@@ -27,6 +27,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true # 图标走 Git LFS，需拉取真实文件，否则 tauri 打包读到指针报「Invalid PNG signature」
 
       - name: Install Linux system deps (WebKitGTK)
         if: startsWith(matrix.os, 'ubuntu')
