@@ -56,7 +56,6 @@ fn launch(state: AppState, view: View) -> ! {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             crate::commands::popup_init,
-            crate::commands::popup_ready,
             crate::commands::submit_popup,
             crate::commands::cancel_popup,
         ])
@@ -76,8 +75,9 @@ fn launch(state: AppState, view: View) -> ! {
         .setup(move |app| {
             match view {
                 View::Popup => {
-                    // 先隐藏创建，待前端绘制完成（popup_ready）再显示，避免白屏闪烁。
-                    WebviewWindowBuilder::new(
+                    // 先隐藏创建，给原生窗口涂上最终主题背景色后立即显示：
+                    // 窗口瞬间出现且已是目标底色，既无白屏闪烁也无可感知延迟。
+                    let window = WebviewWindowBuilder::new(
                         app,
                         "popup",
                         WebviewUrl::App("index.html?view=popup".into()),
@@ -91,17 +91,11 @@ fn launch(state: AppState, view: View) -> ! {
                     .theme(theme)
                     .build()?;
 
-                    // 兜底：前端若未发出就绪信号，超时后也显示窗口。
-                    let handle = app.handle().clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(1500));
-                        if let Some(w) = handle.get_webview_window("popup") {
-                            if !w.is_visible().unwrap_or(true) {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
-                        }
-                    });
+                    // theme() 返回解析后的实际主题（system 亦可），据此取底色。
+                    let resolved = window.theme().unwrap_or(tauri::Theme::Light);
+                    let _ = window.set_background_color(Some(background_for(resolved)));
+                    let _ = window.show();
+                    let _ = window.set_focus();
                 }
                 View::Settings => {
                     WebviewWindowBuilder::new(
@@ -167,6 +161,14 @@ fn emit_result(request: &AskRequest, result: &ChannelResult) -> i32 {
                 1
             }
         },
+    }
+}
+
+/// 原生窗口底色（与前端 tokens.css `--bg` 对齐）。
+fn background_for(theme: tauri::Theme) -> tauri::window::Color {
+    match theme {
+        tauri::Theme::Dark => tauri::window::Color(30, 30, 30, 255),
+        _ => tauri::window::Color(255, 255, 255, 255),
     }
 }
 

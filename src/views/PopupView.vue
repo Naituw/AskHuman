@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { popupInit, popupReady, submitPopup, cancelPopup } from "../lib/ipc";
+import { popupInit, submitPopup, cancelPopup } from "../lib/ipc";
 import { renderMarkdown } from "../lib/markdown";
 import { applyTheme, fileToDataUrl } from "../lib/theme";
 import type { AskRequest, ImageAttachment } from "../lib/types";
@@ -110,21 +110,11 @@ onMounted(async () => {
     const init = await popupInit();
     applyTheme(init.theme);
     request.value = init.request;
+    requestAnimationFrame(() => inputRef.value?.focus());
   } catch (err) {
     console.error("popup_init 失败", err);
     loadError.value = String(err);
   }
-  // 等两帧确保主题/DOM 完成绘制后再显示原生窗口，消除白屏闪烁。
-  requestAnimationFrame(() =>
-    requestAnimationFrame(async () => {
-      try {
-        await popupReady();
-      } catch {
-        /* 兜底由后端超时显示 */
-      }
-      inputRef.value?.focus();
-    })
-  );
 });
 
 onBeforeUnmount(() => {

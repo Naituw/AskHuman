@@ -4,7 +4,7 @@ use crate::app::{self, AppState};
 use crate::config::ThemeMode;
 use crate::models::{AskRequest, ChannelAction, ChannelResult, ImageAttachment};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
 /// 弹窗初始化负载：请求内容 + 主题（前端据此套用样式）。
 #[derive(Serialize)]
@@ -19,15 +19,6 @@ pub fn popup_init(state: State<AppState>) -> PopupInit {
     PopupInit {
         request: state.request.clone(),
         theme: theme_str(state.config.general.theme),
-    }
-}
-
-/// 前端绘制完成后调用：显示此前隐藏的弹窗，消除白屏闪烁。
-#[tauri::command]
-pub fn popup_ready(app: AppHandle) {
-    if let Some(w) = app.get_webview_window("popup") {
-        let _ = w.show();
-        let _ = w.set_focus();
     }
 }
 
