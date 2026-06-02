@@ -20,6 +20,11 @@ const images = ref<ImageAttachment[]>([]);
 const submitting = ref(false);
 const inputRef = ref<HTMLTextAreaElement | null>(null);
 const fileRef = ref<HTMLInputElement | null>(null);
+const scrolled = ref(false);
+
+function onScroll(e: Event) {
+  scrolled.value = (e.target as HTMLElement).scrollTop > 0;
+}
 
 const pinned = ref(false);
 const theme = ref<ThemeMode>("system");
@@ -147,7 +152,7 @@ onMounted(async () => {
     theme.value = init.theme;
     pinned.value = init.alwaysOnTop;
     request.value = init.request;
-    requestAnimationFrame(() => inputRef.value?.focus());
+    requestAnimationFrame(() => inputRef.value?.focus({ preventScroll: true }));
   } catch (err) {
     console.error("popup_init 失败", err);
     loadError.value = String(err);
@@ -167,7 +172,7 @@ onBeforeUnmount(() => {
   </div>
 
   <div v-else class="popup" @dragover.prevent @drop.prevent="onDrop">
-    <header class="navbar" data-tauri-drag-region>
+    <header class="navbar" :class="{ scrolled }" data-tauri-drag-region>
       <span class="brand">
         <span class="brand-dot"></span>
         <span class="brand-title">Question from the Loop</span>
@@ -216,7 +221,7 @@ onBeforeUnmount(() => {
         </button>
       </span>
     </header>
-    <div class="content">
+    <div class="content" @scroll="onScroll">
       <div
         v-if="request.isMarkdown"
         class="markdown-body"
@@ -297,6 +302,12 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--space-2);
   padding: 8px 12px 8px 14px;
+  /* 始终占 1px、仅切换颜色：避免布局跳动；不加 transition/mask，
+     以免在透明窗口上促成不透明合成层（会破坏毛玻璃）。 */
+  border-bottom: 1px solid transparent;
+}
+.navbar.scrolled {
+  border-bottom-color: var(--border);
 }
 /* macOS Overlay 标题栏：下压让出红绿灯空间 */
 .vibrancy .navbar {
