@@ -134,13 +134,15 @@ cargo test --manifest-path src-tauri/Cargo.toml   # Rust 单元测试
 版本号以 `scripts/bump-version.mjs` 统一同步（`Cargo.toml` / `tauri.conf.json` / 根 `package.json` / npm 主包与平台子包）：
 
 ```bash
-node scripts/bump-version.mjs 0.2.0    # 写入各处版本
+# 1. 更新版本号（如有变更，统一写入各处）
+node scripts/bump-version.mjs 0.2.0
 git commit -am "release: v0.2.0"
-git tag v0.2.0
-git push --tags                        # 触发 .github/workflows/release.yml
+
+# 2. 一键发布：校验版本一致/是否已发布 → 打 tag → 推送触发 CI（加 -y 跳过确认）
+./publish.sh
 ```
 
-`release.yml` 会编译 4 平台二进制 → 发布 npm（主包 + 平台子包）→ 创建 GitHub Release。
+`publish.sh` 会校验各处版本一致、检查该版本是否已发布（已发布则报错并提示更新版本号），通过后打 tag 并推送；`release.yml` 随即编译 4 平台二进制 → 发布 npm（主包 + 平台子包）→ 创建 GitHub Release。
 
 > 前置条件：在仓库 Settings → Secrets 配置 `NPM_TOKEN`（npmjs automation token）。预发布版本（如 `0.2.0-rc.1`）会以 npm dist-tag `next` 发布并标记为 GitHub pre-release。
 
