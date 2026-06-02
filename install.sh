@@ -19,6 +19,13 @@ mkdir -p "$INSTALL_DIR"
 cp "$BIN_PATH" "$INSTALL_DIR/AskHuman"
 chmod 0755 "$INSTALL_DIR/AskHuman"
 
+# 清除 quarantine 属性（若有），避免 Gatekeeper 阻拦
+xattr -d com.apple.quarantine "$INSTALL_DIR/AskHuman" 2>/dev/null || true
+
+# 重新做 ad-hoc 签名，降低首次启动被 macOS 校验 kill 的概率
+echo "==> 重新签名 (ad-hoc)"
+codesign --force --sign - "$INSTALL_DIR/AskHuman" 2>/dev/null || true
+
 echo "==> 完成：$INSTALL_DIR/AskHuman"
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
   echo "提示: $INSTALL_DIR 不在 PATH 中，请将其加入 PATH。"
