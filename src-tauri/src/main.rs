@@ -8,6 +8,7 @@
 #![allow(dead_code)]
 
 mod app;
+mod channels;
 mod cli;
 mod commands;
 mod config;

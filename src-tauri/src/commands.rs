@@ -1,11 +1,13 @@
 //! 前端可调用的 Tauri 命令（弹窗模式）。
 
-use crate::app::{self, AppState};
+use crate::app::coordinator::Coordinator;
+use crate::app::AppState;
 use crate::config::{AppConfig, ThemeMode};
 use crate::integrations::cursor_hook;
 use crate::models::{AskRequest, ChannelAction, ChannelResult, ImageAttachment};
 use crate::telegram::TelegramClient;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 
 /// 弹窗初始化负载：请求内容 + 主题（前端据此套用样式）。
@@ -45,12 +47,16 @@ pub fn submit_popup(app: AppHandle, submission: PopupSubmission) {
         images: submission.images,
         source_channel_id: "popup".to_string(),
     };
-    app::finish(&app, result);
+    if let Some(c) = app.try_state::<Arc<Coordinator>>() {
+        c.submit(result);
+    }
 }
 
 #[tauri::command]
 pub fn cancel_popup(app: AppHandle) {
-    app::finish(&app, ChannelResult::cancel("popup"));
+    if let Some(c) = app.try_state::<Arc<Coordinator>>() {
+        c.submit(ChannelResult::cancel("popup"));
+    }
 }
 
 fn theme_str(theme: ThemeMode) -> String {

@@ -1,18 +1,22 @@
-//! Tauri 运行时：创建窗口、运行事件循环、汇集 Channel 结果并退出。
+//! Tauri 运行时：创建窗口、并行启动 Channel、汇集结果并退出。
 
+pub mod coordinator;
+
+use crate::channels::popup::PopupChannel;
+use crate::channels::telegram::TelegramChannel;
+use crate::channels::Channel;
 use crate::cli::{image_writer, output};
 use crate::config::{AppConfig, ThemeMode};
 use crate::models::{AskRequest, ChannelAction, ChannelResult};
-use std::io::Write;
-use std::sync::Mutex;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use crate::telegram::TelegramClient;
+use coordinator::Coordinator;
+use std::sync::Arc;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
-/// 运行时共享状态。
+/// 运行时只读状态：供 popup_init 拉取请求内容与主题。
 pub struct AppState {
     pub request: AskRequest,
     pub config: AppConfig,
-    /// 抢答门闩：首个终态结果生效，其余忽略。
-    pub finished: Mutex<bool>,
 }
 
 #[derive(Clone, Copy)]
@@ -21,25 +25,17 @@ enum View {
     Settings,
 }
 
-/// 提问模式：创建弹窗，等待用户作答 / 取消，输出结果并退出进程。
+/// 提问模式：创建弹窗 + 并行 Channel，等待首个结果，输出并退出。
 pub fn run_ask(request: AskRequest, config: AppConfig) -> ! {
-    launch(
-        AppState {
-            request,
-            config,
-            finished: Mutex::new(false),
-        },
-        View::Popup,
-    )
+    launch(AppState { request, config }, View::Popup)
 }
 
-/// 设置模式：创建设置窗口（前端界面在 Step 5 完善）。
+/// 设置模式：创建设置窗口。
 pub fn run_settings(config: AppConfig) -> ! {
     launch(
         AppState {
             request: AskRequest::new(String::new(), Vec::new(), false),
             config,
-            finished: Mutex::new(false),
         },
         View::Settings,
     )
@@ -52,6 +48,14 @@ fn launch(state: AppState, view: View) -> ! {
     let popup_w = state.config.channels.popup.width;
     let popup_h = state.config.channels.popup.height;
     let always_on_top = state.config.general.always_on_top;
+
+    // 通道启用判定（仅提问模式使用）。
+    let tg = state.config.channels.telegram.clone();
+    let telegram_active = tg.enabled
+        && TelegramClient::new(tg.bot_token.clone(), tg.chat_id.clone(), tg.api_base_url.clone())
+            .is_ok();
+    // 弹窗禁用且 Telegram 不可用时，兜底仍开弹窗，避免无任何 Channel 导致进程挂起。
+    let show_popup = state.config.channels.popup.enabled || !telegram_active;
 
     let app = tauri::Builder::default()
         .manage(state)
@@ -76,7 +80,9 @@ fn launch(state: AppState, view: View) -> ! {
             }
             match event {
                 WindowEvent::CloseRequested { .. } => {
-                    finish(window.app_handle(), ChannelResult::cancel("popup"));
+                    if let Some(c) = window.app_handle().try_state::<Arc<Coordinator>>() {
+                        c.submit(ChannelResult::cancel("popup"));
+                    }
                 }
                 WindowEvent::Resized(_) => persist_popup_size(window),
                 _ => {}
@@ -85,21 +91,33 @@ fn launch(state: AppState, view: View) -> ! {
         .setup(move |app| {
             match view {
                 View::Popup => {
-                    // 在创建时即给 webview 设定底色（macOS 仅 builder 阶段对 webview 生效），
-                    // 窗口一出现就是目标深/浅色，无白屏闪烁。
-                    WebviewWindowBuilder::new(
-                        app,
-                        "popup",
-                        WebviewUrl::App("index.html?view=popup".into()),
-                    )
-                    .title("HumanInLoop")
-                    .inner_size(popup_w, popup_h)
-                    .min_inner_size(420.0, 480.0)
-                    .center()
-                    .always_on_top(always_on_top)
-                    .background_color(window_bg)
-                    .theme(theme)
-                    .build()?;
+                    let request = app.state::<AppState>().request.clone();
+                    let coordinator = Coordinator::new(app.handle().clone(), request.clone());
+
+                    if show_popup {
+                        WebviewWindowBuilder::new(
+                            app,
+                            "popup",
+                            WebviewUrl::App("index.html?view=popup".into()),
+                        )
+                        .title("HumanInLoop")
+                        .inner_size(popup_w, popup_h)
+                        .min_inner_size(420.0, 480.0)
+                        .center()
+                        .always_on_top(always_on_top)
+                        .background_color(window_bg)
+                        .theme(theme)
+                        .build()?;
+                        coordinator.register(Arc::new(PopupChannel::new(app.handle().clone())));
+                    }
+
+                    if telegram_active {
+                        let ch = Arc::new(TelegramChannel::new(tg.clone()));
+                        coordinator.register(ch.clone());
+                        ch.start(&request, coordinator.clone());
+                    }
+
+                    app.manage(coordinator);
                 }
                 View::Settings => {
                     WebviewWindowBuilder::new(
@@ -121,34 +139,19 @@ fn launch(state: AppState, view: View) -> ! {
         .expect("启动 Tauri 失败");
 
     // 构建成功后、进入事件循环前静默系统噪音日志（如 macOS 的 TSM CapsLock 日志）。
-    // 此前的参数/构建错误已照常打到真正的 stderr。
     stderr_redirect::silence();
     app.run(|_app_handle, _event| {});
     std::process::exit(0);
 }
 
-/// 收口：首个结果生效，输出到 stdout 后退出进程。
-pub(crate) fn finish(app: &AppHandle, result: ChannelResult) {
-    let state = app.state::<AppState>();
-    {
-        let mut done = state.finished.lock().unwrap();
-        if *done {
-            return;
-        }
-        *done = true;
-    }
-    let code = emit_result(&state.request, &result);
-    let _ = std::io::stdout().flush();
-    app.exit(code);
-}
-
-fn emit_result(request: &AskRequest, result: &ChannelResult) -> i32 {
+/// 把结果输出到 stdout，返回退出码。供协调器调用。
+pub(crate) fn emit_result(request_id: &str, result: &ChannelResult) -> i32 {
     match result.action {
         ChannelAction::Cancel => {
             println!("{}", output::cancel_output());
             0
         }
-        ChannelAction::Send => match image_writer::save(&result.images, &request.id) {
+        ChannelAction::Send => match image_writer::save(&result.images, request_id) {
             Ok(paths) => {
                 println!(
                     "{}",
@@ -161,7 +164,6 @@ fn emit_result(request: &AskRequest, result: &ChannelResult) -> i32 {
                 0
             }
             Err(e) => {
-                // stderr 已被静默，写回保存的真实 stderr。
                 stderr_redirect::eprintln_real(&format!("错误: {}", e));
                 1
             }
@@ -225,7 +227,8 @@ mod stderr_redirect {
             if saved < 0 {
                 return;
             }
-            let devnull = libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_WRONLY);
+            let devnull =
+                libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_WRONLY);
             if devnull < 0 {
                 libc::close(saved);
                 return;
