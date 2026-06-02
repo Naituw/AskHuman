@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct PopupView: View {
     @ObservedObject var viewModel: PopupViewModel
+    @State private var pasteMonitor: Any?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -24,6 +25,40 @@ struct PopupView: View {
                 .padding(16)
         }
         .frame(minWidth: 420, minHeight: 480)
+        .onAppear { installPasteMonitor() }
+        .onDisappear { removePasteMonitor() }
+    }
+
+    /// 拦截 Cmd+V：当剪贴板含图片时，粘贴到附件区而非文本框
+    private func installPasteMonitor() {
+        guard pasteMonitor == nil else { return }
+        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.contains(.command),
+                  event.charactersIgnoringModifiers?.lowercased() == "v" else {
+                return event
+            }
+            let pb = NSPasteboard.general
+            let hasImage = pb.canReadObject(forClasses: [NSImage.self], options: nil)
+            let imageURLs = (pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL])?
+                .filter { isImageURL($0) } ?? []
+            if hasImage || !imageURLs.isEmpty {
+                viewModel.addImagesFromPasteboard()
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removePasteMonitor() {
+        if let monitor = pasteMonitor {
+            NSEvent.removeMonitor(monitor)
+            pasteMonitor = nil
+        }
+    }
+
+    private func isImageURL(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "tiff", "heic"].contains(ext)
     }
 
     @ViewBuilder

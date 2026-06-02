@@ -126,6 +126,9 @@ private struct WebViewRepresentable: NSViewRepresentable {
           body.dark th, body.dark td { border-color: rgba(255,255,255,0.2); }
           body.dark thead th { background: rgba(255,255,255,0.08); }
           body.dark hr { border-top-color: rgba(255,255,255,0.2); }
+
+          /* 代码块内的 code 不重复背景 */
+          body.light pre code, body.dark pre code { background: transparent; padding: 0; border-radius: 0; }
         </style>
         </head>
         <body class="\(bodyClass)">
