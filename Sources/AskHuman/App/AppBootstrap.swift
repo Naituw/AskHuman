@@ -11,6 +11,7 @@ enum AppBootstrap {
     static func run(theme: ThemeMode, onLaunch: @escaping () -> Void) {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
+        app.mainMenu = MainMenu.build()
         applyTheme(theme)
         let delegate = AppDelegate(onLaunch: onLaunch)
         self.delegate = delegate
