@@ -16,7 +16,7 @@ struct GeneralConfig: Codable {
     var alwaysOnTop: Bool
     var markdownRenderer: MarkdownRenderMode
 
-    init(theme: ThemeMode = .system, alwaysOnTop: Bool = false, markdownRenderer: MarkdownRenderMode = .native) {
+    init(theme: ThemeMode = .system, alwaysOnTop: Bool = true, markdownRenderer: MarkdownRenderMode = .native) {
         self.theme = theme
         self.alwaysOnTop = alwaysOnTop
         self.markdownRenderer = markdownRenderer
@@ -25,7 +25,7 @@ struct GeneralConfig: Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         theme = (try? c.decodeIfPresent(ThemeMode.self, forKey: .theme)) ?? .system
-        alwaysOnTop = (try? c.decodeIfPresent(Bool.self, forKey: .alwaysOnTop)) ?? false
+        alwaysOnTop = (try? c.decodeIfPresent(Bool.self, forKey: .alwaysOnTop)) ?? true
         markdownRenderer = (try? c.decodeIfPresent(MarkdownRenderMode.self, forKey: .markdownRenderer)) ?? .native
     }
 }
@@ -34,11 +34,13 @@ struct PopupChannelConfig: Codable {
     var enabled: Bool
     var width: Double
     var height: Double
+    var rememberSize: Bool
 
-    init(enabled: Bool = true, width: Double = 560, height: Double = 620) {
+    init(enabled: Bool = true, width: Double = 560, height: Double = 620, rememberSize: Bool = true) {
         self.enabled = enabled
         self.width = width
         self.height = height
+        self.rememberSize = rememberSize
     }
 
     init(from decoder: Decoder) throws {
@@ -47,6 +49,7 @@ struct PopupChannelConfig: Codable {
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? def.enabled
         width = (try? c.decodeIfPresent(Double.self, forKey: .width)) ?? def.width
         height = (try? c.decodeIfPresent(Double.self, forKey: .height)) ?? def.height
+        rememberSize = (try? c.decodeIfPresent(Bool.self, forKey: .rememberSize)) ?? def.rememberSize
     }
 }
 

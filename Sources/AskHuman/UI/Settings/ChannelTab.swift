@@ -20,18 +20,23 @@ struct ChannelTab: View {
                 Label("本地弹窗", systemImage: "macwindow")
                     .font(.headline)
                 Toggle("启用本地弹窗", isOn: $viewModel.config.channels.popup.enabled)
-                HStack {
-                    Text("默认窗口尺寸")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Stepper(value: $viewModel.config.channels.popup.width, in: 360...1200, step: 20) {
-                        Text("宽 \(Int(viewModel.config.channels.popup.width))")
-                            .font(.caption.monospacedDigit())
-                    }
-                    Stepper(value: $viewModel.config.channels.popup.height, in: 360...1400, step: 20) {
-                        Text("高 \(Int(viewModel.config.channels.popup.height))")
-                            .font(.caption.monospacedDigit())
+
+                if viewModel.config.channels.popup.enabled {
+                    Divider()
+                    Toggle("记住窗口尺寸", isOn: $viewModel.config.channels.popup.rememberSize)
+                    HStack {
+                        Text("默认窗口尺寸")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Stepper(value: $viewModel.config.channels.popup.width, in: 360...1200, step: 20) {
+                            Text("宽 \(Int(viewModel.config.channels.popup.width))")
+                                .font(.caption.monospacedDigit())
+                        }
+                        Stepper(value: $viewModel.config.channels.popup.height, in: 360...1400, step: 20) {
+                            Text("高 \(Int(viewModel.config.channels.popup.height))")
+                                .font(.caption.monospacedDigit())
+                        }
                     }
                 }
             }
@@ -46,22 +51,25 @@ struct ChannelTab: View {
                     .font(.headline)
                 Toggle("启用 Telegram", isOn: $viewModel.config.channels.telegram.enabled)
 
-                LabeledField(label: "Bot Token", text: $viewModel.config.channels.telegram.botToken)
-                LabeledField(label: "Chat ID", text: $viewModel.config.channels.telegram.chatId)
-                LabeledField(label: "API Base URL", text: $viewModel.config.channels.telegram.apiBaseUrl)
+                if viewModel.config.channels.telegram.enabled {
+                    Divider()
+                    LabeledField(label: "Bot Token", text: $viewModel.config.channels.telegram.botToken)
+                    LabeledField(label: "Chat ID", text: $viewModel.config.channels.telegram.chatId)
+                    LabeledField(label: "API Base URL", text: $viewModel.config.channels.telegram.apiBaseUrl)
 
-                HStack {
-                    Button(viewModel.telegramTesting ? "测试中…" : "测试连接", systemImage: "checkmark.seal") {
-                        viewModel.testTelegram()
+                    HStack {
+                        Button(viewModel.telegramTesting ? "测试中…" : "测试连接", systemImage: "checkmark.seal") {
+                            viewModel.testTelegram()
+                        }
+                        .disabled(viewModel.telegramTesting)
+                        Spacer()
                     }
-                    .disabled(viewModel.telegramTesting)
-                    Spacer()
-                }
 
-                if let msg = viewModel.telegramMessage {
-                    Text(msg)
-                        .font(.caption)
-                        .foregroundStyle(viewModel.telegramError ? Color.red : Color.green)
+                    if let msg = viewModel.telegramMessage {
+                        Text(msg)
+                            .font(.caption)
+                            .foregroundStyle(viewModel.telegramError ? Color.red : Color.green)
+                    }
                 }
             }
             .padding(6)

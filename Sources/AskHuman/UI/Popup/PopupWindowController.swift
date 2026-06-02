@@ -45,4 +45,13 @@ final class PopupWindowController: NSObject, NSWindowDelegate {
         // 用户点了红色关闭按钮，视为取消
         viewModel.cancel()
     }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        guard config.channels.popup.rememberSize,
+              let size = window?.contentView?.frame.size else { return }
+        var cfg = ConfigStore.load()
+        cfg.channels.popup.width = Double(size.width)
+        cfg.channels.popup.height = Double(size.height)
+        ConfigStore.save(cfg)
+    }
 }
