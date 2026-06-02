@@ -30,6 +30,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 [dev-dependencies]
 tempfile = "3"
 
+# Unix 下用于在进入 GUI 事件循环前静默系统噪音日志（重定向 stderr）。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # 较快的 release 配置（不启用 LTO，避免原 Rust 版的慢链接）。
 # 编译性能将在功能完成后专门评测（见 docs/plans/rust-tauri.md §21）。
 [profile.release]

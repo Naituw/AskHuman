@@ -52,7 +52,7 @@ fn launch(state: AppState, view: View) -> ! {
     let popup_h = state.config.channels.popup.height;
     let always_on_top = state.config.general.always_on_top;
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             crate::commands::popup_init,
@@ -103,9 +103,13 @@ fn launch(state: AppState, view: View) -> ! {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("启动 Tauri 失败");
 
+    // 构建成功后、进入事件循环前静默系统噪音日志（如 macOS 的 TSM CapsLock 日志）。
+    // 此前的参数/构建错误已照常打到真正的 stderr。
+    stderr_redirect::silence();
+    app.run(|_app_handle, _event| {});
     std::process::exit(0);
 }
 
@@ -143,7 +147,8 @@ fn emit_result(request: &AskRequest, result: &ChannelResult) -> i32 {
                 0
             }
             Err(e) => {
-                eprintln!("错误: {}", e);
+                // stderr 已被静默，写回保存的真实 stderr。
+                stderr_redirect::eprintln_real(&format!("错误: {}", e));
                 1
             }
         },
@@ -169,5 +174,51 @@ fn persist_popup_size(window: &tauri::Window) {
         cfg.channels.popup.width = size.width as f64 / scale;
         cfg.channels.popup.height = size.height as f64 / scale;
         let _ = cfg.save();
+    }
+}
+
+/// 静默 GUI 事件循环期间的系统噪音日志：把进程 stderr 重定向到 /dev/null，
+/// 同时保存原始 stderr 句柄，供我们自己的错误信息照常输出。
+#[cfg(unix)]
+mod stderr_redirect {
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    static SAVED: AtomicI32 = AtomicI32::new(-1);
+
+    pub fn silence() {
+        unsafe {
+            let saved = libc::dup(libc::STDERR_FILENO);
+            if saved < 0 {
+                return;
+            }
+            let devnull = libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_WRONLY);
+            if devnull < 0 {
+                libc::close(saved);
+                return;
+            }
+            libc::dup2(devnull, libc::STDERR_FILENO);
+            libc::close(devnull);
+            SAVED.store(saved, Ordering::SeqCst);
+        }
+    }
+
+    pub fn eprintln_real(msg: &str) {
+        let fd = SAVED.load(Ordering::SeqCst);
+        let line = format!("{}\n", msg);
+        if fd >= 0 {
+            unsafe {
+                libc::write(fd, line.as_ptr() as *const libc::c_void, line.len());
+            }
+        } else {
+            eprint!("{}", line);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+mod stderr_redirect {
+    pub fn silence() {}
+    pub fn eprintln_real(msg: &str) {
+        eprintln!("{}", msg);
     }
 }

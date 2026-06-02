@@ -6,6 +6,7 @@ import { applyTheme, fileToDataUrl } from "../lib/theme";
 import type { AskRequest, ImageAttachment } from "../lib/types";
 
 const request = ref<AskRequest | null>(null);
+const loadError = ref<string | null>(null);
 const chosen = ref<string[]>([]);
 const userInput = ref("");
 const images = ref<ImageAttachment[]>([]);
@@ -112,6 +113,7 @@ onMounted(async () => {
     requestAnimationFrame(() => inputRef.value?.focus());
   } catch (err) {
     console.error("popup_init 失败", err);
+    loadError.value = String(err);
   }
 });
 
@@ -122,7 +124,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="request" class="popup" @dragover.prevent @drop.prevent="onDrop">
+  <div v-if="!request" class="popup popup-status">
+    <p v-if="loadError" class="status-error">加载失败：{{ loadError }}</p>
+    <p v-else class="status-loading">加载中…</p>
+  </div>
+
+  <div v-else class="popup" @dragover.prevent @drop.prevent="onDrop">
     <div class="content">
       <div
         v-if="request.isMarkdown"
@@ -195,6 +202,18 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+.popup-status {
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
+.status-error {
+  color: #ff453a;
+  white-space: pre-wrap;
 }
 .content {
   flex: 1 1 auto;
