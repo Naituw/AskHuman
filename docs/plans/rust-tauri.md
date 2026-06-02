@@ -479,9 +479,25 @@ AskHuman 命令使用细节：
 > 用户反馈：先按本计划实现，**完成后再专门分析编译性能**，根据实测决定是否引入下列优化（现阶段不实施）。
 
 - **现状预期**：已砍掉重依赖（无 teloxide / rmcp / rodio / schemars / env_logger），依赖树远小于原 Rust 版；dev 走 `cargo tauri dev`（增量）+ Vite HMR（改前端不重编 Rust）；`install.sh` 的 release **不启用 LTO**。Tauri / wry 的首次冷编译（数分钟）属固有成本，无法消除。
-- **完成后评测**：测量并记录「冷编译 / 增量编译（仅改 Rust）/ 仅改前端 / `install.sh` release」各自耗时（标注机器配置），并在本节补充数据。
-- **候选优化（按需再引入）**：
+
+### 实测结果（2026-06-03）
+
+机器：Apple M1 Ultra（16P+4E，20 核）/ 64GB / macOS 26.5.1；rustc 1.88.0、cargo 1.88.0、node 20.19.2、pnpm 10.11.1。
+
+| 场景 | 命令 | 耗时（real） |
+| --- | --- | --- |
+| 冷编译 debug（全量，`cargo clean` 后） | `cargo build` | **42.5s** |
+| 冷编译 release（`install.sh` 等效，opt-level=z 无 LTO） | `cargo build --release` | **44.6s** |
+| 增量 debug（改 1 个 `.rs`） | `cargo build` | **2.2s** |
+| 增量 release（改 1 个 `.rs`） | `cargo build --release` | **1.3s** |
+| 仅改前端 | `pnpm build`（vue-tsc + vite，vite 自身 0.54s） | **1.9s** |
+
+产物：`AskHuman`（release，已 strip）**5.1MB**；`target/`（debug+release）约 2.1GB。
+
+**结论**：冷编译约 45s（M1 Ultra），远优于原 Rust 版（teloxide/rmcp/rodio 等重依赖导致的数分钟级 install.sh 编译）；增量与前端改动均为秒级。**当前不引入下列候选优化**（依赖已足够精简，收益有限、复杂度更高）。后续若在更弱机器（如 CI、Intel mac）或冷编译显著变慢时，再按需启用。
+
+- **候选优化（按需再引入，当前不实施）**：
   - 用 `ureq`（阻塞 HTTP）+ `std::thread` 替代 `tokio` + `reqwest`，去掉两大异步依赖（Telegram 长轮询改阻塞线程实现）
   - 本地构建缓存 `sccache`；更快链接器（macOS `lld` / Linux `mold`）
   - 精简 `tauri` / `reqwest` 的 features；调优 `profile.dev` 与 release（无 LTO）参数
-- **产出**：实测数据 + 最终采纳的优化项。
+- **产出**：见上「实测结果」。最终采纳的优化项：**无**（保持现状）。
