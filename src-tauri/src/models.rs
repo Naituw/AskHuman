@@ -10,17 +10,36 @@ pub struct AskRequest {
     pub message: String,
     pub predefined_options: Vec<String>,
     pub is_markdown: bool,
+    /// 提问附带的文件（AI→人，仅用于弹窗展示，不进入结果输出）。
+    #[serde(default)]
+    pub files: Vec<FileAttachment>,
 }
 
 impl AskRequest {
-    pub fn new(message: String, predefined_options: Vec<String>, is_markdown: bool) -> Self {
+    pub fn new(
+        message: String,
+        predefined_options: Vec<String>,
+        is_markdown: bool,
+        files: Vec<FileAttachment>,
+    ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             message,
             predefined_options,
             is_markdown,
+            files,
         }
     }
+}
+
+/// 提问附带的文件附件（展示用）。`path` 为绝对路径。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileAttachment {
+    pub path: String,
+    pub name: String,
+    pub size: u64,
+    pub is_image: bool,
 }
 
 /// 图片附件。`data` 为 base64，可带 `data:...;base64,` 前缀（落盘时清理）。

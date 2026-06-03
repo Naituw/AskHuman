@@ -61,6 +61,9 @@ if (isAvailable()) {
 # 提问（结果写入 stdout）
 AskHuman "要不要继续？" -o "继续" -o "停止"
 
+# 附带文件展示（可多次；支持绝对路径 / 相对路径 / ~）
+AskHuman "看看这个文档？" -f ~/Documents/spec.md -f ./diagram.png
+
 # 关闭 Markdown 渲染（按纯文本显示）
 AskHuman "纯文本内容" --no-markdown
 
@@ -106,8 +109,8 @@ AskHuman --version
 
 ## 通信 Channel
 
-- **本地弹窗**：默认启用。支持预定义选项、自由文本、图片（粘贴 / 拖拽 / 选择文件）。顶部导航栏可切换置顶、主题、打开设置。
-- **Telegram**：填写 Bot Token 与数字 Chat ID 后启用。发送提问（选项为 inline 按钮）+ 接收文字回复与「发送」操作；不接收图片。
+- **本地弹窗**：默认启用。支持预定义选项、自由文本、图片（粘贴 / 拖拽 / 选择文件）。顶部导航栏可切换置顶、主题、打开设置。提问附带的文件（`-f`）展示在提问下方：单击选中、双击打开、空格预览（macOS 走 QuickLook，其它平台回退为打开）。
+- **Telegram**：填写 Bot Token 与数字 Chat ID 后启用。发送提问（选项为 inline 按钮）+ 接收文字回复与「发送」操作；不接收图片。提问附带的文件（`-f`）会一并发送（图片用 sendPhoto、其它用 sendDocument）。
 
 多个 Channel 同时启用时，哪一端先「发送 / 取消」就采用哪一端的结果，其余自动收尾。当本地弹窗所在环境无法显示 GUI（如 Linux 缺 WebKitGTK、无显示环境）时：若已配置 Telegram，会自动改走 Telegram 并在 stderr 说明原因；若无其他可用 Channel，则以退出码 3 告知调用方降级。
 

@@ -1,16 +1,25 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   popupInit,
   submitPopup,
   cancelPopup,
   openSettings,
   updateTheme,
+  openPath,
+  previewPath,
+  readImageDataUrl,
 } from "../lib/ipc";
 import { renderMarkdown } from "../lib/markdown";
 import { applyTheme, fileToDataUrl } from "../lib/theme";
-import type { AskRequest, ImageAttachment, ThemeMode } from "../lib/types";
+import type {
+  AskRequest,
+  FileAttachment,
+  ImageAttachment,
+  ThemeMode,
+} from "../lib/types";
 
 const request = ref<AskRequest | null>(null);
 const loadError = ref<string | null>(null);
@@ -28,6 +37,59 @@ function onScroll(e: Event) {
 
 const pinned = ref(false);
 const theme = ref<ThemeMode>("system");
+
+// 提问附带的文件附件（AI→人，仅展示）。
+const attachments = computed<FileAttachment[]>(() => request.value?.files ?? []);
+const selectedFile = ref<number | null>(null);
+const thumbs = ref<Record<string, string>>({});
+const previewActive = ref(false);
+const previewUnlisten: UnlistenFn[] = [];
+
+function selectFile(index: number) {
+  const changed = selectedFile.value !== index;
+  selectedFile.value = index;
+  // 预览开着时，选其它附件即切换预览（与原生 QuickLook 类似）。
+  if (previewActive.value && changed) {
+    previewFile(attachments.value[index]);
+  }
+}
+
+function openFile(file: FileAttachment) {
+  openPath(file.path).catch(() => {});
+}
+
+function previewFile(file: FileAttachment) {
+  previewPath(file.path, pinned.value).catch(() => {});
+}
+
+function onFileKeydown(e: KeyboardEvent, file: FileAttachment) {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    e.stopPropagation();
+    openFile(file);
+  } else if (e.key === " ") {
+    e.preventDefault();
+    e.stopPropagation();
+    previewFile(file);
+  }
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function loadThumbs() {
+  for (const file of attachments.value) {
+    if (!file.isImage || thumbs.value[file.path]) continue;
+    try {
+      thumbs.value[file.path] = await readImageDataUrl(file.path);
+    } catch {
+      /* 缩略图加载失败：退回通用图标，不阻断 */
+    }
+  }
+}
 
 async function togglePin() {
   pinned.value = !pinned.value;
@@ -146,12 +208,21 @@ function onKeydown(e: KeyboardEvent) {
 onMounted(async () => {
   window.addEventListener("paste", onPaste);
   window.addEventListener("keydown", onKeydown);
+  previewUnlisten.push(
+    await listen("preview-opened", () => {
+      previewActive.value = true;
+    }),
+    await listen("preview-closed", () => {
+      previewActive.value = false;
+    })
+  );
   try {
     const init = await popupInit();
     applyTheme(init.theme);
     theme.value = init.theme;
     pinned.value = init.alwaysOnTop;
     request.value = init.request;
+    loadThumbs();
     requestAnimationFrame(() => inputRef.value?.focus({ preventScroll: true }));
   } catch (err) {
     console.error("popup_init 失败", err);
@@ -162,6 +233,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("paste", onPaste);
   window.removeEventListener("keydown", onKeydown);
+  previewUnlisten.forEach((un) => un());
 });
 </script>
 
@@ -228,6 +300,32 @@ onBeforeUnmount(() => {
         v-html="renderedHtml"
       ></div>
       <pre v-else class="plain-body">{{ request.message }}</pre>
+
+      <div v-if="attachments.length" class="attachments">
+        <div
+          v-for="(file, i) in attachments"
+          :key="file.path"
+          class="attachment"
+          :class="{ selected: selectedFile === i }"
+          tabindex="0"
+          :title="file.path"
+          @click="selectFile(i)"
+          @dblclick="openFile(file)"
+          @keydown="onFileKeydown($event, file)"
+        >
+          <span class="att-icon">
+            <img v-if="file.isImage && thumbs[file.path]" :src="thumbs[file.path]" alt="" />
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+              <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
+            </svg>
+          </span>
+          <span class="att-meta">
+            <span class="att-name">{{ file.name }}</span>
+            <span class="att-size">{{ formatBytes(file.size) }}</span>
+          </span>
+        </div>
+      </div>
 
       <div v-if="request.predefinedOptions.length" class="options">
         <div
@@ -389,6 +487,67 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+.attachments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: default;
+  outline: none;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.attachment:hover {
+  background: var(--bg-elevated);
+}
+.attachment.selected,
+.attachment:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.att-icon {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+.att-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.att-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.att-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.att-name {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.att-size {
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 .footer {
   flex: 0 0 auto;

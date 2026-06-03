@@ -1,4 +1,5 @@
 pub mod args;
+pub mod file_attachment;
 pub mod help;
 pub mod image_writer;
 pub mod output;
@@ -34,10 +35,18 @@ pub fn dispatch() {
         }
         _ => match args::parse_ask(&argv[1..]) {
             Ok(parsed) => {
+                let files = match file_attachment::resolve(&parsed.files) {
+                    Ok(files) => files,
+                    Err(e) => {
+                        eprintln!("错误: {}", e);
+                        exit(1);
+                    }
+                };
                 let request = crate::models::AskRequest::new(
                     parsed.message,
                     parsed.options,
                     parsed.is_markdown,
+                    files,
                 );
                 crate::app::run_ask(request, crate::config::AppConfig::load());
             }

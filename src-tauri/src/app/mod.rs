@@ -129,7 +129,7 @@ fn run_headless_telegram(request: AskRequest, config: AppConfig) -> ! {
 /// 设置模式：创建设置窗口。
 pub fn run_settings(config: AppConfig) -> ! {
     let state = AppState {
-        request: AskRequest::new(String::new(), Vec::new(), false),
+        request: AskRequest::new(String::new(), Vec::new(), false, Vec::new()),
         config,
     };
     if let Err(e) = launch(state, View::Settings) {
@@ -158,10 +158,14 @@ fn launch(state: AppState, view: View) -> tauri::Result<()> {
 
     let app = tauri::Builder::default()
         .manage(state)
+        .manage(crate::commands::PreviewShared::default())
         .invoke_handler(tauri::generate_handler![
             crate::commands::popup_init,
             crate::commands::submit_popup,
             crate::commands::cancel_popup,
+            crate::commands::open_path,
+            crate::commands::preview_path,
+            crate::commands::read_image_data_url,
             crate::commands::get_settings,
             crate::commands::save_settings,
             crate::commands::get_prompt,

@@ -38,6 +38,8 @@ pub fn help_text() -> String {
         String::new(),
         "选项:".to_string(),
         "  -o, --option <text>            添加预定义选项，可多次出现".to_string(),
+        "  -f, --file <path>              附带文件在弹窗中展示，可多次出现".to_string(),
+        "                                 （仅用于展示，不出现在结果输出中）".to_string(),
         "  --no-markdown                  关闭 Markdown 渲染（默认开启）".to_string(),
         String::new(),
         "输出格式（成功路径）:".to_string(),

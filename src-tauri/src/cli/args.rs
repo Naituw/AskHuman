@@ -5,13 +5,16 @@ pub struct AskArgs {
     pub message: String,
     pub options: Vec<String>,
     pub is_markdown: bool,
+    /// `-f`/`--file` 给出的原始路径（按出现顺序，未做解析/校验）。
+    pub files: Vec<String>,
 }
 
-/// 解析 `AskHuman <message> [-o <opt> ...] [--no-markdown]`。
+/// 解析 `AskHuman <message> [-o <opt> ...] [-f <path> ...] [--no-markdown]`。
 /// 失败时返回中文错误描述。
 pub fn parse_ask(args: &[String]) -> Result<AskArgs, String> {
     let mut message: Option<String> = None;
     let mut options: Vec<String> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
     let mut is_markdown = true;
 
     let mut i = 0;
@@ -23,6 +26,13 @@ pub fn parse_ask(args: &[String]) -> Result<AskArgs, String> {
                     return Err(format!("{} 选项缺少参数值", arg));
                 }
                 options.push(args[i + 1].clone());
+                i += 2;
+            }
+            "-f" | "--file" => {
+                if i + 1 >= args.len() {
+                    return Err(format!("{} 选项缺少参数值", arg));
+                }
+                files.push(args[i + 1].clone());
                 i += 2;
             }
             "--no-markdown" => {
@@ -48,6 +58,7 @@ pub fn parse_ask(args: &[String]) -> Result<AskArgs, String> {
         message,
         options,
         is_markdown,
+        files,
     })
 }
 
@@ -72,6 +83,27 @@ mod tests {
         let p = parse_ask(&v(&["msg", "-o", "A", "--option", "B"])).unwrap();
         assert_eq!(p.message, "msg");
         assert_eq!(p.options, v(&["A", "B"]));
+    }
+
+    #[test]
+    fn multiple_files() {
+        let p = parse_ask(&v(&["msg", "-f", "a.md", "--file", "b.png"])).unwrap();
+        assert_eq!(p.message, "msg");
+        assert_eq!(p.files, v(&["a.md", "b.png"]));
+    }
+
+    #[test]
+    fn mixed_options_and_files() {
+        let p = parse_ask(&v(&["msg", "-o", "A", "-f", "a.md", "--no-markdown"])).unwrap();
+        assert_eq!(p.message, "msg");
+        assert_eq!(p.options, v(&["A"]));
+        assert_eq!(p.files, v(&["a.md"]));
+        assert!(!p.is_markdown);
+    }
+
+    #[test]
+    fn requires_file_value() {
+        assert!(parse_ask(&v(&["msg", "-f"])).is_err());
     }
 
     #[test]

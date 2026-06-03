@@ -3,6 +3,14 @@ export interface AskRequest {
   message: string;
   predefinedOptions: string[];
   isMarkdown: boolean;
+  files: FileAttachment[];
+}
+
+export interface FileAttachment {
+  path: string;
+  name: string;
+  size: number;
+  isImage: boolean;
 }
 
 export interface ImageAttachment {

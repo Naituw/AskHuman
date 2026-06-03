@@ -124,6 +124,54 @@ impl TelegramClient {
             .unwrap_or(0))
     }
 
+    /// 上传文件（multipart）。`method` 为 sendDocument/sendPhoto，`field` 为 document/photo。
+    async fn send_file(
+        &self,
+        method: &str,
+        field: &str,
+        path: &str,
+        filename: &str,
+    ) -> Result<i64, TelegramError> {
+        let bytes = std::fs::read(path)
+            .map_err(|e| TelegramError::Network(format!("读取文件失败: {}", e)))?;
+        let part = reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string());
+        let form = reqwest::multipart::Form::new()
+            .text("chat_id", self.chat_id.to_string())
+            .part(field.to_string(), part);
+        let url = format!("{}/bot{}/{}", self.api_base_url, self.token, method);
+        let resp = self
+            .http
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| TelegramError::Network(e.to_string()))?;
+        let v: Value = resp.json().await.map_err(|_| TelegramError::BadResponse)?;
+        if v.get("ok").and_then(|o| o.as_bool()) == Some(true) {
+            Ok(v.get("result")
+                .and_then(|r| r.get("message_id"))
+                .and_then(|m| m.as_i64())
+                .unwrap_or(0))
+        } else {
+            let desc = v
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("请求失败")
+                .to_string();
+            Err(TelegramError::Api(desc))
+        }
+    }
+
+    /// 以文档形式发送文件。
+    pub async fn send_document(&self, path: &str, filename: &str) -> Result<i64, TelegramError> {
+        self.send_file("sendDocument", "document", path, filename).await
+    }
+
+    /// 以图片形式发送文件（可内联预览）。
+    pub async fn send_photo(&self, path: &str, filename: &str) -> Result<i64, TelegramError> {
+        self.send_file("sendPhoto", "photo", path, filename).await
+    }
+
     pub async fn get_updates(&self, offset: i64) -> Result<Vec<Value>, TelegramError> {
         let result = self
             .call("getUpdates", json!({ "offset": offset, "timeout": 0 }))

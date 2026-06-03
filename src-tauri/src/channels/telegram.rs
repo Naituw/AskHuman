@@ -97,6 +97,21 @@ pub(crate) async fn run_session(
         .await
         .unwrap_or(0);
 
+    // 2.5 发送提问附带的文件（图片→sendPhoto，其它→sendDocument）
+    for file in &request.files {
+        let result = if file.is_image {
+            client.send_photo(&file.path, &file.name).await
+        } else {
+            client.send_document(&file.path, &file.name).await
+        };
+        if let Err(e) = result {
+            eprintln!("警告: 文件发送失败: {}: {}", file.path, e);
+            let _ = client
+                .send_message(&format!("⚠️ 文件发送失败：{}", file.path), None, None)
+                .await;
+        }
+    }
+
     // 3. 长轮询
     let mut offset: i64 = 0;
     while !cancelled.load(Ordering::SeqCst) {

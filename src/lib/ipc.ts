@@ -15,6 +15,14 @@ export const submitPopup = (submission: PopupSubmission) =>
 
 export const cancelPopup = () => invoke<void>("cancel_popup");
 
+export const openPath = (path: string) => invoke<void>("open_path", { path });
+
+export const previewPath = (path: string, restorePin: boolean) =>
+  invoke<void>("preview_path", { path, restorePin });
+
+export const readImageDataUrl = (path: string) =>
+  invoke<string>("read_image_data_url", { path });
+
 export const getSettings = () => invoke<AppConfig>("get_settings");
 
 export const saveSettings = (config: AppConfig) =>

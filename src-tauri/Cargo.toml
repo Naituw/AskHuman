@@ -30,7 +30,7 @@ dirs = "5"
 base64 = "0.22"
 anyhow = "1"
 thiserror = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 # 检测系统深/浅色，用于 system 主题下给窗口设置正确底色（消除白闪）。
 # Linux 端依赖（zbus）仅在 Linux 目标编译，不影响 macOS 编译速度。
