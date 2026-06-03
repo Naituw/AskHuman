@@ -148,6 +148,22 @@ pub fn file_icon_data_url(app: AppHandle, path: String) -> Result<String, String
     }
 }
 
+/// 弹出 -f 附件胶囊的原生右键菜单（Finder 风格）。macOS 专属，其它平台为空操作。
+#[tauri::command]
+pub fn show_attachment_menu(app: AppHandle, path: String) {
+    #[cfg(target_os = "macos")]
+    {
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            crate::macos_menu::show(app2, path);
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, path);
+    }
+}
+
 fn open_with_system(path: &str) -> Result<(), String> {
     use std::process::Command;
     #[cfg(target_os = "macos")]

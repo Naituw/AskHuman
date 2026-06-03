@@ -168,6 +168,7 @@ fn launch(state: AppState, view: View) -> tauri::Result<()> {
             crate::commands::close_preview,
             crate::commands::read_image_data_url,
             crate::commands::file_icon_data_url,
+            crate::commands::show_attachment_menu,
             crate::commands::get_settings,
             crate::commands::save_settings,
             crate::commands::get_prompt,

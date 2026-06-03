@@ -14,6 +14,7 @@ import {
   closePreview,
   readImageDataUrl,
   fileIconDataUrl,
+  showAttachmentMenu,
 } from "../lib/ipc";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import { renderMarkdown } from "../lib/markdown";
@@ -152,6 +153,15 @@ async function loadDragIcons() {
 // 标记正在「拖出」附件：用于让本窗口的原生 drop 监听忽略这次拖拽，
 // 避免把拖出的 -f 附件又当作回复输入加回来（只能拖到窗口外）。
 const draggingOut = ref(false);
+
+// -f 附件胶囊右键：弹出原生 Finder 风格菜单（打开/打开方式/预览/在访达中显示/拷贝等）。
+function onAttachmentContextMenu(file: FileAttachment, i: number, e: MouseEvent) {
+  e.preventDefault();
+  selectFile(i);
+  showAttachmentMenu(file.path).catch((err) =>
+    console.error("打开右键菜单失败", err)
+  );
+}
 
 // -f 附件胶囊拖出到其它应用（如拖到 Dock 应用图标用其打开）。
 function onAttachmentDragStart(file: FileAttachment, e: DragEvent) {
@@ -468,6 +478,7 @@ onBeforeUnmount(() => {
             @click="selectFile(i)"
             @dblclick="openFile(file)"
             @dragstart="onAttachmentDragStart(file, $event)"
+            @contextmenu="onAttachmentContextMenu(file, i, $event)"
           >
             <span class="att-icon" :class="{ 'is-image': file.isImage && thumbs[file.path] }">
               <img v-if="file.isImage && thumbs[file.path]" :src="thumbs[file.path]" alt="" />

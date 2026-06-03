@@ -14,6 +14,8 @@ mod commands;
 mod config;
 mod integrations;
 #[cfg(target_os = "macos")]
+mod macos_menu;
+#[cfg(target_os = "macos")]
 mod macos_quicklook;
 mod models;
 mod paths;

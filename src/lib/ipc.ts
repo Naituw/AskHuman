@@ -30,6 +30,9 @@ export const readImageDataUrl = (path: string) =>
 export const fileIconDataUrl = (path: string) =>
   invoke<string>("file_icon_data_url", { path });
 
+export const showAttachmentMenu = (path: string) =>
+  invoke<void>("show_attachment_menu", { path });
+
 export const getSettings = () => invoke<AppConfig>("get_settings");
 
 export const saveSettings = (config: AppConfig) =>
