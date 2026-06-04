@@ -71,6 +71,17 @@ const messageHtml = computed(() =>
 const showDescription = computed(
   () => messageText.value.trim() !== "" || attachments.value.length > 0
 );
+// 存在 Message（描述/附件）或多题时，显示问题头部以区隔 Message 与 Question。
+const showQuestionHeader = computed(() => showDescription.value || isMulti.value);
+// 多题显示「Question i/n」；单题（仅在有 Message 时显示头部）只显示「Question」。
+const questionHeaderLabel = computed(() =>
+  isMulti.value ? `Question ${current.value + 1}/${total.value}` : "Question"
+);
+// 上一个/下一个的切换方向，驱动左右滑动动画。
+const slideDir = ref<"next" | "prev">("next");
+const transitionName = computed(() =>
+  slideDir.value === "next" ? "q-slide-next" : "q-slide-prev"
+);
 const allViewed = computed(
   () => visited.value.length > 0 && visited.value.every(Boolean)
 );
@@ -355,11 +366,19 @@ function goTo(index: number) {
 }
 
 function goPrev() {
+  slideDir.value = "prev";
   goTo(current.value - 1);
 }
 
 function goNext() {
+  slideDir.value = "next";
   goTo(current.value + 1);
+}
+
+// 问题切换动画完成后聚焦输入框并校正高度（out-in 下新元素挂载在此时）。
+function onQuestionEntered() {
+  inputRef.value?.focus({ preventScroll: true });
+  autoGrow();
 }
 
 function collectAnswers(): QuestionAnswer[] {
@@ -559,10 +578,10 @@ onBeforeUnmount(() => {
       <template v-if="showDescription">
         <div
           v-if="messageText && request.isMarkdown"
-          class="markdown-body message-body"
+          class="markdown-body"
           v-html="messageHtml"
         ></div>
-        <pre v-else-if="messageText" class="plain-body message-body">{{ messageText }}</pre>
+        <pre v-else-if="messageText" class="plain-body">{{ messageText }}</pre>
 
         <div v-if="attachments.length" class="attachments">
         <div class="att-caption">
@@ -602,79 +621,92 @@ onBeforeUnmount(() => {
       </div>
       </template>
 
-      <!-- 题号计数（仅多题），位于 Message 下方、问题上方 -->
-      <div v-if="isMulti" class="q-counter">
-        Question {{ current + 1 }}/{{ total }}
-      </div>
-
-      <!-- 当前问题正文 -->
+      <!-- 问题头部：间距 + 分割线 + 问号图标 + 「Question i/n」 -->
       <div
-        v-if="request.isMarkdown && currentQuestion?.message"
-        class="markdown-body"
-        v-html="renderedHtml"
-      ></div>
-      <pre v-else-if="currentQuestion?.message" class="plain-body">{{ currentQuestion?.message }}</pre>
+        v-if="showQuestionHeader"
+        class="q-header"
+        :class="{ 'with-divider': showDescription }"
+      >
+        <svg class="q-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M9.2 9.3a2.8 2.8 0 0 1 5.4 1c0 1.9-2.8 2.5-2.8 2.5" />
+          <path d="M12 17.2h.01" />
+        </svg>
+        <span class="q-label">{{ questionHeaderLabel }}</span>
+      </div>
 
-      <div v-if="currentQuestion && currentQuestion.predefinedOptions.length" class="options">
-        <div
-          v-for="(opt, i) in currentQuestion.predefinedOptions"
-          :key="i"
-          class="option"
-          :class="{ selected: chosen.includes(opt) }"
-          @click="toggle(opt)"
-        >
-          <span class="check">{{ chosen.includes(opt) ? "✓" : "" }}</span>
-          <span class="label">{{ opt }}</span>
+      <!-- 当前问题区（上一个/下一个左右滑动） -->
+      <Transition :name="transitionName" mode="out-in" @after-enter="onQuestionEntered">
+        <div class="question-pane" :key="current">
+          <div
+            v-if="request.isMarkdown && currentQuestion?.message"
+            class="markdown-body"
+            v-html="renderedHtml"
+          ></div>
+          <pre v-else-if="currentQuestion?.message" class="plain-body">{{ currentQuestion?.message }}</pre>
+
+          <div v-if="currentQuestion && currentQuestion.predefinedOptions.length" class="options">
+            <div
+              v-for="(opt, i) in currentQuestion.predefinedOptions"
+              :key="i"
+              class="option"
+              :class="{ selected: chosen.includes(opt) }"
+              @click="toggle(opt)"
+            >
+              <span class="check">{{ chosen.includes(opt) ? "✓" : "" }}</span>
+              <span class="label">{{ opt }}</span>
+            </div>
+          </div>
+
+          <!-- 输入框 + 内置「添加图片」小图标（右下角） -->
+          <div class="input-wrap">
+            <textarea
+              ref="inputRef"
+              v-model="userInput"
+              class="textarea"
+              placeholder="输入你的回复…"
+              @input="autoGrow"
+            ></textarea>
+            <button
+              class="img-btn"
+              type="button"
+              title="添加图片"
+              aria-label="添加图片"
+              @click="pickFiles"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="8.5" cy="8.5" r="1.6" />
+                <path d="M21 15l-5-5L5 21" />
+              </svg>
+            </button>
+          </div>
+
+          <div v-if="images.length" class="thumbs">
+            <div v-for="(img, i) in images" :key="i" class="thumb">
+              <img :src="img.data" alt="" />
+              <button class="remove" type="button" @click="removeImage(i)">
+                ×
+              </button>
+            </div>
+          </div>
+
+          <div v-if="replyFiles.length" class="reply-files">
+            <div
+              v-for="(f, i) in replyFiles"
+              :key="f.path"
+              class="reply-file"
+              :title="f.path"
+            >
+              <span class="rf-icon">📄</span>
+              <span class="rf-name">{{ f.name }}</span>
+              <button class="rf-remove" type="button" @click="removeReplyFile(i)">
+                ×
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
-
-      <!-- 输入框 + 内置「添加图片」小图标（右下角） -->
-      <div class="input-wrap">
-        <textarea
-          ref="inputRef"
-          v-model="userInput"
-          class="textarea"
-          placeholder="输入你的回复…"
-          @input="autoGrow"
-        ></textarea>
-        <button
-          class="img-btn"
-          type="button"
-          title="添加图片"
-          aria-label="添加图片"
-          @click="pickFiles"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <circle cx="8.5" cy="8.5" r="1.6" />
-            <path d="M21 15l-5-5L5 21" />
-          </svg>
-        </button>
-      </div>
-
-      <div v-if="images.length" class="thumbs">
-        <div v-for="(img, i) in images" :key="i" class="thumb">
-          <img :src="img.data" alt="" />
-          <button class="remove" type="button" @click="removeImage(i)">
-            ×
-          </button>
-        </div>
-      </div>
-
-      <div v-if="replyFiles.length" class="reply-files">
-        <div
-          v-for="(f, i) in replyFiles"
-          :key="f.path"
-          class="reply-file"
-          :title="f.path"
-        >
-          <span class="rf-icon">📄</span>
-          <span class="rf-name">{{ f.name }}</span>
-          <button class="rf-remove" type="button" @click="removeReplyFile(i)">
-            ×
-          </button>
-        </div>
-      </div>
+      </Transition>
     </div>
 
     <input
@@ -989,17 +1021,63 @@ onBeforeUnmount(() => {
   font-size: 11px;
   color: var(--text-secondary);
 }
-/* 共享 Message 描述区：与下方问题略作区分 */
-.message-body {
-  color: var(--text-secondary);
-}
-/* 题号计数：位于 Message 与问题之间 */
-.q-counter {
-  font-size: 11px;
+/* 问题头部：问号图标 + 「Question i/n」，与 Message 同样式区隔靠分割线 */
+.q-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
   font-weight: 600;
-  letter-spacing: 0.3px;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
+}
+/* 有 Message 时：间距 + 分割线，与上方描述区隔开 */
+.q-header.with-divider {
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.q-header .q-icon {
+  width: 17px;
+  height: 17px;
+  color: var(--accent);
+}
+/* 问题区滑动容器 */
+.question-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+/* 上一个/下一个：左右滑动（out-in） */
+.q-slide-next-enter-active,
+.q-slide-next-leave-active,
+.q-slide-prev-enter-active,
+.q-slide-prev-leave-active {
+  transition: transform 0.14s ease, opacity 0.14s ease;
+}
+.q-slide-next-enter-from {
+  transform: translateX(26px);
+  opacity: 0;
+}
+.q-slide-next-leave-to {
+  transform: translateX(-26px);
+  opacity: 0;
+}
+.q-slide-prev-enter-from {
+  transform: translateX(-26px);
+  opacity: 0;
+}
+.q-slide-prev-leave-to {
+  transform: translateX(26px);
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .q-slide-next-enter-active,
+  .q-slide-next-leave-active,
+  .q-slide-prev-enter-active,
+  .q-slide-prev-leave-active {
+    transition: none;
+  }
 }
 /* 输入框容器：承载内置「添加图片」图标 */
 .input-wrap {
