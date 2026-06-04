@@ -197,9 +197,15 @@ fn launch(state: AppState, view: View) -> tauri::Result<()> {
             }
         })
         .setup(move |app| {
+            // 裸二进制运行时 Dock 不会用 bundle 图标；运行时显式覆盖（仅影响本进程）。
+            #[cfg(target_os = "macos")]
+            crate::macos_dock_icon::set_dock_icon();
             match view {
                 View::Popup => {
                     let request = app.state::<AppState>().request.clone();
+                    // Dock 跳动 + 角标提问数（仅 popup）。
+                    #[cfg(target_os = "macos")]
+                    crate::macos_dock_icon::announce_questions(request.questions.len());
                     let coordinator = Coordinator::new(app.handle().clone(), request.clone());
 
                     if show_popup {

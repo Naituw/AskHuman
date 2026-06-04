@@ -50,8 +50,8 @@ libc = "0.2"
 # 协议（acceptsPreviewPanelControl/begin/end）控制面板，从而触发 previewPanel:handleEvent: 回调。
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSURL", "NSGeometry"] }
-objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSEvent"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSURL", "NSGeometry", "NSData"] }
+objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSEvent", "NSApplication", "NSImage", "NSDockTile"] }
 
 # 较快的 release 配置（不启用 LTO，避免原 Rust 版的慢链接）。
 # 编译性能将在功能完成后专门评测（见 docs/plans/rust-tauri.md §21）。
