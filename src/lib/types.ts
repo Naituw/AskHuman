@@ -57,6 +57,8 @@ export interface GeneralConfig {
   alwaysOnTop: boolean;
   appearAnimation: PopupAnimation;
   windowEffect: WindowEffect;
+  /** 语音识别语言（BCP-47，如 "zh-CN"）；"auto" 跟随系统首选语言。 */
+  speechLanguage: string;
 }
 
 export interface PopupChannelConfig {

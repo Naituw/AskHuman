@@ -56,6 +56,8 @@ pub struct GeneralConfig {
     pub always_on_top: bool,
     pub appear_animation: PopupAnimation,
     pub window_effect: WindowEffect,
+    /// 语音识别语言（BCP-47，如 "zh-CN"/"en-US"）；"auto" 表示跟随系统首选语言。
+    pub speech_language: String,
 }
 
 impl Default for GeneralConfig {
@@ -65,6 +67,7 @@ impl Default for GeneralConfig {
             always_on_top: true,
             appear_animation: PopupAnimation::Alert,
             window_effect: WindowEffect::Glass,
+            speech_language: "auto".to_string(),
         }
     }
 }
@@ -193,6 +196,7 @@ mod tests {
         assert!(c.general.always_on_top);
         assert_eq!(c.general.appear_animation, PopupAnimation::Alert);
         assert_eq!(c.general.window_effect, WindowEffect::Glass);
+        assert_eq!(c.general.speech_language, "auto");
         assert!(c.channels.popup.enabled);
         assert_eq!(c.channels.popup.width, 560.0);
         assert_eq!(c.channels.popup.height, 620.0);

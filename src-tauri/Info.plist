@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>AskHuman 需要使用麦克风进行语音输入。</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>AskHuman 需要使用语音识别，将你的语音转写为文字。</string>
+</dict>
+</plist>

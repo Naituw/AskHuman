@@ -15,6 +15,11 @@ import {
   readImageDataUrl,
   fileIconDataUrl,
   showAttachmentMenu,
+  getSettings,
+  startSpeech,
+  stopSpeech,
+  flushSpeech,
+  speechAvailable,
 } from "../lib/ipc";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import { renderMarkdown } from "../lib/markdown";
@@ -41,6 +46,34 @@ const imagesByQ = ref<ImageAttachment[][]>([]);
 const replyFilesByQ = ref<{ path: string; name: string }[][]>([]);
 // 每题是否已被「查看过」。
 const visited = ref<boolean[]>([]);
+
+// 语音输入：macOS 26 原生 SpeechAnalyzer（经 Swift 桥 + Tauri 事件）。
+// 仅 macOS 26+ 可用；后端 speech_available 判定，否则隐藏麦克风按钮。
+const speechSupported = ref(false);
+// listening：会话已激活（含 loading 与录制中）。speechReady：真正进入实时录制（高亮）。
+const listening = ref(false);
+const speechReady = ref(false);
+const speechError = ref<string | null>(null);
+const speechStatus = ref<string | null>(null);
+// 识别语言（来自设置；auto/空 → 后端按系统首选语言）。
+const speechLang = ref("auto");
+// 插入模型（复刻 demo）：文本布局 = [...已提交...][实时片段]。
+// interimStart 指向实时片段起点；interimLen 为其长度。committed 在 interimStart 处永久插入；
+// volatile 就地替换 [interimStart, interimStart+interimLen]。用户中途移动光标→固定并 flush。
+let speechTargetQ = 0;
+let interimStart = 0;
+let interimLen = 0;
+// 待替换选区（激活时若有选区，延迟到首个识别文字到达才删除，模拟原生听写）。
+let pendingSelStart = -1;
+let pendingSelEnd = -1;
+// 用户按下鼠标拖选期间，暂停把语音更新写进 DOM，避免冲掉正在进行的选区。
+let suspendSpeechDom = false;
+// 最近一次「已知」的选区（程序化设置或已处理过的用户选择）；据此区分用户的新操作。
+let lastSelStart = -1;
+let lastSelEnd = -1;
+let speechErrorTimer: ReturnType<typeof setTimeout> | null = null;
+// speech-* 事件取消订阅句柄。
+let unlistenSpeech: UnlistenFn[] = [];
 
 const submitting = ref(false);
 const inputRef = ref<HTMLTextAreaElement | null>(null);
@@ -449,6 +482,196 @@ function dismissCancelConfirm() {
   showCancelConfirm.value = false;
 }
 
+// ===== 语音输入（macOS 26 SpeechAnalyzer，⌘D 切换） =====
+function showSpeechError(msg: string) {
+  speechError.value = msg;
+  if (speechErrorTimer) clearTimeout(speechErrorTimer);
+  speechErrorTimer = setTimeout(() => {
+    speechError.value = null;
+    speechErrorTimer = null;
+  }, 4000);
+}
+
+function toggleSpeech() {
+  if (listening.value) stopListening();
+  else startListening();
+}
+
+function startListening() {
+  if (!speechSupported.value) {
+    showSpeechError("语音输入需要 macOS 26 及以上");
+    return;
+  }
+  if (speechErrorTimer) {
+    clearTimeout(speechErrorTimer);
+    speechErrorTimer = null;
+  }
+  speechError.value = null;
+  speechStatus.value = null;
+  speechTargetQ = current.value;
+  // 听写起点 = 当前光标处。若存在选区：保持高亮，待首个识别文字到达时才替换（原生听写语义）。
+  const el = inputRef.value;
+  const fieldLen = inputByQ.value[speechTargetQ]?.length ?? 0;
+  let start = fieldLen;
+  let end = fieldLen;
+  if (el && speechTargetQ === current.value) {
+    start = el.selectionStart ?? fieldLen;
+    end = el.selectionEnd ?? start;
+  }
+  interimStart = start;
+  interimLen = 0;
+  lastSelStart = start;
+  lastSelEnd = end;
+  // 延迟替换的待删选区（end>start 时有效）；不立刻删，保留选区高亮。
+  pendingSelStart = end > start ? start : -1;
+  pendingSelEnd = end > start ? end : -1;
+
+  listening.value = true;
+  speechReady.value = false; // 先进入 loading，待 speech-ready 再高亮。
+  const locale =
+    speechLang.value && speechLang.value !== "auto" ? speechLang.value : "";
+  startSpeech(locale).catch((err) => {
+    listening.value = false;
+    speechReady.value = false;
+    showSpeechError("无法启动语音输入");
+    console.error("启动语音失败", err);
+  });
+}
+
+function stopListening() {
+  if (!listening.value) return;
+  listening.value = false;
+  speechReady.value = false;
+  stopSpeech().catch(() => {});
+}
+
+// 首个识别文字到达时，删除「待替换选区」（实现：说话才替换选中文本）。
+function consumePendingSelection() {
+  if (pendingSelStart >= 0 && pendingSelEnd > pendingSelStart) {
+    const v = inputByQ.value[speechTargetQ] ?? "";
+    inputByQ.value[speechTargetQ] =
+      v.slice(0, pendingSelStart) + v.slice(pendingSelEnd);
+    interimStart = pendingSelStart;
+    interimLen = 0;
+  }
+  pendingSelStart = -1;
+  pendingSelEnd = -1;
+}
+
+// 「已最终化」片段：移除当前实时片段，再在 interimStart 处永久插入。
+function onSpeechCommitted(delta: string) {
+  if (!delta || suspendSpeechDom) return;
+  consumePendingSelection();
+  let v = inputByQ.value[speechTargetQ] ?? "";
+  if (interimLen > 0) {
+    v = v.slice(0, interimStart) + v.slice(interimStart + interimLen);
+    interimLen = 0;
+  }
+  v = v.slice(0, interimStart) + delta + v.slice(interimStart);
+  interimStart += delta.length;
+  inputByQ.value[speechTargetQ] = v;
+  syncCaret();
+}
+
+// 实时片段：就地替换 [interimStart, interimStart+interimLen]。
+function onSpeechVolatile(text: string) {
+  if (suspendSpeechDom) return;
+  // 尚无任何文字、也无既有实时片段时（空回调），不触碰选区。
+  if (!text && interimLen === 0) return;
+  consumePendingSelection();
+  let v = inputByQ.value[speechTargetQ] ?? "";
+  v = v.slice(0, interimStart) + text + v.slice(interimStart + interimLen);
+  interimLen = text.length;
+  inputByQ.value[speechTargetQ] = v;
+  syncCaret();
+}
+
+// 把光标移到实时片段末尾，并记录为「程序化」位置（避免误判为用户移动）。
+function syncCaret() {
+  if (speechTargetQ !== current.value || suspendSpeechDom) return;
+  nextTick(() => {
+    autoGrow();
+    const el = inputRef.value;
+    if (!el) return;
+    const pos = Math.min(interimStart + interimLen, el.value.length);
+    el.selectionStart = el.selectionEnd = pos;
+    lastSelStart = pos;
+    lastSelEnd = pos;
+  });
+}
+
+// 鼠标在输入框按下即开始拖选：暂停语音写入 DOM，保护用户选区。
+function onTextareaMouseDown() {
+  if (listening.value && speechTargetQ === current.value) {
+    suspendSpeechDom = true;
+  }
+}
+
+// 鼠标松开（可能在窗口任意处）：恢复语音写入，并按最终选区处理。
+function onDocMouseUp() {
+  if (!suspendSpeechDom) return;
+  suspendSpeechDom = false;
+  onUserCaretMaybeMoved();
+}
+
+// 用户在听写中主动移动光标/编辑：固定当前内容、以新光标为起点重启识别会话。
+function onUserCaretMaybeMoved() {
+  if (!listening.value || speechTargetQ !== current.value) return;
+  const el = inputRef.value;
+  if (!el) return;
+  const selStart = el.selectionStart ?? 0;
+  const selEnd = el.selectionEnd ?? selStart;
+  // 与上次已知选区相同 → 无新操作（含程序化设置）。
+  if (selStart === lastSelStart && selEnd === lastSelEnd) return;
+  // 用户改变了光标/选区：以此为新起点重启会话。
+  if (selEnd > selStart) {
+    // 选区 → 延迟替换（说话才删）。
+    pendingSelStart = selStart;
+    pendingSelEnd = selEnd;
+  } else {
+    pendingSelStart = -1;
+    pendingSelEnd = -1;
+  }
+  interimStart = selStart;
+  interimLen = 0;
+  lastSelStart = selStart;
+  lastSelEnd = selEnd;
+  flushSpeech().catch(() => {});
+}
+
+// 订阅后端 speech-* 事件。
+async function setupSpeechListeners() {
+  unlistenSpeech.push(
+    await listen<string>("speech-committed", (e) => onSpeechCommitted(e.payload))
+  );
+  unlistenSpeech.push(
+    await listen<string>("speech-volatile", (e) => onSpeechVolatile(e.payload))
+  );
+  unlistenSpeech.push(
+    await listen<string>("speech-status", (e) => {
+      speechStatus.value = e.payload || null;
+    })
+  );
+  unlistenSpeech.push(
+    await listen("speech-ready", () => {
+      if (listening.value) speechReady.value = true;
+    })
+  );
+  unlistenSpeech.push(
+    await listen<string>("speech-error", (e) => {
+      listening.value = false;
+      speechReady.value = false;
+      showSpeechError(e.payload || "语音识别出错");
+    })
+  );
+  unlistenSpeech.push(
+    await listen("speech-stopped", () => {
+      listening.value = false;
+      speechReady.value = false;
+    })
+  );
+}
+
 function onKeydown(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key === "Enter") {
@@ -461,6 +684,12 @@ function onKeydown(e: KeyboardEvent) {
   if (mod && (e.key === "w" || e.key === "W")) {
     e.preventDefault();
     requestCancel();
+    return;
+  }
+  // CMD+D：开始/停止语音输入。
+  if (mod && (e.key === "d" || e.key === "D")) {
+    e.preventDefault();
+    toggleSpeech();
     return;
   }
   // 多题：CMD+] 下一题，CMD+[ 上一题（不影响 CMD+回车）。
@@ -493,6 +722,7 @@ function onKeydown(e: KeyboardEvent) {
 onMounted(async () => {
   window.addEventListener("paste", onPaste);
   window.addEventListener("keydown", onKeydown);
+  document.addEventListener("mouseup", onDocMouseUp);
   unlistenIndex = await listen<number>("preview-index", (e) => {
     const i = e.payload;
     if (i >= 0 && i < attachments.value.length) {
@@ -517,6 +747,19 @@ onMounted(async () => {
     }
     addDroppedPaths(event.payload.paths);
   });
+  // 读取识别语言设置 + 探测语音是否可用（macOS 26+）。
+  try {
+    const s = await getSettings();
+    speechLang.value = s.general.speechLanguage || "auto";
+  } catch {
+    /* 读取失败：保持 auto */
+  }
+  try {
+    speechSupported.value = await speechAvailable();
+  } catch {
+    speechSupported.value = false;
+  }
+  if (speechSupported.value) await setupSpeechListeners();
   try {
     const init = await popupInit();
     applyTheme(init.theme);
@@ -546,9 +789,14 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("paste", onPaste);
   window.removeEventListener("keydown", onKeydown);
+  document.removeEventListener("mouseup", onDocMouseUp);
   unlistenIndex?.();
   unlistenFocus?.();
   unlistenDrop?.();
+  stopListening();
+  unlistenSpeech.forEach((fn) => fn());
+  unlistenSpeech = [];
+  if (speechErrorTimer) clearTimeout(speechErrorTimer);
 });
 </script>
 
@@ -709,7 +957,31 @@ onBeforeUnmount(() => {
               class="textarea"
               placeholder="输入你的回复…"
               @input="autoGrow"
+              @keyup="onUserCaretMaybeMoved"
+              @mousedown="onTextareaMouseDown"
             ></textarea>
+            <button
+              v-if="speechSupported"
+              class="mic-btn"
+              :class="{ loading: listening && !speechReady, recording: speechReady }"
+              type="button"
+              :title="
+                speechReady
+                  ? '停止语音输入 ⌘D'
+                  : listening
+                  ? '准备中…'
+                  : '语音输入 ⌘D'
+              "
+              :aria-label="listening ? '停止语音输入' : '语音输入'"
+              @mousedown.prevent
+              @click="toggleSpeech"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="2" width="6" height="12" rx="3" />
+                <path d="M5 11a7 7 0 0 0 14 0" />
+                <path d="M12 18v3" />
+              </svg>
+            </button>
             <button
               class="img-btn"
               type="button"
@@ -724,6 +996,10 @@ onBeforeUnmount(() => {
               </svg>
             </button>
           </div>
+          <p v-if="speechError" class="speech-error">{{ speechError }}</p>
+          <p v-else-if="listening && speechStatus" class="speech-status">
+            {{ speechStatus }}
+          </p>
 
           <div v-if="images.length" class="thumbs">
             <div v-for="(img, i) in images" :key="i" class="thumb">
@@ -1153,6 +1429,97 @@ onBeforeUnmount(() => {
 .img-btn svg {
   width: 17px;
   height: 17px;
+}
+/* 语音输入按钮：与图片按钮并列，置于其左侧 */
+.mic-btn {
+  position: absolute;
+  right: 38px;
+  bottom: 8px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.mic-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.mic-btn svg {
+  width: 17px;
+  height: 17px;
+}
+/* 准备中（loading）：初始化/下载模型期间显示 iOS 风格转圈（渐隐拖尾环），未真正录制 */
+.mic-btn.loading {
+  color: var(--text-secondary);
+}
+.mic-btn.loading svg {
+  display: none;
+}
+.mic-btn.loading::before {
+  content: "";
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, currentColor 8%, transparent),
+    currentColor
+  );
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 2.4px),
+    #000 calc(100% - 2.4px)
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 2.4px),
+    #000 calc(100% - 2.4px)
+  );
+  animation: mic-spin 0.7s linear infinite;
+}
+@keyframes mic-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* 录音中：实心蓝（同发送按钮）+ 白色图标 + 透明度呼吸（不缩放） */
+.mic-btn.recording,
+.mic-btn.recording:hover {
+  color: #fff;
+  background: var(--accent);
+  animation: mic-breathe 1.6s ease-in-out infinite;
+}
+@keyframes mic-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.82;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mic-btn.recording,
+  .mic-btn.loading::before {
+    animation: none;
+  }
+}
+.speech-error {
+  margin: 6px 2px 0;
+  font-size: 12px;
+  color: #ff453a;
+}
+.speech-status {
+  margin: 6px 2px 0;
+  font-size: 12px;
+  color: var(--text-muted, #8e8e93);
 }
 .footer {
   flex: 0 0 auto;

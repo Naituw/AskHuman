@@ -294,6 +294,44 @@ pub fn apply_window_effect(app: AppHandle, effect: WindowEffect) {
     }
 }
 
+// ===== 语音输入（macOS 26 SpeechAnalyzer，离线，经 Swift 桥） =====
+
+/// 开始语音输入：识别结果经 `speech-committed` / `speech-volatile` 等事件回传。
+/// `locale` 为 BCP-47（如 zh-CN），空串=跟随系统。仅 macOS 实现；其它平台为空操作。
+#[tauri::command]
+pub fn start_speech(
+    #[allow(unused_variables)] app: AppHandle,
+    #[allow(unused_variables)] locale: Option<String>,
+) {
+    #[cfg(target_os = "macos")]
+    crate::speech::start(app, locale.as_deref().unwrap_or(""));
+}
+
+/// 停止语音输入。仅 macOS 实现；其它平台为空操作。
+#[tauri::command]
+pub fn stop_speech(#[allow(unused_variables)] app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    crate::speech::stop();
+}
+
+/// 听写中途移动光标时：固定已写文本并重启识别会话。仅 macOS。
+#[tauri::command]
+pub fn flush_speech(#[allow(unused_variables)] app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    crate::speech::flush();
+}
+
+/// 语音输入是否可用（macOS 26+）。非 macOS 或低版本返回 false。
+#[tauri::command]
+pub fn speech_available() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return crate::speech::is_available();
+    }
+    #[allow(unreachable_code)]
+    false
+}
+
 // ===== Cursor Hook =====
 
 #[derive(Serialize)]

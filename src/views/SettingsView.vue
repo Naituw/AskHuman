@@ -92,6 +92,22 @@ async function changeAnimation(anim: PopupAnimation) {
   await persist();
 }
 
+// 语音识别语言下拉项：第一项「跟随系统」(auto) + 常用语言（BCP-47）。
+const SPEECH_LANGUAGES: { value: string; label: string }[] = [
+  { value: "auto", label: "跟随系统" },
+  { value: "zh-CN", label: "简体中文" },
+  { value: "zh-TW", label: "繁体中文" },
+  { value: "en-US", label: "English (US)" },
+  { value: "ja-JP", label: "日本語" },
+  { value: "ko-KR", label: "한국어" },
+];
+
+async function changeSpeechLanguage(lang: string) {
+  if (!config.value) return;
+  config.value.general.speechLanguage = lang;
+  await persist();
+}
+
 // 切换弹窗背景效果（仅 macOS 26+ 显示）。持久化后实时作用于已打开的 popup + 设置窗口。
 async function changeWindowEffect(effect: WindowEffect) {
   if (!config.value) return;
@@ -369,6 +385,26 @@ onMounted(async () => {
                   Alert
                 </button>
               </div>
+            </div>
+          </template>
+          <template v-if="isMac">
+            <hr class="divider" />
+            <div class="row">
+              <span class="label">语音识别语言</span>
+              <span class="spacer"></span>
+              <select
+                class="select"
+                :value="config.general.speechLanguage"
+                @change="changeSpeechLanguage(($event.target as HTMLSelectElement).value)"
+              >
+                <option
+                  v-for="lang in SPEECH_LANGUAGES"
+                  :key="lang.value"
+                  :value="lang.value"
+                >
+                  {{ lang.label }}
+                </option>
+              </select>
             </div>
           </template>
           <hr class="divider" />

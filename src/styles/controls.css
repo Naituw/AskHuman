@@ -371,6 +371,29 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
+/* 下拉选择（如语音识别语言） */
+.select {
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 5px 28px 5px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--control-border);
+  background-color: var(--control-bg);
+  color: var(--text-primary);
+  cursor: default;
+  appearance: none;
+  -webkit-appearance: none;
+  /* 右侧自绘下拉箭头 */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+.select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
 /* 步进器 Stepper */
 .stepper {
   display: inline-flex;

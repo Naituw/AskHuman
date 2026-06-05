@@ -57,6 +57,15 @@ export const openSettings = () => invoke<void>("open_settings");
 export const applyWindowEffect = (effect: WindowEffect) =>
   invoke<void>("apply_window_effect", { effect });
 
+export const startSpeech = (locale: string) =>
+  invoke<void>("start_speech", { locale });
+
+export const stopSpeech = () => invoke<void>("stop_speech");
+
+export const flushSpeech = () => invoke<void>("flush_speech");
+
+export const speechAvailable = () => invoke<boolean>("speech_available");
+
 export const cursorHookStatus = () => invoke<HookStatus>("cursor_hook_status");
 
 export const cursorHookInstall = () => invoke<string>("cursor_hook_install");

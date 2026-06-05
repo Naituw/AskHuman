@@ -21,7 +21,11 @@ mod macos_menu;
 #[cfg(target_os = "macos")]
 mod macos_quicklook;
 #[cfg(target_os = "macos")]
+mod macos_speech;
+#[cfg(target_os = "macos")]
 mod macos_window_anim;
+#[cfg(target_os = "macos")]
+mod speech;
 mod models;
 mod paths;
 mod prompts;

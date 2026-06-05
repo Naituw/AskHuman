@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>SpeechDemo</string>
+    <key>CFBundleDisplayName</key>
+    <string>Speech Demo</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.humaninloop.speechdemo</string>
+    <key>CFBundleExecutable</key>
+    <string>SpeechGUI</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>26.0</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>用于语音输入：将你的语音实时转写为文字。</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>用于离线语音识别，将语音转写为文字。</string>
+</dict>
+</plist>
