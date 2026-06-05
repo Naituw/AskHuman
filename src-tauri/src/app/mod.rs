@@ -7,7 +7,7 @@ use crate::channels::popup::PopupChannel;
 use crate::channels::telegram::TelegramChannel;
 use crate::channels::Channel;
 use crate::cli::{image_writer, output};
-use crate::config::{AppConfig, ThemeMode};
+use crate::config::{AppConfig, ThemeMode, WindowEffect};
 use crate::dingtalk::client::DingTalkClient;
 use crate::models::{AskRequest, ChannelAction, ChannelResult};
 use crate::telegram::TelegramClient;
@@ -210,6 +210,7 @@ fn launch(state: AppState, view: View) -> tauri::Result<()> {
     let popup_w = state.config.channels.popup.width;
     let popup_h = state.config.channels.popup.height;
     let always_on_top = state.config.general.always_on_top;
+    let window_effect = state.config.general.window_effect;
     #[cfg(target_os = "macos")]
     let appear_behavior = state.config.general.appear_animation.ns_animation_behavior();
 
@@ -220,6 +221,7 @@ fn launch(state: AppState, view: View) -> tauri::Result<()> {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_drag::init())
+        .plugin(tauri_plugin_liquid_glass::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             crate::commands::popup_init,
@@ -238,6 +240,7 @@ fn launch(state: AppState, view: View) -> tauri::Result<()> {
             crate::commands::set_theme,
             crate::commands::update_theme,
             crate::commands::open_settings,
+            crate::commands::apply_window_effect,
             crate::commands::cursor_hook_status,
             crate::commands::cursor_hook_install,
             crate::commands::cursor_hook_uninstall,
@@ -288,11 +291,17 @@ fn launch(state: AppState, view: View) -> tauri::Result<()> {
                         .visible(false)
                         .always_on_top(always_on_top)
                         .theme(theme);
-                        let win = apply_surface(builder, window_bg).build()?;
+                        let win = apply_surface(builder, window_bg, window_effect).build()?;
                         // macOS：隐藏构建后先设原生出现动画（样式由设置决定），再 show()。
                         #[cfg(target_os = "macos")]
                         if let Ok(ns) = win.ns_window() {
                             crate::macos_window_anim::set_appear_animation(ns, appear_behavior);
+                        }
+                        // 玻璃模式：显示前挂整窗 Liquid Glass（旧系统由插件回退 vibrancy）。
+                        // 模糊模式：背景已在 apply_surface 构建期挂好，无需处理。
+                        #[cfg(target_os = "macos")]
+                        if matches!(window_effect, WindowEffect::Glass) {
+                            apply_liquid_glass(&win);
                         }
                         let _ = win.show();
                         coordinator.register(Arc::new(PopupChannel::new(app.handle().clone())));
@@ -377,6 +386,7 @@ fn resolved_theme(config: &AppConfig) -> tauri::Theme {
 fn apply_surface<'a, R, M>(
     builder: WebviewWindowBuilder<'a, R, M>,
     #[allow(unused_variables)] window_bg: tauri::window::Color,
+    #[allow(unused_variables)] effect: WindowEffect,
 ) -> WebviewWindowBuilder<'a, R, M>
 where
     R: tauri::Runtime,
@@ -384,21 +394,85 @@ where
 {
     #[cfg(target_os = "macos")]
     {
-        builder
+        let builder = builder
             .transparent(true)
             .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true)
-            .effects(
+            .hidden_title(true);
+        match effect {
+            // 模糊：构建期挂 Tauri 自带 NSVisualEffectView。
+            WindowEffect::Blur => builder.effects(
                 EffectsBuilder::new()
                     .effect(Effect::UnderWindowBackground)
                     .state(EffectState::FollowsWindowActiveState)
                     .build(),
-            )
+            ),
+            // 玻璃：此处不挂 vibrancy，背景由 `apply_liquid_glass` 在 build 后接管；
+            // 否则 vibrancy 会压在玻璃层之上，看到的仍是普通毛玻璃。
+            WindowEffect::Glass => builder,
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
         builder.background_color(window_bg)
     }
+}
+
+/// macOS：给窗口挂上唯一的背景层。
+/// - macOS 26+：`NSGlassEffectView`（Liquid Glass 整窗背景）；
+/// - 旧系统：插件自动回退到 `NSVisualEffectView`（等价于此前的 vibrancy）。
+/// 因 `apply_surface` 已不再挂 Tauri 自带 vibrancy，这里需对所有 macOS 版本生效。
+#[cfg(target_os = "macos")]
+fn apply_liquid_glass<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    use tauri_plugin_liquid_glass::{LiquidGlassConfig, LiquidGlassExt};
+    // 整窗背景：cornerRadius 0，由窗口自身圆角裁剪；不加 tint，使用 Regular 材质。
+    let _ = window
+        .liquid_glass()
+        .set_effect(window, LiquidGlassConfig::default());
+}
+
+/// 运行时切换窗口背景效果，供设置页「玻璃/模糊」开关实时作用于已打开窗口。
+/// 切换前先卸掉另一种背景层，避免玻璃与 vibrancy 叠加。
+#[cfg(target_os = "macos")]
+pub(crate) fn set_runtime_window_effect<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    effect: WindowEffect,
+) {
+    use tauri_plugin_liquid_glass::{LiquidGlassConfig, LiquidGlassExt};
+    match effect {
+        WindowEffect::Glass => {
+            // Tauri 的 set_effects(None) 在 macOS 为空实现，需手动移除残留的 vibrancy 视图。
+            if let Ok(ns) = window.ns_window() {
+                crate::macos_window_anim::remove_vibrancy_views(ns);
+            }
+            apply_liquid_glass(window);
+        }
+        WindowEffect::Blur => {
+            let _ = window.liquid_glass().set_effect(
+                window,
+                LiquidGlassConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+            );
+            // 先清掉旧的 vibrancy，避免重复点击叠加多层。
+            if let Ok(ns) = window.ns_window() {
+                crate::macos_window_anim::remove_vibrancy_views(ns);
+            }
+            let _ = window.set_effects(
+                EffectsBuilder::new()
+                    .effect(Effect::UnderWindowBackground)
+                    .state(EffectState::FollowsWindowActiveState)
+                    .build(),
+            );
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn set_runtime_window_effect<R: tauri::Runtime>(
+    _window: &tauri::WebviewWindow<R>,
+    _effect: WindowEffect,
+) {
 }
 
 /// 创建（或聚焦已存在的）设置窗口。供 `--settings` 启动与弹窗导航栏共用。
@@ -424,7 +498,13 @@ where
     .min_inner_size(480.0, 520.0)
     .center()
     .theme(theme);
-    apply_surface(builder, window_bg).build()?;
+    let window_effect = config.general.window_effect;
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+    let win = apply_surface(builder, window_bg, window_effect).build()?;
+    #[cfg(target_os = "macos")]
+    if matches!(window_effect, WindowEffect::Glass) {
+        apply_liquid_glass(&win);
+    }
     Ok(())
 }
 

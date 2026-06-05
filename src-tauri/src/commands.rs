@@ -2,7 +2,7 @@
 
 use crate::app::coordinator::Coordinator;
 use crate::app::AppState;
-use crate::config::{AppConfig, ThemeMode};
+use crate::config::{AppConfig, ThemeMode, WindowEffect};
 use crate::integrations::cursor_hook;
 use crate::models::{AskRequest, ChannelAction, ChannelResult, QuestionAnswer};
 use crate::telegram::TelegramClient;
@@ -281,6 +281,17 @@ fn apply_theme_to_windows(app: &AppHandle, theme: &str) {
 #[tauri::command]
 pub fn open_settings(app: AppHandle) -> Result<(), String> {
     crate::app::create_settings_window(&app, &AppConfig::load()).map_err(|e| e.to_string())
+}
+
+/// 实时切换弹窗背景效果（玻璃/模糊）到所有已打开窗口（仅 macOS 26+ 真正切换）。
+/// 持久化由前端 `save_settings` 负责；此命令只负责对当前窗口即时生效。
+#[tauri::command]
+pub fn apply_window_effect(app: AppHandle, effect: WindowEffect) {
+    for label in ["popup", "settings"] {
+        if let Some(w) = app.get_webview_window(label) {
+            crate::app::set_runtime_window_effect(&w, effect);
+        }
+    }
 }
 
 // ===== Cursor Hook =====

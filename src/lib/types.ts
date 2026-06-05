@@ -32,6 +32,8 @@ export type ThemeMode = "system" | "light" | "dark";
 
 export type PopupAnimation = "none" | "document" | "alert";
 
+export type WindowEffect = "glass" | "blur";
+
 export interface PopupInit {
   request: AskRequest;
   theme: ThemeMode;
@@ -54,6 +56,7 @@ export interface GeneralConfig {
   theme: ThemeMode;
   alwaysOnTop: boolean;
   appearAnimation: PopupAnimation;
+  windowEffect: WindowEffect;
 }
 
 export interface PopupChannelConfig {

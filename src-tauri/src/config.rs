@@ -38,12 +38,24 @@ impl PopupAnimation {
     }
 }
 
+/// 弹窗背景效果。仅 macOS 26+ 可在二者间切换；旧系统无论选哪个都呈现模糊。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowEffect {
+    /// macOS 26+ Liquid Glass（`NSGlassEffectView`，由插件应用）。
+    #[default]
+    Glass,
+    /// 传统毛玻璃模糊（`NSVisualEffectView` / UnderWindowBackground）。
+    Blur,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct GeneralConfig {
     pub theme: ThemeMode,
     pub always_on_top: bool,
     pub appear_animation: PopupAnimation,
+    pub window_effect: WindowEffect,
 }
 
 impl Default for GeneralConfig {
@@ -52,6 +64,7 @@ impl Default for GeneralConfig {
             theme: ThemeMode::System,
             always_on_top: true,
             appear_animation: PopupAnimation::Alert,
+            window_effect: WindowEffect::Glass,
         }
     }
 }
@@ -179,6 +192,7 @@ mod tests {
         assert_eq!(c.general.theme, ThemeMode::System);
         assert!(c.general.always_on_top);
         assert_eq!(c.general.appear_animation, PopupAnimation::Alert);
+        assert_eq!(c.general.window_effect, WindowEffect::Glass);
         assert!(c.channels.popup.enabled);
         assert_eq!(c.channels.popup.width, 560.0);
         assert_eq!(c.channels.popup.height, 620.0);

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import {
+  applyWindowEffect,
   cursorHookInstall,
   cursorHookReveal,
   cursorHookStatus,
@@ -16,11 +17,13 @@ import {
   telegramTest,
 } from "../lib/ipc";
 import { applyTheme } from "../lib/theme";
+import { isGlassSupported } from "tauri-plugin-liquid-glass-api";
 import type {
   AppConfig,
   HookStatus,
   PopupAnimation,
   ThemeMode,
+  WindowEffect,
 } from "../lib/types";
 
 // 出现动画为 macOS 原生窗口能力，其它平台不展示选择器。
@@ -68,6 +71,9 @@ function clamp(v: number, min: number, max: number) {
   return Math.min(max, Math.max(min, v));
 }
 
+// 是否支持 Liquid Glass（macOS 26+）：决定「玻璃/模糊」开关是否显示。
+const glassSupported = ref(true);
+
 async function persist() {
   if (config.value) await saveSettings(config.value);
 }
@@ -84,6 +90,19 @@ async function changeAnimation(anim: PopupAnimation) {
   if (!config.value) return;
   config.value.general.appearAnimation = anim;
   await persist();
+}
+
+// 切换弹窗背景效果（仅 macOS 26+ 显示）。持久化后实时作用于已打开的 popup + 设置窗口。
+async function changeWindowEffect(effect: WindowEffect) {
+  if (!config.value) return;
+  config.value.general.windowEffect = effect;
+  await persist();
+  try {
+    // 后端同时切换 popup 与 settings 两个窗口（玻璃用插件、模糊用 set_effects）。
+    await applyWindowEffect(effect);
+  } catch (e) {
+    console.error("切换窗口效果失败", e);
+  }
 }
 
 function stepWidth(delta: number) {
@@ -218,6 +237,13 @@ onMounted(async () => {
   applyTheme(config.value.general.theme);
   prompt.value = await getPrompt();
   await refreshHook();
+  if (isMac) {
+    try {
+      glassSupported.value = await isGlassSupported();
+    } catch {
+      glassSupported.value = false;
+    }
+  }
 });
 </script>
 
@@ -295,6 +321,27 @@ onMounted(async () => {
               <span class="track"></span>
             </label>
           </div>
+          <template v-if="isMac && glassSupported">
+            <hr class="divider" />
+            <div class="row">
+              <span class="label">窗口效果</span>
+              <span class="spacer"></span>
+              <div class="segmented">
+                <button
+                  :class="{ active: config.general.windowEffect === 'glass' }"
+                  @click="changeWindowEffect('glass')"
+                >
+                  玻璃
+                </button>
+                <button
+                  :class="{ active: config.general.windowEffect === 'blur' }"
+                  @click="changeWindowEffect('blur')"
+                >
+                  模糊
+                </button>
+              </div>
+            </div>
+          </template>
           <template v-if="isMac">
             <hr class="divider" />
             <div class="row">

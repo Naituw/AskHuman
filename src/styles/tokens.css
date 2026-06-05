@@ -30,7 +30,7 @@
   --control-border: rgba(0, 0, 0, 0.2);
 
   /* 毛玻璃色罩：叠在系统材质上，轻微加深、保留通透质感 */
-  --vibrancy-tint: rgba(255, 255, 255, 0.2);
+  --vibrancy-tint: rgba(255, 255, 255, 0.3);
 
   /* Markdown 配色（对齐 Swift HTMLMarkdownRenderer） */
   --md-link: #0a84ff;
@@ -54,7 +54,7 @@
   --control-bg: rgba(255, 255, 255, 0.08);
   --control-border: rgba(255, 255, 255, 0.22);
 
-  --vibrancy-tint: rgba(0, 0, 0, 0.2);
+  --vibrancy-tint: rgba(0, 0, 0, 0.3);
 
   --md-link: #4ea1ff;
   --md-code-bg: rgba(255, 255, 255, 0.12);
@@ -78,7 +78,7 @@
     --control-bg: rgba(255, 255, 255, 0.08);
     --control-border: rgba(255, 255, 255, 0.22);
 
-    --vibrancy-tint: rgba(0, 0, 0, 0.2);
+    --vibrancy-tint: rgba(0, 0, 0, 0.3);
 
     --md-link: #4ea1ff;
     --md-code-bg: rgba(255, 255, 255, 0.12);

@@ -36,6 +36,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 # 从窗口向系统发起原生文件拖拽（-f 附件胶囊可拖到其它应用打开）。
 tauri-plugin-drag = "2"
+# macOS 26+ Liquid Glass 整窗背景（NSGlassEffectView）；旧系统自动回退到 NSVisualEffectView；
+# 非 macOS 为安全空操作。
+tauri-plugin-liquid-glass = "0.1"
 # 检测系统深/浅色，用于 system 主题下给窗口设置正确底色（消除白闪）。
 # Linux 端依赖（zbus）仅在 Linux 目标编译，不影响 macOS 编译速度。
 dark-light = "2"

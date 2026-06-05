@@ -9,6 +9,7 @@ import type {
   PopupSubmission,
   TelegramTestArgs,
   ThemeMode,
+  WindowEffect,
 } from "./types";
 
 export const popupInit = () => invoke<PopupInit>("popup_init");
@@ -52,6 +53,9 @@ export const updateTheme = (theme: ThemeMode) =>
   invoke<void>("update_theme", { theme });
 
 export const openSettings = () => invoke<void>("open_settings");
+
+export const applyWindowEffect = (effect: WindowEffect) =>
+  invoke<void>("apply_window_effect", { effect });
 
 export const cursorHookStatus = () => invoke<HookStatus>("cursor_hook_status");
 
