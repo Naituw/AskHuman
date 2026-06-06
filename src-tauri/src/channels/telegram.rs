@@ -8,6 +8,7 @@ use super::{Channel, Preemption, ResultSink};
 use crate::config::TelegramChannelConfig;
 use crate::i18n::{self, Lang};
 use crate::models::{AskRequest, MessagePrompt, QuestionAnswer};
+use crate::telegram::router::{RoutedTg, TgInbound, TgRouter};
 use crate::telegram::{markdown, TelegramClient};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -16,17 +17,39 @@ use std::time::Duration;
 /// 提交按钮回传数据（inline 键盘）。
 const SUBMIT_CALLBACK: &str = "submit";
 
+/// 事件源轮询间隔：每隔此时长从 Router 句柄取一次事件，以便分片检查抢答信号。
+const POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Router 归属：单进程自建一个仅挂本会话的 Router；Daemon 复用共享且常热的 Router。
+#[derive(Clone)]
+enum TgTransport {
+    Own,
+    Shared(Arc<TgRouter>),
+}
+
 /// 薄外层：接 Coordinator（并行抢答），把会话委托给 `run_conversation` + `TelegramSession`。
 pub struct TelegramChannel {
     config: TelegramChannelConfig,
     preempt: Arc<Preemption>,
+    transport: TgTransport,
 }
 
 impl TelegramChannel {
+    /// 单进程外层：本会话自建并独占一个轮询器（每进程一个 Router、仅挂本会话）。
     pub fn new(config: TelegramChannelConfig) -> Self {
         Self {
             config,
             preempt: Arc::new(Preemption::new()),
+            transport: TgTransport::Own,
+        }
+    }
+
+    /// Daemon 外层：复用共享且常热的 Router（单一 offset 轮询，根治多轮询互吞更新）。
+    pub fn shared(config: TelegramChannelConfig, router: Arc<TgRouter>) -> Self {
+        Self {
+            config,
+            preempt: Arc::new(Preemption::new()),
+            transport: TgTransport::Shared(router),
         }
     }
 }
@@ -40,10 +63,27 @@ impl Channel for TelegramChannel {
         let config = self.config.clone();
         let preempt = self.preempt.clone();
         let request = request.clone();
+        let transport = self.transport.clone();
         tauri::async_runtime::spawn(async move {
-            let mut session = TelegramSession::new(config);
+            let lang = Lang::current();
+            // 取得本会话的事件源句柄（Own：现起一个 Router；Shared：复用）。`_keep` 持有
+            // Own Router 直至会话结束；Shared 的 Router 由 Daemon 持有。
+            let (events, _keep): (RoutedTg, Option<Arc<TgRouter>>) = match transport {
+                TgTransport::Own => match TgRouter::connect(&config).await {
+                    Ok(router) => (router.register(), Some(router)),
+                    Err(e) => {
+                        eprintln!(
+                            "{}{}",
+                            i18n::warn_prefix(lang),
+                            i18n::tr(lang, "channel.tgConfigInvalidSkip").replace("{e}", &e)
+                        );
+                        return;
+                    }
+                },
+                TgTransport::Shared(router) => (router.register(), None),
+            };
+            let mut session = TelegramSession::new(config, events);
             if let Err(e) = session.open().await {
-                let lang = Lang::current();
                 eprintln!(
                     "{}{}",
                     i18n::warn_prefix(lang),
@@ -60,19 +100,19 @@ impl Channel for TelegramChannel {
     }
 }
 
-/// 传输实现：持有 client 与跨题长轮询 offset。
+/// 传输实现：持有 client（发送/编辑/应答）与 Router 事件源句柄（接收，轮询由 Router 独占）。
 pub struct TelegramSession {
     config: TelegramChannelConfig,
     client: Option<TelegramClient>,
-    offset: i64,
+    events: Option<RoutedTg>,
 }
 
 impl TelegramSession {
-    pub fn new(config: TelegramChannelConfig) -> Self {
+    pub fn new(config: TelegramChannelConfig, events: RoutedTg) -> Self {
         Self {
             config,
             client: None,
-            offset: 0,
+            events: Some(events),
         }
     }
 }
@@ -111,23 +151,29 @@ impl MessagingChannel for TelegramSession {
         ctx: &QuestionCtx<'_>,
         preempt: &Preemption,
     ) -> Option<QuestionAnswer> {
-        // 拆分借用：client 不可变 + offset 可变。
-        let Self { client, offset, .. } = self;
+        // 拆分借用：client 不可变 + events 可变。
+        let Self {
+            client, events, ..
+        } = self;
         let client = client.as_ref()?;
+        let events = events.as_mut()?;
         ask_question(
             client,
+            events,
             ctx.header,
             ctx.text,
             ctx.options,
             ctx.is_markdown,
             ctx.lang,
             preempt,
-            offset,
         )
         .await
     }
 
-    async fn close(&mut self) {}
+    async fn close(&mut self) {
+        // 丢弃事件源句柄 → 从 Router 注销路由（Daemon 下及时清理，避免陈旧路由堆积）。
+        self.events = None;
+    }
 }
 
 /// 发送共享 Message：头部「Question from {名}」+（文本，若有）+ 其展示文件。
@@ -174,15 +220,16 @@ async fn send_message_prompt(
 /// `header` 为题首加粗行（来源头部或 `Question i/n`），为空则只发问题正文。
 /// 卡片发出后、提交前用户在聊天里发的文字会累积进 `user_input`。
 /// 终态：本端胜出→卡片改「✅ 已回复」；被抢答→改「✅ 已在{赢家}回答」并去键盘后返回 None。
+#[allow(clippy::too_many_arguments)]
 async fn ask_question(
     client: &TelegramClient,
+    events: &mut RoutedTg,
     header: &str,
     question_text: &str,
     options: &[String],
     is_markdown: bool,
     lang: Lang,
     preempt: &Preemption,
-    offset: &mut i64,
 ) -> Option<QuestionAnswer> {
     let options = options.to_vec();
     let mut selected: Vec<String> = Vec::new();
@@ -200,60 +247,50 @@ async fn ask_question(
     let keyboard = card_keyboard(&options, &selected, lang);
     let card_message_id = send_composed(client, header, &body, is_markdown, Some(keyboard)).await;
 
+    // 登记卡片精确路由 + 接管本 chat 的自由文字（成为「最新活动卡片」）。
+    events.set_active(client.chat_id(), card_message_id);
+
     while !preempt.is_cancelled() {
-        match client.get_updates(*offset).await {
-            Ok(updates) => {
-                for update in updates {
-                    if let Some(uid) = update.get("update_id").and_then(|v| v.as_i64()) {
-                        *offset = uid + 1;
+        let ev = match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
+            Ok(Some(ev)) => ev,
+            Ok(None) => break,  // 轮询器停止
+            Err(_) => continue, // 超时：回到循环顶部重新检查 cancelled
+        };
+        if handle_event(
+            ev,
+            client,
+            &options,
+            &mut selected,
+            &mut user_input,
+            card_message_id,
+            lang,
+        )
+        .await
+        {
+            // 本端胜出：卡片改「已回复」终态、去键盘。
+            let status = i18n::tr(lang, "channel.tgReplied");
+            finalize_card(client, card_message_id, header, &content, &status).await;
+            events.clear_active(card_message_id);
+            return Some(QuestionAnswer {
+                selected_options: selected,
+                user_input: {
+                    let t = user_input.trim();
+                    if t.is_empty() {
+                        None
+                    } else {
+                        Some(t.to_string())
                     }
-                    if handle_update(
-                        &update,
-                        client,
-                        &options,
-                        &mut selected,
-                        &mut user_input,
-                        card_message_id,
-                        lang,
-                    )
-                    .await
-                    {
-                        // 本端胜出：卡片改「已回复」终态、去键盘。
-                        let status = i18n::tr(lang, "channel.tgReplied");
-                        finalize_card(client, card_message_id, header, &content, &status).await;
-                        return Some(QuestionAnswer {
-                            selected_options: selected,
-                            user_input: {
-                                let t = user_input.trim();
-                                if t.is_empty() {
-                                    None
-                                } else {
-                                    Some(t.to_string())
-                                }
-                            },
-                            images: Vec::new(),
-                            files: Vec::new(),
-                        });
-                    }
-                }
-            }
-            Err(_) => {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                continue;
-            }
-        }
-        // 轮询间隔：分片检查抢答信号，被抢答后尽快跳出去收尾（降低延迟）。
-        for _ in 0..10 {
-            if preempt.is_cancelled() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+                },
+                images: Vec::new(),
+                files: Vec::new(),
+            });
         }
     }
 
     // 被抢答：卡片改「已在{赢家}回答」终态、去键盘。
     let status = i18n::tr(lang, "channel.tgAnsweredVia").replace("{source}", &preempt.winner());
     finalize_card(client, card_message_id, header, &content, &status).await;
+    events.clear_active(card_message_id);
     None
 }
 
@@ -351,10 +388,11 @@ async fn send_composed(
     }
 }
 
-/// 处理一条 update；返回 true 表示已终结（用户点「提交」）。
-/// 选项切换走 callback（`toggle:`）；提交走 callback（`submit`）；卡片之后的文字消息累积进 `user_input`。
-async fn handle_update(
-    update: &Value,
+/// 处理一个 Router 分发来的事件；返回 true 表示已终结（用户点「提交」）。
+/// 选项切换走 callback（`toggle:`）；提交走 callback（`submit`）；卡片之后的文字累积进 `user_input`。
+/// 路由（chat / 卡片匹配）已由 Router 完成，这里只处理业务语义。
+async fn handle_event(
+    ev: TgInbound,
     client: &TelegramClient,
     options: &[String],
     selected: &mut Vec<String>,
@@ -362,72 +400,46 @@ async fn handle_update(
     card_message_id: i64,
     lang: Lang,
 ) -> bool {
-    // callback_query：切换选项 / 提交。仅处理本卡片的回调。
-    if let Some(cb) = update.get("callback_query") {
-        let msg = cb.get("message");
-        let chat_ok = msg
-            .and_then(|m| m.get("chat"))
-            .and_then(|c| c.get("id"))
-            .and_then(|v| v.as_i64())
-            == Some(client.chat_id());
-        let same_card = msg
-            .and_then(|m| m.get("message_id"))
-            .and_then(|v| v.as_i64())
-            == Some(card_message_id);
-        if !chat_ok || !same_card {
+    match ev {
+        // callback_query：切换选项 / 提交（已按本卡片精确路由）。
+        TgInbound::Callback(cb) => {
+            let mut finished = false;
+            if let Some(data) = cb.get("data").and_then(|d| d.as_str()) {
+                if data == SUBMIT_CALLBACK {
+                    finished = true;
+                } else if let Some(idx) = data
+                    .strip_prefix("toggle:")
+                    .and_then(|s| s.parse::<usize>().ok())
+                {
+                    if let Some(opt) = options.get(idx) {
+                        toggle(selected, opt);
+                        client
+                            .edit_message_reply_markup(
+                                card_message_id,
+                                card_keyboard(options, selected.as_slice(), lang),
+                            )
+                            .await;
+                    }
+                }
+            }
+            // 应答消除客户端转圈（Telegram 无 3 秒硬限，会话自行应答即可）。
             if let Some(cb_id) = cb.get("id").and_then(|i| i.as_str()) {
                 client.answer_callback_query(cb_id).await;
             }
-            return false;
+            finished
         }
-        let mut finished = false;
-        if let Some(data) = cb.get("data").and_then(|d| d.as_str()) {
-            if data == SUBMIT_CALLBACK {
-                finished = true;
-            } else if let Some(idx) = data
-                .strip_prefix("toggle:")
-                .and_then(|s| s.parse::<usize>().ok())
-            {
-                if let Some(opt) = options.get(idx) {
-                    toggle(selected, opt);
-                    client
-                        .edit_message_reply_markup(
-                            card_message_id,
-                            card_keyboard(options, selected.as_slice(), lang),
-                        )
-                        .await;
-                }
-            }
-        }
-        if let Some(cb_id) = cb.get("id").and_then(|i| i.as_str()) {
-            client.answer_callback_query(cb_id).await;
-        }
-        return finished;
-    }
-
-    // message：卡片之后用户发的文字 → 累积为补充输入。
-    if let Some(message) = update.get("message") {
-        let chat_ok = message
-            .get("chat")
-            .and_then(|c| c.get("id"))
-            .and_then(|v| v.as_i64())
-            == Some(client.chat_id());
-        if !chat_ok {
-            return false;
-        }
-        if let Some(msg_id) = message.get("message_id").and_then(|v| v.as_i64()) {
-            if msg_id <= card_message_id {
+        // message：卡片之后用户发的文字 → 累积为补充输入（忽略卡片消息本身及更早的）。
+        TgInbound::Text { text, message_id } => {
+            if message_id <= card_message_id {
                 return false;
             }
-        }
-        if let Some(text) = message.get("text").and_then(|t| t.as_str()) {
             if !user_input.is_empty() {
                 user_input.push('\n');
             }
-            user_input.push_str(text);
+            user_input.push_str(&text);
+            false
         }
     }
-    false
 }
 
 fn toggle(selected: &mut Vec<String>, option: &str) {

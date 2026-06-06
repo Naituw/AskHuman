@@ -28,11 +28,13 @@ mod unix_impl {
     use super::request::{self, RequestEntry, RequestRegistry};
     use crate::channels::dingding::DingTalkChannel;
     use crate::channels::feishu::FeishuChannel;
+    use crate::channels::telegram::TelegramChannel;
     use crate::channels::Channel;
     use crate::client;
     use crate::config::AppConfig;
     use crate::dingtalk::router::DdRouter;
     use crate::feishu::router::FsRouter;
+    use crate::telegram::router::TgRouter;
     use crate::i18n::Lang;
     use crate::ipc::{
         self, transport, ClientMsg, HelloAck, HelloStatus, ServerMsg, StatusInfo, TaskRequest,
@@ -135,6 +137,8 @@ mod unix_impl {
         dd_router: tokio::sync::Mutex<Option<Arc<DdRouter>>>,
         /// 飞书长连接 Router（惰性建连、常热复用；连接死亡后按需重连）。
         fs_router: tokio::sync::Mutex<Option<Arc<FsRouter>>>,
+        /// Telegram 长轮询 Router（惰性建连、常热复用；单一 offset）。
+        tg_router: tokio::sync::Mutex<Option<Arc<TgRouter>>>,
     }
 
     async fn serve(_lock: LockGuard) -> i32 {
@@ -172,6 +176,7 @@ mod unix_impl {
             registry: RequestRegistry::new(),
             dd_router: tokio::sync::Mutex::new(None),
             fs_router: tokio::sync::Mutex::new(None),
+            tg_router: tokio::sync::Mutex::new(None),
         });
 
         // 空闲退出检查。
@@ -532,6 +537,31 @@ mod unix_impl {
         }
     }
 
+    /// 取得（必要时惰性建连）Telegram Router；轮询器已停则重建。失败返回 None。
+    async fn ensure_tg_router(
+        state: &Arc<ServerState>,
+        cfg: &crate::config::TelegramChannelConfig,
+    ) -> Option<Arc<TgRouter>> {
+        let mut guard = state.tg_router.lock().await;
+        if let Some(r) = guard.as_ref() {
+            if r.is_alive() {
+                return Some(r.clone());
+            }
+        }
+        match TgRouter::connect(cfg).await {
+            Ok(r) => {
+                log("telegram router connected");
+                *guard = Some(r.clone());
+                Some(r)
+            }
+            Err(e) => {
+                log(&format!("telegram router connect failed: {}", e));
+                *guard = None;
+                None
+            }
+        }
+    }
+
     /// 按当前配置把可用 IM 渠道挂到请求协调器上（与弹窗并行抢答）。返回是否至少挂上一个。
     /// 失败的渠道经 `Warn` 流给 CLI stderr，并记 daemon.log。
     async fn attach_im_channels(
@@ -585,6 +615,30 @@ mod unix_impl {
                             crate::i18n::warn_prefix(lang),
                             crate::i18n::tr(lang, "channel.fsConfigInvalidSkip")
                                 .replace("{e}", "WebSocket connection failed"),
+                        ),
+                    })
+                    .await;
+                }
+            }
+        }
+
+        if crate::app::is_telegram_active(&config) {
+            let tg = &config.channels.telegram;
+            match ensure_tg_router(state, tg).await {
+                Some(router) => {
+                    let ch: Arc<dyn Channel> =
+                        Arc::new(TelegramChannel::shared(tg.clone(), router));
+                    entry.coordinator.register(ch.clone());
+                    ch.start(&request, sink.clone());
+                    attached = true;
+                }
+                None => {
+                    let _ = ipc::write_msg(w, &ServerMsg::Warn {
+                        text: format!(
+                            "{}{}",
+                            crate::i18n::warn_prefix(lang),
+                            crate::i18n::tr(lang, "channel.tgConfigInvalidSkip")
+                                .replace("{e}", "poller start failed"),
                         ),
                     })
                     .await;

@@ -1,6 +1,7 @@
 //! Telegram Bot API 客户端（手写 reqwest）。
 
 pub mod markdown;
+pub mod router;
 
 use serde_json::{json, Value};
 use std::fmt;
@@ -188,9 +189,18 @@ impl TelegramClient {
         self.send_file("sendPhoto", "photo", path, filename).await
     }
 
-    pub async fn get_updates(&self, offset: i64) -> Result<Vec<Value>, TelegramError> {
+    /// 拉取更新。`timeout_secs` 为服务端长轮询挂起秒数（0 = 立即返回）。
+    /// Router 用 25s 长轮询，既降负载又能近实时收到回调/消息。
+    pub async fn get_updates(
+        &self,
+        offset: i64,
+        timeout_secs: u64,
+    ) -> Result<Vec<Value>, TelegramError> {
         let result = self
-            .call("getUpdates", json!({ "offset": offset, "timeout": 0 }))
+            .call(
+                "getUpdates",
+                json!({ "offset": offset, "timeout": timeout_secs }),
+            )
             .await?;
         Ok(result.as_array().cloned().unwrap_or_default())
     }

@@ -236,12 +236,26 @@ fn run_headless(request: AskRequest, config: AppConfig) -> ! {
 
         if is_telegram_active(&config) {
             use crate::channels::telegram::TelegramSession;
+            use crate::telegram::router::TgRouter;
             let cfg = config.channels.telegram.clone();
             let req = request.clone();
             let sink = coordinator.clone();
             let preempt = preempt.clone();
             handles.push(tokio::spawn(async move {
-                let mut session = TelegramSession::new(cfg);
+                // 单进程：每进程起一个仅挂本会话的 Router（统一走 Router 路径，单一 offset）。
+                let router = match TgRouter::connect(&cfg).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        stderr_redirect::eprintln_real(&format!(
+                            "{}{}",
+                            i18n::warn_prefix(lang),
+                            i18n::tr(lang, "app.telegramInvalid").replace("{e}", &e)
+                        ));
+                        return;
+                    }
+                };
+                let events = router.register();
+                let mut session = TelegramSession::new(cfg, events);
                 if let Err(e) = session.open().await {
                     stderr_redirect::eprintln_real(&format!(
                         "{}{}",
