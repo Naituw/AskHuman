@@ -173,6 +173,9 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "channel.sourceDingTalk" => pick(lang, "DingTalk", "钉钉"),
         "channel.tgReplied" => pick(lang, "✅ Replied", "✅ 已回复"),
         "channel.tgAnsweredVia" => pick(lang, "✅ Answered via {source}", "✅ 已在{source}回答"),
+        // 钉钉卡片终态文案（绑定模板变量 submit_status）。卡片自带样式，文案不加 emoji 前缀。
+        "channel.ddSubmitted" => pick(lang, "Submitted", "已提交"),
+        "channel.ddAnsweredVia" => pick(lang, "Answered via {source}", "已在{source}回答"),
         "channel.tgActionHint" => pick(
             lang,
             "💬 To add more, just send text messages here. Anything you send after this card (before tapping Submit) will be included.",

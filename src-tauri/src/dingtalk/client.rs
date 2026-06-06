@@ -178,17 +178,25 @@ impl DingTalkClient {
     // ===== 互动卡片高级版（创建并投放 / 更新）=====
 
     /// 创建并投放互动卡片高级版到机器人单聊。回调走 Stream（`callbackType=STREAM`）。
-    /// `card_param_map` 为已组装好的公有数据（值均为字符串）；`out_track_id` 唯一标识本卡片实例。
+    /// `card_param_map` 为公有数据；`private_param_map` 为当前用户私有数据（私有变量默认值，
+    /// 缺省会导致模板「内容加载失败」）。值均为字符串；`out_track_id` 唯一标识本卡片实例。
     pub async fn create_and_deliver_card(
         &self,
         out_track_id: &str,
         card_template_id: &str,
         card_param_map: Value,
+        private_param_map: Value,
     ) -> Result<(), DingTalkError> {
+        let mut private = serde_json::Map::new();
+        private.insert(
+            self.user_id.clone(),
+            json!({ "cardParamMap": private_param_map }),
+        );
         let body = json!({
             "cardTemplateId": card_template_id,
             "outTrackId": out_track_id,
             "cardData": { "cardParamMap": card_param_map },
+            "privateData": Value::Object(private),
             "openSpaceId": format!("dtv1.card//IM_ROBOT.{}", self.user_id),
             "imRobotOpenSpaceModel": { "supportForward": true },
             "imRobotOpenDeliverModel": { "spaceType": "IM_ROBOT", "robotCode": self.robot_code() },
@@ -200,19 +208,21 @@ impl DingTalkClient {
         Ok(())
     }
 
-    /// 按 key 更新卡片数据（公有 + 当前用户私有同时更新）。用于收尾/抢答时 best-effort
-    /// 置 `submitted=true`；同时写公有 `cardData` 与私有 `privateData`，以兼容模板把对应变量
-    /// 配成公有或私有两种情况。`param_map` 值均为字符串。
+    /// 按 key 更新卡片数据：公有变量写 `cardData`，私有变量写当前用户的 `privateData`。
+    /// 用于收尾/抢答时 best-effort 置 `submitted=true`（私有）并写 `submit_status`（公有）。
+    /// 公私必须分开下发：把私有变量塞进公有 `cardData` 会被钉钉拒绝导致整份数据失效。
+    /// 两个 map 的值均为字符串；任一为空对象时对应部分留空。
     pub async fn update_card_private(
         &self,
         out_track_id: &str,
-        param_map: Value,
+        public_map: Value,
+        private_map: Value,
     ) -> Result<(), DingTalkError> {
         let mut private = serde_json::Map::new();
-        private.insert(self.user_id.clone(), json!({ "cardParamMap": param_map.clone() }));
+        private.insert(self.user_id.clone(), json!({ "cardParamMap": private_map }));
         let body = json!({
             "outTrackId": out_track_id,
-            "cardData": { "cardParamMap": param_map },
+            "cardData": { "cardParamMap": public_map },
             "privateData": Value::Object(private),
             "cardUpdateOptions": {
                 "updateCardDataByKey": true,

@@ -26,7 +26,7 @@ use std::time::Duration;
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// 内置默认卡片模板 ID（设置项 `cardTemplateId` 留空时使用）。
-const DEFAULT_CARD_TEMPLATE_ID: &str = "6cfe19d3-3b36-4681-827d-e7c1d0574d0a.schema";
+const DEFAULT_CARD_TEMPLATE_ID: &str = "748d7d3c-232c-4671-a7c4-cce94790d9e1.schema";
 
 /// 取生效的卡片模板 ID：配置非空用配置，否则用内置默认。
 fn effective_template_id(config: &DingTalkChannelConfig) -> &str {
@@ -188,6 +188,7 @@ impl MessagingChannel for DingTalkSession {
         let template_id = effective_template_id(&self.config).to_string();
         let out_track_id = uuid::Uuid::new_v4().to_string();
         let param_map = card::build_card_param_map(title, ctx.text, ctx.options);
+        let private_param_map = card::build_card_private_map();
 
         let Self {
             client,
@@ -200,7 +201,7 @@ impl MessagingChannel for DingTalkSession {
 
         // 1. 投放互动卡片；失败 → 回退纯文本编号方案。
         if let Err(e) = client
-            .create_and_deliver_card(&out_track_id, &template_id, param_map)
+            .create_and_deliver_card(&out_track_id, &template_id, param_map, private_param_map)
             .await
         {
             eprintln!(
@@ -224,8 +225,9 @@ impl MessagingChannel for DingTalkSession {
                 StreamEvent::CardCallback { data, message_id } => {
                     match card::parse_card_submit(&data) {
                         Some(s) if s.out_track_id == out_track_id && s.user_id == user_id => {
-                            // 回包置 submitted=true 让卡片灰显；同时更新公有 + 私有数据，
-                            // 以兼容模板把 `submitted` 配成公有或私有变量两种情况。
+                            // 回包置 submitted=true（私有）让卡片灰显，并写终态文案 submit_status（公有）。
+                            // 公私分开：私有进 userPrivateData，公有进 cardData，避免整份数据被拒。
+                            let submitted_text = i18n::tr(ctx.lang, "channel.ddSubmitted");
                             stream
                                 .respond(
                                     &message_id,
@@ -234,7 +236,7 @@ impl MessagingChannel for DingTalkSession {
                                             "updateCardDataByKey": true,
                                             "updatePrivateDataByKey": true,
                                         },
-                                        "cardData": { "cardParamMap": { "submitted": "true" } },
+                                        "cardData": { "cardParamMap": { "submit_status": submitted_text } },
                                         "userPrivateData": { "cardParamMap": { "submitted": "true" } },
                                     }),
                                 )
@@ -259,9 +261,19 @@ impl MessagingChannel for DingTalkSession {
             }
         }
 
-        // 被抢答 / 断连：尽力把卡片置为「已提交」（失败忽略）。
+        // 被抢答 / 断连：尽力把卡片置为终态（失败忽略）。被抢答点名赢家「已在X回答」，
+        // 断连兜底用「已提交」。
+        let status = if preempt.is_cancelled() {
+            i18n::tr(ctx.lang, "channel.ddAnsweredVia").replace("{source}", &preempt.winner())
+        } else {
+            i18n::tr(ctx.lang, "channel.ddSubmitted").to_string()
+        };
         let _ = client
-            .update_card_private(&out_track_id, json!({ "submitted": "true" }))
+            .update_card_private(
+                &out_track_id,
+                json!({ "submit_status": status }),
+                json!({ "submitted": "true" }),
+            )
             .await;
         None
     }

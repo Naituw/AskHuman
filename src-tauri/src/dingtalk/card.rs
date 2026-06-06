@@ -2,7 +2,7 @@
 //!
 //! 模板变量约定（见 `docs/plans/dingtalk-card-answers.md`）：
 //! - 公有：`title`(标题) / `markdown`(正文) / `options`(对象数组,每项 `{text}`) /
-//!   `submitted`(布尔) / `private_input`(字符串)。
+//!   `submitted`(布尔) / `private_input`(字符串) / `submit_status`(终态文案：已提交 / 已在X回答)。
 //! - 提交按钮 `actionId="submit_action"`，回传 `params={user_input, selected_options}`。
 //!
 //! cardData 填充规则：复杂值（对象/数组）需转成 JSON 字符串放入 `cardParamMap`；
@@ -23,8 +23,11 @@ pub struct CardSubmit {
     pub user_input: Option<String>,
 }
 
-/// 组装卡片公有数据 `cardParamMap`（值均为字符串）。
+/// 组装卡片【公有】数据 `cardParamMap`（值均为字符串）。
 /// `title` 为题首；`markdown` 为问题正文；`options` 为预定义选项文本列表。
+/// 注意：只放公有变量。`submitted`/`private_input` 是模板的【私有】变量，
+/// 一旦混进公有 cardData，钉钉会拒绝整份公有数据导致卡片空白，故不在此下发
+/// （初始未提交态由模板默认值兜底）。
 pub fn build_card_param_map(title: &str, markdown: &str, options: &[String]) -> Value {
     let option_objs: Vec<Value> = options.iter().map(|o| json!({ "text": o })).collect();
     json!({
@@ -32,6 +35,16 @@ pub fn build_card_param_map(title: &str, markdown: &str, options: &[String]) -> 
         "markdown": markdown,
         // 复杂类型 → JSON 字符串。
         "options": Value::Array(option_objs).to_string(),
+        // 终态文案（submitted=true 时模板展示）；初始为空。公有变量。
+        "submit_status": "",
+    })
+}
+
+/// 组装卡片【私有】数据 `cardParamMap`（值均为字符串）。
+/// 投放时必须下发这些私有变量的默认值：模板渲染表达式会读取它们，缺省为 null 会导致
+/// 「内容加载失败」。走私有通道（privateData），不能混进公有 cardData。
+pub fn build_card_private_map() -> Value {
+    json!({
         "submitted": "false",
         "private_input": "",
     })
@@ -130,8 +143,10 @@ mod tests {
         let m = build_card_param_map("Question 1/2", "要继续吗？", &["继续".into(), "停止".into()]);
         assert_eq!(m.get("title").unwrap(), "Question 1/2");
         assert_eq!(m.get("markdown").unwrap(), "要继续吗？");
-        assert_eq!(m.get("submitted").unwrap(), "false");
-        assert_eq!(m.get("private_input").unwrap(), "");
+        assert_eq!(m.get("submit_status").unwrap(), "");
+        // 私有变量不应出现在公有 cardParamMap 中。
+        assert!(m.get("submitted").is_none());
+        assert!(m.get("private_input").is_none());
         // options 为 JSON 字符串
         let opts = m.get("options").unwrap().as_str().unwrap();
         let parsed: Value = serde_json::from_str(opts).unwrap();
