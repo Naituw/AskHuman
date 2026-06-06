@@ -1,4 +1,4 @@
-# HumanInLoop 项目概览（供 agent 参考）
+# AskHuman 项目概览（供 agent 参考）
 
 > 跨平台「Human-in-the-loop」工具：命令行 `AskHuman` 在需要人类确认/补充时弹出窗口收集回应，并把结果按固定区块格式写到 stdout 供 AI 读取。
 
@@ -11,13 +11,14 @@
 ## 目录结构
 
 ```
-HumanInLoop/
-  index.html                 前端入口（含消除白闪/毛玻璃的内联关键样式 + 平台探测脚本）
-  vite.config.ts  package.json  tsconfig.json
-  install.sh  install-windows.ps1        构建并安装到用户 bin
-  .github/workflows/build.yml            三平台 CI 构建
+AskHuman/
+  vite.config.ts  package.json  tsconfig.json    （Vite root=src，构建产物输出到根 dist/）
+  scripts/                   install.sh / install-windows.ps1 / publish.sh / bump-version.mjs
+  docs/wiki/                 用户向配置文档（中英双语）；docs/specs · docs/plans 为开发文档
+  .github/workflows/         build.yml（三平台 CI 构建）/ release.yml（发版）
 
-  src/                       前端
+  src/                       前端（Vite 根目录）
+    index.html               前端入口（含消除白闪/毛玻璃的内联关键样式 + 平台探测脚本）
     main.ts                  挂载 App，引入三套样式
     App.vue                  按 URL ?view=popup|settings 路由
     views/PopupView.vue      弹窗：顶部导航栏 + Markdown/选项/文本/图片 + -f 附件区(选中/打开/
@@ -47,7 +48,7 @@ HumanInLoop/
         help.rs              帮助/版本文案
       models.rs              AskRequest(含 files) / FileAttachment / ChannelResult(含 files) /
                              ImageAttachment / ChannelAction / source_name()
-      config.rs              AppConfig 读写 ~/.humaninloop/config.json（原子写、容错解码）
+      config.rs              AppConfig 读写 ~/.askhuman/config.json（原子写、容错解码；旧 ~/.humaninloop 自动回退读取）
       paths.rs               home/config/temp 路径
       prompts.rs             CLI 参考提示词常量
       commands.rs            #[tauri::command] 集合（前端调用入口，见下）
@@ -111,7 +112,7 @@ HumanInLoop/
 
 ## 配置
 
-`~/.humaninloop/config.json`：`general`(theme, alwaysOnTop) + `channels.popup`(enabled,width,height,rememberSize) + `channels.telegram`(enabled,botToken,chatId,apiBaseUrl)。缺字段走默认、未知字段忽略。
+`~/.askhuman/config.json`（新位置缺失时自动回退旧 `~/.humaninloop/config.json`）：`general`(theme, language, alwaysOnTop, appearAnimation, windowEffect, speechLanguage, speechShortcut) + `channels.popup`(enabled,width,height,rememberSize) + `channels.telegram`(enabled,botToken,chatId,apiBaseUrl) + `channels.dingding`(enabled,clientId,clientSecret,userId,cardTemplateId,…) + `channels.feishu`(enabled,appId,appSecret,openId,baseUrl)。缺字段走默认、未知字段忽略。用户向配置说明见 `docs/wiki/`。
 
 ## 构建 / 开发 / 测试
 
@@ -120,13 +121,13 @@ pnpm install
 pnpm tauri dev                                   # 调试（Vite + Tauri）
 pnpm build && cargo build --release --manifest-path src-tauri/Cargo.toml   # release（前端资源在 cargo 编译时嵌入二进制）
 cargo test --manifest-path src-tauri/Cargo.toml  # Rust 单测
-./install.sh                                      # 安装到 ~/.local/bin（mac/Linux）
+./scripts/install.sh                              # 安装到 ~/.local/bin（mac/Linux）
 ```
 
 ## 注意事项
 
 - **stdout 洁净**：GUI 阶段把 stderr 重定向到 /dev/null（`app/mod.rs` 的 `stderr_redirect`，Unix），自身错误用 `eprintln_real` 走原 stderr。
-- **首帧不白闪**：`index.html` 内联关键底色；macOS 毛玻璃下 body 透明叠色罩。
+- **首帧不白闪**：`src/index.html` 内联关键底色；macOS 毛玻璃下 body 透明叠色罩。
 - **macOS 透明/毛玻璃**依赖 `tauri` 的 `macos-private-api` feature 与 `macOSPrivateApi: true`。
 - **release 自包含**：前端资源在 `cargo build` 时由 `generate_context!` 嵌入，故安装后无需 dev server。
 - Telegram 不接收图片；Cursor Hook 仅 mac/Linux（Windows 禁用并提示）。

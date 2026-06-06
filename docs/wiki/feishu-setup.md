@@ -1,18 +1,20 @@
-# 飞书 / Lark 渠道配置指南
+# 飞书 / Lark 渠道配置
 
-本文档说明如何在飞书（或国际版 Lark）开放平台创建并配置一个企业自建应用，使 HumanInLoop 的「飞书 Channel」可用。该渠道采用 **企业自建应用 + 机器人 + 长连接（WebSocket）+ 单聊** 形态，**无需公网**即可收发消息与卡片回调。
+简体中文 | [English](./feishu-setup.en.md)
 
-> 国际版 Lark 与飞书国内步骤一致，区别仅在域名：开放平台为 `open.larksuite.com`，HumanInLoop 设置页「服务域名」填 `https://open.larksuite.com`（国内留空即用默认 `https://open.feishu.cn`）。
+本文说明如何在飞书（或国际版 Lark）开放平台创建并配置一个企业自建应用，使 AskHuman 的「飞书 Channel」可用。该渠道采用 **企业自建应用 + 机器人 + 长连接（WebSocket）+ 单聊** 形态，**无需公网**即可收发消息与卡片回调。
+
+> 国际版 Lark 与飞书国内步骤一致，区别仅在域名：开放平台为 `open.larksuite.com`，AskHuman 设置页「服务域名」填 `https://open.larksuite.com`（国内留空即用默认 `https://open.feishu.cn`）。
 
 ## 一、创建应用并启用机器人
 
 1. 进入飞书开放平台 → 开发者后台 → 创建「企业自建应用」。
-2. 记录应用凭证：**App ID**（`cli_...`）与 **App Secret**（填入 HumanInLoop 设置页）。
+2. 记录应用凭证：**App ID**（`cli_...`）与 **App Secret**（填入 AskHuman 设置页）。
 3. 「应用能力 → 添加应用能力」中启用 **机器人（Bot）**。
 
 ## 二、导入权限（Scopes）
 
-在「权限管理 → 开通权限」中，可使用「批量导入」并粘贴本仓库的 [`docs/feishu-permissions.json`](./feishu-permissions.json)：
+在「权限管理 → 开通权限」中，可使用「批量导入」并粘贴以下 JSON：
 
 ```json
 {
@@ -48,7 +50,7 @@
 权限只是「能调哪些接口」，要让机器人能**收到**消息和卡片提交，还需在后台配置。
 **关键：飞书把「事件」和「回调」放在两个独立的配置页，必须分别开启长连接——只配其一，会出现「能收消息但卡片点提交无反应/转圈回弹」或「收不到消息」。**
 
-> ⚠️ 两个页面在切换为「长连接」并保存时，都要求**本地已有一条该应用的长连接在线**。做法：先让 HumanInLoop 这端建好连接（设置页点「自动识别」会建连并保持约 120s，或正处于一次提问等待中），再去后台点保存。
+> ⚠️ 两个页面在切换为「长连接」并保存时，都要求**本地已有一条该应用的长连接在线**。做法：先让 AskHuman 这端建好连接（设置页点「自动识别」会建连并保持约 120s，或正处于一次提问等待中），再去后台点保存。
 
 ### 3.1 事件配置（收消息）
 
@@ -70,9 +72,9 @@
 1. 在「版本管理与发布」中创建版本并发布（权限、机器人能力、事件订阅均需发布后生效）。
 2. 确认机器人的**可用范围**包含目标用户，否则发送会报 `230013 Bot has NO availability to this user`。
 
-## 五、在 HumanInLoop 中填写
+## 五、在 AskHuman 中填写
 
-打开 HumanInLoop 设置页 → 「通信渠道」→「飞书」，开启开关后填写：
+打开 AskHuman 设置页 → 「通信渠道」→「飞书」，开启开关后填写：
 
 | 字段 | 说明 |
 | --- | --- |
@@ -101,5 +103,5 @@
 | 发送 / 上传报权限错误 | 对应 scope 未开通或未发布；`im:resource` 可能待管理员审批 |
 | 卡片能收到但点「提交」转圈后回弹、提交不成功 | **「回调配置」页**未把订阅方式设为长连接、或未添加「卡片回传交互 `card.action.trigger`」（见 §3.2）。注意它与「事件配置」是两个独立页面，常见漏配 |
 | 收不到用户消息 / 单聊没有输入框 | **「事件配置」页**未订阅 `im.message.receive_v1`、订阅方式不是长连接、或未发布（见 §3.1） |
-| 想确认回调是否到达 | 设环境变量 `HUMANINLOOP_FEISHU_DEBUG=1` 运行，点提交后查看 `~/.humaninloop/feishu-debug.log`：有 `event_type=card.action.trigger` 即回调已到达 |
+| 想确认回调是否到达 | 设环境变量 `ASKHUMAN_FEISHU_DEBUG=1` 运行，点提交后查看 `~/.askhuman/feishu-debug.log`：有 `event_type=card.action.trigger` 即回调已到达 |
 | 测试连接失败 | App ID / App Secret 错误，或服务域名填错（国内 vs 国际版） |
