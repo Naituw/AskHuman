@@ -438,6 +438,8 @@ function scrollQuestionIntoView() {
 
 function goTo(index: number) {
   if (index < 0 || index >= total.value || index === current.value) return;
+  // 切题前先停掉语音会话：否则录音回调仍写入开始录音时锁定的旧题。
+  stopListening();
   stopPreview();
   selectedFile.value = null;
   current.value = index;

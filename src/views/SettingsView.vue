@@ -867,6 +867,29 @@ onMounted(async () => {
             >
               <template #code><b>{{ dingtalkDetectCode }}</b></template>
             </i18n-t>
+            <div class="row">
+              <button
+                class="btn"
+                type="button"
+                :disabled="dingtalkTesting"
+                @click="runDingtalkTest"
+              >
+                {{
+                  dingtalkTesting
+                    ? t("settings.channels.testing")
+                    : t("settings.channels.testConnection")
+                }}
+              </button>
+              <span class="spacer"></span>
+            </div>
+            <p
+              v-if="dingtalkMessage"
+              class="result"
+              :class="dingtalkError ? 'err' : 'ok'"
+            >
+              {{ dingtalkMessage }}
+            </p>
+            <hr class="divider" />
             <div class="field">
               <label>{{ t("settings.channels.cardTemplateId") }}</label>
               <input
@@ -906,28 +929,6 @@ onMounted(async () => {
             </div>
             <p class="card-desc" style="margin-top: 0">
               {{ t("settings.channels.convertTextToDocxHint") }}
-            </p>
-            <div class="row">
-              <button
-                class="btn"
-                type="button"
-                :disabled="dingtalkTesting"
-                @click="runDingtalkTest"
-              >
-                {{
-                  dingtalkTesting
-                    ? t("settings.channels.testing")
-                    : t("settings.channels.testConnection")
-                }}
-              </button>
-              <span class="spacer"></span>
-            </div>
-            <p
-              v-if="dingtalkMessage"
-              class="result"
-              :class="dingtalkError ? 'err' : 'ok'"
-            >
-              {{ dingtalkMessage }}
             </p>
           </template>
         </div>
