@@ -11,7 +11,7 @@
 //! （`MessagingChannel`）+ 薄外层 `DingTalkChannel`。
 
 use super::conversation::{run_conversation, MessagingChannel, QuestionCtx};
-use super::{Channel, ResultSink};
+use super::{Channel, Preemption, ResultSink};
 use crate::config::DingTalkChannelConfig;
 use crate::dingtalk::card;
 use crate::dingtalk::client::DingTalkClient;
@@ -19,11 +19,10 @@ use crate::dingtalk::stream::{StreamConn, StreamEvent, TOPIC_BOT_MESSAGE, TOPIC_
 use crate::i18n::{self, Lang};
 use crate::models::{ImageAttachment, MessagePrompt, QuestionAnswer};
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// 抢答轮询粒度：每隔此时长检查一次 `cancelled`。
+/// 抢答轮询粒度：每隔此时长检查一次抢答信号。
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// 内置默认卡片模板 ID（设置项 `cardTemplateId` 留空时使用）。
@@ -42,14 +41,14 @@ fn effective_template_id(config: &DingTalkChannelConfig) -> &str {
 /// 薄外层：接 Coordinator（并行抢答），把会话委托给 `run_conversation` + `DingTalkSession`。
 pub struct DingTalkChannel {
     config: DingTalkChannelConfig,
-    cancelled: Arc<AtomicBool>,
+    preempt: Arc<Preemption>,
 }
 
 impl DingTalkChannel {
     pub fn new(config: DingTalkChannelConfig) -> Self {
         Self {
             config,
-            cancelled: Arc::new(AtomicBool::new(false)),
+            preempt: Arc::new(Preemption::new()),
         }
     }
 }
@@ -61,7 +60,7 @@ impl Channel for DingTalkChannel {
 
     fn start(&self, request: &crate::models::AskRequest, sink: ResultSink) {
         let config = self.config.clone();
-        let cancelled = self.cancelled.clone();
+        let preempt = self.preempt.clone();
         let request = request.clone();
         tauri::async_runtime::spawn(async move {
             let mut session = DingTalkSession::new(config);
@@ -74,12 +73,12 @@ impl Channel for DingTalkChannel {
                 );
                 return;
             }
-            run_conversation(&mut session, &request, cancelled, sink).await;
+            run_conversation(&mut session, &request, preempt, sink).await;
         });
     }
 
-    fn cancel_by_other(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
+    fn cancel_by_other(&self, winner: &str) {
+        self.preempt.cancel(winner);
     }
 }
 
@@ -178,7 +177,7 @@ impl MessagingChannel for DingTalkSession {
     async fn ask_question(
         &mut self,
         ctx: &QuestionCtx<'_>,
-        cancelled: &AtomicBool,
+        preempt: &Preemption,
     ) -> Option<QuestionAnswer> {
         // 题首：无则用兜底标题。
         let title = if ctx.header.is_empty() {
@@ -209,13 +208,13 @@ impl MessagingChannel for DingTalkSession {
                 i18n::warn_prefix(ctx.lang),
                 i18n::tr(ctx.lang, "channel.ddCardDeliverFailed").replace("{e}", &e.to_string())
             );
-            return ask_question_text(client, stream, &user_id, ctx, cancelled).await;
+            return ask_question_text(client, stream, &user_id, ctx, preempt).await;
         }
 
         // 2. 等卡片「提交」；作答期间累积聊天里的图片/文件；被抢答则收尾返回 None。
         let mut images: Vec<ImageAttachment> = Vec::new();
         let mut files: Vec<String> = Vec::new();
-        while !cancelled.load(Ordering::SeqCst) {
+        while !preempt.is_cancelled() {
             let ev = match tokio::time::timeout(POLL_INTERVAL, stream.recv()).await {
                 Ok(Some(ev)) => ev,
                 Ok(None) => break,  // 连接彻底断开
@@ -278,7 +277,7 @@ async fn ask_question_text(
     stream: &mut StreamConn,
     user_id: &str,
     ctx: &QuestionCtx<'_>,
-    cancelled: &AtomicBool,
+    preempt: &Preemption,
 ) -> Option<QuestionAnswer> {
     let title = if ctx.header.is_empty() {
         i18n::tr(ctx.lang, "channel.ddTitleFallback")
@@ -299,7 +298,7 @@ async fn ask_question_text(
         );
     }
 
-    while !cancelled.load(Ordering::SeqCst) {
+    while !preempt.is_cancelled() {
         let ev = match tokio::time::timeout(POLL_INTERVAL, stream.recv()).await {
             Ok(Some(ev)) => ev,
             Ok(None) => break,

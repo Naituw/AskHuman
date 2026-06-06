@@ -2,10 +2,9 @@
 //! 这套与传输无关的编排逻辑抽出来，各渠道（Telegram / 钉钉 / 未来飞书等）只需实现
 //! `MessagingChannel` 的传输相关原语。
 
-use super::ResultSink;
+use super::{Preemption, ResultSink};
 use crate::i18n::{self, Lang};
 use crate::models::{AskRequest, ChannelAction, ChannelResult, MessagePrompt, QuestionAnswer};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 /// 单道题的上下文（传给 `ask_question`）。
@@ -36,11 +35,11 @@ pub trait MessagingChannel: Send {
         source: &str,
         lang: Lang,
     );
-    /// 发送一道题并等到「用户完成作答」；被抢答（cancelled）时返回 `None`。
+    /// 发送一道题并等到「用户完成作答」；被抢答（`preempt`）时收尾并返回 `None`。
     async fn ask_question(
         &mut self,
         ctx: &QuestionCtx<'_>,
-        cancelled: &AtomicBool,
+        preempt: &Preemption,
     ) -> Option<QuestionAnswer>;
     /// 收尾 / 断连（完成或被抢答后调用）。
     async fn close(&mut self);
@@ -54,7 +53,7 @@ pub trait MessagingChannel: Send {
 pub async fn run_conversation(
     channel: &mut dyn MessagingChannel,
     request: &AskRequest,
-    cancelled: Arc<AtomicBool>,
+    preempt: Arc<Preemption>,
     sink: ResultSink,
 ) {
     let n = request.questions.len();
@@ -79,10 +78,11 @@ pub async fn run_conversation(
             total: 1,
             lang,
         };
-        match channel.ask_question(&ctx, &cancelled).await {
+        match channel.ask_question(&ctx, &preempt).await {
             Some(answer) => answers.push(answer),
             None => {
                 channel.close().await;
+                sink.notify_finalized();
                 return;
             }
         }
@@ -107,10 +107,11 @@ pub async fn run_conversation(
                 total: n,
                 lang,
             };
-            match channel.ask_question(&ctx, &cancelled).await {
+            match channel.ask_question(&ctx, &preempt).await {
                 Some(answer) => answers.push(answer),
                 None => {
                     channel.close().await;
+                    sink.notify_finalized();
                     return;
                 }
             }

@@ -210,6 +210,18 @@ impl TelegramClient {
             .await;
     }
 
+    /// 编辑消息文本（用于卡片终态）。不传 `reply_markup` 即移除按钮。
+    pub async fn edit_message_text(&self, message_id: i64, text: &str, parse_mode: Option<&str>) {
+        let mut params = serde_json::Map::new();
+        params.insert("chat_id".into(), json!(self.chat_id));
+        params.insert("message_id".into(), json!(message_id));
+        params.insert("text".into(), json!(text));
+        if let Some(pm) = parse_mode {
+            params.insert("parse_mode".into(), json!(pm));
+        }
+        let _ = self.call("editMessageText", Value::Object(params)).await;
+    }
+
     /// 发送测试消息验证配置（`lang` 决定远程消息与返回提示的语言）。
     pub async fn test_connection(&self, lang: crate::i18n::Lang) -> Result<String, TelegramError> {
         let text = crate::i18n::tr(lang, "cmd.tgTestRemote");

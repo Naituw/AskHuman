@@ -166,11 +166,17 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         // Message（共享描述）头部：中英一律英文，{source} 默认 "the Loop"。
         "channel.messageFrom" => pick(lang, "Message from {source}", "Message from {source}"),
         "channel.questionIndexed" => pick(lang, "Question {i}/{n}", "问题 {i}/{n}"),
-        "channel.tgSendButton" => pick(lang, "↗️ Send", "↗️ 发送"),
+        "channel.tgSendButton" => pick(lang, "↑ Submit", "↑ 提交"),
+        // 抢答收尾：赢家端名称 + 卡片终态状态行。
+        "channel.sourcePopup" => pick(lang, "Popup", "弹窗"),
+        "channel.sourceTelegram" => pick(lang, "Telegram", "Telegram"),
+        "channel.sourceDingTalk" => pick(lang, "DingTalk", "钉钉"),
+        "channel.tgReplied" => pick(lang, "✅ Replied", "✅ 已回复"),
+        "channel.tgAnsweredVia" => pick(lang, "✅ Answered via {source}", "✅ 已在{source}回答"),
         "channel.tgActionHint" => pick(
             lang,
-            "Tap “Send” on the keyboard to finish, or just reply with text to add details",
-            "在键盘上点「发送」完成回复，或直接回复文字补充说明",
+            "💬 To add more, just send text messages here. Anything you send after this card (before tapping Submit) will be included.",
+            "💬 需要补充可直接在这里发文字消息。本卡片发出后、点「提交」前你发送的文字都会一并提交。",
         ),
         "channel.fileSendFailed" => pick(lang, "⚠️ Failed to send file: {name}", "⚠️ 文件发送失败：{name}"),
         "channel.ddTitleFallback" => pick(lang, "Question", "提问"),

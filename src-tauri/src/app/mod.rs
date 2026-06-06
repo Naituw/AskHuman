@@ -14,7 +14,7 @@ use crate::models::{AskRequest, ChannelAction, ChannelResult};
 use crate::telegram::TelegramClient;
 use coordinator::Coordinator;
 use std::sync::Arc;
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 #[cfg(target_os = "macos")]
 use tauri::window::{Effect, EffectState, EffectsBuilder};
 
@@ -152,10 +152,13 @@ fn run_headless(request: AskRequest, config: AppConfig) -> ! {
         }
     };
 
-    let coordinator = Coordinator::new_headless(request.clone());
+    // 并行消息渠道数（用于抢答收尾计算落败端数）+ 共享抢答信号。
+    let messaging_count =
+        is_telegram_active(&config) as usize + is_dingding_active(&config) as usize;
+    let preempt = Arc::new(crate::channels::Preemption::new());
+    let coordinator = Coordinator::new_headless(request.clone(), preempt.clone(), messaging_count);
 
     rt.block_on(async move {
-        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut handles = Vec::new();
 
         if is_telegram_active(&config) {
@@ -163,7 +166,7 @@ fn run_headless(request: AskRequest, config: AppConfig) -> ! {
             let cfg = config.channels.telegram.clone();
             let req = request.clone();
             let sink = coordinator.clone();
-            let cancelled = cancelled.clone();
+            let preempt = preempt.clone();
             handles.push(tokio::spawn(async move {
                 let mut session = TelegramSession::new(cfg);
                 if let Err(e) = session.open().await {
@@ -174,7 +177,7 @@ fn run_headless(request: AskRequest, config: AppConfig) -> ! {
                     ));
                     return;
                 }
-                run_conversation(&mut session, &req, cancelled, sink).await;
+                run_conversation(&mut session, &req, preempt, sink).await;
             }));
         }
 
@@ -183,7 +186,7 @@ fn run_headless(request: AskRequest, config: AppConfig) -> ! {
             let cfg = config.channels.dingding.clone();
             let req = request.clone();
             let sink = coordinator.clone();
-            let cancelled = cancelled.clone();
+            let preempt = preempt.clone();
             handles.push(tokio::spawn(async move {
                 let mut session = DingTalkSession::new(cfg);
                 if let Err(e) = session.open().await {
@@ -194,13 +197,16 @@ fn run_headless(request: AskRequest, config: AppConfig) -> ! {
                     ));
                     return;
                 }
-                run_conversation(&mut session, &req, cancelled, sink).await;
+                run_conversation(&mut session, &req, preempt, sink).await;
             }));
         }
 
         for h in handles {
             let _ = h.await;
         }
+
+        // 全部会话结束：若已有结果则输出并退出（不返回）；否则返回交由下方兜底报错。
+        coordinator.finish();
     });
 
     // 正常情况下用户完成回复 → submit → 进程已退出；走到此处说明全部会话结束仍未获结果。
@@ -247,6 +253,9 @@ fn launch(state: AppState, view: View) -> tauri::Result<()> {
     let messaging_active = has_active_messaging(&state.config);
     // 弹窗禁用且无可用消息渠道时，兜底仍开弹窗，避免无任何 Channel 导致进程挂起。
     let show_popup = state.config.channels.popup.enabled || !messaging_active;
+    // 提问模式下抑制「关窗即退出」：抢答收尾时弹窗会先关，需留进程给协调器输出结果并主动退出。
+    // 设置模式不抑制，关窗即正常退出。
+    let prevent_autoexit = matches!(view, View::Popup);
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_drag::init())
@@ -367,7 +376,24 @@ fn launch(state: AppState, view: View) -> tauri::Result<()> {
 
     // 构建成功后、进入事件循环前静默系统噪音日志（如 macOS 的 TSM CapsLock 日志）。
     stderr_redirect::silence();
-    app.run(|_app_handle, _event| {});
+    app.run(move |app_handle, event| {
+        // 提问模式且已进入收尾：拦下关窗触发的退出（code=None），
+        // 仅放行协调器 `app.exit(code)`（code=Some），确保结果先输出再退出。
+        // 收尾前不拦（Cmd+Q / 正常关窗照常退出，行为同改动前）。
+        if prevent_autoexit {
+            if let RunEvent::ExitRequested { code, api, .. } = &event {
+                if code.is_none() {
+                    let finalizing = app_handle
+                        .try_state::<Arc<Coordinator>>()
+                        .map(|c| c.is_finalizing())
+                        .unwrap_or(false);
+                    if finalizing {
+                        api.prevent_exit();
+                    }
+                }
+            }
+        }
+    });
     std::process::exit(0);
 }
 

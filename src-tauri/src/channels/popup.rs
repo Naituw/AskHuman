@@ -24,7 +24,7 @@ impl Channel for PopupChannel {
         // 窗口已由 setup 创建；用户操作经 submit_popup / cancel_popup 命令进入协调器。
     }
 
-    fn cancel_by_other(&self) {
+    fn cancel_by_other(&self, _winner: &str) {
         if let Some(w) = self.app.get_webview_window("popup") {
             let _ = w.close();
         }
