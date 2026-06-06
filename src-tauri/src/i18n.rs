@@ -144,6 +144,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "app.runtimeCreateFailed" => pick(lang, "failed to create runtime: {e}", "无法创建运行时: {e}"),
         "app.telegramInvalid" => pick(lang, "invalid Telegram config: {e}", "Telegram 配置无效: {e}"),
         "app.dingtalkInvalid" => pick(lang, "invalid DingTalk config: {e}", "钉钉配置无效: {e}"),
+        "app.feishuInvalid" => pick(lang, "invalid Feishu config: {e}", "飞书配置无效: {e}"),
         "app.sessionEndedNoResult" => pick(
             lang,
             "messaging session ended without a result",
@@ -171,6 +172,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "channel.sourcePopup" => pick(lang, "Popup", "弹窗"),
         "channel.sourceTelegram" => pick(lang, "Telegram", "Telegram"),
         "channel.sourceDingTalk" => pick(lang, "DingTalk", "钉钉"),
+        "channel.sourceFeishu" => pick(lang, "Feishu", "飞书"),
         "channel.tgReplied" => pick(lang, "✅ Replied", "✅ 已回复"),
         "channel.tgAnsweredVia" => pick(lang, "✅ Answered via {source}", "✅ 已在{source}回答"),
         // 钉钉卡片终态文案（绑定模板变量 submit_status）。卡片自带样式，文案不加 emoji 前缀。
@@ -213,6 +215,26 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "channel.ddCardDeliverFailed" => pick(lang, "failed to deliver DingTalk card, falling back to text: {e}", "钉钉互动卡片投放失败，回退纯文本: {e}"),
         "channel.ddImageDownloadFailed" => pick(lang, "failed to download DingTalk image: {e}", "钉钉图片下载失败: {e}"),
         "channel.ddFileDownloadFailed" => pick(lang, "failed to download DingTalk file: {e}", "钉钉文件下载失败: {e}"),
+
+        // —— 飞书渠道：发给用户的文案 + 本地诊断 ——
+        // 卡片终态文案（PATCH 卡片 / toast）。卡片自带样式，文案不加 emoji 前缀。
+        "channel.fsSubmitted" => pick(lang, "Submitted", "已提交"),
+        "channel.fsAnsweredVia" => pick(lang, "Answered via {source}", "已在{source}回答"),
+        "channel.fsTitleFallback" => pick(lang, "Question", "提问"),
+        // 卡片表单：输入框占位 + 提交按钮文案。
+        "channel.fsInputPlaceholder" => pick(lang, "Add a note (optional)", "补充说明（可选）"),
+        "channel.fsSubmitButton" => pick(lang, "Submit", "提交"),
+        "channel.fsConfigInvalidSkip" => pick(
+            lang,
+            "invalid Feishu config, skipping this channel: {e}",
+            "飞书配置无效，已跳过该 Channel: {e}",
+        ),
+        "channel.fsMessageSendFailed" => pick(lang, "failed to send Feishu Message: {e}", "飞书 Message 发送失败: {e}"),
+        "channel.fsFileSendFailedLog" => pick(lang, "failed to send Feishu file: {path}: {e}", "飞书文件发送失败: {path}: {e}"),
+        "channel.fsQuestionSendFailed" => pick(lang, "failed to send Feishu question: {e}", "飞书提问发送失败: {e}"),
+        "channel.fsCardDeliverFailed" => pick(lang, "failed to deliver Feishu card, falling back to text: {e}", "飞书互动卡片投放失败，回退纯文本: {e}"),
+        "channel.fsImageDownloadFailed" => pick(lang, "failed to download Feishu image: {e}", "飞书图片下载失败: {e}"),
+        "channel.fsFileDownloadFailed" => pick(lang, "failed to download Feishu file: {e}", "飞书文件下载失败: {e}"),
 
         // —— 设置页「弹出测试窗口」示例内容 ——
         "test.message" => pick(
@@ -279,7 +301,29 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         ),
         "cmd.streamDisconnected" => pick(lang, "Stream disconnected, please retry", "Stream 连接断开，请重试"),
 
-        // —— 错误类型校验文案（Telegram/钉钉 Error::localized）——
+        // —— 飞书测试连接 / open_id 自动识别（commands.feishu_test / feishu_detect_*）——
+        "cmd.fillOpenId" => pick(
+            lang,
+            "Please fill in Open ID first (use “Auto-detect” to get it)",
+            "请先填写 Open ID（可点击「自动识别」获取）",
+        ),
+        "cmd.fsTestRemote" => pick(
+            lang,
+            "✅ HumanInLoop Feishu connection test succeeded",
+            "✅ HumanInLoop 飞书连接测试成功",
+        ),
+        "cmd.fsTestSent" => pick(
+            lang,
+            "A test message was sent to your direct chat — please check Feishu",
+            "已向你的单聊发送一条测试消息，请在飞书查收",
+        ),
+        "cmd.fillAppIdSecret" => pick(
+            lang,
+            "Please fill in AppId and AppSecret first",
+            "请先填写 AppId 和 AppSecret",
+        ),
+
+        // —— 错误类型校验文案（Telegram/钉钉/飞书 Error::localized）——
         "err.tgEmptyToken" => pick(lang, "Bot Token must not be empty", "Bot Token 不能为空"),
         "err.tgEmptyChatId" => pick(lang, "Chat ID must not be empty", "Chat ID 不能为空"),
         "err.tgInvalidChatId" => pick(
@@ -288,6 +332,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "Chat ID 格式无效，请输入有效的数字 ID",
         ),
         "err.ddEmptyConfig" => pick(lang, "{field} must not be empty", "{field} 不能为空"),
+        "err.fsEmptyConfig" => pick(lang, "{field} must not be empty", "{field} 不能为空"),
 
         _ => key,
     }

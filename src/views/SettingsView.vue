@@ -12,6 +12,9 @@ import {
   dingtalkDetectPrepare,
   dingtalkDetectWait,
   dingtalkTest,
+  feishuDetectPrepare,
+  feishuDetectWait,
+  feishuTest,
   getPrompt,
   getSettings,
   openTestPopup,
@@ -80,6 +83,12 @@ const dingtalkDetecting = ref(false);
 const dingtalkDetectCode = ref<string | null>(null);
 const dingtalkMessage = ref<string | null>(null);
 const dingtalkError = ref(false);
+
+const feishuTesting = ref(false);
+const feishuDetecting = ref(false);
+const feishuDetectCode = ref<string | null>(null);
+const feishuMessage = ref<string | null>(null);
+const feishuError = ref(false);
 
 function clamp(v: number, min: number, max: number) {
   return Math.min(max, Math.max(min, v));
@@ -339,6 +348,60 @@ async function runDingtalkDetect() {
   } finally {
     dingtalkDetecting.value = false;
     dingtalkDetectCode.value = null;
+  }
+}
+
+async function runFeishuTest() {
+  if (!config.value) return;
+  feishuTesting.value = true;
+  feishuMessage.value = null;
+  const fs = config.value.channels.feishu;
+  try {
+    feishuMessage.value = await feishuTest({
+      appId: fs.appId,
+      appSecret: fs.appSecret,
+      openId: fs.openId,
+      baseUrl: fs.baseUrl,
+    });
+    feishuError.value = false;
+  } catch (e) {
+    feishuMessage.value = String(e);
+    feishuError.value = true;
+  } finally {
+    feishuTesting.value = false;
+  }
+}
+
+// 自动识别：先校验并取识别码 → 展示提示 → 等用户私聊发送该码 → 回填 openId。
+async function runFeishuDetect() {
+  if (!config.value) return;
+  const fs = config.value.channels.feishu;
+  feishuDetecting.value = true;
+  feishuMessage.value = null;
+  feishuDetectCode.value = null;
+  try {
+    const code = await feishuDetectPrepare({
+      appId: fs.appId,
+      appSecret: fs.appSecret,
+      baseUrl: fs.baseUrl,
+    });
+    feishuDetectCode.value = code;
+    const openId = await feishuDetectWait({
+      appId: fs.appId,
+      appSecret: fs.appSecret,
+      baseUrl: fs.baseUrl,
+      code,
+    });
+    fs.openId = openId;
+    await persist();
+    feishuError.value = false;
+    feishuMessage.value = t("settings.channels.feishuDetected", { openId });
+  } catch (e) {
+    feishuMessage.value = String(e);
+    feishuError.value = true;
+  } finally {
+    feishuDetecting.value = false;
+    feishuDetectCode.value = null;
   }
 }
 
@@ -929,6 +992,104 @@ onMounted(async () => {
             </div>
             <p class="card-desc" style="margin-top: 0">
               {{ t("settings.channels.convertTextToDocxHint") }}
+            </p>
+          </template>
+        </div>
+
+        <div class="card">
+          <div class="row">
+            <p class="card-title">{{ t("settings.channels.feishuTitle") }}</p>
+            <span class="spacer"></span>
+            <label class="switch">
+              <input
+                type="checkbox"
+                v-model="config.channels.feishu.enabled"
+                @change="persist"
+              />
+              <span class="track"></span>
+            </label>
+          </div>
+
+          <template v-if="config.channels.feishu.enabled">
+            <hr class="divider" />
+            <div class="field">
+              <label>{{ t("settings.channels.appId") }}</label>
+              <input
+                class="input"
+                v-model="config.channels.feishu.appId"
+                @change="persist"
+              />
+            </div>
+            <div class="field">
+              <label>{{ t("settings.channels.appSecret") }}</label>
+              <input
+                class="input"
+                type="password"
+                v-model="config.channels.feishu.appSecret"
+                @change="persist"
+              />
+            </div>
+            <div class="field">
+              <label>{{ t("settings.channels.openId") }}</label>
+              <div class="row">
+                <input
+                  class="input"
+                  style="flex: 1"
+                  v-model="config.channels.feishu.openId"
+                  @change="persist"
+                />
+                <button
+                  class="btn"
+                  type="button"
+                  :disabled="feishuDetecting"
+                  @click="runFeishuDetect"
+                >
+                  {{
+                    feishuDetecting
+                      ? t("settings.channels.detecting")
+                      : t("settings.channels.autoDetect")
+                  }}
+                </button>
+              </div>
+            </div>
+            <i18n-t
+              v-if="feishuDetectCode"
+              keypath="settings.channels.feishuDetectHint"
+              tag="p"
+              class="result ok"
+            >
+              <template #code><b>{{ feishuDetectCode }}</b></template>
+            </i18n-t>
+            <div class="field">
+              <label>{{ t("settings.channels.feishuBaseUrl") }}</label>
+              <input
+                class="input"
+                v-model="config.channels.feishu.baseUrl"
+                :placeholder="t('settings.channels.feishuBaseUrlPlaceholder')"
+                @change="persist"
+              />
+            </div>
+            <div class="row">
+              <button
+                class="btn"
+                type="button"
+                :disabled="feishuTesting"
+                @click="runFeishuTest"
+              >
+                {{
+                  feishuTesting
+                    ? t("settings.channels.testing")
+                    : t("settings.channels.testConnection")
+                }}
+              </button>
+              <span class="spacer"></span>
+            </div>
+            <p
+              v-if="feishuMessage"
+              class="result"
+              :class="feishuError ? 'err' : 'ok'"
+            >
+              {{ feishuMessage }}
             </p>
           </template>
         </div>

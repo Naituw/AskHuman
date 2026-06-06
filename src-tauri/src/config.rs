@@ -153,12 +153,41 @@ impl Default for DingTalkChannelConfig {
     }
 }
 
+/// 飞书（Feishu / Lark）渠道配置。
+/// 形态：企业自建应用 + 机器人 + 长连接(WebSocket) + 单聊；发消息统一用 tenant_access_token。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FeishuChannelConfig {
+    pub enabled: bool,
+    /// 企业自建应用 App ID（`cli_...`）。
+    pub app_id: String,
+    /// 企业自建应用 App Secret。
+    pub app_secret: String,
+    /// 接收/作答用户的 Open ID（单聊，发消息用 receive_id_type=open_id）。
+    pub open_id: String,
+    /// 开放平台域名：默认飞书国内 `https://open.feishu.cn`；Lark 国际版填 `https://open.larksuite.com`。
+    pub base_url: String,
+}
+
+impl Default for FeishuChannelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            app_id: String::new(),
+            app_secret: String::new(),
+            open_id: String::new(),
+            base_url: "https://open.feishu.cn".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ChannelsConfig {
     pub popup: PopupChannelConfig,
     pub telegram: TelegramChannelConfig,
     pub dingding: DingTalkChannelConfig,
+    pub feishu: FeishuChannelConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -228,6 +257,10 @@ mod tests {
     // 文本附件预览开关默认开启。
     assert!(c.channels.dingding.inline_small_text);
     assert!(c.channels.dingding.convert_text_to_docx);
+    // 飞书默认未启用、字段为空、域名为飞书国内。
+    assert!(!c.channels.feishu.enabled);
+    assert!(c.channels.feishu.app_id.is_empty());
+    assert_eq!(c.channels.feishu.base_url, "https://open.feishu.cn");
 }
 
     #[test]

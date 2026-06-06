@@ -13,6 +13,7 @@ mod cli;
 mod commands;
 mod config;
 mod dingtalk;
+mod feishu;
 mod i18n;
 mod integrations;
 #[cfg(target_os = "macos")]

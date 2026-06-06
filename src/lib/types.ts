@@ -91,10 +91,19 @@ export interface DingTalkChannelConfig {
   convertTextToDocx: boolean;
 }
 
+export interface FeishuChannelConfig {
+  enabled: boolean;
+  appId: string;
+  appSecret: string;
+  openId: string;
+  baseUrl: string;
+}
+
 export interface ChannelsConfig {
   popup: PopupChannelConfig;
   telegram: TelegramChannelConfig;
   dingding: DingTalkChannelConfig;
+  feishu: FeishuChannelConfig;
 }
 
 export interface AppConfig {
@@ -128,5 +137,25 @@ export interface DingTalkDetectArgs {
 export interface DingTalkWaitArgs {
   clientId: string;
   clientSecret: string;
+  code: string;
+}
+
+export interface FeishuTestArgs {
+  appId: string;
+  appSecret: string;
+  openId: string;
+  baseUrl: string;
+}
+
+export interface FeishuDetectArgs {
+  appId: string;
+  appSecret: string;
+  baseUrl: string;
+}
+
+export interface FeishuWaitArgs {
+  appId: string;
+  appSecret: string;
+  baseUrl: string;
   code: string;
 }

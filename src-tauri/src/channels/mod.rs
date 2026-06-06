@@ -2,6 +2,7 @@
 
 pub mod conversation;
 pub mod dingding;
+pub mod feishu;
 pub mod popup;
 pub mod telegram;
 

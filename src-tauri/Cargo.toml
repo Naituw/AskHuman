@@ -44,6 +44,9 @@ tauri-plugin-liquid-glass = "0.1"
 dark-light = "2"
 tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 futures-util = "0.3.32"
+# 飞书长连接帧为 protobuf(pbbp2)。仅用 prost 运行时 + #[derive(prost::Message)] 自定义 PbFrame，
+# 不引入 prost-build / protoc / build.rs（帧结构极小，自持更可控）。
+prost = "0.13"
 sys-locale = "0.3.2"
 # Markdown 解析（文本附件转 docx）。禁用 html/simd 等默认特性以控体积。
 pulldown-cmark = { version = "0.13.4", default-features = false }

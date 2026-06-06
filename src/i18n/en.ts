@@ -146,6 +146,16 @@ export default {
       convertTextToDocx: "Send text files as docx",
       convertTextToDocxHint:
         "Text files that aren't inlined (e.g. long ones) are converted to docx so DingTalk can preview them; turn off to send the original file.",
+      feishuTitle: "Feishu",
+      appId: "App ID",
+      appSecret: "App Secret",
+      openId: "Open ID",
+      feishuDetectHint:
+        "Use the target Feishu account to DM the bot with: {code} (valid for 120s)",
+      feishuDetected: "Detected and filled Open ID: {openId}",
+      feishuBaseUrl: "Service domain",
+      feishuBaseUrlPlaceholder:
+        "Leave empty for Feishu (open.feishu.cn); use open.larksuite.com for Lark",
       moreSoon: "More channels coming soon",
     },
   },

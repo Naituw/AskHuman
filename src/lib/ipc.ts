@@ -4,6 +4,9 @@ import type {
   DingTalkDetectArgs,
   DingTalkTestArgs,
   DingTalkWaitArgs,
+  FeishuDetectArgs,
+  FeishuTestArgs,
+  FeishuWaitArgs,
   HookStatus,
   PopupInit,
   PopupSubmission,
@@ -85,3 +88,12 @@ export const dingtalkDetectPrepare = (args: DingTalkDetectArgs) =>
 
 export const dingtalkDetectWait = (args: DingTalkWaitArgs) =>
   invoke<string>("dingtalk_detect_wait", { args });
+
+export const feishuTest = (args: FeishuTestArgs) =>
+  invoke<string>("feishu_test", { args });
+
+export const feishuDetectPrepare = (args: FeishuDetectArgs) =>
+  invoke<string>("feishu_detect_prepare", { args });
+
+export const feishuDetectWait = (args: FeishuWaitArgs) =>
+  invoke<string>("feishu_detect_wait", { args });

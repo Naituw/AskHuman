@@ -3,6 +3,7 @@
 pub mod coordinator;
 
 use crate::channels::dingding::DingTalkChannel;
+use crate::channels::feishu::FeishuChannel;
 use crate::channels::popup::PopupChannel;
 use crate::channels::telegram::TelegramChannel;
 use crate::channels::Channel;
@@ -10,6 +11,7 @@ use crate::cli::{image_writer, output};
 use crate::config::{AppConfig, ThemeMode, WindowEffect};
 use crate::i18n::{self, Lang};
 use crate::dingtalk::client::DingTalkClient;
+use crate::feishu::client::FeishuClient;
 use crate::models::{AskRequest, ChannelAction, ChannelResult};
 use crate::telegram::TelegramClient;
 use coordinator::Coordinator;
@@ -85,9 +87,17 @@ fn is_dingding_active(config: &AppConfig) -> bool {
     dd.enabled && DingTalkClient::new(dd).is_ok()
 }
 
+/// 飞书是否已配置且可用（构造 client 成功且 open_id 非空——即四项齐备——即视为可用）。
+fn is_feishu_active(config: &AppConfig) -> bool {
+    let fs = &config.channels.feishu;
+    fs.enabled
+        && !fs.open_id.trim().is_empty()
+        && FeishuClient::new(fs).is_ok()
+}
+
 /// 是否存在任一可用的会话型消息渠道。
 fn has_active_messaging(config: &AppConfig) -> bool {
-    is_telegram_active(config) || is_dingding_active(config)
+    is_telegram_active(config) || is_dingding_active(config) || is_feishu_active(config)
 }
 
 /// 收集全部可用的会话型渠道外层（供 GUI 路径注册并行抢答）。
@@ -98,6 +108,9 @@ fn active_messaging_channels(config: &AppConfig) -> Vec<Arc<dyn Channel>> {
     }
     if is_dingding_active(config) {
         channels.push(Arc::new(DingTalkChannel::new(config.channels.dingding.clone())));
+    }
+    if is_feishu_active(config) {
+        channels.push(Arc::new(FeishuChannel::new(config.channels.feishu.clone())));
     }
     channels
 }
@@ -153,8 +166,9 @@ fn run_headless(request: AskRequest, config: AppConfig) -> ! {
     };
 
     // 并行消息渠道数（用于抢答收尾计算落败端数）+ 共享抢答信号。
-    let messaging_count =
-        is_telegram_active(&config) as usize + is_dingding_active(&config) as usize;
+    let messaging_count = is_telegram_active(&config) as usize
+        + is_dingding_active(&config) as usize
+        + is_feishu_active(&config) as usize;
     let preempt = Arc::new(crate::channels::Preemption::new());
     let coordinator = Coordinator::new_headless(request.clone(), preempt.clone(), messaging_count);
 
@@ -194,6 +208,26 @@ fn run_headless(request: AskRequest, config: AppConfig) -> ! {
                         "{}{}",
                         i18n::warn_prefix(lang),
                         i18n::tr(lang, "app.dingtalkInvalid").replace("{e}", &e.to_string())
+                    ));
+                    return;
+                }
+                run_conversation(&mut session, &req, preempt, sink).await;
+            }));
+        }
+
+        if is_feishu_active(&config) {
+            use crate::channels::feishu::FeishuSession;
+            let cfg = config.channels.feishu.clone();
+            let req = request.clone();
+            let sink = coordinator.clone();
+            let preempt = preempt.clone();
+            handles.push(tokio::spawn(async move {
+                let mut session = FeishuSession::new(cfg);
+                if let Err(e) = session.open().await {
+                    stderr_redirect::eprintln_real(&format!(
+                        "{}{}",
+                        i18n::warn_prefix(lang),
+                        i18n::tr(lang, "app.feishuInvalid").replace("{e}", &e)
                     ));
                     return;
                 }
@@ -291,6 +325,9 @@ fn launch(state: AppState, view: View) -> tauri::Result<()> {
             crate::commands::dingtalk_test,
             crate::commands::dingtalk_detect_prepare,
             crate::commands::dingtalk_detect_wait,
+            crate::commands::feishu_test,
+            crate::commands::feishu_detect_prepare,
+            crate::commands::feishu_detect_wait,
         ])
         .on_window_event(|window, event| {
             match window.label() {

@@ -56,12 +56,24 @@ HumanInLoop/
                              stderr 静默 + emit_result(输出并退出) + create_settings_window
         coordinator.rs       抢答协调器：首个终态结果生效，cancel 其余，输出后退出
       channels/
-        mod.rs               Channel trait（id/start/cancel_by_other）+ ResultSink
+        mod.rs               Channel trait（id/start/cancel_by_other）+ ResultSink + Preemption
+        conversation.rs      会话型渠道公共编排（run_conversation + MessagingChannel）
         popup.rs             本地弹窗 Channel（被抢答时关窗）
         telegram.rs          Telegram Channel（发送/长轮询/inline 选项/「发送」键）
+        dingding.rs          钉钉 Channel（Stream 收 + 互动卡片高级版 / 文本回退）
+        feishu.rs            飞书 Channel（长连接收 + 卡片 JSON 2.0 / 文本回退）
       telegram/
         mod.rs               TelegramClient：reqwest 手写 Bot API + 错误类型
         markdown.rs          标准 Markdown → Telegram MarkdownV2（保护代码块/转义）
+      dingtalk/
+        mod.rs / token.rs / client.rs / stream.rs / card.rs / textfile.rs / docx.rs
+                             钉钉客户端层 + Stream 长连(JSON 帧) + 卡片 + 文本附件处理
+      feishu/
+        mod.rs               错误类型 + 模块声明
+        token.rs             tenant_access_token 缓存
+        client.rs            OpenAPI：发文本/图片/文件/卡片、媒体上传、资源下载、PATCH 卡片
+        ws.rs                长连接(WebSocket)：protobuf 帧(pbbp2) + 心跳/分片/回包/重连
+        card.rs              卡片 JSON 2.0 组装（表单+勾选器+输入框+提交）+ 回调解析
       integrations/
         cursor_hook.rs       Cursor Hook 安装/移除/状态/reveal（mac/Linux；含内嵌脚本）
 ```
@@ -72,8 +84,8 @@ HumanInLoop/
    - 无参 → stderr 报错 + 帮助，exit 1；`--help`/`--version` → 输出，exit 0。
    - `--settings` → `app::run_settings(config)`；其余 → 解析为 `AskRequest` → `app::run_ask(request, config)`。
 2. `app::launch`（提问模式）：启动 Tauri（`generate_context!` 每二进制仅一次），在 setup 中：
-   - 建 `Coordinator`；按配置创建弹窗（注册 `PopupChannel`）并/或启动 `TelegramChannel`（tokio 任务）。
-   - 弹窗禁用且 Telegram 不可用时兜底开弹窗。
+   - 建 `Coordinator`；按配置创建弹窗（注册 `PopupChannel`）并/或启动会话型渠道（`TelegramChannel` / `DingTalkChannel` / `FeishuChannel`，各为 tokio 任务）。
+   - 弹窗禁用且无可用会话型渠道时兜底开弹窗；GUI 不可用但有会话型渠道时走 headless 并行。
 3. 用户在任一 Channel 完成（发送/取消）→ 结果投递 `Coordinator`：**仅首个生效**，对其余 Channel `cancel_by_other()`，由 `emit_result` 把区块写 stdout、图片落盘，`app.exit(code)` 退出。
 
 ## 前端 ↔ 后端命令（`commands.rs` ↔ `lib/ipc.ts`）
@@ -84,6 +96,8 @@ HumanInLoop/
 - 设置：`get_settings`、`save_settings`、`get_prompt`、`set_theme`、`update_theme`(持久化+应用)、`open_settings`(同进程建设置窗)
 - Cursor Hook：`cursor_hook_status` / `install` / `uninstall` / `reveal`
 - Telegram：`telegram_test`
+- 钉钉：`dingtalk_test` / `dingtalk_detect_prepare` / `dingtalk_detect_wait`
+- 飞书：`feishu_test` / `feishu_detect_prepare` / `feishu_detect_wait`
 
 窗口拖拽用 `data-tauri-drag-region`（导航栏/底部空白/设置 tab 栏）；置顶用前端 `@tauri-apps/api/window` setAlwaysOnTop。
 文件拖入用 `onDragDropEvent`（原生路径）；`-f` 附件拖出用 `tauri-plugin-drag` 的 `startDrag`。

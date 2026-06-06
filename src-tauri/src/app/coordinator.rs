@@ -203,6 +203,7 @@ fn display_name(id: &str, lang: Lang) -> String {
         "popup" => i18n::tr(lang, "channel.sourcePopup").to_string(),
         "telegram" => i18n::tr(lang, "channel.sourceTelegram").to_string(),
         "dingding" => i18n::tr(lang, "channel.sourceDingTalk").to_string(),
+        "feishu" => i18n::tr(lang, "channel.sourceFeishu").to_string(),
         other => other.to_string(),
     }
 }

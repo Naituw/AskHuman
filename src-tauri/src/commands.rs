@@ -522,6 +522,146 @@ pub async fn dingtalk_detect_wait(args: DingTalkWaitArgs) -> Result<String, Stri
     }
 }
 
+// ===== 飞书测试连接 / open_id 自动识别 =====
+
+use crate::config::FeishuChannelConfig;
+use crate::feishu::client::FeishuClient;
+use crate::feishu::ws::{FeishuWs, WsEvent};
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeishuTestArgs {
+    app_id: String,
+    app_secret: String,
+    open_id: String,
+    base_url: String,
+}
+
+/// 测试连接：换 token（校验 AppId/Secret）+ 向 open_id 单聊发一条测试消息。
+#[tauri::command]
+pub async fn feishu_test(args: FeishuTestArgs) -> Result<String, String> {
+    let lang = crate::i18n::Lang::current();
+    if args.open_id.trim().is_empty() {
+        return Err(crate::i18n::tr(lang, "cmd.fillOpenId").to_string());
+    }
+    let cfg = FeishuChannelConfig {
+        enabled: true,
+        app_id: args.app_id,
+        app_secret: args.app_secret,
+        open_id: args.open_id,
+        base_url: args.base_url,
+    };
+    let client = FeishuClient::new(&cfg).map_err(|e| e.localized(lang))?;
+    client
+        .send_text(crate::i18n::tr(lang, "cmd.fsTestRemote"))
+        .await
+        .map_err(|e| e.localized(lang))?;
+    Ok(crate::i18n::tr(lang, "cmd.fsTestSent").to_string())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeishuDetectArgs {
+    app_id: String,
+    app_secret: String,
+    base_url: String,
+}
+
+/// 自动识别准备：校验 AppId/Secret（换 token），通过后返回供用户私聊发送的 4 位识别码。
+#[tauri::command]
+pub async fn feishu_detect_prepare(args: FeishuDetectArgs) -> Result<String, String> {
+    let lang = crate::i18n::Lang::current();
+    let app_id = args.app_id.trim();
+    let app_secret = args.app_secret.trim();
+    if app_id.is_empty() || app_secret.is_empty() {
+        return Err(crate::i18n::tr(lang, "cmd.fillAppIdSecret").to_string());
+    }
+    let base_url = effective_feishu_base(&args.base_url);
+    let http = reqwest::Client::new();
+    crate::feishu::token::get_token(&http, &base_url, app_id, app_secret)
+        .await
+        .map_err(|e| e.localized(lang))?;
+    Ok(gen_detect_code())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeishuWaitArgs {
+    app_id: String,
+    app_secret: String,
+    base_url: String,
+    code: String,
+}
+
+/// 自动识别等待：开长连接，等到内容等于识别码的单聊消息，返回发送者 open_id。120 秒超时报错。
+#[tauri::command]
+pub async fn feishu_detect_wait(args: FeishuWaitArgs) -> Result<String, String> {
+    use std::time::Duration;
+    let lang = crate::i18n::Lang::current();
+    let app_id = args.app_id.trim();
+    let app_secret = args.app_secret.trim();
+    if app_id.is_empty() || app_secret.is_empty() {
+        return Err(crate::i18n::tr(lang, "cmd.fillAppIdSecret").to_string());
+    }
+    let code = args.code.trim().to_string();
+    if code.is_empty() {
+        return Err(crate::i18n::tr(lang, "cmd.detectCodeInvalid").to_string());
+    }
+    let base_url = effective_feishu_base(&args.base_url);
+    let http = reqwest::Client::new();
+    let mut ws = FeishuWs::connect(http, &base_url, app_id, app_secret)
+        .await
+        .map_err(|e| e.localized(lang))?;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string());
+        }
+        match tokio::time::timeout(remaining, ws.recv()).await {
+            Ok(Some(WsEvent::Message(event))) => {
+                if let Some((open_id, text)) = feishu_text_and_sender(&event) {
+                    if text.trim() == code {
+                        return Ok(open_id);
+                    }
+                }
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => return Err(crate::i18n::tr(lang, "cmd.streamDisconnected").to_string()),
+            Err(_) => return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string()),
+        }
+    }
+}
+
+/// base_url 缺省回退飞书国内。
+fn effective_feishu_base(base_url: &str) -> String {
+    let b = base_url.trim().trim_end_matches('/');
+    if b.is_empty() {
+        "https://open.feishu.cn".to_string()
+    } else {
+        b.to_string()
+    }
+}
+
+/// 从 im.message.receive_v1 的 event 取 (发送者 open_id, 文本内容)。非文本消息返回 None。
+fn feishu_text_and_sender(event: &serde_json::Value) -> Option<(String, String)> {
+    let open_id = event
+        .get("sender")
+        .and_then(|s| s.get("sender_id"))
+        .and_then(|i| i.get("open_id"))
+        .and_then(|v| v.as_str())?
+        .to_string();
+    let message = event.get("message")?;
+    if message.get("message_type").and_then(|v| v.as_str()) != Some("text") {
+        return None;
+    }
+    let content_str = message.get("content").and_then(|v| v.as_str()).unwrap_or("{}");
+    let content: serde_json::Value = serde_json::from_str(content_str).ok()?;
+    let text = content.get("text").and_then(|v| v.as_str())?.to_string();
+    Some((open_id, text))
+}
+
 /// 生成 4 位识别码（瞬时配对用，无需强随机）。
 fn gen_detect_code() -> String {
     let nanos = std::time::SystemTime::now()
