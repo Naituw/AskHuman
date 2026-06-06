@@ -15,6 +15,24 @@
   2. 常驻 daemon——后台进程独占持有 Stream，各 `AskHuman` 经本地 socket 注册等待、由其转发用户消息（真复用 / 连接常热 / 支持并发，但需管理 daemon 生命周期 + IPC，复杂度高）。← **采用此方案（daemon 架构）。**
 - **状态**：修复中（daemon 架构 Phase 2）；完成后删除本条目。
 
+## 已知问题（daemon 分支回归，待修）
+
+### 钉钉卡片「提交」误报『请求失败』toast（实际已成功）
+
+> 🐞 **现象**：daemon 架构下点击钉钉互动卡片的「提交」按钮，客户端弹出红色「请求失败」提示，但答案**其实已成功送达**（AI 侧正常拿到回应，`daemon.log` 对应 request 显示 `done`）。仅卡片端误报，功能不受影响。
+
+- **根因**：daemon 架构里钉钉长连接由 `dingtalk/router.rs` 的 Reader 独占，Reader 收到卡片回调后**对所有回调一律回空包 `{"response":{}}`**（当初按 spec §11 / Q-A① 的「即时空 ACK」）。但钉钉**互动卡片「提交」按钮**要求那条 3 秒内的同步回包必须是**非空的成功/更新回包**，否则客户端判定提交失败并弹红条。
+- **对比旧单进程行为**（`channels/dingding.rs` @ 35efac6）：提交回调的同步回包带了
+  `cardUpdateOptions{updateCardDataByKey,updatePrivateDataByKey} + cardData.submit_status(本地化文案) + userPrivateData.submitted="true"`（成功 + 即时置灰）；**只有选项切换等非提交回调才回空 `{}`**。Router 把这两类合并成「全回空」，于是提交按钮报失败。
+- **证据**：`daemon.log` 中对应 request 均 `accepted`→`done`；toast 为卡片端误报。
+- **推荐修复**（忠实还原旧行为、保持 Router 架构不变）：
+  1. Router 区分回调类型（用 `card::parse_card_submit(&data).is_some()` 判定）：
+     - **提交回调** → 同步回**成功包** `{"cardUpdateOptions":{"updatePrivateDataByKey":true}, "userPrivateData":{"cardParamMap":{"submitted":"true"}}}`（满足 3 秒 + 消除失败提示 + 提交者按钮即时置灰）；
+     - **非提交回调（选项切换等）** → 仍回空 `{}`（与旧版一致）。
+  2. 卡片**公有终态文案**（「已提交」/「已在 X 回答」）继续由会话经 OpenAPI `update_card_private` 写入（即 Q-A① 的异步置灰，仅这部分文案保留 ~0.1–0.3s 延迟）。
+  - 备选（方案②）：会话经 oneshot 把完整回包回传 Reader，由 Reader 在 3 秒内同步写回，连公有文案也即时——代价是 Reader↔会话耦合，不推荐。
+- **影响范围**：仅钉钉。飞书走不同的 ack 模型（卡片更新靠 OpenAPI `patch_card`，空 ack 通常不报错），Telegram 用 `answerCallbackQuery`，二者预计不受影响，但修复后建议一并回归。
+
 ## daemon 架构：待补充的人工实测
 
 > 已通过的真机实测（install 后经新 daemon→GUI Helper 链路）：① 单题弹窗作答（退出 0）；② **并发两请求弹窗不串台**（A→A、B→B）；③ 取消返回 `[Status]` 再问指引（退出 0）；④ `daemon status` 显示 running 且 `im conns: dingtalk, feishu, telegram`（三连接常热单实例）。下列为尚未逐项跑过、建议后续补做的人工测试：
