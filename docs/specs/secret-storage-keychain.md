@@ -1,6 +1,6 @@
 # 需求：渠道密钥安全存储（系统钥匙串 + 构建签名）
 
-> 状态：已实现——B1–B4 + C1 完成并装机实测通过；C2（CI 签名）已写入 `release.yml`，待首次 tag release 端到端验证。
+> 状态：已实现并验证——B1–B4 + C1 + C2 全部完成；C2 经 v0.4.0 release CI 端到端验证（两 macOS target 以 Developer ID 签名通过）。
 > 关联计划：`docs/plans/secret-storage-keychain.md`
 > 影响面：配置读写、设置页、daemon 配置热重载、构建/发布签名。不改对外任务契约与渠道协议。
 
@@ -105,7 +105,8 @@ macOS 密钥库按「指定要求（DR）」判断调用方可信。用稳定证
 - **显式、固定**：从 GitHub Secrets 导入 **Developer ID Application** 证书（`.p12`）到临时钥匙串，用确切 identity 签名，固定 identifier `com.naituw.humaninloop`。**不自动探测**。
 - 所需 Secrets：① Developer ID `.p12` 的 base64；② 该 `.p12` 导出密码；③ 临时钥匙串密码。
 - 暂不公证（见非目标）。
-- 说明：当前 `release.yml` 完全未签名；若发布密钥库特性而 CI 不签名，终端用户每次更新都会弹钥匙串框，故 **CI 签名是「发布本特性」的前置条件**。
+- 缘由：未签名发布会让终端用户每次更新都弹钥匙串框，故 **CI 签名是「发布本特性」的前置条件**。v0.4.0 release 已落地并验证（`codesign -dvv` 显示 Developer ID + 固定 identifier，`--verify --strict` 通过）。
+- 运行环境：macOS 构建必须用 `macos-26` runner（提供 macOS 26 SDK）——Swift 语音桥用到 `SpeechAnalyzer` 等 26 专有 API，`macos-14`(Sonoma SDK) 编译失败；部署目标仍 11.0 + `if #available` 弱链接，产物可在旧系统运行。`build.yml` 同步改 `macos-26`。
 
 ### 8.4 证书准备（供用户操作，非代码）
 - 发布证书复用账号级的 **Developer ID Application**（需付费 Apple Developer Program；CLI 与 .app 用同一种证书，可复用现有）。

@@ -93,7 +93,7 @@ src-tauri/Cargo.toml  [改] 新增 keyring 依赖（按平台 feature）
 
 验证：装两次（改动源码使 cdhash 变）后，daemon/设置读密钥库不再弹框（对照阶段实测）。
 
-### C2 发布 `.github/workflows/release.yml`（仅 macOS 两 target）（已写入，待首次 release 验证）
+### C2 发布 `.github/workflows/release.yml`（仅 macOS 两 target）（已完成，v0.4.0 发布实测通过）
 - 新增「导入证书 + 签名」步骤：从 Secrets（`.p12` base64 + 密码 + 临时钥匙串密码）建临时钥匙串、导入、解锁、设搜索域，再
   `codesign -i com.naituw.humaninloop --force --options runtime --sign "Developer ID Application: …" <bin>`（`--options runtime` 可留作未来公证用，不公证亦可保留）。
 - 显式 identity，不自动探测；构建后校验 `codesign -dvv` 含预期 TeamIdentifier。
@@ -101,7 +101,9 @@ src-tauri/Cargo.toml  [改] 新增 keyring 依赖（按平台 feature）
 
 前置（用户操作，非代码）：在仓库配置上述 Secrets；准备 Developer ID Application 证书并导出 `.p12`。
 
-验证：CI 产物 `codesign -dvv` 显示 Developer ID + 固定 identifier；本地下载运行无 Gatekeeper 阻断（npm 分发路径）。
+验证：v0.4.0 release CI 两 macOS target 均通过，签名步骤输出 `Identifier=com.naituw.humaninloop`、`Authority=Developer ID Application: Wu Tian (DMJXDB9H6Q)`、`TeamIdentifier=DMJXDB9H6Q`，`codesign --verify --strict` 通过且「satisfies its Designated Requirement」。
+
+> 注：macOS 构建 runner 必须为 `macos-26`（提供 macOS 26 SDK）——Swift 语音桥用到 `SpeechAnalyzer` 等 26 专有 API，`macos-14`(Sonoma SDK) 无法编译。`build.yml` 同步改 `macos-26`。
 
 ## 6. 实施顺序与验证节奏
 
