@@ -12,6 +12,8 @@ This guide explains how to create and configure a custom enterprise app on the F
 2. Record the credentials: **App ID** (`cli_...`) and **App Secret** (enter both in AskHuman's settings).
 3. Under "App capabilities → Add capability", enable the **Bot**.
 
+> Avatar: the repo ships two images you can use as the bot avatar (dark / light background), or for other uses: [dark](../../assets/avatars/bot-avatar-dark.jpg) · [light](../../assets/avatars/bot-avatar-light.jpg).
+
 ## 2. Import permissions (scopes)
 
 In "Permissions → Enable permissions", use "Bulk import" and paste the following JSON:

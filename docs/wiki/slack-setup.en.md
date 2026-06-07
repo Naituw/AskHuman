@@ -9,6 +9,8 @@ This guide explains how to create and configure a Slack App so AskHuman's "Slack
 1. Open [Slack API → Your Apps](https://api.slack.com/apps) → **Create New App** → **From scratch**.
 2. Enter an app name, pick the target workspace → **Create App**.
 
+> Avatar: set the app icon under **Settings → Basic Information → Display Information**. The repo ships two images you can use as the avatar (dark / light background), or for other uses: [dark](../../assets/avatars/bot-avatar-dark.jpg) · [light](../../assets/avatars/bot-avatar-light.jpg).
+
 ## 2. Enable Socket Mode and get the App-Level Token
 
 1. In the sidebar, **Settings → Socket Mode** → turn on **Enable Socket Mode**.

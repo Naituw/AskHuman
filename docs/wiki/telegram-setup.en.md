@@ -9,6 +9,8 @@ Send and receive questions through a Telegram bot — no public callback needed 
 1. In Telegram, chat with [@BotFather](https://t.me/BotFather), send `/newbot`, and follow the prompts to set a name and username.
 2. Note the returned **Bot Token** (looks like `123456:ABC-DEF...`).
 
+> Avatar: send `/setuserpic` to BotFather to set the bot's picture. The repo ships two images you can use as the avatar (dark / light background), or for other uses: [dark](../../assets/avatars/bot-avatar-dark.jpg) · [light](../../assets/avatars/bot-avatar-light.jpg).
+
 ## 2. Get your Chat ID
 
 1. First **send any message to your bot** in Telegram (otherwise the bot can't initiate contact with you).

@@ -9,6 +9,8 @@
 1. 在 Telegram 里与 [@BotFather](https://t.me/BotFather) 对话，发送 `/newbot`，按提示设置名称与用户名。
 2. 记下返回的 **Bot Token**（形如 `123456:ABC-DEF...`）。
 
+> 头像：可向 BotFather 发送 `/setuserpic` 设置 Bot 头像。仓库内置两张可作头像的图片（深色 / 浅色背景），也可用于其它场景：[深色](../../assets/avatars/bot-avatar-dark.jpg) · [浅色](../../assets/avatars/bot-avatar-light.jpg)。
+
 ## 二、获取 Chat ID
 
 1. 先在 Telegram 中**主动给你的 Bot 发一条任意消息**（否则 Bot 无法主动联系你）。

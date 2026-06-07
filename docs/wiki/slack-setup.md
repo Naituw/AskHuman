@@ -9,6 +9,8 @@
 1. 打开 [Slack API → Your Apps](https://api.slack.com/apps) → **Create New App** → **From scratch**。
 2. 填写 App 名称并选择目标 Workspace → **Create App**。
 
+> 头像：可在 **Settings → Basic Information → Display Information** 设置 App 图标。仓库内置两张可作头像的图片（深色 / 浅色背景），也可用于其它场景：[深色](../../assets/avatars/bot-avatar-dark.jpg) · [浅色](../../assets/avatars/bot-avatar-light.jpg)。
+
 ## 二、开启 Socket Mode 并获取 App-Level Token
 
 1. 左侧 **Settings → Socket Mode** → 打开 **Enable Socket Mode** 开关。

@@ -12,6 +12,8 @@
 2. 记录应用凭证：**App ID**（`cli_...`）与 **App Secret**（填入 AskHuman 设置页）。
 3. 「应用能力 → 添加应用能力」中启用 **机器人（Bot）**。
 
+> 头像：仓库内置两张可作机器人头像的图片（深色 / 浅色背景），也可用于其它场景：[深色](../../assets/avatars/bot-avatar-dark.jpg) · [浅色](../../assets/avatars/bot-avatar-light.jpg)。
+
 ## 二、导入权限（Scopes）
 
 在「权限管理 → 开通权限」中，可使用「批量导入」并粘贴以下 JSON：

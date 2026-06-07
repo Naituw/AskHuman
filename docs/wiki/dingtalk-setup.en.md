@@ -15,6 +15,8 @@ Send and receive questions through DingTalk using an "internal enterprise app + 
 5. Set the bot's message-receiving mode to **Stream mode** (pushed over a local long connection, no public callback).
 6. Create and publish a version, and make sure the bot is available to your target user.
 
+> Avatar: the repo ships two images you can use as the bot avatar (dark / light background), or for other uses: [dark](../../assets/avatars/bot-avatar-dark.jpg) · [light](../../assets/avatars/bot-avatar-light.jpg).
+
 ## 2. (Optional) Custom card template
 
 AskHuman ships with a **built-in advanced interactive-card template** that works out of the box — no setup required. To customize the card, build and publish an **advanced** interactive-card template (same app) on the DingTalk card platform, then enter its template ID in the settings "Card template ID" field. Leave it blank to use the built-in default.
