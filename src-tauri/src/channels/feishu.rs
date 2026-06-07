@@ -144,7 +144,7 @@ impl MessagingChannel for FeishuSession {
     async fn send_message_prompt(
         &mut self,
         message: &MessagePrompt,
-        _is_markdown: bool,
+        is_markdown: bool,
         source: &str,
         lang: Lang,
     ) {
@@ -152,12 +152,20 @@ impl MessagingChannel for FeishuSession {
             return;
         };
         let header = i18n::tr(lang, "channel.messageFrom").replace("{source}", source);
-        let body = if message.text.trim().is_empty() {
-            header.clone()
+        // 飞书无 markdown 文本消息：markdown 模式下用卡片（markdown 组件）渲染正文；
+        // 非 markdown 或正文为空则发纯文本。
+        let result = if is_markdown && !message.text.trim().is_empty() {
+            let card = card::build_message_card(&header, &message.text);
+            client.send_card(&card).await.map(|_| ())
         } else {
-            format!("{}\n\n{}", header, message.text)
+            let body = if message.text.trim().is_empty() {
+                header.clone()
+            } else {
+                format!("{}\n\n{}", header, message.text)
+            };
+            client.send_text(&body).await.map(|_| ())
         };
-        if let Err(e) = client.send_text(&body).await {
+        if let Err(e) = result {
             eprintln!(
                 "{}{}",
                 i18n::warn_prefix(lang),

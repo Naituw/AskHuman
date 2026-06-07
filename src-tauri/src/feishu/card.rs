@@ -67,6 +67,17 @@ pub struct Finalized<'a> {
     pub button_label: &'a str,
 }
 
+/// 提示消息（message prompt）的 markdown 卡片：标题（来源头部）+ markdown 正文。
+/// 飞书 IM 没有像钉钉 sampleMarkdown 那样的「markdown 文本消息」类型，故以卡片渲染
+/// markdown（粗体/标题/列表/代码/部分表格）。正文为空时仅留标题。
+pub fn build_message_card(title: &str, markdown_body: &str) -> Value {
+    let mut elements: Vec<Value> = Vec::new();
+    if !markdown_body.trim().is_empty() {
+        elements.push(body_text(markdown_body, true));
+    }
+    assemble_card(title, elements)
+}
+
 /// 卡片回调的同步「更新卡片」回包体：`{card:{type:"raw",data:<新卡片>}}`。
 /// 点提交时由会话经 Router 同步回此包 → 按钮 Loading 直接变终态（否则空 ACK 会令按钮先弹回 Submit，
 /// 再由 OpenAPI `patch_card` 异步置灰，出现可见闪烁）。
