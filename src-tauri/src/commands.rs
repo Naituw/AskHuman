@@ -295,7 +295,9 @@ pub fn update_theme(app: AppHandle, theme: String) -> Result<(), String> {
     Ok(())
 }
 
-fn apply_theme_to_windows(app: &AppHandle, theme: &str) {
+/// 实时把主题应用到已打开窗口的**原生外观**（`set_theme`）。玻璃/毛玻璃材质跟随窗口
+/// NSAppearance，故仅切前端 CSS 还不够；配置实时变更（A12）也需调用此函数同步原生层。
+pub(crate) fn apply_theme_to_windows(app: &AppHandle, theme: &str) {
     let t = match theme {
         "light" => Some(tauri::Theme::Light),
         "dark" => Some(tauri::Theme::Dark),

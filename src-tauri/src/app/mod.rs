@@ -606,6 +606,16 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                                         // 复用既有 "settings-updated" 事件（前端已监听 general 配置）。
                                         Ok(Some(crate::ipc::ServerMsg::ConfigChanged { general })) => {
                                             use tauri::Emitter;
+                                            // 先同步原生窗口外观：玻璃/毛玻璃材质随 NSAppearance 切换，
+                                            // 仅靠前端 CSS 会出现「网页变浅、窗体仍深」（见 A12 实测）。
+                                            if let Some(theme) =
+                                                general.get("theme").and_then(|t| t.as_str())
+                                            {
+                                                crate::commands::apply_theme_to_windows(
+                                                    &app_handle,
+                                                    theme,
+                                                );
+                                            }
                                             let _ = app_handle.emit("settings-updated", general);
                                         }
                                         Ok(Some(_)) => {}
