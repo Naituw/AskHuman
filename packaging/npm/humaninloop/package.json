@@ -1,6 +1,6 @@
 {
   "name": "askhuman",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Human-in-the-loop interaction tool. The `AskHuman` CLI pops up a window (or uses Telegram) to collect human input and prints the result to stdout — usable standalone or as a dependency.",
   "license": "MIT",
   "author": "Naituw",
@@ -33,9 +33,9 @@
     "prompt"
   ],
   "optionalDependencies": {
-    "@humaninloop/darwin-arm64": "0.4.1",
-    "@humaninloop/darwin-x64": "0.4.1",
-    "@humaninloop/win32-x64": "0.4.1",
-    "@humaninloop/linux-x64": "0.4.1"
+    "@humaninloop/darwin-arm64": "0.4.2",
+    "@humaninloop/darwin-x64": "0.4.2",
+    "@humaninloop/win32-x64": "0.4.2",
+    "@humaninloop/linux-x64": "0.4.2"
   }
 }
