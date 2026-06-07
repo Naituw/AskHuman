@@ -12,6 +12,11 @@ use std::time::Duration;
 /// Slack Web API 根地址（固定）。
 const API_BASE: &str = "https://slack.com/api";
 
+/// 等待文件分享进时间线的最长时长（实测约数秒，留足余量）。
+const FILE_SHARE_TIMEOUT: Duration = Duration::from_secs(15);
+/// 轮询 `files.info` 的间隔。
+const FILE_SHARE_POLL_INTERVAL: Duration = Duration::from_millis(400);
+
 #[derive(Clone)]
 pub struct SlackClient {
     bot_token: String,
@@ -201,12 +206,35 @@ impl SlackClient {
         self.call(
             "files.completeUploadExternal",
             json!({
-                "files": [ { "id": file_id, "title": name } ],
+                "files": [ { "id": &file_id, "title": name } ],
                 "channel_id": channel,
             }),
         )
-        .await
-        .map(|_| ())
+        .await?;
+
+        // 4. 等待文件真正分享进时间线再返回：completeUploadExternal 返回 ok 后，文件分享进频道是
+        //    **异步**的（图片还要生成缩略图，实测约数秒），分享消息的 ts 按真正分享时刻计。若不等待，
+        //    紧随其后发送的提问卡片会排在文件之前，破坏「message → 附件 → question」顺序。
+        //    轮询 files.info 直到 shares 出现目标频道；超时则放弃等待（best-effort，不卡死）。
+        self.wait_until_shared(&file_id, channel).await;
+        Ok(())
+    }
+
+    /// 轮询 `files.info` 直到文件 `shares` 中出现目标频道（即已进入时间线）。
+    /// 超时（`FILE_SHARE_TIMEOUT`）则返回，不视为错误（best-effort 顺序保障）。
+    async fn wait_until_shared(&self, file_id: &str, channel: &str) {
+        let deadline = std::time::Instant::now() + FILE_SHARE_TIMEOUT;
+        loop {
+            if let Ok(v) = self.call("files.info", json!({ "file": file_id })).await {
+                if file_shared_in(&v, channel) {
+                    return;
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return;
+            }
+            tokio::time::sleep(FILE_SHARE_POLL_INTERVAL).await;
+        }
     }
 
     // ===== 文件下载（人→AI）=====
@@ -245,5 +273,39 @@ impl SlackClient {
         std::fs::write(&dest, &bytes)
             .map_err(|e| SlackError::Network(format!("failed to write temp file: {}", e)))?;
         Ok(dest.to_string_lossy().to_string())
+    }
+}
+
+/// 判断 `files.info` 响应里该文件是否已分享进指定频道（`shares.public`/`shares.private` 任一含 `channel`）。
+fn file_shared_in(info: &Value, channel: &str) -> bool {
+    let Some(shares) = info.get("file").and_then(|f| f.get("shares")) else {
+        return false;
+    };
+    ["public", "private"]
+        .iter()
+        .filter_map(|k| shares.get(k))
+        .any(|scope| scope.get(channel).is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_detected_in_private_and_public() {
+        let private = json!({ "file": { "shares": { "private": { "D1": [ { "ts": "1.2" } ] } } } });
+        assert!(file_shared_in(&private, "D1"));
+        let public = json!({ "file": { "shares": { "public": { "C9": [ { "ts": "1.2" } ] } } } });
+        assert!(file_shared_in(&public, "C9"));
+    }
+
+    #[test]
+    fn not_shared_when_empty_or_other_channel() {
+        let empty = json!({ "file": { "shares": {} } });
+        assert!(!file_shared_in(&empty, "D1"));
+        let other = json!({ "file": { "shares": { "private": { "D2": [] } } } });
+        assert!(!file_shared_in(&other, "D1"));
+        let missing = json!({ "file": {} });
+        assert!(!file_shared_in(&missing, "D1"));
     }
 }
