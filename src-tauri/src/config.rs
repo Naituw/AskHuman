@@ -2,8 +2,31 @@
 //! 读取时若新位置缺失则回退旧 `~/.humaninloop/config.json`（向后兼容）。
 
 use crate::paths;
+use crate::secrets;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+/// Maps each channel secret to its keychain account and its `&mut String` field in `AppConfig`.
+/// Drives resolve/migrate/persist uniformly so the policy is written once for all three secrets.
+struct SecretSpec {
+    account: &'static str,
+    field: fn(&mut AppConfig) -> &mut String,
+}
+
+const SECRET_SPECS: [SecretSpec; 3] = [
+    SecretSpec {
+        account: secrets::ACCOUNT_DINGTALK_SECRET,
+        field: |c| &mut c.channels.dingding.client_secret,
+    },
+    SecretSpec {
+        account: secrets::ACCOUNT_FEISHU_SECRET,
+        field: |c| &mut c.channels.feishu.app_secret,
+    },
+    SecretSpec {
+        account: secrets::ACCOUNT_TELEGRAM_TOKEN,
+        field: |c| &mut c.channels.telegram.bot_token,
+    },
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -228,6 +251,11 @@ impl AppConfig {
 
     /// 读取默认位置 `~/.askhuman/config.json`；新位置缺失时回退旧
     /// `~/.humaninloop/config.json`（向后兼容老用户）。
+    ///
+    /// Secrets are resolved from the OS keychain (see `secrets`): empty config fields are filled
+    /// from the keychain; leftover plaintext fields are migrated into the keychain and blanked on
+    /// disk. After this, the in-memory secret fields always hold the effective value, so all
+    /// downstream readers (channel connect, hot-reload diff) keep working unchanged.
     pub fn load() -> Self {
         let primary = paths::config_file();
         if primary.exists() {
@@ -237,27 +265,79 @@ impl AppConfig {
             if let Some(dir) = primary.parent() {
                 harden_dir(dir);
             }
-            return Self::load_from(&primary);
+            let mut cfg = Self::load_from(&primary);
+            cfg.resolve_secrets_and_migrate(true);
+            return cfg;
         }
         let legacy = paths::legacy_config_file();
         if legacy.exists() {
             harden_file(&legacy);
-            return Self::load_from(&legacy);
+            let mut cfg = Self::load_from(&legacy);
+            // Don't persist (would migrate the legacy file to the primary location); just resolve.
+            cfg.resolve_secrets_and_migrate(false);
+            return cfg;
         }
-        Self::default()
+        let mut cfg = Self::default();
+        cfg.resolve_secrets_and_migrate(false);
+        cfg
     }
 
-    /// 写入默认位置。
+    /// 写入默认位置。Secrets are stripped into the keychain and blanked on disk (plaintext
+    /// fallback only when the keychain is unavailable).
     pub fn save(&self) -> std::io::Result<()> {
-        self.save_to(&paths::config_file())
+        let disk = self.persist_secrets_to_keychain();
+        disk.save_to(&paths::config_file())
+    }
+
+    /// Single pass over the secrets: an empty field is resolved from the keychain; a non-empty
+    /// field (leftover plaintext) is migrated into the keychain. The in-memory field always ends
+    /// up holding the effective value. When `persist` and at least one plaintext field was
+    /// migrated, re-save so the plaintext is blanked on disk.
+    fn resolve_secrets_and_migrate(&mut self, persist: bool) {
+        let mut migrated = false;
+        for spec in &SECRET_SPECS {
+            let field = (spec.field)(self);
+            if field.is_empty() {
+                if let Ok(Some(v)) = secrets::get(spec.account) {
+                    *field = v;
+                }
+            } else {
+                let value = field.clone();
+                if secrets::set(spec.account, &value).is_ok() {
+                    migrated = true;
+                }
+            }
+        }
+        if persist && migrated {
+            let _ = self.save();
+        }
+    }
+
+    /// Return a disk copy in which each secret successfully stored in the keychain is blanked;
+    /// secrets that can't be stored (keychain unavailable) stay as plaintext (fallback). The
+    /// in-memory `self` is left untouched (still holds the resolved values).
+    fn persist_secrets_to_keychain(&self) -> AppConfig {
+        let mut disk = self.clone();
+        for spec in &SECRET_SPECS {
+            let field = (spec.field)(&mut disk);
+            if field.is_empty() {
+                // Empty means "unchanged / keychain-mode / cleared" — leave the keychain as-is
+                // (an explicit clear is handled by the settings command via secrets::delete).
+                continue;
+            }
+            let value = field.clone();
+            if secrets::set(spec.account, &value).is_ok() {
+                field.clear();
+            }
+        }
+        disk
     }
 }
 
 /// Restrict a file to owner read/write (0600) on Unix; no-op elsewhere. Best-effort (ignores errors).
 #[cfg(unix)]
 fn harden_file(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    harden_to(path, 0o600);
 }
 #[cfg(not(unix))]
 fn harden_file(_path: &Path) {}
@@ -265,11 +345,23 @@ fn harden_file(_path: &Path) {}
 /// Restrict a directory to owner-only (0700) on Unix; no-op elsewhere. Best-effort (ignores errors).
 #[cfg(unix)]
 fn harden_dir(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+    harden_to(path, 0o700);
 }
 #[cfg(not(unix))]
 fn harden_dir(_path: &Path) {}
+
+/// chmod `path` to `mode` only when it differs. Re-chmodding to the same mode still bumps the
+/// inode's ctime and emits a filesystem-change event; since `load()` hardens on every read, an
+/// unconditional chmod would feed the daemon's config watcher a reload→harden→reload storm.
+#[cfg(unix)]
+fn harden_to(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.permissions().mode() & 0o777 != mode {
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

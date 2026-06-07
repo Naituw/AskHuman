@@ -33,6 +33,7 @@ mod speech;
 mod models;
 mod paths;
 mod prompts;
+mod secrets;
 mod telegram;
 
 fn main() {
