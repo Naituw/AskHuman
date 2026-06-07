@@ -16,10 +16,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # macos-26 提供 Xcode 26 / macOS 26 SDK（Swift 语音桥用到 macOS 26 专有 API，需 26 SDK 编译）。
+          - os: macos-26
             target: aarch64-apple-darwin
-          # x64 也在 arm64 runner 上交叉编译，避开稀缺/排队久的 Intel(macos-13) runner
-          - os: macos-14
+          # x64 也在 arm64 runner 上交叉编译，避开稀缺/排队久的 Intel runner
+          - os: macos-26
             target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
