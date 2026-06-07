@@ -54,6 +54,9 @@ sys-locale = "0.3.2"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 # 打包 docx（OOXML zip）。仅启用 flate2+zlib-rs 的 deflate 后端（快且小，避免 zopfli）。
 zip = { version = "4.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# 钉钉图片仅支持 jpg/png/gif/bmp(≤1MB)：把 webp 等不支持格式转码、并对超限图做缩放保护。
+# 仅启 png/jpeg/webp 解编码以控体积（heic/tiff 等无法解码时回退原图，best-effort）。
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [dev-dependencies]
 tempfile = "3"

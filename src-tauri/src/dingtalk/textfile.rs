@@ -20,7 +20,7 @@ const TEXT_EXTS: &[&str] = &[
     "js", "jsx", "ts", "tsx", "mjs", "cjs", "vue", "svelte", "py", "rb", "go", "rs", "java", "kt",
     "kts", "scala", "c", "h", "cpp", "cc", "cxx", "hpp", "hh", "cs", "m", "mm", "swift", "php",
     "pl", "lua", "dart", "r", "sql", "graphql", "gql", "proto", "sh", "bash", "zsh", "fish", "ps1",
-    "bat", "gradle", "dockerfile", "makefile", "mk", "cmake",
+    "bat", "gradle", "dockerfile", "makefile", "mk", "cmake", "diff", "patch",
 ];
 
 /// 路由决策结果，由调用方执行实际发送。
@@ -78,6 +78,7 @@ fn lang_of(ext: &str) -> &str {
         "proto" => "protobuf",
         "mk" | "makefile" => "makefile",
         "ps1" => "powershell",
+        "patch" => "diff",
         other => other,
     }
 }

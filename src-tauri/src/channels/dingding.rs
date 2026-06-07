@@ -646,13 +646,43 @@ async fn send_attachment(
     is_image: bool,
 ) -> Result<(), crate::dingtalk::DingTalkError> {
     if is_image {
-        let media_id = client.upload_media(path, "image").await?;
-        client.send_oto_image(&media_id).await
+        // 钉钉图片仅支持 jpg/png/gif/bmp(≤1MB)：webp 等转码、超限图缩放后再上传。
+        use crate::dingtalk::image_convert::{self, Prepared};
+        match image_convert::prepare(path, name) {
+            Prepared::Original => {
+                let media_id = client.upload_media(path, "image").await?;
+                client.send_oto_image(&media_id).await
+            }
+            Prepared::Converted { bytes, file_name } => {
+                send_image_bytes(client, &file_name, &bytes).await
+            }
+        }
     } else {
         let media_id = client.upload_media(path, "file").await?;
         let ext = ext_of(name);
         client.send_oto_file(&media_id, name, ext).await
     }
+}
+
+/// 把转码 / 缩放后的图片字节写临时文件后上传并发送（临时文件名保留正确扩展名供钉钉识别）。
+async fn send_image_bytes(
+    client: &DingTalkClient,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<(), crate::dingtalk::DingTalkError> {
+    use crate::dingtalk::DingTalkError;
+    let tmp = std::env::temp_dir().join(format!("ha-{}-{}", uuid::Uuid::new_v4(), file_name));
+    std::fs::write(&tmp, bytes)
+        .map_err(|e| DingTalkError::Network(format!("write temp image failed: {}", e)))?;
+    let result = async {
+        let media_id = client
+            .upload_media(tmp.to_str().unwrap_or_default(), "image")
+            .await?;
+        client.send_oto_image(&media_id).await
+    }
+    .await;
+    let _ = std::fs::remove_file(&tmp);
+    result
 }
 
 /// 把 docx 字节写临时文件后上传并以 sampleFile(fileType=docx) 发送。

@@ -11,6 +11,7 @@
 pub mod card;
 pub mod client;
 pub mod docx;
+pub mod image_convert;
 pub mod router;
 pub mod stream;
 pub mod textfile;
