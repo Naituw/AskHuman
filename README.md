@@ -11,6 +11,7 @@
 - 单一可执行文件 `AskHuman`，既是 CLI 又能按需弹出 GUI 窗口
 - 基于 **Tauri 2（Rust + Vue 3）**，支持 **macOS / Windows / Linux**
 - 多通信渠道：本地弹窗 + Telegram + 钉钉 + 飞书，可独立开关、多开并行「抢答」
+- 回复历史：按项目回看最近的消息与回答（含回复渠道），跨所有渠道统一记录
 - 内置设置界面、Cursor Hook、参考提示词；macOS 原生毛玻璃外观
 
 ## 安装
@@ -41,6 +42,7 @@ AskHuman "看看这个？" -f ~/Documents/spec.md -f ./diagram.png
 # 其它
 AskHuman "纯文本" --no-markdown   # 关闭 Markdown 渲染
 AskHuman --settings              # 打开设置界面
+AskHuman --history               # 打开回复历史（默认当前项目；加 --all 看全部项目）
 AskHuman --help                  # 帮助
 AskHuman --version               # 版本
 ```

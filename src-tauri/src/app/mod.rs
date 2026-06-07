@@ -28,12 +28,17 @@ pub struct AppState {
     /// 来源名（弹窗标题「Question from {source}」）。Daemon 模式由调用方上送（A11）；
     /// 设置 / 非 Daemon 回退路径取本进程环境。
     pub source: String,
+    /// 当前项目 key（回复历史归类 / 历史窗口默认过滤）。Daemon 模式由调用方上送；
+    /// 单进程 / 独立窗口在本进程计算（向上找 .git 根、回退 cwd）。
+    pub project: String,
 }
 
 #[derive(Clone, Copy)]
 enum View {
     Popup,
     Settings,
+    /// 独立历史窗口；`all` 为 true 时默认展示全部项目。
+    History { all: bool },
 }
 
 /// GUI Helper 模式下，弹窗 ↔ Daemon 的 IPC 接线（由 `run_gui_helper` 建好后传入 `launch`）。
@@ -180,6 +185,7 @@ fn run_gui_ask(request: AskRequest, config: AppConfig, messaging_active: bool) -
         request: request.clone(),
         config: config.clone(),
         source: crate::models::source_name(),
+        project: crate::project::detect(),
     };
     match launch(state, View::Popup, None) {
         Ok(()) => std::process::exit(0), // 成功路径已在 launch 内退出，此处不可达
@@ -229,7 +235,13 @@ fn run_headless(request: AskRequest, config: AppConfig) -> ! {
         + is_dingding_active(&config) as usize
         + is_feishu_active(&config) as usize;
     let preempt = Arc::new(crate::channels::Preemption::new());
-    let coordinator = Coordinator::new_headless(request.clone(), preempt.clone(), messaging_count);
+    let coordinator = Coordinator::new_headless(
+        request.clone(),
+        preempt.clone(),
+        messaging_count,
+        crate::project::detect(),
+        crate::models::source_name(),
+    );
 
     rt.block_on(async move {
         let mut handles = Vec::new();
@@ -361,12 +373,34 @@ pub fn run_settings(config: AppConfig) -> ! {
         request: AskRequest::new(crate::models::MessagePrompt::default(), Vec::new(), false),
         config,
         source: crate::models::source_name(),
+        project: crate::project::detect(),
     };
     if let Err(e) = launch(state, View::Settings, None) {
         stderr_redirect::eprintln_real(&format!(
             "{}{}",
             i18n::err_prefix(lang),
             i18n::tr(lang, "app.settingsLaunchFailed").replace("{e}", &e.to_string())
+        ));
+        std::process::exit(1);
+    }
+    std::process::exit(0);
+}
+
+/// 历史模式：创建独立历史窗口（独立 GUI 进程，不经 Daemon；与 `--settings` 同机制）。
+/// `all` 为 true 时默认展示全部项目，否则默认 `project`（向上找 .git 根、回退 cwd）。
+pub fn run_history(project: String, all: bool, config: AppConfig) -> ! {
+    let lang = Lang::resolve(&config.general.language);
+    let state = AppState {
+        request: AskRequest::new(crate::models::MessagePrompt::default(), Vec::new(), false),
+        config,
+        source: crate::models::source_name(),
+        project,
+    };
+    if let Err(e) = launch(state, View::History { all }, None) {
+        stderr_redirect::eprintln_real(&format!(
+            "{}{}",
+            i18n::err_prefix(lang),
+            i18n::tr(lang, "app.historyLaunchFailed").replace("{e}", &e.to_string())
         ));
         std::process::exit(1);
     }
@@ -426,6 +460,7 @@ pub fn run_gui_helper(_endpoint: String, token: String) -> ! {
         request: show.request,
         config: AppConfig::load(),
         source: show.source,
+        project: show.project,
     };
     let popup_ipc = PopupIpc {
         gui_tx,
@@ -499,6 +534,13 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::commands::feishu_test,
             crate::commands::feishu_detect_prepare,
             crate::commands::feishu_detect_wait,
+            crate::commands::open_history,
+            crate::commands::history_init,
+            crate::commands::get_history,
+            crate::commands::get_history_projects,
+            crate::commands::history_count,
+            crate::commands::trim_history,
+            crate::commands::clear_history,
         ])
         .on_window_event(|window, event| {
             match window.label() {
@@ -520,7 +562,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                 // 设置窗口关闭时清掉 Liquid Glass 注册表条目：插件按 label 缓存玻璃视图，
                 // 若不清理，下次同 label 重开会走 update 分支去操作已销毁的旧视图，导致背景透明无玻璃。
                 #[cfg(target_os = "macos")]
-                "settings" => {
+                "settings" | "history" => {
                     if matches!(event, WindowEvent::CloseRequested { .. }) {
                         clear_window_glass(window);
                     }
@@ -630,7 +672,14 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                         // —— 单进程模式（非 unix 回退）：协调器 + 弹窗 Channel + 并行消息渠道 ——
                         None => {
                             let request = app.state::<AppState>().request.clone();
-                            let coordinator = Coordinator::new(app.handle().clone(), request.clone());
+                            let project = app.state::<AppState>().project.clone();
+                            let source = app.state::<AppState>().source.clone();
+                            let coordinator = Coordinator::new(
+                                app.handle().clone(),
+                                request.clone(),
+                                project,
+                                source,
+                            );
                             if show_popup {
                                 coordinator
                                     .register(Arc::new(PopupChannel::new(app.handle().clone())));
@@ -647,6 +696,10 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                 View::Settings => {
                     let config = AppConfig::load();
                     create_settings_window(app, &config)?;
+                }
+                View::History { all } => {
+                    let config = AppConfig::load();
+                    create_history_window(app, &config, all)?;
                 }
             }
             Ok(())
@@ -698,13 +751,23 @@ pub struct RenderOutcome {
 }
 
 /// 渲染终态结果（图片落盘到 `temp/askhuman/<request_id>/`）。文案按传入 `lang` 本地化。
-pub(crate) fn render_result(request_id: &str, result: &ChannelResult, lang: Lang) -> RenderOutcome {
+///
+/// 第二个返回值为**各题已落盘图片路径**（取消路径为空），供回复历史按路径记录复用；调用方
+/// 通常只用第一个 `RenderOutcome`。
+pub(crate) fn render_result(
+    request_id: &str,
+    result: &ChannelResult,
+    lang: Lang,
+) -> (RenderOutcome, Vec<Vec<String>>) {
     match result.action {
-        ChannelAction::Cancel => RenderOutcome {
-            stdout: output::cancel_output(lang),
-            stderr: None,
-            exit_code: 0,
-        },
+        ChannelAction::Cancel => (
+            RenderOutcome {
+                stdout: output::cancel_output(lang),
+                stderr: None,
+                exit_code: 0,
+            },
+            Vec::new(),
+        ),
         ChannelAction::Send => {
             // 逐题落盘图片（按题分子目录避免文件名冲突），再聚合输出。
             let mut image_paths_per_q: Vec<Vec<String>> = Vec::with_capacity(result.answers.len());
@@ -712,11 +775,14 @@ pub(crate) fn render_result(request_id: &str, result: &ChannelResult, lang: Lang
                 match image_writer::save(&answer.images, request_id, i, lang) {
                     Ok(paths) => image_paths_per_q.push(paths),
                     Err(e) => {
-                        return RenderOutcome {
-                            stdout: String::new(),
-                            stderr: Some(format!("{}{}", i18n::err_prefix(lang), e)),
-                            exit_code: 1,
-                        };
+                        return (
+                            RenderOutcome {
+                                stdout: String::new(),
+                                stderr: Some(format!("{}{}", i18n::err_prefix(lang), e)),
+                                exit_code: 1,
+                            },
+                            Vec::new(),
+                        );
                     }
                 }
             }
@@ -733,18 +799,21 @@ pub(crate) fn render_result(request_id: &str, result: &ChannelResult, lang: Lang
                 })
                 .collect();
 
-            RenderOutcome {
-                stdout: output::aggregate_output(lang, &rendered),
-                stderr: None,
-                exit_code: 0,
-            }
+            (
+                RenderOutcome {
+                    stdout: output::aggregate_output(lang, &rendered),
+                    stderr: None,
+                    exit_code: 0,
+                },
+                image_paths_per_q,
+            )
         }
     }
 }
 
-/// 把结果输出到 stdout（或 stderr），返回退出码。供单进程协调器调用。
+/// 把结果输出到 stdout（或 stderr），返回退出码。（保留供复用；当前协调器内联渲染。）
 pub(crate) fn emit_result(request_id: &str, result: &ChannelResult) -> i32 {
-    let outcome = render_result(request_id, result, Lang::current());
+    let (outcome, _) = render_result(request_id, result, Lang::current());
     if let Some(err) = &outcome.stderr {
         stderr_redirect::eprintln_real(err);
     } else {
@@ -913,6 +982,101 @@ where
         apply_liquid_glass(&win);
     }
     Ok(())
+}
+
+/// 创建（或聚焦已存在的）独立历史窗口。供 `--history` 启动与弹窗导航栏共用。
+/// `all` 为 true 时窗口默认展示全部项目（经 URL 参数传递）。
+pub(crate) fn create_history_window<R, M>(
+    manager: &M,
+    config: &AppConfig,
+    all: bool,
+) -> tauri::Result<()>
+where
+    R: tauri::Runtime,
+    M: Manager<R>,
+{
+    if let Some(w) = manager.get_webview_window("history") {
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let theme = window_theme(config);
+    let lang = Lang::resolve(&config.general.language);
+    let window_bg = background_for(resolved_theme(config));
+    // 弹窗置顶时历史窗口同级，确保显示在置顶弹窗之上（与设置窗口一致）。
+    let pin_above_popup =
+        manager.get_webview_window("popup").is_some() && config.general.always_on_top;
+    let url = if all {
+        "index.html?view=history&all=1"
+    } else {
+        "index.html?view=history"
+    };
+    let builder = WebviewWindowBuilder::new(manager, "history", WebviewUrl::App(url.into()))
+        .title(i18n::tr(lang, "title.history"))
+        .inner_size(820.0, 600.0)
+        .min_inner_size(600.0, 440.0)
+        .center()
+        .always_on_top(pin_above_popup)
+        .theme(theme);
+    let window_effect = config.general.window_effect;
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+    let win = apply_surface(builder, window_bg, window_effect).build()?;
+    #[cfg(target_os = "macos")]
+    if matches!(window_effect, WindowEffect::Glass) {
+        apply_liquid_glass(&win);
+    }
+    // 监听 history.jsonl 变更 → 通知历史窗口实时重载（写入方在别的进程，靠文件监听跨进程感知）。
+    watch_history_file(win);
+    Ok(())
+}
+
+/// 监听历史文件变更并向历史窗口发 `history-updated`（前端据此重载，保留当前选中条目）。
+/// 写临时文件 + rename 会换 inode，故监听**配置目录**再按文件名过滤最稳（与 config_watch 同思路）。
+fn watch_history_file<R: tauri::Runtime>(window: tauri::WebviewWindow<R>) {
+    use tauri::Emitter;
+    std::thread::spawn(move || {
+        use notify::{RecursiveMode, Watcher};
+        use std::sync::mpsc::{channel, RecvTimeoutError};
+        use std::time::Duration;
+        let dir = crate::paths::config_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let (tx, rx) = channel::<()>();
+        let mut watcher = match notify::recommended_watcher(
+            move |res: notify::Result<notify::Event>| {
+                if let Ok(ev) = res {
+                    let hit = ev
+                        .paths
+                        .iter()
+                        .any(|p| p.file_name().map(|n| n == "history.jsonl").unwrap_or(false));
+                    if hit {
+                        let _ = tx.send(());
+                    }
+                }
+            },
+        ) {
+            Ok(w) => w,
+            Err(_) => return,
+        };
+        if watcher.watch(&dir, RecursiveMode::NonRecursive).is_err() {
+            return;
+        }
+        // 去抖：首个事件后等 300ms 静默再发一次（合并 append / rename 产生的多个事件）。
+        loop {
+            if rx.recv().is_err() {
+                break;
+            }
+            loop {
+                match rx.recv_timeout(Duration::from_millis(300)) {
+                    Ok(()) => continue,
+                    Err(RecvTimeoutError::Timeout) => break,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+            }
+            // 窗口已关闭 → emit 失败 → 退出线程，自动释放 watcher。
+            if window.emit("history-updated", ()).is_err() {
+                break;
+            }
+        }
+    });
 }
 
 /// 原生窗口/webview 底色（与前端 tokens.css `--bg` 对齐）。

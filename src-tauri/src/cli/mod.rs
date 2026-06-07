@@ -34,6 +34,15 @@ pub fn dispatch() {
         "--settings" => {
             crate::app::run_settings(crate::config::AppConfig::load());
         }
+        // 独立历史窗口：默认当前项目（向上找 .git 根、回退 cwd）；`--all` 默认展示全部项目。
+        "--history" => {
+            let all = argv[2..].iter().any(|a| a == "--all");
+            crate::app::run_history(
+                crate::project::detect(),
+                all,
+                crate::config::AppConfig::load(),
+            );
+        }
         // 隐藏的 GUI Helper 角色：由 Daemon spawn（`--popup --endpoint <sock> --token <tok>`）。
         "--popup" => {
             #[cfg(unix)]
@@ -114,6 +123,7 @@ pub fn dispatch() {
                         is_markdown: parsed.is_markdown,
                         source: crate::models::source_name(),
                         lang: lang.code().to_string(),
+                        project: crate::project::detect(),
                     };
                     crate::client::run_ask(task);
                 }

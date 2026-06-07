@@ -11,6 +11,7 @@ A cross-platform human-in-the-loop tool. When an AI agent is about to end a conv
 - A single executable `AskHuman` that is both a CLI and an on-demand GUI popup
 - Built on **Tauri 2 (Rust + Vue 3)**, supports **macOS / Windows / Linux**
 - Multiple channels: local popup + Telegram + DingTalk + Feishu, independently toggleable and racing in parallel when several are on
+- Reply history: review recent messages and answers per project (including the reply channel), recorded uniformly across all channels
 - Built-in settings UI, Cursor Hook, reference prompt; native macOS glass look
 
 ## Install
@@ -41,6 +42,7 @@ AskHuman "Take a look?" -f ~/Documents/spec.md -f ./diagram.png
 # Others
 AskHuman "Plain text" --no-markdown   # disable Markdown rendering
 AskHuman --settings                   # open the settings UI
+AskHuman --history                    # open reply history (current project; add --all for every project)
 AskHuman --help                       # help
 AskHuman --version                    # version
 ```

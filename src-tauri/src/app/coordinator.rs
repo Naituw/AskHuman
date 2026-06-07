@@ -34,6 +34,10 @@ pub struct Coordinator {
     inner: Mutex<Inner>,
     /// 结果渲染 / 收尾文案使用的界面语言（Daemon 模式为调用方上送的 lang；单进程为 `Lang::current()`）。
     lang: Lang,
+    /// 当前项目 key（用于回复历史归类；可空）。
+    project: String,
+    /// 调用方来源名（写入回复历史；可空）。
+    source: String,
     /// 仍在收尾的落败「消息渠道」数（弹窗瞬时关闭，不计入）。
     pending: Arc<AtomicUsize>,
     /// 已采纳的终态结果（首个 submit 写入）。
@@ -55,9 +59,9 @@ struct Inner {
 }
 
 impl Coordinator {
-    /// GUI 模式协调器。
-    pub fn new(app: AppHandle, request: AskRequest) -> Arc<Self> {
-        Self::build(Exiter::Gui(app), request, None, Lang::current())
+    /// GUI 模式协调器。`project` / `source` 写入回复历史（可空）。
+    pub fn new(app: AppHandle, request: AskRequest, project: String, source: String) -> Arc<Self> {
+        Self::build(Exiter::Gui(app), request, None, Lang::current(), project, source)
     }
 
     /// headless 模式协调器（无 GUI，结果到达后直接退出进程）。
@@ -66,19 +70,29 @@ impl Coordinator {
         request: AskRequest,
         preempt: Arc<Preemption>,
         messaging_count: usize,
+        project: String,
+        source: String,
     ) -> Arc<Self> {
         Self::build(
             Exiter::Process,
             request,
             Some((preempt, messaging_count)),
             Lang::current(),
+            project,
+            source,
         )
     }
 
     /// Daemon 模式协调器：结果到达后渲染并经 `tx` 回传，不退出进程。
     /// `lang` 为调用方上送的界面语言（A11，使 `auto` 跟随调用方）。
-    pub fn new_ipc(request: AskRequest, lang: Lang, tx: UnboundedSender<RenderOutcome>) -> Arc<Self> {
-        Self::build(Exiter::Ipc(tx), request, None, lang)
+    pub fn new_ipc(
+        request: AskRequest,
+        lang: Lang,
+        tx: UnboundedSender<RenderOutcome>,
+        project: String,
+        source: String,
+    ) -> Arc<Self> {
+        Self::build(Exiter::Ipc(tx), request, None, lang, project, source)
     }
 
     fn build(
@@ -86,6 +100,8 @@ impl Coordinator {
         request: AskRequest,
         headless: Option<(Arc<Preemption>, usize)>,
         lang: Lang,
+        project: String,
+        source: String,
     ) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(Inner {
@@ -96,6 +112,8 @@ impl Coordinator {
                 headless,
             }),
             lang,
+            project,
+            source,
             pending: Arc::new(AtomicUsize::new(0)),
             result: Mutex::new(None),
             finalizing: AtomicBool::new(false),
@@ -228,28 +246,80 @@ impl Coordinator {
         if self.emitted.swap(true, Ordering::SeqCst) {
             return;
         }
-        let (exiter, request_id) = {
+        let (exiter, request) = {
             let inner = self.inner.lock().unwrap();
-            (inner.exiter.clone(), inner.request.id.clone())
+            (inner.exiter.clone(), inner.request.clone())
         };
         let result = self.result.lock().unwrap().take();
         let Some(result) = result else {
             // 无结果（headless 全部会话结束仍未作答）：不退出，交由调用方报错。
             return;
         };
-        // Daemon 模式：渲染后回传连接处理器，不打印、不退出（进程常驻）。
+        // 渲染一次（图片落盘只发生一次），拿到给 CLI 的文本与各题图片路径。
+        let (outcome, image_paths) = super::render_result(&request.id, &result, self.lang);
+        // 旁路写回复历史：最佳努力，绝不影响主流程（stdout / 退出码）。
+        self.record_history(&request, &result, &image_paths);
+        // Daemon 模式：回传连接处理器，不打印、不退出（进程常驻）。
         if let Exiter::Ipc(tx) = &exiter {
-            let outcome = super::render_result(&request_id, &result, self.lang);
             let _ = tx.send(outcome);
             return;
         }
-        let code = super::emit_result(&request_id, &result);
+        // 单进程：打印结果并退出。
+        if let Some(err) = &outcome.stderr {
+            super::stderr_redirect::eprintln_real(err);
+        } else {
+            println!("{}", outcome.stdout);
+        }
         let _ = std::io::stdout().flush();
         match exiter {
-            Exiter::Gui(app) => app.exit(code),
-            Exiter::Process => std::process::exit(code),
+            Exiter::Gui(app) => app.exit(outcome.exit_code),
+            Exiter::Process => std::process::exit(outcome.exit_code),
             Exiter::Ipc(_) => unreachable!("handled above"),
         }
+    }
+
+    /// Append a reply-history entry for this terminal result (best-effort side channel).
+    ///
+    /// Every result reaching `finish` is user-initiated (a Send, or a popup/IM Cancel); system
+    /// cancels go through `cancel_request` and carry no result, so they never get here — which is
+    /// exactly the "only user-initiated cancels" policy. Image/file values are stored as paths.
+    fn record_history(
+        &self,
+        request: &AskRequest,
+        result: &ChannelResult,
+        image_paths: &[Vec<String>],
+    ) {
+        let limit = crate::config::AppConfig::load().general.history_limit;
+        if limit == 0 {
+            return;
+        }
+        let answers = match result.action {
+            ChannelAction::Cancel => Vec::new(),
+            ChannelAction::Send => result
+                .answers
+                .iter()
+                .enumerate()
+                .map(|(i, a)| crate::history::HistoryAnswer {
+                    selected_options: a.selected_options.clone(),
+                    user_input: a.user_input.clone(),
+                    images: image_paths.get(i).cloned().unwrap_or_default(),
+                    files: a.files.clone(),
+                })
+                .collect(),
+        };
+        let entry = crate::history::HistoryEntry {
+            id: request.id.clone(),
+            timestamp_ms: crate::history::now_ms(),
+            project: self.project.clone(),
+            source: self.source.clone(),
+            channel: result.source_channel_id.clone(),
+            action: result.action,
+            is_markdown: request.is_markdown,
+            message: request.message.clone(),
+            questions: request.questions.clone(),
+            answers,
+        };
+        crate::history::record(entry, limit);
     }
 }
 

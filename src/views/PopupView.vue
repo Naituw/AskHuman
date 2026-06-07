@@ -9,6 +9,7 @@ import {
   submitPopup,
   cancelPopup,
   openSettings,
+  openHistory,
   updateTheme,
   openPath,
   previewAttachments,
@@ -320,6 +321,10 @@ async function cycleTheme() {
 
 function openSettingsWindow() {
   openSettings().catch(() => {});
+}
+
+function openHistoryWindow() {
+  openHistory().catch(() => {});
 }
 
 const renderedHtml = computed(() =>
@@ -941,6 +946,18 @@ onBeforeUnmount(() => {
           <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="9" />
             <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+        <button
+          class="nav-btn"
+          type="button"
+          :title="t('popup.nav.history')"
+          @click="openHistoryWindow"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3v5h5" />
+            <path d="M3.05 13a9 9 0 1 0 2.5-6.36L3 8" />
+            <path d="M12 7v5l3 2" />
           </svg>
         </button>
         <button

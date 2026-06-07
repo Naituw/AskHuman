@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { applyLanguage } from "../i18n";
@@ -17,10 +17,12 @@ import {
   feishuTest,
   getPrompt,
   getSettings,
+  historyCount,
   openTestPopup,
   saveSettings,
   setTheme,
   telegramTest,
+  trimHistory,
 } from "../lib/ipc";
 import { applyTheme } from "../lib/theme";
 import {
@@ -192,6 +194,26 @@ async function changeAnimation(anim: PopupAnimation) {
   if (!config.value) return;
   config.value.general.appearAnimation = anim;
   await persist();
+}
+
+// 当前历史总条数（用于「超额」提示与「立即清理」）。
+const historyTotal = ref(0);
+const overLimit = computed(() => {
+  const limit = config.value?.general.historyLimit ?? 0;
+  return limit > 0 && historyTotal.value > limit;
+});
+
+// 改保留条数：仅持久化；裁剪发生在下次 AskHuman 或点击「立即清理」。
+async function changeHistoryLimit(raw: number) {
+  if (!config.value) return;
+  const v = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+  config.value.general.historyLimit = v;
+  await persist();
+}
+
+async function cleanHistoryNow() {
+  const limit = config.value?.general.historyLimit ?? 0;
+  historyTotal.value = await trimHistory(limit);
 }
 
 // 语音识别语言下拉项：第一项「跟随系统」(auto) + 常用语言（BCP-47）。
@@ -485,6 +507,7 @@ onMounted(async () => {
     }
   );
   prompt.value = await getPrompt();
+  historyTotal.value = await historyCount();
   await refreshHook();
   if (isMac) {
     try {
@@ -648,6 +671,34 @@ onMounted(async () => {
               {{ t("common.test") }}
             </button>
           </div>
+        </div>
+
+        <!-- 回复历史 -->
+        <div class="card">
+          <p class="card-title">{{ t("settings.history.title") }}</p>
+          <div class="row">
+            <span class="label">{{ t("settings.history.limit") }}</span>
+            <span class="spacer"></span>
+            <input
+              class="input num"
+              type="number"
+              min="0"
+              step="1"
+              :value="config.general.historyLimit"
+              @change="changeHistoryLimit(Number(($event.target as HTMLInputElement).value))"
+            />
+          </div>
+          <p class="card-desc">{{ t("settings.history.limitHint") }}</p>
+          <template v-if="overLimit">
+            <hr class="divider" />
+            <div class="row">
+              <span class="result err">{{ t("settings.history.overLimit") }}</span>
+              <span class="spacer"></span>
+              <button class="btn" type="button" @click="cleanHistoryNow">
+                {{ t("settings.history.cleanNow") }}
+              </button>
+            </div>
+          </template>
         </div>
 
         <!-- 语音输入（仅 macOS） -->

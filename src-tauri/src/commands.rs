@@ -82,15 +82,18 @@ pub fn open_path(path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn preview_attachments(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     paths: Vec<String>,
     index: usize,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        // 取弹窗 NSWindow 指针：把预览控制者插入其响应链，方可经协议控制面板。
-        let win_ptr = app
-            .get_webview_window("popup")
-            .and_then(|w| w.ns_window().ok())
+        // 取【调用方窗口】NSWindow 指针（弹窗或历史窗口）：把预览控制者插入其响应链，
+        // 方可经协议控制面板（方向键切换）。回退到 popup 以兼容历史调用方。
+        let win_ptr = window
+            .ns_window()
+            .ok()
+            .or_else(|| app.get_webview_window("popup").and_then(|w| w.ns_window().ok()))
             .map(|p| p as usize)
             .unwrap_or(0);
         let app2 = app.clone();
@@ -101,7 +104,7 @@ pub fn preview_attachments(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = app;
+        let _ = (app, window);
         let path = paths.get(index).ok_or_else(|| {
             crate::i18n::tr(crate::i18n::Lang::current(), "cmd.invalidAttachmentIndex").to_string()
         })?;
@@ -219,6 +222,69 @@ fn theme_str(theme: ThemeMode) -> String {
         ThemeMode::Dark => "dark",
     }
     .to_string()
+}
+
+// ===== 回复历史 =====
+
+/// 历史窗口初始化负载：当前主题 + 当前项目（用于默认过滤）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryInit {
+    theme: String,
+    /// 当前项目 key（可空）。
+    project: String,
+    /// 当前项目显示名（basename；可空）。
+    project_name: String,
+}
+
+#[tauri::command]
+pub fn history_init(state: State<AppState>) -> HistoryInit {
+    HistoryInit {
+        theme: theme_str(state.config.general.theme),
+        project: state.project.clone(),
+        project_name: crate::project::display_name(&state.project),
+    }
+}
+
+/// 从弹窗导航栏打开独立历史窗口（同进程内创建，默认当前项目）。
+#[tauri::command]
+pub fn open_history(app: AppHandle) -> Result<(), String> {
+    crate::app::create_history_window(&app, &AppConfig::load(), false).map_err(|e| e.to_string())
+}
+
+/// 读取历史记录：`all` 为 true 时返回全部项目，否则按 `project`（缺省空串）过滤；按时间倒序。
+#[tauri::command]
+pub fn get_history(project: Option<String>, all: bool) -> Vec<crate::history::HistoryEntry> {
+    crate::history::load(project.as_deref(), all)
+}
+
+/// 历史中出现过的项目列表（供窗口下拉切换）。
+#[tauri::command]
+pub fn get_history_projects() -> Vec<crate::history::ProjectInfo> {
+    crate::history::projects()
+}
+
+/// 当前历史总条数（设置页据此判断是否超额）。
+#[tauri::command]
+pub fn history_count() -> usize {
+    crate::history::count()
+}
+
+/// 立即把历史裁剪到 `limit` 条（设置页「立即清理」）。返回裁剪后条数。
+#[tauri::command]
+pub fn trim_history(limit: u32) -> usize {
+    crate::history::trim(limit)
+}
+
+/// 清空历史：`all` 为 true 清全部，否则清 `project`（缺省空串）。
+#[tauri::command]
+pub fn clear_history(all: bool, project: Option<String>) {
+    let scope = if all {
+        crate::history::ClearScope::All
+    } else {
+        crate::history::ClearScope::Project(project.unwrap_or_default())
+    };
+    crate::history::clear(scope);
 }
 
 // ===== 设置页命令 =====

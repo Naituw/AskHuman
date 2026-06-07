@@ -8,7 +8,7 @@
 
 运行 `AskHuman --settings`（或在弹窗右上角点齿轮）打开设置，含三个 Tab：
 
-- **通用**：主题（跟随系统 / 浅色 / 深色）、窗口置顶、出现动画、毛玻璃效果、语音输入语言与快捷键。
+- **通用**：主题（跟随系统 / 浅色 / 深色）、窗口置顶、出现动画、毛玻璃效果、语音输入语言与快捷键、回复历史保留条数（超出已有记录时提供「立即清理」）。
 - **集成**：可复制的参考提示词、Cursor Hook 的安装 / 移除（仅 macOS / Linux，详见 [README](../../README.md) 的「与 AI Agent 搭配」一节）。
 - **通信渠道**：本地弹窗、Telegram、钉钉、飞书的开关与参数，每个渠道都带「测试连接」。
 
@@ -29,7 +29,8 @@
     "appearAnimation": "alert", // none | document | alert
     "windowEffect": "glass",    // glass | blur
     "speechLanguage": "auto",   // BCP-47，如 zh-CN / en-US
-    "speechShortcut": "cmd+d"   // 空串表示关闭
+    "speechShortcut": "cmd+d",  // 空串表示关闭
+    "historyLimit": 200         // 回复历史全局保留条数；0 = 停止新增但保留旧记录
   },
   "channels": {
     "popup":    { "enabled": true, "width": 560, "height": 620, "rememberSize": true },
@@ -39,6 +40,15 @@
   }
 }
 ```
+
+## 回复历史
+
+每次回复（在弹窗或任一 IM 渠道完成的「发送」与你主动「取消」）都会记录到 `~/.askhuman/history.jsonl`（每行一条 JSON，仅保存图片 / 文件的本地路径）。系统触发的取消（超时、断连、daemon 停止）不记录。
+
+- 打开方式：`AskHuman --history`（默认仅当前项目），或在弹窗右上角点「历史」按钮。加 `--all` 查看全部项目。窗口内也可用顶部下拉切换项目。
+- 项目识别：从命令运行目录向上找首个 `.git` 仓库根；没有 `.git` 则用当前目录。
+- 保留条数：由 `general.historyLimit` 控制（默认 200）。设为 `0` 会停止新增记录，但已有记录仍可查看。在设置页调小到低于现有条数时会出现提示，可点「立即清理」按新上限裁剪。
+- 清空：历史窗口右上角「清空」可清「当前项目」或「全部项目」。
 
 ## 环境变量
 

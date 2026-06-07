@@ -20,6 +20,7 @@ export default {
       pin: "Keep on top",
       theme: "Toggle theme",
       settings: "Settings",
+      history: "History",
     },
     question: {
       single: "Question",
@@ -158,6 +159,59 @@ export default {
       feishuBaseUrlPlaceholder:
         "Leave empty for Feishu (open.feishu.cn); use open.larksuite.com for Lark",
       moreSoon: "More channels coming soon",
+    },
+    history: {
+      title: "Reply history",
+      limit: "Entries to keep",
+      limitHint:
+        "Maximum number of replies kept across all projects. 0 stops recording new replies (existing ones are kept).",
+      overLimit:
+        "There are more entries than this; they'll be trimmed on the next AskHuman call.",
+      cleanNow: "Clean up now",
+    },
+  },
+  history: {
+    title: "Reply history",
+    allProjects: "All projects",
+    unknownProject: "Unknown project",
+    empty: "No history yet",
+    emptyHint: "Your replies will appear here.",
+    clear: "Clear",
+    clearCurrent: "Clear this project",
+    clearAll: "Clear all projects",
+    confirmClearCurrentTitle: "Clear this project's history?",
+    confirmClearAllTitle: "Clear all history?",
+    confirmClearCurrentDesc:
+      "This permanently removes all history entries for the selected project.",
+    confirmClearAllDesc:
+      "This permanently removes all history entries for every project.",
+    confirmCancel: "Cancel",
+    confirmOk: "Clear",
+    selectHint: "Select an entry to view its details.",
+    statusSubmitted: "Submitted via {channel}",
+    statusCancelled: "Cancelled via {channel}",
+    cancelledNote: "This request was cancelled; no answers were recorded.",
+    unanswered: "Not answered",
+    questionIndexed: "Question {i}/{n}",
+    question: "Question",
+    attachments: "Attachments · {n}",
+    imageUnavailable: "Image unavailable",
+    unavailable: "(unavailable)",
+    reply: "Reply",
+    selectedOptions: "Selected options",
+    noReply: "(no reply)",
+    channel: {
+      popup: "Popup",
+      dingding: "DingTalk",
+      feishu: "Feishu",
+      telegram: "Telegram",
+      unknown: "Unknown",
+    },
+    time: {
+      justNow: "just now",
+      minutesAgo: "{n}m ago",
+      hoursAgo: "{n}h ago",
+      yesterday: "yesterday",
     },
   },
 };

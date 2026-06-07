@@ -7,9 +7,12 @@ import type {
   FeishuDetectArgs,
   FeishuTestArgs,
   FeishuWaitArgs,
+  HistoryEntry,
+  HistoryInit,
   HookStatus,
   PopupInit,
   PopupSubmission,
+  ProjectInfo,
   SecretActions,
   SettingsPayload,
   TelegramTestArgs,
@@ -58,6 +61,24 @@ export const updateTheme = (theme: ThemeMode) =>
   invoke<void>("update_theme", { theme });
 
 export const openSettings = () => invoke<void>("open_settings");
+
+export const openHistory = () => invoke<void>("open_history");
+
+export const historyInit = () => invoke<HistoryInit>("history_init");
+
+export const getHistory = (project: string | null, all: boolean) =>
+  invoke<HistoryEntry[]>("get_history", { project, all });
+
+export const getHistoryProjects = () =>
+  invoke<ProjectInfo[]>("get_history_projects");
+
+export const historyCount = () => invoke<number>("history_count");
+
+export const trimHistory = (limit: number) =>
+  invoke<number>("trim_history", { limit });
+
+export const clearHistory = (all: boolean, project: string | null) =>
+  invoke<void>("clear_history", { all, project });
 
 export const applyWindowEffect = (effect: WindowEffect) =>
   invoke<void>("apply_window_effect", { effect });

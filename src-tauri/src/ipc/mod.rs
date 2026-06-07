@@ -79,6 +79,10 @@ pub struct TaskRequest {
     pub source: String,
     /// CLI 解析好的界面语言（"en" / "zh"），使 `auto` 跟随调用方而非 Daemon。
     pub lang: String,
+    /// 当前项目 key（CLI 计算：向上找 .git 根、回退 cwd），用于回复历史归类。
+    /// 旧 CLI 不带此字段 → 默认空串（归入「未知项目」）。
+    #[serde(default)]
+    pub project: String,
 }
 
 /// 自动识别 userId/open_id 请求（设置进程 → Daemon，Q6）：用表单当前凭据，
@@ -112,6 +116,9 @@ pub struct ShowPayload {
     pub source: String,
     /// 界面语言（"en" / "zh"）。
     pub lang: String,
+    /// 当前项目 key（供历史窗口默认过滤当前项目）。
+    #[serde(default)]
+    pub project: String,
 }
 
 /// 客户端（CLI / GUI Helper）→ Daemon 的消息。

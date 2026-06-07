@@ -44,10 +44,12 @@ AskHuman/
   src/                       前端（Vite 根目录）
     index.html               前端入口（含消除白闪/毛玻璃的内联关键样式 + 平台探测脚本）
     main.ts                  挂载 App，引入三套样式
-    App.vue                  按 URL ?view=popup|settings 路由
-    views/PopupView.vue      弹窗：顶部导航栏 + Markdown/选项/文本/图片 + -f 附件区(选中/打开/
-                             预览/拖出/右键) + 拖入回复文件胶囊 + 底部操作条
-    views/SettingsView.vue   设置：通用 / 集成 / 通信渠道 三 Tab
+    App.vue                  按 URL ?view=popup|settings|history 路由
+    views/PopupView.vue      弹窗：顶部导航栏（含「历史」按钮）+ Markdown/选项/文本/图片 + -f 附件区
+                             (选中/打开/预览/拖出/右键) + 拖入回复文件胶囊 + 底部操作条
+    views/SettingsView.vue   设置：通用（含「回复历史」保留条数 + 超额「立即清理」）/ 集成 / 通信渠道 三 Tab
+    views/HistoryView.vue    独立历史窗口：顶部项目下拉 + 清空菜单；左列表（渠道徽标/相对时间/摘要）右只读详情
+    components/HistoryDetail.vue 只读还原一条历史（状态横幅 + 消息/附件 + 每题选项高亮/文本/图片/文件，best-effort）
     lib/ipc.ts               invoke 封装（与后端命令一一对应）
     lib/types.ts             与 Rust 模型对齐的 TS 类型
     lib/markdown.ts          markdown-it 渲染
@@ -64,7 +66,7 @@ AskHuman/
       macos_quicklook.rs     (macOS) 原生 QLPreviewPanel 预览 + 文件系统图标(file_icon_png_base64)
       macos_menu.rs          (macOS) -f 附件原生右键菜单（NSMenu，Finder 风格）
       cli/
-        mod.rs               argv 分发（--help/--version/--settings/无参/提问）
+        mod.rs               argv 分发（--help/--version/--settings/--history[--all]/无参/提问）
         args.rs              提问参数解析（message / -o / --no-markdown / -f）
         file_attachment.rs   -f 路径解析/校验（~/相对路径 → 绝对路径 + 元信息）
         output.rs            结果区块格式化（[选择的选项]/[用户输入]/[图片]/[文件]/[状态]）
@@ -73,13 +75,17 @@ AskHuman/
       models.rs              AskRequest(含 files) / FileAttachment / ChannelResult(含 files) /
                              ImageAttachment / ChannelAction / source_name()
       config.rs              AppConfig 读写 ~/.askhuman/config.json（原子写、容错解码；旧 ~/.humaninloop 自动回退读取）
-      paths.rs               home/config/temp 路径
+      paths.rs               home/config/temp 路径 + history.jsonl/history.lock
+      project.rs             项目识别：从 cwd 向上找首个 .git 根，回退 cwd（回复历史归类）
+      history.rs             回复历史存储：~/.askhuman/history.jsonl（每行一条 JSON，追加写 + 文件锁裁剪/清空）
       prompts.rs             CLI 参考提示词常量
       commands.rs            #[tauri::command] 集合（前端调用入口，见下）
       app/
         mod.rs               Tauri 运行时：窗口创建 + 毛玻璃(apply_surface) + 主题 +
-                             stderr 静默 + emit_result(输出并退出) + create_settings_window
-        coordinator.rs       抢答协调器：首个终态结果生效，cancel 其余，输出后退出
+                             stderr 静默 + emit_result(输出并退出) + create_settings_window /
+                             create_history_window / run_history
+        coordinator.rs       抢答协调器：首个终态结果生效，cancel 其余，输出后退出；
+                             在唯一汇聚点旁路写入回复历史（发送 + 用户主动取消）
       channels/
         mod.rs               Channel trait（id/start/cancel_by_other）+ ResultSink + Preemption
         conversation.rs      会话型渠道公共编排（run_conversation + MessagingChannel）
@@ -117,7 +123,7 @@ AskHuman/
 
 1. `main.rs` → `cli::dispatch()`：**在创建任何窗口前**按 argv 分发。
    - 无参 → stderr 报错 + 帮助，exit 1；`--help`/`--version` → 输出，exit 0。
-   - `--settings` → `app::run_settings(config)`；其余 → 解析为 `AskRequest` → `app::run_ask(request, config)`。
+   - `--settings` → `app::run_settings(config)`；`--history [--all]` → `app::run_history(project, all, config)`（默认当前项目）；其余 → 解析为 `AskRequest` → `app::run_ask(request, config)`。
 2. `app::launch`（提问模式）：启动 Tauri（`generate_context!` 每二进制仅一次），在 setup 中：
    - 建 `Coordinator`；按配置创建弹窗（注册 `PopupChannel`）并/或启动会话型渠道（`TelegramChannel` / `DingTalkChannel` / `FeishuChannel`，各为 tokio 任务）。
    - 弹窗禁用且无可用会话型渠道时兜底开弹窗；GUI 不可用但有会话型渠道时走 headless 并行。
@@ -129,6 +135,7 @@ AskHuman/
 - 附件：`open_path`、`preview_attachments` / `close_preview`(QLPreviewPanel)、`read_image_data_url`(缩略图)、
   `file_icon_data_url`(系统图标，拖出预览)、`show_attachment_menu`(原生右键菜单)
 - 设置：`get_settings`、`save_settings`、`get_prompt`、`set_theme`、`update_theme`(持久化+应用)、`open_settings`(同进程建设置窗)
+- 历史：`open_history`(弹窗→建历史窗)、`history_init`(主题+当前项目)、`get_history`(按项目/全部，倒序)、`get_history_projects`(项目下拉)、`history_count`、`trim_history`(立即裁剪)、`clear_history`(按项目/全部清空)
 - Cursor Hook：`cursor_hook_status` / `install` / `uninstall` / `reveal`
 - Telegram：`telegram_test`
 - 钉钉：`dingtalk_test` / `dingtalk_detect_prepare` / `dingtalk_detect_wait`
@@ -146,7 +153,9 @@ AskHuman/
 
 ## 配置
 
-`~/.askhuman/config.json`（新位置缺失时自动回退旧 `~/.humaninloop/config.json`）：`general`(theme, language, alwaysOnTop, appearAnimation, windowEffect, speechLanguage, speechShortcut) + `channels.popup`(enabled,width,height,rememberSize) + `channels.telegram`(enabled,botToken,chatId,apiBaseUrl) + `channels.dingding`(enabled,clientId,clientSecret,userId,cardTemplateId,…) + `channels.feishu`(enabled,appId,appSecret,openId,baseUrl)。缺字段走默认、未知字段忽略。用户向配置说明见 `docs/wiki/`。
+`~/.askhuman/config.json`（新位置缺失时自动回退旧 `~/.humaninloop/config.json`）：`general`(theme, language, alwaysOnTop, appearAnimation, windowEffect, speechLanguage, speechShortcut, historyLimit) + `channels.popup`(enabled,width,height,rememberSize) + `channels.telegram`(enabled,botToken,chatId,apiBaseUrl) + `channels.dingding`(enabled,clientId,clientSecret,userId,cardTemplateId,…) + `channels.feishu`(enabled,appId,appSecret,openId,baseUrl)。缺字段走默认、未知字段忽略。用户向配置说明见 `docs/wiki/`。
+
+> 回复历史：`general.historyLimit`（默认 200，0=停止新增但保留旧记录）控制 `~/.askhuman/history.jsonl` 全局保留条数。每次提问在 `Coordinator.finish()`（所有渠道/模式唯一汇聚点）旁路记录一条「发送 / 用户主动取消」（系统取消不记）；只存图片/文件路径（best-effort 展示，缺失显示占位）。项目按「从 CLI cwd 向上找首个 .git 根、回退 cwd」识别，经 `TaskRequest`/`ShowPayload` 贯穿 daemon（revisit A11）。历史窗口 `AskHuman --history [--all]` 或弹窗导航栏「历史」按钮打开。详情只读组件 `HistoryDetail.vue` 完整还原：选项框复用 controls.css（选中=蓝底白 ✓）、附件区与弹窗同款交互（单击选中 / 空格 QuickLook 预览 + 方向键切换 / 双击打开 / 右键菜单 / 拖出）。历史窗口创建时 `watch_history_file` 用 notify 监听 `history.jsonl`，任何进程写入后发 `history-updated` 事件令前端重载并保留当前选中条目（跨进程实时刷新）。注：`preview_attachments` 命令把 QuickLook 控制者插入**调用方窗口**响应链（弹窗或历史窗口皆可），不再硬编码 popup。
 
 > 密钥安全：三项密钥（`dingding.clientSecret`/`feishu.appSecret`/`telegram.botToken`）默认迁入系统钥匙串，`config.json` 中留空；内存 `AppConfig` 始终携带解析后的真值，读取点零改动。文件权限收紧 0600/目录 0700；钥匙串不可用时回退明文。macOS 需稳定签名身份免弹框（本地 `install.sh` 自动探测证书 / 发布走 Developer ID）。详见 `docs/specs/secret-storage-keychain.md`。
 

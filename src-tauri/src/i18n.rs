@@ -86,6 +86,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         // —— 窗口标题 ——
         "title.popup" => "AskHuman",
         "title.settings" => pick(lang, "AskHuman Settings", "AskHuman 设置"),
+        "title.history" => pick(lang, "AskHuman History", "AskHuman 历史记录"),
 
         // —— macOS 附件右键菜单 ——
         "menu.open" => pick(lang, "Open", "打开"),
@@ -159,6 +160,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "消息渠道会话结束但未获得结果",
         ),
         "app.settingsLaunchFailed" => pick(lang, "failed to launch settings: {e}", "无法启动设置界面: {e}"),
+        "app.historyLaunchFailed" => pick(lang, "failed to launch history window: {e}", "无法启动历史窗口: {e}"),
         "app.noDisplay" => pick(
             lang,
             "no graphical display (neither DISPLAY nor WAYLAND_DISPLAY is set)",

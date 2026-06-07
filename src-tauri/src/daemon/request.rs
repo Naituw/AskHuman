@@ -67,7 +67,13 @@ impl RequestRegistry {
         request.id = request_id.clone();
 
         let (final_tx, final_rx) = tokio::sync::mpsc::unbounded_channel();
-        let coordinator = Coordinator::new_ipc(request.clone(), lang, final_tx.clone());
+        let coordinator = Coordinator::new_ipc(
+            request.clone(),
+            lang,
+            final_tx.clone(),
+            task.project.clone(),
+            task.source.clone(),
+        );
 
         let gui: GuiSlot = Arc::new(Mutex::new(None));
         coordinator.register(Arc::new(GuiHelperPopupChannel::new(
@@ -80,6 +86,7 @@ impl RequestRegistry {
             request,
             source: task.source,
             lang: task.lang,
+            project: task.project,
         };
 
         let entry = Arc::new(RequestEntry {

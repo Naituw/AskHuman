@@ -52,6 +52,48 @@ export interface PopupSubmission {
   answers: QuestionAnswer[];
 }
 
+export type ChannelAction = "send" | "cancel";
+
+/** One question's recorded answer in history (paths only, no base64). */
+export interface HistoryAnswer {
+  selectedOptions: string[];
+  userInput?: string | null;
+  /** Saved image file paths (best-effort to display). */
+  images: string[];
+  /** Reply file paths (best-effort to display). */
+  files: string[];
+}
+
+/** One recorded reply (one per request: the winning terminal result). */
+export interface HistoryEntry {
+  id: string;
+  timestampMs: number;
+  project: string;
+  source: string;
+  /** Channel that submitted / cancelled: popup / dingding / feishu / telegram. */
+  channel: string;
+  action: ChannelAction;
+  isMarkdown: boolean;
+  message: MessagePrompt;
+  questions: Question[];
+  answers: HistoryAnswer[];
+}
+
+/** Aggregated project info for the history window's project picker. */
+export interface ProjectInfo {
+  key: string;
+  name: string;
+  count: number;
+  lastMs: number;
+}
+
+/** History window init payload. */
+export interface HistoryInit {
+  theme: ThemeMode;
+  project: string;
+  projectName: string;
+}
+
 export type UiLanguage = "auto" | "en" | "zh";
 
 export interface GeneralConfig {
@@ -65,6 +107,8 @@ export interface GeneralConfig {
   speechLanguage: string;
   /** 语音输入快捷键（弹窗内）。规范串如 "cmd+d"；空串表示关闭。 */
   speechShortcut: string;
+  /** 回复历史保留条数上限。默认 200；0 = 停止新增记录（但保留旧记录）。 */
+  historyLimit: number;
 }
 
 export interface PopupChannelConfig {

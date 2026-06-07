@@ -32,6 +32,16 @@ pub fn request_temp_dir(request_id: &str) -> PathBuf {
     std::env::temp_dir().join("askhuman").join(request_id)
 }
 
+/// 回复历史文件 `~/.askhuman/history.jsonl`（每行一条 JSON）。
+pub fn history_file() -> PathBuf {
+    config_dir().join("history.jsonl")
+}
+
+/// 回复历史写入锁 `~/.askhuman/history.lock`（写/裁剪/清空时持有）。
+pub fn history_lock() -> PathBuf {
+    config_dir().join("history.lock")
+}
+
 /// Cursor 目录 `~/.cursor`。
 pub fn cursor_dir() -> PathBuf {
     home().join(".cursor")

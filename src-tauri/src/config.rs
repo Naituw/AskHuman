@@ -86,6 +86,13 @@ pub struct GeneralConfig {
     pub speech_language: String,
     /// 语音输入快捷键（弹窗内）。规范串如 "cmd+d"/"cmd+shift+d"；空串表示关闭。
     pub speech_shortcut: String,
+    /// 回复历史保留条数上限。默认 200；`0` 表示停止新增记录（但保留并仍可查看旧记录）。
+    pub history_limit: u32,
+}
+
+/// 回复历史默认保留条数。
+fn default_history_limit() -> u32 {
+    200
 }
 
 impl Default for GeneralConfig {
@@ -98,6 +105,7 @@ impl Default for GeneralConfig {
             window_effect: WindowEffect::Glass,
             speech_language: "auto".to_string(),
             speech_shortcut: "cmd+d".to_string(),
+            history_limit: default_history_limit(),
         }
     }
 }
@@ -378,6 +386,7 @@ mod tests {
         assert_eq!(c.general.window_effect, WindowEffect::Glass);
         assert_eq!(c.general.speech_language, "auto");
         assert_eq!(c.general.speech_shortcut, "cmd+d");
+        assert_eq!(c.general.history_limit, 200);
         assert!(c.channels.popup.enabled);
         assert_eq!(c.channels.popup.width, 560.0);
         assert_eq!(c.channels.popup.height, 620.0);
