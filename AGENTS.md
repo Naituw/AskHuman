@@ -4,7 +4,11 @@
 
 Read [`docs/overview.md`](docs/overview.md) first to understand the architecture and project layout. When the task is complete, update `docs/overview.md` so it stays accurate.
 
-Also read [`docs/PROGRESS.md`](docs/PROGRESS.md). It tracks ToDos and current progress, organized by concrete work task or requirement. For a large task, update `docs/PROGRESS.md` from time to time while developing. When a task or requirement is finished, delete its corresponding section.
+## Tracking progress in docs/PROGRESS.md
+
+[`docs/PROGRESS.md`](docs/PROGRESS.md) has two jobs: track unfinished work and what's next, and mark the one task currently in progress. Read it first.
+
+Before starting ANY work, mark what you're now doing there (reuse an existing entry or add one; a simple task just needs the marker, not detailed steps). Keep it current as you go. When done, clear the marker so nothing shows as in progress, and delete finished sections — history stays in git.
 
 ## Verifying your changes
 

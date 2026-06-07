@@ -16,7 +16,8 @@ pub fn cli_reference() -> String {
 - Before asking, run `{program} --agent-help` to learn its usage.
 
 - When asking through `{program}`, provide predefined options whenever applicable, include your recommended answer, and briefly explain your rationale.
-- I can ONLY see the content passed through `{program}`. Any question, option list, recommendation, status update, report, summary, file content, or material that requires my review MUST be included in the `{program}` message or file. Do NOT rely on direct output for anything you expect me to read or respond to.
+- I can ONLY see what is delivered through `{program}`. Anything I need to review — questions, options, recommendations, summaries, reports, or files — MUST go through `{program}`, inline or attached with `-f`. Never rely on direct output, and never just give me a path.
+- When you create or change material I should review (plans, specs, docs, diffs, key code/config), attach the file(s) with `-f` in the same `{program}` call — do not just name or paraphrase them. When unsure, attach.
 - Before completing the turn/request, you MUST call `{program}` to request feedback.
 - Do NOT end the turn/conversation or mark the request as complete unless you have explicitly asked via `{program}` and received confirmation that the task can be completed or ended.
 </mandatory_interaction_protocol>
