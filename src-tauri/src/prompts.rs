@@ -13,6 +13,7 @@ pub fn cli_reference() -> String {
 **They MUST be followed exactly and completely under all circumstances.**
 
 - You MUST ask me questions by invoking the `{program}` command through the Shell/Bash tool. DO NOT ask questions in direct output, and DO NOT ask by ending the turn.
+- When invoking `{program}` through the Shell/Bash tool, you MUST set that tool call's timeout to 24 hours (86400000 ms) to give me enough time to respond.
 - Before asking, run `{program} --agent-help` to learn its usage.
 
 - When asking through `{program}`, provide predefined options whenever applicable, include your recommended answer, and briefly explain your rationale.
