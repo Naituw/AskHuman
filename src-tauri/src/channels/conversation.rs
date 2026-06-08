@@ -67,7 +67,7 @@ pub async fn run_conversation(
         let q = &request.questions[0];
         let header = format!(
             "「{}」",
-            i18n::tr(lang, "channel.questionFrom").replace("{source}", &source)
+            i18n::source_header(lang, "channel.questionFrom", &source)
         );
         let ctx = QuestionCtx {
             header: &header,

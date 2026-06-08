@@ -9,7 +9,7 @@ export default {
     loading: "加载中…",
     loadError: "加载失败：{msg}",
     questionFrom: "来自 {source} 的提问",
-    messageFrom: "Message from {source}",
+    messageFrom: "来自 {source} 的消息",
     attachments: "附件 · {n}",
     inputPlaceholder: "输入你的回复…",
     addImage: "添加图片",

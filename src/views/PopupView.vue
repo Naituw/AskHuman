@@ -118,6 +118,16 @@ const showDescription = computed(
 );
 // 存在 Message（描述/附件）或多题时，显示问题头部以区隔 Message 与 Question。
 const showQuestionHeader = computed(() => showDescription.value || isMulti.value);
+// 顶栏来源头部：默认来源 "the Loop"（human-in-the-loop 固定短语）强制英文；
+// 自定义来源跟随界面语言（与后端 i18n::source_header 规则一致）。
+const DEFAULT_SOURCE_NAME = "the Loop";
+const headerTitle = computed(() => {
+  const key = showQuestionHeader.value ? "popup.messageFrom" : "popup.questionFrom";
+  const named = { source: sourceName.value };
+  return sourceName.value === DEFAULT_SOURCE_NAME
+    ? t(key, named, { locale: "en" })
+    : t(key, named);
+});
 // 多题显示「Question i/n」；单题（仅在有 Message 时显示头部）只显示「Question」。
 const questionHeaderLabel = computed(() =>
   isMulti.value
@@ -911,11 +921,7 @@ onBeforeUnmount(() => {
     <header class="navbar" :class="{ scrolled }" data-tauri-drag-region>
       <span class="brand">
         <span class="brand-dot"></span>
-        <span class="brand-title">{{
-          showQuestionHeader
-            ? t("popup.messageFrom", { source: sourceName })
-            : t("popup.questionFrom", { source: sourceName })
-        }}</span>
+        <span class="brand-title">{{ headerTitle }}</span>
       </span>
       <span class="nav-actions">
         <button

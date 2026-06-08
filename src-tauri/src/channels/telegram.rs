@@ -186,7 +186,7 @@ async fn send_message_prompt(
 ) {
     let header = format!(
         "「{}」",
-        i18n::tr(lang, "channel.messageFrom").replace("{source}", source)
+        i18n::source_header(lang, "channel.messageFrom", source)
     );
     send_composed(client, &header, &message.text, is_markdown, None).await;
 

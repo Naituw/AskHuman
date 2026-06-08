@@ -64,6 +64,20 @@ pub fn warn_prefix(lang: Lang) -> &'static str {
     pick(lang, "Warning: ", "警告: ")
 }
 
+/// 来源头部文案（「Question from {source}」/「Message from {source}」）。
+///
+/// 默认来源 "the Loop" 是 human-in-the-loop 的固定英文短语，一律保持英文；自定义来源
+/// （用户经 `ASKHUMAN_ENV_SOURCE_NAME` 指定）则按界面语言本地化。
+/// `key` 取 `"channel.questionFrom"` / `"channel.messageFrom"`。
+pub fn source_header(lang: Lang, key: &'static str, source: &str) -> String {
+    let effective = if source == crate::models::DEFAULT_SOURCE_NAME {
+        Lang::En
+    } else {
+        lang
+    };
+    tr(effective, key).replace("{source}", source)
+}
+
 /// 词条查询：源语言英文，缺失 key 原样返回（兜底）。
 /// 含 `{x}` 占位符的模板由调用方用 `str::replace` 填充。
 /// `key` 取 `'static`（调用方均传字面量），以便兜底分支可原样返回。
@@ -191,9 +205,10 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         ),
 
         // —— 远程渠道（Telegram / 钉钉）发给用户的文案 ——
+        // 来源头部：默认来源 "the Loop"（human-in-the-loop 固定短语）经 source_header() 强制英文；
+        // 自定义来源按界面语言本地化（故此处中文照常给出译文）。
         "channel.questionFrom" => pick(lang, "Question from {source}", "来自 {source} 的提问"),
-        // Message（共享描述）头部：中英一律英文，{source} 默认 "the Loop"。
-        "channel.messageFrom" => pick(lang, "Message from {source}", "Message from {source}"),
+        "channel.messageFrom" => pick(lang, "Message from {source}", "来自 {source} 的消息"),
         "channel.questionIndexed" => pick(lang, "Question {i}/{n}", "问题 {i}/{n}"),
         "channel.tgSendButton" => pick(lang, "↑ Submit", "↑ 提交"),
         // 抢答收尾：赢家端名称 + 卡片终态状态行。

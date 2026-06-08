@@ -178,7 +178,7 @@ impl MessagingChannel for SlackSession {
         // 共用文案，故图标仅在此处加，不影响其它渠道）。正文随后作为 section（mrkdwn / 纯文本）。
         let header = format!(
             "✉️ {}",
-            i18n::tr(lang, "channel.messageFrom").replace("{source}", source)
+            i18n::source_header(lang, "channel.messageFrom", source)
         );
         let blocks = blockkit::build_message_blocks(&header, &message.text, is_markdown);
         if let Err(e) = client.post_message(dm, Some(&blocks), &header).await {

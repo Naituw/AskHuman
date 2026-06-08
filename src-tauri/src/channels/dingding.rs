@@ -172,7 +172,7 @@ impl MessagingChannel for DingTalkSession {
         let Some(client) = self.client.as_ref() else {
             return;
         };
-        let header = i18n::tr(lang, "channel.messageFrom").replace("{source}", source);
+        let header = i18n::source_header(lang, "channel.messageFrom", source);
         let result = if is_markdown {
             let body = if message.text.trim().is_empty() {
                 format!("**{}**", header)

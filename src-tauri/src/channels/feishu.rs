@@ -151,7 +151,7 @@ impl MessagingChannel for FeishuSession {
         let Some(client) = self.client.as_ref() else {
             return;
         };
-        let header = i18n::tr(lang, "channel.messageFrom").replace("{source}", source);
+        let header = i18n::source_header(lang, "channel.messageFrom", source);
         // 飞书无 markdown 文本消息：markdown 模式下用卡片（markdown 组件）渲染正文；
         // 非 markdown 或正文为空则发纯文本。
         let result = if is_markdown && !message.text.trim().is_empty() {
