@@ -73,6 +73,7 @@ pub fn agent_help_text(lang: Lang) -> String {
             String::new(),
             "Arguments:".to_string(),
             "  <Message>             Shared description for all questions (optional)".to_string(),
+            "  --stdin               Read the <Message> from stdin instead of the argument (use a quoted heredoc to avoid shell quoting)".to_string(),
             "  -f, --file <path>     Attach a file or image to the Message (absolute/relative/~); repeatable".to_string(),
             "  -q, --question <text> Ask a question; repeatable; -q may be omitted when there is only one".to_string(),
             "  -o, --option <text>   Add a predefined answer option after a question".to_string(),
@@ -93,6 +94,9 @@ pub fn agent_help_text(lang: Lang) -> String {
             format!("  {prog} \"Review this change?\" -f ./diff.patch -q \"Continue?\" -o \"Continue\" -o \"Stop\""),
             format!("  {prog} \"A few things to confirm\" -q \"Keep logs?\" -o \"Keep\" -o \"Clear\" -q \"Enable cache?\" -o \"On\" -o \"Off\""),
             format!("  {prog} \"Plain text (no Markdown)\" --no-markdown"),
+            format!("  {prog} --stdin -q \"Continue?\" -o \"Continue\" -o \"Stop\" <<'EOF'"),
+            "# A long Markdown message with `backticks`, $vars and \"quotes\"".to_string(),
+            "EOF".to_string(),
         ]
         .join("\n"),
         Lang::Zh => [
@@ -103,6 +107,7 @@ pub fn agent_help_text(lang: Lang) -> String {
             String::new(),
             "参数说明:".to_string(),
             "  <Message>             所有问题的共享描述（可选）；".to_string(),
+            "  --stdin               从标准输入读取 <Message>（用带引号的 heredoc 规避 shell 引号转义）".to_string(),
             "  -f, --file <path>     为 Message 附带文件或图片（绝对/相对/~），可多次出现".to_string(),
             "  -q, --question <text> 提出问题，可多次出现，只有一个问题时可省略 -q".to_string(),
             "  -o, --option <text>   跟随在问题后，添加预定义回答选项".to_string(),
@@ -123,6 +128,9 @@ pub fn agent_help_text(lang: Lang) -> String {
             format!("  {prog} \"看看这个改动？\" -f ./diff.patch -q \"要继续吗？\" -o \"继续\" -o \"停止\""),
             format!("  {prog} \"以下是几处待确认\" -q \"保留日志？\" -o \"保留\" -o \"清除\" -q \"开启缓存？\" -o \"开\" -o \"关\""),
             format!("  {prog} \"纯文本内容（不渲染 Markdown）\" --no-markdown"),
+            format!("  {prog} --stdin -q \"要继续吗？\" -o \"继续\" -o \"停止\" <<'EOF'"),
+            "# 含 `反引号`、$VAR 与 \"引号\" 的长 Markdown 消息".to_string(),
+            "EOF".to_string(),
         ]
         .join("\n"),
     }

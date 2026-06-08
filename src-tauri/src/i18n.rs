@@ -120,6 +120,16 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "a positional argument is only allowed as the Message, and must come first",
             "位置参数只能作为 Message，且需在最前",
         ),
+        "cli.stdinWithPositional" => pick(
+            lang,
+            "--stdin cannot be combined with a positional <Message>",
+            "--stdin 不能与位置参数 <Message> 同时使用",
+        ),
+        "cli.stdinIsTty" => pick(
+            lang,
+            "--stdin was given but stdin is a terminal (no piped input)",
+            "指定了 --stdin，但 stdin 是终端（没有管道输入）",
+        ),
 
         // —— 文件附件解析错误 ——
         "cli.fileNotFound" => pick(lang, "file not found or inaccessible: {path}", "文件不存在或无法访问: {path}"),

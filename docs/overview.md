@@ -67,7 +67,7 @@ AskHuman/
       macos_menu.rs          (macOS) -f 附件原生右键菜单（NSMenu，Finder 风格）
       cli/
         mod.rs               argv 分发（--help/--version/--settings/--history[--all]/无参/提问）
-        args.rs              提问参数解析（message / -o / --no-markdown / -f）
+        args.rs              提问参数解析（message / --stdin / -o / --no-markdown / -f）
         file_attachment.rs   -f 路径解析/校验（~/相对路径 → 绝对路径 + 元信息）
         output.rs            结果区块格式化（[选择的选项]/[用户输入]/[图片]/[文件]/[状态]）
         image_writer.rs      图片 base64 落盘 + 文件名 sanitize + ext 映射

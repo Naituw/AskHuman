@@ -57,6 +57,12 @@ AskHuman "Please confirm a few things:" -q "Keep logs?" -o "Keep" -o "Clear" -q 
 # Attach files / images for display (apply to the Message, repeatable; absolute / relative / ~ paths)
 AskHuman "Take a look?" -f ~/Documents/spec.md -f ./diagram.png
 
+# Long Markdown (with backticks / $ / quotes): read the Message from stdin via a heredoc to avoid shell quoting
+AskHuman --stdin -q "Continue?" -o "Continue" -o "Stop" <<'EOF'
+# Title
+Multi-line content with `backticks`, $VAR and "quotes" — all passed verbatim.
+EOF
+
 # Others
 AskHuman "Plain text" --no-markdown   # disable Markdown rendering
 AskHuman --settings                   # open the settings UI

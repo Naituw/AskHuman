@@ -96,6 +96,7 @@ pub fn dispatch() {
                         | "-f"
                         | "--file"
                         | "--no-markdown"
+                        | "--stdin"
                 ) =>
         {
             eprintln!(
@@ -106,7 +107,7 @@ pub fn dispatch() {
             println!("{}", help::agent_help_text(lang));
             exit(1);
         }
-        _ => match args::parse_ask(&argv[1..], lang) {
+        _ => match parse_ask_with_stdin(&argv[1..], lang) {
             Ok(parsed) => {
                 // 解析 Message 的展示附件（-f 始终归 Message）。
                 let files = match file_attachment::resolve(&parsed.message_files, lang) {
@@ -150,4 +151,42 @@ pub fn dispatch() {
             }
         },
     }
+}
+
+/// 提问解析的入口包装：仅当出现 `--stdin` 时读取标准输入作为 Message，
+/// 再交给纯函数 `args::parse_ask`（stdin 内容以参数注入，保持其无 IO 副作用）。
+fn parse_ask_with_stdin(args: &[String], lang: Lang) -> Result<args::AskArgs, String> {
+    let stdin_message = if args.iter().any(|a| a == "--stdin") {
+        Some(read_stdin_message(lang))
+    } else {
+        None
+    };
+    args::parse_ask(args, lang, stdin_message)
+}
+
+/// 读取标准输入作为 Message 文本（`--stdin`）。
+///
+/// - stdin 为终端（无管道输入）时不阻塞等待，直接报错退出，避免挂起；
+/// - 读取失败时报错退出；
+/// - 去除结尾的一个换行（`\n` 或 `\r\n`，即 heredoc 末尾的固有换行），
+///   其余（含前导/内部空白）原样保留。
+fn read_stdin_message(lang: Lang) -> String {
+    use std::io::{IsTerminal, Read};
+    let mut stdin = std::io::stdin();
+    if stdin.is_terminal() {
+        eprintln!("{}{}", i18n::err_prefix(lang), i18n::tr(lang, "cli.stdinIsTty"));
+        exit(1);
+    }
+    let mut buf = String::new();
+    if let Err(e) = stdin.read_to_string(&mut buf) {
+        eprintln!("{}{}", i18n::err_prefix(lang), e);
+        exit(1);
+    }
+    if let Some(stripped) = buf.strip_suffix('\n') {
+        buf.truncate(stripped.len());
+        if let Some(stripped) = buf.strip_suffix('\r') {
+            buf.truncate(stripped.len());
+        }
+    }
+    buf
 }

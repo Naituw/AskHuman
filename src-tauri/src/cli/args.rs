@@ -30,9 +30,19 @@ pub struct AskArgs {
 /// - `-o` 归「最近声明的问题」；存在 `-q` 时不能出现在第一个 `-q` 之前。
 /// - `-f` 始终归 Message（位置不限）。
 /// - `--no-markdown` 全局。
+/// - `--stdin`：Message 文本取自 `stdin_message`（由调用方从 stdin 读好后注入，
+///   保持本函数无 IO 副作用），等价于位置参数 Message，但可出现在任意位置；
+///   与位置参数 `<Message>` 互斥。
+///
+/// `stdin_message`：`Some` 表示命令行含 `--stdin`（值为已读好的 stdin 内容）；
+/// `None` 表示未给 `--stdin`。
 ///
 /// 失败时返回按 `lang` 本地化的错误描述。
-pub fn parse_ask(args: &[String], lang: crate::i18n::Lang) -> Result<AskArgs, String> {
+pub fn parse_ask(
+    args: &[String],
+    lang: crate::i18n::Lang,
+    stdin_message: Option<String>,
+) -> Result<AskArgs, String> {
     use crate::i18n::tr;
     let mut message_text = String::new();
     let mut message_files: Vec<String> = Vec::new();
@@ -90,6 +100,16 @@ pub fn parse_ask(args: &[String], lang: crate::i18n::Lang) -> Result<AskArgs, St
                 is_markdown = false;
                 i += 1;
             }
+            "--stdin" => {
+                // 等价于位置参数 Message，但可出现在任意位置；与位置参数互斥。
+                if seen_positional {
+                    return Err(tr(lang, "cli.stdinWithPositional").to_string());
+                }
+                // 内容由调用方（IO 层）读好注入；缺省兜底为空串。
+                message_text = stdin_message.clone().unwrap_or_default();
+                seen_positional = true;
+                i += 1;
+            }
             a if a.starts_with('-') => {
                 return Err(tr(lang, "cli.unknownOptionColon").replace("{opt}", a));
             }
@@ -138,7 +158,12 @@ mod tests {
 
     // 解析逻辑与语言无关：测试统一用英文（源语言）。
     fn pa(args: &[String]) -> Result<AskArgs, String> {
-        parse_ask(args, Lang::En)
+        parse_ask(args, Lang::En, None)
+    }
+
+    // 带 stdin 内容（模拟命令行含 --stdin、内容已由 IO 层读好）。
+    fn pas(args: &[String], stdin: &str) -> Result<AskArgs, String> {
+        parse_ask(args, Lang::En, Some(stdin.to_string()))
     }
 
     #[test]
@@ -250,5 +275,50 @@ mod tests {
     #[test]
     fn rejects_unknown_flag() {
         assert!(pa(&v(&["msg", "--foo"])).is_err());
+    }
+
+    #[test]
+    fn stdin_is_shared_message_with_q() {
+        let p = pas(&v(&["--stdin", "-q", "Q1"]), "MSG").unwrap();
+        assert_eq!(p.message_text, "MSG");
+        assert_eq!(p.questions, vec![QuestionArgs { message: "Q1".into(), options: vec![] }]);
+    }
+
+    #[test]
+    fn stdin_promoted_without_q() {
+        // 无 -q 时 stdin 内容提升为唯一问题，message_text 清空。
+        let p = pas(&v(&["--stdin"]), "the only question body").unwrap();
+        assert_eq!(p.message_text, "");
+        assert_eq!(
+            p.questions,
+            vec![QuestionArgs { message: "the only question body".into(), options: vec![] }]
+        );
+    }
+
+    #[test]
+    fn stdin_position_is_free() {
+        // --stdin 可出现在 -q 之后（具名标志，不要求在题前）。
+        let p = pas(&v(&["-q", "Q1", "--stdin"]), "MSG").unwrap();
+        assert_eq!(p.message_text, "MSG");
+        assert_eq!(p.questions.len(), 1);
+    }
+
+    #[test]
+    fn stdin_conflicts_with_positional() {
+        assert!(pas(&v(&["MSG", "--stdin"]), "X").is_err());
+        assert!(pas(&v(&["--stdin", "MSG"]), "X").is_err());
+    }
+
+    #[test]
+    fn stdin_empty_without_q_is_invalid() {
+        assert!(pas(&v(&["--stdin"]), "   ").is_err());
+        assert!(pas(&v(&["--stdin"]), "").is_err());
+    }
+
+    #[test]
+    fn stdin_empty_with_q_is_ok() {
+        let p = pas(&v(&["--stdin", "-q", "Q1"]), "").unwrap();
+        assert_eq!(p.message_text, "");
+        assert_eq!(p.questions.len(), 1);
     }
 }
