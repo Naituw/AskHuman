@@ -8,14 +8,14 @@ This guide shows how to create and configure a DingTalk "internal enterprise app
 
 ## 1. Create an app and enable the bot
 
-There are two ways; **way 1 is recommended**: use DingTalk's one-click entry — it works out of the box with no manual permission setup. If you use way 1, you can jump straight to "2. Publish and availability".
+There are two ways; **way 1 is recommended**: use DingTalk's "one-click create a DingTalk agent app" entry — it works out of the box with no manual permission setup. If you use way 1, you can jump straight to "2. Publish and availability".
 
-### Way 1 (recommended): one-click "OpenClaw" create, no permission setup
+### Way 1 (recommended): one-click create a DingTalk agent app (OpenClaw bot), no permission setup
 
-The DingTalk Open Platform offers a "one-click create OpenClaw bot app" entry (OpenClaw is an AI assistant on DingTalk; the entry creates a **standard Stream-mode bot internal app** that AskHuman can reuse directly). It automatically creates the app, enables the bot, sets Stream mode, and **pre-grants the interactive-card and direct-message API permissions**, so it **usually works out of the box with no manual permission setup**.
+The DingTalk Open Platform offers a "one-click create a DingTalk agent app" entry (earlier / some docs still call it "one-click create OpenClaw bot"; the agent app can pair with open-source AI assistants such as OpenClaw and Hermes Agent — OpenClaw itself is an open-source, self-hostable AI assistant, not a DingTalk product). The entry creates a **standard Stream-mode bot internal app** that AskHuman can reuse directly: it automatically creates the app, enables the bot, sets Stream mode, and **pre-grants the interactive-card and direct-message API permissions**, so it **usually works out of the box with no manual permission setup**.
 
 1. Go to the [DingTalk Open Platform developer console](https://open-dev.dingtalk.com) → top menu "App Development → DingTalk Apps".
-2. On the "DingTalk Apps" page, find the "one-click create OpenClaw bot app" banner at the top and click **Create now** on the right.
+2. On the "DingTalk Apps" page, find the "one-click create a DingTalk agent app (OpenClaw bot)" banner at the top and click **Create now** on the right.
 3. In the dialog, fill in the bot name / description / icon (you can use the bundled avatar below), then confirm.
 4. After creation, copy the **ClientId (AppKey)** and **ClientSecret (AppSecret)** for AskHuman.
 
@@ -31,7 +31,7 @@ This entry already enables the bot, sets Stream mode, and pre-grants the require
 
 #### Grant permissions
 
-> Only needed for manual creation; an app created via way 1 (one-click OpenClaw) already has the permissions below.
+> Only needed for manual creation; an app created via way 1 (one-click DingTalk agent app) already has the permissions below.
 
 DingTalk permissions must be **searched and applied one by one** in the app's "Permission management" (there's no JSON batch import like Feishu); applying needs no approval and takes effect immediately, but **changing permissions requires re-publishing a version** to take effect. Based on the APIs this channel actually calls, grant:
 
