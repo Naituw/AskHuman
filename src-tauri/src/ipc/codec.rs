@@ -52,10 +52,7 @@ mod tests {
             protocol_version: 1,
             client_version: "0.0.0".into(),
             binary_path: "/tmp/AskHuman".into(),
-            fingerprint: Fingerprint {
-                mtime_ms: 42,
-                size: 7,
-            },
+            fingerprint: Fingerprint { size: 7, hash: 42 },
             pid: 123,
         });
         write_msg(&mut tx, &sent).await.unwrap();

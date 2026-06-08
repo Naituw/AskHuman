@@ -300,7 +300,8 @@ mod unix_impl {
             match msg {
                 ClientMsg::Hello(hello) => {
                     let now_fp = lifecycle::current_fingerprint();
-                    // 自身二进制被换 / 客户端二进制不一致 / 协议不一致 → 过时，让位换新。
+                    // 指纹按「内容哈希」比对（与路径/mtime 无关）：
+                    // 自身盘上二进制内容被换 / 客户端二进制内容不一致 / 协议不一致 → 过时，让位换新。
                     let stale = now_fp != state.startup_fp
                         || hello.fingerprint != state.startup_fp
                         || hello.protocol_version != ipc::PROTOCOL_VERSION;
