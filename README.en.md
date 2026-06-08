@@ -12,6 +12,12 @@ A cross-platform human-in-the-loop tool. When an AI agent is about to end a conv
 - Built on **Tauri 2 (Rust + Vue 3)**, supports **macOS / Windows / Linux**
 - Multiple channels: local popup + Telegram + Slack + DingTalk + Feishu, independently toggleable and racing in parallel when several are on
 
+## How it works
+
+<p align="center">
+  <img src="assets/overview.webp" alt="AskHuman bridges AI agents and humans: a Bash call fans out to the popup and IMs" width="900">
+</p>
+
 ## Screenshots
 
 Your agent's questions arrive at the local GUI popup and Telegram, Slack, DingTalk, and Feishu all at once, along with the key context, attachments, and preset options — so whether or not you're at your desk, you get notified and can reply anytime.

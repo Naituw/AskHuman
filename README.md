@@ -12,6 +12,12 @@
 - 基于 **Tauri 2（Rust + Vue 3）**，支持 **macOS / Windows / Linux**
 - 多通信渠道：本地弹窗 + 钉钉 + 飞书 + Telegram + Slack，可独立开关、多开并行「抢答」
 
+## 工作原理
+
+<p align="center">
+  <img src="assets/overview.webp" alt="AskHuman 在 AI Agent 与人之间架起桥梁：从 Bash 调用分发到弹窗与各 IM" width="900">
+</p>
+
 ## 功能预览
 
 Agent 的提问会同时送达本地 GUI 弹窗与钉钉、飞书、Telegram、Slack，并提供关键上下文、附件及预选项，无论你是否在电脑前，都能随时收到通知并回复。
