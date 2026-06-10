@@ -226,12 +226,17 @@ async fn ask_question(
     events: &mut RoutedTg,
     header: &str,
     question_text: &str,
-    options: &[String],
+    options: &[crate::models::OptionItem],
     is_markdown: bool,
     lang: Lang,
     preempt: &Preemption,
 ) -> Option<QuestionAnswer> {
-    let options = options.to_vec();
+    // 提交值用原文；正文清单用显示文本（推荐选项带本地化前缀）。
+    let displays: Vec<String> = options
+        .iter()
+        .map(|o| super::conversation::display_text(o, lang))
+        .collect();
+    let options: Vec<String> = options.iter().map(|o| o.text.clone()).collect();
     let mut selected: Vec<String> = Vec::new();
     let mut user_input = String::new();
 
@@ -248,7 +253,7 @@ async fn ask_question(
 
     // 单卡片：正文 = 题干 + 选项清单（A. xxx，按钮只放字母规避超长选项显示不全）+ 补充提示；
     // inline 键盘 = 字母选项（可多选）+「提交」。
-    let content = card_content(question_text, &options);
+    let content = card_content(question_text, &displays);
     let hint = i18n::tr(lang, "channel.tgActionHint");
     let body = if content.is_empty() {
         hint.to_string()

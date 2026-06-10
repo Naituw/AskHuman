@@ -4,7 +4,9 @@
 
 use super::{Preemption, ResultSink};
 use crate::i18n::{self, Lang};
-use crate::models::{AskRequest, ChannelAction, ChannelResult, MessagePrompt, QuestionAnswer};
+use crate::models::{
+    AskRequest, ChannelAction, ChannelResult, MessagePrompt, OptionItem, QuestionAnswer,
+};
 use std::sync::Arc;
 
 /// 单道题的上下文（传给 `ask_question`）。
@@ -12,13 +14,23 @@ pub struct QuestionCtx<'a> {
     /// 题首加粗行：单题无 Message 时为来源头部，多题为 `Question i/n`，否则空。
     pub header: &'a str,
     pub text: &'a str,
-    pub options: &'a [String],
+    pub options: &'a [OptionItem],
     pub is_markdown: bool,
     /// 0 基序号与总题数（供渠道按需展示进度）。
     pub index: usize,
     pub total: usize,
     /// 当前界面语言（渠道据此本地化发给用户的提示/按钮）。
     pub lang: Lang,
+}
+
+/// 选项的【显示文本】：推荐选项加本地化「👍推荐 」前缀，普通选项即原文。
+/// 仅用于各渠道展示；提交值（`selected_options`）必须用 `opt.text` 原文。
+pub fn display_text(opt: &OptionItem, lang: Lang) -> String {
+    if opt.recommended {
+        format!("{}{}", i18n::tr(lang, "channel.recommendedPrefix"), opt.text)
+    } else {
+        opt.text.clone()
+    }
 }
 
 /// 会话型消息渠道的传输原语（与编排逻辑解耦）。

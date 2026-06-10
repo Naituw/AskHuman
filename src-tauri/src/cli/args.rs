@@ -4,11 +4,19 @@
 //! 完全没有 `-q` 时，第一个参数等价于 `-q`（`AskHuman "X"` ≡ `AskHuman -q "X"`），
 //! 被提升为唯一问题，其前置 `-o` 归该问题；`-f` 始终归 Message（位置不限）。
 
+/// 单个预定义选项的原始参数（解析层结构，避免依赖 models）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct OptArg {
+    pub text: String,
+    /// 由 `-o!` / `--option!` 声明：该选项是提问方的推荐答案。
+    pub recommended: bool,
+}
+
 /// 单个问题的原始参数（路径未解析/校验）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct QuestionArgs {
     pub message: String,
-    pub options: Vec<String>,
+    pub options: Vec<OptArg>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +36,7 @@ pub struct AskArgs {
 /// 规则：
 /// - 第一个位置参数 = Message 文本；无任何 `-q` 时它被提升为唯一问题。
 /// - `-o` 归「最近声明的问题」；存在 `-q` 时不能出现在第一个 `-q` 之前。
+///   `-o!` / `--option!` 同 `-o`，且把该选项标记为推荐（一题可多个）。
 /// - `-f` 始终归 Message（位置不限）。
 /// - `--no-markdown` 全局。
 /// - `--stdin`：Message 文本取自 `stdin_message`（由调用方从 stdin 读好后注入，
@@ -48,7 +57,7 @@ pub fn parse_ask(
     let mut message_files: Vec<String> = Vec::new();
     let mut questions: Vec<QuestionArgs> = Vec::new();
     // 无 `-q` 时，位于第一个参数之后的 `-o` 暂存于此，归一化时挂到被提升的问题。
-    let mut lead_options: Vec<String> = Vec::new();
+    let mut lead_options: Vec<OptArg> = Vec::new();
     let mut is_markdown = true;
 
     let mut seen_positional = false;
@@ -71,11 +80,14 @@ pub fn parse_ask(
                 seen_question_flag = true;
                 i += 2;
             }
-            "-o" | "--option" => {
+            "-o" | "--option" | "-o!" | "--option!" => {
                 if i + 1 >= args.len() {
                     return Err(tr(lang, "cli.optionMissingValue").replace("{opt}", arg));
                 }
-                let value = args[i + 1].clone();
+                let value = OptArg {
+                    text: args[i + 1].clone(),
+                    recommended: arg.ends_with('!'),
+                };
                 match questions.last_mut() {
                     Some(q) => q.options.push(value),
                     None => {
@@ -156,6 +168,14 @@ mod tests {
         items.iter().map(|s| s.to_string()).collect()
     }
 
+    /// 普通选项（非推荐）。
+    fn o(items: &[&str]) -> Vec<OptArg> {
+        items
+            .iter()
+            .map(|s| OptArg { text: s.to_string(), recommended: false })
+            .collect()
+    }
+
     // 解析逻辑与语言无关：测试统一用英文（源语言）。
     fn pa(args: &[String]) -> Result<AskArgs, String> {
         parse_ask(args, Lang::En, None)
@@ -181,7 +201,52 @@ mod tests {
     fn single_with_options_promoted() {
         let p = pa(&v(&["X", "-o", "A", "--option", "B"])).unwrap();
         assert_eq!(p.message_text, "");
-        assert_eq!(p.questions, vec![QuestionArgs { message: "X".into(), options: v(&["A", "B"]) }]);
+        assert_eq!(p.questions, vec![QuestionArgs { message: "X".into(), options: o(&["A", "B"]) }]);
+    }
+
+    #[test]
+    fn recommended_option_promoted() {
+        // -o! 标记推荐，归属规则与 -o 一致（无 -q 时归被提升的问题）。
+        let p = pa(&v(&["X", "-o!", "A", "-o", "B"])).unwrap();
+        assert_eq!(
+            p.questions[0].options,
+            vec![
+                OptArg { text: "A".into(), recommended: true },
+                OptArg { text: "B".into(), recommended: false },
+            ]
+        );
+    }
+
+    #[test]
+    fn recommended_long_form_and_multiple() {
+        // --option! 与 -o! 等价；一题允许多个推荐。
+        let p = pa(&v(&["M", "-q", "Q1", "--option!", "A", "-o!", "B", "-o", "C"])).unwrap();
+        assert_eq!(
+            p.questions[0].options,
+            vec![
+                OptArg { text: "A".into(), recommended: true },
+                OptArg { text: "B".into(), recommended: true },
+                OptArg { text: "C".into(), recommended: false },
+            ]
+        );
+    }
+
+    #[test]
+    fn recommended_per_question_attribution() {
+        let p = pa(&v(&["M", "-q", "Q1", "-o", "A", "-q", "Q2", "-o!", "B"])).unwrap();
+        assert!(!p.questions[0].options[0].recommended);
+        assert!(p.questions[1].options[0].recommended);
+    }
+
+    #[test]
+    fn recommended_before_any_question_errors() {
+        // 与 -o 一致：有 -q 时不得出现在第一个 -q 之前。
+        assert!(pa(&v(&["M", "-o!", "A", "-q", "Q1"])).is_err());
+    }
+
+    #[test]
+    fn recommended_requires_value() {
+        assert!(pa(&v(&["msg", "-o!"])).is_err());
     }
 
     #[test]
@@ -200,8 +265,8 @@ mod tests {
         .unwrap();
         assert_eq!(p.message_text, "M");
         assert_eq!(p.questions.len(), 2);
-        assert_eq!(p.questions[0], QuestionArgs { message: "Q1".into(), options: v(&["A"]) });
-        assert_eq!(p.questions[1], QuestionArgs { message: "Q2".into(), options: v(&["B"]) });
+        assert_eq!(p.questions[0], QuestionArgs { message: "Q1".into(), options: o(&["A"]) });
+        assert_eq!(p.questions[1], QuestionArgs { message: "Q2".into(), options: o(&["B"]) });
     }
 
     #[test]

@@ -16,7 +16,7 @@ pub fn cli_reference() -> String {
 - When invoking `{program}` through the Shell/Bash tool, you MUST set that tool call's timeout to 24 hours (86400000 ms) to give me enough time to respond.
 - Before asking, run `{program} --agent-help` to learn its usage.
 
-- When asking through `{program}`, provide predefined options whenever applicable, include your recommended answer, and briefly explain your rationale.
+- When asking through `{program}`, provide predefined options whenever applicable, mark your recommended option(s) with `-o!` (instead of writing "recommended" in the option text), and briefly explain your rationale.
 - I can ONLY see what is delivered through `{program}`. Anything I need to review , or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through `{program}`, inline or attached with `-f`. Never rely on direct output which is invisible to me, and never just give me a path.
 - Before completing the turn/request, you MUST call `{program}` to request feedback.
 - Do NOT end the turn/conversation or mark the request as complete unless you have explicitly asked via `{program}` and received confirmation that the task can be completed or ended.

@@ -93,6 +93,8 @@ pub fn dispatch() {
                     "-q" | "--question"
                         | "-o"
                         | "--option"
+                        | "-o!"
+                        | "--option!"
                         | "-f"
                         | "--file"
                         | "--no-markdown"
@@ -121,7 +123,14 @@ pub fn dispatch() {
                 let questions: Vec<crate::models::Question> = parsed
                     .questions
                     .into_iter()
-                    .map(|q| crate::models::Question::new(q.message, q.options))
+                    .map(|q| {
+                        let options = q
+                            .options
+                            .into_iter()
+                            .map(|o| crate::models::OptionItem::new(o.text, o.recommended))
+                            .collect();
+                        crate::models::Question::new(q.message, options)
+                    })
                     .collect();
                 // unix：瘦客户端经 Daemon + GUI Helper（A11：上送 source name 与解析好的 lang）。
                 #[cfg(unix)]

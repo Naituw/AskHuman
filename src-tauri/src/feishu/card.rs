@@ -7,6 +7,7 @@
 //! - 用户点「提交」→ 一次 `card.action.trigger` 回调，`action.form_value` 汇总所有组件取值。
 //! - 选项 ↔ 组件名映射 `opt_{i}`，便于回调里还原勾选了哪些选项（规避超长/重复选项文案）。
 
+use crate::models::OptionItem;
 use serde_json::{json, Value};
 
 /// 选项组件名前缀（`opt_0` / `opt_1` ...）。
@@ -28,14 +29,17 @@ pub struct CardSubmit {
 /// 组装提问卡片（卡片 JSON 2.0）。
 /// `title` 为题首（空则省略 header）；`text` 为问题正文；`options` 为预定义选项（空则无选项区）；
 /// `is_markdown` 决定正文用 markdown 还是 plain_text 组件；`input_placeholder` 为输入框占位提示；
-/// `submit_label` 为提交按钮文案。
+/// `submit_label` 为提交按钮文案；`recommended_prefix` 为推荐选项的显示前缀（与其他文案
+/// 一样由渠道层本地化后传入；提交值始终为选项原文）。
+#[allow(clippy::too_many_arguments)]
 pub fn build_question_card(
     title: &str,
     text: &str,
-    options: &[String],
+    options: &[OptionItem],
     is_markdown: bool,
     input_placeholder: &str,
     submit_label: &str,
+    recommended_prefix: &str,
 ) -> Value {
     let mut elements: Vec<Value> = Vec::new();
     if !text.trim().is_empty() {
@@ -48,6 +52,7 @@ pub fn build_question_card(
         false,
         input_placeholder,
         submit_label,
+        recommended_prefix,
     ));
     assemble_card(title, elements, true)
 }
@@ -57,14 +62,16 @@ pub struct Finalized<'a> {
     pub title: &'a str,
     pub text: &'a str,
     pub is_markdown: bool,
-    pub options: &'a [String],
-    /// 用户已选选项（被抢答收尾时为空 → 勾选器都不勾）。
+    pub options: &'a [OptionItem],
+    /// 用户已选选项（原文；被抢答收尾时为空 → 勾选器都不勾）。
     pub selected: &'a [String],
     /// 补充文字回显（无则 None → 输入框留空）。
     pub user_input: Option<&'a str>,
     pub input_placeholder: &'a str,
     /// 禁用按钮的文案（「已提交」/「已在 X 回答」）。
     pub button_label: &'a str,
+    /// 推荐选项的显示前缀（本地化）。
+    pub recommended_prefix: &'a str,
 }
 
 /// 提示消息（message prompt）的 markdown 卡片：标题（来源头部）+ markdown 正文。
@@ -100,6 +107,7 @@ pub fn build_finalized_card(p: &Finalized) -> Value {
         true,
         p.input_placeholder,
         p.button_label,
+        p.recommended_prefix,
     ));
     assemble_card(p.title, elements, true)
 }
@@ -107,21 +115,29 @@ pub fn build_finalized_card(p: &Finalized) -> Value {
 /// 组装表单容器：每选项一个勾选器 + 输入框 + 提交按钮。
 /// `disabled=false`（提问态）：可交互，按钮带 `callback` behaviors。
 /// `disabled=true`（终态）：禁用全部交互，勾选器按 `selected` 勾上，输入框用 `user_input` 回显，按钮无 behaviors。
+/// 勾选器展示文本为「前缀（仅推荐项）+ 原文」；`selected` 与 `checked` 的比对用原文。
+#[allow(clippy::too_many_arguments)]
 fn build_form(
-    options: &[String],
+    options: &[OptionItem],
     selected: &[String],
     user_input: Option<&str>,
     disabled: bool,
     input_placeholder: &str,
     button_label: &str,
+    recommended_prefix: &str,
 ) -> Value {
     let mut form_elements: Vec<Value> = Vec::new();
     for (i, opt) in options.iter().enumerate() {
+        let display = if opt.recommended {
+            format!("{}{}", recommended_prefix, opt.text)
+        } else {
+            opt.text.clone()
+        };
         let mut checker = json!({
             "tag": "checker",
             "name": format!("{}{}", OPT_NAME_PREFIX, i),
-            "checked": selected.contains(opt),
-            "text": { "tag": "plain_text", "content": opt },
+            "checked": selected.contains(&opt.text),
+            "text": { "tag": "plain_text", "content": display },
         });
         if disabled {
             checker["disabled"] = Value::Bool(true);
@@ -218,7 +234,7 @@ fn body_text(text: &str, is_markdown: bool) -> Value {
 
 /// 把一条 `card.action.trigger` 的 `event` 解析为「提交」结果；非表单提交 / 缺字段返回 None。
 /// `options` 用于把 `opt_{i}` 还原为选项文本。
-pub fn parse_card_submit(event: &Value, options: &[String]) -> Option<CardSubmit> {
+pub fn parse_card_submit(event: &Value, options: &[OptionItem]) -> Option<CardSubmit> {
     let open_id = event
         .get("operator")
         .and_then(|o| o.get("open_id"))
@@ -240,7 +256,7 @@ pub fn parse_card_submit(event: &Value, options: &[String]) -> Option<CardSubmit
     for (i, opt) in options.iter().enumerate() {
         let key = format!("{}{}", OPT_NAME_PREFIX, i);
         if is_checked(form_value.get(&key)) {
-            selected.push(opt.clone());
+            selected.push(opt.text.clone());
         }
     }
     let user_input = form_value
@@ -270,15 +286,20 @@ fn is_checked(v: Option<&Value>) -> bool {
 mod tests {
     use super::*;
 
+    fn plain(items: &[&str]) -> Vec<OptionItem> {
+        items.iter().map(|s| OptionItem::new(*s, false)).collect()
+    }
+
     #[test]
     fn build_card_has_form_and_options() {
         let card = build_question_card(
             "Question 1/2",
             "要继续吗？",
-            &["继续".into(), "停止".into()],
+            &plain(&["继续", "停止"]),
             true,
             "补充说明（可选）",
             "提交",
+            "👍推荐 ",
         );
         assert_eq!(card["schema"], "2.0");
         // Question card: title is now a body-top "question icon + blue title" row + divider (DingTalk-style), no native header.
@@ -299,8 +320,33 @@ mod tests {
     }
 
     #[test]
+    fn recommended_option_gets_display_prefix_but_keeps_plain_value() {
+        let opts = vec![OptionItem::new("继续", true), OptionItem::new("停止", false)];
+        let card = build_question_card("T", "Q", &opts, true, "ph", "提交", "👍推荐 ");
+        let form = card["body"]["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["tag"] == "form")
+            .unwrap();
+        let fe = form["elements"].as_array().unwrap();
+        let checkers: Vec<&Value> = fe.iter().filter(|e| e["tag"] == "checker").collect();
+        // 显示文本带前缀，普通选项不带。
+        assert_eq!(checkers[0]["text"]["content"], "👍推荐 继续");
+        assert_eq!(checkers[1]["text"]["content"], "停止");
+        // 提交按下标还原，回传原文。
+        let event = json!({
+            "operator": { "open_id": "ou_1" },
+            "context": { "open_message_id": "om_1" },
+            "action": { "form_value": { "opt_0": true } }
+        });
+        let s = parse_card_submit(&event, &opts).unwrap();
+        assert_eq!(s.selected_options, vec!["继续".to_string()]);
+    }
+
+    #[test]
     fn build_card_without_options_omits_checkers() {
-        let card = build_question_card("", "随便说点什么", &[], false, "请输入", "提交");
+        let card = build_question_card("", "随便说点什么", &[], false, "请输入", "提交", "👍推荐 ");
         assert!(card.get("header").is_none());
         let form = card["body"]["elements"]
             .as_array()
@@ -321,7 +367,8 @@ mod tests {
 
     #[test]
     fn finalized_card_disables_form_and_reflects_selection() {
-        let opts = vec!["继续".to_string(), "停止".to_string()];
+        // 「停止」为推荐项：显示带前缀，但勾选比对仍按原文命中。
+        let opts = vec![OptionItem::new("继续", false), OptionItem::new("停止", true)];
         let sel = vec!["停止".to_string()];
         let card = build_finalized_card(&Finalized {
             title: "Question 1/2",
@@ -332,6 +379,7 @@ mod tests {
             user_input: Some("再想想"),
             input_placeholder: "补充说明（可选）",
             button_label: "已提交",
+            recommended_prefix: "👍推荐 ",
         });
         let form = card["body"]["elements"]
             .as_array()
@@ -347,6 +395,7 @@ mod tests {
         assert_eq!(checkers[0]["disabled"], true);
         assert_eq!(checkers[1]["checked"], true);
         assert_eq!(checkers[1]["disabled"], true);
+        assert_eq!(checkers[1]["text"]["content"], "👍推荐 停止");
         // 输入框：禁用 + 回显补充文字。
         let input = fe.iter().find(|e| e["tag"] == "input").unwrap();
         assert_eq!(input["disabled"], true);
@@ -374,7 +423,7 @@ mod tests {
                 }
             }
         });
-        let opts = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let opts = plain(&["A", "B", "C"]);
         let s = parse_card_submit(&event, &opts).unwrap();
         assert_eq!(s.open_id, "ou_1");
         assert_eq!(s.message_id, "om_1");

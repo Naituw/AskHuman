@@ -249,6 +249,7 @@ impl MessagingChannel for SlackSession {
             input_label,
             placeholder,
             submit_label,
+            i18n::tr(ctx.lang, "channel.recommendedPrefix"),
             &nonce,
         );
         // 通知/回退文本（折叠态、推送预览）。
@@ -365,6 +366,8 @@ async fn ask_question_text(
     ctx: &QuestionCtx<'_>,
     preempt: &Preemption,
 ) -> Option<QuestionAnswer> {
+    // 编号回复按原文映射（编号清单展示用显示文本，见 build_question_text）。
+    let option_texts: Vec<String> = ctx.options.iter().map(|o| o.text.clone()).collect();
     let body = build_question_text(ctx);
     if let Err(e) = client.post_text(dm, &body).await {
         eprintln!(
@@ -388,7 +391,7 @@ async fn ask_question_text(
                 if event_user(&event) != user_id {
                     continue;
                 }
-                if let Some(answer) = message_to_answer(client, &event, ctx.options, ctx.lang).await {
+                if let Some(answer) = message_to_answer(client, &event, &option_texts, ctx.lang).await {
                     events.clear_active(None, user_id);
                     return Some(answer);
                 }
@@ -446,7 +449,8 @@ fn build_question_text(ctx: &QuestionCtx<'_>) -> String {
         s.push_str(i18n::tr(ctx.lang, "channel.ddHintFree"));
     } else {
         for (i, opt) in ctx.options.iter().enumerate() {
-            s.push_str(&format!("{}. {}\n", i + 1, markdown::escape(opt)));
+            let display = super::conversation::display_text(opt, ctx.lang);
+            s.push_str(&format!("{}. {}\n", i + 1, markdown::escape(&display)));
         }
         s.push('\n');
         s.push_str(i18n::tr(ctx.lang, "channel.ddHintOptions"));

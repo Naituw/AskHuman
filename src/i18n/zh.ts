@@ -13,6 +13,7 @@ export default {
     attachments: "附件 · {n}",
     inputPlaceholder: "输入你的回复…",
     addImage: "添加图片",
+    recommended: "推荐",
     send: "发送",
     prev: "上一个",
     next: "下一个",

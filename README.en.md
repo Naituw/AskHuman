@@ -48,8 +48,8 @@ You can also download a platform archive from [GitHub Releases](https://github.c
 ### 1. The AskHuman command
 
 ```bash
-# Ask (result goes to stdout). Without -q, the first argument is the question
-AskHuman "Continue?" -o "Continue" -o "Stop"
+# Ask (result goes to stdout). Without -q, the first argument is the question; -o! marks an option as your recommended answer
+AskHuman "Continue?" -o! "Continue" -o "Stop"
 
 # Multiple questions: the first argument is the shared Message; each -q is a question, -o attaches to the nearest preceding question
 AskHuman "Please confirm a few things:" -q "Keep logs?" -o "Keep" -o "Clear" -q "Enable cache?" -o "On" -o "Off"

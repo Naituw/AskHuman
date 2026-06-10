@@ -216,6 +216,7 @@ impl MessagingChannel for FeishuSession {
 
         let placeholder = i18n::tr(ctx.lang, "channel.fsInputPlaceholder");
         let submit_label = i18n::tr(ctx.lang, "channel.fsSubmitButton");
+        let recommended_prefix = i18n::tr(ctx.lang, "channel.recommendedPrefix");
         let question_card = card::build_question_card(
             title,
             ctx.text,
@@ -223,6 +224,7 @@ impl MessagingChannel for FeishuSession {
             ctx.is_markdown,
             placeholder,
             submit_label,
+            recommended_prefix,
         );
 
         // 1. 投放互动卡片；失败 → 回退纯文本编号方案。
@@ -280,6 +282,7 @@ impl MessagingChannel for FeishuSession {
                                 user_input: s.user_input.as_deref(),
                                 input_placeholder: placeholder,
                                 button_label: i18n::tr(ctx.lang, "channel.fsSubmitted"),
+                                recommended_prefix,
                             });
                             // 立刻经 Router 同步回包更新卡片 → 按钮 Loading 直接变终态（无闪烁）。
                             // 不再追加 OpenAPI patch_card：那次二次渲染正是残留「快速回弹」的来源。
@@ -341,6 +344,7 @@ impl MessagingChannel for FeishuSession {
             user_input: None,
             input_placeholder: placeholder,
             button_label: &status,
+            recommended_prefix,
         });
         let _ = client.patch_card(&message_id, &finalized).await;
         events.clear_active(Some(&message_id), &open_id);
@@ -361,6 +365,8 @@ async fn ask_question_text(
     ctx: &QuestionCtx<'_>,
     preempt: &Preemption,
 ) -> Option<QuestionAnswer> {
+    // 编号回复按原文映射（编号清单展示用显示文本，见 build_question_text）。
+    let option_texts: Vec<String> = ctx.options.iter().map(|o| o.text.clone()).collect();
     let body = build_question_text(ctx);
     if let Err(e) = client.send_text(&body).await {
         eprintln!(
@@ -384,7 +390,7 @@ async fn ask_question_text(
                 if event_open_id(&event) != open_id {
                     continue;
                 }
-                if let Some(answer) = message_to_answer(client, &event, ctx.options).await {
+                if let Some(answer) = message_to_answer(client, &event, &option_texts).await {
                     events.clear_active(None, open_id);
                     return Some(answer);
                 }
@@ -465,7 +471,11 @@ fn build_question_text(ctx: &QuestionCtx<'_>) -> String {
         s.push_str(i18n::tr(ctx.lang, "channel.ddHintFree"));
     } else {
         for (i, opt) in ctx.options.iter().enumerate() {
-            s.push_str(&format!("{}. {}\n", i + 1, opt));
+            s.push_str(&format!(
+                "{}. {}\n",
+                i + 1,
+                super::conversation::display_text(opt, ctx.lang)
+            ));
         }
         s.push('\n');
         s.push_str(i18n::tr(ctx.lang, "channel.ddHintOptions"));

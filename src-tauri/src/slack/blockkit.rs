@@ -9,6 +9,7 @@
 //! - 终态为**静态** blocks（无交互控件，回显已选项与补充文字 + 状态行），由 `chat.update` 置入。
 
 use super::markdown;
+use crate::models::OptionItem;
 use serde_json::{json, Value};
 
 /// 选项 value 前缀（`opt_0` / `opt_1` ...，全局连续下标）。
@@ -38,18 +39,21 @@ pub struct CardSubmit {
 /// 组装提问卡片（blocks 数组）。
 /// `title` 题首（空则省略）；`text` 正文（空则省略）；`options` 预定义选项（空则无复选框）；
 /// `is_markdown` 决定正文用 mrkdwn 还是 plain_text；其余为各处文案。
+/// `recommended_prefix` 为推荐选项的显示前缀（渠道层本地化传入；`value=opt_{i}` 按下标
+/// 还原原文，显示前缀不影响提交值）。
 /// `nonce` 为每张卡片唯一串，拼入各 `input` 块 block_id：Slack 客户端按 block_id 缓存输入草稿，
 /// 唯一化可避免新卡片回填上一题的输入/勾选（见 `docs/plans/slack-channel.md` 反馈意见）。
 #[allow(clippy::too_many_arguments)]
 pub fn build_question_card(
     title: &str,
     text: &str,
-    options: &[String],
+    options: &[OptionItem],
     is_markdown: bool,
     options_label: &str,
     input_label: &str,
     input_placeholder: &str,
     submit_label: &str,
+    recommended_prefix: &str,
     nonce: &str,
 ) -> Value {
     let mut blocks: Vec<Value> = Vec::new();
@@ -68,8 +72,13 @@ pub fn build_question_card(
                 .iter()
                 .enumerate()
                 .map(|(j, opt)| {
+                    let display = if opt.recommended {
+                        format!("{}{}", recommended_prefix, opt.text)
+                    } else {
+                        opt.text.clone()
+                    };
                     json!({
-                        "text": { "type": "plain_text", "text": opt, "emoji": true },
+                        "text": { "type": "plain_text", "text": display, "emoji": true },
                         "value": format!("{}{}", OPT_VALUE_PREFIX, base + j),
                     })
                 })
@@ -172,7 +181,7 @@ pub fn build_finalized_card(p: &Finalized) -> Value {
 
 /// 把一次 `block_actions` 回调解析为「提交」结果；非提交按钮 / 缺字段返回 None。
 /// `options` 用于把 `opt_{i}` 还原为选项文本。
-pub fn parse_submit(payload: &Value, options: &[String]) -> Option<CardSubmit> {
+pub fn parse_submit(payload: &Value, options: &[OptionItem]) -> Option<CardSubmit> {
     // 必须是「提交」按钮触发。
     let is_submit = payload
         .get("actions")
@@ -249,7 +258,7 @@ pub fn parse_submit(payload: &Value, options: &[String]) -> Option<CardSubmit> {
         .iter()
         .enumerate()
         .filter(|(i, _)| chosen[*i])
-        .map(|(_, o)| o.clone())
+        .map(|(_, o)| o.text.clone())
         .collect();
 
     Some(CardSubmit {
@@ -314,17 +323,22 @@ mod tests {
         v.as_array().unwrap()
     }
 
+    fn plain(items: &[&str]) -> Vec<OptionItem> {
+        items.iter().map(|s| OptionItem::new(*s, false)).collect()
+    }
+
     #[test]
     fn build_card_has_form_and_options() {
         let card = build_question_card(
             "Question 1/2",
             "要继续吗？",
-            &["继续".into(), "停止".into()],
+            &plain(&["继续", "停止"]),
             true,
             "Options",
             "Note",
             "Add a note",
             "Submit",
+            "👍推荐 ",
             "n1",
         );
         let bs = blocks(&card);
@@ -346,22 +360,37 @@ mod tests {
     }
 
     #[test]
+    fn recommended_option_gets_display_prefix_but_keeps_index_value() {
+        let opts = vec![OptionItem::new("继续", true), OptionItem::new("停止", false)];
+        let card =
+            build_question_card("t", "x", &opts, false, "L", "N", "p", "S", "👍推荐 ", "n");
+        let checkboxes = blocks(&card)
+            .iter()
+            .find(|b| b["element"]["type"] == "checkboxes")
+            .unwrap();
+        let items = checkboxes["element"]["options"].as_array().unwrap();
+        assert_eq!(items[0]["text"]["text"], "👍推荐 继续");
+        assert_eq!(items[0]["value"], "opt_0");
+        assert_eq!(items[1]["text"]["text"], "停止");
+    }
+
+    #[test]
     fn title_rendered_as_header_with_question_icon() {
-        let card = build_question_card("继续吗", "正文", &[], false, "L", "N", "p", "S", "n");
+        let card = build_question_card("继续吗", "正文", &[], false, "L", "N", "p", "S", "R", "n");
         let header = blocks(&card).iter().find(|b| b["type"] == "header").unwrap();
         assert_eq!(header["text"]["type"], "plain_text");
         assert!(header["text"]["text"].as_str().unwrap().starts_with("❓ "));
         // 超长标题回退为普通加粗 section（不致 Slack 报错）。
         let long: String = "题".repeat(200);
-        let card2 = build_question_card(&long, "", &[], false, "L", "N", "p", "S", "n");
+        let card2 = build_question_card(&long, "", &[], false, "L", "N", "p", "S", "R", "n");
         assert!(!blocks(&card2).iter().any(|b| b["type"] == "header"));
     }
 
     #[test]
     fn input_block_ids_carry_nonce() {
         // 唯一 nonce 应拼入各 input 块 block_id（清除 Slack 跨卡片输入缓存）。
-        let a = build_question_card("t", "x", &["o".into()], false, "L", "N", "p", "S", "AAA");
-        let b = build_question_card("t", "x", &["o".into()], false, "L", "N", "p", "S", "BBB");
+        let a = build_question_card("t", "x", &plain(&["o"]), false, "L", "N", "p", "S", "R", "AAA");
+        let b = build_question_card("t", "x", &plain(&["o"]), false, "L", "N", "p", "S", "R", "BBB");
         let id_of = |card: &Value, typ: &str| -> String {
             blocks(card)
                 .iter()
@@ -379,8 +408,10 @@ mod tests {
 
     #[test]
     fn options_split_into_chunks_of_ten() {
-        let options: Vec<String> = (0..23).map(|i| format!("o{}", i)).collect();
-        let card = build_question_card("t", "x", &options, false, "Options", "Note", "ph", "Submit", "n");
+        let options: Vec<OptionItem> =
+            (0..23).map(|i| OptionItem::new(format!("o{}", i), false)).collect();
+        let card =
+            build_question_card("t", "x", &options, false, "Options", "Note", "ph", "Submit", "R", "n");
         let bs = blocks(&card);
         let checkbox_blocks: Vec<&Value> = bs
             .iter()
@@ -393,7 +424,8 @@ mod tests {
 
     #[test]
     fn build_card_without_options_omits_checkboxes() {
-        let card = build_question_card("", "随便说点什么", &[], false, "Options", "Note", "ph", "Submit", "n");
+        let card =
+            build_question_card("", "随便说点什么", &[], false, "Options", "Note", "ph", "Submit", "R", "n");
         let bs = blocks(&card);
         assert!(!bs.iter().any(|b| b["element"]["type"] == "checkboxes"));
         assert!(bs.iter().any(|b| b["element"]["type"] == "plain_text_input"));
@@ -415,7 +447,7 @@ mod tests {
                 "userinput": { "user_input": { "type": "plain_text_input", "value": "  hi  " } }
             } }
         });
-        let opts = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let opts = plain(&["A", "B", "C"]);
         let s = parse_submit(&payload, &opts).unwrap();
         assert_eq!(s.user_id, "U1");
         assert_eq!(s.channel_id, "D1");

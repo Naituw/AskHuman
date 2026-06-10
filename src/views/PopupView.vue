@@ -355,7 +355,7 @@ function toggle(option: string) {
 function toggleByIndex(i: number) {
   const opts = currentQuestion.value?.predefinedOptions;
   if (!opts || i < 0 || i >= opts.length) return;
-  toggle(opts[i]);
+  toggle(opts[i].text);
 }
 
 function pickFiles() {
@@ -481,9 +481,9 @@ function onQuestionEntered() {
 
 function collectAnswers(): QuestionAnswer[] {
   return questions.value.map((q, i) => ({
-    selectedOptions: q.predefinedOptions.filter((o) =>
-      (chosenByQ.value[i] ?? []).includes(o)
-    ),
+    selectedOptions: q.predefinedOptions
+      .map((o) => o.text)
+      .filter((o) => (chosenByQ.value[i] ?? []).includes(o)),
     userInput: inputByQ.value[i] ?? "",
     images: imagesByQ.value[i] ?? [],
     files: (replyFilesByQ.value[i] ?? []).map((f) => f.path),
@@ -1059,11 +1059,18 @@ onBeforeUnmount(() => {
               v-for="(opt, i) in currentQuestion.predefinedOptions"
               :key="i"
               class="option"
-              :class="{ selected: chosen.includes(opt) }"
-              @click="toggle(opt)"
+              :class="{ selected: chosen.includes(opt.text) }"
+              @click="toggle(opt.text)"
             >
-              <span class="check">{{ chosen.includes(opt) ? "✓" : "" }}</span>
-              <span class="label">{{ opt }}</span>
+              <span class="check">{{ chosen.includes(opt.text) ? "✓" : "" }}</span>
+              <span v-if="opt.recommended" class="rec-badge">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"></path>
+                  <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path>
+                </svg>
+                {{ t("popup.recommended") }}
+              </span>
+              <span class="label">{{ opt.text }}</span>
               <kbd v-if="optionHotkey(i)" class="opt-sc">{{ optionHotkey(i) }}</kbd>
             </div>
           </div>

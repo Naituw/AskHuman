@@ -13,6 +13,7 @@ export default {
     attachments: "Attachments · {n}",
     inputPlaceholder: "Type your reply…",
     addImage: "Add image",
+    recommended: "Recommended",
     send: "Send",
     prev: "Previous",
     next: "Next",

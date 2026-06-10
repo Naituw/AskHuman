@@ -250,7 +250,14 @@ impl MessagingChannel for DingTalkSession {
         };
         let template_id = effective_template_id(&self.config).to_string();
         let out_track_id = uuid::Uuid::new_v4().to_string();
-        let param_map = card::build_card_param_map(title, ctx.text, ctx.options);
+        // 卡片展示用显示文本（推荐选项带本地化前缀）；模板回传的也是显示文本，
+        // 提交时经 restore_selected 还原为原文。
+        let displays: Vec<String> = ctx
+            .options
+            .iter()
+            .map(|o| super::conversation::display_text(o, ctx.lang))
+            .collect();
+        let param_map = card::build_card_param_map(title, ctx.text, &displays);
         let private_param_map = card::build_card_private_map();
 
         let Self {
@@ -312,7 +319,11 @@ impl MessagingChannel for DingTalkSession {
                             let images = std::mem::take(&mut *images.lock().unwrap());
                             let files = std::mem::take(&mut *files.lock().unwrap());
                             return Some(QuestionAnswer {
-                                selected_options: s.selected_options,
+                                selected_options: restore_selected(
+                                    s.selected_options,
+                                    ctx.options,
+                                    ctx.lang,
+                                ),
                                 user_input: s.user_input,
                                 images,
                                 files,
@@ -381,6 +392,8 @@ async fn ask_question_text(
     } else {
         ctx.header
     };
+    // 编号回复按原文映射（编号清单展示用显示文本，见 build_question_text）。
+    let option_texts: Vec<String> = ctx.options.iter().map(|o| o.text.clone()).collect();
     let body = build_question_text(ctx, ctx.is_markdown);
     let send_res = if ctx.is_markdown {
         client.send_oto_markdown(title, &body).await
@@ -409,7 +422,7 @@ async fn ask_question_text(
                 if !bot_message_belongs(&data, user_id) {
                     continue;
                 }
-                if let Some(answer) = message_to_answer(client, &data, ctx.options).await {
+                if let Some(answer) = message_to_answer(client, &data, &option_texts).await {
                     events.clear_active(None, user_id);
                     return Some(answer);
                 }
@@ -497,12 +510,35 @@ fn build_question_text(ctx: &QuestionCtx<'_>, is_markdown: bool) -> String {
         s.push_str(i18n::tr(ctx.lang, "channel.ddHintFree"));
     } else {
         for (i, opt) in ctx.options.iter().enumerate() {
-            s.push_str(&format!("{}. {}\n", i + 1, opt));
+            s.push_str(&format!(
+                "{}. {}\n",
+                i + 1,
+                super::conversation::display_text(opt, ctx.lang)
+            ));
         }
         s.push('\n');
         s.push_str(i18n::tr(ctx.lang, "channel.ddHintOptions"));
     }
     s.trim_end().to_string()
+}
+
+/// 钉钉卡片模板回传的是【显示文本】（模板只有 text 一个字段）；
+/// 按本题选项把显示文本还原为原文，查不到（理论不发生）原样保留。
+fn restore_selected(
+    selected: Vec<String>,
+    options: &[crate::models::OptionItem],
+    lang: Lang,
+) -> Vec<String> {
+    selected
+        .into_iter()
+        .map(|s| {
+            options
+                .iter()
+                .find(|o| super::conversation::display_text(o, lang) == s)
+                .map(|o| o.text.clone())
+                .unwrap_or(s)
+        })
+        .collect()
 }
 
 /// 把一条 bot 消息转成回答；非可作答类型返回 None（继续等待）。
@@ -712,4 +748,27 @@ fn ext_of(name: &str) -> &str {
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::OptionItem;
+
+    #[test]
+    fn restore_selected_maps_display_back_to_text() {
+        let options = vec![OptionItem::new("继续", true), OptionItem::new("停止", false)];
+        let selected = vec!["👍推荐 继续".to_string(), "停止".to_string()];
+        assert_eq!(
+            restore_selected(selected, &options, Lang::Zh),
+            vec!["继续".to_string(), "停止".to_string()]
+        );
+    }
+
+    #[test]
+    fn restore_selected_keeps_unknown_as_is() {
+        let options = vec![OptionItem::new("A", true)];
+        let selected = vec!["unknown".to_string()];
+        assert_eq!(restore_selected(selected, &options, Lang::En), vec!["unknown".to_string()]);
+    }
 }

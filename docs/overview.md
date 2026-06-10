@@ -68,13 +68,13 @@ AskHuman/
       macos_menu.rs          (macOS) -f 附件原生右键菜单（NSMenu，Finder 风格）
       cli/
         mod.rs               argv 分发（--help/--version/--settings/--history[--all]/无参/提问）
-        args.rs              提问参数解析（message / --stdin / -o / --no-markdown / -f）
+        args.rs              提问参数解析（message / --stdin / -o / -o!(推荐选项) / --no-markdown / -f）
         file_attachment.rs   -f 路径解析/校验（~/相对路径 → 绝对路径 + 元信息）
         output.rs            结果区块格式化（[选择的选项]/[用户输入]/[图片]/[文件]/[状态]）
         image_writer.rs      图片 base64 落盘 + 文件名 sanitize + ext 映射
         help.rs              帮助/版本文案
-      models.rs              AskRequest(含 files) / FileAttachment / ChannelResult(含 files) /
-                             ImageAttachment / ChannelAction / source_name()
+      models.rs              AskRequest(含 files) / OptionItem(text+recommended，反序列化兼容旧纯字符串) /
+                             FileAttachment / ChannelResult(含 files) / ImageAttachment / ChannelAction / source_name()
       config.rs              AppConfig 读写 ~/.askhuman/config.json（原子写、容错解码；旧 ~/.humaninloop 自动回退读取）
       paths.rs               home/config/temp 路径 + history.jsonl/history.lock
       project.rs             项目识别：从 cwd 向上找首个 .git 根，回退 cwd（回复历史归类）
@@ -166,6 +166,8 @@ AskHuman/
 窗口拖拽用 `data-tauri-drag-region`（导航栏/底部空白/设置 tab 栏）；置顶用前端 `@tauri-apps/api/window` setAlwaysOnTop。
 文件拖入用 `onDragDropEvent`（原生路径）；`-f` 附件拖出用 `tauri-plugin-drag` 的 `startDrag`。
 来源名（弹窗标题 / Telegram 消息头「Question from {名称}」）由环境变量 `ASKHUMAN_ENV_SOURCE_NAME` 定制，缺省「the Loop」。
+
+> 推荐选项（`-o!` / `--option!`，见 `docs/specs/recommended-option.md`）：语义同 `-o` 且标记该选项为 AI 推荐答案（一题可多个，不预选中）。弹窗/历史详情在选项文本前显示「大拇指 SVG +『推荐』」accent 色 Badge（`controls.css` 的 `.rec-badge`）；IM 渠道显示文本加本地化「👍推荐 」前缀（`channel.recommendedPrefix` + `conversation::display_text`），提交值恒为原文——其中钉钉卡片模板回传显示文本，由 `dingding::restore_selected` 还原原文，其余渠道按下标天然回原文。
 
 ## UI / 主题
 

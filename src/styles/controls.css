@@ -110,6 +110,31 @@
   color: var(--text-primary);
   word-break: break-word;
 }
+/* 推荐选项 Badge（选项文本前的 UI 标注，非文本一部分）：大拇指图标 + 本地化「推荐」。 */
+.option .rec-badge {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px 1px 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.option .rec-badge svg {
+  width: 11px;
+  height: 11px;
+}
+/* 选中态（蓝底）下转白色系，保持可读。 */
+.option.selected .rec-badge {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
 
 /* 图片缩略图 */
 .thumbs {

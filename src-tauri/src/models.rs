@@ -66,15 +66,58 @@ impl MessagePrompt {
 pub struct Question {
     pub message: String,
     #[serde(default)]
-    pub predefined_options: Vec<String>,
+    pub predefined_options: Vec<OptionItem>,
 }
 
 impl Question {
-    pub fn new(message: String, predefined_options: Vec<String>) -> Self {
+    pub fn new(message: String, predefined_options: Vec<OptionItem>) -> Self {
         Self {
             message,
             predefined_options,
         }
+    }
+}
+
+/// 单个预定义选项：文本 + 是否为提问方（AI）的推荐答案。
+///
+/// 序列化恒为对象形态；反序列化兼容旧格式的纯字符串
+/// （旧 history.jsonl / 旧 IPC 负载 → `recommended=false`，零迁移）。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OptionItem {
+    pub text: String,
+    pub recommended: bool,
+}
+
+impl OptionItem {
+    pub fn new(text: impl Into<String>, recommended: bool) -> Self {
+        Self {
+            text: text.into(),
+            recommended,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for OptionItem {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // 兼容两种输入：纯字符串（旧格式）与对象（recommended 缺省 false）。
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Text(String),
+            Object {
+                text: String,
+                #[serde(default)]
+                recommended: bool,
+            },
+        }
+        Ok(match Raw::deserialize(deserializer)? {
+            Raw::Text(text) => OptionItem {
+                text,
+                recommended: false,
+            },
+            Raw::Object { text, recommended } => OptionItem { text, recommended },
+        })
     }
 }
 
@@ -152,5 +195,43 @@ impl ChannelResult {
             answers: Vec::new(),
             source_channel_id: source_channel_id.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn option_item_deserializes_legacy_string() {
+        let o: OptionItem = serde_json::from_str("\"继续\"").unwrap();
+        assert_eq!(o, OptionItem::new("继续", false));
+    }
+
+    #[test]
+    fn option_item_deserializes_object_with_default_recommended() {
+        let o: OptionItem = serde_json::from_str(r#"{"text":"A"}"#).unwrap();
+        assert_eq!(o, OptionItem::new("A", false));
+        let o: OptionItem = serde_json::from_str(r#"{"text":"A","recommended":true}"#).unwrap();
+        assert_eq!(o, OptionItem::new("A", true));
+    }
+
+    #[test]
+    fn option_item_serializes_as_object() {
+        let s = serde_json::to_string(&OptionItem::new("A", true)).unwrap();
+        assert_eq!(s, r#"{"text":"A","recommended":true}"#);
+    }
+
+    #[test]
+    fn question_deserializes_mixed_legacy_and_object_options() {
+        // 旧字符串数组、对象数组与混合数组均可读出。
+        let q: Question = serde_json::from_str(
+            r#"{"message":"Q","predefinedOptions":["A",{"text":"B","recommended":true}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            q.predefined_options,
+            vec![OptionItem::new("A", false), OptionItem::new("B", true)]
+        );
     }
 }

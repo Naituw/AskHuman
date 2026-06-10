@@ -10,9 +10,15 @@ export interface MessagePrompt {
   files: FileAttachment[];
 }
 
+/** 单个预定义选项：文本 + 是否为提问方（AI）的推荐答案。 */
+export interface OptionItem {
+  text: string;
+  recommended: boolean;
+}
+
 export interface Question {
   message: string;
-  predefinedOptions: string[];
+  predefinedOptions: OptionItem[];
 }
 
 export interface FileAttachment {
