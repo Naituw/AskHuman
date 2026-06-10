@@ -7,6 +7,17 @@ pub mod output;
 use crate::i18n::{self, Lang};
 use std::process::exit;
 
+/// 向 stdout 输出一行文本，并把 BrokenPipe（读端提前关闭，如 `AskHuman --agent-help | head`）
+/// 视为正常结束：写失败一律静默忽略，退出码由调用方决定（纯输出命令随后 exit(0)，错误分支 exit(1)）。
+///
+/// 背景：Rust 运行时默认把 SIGPIPE 设为忽略，写已关闭管道返回 EPIPE 而非被信号终止；若用
+/// `println!`，写失败会 panic，而 release 为 `panic = "abort"`，最终以退出码 134 退出。改用本函数规避。
+fn print_line(text: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    let _ = writeln!(out, "{text}").and_then(|_| out.flush());
+}
+
 /// 入口分发：在创建任何窗口前按 argv 分流。
 pub fn dispatch() {
     let argv: Vec<String> = std::env::args().collect();
@@ -20,21 +31,21 @@ pub fn dispatch() {
             "{}\n",
             i18n::tr(lang, "cli.seeAgentHelp").replace("{prog}", &help::program_name())
         );
-        println!("{}", help::help_text(lang));
+        print_line(&help::help_text(lang));
         exit(1);
     }
 
     match argv[1].as_str() {
         "--help" | "-h" => {
-            println!("{}", help::help_text(lang));
+            print_line(&help::help_text(lang));
             exit(0);
         }
         "--version" | "-v" => {
-            println!("{}", help::version_text());
+            print_line(&help::version_text());
             exit(0);
         }
         "--agent-help" => {
-            println!("{}", help::agent_help_text(lang));
+            print_line(&help::agent_help_text(lang));
             exit(0);
         }
         // 设置/历史窗口只需 general(主题)；密钥的「已保存」判定由前端 `get_settings` 单独读取。
@@ -106,7 +117,7 @@ pub fn dispatch() {
                 i18n::err_prefix(lang),
                 i18n::tr(lang, "cli.unknownOption").replace("{opt}", first)
             );
-            println!("{}", help::agent_help_text(lang));
+            print_line(&help::agent_help_text(lang));
             exit(1);
         }
         _ => match parse_ask_with_stdin(&argv[1..], lang) {
@@ -155,7 +166,7 @@ pub fn dispatch() {
             }
             Err(e) => {
                 eprintln!("{}{}\n", i18n::err_prefix(lang), e);
-                println!("{}", help::agent_help_text(lang));
+                print_line(&help::agent_help_text(lang));
                 exit(1);
             }
         },

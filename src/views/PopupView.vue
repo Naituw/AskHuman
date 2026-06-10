@@ -90,6 +90,7 @@ const submitting = ref(false);
 const inputRef = ref<HTMLTextAreaElement | null>(null);
 const fileRef = ref<HTMLInputElement | null>(null);
 const qHeaderRef = ref<HTMLElement | null>(null);
+const thumbsRef = ref<HTMLElement | null>(null);
 const scrolled = ref(false);
 // 取消二次确认（已有部分回答时）。
 const showCancelConfirm = ref(false);
@@ -363,6 +364,7 @@ function pickFiles() {
 }
 
 async function addFiles(files: FileList | File[]) {
+  let added = 0;
   for (const file of Array.from(files)) {
     if (!file.type.startsWith("image/")) continue;
     const data = await fileToDataUrl(file);
@@ -371,7 +373,19 @@ async function addFiles(files: FileList | File[]) {
       mediaType: file.type,
       filename: file.name,
     });
+    added++;
   }
+  if (added) scrollImagesIntoView();
+}
+
+// 新增图片后把最新缩略图滚入可见区：粘贴/选择时即使内容已上滚，也能立刻确认成功。
+async function scrollImagesIntoView() {
+  await nextTick();
+  const wrap = thumbsRef.value;
+  if (!wrap) return;
+  const last = (wrap.lastElementChild as HTMLElement | null) ?? wrap;
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  last.scrollIntoView({ block: "nearest", behavior: reduce ? "auto" : "smooth" });
 }
 
 function onFileChange(e: Event) {
@@ -390,6 +404,7 @@ const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?|svg)$/i;
 
 async function addDroppedPaths(paths: string[]) {
   const attachPaths = new Set(attachments.value.map((a) => a.path));
+  let addedImage = 0;
   for (const path of paths) {
     if (attachPaths.has(path)) continue;
     const name = path.split(/[\\/]/).pop() || "file";
@@ -399,6 +414,7 @@ async function addDroppedPaths(paths: string[]) {
         const semi = data.indexOf(";");
         const mediaType = semi > 5 ? data.slice(5, semi) : "image/png";
         imagesByQ.value[current.value]?.push({ data, mediaType, filename: name });
+        addedImage++;
       } catch (err) {
         console.error("读取拖入图片失败", path, err);
       }
@@ -406,6 +422,7 @@ async function addDroppedPaths(paths: string[]) {
       replyFilesByQ.value[current.value]?.push({ path, name });
     }
   }
+  if (addedImage) scrollImagesIntoView();
 }
 
 function removeReplyFile(index: number) {
@@ -1063,14 +1080,7 @@ onBeforeUnmount(() => {
               @click="toggle(opt.text)"
             >
               <span class="check">{{ chosen.includes(opt.text) ? "✓" : "" }}</span>
-              <span v-if="opt.recommended" class="rec-badge">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"></path>
-                  <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path>
-                </svg>
-                {{ t("popup.recommended") }}
-              </span>
-              <span class="label">{{ opt.text }}</span>
+              <span class="label"><span v-if="opt.recommended" class="rec-badge"><span class="rec-badge-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"></path><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>{{ t("popup.recommended") }}</span></span>{{ opt.text }}</span>
               <kbd v-if="optionHotkey(i)" class="opt-sc">{{ optionHotkey(i) }}</kbd>
             </div>
           </div>
@@ -1133,7 +1143,7 @@ onBeforeUnmount(() => {
             {{ speechStatusText(speechStatus) }}
           </p>
 
-          <div v-if="images.length" class="thumbs">
+          <div v-if="images.length" ref="thumbsRef" class="thumbs">
             <div v-for="(img, i) in images" :key="i" class="thumb">
               <img :src="img.data" alt="" />
               <button class="remove" type="button" @click="removeImage(i)">

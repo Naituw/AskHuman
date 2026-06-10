@@ -107,31 +107,43 @@
 .option .label {
   flex: 1 1 auto;
   font-size: 14px;
+  /* 显式行高（不依赖各平台/字体的 normal）：作为首行高度基准，让 check 与 rec-badge 对齐其中线。 */
+  line-height: 20px;
   color: var(--text-primary);
   word-break: break-word;
 }
-/* 推荐选项 Badge（选项文本前的 UI 标注，非文本一部分）：大拇指图标 + 本地化「推荐」。 */
+/* 推荐选项 Badge（大拇指图标 + 本地化「推荐」）：内联在选项文本流开头。
+   这样英文等较长 badge 不再独占一列、把文本挤窄，换行后的文字可铺满整行（含 badge 下方）。
+
+   两层结构：外层 .rec-badge 是与 .label 行高(20px)等高的「透明对齐盒」并顶对齐——
+   其中线即首行中线，与左侧 checkbox 中线对齐，且不依赖字体度量（跨平台稳定）；
+   内层 .rec-badge-pill 是真正可见的绿色胶囊，比外盒内缩约 1px，避免显得过大、过挤。 */
 .option .rec-badge {
-  flex: 0 0 auto;
-  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: top;
+  height: 20px;
+  margin-right: 6px;
+}
+.option .rec-badge-pill {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 1px 7px 1px 5px;
+  height: 18px;
+  padding: 0 7px 0 5px;
   border-radius: var(--radius-sm);
   font-size: 11px;
   font-weight: 600;
-  line-height: 16px;
   white-space: nowrap;
   color: var(--accent-green);
   background: color-mix(in srgb, var(--accent-green) 16%, transparent);
 }
-.option .rec-badge svg {
+.option .rec-badge-pill svg {
   width: 11px;
   height: 11px;
 }
 /* 选中态（蓝底）下保持绿色以与选中色区分。 */
-.option.selected .rec-badge {
+.option.selected .rec-badge-pill {
   color: var(--accent-green);
   background: color-mix(in srgb, var(--accent-green) 22%, transparent);
 }
