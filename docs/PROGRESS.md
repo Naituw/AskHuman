@@ -53,4 +53,11 @@
   前端映射友好文案 `settings.about.rateLimited`/`popup.update.rateLimited`。
 - 全套 `cargo test` 通过；`npm run build` 通过；git-cliff 本地验证多版本。
 
-剩余：本批改动（UI 修复 + pending 清零 + token/友好文案 + 查看当前日志）尚未提交（commit）。
+自更新主体已提交：`feat(update)` + `ci(release)` + `docs`（3 条，未 push）。
+
+追加修复（实测后用户反馈，未提交）：
+- 原生关闭按钮也走二次确认：后端 `CloseRequested` 收尾态放行、否则 `prevent_close()` + emit
+  `popup-close-requested` → 前端走与 ⌘W 相同的 `requestCancel()`（`GuiBridge::is_done` /
+  `Coordinator::is_finalizing` 判收尾，避免拦截死循环）。
+- 取消确认面板 `.confirm-box` 背景透明 → 改不透明 `--bg`（同更新浮层修复）。
+  改动文件：`src-tauri/src/app/mod.rs`、`src/views/PopupView.vue`；install 实测两项均通过。

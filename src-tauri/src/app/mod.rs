@@ -95,6 +95,11 @@ impl GuiBridge {
     pub fn send_cancel(&self) {
         self.terminal(ChannelAction::Cancel, Vec::new());
     }
+
+    /// 是否已进入收尾（已提交/取消）：关窗事件据此放行，避免拦截导致无法真正关窗。
+    pub fn is_done(&self) -> bool {
+        self.done.load(Ordering::SeqCst)
+    }
 }
 
 /// 无任何可用通信 Channel 时的退出码（供下游据此降级）。
@@ -622,14 +627,22 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             match window.label() {
                 // 弹窗：关闭即取消 / 记忆尺寸。
                 "popup" => match event {
-                    WindowEvent::CloseRequested { .. } => {
+                    WindowEvent::CloseRequested { api, .. } => {
+                        use tauri::Emitter;
                         let app = window.app_handle();
-                        if let Some(c) = app.try_state::<Arc<Coordinator>>() {
-                            // 单进程路径：投递协调器。
-                            c.submit(ChannelResult::cancel("popup"));
-                        } else if let Some(b) = app.try_state::<GuiBridge>() {
-                            // GUI Helper 路径：经 IPC 通知 Daemon 取消。
-                            b.send_cancel();
+                        // 已在收尾（提交/取消触发的 w.close()）→ 放行关闭。
+                        let finishing = app
+                            .try_state::<GuiBridge>()
+                            .map(|b| b.is_done())
+                            .unwrap_or(false)
+                            || app
+                                .try_state::<Arc<Coordinator>>()
+                                .map(|c| c.is_finalizing())
+                                .unwrap_or(false);
+                        if !finishing {
+                            // 原生关闭按钮：与 ⌘W 一致——阻止本次关闭，交前端决定（有输入则二次确认）。
+                            api.prevent_close();
+                            let _ = app.emit("popup-close-requested", ());
                         }
                     }
                     WindowEvent::Resized(_) => persist_popup_size(window),

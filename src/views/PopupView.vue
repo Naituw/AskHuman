@@ -231,6 +231,7 @@ let unlistenFocus: UnlistenFn | null = null;
 let unlistenDrop: UnlistenFn | null = null;
 let unlistenSettings: UnlistenFn | null = null;
 let unlistenUpdate: UnlistenFn | null = null;
+let unlistenCloseReq: UnlistenFn | null = null;
 
 function setAttRef(el: Element | null, i: number) {
   if (el) attRefs.value[i] = el as HTMLElement;
@@ -940,6 +941,10 @@ onMounted(async () => {
     updatePending.value = e.payload.pending;
     updateLatest.value = e.payload.latestVersion;
   });
+  // 原生关闭按钮：后端阻止关闭并转发此事件 → 与 ⌘W 一致走二次确认。
+  unlistenCloseReq = await listen("popup-close-requested", () => {
+    requestCancel();
+  });
   try {
     const init = await popupInit();
     applyTheme(init.theme);
@@ -975,6 +980,7 @@ onBeforeUnmount(() => {
   unlistenDrop?.();
   unlistenSettings?.();
   unlistenUpdate?.();
+  unlistenCloseReq?.();
   stopListening();
   unlistenSpeech.forEach((fn) => fn());
   unlistenSpeech = [];
@@ -1977,7 +1983,8 @@ onBeforeUnmount(() => {
 }
 .confirm-box {
   width: min(320px, 84%);
-  background: var(--card-bg, var(--bg-elevated));
+  /* 用不透明 --bg：弹窗是毛玻璃，--card-bg 仅 3~6% alpha 会透出底下内容 */
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 12px);
   padding: 18px 18px 14px;
