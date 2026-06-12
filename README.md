@@ -2,117 +2,118 @@
   <img src="assets/banner.jpg" alt="AskHuman" width="800">
 </p>
 
-<p align="center">简体中文 | <a href="./README.en.md">English</a></p>
+<p align="center">English | <a href="./README.zh-CN.md">简体中文</a></p>
 
 # AskHuman
 
-跨平台的「Human-in-the-loop」交互工具。当 AI Agent 准备结束对话或需要确认时，调用命令行 `AskHuman` 弹出窗口，让你继续提问、勾选选项、补充文字或附带图片，并把结果回传给 AI。
+A cross-platform human-in-the-loop tool. When an AI agent is about to end a conversation or needs confirmation, it runs the `AskHuman` CLI to pop up a window so you can ask follow-ups, pick options, add text, or attach images — and the result is returned to the agent.
 
-- 单一可执行文件 `AskHuman`，允许 Agent 通过 CLI 方式调用提问
-- 基于 **Tauri 2（Rust + Vue 3）**，支持 **macOS / Linux**
-- 多通信渠道：本地弹窗 + 钉钉 + 飞书 + Telegram + Slack，可独立开关、多开并行「抢答」
+- A single executable `AskHuman` that lets agents ask questions through the CLI
+- Built on **Tauri 2 (Rust + Vue 3)**, supports **macOS / Linux**
+- Multiple channels: local popup + Telegram + Slack + DingTalk + Feishu, independently toggleable and racing in parallel when several are on
 
-## 工作原理
-
-<p align="center">
-  <img src="assets/overview.webp" alt="AskHuman 在 AI Agent 与人之间架起桥梁：从 Bash 调用分发到弹窗与各 IM" width="900">
-</p>
-
-## 功能预览
-
-Agent 的提问会同时送达本地 GUI 弹窗与钉钉、飞书、Telegram、Slack，并提供关键上下文、附件及预选项，无论你是否在电脑前，都能随时收到通知并回复。
+## How it works
 
 <p align="center">
-  <img src="assets/channels.webp" alt="在本地弹窗、钉钉、飞书、Telegram、Slack 等多渠道回复 Agent" width="900">
+  <img src="assets/overview.webp" alt="AskHuman bridges AI agents and humans: a Bash call fans out to the popup and IMs" width="900">
 </p>
 
-工具会自动记录最近的 Agent 提问及人类回答历史，在回答新问题时，可以随时参考。（若不需要历史记录，可以在设置中关闭）
+## Screenshots
+
+Your agent's questions arrive at the local GUI popup and Telegram, Slack, DingTalk, and Feishu all at once, along with the key context, attachments, and preset options — so whether or not you're at your desk, you get notified and can reply anytime.
 
 <p align="center">
-  <img src="assets/history.webp" alt="按项目查看消息与回复历史" width="680">
+  <img src="assets/channels.webp" alt="Reply to your agent from the local popup, Telegram, Slack, DingTalk, or Feishu" width="900">
 </p>
 
-## 安装
+The tool automatically records the recent history of agent questions and human answers, so you can refer back to it anytime while answering new questions. (If you don't need history, you can turn it off in the settings.)
+
+<p align="center">
+  <img src="assets/history.webp" alt="Browse message and reply history per project" width="680">
+</p>
+
+## Install
 
 ```bash
-# npm（推荐）：只下载与当前平台匹配的一个二进制
+# npm (recommended): downloads only the one binary matching your platform
 npm i -g askhuman
 ```
 
-也可从 [GitHub Releases](https://github.com/Naituw/AskHuman/releases) 下载对应平台压缩包，解压后把 `AskHuman` 放入 `PATH`。从源码构建见[开发文档](docs/development.md)。
+You can also download a platform archive from [GitHub Releases](https://github.com/Naituw/AskHuman/releases), extract it, and put `AskHuman` on your `PATH`. To build from source, see the [development guide](docs/development.md).
 
-> Linux 运行 GUI 弹窗需系统具备 WebKitGTK（如 `libwebkit2gtk-4.1`）；缺失且配置了会话型渠道时会自动改走该渠道。
+> Running the GUI popup on Linux needs system WebKitGTK (e.g. `libwebkit2gtk-4.1`); if it's missing and a session-based channel is configured, AskHuman uses that channel automatically.
 
-## 使用
+## Usage
 
-### 一、AskHuman 命令
+### 1. The AskHuman command
 
-`AskHuman` 是一个命令行工具，AI Agent 通过它向你提问并取回结果。几个最常见的用法：
+`AskHuman` is a command-line tool that AI agents use to ask you questions and get the result back. The most common usages:
 
 ```bash
-# 最基础的提问：第一个参数即问题，-o 添加预选项
-AskHuman "要继续吗？" -o "继续" -o "停止"
+# The most basic ask: the first argument is the question, -o adds an option
+AskHuman "Continue?" -o "Continue" -o "Stop"
 
-# 带图片、多问题：第一个参数是共享描述，-f 附带文件/图片，每个 -q 是一题，-o! 标记推荐答案
-AskHuman "看看这个改动？" -f ./diagram.png \
-  -q "要继续吗？" -o! "继续" -o "停止" \
-  -q "需要跑测试吗？" -o "跑" -o "跳过"
+# With an image and multiple questions: the first argument is a shared description,
+# -f attaches a file/image, each -q is a question, -o! marks the recommended answer
+AskHuman "Take a look at this change?" -f ./diagram.png \
+  -q "Continue?" -o! "Continue" -o "Stop" \
+  -q "Run the tests?" -o "Run" -o "Skip"
 
-# 其它常用
-AskHuman --settings   # 打开设置界面
-AskHuman --history    # 打开回复历史（加 --all 看全部项目）
+# Other common ones
+AskHuman --settings   # open the settings UI
+AskHuman --history    # open reply history (add --all for every project)
 ```
 
-整个 CLI 的完整用法见 `AskHuman --help`，提问的完整用法见 `AskHuman --agent-help`。
+For the full CLI usage, see `AskHuman --help`; for the full asking usage, see `AskHuman --agent-help`.
 
-### 二、集成到 Agent 中
+### 2. Integrate with your Agent
 
-为了让 Agent 在结束或需要确认时主动调用 `AskHuman`，需要把相应提示词加入 Agent 的全局提示词。运行 `AskHuman --settings` 打开设置，进入 **Agents** 面板，按需选择：
+To make your agent call `AskHuman` on its own when finishing or needing confirmation, add the relevant prompt to the agent's global instructions. Run `AskHuman --settings`, open the **Agents** panel, and choose:
 
-- **手动集成**：复制参考提示词，自行加入你的 Agent 全局提示词（如 Cursor Rules / `AGENTS.md` / `CLAUDE.md`）。
-- **自动集成**：一键为 Cursor / Claude Code / Codex 安装全局 Rules；还可安装超时 Hook（检测到调用 `AskHuman` 时，自动把工具调用超时延长到 24 小时，避免等待你回应时被强制取消）。
+- **Manual integration** — copy the reference prompt and add it to your agent's global instructions yourself (e.g. Cursor Rules / `AGENTS.md` / `CLAUDE.md`).
+- **Automatic integration** — one click installs global Rules for Cursor / Claude Code / Codex; you can also install the timeout Hook (when it detects a call to `AskHuman`, it extends the tool-call timeout to 24 hours so it isn't force-canceled while waiting for your reply).
 
-### 三、配置沟通渠道
+### 3. Set up communication channels
 
-默认即有本地弹窗。你也可以开启钉钉、飞书、Telegram、Slack 等渠道——这样无论是否在电脑前，都能收到提问并回复（多个渠道可同时开启并行「抢答」）。在设置的 **通信渠道** Tab 配置，每个渠道的接入步骤见：
+The local popup works out of the box. You can also enable DingTalk, Feishu, Telegram, or Slack — so you get questions and can reply whether or not you're at your desk (multiple channels can run in parallel and race for the answer). Configure them in the **Channels** tab; for each channel's onboarding steps, see:
 
-- [钉钉](docs/wiki/dingtalk-setup.md)
-- [飞书 / Lark](docs/wiki/feishu-setup.md)
-- [Telegram](docs/wiki/telegram-setup.md)
-- [Slack](docs/wiki/slack-setup.md)
+- [DingTalk](docs/wiki/dingtalk-setup.en.md)
+- [Feishu / Lark](docs/wiki/feishu-setup.en.md)
+- [Telegram](docs/wiki/telegram-setup.en.md)
+- [Slack](docs/wiki/slack-setup.en.md)
 
-### 四、通用设置
+### 4. General settings
 
-主题、窗口、语音输入、回复历史等通用偏好见[通用设置](docs/wiki/settings.md)。
+For general preferences such as theme, window behavior, speech input, and reply history, see [General Settings](docs/wiki/settings.en.md).
 
-## 高级用法
+## Advanced
 
-### 程序集成
+### Program integration
 
-把 `askhuman` 加入项目依赖（`npm i askhuman`），`npm install` 会自动装上当前平台二进制，运行时解析路径并调用：
+Add `askhuman` to your project (`npm i askhuman`); `npm install` pulls the current platform's binary, and at runtime you resolve the path and call it:
 
 ```js
 import { getBinaryPath, isAvailable } from "askhuman";
 import { spawnSync } from "node:child_process";
 
 if (isAvailable()) {
-  const r = spawnSync(getBinaryPath(), ["要继续吗？", "-o", "继续", "-o", "停止"], { encoding: "utf8" });
-  if (r.status === 3) { /* 无任何可用 channel：降级，不阻塞流程 */ }
-  else if (r.status === 0) { /* 解析 r.stdout 的结果区块 */ }
+  const r = spawnSync(getBinaryPath(), ["Continue?", "-o", "Continue", "-o", "Stop"], { encoding: "utf8" });
+  if (r.status === 3) { /* no available channel: degrade without blocking */ }
+  else if (r.status === 0) { /* parse the result blocks from r.stdout */ }
 }
 ```
 
-> 退出码：成功 / 取消为 `0`；无任何可用 channel 为 `3`；其它异常为 `1`。
-> 自定义来源名：设环境变量 `ASKHUMAN_ENV_SOURCE_NAME=Agent`，弹窗标题与渠道消息头变为 `Question from Agent`。
+> Exit codes: success / cancel is `0`; no available channel is `3`; other errors are `1`.
+> Custom source name: set `ASKHUMAN_ENV_SOURCE_NAME=Agent`, and the popup title and channel message headers become `Question from Agent`.
 
-### 环境变量
+### Environment variables
 
-可用的环境变量见[环境变量](docs/wiki/environment-variables.md)。
+For the available environment variables, see [Environment Variables](docs/wiki/environment-variables.en.md).
 
-## 开发
+## Development
 
-本地构建、测试与发布流程见[开发文档](docs/development.md)（English）。
+For local build, test, and release workflow, see the [development guide](docs/development.md).
 
-## 许可
+## License
 
 [MIT](LICENSE) © Naituw

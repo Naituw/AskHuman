@@ -1,6 +1,6 @@
 # askhuman
 
-English | [简体中文](https://github.com/Naituw/AskHuman/blob/main/README.md)
+English | [简体中文](https://github.com/Naituw/AskHuman/blob/main/README.zh-CN.md)
 
 Cross-platform "human-in-the-loop" interaction tool. When an AI assistant is about to end a conversation or needs confirmation, the `AskHuman` CLI pops up a window (or uses Telegram / Slack / DingTalk / Feishu) so you can ask follow-ups, pick options, add text, or attach images — and the result is returned to the AI.
 
