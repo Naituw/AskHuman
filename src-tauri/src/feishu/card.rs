@@ -303,8 +303,13 @@ fn body_text(text: &str, is_markdown: bool) -> Value {
     }
 }
 
-/// 把一条 `card.action.trigger` 的 `event` 解析为「提交」结果；非表单提交 / 缺字段返回 None。
+/// 把一条 `card.action.trigger` 的 `event` 解析为「提交」结果；非提交回调返回 None。
 /// `options` 用于把 `opt_{i}` 还原为选项文本。
+///
+/// 提交判定（两者满足其一）：
+/// - `action.form_value` 存在（多选：勾选器在表单内，提交会汇总 form_value；含补充输入框时同样）；
+/// - 或 `action.value.action == "submit"`（单选严格态：表单内只有提交按钮、无任何输入组件，
+///   飞书此时**不下发 form_value**，只能靠按钮回调 value 判定，否则会被误当作非提交而把卡片弹回）。
 pub fn parse_card_submit(event: &Value, options: &[OptionItem]) -> Option<CardSubmit> {
     let open_id = event
         .get("operator")
@@ -320,8 +325,14 @@ pub fn parse_card_submit(event: &Value, options: &[OptionItem]) -> Option<CardSu
         .to_string();
 
     let action = event.get("action")?;
-    // 必须是表单提交（含 form_value）。
-    let form_value = action.get("form_value")?;
+    let form_value = action.get("form_value");
+    let is_submit = form_value.is_some() || action_kind(action).as_deref() == Some("submit");
+    if !is_submit {
+        return None;
+    }
+    // 无 form_value（单选严格态）时按空表单处理：选项由会话自管的 selected_single 兜底。
+    let empty = Value::Object(serde_json::Map::new());
+    let form_value = form_value.unwrap_or(&empty);
 
     let mut selected: Vec<String> = Vec::new();
     for (i, opt) in options.iter().enumerate() {
@@ -342,6 +353,18 @@ pub fn parse_card_submit(event: &Value, options: &[OptionItem]) -> Option<CardSu
         selected_options: selected,
         user_input,
     })
+}
+
+/// 读取 `action.value.action`（value 可能是对象，也可能是 JSON 字符串）。
+fn action_kind(action: &Value) -> Option<String> {
+    let value = action.get("value")?;
+    let obj: Value = match value {
+        Value::String(s) => serde_json::from_str(s).ok()?,
+        v => v.clone(),
+    };
+    obj.get("action")
+        .and_then(|a| a.as_str())
+        .map(|s| s.to_string())
 }
 
 /// 把一条 `card.action.trigger` 解析为「单选勾选器 toggle」回调（表单外勾选器，无 form_value）。
@@ -597,6 +620,32 @@ mod tests {
         assert_eq!(s.message_id, "om_1");
         assert_eq!(s.selected_options, vec!["A".to_string(), "C".to_string()]);
         assert_eq!(s.user_input.as_deref(), Some("hi"));
+    }
+
+    #[test]
+    fn parse_submit_single_strict_without_form_value() {
+        // 单选严格态：表单内只有提交按钮，飞书不下发 form_value；靠 value.action=="submit" 判定。
+        let event = json!({
+            "operator": { "open_id": "ou_1" },
+            "context": { "open_message_id": "om_1" },
+            "action": { "tag": "button", "name": "submit", "value": { "action": "submit" } }
+        });
+        let s = parse_card_submit(&event, &plain(&["a", "b"])).unwrap();
+        assert_eq!(s.open_id, "ou_1");
+        assert_eq!(s.message_id, "om_1");
+        assert!(s.selected_options.is_empty()); // 选项由会话 selected_single 兜底
+        assert!(s.user_input.is_none());
+    }
+
+    #[test]
+    fn parse_submit_value_as_json_string() {
+        // 部分回调把 value 下发为 JSON 字符串。
+        let event = json!({
+            "operator": { "open_id": "ou_1" },
+            "context": { "open_message_id": "om_1" },
+            "action": { "value": "{\"action\":\"submit\"}" }
+        });
+        assert!(parse_card_submit(&event, &[]).is_some());
     }
 
     #[test]
