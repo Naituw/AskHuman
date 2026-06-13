@@ -88,6 +88,19 @@ export default {
       general: "通用",
       integration: "Agents",
       channel: "通信渠道",
+      experimental: "实验",
+    },
+    experimental: {
+      enableLabel: "实验性功能",
+      enableHint: "显示尚不稳定的高级功能，默认关闭。",
+      lifecycleTitle: "Agent 生命周期追踪",
+      lifecycleDesc:
+        "安装用户级 Hook，使 AskHuman 能追踪各 Agent 的会话状态（工作中 / 空闲 / 已结束）。开启后运行 `AskHuman agents status` 可弹出实时状态窗口。",
+      claude: "Claude Code",
+      codex: "Codex",
+      cursor: "Cursor",
+      unsupported: "当前平台不支持",
+      outdated: "需要更新——请先关闭再开启以刷新。",
     },
     appearance: {
       title: "外观",
@@ -264,6 +277,36 @@ export default {
       minutesAgo: "{n} 分钟前",
       hoursAgo: "{n} 小时前",
       yesterday: "昨天",
+    },
+  },
+  agents: {
+    title: "Agent 状态",
+    empty: "暂无被追踪的 Agent",
+    emptyHint: "启动一个被追踪的 Agent（Claude Code / Codex / Cursor）后会显示在这里。",
+    untitled: "（未命名）",
+    state: {
+      working: "工作中",
+      idle: "空闲",
+      ended: "已结束",
+    },
+    kind: {
+      claude: "Claude Code",
+      codex: "Codex",
+      cursor: "Cursor",
+    },
+    field: {
+      session: "会话",
+      project: "项目",
+      started: "启动",
+      lastActivity: "最近活动",
+      pid: "PID",
+    },
+    time: {
+      justNow: "刚刚",
+      secondsAgo: "{n} 秒前",
+      minutesAgo: "{n} 分钟前",
+      hoursAgo: "{n} 小时前",
+      daysAgo: "{n} 天前",
     },
   },
 };

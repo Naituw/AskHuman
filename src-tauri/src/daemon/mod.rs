@@ -29,6 +29,8 @@ mod unix_impl {
     use super::config_watch;
     use super::lifecycle::{self, DaemonMeta, LockGuard};
     use super::request::{self, RequestEntry, RequestRegistry};
+    use crate::agents::registry::AgentRegistry;
+    use crate::agents::{AgentKind, LifecycleEvent};
     use crate::channels::dingding::DingTalkChannel;
     use crate::channels::feishu::FeishuChannel;
     use crate::channels::slack::SlackChannel;
@@ -159,6 +161,10 @@ mod unix_impl {
         config: Mutex<AppConfig>,
         /// 版本自更新快照（后台检查 / 指纹监听维护，握手与广播据此告知弹窗）。
         update: Mutex<UpdateSnapshot>,
+        /// Agent 生命周期注册表（实验性功能，spec D3）。
+        agents: Arc<AgentRegistry>,
+        /// 状态窗口订阅者的发送端列表（变化 / 心跳时推 `AgentsState`）。
+        agent_subs: Mutex<Vec<tokio::sync::mpsc::UnboundedSender<ServerMsg>>>,
     }
 
     /// Daemon 维护的「自更新」当前态（广播给弹窗用）。
@@ -282,6 +288,8 @@ mod unix_impl {
             sl_router: tokio::sync::Mutex::new(None),
             config: Mutex::new(AppConfig::load()),
             update: Mutex::new(init_update_snapshot()),
+            agents: Arc::new(AgentRegistry::load()),
+            agent_subs: Mutex::new(Vec::new()),
         });
 
         // 空闲退出检查。
@@ -291,7 +299,12 @@ mod unix_impl {
                 let timeout = idle_timeout();
                 loop {
                     tokio::time::sleep(Duration::from_secs(30)).await;
-                    if state.active.load(Ordering::SeqCst) == 0 {
+                    // 空闲退出守卫（spec D18）：仅当无在途请求、无状态窗口订阅、**且**无「工作中」
+                    // agent 时才计空闲。空闲 agent 不保活；版本更新 drain 由 begin_drain 独立处理、不受此影响。
+                    if state.active.load(Ordering::SeqCst) == 0
+                        && state.agents.working_count() == 0
+                        && !has_agent_subs(&state)
+                    {
                         let idle = state.last_active.lock().map(|t| t.elapsed()).unwrap_or_default();
                         if idle >= timeout {
                             log("idle timeout reached; shutting down");
@@ -345,6 +358,26 @@ mod unix_impl {
             });
         }
 
+        // Agent 生命周期：进程存活轮询 + TTL 兜底（spec D5/D12）。变化即持久化 + 推快照；
+        // 有订阅窗口时每个 tick 都推（窗口的相对时间由前端自身 ticker 每秒刷新，这里只为状态变化兜底）。
+        // 间隔取 15s：正常退出走事件驱动即时反映；只有 kill/崩溃这类漏事件才靠轮询兜底，
+        // 15s 的判定延迟可接受，又能显著降低 daemon 空转唤醒。
+        {
+            let state = state.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(15)).await;
+                    let changed = state.agents.poll_liveness() | state.agents.ttl_sweep();
+                    if changed {
+                        state.agents.persist();
+                    }
+                    if changed || has_agent_subs(&state) {
+                        broadcast_agents_state(&state);
+                    }
+                }
+            });
+        }
+
         loop {
             tokio::select! {
                 _ = state.shutdown.notified() => break,
@@ -365,6 +398,9 @@ mod unix_impl {
             tokio::time::sleep(Duration::from_millis(2000)).await;
         }
 
+        // 退出前持久化 agent 注册表（spec D18：换新 / 闲退后由新 daemon 重载复核）。
+        state.agents.persist();
+
         // 收尾：主动丢弃常热 Router（其 Drop 中止 reader 任务、关闭 IM 长连接），再清理 socket/meta。
         // 进行中的请求各自持有 Router Arc 克隆，故仅在无人持有时才真正断连。
         *state.dd_router.lock().await = None;
@@ -380,6 +416,8 @@ mod unix_impl {
     enum Control {
         Submit(TaskRequest),
         Gui(String),
+        /// 状态窗口订阅：接管连接，持续推送 agent 快照。
+        AgentsSub,
         Closed,
     }
 
@@ -392,6 +430,7 @@ mod unix_impl {
         match control_loop(&mut reader, &mut w, &state).await {
             Control::Submit(task) => handle_submit(task, reader, w, &state).await,
             Control::Gui(token) => handle_gui(token, reader, w, &state).await,
+            Control::AgentsSub => handle_agents_sub(reader, w, &state).await,
             Control::Closed => {}
         }
 
@@ -493,6 +532,29 @@ mod unix_impl {
                 }
                 ClientMsg::Submit(task) => return Control::Submit(task),
                 ClientMsg::GuiHello { token } => return Control::Gui(token),
+                // Agent 生命周期事件上报（即发即走）：更新注册表，变化则持久化 + 推订阅窗口。
+                ClientMsg::AgentEvent {
+                    agent,
+                    event,
+                    session_id,
+                    pid,
+                    cwd,
+                    ts,
+                } => {
+                    if let (Some(kind), Some(ev)) =
+                        (AgentKind::parse(&agent), LifecycleEvent::parse(&event))
+                    {
+                        let changed = state
+                            .agents
+                            .apply_event(kind, ev, &session_id, pid, cwd, ts);
+                        if changed {
+                            state.agents.persist();
+                            broadcast_agents_state(state);
+                        }
+                    }
+                }
+                // 状态窗口订阅：接管连接持续推送。
+                ClientMsg::AgentsSubscribe => return Control::AgentsSub,
                 // 自动识别（Q6）：就地处理（可能阻塞至多 120s 等用户发码），完成后回结果继续循环。
                 // 排空期拒绝（兜底；正常情况下客户端在 Hello 即被挡住而回退进程内识别）。
                 ClientMsg::Detect(req) => {
@@ -544,6 +606,16 @@ mod unix_impl {
             })
             .await;
             return;
+        }
+        // ask 调用顺带刷新对应 session 的活动 + 重置 TTL（spec D21）：仅刷新已追踪的同家族 session，不新建。
+        if let (Some(kind), Some(sid)) = (
+            task.agent_kind.as_deref().and_then(AgentKind::parse),
+            task.agent_session_id.clone(),
+        ) {
+            if state.agents.touch_activity(kind, &sid, task.agent_pid) {
+                state.agents.persist();
+                broadcast_agents_state(state);
+            }
         }
         let lang = Lang::resolve(&task.lang);
         let (entry, mut final_rx) = state.registry.create(task);
@@ -707,6 +779,56 @@ mod unix_impl {
             *slot = None;
         }
         drop(gui_tx);
+        let _ = writer.await;
+    }
+
+    /// 是否有状态窗口在订阅。
+    fn has_agent_subs(state: &Arc<ServerState>) -> bool {
+        state
+            .agent_subs
+            .lock()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// 向所有状态窗口推送一次 agent 全量快照（顺带剔除已断开的发送端）。
+    fn broadcast_agents_state(state: &Arc<ServerState>) {
+        let msg = ServerMsg::AgentsState {
+            agents: state.agents.snapshot(),
+        };
+        if let Ok(mut subs) = state.agent_subs.lock() {
+            subs.retain(|tx| tx.send(msg.clone()).is_ok());
+        }
+    }
+
+    /// 状态窗口订阅连接：注册发送端、立即推一次快照，随后专用写任务持续推送；读端用于探测断开。
+    /// 该连接保持期间计入 `active`（连同「工作中」agent 一起阻止 daemon 闲退，spec D18）。
+    async fn handle_agents_sub(mut reader: Reader, w: OwnedWriteHalf, state: &Arc<ServerState>) {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ServerMsg>();
+        let mut w = w;
+        let writer = tokio::spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                if ipc::write_msg(&mut w, &msg).await.is_err() {
+                    break;
+                }
+            }
+        });
+        // 注册订阅端并立即推一次当前快照。
+        if let Ok(mut subs) = state.agent_subs.lock() {
+            subs.push(tx.clone());
+        }
+        let _ = tx.send(ServerMsg::AgentsState {
+            agents: state.agents.snapshot(),
+        });
+
+        // 读端仅用于探测断开；窗口正常不发消息。
+        wait_cli_eof(&mut reader).await;
+
+        // 收尾：从订阅表移除本端（按指针标识），结束写任务。
+        if let Ok(mut subs) = state.agent_subs.lock() {
+            subs.retain(|s| !s.same_channel(&tx));
+        }
+        drop(tx);
         let _ = writer.await;
     }
 

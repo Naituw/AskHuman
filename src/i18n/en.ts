@@ -92,6 +92,19 @@ export default {
       general: "General",
       integration: "Agents",
       channel: "Channels",
+      experimental: "Experimental",
+    },
+    experimental: {
+      enableLabel: "Experimental features",
+      enableHint: "Show advanced, unstable features. Off by default.",
+      lifecycleTitle: "Agent lifecycle tracking",
+      lifecycleDesc:
+        "Install user-level hooks so AskHuman can track each agent's sessions (working / idle / ended). Then run `AskHuman agents status` to open the live status window.",
+      claude: "Claude Code",
+      codex: "Codex",
+      cursor: "Cursor",
+      unsupported: "Not supported on this platform",
+      outdated: "Needs update — toggle off then on to refresh.",
     },
     appearance: {
       title: "Appearance",
@@ -276,6 +289,37 @@ export default {
       minutesAgo: "{n}m ago",
       hoursAgo: "{n}h ago",
       yesterday: "yesterday",
+    },
+  },
+  agents: {
+    title: "Agents",
+    empty: "No agents tracked yet",
+    emptyHint:
+      "Start a tracked agent (Claude Code / Codex / Cursor) and it will appear here.",
+    untitled: "(untitled)",
+    state: {
+      working: "Working",
+      idle: "Idle",
+      ended: "Ended",
+    },
+    kind: {
+      claude: "Claude Code",
+      codex: "Codex",
+      cursor: "Cursor",
+    },
+    field: {
+      session: "Session",
+      project: "Project",
+      started: "Started",
+      lastActivity: "Last activity",
+      pid: "PID",
+    },
+    time: {
+      justNow: "just now",
+      secondsAgo: "{n}s ago",
+      minutesAgo: "{n}m ago",
+      hoursAgo: "{n}h ago",
+      daysAgo: "{n}d ago",
     },
   },
 };

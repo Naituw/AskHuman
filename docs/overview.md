@@ -48,7 +48,10 @@ AskHuman/
     App.vue                  按 URL ?view=popup|settings|history 路由
     views/PopupView.vue      弹窗：顶部导航栏（含「历史」按钮）+ Markdown/选项/文本/图片 + -f 附件区
                              (选中/打开/预览/拖出/右键) + 拖入回复文件胶囊 + 底部操作条
-    views/SettingsView.vue   设置：通用（含「回复历史」保留条数 + 超额「立即清理」）/ Agent / 通信渠道 三 Tab
+    views/AgentsView.vue     (实验性) Agent 状态窗口：按类型(Claude/Codex/Cursor)分组、状态优先排序
+                             (工作中>空闲>已结束)、相对时间动态刷新；订阅 daemon 推送的 agents-updated
+    views/SettingsView.vue   设置：通用（含「回复历史」保留条数 + 超额「立即清理」+ 底部隐蔽开关「实验性功能」）
+                             / Agent / 通信渠道（+ 开启实验后出现「实验」Tab）多 Tab
                              （Agent Tab：顶部原理说明 + 「手动集成」标题下的参考提示词卡 + 「自动集成」标题下按 Cursor/Claude Code/Codex 分组的 Rules 安装卡；Cursor 与 Claude Code 组另含超时 Hook，Codex 无；已安装但内容过期时显示橙色「更新」按钮一键覆盖为最新；Rules 行的「打开」按钮点开下拉菜单：在 Finder 中显示 / 用默认程序打开）
     views/HistoryView.vue    独立历史窗口：顶部项目下拉 + 清空菜单；左列表（渠道徽标/相对时间/摘要）右只读详情
     components/HistoryDetail.vue 只读还原一条历史（状态横幅 + 消息/附件 + 每题选项高亮/文本/图片/文件，best-effort）
@@ -132,6 +135,12 @@ AskHuman/
         claude_hook.rs       Claude Code Hook：~/.claude/settings.json 注册 PreToolUse(Bash) 脚本 +
                              抬高 env.BASH_MAX_TIMEOUT_MS；命中 AskHuman 时把该次 Bash timeout 设为 24h
                              （幂等纯函数 + 单测；卸载不动 env）；needs_update 同 Cursor（脚本漂移）
+        agent_lifecycle.rs   (实验性) 三家生命周期 hook 安装/卸载/状态：**用户级**、与 timeout hook 独立共存
+                             （仅增删命令含 `__agent-hook` 标记的条目，保留其它 hook/格式）。Claude
+                             `~/.claude/settings.json`(Nested) / Cursor `~/.cursor/hooks.json`(Flat) 用 jsonc CST；
+                             Codex `~/.codex/hooks.json` + `config.toml [hooks.state]` 信任哈希用 toml_edit
+                             （复刻 codex `version_for_toml`：sha256(紧凑·键排序 JSON(归一 identity))，键
+                             `<hooks.json 绝对路径>:<event_snake>:<g>:<h>`，见 demo codex-trust.cjs）；Codex 无 SessionEnd
         agent_rules.rs       Agent 全局 Rules 安装/更新/卸载/状态/open/reveal：三者均用 AskHuman:begin/end
                              托管区块写入，保留区块外用户内容（Cursor ~/.cursor/rules/askhuman.mdc 另带
                              alwaysApply frontmatter，卸载时区块外仅剩 frontmatter/空白才删整文件；旧版
@@ -146,6 +155,15 @@ AskHuman/
                              config_watch.rs(notify 监听 config.json + 去抖)
       update/                版本自更新：mod.rs(检测/比较/Updater/select/check) / direct.rs(GitHub 资产替换) /
                              npm.rs(npm i -g) / notes.rs(release notes 取/聚合) / state.rs(update.json)
+      agents/                (实验性, Unix) Agent 生命周期追踪：mod.rs(AgentKind=claude/codex/cursor +
+                             LifecycleEvent=session-start/turn-start/turn-end/session-end) /
+                             detect.rs(按 env 判真实运行家族[Cursor 双触发去重] / session_id 解析 /
+                             walk 进程树定位 agent pid / kill-0 存活) /
+                             title.rs(三家会话标题解析：cursor meta.json / codex·claude jsonl) /
+                             registry.rs(AgentRecord 注册表：apply_event 推导 工作中/空闲/已结束、
+                             poll_liveness、ttl_sweep[1h 兜底]、ended 最多留 10 条、persist/load
+                             ~/.askhuman/agents.json、snapshot 推送) /
+                             report.rs(隐藏子命令 `__agent-hook <agent> <event>` 上报器：去重+解析+发 daemon)
 
   cliff.toml                 git-cliff 配置：Conventional Commits → 面向用户的 release notes
   docs/release-notes/        每版本可选覆盖文件 v<版本>.md（存在即用其内容，否则 git-cliff 生成）
@@ -177,6 +195,7 @@ AskHuman/
 - 飞书：`feishu_test` / `feishu_detect_prepare` / `feishu_detect_wait`
 - Slack：`slack_test` / `slack_detect_prepare` / `slack_detect_wait`
 - 版本自更新：`get_app_version` / `update_check`(manual) / `update_get_notes`(aggregate) / `update_apply`(落盘+进度事件) / `update_dismiss` / `popup_update_state`(弹窗拉初值) / `restart_settings`(设置进程重开)
+- (实验性) Agent 生命周期：`agents_init`(状态窗口主题+语言) / `agent_lifecycle_status` / `agent_lifecycle_install` / `agent_lifecycle_uninstall`（入参 `agent`：claude/codex/cursor）
 
 窗口拖拽用 `data-tauri-drag-region`（导航栏/底部空白/设置 tab 栏）；置顶用前端 `@tauri-apps/api/window` setAlwaysOnTop。
 文件拖入用 `onDragDropEvent`（原生路径）；`-f` 附件拖出用 `tauri-plugin-drag` 的 `startDrag`。
@@ -192,7 +211,7 @@ AskHuman/
 
 ## 配置
 
-`~/.askhuman/config.json`（新位置缺失时自动回退旧 `~/.humaninloop/config.json`）：`general`(theme, language, alwaysOnTop, appearAnimation, windowEffect, speechLanguage, speechShortcut, historyLimit) + `channels.popup`(enabled,width,height,rememberSize) + `channels.telegram`(enabled,botToken,chatId,apiBaseUrl) + `channels.dingding`(enabled,clientId,clientSecret,userId,cardTemplateId,…) + `channels.feishu`(enabled,appId,appSecret,openId,baseUrl) + `channels.slack`(enabled,botToken,appToken,userId)。缺字段走默认、未知字段忽略。用户向配置说明见 `docs/wiki/`。
+`~/.askhuman/config.json`（新位置缺失时自动回退旧 `~/.humaninloop/config.json`）：`general`(theme, language, alwaysOnTop, appearAnimation, windowEffect, speechLanguage, speechShortcut, historyLimit) + `channels.popup`(enabled,width,height,rememberSize) + `channels.telegram`(enabled,botToken,chatId,apiBaseUrl) + `channels.dingding`(enabled,clientId,clientSecret,userId,cardTemplateId,…) + `channels.feishu`(enabled,appId,appSecret,openId,baseUrl) + `channels.slack`(enabled,botToken,appToken,userId) + `experimental`(enabled，实验性功能开关，默认 false)。缺字段走默认、未知字段忽略。用户向配置说明见 `docs/wiki/`。
 
 > 回复历史：`general.historyLimit`（默认 200，0=停止新增并清理已有记录）控制 `~/.askhuman/history.jsonl` 全局保留条数（裁剪与「立即清理」对 0 不再特判：`record` 在 limit==0 时不新增、但按与 >0 相同时机把已有记录裁到 0；`trim(0)` 直接清空）。每次提问在 `Coordinator.finish()`（所有渠道/模式唯一汇聚点）旁路记录一条「发送 / 用户主动取消」（系统取消不记）；只存图片/文件路径（best-effort 展示，缺失显示占位）。项目按「从 CLI cwd 向上找首个 .git 根、回退 cwd」识别，经 `TaskRequest`/`ShowPayload` 贯穿 daemon（revisit A11）。历史窗口 `AskHuman --history [--all]` 或弹窗导航栏「历史」按钮打开。详情只读组件 `HistoryDetail.vue` 完整还原：选项框复用 controls.css（选中=蓝底白 ✓）、附件区与弹窗同款交互（单击选中 / 空格 QuickLook 预览 + 方向键切换 / 双击打开 / 右键菜单 / 拖出）。历史窗口创建时 `watch_history_file` 用 notify 监听 `history.jsonl`，任何进程写入后发 `history-updated` 事件令前端重载并保留当前选中条目（跨进程实时刷新）。注：`preview_attachments` 命令把 QuickLook 控制者插入**调用方窗口**响应链（弹窗或历史窗口皆可），不再硬编码 popup。
 
@@ -214,6 +233,17 @@ AskHuman/
 - **GUI Helper → 前端**：读到 `UpdateState` → 写进程内缓存（`commands::set_pushed_update`）+ emit `update-state`；弹窗挂载先 `popup_update_state` 取初值再监听事件（规避竞态）。
 - **前端**：弹窗右上角更新入口（绿点）+ 浮层（版本/日志/「答完才生效、不打断」/更新按钮）+ 顶部「待生效」横条（`PopupView.vue`）；设置「通用」Tab 新增「关于」区（当前/最新版本、检查更新、更新带进度、聚合更新日志 markdown、查看全部发布、更新后「重启设置页面」`restart_settings`）（`SettingsView.vue`）。
 - **发布流程**：仓库根 `cliff.toml` 用 git-cliff 从 Conventional Commits 生成 release notes（仅 feat/fix/perf/security/revert；breaking 置顶；scope 粗体前缀；`Release-Note:`/`Release-Note: skip` 单条覆盖，skip 由 body 模板按 footer 过滤以免无 body 提交误伤）。`release.yml`：`fetch-depth:0` + 安装 git-cliff，若 `docs/release-notes/v<版本>.md` 存在用其内容、否则 `git-cliff --latest` 生成，`body_path` 替换 `generate_release_notes`。提交规范见 `AGENTS.md`。
+
+## 实验性功能：Agent 生命周期追踪 + 状态窗口（Unix）
+
+> 需求 `docs/specs/agent-lifecycle-tracking.md` + 计划 `docs/plans/agent-lifecycle-tracking.md`（基于 `demo/agent-lifecycle/FINDINGS.md` 三家实测）。**独立于** IM 渠道激活，只追踪、不做 attach/激活。
+
+- **开关入口**：设置「通用」底部隐蔽开关「实验性功能」(`config.experimental.enabled`，默认关、Windows 不显示) → 出现「实验」Tab，内含 Claude/Codex/Cursor 三家「生命周期追踪」开关；开/关＝安装/卸载**用户级** lifecycle hook（`integrations/agent_lifecycle.rs`，开关真值实时查 `agent_lifecycle_status`，与既有 timeout hook 互不影响）。
+- **事件采集**：hook 命令统一为 `AskHuman __agent-hook <agent> <event>`（`agents/report.rs`）；四类事件 session-start/turn-start/turn-end/session-end（Codex 无 session-end）。reporter 按 env 判真实运行家族做**去重**（Cursor 兼容加载 `~/.claude` 致每事件双触发，env 有 `CURSOR_*`→只认 cursor、跳过 claude 那次），并 walk 进程树定位真实 agent pid、解析 session_id（env 专用变量优先，回退 stdin JSON）。
+- **状态推导**：daemon 内 `AgentRegistry`（`agents/registry.rs`）以 **session_id 为身份**、pid 仅判存活。turn-start/turn-end 切「工作中/空闲」；**进程存活轮询（1s）是权威的「已结束」判据**（关窗/`kill -9` 时事件全丢，靠它）；1h TTL 兜底（任何 hook 事件或 `AskHuman` 提问会刷新**对应 session** 的活动时间）。ended 最多留 10 条。状态持久化 `~/.askhuman/agents.json`，daemon 换新/重启后重载并 kill-0 复核。
+- **闲退守卫**：仅「工作中」agent 或有状态窗口连接才阻止 daemon 闲时退出（空闲 agent 不算）；**graceful drain（版本换新）不受存活 agent 影响**。
+- **状态窗口**：`AskHuman agents status` → daemon 拉起 GUI（`app::run_agents` + `create_agents_window`），订阅 `ServerMsg::AgentsState` 推送、前端 `AgentsView.vue` 跨项目按类型分组、状态优先排序、相对时间动态刷新。`agents` 为子命令组，预留后续扩展。
+- **IPC 增量**：`TaskRequest` 加 `agent_kind/agent_session_id/agent_pid`（提问顺带刷新活动）；`ClientMsg::AgentEvent`/`AgentsSubscribe`；`ServerMsg::AgentsState`。
 
 ## 构建 / 开发 / 测试
 

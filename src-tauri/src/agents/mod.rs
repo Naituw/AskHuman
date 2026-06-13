@@ -1,0 +1,117 @@
+//! Agent 生命周期追踪（实验性功能）。
+//!
+//! 三家 Agent CLI（Claude Code / Codex / Cursor）通过用户级 lifecycle hook 把
+//! `session-start` / `turn-start` / `turn-end` / `session-end` 事件经隐藏子命令
+//! `AskHuman __agent-hook <agent> <event>` 上报给常驻 daemon；daemon 维护一张
+//! agent 注册表（进程存活轮询 + TTL 兜底推导「工作中 / 空闲 / 已结束」），并把
+//! 全量快照推送给 `AskHuman agents status` 打开的 GUI 状态窗口。
+//!
+//! 设计与决策见 `docs/specs/agent-lifecycle-tracking.md`，调研见
+//! `demo/agent-lifecycle/FINDINGS.md`。
+
+pub mod detect;
+pub mod registry;
+pub mod title;
+#[cfg(unix)]
+pub mod report;
+
+use serde::{Deserialize, Serialize};
+
+/// 被追踪的 Agent 家族。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentKind {
+    Claude,
+    Codex,
+    Cursor,
+}
+
+impl AgentKind {
+    /// 线上协议 / 命令行使用的小写标识。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AgentKind::Claude => "claude",
+            AgentKind::Codex => "codex",
+            AgentKind::Cursor => "cursor",
+        }
+    }
+
+    /// 展示名（窗口分组标题）。
+    pub fn label(self) -> &'static str {
+        match self {
+            AgentKind::Claude => "Claude Code",
+            AgentKind::Codex => "Codex",
+            AgentKind::Cursor => "Cursor",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "claude" => Some(AgentKind::Claude),
+            "codex" => Some(AgentKind::Codex),
+            "cursor" => Some(AgentKind::Cursor),
+            _ => None,
+        }
+    }
+
+    /// 三家集合（遍历用）。
+    pub const ALL: [AgentKind; 3] = [AgentKind::Claude, AgentKind::Codex, AgentKind::Cursor];
+}
+
+/// 归一化后的生命周期事件（线上 `<event>` 取值）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LifecycleEvent {
+    SessionStart,
+    TurnStart,
+    TurnEnd,
+    SessionEnd,
+}
+
+impl LifecycleEvent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LifecycleEvent::SessionStart => "session-start",
+            LifecycleEvent::TurnStart => "turn-start",
+            LifecycleEvent::TurnEnd => "turn-end",
+            LifecycleEvent::SessionEnd => "session-end",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "session-start" => Some(LifecycleEvent::SessionStart),
+            "turn-start" => Some(LifecycleEvent::TurnStart),
+            "turn-end" => Some(LifecycleEvent::TurnEnd),
+            "session-end" => Some(LifecycleEvent::SessionEnd),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kind_roundtrip() {
+        for k in AgentKind::ALL {
+            assert_eq!(AgentKind::parse(k.as_str()), Some(k));
+        }
+        assert_eq!(AgentKind::parse("CURSOR"), Some(AgentKind::Cursor));
+        assert_eq!(AgentKind::parse("nope"), None);
+    }
+
+    #[test]
+    fn event_roundtrip() {
+        for e in [
+            LifecycleEvent::SessionStart,
+            LifecycleEvent::TurnStart,
+            LifecycleEvent::TurnEnd,
+            LifecycleEvent::SessionEnd,
+        ] {
+            assert_eq!(LifecycleEvent::parse(e.as_str()), Some(e));
+        }
+        assert_eq!(LifecycleEvent::parse("bogus"), None);
+    }
+}

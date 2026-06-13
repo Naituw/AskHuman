@@ -10,6 +10,9 @@ import {
   agentRuleStatus,
   agentRuleUninstall,
   agentRuleUpdate,
+  agentLifecycleStatus,
+  agentLifecycleInstall,
+  agentLifecycleUninstall,
   applyWindowEffect,
   claudeHookInstall,
   claudeHookReveal,
@@ -59,9 +62,11 @@ import {
 import { isGlassSupported } from "tauri-plugin-liquid-glass-api";
 import type {
   AgentId,
+  AgentKind,
   AppConfig,
   ClaudeHookStatus,
   HookStatus,
+  LifecycleStatus,
   PopupAnimation,
   RuleStatus,
   SecretAction,
@@ -86,7 +91,7 @@ const revealLabel = computed(() => {
   return t("settings.integration.revealInFileManager");
 });
 
-type Tab = "general" | "integration" | "channel";
+type Tab = "general" | "integration" | "channel" | "experimental";
 
 const config = ref<AppConfig | null>(null);
 const activeTab = ref<Tab>("general");
@@ -627,6 +632,71 @@ function revealAgentHook(agent: AgentId) {
   return agent === "claude" ? claudeHookReveal() : cursorHookReveal();
 }
 
+// ===== 实验区：Agent 生命周期追踪开关 =====
+const LIFECYCLE_KINDS: AgentKind[] = ["claude", "codex", "cursor"];
+
+const lifecycleStatus = ref<Record<AgentKind, LifecycleStatus>>({
+  claude: { installed: false, outdated: false, supported: true },
+  codex: { installed: false, outdated: false, supported: true },
+  cursor: { installed: false, outdated: false, supported: true },
+});
+const lifecycleBusy = ref<Record<AgentKind, boolean>>({
+  claude: false,
+  codex: false,
+  cursor: false,
+});
+const lifecycleError = ref<Record<AgentKind, string | null>>({
+  claude: null,
+  codex: null,
+  cursor: null,
+});
+
+async function refreshLifecycle() {
+  for (const kind of LIFECYCLE_KINDS) {
+    try {
+      lifecycleStatus.value[kind] = await agentLifecycleStatus(kind);
+    } catch (e) {
+      lifecycleError.value[kind] = String(e);
+    }
+  }
+}
+
+// 开关切换：开 = 安装，关 = 卸载。失败时回滚显示并展示错误。
+async function toggleLifecycle(kind: AgentKind, on: boolean) {
+  if (lifecycleBusy.value[kind]) return;
+  lifecycleBusy.value[kind] = true;
+  lifecycleError.value[kind] = null;
+  try {
+    if (on) await agentLifecycleInstall(kind);
+    else await agentLifecycleUninstall(kind);
+    lifecycleStatus.value[kind] = await agentLifecycleStatus(kind);
+  } catch (e) {
+    lifecycleError.value[kind] = String(e);
+    // 回滚到后端真实状态，避免开关与实际不一致。
+    try {
+      lifecycleStatus.value[kind] = await agentLifecycleStatus(kind);
+    } catch {
+      /* 状态查询也失败时保留现状 */
+    }
+  } finally {
+    lifecycleBusy.value[kind] = false;
+  }
+}
+
+// 打开「实验」开关时显露实验 Tab；关闭时若停留在实验 Tab 则退回通用。
+async function toggleExperimental() {
+  if (!config.value) return;
+  if (!config.value.experimental.enabled && activeTab.value === "experimental") {
+    activeTab.value = "general";
+  }
+  await persist();
+  if (config.value.experimental.enabled) await refreshLifecycle();
+}
+
+function lifecycleLabel(kind: AgentKind): string {
+  return t(`settings.experimental.${kind}`);
+}
+
 async function copyPrompt() {
   try {
     await navigator.clipboard.writeText(prompt.value);
@@ -830,6 +900,7 @@ onMounted(async () => {
   await refreshHook();
   await refreshClaudeHook();
   await Promise.all(AGENTS.map((a) => refreshRule(a.id)));
+  if (!isWindows && config.value.experimental.enabled) await refreshLifecycle();
   if (isMac) {
     try {
       glassSupported.value = await isGlassSupported();
@@ -990,6 +1061,15 @@ onBeforeUnmount(() => unlistenProgress?.());
         @click="onTabClick('channel', $event)"
       >
         {{ t("settings.tabs.channel") }}
+      </button>
+      <button
+        v-if="!isWindows && config.experimental.enabled"
+        data-tauri-drag-region
+        :class="{ active: activeTab === 'experimental' }"
+        @mousedown="onTabDown"
+        @click="onTabClick('experimental', $event)"
+      >
+        {{ t("settings.tabs.experimental") }}
       </button>
     </nav>
 
@@ -1330,6 +1410,77 @@ onBeforeUnmount(() => unlistenProgress?.());
           <p v-if="updateError" class="result err" style="margin-top: 8px">
             {{ updateError }}
           </p>
+        </div>
+
+        <!-- 隐蔽开关：实验性功能（Windows 不显示） -->
+        <div v-if="!isWindows" class="card experimental-toggle">
+          <div class="row">
+            <div class="col">
+              <span class="label">{{ t("settings.experimental.enableLabel") }}</span>
+              <p class="card-desc">{{ t("settings.experimental.enableHint") }}</p>
+            </div>
+            <span class="spacer"></span>
+            <label class="switch">
+              <input
+                type="checkbox"
+                v-model="config.experimental.enabled"
+                @change="toggleExperimental"
+              />
+              <span class="track"></span>
+            </label>
+          </div>
+        </div>
+      </template>
+
+      <!-- 实验性高级功能 -->
+      <template v-else-if="activeTab === 'experimental'">
+        <div class="card">
+          <p class="card-title">{{ t("settings.experimental.lifecycleTitle") }}</p>
+          <p class="card-desc">{{ t("settings.experimental.lifecycleDesc") }}</p>
+          <hr class="divider" />
+          <template v-for="(kind, i) in LIFECYCLE_KINDS" :key="kind">
+            <hr v-if="i > 0" class="divider" />
+            <div class="row">
+              <div class="col">
+                <span class="label">{{ lifecycleLabel(kind) }}</span>
+                <p
+                  v-if="!lifecycleStatus[kind].supported"
+                  class="card-desc"
+                >
+                  {{ t("settings.experimental.unsupported") }}
+                </p>
+                <p
+                  v-else-if="lifecycleStatus[kind].outdated"
+                  class="card-desc warn"
+                >
+                  {{ t("settings.experimental.outdated") }}
+                </p>
+                <p
+                  v-else-if="lifecycleError[kind]"
+                  class="card-desc err"
+                >
+                  {{ lifecycleError[kind] }}
+                </p>
+              </div>
+              <span class="spacer"></span>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  :checked="lifecycleStatus[kind].installed"
+                  :disabled="
+                    !lifecycleStatus[kind].supported || lifecycleBusy[kind]
+                  "
+                  @change="
+                    toggleLifecycle(
+                      kind,
+                      ($event.target as HTMLInputElement).checked
+                    )
+                  "
+                />
+                <span class="track"></span>
+              </label>
+            </div>
+          </template>
         </div>
       </template>
 
@@ -2062,6 +2213,22 @@ onBeforeUnmount(() => unlistenProgress?.());
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+/* 实验区：标签 + 说明纵向堆叠的行内列 */
+.row .col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.row .col .card-desc {
+  margin: 0;
+}
+.card-desc.err {
+  color: #ff453a;
+}
+.card-desc.warn {
+  color: #ff9f0a;
 }
 /* 关于区：版本值、发布链接、更新日志容器 */
 .row .value {

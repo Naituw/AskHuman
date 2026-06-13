@@ -41,6 +41,9 @@ enum View {
     Settings,
     /// 独立历史窗口；`all` 为 true 时默认展示全部项目。
     History { all: bool },
+    /// Agent 生命周期状态窗口（实验性功能，spec D13）：订阅 daemon 推送，动态更新。
+    #[cfg(unix)]
+    Agents,
 }
 
 /// GUI Helper 模式下，弹窗 ↔ Daemon 的 IPC 接线（由 `run_gui_helper` 建好后传入 `launch`）。
@@ -463,6 +466,28 @@ pub fn run_history(project: String, all: bool, config: AppConfig) -> ! {
     std::process::exit(0);
 }
 
+/// Agent 状态窗口入口（`AskHuman agents status`，实验性功能 spec D13）：
+/// 创建窗口 + 订阅 daemon 推送，动态展示工作中 / 空闲 / 已结束的 agent。
+#[cfg(unix)]
+pub fn run_agents(config: AppConfig) -> ! {
+    let lang = Lang::resolve(&config.general.language);
+    let state = AppState {
+        request: AskRequest::new(crate::models::MessagePrompt::default(), Vec::new(), false),
+        config,
+        source: crate::models::source_name(),
+        project: crate::project::detect(),
+    };
+    if let Err(e) = launch(state, View::Agents, None) {
+        stderr_redirect::eprintln_real(&format!(
+            "{}{}",
+            i18n::err_prefix(lang),
+            i18n::tr(lang, "app.agentsLaunchFailed").replace("{e}", &e.to_string())
+        ));
+        std::process::exit(1);
+    }
+    std::process::exit(0);
+}
+
 /// GUI Helper 模式入口（`AskHuman --popup --endpoint <sock> --token <tok>`，由 Daemon 拉起）。
 ///
 /// 流程：连 Daemon → 出示一次性 token → 收 `show` → 本进程主线程跑 Tauri 弹窗；
@@ -597,6 +622,9 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::commands::agent_rule_uninstall,
             crate::commands::agent_rule_reveal,
             crate::commands::agent_rule_open,
+            crate::commands::agent_lifecycle_status,
+            crate::commands::agent_lifecycle_install,
+            crate::commands::agent_lifecycle_uninstall,
             crate::commands::telegram_test,
             crate::commands::dingtalk_test,
             crate::commands::dingtalk_detect_prepare,
@@ -609,6 +637,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::commands::slack_detect_wait,
             crate::commands::open_history,
             crate::commands::history_init,
+            crate::commands::agents_init,
             crate::commands::get_history,
             crate::commands::get_history_projects,
             crate::commands::history_count,
@@ -651,7 +680,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                 // 设置窗口关闭时清掉 Liquid Glass 注册表条目：插件按 label 缓存玻璃视图，
                 // 若不清理，下次同 label 重开会走 update 分支去操作已销毁的旧视图，导致背景透明无玻璃。
                 #[cfg(target_os = "macos")]
-                "settings" | "history" => {
+                "settings" | "history" | "agents" => {
                     if matches!(event, WindowEvent::CloseRequested { .. }) {
                         clear_window_glass(window);
                     }
@@ -807,6 +836,12 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                     // History window only needs general (theme); skip keychain.
                     let config = AppConfig::load_without_secrets();
                     create_history_window(app, &config, all)?;
+                }
+                #[cfg(unix)]
+                View::Agents => {
+                    let config = AppConfig::load_without_secrets();
+                    create_agents_window(app, &config)?;
+                    spawn_agents_subscription(app.handle().clone());
                 }
             }
             Ok(())
@@ -1193,6 +1228,74 @@ fn watch_history_file<R: tauri::Runtime>(window: tauri::WebviewWindow<R>) {
             if window.emit("history-updated", ()).is_err() {
                 break;
             }
+        }
+    });
+}
+
+/// 创建（或聚焦已存在的）Agent 状态窗口（实验性功能 spec D13）。
+#[cfg(unix)]
+pub(crate) fn create_agents_window<R, M>(manager: &M, config: &AppConfig) -> tauri::Result<()>
+where
+    R: tauri::Runtime,
+    M: Manager<R>,
+{
+    if let Some(w) = manager.get_webview_window("agents") {
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let theme = window_theme(config);
+    let lang = Lang::resolve(&config.general.language);
+    let window_bg = background_for(resolved_theme(config));
+    let builder = WebviewWindowBuilder::new(
+        manager,
+        "agents",
+        WebviewUrl::App("index.html?view=agents".into()),
+    )
+    .title(i18n::tr(lang, "title.agents"))
+    .inner_size(760.0, 560.0)
+    .min_inner_size(520.0, 360.0)
+    .center()
+    .theme(theme);
+    let window_effect = config.general.window_effect;
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+    let win = apply_surface(builder, window_bg, window_effect).build()?;
+    #[cfg(target_os = "macos")]
+    if matches!(window_effect, WindowEffect::Glass) {
+        apply_liquid_glass(&win);
+    }
+    Ok(())
+}
+
+/// 订阅 daemon 的 agent 快照推送，转成前端 `agents-updated` 事件（实验性功能 spec D20）。
+/// 断连后退避重连（必要时 `open_for_subscribe` 会自动拉起 daemon），窗口关闭即随进程退出。
+#[cfg(unix)]
+fn spawn_agents_subscription(app: tauri::AppHandle) {
+    use crate::ipc::{self, ClientMsg, ServerMsg};
+    use tauri::Emitter;
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match crate::client::open_for_subscribe().await {
+                Ok((mut reader, mut writer)) => {
+                    if ipc::write_msg(&mut writer, &ClientMsg::AgentsSubscribe)
+                        .await
+                        .is_err()
+                    {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
+                    loop {
+                        match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
+                            Ok(Some(ServerMsg::AgentsState { agents })) => {
+                                let _ = app.emit("agents-updated", agents);
+                            }
+                            Ok(Some(_)) => {}
+                            Ok(None) | Err(_) => break, // 断连 → 跳出去重连。
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     });
 }

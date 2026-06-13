@@ -7,6 +7,7 @@
 // 开发期：部分核心 API 在后续步骤（弹窗/设置/Telegram）才会接线，先放宽未使用告警。
 #![allow(dead_code)]
 
+mod agents;
 mod app;
 mod channels;
 mod cli;

@@ -100,6 +100,16 @@ pub struct TaskRequest {
     /// 结果输出格式（全局）。
     #[serde(default)]
     pub output_format: OutputFormat,
+    /// 调用方 Agent 家族（"claude"/"codex"/"cursor"）——CLI 经 env 探测后顺带上送（生命周期追踪，spec D21）。
+    /// 旧 CLI 不带 → None；daemon 据此刷新对应 session 的「最近活动 + TTL」，仅刷新已追踪 session。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_kind: Option<String>,
+    /// 调用方 Agent 会话 ID（从 env 取，见 spec D21）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_id: Option<String>,
+    /// 调用方 Agent 进程 pid（walk 进程树得到，可空）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_pid: Option<u32>,
 }
 
 /// 自动识别 userId/open_id 请求（设置进程 → Daemon，Q6）：用表单当前凭据，
@@ -165,6 +175,28 @@ pub enum ClientMsg {
         #[serde(default)]
         answers: Vec<QuestionAnswer>,
     },
+    /// Agent 生命周期事件上报（`AskHuman __agent-hook <agent> <event>` → daemon，spec D20）。
+    /// 即发即走、不等回包；daemon 据此更新注册表。
+    AgentEvent {
+        /// 家族 "claude"/"codex"/"cursor"。
+        agent: String,
+        /// 归一化事件 "session-start"/"turn-start"/"turn-end"/"session-end"。
+        event: String,
+        /// 会话 ID（身份键）。
+        #[serde(default)]
+        session_id: String,
+        /// Agent 进程 pid（walk 得到，可空 → 落 TTL 兜底）。
+        #[serde(default)]
+        pid: Option<u32>,
+        /// 工作目录（可空）。
+        #[serde(default)]
+        cwd: Option<String>,
+        /// 事件时间（unix 秒，0 表示由 daemon 取当前时间）。
+        #[serde(default)]
+        ts: u64,
+    },
+    /// 状态窗口订阅 agent 快照（握手后发；之后 daemon 持续推 `AgentsState`，spec D20）。
+    AgentsSubscribe,
 }
 
 /// Daemon → 客户端（CLI / GUI Helper）的消息。
@@ -198,6 +230,9 @@ pub enum ServerMsg {
         latest_version: String,
         pending: bool,
     },
+    /// Agent 注册表全量快照（D→状态窗口订阅者，spec D20）。变化时推 + 周期心跳推。
+    /// `agents` 为记录数组，前端按类型分组、按状态排序渲染。
+    AgentsState { agents: serde_json::Value },
 }
 
 #[cfg(test)]

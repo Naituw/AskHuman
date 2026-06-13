@@ -2,6 +2,22 @@
 
 按具体任务 / 需求记录待办与当前进展。任务 / 需求完成后删除其 section（历史留在 git）。
 
+## 进行中：Agent 生命周期追踪 + 状态窗口（实验性功能）—— 编码完成，待实测
+
+需求 `docs/specs/agent-lifecycle-tracking.md` + 计划 `docs/plans/agent-lifecycle-tracking.md`（基于 `demo/agent-lifecycle/FINDINGS.md` 实测）。
+**独立于** IM 渠道激活需求（不含 attach/激活逻辑）。要点：①设置「通用」底部隐蔽开关「实验性功能」→ 出现「实验」Tab，含 Claude/Codex/Cursor 三家「生命周期追踪」开关（开/关＝安装/卸载用户级 lifecycle hook）；②`AskHuman agents status` 开动态 GUI 窗口，按类型分组显示 工作中/空闲/已结束 agent（类型/标题/sessionID/项目/启动/最近活动/状态/pid）。
+架构：daemon 中枢（agent 注册表 + 存活轮询 + TTL 兜底 + agents.json 持久化 + 闲退守卫 + 订阅推送）；hook 走二进制子命令 `AskHuman __agent-hook`（detectRunningAgent 去重 + walk 找 pid）；身份＝session_id、pid 仅判存活。决策见 spec 的 D1–D24。
+
+已落地（cargo check + 8 个 agent_lifecycle 单测 + vue-tsc 全过）：
+- 后端 `agents/`：`mod`(AgentKind/LifecycleEvent)、`detect`(运行家族判定/session_id/walk pid/kill0)、`title`(三家标题解析)、`registry`(apply_event/poll_liveness/ttl_sweep/最多留 10 条 ended/persist+load `~/.askhuman/agents.json`/snapshot)、`report`(`__agent-hook` 上报器 + 去重)。
+- IPC：`TaskRequest` 加 `agent_kind/agent_session_id/agent_pid`；`ClientMsg::AgentEvent`/`AgentsSubscribe`；`ServerMsg::AgentsState`。
+- daemon：注册表接线（事件落库+广播、1s 轮询+TTL、闲退守卫＝仅「工作中」agent 或有窗口连接才不退、drain 不受影响）；`handle_submit` 顺带 `touch_activity`（仅刷新对应 session）。
+- 安装/卸载/状态 `integrations/agent_lifecycle.rs`：用户级 hook，jsonc CST（Claude `~/.claude/settings.json` Nested / Cursor `~/.cursor/hooks.json` Flat）+ toml_edit（Codex `~/.codex/hooks.json` + `config.toml [hooks.state]` 信任哈希，复刻 `codex-trust.cjs` 算法）；仅增删含 `__agent-hook` 标记条目，保留其它 hook/格式；与 timeout hook 共存。
+- 窗口：`app::run_agents`/`create_agents_window` + 订阅推送；CLI `AskHuman agents status`（`agents` 子命令组预留扩展）；前端 `AgentsView.vue`（按类型分组、状态优先排序、相对时间动态刷新）。
+- 设置 UI：`config.experimental.enabled`（serde 默认兼容旧配置）；「通用」底部隐蔽开关 + 「实验」Tab 三家开关（Windows 隐藏）；i18n zh/en。
+
+**下一步**：①`./scripts/install.sh` 装好后用户实测 Claude / Codex（开关→`/hooks` 或 `~/.codex/config.toml` 核对→`agents status` 窗口看 工作中/空闲/已结束 流转→关窗/`kill -9` 看轮询判 GONE）；②Cursor 在日常开发中验证（双触发去重）；③实测通过后提交 + 清理本 section。
+
 ## 进行中：IM 渠道激活 —— Agent 信号 Demo（Claude/Codex/Cursor 三家均实测通过）
 
 需求 `docs/todos/im-channel-activation.md`；Demo 已升级为**共享核心** `demo/agent-lifecycle/`

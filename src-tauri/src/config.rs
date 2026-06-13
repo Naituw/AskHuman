@@ -257,11 +257,23 @@ pub struct ChannelsConfig {
     pub slack: SlackChannelConfig,
 }
 
+/// 实验性高级功能（spec D15）：默认隐藏，需在「通用」Tab 底部的隐蔽开关里打开后才显示「实验」Tab。
+/// 仅 macOS/Linux 暴露该设置；Windows 不显示（无 daemon / 生命周期追踪）。
+/// 各 Agent 的「追踪开启」真值以 lifecycle hook 是否已安装为准（实时查询），故此处只需保存「是否显露实验区」。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ExperimentalConfig {
+    /// 是否显露「实验」Tab（隐蔽开关，默认关）。
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppConfig {
     pub general: GeneralConfig,
     pub channels: ChannelsConfig,
+    /// 实验性功能开关区（spec D15）。
+    pub experimental: ExperimentalConfig,
 }
 
 impl AppConfig {

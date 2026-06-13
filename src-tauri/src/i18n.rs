@@ -98,6 +98,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "title.popup" => "AskHuman",
         "title.settings" => pick(lang, "AskHuman Settings", "AskHuman 设置"),
         "title.history" => pick(lang, "AskHuman History", "AskHuman 历史记录"),
+        "title.agents" => pick(lang, "AskHuman Agents", "AskHuman Agent 状态"),
 
         // —— macOS 附件右键菜单 ——
         "menu.open" => pick(lang, "Open", "打开"),
@@ -198,6 +199,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         ),
         "app.settingsLaunchFailed" => pick(lang, "failed to launch settings: {e}", "无法启动设置界面: {e}"),
         "app.historyLaunchFailed" => pick(lang, "failed to launch history window: {e}", "无法启动历史窗口: {e}"),
+        "app.agentsLaunchFailed" => pick(lang, "failed to launch agents window: {e}", "无法启动 Agent 状态窗口: {e}"),
         "app.noDisplay" => pick(
             lang,
             "no graphical display (neither DISPLAY nor WAYLAND_DISPLAY is set)",
@@ -377,6 +379,8 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "cmd.ruleUpdated" => pick(lang, "Prompt updated to the latest version", "已更新到最新提示词"),
         "cmd.ruleRemoved" => pick(lang, "Rule removed", "已从规则文件移除"),
         "cmd.unknownAgent" => pick(lang, "Unknown agent", "未知的 Agent"),
+        "cmd.lifecycleInstalled" => pick(lang, "Lifecycle tracking enabled", "已开启生命周期追踪"),
+        "cmd.lifecycleRemoved" => pick(lang, "Lifecycle tracking disabled", "已关闭生命周期追踪"),
 
         // —— Telegram 测试连接（commands.telegram_test / test_connection）——
         "cmd.tgTestRemote" => pick(

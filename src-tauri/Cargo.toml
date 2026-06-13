@@ -29,6 +29,11 @@ serde_json = "1"
 # 只触碰本应用注入的条目，用户的注释 / 缩进 / 转义（如 http:\/\/）逐字节保留；
 # 解析失败即中止，绝不整份重写覆盖用户文件。
 jsonc-parser = { version = "0.32", features = ["cst", "serde", "serde_json"] }
+# Codex 生命周期 hook 走 ~/.codex/config.toml，用 toml_edit 做“保留格式的最小化编辑”
+# （只增删本功能自己的 [hooks] / [hooks.state] 条目，保留用户其它配置与注释）。
+toml_edit = "0.22"
+# 计算 Codex hook 信任哈希（复刻 codex 的 version_for_toml：sha256 of 规范化 JSON）。
+sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 # 会话型渠道公共接口（Telegram/钉钉等共享多问题驱动逻辑）需要 async trait。
 async-trait = "0.1"

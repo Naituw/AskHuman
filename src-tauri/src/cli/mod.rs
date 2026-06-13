@@ -106,6 +106,20 @@ pub fn dispatch() {
         "daemon" => {
             crate::daemon::dispatch(&argv[2..]);
         }
+        // 隐藏的生命周期上报器：由三家 Agent 的用户级 hook 调用
+        // （`AskHuman __agent-hook <agent> <event>`，spec D20）。即发即走、静默退出。
+        "__agent-hook" => {
+            #[cfg(unix)]
+            {
+                crate::agents::report::run(&argv[2..]);
+            }
+            exit(0);
+        }
+        // Agent 生命周期相关子命令组（实验性功能，spec D22）。目前仅 `status`（弹出状态窗口），
+        // 预留扩展（未来可加 list / kill 等）。
+        "agents" => {
+            agents_dispatch(&argv[2..], lang);
+        }
         // 第一题既可用位置参数，也可用 `-q`/`--question`；提问相关 flag 一律进入提问分支，
         // 由 `parse_ask` 给出精确错误（如缺少问题内容、选项需在问题之后）。
         first
@@ -160,6 +174,9 @@ pub fn dispatch() {
                 // unix：瘦客户端经 Daemon + GUI Helper（A11：上送 source name 与解析好的 lang）。
                 #[cfg(unix)]
                 {
+                    // 顺带探测调用方 Agent 身份（生命周期追踪 spec D21）：经 daemon 刷新对应 session 的活动 + TTL。
+                    // 仅当追踪已开启时 daemon 才会有该 session；探测失败则字段为 None，零副作用。
+                    let (agent_kind, agent_session_id, agent_pid) = detect_caller_agent();
                     let task = crate::ipc::TaskRequest {
                         message,
                         questions,
@@ -170,6 +187,9 @@ pub fn dispatch() {
                         select_only: parsed.select_only,
                         single: parsed.single,
                         output_format: parsed.output_format,
+                        agent_kind,
+                        agent_session_id,
+                        agent_pid,
                     };
                     crate::client::run_ask(task);
                 }
@@ -190,6 +210,48 @@ pub fn dispatch() {
                 exit(1);
             }
         },
+    }
+}
+
+/// `AskHuman agents <sub>` 分发（实验性功能，spec D22）。预留扩展空间。
+fn agents_dispatch(args: &[String], lang: Lang) {
+    let sub = args.first().map(|s| s.as_str()).unwrap_or("status");
+    match sub {
+        // 默认 / status：弹出 Agent 状态窗口（订阅 daemon 推送，动态更新）。
+        "status" | "" => {
+            #[cfg(unix)]
+            {
+                crate::app::run_agents(crate::config::AppConfig::load_without_secrets());
+            }
+            #[cfg(not(unix))]
+            {
+                eprintln!("agents status is not supported on this platform");
+                exit(1);
+            }
+        }
+        other => {
+            eprintln!(
+                "{}{}",
+                i18n::err_prefix(lang),
+                i18n::tr(lang, "cli.unknownOption").replace("{opt}", other)
+            );
+            exit(1);
+        }
+    }
+}
+
+/// 探测发起 `AskHuman` 调用的 Agent 身份（家族 / 会话 ID / pid）。
+/// 三者尽力而为：任一拿不到即为 None（daemon 据 session_id 刷新对应 session 的活动 + TTL）。
+#[cfg(unix)]
+fn detect_caller_agent() -> (Option<String>, Option<String>, Option<u32>) {
+    use crate::agents::detect;
+    match detect::detect_running_agent() {
+        Some(kind) => {
+            let sid = detect::session_id_from_env(kind);
+            let pid = detect::walk_agent_pid_from_self(kind);
+            (Some(kind.as_str().to_string()), sid, pid)
+        }
+        None => (None, None, None),
     }
 }
 

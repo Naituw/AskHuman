@@ -108,6 +108,36 @@ export interface HistoryInit {
   projectName: string;
 }
 
+/** Agent 状态窗口 init 负载（实验性功能）。 */
+export interface AgentsInit {
+  theme: ThemeMode;
+  lang: string;
+}
+
+export type AgentKind = "claude" | "codex" | "cursor";
+
+/** 生命周期 hook 安装状态（实验区开关据此渲染）。 */
+export interface LifecycleStatus {
+  installed: boolean;
+  outdated: boolean;
+  supported: boolean;
+}
+
+export type AgentRunState = "working" | "idle" | "ended";
+
+/** 单个被追踪 agent（一条 session）的快照记录。 */
+export interface AgentRecord {
+  kind: AgentKind;
+  sessionId: string;
+  pid?: number | null;
+  title?: string | null;
+  cwd?: string | null;
+  startedAt: number;
+  lastActivity: number;
+  state: AgentRunState;
+  endedAt?: number | null;
+}
+
 export type UiLanguage = "auto" | "en" | "zh";
 
 export interface GeneralConfig {
@@ -172,9 +202,15 @@ export interface ChannelsConfig {
   slack: SlackChannelConfig;
 }
 
+/** 实验性功能开关（默认隐藏；开启后显示「实验」Tab）。 */
+export interface ExperimentalConfig {
+  enabled: boolean;
+}
+
 export interface AppConfig {
   general: GeneralConfig;
   channels: ChannelsConfig;
+  experimental: ExperimentalConfig;
 }
 
 /** Whether each channel secret is currently stored (drives the "Saved" placeholder). */

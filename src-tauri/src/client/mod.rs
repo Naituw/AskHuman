@@ -171,6 +171,31 @@ pub async fn request_detect(req: DetectRequest) -> Option<Result<String, String>
     }
 }
 
+/// 生命周期事件上报（reporter 用，spec D20）：确保 daemon 在跑（拿不到也尽力直连），
+/// 发一条 `AgentEvent` 即走。全程 best-effort，任何失败静默——hook 不能因追踪而拖慢/报错。
+pub fn report_agent_event(msg: ClientMsg) {
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        return;
+    };
+    rt.block_on(async {
+        // 即便 daemon 在排空（WouldBlock）也继续尝试直连：control_loop 不依赖 Hello 即可处理 AgentEvent，
+        // 排空中的 daemon 退出前会持久化、由新 daemon 重载。
+        let _ = ensure_running().await;
+        if let Ok((_, mut writer)) = connect_split().await {
+            let _ = ipc::write_msg(&mut writer, &msg).await;
+        }
+    });
+}
+
+/// 打开一条到 daemon 的连接（订阅状态窗口用，spec D20）：确保在跑后连接并拆分读写半。
+pub async fn open_for_subscribe() -> std::io::Result<(Reader, OwnedWriteHalf)> {
+    ensure_running().await?;
+    connect_split().await
+}
+
 /// 瘦客户端 ask 入口：确保 Daemon 在运行 → 握手 → 提交任务 → 流式取回结果 → 按退出码退出（不返回）。
 pub fn run_ask(task: crate::ipc::TaskRequest) -> ! {
     let rt = match tokio::runtime::Builder::new_current_thread()

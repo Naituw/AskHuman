@@ -47,6 +47,11 @@ pub fn update_state_file() -> PathBuf {
     config_dir().join("update.json")
 }
 
+/// Agent 生命周期追踪状态文件 `~/.askhuman/agents.json`（daemon 持久化、重启复核用）。
+pub fn agents_file() -> PathBuf {
+    config_dir().join("agents.json")
+}
+
 /// Cursor 目录 `~/.cursor`。
 pub fn cursor_dir() -> PathBuf {
     home().join(".cursor")
@@ -105,4 +110,14 @@ pub fn codex_dir() -> PathBuf {
 /// Codex 全局指令文件 `~/.codex/AGENTS.md`（用户级，跨项目）。
 pub fn codex_agents_md() -> PathBuf {
     codex_dir().join("AGENTS.md")
+}
+
+/// Codex 用户级配置文件 `~/.codex/config.toml`（生命周期 hook 的信任 `[hooks.state]` 写于此）。
+pub fn codex_config_toml() -> PathBuf {
+    codex_dir().join("config.toml")
+}
+
+/// Codex 用户级 hook 定义文件 `~/.codex/hooks.json`（生命周期 hook 写于此；信任键以其绝对路径为前缀）。
+pub fn codex_hooks_json() -> PathBuf {
+    codex_dir().join("hooks.json")
 }

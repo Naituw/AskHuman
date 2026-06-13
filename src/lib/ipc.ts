@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AgentsInit,
   AppConfig,
   DingTalkDetectArgs,
   DingTalkTestArgs,
@@ -8,10 +9,12 @@ import type {
   FeishuTestArgs,
   FeishuWaitArgs,
   AgentId,
+  AgentKind,
   ClaudeHookStatus,
   HistoryEntry,
   HistoryInit,
   HookStatus,
+  LifecycleStatus,
   PopupInit,
   PushedUpdateState,
   RuleStatus,
@@ -73,6 +76,8 @@ export const openSettings = () => invoke<void>("open_settings");
 export const openHistory = () => invoke<void>("open_history");
 
 export const historyInit = () => invoke<HistoryInit>("history_init");
+
+export const agentsInit = () => invoke<AgentsInit>("agents_init");
 
 export const getHistory = (project: string | null, all: boolean) =>
   invoke<HistoryEntry[]>("get_history", { project, all });
@@ -139,6 +144,15 @@ export const agentRuleReveal = (agent: AgentId) =>
 
 export const agentRuleOpen = (agent: AgentId) =>
   invoke<void>("agent_rule_open", { agent });
+
+export const agentLifecycleStatus = (agent: AgentKind) =>
+  invoke<LifecycleStatus>("agent_lifecycle_status", { agent });
+
+export const agentLifecycleInstall = (agent: AgentKind) =>
+  invoke<string>("agent_lifecycle_install", { agent });
+
+export const agentLifecycleUninstall = (agent: AgentKind) =>
+  invoke<string>("agent_lifecycle_uninstall", { agent });
 
 export const telegramTest = (args: TelegramTestArgs) =>
   invoke<string>("telegram_test", { args });

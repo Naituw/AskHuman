@@ -246,6 +246,24 @@ pub fn history_init(state: State<AppState>) -> HistoryInit {
     }
 }
 
+/// Agent 状态窗口初始化负载（实验性功能 spec D13）：主题 + 语言（前端据此渲染样式与文案）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentsInit {
+    theme: String,
+    lang: String,
+}
+
+#[tauri::command]
+pub fn agents_init(state: State<AppState>) -> AgentsInit {
+    AgentsInit {
+        theme: theme_str(state.config.general.theme),
+        lang: crate::i18n::Lang::resolve(&state.config.general.language)
+            .code()
+            .to_string(),
+    }
+}
+
 /// 从弹窗导航栏打开独立历史窗口（同进程内创建，默认当前项目）。
 #[tauri::command]
 pub fn open_history(app: AppHandle) -> Result<(), String> {
@@ -703,6 +721,34 @@ pub fn agent_rule_open(agent: String) -> Result<(), String> {
     let a = parse_agent(&agent)?;
     agent_rules::open(a);
     Ok(())
+}
+
+// ===== Agent 生命周期追踪 hook（实验性功能） =====
+
+use crate::agents::AgentKind;
+use crate::integrations::agent_lifecycle;
+
+fn parse_agent_kind(agent: &str) -> Result<AgentKind, String> {
+    AgentKind::parse(agent)
+        .ok_or_else(|| crate::i18n::tr(crate::i18n::Lang::current(), "cmd.unknownAgent").to_string())
+}
+
+#[tauri::command]
+pub fn agent_lifecycle_status(agent: String) -> Result<agent_lifecycle::LifecycleStatus, String> {
+    let k = parse_agent_kind(&agent)?;
+    Ok(agent_lifecycle::status(k))
+}
+
+#[tauri::command]
+pub fn agent_lifecycle_install(agent: String) -> Result<String, String> {
+    let k = parse_agent_kind(&agent)?;
+    agent_lifecycle::install(k).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn agent_lifecycle_uninstall(agent: String) -> Result<String, String> {
+    let k = parse_agent_kind(&agent)?;
+    agent_lifecycle::uninstall(k).map_err(|e| e.to_string())
 }
 
 // ===== Telegram 测试连接 =====
