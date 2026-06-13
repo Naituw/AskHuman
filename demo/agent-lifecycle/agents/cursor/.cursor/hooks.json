@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {
+        "command": "/opt/homebrew/bin/node \"/Users/wutian/Developer/HumanInLoop/demo/agent-lifecycle/harness/hooklog.cjs\" cursor beforeSubmitPrompt"
+      }
+    ],
+    "stop": [
+      {
+        "command": "/opt/homebrew/bin/node \"/Users/wutian/Developer/HumanInLoop/demo/agent-lifecycle/harness/hooklog.cjs\" cursor stop"
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "/opt/homebrew/bin/node \"/Users/wutian/Developer/HumanInLoop/demo/agent-lifecycle/harness/hooklog.cjs\" cursor afterFileEdit"
+      }
+    ]
+  }
+}

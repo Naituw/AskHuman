@@ -1,0 +1,96 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node \"/Users/wutian/Developer/HumanInLoop/demo/agent-lifecycle/harness/hooklog.cjs\" claude SessionStart"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node \"/Users/wutian/Developer/HumanInLoop/demo/agent-lifecycle/harness/hooklog.cjs\" claude UserPromptSubmit"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node \"/Users/wutian/Developer/HumanInLoop/demo/agent-lifecycle/harness/hooklog.cjs\" claude PreToolUse"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node \"/Users/wutian/Developer/HumanInLoop/demo/agent-lifecycle/harness/hooklog.cjs\" claude PostToolUse"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node \"/Users/wutian/Developer/HumanInLoop/demo/agent-lifecycle/harness/hooklog.cjs\" claude Stop"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node \"/Users/wutian/Developer/HumanInLoop/demo/agent-lifecycle/harness/hooklog.cjs\" claude SubagentStop"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node \"/Users/wutian/Developer/HumanInLoop/demo/agent-lifecycle/harness/hooklog.cjs\" claude Notification"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node \"/Users/wutian/Developer/HumanInLoop/demo/agent-lifecycle/harness/hooklog.cjs\" claude PreCompact"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node \"/Users/wutian/Developer/HumanInLoop/demo/agent-lifecycle/harness/hooklog.cjs\" claude SessionEnd"
+          }
+        ]
+      }
+    ]
+  }
+}
