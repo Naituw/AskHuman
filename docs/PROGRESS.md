@@ -144,3 +144,8 @@ turn-start↔turn-end 成对；`/clear` 轮换 session_id 但 pid 不变 → 会
   （默认开）控制；agent 状态由退出前 `persist()` + 新 daemon `load()` 存活复核恢复（工作中原样保留）。
   隔离自测（重签名改盘上二进制、不发 Hello）：日志依次出现 `marking update pending`→`draining for restart`
   →`drain complete; shutting down`，证明监听路径主动换新生效。
+- 后续待评估（暂不做，优先级低）：二进制变化检测目前是 **15s 轮询** `current_exe()` 指纹（稳态≈1 次 `stat`，
+  靠 `binhash.json` 内容哈希缓存避免重哈希）。是否改 **filewatch** 待权衡——难点：二进制走原子替换
+  （rename 换 inode，需盯父目录 + 按文件名过滤 + 每次替换后重挂，参考 `config_watch.rs`）、装在任意目录
+  （`~/.local/bin`/brew/npm 前缀/`.app` bundle…）、且 watcher 仍要 stat/hash 才能确认内容**真**变（指纹是
+  内容哈希而非 mtime）。延迟要求松（~15s 够）+ Hello 路径兜底，故暂保持轮询。
