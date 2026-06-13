@@ -127,8 +127,8 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         ),
         "cli.positionalOnlyMessage" => pick(
             lang,
-            "unexpected extra argument '{arg}': a positional argument is only allowed as the Message, and must come first. If it looks like part of an option value, it is likely a shell quoting issue \u{2014} wrap the value in single quotes.",
-            "出现多余的参数 '{arg}'：位置参数只能作为 Message，且需在最前。如果它看起来像是某个选项值的一部分，多半是 shell 引号没包好——请用单引号包裹该值。",
+            "unexpected argument '{arg}': only the Message may be positional, and it must precede all options. If a value contains spaces or special characters, pass it as a single shell argument, quoting or escaping it as required.",
+            "意外的参数 '{arg}'：仅 Message 可作为位置参数，且须位于所有选项之前。若某个值含空格或特殊字符，请将其作为单个 shell 参数传入，并按需正确引用或转义。",
         ),
         "cli.stdinWithPositional" => pick(
             lang,
