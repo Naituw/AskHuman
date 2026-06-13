@@ -2,6 +2,11 @@
 
 按具体任务 / 需求记录待办与当前进展。任务 / 需求完成后删除其 section（历史留在 git）。
 
+## 进行中：严格选择模式 + 结构化输出（阶段 0：卡片 demo）
+
+需求 `docs/specs/strict-choice-and-structured-output.md` + 计划 `docs/plans/strict-choice-and-structured-output.md`（spec/plan 已评审通过）。
+当前处于 plan §12「阶段 0 — 卡片 demo & 待定项敲定」：写最小可发卡 demo，经各真实渠道发卡给用户看样式，逐项敲定「暂定」项后再进入正式编写。
+
 ## 进行中：版本自更新机制（实现阶段）
 
 需求/方案：`docs/specs/self-update.md`、`docs/plans/self-update.md`；提交规范见 `AGENTS.md`。
