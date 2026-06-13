@@ -11,7 +11,9 @@ pub mod transport;
 pub use codec::{read_msg, write_msg};
 
 use crate::daemon::lifecycle::Fingerprint;
-use crate::models::{AskRequest, ChannelAction, MessagePrompt, Question, QuestionAnswer};
+use crate::models::{
+    AskRequest, ChannelAction, MessagePrompt, OutputFormat, Question, QuestionAnswer,
+};
 use serde::{Deserialize, Serialize};
 
 /// IPC 协议版本：不兼容变更时 +1，握手不一致即触发换新。
@@ -89,6 +91,15 @@ pub struct TaskRequest {
     /// 旧 CLI 不带此字段 → 默认空串（归入「未知项目」）。
     #[serde(default)]
     pub project: String,
+    /// 严格选择：禁用自由文本 / 回复附件，只能勾选预设项（全局）。
+    #[serde(default)]
+    pub select_only: bool,
+    /// 单选：每题恰好一个选择（默认多选，全局）。
+    #[serde(default)]
+    pub single: bool,
+    /// 结果输出格式（全局）。
+    #[serde(default)]
+    pub output_format: OutputFormat,
 }
 
 /// 自动识别 userId/open_id 请求（设置进程 → Daemon，Q6）：用表单当前凭据，

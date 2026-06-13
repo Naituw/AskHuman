@@ -148,6 +148,10 @@ const sourceName = ref("the Loop");
 const questions = computed<Question[]>(() => request.value?.questions ?? []);
 const total = computed(() => questions.value.length);
 const isMulti = computed(() => total.value > 1);
+// 严格选择：隐藏补充输入 / 附件区，且必须选中才能提交（D11）。
+const selectOnly = computed(() => request.value?.selectOnly ?? false);
+// 单选：选项渲染为 radio，每题恰好一个（D11）。
+const single = computed(() => request.value?.single ?? false);
 const currentQuestion = computed<Question | null>(
   () => questions.value[current.value] ?? null
 );
@@ -188,6 +192,13 @@ const allViewed = computed(
 const hasAnyAnswer = computed(() =>
   questions.value.some((_, i) => isAnswered(i))
 );
+// 严格选择下「必须选中才能提交」：每个有选项的问题都需至少一个勾选。
+const canSubmit = computed(() => {
+  if (!selectOnly.value) return true;
+  return questions.value.every(
+    (_, i) => (chosenByQ.value[i]?.length ?? 0) > 0
+  );
+});
 // 是否处于最后一题：多题时 CMD+回车 仅在最后一题提交，否则前往下一题。
 const onLastQuestion = computed(() => current.value === total.value - 1);
 
@@ -392,6 +403,12 @@ function toggle(option: string) {
   const arr = chosenByQ.value[current.value];
   if (!arr) return;
   const i = arr.indexOf(option);
+  // 单选：选中即替换为唯一项；再次点击当前选中项则清空（保留"可不选"，除非严格模式）。
+  if (single.value) {
+    if (i >= 0) arr.splice(0, arr.length);
+    else arr.splice(0, arr.length, option);
+    return;
+  }
   if (i >= 0) arr.splice(i, 1);
   else arr.push(option);
 }
@@ -408,6 +425,7 @@ function pickFiles() {
 }
 
 async function addFiles(files: FileList | File[]) {
+  if (selectOnly.value) return;
   let added = 0;
   for (const file of Array.from(files)) {
     if (!file.type.startsWith("image/")) continue;
@@ -447,6 +465,7 @@ function onDrop(_e: DragEvent) {}
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?|svg)$/i;
 
 async function addDroppedPaths(paths: string[]) {
+  if (selectOnly.value) return;
   const attachPaths = new Set(attachments.value.map((a) => a.path));
   let addedImage = 0;
   for (const path of paths) {
@@ -474,6 +493,7 @@ function removeReplyFile(index: number) {
 }
 
 async function onPaste(e: ClipboardEvent) {
+  if (selectOnly.value) return;
   const items = e.clipboardData?.items;
   if (!items) return;
   const files: File[] = [];
@@ -552,7 +572,7 @@ function collectAnswers(): QuestionAnswer[] {
 }
 
 async function submit() {
-  if (submitting.value) return;
+  if (submitting.value || !canSubmit.value) return;
   submitting.value = true;
   try {
     await submitPopup({ answers: collectAnswers() });
@@ -1201,17 +1221,17 @@ onBeforeUnmount(() => {
               v-for="(opt, i) in currentQuestion.predefinedOptions"
               :key="i"
               class="option"
-              :class="{ selected: chosen.includes(opt.text) }"
+              :class="{ selected: chosen.includes(opt.text), single }"
               @click="toggle(opt.text)"
             >
-              <span class="check">{{ chosen.includes(opt.text) ? "✓" : "" }}</span>
+              <span class="check" :class="{ radio: single }">{{ single ? "" : (chosen.includes(opt.text) ? "✓" : "") }}</span>
               <span class="label"><span v-if="opt.recommended" class="rec-badge"><span class="rec-badge-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"></path><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>{{ t("popup.recommended") }}</span></span>{{ opt.text }}</span>
               <kbd v-if="optionHotkey(i)" class="opt-sc">{{ optionHotkey(i) }}</kbd>
             </div>
           </div>
 
-          <!-- 输入框 + 内置「添加图片」小图标（右下角） -->
-          <div class="input-wrap">
+          <!-- 输入框 + 内置「添加图片」小图标（右下角）；严格选择模式隐藏 -->
+          <div v-if="!selectOnly" class="input-wrap">
             <textarea
               ref="inputRef"
               v-model="userInput"
@@ -1261,14 +1281,14 @@ onBeforeUnmount(() => {
               </svg>
             </button>
           </div>
-          <p v-if="speechError" class="speech-error">
+          <p v-if="!selectOnly && speechError" class="speech-error">
             {{ speechErrorText(speechError) }}
           </p>
-          <p v-else-if="listening && speechStatus" class="speech-status">
+          <p v-else-if="!selectOnly && listening && speechStatus" class="speech-status">
             {{ speechStatusText(speechStatus) }}
           </p>
 
-          <div v-if="images.length" ref="thumbsRef" class="thumbs">
+          <div v-if="!selectOnly && images.length" ref="thumbsRef" class="thumbs">
             <div v-for="(img, i) in images" :key="i" class="thumb">
               <img :src="img.data" alt="" />
               <button class="remove" type="button" @click="removeImage(i)">
@@ -1277,7 +1297,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div v-if="replyFiles.length" class="reply-files">
+          <div v-if="!selectOnly && replyFiles.length" class="reply-files">
             <div
               v-for="(f, i) in replyFiles"
               :key="f.path"
@@ -1332,7 +1352,7 @@ onBeforeUnmount(() => {
         class="btn"
         :class="{ 'btn-primary': onLastQuestion }"
         type="button"
-        :disabled="submitting"
+        :disabled="submitting || !canSubmit"
         @click="submit"
       >
         {{ t("common.submit") }}
@@ -1349,7 +1369,7 @@ onBeforeUnmount(() => {
       <button
         class="btn btn-primary"
         type="button"
-        :disabled="submitting"
+        :disabled="submitting || !canSubmit"
         @click="submit"
       >
         {{ t("popup.send") }} <kbd class="sc">⌘↵</kbd>

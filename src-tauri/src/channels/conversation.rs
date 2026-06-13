@@ -16,6 +16,10 @@ pub struct QuestionCtx<'a> {
     pub text: &'a str,
     pub options: &'a [OptionItem],
     pub is_markdown: bool,
+    /// 严格选择：禁用自由文本 / 附件，只能勾选预设项。
+    pub select_only: bool,
+    /// 单选：每题恰好一个选择（默认多选）。
+    pub single: bool,
     /// 0 基序号与总题数（供渠道按需展示进度）。
     pub index: usize,
     pub total: usize,
@@ -86,6 +90,8 @@ pub async fn run_conversation(
             text: &q.message,
             options: &q.predefined_options,
             is_markdown: request.is_markdown,
+            select_only: request.select_only,
+            single: request.single,
             index: 0,
             total: 1,
             lang,
@@ -115,6 +121,8 @@ pub async fn run_conversation(
                 text: &question.message,
                 options: &question.predefined_options,
                 is_markdown: request.is_markdown,
+                select_only: request.select_only,
+                single: request.single,
                 index,
                 total: n,
                 lang,

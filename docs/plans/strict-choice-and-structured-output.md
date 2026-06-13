@@ -103,19 +103,29 @@ AskHuman -q "Q" -o "A" -o "B" --select-only --single --output json
 - 推荐展示：recommended 项 option `text` 用 mrkdwn 加粗、`description` = 本地化「👍 推荐」（注意 75 字符上限，超长降级）。
 
 ### 钉钉（`dingtalk/card.rs` + `channels/dingding.rs`）
-- **新模板**（用户在卡片平台搭建并发布；按 §6 契约）。`DEFAULT_CARD_TEMPLATE_ID` 升级为新模板 ID。
-- `build_card_param_map`：`options` 改为 `[{text, recommended}]`；新增公有变量 `single`、`allow_input`、`input_placeholder`。
-- `build_card_private_map`：维持 `submitted` / `private_input`。
-- `parse_card_submit`：兼容单选回传（单值或长度 1 数组）→ 归一为 `selected_options`。
+- **新模板**（用户已搭 `d5dc7ac5-…`，最后由用户发布；按 §6 定稿契约）。`DEFAULT_CARD_TEMPLATE_ID` 升级为新模板 ID。
+- `build_card_param_map(title, markdown, options, single, allow_input)`：产出公有 cardParamMap，**值全为字符串**：`title`、`markdown`、`options`(JSON 串 `[{id:下标, md}]`)、`single`("true"/"false")、`allow_input`("true"/"false")、`submit_status`("")。`md` 富文本：选项原文包 `<font sizeToken=common_h5_text_style__font_size>…</font>`；recommended 项前缀 `<font sizeToken=… colorTokenV2=common_green1_color>【👍推荐】</font> `。**不**下发真布尔（会报 StringValue is mandatory）。
+- `build_card_private_map`：维持 `submitted`("false") / `private_input`("")。
+- `parse_card_submit`：`selected_options` 装**选项 id**；兼容多选(id 数组)、单选(`{id}` 对象 / 单值)、`{index,value}` 形态 → 解析成 id 列表 → 由会话层按下标还原 `selected_options`(原文) 与 `selected_indices`。`CardSubmit` 改携带 `selected_ids: Vec<i64>`（或下标），不再直接存文本。
 - 文本回退（`dingding.rs` 编号清单）：严格忽略自由文字、单选仅接受一个编号；推荐行用 `display_text`。
 
-## 6. 钉钉模板变量契约（交付用户搭建）
+## 6. 钉钉模板变量契约（demo 实测定稿；模板 `d5dc7ac5-…` 待用户发布）
 
-- 公有输入：`title`、`markdown`、`options=[{text,recommended}]`、`single`(bool 条件渲染 单选框/多选框)、`allow_input`(bool 条件渲染 输入框)、`input_placeholder`、`submit_status`。
-- 私有：`submitted`、`private_input`。
-- 提交按钮回传 `params`：`{ selected_options(数组), user_input }`。
-- recommended 项：模板内联渲染彩色加粗「推荐」标记（保持"首行带标记、换行回左"；暂定文字，备选内联图片见 spec D18）。
-- 单选 / 多选、输入框显隐**全部同一张模板**靠变量切换；新版统一用新模板。
+- 公有 cardParamMap（**值全为字符串**）：
+  - `title`：标题（多题 `Question i/n`）。
+  - `markdown`：问题正文（Markdown 组件）。
+  - `options`：JSON 串 `[{ "id": <下标 int>, "md": "<富文本>" }]`。`md` = 选项原文包 `<font sizeToken=common_h5_text_style__font_size>…</font>`；recommended 项加前缀 `<font sizeToken=… colorTokenV2=common_green1_color>【👍推荐】</font> `。
+  - `single`：`"true"`/`"false"`（CheckboxList 单选 / CheckboxListMulti 多选 条件渲染）。
+  - `allow_input`：`"true"`/`"false"`（Input 输入框显隐）。
+  - `submit_status`：终态文案（已提交 / 已在 X 回答），初始 `""`。
+- 私有 cardParamMap：`submitted`(`"false"`)、`private_input`(`""`)。
+- 提交按钮 actionId=`submit_action`，回传 `params={ user_input, selected_options }`：
+  - 多选：`selected_options` = 选项 **id 数组** `[0,2]`。
+  - 单选：`selected_options` = `{ id: <n> }`（对象）或单值（以真机为准，解析兼容）。
+  - 严格：`user_input` 恒空。
+- 服务端按 id（=下标）还原 `selected_options`(原文，去推荐前缀) 与 `selected_indices`。
+- 单/多选、输入框显隐全用同一模板靠变量切换；新版统一用新模板。
+- 约束：cardParamMap 只收字符串值（布尔/数字也用字符串），模板按变量声明类型还原；下发真布尔会报「StringValue is mandatory」。字号只能用预设 sizeToken（无自定义 px），定稿 h5=15px（见 spec D18）。
 
 ## 7. 弹窗前端
 
@@ -163,15 +173,15 @@ AskHuman -q "Q" -o "A" -o "B" --select-only --single --output json
 卡片若干「暂定」项（钉钉内联「推荐」、飞书单选 radio + 推荐 icon、Slack 单选 / 推荐 description、Telegram 单选高亮）**只能看真实效果才能敲定**，故先做 demo、经真实渠道发卡给用户确认，再正式编写。
 
 ### 阶段 0 — 卡片 demo & 待定项敲定（必须先于阶段 2 的渠道实现）
-- [ ] 列出每个渠道在「单选 / 严格 / 推荐展示」下的预计卡片结构（落到本计划 §5 已有，按需补细节）。
-- [ ] 写最小可发卡原型（demo 脚本或临时代码路径），把预计样式**经各真实渠道**发出：
-  - [ ] 钉钉：搭一版新模板（§6 契约）并发卡，看单/多选条件渲染 + 内联「推荐」样式。
-  - [ ] 飞书：单选真 radio（移出表单 + 回调互斥）+ checker `icon` 推荐，发卡看观感。
-  - [ ] Slack：`radio_buttons` 单选 + option `description`「👍 推荐」+ 加粗，发卡看观感。
-  - [ ] Telegram：单选按钮互斥高亮 + 👍 emoji，发卡看观感。
-  - [ ] 弹窗：radio + 严格隐藏补充区 + 推荐徽标本地预览。
-- [ ] 通过 `AskHuman` 把各渠道实拍 / 截图发给用户评审，**逐项敲定**推荐展示与单选交互（不满意则迭代：钉钉文字↔图片、飞书 icon↔文字前缀等）。
-- [ ] 把最终敲定结论回填到 spec 决策表（D13–D18）并清除「暂定」。
+> 隐藏 demo 子命令 `AskHuman __demo-cards [feishu|slack|telegram|ping]`（`src-tauri/src/cli/demo_cards.rs`，仅发不收），定稿后删除。
+- [x] 写最小可发卡原型，把预计样式**经各真实渠道**发出并请用户实测：
+  - [x] 钉钉：用户搭模板 `d5dc7ac5-…`（CheckboxList 单选 / CheckboxListMulti 多选 靠 `single` 条件渲染、Input 靠 `allow_input`、选项 `md` 富文本、id=下标回传）；实测定稿字号 h5(15px)、推荐 = 左侧绿色 `【👍推荐】`（含括号）；布尔走字符串。见 §6/spec D15–D18。**待用户最终发布**。
+  - [x] 飞书：实测 checker **无原生 `icon`**（API 报 unknown property）、`button_area` chip 只能在右侧；**定稿 = 左侧彩色前缀 `<font color='green'>【👍推荐】</font> `（lark_md）**；单选 = 回调互斥；严格去 input。
+  - [x] Slack：`radio_buttons` 单选 + option `description`「👍 推荐」+ 加粗 + 严格去输入框。**定稿**。
+  - [x] Telegram：单选按钮 ✅ 互斥高亮；推荐 = **现状文字前缀**「【👍推荐】 」（按钮无法单独配色）。**定稿**。
+  - [ ] 弹窗：radio + 严格隐藏补充区 + 推荐徽标（本地，阶段 2 实现时核对）。
+- [x] 通过 `AskHuman` 把各渠道实测结论逐项敲定（飞书/Slack/Telegram/钉钉 均已定）。
+- [x] 把已定结论回填 spec 决策表（D12–D18、§5）并清除「暂定」。
 
 ### 阶段 1 — 数据 / CLI / 渲染骨架（可与阶段 0 并行）
 - [ ] `models.rs` + `ipc` + TS 类型：新增 `select_only` / `single` / `output_format`（serde 默认）。

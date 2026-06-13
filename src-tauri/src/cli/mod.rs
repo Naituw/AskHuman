@@ -1,4 +1,5 @@
 pub mod args;
+pub mod demo_cards;
 pub mod file_attachment;
 pub mod help;
 pub mod image_writer;
@@ -46,6 +47,16 @@ pub fn dispatch() {
         }
         "--agent-help" => {
             print_line(&help::agent_help_text(lang));
+            exit(0);
+        }
+        "--scripting-help" => {
+            print_line(&help::scripting_help_text(lang));
+            exit(0);
+        }
+        // Hidden dev-only: send prototype cards through real channels for visual review
+        // (strict-choice / structured-output feature, plan phase 0). Not user-facing.
+        "__demo-cards" => {
+            demo_cards::run(&argv[2..]);
             exit(0);
         }
         // 设置/历史窗口只需 general(主题)；密钥的「已保存」判定由前端 `get_settings` 单独读取。
@@ -110,6 +121,9 @@ pub fn dispatch() {
                         | "--file"
                         | "--no-markdown"
                         | "--stdin"
+                        | "--select-only"
+                        | "--single"
+                        | "--output"
                 ) =>
         {
             eprintln!(
@@ -153,14 +167,20 @@ pub fn dispatch() {
                         source: crate::models::source_name(),
                         lang: lang.code().to_string(),
                         project: crate::project::detect(),
+                        select_only: parsed.select_only,
+                        single: parsed.single,
+                        output_format: parsed.output_format,
                     };
                     crate::client::run_ask(task);
                 }
                 // 非 unix：暂无 Daemon，沿用单进程内运行（Windows named pipe 待后续 Phase）。
                 #[cfg(not(unix))]
                 {
-                    let request =
+                    let mut request =
                         crate::models::AskRequest::new(message, questions, parsed.is_markdown);
+                    request.select_only = parsed.select_only;
+                    request.single = parsed.single;
+                    request.output_format = parsed.output_format;
                     crate::app::run_ask(request, crate::config::AppConfig::load());
                 }
             }

@@ -211,6 +211,16 @@ impl TelegramClient {
             .await;
     }
 
+    /// 应答 callback 并弹出 alert 提示（用于严格模式下空提交的拦截）。
+    pub async fn answer_callback_query_alert(&self, id: &str, text: &str) {
+        let _ = self
+            .call(
+                "answerCallbackQuery",
+                json!({ "callback_query_id": id, "text": text, "show_alert": true }),
+            )
+            .await;
+    }
+
     pub async fn edit_message_reply_markup(&self, message_id: i64, markup: Value) {
         let _ = self
             .call(

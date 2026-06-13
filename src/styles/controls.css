@@ -104,6 +104,23 @@
   background: var(--accent);
   border-color: var(--accent);
 }
+/* 单选：把方形勾选框渲染为圆形 radio，选中时中心实心圆点。 */
+.option .check.radio {
+  border-radius: 50%;
+}
+.option.selected .check.radio {
+  background: transparent;
+  border-color: var(--accent);
+  position: relative;
+}
+.option.selected .check.radio::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
 .option .label {
   flex: 1 1 auto;
   font-size: 14px;

@@ -83,12 +83,7 @@ pub fn source_header(lang: Lang, key: &'static str, source: &str) -> String {
 /// `key` 取 `'static`（调用方均传字面量），以便兜底分支可原样返回。
 pub fn tr(lang: Lang, key: &'static str) -> &'static str {
     match key {
-        // —— 结果区块标记（output.rs 实际输出 + agent-help 文档须一致）——
-        "marker.options" => pick(lang, "[Selected options]", "[选择的选项]"),
-        "marker.input" => pick(lang, "[User input]", "[用户输入]"),
-        "marker.images" => pick(lang, "[Images]", "[图片]"),
-        "marker.files" => pick(lang, "[Files]", "[文件]"),
-        "marker.status" => pick(lang, "[Status]", "[状态]"),
+        // 结果区块字段标记现为 output.rs 的固定英文常量（不本地化，见 `cli::output::MARKER_*`）。
 
         // —— 结果状态文案 ——
         "status.cancel" => pick(
@@ -143,6 +138,16 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             lang,
             "--stdin was given but stdin is a terminal (no piped input)",
             "指定了 --stdin，但 stdin 是终端（没有管道输入）",
+        ),
+        "cli.unsupportedOutputFormat" => pick(
+            lang,
+            "unsupported output format: {value} (use text or json)",
+            "不支持的输出格式: {value}（可用 text 或 json）",
+        ),
+        "cli.selectOnlyNeedsOptions" => pick(
+            lang,
+            "--select-only requires every question to have options (-o)",
+            "--select-only 要求每个问题都有选项(-o)",
         ),
 
         // —— 文件附件解析错误 ——
@@ -212,6 +217,16 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "channel.questionIndexed" => pick(lang, "Question {i}/{n}", "问题 {i}/{n}"),
         // 推荐选项的显示文本前缀（尾随空格即与原文的分隔；提交值不含前缀）。
         "channel.recommendedPrefix" => pick(lang, "[👍Recommended] ", "【👍推荐】 "),
+        // Slack 原生选项 description 推荐文案（控件内展示，无括号）。
+        "channel.slackRecommended" => pick(lang, "👍 Recommended", "👍 推荐"),
+        // 飞书选项 checker 的推荐前缀：lark_md 绿色含括号（checker text 用 lark_md）。
+        "channel.feishuRecommendedPrefix" => pick(
+            lang,
+            "<font color='green'>[👍Recommended]</font> ",
+            "<font color='green'>【👍推荐】</font> ",
+        ),
+        // 钉钉选项 md 的推荐徽标文案（card.rs 用 h5 字号 + 绿色 font 包裹，含括号）。
+        "channel.dingtalkRecommended" => pick(lang, "[👍Recommended]", "【👍推荐】"),
         "channel.tgSendButton" => pick(lang, "↑ Submit", "↑ 提交"),
         // 抢答收尾：赢家端名称 + 卡片终态状态行。
         "channel.sourcePopup" => pick(lang, "Popup", "弹窗"),
@@ -236,6 +251,22 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             lang,
             "💬 To add more, just send text messages here. Anything you send after this card (before tapping Submit) will be included.",
             "💬 需要补充可直接在这里发文字消息。本卡片发出后、点「提交」前你发送的文字都会一并提交。",
+        ),
+        // Strict (select-only) hints: free text is ignored, only the buttons count.
+        "channel.tgActionHintSelectSingle" => pick(
+            lang,
+            "👇 Pick one option, then tap Submit.",
+            "👇 请选择一个选项后点「提交」。",
+        ),
+        "channel.tgActionHintSelectMulti" => pick(
+            lang,
+            "👇 Pick one or more options, then tap Submit.",
+            "👇 请选择一个或多个选项后点「提交」。",
+        ),
+        "channel.tgSelectRequired" => pick(
+            lang,
+            "Please pick an option first.",
+            "请先选择一个选项。",
         ),
         "channel.fileSendFailed" => pick(lang, "⚠️ Failed to send file: {name}", "⚠️ 文件发送失败：{name}"),
         // Telegram question title (fallback when there's no source header), consistent with DingTalk/Feishu.

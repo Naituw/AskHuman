@@ -164,6 +164,8 @@ impl MessagingChannel for TelegramSession {
             ctx.text,
             ctx.options,
             ctx.is_markdown,
+            ctx.select_only,
+            ctx.single,
             ctx.lang,
             preempt,
         )
@@ -228,6 +230,8 @@ async fn ask_question(
     question_text: &str,
     options: &[crate::models::OptionItem],
     is_markdown: bool,
+    select_only: bool,
+    single: bool,
     lang: Lang,
     preempt: &Preemption,
 ) -> Option<QuestionAnswer> {
@@ -254,7 +258,16 @@ async fn ask_question(
     // 单卡片：正文 = 题干 + 选项清单（A. xxx，按钮只放字母规避超长选项显示不全）+ 补充提示；
     // inline 键盘 = 字母选项（可多选）+「提交」。
     let content = card_content(question_text, &displays);
-    let hint = i18n::tr(lang, "channel.tgActionHint");
+    // 严格模式忽略自由文字，提示改为「选择后提交」（区分单/多选）；否则用补充文字提示。
+    let hint = if select_only {
+        if single {
+            i18n::tr(lang, "channel.tgActionHintSelectSingle")
+        } else {
+            i18n::tr(lang, "channel.tgActionHintSelectMulti")
+        }
+    } else {
+        i18n::tr(lang, "channel.tgActionHint")
+    };
     let body = if content.is_empty() {
         hint.to_string()
     } else {
@@ -279,6 +292,8 @@ async fn ask_question(
             &mut selected,
             &mut user_input,
             card_message_id,
+            select_only,
+            single,
             lang,
         )
         .await
@@ -430,6 +445,7 @@ fn compose_html(header: &str, body: &str, is_markdown: bool) -> String {
 /// 处理一个 Router 分发来的事件；返回 true 表示已终结（用户点「提交」）。
 /// 选项切换走 callback（`toggle:`）；提交走 callback（`submit`）；卡片之后的文字累积进 `user_input`。
 /// 路由（chat / 卡片匹配）已由 Router 完成，这里只处理业务语义。
+#[allow(clippy::too_many_arguments)]
 async fn handle_event(
     ev: TgInbound,
     client: &TelegramClient,
@@ -437,21 +453,41 @@ async fn handle_event(
     selected: &mut Vec<String>,
     user_input: &mut String,
     card_message_id: i64,
+    select_only: bool,
+    single: bool,
     lang: Lang,
 ) -> bool {
     match ev {
         // callback_query：切换选项 / 提交（已按本卡片精确路由）。
         TgInbound::Callback(cb) => {
             let mut finished = false;
+            // 严格模式空提交：弹 alert 拦截，不进入终结（已用 alert 应答，无需再普通应答）。
+            let mut alerted = false;
             if let Some(data) = cb.get("data").and_then(|d| d.as_str()) {
                 if data == SUBMIT_CALLBACK {
-                    finished = true;
+                    if select_only && selected.is_empty() {
+                        if let Some(cb_id) = cb.get("id").and_then(|i| i.as_str()) {
+                            client
+                                .answer_callback_query_alert(
+                                    cb_id,
+                                    i18n::tr(lang, "channel.tgSelectRequired"),
+                                )
+                                .await;
+                        }
+                        alerted = true;
+                    } else {
+                        finished = true;
+                    }
                 } else if let Some(idx) = data
                     .strip_prefix("toggle:")
                     .and_then(|s| s.parse::<usize>().ok())
                 {
                     if let Some(opt) = options.get(idx) {
-                        toggle(selected, opt);
+                        if single {
+                            toggle_single(selected, opt);
+                        } else {
+                            toggle(selected, opt);
+                        }
                         client
                             .edit_message_reply_markup(
                                 card_message_id,
@@ -462,14 +498,16 @@ async fn handle_event(
                 }
             }
             // 应答消除客户端转圈（Telegram 无 3 秒硬限，会话自行应答即可）。
-            if let Some(cb_id) = cb.get("id").and_then(|i| i.as_str()) {
-                client.answer_callback_query(cb_id).await;
+            if !alerted {
+                if let Some(cb_id) = cb.get("id").and_then(|i| i.as_str()) {
+                    client.answer_callback_query(cb_id).await;
+                }
             }
             finished
         }
-        // message：卡片之后用户发的文字 → 累积为补充输入（忽略卡片消息本身及更早的）。
+        // message：卡片之后用户发的文字 → 累积为补充输入；严格模式下忽略（不并入答案）。
         TgInbound::Text { text, message_id } => {
-            if message_id <= card_message_id {
+            if select_only || message_id <= card_message_id {
                 return false;
             }
             if !user_input.is_empty() {
@@ -485,6 +523,16 @@ fn toggle(selected: &mut Vec<String>, option: &str) {
     if let Some(i) = selected.iter().position(|s| s == option) {
         selected.remove(i);
     } else {
+        selected.push(option.to_string());
+    }
+}
+
+/// 单选互斥：点中已选项则清空；否则清空后只保留该项（真 radio 语义）。
+fn toggle_single(selected: &mut Vec<String>, option: &str) {
+    if selected.iter().any(|s| s == option) {
+        selected.clear();
+    } else {
+        selected.clear();
         selected.push(option.to_string());
     }
 }

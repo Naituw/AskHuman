@@ -216,12 +216,17 @@ impl MessagingChannel for FeishuSession {
 
         let placeholder = i18n::tr(ctx.lang, "channel.fsInputPlaceholder");
         let submit_label = i18n::tr(ctx.lang, "channel.fsSubmitButton");
-        let recommended_prefix = i18n::tr(ctx.lang, "channel.recommendedPrefix");
+        let recommended_prefix = i18n::tr(ctx.lang, "channel.feishuRecommendedPrefix");
+        // 单选已选状态由会话自管（勾选器在表单外，靠 toggle 回调互斥）。
+        let mut selected_single: Vec<String> = Vec::new();
         let question_card = card::build_question_card(
             title,
             ctx.text,
             ctx.options,
             ctx.is_markdown,
+            ctx.single,
+            ctx.select_only,
+            &selected_single,
             placeholder,
             submit_label,
             recommended_prefix,
@@ -272,17 +277,25 @@ impl MessagingChannel for FeishuSession {
                     }
                     match parsed {
                         Some(s) if s.message_id == message_id && s.open_id == open_id => {
+                            // 单选：勾选器在表单外，提交的 form_value 无选项，用会话自管的选中态。
+                            let selected_final = if ctx.single {
+                                selected_single.clone()
+                            } else {
+                                s.selected_options.clone()
+                            };
                             // 终态卡片（禁用表单 + 保留勾选 + 回显补充文字 + 按钮「已提交」）。
                             let finalized = card::build_finalized_card(&card::Finalized {
                                 title,
                                 text: ctx.text,
                                 is_markdown: ctx.is_markdown,
                                 options: ctx.options,
-                                selected: &s.selected_options,
+                                selected: &selected_final,
                                 user_input: s.user_input.as_deref(),
                                 input_placeholder: placeholder,
                                 button_label: i18n::tr(ctx.lang, "channel.fsSubmitted"),
                                 recommended_prefix,
+                                single: ctx.single,
+                                select_only: ctx.select_only,
                             });
                             // 立刻经 Router 同步回包更新卡片 → 按钮 Loading 直接变终态（无闪烁）。
                             // 不再追加 OpenAPI patch_card：那次二次渲染正是残留「快速回弹」的来源。
@@ -295,14 +308,43 @@ impl MessagingChannel for FeishuSession {
                             let images = std::mem::take(&mut *images.lock().unwrap());
                             let files = std::mem::take(&mut *files.lock().unwrap());
                             return Some(QuestionAnswer {
-                                selected_options: s.selected_options,
+                                selected_options: selected_final,
                                 user_input: s.user_input,
                                 images,
                                 files,
                             });
                         }
-                        // 非本卡片 / 非提交：回空 ACK，继续等待。
+                        // 非提交回调：单选勾选器 toggle → 互斥更新选中态并重渲染卡片。
                         _ => {
+                            if ctx.single {
+                                if let Some((oid, mid, idx)) = card::parse_toggle(&data) {
+                                    if mid == message_id
+                                        && oid == open_id
+                                        && idx < ctx.options.len()
+                                    {
+                                        toggle_single(
+                                            &mut selected_single,
+                                            &ctx.options[idx].text,
+                                        );
+                                        let updated = card::build_question_card(
+                                            title,
+                                            ctx.text,
+                                            ctx.options,
+                                            ctx.is_markdown,
+                                            ctx.single,
+                                            ctx.select_only,
+                                            &selected_single,
+                                            placeholder,
+                                            submit_label,
+                                            recommended_prefix,
+                                        );
+                                        let _ =
+                                            ack.send(Some(card::callback_update_card(updated)));
+                                        continue;
+                                    }
+                                }
+                            }
+                            // 非本卡片 / 其它：回空 ACK，继续等待。
                             let _ = ack.send(None);
                         }
                     }
@@ -345,6 +387,8 @@ impl MessagingChannel for FeishuSession {
             input_placeholder: placeholder,
             button_label: &status,
             recommended_prefix,
+            single: ctx.single,
+            select_only: ctx.select_only,
         });
         let _ = client.patch_card(&message_id, &finalized).await;
         events.clear_active(Some(&message_id), &open_id);
@@ -390,7 +434,15 @@ async fn ask_question_text(
                 if event_open_id(&event) != open_id {
                     continue;
                 }
-                if let Some(answer) = message_to_answer(client, &event, &option_texts).await {
+                if let Some(answer) = message_to_answer(
+                    client,
+                    &event,
+                    &option_texts,
+                    ctx.select_only,
+                    ctx.single,
+                )
+                .await
+                {
                     events.clear_active(None, open_id);
                     return Some(answer);
                 }
@@ -484,10 +536,13 @@ fn build_question_text(ctx: &QuestionCtx<'_>) -> String {
 }
 
 /// 把一条用户消息转成回答；非可作答类型返回 None（继续等待）。
+/// 严格模式（`select_only`）忽略自由文字与附件，只接受编号选择；单选只取首个编号。
 async fn message_to_answer(
     client: &FeishuClient,
     event: &Value,
     options: &[String],
+    select_only: bool,
+    single: bool,
 ) -> Option<QuestionAnswer> {
     let (msg_type, message_id, content) = parse_message(event)?;
     match msg_type.as_str() {
@@ -496,7 +551,15 @@ async fn message_to_answer(
             if text.is_empty() {
                 return None;
             }
-            let (selected, user_input) = parse_reply(text, options);
+            let (mut selected, user_input) = parse_reply(text, options);
+            if single {
+                selected.truncate(1);
+            }
+            // 严格模式忽略自由文字（只认编号选择）。
+            let user_input = if select_only { None } else { user_input };
+            if selected.is_empty() && user_input.is_none() {
+                return None;
+            }
             Some(QuestionAnswer {
                 selected_options: selected,
                 user_input,
@@ -504,6 +567,9 @@ async fn message_to_answer(
                 files: Vec::new(),
             })
         }
+        // 严格模式禁附件：图片/文件回复忽略（继续等待编号选择）。
+        "image" if select_only => None,
+        "file" if select_only => None,
         "image" => {
             let key = content.get("image_key").and_then(|v| v.as_str())?;
             match download_image(client, &message_id, key).await {
@@ -553,6 +619,16 @@ async fn message_to_answer(
             }
         }
         _ => None,
+    }
+}
+
+/// 单选互斥（原文）：点中已选项则清空；否则清空后只保留该项。
+fn toggle_single(selected: &mut Vec<String>, option: &str) {
+    if selected.iter().any(|s| s == option) {
+        selected.clear();
+    } else {
+        selected.clear();
+        selected.push(option.to_string());
     }
 }
 

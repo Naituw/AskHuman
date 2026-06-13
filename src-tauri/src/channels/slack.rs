@@ -245,11 +245,13 @@ impl MessagingChannel for SlackSession {
             ctx.text,
             ctx.options,
             ctx.is_markdown,
+            ctx.single,
+            ctx.select_only,
             options_label,
             input_label,
             placeholder,
             submit_label,
-            i18n::tr(ctx.lang, "channel.recommendedPrefix"),
+            i18n::tr(ctx.lang, "channel.slackRecommended"),
             &nonce,
         );
         // 通知/回退文本（折叠态、推送预览）。
@@ -391,7 +393,16 @@ async fn ask_question_text(
                 if event_user(&event) != user_id {
                     continue;
                 }
-                if let Some(answer) = message_to_answer(client, &event, &option_texts, ctx.lang).await {
+                if let Some(answer) = message_to_answer(
+                    client,
+                    &event,
+                    &option_texts,
+                    ctx.lang,
+                    ctx.select_only,
+                    ctx.single,
+                )
+                .await
+                {
                     events.clear_active(None, user_id);
                     return Some(answer);
                 }
@@ -471,33 +482,45 @@ fn fallback_notify(title: &str, ctx: &QuestionCtx<'_>) -> String {
 }
 
 /// 把一条用户消息转成回答（文本兜底）；无可作答内容返回 None（继续等待）。
+/// 严格模式（`select_only`）忽略自由文字与附件，只接受编号选择；单选只取首个编号。
 async fn message_to_answer(
     client: &SlackClient,
     event: &Value,
     options: &[String],
     lang: Lang,
+    select_only: bool,
+    single: bool,
 ) -> Option<QuestionAnswer> {
     let mut images: Vec<ImageAttachment> = Vec::new();
     let mut files: Vec<String> = Vec::new();
-    if let Some(arr) = event.get("files").and_then(|f| f.as_array()) {
-        for f in arr {
-            match download_one(client, f).await {
-                Ok(Attachment::Image(img)) => images.push(img),
-                Ok(Attachment::File(path)) => files.push(path),
-                Err(e) => eprintln!(
-                    "{}{}",
-                    i18n::warn_prefix(lang),
-                    i18n::tr(lang, "channel.slFileDownloadFailed").replace("{e}", &e)
-                ),
+    // 严格模式禁附件：不下载，回复里的图片/文件忽略。
+    if !select_only {
+        if let Some(arr) = event.get("files").and_then(|f| f.as_array()) {
+            for f in arr {
+                match download_one(client, f).await {
+                    Ok(Attachment::Image(img)) => images.push(img),
+                    Ok(Attachment::File(path)) => files.push(path),
+                    Err(e) => eprintln!(
+                        "{}{}",
+                        i18n::warn_prefix(lang),
+                        i18n::tr(lang, "channel.slFileDownloadFailed").replace("{e}", &e)
+                    ),
+                }
             }
         }
     }
     let text = event.get("text").and_then(|t| t.as_str()).unwrap_or("").trim();
-    let (selected, user_input) = if text.is_empty() {
+    let (mut selected, user_input) = if text.is_empty() {
         (Vec::new(), None)
     } else {
         parse_reply(text, options)
     };
+    // 单选：仅保留首个编号。
+    if single {
+        selected.truncate(1);
+    }
+    // 严格模式忽略自由文字（只认编号选择）。
+    let user_input = if select_only { None } else { user_input };
     if selected.is_empty() && user_input.is_none() && images.is_empty() && files.is_empty() {
         return None;
     }

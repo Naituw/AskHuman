@@ -862,14 +862,20 @@ pub struct RenderOutcome {
 /// 第二个返回值为**各题已落盘图片路径**（取消路径为空），供回复历史按路径记录复用；调用方
 /// 通常只用第一个 `RenderOutcome`。
 pub(crate) fn render_result(
-    request_id: &str,
+    request: &AskRequest,
     result: &ChannelResult,
     lang: Lang,
 ) -> (RenderOutcome, Vec<Vec<String>>) {
+    use crate::models::OutputFormat;
+    let json = request.output_format == OutputFormat::Json;
     match result.action {
         ChannelAction::Cancel => (
             RenderOutcome {
-                stdout: output::cancel_output(lang),
+                stdout: if json {
+                    output::render_json(request, result, &[])
+                } else {
+                    output::cancel_output(lang)
+                },
                 stderr: None,
                 exit_code: 0,
             },
@@ -879,7 +885,7 @@ pub(crate) fn render_result(
             // 逐题落盘图片（按题分子目录避免文件名冲突），再聚合输出。
             let mut image_paths_per_q: Vec<Vec<String>> = Vec::with_capacity(result.answers.len());
             for (i, answer) in result.answers.iter().enumerate() {
-                match image_writer::save(&answer.images, request_id, i, lang) {
+                match image_writer::save(&answer.images, &request.id, i, lang) {
                     Ok(paths) => image_paths_per_q.push(paths),
                     Err(e) => {
                         return (
@@ -894,21 +900,26 @@ pub(crate) fn render_result(
                 }
             }
 
-            let rendered: Vec<output::RenderedAnswer> = result
-                .answers
-                .iter()
-                .enumerate()
-                .map(|(i, answer)| output::RenderedAnswer {
-                    selected_options: &answer.selected_options,
-                    user_input: answer.user_input.as_deref(),
-                    image_paths: &image_paths_per_q[i],
-                    file_paths: &answer.files,
-                })
-                .collect();
+            let stdout = if json {
+                output::render_json(request, result, &image_paths_per_q)
+            } else {
+                let rendered: Vec<output::RenderedAnswer> = result
+                    .answers
+                    .iter()
+                    .enumerate()
+                    .map(|(i, answer)| output::RenderedAnswer {
+                        selected_options: &answer.selected_options,
+                        user_input: answer.user_input.as_deref(),
+                        image_paths: &image_paths_per_q[i],
+                        file_paths: &answer.files,
+                    })
+                    .collect();
+                output::aggregate_output(lang, &rendered)
+            };
 
             (
                 RenderOutcome {
-                    stdout: output::aggregate_output(lang, &rendered),
+                    stdout,
                     stderr: None,
                     exit_code: 0,
                 },
@@ -919,8 +930,8 @@ pub(crate) fn render_result(
 }
 
 /// 把结果输出到 stdout（或 stderr），返回退出码。（保留供复用；当前协调器内联渲染。）
-pub(crate) fn emit_result(request_id: &str, result: &ChannelResult) -> i32 {
-    let (outcome, _) = render_result(request_id, result, Lang::current());
+pub(crate) fn emit_result(request: &AskRequest, result: &ChannelResult) -> i32 {
+    let (outcome, _) = render_result(request, result, Lang::current());
     if let Some(err) = &outcome.stderr {
         stderr_redirect::eprintln_real(err);
     } else {

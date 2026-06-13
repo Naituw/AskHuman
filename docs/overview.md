@@ -68,13 +68,16 @@ AskHuman/
       macos_quicklook.rs     (macOS) 原生 QLPreviewPanel 预览 + 文件系统图标(file_icon_png_base64)
       macos_menu.rs          (macOS) -f 附件原生右键菜单（NSMenu，Finder 风格）
       cli/
-        mod.rs               argv 分发（--help/--version/--settings/--history[--all]/无参/提问）
-        args.rs              提问参数解析（message / --stdin / -o / -o!(推荐选项) / --no-markdown / -f）
+        mod.rs               argv 分发（--help/--version/--settings/--history[--all]/--agent-help/--scripting-help/无参/提问）
+        args.rs              提问参数解析（message / --stdin / -o / -o!(推荐选项) / --no-markdown / -f /
+                             --single(单选) / --select-only(严格，须每题有选项) / --output <text|json>）
         file_attachment.rs   -f 路径解析/校验（~/相对路径 → 绝对路径 + 元信息）
-        output.rs            结果区块格式化（[选择的选项]/[用户输入]/[图片]/[文件]/[状态]）
+        output.rs            结果格式化：文本区块字段恒英文常量 MARKER_*（[selected_options]/[user_input]/
+                             [files]（图片+文件合并）/[status]）+ render_json（D7：snake_case/省空字段）
         image_writer.rs      图片 base64 落盘 + 文件名 sanitize + ext 映射
-        help.rs              帮助/版本文案
-      models.rs              AskRequest(含 files) / OptionItem(text+recommended，反序列化兼容旧纯字符串) /
+        help.rs              帮助/版本文案：--help(提问/管理/帮助三块) + --agent-help + --scripting-help（共享片段组装）
+      models.rs              AskRequest(含 files / select_only / single / output_format) / OutputFormat(text|json) /
+                             OptionItem(text+recommended，反序列化兼容旧纯字符串) /
                              FileAttachment / ChannelResult(含 files) / ImageAttachment / ChannelAction / source_name()
       config.rs              AppConfig 读写 ~/.askhuman/config.json（原子写、容错解码；旧 ~/.humaninloop 自动回退读取）
       paths.rs               home/config/temp 路径 + history.jsonl/history.lock
@@ -103,6 +106,7 @@ AskHuman/
       dingtalk/
         mod.rs / token.rs / client.rs / stream.rs / card.rs / textfile.rs / docx.rs
                              钉钉客户端层 + Stream 长连(JSON 帧) + 卡片 + 文本附件处理
+                             （card.rs 高级版模板契约：options=[{id,md}] / single / allow_input；提交回传选项 id）
         router.rs            DdRouter：独占 StreamConn + 按 outTrackId/senderStaffId 分发
                              (提交回调带 oneshot 交会话裁决→回成功包；非提交/孤儿回空 ACK)
       feishu/
@@ -110,14 +114,16 @@ AskHuman/
         token.rs             tenant_access_token 缓存
         client.rs            OpenAPI：发文本/图片/文件/卡片、媒体上传、资源下载、PATCH 卡片
         ws.rs                长连接(WebSocket)：protobuf 帧(pbbp2) + 心跳/分片/回包/重连
-        card.rs              卡片 JSON 2.0 组装（表单+勾选器+输入框+提交）+ 回调解析
+        card.rs              卡片 JSON 2.0 组装（多选=表单内勾选器；单选=勾选器移出表单+toggle 回调互斥；
+                             严格去 input；推荐左侧绿色 lark_md 前缀）+ 提交/toggle 回调解析
         router.rs            FsRouter：独占 FeishuWs + 按 open_message_id/open_id 分发
                              (卡片回调带 oneshot 交会话裁决→同步回包更新卡片；孤儿/超时回空 ACK)
       slack/
         mod.rs               错误类型 + 模块声明
         client.rs            Web API：chat.postMessage/update、conversations.open、files 上传下载、auth.test
         ws.rs                Socket Mode 长连接(WebSocket，JSON 帧)：收帧即 ack(envelope_id) + 重连
-        blockkit.rs          Block Kit 消息内表单组装（复选框+输入框+提交）+ block_actions 提交解析
+        blockkit.rs          Block Kit 消息内表单组装（多选=checkboxes / 单选=radio_buttons；严格去 plain_text_input；
+                             推荐用原生 description「👍 推荐」+ 文本加粗）+ block_actions 提交解析
         markdown.rs          标准 Markdown → Slack mrkdwn（粗*斜_删~码块引链 + 表格转等宽 + 列表 •）
         router.rs            SlRouter：独占 SlackWs + 按 message_ts/user_id 分发（无 oneshot，ack 在 ws 层）
       integrations/

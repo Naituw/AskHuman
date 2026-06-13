@@ -256,7 +256,7 @@ impl Coordinator {
             return;
         };
         // 渲染一次（图片落盘只发生一次），拿到给 CLI 的文本与各题图片路径。
-        let (outcome, image_paths) = super::render_result(&request.id, &result, self.lang);
+        let (outcome, image_paths) = super::render_result(&request, &result, self.lang);
         // 旁路写回复历史：最佳努力，绝不影响主流程（stdout / 退出码）。
         self.record_history(&request, &result, &image_paths);
         // Daemon 模式：回传连接处理器，不打印、不退出（进程常驻）。

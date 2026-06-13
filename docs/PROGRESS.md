@@ -2,10 +2,27 @@
 
 按具体任务 / 需求记录待办与当前进展。任务 / 需求完成后删除其 section（历史留在 git）。
 
-## 进行中：严格选择模式 + 结构化输出（阶段 0：卡片 demo）
+## 进行中：严格选择模式 + 结构化输出（代码已完成 → 待真机实测 + 钉钉模板发布）
 
-需求 `docs/specs/strict-choice-and-structured-output.md` + 计划 `docs/plans/strict-choice-and-structured-output.md`（spec/plan 已评审通过）。
-当前处于 plan §12「阶段 0 — 卡片 demo & 待定项敲定」：写最小可发卡 demo，经各真实渠道发卡给用户看样式，逐项敲定「暂定」项后再进入正式编写。
+需求 `docs/specs/strict-choice-and-structured-output.md` + 计划 `docs/plans/strict-choice-and-structured-output.md`（已评审通过）。
+阶段 0（卡片样式）全部定稿；阶段 1/2 编码**已完成**，`cargo test` / `npm run build` 全绿。
+
+已落地：
+- 数据/IPC：`models.rs`/`ipc/mod.rs` 新增 `select_only`/`single`/`output_format`（serde 默认，向后兼容）；TS `types.ts` 同步。
+- CLI：`cli/args.rs` 解析 `--select-only`/`--single`/`--output <text|json>` + 「严格需每题有选项」校验 + 单测；`cli/mod.rs` allowlist/透传/`--scripting-help` 分发。
+- 渲染：`cli/output.rs` 字段标记改恒英文常量（`[selected_options]`/`[user_input]`/`[files]`/`[status]`）、`[图片]`+`[文件]` 合并为 `[files]`、新增 `render_json`（D7：snake_case/省空字段/`answers` 仅含已答题/取消仅 `{action,channel}`）；`app/mod.rs::render_result` 改签名接 `&AskRequest` 按 `output_format` 分支。
+- help：`cli/help.rs` 重组 `--help`（提问/管理/帮助三块）+ `--agent-help`（字段英文）+ 新增 `--scripting-help`，共享片段 `ask_arg_lines`/`script_flag_lines`/`result_field_lines`/`exit_code_lines` 组装。
+- 渠道公共层：`conversation.rs::QuestionCtx` 透传 `select_only`/`single`。
+- 弹窗：单选 radio（互斥）+ 严格隐藏补充输入/附件区 + 必须选中才可提交。
+- Telegram：单选按钮互斥、严格忽略聊天自由文字、严格空提交弹 alert；推荐沿用文字前缀。
+- Slack：单选 `radio_buttons`、严格去 `plain_text_input`、推荐用原生 `description`「👍 推荐」+ 文本加粗；文本回退遵守严格/单选。
+- 飞书：单选勾选器移出表单 + 各挂 toggle 回调（会话自管互斥重渲染）、严格去 `input`、推荐左侧绿色 lark_md 前缀；文本回退遵守严格/单选。
+- 钉钉：`card.rs` 新契约（`options=[{id,md}]`、`single`/`allow_input` 字符串布尔、h5 字号、绿色含括号推荐前缀、提交回传 id→按下标还原）；`DEFAULT_CARD_TEMPLATE_ID` 升级为 `d5dc7ac5-…schema`；文本回退遵守严格/单选。
+
+待办（依赖用户）：
+- 钉钉模板 `d5dc7ac5-1fca-443a-8230-d33ce63e837f.schema` **由用户最终发布**后真机联调提交链路。
+- `./scripts/install.sh` 后各渠道单选/严格/推荐 + JSON 全链路实测（步骤④）。
+- 收尾：删除隐藏 demo 子命令 `AskHuman __demo-cards`（`src-tauri/src/cli/demo_cards.rs`）。
 
 ## 进行中：版本自更新机制（实现阶段）
 

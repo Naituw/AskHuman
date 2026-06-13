@@ -29,6 +29,12 @@ pub struct AskArgs {
     pub questions: Vec<QuestionArgs>,
     /// 是否按 Markdown 渲染（全局，对所有问题生效）。
     pub is_markdown: bool,
+    /// 严格选择：禁用自由文本 / 回复附件，只能勾选预设项（全局）。
+    pub select_only: bool,
+    /// 单选：每题恰好一个选择（默认多选，全局）。
+    pub single: bool,
+    /// 结果输出格式（全局）。
+    pub output_format: crate::models::OutputFormat,
 }
 
 /// 解析 `AskHuman <Message> [-f <path>] [-q <text> [-o <opt>] ...] [--no-markdown]`。
@@ -59,6 +65,9 @@ pub fn parse_ask(
     // 无 `-q` 时，位于第一个参数之后的 `-o` 暂存于此，归一化时挂到被提升的问题。
     let mut lead_options: Vec<OptArg> = Vec::new();
     let mut is_markdown = true;
+    let mut select_only = false;
+    let mut single = false;
+    let mut output_format = crate::models::OutputFormat::Text;
 
     let mut seen_positional = false;
     let mut seen_question_flag = false;
@@ -112,6 +121,28 @@ pub fn parse_ask(
                 is_markdown = false;
                 i += 1;
             }
+            "--select-only" => {
+                select_only = true;
+                i += 1;
+            }
+            "--single" => {
+                single = true;
+                i += 1;
+            }
+            "--output" => {
+                if i + 1 >= args.len() {
+                    return Err(tr(lang, "cli.optionMissingValue").replace("{opt}", arg));
+                }
+                output_format = match args[i + 1].as_str() {
+                    "text" => crate::models::OutputFormat::Text,
+                    "json" => crate::models::OutputFormat::Json,
+                    other => {
+                        return Err(tr(lang, "cli.unsupportedOutputFormat")
+                            .replace("{value}", other))
+                    }
+                };
+                i += 2;
+            }
             "--stdin" => {
                 // 等价于位置参数 Message，但可出现在任意位置；与位置参数互斥。
                 if seen_positional {
@@ -150,11 +181,19 @@ pub fn parse_ask(
         });
     }
 
+    // 严格模式要求每题都有选项（否则无从作答）。
+    if select_only && questions.iter().any(|q| q.options.is_empty()) {
+        return Err(tr(lang, "cli.selectOnlyNeedsOptions").to_string());
+    }
+
     Ok(AskArgs {
         message_text,
         message_files,
         questions,
         is_markdown,
+        select_only,
+        single,
+        output_format,
     })
 }
 
@@ -385,5 +424,71 @@ mod tests {
         let p = pas(&v(&["--stdin", "-q", "Q1"]), "").unwrap();
         assert_eq!(p.message_text, "");
         assert_eq!(p.questions.len(), 1);
+    }
+
+    #[test]
+    fn defaults_for_new_flags() {
+        let p = pa(&v(&["X"])).unwrap();
+        assert!(!p.select_only);
+        assert!(!p.single);
+        assert_eq!(p.output_format, crate::models::OutputFormat::Text);
+    }
+
+    #[test]
+    fn parses_select_only_single_and_output_json() {
+        let p = pa(&v(&[
+            "-q", "Q1", "-o", "A", "-o", "B", "--select-only", "--single", "--output", "json",
+        ]))
+        .unwrap();
+        assert!(p.select_only);
+        assert!(p.single);
+        assert_eq!(p.output_format, crate::models::OutputFormat::Json);
+    }
+
+    #[test]
+    fn flags_are_position_free() {
+        // 全局开关位置自由（题前/题后均可）。
+        let p = pa(&v(&["--single", "M", "-q", "Q1", "-o", "A", "--select-only"])).unwrap();
+        assert!(p.single);
+        assert!(p.select_only);
+    }
+
+    #[test]
+    fn output_text_explicit_ok() {
+        let p = pa(&v(&["-q", "Q1", "--output", "text"])).unwrap();
+        assert_eq!(p.output_format, crate::models::OutputFormat::Text);
+    }
+
+    #[test]
+    fn output_invalid_value_errors() {
+        assert!(pa(&v(&["-q", "Q1", "--output", "yaml"])).is_err());
+    }
+
+    #[test]
+    fn output_requires_value() {
+        assert!(pa(&v(&["-q", "Q1", "--output"])).is_err());
+    }
+
+    #[test]
+    fn select_only_requires_every_question_has_options() {
+        // 单题无选项 → 报错。
+        assert!(pa(&v(&["-q", "Q1", "--select-only"])).is_err());
+        // 多题其一无选项 → 报错。
+        assert!(pa(&v(&["-q", "Q1", "-o", "A", "-q", "Q2", "--select-only"])).is_err());
+    }
+
+    #[test]
+    fn select_only_with_options_ok() {
+        let p = pa(&v(&["-q", "Q1", "-o", "A", "-q", "Q2", "-o", "B", "--select-only"])).unwrap();
+        assert!(p.select_only);
+        assert_eq!(p.questions.len(), 2);
+    }
+
+    #[test]
+    fn select_only_promoted_question_with_options_ok() {
+        // 无 -q 时被提升的问题也需有选项。
+        assert!(pa(&v(&["X", "--select-only"])).is_err());
+        let p = pa(&v(&["X", "-o", "A", "--select-only"])).unwrap();
+        assert!(p.select_only);
     }
 }

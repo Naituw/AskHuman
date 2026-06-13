@@ -29,14 +29,19 @@ pub struct CardSubmit {
 /// 组装提问卡片（卡片 JSON 2.0）。
 /// `title` 为题首（空则省略 header）；`text` 为问题正文；`options` 为预定义选项（空则无选项区）；
 /// `is_markdown` 决定正文用 markdown 还是 plain_text 组件；`input_placeholder` 为输入框占位提示；
-/// `submit_label` 为提交按钮文案；`recommended_prefix` 为推荐选项的显示前缀（与其他文案
-/// 一样由渠道层本地化后传入；提交值始终为选项原文）。
+/// `submit_label` 为提交按钮文案；`recommended_prefix` 为推荐选项的显示前缀（lark_md，由渠道层
+/// 本地化后传入；提交值始终为选项原文）。
+/// `single`→真 radio：勾选器移出表单、各挂 toggle 回调（互斥由会话自管，按 `selected` 渲染勾选）；
+/// `select_only`→去掉补充输入框（严格选择）。`selected` 为当前已选原文（首次渲染传空）。
 #[allow(clippy::too_many_arguments)]
 pub fn build_question_card(
     title: &str,
     text: &str,
     options: &[OptionItem],
     is_markdown: bool,
+    single: bool,
+    select_only: bool,
+    selected: &[String],
     input_placeholder: &str,
     submit_label: &str,
     recommended_prefix: &str,
@@ -45,11 +50,26 @@ pub fn build_question_card(
     if !text.trim().is_empty() {
         elements.push(body_text(text, is_markdown));
     }
+    // 单选：勾选器置于表单外（各挂 toggle 回调，实现点击互斥）。
+    if single {
+        for (i, opt) in options.iter().enumerate() {
+            elements.push(checker_element(
+                i,
+                opt,
+                selected.contains(&opt.text),
+                false,
+                true,
+                recommended_prefix,
+            ));
+        }
+    }
     elements.push(build_form(
         options,
-        &[],
+        selected,
         None,
         false,
+        single,
+        select_only,
         input_placeholder,
         submit_label,
         recommended_prefix,
@@ -70,8 +90,12 @@ pub struct Finalized<'a> {
     pub input_placeholder: &'a str,
     /// 禁用按钮的文案（「已提交」/「已在 X 回答」）。
     pub button_label: &'a str,
-    /// 推荐选项的显示前缀（本地化）。
+    /// 推荐选项的显示前缀（本地化 lark_md）。
     pub recommended_prefix: &'a str,
+    /// 单选：勾选器在表单外（与提问态布局一致，终态禁用）。
+    pub single: bool,
+    /// 严格选择：无补充输入框。
+    pub select_only: bool,
 }
 
 /// 提示消息（message prompt）的 markdown 卡片：标题（来源头部）+ markdown 正文。
@@ -100,11 +124,26 @@ pub fn build_finalized_card(p: &Finalized) -> Value {
     if !p.text.trim().is_empty() {
         elements.push(body_text(p.text, p.is_markdown));
     }
+    // 单选：勾选器在表单外（与提问态一致），终态禁用。
+    if p.single {
+        for (i, opt) in p.options.iter().enumerate() {
+            elements.push(checker_element(
+                i,
+                opt,
+                p.selected.contains(&opt.text),
+                true,
+                true,
+                p.recommended_prefix,
+            ));
+        }
+    }
     elements.push(build_form(
         p.options,
         p.selected,
         p.user_input,
         true,
+        p.single,
+        p.select_only,
         p.input_placeholder,
         p.button_label,
         p.recommended_prefix,
@@ -112,51 +151,83 @@ pub fn build_finalized_card(p: &Finalized) -> Value {
     assemble_card(p.title, elements, true)
 }
 
-/// 组装表单容器：每选项一个勾选器 + 输入框 + 提交按钮。
+/// 单个勾选器组件：文本用 lark_md（支持推荐项的彩色前缀）。
+/// `disabled=true`（终态）禁用；`single=true` 且非终态时挂 toggle 回调（勾选器在表单外，点击互斥）。
+fn checker_element(
+    i: usize,
+    opt: &OptionItem,
+    checked: bool,
+    disabled: bool,
+    single: bool,
+    recommended_prefix: &str,
+) -> Value {
+    let display = if opt.recommended {
+        format!("{}{}", recommended_prefix, opt.text)
+    } else {
+        opt.text.clone()
+    };
+    let mut checker = json!({
+        "tag": "checker",
+        "name": format!("{}{}", OPT_NAME_PREFIX, i),
+        "checked": checked,
+        "text": { "tag": "lark_md", "content": display },
+    });
+    if disabled {
+        checker["disabled"] = Value::Bool(true);
+    } else if single {
+        // 单选：勾选器在表单外，挂 toggle 回调，由会话自管互斥并重渲染。
+        checker["behaviors"] =
+            json!([ { "type": "callback", "value": { "action": "toggle", "index": i } } ]);
+    }
+    checker
+}
+
+/// 组装表单容器：（多选时）勾选器 +（非严格时）输入框 + 提交按钮。
 /// `disabled=false`（提问态）：可交互，按钮带 `callback` behaviors。
 /// `disabled=true`（终态）：禁用全部交互，勾选器按 `selected` 勾上，输入框用 `user_input` 回显，按钮无 behaviors。
-/// 勾选器展示文本为「前缀（仅推荐项）+ 原文」；`selected` 与 `checked` 的比对用原文。
+/// `single=true`：勾选器不在表单内（由调用方置于表单外）；`select_only=true`：无补充输入框。
 #[allow(clippy::too_many_arguments)]
 fn build_form(
     options: &[OptionItem],
     selected: &[String],
     user_input: Option<&str>,
     disabled: bool,
+    single: bool,
+    select_only: bool,
     input_placeholder: &str,
     button_label: &str,
     recommended_prefix: &str,
 ) -> Value {
     let mut form_elements: Vec<Value> = Vec::new();
-    for (i, opt) in options.iter().enumerate() {
-        let display = if opt.recommended {
-            format!("{}{}", recommended_prefix, opt.text)
-        } else {
-            opt.text.clone()
-        };
-        let mut checker = json!({
-            "tag": "checker",
-            "name": format!("{}{}", OPT_NAME_PREFIX, i),
-            "checked": selected.contains(&opt.text),
-            "text": { "tag": "plain_text", "content": display },
-        });
-        if disabled {
-            checker["disabled"] = Value::Bool(true);
+    // 多选：勾选器在表单内（提交时随 form_value 回传）。单选的勾选器在表单外。
+    if !single {
+        for (i, opt) in options.iter().enumerate() {
+            form_elements.push(checker_element(
+                i,
+                opt,
+                selected.contains(&opt.text),
+                disabled,
+                false,
+                recommended_prefix,
+            ));
         }
-        form_elements.push(checker);
     }
 
-    let mut input = json!({
-        "tag": "input",
-        "name": INPUT_NAME,
-        "placeholder": { "tag": "plain_text", "content": input_placeholder },
-    });
-    if let Some(v) = user_input {
-        input["default_value"] = Value::String(v.to_string());
+    // 严格选择无补充输入框。
+    if !select_only {
+        let mut input = json!({
+            "tag": "input",
+            "name": INPUT_NAME,
+            "placeholder": { "tag": "plain_text", "content": input_placeholder },
+        });
+        if let Some(v) = user_input {
+            input["default_value"] = Value::String(v.to_string());
+        }
+        if disabled {
+            input["disabled"] = Value::Bool(true);
+        }
+        form_elements.push(input);
     }
-    if disabled {
-        input["disabled"] = Value::Bool(true);
-    }
-    form_elements.push(input);
 
     let mut button = json!({
         "tag": "button",
@@ -273,6 +344,39 @@ pub fn parse_card_submit(event: &Value, options: &[OptionItem]) -> Option<CardSu
     })
 }
 
+/// 把一条 `card.action.trigger` 解析为「单选勾选器 toggle」回调（表单外勾选器，无 form_value）。
+/// 返回 (open_id, message_id, 选项下标)；非 toggle（如提交 / 其它）返回 None。
+pub fn parse_toggle(event: &Value) -> Option<(String, String, usize)> {
+    let action = event.get("action")?;
+    // 提交带 form_value；toggle 勾选器在表单外，不产生 form_value。
+    if action.get("form_value").is_some() {
+        return None;
+    }
+    // behaviors 回调 value：可能是对象，也可能是 JSON 字符串。
+    let value = action.get("value")?;
+    let value_obj: Value = match value {
+        Value::String(s) => serde_json::from_str(s).ok()?,
+        v => v.clone(),
+    };
+    if value_obj.get("action").and_then(|a| a.as_str()) != Some("toggle") {
+        return None;
+    }
+    let index = value_obj.get("index").and_then(|i| i.as_u64())? as usize;
+    let open_id = event
+        .get("operator")
+        .and_then(|o| o.get("open_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let message_id = event
+        .get("context")
+        .and_then(|c| c.get("open_message_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some((open_id, message_id, index))
+}
+
 /// 勾选状态判定：兼容布尔 `true` 或字符串 `"true"`。
 fn is_checked(v: Option<&Value>) -> bool {
     match v {
@@ -290,6 +394,16 @@ mod tests {
         items.iter().map(|s| OptionItem::new(*s, false)).collect()
     }
 
+    fn form_of(card: &Value) -> Value {
+        card["body"]["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["tag"] == "form")
+            .unwrap()
+            .clone()
+    }
+
     #[test]
     fn build_card_has_form_and_options() {
         let card = build_question_card(
@@ -297,6 +411,9 @@ mod tests {
             "要继续吗？",
             &plain(&["继续", "停止"]),
             true,
+            false,
+            false,
+            &[],
             "补充说明（可选）",
             "提交",
             "【👍推荐】 ",
@@ -308,8 +425,8 @@ mod tests {
         assert_eq!(elements[0]["text"]["content"], "Question 1/2");
         assert_eq!(elements[0]["icon"]["token"], "maybe_filled");
         assert_eq!(elements[1]["tag"], "hr");
-        // 正文 + 表单容器。
-        let form = elements.iter().find(|e| e["tag"] == "form").unwrap();
+        // 正文 + 表单容器。多选：勾选器在表单内。
+        let form = form_of(&card);
         let fe = form["elements"].as_array().unwrap();
         // 两个 checker + 一个 input + 一个 submit button。
         assert_eq!(fe.iter().filter(|e| e["tag"] == "checker").count(), 2);
@@ -320,19 +437,60 @@ mod tests {
     }
 
     #[test]
-    fn recommended_option_gets_display_prefix_but_keeps_plain_value() {
+    fn single_moves_checkers_out_of_form_with_toggle_callback() {
+        let card = build_question_card(
+            "T", "Q", &plain(&["a", "b"]), false, true, false, &[], "ph", "提交", "R",
+        );
+        let elements = card["body"]["elements"].as_array().unwrap();
+        // 勾选器在表单外（顶层），各挂 toggle 回调。
+        let top_checkers: Vec<&Value> =
+            elements.iter().filter(|e| e["tag"] == "checker").collect();
+        assert_eq!(top_checkers.len(), 2);
+        assert_eq!(
+            top_checkers[0]["behaviors"][0]["value"]["action"],
+            "toggle"
+        );
+        assert_eq!(top_checkers[0]["behaviors"][0]["value"]["index"], 0);
+        // 表单内无勾选器（只有 input + submit）。
+        let form = form_of(&card);
+        assert_eq!(
+            form["elements"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["tag"] == "checker")
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn select_only_omits_input() {
+        let card = build_question_card(
+            "T", "Q", &plain(&["a", "b"]), false, false, true, &[], "ph", "提交", "R",
+        );
+        let form = form_of(&card);
+        let fe = form["elements"].as_array().unwrap();
+        assert!(!fe.iter().any(|e| e["tag"] == "input"));
+        assert!(fe.iter().any(|e| e["tag"] == "button"));
+    }
+
+    #[test]
+    fn recommended_option_uses_lark_md_prefix() {
         let opts = vec![OptionItem::new("继续", true), OptionItem::new("停止", false)];
-        let card = build_question_card("T", "Q", &opts, true, "ph", "提交", "【👍推荐】 ");
-        let form = card["body"]["elements"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|e| e["tag"] == "form")
-            .unwrap();
+        let card = build_question_card(
+            "T", "Q", &opts, true, false, false, &[], "ph", "提交",
+            "<font color='green'>【👍推荐】</font> ",
+        );
+        let form = form_of(&card);
         let fe = form["elements"].as_array().unwrap();
         let checkers: Vec<&Value> = fe.iter().filter(|e| e["tag"] == "checker").collect();
-        // 显示文本带前缀，普通选项不带。
-        assert_eq!(checkers[0]["text"]["content"], "【👍推荐】 继续");
+        // 勾选器文本用 lark_md，推荐项带绿色前缀。
+        assert_eq!(checkers[0]["text"]["tag"], "lark_md");
+        assert_eq!(
+            checkers[0]["text"]["content"],
+            "<font color='green'>【👍推荐】</font> 继续"
+        );
         assert_eq!(checkers[1]["text"]["content"], "停止");
         // 提交按下标还原，回传原文。
         let event = json!({
@@ -345,15 +503,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_toggle_reads_index() {
+        let event = json!({
+            "operator": { "open_id": "ou_1" },
+            "context": { "open_message_id": "om_1" },
+            "action": { "value": { "action": "toggle", "index": 2 } }
+        });
+        let (oid, mid, idx) = parse_toggle(&event).unwrap();
+        assert_eq!(oid, "ou_1");
+        assert_eq!(mid, "om_1");
+        assert_eq!(idx, 2);
+        // 提交（带 form_value）不是 toggle。
+        let submit = json!({ "action": { "form_value": { "opt_0": true } } });
+        assert!(parse_toggle(&submit).is_none());
+    }
+
+    #[test]
     fn build_card_without_options_omits_checkers() {
-        let card = build_question_card("", "随便说点什么", &[], false, "请输入", "提交", "【👍推荐】 ");
+        let card = build_question_card(
+            "", "随便说点什么", &[], false, false, false, &[], "请输入", "提交", "【👍推荐】 ",
+        );
         assert!(card.get("header").is_none());
-        let form = card["body"]["elements"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|e| e["tag"] == "form")
-            .unwrap();
+        let form = form_of(&card);
         let fe = form["elements"].as_array().unwrap();
         assert_eq!(fe.iter().filter(|e| e["tag"] == "checker").count(), 0);
         // 非 markdown 正文用 div + plain_text。
@@ -380,13 +551,10 @@ mod tests {
             input_placeholder: "补充说明（可选）",
             button_label: "已提交",
             recommended_prefix: "【👍推荐】 ",
+            single: false,
+            select_only: false,
         });
-        let form = card["body"]["elements"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|e| e["tag"] == "form")
-            .unwrap();
+        let form = form_of(&card);
         let fe = form["elements"].as_array().unwrap();
         // 勾选器：均禁用；仅「停止」勾上。
         let checkers: Vec<&Value> = fe.iter().filter(|e| e["tag"] == "checker").collect();

@@ -33,7 +33,8 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const MESSAGE_SETTLE_DELAY: Duration = Duration::from_millis(1000);
 
 /// 内置默认卡片模板 ID（设置项 `cardTemplateId` 留空时使用）。
-const DEFAULT_CARD_TEMPLATE_ID: &str = "748d7d3c-232c-4671-a7c4-cce94790d9e1.schema";
+/// D15 定稿模板：`options=[{id,md}]` + `single` + `allow_input` 变量条件渲染（单/多选、严格）。
+const DEFAULT_CARD_TEMPLATE_ID: &str = "d5dc7ac5-1fca-443a-8230-d33ce63e837f.schema";
 
 /// 取生效的卡片模板 ID：配置非空用配置，否则用内置默认。
 fn effective_template_id(config: &DingTalkChannelConfig) -> &str {
@@ -250,14 +251,17 @@ impl MessagingChannel for DingTalkSession {
         };
         let template_id = effective_template_id(&self.config).to_string();
         let out_track_id = uuid::Uuid::new_v4().to_string();
-        // 卡片展示用显示文本（推荐选项带本地化前缀）；模板回传的也是显示文本，
-        // 提交时经 restore_selected 还原为原文。
-        let displays: Vec<String> = ctx
-            .options
-            .iter()
-            .map(|o| super::conversation::display_text(o, ctx.lang))
-            .collect();
-        let param_map = card::build_card_param_map(title, ctx.text, &displays);
+        // 选项以 `[{id,md}]` 下发（md 富文本含推荐绿色徽标）；模板回传选项 id（下标），
+        // 提交时经 restore_selected 按下标还原原文。单选/严格由 single/allow_input 变量控制。
+        let recommended_label = i18n::tr(ctx.lang, "channel.dingtalkRecommended");
+        let param_map = card::build_card_param_map(
+            title,
+            ctx.text,
+            ctx.options,
+            ctx.single,
+            ctx.select_only,
+            recommended_label,
+        );
         let private_param_map = card::build_card_private_map();
 
         let Self {
@@ -320,9 +324,8 @@ impl MessagingChannel for DingTalkSession {
                             let files = std::mem::take(&mut *files.lock().unwrap());
                             return Some(QuestionAnswer {
                                 selected_options: restore_selected(
-                                    s.selected_options,
+                                    s.selected_indices,
                                     ctx.options,
-                                    ctx.lang,
                                 ),
                                 user_input: s.user_input,
                                 images,
@@ -422,7 +425,15 @@ async fn ask_question_text(
                 if !bot_message_belongs(&data, user_id) {
                     continue;
                 }
-                if let Some(answer) = message_to_answer(client, &data, &option_texts).await {
+                if let Some(answer) = message_to_answer(
+                    client,
+                    &data,
+                    &option_texts,
+                    ctx.select_only,
+                    ctx.single,
+                )
+                .await
+                {
                     events.clear_active(None, user_id);
                     return Some(answer);
                 }
@@ -522,30 +533,25 @@ fn build_question_text(ctx: &QuestionCtx<'_>, is_markdown: bool) -> String {
     s.trim_end().to_string()
 }
 
-/// 钉钉卡片模板回传的是【显示文本】（模板只有 text 一个字段）；
-/// 按本题选项把显示文本还原为原文，查不到（理论不发生）原样保留。
+/// 钉钉卡片模板回传的是选项【下标】(id)；按本题选项还原为原文（越界则忽略）。
 fn restore_selected(
-    selected: Vec<String>,
+    indices: Vec<usize>,
     options: &[crate::models::OptionItem],
-    lang: Lang,
 ) -> Vec<String> {
-    selected
+    indices
         .into_iter()
-        .map(|s| {
-            options
-                .iter()
-                .find(|o| super::conversation::display_text(o, lang) == s)
-                .map(|o| o.text.clone())
-                .unwrap_or(s)
-        })
+        .filter_map(|i| options.get(i).map(|o| o.text.clone()))
         .collect()
 }
 
 /// 把一条 bot 消息转成回答；非可作答类型返回 None（继续等待）。
+/// 严格模式（`select_only`）忽略自由文字与附件，只接受编号选择；单选只取首个编号。
 async fn message_to_answer(
     client: &DingTalkClient,
     data: &Value,
     options: &[String],
+    select_only: bool,
+    single: bool,
 ) -> Option<QuestionAnswer> {
     let msgtype = data.get("msgtype").and_then(|v| v.as_str()).unwrap_or("");
     match msgtype {
@@ -559,7 +565,15 @@ async fn message_to_answer(
             if content.is_empty() {
                 return None;
             }
-            let (selected, user_input) = parse_reply(content, options);
+            let (mut selected, user_input) = parse_reply(content, options);
+            if single {
+                selected.truncate(1);
+            }
+            // 严格模式忽略自由文字（只认编号选择）。
+            let user_input = if select_only { None } else { user_input };
+            if selected.is_empty() && user_input.is_none() {
+                return None;
+            }
             Some(QuestionAnswer {
                 selected_options: selected,
                 user_input,
@@ -567,6 +581,8 @@ async fn message_to_answer(
                 files: Vec::new(),
             })
         }
+        // 严格模式禁附件：图片/文件回复忽略（继续等待编号选择）。
+        "picture" | "file" if select_only => None,
         "picture" => {
             let code = data
                 .get("content")
@@ -756,19 +772,17 @@ mod tests {
     use crate::models::OptionItem;
 
     #[test]
-    fn restore_selected_maps_display_back_to_text() {
+    fn restore_selected_maps_indices_to_text() {
         let options = vec![OptionItem::new("继续", true), OptionItem::new("停止", false)];
-        let selected = vec!["【👍推荐】 继续".to_string(), "停止".to_string()];
         assert_eq!(
-            restore_selected(selected, &options, Lang::Zh),
+            restore_selected(vec![0, 1], &options),
             vec!["继续".to_string(), "停止".to_string()]
         );
     }
 
     #[test]
-    fn restore_selected_keeps_unknown_as_is() {
+    fn restore_selected_skips_out_of_range() {
         let options = vec![OptionItem::new("A", true)];
-        let selected = vec!["unknown".to_string()];
-        assert_eq!(restore_selected(selected, &options, Lang::En), vec!["unknown".to_string()]);
+        assert_eq!(restore_selected(vec![0, 5], &options), vec!["A".to_string()]);
     }
 }

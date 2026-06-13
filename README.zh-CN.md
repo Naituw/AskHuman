@@ -58,12 +58,15 @@ AskHuman "看看这个改动？" -f ./diagram.png \
   -q "要继续吗？" -o! "继续" -o "停止" \
   -q "需要跑测试吗？" -o "跑" -o "跳过"
 
+# 脚本场景的严格选择：只允许预设选项、单选、机器可解析的 JSON
+AskHuman -q "部署到哪个环境？" -o "staging" -o! "production" --single --select-only --output json
+
 # 其它常用
 AskHuman --settings   # 打开设置界面
 AskHuman --history    # 打开回复历史（加 --all 看全部项目）
 ```
 
-整个 CLI 的完整用法见 `AskHuman --help`，提问的完整用法见 `AskHuman --agent-help`。
+整个 CLI 的完整用法见 `AskHuman --help`，面向 AI 的提问用法见 `AskHuman --agent-help`，面向脚本/自动化（`--select-only` / `--single` / `--output json`）见 `AskHuman --scripting-help`。
 
 ### 二、集成到 Agent 中
 

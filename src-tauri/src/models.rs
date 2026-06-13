@@ -16,6 +16,17 @@ pub fn source_name() -> String {
         .unwrap_or_else(|| DEFAULT_SOURCE_NAME.to_string())
 }
 
+/// 结果输出格式（全局，对所有问题生效）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputFormat {
+    /// 现有文本区块（字段英文、不本地化）。
+    #[default]
+    Text,
+    /// 结构化 JSON（snake_case、省空字段、美化多行）。
+    Json,
+}
+
 /// 一次提问请求：一个共享 Message（描述 + 附件）+ 一组问题（恒 ≥1）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +39,15 @@ pub struct AskRequest {
     /// 问题列表（恒 ≥1，由 CLI 归一化保证：无 `-q` 时由第一个参数提升而来）。
     #[serde(default)]
     pub questions: Vec<Question>,
+    /// 严格选择：禁用自由文本 / 回复附件，只能勾选预设项（全局）。
+    #[serde(default)]
+    pub select_only: bool,
+    /// 单选：每题恰好一个选择（默认多选，全局）。
+    #[serde(default)]
+    pub single: bool,
+    /// 结果输出格式（全局）。
+    #[serde(default)]
+    pub output_format: OutputFormat,
 }
 
 impl AskRequest {
@@ -37,6 +57,9 @@ impl AskRequest {
             is_markdown,
             message,
             questions,
+            select_only: false,
+            single: false,
+            output_format: OutputFormat::Text,
         }
     }
 }

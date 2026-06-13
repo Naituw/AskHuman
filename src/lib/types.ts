@@ -1,8 +1,16 @@
+export type OutputFormat = "text" | "json";
+
 export interface AskRequest {
   id: string;
   isMarkdown: boolean;
   message: MessagePrompt;
   questions: Question[];
+  /** 严格选择：禁用自由文本 / 回复附件，只能勾选预设项（全局）。 */
+  selectOnly: boolean;
+  /** 单选：每题恰好一个选择（默认多选，全局）。 */
+  single: boolean;
+  /** 结果输出格式（全局；仅影响 CLI 输出，弹窗不关心）。 */
+  outputFormat: OutputFormat;
 }
 
 export interface MessagePrompt {

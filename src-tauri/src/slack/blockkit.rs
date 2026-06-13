@@ -37,10 +37,12 @@ pub struct CardSubmit {
 }
 
 /// 组装提问卡片（blocks 数组）。
-/// `title` 题首（空则省略）；`text` 正文（空则省略）；`options` 预定义选项（空则无复选框）；
+/// `title` 题首（空则省略）；`text` 正文（空则省略）；`options` 预定义选项（空则无选项控件）；
 /// `is_markdown` 决定正文用 mrkdwn 还是 plain_text；其余为各处文案。
-/// `recommended_prefix` 为推荐选项的显示前缀（渠道层本地化传入；`value=opt_{i}` 按下标
-/// 还原原文，显示前缀不影响提交值）。
+/// `single`→选项控件用原生 `radio_buttons`（单选），否则 `checkboxes`（多选）；
+/// `select_only`→去掉补充文本输入块（严格选择，只能勾选）。
+/// `recommended_label` 为推荐选项的原生 `description` 文案（如「👍 推荐」），并把选项文本加粗；
+/// `value=opt_{i}` 按下标还原原文，显示不影响提交值。
 /// `nonce` 为每张卡片唯一串，拼入各 `input` 块 block_id：Slack 客户端按 block_id 缓存输入草稿，
 /// 唯一化可避免新卡片回填上一题的输入/勾选（见 `docs/plans/slack-channel.md` 反馈意见）。
 #[allow(clippy::too_many_arguments)]
@@ -49,11 +51,13 @@ pub fn build_question_card(
     text: &str,
     options: &[OptionItem],
     is_markdown: bool,
+    single: bool,
+    select_only: bool,
     options_label: &str,
     input_label: &str,
     input_placeholder: &str,
     submit_label: &str,
-    recommended_prefix: &str,
+    recommended_label: &str,
     nonce: &str,
 ) -> Value {
     let mut blocks: Vec<Value> = Vec::new();
@@ -64,7 +68,8 @@ pub fn build_question_card(
         blocks.push(body_section(text, is_markdown));
     }
 
-    // 复选框：按 10 个一组拆成多个 input 块。
+    // 选项控件：单选用 radio_buttons、多选用 checkboxes；均按 10 个一组拆成多个 input 块。
+    let element_type = if single { "radio_buttons" } else { "checkboxes" };
     if !options.is_empty() {
         for (k, chunk) in options.chunks(CHECKBOXES_MAX).enumerate() {
             let base = k * CHECKBOXES_MAX;
@@ -72,15 +77,21 @@ pub fn build_question_card(
                 .iter()
                 .enumerate()
                 .map(|(j, opt)| {
-                    let display = if opt.recommended {
-                        format!("{}{}", recommended_prefix, opt.text)
+                    // 推荐项：文本加粗 + 原生 description「👍 推荐」（mrkdwn，控件内展示）。
+                    let text_val = if opt.recommended {
+                        format!("*{}*", markdown::escape(&opt.text))
                     } else {
-                        opt.text.clone()
+                        markdown::escape(&opt.text)
                     };
-                    json!({
-                        "text": { "type": "plain_text", "text": display, "emoji": true },
+                    let mut option = json!({
+                        "text": { "type": "mrkdwn", "text": text_val },
                         "value": format!("{}{}", OPT_VALUE_PREFIX, base + j),
-                    })
+                    });
+                    if opt.recommended {
+                        option["description"] =
+                            json!({ "type": "mrkdwn", "text": recommended_label });
+                    }
+                    option
                 })
                 .collect();
             blocks.push(json!({
@@ -89,7 +100,7 @@ pub fn build_question_card(
                 "optional": true,
                 "label": { "type": "plain_text", "text": options_label, "emoji": true },
                 "element": {
-                    "type": "checkboxes",
+                    "type": element_type,
                     "action_id": format!("options_{}", k),
                     "options": opts,
                 },
@@ -97,19 +108,21 @@ pub fn build_question_card(
         }
     }
 
-    // 多行文本输入框（不 dispatch_action，仅在提交时随 state.values 一并回传）。
-    blocks.push(json!({
-        "type": "input",
-        "block_id": format!("userinput_{}", nonce),
-        "optional": true,
-        "label": { "type": "plain_text", "text": input_label, "emoji": true },
-        "element": {
-            "type": "plain_text_input",
-            "action_id": INPUT_ACTION,
-            "multiline": true,
-            "placeholder": { "type": "plain_text", "text": input_placeholder, "emoji": true },
-        },
-    }));
+    // 多行文本输入框（不 dispatch_action，仅在提交时随 state.values 一并回传）；严格模式去掉。
+    if !select_only {
+        blocks.push(json!({
+            "type": "input",
+            "block_id": format!("userinput_{}", nonce),
+            "optional": true,
+            "label": { "type": "plain_text", "text": input_label, "emoji": true },
+            "element": {
+                "type": "plain_text_input",
+                "action_id": INPUT_ACTION,
+                "multiline": true,
+                "placeholder": { "type": "plain_text", "text": input_placeholder, "emoji": true },
+            },
+        }));
+    }
 
     // 提交按钮。
     blocks.push(json!({
@@ -228,17 +241,16 @@ pub fn parse_submit(payload: &Value, options: &[OptionItem]) -> Option<CardSubmi
                 continue;
             };
             for (action_id, el) in actions {
+                // 多选 checkboxes → selected_options（数组）。
                 if let Some(sel) = el.get("selected_options").and_then(|s| s.as_array()) {
                     for o in sel {
-                        if let Some(val) = o.get("value").and_then(|v| v.as_str()) {
-                            if let Some(idx) = val.strip_prefix(OPT_VALUE_PREFIX) {
-                                if let Ok(i) = idx.parse::<usize>() {
-                                    if i < chosen.len() {
-                                        chosen[i] = true;
-                                    }
-                                }
-                            }
-                        }
+                        mark_chosen(o, &mut chosen);
+                    }
+                }
+                // 单选 radio_buttons → selected_option（单对象，可能为 null）。
+                if let Some(o) = el.get("selected_option") {
+                    if o.is_object() {
+                        mark_chosen(o, &mut chosen);
                     }
                 }
                 let is_text = action_id == INPUT_ACTION
@@ -268,6 +280,19 @@ pub fn parse_submit(payload: &Value, options: &[OptionItem]) -> Option<CardSubmi
         selected_options,
         user_input,
     })
+}
+
+/// 把一个 `{ value: "opt_{i}" }` 选项标记为已选（下标越界则忽略）。
+fn mark_chosen(o: &Value, chosen: &mut [bool]) {
+    if let Some(val) = o.get("value").and_then(|v| v.as_str()) {
+        if let Some(idx) = val.strip_prefix(OPT_VALUE_PREFIX) {
+            if let Ok(i) = idx.parse::<usize>() {
+                if i < chosen.len() {
+                    chosen[i] = true;
+                }
+            }
+        }
+    }
 }
 
 /// 大号 `header` 块（更醒目）。`text` 应已含调用方需要的图标前缀（如 ❓ / ✉️）。
@@ -334,11 +359,13 @@ mod tests {
             "要继续吗？",
             &plain(&["继续", "停止"]),
             true,
+            false,
+            false,
             "Options",
             "Note",
             "Add a note",
             "Submit",
-            "【👍推荐】 ",
+            "👍 推荐",
             "n1",
         );
         let bs = blocks(&card);
@@ -360,37 +387,68 @@ mod tests {
     }
 
     #[test]
-    fn recommended_option_gets_display_prefix_but_keeps_index_value() {
+    fn single_renders_radio_buttons() {
+        let card = build_question_card(
+            "t", "x", &plain(&["a", "b"]), false, true, false, "L", "N", "p", "S", "R", "n",
+        );
+        let bs = blocks(&card);
+        assert!(bs.iter().any(|b| b["element"]["type"] == "radio_buttons"));
+        assert!(!bs.iter().any(|b| b["element"]["type"] == "checkboxes"));
+    }
+
+    #[test]
+    fn select_only_omits_text_input() {
+        let card = build_question_card(
+            "t", "x", &plain(&["a", "b"]), false, false, true, "L", "N", "p", "S", "R", "n",
+        );
+        let bs = blocks(&card);
+        assert!(!bs.iter().any(|b| b["element"]["type"] == "plain_text_input"));
+        assert!(bs.iter().any(|b| b["element"]["type"] == "checkboxes"));
+    }
+
+    #[test]
+    fn recommended_option_bolds_text_and_adds_description() {
         let opts = vec![OptionItem::new("继续", true), OptionItem::new("停止", false)];
-        let card =
-            build_question_card("t", "x", &opts, false, "L", "N", "p", "S", "【👍推荐】 ", "n");
+        let card = build_question_card(
+            "t", "x", &opts, false, false, false, "L", "N", "p", "S", "👍 推荐", "n",
+        );
         let checkboxes = blocks(&card)
             .iter()
             .find(|b| b["element"]["type"] == "checkboxes")
             .unwrap();
         let items = checkboxes["element"]["options"].as_array().unwrap();
-        assert_eq!(items[0]["text"]["text"], "【👍推荐】 继续");
+        assert_eq!(items[0]["text"]["type"], "mrkdwn");
+        assert_eq!(items[0]["text"]["text"], "*继续*");
+        assert_eq!(items[0]["description"]["text"], "👍 推荐");
         assert_eq!(items[0]["value"], "opt_0");
+        // 普通项不加粗、无 description。
         assert_eq!(items[1]["text"]["text"], "停止");
+        assert!(items[1].get("description").is_none());
     }
 
     #[test]
     fn title_rendered_as_header_with_question_icon() {
-        let card = build_question_card("继续吗", "正文", &[], false, "L", "N", "p", "S", "R", "n");
+        let card =
+            build_question_card("继续吗", "正文", &[], false, false, false, "L", "N", "p", "S", "R", "n");
         let header = blocks(&card).iter().find(|b| b["type"] == "header").unwrap();
         assert_eq!(header["text"]["type"], "plain_text");
         assert!(header["text"]["text"].as_str().unwrap().starts_with("❓ "));
         // 超长标题回退为普通加粗 section（不致 Slack 报错）。
         let long: String = "题".repeat(200);
-        let card2 = build_question_card(&long, "", &[], false, "L", "N", "p", "S", "R", "n");
+        let card2 =
+            build_question_card(&long, "", &[], false, false, false, "L", "N", "p", "S", "R", "n");
         assert!(!blocks(&card2).iter().any(|b| b["type"] == "header"));
     }
 
     #[test]
     fn input_block_ids_carry_nonce() {
         // 唯一 nonce 应拼入各 input 块 block_id（清除 Slack 跨卡片输入缓存）。
-        let a = build_question_card("t", "x", &plain(&["o"]), false, "L", "N", "p", "S", "R", "AAA");
-        let b = build_question_card("t", "x", &plain(&["o"]), false, "L", "N", "p", "S", "R", "BBB");
+        let a = build_question_card(
+            "t", "x", &plain(&["o"]), false, false, false, "L", "N", "p", "S", "R", "AAA",
+        );
+        let b = build_question_card(
+            "t", "x", &plain(&["o"]), false, false, false, "L", "N", "p", "S", "R", "BBB",
+        );
         let id_of = |card: &Value, typ: &str| -> String {
             blocks(card)
                 .iter()
@@ -410,8 +468,9 @@ mod tests {
     fn options_split_into_chunks_of_ten() {
         let options: Vec<OptionItem> =
             (0..23).map(|i| OptionItem::new(format!("o{}", i), false)).collect();
-        let card =
-            build_question_card("t", "x", &options, false, "Options", "Note", "ph", "Submit", "R", "n");
+        let card = build_question_card(
+            "t", "x", &options, false, false, false, "Options", "Note", "ph", "Submit", "R", "n",
+        );
         let bs = blocks(&card);
         let checkbox_blocks: Vec<&Value> = bs
             .iter()
@@ -424,11 +483,31 @@ mod tests {
 
     #[test]
     fn build_card_without_options_omits_checkboxes() {
-        let card =
-            build_question_card("", "随便说点什么", &[], false, "Options", "Note", "ph", "Submit", "R", "n");
+        let card = build_question_card(
+            "", "随便说点什么", &[], false, false, false, "Options", "Note", "ph", "Submit", "R", "n",
+        );
         let bs = blocks(&card);
         assert!(!bs.iter().any(|b| b["element"]["type"] == "checkboxes"));
         assert!(bs.iter().any(|b| b["element"]["type"] == "plain_text_input"));
+    }
+
+    #[test]
+    fn parse_submit_maps_radio_selected_option() {
+        let payload = json!({
+            "type": "block_actions",
+            "user": { "id": "U1" },
+            "container": { "message_ts": "1.2" },
+            "actions": [ { "action_id": "submit" } ],
+            "state": { "values": {
+                "opts_0": { "options_0": {
+                    "type": "radio_buttons",
+                    "selected_option": { "value": "opt_1" }
+                } }
+            } }
+        });
+        let opts = plain(&["A", "B", "C"]);
+        let s = parse_submit(&payload, &opts).unwrap();
+        assert_eq!(s.selected_options, vec!["B".to_string()]);
     }
 
     #[test]

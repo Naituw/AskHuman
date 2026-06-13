@@ -65,6 +65,9 @@ impl RequestRegistry {
         // Daemon 分配权威 request_id（用于临时目录）。
         let mut request = AskRequest::new(task.message, task.questions, task.is_markdown);
         request.id = request_id.clone();
+        request.select_only = task.select_only;
+        request.single = task.single;
+        request.output_format = task.output_format;
 
         let (final_tx, final_rx) = tokio::sync::mpsc::unbounded_channel();
         let coordinator = Coordinator::new_ipc(

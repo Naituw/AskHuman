@@ -48,13 +48,13 @@ AskHuman "看看这个改动？" -q "继续吗？" -o "继续" -o "停止" --out
 | D9 | JSON 产出位置 | 由 Daemon 的 `render_result` 产出（CLI 仍仅转发 `Final.stdout`，保持瘦客户端）；非 unix 单进程走同一 `render_result` |
 | D10 | help 体系 | `--help`/`-h` = **完整功能**，按「提问 / 管理」两块组织、列出新参数并指向另两者；`--agent-help` = **为 Agent 精调**的提问用法（仅把结果字段标记改名，不含脚本参数 / JSON）；`--scripting-help`（新）= **脚本/自动化用法**（`--select-only`/`--single`/`--output json` + JSON 结构 + 退出码，简洁精确、少量示例）。`--agent-help` 与 `--scripting-help` 用**共享片段 + 变量/条件组装**，不各写一份 |
 | D11 | 弹窗 | `--single`→选项渲染为 radio（恰好一个）；`--select-only`→隐藏补充文本框 + 回复附件拖拽区，且**必须选中才能提交**（仍可取消）；推荐展示沿用现有绿色徽标 |
-| D12 | Telegram | `--single`→inline 按钮互斥（选一个清其它）+「提交」；`--select-only`→忽略卡片后聊天里的自由文字（不并入答案）；无选择就点提交 → `answerCallbackQuery` 弹 alert 提示。推荐展示 = 👍 emoji（平台无原生按钮控件样式） |
-| D13 | 飞书 | **多选** = 现有表单（checker + 提交），严格则**去掉 `input` 组件**；**单选** = 真 radio：checker **移出表单**、每个挂 `behaviors:callback`，每次点击走回调互斥（仅命中项 `checked`），由会话**自管选中态**，「提交」按钮收尾（类似 Telegram 的 toggle 模型，接受其点击延迟）。推荐展示 = checker 原生 `icon`（👍 绿色 `standard_icon`，**暂定**，实测后可回退文字前缀） |
-| D14 | Slack | **多选** = `checkboxes`、**单选** = `radio_buttons`（原生单选）；严格 → 去掉 `plain_text_input` 块。推荐展示 = option 原生 `description`「👍 推荐」+ 选项文本 mrkdwn 加粗（checkbox / radio 的 `text` 与 `description` 均支持 mrkdwn；注意 75 字符上限） |
-| D15 | 钉钉 | **统一新模板**，靠变量条件渲染：`single`（单选框 / 多选框）、`allow_input`（补充输入框显隐）；`options=[{text,recommended}]`，对 `recommended` 项渲染**内联彩色加粗「推荐」**标记（**暂定**；保持"首行带标记、换行回左"的内联排版；实测后可换内联图片或文字）。**新版把内置默认模板 ID 升级为该新模板**。卡片投放失败回退纯文本时同样遵守严格 / 单选 |
-| D16 | 钉钉模板变量契约 | 公有输入：`title`、`markdown`、`options=[{text,recommended}]`、`single`(bool)、`allow_input`(bool)、`input_placeholder`、`submit_status`；私有：`submitted`、`private_input`；提交按钮回传 `params`：`{ selected_options(数组), user_input }`（单选时数组长度 1；严格时 `user_input` 恒空）。单选 / 多选、输入框显隐**全部用同一张模板**靠变量切换 |
-| D17 | 推荐展示总览 | 弹窗 = 现有绿色徽标；钉钉 = 内联彩色加粗文字（暂定）；飞书 = checker 原生 icon（暂定）；Slack = option `description`「👍 推荐」+ 加粗；Telegram = 👍 emoji。**只有弹窗 / 钉钉 / Slack 接近原生控件；飞书仅彩色文字/图标；Telegram 仅 emoji**（平台能力所限） |
-| D18 | 钉钉内联图片备选说明 | 若 D15 文字效果不满意改用内联图片：卡片 Markdown 的 `![](url)` 需**稳定公网 HTTPS 地址**或发卡片时用钉钉媒体上传接口取可引用地址；文字方案无需任何图片托管，故先选文字 |
+| D12 | Telegram | `--single`→inline 按钮互斥（选一个清其它，按钮 ✅ 高亮）+「提交」；`--select-only`→忽略卡片后聊天里的自由文字（不并入答案）；无选择就点提交 → `answerCallbackQuery` 弹 alert 提示。推荐展示 = **现状文字前缀**「【👍推荐】 」（平台按钮无法单独配色，沿用不变）。**demo 实测确认** |
+| D13 | 飞书 | **多选** = 现有表单（checker + 提交），严格则**去掉 `input` 组件**；**单选** = 真 radio：checker **移出表单**、每个挂 `behaviors:callback`，每次点击走回调互斥（仅命中项 `checked`），由会话**自管选中态**，「提交」按钮收尾（接受点击延迟）。推荐展示 = **左侧彩色文字前缀** `<font color='green'>【👍推荐】</font> `（绿色含括号，checker `text` 用 `lark_md`）。**demo 实测：checker 无原生 `icon`（API 报 unknown property），`button_area` chip 只能固定在右侧，故弃用，改用左前缀彩色文字** |
+| D14 | Slack | **多选** = `checkboxes`、**单选** = `radio_buttons`（原生单选）；严格 → 去掉 `plain_text_input` 块。推荐展示 = option 原生 `description`「👍 推荐」+ 选项文本 mrkdwn 加粗（checkbox / radio 的 `text` 与 `description` 均支持 mrkdwn；注意 75 字符上限）。**demo 实测确认** |
+| D15 | 钉钉 | **统一新模板**（用户已搭 `d5dc7ac5-…`，**最后由用户发布**），靠变量条件渲染：`single`（单选列表 CheckboxList / 多选列表 CheckboxListMulti）、`allow_input`（补充输入框显隐）；选项用富文本 `options[].md` 渲染（字号 h5=15px，`<font sizeToken=common_h5_text_style__font_size>`），推荐项前缀 `<font sizeToken=… colorTokenV2=common_green1_color>【👍推荐】</font> `（绿色含括号，**demo 实测定稿**）。**新版把内置默认模板 ID 升级为该新模板**。卡片投放失败回退纯文本时同样遵守严格 / 单选 |
+| D16 | 钉钉模板变量契约（demo 实测定稿） | 公有 cardParamMap（**值全为字符串**）：`title`、`markdown`、`options`(JSON 串 `[{id:下标(int), md:富文本}]`)、`single`("true"\|"false")、`allow_input`("true"\|"false")、`submit_status`；私有：`submitted`("false")、`private_input`("")。提交按钮 actionId=`submit_action`，回传 `params`：`{ user_input, selected_options }`，`selected_options` 装**选项 id**（多选=id 数组 `[0,2]`、单选=`{id}` 或单值，解析需兼容三态）；id=下标，按下标还原选项原文与 `selected_indices`。单/多选、输入框显隐全用同一模板靠变量切换。注：cardParamMap 只收字符串，布尔靠模板按变量类型还原；**下发真布尔会报「StringValue is mandatory」** |
+| D17 | 推荐展示总览（demo 定稿） | 弹窗 = 现有绿色徽标；Slack = option `description`「👍 推荐」+ 加粗（原生控件内）；飞书 = 左侧彩色文字前缀 `<font color='green'>【👍推荐】</font> `；Telegram = 文字前缀「【👍推荐】 」；钉钉 = 选项 `md` 富文本左侧绿色前缀 `【👍推荐】`（`colorTokenV2=common_green1_color`）。**仅弹窗 / Slack 为原生控件展示；飞书 / Telegram / 钉钉为彩色 / 文字前缀**（平台能力所限） |
+| D18 | 钉钉字号说明（demo 实测） | 钉钉**互动卡片**富文本 `<font>` 不支持自定义像素（`size=N` 仅旧版机器人消息有效，互动卡片会忽略），只认预设 `sizeToken`：footnote=12px、**h5=15px**、body=14px(PC)/17px(移动)。无 13px。选项定稿用 **h5(15px)**（介于 12 与 14/17 之间）|
 
 ## 4. help 体系与示例（供评审）
 
@@ -162,10 +162,10 @@ Example:
 | 渠道 | 多选（默认） | 单选（`--single`） | 严格（`--select-only`） | 推荐展示 |
 |---|---|---|---|---|
 | 本地弹窗 | checkbox（现状） | radio | 隐藏补充文本框 + 回复附件拖拽区；必须选中才可提交 | 绿色徽标（现状） |
-| Telegram | inline 多选 +「提交」 | 按钮互斥高亮 +「提交」 | 忽略聊天自由文字 | 👍 emoji |
-| 飞书 | 表单 checker +「提交」 | checker 移出表单 + 回调互斥（真 radio）+「提交」 | 去掉 `input` 组件 | checker 原生 icon（👍 绿，暂定） |
+| Telegram | inline 多选 +「提交」 | 按钮互斥 ✅ 高亮 +「提交」 | 忽略聊天自由文字 | 文字前缀「【👍推荐】 」 |
+| 飞书 | 表单 checker +「提交」 | checker 移出表单 + 回调互斥（真 radio）+「提交」 | 去掉 `input` 组件 | 左侧彩色前缀 `<font color='green'>【👍推荐】</font> `（lark_md） |
 | Slack | checkboxes | radio_buttons | 去掉 `plain_text_input` 块 | option `description`「👍 推荐」+ 加粗 |
-| 钉钉 | 模板多选框 | 模板单选框（条件渲染） | `allow_input=false` 隐藏输入框 | 内联彩色加粗「推荐」（暂定） |
+| 钉钉 | 模板多选列表 | 模板单选列表（`single` 条件渲染） | `allow_input=false` 隐藏输入框 | 选项 `md` 富文本左侧绿色前缀 `【👍推荐】` |
 
 - 各渠道**提交值恒为选项原文**；推荐前缀 / 标记只进显示。
 - 各渠道**文本回退**模式（钉钉卡片投放失败等）同样遵守严格（编号清单 + 忽略自由文字）/ 单选（仅接受一个编号）。

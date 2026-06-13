@@ -59,12 +59,15 @@ AskHuman "Take a look at this change?" -f ./diagram.png \
   -q "Continue?" -o! "Continue" -o "Stop" \
   -q "Run the tests?" -o "Run" -o "Skip"
 
+# Strict choice for scripts: only preset options, single choice, machine-readable JSON
+AskHuman -q "Deploy where?" -o "staging" -o! "production" --single --select-only --output json
+
 # Other common ones
 AskHuman --settings   # open the settings UI
 AskHuman --history    # open reply history (add --all for every project)
 ```
 
-For the full CLI usage, see `AskHuman --help`; for the full asking usage, see `AskHuman --agent-help`.
+For the full CLI usage, see `AskHuman --help`; for the asking usage tuned for AI agents, see `AskHuman --agent-help`; for scripting/automation (`--select-only` / `--single` / `--output json`), see `AskHuman --scripting-help`.
 
 ### 2. Integrate with your Agent
 
