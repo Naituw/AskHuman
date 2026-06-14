@@ -281,6 +281,13 @@ export default {
     reply: "Reply",
     selectedOptions: "Selected options",
     noReply: "(no reply)",
+    copy: "Copy",
+    copied: "Copied",
+    copyMessage: "Message:",
+    copyOptions: "Options:",
+    copyReply: "Reply:",
+    copyReplyImages: "Reply images:",
+    copyReplyFiles: "Reply files:",
     channel: {
       popup: "Popup",
       dingding: "DingTalk",

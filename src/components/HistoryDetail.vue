@@ -65,6 +65,76 @@ function answerOf(i: number): HistoryAnswer | null {
   return props.entry.answers[i] ?? null;
 }
 
+// —— 复制整条记录为纯文本（便于直接粘贴给 agent）——
+const copied = ref(false);
+
+function buildPlainText(): string {
+  const e = props.entry;
+  const lines: string[] = [];
+  lines.push(`${statusText.value} · ${absoluteTime.value}`);
+
+  if (e.message.text.trim()) {
+    lines.push("", t("history.copyMessage"), e.message.text.trimEnd());
+  }
+  if (e.message.files.length) {
+    lines.push("", t("history.attachments", { n: e.message.files.length }));
+    for (const f of e.message.files) lines.push(`- ${f.name}`);
+  }
+
+  if (isCancel.value) {
+    lines.push("", t("history.cancelledNote"));
+    return lines.join("\n");
+  }
+
+  e.questions.forEach((q, i) => {
+    lines.push("");
+    lines.push(
+      isMulti.value
+        ? t("history.questionIndexed", { i: i + 1, n: e.questions.length })
+        : t("history.question")
+    );
+    if (q.message.trim()) lines.push(q.message.trimEnd());
+
+    const a = answerOf(i);
+    if (isAnswerEmpty(a)) {
+      lines.push(t("history.unanswered"));
+      return;
+    }
+    if (q.predefinedOptions.length) {
+      const sel = a?.selectedOptions ?? [];
+      lines.push(t("history.copyOptions"));
+      for (const opt of q.predefinedOptions) {
+        const mark = sel.includes(opt.text) ? "x" : " ";
+        const rec = opt.recommended ? ` (${t("popup.recommended")})` : "";
+        lines.push(`- [${mark}] ${opt.text}${rec}`);
+      }
+    }
+    if ((a?.userInput ?? "").trim()) {
+      lines.push(t("history.copyReply"), (a?.userInput ?? "").trimEnd());
+    }
+    if ((a?.images ?? []).length) {
+      lines.push(t("history.copyReplyImages"));
+      for (const img of a?.images ?? []) lines.push(`- ${img}`);
+    }
+    if ((a?.files ?? []).length) {
+      lines.push(t("history.copyReplyFiles"));
+      for (const f of a?.files ?? []) lines.push(`- ${f}`);
+    }
+  });
+
+  return lines.join("\n");
+}
+
+async function copyEntry() {
+  try {
+    await navigator.clipboard.writeText(buildPlainText());
+  } catch {
+    /* 忽略：剪贴板不可用时静默 */
+  }
+  copied.value = true;
+  setTimeout(() => (copied.value = false), 1500);
+}
+
 function isAnswerEmpty(a: HistoryAnswer | null): boolean {
   if (!a) return true;
   return (
@@ -257,6 +327,16 @@ watch(
       <span class="status-dot"></span>
       <span class="status-text">{{ statusText }}</span>
       <span class="status-time">{{ absoluteTime }}</span>
+      <button
+        class="copy-btn"
+        type="button"
+        :title="t('history.copy')"
+        @click.stop="copyEntry"
+      >
+        <svg v-if="copied" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+        <span>{{ copied ? t("history.copied") : t("history.copy") }}</span>
+      </button>
     </div>
 
     <!-- Shared message -->
@@ -423,6 +503,29 @@ watch(
   font-weight: 500;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+}
+.copy-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.copy-btn:hover {
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-elevated));
+}
+.copy-btn svg {
+  width: 12px;
+  height: 12px;
 }
 /* Plain (non-markdown) message / question body */
 .plain-body {

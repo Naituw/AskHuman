@@ -269,6 +269,13 @@ export default {
     reply: "回复",
     selectedOptions: "已选选项",
     noReply: "（无回复）",
+    copy: "复制",
+    copied: "已复制",
+    copyMessage: "消息：",
+    copyOptions: "选项：",
+    copyReply: "回复：",
+    copyReplyImages: "回复图片：",
+    copyReplyFiles: "回复文件：",
     channel: {
       popup: "弹窗",
       dingding: "钉钉",
