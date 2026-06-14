@@ -298,6 +298,12 @@ export default {
     emptyHint:
       "Start a tracked agent (Claude Code / Codex / Cursor) and it will appear here.",
     untitled: "(untitled)",
+    unknownProject: "Unknown project",
+    view: {
+      status: "Status",
+      type: "Type",
+      project: "Project",
+    },
     state: {
       working: "Working",
       idle: "Idle",

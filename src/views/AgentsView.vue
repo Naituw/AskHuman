@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { applyTheme } from "../lib/theme";
@@ -15,17 +15,71 @@ const loaded = ref(false);
 // 每秒重算一次相对时间（与数据推送解耦）。
 const nowMs = ref(Date.now());
 
-// 分组顺序（D14：按类型分组）。
+// 查看维度：状态（默认，运行中置顶）/ 类型 / 项目。
+type ViewMode = "status" | "type" | "project";
+const VIEW_MODES: ViewMode[] = ["status", "type", "project"];
+const STORAGE_KEY = "askhuman.agents.viewMode";
+
+function loadMode(): ViewMode {
+  try {
+    const v = localStorage.getItem(STORAGE_KEY);
+    if (v === "status" || v === "type" || v === "project") return v;
+  } catch {
+    /* localStorage 不可用：用默认 */
+  }
+  return "status";
+}
+
+const mode = ref<ViewMode>(loadMode());
+watch(mode, (v) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, v);
+  } catch {
+    /* 忽略持久化失败 */
+  }
+});
+
+// 分组折叠：按 `<mode>:<groupKey>` 记忆，跨维度互不影响，持久化到 localStorage。
+const COLLAPSE_KEY = "askhuman.agents.collapsed";
+function loadCollapsed(): Set<string> {
+  try {
+    const v = localStorage.getItem(COLLAPSE_KEY);
+    if (v) return new Set(JSON.parse(v) as string[]);
+  } catch {
+    /* 忽略 */
+  }
+  return new Set();
+}
+const collapsed = ref<Set<string>>(loadCollapsed());
+function collapseId(g: Group): string {
+  return `${mode.value}:${g.key}`;
+}
+function isCollapsed(g: Group): boolean {
+  return collapsed.value.has(collapseId(g));
+}
+function toggleCollapse(g: Group): void {
+  const id = collapseId(g);
+  const next = new Set(collapsed.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  collapsed.value = next; // 替换整集合以触发响应式更新
+  try {
+    localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...next]));
+  } catch {
+    /* 忽略持久化失败 */
+  }
+}
+
+// 类型分组顺序。
 const KIND_ORDER: AgentKind[] = ["claude", "codex", "cursor"];
-// 状态优先级（D9：先按状态再按时间）。
-const STATE_RANK: Record<AgentRunState, number> = {
-  working: 0,
-  idle: 1,
-  ended: 2,
-};
+// 状态分组顺序（运行中置顶）。
+const STATE_ORDER: AgentRunState[] = ["working", "idle", "ended"];
 
 interface Group {
-  kind: AgentKind;
+  key: string;
+  label: string;
+  // 是否高亮（状态视图的「工作中」组用绿色强调）。
+  accent: boolean;
   items: AgentRecord[];
 }
 
@@ -35,29 +89,65 @@ function anchor(a: AgentRecord): number {
   return a.lastActivity;
 }
 
+// 任一分类下，组内一律按时间倒序（新→旧）。
+function byTimeDesc(x: AgentRecord, y: AgentRecord): number {
+  return anchor(y) - anchor(x);
+}
+
 const groups = computed<Group[]>(() => {
-  const byKind = new Map<AgentKind, AgentRecord[]>();
-  for (const a of agents.value) {
-    const arr = byKind.get(a.kind) ?? [];
-    arr.push(a);
-    byKind.set(a.kind, arr);
+  const list = agents.value;
+
+  if (mode.value === "type") {
+    return KIND_ORDER.map((k) => ({
+      key: k,
+      label: kindLabel(k),
+      accent: false,
+      items: list.filter((a) => a.kind === k).sort(byTimeDesc),
+    })).filter((g) => g.items.length > 0);
   }
-  const result: Group[] = [];
-  for (const kind of KIND_ORDER) {
-    const items = byKind.get(kind);
-    if (!items || items.length === 0) continue;
-    items.sort((x, y) => {
-      const r = STATE_RANK[x.state] - STATE_RANK[y.state];
-      if (r !== 0) return r;
-      return anchor(y) - anchor(x); // 同状态按时间倒序（新→旧）。
+
+  if (mode.value === "project") {
+    const map = new Map<string, AgentRecord[]>();
+    for (const a of list) {
+      const key = a.cwd ? projectName(a.cwd) : "";
+      const arr = map.get(key) ?? [];
+      arr.push(a);
+      map.set(key, arr);
+    }
+    const result: Group[] = [];
+    for (const [key, items] of map) {
+      result.push({
+        key: key || "__unknown__",
+        label: key || t("agents.unknownProject"),
+        accent: false,
+        items: items.sort(byTimeDesc),
+      });
+    }
+    // 组按「该组最近活动」倒序；未知项目排最后。
+    result.sort((x, y) => {
+      const xu = x.key === "__unknown__";
+      const yu = y.key === "__unknown__";
+      if (xu !== yu) return xu ? 1 : -1;
+      return anchor(y.items[0]) - anchor(x.items[0]);
     });
-    result.push({ kind, items });
+    return result;
   }
-  return result;
+
+  // 默认：按状态（运行中置顶）。
+  return STATE_ORDER.map((s) => ({
+    key: s,
+    label: stateLabel(s),
+    accent: s === "working",
+    items: list.filter((a) => a.state === s).sort(byTimeDesc),
+  })).filter((g) => g.items.length > 0);
 });
 
 const isEmpty = computed(() => agents.value.length === 0);
 const isLoading = computed(() => !loaded.value);
+
+function viewLabel(m: ViewMode): string {
+  return t(`agents.view.${m}`);
+}
 
 function kindLabel(kind: AgentKind): string {
   return t(`agents.kind.${kind}`);
@@ -67,15 +157,27 @@ function stateLabel(s: AgentRunState): string {
   return t(`agents.state.${s}`);
 }
 
-function shortSession(id: string): string {
-  if (id.length <= 12) return id;
-  return `${id.slice(0, 8)}…${id.slice(-4)}`;
-}
-
 function projectName(cwd?: string | null): string {
   if (!cwd) return "";
   const parts = cwd.replace(/\/+$/, "").split("/");
   return parts[parts.length - 1] || cwd;
+}
+
+// 卡片是否展示某维度信息：分组所依据的维度在卡片上省略（组标题已表达）。
+function showKind(): boolean {
+  return mode.value !== "type";
+}
+function showState(): boolean {
+  return mode.value !== "status";
+}
+function showProject(a: AgentRecord): boolean {
+  return !!a.cwd && mode.value !== "project";
+}
+
+// 绝对时间（hover 提示用）：保留简洁的相对显示，同时可悬停看到精确时间。
+function absoluteTime(secs?: number | null): string {
+  if (!secs) return "";
+  return new Date(secs * 1000).toLocaleString();
 }
 
 // 后端时间戳为 unix 秒。
@@ -129,6 +231,19 @@ onBeforeUnmount(() => {
   <div class="agents">
     <header class="ag-header" data-tauri-drag-region>
       <span class="ag-title" data-tauri-drag-region>{{ t("agents.title") }}</span>
+      <div v-if="!isLoading && !isEmpty" class="seg" role="tablist">
+        <button
+          v-for="m in VIEW_MODES"
+          :key="m"
+          class="seg-btn"
+          :class="{ active: mode === m }"
+          role="tab"
+          :aria-selected="mode === m"
+          @click="mode = m"
+        >
+          {{ viewLabel(m) }}
+        </button>
+      </div>
     </header>
 
     <div class="ag-body">
@@ -143,12 +258,22 @@ onBeforeUnmount(() => {
       </div>
 
       <template v-else>
-        <section v-for="g in groups" :key="g.kind" class="group">
-          <h2 class="group-title">
-            {{ kindLabel(g.kind) }}
+        <section v-for="g in groups" :key="g.key" class="group">
+          <button
+            type="button"
+            class="group-title"
+            :class="{ accent: g.accent, collapsed: isCollapsed(g) }"
+            :aria-expanded="!isCollapsed(g)"
+            @click="toggleCollapse(g)"
+          >
+            <svg class="chevron" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M4 2.5 L8 6 L4 9.5" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span class="group-label">{{ g.label }}</span>
             <span class="group-count">{{ g.items.length }}</span>
-          </h2>
-          <ul class="card-list">
+          </button>
+          <ul v-show="!isCollapsed(g)" class="card-list">
             <li
               v-for="a in g.items"
               :key="a.sessionId"
@@ -157,27 +282,37 @@ onBeforeUnmount(() => {
             >
               <div class="card-top">
                 <span class="dot" :class="a.state" />
+                <span v-if="showKind()" class="kind-badge">{{ kindLabel(a.kind) }}</span>
                 <span class="card-title">{{ a.title || t("agents.untitled") }}</span>
-                <span class="status-badge" :class="a.state">{{ stateLabel(a.state) }}</span>
+                <span v-if="showState()" class="status-badge" :class="a.state">
+                  {{ stateLabel(a.state) }}
+                </span>
               </div>
-              <div class="meta">
-                <span v-if="a.cwd" class="meta-item" :title="a.cwd ?? ''">
+
+              <div v-if="showProject(a) || a.pid" class="meta">
+                <span v-if="showProject(a)" class="meta-item" :title="a.cwd ?? ''">
                   <span class="meta-k">{{ t("agents.field.project") }}</span>
                   <span class="meta-v">{{ projectName(a.cwd) }}</span>
-                </span>
-                <span class="meta-item">
-                  <span class="meta-k">{{ t("agents.field.session") }}</span>
-                  <span class="meta-v mono" :title="a.sessionId">{{ shortSession(a.sessionId) }}</span>
                 </span>
                 <span v-if="a.pid" class="meta-item">
                   <span class="meta-k">{{ t("agents.field.pid") }}</span>
                   <span class="meta-v mono">{{ a.pid }}</span>
                 </span>
               </div>
+
+              <div class="meta">
+                <span class="meta-item full">
+                  <span class="meta-k">{{ t("agents.field.session") }}</span>
+                  <span class="meta-v mono sid">{{ a.sessionId }}</span>
+                </span>
+              </div>
+
               <div class="meta times">
                 <span class="meta-item">
                   <span class="meta-k">{{ t("agents.field.started") }}</span>
-                  <span class="meta-v">{{ relativeTime(a.startedAt) }}</span>
+                  <span class="meta-v" :title="absoluteTime(a.startedAt)">
+                    {{ relativeTime(a.startedAt) }}
+                  </span>
                 </span>
                 <span class="meta-item">
                   <span class="meta-k">{{
@@ -185,9 +320,12 @@ onBeforeUnmount(() => {
                       ? t("agents.state.ended")
                       : t("agents.field.lastActivity")
                   }}</span>
-                  <span class="meta-v">{{
-                    relativeTime(a.state === "ended" ? a.endedAt : a.lastActivity)
-                  }}</span>
+                  <span
+                    class="meta-v"
+                    :title="absoluteTime(a.state === 'ended' ? a.endedAt : a.lastActivity)"
+                  >
+                    {{ relativeTime(a.state === "ended" ? a.endedAt : a.lastActivity) }}
+                  </span>
                 </span>
               </div>
             </li>
@@ -209,6 +347,8 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
 }
@@ -218,6 +358,34 @@ onBeforeUnmount(() => {
 .ag-title {
   font-size: 14px;
   font-weight: 600;
+  white-space: nowrap;
+}
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+.seg-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+  white-space: nowrap;
+}
+.seg-btn:hover {
+  color: var(--text-primary);
+}
+.seg-btn.active {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
 }
 .ag-body {
   flex: 1 1 auto;
@@ -264,13 +432,44 @@ onBeforeUnmount(() => {
 .group-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  width: 100%;
   margin: 0 0 8px;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s ease;
+}
+.group-title:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+.group-title.accent {
+  color: #248a3d;
+}
+.group-label {
+  flex: 0 0 auto;
+}
+.chevron {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: var(--text-secondary);
+  transition: transform 0.15s ease;
+  transform: rotate(90deg);
+}
+.group-title.collapsed .chevron {
+  transform: rotate(0deg);
+}
+.group-title.accent .chevron {
+  color: #248a3d;
 }
 .group-count {
   display: inline-flex;
@@ -284,6 +483,10 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
+}
+.group-title.accent .group-count {
+  background: color-mix(in srgb, #30d158 20%, transparent);
+  color: #248a3d;
 }
 .card-list {
   list-style: none;
@@ -325,6 +528,16 @@ onBeforeUnmount(() => {
 .dot.ended {
   background: var(--text-secondary);
 }
+.kind-badge {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
 .card-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -358,9 +571,9 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 4px 14px;
   font-size: 11px;
+  margin-top: 3px;
 }
 .meta.times {
-  margin-top: 3px;
   color: var(--text-secondary);
 }
 .meta-item {
@@ -369,7 +582,11 @@ onBeforeUnmount(() => {
   gap: 5px;
   min-width: 0;
 }
+.meta-item.full {
+  width: 100%;
+}
 .meta-k {
+  flex: 0 0 auto;
   color: var(--text-secondary);
 }
 .meta-v {
@@ -377,6 +594,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.meta-v.sid {
+  white-space: normal;
+  overflow: visible;
+  word-break: break-all;
 }
 .mono {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);

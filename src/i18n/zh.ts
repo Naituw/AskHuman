@@ -285,6 +285,12 @@ export default {
     empty: "暂无被追踪的 Agent",
     emptyHint: "启动一个被追踪的 Agent（Claude Code / Codex / Cursor）后会显示在这里。",
     untitled: "（未命名）",
+    unknownProject: "未知项目",
+    view: {
+      status: "状态",
+      type: "类型",
+      project: "项目",
+    },
     state: {
       working: "工作中",
       idle: "空闲",
