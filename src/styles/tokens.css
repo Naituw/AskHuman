@@ -30,6 +30,8 @@
   --control-border: rgba(0, 0, 0, 0.2);
   --accent-orange: #ff9500;
   --accent-green: #34c759;
+  /* 推荐 Badge 文字色：浅色下用更鲜艳但仍清晰的绿（比 #34c759 更沉、比 #1a7f37 更亮更显眼）。 */
+  --rec-badge-fg: #1c9b41;
 
   /* 毛玻璃色罩：叠在系统材质上，轻微加深、保留通透质感 */
   --vibrancy-tint: rgba(255, 255, 255, 0.3);
@@ -57,6 +59,8 @@
   --control-border: rgba(255, 255, 255, 0.22);
   --accent-orange: #ff9f0a;
   --accent-green: #30d158;
+  /* 深色下亮绿在深底上对比度已足够，沿用 accent-green。 */
+  --rec-badge-fg: #30d158;
 
   --vibrancy-tint: rgba(0, 0, 0, 0.3);
 
@@ -83,6 +87,7 @@
     --control-border: rgba(255, 255, 255, 0.22);
     --accent-orange: #ff9f0a;
     --accent-green: #30d158;
+    --rec-badge-fg: #30d158;
 
     --vibrancy-tint: rgba(0, 0, 0, 0.3);
 

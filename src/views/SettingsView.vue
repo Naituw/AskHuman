@@ -2494,8 +2494,8 @@ onBeforeUnmount(() => unlistenProgress?.());
   border-radius: 999px;
   font-size: 10px;
   line-height: 15px;
-  color: var(--accent-green);
-  background: color-mix(in srgb, var(--accent-green) 16%, transparent);
+  color: var(--rec-badge-fg);
+  background: color-mix(in srgb, var(--accent-green) 22%, transparent);
 }
 .segmented .seg.active .seg-rec {
   color: #fff;
