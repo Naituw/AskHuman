@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
+use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager};
 use tokio::io::BufReader;
@@ -95,6 +95,12 @@ pub struct HostState {
     /// 启动宽限是否已过（覆盖「OpenWindow 始终未到达」的兜底退出）。
     pub grace_over: AtomicBool,
     pub tray: Mutex<Option<TrayIcon>>,
+    /// 托盘菜单对象（**长期持有同一个**）：刷新时只原地增删/改其条目，绝不 `set_menu` 换新对象——
+    /// 替换 `NSStatusItem.menu` 会把用户正展开的菜单关掉，原地改条目则不会（spec 菜单稳定性）。
+    pub menu: Mutex<Option<Menu<tauri::Wry>>>,
+    /// 上次渲染的「菜单/图标内容签名」：与本次相同则整次刷新直接跳过，连菜单条目都不动——
+    /// daemon 持续停止时内容不变 → 不重建菜单 → 展开的菜单不会被挤掉。
+    pub menu_sig: Mutex<Option<String>>,
     /// 窗口期续命连接的停止信号（持有即有续命连接在）。
     pub keepalive: Mutex<Option<Arc<Notify>>>,
     /// 启动时的二进制指纹（盘上内容变化即触发宿主换新）。
@@ -138,6 +144,8 @@ pub fn setup(app: &mut tauri::App, config: &AppConfig) -> tauri::Result<()> {
         ever_open: AtomicBool::new(false),
         grace_over: AtomicBool::new(false),
         tray: Mutex::new(None),
+        menu: Mutex::new(None),
+        menu_sig: Mutex::new(None),
         keepalive: Mutex::new(None),
         startup_fp: lifecycle::current_fingerprint(),
     });
@@ -222,13 +230,16 @@ fn ensure_tray(app: &AppHandle, present: bool) -> tauri::Result<()> {
     };
     if !present {
         *state.tray.lock().unwrap() = None; // Drop → 移除托盘
+        *state.menu.lock().unwrap() = None; // 菜单随托盘失效；下次重建时再新建并填充
+        *state.menu_sig.lock().unwrap() = None;
         return Ok(());
     }
     if state.tray.lock().unwrap().is_some() {
         refresh_tray(app);
         return Ok(());
     }
-    let menu = build_menu(app)?;
+    // 建一个空菜单挂上托盘并长期持有；条目交给 refresh_tray 原地填充（之后只原地增删，绝不换对象）。
+    let menu = Menu::new(app)?;
     let mut builder = TrayIconBuilder::with_id("askhuman-tray")
         .icon_as_template(icon_bytes::TEMPLATE)
         .menu(&menu)
@@ -238,28 +249,45 @@ fn ensure_tray(app: &AppHandle, present: bool) -> tauri::Result<()> {
     }
     let tray = builder.build(app)?;
     *state.tray.lock().unwrap() = Some(tray);
+    *state.menu.lock().unwrap() = Some(menu);
+    // 强制首刷：清掉签名缓存，确保 refresh_tray 一定填充菜单 + 摆正图标/tooltip。
+    *state.menu_sig.lock().unwrap() = None;
     refresh_tray(app);
     Ok(())
 }
 
-/// 按最近状态重建菜单 + 切图标 + tooltip。须在主线程调用。
+/// 按最近状态刷新图标 + 菜单 + tooltip。须在主线程调用。
+///
+/// 关键：**内容没变就整次跳过**（连菜单条目都不碰）；有变化时也只**原地增删菜单条目**，
+/// 绝不 `tray.set_menu` 换新对象。这样 daemon 持续停止（内容不变）时展开的菜单不会被 2s
+/// 刷新挤掉；即便有变化，原地改条目通常也不会关闭已展开菜单（只有替换 NSMenu 对象才会）。
 pub fn refresh_tray(app: &AppHandle) {
     let Some(state) = app.try_state::<HostState>() else {
         return;
     };
-    let tray = state.tray.lock().unwrap();
-    let Some(tray) = tray.as_ref() else {
+    let tray_guard = state.tray.lock().unwrap();
+    let Some(tray) = tray_guard.as_ref() else {
         return;
     };
     let up = state.daemon_up.load(Ordering::SeqCst);
     let data = state.data.lock().unwrap().clone();
     let lang = state.lang();
+
+    // 内容签名：与上次相同 → 整次跳过，不触碰托盘（避免重建菜单把用户正展开的菜单挤掉）。
+    let sig = menu_signature(up, lang, &data);
+    if state.menu_sig.lock().unwrap().as_deref() == Some(sig.as_str()) {
+        return;
+    }
+
+    // 图标（set_icon / set_tooltip 不会关闭已展开菜单）。
     if let Some(img) = icon_for(up, data.active_requests) {
         let _ = tray.set_icon(Some(img));
         let _ = tray.set_icon_as_template(icon_bytes::TEMPLATE);
     }
-    if let Ok(menu) = build_menu(app) {
-        let _ = tray.set_menu(Some(menu));
+    // 菜单：原地清空 + 重新填充**同一个**菜单对象（不 set_menu 换对象）。
+    if let Some(menu) = state.menu.lock().unwrap().as_ref() {
+        clear_menu(menu);
+        let _ = populate_menu(app, menu, up, lang, &data);
     }
     let tip = if up {
         i18n::tr(lang, "tray.tooltipRunning").to_string()
@@ -267,6 +295,40 @@ pub fn refresh_tray(app: &AppHandle) {
         i18n::tr(lang, "tray.tooltipStopped").to_string()
     };
     let _ = tray.set_tooltip(Some(&tip));
+
+    *state.menu_sig.lock().unwrap() = Some(sig);
+}
+
+/// 决定菜单/图标渲染结果的全部输入拼成的签名（含语言、在线态、各状态字段；uptime 取分钟级文案，
+/// 避免每次推送都因秒数微变而重建菜单）。相同即无需刷新。
+fn menu_signature(up: bool, lang: Lang, data: &TrayData) -> String {
+    format!(
+        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        lang,
+        up as u8,
+        data.version,
+        fmt_uptime(data.uptime_secs),
+        data.draining as u8,
+        data.active_requests,
+        data.agents_working,
+        data.agents_idle,
+        data.im_connections.join(","),
+        data.update_available as u8,
+        // update_latest 仅在 update_available 时入签名，避免无更新时的噪声变化触发重建。
+        if data.update_available {
+            data.update_latest.as_str()
+        } else {
+            ""
+        },
+    )
+}
+
+/// 清空菜单的全部条目（原地操作同一菜单对象，不替换对象）。
+fn clear_menu(menu: &Menu<tauri::Wry>) {
+    let count = menu.items().map(|v| v.len()).unwrap_or(0);
+    for _ in 0..count {
+        let _ = menu.remove_at(0);
+    }
 }
 
 fn fmt_uptime(secs: u64) -> String {
@@ -279,19 +341,27 @@ fn fmt_uptime(secs: u64) -> String {
     }
 }
 
-/// 构造托盘原生菜单（状态区 disabled + 操作区，spec D7）。
-fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let state = app.state::<HostState>();
-    let lang = state.lang();
-    let mode = state.mode();
-    let up = state.daemon_up.load(Ordering::SeqCst);
-    let data = state.data.lock().unwrap().clone();
-
-    let disabled = |text: String| -> tauri::Result<tauri::menu::MenuItem<tauri::Wry>> {
-        MenuItemBuilder::new(text).enabled(false).build(app)
+/// 把状态区（disabled 只读）+ 操作区条目**追加**进给定（已清空的）菜单对象（spec D7）。
+/// 写入既有对象而非新建，以便原地更新（不替换 NSMenu → 展开中的菜单不被关掉）。
+fn populate_menu(
+    app: &AppHandle,
+    menu: &Menu<tauri::Wry>,
+    up: bool,
+    lang: Lang,
+    data: &TrayData,
+) -> tauri::Result<()> {
+    let disabled = |text: String| -> tauri::Result<()> {
+        let it = MenuItemBuilder::new(text).enabled(false).build(app)?;
+        menu.append(&it)
     };
-
-    let mut b = MenuBuilder::new(app);
+    let action = |id: &str, text: String| -> tauri::Result<()> {
+        let it = MenuItemBuilder::with_id(id, text).build(app)?;
+        menu.append(&it)
+    };
+    let sep = |menu: &Menu<tauri::Wry>| -> tauri::Result<()> {
+        let s = PredefinedMenuItem::separator(app)?;
+        menu.append(&s)
+    };
 
     // —— 状态区 ——
     let title = if up {
@@ -299,69 +369,61 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     } else {
         i18n::tr(lang, "tray.stopped").to_string()
     };
-    b = b.item(&disabled(title)?);
+    disabled(title)?;
     if up {
-        b = b.item(&disabled(
-            i18n::tr(lang, "tray.version").replace("{v}", &data.version),
-        )?);
-        b = b.item(&disabled(
-            i18n::tr(lang, "tray.uptime")
-                .replace("{d}", &fmt_uptime(data.uptime_secs)),
-        )?);
+        disabled(i18n::tr(lang, "tray.version").replace("{v}", &data.version))?;
+        disabled(i18n::tr(lang, "tray.uptime").replace("{d}", &fmt_uptime(data.uptime_secs)))?;
         if data.draining {
-            b = b.item(&disabled(i18n::tr(lang, "tray.draining").to_string())?);
+            disabled(i18n::tr(lang, "tray.draining").to_string())?;
         }
         if data.active_requests > 0 {
-            b = b.item(&disabled(
+            disabled(
                 i18n::tr(lang, "tray.pendingQuestions")
                     .replace("{n}", &data.active_requests.to_string()),
-            )?);
+            )?;
         }
         if data.agents_working + data.agents_idle > 0 {
-            b = b.item(&disabled(
+            disabled(
                 i18n::tr(lang, "tray.agents")
                     .replace("{w}", &data.agents_working.to_string())
                     .replace("{i}", &data.agents_idle.to_string()),
-            )?);
+            )?;
         }
         if !data.im_connections.is_empty() {
-            b = b.item(&disabled(
+            disabled(
                 i18n::tr(lang, "tray.imConnections")
                     .replace("{list}", &data.im_connections.join(", ")),
-            )?);
+            )?;
         }
     }
     if data.update_available {
-        b = b.item(&disabled(
-            i18n::tr(lang, "tray.updateAvailable").replace("{v}", &data.update_latest),
-        )?);
+        disabled(i18n::tr(lang, "tray.updateAvailable").replace("{v}", &data.update_latest))?;
     }
     if data.pending {
-        b = b.item(&disabled(i18n::tr(lang, "tray.updatePending").to_string())?);
+        disabled(i18n::tr(lang, "tray.updatePending").to_string())?;
     }
 
     // —— 操作区 ——
-    b = b.separator();
-    b = b.text("open_settings", i18n::tr(lang, "tray.openSettings"));
-    b = b.text("open_history", i18n::tr(lang, "tray.openHistory"));
-    b = b.text("open_agents", i18n::tr(lang, "tray.openAgents"));
-    b = b.separator();
-    b = b.text("check_update", i18n::tr(lang, "tray.checkUpdate"));
+    sep(menu)?;
+    action("open_settings", i18n::tr(lang, "tray.openSettings").to_string())?;
+    action("open_history", i18n::tr(lang, "tray.openHistory").to_string())?;
+    action("open_agents", i18n::tr(lang, "tray.openAgents").to_string())?;
+    sep(menu)?;
+    action("check_update", i18n::tr(lang, "tray.checkUpdate").to_string())?;
     if data.update_available {
-        b = b.text(
+        action(
             "apply_update",
             i18n::tr(lang, "tray.applyUpdate").replace("{v}", &data.update_latest),
-        );
+        )?;
     }
-    b = b.separator();
+    sep(menu)?;
     if up {
-        b = b.text("restart_daemon", i18n::tr(lang, "tray.restartDaemon"));
-        b = b.text("stop_daemon", i18n::tr(lang, "tray.stopDaemon"));
+        action("restart_daemon", i18n::tr(lang, "tray.restartDaemon").to_string())?;
+        action("stop_daemon", i18n::tr(lang, "tray.stopDaemon").to_string())?;
     } else {
-        b = b.text("start_daemon", i18n::tr(lang, "tray.startDaemon"));
+        action("start_daemon", i18n::tr(lang, "tray.startDaemon").to_string())?;
     }
-    let _ = mode; // 当前不在菜单内提供「退出」（always 由登录项守护，避免误关）。
-    b.build()
+    Ok(())
 }
 
 /// 托盘菜单事件分派（由 launch() 的全局 `on_menu_event` 在宿主进程中调用）。
@@ -580,11 +642,18 @@ async fn handle_host_conn(stream: tokio::net::UnixStream, app: AppHandle) {
 // ===== daemon 状态订阅（非保活）=====
 
 fn start_status_subscription(app: AppHandle) {
+    // 事件驱动重连信号：daemon socket 出现/变化（daemon 起停）即唤醒下方循环立即重连，
+    // 取代「daemon 关着时每 2s 盲连」的忙轮询。配 30s 兜底超时防漏事件。
+    let sock_event = Arc::new(Notify::new());
+    spawn_daemon_sock_watch(sock_event.clone());
     tauri::async_runtime::spawn(async move {
         loop {
-            // off 模式无托盘，不必订阅；2s 复查模式（覆盖运行时切到 active/always）。
+            // off 模式无托盘，不必订阅；等 socket 事件或 2s 复查模式（覆盖运行时切到 active/always）。
             if mode_of(&app) == MenuBarIconMode::Off {
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::select! {
+                    _ = sock_event.notified() => {}
+                    _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                }
                 continue;
             }
             match transport::connect().await {
@@ -637,11 +706,55 @@ fn start_status_subscription(app: AppHandle) {
                 }
                 Err(_) => {}
             }
-            // 断连：daemon 空闲退出 / 停止 / 换新。
+            // 断连：daemon 空闲退出 / 停止 / 换新。刷新会因签名不变而仅在「运行→停止」首刷生效。
             set_daemon_up(&app, false);
             refresh_on_main(&app);
             evaluate_exit(&app);
-            tokio::time::sleep(Duration::from_secs(2)).await; // 被动重连（always/active）。
+            // 事件驱动重连：等 daemon socket 出现/变化即重连，30s 兜底防漏事件（取代 2s 忙轮询）。
+            tokio::select! {
+                _ = sock_event.notified() => {}
+                _ = tokio::time::sleep(Duration::from_secs(30)) => {}
+            }
+        }
+    });
+}
+
+/// 监听 daemon socket（`~/.askhuman/daemon.sock`）所在目录：文件创建/变化（daemon 起停）即唤醒
+/// 状态订阅循环立即重连。用一条 `Notify` 跨「notify 同步回调线程」与「异步订阅循环」传递信号。
+fn spawn_daemon_sock_watch(event: Arc<Notify>) {
+    std::thread::spawn(move || {
+        use notify::{RecursiveMode, Watcher};
+        use std::sync::mpsc::channel;
+        let sock = crate::ipc::transport::socket_path();
+        let Some(name) = sock.file_name().map(|n| n.to_os_string()) else {
+            return;
+        };
+        let Some(dir) = sock.parent().map(|d| d.to_path_buf()) else {
+            return;
+        };
+        let _ = std::fs::create_dir_all(&dir);
+        let (tx, rx) = channel::<()>();
+        let mut watcher =
+            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                if let Ok(ev) = res {
+                    if ev
+                        .paths
+                        .iter()
+                        .any(|p| p.file_name() == Some(name.as_os_str()))
+                    {
+                        let _ = tx.send(());
+                    }
+                }
+            }) {
+                Ok(w) => w,
+                Err(_) => return,
+            };
+        if watcher.watch(&dir, RecursiveMode::NonRecursive).is_err() {
+            return;
+        }
+        // 收到事件即唤醒订阅循环（Notify 会暂存一个许可，避免错过唤醒）。
+        while rx.recv().is_ok() {
+            event.notify_one();
         }
     });
 }
