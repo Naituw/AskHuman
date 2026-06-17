@@ -220,6 +220,9 @@ export const slackDetectPrepare = (args: SlackDetectArgs) =>
 export const slackDetectWait = (args: SlackWaitArgs) =>
   invoke<string>("slack_detect_wait", { args });
 
+// 取消正在进行的「自动识别」等待（三家共用）。
+export const detectCancel = () => invoke<void>("detect_cancel");
+
 // ===== 版本自更新 =====
 
 export const getAppVersion = () => invoke<string>("get_app_version");

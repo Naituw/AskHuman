@@ -690,6 +690,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::commands::slack_test,
             crate::commands::slack_detect_prepare,
             crate::commands::slack_detect_wait,
+            crate::commands::detect_cancel,
             crate::commands::open_history,
             crate::commands::history_init,
             crate::commands::agents_init,

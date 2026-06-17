@@ -206,6 +206,7 @@ export default {
       userId: "UserId",
       autoDetect: "自动识别",
       detecting: "识别中…",
+      detectCancel: "取消",
       detectHint: "请用目标钉钉账号私聊机器人发送：{code}（120 秒内有效）",
       detected: "已识别并填入 UserId：{userId}",
       cardTemplateId: "卡片模板 ID",

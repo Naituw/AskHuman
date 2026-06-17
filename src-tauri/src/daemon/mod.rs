@@ -664,7 +664,7 @@ mod unix_impl {
                         )
                         .await;
                     } else {
-                        handle_detect(&req, state, w).await
+                        handle_detect(&req, state, reader, w).await
                     }
                 }
                 // Answer 只应在 GUI 接管阶段出现；控制阶段收到即忽略。
@@ -1768,19 +1768,41 @@ mod unix_impl {
 
     /// 处理「自动识别 userId/open_id」（Q6）：观察现有同 app_key 的长连接，否则临时开连完成识别。
     /// 结果经 `Detected`（成功）/ `Error`（失败，已本地化）回设置进程。
-    async fn handle_detect(req: &DetectRequest, state: &Arc<ServerState>, w: &mut OwnedWriteHalf) {
+    async fn handle_detect(
+        req: &DetectRequest,
+        state: &Arc<ServerState>,
+        reader: &mut Reader,
+        w: &mut OwnedWriteHalf,
+    ) {
         let lang = Lang::resolve(&req.lang);
-        let result = match req.kind.as_str() {
-            "dingtalk" => detect_dingtalk(state, req, lang).await,
-            "feishu" => detect_feishu(state, req, lang).await,
-            "slack" => detect_slack(state, req, lang).await,
-            other => Err(format!("unknown detect kind: {}", other)),
+        let work = async {
+            match req.kind.as_str() {
+                "dingtalk" => detect_dingtalk(state, req, lang).await,
+                "feishu" => detect_feishu(state, req, lang).await,
+                "slack" => detect_slack(state, req, lang).await,
+                other => Err(format!("unknown detect kind: {}", other)),
+            }
         };
-        let msg = match result {
-            Ok(id) => ServerMsg::Detected { id },
-            Err(message) => ServerMsg::Error { message },
-        };
-        let _ = ipc::write_msg(w, &msg).await;
+        // 识别可能阻塞至多 120s。其间同时监听控制连接：设置进程点「取消」会丢弃 wait 命令的
+        // future 并关闭这条连接，`wait_conn_closed` 即返回 → 丢弃 `work`（连带 drop 掉临时长连接，
+        // 不残留），不再回包。正常完成则回 `Detected`/`Error`。
+        tokio::select! {
+            result = work => {
+                let msg = match result {
+                    Ok(id) => ServerMsg::Detected { id },
+                    Err(message) => ServerMsg::Error { message },
+                };
+                let _ = ipc::write_msg(w, &msg).await;
+            }
+            _ = wait_conn_closed(reader) => {
+                log("detect cancelled by client (connection closed)");
+            }
+        }
+    }
+
+    /// 等到该控制连接关闭/出错（或对端发来任何消息）即返回——用于在 detect 等待期间感知客户端取消。
+    async fn wait_conn_closed(reader: &mut Reader) {
+        let _ = ipc::read_msg::<_, ClientMsg>(reader).await;
     }
 
     /// 钉钉识别：优先观察现有同 client_id 的活动连接（零冲突），否则临时开连。

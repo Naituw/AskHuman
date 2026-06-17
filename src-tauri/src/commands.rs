@@ -1045,11 +1045,11 @@ pub struct DingTalkWaitArgs {
 pub async fn dingtalk_detect_wait(args: DingTalkWaitArgs) -> Result<String, String> {
     use std::time::Duration;
     let lang = crate::i18n::Lang::current();
-    let client_id = args.client_id.trim();
+    let client_id = args.client_id.trim().to_string();
     let secret = fallback_secret(&args.client_secret, |c| {
         c.channels.dingding.client_secret.clone()
     });
-    let client_secret = secret.trim();
+    let client_secret = secret.trim().to_string();
     if client_id.is_empty() || client_secret.is_empty() {
         return Err(crate::i18n::tr(lang, "cmd.fillClientIdSecret").to_string());
     }
@@ -1058,53 +1058,57 @@ pub async fn dingtalk_detect_wait(args: DingTalkWaitArgs) -> Result<String, Stri
         return Err(crate::i18n::tr(lang, "cmd.detectCodeInvalid").to_string());
     }
 
-    // Q6：经 Daemon 长连接识别（避免与 Daemon 单连接冲突）。Daemon 接管即用其结果；
-    // 接不通 Daemon 才回退进程内临时连接（非 Unix 无 Daemon，直接走回退）。
-    #[cfg(unix)]
-    {
-        let req = crate::ipc::DetectRequest {
-            kind: "dingtalk".to_string(),
-            app_key: client_id.to_string(),
-            app_secret: client_secret.to_string(),
-            base_url: String::new(),
-            code: code.clone(),
-            lang: lang.code().to_string(),
-        };
-        if let Some(result) = crate::client::request_detect(req).await {
-            return result;
+    detect_with_cancel(lang, async move {
+        // Q6：经 Daemon 长连接识别（避免与 Daemon 单连接冲突）。Daemon 接管即用其结果；
+        // 接不通 Daemon 才回退进程内临时连接（非 Unix 无 Daemon，直接走回退）。
+        #[cfg(unix)]
+        {
+            let req = crate::ipc::DetectRequest {
+                kind: "dingtalk".to_string(),
+                app_key: client_id.clone(),
+                app_secret: client_secret.clone(),
+                base_url: String::new(),
+                code: code.clone(),
+                lang: lang.code().to_string(),
+            };
+            if let Some(result) = crate::client::request_detect(req).await {
+                return result;
+            }
         }
-    }
 
-    let http = reqwest::Client::new();
-    let mut stream = StreamConn::connect(http, client_id, client_secret, &[TOPIC_BOT_MESSAGE])
-        .await
-        .map_err(|e| e.localized(lang))?;
+        let http = reqwest::Client::new();
+        let mut stream =
+            StreamConn::connect(http, &client_id, &client_secret, &[TOPIC_BOT_MESSAGE])
+                .await
+                .map_err(|e| e.localized(lang))?;
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string());
-        }
-        match tokio::time::timeout(remaining, stream.recv()).await {
-            Ok(Some(StreamEvent::BotMessage(data))) => {
-                let content = data
-                    .get("text")
-                    .and_then(|t| t.get("content"))
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("")
-                    .trim();
-                if content == code {
-                    if let Some(sender) = data.get("senderStaffId").and_then(|v| v.as_str()) {
-                        return Ok(sender.to_string());
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string());
+            }
+            match tokio::time::timeout(remaining, stream.recv()).await {
+                Ok(Some(StreamEvent::BotMessage(data))) => {
+                    let content = data
+                        .get("text")
+                        .and_then(|t| t.get("content"))
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    if content == code {
+                        if let Some(sender) = data.get("senderStaffId").and_then(|v| v.as_str()) {
+                            return Ok(sender.to_string());
+                        }
                     }
                 }
+                Ok(Some(_)) => {}
+                Ok(None) => return Err(crate::i18n::tr(lang, "cmd.streamDisconnected").to_string()),
+                Err(_) => return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string()),
             }
-            Ok(Some(_)) => {}
-            Ok(None) => return Err(crate::i18n::tr(lang, "cmd.streamDisconnected").to_string()),
-            Err(_) => return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string()),
         }
-    }
+    })
+    .await
 }
 
 // ===== 飞书测试连接 / open_id 自动识别 =====
@@ -1185,9 +1189,9 @@ pub struct FeishuWaitArgs {
 pub async fn feishu_detect_wait(args: FeishuWaitArgs) -> Result<String, String> {
     use std::time::Duration;
     let lang = crate::i18n::Lang::current();
-    let app_id = args.app_id.trim();
+    let app_id = args.app_id.trim().to_string();
     let secret = fallback_secret(&args.app_secret, |c| c.channels.feishu.app_secret.clone());
-    let app_secret = secret.trim();
+    let app_secret = secret.trim().to_string();
     if app_id.is_empty() || app_secret.is_empty() {
         return Err(crate::i18n::tr(lang, "cmd.fillAppIdSecret").to_string());
     }
@@ -1197,46 +1201,49 @@ pub async fn feishu_detect_wait(args: FeishuWaitArgs) -> Result<String, String> 
     }
     let base_url = effective_feishu_base(&args.base_url);
 
-    // Q6：经 Daemon 长连接识别（见钉钉同段说明）。
-    #[cfg(unix)]
-    {
-        let req = crate::ipc::DetectRequest {
-            kind: "feishu".to_string(),
-            app_key: app_id.to_string(),
-            app_secret: app_secret.to_string(),
-            base_url: base_url.clone(),
-            code: code.clone(),
-            lang: lang.code().to_string(),
-        };
-        if let Some(result) = crate::client::request_detect(req).await {
-            return result;
+    detect_with_cancel(lang, async move {
+        // Q6：经 Daemon 长连接识别（见钉钉同段说明）。
+        #[cfg(unix)]
+        {
+            let req = crate::ipc::DetectRequest {
+                kind: "feishu".to_string(),
+                app_key: app_id.clone(),
+                app_secret: app_secret.clone(),
+                base_url: base_url.clone(),
+                code: code.clone(),
+                lang: lang.code().to_string(),
+            };
+            if let Some(result) = crate::client::request_detect(req).await {
+                return result;
+            }
         }
-    }
 
-    let http = reqwest::Client::new();
-    let mut ws = FeishuWs::connect(http, &base_url, app_id, app_secret)
-        .await
-        .map_err(|e| e.localized(lang))?;
+        let http = reqwest::Client::new();
+        let mut ws = FeishuWs::connect(http, &base_url, &app_id, &app_secret)
+            .await
+            .map_err(|e| e.localized(lang))?;
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string());
-        }
-        match tokio::time::timeout(remaining, ws.recv()).await {
-            Ok(Some(WsEvent::Message(event))) => {
-                if let Some((open_id, text)) = feishu_text_and_sender(&event) {
-                    if text.trim() == code {
-                        return Ok(open_id);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string());
+            }
+            match tokio::time::timeout(remaining, ws.recv()).await {
+                Ok(Some(WsEvent::Message(event))) => {
+                    if let Some((open_id, text)) = feishu_text_and_sender(&event) {
+                        if text.trim() == code {
+                            return Ok(open_id);
+                        }
                     }
                 }
+                Ok(Some(_)) => {}
+                Ok(None) => return Err(crate::i18n::tr(lang, "cmd.streamDisconnected").to_string()),
+                Err(_) => return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string()),
             }
-            Ok(Some(_)) => {}
-            Ok(None) => return Err(crate::i18n::tr(lang, "cmd.streamDisconnected").to_string()),
-            Err(_) => return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string()),
         }
-    }
+    })
+    .await
 }
 
 /// base_url 缺省回退飞书国内。
@@ -1360,47 +1367,50 @@ pub async fn slack_detect_wait(args: SlackWaitArgs) -> Result<String, String> {
         return Err(crate::i18n::tr(lang, "cmd.detectCodeInvalid").to_string());
     }
 
-    // Q6：经 Daemon 长连接识别（见钉钉/飞书同段说明）。app_key=App Token（Socket 复用键），
-    // app_secret=Bot Token（建连时校验齐全）。
-    #[cfg(unix)]
-    {
-        let req = crate::ipc::DetectRequest {
-            kind: "slack".to_string(),
-            app_key: app_token.trim().to_string(),
-            app_secret: bot_token.trim().to_string(),
-            base_url: String::new(),
-            code: code.clone(),
-            lang: lang.code().to_string(),
-        };
-        if let Some(result) = crate::client::request_detect(req).await {
-            return result;
+    detect_with_cancel(lang, async move {
+        // Q6：经 Daemon 长连接识别（见钉钉/飞书同段说明）。app_key=App Token（Socket 复用键），
+        // app_secret=Bot Token（建连时校验齐全）。
+        #[cfg(unix)]
+        {
+            let req = crate::ipc::DetectRequest {
+                kind: "slack".to_string(),
+                app_key: app_token.trim().to_string(),
+                app_secret: bot_token.trim().to_string(),
+                base_url: String::new(),
+                code: code.clone(),
+                lang: lang.code().to_string(),
+            };
+            if let Some(result) = crate::client::request_detect(req).await {
+                return result;
+            }
         }
-    }
 
-    let http = reqwest::Client::new();
-    let mut ws = SlackWs::connect(http, app_token.trim())
-        .await
-        .map_err(|e| e.localized(lang))?;
+        let http = reqwest::Client::new();
+        let mut ws = SlackWs::connect(http, app_token.trim())
+            .await
+            .map_err(|e| e.localized(lang))?;
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string());
-        }
-        match tokio::time::timeout(remaining, ws.recv()).await {
-            Ok(Some(SlackWsEvent::Message(event))) => {
-                if let Some((user, text)) = slack_text_and_sender(&event) {
-                    if text.trim() == code {
-                        return Ok(user);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string());
+            }
+            match tokio::time::timeout(remaining, ws.recv()).await {
+                Ok(Some(SlackWsEvent::Message(event))) => {
+                    if let Some((user, text)) = slack_text_and_sender(&event) {
+                        if text.trim() == code {
+                            return Ok(user);
+                        }
                     }
                 }
+                Ok(Some(_)) => {}
+                Ok(None) => return Err(crate::i18n::tr(lang, "cmd.streamDisconnected").to_string()),
+                Err(_) => return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string()),
             }
-            Ok(Some(_)) => {}
-            Ok(None) => return Err(crate::i18n::tr(lang, "cmd.streamDisconnected").to_string()),
-            Err(_) => return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string()),
         }
-    }
+    })
+    .await
 }
 
 /// 从 Slack message 事件取 (发送者 user id, 文本内容)。无文本返回 None。
@@ -1408,6 +1418,58 @@ fn slack_text_and_sender(event: &serde_json::Value) -> Option<(String, String)> 
     let user = event.get("user").and_then(|v| v.as_str())?.to_string();
     let text = event.get("text").and_then(|v| v.as_str())?.to_string();
     Some((user, text))
+}
+
+// ===== 自动识别「取消」支持（三家共用） =====
+//
+// 识别的「等待」步骤最多阻塞 120s。UI 加了「取消」按钮，但 Tauri 命令本身不可中断，所以这里
+// 用一个进程内取消信号：每次 `*_detect_wait` 注册一个新 `Notify`，命令体经 `detect_with_cancel`
+// 与 `notified()` 竞速；`detect_cancel` 命令置位即让等待提前返回并 **drop 掉等待 future**——
+// 对走 daemon 的路径这会关掉到 daemon 的连接（daemon 侧 `handle_detect` 随之中止并释放临时长连接），
+// 对进程内回退路径则直接 drop 临时 WS。UI 同一时刻只有一个识别在跑，故全局单槽即可。
+
+static DETECT_CANCEL: std::sync::OnceLock<std::sync::Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>> =
+    std::sync::OnceLock::new();
+
+fn detect_cancel_slot() -> &'static std::sync::Mutex<Option<std::sync::Arc<tokio::sync::Notify>>> {
+    DETECT_CANCEL.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// 为当前识别注册一个新的取消令牌（替换任何旧令牌）。
+fn detect_cancel_register() -> std::sync::Arc<tokio::sync::Notify> {
+    let token = std::sync::Arc::new(tokio::sync::Notify::new());
+    *detect_cancel_slot().lock().unwrap() = Some(token.clone());
+    token
+}
+
+/// 身份安全地清槽：仅当槽里仍是本次令牌时才清（避免误清后一次识别的令牌）。
+fn detect_cancel_clear(token: &std::sync::Arc<tokio::sync::Notify>) {
+    let mut guard = detect_cancel_slot().lock().unwrap();
+    if matches!(guard.as_ref(), Some(cur) if std::sync::Arc::ptr_eq(cur, token)) {
+        *guard = None;
+    }
+}
+
+/// 跑识别 `work`，直到完成或被取消；取消时返回本地化的「已取消」。
+async fn detect_with_cancel<F>(lang: crate::i18n::Lang, work: F) -> Result<String, String>
+where
+    F: std::future::Future<Output = Result<String, String>>,
+{
+    let token = detect_cancel_register();
+    let out = tokio::select! {
+        result = work => result,
+        _ = token.notified() => Err(crate::i18n::tr(lang, "cmd.detectCancelled").to_string()),
+    };
+    detect_cancel_clear(&token);
+    out
+}
+
+/// 取消正在进行的「自动识别」等待（UI「取消」按钮调用）。无进行中识别则无操作。
+#[tauri::command]
+pub fn detect_cancel() {
+    if let Some(token) = detect_cancel_slot().lock().unwrap().take() {
+        token.notify_one();
+    }
 }
 
 /// 生成 4 位识别码（瞬时配对用，无需强随机）。

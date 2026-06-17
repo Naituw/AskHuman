@@ -33,6 +33,7 @@ import {
   playPopupSound,
   popupSoundSupport,
   restartSettings,
+  detectCancel,
   saveSettings,
   setTheme,
   slackDetectPrepare,
@@ -281,6 +282,19 @@ async function copyMcpExample(kind: "json" | "toml") {
 const telegramTesting = ref(false);
 const telegramMessage = ref<string | null>(null);
 const telegramError = ref(false);
+
+// 「自动识别」取消标记（三家共用）：点了取消后，等待会被中止并 reject，catch 据此走中性收尾而非报错。
+const detectCancelled = ref(false);
+
+// 取消正在进行的自动识别（三家共用）：置标记 + 通知后端中止等待（连带释放临时长连接）。
+async function cancelDetect() {
+  detectCancelled.value = true;
+  try {
+    await detectCancel();
+  } catch {
+    /* 取消本身失败可忽略：等待仍会按既有路径超时收尾 */
+  }
+}
 
 const dingtalkTesting = ref(false);
 const dingtalkDetecting = ref(false);
@@ -688,6 +702,7 @@ async function runDingtalkDetect() {
   if (!config.value) return;
   const dd = config.value.channels.dingding;
   dingtalkDetecting.value = true;
+  detectCancelled.value = false;
   dingtalkMessage.value = null;
   dingtalkDetectCode.value = null;
   try {
@@ -706,11 +721,17 @@ async function runDingtalkDetect() {
     dingtalkError.value = false;
     dingtalkMessage.value = t("settings.channels.detected", { userId });
   } catch (e) {
-    dingtalkMessage.value = String(e);
-    dingtalkError.value = true;
+    if (detectCancelled.value) {
+      dingtalkMessage.value = null;
+      dingtalkError.value = false;
+    } else {
+      dingtalkMessage.value = String(e);
+      dingtalkError.value = true;
+    }
   } finally {
     dingtalkDetecting.value = false;
     dingtalkDetectCode.value = null;
+    detectCancelled.value = false;
   }
 }
 
@@ -740,6 +761,7 @@ async function runFeishuDetect() {
   if (!config.value) return;
   const fs = config.value.channels.feishu;
   feishuDetecting.value = true;
+  detectCancelled.value = false;
   feishuMessage.value = null;
   feishuDetectCode.value = null;
   try {
@@ -760,11 +782,17 @@ async function runFeishuDetect() {
     feishuError.value = false;
     feishuMessage.value = t("settings.channels.feishuDetected", { openId });
   } catch (e) {
-    feishuMessage.value = String(e);
-    feishuError.value = true;
+    if (detectCancelled.value) {
+      feishuMessage.value = null;
+      feishuError.value = false;
+    } else {
+      feishuMessage.value = String(e);
+      feishuError.value = true;
+    }
   } finally {
     feishuDetecting.value = false;
     feishuDetectCode.value = null;
+    detectCancelled.value = false;
   }
 }
 
@@ -793,6 +821,7 @@ async function runSlackDetect() {
   if (!config.value) return;
   const sl = config.value.channels.slack;
   slackDetecting.value = true;
+  detectCancelled.value = false;
   slackMessage.value = null;
   slackDetectCode.value = null;
   try {
@@ -811,11 +840,17 @@ async function runSlackDetect() {
     slackError.value = false;
     slackMessage.value = t("settings.channels.slackDetected", { userId });
   } catch (e) {
-    slackMessage.value = String(e);
-    slackError.value = true;
+    if (detectCancelled.value) {
+      slackMessage.value = null;
+      slackError.value = false;
+    } else {
+      slackMessage.value = String(e);
+      slackError.value = true;
+    }
   } finally {
     slackDetecting.value = false;
     slackDetectCode.value = null;
+    detectCancelled.value = false;
   }
 }
 
@@ -2055,6 +2090,14 @@ onBeforeUnmount(() => unlistenProgress?.());
                       : t("settings.channels.autoDetect")
                   }}
                 </button>
+                <button
+                  v-if="dingtalkDetecting"
+                  class="btn"
+                  type="button"
+                  @click="cancelDetect"
+                >
+                  {{ t("settings.channels.detectCancel") }}
+                </button>
               </div>
             </div>
             <i18n-t
@@ -2199,6 +2242,14 @@ onBeforeUnmount(() => unlistenProgress?.());
                       : t("settings.channels.autoDetect")
                   }}
                 </button>
+                <button
+                  v-if="feishuDetecting"
+                  class="btn"
+                  type="button"
+                  @click="cancelDetect"
+                >
+                  {{ t("settings.channels.detectCancel") }}
+                </button>
               </div>
             </div>
             <i18n-t
@@ -2325,6 +2376,14 @@ onBeforeUnmount(() => unlistenProgress?.());
                       ? t("settings.channels.detecting")
                       : t("settings.channels.autoDetect")
                   }}
+                </button>
+                <button
+                  v-if="slackDetecting"
+                  class="btn"
+                  type="button"
+                  @click="cancelDetect"
+                >
+                  {{ t("settings.channels.detectCancel") }}
                 </button>
               </div>
             </div>

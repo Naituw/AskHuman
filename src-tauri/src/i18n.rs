@@ -454,6 +454,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "等待超时（120 秒）未收到匹配的识别码，请重试",
         ),
         "cmd.streamDisconnected" => pick(lang, "Stream disconnected, please retry", "Stream 连接断开，请重试"),
+        "cmd.detectCancelled" => pick(lang, "Auto-detect cancelled", "已取消自动识别"),
 
         // —— 飞书测试连接 / open_id 自动识别（commands.feishu_test / feishu_detect_*）——
         "cmd.fillOpenId" => pick(

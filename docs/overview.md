@@ -243,6 +243,7 @@ AskHuman/
 - 钉钉：`dingtalk_test` / `dingtalk_detect_prepare` / `dingtalk_detect_wait`
 - 飞书：`feishu_test` / `feishu_detect_prepare` / `feishu_detect_wait`
 - Slack：`slack_test` / `slack_detect_prepare` / `slack_detect_wait`
+- 自动识别取消：`detect_cancel`（三家共用）。识别「等待」最多阻塞 120s，UI 在识别中显示「取消」按钮调用本命令。机制：`commands.rs` 进程内单槽 `Notify`，`*_detect_wait` 经 `detect_with_cancel` 与 `notified()` 竞速；取消即 drop 掉等待 future——走 daemon 的路径会关掉控制连接，daemon `handle_detect` 用 `select!`（识别 vs `wait_conn_closed`）感知断连即中止并释放临时长连接；进程内回退路径则直接 drop 临时 WS。
 - 版本自更新：`get_app_version` / `update_check`(manual) / `update_get_notes`(aggregate) / `update_apply`(落盘+进度事件) / `update_dismiss` / `popup_update_state`(弹窗拉初值) / `restart_settings`(设置进程重开)
 - (实验性) Agent 生命周期：`agents_init`(状态窗口主题+语言) / `agent_lifecycle_status` / `agent_lifecycle_install` / `agent_lifecycle_uninstall`（入参 `agent`：claude/codex/cursor）
 

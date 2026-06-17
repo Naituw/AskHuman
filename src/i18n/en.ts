@@ -211,6 +211,7 @@ export default {
       userId: "UserId",
       autoDetect: "Auto-detect",
       detecting: "Detecting…",
+      detectCancel: "Cancel",
       detectHint:
         "Use the target DingTalk account to DM the bot with: {code} (valid for 120s)",
       detected: "Detected and filled UserId: {userId}",
