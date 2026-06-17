@@ -48,7 +48,7 @@ mod unix_impl {
     use crate::models::{ChannelAction, ChannelResult};
     use crate::slack::router::SlRouter;
     use crate::telegram::router::TgRouter;
-    use std::collections::HashSet;
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -171,8 +171,46 @@ mod unix_impl {
         tray_subs: Mutex<Vec<tokio::sync::mpsc::UnboundedSender<ServerMsg>>>,
         /// 「IM 会话期自动激活」当前活跃槽（持久化、跨重启保留，仅由入站消息改变）。
         active_channel: Mutex<Option<String>>,
-        /// 已启动入站监听器的渠道 id 集合（避免重复 spawn；连接断开时移除以便重建）。
-        inbound_listeners: Mutex<HashSet<String>>,
+        /// 已启动入站监听器的注册表（防重复 spawn + 改配置时主动停旧监听并重建）。
+        inbound_listeners: InboundRegistry,
+    }
+
+    /// 入站监听注册表：渠道 id → 该监听任务的停止信号（`Notify`）。
+    ///
+    /// 既防重复 spawn（已认领的渠道不再起第二个监听），又支持「改配置时主动停掉旧监听」：
+    /// `take` 出 stop 后 `notify` 即让旧任务退出、同时立刻释放认领，便于按新连接重建。
+    /// **释放按身份（`Arc::ptr_eq`）判定**：旧任务退出时只移除「自己那次」的认领，绝不误删
+    /// 配置变更后新建监听的认领（否则会出现两个监听并存）。
+    #[derive(Default)]
+    struct InboundRegistry {
+        inner: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
+    }
+
+    impl InboundRegistry {
+        /// 认领某渠道的监听位：未被认领则插入新 stop 信号并返回；已被认领返回 None。
+        fn claim(&self, id: &str) -> Option<Arc<tokio::sync::Notify>> {
+            let mut map = self.inner.lock().unwrap();
+            if map.contains_key(id) {
+                return None;
+            }
+            let stop = Arc::new(tokio::sync::Notify::new());
+            map.insert(id.to_string(), stop.clone());
+            Some(stop)
+        }
+
+        /// 取出并移除某渠道的 stop 信号（改配置时用：拿到后 notify 停旧监听、同时释放认领）。
+        fn take(&self, id: &str) -> Option<Arc<tokio::sync::Notify>> {
+            self.inner.lock().unwrap().remove(id)
+        }
+
+        /// 身份安全释放：仅当当前登记的 stop 与 `token` 是同一实例（`Arc::ptr_eq`）时才移除。
+        /// 监听任务退出时调——避免「改配置后旧任务迟到释放」误删新监听的认领。
+        fn release(&self, id: &str, token: &Arc<tokio::sync::Notify>) {
+            let mut map = self.inner.lock().unwrap();
+            if map.get(id).map(|s| Arc::ptr_eq(s, token)).unwrap_or(false) {
+                map.remove(id);
+            }
+        }
     }
 
     /// Daemon 维护的「自更新」当前态（广播给弹窗用）。
@@ -323,7 +361,7 @@ mod unix_impl {
             agent_subs: Mutex::new(Vec::new()),
             tray_subs: Mutex::new(Vec::new()),
             active_channel: Mutex::new(crate::autochannel::load_active()),
-            inbound_listeners: Mutex::new(HashSet::new()),
+            inbound_listeners: InboundRegistry::default(),
         });
 
         // 空闲退出检查。
@@ -1332,97 +1370,103 @@ mod unix_impl {
         }
         let config = AppConfig::load();
 
-        if crate::app::is_feishu_active(&config) && claim_listener(state, "feishu") {
-            match ensure_fs_router(state, &config.channels.feishu).await {
-                Some(r) => spawn_listener(
-                    state,
-                    "feishu",
-                    r.observe_message(),
-                    extract_feishu,
-                    config.channels.feishu.open_id.trim().to_string(),
-                ),
-                None => release_listener(state, "feishu"),
+        if crate::app::is_feishu_active(&config) {
+            if let Some(stop) = state.inbound_listeners.claim("feishu") {
+                match ensure_fs_router(state, &config.channels.feishu).await {
+                    Some(r) => spawn_listener(
+                        state,
+                        "feishu",
+                        r.observe_message(),
+                        extract_feishu,
+                        config.channels.feishu.open_id.trim().to_string(),
+                        stop,
+                    ),
+                    None => state.inbound_listeners.release("feishu", &stop),
+                }
             }
         }
 
-        if crate::app::is_dingding_active(&config) && claim_listener(state, "dingding") {
-            let dd = &config.channels.dingding;
-            match ensure_dd_router(state, dd.client_id.trim(), dd.client_secret.trim()).await {
-                Some(r) => spawn_listener(
-                    state,
-                    "dingding",
-                    r.observe_bot(),
-                    extract_dingtalk,
-                    dd.user_id.trim().to_string(),
-                ),
-                None => release_listener(state, "dingding"),
+        if crate::app::is_dingding_active(&config) {
+            if let Some(stop) = state.inbound_listeners.claim("dingding") {
+                let dd = &config.channels.dingding;
+                match ensure_dd_router(state, dd.client_id.trim(), dd.client_secret.trim()).await {
+                    Some(r) => spawn_listener(
+                        state,
+                        "dingding",
+                        r.observe_bot(),
+                        extract_dingtalk,
+                        dd.user_id.trim().to_string(),
+                        stop,
+                    ),
+                    None => state.inbound_listeners.release("dingding", &stop),
+                }
             }
         }
 
-        if crate::app::is_slack_active(&config) && claim_listener(state, "slack") {
-            match ensure_sl_router(state, &config.channels.slack).await {
-                Some(r) => spawn_listener(
-                    state,
-                    "slack",
-                    r.observe_message(),
-                    extract_slack,
-                    config.channels.slack.user_id.trim().to_string(),
-                ),
-                None => release_listener(state, "slack"),
+        if crate::app::is_slack_active(&config) {
+            if let Some(stop) = state.inbound_listeners.claim("slack") {
+                match ensure_sl_router(state, &config.channels.slack).await {
+                    Some(r) => spawn_listener(
+                        state,
+                        "slack",
+                        r.observe_message(),
+                        extract_slack,
+                        config.channels.slack.user_id.trim().to_string(),
+                        stop,
+                    ),
+                    None => state.inbound_listeners.release("slack", &stop),
+                }
             }
         }
 
-        if crate::app::is_telegram_active(&config) && claim_listener(state, "telegram") {
-            match ensure_tg_router(state, &config.channels.telegram).await {
-                Some(r) => spawn_listener(
-                    state,
-                    "telegram",
-                    r.observe_message(),
-                    extract_telegram,
-                    config.channels.telegram.chat_id.trim().to_string(),
-                ),
-                None => release_listener(state, "telegram"),
+        if crate::app::is_telegram_active(&config) {
+            if let Some(stop) = state.inbound_listeners.claim("telegram") {
+                match ensure_tg_router(state, &config.channels.telegram).await {
+                    Some(r) => spawn_listener(
+                        state,
+                        "telegram",
+                        r.observe_message(),
+                        extract_telegram,
+                        config.channels.telegram.chat_id.trim().to_string(),
+                        stop,
+                    ),
+                    None => state.inbound_listeners.release("telegram", &stop),
+                }
             }
         }
-    }
-
-    /// 占用某渠道的监听位（幂等）：未在监听则标记并返回 true，否则 false。
-    fn claim_listener(state: &Arc<ServerState>, id: &str) -> bool {
-        let mut set = state.inbound_listeners.lock().unwrap();
-        if set.contains(id) {
-            false
-        } else {
-            set.insert(id.to_string());
-            true
-        }
-    }
-
-    /// 释放某渠道的监听位（连接断开 / 建连失败时）。
-    fn release_listener(state: &Arc<ServerState>, id: &str) {
-        state.inbound_listeners.lock().unwrap().remove(id);
     }
 
     /// 通用入站监听循环（与渠道无关）：从原始消息流抽取 (发送者, 文本)，按期望发送者过滤后交 `handle_inbound`。
-    /// 流结束（连接断开）即释放监听位，下次提问可重建。
+    /// 收到 `stop`（改配置时由 `invalidate_changed_routers` 触发）或流结束（连接断开）即退出，
+    /// 退出时**按身份**释放监听位（不误删改配置后新建监听的认领），下次提问 / 配置变更可重建。
     fn spawn_listener(
         state: &Arc<ServerState>,
         channel_id: &'static str,
         mut rx: tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>,
         extract: fn(&serde_json::Value) -> Option<(String, String)>,
         expected_sender: String,
+        stop: Arc<tokio::sync::Notify>,
     ) {
         let state = state.clone();
         tokio::spawn(async move {
-            while let Some(ev) = rx.recv().await {
-                if let Some((sender, text)) = extract(&ev) {
-                    // 单聊机器人：仅处理期望发送者发来的消息（期望为空则不过滤）；过滤掉机器人自身回声。
-                    if !expected_sender.is_empty() && sender != expected_sender {
-                        continue;
-                    }
-                    handle_inbound(&state, channel_id, &text).await;
+            loop {
+                tokio::select! {
+                    _ = stop.notified() => break,
+                    ev = rx.recv() => match ev {
+                        Some(ev) => {
+                            if let Some((sender, text)) = extract(&ev) {
+                                // 单聊机器人：仅处理期望发送者发来的消息（期望为空则不过滤）；过滤掉机器人自身回声。
+                                if !expected_sender.is_empty() && sender != expected_sender {
+                                    continue;
+                                }
+                                handle_inbound(&state, channel_id, &text).await;
+                            }
+                        }
+                        None => break,
+                    },
                 }
             }
-            release_listener(&state, channel_id);
+            state.inbound_listeners.release(channel_id, &stop);
         });
     }
 
@@ -2004,6 +2048,9 @@ mod unix_impl {
         let old = { state.config.lock().unwrap().clone() };
         invalidate_changed_routers(state, &old, &new).await;
         *state.config.lock().unwrap() = new.clone();
+        // 凭据/收件人变更已停掉旧入站监听（见 invalidate_changed_routers）；这里立即按新配置重建，
+        // 使 `/here`、`/status`、普通消息切槽无需等在途请求结束或 daemon 重启即恢复（有工作中 agent 时）。
+        ensure_inbound_listeners(state).await;
         let general = serde_json::to_value(&new.general).unwrap_or(serde_json::Value::Null);
         state
             .registry
@@ -2013,45 +2060,68 @@ mod unix_impl {
         log("config reloaded");
     }
 
-    /// 比对新旧配置：凭据变更或渠道被禁用 → 丢弃对应缓存 Router（惰性失效，Q1）。
+    /// 比对新旧配置：凭据变更或渠道被禁用 → 丢弃对应缓存 Router（惰性失效，Q1）+ 停掉旧入站监听。
     ///
     /// 进行中的请求仍持有自己的 Router `Arc` 克隆，故其连接保留到该请求结束；
     /// 下一个请求会经 `ensure_*_router` 用新配置重连。注意：若仅改了同 client_id 的 secret，
     /// 且旧请求未结束时新请求又到达，可能短暂出现两条同 client_id 连接（平台会踢掉旧的）——
     /// 属配置在「问题进行中」被改动的少见边角，可接受。
+    ///
+    /// 入站监听单独处理：除凭据变更（连带 Router）外，**收件人 id 变更**（feishu open_id /
+    /// dingding·slack user_id / telegram chat_id，即监听的 expected_sender）也需停旧监听——否则监听
+    /// 仍用旧过滤条件绑在旧连接上，`on_config_changed` 随后会按新配置重建（`stop_listener` 释放认领）。
     async fn invalidate_changed_routers(
         state: &Arc<ServerState>,
         old: &AppConfig,
         new: &AppConfig,
     ) {
-        let dd_changed = !crate::app::is_dingding_active(new)
+        let dd_router_changed = !crate::app::is_dingding_active(new)
             || old.channels.dingding.client_id != new.channels.dingding.client_id
             || old.channels.dingding.client_secret != new.channels.dingding.client_secret;
-        if dd_changed {
+        if dd_router_changed {
             *state.dd_router.lock().await = None;
         }
+        if dd_router_changed || old.channels.dingding.user_id != new.channels.dingding.user_id {
+            stop_listener(state, "dingding");
+        }
 
-        let fs_changed = !crate::app::is_feishu_active(new)
+        let fs_router_changed = !crate::app::is_feishu_active(new)
             || old.channels.feishu.app_id != new.channels.feishu.app_id
             || old.channels.feishu.app_secret != new.channels.feishu.app_secret
             || old.channels.feishu.base_url != new.channels.feishu.base_url;
-        if fs_changed {
+        if fs_router_changed {
             *state.fs_router.lock().await = None;
         }
-
-        let tg_changed = !crate::app::is_telegram_active(new)
-            || old.channels.telegram.bot_token != new.channels.telegram.bot_token
-            || old.channels.telegram.chat_id != new.channels.telegram.chat_id
-            || old.channels.telegram.api_base_url != new.channels.telegram.api_base_url;
-        if tg_changed {
-            *state.tg_router.lock().await = None;
+        if fs_router_changed || old.channels.feishu.open_id != new.channels.feishu.open_id {
+            stop_listener(state, "feishu");
         }
 
-        let sl_changed = !crate::app::is_slack_active(new)
+        let tg_router_changed = !crate::app::is_telegram_active(new)
+            || old.channels.telegram.bot_token != new.channels.telegram.bot_token
+            || old.channels.telegram.api_base_url != new.channels.telegram.api_base_url;
+        if tg_router_changed {
+            *state.tg_router.lock().await = None;
+        }
+        if tg_router_changed || old.channels.telegram.chat_id != new.channels.telegram.chat_id {
+            stop_listener(state, "telegram");
+        }
+
+        let sl_router_changed = !crate::app::is_slack_active(new)
             || old.channels.slack.bot_token != new.channels.slack.bot_token
             || old.channels.slack.app_token != new.channels.slack.app_token;
-        if sl_changed {
+        if sl_router_changed {
             *state.sl_router.lock().await = None;
+        }
+        if sl_router_changed || old.channels.slack.user_id != new.channels.slack.user_id {
+            stop_listener(state, "slack");
+        }
+    }
+
+    /// 停掉某渠道的入站监听（改配置时）：take 出其 stop 并 notify——旧任务随即退出、认领立即释放，
+    /// 供 `ensure_inbound_listeners` 按新配置重建。无监听时为 no-op。
+    fn stop_listener(state: &Arc<ServerState>, id: &str) {
+        if let Some(stop) = state.inbound_listeners.take(id) {
+            stop.notify_one();
         }
     }
 
@@ -2171,5 +2241,44 @@ mod unix_impl {
             info.im_connections.join(", ")
         };
         println!("  im conns   {}", im);
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::InboundRegistry;
+        use std::sync::Arc;
+
+        #[test]
+        fn inbound_claim_is_exclusive() {
+            let reg = InboundRegistry::default();
+            let a = reg.claim("feishu").expect("first claim succeeds");
+            assert!(
+                reg.claim("feishu").is_none(),
+                "a second claim is blocked while the first is held"
+            );
+            reg.release("feishu", &a);
+            assert!(
+                reg.claim("feishu").is_some(),
+                "the channel can be re-claimed once the owner releases it"
+            );
+        }
+
+        #[test]
+        fn inbound_release_is_identity_safe() {
+            // 配置变更场景：take 出旧 stop 释放认领 → 新监听重新认领 → 旧任务**之后**才退出并尝试
+            // 释放。释放必须按身份判定，绝不能把「新监听」的认领误删（否则会重复 spawn）。
+            let reg = InboundRegistry::default();
+            let old = reg.claim("feishu").expect("old listener claims");
+            let taken = reg.take("feishu").expect("config change takes current stop");
+            assert!(Arc::ptr_eq(&old, &taken));
+            let new = reg.claim("feishu").expect("new listener re-claims after take");
+            reg.release("feishu", &old); // 旧任务迟到的释放
+            assert!(
+                reg.claim("feishu").is_none(),
+                "the new listener's claim must survive a stale release from the old task"
+            );
+            reg.release("feishu", &new);
+            assert!(reg.claim("feishu").is_some());
+        }
     }
 }
