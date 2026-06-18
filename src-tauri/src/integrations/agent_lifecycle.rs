@@ -74,6 +74,17 @@ pub fn supported() -> bool {
     cfg!(unix)
 }
 
+/// 是否有任意一家 agent 已开启生命周期追踪（即至少一家装了本功能的 lifecycle hook）。
+/// 用于「未开启任何追踪」时隐藏 Agent 状态相关入口（托盘菜单等）。
+pub fn any_installed() -> bool {
+    if !supported() {
+        return false;
+    }
+    [AgentKind::Claude, AgentKind::Codex, AgentKind::Cursor]
+        .iter()
+        .any(|k| status(*k).installed)
+}
+
 /// 当前可执行文件绝对路径（hook 命令调用它）。
 fn exe_path() -> Result<String> {
     let p = std::env::current_exe().context("failed to resolve current exe path")?;

@@ -276,9 +276,11 @@ pub fn refresh_tray(app: &AppHandle) {
     let up = state.daemon_up.load(Ordering::SeqCst);
     let data = state.data.lock().unwrap().clone();
     let lang = state.lang();
+    // 是否有任一家开启了生命周期追踪：未开启时隐藏 Agent 状态相关菜单项（入口 + 忙闲行）。
+    let lifecycle_on = crate::integrations::agent_lifecycle::any_installed();
 
     // 内容签名：与上次相同 → 整次跳过，不触碰托盘（避免重建菜单把用户正展开的菜单挤掉）。
-    let sig = menu_signature(up, lang, &data);
+    let sig = menu_signature(up, lang, &data, lifecycle_on);
     if state.menu_sig.lock().unwrap().as_deref() == Some(sig.as_str()) {
         return;
     }
@@ -291,7 +293,7 @@ pub fn refresh_tray(app: &AppHandle) {
     // 菜单：原地清空 + 重新填充**同一个**菜单对象（不 set_menu 换对象）。
     if let Some(menu) = state.menu.lock().unwrap().as_ref() {
         clear_menu(menu);
-        let _ = populate_menu(app, menu, up, lang, &data);
+        let _ = populate_menu(app, menu, up, lang, &data, lifecycle_on);
     }
     let tip = if up {
         i18n::tr(lang, "tray.tooltipRunning").to_string()
@@ -305,9 +307,9 @@ pub fn refresh_tray(app: &AppHandle) {
 
 /// 决定菜单/图标渲染结果的全部输入拼成的签名（含语言、在线态、各状态字段；uptime 取分钟级文案，
 /// 避免每次推送都因秒数微变而重建菜单）。相同即无需刷新。
-fn menu_signature(up: bool, lang: Lang, data: &TrayData) -> String {
+fn menu_signature(up: bool, lang: Lang, data: &TrayData, lifecycle_on: bool) -> String {
     format!(
-        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
         lang,
         up as u8,
         data.version,
@@ -324,6 +326,7 @@ fn menu_signature(up: bool, lang: Lang, data: &TrayData) -> String {
         } else {
             ""
         },
+        lifecycle_on as u8,
     )
 }
 
@@ -353,6 +356,7 @@ fn populate_menu(
     up: bool,
     lang: Lang,
     data: &TrayData,
+    lifecycle_on: bool,
 ) -> tauri::Result<()> {
     let disabled = |text: String| -> tauri::Result<()> {
         let it = MenuItemBuilder::new(text).enabled(false).build(app)?;
@@ -386,7 +390,8 @@ fn populate_menu(
                     .replace("{n}", &data.active_requests.to_string()),
             )?;
         }
-        if data.agents_working + data.agents_idle > 0 {
+        // 仅在开启了生命周期追踪时显示忙闲行（未开启时即便有兜底登记也不展示，避免困惑）。
+        if lifecycle_on && data.agents_working + data.agents_idle > 0 {
             disabled(
                 i18n::tr(lang, "tray.agents")
                     .replace("{w}", &data.agents_working.to_string())
@@ -411,7 +416,10 @@ fn populate_menu(
     sep(menu)?;
     action("open_settings", i18n::tr(lang, "tray.openSettings").to_string())?;
     action("open_history", i18n::tr(lang, "tray.openHistory").to_string())?;
-    action("open_agents", i18n::tr(lang, "tray.openAgents").to_string())?;
+    // 「Agent 状态」入口仅在开启了生命周期追踪时显示——否则窗口必为空，徒增困惑。
+    if lifecycle_on {
+        action("open_agents", i18n::tr(lang, "tray.openAgents").to_string())?;
+    }
     sep(menu)?;
     action("check_update", i18n::tr(lang, "tray.checkUpdate").to_string())?;
     if data.update_available {

@@ -99,7 +99,7 @@ export default {
       enableHint: "Show advanced, unstable features. Off by default.",
       lifecycleTitle: "Agent lifecycle tracking",
       lifecycleDesc:
-        "Install user-level hooks so AskHuman can track each agent's sessions (working / idle / ended). Then run `AskHuman agents status` to open the live status window.",
+        "Install user-level hooks so AskHuman can track each agent's sessions (working / idle / ended). While agent activity is tracked, AskHuman stays on standby in the background to receive proactive IM commands (e.g. /status to check status, or activate on-demand sending). Once enabled, run `AskHuman agents monitor` to open the live status window.",
       claude: "Claude Code",
       codex: "Codex",
       cursor: "Cursor",
@@ -336,7 +336,7 @@ export default {
     loading: "Loading…",
     empty: "No agents tracked yet",
     emptyHint:
-      "Start a tracked agent (Claude Code / Codex / Cursor) and it will appear here.",
+      "Only agents with lifecycle tracking enabled will appear here once they start.",
     untitled: "(untitled)",
     unknownProject: "Unknown project",
     view: {

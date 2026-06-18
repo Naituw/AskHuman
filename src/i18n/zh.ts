@@ -95,7 +95,7 @@ export default {
       enableHint: "显示尚不稳定的高级功能，默认关闭。",
       lifecycleTitle: "Agent 生命周期追踪",
       lifecycleDesc:
-        "安装用户级 Hook，使 AskHuman 能追踪各 Agent 的会话状态（工作中 / 空闲 / 已结束）。开启后运行 `AskHuman agents status` 可弹出实时状态窗口。",
+        "安装用户级 Hook，使 AskHuman 能追踪各 Agent 的会话状态（工作中 / 空闲 / 已结束）。追踪到 Agent 活动时，AskHuman 会自动在后台待命，接收 IM 渠道的主动指令（如 /status 查询状态、激活按需发送）。开启后运行 `AskHuman agents monitor` 可弹出实时状态窗口。",
       claude: "Claude Code",
       codex: "Codex",
       cursor: "Cursor",
@@ -323,7 +323,7 @@ export default {
     title: "Agent 状态",
     loading: "加载中…",
     empty: "暂无被追踪的 Agent",
-    emptyHint: "启动一个被追踪的 Agent（Claude Code / Codex / Cursor）后会显示在这里。",
+    emptyHint: "只有开启生命周期追踪的 Agent 启动后才会在此显示。",
     untitled: "（未命名）",
     unknownProject: "未知项目",
     view: {

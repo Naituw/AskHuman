@@ -931,15 +931,33 @@ pub fn agent_lifecycle_status(agent: String) -> Result<agent_lifecycle::Lifecycl
 }
 
 #[tauri::command]
-pub fn agent_lifecycle_install(agent: String) -> Result<String, String> {
+pub fn agent_lifecycle_install(app: AppHandle, agent: String) -> Result<String, String> {
     let k = parse_agent_kind(&agent)?;
-    agent_lifecycle::install(k).map_err(|e| e.to_string())
+    let msg = agent_lifecycle::install(k).map_err(|e| e.to_string())?;
+    refresh_host_tray(&app);
+    Ok(msg)
 }
 
 #[tauri::command]
-pub fn agent_lifecycle_uninstall(agent: String) -> Result<String, String> {
+pub fn agent_lifecycle_uninstall(app: AppHandle, agent: String) -> Result<String, String> {
     let k = parse_agent_kind(&agent)?;
-    agent_lifecycle::uninstall(k).map_err(|e| e.to_string())
+    let msg = agent_lifecycle::uninstall(k).map_err(|e| e.to_string())?;
+    refresh_host_tray(&app);
+    Ok(msg)
+}
+
+/// 生命周期 hook 装/卸后刷新托盘菜单，使「Agent 状态」入口随之显隐。仅在统一 GUI 宿主进程内
+/// （持有 `HostState`）实际生效；其它进程自动 no-op。
+fn refresh_host_tray(app: &AppHandle) {
+    #[cfg(unix)]
+    {
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || crate::app::gui_host::refresh_tray(&app2));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = app;
+    }
 }
 
 // ===== Telegram 测试连接 =====
