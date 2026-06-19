@@ -480,6 +480,14 @@ mod unix_impl {
         // 后的首个弹窗仍冷，但其余请求都能命中热实例。
         maybe_topup_warm(&state);
 
+        // 「存活即监听」：daemon 一就绪即在后台连启用的 IM 起入站监听（与工作中 agent / 在途提问 /
+        // 自动激活开关无关），使在世期间任何 IM 消息都能被收到并回复。后台执行，不挡受理 / 弹窗关键路径；
+        // 无启用 IM 时 `ensure_inbound_listeners` 自身零钥匙串直接返回。监听不计入保活，不阻止空闲退出。
+        {
+            let st = state.clone();
+            tokio::spawn(async move { ensure_inbound_listeners(&st).await; });
+        }
+
         loop {
             tokio::select! {
                 _ = state.shutdown.notified() => break,
@@ -1595,17 +1603,16 @@ mod unix_impl {
 
     // ===== IM 入站消费（命令 /here、/status…）/ 活跃槽 / 补推在途 =====
 
-    /// 确保各已启用 IM 的入站消费任务在线，使守护进程在世期间能收到入站命令（`/here`、`/status`…）。
-    /// 触发条件 = **存在「工作中」agent**：守护进程存活本就由工作 agent 生命周期约束（D18），连接随其
-    /// 退出而释放（serve 收尾丢弃 Router → Drop 关长连接），故无需「反激活式」主动断连。
-    /// **与「自动激活」开关无关**——`/status` 等命令是与开关独立的功能（开关只决定 §3.4 的切槽/发卡行为）。
-    /// 各渠道只提供「连接 Router + 取原始消息观察者 + 抽取 (发送者, 文本) + 期望发送者」这几样传输原语；
+    /// 确保各已启用 IM 的入站消费任务在线，使守护进程**在世期间**能收到任何入站消息（命令 / 引导 / 作答确认）。
+    /// 触发条件 = **daemon 存活 + 有启用 IM**（「存活即监听」，spec R1）：与工作中 agent / 在途提问 / 自动激活
+    /// 开关全部无关。连接随 daemon 退出而释放（serve 收尾丢弃 Router → Drop 关长连接），故无需主动断连；
+    /// 监听不计入保活、不阻止空闲退出。在 `serve()` 启动后台调用一次，并在受理 / 配置变更处幂等重调。
+    /// 各渠道只提供「连接 Router + 取原始消息观察者 + 抽取 (发送者, 文本?) + 期望发送者」这几样传输原语；
     /// 通用循环与命令分派（`spawn_listener` / `handle_inbound`）一份实现，各渠道复用。幂等：可反复调用。
     async fn ensure_inbound_listeners(state: &Arc<ServerState>) {
-        if state.agents.working_count() == 0 {
-            return;
-        }
-        // 方案4（spec §4）：同样先用 `enabled` 标志（零钥匙串）门控——无任何启用的 IM 渠道则无须建监听，
+        // 「存活即监听」：不再用「有工作中 agent」门控——只要 daemon 存活且有启用 IM 就监听，与工作中 agent /
+        // 在途提问 / 自动激活开关全部无关（使任何消息在世期间都能被收到并回复）。
+        // 方案4（spec §4）：仍先用 `enabled` 标志（零钥匙串）门控——无任何启用的 IM 渠道则无须建监听，
         // 跳过 `AppConfig::load()` 的钥匙串读取。
         if !any_im_enabled(&AppConfig::load_without_secrets()) {
             return;
@@ -1681,11 +1688,18 @@ mod unix_impl {
     /// 通用入站监听循环（与渠道无关）：从原始消息流抽取 (发送者, 文本)，按期望发送者过滤后交 `handle_inbound`。
     /// 收到 `stop`（改配置时由 `invalidate_changed_routers` 触发）或流结束（连接断开）即退出，
     /// 退出时**按身份**释放监听位（不误删改配置后新建监听的认领），下次提问 / 配置变更可重建。
+    /// 一条经身份过滤前的入站消息（抽取器输出）。`text` 为 `None` 表示来自发送者的**非文本**消息
+    /// （图片/文件等）——文本走命令/引导分派，非文本仅在「无在途提问」时回引导（见 `handle_inbound`）。
+    struct Inbound {
+        sender: String,
+        text: Option<String>,
+    }
+
     fn spawn_listener(
         state: &Arc<ServerState>,
         channel_id: &'static str,
         mut rx: tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>,
-        extract: fn(&serde_json::Value) -> Option<(String, String)>,
+        extract: fn(&serde_json::Value) -> Option<Inbound>,
         expected_sender: String,
         stop: Arc<tokio::sync::Notify>,
     ) {
@@ -1696,12 +1710,12 @@ mod unix_impl {
                     _ = stop.notified() => break,
                     ev = rx.recv() => match ev {
                         Some(ev) => {
-                            if let Some((sender, text)) = extract(&ev) {
+                            if let Some(inb) = extract(&ev) {
                                 // 单聊机器人：仅处理期望发送者发来的消息（期望为空则不过滤）；过滤掉机器人自身回声。
-                                if !expected_sender.is_empty() && sender != expected_sender {
+                                if !expected_sender.is_empty() && inb.sender != expected_sender {
                                     continue;
                                 }
-                                handle_inbound(&state, channel_id, &text).await;
+                                handle_inbound(&state, channel_id, inb.text.as_deref()).await;
                             }
                         }
                         None => break,
@@ -1712,13 +1726,24 @@ mod unix_impl {
         });
     }
 
-    /// 飞书原始消息 → (发送者 open_id, 文本)；非文本返回 None。
-    fn extract_feishu(ev: &serde_json::Value) -> Option<(String, String)> {
-        fs_text_and_sender(ev)
+    /// 飞书原始消息 → `Inbound`（发送者 open_id + 文本？）；非文本时 `text=None`、非消息事件返回 None。
+    fn extract_feishu(ev: &serde_json::Value) -> Option<Inbound> {
+        let open_id = ev
+            .get("sender")
+            .and_then(|s| s.get("sender_id"))
+            .and_then(|i| i.get("open_id"))
+            .and_then(|v| v.as_str())?
+            .to_string();
+        ev.get("message")?; // 确保是一条消息事件
+        let text = fs_text_and_sender(ev).map(|(_, t)| t);
+        Some(Inbound {
+            sender: open_id,
+            text,
+        })
     }
 
-    /// 钉钉原始 bot 消息 → (senderStaffId, 文本)；非文本返回 None。
-    fn extract_dingtalk(ev: &serde_json::Value) -> Option<(String, String)> {
+    /// 钉钉原始 bot 消息 → `Inbound`（senderStaffId + 文本？）；非文本时 `text=None`。
+    fn extract_dingtalk(ev: &serde_json::Value) -> Option<Inbound> {
         let sender = ev
             .get("senderStaffId")
             .and_then(|v| v.as_str())?
@@ -1728,25 +1753,26 @@ mod unix_impl {
             .and_then(|t| t.get("content"))
             .and_then(|c| c.as_str())
             .map(str::trim)
-            .filter(|s| !s.is_empty())?
-            .to_string();
-        Some((sender, text))
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        Some(Inbound { sender, text })
     }
 
-    /// Slack 原始消息事件 → (user, 文本)；非文本 / 机器人自身消息返回 None。
-    fn extract_slack(ev: &serde_json::Value) -> Option<(String, String)> {
+    /// Slack 原始消息事件 → `Inbound`（user + 文本？）；非文本时 `text=None`、无发送者返回 None。
+    fn extract_slack(ev: &serde_json::Value) -> Option<Inbound> {
         let user = ev.get("user").and_then(|v| v.as_str())?.to_string();
         let text = ev
             .get("text")
             .and_then(|v| v.as_str())
             .map(str::trim)
-            .filter(|s| !s.is_empty())?
-            .to_string();
-        Some((user, text))
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        Some(Inbound { sender: user, text })
     }
 
-    /// Telegram 原始 `message` 对象 → (chat id, 文本)；非文本返回 None。
-    fn extract_telegram(ev: &serde_json::Value) -> Option<(String, String)> {
+    /// Telegram 原始 `message` 对象 → `Inbound`（chat id + 文本？）。Router 仅转发文本消息，
+    /// 故 `text` 实际恒为 `Some`；为统一签名仍按 `Option` 处理。
+    fn extract_telegram(ev: &serde_json::Value) -> Option<Inbound> {
         let chat = ev
             .get("chat")
             .and_then(|c| c.get("id"))
@@ -1756,21 +1782,45 @@ mod unix_impl {
             .get("text")
             .and_then(|v| v.as_str())
             .map(str::trim)
-            .filter(|s| !s.is_empty())?
-            .to_string();
-        Some((chat, text))
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        Some(Inbound { sender: chat, text })
     }
 
-    /// 统一入站分派（与渠道无关）：`/` 开头按内置命令处理，否则按普通消息。
-    /// - `/status`：**与「自动激活」开关无关**，始终回状态文本（开关开且因此切槽时附激活回执）。
-    /// - `/here` 与「普通消息切槽」：仅「自动激活」开时生效；关时 `/here` 静默忽略、普通文字
-    ///   交由卡片作答（观察者不处理）。切槽细则见设计 §3.4。补推在途已下沉到 `set_active_channel`。
-    async fn handle_inbound(state: &Arc<ServerState>, channel_id: &str, text: &str) {
+    /// 该渠道当前是否有「活动在途提问」（即有在途请求把本渠道挂进了协调器）。
+    /// 用于「普通文本退避」判定：有则交渠道会话确认/引导，观察者不重复回复（spec 协调原则）。
+    fn has_active_question_on(state: &Arc<ServerState>, channel_id: &str) -> bool {
+        state
+            .registry
+            .in_flight_entries()
+            .iter()
+            .any(|e| e.coordinator.has_channel(channel_id))
+    }
+
+    /// 统一入站分派（与渠道无关），spec R3/R4：
+    /// - `/status`：始终回状态文本（开关开且因此切槽时附激活回执）。
+    /// - `/here`：开关开时激活+补推+回执；开关关时改回**引导文案**（不再静默忽略）。
+    /// - `/help` 与未知 `/命令`：回**动态引导文案**（命令永不被卡片当答案，安全回）。
+    /// - 普通文本：该渠道**有活动在途提问**时退避（交渠道会话确认/引导，避免重复回复）；
+    ///   否则开关开按现状切槽（切换则回激活回执），未切换/未开则回引导（liveness）。
+    /// - 非文本消息（`text=None`）：无活动在途提问时回引导（有则交会话确认附件）。
+    async fn handle_inbound(state: &Arc<ServerState>, channel_id: &str, text: Option<&str>) {
+        use crate::autochannel::{classify, help_text, Command, Parsed};
         let lang = Lang::current();
         let config = AppConfig::load();
         let auto = config.channels.auto_activation;
-        match crate::autochannel::parse_command(text) {
-            Some(crate::autochannel::Command::Status) => {
+
+        let Some(text) = text else {
+            // 非文本消息（图片/文件）：有活动提问 → 交渠道会话确认；否则回引导（liveness）。
+            if !has_active_question_on(state, channel_id) {
+                let _ =
+                    reply_channel_text(channel_id, &config, &help_text(auto, false, lang)).await;
+            }
+            return;
+        };
+
+        match classify(text) {
+            Parsed::Command(Command::Status) => {
                 // 状态查询是独立功能：始终响应。仅当开关开、且本次因 /status 切了活跃槽时附激活回执。
                 let (switched, n) = if auto {
                     set_active_channel(state, channel_id).await
@@ -1788,9 +1838,13 @@ mod unix_impl {
                 ));
                 let _ = reply_channel_text(channel_id, &config, &body).await;
             }
-            Some(crate::autochannel::Command::Here) => {
+            Parsed::Command(Command::Here) => {
                 if !auto {
-                    return; // 关态下「活跃槽」概念不存在：静默忽略。
+                    // 关态无「活跃槽」概念：回引导（替代旧的静默忽略）。
+                    let has_q = has_active_question_on(state, channel_id);
+                    let _ =
+                        reply_channel_text(channel_id, &config, &help_text(auto, has_q, lang)).await;
+                    return;
                 }
                 // 激活 + 补推（在 set_active_channel 内完成）；/here 始终回执（即便已是当前槽，n=0）。
                 let (_switched, n) = set_active_channel(state, channel_id).await;
@@ -1801,20 +1855,29 @@ mod unix_impl {
                 )
                 .await;
             }
-            None => {
-                if !auto {
-                    return; // 关态：普通文字交卡片作答，观察者不切槽、不补推。
+            Parsed::Command(Command::Help) | Parsed::UnknownCommand => {
+                let has_q = has_active_question_on(state, channel_id);
+                let _ = reply_channel_text(channel_id, &config, &help_text(auto, has_q, lang)).await;
+            }
+            Parsed::Text => {
+                // 普通文本：该渠道有活动在途提问 → 退避（交渠道会话确认/引导，避免重复回复）。
+                if has_active_question_on(state, channel_id) {
+                    return;
                 }
-                // 普通消息：切槽 + 补推（set_active_channel 内）+（仅当发生切换时）回执；文本本身不当答案。
-                let (switched, n) = set_active_channel(state, channel_id).await;
-                if switched {
-                    let _ = reply_channel_text(
-                        channel_id,
-                        &config,
-                        &crate::autochannel::activated_receipt(n, lang),
-                    )
-                    .await;
+                // 无活动提问：开关开则切槽（切换则回激活回执）；否则/未切换回引导（liveness）。
+                if auto {
+                    let (switched, n) = set_active_channel(state, channel_id).await;
+                    if switched {
+                        let _ = reply_channel_text(
+                            channel_id,
+                            &config,
+                            &crate::autochannel::activated_receipt(n, lang),
+                        )
+                        .await;
+                        return;
+                    }
                 }
+                let _ = reply_channel_text(channel_id, &config, &help_text(auto, false, lang)).await;
             }
         }
     }
@@ -2031,7 +2094,11 @@ mod unix_impl {
         tokio::select! {
             result = work => {
                 let msg = match result {
-                    Ok(id) => ServerMsg::Detected { id },
+                    Ok(id) => {
+                        // spec R5：识别成功 → 经该 IM 给识别到的用户回一条「识别成功」回执（best-effort）。
+                        send_detect_ack(req, &id, lang).await;
+                        ServerMsg::Detected { id }
+                    }
                     Err(message) => ServerMsg::Error { message },
                 };
                 let _ = ipc::write_msg(w, &msg).await;
@@ -2039,6 +2106,73 @@ mod unix_impl {
             _ = wait_conn_closed(reader) => {
                 log("detect cancelled by client (connection closed)");
             }
+        }
+    }
+
+    /// spec R5：识别成功后，用识别时的凭据 + 识别到的用户 id 构造一次性 client，回一条「已自动填入<字段>」
+    /// 回执（不回显 ID 值）。best-effort——失败仅日志，不影响把 id 回设置进程。
+    async fn send_detect_ack(req: &DetectRequest, id: &str, lang: Lang) {
+        use crate::autochannel::detect_ack_text;
+        let result: Result<(), String> = match req.kind.as_str() {
+            "dingtalk" => {
+                let field = crate::i18n::tr(lang, "autoChannel.detectFieldUserId");
+                let cfg = crate::config::DingTalkChannelConfig {
+                    enabled: true,
+                    client_id: req.app_key.trim().to_string(),
+                    client_secret: req.app_secret.trim().to_string(),
+                    user_id: id.to_string(),
+                    ..Default::default()
+                };
+                match crate::dingtalk::client::DingTalkClient::new(&cfg) {
+                    Ok(client) => client
+                        .send_oto_text(&detect_ack_text(field, lang))
+                        .await
+                        .map_err(|e| e.to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+            "feishu" => {
+                let field = crate::i18n::tr(lang, "autoChannel.detectFieldOpenId");
+                let cfg = crate::config::FeishuChannelConfig {
+                    enabled: true,
+                    app_id: req.app_key.trim().to_string(),
+                    app_secret: req.app_secret.trim().to_string(),
+                    open_id: id.to_string(),
+                    base_url: req.base_url.trim().to_string(),
+                };
+                match crate::feishu::client::FeishuClient::new(&cfg) {
+                    Ok(client) => client
+                        .send_text(&detect_ack_text(field, lang))
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| e.to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+            "slack" => {
+                let field = crate::i18n::tr(lang, "autoChannel.detectFieldUserId");
+                let cfg = crate::config::SlackChannelConfig {
+                    enabled: true,
+                    bot_token: req.app_secret.trim().to_string(),
+                    app_token: req.app_key.trim().to_string(),
+                    user_id: id.to_string(),
+                };
+                match crate::slack::client::SlackClient::new(&cfg) {
+                    Ok(client) => match client.open_dm().await {
+                        Ok(dm) => client
+                            .post_text(&dm, &detect_ack_text(field, lang))
+                            .await
+                            .map(|_| ())
+                            .map_err(|e| e.to_string()),
+                        Err(e) => Err(e.to_string()),
+                    },
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+            _ => Ok(()),
+        };
+        if let Err(e) = result {
+            log(&format!("detect ack send failed ({}): {}", req.kind, e));
         }
     }
 

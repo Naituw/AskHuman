@@ -41,6 +41,29 @@ pub fn display_text(opt: &OptionItem, lang: Lang) -> String {
     }
 }
 
+/// 当前自动激活开关（零钥匙串读配置）。供会话回执文案按开关拼装动态引导。
+pub fn auto_activation() -> bool {
+    crate::config::AppConfig::load_without_secrets()
+        .channels
+        .auto_activation
+}
+
+/// 作答期间对一条聊天消息的即时回复文案（spec R2/R3）：
+/// - `Some(kind)`：该内容被接受进答案 → 按种类（文字/图片/文件）与模式（卡片/文本兜底）回**确认**；
+/// - `None`：未被当作答案（卡片模式下的纯文字、未接受的兜底消息等）→ 回**动态引导**（含可用命令）。
+///
+/// 引导带 `has_active_question=true`（会话进行中），并按当前自动激活开关裁剪命令/提示。
+pub fn answer_inbound_reply(
+    kind: Option<crate::autochannel::AckKind>,
+    mode: crate::autochannel::AckMode,
+    lang: Lang,
+) -> String {
+    match kind {
+        Some(k) => crate::autochannel::answer_ack_text(k, mode, lang),
+        None => crate::autochannel::help_text(auto_activation(), true, lang),
+    }
+}
+
 /// 会话型消息渠道的传输原语（与编排逻辑解耦）。
 #[async_trait::async_trait]
 pub trait MessagingChannel: Send {

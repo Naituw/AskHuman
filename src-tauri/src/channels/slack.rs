@@ -322,10 +322,21 @@ impl MessagingChannel for SlackSession {
                 }
                 SlInbound::Message(event) => {
                     if event_user(&event) == user_id {
+                        let lang = ctx.lang;
+                        // 即时回执 / 引导（spec R2/R3）：spawn 不阻塞事件循环（保证卡片提交即时处理）。
+                        let reply = super::conversation::answer_inbound_reply(
+                            ack_kind(&event),
+                            crate::autochannel::AckMode::Card,
+                            lang,
+                        );
+                        let ack_client = client.clone();
+                        let ack_dm = dm.to_string();
+                        tauri::async_runtime::spawn(async move {
+                            let _ = ack_client.post_text(&ack_dm, &reply).await;
+                        });
                         let client = client.clone();
                         let images = images.clone();
                         let files = files.clone();
-                        let lang = ctx.lang;
                         downloads.push(tauri::async_runtime::spawn(async move {
                             accumulate_attachments(&client, &event, &images, &files, lang).await;
                         }));
@@ -399,6 +410,7 @@ async fn ask_question_text(
                 if event_user(&event) != user_id {
                     continue;
                 }
+                let kind = ack_kind(&event).or(Some(crate::autochannel::AckKind::Text));
                 if let Some(answer) = message_to_answer(
                     client,
                     &event,
@@ -409,8 +421,31 @@ async fn ask_question_text(
                 )
                 .await
                 {
+                    // 接受 → 确认（spec R2 文本兜底）。
+                    let _ = client
+                        .post_text(
+                            dm,
+                            &super::conversation::answer_inbound_reply(
+                                kind,
+                                crate::autochannel::AckMode::Fallback,
+                                ctx.lang,
+                            ),
+                        )
+                        .await;
                     events.clear_active(None, user_id);
                     return Some(answer);
+                } else {
+                    // 未接受 → 引导（spec R3）。
+                    let _ = client
+                        .post_text(
+                            dm,
+                            &super::conversation::answer_inbound_reply(
+                                None,
+                                crate::autochannel::AckMode::Fallback,
+                                ctx.lang,
+                            ),
+                        )
+                        .await;
                 }
             }
             // 文本兜底路径未登记卡片路由，不应收到交互回调；忽略。
@@ -444,6 +479,27 @@ async fn accumulate_attachments(
             ),
         }
     }
+}
+
+/// Slack 聊天消息 → 回执内容种类：带文件（图片优先判定为图片，否则文件）是可累积进答案的附件；
+/// 无文件（纯文字）非附件→ None。
+fn ack_kind(event: &Value) -> Option<crate::autochannel::AckKind> {
+    use crate::autochannel::AckKind;
+    let arr = event.get("files").and_then(|f| f.as_array())?;
+    if arr.is_empty() {
+        return None;
+    }
+    let any_image = arr.iter().any(|f| {
+        f.get("mimetype")
+            .and_then(|v| v.as_str())
+            .map(|m| m.starts_with("image/"))
+            .unwrap_or(false)
+    });
+    Some(if any_image {
+        AckKind::Image
+    } else {
+        AckKind::File
+    })
 }
 
 /// 组装提问正文（纯文本兜底）：头部（加粗）+ 正文 + 编号选项 + 作答提示。

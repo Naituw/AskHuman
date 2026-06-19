@@ -356,6 +356,67 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "当前没有工作中或空闲的 agent。\n（agent 状态依赖「生命周期追踪」实验功能；如未开启，请在 设置 → 实验 中开启对应 Agent 的追踪。）",
         ),
 
+        // —— 动态引导 / /help 文案（spec R3）：按开关拼装；不含「已收到」。 ——
+        "autoChannel.helpTitle" => pick(lang, "AskHuman is running. You can:", "AskHuman 正在运行，你可以："),
+        "autoChannel.helpCmdStatus" => pick(lang, "• /status — show agent working/idle status", "• /status — 查看 agent 工作中/空闲状态"),
+        "autoChannel.helpCmdHelp" => pick(lang, "• /help — show this help", "• /help — 显示此帮助"),
+        "autoChannel.helpCmdHere" => pick(lang, "• /here — route questions to this channel", "• /here — 把提问切到此渠道接收"),
+        // 有在途提问时的作答指引。
+        "autoChannel.helpAnswering" => pick(
+            lang,
+            "There is a question waiting: choose options or type in the card, then tap Submit. You can also send images/files to attach them to your answer.",
+            "当前有待回答的提问：在卡片中选择或输入后点「提交」；也可直接发送图片/文件补充到你的回答。",
+        ),
+        // 无在途提问时。
+        "autoChannel.helpNoQuestion" => pick(lang, "No question is in progress right now.", "当前暂无进行中的提问。"),
+        // 自动激活开时的切槽提示。
+        "autoChannel.helpSwitchHint" => pick(
+            lang,
+            "Tip: send any text to route questions to this channel.",
+            "提示：发送任意文字即可把提问切到此渠道接收。",
+        ),
+
+        // —— 作答内容被接受的即时确认（spec R2）：仅内容确实被接受进答案时由渠道会话发送。 ——
+        "autoChannel.ackImageCard" => pick(
+            lang,
+            "✅ Got it — this image will be attached to your answer. Tap Submit on the card to finish.",
+            "✅ 已收到，将把该图片加入你的回答；请在卡片点「提交」完成。",
+        ),
+        "autoChannel.ackFileCard" => pick(
+            lang,
+            "✅ Got it — this file will be attached to your answer. Tap Submit on the card to finish.",
+            "✅ 已收到，将把该文件加入你的回答；请在卡片点「提交」完成。",
+        ),
+        "autoChannel.ackTextCard" => pick(
+            lang,
+            "✅ Got it — this text will be added to your answer. Tap Submit on the card to finish.",
+            "✅ 已收到，将把该内容加入你的回答；请在卡片点「提交」完成。",
+        ),
+        "autoChannel.ackImageFallback" => pick(
+            lang,
+            "✅ Got it — this image will be used as your answer.",
+            "✅ 已收到，将把该图片作为你的回答。",
+        ),
+        "autoChannel.ackFileFallback" => pick(
+            lang,
+            "✅ Got it — this file will be used as your answer.",
+            "✅ 已收到，将把该文件作为你的回答。",
+        ),
+        "autoChannel.ackTextFallback" => pick(
+            lang,
+            "✅ Got it — recorded as your answer.",
+            "✅ 已收到，将作为你的回答。",
+        ),
+
+        // —— 自动识别 ID 成功回执（spec R5）：只报字段名、不回显 ID。{field} 由调用方填本地化字段名。 ——
+        "autoChannel.detectAck" => pick(
+            lang,
+            "✅ Detected — {field} has been filled in automatically.",
+            "✅ 识别成功，已自动填入{field}。",
+        ),
+        "autoChannel.detectFieldUserId" => pick(lang, "User ID", "用户 ID"),
+        "autoChannel.detectFieldOpenId" => pick(lang, "OpenID", "用户 OpenID"),
+
         // —— Slack 渠道：发给用户的文案 + 本地诊断 ——
         // 静态终态卡片状态行（无 emoji 前缀，与飞书/钉钉一致）。
         "channel.slSubmitted" => pick(lang, "Submitted", "已提交"),
