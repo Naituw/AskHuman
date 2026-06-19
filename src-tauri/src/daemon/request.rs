@@ -18,6 +18,14 @@ use tokio::sync::Notify;
 /// GUI 连接的发送端槽位：Helper 连上后填入，供 popup adapter 下发 `cancel`。
 pub type GuiSlot = Arc<Mutex<Option<UnboundedSender<ServerMsg>>>>;
 
+/// 异步解析出的调用方 agent 信息（方案5/b）：daemon 从 `caller_pid` 向上 walk 进程树后填入，
+/// 经 `ServerMsg::AgentResolved` 后推弹窗 badge；helper 连接时若已就绪也会随握手补发（覆盖竞态）。
+#[derive(Clone, Default)]
+pub struct ResolvedAgent {
+    pub kind: Option<String>,
+    pub pid: Option<u32>,
+}
+
 /// 一个活动请求的共享状态。
 pub struct RequestEntry {
     pub request_id: String,
@@ -31,6 +39,8 @@ pub struct RequestEntry {
     pub show: ShowPayload,
     /// GUI 发送端槽位（adapter 与连接处理器共享）。
     pub gui: GuiSlot,
+    /// 调用方 agent 异步解析结果（方案5/b）：daemon walk 完成后填入，helper 连接握手时若已就绪则补发。
+    pub resolved_agent: Arc<Mutex<Option<ResolvedAgent>>>,
     /// GUI Helper 是否已连上（用于看门狗判定弹窗是否成功拉起）。
     pub gui_connected: AtomicBool,
     /// CLI 断开 / 请求结束时通知 GUI 连接处理器收尾。
@@ -109,6 +119,7 @@ impl RequestRegistry {
             coordinator,
             show,
             gui,
+            resolved_agent: Arc::new(Mutex::new(None)),
             gui_connected: AtomicBool::new(false),
             cancel: Arc::new(Notify::new()),
             final_tx,

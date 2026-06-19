@@ -19,6 +19,7 @@ import type {
   LifecycleStatus,
   PopupInit,
   PopupSoundSupport,
+  PushedAgent,
   PushedUpdateState,
   RuleStatus,
   PopupSubmission,
@@ -40,9 +41,13 @@ export const popupInit = () => invoke<PopupInit>("popup_init");
 export const perfMark = (stage: string, ts: number) =>
   invoke<void>("perf_mark", { stage, ts });
 
-/** 异步解析发起方 agent 所在终端类型（独立于 popup_init，避免进程链 ps 拖慢弹窗首屏）。 */
-export const popupAgentTerminal = () =>
-  invoke<string | null>("popup_agent_terminal");
+/** 异步解析指定 agent pid 所在终端类型（独立于 popup_init，避免进程链 ps 拖慢弹窗首屏）。 */
+export const popupAgentTerminal = (pid: number) =>
+  invoke<string | null>("popup_agent_terminal", { pid });
+
+/** 拉取调用方 agent 的异步解析结果初值（方案5/b；之后靠 `agent-resolved` 事件实时更新）。 */
+export const popupAgentResolved = () =>
+  invoke<PushedAgent>("popup_agent_resolved");
 
 export const submitPopup = (submission: PopupSubmission) =>
   invoke<void>("submit_popup", { submission });

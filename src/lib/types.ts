@@ -310,6 +310,12 @@ export interface PushedUpdateState {
   pending: boolean;
 }
 
+/** 调用方 agent 的异步解析结果（方案5/b）：daemon walk 出家族 + pid 后经 `agent-resolved` 后推弹窗。 */
+export interface PushedAgent {
+  kind?: string | null;
+  pid?: number | null;
+}
+
 export interface RuleStatus {
   installed: boolean;
   outdated: boolean;

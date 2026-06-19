@@ -72,15 +72,47 @@ pub fn perf_mark(stage: String, ts: Option<f64>) {
     }
 }
 
-/// 解析发起方 agent 所在终端类型（`apple-terminal`/`iterm2`/…）。**刻意独立于 `popup_init`**：
+/// 解析某 agent pid 所在终端类型（`apple-terminal`/`iterm2`/…）。**刻意独立于 `popup_init` + 异步**：
 /// `terminal_kind` 要沿进程链跑多次 `ps`（数十毫秒级），放进 `popup_init` 会拖慢弹窗首屏、露出「加载中」。
-/// 前端在弹窗渲染后再异步调用本命令，拿到后才把 agent badge 升级成「可点 + ↗」。无 pid / 探测不到 → None。
+/// 方案5(b) 起 agent pid 由 daemon 异步 walk 后经 `agent-resolved` 事件下发（不再随 `popup_init`），前端
+/// 拿到 pid 后调用本命令把 badge 升级成「可点 + ↗」。`pid==0` / 探测不到 → None。
 #[tauri::command]
-pub fn popup_agent_terminal(state: State<AppState>) -> Option<String> {
-    state
-        .agent_pid
-        .and_then(|pid| crate::agents::detect::terminal_kind(pid))
-        .map(|s| s.to_string())
+pub fn popup_agent_terminal(pid: u32) -> Option<String> {
+    if pid == 0 {
+        return None;
+    }
+    crate::agents::detect::terminal_kind(pid).map(|s| s.to_string())
+}
+
+/// 调用方 agent 的异步解析结果（方案5/b）：daemon 经 `AgentResolved` 后推、GUI Helper 缓存进程内一份，
+/// 供弹窗挂载时拉取初值（规避「事件早于前端监听」竞态，与自更新态同模式）。
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushedAgent {
+    pub kind: Option<String>,
+    pub pid: Option<u32>,
+}
+
+static PUSHED_AGENT: std::sync::OnceLock<std::sync::Mutex<PushedAgent>> = std::sync::OnceLock::new();
+
+fn pushed_agent_slot() -> &'static std::sync::Mutex<PushedAgent> {
+    PUSHED_AGENT.get_or_init(|| std::sync::Mutex::new(PushedAgent::default()))
+}
+
+/// GUI Helper 收到 daemon 的 `AgentResolved` 后写入此缓存（供弹窗挂载拉取初值 + 后续事件实时更新）。
+pub fn set_pushed_agent(agent: PushedAgent) {
+    if let Ok(mut slot) = pushed_agent_slot().lock() {
+        *slot = agent;
+    }
+}
+
+/// 弹窗挂载时拉取「已推送的调用方 agent 解析结果」初值（之后变化经 `agent-resolved` 事件实时更新）。
+#[tauri::command]
+pub fn popup_agent_resolved() -> PushedAgent {
+    pushed_agent_slot()
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default()
 }
 
 /// 前端提交的作答内容（按问题顺序，每题一项）。

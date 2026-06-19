@@ -723,24 +723,26 @@ mod unix_impl {
         // 「自动激活」开启时：每次提问按「工作中」兜底登记会话（无 turn hook 也能驱动入站监听 / 切槽）；
         // 开关关时保持旧行为（仅刷新已追踪会话的活动，尊重「未装 hook = 不追踪」，不污染注册表）。
         let auto = AppConfig::load_without_secrets().channels.auto_activation;
-        let changed = match (
-            task.agent_kind.as_deref().and_then(AgentKind::parse),
-            task.agent_session_id.clone(),
-            task.agent_pid,
-        ) {
+        // 方案5(b)：家族 + 会话来自 CLI 的 env 探测（即时、零 ps）；进程 pid 改由 daemon 从 `caller_pid`
+        // 异步 walk（见下 spawn_agent_resolve）。这里先用「能即时拿到的」刷新一次（env 有家族+会话 →
+        // 按 session 刷新，pid 此刻通常为 None；旧 CLI 仍可能带 pid），async 完成后再补 pid / MCP 兜底。
+        let kind_env = task.agent_kind.as_deref().and_then(AgentKind::parse);
+        let sid_env = task.agent_session_id.clone();
+        let from_mcp = task.from_mcp;
+        let caller_pid = task.caller_pid;
+        let cwd = Some(task.project.clone()).filter(|s| !s.trim().is_empty());
+        let changed = match (kind_env, sid_env.clone(), task.agent_pid) {
             // 有 session_id（shell 工具子进程能从 env 拿到）：按 session 刷新。
             (Some(kind), Some(sid), pid) => {
-                let cwd = Some(task.project.clone()).filter(|s| !s.trim().is_empty());
                 // MCP 模式（`from_mcp`）下 `agent_session_id` 取自长驻 MCP server 的启动 env，可能过期；
                 // 故即便「自动激活」开启也**只刷新已存在的 session、绝不新建**，避免造出幽灵会话。
-                if auto && !task.from_mcp {
-                    state.agents.upsert_working(kind, &sid, pid, cwd)
+                if auto && !from_mcp {
+                    state.agents.upsert_working(kind, &sid, pid, cwd.clone())
                 } else {
                     state.agents.touch_activity(kind, &sid, pid)
                 }
             }
-            // 无 session_id 但有 pid（典型 **MCP 模式**：agent 把 MCP server 的 env 清空，本次仅靠进程树
-            // walk 拿到 `(kind, pid)`）：按 pid 匹配已存在 session 刷新（只更新、绝不新建）。
+            // 无 session_id 但有 pid（旧 CLI 的 MCP 路径仍可能带 pid）：按 pid 刷新（只更新、绝不新建）。
             (Some(kind), None, Some(pid)) => state.agents.touch_activity_by_pid(kind, pid),
             _ => false,
         };
@@ -748,8 +750,6 @@ mod unix_impl {
             state.agents.persist();
             broadcast_agents_state(state);
         }
-        // 确保入站消费在线（自身按「有工作中 agent」自门控；与开关无关，使 /status 等命令独立可用）。
-        ensure_inbound_listeners(state).await;
         let lang = Lang::resolve(&task.lang);
         let (entry, mut final_rx) = state.registry.create(task);
         let request_id = entry.request_id.clone();
@@ -780,13 +780,10 @@ mod unix_impl {
         // 在途请求数 +1：刷新菜单栏状态（待答数 / 图标圆点）。
         broadcast_tray_state(state);
 
-        // 挂接可用的 IM 渠道（钉钉/…）到本请求的协调器，与弹窗并行抢答。
-        let im_attached = attach_im_channels(&entry, state, &mut w, lang).await;
-        crate::perf::mark(&perf_id, "dmn.im_done");
-        // IM 长连接可能在此刚建立，刷新菜单栏「已连 IM」。
-        broadcast_tray_state(state);
-
-        // spawn GUI Helper（独立短命进程，带一次性 token）。
+        // 方案3（spec §6.1）：尽早 spawn GUI Helper（独立短命进程，带一次性 token），让其 WebView
+        // 初始化与下面的「入站监听 + IM 建连」并行——token 在 `registry.create()` 即登记，helper 可
+        // 立即连上，不存在「helper 先连、entry 未注册」竞态。冷启动下这把 IM 建连（数百 ms）整段移出
+        // 弹窗端到端关键路径。
         let popup_ok = match spawn_gui_helper(&entry.token, &perf_id, perf_autodismiss) {
             Ok(()) => {
                 crate::perf::mark(&perf_id, "dmn.spawned");
@@ -808,6 +805,28 @@ mod unix_impl {
                 false
             }
         };
+
+        // 方案5(b)：从 caller_pid 异步向上 walk 进程树解析 agent（家族 + pid，含 env 判不出时的 MCP 兜底），
+        // 完成后补刷注册表活动并把结果后推弹窗 badge。整段在独立任务里跑，绝不阻塞本请求的关键路径。
+        spawn_agent_resolve(
+            entry.clone(),
+            state.clone(),
+            caller_pid,
+            kind_env,
+            sid_env,
+            from_mcp,
+            auto,
+            cwd,
+        );
+
+        // 以下都已不在弹窗关键路径上（与上面已 spawn 的 helper 并行执行）：
+        // 确保入站消费在线（自身按「有工作中 agent」自门控；与开关无关，使 /status 等命令独立可用）。
+        ensure_inbound_listeners(state).await;
+        // 挂接可用的 IM 渠道（钉钉/…）到本请求的协调器，与弹窗并行抢答。
+        let im_attached = attach_im_channels(&entry, state, &mut w, lang).await;
+        crate::perf::mark(&perf_id, "dmn.im_done");
+        // IM 长连接可能在此刚建立，刷新菜单栏「已连 IM」。
+        broadcast_tray_state(state);
 
         // 既无弹窗也无 IM 渠道 → 无可用渠道，按错误收尾。
         if !popup_ok && !im_attached {
@@ -913,6 +932,15 @@ mod unix_impl {
 
         // 下发题目。
         let _ = gui_tx.send(request::show_msg(&entry));
+
+        // 方案5(b)：若调用方 agent 已异步解析完成（walk 早于本连接），握手即补发 AgentResolved
+        // （覆盖「解析早于 helper 连接」竞态；解析晚于连接的情形由 spawn_agent_resolve 自行推送）。
+        if let Some(r) = entry.resolved_agent.lock().unwrap().clone() {
+            let _ = gui_tx.send(ServerMsg::AgentResolved {
+                kind: r.kind,
+                pid: r.pid,
+            });
+        }
 
         // 握手即带上当前自更新态（有更新 / 待生效），使弹窗一打开就知道，无需等下次广播。
         {
@@ -1246,12 +1274,95 @@ mod unix_impl {
 
     /// 按当前配置把可用 IM 渠道挂到请求协调器上（与弹窗并行抢答）。返回是否至少挂上一个。
     /// 失败的渠道经 `Warn` 流给 CLI stderr，并记 daemon.log。
+    /// 方案5(b)：accept 后**异步**从 `caller_pid` 向上 walk 进程树解析调用方 agent（家族 + pid），完成后
+    /// 补刷注册表活动（补 pid / env 判不出家族的 MCP 兜底）并把结果存入 `entry` + 经 `AgentResolved`
+    /// 后推弹窗 badge。`kind_env` 为 CLI 经 env 已判出的家族（None=未判出，典型 MCP `env_clear` → `walk_any`
+    /// 兜底）。`ps` 游走是阻塞调用，放 blocking 线程；`caller_pid==0`（旧 CLI 不带）则跳过。
+    /// 整段不阻塞请求关键路径（弹窗已先 spawn）。
+    fn spawn_agent_resolve(
+        entry: Arc<RequestEntry>,
+        state: Arc<ServerState>,
+        caller_pid: u32,
+        kind_env: Option<AgentKind>,
+        sid_env: Option<String>,
+        from_mcp: bool,
+        auto: bool,
+        cwd: Option<String>,
+    ) {
+        if caller_pid == 0 {
+            return;
+        }
+        tokio::spawn(async move {
+            let resolved = tokio::task::spawn_blocking(move || match kind_env {
+                Some(kind) => {
+                    crate::agents::detect::walk_agent_pid(kind, caller_pid).map(|pid| (kind, pid))
+                }
+                // env 判不出家族（典型 MCP，env_clear）：进程树兜底找任意家族 agent 祖先。
+                None if from_mcp => crate::agents::detect::walk_any_agent(caller_pid),
+                None => None,
+            })
+            .await
+            .ok()
+            .flatten();
+
+            let Some((kind, pid)) = resolved else {
+                return;
+            };
+
+            // 注册表活动：env 有会话 → 按 session 刷新并补 pid；否则（MCP）按 pid 刷新（只更新、绝不新建）。
+            let changed = match (kind_env, &sid_env) {
+                (Some(k), Some(sid)) => {
+                    if auto && !from_mcp {
+                        state.agents.upsert_working(k, sid, Some(pid), cwd.clone())
+                    } else {
+                        state.agents.touch_activity(k, sid, Some(pid))
+                    }
+                }
+                _ => state.agents.touch_activity_by_pid(kind, pid),
+            };
+            if changed {
+                state.agents.persist();
+                broadcast_agents_state(&state);
+            }
+
+            // 存入 entry + 后推弹窗（helper 已连上则即送；未连则握手时由 handle_gui 补发，覆盖竞态）。
+            let resolved = request::ResolvedAgent {
+                kind: Some(kind.as_str().to_string()),
+                pid: Some(pid),
+            };
+            if let Ok(mut slot) = entry.resolved_agent.lock() {
+                *slot = Some(resolved.clone());
+            }
+            if let Ok(slot) = entry.gui.lock() {
+                if let Some(tx) = slot.as_ref() {
+                    let _ = tx.send(ServerMsg::AgentResolved {
+                        kind: resolved.kind,
+                        pid: resolved.pid,
+                    });
+                }
+            }
+        });
+    }
+
+    /// 是否启用了任一 IM 渠道（仅看非密钥的 `enabled` 标志）。用于方案4 在读钥匙串前的廉价门控：
+    /// 可安全用 `load_without_secrets()` 的结果判定（`enabled` 不是密钥）。
+    fn any_im_enabled(config: &AppConfig) -> bool {
+        let ch = &config.channels;
+        ch.dingding.enabled || ch.feishu.enabled || ch.telegram.enabled || ch.slack.enabled
+    }
+
     async fn attach_im_channels(
         entry: &Arc<RequestEntry>,
         state: &Arc<ServerState>,
         w: &mut OwnedWriteHalf,
         lang: Lang,
     ) -> bool {
+        // 方案4（spec §4）：先用 config.json 的 `enabled` 标志（`load_without_secrets`，零钥匙串）判定
+        // 有无任何启用的 IM 渠道；都没启用（最常见的「仅弹窗」用户）则**完全跳过** `AppConfig::load()`，
+        // 不读 OS 钥匙串。注意只能用 `enabled` 标志：`is_*_active` 要构造 client、依赖密钥，缺密钥会误判。
+        if !any_im_enabled(&AppConfig::load_without_secrets()) {
+            return false;
+        }
         let config = AppConfig::load();
         let request = entry.show.request.clone();
         let sink = entry.coordinator.clone();
@@ -1382,6 +1493,11 @@ mod unix_impl {
     /// 通用循环与命令分派（`spawn_listener` / `handle_inbound`）一份实现，各渠道复用。幂等：可反复调用。
     async fn ensure_inbound_listeners(state: &Arc<ServerState>) {
         if state.agents.working_count() == 0 {
+            return;
+        }
+        // 方案4（spec §4）：同样先用 `enabled` 标志（零钥匙串）门控——无任何启用的 IM 渠道则无须建监听，
+        // 跳过 `AppConfig::load()` 的钥匙串读取。
+        if !any_im_enabled(&AppConfig::load_without_secrets()) {
             return;
         }
         let config = AppConfig::load();

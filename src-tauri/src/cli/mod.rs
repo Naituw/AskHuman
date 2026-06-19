@@ -241,9 +241,9 @@ pub fn dispatch() {
                     crate::perf::mark_at(&perf_id, "cli.start", crate::perf::start_ms());
                     // harness 注入的 spawn 时刻（含进程创建 / 加载，main 之前不可见的开销）。
                     crate::perf::mark_spawn(&perf_id);
-                    // 顺带探测调用方 Agent 身份（生命周期追踪 spec D21）：经 daemon 刷新对应 session 的活动 + TTL。
-                    // 仅当追踪已开启时 daemon 才会有该 session；探测失败则字段为 None，零副作用。
-                    let (agent_kind, agent_session_id, agent_pid) = detect_caller_agent();
+                    // 顺带探测调用方 Agent 身份（生命周期追踪 spec D21）：仅 env 读取（家族 + 会话 ID，零 ps）。
+                    // 方案5(b)：进程树 walk（数十 ms 的 ps 游走）移到 daemon 异步进行——这里只带 CLI 自身 pid。
+                    let (agent_kind, agent_session_id) = detect_caller_agent();
                     crate::perf::mark(&perf_id, "cli.detect_done");
                     let task = crate::ipc::TaskRequest {
                         message,
@@ -257,7 +257,8 @@ pub fn dispatch() {
                         output_format: parsed.output_format,
                         agent_kind,
                         agent_session_id,
-                        agent_pid,
+                        agent_pid: None,
+                        caller_pid: std::process::id(),
                         from_mcp: from_mcp_env(),
                         perf_id,
                         perf_autodismiss: crate::perf::autodismiss(),
@@ -284,26 +285,17 @@ pub fn dispatch() {
     }
 }
 
-/// 探测发起 `AskHuman` 调用的 Agent 身份（家族 / 会话 ID / pid）。
-/// 三者尽力而为：任一拿不到即为 None（daemon 据 session_id 刷新对应 session 的活动 + TTL）。
+/// 探测发起 `AskHuman` 调用的 Agent 身份的**快速部分**（家族 + 会话 ID，仅读 env，零 ps）。
+/// 方案5(b)：进程树 walk（拿 agent pid，数十 ms 的 ps 游走）不在此做——改由 daemon 从 `caller_pid`
+/// 异步进行（含 env 判不出家族的 **MCP 兜底**：daemon walk_any_agent）。env 判不出则两者皆 None。
 #[cfg(unix)]
-fn detect_caller_agent() -> (Option<String>, Option<String>, Option<u32>) {
+fn detect_caller_agent() -> (Option<String>, Option<String>) {
     use crate::agents::detect;
-    // 首选按 env 判定（shell 工具子进程能拿到家族 + 会话 ID）。
     if let Some(kind) = detect::detect_running_agent() {
         let sid = detect::session_id_from_env(kind);
-        let pid = detect::walk_agent_pid_from_self(kind);
-        return (Some(kind.as_str().to_string()), sid, pid);
+        return (Some(kind.as_str().to_string()), sid);
     }
-    // 兜底：env 判不出（典型为 **MCP 模式**——agent 启动 STDIO MCP server 时 `env_clear()`，本子进程
-    // 看不到任何 agent 变量），但进程树仍可定位 agent 祖先 → 拿到 `(kind, pid)`（**无 session_id**）。
-    // 仅 MCP 来源启用，避免影响普通无 agent 的 CLI 调用。daemon 据此按 pid 匹配已存在 session 刷新。
-    if from_mcp_env() {
-        if let Some((kind, pid)) = detect::walk_any_agent_from_self() {
-            return (Some(kind.as_str().to_string()), None, Some(pid));
-        }
-    }
-    (None, None, None)
+    (None, None)
 }
 
 /// 是否经 MCP 模式发起（`AskHuman mcp` spawn 子进程时设 env `ASKHUMAN_FROM_MCP`）。

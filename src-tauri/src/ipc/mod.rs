@@ -107,9 +107,14 @@ pub struct TaskRequest {
     /// 调用方 Agent 会话 ID（从 env 取，见 spec D21）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session_id: Option<String>,
-    /// 调用方 Agent 进程 pid（walk 进程树得到，可空）。
+    /// 调用方 Agent 进程 pid（可空）。方案5(b) 起 CLI 不再同步 walk → 恒 None；改由 daemon accept 后
+    /// 从 `caller_pid` 异步 walk 得到，再经 `AgentResolved` 后推弹窗（旧字段保留以兼容旧 CLI）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_pid: Option<u32>,
+    /// 调用方（CLI 自身）进程 pid。方案5(b)：daemon 据此**异步**向上 walk 进程树定位 agent 进程，
+    /// 把 ps 游走开销移出 CLI 关键路径（CLI 请求存续期保持连接，进程树仍在）。旧 CLI 不带 → 0（daemon 跳过 walk）。
+    #[serde(default)]
+    pub caller_pid: u32,
     /// 该 ask 是否经 MCP 模式发起（`AskHuman mcp` spawn 的子进程，由 env `ASKHUMAN_FROM_MCP` 置位）。
     /// MCP server 长驻整个 session，其继承的 `agent_session_id` 可能过期，故 daemon 对带此标记的请求
     /// 一律「**只刷新已存在的 session、绝不新建**」，避免在「自动激活」开启时按过期 id 造出幽灵会话。
@@ -281,6 +286,15 @@ pub enum ServerMsg {
         available: bool,
         latest_version: String,
         pending: bool,
+    },
+    /// 调用方 agent 信息异步解析完成（D→GUI，方案5/b）：daemon 从 `caller_pid` walk 出 agent 家族 / pid 后
+    /// 后推弹窗，使顶栏 badge「后到补全 / 升级为可聚焦终端」。家族在 env 探到时随 Show 即给（这里可能与之
+    /// 一致或为 MCP 兜底新探到的），`pid` 供「聚焦终端」。
+    AgentResolved {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pid: Option<u32>,
     },
     /// Agent 注册表全量快照（D→状态窗口订阅者，spec D20）。变化时推 + 周期心跳推。
     /// `agents` 为记录数组，前端按类型分组、按状态排序渲染。

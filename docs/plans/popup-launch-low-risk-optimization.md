@@ -69,3 +69,6 @@
 
 ## 不在本轮（留待后续，见 spec §4/§5/§6）
 方案6 预热复用（大头、架构级）、方案5 detect 移 daemon、方案4 attach 省钥匙串、方案8 延后 show/骨架屏。
+
+> 更新（2026-06）：**方案3/4/5 已在次轮实现**，见 `docs/plans/popup-launch-daemon-optimization.md`。
+> 仅余方案6（架构级、远期）、方案8、markdown-it 按需懒加载未做。

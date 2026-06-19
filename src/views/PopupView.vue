@@ -26,6 +26,7 @@ import {
   updateGetNotes,
   focusAgentTerminal,
   popupAgentTerminal,
+  popupAgentResolved,
 } from "../lib/ipc";
 import { isFocusableTerminal } from "../lib/terminals";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
@@ -289,6 +290,7 @@ let unlistenSettings: UnlistenFn | null = null;
 let unlistenUpdate: UnlistenFn | null = null;
 let unlistenCloseReq: UnlistenFn | null = null;
 let unlistenFlash: UnlistenFn | null = null;
+let unlistenAgent: UnlistenFn | null = null;
 
 function triggerFlash() {
   // 重启动画：先关再于下一帧开，确保连续点击也能重新触发。
@@ -1076,14 +1078,41 @@ async function initAfterPaint(init: PopupInit) {
   unlistenFlash = await listen("popup-flash", () => {
     triggerFlash();
   });
-  // 终端类型探测要跑进程链 ps（数十毫秒），故渲染后再异步解析——拿到后 agent badge 才升级成
-  // 「可点 + ↗」（先显示纯文字 badge，不阻塞首屏）。
+  // 调用方 agent 信息（家族 + pid）由 daemon 从 caller_pid **异步** walk 得到（方案5/b），经
+  // `agent-resolved` 后推：先 pull 初值（规避事件早于监听的竞态），再监听实时升级。拿到 pid 才把 badge
+  // 升级成「可点 + ↗」（终端类型探测仍要跑进程链 ps，故也在此渲染后异步进行）。旧 daemon 可能随
+  // popup_init 直接带 pid → 一并处理。
   if (init.agentPid != null) {
-    popupAgentTerminal()
-      .then((kind) => {
-        agentTerminal.value = kind ?? null;
-      })
-      .catch(() => {});
+    void applyAgentResolved(init.agentKind, init.agentPid);
+  }
+  unlistenAgent = await listen<{ kind?: string | null; pid?: number | null }>(
+    "agent-resolved",
+    (e) => {
+      void applyAgentResolved(e.payload.kind, e.payload.pid);
+    },
+  );
+  try {
+    const r = await popupAgentResolved();
+    if (r.kind || r.pid != null) void applyAgentResolved(r.kind, r.pid);
+  } catch {
+    /* 无 daemon / 单进程回退：忽略 */
+  }
+}
+
+/// 应用 daemon 异步解析出的 agent 信息：补全家族 badge 文案，并据 pid 解析所在终端把 badge 升级成
+/// 「可点 + ↗」。幂等：pull 初值与事件可能各触发一次，重复设值无副作用。
+async function applyAgentResolved(
+  kind: string | null | undefined,
+  pid: number | null | undefined
+) {
+  if (kind && !agentKind.value) agentKind.value = kind;
+  if (pid != null) {
+    agentPid.value = pid;
+    try {
+      agentTerminal.value = (await popupAgentTerminal(pid)) ?? null;
+    } catch {
+      /* 探测失败：保持纯文字 badge */
+    }
   }
 }
 
@@ -1098,6 +1127,7 @@ onBeforeUnmount(() => {
   unlistenUpdate?.();
   unlistenCloseReq?.();
   unlistenFlash?.();
+  unlistenAgent?.();
   if (flashTimer) window.clearTimeout(flashTimer);
   stopListening();
   unlistenSpeech.forEach((fn) => fn());

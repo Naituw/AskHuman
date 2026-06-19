@@ -654,6 +654,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::commands::popup_init,
             crate::commands::perf_mark,
             crate::commands::popup_agent_terminal,
+            crate::commands::popup_agent_resolved,
             crate::commands::submit_popup,
             crate::commands::cancel_popup,
             crate::commands::open_path,
@@ -898,6 +899,18 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                                             };
                                             crate::commands::set_pushed_update(payload.clone());
                                             let _ = app_handle.emit("update-state", payload);
+                                        }
+                                        // 调用方 agent 异步解析结果（D→GUI，方案5/b）：缓存进程内 + emit
+                                        // 给弹窗前端（弹窗挂载先 pull `popup_agent_resolved` 取初值，再靠
+                                        // 此事件实时升级 badge / 「聚焦终端」）。
+                                        Ok(Some(crate::ipc::ServerMsg::AgentResolved {
+                                            kind,
+                                            pid,
+                                        })) => {
+                                            use tauri::Emitter;
+                                            let payload = crate::commands::PushedAgent { kind, pid };
+                                            crate::commands::set_pushed_agent(payload.clone());
+                                            let _ = app_handle.emit("agent-resolved", payload);
                                         }
                                         // 托盘「待答」子菜单点击：聚焦本弹窗并通知前端闪烁边框。
                                         Ok(Some(crate::ipc::ServerMsg::FocusPopup { .. })) => {
