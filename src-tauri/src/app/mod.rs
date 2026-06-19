@@ -157,6 +157,8 @@ pub(crate) fn finalize_popup_show(app: &tauri::AppHandle) {
     crate::commands::apply_theme_to_windows(app, &crate::commands::theme_str(config.general.theme));
     #[cfg(target_os = "macos")]
     {
+        // 方案6：领用上屏 → 切回 Regular，让弹窗入坞（待命期为 accessory，不占 Dock/Cmd-Tab）。
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
         if let Ok(ns) = win.ns_window() {
             crate::macos_window_anim::set_appear_animation(
                 ns,
@@ -906,6 +908,12 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             let _ = (app, event);
         })
         .setup(move |app| {
+            // 方案6：预热弹窗待命期不该入坞——尽早设 accessory（在设 Dock 图标 / 建窗前），避免常驻 Dock 图标。
+            // 领用上屏时 `finalize_popup_show` 再切回 Regular，使弹窗像冷路径一样入坞。
+            #[cfg(target_os = "macos")]
+            if warm {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
             // 裸二进制运行时 Dock 不会用 bundle 图标；运行时显式覆盖（仅影响本进程）。
             #[cfg(target_os = "macos")]
             crate::macos_dock_icon::set_dock_icon();
