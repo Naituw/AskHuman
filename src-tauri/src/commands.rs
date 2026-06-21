@@ -479,17 +479,31 @@ fn route_open_window(
     });
 }
 
+/// 解析弹窗当前生效的项目 key：方案6 预热弹窗领用后项目在 `WarmPopup.show`（其 `AppState.project`
+/// 恒为空串），冷 / 单进程弹窗在 `AppState.project`。与 `popup_init` 的取值口径保持一致，避免历史窗口
+/// 默认过滤到空（未知）项目而看不到最近历史。
+#[cfg(unix)]
+fn effective_popup_project(app: &AppHandle, state: &State<AppState>) -> String {
+    if let Some(w) = app.try_state::<crate::app::WarmPopup>() {
+        if let Some(project) = w
+            .show
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.project.clone()))
+        {
+            return project;
+        }
+    }
+    state.project.clone()
+}
+
 /// 从弹窗导航栏打开独立历史窗口：路由到统一宿主（全局单窗），默认过滤到弹窗所属项目。
 #[tauri::command]
 pub fn open_history(app: AppHandle, state: State<AppState>) -> Result<(), String> {
     #[cfg(unix)]
     {
-        route_open_window(
-            app,
-            crate::gui_host::WindowKind::History,
-            false,
-            Some(state.project.clone()),
-        );
+        let project = effective_popup_project(&app, &state);
+        route_open_window(app, crate::gui_host::WindowKind::History, false, Some(project));
         Ok(())
     }
     #[cfg(not(unix))]
