@@ -19,7 +19,7 @@ pub fn cli_reference() -> String {
 - When asking through `{program}`, provide predefined options whenever applicable, mark your recommended option(s) with `-o!`, and briefly explain your rationale.
 - I can ONLY see what is delivered through `{program}`. Anything I need to review , or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through `{program}`, inline or attached with `-f`. Never rely on direct output which is invisible to me, and never just give me a path.
 - Before completing the turn/request, you MUST call `{program}` to request feedback.
-- Do NOT end the turn/conversation or mark the request as complete unless you have explicitly asked via `{program}` and received confirmation that the task can be completed or ended.
+- Do NOT end the turn/conversation or mark the request as complete unless you have explicitly asked via `{program}` and received confirmation that the task can be completed or ended, and that there are no more tasks to do.
 </mandatory_interaction_protocol>
 
 - Interview me with `{program}` relentlessly about every aspect of the requirements until we reach a shared understanding.
@@ -49,7 +49,7 @@ pub fn mcp_reference() -> String {
 - When asking through the AskHuman `ask` tool, provide predefined options whenever applicable, mark your recommended option(s) as recommended, and briefly explain your rationale.
 - I can ONLY see what is delivered through the AskHuman `ask` tool. Anything I need to review, or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through the AskHuman `ask` tool, inline or attached as files. Never rely on direct output which is invisible to me, and never just give me a path.
 - Before completing the turn/request, you MUST call the AskHuman `ask` tool to request feedback.
-- Do NOT end the turn/conversation or mark the request as complete unless you have explicitly asked via the AskHuman `ask` tool and received confirmation that the task can be completed or ended.
+- Do NOT end the turn/conversation or mark the request as complete unless you have explicitly asked via the AskHuman `ask` tool and received confirmation that the task can be completed or ended, and that there are no more tasks to do.
 </mandatory_interaction_protocol>
 
 - Interview me with the AskHuman `ask` tool relentlessly about every aspect of the requirements until we reach a shared understanding.
