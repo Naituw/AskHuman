@@ -817,6 +817,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::commands::agent_mode_status,
             crate::commands::agent_mode_set,
             crate::commands::agent_mode_update,
+            crate::commands::agent_mode_update_artifact,
             crate::commands::mcp_config_reveal,
             crate::commands::mcp_config_open,
             crate::commands::mcp_command_path,

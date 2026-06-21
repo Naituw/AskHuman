@@ -1016,8 +1016,12 @@ use crate::integrations::{agent_mode, mcp_config};
 pub struct AgentModeStatus {
     /// 当前模式："none" | "cli" | "mcp"。
     mode: String,
-    /// 当前模式下是否有产物过期 / 缺失。
+    /// 当前模式下是否有产物过期 / 缺失（= 下面三个 per-artifact 标志的或）。
     needs_update: bool,
+    /// 当前模式下 Rule / 超时 Hook / MCP 配置各自是否过期或缺失（驱动单项更新按钮 + 概览统计）。
+    rule_needs_update: bool,
+    hook_needs_update: bool,
+    mcp_needs_update: bool,
     /// Rule 文件展示路径（home 折叠为 ~）。
     rule_path: String,
     rule_installed: bool,
@@ -1032,9 +1036,13 @@ pub struct AgentModeStatus {
 #[tauri::command]
 pub fn agent_mode_status(agent: String) -> Result<AgentModeStatus, String> {
     let a = parse_agent(&agent)?;
+    let updates = agent_mode::artifact_updates(a);
     Ok(AgentModeStatus {
         mode: agent_mode::current(a).as_str().to_string(),
-        needs_update: agent_mode::needs_update(a),
+        needs_update: updates.rule || updates.hook || updates.mcp,
+        rule_needs_update: updates.rule,
+        hook_needs_update: updates.hook,
+        mcp_needs_update: updates.mcp,
         rule_path: agent_rules::display_path(a),
         rule_installed: agent_rules::is_installed(a),
         timeout_hook_supported: agent_mode::timeout_hook_supported(a),
@@ -1058,6 +1066,16 @@ pub fn agent_mode_set(agent: String, mode: String) -> Result<(), String> {
 pub fn agent_mode_update(agent: String) -> Result<(), String> {
     let a = parse_agent(&agent)?;
     agent_mode::update(a).map_err(|e| e.to_string())
+}
+
+/// 把当前模式下的单个产物（"rule" | "hook" | "mcp"）刷新到最新（不切换模式、不动其它产物）。
+#[tauri::command]
+pub fn agent_mode_update_artifact(agent: String, artifact: String) -> Result<(), String> {
+    let a = parse_agent(&agent)?;
+    let art = agent_mode::Artifact::parse(&artifact).ok_or_else(|| {
+        crate::i18n::tr(crate::i18n::Lang::current(), "cmd.unknownArtifact").to_string()
+    })?;
+    agent_mode::update_artifact(a, art).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

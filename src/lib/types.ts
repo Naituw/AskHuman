@@ -335,6 +335,9 @@ export type AgentMode = "none" | "cli" | "mcp";
 export interface AgentModeStatus {
   mode: AgentMode;
   needsUpdate: boolean;
+  ruleNeedsUpdate: boolean;
+  hookNeedsUpdate: boolean;
+  mcpNeedsUpdate: boolean;
   rulePath: string;
   ruleInstalled: boolean;
   timeoutHookSupported: boolean;

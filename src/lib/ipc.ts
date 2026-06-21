@@ -183,6 +183,11 @@ export const agentModeSet = (agent: AgentId, mode: AgentMode) =>
 export const agentModeUpdate = (agent: AgentId) =>
   invoke<void>("agent_mode_update", { agent });
 
+export const agentModeUpdateArtifact = (
+  agent: AgentId,
+  artifact: "rule" | "hook" | "mcp",
+) => invoke<void>("agent_mode_update_artifact", { agent, artifact });
+
 export const mcpConfigReveal = (agent: AgentId) =>
   invoke<void>("mcp_config_reveal", { agent });
 

@@ -168,6 +168,8 @@ export default {
       notInstalled: "未安装",
       install: "安装",
       update: "更新",
+      updateAll: "全部更新",
+      updatesAvailable: "有可用更新",
       uninstall: "移除",
       windowsUnsupported: "Windows 暂不支持该 Hook",
       modeCli: "CLI",

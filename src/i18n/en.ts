@@ -174,6 +174,8 @@ export default {
       notInstalled: "Not installed",
       install: "Install",
       update: "Update",
+      updateAll: "Update all",
+      updatesAvailable: "Updates available",
       uninstall: "Remove",
       windowsUnsupported: "This hook is not supported on Windows",
       modeCli: "CLI",

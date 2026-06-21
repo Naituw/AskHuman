@@ -469,6 +469,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "cmd.ruleRemoved" => pick(lang, "Rule removed", "已从规则文件移除"),
         "cmd.unknownAgent" => pick(lang, "Unknown agent", "未知的 Agent"),
         "cmd.unknownMode" => pick(lang, "Unknown mode", "未知的模式"),
+        "cmd.unknownArtifact" => pick(lang, "Unknown artifact", "未知的产物"),
         "cmd.lifecycleInstalled" => pick(lang, "Lifecycle tracking enabled", "已开启生命周期追踪"),
         "cmd.lifecycleRemoved" => pick(lang, "Lifecycle tracking disabled", "已关闭生命周期追踪"),
         "cmd.mcpConfigInstalled" => pick(lang, "MCP config written", "已写入 MCP 配置"),

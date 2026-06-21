@@ -124,23 +124,57 @@ pub fn current(target: AgentTarget) -> Mode {
     }
 }
 
-/// 当前模式下是否有产物过期 / 缺失（含 Rule 漂移、超时 Hook 缺失/过期、MCP 配置缺失/过期）。
-pub fn needs_update(target: AgentTarget) -> bool {
-    match current(target) {
-        Mode::None => false,
-        Mode::Cli => {
-            !agent_rules::is_installed(target)
-                || agent_rules::needs_update_variant(target, Variant::Cli)
-                || (timeout_hook_supported(target)
-                    && (!timeout_hook_is_installed(target) || timeout_hook_needs_update(target)))
-        }
-        Mode::Mcp => {
-            !agent_rules::is_installed(target)
-                || agent_rules::needs_update_variant(target, Variant::Mcp)
-                || !mcp_config::is_installed(target)
-                || mcp_config::needs_update(target)
+/// 当前模式下的某类产物（供「按产物」过期判断与单项更新）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Artifact {
+    Rule,
+    Hook,
+    Mcp,
+}
+
+impl Artifact {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "rule" => Some(Artifact::Rule),
+            "hook" => Some(Artifact::Hook),
+            "mcp" => Some(Artifact::Mcp),
+            _ => None,
         }
     }
+}
+
+/// 当前模式下各产物是否过期 / 缺失（与 [`needs_update`] 同口径，逐产物拆开供 UI 概览统计与单项更新）。
+#[derive(Clone, Copy, Default, Debug)]
+pub struct ArtifactUpdates {
+    pub rule: bool,
+    pub hook: bool,
+    pub mcp: bool,
+}
+
+/// 逐产物计算当前模式下的过期 / 缺失情况。None 模式无产物，全 false。
+pub fn artifact_updates(target: AgentTarget) -> ArtifactUpdates {
+    match current(target) {
+        Mode::None => ArtifactUpdates::default(),
+        Mode::Cli => ArtifactUpdates {
+            rule: !agent_rules::is_installed(target)
+                || agent_rules::needs_update_variant(target, Variant::Cli),
+            hook: timeout_hook_supported(target)
+                && (!timeout_hook_is_installed(target) || timeout_hook_needs_update(target)),
+            mcp: false,
+        },
+        Mode::Mcp => ArtifactUpdates {
+            rule: !agent_rules::is_installed(target)
+                || agent_rules::needs_update_variant(target, Variant::Mcp),
+            hook: false,
+            mcp: !mcp_config::is_installed(target) || mcp_config::needs_update(target),
+        },
+    }
+}
+
+/// 当前模式下是否有产物过期 / 缺失（含 Rule 漂移、超时 Hook 缺失/过期、MCP 配置缺失/过期）。
+pub fn needs_update(target: AgentTarget) -> bool {
+    let u = artifact_updates(target);
+    u.rule || u.hook || u.mcp
 }
 
 // MARK: - 切换
@@ -176,6 +210,28 @@ pub fn update(target: AgentTarget) -> Result<()> {
         Mode::None => Ok(()),
         Mode::Cli => set(target, Mode::Cli),
         Mode::Mcp => set(target, Mode::Mcp),
+    }
+}
+
+/// 把当前模式下的**单个产物**刷新到最新（不切换模式、不动其它产物）。各底层 install 均幂等，
+/// 故「重装即更新」；与当前模式不相干的产物（如 None、或在 Cli 模式更新 Mcp）为 no-op。
+pub fn update_artifact(target: AgentTarget, artifact: Artifact) -> Result<()> {
+    match (current(target), artifact) {
+        (Mode::Cli, Artifact::Rule) => {
+            agent_rules::install_variant(target, Variant::Cli).map(|_| ())
+        }
+        (Mode::Mcp, Artifact::Rule) => {
+            agent_rules::install_variant(target, Variant::Mcp).map(|_| ())
+        }
+        (Mode::Cli, Artifact::Hook) => {
+            if timeout_hook_supported(target) {
+                timeout_hook_install(target).map(|_| ())
+            } else {
+                Ok(())
+            }
+        }
+        (Mode::Mcp, Artifact::Mcp) => mcp_config::install(target).map(|_| ()),
+        _ => Ok(()),
     }
 }
 

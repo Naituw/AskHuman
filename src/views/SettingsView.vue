@@ -7,6 +7,7 @@ import {
   agentModeStatus,
   agentModeSet,
   agentModeUpdate,
+  agentModeUpdateArtifact,
   agentRuleReveal,
   agentRuleOpen,
   mcpConfigReveal,
@@ -145,6 +146,9 @@ const AGENTS: {
 const emptyMode = (): AgentModeStatus => ({
   mode: "none",
   needsUpdate: false,
+  ruleNeedsUpdate: false,
+  hookNeedsUpdate: false,
+  mcpNeedsUpdate: false,
   rulePath: "",
   ruleInstalled: false,
   timeoutHookSupported: false,
@@ -194,12 +198,13 @@ async function setMode(agent: AgentId, mode: AgentMode) {
   }
 }
 
-// 把当前模式的全部产物刷新到最新（不切换模式）。
-async function updateMode(agent: AgentId) {
+// 单项更新：只把某个产物（rule / hook / mcp）刷新到最新。
+async function updateArtifact(agent: AgentId, artifact: "rule" | "hook" | "mcp") {
+  if (modeBusy.value[agent]) return;
   modeBusy.value[agent] = true;
   modeMessage.value[agent] = null;
   try {
-    await agentModeUpdate(agent);
+    await agentModeUpdateArtifact(agent, artifact);
     modeError.value[agent] = false;
   } catch (e) {
     modeMessage.value[agent] = String(e);
@@ -207,6 +212,43 @@ async function updateMode(agent: AgentId) {
   } finally {
     modeBusy.value[agent] = false;
     await refreshMode(agent);
+  }
+}
+
+// 跨所有 Agent 的「待更新」概览统计：分别数出有多少家 Rule / Hook / MCP 配置过期或缺失。
+const updateSummary = computed(() => {
+  let rule = 0;
+  let hook = 0;
+  let mcp = 0;
+  for (const a of AGENTS) {
+    const m = modes.value[a.id];
+    if (m.ruleNeedsUpdate) rule++;
+    if (m.hookNeedsUpdate) hook++;
+    if (m.mcpNeedsUpdate) mcp++;
+  }
+  return { rule, hook, mcp, total: rule + hook + mcp };
+});
+
+const updateAllBusy = ref(false);
+
+// 一键更新所有 Agent 的过期产物（逐家调用整模式更新，幂等）。
+async function updateAll() {
+  if (updateAllBusy.value) return;
+  updateAllBusy.value = true;
+  try {
+    for (const a of AGENTS) {
+      if (!modes.value[a.id].needsUpdate) continue;
+      try {
+        await agentModeUpdate(a.id);
+        modeError.value[a.id] = false;
+      } catch (e) {
+        modeMessage.value[a.id] = String(e);
+        modeError.value[a.id] = true;
+      }
+      await refreshMode(a.id);
+    }
+  } finally {
+    updateAllBusy.value = false;
   }
 }
 
@@ -1031,7 +1073,12 @@ onBeforeUnmount(() => unlistenProgress?.());
         @mousedown="onTabDown"
         @click="onTabClick('integration', $event)"
       >
-        {{ t("settings.tabs.integration") }}
+        {{ t("settings.tabs.integration")
+        }}<span
+          v-if="updateSummary.total > 0"
+          class="tab-update-dot"
+          :title="t('settings.integration.updatesAvailable')"
+        ></span>
       </button>
       <button
         data-tauri-drag-region
@@ -1648,6 +1695,48 @@ onBeforeUnmount(() => unlistenProgress?.());
 
         <!-- 自动集成：每个 Agent 一张卡，CLI | MCP | 未集成 三态切换 -->
         <p class="section-title">{{ t("settings.integration.autoTitle") }}</p>
+
+        <!-- 待更新总览（跨所有 Agent）：有任意产物过期/缺失时出现，附「全部更新」按钮 -->
+        <div v-if="updateSummary.total > 0" class="card update-overview">
+          <div class="row">
+            <span class="dot-update"></span>
+            <div class="overview-text">
+              <p class="overview-title">
+                {{ t("settings.integration.updatesAvailable") }}
+              </p>
+              <p class="overview-counts">
+                <template v-if="updateSummary.rule > 0"
+                  >{{ t("settings.integration.rulesLabel") }} ×{{
+                    updateSummary.rule
+                  }}</template
+                ><template v-if="updateSummary.hook > 0"
+                  ><span v-if="updateSummary.rule > 0" class="sep">·</span
+                  >{{ t("settings.integration.hookLabel") }} ×{{
+                    updateSummary.hook
+                  }}</template
+                ><template v-if="updateSummary.mcp > 0"
+                  ><span
+                    v-if="updateSummary.rule > 0 || updateSummary.hook > 0"
+                    class="sep"
+                    >·</span
+                  >{{ t("settings.integration.mcpConfigLabel") }} ×{{
+                    updateSummary.mcp
+                  }}</template
+                >
+              </p>
+            </div>
+            <span class="spacer"></span>
+            <button
+              class="btn btn-update"
+              type="button"
+              :disabled="updateAllBusy"
+              @click="updateAll"
+            >
+              {{ t("settings.integration.updateAll") }}
+            </button>
+          </div>
+        </div>
+
         <div v-for="a in AGENTS" :key="a.id" class="card agent-card">
           <div class="row agent-row">
             <p class="card-title">{{ a.title }}</p>
@@ -1707,6 +1796,16 @@ onBeforeUnmount(() => unlistenProgress?.());
                 }}
               </span>
               <span class="spacer"></span>
+              <button
+                v-if="modes[a.id].ruleNeedsUpdate"
+                class="btn btn-update"
+                type="button"
+                :disabled="modeBusy[a.id]"
+                @click="updateArtifact(a.id, 'rule')"
+              >
+                <span class="dot-update"></span
+                >{{ t("settings.integration.update") }}
+              </button>
               <div v-if="modes[a.id].ruleInstalled" class="menu-wrap">
                 <button
                   class="btn"
@@ -1760,6 +1859,16 @@ onBeforeUnmount(() => unlistenProgress?.());
                     }}
                   </span>
                   <span class="spacer"></span>
+                  <button
+                    v-if="modes[a.id].hookNeedsUpdate"
+                    class="btn btn-update"
+                    type="button"
+                    :disabled="modeBusy[a.id]"
+                    @click="updateArtifact(a.id, 'hook')"
+                  >
+                    <span class="dot-update"></span
+                    >{{ t("settings.integration.update") }}
+                  </button>
                   <div v-if="modes[a.id].timeoutHookInstalled" class="menu-wrap">
                     <button
                       class="btn"
@@ -1820,6 +1929,16 @@ onBeforeUnmount(() => unlistenProgress?.());
                   }}
                 </span>
                 <span class="spacer"></span>
+                <button
+                  v-if="modes[a.id].mcpNeedsUpdate"
+                  class="btn btn-update"
+                  type="button"
+                  :disabled="modeBusy[a.id]"
+                  @click="updateArtifact(a.id, 'mcp')"
+                >
+                  <span class="dot-update"></span
+                  >{{ t("settings.integration.update") }}
+                </button>
                 <div v-if="modes[a.id].mcpConfigInstalled" class="menu-wrap">
                   <button
                     class="btn"
@@ -1854,19 +1973,6 @@ onBeforeUnmount(() => unlistenProgress?.());
               </p>
             </template>
 
-            <!-- 更新（产物落后于最新版本时） -->
-            <div v-if="modes[a.id].needsUpdate" class="row agent-row">
-              <span class="spacer"></span>
-              <button
-                class="btn btn-update"
-                type="button"
-                :disabled="modeBusy[a.id]"
-                @click="updateMode(a.id)"
-              >
-                <span class="dot-update"></span
-                >{{ t("settings.integration.update") }}
-              </button>
-            </div>
           </template>
 
           <p
@@ -2638,6 +2744,53 @@ onBeforeUnmount(() => unlistenProgress?.());
   width: 7px;
   height: 7px;
   margin-right: 5px;
+  border-radius: 50%;
+  background: var(--accent-orange);
+}
+
+/* 待更新总览卡（自动集成标题下）：橙点 + 文案 + 「全部更新」 */
+.update-overview {
+  border-color: color-mix(in srgb, var(--accent-orange) 45%, var(--border));
+}
+.update-overview .row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.update-overview .dot-update {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-orange);
+}
+.overview-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.overview-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.overview-counts {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+}
+.overview-counts .sep {
+  margin: 0 6px;
+  opacity: 0.6;
+}
+/* Agents Tab 待更新提示点（沿用更新色，与单项更新点一致） */
+.tab-update-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 5px;
+  vertical-align: middle;
   border-radius: 50%;
   background: var(--accent-orange);
 }
