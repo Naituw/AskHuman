@@ -277,6 +277,60 @@
   background: none;
   font-size: 12.5px;
 }
+/* Fenced/indented code block wrapper hosting a hover copy button (top-right).
+   Generic (not scoped to .markdown-body) so it also applies to other markdown
+   containers such as the settings release-notes view. */
+.code-block {
+  position: relative;
+  margin: 10px 0;
+}
+.code-block pre {
+  margin: 0;
+}
+.code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.code-block:hover .code-copy,
+.code-copy:focus-visible {
+  opacity: 1;
+}
+.code-copy:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-elevated));
+}
+.code-copy.copied {
+  opacity: 1;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.code-copy .cc-ico {
+  width: 13px;
+  height: 13px;
+}
+.code-copy .cc-check {
+  display: none;
+}
+.code-copy.copied .cc-copy {
+  display: none;
+}
+.code-copy.copied .cc-check {
+  display: inline;
+}
 .markdown-body blockquote {
   margin: 10px 0;
   padding: 2px 12px;

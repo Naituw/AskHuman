@@ -10,7 +10,7 @@ import {
 import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
-import { renderMarkdown } from "../lib/markdown";
+import { renderMarkdown, handleCodeCopyClick } from "../lib/markdown";
 import {
   closePreview,
   fileIconDataUrl,
@@ -27,8 +27,16 @@ const { t, locale } = useI18n();
 const isMulti = computed(() => props.entry.questions.length > 1);
 const isCancel = computed(() => props.entry.action === "cancel");
 
+// Localized labels for the markdown code-block copy button (reactive to locale).
+const codeCopyLabels = computed(() => ({
+  copyLabel: t("common.copyCode"),
+  copiedLabel: t("common.copied"),
+}));
+
 const messageHtml = computed(() =>
-  props.entry.isMarkdown ? renderMarkdown(props.entry.message.text) : ""
+  props.entry.isMarkdown
+    ? renderMarkdown(props.entry.message.text, codeCopyLabels.value)
+    : ""
 );
 const showMessage = computed(
   () =>
@@ -146,7 +154,9 @@ function isAnswerEmpty(a: HistoryAnswer | null): boolean {
 }
 
 function questionHtml(message: string): string {
-  return props.entry.isMarkdown ? renderMarkdown(message) : "";
+  return props.entry.isMarkdown
+    ? renderMarkdown(message, codeCopyLabels.value)
+    : "";
 }
 
 function fileName(path: string): string {
@@ -154,6 +164,7 @@ function fileName(path: string): string {
 }
 
 function onContentClick(e: MouseEvent) {
+  if (handleCodeCopyClick(e)) return;
   const anchor = (e.target as HTMLElement | null)?.closest?.("a") as
     | HTMLAnchorElement
     | null;

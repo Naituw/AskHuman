@@ -4,6 +4,8 @@ export default {
     cancel: "取消",
     submit: "提交",
     test: "测试",
+    copyCode: "复制代码",
+    copied: "已复制",
   },
   popup: {
     loading: "加载中…",

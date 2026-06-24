@@ -58,7 +58,8 @@ AskHuman/
     components/HistoryDetail.vue 只读还原一条历史（状态横幅 + 消息/附件 + 每题选项高亮/文本/图片/文件，best-effort）
     lib/ipc.ts               invoke 封装（与后端命令一一对应）
     lib/types.ts             与 Rust 模型对齐的 TS 类型
-    lib/markdown.ts          markdown-it 渲染
+    lib/markdown.ts          markdown-it 渲染（fence/code_block 包 `.code-block` + hover 拷贝按钮 `.code-copy`，
+                             labels 经 env 本地化；`handleCodeCopyClick` 委托复制；样式在 controls.css 全局）
     lib/theme.ts             applyTheme（切类）/ fileToDataUrl
     styles/{tokens,base,controls}.css   设计 token / 重置+Markdown / 控件
 
@@ -263,7 +264,7 @@ AskHuman/
 
 - 主题三态：`system`(prefers-color-scheme)/`light`/`dark`；前端切根类 + 后端设原生窗口主题。
 - macOS：`underWindowBackground` 毛玻璃 + `TitleBarStyle::Overlay` + 隐藏标题（整窗含标题栏皆玻璃），叠 0.2 色罩；Windows/Linux 退化为纯色不透明底。
-- Markdown 配色见 `styles/controls.css`（链接/代码块/表头/引用/hr 等）。
+- Markdown 配色见 `styles/controls.css`（链接/代码块/表头/引用/hr 等）。代码块 hover 右上角有拷贝按钮（`.code-copy`，点击复制 `<code>` 文本，弹窗/历史详情/设置发布说明共用 `renderMarkdown` 故都生效）。
 
 ## 配置
 

@@ -33,7 +33,7 @@ import { isFocusableTerminal } from "../lib/terminals";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import { formatShortcut, matchShortcut } from "../lib/shortcut";
 import { applyLanguage } from "../i18n";
-import { renderMarkdown } from "../lib/markdown";
+import { renderMarkdown, handleCodeCopyClick } from "../lib/markdown";
 import { applyTheme, fileToDataUrl } from "../lib/theme";
 import { mark as perfMarkFe, enable as perfEnableFe } from "../lib/perf";
 import type {
@@ -47,6 +47,13 @@ import type {
 } from "../lib/types";
 
 const { t } = useI18n();
+
+// Localized labels for the markdown code-block copy button. Referencing t()
+// inside a computed keeps the rendered markdown reactive to language changes.
+const codeCopyLabels = computed(() => ({
+  copyLabel: t("common.copyCode"),
+  copiedLabel: t("common.copied"),
+}));
 
 const request = ref<AskRequest | null>(null);
 const loadError = ref<string | null>(null);
@@ -66,7 +73,9 @@ async function toggleUpdatePopover() {
   if (updatePopoverOpen.value && !updateNotesHtml.value) {
     try {
       const notes = await updateGetNotes(false);
-      updateNotesHtml.value = notes.trim() ? renderMarkdown(notes) : "";
+      updateNotesHtml.value = notes.trim()
+        ? renderMarkdown(notes, codeCopyLabels.value)
+        : "";
     } catch {
       updateNotesHtml.value = "";
     }
@@ -202,7 +211,9 @@ const currentQuestion = computed<Question | null>(
 // 共享 Message（描述 + 附件）。无 -q 时 text 为空（第一个参数已提升为问题）。
 const messageText = computed(() => request.value?.message.text ?? "");
 const messageHtml = computed(() =>
-  request.value?.isMarkdown ? renderMarkdown(messageText.value) : ""
+  request.value?.isMarkdown
+    ? renderMarkdown(messageText.value, codeCopyLabels.value)
+    : ""
 );
 const showDescription = computed(
   () => messageText.value.trim() !== "" || attachments.value.length > 0
@@ -322,6 +333,8 @@ function openFile(file: FileAttachment) {
 
 // 渲染后的 Markdown 里的链接：用系统默认浏览器打开，避免在弹窗 webview 内跳转。
 function onContentClick(e: MouseEvent) {
+  // 代码块的拷贝按钮优先处理（命中即结束，不再走链接逻辑）。
+  if (handleCodeCopyClick(e)) return;
   const anchor = (e.target as HTMLElement | null)?.closest?.("a") as
     | HTMLAnchorElement
     | null;
@@ -459,7 +472,7 @@ function openHistoryWindow() {
 
 const renderedHtml = computed(() =>
   request.value?.isMarkdown && currentQuestion.value
-    ? renderMarkdown(currentQuestion.value.message)
+    ? renderMarkdown(currentQuestion.value.message, codeCopyLabels.value)
     : ""
 );
 

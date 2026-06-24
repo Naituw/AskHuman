@@ -48,7 +48,7 @@ import {
   updateGetVersionNotes,
 } from "../lib/ipc";
 import { applyTheme } from "../lib/theme";
-import { renderMarkdown } from "../lib/markdown";
+import { renderMarkdown, handleCodeCopyClick } from "../lib/markdown";
 import {
   eventToSpec,
   formatShortcut,
@@ -975,7 +975,12 @@ async function toggleCurrentNotes() {
   currentNotesError.value = "";
   try {
     const notes = await updateGetVersionNotes(appVersion.value);
-    currentNotesHtml.value = notes.trim() ? renderMarkdown(notes) : "";
+    currentNotesHtml.value = notes.trim()
+      ? renderMarkdown(notes, {
+          copyLabel: t("common.copyCode"),
+          copiedLabel: t("common.copied"),
+        })
+      : "";
     currentNotesLoaded.value = true;
   } catch (e) {
     currentNotesError.value = updateErrText(e, "notesFailed");
@@ -995,7 +1000,12 @@ async function checkUpdate(manual: boolean) {
     if (info.available) {
       try {
         const notes = await updateGetNotes(true);
-        notesHtml.value = notes.trim() ? renderMarkdown(notes) : "";
+        notesHtml.value = notes.trim()
+          ? renderMarkdown(notes, {
+              copyLabel: t("common.copyCode"),
+              copiedLabel: t("common.copied"),
+            })
+          : "";
       } catch {
         notesHtml.value = "";
       }
@@ -1028,6 +1038,7 @@ function openReleases() {
 
 // 渲染后的更新日志里的链接：用系统默认浏览器打开，避免在设置 webview 内跳转。
 function onNotesClick(e: MouseEvent) {
+  if (handleCodeCopyClick(e)) return;
   const anchor = (e.target as HTMLElement | null)?.closest?.("a") as
     | HTMLAnchorElement
     | null;

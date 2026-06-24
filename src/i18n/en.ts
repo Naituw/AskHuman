@@ -4,6 +4,8 @@ export default {
     cancel: "Cancel",
     submit: "Submit",
     test: "Test",
+    copyCode: "Copy code",
+    copied: "Copied",
   },
   popup: {
     loading: "Loading…",
