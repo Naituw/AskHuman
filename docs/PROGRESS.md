@@ -2,29 +2,6 @@
 
 按具体任务 / 需求记录待办与当前进展。任务 / 需求完成后删除其 section（历史留在 git）。
 
-## 进行中：多问题弹窗改纵向列表（已实现，待人工确认高亮观感）
-
-把多问题（n>1）弹窗从「一次一题 + 上/下一步切换」改为「所有问题纵向平铺」，保留上一个/下一个（语义改为滚动定位）。
-设计/计划：`docs/specs/multi-question-vertical.md`、`docs/plans/multi-question-vertical.md`。仅前端 `src/views/PopupView.vue`（+ 样式）。
-
-已落地：
-- 纵向 `v-for` 平铺所有题（共享 Message/附件/工具条在上方，单题=1 卡片、不淡出不折叠、外观同旧版）。
-- 「当前题(active)」高亮（数轮迭代后定）：每题上方加分割线（`with-divider`，恢复区隔）；当前题 = **柔和底色覆盖**（`.q-card.active::before`，无描边，`--q-active-tint` 控深浅当前 5%，覆盖起点落在分割线下不糊住线）+ **左侧 accent 竖条**（`::after`，更显眼）；hover/点击卡片/聚焦输入/键盘导航均切 active。曾尝试「框」「淡化其他题」均被否决。
-- 覆盖层/竖条对所有卡片常驻、默认透明，靠 opacity 过渡做切题淡入淡出（不生硬）；左右 inset 对称 -12px。
-- 悬停优先（`hovering`）：光标在问题区内时由 hover 决定 active（滚轮滚动光标下的题），暂停滚动 scroll-spy 回写，避免两套来源打架跳动；键盘导航短锁期内忽略滚动引发的 mouseenter。
-- 按住 ⌘/Ctrl → `cmdHeld` 给 `.popup.cmd-held`，高亮当前题选项的 ⌘1–9 角标 + 可用按钮快捷键（淡蓝底+蓝字，弱化版）。
-- 键盘切题（⌘[ / ⌘] / ⌘↵ 到下一题）：若此刻焦点在输入框，则焦点也带到目标题输入框（`goRel` 记录 wasFocused 后 focus）。
-- 滚动定位用**比例阅读线** scroll-spy（`readingLineY`/`activeForScroll`：判定线随 p=scrollTop/maxScroll 从视口顶扫到底，active=该线落在的题）→ 每题都有一段可达滚动区间（修复「内容略超视口时一滑从首题跳末题、中间题选不中」），超长题自适应。
-- 上一个/下一个 + ⌘[ / ⌘] → `scrollQuestionIntoView` 用同一套数学把目标题滚到阅读线落顶处（导航与 scroll-spy 一致、不回写）；⌘↵ 非末题前往下一题、末题提交；⌘1–9 作用于 active 题选项。
-- 「已看到」：每题底部哨兵进视口（IntersectionObserver）或曾被设为 active；最后一题已看到才出现发送按钮（`lastSeen`）。
-- 多问题补充输入框默认真·单行（`.textarea.collapsed` + `rows=1`），聚焦或有内容时展开。
-- 图片归属：拖放按落点命中的卡片（`questionAtPoint`，DPR 换算）；粘贴归 focusedQ ?? active。
-- **实验性开关**（默认关）：`experimental.vertical_questions`（`config.rs` → `PopupInit.vertical_questions` → 前端 `verticalEnabled`）。
-  设置页「实验」Tab 开关；`verticalMode = verticalEnabled && isMulti` 决定渲染哪套：开=纵向平铺（上述全部），
-  关=旧版「一次一题 + 上/下一步左右滑动」（`.question-pane` + `q-slide-*` 过渡 + `qHeaderRef`/`goToSeq`/`onQuestionEntered`/
-  `allViewed` 全部复活）。单题恒走旧版面板（外观同旧版）。
-当前状态：已实现实验开关 + 双模式并存；`pnpm build` + install 通过。待人工确认两套切换无回归。
-
 ## 弹窗启动延迟性能优化（埋点 + harness + 基线 + 首轮 + 次轮 + 方案6 已落地；性能已暂停 → 远期余方案8/markdown-it）
 
 文档：`docs/specs/popup-launch-performance.md`（调用链、等待点、优化方案、度量方法论 §7）。
