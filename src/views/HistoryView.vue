@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { applyTheme } from "../lib/theme";
@@ -25,13 +25,88 @@ const entries = ref<HistoryEntry[]>([]);
 const activeId = ref<string | null>(null);
 const loading = ref(false);
 
+// Keyword search: whitespace-split, AND-matched, case-insensitive.
+const query = ref("");
+
 // Clear confirmation: null | "current" | "all".
 const confirmKind = ref<null | "current" | "all">(null);
 const menuOpen = ref(false);
 
-const activeEntry = computed(
-  () => entries.value.find((e) => e.id === activeId.value) ?? null
+// Lowercased keywords (whitespace-split, empties dropped).
+const keywords = computed(() =>
+  query.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
 );
+
+// Build the searchable haystack for one entry: shared message + each question
+// prompt + selected options + typed replies + attachment / reply file names.
+function haystackOf(e: HistoryEntry): string {
+  const parts: string[] = [];
+  if (e.message.text) parts.push(e.message.text);
+  for (const f of e.message.files) parts.push(f.name);
+  for (const q of e.questions) if (q.message) parts.push(q.message);
+  for (const a of e.answers) {
+    for (const s of a.selectedOptions) parts.push(s);
+    if (a.userInput) parts.push(a.userInput);
+    for (const img of a.images) parts.push(fileName(img));
+    for (const f of a.files) parts.push(fileName(f));
+  }
+  return parts.join("\n").toLowerCase();
+}
+
+// Entries matching every keyword (applied on top of the project filter).
+const filteredEntries = computed(() => {
+  const kws = keywords.value;
+  if (!kws.length) return entries.value;
+  return entries.value.filter((e) => {
+    const hay = haystackOf(e);
+    return kws.every((k) => hay.includes(k));
+  });
+});
+
+const activeEntry = computed(
+  () => filteredEntries.value.find((e) => e.id === activeId.value) ?? null
+);
+
+function fileName(path: string): string {
+  return path.split(/[\\/]/).pop() || path;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!
+  );
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Render a list summary with matched keywords wrapped in <mark>. The text is
+// HTML-escaped first; keywords are escaped the same way so matching stays in
+// sync (and special chars can never break out of the markup).
+function highlightedSummary(e: HistoryEntry): string {
+  const text = summaryOf(e) || t("history.noReply");
+  const esc = escapeHtml(text);
+  const kws = keywords.value;
+  if (!kws.length) return esc;
+  const pattern = kws
+    .map((k) => escapeRegExp(escapeHtml(k)))
+    .sort((a, b) => b.length - a.length)
+    .join("|");
+  try {
+    return esc.replace(new RegExp(`(${pattern})`, "gi"), "<mark>$1</mark>");
+  } catch {
+    return esc;
+  }
+}
+
+// Keep the selection valid as the filtered set changes (typing / reload).
+watch(filteredEntries, (list) => {
+  if (!list.some((e) => e.id === activeId.value)) {
+    activeId.value = list.length ? list[0].id : null;
+  }
+});
 
 interface Opt {
   token: string;
@@ -209,11 +284,30 @@ onBeforeUnmount(() => unlistenUpdated?.());
       </div>
     </header>
 
+    <div class="hist-search">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+      <input
+        v-model="query"
+        type="search"
+        class="search-input"
+        :placeholder="t('history.searchPlaceholder')"
+      />
+      <button
+        v-if="query"
+        type="button"
+        class="search-clear"
+        :title="t('history.searchClear')"
+        @click="query = ''"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+      </button>
+    </div>
+
     <div class="hist-body">
       <!-- Left list -->
-      <ul v-if="entries.length" class="entry-list">
+      <ul v-if="filteredEntries.length" class="entry-list">
         <li
-          v-for="e in entries"
+          v-for="e in filteredEntries"
           :key="e.id"
           class="entry"
           :class="{ active: e.id === activeId }"
@@ -223,9 +317,13 @@ onBeforeUnmount(() => unlistenUpdated?.());
             <span class="badge" :class="e.action">{{ channelName(e.channel) }}</span>
             <span class="entry-time">{{ relativeTime(e.timestampMs) }}</span>
           </div>
-          <div class="entry-summary">{{ summaryOf(e) || t("history.noReply") }}</div>
+          <div class="entry-summary" v-html="highlightedSummary(e)"></div>
         </li>
       </ul>
+      <div v-else-if="keywords.length" class="empty">
+        <p class="empty-title">{{ t("history.searchEmpty") }}</p>
+        <p class="empty-hint">{{ t("history.searchEmptyHint") }}</p>
+      </div>
       <div v-else class="empty">
         <p class="empty-title">{{ t("history.empty") }}</p>
         <p class="empty-hint">{{ t("history.emptyHint") }}</p>
@@ -342,6 +440,63 @@ onBeforeUnmount(() => unlistenUpdated?.());
   opacity: 0.4;
   cursor: default;
 }
+/* Search bar */
+.hist-search {
+  flex: 0 0 auto;
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.search-icon {
+  position: absolute;
+  left: 24px;
+  width: 14px;
+  height: 14px;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+.search-input {
+  flex: 1 1 auto;
+  height: 30px;
+  padding: 0 30px 0 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+.search-input:focus {
+  border-color: var(--accent);
+}
+.search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.search-clear {
+  position: absolute;
+  right: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.search-clear:hover {
+  background: color-mix(in srgb, var(--text-primary) 20%, transparent);
+}
+.search-clear svg {
+  width: 12px;
+  height: 12px;
+}
 /* Body split */
 .hist-body {
   flex: 1 1 auto;
@@ -400,6 +555,12 @@ onBeforeUnmount(() => unlistenUpdated?.());
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.entry-summary :deep(mark) {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: inherit;
 }
 /* Empty list */
 .empty {
