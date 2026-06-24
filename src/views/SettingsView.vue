@@ -1614,6 +1614,27 @@ onBeforeUnmount(() => unlistenProgress?.());
             {{ t("settings.channels.autoActivationLifecycleHint") }}
           </p>
         </div>
+
+        <!-- 多问题纵向同时显示（实验，置于实验区最后） -->
+        <div class="card">
+          <div class="row">
+            <p class="card-title">
+              {{ t("settings.experimental.verticalQuestionsTitle") }}
+            </p>
+            <span class="spacer"></span>
+            <label class="switch">
+              <input
+                type="checkbox"
+                v-model="config.experimental.verticalQuestions"
+                @change="persist"
+              />
+              <span class="track"></span>
+            </label>
+          </div>
+          <p class="card-desc">
+            {{ t("settings.experimental.verticalQuestionsDesc") }}
+          </p>
+        </div>
       </template>
 
       <!-- Agent -->

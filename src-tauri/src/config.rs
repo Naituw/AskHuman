@@ -296,6 +296,8 @@ pub struct ChannelsConfig {
 pub struct ExperimentalConfig {
     /// 是否显露「实验」Tab（隐蔽开关，默认关）。
     pub enabled: bool,
+    /// 多问题弹窗是否「纵向同时显示所有问题」（默认关 = 旧版「一次一题 + 上/下一步」）。
+    pub vertical_questions: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

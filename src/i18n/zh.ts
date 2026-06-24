@@ -108,6 +108,9 @@ export default {
       cursor: "Cursor",
       unsupported: "当前平台不支持",
       outdated: "需要更新——请先关闭再开启以刷新。",
+      verticalQuestionsTitle: "多问题纵向同时显示",
+      verticalQuestionsDesc:
+        "提出多个问题时，纵向平铺同时显示所有问题（当前题高亮、滚动/悬停切换、快捷键导航）。关闭时为旧版「一次显示一个问题、上一步/下一步切换」。",
     },
     appearance: {
       title: "外观",

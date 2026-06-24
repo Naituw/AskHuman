@@ -35,6 +35,8 @@ pub struct PopupInit {
     speech_language: String,
     /// 语音输入快捷键（规范串如 `cmd+d`；空串=关闭）。来自内存态配置，无钥匙串。
     speech_shortcut: String,
+    /// 实验：多问题弹窗是否纵向同时显示所有问题（默认关 = 旧版一次一题）。
+    vertical_questions: bool,
     /// 性能埋点是否开启（helper 进程收到了 `ASKHUMAN_PERF_ID`）；前端据此决定是否上报 perf 标记。
     perf: bool,
     /// 性能测试：画完首帧后自动取消弹窗（仅 harness 用）。
@@ -120,6 +122,7 @@ pub fn popup_init(app: AppHandle, state: State<AppState>) -> PopupInit {
         language,
         speech_language: cfg.general.speech_language.clone(),
         speech_shortcut: cfg.general.speech_shortcut.clone(),
+        vertical_questions: cfg.experimental.vertical_questions,
         perf: !crate::perf::effective_id().is_empty(),
         perf_autodismiss: crate::perf::autodismiss(),
         warm,

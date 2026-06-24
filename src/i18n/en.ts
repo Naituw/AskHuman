@@ -112,6 +112,9 @@ export default {
       cursor: "Cursor",
       unsupported: "Not supported on this platform",
       outdated: "Needs update — toggle off then on to refresh.",
+      verticalQuestionsTitle: "Show multiple questions vertically",
+      verticalQuestionsDesc:
+        "When several questions are asked, list them all vertically at once (active question highlighted, switch by scroll/hover, keyboard navigation). When off, falls back to the classic one-question-at-a-time view with previous/next.",
     },
     appearance: {
       title: "Appearance",

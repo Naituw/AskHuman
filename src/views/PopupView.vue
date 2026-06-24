@@ -161,16 +161,107 @@ let speechErrorTimer: ReturnType<typeof setTimeout> | null = null;
 let unlistenSpeech: UnlistenFn[] = [];
 
 const submitting = ref(false);
-const inputRef = ref<HTMLTextAreaElement | null>(null);
+// 每题的 textarea（函数 ref 按索引登记）；inputRef = 当前题(active) 的 textarea，
+// 供语音 / autoGrow / 聚焦复用既有逻辑（current 即 active 指针）。
+const inputRefs = ref<(HTMLTextAreaElement | null)[]>([]);
+function setInputRef(el: HTMLTextAreaElement | null, i: number) {
+  if (el) inputRefs.value[i] = el;
+}
+const inputRef = computed<HTMLTextAreaElement | null>(
+  () => inputRefs.value[current.value] ?? null
+);
 const fileRef = ref<HTMLInputElement | null>(null);
-const qHeaderRef = ref<HTMLElement | null>(null);
-const thumbsRef = ref<HTMLElement | null>(null);
+// 多问题纵向列表：滚动容器（IntersectionObserver root）+ 每题卡片 + 每题底部哨兵 + 每题缩略图容器。
+const contentRef = ref<HTMLElement | null>(null);
+const cardRefs = ref<(HTMLElement | null)[]>([]);
+function setCardRef(el: HTMLElement | null, i: number) {
+  cardRefs.value[i] = el;
+}
+const sentinelRefs = ref<(HTMLElement | null)[]>([]);
+function setSentinelRef(el: HTMLElement | null, i: number) {
+  sentinelRefs.value[i] = el;
+}
+const thumbsRefs = ref<(HTMLElement | null)[]>([]);
+function setThumbsRef(el: HTMLElement | null, i: number) {
+  thumbsRefs.value[i] = el;
+}
+// 当前聚焦的问题索引（null = 无）；驱动折叠输入框展开。
+const focusedQ = ref<number | null>(null);
+// 待归属图片的目标题（「添加图片」按钮点选时设置）。
+let pendingPickQ = 0;
+// 键盘/按钮 setActive 后短暂锁定，避免随即的滚动事件把 active 改回去。
+let activeLockUntil = 0;
+let io: IntersectionObserver | null = null;
 const scrolled = ref(false);
+// 按住 ⌘/Ctrl 时高亮右侧快捷键 Badge（提示「此刻按数字即可选项」）。
+const cmdHeld = ref(false);
+// 鼠标是否悬停在问题区内：悬停时以 hover 决定 active（滚轮滚动时光标下的题），
+// 暂停滚动 scroll-spy 回写，避免 hover 与滚动两套来源互相打架、active 跳来跳去。
+const hovering = ref(false);
 // 取消二次确认（已有部分回答时）。
 const showCancelConfirm = ref(false);
 
 function onScroll(e: Event) {
   scrolled.value = (e.target as HTMLElement).scrollTop > 0;
+  updateActiveFromScroll();
+}
+
+// 滚动定位「当前题」：用「比例阅读线」(proportional scroll-spy)——判定线在视口内的纵向位置
+// 随滚动进度 p=scrollTop/maxScroll 从顶部线性扫到底部（p=0→视口顶、p=1→视口底）。active =
+// 该线当前落在的题（即最后一个 top ≤ 线的题）。如此滚动进度被均匀分配给各题：滚到最顶=第一题、
+// 滚到底=末题、中间进度=中间题，**每题都有一段可达区间**（修复「内容仅略超视口时，一滑就从首题
+// 跳到末题、中间题选不中」）；且因用真实卡片边界，超长题在其铺满视口期间持续保持 active（高度自适应）。
+// 键盘/按钮导航后 450ms 内不被滚动回改（activeLockUntil）。
+function readingLineY(root: HTMLElement): number {
+  const r = root.getBoundingClientRect();
+  const max = root.scrollHeight - root.clientHeight;
+  const p = max > 0 ? Math.min(1, Math.max(0, root.scrollTop / max)) : 0;
+  return r.top + p * root.clientHeight;
+}
+function activeForScroll(root: HTMLElement): number {
+  const line = readingLineY(root);
+  let next = 0;
+  for (let i = 0; i < cardRefs.value.length; i++) {
+    const el = cardRefs.value[i];
+    if (!el) continue;
+    if (el.getBoundingClientRect().top <= line) next = i;
+  }
+  return next;
+}
+let scrollRaf = 0;
+function updateActiveFromScroll() {
+  if (!verticalMode.value) return;
+  if (scrollRaf) return;
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = 0;
+    if (Date.now() < activeLockUntil) return;
+    // 悬停优先：光标在问题区内时由 hover（mouseenter）决定 active，滚动不回写。
+    if (hovering.value) return;
+    const root = contentRef.value;
+    if (!root) return;
+    const next = activeForScroll(root);
+    if (next !== current.value) current.value = next;
+  });
+}
+
+// 建立/重建底部哨兵观察：哨兵进视口 → 该题「已看到」（兼容超长题）。
+function setupQuestionObserver() {
+  io?.disconnect();
+  io = null;
+  if (!verticalMode.value) return;
+  const root = contentRef.value;
+  if (!root) return;
+  io = new IntersectionObserver(
+    (entries) => {
+      for (const en of entries) {
+        if (!en.isIntersecting) continue;
+        const idx = Number((en.target as HTMLElement).dataset.qSentinel);
+        if (!Number.isNaN(idx)) markVisited(idx);
+      }
+    },
+    { root, threshold: 0 }
+  );
+  for (const el of sentinelRefs.value) if (el) io.observe(el);
 }
 
 const pinned = ref(false);
@@ -218,6 +309,10 @@ async function onOpenWorkspace() {
 const questions = computed<Question[]>(() => request.value?.questions ?? []);
 const total = computed(() => questions.value.length);
 const isMulti = computed(() => total.value > 1);
+// 实验开关：多问题是否纵向同时显示（来自 popup_init）。verticalMode = 开关开 且 多问题。
+// 关 / 单问题 → 旧版「一次一题 + 上/下一步」（sequential）。
+const verticalEnabled = ref(false);
+const verticalMode = computed(() => verticalEnabled.value && isMulti.value);
 // 严格选择：隐藏补充输入 / 附件区，且必须选中才能提交（D11）。
 const selectOnly = computed(() => request.value?.selectOnly ?? false);
 // 单选：选项渲染为 radio，每题恰好一个（D11）。
@@ -225,6 +320,29 @@ const single = computed(() => request.value?.single ?? false);
 const currentQuestion = computed<Question | null>(
   () => questions.value[current.value] ?? null
 );
+// 旧版（sequential）单题代理：作用于「当前题」，供 v-else 单题面板复用旧模板写法。
+const chosen = computed(() => chosenByQ.value[current.value] ?? []);
+const userInput = computed<string>({
+  get: () => inputByQ.value[current.value] ?? "",
+  set: (v) => {
+    if (current.value < inputByQ.value.length) inputByQ.value[current.value] = v;
+  },
+});
+const images = computed(() => imagesByQ.value[current.value] ?? []);
+const replyFiles = computed(() => replyFilesByQ.value[current.value] ?? []);
+const renderedHtml = computed(() =>
+  currentQuestion.value ? questionHtml(currentQuestion.value) : ""
+);
+// 旧版切题左右滑动方向 + 过渡名；「全部看过」用于 sequential 模式显示发送按钮。
+const slideDir = ref<"next" | "prev">("next");
+const transitionName = computed(() =>
+  slideDir.value === "next" ? "q-slide-next" : "q-slide-prev"
+);
+const allViewed = computed(
+  () => visited.value.length > 0 && visited.value.every(Boolean)
+);
+// 旧版单题面板的头部 ref（切题时滚到顶）。
+const qHeaderRef = ref<HTMLElement | null>(null);
 // 共享 Message（描述 + 附件）。无 -q 时 text 为空（第一个参数已提升为问题）。
 const messageText = computed(() => request.value?.message.text ?? "");
 const messageHtml = computed(() =>
@@ -284,13 +402,10 @@ const questionHeaderLabel = computed(() =>
     ? t("popup.question.indexed", { i: current.value + 1, n: total.value })
     : t("popup.question.single")
 );
-// 上一个/下一个的切换方向，驱动左右滑动动画。
-const slideDir = ref<"next" | "prev">("next");
-const transitionName = computed(() =>
-  slideDir.value === "next" ? "q-slide-next" : "q-slide-prev"
-);
-const allViewed = computed(
-  () => visited.value.length > 0 && visited.value.every(Boolean)
+// 「已看到」：卡片底部进视口（IntersectionObserver）或曾被设为当前题（setActive）。
+// 多问题发送按钮出现条件 = 最后一题已看到；单问题恒真。
+const lastSeen = computed(
+  () => !isMulti.value || (visited.value[total.value - 1] ?? false)
 );
 const hasAnyAnswer = computed(() =>
   questions.value.some((_, i) => isAnswered(i))
@@ -320,16 +435,22 @@ function isAnswered(i: number): boolean {
   );
 }
 
-// ===== 当前题的作答视图（读写当前索引） =====
-const chosen = computed(() => chosenByQ.value[current.value] ?? []);
-const userInput = computed({
-  get: () => inputByQ.value[current.value] ?? "",
-  set: (v: string) => {
-    inputByQ.value[current.value] = v;
-  },
-});
-const images = computed(() => imagesByQ.value[current.value] ?? []);
-const replyFiles = computed(() => replyFilesByQ.value[current.value] ?? []);
+// 折叠输入仅在纵向模式生效：默认 1 行，聚焦或已有内容时展开。单题 / 旧版顺序模式恒展开。
+function expandedQ(i: number): boolean {
+  if (!verticalMode.value) return true;
+  return focusedQ.value === i || (inputByQ.value[i]?.trim().length ?? 0) > 0;
+}
+// 每题题干渲染（Markdown 全局开关 + 源码视图）。
+function questionHtml(q: Question): string {
+  return request.value?.isMarkdown && !viewSource.value
+    ? renderMarkdown(q.message, codeCopyLabels.value)
+    : "";
+}
+// 仅「当前题」显示 ⌘1–9 角标（避免每题都冒出 ⌘1）。
+function cardOptionHotkey(qIndex: number, optIndex: number): string | null {
+  if (isMulti.value && qIndex !== current.value) return null;
+  return optionHotkey(optIndex);
+}
 
 // 提问附带的文件附件（AI→人，仅展示）：Message 级，顶部常驻，不随题切换。
 const attachments = computed<FileAttachment[]>(
@@ -518,14 +639,9 @@ function openHistoryWindow() {
   openHistory().catch(() => {});
 }
 
-const renderedHtml = computed(() =>
-  request.value?.isMarkdown && !viewSource.value && currentQuestion.value
-    ? renderMarkdown(currentQuestion.value.message, codeCopyLabels.value)
-    : ""
-);
-
-function toggle(option: string) {
-  const arr = chosenByQ.value[current.value];
+// 切换某题的选项（带题索引，供选项点击 / CMD+数字 复用）。
+function toggle(qIndex: number, option: string) {
+  const arr = chosenByQ.value[qIndex];
   if (!arr) return;
   const i = arr.indexOf(option);
   // 单选：选中即替换为唯一项；再次点击当前选中项则清空（保留"可不选"，除非严格模式）。
@@ -538,37 +654,39 @@ function toggle(option: string) {
   else arr.push(option);
 }
 
-// 通过序号（0 始）切换当前题的选项，供 CMD+数字 调用。
+// 通过序号（0 始）切换「当前题」的选项，供 CMD+数字 调用。
 function toggleByIndex(i: number) {
   const opts = currentQuestion.value?.predefinedOptions;
   if (!opts || i < 0 || i >= opts.length) return;
-  toggle(opts[i].text);
+  toggle(current.value, opts[i].text);
 }
 
-function pickFiles() {
+// 点「添加图片」：记录目标题后唤起文件选择。
+function pickFiles(qIndex: number) {
+  pendingPickQ = qIndex;
   fileRef.value?.click();
 }
 
-async function addFiles(files: FileList | File[]) {
+async function addFiles(files: FileList | File[], qIndex: number) {
   if (selectOnly.value) return;
   let added = 0;
   for (const file of Array.from(files)) {
     if (!file.type.startsWith("image/")) continue;
     const data = await fileToDataUrl(file);
-    imagesByQ.value[current.value]?.push({
+    imagesByQ.value[qIndex]?.push({
       data,
       mediaType: file.type,
       filename: file.name,
     });
     added++;
   }
-  if (added) scrollImagesIntoView();
+  if (added) scrollImagesIntoView(qIndex);
 }
 
-// 新增图片后把最新缩略图滚入可见区：粘贴/选择时即使内容已上滚，也能立刻确认成功。
-async function scrollImagesIntoView() {
+// 新增图片后把该题最新缩略图滚入可见区：粘贴/选择时即使内容已上滚，也能立刻确认成功。
+async function scrollImagesIntoView(qIndex: number) {
   await nextTick();
-  const wrap = thumbsRef.value;
+  const wrap = thumbsRefs.value[qIndex];
   if (!wrap) return;
   const last = (wrap.lastElementChild as HTMLElement | null) ?? wrap;
   const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -577,19 +695,33 @@ async function scrollImagesIntoView() {
 
 function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement;
-  if (input.files) addFiles(input.files);
+  if (input.files) addFiles(input.files, pendingPickQ);
   input.value = "";
 }
 
-function removeImage(index: number) {
-  imagesByQ.value[current.value]?.splice(index, 1);
+function removeImage(qIndex: number, index: number) {
+  imagesByQ.value[qIndex]?.splice(index, 1);
 }
 
+// DOM 级 drop 仅阻止默认（真正落盘走原生 onDragDropEvent，带落点坐标）。
 function onDrop(_e: DragEvent) {}
+
+// 原生拖放落点 → 命中的问题卡片索引（physical 坐标需除以 DPR 转 CSS 像素）。
+function questionAtPoint(physX: number, physY: number): number {
+  if (!verticalMode.value) return current.value;
+  const dpr = window.devicePixelRatio || 1;
+  const el = document.elementFromPoint(physX / dpr, physY / dpr) as HTMLElement | null;
+  const card = el?.closest?.(".q-card") as HTMLElement | null;
+  if (card?.dataset.qIndex != null) {
+    const idx = Number(card.dataset.qIndex);
+    if (!Number.isNaN(idx)) return idx;
+  }
+  return current.value;
+}
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?|svg)$/i;
 
-async function addDroppedPaths(paths: string[]) {
+async function addDroppedPaths(paths: string[], qIndex: number) {
   if (selectOnly.value) return;
   const attachPaths = new Set(attachments.value.map((a) => a.path));
   let addedImage = 0;
@@ -601,22 +733,23 @@ async function addDroppedPaths(paths: string[]) {
         const data = await readImageDataUrl(path);
         const semi = data.indexOf(";");
         const mediaType = semi > 5 ? data.slice(5, semi) : "image/png";
-        imagesByQ.value[current.value]?.push({ data, mediaType, filename: name });
+        imagesByQ.value[qIndex]?.push({ data, mediaType, filename: name });
         addedImage++;
       } catch (err) {
         console.error("读取拖入图片失败", path, err);
       }
-    } else if (!replyFiles.value.some((f) => f.path === path)) {
-      replyFilesByQ.value[current.value]?.push({ path, name });
+    } else if (!(replyFilesByQ.value[qIndex] ?? []).some((f) => f.path === path)) {
+      replyFilesByQ.value[qIndex]?.push({ path, name });
     }
   }
-  if (addedImage) scrollImagesIntoView();
+  if (addedImage) scrollImagesIntoView(qIndex);
 }
 
-function removeReplyFile(index: number) {
-  replyFilesByQ.value[current.value]?.splice(index, 1);
+function removeReplyFile(qIndex: number, index: number) {
+  replyFilesByQ.value[qIndex]?.splice(index, 1);
 }
 
+// 粘贴图片：归到当前聚焦的问题（无聚焦则归当前题 active）。
 async function onPaste(e: ClipboardEvent) {
   if (selectOnly.value) return;
   const items = e.clipboardData?.items;
@@ -631,58 +764,141 @@ async function onPaste(e: ClipboardEvent) {
   }
   if (files.length) {
     e.preventDefault();
-    await addFiles(files);
+    await addFiles(files, focusedQ.value ?? current.value);
   }
 }
 
-// 输入框随内容自增高（封顶 240px，超出则框内滚动；底部留白由 CSS padding 提供）。
+// 输入框随内容自增高（封顶 240px，超出则框内滚动）。仅展开态生效（折叠态固定 1 行）。
 const MAX_TEXTAREA_H = 240;
-function autoGrow() {
-  const el = inputRef.value;
+function autoGrow(i: number = current.value) {
+  const el = inputRefs.value[i];
   if (!el) return;
+  if (!expandedQ(i)) {
+    // 折叠态：清除内联高度，交回 CSS 的 1 行高度。
+    el.style.height = "";
+    return;
+  }
   el.style.height = "auto";
   el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_H)}px`;
 }
 
-// ===== 多题导航 =====
+// textarea 聚焦/失焦：维护 focusedQ + 切当前题（聚焦即展开）；失焦且空则折叠。
+function onTextareaFocus(i: number) {
+  focusedQ.value = i;
+  setActive(i, false);
+  nextTick(() => autoGrow(i));
+}
+function onTextareaBlur(i: number) {
+  if (focusedQ.value === i) focusedQ.value = null;
+  nextTick(() => autoGrow(i));
+}
+
+// 鼠标进入某题卡片：标记悬停中（暂停滚动 scroll-spy）并把该题设为 active。
+// 滚轮滚动时光标下的卡片随内容变化会持续触发，从而「以 hover 为准」、不与滚动打架。
+function onCardHover(qIndex: number) {
+  if (!verticalMode.value) return;
+  hovering.value = true;
+  // 键盘/按钮导航的短锁期内，忽略「滚动把卡片移到光标下」引发的 mouseenter，避免劫持目标题。
+  if (Date.now() < activeLockUntil) return;
+  setActive(qIndex, false);
+}
+
+// ===== 多题导航（纵向列表：当前题指针 + 滚动定位） =====
 function markVisited(i: number) {
   if (i >= 0 && i < visited.value.length) visited.value[i] = true;
 }
 
-// 切题时把问题头部滚到可见区顶部：Message 很长时也能露出当前问题。
-function scrollQuestionIntoView() {
-  const el = qHeaderRef.value;
-  if (!el) return;
+// 把第 i 题滚到「比例阅读线」正好落在其顶部的位置（与 updateActiveFromScroll 同一套数学：
+// 令 lineY == card_i.top 解出 scrollTop = offsetTop_i * (scrollHeight - clientHeight) / scrollHeight），
+// 故导航后 scroll-spy 会稳定地把 active 判为第 i 题，不会在锁过期后被回写到别的题。
+function scrollQuestionIntoView(i: number) {
+  const root = contentRef.value;
+  const el = cardRefs.value[i];
+  if (!root || !el) return;
+  const max = root.scrollHeight - root.clientHeight;
+  if (max <= 0) return; // 内容未超视口：无可滚动空间（active 由 setActive 直接置位）
+  // 首/末题分别贴顶 / 贴底：末题用比例位置会「欠滚」，底部被 footer 上沿遮住一截 → 直接滚到底；
+  // 首题滚到顶。中间题用比例阅读线位置（与 scroll-spy 同一套数学，定位稳定不回跳）。
+  let top: number;
+  if (i <= 0) {
+    top = 0;
+  } else if (i >= total.value - 1) {
+    top = max;
+  } else {
+    const offsetTop =
+      el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
+    top = Math.max(0, Math.min(max, (offsetTop * max) / root.scrollHeight));
+  }
   const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  el.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+  root.scrollTo({ top, behavior: reduce ? "auto" : "smooth" });
 }
 
-function goTo(index: number) {
+// 设当前题：夹边界、置 active + 标记已看到；可选滚动到可见。短锁避免滚动事件回改。
+function setActive(index: number, scroll: boolean) {
+  const i = Math.max(0, Math.min(index, total.value - 1));
+  current.value = i;
+  markVisited(i);
+  if (scroll) {
+    activeLockUntil = Date.now() + 450;
+    scrollQuestionIntoView(i);
+  }
+}
+
+// 相对移动当前题（纵向模式：上一个/下一个 + ⌘[/⌘]）。若此刻焦点在某个输入框，则把焦点也带到
+// 目标题的输入框（用户预期「切到下一个输入框」而非只移动高亮）；纯滚动浏览（无焦点）则不抢焦点。
+function goRel(delta: number) {
+  stopPreview();
+  selectedFile.value = null;
+  const wasFocused = focusedQ.value !== null;
+  const target = Math.max(0, Math.min(current.value + delta, total.value - 1));
+  setActive(target, true);
+  if (wasFocused) {
+    nextTick(() => inputRefs.value[target]?.focus({ preventScroll: true }));
+  }
+}
+
+// 旧版顺序模式切题：仅一题可见，改 current 即换页（聚焦/滚动由 Transition after-enter 处理）。
+function goToSeq(index: number) {
   if (index < 0 || index >= total.value || index === current.value) return;
-  // 切题前先停掉语音会话：否则录音回调仍写入开始录音时锁定的旧题。
-  stopListening();
+  stopListening(); // 切题前停语音，避免回调写进旧题
   stopPreview();
   selectedFile.value = null;
   current.value = index;
   markVisited(index);
 }
 
+// 旧版单题面板头部滚到顶（Message 很长时也能露出当前题）。
+function scrollHeaderIntoView() {
+  const el = qHeaderRef.value;
+  if (!el) return;
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+}
+
+// 旧版切题动画完成后：聚焦输入 + 校正高度 + 滚动头部到顶（新面板已挂载、高度确定）。
+function onQuestionEntered() {
+  if (verticalMode.value) return;
+  inputRef.value?.focus({ preventScroll: true });
+  autoGrow(current.value);
+  scrollHeaderIntoView();
+}
+
 function goPrev() {
+  if (verticalMode.value) {
+    goRel(-1);
+    return;
+  }
   slideDir.value = "prev";
-  goTo(current.value - 1);
+  goToSeq(current.value - 1);
 }
 
 function goNext() {
+  if (verticalMode.value) {
+    goRel(1);
+    return;
+  }
   slideDir.value = "next";
-  goTo(current.value + 1);
-}
-
-// 问题切换动画完成后再聚焦/校正高度/滚动：此时新面板已挂载、高度确定，
-// 避免新旧面板高度不同导致的上下跳动。
-function onQuestionEntered() {
-  inputRef.value?.focus({ preventScroll: true });
-  autoGrow();
-  scrollQuestionIntoView();
+  goToSeq(current.value + 1);
 }
 
 function collectAnswers(): QuestionAnswer[] {
@@ -951,8 +1167,17 @@ async function setupSpeechListeners() {
   );
 }
 
+// ⌘/Ctrl 按下/松开 → 切换 cmdHeld（驱动快捷键 Badge 高亮）。窗口失焦时复位，避免卡住。
+function onKeyup(e: KeyboardEvent) {
+  cmdHeld.value = e.metaKey || e.ctrlKey;
+}
+function onWindowBlur() {
+  cmdHeld.value = false;
+}
+
 function onKeydown(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey;
+  cmdHeld.value = mod;
   // 录音中按 Esc：结束本次语音输入（不关闭弹窗）。
   if (e.key === "Escape" && listening.value) {
     e.preventDefault();
@@ -1029,6 +1254,7 @@ function renderInit(init: PopupInit) {
   // 语音设置改取自 popup_init（不再走 get_settings / 钥匙串）。
   speechLang.value = init.speechLanguage || "auto";
   speechShortcut.value = init.speechShortcut || "cmd+d";
+  verticalEnabled.value = init.verticalQuestions ?? false;
   request.value = req;
   const n = req.questions.length;
   chosenByQ.value = Array.from({ length: n }, () => []);
@@ -1037,12 +1263,28 @@ function renderInit(init: PopupInit) {
   replyFilesByQ.value = Array.from({ length: n }, () => []);
   visited.value = Array.from({ length: n }, () => false);
   if (n > 0) visited.value[0] = true;
+  // 重置每题 DOM 引用数组（v-for 重渲染会按索引回填）。
+  inputRefs.value = [];
+  cardRefs.value = [];
+  sentinelRefs.value = [];
+  thumbsRefs.value = [];
+  focusedQ.value = null;
+  current.value = 0;
   loadThumbs();
   loadDragIcons();
-  // 首帧之后：聚焦 + 打点 + （harness）自动取消。冷热路径共用。
+  // 纵向模式（实验开关开 且 多题）：不自动聚焦、保持全部折叠、建哨兵观察。
+  // 否则（单题 / 旧版顺序模式）：聚焦当前题输入框 + 校正高度。
+  const vertical = verticalEnabled.value && n > 1;
   const afterPaint = () => {
-    inputRef.value?.focus({ preventScroll: true });
-    autoGrow();
+    // DOM 更新后再聚焦/建观察（此时 textarea / 哨兵已挂载）。
+    nextTick(() => {
+      if (!vertical) {
+        inputRef.value?.focus({ preventScroll: true });
+        autoGrow(0);
+      } else {
+        setupQuestionObserver();
+      }
+    });
     // 双 rAF：第一帧让正文进入 DOM 并即将绘制，第二帧回调时该帧已真正合成上屏，
     // 此刻打点更贴近用户真正看到内容的时刻（比单 rAF 晚约 1 帧）。
     requestAnimationFrame(() => {
@@ -1094,6 +1336,8 @@ onMounted(async () => {
   // 同步窗口监听（开销极小）：放最前，保证粘贴 / 快捷键 / Esc 从首帧即可用。
   window.addEventListener("paste", onPaste);
   window.addEventListener("keydown", onKeydown);
+  window.addEventListener("keyup", onKeyup);
+  window.addEventListener("blur", onWindowBlur);
   document.addEventListener("mouseup", onDocMouseUp);
   // 方案6：预热弹窗领用唤醒事件——尽早注册以免漏接（冷路径不会收到，无害）。
   unlistenShow = await listen("popup-show", () => {
@@ -1148,7 +1392,9 @@ async function initAfterPaint(init: PopupInit) {
       draggingOut.value = false;
       return;
     }
-    addDroppedPaths(event.payload.paths);
+    const pos = event.payload.position;
+    const qIndex = questionAtPoint(pos?.x ?? 0, pos?.y ?? 0);
+    addDroppedPaths(event.payload.paths, qIndex);
   });
   // 设置变更实时生效（同进程内设置窗口保存后广播 general 配置）。
   unlistenSettings = await listen<{
@@ -1242,6 +1488,8 @@ async function applyAgentResolved(
 onBeforeUnmount(() => {
   window.removeEventListener("paste", onPaste);
   window.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("keyup", onKeyup);
+  window.removeEventListener("blur", onWindowBlur);
   document.removeEventListener("mouseup", onDocMouseUp);
   unlistenIndex?.();
   unlistenFocus?.();
@@ -1254,6 +1502,9 @@ onBeforeUnmount(() => {
   unlistenShow?.();
   if (flashTimer) window.clearTimeout(flashTimer);
   if (copiedTimer) window.clearTimeout(copiedTimer);
+  io?.disconnect();
+  io = null;
+  if (scrollRaf) cancelAnimationFrame(scrollRaf);
   stopListening();
   unlistenSpeech.forEach((fn) => fn());
   unlistenSpeech = [];
@@ -1272,6 +1523,7 @@ onBeforeUnmount(() => {
   <div
     v-else
     class="popup"
+    :class="{ 'cmd-held': cmdHeld }"
     @dragover.prevent
     @drop.prevent="onDrop"
     @click="onBackgroundClick"
@@ -1443,7 +1695,12 @@ onBeforeUnmount(() => {
     <div v-if="updatePending" class="update-pending-banner">
       {{ t("popup.update.pendingBanner") }}
     </div>
-    <div class="content" @scroll="onScroll">
+    <div
+      ref="contentRef"
+      class="content"
+      @scroll="onScroll"
+      @mouseleave="hovering = false"
+    >
       <!-- 共享 Message 区（描述 + 附件），仅在有内容时展示，顶部常驻 -->
       <template v-if="showDescription">
         <div
@@ -1518,61 +1775,74 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <!-- 问题头部：间距 + 分割线 + 问号图标 + 「Question i/n」 -->
+      <!-- 纵向模式（实验开关 + 多题）：所有问题纵向平铺成卡片，当前题高亮 -->
+      <template v-if="verticalMode">
       <div
-        v-if="showQuestionHeader"
-        ref="qHeaderRef"
-        class="q-header"
-        :class="{ 'with-divider': showDescription }"
+        v-for="(q, qi) in questions"
+        :key="qi"
+        :ref="(el) => setCardRef(el as HTMLElement | null, qi)"
+        class="q-card"
+        :class="{ active: qi === current }"
+        :data-q-index="qi"
+        @mouseenter="onCardHover(qi)"
+        @mousedown="setActive(qi, false)"
       >
-        <svg class="q-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M9.2 9.3a2.8 2.8 0 0 1 5.4 1c0 1.9-2.8 2.5-2.8 2.5" />
-          <path d="M12 17.2h.01" />
-        </svg>
-        <span class="q-label">{{ questionHeaderLabel }}</span>
-      </div>
+        <!-- 问题头部：问号图标 + 「Question i/n」。每题上方加分割线（与 Message/上一题区隔）。 -->
+        <div
+          class="q-header with-divider"
+        >
+          <svg class="q-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M9.2 9.3a2.8 2.8 0 0 1 5.4 1c0 1.9-2.8 2.5-2.8 2.5" />
+            <path d="M12 17.2h.01" />
+          </svg>
+          <span class="q-label">{{
+            t("popup.question.indexed", { i: qi + 1, n: total })
+          }}</span>
+        </div>
 
-      <!-- 当前问题区（上一个/下一个左右滑动） -->
-      <Transition :name="transitionName" mode="out-in" @after-enter="onQuestionEntered">
-        <div class="question-pane" :key="current">
+        <div
+          v-if="request.isMarkdown && !viewSource && q.message"
+          class="markdown-body"
+          v-html="questionHtml(q)"
+          @click="onContentClick"
+        ></div>
+        <pre v-else-if="q.message" class="plain-body">{{ q.message }}</pre>
+
+        <div v-if="q.predefinedOptions.length" class="options">
           <div
-            v-if="request.isMarkdown && !viewSource && currentQuestion?.message"
-            class="markdown-body"
-            v-html="renderedHtml"
-            @click="onContentClick"
-          ></div>
-          <pre v-else-if="currentQuestion?.message" class="plain-body">{{ currentQuestion?.message }}</pre>
-
-          <div v-if="currentQuestion && currentQuestion.predefinedOptions.length" class="options">
-            <div
-              v-for="(opt, i) in currentQuestion.predefinedOptions"
-              :key="i"
-              class="option"
-              :class="{ selected: chosen.includes(opt.text), single }"
-              @click="toggle(opt.text)"
-            >
-              <span class="check" :class="{ radio: single }">{{ single ? "" : (chosen.includes(opt.text) ? "✓" : "") }}</span>
-              <span class="label"><span v-if="opt.recommended" class="rec-badge"><span class="rec-badge-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"></path><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>{{ t("popup.recommended") }}</span></span>{{ opt.text }}</span>
-              <kbd v-if="optionHotkey(i)" class="opt-sc">{{ optionHotkey(i) }}</kbd>
-            </div>
+            v-for="(opt, i) in q.predefinedOptions"
+            :key="i"
+            class="option"
+            :class="{ selected: (chosenByQ[qi] ?? []).includes(opt.text), single }"
+            @click="toggle(qi, opt.text)"
+          >
+            <span class="check" :class="{ radio: single }">{{ single ? "" : ((chosenByQ[qi] ?? []).includes(opt.text) ? "✓" : "") }}</span>
+            <span class="label"><span v-if="opt.recommended" class="rec-badge"><span class="rec-badge-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"></path><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>{{ t("popup.recommended") }}</span></span>{{ opt.text }}</span>
+            <kbd v-if="cardOptionHotkey(qi, i)" class="opt-sc">{{ cardOptionHotkey(qi, i) }}</kbd>
           </div>
+        </div>
 
-          <!-- 输入框 + 内置「添加图片」小图标（右下角）；严格选择模式隐藏 -->
-          <div v-if="!selectOnly" class="input-wrap">
-            <textarea
-              ref="inputRef"
-              v-model="userInput"
-              class="textarea"
-              :placeholder="t('popup.inputPlaceholder')"
-              @input="autoGrow"
-              @keyup="onUserCaretMaybeMoved"
-              @mousedown="onTextareaMouseDown"
-            ></textarea>
+        <!-- 输入框 + 内置「添加图片」小图标（右下角）；严格选择模式隐藏 -->
+        <div v-if="!selectOnly" class="input-wrap">
+          <textarea
+            :ref="(el) => setInputRef(el as HTMLTextAreaElement | null, qi)"
+            v-model="inputByQ[qi]"
+            class="textarea"
+            :class="{ collapsed: !expandedQ(qi) }"
+            rows="1"
+            :placeholder="t('popup.inputPlaceholder')"
+            @input="autoGrow(qi)"
+            @focus="onTextareaFocus(qi)"
+            @blur="onTextareaBlur(qi)"
+            @keyup="onUserCaretMaybeMoved"
+            @mousedown="onTextareaMouseDown"
+          ></textarea>
+          <template v-if="expandedQ(qi)">
             <button
               v-if="speechSupported"
               class="mic-btn"
-              :class="{ loading: listening && !speechReady, recording: speechReady }"
+              :class="{ loading: listening && current === qi && !speechReady, recording: listening && current === qi && speechReady }"
               type="button"
               :title="
                 speechReady
@@ -1587,7 +1857,7 @@ onBeforeUnmount(() => {
                 listening ? t('popup.speech.stop') : t('popup.speech.start')
               "
               @mousedown.prevent
-              @click="toggleSpeech"
+              @click="(setActive(qi, false), toggleSpeech())"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="9" y="2" width="6" height="12" rx="3" />
@@ -1600,7 +1870,7 @@ onBeforeUnmount(() => {
               type="button"
               :title="t('popup.addImage')"
               :aria-label="t('popup.addImage')"
-              @click="pickFiles"
+              @click="pickFiles(qi)"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -1608,39 +1878,179 @@ onBeforeUnmount(() => {
                 <path d="M21 15l-5-5L5 21" />
               </svg>
             </button>
-          </div>
-          <p v-if="!selectOnly && speechError" class="speech-error">
-            {{ speechErrorText(speechError) }}
-          </p>
-          <p v-else-if="!selectOnly && listening && speechStatus" class="speech-status">
-            {{ speechStatusText(speechStatus) }}
-          </p>
+          </template>
+        </div>
+        <p v-if="!selectOnly && current === qi && speechError" class="speech-error">
+          {{ speechErrorText(speechError) }}
+        </p>
+        <p v-else-if="!selectOnly && current === qi && listening && speechStatus" class="speech-status">
+          {{ speechStatusText(speechStatus) }}
+        </p>
 
-          <div v-if="!selectOnly && images.length" ref="thumbsRef" class="thumbs">
-            <div v-for="(img, i) in images" :key="i" class="thumb">
-              <img :src="img.data" alt="" />
-              <button class="remove" type="button" @click="removeImage(i)">
-                ×
-              </button>
-            </div>
-          </div>
-
-          <div v-if="!selectOnly && replyFiles.length" class="reply-files">
-            <div
-              v-for="(f, i) in replyFiles"
-              :key="f.path"
-              class="reply-file"
-              :title="f.path"
-            >
-              <span class="rf-icon">📄</span>
-              <span class="rf-name">{{ f.name }}</span>
-              <button class="rf-remove" type="button" @click="removeReplyFile(i)">
-                ×
-              </button>
-            </div>
+        <div
+          v-if="!selectOnly && (imagesByQ[qi] ?? []).length"
+          :ref="(el) => setThumbsRef(el as HTMLElement | null, qi)"
+          class="thumbs"
+        >
+          <div v-for="(img, i) in imagesByQ[qi]" :key="i" class="thumb">
+            <img :src="img.data" alt="" />
+            <button class="remove" type="button" @click="removeImage(qi, i)">
+              ×
+            </button>
           </div>
         </div>
-      </Transition>
+
+        <div v-if="!selectOnly && (replyFilesByQ[qi] ?? []).length" class="reply-files">
+          <div
+            v-for="(f, i) in replyFilesByQ[qi]"
+            :key="f.path"
+            class="reply-file"
+            :title="f.path"
+          >
+            <span class="rf-icon">📄</span>
+            <span class="rf-name">{{ f.name }}</span>
+            <button class="rf-remove" type="button" @click="removeReplyFile(qi, i)">
+              ×
+            </button>
+          </div>
+        </div>
+
+        <!-- 底部哨兵：进视口即「已看到」该题（兼容超长题） -->
+        <div
+          :ref="(el) => setSentinelRef(el as HTMLElement | null, qi)"
+          class="q-sentinel"
+          :data-q-sentinel="qi"
+          aria-hidden="true"
+        ></div>
+      </div>
+      </template>
+
+      <!-- 旧版（顺序模式）：单题 / 实验开关关时——一次显示一个问题，上一步/下一步左右滑动切换 -->
+      <template v-else>
+        <!-- 问题头部：间距 + 分割线 + 问号图标 + 「Question i/n」 -->
+        <div
+          v-if="showQuestionHeader"
+          ref="qHeaderRef"
+          class="q-header"
+          :class="{ 'with-divider': showDescription }"
+        >
+          <svg class="q-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M9.2 9.3a2.8 2.8 0 0 1 5.4 1c0 1.9-2.8 2.5-2.8 2.5" />
+            <path d="M12 17.2h.01" />
+          </svg>
+          <span class="q-label">{{ questionHeaderLabel }}</span>
+        </div>
+
+        <!-- 当前问题区（上一个/下一个左右滑动） -->
+        <Transition :name="transitionName" mode="out-in" @after-enter="onQuestionEntered">
+          <div class="question-pane" :key="current">
+            <div
+              v-if="request.isMarkdown && !viewSource && currentQuestion?.message"
+              class="markdown-body"
+              v-html="renderedHtml"
+              @click="onContentClick"
+            ></div>
+            <pre v-else-if="currentQuestion?.message" class="plain-body">{{ currentQuestion?.message }}</pre>
+
+            <div v-if="currentQuestion && currentQuestion.predefinedOptions.length" class="options">
+              <div
+                v-for="(opt, i) in currentQuestion.predefinedOptions"
+                :key="i"
+                class="option"
+                :class="{ selected: chosen.includes(opt.text), single }"
+                @click="toggle(current, opt.text)"
+              >
+                <span class="check" :class="{ radio: single }">{{ single ? "" : (chosen.includes(opt.text) ? "✓" : "") }}</span>
+                <span class="label"><span v-if="opt.recommended" class="rec-badge"><span class="rec-badge-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"></path><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>{{ t("popup.recommended") }}</span></span>{{ opt.text }}</span>
+                <kbd v-if="optionHotkey(i)" class="opt-sc">{{ optionHotkey(i) }}</kbd>
+              </div>
+            </div>
+
+            <!-- 输入框 + 内置「添加图片」小图标（右下角）；严格选择模式隐藏 -->
+            <div v-if="!selectOnly" class="input-wrap">
+              <textarea
+                :ref="(el) => setInputRef(el as HTMLTextAreaElement | null, current)"
+                v-model="userInput"
+                class="textarea"
+                :placeholder="t('popup.inputPlaceholder')"
+                @input="autoGrow(current)"
+                @keyup="onUserCaretMaybeMoved"
+                @mousedown="onTextareaMouseDown"
+              ></textarea>
+              <button
+                v-if="speechSupported"
+                class="mic-btn"
+                :class="{ loading: listening && !speechReady, recording: speechReady }"
+                type="button"
+                :title="
+                  speechReady
+                    ? t('popup.speech.stop') +
+                      (speechHotkeyLabel ? ' ' + speechHotkeyLabel : '')
+                    : listening
+                    ? t('popup.speech.preparing')
+                    : t('popup.speech.start') +
+                      (speechHotkeyLabel ? ' ' + speechHotkeyLabel : '')
+                "
+                :aria-label="
+                  listening ? t('popup.speech.stop') : t('popup.speech.start')
+                "
+                @mousedown.prevent
+                @click="toggleSpeech"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="2" width="6" height="12" rx="3" />
+                  <path d="M5 11a7 7 0 0 0 14 0" />
+                  <path d="M12 18v3" />
+                </svg>
+              </button>
+              <button
+                class="img-btn"
+                type="button"
+                :title="t('popup.addImage')"
+                :aria-label="t('popup.addImage')"
+                @click="pickFiles(current)"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <circle cx="8.5" cy="8.5" r="1.6" />
+                  <path d="M21 15l-5-5L5 21" />
+                </svg>
+              </button>
+            </div>
+            <p v-if="!selectOnly && speechError" class="speech-error">
+              {{ speechErrorText(speechError) }}
+            </p>
+            <p v-else-if="!selectOnly && listening && speechStatus" class="speech-status">
+              {{ speechStatusText(speechStatus) }}
+            </p>
+
+            <div v-if="!selectOnly && images.length" :ref="(el) => setThumbsRef(el as HTMLElement | null, current)" class="thumbs">
+              <div v-for="(img, i) in images" :key="i" class="thumb">
+                <img :src="img.data" alt="" />
+                <button class="remove" type="button" @click="removeImage(current, i)">
+                  ×
+                </button>
+              </div>
+            </div>
+
+            <div v-if="!selectOnly && replyFiles.length" class="reply-files">
+              <div
+                v-for="(f, i) in replyFiles"
+                :key="f.path"
+                class="reply-file"
+                :title="f.path"
+              >
+                <span class="rf-icon">📄</span>
+                <span class="rf-name">{{ f.name }}</span>
+                <button class="rf-remove" type="button" @click="removeReplyFile(current, i)">
+                  ×
+                </button>
+              </div>
+            </div>
+          </div>
+        </Transition>
+      </template>
     </div>
 
     <input
@@ -1676,7 +2086,7 @@ onBeforeUnmount(() => {
         {{ t("popup.next") }} <kbd v-if="!onLastQuestion" class="sc">⌘↵</kbd>
       </button>
       <button
-        v-if="allViewed"
+        v-if="verticalMode ? lastSeen : allViewed"
         class="btn"
         :class="{ 'btn-primary': onLastQuestion }"
         type="button"
@@ -2197,13 +2607,77 @@ onBeforeUnmount(() => {
   height: 17px;
   color: var(--accent);
 }
-/* 问题区滑动容器 */
+/* 问题卡片：纵向平铺的单题容器（单问题时无高亮、不折叠，外观同旧版） */
+.q-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  /* 导航滚到顶时留出呼吸位；与 scroll-spy 判定线对齐 */
+  scroll-margin-top: 16px;
+  scroll-margin-bottom: 12px;
+}
+/* 当前题高亮：柔和底色覆盖（无描边，圆角）+ 左侧 accent 竖条（带透明度，不那么实）。
+   覆盖层 / 竖条对**所有卡片常驻、默认透明**，靠 opacity 过渡实现切题时的淡入淡出（不生硬）；
+   起点落在分割线之下（top 正偏移）不糊住分割线；左侧留更大余量（与竖条拉开）、右侧收窄。
+   `--q-active-tint` 控底色深浅，便于微调。 */
+.q-card {
+  --q-active-tint: 5%;
+}
+.q-card::before,
+.q-card::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.q-card::before {
+  inset: 8px -12px -6px -12px;
+  background: color-mix(in srgb, var(--accent) var(--q-active-tint), transparent);
+  border-radius: 8px;
+}
+.q-card::after {
+  left: -12px;
+  top: 8px;
+  bottom: -6px;
+  width: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.q-card.active::before,
+.q-card.active::after {
+  opacity: 1;
+}
+/* 内容压在覆盖层之上，保证可点击/可读 */
+.q-card > * {
+  position: relative;
+  z-index: 1;
+}
+/* 底部哨兵：零高度标记，进视口即判该题「已看到」 */
+.q-sentinel {
+  height: 1px;
+  margin-top: -1px;
+  pointer-events: none;
+}
+/* 多问题折叠态输入框：真·单行（聚焦或有内容时由 expandedQ 还原成多行高度）。
+   折叠态不显示麦克风/图片按钮，故无需底部留白；配合 rows="1" + height:auto 得 1 行。
+   scoped 提升特异性以覆盖全局 .textarea。 */
+.textarea.collapsed {
+  min-height: 0;
+  height: auto;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+/* 旧版（顺序模式）单题面板容器 + 上一个/下一个左右滑动（out-in） */
 .question-pane {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
-/* 上一个/下一个：左右滑动（out-in） */
 .q-slide-next-enter-active,
 .q-slide-next-leave-active,
 .q-slide-prev-enter-active,
@@ -2450,6 +2924,21 @@ onBeforeUnmount(() => {
 }
 .btn-primary .sc {
   opacity: 0.85;
+}
+/* 按住 ⌘/Ctrl：高亮可用的快捷键 Badge（提示此刻按数字即可选项 / 按括号可切题）。
+   仅当前题渲染了 .opt-sc，故天然只高亮当前题的选项角标。 */
+.option .opt-sc {
+  transition: color 0.1s ease, background 0.1s ease, border-color 0.1s ease,
+    opacity 0.1s ease;
+}
+.popup.cmd-held .option .opt-sc {
+  opacity: 1;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.popup.cmd-held .btn:not(:disabled) .sc {
+  opacity: 1;
 }
 
 /* 取消二次确认弹层 */
