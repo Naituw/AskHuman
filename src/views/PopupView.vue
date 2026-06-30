@@ -1167,9 +1167,15 @@ async function setupSpeechListeners() {
   );
 }
 
+// 仅「纯」⌘/Ctrl（未叠加 Shift/Option）才算命中快捷键修饰键：例如 Cmd+Shift（截屏）下
+// 再按 1–9 不会命中选项快捷键，故此时不应高亮。
+function onlyCmdHeld(e: KeyboardEvent): boolean {
+  return (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey;
+}
+
 // ⌘/Ctrl 按下/松开 → 切换 cmdHeld（驱动快捷键 Badge 高亮）。窗口失焦时复位，避免卡住。
 function onKeyup(e: KeyboardEvent) {
-  cmdHeld.value = e.metaKey || e.ctrlKey;
+  cmdHeld.value = onlyCmdHeld(e);
 }
 function onWindowBlur() {
   cmdHeld.value = false;
@@ -1177,7 +1183,7 @@ function onWindowBlur() {
 
 function onKeydown(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey;
-  cmdHeld.value = mod;
+  cmdHeld.value = onlyCmdHeld(e);
   // 录音中按 Esc：结束本次语音输入（不关闭弹窗）。
   if (e.key === "Escape" && listening.value) {
     e.preventDefault();
