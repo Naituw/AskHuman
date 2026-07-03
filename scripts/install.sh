@@ -115,9 +115,18 @@ if [ "$(uname)" = "Darwin" ]; then
   xattr -d com.apple.quarantine "$INSTALL_DIR/AskHuman" 2>/dev/null || true
   # Sign with a stable identity + fixed identifier so the OS keychain trusts the binary across
   # rebuilds (its designated requirement is cdhash-independent) → secret reads stay prompt-free.
-  # Identity: $CODESIGN_IDENTITY if set, else auto-detect the first local codesigning cert,
-  # else ad-hoc (which falls back to per-build keychain prompts).
+  # Identity: $CODESIGN_IDENTITY if set, else prefer a "Developer ID Application" cert, else the
+  # first available codesigning cert, else ad-hoc (per-build keychain prompts).
+  #
+  # Prefer Developer ID *deterministically*: `find-identity` order is not stable, and when both a
+  # "Developer ID Application" and an "Apple Development" cert exist, picking whichever lands first
+  # flips the binary's designated requirement between installs → the keychain ACL stops trusting it
+  # → silent secret reads break (esp. for the background daemon). Developer ID's DR is also cdhash-
+  # independent and non-expiring, so pinning it keeps the ACL valid across rebuilds.
   IDENTITY="${CODESIGN_IDENTITY:-}"
+  if [ -z "$IDENTITY" ]; then
+    IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk '/Developer ID Application/{print $2; exit}')"
+  fi
   if [ -z "$IDENTITY" ]; then
     IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk '/^[[:space:]]*[0-9]+\)/{print $2; exit}')"
   fi

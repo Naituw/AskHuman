@@ -198,7 +198,7 @@ AskHuman/
       client/                (Unix) CLI 作为 Daemon 客户端：连接/握手/自启/submit/detect/status/stop
       daemon/                (Unix) 常驻 Daemon：mod.rs(分发/serve + 自更新后台检查/广播/指纹感知 +
                              handle_tray_sub[非保活]/broadcast_tray_state/maybe_spawn_gui_host) /
-                             lifecycle.rs(单实例·指纹·空闲) / spawn.rs(脱离启动) /
+                             lifecycle.rs(单实例·指纹·空闲) / spawn.rs(脱离启动；macOS 非 Aqua 会话经 gui/uid launchd 拉起) /
                              request.rs(请求登记表·Coordinator·GUI token·broadcast_to_guis) /
                              config_watch.rs(notify 监听 config.json + 去抖)
       update/                版本自更新：mod.rs(检测/比较/Updater/select/check) / direct.rs(GitHub 资产替换) /
@@ -287,7 +287,7 @@ AskHuman/
 
 > 回复历史：`general.historyLimit`（默认 200，0=停止新增并清理已有记录）控制 `~/.askhuman/history.jsonl` 全局保留条数（裁剪与「立即清理」对 0 不再特判：`record` 在 limit==0 时不新增、但按与 >0 相同时机把已有记录裁到 0；`trim(0)` 直接清空）。每次提问在 `Coordinator.finish()`（所有渠道/模式唯一汇聚点）旁路记录一条「发送 / 用户主动取消」（系统取消不记）；只存图片/文件路径（best-effort 展示，缺失显示占位）。项目按「从 CLI cwd 向上找首个 .git 根、回退 cwd」识别，经 `TaskRequest`/`ShowPayload` 贯穿 daemon（revisit A11）。历史窗口 `AskHuman --history [--all]` 或弹窗导航栏「历史」按钮打开。详情只读组件 `HistoryDetail.vue` 完整还原：选项框复用 controls.css（选中=蓝底白 ✓）、附件区与弹窗同款交互（单击选中 / 空格 QuickLook 预览 + 方向键切换 / 双击打开 / 右键菜单 / 拖出）。历史窗口创建时 `watch_history_file` 用 notify 监听 `history.jsonl`，任何进程写入后发 `history-updated` 事件令前端重载并保留当前选中条目（跨进程实时刷新）。注：`preview_attachments` 命令把 QuickLook 控制者插入**调用方窗口**响应链（弹窗或历史窗口皆可），不再硬编码 popup。
 
-> 密钥安全：五项密钥（`dingding.clientSecret`/`feishu.appSecret`/`telegram.botToken`/`slack.botToken`/`slack.appToken`）默认迁入系统钥匙串，`config.json` 中留空；内存 `AppConfig` 始终携带解析后的真值，读取点零改动。文件权限收紧 0600/目录 0700；钥匙串不可用时回退明文。macOS 需稳定签名身份免弹框（本地 `install.sh` 自动探测证书 / 发布走 Developer ID）。详见 `docs/specs/secret-storage-keychain.md`。
+> 密钥安全：五项密钥（`dingding.clientSecret`/`feishu.appSecret`/`telegram.botToken`/`slack.botToken`/`slack.appToken`）默认迁入系统钥匙串，`config.json` 中留空；内存 `AppConfig` 始终携带解析后的真值，读取点零改动。文件权限收紧 0600/目录 0700；钥匙串不可用时回退明文。macOS 需稳定签名身份免弹框（本地 `install.sh` 优先固定 `Developer ID Application` / 发布走 Developer ID）。**钥匙串还依赖「安全会话」上下文**：只有用户 GUI(Aqua) 会话能静默读登录钥匙串；从非 Aqua 会话（SSH、Codex app-server 等后台上下文）直接拉起的 daemon 会继承该非 Aqua 会话、**运行时取到空密钥** → 渠道被判「未配置」不建长连接（现象：飞书 `/status` 无回复、`daemon status` 显 `im conns none`）。故 `daemon/spawn.rs` 在 macOS 侦测 `launchctl managername != "Aqua"` 时改经 `gui/<uid>` launchd 域 bootstrap `daemon run`（透传 HOME/TMPDIR/PATH/`ASKHUMAN_*` 保住 perf/隔离语义），使 daemon 落在 Aqua 会话、能读钥匙串；GUI 会话或纯 headless 回退原 setsid。详见 `docs/specs/secret-storage-keychain.md`。
 >
 > `AppConfig::load()` 会解析密钥（读钥匙串）；只需 general/主题/语言/历史上限等非密钥项的路径一律改用 `AppConfig::load_without_secrets()`（读 config.json + 旧路径回退 + 收紧权限，但跳过密钥解析），避免无关命令（如 `--version`/`--help`）触发钥匙串读取、进而在签名不匹配时弹密码框。当前用 `load_without_secrets` 的：`i18n::Lang::current()`（语言）、`--settings`/`--history` 与窗口创建（主题）、`record_history`（history_limit）、`update_theme`/`persist_popup_size`（改后 `save()` 对空密钥字段原样不动、既不读也不写钥匙串）。确需密钥的保持 `load()`：daemon 初始化/attach IM/热重载、`get_settings` 的「已保存」判定、`fallback_secret`、非 unix 的 `run_ask`。
 
@@ -380,8 +380,12 @@ AskHuman/
 ## 构建 / 开发 / 测试
 
 - `scripts/install.sh` 在 macOS 自动使用本机 codesigning identity 和固定 identifier 正式签名；
-  后台 Codex app-server 无法访问签名私钥时，通过一次性 LaunchAgent 同步委托用户 GUI launchd domain
-  完成（不打开 Terminal），失败则中止安装，避免留下无法执行或破坏钥匙串信任的产物。
+  身份优先选 **`Developer ID Application`**（确定性挑选，不再取 `find-identity` 首个）：机器上同时有
+  `Developer ID Application` 与 `Apple Development` 时，若每次装取到的身份漂移，会翻转二进制的
+  designated requirement，令钥匙串 ACL 不再信任它、静默取密钥失效（尤其后台 daemon）；Developer ID 的 DR
+  又与 cdhash 无关且不过期，固定它可让 ACL 跨重装保持有效。`CODESIGN_IDENTITY` 可覆盖；两者皆无则回退首个
+  可用证书、再退 ad-hoc。后台 Codex app-server 无法访问签名私钥时，通过一次性 LaunchAgent 同步委托用户 GUI
+  launchd domain 完成（不打开 Terminal），失败则中止安装，避免留下无法执行或破坏钥匙串信任的产物。
 
 ```bash
 pnpm install
