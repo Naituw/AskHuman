@@ -37,6 +37,10 @@ pub struct RequestEntry {
     pub coordinator: Arc<Coordinator>,
     /// 给 GUI Helper 的题目下发负载。
     pub show: ShowPayload,
+    /// 调用方 agent 会话 ID（CLI 从 env 探测、`TaskRequest.agent_session_id` 透传；MCP `env_clear`
+    /// 时为 None）。供 daemon「在途 AskHuman 豁免」按 session_id 刷新——覆盖无 pid 的 agent
+    /// （Codex 共享 app-server / Claude 被 scrub），使其等待人类回答期间不被「工作中兜底超时」降级。
+    pub agent_session_id: Option<String>,
     /// GUI 发送端槽位（adapter 与连接处理器共享）。
     pub gui: GuiSlot,
     /// 调用方 agent 异步解析结果（方案5/b）：daemon walk 完成后填入，helper 连接握手时若已就绪则补发。
@@ -79,6 +83,11 @@ impl RequestRegistry {
         let request_id = uuid::Uuid::new_v4().to_string();
         let token = uuid::Uuid::new_v4().to_string();
         let lang = Lang::resolve(&task.lang);
+        // 在 task 被逐字段 move 前取出会话 ID（供在途豁免按 session_id 刷新）。
+        let agent_session_id = task
+            .agent_session_id
+            .clone()
+            .filter(|s| !s.trim().is_empty());
 
         // Daemon 分配权威 request_id（用于临时目录）。
         let mut request = AskRequest::new(task.message, task.questions, task.is_markdown);
@@ -123,6 +132,7 @@ impl RequestRegistry {
             token: token.clone(),
             coordinator,
             show,
+            agent_session_id,
             gui,
             resolved_agent: Arc::new(Mutex::new(None)),
             gui_connected: AtomicBool::new(false),
@@ -181,6 +191,22 @@ impl RequestRegistry {
             }
         }
         pids
+    }
+
+    /// 所有在途请求关联的调用方 agent 会话 ID（去重）。供 daemon「工作中兜底超时」豁免的
+    /// **session_id 版**——覆盖无 pid 的 agent（Codex 共享 app-server / Claude 被 scrub），使其
+    /// 等待人类回答期间不被降级为空闲（有 pid 的由 `in_flight_agent_pids` 覆盖）。
+    pub fn in_flight_agent_session_ids(&self) -> Vec<String> {
+        let inner = self.inner.lock().unwrap();
+        let mut ids: Vec<String> = Vec::new();
+        for entry in inner.by_id.values() {
+            if let Some(sid) = entry.agent_session_id.as_ref() {
+                if !sid.is_empty() && !ids.contains(sid) {
+                    ids.push(sid.clone());
+                }
+            }
+        }
+        ids
     }
 
     /// 在途请求摘要（按创建顺序，托盘「待答」子菜单用）：每条 `{id, 预览}`。

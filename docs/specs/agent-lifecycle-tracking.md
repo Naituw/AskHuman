@@ -60,6 +60,9 @@ AskHuman agents status
 | D22 | 去重细则 | **仅当从 env 明确识别出「不同的」running agent 时**才跳过（`exit 0` 不上报）；env 无法判定 → 按 intended 处理（不跳过），避免漏报。识别顺序 `CURSOR_*`→cursor、`CODEX_*`→codex、`CLAUDECODE`→claude；**`CLAUDE_PROJECT_DIR` 不可作判据**（Cursor 也设它） |
 | D23 | stdout 契约 | `__agent-hook` **永远 `exit 0` + 空 stdout**（sessionStart/turn-start 的 stdout 会被注入模型上下文；Cursor `stop` 空输出 = no-op）。失败全部 fail-open |
 | D24 | i18n | 新 UI / 窗口中英双语（zh/en），沿用既有 i18n 体系 |
+| D25 | Codex app-server 共享 pid **不作会话 pid** | 新版 Codex TUI 经 UDS 连**长寿共享 app-server 守护**（reparent 到 PID 1、多 TUI 共用），hook/工具/MCP 都跑在 app-server 进程树内 → walk 只会命中 app-server、**永远拿不到 TUI pid**（源码+实测坐实，见 §8）。故 walk 命中的 Codex 祖先若是 app-server（判据见 D27）→ **视为「无可用会话 pid」记 `pid=None`**，走 D7/D12 的**无 pid 路径**（与 Claude 被 PID-scrub 时**同一条既有代码路径**）：不做 D7 轮换、不做存活轮询、由 D12 TTL + 「工作中兜底超时」治理。理由：app-server pid 打破 D7「一个 pid 至多一个活动 session、pid 死＝session 结束」假设——否则并发会话在 `apply_event` 里互相轮换误杀、幽灵会话永不结束、`touch_activity_by_pid` 跨 session 串味；且 app-server 无 tty，terminal 定位本就失败 |
+| D26 | interrupt / 关窗 结束判据（同 Claude 兜底） | Codex **无任何** interrupt/abort/SessionEnd hook（源码坐实：`Stop` 仅在回合**自然完成**触发，用户 Esc 打断走 `CodexErr::TurnAborted` 在 Stop 之前直接返回；见 §8）。故 Codex 的「打断 / 关窗 / 报错结束」＝Claude 无 Stop / 被 scrub 时的**同一兜底**：`working_backstop_sweep`（静默超时 工作中→空闲）+ D12 TTL（→已结束），**接受延迟**。正常回合结束仍由已安装的 `Stop`→turn-end hook 即时切「空闲」 |
+| D27 | app-server 判据 | walk 命中的 Codex 祖先满足以下即判为「共享 app-server、非 TUI」→ 按 D25 记 `pid=None`：**命令行含 `app-server` 子命令**（argv0 为 `codex` 且参数含 `app-server` 令牌，`--listen unix://`/`stdio://` 皆算）。**兜底（可选）**：无 tty **且** 父链上溯到 PID 1（通用、不写死 codex，兼容未来其它共享守护架构）。嵌入/旧模式 TUI 命令为纯 `codex`（无 `app-server`）→ 不受影响，pid 照常可用 |
 
 ## 5. 非目标（明确不做）
 
@@ -74,7 +77,37 @@ AskHuman agents status
 - **Codex 信任哈希与 Codex 版本相关**：`trusted_hash` 由 Codex 源码的 hook identity 结构推导；若 Codex 改了该结构，旧哈希失效、hook 会被判 Untrusted 而不执行。需在 `status` 里能识别「未受信任 / 已漂移」并提示重装；算法与出处记于 `FINDINGS §6.2`。
 - **Linux 上 Claude 的 PID namespace 隔离**可能让 walk/`kill-0` 失效 → 落到 D12 的 TTL 兜底。
 - **空闲 agent 不保活 daemon** 的代价（D18）：agent 空闲超过 daemon 空闲上限后 daemon 退出，下个 turn-start 重新拉起（首事件略有延迟）；窗口开着时无此问题。**用户已确认可接受**。
+- **Codex app-server 共享 pid（D25–D27，§8）**：新版默认走共享 app-server → 追踪只能靠 `session_id` 身份 + hook 状态机 + TTL/兜底超时，**不能靠 pid 判存活**。代价：(1) 打断/关窗 无 hook → 结束/降级有延迟（同 Claude，D26）；(2) app-server 崩溃时其名下会话不会即时判死，最多滞留到 TTL（1h）；(3) Codex 会话「聚焦终端」按钮因无 tty 恒隐藏。**判据（D27）依赖 Codex 命令行/进程形态**，若 Codex 改变 app-server 启动形态需同步；`app-server` 令牌判据比「无 tty+PID 1」更专一、更不易误伤真实 TUI。
+
+## 8. Codex app-server 架构补充（2026-07 源码 + 实测坐实）
+
+> 背景：早期 Codex TUI 每个会话独占进程，可用 pid 追踪生命周期。新版 TUI 改为经 **Unix domain socket** 连一个**长寿共享 app-server 守护**来跑 agent，打破了原有 pid 假设。以下结论来自阅读 `/Users/wutian/Developer/codex` 源码 + 对真实运行会话的实测取证。
+
+### 8.1 拿不到 TUI pid（不可靠，已定论）
+
+hook→app-server→TUI 这条链上，TUI pid 在我们能触及的任何位置都不存在：
+
+1. **hook stdin 无 TUI pid**：`hooks/src/events/pre_tool_use.rs`（`PreToolUseCommandInput`）/ `stop.rs`（`StopCommandInput`）字段只有 `session_id`/`turn_id`/`transcript_path`/`cwd`/`model`/`permission_mode`/`tool_*` 等；env 也只有 hooks.json 里配置的**静态** env（`hooks/src/engine/command_runner.rs` 仅 `.envs(handler.env)`，运行时不注入 pid）。
+2. **hook 跑在 app-server 进程内**：`command_runner.rs` 直接 `Command::spawn`，父进程＝app-server；TUI 不是其祖先。
+3. **TUI 经 UDS 连共享守护**：`app-server-client/remote.rs::connect_unix_socket_endpoint` 用 `UnixStream::connect(控制 socket)`；`app-server-transport/unix_socket.rs` accept 后**直接升级 websocket、不读对端凭证**（无 SO_PEERCRED/LOCAL_PEERPID）。守护有 `app-server.pid` 单例锁、可 reparent 到 PID 1。
+4. **握手不带 pid**：`app-server-protocol/src/protocol/v1.rs::ClientInfo { name, title, version }` —— app-server 自己都不知道 TUI 的 pid。
+5. **落盘元数据无 pid**：thread-store / rollout metadata / session_index 只有 `originator`/`cli_version`/`updated_at` 等。
+
+**实测取证**（真实会话 `019f2b13-…`）：
+- 两个 app-server 并存：共享 UDS 守护（`node codex app-server --listen unix://`，已 reparent 到 **PID 1**）+ Codex.app 自带 stdio 版。
+- 该会话 rollout `…-019f2b13….jsonl` 由**共享 app-server（无 tty）以写持有**；**TUI（ttys005）没打开任何 rollout**，env 里也没有 session_id。
+- TUI↔app-server 仅可经 socket 端点配对（TUI fd 的对端 == app-server 的 `app-server-control.sock`），能判「哪个 TUI 连了哪个 app-server」，但**看不出该连接归属哪个 session/thread**（多路复用、不外露）。
+
+⇒ `session_id → TUI pid` 不可得；walk 只会命中共享 app-server。这是 D25/D27 的依据。
+
+### 8.2 hook 判「turn 结束」的边界
+
+- **正常回合结束：有信号，且已在用。** `core/src/session/turn.rs` 在 `if !needs_follow_up`（回合自然完成）内调 `run_turn_stop_hooks` → 触发 `Stop` hook（`hook_runtime.rs`），载荷含 `session_id`/`turn_id`/`last_assistant_message`。我们的 `agent_lifecycle.rs` 已安装 Codex `Stop`→`turn-end`，正常结束即时切「空闲」。
+- **用户 interrupt / 报错结束：Codex 不触发任何 hook。** `session/turn.rs` 里 `Err(CodexErr::TurnAborted) => return Err(...)` 在到达 Stop hook **之前**直接返回；`context/turn_aborted.rs` 只把 `<turn_aborted>` 注入**下一回合**上下文。Codex 全量 hook 事件（`hooks/src/events/`）＝SessionStart / UserPromptSubmit / Pre·PostToolUse / PermissionRequest / Pre·PostCompact / Stop·SubagentStop —— **无** TurnAbort/Interrupt/SessionEnd/Notification。
+- ⇒ 打断/关窗只能靠非 hook 兜底（D26）：现有 `working_backstop_sweep`（工作中→空闲）+ D12 TTL（→已结束）。这与 Claude「Esc 打断不发 Stop」是同一类限制，故**处置方案与 Claude 完全一致**。
 
 ## 7. 反馈意见
 
 （评审 / 实测中的修改意见追加到此处，标注日期。）
+
+- **2026-07-04**：并入 Codex app-server 共享 pid 结论（新增 D25/D26/D27 + §8 + 风险项）。定案：app-server pid 记 `None` 走无 pid 路径（同 Claude）；interrupt/关窗兜底同 Claude；判据以命令行 `app-server` 令牌为主、`无 tty + PID 1` 为可选兜底。据此改 `agents/detect.rs` + `agents/registry.rs`（详见计划文档同日补丁节）。

@@ -91,17 +91,28 @@ drain+重启到新版（`ASKHUMAN_DAEMON_AUTORESTART`），但 **GUI 宿主（`-
 并存」。待评估修法：install.sh/daemon 换新时主动通知 GUI 宿主换新（而非仅靠其自身 15s+无窗口门控）；或让 GUI
 换新不被「有窗口」长期阻塞；或产物 reconcile 统一由单一新二进制来源执行。
 
-## 待办：分析 PID 定位 Terminal 功能失效
+## 待验收：Codex app-server 共享 pid 隔离（生命周期追踪）
 
-已定位：6 月 22 日启动的 Codex app-server daemon 持有当前 thread 并执行 hooks/tools；TUI 自动连接该
-daemon。AskHuman 从 hook/ask 子进程向上 walk 得到 daemon PID 52407（无 tty、父链到 PID 1），而非
-Terminal 内的 TUI PID 83240（ttys005、父链含 Terminal.app）。registry 因而缓存 `terminal=other`，
-状态页隐藏按钮；弹窗同样对该 PID 探测失败，badge 不可点击。Codex 源码确认：默认 control socket
-存在且启动配置可复用时，所有普通 TUI 自动连接同一 LocalDaemon；无 socket、带不可复放覆盖或显式
-remote endpoint 时分别走每 TUI Embedded / 指定 Remote。共享 PID 还会触发 registry 的“同 PID 新
-session 结束旧 session”、daemon 存活误当 thread 存活、按 PID 的 MCP/在途活动跨 session 刷新。
-建议拆分 session 生命周期身份与 Terminal 定位：共享 app-server PID 不进入 session liveness；Terminal
-在旧父链精确命中失败时按 Codex TUI 的 tty + cwd 唯一候选解析，歧义时不猜。待确认歧义交互策略。
+已实现并 `install.sh` 落盘，376 单测全绿。方案见 `docs/specs/agent-lifecycle-tracking.md`（D25/D26/D27 +
+§8 源码+实测坐实 + 风险）与 `docs/plans/agent-lifecycle-tracking.md`（补丁节 P-1..P-4）；overview 生命周期章节已同步。
+
+结论：新版 Codex TUI 经 UDS 连**长寿共享 app-server 守护**（reparent 到 PID 1、多 TUI 共用），hook/工具/MCP
+都跑在 app-server 进程树内 → walk **永远拿不到 TUI pid**（源码：hook stdin/env 无 pid、握手 `ClientInfo` 无 pid、
+UDS 不读对端凭证、落盘无 pid；实测：会话 rollout 由无 tty 的 app-server 持有、TUI 无 rollout/无 session_id）。
+且 Codex **无** interrupt/关窗/SessionEnd hook（`Stop` 仅正常完成触发，Esc 打断走 `TurnAborted` 在 Stop 前返回）。
+
+已落地（＝跟 Claude 无 pid / 被 scrub 时**同一路径**，不改状态机）：
+- `agents/detect.rs`：`is_shared_app_server`（判据：命令行里 `codex` 令牌**紧邻下一个**为 `app-server` 子命令，
+  覆盖 `node …/codex app-server …` 包装器；提示词里含 app-server 不误伤）；`walk_agent_pid(Codex)` 命中 app-server
+  → `None`；`walk_any_agent` 跳过 app-server 节点。+3 单测。
+- `agents/registry.rs`：状态机**无改动**——pid=None 天然跳过 D7 轮换与存活轮询，由 TTL + `working_backstop_sweep`
+  治理；补模块注释。新增 `refresh_by_session_ids`（在途豁免 session_id 版）+1 单测。
+- `daemon/request.rs`：`RequestEntry` 加 `agent_session_id` + `create` 填入 + `in_flight_agent_session_ids()`。
+- `daemon/mod.rs`：tick 里 `refresh_by_pids` **并列** `refresh_by_session_ids`（无 pid 的 Codex/Claude-scrub
+  等人回答>30min 也不掉空闲，与 Claude-有pid 完全一致）。
+
+**未做（待你验收）**：未真机端到端——需重启 daemon 用上新二进制，对一个 app-server 模式的 Codex 会话触发一次
+工具/提问，核对 `~/.askhuman/agents.json` 里该会话 `pid=null`、状态随 `Stop`→空闲与兜底超时正确流转、不再并发轮换误杀。
 
 ## 弹窗启动延迟性能优化（埋点 + harness + 基线 + 首轮 + 次轮 + 方案6 已落地；性能已暂停 → 远期余方案8/markdown-it）
 

@@ -180,6 +180,34 @@ agent 调 AskHuman 提问 → client 顺带上报身份 → 刷新最近活动 +
 
 ---
 
+## 补丁（2026-07-04）：Codex app-server 共享 pid 隔离（spec D25/D26/D27 + §8）
+
+> 背景/结论见 spec §8：新版 Codex TUI 经 UDS 连长寿共享 app-server，walk 永远拿不到 TUI pid，只会命中 app-server（reparent 到 PID 1、多会话共用）。目标：**让共享 app-server pid 不进入会话身份/存活**，Codex 该类会话落到既有「无 pid」路径（与 Claude 被 scrub 时同一路径）。**不新增状态字段、不改状态机**——只在 detect 层把「app-server pid」归一成 `None`。
+
+### P-1 `agents/detect.rs`：识别共享 app-server → 记 None
+
+- 新增 `fn is_shared_app_server(entry: &ProcEntry) -> bool`（判据 D27，纯函数、可单测）：
+  - **主判据**：`argv0 basename` 含 `codex` **且** 命令行 whitespace 分词后存在等于 `app-server` 的令牌（覆盖 `codex app-server --listen unix://` 与 `stdio://`）。
+  - **可选兜底**：`entry` 无 tty（`ps -o tty=` 为空/`??`）**且** 父链上溯到 PID 1（`process_chain` 末端 ppid==1）。默认可只用主判据（更专一、少一次 `ps`）；是否叠加兜底见评审结论。
+- `walk_agent_pid(kind, start_pid)`：命中的 Codex 祖先若 `is_shared_app_server` → 返回 `None`（该会话无可用 pid）。**仅对 Codex 生效**（其它家族不变）。
+- `walk_any_agent(start_pid)`（MCP 兜底）：跳过 `is_shared_app_server` 的节点（继续上溯）；若最终只剩 app-server → 返回 `None`（不按共享 pid 做 `touch_activity_by_pid`，规避跨 session 串味）。
+- `terminal_kind` 不动：pid=None 时上层本就不查，Codex 会话「聚焦终端」按钮恒隐藏（可接受，spec 风险已记）。
+
+### P-2 `agents/registry.rs`：无改动（复用既有无 pid 路径）
+
+- pid=None 时：`apply_event` 的 D7 轮换 `if let Some(pid)` 天然跳过；`poll_liveness` 只扫 `pid.is_some()`；`ttl_sweep` 只扫 `pid.is_none()`；`working_backstop_sweep` 与 pid 无关照常生效。**即 D25 所说「同 Claude 无 pid 路径」，无需改注册表逻辑**。
+- 仅补充/修订模块头与相关方法的文档注释，点明「Codex 共享 app-server 场景由 detect 归一为无 pid」。
+
+### P-3 测试
+
+- `detect.rs` 单测：`is_shared_app_server` 命中 `codex app-server --listen unix://`/`stdio://`；不命中纯 `codex`（TUI）、不命中 argv 里恰好含 "app-server" 字样但 argv0 非 codex 的进程；`walk_agent_pid(Codex, …)` 对构造链（app-server 祖先）返回 `None`。
+- 复用既有 registry 无 pid 用例（`ttl_only_affects_pidless_records` / `working_backstop_*`）即覆盖生命周期治理，无需新增注册表测试。
+
+### P-4 验证
+
+- `cargo test`（新增 detect 单测 + 既有全绿）。
+- `./scripts/install.sh` 编译进环境；按 AGENTS.md 用新 `AskHuman`：真机对一个 app-server 模式的 Codex 会话触发一次工具/提问，核对 `agents.json` 里该会话 `pid=null`、状态随 hook（Stop→空闲）与兜底超时正确流转、不再出现并发会话互相轮换误杀。
+
 ## 关键风险与对策（汇总）
 
 | 风险 | 对策 |

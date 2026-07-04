@@ -108,6 +108,29 @@ fn matches_agent(entry: &ProcEntry, kind: AgentKind) -> bool {
     }
 }
 
+/// 识别一个进程节点是否为 Codex「共享 app-server 守护」而非 TUI 本体（spec D25/D27）。
+///
+/// 新版 Codex TUI 经 Unix domain socket 连一个**长寿共享 app-server 守护**跑 agent，hook / 工具 /
+/// MCP 子进程都跑在 app-server 的进程树里 → 从子进程向上 walk **只会命中 app-server、永远拿不到
+/// TUI pid**；且该守护多会话共用、可 reparent 到 PID 1。故把它的 pid 当作「无可用会话 pid」
+/// （`walk_agent_pid` 命中它即返回 None，让该会话落到 registry 的「无 pid」路径 = 同 Claude 被
+/// PID-scrub 时）。
+///
+/// 判据（D27 主判据）：命令行里基名为 `codex` 的令牌，其**紧邻的下一个令牌**是 `app-server`
+/// 子命令（即 `codex app-server …`，覆盖 `--listen unix://` 与 `stdio://`，以及 `node <path>/codex
+/// app-server …` 包装器）。
+///
+/// 只认「codex 后面紧跟的子命令位」而非「参数里任意出现 app-server」，以免把提示词里恰好含
+/// "app-server" 的 TUI（如 `codex exec "用 app-server 提问"`）误判。嵌入 / 旧模式 TUI 命令为纯
+/// `codex`（子命令是 `exec`/`resume`/无）→ 返回 false，pid 照常可用。
+fn is_shared_app_server(entry: &ProcEntry) -> bool {
+    let command = entry.command.to_ascii_lowercase();
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    tokens.iter().enumerate().any(|(i, tok)| {
+        basename(tok) == "codex" && tokens.get(i + 1).is_some_and(|next| *next == "app-server")
+    })
+}
+
 fn is_self(entry: &ProcEntry) -> bool {
     let comm = entry.comm.to_ascii_lowercase();
     let argv0_base = entry
@@ -128,13 +151,19 @@ fn basename(p: &str) -> String {
 
 /// 从 `start_pid` 向上回溯进程树，返回第一个命中指定家族、且非自身的祖先 pid。
 /// 找不到（或非 unix）返回 `None` → 调用方落 TTL 兜底。
+///
+/// spec D25/D27：Codex 命中的祖先若是**共享 app-server 守护**（`is_shared_app_server`）→ 返回
+/// `None`（walk 只会命中它、拿不到 TUI pid；该会话按「无 pid」路径治理，见 registry）。
 pub fn walk_agent_pid(kind: AgentKind, start_pid: u32) -> Option<u32> {
     let chain = process_chain(start_pid);
-    chain
+    let matched = chain
         .into_iter()
         .filter(|e| !is_self(e))
-        .find(|e| matches_agent(e, kind))
-        .map(|e| e.pid)
+        .find(|e| matches_agent(e, kind))?;
+    if kind == AgentKind::Codex && is_shared_app_server(&matched) {
+        return None;
+    }
+    Some(matched.pid)
 }
 
 /// 从当前进程向上 walk 定位指定家族的 Agent pid。
@@ -159,11 +188,13 @@ pub fn walk_any_agent(start_pid: u32) -> Option<(AgentKind, u32)> {
         .into_iter()
         .filter(|e| !is_self(e))
         .find_map(|e| {
-            KINDS
-                .iter()
-                .copied()
-                .find(|&k| matches_agent(&e, k))
-                .map(|k| (k, e.pid))
+            let kind = KINDS.iter().copied().find(|&k| matches_agent(&e, k))?;
+            // spec D25/D27：跳过 Codex 共享 app-server（返回 None 让 find_map 继续上溯；其上通常即
+            // PID 1，最终返回 None → 不按共享 pid 做 by-pid 刷新，规避跨 session 串味）。
+            if kind == AgentKind::Codex && is_shared_app_server(&e) {
+                return None;
+            }
+            Some((kind, e.pid))
         })
 }
 
@@ -393,6 +424,64 @@ mod tests {
             command: "/Users/u/.local/bin/AskHuman mcp".to_string(),
         };
         assert!(is_self(&e2));
+    }
+
+    #[test]
+    fn shared_app_server_detected_by_command_token() {
+        // 共享 app-server 守护：argv0=codex 且参数含独立令牌 app-server（unix / stdio 皆算）。
+        let unix = ProcEntry {
+            pid: 52407,
+            ppid: 1,
+            comm: "codex".to_string(),
+            command: "/opt/homebrew/lib/.../bin/codex app-server --listen unix://".to_string(),
+        };
+        assert!(is_shared_app_server(&unix));
+        let stdio = ProcEntry {
+            pid: 39788,
+            ppid: 39755,
+            comm: "codex".to_string(),
+            command: "/Applications/Codex.app/.../codex app-server --listen stdio://".to_string(),
+        };
+        assert!(is_shared_app_server(&stdio));
+        // node 包装器：`node <path>/codex app-server …`——codex 后紧跟 app-server 也算。
+        let wrapper = ProcEntry {
+            pid: 52404,
+            ppid: 1,
+            comm: "node".to_string(),
+            command: "node /opt/homebrew/bin/codex app-server --listen unix://".to_string(),
+        };
+        assert!(is_shared_app_server(&wrapper));
+    }
+
+    #[test]
+    fn plain_codex_tui_is_not_app_server() {
+        // 嵌入 / 旧模式 TUI：纯 codex（无 app-server 子命令）→ 不算共享守护，pid 照常可用。
+        for cmd in [
+            "/opt/homebrew/lib/.../bin/codex",
+            "codex",
+            "codex resume",
+            "codex exec 用 app-server 关键词提问", // "app-server" 只是提示词里的子串，非独立子命令令牌
+        ] {
+            let e = ProcEntry {
+                pid: 1,
+                ppid: 2,
+                comm: "codex".to_string(),
+                command: cmd.to_string(),
+            };
+            assert!(!is_shared_app_server(&e), "should not flag: {cmd}");
+        }
+    }
+
+    #[test]
+    fn non_codex_with_app_server_token_is_not_flagged() {
+        // argv0 / comm 不是 codex，即便命令行恰好含 app-server 令牌也不误判。
+        let e = ProcEntry {
+            pid: 1,
+            ppid: 2,
+            comm: "node".to_string(),
+            command: "node my-app-server app-server".to_string(),
+        };
+        assert!(!is_shared_app_server(&e));
     }
 
     #[test]

@@ -5,6 +5,11 @@
 //!
 //! 状态推导（spec D5/D8/D12）：turn-start→工作中、turn-end→空闲；进程存活轮询是权威「已结束」
 //! 判据；仅当 **拿不到 pid** 时用 1 小时 TTL 兜底（任意事件 / ask 调用都刷新活动时间）。
+//!
+//! **无 pid 路径（spec D25/D26）**：Codex 新版经共享 app-server 跑 agent，`detect` 把这类会话的
+//! pid 归一成 `None`（walk 只会命中长寿共享守护、拿不到 TUI pid）；此时本注册表**不做 D7 轮换、
+//! 不做存活轮询**，纯由 D12 TTL + `working_backstop_sweep` 治理——与 Claude 被 PID-scrub 时**同一
+//! 条路径**。打断 / 关窗（Codex 无对应 hook，同 Claude）靠 `working_backstop_sweep` 超时兜底降级。
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -454,6 +459,26 @@ impl AgentRegistry {
         hit
     }
 
+    /// 在途 AskHuman 豁免（**session_id 版**，与 `refresh_by_pids` 并列）：给「正等待人类回答」的
+    /// **无 pid** agent（典型 Codex 共享 app-server / Claude 被 PID-scrub）按 `session_id` 刷新活动，
+    /// 使其在等待期间不被 `working_backstop_sweep` 降级为空闲（有 pid 的由 `refresh_by_pids` 覆盖）。
+    /// `session_id` 全局唯一，故不分家族匹配。返回是否命中（仅调试用，不触发广播——刷新不改状态）。
+    pub fn refresh_by_session_ids(&self, session_ids: &[String]) -> bool {
+        if session_ids.is_empty() {
+            return false;
+        }
+        let now = now_secs();
+        let mut inner = self.inner.lock().unwrap();
+        let mut hit = false;
+        for r in inner.active.iter_mut() {
+            if session_ids.iter().any(|s| s == &r.session_id) {
+                r.last_activity = now;
+                hit = true;
+            }
+        }
+        hit
+    }
+
     /// 「工作中」兜底超时扫描：把「工作中」且距上次活动超过 `timeout_secs` 的记录降级为「空闲」。
     /// 兜底 Claude「用户打断回合」这类无 hook 场景（见 `WORKING_BACKSTOP_SECS`）。调用前应先用
     /// `refresh_by_pids` 豁免在途 AskHuman 的 agent。返回是否有变化（供广播）。
@@ -737,6 +762,41 @@ mod tests {
         assert!(!r2.refresh_by_pids(&[9999])); // pid 不匹配，未刷新
         assert!(r2.working_backstop_sweep(10)); // 陈旧 → 降级
         assert_eq!(r2.working_count(), 0);
+    }
+
+    #[test]
+    fn refresh_by_session_ids_exempts_pidless_from_backstop() {
+        // 无 pid agent（Codex app-server / Claude scrubbed）等人回答期间靠 session_id 豁免，不被降级。
+        let r = reg();
+        r.apply_event(
+            AgentKind::Codex,
+            LifecycleEvent::TurnStart,
+            "asking",
+            None, // 无 pid（共享 app-server 归一）
+            None,
+            1, // 活动时间停在很久以前
+        );
+        assert_eq!(r.working_count(), 1);
+        // 命中在途 session → 刷新到 now → 不被兜底降级。
+        assert!(r.refresh_by_session_ids(&["asking".to_string()]));
+        assert!(!r.working_backstop_sweep(10));
+        assert_eq!(r.working_count(), 1);
+
+        // 不在在途集合 → 不刷新 → 陈旧 → 被降级。
+        let r2 = reg();
+        r2.apply_event(
+            AgentKind::Codex,
+            LifecycleEvent::TurnStart,
+            "stale",
+            None,
+            None,
+            1,
+        );
+        assert!(!r2.refresh_by_session_ids(&["other".to_string()]));
+        assert!(r2.working_backstop_sweep(10));
+        assert_eq!(r2.working_count(), 0);
+        // 空集合 → 未命中。
+        assert!(!r2.refresh_by_session_ids(&[]));
     }
 
     #[test]

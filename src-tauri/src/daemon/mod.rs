@@ -479,9 +479,14 @@ mod unix_impl {
                 loop {
                     tokio::time::sleep(Duration::from_secs(15)).await;
                     // 在途 AskHuman 豁免：先给「正等待人类回答」的 agent 刷新活动，使其不被兜底降级。
+                    // pid 版覆盖有 pid 的 agent；session_id 版覆盖无 pid 的（Codex 共享 app-server /
+                    // Claude 被 scrub），两者并列（spec D25/D26 + Q1 甲）。
                     state
                         .agents
                         .refresh_by_pids(&state.registry.in_flight_agent_pids());
+                    state
+                        .agents
+                        .refresh_by_session_ids(&state.registry.in_flight_agent_session_ids());
                     // 进程存活轮询 + 无 pid TTL 兜底 + 「工作中」兜底超时（打断这类无 hook 场景）。
                     let changed = state.agents.poll_liveness()
                         | state.agents.ttl_sweep()
