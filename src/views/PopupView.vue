@@ -189,6 +189,9 @@ function setThumbsRef(el: HTMLElement | null, i: number) {
 const focusedQ = ref<number | null>(null);
 // 待归属图片的目标题（「添加图片」按钮点选时设置）。
 let pendingPickQ = 0;
+// 弹窗刚上屏（原生「出现」动画期）短时吞掉 ⌘W：用户常按 ⌘W 关别的窗口，弹窗恰好此刻弹出会被误关。
+const APPEAR_GUARD_MS = 500;
+let appearGuardUntil = 0;
 // 键盘/按钮 setActive 后短暂锁定，避免随即的滚动事件把 active 改回去。
 let activeLockUntil = 0;
 // 导航滚动锁时长：需覆盖「聚焦展开(双 rAF) + smooth 滚动动画」的整个过程，否则动画尾段的滚动事件会让
@@ -1348,6 +1351,8 @@ function onKeydown(e: KeyboardEvent) {
   }
   if (mod && (e.key === "w" || e.key === "W")) {
     e.preventDefault();
+    // 出现动画期内吞掉 ⌘W：防止用户为关闭其它窗口按下的 ⌘W 恰好误关刚弹出的弹窗（仍 preventDefault 拦住原生关窗）。
+    if (Date.now() < appearGuardUntil) return;
     requestCancel();
     return;
   }
@@ -1461,10 +1466,12 @@ function renderInit(init: PopupInit) {
     // 「加载中→正文」闪现），rAF 也随之恢复，afterPaint 在 show 之后打点 / 自动取消。
     nextTick(() => {
       popupShowWindow().catch(() => {});
+      appearGuardUntil = Date.now() + APPEAR_GUARD_MS; // 窗口刚上屏：短时吞掉 ⌘W 防误关
       afterPaint();
     });
   } else {
     // 冷路径：窗口已在 setup 中显示，rAF 正常回调。
+    appearGuardUntil = Date.now() + APPEAR_GUARD_MS;
     afterPaint();
   }
   // 内容已渲染：把其余初始化（事件监听 / 语音 / 自更新 / 终端探测）放到首帧之后，不阻塞首屏。
