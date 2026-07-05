@@ -2,14 +2,17 @@
 
 按具体任务 / 需求记录待办与当前进展。任务 / 需求完成后删除其 section（历史留在 git）。
 
-## 【进行中】/watch 实时关注：其它渠道（Telegram / Slack / 钉钉）开发计划
+## 【进行中】/watch 多渠道扩展：M0 公共重构 + Telegram + Slack
 
-P1 飞书已完成并经多轮真机验收（设计 `docs/specs/im-watch.md`、实现见 `watch.rs` +
-`daemon/mod.rs::WatchState` + `feishu/card.rs::build_watch_card`；含跟底重发、足迹时间线、
-TODO 折叠面板、回合时长等全部定案细节），已随 feat 提交入库。
+P1 飞书已完成入库（`docs/specs/im-watch.md`）。多渠道计划 `docs/plans/im-watch-channels.md`
+已经 AskHuman 评审定案：顺序 Telegram → Slack → 钉钉 PoC；TG/Slack 的 TODO 仅摘要行；
+钉钉 PoC 方案（模板 + 探针命令 `debug dd-watch-poc` + 高频更新实测）已认可。
 
-**当前任务**：为其余渠道产出开发计划（能力矩阵：Telegram editMessageText / Slack chat.update /
-钉钉专用模板或重发策略），写入 `docs/plans/`，经 AskHuman 评审后排期。
+**当前任务**（用户指示：TG + Slack 都做完，到钉钉 PoC 时再联系）：
+1. M0 公共重构（R1 帧中立化 / R2 WatchTransport / R3 订阅与扰动按渠道 / R4 门控 / R5 频控参数化），飞书行为不变；
+2. M1 Telegram（HTML 渲染 + inline keyboard + 跟底 + 终态无按钮）；
+3. M2 Slack（新增 chat.update + Block Kit 卡 + interactive 路由；每卡 2s 频控）。
+完成后 AskHuman 验收 TG/Slack，然后进入钉钉 PoC（联系用户建模板）。
 
 ## 待验收：守护进程「保活模式」（实验 Tab）
 
