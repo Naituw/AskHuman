@@ -355,11 +355,11 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "No working or idle agents right now.\n(Agent status relies on the experimental Lifecycle Tracking feature; if it is off, enable tracking for the relevant agent under Settings → Experimental.)",
             "当前没有工作中或空闲的 agent。\n（agent 状态依赖「生命周期追踪」实验功能；如未开启，请在 设置 → 实验 中开启对应 Agent 的追踪。）",
         ),
-        // /status <编号> 详情：未找到该编号。
+        // /status <编号> 详情：未找到该编号。`{p}` 为渠道命令前缀（Slack 用 `!`，其余 `/`）。
         "autoChannel.statusDetailNotFound" => pick(
             lang,
-            "No agent numbered {id}. Send /status to see the list.",
-            "没有编号 {id} 的 agent。发送 /status 查看列表。",
+            "No agent numbered {id}. Send {p}status to see the list.",
+            "没有编号 {id} 的 agent。发送 {p}status 查看列表。",
         ),
         // /status <编号> 详情：解析不到当前活动。
         "autoChannel.statusNoActivity" => pick(lang, "(no activity yet)", "（暂无可解析的活动）"),
@@ -374,15 +374,16 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "autoChannel.activityWrite" => pick(lang, "Edit", "写入文件"),
 
         // —— 动态引导 / /help 文案（spec R3）：按开关拼装；不含「已收到」。 ——
+        // `{p}` 为渠道命令前缀：Slack 客户端拦截一切 `/` 输入，故 Slack 提示 `!` 前缀，其余渠道 `/`。
         "autoChannel.helpTitle" => pick(lang, "AskHuman is running. You can:", "AskHuman 正在运行，你可以："),
-        "autoChannel.helpCmdStatus" => pick(lang, "• /status — list agents (working/idle)\n• /status <n> — what agent n is doing now", "• /status — 列出 agent（工作中/空闲）\n• /status <编号> — 查看该 agent 当前在做什么"),
+        "autoChannel.helpCmdStatus" => pick(lang, "• {p}status — list agents (working/idle)\n• {p}status <n> — what agent n is doing now", "• {p}status — 列出 agent（工作中/空闲）\n• {p}status <编号> — 查看该 agent 当前在做什么"),
         "autoChannel.helpCmdWatch" => pick(
             lang,
-            "• /watch <n> — follow agent n with a live status card (/unwatch to stop)",
-            "• /watch <编号> — 用一张实时状态卡关注该 agent（/unwatch 取消）",
+            "• {p}watch <n> — follow agent n with a live status card ({p}unwatch to stop)",
+            "• {p}watch <编号> — 用一张实时状态卡关注该 agent（{p}unwatch 取消）",
         ),
-        "autoChannel.helpCmdHelp" => pick(lang, "• /help — show this help", "• /help — 显示此帮助"),
-        "autoChannel.helpCmdHere" => pick(lang, "• /here — route questions to this channel", "• /here — 把提问切到此渠道接收"),
+        "autoChannel.helpCmdHelp" => pick(lang, "• {p}help — show this help", "• {p}help — 显示此帮助"),
+        "autoChannel.helpCmdHere" => pick(lang, "• {p}here — route questions to this channel", "• {p}here — 把提问切到此渠道接收"),
         // 有在途提问时的作答指引。
         "autoChannel.helpAnswering" => pick(
             lang,
@@ -439,24 +440,24 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "autoChannel.detectFieldUserId" => pick(lang, "User ID", "用户 ID"),
         "autoChannel.detectFieldOpenId" => pick(lang, "OpenID", "用户 OpenID"),
 
-        // —— /watch 实时关注（spec docs/specs/im-watch.md；飞书/Telegram/Slack）——
-        // 渠道门控：不支持的渠道（如钉钉）收到 watch 命令。
+        // —— /watch 实时关注（spec docs/specs/im-watch.md；四渠道全支持）——
+        // 渠道门控：理论上已无渠道触发（四渠道全支持），保留兜底未来新渠道。
         "watch.unsupported" => pick(
             lang,
-            "Live watch is currently available on Feishu, Telegram and Slack.",
-            "「实时关注」目前支持飞书、Telegram、Slack 渠道。",
+            "Live watch is available on Feishu, Telegram, Slack and DingTalk.",
+            "「实时关注」支持飞书、Telegram、Slack、钉钉渠道。",
         ),
-        // 关注上限。
+        // 关注上限。`{p}` 为渠道命令前缀（Slack 用 `!`，其余 `/`）。
         "watch.limit" => pick(
             lang,
-            "Watch limit reached ({n}). Send /unwatch <n> to stop one first.",
-            "关注数已达上限（{n} 个）。请先 /unwatch <编号> 取消部分关注。",
+            "Watch limit reached ({n}). Send {p}unwatch <n> to stop one first.",
+            "关注数已达上限（{n} 个）。请先 {p}unwatch <编号> 取消部分关注。",
         ),
         // /watch 无参：agent 列表（同 /status）+ 选择提示 + 已关注段标题。
         "watch.pickHint" => pick(
             lang,
-            "Send /watch <n> to follow one with a live status card.",
-            "发送 /watch <编号> 即可用一张实时状态卡关注该 agent。",
+            "Send {p}watch <n> to follow one with a live status card.",
+            "发送 {p}watch <编号> 即可用一张实时状态卡关注该 agent。",
         ),
         "watch.listTitle" => pick(lang, "Watching:", "正在关注："),
         // /unwatch：确认与提示。
@@ -465,20 +466,20 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "watch.unwatchNone" => pick(lang, "Not watching any agent.", "当前没有关注任何 agent。"),
         "watch.unwatchWhich" => pick(
             lang,
-            "Watching more than one agent — send /unwatch <n> to pick one, or /unwatch all:",
-            "正在关注多个 agent，请用 /unwatch <编号> 指定，或 /unwatch all 全部取消：",
+            "Watching more than one agent — send {p}unwatch <n> to pick one, or {p}unwatch all:",
+            "正在关注多个 agent，请用 {p}unwatch <编号> 指定，或 {p}unwatch all 全部取消：",
         ),
         "watch.notWatching" => pick(
             lang,
-            "Not watching agent [{id}]. Send /watch to list current watches.",
-            "没有关注编号为 {id} 的 agent。发送 /watch 查看当前关注。",
+            "Not watching agent [{id}]. Send {p}watch to list current watches.",
+            "没有关注编号为 {id} 的 agent。发送 {p}watch 查看当前关注。",
         ),
         // 发卡失败（飞书配置/网络问题）。
         "watch.sendFailed" => pick(lang, "Failed to send the watch card: {e}", "发送关注卡片失败：{e}"),
         // 卡片：样式化头部（{id} 编号、{agent} 家族名、{project} 项目名）。
         "watch.cardHeader" => pick(lang, "Watching [{id}] {agent} — {project}", "实时关注 [{id}] {agent} — {project}"),
-        // 卡片状态行回合时长（`· 已 {t}`；依赖生命周期 hook，缺省不显示。步数不显示——用户定案）。
-        "watch.statsElapsed" => pick(lang, "{t} in", "已 {t}"),
+        // 卡片状态行运行时长（`· 已运行 {t}`，整个 agent 会话起算——用户定案：回合时长迷惑）。
+        "watch.statsElapsed" => pick(lang, "up {t}", "已运行 {t}"),
         // TODO 摘要（`/status` 尾行 / watch 卡折叠面板标题；agent 未用 todo 功能不显示）。
         // 「TODO」不翻译（用户定案）。
         "watch.todoSummary" => pick(

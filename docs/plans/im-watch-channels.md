@@ -1,10 +1,10 @@
 # /watch 多渠道扩展开发计划（Telegram / Slack / 钉钉）
 
-> 前置：P1 飞书已完成（`docs/specs/im-watch.md`，含跟底重发 / 足迹时间线 / TODO 折叠面板 /
-> 回合时长等全部定案）。本计划把 /watch 推广到其余三渠道，按能力矩阵排定优先级与实现路径。
-> 状态：**M0 公共重构 + M1 Telegram + M2 Slack 已落地并验收**；**M3 钉钉 PoC 已通过**
-> （实测结论见 §4；实现细节沉淀在 `docs/specs/im-watch.md` 渠道差异表）。待排期 M4 钉钉全量
-> （含「提问投放给 watch 渠道」，见 §6 定案）。
+> 前置：P1 飞书已完成（`docs/specs/im-watch.md`，含跟底重发 / 足迹时间线 / TODO 折叠面板等
+> 全部定案）。本计划把 /watch 推广到其余三渠道，按能力矩阵排定优先级与实现路径。
+> 状态：**全部完成**——M0 公共重构 + M1 Telegram + M2 Slack + M3 钉钉 PoC + **M4 钉钉全量
+> （含「提问投放给 watch 渠道」，§6 定案）均已落地并真机验收**。实现细节沉淀在
+> `docs/specs/im-watch.md`（渠道差异表 + 更新引擎）。
 
 ## 0. 渠道能力矩阵（就地编辑 / 按钮回调 / 富文本 / 折叠）
 
@@ -160,8 +160,12 @@ TODO 行），`daemon/mod.rs` 的 `WatchState`/`watch_tick`/`ensure_watch_routes
   `TgRouter::set_card_route`（仅认领卡回调，**不**抢自由文字——不干扰提问卡作答）。
 - Slack：`slack/watch.rs`（Block Kit + `parse_watch_action`，action_id `watch_unwatch|refresh`）；
   复用 `chat.update`（`update_message` 已有）；路由 `set_active(ts, "")`（user_id 空 → 只认领交互）。
-- 钉钉（M3 PoC 产出，M4 复用）：`dingtalk/watch.rs`（`build_watch_param_map` 11 变量 +
+- 钉钉（M3 PoC 产出 + M4 全量，均已落地）：`dingtalk/watch.rs`（`build_watch_param_map` 11 变量 +
   `parse_watch_action` + 内置默认模板 ID）；模板 `docs/assets/dingtalk-watch-card-template.json`；
-  探针 `cli/debug_cmd.rs`。M4 剩余：`watch::channel_supported` 放行 dingding、`WatchClient::DingTalk`
+  探针 `cli/debug_cmd.rs`。M4：`watch::channel_supported` 放行 dingding、`WatchClient::DingTalk`
   （send=createAndDeliver 铸 outTrackId / edit=update_card_private）、`ensure_watch_route_for` 接
-  DdRouter（Reader 需放行 watch actionId 转发）、提问投放并集 watch 渠道（§6 定案）。
+  共享 DdRouter（`set_active(otid, "")` 只认领卡回调；Reader 放行 watch actionId 转发，空 ACK 后
+  OpenAPI 就地编辑）、提问投放并集（`attach_im_channels` 的 `want` = 活跃槽 ∪ watch 该
+  agent 的渠道，§6 定案）。
+- M4 验收期反馈（已修）：状态行时长从「回合时长」改为**整个 agent 会话运行时长**
+  （`startedAt` 起算，文案「已运行 X」；四渠道同步生效，spec 已更新）。

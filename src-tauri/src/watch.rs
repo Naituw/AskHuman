@@ -15,20 +15,21 @@ use serde_json::Value;
 /// 每渠道关注上限。
 pub const MAX_WATCHES: usize = 5;
 
-/// 渠道是否支持 /watch（就地编辑 + 按钮回调都可用）。钉钉待 PoC（`docs/plans/im-watch-channels.md`）。
+/// 渠道是否支持 /watch（就地编辑 + 按钮回调都可用）。四渠道全支持（钉钉经 PoC 验证后
+/// M4 接入，`docs/plans/im-watch-channels.md` §4）。
 pub fn channel_supported(channel_id: &str) -> bool {
-    matches!(channel_id, "feishu" | "telegram" | "slack")
+    matches!(channel_id, "feishu" | "telegram" | "slack" | "dingding")
 }
 
 /// 持久化的一条关注（跨 daemon 重启恢复后继续编辑同一张卡）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PersistedWatch {
-    /// 渠道 id（feishu / telegram / slack）。
+    /// 渠道 id（feishu / telegram / slack / dingding）。
     pub channel: String,
     /// 被关注 agent 的 session_id（身份键，跨重启稳定；seq 编号不跨重启）。
     pub session_id: String,
-    /// 实时状态卡的消息 id（飞书 open_message_id，编辑目标）。
+    /// 实时状态卡的消息 id（编辑目标；渠道各异，见 daemon `WatchEntry::message_id`）。
     pub message_id: String,
     #[serde(default)]
     pub created_at: u64,
@@ -108,8 +109,9 @@ pub struct WatchFrame {
     pub steps_omitted: usize,
     /// 当前 TODO 清单（agent 未用 todo 功能则空）。
     pub todos: Vec<crate::agents::activity::TodoItem>,
-    /// 本回合开始时刻（Unix 秒；无则 None）。**不入签名**（时长走字不应触发编辑）。
-    pub turn_started_at: Option<u64>,
+    /// agent 会话开始时刻（Unix 秒，注册表首次看到该 session；无则 None）。**不入签名**
+    /// （时长走字不应触发编辑）。
+    pub started_at: Option<u64>,
     /// 活动时刻（Unix 秒；进「最近动态」标签）。
     pub at: Option<u64>,
 }
@@ -128,7 +130,7 @@ pub fn build_frame(seq: u64, rec: Option<&Value>, waiting: bool) -> WatchFrame {
             steps: Vec::new(),
             steps_omitted: 0,
             todos: Vec::new(),
-            turn_started_at: None,
+            started_at: None,
             at: None,
         };
     };
@@ -166,13 +168,13 @@ pub fn build_frame(seq: u64, rec: Option<&Value>, waiting: bool) -> WatchFrame {
         steps: parts.steps,
         steps_omitted: parts.steps_omitted,
         todos: parts.todos,
-        turn_started_at: rec.get("turnStartedAt").and_then(|v| v.as_u64()),
+        started_at: rec.get("startedAt").and_then(|v| v.as_u64()),
         at: parts.at,
     }
 }
 
 /// 帧签名：**只含用户可感知的内容**（状态、标题、文字、足迹步 + 省略数、TODO 清单、编号），
-/// 对结构化数据计算、跨渠道一致。签名不变 → 不编辑卡片。刻意**不含**活动时刻 `at` 与回合
+/// 对结构化数据计算、跨渠道一致。签名不变 → 不编辑卡片。刻意**不含**活动时刻 `at` 与运行
 /// 时长：它们会在内容不变时走动（transcript mtime / 时钟），若计入会造成「内容没变、卡片却
 /// 被反复编辑」的无谓更新。
 pub fn signature(f: &WatchFrame) -> String {
@@ -221,8 +223,9 @@ pub fn header_text(f: &WatchFrame, lang: Lang) -> String {
         )
 }
 
-/// 状态行：`🟢 工作中 · 已 6 分钟`。回合时长仅活动回合显示（<1 分钟不显示；步数不显示——
-/// 用户定案）；起点来自生命周期 hook（turn-start / 首个工具心跳兜底），未装 hook 时缺省。
+/// 状态行：`🟢 工作中 · 已运行 6 分钟`。时长 = 整个 agent 会话的运行时间（注册表首次看到
+/// 该 session 起算——用户定案：回合时长「不知道是什么时间」，改为整体运行时长；<1 分钟
+/// 不显示；步数不显示）。已结束不显示（运行已停止，走字无意义）。
 pub fn state_line_text(f: &WatchFrame, now: u64, lang: Lang) -> String {
     let mut state_line = match f.phase {
         WatchPhase::Working => i18n::tr(lang, "watch.stateWorking"),
@@ -231,8 +234,8 @@ pub fn state_line_text(f: &WatchFrame, now: u64, lang: Lang) -> String {
         WatchPhase::Ended => i18n::tr(lang, "watch.stateEnded"),
     }
     .to_string();
-    if matches!(f.phase, WatchPhase::Working | WatchPhase::Waiting) {
-        if let Some(start) = f.turn_started_at {
+    if !matches!(f.phase, WatchPhase::Ended) {
+        if let Some(start) = f.started_at {
             let elapsed = now.saturating_sub(start);
             if elapsed >= 60 {
                 state_line.push_str(" · ");
@@ -537,33 +540,41 @@ mod tests {
 
     #[test]
     fn stats_line_appends_elapsed_only() {
-        // 用户定案：状态行不显示步数，只显示回合时长。
+        // 用户定案：状态行不显示步数，时长 = 整个 agent 会话运行时间（回合时长迷惑）。
         let now = 1_700_000_000u64;
         let mut r = rec("working");
-        r["turnSteps"] = json!(12);
-        r["turnStartedAt"] = json!(now - 6 * 60);
+        r["startedAt"] = json!(now - 6 * 60);
         let f = build_frame(3, Some(&r), false);
         let v = card_view(&f, CardMode::Active, now, Lang::Zh);
-        assert_eq!(v.state_line, "🟢 工作中 · 已 6 分钟");
+        assert_eq!(v.state_line, "🟢 工作中 · 已运行 6 分钟");
         // 不足 1 分钟不显示时长。
         let mut r2 = rec("working");
-        r2["turnStartedAt"] = json!(now - 30);
+        r2["startedAt"] = json!(now - 30);
         let f2 = build_frame(3, Some(&r2), false);
         assert_eq!(
             card_view(&f2, CardMode::Active, now, Lang::Zh).state_line,
             "🟢 工作中"
         );
-        // 空闲态不显示统计（回合已结束）。
+        // 空闲态也显示（agent 仍在运行）；已结束不显示（运行已停止）。
         let mut r4 = rec("idle");
-        r4["turnStartedAt"] = json!(now - 600);
+        r4["startedAt"] = json!(now - 600);
         let f4 = build_frame(3, Some(&r4), false);
-        assert_eq!(card_view(&f4, CardMode::Active, now, Lang::Zh).state_line, "⚪ 空闲");
-        // 步数不入签名（不显示的东西不触发编辑）：turnSteps 变化签名不变。
+        assert_eq!(
+            card_view(&f4, CardMode::Active, now, Lang::Zh).state_line,
+            "⚪ 空闲 · 已运行 10 分钟"
+        );
+        let mut r5 = rec("ended");
+        r5["startedAt"] = json!(now - 600);
+        let f5 = build_frame(3, Some(&r5), false);
+        assert_eq!(
+            card_view(&f5, CardMode::Active, now, Lang::Zh).state_line,
+            "⏹ 已结束"
+        );
+        // 运行起点不入签名（时长走字不应触发编辑）：startedAt 变化签名不变。
         assert_eq!(signature(&f), signature(&{
-            let mut r5 = rec("working");
-            r5["turnSteps"] = json!(13);
-            r5["turnStartedAt"] = json!(now - 6 * 60);
-            build_frame(3, Some(&r5), false)
+            let mut r6 = rec("working");
+            r6["startedAt"] = json!(now - 7 * 60);
+            build_frame(3, Some(&r6), false)
         }));
     }
 

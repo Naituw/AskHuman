@@ -225,7 +225,7 @@ mod unix_impl {
         /// 被关注 agent 的 session_id（身份键）。
         session_id: String,
         /// 实时状态卡的消息 id（编辑目标；跟底重发后换新）。渠道各异：飞书 open_message_id、
-        /// Telegram message_id 十进制串、Slack 消息 ts。
+        /// Telegram message_id 十进制串、Slack 消息 ts、钉钉 outTrackId（自铸 uuid）。
         message_id: String,
         /// 展示编号（同 `/status`；daemon 生命周期内稳定，重启恢复时按 session 重解析）。
         seq: u64,
@@ -258,6 +258,7 @@ mod unix_impl {
         Feishu(std::sync::Weak<FsRouter>),
         Telegram(std::sync::Weak<TgRouter>),
         Slack(std::sync::Weak<SlRouter>),
+        DingTalk(std::sync::Weak<DdRouter>),
     }
 
     impl WatchRouterRef {
@@ -276,6 +277,10 @@ mod unix_impl {
                     .upgrade()
                     .map(|x| Arc::ptr_eq(&x, r) && x.is_alive())
                     .unwrap_or(false),
+                (WatchRouterRef::DingTalk(w), WatchChannelRouter::DingTalk(r)) => w
+                    .upgrade()
+                    .map(|x| Arc::ptr_eq(&x, r) && x.is_alive())
+                    .unwrap_or(false),
                 _ => false,
             }
         }
@@ -286,6 +291,7 @@ mod unix_impl {
         Feishu(Arc<FsRouter>),
         Telegram(Arc<TgRouter>),
         Slack(Arc<SlRouter>),
+        DingTalk(Arc<DdRouter>),
     }
 
     /// 热池中一个待命热实例的句柄：`assign` 用于把领用的请求 entry 交给其 holder 任务（`handle_gui_warm`）；
@@ -1693,11 +1699,27 @@ mod unix_impl {
         let sink = entry.coordinator.clone();
         let mut attached = false;
 
-        // 「IM 会话期自动激活」：开关开时，仅当前活跃槽对应的 IM 发卡片（其余 IM 由入站监听器保持连接、
-        // 只监听 here，不发卡片）。开关关时维持旧「全发」行为。
+        // 「IM 会话期自动激活」：开关开时，投放渠道 = 当前活跃槽 ∪ 正在 watch 本次调用方 agent 的
+        // 渠道（watch 卡显示「等待回答」却收不到提问卡的困惑，计划 §6 M4 定案；多渠道并发时
+        // 抢答收尾机制原样复用）。其余 IM 由入站监听器保持连接、只监听 here，不发卡片。
+        // 开关关时维持旧「全发」行为。
         let auto = config.channels.auto_activation;
         let active = state.active_channel.lock().unwrap().clone();
-        let want = |id: &str| -> bool { !auto || active.as_deref() == Some(id) };
+        let watching: Vec<String> = match entry.agent_session_id.as_ref() {
+            Some(sid) => state
+                .watch
+                .subs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| &s.session_id == sid)
+                .map(|s| s.channel.clone())
+                .collect(),
+            None => Vec::new(),
+        };
+        let want = |id: &str| -> bool {
+            !auto || active.as_deref() == Some(id) || watching.iter().any(|w| w == id)
+        };
 
         if want("dingding") && crate::app::is_dingding_active(&config) {
             let dd = &config.channels.dingding;
@@ -2043,6 +2065,8 @@ mod unix_impl {
             /// DM 频道 id（`conversations.open` 解析；同一 user 稳定）。
             dm: String,
         },
+        /// 钉钉互动卡片高级版：专用 watch 模板 + 变量更新（`dingtalk/watch.rs`）。
+        DingTalk(crate::dingtalk::client::DingTalkClient),
     }
 
     impl WatchClient {
@@ -2067,13 +2091,16 @@ mod unix_impl {
                     let dm = client.open_dm().await.ok()?;
                     Some(WatchClient::Slack { client, dm })
                 }
+                "dingding" => crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
+                    .ok()
+                    .map(WatchClient::DingTalk),
                 _ => None,
             }
         }
 
         /// 每卡最短编辑间隔（毫秒）。Slack `chat.update` 限频更紧（Tier 3 ≈50/min），取 2s
         /// （计划 R5 定案；签名门控使实际编辑远稀于理论上限）；飞书 PATCH / Telegram
-        /// editMessageText 取 1s。
+        /// editMessageText / 钉钉实例更新（PoC 实测 2s×150 连发零频控，p50 ≈60–95ms）取 1s。
         fn min_edit_interval_ms(&self) -> u64 {
             match self {
                 WatchClient::Slack { .. } => 2000,
@@ -2113,6 +2140,20 @@ mod unix_impl {
                         .await
                         .map_err(|e| e.to_string())
                 }
+                WatchClient::DingTalk(c) => {
+                    // 消息 id = 自铸 outTrackId（钉钉创建卡片由调用方指定实例 id，天然可编辑）。
+                    let otid = format!("watch-{}", uuid::Uuid::new_v4());
+                    let map = crate::dingtalk::watch::build_watch_param_map(frame, mode, now, lang);
+                    c.create_and_deliver_card(
+                        &otid,
+                        crate::dingtalk::watch::DEFAULT_WATCH_CARD_TEMPLATE_ID,
+                        map,
+                        serde_json::json!({}),
+                    )
+                    .await
+                    .map(|()| otid)
+                    .map_err(|e| e.to_string())
+                }
             }
         }
 
@@ -2149,6 +2190,12 @@ mod unix_impl {
                         crate::slack::watch::build_watch_blocks(frame, mode, now, lang);
                     client
                         .update_message(dm, message_id, Some(&blocks), &fallback)
+                        .await
+                        .map_err(|e| e.to_string())
+                }
+                WatchClient::DingTalk(c) => {
+                    let map = crate::dingtalk::watch::build_watch_param_map(frame, mode, now, lang);
+                    c.update_card_private(message_id, map, serde_json::json!({}))
                         .await
                         .map_err(|e| e.to_string())
                 }
@@ -2455,6 +2502,16 @@ mod unix_impl {
                     None => return,
                 }
             }
+            "dingding" => {
+                if !crate::app::is_dingding_active(config) {
+                    return;
+                }
+                let dd = &config.channels.dingding;
+                match ensure_dd_router(state, dd.client_id.trim(), dd.client_secret.trim()).await {
+                    Some(r) => WatchChannelRouter::DingTalk(r),
+                    None => return,
+                }
+            }
             _ => return,
         };
         // 现任务仍绑定同一存活 Router 且卡集合未变 → 无事可做。
@@ -2542,6 +2599,32 @@ mod unix_impl {
                     }
                 });
                 (WatchRouterRef::Slack(Arc::downgrade(r)), task)
+            }
+            WatchChannelRouter::DingTalk(r) => {
+                // user_id 传空 → 只认领卡片回调（outTrackId），不认领该用户的聊天消息。
+                let mut routed = r.register();
+                for mid in &mids {
+                    routed.set_active(Some(mid), "");
+                }
+                let st = state.clone();
+                let stop2 = stop.clone();
+                let task = tokio::spawn(async move {
+                    loop {
+                        tokio::select! {
+                            _ = stop2.notified() => break,
+                            ev = routed.recv() => match ev {
+                                Some(crate::dingtalk::router::DdInbound::Card { data, ack }) => {
+                                    // 先空 ACK 满足 3 秒回包（钉钉无「回调同步回卡」，新帧走 OpenAPI 编辑）。
+                                    let _ = ack.send(serde_json::json!({}));
+                                    handle_watch_dd_action(&st, &data).await;
+                                }
+                                Some(_) => {} // 未认领聊天消息，不会到达；防御性忽略。
+                                None => break, // Router 断开：下一拍 ensure 重建。
+                            },
+                        }
+                    }
+                });
+                (WatchRouterRef::DingTalk(Arc::downgrade(r)), task)
             }
         };
         let _ = task; // 任务由 stop 信号控制生命周期；句柄本身无需保留。
@@ -2765,6 +2848,19 @@ mod unix_impl {
         apply_watch_action(state, "slack", &ts, btn).await;
     }
 
+    /// 处理钉钉 watch 卡按钮回调（空 ACK 已在路由任务发出，这里只做编辑）。
+    async fn handle_watch_dd_action(state: &Arc<ServerState>, data: &serde_json::Value) {
+        let Some((otid, action_id)) = crate::dingtalk::watch::parse_watch_action(data) else {
+            return;
+        };
+        let btn = if action_id == crate::dingtalk::watch::ACTION_UNWATCH {
+            WatchBtn::Unwatch
+        } else {
+            WatchBtn::Refresh
+        };
+        apply_watch_action(state, "dingding", &otid, btn).await;
+    }
+
     /// watch 列表一行：`[编号] 类型 — 标题（项目）· 状态`。记录已消失按已结束显示。
     fn watch_line(snapshot: &serde_json::Value, e: &WatchEntry, lang: Lang) -> String {
         let rec = find_agent_by_session(snapshot, &e.session_id);
@@ -2780,7 +2876,7 @@ mod unix_impl {
     }
 
     /// `/watch` 命令：`Some(编号)` 关注该 agent（发实时状态卡，成功回执就是卡片本身）；
-    /// `None` 列出当前关注。渠道门控见 `watch::channel_supported`（飞书/Telegram/Slack）。
+    /// `None` 列出当前关注。渠道门控见 `watch::channel_supported`（四渠道全支持）。
     async fn handle_watch_cmd(
         state: &Arc<ServerState>,
         channel_id: &str,
@@ -2811,7 +2907,10 @@ mod unix_impl {
                 .unwrap_or(false);
             let mut out = String::new();
             if has_agents {
-                out.push_str(crate::i18n::tr(lang, "watch.pickHint"));
+                out.push_str(
+                    &crate::i18n::tr(lang, "watch.pickHint")
+                        .replace("{p}", crate::autochannel::cmd_prefix(channel_id)),
+                );
                 out.push_str("\n\n");
             }
             out.push_str(&crate::autochannel::status_text(&snapshot, lang));
@@ -2841,7 +2940,8 @@ mod unix_impl {
             .and_then(|l| l.iter().find(|r| r.get("seq").and_then(|v| v.as_u64()) == Some(id)))
         else {
             let text = crate::i18n::tr(lang, "autoChannel.statusDetailNotFound")
-                .replace("{id}", &id.to_string());
+                .replace("{id}", &id.to_string())
+                .replace("{p}", crate::autochannel::cmd_prefix(channel_id));
             let _ = reply_channel_text(channel_id, config, &text).await;
             return;
         };
@@ -2871,7 +2971,8 @@ mod unix_impl {
                 >= crate::watch::MAX_WATCHES
         {
             let text = crate::i18n::tr(lang, "watch.limit")
-                .replace("{n}", &crate::watch::MAX_WATCHES.to_string());
+                .replace("{n}", &crate::watch::MAX_WATCHES.to_string())
+                .replace("{p}", crate::autochannel::cmd_prefix(channel_id));
             let _ = reply_channel_text(channel_id, config, &text).await;
             return;
         }
@@ -2973,7 +3074,8 @@ mod unix_impl {
                     entries.iter().filter(|e| e.seq == id).cloned().collect();
                 if found.is_empty() {
                     let text = crate::i18n::tr(lang, "watch.notWatching")
-                        .replace("{id}", &id.to_string());
+                        .replace("{id}", &id.to_string())
+                        .replace("{p}", crate::autochannel::cmd_prefix(channel_id));
                     let _ = reply_channel_text(channel_id, config, &text).await;
                     return;
                 }
@@ -3005,7 +3107,8 @@ mod unix_impl {
                 // 多个：回列表让用户指定编号。
                 _ => {
                     let snapshot = state.agents.snapshot();
-                    let mut out = crate::i18n::tr(lang, "watch.unwatchWhich").to_string();
+                    let mut out = crate::i18n::tr(lang, "watch.unwatchWhich")
+                        .replace("{p}", crate::autochannel::cmd_prefix(channel_id));
                     for e in &entries {
                         out.push('\n');
                         out.push_str(&watch_line(&snapshot, e, lang));
@@ -3070,15 +3173,20 @@ mod unix_impl {
         let auto = config.channels.auto_activation;
         // `/watch` 渠道门控（spec docs/specs/im-watch.md）：决定 help 是否列 watch 命令。
         let watch_cmd = crate::watch::channel_supported(channel_id);
+        // 命令展示前缀：Slack 客户端拦截 `/` 输入，提示用 `!`；其余渠道 `/`。
+        let prefix = crate::autochannel::cmd_prefix(channel_id);
         // 任何用户入站消息都会把 watch 卡顶上去（机器人的文本回执紧随其后，同属一次扰动）。
         mark_watch_disturbed(state, channel_id);
 
         let Some(text) = text else {
             // 非文本消息（图片/文件）：有活动提问 → 交渠道会话确认；否则回引导（liveness）。
             if !has_active_question_on(state, channel_id) {
-                let _ =
-                    reply_channel_text(channel_id, &config, &help_text(auto, false, watch_cmd, lang))
-                        .await;
+                let _ = reply_channel_text(
+                    channel_id,
+                    &config,
+                    &help_text(auto, false, watch_cmd, prefix, lang),
+                )
+                .await;
             }
             return;
         };
@@ -3100,7 +3208,7 @@ mod unix_impl {
                 match sel {
                     // /status <编号>：单个 agent 的当前活动详情。
                     Some(id) => body.push_str(&crate::autochannel::status_detail_text(
-                        &snapshot, id, lang,
+                        &snapshot, id, prefix, lang,
                     )),
                     // /status：工作中/空闲列表。
                     None => body.push_str(&crate::autochannel::status_text(&snapshot, lang)),
@@ -3114,7 +3222,7 @@ mod unix_impl {
                     let _ = reply_channel_text(
                         channel_id,
                         &config,
-                        &help_text(auto, has_q, watch_cmd, lang),
+                        &help_text(auto, has_q, watch_cmd, prefix, lang),
                     )
                     .await;
                     return;
@@ -3137,9 +3245,12 @@ mod unix_impl {
             }
             Parsed::Command(Command::Help) | Parsed::UnknownCommand => {
                 let has_q = has_active_question_on(state, channel_id);
-                let _ =
-                    reply_channel_text(channel_id, &config, &help_text(auto, has_q, watch_cmd, lang))
-                        .await;
+                let _ = reply_channel_text(
+                    channel_id,
+                    &config,
+                    &help_text(auto, has_q, watch_cmd, prefix, lang),
+                )
+                .await;
             }
             Parsed::Text => {
                 // 普通文本：该渠道有活动在途提问 → 退避（交渠道会话确认/引导，避免重复回复）。
@@ -3159,9 +3270,12 @@ mod unix_impl {
                         return;
                     }
                 }
-                let _ =
-                    reply_channel_text(channel_id, &config, &help_text(auto, false, watch_cmd, lang))
-                        .await;
+                let _ = reply_channel_text(
+                    channel_id,
+                    &config,
+                    &help_text(auto, false, watch_cmd, prefix, lang),
+                )
+                .await;
             }
         }
     }

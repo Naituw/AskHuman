@@ -20,7 +20,7 @@ pub fn render_watch_html(f: &WatchFrame, mode: CardMode, now: u64, lang: Lang) -
     use super::markdown::escape_html as esc;
     let mut out = String::new();
     // 头部行（斜体弱化，对应飞书蓝色小字）。
-    out.push_str(&format!("👁 <i>{}</i>\n", esc(&watch::header_text(f, lang))));
+    out.push_str(&format!("🤖 <i>{}</i>\n", esc(&watch::header_text(f, lang))));
     // 状态行（加粗）+ 标题。
     out.push_str(&format!(
         "<b>{}</b>\n",
@@ -119,7 +119,7 @@ mod tests {
                 content: "跑单测".into(),
                 state: TodoState::InProgress,
             }],
-            turn_started_at: None,
+            started_at: None,
             at: Some(1_700_000_000),
         }
     }
@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn html_layout_escapes_and_marks_up() {
         let html = render_watch_html(&frame(), CardMode::Active, 1_700_000_010, Lang::Zh);
-        assert!(html.contains("👁 <i>实时关注 [3] Cursor — HumanInLoop</i>"));
+        assert!(html.contains("🤖 <i>实时关注 [3] Cursor — HumanInLoop</i>"));
         assert!(html.contains("<b>🟢 工作中</b>"));
         assert!(html.contains("「重构空闲退出」"));
         // 用户内容做 HTML 转义。

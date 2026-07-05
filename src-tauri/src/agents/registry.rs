@@ -79,7 +79,8 @@ pub struct AgentRecord {
     #[serde(skip)]
     pub turn_steps: u32,
     /// 本回合开始时刻（Unix 秒；turn-start 置位、首个工具心跳兜底补位、turn-end 清除）。**不落盘**，
-    /// `snapshot()` 注入 `turnStartedAt`，供 `/watch` 卡状态行「已 N 分钟」。
+    /// `snapshot()` 注入 `turnStartedAt`（`/watch` 卡时长已改用 `startedAt` 整体运行时长——
+    /// 用户定案：回合时长迷惑；本字段暂无展示消费方，保留数据）。
     #[serde(skip)]
     pub turn_started_at: Option<u64>,
 }

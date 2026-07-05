@@ -255,9 +255,10 @@ async fn dispatch(client: &TelegramClient, routes: &Arc<Mutex<Routes>>, update: 
         // 广播给 daemon 级观察者（如「IM 会话期自动激活」入站监听），与卡片路由并行。
         let observed = dispatch_observers(routes, message);
         // 边界（仅 armed=有观察者时）：Telegram 自由文字既是卡片答案、又会被观察者收到。
-        // 斜线前缀文字按约定是「命令」（/here、/status…），不应被当成在途卡片的答案——故仅交观察者，
-        // 不路由到卡片会话。非斜线文字仍正常作答（同时被观察者收到，daemon 端按「普通消息」静默处理）。
-        if observed && text.trim_start().starts_with('/') {
+        // 命令文字（`/` 前缀一律、`!` 前缀且为已知命令，见 `autochannel::classify`）不应被当成
+        // 在途卡片的答案——故仅交观察者，不路由到卡片会话。其余文字仍正常作答
+        // （同时被观察者收到，daemon 端按「普通消息」静默处理）。
+        if observed && crate::autochannel::classify(&text) != crate::autochannel::Parsed::Text {
             return;
         }
         // 归给该 chat 下「最新活动卡片」的会话（活动序号最大者）。

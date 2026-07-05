@@ -2,18 +2,6 @@
 
 按具体任务 / 需求记录待办与当前进展。任务 / 需求完成后删除其 section（历史留在 git）。
 
-## 待开工：/watch 多渠道扩展：M4 钉钉全量 + 提问投放给 watch 渠道
-
-M0 公共重构 + M1 Telegram + M2 Slack + **M3 钉钉 PoC 已全部落地并验收**（PoC 结论 GO：
-2s×150 次更新零频控 p50 ≈60–95ms、按钮回调/终态/折叠面板全通过；详见
-`docs/plans/im-watch-channels.md` §4 结论、渠道差异表 `docs/specs/im-watch.md`）。
-
-**M4 范围（用户定案，计划 §6/§7）**：
-1. 钉钉 watch 接入引擎：`channel_supported` 放行 dingding、`WatchClient::DingTalk`、
-   `ensure_watch_route_for` 接共享 DdRouter（Reader 需放行 watch actionId 转发，现被空 ACK 吞）；
-2. **提问投放给 watch 渠道**：autoActivation 开启时投放渠道 = 最后活跃渠道 ∪ 正在 watch
-   该 agent 的渠道，收尾仍走既有多渠道抢答逻辑（不动抢答机制）。
-
 ## 待验收：守护进程「保活模式」（实验 Tab）
 
 在「实验」Tab 加**分段控件**（与状态栏图标一致）选 daemon 生命周期：`activity`（默认＝当前行为：按需拉起、5min 空闲退出）/ `keepalive`（保活）。已全量落地：

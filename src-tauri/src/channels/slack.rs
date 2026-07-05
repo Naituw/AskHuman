@@ -329,7 +329,7 @@ impl MessagingChannel for SlackSession {
                             ack_kind(&event),
                             crate::autochannel::AckMode::Card,
                             event.get("text").and_then(|v| v.as_str()).unwrap_or(""),
-                            false,
+                            "slack",
                             lang,
                         ) {
                             let ack_client = client.clone();
@@ -435,7 +435,7 @@ async fn ask_question_text(
                         kind,
                         crate::autochannel::AckMode::Fallback,
                         &text,
-                        false,
+                        "slack",
                         ctx.lang,
                     ) {
                         let _ = client.post_text(dm, &reply).await;
@@ -443,12 +443,12 @@ async fn ask_question_text(
                     events.clear_active(None, user_id);
                     return Some(answer);
                 } else {
-                    // 未接受 → 引导（spec R3）；斜线命令交 handle_inbound，不回引导。
+                    // 未接受 → 引导（spec R3）；命令交 handle_inbound，不回引导。
                     if let Some(reply) = super::conversation::answer_inbound_reply(
                         None,
                         crate::autochannel::AckMode::Fallback,
                         &text,
-                        false,
+                        "slack",
                         ctx.lang,
                     ) {
                         let _ = client.post_text(dm, &reply).await;

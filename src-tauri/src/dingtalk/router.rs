@@ -26,8 +26,8 @@ const SUBMIT_ACK_TIMEOUT: Duration = Duration::from_millis(2500);
 
 /// 分发给某个会话的入站事件。
 pub enum DdInbound {
-    /// 卡片「提交」回调：会话裁决后经 `ack` 回包（成功置灰 / 空包），由 Router 写回连接。
-    /// 仅提交回调才转发（选项切换等非提交回调由 Router 直接空 ACK、不转发）。
+    /// 卡片回调（提问卡「提交」/ watch 卡按钮）：认领方裁决后经 `ack` 回包（成功置灰 / 空包），
+    /// 由 Router 写回连接。其余回调（选项切换等）由 Router 直接空 ACK、不转发。
     Card {
         data: Value,
         ack: oneshot::Sender<Value>,
@@ -177,8 +177,9 @@ async fn reader_task(mut stream: StreamConn, routes: Arc<Mutex<Routes>>, alive: 
     while let Some(ev) = stream.recv().await {
         match ev {
             StreamEvent::CardCallback { data, message_id } => {
-                // 非提交回调（选项切换等）：会话本就忽略 → 直接空 ACK、不转发。
-                if !card::is_submit(&data) {
+                // 只转发「提交」（提问卡）与 watch 按钮回调；其余（选项切换等）会话本就忽略
+                // → 直接空 ACK、不转发。
+                if !card::is_submit(&data) && super::watch::parse_watch_action(&data).is_none() {
                     stream.respond(&message_id, json!({})).await;
                     continue;
                 }
@@ -192,8 +193,8 @@ async fn reader_task(mut stream: StreamConn, routes: Arc<Mutex<Routes>>, alive: 
                     let r = routes.lock().unwrap();
                     r.cards.get(otid).and_then(|rid| r.sinks.get(rid).cloned())
                 };
-                // 提交回调：转发给会话并带 oneshot 回执；超时等其裁决，按裁决回包（满足 3 秒）。
-                // 孤儿提交（无活动会话登记 / 会话已退出 / 超时）→ 空包：诚实地不显示成功。
+                // 提交 / watch 回调：转发给认领方并带 oneshot 回执；超时等其裁决，按裁决回包
+                // （满足 3 秒）。孤儿回调（无登记 / 已退出 / 超时）→ 空包：诚实地不显示成功。
                 let resp = match sink {
                     Some(tx) => {
                         let (ack_tx, ack_rx) = oneshot::channel();

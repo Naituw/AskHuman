@@ -84,26 +84,36 @@ pub enum Parsed {
     Text,
 }
 
-/// 解析入站文本：`trim` 后**以 `/` 开头**才进命令分派，取首个 token（大小写不敏感）匹配。
+/// 解析入站文本：`trim` 后**以 `/` 或 `!` 开头**才进命令分派，取首个 token（大小写不敏感）匹配。
+///
+/// `!` 是备用前缀（B 案，四渠道通用）：Slack 客户端把**一切** `/` 开头的输入拦截为
+/// slash command 在本地解析，未注册的名字根本发不出来——`!status`/`!watch 3` 是普通消息，畅通。
+/// 两个前缀的**未知命令**语义不同：`/xxx` 依约定必是命令 → `UnknownCommand`（回引导）；
+/// `!xxx` 未匹配则视为普通文本（`Text`）——`!` 开头的自由回答（如 "!important"）不能被劫持。
+///
 /// `/status <编号>`：第二个 token 是纯数字则解析为编号（`Some`），缺省 / 非数字则 `None`（全局列表）。
 pub fn classify(text: &str) -> Parsed {
     let trimmed = text.trim();
-    if !trimmed.starts_with('/') {
-        return Parsed::Text;
-    }
-    let mut tokens = trimmed.split_whitespace();
+    let (bare, bang) = match trimmed.strip_prefix('/') {
+        Some(rest) => (rest, false),
+        None => match trimmed.strip_prefix('!') {
+            Some(rest) => (rest, true),
+            None => return Parsed::Text,
+        },
+    };
+    let mut tokens = bare.split_whitespace();
     let token = tokens.next().unwrap_or("");
     match token.to_ascii_lowercase().as_str() {
-        "/here" | "/这里" => Parsed::Command(Command::Here),
-        "/status" | "/状态" => {
+        "here" | "这里" => Parsed::Command(Command::Here),
+        "status" | "状态" => {
             let sel = tokens.next().and_then(|s| s.parse::<u64>().ok());
             Parsed::Command(Command::Status(sel))
         }
-        "/watch" | "/关注" => {
+        "watch" | "关注" => {
             let sel = tokens.next().and_then(|s| s.parse::<u64>().ok());
             Parsed::Command(Command::Watch(sel))
         }
-        "/unwatch" | "/取消关注" => {
+        "unwatch" | "取消关注" => {
             let sel = match tokens.next() {
                 Some(t) if t.eq_ignore_ascii_case("all") || t == "全部" => WatchSel::All,
                 Some(t) => match t.parse::<u64>() {
@@ -114,7 +124,8 @@ pub fn classify(text: &str) -> Parsed {
             };
             Parsed::Command(Command::Unwatch(sel))
         }
-        "/help" | "/帮助" | "/?" | "/？" => Parsed::Command(Command::Help),
+        "help" | "帮助" | "?" | "？" => Parsed::Command(Command::Help),
+        _ if bang => Parsed::Text,
         _ => Parsed::UnknownCommand,
     }
 }
@@ -153,25 +164,42 @@ pub fn detect_ack_text(field_label: &str, lang: Lang) -> String {
     i18n::tr(lang, "autoChannel.detectAck").replace("{field}", field_label)
 }
 
+/// 渠道展示用的命令前缀：Slack 客户端把一切 `/` 开头输入拦截为 slash command（未注册发不出来），
+/// 故 Slack 的提示/引导展示 `!` 前缀；其余渠道维持 `/`。解析侧两个前缀四渠道通用（见 `classify`）。
+pub fn cmd_prefix(channel_id: &str) -> &'static str {
+    if channel_id == "slack" {
+        "!"
+    } else {
+        "/"
+    }
+}
+
 /// 动态引导 / `/help` 文案（spec R3）：按开关拼装可用命令、如何作答、切槽提示。
 /// **不含「已收到」**——能回复本身即代表收到且在运行。
 /// - `auto`：自动激活是否开启（决定是否列 `/here` 与切槽提示）。
 /// - `has_active_question`：该渠道当前是否有在途提问（决定「如何作答」vs「暂无提问」）。
-/// - `watch`：该渠道是否支持 `/watch` 实时关注（P1 仅飞书，见 `docs/specs/im-watch.md`）。
-pub fn help_text(auto: bool, has_active_question: bool, watch: bool, lang: Lang) -> String {
+/// - `watch`：该渠道是否支持 `/watch` 实时关注（见 `docs/specs/im-watch.md`）。
+/// - `prefix`：命令展示前缀（`cmd_prefix`，Slack `!` / 其余 `/`）。
+pub fn help_text(
+    auto: bool,
+    has_active_question: bool,
+    watch: bool,
+    prefix: &str,
+    lang: Lang,
+) -> String {
     let mut out = String::new();
     out.push_str(i18n::tr(lang, "autoChannel.helpTitle"));
     out.push('\n');
-    out.push_str(i18n::tr(lang, "autoChannel.helpCmdStatus"));
+    out.push_str(&i18n::tr(lang, "autoChannel.helpCmdStatus").replace("{p}", prefix));
     if watch {
         out.push('\n');
-        out.push_str(i18n::tr(lang, "autoChannel.helpCmdWatch"));
+        out.push_str(&i18n::tr(lang, "autoChannel.helpCmdWatch").replace("{p}", prefix));
     }
     out.push('\n');
-    out.push_str(i18n::tr(lang, "autoChannel.helpCmdHelp"));
+    out.push_str(&i18n::tr(lang, "autoChannel.helpCmdHelp").replace("{p}", prefix));
     if auto {
         out.push('\n');
-        out.push_str(i18n::tr(lang, "autoChannel.helpCmdHere"));
+        out.push_str(&i18n::tr(lang, "autoChannel.helpCmdHere").replace("{p}", prefix));
     }
     out.push_str("\n\n");
     if has_active_question {
@@ -283,16 +311,19 @@ pub(crate) fn kind_title_project(rec: &Value, lang: Lang) -> String {
     format!("{} — {}（{}）", kind_label, title, project)
 }
 
-/// `/status <编号>`：单个 agent 的「头部 + 当前活动」。找不到该编号回未找到提示。
+/// `/status <编号>`：单个 agent 的「头部 + 当前活动」。找不到该编号回未找到提示
+/// （`prefix` 为命令展示前缀，见 `cmd_prefix`）。
 /// 可寻址范围＝快照里的任意记录（工作中 / 空闲 / 已结束皆可）。
-pub fn status_detail_text(snapshot: &Value, id: u64, lang: Lang) -> String {
+pub fn status_detail_text(snapshot: &Value, id: u64, prefix: &str, lang: Lang) -> String {
     let empty = Vec::new();
     let list = snapshot.as_array().unwrap_or(&empty);
     let Some(rec) = list
         .iter()
         .find(|r| r.get("seq").and_then(|v| v.as_u64()) == Some(id))
     else {
-        return i18n::tr(lang, "autoChannel.statusDetailNotFound").replace("{id}", &id.to_string());
+        return i18n::tr(lang, "autoChannel.statusDetailNotFound")
+            .replace("{id}", &id.to_string())
+            .replace("{p}", prefix);
     };
 
     // 头部：[编号] 类型 — 标题（项目）· 状态词
@@ -643,16 +674,33 @@ mod tests {
     }
 
     #[test]
+    fn classify_bang_prefix() {
+        // `!` 备用前缀（Slack 拦截 `/`）：已知命令等价于斜线版。
+        assert_eq!(classify("!status"), Parsed::Command(Command::Status(None)));
+        assert_eq!(classify("!watch 3"), Parsed::Command(Command::Watch(Some(3))));
+        assert_eq!(
+            classify("!unwatch all"),
+            Parsed::Command(Command::Unwatch(WatchSel::All))
+        );
+        assert_eq!(classify("!here"), Parsed::Command(Command::Here));
+        assert_eq!(classify(" !HELP "), Parsed::Command(Command::Help));
+        // 未知 `!xxx` 是普通文本（不能劫持感叹号开头的自由回答），区别于 `/xxx`。
+        assert_eq!(classify("!important note"), Parsed::Text);
+        assert_eq!(classify("!"), Parsed::Text);
+        assert_eq!(classify("!!"), Parsed::Text);
+    }
+
+    #[test]
     fn help_text_gates_on_auto_activation() {
-        let here = i18n::tr(Lang::En, "autoChannel.helpCmdHere");
+        let here = i18n::tr(Lang::En, "autoChannel.helpCmdHere").replace("{p}", "/");
         let switch = i18n::tr(Lang::En, "autoChannel.helpSwitchHint");
         // auto on → lists /here + switch hint.
-        let on = help_text(true, false, false, Lang::En);
-        assert!(on.contains(here));
+        let on = help_text(true, false, false, "/", Lang::En);
+        assert!(on.contains(&here));
         assert!(on.contains(switch));
         // auto off → neither /here nor switch hint.
-        let off = help_text(false, false, false, Lang::En);
-        assert!(!off.contains(here));
+        let off = help_text(false, false, false, "/", Lang::En);
+        assert!(!off.contains(&here));
         assert!(!off.contains(switch));
     }
 
@@ -660,19 +708,35 @@ mod tests {
     fn help_text_gates_on_active_question() {
         let answering = i18n::tr(Lang::En, "autoChannel.helpAnswering");
         let none = i18n::tr(Lang::En, "autoChannel.helpNoQuestion");
-        let with_q = help_text(false, true, false, Lang::En);
+        let with_q = help_text(false, true, false, "/", Lang::En);
         assert!(with_q.contains(answering));
         assert!(!with_q.contains(none));
-        let without_q = help_text(false, false, false, Lang::En);
+        let without_q = help_text(false, false, false, "/", Lang::En);
         assert!(without_q.contains(none));
         assert!(!without_q.contains(answering));
     }
 
     #[test]
     fn help_text_gates_on_watch_support() {
-        let watch = i18n::tr(Lang::En, "autoChannel.helpCmdWatch");
-        assert!(help_text(false, false, true, Lang::En).contains(watch));
-        assert!(!help_text(false, false, false, Lang::En).contains(watch));
+        let watch = i18n::tr(Lang::En, "autoChannel.helpCmdWatch").replace("{p}", "/");
+        assert!(help_text(false, false, true, "/", Lang::En).contains(&watch));
+        assert!(!help_text(false, false, false, "/", Lang::En).contains(&watch));
+    }
+
+    #[test]
+    fn help_text_uses_channel_prefix() {
+        // Slack 展示 `!` 前缀（客户端拦截 `/`）；其余渠道 `/`。
+        assert_eq!(cmd_prefix("slack"), "!");
+        assert_eq!(cmd_prefix("feishu"), "/");
+        let slack = help_text(true, false, true, cmd_prefix("slack"), Lang::En);
+        assert!(slack.contains("!status"));
+        assert!(slack.contains("!watch"));
+        assert!(slack.contains("!help"));
+        assert!(!slack.contains("/status"));
+        assert!(!slack.contains("{p}"));
+        let feishu = help_text(true, false, true, cmd_prefix("feishu"), Lang::En);
+        assert!(feishu.contains("/status"));
+        assert!(!feishu.contains("{p}"));
     }
 
     #[test]
@@ -773,11 +837,12 @@ mod tests {
         let snap = serde_json::json!([
             {"seq":1,"kind":"cursor","sessionId":"no-such-session-xyz","state":"working","title":"做点事","cwd":"/tmp/proj"}
         ]);
-        // 未找到编号 → 含 id 提示。
-        let nf = status_detail_text(&snap, 9, Lang::En);
+        // 未找到编号 → 含 id 提示（命令按渠道前缀渲染）。
+        let nf = status_detail_text(&snap, 9, "!", Lang::En);
         assert!(nf.contains('9'));
+        assert!(nf.contains("!status"));
         // 命中：头部含编号与标题；无会话文件 → 无活动提示。
-        let d = status_detail_text(&snap, 1, Lang::En);
+        let d = status_detail_text(&snap, 1, "/", Lang::En);
         assert!(d.contains("[1]"));
         assert!(d.contains("做点事"));
         assert!(d.contains(i18n::tr(Lang::En, "autoChannel.statusNoActivity")));

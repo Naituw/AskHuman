@@ -341,7 +341,7 @@ impl MessagingChannel for DingTalkSession {
                             ack_kind(&data),
                             crate::autochannel::AckMode::Card,
                             &bot_text(&data),
-                            false,
+                            "dingding",
                             lang,
                         ) {
                             let ack_client = client.clone();
@@ -444,7 +444,7 @@ async fn ask_question_text(
                         kind,
                         crate::autochannel::AckMode::Fallback,
                         &text,
-                        false,
+                        "dingding",
                         ctx.lang,
                     ) {
                         let _ = client.send_oto_text(&reply).await;
@@ -452,12 +452,12 @@ async fn ask_question_text(
                     events.clear_active(None, user_id);
                     return Some(answer);
                 } else {
-                    // 未接受 → 引导（spec R3）；斜线命令交 handle_inbound，不回引导。
+                    // 未接受 → 引导（spec R3）；命令交 handle_inbound，不回引导。
                     if let Some(reply) = super::conversation::answer_inbound_reply(
                         None,
                         crate::autochannel::AckMode::Fallback,
                         &text,
-                        false,
+                        "dingding",
                         ctx.lang,
                     ) {
                         let _ = client.send_oto_text(&reply).await;

@@ -30,7 +30,7 @@ pub fn build_watch_blocks(
     // 头部（context 小字，对应飞书蓝色小字）。
     blocks.push(json!({
         "type": "context",
-        "elements": [{ "type": "mrkdwn", "text": format!("👁 {}", esc(&header)) }]
+        "elements": [{ "type": "mrkdwn", "text": format!("🤖 {}", esc(&header)) }]
     }));
 
     // 状态 + 标题。
@@ -108,7 +108,7 @@ pub fn build_watch_blocks(
     }
 
     // 通知回退文本：头部行 + 状态（Slack 弹窗/列表预览用）。
-    let fallback = format!("👁 {} — {}", header, state_line);
+    let fallback = format!("🤖 {} — {}", header, state_line);
     (Value::Array(blocks), fallback)
 }
 
@@ -179,7 +179,7 @@ mod tests {
                 content: "跑单测".into(),
                 state: TodoState::InProgress,
             }],
-            turn_started_at: None,
+            started_at: None,
             at: Some(1_700_000_000),
         }
     }
