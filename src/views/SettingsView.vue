@@ -114,8 +114,13 @@ const secretCleared = ref({
 });
 const SECRET_PLACEHOLDER = "••••••••";
 
-// tab 按钮同时是窗口拖拽区：用屏幕坐标区分「点击切换」与「拖动移窗」。
+// tab 按钮**仅 macOS** 兼作窗口拖拽区（按住 tab 拖窗）：用屏幕坐标区分「点击切换」与「拖动移窗」。
 // 原生拖窗时窗口跟随光标，clientX/Y 几乎不变，故必须用 screenX/Y。
+// Windows/Linux 不给按钮标 data-tauri-drag-region（tabDrag=null 即不渲染属性）：这两个平台的
+// start_dragging 走原生模态拖动（Win32 WM_NCLBUTTONDOWN / GTK begin_move_drag），会吞掉后续
+// mouseup/click，@click 永不触发 → tab 点了没反应。摘掉属性后按钮是 Tauri drag.js 语义里的
+// 「可点击元素」，自动阻断拖拽（外层 tabbar 空白区仍可拖），纯点击即可切换。
+const tabDrag = isMac ? "" : null;
 const tabDown = ref<{ x: number; y: number } | null>(null);
 function onTabDown(e: MouseEvent) {
   tabDown.value = { x: e.screenX, y: e.screenY };
@@ -1107,7 +1112,7 @@ onBeforeUnmount(() => unlistenProgress?.());
   <div v-if="config" class="settings">
     <nav class="tabbar" data-tauri-drag-region>
       <button
-        data-tauri-drag-region
+        :data-tauri-drag-region="tabDrag"
         :class="{ active: activeTab === 'general' }"
         @mousedown="onTabDown"
         @click="onTabClick('general', $event)"
@@ -1115,7 +1120,7 @@ onBeforeUnmount(() => unlistenProgress?.());
         {{ t("settings.tabs.general") }}
       </button>
       <button
-        data-tauri-drag-region
+        :data-tauri-drag-region="tabDrag"
         :class="{ active: activeTab === 'integration' }"
         @mousedown="onTabDown"
         @click="onTabClick('integration', $event)"
@@ -1128,7 +1133,7 @@ onBeforeUnmount(() => unlistenProgress?.());
         ></span>
       </button>
       <button
-        data-tauri-drag-region
+        :data-tauri-drag-region="tabDrag"
         :class="{ active: activeTab === 'channel' }"
         @mousedown="onTabDown"
         @click="onTabClick('channel', $event)"
@@ -1137,7 +1142,7 @@ onBeforeUnmount(() => unlistenProgress?.());
       </button>
       <button
         v-if="!isWindows && config.experimental.enabled"
-        data-tauri-drag-region
+        :data-tauri-drag-region="tabDrag"
         :class="{ active: activeTab === 'experimental' }"
         @mousedown="onTabDown"
         @click="onTabClick('experimental', $event)"
