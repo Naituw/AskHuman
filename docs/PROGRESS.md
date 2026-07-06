@@ -19,6 +19,18 @@ spec `docs/specs/agent-interject.md`（D1–D9）、计划 `docs/plans/agent-int
   发消息，观察其下一次工具调用收到 `[USER INTERJECTION]`；② 打开 composer 不提交，确认 agent 工具调用挂起
   等待、取消后放行；③ IM 发 `/msg`；④ 已开生命周期的 agent hook 是否被自动迁移出 timeout=86400。
 
+## 待办：Codex 生命周期 hook 信任哈希加固（「hook 新、哈希旧」窗口）
+
+用户曾遇一次 Codex 弹「不信任 AskHuman hook」（时值 M2 迁移逻辑经其它任务的 install.sh 生效、
+`migrate_outdated()` 给 PreToolUse 补 timeout=86400 的窗口期）。代码分析确认三个真实窗口
+（当前盘上状态已核对一致，哈希与独立复算逐字节相同）：
+1. `codex_install` 两步写（hooks.json → config.toml 信任）非原子且第二步失败**不回滚**；
+2. config.toml 无锁「读-改-写」，与 Codex CLI 自身写入 / `mcp_config` 并发时后写者覆盖 `[hooks.state]`；
+3. 新旧双二进制交错重装（GUI 宿主滞留旧版，见下方既有待办）可致 file/hash 版本错配。
+另：信任键含数组下标（外部增删同事件条目即失效）；自愈仅在 daemon 启动时跑。
+**候选修法**（用户定案：暂不做）：方案1 第二步失败回滚 hooks.json；方案2（推荐）daemon 周期 tick
+顺带核对 Codex trust 一致性、不一致即幂等重装（秒级自愈，兼作竞态事后修复）。
+
 ## 待验收：守护进程「保活模式」（实验 Tab）
 
 在「实验」Tab 加**分段控件**（与状态栏图标一致）选 daemon 生命周期：`activity`（默认＝当前行为：按需拉起、5min 空闲退出）/ `keepalive`（保活）。已全量落地：
