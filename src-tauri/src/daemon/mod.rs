@@ -3299,6 +3299,29 @@ mod unix_impl {
                     .ok()?;
                 Some(otid)
             }
+            "telegram" => {
+                let tg = &config.channels.telegram;
+                let client = crate::telegram::TelegramClient::new(
+                    tg.bot_token.clone(),
+                    tg.chat_id.clone(),
+                    tg.api_base_url.clone(),
+                )
+                .ok()?;
+                let html = crate::telegram::select::render_select_html(view);
+                let markup = crate::telegram::select::inline_keyboard(view, Lang::current());
+                client
+                    .send_message(&html, Some("HTML"), Some(markup))
+                    .await
+                    .ok()
+                    .map(|mid| mid.to_string())
+            }
+            "slack" => {
+                let client = crate::slack::client::SlackClient::new(&config.channels.slack).ok()?;
+                let dm = client.open_dm().await.ok()?;
+                let (blocks, fallback) =
+                    crate::slack::select::build_select_blocks(view, Lang::current());
+                client.post_message(&dm, Some(&blocks), &fallback).await.ok()
+            }
             _ => None,
         }
     }
@@ -3406,7 +3429,7 @@ mod unix_impl {
             .retain(|p| !(p.channel == channel_id && p.message_id == message_id));
     }
 
-    /// 幂等确保各渠道的单选卡回调路由任务在位（撤掉已无 picker 的渠道路由）。MVP 仅飞书。
+    /// 幂等确保各渠道的单选卡回调路由任务在位（撤掉已无 picker 的渠道路由）。飞书 / 钉钉 / TG / Slack。
     async fn ensure_select_routes(state: &Arc<ServerState>) {
         let mut desired: HashMap<String, Vec<String>> = HashMap::new();
         for p in state.select.pickers.lock().unwrap().iter() {
@@ -3435,8 +3458,9 @@ mod unix_impl {
         }
     }
 
-    /// 幂等确保单一渠道的单选卡回调路由任务在位（MVP 飞书 + 钉钉；复用 watch 的路由句柄类型）。
-    /// 飞书走「回调同步回卡」(oneshot Option)；钉钉先空 ACK、卡片变化经 OpenAPI（见 `handle_select_dd_action`）。
+    /// 幂等确保单一渠道的单选卡回调路由任务在位（飞书 / 钉钉 / TG / Slack；复用 watch 的路由句柄类型）。
+    /// 飞书走「回调同步回卡」(oneshot Option)；钉钉先空 ACK、卡片变化经 OpenAPI；TG/Slack 就地编辑
+    /// （见 `handle_select_dd_action` / `handle_select_tg_action` / `handle_select_slack_action`）。
     async fn ensure_select_route_for(
         state: &Arc<ServerState>,
         config: &AppConfig,
@@ -3464,7 +3488,25 @@ mod unix_impl {
                     None => return,
                 }
             }
-            _ => return, // TG / Slack 暂无单选卡（send_select_card 返回 None、不会有 picker）。
+            "telegram" => {
+                if !crate::app::is_telegram_active(config) {
+                    return;
+                }
+                match ensure_tg_router(state, &config.channels.telegram).await {
+                    Some(r) => WatchChannelRouter::Telegram(r),
+                    None => return,
+                }
+            }
+            "slack" => {
+                if !crate::app::is_slack_active(config) {
+                    return;
+                }
+                match ensure_sl_router(state, &config.channels.slack).await {
+                    Some(r) => WatchChannelRouter::Slack(r),
+                    None => return,
+                }
+            }
+            _ => return,
         };
         // 现任务仍绑定同一存活 Router 且卡集合未变 → 无事可做。
         {
@@ -3523,7 +3565,53 @@ mod unix_impl {
                 });
                 WatchRouterRef::DingTalk(Arc::downgrade(r))
             }
-            _ => return, // 上面已排除，防御性。
+            WatchChannelRouter::Telegram(r) => {
+                let routed = r.register();
+                for mid in &mids {
+                    if let Ok(m) = mid.parse::<i64>() {
+                        // 仅认领卡片回调（`set_card_route`），不认领自由文字（不抢提问卡答案）。
+                        routed.set_card_route(m);
+                    }
+                }
+                let mut routed = routed;
+                tokio::spawn(async move {
+                    loop {
+                        tokio::select! {
+                            _ = stop2.notified() => break,
+                            ev = routed.recv() => match ev {
+                                Some(crate::telegram::router::TgInbound::Callback(cb)) => {
+                                    handle_select_tg_action(&st, &cb).await;
+                                }
+                                Some(_) => {} // 未认领自由文字，不会到达；防御性忽略。
+                                None => break,
+                            },
+                        }
+                    }
+                });
+                WatchRouterRef::Telegram(Arc::downgrade(r))
+            }
+            WatchChannelRouter::Slack(r) => {
+                let mut routed = r.register();
+                for mid in &mids {
+                    // user_id 传空 → 只认领卡片交互（message_ts），不认领聊天消息。
+                    routed.set_active(Some(mid), "");
+                }
+                tokio::spawn(async move {
+                    loop {
+                        tokio::select! {
+                            _ = stop2.notified() => break,
+                            ev = routed.recv() => match ev {
+                                Some(crate::slack::router::SlInbound::Interactive(payload)) => {
+                                    handle_select_slack_action(&st, &payload).await;
+                                }
+                                Some(_) => {}
+                                None => break,
+                            },
+                        }
+                    }
+                });
+                WatchRouterRef::Slack(Arc::downgrade(r))
+            }
         };
         if let Some(old) = state.select.routes.lock().unwrap().insert(
             channel_id.to_string(),
@@ -3979,6 +4067,347 @@ mod unix_impl {
             {
                 log(&format!("select: finalize dingtalk select card failed: {}", err));
             }
+        }
+    }
+
+    // ===== Telegram / Slack 单选卡点选（可就地编辑：点 watch → 本消息变身为实时 watch 卡）=====
+
+    /// 处理 Telegram 单选卡点击：应答消除转圈 → 解析下标 → 分派。
+    async fn handle_select_tg_action(state: &Arc<ServerState>, cb: &serde_json::Value) {
+        let data = cb.get("data").and_then(|v| v.as_str()).unwrap_or("");
+        let Some(idx) = crate::telegram::select::parse_select_action(data) else {
+            return; // 非单选卡回调（本路由只认领单选卡消息；防御）。
+        };
+        let Some(mid) = cb
+            .get("message")
+            .and_then(|m| m.get("message_id"))
+            .and_then(|v| v.as_i64())
+        else {
+            return;
+        };
+        let config = AppConfig::load();
+        // 应答 callback（消除客户端转圈，best-effort）。
+        if let Some(id) = cb.get("id").and_then(|i| i.as_str()) {
+            let tg = &config.channels.telegram;
+            if let Ok(c) = crate::telegram::TelegramClient::new(
+                tg.bot_token.clone(),
+                tg.chat_id.clone(),
+                tg.api_base_url.clone(),
+            ) {
+                c.answer_callback_query(id).await;
+            }
+        }
+        dispatch_select_pick(state, "telegram", &mid.to_string(), idx, &config).await;
+    }
+
+    /// 处理 Slack 单选卡点击（ack 已在 ws 层完成）：解析 `(ts, 下标)` → 分派。
+    async fn handle_select_slack_action(state: &Arc<ServerState>, payload: &serde_json::Value) {
+        let Some((ts, idx)) = crate::slack::select::parse_select_action(payload) else {
+            return;
+        };
+        let config = AppConfig::load();
+        dispatch_select_pick(state, "slack", &ts, idx, &config).await;
+    }
+
+    /// TG/Slack 共用的下标分派：找 picker → 按下标取 session_id → 按 kind 处理。
+    /// 过期 / 越界 / 无 picker → 静默（D7）。
+    async fn dispatch_select_pick(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+        mid: &str,
+        idx: usize,
+        config: &AppConfig,
+    ) {
+        let picker = {
+            let pickers = state.select.pickers.lock().unwrap();
+            pickers
+                .iter()
+                .find(|p| p.channel == channel_id && p.message_id == mid)
+                .cloned()
+        };
+        let Some(picker) = picker else {
+            return; // 已过期 / 被清理：静默（D7）。
+        };
+        let Some(session_id) = picker.options.get(idx).cloned() else {
+            return;
+        };
+        let lang = Lang::current();
+        match picker.kind {
+            PickerKind::Watch => {
+                select_pick_watch_inplace(state, channel_id, mid, &session_id, config, lang).await;
+            }
+            PickerKind::Status => {
+                let snapshot = state.agents.snapshot();
+                let text = status_detail_by_session(&snapshot, &session_id, channel_id, lang);
+                let _ = reply_channel_text(channel_id, config, &text).await;
+            }
+            PickerKind::Unwatch => {
+                select_pick_unwatch_inplace(state, channel_id, mid, &session_id, config, lang).await;
+            }
+        }
+    }
+
+    /// 单选卡点选「watch」（TG/Slack 可就地编辑）：把本消息编辑成实时 watch 卡（`WatchClient::edit`），
+    /// 登记订阅（含换新卡收尾）+ 消费 picker + 让 watch 引擎认领本消息。已结束则定格终态卡、不订阅。
+    async fn select_pick_watch_inplace(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+        mid: &str,
+        session_id: &str,
+        config: &AppConfig,
+        lang: Lang,
+    ) {
+        let now = now_secs();
+        let snapshot = state.agents.snapshot();
+        let rec = find_agent_by_session(&snapshot, session_id);
+        let waiting = state
+            .registry
+            .in_flight_agent_session_ids()
+            .contains(&session_id.to_string());
+        let seq = rec
+            .and_then(|r| r.get("seq").and_then(|v| v.as_u64()))
+            .unwrap_or(0);
+        let frame = crate::watch::build_frame(seq, rec, waiting);
+        let ended = frame.phase == crate::watch::WatchPhase::Ended;
+        if ended {
+            // 已结束/消失：就地把本消息编辑成终态卡、不订阅、消费掉 picker。
+            if let Some(client) = WatchClient::for_channel(channel_id, config).await {
+                if let Err(err) = client
+                    .edit(
+                        mid,
+                        &frame,
+                        crate::watch::CardMode::Final(crate::watch::FinalKind::Ended),
+                        now,
+                        lang,
+                    )
+                    .await
+                {
+                    log(&format!(
+                        "select: transform to ended watch card failed ({}): {}",
+                        channel_id, err
+                    ));
+                    return;
+                }
+            }
+            remove_picker(state, channel_id, mid);
+            return;
+        }
+        // 上限校验（本渠道；已在关注同一 session＝换新卡，不计新增）。
+        let already = state
+            .watch
+            .subs
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| s.channel == channel_id && s.session_id == session_id);
+        if !already {
+            let count = state
+                .watch
+                .subs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| s.channel == channel_id)
+                .count();
+            if count >= crate::watch::MAX_WATCHES {
+                let text = crate::i18n::tr(lang, "watch.limit")
+                    .replace("{n}", &crate::watch::MAX_WATCHES.to_string())
+                    .replace("{p}", crate::autochannel::cmd_prefix(channel_id));
+                let _ = reply_channel_text(channel_id, config, &text).await;
+                return; // 单选卡不动，可另选。
+            }
+        }
+        // 就地把这条单选卡消息编辑成实时 watch 卡。
+        let Some(client) = WatchClient::for_channel(channel_id, config).await else {
+            return;
+        };
+        if let Err(err) = client
+            .edit(mid, &frame, crate::watch::CardMode::Active, now, lang)
+            .await
+        {
+            log(&format!(
+                "select: transform select card to watch card failed ({}): {}",
+                channel_id, err
+            ));
+            return;
+        }
+        register_watch_at(state, channel_id, session_id, seq, mid, &frame, false, config, lang)
+            .await;
+        remove_picker(state, channel_id, mid);
+        ensure_watch_routes(state).await;
+    }
+
+    /// 单选卡点选「unwatch」（TG/Slack）：取消该关注（旧 watch 卡定格）+ 文本确认 + 就地刷新本单选卡
+    /// （移除该项；取到 0 则定格「已全部取消关注」）。
+    async fn select_pick_unwatch_inplace(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+        mid: &str,
+        session_id: &str,
+        config: &AppConfig,
+        lang: Lang,
+    ) {
+        let now = now_secs();
+        let entry = state
+            .watch
+            .subs
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|s| s.channel == channel_id && s.session_id == session_id)
+            .cloned();
+        if let Some(entry) = entry {
+            if let Some(client) = WatchClient::for_channel(channel_id, config).await {
+                let snapshot = state.agents.snapshot();
+                let waiting = state
+                    .registry
+                    .in_flight_agent_session_ids()
+                    .contains(&entry.session_id);
+                let frame = crate::watch::build_frame(
+                    entry.seq,
+                    find_agent_by_session(&snapshot, &entry.session_id),
+                    waiting,
+                );
+                if let Err(err) = client
+                    .edit(
+                        &entry.message_id,
+                        &frame,
+                        crate::watch::CardMode::Final(crate::watch::FinalKind::Cancelled),
+                        now,
+                        lang,
+                    )
+                    .await
+                {
+                    log(&format!("select: finalize unwatch card failed ({}): {}", channel_id, err));
+                }
+            }
+            state
+                .watch
+                .subs
+                .lock()
+                .unwrap()
+                .retain(|s| s.message_id != entry.message_id);
+            persist_watch_subs(state);
+            state.watch.notify.notify_one();
+            ensure_watch_routes(state).await;
+            let text =
+                crate::i18n::tr(lang, "watch.unwatchDone").replace("{id}", &entry.seq.to_string());
+            let _ = reply_channel_text(channel_id, config, &text).await;
+        }
+        // 就地刷新单选卡：剩余订阅 → 新卡；空 → 定格「已全部取消关注」并消费 picker。
+        let snapshot = state.agents.snapshot();
+        let options = unwatch_options(state, channel_id, &snapshot, lang);
+        if options.is_empty() {
+            finalize_select_card_edit(
+                channel_id,
+                config,
+                mid,
+                &crate::select::title_unwatch(lang),
+                crate::i18n::tr(lang, "select.unwatchAllDoneCard"),
+            )
+            .await;
+            remove_picker(state, channel_id, mid);
+        } else {
+            let view = crate::select::build_view(
+                crate::select::title_unwatch(lang),
+                options,
+                crate::select::SelectAction::Unwatch,
+                lang,
+            );
+            let new_ids: Vec<String> = view.options.iter().map(|o| o.id.clone()).collect();
+            refresh_select_card_edit(channel_id, config, mid, &view, lang).await;
+            if let Some(p) = state
+                .select
+                .pickers
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|p| p.channel == channel_id && p.message_id == mid)
+            {
+                p.options = new_ids;
+            }
+        }
+    }
+
+    /// 就地把 TG/Slack 单选卡编辑为新的一版单选卡（`/unwatch` 移除该项后刷新）。
+    async fn refresh_select_card_edit(
+        channel_id: &str,
+        config: &AppConfig,
+        mid: &str,
+        view: &crate::select::SelectView,
+        lang: Lang,
+    ) {
+        match channel_id {
+            "telegram" => {
+                let Ok(m) = mid.parse::<i64>() else { return };
+                let tg = &config.channels.telegram;
+                if let Ok(c) = crate::telegram::TelegramClient::new(
+                    tg.bot_token.clone(),
+                    tg.chat_id.clone(),
+                    tg.api_base_url.clone(),
+                ) {
+                    let html = crate::telegram::select::render_select_html(view);
+                    let markup = crate::telegram::select::inline_keyboard(view, lang);
+                    if let Err(err) = c.edit_message_text(m, &html, Some("HTML"), Some(markup)).await
+                    {
+                        log(&format!("select: refresh telegram select card failed: {}", err));
+                    }
+                }
+            }
+            "slack" => {
+                if let Ok(c) = crate::slack::client::SlackClient::new(&config.channels.slack) {
+                    if let Ok(dm) = c.open_dm().await {
+                        let (blocks, fallback) =
+                            crate::slack::select::build_select_blocks(view, lang);
+                        if let Err(err) =
+                            c.update_message(&dm, mid, Some(&blocks), &fallback).await
+                        {
+                            log(&format!("select: refresh slack select card failed: {}", err));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 就地把 TG/Slack 单选卡定格为无按钮终态（标题 + 定格文案）。
+    async fn finalize_select_card_edit(
+        channel_id: &str,
+        config: &AppConfig,
+        mid: &str,
+        title: &str,
+        final_label: &str,
+    ) {
+        match channel_id {
+            "telegram" => {
+                let Ok(m) = mid.parse::<i64>() else { return };
+                let tg = &config.channels.telegram;
+                if let Ok(c) = crate::telegram::TelegramClient::new(
+                    tg.bot_token.clone(),
+                    tg.chat_id.clone(),
+                    tg.api_base_url.clone(),
+                ) {
+                    let html = crate::telegram::select::render_select_final_html(title, final_label);
+                    if let Err(err) = c.edit_message_text(m, &html, Some("HTML"), None).await {
+                        log(&format!("select: finalize telegram select card failed: {}", err));
+                    }
+                }
+            }
+            "slack" => {
+                if let Ok(c) = crate::slack::client::SlackClient::new(&config.channels.slack) {
+                    if let Ok(dm) = c.open_dm().await {
+                        let (blocks, fallback) =
+                            crate::slack::select::build_select_final_blocks(title, final_label);
+                        if let Err(err) =
+                            c.update_message(&dm, mid, Some(&blocks), &fallback).await
+                        {
+                            log(&format!("select: finalize slack select card failed: {}", err));
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

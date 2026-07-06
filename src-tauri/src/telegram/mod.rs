@@ -2,6 +2,7 @@
 
 pub mod markdown;
 pub mod router;
+pub mod select;
 pub mod watch;
 
 use serde_json::{json, Value};
