@@ -496,6 +496,143 @@ pub fn parse_watch_action(event: &Value) -> Option<(String, WatchAction)> {
     Some((message_id, act))
 }
 
+// ===== 通用「单选卡」（spec docs/specs/im-select-card.md）=====
+
+/// 单选卡按钮回调 value 的键（`{"select": <idx>}`）。与 watch 的 `{"watch":…}` 键不同，
+/// 且卡片按 open_message_id 精确路由（一条消息非 watch 即 select），天然可辨。
+const SELECT_ACTION_KEY: &str = "select";
+
+/// 飞书按钮样式（`type`）按单选卡动作种类映射（用户定稿：watch=蓝主色、status=默认、unwatch=红）。
+fn select_button_type(action: crate::select::SelectAction) -> &'static str {
+    match action {
+        crate::select::SelectAction::Watch => "primary",
+        crate::select::SelectAction::Status => "default",
+        crate::select::SelectAction::Unwatch => "danger",
+    }
+}
+
+/// 单选卡一行左侧富文本（markdown、小字号、可换行）：第一行 `圆点 [编号] 主文本 · 徽标`，
+/// 第二行灰色次行（标题）。圆点用 markdown 彩色 `●`（与 watch 卡步行同风格）。
+fn select_option_markdown(opt: &crate::select::SelectOption) -> String {
+    let mut line1 = String::new();
+    match opt.dot {
+        Some(crate::select::SelectDot::Working) => line1.push_str("<font color='green'>●</font> "),
+        Some(crate::select::SelectDot::Idle) => line1.push_str("<font color='grey'>●</font> "),
+        None => {}
+    }
+    if let Some(seq) = opt.seq {
+        line1.push_str(&format!("**[{}]** ", seq));
+    }
+    line1.push_str(&opt.primary);
+    if let Some(badge) = &opt.badge {
+        line1.push(' ');
+        line1.push_str(badge);
+    }
+    match &opt.secondary {
+        Some(sec) => format!("{}\n<font color='grey'>{}</font>", line1, sec),
+        None => line1,
+    }
+}
+
+/// 组装通用单选卡（卡片 JSON 2.0，`update_multi` 供后续 PATCH 就地变卡）：样式化头部（标题）+ hr +
+/// 逐选项一行（左侧小字号两行富文本 + 右侧紧凑触发按钮，callback value `{select: idx}`），行间以细
+/// 分隔线分隔 +（截断时）灰色小字说明。用户定稿「方案A」（`docs/specs/im-select-card.md`）。
+pub fn build_select_card(v: &crate::select::SelectView) -> Value {
+    let btn_type = select_button_type(v.action);
+    let btn_label = v.action.button_label(crate::i18n::Lang::current());
+    let mut elements: Vec<Value> = Vec::new();
+    for (i, opt) in v.options.iter().enumerate() {
+        if i > 0 {
+            elements.push(json!({ "tag": "hr", "margin": "2px 0px 2px 0px" }));
+        }
+        elements.push(json!({
+            "tag": "column_set",
+            "horizontal_spacing": "8px",
+            "margin": "0px 0px 0px 0px",
+            "columns": [
+                {
+                    "tag": "column",
+                    "width": "weighted",
+                    "weight": 1,
+                    "vertical_align": "center",
+                    "elements": [
+                        { "tag": "markdown", "content": select_option_markdown(opt), "text_size": "notation" }
+                    ],
+                },
+                {
+                    "tag": "column",
+                    "width": "auto",
+                    "vertical_align": "center",
+                    "elements": [
+                        {
+                            "tag": "button",
+                            "size": "tiny",
+                            "type": btn_type,
+                            "text": { "tag": "plain_text", "content": btn_label },
+                            "behaviors": [ { "type": "callback", "value": { SELECT_ACTION_KEY: i } } ],
+                        }
+                    ],
+                },
+            ],
+        }));
+    }
+    if let Some(note) = &v.truncated_note {
+        elements.push(json!({
+            "tag": "div",
+            "text": { "tag": "plain_text", "content": note, "text_size": "notation", "text_align": "left", "text_color": "grey" },
+            "margin": "4px 0px 0px 0px",
+        }));
+    }
+    // 样式化头部行（icon + 蓝色小字，与 watch 卡同风格）。
+    let header_row = json!({
+        "tag": "div",
+        "text": { "tag": "plain_text", "content": v.title, "text_size": "notation", "text_align": "left", "text_color": "blue" },
+        "icon": { "tag": "standard_icon", "token": "maybe_filled", "color": "blue" },
+        "margin": "0px 0px 0px 0px",
+    });
+    let mut body = vec![header_row, json!({ "tag": "hr", "margin": "0px 0px 0px 0px" })];
+    body.extend(elements);
+    json!({
+        "schema": "2.0",
+        "config": { "update_multi": true },
+        "body": { "elements": body },
+    })
+}
+
+/// 定格单选卡为一段纯文本（无按钮）——`/unwatch` 取到 0 个后用。
+pub fn build_select_final_card(title: &str, text: &str) -> Value {
+    json!({
+        "schema": "2.0",
+        "config": { "update_multi": true },
+        "body": { "elements": [
+            { "tag": "div", "text": { "tag": "plain_text", "content": title, "text_size": "notation", "text_align": "left", "text_color": "grey" } },
+            { "tag": "markdown", "content": text },
+        ] },
+    })
+}
+
+/// 把一条 `card.action.trigger` 解析为单选卡点击：`(open_message_id, 选项下标)`；非单选卡回调 None。
+/// value 可能是对象或 JSON 字符串；下标可能以数字或数字字符串回传（两者都接受）。
+pub fn parse_select_action(event: &Value) -> Option<(String, usize)> {
+    let action = event.get("action")?;
+    let value = action.get("value")?;
+    let obj: Value = match value {
+        Value::String(s) => serde_json::from_str(s).ok()?,
+        v => v.clone(),
+    };
+    let idx = obj.get(SELECT_ACTION_KEY).and_then(|a| {
+        a.as_u64()
+            .or_else(|| a.as_str().and_then(|s| s.parse::<u64>().ok()))
+    })? as usize;
+    let message_id = event
+        .get("context")
+        .and_then(|c| c.get("open_message_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some((message_id, idx))
+}
+
 /// 把一条 `card.action.trigger` 的 `event` 解析为「提交」结果；非提交回调返回 None。
 /// `options` 用于把 `opt_{i}` 还原为选项文本。
 ///
@@ -1054,5 +1191,76 @@ mod tests {
             "action": { "value": { "action": "submit" } }
         });
         assert!(parse_watch_action(&other).is_none());
+    }
+
+    // ===== 通用单选卡 =====
+
+    #[test]
+    fn select_card_renders_row_per_option_with_index_callback() {
+        let view = crate::select::SelectView {
+            title: "选择要实时关注的 Agent".into(),
+            options: vec![
+                crate::select::SelectOption {
+                    id: "s-a".into(),
+                    dot: Some(crate::select::SelectDot::Working),
+                    seq: Some(2),
+                    primary: "Cursor · my-frontend".into(),
+                    badge: Some("· 关注中".into()),
+                    secondary: Some("甲".into()),
+                },
+                crate::select::SelectOption {
+                    id: "s-b".into(),
+                    dot: Some(crate::select::SelectDot::Idle),
+                    seq: Some(1),
+                    primary: "Claude Code · api-server".into(),
+                    badge: None,
+                    secondary: Some("乙".into()),
+                },
+            ],
+            truncated_note: None,
+            action: crate::select::SelectAction::Watch,
+        };
+        let card = build_select_card(&view);
+        let els = card["body"]["elements"].as_array().unwrap();
+        // 每个选项一行 column_set；行间以 hr 分隔。
+        let rows: Vec<&Value> = els.iter().filter(|e| e["tag"] == "column_set").collect();
+        assert_eq!(rows.len(), 2);
+        // 每行右列一个按钮（watch → primary，文案「关注」），callback value 带下标。
+        let btn0 = &rows[0]["columns"][1]["elements"][0];
+        assert_eq!(btn0["tag"], "button");
+        assert_eq!(btn0["type"], "primary");
+        assert_eq!(btn0["text"]["content"], "关注");
+        assert_eq!(btn0["behaviors"][0]["value"]["select"], 0);
+        assert_eq!(rows[1]["columns"][1]["elements"][0]["behaviors"][0]["value"]["select"], 1);
+        // 左列富文本：圆点 + 加粗编号 + 主文本 + 徽标 + 灰色次行。
+        let md0 = rows[0]["columns"][0]["elements"][0]["content"].as_str().unwrap();
+        assert!(md0.contains("<font color='green'>●</font>"));
+        assert!(md0.contains("**[2]** Cursor · my-frontend · 关注中"));
+        assert!(md0.contains("<font color='grey'>甲</font>"));
+        let md1 = rows[1]["columns"][0]["elements"][0]["content"].as_str().unwrap();
+        assert!(md1.contains("<font color='grey'>●</font>"));
+        assert!(!md1.contains("关注中"));
+    }
+
+    #[test]
+    fn parse_select_action_reads_index() {
+        // 数字下标。
+        let ev = json!({
+            "context": { "open_message_id": "om_s" },
+            "action": { "value": { "select": 3 } }
+        });
+        assert_eq!(parse_select_action(&ev), Some(("om_s".to_string(), 3)));
+        // value 为 JSON 字符串 + 字符串下标。
+        let ev_str = json!({
+            "context": { "open_message_id": "om_s" },
+            "action": { "value": "{\"select\":\"5\"}" }
+        });
+        assert_eq!(parse_select_action(&ev_str), Some(("om_s".to_string(), 5)));
+        // 非单选卡回调（watch / submit）→ None。
+        let watch = json!({
+            "context": { "open_message_id": "om_w" },
+            "action": { "value": { "watch": "refresh" } }
+        });
+        assert!(parse_select_action(&watch).is_none());
     }
 }

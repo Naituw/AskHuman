@@ -198,6 +198,8 @@ mod unix_impl {
         warm_spawning: AtomicBool,
         /// `/watch` 实时关注子系统（spec docs/specs/im-watch.md；飞书/Telegram/Slack）。
         watch: WatchState,
+        /// 通用「单选卡」子系统（spec docs/specs/im-select-card.md；MVP 仅飞书）。
+        select: SelectState,
     }
 
     /// 「跟底」重发节流：同一订阅两次跟底之间的最短间隔（用户定案 30s）。
@@ -293,6 +295,41 @@ mod unix_impl {
         Slack(Arc<SlRouter>),
         DingTalk(Arc<DdRouter>),
     }
+
+    /// 通用「单选卡」子系统的 daemon 侧状态（spec docs/specs/im-select-card.md）。
+    /// picker 是一次性选择器、**不持久化**（daemon 重启后旧卡点击静默无效，D7）。
+    #[derive(Default)]
+    struct SelectState {
+        /// 活动的单选卡台账（被消费即移除；软上限 + TTL 兜底清理，见 `register_picker`）。
+        pickers: Mutex<Vec<PickerEntry>>,
+        /// 渠道 id → 卡片按钮回调路由任务句柄（复用 watch 的 `WatchRouteHandle`）。
+        routes: Mutex<HashMap<String, WatchRouteHandle>>,
+    }
+
+    /// 单选卡种类（决定点选后做什么；接新命令只需加一档 + 其选中动作）。
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum PickerKind {
+        Watch,
+        Status,
+        Unwatch,
+    }
+
+    /// 一条活动的单选卡台账。选项快照仅存各选项的 session_id（下标即按钮 idx），点击时按下标取 id、
+    /// 再由当前快照/订阅重新定位（避免 seq 漂移）。
+    #[derive(Clone)]
+    struct PickerEntry {
+        channel: String,
+        message_id: String,
+        kind: PickerKind,
+        /// 各选项的 session_id（下标 = 按钮 `select:<idx>`）。
+        options: Vec<String>,
+        created_at: u64,
+    }
+
+    /// 单选卡台账治理上限：每渠道最多留存的活动单选卡数（超出丢最旧）。
+    const SELECT_MAX_PICKERS_PER_CHANNEL: usize = 10;
+    /// 单选卡台账 TTL（秒）：超龄未消费即清理（兜底，避免长期累积）。
+    const SELECT_PICKER_TTL_SECS: u64 = 1800;
 
     /// 热池中一个待命热实例的句柄：`assign` 用于把领用的请求 entry 交给其 holder 任务（`handle_gui_warm`）；
     /// `gui_tx` 仅用于身份比对（热进程自然死亡时判定池中是否仍是本槽）。
@@ -504,6 +541,7 @@ mod unix_impl {
             warm_pool: Mutex::new(None),
             warm_spawning: AtomicBool::new(false),
             watch: WatchState::default(),
+            select: SelectState::default(),
         });
 
         // 空闲退出检查。
@@ -1912,6 +1950,9 @@ mod unix_impl {
                 }
             }
         }
+
+        // 兜底：随 Router 重建恢复活动单选卡的按钮回调路由（无 picker 时为 no-op）。
+        ensure_select_routes(state).await;
     }
 
     /// 通用入站监听循环（与渠道无关）：从原始消息流抽取 (发送者, 文本)，按期望发送者过滤后交 `handle_inbound`。
@@ -3000,20 +3041,67 @@ mod unix_impl {
                 return;
             }
         };
-        // 新卡已发成功 → 旧卡定格 + 退订（失败仅记日志，不影响新订阅）。
+        // 新卡已发成功 → 换新卡收尾（旧卡定格 Replaced + 退订）+ 登记新订阅（`register_watch_at`
+        // 与「单选卡点选就地变卡」共用同一套 bookkeeping；`replaced` 仅供上面的上限判定，收尾在
+        // helper 内按 session 重算）。
+        register_watch_at(
+            state, channel_id, &session_id, id, &message_id, &frame, ended, config, lang,
+        )
+        .await;
+    }
+
+    /// 登记一条新的 watch 订阅到 `message_id`（命令发新卡 / 单选卡点选就地变卡 两条路径共用）：
+    /// 本渠道已在关注**同一 session**（且是别的消息）→ 旧卡定格 `Replaced` 并退订（换新卡语义）；
+    /// 然后（非 ended 时）push 新 `WatchEntry`；持久化 + 唤醒引擎。调用方已完成「发卡 / 回卡」拿到
+    /// `message_id`、并已做上限校验。
+    #[allow(clippy::too_many_arguments)]
+    async fn register_watch_at(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+        session_id: &str,
+        seq: u64,
+        message_id: &str,
+        frame: &crate::watch::WatchFrame,
+        ended: bool,
+        config: &AppConfig,
+        lang: Lang,
+    ) {
+        let now = now_secs();
+        // 换新卡：本渠道同 session 的旧订阅（message_id 不同）定格 Replaced 并退订。
+        let replaced: Option<WatchEntry> = {
+            let subs = state.watch.subs.lock().unwrap();
+            subs.iter()
+                .find(|s| {
+                    s.channel == channel_id
+                        && s.session_id == session_id
+                        && s.message_id != message_id
+                })
+                .cloned()
+        };
         if let Some(old) = replaced {
-            let old_frame = crate::watch::build_frame(old.seq, Some(rec), waiting);
-            if let Err(err) = client
-                .edit(
-                    &old.message_id,
-                    &old_frame,
-                    crate::watch::CardMode::Final(crate::watch::FinalKind::Replaced),
-                    now,
-                    lang,
-                )
-                .await
-            {
-                log(&format!("watch: finalize replaced card failed: {}", err));
+            if let Some(client) = WatchClient::for_channel(channel_id, config).await {
+                let snapshot = state.agents.snapshot();
+                let waiting = state
+                    .registry
+                    .in_flight_agent_session_ids()
+                    .contains(&old.session_id);
+                let old_frame = crate::watch::build_frame(
+                    old.seq,
+                    find_agent_by_session(&snapshot, &old.session_id),
+                    waiting,
+                );
+                if let Err(err) = client
+                    .edit(
+                        &old.message_id,
+                        &old_frame,
+                        crate::watch::CardMode::Final(crate::watch::FinalKind::Replaced),
+                        now,
+                        lang,
+                    )
+                    .await
+                {
+                    log(&format!("watch: finalize replaced card failed: {}", err));
+                }
             }
             state
                 .watch
@@ -3025,11 +3113,11 @@ mod unix_impl {
         if !ended {
             state.watch.subs.lock().unwrap().push(WatchEntry {
                 channel: channel_id.to_string(),
-                session_id,
-                message_id,
-                seq: id,
+                session_id: session_id.to_string(),
+                message_id: message_id.to_string(),
+                seq,
                 created_at: now,
-                last_sig: crate::watch::signature(&frame),
+                last_sig: crate::watch::signature(frame),
                 last_edit_ms: now_ms(),
                 fails: 0,
                 working: frame.phase == crate::watch::WatchPhase::Working,
@@ -3159,6 +3247,458 @@ mod unix_impl {
         let _ = reply_channel_text(channel_id, config, &text).await;
     }
 
+    // ===== 通用「单选卡」子系统（spec docs/specs/im-select-card.md）=====
+
+    /// 登记一条单选卡台账（顺带按 TTL + 每渠道软上限清理旧卡）。
+    fn register_picker(state: &Arc<ServerState>, entry: PickerEntry) {
+        let now = now_secs();
+        let mut pickers = state.select.pickers.lock().unwrap();
+        // TTL 兜底清理（全渠道）。
+        pickers.retain(|p| now.saturating_sub(p.created_at) < SELECT_PICKER_TTL_SECS);
+        let channel = entry.channel.clone();
+        pickers.push(entry);
+        // 每渠道软上限：超出丢最旧（本渠道最靠前的条目）。
+        while pickers.iter().filter(|p| p.channel == channel).count()
+            > SELECT_MAX_PICKERS_PER_CHANNEL
+        {
+            if let Some(pos) = pickers.iter().position(|p| p.channel == channel) {
+                pickers.remove(pos);
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// 发一张单选卡到某渠道，返回消息 id（MVP 仅飞书；其它渠道 None → 调用方回文本兜底）。
+    async fn send_select_card(
+        channel_id: &str,
+        config: &AppConfig,
+        view: &crate::select::SelectView,
+    ) -> Option<String> {
+        match channel_id {
+            "feishu" => {
+                let client =
+                    crate::feishu::client::FeishuClient::new(&config.channels.feishu).ok()?;
+                let card = crate::feishu::card::build_select_card(view);
+                client.send_card(&card).await.ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// 组装并发一张 agent 单选卡：空选项 / 非支持渠道（send 失败）→ 返回 false（调用方回文本兜底）。
+    async fn send_agent_picker(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+        config: &AppConfig,
+        kind: PickerKind,
+        title: String,
+        options: Vec<crate::select::SelectOption>,
+        lang: Lang,
+    ) -> bool {
+        if options.is_empty() {
+            return false;
+        }
+        let action = match kind {
+            PickerKind::Watch => crate::select::SelectAction::Watch,
+            PickerKind::Status => crate::select::SelectAction::Status,
+            PickerKind::Unwatch => crate::select::SelectAction::Unwatch,
+        };
+        let view = crate::select::build_view(title, options, action, lang);
+        let session_ids: Vec<String> = view.options.iter().map(|o| o.id.clone()).collect();
+        let Some(mid) = send_select_card(channel_id, config, &view).await else {
+            return false;
+        };
+        register_picker(
+            state,
+            PickerEntry {
+                channel: channel_id.to_string(),
+                message_id: mid,
+                kind,
+                options: session_ids,
+                created_at: now_secs(),
+            },
+        );
+        ensure_select_routes(state).await;
+        true
+    }
+
+    /// 本渠道已在关注的 session_id 集合（`/watch` 单选卡「· 关注中」徽标用）。
+    fn watching_sessions(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+    ) -> std::collections::HashSet<String> {
+        state
+            .watch
+            .subs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| s.channel == channel_id)
+            .map(|s| s.session_id.clone())
+            .collect()
+    }
+
+    /// 本渠道各 watch 订阅 → 单选卡选项（`/unwatch` 单选卡）。按 session 在快照定位记录组装
+    /// （圆点/类型·工作目录名/标题）；记录已消失时按 `seq` 兜底降级（见 `agent_option_by_session`）。
+    fn unwatch_options(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+        snapshot: &serde_json::Value,
+        lang: Lang,
+    ) -> Vec<crate::select::SelectOption> {
+        state
+            .watch
+            .subs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| s.channel == channel_id)
+            .map(|s| crate::select::agent_option_by_session(snapshot, &s.session_id, s.seq, lang))
+            .collect()
+    }
+
+    /// `/status` 详情（按 session_id 定位，避免 seq 漂移）。找不到 → notFound 提示。
+    fn status_detail_by_session(
+        snapshot: &serde_json::Value,
+        session_id: &str,
+        channel_id: &str,
+        lang: Lang,
+    ) -> String {
+        let prefix = crate::autochannel::cmd_prefix(channel_id);
+        let seq = snapshot.as_array().and_then(|l| {
+            l.iter()
+                .find(|r| r.get("sessionId").and_then(|v| v.as_str()) == Some(session_id))
+                .and_then(|r| r.get("seq").and_then(|v| v.as_u64()))
+        });
+        match seq {
+            Some(id) => crate::autochannel::status_detail_text(snapshot, id, prefix, lang),
+            None => crate::i18n::tr(lang, "autoChannel.statusDetailNotFound")
+                .replace("{id}", "?")
+                .replace("{p}", prefix),
+        }
+    }
+
+    /// 从单选卡台账移除某条卡。
+    fn remove_picker(state: &Arc<ServerState>, channel_id: &str, message_id: &str) {
+        state
+            .select
+            .pickers
+            .lock()
+            .unwrap()
+            .retain(|p| !(p.channel == channel_id && p.message_id == message_id));
+    }
+
+    /// 幂等确保各渠道的单选卡回调路由任务在位（撤掉已无 picker 的渠道路由）。MVP 仅飞书。
+    async fn ensure_select_routes(state: &Arc<ServerState>) {
+        let mut desired: HashMap<String, Vec<String>> = HashMap::new();
+        for p in state.select.pickers.lock().unwrap().iter() {
+            desired
+                .entry(p.channel.clone())
+                .or_default()
+                .push(p.message_id.clone());
+        }
+        for mids in desired.values_mut() {
+            mids.sort();
+        }
+        {
+            let mut routes = state.select.routes.lock().unwrap();
+            routes.retain(|ch, h| {
+                if desired.contains_key(ch) {
+                    true
+                } else {
+                    h.stop.notify_waiters();
+                    false
+                }
+            });
+        }
+        let config = AppConfig::load();
+        for (ch, mids) in desired {
+            ensure_select_route_for(state, &config, &ch, mids).await;
+        }
+    }
+
+    /// 幂等确保单一渠道的单选卡回调路由任务在位（MVP 仅飞书；复用 watch 的路由句柄类型）。
+    async fn ensure_select_route_for(
+        state: &Arc<ServerState>,
+        config: &AppConfig,
+        channel_id: &str,
+        mids: Vec<String>,
+    ) {
+        // MVP：仅飞书有单选卡（其它渠道 send_select_card 返回 None、不会有 picker）。
+        if channel_id != "feishu" || !crate::app::is_feishu_active(config) {
+            return;
+        }
+        let router = match ensure_fs_router(state, &config.channels.feishu).await {
+            Some(r) => r,
+            None => return,
+        };
+        // 现任务仍绑定同一存活 Router 且卡集合未变 → 无事可做。
+        {
+            let routes = state.select.routes.lock().unwrap();
+            if let Some(h) = routes.get(channel_id) {
+                if h.router
+                    .is_same_alive(&WatchChannelRouter::Feishu(router.clone()))
+                    && h.mids == mids
+                {
+                    return;
+                }
+            }
+        }
+        let stop = Arc::new(tokio::sync::Notify::new());
+        let mut routed = router.register();
+        for mid in &mids {
+            routed.set_active(Some(mid), "");
+        }
+        let st = state.clone();
+        let stop2 = stop.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = stop2.notified() => break,
+                    ev = routed.recv() => match ev {
+                        Some(crate::feishu::router::FsInbound::Card { data, ack }) => {
+                            handle_select_card_action(&st, "feishu", &data, ack).await;
+                        }
+                        Some(_) => {} // 未认领聊天消息，不会到达；防御性忽略。
+                        None => break, // Router 断开：下一拍 ensure 重建。
+                    },
+                }
+            }
+        });
+        if let Some(old) = state.select.routes.lock().unwrap().insert(
+            channel_id.to_string(),
+            WatchRouteHandle {
+                stop,
+                router: WatchRouterRef::Feishu(Arc::downgrade(&router)),
+                mids,
+            },
+        ) {
+            old.stop.notify_waiters();
+        }
+    }
+
+    /// 处理飞书单选卡点击：解析 `(open_message_id, idx)` → 找 picker → 按 kind 分派。
+    /// 过期 / 越界 / 无 picker → 空 ACK（静默，D7）。
+    async fn handle_select_card_action(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+        data: &serde_json::Value,
+        ack: tokio::sync::oneshot::Sender<Option<serde_json::Value>>,
+    ) {
+        let Some((mid, idx)) = crate::feishu::card::parse_select_action(data) else {
+            let _ = ack.send(None);
+            return;
+        };
+        let picker = {
+            let pickers = state.select.pickers.lock().unwrap();
+            pickers
+                .iter()
+                .find(|p| p.channel == channel_id && p.message_id == mid)
+                .cloned()
+        };
+        let Some(picker) = picker else {
+            let _ = ack.send(None); // 已过期 / 被清理：静默（D7）。
+            return;
+        };
+        let Some(session_id) = picker.options.get(idx).cloned() else {
+            let _ = ack.send(None);
+            return;
+        };
+        let lang = Lang::current();
+        let config = AppConfig::load();
+        match picker.kind {
+            PickerKind::Watch => {
+                select_pick_watch(state, channel_id, &mid, &session_id, &config, lang, ack).await;
+            }
+            PickerKind::Status => {
+                // 单选卡不动：先空 ACK，再回纯文本详情（可继续点其它 agent）。
+                let _ = ack.send(None);
+                let snapshot = state.agents.snapshot();
+                let text = status_detail_by_session(&snapshot, &session_id, channel_id, lang);
+                let _ = reply_channel_text(channel_id, &config, &text).await;
+            }
+            PickerKind::Unwatch => {
+                select_pick_unwatch(state, channel_id, &mid, &session_id, &config, lang, ack).await;
+            }
+        }
+    }
+
+    /// 单选卡点选「watch」：就地把这张卡编辑成实时 watch 卡（经 oneshot 同步回卡）。
+    #[allow(clippy::too_many_arguments)]
+    async fn select_pick_watch(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+        mid: &str,
+        session_id: &str,
+        config: &AppConfig,
+        lang: Lang,
+        ack: tokio::sync::oneshot::Sender<Option<serde_json::Value>>,
+    ) {
+        let now = now_secs();
+        let snapshot = state.agents.snapshot();
+        let rec = find_agent_by_session(&snapshot, session_id);
+        let waiting = state
+            .registry
+            .in_flight_agent_session_ids()
+            .contains(&session_id.to_string());
+        let seq = rec
+            .and_then(|r| r.get("seq").and_then(|v| v.as_u64()))
+            .unwrap_or(0);
+        let frame = crate::watch::build_frame(seq, rec, waiting);
+        let ended = frame.phase == crate::watch::WatchPhase::Ended;
+        if ended {
+            // 已结束/消失：就地定格终态卡、不订阅、消费掉 picker。
+            let card = crate::feishu::card::build_watch_card(&crate::watch::card_view(
+                &frame,
+                crate::watch::CardMode::Final(crate::watch::FinalKind::Ended),
+                now,
+                lang,
+            ));
+            let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
+            remove_picker(state, channel_id, mid);
+            // 不在此重挂 select 路由（避免 recv-loop 递归 → 非 Send）：残留的 mid 认领无害（卡已定格无按钮），
+            // 下次 send_agent_picker / 监听重建时统一收敛。
+            return;
+        }
+        // 上限校验（本渠道；已在关注同一 session＝换新卡，不计新增）。
+        let already = state
+            .watch
+            .subs
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| s.channel == channel_id && s.session_id == session_id);
+        if !already {
+            let count = state
+                .watch
+                .subs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| s.channel == channel_id)
+                .count();
+            if count >= crate::watch::MAX_WATCHES {
+                let _ = ack.send(None);
+                let text = crate::i18n::tr(lang, "watch.limit")
+                    .replace("{n}", &crate::watch::MAX_WATCHES.to_string())
+                    .replace("{p}", crate::autochannel::cmd_prefix(channel_id));
+                let _ = reply_channel_text(channel_id, config, &text).await;
+                return;
+            }
+        }
+        // 就地回一张实时 watch 卡（这条单选卡消息随即变成 watch 卡）。
+        let card = crate::feishu::card::build_watch_card(&crate::watch::card_view(
+            &frame,
+            crate::watch::CardMode::Active,
+            now,
+            lang,
+        ));
+        let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
+        // 登记订阅（含换新卡收尾）+ 消费 picker + 让 watch 立即认领本消息（`ensure_watch_routes` 不会递归
+        // 回 select）。select 侧不在此重挂（避免 recv-loop 递归 → 非 Send）：本 mid 已被 watch 认领覆盖，
+        // 残留的 select 认领无害，下次 send_agent_picker / 监听重建时收敛。
+        register_watch_at(state, channel_id, session_id, seq, mid, &frame, false, config, lang)
+            .await;
+        remove_picker(state, channel_id, mid);
+        ensure_watch_routes(state).await;
+    }
+
+    /// 单选卡点选「unwatch」：取消该关注（旧卡定格）+ 回文本确认 + 就地刷新单选卡（移除该项）。
+    #[allow(clippy::too_many_arguments)]
+    async fn select_pick_unwatch(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+        mid: &str,
+        session_id: &str,
+        config: &AppConfig,
+        lang: Lang,
+        ack: tokio::sync::oneshot::Sender<Option<serde_json::Value>>,
+    ) {
+        let now = now_secs();
+        // 找到该 session 在本渠道的订阅（可能已被别处取消/结束 → 视为已不在关注，只刷新卡）。
+        let entry = state
+            .watch
+            .subs
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|s| s.channel == channel_id && s.session_id == session_id)
+            .cloned();
+        if let Some(entry) = entry {
+            // 旧 watch 卡定格「已取消关注」。
+            if let Some(client) = WatchClient::for_channel(channel_id, config).await {
+                let snapshot = state.agents.snapshot();
+                let waiting = state
+                    .registry
+                    .in_flight_agent_session_ids()
+                    .contains(&entry.session_id);
+                let frame = crate::watch::build_frame(
+                    entry.seq,
+                    find_agent_by_session(&snapshot, &entry.session_id),
+                    waiting,
+                );
+                if let Err(err) = client
+                    .edit(
+                        &entry.message_id,
+                        &frame,
+                        crate::watch::CardMode::Final(crate::watch::FinalKind::Cancelled),
+                        now,
+                        lang,
+                    )
+                    .await
+                {
+                    log(&format!("select: finalize unwatch card failed: {}", err));
+                }
+            }
+            state
+                .watch
+                .subs
+                .lock()
+                .unwrap()
+                .retain(|s| s.message_id != entry.message_id);
+            persist_watch_subs(state);
+            state.watch.notify.notify_one();
+            ensure_watch_routes(state).await;
+            let text =
+                crate::i18n::tr(lang, "watch.unwatchDone").replace("{id}", &entry.seq.to_string());
+            let _ = reply_channel_text(channel_id, config, &text).await;
+        }
+        // 就地刷新单选卡：剩余订阅 → 新卡；空 → 定格「已全部取消关注」并消费 picker。
+        let snapshot = state.agents.snapshot();
+        let options = unwatch_options(state, channel_id, &snapshot, lang);
+        if options.is_empty() {
+            let card = crate::feishu::card::build_select_final_card(
+                &crate::select::title_unwatch(lang),
+                crate::i18n::tr(lang, "select.unwatchAllDoneCard"),
+            );
+            let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
+            remove_picker(state, channel_id, mid);
+            // 不在此重挂 select 路由（同 select_pick_watch 理由）：卡已定格无按钮，残留认领无害。
+        } else {
+            let view = crate::select::build_view(
+                crate::select::title_unwatch(lang),
+                options,
+                crate::select::SelectAction::Unwatch,
+                lang,
+            );
+            let new_ids: Vec<String> = view.options.iter().map(|o| o.id.clone()).collect();
+            let card = crate::feishu::card::build_select_card(&view);
+            let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
+            // 更新 picker 的选项快照（下标对齐新卡）。
+            if let Some(p) = state
+                .select
+                .pickers
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|p| p.channel == channel_id && p.message_id == mid)
+            {
+                p.options = new_ids;
+            }
+        }
+    }
+
     /// 统一入站分派（与渠道无关），spec R3/R4：
     /// - `/status`：始终回状态文本（开关开且因此切槽时附激活回执）。
     /// - `/here`：开关开时激活+补推+回执；开关关时改回**引导文案**（不再静默忽略）。
@@ -3199,21 +3739,56 @@ mod unix_impl {
                 } else {
                     (false, 0)
                 };
-                let mut body = String::new();
-                if switched {
-                    body.push_str(&crate::autochannel::activated_receipt(n, lang));
-                    body.push_str("\n\n");
-                }
                 let snapshot = state.agents.snapshot();
                 match sel {
-                    // /status <编号>：单个 agent 的当前活动详情。
-                    Some(id) => body.push_str(&crate::autochannel::status_detail_text(
-                        &snapshot, id, prefix, lang,
-                    )),
-                    // /status：工作中/空闲列表。
-                    None => body.push_str(&crate::autochannel::status_text(&snapshot, lang)),
+                    // /status <编号>：单个 agent 的当前活动详情（直达，不弹卡）。
+                    Some(id) => {
+                        let mut body = String::new();
+                        if switched {
+                            body.push_str(&crate::autochannel::activated_receipt(n, lang));
+                            body.push_str("\n\n");
+                        }
+                        body.push_str(&crate::autochannel::status_detail_text(
+                            &snapshot, id, prefix, lang,
+                        ));
+                        let _ = reply_channel_text(channel_id, &config, &body).await;
+                    }
+                    // /status（无参）：切槽回执（若有）作独立文本，随后推「选择要查看的 Agent」单选卡；
+                    // 无 agent / 非飞书 → 回既有工作中/空闲文本列表兜底。
+                    None => {
+                        if switched {
+                            let _ = reply_channel_text(
+                                channel_id,
+                                &config,
+                                &crate::autochannel::activated_receipt(n, lang),
+                            )
+                            .await;
+                        }
+                        let opts = crate::select::agent_options(
+                            &snapshot,
+                            &std::collections::HashSet::new(),
+                            lang,
+                        );
+                        let sent = send_agent_picker(
+                            state,
+                            channel_id,
+                            &config,
+                            PickerKind::Status,
+                            crate::select::title_status(lang),
+                            opts,
+                            lang,
+                        )
+                        .await;
+                        if !sent {
+                            let _ = reply_channel_text(
+                                channel_id,
+                                &config,
+                                &crate::autochannel::status_text(&snapshot, lang),
+                            )
+                            .await;
+                        }
+                    }
                 }
-                let _ = reply_channel_text(channel_id, &config, &body).await;
             }
             Parsed::Command(Command::Here) => {
                 if !auto {
@@ -3238,10 +3813,63 @@ mod unix_impl {
             }
             // /watch、/unwatch：实时关注（P1 仅飞书；其余渠道回「暂仅支持飞书」提示）。
             Parsed::Command(Command::Watch(sel)) => {
-                handle_watch_cmd(state, channel_id, sel, &config, lang).await;
+                match sel {
+                    // /watch <编号>：直达关注（不弹卡）。
+                    Some(_) => handle_watch_cmd(state, channel_id, sel, &config, lang).await,
+                    // /watch（无参）：推「选择要关注的 Agent」单选卡（已关注者带「· 关注中」徽标，
+                    // 点它＝换新卡）。无 agent / 非飞书 → 回既有无参列表兜底。
+                    None => {
+                        let snapshot = state.agents.snapshot();
+                        let watching = watching_sessions(state, channel_id);
+                        let opts = crate::select::agent_options(&snapshot, &watching, lang);
+                        let sent = send_agent_picker(
+                            state,
+                            channel_id,
+                            &config,
+                            PickerKind::Watch,
+                            crate::select::title_watch(lang),
+                            opts,
+                            lang,
+                        )
+                        .await;
+                        if !sent {
+                            handle_watch_cmd(state, channel_id, None, &config, lang).await;
+                        }
+                    }
+                }
             }
             Parsed::Command(Command::Unwatch(sel)) => {
-                handle_unwatch_cmd(state, channel_id, sel, &config, lang).await;
+                use crate::autochannel::WatchSel;
+                // 仅「无参且本渠道有多个关注」时弹卡；0/1/编号/all 一律直达（行为不变）。
+                let multi = matches!(sel, WatchSel::Auto)
+                    && state
+                        .watch
+                        .subs
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|s| s.channel == channel_id)
+                        .count()
+                        >= 2;
+                let sent = if multi {
+                    let snapshot = state.agents.snapshot();
+                    let opts = unwatch_options(state, channel_id, &snapshot, lang);
+                    send_agent_picker(
+                        state,
+                        channel_id,
+                        &config,
+                        PickerKind::Unwatch,
+                        crate::select::title_unwatch(lang),
+                        opts,
+                        lang,
+                    )
+                    .await
+                } else {
+                    false
+                };
+                if !sent {
+                    handle_unwatch_cmd(state, channel_id, sel, &config, lang).await;
+                }
             }
             Parsed::Command(Command::Help) | Parsed::UnknownCommand => {
                 let has_q = has_active_question_on(state, channel_id);

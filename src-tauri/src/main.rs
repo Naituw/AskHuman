@@ -40,6 +40,7 @@ mod perf;
 mod project;
 mod prompts;
 mod secrets;
+mod select;
 mod slack;
 mod sound;
 #[cfg(target_os = "macos")]

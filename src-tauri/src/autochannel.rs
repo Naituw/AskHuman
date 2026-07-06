@@ -584,7 +584,7 @@ pub(crate) fn render_step(step: &crate::agents::activity::ToolStep, lang: Lang) 
 }
 
 /// 取工作目录的末段作为项目名（空 → None）。
-fn project_name(cwd: &str) -> Option<String> {
+pub(crate) fn project_name(cwd: &str) -> Option<String> {
     let trimmed = cwd.trim_end_matches('/');
     if trimmed.is_empty() {
         return None;

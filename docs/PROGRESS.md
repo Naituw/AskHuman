@@ -2,6 +2,39 @@
 
 按具体任务 / 需求记录待办与当前进展。任务 / 需求完成后删除其 section（历史留在 git）。
 
+## 待验收：通用「单选卡」+ /watch·/status·/unwatch 可点选（飞书 MVP 已落地）
+
+用户诉求：三个命令无参时不再回纯文本编号列表（需再敲一次带编号命令），而是**推一张通用单选卡**列出可选
+agent，点一下即执行。设计见 `docs/specs/im-select-card.md`（D1–D8），落地顺序 `docs/plans/im-select-card.md`。
+
+**飞书 MVP 已实现并 `install.sh` 落盘、425 单测全绿**：
+- `select.rs`（新，传输无关，无标记语言）：`SelectDot{Working,Idle}` / `SelectAction{Watch,Status,Unwatch}`（含
+  本地化按钮文案）/ `SelectOption{id, dot, seq, primary(=类型·工作目录名), badge, secondary(=标题)}` / `SelectView` /
+  `SELECT_MAX_OPTIONS=20` 截断 / 按命令种类本地化标题 / `agent_options`（工作中在前、跳过已结束、`· 关注中`徽标）+
+  `agent_option_by_session`（unwatch 按订阅列举、记录消失时降级）。+ `i18n` `select.*`（含 `btnWatch/Status/Unwatch`）。
+- `feishu/card.rs`：`build_select_card`（**用户定稿「方案A」**：每选项一行 `column_set` = 左侧小字号两行富文本
+  ［第一行 markdown 彩色圆点`●` + `**[编号]**` + `类型·工作目录名` + `· 关注中`徽标；第二行灰色标题］+ 右侧紧凑
+  `size:tiny` 按钮［watch=primary/status=default/unwatch=danger，文案随动作］，回调 `{select:<idx>}`，行间细分隔线）/
+  `build_select_final_card`（unwatch 全取消定格）/ `parse_select_action`（读 `context.open_message_id`+`action.value.select`）。
+- `daemon/mod.rs`：`SelectState{pickers,routes}` + `PickerEntry{channel,message_id,kind,options(session_id 快照),created_at}`
+  + `PickerKind{Watch,Status,Unwatch}`；`register_picker`（TTL 30min + 每渠道软上限 10）/ `send_select_card`（仅飞书）
+  / `send_agent_picker`（空/非飞书回文本兜底）/ `ensure_select_routes`+`ensure_select_route_for`（复用 watch 路由句柄）
+  / `handle_select_card_action`（解析→找 picker→按 kind 分派；过期/越界静默空 ACK）/ `select_pick_watch`（就地变 watch 卡，
+  含 D8 换新卡：`register_watch_at` 抽出的换新卡收尾复用）/ `select_pick_unwatch`（旧卡定格 Cancelled+文本确认+就地刷新，
+  取到 0 定格「已全部取消关注」）；`handle_inbound` 三处无参分支改推卡（带编号/all 仍直达）。
+- **递归规避**：卡回调 recv-loop 内不再调 `ensure_select_routes`（会与 spawn 形成 `!Send` 递归）；watch 认领靠
+  `register_watch_at` 的 `notify` → watch 引擎 `ensure_watch_routes`，残留 select 认领无害、下次 `send_agent_picker`/
+  监听重建时收敛。
+
+**未做（待你真机验收，飞书；daemon 已重启用上新二进制）**：
+- `/watch` 无参→单选卡；点 agent→就地变实时 watch 卡；点「· 关注中」的→旧卡定格「已由新卡片接替」、本卡变新 watch 卡。
+- `/status` 无参→单选卡；点 agent→回文本详情、卡不动可继续点。
+- `/unwatch` 无参（≥2 关注）→单选卡；点 agent→旧卡定格「已取消关注」+文本确认+卡去掉该项；取到 0→卡定格「已全部取消关注」。
+- 边界：无 agent 不弹卡（回文本）；`/watch 3`、`/status 3`、`/unwatch all` 仍直达；daemon 重启后点旧单选卡静默无效。
+
+**P2（未开始）**：Telegram / Slack 单选卡渲染 + 回调；钉钉（与用户一起建模板，含「已选择 [n]」定格变量）；
+可选把 `/status` 点选改卡内详情。
+
 ## 待验收：守护进程「保活模式」（实验 Tab）
 
 在「实验」Tab 加**分段控件**（与状态栏图标一致）选 daemon 生命周期：`activity`（默认＝当前行为：按需拉起、5min 空闲退出）/ `keepalive`（保活）。已全量落地：

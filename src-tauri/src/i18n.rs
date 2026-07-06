@@ -506,6 +506,26 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "watch.btnReplaced" => pick(lang, "Replaced by a newer card", "已由新卡片接替"),
         "watch.btnMoved" => pick(lang, "Moved to the latest card ⬇", "已移至最新卡片 ⬇"),
 
+        // —— 通用「单选卡」（spec docs/specs/im-select-card.md）——
+        // 卡片标题（按命令种类）。
+        "select.titleWatch" => pick(
+            lang,
+            "Pick an agent to watch (one tap starts):",
+            "选择要实时关注的 Agent（点一下即开始）：",
+        ),
+        "select.titleStatus" => pick(lang, "Pick an agent to view:", "选择要查看的 Agent："),
+        "select.titleUnwatch" => pick(lang, "Pick an agent to unwatch:", "选择要取消关注的 Agent："),
+        // 每行触发按钮文案（按动作种类）。
+        "select.btnWatch" => pick(lang, "Watch", "关注"),
+        "select.btnStatus" => pick(lang, "View", "查看"),
+        "select.btnUnwatch" => pick(lang, "Unwatch", "取消"),
+        // 选项徽标：已在本渠道关注中（`/watch` 卡；点它＝换新卡）。前后空格由渲染器按需拼接。
+        "select.watchingBadge" => pick(lang, "· watching", "· 关注中"),
+        // 选项超上限截断说明（{n} = 实际展示数）。
+        "select.truncated" => pick(lang, "(showing first {n})", "（仅列前 {n} 个）"),
+        // `/unwatch` 单选卡取到 0 个后定格文案。
+        "select.unwatchAllDoneCard" => pick(lang, "All unwatched.", "已全部取消关注。"),
+
         // —— Slack 渠道：发给用户的文案 + 本地诊断 ——
         // 静态终态卡片状态行（无 emoji 前缀，与飞书/钉钉一致）。
         "channel.slSubmitted" => pick(lang, "Submitted", "已提交"),
