@@ -11,6 +11,7 @@ import {
   historyInit,
 } from "../lib/ipc";
 import type { HistoryEntry, ProjectInfo } from "../lib/types";
+import { agentKindOf, workspaceNameOf } from "../lib/history";
 import HistoryDetail from "../components/HistoryDetail.vue";
 
 const { t, locale } = useI18n();
@@ -37,8 +38,18 @@ const keywords = computed(() =>
   query.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
 );
 
+// Localized agent family label (falls back to the raw id for unknown families).
+function agentLabelOf(e: HistoryEntry): string {
+  const k = agentKindOf(e);
+  if (!k) return "";
+  const label = t(`agents.kind.${k}`);
+  return label === `agents.kind.${k}` ? k : label;
+}
+
 // Build the searchable haystack for one entry: shared message + each question
-// prompt + selected options + typed replies + attachment / reply file names.
+// prompt + selected options + typed replies + attachment / reply file names +
+// workspace (name + full path) + agent (family id + localized label) + caller
+// source name + channel (id + localized name).
 function haystackOf(e: HistoryEntry): string {
   const parts: string[] = [];
   if (e.message.text) parts.push(e.message.text);
@@ -50,6 +61,18 @@ function haystackOf(e: HistoryEntry): string {
     for (const img of a.images) parts.push(fileName(img));
     for (const f of a.files) parts.push(fileName(f));
   }
+  if (e.project) {
+    parts.push(e.project);
+    parts.push(workspaceNameOf(e));
+  }
+  const kind = agentKindOf(e);
+  if (kind) {
+    parts.push(kind);
+    parts.push(agentLabelOf(e));
+  }
+  if (e.source) parts.push(e.source);
+  parts.push(e.channel);
+  parts.push(channelName(e.channel));
   return parts.join("\n").toLowerCase();
 }
 
@@ -82,11 +105,10 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Render a list summary with matched keywords wrapped in <mark>. The text is
+// Render text with matched keywords wrapped in <mark>. The text is
 // HTML-escaped first; keywords are escaped the same way so matching stays in
 // sync (and special chars can never break out of the markup).
-function highlightedSummary(e: HistoryEntry): string {
-  const text = summaryOf(e) || t("history.noReply");
+function highlightText(text: string): string {
   const esc = escapeHtml(text);
   const kws = keywords.value;
   if (!kws.length) return esc;
@@ -99,6 +121,10 @@ function highlightedSummary(e: HistoryEntry): string {
   } catch {
     return esc;
   }
+}
+
+function highlightedSummary(e: HistoryEntry): string {
+  return highlightText(summaryOf(e) || t("history.noReply"));
 }
 
 // Keep the selection valid as the filtered set changes (typing / reload).
@@ -315,9 +341,18 @@ onBeforeUnmount(() => unlistenUpdated?.());
         >
           <div class="entry-top">
             <span class="badge" :class="e.action">{{ channelName(e.channel) }}</span>
+            <span v-if="agentLabelOf(e)" class="agent-badge">{{ agentLabelOf(e) }}</span>
             <span class="entry-time">{{ relativeTime(e.timestampMs) }}</span>
           </div>
           <div class="entry-summary" v-html="highlightedSummary(e)"></div>
+          <div
+            v-if="workspaceNameOf(e)"
+            class="entry-workspace"
+            :title="e.project"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" /></svg>
+            <span class="ws-name" v-html="highlightText(workspaceNameOf(e))"></span>
+          </div>
         </li>
       </ul>
       <div v-else-if="keywords.length" class="empty">
@@ -542,11 +577,50 @@ onBeforeUnmount(() => unlistenUpdated?.());
   background: color-mix(in srgb, #ff453a 16%, transparent);
   color: #ff453a;
 }
+.agent-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  max-width: 96px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  color: var(--text-secondary);
+}
 .entry-time {
   margin-left: auto;
   font-size: 11px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+}
+.entry-workspace {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+.entry-workspace svg {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+}
+.entry-workspace .ws-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.entry-workspace :deep(mark) {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: inherit;
 }
 .entry-summary {
   font-size: 13px;

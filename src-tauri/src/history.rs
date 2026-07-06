@@ -39,6 +39,12 @@ pub struct HistoryEntry {
     /// Caller source name (`ASKHUMAN_ENV_SOURCE_NAME`).
     #[serde(default)]
     pub source: String,
+    /// Caller agent family (claude/codex/cursor/grok). None when undetected or for
+    /// entries recorded before this field existed. For MCP-originated asks the env
+    /// carries nothing; the daemon's async process-tree walk backfills the value
+    /// before the entry is recorded (best-effort).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_kind: Option<String>,
     /// Channel id that submitted / cancelled (popup / dingding / feishu / telegram).
     #[serde(default)]
     pub channel: String,
@@ -281,6 +287,7 @@ mod tests {
             timestamp_ms: ts,
             project: project.to_string(),
             source: "the Loop".to_string(),
+            agent_kind: None,
             channel: "popup".to_string(),
             action: ChannelAction::Send,
             is_markdown: true,
@@ -301,6 +308,23 @@ mod tests {
         // Most recent first.
         assert_eq!(loaded[0].id, "b");
         assert_eq!(loaded[1].id, "a");
+    }
+
+    #[test]
+    fn agent_kind_roundtrip_and_legacy_lines() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        let mut e = entry("a", "/p", 1);
+        e.agent_kind = Some("cursor".to_string());
+        record_at(&path, e, 200);
+        // Legacy line without the field parses with agent_kind == None.
+        record_at(&path, entry("b", "/p", 2), 200);
+        let loaded = load_at(&path, Some("/p"), false);
+        assert_eq!(loaded[0].agent_kind, None);
+        assert_eq!(loaded[1].agent_kind.as_deref(), Some("cursor"));
+        // None is omitted from the serialized line (keeps legacy shape).
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(raw.matches("agentKind").count(), 1);
     }
 
     #[test]

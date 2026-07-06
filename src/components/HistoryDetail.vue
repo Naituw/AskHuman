@@ -20,9 +20,27 @@ import {
   showAttachmentMenu,
 } from "../lib/ipc";
 import type { FileAttachment, HistoryAnswer, HistoryEntry } from "../lib/types";
+import { agentKindOf, customSourceOf, workspaceNameOf } from "../lib/history";
 
 const props = defineProps<{ entry: HistoryEntry }>();
 const { t, locale } = useI18n();
+
+// —— 来源 meta（agent 家族 / 自定义来源名 / workspace）——
+const agentLabel = computed(() => {
+  const k = agentKindOf(props.entry);
+  if (!k) return "";
+  const label = t(`agents.kind.${k}`);
+  return label === `agents.kind.${k}` ? k : label;
+});
+const customSource = computed(() => customSourceOf(props.entry, agentLabel.value));
+const workspaceName = computed(() => workspaceNameOf(props.entry));
+const hasMeta = computed(
+  () => !!agentLabel.value || !!customSource.value || !!workspaceName.value
+);
+
+function openWorkspace() {
+  if (props.entry.project) openPath(props.entry.project).catch(() => {});
+}
 
 const isMulti = computed(() => props.entry.questions.length > 1);
 const isCancel = computed(() => props.entry.action === "cancel");
@@ -80,6 +98,11 @@ function buildPlainText(): string {
   const e = props.entry;
   const lines: string[] = [];
   lines.push(`${statusText.value} · ${absoluteTime.value}`);
+  const meta: string[] = [];
+  if (agentLabel.value) meta.push(agentLabel.value);
+  if (customSource.value) meta.push(customSource.value);
+  if (e.project) meta.push(e.project);
+  if (meta.length) lines.push(meta.join(" · "));
 
   if (e.message.text.trim()) {
     lines.push("", t("history.copyMessage"), e.message.text.trimEnd());
@@ -350,6 +373,23 @@ watch(
       </button>
     </div>
 
+    <!-- Source meta: agent family / custom source name / workspace -->
+    <div v-if="hasMeta" class="meta-row">
+      <span v-if="agentLabel" class="meta-chip">{{ agentLabel }}</span>
+      <span v-if="customSource" class="meta-chip">{{ customSource }}</span>
+      <button
+        v-if="workspaceName"
+        type="button"
+        class="meta-chip meta-workspace"
+        :title="entry.project"
+        @click.stop="openWorkspace"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" /></svg>
+        <span class="meta-ws-name">{{ workspaceName }}</span>
+        <svg class="meta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M8 7h9v9" /></svg>
+      </button>
+    </div>
+
     <!-- Shared message -->
     <template v-if="showMessage">
       <div
@@ -537,6 +577,50 @@ watch(
 .copy-btn svg {
   width: 12px;
   height: 12px;
+}
+/* Source meta chips */
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: -4px;
+}
+.meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 260px;
+  /* 固定高度 + line-height:1：span（继承正文行高）与 button（UA 默认行高）混排时保持等高。 */
+  height: 20px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.meta-chip svg {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+}
+.meta-workspace {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.meta-workspace:hover {
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
+}
+.meta-ws-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meta-arrow {
+  opacity: 0.7;
 }
 /* Plain (non-markdown) message / question body */
 .plain-body {

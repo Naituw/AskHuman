@@ -109,6 +109,8 @@ export interface HistoryEntry {
   timestampMs: number;
   project: string;
   source: string;
+  /** Caller agent family (claude/codex/cursor/grok); absent on legacy entries. */
+  agentKind?: string | null;
   /** Channel that submitted / cancelled: popup / dingding / feishu / telegram. */
   channel: string;
   action: ChannelAction;

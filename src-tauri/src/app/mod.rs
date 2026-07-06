@@ -1131,11 +1131,13 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                             let request = app.state::<AppState>().request.clone();
                             let project = app.state::<AppState>().project.clone();
                             let source = app.state::<AppState>().source.clone();
+                            let agent_kind = app.state::<AppState>().agent_kind.clone();
                             let coordinator = Coordinator::new(
                                 app.handle().clone(),
                                 request.clone(),
                                 project,
                                 source,
+                                agent_kind,
                             );
                             if show_popup {
                                 coordinator

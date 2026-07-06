@@ -103,6 +103,7 @@ impl RequestRegistry {
             final_tx.clone(),
             task.project.clone(),
             task.source.clone(),
+            task.agent_kind.clone(),
         );
 
         let gui: GuiSlot = Arc::new(Mutex::new(None));

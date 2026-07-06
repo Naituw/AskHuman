@@ -38,6 +38,10 @@ pub struct Coordinator {
     project: String,
     /// 调用方来源名（写入回复历史；可空）。
     source: String,
+    /// 调用方 agent 家族（claude/codex/cursor/grok，写入回复历史；可空）。
+    /// 内部可变：daemon 异步 walk 进程树解析完成后经 `set_agent_kind` 回填
+    /// （MCP 模式 env 判不出家族，只有这条路能拿到），`finish` 落历史时取最新值。
+    agent_kind: Mutex<Option<String>>,
     /// 仍在收尾的落败「消息渠道」数（弹窗瞬时关闭，不计入）。
     pending: Arc<AtomicUsize>,
     /// 已采纳的终态结果（首个 submit 写入）。
@@ -61,8 +65,14 @@ struct Inner {
 }
 
 impl Coordinator {
-    /// GUI 模式协调器。`project` / `source` 写入回复历史（可空）。
-    pub fn new(app: AppHandle, request: AskRequest, project: String, source: String) -> Arc<Self> {
+    /// GUI 模式协调器。`project` / `source` / `agent_kind` 写入回复历史（可空）。
+    pub fn new(
+        app: AppHandle,
+        request: AskRequest,
+        project: String,
+        source: String,
+        agent_kind: Option<String>,
+    ) -> Arc<Self> {
         Self::build(
             Exiter::Gui(app),
             request,
@@ -70,6 +80,7 @@ impl Coordinator {
             Lang::current(),
             project,
             source,
+            agent_kind,
         )
     }
 
@@ -89,6 +100,7 @@ impl Coordinator {
             Lang::current(),
             project,
             source,
+            None,
         )
     }
 
@@ -100,8 +112,9 @@ impl Coordinator {
         tx: UnboundedSender<RenderOutcome>,
         project: String,
         source: String,
+        agent_kind: Option<String>,
     ) -> Arc<Self> {
-        Self::build(Exiter::Ipc(tx), request, None, lang, project, source)
+        Self::build(Exiter::Ipc(tx), request, None, lang, project, source, agent_kind)
     }
 
     fn build(
@@ -111,6 +124,7 @@ impl Coordinator {
         lang: Lang,
         project: String,
         source: String,
+        agent_kind: Option<String>,
     ) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(Inner {
@@ -123,6 +137,7 @@ impl Coordinator {
             lang,
             project,
             source,
+            agent_kind: Mutex::new(agent_kind),
             pending: Arc::new(AtomicUsize::new(0)),
             result: Mutex::new(None),
             winner: Mutex::new(None),
@@ -134,6 +149,11 @@ impl Coordinator {
     /// 是否已进入收尾阶段（供 GUI 事件循环决定是否拦下关窗退出）。
     pub fn is_finalizing(&self) -> bool {
         self.finalizing.load(Ordering::SeqCst)
+    }
+
+    /// 回填调用方 agent 家族（daemon 异步 walk 解析完成后调用；覆盖 env 探测值或 None）。
+    pub fn set_agent_kind(&self, kind: String) {
+        *self.agent_kind.lock().unwrap() = Some(kind);
     }
 
     pub fn register(&self, channel: Arc<dyn Channel>) {
@@ -341,6 +361,7 @@ impl Coordinator {
             timestamp_ms: crate::history::now_ms(),
             project: self.project.clone(),
             source: self.source.clone(),
+            agent_kind: self.agent_kind.lock().unwrap().clone(),
             channel: result.source_channel_id.clone(),
             action: result.action,
             is_markdown: request.is_markdown,

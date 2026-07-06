@@ -1932,6 +1932,9 @@ mod unix_impl {
                 broadcast_agents_state(&state);
             }
 
+            // 回填协调器的 agent 家族（MCP 场景 env 判不出，历史记录只有这条路能拿到）。
+            entry.coordinator.set_agent_kind(kind.as_str().to_string());
+
             // 存入 entry + 后推弹窗（helper 已连上则即送；未连则握手时由 handle_gui 补发，覆盖竞态）。
             let resolved = request::ResolvedAgent {
                 kind: Some(kind.as_str().to_string()),
