@@ -91,7 +91,7 @@ const revealLabel = computed(() => {
   return t("settings.integration.revealInFileManager");
 });
 
-type Tab = "general" | "integration" | "channel" | "experimental";
+type Tab = "general" | "integration" | "channel" | "advanced" | "experimental";
 
 const config = ref<AppConfig | null>(null);
 const activeTab = ref<Tab>("general");
@@ -716,14 +716,13 @@ async function updateLifecycle(kind: AgentKind) {
   }
 }
 
-// 打开「实验」开关时显露实验 Tab；关闭时若停留在实验 Tab 则退回通用。
+// 打开「实验」开关时显露实验 Tab（现为空态）；关闭时若停留在实验 Tab 则退回通用。
 async function toggleExperimental() {
   if (!config.value) return;
   if (!config.value.experimental.enabled && activeTab.value === "experimental") {
     activeTab.value = "general";
   }
   await persist();
-  if (config.value.experimental.enabled) await refreshLifecycle();
 }
 
 function lifecycleLabel(kind: AgentKind): string {
@@ -962,7 +961,8 @@ onMounted(async () => {
     soundSupport.value = { kind: "none", names: [] };
   }
   await Promise.all(AGENTS.map((a) => refreshMode(a.id)));
-  if (!isWindows && config.value.experimental.enabled) await refreshLifecycle();
+  // 生命周期追踪已迁至「高级」Tab（仅 macOS/Linux，不再受「实验性功能」开关门控）。
+  if (!isWindows) await refreshLifecycle();
   if (isMac) {
     try {
       glassSupported.value = await isGlassSupported();
@@ -1141,6 +1141,15 @@ onBeforeUnmount(() => unlistenProgress?.());
         {{ t("settings.tabs.channel") }}
       </button>
       <button
+        v-if="!isWindows"
+        :data-tauri-drag-region="tabDrag"
+        :class="{ active: activeTab === 'advanced' }"
+        @mousedown="onTabDown"
+        @click="onTabClick('advanced', $event)"
+      >
+        {{ t("settings.tabs.advanced") }}
+      </button>
+      <button
         v-if="!isWindows && config.experimental.enabled"
         :data-tauri-drag-region="tabDrag"
         :class="{ active: activeTab === 'experimental' }"
@@ -1315,6 +1324,27 @@ onBeforeUnmount(() => unlistenProgress?.());
               {{ t("common.test") }}
             </button>
           </div>
+        </div>
+
+        <!-- 多问题纵向同时显示（从实验区迁来；跨平台，含 Windows） -->
+        <div class="card">
+          <div class="row">
+            <p class="card-title">
+              {{ t("settings.experimental.verticalQuestionsTitle") }}
+            </p>
+            <span class="spacer"></span>
+            <label class="switch">
+              <input
+                type="checkbox"
+                v-model="config.experimental.verticalQuestions"
+                @change="persist"
+              />
+              <span class="track"></span>
+            </label>
+          </div>
+          <p class="card-desc">
+            {{ t("settings.experimental.verticalQuestionsDesc") }}
+          </p>
         </div>
 
         <!-- 菜单栏图标（仅 macOS/Linux 桌面；Windows 不支持） -->
@@ -1581,8 +1611,8 @@ onBeforeUnmount(() => unlistenProgress?.());
         </div>
       </template>
 
-      <!-- 实验性高级功能 -->
-      <template v-else-if="activeTab === 'experimental'">
+      <!-- 高级功能（从实验区迁来：Agent 生命周期追踪 / 守护进程生命周期 / IM 按需发送；仅 macOS/Linux） -->
+      <template v-else-if="activeTab === 'advanced'">
         <div class="card">
           <p class="card-title">{{ t("settings.experimental.lifecycleTitle") }}</p>
           <p class="card-desc">{{ t("settings.experimental.lifecycleDesc") }}</p>
@@ -1675,7 +1705,7 @@ onBeforeUnmount(() => unlistenProgress?.());
           </p>
         </div>
 
-        <!-- IM 渠道按需发送（从「渠道」Tab 迁来，归入实验区；配置键仍为 autoActivation） -->
+        <!-- IM 渠道按需发送（归入「高级」Tab；配置键仍为 autoActivation） -->
         <div class="card">
           <div class="row">
             <p class="card-title">
@@ -1697,27 +1727,38 @@ onBeforeUnmount(() => unlistenProgress?.());
           <p class="card-desc hint">
             {{ t("settings.channels.autoActivationLifecycleHint") }}
           </p>
-        </div>
-
-        <!-- 多问题纵向同时显示（实验，置于实验区最后） -->
-        <div class="card">
-          <div class="row">
-            <p class="card-title">
-              {{ t("settings.experimental.verticalQuestionsTitle") }}
+          <!-- 子开关：自动结束 watch（缩进以示为「按需发送」子项；仅父开时可用，父关置灰禁用） -->
+          <div
+            class="sub-setting"
+            :style="{ opacity: config.channels.autoActivation ? 1 : 0.5 }"
+          >
+            <div class="row">
+              <span class="label">
+                {{ t("settings.channels.autoEndWatchTitle") }}
+              </span>
+              <span class="spacer"></span>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  v-model="config.channels.autoEndWatch"
+                  :disabled="!config.channels.autoActivation"
+                  @change="persist"
+                />
+                <span class="track"></span>
+              </label>
+            </div>
+            <p class="card-desc">
+              {{ t("settings.channels.autoEndWatchDesc") }}
             </p>
-            <span class="spacer"></span>
-            <label class="switch">
-              <input
-                type="checkbox"
-                v-model="config.experimental.verticalQuestions"
-                @change="persist"
-              />
-              <span class="track"></span>
-            </label>
           </div>
-          <p class="card-desc">
-            {{ t("settings.experimental.verticalQuestionsDesc") }}
-          </p>
+        </div>
+      </template>
+
+      <!-- 实验性功能（功能已迁往「高级」/「通用」，暂为空态） -->
+      <template v-else-if="activeTab === 'experimental'">
+        <div class="empty-state">
+          <p class="empty-title">{{ t("settings.experimental.emptyTitle") }}</p>
+          <p class="empty-desc">{{ t("settings.experimental.emptyDesc") }}</p>
         </div>
       </template>
 
@@ -2748,6 +2789,39 @@ onBeforeUnmount(() => unlistenProgress?.());
   flex: 1 1 auto;
   overflow-y: auto;
   padding: var(--space-4);
+}
+/* 子设置项：缩进 + 左侧竖线，表明从属于上方的父开关（如「自动结束 watch」属「按需发送」） */
+.sub-setting {
+  margin-top: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--border);
+}
+.sub-setting .card-desc {
+  margin-bottom: 0;
+}
+/* 空态视图（实验 Tab 暂无功能时） */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: var(--space-2);
+  min-height: 200px;
+  padding: var(--space-4);
+}
+.empty-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.empty-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0;
+  max-width: 320px;
 }
 /* Agent 集成页：顶部原理说明 + 「手动/自动集成」分组标题 */
 .section-intro {

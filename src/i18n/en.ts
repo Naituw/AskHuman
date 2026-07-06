@@ -106,11 +106,14 @@ export default {
       general: "General",
       integration: "Agents",
       channel: "Channels",
+      advanced: "Advanced",
       experimental: "Experimental",
     },
     experimental: {
       enableLabel: "Experimental features",
       enableHint: "Show advanced, unstable features. Off by default.",
+      emptyTitle: "No experimental features yet",
+      emptyDesc: "There are no features under experimentation right now. Future experimental features will show up here.",
       lifecycleTitle: "Agent lifecycle tracking",
       lifecycleDesc:
         "Install user-level hooks so AskHuman can track each agent's sessions (working / idle / ended). While agent activity is tracked, AskHuman stays on standby in the background to receive proactive IM commands (e.g. /status to check status, or activate on-demand sending). Once enabled, run `AskHuman agents monitor` to open the live status window.",
@@ -226,6 +229,9 @@ export default {
         "When on, questions are no longer broadcast to every IM channel; the local popup always receives them. To receive on an IM channel, send /here (or /这里) in that channel while an agent is working; subsequent questions and any pending ones will be routed there.",
       autoActivationLifecycleHint:
         "Tip: also enable Lifecycle tracking above for more accurate working/idle agent state detection.",
+      autoEndWatchTitle: "Auto-stop watches when the active channel switches",
+      autoEndWatchDesc:
+        "When on, if an IM channel is no longer the active channel (e.g. you return to your computer and answer in the local popup, or send a message on another channel that switches the active slot away), all live watches on that channel are stopped automatically—no manual /unwatch needed. Only effective when On-demand IM delivery is enabled.",
       popupTitle: "Local popup",
       rememberSize: "Remember window size",
       defaultWidth: "Default width",

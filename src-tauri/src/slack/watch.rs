@@ -73,7 +73,7 @@ pub fn build_watch_blocks(
 
     // 底部：更新时刻（context 小字）+ 按钮 / 终态标签。
     let mut footer = watch::updated_line_text(now, lang);
-    match mode {
+    match &mode {
         CardMode::Active => {
             blocks.push(json!({
                 "type": "context",

@@ -2406,9 +2406,10 @@ mod unix_impl {
                     c.send_card(&card).await.map_err(|e| e.to_string())
                 }
                 WatchClient::Telegram(c) => {
-                    let html = crate::telegram::watch::render_watch_html(frame, mode, now, lang);
+                    // 先按 mode 取 markup（借用），再把 mode 交给渲染（CardMode 非 Copy）。
                     let markup = matches!(mode, crate::watch::CardMode::Active)
                         .then(|| crate::telegram::watch::inline_keyboard(lang));
+                    let html = crate::telegram::watch::render_watch_html(frame, mode, now, lang);
                     c.send_message(&html, Some("HTML"), markup)
                         .await
                         .map(|mid| mid.to_string())
@@ -2459,10 +2460,11 @@ mod unix_impl {
                 }
                 WatchClient::Telegram(c) => {
                     let mid: i64 = message_id.parse().map_err(|_| "bad message id".to_string())?;
-                    let html = crate::telegram::watch::render_watch_html(frame, mode, now, lang);
                     // editMessageText 整体替换消息：活动态须重传 keyboard，终态不传即移除按钮。
+                    // 先按 mode 取 markup（借用），再把 mode 交给渲染（CardMode 非 Copy）。
                     let markup = matches!(mode, crate::watch::CardMode::Active)
                         .then(|| crate::telegram::watch::inline_keyboard(lang));
+                    let html = crate::telegram::watch::render_watch_html(frame, mode, now, lang);
                     c.edit_message_text(mid, &html, Some("HTML"), markup)
                         .await
                         .map_err(|e| e.to_string())
@@ -3447,28 +3449,62 @@ mod unix_impl {
                 }
             },
         };
-        // 旧卡定格（失败仅记日志）→ 移除订阅 → 回确认。
+        // 旧卡定格 Cancelled + 移除订阅（复用共享收尾）→ 回确认。渠道不可用则整段跳过（订阅保留，稍后重试）。
+        let dropped = finalize_and_drop_watches(
+            state,
+            channel_id,
+            &targets,
+            crate::watch::FinalKind::Cancelled,
+            config,
+            lang,
+        )
+        .await;
+        if dropped == 0 {
+            return; // 渠道客户端不可用：与旧行为一致（不退订、不回执）。
+        }
+        let text = if targets.len() == 1 {
+            crate::i18n::tr(lang, "watch.unwatchDone").replace("{id}", &targets[0].seq.to_string())
+        } else {
+            crate::i18n::tr(lang, "watch.unwatchAllDone")
+                .replace("{n}", &targets.len().to_string())
+        };
+        let _ = reply_channel_text(channel_id, config, &text).await;
+    }
+
+    /// 对某渠道的一批 watch 订阅统一收尾：逐个把卡片定格为 `final_kind` → 从 `subs` 移除 → 持久化 + 通知。
+    /// 与 `handle_unwatch_cmd` 旧内联逻辑等价：渠道客户端不可用则**整段跳过**（订阅保留、返回 0）。
+    /// 供 `/unwatch`（Cancelled）与「按需发送」活跃槽切走自动结束（AutoStopped）复用。
+    async fn finalize_and_drop_watches(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+        targets: &[WatchEntry],
+        final_kind: crate::watch::FinalKind,
+        config: &AppConfig,
+        lang: Lang,
+    ) -> usize {
+        if targets.is_empty() {
+            return 0;
+        }
         let Some(client) = WatchClient::for_channel(channel_id, config).await else {
-            return;
+            return 0;
         };
         let snapshot = state.agents.snapshot();
         let waiting = state.registry.in_flight_agent_session_ids();
         let now = now_secs();
-        for e in &targets {
+        for e in targets {
             let rec = find_agent_by_session(&snapshot, &e.session_id);
-            let frame =
-                crate::watch::build_frame(e.seq, rec, waiting.contains(&e.session_id));
+            let frame = crate::watch::build_frame(e.seq, rec, waiting.contains(&e.session_id));
             if let Err(err) = client
                 .edit(
                     &e.message_id,
                     &frame,
-                    crate::watch::CardMode::Final(crate::watch::FinalKind::Cancelled),
+                    crate::watch::CardMode::Final(final_kind.clone()),
                     now,
                     lang,
                 )
                 .await
             {
-                log(&format!("watch: finalize cancelled card failed: {}", err));
+                log(&format!("watch: finalize card failed ({}): {}", channel_id, err));
             }
         }
         state
@@ -3479,13 +3515,7 @@ mod unix_impl {
             .retain(|s| !targets.iter().any(|t| t.message_id == s.message_id));
         persist_watch_subs(state);
         state.watch.notify.notify_one();
-        let text = if targets.len() == 1 {
-            crate::i18n::tr(lang, "watch.unwatchDone").replace("{id}", &targets[0].seq.to_string())
-        } else {
-            crate::i18n::tr(lang, "watch.unwatchAllDone")
-                .replace("{n}", &targets.len().to_string())
-        };
-        let _ = reply_channel_text(channel_id, config, &text).await;
+        targets.len()
     }
 
     // ===== 通用「单选卡」子系统（spec docs/specs/im-select-card.md）=====
@@ -3897,7 +3927,10 @@ mod unix_impl {
         let config = AppConfig::load();
         match picker.kind {
             PickerKind::Watch => {
+                // 先完成就地变身（含卡片 ACK），再激活——避免激活的补推/回执拖慢同步 ACK。
                 select_pick_watch(state, channel_id, &mid, &session_id, &config, lang, ack).await;
+                // 卡片点『关注』＝在该渠道操作 → 设为活跃槽（与 /watch 一致，用户决策）。
+                activate_channel_on_action(state, channel_id, &config, lang).await;
             }
             PickerKind::Status => {
                 // 单选卡不动：先空 ACK，再回纯文本详情（可继续点其它 agent）。
@@ -3905,6 +3938,8 @@ mod unix_impl {
                 let snapshot = state.agents.snapshot();
                 let text = status_detail_by_session(&snapshot, &session_id, channel_id, lang);
                 let _ = reply_channel_text(channel_id, &config, &text).await;
+                // 卡片点『查看』＝在该渠道操作 → 设为活跃槽（补齐与 /status 文本命令的一致性）。
+                activate_channel_on_action(state, channel_id, &config, lang).await;
             }
             PickerKind::Unwatch => {
                 select_pick_unwatch(state, channel_id, &mid, &session_id, &config, lang, ack).await;
@@ -4114,12 +4149,16 @@ mod unix_impl {
         match picker.kind {
             PickerKind::Watch => {
                 dd_select_pick_watch(state, &otid, &session_id, &config, lang).await;
+                // 卡片点『关注』＝在该渠道操作 → 设为活跃槽（与 /watch 一致，用户决策）。
+                activate_channel_on_action(state, "dingding", &config, lang).await;
             }
             PickerKind::Status => {
                 // 单选卡不动：回纯文本详情（可继续点其它 agent）。
                 let snapshot = state.agents.snapshot();
                 let text = status_detail_by_session(&snapshot, &session_id, "dingding", lang);
                 let _ = reply_channel_text("dingding", &config, &text).await;
+                // 卡片点『查看』＝在该渠道操作 → 设为活跃槽（补齐与 /status 文本命令的一致性）。
+                activate_channel_on_action(state, "dingding", &config, lang).await;
             }
             PickerKind::Unwatch => {
                 dd_select_pick_unwatch(state, &otid, &session_id, &config, lang).await;
@@ -4376,11 +4415,15 @@ mod unix_impl {
         match picker.kind {
             PickerKind::Watch => {
                 select_pick_watch_inplace(state, channel_id, mid, &session_id, config, lang).await;
+                // 卡片点『关注』＝在该渠道操作 → 设为活跃槽（与 /watch 一致，用户决策）。
+                activate_channel_on_action(state, channel_id, config, lang).await;
             }
             PickerKind::Status => {
                 let snapshot = state.agents.snapshot();
                 let text = status_detail_by_session(&snapshot, &session_id, channel_id, lang);
                 let _ = reply_channel_text(channel_id, config, &text).await;
+                // 卡片点『查看』＝在该渠道操作 → 设为活跃槽（补齐与 /status 文本命令的一致性）。
+                activate_channel_on_action(state, channel_id, config, lang).await;
             }
             PickerKind::Unwatch => {
                 select_pick_unwatch_inplace(state, channel_id, mid, &session_id, config, lang).await;
@@ -4708,6 +4751,8 @@ mod unix_impl {
         config: &AppConfig,
         lang: Lang,
     ) {
+        // `/msg` 插话＝在该渠道主动参与 → 设为活跃槽（用户决策）。
+        activate_channel_on_action(state, channel_id, config, lang).await;
         let Some(sid) = resolve_msg_target(state, channel_id, sel, config, lang).await else {
             return;
         };
@@ -4749,6 +4794,8 @@ mod unix_impl {
         config: &AppConfig,
         lang: Lang,
     ) {
+        // `/msg-clear` 撤回插话＝在该渠道操作 → 设为活跃槽（用户决策）。
+        activate_channel_on_action(state, channel_id, config, lang).await;
         let Some(sid) = resolve_msg_target(state, channel_id, sel, config, lang).await else {
             return;
         };
@@ -4876,6 +4923,8 @@ mod unix_impl {
             }
             // /watch、/unwatch：实时关注（P1 仅飞书；其余渠道回「暂仅支持飞书」提示）。
             Parsed::Command(Command::Watch(sel)) => {
+                // `/watch` 属「在该渠道操作」→ 设为活跃槽（用户决策；配合 D2 让离开时自动结束 watch）。
+                activate_channel_on_action(state, channel_id, &config, lang).await;
                 match sel {
                     // /watch <编号>：直达关注（不弹卡）。
                     Some(_) => handle_watch_cmd(state, channel_id, sel, &config, lang).await,
@@ -5006,6 +5055,25 @@ mod unix_impl {
                 .await;
                 // 反激活提示可在无该渠道入站时发出（如在别的渠道作答切槽）→ 单独记扰动。
                 mark_watch_disturbed(state, &old);
+                // 「按需发送」子开关：活跃槽从某 IM 切走时自动结束该渠道的全部 watch（D1/D2，
+                // spec docs/specs/im-auto-end-watch.md）。卡片定格「已切换到 {new} · 自动结束关注」，
+                // 不额外发文字（D4，反激活提示已发）。
+                if cfg.channels.auto_activation && cfg.channels.auto_end_watch {
+                    let targets: Vec<WatchEntry> = state
+                        .watch
+                        .subs
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|s| s.channel == old)
+                        .cloned()
+                        .collect();
+                    let final_kind = crate::watch::FinalKind::AutoStopped(
+                        crate::autochannel::channel_label(new_id, Lang::current()),
+                    );
+                    finalize_and_drop_watches(state, &old, &targets, final_kind, &cfg, Lang::current())
+                        .await;
+                }
             }
         }
         // 激活即补推在途（仅真实 IM；弹窗无卡片概念）。
@@ -5018,6 +5086,29 @@ mod unix_impl {
             mark_watch_disturbed(state, new_id); // 补推的提问卡也是「非 watch」消息。
         }
         (true, backfilled)
+    }
+
+    /// 「在该渠道操作即激活」的统一入口：`auto_activation` 开时把活跃槽切到本渠道；真正切换了
+    /// 就回一条激活回执（与 `/here`、`/status`、普通文本一致）。用于 `/watch`、`/msg`、`/msg-clear`
+    /// 及单选卡「关注 / 查看」点选——这些本属「在渠道上说话」，理应把它设为活跃槽（用户决策）。
+    async fn activate_channel_on_action(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+        config: &AppConfig,
+        lang: Lang,
+    ) {
+        if !config.channels.auto_activation {
+            return;
+        }
+        let (switched, n) = set_active_channel(state, channel_id).await;
+        if switched {
+            let _ = reply_channel_text(
+                channel_id,
+                config,
+                &crate::autochannel::activated_receipt(n, lang),
+            )
+            .await;
+        }
     }
 
     /// 把所有「在途未答」问题补推为 `channel_id` 的卡片（已挂接该渠道的请求跳过，避免重发）。返回补推数。

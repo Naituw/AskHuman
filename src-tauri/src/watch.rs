@@ -68,7 +68,9 @@ pub enum WatchPhase {
 }
 
 /// 终态卡片的种类（决定禁用按钮的文案）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// 注：`AutoStopped` 携带「切换目标渠道展示名」用于动态文案，故本枚举**不再是 `Copy`**（改 `Clone`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FinalKind {
     /// agent 已结束（自动退订）。
     Ended,
@@ -78,10 +80,13 @@ pub enum FinalKind {
     Replaced,
     /// 卡片被会话新消息淹没后「跟底」重发，旧卡定格（订阅仍活，由新卡接续）。
     Moved,
+    /// 「按需发送」下活跃槽切走本渠道时自动结束关注（`String` = 切换目标渠道展示名 `{to}`）。
+    /// 见 `docs/specs/im-auto-end-watch.md`。
+    AutoStopped(String),
 }
 
 /// 卡片渲染模式：活动（可交互按钮）或终态（禁用按钮 + 终态文案）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CardMode {
     Active,
     Final(FinalKind),
@@ -275,7 +280,10 @@ pub fn updated_line_text(now: u64, lang: Lang) -> String {
 }
 
 /// 终态标签（`已结束 · 已自动取消关注` / `已移至最新卡片 ⬇` / …）。
-pub fn final_label_text(kind: FinalKind, lang: Lang) -> String {
+pub fn final_label_text(kind: &FinalKind, lang: Lang) -> String {
+    if let FinalKind::AutoStopped(to) = kind {
+        return i18n::tr(lang, "watch.btnAutoStopped").replace("{to}", to);
+    }
     i18n::tr(
         lang,
         match kind {
@@ -283,6 +291,7 @@ pub fn final_label_text(kind: FinalKind, lang: Lang) -> String {
             FinalKind::Cancelled => "watch.btnCancelled",
             FinalKind::Replaced => "watch.btnReplaced",
             FinalKind::Moved => "watch.btnMoved",
+            FinalKind::AutoStopped(_) => unreachable!("handled above"),
         },
     )
     .to_string()
@@ -309,7 +318,7 @@ pub fn card_view(
             refresh: i18n::tr(lang, "watch.btnRefresh").to_string(),
         },
         CardMode::Final(kind) => WatchButtons::Final {
-            label: final_label_text(kind, lang),
+            label: final_label_text(&kind, lang),
         },
     };
 
@@ -536,6 +545,17 @@ mod tests {
             }
             _ => panic!("expected final button"),
         }
+    }
+
+    #[test]
+    fn auto_stopped_label_is_dynamic() {
+        // 「自动结束 watch」终态：动态文案「已切换到 {to} · 自动结束关注」。
+        let kind = FinalKind::AutoStopped("本地弹窗".to_string());
+        assert_eq!(final_label_text(&kind, Lang::Zh), "已切换到 本地弹窗 · 自动结束关注");
+        assert_eq!(
+            final_label_text(&kind, Lang::En),
+            "Auto-stopped (switched to 本地弹窗)"
+        );
     }
 
     #[test]

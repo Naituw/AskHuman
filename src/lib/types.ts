@@ -269,6 +269,8 @@ export interface ChannelsConfig {
   slack: SlackChannelConfig;
   /** 「IM 渠道按需发送」开关（默认关 = 旧「全发」行为）。UI 入口受实验开关门控。 */
   autoActivation: boolean;
+  /** 「自动结束 watch」——「按需发送」子开关（默认开，仅 autoActivation 开时生效）。 */
+  autoEndWatch: boolean;
 }
 
 /** 实验性功能开关（默认隐藏；开启后显示「实验」Tab）。 */

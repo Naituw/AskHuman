@@ -288,7 +288,7 @@ impl Default for SlackChannelConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ChannelsConfig {
     pub popup: PopupChannelConfig,
@@ -301,6 +301,26 @@ pub struct ChannelsConfig {
     /// 即把该渠道设为活跃槽。UI 入口受实验开关门控，但配置字段独立于 `experimental`，
     /// 便于将来「转正」时已开启用户无需重开。
     pub auto_activation: bool,
+    /// 「自动结束 watch」——「按需发送」的子开关（**默认开**，仅 `auto_activation` 开时生效）。
+    /// 开启后：当某真实 IM 渠道**不再是活跃槽**（活跃槽切到本地弹窗或别的 IM）时，自动结束该渠道上的
+    /// 全部 watch（卡片就地定格「已切换到 XX · 自动结束关注」），省去回到电脑后手动 `/unwatch`。
+    /// 见 `docs/specs/im-auto-end-watch.md`。
+    pub auto_end_watch: bool,
+}
+
+impl Default for ChannelsConfig {
+    fn default() -> Self {
+        Self {
+            popup: PopupChannelConfig::default(),
+            telegram: TelegramChannelConfig::default(),
+            dingding: DingTalkChannelConfig::default(),
+            feishu: FeishuChannelConfig::default(),
+            slack: SlackChannelConfig::default(),
+            auto_activation: false,
+            // 子开关默认开：老配置缺该字段时（容器级 `#[serde(default)]` 回退到此）按开处理。
+            auto_end_watch: true,
+        }
+    }
 }
 
 /// 实验性高级功能（spec D15）：默认隐藏，需在「通用」Tab 底部的隐蔽开关里打开后才显示「实验」Tab。
@@ -530,6 +550,18 @@ mod tests {
         assert!(c.channels.slack.bot_token.is_empty());
         assert!(c.channels.slack.app_token.is_empty());
         assert!(c.channels.slack.user_id.is_empty());
+        // 「按需发送」默认关；子开关「自动结束 watch」默认开。
+        assert!(!c.channels.auto_activation);
+        assert!(c.channels.auto_end_watch);
+    }
+
+    #[test]
+    fn missing_auto_end_watch_defaults_to_true() {
+        // 老配置文件缺 `autoEndWatch` 字段 → 容器级 `#[serde(default)]` 回退到 ChannelsConfig::default() 的 true。
+        let json = r#"{"channels":{"autoActivation":true}}"#;
+        let c: AppConfig = serde_json::from_str(json).unwrap();
+        assert!(c.channels.auto_activation);
+        assert!(c.channels.auto_end_watch);
     }
 
     #[test]

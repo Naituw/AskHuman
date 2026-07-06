@@ -58,7 +58,7 @@ pub fn render_watch_html(f: &WatchFrame, mode: CardMode, now: u64, lang: Lang) -
         "\n\n<i>{}</i>",
         esc(&watch::updated_line_text(now, lang))
     ));
-    if let CardMode::Final(kind) = mode {
+    if let CardMode::Final(kind) = &mode {
         out.push_str(&format!(
             "\n<b>{}</b>",
             esc(&watch::final_label_text(kind, lang))

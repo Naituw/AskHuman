@@ -561,6 +561,9 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "watch.btnCancelled" => pick(lang, "Unwatched", "已取消关注"),
         "watch.btnReplaced" => pick(lang, "Replaced by a newer card", "已由新卡片接替"),
         "watch.btnMoved" => pick(lang, "Moved to the latest card ⬇", "已移至最新卡片 ⬇"),
+        "watch.btnAutoStopped" => {
+            pick(lang, "Auto-stopped (switched to {to})", "已切换到 {to} · 自动结束关注")
+        }
 
         // —— 通用「单选卡」（spec docs/specs/im-select-card.md）——
         // 卡片标题（按命令种类）。
