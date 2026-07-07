@@ -264,9 +264,13 @@ pub enum ClientMsg {
         /// 会话 ID（身份键）。
         #[serde(default)]
         session_id: String,
-        /// Agent 进程 pid（walk 得到，可空 → 落 TTL 兜底）。
+        /// Agent 进程 pid（已解析的 agent PID；旧 hook 由 walk 得到，新 hook 发 None）。
         #[serde(default)]
         pid: Option<u32>,
+        /// hook 进程的 parent PID（ppid），供 daemon 从其向上 walk 解析 agent PID 并缓存。
+        /// 旧 daemon 忽略此字段（`default`）；旧 hook 不带 → None。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hint_pid: Option<u32>,
         /// 工作目录（可空）。
         #[serde(default)]
         cwd: Option<String>,
@@ -631,6 +635,7 @@ mod tests {
             event: "activity".into(),
             session_id: "s1".into(),
             pid: None,
+            hint_pid: None,
             cwd: None,
             ts: 0,
             tool: None,
@@ -644,6 +649,7 @@ mod tests {
             event: "activity".into(),
             session_id: "s1".into(),
             pid: None,
+            hint_pid: None,
             cwd: None,
             ts: 0,
             tool: None,

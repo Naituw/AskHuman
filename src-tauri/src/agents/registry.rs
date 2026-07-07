@@ -126,6 +126,9 @@ impl Inner {
 /// daemon 内唯一的 agent 注册表（线程安全）。
 pub struct AgentRegistry {
     inner: Mutex<Inner>,
+    /// PID 缓存：(session_id, hint_pid) → 已解析的 agent PID。
+    /// hook 发 ppid 来，daemon 从 ppid 向上 walk 找到 agent PID 后缓存，避免重复 walk。
+    pid_cache: Mutex<std::collections::HashMap<(String, u32), Option<u32>>>,
 }
 
 fn now_secs() -> u64 {
@@ -139,6 +142,7 @@ impl AgentRegistry {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(Inner::default()),
+            pid_cache: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -181,6 +185,34 @@ impl AgentRegistry {
         inner.next_seq = seq;
         drop(inner);
         reg
+    }
+
+    /// 从 hint_pid（hook 的 ppid）解析 agent PID，按 (session_id, hint_pid) 缓存。
+    /// Agent 可 resume 同一 session（session_id 不变但进程不同），hint_pid 变化触发重解析。
+    pub fn resolve_pid(
+        &self,
+        session_id: &str,
+        kind: AgentKind,
+        hint_pid: Option<u32>,
+    ) -> Option<u32> {
+        let hint = hint_pid?;
+        let key = (session_id.to_string(), hint);
+        {
+            let cache = self.pid_cache.lock().unwrap();
+            if let Some(&cached) = cache.get(&key) {
+                return cached;
+            }
+        }
+        let resolved = super::detect::walk_agent_pid(kind, hint);
+        let mut cache = self.pid_cache.lock().unwrap();
+        cache.insert(key, resolved);
+        resolved
+    }
+
+    /// 清除某 session 的所有 PID 缓存条目。
+    pub fn clear_pid_cache(&self, session_id: &str) {
+        let mut cache = self.pid_cache.lock().unwrap();
+        cache.retain(|(sid, _), _| sid != session_id);
     }
 
     /// 处理一次生命周期事件（spec D5/D6/D7）。返回是否有状态变化（供广播）。

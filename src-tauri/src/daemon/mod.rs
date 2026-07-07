@@ -896,6 +896,7 @@ mod unix_impl {
                     event,
                     session_id,
                     pid,
+                    hint_pid,
                     cwd,
                     ts,
                     tool,
@@ -904,41 +905,7 @@ mod unix_impl {
                     if let (Some(kind), Some(ev)) =
                         (AgentKind::parse(&agent), LifecycleEvent::parse(&event))
                     {
-                        let changed = state
-                            .agents
-                            .apply_event(kind, ev, &session_id, pid, cwd, ts);
-                        if changed {
-                            state.agents.persist();
-                            broadcast_agents_state(state);
-                        }
-                        // 会话结束 → 清空该 session 的插话队列（spec agent-interject D2/D8）。
-                        if matches!(ev, LifecycleEvent::SessionEnd) {
-                            if state.interject.remove_session(&session_id) {
-                                state.interject.persist();
-                            }
-                        }
-                        // 实时「当前工具」（不落盘、不广播；IM /status 拉取时现取）。
-                        match tool {
-                            Some(crate::ipc::ToolReport {
-                                phase: crate::ipc::ToolPhase::Pre,
-                                name,
-                                object,
-                            }) => state
-                                .agents
-                                .set_current_tool(kind, &session_id, pid, name, object),
-                            Some(crate::ipc::ToolReport {
-                                phase: crate::ipc::ToolPhase::Post,
-                                ..
-                            }) => state.agents.clear_current_tool(kind, &session_id),
-                            None => {}
-                        }
-                        // turn-start 经此即时上线 IM 入站消费（与开关无关，使 /here、/status 在 agent
-                        // 工作期间随时可用）；幂等。连接随守护进程退出而释放，无需在 turn-end 主动断。
-                        ensure_inbound_listeners(state).await;
-                        // /watch 引擎即时唤醒：turn / 工具 / 会话结束事件立刻反映到实时状态卡。
-                        state.watch.notify.notify_one();
-
-                        // 插话轮询（spec agent-interject D3/D4）：必须回一帧（hook 在等，300ms 超时）。
+                        // PreToolUse：先回 interject 再做后续（hook 在等，优先解除阻塞）。
                         if interject_poll {
                             use crate::agents::interject::PollOutcome;
                             use crate::ipc::InterjectAction;
@@ -965,10 +932,8 @@ mod unix_impl {
                                         },
                                     )
                                     .await;
-                                    // 队列被消费：落盘 + 刷新徽标。
                                     state.interject.persist();
                                     broadcast_agents_state(state);
-                                    // 排队插话被 agent 真正消费＝已读 → 给来源渠道各回一条「已阅读」回执（D9）。
                                     spawn_read_receipts(state, &session_id, receipt_channels);
                                 }
                                 PollOutcome::Hold(rx) => {
@@ -980,13 +945,46 @@ mod unix_impl {
                                         },
                                     )
                                     .await;
-                                    // 接管连接等待提交/取消（非保活，可长达数小时）。
                                     return Control::InterjectHold { session_id, rx };
                                 }
                             }
                         }
+
+                        // PID 解析：优先用显式 pid，否则从 hint_pid 走缓存/walk。
+                        let resolved_pid = pid.or_else(|| {
+                            state.agents.resolve_pid(&session_id, kind, hint_pid)
+                        });
+
+                        let changed = state
+                            .agents
+                            .apply_event(kind, ev, &session_id, resolved_pid, cwd, ts);
+                        if changed {
+                            state.agents.persist();
+                            broadcast_agents_state(state);
+                        }
+                        if matches!(ev, LifecycleEvent::SessionEnd) {
+                            state.agents.clear_pid_cache(&session_id);
+                            if state.interject.remove_session(&session_id) {
+                                state.interject.persist();
+                            }
+                        }
+                        match tool {
+                            Some(crate::ipc::ToolReport {
+                                phase: crate::ipc::ToolPhase::Pre,
+                                name,
+                                object,
+                            }) => state
+                                .agents
+                                .set_current_tool(kind, &session_id, resolved_pid, name, object),
+                            Some(crate::ipc::ToolReport {
+                                phase: crate::ipc::ToolPhase::Post,
+                                ..
+                            }) => state.agents.clear_current_tool(kind, &session_id),
+                            None => {}
+                        }
+                        ensure_inbound_listeners(state).await;
+                        state.watch.notify.notify_one();
                     } else if interject_poll {
-                        // 解析失败也必须回帧，hook 侧才能立即放行（否则空等 300ms）。
                         let _ = ipc::write_msg(
                             w,
                             &ServerMsg::InterjectDecision {

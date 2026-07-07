@@ -53,7 +53,17 @@ pub fn run(args: &[String]) {
     if session_id.is_empty() {
         return;
     }
-    let pid = detect::walk_agent_pid_from_self(intended);
+    // 不在 hook 侧 walk 进程树（~280ms），改发 ppid 给 daemon 缓存解析。
+    let hint_pid = {
+        #[cfg(unix)]
+        {
+            Some(unsafe { libc::getppid() } as u32)
+        }
+        #[cfg(not(unix))]
+        {
+            None::<u32>
+        }
+    };
     let cwd = resolve_cwd(&env, stdin.as_ref());
 
     // 仅 activity 事件（Pre/PostToolUse）才尝试解析工具信息；其余事件无工具。
@@ -74,7 +84,8 @@ pub fn run(args: &[String]) {
         agent: intended.as_str().to_string(),
         event: event.as_str().to_string(),
         session_id,
-        pid,
+        pid: None,
+        hint_pid,
         cwd,
         ts: 0,
         tool,

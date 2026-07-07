@@ -2,6 +2,11 @@
 
 按具体任务 / 需求记录待办与当前进展。任务 / 需求完成后删除其 section（历史留在 git）。
 
+## ⏳ 进行中：Hook 性能优化 —— 进程树遍历移至 Daemon
+
+计划 `docs/plans/hook-perf-walk-optimization.md`。PreToolUse hook 耗时从 ~300ms 降至 ~33ms。
+代码已完成（IPC hint_pid + daemon 缓存 + interject 优先响应），待用户确认后清除。
+
 ## 待办：Codex 生命周期 hook 信任哈希加固（「hook 新、哈希旧」窗口）
 
 用户曾遇一次 Codex 弹「不信任 AskHuman hook」（时值 M2 迁移逻辑经其它任务的 install.sh 生效、
