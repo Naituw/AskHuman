@@ -9,10 +9,10 @@
 //!   再重新序列化为 `structuredContent`，对 MCP 客户端不暴露该字段。
 
 use base64::Engine;
+use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
-use rmcp::handler::server::router::tool::ToolRouter;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -215,9 +215,9 @@ impl ServerHandler for AskServer {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(
-                "AskHuman bridges the agent and a human operator. Call the `ask` tool whenever you \
+            "AskHuman bridges the agent and a human operator. Call the `ask` tool whenever you \
 need the human to decide, clarify, review, or approve something; it blocks until they reply.",
-            );
+        );
         // `from_build_env()` 的名字/版本来自 rmcp crate（"rmcp"/"1.7.0"），改成本应用的品牌名与版本。
         let mut implementation = Implementation::from_build_env();
         implementation.name = "AskHuman".to_string();
@@ -310,10 +310,7 @@ mod tests {
     #[test]
     fn argv_message_only_becomes_question() {
         let p = params(json!({ "message": "Continue?" }));
-        assert_eq!(
-            build_argv(&p),
-            vec!["Continue?", "--output", "json"]
-        );
+        assert_eq!(build_argv(&p), vec!["Continue?", "--output", "json"]);
     }
 
     #[test]

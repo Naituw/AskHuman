@@ -315,7 +315,9 @@ fn push_events_msg(v: &Value, out: &mut Vec<Ev>) {
                 }
             }
             "tool_result" => out.push(Ev::ToolResult(
-                item.get("is_error").and_then(|x| x.as_bool()).unwrap_or(false),
+                item.get("is_error")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false),
             )),
             _ => {}
         }
@@ -701,7 +703,8 @@ mod tests {
     fn steps_omitted_counts_beyond_window() {
         // 文字之后连发 5 次调用：留最近 3 步，省略 2 步。
         let mut raw = vec![
-            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"开始干活"}]}}"#.to_string(),
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"开始干活"}]}}"#
+                .to_string(),
         ];
         for i in 0..5 {
             raw.push(format!(

@@ -184,9 +184,16 @@ fn detect_phase(v: &Value) -> Option<ToolPhase> {
         }
     }
     // 有工具名 / 输入 → pre。
-    let has_tool = ["tool_name", "toolName", "tool", "tool_input", "toolInput", "tool_calls"]
-        .iter()
-        .any(|k| v.get(*k).map(|x| !x.is_null()).unwrap_or(false));
+    let has_tool = [
+        "tool_name",
+        "toolName",
+        "tool",
+        "tool_input",
+        "toolInput",
+        "tool_calls",
+    ]
+    .iter()
+    .any(|k| v.get(*k).map(|x| !x.is_null()).unwrap_or(false));
     has_tool.then_some(ToolPhase::Pre)
 }
 
@@ -253,7 +260,11 @@ fn resolve_cwd(env: &HashMap<String, String>, stdin: Option<&Value>) -> Option<S
             }
         }
     }
-    for key in ["CURSOR_PROJECT_DIR", "GROK_WORKSPACE_ROOT", "CLAUDE_PROJECT_DIR"] {
+    for key in [
+        "CURSOR_PROJECT_DIR",
+        "GROK_WORKSPACE_ROOT",
+        "CLAUDE_PROJECT_DIR",
+    ] {
         if let Some(s) = env.get(key) {
             if !s.trim().is_empty() {
                 return Some(s.clone());
@@ -353,6 +364,9 @@ mod tests {
         assert!(user_msg.starts_with("[USER INTERJECTION]"));
         assert!(user_msg.contains("停一下"));
         assert_eq!(v["agent_message"], v["user_message"]);
-        assert!(v.get("hookSpecificOutput").is_none(), "不应混入 Claude 字段");
+        assert!(
+            v.get("hookSpecificOutput").is_none(),
+            "不应混入 Claude 字段"
+        );
     }
 }

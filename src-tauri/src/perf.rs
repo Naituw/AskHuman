@@ -77,7 +77,10 @@ pub fn effective_id() -> String {
     if !env.is_empty() {
         return env;
     }
-    runtime_cell().lock().map(|g| g.0.clone()).unwrap_or_default()
+    runtime_cell()
+        .lock()
+        .map(|g| g.0.clone())
+        .unwrap_or_default()
 }
 
 fn env_truthy(key: &str) -> bool {

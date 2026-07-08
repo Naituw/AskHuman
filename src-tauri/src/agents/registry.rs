@@ -394,7 +394,11 @@ impl AgentRegistry {
             if r.pid.is_none() && pid.is_some() {
                 r.pid = pid;
             }
-            r.current_tool = Some(CurrentTool { name, object, at: now });
+            r.current_tool = Some(CurrentTool {
+                name,
+                object,
+                at: now,
+            });
             // 每次 PreToolUse 记一步（回合内单调递增，turn-start/turn-end 清零）。
             r.turn_steps = r.turn_steps.saturating_add(1);
             if r.turn_started_at.is_none() {
@@ -552,8 +556,7 @@ impl AgentRegistry {
         let mut inner = self.inner.lock().unwrap();
         let mut changed = false;
         for r in inner.active.iter_mut() {
-            if r.state == AgentState::Working
-                && now.saturating_sub(r.last_activity) > timeout_secs
+            if r.state == AgentState::Working && now.saturating_sub(r.last_activity) > timeout_secs
             {
                 r.state = AgentState::Idle;
                 changed = true;
@@ -617,8 +620,11 @@ impl AgentRegistry {
             }
             if r.terminal.is_none() {
                 if let Some(pid) = r.pid {
-                    r.terminal =
-                        Some(super::detect::terminal_kind(pid).unwrap_or("other").to_string());
+                    r.terminal = Some(
+                        super::detect::terminal_kind(pid)
+                            .unwrap_or("other")
+                            .to_string(),
+                    );
                 }
             }
         }
@@ -652,7 +658,10 @@ impl AgentRegistry {
                 pending_interject: false,
                 // 与前端 `lib/terminals.ts` 的支持清单一致（Terminal.app / iTerm2）。
                 focusable: r.pid.is_some()
-                    && matches!(r.terminal.as_deref(), Some("apple-terminal") | Some("iterm2")),
+                    && matches!(
+                        r.terminal.as_deref(),
+                        Some("apple-terminal") | Some("iterm2")
+                    ),
                 pid: r.pid,
             })
             .collect()
@@ -669,8 +678,11 @@ impl AgentRegistry {
             // 惰性识别终端类型（活动记录、有 pid 时）；找不到记 "other"，避免每次快照重算。
             if r.terminal.is_none() {
                 if let Some(pid) = r.pid {
-                    r.terminal =
-                        Some(super::detect::terminal_kind(pid).unwrap_or("other").to_string());
+                    r.terminal = Some(
+                        super::detect::terminal_kind(pid)
+                            .unwrap_or("other")
+                            .to_string(),
+                    );
                 }
             }
         }
@@ -1110,8 +1122,22 @@ mod tests {
     #[test]
     fn seq_is_monotonic_and_exposed_in_snapshot() {
         let r = reg();
-        r.apply_event(AgentKind::Cursor, LifecycleEvent::TurnStart, "s1", None, None, 1);
-        r.apply_event(AgentKind::Claude, LifecycleEvent::TurnStart, "s2", None, None, 2);
+        r.apply_event(
+            AgentKind::Cursor,
+            LifecycleEvent::TurnStart,
+            "s1",
+            None,
+            None,
+            1,
+        );
+        r.apply_event(
+            AgentKind::Claude,
+            LifecycleEvent::TurnStart,
+            "s2",
+            None,
+            None,
+            2,
+        );
         let arr = r.snapshot();
         let arr = arr.as_array().unwrap();
         let s1 = arr.iter().find(|x| x["sessionId"] == "s1").unwrap();
@@ -1119,8 +1145,22 @@ mod tests {
         assert_eq!(s1["seq"], 1);
         assert_eq!(s2["seq"], 2);
         // 结束一个再新建：编号不复用（单调）。
-        r.apply_event(AgentKind::Codex, LifecycleEvent::SessionEnd, "s1", None, None, 3);
-        r.apply_event(AgentKind::Codex, LifecycleEvent::TurnStart, "s3", None, None, 4);
+        r.apply_event(
+            AgentKind::Codex,
+            LifecycleEvent::SessionEnd,
+            "s1",
+            None,
+            None,
+            3,
+        );
+        r.apply_event(
+            AgentKind::Codex,
+            LifecycleEvent::TurnStart,
+            "s3",
+            None,
+            None,
+            4,
+        );
         let arr = r.snapshot();
         let arr = arr.as_array().unwrap();
         let s3 = arr.iter().find(|x| x["sessionId"] == "s3").unwrap();
@@ -1130,7 +1170,14 @@ mod tests {
     #[test]
     fn current_tool_set_clear_and_snapshot_injection() {
         let r = reg();
-        r.apply_event(AgentKind::Cursor, LifecycleEvent::TurnStart, "s1", None, None, 1);
+        r.apply_event(
+            AgentKind::Cursor,
+            LifecycleEvent::TurnStart,
+            "s1",
+            None,
+            None,
+            1,
+        );
         // set：snapshot 注入 currentTool。
         r.set_current_tool(
             AgentKind::Cursor,
@@ -1166,7 +1213,14 @@ mod tests {
     #[test]
     fn turn_steps_count_and_reset() {
         let r = reg();
-        r.apply_event(AgentKind::Cursor, LifecycleEvent::TurnStart, "s1", None, None, 10);
+        r.apply_event(
+            AgentKind::Cursor,
+            LifecycleEvent::TurnStart,
+            "s1",
+            None,
+            None,
+            10,
+        );
         // 两次 PreToolUse → 第 2 步；turnStartedAt 为 turn-start 时刻。
         r.set_current_tool(AgentKind::Cursor, "s1", None, "Read".into(), None);
         r.set_current_tool(AgentKind::Cursor, "s1", None, "Shell".into(), None);
@@ -1181,7 +1235,14 @@ mod tests {
         assert_eq!(s1["turnSteps"].as_u64(), Some(2));
         assert_eq!(s1["turnStartedAt"].as_u64(), Some(10));
         // turn-end 清零；再 turn-start 重新起算。
-        r.apply_event(AgentKind::Cursor, LifecycleEvent::TurnEnd, "s1", None, None, 20);
+        r.apply_event(
+            AgentKind::Cursor,
+            LifecycleEvent::TurnEnd,
+            "s1",
+            None,
+            None,
+            20,
+        );
         let snap = r.snapshot();
         let s1 = snap
             .as_array()
@@ -1192,7 +1253,14 @@ mod tests {
             .clone();
         assert!(s1.get("turnSteps").is_none());
         assert!(s1.get("turnStartedAt").is_none());
-        r.apply_event(AgentKind::Cursor, LifecycleEvent::TurnStart, "s1", None, None, 30);
+        r.apply_event(
+            AgentKind::Cursor,
+            LifecycleEvent::TurnStart,
+            "s1",
+            None,
+            None,
+            30,
+        );
         r.set_current_tool(AgentKind::Cursor, "s1", None, "Write".into(), None);
         let snap = r.snapshot();
         let s1 = snap
@@ -1209,10 +1277,30 @@ mod tests {
     #[test]
     fn current_tool_cleared_on_turn_end_and_not_persisted() {
         let r = reg();
-        r.apply_event(AgentKind::Claude, LifecycleEvent::TurnStart, "s1", None, None, 1);
-        r.set_current_tool(AgentKind::Claude, "s1", None, "Read".into(), Some("a.rs".into()));
+        r.apply_event(
+            AgentKind::Claude,
+            LifecycleEvent::TurnStart,
+            "s1",
+            None,
+            None,
+            1,
+        );
+        r.set_current_tool(
+            AgentKind::Claude,
+            "s1",
+            None,
+            "Read".into(),
+            Some("a.rs".into()),
+        );
         // 回合结束清除。
-        r.apply_event(AgentKind::Claude, LifecycleEvent::TurnEnd, "s1", None, None, 2);
+        r.apply_event(
+            AgentKind::Claude,
+            LifecycleEvent::TurnEnd,
+            "s1",
+            None,
+            None,
+            2,
+        );
         let snap = r.snapshot();
         let s1 = snap
             .as_array()

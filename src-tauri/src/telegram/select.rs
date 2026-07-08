@@ -84,7 +84,14 @@ mod tests {
     use super::*;
     use crate::select::{build_view, SelectAction, SelectDot, SelectOption};
 
-    fn opt(id: &str, dot: Option<SelectDot>, seq: u64, primary: &str, badge: Option<&str>, sub: &str) -> SelectOption {
+    fn opt(
+        id: &str,
+        dot: Option<SelectDot>,
+        seq: u64,
+        primary: &str,
+        badge: Option<&str>,
+        sub: &str,
+    ) -> SelectOption {
         SelectOption {
             id: id.to_string(),
             dot,
@@ -100,8 +107,22 @@ mod tests {
         build_view(
             "选择要实时关注的 Agent：".into(),
             vec![
-                opt("s-work", Some(SelectDot::Working), 2, "Cursor · <api>", Some("· 关注中"), "重构 & 测试"),
-                opt("s-idle", Some(SelectDot::Idle), 5, "Claude Code · web", None, "写文档"),
+                opt(
+                    "s-work",
+                    Some(SelectDot::Working),
+                    2,
+                    "Cursor · <api>",
+                    Some("· 关注中"),
+                    "重构 & 测试",
+                ),
+                opt(
+                    "s-idle",
+                    Some(SelectDot::Idle),
+                    5,
+                    "Claude Code · web",
+                    None,
+                    "写文档",
+                ),
             ],
             SelectAction::Watch,
             Lang::Zh,

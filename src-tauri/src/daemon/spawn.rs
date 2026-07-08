@@ -68,9 +68,7 @@ fn spawn_plain_detached() -> std::io::Result<()> {
 fn in_aqua_session() -> bool {
     use std::process::Command;
     match Command::new("/bin/launchctl").arg("managername").output() {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim() == "Aqua"
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim() == "Aqua",
         _ => true,
     }
 }

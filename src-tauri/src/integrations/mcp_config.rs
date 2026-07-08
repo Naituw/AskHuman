@@ -379,9 +379,7 @@ fn toml_installed(text: &str) -> bool {
     toml_entry(&doc).is_some()
 }
 
-fn toml_entry<'a>(
-    doc: &'a toml_edit::DocumentMut,
-) -> Option<&'a dyn toml_edit::TableLike> {
+fn toml_entry<'a>(doc: &'a toml_edit::DocumentMut) -> Option<&'a dyn toml_edit::TableLike> {
     doc.get("mcp_servers")?
         .as_table_like()?
         .get(SERVER_NAME)?
@@ -605,7 +603,9 @@ mod tests {
             Some(CODEX_TOOL_TIMEOUT_SEC)
         );
         assert_eq!(
-            entry.get("startup_timeout_sec").and_then(|i| i.as_integer()),
+            entry
+                .get("startup_timeout_sec")
+                .and_then(|i| i.as_integer()),
             Some(CODEX_STARTUP_TIMEOUT_SEC)
         );
         // Codex 不写 per-tool tool_timeouts。
@@ -652,7 +652,9 @@ mod tests {
         let doc = out.parse::<toml_edit::DocumentMut>().unwrap();
         let entry = toml_entry(&doc).unwrap();
         assert_eq!(
-            entry.get("startup_timeout_sec").and_then(|i| i.as_integer()),
+            entry
+                .get("startup_timeout_sec")
+                .and_then(|i| i.as_integer()),
             Some(GROK_STARTUP_TIMEOUT_SEC)
         );
         assert_eq!(
@@ -704,7 +706,12 @@ mod tests {
 
     #[test]
     fn toml_uninstall_removes_only_ours() {
-        let input = apply_install_toml(CODEX, "[mcp_servers.other]\ncommand = \"x\"\nargs = []\n", EXE).unwrap();
+        let input = apply_install_toml(
+            CODEX,
+            "[mcp_servers.other]\ncommand = \"x\"\nargs = []\n",
+            EXE,
+        )
+        .unwrap();
         let out = apply_uninstall_toml(&input).unwrap();
         assert!(!toml_installed(&out));
         assert!(out.contains("[mcp_servers.other]"), "他人 server 应保留");

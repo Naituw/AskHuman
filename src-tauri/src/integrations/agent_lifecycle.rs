@@ -283,7 +283,10 @@ fn json_presence(kind: AgentKind, exe: &str, root: &Value, shape: Shape) -> (boo
             .map(|a| a.iter().any(|e| elem_has_marker(e, shape)))
             .unwrap_or(false);
         let has_exact = arr
-            .map(|a| a.iter().any(|e| elem_matches(e, shape, &want, want_timeout)))
+            .map(|a| {
+                a.iter()
+                    .any(|e| elem_matches(e, shape, &want, want_timeout))
+            })
             .unwrap_or(false);
         if has_ours {
             any = true;
@@ -744,7 +747,9 @@ mod tests {
                 "{kind:?} PreToolUse 应带 timeout"
             );
             assert!(
-                v["hooks"]["PostToolUse"][0]["hooks"][0].get("timeout").is_none(),
+                v["hooks"]["PostToolUse"][0]["hooks"][0]
+                    .get("timeout")
+                    .is_none(),
                 "{kind:?} 其余事件不写 timeout"
             );
             assert!(v["hooks"]["Stop"][0]["hooks"][0].get("timeout").is_none());
@@ -752,15 +757,14 @@ mod tests {
         // Cursor（Flat）。
         let out = apply_json_install(AgentKind::Cursor, EXE, "{}", Shape::Flat).unwrap();
         let v = to_value(&out);
-        assert_eq!(
-            v["hooks"]["preToolUse"][0]["timeout"].as_u64(),
-            Some(86400)
-        );
+        assert_eq!(v["hooks"]["preToolUse"][0]["timeout"].as_u64(), Some(86400));
         assert!(v["hooks"]["postToolUse"][0].get("timeout").is_none());
         // Grok 首期排除：任何事件都不写 timeout。
         let out = apply_json_install(AgentKind::Grok, EXE, "{}", Shape::Nested).unwrap();
         let v = to_value(&out);
-        assert!(v["hooks"]["PreToolUse"][0]["hooks"][0].get("timeout").is_none());
+        assert!(v["hooks"]["PreToolUse"][0]["hooks"][0]
+            .get("timeout")
+            .is_none());
     }
 
     #[test]

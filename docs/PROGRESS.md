@@ -2,10 +2,10 @@
 
 按具体任务 / 需求记录待办与当前进展。任务 / 需求完成后删除其 section（历史留在 git）。
 
-## ⏳ 进行中：Hook 性能优化 —— 进程树遍历移至 Daemon
+## ⏳ 进行中：Watch 卡片 Re-watch 按钮
 
-计划 `docs/plans/hook-perf-walk-optimization.md`。PreToolUse hook 耗时从 ~300ms 降至 ~33ms。
-代码已完成（IPC hint_pid + daemon 缓存 + interject 优先响应），待用户确认后清除。
+Watch 卡片自动结束（AutoStopped / Idle）后显示"重新关注"按钮，用户可一键重新 Watch 该 session。
+全渠道（飞书 / Telegram / Slack / 钉钉）实现已完成，编译通过，已安装。待用户确认后清除。
 
 ## 待办：Codex 生命周期 hook 信任哈希加固（「hook 新、哈希旧」窗口）
 

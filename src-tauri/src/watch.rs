@@ -87,6 +87,13 @@ pub enum FinalKind {
     Idle,
 }
 
+impl FinalKind {
+    /// 该终态是否适合提供「重新关注」按钮（AutoStopped / Idle：agent 可能仍在运行或会恢复）。
+    pub fn is_rewatchable(&self) -> bool {
+        matches!(self, FinalKind::AutoStopped(_) | FinalKind::Idle)
+    }
+}
+
 /// 卡片渲染模式：活动（可交互按钮）或终态（禁用按钮 + 终态文案）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CardMode {
@@ -307,6 +314,17 @@ pub fn card_view(
     now: u64,
     lang: Lang,
 ) -> crate::feishu::card::WatchCardView {
+    card_view_with_session(f, mode, now, lang, "")
+}
+
+/// 带 session_id 的飞书卡片视图（rewatchable 终态按钮需要编码 session_id 进回调 value）。
+pub fn card_view_with_session(
+    f: &WatchFrame,
+    mode: CardMode,
+    now: u64,
+    lang: Lang,
+    session_id: &str,
+) -> crate::feishu::card::WatchCardView {
     use crate::feishu::card::{WatchButtons, WatchCardView};
 
     let no_activity = if f.text.is_none() && f.steps.is_empty() {
@@ -320,13 +338,22 @@ pub fn card_view(
             unwatch: i18n::tr(lang, "watch.btnUnwatch").to_string(),
             refresh: i18n::tr(lang, "watch.btnRefresh").to_string(),
         },
+        CardMode::Final(ref kind) if kind.is_rewatchable() => WatchButtons::Rewatch {
+            label: final_label_text(kind, lang),
+            rewatch: i18n::tr(lang, "watch.btnRewatch").to_string(),
+            session_id: session_id.to_string(),
+        },
         CardMode::Final(kind) => WatchButtons::Final {
             label: final_label_text(&kind, lang),
         },
     };
 
     // 足迹时间线（飞书 markdown 渲染）；「… 已省略 N 步」标注（灰字）置于首行。
-    let mut step_lines: Vec<String> = f.steps.iter().map(|s| render_step_feishu(s, lang)).collect();
+    let mut step_lines: Vec<String> = f
+        .steps
+        .iter()
+        .map(|s| render_step_feishu(s, lang))
+        .collect();
     if let Some(om) = omitted_line_text(f, lang) {
         step_lines.insert(0, format!("<font color='grey'>{}</font>", om));
     }
@@ -534,7 +561,10 @@ mod tests {
         // 该 session 无 transcript → 「暂无活动」占位。
         assert!(v.no_activity.is_some());
         match v.buttons {
-            crate::feishu::card::WatchButtons::Active { ref unwatch, ref refresh } => {
+            crate::feishu::card::WatchButtons::Active {
+                ref unwatch,
+                ref refresh,
+            } => {
                 assert_eq!(unwatch, "取消关注");
                 assert_eq!(refresh, "立即刷新");
             }
@@ -554,7 +584,10 @@ mod tests {
     fn auto_stopped_label_is_dynamic() {
         // 「自动结束 watch」终态：动态文案「已切换到 {to} · 自动结束关注」。
         let kind = FinalKind::AutoStopped("本地弹窗".to_string());
-        assert_eq!(final_label_text(&kind, Lang::Zh), "已切换到 本地弹窗 · 自动结束关注");
+        assert_eq!(
+            final_label_text(&kind, Lang::Zh),
+            "已切换到 本地弹窗 · 自动结束关注"
+        );
         assert_eq!(
             final_label_text(&kind, Lang::En),
             "Auto-stopped (switched to 本地弹窗)"
@@ -563,8 +596,14 @@ mod tests {
 
     #[test]
     fn idle_label_text() {
-        assert_eq!(final_label_text(&FinalKind::Idle, Lang::Zh), "已空闲 · 已自动取消关注");
-        assert_eq!(final_label_text(&FinalKind::Idle, Lang::En), "Idle · auto-unwatched");
+        assert_eq!(
+            final_label_text(&FinalKind::Idle, Lang::Zh),
+            "已空闲 · 已自动取消关注"
+        );
+        assert_eq!(
+            final_label_text(&FinalKind::Idle, Lang::En),
+            "Idle · auto-unwatched"
+        );
     }
 
     #[test]
@@ -600,11 +639,14 @@ mod tests {
             "⏹ 已结束"
         );
         // 运行起点不入签名（时长走字不应触发编辑）：startedAt 变化签名不变。
-        assert_eq!(signature(&f), signature(&{
-            let mut r6 = rec("working");
-            r6["startedAt"] = json!(now - 7 * 60);
-            build_frame(3, Some(&r6), false)
-        }));
+        assert_eq!(
+            signature(&f),
+            signature(&{
+                let mut r6 = rec("working");
+                r6["startedAt"] = json!(now - 7 * 60);
+                build_frame(3, Some(&r6), false)
+            })
+        );
     }
 
     #[test]

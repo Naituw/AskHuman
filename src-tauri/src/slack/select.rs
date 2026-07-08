@@ -113,7 +113,14 @@ mod tests {
     use super::*;
     use crate::select::{build_view, SelectAction, SelectDot, SelectOption};
 
-    fn opt(id: &str, dot: Option<SelectDot>, seq: u64, primary: &str, badge: Option<&str>, sub: &str) -> SelectOption {
+    fn opt(
+        id: &str,
+        dot: Option<SelectDot>,
+        seq: u64,
+        primary: &str,
+        badge: Option<&str>,
+        sub: &str,
+    ) -> SelectOption {
         SelectOption {
             id: id.to_string(),
             dot,
@@ -129,8 +136,22 @@ mod tests {
         build_view(
             "选择要取消关注的 Agent：".into(),
             vec![
-                opt("s-work", Some(SelectDot::Working), 2, "Cursor · api", Some("· 关注中"), "重构"),
-                opt("s-idle", Some(SelectDot::Idle), 5, "Claude Code · web", None, "写文档"),
+                opt(
+                    "s-work",
+                    Some(SelectDot::Working),
+                    2,
+                    "Cursor · api",
+                    Some("· 关注中"),
+                    "重构",
+                ),
+                opt(
+                    "s-idle",
+                    Some(SelectDot::Idle),
+                    5,
+                    "Claude Code · web",
+                    None,
+                    "写文档",
+                ),
             ],
             action,
             Lang::Zh,
@@ -143,8 +164,14 @@ mod tests {
         let arr = blocks.as_array().unwrap();
         // 标题 section + 2 个选项 section。
         assert_eq!(arr.len(), 3);
-        assert!(arr[0]["text"]["text"].as_str().unwrap().contains("*选择要取消关注的 Agent：*"));
-        assert!(arr[1]["text"]["text"].as_str().unwrap().contains("🟢 *[2]* Cursor · api · 关注中"));
+        assert!(arr[0]["text"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("*选择要取消关注的 Agent：*"));
+        assert!(arr[1]["text"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("🟢 *[2]* Cursor · api · 关注中"));
         // 每个按钮 action_id 唯一（select_0 / select_1），unwatch=danger。
         assert_eq!(arr[1]["accessory"]["action_id"], "select_0");
         assert_eq!(arr[1]["accessory"]["style"], "danger");
@@ -156,8 +183,14 @@ mod tests {
     #[test]
     fn watch_button_is_primary() {
         let (blocks, _) = build_select_blocks(&view(SelectAction::Watch), Lang::Zh);
-        assert_eq!(blocks.as_array().unwrap()[1]["accessory"]["style"], "primary");
-        assert_eq!(blocks.as_array().unwrap()[1]["accessory"]["text"]["text"], "关注");
+        assert_eq!(
+            blocks.as_array().unwrap()[1]["accessory"]["style"],
+            "primary"
+        );
+        assert_eq!(
+            blocks.as_array().unwrap()[1]["accessory"]["text"]["text"],
+            "关注"
+        );
     }
 
     #[test]

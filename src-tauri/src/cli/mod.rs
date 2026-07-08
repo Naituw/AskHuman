@@ -293,8 +293,7 @@ pub fn dispatch() {
                 // 非 unix：暂无 Daemon，沿用单进程内运行（Windows named pipe 待后续 Phase）。
                 #[cfg(not(unix))]
                 {
-                    let mut request =
-                        crate::models::AskRequest::new(message, questions, true);
+                    let mut request = crate::models::AskRequest::new(message, questions, true);
                     request.select_only = parsed.select_only;
                     request.single = parsed.single;
                     request.output_format = parsed.output_format;

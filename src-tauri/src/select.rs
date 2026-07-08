@@ -160,7 +160,8 @@ fn elapsed_badge(rec: &Value, now: u64, lang: Lang) -> Option<String> {
     let secs = now.saturating_sub(start);
     Some(format!(
         "· {}",
-        i18n::tr(lang, "watch.statsElapsed").replace("{t}", &crate::watch::fmt_duration(secs, lang))
+        i18n::tr(lang, "watch.statsElapsed")
+            .replace("{t}", &crate::watch::fmt_duration(secs, lang))
     ))
 }
 
@@ -433,7 +434,7 @@ mod tests {
         assert_eq!(opts.len(), 2);
         assert_eq!(opts[0].id, "s-work"); // claude，working
         assert_eq!(opts[1].id, "s-grok"); // grok，working（不排除）
-        // idle 的 s-idle 不在列表中。
+                                          // idle 的 s-idle 不在列表中。
         assert!(!opts.iter().any(|o| o.id == "s-idle"));
         // ended 的 s-end 不在列表中。
         assert!(!opts.iter().any(|o| o.id == "s-end"));

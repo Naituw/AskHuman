@@ -219,6 +219,9 @@ mod unix_impl {
         /// 渠道 id → 「最后一条非 watch 消息」时刻（Unix 毫秒）——跟底判定的**淹没信号**。
         /// 只有非 watch 消息才算淹没：watch 卡之间互不影响（用户定案）。
         disturb: Mutex<HashMap<String, u64>>,
+        /// Rewatchable 终态卡的 message_id 暂存（维持路由注册以接收 Rewatch 回调）。
+        /// `(channel, message_id)` — rewatch 成功或超过上限时清除。
+        rewatchable_mids: Mutex<Vec<(String, String)>>,
     }
 
     /// 一条活动的 watch 订阅（引擎工作台账；持久化时压成 `watch::PersistedWatch`）。
@@ -522,7 +525,10 @@ mod unix_impl {
             let migrated = crate::integrations::agent_lifecycle::migrate_outdated();
             if !migrated.is_empty() {
                 let names: Vec<&str> = migrated.iter().map(|k| k.as_str()).collect();
-                log(&format!("migrated outdated lifecycle hooks: {}", names.join(", ")));
+                log(&format!(
+                    "migrated outdated lifecycle hooks: {}",
+                    names.join(", ")
+                ));
             }
         }
 
@@ -692,14 +698,18 @@ mod unix_impl {
         // 无启用 IM 时 `ensure_inbound_listeners` 自身零钥匙串直接返回。监听不计入保活，不阻止空闲退出。
         {
             let st = state.clone();
-            tokio::spawn(async move { ensure_inbound_listeners(&st).await; });
+            tokio::spawn(async move {
+                ensure_inbound_listeners(&st).await;
+            });
         }
 
         // `/watch` 实时关注引擎（spec docs/specs/im-watch.md）：先恢复持久化订阅（重启后继续
         // 编辑同一张卡），再进入 Notify / 自适应 tick 循环。
         {
             let st = state.clone();
-            tokio::spawn(async move { watch_restore_and_run(st).await; });
+            tokio::spawn(async move {
+                watch_restore_and_run(st).await;
+            });
         }
 
         loop {
@@ -753,7 +763,9 @@ mod unix_impl {
         /// 菜单栏宿主订阅：接管连接，持续推送 `TrayState`（非保活）。
         TraySub,
         /// 插话 composer 窗口连接：接管连接，登记「composer 打开」；断开＝关闭（非保活）。
-        InterjectComposer { session_id: String },
+        InterjectComposer {
+            session_id: String,
+        },
         /// 插话 Hold：hook 连接等待 composer 提交/取消（非保活；首帧 Hold 已回，等二帧）。
         InterjectHold {
             session_id: String,
@@ -951,13 +963,13 @@ mod unix_impl {
                         }
 
                         // PID 解析：优先用显式 pid，否则从 hint_pid 走缓存/walk。
-                        let resolved_pid = pid.or_else(|| {
-                            state.agents.resolve_pid(&session_id, kind, hint_pid)
-                        });
+                        let resolved_pid =
+                            pid.or_else(|| state.agents.resolve_pid(&session_id, kind, hint_pid));
 
-                        let changed = state
-                            .agents
-                            .apply_event(kind, ev, &session_id, resolved_pid, cwd, ts);
+                        let changed =
+                            state
+                                .agents
+                                .apply_event(kind, ev, &session_id, resolved_pid, cwd, ts);
                         if changed {
                             state.agents.persist();
                             broadcast_agents_state(state);
@@ -973,9 +985,13 @@ mod unix_impl {
                                 phase: crate::ipc::ToolPhase::Pre,
                                 name,
                                 object,
-                            }) => state
-                                .agents
-                                .set_current_tool(kind, &session_id, resolved_pid, name, object),
+                            }) => state.agents.set_current_tool(
+                                kind,
+                                &session_id,
+                                resolved_pid,
+                                name,
+                                object,
+                            ),
                             Some(crate::ipc::ToolReport {
                                 phase: crate::ipc::ToolPhase::Post,
                                 ..
@@ -1679,7 +1695,10 @@ mod unix_impl {
 
         loop {
             match ipc::read_msg::<_, ClientMsg>(&mut reader).await {
-                Ok(Some(ClientMsg::InterjectSubmit { session_id: sid, text })) => {
+                Ok(Some(ClientMsg::InterjectSubmit {
+                    session_id: sid,
+                    text,
+                })) => {
                     interject_submit(state, &sid, &text);
                 }
                 Ok(Some(ClientMsg::InterjectClear { session_id: sid })) => {
@@ -2423,13 +2442,16 @@ mod unix_impl {
                     .map(WatchClient::Telegram)
                 }
                 "slack" => {
-                    let client = crate::slack::client::SlackClient::new(&config.channels.slack).ok()?;
+                    let client =
+                        crate::slack::client::SlackClient::new(&config.channels.slack).ok()?;
                     let dm = client.open_dm().await.ok()?;
                     Some(WatchClient::Slack { client, dm })
                 }
-                "dingding" => crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
-                    .ok()
-                    .map(WatchClient::DingTalk),
+                "dingding" => {
+                    crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
+                        .ok()
+                        .map(WatchClient::DingTalk)
+                }
                 _ => None,
             }
         }
@@ -2478,7 +2500,6 @@ mod unix_impl {
                         .map_err(|e| e.to_string())
                 }
                 WatchClient::DingTalk(c) => {
-                    // 消息 id = 自铸 outTrackId（钉钉创建卡片由调用方指定实例 id，天然可编辑）。
                     let otid = format!("watch-{}", uuid::Uuid::new_v4());
                     let map = crate::dingtalk::watch::build_watch_param_map(frame, mode, now, lang);
                     c.create_and_deliver_card(
@@ -2503,36 +2524,59 @@ mod unix_impl {
             now: u64,
             lang: Lang,
         ) -> Result<(), String> {
+            self.edit_with_session(message_id, frame, mode, now, lang, "")
+                .await
+        }
+
+        async fn edit_with_session(
+            &self,
+            message_id: &str,
+            frame: &crate::watch::WatchFrame,
+            mode: crate::watch::CardMode,
+            now: u64,
+            lang: Lang,
+            session_id: &str,
+        ) -> Result<(), String> {
             match self {
                 WatchClient::Feishu(c) => {
-                    let card = crate::feishu::card::build_watch_card(&crate::watch::card_view(
-                        frame, mode, now, lang,
-                    ));
+                    let card = crate::feishu::card::build_watch_card(
+                        &crate::watch::card_view_with_session(frame, mode, now, lang, session_id),
+                    );
                     c.patch_card(message_id, &card)
                         .await
                         .map_err(|e| e.to_string())
                 }
                 WatchClient::Telegram(c) => {
-                    let mid: i64 = message_id.parse().map_err(|_| "bad message id".to_string())?;
-                    // editMessageText 整体替换消息：活动态须重传 keyboard，终态不传即移除按钮。
-                    // 先按 mode 取 markup（借用），再把 mode 交给渲染（CardMode 非 Copy）。
-                    let markup = matches!(mode, crate::watch::CardMode::Active)
-                        .then(|| crate::telegram::watch::inline_keyboard(lang));
+                    let mid: i64 = message_id
+                        .parse()
+                        .map_err(|_| "bad message id".to_string())?;
+                    let rewatchable =
+                        matches!(&mode, crate::watch::CardMode::Final(k) if k.is_rewatchable());
+                    let markup = if matches!(mode, crate::watch::CardMode::Active) {
+                        Some(crate::telegram::watch::inline_keyboard(lang))
+                    } else if rewatchable {
+                        Some(crate::telegram::watch::rewatch_keyboard(lang, session_id))
+                    } else {
+                        None
+                    };
                     let html = crate::telegram::watch::render_watch_html(frame, mode, now, lang);
                     c.edit_message_text(mid, &html, Some("HTML"), markup)
                         .await
                         .map_err(|e| e.to_string())
                 }
                 WatchClient::Slack { client, dm } => {
-                    let (blocks, fallback) =
-                        crate::slack::watch::build_watch_blocks(frame, mode, now, lang);
+                    let (blocks, fallback) = crate::slack::watch::build_watch_blocks_with_session(
+                        frame, mode, now, lang, session_id,
+                    );
                     client
                         .update_message(dm, message_id, Some(&blocks), &fallback)
                         .await
                         .map_err(|e| e.to_string())
                 }
                 WatchClient::DingTalk(c) => {
-                    let map = crate::dingtalk::watch::build_watch_param_map(frame, mode, now, lang);
+                    let map = crate::dingtalk::watch::build_watch_param_map_with_session(
+                        frame, mode, now, lang, session_id,
+                    );
                     c.update_card_private(message_id, map, serde_json::json!({}))
                         .await
                         .map_err(|e| e.to_string())
@@ -2657,8 +2701,7 @@ mod unix_impl {
             let select_active = select_is_last_on(state, &ch);
             for e in entries.iter().filter(|e| e.channel == ch) {
                 let rec = find_agent_by_session(&snapshot, &e.session_id);
-                let frame =
-                    crate::watch::build_frame(e.seq, rec, waiting.contains(&e.session_id));
+                let frame = crate::watch::build_frame(e.seq, rec, waiting.contains(&e.session_id));
                 let ended = frame.phase == crate::watch::WatchPhase::Ended;
                 let idle = frame.phase == crate::watch::WatchPhase::Idle;
                 let finalize = ended || idle;
@@ -2726,8 +2769,7 @@ mod unix_impl {
                             log(&format!("watch: move card failed: {}", err));
                             let mut subs = state.watch.subs.lock().unwrap();
                             let mut drop_it = false;
-                            if let Some(s) =
-                                subs.iter_mut().find(|s| s.message_id == e.message_id)
+                            if let Some(s) = subs.iter_mut().find(|s| s.message_id == e.message_id)
                             {
                                 s.fails += 1;
                                 drop_it = s.fails >= 5;
@@ -2741,13 +2783,33 @@ mod unix_impl {
                     }
                     continue;
                 }
-                match client.edit(&e.message_id, &frame, mode, now, lang).await {
+                match client
+                    .edit_with_session(
+                        &e.message_id,
+                        &frame,
+                        mode.clone(),
+                        now,
+                        lang,
+                        &e.session_id,
+                    )
+                    .await
+                {
                     Ok(()) => {
                         let mut subs = state.watch.subs.lock().unwrap();
                         if finalize {
                             // 定格成功（ended / idle）→ 自动退订。
                             subs.retain(|s| s.message_id != e.message_id);
                             changed = true;
+                            // 保留路由以接收 Rewatch 回调。
+                            if let crate::watch::CardMode::Final(ref k) = mode {
+                                if k.is_rewatchable() {
+                                    let mut rw = state.watch.rewatchable_mids.lock().unwrap();
+                                    rw.push((e.channel.clone(), e.message_id.clone()));
+                                    while rw.len() > 20 {
+                                        rw.remove(0);
+                                    }
+                                }
+                            }
                         } else if let Some(s) =
                             subs.iter_mut().find(|s| s.message_id == e.message_id)
                         {
@@ -2791,8 +2853,13 @@ mod unix_impl {
                 .or_default()
                 .push(s.message_id.clone());
         }
+        // Rewatchable 终态卡的 mid 也需要保留路由（接收 Rewatch 回调）。
+        for (ch, mid) in state.watch.rewatchable_mids.lock().unwrap().iter() {
+            desired.entry(ch.clone()).or_default().push(mid.clone());
+        }
         for mids in desired.values_mut() {
             mids.sort();
+            mids.dedup();
         }
         // 撤掉已无订阅的渠道路由。
         {
@@ -3004,8 +3071,20 @@ mod unix_impl {
                 .find(|s| s.channel == "feishu" && s.message_id == mid)
                 .cloned()
         };
+        // Rewatch 不依赖 subs（终态卡已退订），直接从回调 value 取 session_id。
+        if let WatchAction::Rewatch(session_id) = action {
+            let _ = ack.send(None); // 先回空 ACK 放行（发新卡是异步的）。
+            if !session_id.is_empty() {
+                let state2 = Arc::clone(state);
+                let mid2 = mid.clone();
+                tokio::spawn(async move {
+                    handle_rewatch(&state2, "feishu", &session_id, &mid2).await;
+                });
+            }
+            return;
+        }
         let Some(entry) = entry else {
-            let _ = ack.send(None); // 已退订的卡（终态按钮本应禁用）：空 ACK。
+            let _ = ack.send(None);
             return;
         };
         let lang = Lang::current();
@@ -3060,6 +3139,7 @@ mod unix_impl {
                 }
                 state.watch.notify.notify_one();
             }
+            WatchAction::Rewatch(_) => unreachable!("handled above"),
         }
     }
 
@@ -3067,6 +3147,7 @@ mod unix_impl {
     enum WatchBtn {
         Unwatch,
         Refresh,
+        Rewatch,
     }
 
     /// 非飞书渠道的 watch 按钮统一处理：计算新帧并**就地编辑**卡片（这些渠道无「回调同步回卡」
@@ -3149,16 +3230,23 @@ mod unix_impl {
                 }
                 state.watch.notify.notify_one();
             }
+            WatchBtn::Rewatch => {
+                // Rewatch 在各渠道入口已单独处理（不会走到 apply_watch_action）。
+            }
         }
     }
 
     /// 处理 Telegram watch 卡按钮回调：先应答（消除客户端转圈），再就地编辑。
     async fn handle_watch_tg_action(state: &Arc<ServerState>, cb: &serde_json::Value) {
         let data = cb.get("data").and_then(|v| v.as_str()).unwrap_or("");
-        let btn = match data {
-            crate::telegram::watch::CB_UNWATCH => WatchBtn::Unwatch,
-            crate::telegram::watch::CB_REFRESH => WatchBtn::Refresh,
-            _ => return,
+        let btn = if data == crate::telegram::watch::CB_UNWATCH {
+            WatchBtn::Unwatch
+        } else if data == crate::telegram::watch::CB_REFRESH {
+            WatchBtn::Refresh
+        } else if data.starts_with(crate::telegram::watch::CB_REWATCH) {
+            WatchBtn::Rewatch
+        } else {
+            return;
         };
         let Some(mid) = cb
             .get("message")
@@ -3178,6 +3266,16 @@ mod unix_impl {
                 c.answer_callback_query(id).await;
             }
         }
+        if matches!(btn, WatchBtn::Rewatch) {
+            let session_id = data
+                .strip_prefix(crate::telegram::watch::CB_REWATCH)
+                .and_then(|rest| rest.strip_prefix(':'))
+                .unwrap_or("");
+            if !session_id.is_empty() {
+                handle_rewatch(state, "telegram", session_id, &mid.to_string()).await;
+            }
+            return;
+        }
         apply_watch_action(state, "telegram", &mid.to_string(), btn).await;
     }
 
@@ -3186,6 +3284,19 @@ mod unix_impl {
         let Some((ts, action_id)) = crate::slack::watch::parse_watch_action(payload) else {
             return;
         };
+        if action_id == crate::slack::watch::ACTION_REWATCH {
+            let session_id = payload
+                .get("actions")
+                .and_then(|a| a.as_array())
+                .and_then(|a| a.first())
+                .and_then(|a| a.get("value"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !session_id.is_empty() {
+                handle_rewatch(state, "slack", session_id, &ts).await;
+            }
+            return;
+        }
         let btn = if action_id == crate::slack::watch::ACTION_UNWATCH {
             WatchBtn::Unwatch
         } else {
@@ -3196,9 +3307,21 @@ mod unix_impl {
 
     /// 处理钉钉 watch 卡按钮回调（空 ACK 已在路由任务发出，这里只做编辑）。
     async fn handle_watch_dd_action(state: &Arc<ServerState>, data: &serde_json::Value) {
-        let Some((otid, action_id)) = crate::dingtalk::watch::parse_watch_action(data) else {
+        let Some((otid, action_id, params)) = crate::dingtalk::watch::parse_watch_action(data)
+        else {
             return;
         };
+        if action_id == crate::dingtalk::watch::ACTION_REWATCH {
+            let session_id = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !session_id.is_empty() {
+                handle_rewatch(state, "dingding", session_id, &otid).await;
+            }
+            return;
+        }
         let btn = if action_id == crate::dingtalk::watch::ACTION_UNWATCH {
             WatchBtn::Unwatch
         } else {
@@ -3218,7 +3341,12 @@ mod unix_impl {
             Some("idle") => "autoChannel.stateIdle",
             _ => "autoChannel.stateEnded",
         };
-        format!("[{}] {} · {}", e.seq, head, crate::i18n::tr(lang, state_key))
+        format!(
+            "[{}] {} · {}",
+            e.seq,
+            head,
+            crate::i18n::tr(lang, state_key)
+        )
     }
 
     /// `/watch` 命令：`Some(编号)` 关注该 agent（发实时状态卡，成功回执就是卡片本身）；
@@ -3231,9 +3359,12 @@ mod unix_impl {
         lang: Lang,
     ) {
         if !crate::watch::channel_supported(channel_id) {
-            let _ =
-                reply_channel_text(channel_id, config, crate::i18n::tr(lang, "watch.unsupported"))
-                    .await;
+            let _ = reply_channel_text(
+                channel_id,
+                config,
+                crate::i18n::tr(lang, "watch.unsupported"),
+            )
+            .await;
             return;
         }
         let Some(id) = sel else {
@@ -3243,9 +3374,8 @@ mod unix_impl {
             let has_working = snapshot
                 .as_array()
                 .map(|l| {
-                    l.iter().any(|r| {
-                        r.get("state").and_then(|v| v.as_str()) == Some("working")
-                    })
+                    l.iter()
+                        .any(|r| r.get("state").and_then(|v| v.as_str()) == Some("working"))
                 })
                 .unwrap_or(false);
             let mut out = String::new();
@@ -3278,10 +3408,10 @@ mod unix_impl {
             return;
         };
         let snapshot = state.agents.snapshot();
-        let Some(rec) = snapshot
-            .as_array()
-            .and_then(|l| l.iter().find(|r| r.get("seq").and_then(|v| v.as_u64()) == Some(id)))
-        else {
+        let Some(rec) = snapshot.as_array().and_then(|l| {
+            l.iter()
+                .find(|r| r.get("seq").and_then(|v| v.as_u64()) == Some(id))
+        }) else {
             let text = crate::i18n::tr(lang, "autoChannel.statusDetailNotFound")
                 .replace("{id}", &id.to_string())
                 .replace("{p}", crate::autochannel::cmd_prefix(channel_id));
@@ -3352,7 +3482,15 @@ mod unix_impl {
         // 与「单选卡点选就地变卡」共用同一套 bookkeeping；`replaced` 仅供上面的上限判定，收尾在
         // helper 内按 session 重算）。
         register_watch_at(
-            state, channel_id, &session_id, id, &message_id, &frame, one_shot, config, lang,
+            state,
+            channel_id,
+            &session_id,
+            id,
+            &message_id,
+            &frame,
+            one_shot,
+            config,
+            lang,
         )
         .await;
     }
@@ -3448,9 +3586,12 @@ mod unix_impl {
     ) {
         use crate::autochannel::WatchSel;
         if !crate::watch::channel_supported(channel_id) {
-            let _ =
-                reply_channel_text(channel_id, config, crate::i18n::tr(lang, "watch.unsupported"))
-                    .await;
+            let _ = reply_channel_text(
+                channel_id,
+                config,
+                crate::i18n::tr(lang, "watch.unsupported"),
+            )
+            .await;
             return;
         }
         // 只操作本渠道的订阅（`/unwatch all` 也不动别的渠道）。
@@ -3529,8 +3670,7 @@ mod unix_impl {
         let text = if targets.len() == 1 {
             crate::i18n::tr(lang, "watch.unwatchDone").replace("{id}", &targets[0].seq.to_string())
         } else {
-            crate::i18n::tr(lang, "watch.unwatchAllDone")
-                .replace("{n}", &targets.len().to_string())
+            crate::i18n::tr(lang, "watch.unwatchAllDone").replace("{n}", &targets.len().to_string())
         };
         let _ = reply_channel_text(channel_id, config, &text).await;
     }
@@ -3559,16 +3699,20 @@ mod unix_impl {
             let rec = find_agent_by_session(&snapshot, &e.session_id);
             let frame = crate::watch::build_frame(e.seq, rec, waiting.contains(&e.session_id));
             if let Err(err) = client
-                .edit(
+                .edit_with_session(
                     &e.message_id,
                     &frame,
                     crate::watch::CardMode::Final(final_kind.clone()),
                     now,
                     lang,
+                    &e.session_id,
                 )
                 .await
             {
-                log(&format!("watch: finalize card failed ({}): {}", channel_id, err));
+                log(&format!(
+                    "watch: finalize card failed ({}): {}",
+                    channel_id, err
+                ));
             }
         }
         state
@@ -3577,9 +3721,100 @@ mod unix_impl {
             .lock()
             .unwrap()
             .retain(|s| !targets.iter().any(|t| t.message_id == s.message_id));
+        // Rewatchable 终态卡保留路由注册（接收 Rewatch 回调）。
+        if final_kind.is_rewatchable() {
+            let mut rw = state.watch.rewatchable_mids.lock().unwrap();
+            for e in targets {
+                rw.push((channel_id.to_string(), e.message_id.clone()));
+            }
+            // 上限 20：防止长期积累占用路由资源。
+            while rw.len() > 20 {
+                rw.remove(0);
+            }
+        }
         persist_watch_subs(state);
         state.watch.notify.notify_one();
         targets.len()
+    }
+
+    /// Rewatch 回调：从终态卡按钮发起重新关注（等同于 `/watch N`）。
+    /// `old_mid` 是旧终态卡的 message_id（可用于定格或忽略）。
+    async fn handle_rewatch(
+        state: &Arc<ServerState>,
+        channel_id: &str,
+        session_id: &str,
+        _old_mid: &str,
+    ) {
+        let config = AppConfig::load();
+        let lang = Lang::current();
+        let snapshot = state.agents.snapshot();
+        let rec = find_agent_by_session(&snapshot, session_id);
+        let Some(rec) = rec else {
+            return; // agent 已彻底消失，不做任何事。
+        };
+        let seq = rec.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
+        let waiting = state
+            .registry
+            .in_flight_agent_session_ids()
+            .contains(&session_id.to_string());
+        let now = now_secs();
+        let frame = crate::watch::build_frame(seq, Some(rec), waiting);
+        let ended = frame.phase == crate::watch::WatchPhase::Ended;
+        let idle = frame.phase == crate::watch::WatchPhase::Idle;
+        let one_shot = ended || idle;
+        let mode = if ended {
+            crate::watch::CardMode::Final(crate::watch::FinalKind::Ended)
+        } else if idle {
+            crate::watch::CardMode::Final(crate::watch::FinalKind::Idle)
+        } else {
+            crate::watch::CardMode::Active
+        };
+        // 关注上限。
+        let over_limit = state
+            .watch
+            .subs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| s.channel == channel_id)
+            .count()
+            >= crate::watch::MAX_WATCHES;
+        if over_limit {
+            let text = crate::i18n::tr(lang, "watch.limit")
+                .replace("{n}", &crate::watch::MAX_WATCHES.to_string())
+                .replace("{p}", crate::autochannel::cmd_prefix(channel_id));
+            let _ = reply_channel_text(channel_id, &config, &text).await;
+            return;
+        }
+        let Some(client) = WatchClient::for_channel(channel_id, &config).await else {
+            return;
+        };
+        let message_id = match client.send(&frame, mode, now, lang).await {
+            Ok(mid) => mid,
+            Err(e) => {
+                log(&format!("watch: rewatch send failed: {}", e));
+                return;
+            }
+        };
+        register_watch_at(
+            state,
+            channel_id,
+            session_id,
+            seq,
+            &message_id,
+            &frame,
+            one_shot,
+            &config,
+            lang,
+        )
+        .await;
+        // Rewatch 成功：从 rewatchable_mids 移除旧卡 mid（不再需要路由）。
+        state
+            .watch
+            .rewatchable_mids
+            .lock()
+            .unwrap()
+            .retain(|(ch, mid)| !(ch == channel_id && mid == _old_mid));
     }
 
     // ===== 通用「单选卡」子系统（spec docs/specs/im-select-card.md）=====
@@ -3655,7 +3890,10 @@ mod unix_impl {
                 let dm = client.open_dm().await.ok()?;
                 let (blocks, fallback) =
                     crate::slack::select::build_select_blocks(view, Lang::current());
-                client.post_message(&dm, Some(&blocks), &fallback).await.ok()
+                client
+                    .post_message(&dm, Some(&blocks), &fallback)
+                    .await
+                    .ok()
             }
             _ => None,
         }
@@ -3735,7 +3973,9 @@ mod unix_impl {
             .unwrap()
             .iter()
             .filter(|s| s.channel == channel_id)
-            .map(|s| crate::select::agent_option_by_session(snapshot, &s.session_id, s.seq, now, lang))
+            .map(|s| {
+                crate::select::agent_option_by_session(snapshot, &s.session_id, s.seq, now, lang)
+            })
             .collect()
     }
 
@@ -4169,8 +4409,10 @@ mod unix_impl {
         // 登记订阅（含换新卡收尾）+ 消费 picker + 让 watch 立即认领本消息（`ensure_watch_routes` 不会递归
         // 回 select）。select 侧不在此重挂（避免 recv-loop 递归 → 非 Send）：本 mid 已被 watch 认领覆盖，
         // 残留的 select 认领无害，下次 send_agent_picker / 监听重建时收敛。
-        register_watch_at(state, channel_id, session_id, seq, mid, &frame, false, config, lang)
-            .await;
+        register_watch_at(
+            state, channel_id, session_id, seq, mid, &frame, false, config, lang,
+        )
+        .await;
         remove_picker(state, channel_id, mid);
         ensure_watch_routes(state).await;
     }
@@ -4399,8 +4641,10 @@ mod unix_impl {
             }
         };
         // 登记订阅（含换新卡：本渠道同 session 旧卡定格 Replaced）+ 让 watch 引擎认领新卡按钮。
-        register_watch_at(state, "dingding", session_id, seq, &new_mid, &frame, ended, config, lang)
-            .await;
+        register_watch_at(
+            state, "dingding", session_id, seq, &new_mid, &frame, ended, config, lang,
+        )
+        .await;
         ensure_watch_routes(state).await;
         // 单选卡定格「已选择 [n]」并消费 picker。
         let label = crate::i18n::tr(lang, "select.pickedCard").replace("{id}", &seq.to_string());
@@ -4448,7 +4692,10 @@ mod unix_impl {
                     )
                     .await
                 {
-                    log(&format!("select: finalize dingtalk unwatch card failed: {}", err));
+                    log(&format!(
+                        "select: finalize dingtalk unwatch card failed: {}",
+                        err
+                    ));
                 }
             }
             state
@@ -4491,7 +4738,10 @@ mod unix_impl {
                     .update_card_private(otid, map, serde_json::json!({}))
                     .await
                 {
-                    log(&format!("select: refresh dingtalk unwatch card failed: {}", err));
+                    log(&format!(
+                        "select: refresh dingtalk unwatch card failed: {}",
+                        err
+                    ));
                 }
             }
             if let Some(p) = state
@@ -4509,13 +4759,17 @@ mod unix_impl {
 
     /// 定格一张钉钉单选卡（按 key 更新公有 `finalized=true` + `final_label`）：隐藏循环、显示定格文案。
     async fn dd_finalize_select_card(config: &AppConfig, otid: &str, final_label: &str) {
-        if let Ok(client) = crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding) {
+        if let Ok(client) = crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
+        {
             let map = crate::dingtalk::select::build_select_final_param_map(final_label);
             if let Err(err) = client
                 .update_card_private(otid, map, serde_json::json!({}))
                 .await
             {
-                log(&format!("select: finalize dingtalk select card failed: {}", err));
+                log(&format!(
+                    "select: finalize dingtalk select card failed: {}",
+                    err
+                ));
             }
         }
     }
@@ -4596,12 +4850,21 @@ mod unix_impl {
                 activate_channel_on_action(state, channel_id, config, lang).await;
             }
             PickerKind::Unwatch => {
-                select_pick_unwatch_inplace(state, channel_id, mid, &session_id, config, lang).await;
+                select_pick_unwatch_inplace(state, channel_id, mid, &session_id, config, lang)
+                    .await;
             }
             PickerKind::Msg => {
                 let content = picker.payload.clone().unwrap_or_default();
-                select_pick_msg_inplace(state, channel_id, mid, &session_id, &content, config, lang)
-                    .await;
+                select_pick_msg_inplace(
+                    state,
+                    channel_id,
+                    mid,
+                    &session_id,
+                    &content,
+                    config,
+                    lang,
+                )
+                .await;
                 // 卡片点『发送』＝在该渠道操作 → 设为活跃槽（与 /msg 一致，用户决策）。
                 activate_channel_on_action(state, channel_id, config, lang).await;
             }
@@ -4621,8 +4884,14 @@ mod unix_impl {
         let snapshot = state.agents.snapshot();
         let rec = find_agent_by_session(&snapshot, session_id);
         let label = msg_pick_deliver(state, channel_id, session_id, rec, content, lang);
-        finalize_select_card_edit(channel_id, config, mid, &crate::select::title_msg(lang), &label)
-            .await;
+        finalize_select_card_edit(
+            channel_id,
+            config,
+            mid,
+            &crate::select::title_msg(lang),
+            &label,
+        )
+        .await;
         remove_picker(state, channel_id, mid);
     }
 
@@ -4710,8 +4979,10 @@ mod unix_impl {
             ));
             return;
         }
-        register_watch_at(state, channel_id, session_id, seq, mid, &frame, false, config, lang)
-            .await;
+        register_watch_at(
+            state, channel_id, session_id, seq, mid, &frame, false, config, lang,
+        )
+        .await;
         remove_picker(state, channel_id, mid);
         ensure_watch_routes(state).await;
     }
@@ -4757,7 +5028,10 @@ mod unix_impl {
                     )
                     .await
                 {
-                    log(&format!("select: finalize unwatch card failed ({}): {}", channel_id, err));
+                    log(&format!(
+                        "select: finalize unwatch card failed ({}): {}",
+                        channel_id, err
+                    ));
                 }
             }
             state
@@ -4827,9 +5101,14 @@ mod unix_impl {
                 ) {
                     let html = crate::telegram::select::render_select_html(view);
                     let markup = crate::telegram::select::inline_keyboard(view, lang);
-                    if let Err(err) = c.edit_message_text(m, &html, Some("HTML"), Some(markup)).await
+                    if let Err(err) = c
+                        .edit_message_text(m, &html, Some("HTML"), Some(markup))
+                        .await
                     {
-                        log(&format!("select: refresh telegram select card failed: {}", err));
+                        log(&format!(
+                            "select: refresh telegram select card failed: {}",
+                            err
+                        ));
                     }
                 }
             }
@@ -4838,10 +5117,12 @@ mod unix_impl {
                     if let Ok(dm) = c.open_dm().await {
                         let (blocks, fallback) =
                             crate::slack::select::build_select_blocks(view, lang);
-                        if let Err(err) =
-                            c.update_message(&dm, mid, Some(&blocks), &fallback).await
+                        if let Err(err) = c.update_message(&dm, mid, Some(&blocks), &fallback).await
                         {
-                            log(&format!("select: refresh slack select card failed: {}", err));
+                            log(&format!(
+                                "select: refresh slack select card failed: {}",
+                                err
+                            ));
                         }
                     }
                 }
@@ -4867,9 +5148,13 @@ mod unix_impl {
                     tg.chat_id.clone(),
                     tg.api_base_url.clone(),
                 ) {
-                    let html = crate::telegram::select::render_select_final_html(title, final_label);
+                    let html =
+                        crate::telegram::select::render_select_final_html(title, final_label);
                     if let Err(err) = c.edit_message_text(m, &html, Some("HTML"), None).await {
-                        log(&format!("select: finalize telegram select card failed: {}", err));
+                        log(&format!(
+                            "select: finalize telegram select card failed: {}",
+                            err
+                        ));
                     }
                 }
             }
@@ -4878,10 +5163,12 @@ mod unix_impl {
                     if let Ok(dm) = c.open_dm().await {
                         let (blocks, fallback) =
                             crate::slack::select::build_select_final_blocks(title, final_label);
-                        if let Err(err) =
-                            c.update_message(&dm, mid, Some(&blocks), &fallback).await
+                        if let Err(err) = c.update_message(&dm, mid, Some(&blocks), &fallback).await
                         {
-                            log(&format!("select: finalize slack select card failed: {}", err));
+                            log(&format!(
+                                "select: finalize slack select card failed: {}",
+                                err
+                            ));
                         }
                     }
                 }
@@ -5003,7 +5290,9 @@ mod unix_impl {
         content: &str,
         lang: Lang,
     ) -> String {
-        let n = state.interject.append(session_id, content, Some(channel_id));
+        let n = state
+            .interject
+            .append(session_id, content, Some(channel_id));
         state.interject.persist();
         broadcast_agents_state(state);
         if n == 0 {
@@ -5027,8 +5316,8 @@ mod unix_impl {
             let seq = find_agent_by_session(&snapshot, &session_id)
                 .and_then(|r| r.get("seq").and_then(|v| v.as_u64()))
                 .unwrap_or(0);
-            let text =
-                crate::i18n::tr(lang, "autoChannel.msgReadReceipt").replace("{id}", &seq.to_string());
+            let text = crate::i18n::tr(lang, "autoChannel.msgReadReceipt")
+                .replace("{id}", &seq.to_string());
             let config = AppConfig::load();
             for ch in channels {
                 let _ = reply_channel_text(&ch, &config, &text).await;
@@ -5074,7 +5363,11 @@ mod unix_impl {
             })
             .map(|r| {
                 let seq = r.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
-                format!("[{}] {}", seq, crate::autochannel::kind_title_project(r, lang))
+                format!(
+                    "[{}] {}",
+                    seq,
+                    crate::autochannel::kind_title_project(r, lang)
+                )
             })
             .collect()
     }
@@ -5155,7 +5448,8 @@ mod unix_impl {
     ) {
         // `/msg-clear` 撤回插话＝在该渠道操作 → 设为活跃槽（用户决策）。
         activate_channel_on_action(state, channel_id, config, lang).await;
-        let Some(sid) = resolve_msg_target(state, channel_id, sel, false, config, lang).await else {
+        let Some(sid) = resolve_msg_target(state, channel_id, sel, false, config, lang).await
+        else {
             return;
         };
         let text = if state.interject.clear(&sid) {
@@ -5294,7 +5588,8 @@ mod unix_impl {
                     None => {
                         let snapshot = state.agents.snapshot();
                         let watching = watching_sessions(state, channel_id);
-                        let opts = crate::select::watch_options(&snapshot, &watching, now_secs(), lang);
+                        let opts =
+                            crate::select::watch_options(&snapshot, &watching, now_secs(), lang);
                         let sent = send_agent_picker(
                             state,
                             channel_id,
@@ -5434,8 +5729,15 @@ mod unix_impl {
                     let final_kind = crate::watch::FinalKind::AutoStopped(
                         crate::autochannel::channel_label(new_id, Lang::current()),
                     );
-                    finalize_and_drop_watches(state, &old, &targets, final_kind, &cfg, Lang::current())
-                        .await;
+                    finalize_and_drop_watches(
+                        state,
+                        &old,
+                        &targets,
+                        final_kind,
+                        &cfg,
+                        Lang::current(),
+                    )
+                    .await;
                 }
             }
         }
@@ -6366,9 +6668,13 @@ mod unix_impl {
             // 释放。释放必须按身份判定，绝不能把「新监听」的认领误删（否则会重复 spawn）。
             let reg = InboundRegistry::default();
             let old = reg.claim("feishu").expect("old listener claims");
-            let taken = reg.take("feishu").expect("config change takes current stop");
+            let taken = reg
+                .take("feishu")
+                .expect("config change takes current stop");
             assert!(Arc::ptr_eq(&old, &taken));
-            let new = reg.claim("feishu").expect("new listener re-claims after take");
+            let new = reg
+                .claim("feishu")
+                .expect("new listener re-claims after take");
             reg.release("feishu", &old); // 旧任务迟到的释放
             assert!(
                 reg.claim("feishu").is_none(),

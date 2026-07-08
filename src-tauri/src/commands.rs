@@ -185,7 +185,8 @@ pub struct PushedAgent {
     pub pid: Option<u32>,
 }
 
-static PUSHED_AGENT: std::sync::OnceLock<std::sync::Mutex<PushedAgent>> = std::sync::OnceLock::new();
+static PUSHED_AGENT: std::sync::OnceLock<std::sync::Mutex<PushedAgent>> =
+    std::sync::OnceLock::new();
 
 fn pushed_agent_slot() -> &'static std::sync::Mutex<PushedAgent> {
     PUSHED_AGENT.get_or_init(|| std::sync::Mutex::new(PushedAgent::default()))
@@ -822,7 +823,13 @@ pub fn open_settings(app: AppHandle) -> Result<(), String> {
     #[cfg(unix)]
     {
         // 路由到统一宿主（全局单窗）；宿主不可用时回退到本进程内建窗。
-        route_open_window(app, crate::gui_host::WindowKind::Settings, false, None, None);
+        route_open_window(
+            app,
+            crate::gui_host::WindowKind::Settings,
+            false,
+            None,
+            None,
+        );
         Ok(())
     }
     #[cfg(not(unix))]
@@ -1086,8 +1093,9 @@ pub fn agent_mode_status(agent: String) -> Result<AgentModeStatus, String> {
 #[tauri::command]
 pub fn agent_mode_set(agent: String, mode: String) -> Result<(), String> {
     let a = parse_agent(&agent)?;
-    let m = agent_mode::Mode::parse(&mode)
-        .ok_or_else(|| crate::i18n::tr(crate::i18n::Lang::current(), "cmd.unknownMode").to_string())?;
+    let m = agent_mode::Mode::parse(&mode).ok_or_else(|| {
+        crate::i18n::tr(crate::i18n::Lang::current(), "cmd.unknownMode").to_string()
+    })?;
     agent_mode::set(a, m).map_err(|e| e.to_string())
 }
 
@@ -1818,8 +1826,9 @@ fn slack_text_and_sender(event: &serde_json::Value) -> Option<(String, String)> 
 // 对走 daemon 的路径这会关掉到 daemon 的连接（daemon 侧 `handle_detect` 随之中止并释放临时长连接），
 // 对进程内回退路径则直接 drop 临时 WS。UI 同一时刻只有一个识别在跑，故全局单槽即可。
 
-static DETECT_CANCEL: std::sync::OnceLock<std::sync::Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>> =
-    std::sync::OnceLock::new();
+static DETECT_CANCEL: std::sync::OnceLock<
+    std::sync::Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
+> = std::sync::OnceLock::new();
 
 fn detect_cancel_slot() -> &'static std::sync::Mutex<Option<std::sync::Arc<tokio::sync::Notify>>> {
     DETECT_CANCEL.get_or_init(|| std::sync::Mutex::new(None))

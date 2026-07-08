@@ -11,16 +11,20 @@ use crate::i18n::{self, Lang};
 use crate::watch::{self, CardMode, WatchFrame};
 use serde_json::{json, Value};
 
-/// 按钮回调 data 前缀（`watch:unwatch` / `watch:refresh`）。
+/// 按钮回调 data 前缀（`watch:unwatch` / `watch:refresh` / `watch:rewatch`）。
 pub const CB_UNWATCH: &str = "watch:unwatch";
 pub const CB_REFRESH: &str = "watch:refresh";
+pub const CB_REWATCH: &str = "watch:rewatch";
 
 /// 渲染整卡 HTML（`parse_mode=HTML`）。`now` 为渲染时刻（Unix 秒）。
 pub fn render_watch_html(f: &WatchFrame, mode: CardMode, now: u64, lang: Lang) -> String {
     use super::markdown::escape_html as esc;
     let mut out = String::new();
     // 头部行（斜体弱化，对应飞书蓝色小字）。
-    out.push_str(&format!("🤖 <i>{}</i>\n", esc(&watch::header_text(f, lang))));
+    out.push_str(&format!(
+        "🤖 <i>{}</i>\n",
+        esc(&watch::header_text(f, lang))
+    ));
     // 状态行（加粗）+ 标题。
     out.push_str(&format!(
         "<b>{}</b>\n",
@@ -73,6 +77,16 @@ pub fn inline_keyboard(lang: Lang) -> Value {
         "inline_keyboard": [[
             { "text": i18n::tr(lang, "watch.btnUnwatch"), "callback_data": CB_UNWATCH },
             { "text": i18n::tr(lang, "watch.btnRefresh"), "callback_data": CB_REFRESH },
+        ]]
+    })
+}
+
+/// Rewatchable 终态 inline keyboard：单个「重新关注」按钮（callback_data 编码 session_id）。
+pub fn rewatch_keyboard(lang: Lang, session_id: &str) -> Value {
+    json!({
+        "inline_keyboard": [[
+            { "text": i18n::tr(lang, "watch.btnRewatch"),
+              "callback_data": format!("{}:{}", CB_REWATCH, session_id) },
         ]]
     })
 }
