@@ -18,11 +18,12 @@ use crate::watch::{self, CardMode, WatchFrame};
 use serde_json::{json, Value};
 
 /// 内置默认 watch 卡片模板 ID（开发者后台「AskHuman Watch」模板，用户导入发布）。
-pub const DEFAULT_WATCH_CARD_TEMPLATE_ID: &str = "1091f490-69f2-4c43-9ecb-7939e539c7e7.schema";
+pub const DEFAULT_WATCH_CARD_TEMPLATE_ID: &str = "fb330b73-cf00-4a7f-ac80-fd884867f9c1.schema";
 
 /// 按钮回调 actionId。
 pub const ACTION_UNWATCH: &str = "watch_unwatch";
 pub const ACTION_REFRESH: &str = "watch_refresh";
+pub const ACTION_REWATCH: &str = "watch_rewatch";
 
 /// 正文字号（h5=15px，与提问卡选项一致；钉钉 markdown 默认字号偏大）。
 const SIZE_BODY: &str = "common_h5_text_style__font_size";
@@ -52,9 +53,20 @@ const NBSP: char = '\u{00a0}';
 /// 组装 watch 卡【公有】`cardParamMap`（模板全部 11 个变量；值均为字符串，boolean 按钉钉约定
 /// 以字符串下发）。创建与更新共用：更新走 `updateCardDataByKey`，全量下发幂等。
 pub fn build_watch_param_map(f: &WatchFrame, mode: CardMode, now: u64, lang: Lang) -> Value {
-    let final_label = match &mode {
-        CardMode::Final(kind) => watch::final_label_text(kind, lang),
-        CardMode::Active => String::new(),
+    build_watch_param_map_with_session(f, mode, now, lang, "")
+}
+
+/// 带 session_id 的 cardParamMap（rewatch 按钮回调需要 session_id 回传）。
+pub fn build_watch_param_map_with_session(
+    f: &WatchFrame,
+    mode: CardMode,
+    now: u64,
+    lang: Lang,
+    session_id: &str,
+) -> Value {
+    let (final_label, rewatchable) = match &mode {
+        CardMode::Final(kind) => (watch::final_label_text(kind, lang), kind.is_rewatchable()),
+        CardMode::Active => (String::new(), false),
     };
     let todo_summary = autochannel::todo_summary(&f.todos, lang);
     json!({
@@ -64,9 +76,11 @@ pub fn build_watch_param_map(f: &WatchFrame, mode: CardMode, now: u64, lang: Lan
         "updated_line": watch::updated_line_text(now, lang),
         "finalized": if matches!(mode, CardMode::Final(_)) { "true" } else { "false" },
         "final_label": final_label,
+        "rewatchable": if rewatchable { "true" } else { "false" },
         "btn_unwatch": i18n::tr(lang, "watch.btnUnwatch"),
         "btn_refresh": i18n::tr(lang, "watch.btnRefresh"),
-        // TODO 折叠面板（摘要作标题、清单作内容、has_todos 控显隐）。
+        "btn_rewatch": i18n::tr(lang, "watch.btnRewatch"),
+        "session_id": if session_id.is_empty() { "-" } else { session_id },
         "has_todos": if todo_summary.is_some() { "true" } else { "false" },
         "todo_summary": todo_summary.unwrap_or_default(),
         "todo_md": todo_md(f),
@@ -149,9 +163,9 @@ fn render_step_md(step: &ToolStep, lang: Lang) -> String {
     )
 }
 
-/// 把一条卡片回调 `data` 解析为 watch 按钮动作：`(outTrackId, actionId)`。
-/// 非 watch 按钮（如提问卡提交）→ None。
-pub fn parse_watch_action(data: &Value) -> Option<(String, String)> {
+/// 把一条卡片回调 `data` 解析为 watch 按钮动作：`(outTrackId, actionId, params)`。
+/// 非 watch 按钮（如提问卡提交）→ None。params 用于 rewatch 时回传 session_id。
+pub fn parse_watch_action(data: &Value) -> Option<(String, String, Option<Value>)> {
     let otid = data
         .get("outTrackId")
         .and_then(|v| v.as_str())
@@ -162,16 +176,17 @@ pub fn parse_watch_action(data: &Value) -> Option<(String, String)> {
         Value::String(s) => serde_json::from_str(s).ok()?,
         other => other.clone(),
     };
-    let action = inner
-        .get("cardPrivateData")
-        .and_then(|p| p.get("actionIds"))
+    let private_data = inner.get("cardPrivateData")?;
+    let action = private_data
+        .get("actionIds")
         .and_then(|a| a.as_array())
         .and_then(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str())
-                .find(|id| *id == ACTION_UNWATCH || *id == ACTION_REFRESH)
+                .find(|id| *id == ACTION_UNWATCH || *id == ACTION_REFRESH || *id == ACTION_REWATCH)
         })?;
-    Some((otid, action.to_string()))
+    let params = private_data.get("params").cloned();
+    Some((otid, action.to_string(), params))
 }
 
 #[cfg(test)]
@@ -244,10 +259,7 @@ mod tests {
         assert!(!body.contains("📋"));
         assert_eq!(m["has_todos"], "true");
         assert_eq!(m["todo_summary"], "📋 TODO 0/1 · 当前：跑单测");
-        assert!(m["todo_md"]
-            .as_str()
-            .unwrap()
-            .contains("**跑单测**"));
+        assert!(m["todo_md"].as_str().unwrap().contains("**跑单测**"));
     }
 
     #[test]
@@ -329,7 +341,11 @@ mod tests {
         });
         assert_eq!(
             parse_watch_action(&data),
-            Some(("watch-poc-1".into(), "watch_refresh".into()))
+            Some((
+                "watch-poc-1".into(),
+                "watch_refresh".into(),
+                Some(serde_json::json!({}))
+            ))
         );
         // 提问卡提交等非 watch 回调 → None。
         let submit = serde_json::json!({

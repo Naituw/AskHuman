@@ -567,6 +567,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         // 卡片按钮。
         "watch.btnUnwatch" => pick(lang, "Unwatch", "取消关注"),
         "watch.btnRefresh" => pick(lang, "Refresh", "立即刷新"),
+        "watch.btnRewatch" => pick(lang, "🔄 Re-watch", "🔄 重新关注"),
         // 终态按钮（禁用）。
         "watch.btnEnded" => pick(lang, "Ended · auto-unwatched", "已结束 · 已自动取消关注"),
         "watch.btnCancelled" => pick(lang, "Unwatched", "已取消关注"),

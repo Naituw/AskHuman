@@ -309,12 +309,14 @@ fn body_text(text: &str, is_markdown: bool) -> Value {
 const WATCH_ACTION_KEY: &str = "watch";
 
 /// watch 卡的一次按钮动作。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WatchAction {
     /// 取消关注（卡片定格 + 退订）。
     Unwatch,
     /// 立即刷新（按当前状态重算一帧）。
     Refresh,
+    /// 重新关注（从终态卡发起新 watch；携带原 session_id）。
+    Rewatch(String),
 }
 
 /// watch 卡片视图（纯字符串，本地化由 `watch::card_view` 完成）。
@@ -342,10 +344,21 @@ pub struct WatchCardView {
     pub buttons: WatchButtons,
 }
 
-/// watch 卡按钮区：活动态（取消关注 + 立即刷新，可点）或终态（单个禁用按钮）。
+/// watch 卡按钮区：活动态（取消关注 + 立即刷新，可点）、终态（单个禁用按钮）或可重新关注终态。
 pub enum WatchButtons {
-    Active { unwatch: String, refresh: String },
-    Final { label: String },
+    Active {
+        unwatch: String,
+        refresh: String,
+    },
+    Final {
+        label: String,
+    },
+    /// 可重新关注的终态：终态文案 + 可点击的「重新关注」按钮（携带 session_id 供回调使用）。
+    Rewatch {
+        label: String,
+        rewatch: String,
+        session_id: String,
+    },
 }
 
 /// 组装 watch 实时状态卡（卡片 JSON 2.0，`update_multi` 开启供后续 PATCH）。
@@ -470,6 +483,33 @@ fn watch_buttons_element(buttons: &WatchButtons) -> Value {
             "type": "default",
             "disabled": true,
         }),
+        WatchButtons::Rewatch {
+            label,
+            rewatch,
+            session_id,
+        } => json!({
+            "tag": "column_set",
+            "horizontal_spacing": "8px",
+            "flex_mode": "none",
+            "columns": [
+                { "tag": "column", "width": "weighted", "weight": 1,
+                  "vertical_align": "center",
+                  "elements": [{
+                    "tag": "markdown",
+                    "content": format!("<font color='grey'>{}</font>", label),
+                  }] },
+                { "tag": "column", "width": "auto",
+                  "elements": [{
+                    "tag": "button",
+                    "text": { "tag": "plain_text", "content": rewatch },
+                    "type": "primary",
+                    "behaviors": [ { "type": "callback", "value": {
+                        WATCH_ACTION_KEY: "rewatch",
+                        "sid": session_id,
+                    } } ],
+                  }] },
+            ],
+        }),
     }
 }
 
@@ -485,6 +525,14 @@ pub fn parse_watch_action(event: &Value) -> Option<(String, WatchAction)> {
     let act = match obj.get(WATCH_ACTION_KEY).and_then(|a| a.as_str()) {
         Some("unwatch") => WatchAction::Unwatch,
         Some("refresh") => WatchAction::Refresh,
+        Some("rewatch") => {
+            let sid = obj
+                .get("sid")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            WatchAction::Rewatch(sid)
+        }
         _ => return None,
     };
     let message_id = event
@@ -594,7 +642,10 @@ pub fn build_select_card(v: &crate::select::SelectView) -> Value {
         "icon": { "tag": "standard_icon", "token": "maybe_filled", "color": "blue" },
         "margin": "0px 0px 0px 0px",
     });
-    let mut body = vec![header_row, json!({ "tag": "hr", "margin": "0px 0px 0px 0px" })];
+    let mut body = vec![
+        header_row,
+        json!({ "tag": "hr", "margin": "0px 0px 0px 0px" }),
+    ];
     body.extend(elements);
     json!({
         "schema": "2.0",
@@ -1077,7 +1128,10 @@ mod tests {
         let elements = card["body"]["elements"].as_array().unwrap();
         // 样式化头部行（eye icon + 蓝色小字）+ 分隔线。
         assert_eq!(elements[0]["icon"]["token"], "eye_outlined");
-        assert_eq!(elements[0]["text"]["content"], "实时关注 [3] Cursor — HumanInLoop");
+        assert_eq!(
+            elements[0]["text"]["content"],
+            "实时关注 [3] Cursor — HumanInLoop"
+        );
         assert_eq!(elements[1]["tag"], "hr");
         // 状态行加粗（含回合统计）+ 标题；活动区带绝对时刻标签、文字 + 空行 + 彩色圆点足迹时间线。
         let head_md = elements[2]["content"].as_str().unwrap();
@@ -1237,14 +1291,21 @@ mod tests {
         assert_eq!(btn0["type"], "primary");
         assert_eq!(btn0["text"]["content"], "关注");
         assert_eq!(btn0["behaviors"][0]["value"]["select"], 0);
-        assert_eq!(rows[1]["columns"][1]["elements"][0]["behaviors"][0]["value"]["select"], 1);
+        assert_eq!(
+            rows[1]["columns"][1]["elements"][0]["behaviors"][0]["value"]["select"],
+            1
+        );
         // 左列富文本：圆点 + 加粗编号 + 主文本 + 徽标 + 灰色次行。
-        let md0 = rows[0]["columns"][0]["elements"][0]["content"].as_str().unwrap();
+        let md0 = rows[0]["columns"][0]["elements"][0]["content"]
+            .as_str()
+            .unwrap();
         assert!(md0.contains("<font color='green'>●</font>"));
         // 主行：编号 + 主文本 + 关注徽标 + 运行时长（徽标之后）。
         assert!(md0.contains("**[2]** Cursor · my-frontend · 关注中 · 已运行 6 分钟"));
         assert!(md0.contains("<font color='grey'>甲</font>"));
-        let md1 = rows[1]["columns"][0]["elements"][0]["content"].as_str().unwrap();
+        let md1 = rows[1]["columns"][0]["elements"][0]["content"]
+            .as_str()
+            .unwrap();
         assert!(md1.contains("<font color='grey'>●</font>"));
         assert!(!md1.contains("关注中"));
     }
