@@ -4,6 +4,7 @@ pub mod cfgio;
 pub mod channel_cmd;
 pub mod config_cmd;
 pub mod debug_cmd;
+pub mod dev_cmd;
 pub mod doctor;
 pub mod file_attachment;
 pub mod help;
@@ -26,6 +27,9 @@ fn print_line(text: &str) {
 
 /// 入口分发：在创建任何窗口前按 argv 分流。
 pub fn dispatch() {
+    // Dev Instance: pin ASKHUMAN_HOME / re-exec worktree bin before any config or GUI load.
+    crate::dev_instance::maybe_enter_dev_instance();
+
     let argv: Vec<String> = std::env::args().collect();
     let lang = Lang::current();
 
@@ -153,6 +157,10 @@ pub fn dispatch() {
                 eprintln!("--popup is not supported on this platform");
                 exit(1);
             }
+        }
+        // Dev Instance：enable/disable/status/preset（多 WorkTree 并行开发隔离）。
+        "dev" => {
+            dev_cmd::dispatch(&argv[2..], lang);
         }
         // 常驻 Daemon 管理子命令：AskHuman daemon <run|start|stop|restart|status|logs>。
         // 极端歧义（问题正好是 "daemon"）可用 `AskHuman -q daemon` 规避。

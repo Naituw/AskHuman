@@ -4,6 +4,10 @@
 
 Read [`docs/overview.md`](docs/overview.md) first to understand the architecture and project layout. When the task is complete, update `docs/overview.md` so it stays accurate.
 
+## Git worktree / parallel development
+
+If the task needs a **new or existing git worktree** for parallel feature work on this repo (so install/AskHuman do not share the main daemon or overwrite another agent’s binary), read [`docs/agent-worktree-setup.md`](docs/agent-worktree-setup.md) first and follow it—including asking the human via AskHuman whether to attach a channel preset—before coding. After `dev enable`, verification is still `./scripts/install.sh` then `AskHuman` (auto-routed into that worktree’s Dev Instance).
+
 ## Tracking progress in docs/PROGRESS.md
 
 [`docs/PROGRESS.md`](docs/PROGRESS.md) has two jobs: track unfinished work and what's next, and mark the one task currently in progress. Read it first.

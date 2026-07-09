@@ -1,11 +1,65 @@
 #!/usr/bin/env bash
 # 构建并安装 AskHuman 到 ~/.local/bin（macOS / Linux）。
+# 若 cwd 在已 `dev enable` 的 worktree 内且未传 --global，则装到该树
+# `.askhuman-dev/bin`（见 docs/specs/dev-instance-parallel.md）。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 cd "$REPO_ROOT"
+
+FORCE_GLOBAL=0
+for arg in "$@"; do
+  case "$arg" in
+    --global) FORCE_GLOBAL=1 ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: ./scripts/install.sh [--global]
+
+  (default)  If the current directory is under a Dev Instance
+             (worktree with .askhuman-dev/enabled), install into
+             <root>/.askhuman-dev/bin; otherwise ~/.local/bin.
+  --global   Always install to ~/.local/bin (or $INSTALL_DIR if set).
+
+Environment:
+  INSTALL_DIR   Explicit install directory (wins over auto-detect;
+                with --global, still defaults to ~/.local/bin when unset).
+EOF
+      exit 0
+      ;;
+    *)
+      echo "错误: 未知参数 $arg（可用 --global 或 --help）" >&2
+      exit 1
+      ;;
+  esac
+done
+
+find_dev_enabled_root() {
+  local dir
+  dir="$(pwd)"
+  while [ -n "$dir" ] && [ "$dir" != "/" ]; do
+    if [ -f "$dir/.askhuman-dev/enabled" ]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+DEFAULT_INSTALL_DIR="${HOME}/.local/bin"
+if [ -n "${INSTALL_DIR:-}" ]; then
+  : # explicit env wins
+elif [ "$FORCE_GLOBAL" -eq 1 ]; then
+  INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+elif DEV_ROOT="$(find_dev_enabled_root)"; then
+  INSTALL_DIR="${DEV_ROOT}/.askhuman-dev/bin"
+  mkdir -p "$INSTALL_DIR" "${DEV_ROOT}/.askhuman-dev/home"
+  echo "==> Dev Instance 检测到: $DEV_ROOT"
+  echo "    安装目标: $INSTALL_DIR"
+else
+  INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+fi
 
 sign_via_gui_launchd() {
   local identity="$1"

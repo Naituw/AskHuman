@@ -17,6 +17,8 @@ mod client;
 mod commands;
 mod config;
 mod daemon;
+mod dev_instance;
+mod dev_presets;
 mod dingtalk;
 mod feishu;
 mod gui_host;

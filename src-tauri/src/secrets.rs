@@ -32,7 +32,13 @@ pub struct Unavailable;
 /// Callers then fall back to plaintext config (see `config.rs`) without ever touching the real OS
 /// keychain (which is NOT isolated by `$HOME`). This keeps isolated runs — e.g. the perf harness
 /// under a throwaway `$HOME` — from reading or clobbering the user's real channel secrets.
+///
+/// Also forced on for Dev Instance mode (`ASKHUMAN_HOME` set): instance configs must never read
+/// or migrate into the user's main keychain (see `docs/specs/dev-instance-parallel.md`).
 fn disabled() -> bool {
+    if crate::dev_instance::is_dev_instance() {
+        return true;
+    }
     std::env::var("ASKHUMAN_NO_KEYCHAIN")
         .map(|v| !v.is_empty() && v != "0")
         .unwrap_or(false)

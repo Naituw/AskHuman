@@ -30,3 +30,6 @@ demo/tray-menu-close/swift/test_fix
 
 # 杂项
 .DS_Store
+
+# Dev Instance（每 worktree 本地隔离：bin / home / 标记，见 docs/specs/dev-instance-parallel.md）
+.askhuman-dev/

@@ -31,13 +31,30 @@ Build and install locally:
 
 ```bash
 # macOS / Linux  → installs to ~/.local/bin/AskHuman
+# (or <worktree>/.askhuman-dev/bin when Dev Instance is enabled — see below)
 ./scripts/install.sh
+
+# Force production install path even inside an enabled worktree:
+./scripts/install.sh --global
 
 # Windows        → installs to %LOCALAPPDATA%\Programs\AskHuman
 ./scripts/install-windows.ps1
 ```
 
 > Running the GUI popup on Linux needs system WebKitGTK (e.g. `libwebkit2gtk-4.1`). If it's missing and a session-based channel (Telegram / DingTalk / Feishu) is configured, AskHuman automatically uses that channel; if none is available it exits with code 3 to signal graceful degradation.
+
+### Parallel development (Dev Instance / git worktrees)
+
+Multiple agents can develop in separate git worktrees without sharing one daemon or overwriting one binary. Design: [`docs/specs/dev-instance-parallel.md`](./specs/dev-instance-parallel.md). **Agent checklist:** [`docs/agent-worktree-setup.md`](./agent-worktree-setup.md).
+
+```bash
+cd /path/to/worktree
+AskHuman dev enable                    # or: dev enable --preset <name>
+./scripts/install.sh                   # → .askhuman-dev/bin
+AskHuman "…"                           # auto re-exec into this instance
+```
+
+Default instance config is popup-only and never reads the main keychain. Optional machine-level channel presets live in `~/.askhuman/dev-presets/` with exclusive leases.
 
 ## Release
 

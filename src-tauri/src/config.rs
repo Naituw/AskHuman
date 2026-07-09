@@ -391,13 +391,16 @@ impl AppConfig {
             cfg.resolve_secrets_and_migrate(true);
             return cfg;
         }
-        let legacy = paths::legacy_config_file();
-        if legacy.exists() {
-            harden_file(&legacy);
-            let mut cfg = Self::load_from(&legacy);
-            // Don't persist (would migrate the legacy file to the primary location); just resolve.
-            cfg.resolve_secrets_and_migrate(false);
-            return cfg;
+        // Dev Instance: never fall back to the user's main/legacy config (would pull production bots).
+        if !crate::dev_instance::is_dev_instance() {
+            let legacy = paths::legacy_config_file();
+            if legacy.exists() {
+                harden_file(&legacy);
+                let mut cfg = Self::load_from(&legacy);
+                // Don't persist (would migrate the legacy file to the primary location); just resolve.
+                cfg.resolve_secrets_and_migrate(false);
+                return cfg;
+            }
         }
         let mut cfg = Self::default();
         cfg.resolve_secrets_and_migrate(false);
@@ -421,10 +424,12 @@ impl AppConfig {
             }
             return Self::load_from(&primary);
         }
-        let legacy = paths::legacy_config_file();
-        if legacy.exists() {
-            harden_file(&legacy);
-            return Self::load_from(&legacy);
+        if !crate::dev_instance::is_dev_instance() {
+            let legacy = paths::legacy_config_file();
+            if legacy.exists() {
+                harden_file(&legacy);
+                return Self::load_from(&legacy);
+            }
         }
         Self::default()
     }
