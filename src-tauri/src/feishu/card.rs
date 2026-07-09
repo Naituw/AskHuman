@@ -1246,11 +1246,12 @@ mod tests {
         // 每个选项一行 column_set；行间以 hr 分隔。
         let rows: Vec<&Value> = els.iter().filter(|e| e["tag"] == "column_set").collect();
         assert_eq!(rows.len(), 2);
-        // 每行右列一个按钮（watch → primary，文案「关注」），callback value 带下标。
+        let expected_label = crate::select::SelectAction::Watch
+            .button_label(crate::i18n::Lang::current());
         let btn0 = &rows[0]["columns"][1]["elements"][0];
         assert_eq!(btn0["tag"], "button");
         assert_eq!(btn0["type"], "primary");
-        assert_eq!(btn0["text"]["content"], "关注");
+        assert_eq!(btn0["text"]["content"], expected_label.as_str());
         assert_eq!(btn0["behaviors"][0]["value"]["select"], 0);
         assert_eq!(rows[1]["columns"][1]["elements"][0]["behaviors"][0]["value"]["select"], 1);
         // 左列富文本：圆点 + 加粗编号 + 主文本 + 徽标 + 灰色次行。
