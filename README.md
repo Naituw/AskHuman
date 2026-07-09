@@ -62,6 +62,11 @@ AskHuman "Take a look at this change?" -f ./diagram.png \
 # Strict choice for scripts: only preset options, single choice, machine-readable JSON
 AskHuman -q "Deploy where?" -o "staging" -o! "production" --single --select-only --output json
 
+# Long Markdown via stdin: quoted heredoc (write the heredoc last on the command line)
+AskHuman -q "Continue?" -o "Continue" -o "Stop" --stdin <<'EOF'
+# Review notes with `code`, $HOME, and "quotes"
+EOF
+
 # Other common ones
 AskHuman --settings   # open the settings UI
 AskHuman --history    # open reply history (add --all for every project)

@@ -61,6 +61,11 @@ AskHuman "看看这个改动？" -f ./diagram.png \
 # 脚本场景的严格选择：只允许预设选项、单选、机器可解析的 JSON
 AskHuman -q "部署到哪个环境？" -o "staging" -o! "production" --single --select-only --output json
 
+# 长 Markdown 走 stdin：带引号 heredoc（heredoc 写在命令最后）
+AskHuman -q "要继续吗？" -o "继续" -o "停止" --stdin <<'EOF'
+# 含 `code`、$HOME 与 "引号" 的说明
+EOF
+
 # 其它常用
 AskHuman --settings   # 打开设置界面
 AskHuman --history    # 打开回复历史（加 --all 看全部项目）

@@ -43,7 +43,7 @@ pub fn help_text(lang: Lang) -> String {
             "  -o, --option <text>     Add a predefined answer option after a question".to_string(),
             "  -o!, --option! <text>   Same as -o, marks it as your recommended answer".to_string(),
             "  -f, --file <path>       Attach a file/image to the message; repeatable".to_string(),
-            "  --stdin                 Read the message from stdin".to_string(),
+            "  --stdin                 Read the message from stdin via a quoted heredoc (last on the command line)".to_string(),
             "  --single                Single choice (default: multiple choice)".to_string(),
             "  --select-only           Choice only: forbid free text/attachments (each question must have options)".to_string(),
             "  --output <text|json>    Output format (default: text)".to_string(),
@@ -76,7 +76,7 @@ pub fn help_text(lang: Lang) -> String {
             "  -o, --option <text>     跟随问题之后，添加预定义回答选项".to_string(),
             "  -o!, --option! <text>   同 -o，并标记为你的推荐答案".to_string(),
             "  -f, --file <path>       为消息附带文件/图片，可多次出现".to_string(),
-            "  --stdin                 从标准输入读取消息".to_string(),
+            "  --stdin                 用带引号 heredoc 从标准输入读取消息（写在命令最后）".to_string(),
             "  --single                单选（默认多选）".to_string(),
             "  --select-only           严格选择：禁用自由文本/附件（每题必须有选项）".to_string(),
             "  --output <text|json>    输出格式（默认 text）".to_string(),
@@ -106,19 +106,19 @@ fn ask_arg_lines(lang: Lang) -> Vec<String> {
     match lang {
         Lang::En => vec![
             "  <Message>             Shared description for all questions (optional)".to_string(),
-            "  --stdin               Read the <Message> from stdin instead of the argument (use a quoted heredoc to avoid shell quoting)".to_string(),
             "  -f, --file <path>     Attach a file or image to the Message (absolute/relative/~); repeatable".to_string(),
             "  -q, --question <text> Ask a question; repeatable".to_string(),
             "  -o, --option <text>   Add a predefined answer option after a question".to_string(),
             "  -o!, --option! <text> Same as -o, and marks that option as your recommended answer".to_string(),
+            "  --stdin               Read the <Message> from stdin via a quoted heredoc (write the heredoc last on the command line)".to_string(),
         ],
         Lang::Zh => vec![
             "  <Message>             所有问题的共享描述（可选）".to_string(),
-            "  --stdin               从标准输入读取 <Message>（用带引号的 heredoc 规避 shell 引号转义）".to_string(),
             "  -f, --file <path>     为 Message 附带文件或图片（绝对/相对/~），可多次出现".to_string(),
             "  -q, --question <text> 提出问题，可多次出现".to_string(),
             "  -o, --option <text>   跟随在问题后，添加预定义回答选项".to_string(),
             "  -o!, --option! <text> 同 -o，并把该选项标记为你的推荐答案".to_string(),
+            "  --stdin               用带引号的 heredoc 从标准输入读取 <Message>（heredoc 写在命令最后）".to_string(),
         ],
     }
 }
@@ -205,8 +205,9 @@ pub fn agent_help_text(lang: Lang) -> String {
             ));
             out.push(format!("  {prog} \"Review this change?\" -f ./diff.patch -q \"Continue?\" -o \"Continue\" -o \"Stop\""));
             out.push(format!("  {prog} \"A few things to confirm\" -q \"Keep logs?\" -o \"Keep\" -o \"Clear\" -q \"Enable cache?\" -o \"On\" -o \"Off\""));
+            // Heredoc must be last on the command line (put -q/-o before --stdin).
             out.push(format!(
-                "  {prog} --stdin -q \"Continue?\" -o \"Continue\" -o \"Stop\" <<'EOF'"
+                "  {prog} -q \"Continue?\" -o \"Continue\" -o \"Stop\" --stdin <<'EOF'"
             ));
             out.push(
                 "# A long Markdown message with `backticks`, $vars and \"quotes\"".to_string(),
@@ -234,8 +235,9 @@ pub fn agent_help_text(lang: Lang) -> String {
             ));
             out.push(format!("  {prog} \"看看这个改动？\" -f ./diff.patch -q \"要继续吗？\" -o \"继续\" -o \"停止\""));
             out.push(format!("  {prog} \"以下是几处待确认\" -q \"保留日志？\" -o \"保留\" -o \"清除\" -q \"开启缓存？\" -o \"开\" -o \"关\""));
+            // heredoc 必须写在命令最后（先 -q/-o，再 --stdin）。
             out.push(format!(
-                "  {prog} --stdin -q \"要继续吗？\" -o \"继续\" -o \"停止\" <<'EOF'"
+                "  {prog} -q \"要继续吗？\" -o \"继续\" -o \"停止\" --stdin <<'EOF'"
             ));
             out.push("# 含 `反引号`、$VAR 与 \"引号\" 的长 Markdown 消息".to_string());
             out.push("EOF".to_string());
