@@ -23,7 +23,7 @@
 | D1 | 平台范围 | **一期 macOS + Linux**（Unix daemon 已支持 drain 换新）。Windows 为单进程回退、且不能直接覆盖运行中的 exe，**一期不做自动替换**：仅显示「有更新」+ 下载页链接（手动）。 |
 | D2 | 新二进制来源 / 安装方式分流 | **检测安装方式、分别更新**：按 daemon `current_exe()` 路径判定——含 `/node_modules/@humaninloop/` 或 `/node_modules/askhuman/` → **npm 安装**；否则 → **直装二进制**（`install.sh` / 手动下载，如 `~/.local/bin`）。 |
 | D3 | 两套更新实现 | 统一抽象 `Updater`（`check_latest()` + `apply()`），运行时按 D2 选择：① **DirectUpdater**：GitHub Releases 查版本 + 下载平台资产替换；② **NpmUpdater**：npm registry 查版本 + 跑 `npm i -g askhuman@latest`。 |
-| D4 | npm 更新点击行为 | 点「更新」即自动执行 `npm i -g askhuman@latest`；**npm 不可用 / 执行失败 → 退化为显示该命令**让用户手动执行。 |
+| D4 | npm 更新点击行为 | 点「更新」即自动执行 `npm i -g askhuman@latest`。macOS/Linux 优先从当前 npm 安装的可执行文件路径反推 `<prefix>/bin/npm`，并把该目录前置到子进程 `PATH`（保证同目录 `node` 可被 `#!/usr/bin/env node` 找到），避免 GUI/launchd 未加载 nvm/fnm/asdf/mise 等 shell 初始化时误报缺少 npm；无法反推时回退进程原 `PATH`。**npm 不可用 / 执行失败 → 退化为显示该命令**让用户手动执行。 |
 | D5 | 生效时机（关键，无开关） | **无开关**。更新是用户主动触发（弹窗浮层或设置内点击）。触发 = 把新二进制落盘；新版本只在「当前所有在途弹窗答完后」由 drain 自动生效，**绝不退出/打断当前作答**。界面给出该行为的说明文案。 |
 | D6 | 外部更新也提示 | daemon 已监听二进制指纹变化；**任何来源**导致盘上二进制变化（如用户在终端跑了 `npm i -g`、另一处装了新版）都触发「待生效」提示——不限于应用内点更新。 |
 | D7 | 版本门槛 | 仅当「远端正式版 > 本地 `CARGO_PKG_VERSION`」才提示更新（数字段逐段比较）。故本地同版本开发构建不会被误判为有更新。 |

@@ -38,7 +38,7 @@
   - `apply()`：下载到 `temp/askhuman_update/` →（进度回调，复用现有事件机制）→ 解压（shell out `tar -xzf` / Linux 同；mac 同）→ 在解压目录找可执行文件 `AskHuman` → **校验**（见 §6 安全）→ 备份当前为 `<exe>.<ver>.bak` → 原子替换 `current_exe`（同目录临时文件 + `set_mode(0o755)` + `rename`）。**不调用 restart**。
 - `npm.rs`（**NpmUpdater**）
   - `check_latest()`：`npm view askhuman version --registry https://registry.npmjs.org`（或 registry HTTP JSON）取最新；超时 + 错误静默。
-  - `apply()`：spawn `npm i -g askhuman@latest`；成功即返回（盘上 node_modules 二进制被 npm 替换 → daemon 指纹变 → drain 换新）。失败 / 找不到 npm → 返回带「手动命令」的错误，前端回显命令。
+  - `apply()`：spawn `npm i -g askhuman@latest`；macOS/Linux 由当前 `.../<prefix>/lib/node_modules/.../AskHuman` 反推 `<prefix>/bin/npm`，并将 `<prefix>/bin` 前置到子进程 `PATH`，使 GUI/launchd 环境下仍能找到同 prefix 的 npm + node；候选缺失才回退继承 PATH。成功即返回（盘上 node_modules 二进制被 npm 替换 → daemon 指纹变 → drain 换新）。失败 / 找不到 npm → 返回带「手动命令」的错误，前端回显命令。
 - `notes.rs`（更新日志展示）
   - `latest_notes()`：单版本，取 `releases/latest` 的 `body`。
   - `aggregated_notes(from,to)`：**懒加载**，GET `releases`（列表，单请求）→ 过滤 tag 在 `(from, to]` → 按版本倒序拼接 body + 各自 compare 链接；结果缓存（内存 / `update.json`）。npm 安装也走 GitHub 取 body（按 tag），缺失则占位。

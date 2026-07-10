@@ -9,6 +9,10 @@ use super::{http_client, NPM_PACKAGE};
 use super::{ProgressCb, RemoteLatest, Updater};
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
+use std::ffi::{OsStr, OsString};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 
 pub struct NpmUpdater;
 
@@ -67,13 +71,9 @@ async fn npm_latest_version() -> Result<String> {
 async fn run_npm_install() -> Result<()> {
     let cmd = NpmUpdater::manual_command();
     // 在阻塞线程跑外部命令，避免占用 async 执行器。
-    let result = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("npm")
-            .args(["i", "-g", &format!("{}@latest", NPM_PACKAGE)])
-            .output()
-    })
-    .await
-    .context("等待 npm 进程失败")?;
+    let result = tokio::task::spawn_blocking(run_npm_install_blocking)
+        .await
+        .context("等待 npm 进程失败")?;
 
     match result {
         Ok(out) if out.status.success() => Ok(()),
@@ -85,5 +85,168 @@ async fn run_npm_install() -> Result<()> {
             Err(anyhow!("未找到 npm，请手动执行：{cmd}"))
         }
         Err(e) => Err(anyhow!("无法启动 npm（{e}），请手动执行：{cmd}")),
+    }
+}
+
+#[derive(Debug)]
+struct NpmLaunch {
+    program: OsString,
+    path: Option<OsString>,
+    from_install_prefix: bool,
+}
+
+/// 执行 npm。优先使用安装当前 AskHuman 的同一 npm prefix，避免 GUI / launchd 未加载
+/// nvm、fnm、asdf、mise 等 shell 初始化脚本时，PATH 中找不到 npm。
+fn run_npm_install_blocking() -> std::io::Result<std::process::Output> {
+    let exe = std::env::current_exe().ok();
+    let current_path = std::env::var_os("PATH");
+    let launch = npm_launch(exe.as_deref(), current_path.as_deref());
+    let result = run_npm_command(&launch);
+
+    // 候选在检查后可能被并发更新移走；仅这种“无法启动”场景再退回原 PATH。
+    // npm 已成功启动但自身返回失败时必须保留其真实错误，不能换另一套 npm 重试。
+    if launch.from_install_prefix
+        && matches!(&result, Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+    {
+        run_npm_command(&NpmLaunch {
+            program: OsString::from("npm"),
+            path: None,
+            from_install_prefix: false,
+        })
+    } else {
+        result
+    }
+}
+
+fn run_npm_command(launch: &NpmLaunch) -> std::io::Result<std::process::Output> {
+    let mut command = std::process::Command::new(&launch.program);
+    command.args(["i", "-g", &format!("{}@latest", NPM_PACKAGE)]);
+    if let Some(path) = &launch.path {
+        command.env("PATH", path);
+    }
+    command.output()
+}
+
+/// 选择 npm 启动方式。Unix npm 全局包通常位于 `<prefix>/lib/node_modules`，而 npm/node
+/// 位于 `<prefix>/bin`；从当前平台子包二进制向上找到这个 prefix，比依赖 GUI 进程 PATH 稳定。
+fn npm_launch(exe: Option<&Path>, current_path: Option<&OsStr>) -> NpmLaunch {
+    #[cfg(unix)]
+    if let Some(prefix_bin) = exe.and_then(npm_prefix_bin_from_exe) {
+        let npm = prefix_bin.join("npm");
+        if npm.is_file() {
+            return NpmLaunch {
+                program: npm.into_os_string(),
+                // npm 常以 `#!/usr/bin/env node` 启动；前置同 prefix 的 bin，保证它找到配套 Node。
+                path: Some(prepend_path(&prefix_bin, current_path)),
+                from_install_prefix: true,
+            };
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (exe, current_path);
+
+    NpmLaunch {
+        program: OsString::from("npm"),
+        path: None,
+        from_install_prefix: false,
+    }
+}
+
+/// 从 `.../<prefix>/lib/node_modules/.../AskHuman` 反推 `<prefix>/bin`。
+/// 路径内可能有两层 node_modules（主包 + 平台 optionalDependency），因此必须一直向外找
+/// 到父目录名确为 `lib` 的那一层。
+#[cfg(unix)]
+fn npm_prefix_bin_from_exe(exe: &Path) -> Option<PathBuf> {
+    exe.ancestors().find_map(|dir| {
+        if dir.file_name() != Some(OsStr::new("node_modules")) {
+            return None;
+        }
+        let lib = dir.parent()?;
+        if lib.file_name() != Some(OsStr::new("lib")) {
+            return None;
+        }
+        Some(lib.parent()?.join("bin"))
+    })
+}
+
+#[cfg(unix)]
+fn prepend_path(prefix_bin: &Path, current_path: Option<&OsStr>) -> OsString {
+    let mut entries = vec![prefix_bin.to_path_buf()];
+    if let Some(path) = current_path {
+        entries.extend(std::env::split_paths(path));
+    }
+    std::env::join_paths(entries).unwrap_or_else(|_| prefix_bin.as_os_str().to_os_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn derives_nvm_prefix_through_nested_platform_package() {
+        let exe = Path::new(
+            "/Users/u/.nvm/versions/node/v22.17.0/lib/node_modules/askhuman/node_modules/\
+             @humaninloop/darwin-arm64/bin/AskHuman",
+        );
+        assert_eq!(
+            npm_prefix_bin_from_exe(exe),
+            Some(PathBuf::from("/Users/u/.nvm/versions/node/v22.17.0/bin"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn derives_homebrew_and_linux_prefixes() {
+        assert_eq!(
+            npm_prefix_bin_from_exe(Path::new(
+                "/opt/homebrew/lib/node_modules/askhuman/node_modules/\
+                 @humaninloop/darwin-arm64/bin/AskHuman"
+            )),
+            Some(PathBuf::from("/opt/homebrew/bin"))
+        );
+        assert_eq!(
+            npm_prefix_bin_from_exe(Path::new(
+                "/usr/lib/node_modules/askhuman/node_modules/\
+                 @humaninloop/linux-x64/bin/AskHuman"
+            )),
+            Some(PathBuf::from("/usr/bin"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launch_prefers_prefix_npm_and_prepends_its_bin_to_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let prefix = temp.path().join("versions/node/v22.17.0");
+        let prefix_bin = prefix.join("bin");
+        std::fs::create_dir_all(&prefix_bin).unwrap();
+        std::fs::write(prefix_bin.join("npm"), "#!/bin/sh\n").unwrap();
+        let exe = prefix
+            .join("lib/node_modules/askhuman/node_modules/@humaninloop/darwin-arm64/bin/AskHuman");
+        let original =
+            std::env::join_paths([Path::new("/usr/local/bin"), Path::new("/usr/bin")]).unwrap();
+
+        let launch = npm_launch(Some(&exe), Some(&original));
+
+        assert_eq!(launch.program, prefix_bin.join("npm").into_os_string());
+        assert!(launch.from_install_prefix);
+        let entries: Vec<_> = std::env::split_paths(launch.path.as_ref().unwrap()).collect();
+        assert_eq!(entries[0], prefix_bin);
+        assert_eq!(entries[1], PathBuf::from("/usr/local/bin"));
+        assert_eq!(entries[2], PathBuf::from("/usr/bin"));
+    }
+
+    #[test]
+    fn launch_falls_back_to_inherited_path_when_prefix_npm_is_missing() {
+        let launch = npm_launch(
+            Some(Path::new(
+                "/unknown/lib/node_modules/askhuman/node_modules/pkg/bin/AskHuman",
+            )),
+            Some(OsStr::new("/usr/bin")),
+        );
+        assert_eq!(launch.program, OsString::from("npm"));
+        assert!(launch.path.is_none());
+        assert!(!launch.from_install_prefix);
     }
 }
