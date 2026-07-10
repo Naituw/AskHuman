@@ -142,6 +142,8 @@ pub fn uninstall() -> std::io::Result<()> {
 // - 关闭保活时只删文件、**绝不 bootout**：bootout 会给正在跑的 daemon 发 SIGTERM 强杀，而需求是让它按
 //   原 5min 空闲策略自然退出。故避免任何会杀进程的 launchctl 操作。
 // - KeepAlive=false：避免「daemon 空闲退出后被 launchd 立刻拉起」与自然退出/换挡打架。
+// - macOS 必须用 Interactive：daemon 会直接 spawn GUI popup helper；若自身是 Background，
+//   helper 会继承后台调度角色（即使窗口已显示/聚焦仍是低优先级），造成整窗交互持续掉帧。
 
 const DAEMON_LABEL: &str = "com.naituw.humaninloop.daemon";
 
@@ -175,7 +177,7 @@ fn daemon_contents(exe: &str) -> String {
     <key>RunAtLoad</key>
     <true/>
     <key>ProcessType</key>
-    <string>Background</string>
+    <string>Interactive</string>
 </dict>
 </plist>
 "#
@@ -208,15 +210,21 @@ pub fn daemon_is_installed() -> bool {
     daemon_item_path().exists()
 }
 
-/// 已装但记录的 exe 与当前不一致（移动安装位置后需刷新）。
+/// 已装模板与当前期望不一致（移动安装位置或模板升级后需刷新）。
 pub fn daemon_needs_update() -> bool {
     if !daemon_is_installed() {
         return false;
     }
     match std::fs::read_to_string(daemon_item_path()) {
-        Ok(text) => !text.contains(&current_exe()),
+        Ok(text) => daemon_template_needs_update(&text, &current_exe()),
         Err(_) => true,
     }
+}
+
+/// daemon 登录项是完全托管文件，逐字比较可同时发现 exe 迁移与模板语义升级
+/// （例如旧版 macOS plist 的 Background → Interactive）。
+fn daemon_template_needs_update(installed: &str, exe: &str) -> bool {
+    installed != daemon_contents(exe)
 }
 
 /// 写入/刷新 daemon 登录项文件（纯文件、不 launchctl）。幂等。
@@ -331,7 +339,28 @@ mod tests {
         assert!(p.contains("<key>RunAtLoad</key>"));
         // 保活 daemon 登录项刻意**不带** KeepAlive（见模块头注释）。
         assert!(!p.contains("<key>KeepAlive</key>"));
+        // daemon 会 spawn GUI helper，不能用 Background（子进程会继承后台低优先级）。
+        assert!(p.contains("<string>Interactive</string>"));
+        assert!(!p.contains("<string>Background</string>"));
         assert!(p.contains(DAEMON_LABEL));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn daemon_template_refreshes_legacy_background_plist() {
+        let exe = "/usr/local/bin/AskHuman";
+        let current = daemon_contents(exe);
+        assert!(!daemon_template_needs_update(&current, exe));
+
+        let legacy = current.replace(
+            "<string>Interactive</string>",
+            "<string>Background</string>",
+        );
+        assert!(daemon_template_needs_update(&legacy, exe));
+        assert!(daemon_template_needs_update(
+            &current,
+            "/opt/askhuman/AskHuman"
+        ));
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
