@@ -12,7 +12,8 @@ M3 Claude Code / Codex PermissionRequest 协议适配、M4 Hook 共存/Codex tru
 设置页/CLI/doctor 已实现。重复设置 mode 会完整更新磁盘，但不会自动改变 Permission 启用偏好。
 M6 人工验收反馈——popup、飞书、钉钉、Telegram、Slack 已完成真机验收；Codex Permission Hook trust 漏算
 `statusMessage` 已修复并经 Codex 0.144.1 官方 `hooks/list` 与重启实测确认 trusted。当前步骤：按用户要求
-将已验收变更发布为 0.8.3，核对版本、release notes、远端与 tag 后执行推送发布。
+将已验收变更发布为 0.8.3；首次 workflow 暴露 Permission 新代码缺 Windows 编译门，已确认采用最小 cfg
+修复并在 Windows target 检查后重建尚未发布的 v0.8.3 tag。
 
 
 ## 待办：Watch 卡片「重新关注」按钮 — 全渠道
