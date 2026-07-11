@@ -114,7 +114,15 @@ impl Coordinator {
         source: String,
         agent_kind: Option<String>,
     ) -> Arc<Self> {
-        Self::build(Exiter::Ipc(tx), request, None, lang, project, source, agent_kind)
+        Self::build(
+            Exiter::Ipc(tx),
+            request,
+            None,
+            lang,
+            project,
+            source,
+            agent_kind,
+        )
     }
 
     fn build(

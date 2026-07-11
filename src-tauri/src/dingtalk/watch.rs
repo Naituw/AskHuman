@@ -176,9 +176,7 @@ pub fn parse_watch_action(data: &Value) -> Option<(String, String)> {
         .and_then(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str())
-                .find(|id| {
-                    *id == ACTION_UNWATCH || *id == ACTION_REFRESH || *id == ACTION_REWATCH
-                })
+                .find(|id| *id == ACTION_UNWATCH || *id == ACTION_REFRESH || *id == ACTION_REWATCH)
         })?;
     Some((otid, action.to_string()))
 }
@@ -253,10 +251,7 @@ mod tests {
         assert!(!body.contains("📋"));
         assert_eq!(m["has_todos"], "true");
         assert_eq!(m["todo_summary"], "📋 TODO 0/1 · 当前：跑单测");
-        assert!(m["todo_md"]
-            .as_str()
-            .unwrap()
-            .contains("**跑单测**"));
+        assert!(m["todo_md"].as_str().unwrap().contains("**跑单测**"));
     }
 
     #[test]

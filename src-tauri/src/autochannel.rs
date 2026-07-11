@@ -498,9 +498,15 @@ pub(crate) fn activity_parts(rec: &Value) -> ActivityParts {
 
     // transcript 侧：助手文字永远取此；足迹与时间用于与实时工具比较。
     let ts_text = activity.as_ref().and_then(|a| a.text.clone());
-    let mut steps = activity.as_ref().map(|a| a.steps.clone()).unwrap_or_default();
+    let mut steps = activity
+        .as_ref()
+        .map(|a| a.steps.clone())
+        .unwrap_or_default();
     let mut omitted = activity.as_ref().map(|a| a.steps_omitted).unwrap_or(0);
-    let todos = activity.as_ref().map(|a| a.todos.clone()).unwrap_or_default();
+    let todos = activity
+        .as_ref()
+        .map(|a| a.todos.clone())
+        .unwrap_or_default();
     let ts_at = activity.as_ref().and_then(|a| a.at);
 
     // 实时侧：snapshot 注入的 currentTool。
@@ -717,17 +723,29 @@ mod tests {
 
     #[test]
     fn classify_status_with_id() {
-        assert_eq!(classify("/status 3"), Parsed::Command(Command::Status(Some(3))));
-        assert_eq!(classify("/状态 12"), Parsed::Command(Command::Status(Some(12))));
+        assert_eq!(
+            classify("/status 3"),
+            Parsed::Command(Command::Status(Some(3)))
+        );
+        assert_eq!(
+            classify("/状态 12"),
+            Parsed::Command(Command::Status(Some(12)))
+        );
         // 非数字参数 → 全局。
-        assert_eq!(classify("/status abc"), Parsed::Command(Command::Status(None)));
+        assert_eq!(
+            classify("/status abc"),
+            Parsed::Command(Command::Status(None))
+        );
     }
 
     #[test]
     fn classify_diff_stage_transcript() {
         assert_eq!(classify("/diff"), Parsed::Command(Command::Diff(None)));
         assert_eq!(classify("/diff 3"), Parsed::Command(Command::Diff(Some(3))));
-        assert_eq!(classify("!stage 2"), Parsed::Command(Command::Stage(Some(2))));
+        assert_eq!(
+            classify("!stage 2"),
+            Parsed::Command(Command::Stage(Some(2)))
+        );
         assert_eq!(
             classify("/transcript"),
             Parsed::Command(Command::Transcript(None))
@@ -744,7 +762,10 @@ mod tests {
     fn classify_is_case_insensitive_and_takes_first_token() {
         assert_eq!(classify("/HELP"), Parsed::Command(Command::Help));
         // "now" 非数字 → 全局。
-        assert_eq!(classify("/Status now"), Parsed::Command(Command::Status(None)));
+        assert_eq!(
+            classify("/Status now"),
+            Parsed::Command(Command::Status(None))
+        );
     }
 
     #[test]
@@ -760,7 +781,10 @@ mod tests {
     fn classify_bang_prefix() {
         // `!` 备用前缀（Slack 拦截 `/`）：已知命令等价于斜线版。
         assert_eq!(classify("!status"), Parsed::Command(Command::Status(None)));
-        assert_eq!(classify("!watch 3"), Parsed::Command(Command::Watch(Some(3))));
+        assert_eq!(
+            classify("!watch 3"),
+            Parsed::Command(Command::Watch(Some(3)))
+        );
         assert_eq!(
             classify("!unwatch all"),
             Parsed::Command(Command::Unwatch(WatchSel::All))
@@ -825,13 +849,19 @@ mod tests {
     #[test]
     fn classify_watch_and_unwatch() {
         assert_eq!(classify("/watch"), Parsed::Command(Command::Watch(None)));
-        assert_eq!(classify("/关注 3"), Parsed::Command(Command::Watch(Some(3))));
+        assert_eq!(
+            classify("/关注 3"),
+            Parsed::Command(Command::Watch(Some(3)))
+        );
         assert_eq!(
             classify("/watch 12"),
             Parsed::Command(Command::Watch(Some(12)))
         );
         // 非数字参数 → 列表（同 /status 的宽松处理）。
-        assert_eq!(classify("/watch abc"), Parsed::Command(Command::Watch(None)));
+        assert_eq!(
+            classify("/watch abc"),
+            Parsed::Command(Command::Watch(None))
+        );
         assert_eq!(
             classify("/unwatch"),
             Parsed::Command(Command::Unwatch(WatchSel::Auto))
@@ -866,7 +896,10 @@ mod tests {
             Parsed::Command(Command::Msg(Some(3), Some("第一行\n  第二行".to_string())))
         );
         // 有编号无内容 → 回显。
-        assert_eq!(classify("/msg 3"), Parsed::Command(Command::Msg(Some(3), None)));
+        assert_eq!(
+            classify("/msg 3"),
+            Parsed::Command(Command::Msg(Some(3), None))
+        );
         // 无编号无内容 → (None, None)（增强用法提示）。
         assert_eq!(classify("/msg"), Parsed::Command(Command::Msg(None, None)));
         // 无编号有内容（首 token 非数字）→ 整段作内容，交自动选择流程。
@@ -888,10 +921,22 @@ mod tests {
             Parsed::Command(Command::Msg(Some(1), Some("hi".to_string())))
         );
         // msg-clear / 撤回。
-        assert_eq!(classify("/msg-clear 3"), Parsed::Command(Command::MsgClear(Some(3))));
-        assert_eq!(classify("/撤回 3"), Parsed::Command(Command::MsgClear(Some(3))));
-        assert_eq!(classify("/msg-clear"), Parsed::Command(Command::MsgClear(None)));
-        assert_eq!(classify("!MSG-CLEAR 7"), Parsed::Command(Command::MsgClear(Some(7))));
+        assert_eq!(
+            classify("/msg-clear 3"),
+            Parsed::Command(Command::MsgClear(Some(3)))
+        );
+        assert_eq!(
+            classify("/撤回 3"),
+            Parsed::Command(Command::MsgClear(Some(3)))
+        );
+        assert_eq!(
+            classify("/msg-clear"),
+            Parsed::Command(Command::MsgClear(None))
+        );
+        assert_eq!(
+            classify("!MSG-CLEAR 7"),
+            Parsed::Command(Command::MsgClear(Some(7)))
+        );
     }
 
     #[test]
@@ -922,7 +967,9 @@ mod tests {
             { "seq": 2, "sessionId": "s2", "kind": "grok", "state": "idle" },
         ]);
         assert_eq!(
-            find_by_seq(&snap, 2).and_then(|r| r.get("sessionId")).and_then(|v| v.as_str()),
+            find_by_seq(&snap, 2)
+                .and_then(|r| r.get("sessionId"))
+                .and_then(|v| v.as_str()),
             Some("s2")
         );
         assert!(find_by_seq(&snap, 9).is_none());

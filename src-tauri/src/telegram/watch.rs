@@ -21,7 +21,10 @@ pub fn render_watch_html(f: &WatchFrame, mode: CardMode, now: u64, lang: Lang) -
     use super::markdown::escape_html as esc;
     let mut out = String::new();
     // 头部行（斜体弱化，对应飞书蓝色小字）。
-    out.push_str(&format!("🤖 <i>{}</i>\n", esc(&watch::header_text(f, lang))));
+    out.push_str(&format!(
+        "🤖 <i>{}</i>\n",
+        esc(&watch::header_text(f, lang))
+    ));
     // 状态行（加粗）+ 标题。
     out.push_str(&format!(
         "<b>{}</b>\n",

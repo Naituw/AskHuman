@@ -40,10 +40,7 @@ pub fn render(model: &DiffModel, meta_title: &str) -> String {
         ));
         if f.skipped {
             let reason = f.skip_reason.as_deref().unwrap_or("skipped");
-            body.push_str(&format!(
-                "<p class=\"skip\">({})</p>\n",
-                esc(reason)
-            ));
+            body.push_str(&format!("<p class=\"skip\">({})</p>\n", esc(reason)));
             if f.lines.is_empty() {
                 body.push_str("</section>\n");
                 continue;

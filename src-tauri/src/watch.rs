@@ -357,7 +357,11 @@ pub fn card_view(
     };
 
     // 足迹时间线（飞书 markdown 渲染）；「… 已省略 N 步」标注（灰字）置于首行。
-    let mut step_lines: Vec<String> = f.steps.iter().map(|s| render_step_feishu(s, lang)).collect();
+    let mut step_lines: Vec<String> = f
+        .steps
+        .iter()
+        .map(|s| render_step_feishu(s, lang))
+        .collect();
     if let Some(om) = omitted_line_text(f, lang) {
         step_lines.insert(0, format!("<font color='grey'>{}</font>", om));
     }
@@ -565,14 +569,23 @@ mod tests {
         // 该 session 无 transcript → 「暂无活动」占位。
         assert!(v.no_activity.is_some());
         match v.buttons {
-            crate::feishu::card::WatchButtons::Active { ref unwatch, ref refresh } => {
+            crate::feishu::card::WatchButtons::Active {
+                ref unwatch,
+                ref refresh,
+            } => {
                 assert_eq!(unwatch, "取消关注");
                 assert_eq!(refresh, "立即刷新");
             }
             _ => panic!("expected active buttons"),
         }
         // 终态：单个禁用按钮 + 对应文案。
-        let fin = card_view(&f, CardMode::Final(FinalKind::Cancelled), now, Lang::Zh, None);
+        let fin = card_view(
+            &f,
+            CardMode::Final(FinalKind::Cancelled),
+            now,
+            Lang::Zh,
+            None,
+        );
         match fin.buttons {
             crate::feishu::card::WatchButtons::Final { ref label } => {
                 assert_eq!(label, "已取消关注")
@@ -585,7 +598,10 @@ mod tests {
     fn auto_stopped_label_is_dynamic() {
         // 「自动结束 watch」终态：动态文案「已切换到 {to} · 自动结束关注」。
         let kind = FinalKind::AutoStopped("本地弹窗".to_string());
-        assert_eq!(final_label_text(&kind, Lang::Zh), "已切换到 本地弹窗 · 自动结束关注");
+        assert_eq!(
+            final_label_text(&kind, Lang::Zh),
+            "已切换到 本地弹窗 · 自动结束关注"
+        );
         assert_eq!(
             final_label_text(&kind, Lang::En),
             "Auto-stopped (switched to 本地弹窗)"
@@ -594,8 +610,14 @@ mod tests {
 
     #[test]
     fn idle_label_text() {
-        assert_eq!(final_label_text(&FinalKind::Idle, Lang::Zh), "已空闲 · 已自动取消关注");
-        assert_eq!(final_label_text(&FinalKind::Idle, Lang::En), "Idle · auto-unwatched");
+        assert_eq!(
+            final_label_text(&FinalKind::Idle, Lang::Zh),
+            "已空闲 · 已自动取消关注"
+        );
+        assert_eq!(
+            final_label_text(&FinalKind::Idle, Lang::En),
+            "Idle · auto-unwatched"
+        );
     }
 
     #[test]
@@ -631,11 +653,14 @@ mod tests {
             "⏹ 已结束"
         );
         // 运行起点不入签名（时长走字不应触发编辑）：startedAt 变化签名不变。
-        assert_eq!(signature(&f), signature(&{
-            let mut r6 = rec("working");
-            r6["startedAt"] = json!(now - 7 * 60);
-            build_frame(3, Some(&r6), false)
-        }));
+        assert_eq!(
+            signature(&f),
+            signature(&{
+                let mut r6 = rec("working");
+                r6["startedAt"] = json!(now - 7 * 60);
+                build_frame(3, Some(&r6), false)
+            })
+        );
     }
 
     #[test]

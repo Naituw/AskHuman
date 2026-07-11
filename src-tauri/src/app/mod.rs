@@ -105,7 +105,11 @@ impl GuiBridge {
         if self.done.swap(true, Ordering::SeqCst) {
             return;
         }
-        let request_id = self.request_id.lock().map(|g| g.clone()).unwrap_or_default();
+        let request_id = self
+            .request_id
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
         let _ = self.tx.send(crate::ipc::ClientMsg::Answer {
             request_id,
             action,
@@ -910,8 +914,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                 _ => {}
             }
             #[cfg(unix)]
-            if matches!(event, WindowEvent::Destroyed)
-                && gui_host::is_hosted_label(window.label())
+            if matches!(event, WindowEvent::Destroyed) && gui_host::is_hosted_label(window.label())
             {
                 // 插话窗口销毁 → 关闭其 composer 连接（daemon 视为「composer 关闭」，放行等待 hook）。
                 // 兜底路径：正常取消/提交已由命令关闭，这里覆盖直接关窗/进程内异常。
@@ -989,9 +992,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                             let _ = win.show();
                             crate::perf::mark_env("gui.win_show");
                             // Play the configured popup sound after the window becomes visible.
-                            crate::sound::play(
-                                &app.state::<AppState>().config.general.popup_sound,
-                            );
+                            crate::sound::play(&app.state::<AppState>().config.general.popup_sound);
                             // GUI Helper 由 Daemon 拉起，可能不自动获焦 → 尽力前置。
                             if is_helper {
                                 let _ = win.set_focus();
@@ -1112,7 +1113,8 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                                             pid,
                                         })) => {
                                             use tauri::Emitter;
-                                            let payload = crate::commands::PushedAgent { kind, pid };
+                                            let payload =
+                                                crate::commands::PushedAgent { kind, pid };
                                             crate::commands::set_pushed_agent(payload.clone());
                                             let _ = app_handle.emit("agent-resolved", payload);
                                         }
@@ -1121,7 +1123,8 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                                             use tauri::Emitter;
                                             let app2 = app_handle.clone();
                                             let _ = app_handle.run_on_main_thread(move || {
-                                                if let Some(win) = app2.get_webview_window("popup") {
+                                                if let Some(win) = app2.get_webview_window("popup")
+                                                {
                                                     let _ = win.set_focus();
                                                 }
                                                 let _ = app2.emit("popup-flash", ());
@@ -1200,10 +1203,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
         // 宿主模式：托管窗口全关也不退出（是否退出由宿主自身 evaluate_exit 经 app.exit() 决定）。
         // 故拦下一切「关窗触发」的退出（code=None）；宿主主动退出走 app.exit(code) → code=Some 放行。
         #[cfg(unix)]
-        if app_handle
-            .try_state::<gui_host::HostState>()
-            .is_some()
-        {
+        if app_handle.try_state::<gui_host::HostState>().is_some() {
             if let RunEvent::ExitRequested { code, api, .. } = &event {
                 if code.is_none() {
                     api.prevent_exit();

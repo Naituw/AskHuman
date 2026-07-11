@@ -445,7 +445,9 @@ pub enum ServerMsg {
         agents: Vec<TrayAgentInfo>,
     },
     /// 聚焦并闪烁某请求的弹窗（daemon→该请求的 GUI Helper）。弹窗进程据此 `set_focus` + 通知前端闪烁。
-    FocusPopup { request_id: String },
+    FocusPopup {
+        request_id: String,
+    },
     /// 插话轮询裁决（D→hook；`AgentEvent.interject_poll=true` 的回帧，spec agent-interject D4）。
     /// 首帧 none/message/hold；hold 后二帧 message/release。`text` 仅 message 时有意义。
     InterjectDecision {

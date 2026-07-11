@@ -152,12 +152,7 @@ impl<B: MenuOps> Live<B> {
 }
 
 /// 构建一个 [`Live`] 并在 `container` 的 `pos` 处插入；子菜单则递归建其子项。
-fn build_live<B: MenuOps>(
-    b: &B,
-    container: Container<'_, B>,
-    pos: usize,
-    node: &Node,
-) -> Live<B> {
+fn build_live<B: MenuOps>(b: &B, container: Container<'_, B>, pos: usize, node: &Node) -> Live<B> {
     match node {
         Node::Separator { key } => {
             let handle = b.make_separator(key);
@@ -187,7 +182,12 @@ fn build_live<B: MenuOps>(
             b.insert(container, ChildRef::Sub(&handle), pos);
             // 子项从空开始 diff（全部走 insert 分支），统一增删路径。
             let mut child_lives: Vec<Live<B>> = Vec::new();
-            reconcile(b, Container::Sub(&handle), &mut child_lives, children.clone());
+            reconcile(
+                b,
+                Container::Sub(&handle),
+                &mut child_lives,
+                children.clone(),
+            );
             Live::Submenu {
                 key: key.clone(),
                 text: text.clone(),
@@ -457,7 +457,13 @@ mod tests {
                     let (kind, key, text, enabled, children) = {
                         let nodes = self.nodes.borrow();
                         let n = &nodes[id];
-                        (n.kind, n.key.clone(), n.text.clone(), n.enabled, n.children.clone())
+                        (
+                            n.kind,
+                            n.key.clone(),
+                            n.text.clone(),
+                            n.enabled,
+                            n.children.clone(),
+                        )
                     };
                     let kids = self.render_ids(&children);
                     R {
@@ -540,7 +546,9 @@ mod tests {
         fn set_item_enabled(&self, item: &usize, enabled: bool) {
             let key = self.key_of(*item);
             self.nodes.borrow_mut().get_mut(item).unwrap().enabled = enabled;
-            self.log.borrow_mut().push(format!("setenabled {key} {enabled}"));
+            self.log
+                .borrow_mut()
+                .push(format!("setenabled {key} {enabled}"));
         }
         fn set_sub_text(&self, sub: &usize, text: &str) {
             let key = self.key_of(*sub);
@@ -550,7 +558,9 @@ mod tests {
         fn set_sub_enabled(&self, sub: &usize, enabled: bool) {
             let key = self.key_of(*sub);
             self.nodes.borrow_mut().get_mut(sub).unwrap().enabled = enabled;
-            self.log.borrow_mut().push(format!("setenabled {key} {enabled}"));
+            self.log
+                .borrow_mut()
+                .push(format!("setenabled {key} {enabled}"));
         }
 
         fn insert(&self, container: Container<'_, Self>, child: ChildRef<'_, Self>, pos: usize) {
@@ -559,7 +569,9 @@ mod tests {
             match container {
                 Container::Root => {
                     self.root.borrow_mut().insert(pos, id);
-                    self.log.borrow_mut().push(format!("insert {key} @{pos} root"));
+                    self.log
+                        .borrow_mut()
+                        .push(format!("insert {key} @{pos} root"));
                 }
                 Container::Sub(sid) => {
                     let pkey = self.key_of(*sid);
@@ -647,10 +659,18 @@ mod tests {
     fn initial_build_inserts_all_in_order() {
         let b = MockOps::new();
         let mut d = Driver::new(&b);
-        d.apply(vec![dis("title", "Running"), sep("s1"), it("settings", "Settings")]);
+        d.apply(vec![
+            dis("title", "Running"),
+            sep("s1"),
+            it("settings", "Settings"),
+        ]);
         assert_eq!(
             b.render(),
-            vec![ri("title", "Running", false), rs("s1"), ri("settings", "Settings", true)]
+            vec![
+                ri("title", "Running", false),
+                rs("s1"),
+                ri("settings", "Settings", true)
+            ]
         );
         // 三个条目 → 三次 insert。
         assert_eq!(b.structural_ops(), 3);
@@ -679,7 +699,10 @@ mod tests {
         assert_eq!(b.structural_ops(), 0);
         assert_eq!(
             b.render(),
-            vec![ri("uptime", "0s", false).with_text("15s"), ri("settings", "Settings", true)]
+            vec![
+                ri("uptime", "0s", false).with_text("15s"),
+                ri("settings", "Settings", true)
+            ]
         );
     }
 
@@ -707,7 +730,13 @@ mod tests {
             it("settings", "Settings"),
         ]);
         assert_eq!(b.structural_ops(), 1);
-        assert_eq!(b.ops(), vec!["make I uptime".to_string(), "insert uptime @1 root".to_string()]);
+        assert_eq!(
+            b.ops(),
+            vec![
+                "make I uptime".to_string(),
+                "insert uptime @1 root".to_string()
+            ]
+        );
         assert_eq!(
             b.render(),
             vec![
@@ -732,7 +761,10 @@ mod tests {
         assert_eq!(b.ops(), vec!["remove uptime root".to_string()]);
         assert_eq!(
             b.render(),
-            vec![ri("title", "Running", false), ri("settings", "Settings", true)]
+            vec![
+                ri("title", "Running", false),
+                ri("settings", "Settings", true)
+            ]
         );
     }
 
@@ -751,7 +783,10 @@ mod tests {
         assert_eq!(b.structural_ops(), 2);
         assert_eq!(
             b.ops(),
-            vec!["remove version root".to_string(), "remove uptime root".to_string()]
+            vec![
+                "remove version root".to_string(),
+                "remove uptime root".to_string()
+            ]
         );
     }
 
@@ -774,15 +809,25 @@ mod tests {
         let b = MockOps::new();
         let mut d = Driver::new(&b);
         // 待答从「只读计数行」切到「子菜单」即此类：同一槽位 key 变了。
-        d.apply(vec![dis("pending_count", "1 pending"), it("settings", "Settings")]);
+        d.apply(vec![
+            dis("pending_count", "1 pending"),
+            it("settings", "Settings"),
+        ]);
         b.clear_log();
         d.apply(vec![
-            Node::submenu("pending_menu", "1 pending", true, vec![it("focus:a", "Q a")]),
+            Node::submenu(
+                "pending_menu",
+                "1 pending",
+                true,
+                vec![it("focus:a", "Q a")],
+            ),
             it("settings", "Settings"),
         ]);
         // pending_menu 新增（含 1 个子项）+ pending_count 移除。
         assert!(b.ops().contains(&"insert pending_menu @0 root".to_string()));
-        assert!(b.ops().contains(&"insert focus:a @0 pending_menu".to_string()));
+        assert!(b
+            .ops()
+            .contains(&"insert focus:a @0 pending_menu".to_string()));
         assert!(b.ops().contains(&"remove pending_count root".to_string()));
         assert_eq!(
             b.render(),
@@ -879,9 +924,19 @@ mod tests {
     fn submenu_title_change_sets_text() {
         let b = MockOps::new();
         let mut d = Driver::new(&b);
-        d.apply(vec![Node::submenu("pending", "1 pending", true, vec![it("x", "X")])]);
+        d.apply(vec![Node::submenu(
+            "pending",
+            "1 pending",
+            true,
+            vec![it("x", "X")],
+        )]);
         b.clear_log();
-        d.apply(vec![Node::submenu("pending", "1 待答", true, vec![it("x", "X")])]);
+        d.apply(vec![Node::submenu(
+            "pending",
+            "1 待答",
+            true,
+            vec![it("x", "X")],
+        )]);
         assert_eq!(b.ops(), vec!["settext pending 1 待答".to_string()]);
     }
 
@@ -902,7 +957,12 @@ mod tests {
                     sub,
                 ));
             }
-            vec![Node::submenu("agents_menu", "Agent Status (1 · 0)", true, children)]
+            vec![Node::submenu(
+                "agents_menu",
+                "Agent Status (1 · 0)",
+                true,
+                children,
+            )]
         };
         let b = MockOps::new();
         let mut d = Driver::new(&b);
@@ -914,7 +974,9 @@ mod tests {
             ("s1", "Send Message…", true),
             ("s2", "Send Message…", false),
         ]));
-        assert!(b.ops().contains(&"insert agent:s2 @3 agents_menu".to_string()));
+        assert!(b
+            .ops()
+            .contains(&"insert agent:s2 @3 agents_menu".to_string()));
         assert!(b.ops().contains(&"insert ij:s2 @0 agent:s2".to_string()));
         assert!(!b.ops().iter().any(|l| l.contains("remove")));
 
@@ -924,16 +986,16 @@ mod tests {
             ("s1", "Send Message… (queued)", true),
             ("s2", "Send Message…", false),
         ]));
-        assert_eq!(b.ops(), vec!["settext ij:s1 Send Message… (queued)".to_string()]);
+        assert_eq!(
+            b.ops(),
+            vec!["settext ij:s1 Send Message… (queued)".to_string()]
+        );
         assert_eq!(b.structural_ops(), 0);
 
         // agent 下线：仅移除其子菜单。
         b.clear_log();
         d.apply(menu(vec![("s2", "Send Message…", false)]));
-        assert_eq!(
-            b.ops(),
-            vec!["remove agent:s1 agents_menu".to_string()]
-        );
+        assert_eq!(b.ops(), vec!["remove agent:s1 agents_menu".to_string()]);
     }
 
     #[test]

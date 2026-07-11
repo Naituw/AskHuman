@@ -349,8 +349,14 @@ fn menu_signature(up: bool, lang: Lang, data: &TrayData, lifecycle_on: bool) -> 
         .map(|a| {
             format!(
                 "{}:{}:{}:{}:{}:{}:{}:{}",
-                a.session_id, a.seq, a.kind, a.title, a.project_name, a.state,
-                a.pending_interject as u8, a.focusable as u8
+                a.session_id,
+                a.seq,
+                a.kind,
+                a.title,
+                a.project_name,
+                a.state,
+                a.pending_interject as u8,
+                a.focusable as u8
             )
         })
         .collect::<Vec<_>>()
@@ -425,7 +431,8 @@ fn build_specs(up: bool, lang: Lang, data: &TrayData, lifecycle_on: bool) -> Vec
         if !data.im_connections.is_empty() {
             nodes.push(Node::item(
                 "st.im",
-                i18n::tr(lang, "tray.imConnections").replace("{list}", &data.im_connections.join(", ")),
+                i18n::tr(lang, "tray.imConnections")
+                    .replace("{list}", &data.im_connections.join(", ")),
                 false,
             ));
         }
@@ -449,8 +456,8 @@ fn build_specs(up: bool, lang: Lang, data: &TrayData, lifecycle_on: bool) -> Vec
     nodes.push(Node::separator("sep.actions"));
     // 「待答」放在操作区最前、独立一段——它是唯一可点的状态项，混在上方一堆灰色只读行里显得乱。
     if up && data.active_requests > 0 {
-        let title =
-            i18n::tr(lang, "tray.pendingQuestions").replace("{n}", &data.active_requests.to_string());
+        let title = i18n::tr(lang, "tray.pendingQuestions")
+            .replace("{n}", &data.active_requests.to_string());
         // 有逐条摘要 → 子菜单（点击聚焦对应弹窗）；缺摘要（旧 daemon）→ 退回只读计数行。
         if data.pending_requests.is_empty() {
             nodes.push(Node::item("st.pending_count", title, false));
@@ -551,7 +558,12 @@ fn build_specs(up: bool, lang: Lang, data: &TrayData, lifecycle_on: bool) -> Vec
                     // 无任何可用动作（grok 且终端不可聚焦）：列为只读行，仅供感知。
                     children.push(Node::item(format!("agent:{}", a.session_id), title, false));
                 } else {
-                    children.push(Node::submenu(format!("agent:{}", a.session_id), title, true, sub));
+                    children.push(Node::submenu(
+                        format!("agent:{}", a.session_id),
+                        title,
+                        true,
+                        sub,
+                    ));
                 }
             }
             nodes.push(Node::submenu("agents_menu", label, true, children));
@@ -958,8 +970,8 @@ async fn handle_host_conn(stream: tokio::net::UnixStream, app: AppHandle) {
                     cwd,
                 });
                 let app2 = app.clone();
-                let _ = app
-                    .run_on_main_thread(move || open_window(&app2, kind, all, project, target));
+                let _ =
+                    app.run_on_main_thread(move || open_window(&app2, kind, all, project, target));
             }
             HostMsg::Ping => {
                 let _ = ipc::write_msg(&mut w, &HostMsg::Ping).await;

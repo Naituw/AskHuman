@@ -561,7 +561,10 @@ mod unix_impl {
             let migrated = crate::integrations::agent_lifecycle::migrate_outdated();
             if !migrated.is_empty() {
                 let names: Vec<&str> = migrated.iter().map(|k| k.as_str()).collect();
-                log(&format!("migrated outdated lifecycle hooks: {}", names.join(", ")));
+                log(&format!(
+                    "migrated outdated lifecycle hooks: {}",
+                    names.join(", ")
+                ));
             }
         }
 
@@ -616,7 +619,13 @@ mod unix_impl {
                     if state.active.load(Ordering::SeqCst) == 0
                         && state.agents.working_count() == 0
                         && !has_agent_subs(&state)
-                        && !state.watch.subs.lock().unwrap().iter().any(|s| !s.rewatchable)
+                        && !state
+                            .watch
+                            .subs
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .any(|s| !s.rewatchable)
                     {
                         let idle = state
                             .last_active
@@ -731,14 +740,18 @@ mod unix_impl {
         // 无启用 IM 时 `ensure_inbound_listeners` 自身零钥匙串直接返回。监听不计入保活，不阻止空闲退出。
         {
             let st = state.clone();
-            tokio::spawn(async move { ensure_inbound_listeners(&st).await; });
+            tokio::spawn(async move {
+                ensure_inbound_listeners(&st).await;
+            });
         }
 
         // `/watch` 实时关注引擎（spec docs/specs/im-watch.md）：先恢复持久化订阅（重启后继续
         // 编辑同一张卡），再进入 Notify / 自适应 tick 循环。
         {
             let st = state.clone();
-            tokio::spawn(async move { watch_restore_and_run(st).await; });
+            tokio::spawn(async move {
+                watch_restore_and_run(st).await;
+            });
         }
 
         // select/confirm 路由重建旁路任务：避免 card handler → ensure_select_routes 的 async 类型环。
@@ -803,7 +816,9 @@ mod unix_impl {
         /// 菜单栏宿主订阅：接管连接，持续推送 `TrayState`（非保活）。
         TraySub,
         /// 插话 composer 窗口连接：接管连接，登记「composer 打开」；断开＝关闭（非保活）。
-        InterjectComposer { session_id: String },
+        InterjectComposer {
+            session_id: String,
+        },
         /// 插话 Hold：hook 连接等待 composer 提交/取消（非保活；首帧 Hold 已回，等二帧）。
         InterjectHold {
             session_id: String,
@@ -1001,13 +1016,13 @@ mod unix_impl {
                         }
 
                         // PID 解析：优先用显式 pid，否则从 hint_pid 走缓存/walk。
-                        let resolved_pid = pid.or_else(|| {
-                            state.agents.resolve_pid(&session_id, kind, hint_pid)
-                        });
+                        let resolved_pid =
+                            pid.or_else(|| state.agents.resolve_pid(&session_id, kind, hint_pid));
 
-                        let changed = state
-                            .agents
-                            .apply_event(kind, ev, &session_id, resolved_pid, cwd, ts);
+                        let changed =
+                            state
+                                .agents
+                                .apply_event(kind, ev, &session_id, resolved_pid, cwd, ts);
                         if changed {
                             state.agents.persist();
                             broadcast_agents_state(state);
@@ -1023,9 +1038,13 @@ mod unix_impl {
                                 phase: crate::ipc::ToolPhase::Pre,
                                 name,
                                 object,
-                            }) => state
-                                .agents
-                                .set_current_tool(kind, &session_id, resolved_pid, name, object),
+                            }) => state.agents.set_current_tool(
+                                kind,
+                                &session_id,
+                                resolved_pid,
+                                name,
+                                object,
+                            ),
                             Some(crate::ipc::ToolReport {
                                 phase: crate::ipc::ToolPhase::Post,
                                 ..
@@ -1729,7 +1748,10 @@ mod unix_impl {
 
         loop {
             match ipc::read_msg::<_, ClientMsg>(&mut reader).await {
-                Ok(Some(ClientMsg::InterjectSubmit { session_id: sid, text })) => {
+                Ok(Some(ClientMsg::InterjectSubmit {
+                    session_id: sid,
+                    text,
+                })) => {
                     interject_submit(state, &sid, &text);
                 }
                 Ok(Some(ClientMsg::InterjectClear { session_id: sid })) => {
@@ -2473,13 +2495,16 @@ mod unix_impl {
                     .map(WatchClient::Telegram)
                 }
                 "slack" => {
-                    let client = crate::slack::client::SlackClient::new(&config.channels.slack).ok()?;
+                    let client =
+                        crate::slack::client::SlackClient::new(&config.channels.slack).ok()?;
                     let dm = client.open_dm().await.ok()?;
                     Some(WatchClient::Slack { client, dm })
                 }
-                "dingding" => crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
-                    .ok()
-                    .map(WatchClient::DingTalk),
+                "dingding" => {
+                    crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
+                        .ok()
+                        .map(WatchClient::DingTalk)
+                }
                 _ => None,
             }
         }
@@ -2564,11 +2589,11 @@ mod unix_impl {
                         .map_err(|e| e.to_string())
                 }
                 WatchClient::Telegram(c) => {
-                    let mid: i64 = message_id.parse().map_err(|_| "bad message id".to_string())?;
+                    let mid: i64 = message_id
+                        .parse()
+                        .map_err(|_| "bad message id".to_string())?;
                     match (&mode, session_id) {
-                        (crate::watch::CardMode::Final(kind), Some(_))
-                            if kind.is_rewatchable() =>
-                        {
+                        (crate::watch::CardMode::Final(kind), Some(_)) if kind.is_rewatchable() => {
                             let markup = crate::telegram::watch::rewatch_keyboard(kind, lang);
                             let html = crate::telegram::watch::render_watch_html(
                                 frame,
@@ -2583,9 +2608,8 @@ mod unix_impl {
                         _ => {
                             let markup = matches!(mode, crate::watch::CardMode::Active)
                                 .then(|| crate::telegram::watch::inline_keyboard(lang));
-                            let html = crate::telegram::watch::render_watch_html(
-                                frame, mode, now, lang,
-                            );
+                            let html =
+                                crate::telegram::watch::render_watch_html(frame, mode, now, lang);
                             c.edit_message_text(mid, &html, Some("HTML"), markup)
                                 .await
                                 .map_err(|e| e.to_string())
@@ -2594,9 +2618,7 @@ mod unix_impl {
                 }
                 WatchClient::Slack { client, dm } => {
                     let (blocks, fallback) =
-                        crate::slack::watch::build_watch_blocks(
-                            frame, mode, now, lang, session_id,
-                        );
+                        crate::slack::watch::build_watch_blocks(frame, mode, now, lang, session_id);
                     client
                         .update_message(dm, message_id, Some(&blocks), &fallback)
                         .await
@@ -2734,8 +2756,7 @@ mod unix_impl {
             let select_active = select_is_last_on(state, &ch);
             for e in entries.iter().filter(|e| e.channel == ch) {
                 let rec = find_agent_by_session(&snapshot, &e.session_id);
-                let frame =
-                    crate::watch::build_frame(e.seq, rec, waiting.contains(&e.session_id));
+                let frame = crate::watch::build_frame(e.seq, rec, waiting.contains(&e.session_id));
                 let ended = frame.phase == crate::watch::WatchPhase::Ended;
                 let idle = frame.phase == crate::watch::WatchPhase::Idle;
                 let finalize = ended || idle;
@@ -2804,8 +2825,7 @@ mod unix_impl {
                             log(&format!("watch: move card failed: {}", err));
                             let mut subs = state.watch.subs.lock().unwrap();
                             let mut drop_it = false;
-                            if let Some(s) =
-                                subs.iter_mut().find(|s| s.message_id == e.message_id)
+                            if let Some(s) = subs.iter_mut().find(|s| s.message_id == e.message_id)
                             {
                                 s.fails += 1;
                                 drop_it = s.fails >= 5;
@@ -2819,7 +2839,10 @@ mod unix_impl {
                     }
                     continue;
                 }
-                match client.edit(&e.message_id, &frame, mode, now, lang, None).await {
+                match client
+                    .edit(&e.message_id, &frame, mode, now, lang, None)
+                    .await
+                {
                     Ok(()) => {
                         let mut subs = state.watch.subs.lock().unwrap();
                         if finalize {
@@ -3422,7 +3445,12 @@ mod unix_impl {
             Some("idle") => "autoChannel.stateIdle",
             _ => "autoChannel.stateEnded",
         };
-        format!("[{}] {} · {}", e.seq, head, crate::i18n::tr(lang, state_key))
+        format!(
+            "[{}] {} · {}",
+            e.seq,
+            head,
+            crate::i18n::tr(lang, state_key)
+        )
     }
 
     /// `/watch` 命令：`Some(编号)` 关注该 agent（发实时状态卡，成功回执就是卡片本身）；
@@ -3435,9 +3463,12 @@ mod unix_impl {
         lang: Lang,
     ) {
         if !crate::watch::channel_supported(channel_id) {
-            let _ =
-                reply_channel_text(channel_id, config, crate::i18n::tr(lang, "watch.unsupported"))
-                    .await;
+            let _ = reply_channel_text(
+                channel_id,
+                config,
+                crate::i18n::tr(lang, "watch.unsupported"),
+            )
+            .await;
             return;
         }
         let Some(id) = sel else {
@@ -3447,9 +3478,8 @@ mod unix_impl {
             let has_working = snapshot
                 .as_array()
                 .map(|l| {
-                    l.iter().any(|r| {
-                        r.get("state").and_then(|v| v.as_str()) == Some("working")
-                    })
+                    l.iter()
+                        .any(|r| r.get("state").and_then(|v| v.as_str()) == Some("working"))
                 })
                 .unwrap_or(false);
             let mut out = String::new();
@@ -3482,10 +3512,10 @@ mod unix_impl {
             return;
         };
         let snapshot = state.agents.snapshot();
-        let Some(rec) = snapshot
-            .as_array()
-            .and_then(|l| l.iter().find(|r| r.get("seq").and_then(|v| v.as_u64()) == Some(id)))
-        else {
+        let Some(rec) = snapshot.as_array().and_then(|l| {
+            l.iter()
+                .find(|r| r.get("seq").and_then(|v| v.as_u64()) == Some(id))
+        }) else {
             let text = crate::i18n::tr(lang, "autoChannel.statusDetailNotFound")
                 .replace("{id}", &id.to_string())
                 .replace("{p}", crate::autochannel::cmd_prefix(channel_id));
@@ -3556,7 +3586,15 @@ mod unix_impl {
         // 与「单选卡点选就地变卡」共用同一套 bookkeeping；`replaced` 仅供上面的上限判定，收尾在
         // helper 内按 session 重算）。
         register_watch_at(
-            state, channel_id, &session_id, id, &message_id, &frame, one_shot, config, lang,
+            state,
+            channel_id,
+            &session_id,
+            id,
+            &message_id,
+            &frame,
+            one_shot,
+            config,
+            lang,
         )
         .await;
     }
@@ -3654,9 +3692,12 @@ mod unix_impl {
     ) {
         use crate::autochannel::WatchSel;
         if !crate::watch::channel_supported(channel_id) {
-            let _ =
-                reply_channel_text(channel_id, config, crate::i18n::tr(lang, "watch.unsupported"))
-                    .await;
+            let _ = reply_channel_text(
+                channel_id,
+                config,
+                crate::i18n::tr(lang, "watch.unsupported"),
+            )
+            .await;
             return;
         }
         // 只操作本渠道的活跃订阅（rewatchable 已是终态，不参与 unwatch）。
@@ -3735,8 +3776,7 @@ mod unix_impl {
         let text = if targets.len() == 1 {
             crate::i18n::tr(lang, "watch.unwatchDone").replace("{id}", &targets[0].seq.to_string())
         } else {
-            crate::i18n::tr(lang, "watch.unwatchAllDone")
-                .replace("{n}", &targets.len().to_string())
+            crate::i18n::tr(lang, "watch.unwatchAllDone").replace("{n}", &targets.len().to_string())
         };
         let _ = reply_channel_text(channel_id, config, &text).await;
     }
@@ -3781,7 +3821,10 @@ mod unix_impl {
                 )
                 .await
             {
-                log(&format!("watch: finalize card failed ({}): {}", channel_id, err));
+                log(&format!(
+                    "watch: finalize card failed ({}): {}",
+                    channel_id, err
+                ));
             }
         }
         {
@@ -3874,7 +3917,10 @@ mod unix_impl {
                 let dm = client.open_dm().await.ok()?;
                 let (blocks, fallback) =
                     crate::slack::select::build_select_blocks(view, Lang::current());
-                client.post_message(&dm, Some(&blocks), &fallback).await.ok()
+                client
+                    .post_message(&dm, Some(&blocks), &fallback)
+                    .await
+                    .ok()
             }
             _ => None,
         }
@@ -3957,7 +4003,9 @@ mod unix_impl {
             .unwrap()
             .iter()
             .filter(|s| s.channel == channel_id)
-            .map(|s| crate::select::agent_option_by_session(snapshot, &s.session_id, s.seq, now, lang))
+            .map(|s| {
+                crate::select::agent_option_by_session(snapshot, &s.session_id, s.seq, now, lang)
+            })
             .collect()
     }
 
@@ -4228,8 +4276,8 @@ mod unix_impl {
         ack: tokio::sync::oneshot::Sender<Option<serde_json::Value>>,
     ) {
         // Stage 双按钮确认卡。
-        if let Some((mid, ok)) = crate::feishu::card::parse_confirm_action(data) {
-            handle_confirm_action(state, channel_id, &mid, ok, Some(ack)).await;
+        if let Some((mid, slot)) = crate::feishu::card::parse_confirm_action(data) {
+            handle_confirm_action(state, channel_id, &mid, slot, Some(ack)).await;
             return;
         }
         let Some((mid, idx)) = crate::feishu::card::parse_select_action(data) else {
@@ -4420,8 +4468,10 @@ mod unix_impl {
         // 登记订阅（含换新卡收尾）+ 消费 picker + 让 watch 立即认领本消息（`ensure_watch_routes` 不会递归
         // 回 select）。select 侧不在此重挂（避免 recv-loop 递归 → 非 Send）：本 mid 已被 watch 认领覆盖，
         // 残留的 select 认领无害，下次 send_agent_picker / 监听重建时收敛。
-        register_watch_at(state, channel_id, session_id, seq, mid, &frame, false, config, lang)
-            .await;
+        register_watch_at(
+            state, channel_id, session_id, seq, mid, &frame, false, config, lang,
+        )
+        .await;
         remove_picker(state, channel_id, mid);
         ensure_watch_routes(state).await;
     }
@@ -4669,8 +4719,10 @@ mod unix_impl {
             }
         };
         // 登记订阅（含换新卡：本渠道同 session 旧卡定格 Replaced）+ 让 watch 引擎认领新卡按钮。
-        register_watch_at(state, "dingding", session_id, seq, &new_mid, &frame, ended, config, lang)
-            .await;
+        register_watch_at(
+            state, "dingding", session_id, seq, &new_mid, &frame, ended, config, lang,
+        )
+        .await;
         ensure_watch_routes(state).await;
         // 单选卡定格「已选择 [n]」并消费 picker。
         let label = crate::i18n::tr(lang, "select.pickedCard").replace("{id}", &seq.to_string());
@@ -4719,7 +4771,10 @@ mod unix_impl {
                     )
                     .await
                 {
-                    log(&format!("select: finalize dingtalk unwatch card failed: {}", err));
+                    log(&format!(
+                        "select: finalize dingtalk unwatch card failed: {}",
+                        err
+                    ));
                 }
             }
             {
@@ -4762,7 +4817,10 @@ mod unix_impl {
                     .update_card_private(otid, map, serde_json::json!({}))
                     .await
                 {
-                    log(&format!("select: refresh dingtalk unwatch card failed: {}", err));
+                    log(&format!(
+                        "select: refresh dingtalk unwatch card failed: {}",
+                        err
+                    ));
                 }
             }
             if let Some(p) = state
@@ -4780,13 +4838,17 @@ mod unix_impl {
 
     /// 定格一张钉钉单选卡（按 key 更新公有 `finalized=true` + `final_label`）：隐藏循环、显示定格文案。
     async fn dd_finalize_select_card(config: &AppConfig, otid: &str, final_label: &str) {
-        if let Ok(client) = crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding) {
+        if let Ok(client) = crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
+        {
             let map = crate::dingtalk::select::build_select_final_param_map(final_label);
             if let Err(err) = client
                 .update_card_private(otid, map, serde_json::json!({}))
                 .await
             {
-                log(&format!("select: finalize dingtalk select card failed: {}", err));
+                log(&format!(
+                    "select: finalize dingtalk select card failed: {}",
+                    err
+                ));
             }
         }
     }
@@ -4815,8 +4877,8 @@ mod unix_impl {
                 c.answer_callback_query(id).await;
             }
         }
-        if let Some(ok) = crate::telegram::confirm::parse_confirm_action(data) {
-            handle_confirm_action(state, "telegram", &mid.to_string(), ok, None).await;
+        if let Some(slot) = crate::telegram::confirm::parse_confirm_action(data) {
+            handle_confirm_action(state, "telegram", &mid.to_string(), slot, None).await;
             return;
         }
         let Some(idx) = crate::telegram::select::parse_select_action(data) else {
@@ -4828,8 +4890,8 @@ mod unix_impl {
     /// 处理 Slack 单选卡 / 确认卡点击（ack 已在 ws 层完成）。
     async fn handle_select_slack_action(state: &Arc<ServerState>, payload: &serde_json::Value) {
         let config = AppConfig::load();
-        if let Some((ts, ok)) = crate::slack::confirm::parse_confirm_action(payload) {
-            handle_confirm_action(state, "slack", &ts, ok, None).await;
+        if let Some((ts, slot)) = crate::slack::confirm::parse_confirm_action(payload) {
+            handle_confirm_action(state, "slack", &ts, slot, None).await;
             return;
         }
         let Some((ts, idx)) = crate::slack::select::parse_select_action(payload) else {
@@ -4875,12 +4937,21 @@ mod unix_impl {
                 activate_channel_on_action(state, channel_id, config, lang).await;
             }
             PickerKind::Unwatch => {
-                select_pick_unwatch_inplace(state, channel_id, mid, &session_id, config, lang).await;
+                select_pick_unwatch_inplace(state, channel_id, mid, &session_id, config, lang)
+                    .await;
             }
             PickerKind::Msg => {
                 let content = picker.payload.clone().unwrap_or_default();
-                select_pick_msg_inplace(state, channel_id, mid, &session_id, &content, config, lang)
-                    .await;
+                select_pick_msg_inplace(
+                    state,
+                    channel_id,
+                    mid,
+                    &session_id,
+                    &content,
+                    config,
+                    lang,
+                )
+                .await;
                 // 卡片点『发送』＝在该渠道操作 → 设为活跃槽（与 /msg 一致，用户决策）。
                 activate_channel_on_action(state, channel_id, config, lang).await;
             }
@@ -4914,8 +4985,14 @@ mod unix_impl {
         let snapshot = state.agents.snapshot();
         let rec = find_agent_by_session(&snapshot, session_id);
         let label = msg_pick_deliver(state, channel_id, session_id, rec, content, lang);
-        finalize_select_card_edit(channel_id, config, mid, &crate::select::title_msg(lang), &label)
-            .await;
+        finalize_select_card_edit(
+            channel_id,
+            config,
+            mid,
+            &crate::select::title_msg(lang),
+            &label,
+        )
+        .await;
         remove_picker(state, channel_id, mid);
     }
 
@@ -5004,8 +5081,10 @@ mod unix_impl {
             ));
             return;
         }
-        register_watch_at(state, channel_id, session_id, seq, mid, &frame, false, config, lang)
-            .await;
+        register_watch_at(
+            state, channel_id, session_id, seq, mid, &frame, false, config, lang,
+        )
+        .await;
         remove_picker(state, channel_id, mid);
         ensure_watch_routes(state).await;
     }
@@ -5052,7 +5131,10 @@ mod unix_impl {
                     )
                     .await
                 {
-                    log(&format!("select: finalize unwatch card failed ({}): {}", channel_id, err));
+                    log(&format!(
+                        "select: finalize unwatch card failed ({}): {}",
+                        channel_id, err
+                    ));
                 }
             }
             {
@@ -5122,9 +5204,14 @@ mod unix_impl {
                 ) {
                     let html = crate::telegram::select::render_select_html(view);
                     let markup = crate::telegram::select::inline_keyboard(view, lang);
-                    if let Err(err) = c.edit_message_text(m, &html, Some("HTML"), Some(markup)).await
+                    if let Err(err) = c
+                        .edit_message_text(m, &html, Some("HTML"), Some(markup))
+                        .await
                     {
-                        log(&format!("select: refresh telegram select card failed: {}", err));
+                        log(&format!(
+                            "select: refresh telegram select card failed: {}",
+                            err
+                        ));
                     }
                 }
             }
@@ -5133,10 +5220,12 @@ mod unix_impl {
                     if let Ok(dm) = c.open_dm().await {
                         let (blocks, fallback) =
                             crate::slack::select::build_select_blocks(view, lang);
-                        if let Err(err) =
-                            c.update_message(&dm, mid, Some(&blocks), &fallback).await
+                        if let Err(err) = c.update_message(&dm, mid, Some(&blocks), &fallback).await
                         {
-                            log(&format!("select: refresh slack select card failed: {}", err));
+                            log(&format!(
+                                "select: refresh slack select card failed: {}",
+                                err
+                            ));
                         }
                     }
                 }
@@ -5162,9 +5251,13 @@ mod unix_impl {
                     tg.chat_id.clone(),
                     tg.api_base_url.clone(),
                 ) {
-                    let html = crate::telegram::select::render_select_final_html(title, final_label);
+                    let html =
+                        crate::telegram::select::render_select_final_html(title, final_label);
                     if let Err(err) = c.edit_message_text(m, &html, Some("HTML"), None).await {
-                        log(&format!("select: finalize telegram select card failed: {}", err));
+                        log(&format!(
+                            "select: finalize telegram select card failed: {}",
+                            err
+                        ));
                     }
                 }
             }
@@ -5173,10 +5266,12 @@ mod unix_impl {
                     if let Ok(dm) = c.open_dm().await {
                         let (blocks, fallback) =
                             crate::slack::select::build_select_final_blocks(title, final_label);
-                        if let Err(err) =
-                            c.update_message(&dm, mid, Some(&blocks), &fallback).await
+                        if let Err(err) = c.update_message(&dm, mid, Some(&blocks), &fallback).await
                         {
-                            log(&format!("select: finalize slack select card failed: {}", err));
+                            log(&format!(
+                                "select: finalize slack select card failed: {}",
+                                err
+                            ));
                         }
                     }
                 }
@@ -5298,7 +5393,9 @@ mod unix_impl {
         content: &str,
         lang: Lang,
     ) -> String {
-        let n = state.interject.append(session_id, content, Some(channel_id));
+        let n = state
+            .interject
+            .append(session_id, content, Some(channel_id));
         state.interject.persist();
         broadcast_agents_state(state);
         if n == 0 {
@@ -5322,8 +5419,8 @@ mod unix_impl {
             let seq = find_agent_by_session(&snapshot, &session_id)
                 .and_then(|r| r.get("seq").and_then(|v| v.as_u64()))
                 .unwrap_or(0);
-            let text =
-                crate::i18n::tr(lang, "autoChannel.msgReadReceipt").replace("{id}", &seq.to_string());
+            let text = crate::i18n::tr(lang, "autoChannel.msgReadReceipt")
+                .replace("{id}", &seq.to_string());
             let config = AppConfig::load();
             for ch in channels {
                 let _ = reply_channel_text(&ch, &config, &text).await;
@@ -5369,7 +5466,11 @@ mod unix_impl {
             })
             .map(|r| {
                 let seq = r.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
-                format!("[{}] {}", seq, crate::autochannel::kind_title_project(r, lang))
+                format!(
+                    "[{}] {}",
+                    seq,
+                    crate::autochannel::kind_title_project(r, lang)
+                )
             })
             .collect()
     }
@@ -5450,7 +5551,8 @@ mod unix_impl {
     ) {
         // `/msg-clear` 撤回插话＝在该渠道操作 → 设为活跃槽（用户决策）。
         activate_channel_on_action(state, channel_id, config, lang).await;
-        let Some(sid) = resolve_msg_target(state, channel_id, sel, false, config, lang).await else {
+        let Some(sid) = resolve_msg_target(state, channel_id, sel, false, config, lang).await
+        else {
             return;
         };
         let text = if state.interject.clear(&sid) {
@@ -5589,7 +5691,8 @@ mod unix_impl {
                     None => {
                         let snapshot = state.agents.snapshot();
                         let watching = watching_sessions(state, channel_id);
-                        let opts = crate::select::watch_options(&snapshot, &watching, now_secs(), lang);
+                        let opts =
+                            crate::select::watch_options(&snapshot, &watching, now_secs(), lang);
                         let sent = send_agent_picker(
                             state,
                             channel_id,
@@ -5746,8 +5849,15 @@ mod unix_impl {
                     let final_kind = crate::watch::FinalKind::AutoStopped(
                         crate::autochannel::channel_label(new_id, Lang::current()),
                     );
-                    finalize_and_drop_watches(state, &old, &targets, final_kind, &cfg, Lang::current())
-                        .await;
+                    finalize_and_drop_watches(
+                        state,
+                        &old,
+                        &targets,
+                        final_kind,
+                        &cfg,
+                        Lang::current(),
+                    )
+                    .await;
                 }
             }
         }
@@ -6056,11 +6166,13 @@ mod unix_impl {
         let snapshot = state.agents.snapshot();
         let Some((seq, kind, _title, project, cwd)) = agent_export_meta(&snapshot, session_id)
         else {
-            let _ = reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noCwd")).await;
+            let _ =
+                reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noCwd")).await;
             return;
         };
         let Some(cwd) = cwd else {
-            let _ = reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noCwd")).await;
+            let _ =
+                reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noCwd")).await;
             return;
         };
         let Some(root) = crate::gitutil::find_git_root(std::path::Path::new(&cwd)) else {
@@ -6076,8 +6188,12 @@ mod unix_impl {
             }
         };
         if model.total_paths == 0 {
-            let _ = reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noUnstaged"))
-                .await;
+            let _ = reply_channel_text(
+                channel_id,
+                config,
+                crate::i18n::tr(lang, "export.noUnstaged"),
+            )
+            .await;
             return;
         }
         let meta = format!("Diff · [{seq}] {kind} · {project}");
@@ -6085,7 +6201,10 @@ mod unix_impl {
         let (bytes, name) = match channel_id {
             "feishu" => {
                 let md = crate::export::render_diff_md(&model, &meta);
-                (md.into_bytes(), crate::export::diff_filename(seq, &project, "md"))
+                (
+                    md.into_bytes(),
+                    crate::export::diff_filename(seq, &project, "md"),
+                )
             }
             "dingding" | "slack" => match crate::export::render_diff_docx(&model, &meta) {
                 Ok(b) => (b, crate::export::diff_filename(seq, &project, "docx")),
@@ -6120,12 +6239,17 @@ mod unix_impl {
         let snapshot = state.agents.snapshot();
         let Some((seq, kind_s, title, project, _)) = agent_export_meta(&snapshot, session_id)
         else {
-            let _ = reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noCwd")).await;
+            let _ =
+                reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noCwd")).await;
             return;
         };
         let Some(akind) = crate::agents::AgentKind::parse(&kind_s) else {
-            let _ = reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noTranscript"))
-                .await;
+            let _ = reply_channel_text(
+                channel_id,
+                config,
+                crate::i18n::tr(lang, "export.noTranscript"),
+            )
+            .await;
             return;
         };
         let doc = match crate::agents::transcript_full::load_events(akind, session_id) {
@@ -6155,10 +6279,7 @@ mod unix_impl {
                 )
             }
             "dingding" | "slack" => match crate::export::render_transcript_docx(&doc, &meta) {
-                Ok(b) => (
-                    b,
-                    crate::export::transcript_filename(seq, slug_src, "docx"),
-                ),
+                Ok(b) => (b, crate::export::transcript_filename(seq, slug_src, "docx")),
                 Err(e) => {
                     let t = crate::i18n::tr(lang, "export.sendFailed").replace("{err}", &e);
                     let _ = reply_channel_text(channel_id, config, &t).await;
@@ -6189,11 +6310,13 @@ mod unix_impl {
         let snapshot = state.agents.snapshot();
         let Some((_seq, _kind, _title, project, cwd)) = agent_export_meta(&snapshot, session_id)
         else {
-            let _ = reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noCwd")).await;
+            let _ =
+                reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noCwd")).await;
             return;
         };
         let Some(cwd) = cwd else {
-            let _ = reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noCwd")).await;
+            let _ =
+                reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noCwd")).await;
             return;
         };
         let Some(root) = crate::gitutil::find_git_root(std::path::Path::new(&cwd)) else {
@@ -6209,17 +6332,17 @@ mod unix_impl {
             }
         };
         if preview.paths.is_empty() {
-            let _ = reply_channel_text(channel_id, config, crate::i18n::tr(lang, "export.noUnstaged"))
-                .await;
+            let _ = reply_channel_text(
+                channel_id,
+                config,
+                crate::i18n::tr(lang, "export.noUnstaged"),
+            )
+            .await;
             return;
         }
-        let view = crate::confirm::stage_confirm_view(
-            lang,
-            &project,
-            &preview.paths,
-            preview.paths.len(),
-        );
-        let Some(mid) = send_confirm_card(channel_id, config, &view).await else {
+        let view =
+            crate::confirm::stage_confirm_view(lang, &project, &preview.paths, preview.paths.len());
+        let Some(mid) = crate::confirm::transport::send(channel_id, config, &view).await else {
             let _ = reply_channel_text(channel_id, config, "Failed to send confirm card").await;
             return;
         };
@@ -6244,7 +6367,7 @@ mod unix_impl {
 
     /// 钉钉 stage 确认（专用确认模板双按钮）：成功返回 true。
     async fn handle_stage_dd_submit(state: &Arc<ServerState>, data: &serde_json::Value) -> bool {
-        let Some((otid, ok)) = crate::dingtalk::confirm::parse_confirm_action(data) else {
+        let Some((otid, slot)) = crate::dingtalk::confirm::parse_confirm_action(data) else {
             return false;
         };
         let has = {
@@ -6255,76 +6378,16 @@ mod unix_impl {
         if !has {
             return false;
         }
-        handle_confirm_action(state, "dingding", &otid, ok, None).await;
+        handle_confirm_action(state, "dingding", &otid, slot, None).await;
         true
-    }
-
-    async fn send_confirm_card(
-        channel_id: &str,
-        config: &AppConfig,
-        view: &crate::confirm::ConfirmView,
-    ) -> Option<String> {
-        match channel_id {
-            "feishu" => {
-                let client =
-                    crate::feishu::client::FeishuClient::new(&config.channels.feishu).ok()?;
-                let card = crate::feishu::card::build_confirm_card(view);
-                client.send_card(&card).await.ok()
-            }
-            "dingding" => {
-                // 专用确认模板：双按钮 + finalized（docs/assets/dingtalk-confirm-card-template.json）。
-                let client =
-                    crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
-                        .ok()?;
-                let otid = uuid::Uuid::new_v4().to_string();
-                let map = crate::dingtalk::confirm::build_param_map(view);
-                let private = serde_json::json!({});
-                let tpl = {
-                    let t = config.channels.dingding.confirm_card_template_id.trim();
-                    if t.is_empty() {
-                        crate::dingtalk::confirm::DEFAULT_CONFIRM_CARD_TEMPLATE_ID
-                    } else {
-                        t
-                    }
-                };
-                client
-                    .create_and_deliver_card(&otid, tpl, map, private)
-                    .await
-                    .ok()?;
-                Some(otid)
-            }
-            "telegram" => {
-                let tg = &config.channels.telegram;
-                let client = crate::telegram::TelegramClient::new(
-                    tg.bot_token.clone(),
-                    tg.chat_id.clone(),
-                    tg.api_base_url.clone(),
-                )
-                .ok()?;
-                let html = crate::telegram::confirm::build_html(view);
-                let markup = crate::telegram::confirm::inline_keyboard(view);
-                client
-                    .send_message(&html, Some("HTML"), Some(markup))
-                    .await
-                    .ok()
-                    .map(|mid| mid.to_string())
-            }
-            "slack" => {
-                let client = crate::slack::client::SlackClient::new(&config.channels.slack).ok()?;
-                let dm = client.open_dm().await.ok()?;
-                let (blocks, fallback) = crate::slack::confirm::build_blocks(view);
-                client.post_message(&dm, Some(&blocks), &fallback).await.ok()
-            }
-            _ => None,
-        }
     }
 
     async fn handle_confirm_action(
         state: &Arc<ServerState>,
         channel_id: &str,
         mid: &str,
-        ok: bool,
-        ack: Option<tokio::sync::oneshot::Sender<Option<serde_json::Value>>>,
+        slot: crate::confirm::ConfirmSlot,
+        ack: Option<crate::confirm::transport::FsAck>,
     ) {
         let lang = Lang::current();
         let config = AppConfig::load();
@@ -6341,9 +6404,15 @@ mod unix_impl {
             }
             return;
         };
-        if !ok {
+        let is_confirm = slot == crate::confirm::ConfirmSlot::Primary;
+        if !is_confirm {
             let text = crate::i18n::tr(lang, "confirm.stageCancelled").to_string();
-            finalize_confirm_card(channel_id, &config, mid, &entry.title, &text, ack).await;
+            let fv = crate::confirm::ConfirmFinalView {
+                title: entry.title.clone(),
+                body: text.clone(),
+                label: crate::confirm::transport::truncate_for_label(&text),
+            };
+            crate::confirm::transport::finalize(channel_id, &config, mid, &fv, ack).await;
             state.select.route_refresh.notify_one();
             return;
         }
@@ -6352,7 +6421,12 @@ mod unix_impl {
             Ok(p) => p,
             Err(e) => {
                 let text = crate::i18n::tr(lang, "confirm.stageFailed").replace("{err}", &e);
-                finalize_confirm_card(channel_id, &config, mid, &entry.title, &text, ack).await;
+                let fv = crate::confirm::ConfirmFinalView {
+                    title: entry.title.clone(),
+                    body: text.clone(),
+                    label: crate::confirm::transport::truncate_for_label(&text),
+                };
+                crate::confirm::transport::finalize(channel_id, &config, mid, &fv, ack).await;
                 state.select.route_refresh.notify_one();
                 return;
             }
@@ -6360,7 +6434,12 @@ mod unix_impl {
         let fp = crate::gitutil::paths_fingerprint(&preview.paths);
         if fp != entry.paths_fp {
             let text = crate::i18n::tr(lang, "confirm.stageChanged").to_string();
-            finalize_confirm_card(channel_id, &config, mid, &entry.title, &text, ack).await;
+            let fv = crate::confirm::ConfirmFinalView {
+                title: entry.title.clone(),
+                body: text.clone(),
+                label: crate::confirm::transport::truncate_for_label(&text),
+            };
+            crate::confirm::transport::finalize(channel_id, &config, mid, &fv, ack).await;
             let _ = reply_channel_text(channel_id, &config, &text).await;
             state.select.route_refresh.notify_one();
             return;
@@ -6369,7 +6448,12 @@ mod unix_impl {
             Ok(r) => {
                 let text = crate::i18n::tr(lang, "confirm.stageDone")
                     .replace("{n}", &r.paths.len().to_string());
-                finalize_confirm_card(channel_id, &config, mid, &entry.title, &text, ack).await;
+                let fv = crate::confirm::ConfirmFinalView {
+                    title: entry.title.clone(),
+                    body: text.clone(),
+                    label: crate::confirm::transport::truncate_for_label(&text),
+                };
+                crate::confirm::transport::finalize(channel_id, &config, mid, &fv, ack).await;
                 let show: Vec<&str> = r
                     .paths
                     .iter()
@@ -6388,97 +6472,16 @@ mod unix_impl {
             }
             Err(e) => {
                 let text = crate::i18n::tr(lang, "confirm.stageFailed").replace("{err}", &e);
-                finalize_confirm_card(channel_id, &config, mid, &entry.title, &text, ack).await;
+                let fv = crate::confirm::ConfirmFinalView {
+                    title: entry.title.clone(),
+                    body: text.clone(),
+                    label: crate::confirm::transport::truncate_for_label(&text),
+                };
+                crate::confirm::transport::finalize(channel_id, &config, mid, &fv, ack).await;
                 let _ = reply_channel_text(channel_id, &config, &text).await;
             }
         }
         state.select.route_refresh.notify_one();
-    }
-
-    async fn finalize_confirm_card(
-        channel_id: &str,
-        config: &AppConfig,
-        mid: &str,
-        title: &str,
-        text: &str,
-        ack: Option<tokio::sync::oneshot::Sender<Option<serde_json::Value>>>,
-    ) {
-        // 终态按钮文案：整段结果摘要截断到按钮可读长度。
-        let btn = {
-            let t = text.trim();
-            let one: String = t.chars().take(40).collect();
-            if t.chars().count() > 40 {
-                format!("{one}…")
-            } else {
-                one
-            }
-        };
-        match channel_id {
-            "feishu" => {
-                // 双按钮 → 单个禁用按钮（已取消 / 已暂存 / 暂存失败…）
-                let card =
-                    crate::feishu::card::build_confirm_final_card(title, text, &btn);
-                if let Some(ack) = ack {
-                    let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-                } else if let Ok(client) =
-                    crate::feishu::client::FeishuClient::new(&config.channels.feishu)
-                {
-                    let _ = client.patch_card(mid, &card).await;
-                }
-            }
-            "telegram" => {
-                let tg = &config.channels.telegram;
-                if let (Ok(client), Ok(mid_i)) = (
-                    crate::telegram::TelegramClient::new(
-                        tg.bot_token.clone(),
-                        tg.chat_id.clone(),
-                        tg.api_base_url.clone(),
-                    ),
-                    mid.parse::<i64>(),
-                ) {
-                    let html = format!(
-                        "<b>{}</b>\n{}",
-                        crate::telegram::markdown::escape_html(title),
-                        crate::telegram::markdown::escape_html(text)
-                    );
-                    let _ = client
-                        .edit_message_text(mid_i, &html, Some("HTML"), None)
-                        .await;
-                }
-            }
-            "slack" => {
-                if let Ok(client) = crate::slack::client::SlackClient::new(&config.channels.slack) {
-                    if let Ok(dm) = client.open_dm().await {
-                        let (blocks, fallback) =
-                            crate::slack::confirm::build_final_blocks(title, text);
-                        let _ = client.update_message(&dm, mid, Some(&blocks), &fallback).await;
-                    }
-                }
-            }
-            "dingding" => {
-                // 专用确认模板终态：finalized=true + final_label。
-                if let Ok(client) =
-                    crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
-                {
-                    let map = serde_json::json!({
-                        "title": title,
-                        "markdown": text,
-                        "btn_primary": "",
-                        "btn_secondary": "",
-                        "finalized": "true",
-                        "final_label": text,
-                    });
-                    let _ = client
-                        .update_card_private(mid, map, serde_json::json!({}))
-                        .await;
-                }
-            }
-            _ => {
-                if let Some(ack) = ack {
-                    let _ = ack.send(None);
-                }
-            }
-        }
     }
 
     async fn reply_channel_file(
@@ -7345,9 +7348,13 @@ mod unix_impl {
             // 释放。释放必须按身份判定，绝不能把「新监听」的认领误删（否则会重复 spawn）。
             let reg = InboundRegistry::default();
             let old = reg.claim("feishu").expect("old listener claims");
-            let taken = reg.take("feishu").expect("config change takes current stop");
+            let taken = reg
+                .take("feishu")
+                .expect("config change takes current stop");
             assert!(Arc::ptr_eq(&old, &taken));
-            let new = reg.claim("feishu").expect("new listener re-claims after take");
+            let new = reg
+                .claim("feishu")
+                .expect("new listener re-claims after take");
             reg.release("feishu", &old); // 旧任务迟到的释放
             assert!(
                 reg.claim("feishu").is_none(),

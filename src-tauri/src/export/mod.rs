@@ -7,8 +7,8 @@ pub mod transcript_docx;
 pub mod transcript_html;
 pub mod transcript_md;
 
-use crate::gitutil::DiffModel;
 use crate::agents::transcript_full::TranscriptDoc;
+use crate::gitutil::DiffModel;
 
 /// Sanitize a path segment for filenames.
 pub fn slug(s: &str, max: usize) -> String {

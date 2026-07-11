@@ -148,8 +148,12 @@ async fn run_poc(
 
     // 建卡投放。
     let t0 = std::time::Instant::now();
-    let param_map =
-        crate::dingtalk::watch::build_watch_param_map(&poc_frame(0, started), CardMode::Active, started, lang);
+    let param_map = crate::dingtalk::watch::build_watch_param_map(
+        &poc_frame(0, started),
+        CardMode::Active,
+        started,
+        lang,
+    );
     if let Err(e) = client
         .create_and_deliver_card(&out_track_id, template, param_map, json!({}))
         .await
@@ -175,7 +179,10 @@ async fn run_poc(
             lang,
         );
         let t = std::time::Instant::now();
-        match client.update_card_private(&out_track_id, map, json!({})).await {
+        match client
+            .update_card_private(&out_track_id, map, json!({}))
+            .await
+        {
             Ok(()) => {
                 let ms = t.elapsed().as_millis();
                 lat_ms.push(ms);
@@ -196,7 +203,10 @@ async fn run_poc(
         now,
         lang,
     );
-    match client.update_card_private(&out_track_id, map, json!({})).await {
+    match client
+        .update_card_private(&out_track_id, map, json!({}))
+        .await
+    {
         Ok(()) => println!("finalized ok"),
         Err(e) => {
             errors += 1;
@@ -232,7 +242,9 @@ async fn run_poc(
 /// 合成一帧演进中的 watch 内容：文字随 i 变化，足迹步在 进行中/已完成 间轮替，
 /// 让端上能直观看到「流式」效果。
 fn poc_frame(i: usize, started: u64) -> crate::watch::WatchFrame {
-    use crate::agents::activity::{StepState, TodoItem, TodoState, ToolDisplay, ToolLabel, ToolStep};
+    use crate::agents::activity::{
+        StepState, TodoItem, TodoState, ToolDisplay, ToolLabel, ToolStep,
+    };
     let step = |label: ToolLabel, object: &str, state: StepState| ToolStep {
         tool: ToolDisplay {
             label,
@@ -248,11 +260,19 @@ fn poc_frame(i: usize, started: u64) -> crate::watch::WatchFrame {
         phase: crate::watch::WatchPhase::Working,
         text: Some(format!("流式更新 #{i}（验证就地编辑与频控）")),
         steps: vec![
-            step(ToolLabel::Run, &format!("update #{}", i.saturating_sub(1)), StepState::Done),
+            step(
+                ToolLabel::Run,
+                &format!("update #{}", i.saturating_sub(1)),
+                StepState::Done,
+            ),
             step(
                 ToolLabel::Run,
                 &format!("update #{i}"),
-                if i % 5 == 4 { StepState::Failed } else { StepState::Running },
+                if i % 5 == 4 {
+                    StepState::Failed
+                } else {
+                    StepState::Running
+                },
             ),
         ],
         steps_omitted: i.saturating_sub(2),

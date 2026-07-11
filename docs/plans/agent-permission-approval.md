@@ -277,6 +277,21 @@ Tauri 本进程调用契约，不持久化；同版本前后端一起升级。
 
 ## 6. 实施里程碑
 
+### M-1：先抽离通用双动作确认卡展示 / 传输层
+
+本里程碑是纯重构，必须先完成且保持 `/stage` 行为不变，之后才开始 PermissionRequest 业务：
+
+1. `confirm.rs` 抽出通用 `ConfirmAction { id, label, role }`、有序双动作 `ConfirmView`、
+   `ConfirmFinalView` 和 wire slot；builder 不含 git/stage 语义；
+2. 飞书/Telegram/Slack builder 按 action role 渲染，callback 只解析为第一/第二槽位；真实 action id 由
+   daemon 台账映射，不能把 `confirm_ok/cancel` 当业务语义；
+3. 钉钉保留既有已发布模板和 template ID：动态变量继续使用 title/markdown/两按钮文案/finalized/final_label；
+   固定红/蓝槽位与 `confirm_ok/confirm_cancel` 只作为 wire slot，不修改或重发模板；
+4. 从 daemon 的 `/stage` 区域抽出通用 `confirm::transport::{send, finalize}`，统一四渠道发送/定格；
+5. `/stage` 台账继续独立保留 git_root、文件指纹与 `git add -A`，只保存通用 view 并把槽位映射回
+   `stage_confirm/stage_cancel`；不得迁入权限状态或通用 transport；
+6. builder、slot parser、固定钉钉模板变量、send/finalize 纯构件和 `/stage` 回归测试通过后单独提交。
+
 ### M0：通用确认模型与协议
 
 1. `models.rs`：增加 `ConfirmRequest`、`ConfirmAction`、`ConfirmResult`、action role、终态/过期原因；

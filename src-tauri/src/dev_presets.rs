@@ -153,9 +153,7 @@ pub fn validate_preset_name(name: &str) -> Result<(), String> {
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
     {
-        return Err(
-            "preset name may only contain letters, digits, '-', '_', '.'".into(),
-        );
+        return Err("preset name may only contain letters, digits, '-', '_', '.'".into());
     }
     Ok(())
 }
@@ -393,12 +391,13 @@ pub fn apply_presets_to_instance(
         .into_owned();
 
     for name in preset_names {
-        let entry = index.presets.entry(name.clone()).or_insert_with(|| {
-            PresetIndexEntry {
+        let entry = index
+            .presets
+            .entry(name.clone())
+            .or_insert_with(|| PresetIndexEntry {
                 file: format!("{name}.json"),
                 lease: None,
-            }
-        });
+            });
         // Ensure body file is registered.
         entry.file = format!("{name}.json");
         if let Some(lease) = &entry.lease {
@@ -494,12 +493,7 @@ pub fn redact_channels(channels: &ChannelsConfig) -> serde_json::Value {
     if let Some(obj) = v.as_object_mut() {
         for key in ["telegram", "dingding", "feishu", "slack"] {
             if let Some(ch) = obj.get_mut(key).and_then(|x| x.as_object_mut()) {
-                for secret_key in [
-                    "botToken",
-                    "clientSecret",
-                    "appSecret",
-                    "appToken",
-                ] {
+                for secret_key in ["botToken", "clientSecret", "appSecret", "appToken"] {
                     if let Some(val) = ch.get(secret_key).and_then(|x| x.as_str()) {
                         if !val.is_empty() {
                             ch.insert(secret_key.to_string(), serde_json::json!("***"));

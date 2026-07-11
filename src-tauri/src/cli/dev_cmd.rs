@@ -167,12 +167,13 @@ fn cmd_enable(args: &[String]) {
     } else {
         println!("  presets    {}", presets.join(", "));
     }
-    if !bin.join(if cfg!(windows) {
-        "AskHuman.exe"
-    } else {
-        "AskHuman"
-    })
-    .is_file()
+    if !bin
+        .join(if cfg!(windows) {
+            "AskHuman.exe"
+        } else {
+            "AskHuman"
+        })
+        .is_file()
     {
         println!("  next       run ./scripts/install.sh  (installs into this instance bin)");
     } else {
@@ -270,7 +271,11 @@ fn cmd_status() {
             println!(
                 "  bin        {} ({})",
                 bin.display(),
-                if bin.is_file() { "present" } else { "missing — run ./scripts/install.sh" }
+                if bin.is_file() {
+                    "present"
+                } else {
+                    "missing — run ./scripts/install.sh"
+                }
             );
 
             let meta = dev_presets::read_meta(&home);

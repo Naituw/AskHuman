@@ -25,16 +25,8 @@ pub fn render(doc: &TranscriptDoc, meta_title: &str) -> String {
     let mut first = true;
     for ev in &doc.events {
         match ev {
-            TranscriptEvent::UserText {
-                text,
-                at,
-                at_label,
-            }
-            | TranscriptEvent::AssistantText {
-                text,
-                at,
-                at_label,
-            } => {
+            TranscriptEvent::UserText { text, at, at_label }
+            | TranscriptEvent::AssistantText { text, at, at_label } => {
                 if !first {
                     md.push_str("\n---\n\n");
                 }
@@ -51,11 +43,7 @@ pub fn render(doc: &TranscriptDoc, meta_title: &str) -> String {
                 md.push_str(text);
                 md.push_str("\n\n");
             }
-            TranscriptEvent::Thinking {
-                text,
-                at,
-                at_label,
-            } => {
+            TranscriptEvent::Thinking { text, at, at_label } => {
                 let one: String = text.chars().take(120).collect();
                 md.push_str(&format!(
                     "_thinking{}: {one}…_\n\n",
@@ -68,8 +56,7 @@ pub fn render(doc: &TranscriptDoc, meta_title: &str) -> String {
                 ..
             } => {
                 let mark = if *is_error { "✕" } else { "●" };
-                let (label, obj) =
-                    crate::agents::transcript_full::split_tool_line(args_summary);
+                let (label, obj) = crate::agents::transcript_full::split_tool_line(args_summary);
                 match obj {
                     Some(o) => md.push_str(&format!("{mark} **{label}**: *{o}*\n\n")),
                     None => md.push_str(&format!("{mark} **{label}**\n\n")),

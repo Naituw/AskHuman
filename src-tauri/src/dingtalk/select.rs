@@ -86,7 +86,11 @@ fn option_md(opt: &SelectOption) -> String {
     line1.push_str(&font(&head, Some(SIZE_SMALL), None));
     match &opt.secondary {
         Some(sub) if !sub.is_empty() => {
-            format!("{}\n\n{}", line1, font(sub, Some(SIZE_SMALL), Some(COLOR_GREY)))
+            format!(
+                "{}\n\n{}",
+                line1,
+                font(sub, Some(SIZE_SMALL), Some(COLOR_GREY))
+            )
         }
         _ => line1,
     }
@@ -160,7 +164,14 @@ mod tests {
     use super::*;
     use crate::select::{build_view, SelectAction, SelectDot, SelectOption};
 
-    fn opt(id: &str, dot: Option<SelectDot>, seq: u64, primary: &str, badge: Option<&str>, sub: &str) -> SelectOption {
+    fn opt(
+        id: &str,
+        dot: Option<SelectDot>,
+        seq: u64,
+        primary: &str,
+        badge: Option<&str>,
+        sub: &str,
+    ) -> SelectOption {
         SelectOption {
             id: id.to_string(),
             dot,
@@ -177,14 +188,35 @@ mod tests {
         let view = build_view(
             "选择要实时关注的 Agent：".into(),
             vec![
-                opt("s-work", Some(SelectDot::Working), 2, "Claude Code · api-server", Some("· 关注中"), "重构数据层"),
-                opt("s-idle", Some(SelectDot::Idle), 5, "Cursor · web", None, "写测试"),
+                opt(
+                    "s-work",
+                    Some(SelectDot::Working),
+                    2,
+                    "Claude Code · api-server",
+                    Some("· 关注中"),
+                    "重构数据层",
+                ),
+                opt(
+                    "s-idle",
+                    Some(SelectDot::Idle),
+                    5,
+                    "Cursor · web",
+                    None,
+                    "写测试",
+                ),
             ],
             SelectAction::Watch,
             Lang::Zh,
         );
         let m = build_select_param_map(&view, Lang::Zh);
-        for key in ["title", "btn_text", "btn_color", "finalized", "final_label", "loop_object_list"] {
+        for key in [
+            "title",
+            "btn_text",
+            "btn_color",
+            "finalized",
+            "final_label",
+            "loop_object_list",
+        ] {
             assert!(m.get(key).is_some(), "missing {key}");
         }
         assert_eq!(m["btn_text"], "关注");
@@ -207,7 +239,12 @@ mod tests {
     #[test]
     fn button_color_and_text_by_action() {
         let mk = |action: SelectAction| {
-            let v = build_view("T".into(), vec![opt("s", None, 1, "p", None, "t")], action, Lang::Zh);
+            let v = build_view(
+                "T".into(),
+                vec![opt("s", None, 1, "p", None, "t")],
+                action,
+                Lang::Zh,
+            );
             build_select_param_map(&v, Lang::Zh)
         };
         let w = mk(SelectAction::Watch);
@@ -249,6 +286,9 @@ mod tests {
             "outTrackId": "select-x",
             "value": {"cardPrivateData":{"actionIds":["select"],"params":{}}},
         });
-        assert_eq!(parse_select_action(&empty), Some(("select-x".into(), String::new())));
+        assert_eq!(
+            parse_select_action(&empty),
+            Some(("select-x".into(), String::new()))
+        );
     }
 }

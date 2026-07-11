@@ -73,8 +73,16 @@ pub fn install() -> std::io::Result<()> {
     std::fs::write(&path, plist_contents(&current_exe()))?;
     // 先 bootout 旧实例（忽略错误），再 bootstrap 新的；失败回退 load -w。best-effort。
     let domain = format!("gui/{}", unsafe { libc::getuid() });
-    let _ = run("launchctl", &["bootout", &domain, &path.display().to_string()]);
-    if run("launchctl", &["bootstrap", &domain, &path.display().to_string()]).is_err() {
+    let _ = run(
+        "launchctl",
+        &["bootout", &domain, &path.display().to_string()],
+    );
+    if run(
+        "launchctl",
+        &["bootstrap", &domain, &path.display().to_string()],
+    )
+    .is_err()
+    {
         let _ = run("launchctl", &["load", "-w", &path.display().to_string()]);
     }
     Ok(())
@@ -84,7 +92,10 @@ pub fn install() -> std::io::Result<()> {
 pub fn uninstall() -> std::io::Result<()> {
     let path = item_path();
     let domain = format!("gui/{}", unsafe { libc::getuid() });
-    let _ = run("launchctl", &["bootout", &domain, &path.display().to_string()]);
+    let _ = run(
+        "launchctl",
+        &["bootout", &domain, &path.display().to_string()],
+    );
     let _ = run("launchctl", &["unload", &path.display().to_string()]);
     if path.exists() {
         std::fs::remove_file(&path)?;

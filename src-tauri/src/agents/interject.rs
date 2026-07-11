@@ -100,7 +100,10 @@ impl InterjectStore {
         };
         let mut map = store.inner.lock().unwrap();
         for (sid, entries) in parsed.sessions {
-            let entries: Vec<String> = entries.into_iter().filter(|e| !e.trim().is_empty()).collect();
+            let entries: Vec<String> = entries
+                .into_iter()
+                .filter(|e| !e.trim().is_empty())
+                .collect();
             if !sid.is_empty() && !entries.is_empty() {
                 // 仅为仍有待送达条目的 session 恢复来源渠道（回执只在消息被消费时才有意义）。
                 let receipt_channels: Vec<String> = parsed
@@ -585,7 +588,10 @@ mod tests {
         };
         // 有 hook 在等 → 立即送达（返回 0），不登记回执。
         assert_eq!(s.append("s1", "hi", Some("feishu")), 0);
-        assert!(matches!(rx.blocking_recv().unwrap(), WaitOutcome::Message(_)));
+        assert!(matches!(
+            rx.blocking_recv().unwrap(),
+            WaitOutcome::Message(_)
+        ));
     }
 
     #[test]
@@ -641,7 +647,8 @@ mod tests {
     #[test]
     fn loads_legacy_file_without_receipt_channels() {
         // 老格式（只有 sessions、无 receipt_channels 字段）须能无损加载（向后兼容，不丢队列）。
-        let dir = std::env::temp_dir().join(format!("ah-interject-legacy-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("ah-interject-legacy-{}", uuid::Uuid::new_v4()));
         let path = dir.join("interject.json");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&path, r#"{"sessions":{"s1":["旧消息"]}}"#).unwrap();

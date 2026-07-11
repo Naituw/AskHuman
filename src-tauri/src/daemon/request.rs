@@ -300,7 +300,11 @@ const PREVIEW_MAX_CHARS: usize = 24;
 
 pub fn preview_of(req: &AskRequest) -> String {
     let source = first_nonempty_line(&req.message.text)
-        .or_else(|| req.questions.first().and_then(|q| first_nonempty_line(&q.message)))
+        .or_else(|| {
+            req.questions
+                .first()
+                .and_then(|q| first_nonempty_line(&q.message))
+        })
         .unwrap_or_default();
     truncate_chars(&source, PREVIEW_MAX_CHARS)
 }

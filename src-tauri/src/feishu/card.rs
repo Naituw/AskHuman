@@ -497,7 +497,11 @@ pub fn parse_watch_action(event: &Value) -> Option<(String, WatchAction)> {
         Some("unwatch") => WatchAction::Unwatch,
         Some("refresh") => WatchAction::Refresh,
         Some("rewatch") => {
-            let sid = obj.get("sid").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let sid = obj
+                .get("sid")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             WatchAction::Rewatch(sid)
         }
         _ => return None,
@@ -613,7 +617,10 @@ pub fn build_select_card(v: &crate::select::SelectView) -> Value {
         "icon": { "tag": "standard_icon", "token": "maybe_filled", "color": "blue" },
         "margin": "0px 0px 0px 0px",
     });
-    let mut body = vec![header_row, json!({ "tag": "hr", "margin": "0px 0px 0px 0px" })];
+    let mut body = vec![
+        header_row,
+        json!({ "tag": "hr", "margin": "0px 0px 0px 0px" }),
+    ];
     body.extend(elements);
     json!({
         "schema": "2.0",
@@ -634,11 +641,24 @@ pub fn build_select_final_card(title: &str, text: &str) -> Value {
     })
 }
 
-/// Confirm 卡回调键：`{"confirm":"ok"|"cancel"}`。
+/// Confirm 卡回调键：`{"confirm":"ok"|"cancel"}`（wire slot，不代表业务语义）。
 const CONFIRM_ACTION_KEY: &str = "confirm";
+/// Wire slot callback values.
+const WIRE_SLOT_PRIMARY: &str = "ok";
+const WIRE_SLOT_SECONDARY: &str = "cancel";
+
+fn feishu_button_type(role: crate::confirm::ActionRole) -> &'static str {
+    match role {
+        crate::confirm::ActionRole::Primary => "primary",
+        crate::confirm::ActionRole::Destructive => "danger",
+        crate::confirm::ActionRole::Default => "default",
+    }
+}
 
 /// 轻量确认卡：标题 + markdown 正文 + 确认/取消两按钮。
 pub fn build_confirm_card(view: &crate::confirm::ConfirmView) -> Value {
+    let primary_type = feishu_button_type(view.confirm.role);
+    let secondary_type = feishu_button_type(view.cancel.role);
     json!({
         "schema": "2.0",
         "config": { "update_multi": true },
@@ -661,10 +681,10 @@ pub fn build_confirm_card(view: &crate::confirm::ConfirmView) -> Value {
                         "weight": 1,
                         "elements": [{
                             "tag": "button",
-                            "text": { "tag": "plain_text", "content": view.confirm_label },
-                            "type": "primary",
+                            "text": { "tag": "plain_text", "content": view.confirm_label() },
+                            "type": primary_type,
                             "width": "fill",
-                            "behaviors": [{ "type": "callback", "value": { CONFIRM_ACTION_KEY: "ok" } }],
+                            "behaviors": [{ "type": "callback", "value": { CONFIRM_ACTION_KEY: WIRE_SLOT_PRIMARY } }],
                         }],
                     },
                     {
@@ -673,10 +693,10 @@ pub fn build_confirm_card(view: &crate::confirm::ConfirmView) -> Value {
                         "weight": 1,
                         "elements": [{
                             "tag": "button",
-                            "text": { "tag": "plain_text", "content": view.cancel_label },
-                            "type": "default",
+                            "text": { "tag": "plain_text", "content": view.cancel_label() },
+                            "type": secondary_type,
                             "width": "fill",
-                            "behaviors": [{ "type": "callback", "value": { CONFIRM_ACTION_KEY: "cancel" } }],
+                            "behaviors": [{ "type": "callback", "value": { CONFIRM_ACTION_KEY: WIRE_SLOT_SECONDARY } }],
                         }],
                     },
                 ],
@@ -704,8 +724,8 @@ pub fn build_confirm_final_card(title: &str, body_md: &str, button_label: &str) 
     })
 }
 
-/// 解析确认卡点击 → `(open_message_id, ok)`；非 confirm 回调 None。
-pub fn parse_confirm_action(event: &Value) -> Option<(String, bool)> {
+/// 解析确认卡点击 → `(open_message_id, slot)`；非 confirm 回调 None。
+pub fn parse_confirm_action(event: &Value) -> Option<(String, crate::confirm::ConfirmSlot)> {
     let action = event.get("action")?;
     let value = action.get("value")?;
     let obj: Value = match value {
@@ -713,9 +733,9 @@ pub fn parse_confirm_action(event: &Value) -> Option<(String, bool)> {
         v => v.clone(),
     };
     let verb = obj.get(CONFIRM_ACTION_KEY)?.as_str()?;
-    let ok = match verb {
-        "ok" | "confirm" => true,
-        "cancel" => false,
+    let slot = match verb {
+        "ok" | "confirm" => crate::confirm::ConfirmSlot::Primary,
+        "cancel" => crate::confirm::ConfirmSlot::Secondary,
         _ => return None,
     };
     let message_id = event
@@ -724,7 +744,7 @@ pub fn parse_confirm_action(event: &Value) -> Option<(String, bool)> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    Some((message_id, ok))
+    Some((message_id, slot))
 }
 
 /// 把一条 `card.action.trigger` 解析为单选卡点击：`(open_message_id, 选项下标)`；非单选卡回调 None。
@@ -1189,7 +1209,10 @@ mod tests {
         let elements = card["body"]["elements"].as_array().unwrap();
         // 样式化头部行（eye icon + 蓝色小字）+ 分隔线。
         assert_eq!(elements[0]["icon"]["token"], "eye_outlined");
-        assert_eq!(elements[0]["text"]["content"], "实时关注 [3] Cursor — HumanInLoop");
+        assert_eq!(
+            elements[0]["text"]["content"],
+            "实时关注 [3] Cursor — HumanInLoop"
+        );
         assert_eq!(elements[1]["tag"], "hr");
         // 状态行加粗（含回合统计）+ 标题；活动区带绝对时刻标签、文字 + 空行 + 彩色圆点足迹时间线。
         let head_md = elements[2]["content"].as_str().unwrap();
@@ -1343,21 +1366,28 @@ mod tests {
         // 每个选项一行 column_set；行间以 hr 分隔。
         let rows: Vec<&Value> = els.iter().filter(|e| e["tag"] == "column_set").collect();
         assert_eq!(rows.len(), 2);
-        let expected_label = crate::select::SelectAction::Watch
-            .button_label(crate::i18n::Lang::current());
+        let expected_label =
+            crate::select::SelectAction::Watch.button_label(crate::i18n::Lang::current());
         let btn0 = &rows[0]["columns"][1]["elements"][0];
         assert_eq!(btn0["tag"], "button");
         assert_eq!(btn0["type"], "primary");
         assert_eq!(btn0["text"]["content"], expected_label.as_str());
         assert_eq!(btn0["behaviors"][0]["value"]["select"], 0);
-        assert_eq!(rows[1]["columns"][1]["elements"][0]["behaviors"][0]["value"]["select"], 1);
+        assert_eq!(
+            rows[1]["columns"][1]["elements"][0]["behaviors"][0]["value"]["select"],
+            1
+        );
         // 左列富文本：圆点 + 加粗编号 + 主文本 + 徽标 + 灰色次行。
-        let md0 = rows[0]["columns"][0]["elements"][0]["content"].as_str().unwrap();
+        let md0 = rows[0]["columns"][0]["elements"][0]["content"]
+            .as_str()
+            .unwrap();
         assert!(md0.contains("<font color='green'>●</font>"));
         // 主行：编号 + 主文本 + 关注徽标 + 运行时长（徽标之后）。
         assert!(md0.contains("**[2]** Cursor · my-frontend · 关注中 · 已运行 6 分钟"));
         assert!(md0.contains("<font color='grey'>甲</font>"));
-        let md1 = rows[1]["columns"][0]["elements"][0]["content"].as_str().unwrap();
+        let md1 = rows[1]["columns"][0]["elements"][0]["content"]
+            .as_str()
+            .unwrap();
         assert!(md1.contains("<font color='grey'>●</font>"));
         assert!(!md1.contains("关注中"));
     }

@@ -238,10 +238,7 @@ pub fn build_diff_model(root: &Path) -> Result<DiffModel, String> {
                         kind: FileChangeKind::Modified,
                         lines: Vec::new(),
                         skipped: true,
-                        skip_reason: Some(format!(
-                            "large file ({} KB)",
-                            meta.len() / 1024
-                        )),
+                        skip_reason: Some(format!("large file ({} KB)", meta.len() / 1024)),
                     });
                     continue;
                 }

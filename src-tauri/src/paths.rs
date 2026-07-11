@@ -64,7 +64,10 @@ mod tests {
             crate::dev_instance::ASKHUMAN_HOME_ENV,
             "/tmp/instance-home-only",
         );
-        assert_eq!(dev_presets_dir(), home().join(".askhuman").join("dev-presets"));
+        assert_eq!(
+            dev_presets_dir(),
+            home().join(".askhuman").join("dev-presets")
+        );
         assert_ne!(dev_presets_dir(), config_dir().join("dev-presets"));
         match prev {
             Some(v) => std::env::set_var(crate::dev_instance::ASKHUMAN_HOME_ENV, v),

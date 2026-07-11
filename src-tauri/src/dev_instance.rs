@@ -201,22 +201,13 @@ mod tests {
             v.extend(rest.iter().map(|s| (*s).to_string()));
             v
         };
-        assert_eq!(
-            classify_command(&prog(&["--popup"])),
-            CommandClass::Skip
-        );
-        assert_eq!(
-            classify_command(&prog(&["--gui-host"])),
-            CommandClass::Skip
-        );
+        assert_eq!(classify_command(&prog(&["--popup"])), CommandClass::Skip);
+        assert_eq!(classify_command(&prog(&["--gui-host"])), CommandClass::Skip);
         assert_eq!(
             classify_command(&prog(&["dev", "enable"])),
             CommandClass::Meta
         );
-        assert_eq!(
-            classify_command(&prog(&["--version"])),
-            CommandClass::Meta
-        );
+        assert_eq!(classify_command(&prog(&["--version"])), CommandClass::Meta);
         assert_eq!(
             classify_command(&prog(&["--settings"])),
             CommandClass::Config
@@ -229,9 +220,6 @@ mod tests {
             classify_command(&prog(&["daemon", "status"])),
             CommandClass::Runtime
         );
-        assert_eq!(
-            classify_command(&prog(&["hello?"])),
-            CommandClass::Runtime
-        );
+        assert_eq!(classify_command(&prog(&["hello?"])), CommandClass::Runtime);
     }
 }

@@ -67,7 +67,14 @@ pub struct AskHumanBlock {
 /// Real formats seen: Claude/Codex `"2026-06-13T10:09:57.062Z"` (RFC3339 string);
 /// numeric epoch is rare.
 fn event_time(v: &Value) -> Option<u64> {
-    for key in ["timestamp", "ts", "created_at", "createdAt", "time", "event_time"] {
+    for key in [
+        "timestamp",
+        "ts",
+        "created_at",
+        "createdAt",
+        "time",
+        "event_time",
+    ] {
         if let Some(n) = v.get(key).and_then(|x| x.as_u64()) {
             return Some(if n > 10_000_000_000 { n / 1000 } else { n });
         }
@@ -163,7 +170,8 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> Option<i64> {
 }
 
 pub fn load_events(kind: AgentKind, session_id: &str) -> Result<TranscriptDoc, String> {
-    let path = transcript_path(kind, session_id).ok_or_else(|| "transcript not found".to_string())?;
+    let path =
+        transcript_path(kind, session_id).ok_or_else(|| "transcript not found".to_string())?;
     let mut doc = load_path(kind, &path)?;
     // Grok chat_history has no per-line times; backfill from sibling updates.jsonl when present.
     if kind == AgentKind::Grok {
@@ -342,7 +350,11 @@ fn push_msg(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut Vec<usiz
             if let Some(t) = content.and_then(|c| c.as_str()) {
                 let (t, label) = clean_user(t);
                 if !t.is_empty() {
-                    out.push(TranscriptEvent::UserText { text: trunc(&t, MAX_TEXT_CHARS), at: event_time(v), at_label: label });
+                    out.push(TranscriptEvent::UserText {
+                        text: trunc(&t, MAX_TEXT_CHARS),
+                        at: event_time(v),
+                        at_label: label,
+                    });
                 }
             }
         }
@@ -363,11 +375,19 @@ fn push_msg(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut Vec<usiz
                         if is_noise_assistant(text) {
                             continue;
                         }
-                        out.push(TranscriptEvent::AssistantText { text: trunc(text, MAX_TEXT_CHARS), at: event_time(v), at_label: None });
+                        out.push(TranscriptEvent::AssistantText {
+                            text: trunc(text, MAX_TEXT_CHARS),
+                            at: event_time(v),
+                            at_label: None,
+                        });
                     } else if is_user {
                         let (t, label) = clean_user(text);
                         if !t.is_empty() {
-                            out.push(TranscriptEvent::UserText { text: trunc(&t, MAX_TEXT_CHARS), at: event_time(v), at_label: label });
+                            out.push(TranscriptEvent::UserText {
+                                text: trunc(&t, MAX_TEXT_CHARS),
+                                at: event_time(v),
+                                at_label: label,
+                            });
                         }
                     }
                 }
@@ -381,7 +401,11 @@ fn push_msg(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut Vec<usiz
                 {
                     let text = text.trim();
                     if !text.is_empty() {
-                        out.push(TranscriptEvent::Thinking { text: trunc(text, 800), at: event_time(v), at_label: None });
+                        out.push(TranscriptEvent::Thinking {
+                            text: trunc(text, 800),
+                            at: event_time(v),
+                            at_label: None,
+                        });
                     }
                 }
             }
@@ -406,7 +430,10 @@ fn push_msg(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut Vec<usiz
                 open_tools.push(out.len() - 1);
             }
             "tool_result" => {
-                let err = item.get("is_error").and_then(|x| x.as_bool()).unwrap_or(false);
+                let err = item
+                    .get("is_error")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false);
                 let content = tool_result_text(item);
                 close_tool(out, open_tools, content, err);
             }
@@ -439,23 +466,39 @@ fn push_codex(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut Vec<us
                         });
                     }
                 } else if role == "assistant" {
-                    out.push(TranscriptEvent::AssistantText { text: trunc(t, MAX_TEXT_CHARS), at: event_time(v), at_label: None });
+                    out.push(TranscriptEvent::AssistantText {
+                        text: trunc(t, MAX_TEXT_CHARS),
+                        at: event_time(v),
+                        at_label: None,
+                    });
                 }
             }
         }
         ("response_item", "reasoning") => {
             if let Some(t) = value_text(payload.get("summary"))
                 .or_else(|| value_text(payload.get("content")))
-                .or_else(|| payload.get("text").and_then(|x| x.as_str()).map(|s| s.to_string()))
+                .or_else(|| {
+                    payload
+                        .get("text")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string())
+                })
             {
                 let t = t.trim();
                 if !t.is_empty() {
-                    out.push(TranscriptEvent::Thinking { text: trunc(t, MAX_TEXT_CHARS), at: event_time(v), at_label: None });
+                    out.push(TranscriptEvent::Thinking {
+                        text: trunc(t, MAX_TEXT_CHARS),
+                        at: event_time(v),
+                        at_label: None,
+                    });
                 }
             }
         }
         ("response_item", "function_call") => {
-            let name = payload.get("name").and_then(|x| x.as_str()).unwrap_or("tool");
+            let name = payload
+                .get("name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("tool");
             if super::activity::is_todo_tool(name) {
                 return;
             }
@@ -484,7 +527,11 @@ fn push_codex(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut Vec<us
             if let Some(t) = payload.get("message").and_then(|m| m.as_str()) {
                 let t = t.trim();
                 if !t.is_empty() {
-                    out.push(TranscriptEvent::AssistantText { text: trunc(t, MAX_TEXT_CHARS), at: event_time(v), at_label: None });
+                    out.push(TranscriptEvent::AssistantText {
+                        text: trunc(t, MAX_TEXT_CHARS),
+                        at: event_time(v),
+                        at_label: None,
+                    });
                 }
             }
         }
@@ -492,7 +539,11 @@ fn push_codex(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut Vec<us
             if let Some(t) = payload.get("message").and_then(|m| m.as_str()) {
                 let (t, label) = clean_user(t.trim());
                 if !t.is_empty() {
-                    out.push(TranscriptEvent::UserText { text: trunc(&t, MAX_TEXT_CHARS), at: event_time(v), at_label: label });
+                    out.push(TranscriptEvent::UserText {
+                        text: trunc(&t, MAX_TEXT_CHARS),
+                        at: event_time(v),
+                        at_label: label,
+                    });
                 }
             }
         }
@@ -506,7 +557,11 @@ fn push_grok(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut Vec<usi
             if let Some(t) = value_text(v.get("content")) {
                 let (t, label) = clean_user(t.trim());
                 if !t.is_empty() {
-                    out.push(TranscriptEvent::UserText { text: trunc(&t, MAX_TEXT_CHARS), at: event_time(v), at_label: label });
+                    out.push(TranscriptEvent::UserText {
+                        text: trunc(&t, MAX_TEXT_CHARS),
+                        at: event_time(v),
+                        at_label: label,
+                    });
                 }
             }
         }
@@ -514,13 +569,21 @@ fn push_grok(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut Vec<usi
             if let Some(t) = value_text(v.get("content")) {
                 let t = t.trim();
                 if !t.is_empty() {
-                    out.push(TranscriptEvent::AssistantText { text: trunc(t, MAX_TEXT_CHARS), at: event_time(v), at_label: None });
+                    out.push(TranscriptEvent::AssistantText {
+                        text: trunc(t, MAX_TEXT_CHARS),
+                        at: event_time(v),
+                        at_label: None,
+                    });
                 }
             }
             if let Some(r) = v.get("reasoning").and_then(|x| x.as_str()) {
                 let r = r.trim();
                 if !r.is_empty() {
-                    out.push(TranscriptEvent::Thinking { text: trunc(r, MAX_TEXT_CHARS), at: event_time(v), at_label: None });
+                    out.push(TranscriptEvent::Thinking {
+                        text: trunc(r, MAX_TEXT_CHARS),
+                        at: event_time(v),
+                        at_label: None,
+                    });
                 }
             }
             if let Some(arr) = v.get("tool_calls").and_then(|x| x.as_array()) {
@@ -569,7 +632,11 @@ fn push_grok(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut Vec<usi
             }) {
                 let t = t.trim();
                 if !t.is_empty() {
-                    out.push(TranscriptEvent::Thinking { text: trunc(t, MAX_TEXT_CHARS), at: event_time(v), at_label: None });
+                    out.push(TranscriptEvent::Thinking {
+                        text: trunc(t, MAX_TEXT_CHARS),
+                        at: event_time(v),
+                        at_label: None,
+                    });
                 }
             }
         }
@@ -585,11 +652,7 @@ fn close_tool(
 ) {
     let _ = content;
     if let Some(idx) = open_tools.pop() {
-        if let Some(TranscriptEvent::ToolCall {
-            is_error: ie,
-            ..
-        }) = out.get_mut(idx)
-        {
+        if let Some(TranscriptEvent::ToolCall { is_error: ie, .. }) = out.get_mut(idx) {
             // 与 watch 一致：不展示 tool result；仅标记失败。
             *ie = is_error;
         }
@@ -674,7 +737,11 @@ fn summarize_args(name: &str, args: Option<&Value>) -> String {
     trunc(&s, MAX_ARG_CHARS)
 }
 
-fn detect_askhuman(name: &str, args: Option<&Value>, result: Option<&str>) -> Option<AskHumanBlock> {
+fn detect_askhuman(
+    name: &str,
+    args: Option<&Value>,
+    result: Option<&str>,
+) -> Option<AskHumanBlock> {
     let name_l = name.to_ascii_lowercase();
     let mut question = String::new();
     let mut is_ah = name_l == "ask" || name_l.contains("askhuman");
@@ -727,7 +794,11 @@ fn detect_askhuman(name: &str, args: Option<&Value>, result: Option<&str>) -> Op
 fn extract_askhuman_cli_question(cmd: &str) -> String {
     // Best-effort: last quoted string or text after -m / message.
     if let Some(i) = cmd.find(" -m ") {
-        return cmd[i + 4..].trim().trim_matches('"').trim_matches('\'').to_string();
+        return cmd[i + 4..]
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
     }
     if let Some(i) = cmd.find(" --message ") {
         return cmd[i + 11..]
@@ -738,7 +809,11 @@ fn extract_askhuman_cli_question(cmd: &str) -> String {
     }
     // positional after AskHuman
     if let Some(i) = cmd.to_ascii_lowercase().find("askhuman") {
-        let rest = cmd[i..].split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+        let rest = cmd[i..]
+            .split_whitespace()
+            .skip(1)
+            .collect::<Vec<_>>()
+            .join(" ");
         return rest.trim_matches('"').to_string();
     }
     cmd.to_string()
@@ -928,7 +1003,9 @@ fn value_text(v: Option<&Value>) -> Option<String> {
 fn parse_args_value(v: Option<&Value>) -> Option<Value> {
     let v = v?;
     if let Some(s) = v.as_str() {
-        return serde_json::from_str(s).ok().or_else(|| Some(Value::String(s.to_string())));
+        return serde_json::from_str(s)
+            .ok()
+            .or_else(|| Some(Value::String(s.to_string())));
     }
     Some(v.clone())
 }
@@ -988,10 +1065,7 @@ mod tests {
     #[test]
     fn parse_answer_markers() {
         let c = "[status] answered\n[user_input]\nyes please\n[files]\n";
-        assert_eq!(
-            parse_askhuman_answer(c).as_deref(),
-            Some("yes please")
-        );
+        assert_eq!(parse_askhuman_answer(c).as_deref(), Some("yes please"));
     }
 
     #[test]
@@ -1032,26 +1106,48 @@ mod tests {
                         }
                     }
                 }
-                if found.is_some() { break; }
+                if found.is_some() {
+                    break;
+                }
             }
         }
         let path = found.expect("need a claude jsonl sample");
         let doc = load_path(AgentKind::Claude, &path).expect("load");
-        let with_time = doc.events.iter().filter(|e| match e {
-            TranscriptEvent::UserText { at, .. } | TranscriptEvent::AssistantText { at, .. } => at.is_some(),
-            _ => false,
-        }).count();
-        let total_ua = doc.events.iter().filter(|e| matches!(e,
-            TranscriptEvent::UserText { .. } | TranscriptEvent::AssistantText { .. }
-        )).count();
-        eprintln!("file={path:?} events={} user/assistant={total_ua} with_time={with_time}", doc.events.len());
-        assert!(with_time > 0, "expected some User/Assistant events to have timestamps from real claude file");
+        let with_time = doc
+            .events
+            .iter()
+            .filter(|e| match e {
+                TranscriptEvent::UserText { at, .. }
+                | TranscriptEvent::AssistantText { at, .. } => at.is_some(),
+                _ => false,
+            })
+            .count();
+        let total_ua = doc
+            .events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    TranscriptEvent::UserText { .. } | TranscriptEvent::AssistantText { .. }
+                )
+            })
+            .count();
+        eprintln!(
+            "file={path:?} events={} user/assistant={total_ua} with_time={with_time}",
+            doc.events.len()
+        );
+        assert!(
+            with_time > 0,
+            "expected some User/Assistant events to have timestamps from real claude file"
+        );
         // also render md snippet
         let md = crate::export::render_transcript_md(&doc, "test");
         eprintln!("md head:\n{}", md.chars().take(800).collect::<String>());
-        assert!(md.contains("·") || md.contains(":"), "expected time in md headings");
+        assert!(
+            md.contains("·") || md.contains(":"),
+            "expected time in md headings"
+        );
     }
-
 
     #[test]
     fn real_grok_and_claude_times() {
@@ -1064,12 +1160,17 @@ mod tests {
                 if let Ok(rd) = std::fs::read_dir(e.path()) {
                     for f in rd.flatten() {
                         let p = f.path();
-                        if p.extension().and_then(|x| x.to_str()) == Some("jsonl") && p.metadata().map(|m| m.len()).unwrap_or(0) > 10000 {
-                            claude_path = Some(p); break;
+                        if p.extension().and_then(|x| x.to_str()) == Some("jsonl")
+                            && p.metadata().map(|m| m.len()).unwrap_or(0) > 10000
+                        {
+                            claude_path = Some(p);
+                            break;
                         }
                     }
                 }
-                if claude_path.is_some() { break; }
+                if claude_path.is_some() {
+                    break;
+                }
             }
         }
         if let Some(p) = claude_path {
@@ -1084,30 +1185,41 @@ mod tests {
         let mut grok_path = None;
         if let Ok(walk) = std::fs::read_dir(&grok) {
             for e in walk.flatten() {
-                let p = e.path().join("019f4c59-48ad-7462-b148-e50634641c3e").join("chat_history.jsonl");
-                if p.is_file() { grok_path = Some(p); break; }
+                let p = e
+                    .path()
+                    .join("019f4c59-48ad-7462-b148-e50634641c3e")
+                    .join("chat_history.jsonl");
+                if p.is_file() {
+                    grok_path = Some(p);
+                    break;
+                }
                 // also any chat_history
                 if let Ok(rd) = std::fs::read_dir(e.path()) {
                     for f in rd.flatten() {
                         let ch = f.path().join("chat_history.jsonl");
                         if ch.is_file() && ch.metadata().map(|m| m.len()).unwrap_or(0) > 100000 {
-                            grok_path = Some(ch); break;
+                            grok_path = Some(ch);
+                            break;
                         }
                     }
                 }
-                if grok_path.is_some() { break; }
+                if grok_path.is_some() {
+                    break;
+                }
             }
         }
         if let Some(p) = grok_path {
             let doc = load_path(AgentKind::Grok, &p).unwrap();
             let md = crate::export::render_transcript_md(&doc, "grok");
             let has = md.lines().any(|l| l.starts_with("### ") && l.contains("·"));
-            eprintln!("GROK file={p:?} events={} has_time_in_heading={has}", doc.events.len());
+            eprintln!(
+                "GROK file={p:?} events={} has_time_in_heading={has}",
+                doc.events.len()
+            );
             eprintln!("GROK sample headings:");
             for l in md.lines().filter(|l| l.starts_with("### ")).take(8) {
                 eprintln!("  {l}");
             }
         }
     }
-
 }

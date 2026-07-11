@@ -203,7 +203,8 @@ mod tests {
 
     #[test]
     fn blocks_layout_active() {
-        let (blocks, fallback) = build_watch_blocks(&frame(), CardMode::Active, 1_700_000_010, Lang::Zh, None);
+        let (blocks, fallback) =
+            build_watch_blocks(&frame(), CardMode::Active, 1_700_000_010, Lang::Zh, None);
         let arr = blocks.as_array().unwrap();
         // context 头部 + section 状态 + section 动态 + context 更新行 + actions。
         assert_eq!(arr.len(), 5);
@@ -211,7 +212,10 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("实时关注 [3] Cursor — HumanInLoop"));
-        assert!(arr[1]["text"]["text"].as_str().unwrap().contains("*🟢 工作中*"));
+        assert!(arr[1]["text"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("*🟢 工作中*"));
         let body = arr[2]["text"]["text"].as_str().unwrap();
         // 用户内容做 mrkdwn 转义。
         assert!(body.contains("正在跑 &lt;单测&gt;"));

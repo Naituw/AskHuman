@@ -174,7 +174,10 @@ async fn open_ws(
         "localIp": "127.0.0.1",
     });
     let resp = http
-        .post(format!("{}/v1.0/gateway/connections/open", super::api_base()))
+        .post(format!(
+            "{}/v1.0/gateway/connections/open",
+            super::api_base()
+        ))
         .json(&body)
         .send()
         .await
