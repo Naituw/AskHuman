@@ -7,4 +7,5 @@ pub mod grok_skill;
 #[cfg(unix)]
 pub mod login_item;
 pub mod mcp_config;
+pub mod permission_hook;
 pub mod terminal_focus;

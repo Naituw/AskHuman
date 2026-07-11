@@ -51,6 +51,8 @@ export type WindowEffect = "glass" | "blur";
 export interface PopupInit {
   /** 本次提问内容。方案6 预热弹窗未领用（待命）时为 null，前端等 `popup-show` 事件再 pull。 */
   request: AskRequest | null;
+  /** 确认请求（权限审批等）。与 request 互斥：有 confirm 则渲染确认视图。 */
+  confirm?: ConfirmPopupPayload | null;
   theme: ThemeMode;
   alwaysOnTop: boolean;
   sourceName: string;
@@ -78,6 +80,21 @@ export interface PopupInit {
   warm?: boolean;
   /** 提问创建时刻（epoch 毫秒）：弹窗据此显示相对时间（几秒/分钟/小时前），超过一天显示绝对时间。0=未知。 */
   createdAtMs?: number;
+}
+
+/** 确认弹窗负载（权限审批）。 */
+export interface ConfirmPopupPayload {
+  title: string;
+  bodyMd: string;
+  details?: string | null;
+  confirmActionId: string;
+  confirmLabel: string;
+  confirmRole: string;
+  cancelActionId: string;
+  cancelLabel: string;
+  cancelRole: string;
+  dismissActionId: string;
+  expiresAtMs: number;
 }
 
 export interface QuestionAnswer {
@@ -373,6 +390,8 @@ export interface AgentModeStatus {
   ruleInstalled: boolean;
   timeoutHookSupported: boolean;
   timeoutHookInstalled: boolean;
+  permissionHookSupported: boolean;
+  permissionHookInstalled: boolean;
   mcpConfigPath: string;
   mcpConfigInstalled: boolean;
 }

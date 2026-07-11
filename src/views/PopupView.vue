@@ -8,6 +8,7 @@ import {
   popupInit,
   submitPopup,
   cancelPopup,
+  submitConfirmAction,
   openSettings,
   openHistory,
   updateTheme,
@@ -38,6 +39,7 @@ import { applyTheme, fileToDataUrl } from "../lib/theme";
 import { mark as perfMarkFe, enable as perfEnableFe } from "../lib/perf";
 import type {
   AskRequest,
+  ConfirmPopupPayload,
   FileAttachment,
   ImageAttachment,
   PopupInit,
@@ -56,6 +58,8 @@ const codeCopyLabels = computed(() => ({
 }));
 
 const request = ref<AskRequest | null>(null);
+const confirmPayload = ref<ConfirmPopupPayload | null>(null);
+const confirmSubmitting = ref(false);
 const loadError = ref<string | null>(null);
 
 // 视图态：false=Markdown 预览（默认），true=源码（原始文本）。作用于整篇（message + 所有问题）。
@@ -73,6 +77,19 @@ async function copyMessage() {
   copiedMessage.value = true;
   if (copiedTimer) window.clearTimeout(copiedTimer);
   copiedTimer = window.setTimeout(() => (copiedMessage.value = false), 1500);
+}
+
+// ===== 确认视图动作 =====
+async function onConfirmAction(isConfirm: boolean) {
+  const payload = confirmPayload.value;
+  if (!payload || confirmSubmitting.value) return;
+  confirmSubmitting.value = true;
+  const actionId = isConfirm ? payload.confirmActionId : payload.cancelActionId;
+  try {
+    await submitConfirmAction(actionId, isConfirm);
+  } catch {
+    confirmSubmitting.value = false;
+  }
 }
 
 // ===== 版本自更新（弹窗入口 / 浮层 / 待生效横条） =====
@@ -1400,7 +1417,8 @@ let adopting = false;
 // 预热弹窗（init.warm）窗口起始隐藏，绘制完成后调 popup_show_window 让后端延后 show（杜绝空白闪现）。
 function renderInit(init: PopupInit) {
   const req = init.request;
-  if (!req) return;
+  const confirm = init.confirm;
+  if (!req && !confirm) return;
   applyTheme(init.theme);
   theme.value = init.theme;
   // 精确语言来自 popup_init（零钥匙串）；main.ts 只做 auto 兜底，故此处校正。
@@ -1418,8 +1436,14 @@ function renderInit(init: PopupInit) {
   speechLang.value = init.speechLanguage || "auto";
   speechShortcut.value = init.speechShortcut || "cmd+d";
   verticalEnabled.value = init.verticalQuestions ?? false;
+
+  if (confirm) {
+    confirmPayload.value = confirm;
+    return;
+  }
+
   request.value = req;
-  const n = req.questions.length;
+  const n = req!.questions.length;
   chosenByQ.value = Array.from({ length: n }, () => []);
   inputByQ.value = Array.from({ length: n }, () => "");
   imagesByQ.value = Array.from({ length: n }, () => []);
@@ -1478,15 +1502,13 @@ function renderInit(init: PopupInit) {
   void initAfterPaint(init);
 }
 
-// 预热弹窗领用：重新 pull popup_init，若已带 request 则渲染（一次性）。
+// 预热弹窗领用：重新 pull popup_init，若已带 request/confirm 则渲染（一次性）。
 async function adopt() {
-  if (request.value || adopting) return;
+  if (request.value || confirmPayload.value || adopting) return;
   adopting = true;
   try {
     const init = await popupInit();
-    if (init.request) {
-      // 热路径领用：丢弃预热阶段缓存的标记（fe.bootstrap/fe.mounted/待命 popup_init 不属本次请求），
-      // 只上报领用后的标记（如 fe.painted），避免污染时间线（负的 page boot）。
+    if (init.request || init.confirm) {
       if (init.perf) perfEnableFe(true);
       renderInit(init);
     }
@@ -1683,15 +1705,54 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="!request" class="popup popup-status">
+  <div v-if="!request && !confirmPayload" class="popup popup-status">
     <p v-if="loadError" class="status-error">
       {{ t("popup.loadError", { msg: loadError }) }}
     </p>
     <p v-else class="status-loading">{{ t("popup.loading") }}</p>
   </div>
 
+  <!-- ===== Confirm View (Permission Approval) ===== -->
+  <div v-else-if="confirmPayload" class="popup popup-confirm" data-tauri-drag-region>
+    <header class="confirm-header" data-tauri-drag-region>
+      <span class="brand-dot"></span>
+      <span class="confirm-title">{{ confirmPayload.title }}</span>
+    </header>
+    <div class="confirm-body">
+      <div
+        class="confirm-content"
+        v-html="renderMarkdown(confirmPayload.bodyMd, codeCopyLabels)"
+      ></div>
+      <details v-if="confirmPayload.details" class="confirm-details" open>
+        <summary>{{ t("popup.confirm.details") }}</summary>
+        <pre class="confirm-details-pre">{{ confirmPayload.details }}</pre>
+      </details>
+    </div>
+    <footer class="confirm-actions">
+      <button
+        type="button"
+        class="confirm-btn confirm-btn--cancel"
+        :class="'role-' + confirmPayload.cancelRole"
+        :disabled="confirmSubmitting"
+        @click="onConfirmAction(false)"
+      >
+        {{ confirmPayload.cancelLabel }}
+      </button>
+      <button
+        type="button"
+        class="confirm-btn confirm-btn--confirm"
+        :class="'role-' + confirmPayload.confirmRole"
+        :disabled="confirmSubmitting"
+        @click="onConfirmAction(true)"
+      >
+        {{ confirmPayload.confirmLabel }}
+      </button>
+    </footer>
+  </div>
+
+  <!-- ===== Ask View ===== -->
   <div
-    v-else
+    v-else-if="request"
     class="popup"
     :class="{ 'cmd-held': cmdHeld }"
     @dragover.prevent
@@ -3170,5 +3231,111 @@ onBeforeUnmount(() => {
 }
 .btn-danger:hover {
   background: #e23b31;
+}
+
+/* ===== Confirm View (Permission Approval) ===== */
+.popup-confirm {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 12px;
+}
+.confirm-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.confirm-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+.confirm-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.confirm-content :deep(p) {
+  margin: 0 0 8px;
+}
+.confirm-content :deep(code) {
+  background: var(--bg-secondary);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.confirm-content :deep(pre) {
+  background: var(--bg-secondary);
+  padding: 8px 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+.confirm-details {
+  margin-top: 8px;
+}
+.confirm-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+.confirm-details-pre {
+  margin-top: 6px;
+  background: var(--bg-secondary);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.confirm-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.confirm-btn {
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: opacity 0.15s;
+}
+.confirm-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.confirm-btn.role-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.confirm-btn.role-primary:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.confirm-btn.role-destructive {
+  background: #e23b31;
+  color: #fff;
+  border-color: #e23b31;
+}
+.confirm-btn.role-destructive:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.confirm-btn.role-default {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.confirm-btn.role-default:hover:not(:disabled) {
+  background: var(--bg-tertiary, var(--bg-secondary));
 }
 </style>

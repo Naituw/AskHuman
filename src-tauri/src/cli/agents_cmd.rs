@@ -281,8 +281,8 @@ fn integrate(args: &[String], action: Action, lang: Lang) -> Result<(), String> 
             Some(r) => report("hook", r, lang),
             None => print_line(&cfgio::t(
                 lang,
-                &format!("hook: skipped ({agent} has no timeout hook)"),
-                &format!("hook: 跳过（{agent} 无超时 hook）"),
+                &format!("hook: skipped ({agent} has no hooks)"),
+                &format!("hook: 跳过（{agent} 无 hook）"),
             )),
         }
     }
@@ -305,21 +305,51 @@ fn integrate(args: &[String], action: Action, lang: Lang) -> Result<(), String> 
     Ok(())
 }
 
-/// 超时 hook 仅 cursor / claude 支持；codex 返回 None（跳过）。
+/// Hook 包操作：超时 hook（cursor/claude）+ permission hook（claude/codex）。
+/// 返回 None 当该 agent 无任何 hook 支持时。
 fn hook_action(target: AgentTarget, action: Action) -> Option<anyhow::Result<String>> {
-    match target {
-        AgentTarget::Cursor => Some(match action {
-            Action::Install => cursor_hook::install(),
-            Action::Update => cursor_hook::update(),
-            Action::Uninstall => cursor_hook::uninstall(),
-        }),
-        AgentTarget::ClaudeCode => Some(match action {
-            Action::Install => claude_hook::install(),
-            Action::Update => claude_hook::update(),
-            Action::Uninstall => claude_hook::uninstall(),
-        }),
-        AgentTarget::Codex | AgentTarget::Grok => None,
+    use crate::integrations::permission_hook;
+
+    let has_timeout = agent_mode::timeout_hook_supported(target);
+    let has_perm = permission_hook::supported(target);
+    if !has_timeout && !has_perm {
+        return None;
     }
+
+    let mut results: Vec<String> = Vec::new();
+
+    if has_timeout {
+        let r = match target {
+            AgentTarget::Cursor => match action {
+                Action::Install => cursor_hook::install(),
+                Action::Update => cursor_hook::update(),
+                Action::Uninstall => cursor_hook::uninstall(),
+            },
+            AgentTarget::ClaudeCode => match action {
+                Action::Install => claude_hook::install(),
+                Action::Update => claude_hook::update(),
+                Action::Uninstall => claude_hook::uninstall(),
+            },
+            _ => Ok("skipped".to_string()),
+        };
+        match r {
+            Ok(msg) => results.push(format!("timeout: {msg}")),
+            Err(e) => return Some(Err(e)),
+        }
+    }
+
+    if has_perm {
+        let r = match action {
+            Action::Install | Action::Update => permission_hook::install(target),
+            Action::Uninstall => permission_hook::uninstall(target),
+        };
+        match r {
+            Ok(()) => results.push("permission: ok".to_string()),
+            Err(e) => return Some(Err(e)),
+        }
+    }
+
+    Some(Ok(results.join("; ")))
 }
 
 fn report(part: &str, r: anyhow::Result<String>, lang: Lang) {
@@ -401,29 +431,49 @@ fn show(args: &[String], lang: Lang) -> Result<(), String> {
             agent_rules::display_path(target)
         ));
 
-        // Hook
-        let hook = match target {
-            AgentTarget::Cursor => hook_state(
-                cursor_hook::is_installed(),
-                cursor_hook::needs_update(),
-                &yes,
-                &no,
-                &upd,
-            ),
-            AgentTarget::ClaudeCode => hook_state(
-                claude_hook::is_installed(),
-                claude_hook::needs_update(),
-                &yes,
-                &no,
-                &upd,
-            ),
-            AgentTarget::Codex | AgentTarget::Grok => na.clone(),
-        };
-        print_line(&format!(
-            "  {}: {}",
-            cfgio::t(lang, "timeout hook", "超时 hook"),
-            hook
-        ));
+        // Hooks
+        {
+            use crate::integrations::permission_hook;
+            let timeout = match target {
+                AgentTarget::Cursor => hook_state(
+                    cursor_hook::is_installed(),
+                    cursor_hook::needs_update(),
+                    &yes,
+                    &no,
+                    &upd,
+                ),
+                AgentTarget::ClaudeCode => hook_state(
+                    claude_hook::is_installed(),
+                    claude_hook::needs_update(),
+                    &yes,
+                    &no,
+                    &upd,
+                ),
+                AgentTarget::Codex | AgentTarget::Grok => na.clone(),
+            };
+            print_line(&format!(
+                "  {}: {}",
+                cfgio::t(lang, "timeout hook", "超时 hook"),
+                timeout
+            ));
+
+            let perm = if permission_hook::supported(target) {
+                hook_state(
+                    permission_hook::is_installed(target),
+                    permission_hook::needs_update(target),
+                    &yes,
+                    &no,
+                    &upd,
+                )
+            } else {
+                na.clone()
+            };
+            print_line(&format!(
+                "  {}: {}",
+                cfgio::t(lang, "permission hook", "权限 hook"),
+                perm
+            ));
+        }
 
         // MCP 配置（用户级全局）
         let mcp = if mcp_config::is_installed(target) {
@@ -495,11 +545,11 @@ fn help(lang: Lang) -> String {
   agents uninstall <agent> [flags]   Remove the selected integrations\n\
   agents update <agent> [flags]      Refresh managed products to the latest\n\
 \n\
-  Modes: cli = rules + timeout hook;  mcp = rules/skill + MCP server config;  none = remove.\n\
-  Grok only supports none | mcp (skill + MCP config); it has no CLI mode and no timeout hook.\n\
+  Modes: cli = rules + hooks;  mcp = rules/skill + MCP server config + permission hook;  none = remove.\n\
+  Grok only supports none | mcp (skill + MCP config); it has no CLI mode and no hooks.\n\
 \n\
   --rules      global prompt rules (cursor/claude/codex); for grok this installs the AskHuman skill\n\
-  --hook       timeout hook (cursor & claude only; codex/grok skipped)\n\
+  --hook       hook package (timeout: cursor/claude; permission: claude/codex)\n\
   --mcp        MCP server config (user-level global; all agents)\n\
   --lifecycle  lifecycle hook (experimental; all agents)",
         "AskHuman agents —— agent 状态 + 集成（cursor | claude | codex | grok）\n\

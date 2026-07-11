@@ -84,6 +84,77 @@ pub struct ConfirmFinalView {
     pub label: String,
 }
 
+// ─── Business-level confirm request (protocol model) ────────────────────────
+
+/// A complete confirm request submitted via IPC (superset of `ConfirmView`).
+/// Contains both the rendering payload and protocol metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmRequest {
+    /// Daemon-assigned unique ID for this request.
+    pub id: String,
+    pub title: String,
+    /// Markdown body (may contain details summary).
+    pub body_md: String,
+    /// Structured details (tool name, command, parameters, etc.) — for richer
+    /// rendering where supported; may be truncated per-channel.
+    pub details: Option<String>,
+    /// First action (positive/confirm).
+    pub confirm: ConfirmAction,
+    /// Second action (negative/cancel).
+    pub cancel: ConfirmAction,
+    /// Which action ID does "user dismissed the window" map to (e.g. "deny").
+    pub dismiss_action_id: String,
+    /// Whether to record this interaction in reply history (permission: false).
+    pub record_history: bool,
+    /// Absolute expiry (epoch ms); 0 = no expiry.
+    pub expires_at_ms: u64,
+}
+
+impl ConfirmRequest {
+    /// Build a `ConfirmView` suitable for channel rendering.
+    pub fn to_view(&self) -> ConfirmView {
+        ConfirmView {
+            title: self.title.clone(),
+            body: self.body_md.clone(),
+            confirm: self.confirm.clone(),
+            cancel: self.cancel.clone(),
+        }
+    }
+}
+
+/// The structured result of a confirm interaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmResult {
+    /// The action ID chosen by the user (from `ConfirmAction.id`).
+    pub action_id: String,
+    /// Which channel delivered the answer ("popup", "feishu", "telegram", etc.).
+    pub source_channel_id: String,
+}
+
+/// Reason a confirm request ended without a human decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmFallbackReason {
+    /// 24-hour timeout reached.
+    Expired,
+    /// No usable channel (daemon/popup/IM all unavailable).
+    NoChannel,
+    /// Daemon shutting down / draining.
+    DaemonShutdown,
+    /// Connection lost before a decision was made.
+    ConnectionLost,
+}
+
+impl ConfirmFallbackReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Expired => "expired",
+            Self::NoChannel => "no_channel",
+            Self::DaemonShutdown => "daemon_shutdown",
+            Self::ConnectionLost => "connection_lost",
+        }
+    }
+}
+
 // ─── /stage domain builder ──────────────────────────────────────────────────
 
 /// Max paths listed on a stage confirm card.
@@ -172,5 +243,47 @@ mod tests {
         assert_eq!(v.cancel.id, STAGE_CANCEL_ACTION_ID);
         assert_eq!(v.confirm.role, ActionRole::Primary);
         assert_eq!(v.cancel.role, ActionRole::Default);
+    }
+
+    #[test]
+    fn confirm_request_to_view() {
+        let req = ConfirmRequest {
+            id: "req-1".into(),
+            title: "Approve rm -rf?".into(),
+            body_md: "This will delete everything.".into(),
+            details: Some("tool: bash".into()),
+            confirm: ConfirmAction {
+                id: "allow".into(),
+                label: "Allow".into(),
+                role: ActionRole::Primary,
+            },
+            cancel: ConfirmAction {
+                id: "deny".into(),
+                label: "Deny".into(),
+                role: ActionRole::Destructive,
+            },
+            dismiss_action_id: "deny".into(),
+            record_history: false,
+            expires_at_ms: 0,
+        };
+        let view = req.to_view();
+        assert_eq!(view.title, "Approve rm -rf?");
+        assert_eq!(view.confirm.id, "allow");
+        assert_eq!(view.cancel.id, "deny");
+        assert_eq!(view.confirm.role, ActionRole::Primary);
+    }
+
+    #[test]
+    fn fallback_reason_as_str() {
+        assert_eq!(ConfirmFallbackReason::Expired.as_str(), "expired");
+        assert_eq!(ConfirmFallbackReason::NoChannel.as_str(), "no_channel");
+        assert_eq!(
+            ConfirmFallbackReason::DaemonShutdown.as_str(),
+            "daemon_shutdown"
+        );
+        assert_eq!(
+            ConfirmFallbackReason::ConnectionLost.as_str(),
+            "connection_lost"
+        );
     }
 }

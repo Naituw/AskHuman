@@ -42,6 +42,7 @@ mod mcp;
 mod models;
 mod paths;
 mod perf;
+mod permission;
 mod project;
 mod prompts;
 mod secrets;

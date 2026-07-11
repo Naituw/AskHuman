@@ -4,10 +4,11 @@
 //! GUI Helper 连上后凭 token 找到该请求、收 `show`、回 `answer`。IM 渠道在 Phase 2 接入。
 
 use crate::app::coordinator::Coordinator;
-use crate::app::RenderOutcome;
+use crate::app::{RenderOutcome, RequestOutcome};
 use crate::channels::popup::GuiHelperPopupChannel;
+use crate::confirm::{ActionRole, ConfirmAction, ConfirmRequest};
 use crate::i18n::Lang;
-use crate::ipc::{PendingRequestInfo, ServerMsg, ShowPayload, TaskRequest};
+use crate::ipc::{ConfirmTask, PendingRequestInfo, ServerMsg, ShowPayload, TaskRequest};
 use crate::models::AskRequest;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -26,16 +27,27 @@ pub struct ResolvedAgent {
     pub pid: Option<u32>,
 }
 
+/// 请求交互类型。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InteractionKind {
+    /// 普通提问（CLI → Daemon → GUI/IM → 回答文本）。
+    Ask,
+    /// 权限确认（Hook → Daemon → GUI/IM → action_id）。
+    Confirm,
+}
+
 /// 一个活动请求的共享状态。
 pub struct RequestEntry {
     pub request_id: String,
     /// 单调递增序号（创建顺序）：托盘「待答」子菜单据此稳定按时间排序，不随 HashMap 迭代乱序。
     pub seq: u64,
+    /// 交互类型（Ask / Confirm）。
+    pub kind: InteractionKind,
     /// 一次性 token：GUI Helper 连回握手出示。
     pub token: String,
     /// 抢答协调器（Ipc 退出，结果经 `final_tx` 回传）。
     pub coordinator: Arc<Coordinator>,
-    /// 给 GUI Helper 的题目下发负载。
+    /// 给 GUI Helper 的题目下发负载（Ask 有值；Confirm 暂不使用）。
     pub show: ShowPayload,
     /// 调用方 agent 会话 ID（CLI 从 env 探测、`TaskRequest.agent_session_id` 透传；MCP `env_clear`
     /// 时为 None）。供 daemon「在途 AskHuman 豁免」按 session_id 刷新——覆盖无 pid 的 agent
@@ -49,8 +61,12 @@ pub struct RequestEntry {
     pub gui_connected: AtomicBool,
     /// CLI 断开 / 请求结束时通知 GUI 连接处理器收尾。
     pub cancel: Arc<Notify>,
-    /// 渲染结果发送端（协调器 finish 与看门狗共用；连接处理器从对应 rx 取）。
+    /// 渲染结果发送端（Ask 路径；协调器 finish 与看门狗共用）。
     pub final_tx: UnboundedSender<RenderOutcome>,
+    /// Confirm 路径结构化终态发送端（Confirm 路径使用；Ask 为 None）。
+    pub confirm_tx: Option<UnboundedSender<RequestOutcome>>,
+    /// Confirm 请求原始模型（Confirm 路径使用；供 IM attach 时获取 view）。
+    pub confirm_request: Option<ConfirmRequest>,
 }
 
 #[derive(Default)]
@@ -120,16 +136,16 @@ impl RequestRegistry {
             project: task.project,
             agent_kind: task.agent_kind,
             agent_pid: task.agent_pid,
-            // 方案6：透传 perf 上下文，热 helper 领用时据此开启埋点（无 env 也能量化热路径）。
             perf_id: task.perf_id,
             perf_autodismiss: task.perf_autodismiss,
-            // 提问创建时刻：弹窗相对时间的锚点（预热弹窗领用时即为真正到达时刻）。
             created_at_ms: crate::perf::now_ms() as u64,
+            confirm: None,
         };
 
         let entry = Arc::new(RequestEntry {
             request_id: request_id.clone(),
             seq: self.next_seq.fetch_add(1, Ordering::SeqCst),
+            kind: InteractionKind::Ask,
             token: token.clone(),
             coordinator,
             show,
@@ -139,12 +155,141 @@ impl RequestRegistry {
             gui_connected: AtomicBool::new(false),
             cancel: Arc::new(Notify::new()),
             final_tx,
+            confirm_tx: None,
+            confirm_request: None,
         });
 
         let mut inner = self.inner.lock().unwrap();
         inner.by_id.insert(request_id, entry.clone());
         inner.by_token.insert(token, entry.request_id.clone());
         (entry, final_rx)
+    }
+
+    /// 建立一个 Confirm 请求：分配 request_id / token，建 Coordinator（Confirm 模式）+ popup adapter。
+    /// 返回登记项与「终态接收端」。
+    pub fn create_confirm(
+        &self,
+        task: ConfirmTask,
+    ) -> (Arc<RequestEntry>, UnboundedReceiver<RequestOutcome>) {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let token = uuid::Uuid::new_v4().to_string();
+        let lang = Lang::resolve("en");
+        let agent_session_id = task
+            .agent_session_id
+            .clone()
+            .filter(|s| !s.trim().is_empty());
+
+        let dismiss_action_id = task
+            .dismiss_action_id
+            .clone()
+            .unwrap_or_else(|| task.cancel_action_id.clone());
+
+        let confirm_action_id = task.confirm_action_id.clone();
+        let cancel_action_id = task.cancel_action_id.clone();
+
+        fn parse_role(s: &str) -> ActionRole {
+            match s {
+                "primary" => ActionRole::Primary,
+                "destructive" => ActionRole::Destructive,
+                _ => ActionRole::Default,
+            }
+        }
+
+        let confirm_req = ConfirmRequest {
+            id: request_id.clone(),
+            title: task.title.clone(),
+            body_md: task.body_md.clone(),
+            details: task.details.clone(),
+            confirm: ConfirmAction {
+                id: confirm_action_id.clone(),
+                label: task.confirm_label.clone(),
+                role: parse_role(&task.confirm_role),
+            },
+            cancel: ConfirmAction {
+                id: cancel_action_id.clone(),
+                label: task.cancel_label.clone(),
+                role: parse_role(&task.cancel_role),
+            },
+            dismiss_action_id,
+            record_history: task.record_history,
+            expires_at_ms: task.expires_at_ms,
+        };
+
+        let (confirm_tx, confirm_rx) = tokio::sync::mpsc::unbounded_channel();
+        let coordinator = Coordinator::new_confirm_ipc(
+            confirm_action_id,
+            cancel_action_id,
+            lang,
+            confirm_tx.clone(),
+        );
+
+        let gui: GuiSlot = Arc::new(Mutex::new(None));
+        coordinator.register(Arc::new(GuiHelperPopupChannel::new(
+            request_id.clone(),
+            gui.clone(),
+        )));
+
+        let placeholder_request = AskRequest::new(
+            crate::models::MessagePrompt {
+                text: task.title.clone(),
+                files: Vec::new(),
+            },
+            Vec::new(),
+            false,
+        );
+        let confirm_show = crate::ipc::ConfirmShowPayload {
+            title: task.title.clone(),
+            body_md: task.body_md.clone(),
+            details: task.details.clone(),
+            confirm_action_id: task.confirm_action_id.clone(),
+            confirm_label: task.confirm_label.clone(),
+            confirm_role: task.confirm_role.clone(),
+            cancel_action_id: task.cancel_action_id.clone(),
+            cancel_label: task.cancel_label.clone(),
+            cancel_role: task.cancel_role.clone(),
+            dismiss_action_id: task
+                .dismiss_action_id
+                .clone()
+                .unwrap_or_else(|| task.cancel_action_id.clone()),
+            expires_at_ms: task.expires_at_ms,
+        };
+        let show = ShowPayload {
+            request_id: request_id.clone(),
+            request: placeholder_request,
+            source: task.source.clone(),
+            lang: "en".to_string(),
+            project: String::new(),
+            agent_kind: None,
+            agent_pid: None,
+            perf_id: String::new(),
+            perf_autodismiss: false,
+            created_at_ms: crate::perf::now_ms() as u64,
+            confirm: Some(confirm_show),
+        };
+
+        let (final_tx, _final_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let entry = Arc::new(RequestEntry {
+            request_id: request_id.clone(),
+            seq: self.next_seq.fetch_add(1, Ordering::SeqCst),
+            kind: InteractionKind::Confirm,
+            token: token.clone(),
+            coordinator,
+            show,
+            agent_session_id,
+            gui,
+            resolved_agent: Arc::new(Mutex::new(None)),
+            gui_connected: AtomicBool::new(false),
+            cancel: Arc::new(Notify::new()),
+            final_tx,
+            confirm_tx: Some(confirm_tx),
+            confirm_request: Some(confirm_req),
+        });
+
+        let mut inner = self.inner.lock().unwrap();
+        inner.by_id.insert(request_id, entry.clone());
+        inner.by_token.insert(token, entry.request_id.clone());
+        (entry, confirm_rx)
     }
 
     /// GUI Helper 凭 token 关联请求（token 一次性，关联后即注销）。

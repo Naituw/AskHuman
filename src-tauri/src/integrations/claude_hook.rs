@@ -365,7 +365,7 @@ fn write_text(text: &str) -> Result<()> {
     atomic_write(&path, text.as_bytes())
 }
 
-fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)?;

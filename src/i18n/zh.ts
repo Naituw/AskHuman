@@ -28,6 +28,9 @@ export default {
       viewSource: "查看源码",
       viewRendered: "Markdown 预览",
     },
+    confirm: {
+      details: "详情",
+    },
     send: "发送",
     prev: "上一个",
     next: "下一个",
@@ -180,7 +183,7 @@ export default {
       copied: "已复制",
       rulesLabel: "Rules",
       skillLabel: "Skill",
-      hookLabel: "超时 Hook",
+      hookLabel: "Hooks",
       mcpConfigLabel: "MCP 配置",
       reveal: "定位",
       openFile: "打开",
@@ -190,6 +193,10 @@ export default {
       openFileAction: "打开文件",
       installRule: "安装规则",
       hookShort: "检测到调用 AskHuman 时自动把超时延长到 24 小时，避免长时间等待被取消。",
+      hookCapPrefix: "能力：",
+      hookCapSep: "、",
+      hookCapTimeout: "超时延长",
+      hookCapPermission: "权限审批",
       cursorRulesHint:
         "需项目位于用户主目录（~）之下才会全局生效；其它位置请在 Cursor 设置 → Rules 手动配置。",
       grokSkillHint:

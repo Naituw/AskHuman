@@ -8,7 +8,7 @@
 //! 注意：实验性 lifecycle hook（turn 追踪）**不属于**任何模式，保持独立开关、与本编排正交（spec D9）。
 
 use crate::integrations::agent_rules::{self, AgentTarget, Variant};
-use crate::integrations::{claude_hook, cursor_hook, mcp_config};
+use crate::integrations::{claude_hook, cursor_hook, mcp_config, permission_hook};
 use anyhow::Result;
 
 /// 每家 Agent 的集成模式（互斥三态）。
@@ -152,22 +152,34 @@ pub struct ArtifactUpdates {
 }
 
 /// 逐产物计算当前模式下的过期 / 缺失情况。None 模式无产物，全 false。
+/// Hook 产物包含 timeout hook（CLI 模式、Claude/Cursor）+ permission hook（Claude/Codex 两种模式）。
 pub fn artifact_updates(target: AgentTarget) -> ArtifactUpdates {
     match current(target) {
         Mode::None => ArtifactUpdates::default(),
-        Mode::Cli => ArtifactUpdates {
-            rule: !agent_rules::is_installed(target)
-                || agent_rules::needs_update_variant(target, Variant::Cli),
-            hook: timeout_hook_supported(target)
-                && (!timeout_hook_is_installed(target) || timeout_hook_needs_update(target)),
-            mcp: false,
-        },
-        Mode::Mcp => ArtifactUpdates {
-            rule: !agent_rules::is_installed(target)
-                || agent_rules::needs_update_variant(target, Variant::Mcp),
-            hook: false,
-            mcp: !mcp_config::is_installed(target) || mcp_config::needs_update(target),
-        },
+        Mode::Cli => {
+            let timeout_stale = timeout_hook_supported(target)
+                && (!timeout_hook_is_installed(target) || timeout_hook_needs_update(target));
+            let perm_stale = permission_hook::supported(target)
+                && (!permission_hook::is_installed(target)
+                    || permission_hook::needs_update(target));
+            ArtifactUpdates {
+                rule: !agent_rules::is_installed(target)
+                    || agent_rules::needs_update_variant(target, Variant::Cli),
+                hook: timeout_stale || perm_stale,
+                mcp: false,
+            }
+        }
+        Mode::Mcp => {
+            let perm_stale = permission_hook::supported(target)
+                && (!permission_hook::is_installed(target)
+                    || permission_hook::needs_update(target));
+            ArtifactUpdates {
+                rule: !agent_rules::is_installed(target)
+                    || agent_rules::needs_update_variant(target, Variant::Mcp),
+                hook: perm_stale,
+                mcp: !mcp_config::is_installed(target) || mcp_config::needs_update(target),
+            }
+        }
     }
 }
 
@@ -193,21 +205,25 @@ pub fn set(target: AgentTarget, mode: Mode) -> Result<()> {
     match mode {
         Mode::None => uninstall_all(target),
         Mode::Cli => {
-            // 卸 MCP 产物 → 装 CLI Rule + 超时 Hook（Codex 跳过 Hook）。
             mcp_config::uninstall(target)?;
             agent_rules::install_variant(target, Variant::Cli)?;
             if timeout_hook_supported(target) {
                 timeout_hook_install(target)?;
             }
+            if permission_hook::supported(target) {
+                permission_hook::install(target)?;
+            }
             Ok(())
         }
         Mode::Mcp => {
-            // 卸超时 Hook → 装 MCP Rule + MCP 配置。
             if timeout_hook_supported(target) {
                 timeout_hook_uninstall(target)?;
             }
             agent_rules::install_variant(target, Variant::Mcp)?;
             mcp_config::install(target)?;
+            if permission_hook::supported(target) {
+                permission_hook::install(target)?;
+            }
             Ok(())
         }
     }
@@ -232,23 +248,28 @@ pub fn update_artifact(target: AgentTarget, artifact: Artifact) -> Result<()> {
         (Mode::Mcp, Artifact::Rule) => {
             agent_rules::install_variant(target, Variant::Mcp).map(|_| ())
         }
-        (Mode::Cli, Artifact::Hook) => {
+        (Mode::Cli, Artifact::Hook) | (Mode::Mcp, Artifact::Hook) => {
             if timeout_hook_supported(target) {
-                timeout_hook_install(target).map(|_| ())
-            } else {
-                Ok(())
+                timeout_hook_install(target)?;
             }
+            if permission_hook::supported(target) {
+                permission_hook::install(target)?;
+            }
+            Ok(())
         }
         (Mode::Mcp, Artifact::Mcp) => mcp_config::install(target).map(|_| ()),
         _ => Ok(()),
     }
 }
 
-/// 卸载当前 / 全部模式产物（Rule + 超时 Hook + MCP 配置），保留用户其它内容。
+/// 卸载当前 / 全部模式产物（Rule + 超时 Hook + Permission Hook + MCP 配置），保留用户其它内容。
 fn uninstall_all(target: AgentTarget) -> Result<()> {
     agent_rules::uninstall(target)?;
     if timeout_hook_supported(target) {
         timeout_hook_uninstall(target)?;
+    }
+    if permission_hook::supported(target) {
+        permission_hook::uninstall(target)?;
     }
     mcp_config::uninstall(target)?;
     Ok(())

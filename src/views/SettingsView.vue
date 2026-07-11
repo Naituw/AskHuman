@@ -164,6 +164,8 @@ const emptyMode = (): AgentModeStatus => ({
   ruleInstalled: false,
   timeoutHookSupported: false,
   timeoutHookInstalled: false,
+  permissionHookSupported: false,
+  permissionHookInstalled: false,
   mcpConfigPath: "",
   mcpConfigInstalled: false,
 });
@@ -211,6 +213,15 @@ async function setMode(agent: AgentId, mode: AgentMode) {
     modeBusy.value[agent] = false;
     await refreshMode(agent);
   }
+}
+
+function hookCapabilities(agent: AgentId): string {
+  const m = modes.value[agent];
+  const caps: string[] = [];
+  if (m.timeoutHookSupported) caps.push(t("settings.integration.hookCapTimeout"));
+  if (m.permissionHookSupported) caps.push(t("settings.integration.hookCapPermission"));
+  if (caps.length === 0) return t("settings.integration.hookShort");
+  return t("settings.integration.hookCapPrefix") + caps.join(t("settings.integration.hookCapSep"));
 }
 
 // 单项更新：只把某个产物（rule / hook / mcp）刷新到最新。
@@ -2004,10 +2015,10 @@ onBeforeUnmount(() => unlistenProgress?.());
               {{ t("settings.integration.grokSkillHint") }}
             </p>
 
-            <!-- CLI 模式：超时 Hook（Codex 无 Hook 给提示） -->
+            <!-- CLI 模式：Hook 包 -->
             <template v-if="modes[a.id].mode === 'cli'">
               <hr class="divider" />
-              <template v-if="a.hasTimeoutHook">
+              <template v-if="a.hasTimeoutHook || modes[a.id].permissionHookSupported">
                 <div class="row agent-row">
                   <span class="label">{{
                     t("settings.integration.hookLabel")
@@ -2015,10 +2026,10 @@ onBeforeUnmount(() => unlistenProgress?.());
                   <span class="badge">
                     <span
                       class="dot"
-                      :class="modes[a.id].timeoutHookInstalled ? 'on' : 'off'"
+                      :class="(modes[a.id].timeoutHookInstalled || modes[a.id].permissionHookInstalled) ? 'on' : 'off'"
                     ></span>
                     {{
-                      modes[a.id].timeoutHookInstalled
+                      (modes[a.id].timeoutHookInstalled || modes[a.id].permissionHookInstalled)
                         ? t("settings.integration.installed")
                         : t("settings.integration.notInstalled")
                     }}
@@ -2034,7 +2045,7 @@ onBeforeUnmount(() => unlistenProgress?.());
                     <span class="dot-update"></span
                     >{{ t("settings.integration.update") }}
                   </button>
-                  <div v-if="modes[a.id].timeoutHookInstalled" class="menu-wrap">
+                  <div v-if="modes[a.id].timeoutHookInstalled || modes[a.id].permissionHookInstalled" class="menu-wrap">
                     <button
                       class="btn"
                       type="button"
@@ -2061,10 +2072,10 @@ onBeforeUnmount(() => unlistenProgress?.());
                   </div>
                 </div>
                 <p class="card-desc agent-hint">
-                  {{ t("settings.integration.hookShort") }}
+                  {{ hookCapabilities(a.id) }}
                 </p>
                 <p
-                  v-if="!modes[a.id].timeoutHookSupported"
+                  v-if="!modes[a.id].timeoutHookSupported && !modes[a.id].permissionHookSupported"
                   class="result err"
                 >
                   {{ t("settings.integration.windowsUnsupported") }}
@@ -2072,6 +2083,41 @@ onBeforeUnmount(() => unlistenProgress?.());
               </template>
               <p v-else class="card-desc agent-hint">
                 {{ t("settings.integration.codexNoHook") }}
+              </p>
+            </template>
+
+            <!-- MCP 模式：Permission Hook（Claude/Codex） -->
+            <template v-if="modes[a.id].mode === 'mcp' && modes[a.id].permissionHookSupported">
+              <hr class="divider" />
+              <div class="row agent-row">
+                <span class="label">{{
+                  t("settings.integration.hookLabel")
+                }}</span>
+                <span class="badge">
+                  <span
+                    class="dot"
+                    :class="modes[a.id].permissionHookInstalled ? 'on' : 'off'"
+                  ></span>
+                  {{
+                    modes[a.id].permissionHookInstalled
+                      ? t("settings.integration.installed")
+                      : t("settings.integration.notInstalled")
+                  }}
+                </span>
+                <span class="spacer"></span>
+                <button
+                  v-if="modes[a.id].hookNeedsUpdate"
+                  class="btn btn-update"
+                  type="button"
+                  :disabled="modeBusy[a.id]"
+                  @click="updateArtifact(a.id, 'hook')"
+                >
+                  <span class="dot-update"></span
+                  >{{ t("settings.integration.update") }}
+                </button>
+              </div>
+              <p class="card-desc agent-hint">
+                {{ hookCapabilities(a.id) }}
               </p>
             </template>
 

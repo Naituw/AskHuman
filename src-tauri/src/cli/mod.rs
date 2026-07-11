@@ -182,6 +182,20 @@ pub fn dispatch() {
             }
             exit(0);
         }
+        // 隐藏权限 Hook：`AskHuman __permission-hook <claude|codex>`。
+        // 从 stdin 读 PermissionRequest JSON，经 daemon 取得人的决定，stdout 输出 allow/deny JSON。
+        // 基础设施失败时 stdout 为空（Agent 回原生弹窗）。
+        "__permission-hook" => {
+            #[cfg(unix)]
+            {
+                let code = crate::permission::run_hook(&argv[2..]);
+                exit(code);
+            }
+            #[cfg(not(unix))]
+            {
+                exit(0);
+            }
+        }
         // Agent 状态 + 集成子命令组（spec：cli-config）：monitor / show / install / uninstall / update。
         "agents" => {
             agents_cmd::dispatch(&argv[2..], lang);

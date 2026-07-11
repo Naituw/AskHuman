@@ -794,6 +794,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::commands::popup_show_window,
             crate::commands::submit_popup,
             crate::commands::cancel_popup,
+            crate::commands::submit_confirm_action,
             crate::commands::open_path,
             crate::commands::preview_attachments,
             crate::commands::close_preview,
@@ -1250,6 +1251,20 @@ pub struct RenderOutcome {
     pub stderr: Option<String>,
     /// 退出码：0（发送/取消正常）/ 1（落盘等错误）。
     pub exit_code: i32,
+}
+
+/// Coordinator → connection handler 统一终态（Ask 和 Confirm 两条路径）。
+#[derive(Debug, Clone)]
+pub enum RequestOutcome {
+    /// 普通 Ask：文本结果 + 退出码。
+    Ask(RenderOutcome),
+    /// 权限确认终态（人做出了决定）。
+    Confirm {
+        action_id: String,
+        source_channel_id: String,
+    },
+    /// 权限确认回退（基础设施故障 / 超时 / 无可用渠道）。
+    ConfirmFallback { reason: String },
 }
 
 /// 渲染终态结果（图片落盘到 `temp/askhuman/<request_id>/`）。文案按传入 `lang` 本地化。

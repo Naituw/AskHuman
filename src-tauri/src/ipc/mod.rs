@@ -130,6 +130,58 @@ pub struct TaskRequest {
     pub perf_autodismiss: bool,
 }
 
+/// Permission-hook CLI 提交的确认请求（M0）。结构足够通用，不依赖具体 agent 协议。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmTask {
+    /// 展示标题（例："Claude Code 请求执行命令"）。
+    pub title: String,
+    /// Markdown 正文（工具/命令详情）。
+    pub body_md: String,
+    /// 结构化详情（工具名 + 参数 JSON），供渲染端做折叠/代码高亮。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+    /// 第一动作 ID（正向批准），如 "allow"/"allow_session"。
+    pub confirm_action_id: String,
+    /// 第一动作展示文案。
+    pub confirm_label: String,
+    /// 第二动作 ID（拒绝），如 "deny"。
+    pub cancel_action_id: String,
+    /// 第二动作展示文案。
+    pub cancel_label: String,
+    /// 第一动作视觉角色："primary" | "destructive" | "default"。
+    #[serde(default = "default_primary_role")]
+    pub confirm_role: String,
+    /// 第二动作视觉角色。
+    #[serde(default = "default_default_role")]
+    pub cancel_role: String,
+    /// 窗口关闭（dismiss）映射到哪个 action_id，默认=cancel_action_id。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dismiss_action_id: Option<String>,
+    /// 是否保存到回复历史（权限审批场景下为 false）。
+    #[serde(default)]
+    pub record_history: bool,
+    /// 过期时间（epoch ms），0 = 使用默认 24h。
+    #[serde(default)]
+    pub expires_at_ms: u64,
+    /// 调用方来源名（权限 Hook 标识自己）。
+    #[serde(default)]
+    pub source: String,
+    /// 调用方 Agent 会话 ID（从 env 取）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_id: Option<String>,
+    /// 调用方进程 pid（用于进程树 walk）。
+    #[serde(default)]
+    pub caller_pid: u32,
+}
+
+fn default_primary_role() -> String {
+    "primary".to_string()
+}
+fn default_default_role() -> String {
+    "default".to_string()
+}
+
 /// 自动识别 userId/open_id 请求（设置进程 → Daemon，Q6）：用表单当前凭据，
 /// 等用户私聊机器人发送识别码后返回其 id。Daemon 若已有同 `app_key` 的活动长连接则**观察现有连接**
 /// （零冲突），否则自行临时开一条连接完成识别。
@@ -221,6 +273,27 @@ pub struct ShowPayload {
     /// 预热弹窗领用时得到的即为提问真正到达时刻（而非热进程 spawn 时刻）。
     #[serde(default)]
     pub created_at_ms: u64,
+    /// Confirm 请求负载（权限审批等），与 `request` 互斥——有则渲染确认视图。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<ConfirmShowPayload>,
+}
+
+/// GUI Helper 确认视图所需的展示数据（Daemon → GUI）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmShowPayload {
+    pub title: String,
+    pub body_md: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+    pub confirm_action_id: String,
+    pub confirm_label: String,
+    pub confirm_role: String,
+    pub cancel_action_id: String,
+    pub cancel_label: String,
+    pub cancel_role: String,
+    pub dismiss_action_id: String,
+    pub expires_at_ms: u64,
 }
 
 /// 客户端（CLI / GUI Helper）→ Daemon 的消息。
@@ -312,6 +385,9 @@ pub enum ClientMsg {
     InterjectClear { session_id: String },
     /// 查询该 session 的待送达全文（composer 预填 / IM 回显）。回一帧 `InterjectState`。
     InterjectQuery { session_id: String },
+    /// 提交一次确认请求（权限 Hook → Daemon）。Daemon 回 `ConfirmAccepted` 后阻塞等
+    /// `ConfirmFinal` 或 `ConfirmFallback`。
+    SubmitConfirm(ConfirmTask),
 }
 
 /// 一次工具调用的实时上报（随 `AgentEvent` 的 activity 事件携带）。跨进程只传**原始工具名**与
@@ -460,6 +536,19 @@ pub enum ServerMsg {
     InterjectState {
         text: String,
         entries: usize,
+    },
+    /// 确认任务已受理（D→Hook CLI）：回带 request_id。
+    ConfirmAccepted {
+        request_id: String,
+    },
+    /// 确认终态：人明确作出的批准或拒绝（D→Hook CLI）。
+    ConfirmFinal {
+        action_id: String,
+        source_channel_id: String,
+    },
+    /// 确认回退：无法取得人的决定（D→Hook CLI）。Hook 收到后 stdout 为空，Agent 回原生权限弹窗。
+    ConfirmFallback {
+        reason: String,
     },
 }
 

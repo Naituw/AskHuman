@@ -3,7 +3,7 @@
 //! 收到首个结果后不立即退出，而是给落败渠道一个**收尾窗口**（最多 ~2s，事件驱动、提前结束）
 //! 把卡片改成终态（钉钉灰显「已提交」、Telegram 编辑卡片为「已回答」等），随后输出结果并退出。
 
-use super::RenderOutcome;
+use super::{RenderOutcome, RequestOutcome};
 use crate::channels::{Channel, Interruption, Preemption};
 use crate::i18n::{self, Lang};
 use crate::models::{AskRequest, ChannelAction, ChannelResult};
@@ -26,8 +26,22 @@ pub enum Exiter {
     Gui(AppHandle),
     /// headless 模式：直接退出进程。
     Process,
-    /// Daemon 模式：不退出进程，把渲染好的结果经通道回传连接处理器（由它写 IPC `final`）。
+    /// Daemon 模式（Ask）：渲染结果经通道回传连接处理器。
     Ipc(UnboundedSender<RenderOutcome>),
+    /// Daemon 模式（Confirm）：结构化终态经通道回传连接处理器。
+    IpcConfirm(UnboundedSender<RequestOutcome>),
+}
+
+/// 协调器交互模式：决定 `finish()` 的行为。
+#[derive(Clone)]
+pub enum CoordinatorMode {
+    /// 普通 Ask：渲染文本、写历史、输出 stdout。
+    Ask { request: AskRequest },
+    /// 权限确认：映射到 action_id、不写历史。
+    Confirm {
+        confirm_action_id: String,
+        cancel_action_id: String,
+    },
 }
 
 pub struct Coordinator {
@@ -58,7 +72,7 @@ pub struct Coordinator {
 struct Inner {
     finished: bool,
     exiter: Exiter,
-    request: AskRequest,
+    mode: CoordinatorMode,
     channels: Vec<Arc<dyn Channel>>,
     /// headless 模式：共享抢答信号 + 消息渠道总数（用于算落败数）。GUI 为 None。
     headless: Option<(Arc<Preemption>, usize)>,
@@ -75,7 +89,7 @@ impl Coordinator {
     ) -> Arc<Self> {
         Self::build(
             Exiter::Gui(app),
-            request,
+            CoordinatorMode::Ask { request },
             None,
             Lang::current(),
             project,
@@ -95,7 +109,7 @@ impl Coordinator {
     ) -> Arc<Self> {
         Self::build(
             Exiter::Process,
-            request,
+            CoordinatorMode::Ask { request },
             Some((preempt, messaging_count)),
             Lang::current(),
             project,
@@ -104,7 +118,7 @@ impl Coordinator {
         )
     }
 
-    /// Daemon 模式协调器：结果到达后渲染并经 `tx` 回传，不退出进程。
+    /// Daemon 模式协调器（Ask）：结果到达后渲染并经 `tx` 回传，不退出进程。
     /// `lang` 为调用方上送的界面语言（A11，使 `auto` 跟随调用方）。
     pub fn new_ipc(
         request: AskRequest,
@@ -116,7 +130,7 @@ impl Coordinator {
     ) -> Arc<Self> {
         Self::build(
             Exiter::Ipc(tx),
-            request,
+            CoordinatorMode::Ask { request },
             None,
             lang,
             project,
@@ -125,9 +139,30 @@ impl Coordinator {
         )
     }
 
+    /// Daemon 模式协调器（Confirm）：权限确认，不写历史，终态为结构化 action_id。
+    pub fn new_confirm_ipc(
+        confirm_action_id: String,
+        cancel_action_id: String,
+        lang: Lang,
+        tx: UnboundedSender<RequestOutcome>,
+    ) -> Arc<Self> {
+        Self::build(
+            Exiter::IpcConfirm(tx),
+            CoordinatorMode::Confirm {
+                confirm_action_id,
+                cancel_action_id,
+            },
+            None,
+            lang,
+            String::new(),
+            String::new(),
+            None,
+        )
+    }
+
     fn build(
         exiter: Exiter,
-        request: AskRequest,
+        mode: CoordinatorMode,
         headless: Option<(Arc<Preemption>, usize)>,
         lang: Lang,
         project: String,
@@ -138,7 +173,7 @@ impl Coordinator {
             inner: Mutex::new(Inner {
                 finished: false,
                 exiter,
-                request,
+                mode,
                 channels: Vec::new(),
                 headless,
             }),
@@ -255,7 +290,7 @@ impl Coordinator {
             Exiter::Gui(_) => {
                 tauri::async_runtime::spawn(waiter);
             }
-            Exiter::Process | Exiter::Ipc(_) => {
+            Exiter::Process | Exiter::Ipc(_) | Exiter::IpcConfirm(_) => {
                 tokio::spawn(waiter);
             }
         }
@@ -300,25 +335,31 @@ impl Coordinator {
         if self.emitted.swap(true, Ordering::SeqCst) {
             return;
         }
-        let (exiter, request) = {
+        let (exiter, mode) = {
             let inner = self.inner.lock().unwrap();
-            (inner.exiter.clone(), inner.request.clone())
+            (inner.exiter.clone(), inner.mode.clone())
         };
         let result = self.result.lock().unwrap().take();
         let Some(result) = result else {
-            // 无结果（headless 全部会话结束仍未作答）：不退出，交由调用方报错。
             return;
         };
-        // 渲染一次（图片落盘只发生一次），拿到给 CLI 的文本与各题图片路径。
-        let (outcome, image_paths) = super::render_result(&request, &result, self.lang);
-        // 旁路写回复历史：最佳努力，绝不影响主流程（stdout / 退出码）。
-        self.record_history(&request, &result, &image_paths);
-        // Daemon 模式：回传连接处理器，不打印、不退出（进程常驻）。
+
+        match mode {
+            CoordinatorMode::Ask { request } => self.finish_ask(exiter, &request, result),
+            CoordinatorMode::Confirm {
+                confirm_action_id,
+                cancel_action_id,
+            } => self.finish_confirm(exiter, &confirm_action_id, &cancel_action_id, result),
+        }
+    }
+
+    fn finish_ask(&self, exiter: Exiter, request: &AskRequest, result: ChannelResult) {
+        let (outcome, image_paths) = super::render_result(request, &result, self.lang);
+        self.record_history(request, &result, &image_paths);
         if let Exiter::Ipc(tx) = &exiter {
             let _ = tx.send(outcome);
             return;
         }
-        // 单进程：打印结果并退出。
         if let Some(err) = &outcome.stderr {
             super::stderr_redirect::eprintln_real(err);
         } else {
@@ -329,6 +370,27 @@ impl Coordinator {
             Exiter::Gui(app) => app.exit(outcome.exit_code),
             Exiter::Process => std::process::exit(outcome.exit_code),
             Exiter::Ipc(_) => unreachable!("handled above"),
+            Exiter::IpcConfirm(_) => unreachable!("Ask mode cannot use IpcConfirm exiter"),
+        }
+    }
+
+    fn finish_confirm(
+        &self,
+        exiter: Exiter,
+        confirm_action_id: &str,
+        cancel_action_id: &str,
+        result: ChannelResult,
+    ) {
+        let action_id = match result.action {
+            ChannelAction::Send => confirm_action_id.to_string(),
+            ChannelAction::Cancel => cancel_action_id.to_string(),
+        };
+        let outcome = RequestOutcome::Confirm {
+            action_id,
+            source_channel_id: result.source_channel_id,
+        };
+        if let Exiter::IpcConfirm(tx) = &exiter {
+            let _ = tx.send(outcome);
         }
     }
 
@@ -390,5 +452,97 @@ fn display_name(id: &str, lang: Lang) -> String {
         "feishu" => i18n::tr(lang, "channel.sourceFeishu").to_string(),
         "slack" => i18n::tr(lang, "channel.sourceSlack").to_string(),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{ChannelAction, ChannelResult};
+
+    /// Confirm coordinator: Send action maps to confirm_action_id.
+    #[tokio::test]
+    async fn confirm_send_maps_to_confirm_action_id() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let coord =
+            Coordinator::new_confirm_ipc("allow".to_string(), "deny".to_string(), Lang::En, tx);
+
+        let result = ChannelResult {
+            action: ChannelAction::Send,
+            answers: Vec::new(),
+            source_channel_id: "popup".to_string(),
+        };
+        coord.submit(result);
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let outcome = rx.try_recv().unwrap();
+        match outcome {
+            RequestOutcome::Confirm {
+                action_id,
+                source_channel_id,
+            } => {
+                assert_eq!(action_id, "allow");
+                assert_eq!(source_channel_id, "popup");
+            }
+            other => panic!("expected Confirm, got {:?}", other),
+        }
+    }
+
+    /// Confirm coordinator: Cancel action maps to cancel_action_id.
+    #[tokio::test]
+    async fn confirm_cancel_maps_to_cancel_action_id() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let coord =
+            Coordinator::new_confirm_ipc("allow".to_string(), "deny".to_string(), Lang::En, tx);
+
+        let result = ChannelResult {
+            action: ChannelAction::Cancel,
+            answers: Vec::new(),
+            source_channel_id: "telegram".to_string(),
+        };
+        coord.submit(result);
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let outcome = rx.try_recv().unwrap();
+        match outcome {
+            RequestOutcome::Confirm {
+                action_id,
+                source_channel_id,
+            } => {
+                assert_eq!(action_id, "deny");
+                assert_eq!(source_channel_id, "telegram");
+            }
+            other => panic!("expected Confirm, got {:?}", other),
+        }
+    }
+
+    /// First-answer uniqueness: second submit is ignored.
+    #[tokio::test]
+    async fn confirm_first_answer_wins() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let coord =
+            Coordinator::new_confirm_ipc("allow".to_string(), "deny".to_string(), Lang::En, tx);
+
+        coord.submit(ChannelResult {
+            action: ChannelAction::Send,
+            answers: Vec::new(),
+            source_channel_id: "popup".to_string(),
+        });
+        coord.submit(ChannelResult {
+            action: ChannelAction::Cancel,
+            answers: Vec::new(),
+            source_channel_id: "telegram".to_string(),
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let outcome = rx.try_recv().unwrap();
+        assert!(matches!(
+            outcome,
+            RequestOutcome::Confirm {
+                ref action_id,
+                ..
+            } if action_id == "allow"
+        ));
+        assert!(rx.try_recv().is_err());
     }
 }

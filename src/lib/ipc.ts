@@ -58,6 +58,10 @@ export const submitPopup = (submission: PopupSubmission) =>
 
 export const cancelPopup = () => invoke<void>("cancel_popup");
 
+/** 确认弹窗：用户点击某个动作按钮。isConfirm=true 为正向批准，false 为拒绝/关窗。 */
+export const submitConfirmAction = (actionId: string, isConfirm: boolean) =>
+  invoke<void>("submit_confirm_action", { actionId, isConfirm });
+
 export const openPath = (path: string) => invoke<void>("open_path", { path });
 
 export const previewAttachments = (paths: string[], index: number) =>

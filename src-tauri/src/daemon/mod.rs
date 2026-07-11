@@ -808,6 +808,7 @@ mod unix_impl {
     /// 控制阶段的产物：收到接管型消息（提交 / GUI 握手）或连接关闭。
     enum Control {
         Submit(TaskRequest),
+        SubmitConfirm(crate::ipc::ConfirmTask),
         Gui(String),
         /// 方案6 预热弹窗握手：接管连接，入热池待命、等领用。
         GuiWarm,
@@ -835,6 +836,7 @@ mod unix_impl {
 
         match control_loop(&mut reader, &mut w, &state).await {
             Control::Submit(task) => handle_submit(task, reader, w, &state).await,
+            Control::SubmitConfirm(task) => handle_submit_confirm(task, reader, w, &state).await,
             Control::Gui(token) => handle_gui(token, reader, w, &state).await,
             Control::GuiWarm => handle_gui_warm(reader, w, &state).await,
             Control::AgentsSub => handle_agents_sub(reader, w, &state).await,
@@ -1126,6 +1128,7 @@ mod unix_impl {
                 }
                 // Answer 只应在 GUI 接管阶段出现；控制阶段收到即忽略。
                 ClientMsg::Answer { .. } => {}
+                ClientMsg::SubmitConfirm(task) => return Control::SubmitConfirm(task),
             }
         }
     }
@@ -1153,6 +1156,105 @@ mod unix_impl {
     }
 
     /// CLI 提交一次任务：建请求、spawn GUI Helper、流式回结果；CLI 断开则取消。
+    async fn handle_submit_confirm(
+        task: crate::ipc::ConfirmTask,
+        mut reader: Reader,
+        mut w: OwnedWriteHalf,
+        state: &Arc<ServerState>,
+    ) {
+        let lang = Lang::resolve("en");
+        let (entry, mut confirm_rx) = state.registry.create_confirm(task);
+        let request_id = entry.request_id.clone();
+
+        if ipc::write_msg(
+            &mut w,
+            &ServerMsg::ConfirmAccepted {
+                request_id: request_id.clone(),
+            },
+        )
+        .await
+        .is_err()
+        {
+            state.registry.remove(&request_id);
+            return;
+        }
+
+        broadcast_tray_state(state);
+
+        // Attach popup + IM channels.
+        let popup_ok = dispatch_popup(&entry, state, "", false);
+        let im_attached = attach_im_channels(&entry, state, &mut w, lang).await;
+
+        if !popup_ok && !im_attached {
+            let _ = ipc::write_msg(
+                &mut w,
+                &ServerMsg::ConfirmFallback {
+                    reason: "no_channel".to_string(),
+                },
+            )
+            .await;
+            state.registry.remove(&request_id);
+            return;
+        }
+
+        if popup_ok {
+            spawn_gui_watchdog(entry.clone(), lang, im_attached);
+        }
+
+        // Wait for result, CLI disconnect, or 24h timeout.
+        let timeout = tokio::time::Duration::from_secs(24 * 60 * 60);
+        let outcome = tokio::select! {
+            o = confirm_rx.recv() => o,
+            _ = wait_cli_eof(&mut reader) => {
+                entry.coordinator.cancel_request(String::new());
+                entry.cancel.notify_waiters();
+                state.registry.remove(&request_id);
+                state.watch.notify.notify_one();
+                return;
+            }
+            _ = tokio::time::sleep(timeout) => {
+                entry.coordinator.cancel_request(String::new());
+                entry.cancel.notify_waiters();
+                let _ = ipc::write_msg(&mut w, &ServerMsg::ConfirmFallback {
+                    reason: "expired".to_string(),
+                }).await;
+                state.registry.remove(&request_id);
+                return;
+            }
+        };
+
+        match outcome {
+            Some(crate::app::RequestOutcome::Confirm {
+                action_id,
+                source_channel_id,
+            }) => {
+                let _ = ipc::write_msg(
+                    &mut w,
+                    &ServerMsg::ConfirmFinal {
+                        action_id,
+                        source_channel_id,
+                    },
+                )
+                .await;
+            }
+            Some(crate::app::RequestOutcome::ConfirmFallback { reason }) => {
+                let _ = ipc::write_msg(&mut w, &ServerMsg::ConfirmFallback { reason }).await;
+            }
+            _ => {
+                let _ = ipc::write_msg(
+                    &mut w,
+                    &ServerMsg::ConfirmFallback {
+                        reason: "connection_lost".to_string(),
+                    },
+                )
+                .await;
+            }
+        }
+        state.registry.remove(&request_id);
+        broadcast_tray_state(state);
+        state.watch.notify.notify_one();
+    }
+
     async fn handle_submit(
         task: TaskRequest,
         mut reader: Reader,
@@ -2069,6 +2171,7 @@ mod unix_impl {
         }
         let config = AppConfig::load();
         let request = entry.show.request.clone();
+        let confirm_view = entry.confirm_request.as_ref().map(|cr| cr.to_view());
         let sink = entry.coordinator.clone();
         let mut attached = false;
 
@@ -2094,6 +2197,12 @@ mod unix_impl {
             !auto || active.as_deref() == Some(id) || watching.iter().any(|w| w == id)
         };
 
+        // Dispatch helper: start Ask or Confirm depending on entry kind.
+        let start_ch = |ch: &Arc<dyn Channel>| match &confirm_view {
+            Some(view) => ch.start_confirm(view, sink.clone()),
+            None => ch.start(&request, sink.clone()),
+        };
+
         if want("dingding") && crate::app::is_dingding_active(&config) {
             let dd = &config.channels.dingding;
             match ensure_dd_router(state, dd.client_id.trim(), dd.client_secret.trim()).await {
@@ -2101,7 +2210,7 @@ mod unix_impl {
                     let ch: Arc<dyn Channel> =
                         Arc::new(DingTalkChannel::shared(dd.clone(), router));
                     entry.coordinator.register(ch.clone());
-                    ch.start(&request, sink.clone());
+                    start_ch(&ch);
                     attached = true;
                 }
                 None => {
@@ -2127,7 +2236,7 @@ mod unix_impl {
                 Some(router) => {
                     let ch: Arc<dyn Channel> = Arc::new(FeishuChannel::shared(fs.clone(), router));
                     entry.coordinator.register(ch.clone());
-                    ch.start(&request, sink.clone());
+                    start_ch(&ch);
                     attached = true;
                 }
                 None => {
@@ -2154,7 +2263,7 @@ mod unix_impl {
                     let ch: Arc<dyn Channel> =
                         Arc::new(TelegramChannel::shared(tg.clone(), router));
                     entry.coordinator.register(ch.clone());
-                    ch.start(&request, sink.clone());
+                    start_ch(&ch);
                     attached = true;
                 }
                 None => {
@@ -2180,7 +2289,7 @@ mod unix_impl {
                 Some(router) => {
                     let ch: Arc<dyn Channel> = Arc::new(SlackChannel::shared(sl.clone(), router));
                     entry.coordinator.register(ch.clone());
-                    ch.start(&request, sink.clone());
+                    start_ch(&ch);
                     attached = true;
                 }
                 None => {

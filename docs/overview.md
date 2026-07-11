@@ -139,7 +139,14 @@ AskHuman/
                              slack/select.rs（飞书/TG/Slack 就地回卡·变身 / 钉钉模板+变量另发卡、见「IM 单选卡」节）
       gitutil.rs             IM `/diff`·`/stage`：从 cwd 找 git 根、列 unstaged+untracked、DiffModel、
                              `git add -A`、路径指纹（确认卡防陈旧）
-      confirm.rs             轻量确认卡抽象（title+body+确认/取消；`/stage` 用；不复用提问卡/单选卡）
+      confirm.rs             通用确认交互模型（ConfirmView/Action/Slot/FinalView + ConfirmRequest/Result；
+                             权限审批和 /stage 共用）
+      confirm/transport.rs   通用确认卡四渠道发送/终态化（send + finalize）
+      permission/            Agent 权限审批 Hook 运行器（__permission-hook CLI 入口）：
+        mod.rs               PermissionInput/AgentFamily + run_hook（stdin→daemon confirm→stdout JSON）
+        input.rs             解析 Claude/Codex stdin PermissionRequest JSON（大小限制+家族检测）
+        summarize.rs         工具名+输入→人类可读摘要（bash/file/mcp/generic）
+        output.rs            生成 allow/deny JSON 输出（hookSpecificOutput.decision）
       export/                diff/transcript 附件渲染；文件名 `diff-{seq}-{project}` /
                              `transcript-{seq}-{title}`（扩展名随渠道：飞书 `.md`、TG `.html`、
                              Slack/钉钉 `.docx`）
@@ -211,6 +218,9 @@ AskHuman/
                              Grok `~/.grok/hooks/askhuman-lifecycle.json`(Nested，与 Claude 同构、全局恒受信任无需哈希)，
                              事件最全（含 StopFailure+SessionEnd）。**坑**：Grok 默认兼容加载 `~/.claude`/`~/.cursor`
                              的 hook，会与其原生 hook 一起触发 → 靠 reporter 去重（见 agents/report.rs）
+        permission_hook.rs   Claude/Codex PermissionRequest hook 安装/卸载/状态（Unix only）：写入
+                             `~/.claude/settings.json` / `~/.codex/hooks.json` 的 `hooks.PermissionRequest`，
+                             指向 `AskHuman __permission-hook <agent>`；agent_mode 在 Cli/Mcp 模式均安装
         agent_rules.rs       Agent 全局 Rules 安装/更新/卸载/状态/open/reveal：三者均用 AskHuman:begin/end
                              托管区块写入，保留区块外用户内容（Cursor ~/.cursor/rules/askhuman.mdc 另带
                              alwaysApply frontmatter，卸载时区块外仅剩 frontmatter/空白才删整文件；旧版
@@ -453,7 +463,7 @@ AskHuman/
 - **MCP 模式下的生命周期识别（env 清空 → 退用进程树 pid）**：agent 启动 STDIO MCP server 时会 `env_clear()`（实测 Codex：`rmcp-client` 仅注入 `HOME/PATH/...` 约 10 个系统变量），故 ask 子进程**看不到任何 `CODEX_*`/`CURSOR_*`/`CLAUDE*` 变量**——既判不出家族、也**拿不到会话 ID**（`CODEX_THREAD_ID` 本就只注入 codex 的 shell 工具子进程，连 codex 自身进程 env 都没有，配置 `env` 转发也无济于事）。兜底：`detect::walk_any_agent_from_self()` 向上 walk 进程树定位最近的 agent 祖先 → 拿到 `(kind, pid)`（无 session_id，pid 是当次现取、真实存活）；daemon `handle_submit` 据此走 `AgentRegistry::touch_activity_by_pid(kind, pid)`：按 `(kind,pid)` 匹配**已存在**的 session 刷新 `last_activity`，**只更新、绝不新建**（pid 真实存活 → 无幽灵会话）。命中前提是该会话已被 lifecycle hook 追踪（hook 的 turn 事件把同一 codex pid 写进 registry）。三家通用（仅 `from_mcp` 启用兜底，零影响普通 CLI 调用）。
 - **入参（精简）**：`ask` 仅暴露 `message`（**恒按 Markdown 渲染**）/`questions[{question, options[{text, recommended}]}]`/`files[]`；不暴露 `markdown`（恒 on）、`single`、`selectOnly`（属脚本/纯文本场景）。`AskQuestion` / `AskOption` 的 input schema 强制内联，使 `tools/list` 中 `ask.inputSchema` 不产生 `$defs` / `$ref`，兼容无法展开本地引用、否则会把嵌套数组退化为 `Array<unknown>` 的 MCP 客户端 / Code Mode。
 - **输出**：`ask` 声明 input/output schema；子进程 JSON 解析为 `AskResult`（**剔除脚本专用的 `selected_indices`**）→ 返回 `structuredContent`（结构化 JSON）+ `content`（序列化 JSON 文本 + 人类回复中的图片读回转 `ImageContent`）。**取消时顶层带 `status` 引导文案**（要求模型重新确认直到用户明确答复，不得当作放行）；该字段由 CLI `--output json` 顶层产出（取消路径才有），薄壳原样透传，脚本侧亦受益。
-- **三态集成**：每家 agent 的「自动集成」为 **None / Cli / Mcp 互斥三态**（`integrations/agent_mode.rs`）。Cli 绑定 Rule(CLI 版)+超时 Hook；Mcp 绑定 Rule(MCP 版)+MCP 配置（`integrations/mcp_config.rs` 写用户级全局：Cursor `~/.cursor/mcp.json`、Claude `~/.claude.json`、Codex `~/.codex/config.toml`，最小编辑保留用户内容）。提示词分 `prompts::{cli_reference,mcp_reference}` 两版。lifecycle hook（turn 追踪）与三态正交，独立开关。**Grok 例外：仅 None|Mcp 两态**（Composer 的 CLI 会自动后台化、超时不可靠 → 无 Cli 档、无超时 Hook；`set(Grok, Cli)` 直接报错），其 Mcp 产物 = skill（`grok_skill`，非 rules 文件）+ `~/.grok/config.toml`。
+- **三态集成**：每家 agent 的「自动集成」为 **None / Cli / Mcp 互斥三态**（`integrations/agent_mode.rs`）。Cli 绑定 Rule(CLI 版)+超时 Hook+权限 Hook（Claude/Codex）；Mcp 绑定 Rule(MCP 版)+MCP 配置+权限 Hook（Claude/Codex）。**Hook 产物包**：超时 Hook（Cursor/Claude CLI 模式）+ 权限审批 Hook（`integrations/permission_hook.rs`，Claude/Codex 两种模式均装，Unix only；写入 `~/.claude/settings.json` / `~/.codex/hooks.json` 的 `hooks.PermissionRequest`，指向 `AskHuman __permission-hook <agent>`）。提示词分 `prompts::{cli_reference,mcp_reference}` 两版。lifecycle hook（turn 追踪）与三态正交，独立开关。**Grok 例外：仅 None|Mcp 两态**（Composer 的 CLI 会自动后台化、超时不可靠 → 无 Cli 档、无超时 Hook；`set(Grok, Cli)` 直接报错），其 Mcp 产物 = skill（`grok_skill`，非 rules 文件）+ `~/.grok/config.toml`。
 - **MCP 工具超时**（长等待不被取消，各家机制不同）：
   - **Codex**：写 `tool_timeout_sec=86400`(秒) + `startup_timeout_sec=30`。✓
   - **Grok**：写 `tool_timeout_sec=86400` + `startup_timeout_sec=30` + **`tool_timeouts = { ask = 86400 }`**（per-tool，对默认模型 Composer 更精准）。✓ live 验证 `grok inspect` 确认 `askhuman(stdio) config` 已加载。

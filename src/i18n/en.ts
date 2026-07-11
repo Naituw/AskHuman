@@ -28,6 +28,9 @@ export default {
       viewSource: "View source",
       viewRendered: "Rendered preview",
     },
+    confirm: {
+      details: "Details",
+    },
     send: "Send",
     prev: "Previous",
     next: "Next",
@@ -185,7 +188,7 @@ export default {
       copied: "Copied",
       rulesLabel: "Rules",
       skillLabel: "Skill",
-      hookLabel: "Timeout hook",
+      hookLabel: "Hooks",
       mcpConfigLabel: "MCP config",
       reveal: "Locate",
       openFile: "Open",
@@ -196,6 +199,10 @@ export default {
       installRule: "Install Rule",
       hookShort:
         "Auto-extends the timeout to 24h when an AskHuman call is detected, so long waits aren't cancelled.",
+      hookCapPrefix: "Capabilities: ",
+      hookCapSep: ", ",
+      hookCapTimeout: "timeout extension",
+      hookCapPermission: "permission approval",
       cursorRulesHint:
         "Applies globally only when your project lives under your home directory (~). For other locations, configure it manually in Cursor Settings → Rules.",
       grokSkillHint:

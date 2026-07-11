@@ -16,6 +16,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 pub struct PopupInit {
     /// 本次提问内容。方案6 预热弹窗在**未领用**（待命）时为 `None`（前端等 `popup-show` 事件再 pull）。
     request: Option<AskRequest>,
+    /// 确认请求（权限审批等）。与 `request` 互斥：有 `confirm` 则渲染确认视图。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confirm: Option<ConfirmPopupPayload>,
     theme: String,
     always_on_top: bool,
     /// 标题来源名：「Question from {source_name}」。可经环境变量定制。
@@ -49,6 +52,26 @@ pub struct PopupInit {
     created_at_ms: u64,
 }
 
+/// 确认弹窗负载（权限审批），前端据此渲染双动作确认视图而非常规 Ask。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmPopupPayload {
+    pub title: String,
+    pub body_md: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+    pub confirm_action_id: String,
+    pub confirm_label: String,
+    pub confirm_role: String,
+    pub cancel_action_id: String,
+    pub cancel_label: String,
+    pub cancel_role: String,
+    /// 用户关窗映射到的 action_id。
+    pub dismiss_action_id: String,
+    /// 过期时间（epoch ms）；0 = 无超时。
+    pub expires_at_ms: u64,
+}
+
 #[tauri::command]
 pub fn popup_init(app: AppHandle, state: State<AppState>) -> PopupInit {
     // 方案6 预热弹窗：内容来自领用槽（`WarmPopup.show`）——`Some`=已领用、`None`=待命（request 返回 null，
@@ -57,44 +80,66 @@ pub fn popup_init(app: AppHandle, state: State<AppState>) -> PopupInit {
     // en/zh）；其余路径用本进程 config 的原始值（auto/en/zh）。
     let default_lang = state.config.general.language.clone();
     #[cfg(unix)]
-    let (request, source, project, agent_kind, agent_pid, language, warm, created_at_ms) =
-        if let Some(w) = app.try_state::<crate::app::WarmPopup>() {
-            match w.show.lock().ok().and_then(|g| g.clone()) {
-                Some(s) => (
-                    Some(s.request),
-                    s.source,
-                    s.project,
-                    s.agent_kind,
-                    s.agent_pid,
-                    s.lang,
-                    true,
-                    s.created_at_ms,
-                ),
-                None => (
-                    None,
-                    String::new(),
-                    String::new(),
-                    None,
-                    None,
-                    default_lang,
-                    true,
-                    0,
-                ),
-            }
-        } else {
-            (
-                Some(state.request.clone()),
-                state.source.clone(),
-                state.project.clone(),
-                state.agent_kind.clone(),
-                state.agent_pid,
+    let (
+        request,
+        source,
+        project,
+        agent_kind,
+        agent_pid,
+        language,
+        warm,
+        created_at_ms,
+        show_confirm,
+    ) = if let Some(w) = app.try_state::<crate::app::WarmPopup>() {
+        match w.show.lock().ok().and_then(|g| g.clone()) {
+            Some(s) => (
+                Some(s.request),
+                s.source,
+                s.project,
+                s.agent_kind,
+                s.agent_pid,
+                s.lang,
+                true,
+                s.created_at_ms,
+                s.confirm,
+            ),
+            None => (
+                None,
+                String::new(),
+                String::new(),
+                None,
+                None,
                 default_lang,
-                false,
-                state.created_at_ms,
-            )
-        };
+                true,
+                0,
+                None,
+            ),
+        }
+    } else {
+        (
+            Some(state.request.clone()),
+            state.source.clone(),
+            state.project.clone(),
+            state.agent_kind.clone(),
+            state.agent_pid,
+            default_lang,
+            false,
+            state.created_at_ms,
+            None,
+        )
+    };
     #[cfg(not(unix))]
-    let (request, source, project, agent_kind, agent_pid, language, warm, created_at_ms) = (
+    let (
+        request,
+        source,
+        project,
+        agent_kind,
+        agent_pid,
+        language,
+        warm,
+        created_at_ms,
+        show_confirm,
+    ) = (
         Some(state.request.clone()),
         state.source.clone(),
         state.project.clone(),
@@ -103,6 +148,7 @@ pub fn popup_init(app: AppHandle, state: State<AppState>) -> PopupInit {
         default_lang,
         false,
         state.created_at_ms,
+        None,
     );
     let _ = &app;
 
@@ -116,8 +162,23 @@ pub fn popup_init(app: AppHandle, state: State<AppState>) -> PopupInit {
     let cfg = fresh.as_ref().unwrap_or(&state.config);
 
     let project_name = crate::project::display_name(&project);
+    let confirm = show_confirm.map(|c| ConfirmPopupPayload {
+        title: c.title,
+        body_md: c.body_md,
+        details: c.details,
+        confirm_action_id: c.confirm_action_id,
+        confirm_label: c.confirm_label,
+        confirm_role: c.confirm_role,
+        cancel_action_id: c.cancel_action_id,
+        cancel_label: c.cancel_label,
+        cancel_role: c.cancel_role,
+        dismiss_action_id: c.dismiss_action_id,
+        expires_at_ms: c.expires_at_ms,
+    });
+
     PopupInit {
         request,
+        confirm,
         theme: theme_str(cfg.general.theme),
         always_on_top: cfg.general.always_on_top,
         // GUI Helper 模式下来源名由 Daemon 上送（A11）；单进程 / 设置回退取本进程环境。
@@ -243,6 +304,37 @@ pub fn cancel_popup(app: AppHandle) {
     if let Some(c) = app.try_state::<Arc<Coordinator>>() {
         c.submit(ChannelResult::cancel("popup"));
     }
+}
+
+/// 确认弹窗：用户点击了某个动作按钮。`action_id` 为 confirm 或 cancel 的 ID。
+/// Daemon 模式经 GuiBridge 回传；单进程模式投递协调器。
+/// 前端依据 action_id 决定传 Send（confirm）还是 Cancel（cancel/dismiss）。
+#[tauri::command]
+pub fn submit_confirm_action(app: AppHandle, action_id: String, is_confirm: bool) {
+    if is_confirm {
+        // confirm 动作 → ChannelAction::Send，协调器映射为 confirm_action_id
+        if let Some(bridge) = app.try_state::<crate::app::GuiBridge>() {
+            bridge.send_answer(Vec::new());
+            return;
+        }
+        if let Some(c) = app.try_state::<Arc<Coordinator>>() {
+            c.submit(ChannelResult {
+                action: ChannelAction::Send,
+                answers: Vec::new(),
+                source_channel_id: "popup".to_string(),
+            });
+        }
+    } else {
+        // cancel / dismiss → ChannelAction::Cancel，协调器映射为 cancel_action_id
+        if let Some(bridge) = app.try_state::<crate::app::GuiBridge>() {
+            bridge.send_cancel();
+            return;
+        }
+        if let Some(c) = app.try_state::<Arc<Coordinator>>() {
+            c.submit(ChannelResult::cancel("popup"));
+        }
+    }
+    let _ = action_id;
 }
 
 // ===== 文件附件：打开 / 预览 / 缩略图 =====
@@ -1051,7 +1143,7 @@ pub struct AgentModeStatus {
     mode: String,
     /// 当前模式下是否有产物过期 / 缺失（= 下面三个 per-artifact 标志的或）。
     needs_update: bool,
-    /// 当前模式下 Rule / 超时 Hook / MCP 配置各自是否过期或缺失（驱动单项更新按钮 + 概览统计）。
+    /// 当前模式下 Rule / Hook 包 / MCP 配置各自是否过期或缺失（驱动单项更新按钮 + 概览统计）。
     rule_needs_update: bool,
     hook_needs_update: bool,
     mcp_needs_update: bool,
@@ -1061,6 +1153,9 @@ pub struct AgentModeStatus {
     /// 该 Agent 是否有「超时 Hook」概念（Codex 没有）。
     timeout_hook_supported: bool,
     timeout_hook_installed: bool,
+    /// 该 Agent 是否支持 Permission Hook（仅 Claude/Codex + unix）。
+    permission_hook_supported: bool,
+    permission_hook_installed: bool,
     /// MCP 配置文件展示路径。
     mcp_config_path: String,
     mcp_config_installed: bool,
@@ -1068,6 +1163,7 @@ pub struct AgentModeStatus {
 
 #[tauri::command]
 pub fn agent_mode_status(agent: String) -> Result<AgentModeStatus, String> {
+    use crate::integrations::permission_hook;
     let a = parse_agent(&agent)?;
     let updates = agent_mode::artifact_updates(a);
     Ok(AgentModeStatus {
@@ -1080,6 +1176,8 @@ pub fn agent_mode_status(agent: String) -> Result<AgentModeStatus, String> {
         rule_installed: agent_rules::is_installed(a),
         timeout_hook_supported: agent_mode::timeout_hook_supported(a),
         timeout_hook_installed: agent_mode::timeout_hook_is_installed(a),
+        permission_hook_supported: permission_hook::supported(a),
+        permission_hook_installed: permission_hook::is_installed(a),
         mcp_config_path: mcp_config::display_path(a),
         mcp_config_installed: mcp_config::is_installed(a),
     })

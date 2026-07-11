@@ -8,6 +8,7 @@ pub mod slack;
 pub mod telegram;
 
 use crate::app::coordinator::Coordinator;
+use crate::confirm::ConfirmView;
 use crate::models::AskRequest;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -68,8 +69,11 @@ impl Default for Preemption {
 
 pub trait Channel: Send + Sync {
     fn id(&self) -> &str;
-    /// 启动 Channel；到达终态（发送/取消）时向 sink 投递一次结果。
+    /// 启动 Channel（Ask 交互）；到达终态（发送/取消）时向 sink 投递一次结果。
     fn start(&self, request: &AskRequest, sink: ResultSink);
+    /// 启动 Channel（Confirm 交互）：发确认卡、等待回调，到达终态时向 sink 投递结果。
+    /// 默认为 no-op（popup channel 通过 submit_confirm_action 走独立路径）。
+    fn start_confirm(&self, _view: &ConfirmView, _sink: ResultSink) {}
     /// Interrupt this channel before it produced a result, finalizing its UI per `reason`
     /// (preempted by a winner, or the whole request cancelled). Does not deliver a result.
     fn interrupt(&self, reason: &Interruption);
