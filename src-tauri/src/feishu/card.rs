@@ -166,18 +166,40 @@ fn checker_element(
     } else {
         opt.text.clone()
     };
+    let behavior = single.then(|| json!({ "action": "toggle", "index": i }));
+    styled_checker(
+        &format!("{}{}", OPT_NAME_PREFIX, i),
+        &display,
+        checked,
+        disabled,
+        behavior,
+        None,
+    )
+}
+
+/// Shared native checker used by ordinary Ask cards and structured confirmations.
+pub(crate) fn styled_checker(
+    name: &str,
+    content: &str,
+    checked: bool,
+    disabled: bool,
+    callback_value: Option<Value>,
+    text_color: Option<&str>,
+) -> Value {
+    let mut text = json!({ "tag": "lark_md", "content": content });
+    if let Some(color) = text_color {
+        text["text_color"] = Value::String(color.to_string());
+    }
     let mut checker = json!({
         "tag": "checker",
-        "name": format!("{}{}", OPT_NAME_PREFIX, i),
+        "name": name,
         "checked": checked,
-        "text": { "tag": "lark_md", "content": display },
+        "text": text,
     });
     if disabled {
         checker["disabled"] = Value::Bool(true);
-    } else if single {
-        // 单选：勾选器在表单外，挂 toggle 回调，由会话自管互斥并重渲染。
-        checker["behaviors"] =
-            json!([ { "type": "callback", "value": { "action": "toggle", "index": i } } ]);
+    } else if let Some(value) = callback_value {
+        checker["behaviors"] = json!([ { "type": "callback", "value": value } ]);
     }
     checker
 }
@@ -292,6 +314,11 @@ fn assemble_card(title: &str, elements: Vec<Value>, styled_header: bool) -> Valu
         card["header"] = json!({ "title": { "tag": "plain_text", "content": title } });
     }
     card
+}
+
+/// Shared small blue icon header used by ordinary Ask and structured-confirm cards.
+pub(crate) fn assemble_styled_card(title: &str, elements: Vec<Value>) -> Value {
+    assemble_card(title, elements, true)
 }
 
 /// 正文组件：markdown → `markdown` 组件；纯文本 → `div` + plain_text。

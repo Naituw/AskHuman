@@ -77,49 +77,73 @@ fn input_for_selected(
         .filter(|input| selected_id == Some(input.visible_when_action_id.as_str()))
 }
 
-fn feishu_button_type(role: ActionRole) -> &'static str {
-    match role {
-        ActionRole::Primary => "primary",
-        ActionRole::Destructive => "danger",
-        ActionRole::Default => "default",
+fn tool_name(request: &ConfirmRequest) -> &str {
+    request
+        .context
+        .iter()
+        .find(|field| field.id == "tool")
+        .map(|field| field.value.as_str())
+        .unwrap_or("Tool")
+}
+
+fn feishu_tool_elements(request: &ConfirmRequest) -> Vec<Value> {
+    let mut elements = vec![json!({
+        "tag": "markdown",
+        "content": format!("**{}**", tool_name(request)),
+    })];
+    if !request.detail.body_md.trim().is_empty() {
+        elements.push(json!({
+            "tag": "markdown",
+            "content": bounded(&request.detail.body_md, 12_000),
+        }));
+    }
+    if !request.detail.summary.trim().is_empty() {
+        elements.push(json!({
+            "tag": "div",
+            "text": {
+                "tag": "plain_text",
+                "content": request.detail.summary,
+                "text_size": "notation",
+                "text_color": "grey",
+            },
+        }));
+    }
+    elements
+}
+
+fn feishu_choice_text(choice: &crate::models::ConfirmChoice) -> String {
+    if choice.description.trim().is_empty() {
+        choice.label.clone()
+    } else {
+        format!(
+            "**{}**\n<font color='grey'>{}</font>",
+            choice.label, choice.description
+        )
     }
 }
 
 pub fn feishu_card(request: &ConfirmRequest, selected: Option<usize>, comment: &str) -> Value {
-    let mut elements = vec![
-        json!({
-            "tag": "div",
-            "text": { "tag": "plain_text", "content": request.title, "text_size": "notation", "text_color": "blue" },
-            "icon": { "tag": "standard_icon", "token": "maybe_filled", "color": "blue" },
-        }),
-        json!({ "tag": "hr" }),
-        json!({ "tag": "markdown", "content": request_markdown(request, 12_000) }),
-    ];
+    let mut elements = feishu_tool_elements(request);
+    elements.push(json!({ "tag": "hr", "margin": "0px 0px 0px 0px" }));
     for (index, choice) in request.choices.iter().enumerate() {
         let checked = selected == Some(index);
-        let description = if choice.description.trim().is_empty() {
-            choice.label.clone()
+        let color = if checked {
+            Some(if choice.role == ActionRole::Destructive {
+                "red"
+            } else {
+                "blue"
+            })
         } else {
-            format!(
-                "**{}**\n<font color='grey'>{}</font>",
-                choice.label, choice.description
-            )
+            None
         };
-        elements.push(json!({
-            "tag": "column_set",
-            "columns": [
-                { "tag": "column", "width": "weighted", "weight": 1,
-                  "elements": [{ "tag": "markdown", "content": description }] },
-                { "tag": "column", "width": "auto", "vertical_align": "center",
-                  "elements": [{
-                    "tag": "button",
-                    "size": "tiny",
-                    "type": feishu_button_type(choice.role),
-                    "text": { "tag": "plain_text", "content": if checked { "✓" } else { "○" } },
-                    "behaviors": [{ "type": "callback", "value": { "confirm": "select", "index": index } }],
-                  }] },
-            ],
-        }));
+        elements.push(crate::feishu::card::styled_checker(
+            &format!("confirm_choice_{index}"),
+            &feishu_choice_text(choice),
+            checked,
+            false,
+            Some(json!({ "confirm": "select", "index": index })),
+            color,
+        ));
     }
     let mut form_elements = Vec::new();
     if let Some(input) = input_for_selected(request, selected) {
@@ -141,24 +165,22 @@ pub fn feishu_card(request: &ConfirmRequest, selected: Option<usize>, comment: &
         "behaviors": [{ "type": "callback", "value": { "confirm": "submit" } }],
     }));
     elements.push(json!({ "tag": "form", "name": "confirm_form", "elements": form_elements }));
-    json!({
-        "schema": "2.0",
-        "config": { "update_multi": true },
-        "body": { "elements": elements },
-    })
+    crate::feishu::card::assemble_styled_card(&request.title, elements)
 }
 
 pub fn feishu_final_card(request: &ConfirmRequest, status: &str) -> Value {
-    json!({
-        "schema": "2.0",
-        "config": { "update_multi": true },
-        "body": { "elements": [
-            { "tag": "div", "text": { "tag": "plain_text", "content": request.title, "text_size": "notation", "text_color": "grey" } },
-            { "tag": "markdown", "content": request_markdown(request, 12_000) },
-            { "tag": "hr" },
-            { "tag": "div", "text": { "tag": "plain_text", "content": status, "text_color": "grey" } },
-        ] },
-    })
+    let mut elements = feishu_tool_elements(request);
+    elements.push(json!({ "tag": "hr", "margin": "0px 0px 0px 0px" }));
+    elements.push(json!({
+        "tag": "div",
+        "text": {
+            "tag": "plain_text",
+            "content": status,
+            "text_size": "notation",
+            "text_color": "grey",
+        },
+    }));
+    crate::feishu::card::assemble_styled_card(&request.title, elements)
 }
 
 fn value_object(value: &Value) -> Option<Value> {
@@ -434,15 +456,23 @@ pub fn parse_telegram_callback(data: &str) -> Option<Option<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ConfirmChoice, ConfirmDetail, ConfirmPresentation, ConfirmSpec};
+    use crate::models::{
+        ConfirmChoice, ConfirmDetail, ConfirmField, ConfirmFieldKind, ConfirmPresentation,
+        ConfirmSpec,
+    };
 
     fn request() -> ConfirmRequest {
         ConfirmSpec {
             title: "Permission".into(),
-            context: vec![],
+            context: vec![ConfirmField {
+                id: "tool".into(),
+                label: "Tool".into(),
+                value: "Bash".into(),
+                kind: ConfirmFieldKind::Text,
+            }],
             detail: ConfirmDetail {
                 summary: "Run".into(),
-                body_md: String::new(),
+                body_md: "```sh\ngit status\n```".into(),
             },
             choices: vec![
                 ConfirmChoice {
@@ -467,6 +497,45 @@ mod tests {
         }
         .into_request("r1".into(), 1, 2)
         .unwrap()
+    }
+
+    #[test]
+    fn feishu_uses_ask_checker_and_tool_first_hierarchy() {
+        let card = feishu_card(&request(), Some(1), "");
+        let elements = card["body"]["elements"].as_array().unwrap();
+        assert_eq!(elements[0]["tag"], "div");
+        assert_eq!(elements[0]["text"]["content"], "Permission");
+        assert_eq!(elements[2]["tag"], "markdown");
+        assert_eq!(elements[2]["content"], "**Bash**");
+        assert!(elements[3]["content"]
+            .as_str()
+            .unwrap()
+            .contains("git status"));
+        assert_eq!(elements[4]["text"]["content"], "Run");
+        let checkers: Vec<&Value> = elements
+            .iter()
+            .filter(|element| element["tag"] == "checker")
+            .collect();
+        assert_eq!(checkers.len(), 2);
+        assert_eq!(checkers[0]["checked"], false);
+        assert_eq!(checkers[0]["behaviors"][0]["value"]["confirm"], "select");
+        assert_eq!(checkers[1]["checked"], true);
+        assert_eq!(checkers[1]["text"]["text_color"], "red");
+        assert!(elements
+            .iter()
+            .all(|element| element["tag"] != "column_set"));
+        assert!(!card.to_string().contains("**Tool:**"));
+    }
+
+    #[test]
+    fn feishu_final_keeps_compact_tool_hierarchy_without_context() {
+        let card = feishu_final_card(&request(), "Submitted");
+        let text = card.to_string();
+        assert!(text.contains("**Bash**"));
+        assert!(text.contains("git status"));
+        assert!(text.contains("Submitted"));
+        assert!(!text.contains("**Tool:**"));
+        assert!(!text.contains("confirm_choice_"));
     }
 
     #[test]
