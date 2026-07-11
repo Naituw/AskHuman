@@ -482,8 +482,9 @@ AskHuman/
   原样回放；Codex 只支持批准一次/拒绝，永不输出 `updatedPermissions`。deny message 带固定 AskHuman 前缀，
   comment 仅 deny 可用，allow 强制丢弃。
 - **Confirm 编排**：daemon 分配身份和 24h 单调 deadline；popup 10s、四 IM 60s 内显式 Ready，首个合法
-  决定赢得裁决并立即回 IPC，其它端异步定格。Slack/Telegram 精确回复卡片可追加 deny reason（1000 字），
-  Slack 仍须 Submit，Telegram 再点目标决定即提交；终态只保留不含原始权限台账的轻量卡片 tombstone 到原
+  决定赢得裁决并立即回 IPC，其它端异步定格。Slack 使用原生 `radio_buttons`、始终可见的可选拒绝原因多行
+  输入和 Submit，精确线程回复仍可预选 deny 并回填；Telegram 精确回复形成 deny reason draft（1000 字），
+  再点目标 choice 即提交；终态只保留不含原始权限台账的轻量卡片 tombstone 到原
   deadline。本地 popup 不重复展示
   已在导航栏可见的 Agent/项目/时间等 context，而以「理由 → 工具名 → 调用正文」全宽呈现；单选与快捷键
   直接复用普通 Ask 的 `.option/.check.radio/.opt-sc`，只为 destructive 选中态覆盖红色。飞书卡片沿用同一信息
@@ -491,11 +492,14 @@ AskHuman/
   钉钉沿用已发布专用模板与原变量契约，只把 `markdown` 改为紧凑工具正文；Permission 选项不借用普通 Ask
   的 recommended 标记，拒绝输入占位与 popup 保持一致，故无需重新发布模板或更换模板 ID。Telegram 的短
   choice 直接显示完整文案；选项过多/过长时复用普通 Ask 数字键帽；按钮一键形成决定，不再显示 Submit，
-  如需拒绝原因须先精确回复本消息再点拒绝。
+  如需拒绝原因须先精确回复本消息再点拒绝。各端固定批准 choice 统一显示“允许 / Allow”；Claude suggestion
+  直接以“本会话允许”或“始终允许（Local / Project / User）”加规则作为主 label，多规则时把规则数放主行、
+  完整规则放 description。
 - **安装与 mode**：permission 是独立默认开 preference，不是第四种 mode。Claude/Codex 的 CLI/MCP mode
   在 preference 开时安装 PermissionRequest handler，None 卸 handler 但保留偏好；重复设置同 mode 仍完整
   reconcile Rule/timeout/MCP/permission 磁盘产物，但 mode 操作从不改 permission preference。Hook JSONC 编辑
-  保留同事件其它 handler；Codex trust 按 handler 身份迁移，lifecycle/permission/user Hook 互不误删。
+  保留同事件其它 handler；Codex trust 按 handler 身份迁移，哈希完整纳入有效 matcher、`statusMessage`、
+  归一化 timeout 与 `async=false`，并覆盖全部十种事件标签，lifecycle/permission/user Hook 互不误删。
 - **可观测性**：设置页、`agents show|permission` 和 `doctor` 分开显示 timeout 与 permission capability。
   “已配置”不等于已生效；只在可读配置正向发现 blocked policy / 同事件其它 handler 时提示，Claude 说明
   allow/deny 可能互相覆盖并建议会话内 `/hooks` 核实，Codex 说明全部等待且 deny 胜出。

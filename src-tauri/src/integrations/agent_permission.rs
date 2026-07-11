@@ -313,9 +313,27 @@ fn hook_label(event: &str) -> Option<&'static str> {
         "UserPromptSubmit" => Some("user_prompt_submit"),
         "PreToolUse" => Some("pre_tool_use"),
         "PostToolUse" => Some("post_tool_use"),
+        "PreCompact" => Some("pre_compact"),
+        "PostCompact" => Some("post_compact"),
+        "SubagentStart" => Some("subagent_start"),
+        "SubagentStop" => Some("subagent_stop"),
         "Stop" => Some("stop"),
         _ => None,
     }
+}
+
+fn event_uses_matcher(event: &str) -> bool {
+    matches!(
+        event,
+        "PreToolUse"
+            | "PermissionRequest"
+            | "PostToolUse"
+            | "PreCompact"
+            | "PostCompact"
+            | "SessionStart"
+            | "SubagentStart"
+            | "SubagentStop"
+    )
 }
 
 fn trust_entries(path: &Path, text: &str) -> Result<Vec<TrustEntry>> {
@@ -334,11 +352,17 @@ fn trust_entries(path: &Path, text: &str) -> Result<Vec<TrustEntry>> {
             continue;
         };
         for (group_index, group) in groups.iter().enumerate() {
+            let matcher = event_uses_matcher(event)
+                .then(|| group.get("matcher").and_then(Value::as_str))
+                .flatten();
             let Some(handlers) = group.get("hooks").and_then(Value::as_array) else {
                 continue;
             };
             for (handler_index, handler) in handlers.iter().enumerate() {
                 if handler.get("type").and_then(Value::as_str) != Some("command") {
+                    continue;
+                }
+                if handler.get("async").and_then(Value::as_bool) == Some(true) {
                     continue;
                 }
                 let Some(command) = handler.get("command").and_then(Value::as_str) else {
@@ -349,13 +373,14 @@ fn trust_entries(path: &Path, text: &str) -> Result<Vec<TrustEntry>> {
                     .and_then(Value::as_u64)
                     .unwrap_or(600)
                     .max(1);
+                let status_message = handler.get("statusMessage").and_then(Value::as_str);
                 let key = format!(
                     "{}:{label}:{group_index}:{handler_index}",
                     path.to_string_lossy()
                 );
                 entries.push(TrustEntry {
                     key,
-                    hash: trusted_hash(label, command, timeout),
+                    hash: trusted_hash(label, matcher, command, timeout, status_message),
                     permission: command.contains(MARKER),
                     command: command.to_string(),
                 });
@@ -365,11 +390,34 @@ fn trust_entries(path: &Path, text: &str) -> Result<Vec<TrustEntry>> {
     Ok(entries)
 }
 
-fn trusted_hash(label: &str, command: &str, timeout: u64) -> String {
-    let identity = serde_json::json!({
-        "event_name": label,
-        "hooks": [{ "type": "command", "command": command, "timeout": timeout, "async": false }],
-    });
+fn trusted_hash(
+    label: &str,
+    matcher: Option<&str>,
+    command: &str,
+    timeout: u64,
+    status_message: Option<&str>,
+) -> String {
+    let mut handler = serde_json::Map::new();
+    handler.insert("type".to_string(), Value::String("command".to_string()));
+    handler.insert("command".to_string(), Value::String(command.to_string()));
+    handler.insert("timeout".to_string(), Value::Number(timeout.into()));
+    handler.insert("async".to_string(), Value::Bool(false));
+    if let Some(status_message) = status_message {
+        handler.insert(
+            "statusMessage".to_string(),
+            Value::String(status_message.to_string()),
+        );
+    }
+    let mut identity = serde_json::Map::new();
+    identity.insert("event_name".to_string(), Value::String(label.to_string()));
+    if let Some(matcher) = matcher {
+        identity.insert("matcher".to_string(), Value::String(matcher.to_string()));
+    }
+    identity.insert(
+        "hooks".to_string(),
+        Value::Array(vec![Value::Object(handler)]),
+    );
+    let identity = Value::Object(identity);
     fn canonical(value: &Value, output: &mut String) {
         match value {
             Value::Object(object) => {
@@ -530,6 +578,32 @@ mod tests {
 
     #[test]
     fn trusted_hash_matches_lifecycle_reference_shape() {
-        assert!(trusted_hash("permission_request", "cmd", TIMEOUT_SECS).starts_with("sha256:"));
+        assert!(
+            trusted_hash("permission_request", None, "cmd", TIMEOUT_SECS, None)
+                .starts_with("sha256:")
+        );
+    }
+
+    #[test]
+    fn trusted_hash_includes_status_message_like_codex() {
+        let hash = trusted_hash(
+            "permission_request",
+            None,
+            "\"/Users/wutian/.local/bin/AskHuman\" __permission-hook codex",
+            TIMEOUT_SECS,
+            Some(STATUS_MESSAGE),
+        );
+        assert_eq!(
+            hash,
+            "sha256:7ef2b2088c8e2c086cd1fb9ab238dfdc4f502d5da25e3b54dbab63ab74299d50"
+        );
+    }
+
+    #[test]
+    fn trusted_hash_includes_effective_matcher() {
+        assert_ne!(
+            trusted_hash("pre_tool_use", Some("Bash"), "cmd", 600, None),
+            trusted_hash("pre_tool_use", None, "cmd", 600, None)
+        );
     }
 }

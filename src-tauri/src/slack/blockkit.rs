@@ -457,7 +457,7 @@ fn header_block(text: &str) -> Value {
 }
 
 /// 题首：大号标题 + ❓ 图标突出「这是一个问题」。
-fn title_block(title: &str) -> Value {
+pub(crate) fn title_block(title: &str) -> Value {
     header_block(&format!("❓ {}", title))
 }
 
@@ -473,7 +473,7 @@ fn body_section(text: &str, is_markdown: bool) -> Value {
     }
 }
 
-fn mrkdwn_section(text: &str) -> Value {
+pub(crate) fn mrkdwn_section(text: &str) -> Value {
     json!({
         "type": "section",
         "text": { "type": "mrkdwn", "text": truncate(text) },

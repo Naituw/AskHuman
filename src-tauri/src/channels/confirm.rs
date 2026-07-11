@@ -45,9 +45,9 @@ fn final_status(entry: &ConfirmEntry, lang: Lang) -> String {
             let source = source_name(&result.source_channel_id, lang);
             match (lang, denied) {
                 (Lang::Zh, true) => format!("已通过 {source} 提交拒绝决定"),
-                (Lang::Zh, false) => format!("已通过 {source} 提交批准决定"),
+                (Lang::Zh, false) => format!("已通过 {source} 允许"),
                 (Lang::En, true) => format!("Denial decision submitted via {source}"),
-                (Lang::En, false) => format!("Approval decision submitted via {source}"),
+                (Lang::En, false) => format!("Allowed via {source}"),
             }
         }
         Some(ConfirmTerminalKind::Fallback(ConfirmFallbackReason::Expired)) => match lang {
@@ -409,7 +409,7 @@ pub fn start_feishu(
                                 let card = choice_cards::feishu_card(&entry.request, selected, &comment, lang);
                                 let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
                             }
-                            Some(CardAction::Submit { actor, message_id: mid, comment: submitted })
+                            Some(CardAction::Submit { actor, message_id: mid, index: _, comment: submitted })
                                 if actor == target && mid == message_id =>
                             {
                                 let Some(index) = selected else {
@@ -509,7 +509,7 @@ pub fn start_slack(
         events.set_active(Some(&message_id), &target);
         if !entry.mark_ready(channel, message_id.clone()) {
             let blocks =
-                choice_cards::slack_final_blocks(&entry.request, &final_status(&entry, lang));
+                choice_cards::slack_final_blocks(&entry.request, &final_status(&entry, lang), lang);
             let _ = client
                 .update_message(&dm, &message_id, Some(&blocks), &entry.request.title)
                 .await;
@@ -539,10 +539,11 @@ pub fn start_slack(
                                 let blocks = choice_cards::slack_blocks(&entry.request, selected, &comment, lang);
                                 let _ = client.update_message(&dm, &message_id, Some(&blocks), &entry.request.title).await;
                             }
-                            Some(CardAction::Submit { actor, message_id: mid, comment: submitted })
+                            Some(CardAction::Submit { actor, message_id: mid, index: submitted_index, comment: submitted })
                                 if actor == target && mid == message_id =>
                             {
-                                let Some(index) = selected else { continue; };
+                                let Some(index) = submitted_index.or(selected) else { continue; };
+                                selected = Some(index);
                                 if let Some(value) = submitted { comment = value; }
                                 if entry.coordinator.submit_wire(index, Some(comment.clone()), channel).is_ok() {
                                     break;
@@ -577,7 +578,8 @@ pub fn start_slack(
         if disconnected {
             fail(&entry, channel, "Slack router disconnected");
         }
-        let blocks = choice_cards::slack_final_blocks(&entry.request, &final_status(&entry, lang));
+        let blocks =
+            choice_cards::slack_final_blocks(&entry.request, &final_status(&entry, lang), lang);
         let _ = client
             .update_message(&dm, &message_id, Some(&blocks), &entry.request.title)
             .await;

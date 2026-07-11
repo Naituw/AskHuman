@@ -22,6 +22,7 @@ pub enum CardAction {
     Submit {
         actor: String,
         message_id: String,
+        index: Option<usize>,
         comment: Option<String>,
     },
 }
@@ -250,6 +251,7 @@ pub fn parse_feishu_action(event: &Value, input_id: Option<&str>) -> Option<Card
             Some(CardAction::Submit {
                 actor,
                 message_id,
+                index: None,
                 comment,
             })
         }
@@ -261,58 +263,101 @@ fn slack_escape(text: &str) -> String {
     crate::slack::markdown::escape(text)
 }
 
+fn slack_control_text(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
 pub fn slack_blocks(
     request: &ConfirmRequest,
     selected: Option<usize>,
     comment: &str,
     lang: Lang,
 ) -> Value {
-    let mut blocks = vec![json!({
-        "type": "header",
-        "text": { "type": "plain_text", "text": bounded(&request.title, 145) },
-    })];
-    blocks.push(json!({
-        "type": "section",
-        "text": { "type": "mrkdwn", "text": crate::slack::markdown::to_mrkdwn(&request_markdown(request, 2800)) },
-    }));
-    for (index, choice) in request.choices.iter().enumerate() {
-        let checked = selected == Some(index);
-        let mut text = format!(
-            "{} *{}*",
-            if checked { "●" } else { "○" },
-            slack_escape(&choice.label)
-        );
-        if !choice.description.trim().is_empty() {
-            text.push_str(&format!("\n{}", slack_escape(&choice.description)));
-        }
-        let control_label = if checked {
-            "✓".to_string()
-        } else {
-            (index + 1).to_string()
-        };
-        let mut button = json!({
-            "type": "button",
-            "action_id": format!("{SELECT_PREFIX}{index}"),
-            "value": index.to_string(),
-            "text": { "type": "plain_text", "text": control_label },
-        });
-        if choice.role == ActionRole::Destructive {
-            button["style"] = json!("danger");
-        } else if choice.role == ActionRole::Primary {
-            button["style"] = json!("primary");
-        }
-        blocks.push(json!({
-            "type": "section",
-            "text": { "type": "mrkdwn", "text": text },
-            "accessory": button,
-        }));
+    let mut blocks = vec![crate::slack::blockkit::title_block(&request.title)];
+    if !request.detail.summary.trim().is_empty() {
+        blocks.push(crate::slack::blockkit::mrkdwn_section(&format!(
+            "*{}* {}",
+            slack_escape(reason_label(lang)),
+            slack_escape(&request.detail.summary)
+        )));
     }
-    if let Some(input) = input_for_selected(request, selected) {
+    blocks.push(crate::slack::blockkit::mrkdwn_section(&format!(
+        "*{}*",
+        slack_escape(tool_name(request))
+    )));
+    if !request.detail.body_md.trim().is_empty() {
+        blocks.push(crate::slack::blockkit::mrkdwn_section(
+            &crate::slack::markdown::to_mrkdwn(&bounded(&request.detail.body_md, 2800)),
+        ));
+    }
+
+    // Security-relevant scope details stay static and untruncated by radio option limits.
+    for choice in &request.choices {
+        let inline_detail = choice.description.replace('\n', " · ");
+        if inline_detail.chars().count() > 75 || choice.label.chars().count() > 75 {
+            let mut detail = format!("*{}*", slack_escape(&choice.label));
+            if !choice.description.trim().is_empty() {
+                detail.push_str(&format!("\n{}", slack_escape(&choice.description)));
+            }
+            blocks.push(crate::slack::blockkit::mrkdwn_section(&detail));
+        }
+    }
+
+    let options: Vec<Value> = request
+        .choices
+        .iter()
+        .enumerate()
+        .map(|(index, choice)| {
+            let mut option = json!({
+                "text": { "type": "plain_text", "text": slack_control_text(&choice.label, 75) },
+                "value": index.to_string(),
+            });
+            if !choice.description.trim().is_empty() {
+                option["description"] = json!({
+                    "type": "plain_text",
+                    "text": slack_control_text(&choice.description.replace('\n', " · "), 75),
+                });
+            }
+            option
+        })
+        .collect();
+    let mut radio = json!({
+        "type": "radio_buttons",
+        "action_id": "confirm_choice",
+        "options": options,
+    });
+    if let Some(index) = selected.filter(|index| *index < request.choices.len()) {
+        radio["initial_option"] = radio["options"][index].clone();
+    }
+    blocks.push(json!({
+        "type": "input",
+        "block_id": "confirm_choice_block",
+        "optional": true,
+        "label": {
+            "type": "plain_text",
+            "text": if lang == Lang::Zh { "决定" } else { "Decision" },
+        },
+        "element": radio,
+    }));
+
+    if let Some(input) = request.presentation.input() {
         blocks.push(json!({
             "type": "input",
             "block_id": "confirm_reason",
             "optional": true,
-            "label": { "type": "plain_text", "text": bounded(&input.label, 1900) },
+            "label": {
+                "type": "plain_text",
+                "text": if lang == Lang::Zh {
+                    "拒绝原因（可选，仅拒绝时发送）"
+                } else {
+                    "Denial reason (optional; sent only when denying)"
+                },
+            },
             "element": {
                 "type": "plain_text_input",
                 "action_id": input.id,
@@ -322,10 +367,6 @@ pub fn slack_blocks(
             },
         }));
     }
-    let submit = match lang {
-        Lang::Zh => request.presentation.submit_label(),
-        Lang::En => request.presentation.submit_label(),
-    };
     blocks.push(json!({
         "type": "actions",
         "elements": [{
@@ -333,18 +374,35 @@ pub fn slack_blocks(
             "action_id": SUBMIT_ACTION,
             "value": "submit",
             "style": "primary",
-            "text": { "type": "plain_text", "text": bounded(submit, 70) },
+            "text": { "type": "plain_text", "text": bounded(request.presentation.submit_label(), 70) },
         }],
     }));
     Value::Array(blocks)
 }
 
-pub fn slack_final_blocks(request: &ConfirmRequest, status: &str) -> Value {
-    json!([
-        { "type": "header", "text": { "type": "plain_text", "text": bounded(&request.title, 145) } },
-        { "type": "section", "text": { "type": "mrkdwn", "text": crate::slack::markdown::to_mrkdwn(&request_markdown(request, 2800)) } },
-        { "type": "context", "elements": [{ "type": "mrkdwn", "text": slack_escape(status) }] },
-    ])
+pub fn slack_final_blocks(request: &ConfirmRequest, status: &str, lang: Lang) -> Value {
+    let mut blocks = vec![crate::slack::blockkit::title_block(&request.title)];
+    if !request.detail.summary.trim().is_empty() {
+        blocks.push(crate::slack::blockkit::mrkdwn_section(&format!(
+            "*{}* {}",
+            slack_escape(reason_label(lang)),
+            slack_escape(&request.detail.summary)
+        )));
+    }
+    blocks.push(crate::slack::blockkit::mrkdwn_section(&format!(
+        "*{}*",
+        slack_escape(tool_name(request))
+    )));
+    if !request.detail.body_md.trim().is_empty() {
+        blocks.push(crate::slack::blockkit::mrkdwn_section(
+            &crate::slack::markdown::to_mrkdwn(&bounded(&request.detail.body_md, 2800)),
+        ));
+    }
+    blocks.push(json!({
+        "type": "context",
+        "elements": [{ "type": "mrkdwn", "text": slack_escape(status) }],
+    }));
+    Value::Array(blocks)
 }
 
 pub fn parse_slack_action(payload: &Value, input_id: Option<&str>) -> Option<CardAction> {
@@ -385,6 +443,21 @@ pub fn parse_slack_action(payload: &Value, input_id: Option<&str>) -> Option<Car
     if action_id != SUBMIT_ACTION {
         return None;
     }
+    let index = payload
+        .get("state")
+        .and_then(|state| state.get("values"))
+        .and_then(Value::as_object)
+        .and_then(|blocks| {
+            blocks.values().find_map(|actions| {
+                actions
+                    .get("confirm_choice")?
+                    .get("selected_option")?
+                    .get("value")?
+                    .as_str()?
+                    .parse::<usize>()
+                    .ok()
+            })
+        });
     let comment = input_id
         .and_then(|id| {
             payload
@@ -403,6 +476,7 @@ pub fn parse_slack_action(payload: &Value, input_id: Option<&str>) -> Option<Car
     Some(CardAction::Submit {
         actor,
         message_id,
+        index,
         comment,
     })
 }
@@ -617,12 +691,92 @@ mod tests {
     }
 
     #[test]
-    fn slack_uses_short_controls_and_full_static_labels() {
+    fn slack_uses_native_radio_full_labels_and_static_scope_details() {
         let blocks = slack_blocks(&request(), None, "", Lang::En);
         let text = blocks.to_string();
         assert!(text.contains(&"A".repeat(100)));
-        assert!(text.contains("confirm_select_0"));
-        assert!(!text.contains(&format!("\\\"text\\\":\\\"{}\\\"", "A".repeat(100))));
+        let blocks = blocks.as_array().unwrap();
+        assert_eq!(blocks[0]["text"]["text"], "❓ Permission");
+        let radio = blocks
+            .iter()
+            .find(|block| block["element"]["type"] == "radio_buttons")
+            .unwrap();
+        assert_eq!(radio["element"]["options"].as_array().unwrap().len(), 2);
+        assert!(
+            radio["element"]["options"][0]["text"]["text"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count()
+                <= 75
+        );
+        assert_eq!(
+            radio["element"]["options"][0]["description"]["text"],
+            "full scope"
+        );
+        let reason = blocks
+            .iter()
+            .find(|block| block["element"]["type"] == "plain_text_input")
+            .unwrap();
+        assert_eq!(
+            reason["label"]["text"],
+            "Denial reason (optional; sent only when denying)"
+        );
+        assert!(blocks
+            .iter()
+            .all(|block| block["accessory"]["type"] != "button"));
+    }
+
+    #[test]
+    fn slack_multi_rule_choice_uses_compact_label_and_inline_rule_details() {
+        let mut request = request();
+        request.choices[0].label = "Always allow (Project): 2 rules".into();
+        request.choices[0].description = "Bash: git status\nRead: entire tool".into();
+        let blocks = slack_blocks(&request, None, "", Lang::En);
+        let blocks = blocks.as_array().unwrap();
+        let radio = blocks
+            .iter()
+            .find(|block| block["element"]["type"] == "radio_buttons")
+            .unwrap();
+        assert_eq!(
+            radio["element"]["options"][0]["text"]["text"],
+            "Always allow (Project): 2 rules"
+        );
+        assert_eq!(
+            radio["element"]["options"][0]["description"]["text"],
+            "Bash: git status · Read: entire tool"
+        );
+        let text = Value::Array(blocks.clone()).to_string();
+        assert!(text.contains("Bash: git status"));
+        assert!(text.contains("Read: entire tool"));
+    }
+
+    #[test]
+    fn slack_submit_reads_native_radio_and_reason() {
+        let payload = json!({
+            "user": { "id": "U1" },
+            "container": { "message_ts": "1.2" },
+            "actions": [{ "action_id": "confirm_submit" }],
+            "state": { "values": {
+                "confirm_choice_block": {
+                    "confirm_choice": {
+                        "selected_option": { "value": "1" }
+                    }
+                },
+                "confirm_reason": {
+                    "reason": { "value": " use read-only mode " }
+                }
+            } }
+        });
+        assert_eq!(
+            parse_slack_action(&payload, Some("reason")),
+            Some(CardAction::Submit {
+                actor: "U1".into(),
+                message_id: "1.2".into(),
+                index: Some(1),
+                comment: Some("use read-only mode".into()),
+            })
+        );
     }
 
     #[test]

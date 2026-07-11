@@ -143,7 +143,7 @@ fn parse_permission(agent: Agent, input: &Value) -> Option<ParsedPermission> {
 
     let mut choices = vec![ConfirmChoice {
         id: "approve_once".into(),
-        label: if zh { "批准" } else { "Approve" }.into(),
+        label: if zh { "允许" } else { "Allow" }.into(),
         description: String::new(),
         role: ActionRole::Primary,
     }];
@@ -156,7 +156,7 @@ fn parse_permission(agent: Agent, input: &Value) -> Option<ParsedPermission> {
             .into_iter()
             .flatten()
         {
-            let Some(description) = validate_suggestion(suggestion, zh) else {
+            let Some(rendered) = validate_suggestion(suggestion, zh) else {
                 continue;
             };
             if suggestions.len() >= MAX_SUGGESTIONS {
@@ -165,14 +165,12 @@ fn parse_permission(agent: Agent, input: &Value) -> Option<ParsedPermission> {
             }
             let index = suggestions.len();
             suggestions.push(suggestion.clone());
+            let mut lines = rendered.lines();
+            let label = lines.next().unwrap_or_default().to_string();
+            let description = lines.collect::<Vec<_>>().join("\n");
             choices.push(ConfirmChoice {
                 id: format!("permission_suggestion_{index}"),
-                label: if zh {
-                    "更新权限并批准"
-                } else {
-                    "Update permission and approve"
-                }
-                .into(),
+                label,
                 description,
                 role: ActionRole::Default,
             });
@@ -327,7 +325,7 @@ fn validate_suggestion(value: &Value, zh: bool) -> Option<String> {
     if rules.is_empty() || rules.len() > MAX_RULES {
         return None;
     }
-    let mut lines = Vec::new();
+    let mut parsed_rules = Vec::new();
     for rule in rules {
         let rule = rule.as_object()?;
         if rule
@@ -341,31 +339,60 @@ fn validate_suggestion(value: &Value, zh: bool) -> Option<String> {
             Some(Value::String(value))
                 if !value.trim().is_empty() && value.chars().count() <= MAX_RULE_CHARS =>
             {
-                format!("`{}`", value.replace('`', "\\`"))
+                Some(value.split_whitespace().collect::<Vec<_>>().join(" "))
             }
-            None => {
-                if zh {
-                    "**允许整个工具**".into()
-                } else {
-                    "**Allow the entire tool**".into()
-                }
-            }
+            None => None,
             _ => return None,
         };
-        lines.push(format!("{tool}: {content}"));
+        parsed_rules.push((tool, content));
     }
     let scope = match (zh, destination) {
-        (true, "session") => "仅当前 Claude 会话允许",
-        (true, "localSettings") => "此项目（仅本机）始终允许",
-        (true, "projectSettings") => "此项目（共享配置）始终允许",
-        (true, "userSettings") => "用户级跨项目始终允许",
-        (false, "session") => "Allow for this Claude session only",
-        (false, "localSettings") => "Always allow in this project on this machine",
-        (false, "projectSettings") => "Always allow in this project's shared settings",
-        (false, "userSettings") => "Always allow for this user across projects",
+        (true, "session") => "本会话允许",
+        (true, "localSettings") => "始终允许（Local）",
+        (true, "projectSettings") => "始终允许（Project）",
+        (true, "userSettings") => "始终允许（User）",
+        (false, "session") => "Allow in this session",
+        (false, "localSettings") => "Always allow (Local)",
+        (false, "projectSettings") => "Always allow (Project)",
+        (false, "userSettings") => "Always allow (User)",
         _ => return None,
     };
-    Some(format!("{scope}\n{}", lines.join("\n")))
+    if parsed_rules.len() == 1 {
+        let (tool, content) = &parsed_rules[0];
+        let target = content.clone().unwrap_or_else(|| {
+            if zh {
+                format!("整个 {tool} 工具")
+            } else {
+                format!("the entire {tool} tool")
+            }
+        });
+        return Some(if zh {
+            format!("{scope}：{target}")
+        } else {
+            format!("{scope}: {target}")
+        });
+    }
+    let count = parsed_rules.len();
+    let mut description = if zh {
+        format!("{scope}：{count} 条规则")
+    } else {
+        format!("{scope}: {count} rules")
+    };
+    for (tool, content) in parsed_rules {
+        let target = content.unwrap_or_else(|| {
+            if zh {
+                "整个工具".to_string()
+            } else {
+                "entire tool".to_string()
+            }
+        });
+        if zh {
+            description.push_str(&format!("\n{tool}：{target}"));
+        } else {
+            description.push_str(&format!("\n{tool}: {target}"));
+        }
+    }
+    Some(description)
 }
 
 fn decision_output(parsed: &ParsedPermission, result: &ConfirmResult) -> Option<Value> {
@@ -443,6 +470,16 @@ mod tests {
     #[test]
     fn claude_suggestion_is_replayed_from_private_ledger() {
         let parsed = parse_permission(Agent::Claude, &input(Agent::Claude)).unwrap();
+        assert!(matches!(
+            parsed.task.spec.choices[0].label.as_str(),
+            "允许" | "Allow"
+        ));
+        assert!(!matches!(
+            parsed.task.spec.choices[1].label.as_str(),
+            "更新权限并批准" | "Update permission and approve"
+        ));
+        assert!(parsed.task.spec.choices[1].label.contains("git status"));
+        assert!(parsed.task.spec.choices[1].description.is_empty());
         let output = decision_output(&parsed, &result("permission_suggestion_0", None)).unwrap();
         assert_eq!(
             output["hookSpecificOutput"]["decision"]["behavior"],
@@ -476,6 +513,43 @@ mod tests {
         let parsed = parse_permission(Agent::Claude, &input).unwrap();
         assert!(parsed.suggestions.is_empty());
         assert_eq!(parsed.task.spec.choices.len(), 2);
+    }
+
+    #[test]
+    fn suggestion_descriptions_are_compact_and_keep_multi_rule_details() {
+        let single = json!({
+            "type": "addRules",
+            "rules": [{ "toolName": "Bash", "ruleContent": "git   status" }],
+            "behavior": "allow",
+            "destination": "localSettings",
+        });
+        assert_eq!(
+            validate_suggestion(&single, true).as_deref(),
+            Some("始终允许（Local）：git status")
+        );
+        let whole_tool = json!({
+            "type": "addRules",
+            "rules": [{ "toolName": "Read" }],
+            "behavior": "allow",
+            "destination": "userSettings",
+        });
+        assert_eq!(
+            validate_suggestion(&whole_tool, true).as_deref(),
+            Some("始终允许（User）：整个 Read 工具")
+        );
+        let multiple = json!({
+            "type": "addRules",
+            "rules": [
+                { "toolName": "Bash", "ruleContent": "git status" },
+                { "toolName": "Read" }
+            ],
+            "behavior": "allow",
+            "destination": "projectSettings",
+        });
+        assert_eq!(
+            validate_suggestion(&multiple, true).as_deref(),
+            Some("始终允许（Project）：2 条规则\nBash：git status\nRead：整个工具")
+        );
     }
 
     #[test]
