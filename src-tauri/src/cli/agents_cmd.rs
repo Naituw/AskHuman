@@ -7,7 +7,8 @@ use crate::agents::AgentKind;
 use crate::i18n::{err_prefix, Lang};
 use crate::integrations::agent_rules::AgentTarget;
 use crate::integrations::{
-    agent_lifecycle, agent_mode, agent_rules, claude_hook, cursor_hook, mcp_config,
+    agent_lifecycle, agent_mode, agent_permission, agent_rules, claude_hook, cursor_hook,
+    mcp_config,
 };
 use serde_json::Value;
 use std::process::exit;
@@ -21,9 +22,10 @@ pub fn dispatch(args: &[String], lang: Lang) {
     let r = match sub {
         "monitor" => monitor(rest, lang),
         "mode" => mode_cmd(rest, lang),
-        "install" => integrate(rest, Action::Install, lang),
-        "uninstall" => integrate(rest, Action::Uninstall, lang),
-        "update" => integrate(rest, Action::Update, lang),
+        "update" => update_cmd(rest, lang),
+        "permission" => permission_cmd(rest, lang),
+        "lifecycle" => lifecycle_cmd(rest, lang),
+        "install" | "uninstall" => Err(legacy_write_error(sub, lang)),
         "show" => show(rest, lang),
         "help" | "-h" | "--help" => {
             print_line(&help(lang));
@@ -230,107 +232,144 @@ fn mode_label(m: agent_mode::Mode, lang: Lang) -> String {
     }
 }
 
-// ——— 集成 install / uninstall / update ———
+// ——— 整包更新与独立 capability ———
 
-#[derive(Clone, Copy, PartialEq)]
-enum Action {
-    Install,
-    Uninstall,
-    Update,
-}
-
-fn integrate(args: &[String], action: Action, lang: Lang) -> Result<(), String> {
-    let agent = args.first().ok_or_else(|| {
-        cfgio::t(
-            lang,
-            "usage: agents <install|uninstall|update> <agent> [--rules] [--hook] [--mcp] [--lifecycle]",
-            "用法: agents <install|uninstall|update> <agent> [--rules] [--hook] [--mcp] [--lifecycle]",
-        )
-    })?;
-    let target = AgentTarget::parse(agent).ok_or_else(|| {
+fn parse_target(agent: &str, lang: Lang) -> Result<AgentTarget, String> {
+    AgentTarget::parse(agent).ok_or_else(|| {
         cfgio::t(
             lang,
             &format!("unknown agent: {agent} (expected cursor|claude|codex|grok)"),
             &format!("未知 agent: {agent}（应为 cursor|claude|codex|grok）"),
         )
-    })?;
-    let kind = AgentKind::parse(agent).unwrap();
+    })
+}
 
-    let want_rules = args.iter().any(|a| a == "--rules");
-    let want_hook = args.iter().any(|a| a == "--hook");
-    let want_mcp = args.iter().any(|a| a == "--mcp");
-    let want_lifecycle = args.iter().any(|a| a == "--lifecycle");
-    if !want_rules && !want_hook && !want_mcp && !want_lifecycle {
+fn update_cmd(args: &[String], lang: Lang) -> Result<(), String> {
+    if args.len() > 1 || args.first().is_some_and(|arg| arg.starts_with('-')) {
         return Err(cfgio::t(
             lang,
-            "specify at least one of --rules / --hook / --mcp / --lifecycle (no default bundle)",
-            "至少指定 --rules / --hook / --mcp / --lifecycle 之一（无默认捆绑）",
+            "usage: agents update [<agent>] (artifact flags are no longer supported)",
+            "用法: agents update [<agent>]（不再支持产物 flags）",
         ));
     }
-
-    if want_rules {
-        let r = match action {
-            Action::Install => agent_rules::install(target),
-            Action::Update => agent_rules::update(target),
-            Action::Uninstall => agent_rules::uninstall(target),
-        };
-        report("rules", r, lang);
-    }
-    if want_hook {
-        match hook_action(target, action) {
-            Some(r) => report("hook", r, lang),
-            None => print_line(&cfgio::t(
-                lang,
-                &format!("hook: skipped ({agent} has no timeout hook)"),
-                &format!("hook: 跳过（{agent} 无超时 hook）"),
-            )),
+    let targets: Vec<(String, AgentTarget)> = if let Some(agent) = args.first() {
+        vec![(agent.clone(), parse_target(agent, lang)?)]
+    } else {
+        AGENTS
+            .iter()
+            .filter_map(|agent| {
+                let target = AgentTarget::parse(agent)?;
+                (agent_mode::current(target) != agent_mode::Mode::None
+                    || agent_mode::needs_update(target))
+                .then(|| ((*agent).to_string(), target))
+            })
+            .collect()
+    };
+    let mut failures = Vec::new();
+    for (name, target) in targets {
+        match agent_mode::update(target) {
+            Ok(()) => print_line(&format!("[{name}] {}", cfgio::t(lang, "updated", "已更新"))),
+            Err(error) => {
+                print_line(&format!(
+                    "[{name}] {}{error}",
+                    cfgio::t(lang, "error: ", "错误: ")
+                ));
+                failures.push(name);
+            }
         }
     }
-    if want_mcp {
-        let r = match action {
-            Action::Install => mcp_config::install(target),
-            Action::Update => mcp_config::update(target),
-            Action::Uninstall => mcp_config::uninstall(target),
-        };
-        report("mcp", r, lang);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(cfgio::t(
+            lang,
+            &format!("failed to update: {}", failures.join(", ")),
+            &format!("更新失败: {}", failures.join("、")),
+        ))
     }
-    if want_lifecycle {
-        let r = match action {
-            // 生命周期无独立 update：重装即刷新（幂等 upsert）。
-            Action::Install | Action::Update => agent_lifecycle::install(kind),
-            Action::Uninstall => agent_lifecycle::uninstall(kind),
-        };
-        report("lifecycle", r, lang);
+}
+
+fn permission_cmd(args: &[String], lang: Lang) -> Result<(), String> {
+    let agent = args.first().ok_or_else(|| {
+        cfgio::t(
+            lang,
+            "usage: agents permission <claude|codex> [on|off]",
+            "用法: agents permission <claude|codex> [on|off]",
+        )
+    })?;
+    if args.len() > 2 || !matches!(agent.as_str(), "claude" | "codex") {
+        return Err(cfgio::t(
+            lang,
+            "permission approval is supported only for claude and codex",
+            "权限审批仅支持 claude 与 codex",
+        ));
     }
+    let target = parse_target(agent, lang)?;
+    if let Some(value) = args.get(1) {
+        let enabled = match value.as_str() {
+            "on" => true,
+            "off" => false,
+            _ => return Err(cfgio::t(lang, "expected on or off", "应为 on 或 off")),
+        };
+        agent_permission::set_enabled(target, enabled).map_err(|e| e.to_string())?;
+        print_line(&cfgio::t(
+            lang,
+            "This changes future permission prompts only; approvals already delivered by AskHuman remain valid.",
+            "此设置只影响后续权限请求；AskHuman 已投递的在途审批仍然有效。",
+        ));
+    }
+    let status = agent_permission::status(target);
+    print_line(&format!(
+        "[{agent}] {} — {}",
+        if status.enabled { "on" } else { "off" },
+        if status.installed {
+            cfgio::t(lang, "configured", "已配置")
+        } else {
+            cfgio::t(lang, "not configured", "未配置")
+        }
+    ));
     Ok(())
 }
 
-/// 超时 hook 仅 cursor / claude 支持；codex 返回 None（跳过）。
-fn hook_action(target: AgentTarget, action: Action) -> Option<anyhow::Result<String>> {
-    match target {
-        AgentTarget::Cursor => Some(match action {
-            Action::Install => cursor_hook::install(),
-            Action::Update => cursor_hook::update(),
-            Action::Uninstall => cursor_hook::uninstall(),
-        }),
-        AgentTarget::ClaudeCode => Some(match action {
-            Action::Install => claude_hook::install(),
-            Action::Update => claude_hook::update(),
-            Action::Uninstall => claude_hook::uninstall(),
-        }),
-        AgentTarget::Codex | AgentTarget::Grok => None,
+fn lifecycle_cmd(args: &[String], lang: Lang) -> Result<(), String> {
+    let agent = args.first().ok_or_else(|| {
+        cfgio::t(
+            lang,
+            "usage: agents lifecycle <agent> [on|off]",
+            "用法: agents lifecycle <agent> [on|off]",
+        )
+    })?;
+    if args.len() > 2 {
+        return Err(cfgio::t(lang, "too many arguments", "参数过多"));
     }
+    let kind =
+        AgentKind::parse(agent).ok_or_else(|| cfgio::t(lang, "unknown agent", "未知 agent"))?;
+    if let Some(value) = args.get(1) {
+        match value.as_str() {
+            "on" => agent_lifecycle::install(kind).map_err(|e| e.to_string())?,
+            "off" => agent_lifecycle::uninstall(kind).map_err(|e| e.to_string())?,
+            _ => return Err(cfgio::t(lang, "expected on or off", "应为 on 或 off")),
+        };
+    }
+    let status = agent_lifecycle::status(kind);
+    print_line(&format!(
+        "[{agent}] {}{}",
+        if status.installed { "on" } else { "off" },
+        if status.outdated {
+            cfgio::t(lang, " (needs update)", "（需更新）")
+        } else {
+            String::new()
+        }
+    ));
+    Ok(())
 }
 
-fn report(part: &str, r: anyhow::Result<String>, lang: Lang) {
-    match r {
-        Ok(msg) => print_line(&format!("{part}: {msg}")),
-        Err(e) => print_line(&format!(
-            "{part}: {}{}",
-            cfgio::t(lang, "error: ", "错误: "),
-            e
-        )),
-    }
+fn legacy_write_error(command: &str, lang: Lang) -> String {
+    cfgio::t(
+        lang,
+        &format!("agents {command} was removed; use `agents mode <agent> <cli|mcp|none>`, `agents update [agent]`, or the independent permission/lifecycle commands"),
+        &format!("agents {command} 已移除；请改用 `agents mode <agent> <cli|mcp|none>`、`agents update [agent]` 或独立的 permission/lifecycle 命令"),
+    )
 }
 
 // ——— show（手动集成 + 状态）———
@@ -425,6 +464,23 @@ fn show(args: &[String], lang: Lang) -> Result<(), String> {
             hook
         ));
 
+        let permission = agent_permission::status(target);
+        let permission_text = if !permission.supported {
+            na.clone()
+        } else {
+            format!(
+                "{}; {}{}",
+                if permission.enabled { "on" } else { "off" },
+                if permission.installed { &yes } else { &no },
+                if permission.outdated { &upd } else { "" }
+            )
+        };
+        print_line(&format!(
+            "  {}: {}",
+            cfgio::t(lang, "permission approval", "权限审批"),
+            permission_text
+        ));
+
         // MCP 配置（用户级全局）
         let mcp = if mcp_config::is_installed(target) {
             format!(
@@ -490,34 +546,26 @@ fn help(lang: Lang) -> String {
 \n\
   agents monitor [--json|--text]     Live agent status (opens a window when a GUI is available)\n\
   agents mode <agent> [none|cli|mcp] Switch the integration mode (omit to query); auto-swaps products\n\
+  agents update [<agent>]            Refresh each current mode's complete managed bundle\n\
+  agents permission <claude|codex> [on|off]  Query or set permission approval\n\
+  agents lifecycle <agent> [on|off]  Query or set lifecycle tracking\n\
   agents show [<agent>]              Manual-integration prompt + paste paths + install status\n\
-  agents install <agent>   --rules --hook --mcp --lifecycle    Auto-integrate (pick at least one)\n\
-  agents uninstall <agent> [flags]   Remove the selected integrations\n\
-  agents update <agent> [flags]      Refresh managed products to the latest\n\
 \n\
   Modes: cli = rules + timeout hook;  mcp = rules/skill + MCP server config;  none = remove.\n\
   Grok only supports none | mcp (skill + MCP config); it has no CLI mode and no timeout hook.\n\
-\n\
-  --rules      global prompt rules (cursor/claude/codex); for grok this installs the AskHuman skill\n\
-  --hook       timeout hook (cursor & claude only; codex/grok skipped)\n\
-  --mcp        MCP server config (user-level global; all agents)\n\
-  --lifecycle  lifecycle hook (experimental; all agents)",
+  Legacy install/uninstall and per-artifact write flags have been removed.",
         "AskHuman agents —— agent 状态 + 集成（cursor | claude | codex | grok）\n\
 \n\
   agents monitor [--json|--text]     实时 agent 状态（有 GUI 时开窗）\n\
   agents mode <agent> [none|cli|mcp] 切换集成模式（省略则查询）；自动切换底层产物\n\
+  agents update [<agent>]            更新当前模式的完整托管产物包\n\
+  agents permission <claude|codex> [on|off]  查询或设置权限审批\n\
+  agents lifecycle <agent> [on|off]  查询或设置生命周期追踪\n\
   agents show [<agent>]              手动集成提示词 + 粘贴位置 + 安装状态\n\
-  agents install <agent>   --rules --hook --mcp --lifecycle    自动集成（至少选一项）\n\
-  agents uninstall <agent> [选项]    移除所选集成\n\
-  agents update <agent> [选项]       把托管的产物刷新到最新\n\
 \n\
   模式: cli = 规则 + 超时 hook；mcp = 规则/skill + MCP server 配置；none = 移除。\n\
   Grok 仅支持 none | mcp（skill + MCP 配置）；无 CLI 模式、无超时 hook。\n\
-\n\
-  --rules      全局提示词规则（cursor/claude/codex）；对 grok 则安装 AskHuman skill\n\
-  --hook       超时 hook（仅 cursor 与 claude；codex/grok 跳过）\n\
-  --mcp        MCP server 配置（用户级全局；全部支持）\n\
-  --lifecycle  生命周期 hook（实验性；全部支持）",
+  旧 install/uninstall 与逐产物写 flags 已移除。",
     )
 }
 

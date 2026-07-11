@@ -182,6 +182,11 @@ pub fn status(kind: AgentKind) -> LifecycleStatus {
 }
 
 pub fn install(kind: AgentKind) -> Result<String> {
+    let _lock = super::mutation_lock::IntegrationMutationLock::acquire()?;
+    install_unlocked(kind)
+}
+
+pub(crate) fn install_unlocked(kind: AgentKind) -> Result<String> {
     let exe = exe_path()?;
     match kind {
         AgentKind::Claude => {
@@ -195,6 +200,11 @@ pub fn install(kind: AgentKind) -> Result<String> {
 }
 
 pub fn uninstall(kind: AgentKind) -> Result<String> {
+    let _lock = super::mutation_lock::IntegrationMutationLock::acquire()?;
+    uninstall_unlocked(kind)
+}
+
+pub(crate) fn uninstall_unlocked(kind: AgentKind) -> Result<String> {
     match kind {
         AgentKind::Claude => json_uninstall(&paths::claude_settings_json(), Shape::Nested)?,
         AgentKind::Cursor => json_uninstall(&paths::cursor_hooks_json(), Shape::Flat)?,
@@ -436,10 +446,11 @@ fn codex_install(exe: &str) -> Result<()> {
     let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
     let updated = apply_json_install(AgentKind::Codex, exe, &text, Shape::Nested)?;
     write_text(&path, &updated)?;
-
-    // 2) 由最终文件计算信任键与哈希，写入 ~/.codex/config.toml [hooks.state]。
-    let entries = codex_trust_entries(&path)?;
-    write_codex_trust(&entries)
+    if let Err(error) = super::agent_permission::reconcile_codex_trust(&text, &updated, &[MARKER]) {
+        let _ = write_text(&path, &text);
+        return Err(error);
+    }
+    Ok(())
 }
 
 fn codex_uninstall() -> Result<()> {
@@ -447,9 +458,12 @@ fn codex_uninstall() -> Result<()> {
     if let Ok(text) = std::fs::read_to_string(&path) {
         let updated = apply_json_uninstall(&text, Shape::Nested)?;
         write_text(&path, &updated)?;
+        if let Err(error) = super::agent_permission::reconcile_codex_trust(&text, &updated, &[]) {
+            let _ = write_text(&path, &text);
+            return Err(error);
+        }
     }
-    // 移除 config.toml 中所有以本 hooks.json 绝对路径为前缀的信任条目。
-    remove_codex_trust_for(&path)
+    Ok(())
 }
 
 fn codex_status() -> LifecycleStatus {

@@ -1206,14 +1206,27 @@ mod unix_impl {
         }
         broadcast_tray_state(state);
 
-        let popup_enabled = state
-            .config
-            .lock()
-            .map(|config| config.channels.popup.enabled)
-            .unwrap_or(false)
-            && has_display();
+        let shallow_config = AppConfig::load_without_secrets();
+        let config = if any_im_enabled(&shallow_config) {
+            AppConfig::load()
+        } else {
+            shallow_config
+        };
+        let popup_enabled = config.channels.popup.enabled && has_display();
+        let im_candidates = confirm_im_candidates(&entry, state, &config);
         if popup_enabled {
             entry.start_delivery("popup");
+        }
+        for channel in &im_candidates {
+            entry.start_delivery(*channel);
+        }
+        if !popup_enabled && im_candidates.is_empty() {
+            entry
+                .coordinator
+                .fallback(ConfirmFallbackReason::NoAvailableChannel);
+        }
+
+        if popup_enabled {
             if dispatch_interaction_popup(
                 InteractionEntry::Confirm(entry.clone()),
                 state,
@@ -1226,11 +1239,12 @@ mod unix_impl {
                     .coordinator
                     .fallback(ConfirmFallbackReason::NoAvailableChannel);
             }
-        } else {
-            entry
-                .coordinator
-                .fallback(ConfirmFallbackReason::NoAvailableChannel);
         }
+        attach_confirm_im_channels(&entry, state, &config, &im_candidates).await;
+        for channel in &im_candidates {
+            mark_watch_disturbed(state, channel);
+        }
+        ensure_inbound_listeners(state).await;
 
         let outcome = tokio::select! {
             outcome = final_rx.recv() => outcome,
@@ -1264,10 +1278,30 @@ mod unix_impl {
                 .await;
             }
         }
+        if config.channels.auto_activation {
+            if let Some(winner) = entry.coordinator.winner_channel_id() {
+                set_active_channel(state, &winner).await;
+            }
+        }
         entry.mark_deliveries_terminal();
         entry.cancel.notify_waiters();
         state.registry.remove_confirm(&request_id);
         broadcast_tray_state(state);
+        for channel in ["feishu", "telegram", "slack", "dingding"] {
+            if entry.has_delivery(channel) {
+                for subscription in state
+                    .watch
+                    .subs
+                    .lock()
+                    .unwrap()
+                    .iter_mut()
+                    .filter(|subscription| subscription.channel == channel)
+                {
+                    subscription.last_move_ms = 0;
+                }
+            }
+        }
+        state.watch.notify.notify_one();
         log(&format!("confirmation request {request_id} done"));
     }
 
@@ -2430,6 +2464,116 @@ mod unix_impl {
         attached
     }
 
+    fn confirm_im_candidates(
+        entry: &Arc<request::ConfirmEntry>,
+        state: &Arc<ServerState>,
+        config: &AppConfig,
+    ) -> Vec<&'static str> {
+        let auto = config.channels.auto_activation;
+        let active = state.active_channel.lock().unwrap().clone();
+        let watching: Vec<String> = state
+            .watch
+            .subs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|watch| watch.session_id == entry.agent_session_id && !watch.rewatchable)
+            .map(|watch| watch.channel.clone())
+            .collect();
+        let want = |id: &str| {
+            !auto || active.as_deref() == Some(id) || watching.iter().any(|watch| watch == id)
+        };
+        let mut candidates = Vec::new();
+        if want("dingding") && crate::app::is_dingding_active(config) {
+            candidates.push("dingding");
+        }
+        if want("feishu") && crate::app::is_feishu_active(config) {
+            candidates.push("feishu");
+        }
+        if want("telegram") && crate::app::is_telegram_active(config) {
+            candidates.push("telegram");
+        }
+        if want("slack") && crate::app::is_slack_active(config) {
+            candidates.push("slack");
+        }
+        candidates
+    }
+
+    async fn attach_confirm_im_channels(
+        entry: &Arc<request::ConfirmEntry>,
+        state: &Arc<ServerState>,
+        config: &AppConfig,
+        candidates: &[&str],
+    ) {
+        for channel in candidates {
+            match *channel {
+                "feishu" => match ensure_fs_router(state, &config.channels.feishu).await {
+                    Some(router) => crate::channels::confirm::start_feishu(
+                        entry.clone(),
+                        config.channels.feishu.clone(),
+                        router,
+                    ),
+                    None => {
+                        if entry.mark_failed("feishu", "Feishu router unavailable") {
+                            entry
+                                .coordinator
+                                .fallback(ConfirmFallbackReason::NoAvailableChannel);
+                        }
+                    }
+                },
+                "telegram" => match ensure_tg_router(state, &config.channels.telegram).await {
+                    Some(router) => crate::channels::confirm::start_telegram(
+                        entry.clone(),
+                        config.channels.telegram.clone(),
+                        router,
+                    ),
+                    None => {
+                        if entry.mark_failed("telegram", "Telegram router unavailable") {
+                            entry
+                                .coordinator
+                                .fallback(ConfirmFallbackReason::NoAvailableChannel);
+                        }
+                    }
+                },
+                "slack" => match ensure_sl_router(state, &config.channels.slack).await {
+                    Some(router) => crate::channels::confirm::start_slack(
+                        entry.clone(),
+                        config.channels.slack.clone(),
+                        router,
+                    ),
+                    None => {
+                        if entry.mark_failed("slack", "Slack router unavailable") {
+                            entry
+                                .coordinator
+                                .fallback(ConfirmFallbackReason::NoAvailableChannel);
+                        }
+                    }
+                },
+                "dingding" => match ensure_dd_router(
+                    state,
+                    config.channels.dingding.client_id.trim(),
+                    config.channels.dingding.client_secret.trim(),
+                )
+                .await
+                {
+                    Some(router) => crate::channels::confirm::start_dingtalk(
+                        entry.clone(),
+                        config.channels.dingding.clone(),
+                        router,
+                    ),
+                    None => {
+                        if entry.mark_failed("dingding", "DingTalk router unavailable") {
+                            entry
+                                .coordinator
+                                .fallback(ConfirmFallbackReason::NoAvailableChannel);
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+
     // ===== IM 入站消费（命令 /here、/status…）/ 活跃槽 / 补推在途 =====
 
     /// 确保各已启用 IM 的入站消费任务在线，使守护进程**在世期间**能收到任何入站消息（命令 / 引导 / 作答确认）。
@@ -2622,11 +2766,16 @@ mod unix_impl {
     /// 该渠道当前是否有「活动在途提问」（即有在途请求把本渠道挂进了协调器）。
     /// 用于「普通文本退避」判定：有则交渠道会话确认/引导，观察者不重复回复（spec 协调原则）。
     fn has_active_question_on(state: &Arc<ServerState>, channel_id: &str) -> bool {
-        state
+        let ask = state
             .registry
             .in_flight_entries()
             .iter()
-            .any(|e| e.coordinator.has_channel(channel_id))
+            .any(|e| e.coordinator.has_channel(channel_id));
+        ask || state
+            .registry
+            .in_flight_confirm_entries()
+            .iter()
+            .any(|entry| entry.has_live_delivery(channel_id))
     }
 
     /// 该渠道当前是否有在途单选卡（picker 未被消费）。用于 `remove_picker` 判定是否仍有单选卡残留。
@@ -6139,6 +6288,18 @@ mod unix_impl {
                 ch.start(entry.request(), entry.coordinator.clone());
                 n += 1;
             }
+        }
+        for entry in state.registry.in_flight_confirm_entries() {
+            if entry.coordinator.is_terminal() || entry.has_delivery(channel_id) {
+                continue;
+            }
+            let eligible = confirm_im_candidates(&entry, state, config);
+            if !eligible.contains(&channel_id) {
+                continue;
+            }
+            entry.start_delivery(channel_id);
+            attach_confirm_im_channels(&entry, state, config, &[channel_id]).await;
+            n += 1;
         }
         n
     }

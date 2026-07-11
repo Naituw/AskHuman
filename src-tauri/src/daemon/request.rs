@@ -184,6 +184,17 @@ impl ConfirmEntry {
             *state = ConfirmDeliveryState::Terminal;
         }
     }
+
+    pub fn has_delivery(&self, channel_id: &str) -> bool {
+        self.delivery.lock().unwrap().contains_key(channel_id)
+    }
+
+    pub fn has_live_delivery(&self, channel_id: &str) -> bool {
+        matches!(
+            self.delivery.lock().unwrap().get(channel_id),
+            Some(ConfirmDeliveryState::Starting | ConfirmDeliveryState::Ready { .. })
+        )
+    }
 }
 
 #[derive(Default)]
@@ -398,6 +409,16 @@ impl RequestRegistry {
     /// 当前所有在途请求项的快照（供「补推在途」把已发问题补发到新激活的渠道）。
     pub fn in_flight_entries(&self) -> Vec<Arc<RequestEntry>> {
         self.inner.lock().unwrap().by_id.values().cloned().collect()
+    }
+
+    pub fn in_flight_confirm_entries(&self) -> Vec<Arc<ConfirmEntry>> {
+        self.inner
+            .lock()
+            .unwrap()
+            .confirm_by_id
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// 所有在途请求关联的调用方 agent pid（去重）。供 daemon「工作中兜底超时」豁免——

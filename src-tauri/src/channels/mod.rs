@@ -1,5 +1,6 @@
 //! Channel 抽象：并行运行、首个终态结果由协调器采纳，其余被 `interrupt` 收尾。
 
+pub mod confirm;
 pub mod conversation;
 pub mod dingding;
 pub mod feishu;

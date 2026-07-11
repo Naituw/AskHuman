@@ -526,7 +526,9 @@ async fn handle_event(
             finished
         }
         // message：卡片之后用户发的文字 → 累积为补充输入；严格模式下忽略（不并入答案）。
-        TgInbound::Text { text, message_id } => {
+        TgInbound::Text {
+            text, message_id, ..
+        } => {
             if select_only {
                 // 严格模式忽略自由文字 → 引导（spec R3）；斜线命令交 handle_inbound，不回引导。
                 if let Some(reply) = super::conversation::answer_inbound_reply(

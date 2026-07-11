@@ -295,6 +295,8 @@ export interface DingTalkChannelConfig {
   clientSecret: string;
   userId: string;
   cardTemplateId: string;
+  confirmCardTemplateId: string;
+  permissionConfirmCardTemplateId: string;
   inlineSmallText: boolean;
   convertTextToDocx: boolean;
 }
@@ -426,8 +428,22 @@ export interface AgentModeStatus {
   ruleInstalled: boolean;
   timeoutHookSupported: boolean;
   timeoutHookInstalled: boolean;
+  timeoutHookNeedsUpdate: boolean;
+  permission: PermissionStatus;
+  permissionNeedsUpdate: boolean;
   mcpConfigPath: string;
   mcpConfigInstalled: boolean;
+}
+
+export interface PermissionStatus {
+  supported: boolean;
+  unsupportedReason: string | null;
+  enabled: boolean;
+  configured: boolean;
+  outdated: boolean;
+  needsUpdate: boolean;
+  knownBlockedReason: string | null;
+  otherHandlersDetected: boolean;
 }
 
 export interface TelegramTestArgs {

@@ -280,6 +280,7 @@ impl MessagingChannel for SlackSession {
         let images: Arc<Mutex<Vec<ImageAttachment>>> = Arc::new(Mutex::new(Vec::new()));
         let files: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let mut downloads: Vec<tauri::async_runtime::JoinHandle<()>> = Vec::new();
+        let mut selected_single = None;
         while !preempt.is_cancelled() {
             let ev = match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
                 Ok(Some(ev)) => ev,
@@ -288,8 +289,40 @@ impl MessagingChannel for SlackSession {
             };
             match ev {
                 SlInbound::Interactive(payload) => {
-                    let Some(s) = blockkit::parse_submit(&payload, ctx.options) else {
-                        continue; // 非「提交」按钮（理论上不会到这；本卡只有提交按钮）
+                    if let Some(selection) = blockkit::parse_single_select(&payload) {
+                        if ctx.single
+                            && selection.index < ctx.options.len()
+                            && selection.message_ts == message_ts
+                            && (user_id.is_empty() || selection.user_id == user_id)
+                            && (selection.channel_id.is_empty() || selection.channel_id == dm)
+                        {
+                            selected_single = Some(selection.index);
+                            let updated = blockkit::build_question_card_with_state(
+                                title,
+                                ctx.text,
+                                ctx.options,
+                                ctx.is_markdown,
+                                ctx.single,
+                                ctx.select_only,
+                                options_label,
+                                input_label,
+                                placeholder,
+                                submit_label,
+                                i18n::tr(ctx.lang, "channel.slackRecommended"),
+                                &nonce,
+                                selected_single,
+                                selection.user_input.as_deref(),
+                            );
+                            let _ = client
+                                .update_message(dm, &message_ts, Some(&updated), &notify)
+                                .await;
+                        }
+                        continue;
+                    }
+                    let Some(s) =
+                        blockkit::parse_submit_with_single(&payload, ctx.options, selected_single)
+                    else {
+                        continue;
                     };
                     if s.message_ts != message_ts || (!user_id.is_empty() && s.user_id != user_id) {
                         continue; // 非本题卡片 / 非目标用户

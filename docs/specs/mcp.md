@@ -42,7 +42,7 @@
 | D11 | 自动重连 | MCP server **不持长连接**：每次 `ask` 都新起子进程→新走 `ensure_running`/排空等待/提交。daemon 因版本更新 drain/重启后，MCP server 进程继续存活，下一次 `ask` 自动连到新 daemon |
 | D12 | 平台范围 | **全平台**。统一用 spawn 子进程：Unix 子进程是「瘦客户端→daemon」，Windows 子进程是现有「单进程弹窗」回退。MCP server 自身不直接弹窗，绕开 Windows 上「stdio 主循环 vs Tauri 主线程」冲突 |
 | D13 | 漂移检测 | `needs_update` 覆盖 MCP Rule + MCP 配置：已安装但内置提示词/配置模板有更新时显示「更新」 |
-| D14 | CLI/doctor | `agents show/install/uninstall/update` 与 `doctor` 纳入 MCP 模式状态与操作（headless 一致可用） |
+| D14 | CLI/doctor | `agents mode/update/show` 与 `doctor` 纳入 MCP 模式状态与整包操作（headless 一致可用） |
 | D15 | 命名 | 子命令 `mcp`；工具名 `ask`；各家配置中 server 名 `askhuman` |
 | D16 | 配置 command | 配置里的 `command` 写**当前可执行文件绝对路径**（`current_exe()`，与 Hook 脚本写绝对路径一致），因部分客户端不继承 shell PATH |
 
@@ -146,7 +146,7 @@ argv 映射：`message`→首个位置参数（或经 `-q` 拆分）；每个 qu
 5. daemon 因版本更新 drain/重启：已运行的 MCP server 不退出，下一次 `ask` 自动连到新 daemon（撞排空时等待后成功）。
 6. 设置「Agent」Tab：三态模式互斥；一键切换自动卸旧装新；选「未集成」清除全部产物；产物过期显示「更新」。
 7. 手动集成：CLI/MCP 提示词可切换；MCP 版显示三家配置实例。
-8. `agents show/install/uninstall/update`（含 `--mcp`/模式参数）与 `doctor` 正确反映 MCP 状态；headless 可用。
+8. `agents mode/update/show` 与 `doctor` 正确反映 MCP 状态；旧逐产物 `--mcp` 写接口不再执行；headless 可用。
 9. 三家 MCP 配置写入为最小化编辑：保留用户其它条目/注释；重复安装幂等；卸载只移除自有条目；解析失败不破坏文件（单测覆盖）。
 10. Windows：`AskHuman mcp` 经子进程单进程弹窗回退完成提问（无 daemon）。
 11. 既有 CLI 模式（Rule/Hook）与所有现有功能回归正常。

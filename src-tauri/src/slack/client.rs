@@ -128,6 +128,21 @@ impl SlackClient {
         self.post_message(channel, None, text).await
     }
 
+    pub async fn post_thread_text(
+        &self,
+        channel: &str,
+        thread_ts: &str,
+        text: &str,
+    ) -> Result<String, SlackError> {
+        let body = json!({ "channel": channel, "thread_ts": thread_ts, "text": text });
+        let value = self.call("chat.postMessage", body).await?;
+        Ok(value
+            .get("ts")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string())
+    }
+
     /// 更新已发送的消息（收尾置静态终态 / 抢答收尾）。
     pub async fn update_message(
         &self,

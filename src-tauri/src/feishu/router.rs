@@ -152,6 +152,14 @@ impl RoutedFs {
         }
     }
 
+    /// Stop routing loose user messages while retaining the exact card callback route.
+    pub fn clear_loose(&self, open_id: &str) {
+        let mut routes = self.routes.lock().unwrap();
+        if !open_id.is_empty() && routes.loose.get(open_id) == Some(&self.route_id) {
+            routes.loose.remove(open_id);
+        }
+    }
+
     /// 收下一个分发给本会话的事件；`None` 表示连接关闭。
     pub async fn recv(&mut self) -> Option<FsInbound> {
         self.rx.recv().await

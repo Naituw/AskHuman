@@ -144,6 +144,23 @@ impl TelegramClient {
             .unwrap_or(0))
     }
 
+    pub async fn send_reply_message(
+        &self,
+        reply_to_message_id: i64,
+        text: &str,
+    ) -> Result<i64, TelegramError> {
+        let params = json!({
+            "chat_id": self.chat_id,
+            "text": text,
+            "reply_parameters": { "message_id": reply_to_message_id },
+        });
+        let result = self.call("sendMessage", params).await?;
+        Ok(result
+            .get("message_id")
+            .and_then(Value::as_i64)
+            .unwrap_or(0))
+    }
+
     /// 上传文件（multipart）。`method` 为 sendDocument/sendPhoto，`field` 为 document/photo。
     async fn send_file(
         &self,

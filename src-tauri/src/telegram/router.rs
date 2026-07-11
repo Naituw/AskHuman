@@ -26,7 +26,12 @@ pub enum TgInbound {
     /// 卡片回调（`callback_query` 对象；会话据此切换选项/提交，并自行应答）。
     Callback(Value),
     /// 卡片之后用户发的文字（归属「最新活动卡片」的请求，见 Q4）。
-    Text { text: String, message_id: i64 },
+    Text {
+        text: String,
+        message_id: i64,
+        /// Exact replied-to card id when the user used Telegram's Reply action.
+        reply_to_message_id: Option<i64>,
+    },
 }
 
 /// 一条活动会话的归属信息（用于「最新活动卡片」文字路由）。
@@ -161,6 +166,11 @@ impl RoutedTg {
         r.active.remove(&self.route_id);
     }
 
+    /// Stop routing free text while retaining the exact callback route for a terminal card.
+    pub fn clear_loose(&self) {
+        self.routes.lock().unwrap().active.remove(&self.route_id);
+    }
+
     /// 收下一个分发给本会话的事件；`None` 表示轮询器已停止。
     pub async fn recv(&mut self) -> Option<TgInbound> {
         self.rx.recv().await
@@ -248,6 +258,10 @@ async fn dispatch(client: &TelegramClient, routes: &Arc<Mutex<Routes>>, update: 
             .get("message_id")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
+        let reply_to_message_id = message
+            .get("reply_to_message")
+            .and_then(|reply| reply.get("message_id"))
+            .and_then(Value::as_i64);
         let text = match message.get("text").and_then(|t| t.as_str()) {
             Some(t) => t.to_string(),
             None => return, // 仅处理文字；图片/文件 Telegram 渠道不收
@@ -276,6 +290,7 @@ async fn dispatch(client: &TelegramClient, routes: &Arc<Mutex<Routes>>, update: 
             let _ = tx.send(TgInbound::Text {
                 text,
                 message_id: mid,
+                reply_to_message_id,
             });
         }
     }

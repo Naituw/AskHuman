@@ -531,6 +531,10 @@ fn wizard(name: &str, lang: Lang) -> Result<(), String> {
             c.client_id = cfgio::prompt_line("clientId", &c.client_id)?;
             c.user_id = cfgio::prompt_line("userId", &c.user_id)?;
             c.card_template_id = cfgio::prompt_line("cardTemplateId", &c.card_template_id)?;
+            c.permission_confirm_card_template_id = cfgio::prompt_line(
+                "permissionConfirmCardTemplateId",
+                &c.permission_confirm_card_template_id,
+            )?;
             prompt_secret_into(&mut c.client_secret, "clientSecret", lang)?;
         }
         "feishu" => {

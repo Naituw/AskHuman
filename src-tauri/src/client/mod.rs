@@ -324,6 +324,45 @@ pub fn run_ask(task: crate::ipc::TaskRequest) -> ! {
     std::process::exit(rt.block_on(run_ask_async(task)));
 }
 
+/// Submit a structured permission confirmation. Every transport/protocol/fallback failure returns
+/// `None` so the hook writes no decision and the agent keeps its native approval flow.
+pub fn run_confirm(task: crate::ipc::ConfirmTask) -> Option<crate::models::ConfirmResult> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    runtime.block_on(async move {
+        ensure_running().await.ok()?;
+        let (mut reader, mut writer) = connect_split().await.ok()?;
+        ipc::write_msg(&mut writer, &ClientMsg::Hello(hello()))
+            .await
+            .ok()?;
+        match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
+            Ok(Some(ServerMsg::HelloAck(ack))) if ack.status == HelloStatus::Ok => {}
+            _ => return None,
+        }
+        ipc::write_msg(&mut writer, &ClientMsg::SubmitConfirm(task))
+            .await
+            .ok()?;
+        read_confirm_frames(&mut reader).await
+    })
+}
+
+async fn read_confirm_frames<R>(reader: &mut R) -> Option<crate::models::ConfirmResult>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    loop {
+        match ipc::read_msg::<_, ServerMsg>(reader).await {
+            Ok(Some(ServerMsg::ConfirmAccepted { .. })) => {}
+            Ok(Some(ServerMsg::ConfirmFinal { result })) => return Some(result),
+            Ok(Some(ServerMsg::ConfirmFallback { .. })) => return None,
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => return None,
+        }
+    }
+}
+
 async fn run_ask_async(task: crate::ipc::TaskRequest) -> i32 {
     use crate::ipc::ServerMsg;
 
@@ -409,6 +448,50 @@ mod tests {
     use super::*;
     use crate::ipc::InterjectAction;
     use tokio::io::BufReader;
+
+    async fn confirm_frames(frames: Vec<ServerMsg>) -> Option<crate::models::ConfirmResult> {
+        let (mut tx, rx) = tokio::io::duplex(4096);
+        let writer = tokio::spawn(async move {
+            for frame in frames {
+                ipc::write_msg(&mut tx, &frame).await.unwrap();
+            }
+        });
+        let mut reader = BufReader::new(rx);
+        let result = read_confirm_frames(&mut reader).await;
+        writer.await.unwrap();
+        result
+    }
+
+    #[tokio::test]
+    async fn confirm_final_is_returned_without_waiting_for_surface_cleanup() {
+        let expected = crate::models::ConfirmResult {
+            action_id: "approve_once".into(),
+            comment: None,
+            source_channel_id: "popup".into(),
+        };
+        let actual = confirm_frames(vec![
+            ServerMsg::ConfirmAccepted {
+                request_id: "r1".into(),
+            },
+            ServerMsg::ConfirmFinal {
+                result: expected.clone(),
+            },
+        ])
+        .await;
+        assert_eq!(actual, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn confirm_fallback_and_disconnect_return_no_decision() {
+        assert_eq!(
+            confirm_frames(vec![ServerMsg::ConfirmFallback {
+                reason: crate::models::ConfirmFallbackReason::NoAvailableChannel,
+            }])
+            .await,
+            None
+        );
+        assert_eq!(confirm_frames(vec![]).await, None);
+    }
 
     /// 假 daemon 帧序列 → 裁决逻辑（三态 + 超时 fail-open，spec agent-interject D4）。
     async fn run_frames(

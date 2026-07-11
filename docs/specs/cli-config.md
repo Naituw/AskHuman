@@ -37,12 +37,15 @@
 ### `AskHuman agents` —— Agent 状态 + 集成（合并；解决与原 `agents status` 命名冲突）
 - `agents monitor [--json]` —— **原 `agents status` 改名为此**：实时状态。
   有 GUI → 开状态窗口；headless / `--json` → 文本 / JSON 输出。
-- `agents show [<agent>]` —— **手动集成**：打印参考提示词（`prompts::cli_reference`）+ 各 agent 粘贴位置 + 当前安装状态。
-- `agents install <agent> [--rules] [--hook] [--lifecycle]` —— **自动集成**；
-  **无 flag 报错**并提示需显式指定（不设默认捆绑）。
-- `agents uninstall <agent> [--rules] [--hook] [--lifecycle]`
-- `agents update <agent> [flags]` —— 刷新漂移的托管块 / 脚本到最新。
-- agent ∈ cursor | claude | codex；三类：Rules（三家）、超时 Hook（仅 cursor/claude）、生命周期 Hook（实验性，三家）。
+- `agents mode <agent> [none|cli|mcp]` —— 查询或设置自动集成 mode；设置时完整 reconcile 目标整包，重复
+  设置同值也等同显式更新。
+- `agents update [<agent>]` —— 更新单家或全部当前非 None / 有托管残留的整包。
+- `agents permission <claude|codex> [on|off]` —— 查询或设置独立 PermissionRequest 审批 capability。
+- `agents lifecycle <agent> [on|off]` —— 查询或设置独立生命周期追踪 capability。
+- `agents show [<agent>]` —— **手动集成**：打印参考提示词 + 粘贴位置 + mode/rules/timeout/
+  permission/MCP/lifecycle 状态。
+- agent ∈ cursor | claude | codex | grok（grok 仅 none|mcp）。旧 `install/uninstall` 和逐产物写 flags
+  已移除：不得部分执行，非零退出并给 mode/update/permission/lifecycle 迁移提示。
 
 ### `AskHuman config` —— 通用键值（兜底）
 - `config show [--json]` —— 打印生效配置（密钥脱敏为 `●●●`，标注已设 / 未设）。
@@ -63,7 +66,8 @@ daemon 是否在跑 / 各渠道（启用·配置齐全·连接）/ 各 agent 集
 - **D4 密钥输入**：脚本化用 `--<field>-env <VAR>` / `--<field>-file <path>` / `--<field>-stdin`（或值 `-`）；
   交互时隐藏输入。**不**接受密钥明文直接进 argv（避免泄漏 shell 历史 / `ps`）。
 - **D5 `config` 可设密钥键**：自动路由进钥匙串，值仍从 stdin / env 取。
-- **D6 集成安装无默认捆绑**：`agents install` 必须显式 `--rules` / `--hook` / `--lifecycle`。
+- **D6 集成写入统一为 mode 整包**：不允许用逐产物 flags 拼装半安装状态；permission 与 lifecycle 保持
+  独立 on/off。重复设置当前 mode 仍完整更新磁盘，但绝不改写 permission preference。
 - **D7 纳入**：`channel detect`、`doctor`、所有列表 / 状态 / 体检的 `--json`。
 - **D8 改名**：原 `agents status`（GUI 状态窗口）→ `agents monitor`，并增加文本 / `--json`。
 - **D9 每个子命令都要有 `help`** 引导配置。

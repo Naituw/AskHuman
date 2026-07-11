@@ -8,6 +8,7 @@ import {
   agentModeSet,
   agentModeUpdate,
   agentModeUpdateArtifact,
+  agentPermissionSet,
   agentRuleReveal,
   agentRuleOpen,
   mcpConfigReveal,
@@ -164,6 +165,18 @@ const emptyMode = (): AgentModeStatus => ({
   ruleInstalled: false,
   timeoutHookSupported: false,
   timeoutHookInstalled: false,
+  timeoutHookNeedsUpdate: false,
+  permission: {
+    supported: false,
+    unsupportedReason: "native_permission_request_unsupported",
+    enabled: false,
+    configured: false,
+    outdated: false,
+    needsUpdate: false,
+    knownBlockedReason: null,
+    otherHandlersDetected: false,
+  },
+  permissionNeedsUpdate: false,
   mcpConfigPath: "",
   mcpConfigInstalled: false,
 });
@@ -198,7 +211,7 @@ async function refreshMode(agent: AgentId) {
 
 // 一键切换到目标模式（含「未集成」）：自动卸旧装新。
 async function setMode(agent: AgentId, mode: AgentMode) {
-  if (modeBusy.value[agent] || modes.value[agent].mode === mode) return;
+  if (modeBusy.value[agent]) return;
   modeBusy.value[agent] = true;
   modeMessage.value[agent] = null;
   try {
@@ -211,6 +224,28 @@ async function setMode(agent: AgentId, mode: AgentMode) {
     modeBusy.value[agent] = false;
     await refreshMode(agent);
   }
+}
+
+async function togglePermission(agent: AgentId, enabled: boolean) {
+  if (modeBusy.value[agent]) return;
+  modeBusy.value[agent] = true;
+  modeMessage.value[agent] = null;
+  try {
+    await agentPermissionSet(agent, enabled);
+    modeError.value[agent] = false;
+  } catch (e) {
+    modeMessage.value[agent] = String(e);
+    modeError.value[agent] = true;
+  } finally {
+    modeBusy.value[agent] = false;
+    await refreshMode(agent);
+  }
+}
+
+function permissionBlockedText(reason: string): string {
+  return reason === "allow_managed_hooks_only"
+    ? t("settings.integration.permissionManagedOnly")
+    : t("settings.integration.permissionHooksDisabled");
 }
 
 // 单项更新：只把某个产物（rule / hook / mcp）刷新到最新。
@@ -2025,7 +2060,7 @@ onBeforeUnmount(() => unlistenProgress?.());
                   </span>
                   <span class="spacer"></span>
                   <button
-                    v-if="modes[a.id].hookNeedsUpdate"
+                    v-if="modes[a.id].timeoutHookNeedsUpdate"
                     class="btn btn-update"
                     type="button"
                     :disabled="modeBusy[a.id]"
@@ -2139,6 +2174,89 @@ onBeforeUnmount(() => unlistenProgress?.());
             </template>
 
           </template>
+
+          <hr class="divider" />
+          <template v-if="modes[a.id].permission.supported">
+            <div class="row agent-row">
+              <span class="label">{{
+                t("settings.integration.permissionTitle")
+              }}</span>
+              <span class="badge">
+                <span
+                  class="dot"
+                  :class="modes[a.id].permission.configured ? 'on' : 'off'"
+                ></span>
+                {{
+                  modes[a.id].permission.configured
+                    ? t("settings.integration.configured")
+                    : t("settings.integration.notConfigured")
+                }}
+              </span>
+              <span class="spacer"></span>
+              <button
+                v-if="modes[a.id].permissionNeedsUpdate"
+                class="btn btn-update"
+                type="button"
+                :disabled="modeBusy[a.id]"
+                @click="updateArtifact(a.id, 'hook')"
+              >
+                <span class="dot-update"></span
+                >{{ t("settings.integration.update") }}
+              </button>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  :checked="modes[a.id].permission.enabled"
+                  :disabled="modeBusy[a.id]"
+                  @change="
+                    togglePermission(
+                      a.id,
+                      ($event.target as HTMLInputElement).checked
+                    )
+                  "
+                />
+                <span class="track"></span>
+              </label>
+            </div>
+            <p class="card-desc agent-hint">
+              {{
+                a.id === 'claude'
+                  ? t("settings.integration.permissionClaudeHint")
+                  : t("settings.integration.permissionCodexHint")
+              }}
+            </p>
+            <p class="card-desc agent-hint">
+              {{ t("settings.integration.permissionInflightHint") }}
+            </p>
+            <p
+              v-if="modes[a.id].permission.knownBlockedReason"
+              class="result err"
+            >
+              {{
+                permissionBlockedText(
+                  modes[a.id].permission.knownBlockedReason as string
+                )
+              }}
+            </p>
+            <p
+              v-if="modes[a.id].permission.otherHandlersDetected"
+              class="result err"
+            >
+              {{
+                a.id === 'claude'
+                  ? t("settings.integration.permissionClaudeCoexist")
+                  : t("settings.integration.permissionCodexCoexist")
+              }}
+            </p>
+          </template>
+          <p v-else class="card-desc agent-hint">
+            {{
+              modes[a.id].permission.unsupportedReason ===
+              'windows_daemon_unsupported'
+                ? t("settings.integration.permissionWindowsUnsupported")
+                : t("settings.integration.permissionUnsupported")
+            }}
+          </p>
 
           <p
             v-if="modeMessage[a.id]"
@@ -2434,6 +2552,15 @@ onBeforeUnmount(() => unlistenProgress?.());
               <input
                 class="input"
                 v-model="config.channels.dingding.cardTemplateId"
+                :placeholder="t('settings.channels.cardTemplateIdPlaceholder')"
+                @change="persist"
+              />
+            </div>
+            <div class="field">
+              <label>{{ t("settings.channels.permissionCardTemplateId") }}</label>
+              <input
+                class="input"
+                v-model="config.channels.dingding.permissionConfirmCardTemplateId"
                 :placeholder="t('settings.channels.cardTemplateIdPlaceholder')"
                 @change="persist"
               />

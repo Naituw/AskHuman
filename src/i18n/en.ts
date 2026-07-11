@@ -210,12 +210,33 @@ export default {
         "Installs an AskHuman skill under ~/.grok/skills so both Composer and Grok Build can discover the interaction protocol. Grok supports MCP mode only (no CLI/timeout hook).",
       installed: "Installed",
       notInstalled: "Not installed",
+      configured: "Configured",
+      notConfigured: "Not configured",
       install: "Install",
       update: "Update",
       updateAll: "Update all",
       updatesAvailable: "Updates available",
       uninstall: "Remove",
       windowsUnsupported: "This hook is not supported on Windows",
+      permissionTitle: "Permission approval",
+      permissionUnsupported:
+        "This agent does not support a native PermissionRequest approval flow.",
+      permissionWindowsUnsupported:
+        "Permission approval is waiting for Windows daemon support.",
+      permissionClaudeHint:
+        "Routes Claude Code permission prompts to AskHuman. Other project, managed, plugin, skill, or agent hooks may still affect the final decision; use /hooks in the current Claude session to inspect active sources.",
+      permissionCodexHint:
+        "Routes Codex permission prompts to AskHuman. Hooks from other sources may add waiting time or deny the request.",
+      permissionInflightHint:
+        "Changing this affects future permission prompts only; approvals already delivered by AskHuman remain valid.",
+      permissionHooksDisabled:
+        "A readable agent policy disables hooks, so this configured hook will not run.",
+      permissionManagedOnly:
+        "A readable agent policy allows managed hooks only, so this user hook will not run.",
+      permissionClaudeCoexist:
+        "Other visible PermissionRequest handlers were found. Another allow may override an AskHuman denial, and an AskHuman allow may override another denial.",
+      permissionCodexCoexist:
+        "Other visible PermissionRequest handlers were found. Codex waits for all matching hooks and a denial wins.",
       modeCli: "CLI",
       modeMcp: "MCP",
       modeNone: "Off",
@@ -266,6 +287,7 @@ export default {
         "Use the target DingTalk account to DM the bot with: {code} (valid for 120s)",
       detected: "Detected and filled UserId: {userId}",
       cardTemplateId: "Card template ID",
+      permissionCardTemplateId: "Permission approval card template ID",
       cardTemplateIdPlaceholder: "Leave empty to use the built-in default template",
       inlineSmallText: "Inline small text files",
       inlineSmallTextHint:

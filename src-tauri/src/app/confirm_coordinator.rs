@@ -22,6 +22,13 @@ enum Terminal {
     Cancelled,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmTerminalKind {
+    Decision(ConfirmResult),
+    Fallback(ConfirmFallbackReason),
+    Cancelled,
+}
+
 pub struct ConfirmCoordinator {
     request: Arc<ConfirmRequest>,
     terminal: FirstTerminalGate<Terminal>,
@@ -81,6 +88,15 @@ impl ConfirmCoordinator {
         self.terminal.with(|terminal| match terminal {
             Some(Terminal::Final(result)) => Some(result.source_channel_id.clone()),
             _ => None,
+        })
+    }
+
+    pub fn terminal_kind(&self) -> Option<ConfirmTerminalKind> {
+        self.terminal.with(|terminal| match terminal {
+            Some(Terminal::Final(result)) => Some(ConfirmTerminalKind::Decision(result.clone())),
+            Some(Terminal::Fallback(reason)) => Some(ConfirmTerminalKind::Fallback(*reason)),
+            Some(Terminal::Cancelled) => Some(ConfirmTerminalKind::Cancelled),
+            None => None,
         })
     }
 }

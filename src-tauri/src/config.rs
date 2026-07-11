@@ -215,6 +215,9 @@ pub struct DingTalkChannelConfig {
     /// 通用确认卡模板 ID（`/stage` 等；双按钮 + finalized。见 docs/assets/dingtalk-confirm-card-template.json）。
     #[serde(default)]
     pub confirm_card_template_id: String,
+    /// Permission approval single-select + Submit card template override.
+    #[serde(default)]
+    pub permission_confirm_card_template_id: String,
     /// 文本类附件：短文本（≤阈值）是否内联进消息正文（默认开）。见
     /// `docs/plans/dingtalk-attachment-preview.md`。
     pub inline_small_text: bool,
@@ -231,6 +234,7 @@ impl Default for DingTalkChannelConfig {
             user_id: String::new(),
             card_template_id: String::new(),
             confirm_card_template_id: String::new(),
+            permission_confirm_card_template_id: String::new(),
             // 文本附件预览能力默认开启（旧配置缺字段时经 serde(default) 取此默认）。
             inline_small_text: true,
             convert_text_to_docx: true,
@@ -546,6 +550,11 @@ mod tests {
         assert!(!c.channels.dingding.enabled);
         assert!(c.channels.dingding.client_id.is_empty());
         assert!(c.channels.dingding.card_template_id.is_empty());
+        assert!(c
+            .channels
+            .dingding
+            .permission_confirm_card_template_id
+            .is_empty());
         // 文本附件预览开关默认开启。
         assert!(c.channels.dingding.inline_small_text);
         assert!(c.channels.dingding.convert_text_to_docx);

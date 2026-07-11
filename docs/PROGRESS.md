@@ -7,7 +7,17 @@
 计划 `docs/plans/agent-permission-approval.md`。M-1 通用双动作确认卡 view/builder/transport 已完成并验证，
 `/stage` 行为与钉钉固定模板保持兼容；权限 Confirm、Hook 共存、设置/CLI 整包语义已完成核对。
 M0 通用确认模型/IPC/registry/coordinator 与 M1 本地确认弹窗已实现并通过全量回归、前端构建及安装验证。
-当前步骤：M2 Daemon 抢答、四 IM 卡片、投递状态与按需补推。
+M2 Daemon 抢答、四 IM 卡片、投递状态、按需补推与终态 tombstone 已实现，钉钉专用权限模板已生成并发布；
+M3 Claude Code / Codex PermissionRequest 协议适配、M4 Hook 共存/Codex trust/mode 整包 reconcile、M5
+设置页/CLI/doctor 已实现。重复设置 mode 会完整更新磁盘，但不会自动改变 Permission 启用偏好。
+当前步骤：M6 全量验证、安装、文档核对与人工验收。
+
+## 待办：优化钉钉 Permission 卡的元数据展示
+
+权限审批专用模板 `docs/assets/dingtalk-permission-confirm-card-template.json` 已完成功能真机验收：动态单选、
+仅 deny 显示原因、Submit、原因传输与终态均正确；但 Agent / 项目 / workspace / tool / permission mode /
+请求时间等元数据目前整体塞在 Markdown 正文中，视觉层级和弹窗相比明显较差。后续单独优化模板布局与字段
+样式，保持已发布变量/回调协议和其它 Ask、`/stage` 模板不变。
 
 
 ## 待办：Watch 卡片「重新关注」按钮 — 全渠道

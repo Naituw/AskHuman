@@ -182,6 +182,17 @@ pub fn dispatch() {
             }
             exit(0);
         }
+        // Hidden PermissionRequest adapter. All infrastructure and validation failures produce no
+        // stdout so the agent falls back to its native approval prompt.
+        "__permission-hook" => {
+            #[cfg(unix)]
+            {
+                if let Some(output) = crate::permissions::run(argv.get(2).map(String::as_str)) {
+                    print_line(&output);
+                }
+            }
+            exit(0);
+        }
         // Agent 状态 + 集成子命令组（spec：cli-config）：monitor / show / install / uninstall / update。
         "agents" => {
             agents_cmd::dispatch(&argv[2..], lang);

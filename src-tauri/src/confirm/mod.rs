@@ -5,6 +5,7 @@
 //! callbacks back to a wire-level `ConfirmSlot`; the daemon maps slots to business action
 //! IDs via the originating view.
 
+pub mod choice_cards;
 pub mod transport;
 
 use crate::i18n::{self, Lang};

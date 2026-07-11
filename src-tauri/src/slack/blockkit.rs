@@ -18,6 +18,7 @@ const OPT_VALUE_PREFIX: &str = "opt_";
 const INPUT_ACTION: &str = "user_input";
 /// 提交按钮 action_id。
 const SUBMIT_ACTION: &str = "submit";
+const SINGLE_SELECT_PREFIX: &str = "single_select_";
 /// 复选框单元素选项上限（Slack 限制）。
 const CHECKBOXES_MAX: usize = 10;
 /// section 文本安全上限（Slack 约 3000）。
@@ -33,6 +34,14 @@ pub struct CardSubmit {
     /// 勾选的预定义选项（选项文本，已按下标还原）。
     pub selected_options: Vec<String>,
     /// 补充文字输入（空则 None）。
+    pub user_input: Option<String>,
+}
+
+pub struct CardSelect {
+    pub user_id: String,
+    pub message_ts: String,
+    pub channel_id: String,
+    pub index: usize,
     pub user_input: Option<String>,
 }
 
@@ -60,6 +69,41 @@ pub fn build_question_card(
     recommended_label: &str,
     nonce: &str,
 ) -> Value {
+    build_question_card_with_state(
+        title,
+        text,
+        options,
+        is_markdown,
+        single,
+        select_only,
+        options_label,
+        input_label,
+        input_placeholder,
+        submit_label,
+        recommended_label,
+        nonce,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_question_card_with_state(
+    title: &str,
+    text: &str,
+    options: &[OptionItem],
+    is_markdown: bool,
+    single: bool,
+    select_only: bool,
+    options_label: &str,
+    input_label: &str,
+    input_placeholder: &str,
+    submit_label: &str,
+    recommended_label: &str,
+    nonce: &str,
+    selected_single: Option<usize>,
+    user_input_draft: Option<&str>,
+) -> Value {
     let mut blocks: Vec<Value> = Vec::new();
     if !title.trim().is_empty() {
         blocks.push(title_block(title));
@@ -68,13 +112,36 @@ pub fn build_question_card(
         blocks.push(body_section(text, is_markdown));
     }
 
-    // 选项控件：单选用 radio_buttons、多选用 checkboxes；均按 10 个一组拆成多个 input 块。
-    let element_type = if single {
-        "radio_buttons"
-    } else {
-        "checkboxes"
-    };
-    if !options.is_empty() {
+    // Single-select uses server-side state across all options. Full labels stay in section text;
+    // buttons carry only bounded numeric controls, avoiding Slack's 10-option/75-char limits.
+    if single {
+        for (index, option) in options.iter().enumerate() {
+            let selected = selected_single == Some(index);
+            let recommended = if option.recommended {
+                format!("\n_{recommended_label}_")
+            } else {
+                String::new()
+            };
+            blocks.push(json!({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": truncate(&format!(
+                        "{} {}{}",
+                        if selected { "●" } else { "○" },
+                        markdown::escape(&option.text),
+                        recommended,
+                    )),
+                },
+                "accessory": {
+                    "type": "button",
+                    "action_id": format!("{SINGLE_SELECT_PREFIX}{index}"),
+                    "value": index.to_string(),
+                    "text": { "type": "plain_text", "text": if selected { "✓".to_string() } else { (index + 1).to_string() } },
+                },
+            }));
+        }
+    } else if !options.is_empty() {
         for (k, chunk) in options.chunks(CHECKBOXES_MAX).enumerate() {
             let base = k * CHECKBOXES_MAX;
             let opts: Vec<Value> = chunk
@@ -104,7 +171,7 @@ pub fn build_question_card(
                 "optional": true,
                 "label": { "type": "plain_text", "text": options_label, "emoji": true },
                 "element": {
-                    "type": element_type,
+                    "type": "checkboxes",
                     "action_id": format!("options_{}", k),
                     "options": opts,
                 },
@@ -114,7 +181,7 @@ pub fn build_question_card(
 
     // 多行文本输入框（不 dispatch_action，仅在提交时随 state.values 一并回传）；严格模式去掉。
     if !select_only {
-        blocks.push(json!({
+        let mut input = json!({
             "type": "input",
             "block_id": format!("userinput_{}", nonce),
             "optional": true,
@@ -125,7 +192,11 @@ pub fn build_question_card(
                 "multiline": true,
                 "placeholder": { "type": "plain_text", "text": input_placeholder, "emoji": true },
             },
-        }));
+        });
+        if let Some(draft) = user_input_draft.filter(|value| !value.is_empty()) {
+            input["element"]["initial_value"] = json!(draft);
+        }
+        blocks.push(input);
     }
 
     // 提交按钮。
@@ -199,6 +270,14 @@ pub fn build_finalized_card(p: &Finalized) -> Value {
 /// 把一次 `block_actions` 回调解析为「提交」结果；非提交按钮 / 缺字段返回 None。
 /// `options` 用于把 `opt_{i}` 还原为选项文本。
 pub fn parse_submit(payload: &Value, options: &[OptionItem]) -> Option<CardSubmit> {
+    parse_submit_with_single(payload, options, None)
+}
+
+pub fn parse_submit_with_single(
+    payload: &Value,
+    options: &[OptionItem],
+    selected_single: Option<usize>,
+) -> Option<CardSubmit> {
     // 必须是「提交」按钮触发。
     let is_submit = payload
         .get("actions")
@@ -275,6 +354,10 @@ pub fn parse_submit(payload: &Value, options: &[OptionItem]) -> Option<CardSubmi
             }
         }
     }
+    if let Some(index) = selected_single.filter(|index| *index < chosen.len()) {
+        chosen.fill(false);
+        chosen[index] = true;
+    }
     let selected_options = options
         .iter()
         .enumerate()
@@ -289,6 +372,62 @@ pub fn parse_submit(payload: &Value, options: &[OptionItem]) -> Option<CardSubmi
         selected_options,
         user_input,
     })
+}
+
+pub fn parse_single_select(payload: &Value) -> Option<CardSelect> {
+    let action = payload.get("actions")?.as_array()?.first()?;
+    let index = action
+        .get("action_id")?
+        .as_str()?
+        .strip_prefix(SINGLE_SELECT_PREFIX)?
+        .parse::<usize>()
+        .ok()?;
+    let user_id = payload
+        .get("user")
+        .and_then(|user| user.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let message_ts = payload
+        .get("container")
+        .and_then(|container| container.get("message_ts"))
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("message")?.get("ts")?.as_str())
+        .unwrap_or("")
+        .to_string();
+    let channel_id = payload
+        .get("channel")
+        .and_then(|channel| channel.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let user_input = state_user_input(payload);
+    Some(CardSelect {
+        user_id,
+        message_ts,
+        channel_id,
+        index,
+        user_input,
+    })
+}
+
+fn state_user_input(payload: &Value) -> Option<String> {
+    payload
+        .get("state")?
+        .get("values")?
+        .as_object()?
+        .values()
+        .filter_map(Value::as_object)
+        .flat_map(|actions| actions.iter())
+        .find_map(|(action_id, value)| {
+            (action_id == INPUT_ACTION
+                || value.get("type").and_then(Value::as_str) == Some("plain_text_input"))
+            .then(|| value.get("value").and_then(Value::as_str))
+            .flatten()
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 /// 把一个 `{ value: "opt_{i}" }` 选项标记为已选（下标越界则忽略）。
@@ -396,24 +535,57 @@ mod tests {
     }
 
     #[test]
-    fn single_renders_radio_buttons() {
+    fn single_uses_one_server_side_selection_across_many_long_options() {
+        let options: Vec<OptionItem> = (0..11)
+            .map(|index| OptionItem::new(format!("{index}: {}", "x".repeat(80)), false))
+            .collect();
         let card = build_question_card(
-            "t",
-            "x",
-            &plain(&["a", "b"]),
-            false,
-            true,
-            false,
-            "L",
-            "N",
-            "p",
-            "S",
-            "R",
-            "n",
+            "t", "x", &options, false, true, false, "L", "N", "p", "S", "R", "n",
         );
         let bs = blocks(&card);
-        assert!(bs.iter().any(|b| b["element"]["type"] == "radio_buttons"));
+        let selectors: Vec<&Value> = bs
+            .iter()
+            .filter(|block| {
+                block["accessory"]["action_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with(SINGLE_SELECT_PREFIX))
+            })
+            .collect();
+        assert_eq!(selectors.len(), 11);
+        assert!(
+            selectors[0]["text"]["text"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count()
+                > 75
+        );
+        assert!(
+            selectors[0]["accessory"]["text"]["text"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count()
+                < 3
+        );
+        assert!(!bs.iter().any(|b| b["element"]["type"] == "radio_buttons"));
         assert!(!bs.iter().any(|b| b["element"]["type"] == "checkboxes"));
+    }
+
+    #[test]
+    fn parses_server_side_single_selection_and_draft() {
+        let payload = json!({
+            "user": { "id": "U1" },
+            "channel": { "id": "D1" },
+            "container": { "message_ts": "1.2" },
+            "actions": [{ "action_id": "single_select_10", "value": "10" }],
+            "state": { "values": {
+                "draft": { "user_input": { "type": "plain_text_input", "value": " note " } }
+            } }
+        });
+        let selection = parse_single_select(&payload).unwrap();
+        assert_eq!(selection.index, 10);
+        assert_eq!(selection.user_input.as_deref(), Some("note"));
     }
 
     #[test]

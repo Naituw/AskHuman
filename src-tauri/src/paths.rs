@@ -114,6 +114,16 @@ pub fn integration_state_file() -> PathBuf {
     config_dir().join("integration-state.json")
 }
 
+/// Cross-process lock for all integration artifact mutations.
+pub fn integrations_lock_file() -> PathBuf {
+    config_dir().join("integrations.lock")
+}
+
+/// Per-agent PermissionRequest preference; independent from the integration mode.
+pub fn permission_preferences_file() -> PathBuf {
+    config_dir().join("permission-preferences.json")
+}
+
 /// Agent 生命周期追踪状态文件 `~/.askhuman/agents.json`（daemon 持久化、重启复核用）。
 pub fn agents_file() -> PathBuf {
     config_dir().join("agents.json")

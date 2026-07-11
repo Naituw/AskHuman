@@ -8,7 +8,7 @@
 //! 注意：实验性 lifecycle hook（turn 追踪）**不属于**任何模式，保持独立开关、与本编排正交（spec D9）。
 
 use crate::integrations::agent_rules::{self, AgentTarget, Variant};
-use crate::integrations::{claude_hook, cursor_hook, mcp_config};
+use crate::integrations::{agent_permission, claude_hook, cursor_hook, mcp_config, mutation_lock};
 use anyhow::Result;
 
 /// 每家 Agent 的集成模式（互斥三态）。
@@ -151,24 +151,38 @@ pub struct ArtifactUpdates {
     pub mcp: bool,
 }
 
-/// 逐产物计算当前模式下的过期 / 缺失情况。None 模式无产物，全 false。
+/// 逐产物计算当前模式下的过期 / 缺失情况。None 模式仅报告需要清理的残留 Permission Hook。
 pub fn artifact_updates(target: AgentTarget) -> ArtifactUpdates {
-    match current(target) {
-        Mode::None => ArtifactUpdates::default(),
+    let mode = current(target);
+    let permission = permission_needs_reconcile(target, mode);
+    match mode {
+        Mode::None => ArtifactUpdates {
+            hook: permission,
+            ..ArtifactUpdates::default()
+        },
         Mode::Cli => ArtifactUpdates {
             rule: !agent_rules::is_installed(target)
                 || agent_rules::needs_update_variant(target, Variant::Cli),
-            hook: timeout_hook_supported(target)
-                && (!timeout_hook_is_installed(target) || timeout_hook_needs_update(target)),
+            hook: (timeout_hook_supported(target)
+                && (!timeout_hook_is_installed(target) || timeout_hook_needs_update(target)))
+                || permission,
             mcp: false,
         },
         Mode::Mcp => ArtifactUpdates {
             rule: !agent_rules::is_installed(target)
                 || agent_rules::needs_update_variant(target, Variant::Mcp),
-            hook: false,
+            hook: permission,
             mcp: !mcp_config::is_installed(target) || mcp_config::needs_update(target),
         },
     }
+}
+
+fn permission_needs_reconcile(target: AgentTarget, _mode: Mode) -> bool {
+    let status = agent_permission::status(target);
+    if !status.supported {
+        return false;
+    }
+    status.needs_update
 }
 
 /// 当前模式下是否有产物过期 / 缺失（含 Rule 漂移、超时 Hook 缺失/过期、MCP 配置缺失/过期）。
@@ -179,7 +193,8 @@ pub fn needs_update(target: AgentTarget) -> bool {
 
 // MARK: - 切换
 
-/// 一键切到目标模式：先卸「非目标模式」的全部产物，再装目标模式产物。各底层 install/uninstall 已幂等。
+/// 一键设为目标模式并完整 reconcile 该模式的托管产物。重复设置同一 mode 也会更新磁盘；
+/// Permission 是否安装只读取其独立 preference，本操作绝不改写该 preference。
 ///
 /// Grok 只提供 `None | Mcp` 两态（Composer 的 CLI 会自动后台化、不可靠，见调研）：请求 `Cli` 直接报错，
 /// 避免留下「装了 skill 却没 MCP 配置」的半残状态。Grok 的 `Mcp` 产物 = skill（经 `agent_rules` 委托）+
@@ -190,8 +205,13 @@ pub fn set(target: AgentTarget, mode: Mode) -> Result<()> {
             "Grok only supports None | Mcp (no CLI mode)"
         ));
     }
+    let _lock = mutation_lock::IntegrationMutationLock::acquire()?;
+    set_unlocked(target, mode)
+}
+
+fn set_unlocked(target: AgentTarget, mode: Mode) -> Result<()> {
     match mode {
-        Mode::None => uninstall_all(target),
+        Mode::None => uninstall_all_unlocked(target),
         Mode::Cli => {
             // 卸 MCP 产物 → 装 CLI Rule + 超时 Hook（Codex 跳过 Hook）。
             mcp_config::uninstall(target)?;
@@ -199,6 +219,7 @@ pub fn set(target: AgentTarget, mode: Mode) -> Result<()> {
             if timeout_hook_supported(target) {
                 timeout_hook_install(target)?;
             }
+            agent_permission::reconcile_unlocked(target, mode)?;
             Ok(())
         }
         Mode::Mcp => {
@@ -208,24 +229,23 @@ pub fn set(target: AgentTarget, mode: Mode) -> Result<()> {
             }
             agent_rules::install_variant(target, Variant::Mcp)?;
             mcp_config::install(target)?;
+            agent_permission::reconcile_unlocked(target, mode)?;
             Ok(())
         }
     }
 }
 
-/// 更新当前模式的全部产物到最新（不切换模式）。当前为 None 时 no-op。
+/// 更新当前模式的全部产物到最新（不切换模式）。None 有残留时清理，clean None 幂等 no-op。
 pub fn update(target: AgentTarget) -> Result<()> {
-    match current(target) {
-        Mode::None => Ok(()),
-        Mode::Cli => set(target, Mode::Cli),
-        Mode::Mcp => set(target, Mode::Mcp),
-    }
+    set(target, current(target))
 }
 
 /// 把当前模式下的**单个产物**刷新到最新（不切换模式、不动其它产物）。各底层 install 均幂等，
 /// 故「重装即更新」；与当前模式不相干的产物（如 None、或在 Cli 模式更新 Mcp）为 no-op。
 pub fn update_artifact(target: AgentTarget, artifact: Artifact) -> Result<()> {
-    match (current(target), artifact) {
+    let _lock = mutation_lock::IntegrationMutationLock::acquire()?;
+    let mode = current(target);
+    match (mode, artifact) {
         (Mode::Cli, Artifact::Rule) => {
             agent_rules::install_variant(target, Variant::Cli).map(|_| ())
         }
@@ -234,10 +254,12 @@ pub fn update_artifact(target: AgentTarget, artifact: Artifact) -> Result<()> {
         }
         (Mode::Cli, Artifact::Hook) => {
             if timeout_hook_supported(target) {
-                timeout_hook_install(target).map(|_| ())
-            } else {
-                Ok(())
+                timeout_hook_install(target)?;
             }
+            agent_permission::reconcile_unlocked(target, mode)
+        }
+        (Mode::Mcp, Artifact::Hook) | (Mode::None, Artifact::Hook) => {
+            agent_permission::reconcile_unlocked(target, mode)
         }
         (Mode::Mcp, Artifact::Mcp) => mcp_config::install(target).map(|_| ()),
         _ => Ok(()),
@@ -245,12 +267,13 @@ pub fn update_artifact(target: AgentTarget, artifact: Artifact) -> Result<()> {
 }
 
 /// 卸载当前 / 全部模式产物（Rule + 超时 Hook + MCP 配置），保留用户其它内容。
-fn uninstall_all(target: AgentTarget) -> Result<()> {
+fn uninstall_all_unlocked(target: AgentTarget) -> Result<()> {
     agent_rules::uninstall(target)?;
     if timeout_hook_supported(target) {
         timeout_hook_uninstall(target)?;
     }
     mcp_config::uninstall(target)?;
+    agent_permission::reconcile_unlocked(target, Mode::None)?;
     Ok(())
 }
 

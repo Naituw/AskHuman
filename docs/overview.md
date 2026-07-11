@@ -96,9 +96,9 @@ AskHuman/
                              密钥取值(env/file/stdin/隐藏输入) + 脱敏 + 交互输入 + block_on 助手
         config_cmd.rs        `config show|get|set|unset|path`（通用键值兜底；密钥键自动入钥匙串，值不进 argv）
         channel_cmd.rs       `channel list|set|enable|disable|test|detect`（向导+脚本；复用 commands 的 test/detect）
-        agents_cmd.rs        `agents monitor|mode|show|install|uninstall|update`（状态文本/json + 三态模式编排 +
-                             细粒度集成 --rules/--hook/--mcp/--lifecycle；复用 integrations）
-        doctor.rs            `doctor [--json]` 一屏体检（daemon/渠道/集成，集成含 mode/rules/hook/mcp/lifecycle）
+        agents_cmd.rs        `agents monitor|mode|update|permission|lifecycle|show`（状态文本/json + mode 整包更新 +
+                             独立 capability；旧 install/uninstall 与细粒度 flags 只返回迁移提示）
+        doctor.rs            `doctor [--json]` 一屏体检（daemon/渠道/集成，含 permission blocked/coexist 状态）
         debug_cmd.rs         隐藏调试组 `AskHuman debug …`（不进 help）：dd-watch-poc 钉钉 watch 卡
                              高频更新探针（建卡+循环更新+终态+回调打印；--count 0 只发样式预览卡）
         file_attachment.rs   -f 路径解析/校验（~/相对路径 → 绝对路径 + 元信息）
@@ -107,7 +107,8 @@ AskHuman/
         image_writer.rs      图片 base64 落盘 + 文件名 sanitize + ext 映射
         help.rs              帮助/版本文案：--help(提问/管理/帮助三块) + --agent-help + --scripting-help（共享片段组装）
       models.rs              AskRequest(含 files / select_only / single / output_format) / OutputFormat(text|json) /
-                             OptionItem(text+recommended，反序列化兼容旧纯字符串) /
+                             OptionItem(text+recommended，反序列化兼容旧纯字符串) / ConfirmSpec·ConfirmRequest·
+                             ConfirmChoice·ConfirmResult（单选+Submit、稳定 action id、条件输入与 24h daemon 身份）/
                              FileAttachment / ChannelResult(含 files) / ImageAttachment / ChannelAction / source_name()
       config.rs              AppConfig 读写 ~/.askhuman/config.json（原子写、容错解码；旧 ~/.humaninloop 自动回退读取）
       paths.rs               home/config/temp 路径 + history.jsonl/history.lock + integration-state.json（集成所有权）+
@@ -170,6 +171,8 @@ AskHuman/
         dingding.rs          钉钉 Channel（Stream 收 + 互动卡片高级版 / 文本回退）
         feishu.rs            飞书 Channel（长连接收 + 卡片 JSON 2.0 / 文本回退）
         slack.rs             Slack Channel（Socket Mode 收 + Block Kit 消息内表单 / 文本回退）
+        confirm.rs           结构化 Confirm 四 IM adapter：60s Ready、首答、单选态/deny reason、终态卡与
+                             到原 deadline 的轻量 callback tombstone（不保留原始权限状态）
       telegram/
         mod.rs               TelegramClient：reqwest 手写 Bot API + 错误类型
         markdown.rs          标准 Markdown → Telegram HTML（粗/斜/删/码/块/引/链 + 表格转等宽代码块 + 列表 •；仅转义 < > &，标签天然配对不回退）
@@ -194,11 +197,15 @@ AskHuman/
         mod.rs               错误类型 + 模块声明
         client.rs            Web API：chat.postMessage/update、conversations.open、files 上传下载、auth.test
         ws.rs                Socket Mode 长连接(WebSocket，JSON 帧)：收帧即 ack(envelope_id) + 重连
-        blockkit.rs          Block Kit 消息内表单组装（多选=checkboxes / 单选=radio_buttons；严格去 plain_text_input；
-                             推荐用原生 description「👍 推荐」+ 文本加粗）+ block_actions 提交解析
+        blockkit.rs          Block Kit 消息内表单组装（多选=checkboxes；单选=服务端全局选择态 + 静态完整标签 +
+                             短编号按钮，规避 10 项分组互斥和 75 字控件限制；严格去 plain_text_input）+ 回调解析
         markdown.rs          标准 Markdown → Slack mrkdwn（粗*斜_删~码块引链 + 表格转等宽 + 列表 •）
         router.rs            SlRouter：独占 SlackWs + 按 message_ts/user_id 分发（无 oneshot，ack 在 ws 层）
       integrations/
+        hook_edit.rs         Nested JSONC Hook handler 级最小编辑 + 原子写；保留同 group 用户 handler/注释
+        mutation_lock.rs     lifecycle / permission / mode 配置写入的跨进程 flock
+        agent_permission.rs  Claude/Codex PermissionRequest capability：独立默认开 preference、Hook 安装/状态、
+                             policy/coexist 检测与 Codex handler 身份级 trust 迁移/回滚；Cursor/Grok/Windows 不支持
         cursor_hook.rs       Cursor Hook 安装/更新/移除/状态/reveal（mac/Linux；hooks.json 内嵌脚本）；
                              needs_update：已安装但磁盘脚本 ≠ 内置最新 SCRIPT_CONTENT（或缺失/仅旧版）→ 需更新
         claude_hook.rs       Claude Code Hook：~/.claude/settings.json 注册 PreToolUse(Bash) 脚本 +
@@ -249,8 +256,9 @@ AskHuman/
         agent_mode.rs        三态模式编排（None|Cli|Mcp 互斥）：Cli=Rule(CLI)+超时 Hook，Mcp=Rule(MCP)+MCP 配置；
                              `current`(**以产物 MCP配置/超时Hook 为首要信号**，互斥且由 set 维护、稳定；产物不
                              明确时才回退 Rule 变体——避免内置提示词改版后已装旧正文失配被错判模式) /
-                             `needs_update` / `set`(卸非目标产物→装目标，幂等) / `update`(刷当前模式) /
-                             uninstall_all。lifecycle hook 与三态正交。`agent_rules::classify_body` 对漂移正文
+                             `needs_update` / `set`(即使同 mode 也完整 reconcile 磁盘) / `update`(刷当前模式) /
+                             uninstall_all；permission 只按独立 preference 安装/卸载，mode 操作绝不改偏好且不参与
+                             mode 推断。lifecycle hook 与三态正交。`agent_rules::classify_body` 对漂移正文
                              用结构信号（是否含 `Shell/Bash`）判 CLI/MCP，提示词改版仍稳定归类
       ipc/                   IPC 协议：mod.rs(消息类型，含 ServerMsg::UpdateState/TrayState、ClientMsg::TraySubscribe) /
                              codec.rs(NDJSON) / transport.rs(Unix socket)
@@ -439,12 +447,12 @@ AskHuman/
 
 > 需求 `docs/specs/cli-config.md` + 计划 `docs/plans/cli-config.md`。让 Linux 服务器 / 容器 / SSH 等无 GUI 环境**纯命令行**完成全部渠道配置与 agent 集成，且**可脚本化一次性执行**。四个顶层子命令组（`channel`/`agents`/`config` + `doctor`），每组及子命令都有 `help`，所有输出经 `cli/cfgio.rs::t` 中英双语本地化。
 
-- **复用而非重写**：渠道连通性 `test` / userId·openId 自动识别 `detect` 直接调 `commands.rs` 既有 `*_test`/`*_detect_prepare`/`*_detect_wait`（参数结构体字段已 `pub`，密钥经 `fallback_secret` 回退已存值）；配置读写走 `config.rs::{load,load_without_secrets,save}`（save 自动把密钥写钥匙串、文件 0600）；集成走 `integrations::{agent_rules,cursor_hook,claude_hook,agent_lifecycle,mcp_config,agent_mode}`；agent 状态走 daemon `AgentsSubscribe`/`AgentsState`。落盘后 daemon `config_watch` 自动热重载。
+- **复用而非重写**：渠道连通性 `test` / userId·openId 自动识别 `detect` 直接调 `commands.rs` 既有 `*_test`/`*_detect_prepare`/`*_detect_wait`（参数结构体字段已 `pub`，密钥经 `fallback_secret` 回退已存值）；配置读写走 `config.rs::{load,load_without_secrets,save}`（save 自动把密钥写钥匙串、文件 0600）；集成走 `integrations::{agent_rules,cursor_hook,claude_hook,agent_lifecycle,agent_permission,mcp_config,agent_mode}`；agent 状态走 daemon `AgentsSubscribe`/`AgentsState`。落盘后 daemon `config_watch` 自动热重载。
 - **`channel`**（`channel_cmd.rs`，name ∈ telegram|dingding|feishu|slack）：`list [--json]`（启用/配置齐全/已连接；daemon 未运行时连接态文本显 `—`、JSON 为 `null`）；`set <name>` 二合一——**终端且无 flag → 交互向导**（逐项提示、密钥隐藏输入、留空保留）、**带 flag → 非交互脚本**（`--enable/--disable` + 各非密钥字段 kebab flag）；`enable|disable`；`test`；`detect [--save]`（prepare 取识别码 → 提示发给 bot → wait 经 daemon 单连接捕获 → 可保存；telegram 无 detect）。
 - **密钥输入（D4，脚本安全）**：仅 `--<field>-env <VAR>` / `--<field>-file <path>` / `--<field>-stdin`（或值 `-`）；交互时隐藏输入（Unix termios 关 echo）；**密钥明文不进 argv**（避免泄漏 shell 历史 / `ps`）。
-- **`agents`**（`agents_cmd.rs`，agent ∈ cursor|claude|codex|grok）：`monitor [--json|--text]`（见上节）；`mode <agent> [none|cli|mcp]`（省略模式则查询当前模式 + 是否需更新，带模式则一键切换、复用 `agent_mode::set` 自动卸旧装新；**grok 仅 none|mcp，请求 cli 报错**）；`show [<agent>]`（打印手动集成参考提示词——单查 grok 时打印 `grok_skill_body`、否则 `cli_reference()`——+ 各 agent 粘贴位置 + 当前模式/rules|skill/hook/mcp/lifecycle 安装状态）；`install/uninstall/update <agent>` **必须显式** `--rules`/`--hook`/`--mcp`/`--lifecycle`（无默认捆绑，D6；`--rules` 对 grok = 安装 skill；`--hook` 仅 cursor/claude，codex/grok 跳过；`--mcp` 写 MCP server 配置；`--lifecycle` 实验性；lifecycle 无独立 update→重装即刷新）。
+- **`agents`**（`agents_cmd.rs`，agent ∈ cursor|claude|codex|grok）：`monitor [--json|--text]`；`mode <agent> [none|cli|mcp]` 查询或完整 reconcile 目标 mode（重复设同值也更新；**grok 仅 none|mcp**）；`update [<agent>]` 更新单家或所有非 None/有残留的整包；`permission <claude|codex> [on|off]` 查询/设置独立权限审批 preference；`lifecycle <agent> [on|off]` 查询/设置生命周期追踪；`show [<agent>]` 输出参考提示词与 capability 状态。旧 `install/uninstall` 和 `--rules/--hook/--mcp/--lifecycle` 写 flags 不执行任何部分变更，统一非零退出并给迁移命令。
 - **`config`**（`config_cmd.rs`，兜底）：`show [--json]`（密钥脱敏 `●●●`）/`get`/`set`/`unset`/`path`，点号 camelCase 键。`set` 非密钥键按目标 JSON 类型强制（bool/数字/字符串/枚举）→ 反序列化校验 → save；**密钥键**（5 个，`cfgio::SECRET_KEYS`，与 `secrets::ACCOUNT_*` 一致）自动路由进钥匙串，值仍只从 env/file/stdin 取。`unset` 重置默认（密钥 → `secrets::delete`）。
-- **`doctor [--json]`**（`doctor.rs`）：一屏体检 daemon（运行/版本/在途/IM 连接）+ 各渠道（启用·齐全·连接）+ 各 agent 集成（当前 mode + rules·hook·mcp·lifecycle 装没装/需更新）。
+- **`doctor [--json]`**（`doctor.rs`）：一屏体检 daemon（运行/版本/在途/IM 连接）+ 各渠道（启用·齐全·连接）+ 各 agent 集成（当前 mode + rules·timeout hook·permission·mcp·lifecycle；permission 只称 configured，并输出可读范围内 blocked/coexist 正向发现）。
 
 ## MCP 支持（CLI 模式之外的第二种集成形态）
 
@@ -461,7 +469,28 @@ AskHuman/
   - **Grok**：写 `tool_timeout_sec=86400` + `startup_timeout_sec=30` + **`tool_timeouts = { ask = 86400 }`**（per-tool，对默认模型 Composer 更精准）。✓ live 验证 `grok inspect` 确认 `askhuman(stdio) config` 已加载。
   - **Claude Code（CLI）**：默认 60s（MCP TS SDK `DEFAULT_REQUEST_TIMEOUT_MSEC`），故在 `mcpServers.askhuman` 写 `timeout=86400000`(**毫秒**，24h) 覆盖默认（`CLAUDE_TOOL_TIMEOUT_MS`）；否则等待人类超 60s 会被 `-32001` 取消。`needs_update` 一并校验该值（旧条目无 timeout → 提示更新）。
   - **Cursor**：MCP 工具/elicitation 超时 ~60s **硬编码、不可配置**，无法支撑长等待——故不写 `timeout`，且 Cursor 推荐用 CLI(+Hook) 模式。
-- **入口**：设置页 Agent Tab 三态分段控件 + 手动集成卡的 CLI/MCP 切换；headless 走 `agents mode` / `agents install --mcp` / `doctor`（见「CLI 配置与 Agent 集成」节）。手动集成卡的 MCP 配置示例（JSON/TOML）**直接填入当前可执行文件绝对路径**（`mcp_command_path` 命令读 `current_exe()`，取不到时退回占位符）并各带**拷贝按钮**，免用户手改路径。JSON 示例含 `timeout: 86400000` 并注明「仅 Claude 需要」（Cursor 忽略该字段）。
+- **入口**：设置页 Agent Tab 三态分段控件 + 手动集成卡的 CLI/MCP 切换；headless 走 `agents mode` / `agents update` / `doctor`（见「CLI 配置与 Agent 集成」节）。手动集成卡的 MCP 配置示例（JSON/TOML）**直接填入当前可执行文件绝对路径**（`mcp_command_path` 命令读 `current_exe()`，取不到时退回占位符）并各带**拷贝按钮**，免用户手改路径。JSON 示例含 `timeout: 86400000` 并注明「仅 Claude 需要」（Cursor 忽略该字段）。
+
+## Agent 原生权限审批（Claude Code / Codex）
+
+> 计划与协议：`docs/plans/agent-permission-approval.md`。Unix 用户级 `PermissionRequest` Hook 通过隐藏入口
+> `AskHuman __permission-hook <claude|codex>` 把原生权限请求送入同一 daemon 的结构化 Confirm 流程；任何
+> 基础设施失败、渠道全失败、24h 到期或 daemon 断开都保持 stdout 为空，让 Agent 回到原生审批。
+
+- **协议边界**：Hook stdin 总量、`tool_input`、正文、rule 和 suggestion 数量均有界；daemon 只接收稳定
+  action id，Claude 合法 `addRules + allow` suggestion 的原对象只保留在短命 Hook 进程私有台账中，选中后
+  原样回放；Codex 只支持批准一次/拒绝，永不输出 `updatedPermissions`。deny message 带固定 AskHuman 前缀，
+  comment 仅 deny 可用，allow 强制丢弃。
+- **Confirm 编排**：daemon 分配身份和 24h 单调 deadline；popup 10s、四 IM 60s 内显式 Ready，首个合法
+  Submit 赢得裁决并立即回 IPC，其它端异步定格。Slack/Telegram 精确回复卡片可追加 deny reason（1000 字），
+  仍须 Submit；终态只保留不含原始权限台账的轻量卡片 tombstone 到原 deadline。
+- **安装与 mode**：permission 是独立默认开 preference，不是第四种 mode。Claude/Codex 的 CLI/MCP mode
+  在 preference 开时安装 PermissionRequest handler，None 卸 handler 但保留偏好；重复设置同 mode 仍完整
+  reconcile Rule/timeout/MCP/permission 磁盘产物，但 mode 操作从不改 permission preference。Hook JSONC 编辑
+  保留同事件其它 handler；Codex trust 按 handler 身份迁移，lifecycle/permission/user Hook 互不误删。
+- **可观测性**：设置页、`agents show|permission` 和 `doctor` 分开显示 timeout 与 permission capability。
+  “已配置”不等于已生效；只在可读配置正向发现 blocked policy / 同事件其它 handler 时提示，Claude 说明
+  allow/deny 可能互相覆盖并建议会话内 `/hooks` 核实，Codex 说明全部等待且 deny 胜出。
 
 ## 用户级 hooks + 内置弹窗提示音
 

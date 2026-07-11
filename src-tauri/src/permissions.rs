@@ -1,0 +1,567 @@
+//! Hidden Claude Code / Codex PermissionRequest adapter.
+//!
+//! The raw suggestion ledger stays in this short-lived hook process. The daemon and every surface
+//! see only stable action ids; a terminal id can select only a validated suggestion from this run.
+
+use crate::confirm::ActionRole;
+use crate::ipc::ConfirmTask;
+use crate::models::{
+    ConfirmChoice, ConfirmDetail, ConfirmField, ConfirmFieldKind, ConfirmInput,
+    ConfirmPresentation, ConfirmResult, ConfirmSpec,
+};
+use serde_json::{json, Map, Value};
+use std::io::Read;
+
+const MAX_STDIN_BYTES: u64 = 1024 * 1024;
+const MAX_TOOL_INPUT_BYTES: usize = 256 * 1024;
+const MAX_BODY_CHARS: usize = 12_000;
+const MAX_SUGGESTIONS: usize = 8;
+const MAX_RULES: usize = 50;
+const MAX_RULE_CHARS: usize = 2_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Agent {
+    Claude,
+    Codex,
+}
+
+impl Agent {
+    fn parse(value: Option<&str>) -> Option<Self> {
+        match value? {
+            "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            _ => None,
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude Code",
+            Self::Codex => "Codex",
+        }
+    }
+}
+
+struct ParsedPermission {
+    agent: Agent,
+    task: ConfirmTask,
+    suggestions: Vec<Value>,
+}
+
+pub fn run(agent: Option<&str>) -> Option<String> {
+    let agent = Agent::parse(agent)?;
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take(MAX_STDIN_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_STDIN_BYTES {
+        return None;
+    }
+    let input: Value = serde_json::from_slice(&bytes).ok()?;
+    let parsed = parse_permission(agent, &input)?;
+    let result = crate::client::run_confirm(parsed.task.clone())?;
+    decision_output(&parsed, &result).and_then(|value| serde_json::to_string(&value).ok())
+}
+
+fn parse_permission(agent: Agent, input: &Value) -> Option<ParsedPermission> {
+    let object = input.as_object()?;
+    if object.get("hook_event_name").and_then(Value::as_str) != Some("PermissionRequest") {
+        return None;
+    }
+    let session_id = required_string(object, "session_id", 256)?;
+    let cwd = required_string(object, "cwd", 8_192)?;
+    let permission_mode = required_string(object, "permission_mode", 128)?;
+    let tool_name = required_string(object, "tool_name", 512)?;
+    let tool_input = object.get("tool_input")?.clone();
+    if serde_json::to_vec(&tool_input).ok()?.len() > MAX_TOOL_INPUT_BYTES {
+        return None;
+    }
+
+    let (summary, body) = summarize_tool(&tool_name, &tool_input);
+    let now = crate::history::now_ms();
+    let project_name = crate::project::display_name(&cwd);
+    let lang = crate::i18n::Lang::current();
+    let zh = lang == crate::i18n::Lang::Zh;
+    let field = |id: &str, en: &str, zh_label: &str, value: String, kind| ConfirmField {
+        id: id.to_string(),
+        label: if zh { zh_label } else { en }.to_string(),
+        value,
+        kind,
+    };
+    let context = vec![
+        field(
+            "agent",
+            "Agent",
+            "Agent",
+            agent.label().into(),
+            ConfirmFieldKind::Text,
+        ),
+        field(
+            "project",
+            "Project",
+            "项目",
+            project_name,
+            ConfirmFieldKind::Text,
+        ),
+        field(
+            "workspace",
+            "Workspace",
+            "工作区",
+            cwd.clone(),
+            ConfirmFieldKind::Path,
+        ),
+        field(
+            "tool",
+            "Tool",
+            "工具",
+            tool_name.clone(),
+            ConfirmFieldKind::Text,
+        ),
+        field(
+            "permission_mode",
+            "Permission mode",
+            "权限模式",
+            permission_mode,
+            ConfirmFieldKind::Text,
+        ),
+        field(
+            "created_at",
+            "Requested at",
+            "请求时间",
+            now.to_string(),
+            ConfirmFieldKind::Timestamp,
+        ),
+    ];
+
+    let mut choices = vec![ConfirmChoice {
+        id: "approve_once".into(),
+        label: if zh {
+            "仅批准本次"
+        } else {
+            "Approve once"
+        }
+        .into(),
+        description: String::new(),
+        role: ActionRole::Primary,
+    }];
+    let mut suggestions = Vec::new();
+    let mut omitted = 0usize;
+    if agent == Agent::Claude {
+        for suggestion in object
+            .get("permission_suggestions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(description) = validate_suggestion(suggestion, zh) else {
+                continue;
+            };
+            if suggestions.len() >= MAX_SUGGESTIONS {
+                omitted += 1;
+                continue;
+            }
+            let index = suggestions.len();
+            suggestions.push(suggestion.clone());
+            choices.push(ConfirmChoice {
+                id: format!("permission_suggestion_{index}"),
+                label: if zh {
+                    "更新权限并批准"
+                } else {
+                    "Update permission and approve"
+                }
+                .into(),
+                description,
+                role: ActionRole::Default,
+            });
+        }
+    }
+    choices.push(ConfirmChoice {
+        id: "deny".into(),
+        label: if zh { "拒绝" } else { "Deny" }.into(),
+        description: String::new(),
+        role: ActionRole::Destructive,
+    });
+
+    let mut body_md = body;
+    if omitted > 0 {
+        body_md.push_str(&format!(
+            "\n\n> {}",
+            if zh {
+                format!("另有 {omitted} 条合法权限建议未展示")
+            } else {
+                format!("{omitted} additional valid permission suggestion(s) not shown")
+            }
+        ));
+    }
+    let spec = ConfirmSpec {
+        title: if zh {
+            "Agent 权限请求"
+        } else {
+            "Agent permission request"
+        }
+        .into(),
+        context,
+        detail: ConfirmDetail { summary, body_md },
+        choices,
+        presentation: ConfirmPresentation::SingleSelectSubmit {
+            input: Some(ConfirmInput {
+                id: "reason".into(),
+                visible_when_action_id: "deny".into(),
+                label: if zh {
+                    "拒绝原因（可选）"
+                } else {
+                    "Reason for denial (optional)"
+                }
+                .into(),
+                placeholder: if zh {
+                    "告诉 Agent 为什么拒绝"
+                } else {
+                    "Tell the agent why"
+                }
+                .into(),
+                max_chars: 1000,
+            }),
+            submit_label: if zh {
+                "提交决定"
+            } else {
+                "Submit decision"
+            }
+            .into(),
+            default_action_id: None,
+        },
+        dismiss_action_id: "deny".into(),
+    };
+    Some(ParsedPermission {
+        agent,
+        task: ConfirmTask {
+            spec,
+            source: agent.label().into(),
+            lang: if zh { "zh" } else { "en" }.into(),
+            project: cwd,
+            agent_kind: agent.id().into(),
+            agent_session_id: session_id,
+            caller_pid: std::process::id(),
+        },
+        suggestions,
+    })
+}
+
+fn required_string(object: &Map<String, Value>, key: &str, max: usize) -> Option<String> {
+    let value = object.get(key)?.as_str()?.trim();
+    (!value.is_empty() && value.chars().count() <= max).then(|| value.to_string())
+}
+
+fn summarize_tool(tool: &str, input: &Value) -> (String, String) {
+    let summary = input
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| match tool {
+            "Bash" => "Run a shell command".into(),
+            "apply_patch" | "Edit" | "Write" => "Modify files".into(),
+            value if value.starts_with("mcp__") => "Call an MCP tool".into(),
+            _ => format!("Use {tool}"),
+        });
+    let raw = if let Some(command) = input.get("command").and_then(Value::as_str) {
+        format!(
+            "```sh\n{}\n```",
+            safe_fence(command, MAX_BODY_CHARS.saturating_sub(10))
+        )
+    } else if let Some(path) = input
+        .get("file_path")
+        .or_else(|| input.get("path"))
+        .and_then(Value::as_str)
+    {
+        format!(
+            "**Path:** `{}`\n\n```json\n{}\n```",
+            path.replace('`', "\\`"),
+            pretty_json(input)
+        )
+    } else {
+        format!("```json\n{}\n```", pretty_json(input))
+    };
+    (summary, truncate_chars(&raw, MAX_BODY_CHARS))
+}
+
+fn pretty_json(value: &Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".into())
+}
+
+fn safe_fence(value: &str, max: usize) -> String {
+    truncate_chars(value, max).replace("```", "``\u{200b}`")
+}
+
+fn truncate_chars(value: &str, max: usize) -> String {
+    let mut chars = value.chars();
+    let head: String = chars.by_ref().take(max).collect();
+    if chars.next().is_some() {
+        format!("{head}\n… [truncated]")
+    } else {
+        head
+    }
+}
+
+fn validate_suggestion(value: &Value, zh: bool) -> Option<String> {
+    let object = value.as_object()?;
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "type" | "rules" | "behavior" | "destination"))
+        || object.get("type").and_then(Value::as_str) != Some("addRules")
+        || object.get("behavior").and_then(Value::as_str) != Some("allow")
+    {
+        return None;
+    }
+    let destination = object.get("destination")?.as_str()?;
+    if !matches!(
+        destination,
+        "session" | "localSettings" | "projectSettings" | "userSettings"
+    ) {
+        return None;
+    }
+    let rules = object.get("rules")?.as_array()?;
+    if rules.is_empty() || rules.len() > MAX_RULES {
+        return None;
+    }
+    let mut lines = Vec::new();
+    for rule in rules {
+        let rule = rule.as_object()?;
+        if rule
+            .keys()
+            .any(|key| !matches!(key.as_str(), "toolName" | "ruleContent"))
+        {
+            return None;
+        }
+        let tool = required_string(rule, "toolName", 256)?;
+        let content = match rule.get("ruleContent") {
+            Some(Value::String(value))
+                if !value.trim().is_empty() && value.chars().count() <= MAX_RULE_CHARS =>
+            {
+                format!("`{}`", value.replace('`', "\\`"))
+            }
+            None => {
+                if zh {
+                    "**允许整个工具**".into()
+                } else {
+                    "**Allow the entire tool**".into()
+                }
+            }
+            _ => return None,
+        };
+        lines.push(format!("{tool}: {content}"));
+    }
+    let scope = match (zh, destination) {
+        (true, "session") => "仅当前 Claude 会话允许",
+        (true, "localSettings") => "此项目（仅本机）始终允许",
+        (true, "projectSettings") => "此项目（共享配置）始终允许",
+        (true, "userSettings") => "用户级跨项目始终允许",
+        (false, "session") => "Allow for this Claude session only",
+        (false, "localSettings") => "Always allow in this project on this machine",
+        (false, "projectSettings") => "Always allow in this project's shared settings",
+        (false, "userSettings") => "Always allow for this user across projects",
+        _ => return None,
+    };
+    Some(format!("{scope}\n{}", lines.join("\n")))
+}
+
+fn decision_output(parsed: &ParsedPermission, result: &ConfirmResult) -> Option<Value> {
+    let mut decision = Map::new();
+    match result.action_id.as_str() {
+        "approve_once" => {
+            decision.insert("behavior".into(), json!("allow"));
+        }
+        "deny" => {
+            decision.insert("behavior".into(), json!("deny"));
+            let comment = result
+                .comment
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let message = match comment {
+                Some(comment) => format!(
+                    "The user denied this permission request via AskHuman. Reason: {comment}"
+                ),
+                None => "The user denied this permission request via AskHuman.".to_string(),
+            };
+            decision.insert("message".into(), json!(message));
+        }
+        action if parsed.agent == Agent::Claude => {
+            let index = action
+                .strip_prefix("permission_suggestion_")?
+                .parse::<usize>()
+                .ok()?;
+            let suggestion = parsed.suggestions.get(index)?.clone();
+            decision.insert("behavior".into(), json!("allow"));
+            decision.insert("updatedPermissions".into(), Value::Array(vec![suggestion]));
+        }
+        _ => return None,
+    }
+    Some(json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": Value::Object(decision),
+        }
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(agent: Agent) -> Value {
+        let mut value = json!({
+            "session_id": "s1",
+            "cwd": "/tmp/project",
+            "permission_mode": "default",
+            "hook_event_name": "PermissionRequest",
+            "tool_name": "Bash",
+            "tool_input": { "command": "git status", "description": "Inspect repository" },
+        });
+        if agent == Agent::Claude {
+            value["permission_suggestions"] = json!([{
+                "type": "addRules",
+                "rules": [{ "toolName": "Bash", "ruleContent": "git status" }],
+                "behavior": "allow",
+                "destination": "session"
+            }]);
+        }
+        value
+    }
+
+    fn result(action: &str, comment: Option<&str>) -> ConfirmResult {
+        ConfirmResult {
+            action_id: action.into(),
+            comment: comment.map(str::to_string),
+            source_channel_id: "popup".into(),
+        }
+    }
+
+    #[test]
+    fn claude_suggestion_is_replayed_from_private_ledger() {
+        let parsed = parse_permission(Agent::Claude, &input(Agent::Claude)).unwrap();
+        let output = decision_output(&parsed, &result("permission_suggestion_0", None)).unwrap();
+        assert_eq!(
+            output["hookSpecificOutput"]["decision"]["behavior"],
+            "allow"
+        );
+        assert_eq!(
+            output["hookSpecificOutput"]["decision"]["updatedPermissions"][0]["destination"],
+            "session"
+        );
+    }
+
+    #[test]
+    fn codex_never_accepts_a_permission_update_action() {
+        let parsed = parse_permission(Agent::Codex, &input(Agent::Codex)).unwrap();
+        assert!(decision_output(&parsed, &result("permission_suggestion_0", None)).is_none());
+        let deny = decision_output(&parsed, &result("deny", Some("unsafe"))).unwrap();
+        assert_eq!(
+            deny["hookSpecificOutput"]["decision"]["message"],
+            "The user denied this permission request via AskHuman. Reason: unsafe"
+        );
+    }
+
+    #[test]
+    fn malformed_or_non_allow_suggestions_are_ignored() {
+        let mut input = input(Agent::Claude);
+        input["permission_suggestions"] = json!([
+            { "type": "setMode", "behavior": "allow", "destination": "session" },
+            { "type": "addRules", "rules": [], "behavior": "allow", "destination": "session" },
+            { "type": "addRules", "rules": [{"toolName":"Bash"}], "behavior": "deny", "destination": "session" }
+        ]);
+        let parsed = parse_permission(Agent::Claude, &input).unwrap();
+        assert!(parsed.suggestions.is_empty());
+        assert_eq!(parsed.task.spec.choices.len(), 2);
+    }
+
+    #[test]
+    fn context_and_default_selection_follow_permission_contract() {
+        let parsed = parse_permission(Agent::Codex, &input(Agent::Codex)).unwrap();
+        let ids: Vec<&str> = parsed
+            .task
+            .spec
+            .context
+            .iter()
+            .map(|field| field.id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "agent",
+                "project",
+                "workspace",
+                "tool",
+                "permission_mode",
+                "created_at"
+            ]
+        );
+        assert_eq!(parsed.task.spec.presentation.default_action_id(), None);
+    }
+
+    #[test]
+    fn approve_discards_comment_and_unknown_action_fails_closed() {
+        let parsed = parse_permission(Agent::Claude, &input(Agent::Claude)).unwrap();
+        let allow =
+            decision_output(&parsed, &result("approve_once", Some("inject\njson"))).unwrap();
+        assert!(allow["hookSpecificOutput"]["decision"]
+            .get("message")
+            .is_none());
+        assert!(decision_output(&parsed, &result("permission_suggestion_99", None)).is_none());
+        assert!(decision_output(&parsed, &result("approve_once\"}", None)).is_none());
+    }
+
+    #[test]
+    fn suggestions_are_bounded_and_keep_original_objects_private() {
+        let mut value = input(Agent::Claude);
+        value["permission_suggestions"] = Value::Array(
+            (0..10)
+                .map(|index| {
+                    json!({
+                        "type": "addRules",
+                        "rules": [{ "toolName": "Bash", "ruleContent": format!("echo {index}") }],
+                        "behavior": "allow",
+                        "destination": "session",
+                    })
+                })
+                .collect(),
+        );
+        let parsed = parse_permission(Agent::Claude, &value).unwrap();
+        assert_eq!(parsed.suggestions.len(), MAX_SUGGESTIONS);
+        assert_eq!(parsed.task.spec.choices.len(), MAX_SUGGESTIONS + 2);
+        assert!(parsed.task.spec.detail.body_md.contains('2'));
+        let output = decision_output(
+            &parsed,
+            &result(
+                &format!("permission_suggestion_{}", MAX_SUGGESTIONS - 1),
+                None,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            output["hookSpecificOutput"]["decision"]["updatedPermissions"][0]["rules"][0]
+                ["ruleContent"],
+            format!("echo {}", MAX_SUGGESTIONS - 1)
+        );
+    }
+
+    #[test]
+    fn deny_reason_is_json_escaped_under_fixed_prefix() {
+        let parsed = parse_permission(Agent::Codex, &input(Agent::Codex)).unwrap();
+        let output = decision_output(&parsed, &result("deny", Some("line 1\n\"line 2\""))).unwrap();
+        let encoded = serde_json::to_string(&output).unwrap();
+        let decoded: Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(
+            decoded["hookSpecificOutput"]["decision"]["message"],
+            "The user denied this permission request via AskHuman. Reason: line 1\n\"line 2\""
+        );
+    }
+}

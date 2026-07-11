@@ -196,6 +196,9 @@ export const agentModeUpdateArtifact = (
   artifact: "rule" | "hook" | "mcp",
 ) => invoke<void>("agent_mode_update_artifact", { agent, artifact });
 
+export const agentPermissionSet = (agent: AgentId, enabled: boolean) =>
+  invoke<void>("agent_permission_set", { agent, enabled });
+
 export const mcpConfigReveal = (agent: AgentId) =>
   invoke<void>("mcp_config_reveal", { agent });
 

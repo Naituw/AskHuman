@@ -203,12 +203,31 @@ export default {
         "在 ~/.grok/skills 下安装 AskHuman skill，让 Composer 与 Grok Build 都能发现交互协议。Grok 仅支持 MCP 模式（无 CLI/超时 Hook）。",
       installed: "已安装",
       notInstalled: "未安装",
+      configured: "已配置",
+      notConfigured: "未配置",
       install: "安装",
       update: "更新",
       updateAll: "全部更新",
       updatesAvailable: "有可用更新",
       uninstall: "移除",
       windowsUnsupported: "Windows 暂不支持该 Hook",
+      permissionTitle: "权限审批",
+      permissionUnsupported: "该 Agent 不支持原生 PermissionRequest 审批闭环。",
+      permissionWindowsUnsupported: "权限审批仍在等待 Windows Daemon 支持。",
+      permissionClaudeHint:
+        "将 Claude Code 权限请求交给 AskHuman。项目、managed、插件、skill 或 agent 的其它 Hook 仍可能影响最终决定；可在当前 Claude 会话使用 /hooks 查看实际来源。",
+      permissionCodexHint:
+        "将 Codex 权限请求交给 AskHuman。其它来源的 Hook 可能增加等待或拒绝请求。",
+      permissionInflightHint:
+        "开关只影响后续权限请求；AskHuman 已投递的在途审批仍然有效。",
+      permissionHooksDisabled:
+        "检测到可读的 Agent 策略已禁用 Hook，因此当前配置不会运行。",
+      permissionManagedOnly:
+        "检测到可读的 Agent 策略只允许 managed Hook，因此当前用户 Hook 不会运行。",
+      permissionClaudeCoexist:
+        "检测到其它可见的 PermissionRequest handler：其它 allow 可能覆盖 AskHuman deny，AskHuman allow 也可能覆盖其它 deny。",
+      permissionCodexCoexist:
+        "检测到其它可见的 PermissionRequest handler：Codex 会等待全部匹配 Hook，且 deny 胜出。",
       modeCli: "CLI",
       modeMcp: "MCP",
       modeNone: "未集成",
@@ -258,6 +277,7 @@ export default {
       detectHint: "请用目标钉钉账号私聊机器人发送：{code}（120 秒内有效）",
       detected: "已识别并填入 UserId：{userId}",
       cardTemplateId: "卡片模板 ID",
+      permissionCardTemplateId: "权限审批卡片模板 ID",
       cardTemplateIdPlaceholder: "留空使用内置默认模板",
       inlineSmallText: "小文件内联到正文",
       inlineSmallTextHint:
