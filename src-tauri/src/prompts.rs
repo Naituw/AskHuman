@@ -30,7 +30,7 @@ pub fn cli_reference() -> String {
 - I can ONLY see what is delivered through `{program}`. Anything I need to review , or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through `{program}`, inline or attached with `-f`. Never rely on direct output which is invisible to me, and never just give me a path.
 - Before completing the turn/request, you MUST call `{program}` to request feedback.
 - Do NOT end the turn/conversation or mark the request as complete unless you have explicitly asked via `{program}` and received confirmation that the task can be completed or ended, and that there are no more tasks to do.
-- After the user agrees, you MUST append the `{end_marker}` marker on a new final line at the end of your final output.
+- After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
 </mandatory_interaction_protocol>
 
 - Interview me with `{program}` relentlessly about every aspect of the requirements until we reach a shared understanding.
@@ -66,7 +66,7 @@ pub fn mcp_reference() -> String {
 - I can ONLY see what is delivered through the AskHuman `ask` tool. Anything I need to review, or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through the AskHuman `ask` tool, inline or attached as files. Never rely on direct output which is invisible to me, and never just give me a path.
 - Before completing the turn/request, you MUST call the AskHuman `ask` tool to request feedback.
 - Do NOT end the turn/conversation or mark the request as complete unless you have explicitly asked via the AskHuman `ask` tool and received confirmation that the task can be completed or ended, and that there are no more tasks to do.
-- After the user agrees, you MUST append the `{end_marker}` marker on a new final line at the end of your final output.
+- After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
 </mandatory_interaction_protocol>
 
 - Interview me with the AskHuman `ask` tool relentlessly about every aspect of the requirements until we reach a shared understanding.
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn default_prompts_require_the_confirmed_end_turn_marker() {
         let expected = format!(
-            "After the user agrees, you MUST append the `{}` marker on a new final line at the end of your final output.",
+            "After the user explicitly approves ending the turn, you MUST append the `{}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.",
             USER_CONFIRMED_END_TURN_MARKER
         );
         assert!(cli_reference().contains(&expected));
