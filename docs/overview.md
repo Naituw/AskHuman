@@ -340,7 +340,7 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 - 三家独立开关默认关；询问“继续/结束”，24h 或基础设施失败 fail-open，投放沿用活跃槽 ∪ watch 渠道。
 - 继续时使用各家原生 continuation，下一次自然 Stop 再询问，不做外部 resume。
 - Stop 确认复用普通 Ask 单选链路但不写回复历史；它与 lifecycle 共用单一 Stop handler，避免并发 Hook 提前置空闲。
-- `[user_confirmed_end_turn]` 作为独立尾行表示用户已明确同意结束，命中后直接放行，避免再次确认。
+- `[user_confirmed_end_turn]` 作为独立行表示用户已明确同意结束（任意独立行命中即可，不要求必须是最后一行），命中后直接放行，避免再次确认。
 
 ## 用户级 hooks + 弹窗提示音
 
