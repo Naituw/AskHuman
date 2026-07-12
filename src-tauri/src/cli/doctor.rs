@@ -7,8 +7,8 @@ use crate::config::AppConfig;
 use crate::i18n::Lang;
 use crate::integrations::agent_rules::AgentTarget;
 use crate::integrations::{
-    agent_lifecycle, agent_mode, agent_permission, agent_rules, claude_hook, cursor_hook,
-    mcp_config,
+    agent_lifecycle, agent_mode, agent_permission, agent_rules, agent_subagent_guard, claude_hook,
+    cursor_hook, mcp_config,
 };
 
 const AGENTS: [&str; 4] = ["cursor", "claude", "codex", "grok"];
@@ -133,6 +133,16 @@ fn render_text(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>, lang: L
             mcp_config::needs_update(target),
             lang,
         );
+        let guard = if agent_subagent_guard::supported(target) {
+            let status = agent_subagent_guard::status(target);
+            state_label(
+                status.installed,
+                agent_subagent_guard::needs_update(target, agent_mode::current(target)),
+                lang,
+            )
+        } else {
+            cfgio::t(lang, "n/a", "—")
+        };
         let lc = agent_lifecycle::status(kind);
         let permission = agent_permission::status(target);
         let permission_label = if !permission.supported {
@@ -157,7 +167,7 @@ fn render_text(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>, lang: L
             state_label(lc.installed, lc.outdated, lang)
         };
         out.push_str(&format!(
-            "  {:<8} {}={} {}={} {}={} {}={} {}={} {}={}\n",
+            "  {:<8} {}={} {}={} {}={} {}={} {}={} {}={} {}={}\n",
             name,
             cfgio::t(lang, "mode", "模式"),
             mode_label(agent_mode::current(target), lang),
@@ -167,6 +177,8 @@ fn render_text(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>, lang: L
             hook,
             cfgio::t(lang, "mcp", "mcp"),
             mcp,
+            cfgio::t(lang, "subagent guard", "子 Agent 防护"),
+            guard,
             cfgio::t(lang, "lifecycle", "生命周期"),
             lifecycle,
             cfgio::t(lang, "permission", "权限审批"),
@@ -254,11 +266,20 @@ fn render_json(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>) -> Stri
             };
             let lc = agent_lifecycle::status(kind);
             let permission = agent_permission::status(target);
+            let guard = agent_subagent_guard::status(target);
             serde_json::json!({
                 "name": name,
                 "mode": agent_mode::current(target).as_str(),
                 "rules": { "installed": agent_rules::is_installed(target), "needsUpdate": agent_rules::needs_update(target) },
                 "hook": hook.map(|(i, u)| serde_json::json!({ "installed": i, "needsUpdate": u })),
+                "subagentGuard": if agent_subagent_guard::supported(target) {
+                    Some(serde_json::json!({
+                        "installed": guard.installed,
+                        "needsUpdate": agent_subagent_guard::needs_update(target, agent_mode::current(target))
+                    }))
+                } else {
+                    None
+                },
                 "mcp": { "installed": mcp_config::is_installed(target), "needsUpdate": mcp_config::needs_update(target) },
                 "permission": permission,
                 "lifecycle": { "installed": lc.installed, "needsUpdate": lc.outdated, "supported": lc.supported },

@@ -35,8 +35,9 @@ name: interaction-protocol\n\
 description: >-\n  \
 Mandatory interaction protocol for this environment. You MUST read this skill FIRST in EVERY\n  \
 session, before doing anything else — unconditionally, for every task and topic, even if it seems\n  \
-unrelated, and do NOT wait until you have a question. It ALWAYS applies, with no exceptions. Key\n  \
-fact: the human user can ONLY see what is delivered through the AskHuman `ask` MCP tool;\n  \
+unrelated, and do NOT wait until you have a question. It ALWAYS applies, with one exception: if\n  \
+you are a subagent, it does not apply to you. Key fact: the human user can ONLY see what is\n  \
+delivered through the AskHuman `ask` MCP tool;\n  \
 your normal chat output is invisible to them.\n\
 ---\n"
         .to_string()
@@ -188,6 +189,9 @@ mod tests {
         assert!(c.contains("name: interaction-protocol"));
         // description 第一句须为「无条件必读」定位，且含「普通输出人类不可见」这条兜底事实。
         assert!(c.contains("You MUST read this skill FIRST in EVERY"));
+        assert!(c.contains("It ALWAYS applies, with one exception: if"));
+        assert!(c.contains("you are a subagent, it does not apply to you."));
+        assert!(!c.contains("It ALWAYS applies, with no exceptions."));
         assert!(c.contains("your normal chat output is invisible to them"));
         assert!(c.contains(SKILL_MARK));
         assert!(c.contains("<mandatory_interaction_protocol>"));

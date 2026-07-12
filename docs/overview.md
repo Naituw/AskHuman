@@ -156,6 +156,7 @@ AskHuman/
         agent_lifecycle.rs   四家 Agent 生命周期 Hook 管理
         agent_launch.rs      Agent readiness、一次性启动记录与 Terminal.app helper
         agent_rules.rs       Agent 全局 Rules 管理
+        agent_subagent_guard.rs  Claude/Codex SubagentStart 提示 Hook
         grok_skill.rs        Grok interaction-protocol skill 管理
         mcp_config.rs        四家 MCP server 配置管理
         agent_mode.rs        None/CLI/MCP 模式编排
@@ -306,6 +307,7 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 - headless/SSH 可用 `channel`、`agents`、`config`、`doctor` 完成渠道配置与 Agent 集成；各子命令提供 help 和 JSON 输出。
 - `channel set` 无 flag 走交互向导，有 flag 走脚本；密钥只从 env/file/stdin 或隐藏输入读取，不进 argv。
 - `agents mode` 维护 None/CLI/MCP 整包；permission、lifecycle、stop 是正交 capability，Grok 仅 None/MCP 且不支持 stop/interject。
+- 全局交互协议把 Sub Agent 作为唯一例外并禁止其使用 AskHuman；Claude/Codex mode 另带 `SubagentStart` 提示 Hook，Cursor/Grok 只依赖协议文本。
 - `agents update [<agent>]` 按当前 mode 重新 reconcile 单家或全部托管产物；重复设置相同 mode 也会完整更新，但不改正交 capability 偏好。
 - `config` 是通用键值兜底，`doctor` 汇总 Daemon、渠道和集成；两者复用同一配置与集成模块，不维护第二套逻辑。
 

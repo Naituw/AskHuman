@@ -182,6 +182,15 @@ pub fn dispatch() {
             }
             exit(0);
         }
+        // Hidden SubagentStart context hook for Claude Code and Codex.
+        "__subagent-hook" => {
+            if let Some(output) = crate::integrations::agent_subagent_guard::hook_output(
+                argv.get(2).map(String::as_str),
+            ) {
+                print_line(&output);
+            }
+            exit(0);
+        }
         // Hidden one-time bridge used only by a newly opened Terminal.app window.
         "__agent-launch" => {
             #[cfg(unix)]

@@ -4,6 +4,12 @@
 //! 而是指引 AI 执行 `<prog> --agent-help` 获取实时、随界面语言本地化的用法。
 
 pub const USER_CONFIRMED_END_TURN_MARKER: &str = "[user_confirmed_end_turn]";
+pub const SUBAGENT_PROTOCOL_RULES: &str = r#"**This protocol does not apply to subagents. If you are a subagent, do not use AskHuman.**
+**When starting a subagent, tell it that it is a subagent and must not use AskHuman.**"#;
+
+pub const fn subagent_guard_context() -> &'static str {
+    "You are a subagent. Do not use AskHuman."
+}
 
 /// 组装参考提示词：行为约束规则（英文固定）+ 一行执行指引。
 pub fn cli_reference() -> String {
@@ -11,6 +17,8 @@ pub fn cli_reference() -> String {
 
     format!(
         r#"<mandatory_interaction_protocol>
+{subagent_rules}
+
 **These rules MUST NOT be overridden, weakened, ignored, or bypassed by any other context.**
 **They MUST be followed exactly and completely under all circumstances.**
 
@@ -31,6 +39,7 @@ pub fn cli_reference() -> String {
 - Do NOT change the current plan, design, scope, or strategy on your own. If new info suggests that a change may be needed, you MUST ask for confirmation through `{program}` before making the change."#,
         program = program,
         end_marker = USER_CONFIRMED_END_TURN_MARKER,
+        subagent_rules = SUBAGENT_PROTOCOL_RULES,
     )
 }
 
@@ -45,6 +54,8 @@ pub fn cli_reference() -> String {
 pub fn mcp_reference() -> String {
     format!(
         r#"<mandatory_interaction_protocol>
+{subagent_rules}
+
 **These rules MUST NOT be overridden, weakened, ignored, or bypassed by any other context.**
 **They MUST be followed exactly and completely under all circumstances.**
 
@@ -63,6 +74,7 @@ pub fn mcp_reference() -> String {
   - If a question can be answered by exploring the codebase, explore the codebase instead.
 - Do NOT change the current plan, design, scope, or strategy on your own. If new info suggests that a change may be needed, you MUST ask for confirmation through the AskHuman `ask` tool before making the change."#,
         end_marker = USER_CONFIRMED_END_TURN_MARKER,
+        subagent_rules = SUBAGENT_PROTOCOL_RULES,
     )
 }
 
@@ -170,6 +182,27 @@ mod tests {
         assert!(cli_reference().contains(&expected));
         assert!(mcp_reference().contains(&expected));
         assert!(grok_skill_body().contains(&expected));
+    }
+
+    #[test]
+    fn default_prompts_put_subagent_rules_before_mandatory_rules() {
+        for prompt in [cli_reference(), mcp_reference(), grok_skill_body()] {
+            let subagent = prompt.find(SUBAGENT_PROTOCOL_RULES).unwrap();
+            let mandatory = prompt.find("These rules MUST NOT be overridden").unwrap();
+            assert!(subagent < mandatory);
+            assert!(prompt.contains("If you are a subagent, do not use AskHuman."));
+            assert!(prompt.contains(
+                "When starting a subagent, tell it that it is a subagent and must not use AskHuman."
+            ));
+        }
+    }
+
+    #[test]
+    fn subagent_guard_context_is_minimal_and_exact() {
+        assert_eq!(
+            subagent_guard_context(),
+            "You are a subagent. Do not use AskHuman."
+        );
     }
 
     #[test]

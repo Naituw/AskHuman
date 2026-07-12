@@ -1,14 +1,17 @@
-//! 三态模式编排：把每家 Agent 的「Rule +（超时 Hook | MCP 配置）」聚合为 **None / Cli / Mcp** 三态互斥，
+//! 三态模式编排：把每家 Agent 的「Rule + Subagent Guard +（超时 Hook | MCP 配置）」聚合为
+//! **None / Cli / Mcp** 三态互斥，
 //! 供设置 UI 与 `agents`/`doctor` CLI 复用。
 //!
-//! - **Cli** 模式绑定：CLI 版 Rule + 超时 Hook（Codex 无超时 Hook，仅 Rule）。
-//! - **Mcp** 模式绑定：MCP 版 Rule + MCP 配置（用户级全局）。
+//! - **Cli** 模式绑定：CLI 版 Rule + Guard + 超时 Hook（Codex 无超时 Hook）。
+//! - **Mcp** 模式绑定：MCP 版 Rule + Guard + MCP 配置（用户级全局）。
 //! - 一键切换（[`set`]）：先卸掉「非目标模式」的全部产物，再装目标模式产物；天然幂等。
 //!
 //! 注意：实验性 lifecycle hook（turn 追踪）**不属于**任何模式，保持独立开关、与本编排正交（spec D9）。
 
 use crate::integrations::agent_rules::{self, AgentTarget, Variant};
-use crate::integrations::{agent_permission, claude_hook, cursor_hook, mcp_config, mutation_lock};
+use crate::integrations::{
+    agent_permission, agent_subagent_guard, claude_hook, cursor_hook, mcp_config, mutation_lock,
+};
 use anyhow::Result;
 
 /// 每家 Agent 的集成模式（互斥三态）。
@@ -155,6 +158,7 @@ pub struct ArtifactUpdates {
 pub fn artifact_updates(target: AgentTarget) -> ArtifactUpdates {
     let mode = current(target);
     let permission = permission_needs_reconcile(target, mode);
+    let guard = agent_subagent_guard::needs_update(target, mode);
     match mode {
         Mode::None => ArtifactUpdates {
             hook: permission,
@@ -162,7 +166,8 @@ pub fn artifact_updates(target: AgentTarget) -> ArtifactUpdates {
         },
         Mode::Cli => ArtifactUpdates {
             rule: !agent_rules::is_installed(target)
-                || agent_rules::needs_update_variant(target, Variant::Cli),
+                || agent_rules::needs_update_variant(target, Variant::Cli)
+                || guard,
             hook: (timeout_hook_supported(target)
                 && (!timeout_hook_is_installed(target) || timeout_hook_needs_update(target)))
                 || permission,
@@ -170,7 +175,8 @@ pub fn artifact_updates(target: AgentTarget) -> ArtifactUpdates {
         },
         Mode::Mcp => ArtifactUpdates {
             rule: !agent_rules::is_installed(target)
-                || agent_rules::needs_update_variant(target, Variant::Mcp),
+                || agent_rules::needs_update_variant(target, Variant::Mcp)
+                || guard,
             hook: permission,
             mcp: !mcp_config::is_installed(target) || mcp_config::needs_update(target),
         },
@@ -185,7 +191,7 @@ fn permission_needs_reconcile(target: AgentTarget, _mode: Mode) -> bool {
     status.needs_update
 }
 
-/// 当前模式下是否有产物过期 / 缺失（含 Rule 漂移、超时 Hook 缺失/过期、MCP 配置缺失/过期）。
+/// 当前模式下是否有产物过期 / 缺失（含 Rule / Guard、超时 Hook 与 MCP 配置）。
 pub fn needs_update(target: AgentTarget) -> bool {
     let u = artifact_updates(target);
     u.rule || u.hook || u.mcp
@@ -216,6 +222,7 @@ fn set_unlocked(target: AgentTarget, mode: Mode) -> Result<()> {
             // 卸 MCP 产物 → 装 CLI Rule + 超时 Hook（Codex 跳过 Hook）。
             mcp_config::uninstall(target)?;
             agent_rules::install_variant(target, Variant::Cli)?;
+            agent_subagent_guard::reconcile_unlocked(target, mode)?;
             if timeout_hook_supported(target) {
                 timeout_hook_install(target)?;
             }
@@ -228,6 +235,7 @@ fn set_unlocked(target: AgentTarget, mode: Mode) -> Result<()> {
                 timeout_hook_uninstall(target)?;
             }
             agent_rules::install_variant(target, Variant::Mcp)?;
+            agent_subagent_guard::reconcile_unlocked(target, mode)?;
             mcp_config::install(target)?;
             agent_permission::reconcile_unlocked(target, mode)?;
             Ok(())
@@ -247,10 +255,12 @@ pub fn update_artifact(target: AgentTarget, artifact: Artifact) -> Result<()> {
     let mode = current(target);
     match (mode, artifact) {
         (Mode::Cli, Artifact::Rule) => {
-            agent_rules::install_variant(target, Variant::Cli).map(|_| ())
+            agent_rules::install_variant(target, Variant::Cli)?;
+            agent_subagent_guard::reconcile_unlocked(target, mode)
         }
         (Mode::Mcp, Artifact::Rule) => {
-            agent_rules::install_variant(target, Variant::Mcp).map(|_| ())
+            agent_rules::install_variant(target, Variant::Mcp)?;
+            agent_subagent_guard::reconcile_unlocked(target, mode)
         }
         (Mode::Cli, Artifact::Hook) => {
             if timeout_hook_supported(target) {
@@ -266,9 +276,10 @@ pub fn update_artifact(target: AgentTarget, artifact: Artifact) -> Result<()> {
     }
 }
 
-/// 卸载当前 / 全部模式产物（Rule + 超时 Hook + MCP 配置），保留用户其它内容。
+/// 卸载当前 / 全部模式产物（Rule + Guard + 超时 Hook + MCP 配置），保留用户其它内容。
 fn uninstall_all_unlocked(target: AgentTarget) -> Result<()> {
     agent_rules::uninstall(target)?;
+    agent_subagent_guard::reconcile_unlocked(target, Mode::None)?;
     if timeout_hook_supported(target) {
         timeout_hook_uninstall(target)?;
     }

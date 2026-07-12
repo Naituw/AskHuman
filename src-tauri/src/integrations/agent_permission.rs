@@ -302,7 +302,6 @@ fn restore(path: &Path, bytes: Option<&[u8]>) {
 struct TrustEntry {
     key: String,
     hash: String,
-    permission: bool,
     command: String,
 }
 
@@ -381,7 +380,6 @@ fn trust_entries(path: &Path, text: &str) -> Result<Vec<TrustEntry>> {
                 entries.push(TrustEntry {
                     key,
                     hash: trusted_hash(label, matcher, command, timeout, status_message),
-                    permission: command.contains(MARKER),
                     command: command.to_string(),
                 });
             }
@@ -523,11 +521,11 @@ pub(crate) fn reconcile_codex_trust(
     hook_edit::atomic_write(&config_path, document.to_string().as_bytes())
 }
 
-fn codex_marker_trusted(path: &Path, marker: &str) -> Result<bool> {
+pub(crate) fn codex_marker_trusted(path: &Path, marker: &str) -> Result<bool> {
     let hooks = std::fs::read_to_string(path)?;
     let entries: Vec<TrustEntry> = trust_entries(path, &hooks)?
         .into_iter()
-        .filter(|entry| entry.permission && marker == MARKER)
+        .filter(|entry| entry.command.contains(marker))
         .collect();
     if entries.is_empty() {
         return Ok(false);
