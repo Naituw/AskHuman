@@ -21,6 +21,8 @@ use super::detect;
 use super::AgentKind;
 use crate::ipc::{ClientMsg, ToolPhase, ToolReport};
 
+const MAX_HOOK_STDIN_BYTES: u64 = 1024 * 1024;
+
 /// 入口：`args` 为 `__agent-hook` 之后的参数（`[<agent>, <event>]`）。失败一律静默退出。
 pub fn run(args: &[String]) {
     let Some(intended) = args.first().and_then(|s| AgentKind::parse(s)) else {
@@ -33,17 +35,7 @@ pub fn run(args: &[String]) {
     let env: HashMap<String, String> = std::env::vars().collect();
 
     // 去重：跳过「兼容加载他家 hook」造成的误触发。
-    let running = detect::detect_running_agent_from(&env);
-    // Grok 默认会合并触发 `~/.claude`/`~/.cursor` 的兼容 hook（见 grok hooks 文档）：这些兼容 hook 的
-    // intended 是 claude/cursor，但真实运行家族是 Grok（env 有 GROK_HOOK_EVENT/GROK_SESSION_ID）→ 一律
-    // 跳过，只认 Grok 原生 hook（intended==grok），避免把 Grok 会话错标成 Claude/Cursor 或重复登记。
-    if running == Some(AgentKind::Grok) && intended != AgentKind::Grok {
-        return;
-    }
-    // Cursor 兼容加载了 ~/.claude → Claude hook 在 cursor-agent 下双触发：仅当 intended=claude 且实际
-    // 运行家族是 Cursor 时跳过（保留 cursor 自身那次）。其它情况一律不跳过：Codex/Cursor 只会执行自己的
-    // hook，绝不能因 env 里残留 CURSOR_*（例如从 cursor-agent 环境启动 Codex/Claude）而误杀其自身上报。
-    if intended == AgentKind::Claude && running == Some(AgentKind::Cursor) {
+    if should_skip(intended, &env) {
         return;
     }
 
@@ -100,6 +92,37 @@ pub fn run(args: &[String]) {
     } else {
         crate::client::report_agent_event(msg);
     }
+}
+
+/// Compatibility-loader deduplication shared by lifecycle and Stop hooks.
+pub(super) fn should_skip(intended: AgentKind, env: &HashMap<String, String>) -> bool {
+    let running = detect::detect_running_agent_from(env);
+    (running == Some(AgentKind::Grok) && intended != AgentKind::Grok)
+        || (intended == AgentKind::Claude && running == Some(AgentKind::Cursor))
+}
+
+/// Send a lifecycle event without tool data or interjection polling.
+pub(super) fn report_simple_event(
+    intended: AgentKind,
+    event: super::LifecycleEvent,
+    session_id: String,
+    cwd: Option<String>,
+) {
+    if session_id.trim().is_empty() {
+        return;
+    }
+    let hint_pid = Some(unsafe { libc::getppid() } as u32);
+    crate::client::report_agent_event(ClientMsg::AgentEvent {
+        agent: intended.as_str().to_string(),
+        event: event.as_str().to_string(),
+        session_id,
+        pid: None,
+        hint_pid,
+        cwd,
+        ts: 0,
+        tool: None,
+        interject_poll: false,
+    });
 }
 
 /// 输出各家 PreToolUse 的 deny JSON（stdout，随后调用方 exit 0；spec agent-interject D3）。
@@ -223,7 +246,7 @@ fn tool_input(v: &Value) -> Option<Value> {
 }
 
 /// 解析会话 ID：env 专用变量优先，其次 stdin JSON 的若干常见字段。
-fn resolve_session_id(
+pub(super) fn resolve_session_id(
     kind: AgentKind,
     env: &HashMap<String, String>,
     stdin: Option<&Value>,
@@ -252,7 +275,7 @@ fn resolve_session_id(
 }
 
 /// 解析工作目录：stdin JSON `cwd` → env 工程目录 → 当前目录。
-fn resolve_cwd(env: &HashMap<String, String>, stdin: Option<&Value>) -> Option<String> {
+pub(super) fn resolve_cwd(env: &HashMap<String, String>, stdin: Option<&Value>) -> Option<String> {
     if let Some(v) = stdin {
         if let Some(s) = v.get("cwd").and_then(|x| x.as_str()) {
             if !s.trim().is_empty() {
@@ -276,21 +299,32 @@ fn resolve_cwd(env: &HashMap<String, String>, stdin: Option<&Value>) -> Option<S
         .map(|p| p.display().to_string())
 }
 
-/// 读取 hook 经 stdin 传入的 JSON（best-effort，带超时，避免在无 stdin 时挂起）。
-fn read_stdin_json() -> Option<Value> {
+/// Read JSON delivered to a hook over stdin. Input is time- and size-bounded so malformed hook
+/// callers cannot leave the reporter hanging or allocate an unbounded buffer.
+pub(super) fn read_stdin_json() -> Option<Value> {
     use std::io::IsTerminal;
     if std::io::stdin().is_terminal() {
         return None;
     }
-    // 在独立线程读，主线程最多等 500ms：hook 通常瞬间写完并关闭 stdin。
+    // Hook callers normally write and close stdin immediately. Keep the blocking read isolated.
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let mut buf = String::new();
-        let _ = std::io::stdin().read_to_string(&mut buf);
-        let _ = tx.send(buf);
+        let mut bytes = Vec::new();
+        let parsed = std::io::stdin()
+            .take(MAX_HOOK_STDIN_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .ok()
+            .and_then(|_| parse_stdin_bytes(&bytes));
+        let _ = tx.send(parsed);
     });
-    let buf = rx.recv_timeout(Duration::from_millis(500)).ok()?;
-    let trimmed = buf.trim();
+    rx.recv_timeout(Duration::from_millis(500)).ok()?
+}
+
+fn parse_stdin_bytes(bytes: &[u8]) -> Option<Value> {
+    if bytes.len() as u64 > MAX_HOOK_STDIN_BYTES {
+        return None;
+    }
+    let trimmed = std::str::from_utf8(bytes).ok()?.trim();
     if trimmed.is_empty() {
         return None;
     }
@@ -301,6 +335,18 @@ fn read_stdin_json() -> Option<Value> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn hook_stdin_parser_rejects_empty_malformed_invalid_utf8_and_oversize() {
+        assert!(parse_stdin_bytes(b"").is_none());
+        assert!(parse_stdin_bytes(b"not json").is_none());
+        assert!(parse_stdin_bytes(&[0xff]).is_none());
+        assert!(parse_stdin_bytes(&vec![b' '; MAX_HOOK_STDIN_BYTES as usize + 1]).is_none());
+        assert_eq!(
+            parse_stdin_bytes(br#" {"session_id":"s1"} "#).unwrap()["session_id"],
+            "s1"
+        );
+    }
 
     #[test]
     fn phase_pre_from_tool_input() {

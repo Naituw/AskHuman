@@ -140,6 +140,80 @@ pub fn nested_groups(text: &str, event: &str) -> Result<Vec<Value>> {
         .unwrap_or_default())
 }
 
+/// Idempotently replace or append a marker-owned Cursor flat hook in `hooks.<event>`.
+pub fn upsert_flat_handler(
+    text: &str,
+    event: &str,
+    marker: &str,
+    command: &str,
+    timeout: u64,
+    unlimited_loop: bool,
+) -> Result<String> {
+    let source = if text.trim().is_empty() { "{}" } else { text };
+    let root = CstRootNode::parse(source, &ParseOptions::default())
+        .map_err(|error| anyhow!("failed to parse hook config: {error}"))?;
+    let root_object = root
+        .object_value_or_create()
+        .ok_or_else(|| anyhow!("hook config root is not an object"))?;
+    if root_object.get("version").is_none() {
+        root_object.append("version", json!(1));
+    }
+    let hooks = root_object
+        .object_value_or_create("hooks")
+        .ok_or_else(|| anyhow!("hook config 'hooks' is not an object"))?;
+    let handlers = hooks
+        .array_value_or_create(event)
+        .ok_or_else(|| anyhow!("hook event '{event}' is not an array"))?;
+    let replacement = if unlimited_loop {
+        json!({ "command": command, "timeout": timeout, "loop_limit": null })
+    } else {
+        json!({ "command": command, "timeout": timeout })
+    };
+    let mut replaced = false;
+    for handler in handlers.elements() {
+        if !handler_node_has_marker(&handler, marker) {
+            continue;
+        }
+        if !replaced {
+            if let Some(object) = handler.as_object() {
+                object.replace_with(replacement.clone());
+                replaced = true;
+                continue;
+            }
+        }
+        handler.remove();
+    }
+    if !replaced {
+        handlers.ensure_multiline();
+        handlers.append(replacement);
+    }
+    Ok(root.to_string())
+}
+
+pub fn remove_flat_marker(text: &str, event: &str, marker: &str) -> Result<String> {
+    let root = CstRootNode::parse(text, &ParseOptions::default())
+        .map_err(|error| anyhow!("failed to parse hook config: {error}"))?;
+    let Some(root_object) = root.object_value() else {
+        return Ok(root.to_string());
+    };
+    let Some(hooks) = root_object.object_value("hooks") else {
+        return Ok(root.to_string());
+    };
+    if let Some(handlers) = hooks.array_value(event) {
+        for handler in handlers.elements() {
+            if handler_node_has_marker(&handler, marker) {
+                handler.remove();
+            }
+        }
+        if handlers.elements().is_empty() {
+            if let Some(property) = hooks.get(event) {
+                property.remove();
+            }
+        }
+    }
+    Ok(root.to_string())
+}
+
 pub fn group_has_marker(group: &Value, marker: &str) -> bool {
     command_has_marker(group, marker)
 }
@@ -179,5 +253,32 @@ mod tests {
         let groups = nested_groups(&output, "PermissionRequest").unwrap();
         assert_eq!(groups.len(), 2);
         assert!(group_has_marker(&groups[1], "__permission-hook"));
+    }
+
+    #[test]
+    fn flat_upsert_and_remove_preserve_user_handler() {
+        let input = r#"{ // keep
+          "version": 1,
+          "hooks": { "stop": [
+            {"command":"user-hook"},
+            {"command":"old __stop-hook cursor"}
+          ] }
+        }"#;
+        let output = upsert_flat_handler(
+            input,
+            "stop",
+            "__stop-hook",
+            "new __stop-hook cursor confirm",
+            86400,
+            true,
+        )
+        .unwrap();
+        assert!(output.contains("// keep"));
+        assert!(output.contains("user-hook"));
+        assert!(output.contains("new __stop-hook cursor confirm"));
+        assert!(!output.contains("old __stop-hook cursor"));
+        let removed = remove_flat_marker(&output, "stop", "__stop-hook").unwrap();
+        assert!(removed.contains("user-hook"));
+        assert!(!removed.contains("__stop-hook"));
     }
 }

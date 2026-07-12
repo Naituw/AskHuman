@@ -199,6 +199,9 @@ export const agentModeUpdateArtifact = (
 export const agentPermissionSet = (agent: AgentId, enabled: boolean) =>
   invoke<void>("agent_permission_set", { agent, enabled });
 
+export const agentStopSet = (agent: AgentId, enabled: boolean) =>
+  invoke<void>("agent_stop_set", { agent, enabled });
+
 export const mcpConfigReveal = (agent: AgentId) =>
   invoke<void>("mcp_config_reveal", { agent });
 

@@ -1063,7 +1063,7 @@ pub fn agent_rule_open(agent: String) -> Result<(), String> {
 
 // ===== Agent 三态模式（CLI | MCP | 未集成） =====
 
-use crate::integrations::{agent_mode, agent_permission, mcp_config};
+use crate::integrations::{agent_mode, agent_permission, agent_stop, mcp_config};
 
 /// 某家 Agent 的模式聚合状态（驱动设置页三态分段控件 + 产物清单）。
 #[derive(Serialize)]
@@ -1087,6 +1087,8 @@ pub struct AgentModeStatus {
     /// PermissionRequest capability state; kept separate from the timeout hook.
     permission: agent_permission::PermissionStatus,
     permission_needs_update: bool,
+    /// Stop confirmation capability, independent from integration mode and lifecycle tracking.
+    stop: agent_stop::StopStatus,
     /// MCP 配置文件展示路径。
     mcp_config_path: String,
     mcp_config_installed: bool,
@@ -1095,6 +1097,8 @@ pub struct AgentModeStatus {
 #[tauri::command]
 pub fn agent_mode_status(agent: String) -> Result<AgentModeStatus, String> {
     let a = parse_agent(&agent)?;
+    let stop_kind =
+        crate::agents::AgentKind::parse(&agent).ok_or_else(|| "unknown agent".to_string())?;
     let updates = agent_mode::artifact_updates(a);
     let mode = agent_mode::current(a);
     let permission = agent_permission::status(a);
@@ -1114,6 +1118,7 @@ pub fn agent_mode_status(agent: String) -> Result<AgentModeStatus, String> {
                 || agent_mode::timeout_hook_needs_update(a)),
         permission,
         permission_needs_update,
+        stop: agent_stop::status(stop_kind),
         mcp_config_path: mcp_config::display_path(a),
         mcp_config_installed: mcp_config::is_installed(a),
     })
@@ -1123,6 +1128,14 @@ pub fn agent_mode_status(agent: String) -> Result<AgentModeStatus, String> {
 pub fn agent_permission_set(agent: String, enabled: bool) -> Result<(), String> {
     let a = parse_agent(&agent)?;
     agent_permission::set_enabled(a, enabled).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn agent_stop_set(agent: String, enabled: bool) -> Result<(), String> {
+    let _ = parse_agent(&agent)?;
+    let kind =
+        crate::agents::AgentKind::parse(&agent).ok_or_else(|| "unknown agent".to_string())?;
+    agent_stop::set_enabled(kind, enabled).map_err(|error| error.to_string())
 }
 
 /// 一键切换到目标模式（"none"|"cli"|"mcp"）：自动卸旧装新。

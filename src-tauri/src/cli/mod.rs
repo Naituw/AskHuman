@@ -182,6 +182,16 @@ pub fn dispatch() {
             }
             exit(0);
         }
+        // Hidden Stop confirmation hook. Failures emit `{}` so the agent can stop normally.
+        "__stop-hook" => {
+            #[cfg(unix)]
+            {
+                crate::agents::stop::run(&argv[2..]);
+            }
+            #[cfg(not(unix))]
+            print_line("{}");
+            exit(0);
+        }
         // Hidden PermissionRequest adapter. All infrastructure and validation failures produce no
         // stdout so the agent falls back to its native approval prompt.
         "__permission-hook" => {
@@ -299,6 +309,7 @@ pub fn dispatch() {
                         select_only: parsed.select_only,
                         single: parsed.single,
                         output_format: parsed.output_format,
+                        record_history: true,
                         agent_kind,
                         agent_session_id,
                         agent_pid: None,

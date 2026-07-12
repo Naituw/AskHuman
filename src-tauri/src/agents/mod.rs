@@ -15,6 +15,8 @@ pub mod interject;
 pub mod registry;
 #[cfg(unix)]
 pub mod report;
+#[cfg(unix)]
+pub mod stop;
 pub mod title;
 pub mod transcript_full;
 

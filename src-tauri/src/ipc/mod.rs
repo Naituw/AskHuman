@@ -20,6 +20,14 @@ use serde::{Deserialize, Serialize};
 /// IPC 协议版本：不兼容变更时 +1，握手不一致即触发换新。
 pub const PROTOCOL_VERSION: u32 = 2;
 
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 /// CLI/GUI 连接时的握手信息。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,6 +109,10 @@ pub struct TaskRequest {
     /// 结果输出格式（全局）。
     #[serde(default)]
     pub output_format: OutputFormat,
+    /// Whether to record this request in ordinary reply history. Stop confirmation disables it.
+    /// Missing fields from older clients default to true for compatibility.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub record_history: bool,
     /// 调用方 Agent 家族（"claude"/"codex"/"cursor"）——CLI 经 env 探测后顺带上送（生命周期追踪，spec D21）。
     /// 旧 CLI 不带 → None；daemon 据此刷新对应 session 的「最近活动 + TTL」，仅刷新已追踪 session。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -512,6 +524,30 @@ pub enum ServerMsg {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_request_history_flag_defaults_true_and_false_is_transmitted() {
+        let legacy = r#"{
+          "message":{"text":"done","files":[]},
+          "questions":[{"message":"continue?","predefinedOptions":[]}],
+          "isMarkdown":true,
+          "source":"Codex",
+          "lang":"en"
+        }"#;
+        let legacy: TaskRequest = serde_json::from_str(legacy).unwrap();
+        assert!(legacy.record_history);
+        let serialized = serde_json::to_string(&legacy).unwrap();
+        assert!(!serialized.contains("recordHistory"));
+
+        let internal = legacy.clone();
+        let mut value = serde_json::to_value(internal).unwrap();
+        value["recordHistory"] = serde_json::Value::Bool(false);
+        let internal: TaskRequest = serde_json::from_value(value).unwrap();
+        assert!(!internal.record_history);
+        assert!(serde_json::to_string(&internal)
+            .unwrap()
+            .contains(r#""recordHistory":false"#));
+    }
 
     fn confirm_task() -> ConfirmTask {
         ConfirmTask {

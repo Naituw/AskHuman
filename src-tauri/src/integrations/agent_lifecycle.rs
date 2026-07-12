@@ -2,8 +2,9 @@
 //! **用户级** lifecycle hook，调用隐藏子命令 `AskHuman __agent-hook <agent> <event>` 上报事件。
 //!
 //! 设计要点：
-//! - 与既有 timeout hook（`askhuman-timeout.sh`）**完全独立**：本模块只增删命令里含 `__agent-hook`
-//!   标记的条目，保留用户其它 hook 与文件格式（jsonc CST / toml_edit 做保留格式的最小化编辑）。
+//! - The timeout hook (`askhuman-timeout.sh`) remains independent. Lifecycle events use the
+//!   `__agent-hook` marker, while supported Stop events use the single shared `__stop-hook` handler
+//!   that can also perform end confirmation. Other hooks and JSONC/TOML formatting are preserved.
 //! - Claude/Cursor 是 JSON 配置（无信任）；Codex 是 `~/.codex/hooks.json` 定义 + `~/.codex/config.toml`
 //!   `[hooks.state]` 写信任哈希（复刻 codex `version_for_toml`，见 `demo/.../codex-trust.cjs` 与
 //!   FINDINGS §6.2）。Codex 无 SessionEnd 事件。
@@ -80,12 +81,10 @@ fn events(kind: AgentKind) -> &'static [(&'static str, &'static str)] {
     }
 }
 
-/// PreToolUse 条目的显式超时（秒）：插话的「composer 打开时挂起等待」需要长超时
-/// （spec agent-interject D5）。仅 Claude / Codex / Cursor 的 PreToolUse；Grok 首期排除、
-/// 其余事件维持各家默认（Claude/Codex 600s、Cursor 60s）。
+/// Explicit timeout for PreToolUse interjection waits, in seconds.
 pub const PRE_TOOL_USE_TIMEOUT_SECS: u64 = 86400;
 
-/// 某事件条目需要显式写入的超时（秒）；None＝不写（用各家默认）。
+/// Return the explicit lifecycle timeout for an event. Shared Stop handlers are handled separately.
 fn event_timeout(kind: AgentKind, event_key: &str) -> Option<u64> {
     match (kind, event_key) {
         (AgentKind::Claude, "PreToolUse")
@@ -127,6 +126,34 @@ pub fn any_installed() -> bool {
     .any(|k| status(*k).installed)
 }
 
+/// Whether lifecycle tracking is installed. A shared Stop handler counts only when it carries the
+/// `track` flag; a confirmation-only handler does not.
+pub(crate) fn tracking_installed(kind: AgentKind) -> bool {
+    if !supported() {
+        return false;
+    }
+    let (path, shape) = match kind {
+        AgentKind::Claude => (paths::claude_settings_json(), Shape::Nested),
+        AgentKind::Codex => (paths::codex_hooks_json(), Shape::Nested),
+        AgentKind::Cursor => (paths::cursor_hooks_json(), Shape::Flat),
+        AgentKind::Grok => (paths::grok_hooks_json(), Shape::Nested),
+    };
+    let Some(root) = read_value(&path) else {
+        return false;
+    };
+    root.get("hooks")
+        .and_then(Value::as_object)
+        .is_some_and(|hooks| {
+            hooks.values().any(|groups| {
+                groups.as_array().is_some_and(|groups| {
+                    groups
+                        .iter()
+                        .any(|group| elem_tracks_lifecycle(group, shape))
+                })
+            })
+        })
+}
+
 /// 启动时自动迁移：对**已安装但过期**的 lifecycle hook 幂等重装（补齐新增事件 / 修正命令路径）。
 /// 仅刷新用户已开启的家族（installed 才动），绝不为未启用的家族安装。返回被迁移的家族列表。
 /// 用于「升级二进制后，已开启生命周期追踪的用户自动拿到新 hook」，无需手动关开开关。
@@ -158,8 +185,22 @@ fn exe_path() -> Result<String> {
 }
 
 /// hook 命令字符串：`"<exe>" __agent-hook <agent> <lifecycle-event>`。
-fn hook_command(exe: &str, kind: AgentKind, lc_event: &str) -> String {
+fn hook_command(
+    exe: &str,
+    kind: AgentKind,
+    event_key: &str,
+    lc_event: &str,
+    stop_confirm: bool,
+) -> String {
+    if is_stop_event(kind, event_key) {
+        return super::agent_stop::hook_command_for(exe, kind, true, stop_confirm);
+    }
     format!("\"{}\" {} {} {}", exe, MARKER, kind.as_str(), lc_event)
+}
+
+fn is_stop_event(kind: AgentKind, event_key: &str) -> bool {
+    kind != AgentKind::Grok
+        && matches!((kind, event_key), (AgentKind::Cursor, "stop") | (_, "Stop"))
 }
 
 // ===== 对外：状态 / 安装 / 卸载 =====
@@ -206,11 +247,12 @@ pub fn uninstall(kind: AgentKind) -> Result<String> {
 
 pub(crate) fn uninstall_unlocked(kind: AgentKind) -> Result<String> {
     match kind {
-        AgentKind::Claude => json_uninstall(&paths::claude_settings_json(), Shape::Nested)?,
-        AgentKind::Cursor => json_uninstall(&paths::cursor_hooks_json(), Shape::Flat)?,
+        AgentKind::Claude => json_uninstall(kind, &paths::claude_settings_json(), Shape::Nested)?,
+        AgentKind::Cursor => json_uninstall(kind, &paths::cursor_hooks_json(), Shape::Flat)?,
         AgentKind::Codex => codex_uninstall()?,
-        AgentKind::Grok => json_uninstall(&paths::grok_hooks_json(), Shape::Nested)?,
+        AgentKind::Grok => json_uninstall(kind, &paths::grok_hooks_json(), Shape::Nested)?,
     }
+    super::agent_stop::reconcile_unlocked(kind)?;
     Ok(message("cmd.lifecycleRemoved"))
 }
 
@@ -247,10 +289,60 @@ fn cmd_has_marker(cmd: Option<&Value>) -> bool {
         .unwrap_or(false)
 }
 
-fn elem_node_has_marker(node: &CstNode, shape: Shape) -> bool {
+fn elem_node_has_marker(node: &CstNode, shape: Shape, include_stop: bool) -> bool {
     node.to_serde_value()
-        .map(|v| elem_has_marker(&v, shape))
+        .map(|v| {
+            elem_has_marker(&v, shape)
+                || (include_stop && elem_has_command_marker(&v, shape, super::agent_stop::MARKER))
+        })
         .unwrap_or(false)
+}
+
+fn elem_has_command_marker(elem: &Value, shape: Shape, marker: &str) -> bool {
+    match shape {
+        Shape::Nested => elem
+            .get("hooks")
+            .and_then(Value::as_array)
+            .is_some_and(|handlers| {
+                handlers.iter().any(|handler| {
+                    handler
+                        .get("command")
+                        .and_then(Value::as_str)
+                        .is_some_and(|command| command.contains(marker))
+                })
+            }),
+        Shape::Flat => elem
+            .get("command")
+            .and_then(Value::as_str)
+            .is_some_and(|command| command.contains(marker)),
+    }
+}
+
+fn elem_tracks_lifecycle(elem: &Value, shape: Shape) -> bool {
+    if elem_has_marker(elem, shape) {
+        return true;
+    }
+    let has_track = |command: &str| {
+        command.contains(super::agent_stop::MARKER)
+            && command.split_whitespace().any(|part| part == "track")
+    };
+    match shape {
+        Shape::Nested => elem
+            .get("hooks")
+            .and_then(Value::as_array)
+            .is_some_and(|handlers| {
+                handlers.iter().any(|handler| {
+                    handler
+                        .get("command")
+                        .and_then(Value::as_str)
+                        .is_some_and(has_track)
+                })
+            }),
+        Shape::Flat => elem
+            .get("command")
+            .and_then(Value::as_str)
+            .is_some_and(has_track),
+    }
 }
 
 fn read_value(path: &std::path::Path) -> Option<Value> {
@@ -267,7 +359,8 @@ fn json_status(kind: AgentKind, path: &std::path::Path, shape: Shape) -> Lifecyc
             supported: true,
         };
     };
-    let (any, complete) = json_presence(kind, &exe, &root, shape);
+    let (any, complete) =
+        json_presence_with_stop(kind, &exe, &root, shape, super::agent_stop::enabled(kind));
     LifecycleStatus {
         installed: any,
         outdated: any && !complete,
@@ -280,22 +373,37 @@ fn json_status(kind: AgentKind, path: &std::path::Path, shape: Shape) -> Lifecyc
 /// 不完整（如旧版安装缺 timeout）→ `outdated` → 由 `migrate_outdated()` 自动幂等重装
 /// （spec agent-interject D5「已开启用户的 hook 更新流程」）。
 fn json_presence(kind: AgentKind, exe: &str, root: &Value, shape: Shape) -> (bool, bool) {
+    json_presence_with_stop(kind, exe, root, shape, false)
+}
+
+fn json_presence_with_stop(
+    kind: AgentKind,
+    exe: &str,
+    root: &Value,
+    shape: Shape,
+    stop_confirm: bool,
+) -> (bool, bool) {
     let hooks = root.get("hooks");
     let mut any = false;
     let mut complete = true;
     for (event_key, lc) in events(kind) {
-        let want = hook_command(exe, kind, lc);
-        let want_timeout = event_timeout(kind, event_key);
+        let want = hook_command(exe, kind, event_key, lc, stop_confirm);
+        let want_timeout = if is_stop_event(kind, event_key) {
+            Some(super::agent_stop::TIMEOUT_SECS)
+        } else {
+            event_timeout(kind, event_key)
+        };
+        let want_unlimited_loop = kind == AgentKind::Cursor && *event_key == "stop";
         let arr = hooks
             .and_then(|h| h.get(event_key))
             .and_then(|a| a.as_array());
         let has_ours = arr
-            .map(|a| a.iter().any(|e| elem_has_marker(e, shape)))
+            .map(|a| a.iter().any(|e| elem_tracks_lifecycle(e, shape)))
             .unwrap_or(false);
         let has_exact = arr
             .map(|a| {
                 a.iter()
-                    .any(|e| elem_matches(e, shape, &want, want_timeout))
+                    .any(|e| elem_matches(e, shape, &want, want_timeout, want_unlimited_loop))
             })
             .unwrap_or(false);
         if has_ours {
@@ -310,7 +418,13 @@ fn json_presence(kind: AgentKind, exe: &str, root: &Value, shape: Shape) -> (boo
 
 /// 元素是否恰好为期望形态：命令逐字一致，且（要求显式 timeout 的事件）timeout 一致。
 /// 用于 outdated 判定：路径变化 / 旧版缺 timeout 都会触发幂等重装。
-fn elem_matches(elem: &Value, shape: Shape, want: &str, want_timeout: Option<u64>) -> bool {
+fn elem_matches(
+    elem: &Value,
+    shape: Shape,
+    want: &str,
+    want_timeout: Option<u64>,
+    want_unlimited_loop: bool,
+) -> bool {
     let timeout_ok = |h: &Value| match want_timeout {
         Some(t) => h.get("timeout").and_then(|v| v.as_u64()) == Some(t),
         None => true,
@@ -326,27 +440,40 @@ fn elem_matches(elem: &Value, shape: Shape, want: &str, want_timeout: Option<u64
             })
             .unwrap_or(false),
         Shape::Flat => {
-            elem.get("command").and_then(|c| c.as_str()) == Some(want) && timeout_ok(elem)
+            elem.get("command").and_then(|c| c.as_str()) == Some(want)
+                && timeout_ok(elem)
+                && (!want_unlimited_loop || elem.get("loop_limit").is_some_and(Value::is_null))
         }
     }
 }
 
 fn json_install(kind: AgentKind, exe: &str, path: &std::path::Path, shape: Shape) -> Result<()> {
     let text = std::fs::read_to_string(path).unwrap_or_else(|_| "{}".to_string());
-    let updated = apply_json_install(kind, exe, &text, shape)?;
+    let updated =
+        apply_json_install_with_stop(kind, exe, &text, shape, super::agent_stop::enabled(kind))?;
     write_text(path, &updated)
 }
 
-fn json_uninstall(path: &std::path::Path, shape: Shape) -> Result<()> {
+fn json_uninstall(kind: AgentKind, path: &std::path::Path, shape: Shape) -> Result<()> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Ok(());
     };
-    let updated = apply_json_uninstall(&text, shape)?;
+    let updated = apply_json_uninstall(kind, &text, shape)?;
     write_text(path, &updated)
 }
 
 /// 在 JSON 文本中插入/更新本功能各事件条目（CST 保留格式）。仅触碰本功能条目。
 fn apply_json_install(kind: AgentKind, exe: &str, text: &str, shape: Shape) -> Result<String> {
+    apply_json_install_with_stop(kind, exe, text, shape, false)
+}
+
+fn apply_json_install_with_stop(
+    kind: AgentKind,
+    exe: &str,
+    text: &str,
+    shape: Shape,
+    stop_confirm: bool,
+) -> Result<String> {
     let source = if text.trim().is_empty() { "{}" } else { text };
     let root = CstRootNode::parse(source, &ParseOptions::default())
         .map_err(|e| anyhow!("解析配置失败，已中止（不覆盖原文件）：{e}"))?;
@@ -364,15 +491,23 @@ fn apply_json_install(kind: AgentKind, exe: &str, text: &str, shape: Shape) -> R
         .ok_or_else(|| anyhow!("配置的 'hooks' 不是对象，已中止"))?;
 
     for (event_key, lc) in events(kind) {
-        let command = hook_command(exe, kind, lc);
+        let command = hook_command(exe, kind, event_key, lc, stop_confirm);
         let cmd = command.as_str();
-        // PreToolUse 显式长超时（插话等待，spec agent-interject D5）；其余事件不写、用默认。
-        let entry = match (shape, event_timeout(kind, event_key)) {
+        // Stop confirmation and PreToolUse interjection waits both need a 24-hour hook timeout.
+        let timeout = if is_stop_event(kind, event_key) {
+            Some(super::agent_stop::TIMEOUT_SECS)
+        } else {
+            event_timeout(kind, event_key)
+        };
+        let entry = match (shape, timeout) {
             (Shape::Nested, Some(t)) => {
                 json!({ "hooks": [ { "type": "command", "command": cmd, "timeout": t } ] })
             }
             (Shape::Nested, None) => {
                 json!({ "hooks": [ { "type": "command", "command": cmd } ] })
+            }
+            (Shape::Flat, Some(t)) if kind == AgentKind::Cursor && *event_key == "stop" => {
+                json!({ "command": cmd, "timeout": t, "loop_limit": null })
             }
             (Shape::Flat, Some(t)) => json!({ "command": cmd, "timeout": t }),
             (Shape::Flat, None) => json!({ "command": cmd }),
@@ -382,7 +517,7 @@ fn apply_json_install(kind: AgentKind, exe: &str, text: &str, shape: Shape) -> R
             .ok_or_else(|| anyhow!("配置的 '{event_key}' 不是数组，已中止"))?;
         let mut replaced = false;
         for e in arr.elements() {
-            if !elem_node_has_marker(&e, shape) {
+            if !elem_node_has_marker(&e, shape, is_stop_event(kind, event_key)) {
                 continue;
             }
             if !replaced {
@@ -403,7 +538,7 @@ fn apply_json_install(kind: AgentKind, exe: &str, text: &str, shape: Shape) -> R
 }
 
 /// 在 JSON 文本中移除本功能各事件条目；事件数组变空则删除该键。仅触碰本功能条目。
-fn apply_json_uninstall(text: &str, shape: Shape) -> Result<String> {
+fn apply_json_uninstall(kind: AgentKind, text: &str, shape: Shape) -> Result<String> {
     let root = CstRootNode::parse(text, &ParseOptions::default())
         .map_err(|e| anyhow!("解析配置失败，已中止（不覆盖原文件）：{e}"))?;
     let Some(root_obj) = root.object_value() else {
@@ -424,7 +559,7 @@ fn apply_json_uninstall(text: &str, shape: Shape) -> Result<String> {
     for key in keys {
         if let Some(arr) = hooks.array_value(&key) {
             for e in arr.elements() {
-                if elem_node_has_marker(&e, shape) {
+                if elem_node_has_marker(&e, shape, is_stop_event(kind, &key)) {
                     e.remove();
                 }
             }
@@ -444,9 +579,19 @@ fn codex_install(exe: &str) -> Result<()> {
     // 1) 写 ~/.codex/hooks.json（Nested shape，与 Claude 同构）。
     let path = paths::codex_hooks_json();
     let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
-    let updated = apply_json_install(AgentKind::Codex, exe, &text, Shape::Nested)?;
+    let updated = apply_json_install_with_stop(
+        AgentKind::Codex,
+        exe,
+        &text,
+        Shape::Nested,
+        super::agent_stop::enabled(AgentKind::Codex),
+    )?;
     write_text(&path, &updated)?;
-    if let Err(error) = super::agent_permission::reconcile_codex_trust(&text, &updated, &[MARKER]) {
+    if let Err(error) = super::agent_permission::reconcile_codex_trust(
+        &text,
+        &updated,
+        &[MARKER, super::agent_stop::MARKER],
+    ) {
         let _ = write_text(&path, &text);
         return Err(error);
     }
@@ -456,7 +601,7 @@ fn codex_install(exe: &str) -> Result<()> {
 fn codex_uninstall() -> Result<()> {
     let path = paths::codex_hooks_json();
     if let Ok(text) = std::fs::read_to_string(&path) {
-        let updated = apply_json_uninstall(&text, Shape::Nested)?;
+        let updated = apply_json_uninstall(AgentKind::Codex, &text, Shape::Nested)?;
         write_text(&path, &updated)?;
         if let Err(error) = super::agent_permission::reconcile_codex_trust(&text, &updated, &[]) {
             let _ = write_text(&path, &text);
@@ -517,7 +662,9 @@ fn codex_trust_entries(hooks_json: &std::path::Path) -> Result<Vec<(String, Stri
                 let cmd = handler.get("command").and_then(|c| c.as_str());
                 let is_command = handler.get("type").and_then(|t| t.as_str()) == Some("command");
                 let Some(cmd) = cmd else { continue };
-                if !is_command || !cmd.contains(MARKER) {
+                if !is_command
+                    || (!cmd.contains(MARKER) && !cmd.contains(super::agent_stop::MARKER))
+                {
                     continue;
                 }
                 let key = format!("{abs_str}:{label}:{gi}:{hi}");
@@ -744,13 +891,18 @@ mod tests {
             let arr = v["hooks"][ev].as_array().unwrap();
             assert_eq!(arr.len(), 1, "event {ev} should have one entry");
             let cmd = arr[0]["hooks"][0]["command"].as_str().unwrap();
-            assert!(cmd.contains(MARKER) && cmd.contains("claude") && cmd.contains(lc));
+            if ev == "Stop" {
+                assert!(cmd.contains(super::super::agent_stop::MARKER));
+                assert!(cmd.contains("claude") && cmd.contains("track"));
+            } else {
+                assert!(cmd.contains(MARKER) && cmd.contains("claude") && cmd.contains(lc));
+            }
         }
     }
 
     #[test]
-    fn pre_tool_use_gets_long_timeout_others_dont() {
-        // 插话等待需要长超时（spec agent-interject D5）：仅 PreToolUse 显式 timeout=86400。
+    fn long_running_hooks_get_explicit_timeout() {
+        // Interjection waits and Stop confirmation need a long timeout; other hooks use defaults.
         // Claude / Codex（Nested）。
         for kind in [AgentKind::Claude, AgentKind::Codex] {
             let out = apply_json_install(kind, EXE, "{}", Shape::Nested).unwrap();
@@ -766,13 +918,18 @@ mod tests {
                     .is_none(),
                 "{kind:?} 其余事件不写 timeout"
             );
-            assert!(v["hooks"]["Stop"][0]["hooks"][0].get("timeout").is_none());
+            assert_eq!(
+                v["hooks"]["Stop"][0]["hooks"][0]["timeout"].as_u64(),
+                Some(86400)
+            );
         }
         // Cursor（Flat）。
         let out = apply_json_install(AgentKind::Cursor, EXE, "{}", Shape::Flat).unwrap();
         let v = to_value(&out);
         assert_eq!(v["hooks"]["preToolUse"][0]["timeout"].as_u64(), Some(86400));
         assert!(v["hooks"]["postToolUse"][0].get("timeout").is_none());
+        assert_eq!(v["hooks"]["stop"][0]["timeout"].as_u64(), Some(86400));
+        assert!(v["hooks"]["stop"][0]["loop_limit"].is_null());
         // Grok 首期排除：任何事件都不写 timeout。
         let out = apply_json_install(AgentKind::Grok, EXE, "{}", Shape::Nested).unwrap();
         let v = to_value(&out);
@@ -823,6 +980,37 @@ mod tests {
             let out = apply_json_install(kind, EXE, "{}", shape).unwrap();
             let (any, complete) = json_presence(kind, EXE, &to_value(&out), shape);
             assert!(any && complete, "{kind:?} 新装即完整");
+        }
+    }
+
+    #[test]
+    fn lifecycle_stop_confirmation_variant_is_complete_and_path_sensitive() {
+        for (kind, shape) in [
+            (AgentKind::Claude, Shape::Nested),
+            (AgentKind::Codex, Shape::Nested),
+            (AgentKind::Cursor, Shape::Flat),
+        ] {
+            let output = apply_json_install_with_stop(kind, EXE, "{}", shape, true).unwrap();
+            let value = to_value(&output);
+            let (any, complete) = json_presence_with_stop(kind, EXE, &value, shape, true);
+            assert!(any && complete);
+            let (_, without_confirm) = json_presence(kind, EXE, &value, shape);
+            assert!(!without_confirm);
+            let (_, old_binary) =
+                json_presence_with_stop(kind, "/old/AskHuman", &value, shape, true);
+            assert!(!old_binary);
+            let event = if kind == AgentKind::Cursor {
+                "stop"
+            } else {
+                "Stop"
+            };
+            let handler = if shape == Shape::Flat {
+                &value["hooks"][event][0]
+            } else {
+                &value["hooks"][event][0]["hooks"][0]
+            };
+            let command = handler["command"].as_str().unwrap();
+            assert!(command.ends_with(&format!("{} track confirm", kind.as_str())));
         }
     }
 
@@ -883,7 +1071,7 @@ mod tests {
     #[test]
     fn uninstall_removes_only_ours() {
         let input = "{ \"hooks\": { \"PreToolUse\": [ { \"matcher\": \"Bash\", \"hooks\": [ { \"type\": \"command\", \"command\": \"x/askhuman-timeout.sh\" } ] } ], \"SessionStart\": [ { \"hooks\": [ { \"type\": \"command\", \"command\": \"a __agent-hook claude session-start\" } ] } ] } }";
-        let out = apply_json_uninstall(input, Shape::Nested).unwrap();
+        let out = apply_json_uninstall(AgentKind::Claude, input, Shape::Nested).unwrap();
         let v = to_value(&out);
         assert!(v["hooks"].get("SessionStart").is_none(), "空数组应删键");
         assert_eq!(
@@ -897,7 +1085,7 @@ mod tests {
         assert!(
             apply_json_install(AgentKind::Claude, EXE, "{ \"hooks\": ", Shape::Nested).is_err()
         );
-        assert!(apply_json_uninstall("{ \"hooks\": ", Shape::Nested).is_err());
+        assert!(apply_json_uninstall(AgentKind::Claude, "{ \"hooks\": ", Shape::Nested).is_err());
     }
 
     #[test]
@@ -930,6 +1118,33 @@ mod tests {
         let want = format!("sha256:{}", hex_encode(&hasher.finalize()));
         assert_eq!(h, want);
         assert_ne!(h, codex_trusted_hash("pre_tool_use", cmd, 600));
+    }
+
+    #[test]
+    fn codex_trust_entries_include_shared_stop_handler() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("hooks.json");
+        let command = "\"/opt/AskHuman\" __stop-hook codex track confirm";
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "hooks": {
+                    "Stop": [{
+                        "hooks": [{
+                            "type": "command",
+                            "command": command,
+                            "timeout": 86400
+                        }]
+                    }]
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let entries = codex_trust_entries(&path).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].0.ends_with(":stop:0:0"));
+        assert_eq!(entries[0].1, codex_trusted_hash("stop", command, 86400));
     }
 
     #[test]

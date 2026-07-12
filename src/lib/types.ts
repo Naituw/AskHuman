@@ -431,8 +431,17 @@ export interface AgentModeStatus {
   timeoutHookNeedsUpdate: boolean;
   permission: PermissionStatus;
   permissionNeedsUpdate: boolean;
+  stop: StopStatus;
   mcpConfigPath: string;
   mcpConfigInstalled: boolean;
+}
+
+export interface StopStatus {
+  supported: boolean;
+  enabled: boolean;
+  installed: boolean;
+  outdated: boolean;
+  otherHandlersDetected: boolean;
 }
 
 export interface PermissionStatus {

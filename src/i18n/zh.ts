@@ -213,6 +213,13 @@ export default {
       uninstall: "移除",
       windowsUnsupported: "Windows 暂不支持该 Hook",
       permissionTitle: "权限审批",
+      stopTitle: "结束前确认",
+      stopHint:
+        "该 Agent 自然完成一轮时，通过当前活跃弹窗或 IM 询问继续还是结束；错误和用户主动取消不会被拦截。",
+      stopUnsupported:
+        "该 Agent 无法通过可阻塞的 Stop Hook 继续。Grok 本期不支持；Windows 仍在等待 Daemon 支持。",
+      stopCoexist:
+        "检测到其它可见的 Stop handler；它们会并发执行，并可能独立决定继续或结束 Agent。",
       permissionUnsupported: "该 Agent 不支持原生 PermissionRequest 审批闭环。",
       permissionWindowsUnsupported: "权限审批仍在等待 Windows Daemon 支持。",
       permissionClaudeHint:

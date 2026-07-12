@@ -111,6 +111,50 @@ pub fn resolve_activity(kind: AgentKind, session_id: &str) -> Option<Activity> {
     Some(activity)
 }
 
+/// Read the last assistant text from a caller-validated transcript path without the `/status`
+/// 500-character display limit. Reads remain bounded by `MAX_TAIL_BYTES`.
+pub fn resolve_last_assistant_text_from_path(
+    kind: AgentKind,
+    path: &Path,
+    max_chars: usize,
+) -> Option<String> {
+    resolve_last_assistant_text_from_path_raw(kind, path)
+        .map(|text| truncate_preserving_layout(&text, max_chars))
+}
+
+/// Read the raw last assistant text from a caller-validated transcript path. The file read is
+/// bounded even though the returned event text is not display-truncated.
+pub fn resolve_last_assistant_text_from_path_raw(kind: AgentKind, path: &Path) -> Option<String> {
+    let lines = read_tail(path, MAX_TAIL_BYTES);
+    let mut last = None;
+    for line in lines {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        let mut events = Vec::new();
+        push_events(kind, &value, &mut events);
+        let mut text_parts = Vec::new();
+        for event in events {
+            if let Ev::Text(text) = event {
+                text_parts.push(text);
+            }
+        }
+        if !text_parts.is_empty() {
+            last = Some(text_parts.join("\n"));
+        }
+    }
+    last
+}
+
+fn truncate_preserving_layout(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        text.to_string()
+    } else {
+        let head: String = text.chars().take(max_chars).collect();
+        format!("{}\n\n… [truncated]", head.trim_end())
+    }
+}
+
 /// 取文件 mtime 的 Unix 秒（best-effort）。
 fn file_mtime_secs(path: &Path) -> Option<u64> {
     fs::metadata(path)
@@ -635,7 +679,7 @@ fn value_text(c: Option<&Value>) -> Option<String> {
             if parts.is_empty() {
                 None
             } else {
-                Some(parts.join(" "))
+                Some(parts.join("\n"))
             }
         }
         _ => None,
@@ -958,5 +1002,34 @@ mod tests {
         assert!(!tail.is_empty());
         assert!(tail.iter().all(|l| !l.starts_with("line-0-")));
         assert!(tail.iter().any(|l| l.starts_with("line-99-")));
+    }
+
+    #[test]
+    fn last_assistant_text_from_cursor_transcript_is_bounded_and_best_effort() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("conversation.jsonl");
+        let old = serde_json::json!({
+            "role": "assistant",
+            "message": {"content": [{"type":"text", "text":"old"}]}
+        });
+        let latest = serde_json::json!({
+            "role": "assistant",
+            "message": {"content": [{"type":"text", "text":"最后一段\n第二行"}]}
+        });
+        std::fs::write(&path, format!("{old}\nmalformed\n{latest}\n")).unwrap();
+        assert_eq!(
+            resolve_last_assistant_text_from_path(AgentKind::Cursor, &path, 2_000).as_deref(),
+            Some("最后一段\n第二行")
+        );
+
+        let long = "你".repeat(2_001);
+        let record = serde_json::json!({
+            "role": "assistant",
+            "message": {"content": [{"type":"text", "text":long}]}
+        });
+        std::fs::write(&path, format!("{record}\n")).unwrap();
+        let text = resolve_last_assistant_text_from_path(AgentKind::Cursor, &path, 2_000).unwrap();
+        assert_eq!(text.matches('你').count(), 2_000);
+        assert!(text.ends_with("… [truncated]"));
     }
 }

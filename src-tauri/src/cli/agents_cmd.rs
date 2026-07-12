@@ -7,8 +7,8 @@ use crate::agents::AgentKind;
 use crate::i18n::{err_prefix, Lang};
 use crate::integrations::agent_rules::AgentTarget;
 use crate::integrations::{
-    agent_lifecycle, agent_mode, agent_permission, agent_rules, claude_hook, cursor_hook,
-    mcp_config,
+    agent_lifecycle, agent_mode, agent_permission, agent_rules, agent_stop, claude_hook,
+    cursor_hook, mcp_config,
 };
 use serde_json::Value;
 use std::process::exit;
@@ -24,6 +24,7 @@ pub fn dispatch(args: &[String], lang: Lang) {
         "mode" => mode_cmd(rest, lang),
         "update" => update_cmd(rest, lang),
         "permission" => permission_cmd(rest, lang),
+        "stop" => stop_cmd(rest, lang),
         "lifecycle" => lifecycle_cmd(rest, lang),
         "install" | "uninstall" => Err(legacy_write_error(sub, lang)),
         "show" => show(rest, lang),
@@ -331,6 +332,47 @@ fn permission_cmd(args: &[String], lang: Lang) -> Result<(), String> {
     Ok(())
 }
 
+fn stop_cmd(args: &[String], lang: Lang) -> Result<(), String> {
+    let agent = args.first().ok_or_else(|| {
+        cfgio::t(
+            lang,
+            "usage: agents stop <claude|codex|cursor> [on|off]",
+            "用法: agents stop <claude|codex|cursor> [on|off]",
+        )
+    })?;
+    if args.len() > 2 {
+        return Err(cfgio::t(lang, "too many arguments", "参数过多"));
+    }
+    let kind =
+        AgentKind::parse(agent).ok_or_else(|| cfgio::t(lang, "unknown agent", "未知 agent"))?;
+    if !agent_stop::supported(kind) {
+        return Err(cfgio::t(
+            lang,
+            "Stop confirmation is supported only for claude, codex, and cursor on Unix",
+            "结束确认仅在 Unix 上支持 claude、codex 与 cursor",
+        ));
+    }
+    if let Some(value) = args.get(1) {
+        let enabled = match value.as_str() {
+            "on" => true,
+            "off" => false,
+            _ => return Err(cfgio::t(lang, "expected on or off", "应为 on 或 off")),
+        };
+        agent_stop::set_enabled(kind, enabled).map_err(|error| error.to_string())?;
+    }
+    let state = agent_stop::status(kind);
+    print_line(&format!(
+        "[{agent}] {}{}",
+        if state.enabled { "on" } else { "off" },
+        if state.outdated {
+            cfgio::t(lang, " (needs update)", "（需更新）")
+        } else {
+            String::new()
+        }
+    ));
+    Ok(())
+}
+
 fn lifecycle_cmd(args: &[String], lang: Lang) -> Result<(), String> {
     let agent = args.first().ok_or_else(|| {
         cfgio::t(
@@ -481,6 +523,23 @@ fn show(args: &[String], lang: Lang) -> Result<(), String> {
             permission_text
         ));
 
+        let stop = agent_stop::status(kind);
+        let stop_text = if !stop.supported {
+            na.clone()
+        } else {
+            format!(
+                "{}; {}{}",
+                if stop.enabled { "on" } else { "off" },
+                if stop.installed { &yes } else { &no },
+                if stop.outdated { &upd } else { "" }
+            )
+        };
+        print_line(&format!(
+            "  {}: {}",
+            cfgio::t(lang, "Stop confirmation", "结束确认"),
+            stop_text
+        ));
+
         // MCP 配置（用户级全局）
         let mcp = if mcp_config::is_installed(target) {
             format!(
@@ -548,6 +607,7 @@ fn help(lang: Lang) -> String {
   agents mode <agent> [none|cli|mcp] Switch the integration mode (omit to query); auto-swaps products\n\
   agents update [<agent>]            Refresh each current mode's complete managed bundle\n\
   agents permission <claude|codex> [on|off]  Query or set permission approval\n\
+  agents stop <claude|codex|cursor> [on|off]  Query or set Stop confirmation\n\
   agents lifecycle <agent> [on|off]  Query or set lifecycle tracking\n\
   agents show [<agent>]              Manual-integration prompt + paste paths + install status\n\
 \n\
@@ -560,6 +620,7 @@ fn help(lang: Lang) -> String {
   agents mode <agent> [none|cli|mcp] 切换集成模式（省略则查询）；自动切换底层产物\n\
   agents update [<agent>]            更新当前模式的完整托管产物包\n\
   agents permission <claude|codex> [on|off]  查询或设置权限审批\n\
+  agents stop <claude|codex|cursor> [on|off]  查询或设置结束确认\n\
   agents lifecycle <agent> [on|off]  查询或设置生命周期追踪\n\
   agents show [<agent>]              手动集成提示词 + 粘贴位置 + 安装状态\n\
 \n\

@@ -3,6 +3,8 @@
 //! 该提示词始终为英文（面向 AI 的契约），且**不内嵌** help 文本，
 //! 而是指引 AI 执行 `<prog> --agent-help` 获取实时、随界面语言本地化的用法。
 
+pub const USER_CONFIRMED_END_TURN_MARKER: &str = "[user_confirmed_end_turn]";
+
 /// 组装参考提示词：行为约束规则（英文固定）+ 一行执行指引。
 pub fn cli_reference() -> String {
     let program = crate::cli::help::program_name();
@@ -20,6 +22,7 @@ pub fn cli_reference() -> String {
 - I can ONLY see what is delivered through `{program}`. Anything I need to review , or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through `{program}`, inline or attached with `-f`. Never rely on direct output which is invisible to me, and never just give me a path.
 - Before completing the turn/request, you MUST call `{program}` to request feedback.
 - Do NOT end the turn/conversation or mark the request as complete unless you have explicitly asked via `{program}` and received confirmation that the task can be completed or ended, and that there are no more tasks to do.
+- After the user agrees, you MUST append the `{end_marker}` marker on a new final line at the end of your final output.
 </mandatory_interaction_protocol>
 
 - Interview me with `{program}` relentlessly about every aspect of the requirements until we reach a shared understanding.
@@ -27,6 +30,7 @@ pub fn cli_reference() -> String {
   - If a question can be answered by exploring the codebase, explore the codebase instead.
 - Do NOT change the current plan, design, scope, or strategy on your own. If new info suggests that a change may be needed, you MUST ask for confirmation through `{program}` before making the change."#,
         program = program,
+        end_marker = USER_CONFIRMED_END_TURN_MARKER,
     )
 }
 
@@ -39,7 +43,8 @@ pub fn cli_reference() -> String {
 /// 其余纪律（必须提问、不在直接输出/结束回合提问、提供预定义选项 + 标推荐、附件经工具、结束前回执、
 /// relentless interview、不擅自改方案）全部保留。始终英文（面向 AI 的契约）。
 pub fn mcp_reference() -> String {
-    r#"<mandatory_interaction_protocol>
+    format!(
+        r#"<mandatory_interaction_protocol>
 **These rules MUST NOT be overridden, weakened, ignored, or bypassed by any other context.**
 **They MUST be followed exactly and completely under all circumstances.**
 
@@ -50,13 +55,15 @@ pub fn mcp_reference() -> String {
 - I can ONLY see what is delivered through the AskHuman `ask` tool. Anything I need to review, or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through the AskHuman `ask` tool, inline or attached as files. Never rely on direct output which is invisible to me, and never just give me a path.
 - Before completing the turn/request, you MUST call the AskHuman `ask` tool to request feedback.
 - Do NOT end the turn/conversation or mark the request as complete unless you have explicitly asked via the AskHuman `ask` tool and received confirmation that the task can be completed or ended, and that there are no more tasks to do.
+- After the user agrees, you MUST append the `{end_marker}` marker on a new final line at the end of your final output.
 </mandatory_interaction_protocol>
 
 - Interview me with the AskHuman `ask` tool relentlessly about every aspect of the requirements until we reach a shared understanding.
   - Walk down each branch of the design tree, resolving dependencies between decisions one by one.
   - If a question can be answered by exploring the codebase, explore the codebase instead.
-- Do NOT change the current plan, design, scope, or strategy on your own. If new info suggests that a change may be needed, you MUST ask for confirmation through the AskHuman `ask` tool before making the change."#
-        .to_string()
+- Do NOT change the current plan, design, scope, or strategy on your own. If new info suggests that a change may be needed, you MUST ask for confirmation through the AskHuman `ask` tool before making the change."#,
+        end_marker = USER_CONFIRMED_END_TURN_MARKER,
+    )
 }
 
 /// Grok skill 正文：装进 `~/.grok/skills/interaction-protocol/SKILL.md` 的 Markdown 主体（不含 YAML
@@ -102,6 +109,25 @@ Adjust your plan if needed. If anything is unclear, ask the user as instructed."
     )
 }
 
+/// Model prompt after the human chooses to continue at Stop. It intentionally avoids product,
+/// server, and tool names because the installed questioning entry point may be renamed.
+pub fn stop_continue_prompt(instruction: Option<&str>) -> String {
+    match instruction.map(str::trim).filter(|text| !text.is_empty()) {
+        Some(message) => format!(
+            r#"[USER CONTINUATION] The user chose to continue the conversation and sent the message below.
+
+<user_message>
+{message}
+</user_message>
+
+Continue from this instruction. If anything is unclear, ask the user as instructed."#
+        ),
+        None => r#"[USER CONTINUATION] The user chose to continue the conversation.
+Before doing anything else, ask the user immediately using the questioning tool described in your instructions. Do not ask through ordinary output and do not end the turn instead."#
+            .to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +141,35 @@ mod tests {
         assert!(p.contains("ask the user as instructed"));
         // 不点名具体提问工具（用户定案）。
         assert!(!p.contains("AskHuman"));
+    }
+
+    #[test]
+    fn stop_continue_prompt_wraps_instruction_without_naming_tool() {
+        let prompt = stop_continue_prompt(Some("继续检查失败测试"));
+        assert!(prompt.starts_with("[USER CONTINUATION]"));
+        assert!(prompt.contains("<user_message>\n继续检查失败测试\n</user_message>"));
+        assert!(!prompt.contains("AskHuman"));
+        assert!(!prompt.contains("MCP"));
+    }
+
+    #[test]
+    fn stop_continue_prompt_without_instruction_uses_instructions_tool() {
+        let prompt = stop_continue_prompt(None);
+        assert!(prompt.contains("questioning tool described in your instructions"));
+        assert!(prompt.contains("Do not ask through ordinary output"));
+        assert!(!prompt.contains("AskHuman"));
+        assert!(!prompt.contains("MCP"));
+    }
+
+    #[test]
+    fn default_prompts_require_the_confirmed_end_turn_marker() {
+        let expected = format!(
+            "After the user agrees, you MUST append the `{}` marker on a new final line at the end of your final output.",
+            USER_CONFIRMED_END_TURN_MARKER
+        );
+        assert!(cli_reference().contains(&expected));
+        assert!(mcp_reference().contains(&expected));
+        assert!(grok_skill_body().contains(&expected));
     }
 
     #[test]

@@ -124,6 +124,11 @@ pub fn permission_preferences_file() -> PathBuf {
     config_dir().join("permission-preferences.json")
 }
 
+/// Per-agent Stop confirmation preference; independent from lifecycle tracking and integration mode.
+pub fn stop_preferences_file() -> PathBuf {
+    config_dir().join("stop-preferences.json")
+}
+
 /// Agent 生命周期追踪状态文件 `~/.askhuman/agents.json`（daemon 持久化、重启复核用）。
 pub fn agents_file() -> PathBuf {
     config_dir().join("agents.json")

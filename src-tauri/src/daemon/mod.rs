@@ -564,6 +564,14 @@ mod unix_impl {
                     names.join(", ")
                 ));
             }
+            let migrated = crate::integrations::agent_stop::migrate_outdated();
+            if !migrated.is_empty() {
+                let names: Vec<&str> = migrated.iter().map(|kind| kind.as_str()).collect();
+                log(&format!(
+                    "migrated outdated Stop confirmation hooks: {}",
+                    names.join(", ")
+                ));
+            }
         }
 
         // 保活模式：让 daemon 登录项（下次登录自启）与配置一致（幂等，纯文件；exe 路径变化会刷新）。

@@ -220,6 +220,13 @@ export default {
       uninstall: "Remove",
       windowsUnsupported: "This hook is not supported on Windows",
       permissionTitle: "Permission approval",
+      stopTitle: "Confirm before ending",
+      stopHint:
+        "When this Agent naturally finishes a turn, ask through the active popup or IM whether to continue or end. Errors and manual cancellations are not intercepted.",
+      stopUnsupported:
+        "This Agent cannot continue from a blocking Stop hook. Grok is not supported in this release; Windows is waiting for daemon support.",
+      stopCoexist:
+        "Other visible Stop handlers were found. They run concurrently and may independently continue or stop the Agent.",
       permissionUnsupported:
         "This agent does not support a native PermissionRequest approval flow.",
       permissionWindowsUnsupported:

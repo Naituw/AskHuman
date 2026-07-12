@@ -324,6 +324,21 @@ pub fn run_ask(task: crate::ipc::TaskRequest) -> ! {
     std::process::exit(rt.block_on(run_ask_async(task)));
 }
 
+/// Run an internal Ask request and capture its rendered JSON instead of printing/exiting.
+/// Used by the Stop hook; timeout/disconnect/non-success all fail open as `None`.
+pub fn run_ask_capture(task: crate::ipc::TaskRequest, timeout: Duration) -> Option<String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    runtime.block_on(async move {
+        let final_result = tokio::time::timeout(timeout, run_ask_final_async(task, false))
+            .await
+            .ok()?;
+        (final_result.exit_code == 0).then_some(final_result.stdout)
+    })
+}
+
 /// Submit a structured permission confirmation. Every transport/protocol/fallback failure returns
 /// `None` so the hook writes no decision and the agent keeps its native approval flow.
 pub fn run_confirm(task: crate::ipc::ConfirmTask) -> Option<crate::models::ConfirmResult> {
@@ -363,7 +378,30 @@ where
     }
 }
 
+struct AskFinal {
+    stdout: String,
+    exit_code: i32,
+}
+
+fn client_error(verbose: bool, message: &str) -> AskFinal {
+    if verbose {
+        eprintln!("{message}");
+    }
+    AskFinal {
+        stdout: String::new(),
+        exit_code: 3,
+    }
+}
+
 async fn run_ask_async(task: crate::ipc::TaskRequest) -> i32 {
+    let result = run_ask_final_async(task, true).await;
+    if !result.stdout.is_empty() {
+        println!("{}", result.stdout);
+    }
+    result.exit_code
+}
+
+async fn run_ask_final_async(task: crate::ipc::TaskRequest, verbose: bool) -> AskFinal {
     use crate::ipc::ServerMsg;
 
     // 外层循环：撞上 Daemon 排空（draining）时无限等待其下线，然后重置重试预算重来。
@@ -378,8 +416,7 @@ async fn run_ask_async(task: crate::ipc::TaskRequest) -> i32 {
                     continue 'outer;
                 }
                 Err(_) => {
-                    eprintln!("askhuman: failed to start daemon");
-                    return 3;
+                    return client_error(verbose, "askhuman: failed to start daemon");
                 }
             }
             let Ok((mut reader, mut writer)) = connect_split().await else {
@@ -423,23 +460,22 @@ async fn run_ask_async(task: crate::ipc::TaskRequest) -> i32 {
                         wait_for_drain().await;
                         continue 'outer;
                     }
-                    Ok(Some(ServerMsg::Warn { text })) => eprintln!("{}", text),
-                    Ok(Some(ServerMsg::Final { stdout, exit_code })) => {
-                        if !stdout.is_empty() {
-                            println!("{}", stdout);
+                    Ok(Some(ServerMsg::Warn { text })) => {
+                        if verbose {
+                            eprintln!("{}", text);
                         }
-                        return exit_code;
+                    }
+                    Ok(Some(ServerMsg::Final { stdout, exit_code })) => {
+                        return AskFinal { stdout, exit_code };
                     }
                     Ok(Some(_)) => {}
                     Ok(None) | Err(_) => {
-                        eprintln!("askhuman: daemon connection lost");
-                        return 3;
+                        return client_error(verbose, "askhuman: daemon connection lost");
                     }
                 }
             }
         }
-        eprintln!("askhuman: could not reach daemon");
-        return 3;
+        return client_error(verbose, "askhuman: could not reach daemon");
     }
 }
 

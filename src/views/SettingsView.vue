@@ -9,6 +9,7 @@ import {
   agentModeUpdate,
   agentModeUpdateArtifact,
   agentPermissionSet,
+  agentStopSet,
   agentRuleReveal,
   agentRuleOpen,
   mcpConfigReveal,
@@ -177,6 +178,13 @@ const emptyMode = (): AgentModeStatus => ({
     otherHandlersDetected: false,
   },
   permissionNeedsUpdate: false,
+  stop: {
+    supported: false,
+    enabled: false,
+    installed: false,
+    outdated: false,
+    otherHandlersDetected: false,
+  },
   mcpConfigPath: "",
   mcpConfigInstalled: false,
 });
@@ -232,6 +240,22 @@ async function togglePermission(agent: AgentId, enabled: boolean) {
   modeMessage.value[agent] = null;
   try {
     await agentPermissionSet(agent, enabled);
+    modeError.value[agent] = false;
+  } catch (e) {
+    modeMessage.value[agent] = String(e);
+    modeError.value[agent] = true;
+  } finally {
+    modeBusy.value[agent] = false;
+    await refreshMode(agent);
+  }
+}
+
+async function toggleStop(agent: AgentId, enabled: boolean) {
+  if (modeBusy.value[agent]) return;
+  modeBusy.value[agent] = true;
+  modeMessage.value[agent] = null;
+  try {
+    await agentStopSet(agent, enabled);
     modeError.value[agent] = false;
   } catch (e) {
     modeMessage.value[agent] = String(e);
@@ -2174,6 +2198,60 @@ onBeforeUnmount(() => unlistenProgress?.());
             </template>
 
           </template>
+
+          <hr class="divider" />
+          <template v-if="modes[a.id].stop.supported">
+            <div class="row agent-row">
+              <span class="label">{{ t("settings.integration.stopTitle") }}</span>
+              <span class="badge">
+                <span
+                  class="dot"
+                  :class="modes[a.id].stop.installed ? 'on' : 'off'"
+                ></span>
+                {{
+                  modes[a.id].stop.installed
+                    ? t("settings.integration.configured")
+                    : t("settings.integration.notConfigured")
+                }}
+              </span>
+              <span class="spacer"></span>
+              <button
+                v-if="modes[a.id].stop.outdated"
+                class="btn btn-update"
+                type="button"
+                :disabled="modeBusy[a.id]"
+                @click="toggleStop(a.id, true)"
+              >
+                <span class="dot-update"></span>{{ t("settings.integration.update") }}
+              </button>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  :checked="modes[a.id].stop.enabled"
+                  :disabled="modeBusy[a.id]"
+                  @change="
+                    toggleStop(
+                      a.id,
+                      ($event.target as HTMLInputElement).checked
+                    )
+                  "
+                />
+                <span class="track"></span>
+              </label>
+            </div>
+            <p class="card-desc agent-hint">
+              {{ t("settings.integration.stopHint") }}
+            </p>
+            <p
+              v-if="modes[a.id].stop.otherHandlersDetected"
+              class="result err"
+            >
+              {{ t("settings.integration.stopCoexist") }}
+            </p>
+          </template>
+          <p v-else class="card-desc agent-hint">
+            {{ t("settings.integration.stopUnsupported") }}
+          </p>
 
           <hr class="divider" />
           <template v-if="modes[a.id].permission.supported">

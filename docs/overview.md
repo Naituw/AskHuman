@@ -505,6 +505,30 @@ AskHuman/
   “已配置”不等于已生效；只在可读配置正向发现 blocked policy / 同事件其它 handler 时提示，Claude 说明
   allow/deny 可能互相覆盖并建议会话内 `/hooks` 核实，Codex 说明全部等待且 deny 胜出。
 
+## Agent Stop 结束确认
+
+> 规格：`docs/specs/agent-stop-confirmation.md`。目标是在 Agent 自然完成一轮时，经现有 popup / IM
+> 普通 Ask 单选链路询问“继续对话 / 结束对话”，给只能从 IM 交互的用户保留最后接管点。
+
+- **能力边界**：Claude Code / Codex / Cursor 的自然 Stop 均可原生 continuation；Grok Stop 被动、stdout
+  无效，首期不支持。错误/用户取消三家均无法靠原生 Stop Hook 续跑，故不发卡，保留既有生命周期更新/兜底。
+- **交互决策**：三家独立开关、默认关；每次继续后的下一次 Stop 再询问；24h 无答或基础设施失败 fail-open；
+  投放沿用活跃槽 ∪ watch 渠道；最后助手回复 2,000 字符内完整显示，超出截断、不附附件。Claude/Codex
+  直接读 Stop stdin 的 `last_assistant_message`，Cursor best-effort 解析 `transcript_path`。
+- **重复确认去重**：默认 CLI / MCP 提示词始终要求 Agent 在用户已通过提问工具明确同意结束后，把
+  `[user_confirmed_end_turn]` 作为最终输出的独立尾行。自然 Stop 严格命中该标记时直接放行并完成
+  `turn-end`，不再发第二张卡；未命中则保留 Stop 确认兜底。标记规则与开关无关，不造成 Rule 联动更新，
+  也不替代“所有用户可见报告/总结/文件必须经提问工具发送”的既有规则。
+- **实现约束**：生命周期追踪与结束确认在产品上正交，但 AskHuman 自己对每家只能安装一个共享 Stop handler，
+  避免并发 Hook 让 turn-end 提前置空闲；卡片直接复用普通 Ask 的 `single=true/select_only=false` 流程，
+  加薄 capture 入口和不写历史标志，Permission Confirm 完全不改。用户明确要求覆盖安装器四状态矩阵、Hook
+  协议、Ask 五端结果映射和生命周期时序的完整单元测试。
+- **落地代码**：`agents/stop.rs` 负责 Hook stdin 校验、普通 Ask 结果映射和三家原生 continuation JSON；
+  `integrations/agent_stop.rs` 持久化 `~/.askhuman/stop-preferences.json`、协调独立开关与共享 Stop handler；
+  `agent_lifecycle.rs` 的 Stop 事件统一代理到该 handler。设置页与 `agents stop <agent> [on|off]` 提供三家
+  独立开关（默认关），daemon 启动时幂等迁移旧 handler。内部 Ask 通过 `TaskRequest.recordHistory=false`
+  跳过普通回复历史，客户端 24h deadline 到期会断开请求并 fail-open。
+
 ## 用户级 hooks + 内置弹窗提示音
 
 > 代码：`src-tauri/src/hooks.rs`（通用 hooks）、`src-tauri/src/sound.rs`（提示音）。

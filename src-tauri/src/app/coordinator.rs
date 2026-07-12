@@ -56,6 +56,8 @@ pub struct Coordinator {
     finalizing: AtomicBool,
     /// 结果是否已输出（保证只输出 / 退出一次）。
     emitted: AtomicBool,
+    /// Whether this request should be recorded in ordinary reply history.
+    record_history_enabled: bool,
 }
 
 struct Inner {
@@ -83,6 +85,7 @@ impl Coordinator {
             project,
             source,
             agent_kind,
+            true,
         )
     }
 
@@ -103,6 +106,7 @@ impl Coordinator {
             project,
             source,
             None,
+            true,
         )
     }
 
@@ -115,6 +119,7 @@ impl Coordinator {
         project: String,
         source: String,
         agent_kind: Option<String>,
+        record_history_enabled: bool,
     ) -> Arc<Self> {
         Self::build(
             Exiter::Ipc(tx),
@@ -124,6 +129,7 @@ impl Coordinator {
             project,
             source,
             agent_kind,
+            record_history_enabled,
         )
     }
 
@@ -135,6 +141,7 @@ impl Coordinator {
         project: String,
         source: String,
         agent_kind: Option<String>,
+        record_history_enabled: bool,
     ) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(Inner {
@@ -153,6 +160,7 @@ impl Coordinator {
             winner: Mutex::new(None),
             finalizing: AtomicBool::new(false),
             emitted: AtomicBool::new(false),
+            record_history_enabled,
         })
     }
 
@@ -350,6 +358,9 @@ impl Coordinator {
         result: &ChannelResult,
         image_paths: &[Vec<String>],
     ) {
+        if !self.record_history_enabled {
+            return;
+        }
         // 仅需 history_limit（general）；用 load_without_secrets() 避免每条回答落历史都读钥匙串。
         let limit = crate::config::AppConfig::load_without_secrets()
             .general
