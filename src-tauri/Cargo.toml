@@ -39,10 +39,10 @@ sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 # 会话型渠道公共接口（Telegram/钉钉等共享多问题驱动逻辑）需要 async trait。
 async-trait = "0.1"
-dirs = "5"
+dirs = "6"
 base64 = "0.22"
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "process"] }
 # Daemon 监听 ~/.askhuman/config.json 变更以实时重载配置（A12）。
