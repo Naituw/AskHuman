@@ -332,6 +332,13 @@ fn scan_cursor(out: &mut Vec<(PathBuf, AgentKind, u64)>) {
 
 /// Resolve Cursor's hyphen-joined project key against the real filesystem. Exploration stops as
 /// soon as more than one candidate exists; ambiguous keys are intentionally ignored.
+///
+/// Probes candidate prefixes with a direct stat instead of enumerating directories: the only
+/// entry names that can match `encoded` are its hyphen-boundary prefixes, so the match set is
+/// identical to a `read_dir` scan. Crucially, `readdir` on macOS TCC-protected folders
+/// (~/Desktop, ~/Documents, ~/Downloads, iCloud Drive) triggers a consent prompt per folder,
+/// while stat of a known path does not — keys like `Users-me-Downloads-proj` used to make the
+/// settings window (and the daemon) pop several permission dialogs.
 fn recover_cursor_path(encoded: &str, base: &Path, depth: usize, limit: usize) -> Vec<PathBuf> {
     if encoded.is_empty() {
         return base
@@ -343,21 +350,17 @@ fn recover_cursor_path(encoded: &str, base: &Path, depth: usize, limit: usize) -
     if depth > 64 || limit == 0 {
         return Vec::new();
     }
-    let Ok(entries) = fs::read_dir(base) else {
-        return Vec::new();
-    };
+    // Every hyphen is a potential path separator; the whole key is the final candidate.
+    let candidates = encoded
+        .char_indices()
+        .filter_map(|(i, c)| (c == '-').then(|| (&encoded[..i], &encoded[i + 1..])))
+        .chain(std::iter::once((encoded, "")));
     let mut out = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if encoded != name && !encoded.starts_with(&(name.clone() + "-")) {
+    for (name, remainder) in candidates {
+        if name.is_empty() {
             continue;
         }
-        let remainder = if encoded == name {
-            ""
-        } else {
-            &encoded[name.len() + 1..]
-        };
-        let path = entry.path();
+        let path = base.join(name);
         if !path.is_dir() {
             continue;
         }
@@ -468,5 +471,23 @@ mod tests {
         );
         let matches = recover_cursor_path(&encoded, Path::new("/"), 0, 2);
         assert_eq!(matches, vec![dir.path().join("one").join("two-three")]);
+    }
+
+    #[test]
+    fn cursor_recovery_reports_ambiguous_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        // Both interpretations of "one-two" exist: the nested one/two and the hyphenated one-two.
+        fs::create_dir_all(dir.path().join("one").join("two")).unwrap();
+        fs::create_dir_all(dir.path().join("one-two")).unwrap();
+        let encoded = format!(
+            "{}-one-two",
+            dir.path()
+                .strip_prefix("/")
+                .unwrap()
+                .to_string_lossy()
+                .replace('/', "-")
+        );
+        let matches = recover_cursor_path(&encoded, Path::new("/"), 0, 2);
+        assert_eq!(matches.len(), 2, "ambiguity must surface both candidates");
     }
 }

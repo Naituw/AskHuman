@@ -172,6 +172,9 @@ function openWorkspacePanel() {
   workspaceMenuPath.value = null;
   taskSettingsMessage.value = "";
   workspacePanelOpen.value = true;
+  // 冷扫描只在真正管理工作目录时做（onMounted 不扫）：扫描要读四家 Agent 的会话元数据，
+  // 打开设置页就扫既浪费也曾连环触发 macOS 文件权限弹窗。
+  void refreshAgentTaskSettings(true);
 }
 
 function closeWorkspacePanel() {
@@ -1172,7 +1175,8 @@ onMounted(async () => {
   await Promise.all(AGENTS.map((a) => refreshMode(a.id)));
   // 生命周期追踪已迁至「高级」Tab（仅 macOS/Linux，不再受「实验性功能」开关门控）。
   if (!isWindows) await refreshLifecycle();
-  if (isMac) await refreshAgentTaskSettings(true);
+  // 只读已持久化的工作目录索引；冷扫描延迟到打开「管理工作目录」面板时。
+  if (isMac) await refreshAgentTaskSettings(false);
   if (isMac) {
     try {
       glassSupported.value = await isGlassSupported();
