@@ -2,10 +2,12 @@
 
 按具体任务 / 需求记录待办与当前进展。任务 / 需求完成后删除其 section（历史留在 git）。
 
-## 【进行中】落实项目 review 的 P0+P1 优化（分支 chore/project-review-2026-07）
+## 待办：项目 review 的 P2 项（择机）
 
-报告见 `docs/investigations/project-review-2026-07.md`。用户定案：P0+P1 全做，
-rmcp 直接迁 2.x、前端 dev 链 major 实际升级。P2 留待择机。
+报告见 `docs/investigations/project-review-2026-07.md`。P0+P1 已在分支
+`chore/project-review-2026-07` 完成；P2 剩余：daemon.log 轮转、SettingsView/PopupView
+组件拆分、types.ts 改为从 Rust 派生（ts-rs/specta）、secrets.rs 注释修正、
+gitutil 测试噪音、TS 7 升级（等 vue-tsc 支持）。
 
 ## 待办：Cursor 全局 Rules 迁移为用户级 always-on Skill
 
