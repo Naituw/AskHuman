@@ -141,6 +141,8 @@ export default {
       daemonLifecycleKeepalive: "Keep alive",
       daemonLifecycleHint:
         "\"On activity\": the daemon starts only when an agent becomes active or asks a question, and exits after a period of idleness. \"Keep alive\": the daemon stays resident and starts at login so IM channels can receive messages anytime; this keeps using a small amount of system resources and holds the IM channel open. When using multiple devices at once, configure a distinct IM bot per device.",
+      daemonLifecycleLockedByTasks:
+        "Locked to \"Keep alive\" by \"Create Agent tasks from IM\"; turn that feature off to switch back to \"On activity\".",
     },
     appearance: {
       title: "Appearance",
@@ -268,6 +270,8 @@ export default {
       permissionDefault: "Always Agent default",
       permissionYolo: "Always YOLO",
       yoloWarning: "YOLO auto-approves operations and bypasses normal Agent protections for every new IM task.",
+      keepaliveWarning:
+        "While enabled, the daemon stays resident and installs a start-at-login item (the daemon lifecycle under Advanced is locked to \"Keep alive\"; changes there won't take effect). Impact: a small amount of system resources is used continuously, and this device holds the IM bot channel — devices sharing the same bot will steal each other's messages. Turn this feature off to switch back to \"On activity\".",
       testTerminal: "Test Terminal",
       terminalTestDone: "Terminal.app test opened successfully. No Agent was started.",
       refresh: "Refresh",

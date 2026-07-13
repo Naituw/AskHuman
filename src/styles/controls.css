@@ -483,6 +483,10 @@
   color: var(--text-primary);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
+.segmented button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* 下拉选择（如语音识别语言） */
 .select {

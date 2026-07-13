@@ -698,8 +698,9 @@ async function changeMenuBarIcon(mode: MenuBarIconMode) {
 
 // 守护进程生命周期二态（activity/keepalive）。仅持久化；daemon 与宿主监听 config 变化后自行
 // 换挡（保活→立即拉起 + 装开机自启登录项 + 不空闲退出；见 src-tauri daemon / app::gui_host）。
+// 「从 IM 创建 Agent 任务」开启期间锁定为保活（控件已禁用，这里再兜底一次）。
 async function changeDaemonLifecycle(mode: DaemonLifecycleMode) {
-  if (!config.value) return;
+  if (!config.value || config.value.agentTasks.enabled) return;
   config.value.general.daemonLifecycle = mode;
   await persist();
 }
@@ -1906,18 +1907,25 @@ onBeforeUnmount(() => unlistenProgress?.());
             <div class="segmented">
               <button
                 :class="{ active: config.general.daemonLifecycle === 'activity' }"
+                :disabled="config.agentTasks.enabled"
                 @click="changeDaemonLifecycle('activity')"
               >
                 {{ t("settings.experimental.daemonLifecycleActivity") }}
               </button>
               <button
                 :class="{ active: config.general.daemonLifecycle === 'keepalive' }"
+                :disabled="config.agentTasks.enabled"
                 @click="changeDaemonLifecycle('keepalive')"
               >
                 {{ t("settings.experimental.daemonLifecycleKeepalive") }}
               </button>
             </div>
           </div>
+          <!-- 「从 IM 创建 Agent 任务」依赖保活：功能开启期间锁定本控件，并就地说明原因，
+               避免用户改了不生效以为是 bug（save_settings 会静默强制回 keepalive）。 -->
+          <p v-if="config.agentTasks.enabled" class="card-desc warn">
+            {{ t("settings.experimental.daemonLifecycleLockedByTasks") }}
+          </p>
           <p class="card-desc">
             {{ t("settings.experimental.daemonLifecycleHint") }}
           </p>
@@ -1991,6 +1999,9 @@ onBeforeUnmount(() => unlistenProgress?.());
             </label>
           </div>
           <template v-if="config.agentTasks.enabled">
+            <p class="card-desc warn">
+              {{ t("settings.agentTasks.keepaliveWarning") }}
+            </p>
             <hr class="divider" />
             <div class="row">
               <span class="label">{{ t("settings.agentTasks.permission") }}</span>

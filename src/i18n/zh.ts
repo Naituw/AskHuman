@@ -136,6 +136,8 @@ export default {
       daemonLifecycleKeepalive: "保活",
       daemonLifecycleHint:
         "「按活动」：Agent 开始活动或提问时才启动守护进程，空闲一段时间后自动退出。「保活」：守护进程常驻并开机自启，让 IM 随时可接收消息；但会持续占用少量系统资源并占用 IM 通道。建议在多台设备上同时使用时为各设备配置不同的 IM 机器人。",
+      daemonLifecycleLockedByTasks:
+        "已被「从 IM 创建 Agent 任务」锁定为保活；关闭该功能后即可切换回「按活动」。",
     },
     appearance: {
       title: "外观",
@@ -259,6 +261,8 @@ export default {
       permissionDefault: "总是 Agent 默认",
       permissionYolo: "总是 YOLO",
       yoloWarning: "YOLO 会对每个 IM 新任务自动批准操作并绕过 Agent 的常规保护。",
+      keepaliveWarning:
+        "开启期间 Daemon 将保持常驻并安装开机自启登录项（「高级」中的守护进程生命周期被锁定为「保活」，改动不会生效）。影响：后台持续占用少量系统资源；本机长期占用 IM 机器人通道，多台设备共用同一机器人时会互相抢消息。关闭本功能后即可改回「按活动」。",
       testTerminal: "测试 Terminal",
       terminalTestDone: "Terminal.app 测试窗口已成功打开，未启动任何 Agent。",
       refresh: "刷新",
