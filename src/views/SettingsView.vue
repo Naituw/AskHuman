@@ -183,7 +183,60 @@ interface SearchEntry {
   extra: string[];
 }
 
+// 搜索态：点放大镜进入（隐藏 tab、显示输入框并聚焦），Esc/✕/选中结果退出。
+const searchActive = ref(false);
 const searchQuery = ref("");
+const searchSelected = ref(0);
+const searchInputEl = ref<HTMLInputElement | null>(null);
+
+function openSearch() {
+  searchActive.value = true;
+  searchQuery.value = "";
+  searchSelected.value = 0;
+  void nextTick(() => searchInputEl.value?.focus());
+}
+
+function closeSearch() {
+  searchActive.value = false;
+  searchQuery.value = "";
+}
+
+/** 键盘导航：↑↓ 移动选中（拦截默认的光标跳行为）、回车打开选中项、Esc 清空/退出。 */
+function onSearchKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    if (searchQuery.value) searchQuery.value = "";
+    else closeSearch();
+    return;
+  }
+  const n = searchResults.value.length;
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    if (n > 0) searchSelected.value = (searchSelected.value + 1) % n;
+    return;
+  }
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    if (n > 0) searchSelected.value = (searchSelected.value - 1 + n) % n;
+    return;
+  }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const r = searchResults.value[searchSelected.value];
+    if (r) void gotoSearchResult(r);
+  }
+}
+
+watch(searchQuery, () => {
+  searchSelected.value = 0;
+});
+// 键盘上下移动选中时保持可见（结果列表可滚动）。
+watch(searchSelected, async () => {
+  await nextTick();
+  document
+    .querySelector(".tab-search-item.selected")
+    ?.scrollIntoView({ block: "nearest" });
+});
 
 const searchIndex = computed<SearchEntry[]>(() => {
   const e = (tab: Tab, titleKey: string, extraKeys: string[] = []): SearchEntry => ({
@@ -311,9 +364,9 @@ const searchResults = computed<SearchEntry[]>(() => {
     .slice(0, 12);
 });
 
-/** 跳到搜索结果：切 tab → 按锚文本定位行/卡片 → 滚动居中 + 短暂高亮。 */
+/** 跳到搜索结果：退出搜索态 → 切 tab → 按锚文本定位行/卡片 → 滚动居中 + 短暂高亮。 */
 async function gotoSearchResult(entry: SearchEntry) {
-  searchQuery.value = "";
+  closeSearch();
   activeTab.value = entry.tab;
   await nextTick();
   const nodes = Array.from(
@@ -1572,6 +1625,7 @@ onBeforeUnmount(() => unlistenProgress?.());
 <template>
   <div v-if="config" class="settings">
     <nav class="tabbar" data-tauri-drag-region>
+      <template v-if="!searchActive">
       <button
         :data-tauri-drag-region="tabDrag"
         :class="{ active: activeTab === 'general' }"
@@ -1619,22 +1673,47 @@ onBeforeUnmount(() => unlistenProgress?.());
       >
         {{ t("settings.tabs.experimental") }}
       </button>
-      <!-- 设置搜索（R9）：匹配各 tab 的设置项标题/描述，点击跳转并高亮 -->
-      <div class="tab-search">
+      <!-- 设置搜索入口（R9）：右上角放大镜，点击进入搜索态（隐藏 tab、显示输入框） -->
+      <button
+        class="tab-search-toggle"
+        type="button"
+        :title="t('settings.search.placeholder')"
+        @click="openSearch"
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M10.9 10.2a4.8 4.8 0 1 0-.7.7l3 3a.5.5 0 0 0 .7-.7l-3-3ZM3 6.8a3.8 3.8 0 1 1 7.6 0 3.8 3.8 0 0 1-7.6 0Z"
+            fill="currentColor"
+          />
+        </svg>
+      </button>
+      </template>
+      <!-- 搜索态：输入框占据 tabbar，↑↓ 选择、回车跳转、Esc 退出 -->
+      <div v-else class="tab-search">
         <input
+          ref="searchInputEl"
           class="tab-search-input"
-          type="search"
+          type="text"
           :placeholder="t('settings.search.placeholder')"
           v-model="searchQuery"
-          @keydown.escape="searchQuery = ''"
-          @keydown.enter="searchResults[0] && gotoSearchResult(searchResults[0])"
+          @keydown="onSearchKeydown"
         />
+        <button
+          class="tab-search-close"
+          type="button"
+          :title="t('settings.search.close')"
+          @click="closeSearch"
+        >
+          ✕
+        </button>
         <div v-if="searchQuery.trim()" class="tab-search-results">
           <button
-            v-for="r in searchResults"
+            v-for="(r, i) in searchResults"
             :key="`${r.tab}:${r.title}`"
             type="button"
             class="tab-search-item"
+            :class="{ selected: i === searchSelected }"
+            @mouseenter="searchSelected = i"
             @click="gotoSearchResult(r)"
           >
             <span class="tab-search-tab">{{ t(`settings.tabs.${r.tab}`) }}</span>
@@ -4118,45 +4197,83 @@ onBeforeUnmount(() => unlistenProgress?.());
 }
 
 /* ===== 设置搜索（R9） ===== */
-/* tabbar 是窗口拖拽区；搜索框绝对定位靠右，不挤动居中的 tab。 */
+/* 常态只显示右上角放大镜；点击进入搜索态：tab 隐藏、输入框占据 tabbar。 */
 .tabbar {
   position: relative;
 }
-.tab-search {
+.tab-search-toggle {
   position: absolute;
   right: var(--space-4);
   top: 50%;
   transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--text-secondary);
+}
+.tab-search-toggle:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.tab-search-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+.tab-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: min(420px, 100%);
+  margin: 0 auto;
 }
 .tab-search-input {
-  width: 110px;
-  padding: 4px 8px;
+  flex: 1;
+  padding: 5px 10px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-primary);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
   border-radius: var(--radius-sm);
   outline: none;
-  transition: width 0.15s ease, border-color 0.15s ease;
 }
 .tab-search-input:focus {
-  width: 170px;
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--control-border));
 }
+.tab-search-close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: default;
+}
+.tab-search-close:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+/* 结果弹层：不透明实底（--bg 为窗口底色），避免与下方内容透叠看不清。 */
 .tab-search-results {
   position: absolute;
-  right: 0;
+  left: 0;
+  right: 30px;
   top: calc(100% + 6px);
-  width: 260px;
   max-height: 320px;
   overflow-y: auto;
   padding: 4px;
-  background: var(--bg-elevated);
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-  z-index: 30;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  z-index: 120;
 }
 .tab-search-item {
   display: flex;
@@ -4172,8 +4289,15 @@ onBeforeUnmount(() => unlistenProgress?.());
   text-align: left;
   cursor: default;
 }
-.tab-search-item:hover {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+.tab-search-item.selected {
+  background: var(--accent);
+}
+.tab-search-item.selected .tab-search-title,
+.tab-search-item.selected .tab-search-tab {
+  color: #fff;
+}
+.tab-search-item.selected .tab-search-tab {
+  background: rgba(255, 255, 255, 0.22);
 }
 .tab-search-tab {
   flex: none;

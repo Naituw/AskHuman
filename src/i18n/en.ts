@@ -121,6 +121,7 @@ export default {
     search: {
       placeholder: "Search settings",
       empty: "No matching settings",
+      close: "Exit search",
     },
     experimental: {
       enableLabel: "Experimental features",

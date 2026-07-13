@@ -116,6 +116,7 @@ export default {
     search: {
       placeholder: "搜索设置",
       empty: "无匹配的设置项",
+      close: "退出搜索",
     },
     experimental: {
       enableLabel: "实验性功能",
