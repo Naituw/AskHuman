@@ -92,7 +92,7 @@ import type {
   WindowEffect,
 } from "../lib/types";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 // 出现动画为 macOS 原生窗口能力，其它平台不展示选择器。
 const isMac = navigator.userAgent.toLowerCase().includes("mac");
@@ -139,6 +139,23 @@ function channelIssueText(id: string): string | null {
     time: issueAgo(issue.atMs),
     msg: issue.message,
   });
+}
+
+// 渠道配置指南（仓库内 wiki 文档；中文默认 .md，英文 .en.md）。
+const CHANNEL_SETUP_DOCS: Record<string, string> = {
+  telegram: "telegram-setup",
+  dingding: "dingtalk-setup",
+  feishu: "feishu-setup",
+  slack: "slack-setup",
+};
+
+function openChannelGuide(id: string) {
+  const slug = CHANNEL_SETUP_DOCS[id];
+  if (!slug) return;
+  const suffix = String(locale.value).startsWith("zh") ? ".md" : ".en.md";
+  void openPath(
+    `https://github.com/Naituw/AskHuman/blob/main/docs/wiki/${slug}${suffix}`,
+  );
 }
 
 function issueAgo(atMs: number): string {
@@ -3079,6 +3096,9 @@ onBeforeUnmount(() => unlistenProgress?.());
         <div class="card">
           <div class="row">
             <p class="card-title">{{ t("settings.channels.telegramTitle") }}</p>
+            <a class="link guide-link" href="#" @click.prevent="openChannelGuide('telegram')">
+              {{ t("settings.channels.setupGuide") }} ↗
+            </a>
             <span class="spacer"></span>
             <label class="switch">
               <input
@@ -3163,6 +3183,9 @@ onBeforeUnmount(() => unlistenProgress?.());
         <div class="card">
           <div class="row">
             <p class="card-title">{{ t("settings.channels.dingtalkTitle") }}</p>
+            <a class="link guide-link" href="#" @click.prevent="openChannelGuide('dingding')">
+              {{ t("settings.channels.setupGuide") }} ↗
+            </a>
             <span class="spacer"></span>
             <label class="switch">
               <input
@@ -3327,6 +3350,9 @@ onBeforeUnmount(() => unlistenProgress?.());
         <div class="card">
           <div class="row">
             <p class="card-title">{{ t("settings.channels.feishuTitle") }}</p>
+            <a class="link guide-link" href="#" @click.prevent="openChannelGuide('feishu')">
+              {{ t("settings.channels.setupGuide") }} ↗
+            </a>
             <span class="spacer"></span>
             <label class="switch">
               <input
@@ -3450,6 +3476,9 @@ onBeforeUnmount(() => unlistenProgress?.());
         <div class="card">
           <div class="row">
             <p class="card-title">{{ t("settings.channels.slackTitle") }}</p>
+            <a class="link guide-link" href="#" @click.prevent="openChannelGuide('slack')">
+              {{ t("settings.channels.setupGuide") }} ↗
+            </a>
             <span class="spacer"></span>
             <label class="switch">
               <input
@@ -4066,6 +4095,12 @@ onBeforeUnmount(() => unlistenProgress?.());
 }
 .link:hover {
   text-decoration: underline;
+}
+/* 渠道卡标题旁的「配置指南」外链 */
+.guide-link {
+  margin-left: var(--space-2);
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .release-notes {
   max-height: 220px;

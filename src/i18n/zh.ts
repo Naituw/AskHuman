@@ -73,6 +73,11 @@ export default {
       stop: "停止语音输入",
       preparing: "准备中…",
     },
+    imTip: {
+      text: "配置 IM 渠道后，离开电脑也能在手机上收到并回复提问。",
+      action: "去配置",
+      dismiss: "不再提示",
+    },
   },
   // 后端(Swift/Rust)语音事件以语义 key 上报，前端在此翻译。
   speech: {
@@ -322,6 +327,7 @@ export default {
       defaultWidth: "默认宽度",
       defaultHeight: "默认高度",
       telegramTitle: "Telegram",
+      setupGuide: "配置指南",
       botToken: "Bot Token",
       chatId: "Chat ID",
       apiBaseUrl: "API Base URL",

@@ -77,6 +77,11 @@ export default {
       stop: "Stop voice input",
       preparing: "Preparing…",
     },
+    imTip: {
+      text: "Set up an IM channel to receive and answer prompts on your phone when away.",
+      action: "Set up",
+      dismiss: "Don't show again",
+    },
   },
   // 后端(Swift/Rust)语音事件以语义 key 上报，前端在此翻译。
   speech: {
@@ -331,6 +336,7 @@ export default {
       defaultWidth: "Default width",
       defaultHeight: "Default height",
       telegramTitle: "Telegram",
+      setupGuide: "Setup guide",
       botToken: "Bot Token",
       chatId: "Chat ID",
       apiBaseUrl: "API Base URL",

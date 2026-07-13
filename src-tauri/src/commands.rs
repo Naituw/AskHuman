@@ -505,7 +505,8 @@ fn route_open_window(
             let pin = crate::app::popup_pin(&fallback, &cfg);
             let _ = match kind {
                 WindowKind::Settings => {
-                    crate::app::create_settings_window(&fallback, &cfg, pin, None)
+                    // `project` 槽位在设置窗口语义下是「初始定位 tab」（同 gui_host::open_window）。
+                    crate::app::create_settings_window(&fallback, &cfg, pin, project.as_deref())
                 }
                 WindowKind::History => {
                     crate::app::create_history_window(&fallback, &cfg, all, project.as_deref(), pin)
@@ -935,18 +936,13 @@ pub(crate) fn apply_theme_to_windows(app: &AppHandle, theme: &str) {
 }
 
 /// 从弹窗导航栏打开设置窗口（同进程内创建，不影响弹窗等待）。
+/// `tab` 可选：打开后定位到指定 tab（如 R6 引导跳「渠道」）。
 #[tauri::command]
-pub fn open_settings(app: AppHandle) -> Result<(), String> {
+pub fn open_settings(app: AppHandle, tab: Option<String>) -> Result<(), String> {
     #[cfg(unix)]
     {
         // 路由到统一宿主（全局单窗）；宿主不可用时回退到本进程内建窗。
-        route_open_window(
-            app,
-            crate::gui_host::WindowKind::Settings,
-            false,
-            None,
-            None,
-        );
+        route_open_window(app, crate::gui_host::WindowKind::Settings, false, tab, None);
         Ok(())
     }
     #[cfg(not(unix))]
@@ -955,8 +951,29 @@ pub fn open_settings(app: AppHandle) -> Result<(), String> {
         // get_settings() separately. Skip keychain here.
         let cfg = AppConfig::load_without_secrets();
         let pin = crate::app::popup_pin(&app, &cfg);
-        crate::app::create_settings_window(&app, &cfg, pin, None).map_err(|e| e.to_string())
+        crate::app::create_settings_window(&app, &cfg, pin, tab.as_deref())
+            .map_err(|e| e.to_string())
     }
+}
+
+// ===== 弹窗一次性引导（R6）=====
+
+/// 弹窗是否应显示「配置 IM 渠道」一次性引导：未被关闭过，且当前没有任何 IM 渠道启用。
+#[tauri::command]
+pub fn popup_im_tip_visible() -> bool {
+    if crate::uistate::load().im_tip_dismissed {
+        return false;
+    }
+    let ch = AppConfig::load_without_secrets().channels;
+    !(ch.telegram.enabled || ch.dingding.enabled || ch.feishu.enabled || ch.slack.enabled)
+}
+
+/// 永久关闭「配置 IM 渠道」引导（点 ✕ 或点「打开设置」时调用）。
+#[tauri::command]
+pub fn popup_im_tip_dismiss() {
+    let mut s = crate::uistate::load();
+    s.im_tip_dismissed = true;
+    crate::uistate::save(&s);
 }
 
 /// 实时切换弹窗背景效果（玻璃/模糊）到本进程**全部**已打开 WebView 窗口（含 history/agents 等）。

@@ -25,8 +25,8 @@ pub enum WindowKind {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum HostMsg {
     /// 打开（或聚焦已存在的）指定窗口。`all` 仅历史窗口使用（默认展示全部项目）；
-    /// `project` 仅历史窗口使用——携带调用方的项目 key（空串=未知项目），让宿主里的历史窗口
-    /// 默认过滤到调用方项目而非宿主自身 cwd（spec 计划「项目过滤经 OpenWindow 字段传递」）。
+    /// `project` 按窗口类型复用：历史窗口=调用方项目 key（空串=未知项目，宿主里的历史窗口
+    /// 默认过滤到该项目而非宿主自身 cwd）；设置窗口=初始定位 tab（如 "channel"）。
     /// `session`/`agent`/`cwd` 仅插话窗口使用：目标 agent 的 session_id（窗口唯一键）、
     /// 家族（头部胶囊）与工作目录（头部项目名）。旧宿主忽略未知字段（serde default 兼容）。
     OpenWindow {

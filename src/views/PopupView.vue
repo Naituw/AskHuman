@@ -30,6 +30,8 @@ import {
   popupAgentTerminal,
   popupAgentResolved,
   popupShowWindow,
+  popupImTipVisible,
+  popupImTipDismiss,
 } from "../lib/ipc";
 import { isFocusableTerminal } from "../lib/terminals";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
@@ -690,6 +692,20 @@ async function cycleTheme() {
 
 function openSettingsWindow() {
   openSettings().catch(() => {});
+}
+
+// ===== 首次运行引导（R6）：无 IM 渠道时页脚上方的一次性提示 =====
+const imTipVisible = ref(false);
+
+function imTipConfigure() {
+  imTipVisible.value = false;
+  popupImTipDismiss().catch(() => {});
+  openSettings("channel").catch(() => {});
+}
+
+function imTipDismiss() {
+  imTipVisible.value = false;
+  popupImTipDismiss().catch(() => {});
 }
 
 function openHistoryWindow() {
@@ -1743,6 +1759,12 @@ async function initAfterPaint(init: PopupInit) {
   } catch {
     /* 无 daemon / 单进程回退：忽略 */
   }
+  // R6 一次性引导：未配置任何 IM 渠道且未被关闭过时，页脚上方显示提示条。
+  try {
+    imTipVisible.value = await popupImTipVisible();
+  } catch {
+    /* 旧后端无此命令：忽略 */
+  }
 }
 
 /// 应用 daemon 异步解析出的 agent 信息：补全家族 badge 文案，并据 pid 解析所在终端把 badge 升级成
@@ -2397,6 +2419,25 @@ onBeforeUnmount(() => {
       hidden
       @change="onFileChange"
     />
+
+    <!-- 首次运行引导（R6）：未配置 IM 渠道时的一次性提示条 -->
+    <div v-if="imTipVisible" class="im-tip">
+      <span class="im-tip-text">{{ t("popup.imTip.text") }}</span>
+      <button class="im-tip-action" type="button" @click="imTipConfigure">
+        {{ t("popup.imTip.action") }}
+      </button>
+      <button
+        class="im-tip-close"
+        type="button"
+        :title="t('popup.imTip.dismiss')"
+        @click="imTipDismiss"
+      >
+        <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+          <line x1="2" y1="2" x2="10" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          <line x1="10" y1="2" x2="2" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+        </svg>
+      </button>
+    </div>
 
     <!-- 多问题底部：取消(左) + 上一个/下一个/提交(右) -->
     <div v-if="!isConfirm && isMulti" class="footer" data-tauri-drag-region>
@@ -3319,6 +3360,51 @@ onBeforeUnmount(() => {
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--border);
   background: transparent;
+}
+/* R6 一次性引导提示条（页脚上方） */
+.im-tip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-4);
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent, #0a84ff) 8%, transparent);
+  font-size: 12px;
+}
+.im-tip-text {
+  flex: 1 1 auto;
+  color: var(--text-secondary);
+}
+.im-tip-action {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  padding: 2px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent, #0a84ff);
+  cursor: default;
+}
+.im-tip-action:hover {
+  text-decoration: underline;
+}
+.im-tip-close {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted, #8e8e93);
+  cursor: default;
+}
+.im-tip-close:hover {
+  background: rgba(128, 128, 128, 0.2);
+  color: var(--text-secondary);
 }
 .footer .spacer {
   flex: 1 1 auto;

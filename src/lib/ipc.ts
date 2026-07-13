@@ -125,7 +125,14 @@ export const setTheme = (theme: ThemeMode) =>
 export const updateTheme = (theme: ThemeMode) =>
   invoke<void>("update_theme", { theme });
 
-export const openSettings = () => invoke<void>("open_settings");
+export const openSettings = (tab?: string) =>
+  invoke<void>("open_settings", { tab: tab ?? null });
+
+export const popupImTipVisible = () =>
+  invoke<boolean>("popup_im_tip_visible");
+
+export const popupImTipDismiss = () =>
+  invoke<void>("popup_im_tip_dismiss");
 
 export const openHistory = () => invoke<void>("open_history");
 

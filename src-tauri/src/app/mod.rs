@@ -875,6 +875,8 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::commands::set_theme,
             crate::commands::update_theme,
             crate::commands::open_settings,
+            crate::commands::popup_im_tip_visible,
+            crate::commands::popup_im_tip_dismiss,
             crate::commands::apply_window_effect,
             crate::commands::start_speech,
             crate::commands::stop_speech,

@@ -39,3 +39,7 @@
 
 Agent 任务的 workspace 索引独立存于 `~/.askhuman/agent-workspaces.json`，一次性启动记录存于
 `~/.askhuman/state/agent-launches/`；二者都不是 `AppConfig`。
+
+轻量界面状态（如弹窗「配置 IM 渠道」一次性引导的已关闭标记）独立存于
+`~/.askhuman/ui-state.json`（`src-tauri/src/uistate.rs`）：读失败视为默认、写失败静默，
+与用户配置分离以免互相触发保存/迁移逻辑。
