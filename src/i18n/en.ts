@@ -270,8 +270,16 @@ export default {
       permissionDefault: "Always Agent default",
       permissionYolo: "Always YOLO",
       yoloWarning: "YOLO auto-approves operations and bypasses normal Agent protections for every new IM task.",
-      keepaliveWarning:
-        "While enabled, the daemon stays resident and installs a start-at-login item (the daemon lifecycle under Advanced is locked to \"Keep alive\"; changes there won't take effect). Impact: a small amount of system resources is used continuously, and this device holds the IM bot channel — devices sharing the same bot will steal each other's messages. Turn this feature off to switch back to \"On activity\".",
+      confirmTitle: "Enable \"Create Agent tasks from IM\"?",
+      confirmIntro: "Enabling this takes effect immediately:",
+      confirmKeepalive:
+        "The daemon stays resident and installs a start-at-login item; the daemon lifecycle under Advanced is locked to \"Keep alive\" and changes there won't take effect.",
+      confirmResources: "A small amount of system resources is used continuously in the background.",
+      confirmBotChannel:
+        "This device holds the IM bot channel long-term; devices sharing the same bot will steal each other's messages.",
+      confirmRevert: "Turn this feature off to switch the lifecycle back to \"On activity\".",
+      confirmCancel: "Cancel",
+      confirmEnable: "Enable anyway",
       testTerminal: "Test Terminal",
       terminalTestDone: "Terminal.app test opened successfully. No Agent was started.",
       refresh: "Refresh",

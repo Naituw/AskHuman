@@ -130,11 +130,26 @@ async function refreshAgentTaskSettings(scan = false) {
   }
 }
 
+// 开启走确认弹层（列出保活/登录项等副作用，用户点「继续开启」才生效）；关闭直接持久化。
+const agentTasksConfirmOpen = ref(false);
+
 async function toggleAgentTasks() {
   if (!config.value) return;
   if (config.value.agentTasks.enabled) {
-    config.value.general.daemonLifecycle = "keepalive";
+    // 先回退开关，待弹层确认后再真正开启。
+    config.value.agentTasks.enabled = false;
+    agentTasksConfirmOpen.value = true;
+    return;
   }
+  await persist();
+  await refreshAgentTaskSettings(false);
+}
+
+async function confirmEnableAgentTasks() {
+  agentTasksConfirmOpen.value = false;
+  if (!config.value) return;
+  config.value.agentTasks.enabled = true;
+  config.value.general.daemonLifecycle = "keepalive";
   await persist();
   await refreshAgentTaskSettings(false);
 }
@@ -1999,9 +2014,6 @@ onBeforeUnmount(() => unlistenProgress?.());
             </label>
           </div>
           <template v-if="config.agentTasks.enabled">
-            <p class="card-desc warn">
-              {{ t("settings.agentTasks.keepaliveWarning") }}
-            </p>
             <hr class="divider" />
             <div class="row">
               <span class="label">{{ t("settings.agentTasks.permission") }}</span>
@@ -3198,6 +3210,33 @@ onBeforeUnmount(() => unlistenProgress?.());
       </template>
     </div>
 
+    <!-- 开启「从 IM 创建 Agent 任务」前的副作用确认弹层 -->
+    <div v-if="agentTasksConfirmOpen" class="workspace-panel-backdrop">
+      <section
+        class="confirm-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        :aria-label="t('settings.agentTasks.confirmTitle')"
+      >
+        <h2>{{ t("settings.agentTasks.confirmTitle") }}</h2>
+        <p class="confirm-intro">{{ t("settings.agentTasks.confirmIntro") }}</p>
+        <ul class="confirm-list">
+          <li>{{ t("settings.agentTasks.confirmKeepalive") }}</li>
+          <li>{{ t("settings.agentTasks.confirmResources") }}</li>
+          <li>{{ t("settings.agentTasks.confirmBotChannel") }}</li>
+        </ul>
+        <p class="confirm-note">{{ t("settings.agentTasks.confirmRevert") }}</p>
+        <div class="confirm-actions">
+          <button class="btn" type="button" @click="agentTasksConfirmOpen = false">
+            {{ t("settings.agentTasks.confirmCancel") }}
+          </button>
+          <button class="btn btn-primary" type="button" @click="confirmEnableAgentTasks">
+            {{ t("settings.agentTasks.confirmEnable") }}
+          </button>
+        </div>
+      </section>
+    </div>
+
     <div v-if="workspacePanelOpen" class="workspace-panel-backdrop">
       <section
         class="workspace-panel"
@@ -3319,6 +3358,45 @@ onBeforeUnmount(() => unlistenProgress?.());
   background: rgba(0, 0, 0, 0.24);
   backdrop-filter: blur(5px);
 }
+.confirm-dialog {
+  width: min(440px, 100%);
+  padding: 20px 22px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.16);
+}
+.confirm-dialog h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.confirm-dialog .confirm-intro {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.confirm-dialog .confirm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.confirm-dialog .confirm-note {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.confirm-dialog .confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .workspace-panel {
   position: relative;
   display: flex;

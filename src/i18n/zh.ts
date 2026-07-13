@@ -261,8 +261,16 @@ export default {
       permissionDefault: "总是 Agent 默认",
       permissionYolo: "总是 YOLO",
       yoloWarning: "YOLO 会对每个 IM 新任务自动批准操作并绕过 Agent 的常规保护。",
-      keepaliveWarning:
-        "开启期间 Daemon 将保持常驻并安装开机自启登录项（「高级」中的守护进程生命周期被锁定为「保活」，改动不会生效）。影响：后台持续占用少量系统资源；本机长期占用 IM 机器人通道，多台设备共用同一机器人时会互相抢消息。关闭本功能后即可改回「按活动」。",
+      confirmTitle: "开启「从 IM 创建 Agent 任务」？",
+      confirmIntro: "开启后将立即产生以下影响：",
+      confirmKeepalive:
+        "Daemon 将保持常驻并安装开机自启登录项；「高级」中的守护进程生命周期被锁定为「保活」，期间改动不会生效。",
+      confirmResources: "后台持续占用少量系统资源。",
+      confirmBotChannel:
+        "本机长期占用 IM 机器人通道；多台设备共用同一机器人时会互相抢消息。",
+      confirmRevert: "关闭本功能后，生命周期即可改回「按活动」。",
+      confirmCancel: "取消",
+      confirmEnable: "继续开启",
       testTerminal: "测试 Terminal",
       terminalTestDone: "Terminal.app 测试窗口已成功打开，未启动任何 Agent。",
       refresh: "刷新",
