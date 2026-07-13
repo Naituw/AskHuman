@@ -93,6 +93,8 @@ pub struct TrayData {
     pub pending_requests: Vec<ipc::PendingRequestInfo>,
     /// 活动 agent 摘要（托盘「Agent 状态」子菜单逐条列出，spec agent-interject D7）。
     pub agents: Vec<ipc::TrayAgentInfo>,
+    /// 各渠道最近未恢复的故障（R7：托盘警示项，点击打开设置渠道 tab）。
+    pub channel_issues: Vec<ipc::ChannelIssueInfo>,
 }
 
 pub struct HostState {
@@ -342,6 +344,13 @@ fn menu_signature(up: bool, lang: Lang, data: &TrayData, lifecycle_on: bool) -> 
         .map(|p| format!("{}={}", p.id, p.preview))
         .collect::<Vec<_>>()
         .join(";");
+    // 渠道故障（R7）也入签名：渠道 / 文案 / 分钟级时间变化即触发 diff。
+    let issues: String = data
+        .channel_issues
+        .iter()
+        .map(|i| format!("{}={}@{}", i.channel, i.message, fmt_ago(i.at_ms, lang)))
+        .collect::<Vec<_>>()
+        .join(";");
     // Agent 子菜单内容也入签名：会话增删 / 标题 / 状态 / 待送达 / 可聚焦变化即触发 diff。
     let agents: String = data
         .agents
@@ -362,7 +371,7 @@ fn menu_signature(up: bool, lang: Lang, data: &TrayData, lifecycle_on: bool) -> 
         .collect::<Vec<_>>()
         .join(";");
     format!(
-        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
         lang,
         up as u8,
         data.version,
@@ -383,7 +392,24 @@ fn menu_signature(up: bool, lang: Lang, data: &TrayData, lifecycle_on: bool) -> 
         data.pending as u8,
         pending,
         agents,
+        issues,
     )
+}
+
+/// 分钟级「多久之前」文案（托盘渠道故障行用；分钟级粒度避免秒级微变触发菜单刷新）。
+fn fmt_ago(at_ms: u64, lang: Lang) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let mins = now.saturating_sub(at_ms) / 60_000;
+    if mins < 1 {
+        i18n::tr(lang, "tray.justNow").to_string()
+    } else if mins < 60 {
+        i18n::tr(lang, "tray.minutesAgo").replace("{n}", &mins.to_string())
+    } else {
+        i18n::tr(lang, "tray.hoursAgo").replace("{n}", &(mins / 60).to_string())
+    }
 }
 
 fn fmt_uptime(secs: u64) -> String {
@@ -434,6 +460,16 @@ fn build_specs(up: bool, lang: Lang, data: &TrayData, lifecycle_on: bool) -> Vec
                 i18n::tr(lang, "tray.imConnections")
                     .replace("{list}", &data.im_connections.join(", ")),
                 false,
+            ));
+        }
+        // 渠道故障警示（R7）：逐渠道一行，可点击 → 打开设置渠道 tab 看错误详情。
+        for issue in &data.channel_issues {
+            nodes.push(Node::item(
+                format!("chissue:{}", issue.channel),
+                i18n::tr(lang, "tray.channelIssue")
+                    .replace("{ch}", &crate::autochannel::channel_label(&issue.channel, lang))
+                    .replace("{t}", &fmt_ago(issue.at_ms, lang)),
+                true,
             ));
         }
     }
@@ -701,6 +737,11 @@ pub fn on_menu_event(app: &AppHandle, id: &str) {
         });
         return;
     }
+    // 渠道故障警示行（R7）：打开设置并定位到渠道 tab（错误详情显示在渠道卡片上）。
+    if id.starts_with("chissue:") {
+        open_window_settings_tab(app, "channel");
+        return;
+    }
     // Agent 子菜单「聚焦终端」：AppleScript 可能阻塞（授权弹窗等），放后台线程。
     if let Some(session_id) = id.strip_prefix("term:") {
         let pid = app.try_state::<HostState>().and_then(|s| {
@@ -763,13 +804,14 @@ pub fn on_menu_event(app: &AppHandle, id: &str) {
 // ===== 窗口管理 =====
 
 /// 在宿主进程内打开（或聚焦）指定窗口，并刷新窗口计数 / 续命。须在主线程调用。
-/// `project` 仅历史窗口使用：携带调用方项目 key（默认过滤到该项目），None 则用宿主自身项目。
+/// `param` 按窗口类型复用：历史窗口 = 调用方项目 key（默认过滤到该项目，None 用宿主自身项目）；
+/// 设置窗口 = 初始定位 tab（如 "channel"，None 用默认 tab）。
 /// `target` 仅插话窗口使用（session 必填；缺失则忽略本次请求）。
 pub(crate) fn open_window(
     app: &AppHandle,
     kind: WindowKind,
     all: bool,
-    project: Option<String>,
+    param: Option<String>,
     target: Option<crate::gui_host::InterjectTarget>,
 ) {
     let cfg = AppConfig::load_without_secrets();
@@ -781,9 +823,11 @@ pub(crate) fn open_window(
             .map(|s| s.data.lock().unwrap().active_requests > 0)
             .unwrap_or(false);
     let r = match kind {
-        WindowKind::Settings => crate::app::create_settings_window(app, &cfg, pin_above_popup),
+        WindowKind::Settings => {
+            crate::app::create_settings_window(app, &cfg, pin_above_popup, param.as_deref())
+        }
         WindowKind::History => {
-            crate::app::create_history_window(app, &cfg, all, project.as_deref(), pin_above_popup)
+            crate::app::create_history_window(app, &cfg, all, param.as_deref(), pin_above_popup)
         }
         WindowKind::Agents => crate::app::create_agents_window(app, &cfg),
         WindowKind::Interject => match &target {
@@ -810,6 +854,12 @@ pub(crate) fn open_window(
         // 立即快照会早于监听而丢失，导致窗口长时间停在 Loading。
     }
     recount_windows(app);
+}
+
+/// 打开（或聚焦）设置窗口并定位到指定 tab（R7 托盘渠道故障行使用）。
+/// 已开窗 → `create_settings_window` 内经 `settings-goto-tab` 事件切 tab；新开 → tab 进初始 URL。
+fn open_window_settings_tab(app: &AppHandle, tab: &str) {
+    open_window(app, WindowKind::Settings, false, Some(tab.to_string()), None);
 }
 
 /// 重算宿主承载的窗口数，并据此维护续命连接与退出判定。可在任意线程调用（只读窗口表 + 原子）。
@@ -1021,6 +1071,7 @@ fn start_status_subscription(app: AppHandle) {
                                 pending,
                                 pending_requests,
                                 agents,
+                                channel_issues,
                             })) => {
                                 if let Some(state) = app.try_state::<HostState>() {
                                     *state.data.lock().unwrap() = TrayData {
@@ -1037,6 +1088,7 @@ fn start_status_subscription(app: AppHandle) {
                                         pending,
                                         pending_requests,
                                         agents,
+                                        channel_issues,
                                     };
                                 }
                                 refresh_on_main(&app);

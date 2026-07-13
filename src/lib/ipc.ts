@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AgentsInit,
   AppConfig,
+  ChannelIssue,
   DingTalkDetectArgs,
   DingTalkTestArgs,
   DingTalkWaitArgs,
@@ -327,6 +328,10 @@ export const updateDismiss = (version: string) =>
   invoke<void>("update_dismiss", { version });
 
 export const restartSettings = () => invoke<void>("restart_settings");
+
+/** 渠道健康快照（R7）：各渠道最近未恢复的故障；daemon 未运行返回空。 */
+export const channelHealth = () =>
+  invoke<ChannelIssue[]>("channel_health");
 
 export const popupUpdateState = () =>
   invoke<PushedUpdateState>("popup_update_state");

@@ -386,6 +386,16 @@ export interface SettingsPayload {
   secretsPresent: SecretsPresent;
 }
 
+/** 一条渠道故障摘要（R7，镜像 Rust `ipc::ChannelIssueInfo`）：出现即表示该渠道仍未恢复。 */
+export interface ChannelIssue {
+  /** 渠道 id："telegram" / "dingding" / "feishu" / "slack"。 */
+  channel: string;
+  /** 错误文案（源语言英文，与 daemon.log 一致）。 */
+  message: string;
+  /** 首次出现的 Unix 毫秒时间戳。 */
+  atMs: number;
+}
+
 /** Per-secret edit intent sent on save. Secrets never round-trip through the config object. */
 export type SecretAction =
   | { kind: "unchanged" }

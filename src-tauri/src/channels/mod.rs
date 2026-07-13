@@ -4,6 +4,7 @@ pub mod confirm;
 pub mod conversation;
 pub mod dingding;
 pub mod feishu;
+pub mod health;
 pub mod popup;
 pub mod slack;
 pub mod telegram;

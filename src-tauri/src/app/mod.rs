@@ -945,6 +945,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::commands::update_dismiss,
             crate::commands::restart_settings,
             crate::commands::popup_update_state,
+            crate::commands::channel_health,
         ])
         .on_window_event(|window, event| {
             match window.label() {
@@ -1242,7 +1243,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                     // Window build only needs general (theme); get_settings() reads secrets later.
                     let config = AppConfig::load_without_secrets();
                     // 独立 --settings 进程内无弹窗 → 不置顶（popup_pin 恒 false）。
-                    create_settings_window(app, &config, popup_pin(app, &config))?;
+                    create_settings_window(app, &config, popup_pin(app, &config), None)?;
                 }
                 View::History { all } => {
                     // History window only needs general (theme); skip keychain.
@@ -1578,6 +1579,7 @@ pub(crate) fn create_settings_window<R, M>(
     manager: &M,
     config: &AppConfig,
     pin_above_popup: bool,
+    initial_tab: Option<&str>,
 ) -> tauri::Result<()>
 where
     R: tauri::Runtime,
@@ -1585,16 +1587,22 @@ where
 {
     if let Some(w) = manager.get_webview_window("settings") {
         let _ = w.set_focus();
+        // 已开窗：经事件让前端切到目标 tab（前端 mount 时已注册监听）。
+        if let Some(tab) = initial_tab {
+            use tauri::Emitter;
+            let _ = w.emit("settings-goto-tab", tab.to_string());
+        }
         return Ok(());
     }
     let theme = window_theme(config);
     let lang = Lang::resolve(&config.general.language);
     let window_bg = background_for(resolved_theme(config));
-    let builder = WebviewWindowBuilder::new(
-        manager,
-        "settings",
-        WebviewUrl::App("index.html?view=settings".into()),
-    )
+    // 新开窗：目标 tab 进初始 URL（无监听时序问题）。tab 值是内部常量（如 "channel"），无需转义。
+    let url = match initial_tab {
+        Some(tab) => format!("index.html?view=settings&tab={}", tab),
+        None => "index.html?view=settings".to_string(),
+    };
+    let builder = WebviewWindowBuilder::new(manager, "settings", WebviewUrl::App(url.into()))
     .title(i18n::tr(lang, "title.settings"))
     .inner_size(560.0, 640.0)
     // 最小宽度：保证标题栏内居中的 tab 不会与左上角红绿灯重叠。

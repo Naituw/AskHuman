@@ -38,6 +38,15 @@ impl fmt::Display for TelegramError {
 
 impl std::error::Error for TelegramError {}
 
+/// 渠道健康登记（R7）：API 调用失败登记、成功清除。放在统一出口，覆盖发送/编辑/上传全部路径。
+fn track<T>(r: Result<T, TelegramError>) -> Result<T, TelegramError> {
+    match &r {
+        Ok(_) => crate::channels::health::clear("telegram"),
+        Err(e) => crate::channels::health::report("telegram", e.to_string()),
+    }
+    r
+}
+
 impl TelegramError {
     /// GUI 可见的本地化文案：校验类按界面语言翻译；技术细节(API/网络/解析)保留英文。
     pub fn localized(&self, lang: crate::i18n::Lang) -> String {
@@ -99,7 +108,12 @@ impl TelegramClient {
     }
 
     /// 调用某方法，返回 `result` 字段（成功）或错误（`ok=false`/网络/解析）。
+    /// 结果顺带登记渠道健康表（R7：失败可见化，成功即清）。
     async fn call(&self, method: &str, params: Value) -> Result<Value, TelegramError> {
+        track(self.call_inner(method, params).await)
+    }
+
+    async fn call_inner(&self, method: &str, params: Value) -> Result<Value, TelegramError> {
         let url = format!("{}/bot{}/{}", self.api_base_url, self.token, method);
         let resp = self
             .http
@@ -163,6 +177,16 @@ impl TelegramClient {
 
     /// 上传文件（multipart）。`method` 为 sendDocument/sendPhoto，`field` 为 document/photo。
     async fn send_file(
+        &self,
+        method: &str,
+        field: &str,
+        path: &str,
+        filename: &str,
+    ) -> Result<i64, TelegramError> {
+        track(self.send_file_inner(method, field, path, filename).await)
+    }
+
+    async fn send_file_inner(
         &self,
         method: &str,
         field: &str,

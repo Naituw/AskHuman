@@ -14,6 +14,15 @@ const FILE_SHARE_TIMEOUT: Duration = Duration::from_secs(15);
 /// 轮询 `files.info` 的间隔。
 const FILE_SHARE_POLL_INTERVAL: Duration = Duration::from_millis(400);
 
+/// 渠道健康登记（R7）：API 调用失败登记、成功清除。放在统一出口，覆盖发送/编辑/上传全部路径。
+fn track<T>(r: Result<T, SlackError>) -> Result<T, SlackError> {
+    match &r {
+        Ok(_) => crate::channels::health::clear("slack"),
+        Err(e) => crate::channels::health::report("slack", e.to_string()),
+    }
+    r
+}
+
 #[derive(Clone)]
 pub struct SlackClient {
     bot_token: String,
@@ -62,7 +71,12 @@ impl SlackClient {
     }
 
     /// 通用 JSON 调用：Bot Token Bearer + `ok==true` 判定成功，失败取 `error`。
+    /// 结果顺带登记渠道健康表（R7）。
     async fn call(&self, method: &str, body: Value) -> Result<Value, SlackError> {
+        track(self.call_inner(method, body).await)
+    }
+
+    async fn call_inner(&self, method: &str, body: Value) -> Result<Value, SlackError> {
         let resp = self
             .http
             .post(format!("{}/{}", super::api_base(), method))
@@ -162,6 +176,15 @@ impl SlackClient {
 
     /// 上传一个文件并分享进 DM 频道。图片/文件统一走此流程。
     pub async fn upload_file(
+        &self,
+        channel: &str,
+        path: &str,
+        name: &str,
+    ) -> Result<(), SlackError> {
+        track(self.upload_file_inner(channel, path, name).await)
+    }
+
+    async fn upload_file_inner(
         &self,
         channel: &str,
         path: &str,

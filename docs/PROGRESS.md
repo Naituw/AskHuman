@@ -2,12 +2,12 @@
 
 按具体任务 / 需求记录待办与当前进展。任务 / 需求完成后删除其 section（历史留在 git）。
 
-## 【进行中】项目 review 收尾：真机验证 + AskHuman 确认
+## 【进行中】项目 review 第三轮落实：R7 渠道故障可见化 + R9 设置页搜索
 
-分支 `chore/project-review-2026-07`。P0+P1、第二轮 R1/R2/R3、TCC 弹窗修复、
-Agent 任务保活 UI（生命周期锁定 + 开启确认弹层）均已提交并 install.sh 安装。
-测试（cargo test + vitest 28）通过。待真机验证：设置页无 TCC 弹窗、弹窗/watch 正常、
-Agent 任务开关确认弹层与生命周期锁定表现。
+分支 `chore/project-review-2026-07`。第三轮报告（R6–R15）见
+`docs/investigations/project-review-2026-07.md`；用户选定先做 R7（渠道运行时故障
+挂进 TrayState：托盘警示 + 设置页渠道卡片显示最近错误）与 R9（设置页搜索）。
+其余 R6/R8/R10–R15 未排期。另：TCC 弹窗修复用户尚未真机验证（Agent 任务确认弹层已验收）。
 
 ## 待办：项目 review 的 P2 项（择机）
 

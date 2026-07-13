@@ -321,6 +321,7 @@ export default {
       autoEndWatchDesc:
         "When on, if an IM channel is no longer the active channel (e.g. you return to your computer and answer in the local popup, or send a message on another channel that switches the active slot away), all live watches on that channel are stopped automatically—no manual /unwatch needed. Only effective when On-demand IM delivery is enabled.",
       popupTitle: "Local popup",
+      issueBanner: "⚠ Channel issue ({time}): {msg}",
       rememberSize: "Remember window size",
       defaultWidth: "Default width",
       defaultHeight: "Default height",

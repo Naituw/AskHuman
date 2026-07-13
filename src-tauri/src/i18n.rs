@@ -886,6 +886,11 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "tray.pendingQuestions" => pick(lang, "{n} pending question(s)", "{n} 个待答"),
         "tray.pendingUntitled" => pick(lang, "(no preview)", "（无预览）"),
         "tray.imConnections" => pick(lang, "Channels: {list}", "渠道：{list}"),
+        // 渠道故障警示行（R7）：可点击，打开设置渠道 tab 查看错误详情。
+        "tray.channelIssue" => pick(lang, "⚠ {ch} issue ({t})", "⚠ {ch}异常（{t}）"),
+        "tray.justNow" => pick(lang, "just now", "刚刚"),
+        "tray.minutesAgo" => pick(lang, "{n} min ago", "{n} 分钟前"),
+        "tray.hoursAgo" => pick(lang, "{n} h ago", "{n} 小时前"),
         "tray.updateAvailable" => pick(lang, "● Update available ({v})", "● 有可用更新（{v}）"),
         "tray.updatePending" => pick(
             lang,

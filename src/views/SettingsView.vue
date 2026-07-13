@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { applyLanguage } from "../i18n";
@@ -29,6 +29,7 @@ import {
   agentLifecycleInstall,
   agentLifecycleUninstall,
   applyWindowEffect,
+  channelHealth,
   dingtalkDetectPrepare,
   dingtalkDetectWait,
   dingtalkTest,
@@ -76,6 +77,7 @@ import type {
   AgentTaskReadiness,
   AgentTaskWorkspace,
   AppConfig,
+  ChannelIssue,
   DaemonLifecycleMode,
   LifecycleStatus,
   MenuBarIconMode,
@@ -104,9 +106,71 @@ const revealLabel = computed(() => {
 });
 
 type Tab = "general" | "integration" | "channel" | "advanced" | "experimental";
+const TABS: readonly Tab[] = ["general", "integration", "channel", "advanced", "experimental"];
+
+function parseInitialTab(): Tab {
+  // 初始定位 tab 经窗口 URL 传入（如托盘「渠道异常」行 → ?tab=channel），无监听时序问题。
+  const tab = new URLSearchParams(window.location.search).get("tab");
+  return TABS.includes(tab as Tab) ? (tab as Tab) : "general";
+}
 
 const config = ref<AppConfig | null>(null);
-const activeTab = ref<Tab>("general");
+const activeTab = ref<Tab>(parseInitialTab());
+
+// ===== 渠道健康（R7 渠道故障可见化）=====
+// daemon 侧渠道故障快照：渠道 tab 可见期间拉取并轻量轮询（修好后横幅自动消失——
+// daemon 在配置变更 / 下一次成功操作后即清除记录）。
+const channelIssues = ref<ChannelIssue[]>([]);
+let channelHealthTimer: number | undefined;
+
+async function refreshChannelHealth() {
+  try {
+    channelIssues.value = await channelHealth();
+  } catch {
+    channelIssues.value = [];
+  }
+}
+
+/** 渠道卡错误横幅文案；无故障返回 null（不渲染）。 */
+function channelIssueText(id: string): string | null {
+  const issue = channelIssues.value.find((i) => i.channel === id);
+  if (!issue) return null;
+  return t("settings.channels.issueBanner", {
+    time: issueAgo(issue.atMs),
+    msg: issue.message,
+  });
+}
+
+function issueAgo(atMs: number): string {
+  const diff = Math.max(0, Math.floor((Date.now() - atMs) / 1000));
+  if (diff < 60) return t("agents.time.justNow");
+  const min = Math.floor(diff / 60);
+  if (min < 60) return t("agents.time.minutesAgo", { n: min });
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return t("agents.time.hoursAgo", { n: hr });
+  return t("agents.time.daysAgo", { n: Math.floor(hr / 24) });
+}
+
+watch(
+  activeTab,
+  (tab) => {
+    if (channelHealthTimer) {
+      window.clearInterval(channelHealthTimer);
+      channelHealthTimer = undefined;
+    }
+    if (tab === "channel") {
+      void refreshChannelHealth();
+      channelHealthTimer = window.setInterval(
+        () => void refreshChannelHealth(),
+        10_000,
+      );
+    }
+  },
+  { immediate: true },
+);
+onBeforeUnmount(() => {
+  if (channelHealthTimer) window.clearInterval(channelHealthTimer);
+});
 
 const taskWorkspaces = ref<AgentTaskWorkspace[]>([]);
 const taskReadiness = ref<AgentTaskReadiness[]>([]);
@@ -695,7 +759,12 @@ async function changeLanguage(lang: UiLanguage) {
 
 // 其它窗口改了语言时，本窗口也同步切换。
 let unlistenSettings: UnlistenFn | null = null;
-onBeforeUnmount(() => unlistenSettings?.());
+// 已开窗时的 tab 定位请求（settings-goto-tab）。
+let unlistenGotoTab: UnlistenFn | null = null;
+onBeforeUnmount(() => {
+  unlistenSettings?.();
+  unlistenGotoTab?.();
+});
 
 async function changeAnimation(anim: PopupAnimation) {
   if (!config.value) return;
@@ -1176,6 +1245,10 @@ onMounted(async () => {
       if (e.payload.language) applyLanguage(e.payload.language);
     }
   );
+  // 窗口已开时的定位请求（托盘「渠道异常」行等）：新开窗走 URL ?tab=，已开窗走本事件。
+  unlistenGotoTab = await listen<string>("settings-goto-tab", (e) => {
+    if (TABS.includes(e.payload as Tab)) activeTab.value = e.payload as Tab;
+  });
   await loadPrompt();
   try {
     mcpExePath.value = await mcpCommandPath();
@@ -2728,6 +2801,10 @@ onBeforeUnmount(() => unlistenProgress?.());
               <span class="track"></span>
             </label>
           </div>
+          <!-- R7 渠道故障横幅：daemon 侧最近未恢复的错误（修复后自动消失） -->
+          <p v-if="channelIssueText('telegram')" class="card-desc warn">
+            {{ channelIssueText("telegram") }}
+          </p>
 
           <template v-if="config.channels.telegram.enabled">
             <hr class="divider" />
@@ -2808,6 +2885,9 @@ onBeforeUnmount(() => unlistenProgress?.());
               <span class="track"></span>
             </label>
           </div>
+          <p v-if="channelIssueText('dingding')" class="card-desc warn">
+            {{ channelIssueText("dingding") }}
+          </p>
 
           <template v-if="config.channels.dingding.enabled">
             <hr class="divider" />
@@ -2969,6 +3049,9 @@ onBeforeUnmount(() => unlistenProgress?.());
               <span class="track"></span>
             </label>
           </div>
+          <p v-if="channelIssueText('feishu')" class="card-desc warn">
+            {{ channelIssueText("feishu") }}
+          </p>
 
           <template v-if="config.channels.feishu.enabled">
             <hr class="divider" />
@@ -3089,6 +3172,9 @@ onBeforeUnmount(() => unlistenProgress?.());
               <span class="track"></span>
             </label>
           </div>
+          <p v-if="channelIssueText('slack')" class="card-desc warn">
+            {{ channelIssueText("slack") }}
+          </p>
 
           <template v-if="config.channels.slack.enabled">
             <hr class="divider" />

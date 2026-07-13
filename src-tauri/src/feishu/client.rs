@@ -9,6 +9,15 @@ use crate::config::FeishuChannelConfig;
 use serde_json::{json, Value};
 use std::time::Duration;
 
+/// 渠道健康登记（R7）：API 调用失败登记、成功清除。放在统一出口，覆盖发送/编辑/上传全部路径。
+fn track<T>(r: Result<T, FeishuError>) -> Result<T, FeishuError> {
+    match &r {
+        Ok(_) => crate::channels::health::clear("feishu"),
+        Err(e) => crate::channels::health::report("feishu", e.to_string()),
+    }
+    r
+}
+
 #[derive(Clone)]
 pub struct FeishuClient {
     app_id: String,
@@ -79,8 +88,17 @@ impl FeishuClient {
         self.token().await.map(|_| ())
     }
 
-    /// 通用 JSON 调用：Bearer 鉴权 + 业务码 code==0 判定成功。
+    /// 通用 JSON 调用：Bearer 鉴权 + 业务码 code==0 判定成功。结果顺带登记渠道健康表（R7）。
     async fn call(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Value,
+    ) -> Result<Value, FeishuError> {
+        track(self.call_inner(method, path, body).await)
+    }
+
+    async fn call_inner(
         &self,
         method: reqwest::Method,
         path: &str,
@@ -217,6 +235,15 @@ impl FeishuClient {
     }
 
     async fn upload(
+        &self,
+        token: &str,
+        path: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<Value, FeishuError> {
+        track(self.upload_inner(token, path, form).await)
+    }
+
+    async fn upload_inner(
         &self,
         token: &str,
         path: &str,

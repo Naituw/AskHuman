@@ -10,6 +10,15 @@ use std::time::Duration;
 
 const OAPI_BASE: &str = "https://oapi.dingtalk.com";
 
+/// 渠道健康登记（R7）：API 调用失败登记、成功清除。放在统一出口，覆盖发送/编辑/上传全部路径。
+fn track<T>(r: Result<T, DingTalkError>) -> Result<T, DingTalkError> {
+    match &r {
+        Ok(_) => crate::channels::health::clear("dingding"),
+        Err(e) => crate::channels::health::report("dingding", e.to_string()),
+    }
+    r
+}
+
 #[derive(Clone)]
 pub struct DingTalkClient {
     client_id: String,
@@ -69,7 +78,17 @@ impl DingTalkClient {
     }
 
     /// 同 `call_new`，但可指定 HTTP method（如更新卡片用 PUT）。
+    /// 结果顺带登记渠道健康表（R7：失败可见化，成功即清）。
     async fn call_new_method(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Value,
+    ) -> Result<Value, DingTalkError> {
+        track(self.call_new_method_inner(method, path, body).await)
+    }
+
+    async fn call_new_method_inner(
         &self,
         method: reqwest::Method,
         path: &str,
@@ -144,6 +163,10 @@ impl DingTalkClient {
 
     /// 上传媒体文件，返回 media_id。`kind` 为 `image` / `file`。
     pub async fn upload_media(&self, path: &str, kind: &str) -> Result<String, DingTalkError> {
+        track(self.upload_media_inner(path, kind).await)
+    }
+
+    async fn upload_media_inner(&self, path: &str, kind: &str) -> Result<String, DingTalkError> {
         let token = self.token().await?;
         let bytes = std::fs::read(path)
             .map_err(|e| DingTalkError::Network(format!("failed to read file: {}", e)))?;

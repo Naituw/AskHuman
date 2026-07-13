@@ -79,6 +79,22 @@ pub struct StatusInfo {
     /// 是否处于排空状态（旧 Daemon 回包缺字段 → false）。
     #[serde(default)]
     pub draining: bool,
+    /// 各渠道最近一次未恢复的故障（R7 渠道故障可见化；旧 Daemon 回包缺字段 → 空）。
+    #[serde(default)]
+    pub channel_issues: Vec<ChannelIssueInfo>,
+}
+
+/// 一条渠道故障摘要（R7）：渠道 id + 错误文案 + 首次出现时间。该渠道下一次成功操作即从
+/// daemon 的健康表清除，故出现在快照里即表示「仍未恢复」。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelIssueInfo {
+    /// 渠道 id："telegram" / "dingding" / "feishu" / "slack"。
+    pub channel: String,
+    /// 错误文案（源语言英文，与 daemon.log 一致）。
+    pub message: String,
+    /// 首次出现的 Unix 毫秒时间戳。
+    pub at_ms: u64,
 }
 
 /// CLI 提交的一次提问任务（A11：`-f` 已在 CLI 解析为绝对路径；硬性上送 source name 与解析好的 lang；
@@ -509,6 +525,9 @@ pub enum ServerMsg {
         /// 旧 daemon 缺此字段 → 空 Vec（父项退回普通「打开状态窗口」条目）。
         #[serde(default)]
         agents: Vec<TrayAgentInfo>,
+        /// 各渠道最近未恢复的故障（R7；旧 daemon 缺此字段 → 空 Vec，托盘不显示警示）。
+        #[serde(default)]
+        channel_issues: Vec<ChannelIssueInfo>,
     },
     /// 聚焦并闪烁某请求的弹窗（daemon→该请求的 GUI Helper）。弹窗进程据此 `set_focus` + 通知前端闪烁。
     FocusPopup {
@@ -742,6 +761,11 @@ mod tests {
                 focusable: true,
                 pid: Some(7),
             }],
+            channel_issues: vec![ChannelIssueInfo {
+                channel: "slack".to_string(),
+                message: "invalid_auth".to_string(),
+                at_ms: 1_700_000_000_000,
+            }],
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"trayState""#));
@@ -757,6 +781,7 @@ mod tests {
                 agents_idle,
                 update_available,
                 agents,
+                channel_issues,
                 ..
             } => {
                 assert!(running);
@@ -765,15 +790,24 @@ mod tests {
                 assert!(update_available);
                 assert_eq!(agents.len(), 1);
                 assert!(agents[0].focusable);
+                assert_eq!(channel_issues.len(), 1);
+                assert_eq!(channel_issues[0].channel, "slack");
             }
             other => panic!("unexpected: {:?}", other),
         }
-        // 旧 daemon 回包缺 agents 字段 → 空 Vec（宿主退回普通条目）。
+        // 旧 daemon 回包缺 agents / channel_issues 字段 → 空 Vec（宿主退回普通条目 / 不显示警示）。
         let old = r#"{"type":"trayState","running":true,"version":"0.6","uptime_secs":1,
             "active_requests":0,"im_connections":[],"draining":false,"agents_working":0,
             "agents_idle":0,"update_available":false,"update_latest":"","pending":false}"#;
         match serde_json::from_str::<ServerMsg>(old).unwrap() {
-            ServerMsg::TrayState { agents, .. } => assert!(agents.is_empty()),
+            ServerMsg::TrayState {
+                agents,
+                channel_issues,
+                ..
+            } => {
+                assert!(agents.is_empty());
+                assert!(channel_issues.is_empty());
+            }
             other => panic!("unexpected: {:?}", other),
         }
     }

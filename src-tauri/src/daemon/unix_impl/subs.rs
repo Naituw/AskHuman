@@ -116,7 +116,20 @@ pub(super) async fn build_tray_state(state: &Arc<ServerState>) -> ServerMsg {
         pending: u.pending,
         pending_requests: state.registry.pending_infos(),
         agents,
+        channel_issues: channel_issue_infos(),
     }
+}
+
+/// 渠道健康表快照 → IPC 摘要（R7）。
+pub(super) fn channel_issue_infos() -> Vec<ipc::ChannelIssueInfo> {
+    crate::channels::health::snapshot()
+        .into_iter()
+        .map(|i| ipc::ChannelIssueInfo {
+            channel: i.channel,
+            message: i.message,
+            at_ms: i.at_ms,
+        })
+        .collect()
 }
 
 /// 向所有菜单栏宿主推送一帧 `TrayState`（顺带剔除已断开的发送端）。

@@ -697,6 +697,13 @@ async fn serve(_lock: LockGuard) -> i32 {
         });
     }
 
+    // 渠道健康表变化（R7）→ 即时推一帧 TrayState（托盘警示实时出现/消失）。
+    // 回调可能来自任意渠道 task；broadcast 内部自行 spawn，无订阅者时廉价早退。
+    {
+        let state = state.clone();
+        crate::channels::health::set_notifier(move || broadcast_tray_state(&state));
+    }
+
     // 临时目录清理（A10）：启动即清一次，之后每小时清理过期 temp/askhuman/<id>/。
     tokio::spawn(async move {
         loop {
@@ -981,6 +988,7 @@ async fn control_loop(
                     active_requests: state.registry.active_count(),
                     im_connections: active_im_connections(state).await,
                     draining: state.draining.load(Ordering::SeqCst),
+                    channel_issues: channel_issue_infos(),
                 };
                 let _ = ipc::write_msg(w, &ServerMsg::Status(info)).await;
             }
@@ -1930,11 +1938,13 @@ async fn ensure_dd_router(
     match DdRouter::connect(client_id, client_secret).await {
         Ok(r) => {
             log("dingtalk router connected");
+            crate::channels::health::clear("dingding");
             *guard = Some(r.clone());
             Some(r)
         }
         Err(e) => {
             log(&format!("dingtalk router connect failed: {}", e));
+            crate::channels::health::report("dingding", e);
             *guard = None;
             None
         }
@@ -1955,11 +1965,13 @@ async fn ensure_fs_router(
     match FsRouter::connect(cfg).await {
         Ok(r) => {
             log("feishu router connected");
+            crate::channels::health::clear("feishu");
             *guard = Some(r.clone());
             Some(r)
         }
         Err(e) => {
             log(&format!("feishu router connect failed: {}", e));
+            crate::channels::health::report("feishu", e);
             *guard = None;
             None
         }
@@ -1985,6 +1997,7 @@ async fn ensure_tg_router(
         }
         Err(e) => {
             log(&format!("telegram router connect failed: {}", e));
+            crate::channels::health::report("telegram", e);
             *guard = None;
             None
         }
@@ -2005,11 +2018,13 @@ async fn ensure_sl_router(
     match SlRouter::connect(cfg).await {
         Ok(r) => {
             log("slack router connected");
+            crate::channels::health::clear("slack");
             *guard = Some(r.clone());
             Some(r)
         }
         Err(e) => {
             log(&format!("slack router connect failed: {}", e));
+            crate::channels::health::report("slack", e);
             *guard = None;
             None
         }

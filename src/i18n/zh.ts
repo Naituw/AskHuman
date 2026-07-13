@@ -312,6 +312,7 @@ export default {
       autoEndWatchDesc:
         "开启后，当某个 IM 渠道不再是当前活跃渠道时（例如你回到电脑在本地弹窗作答，或在别的渠道发消息把活跃渠道切走），自动结束该渠道上的所有实时关注（watch），无需手动 /unwatch。仅在「按需发送」开启时生效。",
       popupTitle: "本地弹窗",
+      issueBanner: "⚠ 渠道异常（{time}）：{msg}",
       rememberSize: "记住窗口尺寸",
       defaultWidth: "默认宽度",
       defaultHeight: "默认高度",

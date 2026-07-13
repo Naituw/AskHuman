@@ -504,7 +504,9 @@ fn route_open_window(
             // 兜底在弹窗进程内建窗：沿用进程内置顶判定（有弹窗且置顶 → 浮于其上）。
             let pin = crate::app::popup_pin(&fallback, &cfg);
             let _ = match kind {
-                WindowKind::Settings => crate::app::create_settings_window(&fallback, &cfg, pin),
+                WindowKind::Settings => {
+                    crate::app::create_settings_window(&fallback, &cfg, pin, None)
+                }
                 WindowKind::History => {
                     crate::app::create_history_window(&fallback, &cfg, all, project.as_deref(), pin)
                 }
@@ -953,7 +955,7 @@ pub fn open_settings(app: AppHandle) -> Result<(), String> {
         // get_settings() separately. Skip keychain here.
         let cfg = AppConfig::load_without_secrets();
         let pin = crate::app::popup_pin(&app, &cfg);
-        crate::app::create_settings_window(&app, &cfg, pin).map_err(|e| e.to_string())
+        crate::app::create_settings_window(&app, &cfg, pin, None).map_err(|e| e.to_string())
     }
 }
 
@@ -962,6 +964,23 @@ pub fn open_settings(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn apply_window_effect(app: AppHandle, effect: WindowEffect) {
     crate::app::apply_window_effect_to_all(&app, effect);
+}
+
+/// 渠道健康快照（R7）：向 daemon 查询各渠道最近未恢复的故障，设置页渠道 tab 据此显示错误横幅。
+/// daemon 未运行（或非 Unix 无 daemon）→ 空列表。
+#[tauri::command]
+pub async fn channel_health() -> Vec<crate::ipc::ChannelIssueInfo> {
+    #[cfg(unix)]
+    {
+        crate::client::request_status()
+            .await
+            .map(|s| s.channel_issues)
+            .unwrap_or_default()
+    }
+    #[cfg(not(unix))]
+    {
+        Vec::new()
+    }
 }
 
 // ===== 语音输入（macOS 26 SpeechAnalyzer，离线，经 Swift 桥） =====
