@@ -231,6 +231,67 @@ locale 按需加载。任何改动先过 `scripts/perf-popup.mjs` 基线。
 - `dirs` 6 / `thiserror` 2 已在本轮直接升级（编译测试全绿）。
 - Windows 无 daemon（单进程回退）是已知形态差异，属产品决策非技术债，不列入建议。
 
+## 第三轮分析：交互 / 性能 / 功能 / 扩展性（用户可感知面）
+
+前两轮以静态结构与 daemon 运行时为主；本轮从用户可感知的四个维度再扫一遍。
+编号接续 R5。已在待办的项（R4 bundle、types.ts 派生、组件拆分、i18n 第三语言等）不重复列。
+
+先说结论里的「好」：watch tick 已自适应（工作中 2s / 空闲 10s）；弹窗预热默认开启
+（hot 路径 121ms）；弹窗关窗在有输入时已有二次确认；历史有搜索与项目筛选。
+以下是仍可优化的点。
+
+### 交互
+
+**R6. 首次运行零引导** — 新装用户首次 `AskHuman` 只见弹窗；IM 渠道、Agent 集成、
+菜单栏这些核心能力全靠自己发现（doctor 也要主动想起来跑）。建议轻量引导：
+首次弹窗页脚一次性提示「配置 IM 渠道可在手机上作答」（点击打开设置），
+或 CLI 首问后 stderr 打一行 doctor 提示。成本低，转化价值高。
+
+**R7. 渠道运行时故障对用户不可见** — 投放失败 / 长连接断开只进 daemon.log；
+`TrayState` 只有 `im_connections` 在线名单，没有错误态。token 配错或网络断时，
+用户的感知是「IM 静默无消息」，无从排查。建议：router 把最近渠道错误挂进
+TrayState（托盘警示 + 设置页渠道卡片显示最近错误摘要）。中成本。
+
+**R8. 弹窗关闭语义单一** — 关窗 = 取消整个请求（含 IM 端）。「本地先不答、
+稍后在手机上答」做不到；只能不碰弹窗。托盘「待答」子菜单已能重新聚焦弹窗，
+基础设施具备。可评估第三动作「仅收起本地弹窗，IM 继续等待」。行为语义变化，需定案。
+
+**R9. 设置页无搜索** — 几十个设置项分布在多个 tab，找设置靠记忆。
+建议随 SettingsView 组件拆分（已列 P2）顺带加关键词过滤。
+
+### 性能
+
+**R10. daemon 冷启动首问的 IM 卡片延迟** — perf 基线里 cold `im_attach` 中位 461ms
+（mock 网络 150ms 延迟下）；真实网络下钉钉/飞书要 token + 长连接建立，应为秒级。
+弹窗不受影响，但冷启后第一问的 IM 卡片明显晚到。可评估各渠道 attach 并行化 /
+daemon 起步即预连接。改前先在真实渠道上量一次。
+
+（弹窗 warm 路径 ~460ms 主要是 WebView 启动的本质开销，prewarm 已覆盖；
+预热实例被消耗后的补位窗口内连发第二问会退回 warm 路径，属已知边界，暂不动。）
+
+### 功能
+
+**R11. Agent 任务（IM `/new`）仅 macOS** — `agent_launch.rs` 的 readiness 即
+`cfg!(target_os = "macos")`（依赖 Terminal.app helper）。Linux 桌面可评估
+gnome-terminal / konsole / x-terminal-emulator 兜底。中成本，视 Linux 用户占比。
+
+**R12. 用户 hooks 事件面只有 `ask-received`** — 机制已通用（按事件名找脚本）。
+低成本即可加 `answer-received`（含结果摘要）、`request-cancelled`、`agent-stop` 等，
+供用户做统计 / 转发 / 自动化。按需求排。
+
+**R13. 历史无导出入口** — UI 无导出按钮（JSONL 在磁盘可自取）。低优先。
+
+**R14. 更新渠道无 Homebrew** — 现有 Direct / npm。视用户群补 cask。低优先。
+
+### 扩展性
+
+**R15. 新渠道 / 新 Agent 家族没有接入 checklist** — 加一个 IM 渠道要动约 9 处
+（channel adapter、router、watch 卡、select 卡、confirm adapter、设置 UI、config、
+detect、i18n）；加一个 Agent 家族同理（`AgentKind` 枚举 + detect/title/transcript/
+lifecycle 多处 match）。短期：在开发文档补「新增渠道 / 新增 Agent 家族 checklist」
+（低成本，防漏项）。长期：把 watch/select/confirm 的渠道分支收敛进 Channel trait
+（大重构，仅在确有第五渠道需求时做）。
+
 ## 建议行动顺序
 
 | 优先级 | 事项 | 预估成本 |

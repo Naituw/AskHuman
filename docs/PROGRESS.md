@@ -2,13 +2,19 @@
 
 按具体任务 / 需求记录待办与当前进展。任务 / 需求完成后删除其 section（历史留在 git）。
 
+## 【进行中】项目 review 收尾：真机验证 + AskHuman 确认
+
+分支 `chore/project-review-2026-07`。P0+P1、第二轮 R1/R2/R3、TCC 弹窗修复、
+Agent 任务保活 UI（生命周期锁定 + 开启确认弹层）均已提交并 install.sh 安装。
+测试（cargo test + vitest 28）通过。待真机验证：设置页无 TCC 弹窗、弹窗/watch 正常、
+Agent 任务开关确认弹层与生命周期锁定表现。
+
 ## 待办：项目 review 的 P2 项（择机）
 
-报告见 `docs/investigations/project-review-2026-07.md`。P0+P1 与第二轮 R1/R2/R3 已在分支
-`chore/project-review-2026-07` 完成；剩余择机项：daemon.log 轮转、SettingsView/PopupView
-组件拆分、types.ts 改为从 Rust 派生（ts-rs/specta）、secrets.rs 注释修正、
-gitutil 测试噪音、TS 7 升级（等 vue-tsc 支持）、前端主 bundle 瘦身（R4，需 perf 基线）、
-agents.snapshot() typed 化 + pnpm/Node 版本对齐（R5）。
+报告见 `docs/investigations/project-review-2026-07.md`。剩余择机项：daemon.log 轮转、
+SettingsView/PopupView 组件拆分、types.ts 改为从 Rust 派生（ts-rs/specta）、
+secrets.rs 注释修正、gitutil 测试噪音、TS 7 升级（等 vue-tsc 支持）、
+前端主 bundle 瘦身（R4，需 perf 基线）、agents.snapshot() typed 化 + pnpm/Node 版本对齐（R5）。
 
 ## 待办：Cursor 全局 Rules 迁移为用户级 always-on Skill
 
