@@ -118,6 +118,10 @@ export default {
       advanced: "Advanced",
       experimental: "Experimental",
     },
+    search: {
+      placeholder: "Search settings",
+      empty: "No matching settings",
+    },
     experimental: {
       enableLabel: "Experimental features",
       enableHint: "Show advanced, unstable features. Off by default.",

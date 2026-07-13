@@ -172,6 +172,164 @@ onBeforeUnmount(() => {
   if (channelHealthTimer) window.clearInterval(channelHealthTimer);
 });
 
+// ===== 设置搜索（R9）=====
+// 静态索引：每条 = 一个设置项（tab + 展示/锚定标题 + 参与匹配的额外文案）。标题文本
+// 与模板渲染文本同源（都经 t()），跳转后按文本在 DOM 里定位，无须给每行加 id。
+interface SearchEntry {
+  tab: Tab;
+  /** 结果展示文本，也是跳转后 DOM 定位的锚文本（须与渲染文本一致）。 */
+  title: string;
+  /** 额外参与匹配的文案（描述/子项等），不展示。 */
+  extra: string[];
+}
+
+const searchQuery = ref("");
+
+const searchIndex = computed<SearchEntry[]>(() => {
+  const e = (tab: Tab, titleKey: string, extraKeys: string[] = []): SearchEntry => ({
+    tab,
+    title: t(titleKey),
+    extra: extraKeys.map((k) => t(k)),
+  });
+  const lit = (tab: Tab, title: string, extra: string[] = []): SearchEntry => ({
+    tab,
+    title,
+    extra,
+  });
+  const list: SearchEntry[] = [
+    // 通用
+    e("general", "settings.appearance.title"),
+    e("general", "settings.appearance.theme", [
+      "settings.appearance.themeSystem",
+      "settings.appearance.themeLight",
+      "settings.appearance.themeDark",
+    ]),
+    e("general", "settings.appearance.language"),
+    e("general", "settings.popupBehavior.title"),
+    e("general", "settings.popupBehavior.alwaysOnTop"),
+    e("general", "settings.popupBehavior.prewarm", [
+      "settings.popupBehavior.prewarmHint",
+    ]),
+    e("general", "settings.popupBehavior.testPopup"),
+    e("general", "settings.history.title"),
+    e("general", "settings.history.limit", ["settings.history.limitHint"]),
+    e("general", "settings.about.title", [
+      "settings.about.currentVersion",
+      "settings.about.latestVersion",
+    ]),
+    // Agents 集成
+    e("integration", "settings.integration.promptTitle"),
+    e("integration", "settings.integration.stopTitle"),
+    lit("integration", "Claude Code", ["Agent"]),
+    lit("integration", "Codex", ["Agent"]),
+    lit("integration", "Cursor", ["Agent"]),
+    lit("integration", "Grok", ["Agent"]),
+    // 通信渠道
+    e("channel", "settings.channels.popupTitle", [
+      "settings.channels.rememberSize",
+      "settings.channels.defaultWidth",
+      "settings.channels.defaultHeight",
+    ]),
+    e("channel", "settings.channels.telegramTitle", [
+      "settings.channels.botToken",
+      "settings.channels.chatId",
+    ]),
+    e("channel", "settings.channels.dingtalkTitle", [
+      "settings.channels.clientId",
+      "settings.channels.clientSecret",
+      "settings.channels.userId",
+    ]),
+    e("channel", "settings.channels.feishuTitle", [
+      "settings.channels.appId",
+      "settings.channels.appSecret",
+    ]),
+    e("channel", "settings.channels.slackTitle", [
+      "settings.channels.slackBotToken",
+      "settings.channels.slackAppToken",
+      "settings.channels.slackUserId",
+    ]),
+  ];
+  if (isMac) {
+    list.push(
+      e("general", "settings.popupBehavior.sound"),
+      e("general", "settings.popupBehavior.appearAnimation"),
+      e("general", "settings.speech.title", [
+        "settings.speech.language",
+        "settings.speech.shortcut",
+      ]),
+    );
+  }
+  if (isMac && glassSupported.value) {
+    list.push(e("general", "settings.popupBehavior.windowEffect"));
+  }
+  if (!isWindows) {
+    list.push(
+      e("general", "settings.menuBar.title", [
+        "settings.menuBar.icon",
+        "settings.menuBar.hint",
+      ]),
+      // 高级
+      e("advanced", "settings.experimental.lifecycleTitle", [
+        "settings.experimental.lifecycleDesc",
+      ]),
+      e("advanced", "settings.experimental.daemonLifecycleTitle", [
+        "settings.experimental.daemonLifecycleLabel",
+        "settings.experimental.daemonLifecycleActivity",
+        "settings.experimental.daemonLifecycleKeepalive",
+      ]),
+      e("advanced", "settings.channels.autoActivationTitle", [
+        "settings.channels.autoActivationDesc",
+      ]),
+      e("advanced", "settings.channels.autoEndWatchTitle", [
+        "settings.channels.autoEndWatchDesc",
+      ]),
+    );
+  }
+  // 实验 tab 仅在开启实验性功能后可见（其内容目前仅 macOS 的 Agent 任务卡）。
+  if (!isWindows && isMac && config.value?.experimental.enabled) {
+    list.push(
+      e("experimental", "settings.agentTasks.title", [
+        "settings.agentTasks.description",
+        "settings.agentTasks.permission",
+        "settings.agentTasks.readiness",
+        "settings.agentTasks.workspaces",
+      ]),
+    );
+  }
+  return list;
+});
+
+const searchResults = computed<SearchEntry[]>(() => {
+  const q = searchQuery.value.trim().toLowerCase();
+  if (!q) return [];
+  return searchIndex.value
+    .filter(
+      (s) =>
+        s.title.toLowerCase().includes(q) ||
+        s.extra.some((x) => x.toLowerCase().includes(q)),
+    )
+    .slice(0, 12);
+});
+
+/** 跳到搜索结果：切 tab → 按锚文本定位行/卡片 → 滚动居中 + 短暂高亮。 */
+async function gotoSearchResult(entry: SearchEntry) {
+  searchQuery.value = "";
+  activeTab.value = entry.tab;
+  await nextTick();
+  const nodes = Array.from(
+    document.querySelectorAll(".settings-body .card-title, .settings-body .label"),
+  );
+  const anchor = nodes.find((n) => (n.textContent ?? "").trim().startsWith(entry.title));
+  if (!anchor) return;
+  // 行级条目高亮所在行，卡片标题条目高亮整卡。
+  const el = (anchor.classList.contains("label")
+    ? (anchor.closest(".row") ?? anchor.closest(".card") ?? anchor)
+    : (anchor.closest(".card") ?? anchor)) as HTMLElement;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.add("search-hit-highlight");
+  window.setTimeout(() => el.classList.remove("search-hit-highlight"), 2200);
+}
+
 const taskWorkspaces = ref<AgentTaskWorkspace[]>([]);
 const taskReadiness = ref<AgentTaskReadiness[]>([]);
 const taskSettingsBusy = ref(false);
@@ -1461,6 +1619,32 @@ onBeforeUnmount(() => unlistenProgress?.());
       >
         {{ t("settings.tabs.experimental") }}
       </button>
+      <!-- 设置搜索（R9）：匹配各 tab 的设置项标题/描述，点击跳转并高亮 -->
+      <div class="tab-search">
+        <input
+          class="tab-search-input"
+          type="search"
+          :placeholder="t('settings.search.placeholder')"
+          v-model="searchQuery"
+          @keydown.escape="searchQuery = ''"
+          @keydown.enter="searchResults[0] && gotoSearchResult(searchResults[0])"
+        />
+        <div v-if="searchQuery.trim()" class="tab-search-results">
+          <button
+            v-for="r in searchResults"
+            :key="`${r.tab}:${r.title}`"
+            type="button"
+            class="tab-search-item"
+            @click="gotoSearchResult(r)"
+          >
+            <span class="tab-search-tab">{{ t(`settings.tabs.${r.tab}`) }}</span>
+            <span class="tab-search-title">{{ r.title }}</span>
+          </button>
+          <p v-if="searchResults.length === 0" class="tab-search-empty">
+            {{ t("settings.search.empty") }}
+          </p>
+        </div>
+      </div>
     </nav>
 
     <div class="settings-body">
@@ -3931,6 +4115,91 @@ onBeforeUnmount(() => unlistenProgress?.());
 .readiness-target-row.settings-target-highlight {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+/* ===== 设置搜索（R9） ===== */
+/* tabbar 是窗口拖拽区；搜索框绝对定位靠右，不挤动居中的 tab。 */
+.tabbar {
+  position: relative;
+}
+.tab-search {
+  position: absolute;
+  right: var(--space-4);
+  top: 50%;
+  transform: translateY(-50%);
+}
+.tab-search-input {
+  width: 110px;
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: width 0.15s ease, border-color 0.15s ease;
+}
+.tab-search-input:focus {
+  width: 170px;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+.tab-search-results {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  z-index: 30;
+}
+.tab-search-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: default;
+}
+.tab-search-item:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.tab-search-tab {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.tab-search-title {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab-search-empty {
+  margin: 6px 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+/* 搜索跳转后的短暂高亮（行或整卡）。 */
+.search-hit-highlight {
+  background: color-mix(in srgb, var(--accent) 12%, transparent) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
+  border-radius: var(--radius-sm);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
 }
 .agent-card {
   transition: border-color 0.2s ease, box-shadow 0.2s ease;

@@ -113,6 +113,10 @@ export default {
       advanced: "高级",
       experimental: "实验",
     },
+    search: {
+      placeholder: "搜索设置",
+      empty: "无匹配的设置项",
+    },
     experimental: {
       enableLabel: "实验性功能",
       enableHint: "显示尚不稳定的高级功能，默认关闭。",
