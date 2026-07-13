@@ -8,10 +8,25 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # 每周一 03:00 UTC 复查依赖漏洞（RustSec 随时可能对既有 Cargo.lock 发新通告）。
+    - cron: "0 3 * * 1"
 
 jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit --file src-tauri/Cargo.lock
+
   build:
     name: ${{ matrix.target }}
+    # 定时触发只做 audit；四平台构建仍由 push / PR / 手动驱动。
+    if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
@@ -63,8 +78,20 @@ jobs:
 
       - run: pnpm build
 
-      - name: cargo test (Linux only)
+      - name: vitest (Linux only)
         if: startsWith(matrix.os, 'ubuntu')
+        run: pnpm test
+
+      # 门禁：警告即失败（存量已清零）；fmt / clippy 只需跑一个平台。
+      - name: rustfmt + clippy (Linux only)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      # macOS 也跑测试：objc2 / QuickLook / launchd 等平台代码只在这里能被覆盖。
+      - name: cargo test (Linux + macOS arm64)
+        if: startsWith(matrix.os, 'ubuntu') || matrix.target == 'aarch64-apple-darwin'
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: cargo build (release)
