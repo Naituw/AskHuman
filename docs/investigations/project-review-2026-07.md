@@ -110,6 +110,10 @@ semver 范围内**，跑一次 `cargo update`（或至少针对这三个包 upda
    但若磁盘继续紧张，这 3.9GB 里大部分是它的缓存，可权衡关闭。
 4. 处理后 PROGRESS 中「分析 target 过大」待办可关闭。
 
+（落实记录：本机原来已装 cargo-sweep；交叉 target 已删，`cargo sweep --installed`
+清掉旧工具链产物 4.2GB。近 14 天内活跃开发产生的新旧两代依赖产物会随 install.sh
+的例行 sweep 在两周窗口后自动回收，无需一次性 `cargo clean`。）
+
 ### 7. 依赖大版本落后（无漏洞，但会越拖越难升）
 
 - **Rust**：`rmcp` 1.7 → 2.2（major，MCP SDK 迭代快，建议尽早评估迁移成本）；
