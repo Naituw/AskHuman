@@ -336,7 +336,7 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 - Unix 只支持 Claude Code / Codex 的原生 `PermissionRequest` Hook；基础设施或渠道失败、24h 到期时不输出裁决，让 Agent 回到原生审批。
 - 固定动作是批准一次/拒绝；Claude 只原样回放本次请求携带且通过白名单的 allow suggestion，Codex 永不伪造 `updatedPermissions`。
 - 权限请求走独立 Confirm 模型；Popup/四 IM 中首个 Ready 的合法回答胜出，其它端定格，轻量 tombstone 只保留到原 deadline。
-- permission 是默认开启的正交 preference，不是第四种 mode；CLI/MCP mode 按 preference 管理 Hook，None 卸 Hook 但保留偏好。
+- permission 是正交 preference，不是第四种 mode；Claude 默认开、Codex 默认关。CLI/MCP mode 按 preference 管理 Hook，None 卸 Hook 但保留偏好。
 - “已配置”不等于已生效；blocked policy 和其它 Hook 只做可读范围内的正向提示。Claude 决策可能互相覆盖，Codex 保持 deny-wins。
 
 ## Agent Stop 结束确认

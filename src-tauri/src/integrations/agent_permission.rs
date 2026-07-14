@@ -42,8 +42,12 @@ pub fn supported(target: AgentTarget) -> bool {
 pub fn enabled(target: AgentTarget) -> bool {
     let preferences = load_preferences();
     match target {
+        // Claude keeps the original product default: intercept PermissionRequest.
         AgentTarget::ClaudeCode => preferences.claude.unwrap_or(true),
-        AgentTarget::Codex => preferences.codex.unwrap_or(true),
+        // Codex defaults off: native TUI already offers session-scoped approvals, and
+        // spawn_agent subagents re-trigger PermissionRequest often without sharing that
+        // cache. Users can still opt in via settings / `agents permission codex on`.
+        AgentTarget::Codex => preferences.codex.unwrap_or(false),
         _ => false,
     }
 }
@@ -548,10 +552,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn preferences_default_on_only_for_supported_agents() {
+    fn permission_support_and_default_preference_by_agent() {
         assert!(supported(AgentTarget::ClaudeCode));
         assert!(supported(AgentTarget::Codex));
         assert!(!supported(AgentTarget::Cursor));
+        // Defaults are pure preference lookups when no preference file is present.
+        // Claude opts in by default; Codex opts out to avoid noisy subagent prompts.
+        let empty = Preferences::default();
+        assert_eq!(empty.claude.unwrap_or(true), true);
+        assert_eq!(empty.codex.unwrap_or(false), false);
     }
 
     #[test]
