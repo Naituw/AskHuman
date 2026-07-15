@@ -1108,8 +1108,6 @@ export function usePopupCore() {
   // 聚焦会触发折叠输入框展开、改变高度，故**展开后再滚动**（双 nextTick），避免用旧高度定位。全程用 NAV_LOCK_MS
   // 锁住 scroll-spy 到滚动动画结束，避免 current 被滚动事件抢走。供上一个/下一个、⌘[/⌘]、⌘↵ 复用，行为一致。
   function goToIdx(target: number) {
-    attach.stopPreview();
-    attach.selectedFile.value = null;
     const i = Math.max(0, Math.min(target, total.value - 1));
     setActive(i, false); // 先置当前题、不滚动（滚动放到展开之后）
     activeLockUntil = Date.now() + NAV_LOCK_MS;
@@ -1131,8 +1129,6 @@ export function usePopupCore() {
   function goToSeq(index: number) {
     if (index < 0 || index >= total.value || index === current.value) return;
     speech.stopListening(); // 切题前停语音，避免回调写进旧题
-    attach.stopPreview();
-    attach.selectedFile.value = null;
     clearComposerOwner();
     nextSequentialFocusIsManual = true;
     current.value = index;
@@ -1246,6 +1242,7 @@ export function usePopupCore() {
   async function submit() {
     if (submitting.value || !canSubmit.value) return;
     submitting.value = true;
+    attach.stopPreview();
     try {
       await submitPopup({ answers: collectAnswers() });
     } catch {
@@ -1345,6 +1342,7 @@ export function usePopupCore() {
     if (submitting.value) return;
     submitting.value = true;
     showCancelConfirm.value = false;
+    attach.stopPreview();
     try {
       await cancelPopup();
     } catch {

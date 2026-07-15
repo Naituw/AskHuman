@@ -26,6 +26,7 @@ export function useAttachments(deps: {
   const draggingOut = ref(false);
   let unlistenIndex: UnlistenFn | null = null;
   let unlistenFocus: UnlistenFn | null = null;
+  let restoreAttachmentFocusOnClose = false;
 
   function setAttRef(el: Element | null, i: number) {
     if (el) attRefs.value[i] = el as HTMLElement;
@@ -47,6 +48,7 @@ export function useAttachments(deps: {
   function previewSelected(index: number) {
     focusAttachment(index);
     previewing.value = true;
+    restoreAttachmentFocusOnClose = true;
     previewAttachments(
       attachments.value.map((f) => f.path),
       index
@@ -56,23 +58,30 @@ export function useAttachments(deps: {
   function stopPreview() {
     if (!previewing.value) return;
     previewing.value = false;
+    restoreAttachmentFocusOnClose = false;
     closePreview().catch(() => {});
   }
 
   function onBackgroundClick(e: MouseEvent) {
     if ((e.target as HTMLElement).closest(".attachment")) return;
+    if (previewing.value) {
+      restoreAttachmentFocusOnClose = false;
+      return;
+    }
     if (selectedFile.value !== null) selectedFile.value = null;
-    stopPreview();
   }
 
   function handleAttachmentKey(e: KeyboardEvent): boolean {
     if (!attachments.value.length) return false;
     const i = selectedFile.value;
     if (i === null) return false;
-    if (e.key === "Enter") {
+    if (e.key === "Escape" && previewing.value) {
+      stopPreview();
+    } else if (e.key === "Enter") {
       openFile(attachments.value[i]);
     } else if (e.key === " ") {
-      previewSelected(i);
+      if (previewing.value) stopPreview();
+      else previewSelected(i);
     } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
       if (i < attachments.value.length - 1) focusAttachment(i + 1);
     } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
@@ -148,11 +157,16 @@ export function useAttachments(deps: {
     unlistenFocus = await listen("preview-closed", () => {
       previewing.value = false;
       const i = selectedFile.value;
-      if (i !== null) nextTick(() => attRefs.value[i]?.focus());
+      const shouldRestore = restoreAttachmentFocusOnClose;
+      restoreAttachmentFocusOnClose = false;
+      if (shouldRestore && i !== null) {
+        nextTick(() => attRefs.value[i]?.focus());
+      }
     });
   }
 
   function disposeAttachments() {
+    stopPreview();
     unlistenIndex?.();
     unlistenFocus?.();
   }

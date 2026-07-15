@@ -5,7 +5,7 @@
 ## 窗口与附件交互
 
 - 窗口拖拽用 `data-tauri-drag-region`（导航栏、底部空白和设置 tab 栏）；置顶用前端 `@tauri-apps/api/window` 的 `setAlwaysOnTop`。
-- 文件拖入用 `onDragDropEvent` 取得原生路径；`-f` 附件拖出用 `tauri-plugin-drag` 的 `startDrag`。预览、系统图标和原生右键菜单由 `commands.rs` 中对应 command 提供。
+- 文件拖入用 `onDragDropEvent` 取得原生路径；`-f` 附件拖出用 `tauri-plugin-drag` 的 `startDrag`。预览、系统图标和原生右键菜单由 `commands.rs` 中对应 command 提供。macOS Quick Look 打开后可与 Popup 并行交互：弹窗内点击和切题不关闭预览，附件高亮保留；输入焦点不会在面板关闭时被附件抢回。焦点不在输入控件时空格切换预览，提交 / 取消 / Popup 销毁主动关闭。
 
 ## 来源标题与上下文
 
