@@ -15,6 +15,10 @@ use serde_json::Value;
 /// 每渠道关注上限。
 pub const MAX_WATCHES: usize = 5;
 
+/// Keep an existing watch alive for this long after its agent becomes Idle. This lets a user
+/// interrupt one turn and immediately continue in the same session without re-subscribing.
+pub const IDLE_GRACE_SECS: u64 = 5 * 60;
+
 /// 渠道是否支持 /watch（就地编辑 + 按钮回调都可用）。四渠道全支持（钉钉经 PoC 验证后
 /// M4 接入，`docs/plans/im-watch-channels.md` §4）。
 pub fn channel_supported(channel_id: &str) -> bool {
@@ -190,6 +194,35 @@ pub fn build_frame(seq: u64, rec: Option<&Value>, waiting: bool) -> WatchFrame {
         todos: parts.todos,
         active_elapsed_secs: rec.get("activeElapsedSecs").and_then(|v| v.as_u64()),
         at: parts.at,
+    }
+}
+
+/// Whether an Idle record has exhausted the grace period for an existing watch subscription.
+/// `lastActivity` is the persisted Idle boundary, so daemon restarts do not reset the deadline.
+/// Missing timestamps expire defensively rather than keeping a malformed subscription forever.
+pub fn idle_grace_expired(rec: Option<&Value>, now: u64) -> bool {
+    let Some(rec) = rec else {
+        return false;
+    };
+    if rec.get("state").and_then(Value::as_str) != Some("idle") {
+        return false;
+    }
+    rec.get("lastActivity")
+        .and_then(Value::as_u64)
+        .is_none_or(|idle_since| now.saturating_sub(idle_since) >= IDLE_GRACE_SECS)
+}
+
+/// Automatic terminal state for an existing subscription. Explicit session end remains immediate;
+/// Idle is terminal only after its grace period. Waiting deliberately overrides an Idle record.
+pub fn automatic_final_kind(
+    frame: &WatchFrame,
+    rec: Option<&Value>,
+    now: u64,
+) -> Option<FinalKind> {
+    match frame.phase {
+        WatchPhase::Ended => Some(FinalKind::Ended),
+        WatchPhase::Idle if idle_grace_expired(rec, now) => Some(FinalKind::Idle),
+        WatchPhase::Working | WatchPhase::Idle | WatchPhase::Waiting => None,
     }
 }
 
@@ -704,6 +737,95 @@ mod tests {
         // camelCase 字段名（与其它持久化文件一致）。
         assert!(text.contains("sessionId"));
         assert!(text.contains("messageId"));
+    }
+
+    #[test]
+    fn idle_grace_expires_after_five_minutes_only_for_idle_records() {
+        let now = 10_000;
+        let idle = |last_activity| {
+            serde_json::json!({
+                "state": "idle",
+                "lastActivity": last_activity,
+            })
+        };
+        assert!(!idle_grace_expired(
+            Some(&idle(now - IDLE_GRACE_SECS + 1)),
+            now
+        ));
+        assert!(idle_grace_expired(Some(&idle(now - IDLE_GRACE_SECS)), now));
+        assert!(!idle_grace_expired(
+            Some(&serde_json::json!({
+                "state": "working",
+                "lastActivity": now - IDLE_GRACE_SECS,
+            })),
+            now
+        ));
+        assert!(!idle_grace_expired(None, now));
+        assert!(idle_grace_expired(
+            Some(&serde_json::json!({ "state": "idle" })),
+            now
+        ));
+    }
+
+    #[test]
+    fn existing_watch_resumes_within_idle_grace_and_ends_at_deadline() {
+        let idle_since = 1_000;
+        let idle = serde_json::json!({
+            "seq": 1,
+            "kind": "codex",
+            "sessionId": "s1",
+            "state": "idle",
+            "lastActivity": idle_since,
+        });
+        let idle_frame = build_frame(1, Some(&idle), false);
+        assert_eq!(
+            automatic_final_kind(&idle_frame, Some(&idle), idle_since + IDLE_GRACE_SECS - 1),
+            None
+        );
+
+        let mut working = idle.clone();
+        working["state"] = serde_json::json!("working");
+        let working_frame = build_frame(1, Some(&working), false);
+        assert_eq!(
+            automatic_final_kind(&working_frame, Some(&working), idle_since + IDLE_GRACE_SECS),
+            None
+        );
+
+        assert_eq!(
+            automatic_final_kind(&idle_frame, Some(&idle), idle_since + IDLE_GRACE_SECS),
+            Some(FinalKind::Idle)
+        );
+        let waiting_frame = build_frame(1, Some(&idle), true);
+        assert_eq!(
+            automatic_final_kind(&waiting_frame, Some(&idle), idle_since + IDLE_GRACE_SECS),
+            None
+        );
+
+        let mut ended = idle.clone();
+        ended["state"] = serde_json::json!("ended");
+        let ended_frame = build_frame(1, Some(&ended), false);
+        assert_eq!(
+            automatic_final_kind(&ended_frame, Some(&ended), idle_since + 1),
+            Some(FinalKind::Ended)
+        );
+    }
+
+    #[test]
+    fn idle_grace_deadline_survives_snapshot_roundtrip() {
+        let idle_since = 2_000;
+        let rec = serde_json::json!({
+            "state": "idle",
+            "lastActivity": idle_since,
+        });
+        let restored: Value = serde_json::from_str(&serde_json::to_string(&rec).unwrap()).unwrap();
+        assert!(!idle_grace_expired(
+            Some(&restored),
+            idle_since + IDLE_GRACE_SECS - 1
+        ));
+        assert!(idle_grace_expired(
+            Some(&restored),
+            idle_since + IDLE_GRACE_SECS
+        ));
     }
 
     #[test]

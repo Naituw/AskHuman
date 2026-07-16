@@ -37,7 +37,7 @@
 
 ## Watch
 
-Watch 规格见 `docs/specs/im-watch.md`。订阅持久化在 `~/.askhuman/state/watch.json`，daemon 重启后尽量继续编辑原卡。状态卡展示 Agent 工作中、空闲、等待回答或已结束，以及跨 Turn 累计、扣除真正 idle 的工作时长和最近活动；状态变化、提问和回答会唤醒引擎。
+Watch 规格见 `docs/specs/im-watch.md`。订阅持久化在 `~/.askhuman/state/watch.json`，daemon 重启后尽量继续编辑原卡。状态卡展示 Agent 工作中、空闲、等待回答或已结束，以及跨 Turn 累计、扣除真正 idle 的工作时长和最近活动；状态变化、提问和回答会唤醒引擎。已在关注的 Agent 进入空闲后保留 5 分钟宽限，期间开始下一 Turn 可由原卡继续。
 
 引擎按结构化帧签名避免无变化编辑，并按平台限制节流。Agent 结束、用户取消、自动切槽或连续发送失败都会让订阅进入终态并释放。共享状态在 `watch.rs`，平台渲染和回调在各自 `<channel>/watch.rs` 与 Router 中。
 

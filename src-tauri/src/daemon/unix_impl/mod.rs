@@ -238,7 +238,7 @@ const REWATCHABLE_TTL_SECS: u64 = 600;
 /// `/watch` 实时关注子系统的 daemon 侧状态。
 #[derive(Default)]
 struct WatchState {
-    /// 活动订阅（agent 结束 / 用户取消即移除；每渠道上限 `watch::MAX_WATCHES`）。
+    /// 活动订阅（agent 结束 / 空闲宽限期到期 / 用户取消即移除；每渠道上限 `watch::MAX_WATCHES`）。
     subs: Mutex<Vec<WatchEntry>>,
     /// 引擎唤醒信号（AgentEvent / 提问创建、完结 / 订阅变化）。
     notify: tokio::sync::Notify,
@@ -271,7 +271,7 @@ struct WatchEntry {
     last_edit_ms: u64,
     /// 连续编辑失败次数（≥5 自动退订：超时不可改 / 卡被删等）。
     fails: u32,
-    /// 上一帧是否「工作中」（引擎自适应 tick：有工作中 2s，否则 10s）。
+    /// 上一帧是否「工作中」（引擎自适应 tick：有工作中 2s，否则 10s；Idle 宽限期走后者）。
     working: bool,
     /// 当前卡发出时刻（Unix 毫秒）：与渠道 disturb 水位比较判定卡是否已被淹没。
     sent_at_ms: u64,

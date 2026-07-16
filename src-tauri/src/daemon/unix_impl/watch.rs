@@ -37,8 +37,8 @@ pub(super) fn persist_watch_subs(state: &Arc<ServerState>) {
 }
 
 /// watch 引擎入口：恢复持久化订阅（按 session 重解析展示编号——`seq` 不跨重启保留），
-/// 然后进入「Notify 即醒 / 自适应 tick」循环：有「工作中」订阅 2s 一拍、只有空闲订阅 10s
-/// 一拍、无订阅纯等 Notify（零空转）。
+/// 然后进入「Notify 即醒 / 自适应 tick」循环：有「工作中」订阅 2s 一拍、只有处于空闲宽限期的
+/// 订阅 10s 一拍、无订阅纯等 Notify（零空转）。
 pub(super) async fn watch_restore_and_run(state: Arc<ServerState>) {
     let persisted = crate::watch::load();
     if !persisted.is_empty() {
@@ -100,8 +100,9 @@ pub(super) async fn watch_restore_and_run(state: Arc<ServerState>) {
 }
 
 /// 引擎一拍：对每个订阅重算帧，**签名变化才**编辑卡片（帧是全量的，丢帧无损）；
-/// agent 结束 → 终态定格 + 自动退订；连续失败 ≥5 退订。按渠道分组：每渠道各建一次
-/// 传输客户端、各取各的淹没水位与在途提问。末尾幂等确保回调路由在位。
+/// agent 结束 → 立即终态定格 + 自动退订；Idle → 保留活动卡，持续满宽限期才定格退订；连续失败
+/// ≥5 退订。按渠道分组：每渠道各建一次传输客户端、各取各的淹没水位与在途提问。末尾幂等确保
+/// 回调路由在位。
 pub(super) async fn watch_tick(state: &Arc<ServerState>) {
     let all_entries: Vec<WatchEntry> = state.watch.subs.lock().unwrap().clone();
     // 活跃 entry：引擎只驱动非 rewatchable 的订阅（rewatchable 保留仅供回调路由）。
@@ -141,9 +142,8 @@ pub(super) async fn watch_tick(state: &Arc<ServerState>) {
         for e in entries.iter().filter(|e| e.channel == ch) {
             let rec = find_agent_by_session(&snapshot, &e.session_id);
             let frame = crate::watch::build_frame(e.seq, rec, waiting.contains(&e.session_id));
-            let ended = frame.phase == crate::watch::WatchPhase::Ended;
-            let idle = frame.phase == crate::watch::WatchPhase::Idle;
-            let finalize = ended || idle;
+            let final_kind = crate::watch::automatic_final_kind(&frame, rec, now);
+            let finalize = final_kind.is_some();
             let sig = crate::watch::signature(&frame);
             if !finalize && sig == e.last_sig {
                 continue; // 内容没变，不编辑。
@@ -153,13 +153,9 @@ pub(super) async fn watch_tick(state: &Arc<ServerState>) {
             {
                 continue;
             }
-            let mode = if ended {
-                crate::watch::CardMode::Final(crate::watch::FinalKind::Ended)
-            } else if idle {
-                crate::watch::CardMode::Final(crate::watch::FinalKind::Idle)
-            } else {
-                crate::watch::CardMode::Active
-            };
+            let mode = final_kind
+                .map(crate::watch::CardMode::Final)
+                .unwrap_or(crate::watch::CardMode::Active);
             // 跟底：卡已被非 watch 消息淹没 + 无在途提问 + 无在途单选卡 + 30s 节流
             // （`last_move_ms == 0` 豁免：答复 / 单选完结、重启恢复）→ 发新卡到会话底部，
             // 旧卡定格「已移至最新卡片」。
@@ -188,7 +184,7 @@ pub(super) async fn watch_tick(state: &Arc<ServerState>) {
                         }
                         let mut subs = state.watch.subs.lock().unwrap();
                         if finalize {
-                            // 新卡即终态卡（ended / idle）：定格已随发送完成 → 退订。
+                            // 新卡即终态卡（ended / Idle grace expired）：定格已随发送完成 → 退订。
                             subs.retain(|s| s.message_id != e.message_id);
                         } else if let Some(s) =
                             subs.iter_mut().find(|s| s.message_id == e.message_id)
@@ -228,7 +224,7 @@ pub(super) async fn watch_tick(state: &Arc<ServerState>) {
                 Ok(()) => {
                     let mut subs = state.watch.subs.lock().unwrap();
                     if finalize {
-                        // 定格成功（ended / idle）→ 自动退订。
+                        // 定格成功（ended / Idle grace expired）→ 自动退订。
                         subs.retain(|s| s.message_id != e.message_id);
                         changed = true;
                     } else if let Some(s) = subs.iter_mut().find(|s| s.message_id == e.message_id) {
@@ -508,7 +504,7 @@ pub(super) fn handle_watch_card_action(
         .contains(&entry.session_id);
     let rec = find_agent_by_session(&snapshot, &entry.session_id);
     let frame = crate::watch::build_frame(entry.seq, rec, waiting);
-    let ended = frame.phase == crate::watch::WatchPhase::Ended;
+    let automatic_final = crate::watch::automatic_final_kind(&frame, rec, now);
     match action {
         WatchAction::Unwatch => {
             let card = build_watch_card(&crate::watch::card_view(
@@ -529,16 +525,15 @@ pub(super) fn handle_watch_card_action(
             state.watch.notify.notify_one();
         }
         WatchAction::Refresh => {
-            let mode = if ended {
-                crate::watch::CardMode::Final(crate::watch::FinalKind::Ended)
-            } else {
-                crate::watch::CardMode::Active
-            };
+            let finalize = automatic_final.is_some();
+            let mode = automatic_final
+                .map(crate::watch::CardMode::Final)
+                .unwrap_or(crate::watch::CardMode::Active);
             let card = build_watch_card(&crate::watch::card_view(&frame, mode, now, lang, None));
             let _ = ack.send(Some(callback_update_card(card)));
             {
                 let mut subs = state.watch.subs.lock().unwrap();
-                if ended {
+                if finalize {
                     subs.retain(|s| s.message_id != mid);
                 } else if let Some(s) = subs.iter_mut().find(|s| s.message_id == mid) {
                     s.last_sig = crate::watch::signature(&frame);
@@ -547,7 +542,7 @@ pub(super) fn handle_watch_card_action(
                     s.working = frame.phase == crate::watch::WatchPhase::Working;
                 }
             }
-            if ended {
+            if finalize {
                 persist_watch_subs(state);
             }
             state.watch.notify.notify_one();
@@ -684,7 +679,7 @@ pub(super) async fn apply_watch_action(
         .contains(&entry.session_id);
     let rec = find_agent_by_session(&snapshot, &entry.session_id);
     let frame = crate::watch::build_frame(entry.seq, rec, waiting);
-    let ended = frame.phase == crate::watch::WatchPhase::Ended;
+    let automatic_final = crate::watch::automatic_final_kind(&frame, rec, now);
     match btn {
         WatchBtn::Unwatch => {
             if let Err(err) = client
@@ -710,18 +705,17 @@ pub(super) async fn apply_watch_action(
             state.watch.notify.notify_one();
         }
         WatchBtn::Refresh => {
-            let mode = if ended {
-                crate::watch::CardMode::Final(crate::watch::FinalKind::Ended)
-            } else {
-                crate::watch::CardMode::Active
-            };
+            let finalize = automatic_final.is_some();
+            let mode = automatic_final
+                .map(crate::watch::CardMode::Final)
+                .unwrap_or(crate::watch::CardMode::Active);
             if let Err(err) = client.edit(mid, &frame, mode, now, lang, None).await {
                 log(&format!("watch: refresh card failed: {}", err));
                 return;
             }
             {
                 let mut subs = state.watch.subs.lock().unwrap();
-                if ended {
+                if finalize {
                     subs.retain(|s| s.message_id != mid);
                 } else if let Some(s) = subs.iter_mut().find(|s| s.message_id == mid) {
                     s.last_sig = crate::watch::signature(&frame);
@@ -730,7 +724,7 @@ pub(super) async fn apply_watch_action(
                     s.working = frame.phase == crate::watch::WatchPhase::Working;
                 }
             }
-            if ended {
+            if finalize {
                 persist_watch_subs(state);
             }
             state.watch.notify.notify_one();
