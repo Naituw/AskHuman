@@ -218,17 +218,26 @@ pub fn agent_help_text(lang: Lang) -> String {
             );
             out.push("EOF".to_string());
             out.push(String::new());
-            out.push("Ending your turn (--whats-next):".to_string());
+            out.push("Project todos:".to_string());
+            out.push("  Store a reminder for the user or a task they asked to do later; not your internal work plan.".to_string());
+            out.push("  Keep it to one actionable sentence, preferably no more than 100 characters.".to_string());
+            out.push(format!(
+                "  Add when the user asks or defers a concrete task: {prog} todo add \"<task>\""
+            ));
+            out.push(String::new());
+            out.push("End-of-task handoff (--whats-next):".to_string());
             out.push(format!(
                 "  {prog} --whats-next [\"<completion report>\"] [-o[!] \"<suggested task>\" ...] [-f \"<file>\" ...] [--stdin]"
             ));
-            out.push("  Run this after finishing the current task and before ending your turn. The user".to_string());
-            out.push("  replies with the next task (start it immediately), or approves ending the turn —".to_string());
+            out.push("  Run only after the current task is fully complete, to request a separate next task.".to_string());
+            out.push("  Use normal AskHuman questions for anything within the current task. The user".to_string());
+            out.push("  replies with the next task (start it immediately), or approves ending — only".to_string());
+            out.push("  then may you end it. -o/-o! are concrete next-task suggestions only; never add".to_string());
             out.push(
-                "  only then may you end it. Pass -o/-o! only for concrete suggested next tasks;"
+                "  an end/stop option because ending is built in. Omit them when there are no"
                     .to_string(),
             );
-            out.push("  otherwise omit them. Takes no -q (the question is fixed).".to_string());
+            out.push("  suggestions. Takes no -q (the question is fixed).".to_string());
         }
         Lang::Zh => {
             out.push(format!("{prog} —— 向人类发起提问并收集回应。"));
@@ -258,16 +267,27 @@ pub fn agent_help_text(lang: Lang) -> String {
             out.push("# 含 `反引号`、$VAR 与 \"引号\" 的长 Markdown 消息".to_string());
             out.push("EOF".to_string());
             out.push(String::new());
-            out.push("结束回合前（--whats-next）:".to_string());
+            out.push("项目待办:".to_string());
+            out.push(
+                "  用于提醒用户操作，或记录用户要求稍后执行的任务；不是 Agent 的内部工作计划。"
+                    .to_string(),
+            );
+            out.push("  建议写成一个可执行的句子，尽量不超过 100 个字符。".to_string());
+            out.push(format!(
+                "  用户要求添加或明确延后具体任务时使用：{prog} todo add \"<任务>\""
+            ));
+            out.push(String::new());
+            out.push("任务完成后的交接（--whats-next）:".to_string());
             out.push(format!(
                 "  {prog} --whats-next [\"<完成报告>\"] [-o[!] \"<建议任务>\" ...] [-f \"<文件>\" ...] [--stdin]"
             ));
-            out.push("  完成当前任务后、结束回合前运行。用户会给出下一个任务（立即开始执行），".to_string());
+            out.push("  仅在当前任务完全完成后运行，用于领取一个独立的下一任务。当前任务内的任何".to_string());
+            out.push("  问题都用普通 AskHuman 提问。用户会给出下一个任务（立即开始执行），或确认".to_string());
             out.push(
-                "  或确认结束回合——仅此时才可结束。仅在确有建议任务时传 -o/-o!，否则省略；"
+                "  结束——仅此时才可结束。-o/-o! 只放具体的下一任务建议；不要添加结束/停止"
                     .to_string(),
             );
-            out.push("  不接受 -q（问题固定）。".to_string());
+            out.push("  选项，因为结束项已内置。无建议时省略。不接受 -q（问题固定）。".to_string());
         }
     }
     out.join("\n")
@@ -439,8 +459,37 @@ mod tests {
             assert!(h.contains("todo "));
             let ah = agent_help_text(lang);
             assert!(ah.contains("--whats-next"));
+            assert!(ah.contains("todo add"));
             // 旧「固定英文结束句」已废除，不应再出现在 help 里。
             assert!(!ah.contains("no more tasks"));
         }
+    }
+
+    #[test]
+    fn agent_help_distinguishes_project_todos_from_internal_plans() {
+        let en = agent_help_text(Lang::En);
+        assert!(en.contains("user asks or defers a concrete task"));
+        assert!(en.contains("not your internal work plan"));
+        assert!(en.contains("one actionable sentence"));
+        assert!(en.contains("no more than 100 characters"));
+
+        let zh = agent_help_text(Lang::Zh);
+        assert!(zh.contains("用户要求添加或明确延后具体任务时使用"));
+        assert!(zh.contains("不是 Agent 的内部工作计划"));
+        assert!(zh.contains("一个可执行的句子"));
+        assert!(zh.contains("不超过 100 个字符"));
+    }
+
+    #[test]
+    fn agent_help_frames_whats_next_as_end_of_task_handoff() {
+        let en = agent_help_text(Lang::En);
+        assert!(en.contains("End-of-task handoff (--whats-next)"));
+        assert!(en.contains("only after the current task is fully complete"));
+        assert!(en.contains("never add\n  an end/stop option because ending is built in"));
+
+        let zh = agent_help_text(Lang::Zh);
+        assert!(zh.contains("任务完成后的交接（--whats-next）"));
+        assert!(zh.contains("仅在当前任务完全完成后运行"));
+        assert!(zh.contains("不要添加结束/停止\n  选项，因为结束项已内置"));
     }
 }

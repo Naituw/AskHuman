@@ -69,8 +69,8 @@ Interject 是「打断进行中」的纠偏语义，不适合），希望：
 **CLI**：`AskHuman --whats-next [<Message>] [-o <建议任务> …] [-o! <推荐建议任务> …] [--stdin] [-f <file> …]`
 
 - Message＝agent 的**完成报告**（可选，推荐 `--stdin` heredoc），`-f` 可附报告文件；
-  **不接受** `-q`（问题固定）。仅在 agent 确有建议的下一任务时用 `-o` / `-o!` 传入；
-  `-o!` 沿用普通 Ask 的推荐样式，无建议时不传。
+  **不接受** `-q`（问题固定）。`-o` / `-o!` 只传 agent 建议的具体下一任务，**不得传结束、
+  停止或无事可做选项**（结束项由 AskHuman 内置）；`-o!` 沿用普通 Ask 的推荐样式，无建议时不传。
 - 语义：**必然发出一个提问**，走完全现成的普通 Ask 链路（popup + 四 IM、抢答协调、
   活跃槽 ∪ watch 投放、24h 等待、排空）。项目 key 取 CLI 调用 cwd 的 git 根。
 - 问题固定为「接下来做什么？」（按界面语言本地化）；选项顺序＝agent 本次传入的建议任务 +
@@ -92,7 +92,8 @@ Interject 是「打断进行中」的纠偏语义，不适合），希望：
   Stop 卡是兜底确认场景，**不自动**（见 D5）。
 
 **MCP**：server 的 `whats_next`（与 `ask` 并列）入参
-`{ message?, options?: [{ text, recommended? }], files? }`；`options` 仅在确有建议任务时传入，
+`{ message?, options?: [{ text, recommended? }], files? }`；工具描述将其定位为**任务完成后的交接**，
+当前任务内的问题、决策或下一步仍走普通 `ask`；`options` 仅放具体下一任务，不含内置结束项，
 薄壳将其翻译为 `-o` / `-o!`，再 spawn `AskHuman --whats-next --output
 json …` 子进程，结果映射进 structuredContent。
 
@@ -132,16 +133,16 @@ whats-next 是固定题目，输出直接复用普通 Ask 的区块词汇，agen
 
 ### D4 rules 文案变更草稿（`prompts.rs` 单一来源，始终英文）
 
-评审定案：**在原措辞上做最小调整**——把「结束前必须提问请求反馈」改为「必须调
-whats-next」，不新增用法细节（那是 `--agent-help` 的职责），marker 行原样保留。
+评审定案：在原措辞上做最小调整，不追加规则列表。Rules 只定义生命周期边界：whats-next 是
+**当前任务完全完成后**领取独立下一任务的交接，不得用于当前任务内的问题、决策或下一步；参数
+语义由 CLI `--agent-help` 与 MCP schema 分别说明。marker 行原样保留。
 
 CLI 版 `cli_reference()` 原三行中，前两行调整为：
 
 ```text
-- Before completing the turn/request, you MUST run `{program} --whats-next`
-  (optionally with a completion report as the Message) to ask me what to do next.
-  Pass suggested next tasks with `-o`/`-o!` only when you have concrete
-  suggestions; otherwise omit them.
+- After fully completing the current task—and never for questions, decisions,
+  or next steps within it—you MUST run `{program} --whats-next` for the
+  end-of-task handoff before ending, to ask me for a separate next task.
 - If it returns a task, start working on it immediately and repeat this protocol
   when done. Do NOT end the turn/conversation or mark the request as complete
   unless `{program} --whats-next` returned that I approved ending the turn and
@@ -154,10 +155,9 @@ CLI 版 `cli_reference()` 原三行中，前两行调整为：
 MCP 版 `mcp_reference()` 对应前两行调整为：
 
 ```text
-- Before completing the turn/request, you MUST call the AskHuman `whats_next`
-  tool (optionally with a completion report as its message) to ask me what to do
-  next. Pass suggested next tasks in `options` only when you have concrete
-  suggestions; otherwise omit them.
+- After fully completing the current task—and never for questions, decisions,
+  or next steps within it—you MUST call the AskHuman `whats_next` tool for the
+  end-of-task handoff before ending, to ask me for a separate next task.
 - If it returns a task, start working on it immediately and repeat this protocol
   when done. Do NOT end the turn/conversation or mark the request as complete
   unless the `whats_next` result says I approved ending the turn and there are
@@ -169,6 +169,10 @@ MCP 版 `mcp_reference()` 对应前两行调整为：
   覆盖完成报告之外的中间产物。
 - Grok skill 正文复用 `mcp_reference()`，自动跟随。
 - rules 是托管产物：升级二进制后按现有 `agents update` / 过期徽标机制更新四家安装文案。
+- （2026-07-17 补充）Rules 在用户明确要求添加待办，或把一个**具体任务 / 已提出的建议明确延后**
+  （如“稍后再做”）时要求 Agent 添加项目待办；不得把 Agent 自己的内部计划或尚未被用户接受的建议
+  擅自入队。CLI 版调用 `<program> todo add "<concise task>"`，MCP 版与 Grok skill 调用
+  `AskHuman todo add "<concise task>"`；Rules 只用 `concise` 轻量提示，不重复具体长度。
 
 ### D5 与 Stop 结束确认、插话的关系；Stop 卡待办派发（兜底送达点）
 
@@ -203,6 +207,9 @@ AskHuman todo clear                # 清空本项目（需交互确认，或 --y
 
 - Unix 经 daemon（连接或拉起，daemon 内存为准）；非 Unix 直接文件 + 锁。
 - 输出人类可读；后续需要时再加 `--output json`（首期不做）。
+- `--agent-help` 用两行简述项目待办：它用于提醒用户操作，或记录用户要求稍后执行的任务，
+  不是 Agent 的内部工作计划；用户要求添加或明确延后具体任务时用 `todo add` 添加。另给出软建议：
+  写成一个可执行的句子，尽量不超过 **100 个字符**；不做硬截断，避免丢失必要上下文。
 
 ### D7 入口二：Popup 待办下拉区（第 11 轮改版）
 

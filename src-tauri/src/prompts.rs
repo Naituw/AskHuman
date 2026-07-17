@@ -28,11 +28,12 @@ pub fn cli_reference() -> String {
 
 - When asking through `{program}`, provide predefined options whenever applicable, mark your recommended option(s) with `-o!`, and briefly explain your rationale.
 - I can ONLY see what is delivered through `{program}`. Anything I need to review , or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through `{program}`, inline or attached with `-f`. Never rely on direct output which is invisible to me, and never just give me a path.
-- Before completing the turn/request, you MUST run `{program} --whats-next` (optionally with a completion report as the Message) to ask me what to do next. Pass suggested next tasks with `-o`/`-o!` only when you have concrete suggestions; otherwise omit them.
+- After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST run `{program} --whats-next` for the end-of-task handoff before ending, to ask me for a separate next task.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless `{program} --whats-next` returned that I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
 </mandatory_interaction_protocol>
 
+- When I ask for a project todo or defer a concrete task or suggestion until later, add it with `{program} todo add "<concise task>"`. Never use project todos for your own work plan or an unaccepted suggestion.
 - Interview me with `{program}` relentlessly about every aspect of the requirements until we reach a shared understanding.
   - Walk down each branch of the design tree, resolving dependencies between decisions one by one.
   - If a question can be answered by exploring the codebase, explore the codebase instead.
@@ -64,11 +65,12 @@ pub fn mcp_reference() -> String {
 
 - When asking through the AskHuman `ask` tool, provide predefined options whenever applicable, mark your recommended option(s) as recommended, and briefly explain your rationale.
 - I can ONLY see what is delivered through the AskHuman `ask` tool. Anything I need to review, or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through the AskHuman `ask` tool, inline or attached as files. Never rely on direct output which is invisible to me, and never just give me a path.
-- Before completing the turn/request, you MUST call the AskHuman `whats_next` tool (optionally with a completion report as its message) to ask me what to do next. Pass suggested next tasks in `options` only when you have concrete suggestions; otherwise omit them.
+- After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST call the AskHuman `whats_next` tool for the end-of-task handoff before ending, to ask me for a separate next task.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless the `whats_next` result says I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
 </mandatory_interaction_protocol>
 
+- When I ask for a project todo or defer a concrete task or suggestion until later, add it with `AskHuman todo add "<concise task>"`. Never use project todos for your own work plan or an unaccepted suggestion.
 - Interview me with the AskHuman `ask` tool relentlessly about every aspect of the requirements until we reach a shared understanding.
   - Walk down each branch of the design tree, resolving dependencies between decisions one by one.
   - If a question can be answered by exploring the codebase, explore the codebase instead.
@@ -240,20 +242,40 @@ mod tests {
         // CLI / MCP / Grok skill 三处一致（Grok 复用 MCP 版）。
         // 程序名在测试环境随二进制名变化，只断言与其无关的措辞。
         let cli = cli_reference();
-        assert!(cli.contains("--whats-next` (optionally with a completion report as the Message)"));
-        assert!(cli.contains("Pass suggested next tasks with `-o`/`-o!` only when"));
+        assert!(cli.contains("After fully completing the current task"));
+        assert!(cli.contains("never for questions, decisions, or next steps within it"));
+        assert!(cli.contains("--whats-next` for the end-of-task handoff before ending"));
         assert!(cli.contains("If it returns a task, start working on it immediately"));
         assert!(cli.contains("returned that I approved ending the turn"));
+        assert!(!cli.contains("Pass suggested next tasks"));
         assert!(!cli.contains("to request feedback"));
         assert!(!cli.contains("received confirmation that the task can be completed"));
 
         for p in [mcp_reference(), grok_skill_body()] {
-            assert!(p.contains("you MUST call the AskHuman `whats_next` tool"));
-            assert!(p.contains("Pass suggested next tasks in `options` only when"));
+            assert!(p.contains("After fully completing the current task"));
+            assert!(p.contains("never for questions, decisions, or next steps within it"));
+            assert!(
+                p.contains("AskHuman `whats_next` tool for the end-of-task handoff before ending")
+            );
             assert!(p.contains("If it returns a task, start working on it immediately"));
             assert!(p.contains("unless the `whats_next` result says I approved ending the turn"));
+            assert!(!p.contains("Pass suggested next tasks"));
             assert!(!p.contains("to request feedback"));
             assert!(!p.contains("received confirmation that the task can be completed"));
+        }
+    }
+
+    #[test]
+    fn default_prompts_add_deferred_tasks_but_not_unaccepted_suggestions() {
+        let cli = cli_reference();
+        assert!(cli.contains("defer a concrete task or suggestion until later"));
+        assert!(cli.contains("todo add \"<concise task>\""));
+        assert!(cli.contains("own work plan or an unaccepted suggestion"));
+
+        for prompt in [mcp_reference(), grok_skill_body()] {
+            assert!(prompt.contains("defer a concrete task or suggestion until later"));
+            assert!(prompt.contains("AskHuman todo add \"<concise task>\""));
+            assert!(prompt.contains("own work plan or an unaccepted suggestion"));
         }
     }
 

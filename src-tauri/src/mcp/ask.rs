@@ -54,9 +54,9 @@ pub struct WhatsNextParams {
     /// next?" question, rendered as Markdown.
     #[serde(default)]
     pub message: Option<String>,
-    /// Optional suggested next tasks. Provide these only when you have concrete tasks to suggest;
-    /// omit this field otherwise. Options appear before project todos, and `recommended` renders
-    /// the same emphasis as in `ask`.
+    /// Optional concrete next-task suggestions. NEVER include an end, stop, or no-more-work option;
+    /// AskHuman adds the ending choice. Omit this field when you have no task to suggest. Options
+    /// appear before project todos, and `recommended` renders the same emphasis as in `ask`.
     #[serde(default)]
     pub options: Option<Vec<AskOption>>,
     /// Optional file paths (e.g. a report or summary document) to attach to what the human sees.
@@ -253,13 +253,13 @@ structured content; any images the human attaches are returned as image content.
         Ok(tool_result)
     }
 
-    /// Ask the human what to do next (mandatory before ending a turn).
+    /// End-of-task handoff for requesting a separate next task.
     #[tool(
         name = "whats_next",
-        description = "Ask the human what to do next. You MUST call this after completing the \
-current task and before ending your turn; optionally pass `message` with a completion report and \
-`files` with report documents. Pass `options` only when you have concrete suggested next tasks; \
-omit it otherwise. The human replies with the next task (start it immediately), or \
+        description = "End-of-task handoff: ask the human for a separate next task. You MUST call \
+this only after the current task is fully complete and before ending; use `ask` for any question, \
+decision, or next step within the current task. Optionally pass `message` with a completion report \
+and `files` with report documents. The human replies with the next task (start it immediately), or \
 approves ending the turn — only then may you end it."
     )]
     async fn whats_next(
@@ -666,7 +666,16 @@ mod tests {
     fn whats_next_schema_exposes_inline_suggested_options() {
         let server = AskServer::new();
         let tool = server.tool_router.get("whats_next").unwrap();
+        let description = tool.description.as_deref().unwrap();
+        assert!(description.contains("End-of-task handoff"));
+        assert!(description.contains("use `ask` for any question"));
         let schema = Value::Object((*tool.input_schema).clone());
+        let options_description = schema
+            .pointer("/properties/options/description")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(options_description.contains("NEVER include an end, stop, or no-more-work option"));
+        assert!(options_description.contains("AskHuman adds the ending choice"));
         assert_eq!(
             schema.pointer("/properties/options/items/type"),
             Some(&json!("object"))
