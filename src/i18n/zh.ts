@@ -62,7 +62,7 @@ export default {
     next: "下一个",
     nav: {
       pin: "窗口置顶",
-      theme: "切换主题",
+      todos: "项目待办",
       settings: "设置",
       history: "历史记录",
       update: "有可用更新",

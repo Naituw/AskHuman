@@ -15,7 +15,7 @@ import {
   cancelPopup,
   openSettings,
   openHistory,
-  updateTheme,
+  openTodos,
   openPath,
   readImageDataUrl,
   focusAgentTerminal,
@@ -503,7 +503,6 @@ export function usePopupCore() {
   }
 
   const pinned = ref(false);
-  const theme = ref<ThemeMode>("system");
   const sourceName = ref("the Loop");
   // 来源 workspace：名称用于标题区展示，完整路径用于 hover 提示。空则隐藏该元素。
   const projectName = ref("");
@@ -853,18 +852,6 @@ export function usePopupCore() {
     }
   }
 
-  async function cycleTheme() {
-    const order: ThemeMode[] = ["system", "light", "dark"];
-    const next = order[(order.indexOf(theme.value) + 1) % order.length];
-    theme.value = next;
-    applyTheme(next);
-    try {
-      await updateTheme(next);
-    } catch {
-      /* 忽略：持久化失败不影响当前显示 */
-    }
-  }
-
   function openSettingsWindow() {
     openSettings().catch(() => {});
   }
@@ -885,6 +872,10 @@ export function usePopupCore() {
 
   function openHistoryWindow() {
     openHistory().catch(() => {});
+  }
+
+  function openTodosWindow() {
+    openTodos(projectPath.value || null).catch(() => {});
   }
 
   // 切换某题的选项（带题索引，供选项点击 / CMD+数字 复用）。
@@ -1564,7 +1555,6 @@ export function usePopupCore() {
     if (!interaction || interactionRendered) return;
     interactionRendered = true;
     applyTheme(init.theme);
-    theme.value = init.theme;
     // 精确语言来自 popup_init（零钥匙串）；main.ts 只做 auto 兜底，故此处校正。
     if (typeof init.language === "string") applyLanguage(init.language);
     pinned.value = init.alwaysOnTop;
@@ -1711,7 +1701,6 @@ export function usePopupCore() {
       } else {
         // 预热待命：先按当前主题/语言渲染（窗口隐藏），等 popup-show 领用。
         applyTheme(init.theme);
-        theme.value = init.theme;
         if (typeof init.language === "string") applyLanguage(init.language);
         // 兜底竞态：领用可能发生在首个 popup_init 与监听注册之间，立即复查一次。
         void adopt();
@@ -1748,7 +1737,6 @@ export function usePopupCore() {
       // daemon 架构下由 Daemon 经 IPC 下发（独立 GUI Helper 进程）；单进程下由设置窗口同进程广播。
       if (typeof e.payload.theme === "string") {
         applyTheme(e.payload.theme);
-        theme.value = e.payload.theme;
       }
       if (typeof e.payload.language === "string") applyLanguage(e.payload.language);
       if (typeof e.payload.speechLanguage === "string")
@@ -1963,9 +1951,8 @@ export function usePopupCore() {
     // 顶栏动作
     pinned,
     togglePin,
-    theme,
-    cycleTheme,
     openSettingsWindow,
+    openTodosWindow,
     openHistoryWindow,
     // R6 引导
     imTipVisible,

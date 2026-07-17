@@ -65,7 +65,7 @@ export default {
     next: "Next",
     nav: {
       pin: "Keep on top",
-      theme: "Toggle theme",
+      todos: "Project todos",
       settings: "Settings",
       history: "History",
       update: "Update available",

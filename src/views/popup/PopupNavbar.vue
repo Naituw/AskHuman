@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 顶部导航栏：来源头部（agent/workspace 胶囊 + 相对时间）+ 右侧动作（自更新入口/置顶/主题/
+// 顶部导航栏：来源头部（agent/workspace 胶囊 + 相对时间）+ 右侧动作（自更新入口/置顶/待办/
 // 历史/设置）。多根组件：navbar 之外还含自更新浮层背板与「更新待生效」横条（保持 .popup 的
 // flex 子级顺序）。
 import { useI18n } from "vue-i18n";
@@ -32,8 +32,7 @@ const {
   onContentClick,
   pinned,
   togglePin,
-  theme,
-  cycleTheme,
+  openTodosWindow,
   openHistoryWindow,
   openSettingsWindow,
 } = usePopupContext();
@@ -164,19 +163,13 @@ const {
       <button
         class="nav-btn"
         type="button"
-        :title="t('popup.nav.theme')"
-        @click="cycleTheme"
+        :title="t('popup.nav.todos')"
+        @click="openTodosWindow"
       >
-        <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="4" />
-          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-        </svg>
-        <svg v-else-if="theme === 'dark'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z" />
-        </svg>
-        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" />
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="16" rx="3" />
+          <path d="M7 10l2 2 3-3" />
+          <path d="M14.5 10.5H18M7 16h11" />
         </svg>
       </button>
       <button
