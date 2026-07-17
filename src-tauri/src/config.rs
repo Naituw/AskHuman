@@ -100,9 +100,10 @@ pub enum DaemonLifecycleMode {
 #[serde(rename_all = "lowercase")]
 pub enum WindowEffect {
     /// macOS 26+ Liquid Glass（`NSGlassEffectView`，由插件应用）。
-    #[default]
     Glass,
     /// 传统毛玻璃模糊（`NSVisualEffectView` / UnderWindowBackground）。
+    /// 默认值：Glass 下文字可读性受壁纸影响大，macOS 26+ 也默认用 Blur。
+    #[default]
     Blur,
     /// 完全不透明的主题纯色，不使用任何 Visual Effects 视图。
     Solid,
@@ -167,7 +168,7 @@ impl Default for GeneralConfig {
             language: "auto".to_string(),
             always_on_top: true,
             appear_animation: PopupAnimation::Alert,
-            window_effect: WindowEffect::Glass,
+            window_effect: WindowEffect::Blur,
             speech_language: "auto".to_string(),
             speech_shortcut: "cmd+d".to_string(),
             history_limit: default_history_limit(),
@@ -573,7 +574,7 @@ mod tests {
         assert_eq!(c.general.language, "auto");
         assert!(c.general.always_on_top);
         assert_eq!(c.general.appear_animation, PopupAnimation::Alert);
-        assert_eq!(c.general.window_effect, WindowEffect::Glass);
+        assert_eq!(c.general.window_effect, WindowEffect::Blur);
         assert_eq!(c.general.speech_language, "auto");
         assert_eq!(c.general.speech_shortcut, "cmd+d");
         assert_eq!(c.general.history_limit, 200);

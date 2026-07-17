@@ -9,7 +9,7 @@ Run `AskHuman --settings` (or click the gear in the popup's top-right) to open t
 - **Theme** — system / light / dark.
 - **Always on top** — keep the popup above other windows.
 - **Appear animation** (macOS only) — None / Document / Alert.
-- **Window material** (macOS only) — macOS 11–25 offers solid / blur, while macOS 26+ also offers glass. Solid is fully opaque; older systems resolve the default or an existing glass preference to blur without rewriting the config.
+- **Window material** (macOS only) — macOS 11–25 offers solid / blur, while macOS 26+ also offers glass. The default is blur; solid is fully opaque; older systems resolve an existing glass preference to blur without rewriting the config.
 - **Speech input** (macOS only) — recognition language and trigger shortcut.
 - **Reply-history retention** — defaults to 200; set it to `0` to stop recording and clear existing entries. When the existing count exceeds the limit, a "Clean up now" button appears to trim immediately.
 

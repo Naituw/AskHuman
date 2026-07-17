@@ -206,7 +206,7 @@ export function useGeneralSettings(core: SettingsCore) {
   // Liquid Glass is an optional third material on macOS 26+.
   const glassSupported = ref(false);
   const effectiveWindowEffect = computed<WindowEffect>(() => {
-    const requested = config.value?.general.windowEffect ?? "glass";
+    const requested = config.value?.general.windowEffect ?? "blur";
     return requested === "glass" && !glassSupported.value ? "blur" : requested;
   });
 
