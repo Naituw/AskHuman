@@ -147,6 +147,13 @@ pub fn send_output(
 pub enum WhatsNextReply {
     /// 派活：任务文本（选中待办原文 ± 空行拼补充，或纯自由文本）→ `[user_input]`。
     Task(String),
+    /// A caller-suggested next task selected by the human. Keep ordinary Ask semantics:
+    /// the option stays under `[selected_options]` and an optional supplement stays under
+    /// `[user_input]`.
+    Suggested {
+        option: String,
+        user_input: Option<String>,
+    },
     /// 准许结束：携带「结束本轮」选项原文 → `[selected_options]`（第 19 轮定案：复用
     /// Ask 标准区块，不再输出固定英文结束句；agent 据 rules 语义判断可结束）。
     End(String),
@@ -156,8 +163,9 @@ pub enum WhatsNextReply {
 
 /// whats-next 提交映射（纯函数，spec todo-whats-next D2/D3）。
 ///
-/// 单题单选：选中待办 chip（带 `todo_id` 的选项）→ 该条原文（有补充文本时按空行拼接其后）；
-/// 只填文本 → 该文本；选「结束本轮」无文本 → End；「结束＋文本」视为继续（文本是新指令）。
+/// Single-choice question: a todo chip becomes its raw task text; a caller suggestion preserves
+/// ordinary Ask option/input blocks; free text alone becomes a task; the final end option without
+/// text approves ending, while end plus text continues with that text.
 /// 出队不在此处：赢家回答的待办 id 由 `todos::ids_to_dequeue` 统一收集、Coordinator 出队。
 pub fn whats_next_reply(request: &AskRequest, result: &ChannelResult) -> WhatsNextReply {
     if result.action == ChannelAction::Cancel {
@@ -192,16 +200,34 @@ pub fn whats_next_reply(request: &AskRequest, result: &ChannelResult) -> WhatsNe
         };
         return WhatsNextReply::Task(text);
     }
-    let selected_end = answer
+    // Suggestions precede todos and the final end option. Keep their output identical to Ask
+    // instead of rewriting the selected label into synthetic free text.
+    let end_index = options.len().saturating_sub(1);
+    let selected_suggestion = answer
         .map(|a| a.selected_options.as_slice())
         .unwrap_or(&[])
         .iter()
         .find_map(|sel| {
             options
                 .iter()
-                .find(|o| &o.text == sel && o.todo_id.is_none())
-                .map(|o| o.text.clone())
+                .enumerate()
+                .find(|(index, option)| {
+                    *index < end_index && option.todo_id.is_none() && &option.text == sel
+                })
+                .map(|(_, option)| option.text.clone())
         });
+    if let Some(option) = selected_suggestion {
+        return WhatsNextReply::Suggested {
+            option,
+            user_input: input.map(str::to_string),
+        };
+    }
+    let selected_end = answer
+        .map(|a| a.selected_options.as_slice())
+        .unwrap_or(&[])
+        .iter()
+        .find_map(|sel| options.last().filter(|option| &option.text == sel))
+        .map(|option| option.text.clone());
     match (selected_end, input) {
         // 「结束＋文字」＝继续：文字是新指令（有话说＝还没完）。
         (_, Some(text)) => WhatsNextReply::Task(text.to_string()),
@@ -218,6 +244,13 @@ pub fn whats_next_reply(request: &AskRequest, result: &ChannelResult) -> WhatsNe
 pub fn whats_next_output(reply: &WhatsNextReply, file_paths: &[String], lang: Lang) -> String {
     let base = match reply {
         WhatsNextReply::Task(text) => format!("{}\n{}", MARKER_USER_INPUT, text),
+        WhatsNextReply::Suggested { option, user_input } => send_output(
+            lang,
+            std::slice::from_ref(option),
+            user_input.as_deref(),
+            &[],
+            &[],
+        ),
         WhatsNextReply::End(text) => format!("{}\n{}", MARKER_SELECTED_OPTIONS, text),
         WhatsNextReply::Cancelled => return cancel_output(lang),
     };
@@ -544,13 +577,15 @@ mod tests {
 
     // ===== whats-next（spec todo-whats-next D2/D3）=====
 
-    /// whats-next 请求：两条待办 chip + 末位「结束本轮」。
+    /// whats-next request: suggestions, todo chips, then the final end option.
     fn wn_request() -> AskRequest {
         let mut r = AskRequest::new(
             MessagePrompt::default(),
             vec![Question::new(
                 "What should we do next?".into(),
                 vec![
+                    OptionItem::new("Write docs", false),
+                    OptionItem::new("Add tests", true),
                     OptionItem::with_todo("执行待办：修复登录 bug", "id-1"),
                     OptionItem::with_todo("Run todo: 写发布说明", "id-2"),
                     OptionItem::new("End this turn", false),
@@ -594,6 +629,25 @@ mod tests {
     fn whats_next_free_text_only_is_a_new_task() {
         let reply = whats_next_reply(&wn_request(), &wn_result(&[], Some("先跑一遍测试")));
         assert_eq!(reply, WhatsNextReply::Task("先跑一遍测试".into()));
+    }
+
+    #[test]
+    fn whats_next_suggestion_keeps_ask_option_and_input_blocks() {
+        let reply = whats_next_reply(
+            &wn_request(),
+            &wn_result(&["Add tests"], Some(" Cover the edge case ")),
+        );
+        assert_eq!(
+            reply,
+            WhatsNextReply::Suggested {
+                option: "Add tests".into(),
+                user_input: Some("Cover the edge case".into()),
+            }
+        );
+        assert_eq!(
+            whats_next_output(&reply, &s(&["/tmp/report.md"]), Lang::En),
+            "[selected_options]\nAdd tests\n\n[user_input]\nCover the edge case\n\n[files]\n/tmp/report.md"
+        );
     }
 
     #[test]

@@ -33,9 +33,11 @@ pub struct AskArgs {
     pub single: bool,
     /// 结果输出格式（全局）。
     pub output_format: crate::models::OutputFormat,
-    /// whats-next 提问（spec todo-whats-next D2）：Message＝完成报告（可空），问题与选项
-    /// 由系统固定生成；与 `-q`/`-o`/`--select-only`/`--single`/`--output` 互斥。
+    /// whats-next request (spec todo-whats-next D2): Message is an optional completion report;
+    /// the question is fixed, while `-o`/`-o!` supply optional suggested tasks before todos.
     pub whats_next: bool,
+    /// Suggested whats-next tasks from `-o`/`-o!`; always empty for ordinary asks.
+    pub whats_next_options: Vec<OptArg>,
 }
 
 /// 解析 `AskHuman <Message> [-f <path>] [-q <text> [-o <opt>] ...]`。
@@ -169,13 +171,11 @@ pub fn parse_ask(
         }
     }
 
-    // whats-next：问题与选项由系统固定生成，与提问定制类 flag 互斥（spec D2）；
-    // Message 可空（完成报告可选），跳过内容校验与位置参数提升。
+    // whats-next fixes the question but accepts `-o`/`-o!` suggestions. Other question-shaping
+    // flags remain incompatible (spec D2). Message may be empty, so skip ordinary normalization.
     if whats_next {
         let conflict = if seen_question_flag {
             Some("-q")
-        } else if !lead_options.is_empty() {
-            Some("-o")
         } else if select_only {
             Some("--select-only")
         } else if single {
@@ -196,6 +196,7 @@ pub fn parse_ask(
             single: true,
             output_format: crate::models::OutputFormat::Text,
             whats_next: true,
+            whats_next_options: lead_options,
         });
     }
 
@@ -225,6 +226,7 @@ pub fn parse_ask(
         single,
         output_format,
         whats_next: false,
+        whats_next_options: Vec::new(),
     })
 }
 
@@ -625,6 +627,7 @@ mod tests {
         assert!(p.questions.is_empty());
         assert!(p.single); // 单选逐条派发
         assert!(!p.select_only);
+        assert!(p.whats_next_options.is_empty());
     }
 
     #[test]
@@ -646,9 +649,22 @@ mod tests {
     }
 
     #[test]
-    fn whats_next_rejects_question_and_option_flags() {
+    fn whats_next_accepts_suggested_options_and_rejects_other_question_flags() {
         assert!(pa(&v(&["--whats-next", "-q", "Q1"])).is_err());
-        assert!(pa(&v(&["--whats-next", "M", "-o", "A"])).is_err());
+        let p = pa(&v(&[
+            "--whats-next",
+            "M",
+            "-o",
+            "Write docs",
+            "-o!",
+            "Add tests",
+        ]))
+        .unwrap();
+        assert_eq!(p.whats_next_options.len(), 2);
+        assert_eq!(p.whats_next_options[0].text, "Write docs");
+        assert!(!p.whats_next_options[0].recommended);
+        assert_eq!(p.whats_next_options[1].text, "Add tests");
+        assert!(p.whats_next_options[1].recommended);
         assert!(pa(&v(&["--whats-next", "--select-only"])).is_err());
         assert!(pa(&v(&["--whats-next", "--single"])).is_err());
         assert!(pa(&v(&["--whats-next", "--output", "json"])).is_err());

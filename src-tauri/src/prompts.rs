@@ -28,7 +28,7 @@ pub fn cli_reference() -> String {
 
 - When asking through `{program}`, provide predefined options whenever applicable, mark your recommended option(s) with `-o!`, and briefly explain your rationale.
 - I can ONLY see what is delivered through `{program}`. Anything I need to review , or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through `{program}`, inline or attached with `-f`. Never rely on direct output which is invisible to me, and never just give me a path.
-- Before completing the turn/request, you MUST run `{program} --whats-next` (optionally with a completion report as the Message) to ask me what to do next.
+- Before completing the turn/request, you MUST run `{program} --whats-next` (optionally with a completion report as the Message) to ask me what to do next. Pass suggested next tasks with `-o`/`-o!` only when you have concrete suggestions; otherwise omit them.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless `{program} --whats-next` returned that I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
 </mandatory_interaction_protocol>
@@ -64,7 +64,7 @@ pub fn mcp_reference() -> String {
 
 - When asking through the AskHuman `ask` tool, provide predefined options whenever applicable, mark your recommended option(s) as recommended, and briefly explain your rationale.
 - I can ONLY see what is delivered through the AskHuman `ask` tool. Anything I need to review, or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through the AskHuman `ask` tool, inline or attached as files. Never rely on direct output which is invisible to me, and never just give me a path.
-- Before completing the turn/request, you MUST call the AskHuman `whats_next` tool (optionally with a completion report as its message) to ask me what to do next.
+- Before completing the turn/request, you MUST call the AskHuman `whats_next` tool (optionally with a completion report as its message) to ask me what to do next. Pass suggested next tasks in `options` only when you have concrete suggestions; otherwise omit them.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless the `whats_next` result says I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
 </mandatory_interaction_protocol>
@@ -241,6 +241,7 @@ mod tests {
         // 程序名在测试环境随二进制名变化，只断言与其无关的措辞。
         let cli = cli_reference();
         assert!(cli.contains("--whats-next` (optionally with a completion report as the Message)"));
+        assert!(cli.contains("Pass suggested next tasks with `-o`/`-o!` only when"));
         assert!(cli.contains("If it returns a task, start working on it immediately"));
         assert!(cli.contains("returned that I approved ending the turn"));
         assert!(!cli.contains("to request feedback"));
@@ -248,6 +249,7 @@ mod tests {
 
         for p in [mcp_reference(), grok_skill_body()] {
             assert!(p.contains("you MUST call the AskHuman `whats_next` tool"));
+            assert!(p.contains("Pass suggested next tasks in `options` only when"));
             assert!(p.contains("If it returns a task, start working on it immediately"));
             assert!(p.contains("unless the `whats_next` result says I approved ending the turn"));
             assert!(!p.contains("to request feedback"));

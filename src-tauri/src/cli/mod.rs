@@ -307,10 +307,14 @@ pub fn dispatch() {
                 if parsed.whats_next && try_whats_next_auto(&project, &message, lang) {
                     return;
                 }
-                // whats-next（spec D2）：问题与选项由系统固定生成——各待办 chip（带 id）+ 恒有
-                // 的「结束本轮」（末位）；无待办时只有「结束本轮」+ 自由输入框。
+                // whats-next (spec D2): fixed question + suggestions + todo chips + a final end
+                // option. Auto-run todo takeover already happened above and keeps its priority.
                 let questions: Vec<crate::models::Question> = if parsed.whats_next {
-                    vec![whats_next_question(&project, lang)]
+                    vec![whats_next_question(
+                        &project,
+                        &parsed.whats_next_options,
+                        lang,
+                    )]
                 } else {
                     parsed
                         .questions
@@ -450,27 +454,48 @@ fn try_whats_next_auto(project: &str, message: &crate::models::MessagePrompt, la
     true
 }
 
-/// whats-next 的固定问题（spec todo-whats-next D2）：「接下来做什么？」+ 该项目当前各待办
-/// chip（展示加「执行待办：」前缀、携带条目 id，供终态出队）+ 恒有的「结束本轮」（末位）。
-/// 待办直读 `todos.json` 快照；只列前 `MAX_OPTION_TODOS` 条（渠道选项数硬限制），
-/// 超出时问题正文尾部附溢出提示（第 14 轮定案）。
-fn whats_next_question(project: &str, lang: Lang) -> crate::models::Question {
+/// Total whats-next option limit, including suggestions, todos, and the final end option.
+const WHATS_NEXT_MAX_OPTIONS: usize = 10;
+
+/// Build the fixed whats-next question (spec todo-whats-next D2): `-o`/`-o!` suggestions first,
+/// project todo chips next, and the end option last. Suggestions consume the ten-option capacity
+/// first and are silently truncated; todos fill the remainder in FIFO order. Auto-run takeover
+/// happens before this function is called.
+fn whats_next_question(
+    project: &str,
+    suggestions: &[args::OptArg],
+    lang: Lang,
+) -> crate::models::Question {
+    whats_next_question_from_entries(suggestions, crate::todos::list(project), lang)
+}
+
+fn whats_next_question_from_entries(
+    suggestions: &[args::OptArg],
+    entries: Vec<crate::todos::TodoEntry>,
+    lang: Lang,
+) -> crate::models::Question {
     let prefix = i18n::tr(lang, "whatsNext.todoPrefix");
-    let entries = crate::todos::list(project);
     let total = entries.len();
-    let mut options: Vec<crate::models::OptionItem> = entries
-        .into_iter()
-        .take(crate::todos::MAX_OPTION_TODOS)
-        .map(|entry| {
-            crate::models::OptionItem::with_todo(format!("{}{}", prefix, entry.text), entry.id)
-        })
+    let task_slots = WHATS_NEXT_MAX_OPTIONS - 1;
+    let mut options: Vec<crate::models::OptionItem> = suggestions
+        .iter()
+        .take(task_slots)
+        .map(|option| crate::models::OptionItem::new(&option.text, option.recommended))
         .collect();
+    let todo_slots = task_slots - options.len();
+    let shown_todos = total.min(todo_slots);
+    options.extend(entries.into_iter().take(todo_slots).map(|entry| {
+        crate::models::OptionItem::with_todo(format!("{}{}", prefix, entry.text), entry.id)
+    }));
     options.push(crate::models::OptionItem::new(
         i18n::tr(lang, "whatsNext.endOption"),
         false,
     ));
     let mut message = i18n::tr(lang, "whatsNext.question").to_string();
-    if let Some(note) = crate::todos::overflow_note(total, lang) {
+    // When suggestions consume every task slot, omit overflow noise as explicitly requested.
+    if todo_slots > 0 && total > shown_todos {
+        let note =
+            i18n::tr(lang, "todo.moreNote").replace("{n}", &(total - shown_todos).to_string());
         message.push_str("\n\n");
         message.push_str(&note);
     }
@@ -542,4 +567,71 @@ fn read_stdin_message(lang: Lang) -> String {
         }
     }
     buf
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn suggestion(text: &str, recommended: bool) -> args::OptArg {
+        args::OptArg {
+            text: text.to_string(),
+            recommended,
+        }
+    }
+
+    fn todo(index: usize) -> crate::todos::TodoEntry {
+        crate::todos::TodoEntry {
+            id: format!("todo-{index}"),
+            text: format!("todo {index}"),
+            created_at_ms: index as u64,
+            auto: false,
+        }
+    }
+
+    #[test]
+    fn whats_next_orders_suggestions_todos_then_end_with_ten_total() {
+        let question = whats_next_question_from_entries(
+            &[
+                suggestion("Write docs", false),
+                suggestion("Add tests", true),
+            ],
+            (1..=10).map(todo).collect(),
+            Lang::En,
+        );
+
+        assert_eq!(question.predefined_options.len(), WHATS_NEXT_MAX_OPTIONS);
+        assert_eq!(question.predefined_options[0].text, "Write docs");
+        assert!(!question.predefined_options[0].recommended);
+        assert_eq!(question.predefined_options[1].text, "Add tests");
+        assert!(question.predefined_options[1].recommended);
+        assert_eq!(
+            question.predefined_options[2].todo_id.as_deref(),
+            Some("todo-1")
+        );
+        assert_eq!(
+            question.predefined_options.last().unwrap().text,
+            "End this turn"
+        );
+        assert!(question.message.contains('3'), "{}", question.message);
+    }
+
+    #[test]
+    fn whats_next_silently_keeps_first_nine_suggestions() {
+        let suggestions: Vec<_> = (1..=12)
+            .map(|index| suggestion(&format!("suggestion {index}"), false))
+            .collect();
+        let question = whats_next_question_from_entries(&suggestions, vec![todo(1)], Lang::En);
+
+        assert_eq!(question.predefined_options.len(), WHATS_NEXT_MAX_OPTIONS);
+        assert_eq!(question.predefined_options[8].text, "suggestion 9");
+        assert!(question.predefined_options[..9]
+            .iter()
+            .all(|option| option.todo_id.is_none()));
+        assert_eq!(
+            question.predefined_options.last().unwrap().text,
+            "End this turn"
+        );
+        assert_eq!(question.message, "What should we do next?");
+    }
 }

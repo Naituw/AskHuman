@@ -66,33 +66,38 @@ Interject 是「打断进行中」的纠偏语义，不适合），希望：
 
 ### D2 whats-next：取代「结束前确认」的标准化提问
 
-**CLI**：`AskHuman --whats-next [<Message>] [--stdin] [-f <file> …]`
+**CLI**：`AskHuman --whats-next [<Message>] [-o <建议任务> …] [-o! <推荐建议任务> …] [--stdin] [-f <file> …]`
 
 - Message＝agent 的**完成报告**（可选，推荐 `--stdin` heredoc），`-f` 可附报告文件；
-  **不接受** `-q` / `-o`（问题与选项由系统固定生成）。
+  **不接受** `-q`（问题固定）。仅在 agent 确有建议的下一任务时用 `-o` / `-o!` 传入；
+  `-o!` 沿用普通 Ask 的推荐样式，无建议时不传。
 - 语义：**必然发出一个提问**，走完全现成的普通 Ask 链路（popup + 四 IM、抢答协调、
   活跃槽 ∪ watch 投放、24h 等待、排空）。项目 key 取 CLI 调用 cwd 的 git 根。
-- 问题固定为「接下来做什么？」（按界面语言本地化）；选项＝该项目当前各待办条目
-  （每条一个 chip/按钮，展示加「执行待办：」前缀、携带条目 id，第 11 轮定案）+
-  **恒有**一个「结束本轮」选项（列表末位）。无待办时只有「结束本轮」+ 自由输入框。
+- 问题固定为「接下来做什么？」（按界面语言本地化）；选项顺序＝agent 本次传入的建议任务 +
+  该项目当前各待办条目（每条一个 chip/按钮，展示加「执行待办：」前缀、携带条目 id，
+  第 11 轮定案）+ **恒有**一个「结束本轮」选项（列表末位）。总选项最多 10 条：结束项
+  固定占 1 个，建议任务优先占据其余 9 个容量，超出建议静默截取，待办使用剩余容量。
+  无建议、无待办时只有「结束本轮」+ 自由输入框。
   发给 agent 的任务文本剥掉前缀、还原待办原文。whats-next 弹窗**不渲染** D7 待办区
   （待办已是选项本体）。
 - 回答**写入回复历史**（它承载完成报告，是 agent 的正式提问；区别于 Stop 确认卡的
   hook 兜底卡不写历史）。
 - **自动执行接管**（第 17 轮定案）：发问前先查队列，若存在 `auto` 待办则**不发卡**，
-  直接把**最靠前**的一条自动待办出队（照常进执行历史）并输出其文本——多条自动待办
+  直接把**最靠前**的一条自动待办出队（照常进执行历史）并输出其文本；本次建议任务不展示——多条自动待办
   按队列顺序天然形成逐条自动链，跑完后回到正常提问。agent 附带的完成报告照常落
   **回复历史**（自动路径没有卡片可看，历史窗口是唯一可查处）。仅 whats-next 有此行为；
   Stop 卡是兜底确认场景，**不自动**（见 D5）。
 
-**MCP**：server 新增第二个工具 `whats_next`（与 `ask` 并列），入参
-`{ message?, files? }`；薄壳实现与 `ask` 一致——spawn `AskHuman --whats-next --output
+**MCP**：server 的 `whats_next`（与 `ask` 并列）入参
+`{ message?, options?: [{ text, recommended? }], files? }`；`options` 仅在确有建议任务时传入，
+薄壳将其翻译为 `-o` / `-o!`，再 spawn `AskHuman --whats-next --output
 json …` 子进程，结果映射进 structuredContent。
 
 **提交结果 → 语义映射**（纯函数，完整单测）：
 
 | 用户提交 | 语义 | 出队 |
 |---|---|---|
+| 选中 agent 建议任务（可附自由文本补充） | 与普通 Ask 一致：建议在 `[selected_options]`，补充在 `[user_input]` | 不出队 |
 | 选中某待办 chip（可附自由文本补充） | 执行该条（补充一并送达） | ✅ 按 id 原子出队 |
 | 只填自由文本 | 执行该文本（全新指令） | 不出队 |
 | 选「结束本轮」且无文本 | 同意结束：agent 输出结束 marker 后自然停止 | 不出队 |
@@ -108,6 +113,8 @@ json …` 子进程，结果映射进 structuredContent。
 
 whats-next 是固定题目，输出直接复用普通 Ask 的区块词汇，agent 无需学习新结构：
 
+- 建议任务 → 与普通 Ask 一致：选项原文放在 `[selected_options]`；若有自由文本补充，另放
+  `[user_input]`。Agent 根据该建议是 whats-next 的下一任务继续执行。
 - 派活（选待办 / 只填文本 / 结束+文本）→ `[user_input]` + **任务文本**：选中待办的
   原文（前缀剥掉）；有补充文本时按空行拼在其后；只填文本时即该文本。D2 的自动执行
   接管同构输出。
@@ -130,6 +137,8 @@ CLI 版 `cli_reference()` 原三行中，前两行调整为：
 ```text
 - Before completing the turn/request, you MUST run `{program} --whats-next`
   (optionally with a completion report as the Message) to ask me what to do next.
+  Pass suggested next tasks with `-o`/`-o!` only when you have concrete
+  suggestions; otherwise omit them.
 - If it returns a task, start working on it immediately and repeat this protocol
   when done. Do NOT end the turn/conversation or mark the request as complete
   unless `{program} --whats-next` returned that I approved ending the turn and
@@ -144,7 +153,8 @@ MCP 版 `mcp_reference()` 对应前两行调整为：
 ```text
 - Before completing the turn/request, you MUST call the AskHuman `whats_next`
   tool (optionally with a completion report as its message) to ask me what to do
-  next.
+  next. Pass suggested next tasks in `options` only when you have concrete
+  suggestions; otherwise omit them.
 - If it returns a task, start working on it immediately and repeat this protocol
   when done. Do NOT end the turn/conversation or mark the request as complete
   unless the `whats_next` result says I approved ending the turn and there are
@@ -259,7 +269,8 @@ AskHuman todo clear                # 清空本项目（需交互确认，或 --y
   GUI/CLI 删除赶在点卡之前同理。
 - 同一请求内**首答胜出**等既有约定全部沿用（whats-next 就是普通 Ask）。
 - 待办文本超长时 IM 按钮/选项按各渠道既有截断规则展示，送达内容始终为原文全文。
-- **选项条数上限**（第 14 轮定案）：whats-next 卡、Stop 卡、`/todo-rm` 删除卡只列队列
+- **选项条数上限**（第 14 轮定案；2026-07-17 扩展）：whats-next **总选项最多 10 条**
+  （建议任务优先 + 待办 + 末位结束项）；Stop 卡、`/todo-rm` 删除卡仍只列队列
   **前 10 条**（`todos::MAX_OPTION_TODOS`，渠道选项数硬限制的安全值），超出时正文尾部附
   「……还有 x 条待办未列出」提示；顺序靠 GUI 窗口拖拽调整（D9）。
 - daemon 重启 / agent 崩溃：队列由 `todos.json` 恢复，无会话绑定故无需清理逻辑。
@@ -268,7 +279,7 @@ AskHuman todo clear                # 清空本项目（需交互确认，或 --y
 ## 4. 单元测试要求（骨架，实现计划再展开）
 
 - 队列存储：add/rm/clear/出队幂等、persist 往返、空项目剪除、文件锁（非 Unix 路径）。
-- whats-next 参数解析：与 `-q`/`-o` 互斥、Message/`--stdin`/`-f` 组合。
+- whats-next 参数解析：与 `-q` 互斥，接受 `-o`/`-o!` 建议任务，覆盖 Message/`--stdin`/`-f` 组合。
 - 提交映射五分支（D2 表）纯函数全覆盖；出队 best-effort（条目已删）分支。
 - 输出契约：任务文本（含补充拼接）/ 固定结束句 / 取消 `[status]` 三种渲染；
   MCP 返回同一文本。
@@ -306,3 +317,7 @@ AskHuman todo clear                # 清空本项目（需交互确认，或 --y
 - （第 9 轮实现前确认）存储简化定案：`todos.json` 即唯一数据源、全进程直读直写 +
   flock 串行化，不做 daemon 内存态与 CRUD IPC；GUI 待办窗口实时同步改为宿主监听文件
   变化。CLI 待办操作因此不依赖 daemon 存活。
+- （2026-07-17 建议任务）`whats_next` 支持 CLI `-o`/`-o!` 与 MCP `options` 传入 agent
+  建议的下一任务，仅确有建议时才传。卡片顺序为建议、待办、结束，总计最多 10 项；建议
+  超限静默截取。选中建议保持普通 Ask 的 `[selected_options]`（补充文字仍为 `[user_input]`）；
+  自动待办继续优先并直接接管。

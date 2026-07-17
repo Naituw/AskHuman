@@ -46,7 +46,7 @@ pub struct AskParams {
     pub files: Option<Vec<String>>,
 }
 
-// `whats_next` 工具的入参（spec todo-whats-next D2：`{ message?, files? }`）。
+// Input for `whats_next` (spec todo-whats-next D2).
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WhatsNextParams {
@@ -54,6 +54,11 @@ pub struct WhatsNextParams {
     /// next?" question, rendered as Markdown.
     #[serde(default)]
     pub message: Option<String>,
+    /// Optional suggested next tasks. Provide these only when you have concrete tasks to suggest;
+    /// omit this field otherwise. Options appear before project todos, and `recommended` renders
+    /// the same emphasis as in `ask`.
+    #[serde(default)]
+    pub options: Option<Vec<AskOption>>,
     /// Optional file paths (e.g. a report or summary document) to attach to what the human sees.
     #[serde(default)]
     pub files: Option<Vec<String>>,
@@ -253,7 +258,8 @@ structured content; any images the human attaches are returned as image content.
         name = "whats_next",
         description = "Ask the human what to do next. You MUST call this after completing the \
 current task and before ending your turn; optionally pass `message` with a completion report and \
-`files` with report documents. The human replies with the next task (start it immediately), or \
+`files` with report documents. Pass `options` only when you have concrete suggested next tasks; \
+omit it otherwise. The human replies with the next task (start it immediately), or \
 approves ending the turn — only then may you end it."
     )]
     async fn whats_next(
@@ -422,6 +428,12 @@ fn build_whats_next_argv(params: &WhatsNextParams) -> Vec<String> {
         }
     }
     argv.push("--whats-next".to_string());
+    if let Some(options) = params.options.as_ref() {
+        for option in options {
+            argv.push(if option.recommended { "-o!" } else { "-o" }.to_string());
+            argv.push(option.text.clone());
+        }
+    }
     if let Some(files) = params.files.as_ref() {
         for f in files {
             argv.push("-f".to_string());
@@ -610,6 +622,29 @@ mod tests {
     }
 
     #[test]
+    fn whats_next_argv_includes_suggested_options() {
+        let p: WhatsNextParams = serde_json::from_value(json!({
+            "message": "All tests pass.",
+            "options": [
+                { "text": "Write docs" },
+                { "text": "Add tests", "recommended": true }
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            build_whats_next_argv(&p),
+            vec![
+                "All tests pass.",
+                "--whats-next",
+                "-o",
+                "Write docs",
+                "-o!",
+                "Add tests",
+            ]
+        );
+    }
+
+    #[test]
     fn whats_next_argv_bare_and_with_files() {
         let p: WhatsNextParams = serde_json::from_value(json!({})).unwrap();
         assert_eq!(build_whats_next_argv(&p), vec!["--whats-next"]);
@@ -625,6 +660,25 @@ mod tests {
     fn whats_next_tool_is_registered() {
         let server = AskServer::new();
         assert!(server.tool_router.get("whats_next").is_some());
+    }
+
+    #[test]
+    fn whats_next_schema_exposes_inline_suggested_options() {
+        let server = AskServer::new();
+        let tool = server.tool_router.get("whats_next").unwrap();
+        let schema = Value::Object((*tool.input_schema).clone());
+        assert_eq!(
+            schema.pointer("/properties/options/items/type"),
+            Some(&json!("object"))
+        );
+        assert_eq!(
+            schema.pointer("/properties/options/items/properties/text/type"),
+            Some(&json!("string"))
+        );
+        assert_eq!(
+            schema.pointer("/properties/options/items/properties/recommended/type"),
+            Some(&json!("boolean"))
+        );
     }
 
     #[test]

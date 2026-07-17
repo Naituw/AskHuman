@@ -47,7 +47,7 @@ pub fn help_text(lang: Lang) -> String {
             "  --single                Single choice (default: multiple choice)".to_string(),
             "  --select-only           Choice only: forbid free text/attachments (each question must have options)".to_string(),
             "  --output <text|json>    Output format (default: text)".to_string(),
-            "  --whats-next            Ask \"what should we do next?\" with the project's pending todos as choices (see --agent-help)".to_string(),
+            "  --whats-next            Ask \"what should we do next?\" with optional suggested tasks and project todos (see --agent-help)".to_string(),
             String::new(),
             "Management:".to_string(),
             "  --settings              Open the settings window".to_string(),
@@ -82,7 +82,7 @@ pub fn help_text(lang: Lang) -> String {
             "  --single                单选（默认多选）".to_string(),
             "  --select-only           严格选择：禁用自由文本/附件（每题必须有选项）".to_string(),
             "  --output <text|json>    输出格式（默认 text）".to_string(),
-            "  --whats-next            提问「接下来做什么？」，本项目待办作为选项（见 --agent-help）".to_string(),
+            "  --whats-next            提问「接下来做什么？」，可附建议任务，本项目待办也作为选项（见 --agent-help）".to_string(),
             String::new(),
             "管理:".to_string(),
             "  --settings              启动设置界面".to_string(),
@@ -220,11 +220,15 @@ pub fn agent_help_text(lang: Lang) -> String {
             out.push(String::new());
             out.push("Ending your turn (--whats-next):".to_string());
             out.push(format!(
-                "  {prog} --whats-next [\"<completion report>\"] [-f \"<file>\" ...] [--stdin]"
+                "  {prog} --whats-next [\"<completion report>\"] [-o[!] \"<suggested task>\" ...] [-f \"<file>\" ...] [--stdin]"
             ));
             out.push("  Run this after finishing the current task and before ending your turn. The user".to_string());
             out.push("  replies with the next task (start it immediately), or approves ending the turn —".to_string());
-            out.push("  only then may you end it. Takes no -q/-o (the question is fixed).".to_string());
+            out.push(
+                "  only then may you end it. Pass -o/-o! only for concrete suggested next tasks;"
+                    .to_string(),
+            );
+            out.push("  otherwise omit them. Takes no -q (the question is fixed).".to_string());
         }
         Lang::Zh => {
             out.push(format!("{prog} —— 向人类发起提问并收集回应。"));
@@ -256,10 +260,14 @@ pub fn agent_help_text(lang: Lang) -> String {
             out.push(String::new());
             out.push("结束回合前（--whats-next）:".to_string());
             out.push(format!(
-                "  {prog} --whats-next [\"<完成报告>\"] [-f \"<文件>\" ...] [--stdin]"
+                "  {prog} --whats-next [\"<完成报告>\"] [-o[!] \"<建议任务>\" ...] [-f \"<文件>\" ...] [--stdin]"
             ));
             out.push("  完成当前任务后、结束回合前运行。用户会给出下一个任务（立即开始执行），".to_string());
-            out.push("  或确认结束回合——仅此时才可结束。不接受 -q/-o（问题固定）。".to_string());
+            out.push(
+                "  或确认结束回合——仅此时才可结束。仅在确有建议任务时传 -o/-o!，否则省略；"
+                    .to_string(),
+            );
+            out.push("  不接受 -q（问题固定）。".to_string());
         }
     }
     out.join("\n")
