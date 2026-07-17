@@ -182,7 +182,7 @@ impl MessagingChannel for DingTalkSession {
             } else {
                 format!("**{}**\n\n{}", header, message.text)
             };
-            client.send_oto_markdown(&header, &body).await
+            client.send_oto_markdown(header, &body).await
         } else {
             let body = if message.text.trim().is_empty() {
                 header.to_string()

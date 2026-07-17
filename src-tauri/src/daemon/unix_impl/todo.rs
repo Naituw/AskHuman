@@ -153,9 +153,7 @@ pub(super) async fn handle_todo_auto_cmd(
                     let _ = reply_channel_text(channel_id, config, &msg).await;
                 }
                 // `/todo-auto <n>`：兼容直达该项目的切换 + 新增控制面。
-                None => {
-                    send_todo_auto_controls(state, channel_id, config, &project, lang).await
-                }
+                None => send_todo_auto_controls(state, channel_id, config, &project, lang).await,
             }
         }
         // `/todo-auto` 或 `/todo-auto <text>`：选项目；有文本时选中后直接新增自动待办。
@@ -193,8 +191,12 @@ async fn project_by_seq(
     };
     let key = project_of_record(Some(rec));
     if key.is_none() {
-        let _ =
-            reply_channel_text(channel_id, config, crate::i18n::tr(lang, "todoIm.noProject")).await;
+        let _ = reply_channel_text(
+            channel_id,
+            config,
+            crate::i18n::tr(lang, "todoIm.noProject"),
+        )
+        .await;
     }
     key
 }
@@ -497,8 +499,7 @@ fn manage_title(project: &str, lang: Lang) -> String {
 }
 
 fn rm_hint(prefix: &str, lang: Lang) -> String {
-    crate::i18n::tr(lang, "todoIm.rmHint")
-        .replace("{p}", prefix)
+    crate::i18n::tr(lang, "todoIm.rmHint").replace("{p}", prefix)
 }
 
 /// TG/Slack（及卡片发送失败兜底）的文本列表：标题 + 列表 + 新增/删除提示。
@@ -512,10 +513,7 @@ fn todo_list_text(
     out.push('\n');
     out.push_str(&todo_lines(entries, lang));
     out.push_str("\n\n");
-    out.push_str(
-        &crate::i18n::tr(lang, "todoIm.addHint")
-            .replace("{p}", prefix),
-    );
+    out.push_str(&crate::i18n::tr(lang, "todoIm.addHint").replace("{p}", prefix));
     out
 }
 
@@ -590,14 +588,11 @@ pub(super) async fn send_todo_manage(
                 "",
             );
             let private = crate::dingtalk::card::build_card_private_map();
-            let ok = match crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
-            {
+            let ok = match crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding) {
                 Ok(client) => client
                     .create_and_deliver_card(
                         &otid,
-                        crate::channels::dingding::effective_template_id(
-                            &config.channels.dingding,
-                        ),
+                        crate::channels::dingding::effective_template_id(&config.channels.dingding),
                         map,
                         private,
                     )
@@ -842,10 +837,7 @@ fn todo_auto_view(project: &str, lang: Lang) -> Option<(crate::select::SelectVie
     Some((view, ids))
 }
 
-fn todo_auto_view_or_empty(
-    project: &str,
-    lang: Lang,
-) -> (crate::select::SelectView, Vec<String>) {
+fn todo_auto_view_or_empty(project: &str, lang: Lang) -> (crate::select::SelectView, Vec<String>) {
     todo_auto_view(project, lang).unwrap_or_else(|| {
         let name = crate::project::display_name(project);
         (
@@ -1021,12 +1013,9 @@ async fn send_todo_auto_controls(
                 }
             }
             if !send_dd_todo_auto_add_card(state, config, project, lang).await {
-                let _ = reply_channel_text(
-                    channel_id,
-                    config,
-                    &todo_auto_add_hint(channel_id, lang),
-                )
-                .await;
+                let _ =
+                    reply_channel_text(channel_id, config, &todo_auto_add_hint(channel_id, lang))
+                        .await;
             }
         }
         _ => {
@@ -1101,7 +1090,7 @@ pub(super) async fn fs_select_pick_todo_rm(
         }
         None => {
             let msg = crate::i18n::tr(lang, "todoIm.rmEmpty")
-                .replace("{project}", &crate::project::display_name(&project));
+                .replace("{project}", &crate::project::display_name(project));
             let card = crate::feishu::card::build_select_final_card(
                 &crate::select::title_todo_rm(lang),
                 &msg,
@@ -1145,7 +1134,7 @@ pub(super) async fn dd_select_pick_todo_rm(
         }
         None => {
             let msg = crate::i18n::tr(lang, "todoIm.rmEmpty")
-                .replace("{project}", &crate::project::display_name(&project));
+                .replace("{project}", &crate::project::display_name(project));
             dd_finalize_select_card(config, otid, &msg).await;
             remove_picker(state, "dingding", otid);
         }
@@ -1176,7 +1165,7 @@ pub(super) async fn select_pick_todo_rm_inplace(
         }
         None => {
             let msg = crate::i18n::tr(lang, "todoIm.rmEmpty")
-                .replace("{project}", &crate::project::display_name(&project));
+                .replace("{project}", &crate::project::display_name(project));
             finalize_select_card_edit(
                 channel_id,
                 config,
@@ -1256,18 +1245,17 @@ pub(super) async fn dd_select_pick_todo_auto(
             );
         }
         None => {
-            dd_finalize_select_card(config, otid, crate::i18n::tr(lang, "select.todoAutoEmptyCard"))
-                .await;
+            dd_finalize_select_card(
+                config,
+                otid,
+                crate::i18n::tr(lang, "select.todoAutoEmptyCard"),
+            )
+            .await;
             remove_picker(state, "dingding", otid);
         }
     }
     if !send_dd_todo_auto_add_card(state, config, project, lang).await {
-        let _ = reply_channel_text(
-            "dingding",
-            config,
-            &todo_auto_add_hint("dingding", lang),
-        )
-        .await;
+        let _ = reply_channel_text("dingding", config, &todo_auto_add_hint("dingding", lang)).await;
     }
 }
 
@@ -1320,12 +1308,7 @@ pub(super) async fn select_pick_todo_auto_inplace(
             remove_picker(state, channel_id, mid);
         }
     }
-    let _ = reply_channel_text(
-        channel_id,
-        config,
-        &todo_auto_add_hint(channel_id, lang),
-    )
-    .await;
+    let _ = reply_channel_text(channel_id, config, &todo_auto_add_hint(channel_id, lang)).await;
 }
 
 // ===== 切换卡点「切换」（TodoAutoEntry）=====
@@ -1396,8 +1379,12 @@ pub(super) async fn dd_select_pick_todo_auto_entry(
             );
         }
         None => {
-            dd_finalize_select_card(config, otid, crate::i18n::tr(lang, "select.todoAutoEmptyCard"))
-                .await;
+            dd_finalize_select_card(
+                config,
+                otid,
+                crate::i18n::tr(lang, "select.todoAutoEmptyCard"),
+            )
+            .await;
             remove_picker(state, "dingding", otid);
         }
     }
@@ -1457,7 +1444,10 @@ async fn dd_refresh_entry_card(
             .update_card_private(otid, map, serde_json::json!({}))
             .await
         {
-            log(&format!("todo: refresh dingtalk entry card failed: {}", err));
+            log(&format!(
+                "todo: refresh dingtalk entry card failed: {}",
+                err
+            ));
         }
     }
 }
@@ -1548,8 +1538,12 @@ pub(super) async fn dd_select_pick_todo_rm_entry(
             );
         }
         None => {
-            dd_finalize_select_card(config, otid, crate::i18n::tr(lang, "select.todoRmAllDoneCard"))
-                .await;
+            dd_finalize_select_card(
+                config,
+                otid,
+                crate::i18n::tr(lang, "select.todoRmAllDoneCard"),
+            )
+            .await;
             remove_picker(state, "dingding", otid);
         }
     }
@@ -1713,7 +1707,10 @@ pub(super) async fn handle_todo_dd_submit(
             )
             .await
         {
-            log(&format!("todo: refresh dingtalk manage card failed: {}", err));
+            log(&format!(
+                "todo: refresh dingtalk manage card failed: {}",
+                err
+            ));
         }
     }
     true
@@ -1723,7 +1720,11 @@ pub(super) async fn handle_todo_dd_submit(
 mod tests {
     use super::*;
 
-    fn workspace(path: &str, pinned: bool, last_used_at: u64) -> crate::agents::workspaces::Workspace {
+    fn workspace(
+        path: &str,
+        pinned: bool,
+        last_used_at: u64,
+    ) -> crate::agents::workspaces::Workspace {
         crate::agents::workspaces::Workspace {
             path: path.to_string(),
             label: crate::project::display_name(path),

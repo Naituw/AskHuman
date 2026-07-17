@@ -924,11 +924,7 @@ async fn serve(_lock: LockGuard) -> i32 {
 
     // 第 15 轮定案：graceful 关停（drain/stop/install 换新）前把活动单选/确认卡定格「已失效」，
     // 避免重启后旧卡（台账不持久化）点击静默无响应。限时兜底，不拖关停。
-    let _ = tokio::time::timeout(
-        Duration::from_secs(8),
-        finalize_all_select_cards(&state),
-    )
-    .await;
+    let _ = tokio::time::timeout(Duration::from_secs(8), finalize_all_select_cards(&state)).await;
 
     // 方案6：关停前回收热实例（drop 连接 → 热进程收 EOF 自杀，不悬挂）。先置 `draining` 再回收，
     // 否则被回收的热实例走死亡分支会 `maybe_topup_warm` 又拉起一个新热进程（孤儿，daemon 已停）。
@@ -2303,6 +2299,7 @@ fn im_conversation_origin(
     )
 }
 
+#[allow(clippy::too_many_arguments)] // arguments mirror the request handoff context
 async fn attach_im_channels(
     entry: &Arc<RequestEntry>,
     state: &Arc<ServerState>,

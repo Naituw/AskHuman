@@ -53,7 +53,7 @@ fn button_color(action: crate::select::SelectAction) -> &'static str {
         | crate::select::SelectAction::TaskAgent
         | crate::select::SelectAction::TaskPermission
         | crate::select::SelectAction::Status
-        |         crate::select::SelectAction::Msg
+        | crate::select::SelectAction::Msg
         | crate::select::SelectAction::MsgTarget
         | crate::select::SelectAction::Diff
         | crate::select::SelectAction::Stage

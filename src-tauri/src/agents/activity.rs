@@ -502,7 +502,7 @@ fn codex_inner_tool(input: &str) -> Option<(String, Option<Value>)> {
 /// Code Mode does not expose a structured read event. Recognize the conservative set of commands
 /// Codex normally uses to inspect files; every other command remains visible through the Run fallback.
 fn is_common_read_command(cmd: &str) -> bool {
-    let first = cmd.trim_start().split_whitespace().next().unwrap_or("");
+    let first = cmd.split_whitespace().next().unwrap_or("");
     matches!(
         first,
         "rg" | "grep" | "cat" | "head" | "tail" | "less" | "jq"

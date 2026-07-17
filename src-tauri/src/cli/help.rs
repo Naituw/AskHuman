@@ -220,7 +220,10 @@ pub fn agent_help_text(lang: Lang) -> String {
             out.push(String::new());
             out.push("Project todos:".to_string());
             out.push("  Store a reminder for the user or a task they asked to do later; not your internal work plan.".to_string());
-            out.push("  Keep it to one actionable sentence, preferably no more than 100 characters.".to_string());
+            out.push(
+                "  Keep it to one actionable sentence, preferably no more than 100 characters."
+                    .to_string(),
+            );
             out.push(format!(
                 "  Add when the user asks or defers a concrete task: {prog} todo add \"<task>\""
             ));
@@ -230,9 +233,18 @@ pub fn agent_help_text(lang: Lang) -> String {
                 "  {prog} --whats-next [\"<completion report>\"] [-o[!] \"<suggested task>\" ...] [-f \"<file>\" ...] [--stdin]"
             ));
             out.push("  Run only after the current task is fully complete, to request a separate next task.".to_string());
-            out.push("  Use normal AskHuman questions for anything within the current task. The user".to_string());
-            out.push("  replies with the next task (start it immediately), or approves ending — only".to_string());
-            out.push("  then may you end it. -o/-o! are concrete next-task suggestions only; never add".to_string());
+            out.push(
+                "  Use normal AskHuman questions for anything within the current task. The user"
+                    .to_string(),
+            );
+            out.push(
+                "  replies with the next task (start it immediately), or approves ending — only"
+                    .to_string(),
+            );
+            out.push(
+                "  then may you end it. -o/-o! are concrete next-task suggestions only; never add"
+                    .to_string(),
+            );
             out.push(
                 "  an end/stop option because ending is built in. Omit them when there are no"
                     .to_string(),
@@ -281,8 +293,14 @@ pub fn agent_help_text(lang: Lang) -> String {
             out.push(format!(
                 "  {prog} --whats-next [\"<完成报告>\"] [-o[!] \"<建议任务>\" ...] [-f \"<文件>\" ...] [--stdin]"
             ));
-            out.push("  仅在当前任务完全完成后运行，用于领取一个独立的下一任务。当前任务内的任何".to_string());
-            out.push("  问题都用普通 AskHuman 提问。用户会给出下一个任务（立即开始执行），或确认".to_string());
+            out.push(
+                "  仅在当前任务完全完成后运行，用于领取一个独立的下一任务。当前任务内的任何"
+                    .to_string(),
+            );
+            out.push(
+                "  问题都用普通 AskHuman 提问。用户会给出下一个任务（立即开始执行），或确认"
+                    .to_string(),
+            );
             out.push(
                 "  结束——仅此时才可结束。-o/-o! 只放具体的下一任务建议；不要添加结束/停止"
                     .to_string(),

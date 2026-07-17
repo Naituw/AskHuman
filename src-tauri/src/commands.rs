@@ -312,7 +312,11 @@ pub fn todos_list(project: String) -> Vec<crate::todos::TodoEntry> {
 }
 
 #[tauri::command]
-pub fn todos_add(project: String, text: String, auto: Option<bool>) -> Option<crate::todos::TodoEntry> {
+pub fn todos_add(
+    project: String,
+    text: String,
+    auto: Option<bool>,
+) -> Option<crate::todos::TodoEntry> {
     if auto.unwrap_or(false) {
         crate::todos::add_auto(&project, &text)
     } else {
@@ -404,7 +408,10 @@ pub async fn todos_projects() -> Vec<TodoProjectInfo> {
     if let Some(agents) = crate::client::agents_snapshot_if_running().await {
         for rec in agents.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
             let ended = rec.get("state").and_then(|v| v.as_str()) == Some("ended");
-            let Some(cwd) = rec.get("cwd").and_then(|v| v.as_str()).filter(|c| !c.is_empty())
+            let Some(cwd) = rec
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .filter(|c| !c.is_empty())
             else {
                 continue;
             };
@@ -421,7 +428,7 @@ pub async fn todos_projects() -> Vec<TodoProjectInfo> {
     // 最近 workspace 索引（IM Agent 任务同款；隐藏项不列）：按近期使用倒序追加。
     let mut workspaces = crate::agents::workspaces::list();
     workspaces.retain(|w| !w.hidden);
-    workspaces.sort_by(|a, b| b.last_used_at.cmp(&a.last_used_at));
+    workspaces.sort_by_key(|workspace| std::cmp::Reverse(workspace.last_used_at));
     for w in workspaces {
         let key = crate::project::detect_from(std::path::Path::new(&w.path));
         if !key.is_empty() && !keys.contains(&key) {
@@ -448,7 +455,13 @@ pub fn open_todos(app: AppHandle, dir: Option<String>) -> Result<(), String> {
             .filter(|d| !d.trim().is_empty())
             .map(|d| crate::project::detect_from(std::path::Path::new(&d)))
             .filter(|k| !k.is_empty());
-        route_open_window(app, crate::gui_host::WindowKind::Todos, false, project, None);
+        route_open_window(
+            app,
+            crate::gui_host::WindowKind::Todos,
+            false,
+            project,
+            None,
+        );
         Ok(())
     }
     #[cfg(not(unix))]

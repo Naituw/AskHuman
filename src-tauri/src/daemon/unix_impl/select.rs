@@ -484,8 +484,7 @@ pub(super) async fn finalize_all_select_cards(state: &Arc<ServerState>) {
         };
         match p.channel.as_str() {
             "feishu" => {
-                let card =
-                    crate::feishu::card::build_select_final_card(&p.title, &picker_label);
+                let card = crate::feishu::card::build_select_final_card(&p.title, &picker_label);
                 if let Ok(client) =
                     crate::feishu::client::FeishuClient::new(&config.channels.feishu)
                 {
@@ -940,16 +939,7 @@ pub(super) async fn handle_select_card_action(
             PickerKind::Todo | PickerKind::TodoRm | PickerKind::TodoAuto
         )
     {
-        select_pick_todo_more(
-            state,
-            channel_id,
-            &mid,
-            &picker,
-            &config,
-            lang,
-            Some(ack),
-        )
-        .await;
+        select_pick_todo_more(state, channel_id, &mid, &picker, &config, lang, Some(ack)).await;
         activate_channel_on_action(state, channel_id, &config, lang).await;
         return;
     }
@@ -1498,16 +1488,7 @@ pub(super) async fn handle_select_dd_action(state: &Arc<ServerState>, data: &ser
             PickerKind::Todo | PickerKind::TodoRm | PickerKind::TodoAuto
         )
     {
-        select_pick_todo_more(
-            state,
-            "dingding",
-            &otid,
-            &picker,
-            &config,
-            lang,
-            None,
-        )
-        .await;
+        select_pick_todo_more(state, "dingding", &otid, &picker, &config, lang, None).await;
         activate_channel_on_action(state, "dingding", &config, lang).await;
         return;
     }
@@ -2222,16 +2203,7 @@ pub(super) async fn dispatch_select_pick(
             PickerKind::Todo | PickerKind::TodoRm | PickerKind::TodoAuto
         )
     {
-        select_pick_todo_more(
-            state,
-            channel_id,
-            mid,
-            &picker,
-            config,
-            lang,
-            None,
-        )
-        .await;
+        select_pick_todo_more(state, channel_id, mid, &picker, config, lang, None).await;
         activate_channel_on_action(state, channel_id, config, lang).await;
         return;
     }
@@ -2761,7 +2733,9 @@ async fn try_finalize_select_card_edit(
 ) -> bool {
     match channel_id {
         "telegram" => {
-            let Ok(m) = mid.parse::<i64>() else { return false };
+            let Ok(m) = mid.parse::<i64>() else {
+                return false;
+            };
             let tg = &config.channels.telegram;
             if let Ok(c) = crate::telegram::TelegramClient::new(
                 tg.bot_token.clone(),

@@ -664,7 +664,10 @@ mod tests {
     #[test]
     fn whats_next_end_with_text_means_continue() {
         // 「结束＋文字」＝继续：文字是新指令（spec D2 表第 4 行）。
-        let reply = whats_next_reply(&wn_request(), &wn_result(&["End this turn"], Some("还有个想法")));
+        let reply = whats_next_reply(
+            &wn_request(),
+            &wn_result(&["End this turn"], Some("还有个想法")),
+        );
         assert_eq!(reply, WhatsNextReply::Task("还有个想法".into()));
     }
 
@@ -680,8 +683,9 @@ mod tests {
             whats_next_reply(&wn_request(), &wn_result(&[], None)),
             WhatsNextReply::Cancelled
         );
-        assert!(whats_next_output(&WhatsNextReply::Cancelled, &[], Lang::En)
-            .starts_with("[status]\n"));
+        assert!(
+            whats_next_output(&WhatsNextReply::Cancelled, &[], Lang::En).starts_with("[status]\n")
+        );
     }
 
     #[test]
@@ -692,7 +696,10 @@ mod tests {
             whats_next_output(&reply, &s(&["/tmp/a.png"]), Lang::En),
             "[user_input]\n任务\n\n[files]\n/tmp/a.png"
         );
-        assert_eq!(whats_next_output(&reply, &[], Lang::En), "[user_input]\n任务");
+        assert_eq!(
+            whats_next_output(&reply, &[], Lang::En),
+            "[user_input]\n任务"
+        );
     }
 
     #[test]

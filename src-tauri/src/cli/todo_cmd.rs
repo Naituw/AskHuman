@@ -90,7 +90,10 @@ fn rm(project: &str, args: &[String], lang: Lang) -> ! {
     let raw = args.first().map(String::as_str).unwrap_or("");
     let entries = crate::todos::list(project);
     // 编号为 `todo list` 显示的 1 基序号。
-    let index = raw.parse::<usize>().ok().filter(|n| (1..=entries.len()).contains(n));
+    let index = raw
+        .parse::<usize>()
+        .ok()
+        .filter(|n| (1..=entries.len()).contains(n));
     let Some(index) = index else {
         eprintln!(
             "{}{}",

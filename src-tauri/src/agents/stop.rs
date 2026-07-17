@@ -236,9 +236,7 @@ fn build_task(
     let prefix = crate::i18n::tr(lang, "whatsNext.todoPrefix");
     let mut options: Vec<OptionItem> = todos
         .iter()
-        .map(|entry| {
-            OptionItem::with_todo(format!("{}{}", prefix, entry.text), entry.id.clone())
-        })
+        .map(|entry| OptionItem::with_todo(format!("{}{}", prefix, entry.text), entry.id.clone()))
         .collect();
     options.push(OptionItem::new(continue_label, true));
     options.push(OptionItem::new(end_label, false));
@@ -295,7 +293,10 @@ fn parse_ask_decision(stdout: &str, todos: &[crate::todos::TodoEntry]) -> StopDe
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    if indices.iter().any(|index| index.as_u64() == Some(end_index)) {
+    if indices
+        .iter()
+        .any(|index| index.as_u64() == Some(end_index))
+    {
         return StopDecision::End;
     }
     let instruction = answer
@@ -388,7 +389,10 @@ mod tests {
             StopDecision::End
         );
         assert_eq!(
-            parse_ask_decision(r#"{"action":"answer","answers":[{"selected_indices":[0]}]}"#, &[]),
+            parse_ask_decision(
+                r#"{"action":"answer","answers":[{"selected_indices":[0]}]}"#,
+                &[]
+            ),
             StopDecision::Continue(None)
         );
         assert_eq!(
@@ -561,7 +565,15 @@ mod tests {
 
     #[test]
     fn internal_task_is_single_free_text_and_skips_history() {
-        let task = build_task(AgentKind::Codex, "s1", "/tmp/p", &[], 0, Some("done"), Lang::En);
+        let task = build_task(
+            AgentKind::Codex,
+            "s1",
+            "/tmp/p",
+            &[],
+            0,
+            Some("done"),
+            Lang::En,
+        );
         assert!(task.single);
         assert!(!task.select_only);
         assert!(!task.record_history);
@@ -623,7 +635,11 @@ mod tests {
         );
         let options = &task.questions[0].predefined_options;
         assert_eq!(options.len(), crate::todos::MAX_OPTION_TODOS + 2);
-        assert!(task.questions[0].message.contains("4 more"), "{}", task.questions[0].message);
+        assert!(
+            task.questions[0].message.contains("4 more"),
+            "{}",
+            task.questions[0].message
+        );
     }
 
     #[test]

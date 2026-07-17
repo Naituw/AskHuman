@@ -227,6 +227,7 @@ pub fn build_finalized_card_with_todo(
 
 /// 单个勾选器组件：文本用 lark_md（支持推荐项的彩色前缀）。
 /// `disabled=true`（终态）禁用；`single=true` 且非终态时挂 toggle 回调（勾选器在表单外，点击互斥）。
+#[allow(clippy::too_many_arguments)] // arguments mirror the checker payload fields
 fn checker_element(
     i: usize,
     opt: &OptionItem,
@@ -638,7 +639,7 @@ fn select_button_type(action: crate::select::SelectAction) -> &'static str {
         | crate::select::SelectAction::TaskWorkspace
         | crate::select::SelectAction::TaskAgent
         | crate::select::SelectAction::TaskPermission
-        |         crate::select::SelectAction::Msg
+        | crate::select::SelectAction::Msg
         | crate::select::SelectAction::MsgTarget
         | crate::select::SelectAction::Stage
         | crate::select::SelectAction::TodoRm
@@ -648,9 +649,7 @@ fn select_button_type(action: crate::select::SelectAction) -> &'static str {
         | crate::select::SelectAction::Transcript
         | crate::select::SelectAction::Todo
         | crate::select::SelectAction::TodoAutoEntry => "default",
-        crate::select::SelectAction::Unwatch | crate::select::SelectAction::TodoRmEntry => {
-            "danger"
-        }
+        crate::select::SelectAction::Unwatch | crate::select::SelectAction::TodoRmEntry => "danger",
     }
 }
 
@@ -1090,7 +1089,10 @@ mod tests {
         // 样式化头部 + hr + markdown 列表正文。
         assert_eq!(elements[0]["text"]["content"], "「proj」的待办");
         assert_eq!(elements[2]["tag"], "markdown");
-        assert!(elements[2]["content"].as_str().unwrap().contains("修复登录"));
+        assert!(elements[2]["content"]
+            .as_str()
+            .unwrap()
+            .contains("修复登录"));
         // 表单只有输入框 + 提交按钮（无勾选器）。
         let form = form_of(&card);
         let fe = form["elements"].as_array().unwrap();
@@ -1797,8 +1799,20 @@ mod tests {
         let elements = card["body"]["elements"].as_array().unwrap();
         let form = elements.iter().find(|item| item["tag"] == "form").unwrap();
         let controls = form["elements"].as_array().unwrap();
-        assert_eq!(controls.iter().filter(|item| item["tag"] == "input").count(), 1);
-        assert_eq!(controls.iter().filter(|item| item["tag"] == "button").count(), 1);
+        assert_eq!(
+            controls
+                .iter()
+                .filter(|item| item["tag"] == "input")
+                .count(),
+            1
+        );
+        assert_eq!(
+            controls
+                .iter()
+                .filter(|item| item["tag"] == "button")
+                .count(),
+            1
+        );
         assert_eq!(controls[0]["default_value"], "draft");
         assert!(elements.iter().any(|item| item["text"]["content"]
             .as_str()

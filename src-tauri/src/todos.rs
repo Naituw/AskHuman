@@ -284,7 +284,10 @@ fn add_impl(path: &Path, lock: &Path, project: &str, text: &str, auto: bool) -> 
         created_at_ms: now_ms(),
         auto,
     };
-    data.projects.entry(project).or_default().push(entry.clone());
+    data.projects
+        .entry(project)
+        .or_default()
+        .push(entry.clone());
     store_at(path, data);
     Some(entry)
 }
@@ -707,20 +710,39 @@ mod tests {
         assert!(!a.auto);
         assert!(b.auto && c.auto);
         // 最靠前的自动待办 = 队列顺序里第一条 auto（b 在 c 前）。
-        let first = list_at(&t.file(), "/p").into_iter().find(|e| e.auto).unwrap();
+        let first = list_at(&t.file(), "/p")
+            .into_iter()
+            .find(|e| e.auto)
+            .unwrap();
         assert_eq!(first.id, b.id);
         // 切换：关掉 b 后轮到 c；开回普通条目 a 后 a 最靠前。
-        assert_eq!(set_auto_at(&t.file(), &t.lock(), "/p", &b.id, false), Some(false));
-        let first = list_at(&t.file(), "/p").into_iter().find(|e| e.auto).unwrap();
+        assert_eq!(
+            set_auto_at(&t.file(), &t.lock(), "/p", &b.id, false),
+            Some(false)
+        );
+        let first = list_at(&t.file(), "/p")
+            .into_iter()
+            .find(|e| e.auto)
+            .unwrap();
         assert_eq!(first.id, c.id);
-        assert_eq!(set_auto_at(&t.file(), &t.lock(), "/p", &a.id, true), Some(true));
-        let first = list_at(&t.file(), "/p").into_iter().find(|e| e.auto).unwrap();
+        assert_eq!(
+            set_auto_at(&t.file(), &t.lock(), "/p", &a.id, true),
+            Some(true)
+        );
+        let first = list_at(&t.file(), "/p")
+            .into_iter()
+            .find(|e| e.auto)
+            .unwrap();
         assert_eq!(first.id, a.id);
         // 不存在的 id → None。
-        assert_eq!(set_auto_at(&t.file(), &t.lock(), "/p", "missing", true), None);
+        assert_eq!(
+            set_auto_at(&t.file(), &t.lock(), "/p", "missing", true),
+            None
+        );
         // 序列化：auto=false 不落盘（skip_serializing_if），旧文件无该字段可读。
         let raw = std::fs::read_to_string(t.file()).unwrap();
         assert_eq!(raw.matches("\"auto\"").count(), 2); // a 与 c
+
         // 恢复历史不带 auto。
         take_at(&t.file(), &t.lock(), "/p", std::slice::from_ref(&a.id), 20);
         assert!(restore_at(&t.file(), &t.lock(), "/p", &a.id));

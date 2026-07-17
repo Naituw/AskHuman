@@ -589,9 +589,8 @@ fn detect_integration_updates() -> Vec<String> {
         ("grok", AgentTarget::Grok),
     ]
     .into_iter()
-    .filter_map(|(id, target)| {
-        crate::integrations::agent_mode::needs_update(target).then(|| id.to_string())
-    })
+    .filter(|&(_, target)| crate::integrations::agent_mode::needs_update(target))
+    .map(|(id, _)| id.to_string())
     .collect()
 }
 
@@ -631,8 +630,7 @@ fn integration_updates_text(updates: &[String], lang: Lang) -> String {
         return i18n::tr(lang, "tray.integrationUpdateOne")
             .replace("{agent}", integration_agent_label(&updates[0]));
     }
-    i18n::tr(lang, "tray.integrationUpdateMany")
-        .replace("{count}", &updates.len().to_string())
+    i18n::tr(lang, "tray.integrationUpdateMany").replace("{count}", &updates.len().to_string())
 }
 
 /// 分钟级「多久之前」文案（托盘渠道故障行用；分钟级粒度避免秒级微变触发菜单刷新）。

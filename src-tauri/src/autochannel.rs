@@ -1020,7 +1020,10 @@ mod tests {
     #[test]
     fn classify_todo_and_todo_rm() {
         // `/todo`（无参）→ 选项目管理；非数字文本 → 选项目新增；数字入口保持向后兼容。
-        assert_eq!(classify("/todo"), Parsed::Command(Command::Todo(None, None)));
+        assert_eq!(
+            classify("/todo"),
+            Parsed::Command(Command::Todo(None, None))
+        );
         assert_eq!(
             classify("/todo 3"),
             Parsed::Command(Command::Todo(Some(3), None))
@@ -1042,7 +1045,10 @@ mod tests {
             classify("/待办 2 写文档"),
             Parsed::Command(Command::Todo(Some(2), Some("写文档".to_string())))
         );
-        assert_eq!(classify("!todo"), Parsed::Command(Command::Todo(None, None)));
+        assert_eq!(
+            classify("!todo"),
+            Parsed::Command(Command::Todo(None, None))
+        );
         // `/todo-rm`。
         assert_eq!(classify("/todo-rm"), Parsed::Command(Command::TodoRm(None)));
         assert_eq!(
