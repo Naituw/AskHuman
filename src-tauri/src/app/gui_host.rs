@@ -11,7 +11,7 @@
 #![cfg(unix)]
 
 use crate::app::tray_menu::{Node, TrayMenu};
-use crate::config::{AppConfig, DaemonLifecycleMode, MenuBarIconMode};
+use crate::config::{AppConfig, DaemonLifecycleMode, MenuBarIconMode, ThemeMode};
 use crate::daemon::lifecycle::{self, Fingerprint, LockGuard};
 use crate::gui_host::{HostMsg, WindowKind};
 use crate::i18n::{self, Lang};
@@ -1648,6 +1648,21 @@ fn apply_config(app: &AppHandle, cfg: &AppConfig) {
     let Some(state) = app.try_state::<HostState>() else {
         return;
     };
+    // 主题跨进程热同步：弹窗导航栏 / CLI 改主题只写配置文件，宿主窗口（设置/历史/
+    // 待办/Agents/插话）靠本 watcher 跟进——原生外观 + 前端事件一起下发。
+    // 设置窗口在宿主内改主题时会再触发一次，重复应用幂等无害。
+    let theme = match cfg.general.theme {
+        ThemeMode::Light => "light",
+        ThemeMode::Dark => "dark",
+        ThemeMode::System => "system",
+    };
+    crate::commands::apply_theme_to_windows(app, theme);
+    {
+        use tauri::Emitter;
+        if let Ok(general) = serde_json::to_value(&cfg.general) {
+            let _ = app.emit("settings-updated", general);
+        }
+    }
     let new_lang = Lang::resolve(&cfg.general.language);
     let new_mode = cfg.general.menu_bar_icon;
     let old_mode = state.mode();

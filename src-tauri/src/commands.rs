@@ -373,10 +373,13 @@ pub struct TodosInit {
 }
 
 #[tauri::command]
-pub fn todos_init(state: State<AppState>) -> TodosInit {
+pub fn todos_init() -> TodosInit {
+    // 现读配置而非 `AppState.config`：GUI Host 常驻，进程级快照会滞后于设置变更，
+    // 重开窗口时会拿到旧主题/语言（原生窗口底色已切、内容却停在旧主题）。
+    let config = AppConfig::load_without_secrets();
     TodosInit {
-        theme: theme_str(state.config.general.theme),
-        lang: crate::i18n::Lang::resolve(&state.config.general.language)
+        theme: theme_str(config.general.theme),
+        lang: crate::i18n::Lang::resolve(&config.general.language)
             .code()
             .to_string(),
     }
@@ -707,9 +710,11 @@ pub struct HistoryInit {
 
 #[tauri::command]
 pub fn history_init(state: State<AppState>) -> HistoryInit {
+    // 主题/语言现读配置（GUI Host 常驻，进程级快照会滞后）；项目仍取本进程状态。
+    let config = AppConfig::load_without_secrets();
     HistoryInit {
-        theme: theme_str(state.config.general.theme),
-        lang: crate::i18n::Lang::resolve(&state.config.general.language)
+        theme: theme_str(config.general.theme),
+        lang: crate::i18n::Lang::resolve(&config.general.language)
             .code()
             .to_string(),
         project: state.project.clone(),
@@ -726,10 +731,12 @@ pub struct AgentsInit {
 }
 
 #[tauri::command]
-pub fn agents_init(state: State<AppState>) -> AgentsInit {
+pub fn agents_init() -> AgentsInit {
+    // 现读配置而非 `AppState.config`（同 `todos_init`，避免常驻宿主的过期快照）。
+    let config = AppConfig::load_without_secrets();
     AgentsInit {
-        theme: theme_str(state.config.general.theme),
-        lang: crate::i18n::Lang::resolve(&state.config.general.language)
+        theme: theme_str(config.general.theme),
+        lang: crate::i18n::Lang::resolve(&config.general.language)
             .code()
             .to_string(),
     }
@@ -1721,12 +1728,11 @@ pub struct InterjectInit {
 /// 插话窗口挂载时调用：打开到 daemon 的 composer 专属连接（登记「composer 打开中」，
 /// 此后该 session 的 PreToolUse hook 挂起等待）+ 查询待送达全文作预填。连接生命周期与窗口一致。
 #[tauri::command]
-pub async fn interject_init(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<InterjectInit, String> {
-    let theme = theme_str(state.config.general.theme);
-    let lang = crate::i18n::Lang::resolve(&state.config.general.language)
+pub async fn interject_init(session_id: String) -> Result<InterjectInit, String> {
+    // 现读配置而非 `AppState.config`（同 `todos_init`，避免常驻宿主的过期快照）。
+    let config = AppConfig::load_without_secrets();
+    let theme = theme_str(config.general.theme);
+    let lang = crate::i18n::Lang::resolve(&config.general.language)
         .code()
         .to_string();
     #[cfg(unix)]

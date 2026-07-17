@@ -7,7 +7,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { applyLanguage } from "../i18n";
 import { getSettings } from "../lib/ipc";
 import { applyTheme } from "../lib/theme";
-import type { UiLanguage } from "../lib/types";
+import type { ThemeMode, UiLanguage } from "../lib/types";
 import {
   createSettingsContext,
   isMac,
@@ -79,10 +79,15 @@ onMounted(async () => {
   secretsPresent.value = payload.secretsPresent;
   applyTheme(payload.config.general.theme);
   applyLanguage(payload.config.general.language);
-  unlistenSettings = await listen<{ language?: UiLanguage }>(
+  unlistenSettings = await listen<{ theme?: ThemeMode; language?: UiLanguage }>(
     "settings-updated",
     (e) => {
       if (e.payload.language) applyLanguage(e.payload.language);
+      // 其它入口（弹窗导航栏/CLI）改主题时本窗口同步：切换外观 + 更新单选高亮。
+      if (typeof e.payload.theme === "string") {
+        applyTheme(e.payload.theme);
+        if (config.value) config.value.general.theme = e.payload.theme;
+      }
     }
   );
   // 窗口已开时的定位请求（托盘「渠道异常」行等）：新开窗走 URL ?tab=，已开窗走本事件。

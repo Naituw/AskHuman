@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { applyTheme } from "../lib/theme";
 import { applyLanguage } from "../i18n";
 import { interjectCancel, interjectInit, interjectSubmit } from "../lib/ipc";
-import type { AgentKind } from "../lib/types";
+import type { AgentKind, ThemeMode } from "../lib/types";
 
 const { t } = useI18n();
 
@@ -61,6 +62,8 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
+let unlistenSettings: UnlistenFn | null = null;
+
 onMounted(async () => {
   try {
     const init = await interjectInit(session);
@@ -71,6 +74,14 @@ onMounted(async () => {
   } catch {
     /* daemon 不可达：保持空预填，提交时后端兜底重试 */
   }
+  // 设置变更实时生效（主题/语言与设置窗口同宿主进程广播）。
+  unlistenSettings = await listen<{ theme?: ThemeMode; language?: string }>(
+    "settings-updated",
+    (e) => {
+      if (typeof e.payload.theme === "string") applyTheme(e.payload.theme);
+      if (typeof e.payload.language === "string") applyLanguage(e.payload.language);
+    }
+  );
   loaded.value = true;
   // 聚焦输入框、光标移到末尾（预填内容之后继续输入）。
   requestAnimationFrame(() => {
@@ -80,6 +91,10 @@ onMounted(async () => {
       el.setSelectionRange(el.value.length, el.value.length);
     }
   });
+});
+
+onBeforeUnmount(() => {
+  unlistenSettings?.();
 });
 </script>
 
@@ -132,7 +147,7 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--hairline) solid var(--border);
 }
 .macos .ij-header {
   padding-top: 30px;
@@ -181,14 +196,15 @@ onMounted(async () => {
   min-height: 0;
   resize: none;
   padding: 8px 10px;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--control-border);
   border-radius: var(--radius-sm, 8px);
-  background: var(--bg-elevated);
+  background: var(--control-bg);
   color: var(--text-primary);
   font-size: 13px;
   line-height: 1.5;
   font-family: inherit;
   outline: none;
+  box-shadow: var(--clickable-shadow);
 }
 .ij-input:focus {
   border-color: var(--accent, #0a84ff);
@@ -217,18 +233,18 @@ onMounted(async () => {
 }
 .btn {
   appearance: none;
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--control-border);
+  background: var(--control-bg);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
   padding: 5px 14px;
   border-radius: 7px;
   cursor: pointer;
-  transition: background 0.12s ease, opacity 0.12s ease;
+  box-shadow: var(--clickable-shadow);
 }
 .btn:hover {
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  background: var(--control-hover-bg);
 }
 .btn.primary {
   border-color: transparent;

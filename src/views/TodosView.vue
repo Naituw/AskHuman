@@ -17,7 +17,12 @@ import {
   todosRestore,
   todosSetAuto,
 } from "../lib/ipc";
-import type { TodoDoneEntry, TodoEntry, TodoProjectInfo } from "../lib/types";
+import type {
+  ThemeMode,
+  TodoDoneEntry,
+  TodoEntry,
+  TodoProjectInfo,
+} from "../lib/types";
 
 const { t } = useI18n();
 
@@ -262,6 +267,7 @@ async function onDragEnd(): Promise<void> {
 
 let unlistenUpdated: UnlistenFn | null = null;
 let unlistenGoto: UnlistenFn | null = null;
+let unlistenSettings: UnlistenFn | null = null;
 
 onMounted(async () => {
   try {
@@ -273,6 +279,14 @@ onMounted(async () => {
   }
   const preselect = new URLSearchParams(window.location.search).get("project");
   if (preselect) selected.value = preselect;
+  // 设置变更实时生效（主题/语言与设置窗口同宿主进程广播）。
+  unlistenSettings = await listen<{ theme?: ThemeMode; language?: string }>(
+    "settings-updated",
+    (e) => {
+      if (typeof e.payload.theme === "string") applyTheme(e.payload.theme);
+      if (typeof e.payload.language === "string") applyLanguage(e.payload.language);
+    }
+  );
   // todos.json 被任意进程改写（CLI/弹窗/出队）→ 宿主文件监听推事件 → 重载。
   unlistenUpdated = await listen("todos-updated", () => {
     void reloadAll();
@@ -296,6 +310,7 @@ onBeforeUnmount(() => {
   if (newAutoHintTimer !== undefined) window.clearTimeout(newAutoHintTimer);
   unlistenUpdated?.();
   unlistenGoto?.();
+  unlistenSettings?.();
 });
 </script>
 
@@ -549,7 +564,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--hairline) solid var(--border);
 }
 .macos .td-header {
   padding-top: 30px;
@@ -564,12 +579,13 @@ onBeforeUnmount(() => {
   min-width: 0;
   max-width: 60%;
   appearance: auto;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   border-radius: 7px;
-  background: var(--bg-elevated);
+  background: var(--control-bg);
   color: var(--text-primary);
   font-size: 12px;
   padding: 3px 8px;
+  box-shadow: var(--clickable-shadow);
 }
 .td-body {
   flex: 1 1 auto;
@@ -623,13 +639,14 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: 8px;
   padding: 9px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm, 8px);
   background: var(--bg-elevated);
 }
 .td-row.dragging {
   opacity: 0.55;
   border-style: dashed;
+  border-color: var(--control-border);
 }
 .td-handle {
   flex: 0 0 auto;
@@ -687,7 +704,6 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   opacity: 0;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease, opacity 0.12s ease;
 }
 .td-row:hover .td-auto {
   opacity: 0.75;
@@ -715,7 +731,7 @@ onBeforeUnmount(() => {
 .td-auto-new {
   opacity: 0.75;
   align-self: center;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   width: auto;
   height: 28px;
   padding: 0 8px;
@@ -738,7 +754,7 @@ onBeforeUnmount(() => {
   width: max-content;
   max-width: min(280px, calc(100vw - 28px));
   padding: 7px 9px;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   border-radius: 7px;
   background: var(--bg);
   box-shadow: 0 5px 18px rgba(0, 0, 0, 0.22);
@@ -757,8 +773,8 @@ onBeforeUnmount(() => {
   bottom: -5px;
   width: 8px;
   height: 8px;
-  border-right: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  border-right: var(--hairline) solid var(--border);
+  border-bottom: var(--hairline) solid var(--border);
   background: var(--bg);
   transform: rotate(45deg);
 }
@@ -776,7 +792,6 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
 }
 .td-del:hover {
   background: color-mix(in srgb, #ff453a 14%, transparent);
@@ -799,7 +814,6 @@ onBeforeUnmount(() => {
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.12s ease;
 }
 .td-del-confirm:hover {
   background: color-mix(in srgb, #ff453a 22%, transparent);
@@ -810,7 +824,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 8px;
   padding: 10px 14px 12px;
-  border-top: 1px solid var(--border);
+  border-top: var(--hairline) solid var(--border);
 }
 .td-add {
   display: flex;
@@ -819,12 +833,13 @@ onBeforeUnmount(() => {
 .td-input {
   flex: 1 1 auto;
   min-width: 0;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--control-border);
   border-radius: 7px;
-  background: var(--bg-elevated);
+  background: var(--control-bg);
   color: var(--text-primary);
   font-size: 12px;
   padding: 6px 9px;
+  box-shadow: var(--clickable-shadow);
 }
 .td-input:focus {
   outline: none;
@@ -833,18 +848,18 @@ onBeforeUnmount(() => {
 .td-btn {
   appearance: none;
   flex: 0 0 auto;
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--control-border);
+  background: var(--control-bg);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
   padding: 5px 12px;
   border-radius: 7px;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  box-shadow: var(--clickable-shadow);
 }
 .td-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  background: var(--control-hover-bg);
 }
 .td-btn:disabled {
   opacity: 0.45;
@@ -883,7 +898,6 @@ onBeforeUnmount(() => {
   padding: 2px 6px;
   border-radius: 5px;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
 }
 .td-clear:hover {
   background: color-mix(in srgb, #ff453a 12%, transparent);
@@ -963,7 +977,6 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
 }
 .td-restore:hover {
   background: color-mix(in srgb, #0a84ff 14%, transparent);
@@ -989,7 +1002,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius, 12px);
   /* --card-bg 是近乎透明的叠色，会与底下文字混叠；模态框必须不透明底。 */
   background: var(--bg, #fff);
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
 }
 .td-dialog h3 {

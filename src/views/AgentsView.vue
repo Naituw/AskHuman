@@ -14,7 +14,12 @@ import {
   openTodos,
 } from "../lib/ipc";
 import { isFocusableTerminal } from "../lib/terminals";
-import type { AgentKind, AgentRecord, AgentRunState } from "../lib/types";
+import type {
+  AgentKind,
+  AgentRecord,
+  AgentRunState,
+  ThemeMode,
+} from "../lib/types";
 
 const { t } = useI18n();
 
@@ -292,6 +297,7 @@ function relativeTime(secs?: number | null): string {
 }
 
 let unlisten: UnlistenFn | null = null;
+let unlistenSettings: UnlistenFn | null = null;
 let ticker: number | undefined;
 
 onMounted(async () => {
@@ -307,6 +313,14 @@ onMounted(async () => {
   } catch {
     /* 读取失败：保持兜底外观 */
   }
+  // 设置变更实时生效（主题/语言与设置窗口同宿主进程广播）。
+  unlistenSettings = await listen<{ theme?: ThemeMode; language?: string }>(
+    "settings-updated",
+    (e) => {
+      if (typeof e.payload.theme === "string") applyTheme(e.payload.theme);
+      if (typeof e.payload.language === "string") applyLanguage(e.payload.language);
+    }
+  );
   // 监听已就绪，启动到 daemon 的快照订阅。
   try {
     await agentsStartSubscription();
@@ -320,6 +334,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   unlisten?.();
+  unlistenSettings?.();
   if (ticker) window.clearInterval(ticker);
 });
 </script>
@@ -546,7 +561,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--hairline) solid var(--border);
 }
 .macos .ag-header {
   padding-top: 30px;
@@ -572,7 +587,6 @@ onBeforeUnmount(() => {
   padding: 3px 12px;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
   white-space: nowrap;
 }
 .seg-btn:hover {
@@ -642,7 +656,6 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
-  transition: background 0.12s ease;
 }
 .group-title:hover {
   background: color-mix(in srgb, var(--text-primary) 6%, transparent);
@@ -694,7 +707,7 @@ onBeforeUnmount(() => {
 }
 .card {
   padding: 10px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm, 8px);
   background: var(--bg-elevated);
 }
@@ -775,7 +788,6 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
 }
 .focus-btn:hover {
   background: color-mix(in srgb, var(--text-primary) 10%, transparent);
@@ -830,7 +842,6 @@ onBeforeUnmount(() => {
   padding: 2px 6px;
   border-radius: 5px;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
 }
 .ij-revoke:hover {
   background: color-mix(in srgb, var(--text-primary) 10%, transparent);
@@ -866,7 +877,7 @@ onBeforeUnmount(() => {
 }
 .ic-btn {
   appearance: none;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--control-border);
   background: var(--bg-elevated);
   color: var(--text-primary);
   font-size: 11px;
@@ -874,7 +885,6 @@ onBeforeUnmount(() => {
   padding: 3px 10px;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 .ic-btn:hover {
   background: color-mix(in srgb, var(--text-primary) 8%, transparent);
