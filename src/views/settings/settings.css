@@ -26,7 +26,7 @@
 .confirm-dialog {
   width: min(440px, 100%);
   padding: 20px 22px;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   border-radius: 14px;
   background: var(--bg);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.16);
@@ -70,7 +70,7 @@
   height: min(540px, calc(100vh - 56px));
   min-height: 340px;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   border-radius: 14px;
   background: var(--bg);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.16);
@@ -81,7 +81,7 @@
   align-items: center;
   min-height: 50px;
   padding: 0 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--hairline) solid var(--border);
   background: color-mix(in srgb, var(--bg-elevated) 72%, var(--bg));
 }
 .workspace-panel-toolbar h2 {
@@ -139,7 +139,7 @@
 }
 .workspace-list {
   overflow: visible;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   border-radius: 10px;
   background: var(--card-bg);
 }
@@ -152,7 +152,7 @@
   padding: 10px 10px 10px 12px;
 }
 .workspace-list-row + .workspace-list-row {
-  border-top: 1px solid var(--border);
+  border-top: var(--hairline) solid var(--border);
 }
 .workspace-list-row.is-hidden .workspace-folder-icon,
 .workspace-list-row.is-hidden .workspace-list-copy {
@@ -255,7 +255,7 @@
   z-index: 114;
   min-width: 148px;
   padding: 4px;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
@@ -583,9 +583,10 @@
   font-size: 13px;
   color: var(--text-primary);
   background: var(--control-bg);
-  border: 1px solid var(--control-border);
+  border: var(--hairline) solid var(--control-border);
   border-radius: var(--radius-sm);
   outline: none;
+  box-shadow: var(--clickable-shadow);
 }
 .tab-search-input:focus {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--control-border));
@@ -616,7 +617,7 @@
   overflow-y: auto;
   padding: 4px;
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
   z-index: 120;
@@ -689,7 +690,7 @@
 .segmented {
   display: inline-flex;
   padding: 2px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: var(--bg-subtle, rgba(127, 127, 127, 0.08));
 }
@@ -822,7 +823,7 @@
   z-index: 60;
   min-width: 168px;
   padding: 4px;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);

@@ -29,14 +29,14 @@
   gap: 0;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--bg) 92%, transparent);
   box-shadow: 0 1px 2px color-mix(in srgb, #000 4%, transparent);
 }
 .confirm-tool-header {
   padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--hairline) solid var(--border);
   font-size: 14px;
   font-weight: 600;
   line-height: 1.25;
@@ -149,7 +149,7 @@
 }
 .permission-diff-file {
   min-width: 0;
-  border-top: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-top: var(--hairline) solid color-mix(in srgb, var(--border) 82%, transparent);
 }
 .permission-diff-file-header {
   gap: 9px;
@@ -236,7 +236,7 @@
   font-size: 11px;
 }
 .confirm-raw-details {
-  border-top: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-top: var(--hairline) solid color-mix(in srgb, var(--border) 82%, transparent);
 }
 .confirm-raw-details > summary {
   padding: 10px 14px;
@@ -246,7 +246,7 @@
   user-select: none;
 }
 .confirm-raw-details[open] > summary {
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-bottom: var(--hairline) solid color-mix(in srgb, var(--border) 72%, transparent);
 }
 .confirm-raw-details .confirm-detail {
   padding-top: 10px;
@@ -264,8 +264,8 @@
   box-sizing: border-box;
 }
 .confirm-option.role-destructive.selected {
-  border-color: #ff453a;
-  background: color-mix(in srgb, #ff453a 10%, transparent);
+  border-color: color-mix(in srgb, #ff453a 55%, var(--control-border));
+  background: color-mix(in srgb, #ff453a 9%, var(--control-bg));
 }
 .confirm-option.role-destructive.selected .check.radio {
   border-color: #ff453a;
@@ -330,7 +330,7 @@
   align-items: center;
   gap: var(--space-2);
   padding: 8px 12px 8px 14px;
-  border-bottom: 1px solid transparent;
+  border-bottom: var(--hairline) solid transparent;
 }
 .navbar.scrolled {
   border-bottom-color: var(--border);
@@ -462,7 +462,6 @@
 }
 .brand-chip.clickable {
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
 }
 .brand-chip.clickable:hover {
   background: color-mix(in srgb, var(--text-primary) 14%, transparent);
@@ -499,7 +498,6 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: default;
-  transition: background 0.12s ease, color 0.12s ease;
 }
 .nav-btn:hover {
   background: var(--bg-elevated);
@@ -640,13 +638,12 @@
   justify-content: center;
   height: 24px;
   padding: 0 9px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 5px;
   background: var(--bg-elevated);
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0.6;
-  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
 .mt-btn:hover {
   opacity: 1;
@@ -709,13 +706,13 @@
   padding: 5px 12px 5px 5px;
   border: 1px solid transparent;
   border-radius: 999px;
-  background: var(--bg-elevated);
+  background: var(--control-bg);
   cursor: default;
   outline: none;
-  transition: background 0.12s ease, box-shadow 0.12s ease;
+  box-shadow: var(--clickable-shadow);
 }
 .attachment:hover {
-  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-elevated));
+  background: var(--control-hover-bg);
 }
 .attachment.selected,
 .attachment:focus-visible {
@@ -779,7 +776,7 @@
 .q-header.with-divider {
   margin-top: 6px;
   padding-top: 14px;
-  border-top: 1px solid var(--border);
+  border-top: var(--hairline) solid var(--border);
 }
 .q-header .q-icon {
   width: 17px;
@@ -907,7 +904,7 @@
   flex: 0 0 auto;
   min-width: 0;
   padding: 8px var(--space-4) 10px;
-  border-top: 1px solid var(--border);
+  border-top: var(--hairline) solid var(--border);
   background: var(--bg);
   box-shadow: 0 -8px 22px color-mix(in srgb, #000 8%, transparent);
 }
@@ -992,7 +989,6 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: default;
-  transition: background 0.12s ease, color 0.12s ease;
 }
 .img-btn:hover {
   background: var(--bg-elevated);
@@ -1017,7 +1013,6 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: default;
-  transition: background 0.12s ease, color 0.12s ease;
 }
 .mic-btn:hover {
   background: var(--bg-elevated);
@@ -1099,7 +1094,7 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--border);
+  border-top: var(--hairline) solid var(--border);
   background: transparent;
 }
 /* R6 一次性引导提示条（页脚上方） */
@@ -1109,7 +1104,7 @@
   align-items: center;
   gap: var(--space-2);
   padding: 6px var(--space-4);
-  border-top: 1px solid var(--border);
+  border-top: var(--hairline) solid var(--border);
   background: color-mix(in srgb, var(--accent, #0a84ff) 8%, transparent);
   font-size: 12px;
 }
@@ -1164,17 +1159,17 @@
   gap: 6px;
   align-self: flex-start;
   padding: 4px 10px 4px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
-  background: var(--card-bg);
+  background: var(--control-bg);
   color: var(--text-secondary);
   font-size: 12px;
   cursor: default;
   text-align: left;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  box-shadow: var(--clickable-shadow);
 }
 .todo-toggle:hover {
-  background: var(--bg-elevated);
+  background: var(--control-hover-bg);
   color: var(--text-primary);
 }
 .todo-caret {
@@ -1220,7 +1215,6 @@
   color: var(--text-muted, #8e8e93);
   opacity: 0;
   cursor: default;
-  transition: opacity 0.12s ease;
 }
 .todo-option:hover .todo-del {
   opacity: 1;
@@ -1242,7 +1236,6 @@
   font-weight: 600;
   white-space: nowrap;
   cursor: default;
-  transition: background 0.12s ease;
 }
 .todo-option .todo-del-confirm:hover {
   background: color-mix(in srgb, #ff453a 22%, transparent);
@@ -1261,7 +1254,7 @@
   max-width: 220px;
   padding: 4px 6px 4px 8px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   background: var(--bg-elevated);
   font-size: 12px;
 }
@@ -1307,7 +1300,7 @@
   line-height: 1;
   color: var(--text-secondary);
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   border-radius: 5px;
   padding: 3px 5px;
   opacity: 0.85;
@@ -1332,11 +1325,8 @@
   opacity: 0.85;
 }
 /* 按住 ⌘/Ctrl：高亮可用的快捷键 Badge（提示此刻按数字即可选项 / 按括号可切题）。
-   仅当前题渲染了 .opt-sc，故天然只高亮当前题的选项角标。 */
-.option .opt-sc {
-  transition: color 0.1s ease, background 0.1s ease, border-color 0.1s ease,
-    opacity 0.1s ease;
-}
+   仅当前题渲染了 .opt-sc，故天然只高亮当前题的选项角标。
+   不加 transition：WKWebView 会偶发漏掉过渡末帧的重绘，令角标停在中间态。 */
 .popup.cmd-held .option .opt-sc {
   opacity: 1;
   color: var(--accent);
@@ -1361,7 +1351,7 @@
   width: min(320px, 84%);
   /* 用不透明 --bg：弹窗是毛玻璃，--card-bg 仅 3~6% alpha 会透出底下内容 */
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   border-radius: var(--radius-md, 12px);
   padding: 18px 18px 14px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);

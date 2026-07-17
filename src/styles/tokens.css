@@ -14,20 +14,37 @@
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 20px;
+
+  /* 结构性分割线/边框宽度：Retina 上用 0.5px 物理像素细线，避免 1pt 线显粗。
+     强调/选中态（accent 描边）仍保持 1px。 */
+  --hairline: 1px;
+}
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+  :root {
+    --hairline: 0.5px;
+  }
 }
 
 /* 浅色 */
 :root,
 .theme-light {
-  --bg: #ffffff;
-  --bg-elevated: rgba(0, 0, 0, 0.03);
-  --card-bg: rgba(0, 0, 0, 0.035);
-  --border: rgba(0, 0, 0, 0.14);
+  /* 窗口底带一点灰度：让偏白的可点击表面（控件/选项）能从底上浮出来。 */
+  --bg: #f0f0f2;
+  --bg-elevated: rgba(0, 0, 0, 0.045);
+  --card-bg: rgba(0, 0, 0, 0.05);
+  /* 分割线/边框刻意做得很轻（用户反馈线太重显厚重）：层级主要靠背景色差表达。 */
+  --border: rgba(0, 0, 0, 0.08);
   --text-primary: #1d1d1f;
   --text-secondary: rgba(0, 0, 0, 0.55);
   --text-tertiary: rgba(0, 0, 0, 0.38);
-  --control-bg: #ffffff;
-  --control-border: rgba(0, 0, 0, 0.2);
+  /* 半透明而非纯白：毛玻璃材质下不透明控件会压住透出的桌面色、显得突兀；
+     Solid 微灰底上则近白、比底色亮一档。 */
+  --control-bg: rgba(255, 255, 255, 0.72);
+  --control-border: rgba(0, 0, 0, 0.16);
+  /* 可点击表面的 hover 底色：浅色只要很轻的一点加深。 */
+  --control-hover-bg: color-mix(in srgb, var(--text-primary) 5%, var(--control-bg));
+  /* 浅色下可点击表面（输入框/选项/按钮）的微阴影，代替描边表达层级；深色为 none。 */
+  --clickable-shadow: 0 1px 4px rgba(0, 0, 0, 0.07), 0 0.5px 1.5px rgba(0, 0, 0, 0.05);
   --accent-orange: #ff9500;
   --accent-green: #34c759;
   /* 推荐 Badge 文字色：浅色下用更鲜艳但仍清晰的绿（比 #34c759 更沉、比 #1a7f37 更亮更显眼）。 */
@@ -43,22 +60,26 @@
   --md-code-bg: rgba(0, 0, 0, 0.06);
   --md-quote-fg: rgba(0, 0, 0, 0.55);
   --md-quote-border: rgba(0, 0, 0, 0.2);
-  --md-table-border: rgba(0, 0, 0, 0.18);
+  --md-table-border: rgba(0, 0, 0, 0.1);
   --md-thead-bg: rgba(0, 0, 0, 0.05);
-  --md-hr: rgba(0, 0, 0, 0.15);
+  --md-hr: rgba(0, 0, 0, 0.08);
 }
 
 /* 深色 */
 .theme-dark {
   --bg: #1e1e1e;
-  --bg-elevated: rgba(255, 255, 255, 0.06);
-  --card-bg: rgba(255, 255, 255, 0.06);
-  --border: rgba(255, 255, 255, 0.16);
+  --bg-elevated: rgba(255, 255, 255, 0.08);
+  --card-bg: rgba(255, 255, 255, 0.085);
+  --border: rgba(255, 255, 255, 0.09);
   --text-primary: #e8e8ea;
   --text-secondary: rgba(255, 255, 255, 0.62);
   --text-tertiary: rgba(255, 255, 255, 0.4);
   --control-bg: rgba(255, 255, 255, 0.08);
-  --control-border: rgba(255, 255, 255, 0.22);
+  --control-border: rgba(255, 255, 255, 0.15);
+  /* 深底上 5% 几乎不可感，深色 hover 用 10%。 */
+  --control-hover-bg: color-mix(in srgb, var(--text-primary) 10%, var(--control-bg));
+  /* 深色下阴影几乎不可见且会显脏，禁用。 */
+  --clickable-shadow: none;
   --accent-orange: #ff9f0a;
   --accent-green: #30d158;
   /* 深色下亮绿在深底上对比度已足够，沿用 accent-green。 */
@@ -72,23 +93,25 @@
   --md-code-bg: rgba(255, 255, 255, 0.12);
   --md-quote-fg: #c2c2c6;
   --md-quote-border: rgba(255, 255, 255, 0.3);
-  --md-table-border: rgba(255, 255, 255, 0.2);
+  --md-table-border: rgba(255, 255, 255, 0.12);
   --md-thead-bg: rgba(255, 255, 255, 0.08);
-  --md-hr: rgba(255, 255, 255, 0.2);
+  --md-hr: rgba(255, 255, 255, 0.1);
 }
 
 /* 跟随系统：在未显式指定 light/dark 类时用媒体查询兜底 */
 @media (prefers-color-scheme: dark) {
   :root:not(.theme-light) {
     --bg: #1e1e1e;
-    --bg-elevated: rgba(255, 255, 255, 0.06);
-    --card-bg: rgba(255, 255, 255, 0.06);
-    --border: rgba(255, 255, 255, 0.16);
+    --bg-elevated: rgba(255, 255, 255, 0.08);
+    --card-bg: rgba(255, 255, 255, 0.085);
+    --border: rgba(255, 255, 255, 0.09);
     --text-primary: #e8e8ea;
     --text-secondary: rgba(255, 255, 255, 0.62);
     --text-tertiary: rgba(255, 255, 255, 0.4);
     --control-bg: rgba(255, 255, 255, 0.08);
-    --control-border: rgba(255, 255, 255, 0.22);
+    --control-border: rgba(255, 255, 255, 0.15);
+    --control-hover-bg: color-mix(in srgb, var(--text-primary) 10%, var(--control-bg));
+    --clickable-shadow: none;
     --accent-orange: #ff9f0a;
     --accent-green: #30d158;
     --rec-badge-fg: #30d158;
@@ -101,8 +124,8 @@
     --md-code-bg: rgba(255, 255, 255, 0.12);
     --md-quote-fg: #c2c2c6;
     --md-quote-border: rgba(255, 255, 255, 0.3);
-    --md-table-border: rgba(255, 255, 255, 0.2);
+    --md-table-border: rgba(255, 255, 255, 0.12);
     --md-thead-bg: rgba(255, 255, 255, 0.08);
-    --md-hr: rgba(255, 255, 255, 0.2);
+    --md-hr: rgba(255, 255, 255, 0.1);
   }
 }

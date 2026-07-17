@@ -13,15 +13,15 @@
   line-height: 1;
   padding: 7px 16px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--control-border);
+  border: var(--hairline) solid var(--control-border);
   background: var(--control-bg);
   color: var(--text-primary);
   cursor: default;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  box-shadow: var(--clickable-shadow);
   user-select: none;
 }
 .btn:hover {
-  background: var(--bg-elevated);
+  background: var(--control-hover-bg);
 }
 .btn:active {
   transform: translateY(0.5px);
@@ -57,9 +57,10 @@
   /* 底部留白给输入框内右下角的「添加图片」图标 */
   padding: 10px 12px 36px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--control-border);
+  border: var(--hairline) solid var(--control-border);
   background: var(--control-bg);
   color: var(--text-primary);
+  box-shadow: var(--clickable-shadow);
   box-sizing: border-box;
   display: block;
 }
@@ -67,24 +68,27 @@
   color: var(--text-tertiary);
 }
 
-/* 预定义选项：可多选的胶囊 */
+/* 预定义选项：可多选的胶囊。与输入框同款外观（偏白底 + 控件细边框 + 微阴影），
+   选中态边框变 accent 色。 */
 .option {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 9px 12px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--card-bg);
+  border: var(--hairline) solid var(--control-border);
+  background: var(--control-bg);
   cursor: default;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  box-shadow: var(--clickable-shadow);
 }
 .option:hover {
-  background: var(--bg-elevated);
+  background: var(--control-hover-bg);
 }
+/* 选中态：保持与常态同一「偏白面 + 细框 + 微阴影」风格，只做 accent 染色，
+   不切换成纯线框半透明风。 */
 .option.selected {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--control-border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--control-bg));
 }
 .option .check {
   flex: 0 0 auto;
@@ -193,7 +197,7 @@
   height: 64px;
   border-radius: var(--radius-sm);
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   background: var(--bg-elevated);
 }
 .thumb img {
@@ -313,13 +317,12 @@
   width: 26px;
   height: 26px;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 6px;
   background: var(--bg-elevated);
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
 .code-block:hover .code-copy,
 .code-copy:focus-visible {
@@ -355,7 +358,7 @@
 }
 .markdown-body hr {
   border: none;
-  border-top: 1px solid var(--md-hr);
+  border-top: var(--hairline) solid var(--md-hr);
   margin: 14px 0;
 }
 .markdown-body table {
@@ -364,7 +367,7 @@
 }
 .markdown-body th,
 .markdown-body td {
-  border: 1px solid var(--md-table-border);
+  border: var(--hairline) solid var(--md-table-border);
   padding: 5px 10px;
   text-align: left;
 }
@@ -384,9 +387,10 @@
 
 /* ===== 设置页控件 ===== */
 
-/* 卡片（GroupBox 风） */
+/* 卡片（GroupBox 风）：无常态描边，层级靠背景色差；
+   transparent 边框占位供 tip/更新/搜索高亮等变体设置 border-color。 */
 .card {
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-lg);
   background: var(--card-bg);
   padding: var(--space-4);
@@ -428,7 +432,7 @@
   flex: 1 1 auto;
 }
 .divider {
-  height: 1px;
+  height: var(--hairline);
   background: var(--border);
   margin: var(--space-3) 0;
   border: 0;
@@ -475,13 +479,13 @@
   transform: translateX(16px);
 }
 
-/* 分段控件 Segmented */
+/* 分段控件 Segmented：无描边，靠底色 + 活动段的浮起感 */
 .segmented {
   display: inline-flex;
   padding: 2px;
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   gap: 2px;
 }
 .segmented button {
@@ -510,10 +514,11 @@
   font-size: 12.5px;
   padding: 5px 28px 5px 10px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--control-border);
+  border: var(--hairline) solid var(--control-border);
   background-color: var(--control-bg);
   color: var(--text-primary);
   cursor: default;
+  box-shadow: var(--clickable-shadow);
   appearance: none;
   -webkit-appearance: none;
   /* 右侧自绘下拉箭头 */
@@ -544,12 +549,13 @@
   width: 24px;
   height: 24px;
   border-radius: 6px;
-  border: 1px solid var(--control-border);
+  border: var(--hairline) solid var(--control-border);
   background: var(--control-bg);
   color: var(--text-primary);
   font-size: 14px;
   line-height: 1;
   cursor: default;
+  box-shadow: var(--clickable-shadow);
 }
 .stepper button:disabled {
   opacity: 0.4;
@@ -577,11 +583,12 @@
   font-size: 13px;
   padding: 6px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--control-border);
+  border: var(--hairline) solid var(--control-border);
   background: var(--control-bg);
   color: var(--text-primary);
   width: 100%;
   box-sizing: border-box;
+  box-shadow: var(--clickable-shadow);
 }
 /* 数字输入（如历史条数）：固定窄宽、右对齐，去掉浏览器自带的上下步进按钮，避免撑宽行挤压 label */
 .input.num {
@@ -640,7 +647,6 @@
   overflow-y: auto;
   padding: 10px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--text-primary);
   margin: 0;

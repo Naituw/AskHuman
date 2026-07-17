@@ -553,14 +553,13 @@ watch(
   gap: 4px;
   height: 24px;
   padding: 0 9px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 999px;
   background: var(--bg-elevated);
   color: var(--text-primary);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.12s ease;
 }
 .copy-btn:hover {
   background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-elevated));
@@ -601,7 +600,6 @@ watch(
 }
 .meta-workspace {
   cursor: pointer;
-  transition: background 0.12s ease;
 }
 .meta-workspace:hover {
   background: color-mix(in srgb, var(--text-primary) 14%, transparent);
@@ -654,13 +652,13 @@ watch(
   padding: 5px 12px 5px 5px;
   border: 1px solid transparent;
   border-radius: 999px;
-  background: var(--bg-elevated);
+  background: var(--control-bg);
   cursor: default;
   outline: none;
-  transition: background 0.12s ease, box-shadow 0.12s ease;
+  box-shadow: var(--clickable-shadow);
 }
 .attachment:hover {
-  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-elevated));
+  background: var(--control-hover-bg);
 }
 .attachment.selected,
 .attachment:focus-visible {
@@ -718,7 +716,7 @@ watch(
 .q-block.with-divider {
   margin-top: 4px;
   padding-top: 14px;
-  border-top: 1px solid var(--border);
+  border-top: var(--hairline) solid var(--border);
 }
 .q-header {
   font-size: 14px;
@@ -757,7 +755,7 @@ watch(
   padding: 10px 12px;
   border-radius: var(--radius-sm, 8px);
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   font-family: inherit;
   font-size: 13px;
   color: var(--text-primary);
@@ -775,7 +773,7 @@ watch(
   height: 72px;
   border-radius: var(--radius-sm, 8px);
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: var(--hairline) solid var(--border);
   background: var(--bg-elevated);
   cursor: default;
 }
@@ -808,7 +806,7 @@ watch(
   max-width: 240px;
   padding: 4px 10px 4px 8px;
   border-radius: var(--radius-sm, 8px);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   background: var(--bg-elevated);
   font-size: 12px;
   cursor: default;

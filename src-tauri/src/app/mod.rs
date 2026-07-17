@@ -2312,7 +2312,7 @@ pub(crate) fn spawn_agents_subscription(
 fn background_for(theme: tauri::Theme) -> tauri::window::Color {
     match theme {
         tauri::Theme::Dark => tauri::window::Color(30, 30, 30, 255),
-        _ => tauri::window::Color(255, 255, 255, 255),
+        _ => tauri::window::Color(240, 240, 242, 255),
     }
 }
 
