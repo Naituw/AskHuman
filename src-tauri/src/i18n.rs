@@ -267,6 +267,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         // 自定义来源按界面语言本地化（故此处中文照常给出译文）。
         "channel.questionFrom" => pick(lang, "Question from {source}", "来自 {source} 的提问"),
         "channel.messageFrom" => pick(lang, "Message from {source}", "来自 {source} 的消息"),
+        "channel.messageTitle" => pick(lang, "Message", "消息"),
         "channel.questionTitle" => pick(lang, "Question", "提问"),
         "channel.questionIndexed" => pick(lang, "Question {i}/{n}", "问题 {i}/{n}"),
         // 推荐选项的显示文本前缀（尾随空格即与原文的分隔；提交值不含前缀）。

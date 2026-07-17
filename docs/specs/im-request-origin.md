@@ -16,6 +16,10 @@
   `Question 1/2 · Codex · HumanInLoop`、`Question 2/2 · Codex · HumanInLoop`。
 - 自定义 source 与 Agent 不同：两者都显示，如
   `Message from MyAgent · Codex · HumanInLoop`；相同值不重复。
+- 最终有效 source 仍为默认 `the Loop`（未识别到真实 Agent）时，只隐藏无信息量的默认来源文本，
+  **保留项目名**：单题标题为 `Question · HumanInLoop`，Message 标题为 `Message · HumanInLoop`，
+  带 Message / 多题的问题标题为 `Question · HumanInLoop` / `Question i/n · HumanInLoop`。
+  一旦识别出真实 Agent 并替换默认 source，仍按正常规则显示 Agent 与项目。
 - source / Agent / 项目任一缺失时只省略该段，不留下空分隔符。项目只显示路径 basename。
 - 现有 i18n 继续负责 `Message from` / `Question from` / `Question i/n`；Agent 和项目名不翻译。
 - 飞书、Telegram、Slack、钉钉的初始卡与答后终态卡复用同一个标题字符串。
@@ -29,7 +33,7 @@
 
 MCP 会清理 Agent 环境标记，daemon 需靠进程树异步解析。只有本次确实要投放 IM 且 CLI 未直接给出
 Agent 时，IM 最多等待 200ms 复用该解析结果；Popup 已先行投放，不受这段等待影响。解析及时完成则用
-真实 Agent 替换通用 `the Loop`，超时或解析失败则用已有 source + 项目降级，不能无限阻塞。
+真实 Agent 替换通用 `the Loop` 并显示项目，超时或解析失败则隐藏默认 source、只显示项目，不能无限阻塞。
 
 ## 非目标
 

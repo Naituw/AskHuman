@@ -246,12 +246,16 @@ mod tests {
             "Question from MyAgent · Claude Code · api"
         );
 
-        let fallback = ConversationOrigin::new("", None, "");
+        let fallback = ConversationOrigin::new("", None, "/tmp/api");
         assert_eq!(
             fallback.source_title(Lang::Zh, "channel.messageFrom"),
-            "Message from the Loop"
+            "Message · api"
         );
-        assert_eq!(fallback.question_title("提问".into()), "提问 · the Loop");
+        assert_eq!(fallback.question_title("提问".into()), "提问 · api");
+        assert_eq!(
+            question_title(&fallback, Lang::En, 0, 1, false),
+            "Question · api"
+        );
     }
 
     #[test]

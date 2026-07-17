@@ -34,7 +34,9 @@ impl ConversationOrigin {
         let source = source.trim();
         // MCP requests initially use the generic fallback. Once daemon resolution identifies an
         // Agent, mirror Popup's inline badge by treating that Agent as the effective source.
-        let source = if source.is_empty() || source == crate::models::DEFAULT_SOURCE_NAME {
+        let source = if source.is_empty()
+            || source.eq_ignore_ascii_case(crate::models::DEFAULT_SOURCE_NAME)
+        {
             agent_label
                 .clone()
                 .unwrap_or_else(|| crate::models::DEFAULT_SOURCE_NAME.to_string())
@@ -51,7 +53,18 @@ impl ConversationOrigin {
 
     /// `Message from …` / `Question from …`, followed by distinct Agent and project labels.
     pub fn source_title(&self, lang: crate::i18n::Lang, key: &'static str) -> String {
-        let base = crate::i18n::source_header(lang, key, &self.source);
+        let base = if self.is_default_source() {
+            // Preserve the fallback's historical English base while omitting the uninformative
+            // "from the Loop" segment. Project context is still appended below.
+            let title_key = match key {
+                "channel.questionFrom" => "channel.questionTitle",
+                "channel.messageFrom" => "channel.messageTitle",
+                _ => key,
+            };
+            crate::i18n::tr(crate::i18n::Lang::En, title_key).to_string()
+        } else {
+            crate::i18n::source_header(lang, key, &self.source)
+        };
         self.append_context(base, false)
     }
 
@@ -63,7 +76,7 @@ impl ConversationOrigin {
     fn append_context(&self, base: String, include_source: bool) -> String {
         let mut used = vec![self.source.as_str()];
         let mut parts: Vec<&str> = Vec::new();
-        if include_source {
+        if include_source && !self.is_default_source() {
             parts.push(&self.source);
         }
         for value in [self.agent_label.as_deref(), self.project_name.as_deref()]
@@ -80,6 +93,11 @@ impl ConversationOrigin {
         } else {
             format!("{} · {}", base, parts.join(" · "))
         }
+    }
+
+    fn is_default_source(&self) -> bool {
+        self.source
+            .eq_ignore_ascii_case(crate::models::DEFAULT_SOURCE_NAME)
     }
 }
 
