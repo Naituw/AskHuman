@@ -3083,6 +3083,11 @@ async fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, n
         || old.channels.feishu.app_secret != new.channels.feishu.app_secret
         || old.channels.feishu.base_url != new.channels.feishu.base_url;
     if fs_router_changed {
+        crate::feishu::token::invalidate_credentials(
+            &old.channels.feishu.base_url,
+            &old.channels.feishu.app_id,
+            &old.channels.feishu.app_secret,
+        );
         *state.fs_router.lock().await = None;
     }
     if fs_router_changed || old.channels.feishu.open_id != new.channels.feishu.open_id {

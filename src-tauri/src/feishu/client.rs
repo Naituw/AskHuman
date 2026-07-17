@@ -9,6 +9,8 @@ use crate::config::FeishuChannelConfig;
 use serde_json::{json, Value};
 use std::time::Duration;
 
+const AUTH_ATTEMPTS: usize = 2;
+
 /// 渠道健康登记（R7）：API 调用失败登记、成功清除。放在统一出口，覆盖发送/编辑/上传全部路径。
 fn track<T>(r: Result<T, FeishuError>) -> Result<T, FeishuError> {
     match &r {
@@ -83,6 +85,20 @@ impl FeishuClient {
         token::get_token(&self.http, &self.base_url, &self.app_id, &self.app_secret).await
     }
 
+    fn invalidate_rejected_token(&self, rejected_token: &str) {
+        token::invalidate_if_matches(
+            &self.base_url,
+            &self.app_id,
+            &self.app_secret,
+            rejected_token,
+        );
+    }
+
+    async fn refresh_rejected_token(&self, rejected_token: &str) -> Result<String, FeishuError> {
+        self.invalidate_rejected_token(rejected_token);
+        self.token().await
+    }
+
     /// 仅校验凭据（换取一次 token）。供「测试连接」用。
     pub async fn verify(&self) -> Result<(), FeishuError> {
         self.token().await.map(|_| ())
@@ -104,26 +120,31 @@ impl FeishuClient {
         path: &str,
         body: Value,
     ) -> Result<Value, FeishuError> {
-        let token = self.token().await?;
-        let resp = self
-            .http
-            .request(method, format!("{}{}", self.base_url, path))
-            .bearer_auth(token)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| FeishuError::Network(e.to_string()))?;
-        let v: Value = resp.json().await.unwrap_or(Value::Null);
-        if v.get("code").and_then(|c| c.as_i64()) == Some(0) {
-            Ok(v)
-        } else {
-            let msg = v
-                .get("msg")
-                .and_then(|m| m.as_str())
-                .unwrap_or("request failed")
-                .to_string();
-            Err(FeishuError::Api(msg))
+        let mut access_token = self.token().await?;
+        for attempt in 0..AUTH_ATTEMPTS {
+            let resp = self
+                .http
+                .request(method.clone(), format!("{}{}", self.base_url, path))
+                .bearer_auth(&access_token)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| FeishuError::Network(e.to_string()))?;
+            let value: Value = resp.json().await.map_err(|_| FeishuError::BadResponse)?;
+            match api_result(value, "request failed") {
+                Ok(value) => return Ok(value),
+                Err(error) if attempt == 0 && error.is_invalid_tenant_token() => {
+                    access_token = self.refresh_rejected_token(&access_token).await?;
+                }
+                Err(error) => {
+                    if error.is_invalid_tenant_token() {
+                        self.invalidate_rejected_token(&access_token);
+                    }
+                    return Err(error);
+                }
+            }
         }
+        unreachable!("Feishu authentication attempts are bounded")
     }
 
     // ===== 单聊主动发送（im/v1/messages, receive_id_type=open_id）=====
@@ -184,15 +205,17 @@ impl FeishuClient {
 
     /// 上传图片，返回 image_key。
     pub async fn upload_image(&self, path: &str) -> Result<String, FeishuError> {
-        let token = self.token().await?;
         let bytes = std::fs::read(path)
             .map_err(|e| FeishuError::Network(format!("failed to read file: {}", e)))?;
         let name = file_name_of(path);
-        let part = reqwest::multipart::Part::bytes(bytes).file_name(name);
-        let form = reqwest::multipart::Form::new()
-            .text("image_type", "message")
-            .part("image", part);
-        let v = self.upload(&token, "/open-apis/im/v1/images", form).await?;
+        let v = self
+            .upload("/open-apis/im/v1/images", || {
+                let part = reqwest::multipart::Part::bytes(bytes.clone()).file_name(name.clone());
+                reqwest::multipart::Form::new()
+                    .text("image_type", "message")
+                    .part("image", part)
+            })
+            .await?;
         v.get("data")
             .and_then(|d| d.get("image_key"))
             .and_then(|m| m.as_str())
@@ -204,7 +227,6 @@ impl FeishuClient {
     /// `file_type`：飞书要求枚举（opus/mp4/pdf/doc/xls/ppt/stream）；docx/xlsx/pptx 用
     /// doc/xls/ppt 以利预览，其余 `stream`。
     pub async fn upload_file(&self, path: &str, file_name: &str) -> Result<String, FeishuError> {
-        let token = self.token().await?;
         let bytes = std::fs::read(path)
             .map_err(|e| FeishuError::Network(format!("failed to read file: {}", e)))?;
         let ext = std::path::Path::new(file_name)
@@ -221,12 +243,16 @@ impl FeishuClient {
             "opus" => "opus",
             _ => "stream",
         };
-        let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name.to_string());
-        let form = reqwest::multipart::Form::new()
-            .text("file_type", file_type)
-            .text("file_name", file_name.to_string())
-            .part("file", part);
-        let v = self.upload(&token, "/open-apis/im/v1/files", form).await?;
+        let v = self
+            .upload("/open-apis/im/v1/files", || {
+                let part =
+                    reqwest::multipart::Part::bytes(bytes.clone()).file_name(file_name.to_string());
+                reqwest::multipart::Form::new()
+                    .text("file_type", file_type)
+                    .text("file_name", file_name.to_string())
+                    .part("file", part)
+            })
+            .await?;
         v.get("data")
             .and_then(|d| d.get("file_key"))
             .and_then(|m| m.as_str())
@@ -234,40 +260,42 @@ impl FeishuClient {
             .ok_or(FeishuError::BadResponse)
     }
 
-    async fn upload(
-        &self,
-        token: &str,
-        path: &str,
-        form: reqwest::multipart::Form,
-    ) -> Result<Value, FeishuError> {
-        track(self.upload_inner(token, path, form).await)
+    async fn upload<F>(&self, path: &str, build_form: F) -> Result<Value, FeishuError>
+    where
+        F: FnMut() -> reqwest::multipart::Form,
+    {
+        track(self.upload_inner(path, build_form).await)
     }
 
-    async fn upload_inner(
-        &self,
-        token: &str,
-        path: &str,
-        form: reqwest::multipart::Form,
-    ) -> Result<Value, FeishuError> {
-        let resp = self
-            .http
-            .post(format!("{}{}", self.base_url, path))
-            .bearer_auth(token)
-            .multipart(form)
-            .send()
-            .await
-            .map_err(|e| FeishuError::Network(e.to_string()))?;
-        let v: Value = resp.json().await.map_err(|_| FeishuError::BadResponse)?;
-        if v.get("code").and_then(|c| c.as_i64()) == Some(0) {
-            Ok(v)
-        } else {
-            let msg = v
-                .get("msg")
-                .and_then(|m| m.as_str())
-                .unwrap_or("upload failed")
-                .to_string();
-            Err(FeishuError::Api(msg))
+    async fn upload_inner<F>(&self, path: &str, mut build_form: F) -> Result<Value, FeishuError>
+    where
+        F: FnMut() -> reqwest::multipart::Form,
+    {
+        let mut access_token = self.token().await?;
+        for attempt in 0..AUTH_ATTEMPTS {
+            let resp = self
+                .http
+                .post(format!("{}{}", self.base_url, path))
+                .bearer_auth(&access_token)
+                .multipart(build_form())
+                .send()
+                .await
+                .map_err(|e| FeishuError::Network(e.to_string()))?;
+            let value: Value = resp.json().await.map_err(|_| FeishuError::BadResponse)?;
+            match api_result(value, "upload failed") {
+                Ok(value) => return Ok(value),
+                Err(error) if attempt == 0 && error.is_invalid_tenant_token() => {
+                    access_token = self.refresh_rejected_token(&access_token).await?;
+                }
+                Err(error) => {
+                    if error.is_invalid_tenant_token() {
+                        self.invalidate_rejected_token(&access_token);
+                    }
+                    return Err(error);
+                }
+            }
         }
+        unreachable!("Feishu authentication attempts are bounded")
     }
 
     // ===== 接收消息资源下载 =====
@@ -281,28 +309,11 @@ impl FeishuClient {
         kind: &str,
         ext: &str,
     ) -> Result<String, FeishuError> {
-        let token = self.token().await?;
         let url = format!(
             "{}/open-apis/im/v1/messages/{}/resources/{}?type={}",
             self.base_url, message_id, key, kind
         );
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(token)
-            .send()
-            .await
-            .map_err(|e| FeishuError::Network(e.to_string()))?;
-        if !resp.status().is_success() {
-            return Err(FeishuError::Api(format!(
-                "resource download failed: HTTP {}",
-                resp.status()
-            )));
-        }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| FeishuError::Network(e.to_string()))?;
+        let bytes = self.download_resource(&url).await?;
 
         let dir = std::env::temp_dir().join("askhuman-feishu");
         std::fs::create_dir_all(&dir)
@@ -318,6 +329,77 @@ impl FeishuClient {
             .map_err(|e| FeishuError::Network(format!("failed to write temp file: {}", e)))?;
         Ok(dest.to_string_lossy().to_string())
     }
+
+    async fn download_resource(&self, url: &str) -> Result<Vec<u8>, FeishuError> {
+        let mut access_token = self.token().await?;
+        for attempt in 0..AUTH_ATTEMPTS {
+            let resp = self
+                .http
+                .get(url)
+                .bearer_auth(&access_token)
+                .send()
+                .await
+                .map_err(|e| FeishuError::Network(e.to_string()))?;
+            let status = resp.status();
+            let is_json = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.contains("json"));
+            let bytes = resp
+                .bytes()
+                .await
+                .map_err(|e| FeishuError::Network(e.to_string()))?;
+
+            let api_error = if is_json || !status.is_success() {
+                serde_json::from_slice::<Value>(&bytes)
+                    .ok()
+                    .and_then(|value| api_error(&value, "resource download failed"))
+            } else {
+                None
+            };
+            match api_error {
+                Some(error) if attempt == 0 && error.is_invalid_tenant_token() => {
+                    access_token = self.refresh_rejected_token(&access_token).await?;
+                    continue;
+                }
+                Some(error) => {
+                    if error.is_invalid_tenant_token() {
+                        self.invalidate_rejected_token(&access_token);
+                    }
+                    return Err(error);
+                }
+                None if !status.is_success() => {
+                    return Err(FeishuError::api(
+                        None,
+                        format!("resource download failed: HTTP {}", status),
+                    ));
+                }
+                None => return Ok(bytes.to_vec()),
+            }
+        }
+        unreachable!("Feishu authentication attempts are bounded")
+    }
+}
+
+fn api_result(value: Value, fallback: &str) -> Result<Value, FeishuError> {
+    match api_error(&value, fallback) {
+        Some(error) => Err(error),
+        None if value.get("code").and_then(|code| code.as_i64()) == Some(0) => Ok(value),
+        None => Err(FeishuError::BadResponse),
+    }
+}
+
+fn api_error(value: &Value, fallback: &str) -> Option<FeishuError> {
+    let code = value.get("code").and_then(|code| code.as_i64())?;
+    if code == 0 {
+        return None;
+    }
+    let message = value
+        .get("msg")
+        .and_then(|message| message.as_str())
+        .unwrap_or(fallback);
+    Some(FeishuError::api(Some(code), message))
 }
 
 fn file_name_of(path: &str) -> String {
@@ -326,4 +408,200 @@ fn file_name_of(path: &str) -> String {
         .and_then(|n| n.to_str())
         .unwrap_or("file")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    struct MockResponse {
+        content_type: &'static str,
+        body: Vec<u8>,
+    }
+
+    impl MockResponse {
+        fn json(body: &'static str) -> Self {
+            Self {
+                content_type: "application/json",
+                body: body.as_bytes().to_vec(),
+            }
+        }
+
+        fn bytes(body: &'static [u8]) -> Self {
+            Self {
+                content_type: "application/octet-stream",
+                body: body.to_vec(),
+            }
+        }
+    }
+
+    async fn mock_server(
+        responses: Vec<MockResponse>,
+    ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&requests);
+        let task = tokio::spawn(async move {
+            for response in responses {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let request = read_request(&mut socket).await;
+                recorded.lock().unwrap().push(request);
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    response.content_type,
+                    response.body.len()
+                );
+                socket.write_all(header.as_bytes()).await.unwrap();
+                socket.write_all(&response.body).await.unwrap();
+                socket.shutdown().await.unwrap();
+            }
+        });
+        (base_url, requests, task)
+    }
+
+    async fn read_request(socket: &mut TcpStream) -> String {
+        let mut bytes = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        loop {
+            let read = socket.read(&mut chunk).await.unwrap();
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+            let Some(header_end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&bytes[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            if bytes.len() >= header_end + 4 + content_length {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn config(base_url: &str) -> FeishuChannelConfig {
+        FeishuChannelConfig {
+            enabled: true,
+            app_id: "app-client-test".into(),
+            app_secret: "secret-client-test".into(),
+            open_id: "user-client-test".into(),
+            base_url: base_url.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_token_refreshes_and_retries_json_request_once() {
+        let (base_url, requests, server) = mock_server(vec![
+            MockResponse::json(r#"{"code":0,"tenant_access_token":"old-token","expire":7200}"#),
+            MockResponse::json(
+                r#"{"code":99991663,"msg":"Invalid access token for authorization"}"#,
+            ),
+            MockResponse::json(r#"{"code":0,"tenant_access_token":"fresh-token","expire":7200}"#),
+            MockResponse::json(r#"{"code":0,"data":{"message_id":"message-1"}}"#),
+        ])
+        .await;
+        let client = FeishuClient::new(&config(&base_url)).unwrap();
+
+        assert_eq!(client.send_text("hello").await.unwrap(), "message-1");
+        server.await.unwrap();
+
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert!(requests[0].contains("/open-apis/auth/v3/tenant_access_token/internal"));
+        assert!(requests[1]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer old-token"));
+        assert!(requests[2].contains("/open-apis/auth/v3/tenant_access_token/internal"));
+        assert!(requests[3]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fresh-token"));
+    }
+
+    #[tokio::test]
+    async fn second_invalid_token_is_reported_without_another_retry() {
+        let (base_url, requests, server) = mock_server(vec![
+            MockResponse::json(r#"{"code":0,"tenant_access_token":"old-token","expire":7200}"#),
+            MockResponse::json(r#"{"code":99991663,"msg":"token invalid"}"#),
+            MockResponse::json(r#"{"code":0,"tenant_access_token":"fresh-token","expire":7200}"#),
+            MockResponse::json(r#"{"code":99991663,"msg":"still invalid"}"#),
+        ])
+        .await;
+        let client = FeishuClient::new(&config(&base_url)).unwrap();
+
+        let error = client.send_text("hello").await.unwrap_err();
+        assert!(matches!(
+            error,
+            FeishuError::Api {
+                code: Some(99991663),
+                ..
+            }
+        ));
+        server.await.unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn upload_and_download_rebuild_requests_after_token_refresh() {
+        let (base_url, requests, server) = mock_server(vec![
+            MockResponse::json(r#"{"code":0,"tenant_access_token":"upload-old","expire":7200}"#),
+            MockResponse::json(r#"{"code":99991663,"msg":"token invalid"}"#),
+            MockResponse::json(r#"{"code":0,"tenant_access_token":"upload-fresh","expire":7200}"#),
+            MockResponse::json(r#"{"code":0,"data":{"file_key":"file-1"}}"#),
+            MockResponse::json(r#"{"code":99991663,"msg":"token invalid"}"#),
+            MockResponse::json(
+                r#"{"code":0,"tenant_access_token":"download-fresh","expire":7200}"#,
+            ),
+            MockResponse::bytes(b"downloaded-file"),
+        ])
+        .await;
+        let client = FeishuClient::new(&config(&base_url)).unwrap();
+        let upload = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(upload.path(), b"upload-body").unwrap();
+
+        assert_eq!(
+            client
+                .upload_file(upload.path().to_str().unwrap(), "report.txt")
+                .await
+                .unwrap(),
+            "file-1"
+        );
+        assert_eq!(
+            client
+                .download_resource(&format!("{base_url}/download"))
+                .await
+                .unwrap(),
+            b"downloaded-file"
+        );
+        server.await.unwrap();
+
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 7);
+        assert!(requests[1].contains("POST /open-apis/im/v1/files"));
+        assert!(requests[1]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer upload-old"));
+        assert!(requests[3]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer upload-fresh"));
+        assert!(requests[4].contains("GET /download"));
+        assert!(requests[4]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer upload-fresh"));
+        assert!(requests[6]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer download-fresh"));
+    }
 }

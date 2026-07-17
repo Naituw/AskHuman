@@ -20,8 +20,8 @@ use std::fmt;
 pub enum FeishuError {
     /// 配置缺失（附字段名提示）。
     EmptyConfig(String),
-    /// 飞书接口返回业务错误（code 非 0 时的 msg）。
-    Api(String),
+    /// 飞书接口返回业务错误；保留数值 code 供鉴权恢复等逻辑可靠判断。
+    Api { code: Option<i64>, message: String },
     /// 网络错误。
     Network(String),
     /// 响应无法解析。
@@ -33,7 +33,7 @@ impl fmt::Display for FeishuError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FeishuError::EmptyConfig(field) => write!(f, "{} must not be empty", field),
-            FeishuError::Api(msg) => write!(f, "Feishu API error: {}", msg),
+            FeishuError::Api { message, .. } => write!(f, "Feishu API error: {}", message),
             FeishuError::Network(msg) => write!(f, "network error: {}", msg),
             FeishuError::BadResponse => write!(f, "failed to parse Feishu response"),
         }
@@ -43,6 +43,25 @@ impl fmt::Display for FeishuError {
 impl std::error::Error for FeishuError {}
 
 impl FeishuError {
+    pub(crate) fn api(code: Option<i64>, message: impl Into<String>) -> Self {
+        Self::Api {
+            code,
+            message: message.into(),
+        }
+    }
+
+    /// These codes identify an invalid tenant token for APIs that AskHuman always calls with a
+    /// tenant token. Keep this code-based: Feishu documents `msg` as unstable display text.
+    pub(crate) fn is_invalid_tenant_token(&self) -> bool {
+        matches!(
+            self,
+            Self::Api {
+                code: Some(99991663 | 99991665),
+                ..
+            }
+        )
+    }
+
     /// GUI 可见的本地化文案：校验类按界面语言翻译；技术细节(API/网络/解析)保留英文。
     pub fn localized(&self, lang: crate::i18n::Lang) -> String {
         match self {

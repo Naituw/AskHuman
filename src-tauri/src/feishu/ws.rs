@@ -335,7 +335,10 @@ async fn open_endpoint(
             .and_then(|m| m.as_str())
             .unwrap_or("failed to obtain Feishu long-connection endpoint")
             .to_string();
-        return Err(FeishuError::Api(msg));
+        return Err(FeishuError::api(
+            v.get("code").and_then(|code| code.as_i64()),
+            msg,
+        ));
     }
     let data = v.get("data").ok_or(FeishuError::BadResponse)?;
     let conn_url = data
