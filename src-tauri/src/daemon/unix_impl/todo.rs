@@ -45,10 +45,10 @@ pub(super) async fn handle_todo_cmd(
             match content {
                 // `/todo <n> <text>`：直接追加一条（四渠道通用的新增形式）。
                 Some(text) => {
-                    if crate::todos::add(&project, &text).is_none() {
+                    let Ok(entry) = crate::todos::add(&project, &text) else {
                         return;
-                    }
-                    let count = crate::todos::list(&project).len();
+                    };
+                    let count = crate::todos::index_of(&project, &entry.id).unwrap_or(0);
                     let msg = crate::i18n::tr(lang, "todoIm.added")
                         .replace("{project}", &crate::project::display_name(&project))
                         .replace("{n}", &count.to_string());
@@ -143,10 +143,10 @@ pub(super) async fn handle_todo_auto_cmd(
             match content {
                 // `/todo-auto <n> <text>`：直接追加一条自动执行待办。
                 Some(text) => {
-                    if crate::todos::add_auto(&project, &text).is_none() {
+                    let Ok(entry) = crate::todos::add_auto(&project, &text) else {
                         return;
-                    }
-                    let count = crate::todos::list(&project).len();
+                    };
+                    let count = crate::todos::index_of(&project, &entry.id).unwrap_or(0);
                     let msg = crate::i18n::tr(lang, "todoIm.addedAuto")
                         .replace("{project}", &crate::project::display_name(&project))
                         .replace("{n}", &count.to_string());
@@ -691,8 +691,12 @@ fn add_from_picker(project: &str, content: &str, auto: bool, lang: Lang) -> Opti
         crate::todos::add_auto(project, content)
     } else {
         crate::todos::add(project, content)
-    }?;
-    let count = crate::todos::list(project).len();
+    }
+    .ok()?;
+    let count = crate::todos::index_of(project, &added.id).unwrap_or(0);
+    if count == 0 {
+        return None;
+    }
     let key = if added.auto {
         "todoIm.addedAuto"
     } else {

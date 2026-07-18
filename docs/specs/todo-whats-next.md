@@ -56,7 +56,8 @@ Interject 是「打断进行中」的纠偏语义，不适合），希望：
   ——todo 无热路径（whats-next 每轮一次、增删查是人操作频率），双层结构无收益。
   文件形态：`{ "projects": { "<project_key>": [ {id,text,createdAtMs,agentKind?}, … ] },
   "history": { "<project_key>": [ {id,text,createdAtMs,agentKind?,doneAtMs}, … ] } }`，
-  空项目键剪除；原子写（tmp + rename）。
+  空项目键剪除；原子写（tmp + rename）。写入失败（权限 / 沙箱等）时 CLI `todo add` 与
+  MCP `todo_add` **必须失败退出/报错**，不得打印「已添加」；编号为落盘后队列中的 1 基序号。
 - **执行历史**（第 16 轮定案，GUI 勾选完成补充）：**「出队进历史」**路径（whats-next /
   Stop 卡 / 弹窗点选 → `take`，以及 GUI 待办窗口圆形复选框完成 → 同一 `take`）进入
   `history`（时间正序追加，展示倒序）；手动删除（✕）、清空**不记**。每项目按设置

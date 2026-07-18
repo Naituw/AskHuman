@@ -117,7 +117,7 @@ pub fn mcp_reference() -> String {
 - After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
 </mandatory_interaction_protocol>
 
-- When I ask for a project todo or defer a concrete task or suggestion until later, add it with `AskHuman todo add "<concise task>"`. Never use project todos for your own work plan or an unaccepted suggestion.
+- When I ask for a project todo or defer a concrete task or suggestion until later, call the AskHuman MCP `todo_add` tool with the task text (optional `auto: true` for auto-run). Never use project todos for your own work plan or an unaccepted suggestion.
 {collab}"#,
         end_marker = USER_CONFIRMED_END_TURN_MARKER,
         subagent_rules = SUBAGENT_PROTOCOL_RULES,
@@ -319,8 +319,10 @@ mod tests {
 
         for prompt in [mcp_reference(), grok_skill_body()] {
             assert!(prompt.contains("defer a concrete task or suggestion until later"));
-            assert!(prompt.contains("AskHuman todo add \"<concise task>\""));
+            assert!(prompt.contains("AskHuman MCP `todo_add` tool"));
             assert!(prompt.contains("own work plan or an unaccepted suggestion"));
+            // MCP path must not direct agents to shell todo add.
+            assert!(!prompt.contains("AskHuman todo add"));
         }
     }
 

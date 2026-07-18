@@ -320,11 +320,12 @@ pub fn todos_add(
     text: String,
     auto: Option<bool>,
 ) -> Option<crate::todos::TodoEntry> {
-    if auto.unwrap_or(false) {
+    let result = if auto.unwrap_or(false) {
         crate::todos::add_auto(&project, &text)
     } else {
         crate::todos::add(&project, &text)
-    }
+    };
+    result.ok()
 }
 
 /// 切换自动执行标记（第 17 轮定案）；返回新状态，条目不存在返回 None。

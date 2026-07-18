@@ -168,7 +168,7 @@ pub fn dispatch() {
         "daemon" => {
             crate::daemon::dispatch(&argv[2..]);
         }
-        // MCP server 角色：以 STDIO 暴露 `ask` 工具，供 Codex / Claude Code / Cursor 等 MCP 客户端调用。
+        // MCP server 角色：以 STDIO 暴露 ask / whats_next / todo_add，供 Codex / Claude Code / Cursor 等 MCP 客户端调用。
         // 每次工具调用都 spawn 一个 `AskHuman --output json …` 子进程复用既有 ask 流程（见 mcp 模块）。
         // 极端歧义（问题正好是 "mcp"）可用 `AskHuman -q mcp` 规避。
         "mcp" => {

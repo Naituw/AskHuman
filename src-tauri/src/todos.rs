@@ -88,20 +88,30 @@ fn load_at(path: &Path) -> TodoFile {
     serde_json::from_str(&text).unwrap_or_default()
 }
 
-/// Atomic write; prunes projects with no entries. Best-effort (failure is silent, the queue
-/// simply keeps its previous on-disk state).
-fn store_at(path: &Path, mut data: TodoFile) {
+/// Atomic write; prunes projects with no entries.
+/// Returns `true` only when the file was fully replaced (tmp write + rename both ok).
+/// Callers that must not report a false success (CLI / MCP `todo_add`) should surface
+/// `false` as a hard error; other mutators keep best-effort behavior.
+fn store_at(path: &Path, mut data: TodoFile) -> bool {
     data.projects.retain(|_, entries| !entries.is_empty());
     data.history.retain(|_, entries| !entries.is_empty());
     let Ok(json) = serde_json::to_string_pretty(&data) else {
-        return;
+        return false;
     };
     if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        if std::fs::create_dir_all(dir).is_err() {
+            return false;
+        }
     }
     let tmp = path.with_extension(format!("json.tmp-{}", uuid::Uuid::new_v4()));
-    if std::fs::write(&tmp, json.as_bytes()).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+    if std::fs::write(&tmp, json.as_bytes()).is_err() {
+        return false;
+    }
+    if std::fs::rename(&tmp, path).is_ok() {
+        true
+    } else {
+        let _ = std::fs::remove_file(&tmp);
+        false
     }
 }
 
@@ -154,13 +164,22 @@ pub fn all() -> HashMap<String, Vec<TodoEntry>> {
     load_at(&todos_file()).projects
 }
 
-/// Append one entry; returns it (or `None` when project/text is empty after trim).
-pub fn add(project: &str, text: &str) -> Option<TodoEntry> {
+/// Why [`add`] / [`add_auto`] / [`add_from_agent`] failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddError {
+    /// Project key or text empty after trim.
+    EmptyInput,
+    /// Could not persist `todos.json` (permissions, sandbox, disk full, …).
+    Persist,
+}
+
+/// Append one entry. Errors when input is empty or the write did not land on disk.
+pub fn add(project: &str, text: &str) -> Result<TodoEntry, AddError> {
     add_at(&todos_file(), &todos_lock(), project, text)
 }
 
 /// Append one auto-run entry (round 17; CLI `todo add --auto` / GUI toggle / IM `/todo-auto`).
-pub fn add_auto(project: &str, text: &str) -> Option<TodoEntry> {
+pub fn add_auto(project: &str, text: &str) -> Result<TodoEntry, AddError> {
     add_auto_at(&todos_file(), &todos_lock(), project, text)
 }
 
@@ -170,7 +189,7 @@ pub fn add_from_agent(
     text: &str,
     auto: bool,
     agent: crate::agents::AgentKind,
-) -> Option<TodoEntry> {
+) -> Result<TodoEntry, AddError> {
     add_impl(
         &todos_file(),
         &todos_lock(),
@@ -179,6 +198,11 @@ pub fn add_from_agent(
         auto,
         Some(agent.as_str()),
     )
+}
+
+/// 1-based list index of `id` in the project's pending queue, if present.
+pub fn index_of(project: &str, id: &str) -> Option<usize> {
+    list(project).iter().position(|e| e.id == id).map(|i| i + 1)
 }
 
 /// Toggle the auto-run flag of one entry (round 17). Returns the new flag, `None` if missing.
@@ -289,11 +313,16 @@ pub fn list_at(path: &Path, project: &str) -> Vec<TodoEntry> {
         .unwrap_or_default()
 }
 
-pub fn add_at(path: &Path, lock: &Path, project: &str, text: &str) -> Option<TodoEntry> {
+pub fn add_at(path: &Path, lock: &Path, project: &str, text: &str) -> Result<TodoEntry, AddError> {
     add_impl(path, lock, project, text, false, None)
 }
 
-pub fn add_auto_at(path: &Path, lock: &Path, project: &str, text: &str) -> Option<TodoEntry> {
+pub fn add_auto_at(
+    path: &Path,
+    lock: &Path,
+    project: &str,
+    text: &str,
+) -> Result<TodoEntry, AddError> {
     add_impl(path, lock, project, text, true, None)
 }
 
@@ -304,8 +333,8 @@ fn add_impl(
     text: &str,
     auto: bool,
     agent_kind: Option<&str>,
-) -> Option<TodoEntry> {
-    let (project, text) = normalized(project, text)?;
+) -> Result<TodoEntry, AddError> {
+    let (project, text) = normalized(project, text).ok_or(AddError::EmptyInput)?;
     let _guard = lock_at(lock);
     let mut data = load_at(path);
     let entry = TodoEntry {
@@ -316,11 +345,17 @@ fn add_impl(
         auto,
     };
     data.projects
-        .entry(project)
+        .entry(project.clone())
         .or_default()
         .push(entry.clone());
-    store_at(path, data);
-    Some(entry)
+    if !store_at(path, data) {
+        return Err(AddError::Persist);
+    }
+    // Defense in depth: never claim success unless the entry is readable back.
+    if !list_at(path, &project).iter().any(|e| e.id == entry.id) {
+        return Err(AddError::Persist);
+    }
+    Ok(entry)
 }
 
 pub fn set_auto_at(path: &Path, lock: &Path, project: &str, id: &str, auto: bool) -> Option<bool> {
@@ -574,9 +609,30 @@ mod tests {
     #[test]
     fn add_rejects_empty_text_or_project() {
         let t = TempStore::new();
-        assert!(add_at(&t.file(), &t.lock(), "/p", "   ").is_none());
-        assert!(add_at(&t.file(), &t.lock(), "  ", "task").is_none());
+        assert_eq!(
+            add_at(&t.file(), &t.lock(), "/p", "   "),
+            Err(AddError::EmptyInput)
+        );
+        assert_eq!(
+            add_at(&t.file(), &t.lock(), "  ", "task"),
+            Err(AddError::EmptyInput)
+        );
         assert!(!t.file().exists());
+    }
+
+    #[test]
+    fn add_reports_persist_failure_when_path_unwritable() {
+        // Parent path is a regular file → create_dir_all / write cannot succeed.
+        let t = TempStore::new();
+        let blocker = t.dir.join("not-a-dir");
+        std::fs::write(&blocker, b"x").unwrap();
+        let file = blocker.join("todos.json");
+        let lock = t.dir.join("todos.lock");
+        assert_eq!(
+            add_at(&file, &lock, "/p", "should not land"),
+            Err(AddError::Persist)
+        );
+        assert!(!file.exists());
     }
 
     #[test]
@@ -594,8 +650,8 @@ mod tests {
     #[test]
     fn clear_returns_count_and_needs_entries() {
         let t = TempStore::new();
-        add_at(&t.file(), &t.lock(), "/p", "a");
-        add_at(&t.file(), &t.lock(), "/p", "b");
+        let _ = add_at(&t.file(), &t.lock(), "/p", "a");
+        let _ = add_at(&t.file(), &t.lock(), "/p", "b");
         assert_eq!(clear_at(&t.file(), &t.lock(), "/p"), 2);
         assert_eq!(clear_at(&t.file(), &t.lock(), "/p"), 0);
     }
@@ -837,8 +893,8 @@ mod tests {
     #[test]
     fn all_snapshot_groups_by_project() {
         let t = TempStore::new();
-        add_at(&t.file(), &t.lock(), "/p", "a");
-        add_at(&t.file(), &t.lock(), "/q", "b");
+        let _ = add_at(&t.file(), &t.lock(), "/p", "a");
+        let _ = add_at(&t.file(), &t.lock(), "/q", "b");
         let all = load_at(&t.file()).projects;
         assert_eq!(all.len(), 2);
         assert_eq!(all["/p"][0].text, "a");

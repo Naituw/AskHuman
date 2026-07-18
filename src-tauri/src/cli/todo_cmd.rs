@@ -48,15 +48,35 @@ fn add(project: &str, args: &[String], lang: Lang) -> ! {
         None if auto => crate::todos::add_auto(project, &text),
         None => crate::todos::add(project, &text),
     };
-    let Some(_entry) = added else {
+    let entry = match added {
+        Ok(entry) => entry,
+        Err(crate::todos::AddError::EmptyInput) => {
+            eprintln!(
+                "{}{}",
+                i18n::err_prefix(lang),
+                i18n::tr(lang, "todo.missingText")
+            );
+            exit(1);
+        }
+        Err(crate::todos::AddError::Persist) => {
+            eprintln!(
+                "{}{}",
+                i18n::err_prefix(lang),
+                i18n::tr(lang, "todo.persistFailed")
+            );
+            exit(1);
+        }
+    };
+    // Prefer the real 1-based index of the new id (never report #0 on a hollow write).
+    let n = crate::todos::index_of(project, &entry.id).unwrap_or(0);
+    if n == 0 {
         eprintln!(
             "{}{}",
             i18n::err_prefix(lang),
-            i18n::tr(lang, "todo.missingText")
+            i18n::tr(lang, "todo.persistFailed")
         );
         exit(1);
-    };
-    let n = crate::todos::list(project).len();
+    }
     let key = if auto { "todo.addedAuto" } else { "todo.added" };
     print_line(
         &i18n::tr(lang, key)

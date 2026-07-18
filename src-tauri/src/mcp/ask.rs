@@ -46,6 +46,34 @@ pub struct AskParams {
     pub files: Option<Vec<String>>,
 }
 
+// Input for `todo_add` (project-scoped queue; same store as CLI `todo add`).
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoAddParams {
+    /// Concise task text to append to the current project's todo queue.
+    /// Prefer a single executable sentence, ideally under 100 characters.
+    pub text: String,
+    /// When true, mark the todo for auto-run on the next `whats_next` (⚡).
+    #[serde(default)]
+    pub auto: Option<bool>,
+}
+
+// Output for `todo_add`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoAddResult {
+    /// 1-based index in the project's pending list after the add.
+    pub index: usize,
+    /// Stable id of the new entry (for debugging / future tools).
+    pub id: String,
+    /// Trimmed task text that was stored.
+    pub text: String,
+    /// Absolute project key (git root path) the todo was attached to.
+    pub project: String,
+    /// Whether the entry is marked auto-run.
+    pub auto: bool,
+}
+
 // Input for `whats_next` (spec todo-whats-next D2).
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -126,7 +154,7 @@ pub struct AskAnswer {
     pub files: Vec<String>,
 }
 
-/// MCP server：仅暴露 `ask` 一个工具。
+/// MCP server：暴露 `ask`、`whats_next`、`todo_add`。
 #[derive(Clone)]
 pub struct AskServer {
     tool_router: ToolRouter<Self>,
@@ -304,6 +332,75 @@ approves ending the turn — only then may you end it."
             text.to_string(),
         )]))
     }
+
+    /// Append a project todo (same queue as CLI `AskHuman todo add`).
+    /// Writes from the MCP server process directly into `todos.json`.
+    #[tool(
+        name = "todo_add",
+        description = "Add a project todo for the human to pick up later (whats-next chips / todos \
+window / IM). Use only when the human asked to record a deferred task or accepted a concrete \
+suggestion for later — never for your own work plan. Attaches to the project of the MCP server's \
+cwd (git root). Returns the 1-based index and stored text on success.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<TodoAddResult>()
+    )]
+    async fn todo_add(
+        &self,
+        Parameters(params): Parameters<TodoAddParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let text = params.text.trim();
+        if text.is_empty() {
+            return Err(McpError::invalid_params(
+                "todo_add requires non-empty `text`",
+                None,
+            ));
+        }
+        let project = crate::project::detect();
+        if project.is_empty() {
+            return Err(McpError::internal_error(
+                "cannot determine project (cwd unavailable)",
+                None,
+            ));
+        }
+        let auto = params.auto.unwrap_or(false);
+        let agent = crate::agents::detect::detect_invoking_agent();
+        let added = match agent {
+            Some(agent) => crate::todos::add_from_agent(&project, text, auto, agent),
+            None if auto => crate::todos::add_auto(&project, text),
+            None => crate::todos::add(&project, text),
+        };
+        let entry = match added {
+            Ok(entry) => entry,
+            Err(crate::todos::AddError::EmptyInput) => {
+                return Err(McpError::invalid_params(
+                    "todo_add requires non-empty `text`",
+                    None,
+                ));
+            }
+            Err(crate::todos::AddError::Persist) => {
+                return Ok(CallToolResult::error(vec![ContentBlock::text(
+                    "Failed to save todo: could not write ~/.askhuman/state/todos.json \
+(check permissions).",
+                )]));
+            }
+        };
+        let Some(index) = crate::todos::index_of(&project, &entry.id) else {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Failed to save todo: entry missing after write (not persisted).",
+            )]));
+        };
+        let result = TodoAddResult {
+            index,
+            id: entry.id,
+            text: entry.text,
+            project,
+            auto: entry.auto,
+        };
+        let structured = serde_json::to_value(&result).map_err(|e| {
+            McpError::internal_error(format!("failed to serialize todo_add result: {e}"), None)
+        })?;
+        // `structured()` mirrors structuredContent into content[0] as JSON text.
+        Ok(CallToolResult::structured(structured))
+    }
 }
 
 /// Errors from [`capture_output`].
@@ -369,7 +466,8 @@ impl ServerHandler for AskServer {
             "AskHuman bridges the agent and a human operator. Call the `ask` tool whenever you \
 need the human to decide, clarify, review, or approve something; it blocks until they reply. \
 Call the `whats_next` tool after completing the current task and before ending your turn to ask \
-the human what to do next.",
+the human what to do next. Call the `todo_add` tool when the human asks to record a deferred \
+project todo.",
         );
         // `from_build_env()` 的名字/版本来自 rmcp crate 自身，改成本应用的品牌名与版本。
         let mut implementation = Implementation::from_build_env();
@@ -660,6 +758,29 @@ mod tests {
     fn whats_next_tool_is_registered() {
         let server = AskServer::new();
         assert!(server.tool_router.get("whats_next").is_some());
+    }
+
+    #[test]
+    fn todo_add_tool_is_registered() {
+        let server = AskServer::new();
+        assert!(server.tool_router.get("todo_add").is_some());
+        let tool = server.tool_router.get("todo_add").unwrap();
+        let schema = Value::Object((*tool.input_schema).clone());
+        assert_eq!(
+            schema.pointer("/properties/text/type"),
+            Some(&json!("string"))
+        );
+        // `Option<bool>` → JSON Schema `["boolean","null"]` (or boolean depending on rmcp/schemars).
+        let auto_type = schema.pointer("/properties/auto/type").cloned();
+        assert!(
+            auto_type == Some(json!("boolean")) || auto_type == Some(json!(["boolean", "null"])),
+            "unexpected auto type: {auto_type:?}"
+        );
+        assert!(tool
+            .description
+            .as_deref()
+            .unwrap_or("")
+            .contains("never for your own work plan"));
     }
 
     #[test]

@@ -1,9 +1,10 @@
-//! `AskHuman mcp`：以 STDIO 运行 MCP server，暴露 `ask` 与 `whats_next` 两个工具。
+//! `AskHuman mcp`：以 STDIO 运行 MCP server，暴露 `ask`、`whats_next` 与 `todo_add`。
 //!
-//! 设计为「薄壳」：每次工具调用都 spawn 一个现有的 `AskHuman …` 子进程（`ask` 带
+//! `ask` / `whats_next` 为「薄壳」：每次工具调用都 spawn 一个现有的 `AskHuman …` 子进程（`ask` 带
 //! `--output json`，`whats_next` 走文本模式），
 //! 复用全部既有 ask 流程（弹窗 / IM / 抢答 / 历史 / 落盘 / 排空与自动重连），再把人类回复中的
-//! 图片读回转成 MCP `ImageContent` 一并返回。全平台同一套；daemon 换新 / 重启后下一次调用自动重连
+//! 图片读回转成 MCP `ImageContent` 一并返回。`todo_add` 在 MCP 进程内直写 `todos.json`。
+//! 全平台同一套；daemon 换新 / 重启后下一次 ask/whats_next 调用自动重连
 //! （每次调用都是新起子进程、重新连接 daemon，因此 MCP server 进程可长期存活、跨 daemon 重启）。
 
 mod ask;

@@ -196,6 +196,11 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         ),
         "todo.clearAborted" => pick(lang, "Aborted; nothing was cleared", "已取消，未清空"),
         "todo.missingText" => pick(lang, "todo add is missing the todo text", "todo add 缺少待办内容"),
+        "todo.persistFailed" => pick(
+            lang,
+            "failed to save todo (could not write ~/.askhuman/state/todos.json — check permissions or agent sandbox write access)",
+            "保存待办失败（无法写入 ~/.askhuman/state/todos.json — 请检查权限或 agent 沙箱写权限）",
+        ),
         "todo.unknownSubcommand" => pick(
             lang,
             "unknown todo subcommand: {cmd} (use add / list / rm / clear)",

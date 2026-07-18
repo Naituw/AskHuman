@@ -94,7 +94,7 @@ AskHuman/
       prompts.rs             CLI/MCP Agent 参考提示词
       mcp/
         mod.rs               STDIO MCP server 运行时
-        ask.rs               ask 工具到现有 CLI 流程的适配
+        ask.rs               ask / whats_next / todo_add 工具
       hooks.rs               用户级 hooks
       watch.rs               四渠道 /watch 共用状态与文案
       select.rs              跨渠道单选卡模型
@@ -304,7 +304,7 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 
 > 规格 `docs/specs/todo-whats-next.md`。
 
-- 待办按项目（git 根）归属，`~/.askhuman/state/todos.json` 是唯一数据源：所有进程直读直写 + 文件锁串行化，不依赖 daemon 存活，跨平台。
+- 待办按项目（git 根）归属，`~/.askhuman/state/todos.json` 是唯一数据源：所有进程直读直写 + 文件锁串行化，不依赖 daemon 存活，跨平台。CLI / MCP `todo_add` 在落盘失败时必须报错（禁止假成功 `#0`）。
 - Agent 完成任务后必须调 `AskHuman --whats-next`（MCP 为 `whats_next` 工具）：固定提问 + 可选的 Agent 建议任务 + 待办 chip + 恒有「结束本轮」；顺序固定为建议任务、待办、结束，总选项最多 10 条。建议任务仅在确有建议时通过 `-o`/`-o!`（MCP `options`）传入，选择结果保持普通 Ask 的 `[selected_options]` 语义；待办派活为 `[user_input]`，准许结束为 `[selected_options]`，取消为 `[status]`。选中的待办按 id best-effort 出队（Coordinator 汇聚点统一处理）。标记为「自动执行」（⚡）的待办优先级不变：whats-next 时不发卡、直接按队列顺序派发最靠前一条。
 - 送达面：whats-next / 普通提问 Popup 折叠待办区 / Stop 确认卡（兜底）都以选项形式呈现待办；输入面：CLI `todo` 子命令、Popup 内新增、GUI 待办窗口（托盘/AgentsView 入口）、IM `/todo`。
 - IM `/todo`（管理卡：飞书代码卡自带输入表单，钉钉复用提问卡模板 `allow_input`，TG/Slack 文本 + 命令提示）、`/todo-rm`（复用单选卡逐条删除、就地刷新）与 `/todo-auto`（切换自动执行标记）仅 Unix，实现在 `daemon/unix_impl/todo.rs`。
@@ -336,8 +336,8 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 
 > 需求 `docs/specs/mcp.md`，计划 `docs/plans/mcp.md`。
 
-- `AskHuman mcp` 是只暴露 `ask` 的 STDIO server；每次调用 spawn 现有 CLI JSON 流程，复用 Popup、IM、抢答、历史和 drain。
-- 入参仅 message/questions/files；输出同时提供 structuredContent、JSON 文本和图片 ImageContent。MCP 取消会终止子 CLI，并通过 socket EOF 取消 Daemon 请求。
+- `AskHuman mcp` 暴露 `ask`、`whats_next`、`todo_add`：`ask`/`whats_next` 每次调用 spawn 现有 CLI 流程，复用 Popup、IM、抢答、历史和 drain；`todo_add` 在 MCP 进程内直写 `todos.json`。
+- `ask` 入参为 message/questions/files；输出同时提供 structuredContent、JSON 文本和图片 ImageContent。MCP 取消会终止子 CLI，并通过 socket EOF 取消 Daemon 请求。
 - Agent 自动集成是 None/CLI/MCP 互斥；Grok 仅 None/MCP，其 MCP 产物是 skill + config。
 - Codex、Grok、Claude 分别写适配自身的长超时配置；Cursor MCP 超时不可配置，推荐 CLI 模式。
 - MCP server 环境可能被客户端清空；Daemon 可用调用进程树 pid 只刷新已有 lifecycle session，绝不因此新建幽灵会话。
