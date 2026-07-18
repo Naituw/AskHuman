@@ -5,9 +5,11 @@
 //! `codex-rs/shell-command` (`bash.rs`, `command_safety/is_safe_command.rs`,
 //! `command_safety/is_dangerous_command.rs`) plus the `BANNED_PREFIX_SUGGESTIONS` table from
 //! `core/src/exec_policy.rs`. It must only ever be used behind the version gate
-//! ([`codex_version_supported`], D35): the port was verified against the source tree of the
-//! version ceiling below, and drift in newer Codex releases must fail closed to the basic
-//! popup rather than run stale heuristics.
+//! ([`codex_version_supported`], D35): a floor at the PermissionRequest-hook introduction,
+//! no ceiling. Newer-than-verified releases stay enabled (each safety-relevant divergence
+//! since the floor was audited as strictly-more-conservative on our side; auto-allow and
+//! permanent rules are verified through the user's own `codex` binary anyway) — but they
+//! are logged so upstream drift reviews (docs/PROGRESS.md) have a trail.
 //!
 //! Windows-only branches of the original (PowerShell safelists, .exe name stripping) are
 //! intentionally omitted: the AskHuman permission hook only runs on Unix.
@@ -15,10 +17,14 @@
 use std::path::Path;
 use tree_sitter::{Node, Parser, Tree};
 
-/// Inclusive `(major, minor)` window of Codex versions this port was verified against
-/// (D35). Outside the window, shell memory options are disabled (fail closed to basic).
-pub const VERIFIED_CODEX_VERSION_FLOOR: (u32, u32) = (0, 144);
-pub const VERIFIED_CODEX_VERSION_CEILING: (u32, u32) = (0, 144);
+/// Minimum supported Codex `(major, minor)` (D35): 0.122 introduced the PermissionRequest
+/// hook itself; the replicated Unix shell semantics were audited back to that version
+/// (every later upstream change is either Windows-only or tightens safety checks we
+/// already carry). Below the floor, shell memory options are disabled (fail closed).
+pub const VERIFIED_CODEX_VERSION_FLOOR: (u32, u32) = (0, 122);
+/// Highest Codex version the port was line-audited against. Newer versions stay enabled
+/// but are logged for the periodic upstream sync (docs/PROGRESS.md).
+pub const VERIFIED_CODEX_VERSION_CEILING: (u32, u32) = (0, 145);
 
 /// Parses `codex-cli 0.144.4` (the `codex --version` output) into `(major, minor)`.
 pub fn parse_codex_version(output: &str) -> Option<(u32, u32)> {
@@ -30,7 +36,12 @@ pub fn parse_codex_version(output: &str) -> Option<(u32, u32)> {
 }
 
 pub fn codex_version_supported(version: (u32, u32)) -> bool {
-    version >= VERIFIED_CODEX_VERSION_FLOOR && version <= VERIFIED_CODEX_VERSION_CEILING
+    version >= VERIFIED_CODEX_VERSION_FLOOR
+}
+
+/// Newer than the audited ceiling: still supported, but worth a log line.
+pub fn codex_version_beyond_verified(version: (u32, u32)) -> bool {
+    version > VERIFIED_CODEX_VERSION_CEILING
 }
 
 /// Prefix rules Codex refuses to suggest or accept as amendments
@@ -1127,10 +1138,15 @@ mod tests {
         assert_eq!(parse_codex_version("codex-cli 0.144.4"), Some((0, 144)));
         assert_eq!(parse_codex_version("codex-cli 1.2.3\n"), Some((1, 2)));
         assert_eq!(parse_codex_version("garbage"), None);
+        assert!(codex_version_supported((0, 122)));
         assert!(codex_version_supported((0, 144)));
-        assert!(!codex_version_supported((0, 143)));
-        assert!(!codex_version_supported((0, 145)));
-        assert!(!codex_version_supported((1, 0)));
+        // No ceiling: newer releases stay enabled, only flagged as beyond-verified.
+        assert!(codex_version_supported((0, 200)));
+        assert!(codex_version_supported((1, 0)));
+        assert!(!codex_version_supported((0, 121)));
+        assert!(!codex_version_beyond_verified((0, 145)));
+        assert!(codex_version_beyond_verified((0, 146)));
+        assert!(codex_version_beyond_verified((1, 0)));
 
         assert!(is_banned_prefix(&vec_str(&["git"])));
         assert!(is_banned_prefix(&vec_str(&["bash", "-lc"])));

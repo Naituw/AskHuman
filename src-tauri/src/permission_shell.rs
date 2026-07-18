@@ -220,12 +220,23 @@ pub fn analyze(
     checker: &dyn PolicyChecker,
     system_config_dir: &Path,
 ) -> ShellWorkerOutput {
-    // Version gate first (D34/D35): the whole replication is only valid inside the window.
+    // Version gate first (D34/D35): floor only. Newer-than-audited versions stay enabled
+    // (divergences are conservative on our side and rule writes verify through the user's
+    // codex binary) but leave a trail for the periodic upstream sync.
     let Some(version) = checker.codex_version() else {
         return ShellWorkerOutput::disabled("codex version unavailable");
     };
     if !crate::shell_safety::codex_version_supported(version) {
-        return ShellWorkerOutput::disabled("codex version outside verified window");
+        return ShellWorkerOutput::disabled("codex version below verified floor");
+    }
+    if crate::shell_safety::codex_version_beyond_verified(version) {
+        eprintln!(
+            "permission_shell: codex {}.{} is newer than the audited {}.{}; shell memory stays enabled",
+            version.0,
+            version.1,
+            crate::shell_safety::VERIFIED_CODEX_VERSION_CEILING.0,
+            crate::shell_safety::VERIFIED_CODEX_VERSION_CEILING.1,
+        );
     }
 
     let codex_home = PathBuf::from(&input.codex_home);
@@ -813,12 +824,17 @@ mod tests {
     #[test]
     fn version_gate_disables_analysis() {
         let env = Env::new();
-        let checker = FakeChecker::new(Some((0, 145)));
+        // Below the floor (pre-hook versions) or unknown: disabled.
+        let checker = FakeChecker::new(Some((0, 121)));
         let output = analyze(&env.input("ls"), &checker, env.system.path());
         assert!(output.disabled_reason.is_some());
         let checker = FakeChecker::new(None);
         let output = analyze(&env.input("ls"), &checker, env.system.path());
         assert!(output.disabled_reason.is_some());
+        // Newer than the audited ceiling: stays enabled (no ceiling, log only).
+        let checker = FakeChecker::new(Some((99, 0)));
+        let output = analyze(&env.input("ls"), &checker, env.system.path());
+        assert!(output.disabled_reason.is_none());
     }
 
     #[test]

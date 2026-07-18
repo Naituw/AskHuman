@@ -6,10 +6,11 @@
 ## 定期同步：Codex Shell 判定复刻（codex-permission-remember §6.4）
 
 权限记忆功能复刻了 Codex 的 Shell 判定逻辑（`src-tauri/src/shell_safety.rs` +
-`permission_shell.rs`），受 `VERIFIED_CODEX_VERSION_FLOOR/CEILING` 门控（当前 **0.144**，
-对拍来源 Codex commit `6bd3f5e3db`，2026-07-18）。用户装机 Codex 超出上限时 Shell 记忆
-选项自动降级（D35），因此**每次 Codex 发新 minor 版都需要对拍并抬升上限**，否则用户体验
-回落到基础弹窗。抬升前重新对拍以下上游文件（相对 codex-rs/）：
+`permission_shell.rs`）。版本门控只设下限（`VERIFIED_CODEX_VERSION_FLOOR` = **0.122**，
+hook 引入版）；`VERIFIED_CODEX_VERSION_CEILING`（当前 **0.145**-alpha，对拍来源 Codex commit
+`6bd3f5e3db`，2026-07-18）是最近一次逐行对拍的版本，用户装机超出它时功能**保持启用**、
+worker stderr 记一条日志。因此同步不再是紧急事项，但仍需**定期**（Codex 新 minor 发布后）
+对拍以下上游文件并抬升已审计版本（相对 codex-rs/）：
 
 - `shell-command/src/bash.rs`（`bash -lc` 脚本拆分）
 - `shell-command/src/command_safety/is_safe_command.rs`、`is_dangerous_command.rs`（heuristics）
@@ -18,7 +19,9 @@
 - `codex execpolicy check` 的 CLI 契约（参数与 JSON 输出；有 ignored 集成测试
   `permission_shell::tests::real_codex_cli_contract_when_available` 可拿真机验证）
 
-无差异则只改常量 + 记录新 commit；有差异先改 port 再抬上限。
+无差异则只改常量 + 记录新 commit；有差异先改 port 再抬已审计版本。若上游出现我方未携带的
+**放宽**类变更（新增 safe 命令等），只影响覆盖率；出现语义级破坏（拆分格式、hook 契约）时
+fail-closed 机制会自动降级为基础弹窗，届时按 D35 修订的证据链重新评估。
 
 ## 待办：Cursor 全局 Rules 迁移为用户级 always-on Skill
 

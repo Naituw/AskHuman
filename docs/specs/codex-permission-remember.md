@@ -68,8 +68,8 @@ AskHuman 处理时可能反复弹窗。
 | D31 | Shell 判断复刻采用混合方案（回答 D22）：规则匹配语义交给用户已装 codex 二进制的只读 `codex execpolicy check`（经 Hook 调用进程树定位发起审批的那个 codex 可执行文件，保证版本精确一致）；AskHuman 只复刻输入重建、脚本拆分与候选派生，全程 fail-closed。该命令只做规则评估引擎，不当完整审批 oracle（层叠、分段、heuristics、请求阶段仍由外围证明，见 D29） |
 | D32 | 复刻 `parse_shell_lc_plain_commands` 的 bash -lc 脚本拆分（与 Codex 同版本 tree-sitter-bash + 相同的节点白名单语义）；解析结果为 None 或与 Codex 语义不可证一致时，不产生任何记忆候选，也不自动放行 |
 | D33 | 规则层叠发现复刻 user 层（`$CODEX_HOME/rules/`）、system 配置文件层与项目层（cwd 到项目根逐级 `.codex/`，含 projects 信任判定、路径规范化与 worktree 根解析）；检测到 MDM / 企业云配置 bundle / requirements `exec_policy` / `ignore_user_and_project_exec_policy_rules` 时整体禁用 Shell 记忆增强，回到基础弹窗 |
-| D34 | 复刻 heuristics 判定（`is_known_safe_command`、`dangerous_command_match`、`render_decision_for_unmatched_command`、amendment 派生与禁选前缀表），并与已验证的 Codex 版本上限绑定；上游同步责任按 §6.4 的维护纪律执行 |
-| D35 | 已装 codex 版本超出已验证上限时降级而非全关：保留永久选项写入与“纯规则命中”的判断（由装机二进制评估，不受列表漂移影响），禁用依赖 heuristics 的 auto-allow 与候选派生 |
+| D34 | 复刻 heuristics 判定（`is_known_safe_command`、`dangerous_command_match`、`render_decision_for_unmatched_command`、amendment 派生与禁选前缀表）；上游同步责任按 §6.4 的维护纪律执行 |
+| D35 | 版本门控只设下限、不设上限（2026-07-18 修订，用户定案）：下限 0.122（PermissionRequest hook 引入版本，再往前 hook 不存在）；低于下限禁用 Shell 记忆（fail-closed）。高于已审计版本（`VERIFIED_CODEX_VERSION_CEILING`，当前 0.145-alpha）保持启用、仅记日志留痕。放宽依据：①拆分 fail-closed，解析不了自动降级；②auto-allow 只认 execpolicy 显式 allow，且 `execpolicy check` 调用用户装机 codex，语义随用户版本；③永久 prefix 落盘前用装机 codex verify（D45）；④对拍 git 历史证实 0.122 以来 Unix 侧安全逻辑变更均为我方已携带的收紧方向（0.126 git -C、0.129 heredoc/分页、0.145-alpha rm 强化），其余是 Windows/PowerShell 专属 |
 | D36 | 能证明本次审批会路由给 guardian（rollout `TurnContextItem` 显示 `approvals_reviewer = auto_review` 且 `approval_policy ∈ {on-request, granular}`，即 `routes_approval_to_guardian_with_reviewer` 条件）时，Hook 不弹窗、不作裁决（exit 0 无 stdout），交回原生流程；原生此时由 guardian 自动审、用户不会被问，AskHuman 弹窗只会多问。无法证明时维持现有弹窗。turn 级 `strict_auto_review`（动态 `request_permissions` 授权触发）不在 TurnContextItem 中，按 D43 保守识别 |
 | D37 | network / MCP 的会话级记忆属于达成北极星（作答次数 ≤ 原生）的必做范围，不是可选优化；识别与写入方式已按 D39/D40 定案 |
 | D38 | 放宽 D18：普通 Shell 增加 AskHuman 自有的会话级选项，两档——精确命令级（脚本可完整拆分、所有命令不命中 dangerous 列表、版本在已验证窗口内时提供，“本对话不再询问这些确切命令”，全 token 精确匹配入库）与前缀级（仅当模型自带 `prefix_rule` 且通过与永久选项相同验证时提供，“本对话允许 `<prefix>` 开头的命令”）。匹配语义是 AskHuman 自有的 token 精确/前缀匹配，复用 §6.2 session rule 存储与管理面板；auto-allow 需每条命令被（精确命令集 ∪ 前缀集）覆盖、全部不命中 dangerous 列表并通过 guardian / retry 防护（D29/D36）。会话级与永久选项可同时展示：允许一次 / 本对话 / 始终 / 拒绝 |
@@ -406,14 +406,14 @@ MCP、network 的 permanent 即时层已按 §6.5 定案为“原生写入 + 会
 | 规则匹配语义（prefix/network/host_executable、Starlark 解析） | **不复刻**：调用已装 codex 二进制的 `codex execpolicy check --rules <file>... -- <tokens>`（2025-11-20 引入的只读评估 CLI，输出 matchedRules + decision JSON，无副作用） | 漂移风险最大的部分交给与运行中 Codex 完全同版本的二进制（D31） |
 | bash -lc 脚本拆分 | **复刻** `parse_shell_lc_plain_commands`（tree-sitter-bash 版本对齐 Codex Cargo.lock + 相同节点白名单）；`bash.rs` 近 6 个月改过 7 次，属版本绑定面 | D32 |
 | 规则层叠发现 | **复刻常用层**：user + system 文件层 + 项目层（信任判定）；MDM / 企业云 / requirements 只做存在性检测，检测到即禁用记忆增强 | D33，移植量约 300–400 行，信任判定可用 Codex 自身测试对拍 |
-| heuristics 兜底与候选派生 | **复刻**（约 800 行判定逻辑 + 对拍测试），绑定已验证版本上限 | D34–D35 |
+| heuristics 兜底与候选派生 | **复刻**（约 800 行判定逻辑 + 对拍测试），版本门控只设下限 0.122，超出已审计版本仅记日志 | D34–D35 |
 
 关键输入的来源与失败处理：
 
 - 命令 argv：Hook `tool_input.command` 为脚本原文，按 `[shell, -lc, script]` 包装后与 Codex 解析路径语义等价（bash/zsh/sh 同路径；无法识别的 shell 类型 fail-closed）。
 - `approval_policy` / `permission_profile` / `approvals_reviewer`：读 rollout 当前 turn 的 `TurnContextItem`（每 turn 首次采样前已落盘）；缺失或旧 schema 即放弃记忆增强（D23）。
 - 模型自带 `prefix_rule` / `sandbox_permissions` / `justification`：读 rollout 对应 FunctionCall arguments；Hook 无 `call_id`，必须以 `turn_id` + 命令原文唯一关联，存在歧义即放弃。
-- codex 二进制定位：Hook 进程的父进程链中的 codex 可执行文件；`--version` 同时用于 D34/D35 的版本窗口判定。
+- codex 二进制定位：Hook 进程的父进程链中的 codex 可执行文件；`--version` 同时用于 D34/D35 的版本下限判定。
 - auto-allow 防误放行沿用 D29/D36，retry 与 turn 级 strict_auto_review 的处理按 D42/D43（§6.1.2）。
 
 ### 6.1.2 retry 安全性与 turn 级 strict_auto_review（D42–D45，2026-07-18 定案）
@@ -484,11 +484,13 @@ D41 的跨会话 shadow 授权（插件 / codex_apps MCP“始终允许”）不
 
 ### 6.4 复刻逻辑的维护纪律（随 D34 生效）
 
-复刻组件与 Codex 上游存在持续同步义务，失同步的风险不对称：列表过时导致“少给选项”只是覆盖率损失，
-而 auto-allow 放行了新版 Codex 会拦的命令是真实安全风险，因此必须由 D35 的版本上限挡住。
+复刻组件与 Codex 上游存在持续同步义务。失同步的主要后果是覆盖率损失（少给选项）；auto-allow
+路径不依赖复刻列表（只认装机 codex 的 execpolicy 显式 allow，见 D35 修订），因此不再用版本上限
+挡新版本，改为日志留痕 + 定期对拍。
 
-- 实现中维护一个显式的 `VERIFIED_CODEX_VERSION_CEILING` 常量，与复刻来源的 Codex commit 一并记录；
-- 每次抬升上限前，重新对拍以下上游文件的变更：`shell-command/src/bash.rs`、
+- 实现中维护显式的 `VERIFIED_CODEX_VERSION_FLOOR`（0.122，硬下限）与 `VERIFIED_CODEX_VERSION_CEILING`
+  （最近一次逐行对拍的版本，仅用于“超出即记日志”），与复刻来源的 Codex commit 一并记录；
+- 每次抬升已审计版本前，重新对拍以下上游文件的变更：`shell-command/src/bash.rs`、
   `command_safety/is_safe_command.rs`、`command_safety/is_dangerous_command.rs`、
   `core/src/exec_policy.rs`（fallback / amendment 派生 / 禁选前缀表）、`config/src/loader/`（层叠与信任）、
   `execpolicy check` 的 CLI 契约；
@@ -648,7 +650,7 @@ codex execpolicy check --rules <path> [--rules <path> ...] [--resolve-host-execu
 - 每个拆分段单独一次调用（或逐段传入多次调用）；D42 的 auto-allow 要求**每段**的 matchedRules 中存在
   policy 来源、`decision == allow` 的命中（对应 Codex `bypass_sandbox` 判定），仅 `decision` 字段为
   allow 但依赖 heuristics 的组合不成立（该 CLI 不含 heuristics，故天然满足）。
-- 二进制定位：Hook 进程父链中的 codex 可执行文件（D31）；`codex --version` 用于 D34/D35 版本窗口。
+- 二进制定位：Hook 进程父链中的 codex 可执行文件（D31）；`codex --version` 用于 D34/D35 版本下限判定。
 
 ### 9.3 `default.rules` 写入契约（Shell / network 永久）
 
