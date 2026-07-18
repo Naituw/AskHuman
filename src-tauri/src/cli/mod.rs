@@ -457,10 +457,86 @@ fn try_whats_next_auto(project: &str, message: &crate::models::MessagePrompt, la
 /// Total whats-next option limit, including suggestions, todos, and the final end option.
 const WHATS_NEXT_MAX_OPTIONS: usize = 10;
 
+/// Normalize agent suggestion text for end-option detection: drop all whitespace and
+/// punctuation/symbols, lowercase letters. Compared as a whole string only (no substring).
+fn normalize_whats_next_option_key(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// Agent-supplied end-ish labels (normalized keys). Built-in i18n end strings are always
+/// checked separately for both languages. Whole-key equality only — longer real tasks
+/// that merely contain these words (e.g. "结束本轮的文档") are kept.
+const SPURIOUS_WHATS_NEXT_END_KEYS: &[&str] = &[
+    // Chinese
+    "结束本轮",
+    "结束对话",
+    "结束会话",
+    "结束",
+    "收工",
+    "没有更多",
+    "没有更多任务",
+    "没有更多工作",
+    "无事可做",
+    "没事了",
+    "没有了",
+    "先这样",
+    "不用了",
+    "就到这里",
+    "可以结束了",
+    // English
+    "endthisturn",
+    "endtheturn",
+    "endturn",
+    "endthissession",
+    "endsession",
+    "endconversation",
+    "endthisconversation",
+    "nomore",
+    "nomorework",
+    "nomoretasks",
+    "nomoretodos",
+    "nothingelse",
+    "nothingtodo",
+    "alldone",
+    "weredone",
+    "wearedone",
+    "nofurtherwork",
+    "nofurthertasks",
+    "stop",
+    "done",
+    "finish",
+    "finished",
+];
+
+/// True when a caller `-o` / MCP option is a mistaken "end this turn" stand-in and must be
+/// dropped so only AskHuman's built-in end option remains.
+fn is_spurious_whats_next_end_option(text: &str) -> bool {
+    let key = normalize_whats_next_option_key(text);
+    if key.is_empty() {
+        return false;
+    }
+    if SPURIOUS_WHATS_NEXT_END_KEYS.contains(&key.as_str()) {
+        return true;
+    }
+    // Built-in labels in both UI languages (agent lang may disagree with current UI lang).
+    for lang in [Lang::Zh, Lang::En] {
+        if key == normalize_whats_next_option_key(i18n::tr(lang, "whatsNext.endOption")) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Build the fixed whats-next question (spec todo-whats-next D2): `-o`/`-o!` suggestions first,
 /// project todo chips next, and the end option last. Suggestions consume the ten-option capacity
 /// first and are silently truncated; todos fill the remainder in FIFO order. Auto-run takeover
 /// happens before this function is called.
+///
+/// Caller suggestions that look like an end/stop/no-more-work choice are dropped: the protocol
+/// forbids agents from supplying those; AskHuman always appends the sole built-in end option.
 fn whats_next_question(
     project: &str,
     suggestions: &[args::OptArg],
@@ -479,6 +555,7 @@ fn whats_next_question_from_entries(
     let task_slots = WHATS_NEXT_MAX_OPTIONS - 1;
     let mut options: Vec<crate::models::OptionItem> = suggestions
         .iter()
+        .filter(|option| !is_spurious_whats_next_end_option(&option.text))
         .take(task_slots)
         .map(|option| crate::models::OptionItem::new(&option.text, option.recommended))
         .collect();
@@ -634,5 +711,100 @@ mod tests {
             "End this turn"
         );
         assert_eq!(question.message, "What should we do next?");
+    }
+
+    #[test]
+    fn normalize_strips_whitespace_and_punctuation() {
+        assert_eq!(
+            normalize_whats_next_option_key("End this turn!"),
+            "endthisturn"
+        );
+        assert_eq!(
+            normalize_whats_next_option_key("  结束本轮。 "),
+            "结束本轮"
+        );
+        assert_eq!(
+            normalize_whats_next_option_key("We're done"),
+            "weredone"
+        );
+        assert_eq!(
+            normalize_whats_next_option_key("No more tasks"),
+            "nomoretasks"
+        );
+    }
+
+    #[test]
+    fn spurious_end_detector_matches_table_and_builtin() {
+        assert!(is_spurious_whats_next_end_option("End this turn"));
+        assert!(is_spurious_whats_next_end_option("结束本轮"));
+        assert!(is_spurious_whats_next_end_option("  结束本轮。"));
+        assert!(is_spurious_whats_next_end_option("no more tasks!"));
+        assert!(is_spurious_whats_next_end_option("Stop"));
+        assert!(is_spurious_whats_next_end_option("先这样"));
+        assert!(is_spurious_whats_next_end_option("We're done"));
+        // Real tasks that only contain end-ish words stay.
+        assert!(!is_spurious_whats_next_end_option("结束本轮的文档撰写"));
+        assert!(!is_spurious_whats_next_end_option("Stop the flaky e2e suite"));
+        assert!(!is_spurious_whats_next_end_option("Write docs"));
+    }
+
+    #[test]
+    fn whats_next_drops_spurious_end_suggestions_and_keeps_one_builtin() {
+        let question = whats_next_question_from_entries(
+            &[
+                suggestion("Write docs", false),
+                suggestion("结束本轮", false),
+                suggestion("End this turn", true),
+                suggestion("no more work", false),
+                suggestion("Add tests", true),
+            ],
+            (1..=10).map(todo).collect(),
+            Lang::Zh,
+        );
+
+        let labels: Vec<&str> = question
+            .predefined_options
+            .iter()
+            .map(|o| o.text.as_str())
+            .collect();
+        assert!(labels.contains(&"Write docs"));
+        assert!(labels.contains(&"Add tests"));
+        // Only the final built-in end option (Chinese UI); agent end-ish labels dropped.
+        assert_eq!(labels.last().copied(), Some("结束本轮"));
+        assert_eq!(
+            labels.iter().filter(|t| **t == "结束本轮").count(),
+            1,
+            "{labels:?}"
+        );
+        assert!(
+            labels[..labels.len() - 1]
+                .iter()
+                .all(|t| !is_spurious_whats_next_end_option(t)),
+            "{labels:?}"
+        );
+        // Dropped end-ish suggestions free slots for more todos.
+        assert!(
+            question
+                .predefined_options
+                .iter()
+                .filter(|o| o.todo_id.is_some())
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn whats_next_all_spurious_suggestions_leave_only_end_when_no_todos() {
+        let question = whats_next_question_from_entries(
+            &[
+                suggestion("End this turn", false),
+                suggestion("收工", false),
+                suggestion("done", false),
+            ],
+            vec![],
+            Lang::En,
+        );
+        assert_eq!(question.predefined_options.len(), 1);
+        assert_eq!(question.predefined_options[0].text, "End this turn");
     }
 }
