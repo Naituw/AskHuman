@@ -111,6 +111,29 @@ pub fn dispatch() {
                 crate::config::AppConfig::load_without_secrets(),
             );
         }
+        // 独立待办窗口：预选当前项目（与 `--history` 同探测规则）；窗内仍可切换项目。
+        "--todos" => {
+            #[cfg(unix)]
+            {
+                let project = crate::project::detect();
+                if crate::gui_host::host_open(
+                    crate::gui_host::WindowKind::Todos,
+                    false,
+                    Some(project.clone()),
+                    None,
+                )
+                .is_ok()
+                {
+                    exit(0);
+                }
+                crate::app::run_todos(project, crate::config::AppConfig::load_without_secrets());
+            }
+            #[cfg(not(unix))]
+            {
+                eprintln!("--todos is not supported on this platform");
+                exit(1);
+            }
+        }
         // 隐藏的统一 GUI 宿主角色（spec D2）：单实例托盘 + 设置/历史/Agent 窗口宿主。
         // 由 CLI 路由 / daemon 按需 spawn；抢宿主单实例锁失败即直接退出（已有宿主在跑）。
         "--gui-host" => {

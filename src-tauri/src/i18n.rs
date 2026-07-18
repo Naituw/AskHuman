@@ -255,6 +255,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         ),
         "app.settingsLaunchFailed" => pick(lang, "failed to launch settings: {e}", "无法启动设置界面: {e}"),
         "app.historyLaunchFailed" => pick(lang, "failed to launch history window: {e}", "无法启动历史窗口: {e}"),
+        "app.todosLaunchFailed" => pick(lang, "failed to launch todos window: {e}", "无法启动待办窗口: {e}"),
         "app.agentsLaunchFailed" => pick(lang, "failed to launch agents window: {e}", "无法启动 Agent 状态窗口: {e}"),
         "app.noDisplay" => pick(
             lang,

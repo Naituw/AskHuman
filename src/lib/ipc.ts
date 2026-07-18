@@ -376,6 +376,10 @@ export const todosAdd = (project: string, text: string, auto = false) =>
 export const todosSetAuto = (project: string, id: string, auto: boolean) =>
   invoke<boolean | null>("todos_set_auto", { project, id, auto });
 
+/** Update pending todo text (GUI double-click edit). Returns stored text or null. */
+export const todosSetText = (project: string, id: string, text: string) =>
+  invoke<string | null>("todos_set_text", { project, id, text });
+
 export const todosRemove = (project: string, id: string) =>
   invoke<boolean>("todos_remove", { project, id });
 

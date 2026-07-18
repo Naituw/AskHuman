@@ -210,6 +210,13 @@ pub fn set_auto(project: &str, id: &str, auto: bool) -> Option<bool> {
     set_auto_at(&todos_file(), &todos_lock(), project, id, auto)
 }
 
+/// Update the text of one pending entry (GUI double-click edit). Keeps id / created_at / auto /
+/// agent_kind. Returns the stored text after trim, or `None` if the entry is missing or the
+/// new text is empty after trim.
+pub fn set_text(project: &str, id: &str, text: &str) -> Option<String> {
+    set_text_at(&todos_file(), &todos_lock(), project, id, text)
+}
+
 /// Front-most auto-run entry of a project (whats-next auto-dispatch, round 17).
 pub fn first_auto(project: &str) -> Option<TodoEntry> {
     list(project).into_iter().find(|e| e.auto)
@@ -372,6 +379,34 @@ pub fn set_auto_at(path: &Path, lock: &Path, project: &str, id: &str, auto: bool
     entry.auto = auto;
     store_at(path, data);
     Some(auto)
+}
+
+pub fn set_text_at(
+    path: &Path,
+    lock: &Path,
+    project: &str,
+    id: &str,
+    text: &str,
+) -> Option<String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return None;
+    }
+    let _guard = lock_at(lock);
+    let mut data = load_at(path);
+    let entry = data
+        .projects
+        .get_mut(project.trim())?
+        .iter_mut()
+        .find(|e| e.id == id)?;
+    if entry.text == text {
+        return Some(text);
+    }
+    entry.text = text.clone();
+    if !store_at(path, data) {
+        return None;
+    }
+    Some(text)
 }
 
 pub fn remove_at(path: &Path, lock: &Path, project: &str, id: &str) -> bool {
@@ -645,6 +680,23 @@ mod tests {
         // Project key pruned from file.
         let raw = std::fs::read_to_string(t.file()).unwrap();
         assert!(!raw.contains("/p"));
+    }
+
+    #[test]
+    fn set_text_updates_trim_keeps_id_and_rejects_empty() {
+        let t = TempStore::new();
+        let a = add_at(&t.file(), &t.lock(), "/p", "old").unwrap();
+        let id = a.id.clone();
+        let stored = set_text_at(&t.file(), &t.lock(), "/p", &id, "  new line\ntext  ").unwrap();
+        assert_eq!(stored, "new line\ntext");
+        let entries = list_at(&t.file(), "/p");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, id);
+        assert_eq!(entries[0].text, "new line\ntext");
+        assert_eq!(entries[0].created_at_ms, a.created_at_ms);
+        assert!(set_text_at(&t.file(), &t.lock(), "/p", &id, "   ").is_none());
+        assert_eq!(list_at(&t.file(), "/p")[0].text, "new line\ntext");
+        assert!(set_text_at(&t.file(), &t.lock(), "/p", "missing", "x").is_none());
     }
 
     #[test]

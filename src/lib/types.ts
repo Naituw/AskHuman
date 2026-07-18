@@ -222,6 +222,8 @@ export interface TodoProjectInfo {
 export interface TodosInit {
   theme: ThemeMode;
   lang: string;
+  /** 与弹窗一致的提交快捷键（添加待办）。 */
+  popupSubmitKey: PopupSubmitKey;
 }
 
 export interface Question {

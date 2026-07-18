@@ -1,8 +1,8 @@
 //! 统一 GUI 宿主进程的「自有 IPC」协议与客户端（spec D2/D3/D13）。
 //!
-//! 宿主进程（`AskHuman --gui-host`）单实例承载托盘图标 + 设置/历史/Agent 窗口。它另起一条
+//! 宿主进程（`AskHuman --gui-host`）单实例承载托盘图标 + 设置/历史/待办/Agent 窗口。它另起一条
 //! **与 daemon 解耦**的 Unix socket（`~/.askhuman/gui-host.sock`），接收来自 CLI（`--settings`
-//! /`--history`/`agents monitor`）与弹窗导航按钮的「打开窗口」请求，从而保证每类窗口全局唯一。
+//! /`--history`/`--todos`/`agents monitor`）与弹窗导航按钮的「打开窗口」请求，从而保证每类窗口全局唯一。
 //!
 //! 传输复用 `ipc::codec` 的 NDJSON 编解码；协议见 `HostMsg`。客户端入口为 `host_open`。
 //! 宿主侧的监听 / 窗口管理 / 托盘逻辑见 `app::gui_host`。

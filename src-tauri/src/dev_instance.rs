@@ -81,7 +81,7 @@ pub fn classify_command(argv: &[String]) -> CommandClass {
         "dev" | "--help" | "-h" | "--version" | "-v" | "--agent-help" | "--scripting-help" => {
             CommandClass::Meta
         }
-        "--settings" | "--history" | "config" | "channel" => CommandClass::Config,
+        "--settings" | "--history" | "--todos" | "config" | "channel" => CommandClass::Config,
         _ => CommandClass::Runtime,
     }
 }
@@ -218,6 +218,7 @@ mod tests {
             classify_command(&prog(&["--settings"])),
             CommandClass::Config
         );
+        assert_eq!(classify_command(&prog(&["--todos"])), CommandClass::Config);
         assert_eq!(
             classify_command(&prog(&["channel", "list"])),
             CommandClass::Config

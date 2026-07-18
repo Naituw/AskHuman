@@ -334,6 +334,12 @@ pub fn todos_set_auto(project: String, id: String, auto: bool) -> Option<bool> {
     crate::todos::set_auto(&project, &id, auto)
 }
 
+/// 修改待办正文（GUI 双击编辑）；返回落盘后的文本，条目不存在或空文本返回 None。
+#[tauri::command]
+pub fn todos_set_text(project: String, id: String, text: String) -> Option<String> {
+    crate::todos::set_text(&project, &id, &text)
+}
+
 #[tauri::command]
 pub fn todos_remove(project: String, id: String) -> bool {
     crate::todos::remove(&project, &id)
@@ -381,6 +387,8 @@ pub fn todos_history_clear(project: String) -> usize {
 pub struct TodosInit {
     theme: String,
     lang: String,
+    /// 与弹窗一致的提交快捷键：`cmdEnter`（⌘/Ctrl+Enter）或 `enter`（裸 Enter）。
+    popup_submit_key: String,
 }
 
 #[tauri::command]
@@ -393,6 +401,7 @@ pub fn todos_init() -> TodosInit {
         lang: crate::i18n::Lang::resolve(&config.general.language)
             .code()
             .to_string(),
+        popup_submit_key: config.general.popup_submit_key.as_str().to_string(),
     }
 }
 

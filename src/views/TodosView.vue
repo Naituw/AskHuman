@@ -18,8 +18,10 @@ import {
   todosReorder,
   todosRestore,
   todosSetAuto,
+  todosSetText,
 } from "../lib/ipc";
 import type {
+  PopupSubmitKey,
   ThemeMode,
   TodoDoneEntry,
   TodoEntry,
@@ -27,6 +29,20 @@ import type {
 } from "../lib/types";
 
 const { t, locale } = useI18n();
+
+/** Same setting as the popup submit shortcut (`settings.popupBehavior.submitKey`). */
+const popupSubmitKey = ref<PopupSubmitKey>("cmdEnter");
+const submitWithBareEnter = computed(() => popupSubmitKey.value === "enter");
+/** Badge on the Add button — matches popup (`⌘↵` / `↵`). */
+const submitKeyLabel = computed(() =>
+  submitWithBareEnter.value ? "↵" : "⌘↵"
+);
+
+function applyPopupSubmitKey(value: unknown): void {
+  if (value === "enter" || value === "cmdEnter") {
+    popupSubmitKey.value = value;
+  }
+}
 
 const projects = ref<TodoProjectInfo[]>([]);
 const selected = ref<string>("");
@@ -48,13 +64,37 @@ const newText = ref("");
 const confirmKind = ref<"todos" | "history" | null>(null);
 // 防连点重复新增（Enter 连击）。
 const adding = ref(false);
-const addInputRef = ref<HTMLInputElement | null>(null);
+const addInputRef = ref<HTMLTextAreaElement | null>(null);
+
+// Multi-line add box: ~2.5 lines default, grow to ~6 lines, then scroll inside.
+const ADD_INPUT_MIN_PX = 56;
+const ADD_INPUT_MAX_PX = 132;
 
 // 带预选项目打开（托盘 agent「添加待办」/ AgentsView 入口）＝为该项目记想法而来 →
 // 自动聚焦新增输入框（footer 在数据加载后才渲染，故 nextTick）。
 async function focusAddInput(): Promise<void> {
   await nextTick();
   addInputRef.value?.focus();
+  syncAddInputHeight();
+}
+
+function syncTextareaHeight(
+  el: HTMLTextAreaElement | null | undefined,
+  minPx: number,
+  maxPx: number
+): void {
+  if (!el) return;
+  // height:auto + overflow:hidden so scrollHeight is the full content height
+  // (min-height / fixed height would clamp the measurement).
+  el.style.height = "auto";
+  el.style.overflow = "hidden";
+  const content = el.scrollHeight;
+  el.style.overflow = "auto";
+  el.style.height = `${Math.min(maxPx, Math.max(minPx, content))}px`;
+}
+
+function syncAddInputHeight(): void {
+  syncTextareaHeight(addInputRef.value, ADD_INPUT_MIN_PX, ADD_INPUT_MAX_PX);
 }
 
 function basename(key: string): string {
@@ -146,6 +186,7 @@ async function reloadAll(): Promise<void> {
 async function onSelect(): Promise<void> {
   confirmKind.value = null;
   confirmDeleteId.value = null;
+  cancelEdit();
   histOpen.value = false;
   clearAllPendingComplete();
   await reloadEntries();
@@ -181,6 +222,8 @@ async function addEntry(): Promise<void> {
   try {
     await todosAdd(selected.value, text, newAuto.value);
     newText.value = "";
+    await nextTick();
+    syncAddInputHeight();
     await reloadAll();
   } catch (err) {
     console.warn("todo add failed", err);
@@ -201,11 +244,119 @@ async function toggleAuto(e: TodoEntry): Promise<void> {
 }
 
 function onNewKeydown(e: KeyboardEvent): void {
-  // isComposing：IME 组词中的 Enter 不当提交。
-  if (e.key === "Enter" && !e.isComposing) {
-    e.preventDefault();
-    void addEntry();
+  // Align with popup submit: cmdEnter (default) = ⌘/Ctrl+Enter; enter = bare Enter.
+  // Non-submit Enter (or mod+Enter in enter mode) inserts a newline in the textarea.
+  // isComposing / keyCode 229：IME 组词中的 Enter 不当提交。
+  if (e.key !== "Enter") return;
+  if (e.isComposing || (e as KeyboardEvent & { keyCode?: number }).keyCode === 229) {
+    return;
   }
+  const mod = e.metaKey || e.ctrlKey;
+  const anyMod = mod || e.shiftKey || e.altKey;
+  const isPrimarySendMod = mod && !e.shiftKey && !e.altKey;
+  const shouldSubmit = submitWithBareEnter.value ? !anyMod : isPrimarySendMod;
+  if (!shouldSubmit) return;
+  e.preventDefault();
+  void addEntry();
+}
+
+function onNewInput(): void {
+  syncAddInputHeight();
+}
+
+// ===== 行内编辑：复制旁「编辑」进入；变成「保存 / 取消」；提交键保存、Esc 取消 =====
+const editingId = ref<string | null>(null);
+const editText = ref("");
+const editSaving = ref(false);
+/** Function ref — plain `ref` inside `v-for` becomes an array in Vue 3. */
+const editInputRef = ref<HTMLTextAreaElement | null>(null);
+
+function setEditInputRef(el: unknown): void {
+  editInputRef.value = el instanceof HTMLTextAreaElement ? el : null;
+}
+
+// Inline edit box: at least ~2 lines, grow with content up to ~6 lines.
+const EDIT_INPUT_MIN_PX = 48;
+const EDIT_INPUT_MAX_PX = 132;
+
+async function beginEdit(e: TodoEntry): Promise<void> {
+  if (isCompleting(e.id) || editSaving.value) return;
+  if (editingId.value === e.id) return;
+  // Switching rows: discard the previous draft (explicit Save only).
+  if (editingId.value) {
+    cancelEdit();
+  }
+  confirmDeleteId.value = null;
+  editingId.value = e.id;
+  editText.value = e.text;
+  await nextTick();
+  const el = editInputRef.value;
+  if (el) {
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+    syncEditInputHeight();
+  }
+}
+
+function syncEditInputHeight(): void {
+  syncTextareaHeight(editInputRef.value, EDIT_INPUT_MIN_PX, EDIT_INPUT_MAX_PX);
+}
+
+function onEditInput(): void {
+  // Remeasure after the value is in the DOM.
+  void nextTick(() => syncEditInputHeight());
+}
+
+function cancelEdit(): void {
+  editingId.value = null;
+  editText.value = "";
+}
+
+async function commitEdit(): Promise<void> {
+  const id = editingId.value;
+  if (!id || !selected.value || editSaving.value) return;
+  const text = editText.value.trim();
+  const original = entries.value.find((e) => e.id === id)?.text ?? "";
+  if (!text) return; // Keep editing; Save stays disabled in UI when empty.
+  if (text === original) {
+    cancelEdit();
+    return;
+  }
+  editSaving.value = true;
+  try {
+    const stored = await todosSetText(selected.value, id, text);
+    if (stored != null) {
+      // Optimistic local update; todos-updated / reload will converge.
+      const row = entries.value.find((e) => e.id === id);
+      if (row) row.text = stored;
+    }
+    editingId.value = null;
+    editText.value = "";
+  } catch (err) {
+    console.warn("todo set text failed", err);
+  } finally {
+    editSaving.value = false;
+  }
+}
+
+function onEditKeydown(e: KeyboardEvent): void {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    cancelEdit();
+    return;
+  }
+  // Same submit shortcut as add / popup.
+  if (e.key !== "Enter") return;
+  if (e.isComposing || (e as KeyboardEvent & { keyCode?: number }).keyCode === 229) {
+    return;
+  }
+  const mod = e.metaKey || e.ctrlKey;
+  const anyMod = mod || e.shiftKey || e.altKey;
+  const isPrimarySendMod = mod && !e.shiftKey && !e.altKey;
+  const shouldSubmit = submitWithBareEnter.value ? !anyMod : isPrimarySendMod;
+  if (!shouldSubmit) return;
+  e.preventDefault();
+  void commitEdit();
 }
 
 // 删除二次确认（第 13 轮定案，防误删）：首次点 ✕ 该行按钮变「确认删除」文字，再点才删；
@@ -436,19 +587,22 @@ onMounted(async () => {
     const init = await todosInit();
     applyTheme(init.theme);
     applyLanguage(init.lang);
+    applyPopupSubmitKey(init.popupSubmitKey);
   } catch {
     /* 读取失败：保持兜底外观 */
   }
   const preselect = new URLSearchParams(window.location.search).get("project");
   if (preselect) selected.value = preselect;
-  // 设置变更实时生效（主题/语言与设置窗口同宿主进程广播）。
-  unlistenSettings = await listen<{ theme?: ThemeMode; language?: string }>(
-    "settings-updated",
-    (e) => {
-      if (typeof e.payload.theme === "string") applyTheme(e.payload.theme);
-      if (typeof e.payload.language === "string") applyLanguage(e.payload.language);
-    }
-  );
+  // 设置变更实时生效（主题/语言/提交快捷键与设置窗口同宿主进程广播）。
+  unlistenSettings = await listen<{
+    theme?: ThemeMode;
+    language?: string;
+    popupSubmitKey?: PopupSubmitKey;
+  }>("settings-updated", (e) => {
+    if (typeof e.payload.theme === "string") applyTheme(e.payload.theme);
+    if (typeof e.payload.language === "string") applyLanguage(e.payload.language);
+    applyPopupSubmitKey(e.payload.popupSubmitKey);
+  });
   // todos.json 被任意进程改写（CLI/弹窗/出队）→ 宿主文件监听推事件 → 重载。
   unlistenUpdated = await listen("todos-updated", () => {
     void reloadAll();
@@ -603,7 +757,19 @@ onBeforeUnmount(() => {
 
           <div class="td-main">
             <div class="td-top">
-              <span class="td-text">{{ e.text }}</span>
+              <textarea
+                v-if="editingId === e.id"
+                :ref="setEditInputRef"
+                v-model="editText"
+                class="td-edit"
+                rows="1"
+                :disabled="editSaving"
+                :aria-label="t('todosWin.editLabel')"
+                @click.stop
+                @keydown="onEditKeydown"
+                @input="onEditInput"
+              />
+              <span v-else class="td-text">{{ e.text }}</span>
               <button
                 v-if="confirmDeleteId === e.id"
                 type="button"
@@ -676,7 +842,7 @@ onBeforeUnmount(() => {
                 :aria-label="
                   copiedId === e.id ? t('todosWin.copied') : t('todosWin.copy')
                 "
-                @click.stop="copyTodoText(e.id, e.text)"
+                @click.stop="copyTodoText(e.id, editingId === e.id ? editText : e.text)"
               >
                 <svg
                   v-if="copiedId === e.id"
@@ -705,6 +871,51 @@ onBeforeUnmount(() => {
                   />
                   <path
                     d="M3 8 V3.2 A1.2 1.2 0 0 1 4.2 2 H8"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              </button>
+              <!-- Edit (right of copy) → becomes Save + Cancel while editing. -->
+              <template v-if="editingId === e.id">
+                <button
+                  type="button"
+                  class="td-edit-action td-edit-save"
+                  :disabled="editSaving || !editText.trim()"
+                  @click.stop="commitEdit"
+                >
+                  {{ t("todosWin.save") }}
+                </button>
+                <button
+                  type="button"
+                  class="td-edit-action td-edit-cancel"
+                  :disabled="editSaving"
+                  @click.stop="cancelEdit"
+                >
+                  {{ t("todosWin.editCancel") }}
+                </button>
+              </template>
+              <button
+                v-else
+                type="button"
+                class="td-edit-btn"
+                :title="t('todosWin.edit')"
+                :aria-label="t('todosWin.edit')"
+                :disabled="isCompleting(e.id)"
+                @click.stop="beginEdit(e)"
+              >
+                <svg viewBox="0 0 12 12" aria-hidden="true">
+                  <path
+                    d="M8.4 1.6 L10.4 3.6 L4.2 9.8 L2 10 L2.2 7.8 Z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linejoin="round"
+                  />
+                  <path
+                    d="M7.3 2.7 L9.3 4.7"
                     fill="none"
                     stroke="currentColor"
                     stroke-width="1.2"
@@ -855,59 +1066,65 @@ onBeforeUnmount(() => {
 
     <footer v-if="projects.length" class="td-footer">
       <div class="td-add">
-        <input
+        <textarea
           ref="addInputRef"
           v-model="newText"
           class="td-input"
-          type="text"
+          rows="2"
           :placeholder="t('todosWin.addPlaceholder')"
           @keydown="onNewKeydown"
+          @input="onNewInput"
         />
-        <div
-          class="td-auto-hint-anchor"
-          @mouseenter="newAutoHintHovered = true"
-          @mouseleave="newAutoHintHovered = false"
-        >
+        <div class="td-add-actions">
+          <div
+            class="td-auto-hint-anchor"
+            @mouseenter="newAutoHintHovered = true"
+            @mouseleave="newAutoHintHovered = false"
+          >
+            <button
+              type="button"
+              class="td-auto td-auto-new"
+              :class="{ on: newAuto }"
+              :aria-label="newAuto ? t('todosWin.autoOff') : t('todosWin.autoOn')"
+              aria-describedby="todo-auto-new-hint"
+              :aria-pressed="newAuto"
+              @focus="onNewAutoFocus"
+              @blur="newAutoHintKeyboardFocused = false"
+              @click="toggleNewAuto"
+            >
+              <svg viewBox="0 0 12 12" aria-hidden="true">
+                <path
+                  d="M6.8 1 L2.5 7 H5.6 L5.2 11 L9.5 5 H6.4 Z"
+                  :fill="newAuto ? 'currentColor' : 'none'"
+                  stroke="currentColor"
+                  stroke-width="1"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>{{ t("todosWin.autoLabel") }}</span>
+            </button>
+            <div
+              v-show="
+                newAutoHintHovered || newAutoHintKeyboardFocused || newAutoHintPinned
+              "
+              id="todo-auto-new-hint"
+              class="td-auto-hint"
+              role="tooltip"
+              aria-live="polite"
+            >
+              {{ t("todosWin.autoNewHint") }}
+            </div>
+          </div>
           <button
             type="button"
-            class="td-auto td-auto-new"
-            :class="{ on: newAuto }"
-            :aria-label="newAuto ? t('todosWin.autoOff') : t('todosWin.autoOn')"
-            aria-describedby="todo-auto-new-hint"
-            :aria-pressed="newAuto"
-            @focus="onNewAutoFocus"
-            @blur="newAutoHintKeyboardFocused = false"
-            @click="toggleNewAuto"
+            class="td-btn td-btn-add"
+            :disabled="!newText.trim() || adding"
+            @click="addEntry"
           >
-            <svg viewBox="0 0 12 12" aria-hidden="true">
-              <path
-                d="M6.8 1 L2.5 7 H5.6 L5.2 11 L9.5 5 H6.4 Z"
-                :fill="newAuto ? 'currentColor' : 'none'"
-                stroke="currentColor"
-                stroke-width="1"
-                stroke-linejoin="round"
-              />
-            </svg>
-            <span>{{ t("todosWin.autoLabel") }}</span>
+            {{ t("todosWin.add") }}
+            <kbd class="sc">{{ submitKeyLabel }}</kbd>
           </button>
-          <div
-            v-show="newAutoHintHovered || newAutoHintKeyboardFocused || newAutoHintPinned"
-            id="todo-auto-new-hint"
-            class="td-auto-hint"
-            role="tooltip"
-            aria-live="polite"
-          >
-            {{ t("todosWin.autoNewHint") }}
-          </div>
         </div>
-        <button
-          type="button"
-          class="td-btn td-btn-add"
-          :disabled="!newText.trim() || adding"
-          @click="addEntry"
-        >
-          {{ t("todosWin.add") }}
-        </button>
       </div>
     </footer>
 
@@ -1151,6 +1368,102 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Inline edit field: control look; height driven by JS (min ~2 lines, max ~6). */
+.td-edit {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Do not set CSS min-height here — it clamps scrollHeight and blocks auto-grow. */
+  max-height: 132px;
+  height: 48px; /* initial floor before first JS measure */
+  resize: none;
+  overflow-y: auto;
+  margin: -2px 0 0;
+  padding: 6px 8px;
+  border: var(--hairline) solid color-mix(in srgb, #0a84ff 50%, var(--control-border));
+  border-radius: 7px;
+  background: var(--control-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-sizing: border-box;
+  box-shadow: var(--clickable-shadow);
+}
+.td-edit:focus,
+.td-edit:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, #0a84ff 70%, var(--control-border));
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
+}
+/* Pencil — same hover-only visibility as .td-copy (right of copy). */
+.td-edit-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  opacity: 0;
+  cursor: pointer;
+}
+.td-row:hover .td-edit-btn {
+  opacity: 0.75;
+}
+.td-edit-btn:hover:not(:disabled),
+.td-edit-btn:focus-visible:not(:disabled) {
+  opacity: 1;
+  color: #0a84ff;
+  background: color-mix(in srgb, #0a84ff 14%, transparent);
+}
+.td-edit-btn:disabled {
+  opacity: 0;
+  cursor: default;
+}
+.td-row:hover .td-edit-btn:disabled {
+  opacity: 0.3;
+}
+.td-edit-btn svg {
+  width: 12px;
+  height: 12px;
+}
+/* Save / Cancel replace the edit control while a row is being edited. */
+.td-edit-action {
+  flex: 0 0 auto;
+  appearance: none;
+  height: 18px;
+  padding: 0 7px;
+  border: var(--hairline) solid var(--control-border);
+  border-radius: 5px;
+  background: var(--control-bg);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.td-edit-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.td-edit-save {
+  border-color: transparent;
+  background: #0a84ff;
+  color: #fff;
+}
+.td-edit-save:hover:not(:disabled) {
+  background: #0071e3;
+}
+.td-edit-cancel:hover:not(:disabled) {
+  background: var(--control-hover-bg);
+}
 .td-meta {
   display: flex;
   align-items: center;
@@ -1367,23 +1680,40 @@ onBeforeUnmount(() => {
 }
 .td-add {
   display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 .td-input {
-  flex: 1 1 auto;
+  display: block;
+  width: 100%;
   min-width: 0;
+  /* Height from JS (min/max); avoid CSS min-height clamping scrollHeight. */
+  max-height: 132px;
+  height: 56px;
+  resize: none;
+  overflow-y: auto;
   border: var(--hairline) solid var(--control-border);
   border-radius: 7px;
   background: var(--control-bg);
   color: var(--text-primary);
+  font: inherit;
   font-size: 12px;
-  padding: 6px 9px;
+  line-height: 1.45;
+  padding: 7px 9px;
   box-shadow: var(--clickable-shadow);
+  box-sizing: border-box;
 }
 .td-input:focus,
 .td-input:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring), var(--clickable-shadow);
+}
+/* B1: actions under the full-width textarea, right-aligned. */
+.td-add-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .td-btn {
   appearance: none;
@@ -1412,6 +1742,18 @@ onBeforeUnmount(() => {
 }
 .td-btn-add:hover:not(:disabled) {
   background: #0071e3;
+}
+/* Shortcut badge on Add — same style idea as popup footer `.btn .sc`. */
+.td-btn .sc {
+  margin-left: 6px;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.85;
+  font-family: inherit;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: inherit;
 }
 .td-btn-danger {
   border-color: transparent;

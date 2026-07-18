@@ -66,6 +66,9 @@ enum View {
     History {
         all: bool,
     },
+    /// 独立项目待办窗口（`AskHuman --todos`）；预选项目取自 `AppState.project`。
+    #[cfg(unix)]
+    Todos,
     /// Agent 生命周期状态窗口（实验性功能，spec D13）：订阅 daemon 推送，动态更新。
     #[cfg(unix)]
     Agents,
@@ -633,6 +636,36 @@ pub fn run_history(project: String, all: bool, config: AppConfig) -> ! {
     std::process::exit(0);
 }
 
+/// 待办窗口模式：独立进程建窗（gui-host 不可用时的兜底；与 `--settings` / `--history` 同机制）。
+/// `project` 为预选项目 key（通常是 CLI cwd 的 git 根），写入 `AppState.project`。
+#[cfg(unix)]
+pub fn run_todos(project: String, config: AppConfig) -> ! {
+    let lang = Lang::resolve(&config.general.language);
+    let state = AppState {
+        interaction: InteractionRequest::Ask(AskRequest::new(
+            crate::models::MessagePrompt::default(),
+            Vec::new(),
+            false,
+        )),
+        popup_edit: None,
+        config,
+        source: crate::models::source_name(),
+        project,
+        agent_kind: None,
+        agent_pid: None,
+        created_at_ms: 0,
+    };
+    if let Err(e) = launch(state, View::Todos, None) {
+        stderr_redirect::eprintln_real(&format!(
+            "{}{}",
+            i18n::err_prefix(lang),
+            i18n::tr(lang, "app.todosLaunchFailed").replace("{e}", &e.to_string())
+        ));
+        std::process::exit(1);
+    }
+    std::process::exit(0);
+}
+
 /// Agent 状态窗口入口（`AskHuman agents status`，实验性功能 spec D13）：
 /// 创建窗口 + 订阅 daemon 推送，动态展示工作中 / 空闲 / 已结束的 agent。
 #[cfg(unix)]
@@ -981,6 +1014,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::commands::todos_clear,
             crate::commands::todos_reorder,
             crate::commands::todos_set_auto,
+            crate::commands::todos_set_text,
             crate::commands::todos_history,
             crate::commands::todos_restore,
             crate::commands::todos_history_clear,
@@ -1294,6 +1328,14 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                     let config = AppConfig::load_without_secrets();
                     // 进程内默认项目（AppState.project = CLI 探测的当前项目）→ 传 None 沿用。
                     create_history_window(app, &config, all, None, popup_pin(app, &config))?;
+                }
+                #[cfg(unix)]
+                View::Todos => {
+                    let config = AppConfig::load_without_secrets();
+                    // 预选项目在 AppState.project（CLI 探测的 cwd git 根）。
+                    let project = app.state::<AppState>().project.clone();
+                    let preselect = (!project.is_empty()).then_some(project.as_str());
+                    create_todos_window(app, &config, preselect, popup_pin(app, &config))?;
                 }
                 #[cfg(unix)]
                 View::GuiHost => {
