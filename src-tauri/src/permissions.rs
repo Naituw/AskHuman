@@ -106,6 +106,11 @@ enum MemoryLayer {
 
 fn memory_layer(agent: Agent, input: &Value, zh: bool) -> MemoryLayer {
     if agent != Agent::Codex {
+        // Claude keeps its native suggestion path; only the built-in AskHuman self-call
+        // whitelist (D49) applies, gated on explicit user ask/deny rules.
+        if agent == Agent::Claude && crate::permission_memory::claude_self_call(input) {
+            return MemoryLayer::AutoAllow;
+        }
         return MemoryLayer::Basic;
     }
     match crate::permission_memory::analyze_codex(input, zh) {

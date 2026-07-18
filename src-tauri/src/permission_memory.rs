@@ -820,6 +820,214 @@ fn mcp_self_call_at(tool_name: &str, cwd: &str, codex_home: &Path, current_exe: 
     defined
 }
 
+// ===== Claude Code self-call whitelist (D49) =====
+
+/// D49 for Claude Code: auto-allow AskHuman's own shell / MCP invocations. Claude has no
+/// guardian/rollout gate — its PermissionRequest hook only fires once Claude itself decided
+/// to ask the user — so the whitelist applies directly, gated on explicit user rules.
+pub fn claude_self_call(input: &Value) -> bool {
+    let Some(home) = claude_home() else {
+        return false;
+    };
+    let Ok(current) = std::env::current_exe() else {
+        return false;
+    };
+    claude_self_call_at(input, &home, &current, std::env::var_os("PATH").as_deref())
+}
+
+fn claude_home() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .filter(|home| home.starts_with('/'))
+        .map(PathBuf::from)
+}
+
+pub(crate) fn claude_self_call_at(
+    input: &Value,
+    home: &Path,
+    current_exe: &Path,
+    path_var: Option<&std::ffi::OsStr>,
+) -> bool {
+    let Some(object) = input.as_object() else {
+        return false;
+    };
+    let tool_name = object
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let cwd = object.get("cwd").and_then(Value::as_str).unwrap_or("");
+    if !cwd.starts_with('/') {
+        return false;
+    }
+    match tool_name {
+        "Bash" => {
+            let Some(script) = object
+                .get("tool_input")
+                .and_then(|tool_input| tool_input.get("command"))
+                .and_then(Value::as_str)
+            else {
+                return false;
+            };
+            !claude_explicit_rule_conflict(cwd, home, true)
+                && shell_self_call_at(script, cwd, current_exe, path_var)
+        }
+        "mcp__askhuman__ask" | "mcp__askhuman__whats_next" => {
+            !claude_explicit_rule_conflict(cwd, home, false)
+                && claude_mcp_self_call_at(cwd, home, current_exe)
+        }
+        _ => false,
+    }
+}
+
+/// An explicit `permissions.ask` / `permissions.deny` rule mentioning AskHuman in any
+/// readable Claude settings layer wins over the whitelist (mirrors D40's respect for
+/// explicit prompt modes). Matching is deliberately substring-coarse: a false hit only
+/// costs a popup.
+fn claude_explicit_rule_conflict(cwd: &str, home: &Path, shell: bool) -> bool {
+    for path in claude_settings_paths(cwd, home) {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&text) else {
+            // An unparseable settings file could hide an explicit rule: fail to popup.
+            return true;
+        };
+        for list in ["ask", "deny"] {
+            let rules = value
+                .get("permissions")
+                .and_then(|permissions| permissions.get(list))
+                .and_then(Value::as_array);
+            for rule in rules.into_iter().flatten() {
+                let Some(rule) = rule.as_str() else { continue };
+                let lower = rule.to_ascii_lowercase();
+                let hit = if shell {
+                    lower.starts_with("bash") && lower.contains("askhuman")
+                } else {
+                    lower.starts_with("mcp__askhuman")
+                };
+                if hit {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Claude settings layers carrying permission rules: enterprise managed, user, then
+/// project `settings.json` / `settings.local.json` from the hook cwd up to the git root.
+fn claude_settings_paths(cwd: &str, home: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![
+        PathBuf::from("/Library/Application Support/ClaudeCode/managed-settings.json"),
+        PathBuf::from("/etc/claude-code/managed-settings.json"),
+        home.join(".claude/settings.json"),
+    ];
+    for dir in claude_walk_up_dirs(cwd) {
+        paths.push(dir.join(".claude/settings.json"));
+        paths.push(dir.join(".claude/settings.local.json"));
+    }
+    paths
+}
+
+/// Directories from the normalized cwd up to the git root (or just the cwd without one),
+/// mirroring `readable_config_layers`.
+fn claude_walk_up_dirs(cwd: &str) -> Vec<PathBuf> {
+    let Some(normalized) = crate::permission_rules::normalize_path(".", cwd) else {
+        return Vec::new();
+    };
+    let cwd_path = PathBuf::from(&normalized);
+    let stop = crate::project::git_root(&cwd_path).unwrap_or_else(|| cwd_path.clone());
+    let mut dirs = Vec::new();
+    let mut dir = Some(cwd_path.as_path());
+    while let Some(current) = dir {
+        dirs.push(current.to_path_buf());
+        if current == stop {
+            break;
+        }
+        dir = current.parent();
+    }
+    dirs
+}
+
+/// Every readable Claude layer defining an `askhuman` MCP server must point its `command`
+/// at this binary (user `~/.claude.json` top-level + matching `projects` entries, and
+/// project `.mcp.json` files); a workspace-planted impostor keeps the popup.
+fn claude_mcp_self_call_at(cwd: &str, home: &Path, current_exe: &Path) -> bool {
+    let Ok(current) = std::fs::canonicalize(current_exe) else {
+        return false;
+    };
+    let server_is_us = |server: &Value| -> bool {
+        let Some(command) = server.get("command").and_then(Value::as_str) else {
+            return false;
+        };
+        if !command.starts_with('/') {
+            return false;
+        }
+        matches!(std::fs::canonicalize(command), Ok(path) if path == current)
+    };
+    let mut defined = false;
+
+    let user_path = home.join(".claude.json");
+    if let Ok(text) = std::fs::read_to_string(&user_path) {
+        let Ok(value) = serde_json::from_str::<Value>(&text) else {
+            return false;
+        };
+        if let Some(server) = value
+            .get("mcpServers")
+            .and_then(|servers| servers.get("askhuman"))
+        {
+            defined = true;
+            if !server_is_us(server) {
+                return false;
+            }
+        }
+        // Local-scope servers live under `projects["<launch dir>"]`; the launch dir is
+        // the hook cwd or one of its ancestors.
+        for (key, project) in value
+            .get("projects")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            let covers = cwd == key
+                || (key != "/"
+                    && cwd.starts_with(key.as_str())
+                    && cwd.as_bytes().get(key.len()) == Some(&b'/'));
+            if !covers {
+                continue;
+            }
+            if let Some(server) = project
+                .get("mcpServers")
+                .and_then(|servers| servers.get("askhuman"))
+            {
+                defined = true;
+                if !server_is_us(server) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    for dir in claude_walk_up_dirs(cwd) {
+        let Ok(text) = std::fs::read_to_string(dir.join(".mcp.json")) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&text) else {
+            return false;
+        };
+        if let Some(server) = value
+            .get("mcpServers")
+            .and_then(|servers| servers.get("askhuman"))
+        {
+            defined = true;
+            if !server_is_us(server) {
+                return false;
+            }
+        }
+    }
+    defined
+}
+
 // ===== Network host approvals (D39, §6.5.1) =====
 
 /// A Bash PermissionRequest that structurally looks like a Codex network interception
@@ -1842,6 +2050,169 @@ mod tests {
             &codex_home,
             &exe
         ));
+    }
+
+    fn claude_input(tool_name: &str, tool_input: Value, cwd: &str) -> Value {
+        json!({
+            "hook_event_name": "PermissionRequest",
+            "session_id": "s1",
+            "cwd": cwd,
+            "permission_mode": "default",
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+        })
+    }
+
+    #[test]
+    fn claude_shell_self_call_honors_identity_and_explicit_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let exe = fake_exe(&root, "AskHuman");
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let project = root.join("proj");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        let cwd = project.to_string_lossy().to_string();
+        let path_var = std::ffi::OsString::from(root.as_os_str());
+
+        let script = format!("{} --whats-next \"done, next?\"", exe.display());
+        let input = claude_input("Bash", json!({ "command": script }), &cwd);
+        assert!(claude_self_call_at(&input, &home, &exe, Some(&path_var)));
+
+        // Non-ask usage / impostor binary stay on the popup.
+        let impostor = fake_exe(&project, "AskHuman");
+        let bad = claude_input(
+            "Bash",
+            json!({ "command": format!("{} daemon stop", exe.display()) }),
+            &cwd,
+        );
+        assert!(!claude_self_call_at(&bad, &home, &exe, Some(&path_var)));
+        let bad = claude_input(
+            "Bash",
+            json!({ "command": format!("{} --agent-help", impostor.display()) }),
+            &cwd,
+        );
+        assert!(!claude_self_call_at(&bad, &home, &exe, Some(&path_var)));
+
+        // An explicit user ask rule mentioning AskHuman wins over the whitelist.
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::write(
+            home.join(".claude/settings.json"),
+            r#"{ "permissions": { "ask": ["Bash(AskHuman:*)"] } }"#,
+        )
+        .unwrap();
+        let input = claude_input(
+            "Bash",
+            json!({ "command": format!("{} --agent-help", exe.display()) }),
+            &cwd,
+        );
+        assert!(!claude_self_call_at(&input, &home, &exe, Some(&path_var)));
+        // Rules about other tools do not interfere.
+        std::fs::write(
+            home.join(".claude/settings.json"),
+            r#"{ "permissions": { "ask": ["Bash(rm:*)"], "deny": ["mcp__other"] } }"#,
+        )
+        .unwrap();
+        assert!(claude_self_call_at(&input, &home, &exe, Some(&path_var)));
+        // Project-level explicit rules count too.
+        std::fs::create_dir_all(project.join(".claude")).unwrap();
+        std::fs::write(
+            project.join(".claude/settings.local.json"),
+            r#"{ "permissions": { "deny": ["Bash(AskHuman daemon:*)"] } }"#,
+        )
+        .unwrap();
+        assert!(!claude_self_call_at(&input, &home, &exe, Some(&path_var)));
+    }
+
+    #[test]
+    fn claude_mcp_self_call_verifies_every_defining_layer() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let exe = fake_exe(&root, "AskHuman");
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let project = root.join("proj");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        let cwd = project.to_string_lossy().to_string();
+        let input = claude_input("mcp__askhuman__ask", json!({ "questions": [] }), &cwd);
+
+        // No layer defines the server -> no whitelist.
+        assert!(!claude_self_call_at(&input, &home, &exe, None));
+
+        // User-scope definition pointing at us.
+        let user_config = |command: &str| {
+            std::fs::write(
+                home.join(".claude.json"),
+                json!({ "mcpServers": { "askhuman": { "command": command, "args": ["mcp"] } } })
+                    .to_string(),
+            )
+            .unwrap();
+        };
+        user_config(&exe.to_string_lossy());
+        assert!(claude_self_call_at(&input, &home, &exe, None));
+        let whats_next = claude_input("mcp__askhuman__whats_next", json!({}), &cwd);
+        assert!(claude_self_call_at(&whats_next, &home, &exe, None));
+        // Other tools / servers never match.
+        let other = claude_input("mcp__askhuman__evil", json!({}), &cwd);
+        assert!(!claude_self_call_at(&other, &home, &exe, None));
+        let other = claude_input("mcp__other__ask", json!({}), &cwd);
+        assert!(!claude_self_call_at(&other, &home, &exe, None));
+
+        // A workspace `.mcp.json` impostor kills the whitelist even with a good user layer.
+        let impostor = fake_exe(&root, "Impostor");
+        std::fs::write(
+            project.join(".mcp.json"),
+            json!({ "mcpServers": { "askhuman": { "command": impostor.to_string_lossy() } } })
+                .to_string(),
+        )
+        .unwrap();
+        assert!(!claude_self_call_at(&input, &home, &exe, None));
+        std::fs::remove_file(project.join(".mcp.json")).unwrap();
+
+        // Local scope (projects entry covering the cwd) is also verified.
+        std::fs::write(
+            home.join(".claude.json"),
+            json!({
+                "mcpServers": { "askhuman": { "command": exe.to_string_lossy() } },
+                "projects": {
+                    project.to_string_lossy().as_ref(): {
+                        "mcpServers": { "askhuman": { "command": impostor.to_string_lossy() } }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(!claude_self_call_at(&input, &home, &exe, None));
+        // A projects entry for an unrelated directory is ignored.
+        std::fs::write(
+            home.join(".claude.json"),
+            json!({
+                "mcpServers": { "askhuman": { "command": exe.to_string_lossy() } },
+                "projects": {
+                    "/elsewhere": {
+                        "mcpServers": { "askhuman": { "command": impostor.to_string_lossy() } }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(claude_self_call_at(&input, &home, &exe, None));
+
+        // Relative command strings are unresolvable -> fail closed.
+        user_config("AskHuman");
+        assert!(!claude_self_call_at(&input, &home, &exe, None));
+
+        // An explicit ask rule for the MCP tool wins.
+        user_config(&exe.to_string_lossy());
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::write(
+            home.join(".claude/settings.json"),
+            r#"{ "permissions": { "ask": ["mcp__askhuman__ask"] } }"#,
+        )
+        .unwrap();
+        assert!(!claude_self_call_at(&input, &home, &exe, None));
     }
 
     #[test]
