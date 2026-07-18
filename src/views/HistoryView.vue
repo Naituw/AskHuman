@@ -519,8 +519,9 @@ onBeforeUnmount(() => {
   outline: none;
   box-shadow: var(--clickable-shadow);
 }
-.search-input:focus {
-  border-color: var(--accent);
+.search-input:focus,
+.search-input:focus-visible {
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
 }
 .search-input::-webkit-search-cancel-button {
   -webkit-appearance: none;

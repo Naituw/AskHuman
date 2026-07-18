@@ -28,7 +28,9 @@ body {
 .material-solid #app {
   background: var(--bg);
 }
+/* Default keyboard focus. Controls that set their own box-shadow (elevation)
+   must re-compose with var(--focus-ring) in :focus-visible, or this ring is lost. */
 :focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  box-shadow: var(--focus-ring);
 }

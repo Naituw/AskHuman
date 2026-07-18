@@ -20,6 +20,10 @@
   box-shadow: var(--clickable-shadow);
   user-select: none;
 }
+.btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
+}
 .btn:hover {
   background: var(--control-hover-bg);
 }
@@ -63,6 +67,14 @@
   box-shadow: var(--clickable-shadow);
   box-sizing: border-box;
   display: block;
+}
+/* Text fields show focus on click as well as keyboard (macOS field behavior).
+   Ring color is unchanged from the old global rule (accent @ 35%); do not also
+   retint the border — that made the focused field look “more blue” overall. */
+.textarea:focus,
+.textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
 }
 .textarea::placeholder {
   color: var(--text-tertiary);
@@ -531,8 +543,7 @@
 }
 .select:focus-visible {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
 }
 
 /* 步进器 Stepper */
@@ -559,6 +570,10 @@
   line-height: 1;
   cursor: default;
   box-shadow: var(--clickable-shadow);
+}
+.stepper button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
 }
 .stepper button:disabled {
   opacity: 0.4;
@@ -592,6 +607,11 @@
   width: 100%;
   box-sizing: border-box;
   box-shadow: var(--clickable-shadow);
+}
+.input:focus,
+.input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
 }
 /* 数字输入（如历史条数）：固定窄宽、右对齐，去掉浏览器自带的上下步进按钮，避免撑宽行挤压 label */
 .input.num {

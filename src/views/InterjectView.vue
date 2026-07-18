@@ -206,8 +206,10 @@ onBeforeUnmount(() => {
   outline: none;
   box-shadow: var(--clickable-shadow);
 }
-.ij-input:focus {
-  border-color: var(--accent, #0a84ff);
+.ij-input:focus,
+.ij-input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
 }
 .ij-footer {
   flex: 0 0 auto;

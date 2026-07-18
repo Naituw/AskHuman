@@ -18,6 +18,9 @@
   /* 结构性分割线/边框宽度：Retina 上用 0.5px 物理像素细线，避免 1pt 线显粗。
      强调/选中态（accent 描边）仍保持 1px。 */
   --hairline: 1px;
+  /* Keyboard / text-field focus glow. Composed with --clickable-shadow on controls;
+     keep as a single shadow list item so it can be stacked safely. */
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
   :root {
@@ -78,8 +81,9 @@
   --control-border: rgba(255, 255, 255, 0.15);
   /* 深底上 5% 几乎不可感，深色 hover 用 10%。 */
   --control-hover-bg: color-mix(in srgb, var(--text-primary) 10%, var(--control-bg));
-  /* 深色下阴影几乎不可见且会显脏，禁用。 */
-  --clickable-shadow: none;
+  /* Dark: no elevation (invisible/muddy on dark glass). Use a no-op shadow rather
+     than `none` so focus rules can safely compose `var(--clickable-shadow), var(--focus-ring)`. */
+  --clickable-shadow: 0 0 0 transparent;
   --accent-orange: #ff9f0a;
   --accent-green: #30d158;
   /* 深色下亮绿在深底上对比度已足够，沿用 accent-green。 */
@@ -111,7 +115,7 @@
     --control-bg: rgba(255, 255, 255, 0.08);
     --control-border: rgba(255, 255, 255, 0.15);
     --control-hover-bg: color-mix(in srgb, var(--text-primary) 10%, var(--control-bg));
-    --clickable-shadow: none;
+    --clickable-shadow: 0 0 0 transparent;
     --accent-orange: #ff9f0a;
     --accent-green: #30d158;
     --rec-badge-fg: #30d158;

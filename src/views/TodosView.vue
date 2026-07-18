@@ -1380,9 +1380,10 @@ onBeforeUnmount(() => {
   padding: 6px 9px;
   box-shadow: var(--clickable-shadow);
 }
-.td-input:focus {
+.td-input:focus,
+.td-input:focus-visible {
   outline: none;
-  border-color: color-mix(in srgb, #0a84ff 55%, transparent);
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
 }
 .td-btn {
   appearance: none;

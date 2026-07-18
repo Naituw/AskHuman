@@ -588,8 +588,9 @@
   outline: none;
   box-shadow: var(--clickable-shadow);
 }
-.tab-search-input:focus {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--control-border));
+.tab-search-input:focus,
+.tab-search-input:focus-visible {
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
 }
 .tabbar .tab-search-close {
   flex: none;
