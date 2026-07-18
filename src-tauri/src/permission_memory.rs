@@ -1283,35 +1283,11 @@ fn shell_enhancement(
     let mut saves: Vec<MemorySave> = Vec::new();
     let mut query = None;
 
-    // Session tiers and the auto-allow query are gated on the dangerous list (D38).
+    // Session tier and the auto-allow query are gated on the dangerous list (D38).
+    // Prefix-first (D38 refined 2026-07-18): the prefix shares its source and validation
+    // with the permanent amendment; the exact-commands tier only appears as a fallback
+    // when no prefix could be derived.
     if !output.dangerous_any {
-        let preview = shell_segments_preview(&output.segments);
-        extra_choices.push(ConfirmChoice {
-            id: ACTION_SHELL_SESSION.into(),
-            label: if zh {
-                "本对话不再询问这些确切命令".into()
-            } else {
-                "Don't ask again for these exact commands this conversation".into()
-            },
-            description: format!("{session_note} · {preview}"),
-            role: ActionRole::Default,
-        });
-        saves.push(MemorySave {
-            action_id: ACTION_SHELL_SESSION.into(),
-            namespace: RuleNamespace::Session,
-            rules: output
-                .segments
-                .iter()
-                .map(|argv| RuleKey::ShellExact { argv: argv.clone() })
-                .collect(),
-            native: None,
-        });
-        query = Some(MemoryQuery::ShellCommands {
-            commands: output.segments.clone(),
-        });
-        // Prefix tier: same prefix source as the permanent amendment — the model's
-        // prefix_rule or the fallback derivation (D38 refined 2026-07-18). A prefix safe
-        // enough for the permanent default.rules is safe for the weaker session scope.
         if let Some(prefix) = output.amendment.clone() {
             let prefix_text = prefix.join(" ");
             extra_choices.push(ConfirmChoice {
@@ -1330,7 +1306,32 @@ fn shell_enhancement(
                 rules: vec![RuleKey::ShellPrefix { prefix }],
                 native: None,
             });
+        } else {
+            let preview = shell_segments_preview(&output.segments);
+            extra_choices.push(ConfirmChoice {
+                id: ACTION_SHELL_SESSION.into(),
+                label: if zh {
+                    "本对话不再询问这些确切命令".into()
+                } else {
+                    "Don't ask again for these exact commands this conversation".into()
+                },
+                description: format!("{session_note} · {preview}"),
+                role: ActionRole::Default,
+            });
+            saves.push(MemorySave {
+                action_id: ACTION_SHELL_SESSION.into(),
+                namespace: RuleNamespace::Session,
+                rules: output
+                    .segments
+                    .iter()
+                    .map(|argv| RuleKey::ShellExact { argv: argv.clone() })
+                    .collect(),
+                native: None,
+            });
         }
+        query = Some(MemoryQuery::ShellCommands {
+            commands: output.segments.clone(),
+        });
     }
 
     // Permanent tier mirrors the native TUI's conditional "don't ask again" option: shown
@@ -1344,11 +1345,9 @@ fn shell_enhancement(
             extra_choices.push(ConfirmChoice {
                 id: ACTION_SHELL_ALWAYS.into(),
                 label: if zh {
-                    format!("始终允许 {prefix_text} 开头的命令（写入 Codex 全局规则）")
+                    format!("始终允许 {prefix_text} 开头的命令")
                 } else {
-                    format!(
-                        "Always allow commands starting with {prefix_text} (saved to Codex global rules)"
-                    )
+                    format!("Always allow commands starting with {prefix_text}")
                 },
                 description: prefix_text,
                 role: ActionRole::Default,
@@ -3024,7 +3023,7 @@ mod tests {
     }
 
     #[test]
-    fn plain_shell_offers_exact_session_tier_and_permanent_amendment() {
+    fn plain_shell_offers_prefix_first_session_tier_and_permanent_amendment() {
         let rollout = write_rollout(&[
             shell_turn_context("turn-1", json!("on-request"), "restricted"),
             shell_call_full("turn-1", "git status && cargo build", None, None),
@@ -3046,16 +3045,9 @@ mod tests {
             .iter()
             .map(|choice| choice.id.as_str())
             .collect();
-        // The fallback-derived amendment feeds both the session prefix tier and the
-        // permanent tier (D38 refined).
-        assert_eq!(
-            ids,
-            [
-                ACTION_SHELL_SESSION,
-                ACTION_SHELL_PREFIX,
-                ACTION_SHELL_ALWAYS
-            ]
-        );
+        // The fallback-derived amendment feeds the session prefix tier and the permanent
+        // tier; the exact tier is hidden when a prefix exists (D38 refined).
+        assert_eq!(ids, [ACTION_SHELL_PREFIX, ACTION_SHELL_ALWAYS]);
         assert!(matches!(
             memory.query,
             Some(MemoryQuery::ShellCommands { ref commands })
@@ -3065,9 +3057,14 @@ mod tests {
         let session = memory
             .saves
             .iter()
-            .find(|save| save.action_id == ACTION_SHELL_SESSION)
+            .find(|save| save.action_id == ACTION_SHELL_PREFIX)
             .unwrap();
-        assert_eq!(session.rules.len(), 2);
+        assert_eq!(
+            session.rules,
+            vec![RuleKey::ShellPrefix {
+                prefix: vec!["cargo".into(), "build".into()]
+            }]
+        );
         assert!(session.native.is_none());
         let always = memory
             .saves
@@ -3082,6 +3079,48 @@ mod tests {
                 if prefix == &["cargo".to_string(), "build".into()]
                     && rules_path.ends_with("/rules/default.rules")
         ));
+        // The plain label carries no implementation detail.
+        let always_choice = extra_choices
+            .iter()
+            .find(|choice| choice.id == ACTION_SHELL_ALWAYS)
+            .unwrap();
+        assert_eq!(
+            always_choice.label,
+            "Always allow commands starting with cargo build"
+        );
+    }
+
+    #[test]
+    fn exact_session_tier_appears_only_without_a_prefix() {
+        let rollout = write_rollout(&[
+            shell_turn_context("turn-1", json!("on-request"), "restricted"),
+            shell_call_full("turn-1", "git status", None, None),
+        ]);
+        let input = shell_input(rollout.path(), "git status");
+        let runner = |_probe: &ShellProbe| Some(worker_output(&[&["git", "status"]]));
+        let Analysis::Enhanced {
+            memory,
+            extra_choices,
+        } = analyze_codex_with(&input, false, &runner)
+        else {
+            panic!("expected enhancement");
+        };
+        let ids: Vec<&str> = extra_choices
+            .iter()
+            .map(|choice| choice.id.as_str())
+            .collect();
+        assert_eq!(ids, [ACTION_SHELL_SESSION]);
+        let session = memory
+            .saves
+            .iter()
+            .find(|save| save.action_id == ACTION_SHELL_SESSION)
+            .unwrap();
+        assert_eq!(
+            session.rules,
+            vec![RuleKey::ShellExact {
+                argv: vec!["git".into(), "status".into()]
+            }]
+        );
     }
 
     #[test]
@@ -3265,14 +3304,8 @@ mod tests {
             .iter()
             .map(|choice| choice.id.as_str())
             .collect();
-        assert_eq!(
-            ids,
-            [
-                ACTION_SHELL_SESSION,
-                ACTION_SHELL_PREFIX,
-                ACTION_SHELL_ALWAYS
-            ]
-        );
+        // Prefix-first: the exact tier is not offered when a prefix exists.
+        assert_eq!(ids, [ACTION_SHELL_PREFIX, ACTION_SHELL_ALWAYS]);
         let prefix_save = memory
             .saves
             .iter()
