@@ -763,7 +763,7 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-/// MCP whitelist: `mcp__askhuman__{ask,whats_next}` where every readable config layer
+/// MCP whitelist: `mcp__askhuman__{ask,whats_next,todo_add}` where every readable config layer
 /// defining an `askhuman` server points its `command` at this binary, and none sets an
 /// explicit prompt/writes approval mode for the tool (user intent wins, mirrors D40).
 fn mcp_self_call(tool_name: &str, cwd: &str) -> bool {
@@ -780,6 +780,7 @@ fn mcp_self_call_at(tool_name: &str, cwd: &str, codex_home: &Path, current_exe: 
     let tool = match tool_name {
         "mcp__askhuman__ask" => "ask",
         "mcp__askhuman__whats_next" => "whats_next",
+        "mcp__askhuman__todo_add" => "todo_add",
         _ => return false,
     };
     let Ok(current) = std::fs::canonicalize(current_exe) else {
@@ -871,7 +872,7 @@ pub(crate) fn claude_self_call_at(
             !claude_explicit_rule_conflict(cwd, home, true)
                 && shell_self_call_at(script, cwd, current_exe, path_var)
         }
-        "mcp__askhuman__ask" | "mcp__askhuman__whats_next" => {
+        "mcp__askhuman__ask" | "mcp__askhuman__whats_next" | "mcp__askhuman__todo_add" => {
             !claude_explicit_rule_conflict(cwd, home, false)
                 && claude_mcp_self_call_at(cwd, home, current_exe)
         }
@@ -1997,6 +1998,12 @@ mod tests {
             &codex_home,
             &exe
         ));
+        assert!(mcp_self_call_at(
+            "mcp__askhuman__todo_add",
+            &cwd,
+            &codex_home,
+            &exe
+        ));
         // Other tools of the server (none exist today) and other servers never match.
         assert!(!mcp_self_call_at(
             "mcp__askhuman__evil",
@@ -2152,6 +2159,8 @@ mod tests {
         assert!(claude_self_call_at(&input, &home, &exe, None));
         let whats_next = claude_input("mcp__askhuman__whats_next", json!({}), &cwd);
         assert!(claude_self_call_at(&whats_next, &home, &exe, None));
+        let todo_add = claude_input("mcp__askhuman__todo_add", json!({ "text": "x" }), &cwd);
+        assert!(claude_self_call_at(&todo_add, &home, &exe, None));
         // Other tools / servers never match.
         let other = claude_input("mcp__askhuman__evil", json!({}), &cwd);
         assert!(!claude_self_call_at(&other, &home, &exe, None));

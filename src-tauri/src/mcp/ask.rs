@@ -346,7 +346,9 @@ approves ending the turn — only then may you end it.",
 window / IM). Use only when the human asked to record a deferred task or accepted a concrete \
 suggestion for later — never for your own work plan. Attaches to the project of the MCP server's \
 cwd (git root). Returns the 1-based index and stored text on success.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<TodoAddResult>()
+        output_schema = rmcp::handler::server::tool::schema_for_type::<TodoAddResult>(),
+        // Appending a todo is additive (not destructive) and touches no external world.
+        annotations(destructive_hint = false, open_world_hint = false)
     )]
     async fn todo_add(
         &self,
