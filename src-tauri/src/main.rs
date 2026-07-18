@@ -44,11 +44,15 @@ mod msg_card;
 mod paths;
 mod perf;
 mod permission_diff;
+mod permission_memory;
+mod permission_rules;
+mod permission_shell;
 mod permissions;
 mod project;
 mod prompts;
 mod secrets;
 mod select;
+mod shell_safety;
 mod slack;
 mod sound;
 #[cfg(target_os = "macos")]

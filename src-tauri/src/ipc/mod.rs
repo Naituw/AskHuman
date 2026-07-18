@@ -186,6 +186,75 @@ pub struct ConfirmTask {
     /// Hook process pid; daemon may asynchronously resolve the owning agent process.
     #[serde(default)]
     pub caller_pid: u32,
+    /// Codex permission memory metadata (spec codex-permission-remember): auto-allow query and
+    /// per-action save operations. The daemon owns matching and persistence (D26).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<crate::permission_rules::PermissionMemory>,
+}
+
+/// 权限授权管理面板操作（设置进程 → Daemon，spec codex-permission-remember §6.3）。
+/// Daemon 是 rule store 的唯一写入方：面板读写都经这里，设置进程不直接碰存储文件。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum PermissionRulesOp {
+    /// 对话摘要列表 + 跨会话（D41）授权计数。
+    Summaries,
+    /// 单个对话的完整规则列表（展开时按需加载）。
+    SessionDetail { session_id: String },
+    /// 跨会话授权的完整规则列表。
+    GlobalDetail,
+    /// 重置某对话的全部 AskHuman session rules（不触碰 Codex 原生配置）。
+    ResetSession { session_id: String },
+    /// 重置全部跨会话授权。
+    ResetGlobal,
+}
+
+/// 管理面板的一条对话分组：store 摘要 + agent registry 的标题/项目名增强（可为空）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionSessionGroup {
+    pub summary: crate::permission_rules::SessionRuleSummary,
+    /// 对话标题（registry 已解析时给出；空 = 前端回退显示缩短的 session id）。
+    #[serde(default)]
+    pub title: String,
+    /// 项目显示名（registry cwd basename；空 = 未知）。
+    #[serde(default)]
+    pub project_name: String,
+}
+
+/// 管理面板的一条规则展示行（D48：原样键文本，不脱敏）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionRuleInfo {
+    /// 规则类型标签："fileExact" / "fileProject" / "fileDisk" / "mcpTool" /
+    /// "networkHost" / "shellExact" / "shellPrefix"。
+    pub kind: String,
+    /// 原样键文本（fileDisk 为空串）。
+    pub display: String,
+    pub created_at_ms: u64,
+    pub last_used_at_ms: u64,
+    /// 预计清理时间（最后命中 + 30 天滚动窗口，D15）。
+    pub expires_at_ms: u64,
+}
+
+/// `PermissionRulesOp` 的回帧负载。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PermissionRulesResult {
+    Summaries {
+        sessions: Vec<PermissionSessionGroup>,
+        global_count: usize,
+    },
+    Rules {
+        rules: Vec<PermissionRuleInfo>,
+    },
+    Reset {
+        removed: usize,
+    },
 }
 
 /// 自动识别 userId/open_id 请求（设置进程 → Daemon，Q6）：用表单当前凭据，
@@ -301,7 +370,8 @@ pub enum ClientMsg {
     /// CLI 提交一次提问任务（握手后发送）。
     Submit(TaskRequest),
     /// Hidden PermissionRequest hook submits a structured confirmation.
-    SubmitConfirm(ConfirmTask),
+    /// Boxed: the task (with optional permission memory) dwarfs the other variants.
+    SubmitConfirm(Box<ConfirmTask>),
     /// GUI Helper 握手：出示 Daemon 下发的一次性 token。
     GuiHello { token: String },
     /// 预热 GUI Helper 握手（方案6）：由 daemon 以 `--popup --warm` 拉起的进程在建好隐藏窗 + 挂载前端后
@@ -394,6 +464,8 @@ pub enum ClientMsg {
     InterjectClear { session_id: String },
     /// 查询该 session 的待送达全文（composer 预填 / IM 回显）。回一帧 `InterjectState`。
     InterjectQuery { session_id: String },
+    /// 权限授权管理面板操作（设置进程，§6.3）。回一帧 `PermissionRules`。
+    PermissionRules { op: PermissionRulesOp },
 }
 
 /// 一次工具调用的实时上报（随 `AgentEvent` 的 activity 事件携带）。跨进程只传**原始工具名**与
@@ -560,6 +632,10 @@ pub enum ServerMsg {
         text: String,
         entries: usize,
     },
+    /// 权限授权管理面板回帧（D→设置进程，§6.3）。
+    PermissionRules {
+        result: PermissionRulesResult,
+    },
 }
 
 #[cfg(test)]
@@ -627,6 +703,7 @@ mod tests {
             agent_kind: "claude".into(),
             agent_session_id: "session-1".into(),
             caller_pid: 42,
+            memory: None,
         }
     }
 
@@ -639,7 +716,7 @@ mod tests {
 
     #[test]
     fn confirm_messages_roundtrip_without_action_ids_from_gui() {
-        let task = ClientMsg::SubmitConfirm(confirm_task());
+        let task = ClientMsg::SubmitConfirm(Box::new(confirm_task()));
         let json = serde_json::to_string(&task).unwrap();
         assert!(json.contains(r#""type":"submitConfirm""#));
         assert!(!json.contains("expiresAtMs"));

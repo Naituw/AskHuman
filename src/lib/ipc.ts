@@ -27,6 +27,8 @@ import type {
   PushedAgent,
   PushedUpdateState,
   RuleStatus,
+  PermissionRulesOp,
+  PermissionRulesResult,
   PopupSubmission,
   ProjectInfo,
   SecretActions,
@@ -95,6 +97,10 @@ export const showAttachmentMenu = (path: string) =>
   invoke<void>("show_attachment_menu", { path });
 
 export const getSettings = () => invoke<SettingsPayload>("get_settings");
+
+/** Codex 权限授权管理面板（spec codex-permission-remember §6.3）：全部操作经 daemon 完成。 */
+export const permissionRulesPanel = (op: PermissionRulesOp) =>
+  invoke<PermissionRulesResult>("permission_rules_panel", { op });
 
 export const saveSettings = (config: AppConfig, secretActions: SecretActions) =>
   invoke<void>("save_settings", { config, secretActions });

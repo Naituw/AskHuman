@@ -676,6 +676,28 @@ impl AgentRegistry {
         inner.active.iter().map(|r| r.session_id.clone()).collect()
     }
 
+    /// 权限授权管理面板的分组增强（spec codex-permission-remember §6.3）：按 session_id 在
+    /// 活动与已结束记录中查标题 / 项目名（标题惰性解析并缓存）。不在册返回 None，面板回退
+    /// 显示缩短的 session id。
+    pub fn session_display(&self, session_id: &str) -> Option<(String, String)> {
+        let mut inner = self.inner.lock().unwrap();
+        let inner = &mut *inner;
+        let record = inner
+            .active
+            .iter_mut()
+            .chain(inner.ended.iter_mut())
+            .find(|r| r.session_id == session_id)?;
+        if record.title.is_none() {
+            record.title = resolve_title(record.kind, &record.session_id);
+        }
+        let project = record
+            .cwd
+            .as_deref()
+            .map(crate::project::display_name)
+            .unwrap_or_default();
+        Some((record.title.clone().unwrap_or_default(), project))
+    }
+
     /// 托盘「Agent 状态」子菜单摘要（spec agent-interject D7）：仅活动会话，**工作中在前**、
     /// 组内按最近活动倒序；ended 不含。`pending_interject` 恒 false，由 daemon 按插话队列注入。
     pub fn tray_agent_infos(&self) -> Vec<crate::ipc::TrayAgentInfo> {

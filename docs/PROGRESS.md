@@ -3,6 +3,15 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 待办：实现 Codex 权限弹窗“本会话 / 始终允许”（规格已定案）
+
+规格见 `docs/specs/codex-permission-remember.md`（2026-07-18 定案，D1–D48，全部开放问题已关闭）。
+北极星：用户作答次数 ≤ 原生 Codex TUI。实现范围：会话级 shadow rules（文件 / Shell / network / MCP，
+对话树共享 + 30 天滚动清理）、永久级原生写入（Shell prefix_rule、network_rule、MCP approval_mode）+
+会话桥接、插件 / codex_apps 的跨会话 shadow 兜底（D41）、Shell 判断混合复刻（execpolicy check CLI +
+脚本拆分 / 层叠 / heuristics 复刻，版本上限门控）、guardian / strict_auto_review fail-closed（D36/D43）、
+设置页授权管理面板（D16/D17/D48）。开发完成后按规格 §6.4 在本文件登记“定期同步 Codex Shell 判定复刻”。
+
 ## 待办：Cursor 全局 Rules 迁移为用户级 always-on Skill
 
 调查与候选设计见 `docs/investigations/cursor-global-rule-user-skill.md`。无 workspace folder 的 Cursor IDE

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// 「高级」tab：Agent 生命周期追踪 / 守护进程生命周期 / IM 按需发送（仅 macOS/Linux）。
+// 「高级」tab：Agent 生命周期追踪 / 守护进程生命周期 / IM 按需发送 / Codex 会话授权（仅 macOS/Linux）。
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSettingsContext } from "./context";
+import PermissionRulesCard from "./PermissionRulesCard.vue";
 
 const { t } = useI18n();
 const ctx = useSettingsContext();
@@ -173,4 +174,7 @@ const config = computed(() => ctx.config.value!);
       </p>
     </div>
   </div>
+
+  <!-- Codex 权限授权管理（spec codex-permission-remember §6.3） -->
+  <PermissionRulesCard />
 </template>

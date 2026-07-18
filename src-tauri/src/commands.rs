@@ -1116,6 +1116,23 @@ pub async fn save_settings(
     Ok(())
 }
 
+/// 权限授权管理面板（spec codex-permission-remember §6.3）：设置前端唯一入口，全部操作
+/// 经 daemon 完成（读摘要 / 展开详情 / 重置），设置进程不直接读写 rule store 文件。
+#[tauri::command]
+pub async fn permission_rules_panel(
+    op: crate::ipc::PermissionRulesOp,
+) -> Result<crate::ipc::PermissionRulesResult, String> {
+    #[cfg(unix)]
+    {
+        crate::client::permission_rules_op(op).await
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = op;
+        Err("unsupported platform".to_string())
+    }
+}
+
 #[tauri::command]
 pub fn agent_task_workspaces(refresh: Option<bool>) -> Vec<crate::agents::workspaces::Workspace> {
     if refresh.unwrap_or(false) {

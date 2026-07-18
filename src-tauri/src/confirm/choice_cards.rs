@@ -27,9 +27,11 @@ pub enum CardAction {
     },
 }
 
+/// D14: option taps only select (draft); a separate submit callback finalizes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TelegramAction {
-    Decide(usize),
+    Select(usize),
+    Submit,
 }
 
 fn bounded(input: &str, max: usize) -> String {
@@ -585,9 +587,9 @@ pub fn telegram_html(
         let hint = match (is_task_input_form(request), lang) {
             (true, Lang::Zh) => "请直接回复本消息输入任务。",
             (true, Lang::En) => "Reply directly to this message with the task.",
-            (false, Lang::Zh) => "如需说明拒绝原因，请先回复本消息，再点“拒绝”。",
+            (false, Lang::Zh) => "如需说明拒绝原因，请先回复本消息，再选择“拒绝”并提交。",
             (false, Lang::En) => {
-                "To include a denial reason, reply to this message before tapping Deny."
+                "To include a denial reason, reply to this message before selecting Deny and submitting."
             }
         };
         out.push_str(&format!("\n\n<i>{}</i>", escape_html(hint)));
@@ -620,7 +622,7 @@ pub fn telegram_keyboard(request: &ConfirmRequest, selected: Option<usize>) -> V
     } else {
         crate::channels::telegram::KEYBOARD_ROW_WIDTH
     };
-    let rows = indices
+    let mut rows = indices
         .chunks(width)
         .map(|indices| {
             Value::Array(
@@ -641,13 +643,24 @@ pub fn telegram_keyboard(request: &ConfirmRequest, selected: Option<usize>) -> V
         )
         })
         .collect::<Vec<_>>();
+    // D14: taps only select; the submit row appears once a draft selection exists
+    // (Telegram has no disabled buttons, so the row is hidden instead).
+    if selected.is_some() {
+        rows.push(Value::Array(vec![json!({
+            "text": request.presentation.submit_label(),
+            "callback_data": "pc:submit",
+        })]));
+    }
     json!({ "inline_keyboard": rows })
 }
 
 pub fn parse_telegram_callback(data: &str) -> Option<TelegramAction> {
+    if data == "pc:submit" {
+        return Some(TelegramAction::Submit);
+    }
     data.strip_prefix("pc:do:")
         .and_then(|value| value.parse().ok())
-        .map(TelegramAction::Decide)
+        .map(TelegramAction::Select)
 }
 
 #[cfg(test)]
@@ -867,10 +880,13 @@ mod tests {
     fn telegram_callbacks_carry_only_wire_indices() {
         assert_eq!(
             parse_telegram_callback("pc:do:7"),
-            Some(TelegramAction::Decide(7))
+            Some(TelegramAction::Select(7))
+        );
+        assert_eq!(
+            parse_telegram_callback("pc:submit"),
+            Some(TelegramAction::Submit)
         );
         assert_eq!(parse_telegram_callback("pc:s:7"), None);
-        assert_eq!(parse_telegram_callback("pc:submit"), None);
         assert_eq!(parse_telegram_callback("approve_once"), None);
     }
 
@@ -886,12 +902,28 @@ mod tests {
         assert!(!html.contains("<b>Tool:</b>"));
         let keyboard = telegram_keyboard(&request, Some(1));
         let rows = keyboard["inline_keyboard"].as_array().unwrap();
-        assert_eq!(rows.len(), 1);
+        // D14: a submit row appears once a draft selection exists.
+        assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].as_array().unwrap().len(), 2);
         assert_eq!(rows[0][0]["text"], "1️⃣");
         assert_eq!(rows[0][1]["text"], "✅ 2️⃣");
         assert_eq!(rows[0][1]["callback_data"], "pc:do:1");
-        assert!(html.contains("reply to this message before tapping Deny"));
+        assert_eq!(rows[1][0]["text"], "Submit");
+        assert_eq!(rows[1][0]["callback_data"], "pc:submit");
+        assert!(html.contains("reply to this message before selecting Deny and submitting"));
+    }
+
+    #[test]
+    fn telegram_keyboard_hides_submit_row_until_a_choice_is_selected() {
+        let request = request();
+        let keyboard = telegram_keyboard(&request, None);
+        let rows = keyboard["inline_keyboard"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|button| button["callback_data"] != "pc:submit"));
     }
 
     #[test]

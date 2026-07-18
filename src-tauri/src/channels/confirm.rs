@@ -61,7 +61,7 @@ fn final_status(entry: &ConfirmEntry, lang: Lang) -> String {
                 .presentation
                 .input()
                 .is_some_and(|input| input.max_chars > 1000);
-            match (task_input, lang, denied) {
+            let mut status = match (task_input, lang, denied) {
                 (true, Lang::Zh, true) => format!("已通过 {source} 取消"),
                 (true, Lang::Zh, false) => format!("已通过 {source} 提交"),
                 (true, Lang::En, true) => format!("Cancelled via {source}"),
@@ -70,7 +70,18 @@ fn final_status(entry: &ConfirmEntry, lang: Lang) -> String {
                 (false, Lang::Zh, false) => format!("已通过 {source} 允许"),
                 (false, Lang::En, true) => format!("Denial decision submitted via {source}"),
                 (false, Lang::En, false) => format!("Allowed via {source}"),
+            };
+            // Remember choice degraded to allow-once because persisting failed (D25).
+            if entry
+                .memory_save_failed
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                status.push_str(match lang {
+                    Lang::Zh => "（本次已允许，但未能保存授权）",
+                    Lang::En => " (allowed this time, but saving the grant failed)",
+                });
             }
+            status
         }
         Some(ConfirmTerminalKind::Fallback(ConfirmFallbackReason::Expired)) => match lang {
             Lang::Zh => "请求已过期".to_string(),
@@ -786,11 +797,32 @@ pub fn start_telegram(
                         let callback_id = callback.get("id").and_then(|value| value.as_str()).unwrap_or("");
                         let data = callback.get("data").and_then(|value| value.as_str()).unwrap_or("");
                         match choice_cards::parse_telegram_callback(data) {
-                            Some(choice_cards::TelegramAction::Decide(index)) if index < entry.request.choices.len() => {
-                                selected = Some(index);
+                            // D14: option taps only update the draft; the explicit
+                            // submit callback is the sole path into submit_wire.
+                            // Exception: the force-reply task form's only inline button
+                            // is the dedicated cancel escape hatch, which stays one-tap.
+                            Some(choice_cards::TelegramAction::Select(index)) if index < entry.request.choices.len() => {
                                 client.answer_callback_query(callback_id).await;
-                                if entry.coordinator.submit_wire(index, Some(comment.clone()), channel).is_ok() { break; }
+                                if force_reply {
+                                    selected = Some(index);
+                                    if entry.coordinator.submit_wire(index, Some(comment.clone()), channel).is_ok() { break; }
+                                } else if selected != Some(index) {
+                                    selected = Some(index);
+                                    let keyboard = choice_cards::telegram_keyboard(&entry.request, selected);
+                                    let html = choice_cards::telegram_html(&entry.request, selected, &comment, None, lang);
+                                    let _ = client.edit_message_text(message_id, &html, Some("HTML"), Some(keyboard)).await;
+                                }
                             }
+                            Some(choice_cards::TelegramAction::Submit) => match selected {
+                                Some(index) if !force_reply => {
+                                    client.answer_callback_query(callback_id).await;
+                                    if entry.coordinator.submit_wire(index, Some(comment.clone()), channel).is_ok() { break; }
+                                }
+                                _ => {
+                                    let text = if lang == Lang::Zh { "请先选择一个选项。" } else { "Select an option first." };
+                                    client.answer_callback_query_alert(callback_id, text).await;
+                                }
+                            },
                             None => client.answer_callback_query(callback_id).await,
                             _ => client.answer_callback_query(callback_id).await,
                         }

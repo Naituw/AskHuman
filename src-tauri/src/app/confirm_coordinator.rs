@@ -4,7 +4,7 @@
 //! popup/IM finalization is owned by daemon-side channel tasks and never delays the caller.
 
 use crate::models::{ConfirmFallbackReason, ConfirmRequest, ConfirmResult};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::terminal_gate::FirstTerminalGate;
@@ -29,18 +29,37 @@ pub enum ConfirmTerminalKind {
     Cancelled,
 }
 
+/// Two-phase commit hook run for the winning submission only, before the terminal gate is
+/// set and any surface can render a final state (spec codex-permission-remember §5.6). It may
+/// rewrite the result, e.g. degrade a remember choice to `approve_once` when persisting the
+/// rules failed (D25).
+pub type ConfirmFinalizer = Arc<dyn Fn(ConfirmResult) -> ConfirmResult + Send + Sync>;
+
 pub struct ConfirmCoordinator {
     request: Arc<ConfirmRequest>,
     terminal: FirstTerminalGate<Terminal>,
     tx: UnboundedSender<ConfirmOutcome>,
+    finalizer: Option<ConfirmFinalizer>,
+    /// Serializes submissions so the finalizer runs at most once, for the winner only.
+    submit_lock: Mutex<()>,
 }
 
 impl ConfirmCoordinator {
     pub fn new(request: Arc<ConfirmRequest>, tx: UnboundedSender<ConfirmOutcome>) -> Arc<Self> {
+        Self::with_finalizer(request, tx, None)
+    }
+
+    pub fn with_finalizer(
+        request: Arc<ConfirmRequest>,
+        tx: UnboundedSender<ConfirmOutcome>,
+        finalizer: Option<ConfirmFinalizer>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             request,
             terminal: FirstTerminalGate::new(),
             tx,
+            finalizer,
+            submit_lock: Mutex::new(()),
         })
     }
 
@@ -59,6 +78,14 @@ impl ConfirmCoordinator {
         let result = self
             .request
             .resolve_submission(choice_index, comment, source_channel_id)?;
+        let _guard = self.submit_lock.lock().unwrap();
+        if self.terminal.is_set() {
+            return Ok(false);
+        }
+        let result = match &self.finalizer {
+            Some(finalizer) => finalizer(result),
+            None => result,
+        };
         if !self.terminal.try_set(Terminal::Final(result.clone())) {
             return Ok(false);
         }
@@ -181,5 +208,60 @@ mod tests {
         assert!(coordinator.cancel());
         assert!(!coordinator.fallback(ConfirmFallbackReason::Expired));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn finalizer_runs_once_for_winner_and_may_rewrite_result() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let spec = ConfirmSpec {
+            title: "Approve?".into(),
+            context: vec![],
+            detail: ConfirmDetail {
+                summary: "Run command".into(),
+                body_md: String::new(),
+            },
+            choices: vec![
+                ConfirmChoice {
+                    id: "remember_files".into(),
+                    label: "Remember".into(),
+                    description: String::new(),
+                    role: ActionRole::Default,
+                },
+                ConfirmChoice {
+                    id: "deny".into(),
+                    label: "Deny".into(),
+                    description: String::new(),
+                    role: ActionRole::Destructive,
+                },
+            ],
+            presentation: ConfirmPresentation::SingleSelectSubmit {
+                input: None,
+                submit_label: "Submit".into(),
+                default_action_id: None,
+            },
+            dismiss_action_id: "deny".into(),
+        };
+        let request = Arc::new(spec.into_request("r1".into(), 1, 2).unwrap());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_in_finalizer = calls.clone();
+        let coordinator = ConfirmCoordinator::with_finalizer(
+            request,
+            tx,
+            Some(Arc::new(move |mut result: ConfirmResult| {
+                calls_in_finalizer.fetch_add(1, Ordering::SeqCst);
+                // Simulate a failed save degrading to allow-once (D25).
+                result.action_id = "approve_once".into();
+                result
+            })),
+        );
+        assert!(coordinator.submit_wire(0, None, "popup").unwrap());
+        // The loser never triggers the finalizer again.
+        assert!(!coordinator.submit_wire(0, None, "feishu").unwrap());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        match rx.recv().await.unwrap() {
+            ConfirmOutcome::Final(result) => assert_eq!(result.action_id, "approve_once"),
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 }

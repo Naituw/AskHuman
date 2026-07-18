@@ -188,6 +188,10 @@ export function useSettingsSearch(deps: {
         e("advanced", "settings.channels.autoEndWatchTitle", [
           "settings.channels.autoEndWatchDesc",
         ]),
+        // 授权管理面板内容按需从 daemon 拉取，搜索只索引静态标题/描述（D48）。
+        e("advanced", "settings.permissionRules.title", [
+          "settings.permissionRules.desc",
+        ]),
       );
     }
     // 实验 tab 仅在开启实验性功能后可见（其内容目前仅 macOS 的 Agent 任务卡）。

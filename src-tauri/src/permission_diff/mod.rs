@@ -1,7 +1,7 @@
 pub mod adapters;
 mod build;
 pub mod model;
-mod patch;
+pub mod patch;
 pub(crate) mod safety;
 pub mod worker;
 

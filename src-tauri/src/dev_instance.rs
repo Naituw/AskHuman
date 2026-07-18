@@ -75,7 +75,9 @@ pub fn classify_command(argv: &[String]) -> CommandClass {
         return CommandClass::Meta;
     };
     match first {
-        "--popup" | "--gui-host" | "__permission-diff-worker" => CommandClass::Skip,
+        "--popup" | "--gui-host" | "__permission-diff-worker" | "__permission-shell-worker" => {
+            CommandClass::Skip
+        }
         "dev" | "--help" | "-h" | "--version" | "-v" | "--agent-help" | "--scripting-help" => {
             CommandClass::Meta
         }

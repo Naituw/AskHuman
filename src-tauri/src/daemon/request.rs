@@ -84,6 +84,9 @@ pub struct ConfirmEntry {
     pub gui: GuiSlot,
     pub gui_connected: AtomicBool,
     pub cancel: Arc<Notify>,
+    /// Set when the winning remember choice could not be persisted and the decision was
+    /// degraded to allow-once (spec codex-permission-remember D25); surfaces append a note.
+    pub memory_save_failed: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -245,9 +248,77 @@ pub fn create_internal_confirm(
         gui: Arc::new(Mutex::new(None)),
         gui_connected: AtomicBool::new(false),
         cancel: Arc::new(Notify::new()),
+        memory_save_failed: Arc::new(AtomicBool::new(false)),
     });
     entry.start_delivery(source_channel);
     Ok((entry, final_rx))
+}
+
+/// Build the two-phase commit finalizer for a permission memory task (spec
+/// codex-permission-remember §5.6/D25/D26): when the winning choice is a remember action,
+/// persist its rules before any surface may render a final state; on failure degrade the
+/// decision to `approve_once` and flag the entry so surfaces report the unsaved grant.
+fn memory_finalizer(
+    memory: Option<&crate::permission_rules::PermissionMemory>,
+    session_id: &str,
+    save_failed: Arc<AtomicBool>,
+) -> Option<crate::app::confirm_coordinator::ConfirmFinalizer> {
+    let saves = memory
+        .map(|memory| memory.saves.clone())
+        .filter(|saves| !saves.is_empty())?;
+    let session_id = session_id.to_string();
+    Some(Arc::new(move |mut result: crate::models::ConfirmResult| {
+        let Some(save) = saves.iter().find(|save| save.action_id == result.action_id) else {
+            return result;
+        };
+        // Native config write first: it is the durable promise of an "always allow"
+        // choice, so its failure degrades the whole decision (D25).
+        if let Some(write) = &save.native {
+            if let Err(error) = crate::permission_rules::apply_native_write(write) {
+                eprintln!(
+                    "[askhuman-daemon] native permission write failed ({error}); degrading {} to approve_once",
+                    save.action_id
+                );
+                save_failed.store(true, Ordering::SeqCst);
+                result.action_id = "approve_once".to_string();
+                return result;
+            }
+            eprintln!(
+                "[askhuman-daemon] native permission write applied for {}",
+                save.action_id
+            );
+        }
+        if save.rules.is_empty() {
+            return result;
+        }
+        match crate::permission_rules::save_rules(&session_id, save.namespace, &save.rules) {
+            Ok(()) => {
+                eprintln!(
+                    "[askhuman-daemon] permission memory saved: session={} action={} rules={}",
+                    session_id,
+                    save.action_id,
+                    save.rules.len()
+                );
+            }
+            Err(error) if save.native.is_some() => {
+                // The durable native write already succeeded; a failed session bridge only
+                // means this conversation may be asked again. Keep the chosen action.
+                eprintln!(
+                    "[askhuman-daemon] session bridge save failed ({error:?}) after native write for {}",
+                    save.action_id
+                );
+            }
+            Err(error) => {
+                eprintln!(
+                    "[askhuman-daemon] permission memory save failed ({error:?}); degrading {} to approve_once",
+                    save.action_id
+                );
+                save_failed.store(true, Ordering::SeqCst);
+                result.action_id = "approve_once".to_string();
+            }
+        }
+        result
+    }))
 }
 
 #[derive(Default)]
@@ -377,6 +448,18 @@ impl RequestRegistry {
         if let Some(intent) = task.popup_edit.as_ref() {
             crate::permission_diff::validate_intent(intent, &task.agent_kind, &task.project)?;
         }
+        if let Some(memory) = task.memory.as_ref() {
+            if task.agent_kind != "codex" {
+                return Err("permission memory is supported for codex only".to_string());
+            }
+            let choice_ids: Vec<&str> = task
+                .spec
+                .choices
+                .iter()
+                .map(|choice| choice.id.as_str())
+                .collect();
+            memory.validate(&choice_ids)?;
+        }
         let request_id = uuid::Uuid::new_v4().to_string();
         let token = uuid::Uuid::new_v4().to_string();
         let created_at_ms = crate::perf::now_ms() as u64;
@@ -388,7 +471,13 @@ impl RequestRegistry {
             expires_at_ms,
         )?);
         let (final_tx, final_rx) = tokio::sync::mpsc::unbounded_channel();
-        let coordinator = ConfirmCoordinator::new(request.clone(), final_tx);
+        let memory_save_failed = Arc::new(AtomicBool::new(false));
+        let finalizer = memory_finalizer(
+            task.memory.as_ref(),
+            &task.agent_session_id,
+            memory_save_failed.clone(),
+        );
+        let coordinator = ConfirmCoordinator::with_finalizer(request.clone(), final_tx, finalizer);
         let show = ShowPayload {
             request_id: request_id.clone(),
             interaction: InteractionRequest::Confirm((*request).clone()),
@@ -420,6 +509,7 @@ impl RequestRegistry {
             gui: Arc::new(Mutex::new(None)),
             gui_connected: AtomicBool::new(false),
             cancel: Arc::new(Notify::new()),
+            memory_save_failed,
         });
         let mut inner = self.inner.lock().unwrap();
         inner.confirm_by_id.insert(request_id, entry.clone());
@@ -743,6 +833,7 @@ mod tests {
             agent_kind: "claude".into(),
             agent_session_id: "session-1".into(),
             caller_pid: 42,
+            memory: None,
         }
     }
 

@@ -946,10 +946,82 @@ async fn serve(_lock: LockGuard) -> i32 {
     0
 }
 
+/// 管理面板操作的同步实现（blocking 线程内执行，spec codex-permission-remember §6.3）。
+/// 摘要用 agent registry 增强标题 / 项目名；重置在 store 文件锁内原子完成，返回后
+/// 下一次相关请求即重新弹窗（store 无内存缓存，每次匹配都重读文件）。
+fn permission_rules_op(
+    state: &Arc<ServerState>,
+    op: ipc::PermissionRulesOp,
+) -> ipc::PermissionRulesResult {
+    use crate::permission_rules as store;
+    match op {
+        ipc::PermissionRulesOp::Summaries => {
+            let sessions = store::session_summaries()
+                .into_iter()
+                .map(|summary| {
+                    let (title, project_name) = state
+                        .agents
+                        .session_display(&summary.session_id)
+                        .unwrap_or_default();
+                    ipc::PermissionSessionGroup {
+                        summary,
+                        title,
+                        project_name,
+                    }
+                })
+                .collect();
+            ipc::PermissionRulesResult::Summaries {
+                sessions,
+                global_count: store::global_rules().len(),
+            }
+        }
+        ipc::PermissionRulesOp::SessionDetail { session_id } => ipc::PermissionRulesResult::Rules {
+            rules: permission_rule_infos(store::session_rules(&session_id)),
+        },
+        ipc::PermissionRulesOp::GlobalDetail => ipc::PermissionRulesResult::Rules {
+            rules: permission_rule_infos(store::global_rules()),
+        },
+        ipc::PermissionRulesOp::ResetSession { session_id } => ipc::PermissionRulesResult::Reset {
+            removed: store::reset_session(&session_id),
+        },
+        ipc::PermissionRulesOp::ResetGlobal => ipc::PermissionRulesResult::Reset {
+            removed: store::reset_global(),
+        },
+    }
+}
+
+fn permission_rule_infos(
+    rules: Vec<crate::permission_rules::StoredRule>,
+) -> Vec<ipc::PermissionRuleInfo> {
+    use crate::permission_rules::{RuleKey, RULE_TTL_MS};
+    rules
+        .into_iter()
+        .map(|rule| {
+            let kind = match &rule.key {
+                RuleKey::FileExact { .. } => "fileExact",
+                RuleKey::FileProject { .. } => "fileProject",
+                RuleKey::FileDisk => "fileDisk",
+                RuleKey::McpTool { .. } => "mcpTool",
+                RuleKey::NetworkHost { .. } => "networkHost",
+                RuleKey::ShellExact { .. } => "shellExact",
+                RuleKey::ShellPrefix { .. } => "shellPrefix",
+            };
+            let anchor = rule.last_used_at_ms.max(rule.created_at_ms);
+            ipc::PermissionRuleInfo {
+                kind: kind.to_string(),
+                display: rule.key.display(),
+                created_at_ms: rule.created_at_ms,
+                last_used_at_ms: rule.last_used_at_ms,
+                expires_at_ms: anchor.saturating_add(RULE_TTL_MS),
+            }
+        })
+        .collect()
+}
+
 /// 控制阶段的产物：收到接管型消息（提交 / GUI 握手）或连接关闭。
 enum Control {
-    Submit(TaskRequest),
-    SubmitConfirm(ConfirmTask),
+    Submit(Box<TaskRequest>),
+    SubmitConfirm(Box<ConfirmTask>),
     Gui(String),
     /// 方案6 预热弹窗握手：接管连接，入热池待命、等领用。
     GuiWarm,
@@ -976,8 +1048,8 @@ async fn handle_conn(stream: UnixStream, state: Arc<ServerState>) {
     let mut w = w;
 
     match control_loop(&mut reader, &mut w, &state).await {
-        Control::Submit(task) => handle_submit(task, reader, w, &state).await,
-        Control::SubmitConfirm(task) => handle_submit_confirm(task, reader, w, &state).await,
+        Control::Submit(task) => handle_submit(*task, reader, w, &state).await,
+        Control::SubmitConfirm(task) => handle_submit_confirm(*task, reader, w, &state).await,
         Control::Gui(token) => handle_gui(token, reader, w, &state).await,
         Control::GuiWarm => handle_gui_warm(reader, w, &state).await,
         Control::AgentsSub => handle_agents_sub(reader, w, &state).await,
@@ -1094,7 +1166,7 @@ async fn control_loop(
                 state.shutdown.notify_one();
                 return Control::Closed;
             }
-            ClientMsg::Submit(task) => return Control::Submit(task),
+            ClientMsg::Submit(task) => return Control::Submit(Box::new(task)),
             ClientMsg::SubmitConfirm(task) => return Control::SubmitConfirm(task),
             ClientMsg::GuiHello { token } => return Control::Gui(token),
             // 方案6 预热弹窗握手（无 token）：接管连接入热池待命。
@@ -1275,6 +1347,28 @@ async fn control_loop(
                 )
                 .await;
             }
+            // 权限授权管理面板（spec codex-permission-remember §6.3）：daemon 是 rule store 的
+            // 唯一写入方；store 操作走文件锁（阻塞），放 blocking 线程执行，完成后回一帧。
+            ClientMsg::PermissionRules { op } => {
+                let result = {
+                    let state = state.clone();
+                    tokio::task::spawn_blocking(move || permission_rules_op(&state, op)).await
+                };
+                match result {
+                    Ok(result) => {
+                        let _ = ipc::write_msg(w, &ServerMsg::PermissionRules { result }).await;
+                    }
+                    Err(_) => {
+                        let _ = ipc::write_msg(
+                            w,
+                            &ServerMsg::Error {
+                                message: "permission rules task failed".to_string(),
+                            },
+                        )
+                        .await;
+                    }
+                }
+            }
             // 自动识别（Q6）：就地处理（可能阻塞至多 120s 等用户发码），完成后回结果继续循环。
             // 排空期拒绝（兜底；正常情况下客户端在 Hello 即被挡住而回退进程内识别）。
             ClientMsg::Detect(req) => {
@@ -1338,6 +1432,40 @@ async fn handle_submit_confirm(
         )
         .await;
         return;
+    }
+
+    // Permission memory auto-allow (spec codex-permission-remember §6): answer from stored
+    // shadow rules before engaging any surface. A hit refreshes the rules' rolling retention.
+    if let Some(query) = task
+        .memory
+        .as_ref()
+        .and_then(|memory| memory.query.clone())
+        .filter(|_| task.agent_kind == "codex")
+    {
+        let session_id = task.agent_session_id.clone();
+        let hit = tokio::task::spawn_blocking(move || {
+            crate::permission_rules::check_auto_allow(&session_id, &query)
+        })
+        .await
+        .unwrap_or(false);
+        if hit {
+            log(&format!(
+                "permission memory auto-allow for session {}",
+                task.agent_session_id
+            ));
+            let _ = ipc::write_msg(
+                &mut w,
+                &ServerMsg::ConfirmFinal {
+                    result: crate::models::ConfirmResult {
+                        action_id: crate::permission_rules::AUTO_ALLOW_ACTION_ID.to_string(),
+                        comment: None,
+                        source_channel_id: "memory".to_string(),
+                    },
+                },
+            )
+            .await;
+            return;
+        }
     }
 
     let (entry, mut final_rx) = match state.registry.create_confirm(task) {

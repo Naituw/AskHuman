@@ -233,6 +233,16 @@ pub fn dispatch() {
             }
             exit(0);
         }
+        // Hidden short-lived shell policy analysis worker (codex-permission-remember D27).
+        "__permission-shell-worker" => {
+            #[cfg(unix)]
+            {
+                if let Some(output) = crate::permission_shell::run_stdio() {
+                    print_line(&output);
+                }
+            }
+            exit(0);
+        }
         // Agent 状态 + 集成子命令组（spec：cli-config）：monitor / show / install / uninstall / update。
         "agents" => {
             agents_cmd::dispatch(&argv[2..], lang);

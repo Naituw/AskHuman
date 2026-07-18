@@ -883,6 +883,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::commands::show_attachment_menu,
             crate::commands::get_settings,
             crate::commands::save_settings,
+            crate::commands::permission_rules_panel,
             crate::commands::agent_task_workspaces,
             crate::commands::agent_task_workspace_add,
             crate::commands::agent_task_workspace_pick,

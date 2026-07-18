@@ -567,6 +567,58 @@ export interface ChannelIssue {
   atMs: number;
 }
 
+// ===== Codex 权限授权管理面板（spec codex-permission-remember §6.3，镜像 Rust ipc 类型）=====
+
+/** 一个对话的授权摘要（镜像 `permission_rules::SessionRuleSummary`）。 */
+export interface PermissionSessionSummary {
+  sessionId: string;
+  ruleCount: number;
+  fileExactCount: number;
+  projectRoots: string[];
+  fullDisk: boolean;
+  shellCount: number;
+  networkCount: number;
+  mcpCount: number;
+  lastUsedAtMs: number;
+}
+
+/** 面板分组：store 摘要 + registry 标题/项目名增强（可为空串）。 */
+export interface PermissionSessionGroup {
+  summary: PermissionSessionSummary;
+  title: string;
+  projectName: string;
+}
+
+export type PermissionRuleKind =
+  | "fileExact"
+  | "fileProject"
+  | "fileDisk"
+  | "mcpTool"
+  | "networkHost"
+  | "shellExact"
+  | "shellPrefix";
+
+/** 一条规则展示行（D48：原样键文本）。 */
+export interface PermissionRuleInfo {
+  kind: PermissionRuleKind;
+  display: string;
+  createdAtMs: number;
+  lastUsedAtMs: number;
+  expiresAtMs: number;
+}
+
+export type PermissionRulesOp =
+  | { op: "summaries" }
+  | { op: "sessionDetail"; sessionId: string }
+  | { op: "globalDetail" }
+  | { op: "resetSession"; sessionId: string }
+  | { op: "resetGlobal" };
+
+export type PermissionRulesResult =
+  | { kind: "summaries"; sessions: PermissionSessionGroup[]; globalCount: number }
+  | { kind: "rules"; rules: PermissionRuleInfo[] }
+  | { kind: "reset"; removed: number };
+
 /** Per-secret edit intent sent on save. Secrets never round-trip through the config object. */
 export type SecretAction =
   | { kind: "unchanged" }
