@@ -402,22 +402,92 @@ pub struct TodoProjectInfo {
     pub name: String,
     /// 该项目当前待办条数。
     pub count: usize,
+    /// 选择器分组：`withTodos`（有待办）或 `recent`（最近工作过；与 IM `/todo` 候选同源）。
+    pub section: String,
 }
 
-/// 项目选择器候选＝有待办的项目 ∪ 活跃 agent 的项目 ∪ 最近 workspace 索引（去重）。
-/// 排序：有待办者在前（按名），其余按 workspace 近期使用倒序。daemon 未运行时不拉起
-/// （agent 项目为空即可），窗口照样可用。
+/// Intermediate candidate shared by the two GUI selector sections.
+/// Ranking mirrors IM `/todo` project pick (working → idle → pinned → last used).
+struct GuiTodoProjectCandidate {
+    key: String,
+    pinned: bool,
+    last_used_at: u64,
+    has_workspace: bool,
+    /// 0 = working, 1 = idle, 2 = no live Agent.
+    activity_rank: u8,
+    todo_count: usize,
+}
+
+fn gui_todo_project_sort(a: &GuiTodoProjectCandidate, b: &GuiTodoProjectCandidate) -> std::cmp::Ordering {
+    a.activity_rank
+        .cmp(&b.activity_rank)
+        .then_with(|| b.pinned.cmp(&a.pinned))
+        .then_with(|| b.has_workspace.cmp(&a.has_workspace))
+        .then_with(|| b.last_used_at.cmp(&a.last_used_at))
+        .then_with(|| {
+            crate::project::display_name(&a.key)
+                .to_lowercase()
+                .cmp(&crate::project::display_name(&b.key).to_lowercase())
+        })
+        .then_with(|| a.key.cmp(&b.key))
+}
+
+/// 项目选择器候选＝有待办的项目 ∪ 活跃 agent 项目 ∪ 最近 workspace（与 IM `/todo` 同源）。
+/// 前端用两个 optgroup 展示：`withTodos`（有待办）在前、`recent`（最近工作过，不含已在
+/// 上一组出现的 key）在后；组内排序同 IM。daemon 未运行时 agent 段为空，窗口照样可用。
 #[tauri::command]
 pub async fn todos_projects() -> Vec<TodoProjectInfo> {
     let todos = crate::todos::all();
-    let mut keys: Vec<String> = todos.keys().cloned().collect();
-    keys.sort_by_key(|k| crate::project::display_name(k).to_lowercase());
+    let mut by_key: std::collections::HashMap<String, GuiTodoProjectCandidate> =
+        std::collections::HashMap::new();
 
-    // 活跃 agent 的项目（cwd → git 根 key）。仅 Unix 有 daemon。
+    // 最近 workspace 索引（隐藏项不列）。
+    for workspace in crate::agents::workspaces::list()
+        .into_iter()
+        .filter(|workspace| !workspace.hidden)
+    {
+        let key = crate::project::detect_from(std::path::Path::new(&workspace.path));
+        if key.is_empty() {
+            continue;
+        }
+        let entry = by_key
+            .entry(key.clone())
+            .or_insert_with(|| GuiTodoProjectCandidate {
+                key,
+                pinned: false,
+                last_used_at: 0,
+                has_workspace: true,
+                activity_rank: 2,
+                todo_count: 0,
+            });
+        entry.pinned |= workspace.pinned;
+        entry.last_used_at = entry.last_used_at.max(workspace.last_used_at);
+        entry.has_workspace = true;
+    }
+
+    for (key, entries) in &todos {
+        let entry = by_key
+            .entry(key.clone())
+            .or_insert_with(|| GuiTodoProjectCandidate {
+                key: key.clone(),
+                pinned: false,
+                last_used_at: 0,
+                has_workspace: false,
+                activity_rank: 2,
+                todo_count: 0,
+            });
+        entry.todo_count = entries.len();
+    }
+
+    // 活跃 agent 的项目（cwd → git 根 key）。仅 Unix 有 daemon；未运行不拉起。
     #[cfg(unix)]
     if let Some(agents) = crate::client::agents_snapshot_if_running().await {
         for rec in agents.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
-            let ended = rec.get("state").and_then(|v| v.as_str()) == Some("ended");
+            let rank = match rec.get("state").and_then(|v| v.as_str()) {
+                Some("working") => 0u8,
+                Some("idle") => 1u8,
+                _ => continue,
+            };
             let Some(cwd) = rec
                 .get("cwd")
                 .and_then(|v| v.as_str())
@@ -425,34 +495,55 @@ pub async fn todos_projects() -> Vec<TodoProjectInfo> {
             else {
                 continue;
             };
-            if ended {
+            let key = crate::project::detect_from(std::path::Path::new(cwd));
+            if key.is_empty() {
                 continue;
             }
-            let key = crate::project::detect_from(std::path::Path::new(cwd));
-            if !key.is_empty() && !keys.contains(&key) {
-                keys.push(key);
-            }
+            let entry = by_key
+                .entry(key.clone())
+                .or_insert_with(|| GuiTodoProjectCandidate {
+                    key,
+                    pinned: false,
+                    last_used_at: 0,
+                    has_workspace: false,
+                    activity_rank: rank,
+                    todo_count: 0,
+                });
+            entry.activity_rank = entry.activity_rank.min(rank);
         }
     }
 
-    // 最近 workspace 索引（IM Agent 任务同款；隐藏项不列）：按近期使用倒序追加。
-    let mut workspaces = crate::agents::workspaces::list();
-    workspaces.retain(|w| !w.hidden);
-    workspaces.sort_by_key(|workspace| std::cmp::Reverse(workspace.last_used_at));
-    for w in workspaces {
-        let key = crate::project::detect_from(std::path::Path::new(&w.path));
-        if !key.is_empty() && !keys.contains(&key) {
-            keys.push(key);
+    let mut with_todos: Vec<GuiTodoProjectCandidate> = Vec::new();
+    let mut recent: Vec<GuiTodoProjectCandidate> = Vec::new();
+    for candidate in by_key.into_values() {
+        if candidate.todo_count > 0 {
+            with_todos.push(candidate);
+        } else if candidate.has_workspace || candidate.activity_rank < 2 {
+            // Recent section: workspaces + live agents only (no orphan empty keys).
+            recent.push(candidate);
         }
     }
+    with_todos.sort_by(gui_todo_project_sort);
+    recent.sort_by(gui_todo_project_sort);
 
-    keys.into_iter()
-        .map(|key| TodoProjectInfo {
-            name: crate::project::display_name(&key),
-            count: todos.get(&key).map(|e| e.len()).unwrap_or(0),
-            key,
-        })
-        .collect()
+    let mut out = Vec::with_capacity(with_todos.len() + recent.len());
+    for candidate in with_todos {
+        out.push(TodoProjectInfo {
+            name: crate::project::display_name(&candidate.key),
+            count: candidate.todo_count,
+            key: candidate.key,
+            section: "withTodos".into(),
+        });
+    }
+    for candidate in recent {
+        out.push(TodoProjectInfo {
+            name: crate::project::display_name(&candidate.key),
+            count: candidate.todo_count,
+            key: candidate.key,
+            section: "recent".into(),
+        });
+    }
+    out
 }
 
 /// 打开（或聚焦）项目待办窗口（spec todo-whats-next D9）：经统一宿主路由（全局单窗）。

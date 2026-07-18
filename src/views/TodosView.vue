@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { applyTheme } from "../lib/theme";
@@ -30,6 +30,15 @@ const { t, locale } = useI18n();
 const projects = ref<TodoProjectInfo[]>([]);
 const selected = ref<string>("");
 const entries = ref<TodoEntry[]>([]);
+
+/** Selector section: projects that currently have pending todos. */
+const projectsWithTodos = computed(() =>
+  projects.value.filter((p) => p.section === "withTodos")
+);
+/** Selector section: recent workspaces / live agents (keys already in withTodos excluded). */
+const projectsRecent = computed(() =>
+  projects.value.filter((p) => p.section === "recent")
+);
 // 首次加载完成前显示 Loading（避免空态闪现误导）。
 const loaded = ref(false);
 const newText = ref("");
@@ -63,7 +72,13 @@ async function reloadProjects(): Promise<void> {
   const list = await todosProjects();
   // 预选项目不在候选中（如 daemon 刚退、agent 项目未入 workspace 索引）→ 兜底追加，保持选中稳定。
   if (selected.value && !list.some((p) => p.key === selected.value)) {
-    list.push({ key: selected.value, name: basename(selected.value), count: 0 });
+    // Preselect not in candidates (daemon just stopped / agent not indexed) → keep selection stable.
+    list.push({
+      key: selected.value,
+      name: basename(selected.value),
+      count: 0,
+      section: "recent",
+    });
   }
   projects.value = list;
   if (!selected.value) {
@@ -447,9 +462,32 @@ onBeforeUnmount(() => {
         :aria-label="t('todosWin.projectLabel')"
         @change="onSelect"
       >
-        <option v-for="p in projects" :key="p.key" :value="p.key" :title="p.key">
-          {{ p.name }}{{ p.count ? ` (${p.count})` : "" }}
-        </option>
+        <optgroup
+          v-if="projectsWithTodos.length"
+          :label="t('todosWin.sectionWithTodos')"
+        >
+          <option
+            v-for="p in projectsWithTodos"
+            :key="p.key"
+            :value="p.key"
+            :title="p.key"
+          >
+            {{ p.name }}{{ p.count ? ` (${p.count})` : "" }}
+          </option>
+        </optgroup>
+        <optgroup
+          v-if="projectsRecent.length"
+          :label="t('todosWin.sectionRecent')"
+        >
+          <option
+            v-for="p in projectsRecent"
+            :key="p.key"
+            :value="p.key"
+            :title="p.key"
+          >
+            {{ p.name }}
+          </option>
+        </optgroup>
       </select>
     </header>
 

@@ -553,6 +553,8 @@ export default {
   todosWin: {
     title: "待办",
     projectLabel: "项目",
+    sectionWithTodos: "有待办",
+    sectionRecent: "最近项目",
     noProjects: "暂无候选项目",
     noProjectsHint: "项目有待办、有被追踪的 Agent 会话或最近使用过的 workspace 后会出现在这里。",
     empty: "本项目暂无待办",

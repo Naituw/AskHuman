@@ -573,6 +573,8 @@ export default {
   todosWin: {
     title: "Todos",
     projectLabel: "Project",
+    sectionWithTodos: "With todos",
+    sectionRecent: "Recent projects",
     noProjects: "No projects yet",
     noProjectsHint:
       "Projects appear here once they have todos, a tracked agent session, or a recent workspace.",

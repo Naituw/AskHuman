@@ -210,6 +210,12 @@ export interface TodoProjectInfo {
   name: string;
   /** 该项目当前待办条数。 */
   count: number;
+  /**
+   * 选择器分组：
+   * - `withTodos`：当前有待办的项目
+   * - `recent`：最近工作过的项目（活跃 Agent / workspace；不含已在 withTodos 出现的 key）
+   */
+  section: "withTodos" | "recent" | string;
 }
 
 /** 待办窗口 init 负载。 */
