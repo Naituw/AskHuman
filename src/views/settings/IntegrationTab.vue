@@ -6,10 +6,15 @@ import { useSettingsContext } from "./context";
 
 const { t } = useI18n();
 const {
+  config,
   revealLabel,
   prompt,
   promptCopied,
   promptVariant,
+  collabBusy,
+  collabError,
+  changeCollaborationStyle,
+  saveCustomCollaborationText,
   AGENTS,
   modes,
   modeBusy,
@@ -46,6 +51,75 @@ const {
     @click="closeOpenMenu"
   ></div>
   <p class="section-intro">{{ t("settings.integration.overviewDesc") }}</p>
+
+  <!-- 协作风格（全局）：对齐 / 自主 / 自定义 -->
+  <div class="card collab-style-card">
+    <p class="card-title">{{ t("settings.integration.collabTitle") }}</p>
+    <div class="row">
+      <div class="segmented">
+        <button
+          type="button"
+          class="seg"
+          :class="{ active: (config?.general.collaborationStyle ?? 'aligned') === 'aligned' }"
+          :disabled="collabBusy"
+          @click="changeCollaborationStyle('aligned')"
+        >
+          {{ t("settings.integration.collabAligned") }}
+        </button>
+        <button
+          type="button"
+          class="seg"
+          :class="{ active: config?.general.collaborationStyle === 'autonomous' }"
+          :disabled="collabBusy"
+          @click="changeCollaborationStyle('autonomous')"
+        >
+          {{ t("settings.integration.collabAutonomous") }}
+        </button>
+        <button
+          type="button"
+          class="seg"
+          :class="{ active: config?.general.collaborationStyle === 'custom' }"
+          :disabled="collabBusy"
+          @click="changeCollaborationStyle('custom')"
+        >
+          {{ t("settings.integration.collabCustom") }}
+        </button>
+      </div>
+    </div>
+    <p
+      v-if="(config?.general.collaborationStyle ?? 'aligned') === 'aligned'"
+      class="card-desc"
+    >
+      {{ t("settings.integration.collabAlignedDesc") }}
+    </p>
+    <p
+      v-else-if="config?.general.collaborationStyle === 'autonomous'"
+      class="card-desc"
+    >
+      {{ t("settings.integration.collabAutonomousDesc") }}
+    </p>
+    <template v-else-if="config?.general.collaborationStyle === 'custom' && config">
+      <p class="card-desc">{{ t("settings.integration.collabCustomDesc") }}</p>
+      <textarea
+        v-model="config.general.collaborationStyleCustomText"
+        class="input collab-custom-input"
+        rows="8"
+        spellcheck="false"
+      />
+      <div class="row" style="margin-top: 8px">
+        <span class="spacer"></span>
+        <button
+          type="button"
+          class="btn"
+          :disabled="collabBusy"
+          @click="saveCustomCollaborationText"
+        >
+          {{ t("settings.integration.collabSaveCustom") }}
+        </button>
+      </div>
+    </template>
+    <p v-if="collabError" class="error-text">{{ collabError }}</p>
+  </div>
 
   <div class="integration-manual">
   <!-- 手动集成：参考提示词（CLI / MCP 双版本 + MCP 配置示例） -->

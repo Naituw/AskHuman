@@ -119,6 +119,13 @@ export const agentTaskTestTerminal = () =>
 export const getPrompt = (variant?: "cli" | "mcp") =>
   invoke<string>("get_prompt", { variant });
 
+export const collaborationStyleDefaults = () =>
+  invoke<{ aligned: string; autonomous: string }>("collaboration_style_defaults");
+
+/** Rewrite rules/skill for every agent with an enabled integration mode. */
+export const collaborationStyleApplyIntegrations = () =>
+  invoke<void>("collaboration_style_apply_integrations");
+
 export const openTestPopup = () => invoke<void>("open_test_popup");
 
 export const popupSoundSupport = () =>

@@ -146,7 +146,7 @@ export function createSettingsContext() {
   const core = createCore();
   const general = useGeneralSettings(core);
   const updates = useAboutUpdates();
-  const integration = useIntegration();
+  const integration = useIntegration(core);
   const tasks = useAgentTasks(core);
   const lifecycle = useLifecycleSettings(tasks.refreshAgentTaskSettings);
   const channels = useChannels(core);

@@ -17,12 +17,21 @@ import {
   agentHookReveal,
   agentHookOpen,
   getPrompt,
+  collaborationStyleDefaults,
+  collaborationStyleApplyIntegrations,
 } from "../../lib/ipc";
-import type { AgentId, AgentMode, AgentModeStatus } from "../../lib/types";
+import type {
+  AgentId,
+  AgentMode,
+  AgentModeStatus,
+  CollaborationStyle,
+} from "../../lib/types";
 import { isMac, isWindows } from "../../lib/platform";
+import type { SettingsCore } from "./context";
 
-export function useIntegration() {
+export function useIntegration(core: SettingsCore) {
   const { t } = useI18n();
+  const { config, persist } = core;
 
   // 「在文件管理器中显示」的按平台措辞（访达 / 文件资源管理器 / 文件管理器），单一来源。
   const revealLabel = computed(() => {
@@ -256,6 +265,63 @@ export function useIntegration() {
     void loadPrompt();
   }
 
+  // —— 协作风格（全局；切换后重写已开集成 + 刷新手动 Prompt）——
+  const collabBusy = ref(false);
+  const collabError = ref<string | null>(null);
+  const collabDefaults = ref({ aligned: "", autonomous: "" });
+
+  async function ensureCollabDefaults() {
+    if (collabDefaults.value.aligned) return;
+    try {
+      collabDefaults.value = await collaborationStyleDefaults();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function changeCollaborationStyle(style: CollaborationStyle) {
+    if (!config.value || collabBusy.value) return;
+    await ensureCollabDefaults();
+    if (
+      style === "custom" &&
+      !config.value.general.collaborationStyleCustomText?.trim()
+    ) {
+      config.value.general.collaborationStyleCustomText =
+        collabDefaults.value.aligned;
+    }
+    config.value.general.collaborationStyle = style;
+    collabBusy.value = true;
+    collabError.value = null;
+    try {
+      await persist();
+      await collaborationStyleApplyIntegrations();
+      await loadPrompt();
+      await Promise.all(AGENTS.map((a) => refreshMode(a.id)));
+    } catch (e) {
+      collabError.value = String(e);
+    } finally {
+      collabBusy.value = false;
+    }
+  }
+
+  async function saveCustomCollaborationText() {
+    if (!config.value || collabBusy.value) return;
+    collabBusy.value = true;
+    collabError.value = null;
+    try {
+      await persist();
+      if (config.value.general.collaborationStyle === "custom") {
+        await collaborationStyleApplyIntegrations();
+        await loadPrompt();
+        await Promise.all(AGENTS.map((a) => refreshMode(a.id)));
+      }
+    } catch (e) {
+      collabError.value = String(e);
+    } finally {
+      collabBusy.value = false;
+    }
+  }
+
   // MCP 手动配置示例。直接填入当前可执行文件绝对路径（与自动集成写入一致），免用户手改；
   // 取不到时退回占位符。
   const MCP_EXE_PLACEHOLDER = "<absolute path to AskHuman>";
@@ -305,6 +371,7 @@ tool_timeout_sec = 86400`,
 
   // 集成域初始化：加载提示词、可执行路径与各 Agent 集成状态。
   async function initIntegration() {
+    await ensureCollabDefaults();
     await loadPrompt();
     try {
       mcpExePath.value = await mcpCommandPath();
@@ -319,6 +386,11 @@ tool_timeout_sec = 86400`,
     prompt,
     promptCopied,
     promptVariant,
+    collabBusy,
+    collabError,
+    collabDefaults,
+    changeCollaborationStyle,
+    saveCustomCollaborationText,
     AGENTS,
     modes,
     modeBusy,

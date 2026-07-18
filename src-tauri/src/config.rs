@@ -119,6 +119,38 @@ impl WindowEffect {
     }
 }
 
+/// Global collaboration style for installed agent prompts (spec collaboration-style.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum CollaborationStyle {
+    /// Relentless interview until shared understanding (historical default).
+    #[default]
+    Aligned,
+    /// Fewer mid-task questions; ask on blockers / high blast radius only.
+    Autonomous,
+    /// User-supplied collaboration paragraph (`collaboration_style_custom_text`).
+    Custom,
+}
+
+impl CollaborationStyle {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Aligned => "aligned",
+            Self::Autonomous => "autonomous",
+            Self::Custom => "custom",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "aligned" => Some(Self::Aligned),
+            "autonomous" => Some(Self::Autonomous),
+            "custom" => Some(Self::Custom),
+            _ => None,
+        }
+    }
+}
+
 /// Popup / Confirm submit keyboard shortcut mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -154,6 +186,11 @@ pub struct GeneralConfig {
     pub speech_shortcut: String,
     /// 弹窗/Confirm 提交快捷键：`cmdEnter`（默认）或 `enter`。
     pub popup_submit_key: PopupSubmitKey,
+    /// 协作风格：对齐 / 自主 / 自定义（写入 Agent rules/skill 的可替换段）。
+    pub collaboration_style: CollaborationStyle,
+    /// 自定义协作风格正文（英文契约段）；`collaboration_style == custom` 时使用，空则回退对齐默认。
+    #[serde(default)]
+    pub collaboration_style_custom_text: String,
     /// 回复历史保留条数上限。默认 200；`0` 表示停止新增记录（但保留并仍可查看旧记录）。
     pub history_limit: u32,
     /// 待办执行历史保留条数（按项目各留 N 条，第 16 轮定案）。默认 20；`0` 同 history_limit
@@ -194,6 +231,8 @@ impl Default for GeneralConfig {
             speech_language: "auto".to_string(),
             speech_shortcut: "cmd+d".to_string(),
             popup_submit_key: PopupSubmitKey::CmdEnter,
+            collaboration_style: CollaborationStyle::Aligned,
+            collaboration_style_custom_text: String::new(),
             history_limit: default_history_limit(),
             todo_history_limit: default_todo_history_limit(),
             popup_sound: String::new(),

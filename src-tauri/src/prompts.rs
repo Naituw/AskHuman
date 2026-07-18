@@ -2,6 +2,11 @@
 //!
 //! 该提示词始终为英文（面向 AI 的契约），且**不内嵌** help 文本，
 //! 而是指引 AI 执行 `<prog> --agent-help` 获取实时、随界面语言本地化的用法。
+//!
+//! 协作风格（aligned / autonomous / custom）见 `docs/specs/collaboration-style.md`：
+//! 通道纪律固定；`Interview…` / 改方案确认段随配置替换。
+
+use crate::config::{AppConfig, CollaborationStyle};
 
 pub const USER_CONFIRMED_END_TURN_MARKER: &str = "[user_confirmed_end_turn]";
 pub const SUBAGENT_PROTOCOL_RULES: &str = r#"**This protocol does not apply to subagents. If you are a subagent, do not use AskHuman.**
@@ -11,9 +16,59 @@ pub const fn subagent_guard_context() -> &'static str {
     "You are a subagent. Do not use AskHuman."
 }
 
-/// 组装参考提示词：行为约束规则（英文固定）+ 一行执行指引。
+/// Default **aligned** collaboration body (tool-agnostic). Used as the custom-style editor default.
+pub fn default_aligned_collaboration_text() -> &'static str {
+    r#"- Interview me relentlessly about every aspect of the requirements until we reach a shared understanding. Use AskHuman as instructed in the interaction protocol above.
+  - Walk down each branch of the design tree, resolving dependencies between decisions one by one.
+  - If a question can be answered by exploring the codebase, explore the codebase instead.
+- Do NOT change the current plan, design, scope, or strategy on your own. If new info suggests that a change may be needed, you MUST ask for confirmation through AskHuman before making the change."#
+}
+
+/// **Autonomous** collaboration body (tool-agnostic).
+pub fn default_autonomous_collaboration_text() -> &'static str {
+    r#"- Prefer reasonable defaults and keep making progress. Do **not** interview relentlessly on every design branch.
+- Ask via AskHuman only when you are blocked, the choice is irreversible or security-sensitive, the blast radius is high, or I explicitly asked to decide. Prefer exploring the codebase over asking.
+- You may decide minor implementation details without asking. If you would change the agreed plan, scope, or user-visible behavior in a material way, ask first.
+- When you finish a task and call whats-next, briefly note any important defaults you took."#
+}
+
+/// Resolve collaboration body for `style` + optional custom text (empty custom → aligned default).
+pub fn collaboration_body(style: CollaborationStyle, custom_text: &str) -> String {
+    match style {
+        CollaborationStyle::Aligned => default_aligned_collaboration_text().to_string(),
+        CollaborationStyle::Autonomous => default_autonomous_collaboration_text().to_string(),
+        CollaborationStyle::Custom => {
+            let t = custom_text.trim();
+            if t.is_empty() {
+                default_aligned_collaboration_text().to_string()
+            } else {
+                t.to_string()
+            }
+        }
+    }
+}
+
+fn wrap_collaboration_style(style: CollaborationStyle, body: &str) -> String {
+    format!(
+        "<collaboration_style name=\"{}\">\n{}\n</collaboration_style>",
+        style.as_str(),
+        body.trim_end()
+    )
+}
+
+fn collaboration_section_from_config() -> String {
+    let cfg = AppConfig::load_without_secrets();
+    let body = collaboration_body(
+        cfg.general.collaboration_style,
+        &cfg.general.collaboration_style_custom_text,
+    );
+    wrap_collaboration_style(cfg.general.collaboration_style, &body)
+}
+
+/// CLI 版：行为约束 + 当前协作风格段。
 pub fn cli_reference() -> String {
     let program = crate::cli::help::program_name();
+    let collab = collaboration_section_from_config();
 
     format!(
         r#"<mandatory_interaction_protocol>
@@ -34,25 +89,17 @@ pub fn cli_reference() -> String {
 </mandatory_interaction_protocol>
 
 - When I ask for a project todo or defer a concrete task or suggestion until later, add it with `{program} todo add "<concise task>"`. Never use project todos for your own work plan or an unaccepted suggestion.
-- Interview me with `{program}` relentlessly about every aspect of the requirements until we reach a shared understanding.
-  - Walk down each branch of the design tree, resolving dependencies between decisions one by one.
-  - If a question can be answered by exploring the codebase, explore the codebase instead.
-- Do NOT change the current plan, design, scope, or strategy on your own. If new info suggests that a change may be needed, you MUST ask for confirmation through `{program}` before making the change."#,
+{collab}"#,
         program = program,
         end_marker = USER_CONFIRMED_END_TURN_MARKER,
         subagent_rules = SUBAGENT_PROTOCOL_RULES,
+        collab = collab,
     )
 }
 
-/// MCP 版参考提示词：交互纪律与 CLI 版一致，但工具用法改为「调用 AskHuman MCP server 的 `ask` 工具」。
-///
-/// 与 [`cli_reference`] 的差异（spec D10）：去掉 Shell 专属的「设 24h 超时」「先跑 `--agent-help`」等句
-/// （MCP 工具调用本身可长超时、用法由工具 schema 自带），把「经 Shell 调 `AskHuman`」改为「调用 AskHuman
-/// 的 `ask` 工具」。**工具引用须带 AskHuman 限定**——agent 可能挂载多个 MCP server，单说「the `ask`
-/// tool」会有歧义，故全文统一为「the AskHuman `ask` tool」并在首句点明它由 AskHuman MCP server 提供。
-/// 其余纪律（必须提问、不在直接输出/结束回合提问、提供预定义选项 + 标推荐、附件经工具、结束前回执、
-/// relentless interview、不擅自改方案）全部保留。始终英文（面向 AI 的契约）。
+/// MCP 版参考提示词：交互纪律与 CLI 版一致，工具改为 AskHuman MCP `ask`；协作风格同配置。
 pub fn mcp_reference() -> String {
+    let collab = collaboration_section_from_config();
     format!(
         r#"<mandatory_interaction_protocol>
 {subagent_rules}
@@ -71,12 +118,10 @@ pub fn mcp_reference() -> String {
 </mandatory_interaction_protocol>
 
 - When I ask for a project todo or defer a concrete task or suggestion until later, add it with `AskHuman todo add "<concise task>"`. Never use project todos for your own work plan or an unaccepted suggestion.
-- Interview me with the AskHuman `ask` tool relentlessly about every aspect of the requirements until we reach a shared understanding.
-  - Walk down each branch of the design tree, resolving dependencies between decisions one by one.
-  - If a question can be answered by exploring the codebase, explore the codebase instead.
-- Do NOT change the current plan, design, scope, or strategy on your own. If new info suggests that a change may be needed, you MUST ask for confirmation through the AskHuman `ask` tool before making the change."#,
+{collab}"#,
         end_marker = USER_CONFIRMED_END_TURN_MARKER,
         subagent_rules = SUBAGENT_PROTOCOL_RULES,
+        collab = collab,
     )
 }
 
@@ -345,5 +390,28 @@ mod tests {
         assert!(p.contains("Shell/Bash"));
         assert!(p.contains("86400000"));
         assert!(p.contains("--agent-help"));
+    }
+
+    #[test]
+    fn collaboration_body_switches_and_custom_falls_back() {
+        let aligned = collaboration_body(CollaborationStyle::Aligned, "");
+        assert!(aligned.contains("relentlessly"));
+        let auto = collaboration_body(CollaborationStyle::Autonomous, "");
+        assert!(auto.contains("Prefer reasonable defaults"));
+        assert!(auto.contains("Do **not** interview relentlessly"));
+        assert!(!auto.contains("until we reach a shared understanding"));
+        let custom = collaboration_body(CollaborationStyle::Custom, "  only ask when blocked  ");
+        assert_eq!(custom, "only ask when blocked");
+        let empty_custom = collaboration_body(CollaborationStyle::Custom, "  \n");
+        assert!(empty_custom.contains("relentlessly"));
+    }
+
+    #[test]
+    fn default_prompts_wrap_collaboration_style_aligned() {
+        // Default config is aligned.
+        let p = mcp_reference();
+        assert!(p.contains("<collaboration_style name=\"aligned\">"));
+        assert!(p.contains("relentlessly"));
+        assert!(p.contains("</collaboration_style>"));
     }
 }

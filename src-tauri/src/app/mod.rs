@@ -892,6 +892,8 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::commands::agent_task_readiness,
             crate::commands::agent_task_test_terminal,
             crate::commands::get_prompt,
+            crate::commands::collaboration_style_defaults,
+            crate::commands::collaboration_style_apply_integrations,
             crate::commands::open_test_popup,
             crate::commands::popup_sound_support,
             crate::commands::play_popup_sound,

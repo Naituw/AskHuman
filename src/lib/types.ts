@@ -396,6 +396,9 @@ export type UiLanguage = "auto" | "en" | "zh";
 /** Popup/Confirm submit key mode (mirrors Rust `PopupSubmitKey`). */
 export type PopupSubmitKey = "cmdEnter" | "enter";
 
+/** Global collaboration style for agent prompts (mirrors Rust `CollaborationStyle`). */
+export type CollaborationStyle = "aligned" | "autonomous" | "custom";
+
 export interface GeneralConfig {
   theme: ThemeMode;
   /** 界面语言：auto（跟随系统）/ en / zh。回退英文。 */
@@ -413,6 +416,10 @@ export interface GeneralConfig {
    * - `enter`: bare Enter submits; any modifier+Enter newlines
    */
   popupSubmitKey: PopupSubmitKey;
+  /** 协作风格：对齐 / 自主 / 自定义。 */
+  collaborationStyle: CollaborationStyle;
+  /** 自定义协作风格正文；空则回退对齐默认。 */
+  collaborationStyleCustomText: string;
   /** 回复历史保留条数上限。默认 200；0 = 停止新增记录（但保留旧记录）。 */
   historyLimit: number;
   /** 待办执行历史保留条数（每项目）。默认 20；0 = 停止新增记录（保留旧历史）。 */

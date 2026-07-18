@@ -237,6 +237,17 @@ export default {
     integration: {
       overviewDesc:
         "优先使用「自动集成」一键配置 AskHuman；如果希望自行管理文件，可在下方「手动集成」复制参考提示词与 MCP 配置。",
+      collabTitle: "协作风格",
+      collabAligned: "对齐",
+      collabAutonomous: "自主",
+      collabCustom: "自定义",
+      collabAlignedDesc:
+        "需求与方案多确认，理解一致后再大规模改动；会更频繁地通过 AskHuman 询问。",
+      collabAutonomousDesc:
+        "少打断；仅在阻塞、高风险或不可逆时询问，其余合理默认并在任务交接时说明。",
+      collabCustomDesc:
+        "编辑下方英文段落以替换「问多勤 / 何时改方案」的约定。通道纪律（必须经 AskHuman、whats-next 等）不受影响。",
+      collabSaveCustom: "保存自定义并更新集成",
       manualTitle: "手动集成",
       autoTitle: "自动集成",
       promptTitle: "参考提示词",

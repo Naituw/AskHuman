@@ -246,6 +246,17 @@ export default {
     integration: {
       overviewDesc:
         "Use Automatic integration to set up AskHuman in one step. If you prefer to manage files yourself, the reference prompt and MCP examples are available under Manual integration below.",
+      collabTitle: "Collaboration style",
+      collabAligned: "Aligned",
+      collabAutonomous: "Autonomous",
+      collabCustom: "Custom",
+      collabAlignedDesc:
+        "Interview thoroughly until requirements and design are shared; more AskHuman check-ins before large changes.",
+      collabAutonomousDesc:
+        "Fewer interruptions; ask only when blocked, high-risk, or irreversible. Reasonable defaults are fine—summarize them at handoff.",
+      collabCustomDesc:
+        "Edit the English paragraph below to replace how often the agent asks and when it may change the plan. Channel rules (must use AskHuman, whats-next, etc.) stay fixed.",
+      collabSaveCustom: "Save custom text and update integrations",
       manualTitle: "Manual integration",
       autoTitle: "Automatic integration",
       promptTitle: "Reference prompt",

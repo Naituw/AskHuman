@@ -1229,6 +1229,42 @@ pub fn get_prompt(variant: Option<String>) -> String {
     }
 }
 
+/// Default collaboration-style paragraphs for the custom editor (aligned + autonomous).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollaborationStyleDefaults {
+    aligned: String,
+    autonomous: String,
+}
+
+#[tauri::command]
+pub fn collaboration_style_defaults() -> CollaborationStyleDefaults {
+    CollaborationStyleDefaults {
+        aligned: crate::prompts::default_aligned_collaboration_text().to_string(),
+        autonomous: crate::prompts::default_autonomous_collaboration_text().to_string(),
+    }
+}
+
+/// After collaboration style changes: rewrite rules/skill for every agent whose mode is not None.
+#[tauri::command]
+pub fn collaboration_style_apply_integrations() -> Result<(), String> {
+    use crate::integrations::agent_mode::{self, Mode};
+    use crate::integrations::agent_rules::AgentTarget;
+    for target in [
+        AgentTarget::Cursor,
+        AgentTarget::ClaudeCode,
+        AgentTarget::Codex,
+        AgentTarget::Grok,
+    ] {
+        let mode = agent_mode::current(target);
+        if mode == Mode::None {
+            continue;
+        }
+        agent_mode::update(target).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 设置页「弹出测试窗口」：以独立子进程跑一个多问题示例，
 /// 完全复用真实弹窗流程并读取已保存的配置（含出现动画），便于快速预览效果。
 #[tauri::command]
