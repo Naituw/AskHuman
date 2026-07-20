@@ -343,6 +343,7 @@ pub(crate) fn finalize_popup_show(
             }
             #[cfg(not(target_os = "macos"))]
             {
+                let _ = behind_window_number;
                 cascade_popup_position(&win, cascade_index);
                 let _ = win.show();
             }
