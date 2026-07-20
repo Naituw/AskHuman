@@ -1328,6 +1328,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                                             }
                                             let _ = app_handle.emit("popup-show", ());
                                         }
+                                        #[cfg(unix)]
                                         Ok(Some(crate::ipc::ServerMsg::PresentPopup {
                                             request_id,
                                             presentation,
