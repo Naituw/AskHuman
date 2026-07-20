@@ -895,6 +895,24 @@
   gap: var(--space-3);
   min-width: 0;
 }
+/* Vertical-question composers keep identical empty geometry before and after focus. Only real
+   multiline content grows the textarea, so native focus/blur cannot move an option mid-click. */
+.answer-composer.is-collapsible .textarea,
+.answer-composer.is-collapsible .textarea.collapsed {
+  min-height: 44px;
+  padding: 10px 72px 10px 12px;
+}
+.answer-composer.is-collapsible .textarea.collapsed {
+  height: 44px;
+}
+.answer-composer.is-collapsible .img-btn,
+.answer-composer.is-collapsible .mic-btn {
+  bottom: 9px;
+}
+/* Match the option-to-composer gap to the spacing between adjacent options. */
+.options + .composer-anchor {
+  margin-top: calc(var(--space-2) - var(--space-3));
+}
 .composer-attachments {
   display: contents;
 }

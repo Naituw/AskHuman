@@ -141,10 +141,34 @@
 8. **闪光区域几何**：`.q-card::before` 定为 `inset: 8px -6px -6px -9px`（上/右/下轻微外扩、**不覆盖题间分割线**；左侧
    外扩 -9px 留 ~7px 呼吸位、不贴窗口边框），accent 12% 淡底、圆角 8px、`opacity 1→0` 渐隐。
 
-### 2026-07（固定编辑器与当前题解耦）
+### 2026-07（固定编辑器与动作目标解耦）
 
 `docs/specs/popup-pinned-composer.md` 在不改变本规格导航 / 快捷键焦点模型的前提下，引入独立 composer owner：用户向上回看 Message 时，最近激活的输入框可固定在底部，scroll-spy 仍可更新 `current`。只有聚焦另一题输入框或在另一题执行明确作答动作才切换 / 清除旧 owner；单纯滚动、点正文或选择 Message 文字不会清除。
 
-固定 textarea 仍有焦点时，`⌘↵` 的“当前焦点”具体取 `focusedQ`，而不是可能已被 scroll-spy 改写的
-`current`；且编辑器已在固定区可见时跳过题卡 reveal-first。否则会在回看 Message 时把已填好的固定
-输入框误判为屏外题卡并跳回第 1 题。固定区失焦后继续沿用 `current`，不改变普通滚动导航语义。
+纵向模式把“视口所在题”和“用户动作题”明确拆开：`current` 只代表 scroll-spy / 程序化导航得到的
+视口题；`actionQ = focusedQ ?? current` 是快捷键、选项角标、语音和页脚导航的唯一动作目标。只要
+textarea 仍有真实焦点，被动滚动就只更新 `current`，不能把动作目标从编辑中的题夺走；输入框失焦后
+动作才交回 `current`。
+
+`⌘1–9` 始终选择 `actionQ` 的对应选项。若用户回看上方内容导致该题卡不完整可见，选择后自动把
+`actionQ` 滚回可见并保持编辑器焦点；`⌘↵` 与语音快捷键仍可直接作用于固定编辑器，不强制回滚。
+点击另一题选项或使用上一个 / 下一个显式导航则真正切换上下文：先 blur 旧 textarea、停止旧题语音并
+清除旧 owner，再聚焦目标题；Teleport 回位过程不得恢复已经明确结束的旧焦点。
+
+动作保留还有一个统一退出条件：真实滚动先完成既有固定判定；若聚焦题卡随后已与 `.content` 视口
+完全无交集，且编辑器没有进入固定区，则 blur textarea 并清除 owner，动作立即交回 scroll-spy 题。
+上下两端使用同一几何规则，部分可见不退出，已经固定也不退出。
+
+纵向题卡的空 textarea 不再因 focus / blur 在单行与 64px 之间切换高度。折叠态与聚焦空态统一为
+约 44px 的紧凑单行，麦克风 / 图片按钮在右侧占位；只有真实多行内容才向下增长。已展开 textarea
+失焦时保留输入阶段测得的内联高度，不得再执行 `height: auto → measured height`；只有确实折叠时才
+清除内联高度，避免 WebKit 滚动锚定在 option 的 pointerdown 与 pointerup 之间移动题卡。该约束不需要
+额外 pointer 状态或 scrollTop 补偿。相邻预设选项之间、最后一个选项到输入框之间统一使用同一垂直间距。
+
+### 2026-07（composer 测量不得冒充滚动）
+
+固定编辑器把 docking 几何测量与 scroll-spy 合并进同一个 rAF 节流后，textarea 的任意 `keydown`
+（包括单独按 Command）、输入和 `ResizeObserver` 都可能在导航锁过期后按静止滚动位置重算 `current`，
+把刚由 `⌘]` / 按钮切到的题抢回第一题。调度器必须保留事件来源：只有真实 `.content` `scroll`
+事件可以更新 `current`；composer 激活、尺寸变化、Teleport 和回位复测只更新 docking 几何。合并在
+同一帧的多个调用采用 sticky scroll intent，既不漏掉真实滚动，也不让纯测量获得 scroll-spy 权限。

@@ -16,11 +16,19 @@ export const DEFAULT_COMPOSER_DOCK_THRESHOLDS: ComposerDockThresholds = {
   returnGap: 10,
 };
 
+/** A focused editor owns user actions even when passive scrolling changes the viewport card. */
+export function resolveActionQuestionIndex(
+  viewportQuestion: number,
+  focusedQuestion: number | null
+): number {
+  return focusedQuestion ?? viewportQuestion;
+}
+
 export function cmdEnterQuestionIndex(
   currentQuestion: number,
   focusedQuestion: number | null
 ): number {
-  return focusedQuestion ?? currentQuestion;
+  return resolveActionQuestionIndex(currentQuestion, focusedQuestion);
 }
 
 export function shouldRevealQuestionBeforeCmdEnter(
@@ -32,6 +40,28 @@ export function shouldRevealQuestionBeforeCmdEnter(
   const focusedEditorIsDocked =
     focusedQuestion === questionIndex && dockedQuestion === questionIndex;
   return cardOffScreen && !focusedEditorIsDocked;
+}
+
+/** Only a real scroll event may hand the current-question pointer back to scroll-spy. */
+export function shouldApplyScrollSpy(
+  scrollEventPending: boolean,
+  verticalMode: boolean,
+  nowMs: number,
+  activeLockUntilMs: number,
+): boolean {
+  return scrollEventPending && verticalMode && nowMs >= activeLockUntilMs;
+}
+
+export function shouldDeactivateOffscreenComposer(
+  focusedQuestion: number | null,
+  dockedQuestion: number | null,
+  cardOffScreen: boolean
+): boolean {
+  return (
+    focusedQuestion !== null &&
+    dockedQuestion !== focusedQuestion &&
+    cardOffScreen
+  );
 }
 
 export function canComposerDock(

@@ -16,7 +16,7 @@ const {
   canGoPrev,
   goPrev,
   goNext,
-  current,
+  actionQuestionIndex,
   total,
   onLastQuestion,
   submitShowsCmdEnter,
@@ -64,6 +64,7 @@ const {
       class="btn"
       type="button"
       :disabled="submitting || !canGoPrev"
+      @mousedown.prevent
       @click="goPrev"
     >
       {{ t("popup.prev") }} <kbd v-if="canGoPrev" class="sc">⌘[</kbd>
@@ -72,7 +73,8 @@ const {
       class="btn"
       :class="{ 'btn-primary': nextPrimary }"
       type="button"
-      :disabled="submitting || current === total - 1"
+      :disabled="submitting || actionQuestionIndex === total - 1"
+      @mousedown.prevent
       @click="goNext"
     >
       {{ t("popup.next") }}

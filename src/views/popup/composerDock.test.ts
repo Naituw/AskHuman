@@ -4,7 +4,10 @@ import {
   cmdEnterQuestionIndex,
   composerHomeVisibleRatio,
   isComposerHomeFullyVisible,
+  resolveActionQuestionIndex,
   resolveComposerDocked,
+  shouldApplyScrollSpy,
+  shouldDeactivateOffscreenComposer,
   shouldRevealQuestionBeforeCmdEnter,
   type ComposerDockGeometry,
 } from "./composerDock";
@@ -47,6 +50,46 @@ describe("docked composer Cmd+Enter", () => {
     expect(shouldRevealQuestionBeforeCmdEnter(2, 2, 2, true)).toBe(false);
     expect(shouldRevealQuestionBeforeCmdEnter(2, null, 2, true)).toBe(true);
     expect(shouldRevealQuestionBeforeCmdEnter(2, 2, null, true)).toBe(true);
+  });
+});
+
+describe("multi-question action target", () => {
+  it("keeps actions on the focused editor while the viewport moves", () => {
+    expect(resolveActionQuestionIndex(0, 1)).toBe(1);
+  });
+
+  it("hands actions back to the viewport after the editor blurs", () => {
+    expect(resolveActionQuestionIndex(0, null)).toBe(0);
+  });
+});
+
+describe("scroll-spy scheduling", () => {
+  it("ignores composer-only measurements such as modifier key activation", () => {
+    expect(shouldApplyScrollSpy(false, true, 1_000, 700)).toBe(false);
+  });
+
+  it("accepts real scrolling after the navigation lock expires", () => {
+    expect(shouldApplyScrollSpy(true, true, 1_000, 700)).toBe(true);
+    expect(shouldApplyScrollSpy(true, true, 600, 700)).toBe(false);
+  });
+
+  it("never applies the vertical scroll-spy in sequential mode", () => {
+    expect(shouldApplyScrollSpy(true, false, 1_000, 0)).toBe(false);
+  });
+});
+
+describe("offscreen composer deactivation", () => {
+  it("deactivates a focused editor after its card fully leaves the viewport", () => {
+    expect(shouldDeactivateOffscreenComposer(1, null, true)).toBe(true);
+  });
+
+  it("keeps a docked editor active even when its card is offscreen", () => {
+    expect(shouldDeactivateOffscreenComposer(1, 1, true)).toBe(false);
+  });
+
+  it("keeps partially visible and already blurred editors unchanged", () => {
+    expect(shouldDeactivateOffscreenComposer(1, null, false)).toBe(false);
+    expect(shouldDeactivateOffscreenComposer(null, null, true)).toBe(false);
   });
 });
 

@@ -51,10 +51,12 @@ import { useAttachments } from "./useAttachments";
 import { useUpdateState } from "./useUpdateState";
 import {
   canComposerDock,
-  cmdEnterQuestionIndex,
   composerHomeVisibleRatio,
   isComposerHomeFullyVisible,
+  resolveActionQuestionIndex,
   resolveComposerDocked,
+  shouldApplyScrollSpy,
+  shouldDeactivateOffscreenComposer,
   shouldRevealQuestionBeforeCmdEnter,
   type ComposerDockGeometry,
 } from "./composerDock";
@@ -62,6 +64,7 @@ import {
   refreshWhatsNextTodos,
   selectedWhatsNextTodo,
 } from "./whatsNextTodos";
+import { settleTextareaHeightAfterBlur } from "./textareaAutosize";
 
 export function usePopupCore() {
   const { t } = useI18n();
@@ -116,15 +119,11 @@ export function usePopupCore() {
   /** Submit shortcut: cmdEnter (default) or enter. From popup_init / settings-updated. */
   const popupSubmitKey = ref<"cmdEnter" | "enter">("cmdEnter");
   const submitWithBareEnter = computed(() => popupSubmitKey.value === "enter");
-  // 每题的 textarea（函数 ref 按索引登记）；inputRef = 当前题(active) 的 textarea，
-  // 供语音 / autoGrow / 聚焦复用既有逻辑（current 即 active 指针）。
+  // Textarea refs are registered by question index.
   const inputRefs = ref<(HTMLTextAreaElement | null)[]>([]);
   function setInputRef(el: HTMLTextAreaElement | null, i: number) {
     inputRefs.value[i] = el;
   }
-  const inputRef = computed<HTMLTextAreaElement | null>(
-    () => inputRefs.value[current.value] ?? null
-  );
   const fileRef = ref<HTMLInputElement | null>(null);
   // 多问题纵向列表：滚动容器（IntersectionObserver root）+ 每题卡片 + 每题底部哨兵 + 每题缩略图容器。
   const contentRef = ref<HTMLElement | null>(null);
@@ -164,6 +163,7 @@ export function usePopupCore() {
   let nextSequentialFocusIsManual = false;
   let lastContentScrollTop = 0;
   let upwardScrollIntentUntil = 0;
+  let contentScrollIntentUntil = 0;
 
   function ensureComposerResizeObserver(): ResizeObserver | null {
     if (composerResizeObserver || typeof ResizeObserver === "undefined") {
@@ -373,6 +373,10 @@ export function usePopupCore() {
   }
 
   function endOtherComposer(i: number) {
+    const focused = focusedQ.value;
+    if (focused !== null && focused !== i) {
+      inputRefs.value[focused]?.blur();
+    }
     if (composerOwnerQ.value !== null && composerOwnerQ.value !== i) {
       clearComposerOwner();
     }
@@ -410,6 +414,7 @@ export function usePopupCore() {
     nextSequentialFocusIsManual = false;
     lastContentScrollTop = contentRef.value?.scrollTop ?? 0;
     upwardScrollIntentUntil = 0;
+    contentScrollIntentUntil = 0;
   }
   // 当前聚焦的问题索引（null = 无）；驱动折叠输入框展开。
   const focusedQ = ref<number | null>(null);
@@ -444,10 +449,11 @@ export function usePopupCore() {
     lastContentScrollTop = st;
     scrolled.value = st > 0;
     atTop.value = st <= 0;
-    scheduleScrollWork();
+    scheduleScrollWork(true);
   }
 
   function onContentWheel(e: WheelEvent) {
+    if (e.deltaY !== 0) contentScrollIntentUntil = Date.now() + 500;
     if (e.deltaY < 0) upwardScrollIntentUntil = Date.now() + 500;
   }
 
@@ -456,7 +462,7 @@ export function usePopupCore() {
   // 该线当前落在的题（即最后一个 top ≤ 线的题）。如此滚动进度被均匀分配给各题：滚到最顶=第一题、
   // 滚到底=末题、中间进度=中间题，**每题都有一段可达区间**（修复「内容仅略超视口时，一滑就从首题
   // 跳到末题、中间题选不中」）；且因用真实卡片边界，超长题在其铺满视口期间持续保持 active（高度自适应）。
-  // 键盘/按钮导航后 450ms 内不被滚动回改（activeLockUntil）。
+  // Keep scroll-spy from overriding keyboard/button navigation during NAV_LOCK_MS.
   function readingLineY(root: HTMLElement): number {
     const r = root.getBoundingClientRect();
     const max = root.scrollHeight - root.clientHeight;
@@ -474,11 +480,24 @@ export function usePopupCore() {
     return next;
   }
   let scrollRaf = 0;
-  function scheduleScrollWork() {
+  let scrollSpyPending = false;
+  function scheduleScrollWork(fromScrollEvent = false) {
+    // Geometry-only callers (keyboard activation, ResizeObserver, Teleport) must not hand the
+    // current-question pointer back to scroll-spy. Preserve a real scroll intent if calls coalesce.
+    if (fromScrollEvent) scrollSpyPending = true;
     if (scrollRaf) return;
     scrollRaf = requestAnimationFrame(() => {
       scrollRaf = 0;
-      if (verticalMode.value && Date.now() >= activeLockUntil) {
+      const hadScrollEvent = scrollSpyPending;
+      const now = Date.now();
+      const applyScrollSpy = shouldApplyScrollSpy(
+        hadScrollEvent,
+        verticalMode.value,
+        now,
+        activeLockUntil,
+      );
+      scrollSpyPending = false;
+      if (applyScrollSpy) {
         const root = contentRef.value;
         if (root) {
           const next = activeForScroll(root);
@@ -486,6 +505,14 @@ export function usePopupCore() {
         }
       }
       measureComposerDock();
+      // User wheel/trackpad input may intentionally override an in-flight navigation lock. Outside
+      // the lock, any real content scroll is eligible (including scrollbar-driven scrolling).
+      if (
+        hadScrollEvent &&
+        (applyScrollSpy || now <= contentScrollIntentUntil)
+      ) {
+        deactivateOffscreenComposer();
+      }
     });
   }
 
@@ -557,6 +584,19 @@ export function usePopupCore() {
   // 关 / 单问题 → 旧版「一次一题 + 上/下一步」（sequential）。
   const verticalEnabled = ref(false);
   const verticalMode = computed(() => verticalEnabled.value && isMulti.value);
+  // Passive scrolling only changes `current` (the viewport card). While an editor retains DOM
+  // focus, every user action stays owned by that editor until an explicit cross-question action.
+  const actionQuestionIndex = computed(() =>
+    verticalMode.value
+      ? resolveActionQuestionIndex(current.value, focusedQ.value)
+      : current.value
+  );
+  const actionQuestion = computed<Question | null>(
+    () => questions.value[actionQuestionIndex.value] ?? null
+  );
+  const inputRef = computed<HTMLTextAreaElement | null>(
+    () => inputRefs.value[actionQuestionIndex.value] ?? null
+  );
   // 严格选择：隐藏补充输入 / 附件区，且必须选中才能提交（D11）。
   const selectOnly = computed(() => request.value?.selectOnly ?? false);
   // 单选：选项渲染为 radio，每题恰好一个（D11）。
@@ -762,18 +802,20 @@ export function usePopupCore() {
       (_, i) => (chosenByQ.value[i]?.length ?? 0) > 0
     );
   });
-  // 是否处于最后一题：多题时 CMD+回车 仅在最后一题提交，否则前往下一题。
-  const onLastQuestion = computed(() => current.value === total.value - 1);
+  // Passive scrolling does not change whether the unified action target is the last question.
+  const onLastQuestion = computed(
+    () => actionQuestionIndex.value === total.value - 1
+  );
 
   // 「上一个」是否可用：纵向模式下即使在首题，只要还没滚到最顶（上方 message 未露全）就可用（点它=露出 message）；
   // 旧版顺序模式仍是「非首题才可用」。
   const canGoPrev = computed(() =>
-    verticalMode.value ? !(current.value === 0 && atTop.value) : current.value > 0
+    verticalMode.value
+      ? !(actionQuestionIndex.value === 0 && atTop.value)
+      : current.value > 0
   );
 
-  const cmdEnterFromQ = computed(() =>
-    cmdEnterQuestionIndex(current.value, focusedQ.value)
-  );
+  const cmdEnterFromQ = computed(() => actionQuestionIndex.value);
   // 纵向模式下 ⌘↵ 是否会「提交」：已看完全部 且 快捷键目标题之后再无未答题（含焦点在末题时恒真）。
   // 与 onCmdEnter 的分支完全一致——「谁挂 ⌘↵ = ⌘↵ 就干谁」，故 ⌘↵ 角标据此挂在提交按钮上。
   const cmdEnterWillSubmit = computed(
@@ -828,7 +870,7 @@ export function usePopupCore() {
   }
   // 仅「当前题」显示 ⌘1–9 角标（避免每题都冒出 ⌘1）。
   function cardOptionHotkey(qIndex: number, optIndex: number): string | null {
-    if (isMulti.value && qIndex !== current.value) return null;
+    if (isMulti.value && qIndex !== actionQuestionIndex.value) return null;
     return optionHotkey(optIndex);
   }
 
@@ -920,6 +962,12 @@ export function usePopupCore() {
   function toggle(qIndex: number, option: string) {
     const arr = chosenByQ.value[qIndex];
     if (!arr) return;
+    if (
+      (focusedQ.value !== null && focusedQ.value !== qIndex) ||
+      (composerOwnerQ.value !== null && composerOwnerQ.value !== qIndex)
+    ) {
+      speech.stopListening();
+    }
     endOtherComposer(qIndex);
     const i = arr.indexOf(option);
     // 单选：选中即替换为唯一项；再次点击当前选中项则清空（保留"可不选"，除非严格模式）。
@@ -932,11 +980,20 @@ export function usePopupCore() {
     else arr.push(option);
   }
 
-  // 通过序号（0 始）切换「当前题」的选项，供 CMD+数字 调用。
+  // Toggle an option on the unified action target. If passive scrolling moved its card away,
+  // Cmd+1–9 reveals the card after selecting while retaining editor focus.
   function toggleByIndex(i: number) {
-    const opts = currentQuestion.value?.predefinedOptions;
+    const qIndex = actionQuestionIndex.value;
+    const opts = actionQuestion.value?.predefinedOptions;
     if (!opts || i < 0 || i >= opts.length) return;
-    toggle(current.value, opts[i].text);
+    toggle(qIndex, opts[i].text);
+    if (!verticalMode.value) return;
+    setActive(qIndex, false);
+    activeLockUntil = Date.now() + NAV_LOCK_MS;
+    nextTick(() => {
+      activeLockUntil = Date.now() + NAV_LOCK_MS;
+      scrollQuestionIntoView(qIndex);
+    });
   }
 
   // 点「添加图片」：记录目标题后唤起文件选择。
@@ -1065,11 +1122,26 @@ export function usePopupCore() {
     el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_H)}px`;
   }
 
-  // ===== 子域接线：语音（依赖 current / inputByQ / inputRef / autoGrow）=====
-  const speech = useSpeech({ current, inputByQ, inputRef, autoGrow });
+  // ===== Speech follows the unified action target, not passive scroll position. =====
+  const speech = useSpeech({
+    targetQuestion: actionQuestionIndex,
+    inputByQ,
+    inputRef,
+    autoGrow,
+  });
+
+  // Toolbar actions are explicit question switches. Focus the owning textarea first so their
+  // speech / attachment target cannot be inherited from an editor retained by passive scrolling.
+  function focusQuestionAction(i: number) {
+    if (speech.speechTargetQ.value !== i) speech.stopListening();
+    endOtherComposer(i);
+    setActive(i, false);
+    focusComposer(i, true);
+  }
 
   // textarea 聚焦/失焦：维护 focusedQ + 切当前题（聚焦即展开）；失焦且空则折叠。
   function onTextareaFocus(i: number) {
+    if (speech.speechTargetQ.value !== i) speech.stopListening();
     const activation = programmaticFocusActivation;
     const manuallyActivated =
       activation?.qIndex === i ? activation.manuallyActivated : false;
@@ -1090,7 +1162,9 @@ export function usePopupCore() {
   function onTextareaBlur(i: number) {
     rememberComposerSelection(i);
     if (focusedQ.value === i) focusedQ.value = null;
-    nextTick(() => autoGrow(i));
+    nextTick(() => {
+      settleTextareaHeightAfterBlur(inputRefs.value[i], expandedQ(i));
+    });
   }
 
   // ===== 多题导航（纵向列表：当前题指针 + 滚动定位） =====
@@ -1123,6 +1197,23 @@ export function usePopupCore() {
     return (
       elRect.top >= rootRect.top + root.clientHeight || elRect.bottom <= rootRect.top
     );
+  }
+
+  function deactivateOffscreenComposer() {
+    const i = focusedQ.value;
+    if (i === null) return;
+    if (
+      !shouldDeactivateOffscreenComposer(
+        i,
+        dockedComposerQ.value,
+        isCardOffScreen(i)
+      )
+    ) {
+      return;
+    }
+    if (speech.speechTargetQ.value === i) speech.stopListening();
+    inputRefs.value[i]?.blur();
+    if (composerOwnerQ.value === i) clearComposerOwner();
   }
 
   // 把内容滚到最顶（scrollTop=0）：纵向模式在首题按「上一个」时用来完整露出上方 message。
@@ -1201,6 +1292,13 @@ export function usePopupCore() {
   // 锁住 scroll-spy 到滚动动画结束，避免 current 被滚动事件抢走。供上一个/下一个、⌘[/⌘]、⌘↵ 复用，行为一致。
   function goToIdx(target: number) {
     const i = Math.max(0, Math.min(target, total.value - 1));
+    if (
+      actionQuestionIndex.value !== i ||
+      (composerOwnerQ.value !== null && composerOwnerQ.value !== i)
+    ) {
+      speech.stopListening();
+    }
+    endOtherComposer(i);
     setActive(i, false); // 先置当前题、不滚动（滚动放到展开之后）
     activeLockUntil = Date.now() + NAV_LOCK_MS;
     nextTick(() => {
@@ -1212,9 +1310,9 @@ export function usePopupCore() {
     });
   }
 
-  // 相对移动当前题（上一个/下一个 + ⌘[/⌘]）。委托 goToIdx（焦点携带 + 展开后滚动）。
+  // Move relative to the unified action target and let goToIdx transfer focus before scrolling.
   function goRel(delta: number) {
-    goToIdx(current.value + delta);
+    goToIdx(actionQuestionIndex.value + delta);
   }
 
   // 旧版顺序模式切题：仅一题可见，改 current 即换页（聚焦/滚动由 Transition after-enter 处理）。
@@ -1250,7 +1348,7 @@ export function usePopupCore() {
     if (verticalMode.value) {
       // 已在首题：「上一个」= 把上方 message 完整露出（滚到最顶），而非无动作（用户预期两级：Q2→Q1 露出 Q1、
       // 在 Q1 再上一个才露出 message）。
-      if (current.value === 0) {
+      if (actionQuestionIndex.value === 0) {
         activeLockUntil = Date.now() + NAV_LOCK_MS;
         scrollContentToTop();
         flashCard(0);
@@ -1268,9 +1366,10 @@ export function usePopupCore() {
     if (verticalMode.value) {
       // 当前题**完全在屏外**（如长 message 刚打开把 Q1 顶到屏外）→ 先把它露出来 + 聚焦 + 闪一下，而非直接跳下一题
       // （用户反馈：刚打开点「下一个」直接跳到 Q2、Q1 从没露出）。仅「底部被切一点」不算屏外，可正常推进到下一题。
-      if (isCardOffScreen(current.value)) {
-        goToIdx(current.value);
-        flashCard(current.value);
+      const from = actionQuestionIndex.value;
+      if (isCardOffScreen(from)) {
+        goToIdx(from);
+        flashCard(from);
         return;
       }
       goRel(1);
@@ -1320,7 +1419,7 @@ export function usePopupCore() {
       submit();
       return;
     }
-    const s = nextUnseenAfter(current.value);
+    const s = nextUnseenAfter(from);
     if (s >= 0) {
       goToIdx(s);
       flashCard(s);
@@ -1647,7 +1746,7 @@ export function usePopupCore() {
     // CMD+数字（1-9）：选中/取消当前题对应序号的选项。
     if (mod && e.key >= "1" && e.key <= "9") {
       const idx = Number(e.key) - 1;
-      const opts = currentQuestion.value?.predefinedOptions;
+      const opts = actionQuestion.value?.predefinedOptions;
       if (opts && idx < opts.length && idx < OPTION_HOTKEY_MAX) {
         e.preventDefault();
         toggleByIndex(idx);
@@ -1959,6 +2058,7 @@ export function usePopupCore() {
     io = null;
     composerResizeObserver?.disconnect();
     composerResizeObserver = null;
+    scrollSpyPending = false;
     if (scrollRaf) cancelAnimationFrame(scrollRaf);
     speech.disposeSpeech();
   });
@@ -1982,6 +2082,7 @@ export function usePopupCore() {
     selectOnly,
     single,
     current,
+    actionQuestionIndex,
     currentQuestion,
     chosenByQ,
     inputByQ,
@@ -2010,6 +2111,7 @@ export function usePopupCore() {
     activateComposer,
     onComposerCompositionStart,
     onComposerCompositionEnd,
+    focusQuestionAction,
     // DOM refs
     setInputRef,
     setComposerAnchorRef,

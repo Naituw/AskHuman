@@ -7,13 +7,13 @@ import { startSpeech, stopSpeech, flushSpeech, speechAvailable } from "../../lib
 import { formatShortcut } from "../../lib/shortcut";
 
 export function useSpeech(deps: {
-  current: Ref<number>;
+  targetQuestion: Readonly<Ref<number>>;
   inputByQ: Ref<string[]>;
   inputRef: ComputedRef<HTMLTextAreaElement | null>;
   autoGrow: (i?: number) => void;
 }) {
   const { t } = useI18n();
-  const { current, inputByQ, inputRef, autoGrow } = deps;
+  const { targetQuestion, inputByQ, inputRef, autoGrow } = deps;
 
   // 仅 macOS 26+ 可用；后端 speech_available 判定，否则隐藏麦克风按钮。
   const speechSupported = ref(false);
@@ -102,13 +102,13 @@ export function useSpeech(deps: {
     }
     speechError.value = null;
     speechStatus.value = null;
-    speechTargetQ.value = current.value;
+    speechTargetQ.value = targetQuestion.value;
     // 听写起点 = 当前光标处。若存在选区：保持高亮，待首个识别文字到达时才替换（原生听写语义）。
     const el = inputRef.value;
     const fieldLen = inputByQ.value[speechTargetQ.value]?.length ?? 0;
     let start = fieldLen;
     let end = fieldLen;
-    if (el && speechTargetQ.value === current.value) {
+    if (el && speechTargetQ.value === targetQuestion.value) {
       start = el.selectionStart ?? fieldLen;
       end = el.selectionEnd ?? start;
     }
@@ -182,9 +182,9 @@ export function useSpeech(deps: {
 
   // 把光标移到实时片段末尾，并记录为「程序化」位置（避免误判为用户移动）。
   function syncCaret() {
-    if (speechTargetQ.value !== current.value || suspendSpeechDom) return;
+    if (speechTargetQ.value !== targetQuestion.value || suspendSpeechDom) return;
     nextTick(() => {
-      autoGrow();
+      autoGrow(speechTargetQ.value);
       const el = inputRef.value;
       if (!el) return;
       const pos = Math.min(interimStart + interimLen, el.value.length);
@@ -196,7 +196,7 @@ export function useSpeech(deps: {
 
   // 鼠标在输入框按下即开始拖选：暂停语音写入 DOM，保护用户选区。
   function onTextareaMouseDown() {
-    if (listening.value && speechTargetQ.value === current.value) {
+    if (listening.value && speechTargetQ.value === targetQuestion.value) {
       suspendSpeechDom = true;
     }
   }
@@ -210,7 +210,7 @@ export function useSpeech(deps: {
 
   // 用户在听写中主动移动光标/编辑：固定当前内容、以新光标为起点重启识别会话。
   function onUserCaretMaybeMoved() {
-    if (!listening.value || speechTargetQ.value !== current.value) return;
+    if (!listening.value || speechTargetQ.value !== targetQuestion.value) return;
     const el = inputRef.value;
     if (!el) return;
     const selStart = el.selectionStart ?? 0;

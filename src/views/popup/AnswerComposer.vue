@@ -38,7 +38,7 @@ const {
   speechErrorText,
   speechStatusText,
   toggleSpeech,
-  setActive,
+  focusQuestionAction,
   pickFiles,
   removeImage,
   removeReplyFile,
@@ -53,13 +53,12 @@ const ownsSpeech = computed(
 );
 
 function handleSpeech() {
-  activateComposer(props.qIndex);
-  setActive(props.qIndex, false);
+  focusQuestionAction(props.qIndex);
   toggleSpeech();
 }
 
 function handlePickFiles() {
-  setActive(props.qIndex, false);
+  focusQuestionAction(props.qIndex);
   pickFiles(props.qIndex);
 }
 </script>
@@ -72,7 +71,10 @@ function handlePickFiles() {
     :style="composerAnchorStyle(qIndex)"
   >
     <Teleport defer to="#popup-composer-dock-target" :disabled="!isDocked">
-      <div class="answer-composer" :class="{ 'is-docked': isDocked }">
+      <div
+        class="answer-composer"
+        :class="{ 'is-docked': isDocked, 'is-collapsible': collapsible }"
+      >
         <div
           :ref="(el) => setComposerHomeRef(el as HTMLElement | null, qIndex)"
           class="input-wrap"
