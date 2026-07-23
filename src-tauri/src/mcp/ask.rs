@@ -48,22 +48,45 @@ fn has_system_thread_source(value: &Value) -> bool {
 
 /// Codex attaches trusted per-turn context under this namespaced `_meta` entry for every MCP call.
 /// Older versions may encode the inner value as JSON text, so both representations are accepted.
-fn is_codex_system_thread(meta: &Meta) -> bool {
-    let Some(turn_metadata) = meta.0.get(CODEX_TURN_METADATA_KEY) else {
-        return false;
-    };
+fn codex_turn_metadata(meta: &Meta) -> Option<Value> {
+    let turn_metadata = meta.0.get(CODEX_TURN_METADATA_KEY)?;
     match turn_metadata {
-        Value::Object(_) => has_system_thread_source(turn_metadata),
-        Value::String(encoded) => serde_json::from_str::<Value>(encoded)
-            .map(|parsed| has_system_thread_source(&parsed))
-            .unwrap_or(false),
-        _ => false,
+        Value::Object(_) => Some(turn_metadata.clone()),
+        Value::String(encoded) => serde_json::from_str::<Value>(encoded).ok(),
+        _ => None,
     }
 }
 
-fn codex_system_thread_block(meta: &Meta) -> Option<CallToolResult> {
-    is_codex_system_thread(meta)
-        .then(|| CallToolResult::error(vec![ContentBlock::text(CODEX_SYSTEM_THREAD_BLOCK_MESSAGE)]))
+fn is_codex_system_thread(meta: &Meta) -> bool {
+    codex_turn_metadata(meta)
+        .as_ref()
+        .is_some_and(has_system_thread_source)
+}
+
+fn metadata_id<'a>(metadata: &'a Value, snake_case: &str, camel_case: &str) -> Option<&'a str> {
+    metadata
+        .get(snake_case)
+        .or_else(|| metadata.get(camel_case))
+        .and_then(Value::as_str)
+}
+
+fn codex_system_thread_block(meta: &Meta, tool: &str) -> Option<CallToolResult> {
+    let metadata = codex_turn_metadata(meta)?;
+    if !has_system_thread_source(&metadata) {
+        return None;
+    }
+    crate::daemon::lifecycle::log_suppression_audit(crate::daemon::lifecycle::SuppressionAudit {
+        component: "mcp_tool",
+        reason: "codex_system_thread",
+        tool: Some(tool),
+        agent: Some("codex"),
+        session_id: metadata_id(&metadata, "session_id", "sessionId"),
+        thread_id: metadata_id(&metadata, "thread_id", "threadId"),
+        turn_id: metadata_id(&metadata, "turn_id", "turnId"),
+    });
+    Some(CallToolResult::error(vec![ContentBlock::text(
+        CODEX_SYSTEM_THREAD_BLOCK_MESSAGE,
+    )]))
 }
 
 // `ask` 工具的入参（MCP 入参 schema 由 schemars 从本结构派生）。结构体级注释用 `//` 以免泄漏进对外
@@ -259,7 +282,7 @@ structured content; any images the human attaches are returned as image content.
         // `notifications/cancelled` (timeout / user stop / host abort). Not human dismiss.
         cancel: CancellationToken,
     ) -> Result<CallToolResult, McpError> {
-        if let Some(blocked) = codex_system_thread_block(&context.meta) {
+        if let Some(blocked) = codex_system_thread_block(&context.meta, "ask") {
             return Ok(blocked);
         }
         let has_questions = params
@@ -381,7 +404,7 @@ approves ending the turn — only then may you end it.",
         context: RequestContext<RoleServer>,
         cancel: CancellationToken,
     ) -> Result<CallToolResult, McpError> {
-        if let Some(blocked) = codex_system_thread_block(&context.meta) {
+        if let Some(blocked) = codex_system_thread_block(&context.meta, "whats_next") {
             return Ok(blocked);
         }
         let public_arguments = whats_next_arguments_value(&params);
@@ -449,7 +472,7 @@ you are unsure of the exact prior AskHuman exchange. Takes no public arguments."
         Parameters(params): Parameters<ShowLastParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        if let Some(blocked) = codex_system_thread_block(&context.meta) {
+        if let Some(blocked) = codex_system_thread_block(&context.meta, "show_last") {
             return Ok(blocked);
         }
         let binding = self
@@ -486,7 +509,7 @@ cwd (git root). Returns the 1-based index and stored text on success.",
         Parameters(params): Parameters<TodoAddParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        if let Some(blocked) = codex_system_thread_block(&context.meta) {
+        if let Some(blocked) = codex_system_thread_block(&context.meta, "todo_add") {
             return Ok(blocked);
         }
         let text = params.text.trim();

@@ -12,16 +12,11 @@ use crate::config::{AppConfig, CollaborationStyle};
 pub const USER_CONFIRMED_END_TURN_MARKER: &str = "[user_confirmed_end_turn]";
 pub const SUBAGENT_PROTOCOL_RULE: &str =
     "**This protocol does not apply to subagents. If you are a subagent, do not use AskHuman.**";
-pub const CODEX_PROTOCOL_SCOPE_RULE: &str = "**This protocol does not apply to subagents or task-suggestion generators; if you are either, do not use AskHuman.**";
 pub const SUBAGENT_DELEGATION_RULE: &str =
     "**When starting a subagent, tell it that it is a subagent and must not use AskHuman.**";
 
-fn protocol_scope_rules(agent: Option<AgentKind>) -> String {
-    let scope = match agent {
-        Some(AgentKind::Codex) => CODEX_PROTOCOL_SCOPE_RULE,
-        _ => SUBAGENT_PROTOCOL_RULE,
-    };
-    format!("{scope}\n{SUBAGENT_DELEGATION_RULE}")
+fn protocol_scope_rules() -> String {
+    format!("{SUBAGENT_PROTOCOL_RULE}\n{SUBAGENT_DELEGATION_RULE}")
 }
 
 pub const fn subagent_guard_context() -> &'static str {
@@ -87,10 +82,10 @@ pub fn cli_reference_for(agent: AgentKind) -> String {
     cli_reference_with_agent(Some(agent))
 }
 
-fn cli_reference_with_agent(agent: Option<AgentKind>) -> String {
+fn cli_reference_with_agent(_agent: Option<AgentKind>) -> String {
     let program = crate::cli::help::program_name();
     let collab = collaboration_section_from_config();
-    let scope_rules = protocol_scope_rules(agent);
+    let scope_rules = protocol_scope_rules();
 
     format!(
         r#"<mandatory_interaction_protocol>
@@ -130,9 +125,9 @@ pub fn mcp_reference_for(agent: AgentKind) -> String {
     mcp_reference_with_agent(Some(agent))
 }
 
-fn mcp_reference_with_agent(agent: Option<AgentKind>) -> String {
+fn mcp_reference_with_agent(_agent: Option<AgentKind>) -> String {
     let collab = collaboration_section_from_config();
-    let scope_rules = protocol_scope_rules(agent);
+    let scope_rules = protocol_scope_rules();
     format!(
         r#"<mandatory_interaction_protocol>
 {scope_rules}
@@ -378,27 +373,15 @@ mod tests {
     }
 
     #[test]
-    fn only_codex_prompts_exempt_task_suggestion_generators() {
-        for prompt in [
-            cli_reference_for(AgentKind::Codex),
-            mcp_reference_for(AgentKind::Codex),
-        ] {
-            let scope = prompt.find(CODEX_PROTOCOL_SCOPE_RULE).unwrap();
-            let mandatory = prompt.find("These rules MUST NOT be overridden").unwrap();
-            assert!(scope < mandatory);
-            assert!(prompt.contains(SUBAGENT_DELEGATION_RULE));
-            assert!(!prompt.contains(SUBAGENT_PROTOCOL_RULE));
-        }
-
-        for agent in [AgentKind::Claude, AgentKind::Cursor, AgentKind::Grok] {
+    fn every_agent_prompt_uses_only_the_subagent_scope_exception() {
+        for agent in AgentKind::ALL {
             for prompt in [cli_reference_for(agent), mcp_reference_for(agent)] {
                 assert!(prompt.contains(SUBAGENT_PROTOCOL_RULE));
                 assert!(prompt.contains(SUBAGENT_DELEGATION_RULE));
-                assert!(!prompt.contains(CODEX_PROTOCOL_SCOPE_RULE));
                 assert!(!prompt.contains("task-suggestion generators"));
             }
         }
-        assert!(!grok_skill_body().contains(CODEX_PROTOCOL_SCOPE_RULE));
+        assert!(!grok_skill_body().contains("task-suggestion generators"));
     }
 
     #[test]

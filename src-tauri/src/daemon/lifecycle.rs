@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 可执行文件指纹：用 size + 内容哈希判定「盘上二进制内容是否变化」。
 ///
@@ -157,6 +157,100 @@ pub fn meta_path() -> PathBuf {
 /// 运行日志 `~/.askhuman/daemon.log`。
 pub fn log_path() -> PathBuf {
     crate::paths::config_dir().join("daemon.log")
+}
+
+/// Privacy-safe audit context for a guard that rejected an interaction before side effects.
+///
+/// Keep this deliberately identifier-only: prompts, answers, transcript paths, and arbitrary
+/// metadata must never enter the daemon log through this interface.
+#[derive(Debug, Clone, Copy)]
+pub struct SuppressionAudit<'a> {
+    pub component: &'a str,
+    pub reason: &'a str,
+    pub tool: Option<&'a str>,
+    pub agent: Option<&'a str>,
+    pub session_id: Option<&'a str>,
+    pub thread_id: Option<&'a str>,
+    pub turn_id: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SuppressionAuditLine<'a> {
+    timestamp_ms: u64,
+    pid: u32,
+    event: &'static str,
+    component: &'a str,
+    action: &'static str,
+    reason: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thread_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turn_id: Option<&'a str>,
+}
+
+fn suppression_audit_line_at(
+    audit: SuppressionAudit<'_>,
+    timestamp_ms: u64,
+    pid: u32,
+) -> Option<String> {
+    serde_json::to_string(&SuppressionAuditLine {
+        timestamp_ms,
+        pid,
+        event: "askhuman_guard",
+        component: audit.component,
+        action: "suppressed",
+        reason: audit.reason,
+        tool: audit.tool,
+        agent: audit.agent,
+        session_id: audit.session_id,
+        thread_id: audit.thread_id,
+        turn_id: audit.turn_id,
+    })
+    .ok()
+}
+
+/// Append one structured guard decision to `daemon.log` (best-effort).
+///
+/// The write is disabled in unit-test builds so handler tests never touch the user's real log.
+pub fn log_suppression_audit(audit: SuppressionAudit<'_>) {
+    let timestamp_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let Some(mut line) = suppression_audit_line_at(audit, timestamp_ms, std::process::id()) else {
+        return;
+    };
+    line.push('\n');
+
+    #[cfg(not(test))]
+    {
+        use std::io::Write;
+
+        let path = log_path();
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = file.write_all(line.as_bytes());
+        }
+    }
+
+    #[cfg(test)]
+    let _ = line;
 }
 
 /// daemon.log 轮转阈值：超过即把现有内容挪到 `daemon.log.1`（覆盖上一代）并清空当前文件。
@@ -331,5 +425,37 @@ mod tests {
         assert_eq!(back.version, "9.9.9");
         assert_eq!(back.fingerprint.size, 6);
         assert_eq!(back.fingerprint.hash, 5);
+    }
+
+    #[test]
+    fn suppression_audit_is_structured_and_omits_missing_or_sensitive_fields() {
+        let line = suppression_audit_line_at(
+            SuppressionAudit {
+                component: "mcp_tool",
+                reason: "codex_system_thread",
+                tool: Some("whats_next"),
+                agent: Some("codex"),
+                session_id: Some("session-1"),
+                thread_id: Some("thread-1"),
+                turn_id: None,
+            },
+            123,
+            456,
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["timestampMs"], 123);
+        assert_eq!(value["pid"], 456);
+        assert_eq!(value["event"], "askhuman_guard");
+        assert_eq!(value["component"], "mcp_tool");
+        assert_eq!(value["action"], "suppressed");
+        assert_eq!(value["reason"], "codex_system_thread");
+        assert_eq!(value["tool"], "whats_next");
+        assert_eq!(value["agent"], "codex");
+        assert_eq!(value["sessionId"], "session-1");
+        assert_eq!(value["threadId"], "thread-1");
+        assert!(value.get("turnId").is_none());
+        assert!(!line.contains("prompt"));
+        assert!(!line.contains("transcript"));
     }
 }

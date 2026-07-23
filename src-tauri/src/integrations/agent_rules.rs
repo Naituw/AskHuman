@@ -604,19 +604,17 @@ mod tests {
     }
 
     #[test]
-    fn variant_body_adds_the_scope_exception_only_for_codex() {
+    fn variant_body_uses_the_same_subagent_scope_for_every_agent() {
         for variant in [Variant::Cli, Variant::Mcp] {
-            assert!(variant
-                .body(AgentTarget::Codex)
-                .contains(crate::prompts::CODEX_PROTOCOL_SCOPE_RULE));
             for target in [
+                AgentTarget::Codex,
                 AgentTarget::ClaudeCode,
                 AgentTarget::Cursor,
                 AgentTarget::Grok,
             ] {
-                assert!(!variant
-                    .body(target)
-                    .contains(crate::prompts::CODEX_PROTOCOL_SCOPE_RULE));
+                let body = variant.body(target);
+                assert!(body.contains(crate::prompts::SUBAGENT_PROTOCOL_RULE));
+                assert!(!body.contains("task-suggestion generators"));
             }
         }
     }

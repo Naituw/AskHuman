@@ -56,7 +56,9 @@
 - Codex 的 system thread 不触发结束确认。新版 Hook 输入优先按
   `thread_source == "system"` 精确识别；在尚未提供该字段的旧版 Codex 中，
   `transcript_path` 字段明确为 `null` 表示未创建 rollout 的 ephemeral thread，同样静默放行。
-  字段缺失不按 ephemeral 处理，Claude / Cursor 的行为不受影响。
+  字段缺失不按 ephemeral 处理，Claude / Cursor 的行为不受影响。命中后向
+  `~/.askhuman/daemon.log` 写一条结构化审计，`reason` 分别为 `codex_system_thread` 或
+  `codex_transcript_path_null`。
 
 ### 3.2 确认卡
 
@@ -141,7 +143,9 @@
 {}
 ```
 
-stdout 必须只有一个合法 JSON 对象；日志只写 stderr。Hook 始终以 Agent 可接受的成功码退出。
+stdout 必须只有一个合法 JSON 对象；普通诊断日志只写 stderr，system / ephemeral 抑制审计写
+`~/.askhuman/daemon.log`。审计只含 agent、reason 与可用的 session/thread/turn id，不含最后回复或
+transcript 路径。Hook 始终以 Agent 可接受的成功码退出。
 
 ## 5. 架构设计
 

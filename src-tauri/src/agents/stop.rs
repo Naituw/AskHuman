@@ -62,7 +62,30 @@ fn run_inner(args: &[String]) -> Option<Value> {
         return None;
     }
 
-    if !confirm || should_suppress_confirmation(kind, &input) {
+    if !confirm {
+        if track {
+            super::report::report_simple_event(kind, LifecycleEvent::TurnEnd, session_id, cwd);
+        }
+        return None;
+    }
+    if let Some(reason) = confirmation_suppression_reason(kind, &input) {
+        crate::daemon::lifecycle::log_suppression_audit(
+            crate::daemon::lifecycle::SuppressionAudit {
+                component: "stop_confirmation",
+                reason,
+                tool: None,
+                agent: Some(kind.as_str()),
+                session_id: Some(&session_id),
+                thread_id: input
+                    .get("thread_id")
+                    .or_else(|| input.get("threadId"))
+                    .and_then(Value::as_str),
+                turn_id: input
+                    .get("turn_id")
+                    .or_else(|| input.get("turnId"))
+                    .and_then(Value::as_str),
+            },
+        );
         if track {
             super::report::report_simple_event(kind, LifecycleEvent::TurnEnd, session_id, cwd);
         }
@@ -134,21 +157,22 @@ fn is_natural_stop(kind: AgentKind, input: &Value) -> bool {
     }
 }
 
-fn should_suppress_confirmation(kind: AgentKind, input: &Value) -> bool {
+fn confirmation_suppression_reason(kind: AgentKind, input: &Value) -> Option<&'static str> {
     if kind != AgentKind::Codex {
-        return false;
+        return None;
     }
     let thread_source = input
         .get("thread_source")
         .or_else(|| input.get("threadSource"))
         .and_then(Value::as_str);
     if thread_source == Some("system") {
-        return true;
+        return Some("codex_system_thread");
     }
     input
         .get("transcript_path")
         .or_else(|| input.get("transcriptPath"))
         .is_some_and(Value::is_null)
+        .then_some("codex_transcript_path_null")
 }
 
 fn last_assistant_message(kind: AgentKind, input: &Value) -> LastAssistantMessage {
@@ -393,14 +417,28 @@ mod tests {
 
     #[test]
     fn codex_system_and_ephemeral_stops_suppress_confirmation() {
-        for input in [
-            json!({"thread_source":"system", "transcript_path":"/tmp/rollout.jsonl"}),
-            json!({"threadSource":"system", "transcriptPath":"/tmp/rollout.jsonl"}),
-            json!({"transcript_path":null}),
-            json!({"transcriptPath":null}),
-        ] {
-            assert!(should_suppress_confirmation(AgentKind::Codex, &input));
-        }
+        assert_eq!(
+            confirmation_suppression_reason(
+                AgentKind::Codex,
+                &json!({"thread_source":"system", "transcript_path":"/tmp/rollout.jsonl"})
+            ),
+            Some("codex_system_thread")
+        );
+        assert_eq!(
+            confirmation_suppression_reason(
+                AgentKind::Codex,
+                &json!({"threadSource":"system", "transcriptPath":"/tmp/rollout.jsonl"})
+            ),
+            Some("codex_system_thread")
+        );
+        assert_eq!(
+            confirmation_suppression_reason(AgentKind::Codex, &json!({"transcript_path":null})),
+            Some("codex_transcript_path_null")
+        );
+        assert_eq!(
+            confirmation_suppression_reason(AgentKind::Codex, &json!({"transcriptPath":null})),
+            Some("codex_transcript_path_null")
+        );
     }
 
     #[test]
@@ -410,13 +448,19 @@ mod tests {
             json!({"transcript_path":"/tmp/rollout.jsonl"}),
             json!({}),
         ] {
-            assert!(!should_suppress_confirmation(AgentKind::Codex, &input));
+            assert_eq!(
+                confirmation_suppression_reason(AgentKind::Codex, &input),
+                None
+            );
         }
         for kind in [AgentKind::Claude, AgentKind::Cursor, AgentKind::Grok] {
-            assert!(!should_suppress_confirmation(
-                kind,
-                &json!({"thread_source":"system", "transcript_path":null})
-            ));
+            assert_eq!(
+                confirmation_suppression_reason(
+                    kind,
+                    &json!({"thread_source":"system", "transcript_path":null})
+                ),
+                None
+            );
         }
     }
 

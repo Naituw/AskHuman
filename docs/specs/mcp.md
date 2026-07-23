@@ -13,7 +13,8 @@
 > **实现期补充（2026-07-23）**：Codex 桌面版 Suggested prompts 使用
 > `thread_source=system` 的内部 thread。AskHuman 对 Codex 每次 `tools/call._meta` 做前置检查，命中
 > `x-codex-turn-metadata.thread_source == "system"` 时在任何子进程、daemon 或 todo 副作用前本地拒绝
-> `ask`、`whats_next`、`show_last`、`todo_add`；其它来源与缺失 / 异常 metadata 保持 fail-open。
+> `ask`、`whats_next`、`show_last`、`todo_add`，并向 `~/.askhuman/daemon.log` 追加一条结构化抑制
+> 审计；其它来源与缺失 / 异常 metadata 保持 fail-open。
 >
 > **实现期补充（2026-07-22）**：上下文压缩恢复新增只读 `show_last`。Codex 从每调用
 > `_meta.threadId` 绑定，Claude/Cursor 由 mode 托管的 PreToolUse Hook 注入 schema 隐藏、
@@ -102,8 +103,14 @@ Do not retry or contact the human; finish the host-requested non-interactive out
 ```
 
 该返回不伪造 human answer 或结束批准；四个 handler 都在参数业务校验、spawn 子 CLI、项目检测与 todo
-落盘前执行同一 guard。因此 Suggested prompts 即使不遵守 Codex 专属 Rule，也不会触发 popup、IM 或
-项目 todo。
+落盘前执行同一 guard。因此 Suggested prompts 即使按通用 Rules 尝试调用 AskHuman，也不会触发
+popup、IM 或项目 todo。
+
+命中时还向 `~/.askhuman/daemon.log` 追加一行 JSON 审计，固定包含
+`event="askhuman_guard"`、`component="mcp_tool"`、`action="suppressed"`、
+`reason="codex_system_thread"` 与工具名；可信 metadata 中存在时附带 session/thread/turn id。日志不
+记录提问正文、参数或任意未识别 metadata。字段缺失、格式错误或非 system 来源既不拒绝，也不写抑制
+日志。
 
 ## 5. `ask` 工具 Schema（草案）
 
@@ -190,7 +197,8 @@ argv 映射：`message`→首个位置参数（或经 `-q` 拆分）；每个 qu
 10. Windows：`AskHuman mcp` 经子进程单进程弹窗回退完成提问（无 daemon）。
 11. 既有 CLI 模式（Rule/Hook）与所有现有功能回归正常。
 12. raw `tools/call` 携带 Codex `thread_source=system` 时四个工具均返回固定 terminal error 且无副作用；
-    `user`、`automation`、缺失和异常 metadata 不命中。
+    同时写入含工具名与 `codex_system_thread` 原因的结构化审计；`user`、`automation`、缺失和异常
+    metadata 不命中。
 
 ## 10. 待实现期复核 / 开放细节
 
