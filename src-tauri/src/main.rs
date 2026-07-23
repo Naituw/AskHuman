@@ -17,6 +17,7 @@ mod client;
 mod commands;
 mod config;
 mod confirm;
+mod context_binding;
 mod daemon;
 mod dev_instance;
 mod dev_presets;
@@ -55,6 +56,7 @@ mod prompts;
 mod secrets;
 mod select;
 mod shell_safety;
+mod show_last;
 mod slack;
 mod sound;
 #[cfg(target_os = "macos")]

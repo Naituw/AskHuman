@@ -1,4 +1,4 @@
-//! `AskHuman mcp`：以 STDIO 运行 MCP server，暴露 `ask`、`whats_next` 与 `todo_add`。
+//! `AskHuman mcp`：以 STDIO 运行 MCP server，暴露 `ask`、`whats_next`、`show_last` 与 `todo_add`。
 //!
 //! `ask` / `whats_next` 为「薄壳」：每次工具调用都 spawn 一个现有的 `AskHuman …` 子进程（`ask` 带
 //! `--output json`，`whats_next` 走文本模式），
@@ -7,7 +7,7 @@
 //! 全平台同一套；daemon 换新 / 重启后下一次 ask/whats_next 调用自动重连
 //! （每次调用都是新起子进程、重新连接 daemon，因此 MCP server 进程可长期存活、跨 daemon 重启）。
 
-mod ask;
+pub(crate) mod ask;
 
 use rmcp::{transport::stdio, ServiceExt};
 
@@ -27,7 +27,9 @@ pub fn run() -> ! {
 
 /// 建 server、握手、等关闭。返回进程退出码。
 async fn serve() -> i32 {
-    match ask::AskServer::new().serve(stdio()).await {
+    let server = ask::AskServer::new();
+    server.register_instance().await;
+    match server.serve(stdio()).await {
         Ok(service) => {
             let _ = service.waiting().await;
             0

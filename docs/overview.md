@@ -89,13 +89,15 @@ AskHuman/
       secrets.rs             系统钥匙串与密钥回退
       project.rs             从 cwd 识别项目根
       history.rs             JSONL 回复历史存储
+      show_last.rs           按 Agent session/MCP instance 恢复最近完成问答
+      context_binding.rs     MCP 会话的一次性 token 与 Grok 安全旁路绑定
       todos.rs               项目级待办队列（todos.json 直读直写 + 文件锁）
       autochannel.rs         IM 命令分类、活跃槽与共享文案
       perf.rs                跨进程性能埋点
       prompts.rs             CLI/MCP Agent 参考提示词
       mcp/
         mod.rs               STDIO MCP server 运行时
-        ask.rs               ask / whats_next / todo_add 工具
+        ask.rs               ask / whats_next / show_last / todo_add 工具
       hooks.rs               用户级 hooks
       watch.rs               四渠道 /watch 共用状态与文案
       select.rs              跨渠道单选卡模型
@@ -161,6 +163,7 @@ AskHuman/
         agent_launch.rs      Agent readiness、一次性启动记录与 Terminal.app helper
         agent_rules.rs       Agent 全局 Rules 管理
         agent_subagent_guard.rs  Claude/Codex SubagentStart 提示 Hook
+        agent_context_recovery.rs  集成 mode 托管的压缩恢复/会话绑定 Hook
         grok_skill.rs        Grok interaction-protocol skill 管理
         mcp_config.rs        四家 MCP server 配置管理
         agent_mode.rs        None/CLI/MCP 模式编排
@@ -200,6 +203,7 @@ AskHuman/
         mod.rs               Agent 类型、事件与模块入口
         detect.rs            Agent 家族、会话和进程探测
         report.rs            生命周期 Hook 上报与去重
+        context_recovery.rs  压缩后提示、MCP token 注入与 Grok pending 上报
         title.rs             四家会话标题解析
         activity.rs          transcript 尾部活动解析
         registry.rs          Agent 状态推导、持久化与快照
@@ -266,6 +270,10 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 - `general.historyLimit` 控制 `~/.askhuman/history.jsonl` 的全局保留数；0 停止新增，裁剪/立即清理时清空已有记录。
 - 历史在 Coordinator 的唯一汇聚点记录“发送”和“用户主动取消”，系统取消不记。
 - 记录按 git 根（回退 cwd）归项目；图片和文件只保存路径，读取对旧记录和缺失附件保持兼容。
+- 完成问答额外记录可用的 Agent session ID 和 MCP instance ID；`AskHuman --show-last`
+  或 MCP `show_last` 可在上下文压缩后读取当前会话最近一条提问语境与实际答案（省略空字段、
+  未选候选项和 recommended 标记）。取得真实 session 后只做精确查询，不向弱键级联；
+  只有完全非 Agent 的 CLI 才按项目回退。
 - 历史窗口提供跨项目查看与搜索；完整约束见 `docs/specs/reply-history.md`。
 
 ### 密钥安全
@@ -332,6 +340,8 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 - headless/SSH 可用 `channel`、`agents`、`config`、`doctor` 完成渠道配置与 Agent 集成；各子命令提供 help 和 JSON 输出。
 - `channel set` 无 flag 走交互向导，有 flag 走脚本；密钥只从 env/file/stdin 或隐藏输入读取，不进 argv。
 - `agents mode` 维护 None/CLI/MCP 整包；permission/stop 的 preference 独立保存，但只有 CLI/MCP mode 才安装交互接管 Hook，None 隐藏对应设置并卸载其 active 能力；lifecycle 始终正交，Grok 仅 None/MCP 且不支持 stop/interject。
+- 上下文恢复 Hook 由当前 mode 独立托管，不依赖可关闭的 lifecycle tracking；CLI/MCP
+  提示严格只指向用户当前选中的入口，缺失/过期并入当前 Hook 或 MCP 产物的更新状态。
 - 全局交互协议把 Sub Agent 作为唯一例外并禁止其使用 AskHuman；Claude/Codex mode 另带 `SubagentStart` 提示 Hook，Cursor/Grok 只依赖协议文本。
 - `agents update [<agent>]` 按当前 mode 重新 reconcile 单家或全部托管产物；重复设置相同 mode 也会完整更新，但不改独立保存的 capability 偏好。
 - `config` 是通用键值兜底，`doctor` 汇总 Daemon、渠道和集成；两者复用同一配置与集成模块，不维护第二套逻辑。
@@ -340,11 +350,14 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 
 > 需求 `docs/specs/mcp.md`，计划 `docs/plans/mcp.md`。
 
-- `AskHuman mcp` 暴露 `ask`、`whats_next`、`todo_add`：`ask`/`whats_next` 每次调用 spawn 现有 CLI 流程，复用 Popup、IM、抢答、历史和 drain；`todo_add` 在 MCP 进程内直写 `todos.json`。
+- `AskHuman mcp` 暴露 `ask`、`whats_next`、`show_last`、`todo_add`：`ask`/`whats_next` 每次调用 spawn 现有 CLI 流程，复用 Popup、IM、抢答、历史和 drain；`show_last` 只读恢复最近精确问答，`todo_add` 在 MCP 进程内直写 `todos.json`。
 - `ask` 入参为 message/questions/files；输出同时提供 structuredContent、JSON 文本和图片 ImageContent。MCP 取消会终止子 CLI，并通过 socket EOF 取消 Daemon 请求。
 - Agent 自动集成是 None/CLI/MCP 互斥；Grok 仅 None/MCP，其 MCP 产物是 skill + config。
 - Codex、Grok、Claude 分别写适配自身的长超时配置；Cursor MCP 超时不可配置，推荐 CLI 模式。
-- MCP server 环境可能被客户端清空；Daemon 可用调用进程树 pid 只刷新已有 lifecycle session，绝不因此新建幽灵会话。
+- MCP 没有通用的 Agent session 字段：Codex 使用每调用 `_meta.threadId`，Claude/Cursor
+  使用 schema 隐藏的短命一次性 token，Grok 只在进程+项目分区内参数指纹候选唯一时认领；
+  无可信 session 时才回退到当前 MCP instance + project。详见
+  `docs/plans/agent-context-compaction-retention.md`。
 - Codex 配置把 `mcp__askhuman` 加入 Code Mode direct-only namespace，确保 ask 顶层阻塞；最小编辑与所有权记录避免卸载用户原有配置。
 
 ## Agent 原生权限审批（Claude Code / Codex）

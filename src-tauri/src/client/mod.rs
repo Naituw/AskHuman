@@ -264,6 +264,77 @@ pub fn report_agent_event(msg: ClientMsg) {
     });
 }
 
+/// Best-effort Grok side-channel pending report from the short-lived recovery hook.
+pub fn report_grok_binding_pending(msg: ClientMsg) {
+    report_agent_event(msg);
+}
+
+/// Register the long-lived MCP process before exposing its tools to the client.
+pub async fn register_mcp_instance(
+    mcp_instance_id: String,
+    project: String,
+    server_pid: u32,
+    parent_pid_hint: Option<u32>,
+) {
+    let _ = ensure_running().await;
+    if let Ok((_, mut writer)) = connect_split().await {
+        let _ = ipc::write_msg(
+            &mut writer,
+            &ClientMsg::McpInstanceRegister {
+                mcp_instance_id,
+                project,
+                server_pid,
+                parent_pid_hint,
+            },
+        )
+        .await;
+    }
+}
+
+/// Claim a unique Grok hook candidate. A short bounded retry covers hook/handler scheduling.
+pub async fn claim_grok_binding(
+    mcp_instance_id: String,
+    project: String,
+    tool_name: String,
+    arguments_sha256: String,
+    server_pid: u32,
+) -> Option<String> {
+    for attempt in 0..3 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let Ok((mut reader, mut writer)) = connect_split().await else {
+            continue;
+        };
+        if ipc::write_msg(
+            &mut writer,
+            &ClientMsg::GrokBindingClaim {
+                mcp_instance_id: mcp_instance_id.clone(),
+                project: project.clone(),
+                tool_name: tool_name.clone(),
+                arguments_sha256: arguments_sha256.clone(),
+                server_pid,
+            },
+        )
+        .await
+        .is_err()
+        {
+            continue;
+        }
+        let response = tokio::time::timeout(
+            Duration::from_millis(100),
+            ipc::read_msg::<_, ServerMsg>(&mut reader),
+        )
+        .await;
+        if let Ok(Ok(Some(ServerMsg::GrokBindingClaim { agent_session_id }))) = response {
+            if agent_session_id.is_some() {
+                return agent_session_id;
+            }
+        }
+    }
+    None
+}
+
 /// 插话轮询产物（hook 侧视角，spec agent-interject D3/D4）。
 #[derive(Debug, PartialEq, Eq)]
 pub enum InterjectPollOutcome {

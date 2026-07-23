@@ -7,6 +7,12 @@
 > 搜索覆盖 message、题干、回答、附件、workspace、Agent、来源与渠道。记录新增可选 `agentKind`，普通 CLI
 > 取调用环境，MCP 来源可在 daemon 异步探测后于 Coordinator 落盘前回填；旧记录缺字段时按 `source`
 > best-effort 兼容。以下“独立窗口”指独立 WebView 窗口，不再要求独立进程。
+>
+> **当前实现补充（2026-07-22）**：记录再增可选 `agentSessionId` 与 `mcpInstanceId`。
+> `AskHuman --show-last` 与 MCP `show_last` 以历史为唯一数据源，只读返回最近的
+> `action=send` 提问语境与实际答案；恢复载荷省略空字段、未选候选项和 recommended 标记，
+> 不影响历史窗口对原始问答的完整展示。真实 Agent session 可用时只做精确匹配，不向 MCP
+> instance/项目弱键级联。旧行缺新字段仍可读，但不参与 session 精确查询。
 
 ## 1. 背景
 
@@ -42,7 +48,7 @@
 | R1 | 汇聚点 | 所有渠道、所有运行模式的终态结果都汇聚到「每个请求的协调器 `Coordinator.finish()`」（其内调用 `render_result`）。**在此处记录**，天然覆盖弹窗 / 钉钉 / 飞书 / Telegram / 单进程 / headless。 |
 | R2 | 每请求一条 | 一次提问产生**一条**记录（取首个生效的终态结果，即抢答赢家的整套结果）。 |
 | R3 | 记录范围 | 记录「**发送**」（含空回复 = 确认继续、多题部分未答 / 全未答）与「**用户主动取消**」（关弹窗 / IM 端取消）。**不记录系统性取消**（超时 / 连接断开 / `daemon stop`）——这些走 `cancel_request`、本就无 result，自然不进历史。 |
-| R4 | 记录字段 | 每条含：请求 id、时间戳、项目 key、来源名（`ASKHUMAN_ENV_SOURCE_NAME`）、**渠道**（提交 / 取消端：popup/dingding/feishu/telegram）、动作（send/cancel）、是否 markdown、原始 message（文本 + `-f` 附件路径）、各问题（题干 + 选项）、各题作答（所选项、文本、**图片路径**、**文件路径**）。 |
+| R4 | 记录字段 | 每条含：请求 id、时间戳、项目 key、来源名、可选 Agent 家族/session ID 与 MCP instance ID、**渠道**（提交 / 取消端）、动作（send/cancel）、是否 markdown、原始 message（文本 + `-f` 附件路径）、各问题（题干 + 选项）、各题作答（所选项、文本、**图片路径**、**文件路径**）。 |
 | R5 | 图片 / 文件 | **只存路径**，不存 base64。展示时 best-effort 读取；文件不存在（如临时图片被 24h 清理后）显示**占位 / 不可用**，不报错。 |
 
 ### 3.3 存储与容量

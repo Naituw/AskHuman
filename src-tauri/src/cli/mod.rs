@@ -13,7 +13,21 @@ pub mod output;
 pub mod todo_cmd;
 
 use crate::i18n::{self, Lang};
+use std::collections::HashMap;
 use std::process::exit;
+
+pub(crate) const FROM_MCP_ENV: &str = "ASKHUMAN_FROM_MCP";
+pub(crate) const MCP_INSTANCE_ID_ENV: &str = "ASKHUMAN_MCP_INSTANCE_ID";
+pub(crate) const MCP_AGENT_KIND_ENV: &str = "ASKHUMAN_MCP_AGENT_KIND";
+pub(crate) const MCP_AGENT_SESSION_ID_ENV: &str = "ASKHUMAN_MCP_AGENT_SESSION_ID";
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct CallerContext {
+    pub agent_kind: Option<String>,
+    pub agent_session_id: Option<String>,
+    pub mcp_instance_id: Option<String>,
+    pub from_mcp: bool,
+}
 
 /// 向 stdout 输出一行文本，并把 BrokenPipe（读端提前关闭，如 `AskHuman --agent-help | head`）
 /// 视为正常结束：写失败一律静默忽略，退出码由调用方决定（纯输出命令随后 exit(0)，错误分支 exit(1)）。
@@ -62,6 +76,30 @@ pub fn dispatch() {
         "--agent-help" => {
             print_line(&help::agent_help_text(lang));
             exit(0);
+        }
+        "--show-last" => {
+            let context = caller_context();
+            let scope = match show_last_cli_scope(
+                context.agent_kind,
+                context.agent_session_id,
+                crate::project::detect(),
+            ) {
+                Ok(scope) => scope,
+                Err(error) => {
+                    eprintln!("{}{error}", i18n::err_prefix(lang));
+                    exit(1);
+                }
+            };
+            match crate::show_last::recover(&scope) {
+                Ok(output) => {
+                    print_line(&output);
+                    exit(0);
+                }
+                Err(error) => {
+                    eprintln!("{}{error}", i18n::err_prefix(lang));
+                    exit(1);
+                }
+            }
         }
         "--scripting-help" => {
             print_line(&help::scripting_help_text(lang));
@@ -206,6 +244,15 @@ pub fn dispatch() {
             #[cfg(unix)]
             {
                 crate::agents::report::run(&argv[2..]);
+            }
+            exit(0);
+        }
+        // Hidden context-compaction/session-binding hook. It is mode-owned and intentionally
+        // independent from experimental lifecycle tracking.
+        "__context-recovery-hook" => {
+            #[cfg(unix)]
+            {
+                crate::agents::context_recovery::run(&argv[2..]);
             }
             exit(0);
         }
@@ -380,12 +427,13 @@ pub fn dispatch() {
                     crate::perf::mark_spawn(&perf_id);
                     // 顺带探测调用方 Agent 身份（生命周期追踪 spec D21）：仅 env 读取（家族 + 会话 ID，零 ps）。
                     // 方案5(b)：进程树 walk（数十 ms 的 ps 游走）移到 daemon 异步进行——这里只带 CLI 自身 pid。
-                    let (agent_kind, agent_session_id) = detect_caller_agent();
+                    let context = caller_context();
                     crate::perf::mark(&perf_id, "cli.detect_done");
                     // 来源名解析：未定制 `ASKHUMAN_ENV_SOURCE_NAME` 时，用探测到的 Agent 名
                     // （Claude Code / Codex / Cursor）替代默认 "the Loop"；供渠道消息头 + 历史共用
                     // （弹窗标题另由前端按胶囊内联渲染）。MCP 模式 env 判不出家族 → 回退 "the Loop"。
-                    let resolved_agent_kind = agent_kind
+                    let resolved_agent_kind = context
+                        .agent_kind
                         .as_deref()
                         .and_then(crate::agents::AgentKind::parse);
                     let task = crate::ipc::TaskRequest {
@@ -400,11 +448,12 @@ pub fn dispatch() {
                         single: parsed.single,
                         output_format: parsed.output_format,
                         record_history: true,
-                        agent_kind,
-                        agent_session_id,
+                        agent_kind: context.agent_kind,
+                        agent_session_id: context.agent_session_id,
+                        mcp_instance_id: context.mcp_instance_id,
                         agent_pid: None,
                         caller_pid: std::process::id(),
-                        from_mcp: from_mcp_env(),
+                        from_mcp: context.from_mcp,
                         perf_id,
                         perf_autodismiss: crate::perf::autodismiss(),
                         whats_next: parsed.whats_next,
@@ -448,11 +497,9 @@ fn try_whats_next_auto(project: &str, message: &crate::models::MessagePrompt, la
         .general
         .history_limit;
     if limit > 0 {
-        #[cfg(unix)]
-        let (agent_kind, _sid) = detect_caller_agent();
-        #[cfg(not(unix))]
-        let agent_kind: Option<String> = None;
-        let resolved = agent_kind
+        let context = caller_context();
+        let resolved = context
+            .agent_kind
             .as_deref()
             .and_then(crate::agents::AgentKind::parse);
         let prefix = i18n::tr(lang, "whatsNext.todoPrefix");
@@ -462,7 +509,9 @@ fn try_whats_next_auto(project: &str, message: &crate::models::MessagePrompt, la
                 timestamp_ms: crate::history::now_ms(),
                 project: project.to_string(),
                 source: crate::models::source_name_for_agent(resolved),
-                agent_kind,
+                agent_kind: context.agent_kind,
+                agent_session_id: context.agent_session_id,
+                mcp_instance_id: context.mcp_instance_id,
                 channel: "auto".to_string(),
                 action: crate::models::ChannelAction::Send,
                 is_markdown: true,
@@ -611,29 +660,59 @@ fn whats_next_question_from_entries(
     crate::models::Question::new(message, options)
 }
 
-/// 探测发起 `AskHuman` 调用的 Agent 身份的**快速部分**（家族 + 会话 ID，仅读 env，零 ps）。
-/// 方案5(b)：进程树 walk（拿 agent pid，数十 ms 的 ps 游走）不在此做——改由 daemon 从 `caller_pid`
-/// 异步进行（含 env 判不出家族的 **MCP 兜底**：daemon walk_any_agent）。env 判不出则两者皆 None。
-#[cfg(unix)]
-fn detect_caller_agent() -> (Option<String>, Option<String>) {
-    use crate::agents::detect;
-    if let Some(kind) = detect::detect_running_agent() {
-        let sid = detect::session_id_from_env(kind);
-        return (Some(kind.as_str().to_string()), sid);
-    }
-    (None, None)
+/// Resolve the calling Agent with environment-only work so it is safe on the ask hot path and
+/// available to both daemon-backed Unix and single-process Windows builds.
+pub(crate) fn caller_context() -> CallerContext {
+    caller_context_from_env(&std::env::vars().collect())
 }
 
-/// 是否经 MCP 模式发起（`AskHuman mcp` spawn 子进程时设 env `ASKHUMAN_FROM_MCP`）。
-/// 非空且非 `0` 即视为真（沿用本项目 env 开关惯例）。daemon 据此对该次 ask「只刷新、不新建」session。
-#[cfg(unix)]
-fn from_mcp_env() -> bool {
-    std::env::var("ASKHUMAN_FROM_MCP")
-        .map(|v| {
-            let v = v.trim();
-            !v.is_empty() && v != "0"
-        })
-        .unwrap_or(false)
+fn caller_context_from_env(env: &HashMap<String, String>) -> CallerContext {
+    let nonempty = |name: &str| {
+        env.get(name)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    };
+    let from_mcp = nonempty(FROM_MCP_ENV).is_some_and(|value| value != "0");
+    if from_mcp {
+        let kind = nonempty(MCP_AGENT_KIND_ENV)
+            .filter(|value| crate::agents::AgentKind::parse(value).is_some());
+        let session_id = nonempty(MCP_AGENT_SESSION_ID_ENV);
+        let (agent_kind, agent_session_id) = match (kind, session_id) {
+            (Some(kind), Some(session_id)) => (Some(kind), Some(session_id)),
+            _ => (None, None),
+        };
+        return CallerContext {
+            agent_kind,
+            agent_session_id,
+            mcp_instance_id: nonempty(MCP_INSTANCE_ID_ENV),
+            from_mcp: true,
+        };
+    }
+    let kind = crate::agents::detect::detect_running_agent_from(env);
+    CallerContext {
+        agent_kind: kind.map(|kind| kind.as_str().to_string()),
+        agent_session_id: kind
+            .and_then(|kind| crate::agents::detect::session_id_from_env_map(kind, env)),
+        mcp_instance_id: None,
+        from_mcp: false,
+    }
+}
+
+fn show_last_cli_scope(
+    agent_kind: Option<String>,
+    agent_session_id: Option<String>,
+    project: String,
+) -> Result<crate::show_last::Scope, &'static str> {
+    match (agent_kind, agent_session_id) {
+        (Some(agent_kind), Some(session_id)) => Ok(crate::show_last::Scope::AgentSession {
+            agent_kind,
+            session_id,
+        }),
+        (None, None) => Ok(crate::show_last::Scope::Project(project)),
+        _ => Err(
+            "AskHuman detected an Agent caller but no trustworthy session id; refusing an unsafe project-wide fallback",
+        ),
+    }
 }
 
 /// 提问解析的入口包装：仅当出现 `--stdin` 时读取标准输入作为 Message，
@@ -697,6 +776,86 @@ mod tests {
             agent_kind: None,
             auto: false,
         }
+    }
+
+    #[test]
+    fn show_last_project_fallback_requires_a_non_agent_caller() {
+        assert!(matches!(
+            show_last_cli_scope(None, None, "/project".into()).unwrap(),
+            crate::show_last::Scope::Project(project) if project == "/project"
+        ));
+        assert!(show_last_cli_scope(Some("codex".into()), None, "/project".into()).is_err());
+        assert!(show_last_cli_scope(None, Some("session".into()), "/project".into()).is_err());
+        assert!(matches!(
+            show_last_cli_scope(
+                Some("codex".into()),
+                Some("session".into()),
+                "/project".into()
+            )
+            .unwrap(),
+            crate::show_last::Scope::AgentSession { agent_kind, session_id }
+                if agent_kind == "codex" && session_id == "session"
+        ));
+    }
+
+    #[test]
+    fn caller_context_prefers_trusted_mcp_binding_and_ignores_stale_native_env() {
+        let env = HashMap::from([
+            (FROM_MCP_ENV.into(), "1".into()),
+            (MCP_INSTANCE_ID_ENV.into(), "  instance  ".into()),
+            (MCP_AGENT_KIND_ENV.into(), "cursor".into()),
+            (MCP_AGENT_SESSION_ID_ENV.into(), " conversation ".into()),
+            ("CODEX_THREAD_ID".into(), "stale-codex".into()),
+        ]);
+        assert_eq!(
+            caller_context_from_env(&env),
+            CallerContext {
+                agent_kind: Some("cursor".into()),
+                agent_session_id: Some("conversation".into()),
+                mcp_instance_id: Some("instance".into()),
+                from_mcp: true,
+            }
+        );
+
+        for env in [
+            HashMap::from([
+                (FROM_MCP_ENV.into(), "1".into()),
+                (MCP_AGENT_KIND_ENV.into(), "unknown".into()),
+                (MCP_AGENT_SESSION_ID_ENV.into(), "session".into()),
+            ]),
+            HashMap::from([
+                (FROM_MCP_ENV.into(), "true".into()),
+                (MCP_AGENT_KIND_ENV.into(), "codex".into()),
+            ]),
+        ] {
+            let context = caller_context_from_env(&env);
+            assert!(context.from_mcp);
+            assert!(context.agent_kind.is_none());
+            assert!(context.agent_session_id.is_none());
+        }
+    }
+
+    #[test]
+    fn caller_context_detects_direct_agent_and_never_assigns_mcp_partition() {
+        let env = HashMap::from([
+            ("CURSOR_AGENT".into(), "1".into()),
+            ("CURSOR_CONVERSATION_ID".into(), " conversation ".into()),
+            (FROM_MCP_ENV.into(), "0".into()),
+            (MCP_INSTANCE_ID_ENV.into(), "ignored".into()),
+        ]);
+        assert_eq!(
+            caller_context_from_env(&env),
+            CallerContext {
+                agent_kind: Some("cursor".into()),
+                agent_session_id: Some("conversation".into()),
+                mcp_instance_id: None,
+                from_mcp: false,
+            }
+        );
+        assert_eq!(
+            caller_context_from_env(&HashMap::new()),
+            CallerContext::default()
+        );
     }
 
     #[test]

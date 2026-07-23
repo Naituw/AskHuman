@@ -38,8 +38,8 @@ pub struct RequestEntry {
     pub coordinator: Arc<Coordinator>,
     /// 给 GUI Helper 的题目下发负载。
     pub show: ShowPayload,
-    /// 调用方 agent 会话 ID（CLI 从 env 探测、`TaskRequest.agent_session_id` 透传；MCP `env_clear`
-    /// 时为 None）。供 daemon「在途 AskHuman 豁免」按 session_id 刷新——覆盖无 pid 的 agent
+    /// 调用方 agent 会话 ID（CLI 从 env 探测；MCP 仅在每次调用取得可信绑定时透传）。
+    /// 供 daemon「在途 AskHuman 豁免」按 session_id 刷新——覆盖无 pid 的 agent
     /// （Codex 共享 app-server / Claude 被 scrub），使其等待人类回答期间不被「工作中兜底超时」降级。
     pub agent_session_id: Option<String>,
     /// GUI 发送端槽位（adapter 与连接处理器共享）。
@@ -382,7 +382,11 @@ impl RequestRegistry {
             final_tx.clone(),
             task.project.clone(),
             task.source.clone(),
-            task.agent_kind.clone(),
+            crate::app::coordinator::HistoryBinding {
+                agent_kind: task.agent_kind.clone(),
+                agent_session_id: task.agent_session_id.clone(),
+                mcp_instance_id: task.mcp_instance_id.clone(),
+            },
             task.record_history,
         );
 
@@ -841,6 +845,34 @@ mod tests {
             caller_pid: 42,
             memory: None,
         }
+    }
+
+    #[test]
+    fn ask_registry_propagates_exact_recovery_binding_into_coordinator() {
+        let task: TaskRequest = serde_json::from_value(json!({
+            "message": {"text": "context", "files": []},
+            "questions": [{"message": "continue?", "predefinedOptions": []}],
+            "isMarkdown": true,
+            "source": "Cursor",
+            "lang": "en",
+            "project": "/tmp/project",
+            "agentKind": "cursor",
+            "agentSessionId": "conversation-1",
+            "mcpInstanceId": "instance-1",
+            "fromMcp": true
+        }))
+        .unwrap();
+        let registry = RequestRegistry::new();
+        let (entry, _rx) = registry.create(task);
+        assert_eq!(
+            entry.coordinator.recovery_binding(),
+            (
+                Some("cursor".into()),
+                Some("conversation-1".into()),
+                Some("instance-1".into())
+            )
+        );
+        assert_eq!(entry.agent_session_id.as_deref(), Some("conversation-1"));
     }
 
     #[test]

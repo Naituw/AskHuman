@@ -10,6 +10,8 @@
 //! `demo/agent-lifecycle/FINDINGS.md`。
 
 pub mod activity;
+#[cfg(unix)]
+pub mod context_recovery;
 pub mod detect;
 pub mod interject;
 pub mod registry;

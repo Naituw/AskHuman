@@ -60,6 +60,16 @@ pub fn history_lock() -> PathBuf {
     config_dir().join("history.lock")
 }
 
+/// Private overwrite-only files used when a recovered AskHuman Message exceeds stdout limits.
+pub fn show_last_dir() -> PathBuf {
+    state_dir().join("show-last")
+}
+
+/// Private schema-hidden MCP session tokens, consumed once by AskHuman MCP handlers.
+pub fn session_token_dir() -> PathBuf {
+    state_dir().join("session-tokens")
+}
+
 /// 版本自更新状态文件 `~/.askhuman/update.json`（最新版本/检查时间/忽略集合/待生效）。
 pub fn update_state_file() -> PathBuf {
     config_dir().join("update.json")

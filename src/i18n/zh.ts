@@ -339,6 +339,9 @@ export default {
       recommendedTag: "推荐",
       codexNoHook:
         "Codex 无法延长 CLI 工具的超时，长时间等待可能被取消；如需可靠的长等待请改用 MCP 模式。",
+      contextRecoveryHookLabel: "上下文恢复 Hook",
+      codexRecoveryHookHint:
+        "用于压缩后恢复最近一次 AskHuman 精确问答。Codex 仍无法延长 CLI 工具超时，长时间等待依然推荐 MCP 模式。",
       mcpModeHint:
         "以 MCP server 方式运行 AskHuman 并设置较长的工具超时，让 Agent 能可靠地等待你的回复。",
       mcpExampleHint:

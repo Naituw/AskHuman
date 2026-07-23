@@ -62,7 +62,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
         return None;
     }
 
-    if !confirm {
+    if !confirm || should_suppress_confirmation(kind, &input) {
         if track {
             super::report::report_simple_event(kind, LifecycleEvent::TurnEnd, session_id, cwd);
         }
@@ -132,6 +132,23 @@ fn is_natural_stop(kind: AgentKind, input: &Value) -> bool {
             .is_some_and(|event| event.eq_ignore_ascii_case("stop")),
         AgentKind::Grok => false,
     }
+}
+
+fn should_suppress_confirmation(kind: AgentKind, input: &Value) -> bool {
+    if kind != AgentKind::Codex {
+        return false;
+    }
+    let thread_source = input
+        .get("thread_source")
+        .or_else(|| input.get("threadSource"))
+        .and_then(Value::as_str);
+    if thread_source == Some("system") {
+        return true;
+    }
+    input
+        .get("transcript_path")
+        .or_else(|| input.get("transcriptPath"))
+        .is_some_and(Value::is_null)
 }
 
 fn last_assistant_message(kind: AgentKind, input: &Value) -> LastAssistantMessage {
@@ -259,6 +276,7 @@ fn build_task(
         record_history: false,
         agent_kind: Some(kind.as_str().to_string()),
         agent_session_id: Some(session_id.to_string()),
+        mcp_instance_id: None,
         agent_pid: None,
         caller_pid: std::process::id(),
         from_mcp: false,
@@ -371,6 +389,35 @@ mod tests {
             &json!({"hook_event_name":"StopFailure"})
         ));
         assert!(!is_natural_stop(AgentKind::Codex, &json!({})));
+    }
+
+    #[test]
+    fn codex_system_and_ephemeral_stops_suppress_confirmation() {
+        for input in [
+            json!({"thread_source":"system", "transcript_path":"/tmp/rollout.jsonl"}),
+            json!({"threadSource":"system", "transcriptPath":"/tmp/rollout.jsonl"}),
+            json!({"transcript_path":null}),
+            json!({"transcriptPath":null}),
+        ] {
+            assert!(should_suppress_confirmation(AgentKind::Codex, &input));
+        }
+    }
+
+    #[test]
+    fn ordinary_and_non_codex_stops_keep_confirmation() {
+        for input in [
+            json!({"thread_source":"user", "transcript_path":"/tmp/rollout.jsonl"}),
+            json!({"transcript_path":"/tmp/rollout.jsonl"}),
+            json!({}),
+        ] {
+            assert!(!should_suppress_confirmation(AgentKind::Codex, &input));
+        }
+        for kind in [AgentKind::Claude, AgentKind::Cursor, AgentKind::Grok] {
+            assert!(!should_suppress_confirmation(
+                kind,
+                &json!({"thread_source":"system", "transcript_path":null})
+            ));
+        }
     }
 
     #[test]

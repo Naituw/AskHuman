@@ -45,6 +45,14 @@ pub struct HistoryEntry {
     /// before the entry is recorded (best-effort).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_kind: Option<String>,
+    /// Native Agent conversation/session id. None for legacy, non-Agent, or calls where the MCP
+    /// client could not provide a trustworthy per-call binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_id: Option<String>,
+    /// Random id owned by one long-lived AskHuman MCP server process. This is only a best-effort
+    /// fallback partition when no true Agent session id is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_instance_id: Option<String>,
     /// Channel id that submitted / cancelled (popup / dingding / feishu / telegram).
     #[serde(default)]
     pub channel: String,
@@ -101,6 +109,21 @@ pub fn load(project: Option<&str>, all: bool) -> Vec<HistoryEntry> {
     load_at(&paths::history_file(), project, all)
 }
 
+/// Latest completed exchange for one exact native Agent session.
+pub fn latest_send_for_session(agent_kind: &str, session_id: &str) -> Option<HistoryEntry> {
+    latest_send_for_session_at(&paths::history_file(), agent_kind, session_id)
+}
+
+/// Latest completed exchange in one MCP-process/project fallback partition.
+pub fn latest_send_for_mcp_instance(mcp_instance_id: &str, project: &str) -> Option<HistoryEntry> {
+    latest_send_for_mcp_instance_at(&paths::history_file(), mcp_instance_id, project)
+}
+
+/// Latest completed exchange for a project, used only by an ordinary non-Agent CLI call.
+pub fn latest_send_for_project(project: &str) -> Option<HistoryEntry> {
+    latest_send_for_project_at(&paths::history_file(), project)
+}
+
 /// Distinct projects present in history, most recently active first.
 pub fn projects() -> Vec<ProjectInfo> {
     projects_at(&paths::history_file())
@@ -148,6 +171,38 @@ fn load_at(path: &Path, project: Option<&str>, all: bool) -> Vec<HistoryEntry> {
     }
     entries.sort_by_key(|e| std::cmp::Reverse(e.timestamp_ms));
     entries
+}
+
+fn latest_send_at(path: &Path, predicate: impl Fn(&HistoryEntry) -> bool) -> Option<HistoryEntry> {
+    read_all_at(path)
+        .into_iter()
+        .filter(|entry| entry.action == ChannelAction::Send && predicate(entry))
+        .max_by_key(|entry| entry.timestamp_ms)
+}
+
+fn latest_send_for_session_at(
+    path: &Path,
+    agent_kind: &str,
+    session_id: &str,
+) -> Option<HistoryEntry> {
+    latest_send_at(path, |entry| {
+        entry.agent_kind.as_deref() == Some(agent_kind)
+            && entry.agent_session_id.as_deref() == Some(session_id)
+    })
+}
+
+fn latest_send_for_mcp_instance_at(
+    path: &Path,
+    mcp_instance_id: &str,
+    project: &str,
+) -> Option<HistoryEntry> {
+    latest_send_at(path, |entry| {
+        entry.mcp_instance_id.as_deref() == Some(mcp_instance_id) && entry.project == project
+    })
+}
+
+fn latest_send_for_project_at(path: &Path, project: &str) -> Option<HistoryEntry> {
+    latest_send_at(path, |entry| entry.project == project)
 }
 
 fn projects_at(path: &Path) -> Vec<ProjectInfo> {
@@ -288,6 +343,8 @@ mod tests {
             project: project.to_string(),
             source: "the Loop".to_string(),
             agent_kind: None,
+            agent_session_id: None,
+            mcp_instance_id: None,
             channel: "popup".to_string(),
             action: ChannelAction::Send,
             is_markdown: true,
@@ -311,20 +368,93 @@ mod tests {
     }
 
     #[test]
-    fn agent_kind_roundtrip_and_legacy_lines() {
+    fn agent_binding_fields_roundtrip_and_legacy_lines() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("history.jsonl");
         let mut e = entry("a", "/p", 1);
         e.agent_kind = Some("cursor".to_string());
+        e.agent_session_id = Some("conversation-1".to_string());
+        e.mcp_instance_id = Some("instance-1".to_string());
         record_at(&path, e, 200);
         // Legacy line without the field parses with agent_kind == None.
         record_at(&path, entry("b", "/p", 2), 200);
         let loaded = load_at(&path, Some("/p"), false);
         assert_eq!(loaded[0].agent_kind, None);
+        assert_eq!(loaded[0].agent_session_id, None);
+        assert_eq!(loaded[0].mcp_instance_id, None);
         assert_eq!(loaded[1].agent_kind.as_deref(), Some("cursor"));
+        assert_eq!(
+            loaded[1].agent_session_id.as_deref(),
+            Some("conversation-1")
+        );
+        assert_eq!(loaded[1].mcp_instance_id.as_deref(), Some("instance-1"));
         // None is omitted from the serialized line (keeps legacy shape).
         let raw = std::fs::read_to_string(&path).unwrap();
         assert_eq!(raw.matches("agentKind").count(), 1);
+        assert_eq!(raw.matches("agentSessionId").count(), 1);
+        assert_eq!(raw.matches("mcpInstanceId").count(), 1);
+    }
+
+    #[test]
+    fn latest_send_queries_use_exact_partitions_and_ignore_cancel() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+
+        let mut first = entry("first", "/p", 1);
+        first.agent_kind = Some("codex".into());
+        first.agent_session_id = Some("s1".into());
+        first.mcp_instance_id = Some("m1".into());
+        record_at(&path, first, 200);
+
+        let mut cancelled = entry("cancelled", "/p", 2);
+        cancelled.agent_kind = Some("codex".into());
+        cancelled.agent_session_id = Some("s1".into());
+        cancelled.mcp_instance_id = Some("m1".into());
+        cancelled.action = ChannelAction::Cancel;
+        record_at(&path, cancelled, 200);
+
+        let mut other_session = entry("other", "/p", 3);
+        other_session.agent_kind = Some("codex".into());
+        other_session.agent_session_id = Some("s2".into());
+        other_session.mcp_instance_id = Some("m1".into());
+        record_at(&path, other_session, 200);
+
+        assert_eq!(
+            latest_send_for_session_at(&path, "codex", "s1").unwrap().id,
+            "first"
+        );
+        assert_eq!(
+            latest_send_for_mcp_instance_at(&path, "m1", "/p")
+                .unwrap()
+                .id,
+            "other"
+        );
+        assert_eq!(latest_send_for_project_at(&path, "/p").unwrap().id, "other");
+
+        // Exact Agent partitions include both kind and native session id.
+        assert!(latest_send_for_session_at(&path, "cursor", "s1").is_none());
+        assert!(latest_send_for_session_at(&path, "codex", "missing").is_none());
+        // MCP fallback partitions include both process instance and project.
+        assert!(latest_send_for_mcp_instance_at(&path, "m1", "/other").is_none());
+        assert!(latest_send_for_mcp_instance_at(&path, "m2", "/p").is_none());
+        assert!(latest_send_for_project_at(&path, "/other").is_none());
+
+        // A restarted MCP process in the same project cannot see the previous instance partition.
+        let mut restarted = entry("restarted", "/p", 4);
+        restarted.mcp_instance_id = Some("m2".into());
+        record_at(&path, restarted, 200);
+        assert_eq!(
+            latest_send_for_mcp_instance_at(&path, "m1", "/p")
+                .unwrap()
+                .id,
+            "other"
+        );
+        assert_eq!(
+            latest_send_for_mcp_instance_at(&path, "m2", "/p")
+                .unwrap()
+                .id,
+            "restarted"
+        );
     }
 
     #[test]

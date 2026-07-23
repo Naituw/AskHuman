@@ -351,6 +351,9 @@ export default {
       recommendedTag: "Rec",
       codexNoHook:
         "Codex can't extend a CLI tool's timeout, so long waits may be cancelled. Use MCP mode for reliable long waits.",
+      contextRecoveryHookLabel: "Context recovery hook",
+      codexRecoveryHookHint:
+        "Restores the exact last AskHuman exchange after compaction. Codex still cannot extend a CLI tool timeout, so MCP remains recommended for long waits.",
       mcpModeHint:
         "Runs AskHuman as an MCP server with a long tool timeout, so the agent reliably waits for your reply.",
       mcpExampleHint:

@@ -718,6 +718,7 @@ export interface AgentModeStatus {
   timeoutHookSupported: boolean;
   timeoutHookInstalled: boolean;
   timeoutHookNeedsUpdate: boolean;
+  recoveryHookInstalled: boolean;
   permission: PermissionStatus;
   permissionNeedsUpdate: boolean;
   stop: StopStatus;

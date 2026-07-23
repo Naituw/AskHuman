@@ -68,7 +68,7 @@ fn codex_system_thread_block(meta: &Meta) -> Option<CallToolResult> {
 
 // `ask` 工具的入参（MCP 入参 schema 由 schemars 从本结构派生）。结构体级注释用 `//` 以免泄漏进对外
 // schema 的 description；字段级 `///` 才是给 agent 读的描述，须为英文。
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AskParams {
     /// Shared context/description shown above all questions, rendered as Markdown
@@ -82,10 +82,13 @@ pub struct AskParams {
     /// Optional file paths (images or documents) to attach to what the human sees.
     #[serde(default)]
     pub files: Option<Vec<String>>,
+    #[serde(default, rename = "__askhuman_session_token_v1")]
+    #[schemars(skip)]
+    session_token: Option<String>,
 }
 
 // Input for `todo_add` (project-scoped queue; same store as CLI `todo add`).
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TodoAddParams {
     /// Concise task text to append to the current project's todo queue.
@@ -113,7 +116,7 @@ pub struct TodoAddResult {
 }
 
 // Input for `whats_next` (spec todo-whats-next D2).
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WhatsNextParams {
     /// Optional completion report shown to the human above the fixed "What should we do
@@ -128,10 +131,22 @@ pub struct WhatsNextParams {
     /// Optional file paths (e.g. a report or summary document) to attach to what the human sees.
     #[serde(default)]
     pub files: Option<Vec<String>>,
+    #[serde(default, rename = "__askhuman_session_token_v1")]
+    #[schemars(skip)]
+    session_token: Option<String>,
+}
+
+// Publicly zero-argument input. Managed hooks may add the private field after model generation;
+// it is deliberately absent from tools/list.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ShowLastParams {
+    #[serde(default, rename = "__askhuman_session_token_v1")]
+    #[schemars(skip)]
+    session_token: Option<String>,
 }
 
 // 单个问题。
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 pub struct AskQuestion {
     /// The question text.
@@ -142,7 +157,7 @@ pub struct AskQuestion {
 }
 
 // 单个选项。
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 pub struct AskOption {
     /// The option label.
@@ -192,10 +207,12 @@ pub struct AskAnswer {
     pub files: Vec<String>,
 }
 
-/// MCP server：暴露 `ask`、`whats_next`、`todo_add`。
+/// MCP server：暴露 `ask`、`whats_next`、`show_last`、`todo_add`。
 #[derive(Clone)]
 pub struct AskServer {
     tool_router: ToolRouter<Self>,
+    mcp_instance_id: String,
+    project: String,
 }
 
 #[tool_router(router = tool_router)]
@@ -203,7 +220,18 @@ impl AskServer {
     pub fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
+            mcp_instance_id: uuid::Uuid::new_v4().to_string(),
+            project: crate::project::detect(),
         }
+    }
+
+    pub async fn register_instance(&self) {
+        register_mcp_instance(
+            self.mcp_instance_id.clone(),
+            self.project.clone(),
+            std::process::id(),
+        )
+        .await;
     }
 
     /// Ask the human a question (or several) and block until they reply.
@@ -251,6 +279,15 @@ structured content; any images the human attaches are returned as image content.
             ));
         }
 
+        let public_arguments = ask_arguments_value(&params);
+        let binding = self
+            .resolve_binding(
+                &context.meta,
+                params.session_token.as_deref(),
+                "ask",
+                &public_arguments,
+            )
+            .await;
         let argv = build_argv(&params);
         let exe = std::env::current_exe().map_err(|e| {
             McpError::internal_error(format!("cannot locate AskHuman executable: {e}"), None)
@@ -259,7 +296,8 @@ structured content; any images the human attaches are returned as image content.
         // stdin 置空、stdout/stderr 捕获，确保子进程不碰 MCP 的 STDIO 协议流。
         // `ASKHUMAN_FROM_MCP=1`：告知子进程这是 MCP 发起，daemon 据此「只刷新、不新建」会话（防幽灵）。
         let mut command = tokio::process::Command::new(exe);
-        command.args(&argv).env("ASKHUMAN_FROM_MCP", "1");
+        command.args(&argv);
+        self.configure_child(&mut command, binding.as_ref());
         let output = match capture_output(command, cancel).await {
             Ok(o) => o,
             Err(CaptureError::Cancelled) => {
@@ -346,12 +384,22 @@ approves ending the turn — only then may you end it.",
         if let Some(blocked) = codex_system_thread_block(&context.meta) {
             return Ok(blocked);
         }
+        let public_arguments = whats_next_arguments_value(&params);
+        let binding = self
+            .resolve_binding(
+                &context.meta,
+                params.session_token.as_deref(),
+                "whats_next",
+                &public_arguments,
+            )
+            .await;
         let argv = build_whats_next_argv(&params);
         let exe = std::env::current_exe().map_err(|e| {
             McpError::internal_error(format!("cannot locate AskHuman executable: {e}"), None)
         })?;
         let mut command = tokio::process::Command::new(exe);
-        command.args(&argv).env("ASKHUMAN_FROM_MCP", "1");
+        command.args(&argv);
+        self.configure_child(&mut command, binding.as_ref());
         let output = match capture_output(command, cancel).await {
             Ok(o) => o,
             Err(CaptureError::Cancelled) => {
@@ -382,6 +430,43 @@ approves ending the turn — only then may you end it.",
         Ok(CallToolResult::success(vec![ContentBlock::text(
             text.to_string(),
         )]))
+    }
+
+    /// Recover the complete latest AskHuman exchange for the current Agent session.
+    #[tool(
+        name = "show_last",
+        description = "Retrieve the full latest completed AskHuman question and human answer for \
+the current Agent session. Call this immediately after context summarization/compaction, or whenever \
+you are unsure of the exact prior AskHuman exchange. Takes no public arguments.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn show_last(
+        &self,
+        Parameters(params): Parameters<ShowLastParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Some(blocked) = codex_system_thread_block(&context.meta) {
+            return Ok(blocked);
+        }
+        let binding = self
+            .resolve_binding(
+                &context.meta,
+                params.session_token.as_deref(),
+                "show_last",
+                &serde_json::json!({}),
+            )
+            .await;
+        let scope = show_last_scope(binding, &self.mcp_instance_id, &self.project);
+        match crate::show_last::recover(&scope) {
+            Ok(output) => Ok(CallToolResult::success(vec![ContentBlock::text(output)])),
+            Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(
+                error.to_string(),
+            )])),
+        }
     }
 
     /// Append a project todo (same queue as CLI `AskHuman todo add`).
@@ -458,6 +543,177 @@ cwd (git root). Returns the 1-based index and stored text on success.",
         // `structured()` mirrors structuredContent into content[0] as JSON text.
         Ok(CallToolResult::structured(structured))
     }
+
+    fn configure_child(
+        &self,
+        command: &mut tokio::process::Command,
+        binding: Option<&crate::context_binding::AgentBinding>,
+    ) {
+        // Native session env inherited when this long-lived MCP process started may belong to an
+        // older conversation. Only explicit per-call binding is authoritative.
+        for kind in [
+            crate::agents::AgentKind::Claude,
+            crate::agents::AgentKind::Codex,
+            crate::agents::AgentKind::Cursor,
+            crate::agents::AgentKind::Grok,
+        ] {
+            command.env_remove(crate::agents::detect::session_id_env_var(kind));
+        }
+        command
+            .env(crate::cli::FROM_MCP_ENV, "1")
+            .env(
+                crate::cli::MCP_INSTANCE_ID_ENV,
+                self.mcp_instance_id.as_str(),
+            )
+            .env_remove(crate::cli::MCP_AGENT_KIND_ENV)
+            .env_remove(crate::cli::MCP_AGENT_SESSION_ID_ENV);
+        if let Some(binding) = binding {
+            command
+                .env(crate::cli::MCP_AGENT_KIND_ENV, &binding.agent_kind)
+                .env(crate::cli::MCP_AGENT_SESSION_ID_ENV, &binding.session_id);
+        }
+    }
+
+    async fn resolve_binding(
+        &self,
+        meta: &Meta,
+        token: Option<&str>,
+        tool_name: &str,
+        public_arguments: &Value,
+    ) -> Option<crate::context_binding::AgentBinding> {
+        if let Some(binding) = resolve_direct_binding(meta, token, tool_name) {
+            return Some(binding);
+        }
+        let session_id = claim_grok_binding(
+            self.mcp_instance_id.clone(),
+            self.project.clone(),
+            tool_name.to_string(),
+            crate::context_binding::canonical_tool_arguments_sha256(tool_name, public_arguments)?,
+            std::process::id(),
+        )
+        .await?;
+        Some(crate::context_binding::AgentBinding {
+            agent_kind: "grok".into(),
+            session_id,
+        })
+    }
+}
+
+fn show_last_scope(
+    binding: Option<crate::context_binding::AgentBinding>,
+    mcp_instance_id: &str,
+    project: &str,
+) -> crate::show_last::Scope {
+    match binding {
+        Some(binding) => crate::show_last::Scope::AgentSession {
+            agent_kind: binding.agent_kind,
+            session_id: binding.session_id,
+        },
+        None => crate::show_last::Scope::McpInstance {
+            mcp_instance_id: mcp_instance_id.to_string(),
+            project: project.to_string(),
+        },
+    }
+}
+
+fn resolve_direct_binding(
+    meta: &Meta,
+    token: Option<&str>,
+    tool_name: &str,
+) -> Option<crate::context_binding::AgentBinding> {
+    // Codex overwrites this field with the current thread id on every tools/call.
+    if let Some(session_id) = meta
+        .0
+        .get("threadId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| uuid::Uuid::parse_str(value).is_ok())
+    {
+        return Some(crate::context_binding::AgentBinding {
+            agent_kind: "codex".into(),
+            session_id: session_id.to_string(),
+        });
+    }
+    token.and_then(|token| crate::context_binding::consume_token(token, tool_name))
+}
+
+pub(crate) fn ask_arguments_value(params: &AskParams) -> Value {
+    let mut object = serde_json::Map::new();
+    if let Some(value) = &params.message {
+        object.insert("message".into(), Value::String(value.clone()));
+    }
+    if let Some(value) = &params.questions {
+        object.insert(
+            "questions".into(),
+            serde_json::to_value(value).expect("AskQuestion is serializable"),
+        );
+    }
+    if let Some(value) = &params.files {
+        object.insert(
+            "files".into(),
+            serde_json::to_value(value).expect("file paths are serializable"),
+        );
+    }
+    Value::Object(object)
+}
+
+pub(crate) fn whats_next_arguments_value(params: &WhatsNextParams) -> Value {
+    let mut object = serde_json::Map::new();
+    if let Some(value) = &params.message {
+        object.insert("message".into(), Value::String(value.clone()));
+    }
+    if let Some(value) = &params.options {
+        object.insert(
+            "options".into(),
+            serde_json::to_value(value).expect("AskOption is serializable"),
+        );
+    }
+    if let Some(value) = &params.files {
+        object.insert(
+            "files".into(),
+            serde_json::to_value(value).expect("file paths are serializable"),
+        );
+    }
+    Value::Object(object)
+}
+
+#[cfg(unix)]
+async fn register_mcp_instance(mcp_instance_id: String, project: String, server_pid: u32) {
+    let parent_pid_hint = Some(unsafe { libc::getppid() } as u32);
+    crate::client::register_mcp_instance(mcp_instance_id, project, server_pid, parent_pid_hint)
+        .await;
+}
+
+#[cfg(not(unix))]
+async fn register_mcp_instance(_mcp_instance_id: String, _project: String, _server_pid: u32) {}
+
+#[cfg(unix)]
+async fn claim_grok_binding(
+    mcp_instance_id: String,
+    project: String,
+    tool_name: String,
+    arguments_sha256: String,
+    server_pid: u32,
+) -> Option<String> {
+    crate::client::claim_grok_binding(
+        mcp_instance_id,
+        project,
+        tool_name,
+        arguments_sha256,
+        server_pid,
+    )
+    .await
+}
+
+#[cfg(not(unix))]
+async fn claim_grok_binding(
+    _mcp_instance_id: String,
+    _project: String,
+    _tool_name: String,
+    _arguments_sha256: String,
+    _server_pid: u32,
+) -> Option<String> {
+    None
 }
 
 /// Errors from [`capture_output`].
@@ -523,7 +779,8 @@ impl ServerHandler for AskServer {
             "AskHuman bridges the agent and a human operator. Call the `ask` tool whenever you \
 need the human to decide, clarify, review, or approve something; it blocks until they reply. \
 Call the `whats_next` tool after completing the current task and before ending your turn to ask \
-the human what to do next. Call the `todo_add` tool when the human asks to record a deferred \
+the human what to do next. Call `show_last` after context summarization when exact prior AskHuman \
+details may be missing. Call the `todo_add` tool when the human asks to record a deferred \
 project todo.",
         );
         // `from_build_env()` 的名字/版本来自 rmcp crate 自身，改成本应用的品牌名与版本。
@@ -748,6 +1005,7 @@ mod tests {
         for (offset, (name, arguments)) in [
             ("ask", json!({ "message": "must not spawn" })),
             ("whats_next", json!({})),
+            ("show_last", json!({})),
             // Whitespace is valid at schema decoding time but would fail handler validation.
             // Receiving the system-thread result proves the guard ran before any todo write.
             ("todo_add", json!({ "text": " " })),
@@ -987,6 +1245,168 @@ mod tests {
     fn whats_next_tool_is_registered() {
         let server = AskServer::new();
         assert!(server.tool_router.get("whats_next").is_some());
+    }
+
+    #[test]
+    fn show_last_is_registered_with_zero_public_fields() {
+        let server = AskServer::new();
+        let tool = server.tool_router.get("show_last").unwrap();
+        let schema = Value::Object((*tool.input_schema).clone());
+        assert!(schema
+            .pointer("/properties/__askhuman_session_token_v1")
+            .is_none());
+        assert!(tool
+            .description
+            .as_deref()
+            .unwrap_or("")
+            .contains("context summarization/compaction"));
+    }
+
+    #[test]
+    fn server_instances_and_show_last_scopes_are_strictly_partitioned() {
+        let first = AskServer::new();
+        let second = AskServer::new();
+        assert!(uuid::Uuid::parse_str(&first.mcp_instance_id).is_ok());
+        assert!(uuid::Uuid::parse_str(&second.mcp_instance_id).is_ok());
+        assert_ne!(first.mcp_instance_id, second.mcp_instance_id);
+
+        assert!(matches!(
+            show_last_scope(None, &first.mcp_instance_id, "/p"),
+            crate::show_last::Scope::McpInstance { mcp_instance_id, project }
+                if mcp_instance_id == first.mcp_instance_id && project == "/p"
+        ));
+        assert!(matches!(
+            show_last_scope(
+                Some(crate::context_binding::AgentBinding {
+                    agent_kind: "cursor".into(),
+                    session_id: "conversation".into(),
+                }),
+                &first.mcp_instance_id,
+                "/p",
+            ),
+            crate::show_last::Scope::AgentSession { agent_kind, session_id }
+                if agent_kind == "cursor" && session_id == "conversation"
+        ));
+    }
+
+    #[test]
+    fn public_argument_hash_omits_hidden_token_and_preserves_absence() {
+        let server = AskServer::new();
+        for tool_name in ["ask", "whats_next", "show_last"] {
+            let tool = server.tool_router.get(tool_name).unwrap();
+            let schema = Value::Object((*tool.input_schema).clone());
+            assert!(schema
+                .pointer("/properties/__askhuman_session_token_v1")
+                .is_none());
+        }
+        let params: AskParams = serde_json::from_value(json!({
+            "message": "hello",
+            "__askhuman_session_token_v1": "secret"
+        }))
+        .unwrap();
+        assert_eq!(ask_arguments_value(&params), json!({"message": "hello"}));
+        let params: WhatsNextParams = serde_json::from_value(json!({
+            "message": "done",
+            "__askhuman_session_token_v1": "secret"
+        }))
+        .unwrap();
+        assert_eq!(
+            whats_next_arguments_value(&params),
+            json!({"message": "done"})
+        );
+        assert_eq!(params.session_token.as_deref(), Some("secret"));
+        let params: ShowLastParams = serde_json::from_value(json!({
+            "__askhuman_session_token_v1": "secret"
+        }))
+        .unwrap();
+        assert_eq!(params.session_token.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn codex_binding_accepts_only_uuid_thread_ids() {
+        let valid = "5c2bfe55-f587-4f0f-9671-f02d5259f2e1";
+        assert_eq!(
+            resolve_direct_binding(&meta(json!({"threadId": valid})), None, "show_last"),
+            Some(crate::context_binding::AgentBinding {
+                agent_kind: "codex".into(),
+                session_id: valid.into(),
+            })
+        );
+        assert!(resolve_direct_binding(
+            &meta(json!({"threadId": "not-a-codex-thread"})),
+            None,
+            "show_last"
+        )
+        .is_none());
+        assert_eq!(
+            resolve_direct_binding(
+                &meta(json!({"threadId": format!("  {valid}  ")})),
+                Some("invalid-token"),
+                "ask"
+            ),
+            Some(crate::context_binding::AgentBinding {
+                agent_kind: "codex".into(),
+                session_id: valid.into(),
+            })
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn child_environment_removes_stale_native_sessions_and_sets_only_binding() {
+        async fn configured_env(
+            server: &AskServer,
+            binding: Option<&crate::context_binding::AgentBinding>,
+        ) -> String {
+            let mut command = tokio::process::Command::new("sh");
+            command.args(["-c", "env"]);
+            for kind in [
+                crate::agents::AgentKind::Claude,
+                crate::agents::AgentKind::Codex,
+                crate::agents::AgentKind::Cursor,
+                crate::agents::AgentKind::Grok,
+            ] {
+                command.env(crate::agents::detect::session_id_env_var(kind), "stale");
+            }
+            command
+                .env(crate::cli::MCP_AGENT_KIND_ENV, "stale-kind")
+                .env(crate::cli::MCP_AGENT_SESSION_ID_ENV, "stale-session");
+            server.configure_child(&mut command, binding);
+            String::from_utf8(command.output().await.unwrap().stdout).unwrap()
+        }
+
+        let server = AskServer::new();
+        let binding = crate::context_binding::AgentBinding {
+            agent_kind: "claude".into(),
+            session_id: "current-session".into(),
+        };
+        let bound = configured_env(&server, Some(&binding)).await;
+        assert!(bound.contains(&format!("{}=1\n", crate::cli::FROM_MCP_ENV)));
+        assert!(bound.contains(&format!(
+            "{}={}\n",
+            crate::cli::MCP_INSTANCE_ID_ENV,
+            server.mcp_instance_id
+        )));
+        assert!(bound.contains(&format!("{}=claude\n", crate::cli::MCP_AGENT_KIND_ENV)));
+        assert!(bound.contains(&format!(
+            "{}=current-session\n",
+            crate::cli::MCP_AGENT_SESSION_ID_ENV
+        )));
+        for kind in [
+            crate::agents::AgentKind::Claude,
+            crate::agents::AgentKind::Codex,
+            crate::agents::AgentKind::Cursor,
+            crate::agents::AgentKind::Grok,
+        ] {
+            assert!(!bound.contains(&format!(
+                "{}=stale",
+                crate::agents::detect::session_id_env_var(kind)
+            )));
+        }
+
+        let unbound = configured_env(&server, None).await;
+        assert!(!unbound.contains(&format!("{}=", crate::cli::MCP_AGENT_KIND_ENV)));
+        assert!(!unbound.contains(&format!("{}=", crate::cli::MCP_AGENT_SESSION_ID_ENV)));
     }
 
     #[test]

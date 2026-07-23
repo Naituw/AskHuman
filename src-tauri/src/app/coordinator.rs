@@ -32,6 +32,13 @@ pub enum Exiter {
     Ipc(UnboundedSender<RenderOutcome>),
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct HistoryBinding {
+    pub agent_kind: Option<String>,
+    pub agent_session_id: Option<String>,
+    pub mcp_instance_id: Option<String>,
+}
+
 pub struct Coordinator {
     inner: Mutex<Inner>,
     terminal: FirstTerminalGate<()>,
@@ -45,6 +52,10 @@ pub struct Coordinator {
     /// 内部可变：daemon 异步 walk 进程树解析完成后经 `set_agent_kind` 回填
     /// （MCP 模式 env 判不出家族，只有这条路能拿到），`finish` 落历史时取最新值。
     agent_kind: Mutex<Option<String>>,
+    /// Native Agent session/conversation id used for exact history recovery.
+    agent_session_id: Option<String>,
+    /// Process-scoped MCP instance fallback partition.
+    mcp_instance_id: Option<String>,
     /// 仍在收尾的落败「消息渠道」数（弹窗瞬时关闭，不计入）。
     pending: Arc<AtomicUsize>,
     /// 已采纳的终态结果（首个 submit 写入）。
@@ -77,6 +88,8 @@ impl Coordinator {
         source: String,
         agent_kind: Option<String>,
     ) -> Arc<Self> {
+        let caller = crate::cli::caller_context();
+        let binding = merged_caller_binding(agent_kind, caller);
         Self::build(
             Exiter::Gui(app),
             request,
@@ -84,7 +97,9 @@ impl Coordinator {
             Lang::current(),
             project,
             source,
-            agent_kind,
+            binding.agent_kind,
+            binding.agent_session_id,
+            binding.mcp_instance_id,
             true,
         )
     }
@@ -98,6 +113,8 @@ impl Coordinator {
         project: String,
         source: String,
     ) -> Arc<Self> {
+        let caller = crate::cli::caller_context();
+        let binding = merged_caller_binding(None, caller);
         Self::build(
             Exiter::Process,
             request,
@@ -105,7 +122,9 @@ impl Coordinator {
             Lang::current(),
             project,
             source,
-            None,
+            binding.agent_kind,
+            binding.agent_session_id,
+            binding.mcp_instance_id,
             true,
         )
     }
@@ -118,7 +137,7 @@ impl Coordinator {
         tx: UnboundedSender<RenderOutcome>,
         project: String,
         source: String,
-        agent_kind: Option<String>,
+        binding: HistoryBinding,
         record_history_enabled: bool,
     ) -> Arc<Self> {
         Self::build(
@@ -128,7 +147,9 @@ impl Coordinator {
             lang,
             project,
             source,
-            agent_kind,
+            binding.agent_kind,
+            binding.agent_session_id,
+            binding.mcp_instance_id,
             record_history_enabled,
         )
     }
@@ -142,6 +163,8 @@ impl Coordinator {
         project: String,
         source: String,
         agent_kind: Option<String>,
+        agent_session_id: Option<String>,
+        mcp_instance_id: Option<String>,
         record_history_enabled: bool,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -156,6 +179,8 @@ impl Coordinator {
             project,
             source,
             agent_kind: Mutex::new(agent_kind),
+            agent_session_id,
+            mcp_instance_id,
             pending: Arc::new(AtomicUsize::new(0)),
             result: Mutex::new(None),
             winner: Mutex::new(None),
@@ -173,6 +198,15 @@ impl Coordinator {
     /// 回填调用方 agent 家族（daemon 异步 walk 解析完成后调用；覆盖 env 探测值或 None）。
     pub fn set_agent_kind(&self, kind: String) {
         *self.agent_kind.lock().unwrap() = Some(kind);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn recovery_binding(&self) -> (Option<String>, Option<String>, Option<String>) {
+        (
+            self.agent_kind.lock().unwrap().clone(),
+            self.agent_session_id.clone(),
+            self.mcp_instance_id.clone(),
+        )
     }
 
     pub fn register(&self, channel: Arc<dyn Channel>) {
@@ -376,6 +410,17 @@ impl Coordinator {
         if limit == 0 {
             return;
         }
+        let entry = self.history_entry(request, result, image_paths, crate::history::now_ms());
+        crate::history::record(entry, limit);
+    }
+
+    fn history_entry(
+        &self,
+        request: &AskRequest,
+        result: &ChannelResult,
+        image_paths: &[Vec<String>],
+        timestamp_ms: i64,
+    ) -> crate::history::HistoryEntry {
         let answers = match result.action {
             ChannelAction::Cancel => Vec::new(),
             ChannelAction::Send => result
@@ -390,20 +435,32 @@ impl Coordinator {
                 })
                 .collect(),
         };
-        let entry = crate::history::HistoryEntry {
+        crate::history::HistoryEntry {
             id: request.id.clone(),
-            timestamp_ms: crate::history::now_ms(),
+            timestamp_ms,
             project: self.project.clone(),
             source: self.source.clone(),
             agent_kind: self.agent_kind.lock().unwrap().clone(),
+            agent_session_id: self.agent_session_id.clone(),
+            mcp_instance_id: self.mcp_instance_id.clone(),
             channel: result.source_channel_id.clone(),
             action: result.action,
             is_markdown: request.is_markdown,
             message: request.message.clone(),
             questions: request.questions.clone(),
             answers,
-        };
-        crate::history::record(entry, limit);
+        }
+    }
+}
+
+fn merged_caller_binding(
+    explicit_agent_kind: Option<String>,
+    caller: crate::cli::CallerContext,
+) -> HistoryBinding {
+    HistoryBinding {
+        agent_kind: explicit_agent_kind.or(caller.agent_kind),
+        agent_session_id: caller.agent_session_id,
+        mcp_instance_id: caller.mcp_instance_id,
     }
 }
 
@@ -416,5 +473,102 @@ fn display_name(id: &str, lang: Lang) -> String {
         "feishu" => i18n::tr(lang, "channel.sourceFeishu").to_string(),
         "slack" => i18n::tr(lang, "channel.sourceSlack").to_string(),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{MessagePrompt, Question, QuestionAnswer};
+
+    fn coordinator() -> Arc<Coordinator> {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        Coordinator::new_ipc(
+            AskRequest::new(
+                MessagePrompt::new("context".into(), Vec::new()),
+                vec![Question::new("question".into(), Vec::new())],
+                true,
+            ),
+            Lang::En,
+            tx,
+            "/project".into(),
+            "Codex".into(),
+            HistoryBinding {
+                agent_kind: Some("codex".into()),
+                agent_session_id: Some("session-1".into()),
+                mcp_instance_id: Some("instance-1".into()),
+            },
+            true,
+        )
+    }
+
+    #[test]
+    fn history_entry_preserves_exact_agent_and_mcp_binding() {
+        let coordinator = coordinator();
+        let request = coordinator.inner.lock().unwrap().request.clone();
+        let result = ChannelResult {
+            action: ChannelAction::Send,
+            answers: vec![QuestionAnswer {
+                selected_options: vec!["Yes".into()],
+                user_input: Some("details".into()),
+                images: Vec::new(),
+                files: vec!["/tmp/file.txt".into()],
+                todo_ids: Vec::new(),
+            }],
+            source_channel_id: "popup".into(),
+        };
+        let entry =
+            coordinator.history_entry(&request, &result, &[vec!["/tmp/image.png".into()]], 123);
+        assert_eq!(entry.timestamp_ms, 123);
+        assert_eq!(entry.agent_kind.as_deref(), Some("codex"));
+        assert_eq!(entry.agent_session_id.as_deref(), Some("session-1"));
+        assert_eq!(entry.mcp_instance_id.as_deref(), Some("instance-1"));
+        assert_eq!(entry.answers[0].selected_options, ["Yes"]);
+        assert_eq!(entry.answers[0].images, ["/tmp/image.png"]);
+        assert_eq!(entry.answers[0].files, ["/tmp/file.txt"]);
+
+        coordinator.set_agent_kind("cursor".into());
+        let updated = coordinator.history_entry(&request, &result, &[], 124);
+        assert_eq!(updated.agent_kind.as_deref(), Some("cursor"));
+        assert_eq!(updated.agent_session_id.as_deref(), Some("session-1"));
+    }
+
+    #[test]
+    fn cancelled_history_entry_keeps_binding_but_never_answers() {
+        let coordinator = coordinator();
+        let request = coordinator.inner.lock().unwrap().request.clone();
+        let mut result = ChannelResult::cancel("popup");
+        result.answers.push(QuestionAnswer::default());
+        let entry = coordinator.history_entry(&request, &result, &[], 123);
+        assert_eq!(entry.action, ChannelAction::Cancel);
+        assert!(entry.answers.is_empty());
+        assert_eq!(entry.agent_session_id.as_deref(), Some("session-1"));
+        assert_eq!(entry.mcp_instance_id.as_deref(), Some("instance-1"));
+    }
+
+    #[test]
+    fn single_process_coordinators_keep_cross_platform_caller_binding() {
+        let caller = crate::cli::CallerContext {
+            agent_kind: Some("codex".into()),
+            agent_session_id: Some("thread".into()),
+            mcp_instance_id: Some("instance".into()),
+            from_mcp: true,
+        };
+        assert_eq!(
+            merged_caller_binding(None, caller.clone()),
+            HistoryBinding {
+                agent_kind: Some("codex".into()),
+                agent_session_id: Some("thread".into()),
+                mcp_instance_id: Some("instance".into()),
+            }
+        );
+        assert_eq!(
+            merged_caller_binding(Some("cursor".into()), caller),
+            HistoryBinding {
+                agent_kind: Some("cursor".into()),
+                agent_session_id: Some("thread".into()),
+                mcp_instance_id: Some("instance".into()),
+            }
+        );
     }
 }

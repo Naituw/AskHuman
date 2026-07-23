@@ -93,6 +93,58 @@ pub fn upsert_nested_group(
     Ok(root.to_string())
 }
 
+/// Replace or append one marker-owned nested group, including an optional group-level matcher.
+/// Unlike [`upsert_nested_group`], this owns the whole group so stale matchers cannot survive.
+pub fn upsert_nested_group_matched(
+    text: &str,
+    event: &str,
+    marker: &str,
+    matcher: Option<&str>,
+    command: &str,
+    timeout: u64,
+) -> Result<String> {
+    let source = if text.trim().is_empty() { "{}" } else { text };
+    let root = CstRootNode::parse(source, &ParseOptions::default())
+        .map_err(|error| anyhow!("failed to parse hook config: {error}"))?;
+    let root_object = root
+        .object_value_or_create()
+        .ok_or_else(|| anyhow!("hook config root is not an object"))?;
+    let hooks = root_object
+        .object_value_or_create("hooks")
+        .ok_or_else(|| anyhow!("hook config 'hooks' is not an object"))?;
+    let groups = hooks
+        .array_value_or_create(event)
+        .ok_or_else(|| anyhow!("hook event '{event}' is not an array"))?;
+    let handler = json!({ "type": "command", "command": command, "timeout": timeout });
+    let replacement = match matcher {
+        Some(matcher) => json!({ "matcher": matcher, "hooks": [handler] }),
+        None => json!({ "hooks": [handler] }),
+    };
+    let mut replaced = false;
+    for group in groups.elements() {
+        let has_marker = group
+            .to_serde_value()
+            .map(|value| command_has_marker(&value, marker))
+            .unwrap_or(false);
+        if !has_marker {
+            continue;
+        }
+        if !replaced {
+            if let Some(object) = group.as_object() {
+                object.replace_with(replacement.clone());
+                replaced = true;
+                continue;
+            }
+        }
+        group.remove();
+    }
+    if !replaced {
+        groups.ensure_multiline();
+        groups.append(replacement);
+    }
+    Ok(root.to_string())
+}
+
 pub fn remove_nested_marker(text: &str, event: &str, marker: &str) -> Result<String> {
     let root = CstRootNode::parse(text, &ParseOptions::default())
         .map_err(|error| anyhow!("failed to parse hook config: {error}"))?;
@@ -228,6 +280,59 @@ pub fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Atomically write sensitive runtime state without ever exposing a world-readable temporary
+/// file. The leaf directory and final file are restricted to the current user on Unix.
+pub fn atomic_write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("private file path has no parent"))?;
+    std::fs::create_dir_all(parent)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+    }
+
+    let temporary = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+    let write_result = (|| -> std::io::Result<()> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary)?;
+        file.write_all(bytes)?;
+        file.flush()?;
+        drop(file);
+        #[cfg(not(windows))]
+        std::fs::rename(&temporary, path)?;
+        #[cfg(windows)]
+        {
+            // std::fs::rename cannot replace an existing destination on Windows. The private
+            // file remains unavailable to other users throughout, although replacement itself
+            // cannot be atomic with the portable standard-library API.
+            if std::fs::rename(&temporary, path).is_err() {
+                std::fs::remove_file(path)?;
+                std::fs::rename(&temporary, path)?;
+            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    write_result.map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +385,61 @@ mod tests {
         let removed = remove_flat_marker(&output, "stop", "__stop-hook").unwrap();
         assert!(removed.contains("user-hook"));
         assert!(!removed.contains("__stop-hook"));
+    }
+
+    #[test]
+    fn matched_group_upsert_owns_only_its_marker_group() {
+        let input = r#"{
+          // keep user and lifecycle groups
+          "hooks": { "SessionStart": [
+            {"matcher":"startup","hooks":[{"type":"command","command":"user-hook"}]},
+            {"matcher":"old","hooks":[{"type":"command","command":"old __context-recovery-hook codex"}]},
+            {"hooks":[{"type":"command","command":"AskHuman __agent-hook codex session-start"}]}
+          ] }
+        }"#;
+        let output = upsert_nested_group_matched(
+            input,
+            "SessionStart",
+            "__context-recovery-hook",
+            Some("compact"),
+            "AskHuman __context-recovery-hook codex session-start",
+            30,
+        )
+        .unwrap();
+        assert!(output.contains("// keep user and lifecycle groups"));
+        assert!(output.contains("user-hook"));
+        assert!(output.contains("__agent-hook codex session-start"));
+        assert!(output.contains("\"matcher\": \"compact\""));
+        assert!(!output.contains("\"matcher\":\"old\""));
+        assert_eq!(output.matches("__context-recovery-hook").count(), 1);
+
+        let removed =
+            remove_nested_marker(&output, "SessionStart", "__context-recovery-hook").unwrap();
+        assert!(removed.contains("user-hook"));
+        assert!(removed.contains("__agent-hook codex session-start"));
+        assert!(!removed.contains("__context-recovery-hook"));
+    }
+
+    #[test]
+    fn private_atomic_write_overwrites_without_leaving_temporary_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let leaf = dir.path().join("private");
+        let path = leaf.join("state.json");
+        atomic_write_private(&path, b"first").unwrap();
+        atomic_write_private(&path, b"second").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        assert_eq!(std::fs::read_dir(&leaf).unwrap().count(), 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&leaf).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
     }
 }

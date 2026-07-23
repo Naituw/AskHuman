@@ -74,6 +74,7 @@ export function useIntegration(core: SettingsCore) {
     timeoutHookSupported: false,
     timeoutHookInstalled: false,
     timeoutHookNeedsUpdate: false,
+    recoveryHookInstalled: false,
     permission: {
       supported: false,
       unsupportedReason: "native_permission_request_unsupported",

@@ -1881,7 +1881,9 @@ pub fn agent_rule_open(agent: String) -> Result<(), String> {
 
 // ===== Agent 三态模式（CLI | MCP | 未集成） =====
 
-use crate::integrations::{agent_mode, agent_permission, agent_stop, mcp_config};
+use crate::integrations::{
+    agent_context_recovery, agent_mode, agent_permission, agent_stop, mcp_config,
+};
 
 /// 某家 Agent 的模式聚合状态（驱动设置页三态分段控件 + 产物清单）。
 #[derive(Serialize)]
@@ -1902,6 +1904,7 @@ pub struct AgentModeStatus {
     timeout_hook_supported: bool,
     timeout_hook_installed: bool,
     timeout_hook_needs_update: bool,
+    recovery_hook_installed: bool,
     /// PermissionRequest capability state; kept separate from the timeout hook.
     permission: agent_permission::PermissionStatus,
     permission_needs_update: bool,
@@ -1921,6 +1924,7 @@ pub fn agent_mode_status(agent: String) -> Result<AgentModeStatus, String> {
     let updates = agent_mode::artifact_updates(a);
     let mode = agent_mode::current(a);
     let permission = agent_permission::status(a);
+    let recovery = agent_context_recovery::status(a, mode);
     let permission_needs_update = permission.needs_update;
     Ok(AgentModeStatus {
         mode: mode.as_str().to_string(),
@@ -1935,6 +1939,7 @@ pub fn agent_mode_status(agent: String) -> Result<AgentModeStatus, String> {
         timeout_hook_needs_update: agent_mode::timeout_hook_supported(a)
             && (!agent_mode::timeout_hook_is_installed(a)
                 || agent_mode::timeout_hook_needs_update(a)),
+        recovery_hook_installed: recovery.installed && !recovery.outdated,
         permission,
         permission_needs_update,
         stop: agent_stop::status(stop_kind),

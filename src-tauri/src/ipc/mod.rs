@@ -136,6 +136,10 @@ pub struct TaskRequest {
     /// 调用方 Agent 会话 ID（从 env 取，见 spec D21）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session_id: Option<String>,
+    /// AskHuman MCP server 进程级随机实例 ID。仅作为拿不到真实 Agent session 时的弱隔离键；
+    /// 普通 CLI 与旧 MCP server 不带 → None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_instance_id: Option<String>,
     /// 调用方 Agent 进程 pid（可空）。方案5(b) 起 CLI 不再同步 walk → 恒 None；改由 daemon accept 后
     /// 从 `caller_pid` 异步 walk 得到，再经 `AgentResolved` 后推弹窗（旧字段保留以兼容旧 CLI）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,8 +149,8 @@ pub struct TaskRequest {
     #[serde(default)]
     pub caller_pid: u32,
     /// 该 ask 是否经 MCP 模式发起（`AskHuman mcp` spawn 的子进程，由 env `ASKHUMAN_FROM_MCP` 置位）。
-    /// MCP server 长驻整个 session，其继承的 `agent_session_id` 可能过期，故 daemon 对带此标记的请求
-    /// 一律「**只刷新已存在的 session、绝不新建**」，避免在「自动激活」开启时按过期 id 造出幽灵会话。
+    /// 只有每次调用取得可信绑定时才会附带 `agent_session_id`；daemon 仍对 MCP 请求只刷新
+    /// 已追踪 session、不因一次工具调用新建 lifecycle session。
     /// 旧 CLI 不带 → 默认 false（行为不变）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub from_mcp: bool,
@@ -460,6 +464,34 @@ pub enum ClientMsg {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         interject_poll: bool,
     },
+    /// Register one long-lived AskHuman MCP server process for Grok's best-effort session binding.
+    McpInstanceRegister {
+        mcp_instance_id: String,
+        project: String,
+        server_pid: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_pid_hint: Option<u32>,
+    },
+    /// Grok PreToolUse side channel. It carries only a versioned canonical-arguments hash.
+    GrokBindingPending {
+        agent_session_id: String,
+        qualified_tool_name: String,
+        arguments_sha256: String,
+        project: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hook_parent_hint: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_use_id: Option<String>,
+        created_at_ms: i64,
+    },
+    /// Claim one pending Grok binding in the current MCP instance/project partition.
+    GrokBindingClaim {
+        mcp_instance_id: String,
+        project: String,
+        tool_name: String,
+        arguments_sha256: String,
+        server_pid: u32,
+    },
     /// 状态窗口订阅 agent 快照（握手后发；之后 daemon 持续推 `AgentsState`，spec D20）。
     AgentsSubscribe,
     /// 菜单栏宿主订阅整合状态（**非保活**，spec D10）：连上即收一帧 `TrayState`，之后变化即推。
@@ -658,6 +690,11 @@ pub enum ServerMsg {
         #[serde(default)]
         text: String,
     },
+    /// Unique Grok side-channel claim. None means unavailable or ambiguous.
+    GrokBindingClaim {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_session_id: Option<String>,
+    },
     /// 插话待送达状态（D→composer/查询方；`InterjectQuery` 的回帧）。`text` 为按空行拼接的全文
     /// （composer 预填），`entries` 为条数（IM 回执）。
     InterjectState {
@@ -685,8 +722,12 @@ mod tests {
         }"#;
         let legacy: TaskRequest = serde_json::from_str(legacy).unwrap();
         assert!(legacy.record_history);
+        assert!(legacy.agent_session_id.is_none());
+        assert!(legacy.mcp_instance_id.is_none());
         let serialized = serde_json::to_string(&legacy).unwrap();
         assert!(!serialized.contains("recordHistory"));
+        assert!(!serialized.contains("agentSessionId"));
+        assert!(!serialized.contains("mcpInstanceId"));
 
         let internal = legacy.clone();
         let mut value = serde_json::to_value(internal).unwrap();
@@ -696,6 +737,69 @@ mod tests {
         assert!(serde_json::to_string(&internal)
             .unwrap()
             .contains(r#""recordHistory":false"#));
+
+        let mut value = serde_json::to_value(internal).unwrap();
+        value["agentSessionId"] = serde_json::json!("session-1");
+        value["mcpInstanceId"] = serde_json::json!("instance-1");
+        let bound: TaskRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(bound.agent_session_id.as_deref(), Some("session-1"));
+        assert_eq!(bound.mcp_instance_id.as_deref(), Some("instance-1"));
+        let serialized = serde_json::to_string(&bound).unwrap();
+        assert!(serialized.contains(r#""agentSessionId":"session-1""#));
+        assert!(serialized.contains(r#""mcpInstanceId":"instance-1""#));
+    }
+
+    #[test]
+    fn grok_binding_messages_roundtrip_all_partition_fields() {
+        let messages = [
+            ClientMsg::McpInstanceRegister {
+                mcp_instance_id: "instance".into(),
+                project: "/p".into(),
+                server_pid: 10,
+                parent_pid_hint: Some(9),
+            },
+            ClientMsg::GrokBindingPending {
+                agent_session_id: "session".into(),
+                qualified_tool_name: "askhuman__ask".into(),
+                arguments_sha256: "hash".into(),
+                project: "/p".into(),
+                hook_parent_hint: Some(11),
+                tool_use_id: Some("tool".into()),
+                created_at_ms: 12,
+            },
+            ClientMsg::GrokBindingClaim {
+                mcp_instance_id: "instance".into(),
+                project: "/p".into(),
+                tool_name: "ask".into(),
+                arguments_sha256: "hash".into(),
+                server_pid: 10,
+            },
+        ];
+        for message in messages {
+            let json = serde_json::to_string(&message).unwrap();
+            let decoded: ClientMsg = serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                std::mem::discriminant(&decoded),
+                std::mem::discriminant(&message),
+                "{json}"
+            );
+            assert!(json.contains("/p"));
+        }
+        let reply = ServerMsg::GrokBindingClaim {
+            agent_session_id: Some("session".into()),
+        };
+        let json = serde_json::to_string(&reply).unwrap();
+        assert!(matches!(
+            serde_json::from_str::<ServerMsg>(&json).unwrap(),
+            ServerMsg::GrokBindingClaim {
+                agent_session_id: Some(session)
+            } if session == "session"
+        ));
+        let empty = serde_json::to_string(&ServerMsg::GrokBindingClaim {
+            agent_session_id: None,
+        })
+        .unwrap();
+        assert!(!empty.contains("agent_session_id"));
     }
 
     fn confirm_task() -> ConfirmTask {

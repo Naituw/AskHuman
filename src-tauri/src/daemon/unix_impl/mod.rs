@@ -178,6 +178,8 @@ struct ServerState {
     agents: Arc<AgentRegistry>,
     /// Agent 插话队列（spec agent-interject）：内存常驻，变更时落盘 `interject.json`。
     interject: crate::agents::interject::InterjectStore,
+    /// Short-lived Grok MCP session-binding candidates and process/instance partitions.
+    grok_bindings: crate::context_binding::GrokBindingRegistry,
     /// 状态窗口订阅者的发送端列表（变化 / 心跳时推 `AgentsState`）。
     agent_subs: Mutex<Vec<tokio::sync::mpsc::UnboundedSender<ServerMsg>>>,
     /// 菜单栏宿主订阅者的发送端列表（变化 / 心跳时推 `TrayState`）。
@@ -777,6 +779,7 @@ async fn serve(_lock: LockGuard) -> i32 {
         update: Mutex::new(init_update_snapshot()),
         agents: Arc::new(AgentRegistry::load()),
         interject: crate::agents::interject::InterjectStore::load(),
+        grok_bindings: crate::context_binding::GrokBindingRegistry::default(),
         agent_subs: Mutex::new(Vec::new()),
         tray_subs: Mutex::new(Vec::new()),
         active_channel: Mutex::new(crate::autochannel::load_active()),
@@ -1376,6 +1379,51 @@ async fn control_loop(
                     .await;
                 }
             }
+            ClientMsg::McpInstanceRegister {
+                mcp_instance_id,
+                project,
+                server_pid,
+                parent_pid_hint,
+            } => {
+                state
+                    .grok_bindings
+                    .register(mcp_instance_id, project, server_pid, parent_pid_hint);
+            }
+            ClientMsg::GrokBindingPending {
+                agent_session_id,
+                qualified_tool_name,
+                arguments_sha256,
+                project,
+                hook_parent_hint,
+                tool_use_id,
+                created_at_ms,
+            } => {
+                state.grok_bindings.add_pending(
+                    agent_session_id,
+                    qualified_tool_name,
+                    arguments_sha256,
+                    project,
+                    hook_parent_hint,
+                    tool_use_id,
+                    created_at_ms,
+                );
+            }
+            ClientMsg::GrokBindingClaim {
+                mcp_instance_id,
+                project,
+                tool_name,
+                arguments_sha256,
+                server_pid,
+            } => {
+                let agent_session_id = state.grok_bindings.claim(
+                    &mcp_instance_id,
+                    &project,
+                    &tool_name,
+                    &arguments_sha256,
+                    server_pid,
+                );
+                let _ = ipc::write_msg(w, &ServerMsg::GrokBindingClaim { agent_session_id }).await;
+            }
             // 状态窗口订阅：接管连接持续推送。
             ClientMsg::AgentsSubscribe => return Control::AgentsSub,
             // 菜单栏宿主订阅：接管连接持续推送 TrayState（非保活）。
@@ -1712,8 +1760,8 @@ async fn handle_submit(
     let changed = match (kind_env, sid_env.clone(), task.agent_pid) {
         // 有 session_id（shell 工具子进程能从 env 拿到）：按 session 刷新。
         (Some(kind), Some(sid), pid) => {
-            // MCP 模式（`from_mcp`）下 `agent_session_id` 取自长驻 MCP server 的启动 env，可能过期；
-            // 故即便「自动激活」开启也**只刷新已存在的 session、绝不新建**，避免造出幽灵会话。
+            // MCP 工具调用不单独创建 lifecycle session；可信的每调用绑定仅用于
+            // 刷新已由 lifecycle hook 追踪的 session。
             if auto && !from_mcp {
                 state.agents.upsert_working(kind, &sid, pid, cwd.clone())
             } else {

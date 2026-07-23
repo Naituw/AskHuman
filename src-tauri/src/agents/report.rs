@@ -243,7 +243,7 @@ fn detect_phase(v: &Value) -> Option<ToolPhase> {
 }
 
 /// 取工具名（各家字段兼容）。
-fn tool_name(v: &Value) -> Option<String> {
+pub(super) fn tool_name(v: &Value) -> Option<String> {
     for k in ["tool_name", "toolName", "tool"] {
         if let Some(s) = v.get(k).and_then(|x| x.as_str()) {
             let s = s.trim();
@@ -256,7 +256,7 @@ fn tool_name(v: &Value) -> Option<String> {
 }
 
 /// 取工具输入（对象或原始 JSON 字符串，`classify_tool` 内部再 `parse_args`）。
-fn tool_input(v: &Value) -> Option<Value> {
+pub(super) fn tool_input(v: &Value) -> Option<Value> {
     for k in ["tool_input", "toolInput", "input", "arguments"] {
         if let Some(x) = v.get(k) {
             if !x.is_null() {
@@ -297,7 +297,7 @@ pub(super) fn resolve_session_id(
 }
 
 /// 解析工作目录：stdin JSON `cwd` → env 工程目录 → 当前目录。
-pub(super) fn resolve_cwd(env: &HashMap<String, String>, stdin: Option<&Value>) -> Option<String> {
+pub(crate) fn resolve_cwd(env: &HashMap<String, String>, stdin: Option<&Value>) -> Option<String> {
     if let Some(v) = stdin {
         if let Some(s) = v.get("cwd").and_then(|x| x.as_str()) {
             if !s.trim().is_empty() {
@@ -401,6 +401,8 @@ struct HookInputSummary {
     #[serde(default, rename = "hookEventName")]
     hook_event_name_camel: Option<String>,
     #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
     tool_name: Option<String>,
     #[serde(default, rename = "toolName")]
     tool_name_camel: Option<String>,
@@ -456,6 +458,7 @@ impl HookInputSummary {
             "hook_event_name",
             self.hook_event_name.or(self.hook_event_name_camel),
         );
+        insert_summary_string(&mut map, "source", self.source);
         insert_summary_string(
             &mut map,
             "tool_name",
@@ -479,6 +482,7 @@ impl HookInputSummary {
         .any(|field| field.is_some())
         {
             map.insert("tool_input".to_string(), Value::Object(Default::default()));
+            map.insert("toolInputTruncated".to_string(), Value::Bool(true));
         }
         if [
             self.tool_response,

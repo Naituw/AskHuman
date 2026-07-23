@@ -52,9 +52,10 @@ pub fn help_text(lang: Lang) -> String {
             "Management:".to_string(),
             "  --settings              Open the settings window".to_string(),
             "  --history [--all]       Open the reply history window (current project; --all for every project)".to_string(),
+            "  --show-last             Print the full latest completed AskHuman exchange for this Agent session".to_string(),
             "  --todos                 Open the project todos window (preselects current project)".to_string(),
             "  daemon <sub>            Manage the background daemon: status/stop/restart/start/logs (stop/restart drain active requests; add --force to terminate now)".to_string(),
-            "  mcp                     Run as an MCP server over STDIO, exposing the 'ask', 'whats_next', and 'todo_add' tools (for MCP clients, not humans)".to_string(),
+            "  mcp                     Run as an MCP server over STDIO, exposing 'ask', 'whats_next', 'show_last', and 'todo_add' (for MCP clients)".to_string(),
             "  todo <sub>              Project todo queue: add [--auto] <text> / list / rm <n> / clear (todos surface as --whats-next choices; --auto ones auto-dispatch)".to_string(),
             "  channel <sub>           Configure IM channels without a GUI (list/set/enable/disable/test/detect; see 'channel help')".to_string(),
             "  agents <sub>            Agent status & integrations (monitor/show/install/uninstall/update; see 'agents help')".to_string(),
@@ -88,9 +89,10 @@ pub fn help_text(lang: Lang) -> String {
             "管理:".to_string(),
             "  --settings              启动设置界面".to_string(),
             "  --history [--all]       启动回复历史窗口（默认当前项目；--all 查看全部项目）".to_string(),
+            "  --show-last             输出当前 Agent 会话最近一次完整 AskHuman 已完成问答".to_string(),
             "  --todos                 启动项目待办窗口（预选当前项目）".to_string(),
             "  daemon <子命令>          管理后台 daemon：status/stop/restart/start/logs（stop/restart 默认等在途请求完结；--force 立即终止）".to_string(),
-            "  mcp                     以 MCP server（STDIO）运行，暴露 'ask'、'whats_next' 与 'todo_add' 工具（面向 MCP 客户端，非人类）".to_string(),
+            "  mcp                     以 MCP server（STDIO）运行，暴露 'ask'、'whats_next'、'show_last' 与 'todo_add'（面向 MCP 客户端）".to_string(),
             "  todo <子命令>            项目级待办队列：add [--auto] <text> / list / rm <n> / clear（待办会作为 --whats-next 的选项出现；--auto 的直接自动派发）".to_string(),
             "  channel <子命令>         无 GUI 配置 IM 渠道（list/set/enable/disable/test/detect；见 'channel help'）".to_string(),
             "  agents <子命令>          Agent 状态与集成（monitor/show/install/uninstall/update；见 'agents help'）".to_string(),
@@ -252,6 +254,11 @@ pub fn agent_help_text(lang: Lang) -> String {
                     .to_string(),
             );
             out.push("  suggestions. Takes no -q (the question is fixed).".to_string());
+            out.push(String::new());
+            out.push("Context-compaction recovery:".to_string());
+            out.push(format!(
+                "  Run {prog} --show-last after summarization, or whenever the exact last AskHuman question/answer is uncertain."
+            ));
         }
         Lang::Zh => {
             out.push(format!("{prog} —— 向人类发起提问并收集回应。"));
@@ -308,6 +315,11 @@ pub fn agent_help_text(lang: Lang) -> String {
                     .to_string(),
             );
             out.push("  选项，因为结束项已内置。无建议时省略。不接受 -q（问题固定）。".to_string());
+            out.push(String::new());
+            out.push("上下文压缩恢复:".to_string());
+            out.push(format!(
+                "  被摘要后，或不确定上一次 AskHuman 问答的精确内容时，运行 {prog} --show-last。"
+            ));
         }
     }
     out.join("\n")
@@ -482,6 +494,17 @@ mod tests {
             assert!(ah.contains("todo add"));
             // 旧「固定英文结束句」已废除，不应再出现在 help 里。
             assert!(!ah.contains("no more tasks"));
+        }
+    }
+
+    #[test]
+    fn help_and_agent_help_cover_context_recovery_in_both_languages() {
+        for lang in [Lang::En, Lang::Zh] {
+            let help = help_text(lang);
+            let agent = agent_help_text(lang);
+            assert!(help.contains("--show-last"));
+            assert!(help.contains("show_last"));
+            assert!(agent.contains("--show-last"));
         }
     }
 

@@ -384,7 +384,7 @@ const {
             </span>
             <span class="spacer"></span>
             <button
-              v-if="modes[a.id].timeoutHookNeedsUpdate"
+              v-if="modes[a.id].hookNeedsUpdate"
               class="btn btn-update"
               type="button"
               :disabled="modeBusy[a.id]"
@@ -429,9 +429,38 @@ const {
             {{ t("settings.integration.windowsUnsupported") }}
           </p>
         </template>
-        <p v-else class="card-desc agent-hint">
-          {{ t("settings.integration.codexNoHook") }}
-        </p>
+        <template v-else>
+          <div class="row agent-row">
+            <span class="label">{{
+              t("settings.integration.contextRecoveryHookLabel")
+            }}</span>
+            <span class="badge">
+              <span
+                class="dot"
+                :class="modes[a.id].recoveryHookInstalled ? 'on' : 'off'"
+              ></span>
+              {{
+                modes[a.id].recoveryHookInstalled
+                  ? t("settings.integration.installed")
+                  : t("settings.integration.notInstalled")
+              }}
+            </span>
+            <span class="spacer"></span>
+            <button
+              v-if="modes[a.id].hookNeedsUpdate"
+              class="btn btn-update"
+              type="button"
+              :disabled="modeBusy[a.id]"
+              @click="updateArtifact(a.id, 'hook')"
+            >
+              <span class="dot-update"></span
+              >{{ t("settings.integration.update") }}
+            </button>
+          </div>
+          <p class="card-desc agent-hint">
+            {{ t("settings.integration.codexRecoveryHookHint") }}
+          </p>
+        </template>
       </template>
 
       <!-- MCP 模式：MCP 配置 -->
