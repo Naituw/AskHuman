@@ -83,6 +83,7 @@
     - 等待方式：轮询 `transport::connect()` 直至连不上（下线），无超时上限；下线后回到主循环 `ensure_running()` 拉新提交。
   - `ServerMsg::Draining` 只会出现在 `Accepted` 之前；`Accepted` 之后流程不变。
 - `wait_until_down(max)` 保持；排空等待用独立的无上限轮询（带提示回调），不复用改签名。
+- **2026-09-16 修正（spec D7–D9）**：上述「轮询 `connect()` 直至连不上」在实测中永远等不到——旧 daemon 退出后 ≤1s 新 daemon 就被别的 `ensure_running()` 调用方拉起。现改为记住排空 daemon 的 pid，每 500ms 查 `Status`，无应答 / pid 变化 / 不再 draining 即结束；`wait_until_down` 与 `wait_stopped` 同样按 pid 判定。文案补「this question will pop up automatically once they are answered」。配套：`ensure_running` 的拉起段持 `spawn.lock` 串行化并在拿锁后重新握手；macOS 对 launchd 仍报存活的任务不 `bootout`（`SpawnPolicy::ReuseAlive`，等就绪超时后才 `Replace`）；daemon 安装 SIGTERM 处理，语义等同 graceful `Stop`。
 
 ## 4. install.sh / install-windows.ps1
 
