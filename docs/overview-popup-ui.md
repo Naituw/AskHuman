@@ -72,7 +72,9 @@ Message / Question、回复历史详情以及 Agent 控制台的 Watch / 完整�
 附件名以及 Confirm 详情/选项做连续子串匹配（默认不区分大小写，条上 Aa 可切换），高亮全部命中
 并支持上/下一条与循环；顺序多题会跨题匹配并自动切题。渲染后的 Mermaid 图按可见 label 作为一个
 原子命中并高亮整张图，不修改 sandbox 内 SVG；切到单图源码后恢复普通文本逐次匹配。Esc 关闭并清除高亮。实现为
-`usePopupFind` + `FindBar` + `lib/findInDom`，不搜用户答案草稿。
+`usePopupFind` + `FindBar` + `lib/findInDom`，不搜用户答案草稿。视口只归用户导航（打开 / 输入 / 上下条 / Aa）
+所有：DOM 变化（Markdown 重渲染、顺序切题、纵向模式 scroll-spy 改写当前题）只触发 `repaintHighlights` 重画高亮，
+不切题也不滚动（spec F13）。
 
 ## 推荐选项
 
