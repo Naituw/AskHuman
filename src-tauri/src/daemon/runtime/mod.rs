@@ -11,6 +11,7 @@ use crate::agents::{AgentKind, LifecycleEvent};
 use crate::app::confirm_coordinator::ConfirmOutcome;
 use crate::channels::dingding::DingTalkChannel;
 use crate::channels::feishu::FeishuChannel;
+use crate::channels::popup::GuiHelperPopupChannel;
 use crate::channels::slack::SlackChannel;
 use crate::channels::telegram::TelegramChannel;
 use crate::channels::Channel;
@@ -2153,6 +2154,18 @@ async fn handle_submit(
         )
         .await;
     }
+    if !popup_ok {
+        // The popup adapter is registered at creation; drop it so the coordinator only races
+        // the surfaces that actually exist (and can tell when none is left).
+        entry.coordinator.surface_lost(
+            "popup",
+            if popup_enabled {
+                "failed to spawn popup"
+            } else {
+                "popup disabled or no display available"
+            },
+        );
+    }
 
     // 方案5(b)：从 caller_pid 异步向上 walk 进程树解析 agent（家族 + pid，含 env 判不出时的 MCP 兜底），
     // 完成后补刷注册表活动并把结果后推弹窗 badge。整段在独立任务里跑，绝不阻塞本请求的关键路径。
@@ -2170,7 +2183,8 @@ async fn handle_submit(
     // 以下都已不在弹窗关键路径上（与上面已 spawn 的 helper 并行执行）：
     // 确保入站消费在线（自身按「有工作中 agent」自门控；与开关无关，使 /status 等命令独立可用）。
     ensure_inbound_listeners(state).await;
-    // 挂接可用的 IM 渠道（钉钉/…）到本请求的协调器，与弹窗并行抢答。
+    // 挂接可用的 IM 渠道（钉钉/…）到本请求的协调器，与弹窗并行抢答。哪些面真正活着由协调器
+    // 的渠道表跟踪（会话打不开 / 送达失败会自行退出），这里的返回值只用于埋点。
     let im_attached = attach_im_channels(
         &entry,
         state,
@@ -2183,6 +2197,13 @@ async fn handle_submit(
     )
     .await;
     crate::perf::mark(&perf_id, "dmn.im_done");
+    if !popup_ok && !im_attached {
+        log(&format!(
+            "request {} has no popup and no IM surface; failing with exit {}",
+            request_id,
+            crate::app::EXIT_NO_CHANNEL
+        ));
+    }
     // /watch 跟底：提问卡即将出现在渠道会话里，是一次「非 watch」扰动（提问期间跟底被抑制，
     // 这里先记水位线，供答复完结后立即跟底）。
     for ch in ["feishu", "telegram", "slack"] {
@@ -2193,23 +2214,15 @@ async fn handle_submit(
     // IM 长连接可能在此刚建立，刷新菜单栏「已连 IM」。
     broadcast_tray_state(state);
 
-    // 既无弹窗也无 IM 渠道 → 无可用渠道，按错误收尾。
-    if !popup_ok && !im_attached {
-        let _ = ipc::write_msg(
-            &mut w,
-            &ServerMsg::Final {
-                stdout: String::new(),
-                exit_code: request::EXIT_NO_CHANNEL,
-            },
-        )
-        .await;
-        state.registry.remove(&request_id);
-        return;
-    }
+    // Every surface this request will ever get is attached now. From here on the coordinator
+    // fails the request (exit 3 + stderr) as soon as the last surface is gone — including the
+    // static "no popup and no IM" case, which arrives through `final_rx` like any other outcome —
+    // instead of letting the CLI wait for an answer nobody can give.
+    entry.coordinator.mark_surfaces_settled();
 
-    // 看门狗：弹窗已拉起但限定时间内未连上 → 判失败；但若已挂了 IM 渠道则不致命（让 IM 继续等答）。
+    // 看门狗：弹窗已拉起但限定时间内未连上 → 弹窗面判失败；IM 渠道若仍在则请求继续等答。
     if popup_ok {
-        spawn_gui_watchdog(entry.clone(), lang, im_attached, state.clone());
+        spawn_gui_watchdog(entry.clone(), state.clone());
     }
 
     // 等待结果或 CLI 断开。本连接断开时只有在**没有其它调用方还在等**这份结果时才取消整个
@@ -2465,6 +2478,31 @@ async fn serve_gui(
         *slot = Some(gui_tx.clone());
     }
 
+    if entry.coordinator.is_finalizing() {
+        // The request already ended (answered elsewhere, cancelled, or every surface was lost
+        // and it failed). Do not show a question nobody is waiting for; close the helper.
+        let _ = gui_tx.send(ServerMsg::Cancel {
+            request_id: entry.request_id.clone(),
+            winner: "system".to_string(),
+        });
+        if let Ok(mut slot) = entry.gui.lock() {
+            *slot = None;
+        }
+        drop(gui_tx);
+        let _ = writer.await;
+        return;
+    }
+    if !entry.coordinator.has_channel("popup") {
+        // The watchdog gave the popup up while IM surfaces kept the request alive; a helper that
+        // shows up late is still a perfectly good place to answer, so let it rejoin the race.
+        entry
+            .coordinator
+            .register(Arc::new(GuiHelperPopupChannel::new(
+                entry.request_id.clone(),
+                entry.gui.clone(),
+            )));
+    }
+
     // 下发题目。
     let _ = gui_tx.send(request::show_msg(&entry));
 
@@ -2571,9 +2609,18 @@ async fn serve_gui(
                     }
                     Ok(Some(_)) => {}
                     Ok(None) | Err(_) => {
-                        // Helper 断开且未作答：视为取消（已完成则为 no-op）。
-                        if !answer_received {
-                            entry.coordinator.submit(ChannelResult::cancel("popup"));
+                        // Helper 断开且未作答：进程崩溃 / 被杀，不是人的决定。用户主动关窗与 ⌘Q
+                        // 都会先发 `Answer{Cancel}`，走不到这里。丢掉弹窗面即可：还有 IM 卡就让人
+                        // 继续在那里答；一个面都不剩时由协调器以退出码 3 收尾（不伪装成用户取消）。
+                        if !answer_received && !entry.coordinator.is_finalizing() {
+                            log(&format!(
+                                "request {} popup helper disconnected before answering; dropping the popup surface",
+                                entry.request_id
+                            ));
+                            entry.coordinator.surface_lost(
+                                "popup",
+                                "popup closed unexpectedly before an answer was given",
+                            );
                         }
                         break;
                     }
@@ -2847,28 +2894,23 @@ async fn wait_cli_eof(reader: &mut Reader) {
     }
 }
 
-/// 看门狗：限定时间内 GUI 未连上 → 经渲染通道送「弹窗拉起失败」结果（退出码 3）。
-/// `im_attached` 为真时弹窗未连上不判失败——IM 渠道仍可作答。
-fn spawn_gui_watchdog(
-    entry: Arc<RequestEntry>,
-    lang: Lang,
-    im_attached: bool,
-    state: Arc<ServerState>,
-) {
+/// 看门狗：限定时间内 GUI 未连上 → 弹窗面视为丢失。协调器据此决定：还有 IM 渠道就继续等答，
+/// 一个都没有则以退出码 3 + stderr 收尾（不再伪装成用户取消）。
+fn spawn_gui_watchdog(entry: Arc<RequestEntry>, state: Arc<ServerState>) {
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(request::GUI_CONNECT_TIMEOUT_SECS)).await;
         if !entry.gui_ready.load(Ordering::SeqCst) {
             update_popup_focus(&state, |focus| focus.dispatch_failed(&entry.request_id));
-            if !im_attached {
-                let _ = state.registry.send_to_gui(
-                    &entry.request_id,
-                    ServerMsg::Cancel {
-                        request_id: entry.request_id.clone(),
-                        winner: "system".to_string(),
-                    },
-                );
-                let _ = entry.final_tx.send(request::popup_failed_outcome(lang));
-            }
+            log(&format!(
+                "request {} popup did not become ready; dropping the popup surface",
+                entry.request_id
+            ));
+            // If this was the last surface the coordinator fails the request and the request
+            // handler's bookkeeping closes any half-connected helper. If IM surfaces remain, a
+            // helper that still shows up later rejoins the race in `serve_gui`.
+            entry
+                .coordinator
+                .surface_lost("popup", "GUI popup failed to start");
         }
     });
 }
@@ -3222,10 +3264,8 @@ async fn attach_im_channels(
         match ensure_dd_router(state, dd.client_id.trim(), dd.client_secret.trim()).await {
             Some(router) => {
                 let ch: Arc<dyn Channel> = Arc::new(DingTalkChannel::shared(dd.clone(), router));
-                entry.coordinator.register(ch.clone());
                 let origin = im_conversation_origin(entry, agent_kind);
-                ch.start(&request, &origin, sink.clone());
-                attached = true;
+                attached |= attach_channel(entry, ch, &request, &origin, &sink);
             }
             None => {
                 let _ = ipc::write_msg(
@@ -3249,10 +3289,8 @@ async fn attach_im_channels(
         match ensure_fs_router(state, fs).await {
             Some(router) => {
                 let ch: Arc<dyn Channel> = Arc::new(FeishuChannel::shared(fs.clone(), router));
-                entry.coordinator.register(ch.clone());
                 let origin = im_conversation_origin(entry, agent_kind);
-                ch.start(&request, &origin, sink.clone());
-                attached = true;
+                attached |= attach_channel(entry, ch, &request, &origin, &sink);
             }
             None => {
                 let _ = ipc::write_msg(
@@ -3276,10 +3314,8 @@ async fn attach_im_channels(
         match ensure_tg_router(state, tg).await {
             Some(router) => {
                 let ch: Arc<dyn Channel> = Arc::new(TelegramChannel::shared(tg.clone(), router));
-                entry.coordinator.register(ch.clone());
                 let origin = im_conversation_origin(entry, agent_kind);
-                ch.start(&request, &origin, sink.clone());
-                attached = true;
+                attached |= attach_channel(entry, ch, &request, &origin, &sink);
             }
             None => {
                 let _ = ipc::write_msg(
@@ -3303,10 +3339,8 @@ async fn attach_im_channels(
         match ensure_sl_router(state, sl).await {
             Some(router) => {
                 let ch: Arc<dyn Channel> = Arc::new(SlackChannel::shared(sl.clone(), router));
-                entry.coordinator.register(ch.clone());
                 let origin = im_conversation_origin(entry, agent_kind);
-                ch.start(&request, &origin, sink.clone());
-                attached = true;
+                attached |= attach_channel(entry, ch, &request, &origin, &sink);
             }
             None => {
                 let _ = ipc::write_msg(
@@ -3326,6 +3360,24 @@ async fn attach_im_channels(
     }
 
     attached
+}
+
+/// Register + start one IM surface unless the request already reached a terminal state: a popup
+/// answer can land while routers are still connecting, and starting a card after that would leave
+/// an orphan nobody ever finalizes.
+fn attach_channel(
+    entry: &Arc<request::RequestEntry>,
+    ch: Arc<dyn Channel>,
+    request: &crate::models::AskRequest,
+    origin: &crate::channels::ConversationOrigin,
+    sink: &crate::channels::ResultSink,
+) -> bool {
+    if entry.coordinator.is_finalizing() {
+        return false;
+    }
+    entry.coordinator.register(ch.clone());
+    ch.start(request, origin, sink.clone());
+    true
 }
 
 fn confirm_im_candidates(

@@ -102,6 +102,11 @@ impl Drop for SlRouter {
         if let Some(h) = self.task.lock().unwrap().take() {
             h.abort();
         }
+        // Aborting skips the reader's own teardown, so close the session event sources here:
+        // their `recv()` yields `None` and the sessions report the surface as lost instead of
+        // waiting on a Router that no longer exists.
+        self.alive.store(false, Ordering::SeqCst);
+        self.routes.lock().unwrap().sinks.clear();
     }
 }
 

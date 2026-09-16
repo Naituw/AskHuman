@@ -19,6 +19,11 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+/// Half-open probe cadence: Socket Mode has no application heartbeat of its own, so after
+/// `PROBE_INTERVAL` without any inbound frame we send a WebSocket Ping; a second silent tick means
+/// the connection is dead (sleep / network handoff) and gets rebuilt.
+const PROBE_INTERVAL: Duration = Duration::from_secs(30);
+
 /// 上抛给上层的业务事件（皆已 ack）。
 pub enum WsEvent {
     /// 用户消息事件（`events_api` 的 `payload.event`，`type=message`）。
@@ -32,6 +37,9 @@ pub struct SlackWs {
     app_token: String,
     write: SplitSink<Ws, Message>,
     read: SplitStream<Ws>,
+    /// Half-open detection: WebSocket Ping cadence plus "did anything arrive since the last probe".
+    probe: tokio::time::Interval,
+    awaiting_pong: bool,
 }
 
 impl SlackWs {
@@ -47,29 +55,54 @@ impl SlackWs {
             app_token: app_token.to_string(),
             write,
             read,
+            probe: probe_interval(),
+            awaiting_pong: false,
         })
     }
 
-    /// 收下一个业务事件；内部处理 ack、hello/disconnect、ping/pong、断线重连。
-    /// 返回 `None` 表示重连多次仍失败（上层据此结束）。
+    /// 收下一个业务事件；内部处理 ack、hello/disconnect、ping/pong、半开探测、断线重连。
+    ///
+    /// Reconnects indefinitely with capped exponential backoff, so this only returns `None` when
+    /// the caller aborts the task; in-flight cards stay valid across outages.
     pub async fn recv(&mut self) -> Option<WsEvent> {
         loop {
-            let msg = self.read.next().await;
+            let msg = tokio::select! {
+                biased;
+                msg = self.read.next() => Some(msg),
+                _ = self.probe.tick() => None,
+            };
             match msg {
-                Some(Ok(Message::Text(t))) => {
+                None => {
+                    // Probe tick: nothing arrived since the previous probe (not even its Pong) or
+                    // the socket refuses writes → dead, rebuild instead of waiting forever.
+                    if self.awaiting_pong
+                        || self
+                            .write
+                            .send(Message::Ping(Vec::new().into()))
+                            .await
+                            .is_err()
+                    {
+                        debug_log("[slack-ws] connection unresponsive to probes; reconnecting");
+                        self.reconnect().await;
+                    } else {
+                        self.awaiting_pong = true;
+                    }
+                }
+                Some(Some(Ok(Message::Text(t)))) => {
+                    self.awaiting_pong = false;
                     if let Some(ev) = self.handle_text(t.as_str()).await {
                         return Some(ev);
                     }
                 }
-                Some(Ok(Message::Ping(p))) => {
+                Some(Some(Ok(Message::Ping(p)))) => {
+                    self.awaiting_pong = false;
                     let _ = self.write.send(Message::Pong(p)).await;
                 }
-                Some(Ok(_)) => {} // Binary / Pong / 其它：忽略
-                Some(Err(_)) | None => {
-                    if !self.reconnect().await {
-                        return None;
-                    }
+                Some(Some(Ok(_))) => {
+                    // Binary / Pong / 其它：忽略，但它们都证明连接活着。
+                    self.awaiting_pong = false;
                 }
+                Some(Some(Err(_))) | Some(None) => self.reconnect().await,
             }
         }
     }
@@ -86,9 +119,7 @@ impl SlackWs {
         }
         if frame_type == "disconnect" {
             // 服务端要求重连（reason: warning / refresh_requested / too_many_connections）。
-            if !self.reconnect().await {
-                // 重连失败：交由 recv 的下一轮读到 None 后再尝试 / 退出。
-            }
+            self.reconnect().await;
             return None;
         }
 
@@ -135,22 +166,58 @@ impl SlackWs {
         let _ = self.write.send(Message::Text(body.into())).await;
     }
 
-    /// 断线重连：重新取 url + 连接。最多重试若干次。
-    async fn reconnect(&mut self) -> bool {
-        for attempt in 0..5u32 {
-            tokio::time::sleep(Duration::from_millis(500 * (attempt as u64 + 1))).await;
-            let Ok(url) = open_socket_url(&self.http, &self.app_token).await else {
-                continue;
-            };
-            if let Ok((ws, _)) = connect_async(url).await {
-                let (write, read) = ws.split();
-                self.write = write;
-                self.read = read;
-                return true;
+    /// 断线重连：重新取 url + 连接，指数退避（0.5 s 起、上限 30 s）直到成功。
+    /// 期间在渠道健康表登记「重连中」，成功即清除；首三次及之后每十次记一行日志。
+    async fn reconnect(&mut self) {
+        use crate::channels::health;
+        let mut attempt: u32 = 0;
+        loop {
+            tokio::time::sleep(health::reconnect_delay(attempt)).await;
+            match self.reconnect_once().await {
+                Ok(()) => {
+                    health::clear("slack");
+                    eprintln!(
+                        "[slack-ws] reconnected after {} attempt(s)",
+                        attempt.saturating_add(1)
+                    );
+                    return;
+                }
+                Err(e) => {
+                    if health::should_log_reconnect(attempt) {
+                        eprintln!(
+                            "[slack-ws] reconnect attempt {} failed: {e}; next try in {:?}",
+                            attempt.saturating_add(1),
+                            health::reconnect_delay(attempt.saturating_add(1))
+                        );
+                    }
+                    health::report("slack", health::reconnecting_message(attempt, &e));
+                    attempt = attempt.saturating_add(1);
+                }
             }
         }
-        false
     }
+
+    async fn reconnect_once(&mut self) -> Result<(), String> {
+        let url = open_socket_url(&self.http, &self.app_token)
+            .await
+            .map_err(|e| e.to_string())?;
+        let (ws, _) = connect_async(url)
+            .await
+            .map_err(|e| format!("WebSocket connection failed: {e}"))?;
+        let (write, read) = ws.split();
+        self.write = write;
+        self.read = read;
+        self.probe = probe_interval();
+        self.awaiting_pong = false;
+        Ok(())
+    }
+}
+
+fn probe_interval() -> tokio::time::Interval {
+    let mut interval =
+        tokio::time::interval_at(tokio::time::Instant::now() + PROBE_INTERVAL, PROBE_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    interval
 }
 
 /// 取 Socket Mode wss URL：`apps.connections.open`（App Token 必须放 `Authorization` 头）。

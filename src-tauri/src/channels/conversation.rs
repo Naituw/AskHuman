@@ -116,6 +116,21 @@ pub fn answer_inbound_reply(
     }
 }
 
+/// How one question ended on a messaging channel.
+#[derive(Debug)]
+pub enum QuestionOutcome {
+    /// The human completed this question here.
+    Answered(QuestionAnswer),
+    /// Interrupted by the coordinator (another surface answered first, or the whole request was
+    /// cancelled). The card was already finalized with the matching wording; no result follows.
+    Interrupted,
+    /// This channel can no longer carry the request: the question could not be delivered, or the
+    /// event source closed for good. Nothing was written on the card — the human never saw a
+    /// terminal state they did not cause — and the coordinator drops this surface while the
+    /// request keeps waiting on the others.
+    Lost,
+}
+
 /// 会话型消息渠道的传输原语（与编排逻辑解耦）。
 #[async_trait::async_trait]
 pub trait MessagingChannel: Send {
@@ -130,12 +145,13 @@ pub trait MessagingChannel: Send {
         header: &str,
         lang: Lang,
     );
-    /// 发送一道题并等到「用户完成作答」；被抢答（`preempt`）时收尾并返回 `None`。
+    /// 发送一道题并等到「用户完成作答」；被抢答（`preempt`）时收尾并返回 `Interrupted`，
+    /// 送不出去 / 事件源永久关闭时返回 `Lost`（不改卡片）。
     async fn ask_question(
         &mut self,
         ctx: &QuestionCtx<'_>,
         preempt: &Preemption,
-    ) -> Option<QuestionAnswer>;
+    ) -> QuestionOutcome;
     /// 收尾 / 断连（完成或被抢答后调用）。
     async fn close(&mut self);
 }
@@ -172,10 +188,14 @@ pub async fn run_conversation(
             lang,
         };
         match channel.ask_question(&ctx, &preempt).await {
-            Some(answer) => answers.push(answer),
-            None => {
+            QuestionOutcome::Answered(answer) => answers.push(answer),
+            QuestionOutcome::Interrupted => {
                 channel.close().await;
                 sink.notify_finalized();
+                return;
+            }
+            QuestionOutcome::Lost => {
+                surface_lost(channel, &sink).await;
                 return;
             }
         }
@@ -198,10 +218,14 @@ pub async fn run_conversation(
                 lang,
             };
             match channel.ask_question(&ctx, &preempt).await {
-                Some(answer) => answers.push(answer),
-                None => {
+                QuestionOutcome::Answered(answer) => answers.push(answer),
+                QuestionOutcome::Interrupted => {
                     channel.close().await;
                     sink.notify_finalized();
+                    return;
+                }
+                QuestionOutcome::Lost => {
+                    surface_lost(channel, &sink).await;
                     return;
                 }
             }
@@ -215,6 +239,15 @@ pub async fn run_conversation(
         answers,
         source_channel_id,
     });
+}
+
+/// The channel dropped out mid-request (undeliverable question / event source closed). Tell the
+/// coordinator so the request stops counting on this surface; it is not a cancel.
+async fn surface_lost(channel: &mut dyn MessagingChannel, sink: &ResultSink) {
+    let id = channel.id().to_string();
+    channel.close().await;
+    eprintln!("[{id}] channel lost before an answer; request keeps waiting on the other surfaces");
+    sink.surface_lost(&id, "question undeliverable or connection closed");
 }
 
 #[cfg(test)]

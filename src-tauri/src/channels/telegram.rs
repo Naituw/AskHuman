@@ -3,7 +3,9 @@
 //! 编排逻辑（单/多题、收集答案、投递）已上移到 `channels::conversation::run_conversation`；
 //! 本文件提供传输相关实现 `TelegramSession`（`MessagingChannel`）+ 薄外层 `TelegramChannel`。
 
-use super::conversation::{run_conversation, InboundReply, MessagingChannel, QuestionCtx};
+use super::conversation::{
+    run_conversation, InboundReply, MessagingChannel, QuestionCtx, QuestionOutcome,
+};
 use super::{Channel, ConversationOrigin, Interruption, Preemption, ResultSink};
 use crate::config::TelegramChannelConfig;
 use crate::i18n::{self, Lang};
@@ -97,6 +99,7 @@ impl Channel for TelegramChannel {
                             i18n::warn_prefix(lang),
                             i18n::tr(lang, "channel.tgConfigInvalidSkip").replace("{e}", &e)
                         );
+                        sink.surface_lost("telegram", &e);
                         return;
                     }
                 },
@@ -109,6 +112,7 @@ impl Channel for TelegramChannel {
                     i18n::warn_prefix(lang),
                     i18n::tr(lang, "channel.tgConfigInvalidSkip").replace("{e}", &e.to_string())
                 );
+                sink.surface_lost("telegram", &e.to_string());
                 return;
             }
             run_conversation(&mut session, &request, &origin, preempt, sink).await;
@@ -170,11 +174,12 @@ impl MessagingChannel for TelegramSession {
         &mut self,
         ctx: &QuestionCtx<'_>,
         preempt: &Preemption,
-    ) -> Option<QuestionAnswer> {
+    ) -> QuestionOutcome {
         // 拆分借用：client 不可变 + events 可变。
         let Self { client, events, .. } = self;
-        let client = client.as_ref()?;
-        let events = events.as_mut()?;
+        let (Some(client), Some(events)) = (client.as_ref(), events.as_mut()) else {
+            return QuestionOutcome::Lost;
+        };
         ask_question(
             client,
             events,
@@ -235,7 +240,8 @@ async fn send_message_prompt(
 /// 发送一道题（单卡片：正文 + 补充提示 + inline 选项/提交键盘）并长轮询直到用户点「提交」。
 /// `header` is the fully assembled question title, including source / Agent / project context.
 /// 卡片发出后、提交前用户在聊天里发的文字会累积进 `user_input`。
-/// 终态：本端胜出→卡片改「✅ 已回复」；被抢答→改「✅ 已在{赢家}回答」并去键盘后返回 None。
+/// 终态：本端胜出→卡片改「✅ 已回复」；被抢答→改「✅ 已在{赢家}回答」并去键盘后返回
+/// `Interrupted`；卡片发不出去 / 轮询器永久停止 → `Lost`（不改卡片）。
 #[allow(clippy::too_many_arguments)]
 async fn ask_question(
     client: &TelegramClient,
@@ -248,7 +254,7 @@ async fn ask_question(
     single: bool,
     lang: Lang,
     preempt: &Preemption,
-) -> Option<QuestionAnswer> {
+) -> QuestionOutcome {
     // 提交值用原文；正文清单用显示文本（推荐选项带本地化前缀）。
     let displays: Vec<String> = options
         .iter()
@@ -289,6 +295,16 @@ async fn ask_question(
     };
     let keyboard = card_keyboard(&options, &selected, lang);
     let card_message_id = send_composed(client, header, &body, is_markdown, Some(keyboard)).await;
+    if card_message_id == 0 {
+        // Both the HTML card and its plain-text retry failed: the human never saw this question,
+        // so this surface cannot carry it. Waiting would only hide the failure from the caller.
+        eprintln!(
+            "{}{}",
+            i18n::warn_prefix(lang),
+            i18n::tr(lang, "channel.tgQuestionSendFailed")
+        );
+        return QuestionOutcome::Lost;
+    }
 
     // 登记卡片精确路由 + 接管本 chat 的自由文字（成为「最新活动卡片」）。
     events.set_active(client.chat_id(), card_message_id);
@@ -296,7 +312,16 @@ async fn ask_question(
     while !preempt.is_cancelled() {
         let ev = match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
             Ok(Some(ev)) => ev,
-            Ok(None) => break,  // 轮询器停止
+            Ok(None) => {
+                // The poller stopped for good (Router dropped); transient API errors are retried
+                // inside the Router. Leave the card as is and let the coordinator drop this surface
+                // rather than stamping "cancelled" on a question nobody cancelled.
+                if preempt.is_cancelled() {
+                    break;
+                }
+                events.clear_active(card_message_id);
+                return QuestionOutcome::Lost;
+            }
             Err(_) => continue, // 超时：回到循环顶部重新检查 cancelled
         };
         if handle_event(
@@ -324,7 +349,7 @@ async fn ask_question(
             )
             .await;
             events.clear_active(card_message_id);
-            return Some(QuestionAnswer {
+            return QuestionOutcome::Answered(QuestionAnswer {
                 selected_options: selected,
                 user_input: {
                     let t = user_input.trim();
@@ -343,8 +368,7 @@ async fn ask_question(
     }
 
     // Interrupted: edit the card to its terminal state and drop the keyboard.
-    // Preempted → "Answered via X"; cancelled (with/without source) → "Cancelled [by X]";
-    // poller stopped with no reason → generic "Cancelled".
+    // Preempted → "Answered via X"; cancelled (with/without source) → "Cancelled [by X]".
     let status = match preempt.reason() {
         Some(Interruption::AnsweredBy(w)) => {
             i18n::tr(lang, "channel.tgAnsweredVia").replace("{source}", &w)
@@ -364,7 +388,7 @@ async fn ask_question(
     )
     .await;
     events.clear_active(card_message_id);
-    None
+    QuestionOutcome::Interrupted
 }
 
 /// 把卡片编辑为终态：保留头部 + 内容（题干 + 选项清单），追加状态行，并移除按钮（不传 reply_markup）。

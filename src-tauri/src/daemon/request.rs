@@ -865,22 +865,6 @@ impl RequestRegistry {
 /// 看门狗等待时长：GUI Helper 在此时长内未连上即判定弹窗拉起失败。
 pub const GUI_CONNECT_TIMEOUT_SECS: u64 = 10;
 
-/// 弹窗拉起失败时给 CLI 的退出码（无可用 Channel）。
-pub const EXIT_NO_CHANNEL: i32 = crate::app::EXIT_NO_CHANNEL;
-
-/// 构造「弹窗拉起失败」的渲染结果（→ CLI stderr + 退出码 3）。
-pub fn popup_failed_outcome(lang: Lang) -> RenderOutcome {
-    RenderOutcome {
-        stdout: String::new(),
-        stderr: Some(format!(
-            "{}{}",
-            crate::i18n::err_prefix(lang),
-            "GUI popup failed to start",
-        )),
-        exit_code: EXIT_NO_CHANNEL,
-    }
-}
-
 /// 用于 ServerMsg::Show 的便捷封装。
 pub fn show_msg(entry: &RequestEntry) -> ServerMsg {
     ServerMsg::Show(entry.show.clone())

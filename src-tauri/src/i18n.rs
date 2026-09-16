@@ -315,6 +315,13 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "channel.sourceSlack" => pick(lang, "Slack", "Slack"),
         // Cancel source: the caller (CLI/terminal cancelled the request).
         "channel.sourceCaller" => pick(lang, "Caller", "调用方"),
+        // Every delivery surface went away before anyone answered (popup helper died, IM
+        // connection closed / question undeliverable). Not a cancel: the CLI exits 3 with this.
+        "channel.noSurfaceLeft" => pick(
+            lang,
+            "no channel can deliver this question anymore ({reason}); nobody answered it. Check `AskHuman doctor`, then ask again.",
+            "已没有任何渠道能送达此提问（{reason}），尚无人作答。请检查 `AskHuman doctor` 后重新提问。",
+        ),
         "channel.tgReplied" => pick(lang, "✅ Replied", "✅ 已回复"),
         "channel.tgAnsweredVia" => pick(lang, "✅ Answered via {source}", "✅ 已在{source}回答"),
         // Telegram cancelled terminal state (uses an emoji prefix like other tg states).
@@ -368,6 +375,11 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             lang,
             "invalid Telegram config, skipping this channel: {e}",
             "Telegram 配置无效，已跳过该 Channel: {e}",
+        ),
+        "channel.tgQuestionSendFailed" => pick(
+            lang,
+            "failed to send Telegram question (HTML and plain text both rejected); dropping this channel for the request",
+            "Telegram 提问发送失败（HTML 与纯文本均被拒绝），本次提问不再使用该渠道",
         ),
         "channel.ddConfigInvalidSkip" => pick(
             lang,

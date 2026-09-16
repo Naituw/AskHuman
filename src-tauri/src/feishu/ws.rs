@@ -34,6 +34,11 @@ const FRAME_CONTROL: i32 = 0;
 const FRAME_DATA: i32 = 1;
 /// 默认心跳间隔（ClientConfig 缺省时）。
 const DEFAULT_PING_SECS: u64 = 120;
+/// Half-open probe cadence. A sleeping Mac or a network handoff can leave the TCP socket open
+/// while the server has long forgotten it: REST sends still succeed, but no callback ever arrives.
+/// Every `PROBE_INTERVAL` without inbound traffic we send a WebSocket Ping; a second tick with no
+/// reply in between means the connection is dead and gets rebuilt.
+const PROBE_INTERVAL: Duration = Duration::from_secs(30);
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -96,6 +101,9 @@ pub struct FeishuWs {
     read: SplitStream<Ws>,
     service_id: i32,
     ping: tokio::time::Interval,
+    /// Half-open detection: WebSocket Ping cadence plus "did anything arrive since the last probe".
+    probe: tokio::time::Interval,
+    awaiting_pong: bool,
     /// message_id → 分片槽（大消息重组）。
     frag: HashMap<String, Vec<Option<Vec<u8>>>>,
 }
@@ -125,14 +133,19 @@ impl FeishuWs {
             read,
             service_id,
             ping,
+            probe: probe_interval(),
+            awaiting_pong: false,
             frag: HashMap::new(),
         };
         let _ = me.send_app_ping().await; // 首个 ping，校准心跳（与官方 SDK 一致）。
         Ok(me)
     }
 
-    /// 收下一个业务事件；内部处理 ping/pong、分片重组、自动 ACK、断线重连。
-    /// 返回 `None` 表示重连多次仍失败（上层据此结束）。
+    /// 收下一个业务事件；内部处理 ping/pong、半开探测、分片重组、自动 ACK、断线重连。
+    ///
+    /// Reconnects indefinitely with capped exponential backoff, so this only returns `None` when
+    /// the caller aborts the task; in-flight cards stay valid across outages and their callbacks
+    /// resume once the connection is back.
     pub async fn recv(&mut self) -> Option<WsEvent> {
         loop {
             enum Step {
@@ -141,6 +154,7 @@ impl FeishuWs {
                 Ignore,
                 Dead,
                 AppPing,
+                Probe,
             }
             let step = tokio::select! {
                 biased;
@@ -151,7 +165,12 @@ impl FeishuWs {
                     Some(Ok(_)) => Step::Ignore,
                 },
                 _ = self.ping.tick() => Step::AppPing,
+                _ = self.probe.tick() => Step::Probe,
             };
+            if !matches!(step, Step::Dead | Step::AppPing | Step::Probe) {
+                // Any inbound frame (data, ping, pong, …) proves the connection is alive.
+                self.awaiting_pong = false;
+            }
             match step {
                 Step::Frame(bytes) => {
                     if let Some(ev) = self.handle_frame(&bytes).await {
@@ -164,12 +183,24 @@ impl FeishuWs {
                 Step::AppPing => {
                     let _ = self.send_app_ping().await;
                 }
-                Step::Ignore => {}
-                Step::Dead => {
-                    if !self.reconnect().await {
-                        return None;
+                Step::Probe => {
+                    // Nothing arrived since the previous probe (not even its Pong) or the socket
+                    // refuses writes: treat as dead and rebuild instead of waiting forever.
+                    if self.awaiting_pong
+                        || self
+                            .write
+                            .send(Message::Ping(Vec::new().into()))
+                            .await
+                            .is_err()
+                    {
+                        eprintln!("[feishu-ws] connection unresponsive to probes; reconnecting");
+                        self.reconnect().await;
+                    } else {
+                        self.awaiting_pong = true;
                     }
                 }
+                Step::Ignore => {}
+                Step::Dead => self.reconnect().await,
             }
         }
     }
@@ -287,30 +318,65 @@ impl FeishuWs {
         combine_frag(&mut self.frag, msg_id, sum, seq, bs)
     }
 
-    /// 断线重连：重新取 endpoint + 连接。最多重试若干次。
-    async fn reconnect(&mut self) -> bool {
-        for attempt in 0..5u32 {
-            tokio::time::sleep(Duration::from_millis(500 * (attempt as u64 + 1))).await;
-            let opened =
-                open_endpoint(&self.http, &self.base_url, &self.app_id, &self.app_secret).await;
-            let Ok((url, ping_secs)) = opened else {
-                continue;
-            };
-            let service_id = parse_query_i32(&url, "service_id").unwrap_or(0);
-            if let Ok((ws, _)) = connect_async(url).await {
-                let (write, read) = ws.split();
-                self.write = write;
-                self.read = read;
-                self.service_id = service_id;
-                let dur = Duration::from_secs(ping_secs.max(10));
-                self.ping = tokio::time::interval_at(tokio::time::Instant::now() + dur, dur);
-                self.frag.clear();
-                let _ = self.send_app_ping().await;
-                return true;
+    /// 断线重连：重新取 endpoint + 连接，指数退避（0.5 s 起、上限 30 s）直到成功。
+    /// 期间在渠道健康表登记「重连中」，成功即清除；首三次及之后每十次记一行日志。
+    async fn reconnect(&mut self) {
+        use crate::channels::health;
+        let mut attempt: u32 = 0;
+        loop {
+            tokio::time::sleep(health::reconnect_delay(attempt)).await;
+            match self.reconnect_once().await {
+                Ok(()) => {
+                    health::clear("feishu");
+                    eprintln!(
+                        "[feishu-ws] reconnected after {} attempt(s)",
+                        attempt.saturating_add(1)
+                    );
+                    return;
+                }
+                Err(e) => {
+                    if health::should_log_reconnect(attempt) {
+                        eprintln!(
+                            "[feishu-ws] reconnect attempt {} failed: {e}; next try in {:?}",
+                            attempt.saturating_add(1),
+                            health::reconnect_delay(attempt.saturating_add(1))
+                        );
+                    }
+                    health::report("feishu", health::reconnecting_message(attempt, &e));
+                    attempt = attempt.saturating_add(1);
+                }
             }
         }
-        false
     }
+
+    async fn reconnect_once(&mut self) -> Result<(), String> {
+        let (url, ping_secs) =
+            open_endpoint(&self.http, &self.base_url, &self.app_id, &self.app_secret)
+                .await
+                .map_err(|e| e.to_string())?;
+        let service_id = parse_query_i32(&url, "service_id").unwrap_or(0);
+        let (ws, _) = connect_async(url)
+            .await
+            .map_err(|e| format!("WebSocket connection failed: {e}"))?;
+        let (write, read) = ws.split();
+        self.write = write;
+        self.read = read;
+        self.service_id = service_id;
+        let dur = Duration::from_secs(ping_secs.max(10));
+        self.ping = tokio::time::interval_at(tokio::time::Instant::now() + dur, dur);
+        self.probe = probe_interval();
+        self.awaiting_pong = false;
+        self.frag.clear();
+        let _ = self.send_app_ping().await;
+        Ok(())
+    }
+}
+
+fn probe_interval() -> tokio::time::Interval {
+    let mut interval =
+        tokio::time::interval_at(tokio::time::Instant::now() + PROBE_INTERVAL, PROBE_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    interval
 }
 
 /// 取长连接 endpoint：返回 (wss URL, ping 间隔秒)。

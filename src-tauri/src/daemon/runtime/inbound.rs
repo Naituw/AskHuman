@@ -1862,7 +1862,10 @@ pub(super) async fn backfill_inflight(
 ) -> usize {
     let mut n = 0;
     for entry in state.registry.in_flight_entries() {
-        if entry.coordinator.has_channel(channel_id) {
+        // Skip requests that already ended (bookkeeping removes them a moment later) and those
+        // that still hold a live surface on this channel. A surface dropped by `surface_lost`
+        // is *not* held, so a reconnected channel legitimately re-delivers here.
+        if entry.coordinator.is_finalizing() || entry.coordinator.has_channel(channel_id) {
             continue;
         }
         if let Some(ch) = build_im_channel(channel_id, config, state).await {

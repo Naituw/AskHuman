@@ -117,6 +117,10 @@ impl Drop for TgRouter {
         if let Some(h) = self.task.lock().unwrap().take() {
             h.abort();
         }
+        // Close the session event sources so their `recv()` yields `None` and the sessions report
+        // the surface as lost instead of waiting on a poller that no longer runs.
+        self.alive.store(false, Ordering::SeqCst);
+        self.routes.lock().unwrap().sinks.clear();
     }
 }
 

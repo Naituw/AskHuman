@@ -72,6 +72,12 @@ pub struct Coordinator {
     emitted: AtomicBool,
     /// Whether this request should be recorded in ordinary reply history.
     record_history_enabled: bool,
+    /// Set once the request handler has finished attaching every surface it intends to use.
+    /// Before that, an empty channel list only means "not attached yet", not "nobody left".
+    surfaces_settled: AtomicBool,
+    /// Why the most recent surface disappeared (`"<id>: <reason>"`), surfaced on stderr when the
+    /// last one goes away.
+    last_surface_loss: Mutex<Option<String>>,
 }
 
 struct Inner {
@@ -191,6 +197,8 @@ impl Coordinator {
             finalizing: AtomicBool::new(false),
             emitted: AtomicBool::new(false),
             record_history_enabled,
+            surfaces_settled: AtomicBool::new(false),
+            last_surface_loss: Mutex::new(None),
         })
     }
 
@@ -225,6 +233,68 @@ impl Coordinator {
             .channels
             .iter()
             .any(|c| c.id() == id)
+    }
+
+    /// A delivery surface disappeared without a human decision: the popup helper died, an IM
+    /// session could not open, the question could not be delivered, or the long connection was
+    /// closed for good. This is **not** a cancel — the surface is simply dropped from the race so
+    /// a later interrupt does not wait on it, `has_channel` lets the daemon re-attach it, and the
+    /// request keeps waiting on whatever remains. Once every surface is gone (and the handler has
+    /// finished attaching, see [`Self::mark_surfaces_settled`]) the request ends with
+    /// `EXIT_NO_CHANNEL` plus a stderr explanation instead of hanging forever or pretending the
+    /// user cancelled.
+    pub fn surface_lost(&self, id: &str, reason: &str) {
+        let remaining = {
+            let mut inner = self.inner.lock().unwrap();
+            let before = inner.channels.len();
+            inner.channels.retain(|c| c.id() != id);
+            if inner.channels.len() == before {
+                // Unknown or already-removed surface: nothing changes, do not touch the reason.
+                return;
+            }
+            inner.channels.len()
+        };
+        *self.last_surface_loss.lock().unwrap() = Some(format!("{id}: {reason}"));
+        if remaining == 0 && self.surfaces_settled.load(Ordering::SeqCst) {
+            self.fail_without_surface();
+        }
+    }
+
+    /// The request handler attached every surface it is going to. From now on an empty channel
+    /// list means nobody can answer, so the request fails fast rather than waiting for a reply
+    /// that cannot arrive.
+    pub fn mark_surfaces_settled(&self) {
+        self.surfaces_settled.store(true, Ordering::SeqCst);
+        let empty = self.inner.lock().unwrap().channels.is_empty();
+        if empty {
+            self.fail_without_surface();
+        }
+    }
+
+    /// Terminate with `EXIT_NO_CHANNEL`: no surface can deliver this question anymore. No history
+    /// entry is written (nothing happened on the human side) and no card is touched (the lost
+    /// surfaces already left on their own).
+    fn fail_without_surface(&self) {
+        if !self.terminal.try_set(()) {
+            return;
+        }
+        self.finalizing.store(true, Ordering::SeqCst);
+        let reason = self
+            .last_surface_loss
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| "no delivery channel".to_string());
+        let outcome = RenderOutcome {
+            stdout: String::new(),
+            stderr: Some(format!(
+                "{}{}",
+                i18n::err_prefix(self.lang),
+                i18n::tr(self.lang, "channel.noSurfaceLeft").replace("{reason}", &reason)
+            )),
+            exit_code: super::EXIT_NO_CHANNEL,
+        };
+        self.emit(outcome);
     }
 
     /// 赢家渠道 id（终态结果的来源；未作答 / 系统取消时为 None）。供作答后把活跃槽更新为该渠道。
@@ -406,6 +476,20 @@ impl Coordinator {
         let (outcome, image_paths) = super::render_result(&request, &result, self.lang);
         // 旁路写回复历史：最佳努力，绝不影响主流程（stdout / 退出码）。
         self.record_history(&request, &result, &image_paths);
+        self.deliver(exiter, outcome);
+    }
+
+    /// Emit an already-rendered outcome exactly once (shared by `finish` and the no-surface
+    /// failure path).
+    fn emit(&self, outcome: RenderOutcome) {
+        if self.emitted.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let exiter = self.inner.lock().unwrap().exiter.clone();
+        self.deliver(exiter, outcome);
+    }
+
+    fn deliver(&self, exiter: Exiter, outcome: RenderOutcome) {
         // Daemon 模式：回传连接处理器，不打印、不退出（进程常驻）。
         if let Exiter::Ipc(tx) = &exiter {
             let _ = tx.send(outcome);
@@ -653,5 +737,141 @@ mod tests {
         assert_eq!(coordinator.pending.load(Ordering::SeqCst), 1);
         coordinator.notify_finalized();
         assert!(coordinator.wait_for_finalizers().await);
+    }
+
+    /// Coordinator whose rendered outcomes are observable and which never touches reply history
+    /// (`record_history_enabled = false`, so these tests cannot pollute `~/.askhuman`).
+    fn observable_coordinator() -> (
+        Arc<Coordinator>,
+        tokio::sync::mpsc::UnboundedReceiver<RenderOutcome>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let coordinator = Coordinator::new_ipc(
+            AskRequest::new(
+                MessagePrompt::new("context".into(), Vec::new()),
+                vec![Question::new("question".into(), Vec::new())],
+                true,
+            ),
+            Lang::En,
+            tx,
+            "/project".into(),
+            "Codex".into(),
+            HistoryBinding::default(),
+            false,
+        );
+        (coordinator, rx)
+    }
+
+    fn surface(id: &'static str) -> (Arc<dyn Channel>, Arc<AtomicBool>) {
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let channel: Arc<dyn Channel> = Arc::new(InterruptChannel {
+            id,
+            interrupted: interrupted.clone(),
+        });
+        (channel, interrupted)
+    }
+
+    #[test]
+    fn losing_one_surface_keeps_the_request_waiting_on_the_others() {
+        let (coordinator, mut rx) = observable_coordinator();
+        let (popup, popup_interrupted) = surface("popup");
+        let (feishu, _) = surface("feishu");
+        coordinator.register(popup);
+        coordinator.register(feishu);
+        coordinator.mark_surfaces_settled();
+
+        coordinator.surface_lost("popup", "popup closed unexpectedly");
+
+        assert!(!coordinator.has_channel("popup"));
+        assert!(coordinator.has_channel("feishu"));
+        assert!(!coordinator.is_finalizing());
+        assert!(rx.try_recv().is_err(), "no outcome while a surface remains");
+        // A lost surface is not a loser to interrupt or wait for later.
+        coordinator.cancel_request("Caller".into(), "caller");
+        assert!(!popup_interrupted.load(Ordering::SeqCst));
+        assert_eq!(coordinator.pending.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn losing_the_last_surface_fails_with_exit_3_and_a_reason_instead_of_hanging() {
+        let (coordinator, mut rx) = observable_coordinator();
+        let (popup, _) = surface("popup");
+        let (feishu, _) = surface("feishu");
+        coordinator.register(popup);
+        coordinator.register(feishu);
+        coordinator.mark_surfaces_settled();
+
+        coordinator.surface_lost("feishu", "connection closed");
+        assert!(rx.try_recv().is_err());
+        coordinator.surface_lost(
+            "popup",
+            "popup closed unexpectedly before an answer was given",
+        );
+
+        let outcome = rx.try_recv().expect("last surface gone → terminal outcome");
+        assert_eq!(outcome.exit_code, super::super::EXIT_NO_CHANNEL);
+        assert!(outcome.stdout.is_empty());
+        let stderr = outcome.stderr.expect("stderr explains the failure");
+        assert!(
+            stderr.contains("popup: popup closed unexpectedly"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("nobody answered"), "{stderr}");
+        assert!(coordinator.is_finalizing());
+        assert!(!coordinator.answered(), "never enters the replay cache");
+        // Terminal: a late answer or cancel changes nothing.
+        coordinator.submit(ChannelResult::cancel("popup"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn surfaces_lost_before_attach_finished_do_not_fail_early() {
+        let (coordinator, mut rx) = observable_coordinator();
+        let (popup, _) = surface("popup");
+        coordinator.register(popup);
+        // Popup could not be spawned while IM routers are still connecting.
+        coordinator.surface_lost("popup", "failed to spawn popup");
+        assert!(rx.try_recv().is_err(), "attach not settled yet");
+        assert!(!coordinator.is_finalizing());
+
+        let (slack, _) = surface("slack");
+        coordinator.register(slack);
+        coordinator.mark_surfaces_settled();
+        assert!(rx.try_recv().is_err(), "slack keeps the request alive");
+    }
+
+    #[test]
+    fn settling_with_no_surface_at_all_fails_immediately() {
+        let (coordinator, mut rx) = observable_coordinator();
+        let (popup, _) = surface("popup");
+        coordinator.register(popup);
+        coordinator.surface_lost("popup", "popup disabled or no display available");
+        coordinator.mark_surfaces_settled();
+        let outcome = rx.try_recv().expect("nothing attached → fail fast");
+        assert_eq!(outcome.exit_code, super::super::EXIT_NO_CHANNEL);
+        assert!(outcome
+            .stderr
+            .as_deref()
+            .unwrap_or_default()
+            .contains("popup disabled or no display available"));
+    }
+
+    #[test]
+    fn unknown_or_repeated_surface_ids_are_ignored() {
+        let (coordinator, mut rx) = observable_coordinator();
+        let (popup, _) = surface("popup");
+        coordinator.register(popup);
+        coordinator.mark_surfaces_settled();
+        coordinator.surface_lost("telegram", "never attached");
+        assert!(coordinator.has_channel("popup"));
+        assert!(rx.try_recv().is_err());
+        coordinator.surface_lost("popup", "first");
+        let first = rx.try_recv().expect("popup was the last surface");
+        assert!(first.stderr.unwrap_or_default().contains("popup: first"));
+        coordinator.surface_lost("popup", "second");
+        assert!(
+            rx.try_recv().is_err(),
+            "already terminal; no second outcome"
+        );
     }
 }

@@ -58,8 +58,10 @@ impl StreamConn {
         })
     }
 
-    /// 收下一个业务事件；内部处理 SYSTEM ping / ACK / 断线重连。
-    /// 返回 `None` 表示重连多次仍失败（上层据此结束）。
+    /// 收下一个业务事件；内部处理 SYSTEM ping / ACK / 半开探测 / 断线重连。
+    ///
+    /// Reconnects indefinitely with capped exponential backoff, so this only returns `None` when
+    /// the caller aborts the task; in-flight cards stay valid across outages.
     pub async fn recv(&mut self) -> Option<StreamEvent> {
         loop {
             let frame = tokio::select! {
@@ -78,9 +80,10 @@ impl StreamConn {
                             .await
                             .is_err()
                     {
-                        if !self.reconnect().await {
-                            return None;
-                        }
+                        eprintln!(
+                            "[dingtalk-stream] connection unresponsive to probes; reconnecting"
+                        );
+                        self.reconnect().await;
                     } else {
                         self.awaiting_pong = true;
                     }
@@ -101,9 +104,7 @@ impl StreamConn {
                 // Cannot collapse into a match guard: `.await` is not allowed there.
                 #[allow(clippy::collapsible_match)]
                 Some(Some(Ok(Message::Close(_)))) | Some(Some(Err(_))) | Some(None) => {
-                    if !self.reconnect().await {
-                        return None;
-                    }
+                    self.reconnect().await;
                 }
                 _ => {}
             }
@@ -171,11 +172,14 @@ impl StreamConn {
         let _ = self.ws.send(Message::Text(frame.to_string().into())).await;
     }
 
-    /// 断线重连：重新 open 拿新 ticket 再连。最多重试若干次。
-    async fn reconnect(&mut self) -> bool {
-        for attempt in 0..5u32 {
-            tokio::time::sleep(std::time::Duration::from_millis(500 * (attempt as u64 + 1))).await;
-            if let Ok(ws) = open_ws(
+    /// 断线重连：重新 open 拿新 ticket 再连，指数退避（0.5 s 起、上限 30 s）直到成功。
+    /// 期间在渠道健康表登记「重连中」，成功即清除；首三次及之后每十次记一行日志。
+    async fn reconnect(&mut self) {
+        use crate::channels::health;
+        let mut attempt: u32 = 0;
+        loop {
+            tokio::time::sleep(health::reconnect_delay(attempt)).await;
+            match open_ws(
                 &self.http,
                 &self.client_id,
                 &self.client_secret,
@@ -183,13 +187,31 @@ impl StreamConn {
             )
             .await
             {
-                self.ws = ws;
-                self.heartbeat = heartbeat_interval();
-                self.awaiting_pong = false;
-                return true;
+                Ok(ws) => {
+                    self.ws = ws;
+                    self.heartbeat = heartbeat_interval();
+                    self.awaiting_pong = false;
+                    health::clear("dingding");
+                    eprintln!(
+                        "[dingtalk-stream] reconnected after {} attempt(s)",
+                        attempt.saturating_add(1)
+                    );
+                    return;
+                }
+                Err(e) => {
+                    let e = e.to_string();
+                    if health::should_log_reconnect(attempt) {
+                        eprintln!(
+                            "[dingtalk-stream] reconnect attempt {} failed: {e}; next try in {:?}",
+                            attempt.saturating_add(1),
+                            health::reconnect_delay(attempt.saturating_add(1))
+                        );
+                    }
+                    health::report("dingding", health::reconnecting_message(attempt, &e));
+                    attempt = attempt.saturating_add(1);
+                }
             }
         }
-        false
     }
 }
 
