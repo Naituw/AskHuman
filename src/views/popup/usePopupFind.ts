@@ -187,6 +187,25 @@ export function usePopupFind(deps: {
     }
   }
 
+  /**
+   * Rebuild after the DOM (not the query) changed, keeping the same logical match current.
+   * Segment texts are re-read from whatever is mounted, so indices may shift (e.g. a
+   * sequential question mounting swaps raw Markdown for rendered text); the current match is
+   * therefore re-identified by segment + occurrence rather than by position.
+   */
+  function rebuildMatchesKeepingCurrent(): void {
+    const anchor = matches.value[findCurrent.value] ?? null;
+    rebuildMatches();
+    if (!anchor) return;
+    const idx = matches.value.findIndex(
+      (m) =>
+        m.segmentId === anchor.segmentId && m.occurrence === anchor.occurrence,
+    );
+    if (idx >= 0) findCurrent.value = idx;
+    else if (matches.value.length > 0) findCurrent.value = 0;
+    else findCurrent.value = -1;
+  }
+
   async function ensureQuestionVisible(qIndex: number | null): Promise<void> {
     if (qIndex === null) return;
     if (deps.currentQ.value === qIndex && !deps.verticalMode.value) {
@@ -221,7 +240,49 @@ export function usePopupFind(deps: {
     content.scrollTop += delta;
   }
 
-  async function applyHighlights(): Promise<void> {
+  /** Re-wrap marks on the mounted DOM and style the current one; returns that mark, if mounted. */
+  function paintMarks(root: HTMLElement): HTMLElement | null {
+    const query = findQuery.value;
+    const caseSensitive = findCaseSensitive.value;
+    clearFindMarks(root);
+
+    const segs = buildSegments();
+    const allMarks: HTMLElement[] = [];
+    for (const seg of segs) {
+      const el = root.querySelector(
+        `[data-find-seg="${CSS.escape(seg.id)}"]`,
+      ) as HTMLElement | null;
+      if (!el) continue;
+      allMarks.push(...applyFindMarks(el, query, caseSensitive));
+    }
+
+    const mi = findCurrent.value;
+    if (mi < 0 || mi >= matches.value.length) {
+      setCurrentFindMark(allMarks, -1);
+      return null;
+    }
+    const m = matches.value[mi]!;
+    const segEl = root.querySelector(
+      `[data-find-seg="${CSS.escape(m.segmentId)}"]`,
+    ) as HTMLElement | null;
+    let currentEl: HTMLElement | null = null;
+    if (segEl) {
+      const segMarks = Array.from(
+        segEl.querySelectorAll<HTMLElement>("[data-popup-find]"),
+      );
+      currentEl = segMarks[m.occurrence] ?? null;
+    }
+    setCurrentFindMark(allMarks, currentEl ? allMarks.indexOf(currentEl) : -1);
+    return currentEl;
+  }
+
+  /**
+   * Bring the current match on screen (user navigation: open / typing / next-prev / Aa):
+   * reveal its question when hidden, repaint marks, then scroll the mark into view. Only this
+   * path moves the viewport; passive repaints never do, otherwise every scroll-spy tick in
+   * vertical mode (which rewrites `currentQ`) would drag the user back to the match.
+   */
+  async function navigateToCurrent(): Promise<void> {
     const token = ++applyToken;
     const root = deps.contentRef.value;
     if (markedRoot && markedRoot !== root) {
@@ -238,56 +299,35 @@ export function usePopupFind(deps: {
     if (anchor) {
       await ensureQuestionVisible(anchor.qIndex);
       if (token !== applyToken) return;
-      // After sequential switch, re-read DOM-backed segment texts.
-      rebuildMatches();
-      if (anchor) {
-        const idx = matches.value.findIndex(
-          (m) =>
-            m.segmentId === anchor.segmentId &&
-            m.occurrence === anchor.occurrence,
-        );
-        if (idx >= 0) findCurrent.value = idx;
-        else if (matches.value.length > 0) findCurrent.value = 0;
-        else findCurrent.value = -1;
-      }
+      // After a sequential switch, re-read DOM-backed segment texts.
+      rebuildMatchesKeepingCurrent();
     }
 
     await nextTick();
     if (token !== applyToken) return;
+    const currentEl = paintMarks(root);
+    if (currentEl) scrollMarkIntoView(currentEl);
+  }
 
-    const query = findQuery.value;
-    const caseSensitive = findCaseSensitive.value;
-    clearFindMarks(root);
-
-    const segs = buildSegments();
-    const allMarks: HTMLElement[] = [];
-    for (const seg of segs) {
-      const el = root.querySelector(
-        `[data-find-seg="${CSS.escape(seg.id)}"]`,
-      ) as HTMLElement | null;
-      if (!el) continue;
-      allMarks.push(...applyFindMarks(el, query, caseSensitive));
+  /**
+   * Repaint after the mounted DOM changed underneath an open session (Markdown re-render,
+   * sequential question mounted, source toggle, scroll-spy in sequential mode). Keeps the same
+   * logical match current but does not reveal or scroll: the user may have deliberately moved
+   * elsewhere, and a match on an unmounted question simply has no styled mark until the next
+   * Enter / ⌘G navigates back to it. Never cancels an in-flight navigation.
+   */
+  function repaintHighlights(): void {
+    const root = deps.contentRef.value;
+    if (markedRoot && markedRoot !== root) {
+      clearFindMarks(markedRoot);
     }
-
-    const mi = findCurrent.value;
-    if (mi >= 0 && mi < matches.value.length) {
-      const m = matches.value[mi]!;
-      const segEl = root.querySelector(
-        `[data-find-seg="${CSS.escape(m.segmentId)}"]`,
-      ) as HTMLElement | null;
-      let currentEl: HTMLElement | null = null;
-      if (segEl) {
-        const segMarks = Array.from(
-          segEl.querySelectorAll<HTMLElement>("[data-popup-find]"),
-        );
-        currentEl = segMarks[m.occurrence] ?? null;
-      }
-      const globalIdx = currentEl ? allMarks.indexOf(currentEl) : -1;
-      setCurrentFindMark(allMarks, globalIdx);
-      if (currentEl) scrollMarkIntoView(currentEl);
-    } else {
-      setCurrentFindMark(allMarks, -1);
+    markedRoot = root;
+    if (!findActive.value || !root || !findQuery.value) {
+      if (root) clearFindMarks(root);
+      return;
     }
+    rebuildMatchesKeepingCurrent();
+    paintMarks(root);
   }
 
   function openFind(prefillFromSelection = true): void {
@@ -322,7 +362,7 @@ export function usePopupFind(deps: {
 
     // Focus is applied after the slide-in enter transition (FindBar @after-enter).
     void nextTick(async () => {
-      await applyHighlights();
+      await navigateToCurrent();
     });
   }
 
@@ -355,14 +395,14 @@ export function usePopupFind(deps: {
     if (n === 0) return;
     const cur = findCurrent.value < 0 ? 0 : findCurrent.value;
     findCurrent.value = (cur + delta + n * 10) % n;
-    await applyHighlights();
+    await navigateToCurrent();
   }
 
   function onFindQueryInput(value: string): void {
     findQuery.value = value;
     rebuildMatches();
     findCurrent.value = matches.value.length > 0 ? 0 : -1;
-    void applyHighlights();
+    void navigateToCurrent();
   }
 
   function toggleFindCase(): void {
@@ -381,7 +421,7 @@ export function usePopupFind(deps: {
     } else {
       findCurrent.value = matches.value.length > 0 ? 0 : -1;
     }
-    void applyHighlights();
+    void navigateToCurrent();
   }
 
   /** Returns true if the event was handled. */
@@ -429,12 +469,15 @@ export function usePopupFind(deps: {
     return false;
   }
 
+  // Repaint when the searchable DOM changes underneath an open session. `currentQ` only matters
+  // in sequential mode, where it decides which question is mounted; in vertical mode every card
+  // is mounted and scroll-spy rewrites `currentQ` on each scroll, so it must not retrigger here.
   watch(
     () =>
       [
         deps.messageText.value,
         deps.viewSource.value,
-        deps.currentQ.value,
+        deps.verticalMode.value ? -1 : deps.currentQ.value,
         deps.verticalMode.value,
         deps.isConfirm.value,
         deps.confirmBodyText.value,
@@ -443,8 +486,7 @@ export function usePopupFind(deps: {
       ] as const,
     () => {
       if (!findActive.value || !findQuery.value) return;
-      rebuildMatches();
-      void applyHighlights();
+      repaintHighlights();
     },
   );
 
@@ -467,11 +509,10 @@ export function usePopupFind(deps: {
     onFindQueryInput,
     toggleFindCase,
     handleFindKeydown,
-    /** Re-run after sequential transition settles. */
+    /** Repaint after the DOM settled (sequential transition, Markdown update); never scrolls. */
     refreshFind: () => {
       if (!findActive.value) return;
-      rebuildMatches();
-      void applyHighlights();
+      repaintHighlights();
     },
   };
 }
