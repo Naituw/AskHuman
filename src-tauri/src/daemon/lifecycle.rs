@@ -149,6 +149,13 @@ pub fn lock_path() -> PathBuf {
     crate::paths::config_dir().join("daemon.lock")
 }
 
+/// Spawn serialization lock `~/.askhuman/spawn.lock`: held by whichever client is currently
+/// starting the daemon and waiting for it to become ready, so concurrent starters queue up and
+/// re-check instead of each launching (and, on macOS, `bootout`-killing) their own instance.
+pub fn spawn_lock_path() -> PathBuf {
+    crate::paths::config_dir().join("spawn.lock")
+}
+
 /// 运行元信息文件 `~/.askhuman/daemon.json`。
 pub fn meta_path() -> PathBuf {
     crate::paths::config_dir().join("daemon.json")

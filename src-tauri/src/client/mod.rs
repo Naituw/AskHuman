@@ -67,19 +67,64 @@ pub async fn ensure_running() -> std::io::Result<()> {
         None => {}
     }
 
-    // 2. 拉起并等待就绪（最多约 5 秒）。
-    spawn::spawn_detached()?;
-    let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(5) {
-        if let Some(HelloStatus::Ok) = hello_status().await {
-            return Ok(());
+    // 2. Start it, serialized across processes. Right after a drain exit, several clients notice
+    //    the gap within the same few hundred milliseconds (agent hooks, the GUI Host, other
+    //    waiting CLIs). Without the lock each of them would spawn its own daemon and, on macOS,
+    //    `launchctl bootout` the instance a sibling had just started; here the queued starters
+    //    re-check after the winner is ready and simply reuse it.
+    let _spawn_guard = acquire_spawn_lock().await;
+    match hello_status().await {
+        Some(HelloStatus::Ok) => return Ok(()),
+        Some(HelloStatus::Draining) => {
+            return Err(Error::new(ErrorKind::WouldBlock, "daemon is draining"));
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        Some(HelloStatus::Restarting) => wait_until_down(Duration::from_secs(5)).await,
+        None => {}
+    }
+    spawn::spawn_detached(spawn::SpawnPolicy::ReuseAlive)?;
+    if wait_ready(Duration::from_secs(5)).await {
+        return Ok(());
+    }
+    // A daemon process may be alive yet never answer (wedged, stale socket path). `ReuseAlive`
+    // left it untouched; fall back to the replacing spawn so `restart --force` and plain asks can
+    // still recover, exactly as before serialization existed.
+    spawn::spawn_detached(spawn::SpawnPolicy::Replace)?;
+    if wait_ready(Duration::from_secs(5)).await {
+        return Ok(());
     }
     Err(Error::new(
         ErrorKind::TimedOut,
         "daemon did not become ready in time",
     ))
+}
+
+/// Poll Hello until the daemon answers `Ok` or `max` elapses.
+async fn wait_ready(max: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < max {
+        if let Some(HelloStatus::Ok) = hello_status().await {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    false
+}
+
+/// Take the cross-process spawn lock, waiting for a sibling starter to finish (it holds the lock
+/// for at most the ready timeouts above). Best-effort: if the lock cannot be taken in time or
+/// the filesystem refuses, proceed unlocked rather than fail the ask.
+async fn acquire_spawn_lock() -> Option<crate::file_lock::FileLock> {
+    let path = lifecycle::spawn_lock_path();
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        match crate::file_lock::FileLock::try_exclusive(&path) {
+            Ok(Some(lock)) => return Some(lock),
+            Ok(None) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Ok(None) | Err(_) => return None,
+        }
+    }
 }
 
 /// 请求运行状态（未运行返回 None）。

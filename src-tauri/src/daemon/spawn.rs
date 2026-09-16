@@ -7,14 +7,28 @@
 //! 永远不弹窗”。因此只要 `gui/<uid>` 可用，就统一 bootstrap 到该 domain：既能静默读取登录钥匙串，
 //! 也会在登出时随 GUI domain 一起退出。纯 headless 环境无法 bootstrap 时才回退 setsid。
 
-pub fn spawn_detached() -> std::io::Result<()> {
+/// How to treat a daemon process that the platform service manager still reports as alive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpawnPolicy {
+    /// Leave an alive instance alone and report success; the caller polls the socket anyway.
+    /// This is the normal path: the alive instance is usually one a sibling client just started.
+    ReuseAlive,
+    /// Tear the existing job down and start a fresh one even if its process is alive. Only for
+    /// recovery from an instance that stays unresponsive.
+    Replace,
+}
+
+pub fn spawn_detached(policy: SpawnPolicy) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
     {
-        if spawn_via_gui_launchd().is_ok() {
+        if spawn_via_gui_launchd(policy).is_ok() {
             return Ok(());
         }
         // GUI 域不可用（纯 headless）→ 回退原 setsid 拉起。
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = policy; // Other platforms have no service manager to consult; a duplicate daemon
+                    // loses the single-instance `daemon.lock` and exits on its own.
     #[cfg(unix)]
     {
         spawn_plain_detached()
@@ -161,7 +175,7 @@ fn launchd_label(config_dir: &std::path::Path, isolated: bool) -> String {
 /// 透传 HOME / TMPDIR / PATH 及全部 `ASKHUMAN_*` 环境变量，保住 perf/隔离调用方（隔离 HOME、
 /// `ASKHUMAN_NO_KEYCHAIN`、mock API base 等）的语义。成功返回 `Ok(())`，否则 `Err`（调用方回退）。
 #[cfg(target_os = "macos")]
-fn spawn_via_gui_launchd() -> std::io::Result<()> {
+fn spawn_via_gui_launchd(policy: SpawnPolicy) -> std::io::Result<()> {
     use super::lifecycle;
     use std::process::{Command, Stdio};
 
@@ -176,6 +190,14 @@ fn spawn_via_gui_launchd() -> std::io::Result<()> {
     let config_dir = crate::paths::config_dir();
     let label = launchd_label(&config_dir, crate::dev_instance::is_dev_instance());
     let plist_path = config_dir.join("daemon-launchd.plist");
+
+    // `bootout` below is a SIGTERM (then SIGKILL after the job's 5s exit timeout) for a job whose
+    // process is still alive, and the daemon it would hit is almost always one a sibling client
+    // started a moment ago. Never tear an alive job down on the reuse path; the caller keeps
+    // polling the socket and picks that instance up as it becomes ready.
+    if policy == SpawnPolicy::ReuseAlive && launchd_job_alive(&domain, &label) {
+        return Ok(());
+    }
 
     // 透传隔离/配置相关 env：HOME/TMPDIR/PATH + 全部 ASKHUMAN_*。
     let mut env_xml = String::new();
@@ -198,7 +220,8 @@ fn spawn_via_gui_launchd() -> std::io::Result<()> {
     );
     std::fs::write(&plist_path, plist)?;
 
-    // 自清理：先 bootout 上次残留的（已退出）任务，再 bootstrap 新的（RunAtLoad 立即启动）。
+    // 自清理：先 bootout 上次残留的任务（正常已退出；`Replace` 时可能仍在跑，SIGTERM 由 daemon 的
+    // 信号处理走 graceful 退出），再 bootstrap 新的（RunAtLoad 立即启动）。
     let plist_str = plist_path.display().to_string();
     let _ = Command::new("/bin/launchctl")
         .args(["bootout", &domain, &plist_str])
@@ -274,6 +297,45 @@ fn xml_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Ask launchd whether the daemon job's process is currently alive. A job that is not loaded or
+/// has exited (`state = not running`, no `pid = …`) is not alive; a failing `launchctl` is
+/// treated as "not alive" so the caller falls through to the regular bootstrap path.
+#[cfg(target_os = "macos")]
+fn launchd_job_alive(domain: &str, label: &str) -> bool {
+    use std::process::{Command, Stdio};
+
+    let Ok(out) = Command::new("/bin/launchctl")
+        .args(["print", &format!("{domain}/{label}")])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return false;
+    };
+    out.status.success() && launchd_print_reports_alive(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Parse `launchctl print <service>` output. Only the service's own top-level `state = …` line
+/// counts (endpoint sub-blocks also print `state = active`); an explicit `pid = …` line is the
+/// strongest signal and appears only while the process exists.
+#[cfg(target_os = "macos")]
+fn launchd_print_reports_alive(text: &str) -> bool {
+    let mut top_level_state: Option<&str> = None;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("pid = ") {
+            return true;
+        }
+        // Top-level keys are indented by exactly one tab; nested blocks use two or more.
+        if top_level_state.is_none() && line.starts_with('\t') && !line.starts_with("\t\t") {
+            if let Some(value) = trimmed.strip_prefix("state = ") {
+                top_level_state = Some(value.trim());
+            }
+        }
+    }
+    matches!(top_level_state, Some(state) if state != "not running")
+}
+
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
@@ -311,5 +373,26 @@ mod tests {
         assert!(plist.contains("/Users/test/log&lt;1&gt;"));
         assert!(plist.contains("<key>ASKHUMAN_HOME</key>"));
         assert!(!plist.contains("<key>KeepAlive</key>"));
+    }
+
+    #[test]
+    fn launchd_print_running_job_is_alive() {
+        let text = "com.naituw.humaninloop.daemon = {\n\tactive count = 1\n\tpath = /x.plist\n\tstate = running\n\n\tprogram = /x/AskHuman\n\tpid = 81380\n\tlast exit code = (never exited)\n\tendpoints = {\n\t\t\"a\" = {\n\t\t\tstate = active\n\t\t}\n\t}\n}\n";
+        assert!(launchd_print_reports_alive(text));
+    }
+
+    #[test]
+    fn launchd_print_exited_job_is_not_alive() {
+        // Loaded but exited: no `pid =` line; nested endpoint `state = active` must not count.
+        let text = "com.naituw.humaninloop.daemon = {\n\tactive count = 0\n\tstate = not running\n\n\tprogram = /x/AskHuman\n\tlast exit code = 0\n\tendpoints = {\n\t\t\"a\" = {\n\t\t\tstate = active\n\t\t}\n\t}\n}\n";
+        assert!(!launchd_print_reports_alive(text));
+        assert!(!launchd_print_reports_alive(""));
+    }
+
+    #[test]
+    fn launchd_print_scheduled_job_counts_as_alive() {
+        // Just bootstrapped by a sibling: process not yet forked, but tearing it down would race.
+        let text = "com.naituw.humaninloop.daemon = {\n\tstate = spawn scheduled\n\tprogram = /x/AskHuman\n}\n";
+        assert!(launchd_print_reports_alive(text));
     }
 }
