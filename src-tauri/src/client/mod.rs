@@ -212,38 +212,72 @@ pub async fn request_stop(force: bool) -> bool {
     )
 }
 
-/// 轮询直到 Daemon 不可连（或超时）。
+/// Poll until the daemon instance that is running *now* is gone, or `max` elapses.
+///
+/// "Gone" means nothing answers on the socket **or a different pid answers**. A replacement
+/// daemon is routinely spawned within a few hundred milliseconds of the old one exiting (agent
+/// hooks, the GUI Host and other waiting CLIs all call [`ensure_running`]), so a loop that only
+/// tests connectivity can miss the transition entirely and keep waiting on a healthy successor.
 pub async fn wait_until_down(max: Duration) {
     let start = Instant::now();
+    let Some(initial) = request_status().await else {
+        return;
+    };
     while start.elapsed() < max {
-        if transport::connect().await.is_err() {
+        if instance_gone(initial.pid).await {
             return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
-/// 排空等待：旧 Daemon 正在完结在途请求，无限等待其下线（首条提示立即输出，之后每 30s 一条，
-/// 含剩余在途数与强制换新提示）。剩余数经 `Status` 查询获取（不带 Hello，不会误触发 stale 判定）。
+/// Whether the daemon instance `pid` is gone: nothing accepts on the endpoint, or a different
+/// instance answers `Status`. An endpoint that still accepts but stays silent belongs to an
+/// instance in its shutdown sequence (listener bound, `daemon.lock` held), so it is *not* gone
+/// yet; starting a successor at that moment would only lose the single-instance lock.
+async fn instance_gone(pid: u32) -> bool {
+    match request_status().await {
+        Some(info) => info.pid != pid,
+        None => transport::connect().await.is_err(),
+    }
+}
+
+/// Wait out a draining daemon so the caller can submit to its successor.
+///
+/// Returns once the draining instance is gone or replaced: `Status` stops answering, answers
+/// with a different pid, or no longer reports `draining`. Connectivity alone is not a usable
+/// exit signal (see [`wait_until_down`]); a CLI that only tested `connect()` was observed
+/// polling a healthy replacement daemon for days, and its question never popped up.
+///
+/// Prints a stderr hint immediately and then every 30s: the number of in-flight requests on the
+/// *draining* daemon (pid-matched, so a busy successor is never mistaken for it), a note that
+/// the question pops up automatically once they are answered, and the force-switch escape hatch.
+/// `Status` deliberately carries no Hello, so polling never triggers a stale-binary check.
 async fn wait_for_drain() {
+    let Some(initial) = request_status().await else {
+        return; // Already gone.
+    };
+    if !initial.draining {
+        return; // A fresh daemon already took over the socket.
+    }
+    let mut latest = initial.active_requests;
     let mut last_hint: Option<Instant> = None;
     loop {
-        if transport::connect().await.is_err() {
-            return; // 旧 Daemon 已下线，可拉起新的。
-        }
         if last_hint.is_none_or(|t| t.elapsed() >= Duration::from_secs(30)) {
-            match request_status().await {
-                Some(info) => eprintln!(
-                    "askhuman: daemon is draining ({} active request(s) left); waiting to submit… (run 'AskHuman daemon restart --force' to switch now, interrupting them)",
-                    info.active_requests
-                ),
-                None => eprintln!(
-                    "askhuman: daemon is draining; waiting to submit… (run 'AskHuman daemon restart --force' to switch now)"
-                ),
-            }
+            eprintln!(
+                "askhuman: daemon is draining ({} active request(s) left); this question will pop up automatically once they are answered (run 'AskHuman daemon restart --force' to switch now, interrupting them)",
+                latest
+            );
             last_hint = Some(Instant::now());
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
+        match request_status().await {
+            Some(info) if info.pid != initial.pid || !info.draining => return, // Replaced.
+            Some(info) => latest = info.active_requests,
+            // Silent but still accepting: the old instance is in its shutdown sequence.
+            None if transport::connect().await.is_err() => return,
+            None => {}
+        }
     }
 }
 

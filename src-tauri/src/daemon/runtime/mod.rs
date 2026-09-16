@@ -4029,22 +4029,39 @@ fn restart_cmd(force: bool) -> i32 {
 
 /// 等 Daemon 下线。force：限时即可；graceful：可能在排空（等在途请求完结），
 /// 无限等待并周期性打印进度与强制提示。
+///
+/// "Down" is judged per instance: the daemon we asked to stop is gone once nothing answers *or a
+/// different pid answers*. Another client routinely spawns the successor within a second of the
+/// old one exiting, and a loop keyed on connectivity alone would then spin forever (silently, as
+/// the successor is not draining).
 async fn wait_stopped(force: bool) {
     if force {
         client::wait_until_down(Duration::from_secs(5)).await;
         return;
     }
+    let Some(initial) = client::request_status().await else {
+        return; // 已下线。
+    };
     let mut last_hint: Option<Instant> = None;
     loop {
-        let Some(info) = client::request_status().await else {
-            return; // 已下线。
-        };
-        if info.draining && last_hint.is_none_or(|t| t.elapsed() >= Duration::from_secs(30)) {
-            eprintln!(
-                "askhuman daemon: draining ({} active request(s) left); waiting… (use --force to terminate now)",
-                info.active_requests
-            );
-            last_hint = Some(Instant::now());
+        match client::request_status().await {
+            // Silent but still accepting = shutdown sequence in progress; keep waiting.
+            None => {
+                if transport::connect().await.is_err() {
+                    return; // 已下线。
+                }
+            }
+            Some(info) if info.pid != initial.pid => return, // 已由新实例接替。
+            Some(info) => {
+                if info.draining && last_hint.is_none_or(|t| t.elapsed() >= Duration::from_secs(30))
+                {
+                    eprintln!(
+                        "askhuman daemon: draining ({} active request(s) left); waiting… (use --force to terminate now)",
+                        info.active_requests
+                    );
+                    last_hint = Some(Instant::now());
+                }
+            }
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
