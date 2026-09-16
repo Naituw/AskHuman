@@ -51,7 +51,7 @@ base64 = "0.22"
 anyhow = "1"
 thiserror = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "process", "signal"] }
 # Daemon 监听 ~/.askhuman/config.json 变更以实时重载配置（A12）。
 notify = "8"
 # 从窗口向系统发起原生文件拖拽（-f 附件胶囊可拖到其它应用打开）。

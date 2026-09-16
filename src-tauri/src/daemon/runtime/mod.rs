@@ -872,6 +872,32 @@ async fn serve(_lock: LockGuard) -> i32 {
         replay: Mutex::new(crate::daemon::ask_dedup::ReplayCache::new()),
     });
 
+    // SIGTERM = `daemon stop` (graceful). launchd `bootout`, user logout and a plain `kill <pid>`
+    // all deliver SIGTERM; without a handler the process died on the spot, leaving no log line and
+    // cutting every in-flight popup off. Each signal is handled exactly like `ClientMsg::Stop
+    // { force: false }`: drain while requests are active, exit right away otherwise. (launchd still
+    // SIGKILLs after the job's exit timeout, so a bootout-triggered drain is bounded to ~5s.)
+    #[cfg(unix)]
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            let Ok(mut term) = signal(SignalKind::terminate()) else {
+                log("failed to install SIGTERM handler; termination will be abrupt");
+                return;
+            };
+            while term.recv().await.is_some() {
+                if state.registry.active_count() > 0 {
+                    log("SIGTERM received with active requests; draining");
+                    begin_drain(&state);
+                } else {
+                    log("SIGTERM received; shutting down");
+                    state.shutdown.notify_one();
+                }
+            }
+        });
+    }
+
     // 空闲退出检查。
     {
         let state = state.clone();
