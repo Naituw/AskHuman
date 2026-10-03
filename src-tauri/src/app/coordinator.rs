@@ -447,6 +447,8 @@ impl Coordinator {
 
     /// 一个落败渠道完成收尾时调用：未归零则减一（用于提前结束收尾窗口）。
     pub fn notify_finalized(&self) {
+        // Keep the Rust 1.82-compatible name; try_update requires a newer compiler.
+        #[allow(deprecated)]
         let _ = self
             .pending
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {

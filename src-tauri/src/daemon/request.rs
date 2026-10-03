@@ -84,6 +84,8 @@ impl RequestEntry {
     /// 归零意味着没人再消费结果，由提交连接走取消收尾（spec D4）——最后离场的可能是
     /// 合流上来的调用方，故这里唤醒提交连接，不在各自的任务里各做各的收尾。
     pub fn release_waiter(&self) -> usize {
+        // Keep the Rust 1.82-compatible name; try_update requires a newer compiler.
+        #[allow(deprecated)]
         let left = self
             .waiters
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {

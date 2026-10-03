@@ -157,12 +157,11 @@ pub(crate) fn reconcile_current_mode_unlocked(kind: AgentKind) -> Result<()> {
 
 pub fn migrate_outdated() -> Vec<AgentKind> {
     let mut migrated = Vec::new();
-    for kind in [AgentKind::Claude] {
-        if status(kind).outdated {
-            if let Ok(_lock) = super::mutation_lock::IntegrationMutationLock::acquire() {
-                if reconcile_current_mode_unlocked(kind).is_ok() {
-                    migrated.push(kind);
-                }
+    let kind = AgentKind::Claude;
+    if status(kind).outdated {
+        if let Ok(_lock) = super::mutation_lock::IntegrationMutationLock::acquire() {
+            if reconcile_current_mode_unlocked(kind).is_ok() {
+                migrated.push(kind);
             }
         }
     }

@@ -132,6 +132,8 @@ pub enum QuestionOutcome {
 }
 
 /// 会话型消息渠道的传输原语（与编排逻辑解耦）。
+// async_trait adds a redundant must_use attribute to each boxed Future it generates.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait MessagingChannel: Send {
     fn id(&self) -> &str;

@@ -144,6 +144,8 @@ pub struct DownloadProgress {
 pub type ProgressCb = Box<dyn Fn(DownloadProgress) + Send + Sync>;
 
 /// 统一更新器抽象：查最新版 + 应用更新（落盘，不 restart）。
+// async_trait adds a redundant must_use attribute to each boxed Future it generates.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait Updater: Send + Sync {
     /// 查询远端最新正式版（不做版本比较、不落盘）。
