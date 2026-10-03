@@ -266,6 +266,23 @@ pub fn needs_update(target: AgentTarget) -> bool {
 /// 避免留下「装了 skill 却没 MCP 配置」的半残状态。Grok 的 `Mcp` 产物 = skill（经 `agent_rules` 委托）+
 /// MCP 配置，正好复用下方 Mcp 分支（无超时 Hook）。
 pub fn set(target: AgentTarget, mode: Mode) -> Result<()> {
+    set_with_env(target, mode, &std::collections::BTreeMap::new())
+}
+
+pub(crate) fn set_with_env(
+    target: AgentTarget,
+    mode: Mode,
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    if !env.is_empty() && (target != AgentTarget::Codex || mode != Mode::Mcp) {
+        return Err(anyhow::anyhow!("environment overrides require Codex MCP"));
+    }
+
+    for (name, value) in env {
+        if !mcp_config::valid_env_name(name) || value.contains('\0') {
+            return Err(anyhow::anyhow!("invalid environment override"));
+        }
+    }
     if target == AgentTarget::Grok && mode == Mode::Cli {
         return Err(anyhow::anyhow!(
             "Grok only supports None | Mcp (no CLI mode)"
@@ -275,10 +292,14 @@ pub fn set(target: AgentTarget, mode: Mode) -> Result<()> {
         return Err(anyhow::anyhow!("Pi only supports None | Cli (no MCP mode)"));
     }
     let _lock = mutation_lock::IntegrationMutationLock::acquire()?;
-    set_unlocked(target, mode)
+    set_unlocked_with_env(target, mode, env)
 }
 
-fn set_unlocked(target: AgentTarget, mode: Mode) -> Result<()> {
+fn set_unlocked_with_env(
+    target: AgentTarget,
+    mode: Mode,
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
     match mode {
         Mode::None => uninstall_all_unlocked(target),
         Mode::Cli => {
@@ -303,7 +324,7 @@ fn set_unlocked(target: AgentTarget, mode: Mode) -> Result<()> {
             }
             agent_rules::install_variant(target, Variant::Mcp)?;
             agent_subagent_guard::reconcile_unlocked(target, mode)?;
-            mcp_config::install(target)?;
+            mcp_config::install_with_env(target, env)?;
             agent_context_recovery::reconcile_unlocked(target, mode)?;
             agent_lifecycle::reconcile_unlocked(kind_for_target(target), mode, true)?;
             agent_permission::reconcile_unlocked(target, mode)?;
@@ -585,5 +606,33 @@ mod tests {
             merge_lifecycle_update(base, true),
             ArtifactUpdates { hook: true, ..base }
         );
+    }
+}
+
+#[cfg(test)]
+mod env_mode_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    #[test]
+    fn rejects_unsupported_env_modes_before_acquiring_mutation_lock() {
+        let env = BTreeMap::from([("DISPLAY".into(), ":1".into())]);
+        for (target, mode) in [
+            (AgentTarget::ClaudeCode, Mode::Mcp),
+            (AgentTarget::Cursor, Mode::Mcp),
+            (AgentTarget::Grok, Mode::Mcp),
+            (AgentTarget::Pi, Mode::Mcp),
+            (AgentTarget::Codex, Mode::Cli),
+            (AgentTarget::Codex, Mode::None),
+        ] {
+            assert!(set_with_env(target, mode, &env)
+                .unwrap_err()
+                .to_string()
+                .contains("require Codex MCP"));
+        }
+        let invalid = BTreeMap::from([("".into(), "x".into())]);
+        assert!(set_with_env(AgentTarget::Codex, Mode::Mcp, &invalid)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid environment"));
     }
 }

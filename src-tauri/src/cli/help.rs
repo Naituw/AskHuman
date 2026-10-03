@@ -56,6 +56,7 @@ pub fn help_text(lang: Lang) -> String {
             "  --todos                 Open the project todos window (preselects current project)".to_string(),
             "  daemon <sub>            Manage the background daemon: status/stop/restart/start/logs (stop/restart drain active requests; add --force to terminate now)".to_string(),
             "  update prepare          Windows: drain background processes before a manual update".to_string(),
+            "  agents mode codex mcp [--env NAME=VALUE]  Merge explicit MCP environment overrides (repeatable)".to_string(),
             "  mcp                     Run as an MCP server over STDIO, exposing ask, whats_next, show_last, todo_add, todo_list, and todo_update".to_string(),
             "  todo <sub>              Project todos: add [--auto] [-f path] <text> / list / attach / detach / rm / clear".to_string(),
             "  channel <sub>           Configure IM channels without a GUI (list/set/enable/disable/test/detect; see 'channel help')".to_string(),

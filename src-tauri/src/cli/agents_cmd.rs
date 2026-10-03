@@ -204,7 +204,8 @@ fn mode_cmd(args: &[String], lang: Lang) -> Result<(), String> {
                     &format!("未知模式: {want}（应为 none|cli|mcp）"),
                 )
             })?;
-            agent_mode::set(target, mode).map_err(|e| e.to_string())?;
+            let env = parse_mode_env(target, mode, &args[2..])?;
+            agent_mode::set_with_env(target, mode, &env).map_err(|e| e.to_string())?;
             print_line(&format!(
                 "[{}] {} {}",
                 kind.label(),
@@ -214,6 +215,30 @@ fn mode_cmd(args: &[String], lang: Lang) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn parse_mode_env(
+    target: AgentTarget,
+    mode: agent_mode::Mode,
+    args: &[String],
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let mut env = std::collections::BTreeMap::new();
+    if !args.is_empty() && (target != AgentTarget::Codex || mode != agent_mode::Mode::Mcp) {
+        return Err("--env is supported only by agents mode codex mcp".into());
+    }
+    let mut args = args.iter();
+    while let Some(flag) = args.next() {
+        if flag != "--env" {
+            return Err(format!("unknown option: {flag}"));
+        }
+        let pair = args.next().ok_or("--env requires NAME=VALUE")?;
+        let (name, value) = pair.split_once('=').ok_or("--env requires NAME=VALUE")?;
+        if !crate::integrations::mcp_config::valid_env_name(name) || value.contains('\0') {
+            return Err("invalid environment name or NUL value".into());
+        }
+        env.insert(name.to_string(), value.to_string());
+    }
+    Ok(env)
 }
 
 fn mode_label(m: agent_mode::Mode, lang: Lang) -> String {
@@ -651,6 +676,7 @@ fn help(lang: Lang) -> String {
 \n\
   agents monitor [--json|--text]     Live agent status (opens a window when a GUI is available)\n\
   agents mode <agent> [none|cli|mcp] Switch the integration mode (omit to query); auto-swaps products\n\
+  agents mode codex mcp [--env NAME=VALUE] Repeatable; merge explicit environment overrides\n\
   agents update [<agent>]            Refresh each current mode's complete managed bundle\n\
   agents permission <claude|codex> [on|off]  Query or set permission approval\n\
   agents stop <claude|codex|cursor|pi> [on|off]  Query or set Stop confirmation\n\
@@ -666,6 +692,7 @@ fn help(lang: Lang) -> String {
 \n\
   agents monitor [--json|--text]     实时 agent 状态（有 GUI 时开窗）\n\
   agents mode <agent> [none|cli|mcp] 切换集成模式（省略则查询）；自动切换底层产物\n\
+  agents mode codex mcp [--env NAME=VALUE] 可重复，合并显式环境变量\n\
   agents update [<agent>]            更新当前模式的完整托管产物包\n\
   agents permission <claude|codex> [on|off]  查询或设置权限审批\n\
   agents stop <claude|codex|cursor|pi> [on|off]  查询或设置结束确认\n\
@@ -682,4 +709,61 @@ fn help(lang: Lang) -> String {
 
 fn print_line(s: &str) {
     super::print_line(s);
+}
+
+#[cfg(test)]
+mod mode_env_tests {
+    use super::*;
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| v.to_string()).collect()
+    }
+    #[test]
+    fn parses_repeated_env_last_wins_and_empty_values() {
+        let env = parse_mode_env(
+            AgentTarget::Codex,
+            agent_mode::Mode::Mcp,
+            &args(&[
+                "--env",
+                "DISPLAY=:0",
+                "--env",
+                "DISPLAY=:1",
+                "--env",
+                "EMPTY=",
+                "--env",
+                "EQUAL=a=b",
+                "--env",
+                "1NAME=x",
+                "--env",
+                "WITH-DASH=y",
+            ]),
+        )
+        .unwrap();
+        assert_eq!(env["DISPLAY"], ":1");
+        assert_eq!(env["EMPTY"], "");
+        assert_eq!(env["EQUAL"], "a=b");
+        assert_eq!(env["1NAME"], "x");
+        assert_eq!(env["WITH-DASH"], "y");
+    }
+    #[test]
+    fn rejects_invalid_and_unsupported_before_mutation() {
+        for values in [
+            vec!["--env"],
+            vec!["--env", "NO_EQUALS"],
+            vec!["--env", "=x"],
+            vec!["--env", "NAME=a\0b"],
+            vec!["--unknown"],
+        ] {
+            assert!(
+                parse_mode_env(AgentTarget::Codex, agent_mode::Mode::Mcp, &args(&values)).is_err()
+            );
+        }
+        for (target, mode) in [
+            (AgentTarget::ClaudeCode, agent_mode::Mode::Mcp),
+            (AgentTarget::Codex, agent_mode::Mode::Cli),
+            (AgentTarget::Codex, agent_mode::Mode::None),
+            (AgentTarget::Pi, agent_mode::Mode::Mcp),
+        ] {
+            assert!(parse_mode_env(target, mode, &args(&["--env", "DISPLAY=:1"])).is_err());
+        }
+    }
 }
