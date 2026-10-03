@@ -112,6 +112,37 @@ pub fn configure_background(command: &mut std::process::Command) {
     let _ = command;
 }
 
+/// Spawn a GUI child without blocking the caller, and reap it when it exits on Unix.
+// VERIFY: Exercise popup, warm popup, and GUI Host launch/exit on native macOS and Windows.
+pub fn spawn_and_reap(command: &mut std::process::Command) -> std::io::Result<u32> {
+    #[cfg(unix)]
+    {
+        let (sender, receiver) = std::sync::mpsc::channel::<std::process::Child>();
+        // Allocate the waiter before spawning: a thread creation failure must not orphan a child.
+        std::thread::Builder::new()
+            .name("gui-child-reaper".into())
+            .spawn(move || {
+                if let Ok(mut child) = receiver.recv() {
+                    let _ = child.wait();
+                }
+            })?;
+        let child = command.spawn()?;
+        let pid = child.id();
+        if let Err(error) = sender.send(child) {
+            // Recover ownership if the waiter unexpectedly disappears before receiving the child.
+            let mut child = error.0;
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::other("GUI child reaper disconnected"));
+        }
+        Ok(pid)
+    }
+    #[cfg(not(unix))]
+    {
+        command.spawn().map(|child| child.id())
+    }
+}
+
 /// 原始拉起方式：`setsid` 新建会话 + stdio 重定向到 daemon.log，直接继承当前会话上下文。
 #[cfg(unix)]
 fn spawn_plain_detached() -> std::io::Result<()> {
@@ -394,5 +425,59 @@ mod tests {
         // Just bootstrapped by a sibling: process not yet forked, but tearing it down would race.
         let text = "com.naituw.humaninloop.daemon = {\n\tstate = spawn scheduled\n\tprogram = /x/AskHuman\n}\n";
         assert!(launchd_print_reports_alive(text));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod reaper_tests {
+    use super::spawn_and_reap;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    fn assert_reaped(pid: u32) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+            if result == -1 {
+                assert_eq!(
+                    std::io::Error::last_os_error().raw_os_error(),
+                    Some(libc::ESRCH)
+                );
+                #[cfg(target_os = "linux")]
+                assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+                return;
+            }
+            assert!(Instant::now() < deadline, "child {pid} was not reaped");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn spawn_error_is_returned() {
+        let error = spawn_and_reap(&mut Command::new("/nonexistent/askhuman-reaper-test"))
+            .expect_err("missing executable must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn immediately_exiting_child_is_reaped() {
+        let pid =
+            spawn_and_reap(Command::new("/bin/sh").args(["-c", "exit 0"])).expect("spawn shell");
+        assert_reaped(pid);
+    }
+
+    #[test]
+    fn running_child_does_not_block_and_is_eventually_reaped() {
+        // The fixture exits on its own even if an assertion fails.
+        let pid = spawn_and_reap(
+            Command::new("/bin/sh")
+                .args(["-c", "exec sleep 1"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
+        .expect("spawn sleeping child");
+        assert_eq!(unsafe { libc::kill(pid as libc::pid_t, 0) }, 0);
+        assert_reaped(pid);
     }
 }

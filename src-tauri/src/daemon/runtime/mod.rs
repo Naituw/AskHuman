@@ -3756,7 +3756,7 @@ fn spawn_gui_helper(token: &str, perf_id: &str, perf_autodismiss: bool) -> std::
         }
     }
     crate::daemon::spawn::configure_background(&mut cmd);
-    cmd.spawn().map(|_| ())
+    crate::daemon::spawn::spawn_and_reap(&mut cmd).map(|_| ())
 }
 
 /// 方案6：spawn 一个预热弹窗进程（`--popup --warm`，无 token、无 perf env）。它会建好隐藏窗 + 挂载前端
@@ -3773,7 +3773,7 @@ fn spawn_warm_helper() -> std::io::Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     crate::daemon::spawn::configure_background(&mut cmd);
-    cmd.spawn().map(|_| ())
+    crate::daemon::spawn::spawn_and_reap(&mut cmd).map(|_| ())
 }
 
 /// Popup 渠道是否应当投放。显示环境显式传入，便于覆盖完整真值表。

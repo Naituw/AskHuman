@@ -177,7 +177,7 @@ mod platform_impl {
             });
         }
         crate::daemon::spawn::configure_background(&mut cmd);
-        cmd.spawn().map(|_| ())
+        crate::daemon::spawn::spawn_and_reap(&mut cmd).map(|_| ())
     }
 
     /// 把「打开窗口」请求路由到宿主（spec D3）。同步阻塞，内部在独立线程跑一个 current-thread
