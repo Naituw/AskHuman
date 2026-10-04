@@ -1,5 +1,28 @@
 // 简体中文词条。结构需与 en.ts 一致；缺失项回退英文。
 export default {
+  desktop: {
+    refresh: "刷新",
+    detectionFailed: "暂时无法完成检测",
+    checking: "检测中…",
+    withReason: "{result}（{reason}）",
+    cannotLaunch: "暂时无法启动：{reasons}",
+    noneDetected: "暂时无法启动：未检测到 Desktop App 和 Codex CLI",
+    reasonSeparator: "；",
+    reasons: {"appNotDetected": "未检测到 Desktop App", "appRuntimeMissing": "Desktop App 的内置运行程序不可用", "appDataUnavailable": "Desktop App 的本地数据不可用", "cliNotDetected": "未检测到 Codex CLI", "cliTrackingDisabled": "CLI 的生命周期追踪未启用", "cliTrackingNeedsUpdate": "CLI 的生命周期追踪需要更新", "cliTrackingNotConfigured": "CLI 的生命周期追踪未配置", "cliIntegrationNotConfigured": "CLI 的 AskHuman 集成未配置", "terminalUnavailable": "系统终端不可用", "unsupportedPlatform": "当前平台不支持此运行方式", "integrationDisabled": "Codex 集成未启用"},
+    launchNote: "提交后将在 Desktop App 中打开新会话并执行任务。",
+    "preference": "默认运行方式",
+    "preferApp": "优先 Desktop App",
+    "preferCli": "优先 CLI",
+    "willUseApp": "新任务将使用 Desktop App",
+    "willUseCli": "新任务将使用 CLI",
+    "unavailable": "未检测到可用的 Codex App 或 CLI",
+    "openSession": "打开原会话",
+    "reconnect": "暂时无法发送，请从标题栏打开原会话，等待 App 连接后重试。",
+    "accepted": "App 已接受操作，尚不代表执行完成。",
+    "stop": "停止",
+    "message": "继续此会话，或补充当前任务…",
+    "checked": "已检查原聊天，编辑新的消息"
+},
   common: {
     cancel: "取消",
     submit: "提交",

@@ -797,6 +797,32 @@ async fn run_ask_final_async(task: crate::ipc::TaskRequest, verbose: bool) -> As
     }
 }
 
+/// Send a desktop operation through the daemon, the sole native IPC owner.
+pub async fn codex_desktop(
+    operation: crate::codex_desktop::Operation,
+) -> Result<serde_json::Value, String> {
+    let (mut reader, mut writer) = open_for_subscribe().await.map_err(|e| e.to_string())?;
+    ipc::write_msg(&mut writer, &ClientMsg::Hello(hello()))
+        .await
+        .map_err(|e| e.to_string())?;
+    if !matches!(ipc::read_msg::<_,ServerMsg>(&mut reader).await, Ok(Some(ServerMsg::HelloAck(ack))) if ack.status == HelloStatus::Ok)
+    {
+        return Err("Daemon is restarting".into());
+    }
+    ipc::write_msg(&mut writer, &ClientMsg::CodexDesktop { operation })
+        .await
+        .map_err(|e| e.to_string())?;
+    match ipc::read_msg::<_, ServerMsg>(&mut reader)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        Some(ServerMsg::CodexDesktop { result }) => result,
+        _ => {
+            Err("Desktop operation response lost. Check the original chat before retrying.".into())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

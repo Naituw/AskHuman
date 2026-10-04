@@ -514,7 +514,9 @@ pub fn msg_options(
     let list = snapshot.as_array().unwrap_or(&empty);
     let mut out: Vec<SelectOption> = Vec::new();
     for rec in list {
-        if rec.get("state").and_then(|v| v.as_str()) != Some("working") {
+        if rec.get("state").and_then(|v| v.as_str()) != Some("working")
+            && rec["desktop"]["connected"] != true
+        {
             continue; // 仅工作中。
         }
         if rec.get("kind").and_then(|v| v.as_str()) == Some("grok") {

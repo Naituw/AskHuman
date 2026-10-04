@@ -1833,6 +1833,7 @@ pub fn project_key_of(dir: String) -> String {
 /// `task` 由前端拼装（选待办时 = 待办原文快照 + 空行 + 补充）；`todo_project`/`todo_id` 非空时
 /// Terminal 成功打开后 best-effort 出队（G7）。成功后 best-effort 把活跃槽切到 popup（G11）。
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn new_task_launch(
     workspace: String,
     kind: String,
@@ -1841,7 +1842,50 @@ pub async fn new_task_launch(
     todo_project: Option<String>,
     todo_id: Option<String>,
     todo_attachments: Option<Vec<crate::todo_attachments::TodoAttachmentSnapshot>>,
+    launch_target: Option<crate::codex_desktop::LaunchTarget>,
+    operation_id: Option<String>,
 ) -> Result<(), String> {
+    let parsed_kind = crate::agents::AgentKind::parse(&kind).ok_or("unknown agent kind")?;
+    let op_id = operation_id.clone();
+    let resolved = tokio::task::spawn_blocking(move || {
+        crate::codex_desktop::resolve_launch(parsed_kind, op_id.as_deref(), launch_target)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if resolved == crate::codex_desktop::LaunchTarget::Desktop {
+        if kind != "codex" {
+            return Err("Only Codex supports desktop tasks".into());
+        }
+        let id = operation_id.ok_or("Desktop tasks require a stable operation ID")?;
+        uuid::Uuid::parse_str(&id).map_err(|_| "Invalid operation ID")?;
+        let delivery =
+            if let (Some(project), Some(todo)) = (todo_project.as_deref(), todo_id.as_deref()) {
+                crate::todos::prepare_delivery_consistent(
+                    project,
+                    todo,
+                    &todo_attachments.unwrap_or_default(),
+                    &id,
+                )
+            } else {
+                crate::todo_attachments::TodoDelivery::default()
+            };
+        if !delivery.warnings.is_empty() {
+            return Err(delivery.warnings.join("\n"));
+        }
+        crate::client::codex_desktop(crate::codex_desktop::Operation::Create {
+            cwd: workspace,
+            text: task,
+            files: delivery.files,
+            permission,
+            id,
+        })
+        .await?;
+        if let (Some(project), Some(todo)) = (todo_project.as_deref(), todo_id.as_deref()) {
+            let _ = crate::todos::take(project, &[todo.into()]);
+        }
+        tokio::spawn(crate::client::activate_popup_slot());
+        return Ok(());
+    }
     let kind = crate::agents::AgentKind::parse(&kind).ok_or("unknown agent kind")?;
     let permission = match permission.as_str() {
         "agent-default" => crate::integrations::agent_launch::LaunchPermission::AgentDefault,
@@ -3969,6 +4013,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
         };
         let err = launch("nope", "yolo", "task").await.unwrap_err();
@@ -4076,4 +4122,33 @@ mod tests {
         assert!(history_open_target("", None, None, Some("instance")).is_none());
         assert!(history_open_target("/p", Some("codex"), None, None).is_none());
     }
+}
+
+#[tauri::command]
+pub async fn codex_launch_status(
+    force: Option<bool>,
+) -> Result<crate::codex_desktop::LaunchStatus, String> {
+    tokio::task::spawn_blocking(move || crate::codex_desktop::launch_status(force.unwrap_or(false)))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn codex_desktop(
+    operation: crate::codex_desktop::Operation,
+) -> Result<serde_json::Value, String> {
+    crate::client::codex_desktop(operation).await
+}
+
+/// Materialize composer files before assigning a stable native send operation.
+#[tauri::command]
+pub async fn codex_desktop_attachments(
+    file_paths: Vec<String>,
+    pasted_images: Vec<crate::models::ImageAttachment>,
+) -> Result<Vec<String>, String> {
+    Ok(prepare_interject_attachments(file_paths, pasted_images)
+        .await?
+        .into_iter()
+        .map(|f| f.path)
+        .collect())
 }

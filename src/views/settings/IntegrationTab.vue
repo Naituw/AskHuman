@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // 「Agent 集成」tab：自动集成（每家一张卡，CLI|MCP|未集成三态）+ 手动集成（参考提示词、
 // MCP 配置示例）。
+import { isMac } from "../../lib/platform";
+import CodexDesktopSettings from "./CodexDesktopSettings.vue";
 import { useI18n } from "vue-i18n";
 import { useSettingsContext } from "./context";
 
@@ -306,6 +308,7 @@ const {
         </button>
       </div>
     </div>
+
 
     <div
       v-if="modes[a.id].mode === 'none' && modes[a.id].lifecycle.cleanupRequired"
@@ -822,6 +825,8 @@ const {
         {{ t("settings.integration.lifecycleHint") }}
       </p>
     </template>
+
+    <CodexDesktopSettings v-if="isMac && a.id === 'codex' && modes.codex.mode !== 'none'" />
 
     <p
       v-if="modeMessage[a.id]"

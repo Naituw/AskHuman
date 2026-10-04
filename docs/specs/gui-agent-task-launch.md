@@ -1,5 +1,7 @@
 # 需求：从桌面 GUI 创建 Agent 任务（新建任务窗口）
 
+> 2026-10-04 扩展：macOS Codex 按设置中的运行偏好自动选择目标（默认优先 Desktop App，可改为优先 CLI）；表单不再增加目标选择步骤。其就绪、原生执行和“首条任务 accepted 后待办出队”语义见 [Codex App 接入](codex-desktop-session-integration.md)。本文以下 Terminal / LaunchRecord 约定适用于终端目标。
+
 > 状态：已实现（2026-07-21）。
 > 关联计划：`docs/plans/gui-agent-task-launch.md`
 > 依赖 / 复用：`docs/specs/im-agent-task-launch.md`（LaunchRecord + 原生终端启动链路、

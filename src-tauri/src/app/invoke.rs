@@ -35,7 +35,9 @@ fn group_for(command: &str) -> Group {
         || matches!(command, "todo_attachment_thumbnail" | "open_todos")
     {
         Group::Todo
-    } else if command.starts_with("new_task_")
+    } else if command.starts_with("codex_desktop")
+        || command == "codex_launch_status"
+        || command.starts_with("new_task_")
         || command.starts_with("fork_task_")
         || matches!(
             command,
@@ -265,6 +267,9 @@ fn task(invoke: Invoke<Wry>) -> bool {
         crate::commands::new_task_projects_refreshed,
         crate::commands::project_key_of,
         crate::commands::new_task_launch,
+        crate::commands::codex_desktop,
+        crate::commands::codex_launch_status,
+        crate::commands::codex_desktop_attachments,
         crate::commands::fork_task_init,
         crate::commands::fork_task_launch,
     ];

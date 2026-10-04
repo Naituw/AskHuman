@@ -1,0 +1,30 @@
+import { mount, flushPromises } from "@vue/test-utils";
+import { ref } from "vue";
+import { beforeEach, expect, it, vi } from "vitest";
+import InteractSlot from "./InteractSlot.vue";
+import { i18n } from "../../i18n";
+import type { AgentRecord } from "../../lib/types";
+vi.mock("@tauri-apps/api/webview", () => ({getCurrentWebview: () => ({onDragDropEvent: vi.fn(async () => vi.fn())})}));
+const api=vi.hoisted(()=>({send:vi.fn(),files:vi.fn()}));
+vi.mock("../../lib/ipc",()=>({codexDesktop:api.send,codexDesktopAttachments:api.files}));
+vi.mock("../interject/useInterjectAttachments",()=>({useInterjectAttachments:()=>({filePaths:ref([]),pastedImages:ref([]),composerImages:ref([]),composerFiles:ref([]),hasAttachments:ref(false),busy:ref(false),error:ref(""),reset:vi.fn(),chooseFiles:vi.fn(),onPaste:vi.fn()})}));
+beforeEach(()=>{api.send.mockReset();api.files.mockReset().mockResolvedValue([]);i18n.global.locale.value="en";});
+it("retains the draft and operation id after a lost response, then clears on acknowledgement",async()=>{
+ const wrapper=mount(InteractSlot,{props:{record:{sessionId:"test",desktop:{connected:true},state:"idle"} as AgentRecord,submitBareEnter:false,pendingText:"",pendingCount:0,pendingAttachmentCount:0,newTaskSupported:false},global:{plugins:[i18n],stubs:{ComposerAttachments:true}}});
+ await wrapper.get("textarea").setValue("continue task");
+ api.send.mockRejectedValueOnce(new Error("response lost"));
+ const send=()=>wrapper.findAll("button").find(b=>b.classes().includes("send"))!.trigger("click");
+ await send();await flushPromises();
+ expect((wrapper.get("textarea").element as HTMLTextAreaElement).value).toBe("continue task");
+ expect(wrapper.text()).toContain("response lost");
+ const first=api.send.mock.calls[0][0];
+ api.send.mockResolvedValueOnce({status:"accepted"});
+ await send();await flushPromises();
+ expect(api.send.mock.calls[1][0]).toEqual(first);
+ expect(api.files).toHaveBeenCalledTimes(1);
+ expect((wrapper.get("textarea").element as HTMLTextAreaElement).value).toBe("");
+});
+it("does not send when the native session is disconnected",async()=>{
+ const wrapper=mount(InteractSlot,{props:{record:{sessionId:"test",desktop:{connected:false},state:"idle"} as AgentRecord,submitBareEnter:false,pendingText:"",pendingCount:0,pendingAttachmentCount:0,newTaskSupported:false},global:{plugins:[i18n],stubs:{ComposerAttachments:true}}});
+ await wrapper.get("textarea").setValue("task");await wrapper.get(".send").trigger("click");await flushPromises();expect(api.send).not.toHaveBeenCalled();expect(wrapper.get('[role="alert"]').text()).toContain("Open the original chat");
+});

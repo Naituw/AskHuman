@@ -9,6 +9,7 @@ import { applyTheme } from "../lib/theme";
 import { applyLanguage } from "../i18n";
 import {
   agentForceIdle,
+  codexDesktop,
   agentsFocus,
   agentsInit,
   agentsStartSubscription,
@@ -217,8 +218,10 @@ function fmtDuration(secs: number): string {
 }
 
 // macOS focus requires a live pid; Windows Terminal focus requires a registered launch UUID.
+const focusError = ref("");
+watch(() => sel.value?.sessionId, () => { focusError.value = ""; });
 function canFocusTerminal(a: AgentRecord): boolean {
-  return (
+  return !!a.desktop || (
     (!!a.pid || !!a.launchId) &&
     a.state !== "ended" &&
     isFocusableTerminal(a.terminal)
@@ -226,10 +229,13 @@ function canFocusTerminal(a: AgentRecord): boolean {
 }
 
 async function onFocusTerminal(a: AgentRecord): Promise<void> {
-  if (!a.pid && !a.launchId) return;
+  if (!a.desktop && !a.pid && !a.launchId) return;
+  focusError.value = "";
   try {
-    await focusAgentTerminal(a.pid, a.launchId);
+    if (a.desktop) await codexDesktop({ op: "open", sessionId: a.sessionId });
+    else await focusAgentTerminal(a.pid, a.launchId);
   } catch (err) {
+    if (a.desktop) focusError.value = String(err);
     console.warn("focus terminal failed", err);
   }
 }
@@ -548,8 +554,8 @@ onBeforeUnmount(() => {
               <button
                 v-if="canFocusTerminal(sel)"
                 class="icon-btn"
-                :title="t('agents.focusTerminal')"
-                :aria-label="t('agents.focusTerminal')"
+                :title="t(sel.desktop ? 'desktop.openSession' : 'agents.focusTerminal')"
+                :aria-label="t(sel.desktop ? 'desktop.openSession' : 'agents.focusTerminal')"
                 @click="onFocusTerminal(sel)"
               >
                 <svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4 6 L6.5 8 L4 10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 10.2 H11.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
@@ -564,7 +570,7 @@ onBeforeUnmount(() => {
                 <svg viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.6 6 L6 7.4 L8.2 5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.8 6.6 H11.6 M4.8 10.4 H11.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
               </button>
               <button
-                v-if="sel.state === 'working'"
+                v-if="!sel.desktop && sel.state === 'working'"
                 class="icon-btn warn"
                 :title="t('agents.markIdle')"
                 :aria-label="t('agents.markIdle')"
@@ -597,6 +603,8 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
+          <p v-if="focusError" class="interact-error" role="alert">{{ focusError }}</p>
+
           <!-- 等待回答横幅（C7）：两种正文视图下都常驻。 -->
           <div v-if="sel.waitingRequestId" class="wait-banner">
             <span class="wait-icon">🙋</span>
@@ -628,7 +636,7 @@ onBeforeUnmount(() => {
 
           <DiffBar v-if="sel.cwd" :project="sel.cwd" :edit-tick="editTick" />
 
-          <InteractSlot
+          <InteractSlot :key="sel.sessionId"
             :record="sel"
             :submit-bare-enter="submitBareEnter"
             :pending-text="pendingText"
@@ -650,6 +658,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.interact-error { margin: 8px 16px; color: var(--danger, #d70015); font-size: 12px; }
 .console {
   display: flex;
   flex-direction: column;

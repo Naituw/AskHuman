@@ -1,5 +1,28 @@
 // English messages (source language). Keys are grouped by namespace.
 export default {
+  desktop: {
+    refresh: "Refresh",
+    detectionFailed: "Unable to complete detection",
+    checking: "Checking…",
+    withReason: "{result} ({reason})",
+    cannotLaunch: "Unable to start: {reasons}",
+    noneDetected: "Unable to start: neither Desktop App nor Codex CLI was detected",
+    reasonSeparator: "; ",
+    reasons: {"appNotDetected": "Desktop App was not detected", "appRuntimeMissing": "Desktop App’s bundled runtime is unavailable", "appDataUnavailable": "Desktop App’s local data is unavailable", "cliNotDetected": "Codex CLI was not detected", "cliTrackingDisabled": "CLI lifecycle tracking is disabled", "cliTrackingNeedsUpdate": "CLI lifecycle tracking needs updating", "cliTrackingNotConfigured": "CLI lifecycle tracking is not configured", "cliIntegrationNotConfigured": "CLI integration with AskHuman is not configured", "terminalUnavailable": "The system terminal is unavailable", "unsupportedPlatform": "This runtime is unsupported on this platform", "integrationDisabled": "Codex integration is disabled"},
+    launchNote: "Submitting opens a new chat in Desktop App and starts the task.",
+    "preference": "Default runtime",
+    "preferApp": "Prefer Desktop App",
+    "preferCli": "Prefer CLI",
+    "willUseApp": "New tasks will use Desktop App",
+    "willUseCli": "New tasks will use CLI",
+    "unavailable": "No available Codex App or CLI detected",
+    "openSession": "Open original chat",
+    "reconnect": "Unable to send yet. Open the original chat from the header and retry after the App connects.",
+    "accepted": "App accepted the operation; execution is not necessarily complete.",
+    "stop": "Stop",
+    "message": "Continue this chat or add to the current task…",
+    "checked": "I checked the original chat; edit a new message"
+},
   common: {
     cancel: "Cancel",
     submit: "Submit",

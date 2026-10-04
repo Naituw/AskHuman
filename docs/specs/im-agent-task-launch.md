@@ -1,5 +1,7 @@
 # 需求：从 IM 创建可在电脑端接续的 Agent 任务
 
+> 2026-10-04 扩展：macOS Codex 按设置中的运行偏好自动选择目标（默认优先 Desktop App，可改为优先 CLI）；表单不再增加目标选择步骤。其就绪、原生执行和“首条任务 accepted 后待办出队”语义见 [Codex App 接入](codex-desktop-session-integration.md)。本文以下 Terminal / LaunchRecord 约定适用于终端目标。
+
 > 状态：已实现。
 > 关联计划：`docs/plans/im-agent-task-launch.md`  
 > 依赖：四渠道主动命令、通用单选卡、Agent 生命周期追踪、IM watch、daemon keepalive。  

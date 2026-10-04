@@ -48,6 +48,10 @@ pub fn fingerprint(task: &TaskRequest) -> String {
         hasher.update(SEP.as_bytes());
     };
 
+    if let Some(id) = &task.native_request_id {
+        feed("native");
+        feed(id);
+    }
     feed(&task.message.text);
     for file in &task.message.files {
         feed(&file.path);
@@ -201,6 +205,7 @@ mod tests {
 
     fn task() -> TaskRequest {
         TaskRequest {
+            native_request_id: None,
             message: MessagePrompt {
                 text: "hello".into(),
                 files: vec![attachment("/tmp/a.png")],
@@ -241,6 +246,16 @@ mod tests {
             stderr: None,
             exit_code: 0,
         }
+    }
+
+    #[test]
+    fn native_request_identity_prevents_previous_answer_replay() {
+        let mut first = task();
+        first.native_request_id = Some("owner:request-1".into());
+        let mut next = first.clone();
+        next.native_request_id = Some("owner:request-2".into());
+        assert_ne!(fingerprint(&first), fingerprint(&next));
+        assert_eq!(session_key(&first), session_key(&next));
     }
 
     #[test]

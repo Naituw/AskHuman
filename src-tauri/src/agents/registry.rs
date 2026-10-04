@@ -977,6 +977,42 @@ impl AgentRegistry {
     }
 
     /// 构造全量快照（解析缺失标题并缓存）。返回 agents 列表 Value（前端按类型分组、按状态排序）。
+    /// Merge desktop and hook observations under the real session id.
+    pub fn update_desktop(&self, id: &str, title: &str, cwd: &str, active: bool) {
+        let unchanged = self
+            .inner
+            .lock()
+            .unwrap()
+            .active
+            .iter()
+            .any(|r| r.session_id == id && (r.state == AgentState::Working) == active);
+        if !unchanged || active {
+            self.apply_event(
+                AgentKind::Codex,
+                if active {
+                    LifecycleEvent::Activity
+                } else {
+                    LifecycleEvent::TurnEnd
+                },
+                id,
+                None,
+                Some(cwd.into()),
+                0,
+            );
+        }
+        if let Some(r) = self
+            .inner
+            .lock()
+            .unwrap()
+            .active
+            .iter_mut()
+            .find(|r| r.session_id == id)
+        {
+            r.title = Some(title.into());
+            r.terminal = Some("codex-app".into());
+        }
+    }
+
     pub fn snapshot(&self) -> Value {
         let mut inner = self.inner.lock().unwrap();
         // 惰性补齐标题（已解析的不再重复）；ended 记录的会话文件依然在盘上，同样补齐。
@@ -1013,6 +1049,10 @@ impl AgentRegistry {
             .map(|r| {
                 let mut v = serde_json::to_value(r).unwrap_or(Value::Null);
                 if let Some(obj) = v.as_object_mut() {
+                    if r.terminal.as_deref() == Some("codex-app") {
+                        let native = crate::codex_desktop::shared().session(&r.session_id);
+                        obj.insert("desktop".into(), serde_json::json!({"connected":native.as_ref().is_some_and(|s|s.connected),"error":native.as_ref().and_then(|s|s.error.clone())}));
+                    }
                     obj.insert(
                         "activeElapsedSecs".to_string(),
                         serde_json::json!(active_elapsed_at(r, now)),
@@ -1029,7 +1069,7 @@ impl AgentRegistry {
                     if let Some(ts) = r.turn_started_at {
                         obj.insert("turnStartedAt".to_string(), serde_json::json!(ts));
                     }
-                    let fork_ready = r.state != AgentState::Ended
+                    let fork_ready = r.terminal.as_deref() != Some("codex-app") && r.state != AgentState::Ended
                         && r.cwd
                             .as_deref()
                             .is_some_and(|cwd| std::path::Path::new(cwd).is_dir())

@@ -580,6 +580,8 @@ export const projectKeyOf = (dir: string) =>
 
 /** Start a task through the private LaunchRecord and platform-terminal bridge. */
 export const newTaskLaunch = (payload: {
+  launchTarget?: "terminal" | "desktop";
+  operationId?: string;
   workspace: string;
   kind: string;
   permission: "agent-default" | "yolo";
@@ -589,6 +591,8 @@ export const newTaskLaunch = (payload: {
   todoAttachments?: import("./types").TodoAttachmentSnapshot[];
 }) =>
   invoke<void>("new_task_launch", {
+    launchTarget: payload.launchTarget ?? null,
+    operationId: payload.operationId ?? null,
     workspace: payload.workspace,
     kind: payload.kind,
     permission: payload.permission,
@@ -611,3 +615,26 @@ export const forkTaskLaunch = (payload: {
   permission: "agent-default" | "yolo";
   task: string;
 }) => invoke<void>("fork_task_launch", payload);
+
+export interface CodexDesktopStatus {
+  supported: boolean; enabled: boolean; installed: boolean; connected: boolean;
+  error?: string; installation?: { app: string; home: string };
+  sessions: { id: string; title: string; cwd: string; connected: boolean; active: boolean; error?: string }[];
+}
+export type CodexDesktopOperation = {op: "status"} | {op: "open"; sessionId?: string}
+  | {op: "send"; sessionId: string; text: string; files: string[]; id: string}
+  | {op: "stop"; sessionId: string; id: string};
+export const codexDesktop = <T = Record<string, unknown>>(operation: CodexDesktopOperation) => invoke<T>("codex_desktop", {operation});
+export const codexDesktopAttachments = (filePaths: string[], pastedImages: import("./types").ImageAttachment[]) => invoke<string[]>("codex_desktop_attachments", {filePaths, pastedImages});
+
+export type CodexUnavailableReason = "appNotDetected" | "appRuntimeMissing" | "appDataUnavailable" | "cliNotDetected" | "cliTrackingDisabled" | "cliTrackingNeedsUpdate" | "cliTrackingNotConfigured" | "cliIntegrationNotConfigured" | "terminalUnavailable" | "unsupportedPlatform" | "integrationDisabled";
+export interface CodexLaunchStatus {
+  preference: "desktop" | "terminal";
+  target: "desktop" | "terminal" | null;
+  desktopAvailable: boolean;
+  terminalAvailable: boolean;
+  desktopReason: CodexUnavailableReason | null;
+  terminalReason: CodexUnavailableReason | null;
+  integrated: boolean;
+}
+export const codexLaunchStatus = (force = false) => invoke<CodexLaunchStatus>("codex_launch_status", {force});

@@ -77,6 +77,7 @@ fn run_inner(agent: Option<&str>) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string);
     let task = crate::ipc::TaskRequest {
+        native_request_id: None,
         message: MessagePrompt::default(),
         questions,
         is_markdown: true,

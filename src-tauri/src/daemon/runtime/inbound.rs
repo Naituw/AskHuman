@@ -312,7 +312,10 @@ pub(super) async fn resolve_msg_target(
         .await;
         return None;
     }
-    if require_working && rec.get("state").and_then(|v| v.as_str()) != Some("working") {
+    if require_working
+        && rec.get("state").and_then(|v| v.as_str()) != Some("working")
+        && rec["desktop"]["connected"] != true
+    {
         let _ = reply_channel_text(
             channel_id,
             config,
@@ -446,6 +449,38 @@ pub(super) fn deliver_msg(
     content: &str,
     lang: Lang,
 ) -> String {
+    if crate::codex_desktop::shared().session(session_id).is_some() {
+        let state = state.clone();
+        let channel = channel_id.to_string();
+        let sid = session_id.to_string();
+        let text = content.to_string();
+        tokio::spawn(async move {
+            let result = crate::codex_desktop::shared()
+                .execute(crate::codex_desktop::Operation::Send {
+                    session_id: sid,
+                    text,
+                    files: vec![],
+                    id: uuid::Uuid::new_v4().to_string(),
+                })
+                .await;
+            let receipt = match result {
+                Ok(_) => {
+                    if lang == Lang::Zh {
+                        "Codex App 已接受消息。".into()
+                    } else {
+                        "Codex App accepted the message.".into()
+                    }
+                }
+                Err(e) => e,
+            };
+            let _ = reply_channel_text(&channel, &state.config_snapshot(), &receipt).await;
+        });
+        return if lang == Lang::Zh {
+            "正在提交到 Codex App…".into()
+        } else {
+            "Submitting to Codex App…".into()
+        };
+    }
     let n = state
         .interject
         .append(session_id, content, Vec::new(), Some(channel_id));
@@ -504,7 +539,8 @@ pub(super) fn msg_echo_text(state: &Arc<ServerState>, session_id: &str, lang: La
 pub(super) fn is_working_non_grok(snapshot: &serde_json::Value, session_id: &str) -> bool {
     find_agent_by_session(snapshot, session_id)
         .map(|r| {
-            r.get("state").and_then(|v| v.as_str()) == Some("working")
+            (r.get("state").and_then(|v| v.as_str()) == Some("working")
+                || r["desktop"]["connected"] == true)
                 && r.get("kind").and_then(|v| v.as_str()) != Some("grok")
         })
         .unwrap_or(false)
@@ -518,7 +554,8 @@ pub(super) fn working_agent_lines(snapshot: &serde_json::Value, lang: Lang) -> V
         .unwrap_or(&empty)
         .iter()
         .filter(|r| {
-            r.get("state").and_then(|v| v.as_str()) == Some("working")
+            (r.get("state").and_then(|v| v.as_str()) == Some("working")
+                || r["desktop"]["connected"] == true)
                 && r.get("kind").and_then(|v| v.as_str()) != Some("grok")
         })
         .map(|r| {
@@ -648,7 +685,9 @@ pub(super) async fn start_new_task_flow(
         let _ = reply_channel_text(channel_id, config, text).await;
         return;
     }
-    if !crate::integrations::agent_launch::terminal_available() {
+    if !crate::integrations::agent_launch::terminal_available()
+        && !crate::codex_desktop::available(&config.codex_desktop)
+    {
         let text = match lang {
             Lang::Zh => "没有找到受支持的系统终端（macOS Terminal.app 或 Windows Terminal）。",
             Lang::En => {
@@ -684,7 +723,7 @@ pub(super) async fn start_new_task_flow(
         .collect::<Vec<_>>()
         .join("\n");
     let ready: Vec<_> = readiness.into_iter().filter(|item| item.ready).collect();
-    if ready.is_empty() {
+    if ready.is_empty() && !crate::codex_desktop::available(&config.codex_desktop) {
         let title = match lang {
             Lang::Zh => "没有已就绪的 Agent。",
             Lang::En => "No Agent is ready.",
@@ -702,6 +741,7 @@ pub(super) async fn start_new_task_flow(
         options,
         Some(
             serde_json::to_string(&TaskPickerPayload {
+                target: None,
                 workspace: String::new(),
                 kind: String::new(),
             })
@@ -836,6 +876,7 @@ pub(super) async fn continue_task_picker(
         .as_deref()
         .and_then(|value| serde_json::from_str(value).ok())
         .unwrap_or(TaskPickerPayload {
+            target: None,
             workspace: String::new(),
             kind: String::new(),
         });
@@ -868,9 +909,16 @@ pub(super) async fn continue_task_picker(
                 return;
             }
             payload.workspace = selected_id.to_string();
+            let codex_status = crate::codex_desktop::launch_status(false);
             let options = crate::integrations::agent_launch::all_readiness()
                 .into_iter()
-                .filter(|item| item.ready)
+                .filter(|item| {
+                    if item.kind == AgentKind::Codex {
+                        codex_status.target.is_some()
+                    } else {
+                        item.ready
+                    }
+                })
                 .map(|item| crate::select::SelectOption {
                     id: item.kind.as_str().to_string(),
                     dot: None,
@@ -878,11 +926,15 @@ pub(super) async fn continue_task_picker(
                     primary: item.label,
                     badge: None,
                     elapsed: None,
-                    secondary: Some(format!(
-                        "{} · {}",
-                        item.integration_mode,
-                        item.executable.unwrap_or_default()
-                    )),
+                    secondary: Some(if item.kind == AgentKind::Codex {
+                        codex_status.description(lang)
+                    } else {
+                        format!(
+                            "{} · {}",
+                            item.integration_mode,
+                            item.executable.unwrap_or_default()
+                        )
+                    }),
                 })
                 .collect();
             let _ = send_agent_picker(
@@ -897,15 +949,33 @@ pub(super) async fn continue_task_picker(
             )
             .await;
         }
-        PickerKind::TaskAgent => {
-            let Some(kind) = AgentKind::parse(selected_id) else {
+        PickerKind::TaskAgent | PickerKind::TaskTarget => {
+            if picker.kind == PickerKind::TaskAgent {
+                let Some(kind) = AgentKind::parse(selected_id) else {
+                    return;
+                };
+                payload.kind = kind.as_str().into();
+            } else {
+                payload.target = Some(match selected_id {
+                    "terminal" => crate::codex_desktop::LaunchTarget::Terminal,
+                    "desktop" => crate::codex_desktop::LaunchTarget::Desktop,
+                    _ => return,
+                });
+            }
+            let Some(kind) = AgentKind::parse(&payload.kind) else {
                 return;
             };
-            if !crate::integrations::agent_launch::readiness(kind).ready {
-                let _ = reply_channel_text(channel_id, config, "Agent is no longer ready").await;
+            let ready = if kind == AgentKind::Codex {
+                crate::codex_desktop::launch_status(false).target.is_some()
+            } else {
+                crate::integrations::agent_launch::readiness(kind).ready
+            };
+            if !ready {
+                let _ =
+                    reply_channel_text(channel_id, config, "Selected task location is unavailable")
+                        .await;
                 return;
             }
-            payload.kind = kind.as_str().to_string();
             if kind == AgentKind::Pi {
                 start_task_input(
                     state,
@@ -1401,6 +1471,55 @@ async fn start_task_input_form(
         } else {
             crate::todo_attachments::TodoDelivery::default()
         };
+        let target = match crate::codex_desktop::resolve_launch(
+            kind,
+            Some(&delivery_request_id),
+            payload.target,
+        ) {
+            Ok(target) => target,
+            Err(error) => {
+                let _ = reply_channel_text(&channel, &config, &error).await;
+                return;
+            }
+        };
+        if target == crate::codex_desktop::LaunchTarget::Desktop {
+            if !delivery.warnings.is_empty() {
+                let _ = reply_channel_text(&channel, &config, &delivery.warnings.join("\n")).await;
+                return;
+            }
+            let result = crate::codex_desktop::shared()
+                .execute(crate::codex_desktop::Operation::Create {
+                    cwd: payload.workspace,
+                    text: task,
+                    files: delivery.files,
+                    permission: match permission {
+                        crate::integrations::agent_launch::LaunchPermission::AgentDefault => {
+                            "agent-default"
+                        }
+                        crate::integrations::agent_launch::LaunchPermission::Yolo => "yolo",
+                    }
+                    .into(),
+                    id: delivery_request_id.clone(),
+                })
+                .await;
+            let text=match result {
+                Ok(value) => {
+                    if let Some(sid)=value["sessionId"].as_str() {
+                        if let Some(session)=crate::codex_desktop::shared().session(sid) {
+                            if let Some(meta)=session.meta {state.agents.update_desktop(sid,&meta.title,&meta.cwd,true);}
+                        }
+                        let snapshot=state.agents.snapshot();
+                        if let Some(seq)=find_agent_by_session(&snapshot,sid).and_then(|r|r["seq"].as_u64()) {handle_watch_cmd(&state,&channel,Some(seq),&config,lang).await;}
+                    }
+                    if let Some(todo)=todo.as_ref(){let _=crate::todos::take(&todo_project,std::slice::from_ref(&todo.id));}
+                    format!("Codex App accepted the task. Session: {}",value["sessionId"].as_str().unwrap_or_default())
+                },
+                Err(error)=>format!("{error}\nOperation: {delivery_request_id}\nInspect Codex App before creating another task."),
+            };
+            let _ = reply_channel_text(&channel, &config, &text).await;
+            state.watch.notify.notify_one();
+            return;
+        }
         let launch = match crate::integrations::agent_launch::create_record_with_files(
             source,
             std::path::Path::new(&payload.workspace),

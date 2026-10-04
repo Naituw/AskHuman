@@ -8,6 +8,8 @@ import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   agentTaskReadiness,
+  codexLaunchStatus,
+  type CodexLaunchStatus,
   newTaskInit,
   newTaskLaunch,
   newTaskProjects,
@@ -26,6 +28,7 @@ import type {
 } from "../../lib/types";
 import { AGENT_INSTALL_DOCS } from "../settings/useAgentTasks";
 import { primaryModifierPressed, primaryShortcutLabel } from "../../lib/platform";
+import { codexLaunchDescription } from "../../lib/codexLaunch";
 import LaunchPermission from "./LaunchPermission.vue";
 
 const { t } = useI18n();
@@ -149,15 +152,22 @@ function selectTodo(entry: TodoEntry): void {
 // ===== Agent（G4/G5）=====
 const readiness = ref<AgentTaskReadiness[] | null>(null);
 const selectedKind = ref<AgentKind | null>(null);
+const desktop = ref<CodexLaunchStatus | null>(null);
+const operationId = ref(crypto.randomUUID());
+function agentAvailable(item: AgentTaskReadiness): boolean {
+  return item.kind === "codex" ? !!desktop.value?.target : item.ready;
+}
+const targetReady = computed(() => !!readiness.value?.find(r => r.kind === selectedKind.value && agentAvailable(r)));
 
 async function loadReadiness(): Promise<void> {
   try {
-    const list = await agentTaskReadiness();
+    const [list, status] = await Promise.all([agentTaskReadiness(), codexLaunchStatus(true).catch(() => null)]);
+    desktop.value = status;
     readiness.value = list;
     // 已选 Agent 不再就绪（重查后）→ 取消选择。
     if (
       selectedKind.value &&
-      !list.some((r) => r.kind === selectedKind.value && r.ready)
+      !list.some((r) => r.kind === selectedKind.value && agentAvailable(r))
     ) {
       selectedKind.value = null;
     }
@@ -168,7 +178,7 @@ async function loadReadiness(): Promise<void> {
 }
 
 function selectAgent(item: AgentTaskReadiness): void {
-  if (!item.ready) return;
+  if (!agentAvailable(item)) return;
   selectedKind.value = item.kind;
 }
 
@@ -217,7 +227,7 @@ const tooLong = computed(() => taskChars.value > MAX_TASK_CHARS);
 
 const canLaunch = computed(
   () =>
-    !launching.value &&
+    !launching.value && targetReady.value &&
     !!selectedProject.value &&
     !!selectedKind.value &&
     !!effectivePermission.value &&
@@ -236,7 +246,14 @@ async function launch(): Promise<void> {
   launching.value = true;
   launchError.value = "";
   try {
+    if (selectedKind.value === "codex") {
+      const key=JSON.stringify([selectedProject.value,finalTask.value,effectivePermission.value,selectedTodo.value?.id]);
+      const saved=JSON.parse(localStorage.getItem("codex-desktop-pending-create") || "null");
+      operationId.value = saved?.key === key && typeof saved.id === "string" ? saved.id : crypto.randomUUID();
+      localStorage.setItem("codex-desktop-pending-create",JSON.stringify({key,id:operationId.value}));
+    }
     await newTaskLaunch({
+      operationId: operationId.value,
       workspace: selectedProject.value,
       kind: selectedKind.value,
       permission: effectivePermission.value,
@@ -252,6 +269,8 @@ async function launch(): Promise<void> {
           storage: attachment.storage,
         })) ?? [],
     });
+    localStorage.removeItem("codex-desktop-pending-create");
+    operationId.value=crypto.randomUUID();
   } catch (err) {
     launchError.value = t("newTask.launchFailed", { e: String(err) });
     return;
@@ -309,6 +328,7 @@ let unlistenSettings: UnlistenFn | null = null;
 let unlistenTodos: UnlistenFn | null = null;
 
 onMounted(async () => {
+  window.addEventListener("focus", loadReadiness);
   try {
     const init = await newTaskInit();
     applyPopupSubmitKey(init.popupSubmitKey);
@@ -326,6 +346,7 @@ onMounted(async () => {
     "settings-updated",
     (e) => {
       applyPopupSubmitKey(e.payload.popupSubmitKey);
+      void loadReadiness();
     }
   );
   // todos.json 被任意进程改写 → 重载所选项目待办；选中待办被删时保留快照并提示（IM D31）。
@@ -364,6 +385,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("focus", loadReadiness);
   unlistenSettings?.();
   unlistenTodos?.();
 });
@@ -528,14 +550,17 @@ onBeforeUnmount(() => {
               class="nt-agent"
               :class="{
                 active: selectedKind === item.kind,
-                disabled: !item.ready,
+                disabled: !agentAvailable(item),
               }"
               @click="selectAgent(item)"
             >
               <span class="nt-radio" :class="{ on: selectedKind === item.kind }" />
               <span class="nt-agent-main">
                 <span class="nt-agent-name">{{ item.label }}</span>
-                <span v-if="item.ready" class="nt-agent-sub" :title="item.executable ?? ''">
+                <span v-if="item.kind === 'codex' && desktop" class="nt-agent-sub">
+                  {{ codexLaunchDescription(desktop, t) }}
+                </span>
+                <span v-else-if="item.ready" class="nt-agent-sub" :title="item.executable ?? ''">
                   {{ item.integrationMode.toUpperCase() }} · {{ item.executable }}
                 </span>
                 <span v-else class="nt-agent-issues">
@@ -582,7 +607,7 @@ onBeforeUnmount(() => {
     <footer v-if="loaded && (locked || projects.length)" class="nt-footer">
       <p v-if="launchError" class="nt-error">{{ launchError }}</p>
       <div class="nt-footer-row">
-        <span class="nt-note">{{ t("newTask.launchNote") }}</span>
+        <span class="nt-note">{{ t(selectedKind === "codex" && desktop?.target === "desktop" ? "desktop.launchNote" : "newTask.launchNote") }}</span>
         <button
           type="button"
           class="nt-btn nt-btn-launch"

@@ -102,6 +102,9 @@ pub struct ChannelIssueInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskRequest {
+    /// Native request identity prevents replaying a previous, equal-looking question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_request_id: Option<String>,
     /// 共享 Message：描述文本与展示附件（绝对路径）。
     pub message: MessagePrompt,
     /// 问题列表（CLI 已归一化，恒 ≥1）。
@@ -395,6 +398,9 @@ pub enum PopupPresentation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ClientMsg {
+    CodexDesktop {
+        operation: crate::codex_desktop::Operation,
+    },
     /// CLI / 控制连接握手。
     Hello(ClientHello),
     /// `daemon status`。
@@ -620,6 +626,9 @@ pub enum InterjectAction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ServerMsg {
+    CodexDesktop {
+        result: Result<serde_json::Value, String>,
+    },
     HelloAck(HelloAck),
     Status(StatusInfo),
     Stopping,

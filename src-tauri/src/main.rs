@@ -14,6 +14,7 @@ mod autochannel;
 mod channels;
 mod cli;
 mod client;
+mod codex_desktop;
 mod commands;
 mod config;
 mod confirm;

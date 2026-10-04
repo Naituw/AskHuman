@@ -501,6 +501,7 @@ export type AgentRunState = "working" | "idle" | "ended";
 
 /** 单个被追踪 agent（一条 session）的快照记录。 */
 export interface AgentRecord {
+  desktop?: {connected: boolean; error?: string};
   /** 稳定数字编号（当前 daemon 生命周期内单调、不复用）；供 IM `/status <编号>` 寻址。 */
   seq?: number;
   kind: AgentKind;
@@ -799,6 +800,7 @@ export interface AgentTaskReadiness {
 }
 
 export interface AppConfig {
+  codexDesktop?: {appPath: string; codexHome: string; launchPreference: "terminal" | "desktop"};
   general: GeneralConfig;
   channels: ChannelsConfig;
   agentTasks: AgentTasksConfig;

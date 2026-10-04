@@ -305,6 +305,7 @@ fn build_task(
         question.push_str(&note);
     }
     TaskRequest {
+        native_request_id: None,
         message: MessagePrompt::new(message, Vec::new()),
         questions: vec![Question::new(question, options)],
         is_markdown: true,

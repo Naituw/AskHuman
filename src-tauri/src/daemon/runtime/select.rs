@@ -280,7 +280,7 @@ pub(super) async fn send_agent_picker(
     }
     let action = match kind {
         PickerKind::TaskWorkspace => crate::select::SelectAction::TaskWorkspace,
-        PickerKind::TaskAgent => crate::select::SelectAction::TaskAgent,
+        PickerKind::TaskAgent | PickerKind::TaskTarget => crate::select::SelectAction::TaskAgent,
         PickerKind::TaskPermission => crate::select::SelectAction::TaskPermission,
         PickerKind::TaskInputSource => crate::select::SelectAction::TaskInputSource,
         PickerKind::ForkSource => crate::select::SelectAction::Fork,
@@ -339,6 +339,7 @@ pub(super) async fn select_pick_task_flow(
     let title = match picker.kind {
         PickerKind::TaskWorkspace => crate::select::title_task_workspace(lang),
         PickerKind::TaskAgent => crate::select::title_task_agent(lang),
+        PickerKind::TaskTarget => "Codex · Terminal / App".into(),
         PickerKind::TaskPermission => crate::select::title_task_permission(lang),
         PickerKind::TaskInputSource => crate::select::title_task_input_source(lang),
         PickerKind::ForkSource => crate::select::title_fork(lang),
@@ -349,6 +350,7 @@ pub(super) async fn select_pick_task_flow(
         PickerKind::TaskWorkspace => {
             crate::autochannel::project_name(selected_id).unwrap_or_else(|| selected_id.to_string())
         }
+        PickerKind::TaskTarget => selected_id.to_string(),
         PickerKind::TaskAgent => AgentKind::parse(selected_id)
             .map(|kind| kind.label().to_string())
             .unwrap_or_else(|| selected_id.to_string()),
@@ -986,6 +988,7 @@ pub(super) async fn handle_select_card_action(
     match picker.kind {
         PickerKind::TaskWorkspace
         | PickerKind::TaskAgent
+        | PickerKind::TaskTarget
         | PickerKind::TaskPermission
         | PickerKind::TaskInputSource
         | PickerKind::ForkSource
@@ -1304,7 +1307,8 @@ pub(super) fn msg_pick_deliver(
 ) -> String {
     let ok = rec
         .map(|r| {
-            r.get("state").and_then(|v| v.as_str()) == Some("working")
+            (r.get("state").and_then(|v| v.as_str()) == Some("working")
+                || r["desktop"]["connected"] == true)
                 && r.get("kind").and_then(|v| v.as_str()) != Some("grok")
         })
         .unwrap_or(false);
@@ -1315,7 +1319,9 @@ pub(super) fn msg_pick_deliver(
         .and_then(|r| r.get("seq").and_then(|v| v.as_u64()))
         .unwrap_or(0);
     let delivered = deliver_msg(state, channel_id, session_id, content, lang);
-    let note = if delivered == crate::i18n::tr(lang, "autoChannel.msgDeliveredNow") {
+    let note = if rec.is_some_and(|r| r.get("desktop").is_some())
+        || delivered == crate::i18n::tr(lang, "autoChannel.msgDeliveredNow")
+    {
         delivered
     } else {
         crate::i18n::tr(lang, "msgCard.queuedShort").to_string()
@@ -1633,6 +1639,7 @@ pub(super) async fn handle_select_dd_action(state: &Arc<ServerState>, data: &ser
     match picker.kind {
         PickerKind::TaskWorkspace
         | PickerKind::TaskAgent
+        | PickerKind::TaskTarget
         | PickerKind::TaskPermission
         | PickerKind::TaskInputSource
         | PickerKind::ForkSource
@@ -2357,6 +2364,7 @@ pub(super) async fn dispatch_select_pick(
     match picker.kind {
         PickerKind::TaskWorkspace
         | PickerKind::TaskAgent
+        | PickerKind::TaskTarget
         | PickerKind::TaskPermission
         | PickerKind::TaskInputSource
         | PickerKind::ForkSource

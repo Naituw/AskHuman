@@ -498,6 +498,7 @@ impl Default for SelectState {
 enum PickerKind {
     TaskWorkspace,
     TaskAgent,
+    TaskTarget,
     TaskPermission,
     TaskInputSource,
     ForkSource,
@@ -565,6 +566,8 @@ struct PickerEntry {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TaskPickerPayload {
+    #[serde(default)]
+    target: Option<crate::codex_desktop::LaunchTarget>,
     #[serde(default)]
     workspace: String,
     #[serde(default)]
@@ -899,6 +902,40 @@ async fn serve(_lock: LockGuard) -> i32 {
         });
     }
 
+    // The daemon owns desktop subscriptions and routes native prompts through the existing coordinator.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let bridge = crate::codex_desktop::shared();
+            let mut requests = crate::codex_desktop::requests::Tracker::default();
+            let mut was_enabled = false;
+            loop {
+                let config = crate::config::AppConfig::load_without_secrets();
+                let enabled = crate::codex_desktop::integration_enabled();
+                bridge.refresh(config.codex_desktop).await;
+                let sessions = bridge.sessions.lock().unwrap().clone();
+                for (id, session) in &sessions {
+                    if let Some(meta) = &session.meta {
+                        if session.connected {
+                            state.agents.update_desktop(
+                                id,
+                                &meta.title,
+                                &meta.cwd,
+                                session.active(),
+                            );
+                        }
+                    }
+                }
+                requests.tick(&bridge, &state.registry.in_flight_agent_requests());
+                if enabled || was_enabled {
+                    broadcast_agents_state(&state);
+                }
+                was_enabled = enabled;
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        });
+    }
+
     // 空闲退出检查。
     {
         let state = state.clone();
@@ -908,10 +945,9 @@ async fn serve(_lock: LockGuard) -> i32 {
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 // 保活模式（general.daemonLifecycle = keepalive）：永不因空闲退出（让 IM 随时可收）。
                 // 每轮读一次配置（load_without_secrets：仅读 config.json，不碰钥匙串，开销可忽略）。
-                if crate::config::AppConfig::load_without_secrets()
-                    .general
-                    .daemon_lifecycle
-                    == crate::config::DaemonLifecycleMode::KeepAlive
+                let config = crate::config::AppConfig::load_without_secrets();
+                if config.general.daemon_lifecycle == crate::config::DaemonLifecycleMode::KeepAlive
+                    || crate::codex_desktop::available(&config.codex_desktop)
                 {
                     continue;
                 }
@@ -1291,6 +1327,10 @@ async fn control_loop(
         }; // EOF / 对端关闭
 
         match msg {
+            ClientMsg::CodexDesktop { operation } => {
+                let result = crate::codex_desktop::shared().execute(operation).await;
+                let _ = ipc::write_msg(w, &ServerMsg::CodexDesktop { result }).await;
+            }
             ClientMsg::Hello(hello) => {
                 // 已在排空：一律回 Draining（客户端等下线后用新二进制拉起重试）。
                 if state.draining.load(Ordering::SeqCst) {

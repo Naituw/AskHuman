@@ -304,6 +304,26 @@ pub fn dispatch() {
         }
         // Hidden PreToolUse adapter for Claude's built-in AskUserQuestion: the questions are
         // answered through AskHuman instead of Claude's own picker.
+        "__codex-desktop" => {
+            use std::io::Read;
+            let mut input = String::new();
+            if std::io::stdin()
+                .take(1024 * 1024)
+                .read_to_string(&mut input)
+                .is_err()
+            {
+                exit(1);
+            }
+            let result = serde_json::from_str::<crate::codex_desktop::Operation>(&input)
+                .map_err(|e| e.to_string())
+                .and_then(|op| {
+                    tokio::runtime::Runtime::new()
+                        .map_err(|e| e.to_string())?
+                        .block_on(crate::client::codex_desktop(op))
+                });
+            print_line(&serde_json::to_string(&result).unwrap_or_default());
+            exit(if result.is_ok() { 0 } else { 1 });
+        }
         "__ask-question-hook" => {
             crate::ask_question::run(argv.get(2).map(String::as_str));
             exit(0);
@@ -441,6 +461,7 @@ pub fn dispatch() {
                     .as_deref()
                     .and_then(crate::agents::AgentKind::parse);
                 let task = crate::ipc::TaskRequest {
+                    native_request_id: None,
                     message,
                     questions,
                     // Markdown 渲染恒开（`--no-markdown` 已移除）；弹窗内可临时切换为源码视图。

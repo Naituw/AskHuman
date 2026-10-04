@@ -176,6 +176,16 @@ pub fn build_frame(seq: u64, rec: Option<&Value>, waiting: bool) -> WatchFrame {
         .and_then(|v| v.as_str())
         .and_then(project_name);
     let state = rec.get("state").and_then(|v| v.as_str()).unwrap_or("");
+    let native = rec["sessionId"]
+        .as_str()
+        .and_then(|id| crate::codex_desktop::shared().session(id))
+        .filter(|s| s.connected);
+    let waiting = waiting
+        || native.as_ref().is_some_and(|s| {
+            s.state["requests"]
+                .as_array()
+                .is_some_and(|r| !r.is_empty())
+        });
     let phase = match state {
         "ended" => WatchPhase::Ended,
         _ if waiting => WatchPhase::Waiting,
@@ -189,7 +199,16 @@ pub fn build_frame(seq: u64, rec: Option<&Value>, waiting: bool) -> WatchFrame {
         .map(|value| value.chars().take(8).collect());
     // 已结束的会话不再读 transcript（内容定格在结束前最后一帧的签名上无意义——终态卡会展示
     // 最后已知活动；这里仍解析一次，让终态卡带上收尾内容）。
-    let parts = autochannel::activity_parts(rec);
+    let mut parts = autochannel::activity_parts(rec);
+    if let Some(session) = rec["sessionId"]
+        .as_str()
+        .and_then(|id| crate::codex_desktop::shared().session(id))
+        .filter(|s| s.connected)
+    {
+        if let Some(text) = session.latest_text() {
+            parts.text = Some(text);
+        }
+    }
     WatchFrame {
         seq,
         kind_label,

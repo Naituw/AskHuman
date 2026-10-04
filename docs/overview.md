@@ -23,6 +23,7 @@
 
 - **AskHuman CLI**（多、短命）：解析 argv（`-f` 在此解析为绝对路径、缺失即退 1）→ 提交 `AskRequest` 给 Daemon → 流式取回结果打到 stdout → 按终态映射退出码 0/1/3。
 - **AskHuman Daemon**（macOS/Linux/Windows 每用户 1 个、常驻、**无 GUI**）：独占四种 IM 的 Router/长连接，承载每请求的 Coordinator/Preemption，集中落盘，监听配置变更，并管理空闲退出、二进制换新和排空。
+- **Codex App 适配器**（macOS）：由 Daemon 独占原生 IPC，将桌面会话状态、控制与新建任务接入现有 registry / Watch / 问答协调；随 Codex 整体集成启停，新任务默认优先 App、可改为优先 CLI。详见 `docs/specs/codex-desktop-session-integration.md`。
 - **Popup Helper**（每弹窗 1 个）：由 Daemon 启动，主线程运行 Tauri 弹窗，收题目、回传答案后退出。预热实例及其边界见 `docs/specs/popup-prewarm.md`。
 - **GUI Host**（macOS/Linux/Windows 每用户至多 1 个、长命）：承载菜单栏/托盘，以及全局唯一的设置、历史、待办、Agent、Interject、新建任务与 Fork 窗口；各打开入口通过自有 IPC 路由到宿主。
 
@@ -115,6 +116,7 @@ AskHuman/
       dingtalk/confirm.rs    钉钉双动作确认卡
       sound.rs               跨平台弹窗提示音
       commands.rs            前端调用的 Tauri command 集合
+      codex_desktop/               可选 macOS Codex App 原生会话与创建适配器
       integrations/agent_launch.rs  新建/Fork 共用一次性 LaunchRecord、readiness 与固定 argv adapter
 
       app/
