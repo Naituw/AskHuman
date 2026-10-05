@@ -114,6 +114,8 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
 
         // —— macOS 附件右键菜单 ——
         "menu.open" => pick(lang, "Open", "打开"),
+        "menu.openBrowser" => pick(lang, "Open in browser", "浏览器打开"),
+        "menu.openOriginal" => pick(lang, "Open original file", "打开原文件"),
         "menu.openWith" => pick(lang, "Open With", "打开方式"),
         "menu.other" => pick(lang, "Other…", "其他…"),
         "menu.quickLook" => pick(lang, "Quick Look “{name}”", "快速查看「{name}」"),

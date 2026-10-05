@@ -11,7 +11,7 @@
 最大化后恢复、阅读状态、图片动画 / 平移、原文件打开及多题草稿提交。展开总尺寸未污染主区偏好。
 
 剩余为 Windows / Linux 实机安装、DPI / 多屏、X11 / Wayland、目标应用拖放：保留已确认的外部
-gate（AskHuman 项目 todo #3），完成后删除本节。不得以 macOS 或纯计算测试代替这些平台实机证据。
+gate（AskHuman 项目 todo #3），完成后删除本节。Markdown 浏览器打开也应在这两平台补验系统默认浏览器、HTML 文件关联不同、启动失败和真实菜单；本地记录见 `docs/plans/markdown-browser-open.md`。不得以 macOS 或纯计算测试代替这些平台实机证据。
 
 ## 待外部验收：Windows 发布候选
 

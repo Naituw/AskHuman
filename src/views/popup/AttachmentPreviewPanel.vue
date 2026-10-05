@@ -8,7 +8,7 @@ import { useNativeAttachmentPreview } from "./useNativeAttachmentPreview";
 import AttachmentDiffPreview from "./AttachmentDiffPreview.vue";
 import AttachmentImagePreview from "./AttachmentImagePreview.vue";
 const { t } = useI18n();
-const { previewFile, previewIndex, attachments, showPreview, stopPreview, openFile, showPreviewMenu, revealFile,
+const { previewFile, previewIndex, attachments, showPreview, stopPreview, openFile, openPreviewFile, primaryBrowser, browserOpening, browserActionError, browserErrorIndex, showPreviewMenu, revealFile,
   previewContent, previewLoading, currentReadingState, onAttachmentDragStart, previewActionError, request, nativePreviewBlocked, previewTransition, previewLayout, submitWithBareEnter } = usePopupContext();
 const nativeBody = ref<HTMLElement | null>(null);
 const { nativeFailed } = useNativeAttachmentPreview({
@@ -73,12 +73,13 @@ function markdownClick(event: MouseEvent) {
         <span class="attachment-preview-count" data-tauri-drag-region>{{ (previewIndex ?? 0) + 1 }} / {{ attachments.length }}</span>
         <button type="button" :disabled="previewIndex === 0" :aria-label="t('popup.prev')" @click="showPreview((previewIndex ?? 0) - 1)">‹</button>
         <button type="button" :disabled="previewIndex === attachments.length - 1" :aria-label="t('popup.next')" @click="showPreview((previewIndex ?? 0) + 1)">›</button>
-        <button type="button" @click="previewFile && openFile(previewFile)">{{ t('popup.preview.open') }}</button>
+        <button type="button" class="attachment-preview-open" :disabled="previewLoading || (primaryBrowser && browserOpening)" :aria-busy="primaryBrowser && browserOpening" @click="openPreviewFile()">{{ t(primaryBrowser ? 'popup.preview.openBrowser' : 'popup.preview.open') }}</button>
         <button type="button" :aria-label="t('popup.preview.more')" @click="showPreviewMenu()">⋯</button>
         <button type="button" :aria-label="t('popup.preview.close')" @click="stopPreview()">×</button>
       </div>
     </header>
     <p v-if="previewActionError" class="attachment-preview-notice" role="alert">{{ t('popup.preview.actionFailed') }}</p>
+    <p v-if="browserActionError && browserErrorIndex === previewIndex" class="attachment-preview-notice" role="alert">{{ t(`popup.preview.${browserActionError}`) }} <button type="button" @click="previewFile && openFile(previewFile)">{{ t('popup.preview.openOriginal') }}</button></p>
     <div v-if="previewLoading" class="attachment-preview-status" role="status" data-tauri-drag-region>{{ t('common.loading') }}</div>
     <div v-else-if="reason" class="attachment-preview-status" role="status" data-tauri-drag-region>
       <strong>{{ previewFile?.name }}</strong><p>{{ t(`popup.preview.${reason}`) }}</p>

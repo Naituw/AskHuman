@@ -93,7 +93,7 @@ export default {
       viewSource: "查看源码",
       viewRendered: "Markdown 预览",
     },
-    preview: { multipleImages: "包含 {n} 张图像。请打开原文件查看全部图像。", system: "系统预览", title: "附件预览", open: "打开", close: "关闭预览", resize: "调整预览区域",
+    preview: { openBrowser: "浏览器打开", openOriginal: "打开原文件", browserFailed: "无法在默认浏览器中打开渲染预览，请重试或打开原文件。", multipleImages: "包含 {n} 张图像。请打开原文件查看全部图像。", system: "系统预览", title: "附件预览", open: "打开", close: "关闭预览", resize: "调整预览区域",
       raw: "查看原文", rendered: "查看预览", more: "更多操作", fit: "适应", zoomIn: "放大", zoomOut: "缩小",
       reveal: { mac: "在访达中显示", windows: "在资源管理器中显示", linux: "在文件管理器中显示" },
       unsupported: "暂不支持预览此文件", encoding: "无法可靠识别文本编码", readFailed: "无法读取附件", limit: "附件超出预览资源上限，请使用默认应用打开", imageFailed: "无法显示此图片", actionFailed: "文件管理器未能定位附件，请重试或使用打开",

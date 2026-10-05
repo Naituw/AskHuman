@@ -25,6 +25,7 @@ const TAG_REVEAL: isize = 2;
 const TAG_QUICKLOOK: isize = 3;
 const TAG_COPY_FILE: isize = 4;
 const TAG_COPY_PATH: isize = 5;
+const TAG_OPEN_BROWSER: isize = 6;
 const TAG_OPEN_WITH_OTHER: isize = 99;
 const TAG_APP_BASE: isize = 100;
 
@@ -123,6 +124,16 @@ impl Target {
         let ws = workspace();
         let url = file_url(&path);
         match tag {
+            TAG_OPEN_BROWSER => {
+                if let Some((request_id, index)) = &self.ivars().popup {
+                    if let Some(window) = self.ivars().app.get_webview_window("popup") {
+                        let _ = window.emit(
+                            "popup-preview-open-browser",
+                            serde_json::json!({ "requestId": request_id, "index": index }),
+                        );
+                    }
+                }
+            }
             TAG_OPEN => {
                 let _: bool = msg_send![ws, openURL: &*url];
             }
@@ -227,6 +238,31 @@ fn general_pasteboard() -> *mut AnyObject {
 
 fn file_url(path: &str) -> Retained<NSURL> {
     NSURL::fileURLWithPath(&NSString::from_str(path))
+}
+
+/// Open a local snapshot using the application's HTTPS association, on the AppKit thread.
+pub fn open_in_browser(path: &std::path::Path) -> Result<(), String> {
+    if MainThreadMarker::new().is_none() {
+        return Err("browser launch requires the main thread".into());
+    }
+    unsafe {
+        let protocol = NSURL::URLWithString(&NSString::from_str("https://example.invalid"))
+            .ok_or("invalid browser scheme")?;
+        let ws = workspace();
+        let browser: *mut NSURL = msg_send![ws, URLForApplicationToOpenURL: &*protocol];
+        let browser = Retained::retain(browser).ok_or("no default browser is configured")?;
+        let app_path: *mut NSString = msg_send![&*browser, path];
+        if app_path.is_null() {
+            return Err("default browser path is unavailable".into());
+        }
+        let file = NSString::from_str(path.to_str().ok_or("invalid preview path")?);
+        let opened: bool = msg_send![ws, openFile: &*file, withApplication: app_path];
+        if opened {
+            Ok(())
+        } else {
+            Err("default browser could not open the preview".into())
+        }
+    }
 }
 
 /// Reveal the original file through the same native API as the attachment menu.
@@ -353,6 +389,7 @@ fn show_context(app: AppHandle, path: String, popup: Option<(String, usize)>) {
         return;
     }
     let lang = Lang::current();
+    let markdown = popup.is_some() && crate::attachment_markdown::supports(&path);
     let name = basename(&path);
     let popup_window = popup
         .as_ref()
@@ -364,7 +401,27 @@ fn show_context(app: AppHandle, path: String, popup: Option<(String, usize)>) {
         let menu = new_menu();
 
         // 打开
-        add_item(menu, tr(lang, "menu.open"), TAG_OPEN, &target);
+        if markdown {
+            add_item(
+                menu,
+                tr(lang, "menu.openBrowser"),
+                TAG_OPEN_BROWSER,
+                &target,
+            );
+        }
+        add_item(
+            menu,
+            tr(
+                lang,
+                if markdown {
+                    "menu.openOriginal"
+                } else {
+                    "menu.open"
+                },
+            ),
+            TAG_OPEN,
+            &target,
+        );
 
         // 打开方式 ▸
         let apps = apps_for_file(&path);

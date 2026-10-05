@@ -10,7 +10,9 @@
 mod agents;
 mod app;
 mod ask_question;
+mod attachment_browser;
 mod attachment_diff;
+mod attachment_html;
 mod attachment_markdown;
 mod attachment_preview;
 mod autochannel;

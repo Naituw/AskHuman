@@ -960,6 +960,67 @@ pub fn open_path(path: String) -> Result<(), String> {
     open_with_system(&path)
 }
 
+/// Generate a fresh snapshot only for a Markdown attachment assigned to the active question.
+#[tauri::command]
+pub async fn popup_preview_open_browser(
+    window: tauri::Window,
+    request_id: String,
+    index: usize,
+) -> Result<(), String> {
+    let request = crate::app::popup_preview::request(&window, &request_id)?;
+    let path = request
+        .message
+        .files
+        .get(index)
+        .ok_or("invalid attachment index")?
+        .path
+        .clone();
+    static OPENERS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::OnceLock::new();
+    let permit = OPENERS
+        .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(2)))
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| "browser preview is busy")?;
+    let snapshot =
+        tauri::async_runtime::spawn_blocking(move || crate::attachment_browser::snapshot(&path))
+            .await
+            .map_err(|e| e.to_string())??;
+    let launch_path = snapshot.clone();
+    #[cfg(target_os = "macos")]
+    let result = {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let dispatch = window
+            .app_handle()
+            .clone()
+            .run_on_main_thread(move || {
+                let result = crate::app::popup_preview::request(&window, &request_id)
+                    .and_then(|_| crate::attachment_browser::open(&launch_path));
+                let _ = tx.send(result);
+            })
+            .map_err(|e| e.to_string());
+        match dispatch {
+            Ok(()) => rx.await.map_err(|e| e.to_string()).and_then(|r| r),
+            Err(e) => Err(e),
+        }
+    };
+    #[cfg(not(target_os = "macos"))]
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::app::popup_preview::request(&window, &request_id)?;
+        crate::attachment_browser::open(&launch_path)
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|r| r);
+    if result.is_err() {
+        if let Some(parent) = snapshot.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
+    }
+    drop(permit);
+    result
+}
+
 #[tauri::command]
 pub async fn popup_preview_prepare(
     window: tauri::Window,

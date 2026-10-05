@@ -53,8 +53,20 @@ pub fn menu(window: &tauri::Window, request_id: &str, index: usize) -> Result<()
         .files
         .get(index)
         .ok_or("invalid attachment index")?;
-    let definitions = [
-        ("open", crate::i18n::tr(lang, "menu.open").to_owned()),
+    let markdown = crate::attachment_markdown::supports(&file.path);
+    let mut definitions = vec![
+        (
+            "open",
+            crate::i18n::tr(
+                lang,
+                if markdown {
+                    "menu.openOriginal"
+                } else {
+                    "menu.open"
+                },
+            )
+            .to_owned(),
+        ),
         (
             "preview",
             crate::i18n::tr(lang, "menu.quickLook").replace("{name}", &file.name),
@@ -72,6 +84,15 @@ pub fn menu(window: &tauri::Window, request_id: &str, index: usize) -> Result<()
         ),
         ("copy", crate::i18n::tr(lang, "menu.copyPath").to_owned()),
     ];
+    if markdown {
+        definitions.insert(
+            0,
+            (
+                "browser",
+                crate::i18n::tr(lang, "menu.openBrowser").to_owned(),
+            ),
+        );
+    }
     let menu = Menu::new(window).map_err(|e| e.to_string())?;
     for (action, text) in definitions {
         let item = MenuItem::with_id(
@@ -119,6 +140,9 @@ pub fn handle_menu(app: &AppHandle, id: &str) {
     };
     let target = serde_json::json!({ "requestId": request_id, "index": index });
     match action {
+        "browser" => {
+            let _ = window.emit("popup-preview-open-browser", target);
+        }
         "preview" => {
             let _ = window.emit("popup-preview-show", target);
         }

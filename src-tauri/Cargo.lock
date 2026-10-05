@@ -1950,6 +1950,7 @@ dependencies = [
  "dirs",
  "fs2",
  "futures-util",
+ "gio",
  "image",
  "jsonc-parser",
  "keyring",

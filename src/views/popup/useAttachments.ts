@@ -24,7 +24,14 @@ export function useAttachments(deps: {
   let menuListener: UnlistenFn | undefined;
   const focusedFile = ref<number | null>(null);
   const previewActionError = ref(false);
-  const stopErrorWatch = watch(selectedFile, () => { previewActionError.value = false; });
+  const browserActionError = ref<string | null>(null);
+  const browserErrorIndex = ref<number | null>(null);
+  const browserOpening = ref(false);
+  let browserToken = 0;
+  const stopErrorWatch = watch([deps.requestId, selectedFile], () => {
+    previewActionError.value = false; browserActionError.value = null; browserErrorIndex.value = null;
+  });
+  const stopBrowserWatch = watch(deps.requestId, () => { browserToken++; browserOpening.value = false; }, { flush: "sync" });
   const thumbs = ref<Record<string, string>>({});
   const dragIcons = ref<Record<string, string>>({});
   const attRefs = ref<HTMLElement[]>([]);
@@ -44,6 +51,24 @@ export function useAttachments(deps: {
     if (index >= 0 && index < attachments.value.length) preview.showPreview(index);
   }
   function openFile(file: FileAttachment) { openPath(file.path).catch(() => {}); }
+  const primaryBrowser = computed(() => content.previewContent.value?.kind === "markdown" && !content.currentReadingState.value?.raw);
+  async function openBrowser(index = selectedFile.value) {
+    if (index === null || !attachments.value[index] || disposed || browserOpening.value) return;
+    const id = deps.requestId.value, token = ++browserToken;
+    browserActionError.value = null; browserOpening.value = true;
+    try {
+      await invoke<void>("popup_preview_open_browser", { requestId: id, index });
+    } catch (error) {
+      if (!disposed && token === browserToken && id === deps.requestId.value) {
+        browserErrorIndex.value = index;
+        browserActionError.value = ["limit", "encoding", "readFailed", "unsupported"].includes(String(error)) ? String(error) : "browserFailed";
+      }
+    } finally { if (!disposed && token === browserToken) browserOpening.value = false; }
+  }
+  function openPreviewFile() {
+    if (primaryBrowser.value) void openBrowser();
+    else if (selectedFile.value !== null && attachments.value[selectedFile.value]) openFile(attachments.value[selectedFile.value]);
+  }
   function stopPreview(finalizing = false) {
     const i = selectedFile.value;
     const returnFocus = !finalizing && document.activeElement?.closest(".attachment-preview");
@@ -125,8 +150,12 @@ export function useAttachments(deps: {
         previewActionError.value = true;
     });
     if (disposed) errorOff(); else { const previous = menuListener; menuListener = () => { previous?.(); errorOff(); }; }
+    const browserOff = await listen<{ requestId: string; index: number }>("popup-preview-open-browser", e => {
+      if (!disposed && e.payload.requestId === deps.requestId.value) void openBrowser(e.payload.index);
+    });
+    if (disposed) browserOff(); else { const previous = menuListener; menuListener = () => { previous?.(); browserOff(); }; }
   }
-  function disposeAttachments() { disposed = true; stopErrorWatch(); menuListener?.(); content.disposeContent(); preview.disposePreview(); }
+  function disposeAttachments() { disposed = true; browserToken++; stopBrowserWatch(); stopErrorWatch(); menuListener?.(); content.disposeContent(); preview.disposePreview(); }
   function onAttachmentDragStart(file: FileAttachment, e: DragEvent) {
     e.preventDefault();
     suppressClickUntil = Date.now() + 500;
@@ -137,9 +166,10 @@ export function useAttachments(deps: {
     }).catch(error => { draggingOut.value = false; console.error("Attachment drag failed", error); });
   }
   const previewFile = computed(() => selectedFile.value === null ? null : attachments.value[selectedFile.value] ?? null);
+  const browserErrorFile = computed(() => browserErrorIndex.value === null ? null : attachments.value[browserErrorIndex.value] ?? null);
   return {
     ...preview, ...content, showPreview, stopPreview, showPreviewMenu, revealFile, selectedFile, focusedFile, previewFile, previewActionError,
-    thumbs, draggingOut, setAttRef, selectFile, openFile, onBackgroundClick,
+    thumbs, draggingOut, setAttRef, selectFile, openFile, openBrowser, openPreviewFile, primaryBrowser, browserOpening, browserActionError, browserErrorIndex, browserErrorFile, onBackgroundClick,
     handleAttachmentKey, formatBytes, loadThumbs, loadDragIcons, onAttachmentContextMenu, onAttachmentDragStart,
     initAttachmentPreviewListeners, disposeAttachments,
   };

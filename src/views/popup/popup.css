@@ -20,6 +20,9 @@
 .attachment-preview-count { min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
 .attachment-preview button { border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--text-primary); padding: 4px 6px; font-size: 12px; cursor: pointer; white-space: nowrap; }
 .attachment-preview .attachment-preview-mode, .attachment-preview-file-actions button, .attachment-image-controls button { border-color: var(--border); background: var(--bg-elevated); }
+.attachment-preview .attachment-preview-open { width: 112px; flex: 0 0 112px; }
+.attachment-browser-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; padding: 10px; border-radius: 6px; background: color-mix(in srgb, #d97706 12%, var(--bg)); color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.attachment-browser-error button { border: 1px solid var(--border); border-radius: 5px; background: var(--bg-elevated); color: var(--text-primary); padding: 4px 6px; font-size: 12px; cursor: pointer; }
 .attachment-preview button:hover:not(:disabled) { background: var(--hover); }
 .attachment-preview button:disabled { opacity: .35; cursor: default; }
 .attachment-preview button:focus-visible, .attachment-preview-body:focus-visible, .attachment-image-viewport:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

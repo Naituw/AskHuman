@@ -19,6 +19,9 @@ const {
   setAttRef,
   selectFile,
   openFile,
+  browserActionError,
+  browserErrorFile,
+  browserErrorIndex,
   onAttachmentDragStart,
   onAttachmentContextMenu,
   formatBytes,
@@ -74,6 +77,10 @@ const {
             <span class="att-size" data-find-skip>{{ formatBytes(file.size) }}</span>
           </span>
         </div>
+      </div>
+      <div v-if="browserActionError && browserErrorFile && browserErrorIndex !== selectedFile" class="attachment-browser-error" role="alert">
+        <span>{{ browserErrorFile.name }} — {{ t(`popup.preview.${browserActionError}`) }}</span>
+        <button type="button" @click="openFile(browserErrorFile)">{{ t('popup.preview.openOriginal') }}</button>
       </div>
     </div>
   </template>

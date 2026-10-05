@@ -117,12 +117,15 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_Registry",
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Shell",
   "Win32_UI_Input_KeyboardAndMouse",
 ] }
 
 # Store channel secrets in the Linux Secret Service (D-Bus; needs gnome-keyring/kwallet).
 # Falls back to plaintext config when unavailable (headless servers).
 [target.'cfg(target_os = "linux")'.dependencies]
+# Reuse the GIO runtime already required by Tauri for desktop browser associations.
+gio = "0.18"
 keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 
 # macOS 原生 QuickLook 预览（QLPreviewPanel）经 objc2 调用；版本与 Tauri 现用一致。
