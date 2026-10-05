@@ -49,14 +49,15 @@ const {
       <div class="att-list">
         <div
           v-for="(file, i) in attachments"
-          :key="file.path"
+          :key="i"
           :ref="(el) => setAttRef(el as Element | null, i)"
           class="attachment"
+          :data-attachment-index="i"
           :class="{ selected: selectedFile === i }"
           tabindex="0"
           draggable="true"
           :title="file.path"
-          @click="selectFile(i)"
+          @click="selectFile(i, $event)"
           @dblclick="openFile(file)"
           @dragstart="onAttachmentDragStart(file, $event)"
           @contextmenu="onAttachmentContextMenu(file, i, $event)"

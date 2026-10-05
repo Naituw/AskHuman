@@ -4,6 +4,9 @@ pub mod confirm_coordinator;
 pub mod coordinator;
 pub mod gui_host;
 mod invoke;
+pub mod popup_preview;
+pub mod popup_preview_actions;
+mod popup_preview_geometry;
 mod popup_size;
 pub mod terminal_gate;
 pub mod tray_menu;
@@ -756,6 +759,8 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
         .plugin(tauri_plugin_liquid_glass::init())
         .manage(state)
         .manage(std::sync::Mutex::new(popup_size::SizeMemory::default()))
+        .manage(std::sync::Mutex::new(popup_preview::Controller::default()))
+        .manage(crate::attachment_preview::ReadGeneration::default())
         .invoke_handler(invoke::handle)
         .on_window_event(|window, event| {
             match window.label() {
@@ -776,7 +781,11 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                         }
                     }
                     WindowEvent::Resized(size) => persist_popup_size(window, *size),
+                    WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                        popup_preview::moved(window)
+                    }
                     WindowEvent::Focused(true) => {
+                        popup_preview::moved(window);
                         if let Some(bridge) = window.app_handle().try_state::<GuiBridge>() {
                             bridge.send_popup_focused();
                         }
@@ -813,12 +822,15 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             }
         })
         .on_menu_event(|app, event| {
+            popup_preview_actions::handle_menu(app, event.id().as_ref());
             // 托盘菜单事件仅在宿主进程内有 HostState；其余进程无托盘、忽略。
             if app.try_state::<gui_host::HostState>().is_some() {
                 gui_host::on_menu_event(app, event.id().as_ref());
             }
         })
         .setup(move |app| {
+            #[cfg(not(target_os = "macos"))]
+            app.manage(popup_preview_actions::MenuOwner::default());
             // 方案6：预热弹窗待命期不该入坞——尽早设 accessory（在设 Dock 图标 / 建窗前），避免常驻 Dock 图标。
             // 领用上屏时 `finalize_popup_show` 再切回 Regular，使弹窗像冷路径一样入坞。
             #[cfg(target_os = "macos")]
@@ -2273,28 +2285,32 @@ fn persist_popup_size(window: &tauri::Window, event_size: tauri::PhysicalSize<u3
         return;
     }
     if let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
+        let Some(projected) = popup_preview::resized(window, event_size) else {
+            return;
+        };
         // Queued creation/restore events can arrive after presentation. Only observe the
         // current geometry, never a stale event paired with a newer native window state.
         let remembered = app
             .state::<std::sync::Mutex<popup_size::SizeMemory>>()
             .lock()
             .unwrap()
-            .observe(
-                (event_size.width, event_size.height),
-                scale,
-                size == event_size,
-            );
-        let Some((width, height)) = remembered else {
+            .observe(projected.main, scale, size == event_size);
+        if remembered.is_none() && projected.preview.is_none() {
             return;
-        };
+        }
         // Only the popup size changes; load without secrets so save() neither reads nor rewrites
         // the keychain (blank secret fields are left as-is by save()).
         let mut cfg = AppConfig::load_without_secrets();
         if !cfg.channels.popup.remember_size {
             return;
         }
-        cfg.channels.popup.width = width;
-        cfg.channels.popup.height = height;
+        if let Some((width, height)) = remembered {
+            cfg.channels.popup.width = width;
+            cfg.channels.popup.height = height;
+        }
+        if let Some(width) = projected.preview {
+            cfg.channels.popup.preview_width = width;
+        }
         let _ = cfg.save();
     }
 }

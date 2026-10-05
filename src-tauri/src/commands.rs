@@ -960,6 +960,50 @@ pub fn open_path(path: String) -> Result<(), String> {
     open_with_system(&path)
 }
 
+#[tauri::command]
+pub async fn popup_preview_prepare(
+    window: tauri::Window,
+    request_id: String,
+    open: bool,
+    version: u64,
+) -> Result<crate::app::popup_preview::Layout, String> {
+    crate::app::popup_preview::request(&window, &request_id)?;
+    crate::app::popup_preview::wait_idle(&window).await?;
+    let app = window.app_handle().clone();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let result = crate::app::popup_preview::request(&window, &request_id)
+            .and_then(|_| crate::app::popup_preview::prepare(&window, open, version));
+        let _ = tx.send(result);
+    })
+    .map_err(|e| e.to_string())?;
+    rx.await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn popup_preview_layout(
+    window: tauri::Window,
+    request_id: String,
+    open: bool,
+    main_extent: Option<f64>,
+    version: u64,
+) -> Result<crate::app::popup_preview::Layout, String> {
+    crate::app::popup_preview::request(&window, &request_id)?;
+    crate::app::popup_preview::wait_idle(&window).await?;
+    let app = window.app_handle().clone();
+    let owner = window.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let result = crate::app::popup_preview::request(&window, &request_id)
+            .and_then(|_| crate::app::popup_preview::change(&window, open, main_extent, version));
+        let _ = tx.send(result);
+    })
+    .map_err(|e| e.to_string())?;
+    let initial = rx.await.map_err(|e| e.to_string())??;
+    crate::app::popup_preview::wait_idle(&owner).await?;
+    Ok(crate::app::popup_preview::published(&owner).unwrap_or(initial))
+}
+
 /// 预览附件：macOS 用原生 QLPreviewPanel 展示「全部附件」并定位到 `index`，
 /// 面板内方向键即可在附件间切换（与 Finder 一致）；其它平台回退为「打开」当前项。
 #[tauri::command]
@@ -996,6 +1040,155 @@ pub fn preview_attachments(
         })?;
         open_with_system(path)
     }
+}
+
+/// Read only an attachment assigned to the active question, off the GUI thread.
+#[tauri::command]
+pub async fn popup_preview_read(
+    window: tauri::Window,
+    request_id: String,
+    index: usize,
+    generation: u64,
+) -> Result<crate::attachment_preview::Loaded, String> {
+    let request = crate::app::popup_preview::request(&window, &request_id)?;
+    let path = request
+        .message
+        .files
+        .get(index)
+        .ok_or("invalid attachment index")?
+        .path
+        .clone();
+    let epoch = window
+        .app_handle()
+        .state::<crate::attachment_preview::ReadGeneration>();
+    epoch.invalidate(&request_id, generation);
+    static READERS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::OnceLock::new();
+    let permit = READERS
+        .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(2)))
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|e| e.to_string())?;
+    crate::app::popup_preview::request(&window, &request_id)?;
+    if !epoch.current(&request_id, generation) {
+        return Err("stale attachment read".into());
+    }
+    let content = tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        crate::attachment_preview::load(&path)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    crate::app::popup_preview::request(&window, &request_id)?;
+    if !epoch.current(&request_id, generation) {
+        return Err("stale attachment read".into());
+    }
+    Ok(crate::attachment_preview::Loaded {
+        request_id,
+        index,
+        generation,
+        content,
+    })
+}
+#[tauri::command]
+pub fn popup_preview_cancel_read(
+    window: tauri::Window,
+    request_id: String,
+    generation: u64,
+) -> Result<(), String> {
+    crate::app::popup_preview::request(&window, &request_id)?;
+    window
+        .app_handle()
+        .state::<crate::attachment_preview::ReadGeneration>()
+        .invalidate(&request_id, generation);
+    Ok(())
+}
+#[tauri::command]
+pub async fn popup_preview_thumbnail(
+    window: tauri::Window,
+    request_id: String,
+    index: usize,
+) -> Result<Option<String>, String> {
+    let request = crate::app::popup_preview::assigned_request(&window, &request_id, false)?;
+    let path = request
+        .message
+        .files
+        .get(index)
+        .ok_or("invalid attachment index")?
+        .path
+        .clone();
+    let image =
+        tauri::async_runtime::spawn_blocking(move || crate::attachment_preview::thumbnail(&path))
+            .await
+            .map_err(|e| e.to_string())?;
+    crate::app::popup_preview::assigned_request(&window, &request_id, false)?;
+    Ok(image)
+}
+
+#[tauri::command]
+pub async fn popup_preview_reveal(
+    window: tauri::Window,
+    request_id: String,
+    index: usize,
+) -> Result<(), String> {
+    let request = crate::app::popup_preview::request(&window, &request_id)?;
+    let path = request
+        .message
+        .files
+        .get(index)
+        .ok_or("invalid attachment index")?
+        .path
+        .clone();
+    #[cfg(target_os = "macos")]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        window
+            .app_handle()
+            .run_on_main_thread(move || {
+                let _ = tx.send(crate::macos_menu::reveal_file(&path));
+            })
+            .map_err(|e| e.to_string())?;
+        rx.await.map_err(|e| e.to_string())?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::app::popup_preview_actions::reveal(&path)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+}
+#[tauri::command]
+pub fn popup_preview_menu(
+    window: tauri::Window,
+    request_id: String,
+    index: usize,
+) -> Result<(), String> {
+    let request = crate::app::popup_preview::request(&window, &request_id)?;
+    let path = request
+        .message
+        .files
+        .get(index)
+        .ok_or("invalid attachment index")?
+        .path
+        .clone();
+    let app = window.app_handle().clone();
+    app.clone()
+        .run_on_main_thread(move || {
+            if crate::app::popup_preview::request(&window, &request_id).is_err() {
+                return;
+            }
+            #[cfg(target_os = "macos")]
+            crate::macos_menu::show_popup(app, path, request_id, index);
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = path;
+                let _ = crate::app::popup_preview_actions::menu(&window, &request_id, index);
+            }
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// 关闭当前 QuickLook 预览（点击附件以外区域时调用）。

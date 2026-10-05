@@ -4,10 +4,16 @@
 
 ## 窗口与附件交互
 
-- 弹窗创建和上屏恢复尺寸共用校验：零值、负值、非有限值或超出原生尺寸表示范围时按对应维度回退默认值，正值至少满足原生最小尺寸 420×480。尺寸记忆只采纳已上屏、可见、非最小化/最大化且未收尾窗口的有效变化；过滤与当前原生尺寸不符的延迟事件，以及与恢复尺寸相同的程序回调，避免预热或并发 helper 把异常/旧尺寸写回共享配置。读取最新的 `rememberSize` 开关；污染配置在窗口使用时恢复，正常拖动后写回有效尺寸。
-- 窗口拖拽用 `data-tauri-drag-region`（导航栏、底部空白和设置 tab 栏）；置顶用前端 `@tauri-apps/api/window` 的 `setAlwaysOnTop`。
-- 文件拖入用 `onDragDropEvent` 取得原生路径；`-f` 附件拖出用 `tauri-plugin-drag` 的 `startDrag`。预览、系统图标和原生右键菜单由 `commands.rs` 中对应 command 提供。macOS Quick Look 打开后可与 Popup 并行交互：弹窗内点击和切题不关闭预览，附件高亮保留；输入焦点不会在面板关闭时被附件抢回。焦点不在输入控件时空格切换预览，提交 / 取消 / Popup 销毁主动关闭。
-- macOS Quick Look 对 Markdown 和 `.diff` / `.patch` 附件在后台生成临时 HTML；关闭或替换预览后，旧转换结果不会重新打开面板。Popup 中鼠标点击其他附件，或焦点回到附件列表后按方向键，会同步更新已打开的原生预览。Diff 预览为单栏、红绿增删底色和旧 / 新行号，保留文件头、变更块、提交说明及不能解析的原文；有读取与渲染上限，超限显示提示而不静默截断。附件 diff 解析和样式在 `attachment_diff.rs` / `attachment_diff.css`，原生接入在 `macos_quicklook.rs`，历史、待办和右键预览共用。范围与降级规则见 `docs/specs/diff-attachment-preview.md`。
+Popup 提问附件采用同窗右侧预览，具体决策见 `docs/specs/popup-attachment-preview-panel.md`。
+默认窗口紧凑，点击附件才扩展；切换不重建主区，作答、选项和当前题目状态独立保留。
+
+- 原生窗口下限仍为 420×480。`app/popup_preview.rs` 和 `popup_preview_geometry.rs` 管理固定右侧、必要时整窗左移、受限横向分区与关闭恢复；前端 prepare 后等待绘制，再提交原生几何并异步对账。关闭恢复展开前位置，用户移动过则保持新位置；临时缩窄和展开总宽不写入主区尺寸偏好。`persist_popup_size` 继续过滤预热、收尾、最大化和迟到事件，并读取最新 rememberSize。
+- 预览默认 700 宽，`channels.popup.previewWidth` 单独记忆用户的外缘 / 正常分隔线调整，遵守同一个 rememberSize 开关；空间限制或 DPI 变化造成的临时宽度不覆盖偏好。
+- `useAttachments.ts` 管理列表焦点、点击激活和原文件动作；`useAttachmentPreview.ts` 管理几何意图与布局订阅；`useAttachmentContent.ts` 管理读取代次、64 MiB 内容缓存及每附件的模式、滚动和图片缩放。收起保留本次阅读状态，下一请求清空。
+- `attachment_preview.rs` 从当前冷 / 热 Popup 的请求附件按索引读取，不接受任意路径；限制字节、文本行数、图片像素与动画帧预算，后台执行并丢弃失效代次。列表缩略图另有读取与缓存预算。Markdown 与普通文本支持 UTF-8、带 BOM 的 UTF-16，无法可靠识别或超限时保留打开和文件管理器定位入口。
+- `AttachmentPreviewPanel.vue` 提供单行标题栏、带边框的原文切换、固定右侧操作区。Markdown 使用 `attachment_markdown.rs` 的静态受限片段；diff 使用 `attachment_diff.rs` 的共享解析模型，由 `AttachmentDiffPreview.vue` 虚拟显示行；代码与原文作为文本展示。`AttachmentImagePreview.vue` 保留动画原字节，以实际溢出决定文件拖出或平移查看，SVG 只通过隔离 img 显示。
+- 窗口拖拽仍用主区 `data-tauri-drag-region`；文件拖出共用 `startDrag` 并使用原路径与有效 PNG 图标。原生拖入的预览区 / 分隔线落点不进入回复附件。附件列表空格和方向键、标题栏左右键与正文滚动分别路由；输入法、查找、语音及既有发送 / 取消优先级保留。
+- Popup 更多与右键共用 `popup_preview_menu`。macOS 保留完整原生菜单并将快速查看路由到当前 Popup；Windows / Linux 提供公共文件动作，定位失败显示错误。历史、待办及其他入口继续用已有 Quick Look；它们与 Popup 共用 diff 解析和 Markdown 静态渲染，范围见 `docs/specs/diff-attachment-preview.md`。
 
 ## 并发窗口焦点与级联
 

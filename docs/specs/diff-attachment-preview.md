@@ -1,12 +1,15 @@
 # Diff 附件预览
 
+> 本文记录共享 diff 格式与 macOS Quick Look 渲染。Popup 同窗面板与原文切换见
+> [popup-attachment-preview-panel.md](popup-attachment-preview-panel.md)，其 diff 格式沿用本文。
+
 ## 已确认范围
 
-- macOS 原生 Quick Look 内预览扩展名为 `.diff` / `.patch` 的附件，大小写不敏感。
+- 扩展名 `.diff` / `.patch` 大小写不敏感；Popup 使用同窗面板，macOS 其他入口使用原生 Quick Look。
 - 单栏 unified diff；显示新增绿色底、删除红色底、原始 `+` / `-` 前缀、旧 / 新行号、文件头与变更块。
-- 沿用现有空格、方向键、关闭、附件打开与拖出操作。历史、待办、原生右键菜单共享同一预览入口。
-- Popup 预览打开后，鼠标点击其他附件或焦点回到附件列表后按方向键，选中索引会同步到 Quick Look；未打开预览时仍只改变选中项。原生面板的索引回传不再次触发预览请求；Windows/Linux 不因选中项变化额外打开外部程序。
-- 本次不增加代码语法高亮、双栏对照、普通文本内容嗅探或 Windows/Linux 内置预览。
+- `attachment_diff::parse` 返回同一份文件段与行模型；Quick Look 生成静态 HTML，Popup 通过 Vue 文本插值虚拟显示行，保留原文切换和每附件阅读状态。
+- Popup 的激活、键盘和跨平台文件操作由关联面板规格定义；其他入口保留原生预览流程。
+- 不增加代码语法高亮或双栏对照；普通文本识别属于 Popup 面板，不属于 diff 解析器。
 
 ## 格式和显示
 
@@ -16,7 +19,7 @@
 
 不完整或无法解析的变更块、combined diff、无文件头的片段保持原文，不推测行号；出现不能解析的变更块或整份附件没有支持的变更块时显示说明。此预览不是 patch 合法性校验器，未识别的其他内容也仍完整显示。
 
-使用等宽字体，保留缩进、空白、空行和显式无末尾换行标记，兼容 UTF-8 BOM / CRLF；行号不可选中，代码保留原始前缀。长行在文件块内横向滚动，文件头可换行。跟随系统深浅色。
+使用等宽字体，保留缩进、空白、空行和显式无末尾换行标记，兼容 UTF-8 BOM / CRLF；行号不可选中，代码保留原始前缀。Quick Look 长行在文件块内横向滚动、文件头可换行，跟随系统深浅色；Popup 长行在独立正文横向滚动、文件头保持单行，跟随应用有效主题。行号 DTO 序列化为十进制字符串，避免 JavaScript 大整数精度丢失。
 
 ## 安全与资源边界
 
@@ -31,4 +34,4 @@
 
 Rust 测试覆盖范围解析、两侧行号、多个文件 / 变更块、增删文件、重命名、邮件头、二进制段、无末尾换行、BOM / CRLF、扩展名、转义和资源上限。验收样例为 `src-tauri/tests/fixtures/attachment-preview.patch`。
 
-运行安装脚本后，以真实 Popup 验证 diff 高亮、行号、长行横向滚动、与 Markdown 混合切换、原生右键预览及关闭行为；深浅色跟随系统。Windows/Linux 仍使用系统默认程序打开附件。
+macOS 已用安装后的真实 Popup 验证 diff 高亮、两侧行号、原文与 Markdown 混合切换。Popup 面板的安装验收及 Windows / Linux 实机 gate 见关联实现计划；原生 Quick Look 转换与其他入口行为保留。

@@ -17,7 +17,7 @@ use objc2::runtime::{AnyClass, AnyObject, NSObject, NSObjectProtocol};
 use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker};
 use objc2_foundation::{NSArray, NSPoint, NSString, NSURL};
 use std::cell::RefCell;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 // 菜单项 tag → 动作。100+ 表示「打开方式」中的第 N 个应用。
 const TAG_OPEN: isize = 1;
@@ -67,6 +67,7 @@ pub fn choose_directory() -> Result<Option<String>, String> {
 struct Ivars {
     app: AppHandle,
     path: String,
+    popup: Option<(String, usize)>,
     app_urls: RefCell<Vec<Retained<NSURL>>>,
 }
 
@@ -88,10 +89,11 @@ define_class!(
 );
 
 impl Target {
-    fn new(app: AppHandle, path: String) -> Retained<Self> {
+    fn new(app: AppHandle, path: String, popup: Option<(String, usize)>) -> Retained<Self> {
         let this = Self::alloc().set_ivars(Ivars {
             app,
             path,
+            popup,
             app_urls: RefCell::new(Vec::new()),
         });
         unsafe { msg_send![super(this), init] }
@@ -99,6 +101,25 @@ impl Target {
 
     unsafe fn perform(&self, tag: isize) {
         let path = self.ivars().path.clone();
+        if let Some((request_id, index)) = &self.ivars().popup {
+            let Some(window) = self
+                .ivars()
+                .app
+                .get_webview_window("popup")
+                .map(|w| w.as_ref().window())
+            else {
+                return;
+            };
+            if !crate::app::popup_preview::request(&window, request_id).is_ok_and(|request| {
+                request
+                    .message
+                    .files
+                    .get(*index)
+                    .is_some_and(|file| file.path == path)
+            }) {
+                return;
+            }
+        }
         let ws = workspace();
         let url = file_url(&path);
         match tag {
@@ -106,10 +127,23 @@ impl Target {
                 let _: bool = msg_send![ws, openURL: &*url];
             }
             TAG_REVEAL => {
-                let arr = NSArray::from_slice(&[&*url]);
-                let _: () = msg_send![ws, activateFileViewerSelectingURLs: &*arr];
+                let _ = reveal_file(&path);
             }
             TAG_QUICKLOOK => {
+                if let Some((request_id, index)) = &self.ivars().popup {
+                    if let Some(window) = self
+                        .ivars()
+                        .app
+                        .get_webview_window("popup")
+                        .map(|w| w.as_ref().window())
+                    {
+                        let _ = window.emit(
+                            "popup-preview-show",
+                            serde_json::json!({ "requestId": request_id, "index": index }),
+                        );
+                    }
+                    return;
+                }
                 let win = self
                     .ivars()
                     .app
@@ -193,6 +227,22 @@ fn general_pasteboard() -> *mut AnyObject {
 
 fn file_url(path: &str) -> Retained<NSURL> {
     NSURL::fileURLWithPath(&NSString::from_str(path))
+}
+
+/// Reveal the original file through the same native API as the attachment menu.
+pub fn reveal_file(path: &str) -> Result<(), String> {
+    if MainThreadMarker::new().is_none() {
+        return Err("file reveal requires the main thread".into());
+    }
+    if !std::path::Path::new(path).exists() {
+        return Err("attachment no longer exists".into());
+    }
+    unsafe {
+        let url = file_url(path);
+        let arr = NSArray::from_slice(&[&*url]);
+        let _: () = msg_send![workspace(), activateFileViewerSelectingURLs: &*arr];
+    }
+    Ok(())
 }
 
 /// 用指定应用打开文件（采用稳定的 openFile:withApplication:）。
@@ -293,12 +343,22 @@ fn basename(path: &str) -> String {
 
 /// 构建并弹出附件的右键菜单。
 pub fn show(app: AppHandle, path: String) {
+    show_context(app, path, None);
+}
+pub fn show_popup(app: AppHandle, path: String, request_id: String, index: usize) {
+    show_context(app, path, Some((request_id, index)));
+}
+fn show_context(app: AppHandle, path: String, popup: Option<(String, usize)>) {
     if MainThreadMarker::new().is_none() {
         return;
     }
     let lang = Lang::current();
     let name = basename(&path);
-    let target = Target::new(app, path.clone());
+    let popup_window = popup
+        .as_ref()
+        .and_then(|_| app.get_webview_window("popup"))
+        .and_then(|w| w.ns_window().ok());
+    let target = Target::new(app, path.clone(), popup);
 
     unsafe {
         let menu = new_menu();
@@ -360,13 +420,22 @@ pub fn show(app: AppHandle, path: String) {
         );
         add_item(menu, tr(lang, "menu.copyPath"), TAG_COPY_PATH, &target);
 
-        // 在当前鼠标位置（屏幕坐标）弹出；inView 传 nil 即按屏幕坐标定位。
+        // Associate Popup menus with their invoking window, including keyboard activation.
         let event_cls = AnyClass::get(c"NSEvent").expect("NSEvent");
-        let loc: NSPoint = msg_send![event_cls, mouseLocation];
+        let mut loc: NSPoint = msg_send![event_cls, mouseLocation];
         let nil_item: *mut AnyObject = std::ptr::null_mut();
-        let nil_view: *mut AnyObject = std::ptr::null_mut();
+        let mut view: *mut AnyObject = std::ptr::null_mut();
+        if let Some(window) = popup_window {
+            let window = window as *mut AnyObject;
+            view = msg_send![window, contentView];
+            if !view.is_null() {
+                loc = msg_send![window, convertPointFromScreen: loc];
+                let nil_view: *mut AnyObject = std::ptr::null_mut();
+                loc = msg_send![view, convertPoint: loc, fromView: nil_view];
+            }
+        }
         let _: bool =
-            msg_send![menu, popUpMenuPositioningItem: nil_item, atLocation: loc, inView: nil_view];
+            msg_send![menu, popUpMenuPositioningItem: nil_item, atLocation: loc, inView: view];
     }
     // target 在此前一直被栈持有；popUp 为模态，动作在返回前同步执行完。
     drop(target);

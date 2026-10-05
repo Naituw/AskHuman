@@ -3,6 +3,16 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 待外部验收：Windows / Linux Popup 附件预览面板
+
+实现、macOS 安装及用户体验验收已完成，自动回归和真实 WKWebView / AppKit 验证记录见
+`docs/plans/popup-attachment-preview-panel.md` §9；行为规格见
+`docs/specs/popup-attachment-preview-panel.md`。已验证固定右侧、分隔线、外缘缩窄后的主区恢复、
+最大化后恢复、阅读状态、图片动画 / 平移、原文件打开及多题草稿提交。展开总尺寸未污染主区偏好。
+
+剩余为 Windows / Linux 实机安装、DPI / 多屏、X11 / Wayland、目标应用拖放：保留已确认的外部
+gate（AskHuman 项目 todo #3），完成后删除本节。不得以 macOS 或纯计算测试代替这些平台实机证据。
+
 ## 待外部验收：Windows 发布候选
 
 功能与架构实现已在 `codex/windows-platform-parity` 完成；设计、实施记录和 Win11 证据见

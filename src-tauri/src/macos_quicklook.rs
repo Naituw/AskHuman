@@ -338,19 +338,7 @@ fn write_preview_html(path: &str, doc: &str) -> Option<String> {
 /// Markdown → HTML 片段。启用常用 GFM 扩展；**原始 HTML 一律转义为文本**（对齐前端
 /// markdown-it 的 `html:false`，避免本地预览里执行任意标记）。
 fn markdown_to_html(src: &str) -> String {
-    use pulldown_cmark::{html, Event, Options, Parser};
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_TABLES);
-    opts.insert(Options::ENABLE_STRIKETHROUGH);
-    opts.insert(Options::ENABLE_TASKLISTS);
-    opts.insert(Options::ENABLE_FOOTNOTES);
-    let parser = Parser::new_ext(src, opts).map(|ev| match ev {
-        Event::Html(s) | Event::InlineHtml(s) => Event::Text(s),
-        other => other,
-    });
-    let mut out = String::new();
-    html::push_html(&mut out, parser);
-    out
+    crate::attachment_markdown::render(src, false)
 }
 
 /// 包成自包含 HTML 文档：内联样式 + 深浅色随系统（QuickLook 用 WebKit 渲染、遵循系统外观）。

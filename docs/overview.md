@@ -73,6 +73,8 @@ AskHuman/
       dev_instance.rs · dev_presets.rs  WorkTree Dev Instance 与渠道预设
       macos_quicklook.rs     macOS Quick Look 与文件图标
       macos_menu.rs          macOS 附件原生右键菜单
+      attachment_preview.rs Popup 请求内附件有界读取、类型与资源判定
+      attachment_diff.rs · attachment_markdown.rs  Popup / Quick Look 共享解析与静态渲染
 
       cli/
         mod.rs               argv 总分发与各运行角色入口
@@ -124,6 +126,8 @@ AskHuman/
         gui_host.rs          GUI Host、托盘和 daemon 状态订阅
         tray_menu.rs         托盘菜单模型与最小 diff
         coordinator.rs       首答胜出与其它渠道取消
+        popup_preview.rs · popup_preview_geometry.rs  同窗预览几何与主区尺寸投影
+        popup_preview_actions.rs  Popup 原文件菜单与跨平台定位
 
       channels/
         mod.rs               Channel、ResultSink 与 Preemption 抽象
@@ -238,7 +242,8 @@ AskHuman/
 ## 前端 ↔ 后端命令（`commands.rs` ↔ `lib/ipc.ts`）
 
 - 弹窗：`popup_init`、`submit_popup`、`cancel_popup`
-- 附件：`open_path`、`preview_attachments`、`close_preview`、`read_image_data_url`、`file_icon_data_url`、`show_attachment_menu`
+- Popup 提问附件：`popup_preview_prepare` / `layout`、`popup_preview_read` / `cancel_read` / `thumbnail`、`popup_preview_reveal` / `menu`；原文件打开仍用 `open_path`
+- 其他附件入口：`preview_attachments`、`close_preview`、`read_image_data_url`、`file_icon_data_url`、`show_attachment_menu`
 - 设置：`get_settings`、`save_settings`、`get_prompt`、`set_theme`、`update_theme`、`open_settings`、`popup_sound_support`、`play_popup_sound`
 - 历史：`open_history`、`history_init`、`get_history`、`get_history_projects`、`history_count`、`trim_history`、`resolve_history_session_titles`、`delete_history_entries`、`clear_all_history`
 - Cursor / Claude 超时 Hook 与 Pi Extension：前两者保留专用命令；统一设置入口走 `agent_mode_*` 与 `agent_hook_reveal` / `open`
@@ -253,7 +258,7 @@ AskHuman/
 
 Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-popup-ui.md`：
 
-- 弹窗支持 Markdown、附件拖入/拖出、原生预览与右键菜单。
+- 弹窗支持 Markdown、附件拖入 / 拖出、同窗右侧附件预览与原文件菜单；其他入口保留既有预览。
 - 来源名优先级为自定义环境变量 > 发起 Agent > 默认「the Loop」；头部同时展示 Agent、workspace 和提问时间。
 - 多问题纵向模式由实验开关控制，设计见 `docs/specs/multi-question-vertical.md`。
 - 推荐选项不自动预选，提交值始终为原文，规格见 `docs/specs/recommended-option.md`。

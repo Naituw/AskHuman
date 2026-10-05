@@ -5,6 +5,18 @@ use crate::config::PopupChannelConfig;
 pub(super) const MIN_WIDTH: f64 = 420.0;
 pub(super) const MIN_HEIGHT: f64 = 480.0;
 
+pub(super) fn restored_preview_width(config: &PopupChannelConfig) -> f64 {
+    if config.remember_size
+        && config.preview_width.is_finite()
+        && config.preview_width > 0.0
+        && config.preview_width <= i32::MAX as f64
+    {
+        config.preview_width.max(320.0)
+    } else {
+        PopupChannelConfig::default().preview_width
+    }
+}
+
 pub(super) fn restored_size(config: &PopupChannelConfig) -> (f64, f64) {
     fn dimension(value: f64, minimum: f64, fallback: f64) -> f64 {
         if value.is_finite() && value > 0.0 && value <= i32::MAX as f64 {
@@ -87,6 +99,24 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(restored_size(&config), (MIN_WIDTH, MIN_HEIGHT));
+    }
+
+    #[test]
+    fn preview_width_recovers_old_configs_and_obeys_the_shared_switch() {
+        let mut config: PopupChannelConfig = serde_json::from_str(
+            r#"{"enabled":true,"width":560,"height":620,"rememberSize":true}"#,
+        )
+        .unwrap();
+        assert_eq!(restored_preview_width(&config), 700.0);
+        config.preview_width = 920.0;
+        assert_eq!(restored_preview_width(&config), 920.0);
+        config.remember_size = false;
+        assert_eq!(restored_preview_width(&config), 700.0);
+        config.remember_size = true;
+        for invalid in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::MAX] {
+            config.preview_width = invalid;
+            assert_eq!(restored_preview_width(&config), 700.0);
+        }
     }
 
     #[test]

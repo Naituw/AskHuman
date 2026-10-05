@@ -11,6 +11,8 @@ mod agents;
 mod app;
 mod ask_question;
 mod attachment_diff;
+mod attachment_markdown;
+mod attachment_preview;
 mod autochannel;
 mod channels;
 mod cli;

@@ -145,9 +145,34 @@ fn hunk<'a>(lines: &[&'a str], start: usize) -> Option<(Vec<Row<'a>>, usize)> {
     (old_left == 0 && new_left == 0).then_some((rows, i))
 }
 
-pub fn render(src: &str, title: &str) -> String {
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct DiffRow {
+    pub text: String,
+    pub kind: &'static str,
+    #[serde(serialize_with = "serialize_line_number")]
+    pub old: Option<u64>,
+    #[serde(serialize_with = "serialize_line_number")]
+    pub new: Option<u64>,
+}
+fn serialize_line_number<S: serde::Serializer>(
+    value: &Option<u64>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&value.map(|n| n.to_string()), serializer)
+}
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct DiffSection {
+    pub title: Option<String>,
+    pub rows: Vec<DiffRow>,
+}
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ParsedDiff {
+    pub sections: Vec<DiffSection>,
+    pub notice: Option<&'static str>,
+}
+pub fn parse(src: &str) -> Result<ParsedDiff, &'static str> {
     if src.len() > MAX_BYTES {
-        return document(title, "", Some("preview.diffLimit"));
+        return Err("preview.diffLimit");
     }
     let lines: Vec<_> = src
         .strip_prefix('\u{feff}')
@@ -156,16 +181,14 @@ pub fn render(src: &str, title: &str) -> String {
         .take(MAX_LINES + 1)
         .collect();
     if lines.len() > MAX_LINES || lines.iter().any(|line| line.len() > MAX_LINE_BYTES) {
-        return document(title, "", Some("preview.diffLimit"));
+        return Err("preview.diffLimit");
     }
-    let mut body = String::new();
-    let mut i = 0;
-    let mut in_file = false;
-    let mut git_file = false;
-    let mut binary = false;
-    let mut supported = false;
-    let mut unparsed = false;
-    body.push_str("<section><div class=\"diff-scroll\"><div class=\"diff\">");
+    let mut sections = vec![DiffSection {
+        title: None,
+        rows: Vec::new(),
+    }];
+    let (mut i, mut in_file, mut git_file, mut binary, mut supported, mut unparsed) =
+        (0, false, false, false, false, false);
     while i < lines.len() {
         let text = lines[i];
         let git_header = text.starts_with("diff --git ")
@@ -176,13 +199,10 @@ pub fn render(src: &str, title: &str) -> String {
                 .get(i + 1)
                 .is_some_and(|line| line.starts_with("+++ "));
         if git_header || (file_pair && !git_file) {
-            body.push_str("</div></div></section><section class=\"file\"><h2>");
-            // Use the original paths, including Git quoting, rather than guessing at spaces/escapes.
-            escape_into(
-                &mut body,
-                if git_header { text } else { &lines[i + 1][4..] },
-            );
-            body.push_str("</h2><div class=\"diff-scroll\"><div class=\"diff\">");
+            sections.push(DiffSection {
+                title: Some(if git_header { text } else { &lines[i + 1][4..] }.to_owned()),
+                rows: Vec::new(),
+            });
             git_file = git_header;
             in_file = file_pair || text.starts_with("diff --git ");
             binary = false;
@@ -193,19 +213,27 @@ pub fn render(src: &str, title: &str) -> String {
         if text == "GIT binary patch" || text.starts_with("Binary files ") {
             binary = true;
         }
+        let rows = &mut sections.last_mut().unwrap().rows;
         if text.starts_with("@@") {
             if in_file && !binary {
-                if let Some((rows, end)) = hunk(&lines, i) {
-                    render_row(&mut body, text, "hunk", None, None);
-                    for row in rows {
-                        let class = match row.kind {
+                if let Some((parsed, end)) = hunk(&lines, i) {
+                    rows.push(DiffRow {
+                        text: text.to_owned(),
+                        kind: "hunk",
+                        old: None,
+                        new: None,
+                    });
+                    rows.extend(parsed.into_iter().map(|row| DiffRow {
+                        text: row.text.to_owned(),
+                        kind: match row.kind {
                             Kind::Add => "add",
                             Kind::Delete => "delete",
                             Kind::Context => "context",
                             Kind::Meta => "meta",
-                        };
-                        render_row(&mut body, row.text, class, row.old, row.new);
-                    }
+                        },
+                        old: row.old,
+                        new: row.new,
+                    }));
                     supported = true;
                     i = end;
                     continue;
@@ -213,15 +241,40 @@ pub fn render(src: &str, title: &str) -> String {
             }
             unparsed = true;
         }
-        render_row(&mut body, text, "meta", None, None);
+        rows.push(DiffRow {
+            text: text.to_owned(),
+            kind: "meta",
+            old: None,
+            new: None,
+        });
         i += 1;
     }
-    body.push_str("</div></div></section>");
-    document(
-        title,
-        &body,
-        (unparsed || !supported).then_some("preview.diffPlain"),
-    )
+    Ok(ParsedDiff {
+        sections,
+        notice: (unparsed || !supported).then_some("preview.diffPlain"),
+    })
+}
+pub fn render(src: &str, title: &str) -> String {
+    let parsed = match parse(src) {
+        Ok(parsed) => parsed,
+        Err(note) => return document(title, "", Some(note)),
+    };
+    let mut body = String::new();
+    for section in parsed.sections {
+        if let Some(title) = section.title {
+            body.push_str("<section class=\"file\"><h2>");
+            escape_into(&mut body, &title);
+            body.push_str("</h2>");
+        } else {
+            body.push_str("<section>");
+        }
+        body.push_str("<div class=\"diff-scroll\"><div class=\"diff\">");
+        for row in section.rows {
+            render_row(&mut body, &row.text, row.kind, row.old, row.new);
+        }
+        body.push_str("</div></div></section>");
+    }
+    document(title, &body, parsed.notice)
 }
 
 fn render_row(out: &mut String, text: &str, class: &str, old: Option<u64>, new: Option<u64>) {
@@ -274,6 +327,19 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str = include_str!("../tests/fixtures/attachment-preview.patch");
+
+    #[test]
+    fn popup_line_numbers_keep_precision_beyond_javascript_integer_range() {
+        let row = DiffRow {
+            text: " context".into(),
+            kind: "context",
+            old: Some(9_007_199_254_740_993),
+            new: None,
+        };
+        let json = serde_json::to_value(row).unwrap();
+        assert_eq!(json["old"], "9007199254740993");
+        assert!(json["new"].is_null());
+    }
 
     #[test]
     fn only_explicit_diff_extensions_are_supported() {

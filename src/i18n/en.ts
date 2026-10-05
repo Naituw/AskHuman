@@ -96,6 +96,11 @@ export default {
       viewSource: "View source",
       viewRendered: "Rendered preview",
     },
+    preview: { title: "Attachment preview", open: "Open", close: "Close preview", resize: "Resize preview area",
+      raw: "View source", rendered: "View preview", more: "More actions", fit: "Fit", zoomIn: "Zoom in", zoomOut: "Zoom out",
+      reveal: { mac: "Show in Finder", windows: "Show in File Explorer", linux: "Show in file manager" },
+      unsupported: "Preview is not available for this file", encoding: "Text encoding could not be identified reliably", readFailed: "Unable to read this attachment", limit: "This attachment exceeds preview limits. Open it in the default app", imageFailed: "Unable to display this image", actionFailed: "The file manager could not locate this attachment. Retry or open the file",
+      diffPlain: "Some content could not be parsed and is shown as source" },
     find: {
       label: "Find in popup",
       placeholder: "Find",

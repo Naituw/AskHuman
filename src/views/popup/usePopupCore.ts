@@ -948,7 +948,7 @@ export function usePopupCore() {
   );
 
   // ===== 子域接线：附件 / 自更新 =====
-  const attach = useAttachments({ attachments });
+  const attach = useAttachments({ attachments, requestId: computed(() => request.value?.id ?? "") });
   const update = useUpdateState({ codeCopyLabels });
 
   // 托盘「待答」子菜单点击本弹窗时，边框闪烁一次（accent 蓝脉冲）。
@@ -1588,7 +1588,7 @@ export function usePopupCore() {
   async function submit() {
     if (submitting.value || !canSubmit.value) return;
     submitting.value = true;
-    attach.stopPreview();
+    attach.stopPreview(true);
     try {
       await submitPopup({ answers: collectAnswers() });
     } catch {
@@ -1851,7 +1851,7 @@ export function usePopupCore() {
     if (submitting.value) return;
     submitting.value = true;
     showCancelConfirm.value = false;
-    attach.stopPreview();
+    attach.stopPreview(true);
     try {
       await cancelPopup();
     } catch {
@@ -1899,6 +1899,7 @@ export function usePopupCore() {
   function onKeydown(e: KeyboardEvent) {
     const mod = primaryModifierPressed(e);
     cmdHeld.value = onlyCmdHeld(e);
+    if (!isConfirm.value && (e.isComposing || e.keyCode === 229)) return;
     // In-page find (⌘/Ctrl+F, Esc while open, ⌘G, …) — before business shortcuts.
     if (find.handleFindKeydown(e)) return;
     if (isConfirm.value) {
@@ -1944,10 +1945,16 @@ export function usePopupCore() {
       return;
     }
     // 录音中按 Esc：结束本次语音输入（不关闭弹窗）。
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape" && speech.listening.value) {
       e.preventDefault();
       speech.stopListening();
       return;
+    }
+    if (e.key === "Escape" && attach.handleAttachmentKey(e)) return;
+    if (e.key === "Enter" && (e.target as Element | null)?.closest(".attachment, .attachment-preview button, .attachment-preview a")) {
+      if (attach.handleAttachmentKey(e)) return;
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) return;
     }
     if (e.key === "Enter") {
       // IME composing: never treat Enter as submit (matches todo add input).
@@ -2224,6 +2231,11 @@ export function usePopupCore() {
         if (event.payload.type === "drop") attach.draggingOut.value = false;
         dropTargetQ.value = null;
         return;
+      }
+      if (event.payload.type === "over" || event.payload.type === "drop") {
+        const pos = event.payload.position;
+        const element = document.elementFromPoint((pos?.x ?? 0) / window.devicePixelRatio, (pos?.y ?? 0) / window.devicePixelRatio);
+        if (element?.closest(".attachment-preview, .attachment-preview-divider")) { dropTargetQ.value = null; return; }
       }
       if (event.payload.type === "over") {
         const pos = event.payload.position;

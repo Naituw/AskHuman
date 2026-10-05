@@ -93,6 +93,11 @@ export default {
       viewSource: "查看源码",
       viewRendered: "Markdown 预览",
     },
+    preview: { title: "附件预览", open: "打开", close: "关闭预览", resize: "调整预览区域",
+      raw: "查看原文", rendered: "查看预览", more: "更多操作", fit: "适应", zoomIn: "放大", zoomOut: "缩小",
+      reveal: { mac: "在访达中显示", windows: "在资源管理器中显示", linux: "在文件管理器中显示" },
+      unsupported: "暂不支持预览此文件", encoding: "无法可靠识别文本编码", readFailed: "无法读取附件", limit: "附件超出预览资源上限，请使用默认应用打开", imageFailed: "无法显示此图片", actionFailed: "文件管理器未能定位附件，请重试或使用打开",
+      diffPlain: "部分内容无法解析，已保留原文" },
     find: {
       label: "在弹窗中查找",
       placeholder: "查找",
