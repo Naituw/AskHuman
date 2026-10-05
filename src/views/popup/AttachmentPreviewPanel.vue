@@ -61,15 +61,16 @@ function markdownClick(event: MouseEvent) {
 </script>
 <template>
   <aside class="attachment-preview" :aria-label="t('popup.preview.title')">
-    <header class="attachment-preview-toolbar">
-      <span class="attachment-preview-title">
-        <span class="attachment-preview-name" :title="previewFile?.name">{{ previewFile?.name }}</span>
-        <span class="attachment-preview-mode-slot">
+    <!-- Explicit regions preserve the pointer behavior of controls and preview content. -->
+    <header class="attachment-preview-toolbar" data-tauri-drag-region>
+      <span class="attachment-preview-title" data-tauri-drag-region>
+        <span class="attachment-preview-name" :title="previewFile?.name" data-tauri-drag-region>{{ previewFile?.name }}</span>
+        <span class="attachment-preview-mode-slot" data-tauri-drag-region>
           <button v-if="canToggle" type="button" class="attachment-preview-mode" @click="toggleRaw">{{ t(raw ? 'popup.preview.rendered' : 'popup.preview.raw') }}</button>
         </span>
       </span>
-      <div class="attachment-preview-actions">
-        <span class="attachment-preview-count">{{ (previewIndex ?? 0) + 1 }} / {{ attachments.length }}</span>
+      <div class="attachment-preview-actions" data-tauri-drag-region>
+        <span class="attachment-preview-count" data-tauri-drag-region>{{ (previewIndex ?? 0) + 1 }} / {{ attachments.length }}</span>
         <button type="button" :disabled="previewIndex === 0" :aria-label="t('popup.prev')" @click="showPreview((previewIndex ?? 0) - 1)">‹</button>
         <button type="button" :disabled="previewIndex === attachments.length - 1" :aria-label="t('popup.next')" @click="showPreview((previewIndex ?? 0) + 1)">›</button>
         <button type="button" @click="previewFile && openFile(previewFile)">{{ t('popup.preview.open') }}</button>
@@ -78,10 +79,10 @@ function markdownClick(event: MouseEvent) {
       </div>
     </header>
     <p v-if="previewActionError" class="attachment-preview-notice" role="alert">{{ t('popup.preview.actionFailed') }}</p>
-    <div v-if="previewLoading" class="attachment-preview-status" role="status">{{ t('common.loading') }}</div>
-    <div v-else-if="reason" class="attachment-preview-status" role="status">
+    <div v-if="previewLoading" class="attachment-preview-status" role="status" data-tauri-drag-region>{{ t('common.loading') }}</div>
+    <div v-else-if="reason" class="attachment-preview-status" role="status" data-tauri-drag-region>
       <strong>{{ previewFile?.name }}</strong><p>{{ t(`popup.preview.${reason}`) }}</p>
-      <div class="attachment-preview-file-actions">
+      <div class="attachment-preview-file-actions" data-tauri-drag-region>
         <button type="button" @click="previewFile && openFile(previewFile)">{{ t('popup.preview.open') }}</button>
         <button type="button" @click="reveal()">{{ t(`popup.preview.reveal.${desktopPlatform}`) }}</button>
       </div>

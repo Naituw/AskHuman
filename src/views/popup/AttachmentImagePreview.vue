@@ -51,15 +51,15 @@ onBeforeUnmount(() => { saveScroll(); observer?.disconnect(); });
 </script>
 <template>
   <div class="attachment-image-preview">
-    <div class="attachment-image-controls">
+    <div class="attachment-image-controls" data-tauri-drag-region>
       <button type="button" :aria-pressed="state.zoom === 'fit'" @click="zoom('fit')">{{ t('popup.preview.fit') }}</button>
       <button type="button" :aria-pressed="state.zoom === 1" @click="zoom(1)">100%</button>
       <button type="button" :aria-label="t('popup.preview.zoomOut')" @click="zoom(factor / 1.25)">−</button>
-      <span>{{ Math.round(factor * 100) }}%</span>
+      <span data-tauri-drag-region>{{ Math.round(factor * 100) }}%</span>
       <button type="button" :aria-label="t('popup.preview.zoomIn')" @click="zoom(factor * 1.25)">+</button>
     </div>
     <div ref="viewport" class="attachment-image-viewport" tabindex="0" @scroll.passive="saveScroll">
-      <div class="attachment-image-stage" :style="{ minWidth: `${width * factor + 32}px`, minHeight: `${height * factor + 32}px` }">
+      <div class="attachment-image-stage" data-tauri-drag-region :style="{ minWidth: `${width * factor + 32}px`, minHeight: `${height * factor + 32}px` }">
         <img :src="url" :alt="name" :style="imageStyle" :draggable="!overflowing && !panning" :class="{ pannable: overflowing, panning }"
           @pointerdown="pan" @dragstart="drag" @load="measure(true)" @error="emit('error')" />
       </div>
