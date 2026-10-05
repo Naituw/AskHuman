@@ -19,7 +19,7 @@ use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOn
 use objc2_app_kit::{NSEvent, NSEventType, NSResponder};
 use objc2_foundation::{NSString, NSURL};
 use std::cell::{Cell, RefCell};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 const KEY_LEFT: u16 = 123;
 const KEY_RIGHT: u16 = 124;
@@ -62,6 +62,7 @@ define_class!(
 
         #[unsafe(method(endPreviewPanelControl:))]
         fn end_control(&self, _panel: *mut AnyObject) {
+            invalidate_preparation();
             // 面板关闭：通知前端预览已结束。
             let _ = self.ivars().app.emit("preview-closed", ());
         }
@@ -110,6 +111,8 @@ impl Controller {
             _ => return false,
         };
         if new != cur {
+            // Native navigation wins over a previously queued popup selection.
+            invalidate_preparation();
             self.ivars().index.set(new);
             let _: () = msg_send![panel, reloadData];
             let _ = self.ivars().app.emit("preview-index", new);
@@ -132,6 +135,16 @@ thread_local! {
     static CONTROLLER: RefCell<Option<Retained<Controller>>> = const { RefCell::new(None) };
     /// 标记是否已插入某窗口的响应链，避免重复插入。
     static CHAIN_INSTALLED: Cell<bool> = const { Cell::new(false) };
+    // All access is on the main thread. Closing/replacing a preview invalidates pending IO.
+    static PREPARATION: Cell<u64> = const { Cell::new(0) };
+}
+
+fn invalidate_preparation() -> u64 {
+    PREPARATION.with(|generation| {
+        let next = generation.get().wrapping_add(1);
+        generation.set(next);
+        next
+    })
 }
 
 fn panel_class() -> Option<&'static AnyClass> {
@@ -165,11 +178,36 @@ unsafe fn ensure_controller(app: &AppHandle, window: usize) -> Retained<Controll
 
 /// 打开预览：展示 `paths[index]` 单个文件；方向键经 handleEvent 逐个联动切换。
 pub fn show(app: AppHandle, window: usize, paths: &[String], index: usize) {
-    // Markdown 附件：渲染成自包含 HTML 临时文件再交给 QuickLook（系统对 .md 无渲染器，只显示源码）；
-    // 其它文件或渲染失败 → 用原路径按原样预览。
+    let generation = invalidate_preparation();
+    let paths = paths.to_vec();
+    tauri::async_runtime::spawn_blocking(move || {
+        let prepared: Vec<_> = paths
+            .iter()
+            .map(|path| effective_preview_path(path))
+            .collect();
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if PREPARATION.with(|current| current.get() != generation) {
+                return;
+            }
+            // Never dereference an NSWindow that was destroyed while conversion was running.
+            if window != 0
+                && !app2.webview_windows().values().any(|win| {
+                    win.ns_window()
+                        .is_ok_and(|pointer| pointer as usize == window)
+                })
+            {
+                return;
+            }
+            show_prepared(app2, window, &prepared, index);
+        });
+    });
+}
+
+fn show_prepared(app: AppHandle, window: usize, paths: &[String], index: usize) {
     let urls: Vec<Retained<NSURL>> = paths
         .iter()
-        .map(|p| NSURL::fileURLWithPath(&NSString::from_str(&effective_preview_path(p))))
+        .map(|p| NSURL::fileURLWithPath(&NSString::from_str(p)))
         .collect();
     if urls.is_empty() {
         return;
@@ -256,9 +294,12 @@ pub fn file_icon_png_base64(path: &str) -> Result<String, String> {
 /// 已识别的 Markdown 扩展名（小写、含点）。
 const MARKDOWN_EXTS: [&str; 5] = [".md", ".markdown", ".mdown", ".mkd", ".mdwn"];
 
-/// 取该路径用于 QuickLook 预览的实际文件：Markdown → 渲染成临时 HTML 返回其路径；
-/// 非 Markdown 或渲染失败 → 原路径（让 QuickLook 按原样预览，至少不丢功能）。
+/// Convert supported text attachments to static HTML; preserve the original on write failure.
 fn effective_preview_path(path: &str) -> String {
+    if crate::attachment_diff::supports(path) {
+        return write_preview_html(path, &crate::attachment_diff::render_file(path))
+            .unwrap_or_else(|| path.to_string());
+    }
     let lower = path.to_ascii_lowercase();
     if !MARKDOWN_EXTS.iter().any(|e| lower.ends_with(e)) {
         return path.to_string();
@@ -271,16 +312,19 @@ fn effective_preview_path(path: &str) -> String {
 /// 独立子目录避免同名附件相互覆盖，并让标题栏显示「<原名>.html」（而非随机串）。
 fn render_markdown_to_temp_html(path: &str) -> Option<String> {
     let src = std::fs::read_to_string(path).ok()?;
-    let stem = std::path::Path::new(path)
-        .file_stem()
-        .and_then(|n| n.to_str())
-        .unwrap_or("preview");
     let title = std::path::Path::new(path)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("preview");
     let doc = wrap_html(title, &markdown_to_html(&src));
+    write_preview_html(path, &doc)
+}
 
+fn write_preview_html(path: &str, doc: &str) -> Option<String> {
+    let stem = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or("preview");
     let dir = std::env::temp_dir()
         .join("askhuman")
         .join("preview")
@@ -379,6 +423,7 @@ body {
 
 /// 关闭当前预览面板（若存在且可见）。
 pub fn hide() {
+    invalidate_preparation();
     let Some(cls) = panel_class() else {
         return;
     };
@@ -393,5 +438,41 @@ pub fn hide() {
             let null: *mut AnyObject = std::ptr::null_mut();
             let _: () = msg_send![&*panel, orderOut: null];
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diff_attachment_becomes_html_without_changing_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("review.PATCH");
+        let src = include_str!("../tests/fixtures/attachment-preview.patch");
+        std::fs::write(&path, src).unwrap();
+        let converted = effective_preview_path(path.to_str().unwrap());
+        assert!(converted.ends_with("review.html"));
+        let html = std::fs::read_to_string(&converted).unwrap();
+        assert!(html.contains("class=\"line add\""));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), src);
+        std::fs::remove_dir_all(std::path::Path::new(&converted).parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn markdown_still_renders_and_other_attachments_keep_their_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.md");
+        std::fs::write(&path, "# Title\n\n<script>hello</script>").unwrap();
+        let converted = effective_preview_path(path.to_str().unwrap());
+        let html = std::fs::read_to_string(&converted).unwrap();
+        assert!(html.contains("<h1>Title</h1>"));
+        assert!(!html.contains("<script>"));
+        std::fs::remove_dir_all(std::path::Path::new(&converted).parent().unwrap()).unwrap();
+        let other = dir.path().join("plain.txt");
+        assert_eq!(
+            effective_preview_path(other.to_str().unwrap()),
+            other.to_str().unwrap()
+        );
     }
 }

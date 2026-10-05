@@ -7,6 +7,7 @@
 - 弹窗创建和上屏恢复尺寸共用校验：零值、负值、非有限值或超出原生尺寸表示范围时按对应维度回退默认值，正值至少满足原生最小尺寸 420×480。尺寸记忆只采纳已上屏、可见、非最小化/最大化且未收尾窗口的有效变化；过滤与当前原生尺寸不符的延迟事件，以及与恢复尺寸相同的程序回调，避免预热或并发 helper 把异常/旧尺寸写回共享配置。读取最新的 `rememberSize` 开关；污染配置在窗口使用时恢复，正常拖动后写回有效尺寸。
 - 窗口拖拽用 `data-tauri-drag-region`（导航栏、底部空白和设置 tab 栏）；置顶用前端 `@tauri-apps/api/window` 的 `setAlwaysOnTop`。
 - 文件拖入用 `onDragDropEvent` 取得原生路径；`-f` 附件拖出用 `tauri-plugin-drag` 的 `startDrag`。预览、系统图标和原生右键菜单由 `commands.rs` 中对应 command 提供。macOS Quick Look 打开后可与 Popup 并行交互：弹窗内点击和切题不关闭预览，附件高亮保留；输入焦点不会在面板关闭时被附件抢回。焦点不在输入控件时空格切换预览，提交 / 取消 / Popup 销毁主动关闭。
+- macOS Quick Look 对 Markdown 和 `.diff` / `.patch` 附件在后台生成临时 HTML；关闭或替换预览后，旧转换结果不会重新打开面板。Popup 中鼠标点击其他附件，或焦点回到附件列表后按方向键，会同步更新已打开的原生预览。Diff 预览为单栏、红绿增删底色和旧 / 新行号，保留文件头、变更块、提交说明及不能解析的原文；有读取与渲染上限，超限显示提示而不静默截断。附件 diff 解析和样式在 `attachment_diff.rs` / `attachment_diff.css`，原生接入在 `macos_quicklook.rs`，历史、待办和右键预览共用。范围与降级规则见 `docs/specs/diff-attachment-preview.md`。
 
 ## 并发窗口焦点与级联
 

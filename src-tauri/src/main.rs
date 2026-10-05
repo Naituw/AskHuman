@@ -10,6 +10,7 @@
 mod agents;
 mod app;
 mod ask_question;
+mod attachment_diff;
 mod autochannel;
 mod channels;
 mod cli;

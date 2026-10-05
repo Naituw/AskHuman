@@ -1160,6 +1160,10 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "test.questionSuggestions" => pick(lang, "Any other suggestions?", "还有其他建议吗？"),
 
         // —— IPC 命令直接返回的 GUI 文案（commands.rs）——
+        "preview.diffLimit" => pick(lang, "This diff exceeds the preview limit (2 MiB, 20,000 lines, or 16 KiB per line). No content is displayed. Open the original attachment to review it.", "此 diff 超出预览限制（2 MiB、20,000 行或单行 16 KiB），未展示内容。请打开原始附件查看。"),
+        "preview.diffEncoding" => pick(lang, "This attachment is not UTF-8 text or contains binary data. Open the original attachment to review it.", "此附件不是 UTF-8 文本或包含二进制数据，请打开原始附件查看。"),
+        "preview.diffReadFailed" => pick(lang, "Could not read this attachment. Check whether the original file is still available.", "无法读取此附件，请检查原始文件是否仍然可用。"),
+        "preview.diffPlain" => pick(lang, "Content without a supported, complete unified diff hunk is shown as plain text; no line numbers are inferred for it.", "不属于受支持的完整 unified diff 变更块的内容按原文展示，不推测行号。"),
         "cmd.invalidAttachmentIndex" => pick(lang, "Invalid attachment index", "无效的附件索引"),
         "cmd.readFileFailed" => pick(lang, "Failed to read file: {e}", "读取文件失败: {e}"),
         "cmd.fileIconUnsupported" => pick(

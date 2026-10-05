@@ -12,6 +12,7 @@ import {
 } from "../../lib/ipc";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type { FileAttachment } from "../../lib/types";
+import { isMac } from "../../lib/platform";
 
 export function useAttachments(deps: {
   attachments: ComputedRef<FileAttachment[]>;
@@ -33,7 +34,11 @@ export function useAttachments(deps: {
   }
 
   function selectFile(index: number) {
+    const changed = selectedFile.value !== index;
     focusAttachment(index);
+    // Keep the native panel in sync when selection moves back into the popup.
+    // Other platforms open an external application and have no live preview panel.
+    if (changed && previewing.value && isMac) updatePreview(index);
   }
 
   function openFile(file: FileAttachment) {
@@ -49,6 +54,10 @@ export function useAttachments(deps: {
     focusAttachment(index);
     previewing.value = true;
     restoreAttachmentFocusOnClose = true;
+    updatePreview(index);
+  }
+
+  function updatePreview(index: number) {
     previewAttachments(
       attachments.value.map((f) => f.path),
       index
@@ -83,9 +92,9 @@ export function useAttachments(deps: {
       if (previewing.value) stopPreview();
       else previewSelected(i);
     } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-      if (i < attachments.value.length - 1) focusAttachment(i + 1);
+      if (i < attachments.value.length - 1) selectFile(i + 1);
     } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-      if (i > 0) focusAttachment(i - 1);
+      if (i > 0) selectFile(i - 1);
     } else {
       return false;
     }
