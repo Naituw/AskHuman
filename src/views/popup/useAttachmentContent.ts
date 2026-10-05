@@ -6,6 +6,7 @@ export type PreviewContent = { kind: "markdown"; text: string; html: string }
   | { kind: "diff"; text: string; parsed: ParsedDiff }
   | { kind: "text"; text: string }
   | { kind: "image"; url: string; width: number; height: number }
+  | { kind: "native"; imageCount?: number | null }
   | { kind: "unavailable"; reason: string };
 export interface ReadingState {
   raw: boolean;

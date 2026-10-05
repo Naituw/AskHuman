@@ -19,15 +19,14 @@ fn main() {
             plist.display()
         );
 
-        // 语音输入：把 src-tauri/swift/*.swift 编为静态库并链入本二进制（macOS 26 SpeechAnalyzer）。
-        build_swift_speech(&manifest_dir);
+        // Compile the system speech and attachment preview bridges into the existing static library.
+        build_swift_bridges(&manifest_dir);
     }
     tauri_build::build()
 }
 
-/// 将 Swift 语音桥编译为静态库 `libahspeech.a` 并产出链接参数。
-/// 仅在 macOS 目标调用。按当前 cargo `$TARGET` 架构交叉编译对应切片（不做 lipo）。
-fn build_swift_speech(manifest_dir: &str) {
+/// Compile the Swift bridges for the Cargo target architecture and emit link arguments.
+fn build_swift_bridges(manifest_dir: &str) {
     use std::path::Path;
     use std::process::Command;
 
@@ -48,7 +47,7 @@ fn build_swift_speech(manifest_dir: &str) {
     }
     if sources.is_empty() {
         panic!(
-            "build_swift_speech: 未找到 swift 源文件于 {}",
+            "build_swift_bridges: 未找到 swift 源文件于 {}",
             swift_dir.display()
         );
     }
@@ -58,7 +57,7 @@ fn build_swift_speech(manifest_dir: &str) {
     let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
         Ok("aarch64") => "arm64",
         Ok("x86_64") => "x86_64",
-        other => panic!("build_swift_speech: 不支持的架构 {:?}", other),
+        other => panic!("build_swift_bridges: 不支持的架构 {:?}", other),
     };
     // 部署目标必须用「app 的最低系统版本」而非 26.0：
     // 用 26 SDK 编译，但 SpeechAnalyzer 等 26 专有 API 经 `if #available(macOS 26,*)` 弱链接，

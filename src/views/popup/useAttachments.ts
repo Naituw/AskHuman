@@ -85,7 +85,7 @@ export function useAttachments(deps: {
     let budget = 0;
     for (const [index, file] of attachments.value.entries()) {
       if (disposed || budget >= 8 * 1024 * 1024) break;
-      if (!file.isImage || thumbs.value[file.path]) continue;
+      if (thumbs.value[file.path]) continue;
       try {
         const url = await invoke<string | null>("popup_preview_thumbnail", { requestId: deps.requestId.value, index });
         if (disposed) break;

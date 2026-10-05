@@ -1074,15 +1074,22 @@ pub async fn popup_preview_read(
     if !epoch.current(&request_id, generation) {
         return Err("stale attachment read".into());
     }
+    let read_path = path.clone();
     let content = tauri::async_runtime::spawn_blocking(move || {
         let _permit = permit;
-        crate::attachment_preview::load(&path)
+        crate::attachment_preview::load(&read_path)
     })
     .await
     .map_err(|e| e.to_string())?;
     crate::app::popup_preview::request(&window, &request_id)?;
     if !epoch.current(&request_id, generation) {
         return Err("stale attachment read".into());
+    }
+    if matches!(content, crate::attachment_preview::Content::Native { .. }) {
+        window
+            .app_handle()
+            .state::<crate::attachment_preview::NativePermits>()
+            .allow(&request_id, index, &path);
     }
     Ok(crate::attachment_preview::Loaded {
         request_id,
@@ -1091,6 +1098,103 @@ pub async fn popup_preview_read(
         content,
     })
 }
+/// Frame and attachment are validated independently; the frontend never supplies a file path.
+#[tauri::command]
+pub async fn popup_preview_native(
+    window: tauri::Window,
+    request_id: String,
+    index: Option<usize>,
+    version: u64,
+    rect: Option<crate::attachment_preview::ViewRect>,
+    bare_enter: bool,
+) -> Result<(), String> {
+    crate::app::popup_preview::request(&window, &request_id)?;
+    let app = window.app_handle();
+    app.state::<crate::attachment_preview::NativeGeneration>()
+        .0
+        .invalidate(&request_id, version);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (index, rect, bare_enter);
+        Err("system preview is only available on macOS".into())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let window = window.clone();
+        app.run_on_main_thread(move || {
+            let result = (|| {
+                let request = crate::app::popup_preview::request(&window, &request_id)?;
+                if !window
+                    .app_handle()
+                    .state::<crate::attachment_preview::NativeGeneration>()
+                    .0
+                    .current(&request_id, version)
+                {
+                    return Err("stale system preview".into());
+                }
+                let layout = crate::app::popup_preview::published(&window);
+                let native = index.zip(rect).filter(|_| {
+                    layout
+                        .as_ref()
+                        .is_some_and(|l| l.side != crate::app::popup_preview_geometry::Side::Closed)
+                });
+                let Some((index, rect)) = native else {
+                    return crate::macos_attachment_preview::update_view(
+                        &window,
+                        &request_id,
+                        None,
+                        None,
+                        None,
+                        bare_enter,
+                    );
+                };
+                let file = request
+                    .message
+                    .files
+                    .get(index)
+                    .ok_or("invalid attachment index")?;
+                if !window
+                    .app_handle()
+                    .state::<crate::attachment_preview::NativePermits>()
+                    .check(&request_id, index, &file.path)
+                {
+                    return Err("attachment changed or is not a system preview".into());
+                }
+                let size = window.inner_size().map_err(|e| e.to_string())?;
+                let scale = window.scale_factor().map_err(|e| e.to_string())?;
+                let rect = rect.clipped(
+                    layout.unwrap().main_width,
+                    size.width as f64 / scale,
+                    size.height as f64 / scale,
+                );
+                if let Some(rect) = rect {
+                    crate::macos_attachment_preview::update_view(
+                        &window,
+                        &request_id,
+                        Some(index),
+                        Some(&file.path),
+                        Some(rect),
+                        bare_enter,
+                    )
+                } else {
+                    crate::macos_attachment_preview::update_view(
+                        &window,
+                        &request_id,
+                        None,
+                        None,
+                        None,
+                        bare_enter,
+                    )
+                }
+            })();
+            let _ = tx.send(result);
+        })
+        .map_err(|e| e.to_string())?;
+        rx.await.map_err(|e| e.to_string())?
+    }
+}
+
 #[tauri::command]
 pub fn popup_preview_cancel_read(
     window: tauri::Window,

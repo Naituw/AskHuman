@@ -107,6 +107,7 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::popup_preview_layout,
         crate::commands::popup_preview_prepare,
         crate::commands::popup_preview_read,
+        crate::commands::popup_preview_native,
         crate::commands::popup_preview_cancel_read,
         crate::commands::popup_preview_thumbnail,
         crate::commands::popup_preview_reveal,

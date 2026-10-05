@@ -76,10 +76,10 @@ sys-locale = "0.3.2"
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 # 打包 docx（OOXML zip）。仅启用 flate2+zlib-rs 的 deflate 后端（快且小，避免 zopfli）。
 zip = { version = "4.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
-# 钉钉图片仅支持 jpg/png/gif/bmp(≤1MB)：把 webp 等不支持格式转码、并对超限图做缩放保护。
-# 仅启 png/jpeg/webp 解编码以控体积（heic/tiff 等无法解码时回退原图，best-effort）。
 roxmltree = "0.20"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
+# Shared channel conversion and Popup codecs; keep default codecs disabled to control size.
+# ICO reuses PNG/BMP, and TGA/PNM add no external decoder crates.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico", "tga", "pnm"] }
 # 官方 Rust MCP SDK：`AskHuman mcp` 以 STDIO 暴露 `ask` 工具（server + 宏 + stdio transport）。
 # server feature 已含 macros 与 transport-io；显式列出 transport-io 以防特性裁剪。
 rmcp = { version = "2", features = ["server", "transport-io"] }

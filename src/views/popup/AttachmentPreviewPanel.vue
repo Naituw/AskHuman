@@ -4,18 +4,26 @@ import { useI18n } from "vue-i18n";
 import { desktopPlatform } from "../../lib/platform";
 import { openPath } from "../../lib/ipc";
 import { usePopupContext } from "./context";
+import { useNativeAttachmentPreview } from "./useNativeAttachmentPreview";
 import AttachmentDiffPreview from "./AttachmentDiffPreview.vue";
 import AttachmentImagePreview from "./AttachmentImagePreview.vue";
 const { t } = useI18n();
 const { previewFile, previewIndex, attachments, showPreview, stopPreview, openFile, showPreviewMenu, revealFile,
-  previewContent, previewLoading, currentReadingState, onAttachmentDragStart, previewActionError } = usePopupContext();
+  previewContent, previewLoading, currentReadingState, onAttachmentDragStart, previewActionError, request, nativePreviewBlocked, previewTransition, previewLayout, submitWithBareEnter } = usePopupContext();
+const nativeBody = ref<HTMLElement | null>(null);
+const { nativeFailed } = useNativeAttachmentPreview({
+  requestId: computed(() => request.value?.id ?? ""), index: previewIndex, element: nativeBody,
+  active: computed(() => previewContent.value?.kind === "native"),
+  blocked: computed(() => nativePreviewBlocked.value || !!previewTransition.value),
+  bareEnter: submitWithBareEnter, revision: computed(() => previewLayout.value.revision),
+});
 const body = ref<HTMLElement | null>(null);
 const top = ref(0);
 const imageFailed = ref(false);
 const actionError = ref(false);
 const canToggle = computed(() => previewContent.value?.kind === "markdown" || previewContent.value?.kind === "diff");
 const raw = computed(() => canToggle.value && currentReadingState.value?.raw);
-const reason = computed(() => imageFailed.value ? "imageFailed" : previewContent.value?.kind === "unavailable" ? previewContent.value.reason : null);
+const reason = computed(() => nativeFailed.value ? "unsupported" : imageFailed.value ? "imageFailed" : previewContent.value?.kind === "unavailable" ? previewContent.value.reason : null);
 let restoreVersion = 0;
 function saveScroll(index = previewIndex.value, mode: "raw" | "preview" = raw.value ? "raw" : "preview") {
   if (index === null || !body.value || !currentReadingState.value) return;
@@ -82,6 +90,10 @@ function markdownClick(event: MouseEvent) {
     <AttachmentImagePreview v-else-if="previewContent?.kind === 'image' && currentReadingState" :key="previewIndex ?? 0"
       v-bind="previewContent" :name="previewFile?.name ?? ''" :state="currentReadingState.image"
       @drag="previewFile && onAttachmentDragStart(previewFile, $event)" @error="imageFailed = true" />
+    <template v-else-if="previewContent?.kind === 'native'">
+      <p v-if="previewContent.imageCount" class="attachment-preview-notice">{{ t('popup.preview.multipleImages', { n: previewContent.imageCount }) }}</p>
+      <div ref="nativeBody" class="attachment-preview-body attachment-preview-native" :aria-label="t('popup.preview.system')"></div>
+    </template>
     <div v-else ref="body" class="attachment-preview-body" tabindex="0" @scroll.passive="saveScroll()">
       <pre v-if="previewContent && (raw || previewContent.kind === 'text')" class="attachment-preview-text">{{ 'text' in previewContent ? previewContent.text : '' }}</pre>
       <article v-else-if="previewContent?.kind === 'markdown'" class="attachment-preview-markdown" @click="markdownClick" v-html="previewContent.html"></article>

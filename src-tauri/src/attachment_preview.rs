@@ -20,11 +20,16 @@ impl ReadGeneration {
 }
 pub const TEXT_BYTES: usize = 2 * 1024 * 1024;
 pub const IMAGE_BYTES: usize = 20 * 1024 * 1024;
+pub const NATIVE_BYTES: u64 = 100 * 1024 * 1024;
 const IMAGE_PIXELS: u64 = 40_000_000;
 const ANIMATION_PIXELS: u64 = 80_000_000;
 const MAX_LINES: usize = 20_000;
 #[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum Content {
     Markdown {
         text: String,
@@ -41,6 +46,9 @@ pub enum Content {
         url: String,
         width: u32,
         height: u32,
+    },
+    Native {
+        image_count: Option<u32>,
     },
     Unavailable {
         reason: &'static str,
@@ -127,7 +135,118 @@ fn ext(path: &Path) -> String {
         .to_ascii_lowercase()
 }
 fn image_extension(ext: &str) -> bool {
-    matches!(ext, "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg")
+    matches!(
+        ext,
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "bmp"
+            | "svg"
+            | "ico"
+            | "tga"
+            | "pnm"
+            | "ppm"
+            | "pgm"
+            | "pbm"
+            | "pam"
+    ) || (cfg!(target_os = "macos") && system_image_extension(ext))
+}
+fn system_image_extension(ext: &str) -> bool {
+    matches!(
+        ext,
+        "icns"
+            | "cur"
+            | "tif"
+            | "tiff"
+            | "heic"
+            | "heif"
+            | "avif"
+            | "jp2"
+            | "j2k"
+            | "jpf"
+            | "jpx"
+            | "psd"
+            | "exr"
+            | "jxl"
+            | "hdr"
+            | "sgi"
+            | "dds"
+            | "ktx"
+            | "pict"
+            | "pct"
+            | "raw"
+            | "dng"
+            | "cr2"
+            | "cr3"
+            | "crw"
+            | "nef"
+            | "nrw"
+            | "arw"
+            | "srf"
+            | "sr2"
+            | "orf"
+            | "rw2"
+            | "raf"
+            | "pef"
+            | "srw"
+            | "3fr"
+            | "fff"
+            | "iiq"
+            | "mos"
+            | "kdc"
+            | "dcr"
+            | "mrw"
+    )
+}
+fn system_document_extension(ext: &str) -> bool {
+    matches!(
+        ext,
+        "pdf"
+            | "rtf"
+            | "doc"
+            | "docx"
+            | "xls"
+            | "xlsx"
+            | "ppt"
+            | "pptx"
+            | "pages"
+            | "numbers"
+            | "key"
+            | "odt"
+            | "ods"
+            | "odp"
+            | "mp3"
+            | "m4a"
+            | "aac"
+            | "wav"
+            | "aiff"
+            | "aif"
+            | "flac"
+            | "ogg"
+            | "mp4"
+            | "m4v"
+            | "mov"
+            | "avi"
+            | "mpeg"
+            | "mpg"
+            | "webm"
+            | "mkv"
+            | "usdz"
+            | "reality"
+            | "epub"
+    )
+}
+fn native_content(path: &Path) -> Result<Content, &'static str> {
+    let metadata = std::fs::metadata(path).map_err(|_| "readFailed")?;
+    if !metadata.is_file() {
+        return Err("unsupported");
+    }
+    if metadata.len() > NATIVE_BYTES {
+        return Err("limit");
+    }
+    Ok(Content::Native { image_count: None })
 }
 fn checked_pixels(w: u32, h: u32) -> Result<u64, &'static str> {
     let pixels = u64::from(w) * u64::from(h);
@@ -276,6 +395,49 @@ fn animation_budget(
     Ok(())
 }
 fn image_content(bytes: Vec<u8>, extension: &str) -> Result<Content, &'static str> {
+    #[cfg(target_os = "macos")]
+    if system_image_extension(extension) || extension == "ico" {
+        return match crate::macos_attachment_preview::decode_image(&bytes, false) {
+            Ok(crate::macos_attachment_preview::DecodedImage::Png {
+                bytes,
+                width,
+                height,
+            }) => Ok(png_content(bytes, width, height)),
+            Ok(crate::macos_attachment_preview::DecodedImage::Multipage { count }) => {
+                Ok(Content::Native {
+                    image_count: Some(count),
+                })
+            }
+            Err("unsupported") => Ok(Content::Native { image_count: None }),
+            Err(reason) => Err(reason),
+        };
+    }
+    if matches!(
+        extension,
+        "ico" | "tga" | "pnm" | "ppm" | "pgm" | "pbm" | "pam"
+    ) {
+        let format = if extension == "tga" {
+            image::ImageFormat::Tga
+        } else {
+            image::guess_format(&bytes).map_err(|_| "imageFailed")?
+        };
+        let reader = || image::ImageReader::with_format(std::io::Cursor::new(&bytes), format);
+        let (w, h) = reader().into_dimensions().map_err(|_| "imageFailed")?;
+        checked_pixels(w, h)?;
+        let mut decoder = reader();
+        let mut limits = image::Limits::default();
+        limits.max_alloc = Some(160 * 1024 * 1024);
+        decoder.limits(limits);
+        let decoded = decoder.decode().map_err(|_| "imageFailed")?;
+        let mut png = std::io::Cursor::new(Vec::new());
+        decoded
+            .write_to(&mut png, image::ImageFormat::Png)
+            .map_err(|_| "imageFailed")?;
+        if png.get_ref().len() > IMAGE_BYTES {
+            return Err("limit");
+        }
+        return Ok(png_content(png.into_inner(), w, h));
+    }
     let (mime, width, height) = if extension == "svg" {
         let (w, h) = svg_dimensions(&bytes)?;
         ("image/svg+xml", w, h)
@@ -305,9 +467,22 @@ fn image_content(bytes: Vec<u8>, extension: &str) -> Result<Content, &'static st
         height,
     })
 }
+fn png_content(bytes: Vec<u8>, width: u32, height: u32) -> Content {
+    Content::Image {
+        url: format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        ),
+        width,
+        height,
+    }
+}
 pub fn load(path: &str) -> Content {
     let path = Path::new(path);
     let extension = ext(path);
+    if cfg!(target_os = "macos") && system_document_extension(&extension) {
+        return native_content(path).unwrap_or_else(unavailable);
+    }
     let image = image_extension(&extension);
     let max = if image && extension != "svg" {
         IMAGE_BYTES
@@ -320,7 +495,18 @@ pub fn load(path: &str) -> Content {
             return image_content(bytes, &extension);
         }
         let diff = crate::attachment_diff::supports(path.to_str().unwrap_or(""));
-        let source = text(&bytes, !diff)?;
+        let source = match text(&bytes, !diff) {
+            Ok(text) => text,
+            Err(reason)
+                if cfg!(target_os = "macos")
+                    && !diff
+                    && !crate::attachment_markdown::supports(path.to_str().unwrap_or(""))
+                    && matches!(reason, "unsupported" | "encoding") =>
+            {
+                return native_content(path)
+            }
+            Err(reason) => return Err(reason),
+        };
         if diff {
             let parsed = crate::attachment_diff::parse(&source).map_err(|_| "limit")?;
             Ok(Content::Diff {
@@ -344,6 +530,20 @@ pub fn thumbnail(path: &str) -> Option<String> {
         return None;
     }
     let bytes = read(Path::new(path), TEXT_BYTES).ok()?;
+    #[cfg(target_os = "macos")]
+    if system_image_extension(&ext(Path::new(path))) || ext(Path::new(path)) == "ico" {
+        return match crate::macos_attachment_preview::decode_image(&bytes, true).ok()? {
+            crate::macos_attachment_preview::DecodedImage::Png {
+                bytes,
+                width,
+                height,
+            } => match png_content(bytes, width, height) {
+                Content::Image { url, .. } => Some(url),
+                _ => None,
+            },
+            _ => None,
+        };
+    }
     match image_content(bytes, &ext(Path::new(path))).ok()? {
         Content::Image { url, width, height }
             if u64::from(width) * u64::from(height) <= 4_000_000 =>
@@ -353,6 +553,75 @@ pub fn thumbnail(path: &str) -> Option<String> {
         _ => None,
     }
 }
+
+#[derive(Clone, serde::Deserialize)]
+pub struct ViewRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+impl ViewRect {
+    pub fn clipped(&self, main_width: f64, width: f64, height: f64) -> Option<Self> {
+        if ![
+            self.x,
+            self.y,
+            self.width,
+            self.height,
+            main_width,
+            width,
+            height,
+        ]
+        .iter()
+        .all(|v| v.is_finite())
+        {
+            return None;
+        }
+        // Never let a frontend-provided frame cover the answering area or fixed toolbar.
+        let x = self.x.max(main_width + 6.0).min(width);
+        let y = self.y.max(48.0).min(height);
+        let right = (self.x + self.width).min(width);
+        let bottom = (self.y + self.height).min(height);
+        (right > x && bottom > y).then_some(Self {
+            x,
+            y,
+            width: right - x,
+            height: bottom - y,
+        })
+    }
+}
+
+#[derive(Default)]
+pub struct NativeGeneration(pub ReadGeneration);
+type NativeStamp = (u64, Option<std::time::SystemTime>);
+type NativePermitMap = (String, std::collections::HashMap<usize, NativeStamp>);
+#[derive(Default)]
+pub struct NativePermits(std::sync::Mutex<NativePermitMap>);
+impl NativePermits {
+    pub fn allow(&self, request: &str, index: usize, path: &str) {
+        let Ok(metadata) = std::fs::metadata(path) else {
+            return;
+        };
+        let mut state = self.0.lock().unwrap();
+        if state.0 != request {
+            *state = (request.to_owned(), Default::default());
+        }
+        state
+            .1
+            .insert(index, (metadata.len(), metadata.modified().ok()));
+    }
+    pub fn check(&self, request: &str, index: usize, path: &str) -> bool {
+        let Ok(metadata) = std::fs::metadata(path) else {
+            return false;
+        };
+        let state = self.0.lock().unwrap();
+        metadata.is_file()
+            && metadata.len() <= NATIVE_BYTES
+            && state.0 == request
+            && state.1.get(&index) == Some(&(metadata.len(), metadata.modified().ok()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,5 +758,88 @@ mod tests {
         );
         assert!(svg_dimensions(b"<svg width='100000' height='100000'/>").is_err());
         assert!(svg_dimensions(b"<!DOCTYPE svg [<!ENTITY x 'hi'>]><svg>&x;</svg>").is_err());
+    }
+    #[test]
+    fn lightweight_formats_are_png_previews_without_changing_transport_classification() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("image.ppm");
+        std::fs::write(&path, b"P6\n2 1\n255\n\xff\x00\x00\x00\xff\x00").unwrap();
+        match load(path.to_str().unwrap()) {
+            Content::Image { url, width, height } => {
+                assert_eq!((width, height), (2, 1));
+                assert!(url.starts_with("data:image/png;base64,"));
+            }
+            _ => panic!("PNM must be decoded into a browser-supported format"),
+        }
+        for name in ["image.ico", "image.icns", "image.psd", "image.tiff"] {
+            assert!(!crate::cli::file_attachment::is_image_ext(name));
+        }
+    }
+    #[test]
+    fn native_permits_cannot_be_reused_for_a_different_request_or_changed_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("document.pdf");
+        std::fs::write(&path, b"original").unwrap();
+        let path = path.to_str().unwrap();
+        let permits = NativePermits::default();
+        assert!(!permits.check("r", 0, path));
+        permits.allow("r", 0, path);
+        assert!(permits.check("r", 0, path));
+        assert!(!permits.check("other", 0, path));
+        assert!(!permits.check("r", 1, path));
+        std::fs::write(path, b"changed document").unwrap();
+        assert!(!permits.check("r", 0, path));
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn system_formats_preserve_native_documents_and_multipage_images() {
+        let directory = tempfile::tempdir().unwrap();
+        for name in ["document.PDF", "rich.rtf", "office.docx", "audio.wav"] {
+            let path = directory.path().join(name);
+            std::fs::write(&path, b"test content").unwrap();
+            assert!(matches!(
+                load(path.to_str().unwrap()),
+                Content::Native { .. }
+            ));
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_len(NATIVE_BYTES + 1)
+                .unwrap();
+            assert!(matches!(
+                load(path.to_str().unwrap()),
+                Content::Unavailable { reason: "limit" }
+            ));
+        }
+        assert!(matches!(
+            load(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/preview-multipage.tiff"
+            )),
+            Content::Native {
+                image_count: Some(2)
+            }
+        ));
+        // Missing Image I/O codecs can still delegate to a system preview extension;
+        // recognized but corrupt image containers must retain their failure message.
+        let path = directory.path().join("provider.pict");
+        std::fs::write(&path, b"opaque preview provider payload").unwrap();
+        assert!(matches!(
+            load(path.to_str().unwrap()),
+            Content::Native { .. }
+        ));
+        let path = directory.path().join("corrupt.icns");
+        std::fs::write(&path, b"icns\x00\x00\x00\x20broken").unwrap();
+        assert!(matches!(
+            load(path.to_str().unwrap()),
+            Content::Unavailable {
+                reason: "imageFailed"
+            }
+        ));
+        // Rich text is explicitly native, while HTML and code remain inert text.
+        let path = directory.path().join("page.html");
+        std::fs::write(&path, b"<script>active()</script>").unwrap();
+        assert!(matches!(load(path.to_str().unwrap()), Content::Text { .. }));
     }
 }

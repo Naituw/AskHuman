@@ -6,7 +6,7 @@ pub mod gui_host;
 mod invoke;
 pub mod popup_preview;
 pub mod popup_preview_actions;
-mod popup_preview_geometry;
+pub(crate) mod popup_preview_geometry;
 mod popup_size;
 pub mod terminal_gate;
 pub mod tray_menu;
@@ -761,6 +761,8 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
         .manage(std::sync::Mutex::new(popup_size::SizeMemory::default()))
         .manage(std::sync::Mutex::new(popup_preview::Controller::default()))
         .manage(crate::attachment_preview::ReadGeneration::default())
+        .manage(crate::attachment_preview::NativeGeneration::default())
+        .manage(crate::attachment_preview::NativePermits::default())
         .invoke_handler(invoke::handle)
         .on_window_event(|window, event| {
             match window.label() {

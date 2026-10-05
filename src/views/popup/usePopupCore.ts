@@ -962,6 +962,7 @@ export function usePopupCore() {
   let unlistenTodos: UnlistenFn | null = null;
   // 方案6 预热弹窗：daemon 领用时 emit 的唤醒事件，前端据此 pull 请求并渲染。
   let unlistenShow: UnlistenFn | null = null;
+  let unlistenNativePreview: UnlistenFn | null = null;
 
   function triggerFlash() {
     // 重启动画：先关再于下一帧开，确保连续点击也能重新触发。
@@ -2225,6 +2226,14 @@ export function usePopupCore() {
     });
     void loadTodos();
     await attach.initAttachmentPreviewListeners();
+    unlistenNativePreview = await listen<{ requestId: string; index: number; key: string; metaKey: boolean }>("popup-preview-native-key", event => {
+      const key = event.payload;
+      if (key.requestId !== request.value?.id || key.index !== attach.previewIndex.value
+          || attach.previewContent.value?.kind !== "native" || showCancelConfirm.value) return;
+      onKeydown(new KeyboardEvent("keydown", { key: key.key, metaKey: key.metaKey, cancelable: true }));
+      // Native responders do not deliver the matching DOM keyup event.
+      cmdHeld.value = false;
+    });
     unlistenDrop = await getCurrentWebview().onDragDropEvent((event) => {
       // 拖出自家附件时不接管（那是往外拖，不是往里放）。
       if (attach.draggingOut.value) {
@@ -2364,6 +2373,7 @@ export function usePopupCore() {
     unlistenAgent?.();
     unlistenTodos?.();
     unlistenShow?.();
+    unlistenNativePreview?.();
     if (timeTicker) window.clearInterval(timeTicker);
     if (flashTimer) window.clearTimeout(flashTimer);
     if (copiedTimer) window.clearTimeout(copiedTimer);
@@ -2377,6 +2387,9 @@ export function usePopupCore() {
   });
 
   return {
+    // Native preview uses the same submit policy and temporarily yields to root overlays.
+    submitWithBareEnter,
+    nativePreviewBlocked: computed(() => showCancelConfirm.value || showConfirmCloseWarning.value || submitting.value),
     // In-page find
     findActive: find.findActive,
     findQuery: find.findQuery,
