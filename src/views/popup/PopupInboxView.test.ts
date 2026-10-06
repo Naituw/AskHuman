@@ -42,11 +42,11 @@ describe("shared popup navigation", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     emit("popup-inbox-show", request("c")); await flushPromises();
     const row = wrapper.findAll(".inbox-row")[2];
-    await vi.advanceTimersByTimeAsync(800);
+    await vi.advanceTimersByTimeAsync(400);
     expect(row.classes()).toContain("flash");
-    await vi.advanceTimersByTimeAsync(800);
+    await vi.advanceTimersByTimeAsync(400);
     expect(row.classes()).toContain("flash");
-    await vi.advanceTimersByTimeAsync(800);
+    await vi.advanceTimersByTimeAsync(400);
     expect(row.classes()).not.toContain("flash");
     expect(row.find(".inbox-dot").classes()).toContain("unread");
     expect(wrapper.find('[data-inbox-request="a"]').isVisible()).toBe(true);
