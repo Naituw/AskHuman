@@ -100,6 +100,12 @@ export function useSettingsSearch(deps: {
       title,
       extra,
     });
+    const windowMode = e("general", "settings.channels.windowMode", [
+      "settings.channels.windowModeMerged",
+      "settings.channels.windowModeIndependent",
+      "settings.channels.windowModeHint",
+    ]);
+    windowMode.extra.push("sidebar", "merged", "independent", "window mode", "弹窗模式", "作答窗口");
     const list: SearchEntry[] = [
       // 通用
       e("general", "settings.appearance.title"),
@@ -110,6 +116,7 @@ export function useSettingsSearch(deps: {
       ]),
       e("general", "settings.appearance.language"),
       e("general", "settings.popupBehavior.title"),
+      windowMode,
       e("general", "settings.popupBehavior.alwaysOnTop"),
       e("general", "settings.popupBehavior.submitKey"),
       e("general", "settings.popupBehavior.prewarm", [

@@ -15,7 +15,9 @@ Run `AskHuman --settings` (or click the gear in the popup's top-right) to open t
 
 ## Answer windows
 
-In **Channels → Popup → Answer windows**, **Merged** is the default. Requests from multiple agents appear in one window, grouped by project in the sidebar. Each request retains its own draft; the window hides after all requests finish.
+Open Settings, then **General → Popup behavior → Question window mode**, the first option in that card. **Merged** is the default.
+Search for **merged**, **independent**, **window mode**, or **Sidebar** to jump directly to it.
+Requests from multiple agents appear in one window, grouped by project in the sidebar. Each request retains its own draft; the window hides after all requests finish.
 
 Choose **Independent** to use one window per request. Changes apply to new requests. Open requests and their drafts stay in their current windows. Both modes use the Popup prewarm setting.
 
