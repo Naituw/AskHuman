@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// 弹窗初始化负载：请求内容 + 主题 + 是否置顶（前端据此套用样式、初始化导航栏）。
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PopupInit {
     /// Current interaction. A prewarmed helper returns `None` until it is assigned.
@@ -56,7 +56,40 @@ pub struct PopupInit {
 }
 
 #[tauri::command]
-pub fn popup_init(app: AppHandle, state: State<AppState>) -> PopupInit {
+pub fn popup_init(
+    app: AppHandle,
+    state: State<AppState>,
+    request_id: Option<String>,
+) -> Result<PopupInit, String> {
+    if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
+        let show = inbox.request(
+            request_id
+                .as_deref()
+                .ok_or("shared popup requires a request ID")?,
+        )?;
+        let cfg = AppConfig::load_without_secrets();
+        return Ok(PopupInit {
+            interaction: Some(show.interaction),
+            popup_edit: show.popup_edit,
+            theme: theme_str(cfg.general.theme),
+            always_on_top: cfg.general.always_on_top,
+            source_name: show.source,
+            project_name: crate::project::display_name(&show.project),
+            project: show.project,
+            agent_kind: show.agent_kind,
+            agent_pid: show.agent_pid,
+            agent_console_session_id: show.agent_console_session_id,
+            language: show.lang,
+            speech_language: cfg.general.speech_language.clone(),
+            speech_shortcut: cfg.general.speech_shortcut.clone(),
+            popup_submit_key: cfg.general.popup_submit_key.as_str().into(),
+            vertical_questions: cfg.experimental.vertical_questions,
+            perf: !show.perf_id.is_empty(),
+            perf_autodismiss: show.perf_autodismiss,
+            warm: true,
+            created_at_ms: show.created_at_ms,
+        });
+    }
     // 方案6 预热弹窗：内容来自领用槽（`WarmPopup.show`）——`Some`=已领用、`None`=待命（request 返回 null，
     // 前端等 `popup-show` 唤醒后再 pull）。冷 helper 的内容在构建时已注入 `AppState`。
     // language：预热弹窗进程长期存活、`state.config` 可能滞后，故领用时优先用 `Show.lang`（已解析的
@@ -124,7 +157,7 @@ pub fn popup_init(app: AppHandle, state: State<AppState>) -> PopupInit {
     let cfg = fresh.as_ref().unwrap_or(&state.config);
 
     let project_name = crate::project::display_name(&project);
-    PopupInit {
+    Ok(PopupInit {
         interaction,
         popup_edit,
         theme: theme_str(cfg.general.theme),
@@ -145,7 +178,119 @@ pub fn popup_init(app: AppHandle, state: State<AppState>) -> PopupInit {
         perf_autodismiss: crate::perf::autodismiss(),
         warm,
         created_at_ms,
+    })
+}
+
+#[tauri::command]
+pub fn popup_inbox_init(app: AppHandle) -> Result<crate::app::popup_inbox::Snapshot, String> {
+    Ok(app
+        .try_state::<crate::app::popup_inbox::Inbox>()
+        .ok_or("popup inbox is unavailable")?
+        .snapshot())
+}
+#[tauri::command]
+pub async fn popup_inbox_activate(app: AppHandle, request_id: String) -> Result<(), String> {
+    let inbox = app
+        .try_state::<crate::app::popup_inbox::Inbox>()
+        .ok_or("popup inbox is unavailable")?;
+    inbox.request(&request_id)?;
+    #[cfg(target_os = "macos")]
+    if let Some(window) = app.get_webview_window("popup") {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.run_on_main_thread(move || {
+            let _ = crate::macos_attachment_preview::update_view(
+                &window.as_ref().window(),
+                "",
+                None,
+                None,
+                None,
+                false,
+            );
+            let _ = tx.send(());
+        })
+        .map_err(|e| e.to_string())?;
+        rx.await.map_err(|e| e.to_string())?;
     }
+    inbox.activate(&request_id)
+}
+
+#[tauri::command]
+pub async fn popup_inbox_layout(
+    window: tauri::Window,
+    sidebar: bool,
+    sidebar_width: Option<f64>,
+    preview: bool,
+    main_extent: Option<f64>,
+) -> Result<crate::app::popup_inbox_geometry::Allocation, String> {
+    if window.label() != "popup"
+        || window
+            .app_handle()
+            .try_state::<crate::app::popup_inbox::Inbox>()
+            .is_none()
+    {
+        return Err("shared Popup is unavailable".into());
+    }
+    crate::app::popup_inbox_geometry::prepare(
+        &window,
+        Some(sidebar),
+        Some(preview),
+        sidebar_width,
+        main_extent,
+    )
+    .await
+}
+#[tauri::command]
+pub async fn popup_inbox_commit(
+    window: tauri::Window,
+    revision: u64,
+    review_animation_ms: Option<u64>,
+) -> Result<crate::app::popup_inbox_geometry::Allocation, String> {
+    if window.label() != "popup"
+        || window
+            .app_handle()
+            .try_state::<crate::app::popup_inbox::Inbox>()
+            .is_none()
+    {
+        return Err("shared Popup is unavailable".into());
+    }
+    let review_ms = if crate::dev_instance::is_dev_instance()
+        && std::env::var_os("ASKHUMAN_INBOX_LAYOUT_REVIEW").is_some()
+    {
+        review_animation_ms.unwrap_or(220).min(1000)
+    } else {
+        review_animation_ms.unwrap_or(220).min(220)
+    };
+    crate::app::popup_inbox_geometry::commit_frame(&window, revision, review_ms).await
+}
+#[tauri::command]
+pub async fn popup_inbox_finish(
+    window: tauri::Window,
+    revision: u64,
+    arrival: bool,
+) -> Result<crate::app::popup_inbox_geometry::Allocation, String> {
+    if window.label() != "popup"
+        || window
+            .app_handle()
+            .try_state::<crate::app::popup_inbox::Inbox>()
+            .is_none()
+    {
+        return Err("shared Popup is unavailable".into());
+    }
+    crate::app::popup_inbox_geometry::finish(&window, revision, arrival).await
+}
+#[tauri::command]
+pub async fn popup_inbox_idle(app: AppHandle) -> Result<(), String> {
+    let inbox = app
+        .try_state::<crate::app::popup_inbox::Inbox>()
+        .ok_or("popup inbox is unavailable")?;
+    if !inbox.begin_idle(&app) {
+        return Ok(());
+    }
+    if let Some(window) = app.get_webview_window("popup") {
+        crate::app::popup_inbox_geometry::reset(&window.as_ref().window()).await?;
+    }
+    inbox.idle(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -154,22 +299,26 @@ pub async fn enrich_permission_diff(
     state: State<'_, AppState>,
     request_id: String,
 ) -> Result<crate::permission_diff::PermissionDiffModel, String> {
-    let (current_id, intent) = if let Some(warm) = app.try_state::<crate::app::WarmPopup>() {
-        let show = warm
-            .show
-            .lock()
-            .map_err(|_| "permission diff state unavailable".to_string())?
-            .clone()
-            .ok_or_else(|| "permission diff request is not assigned".to_string())?;
-        (show.request_id, show.popup_edit)
-    } else {
-        let id = state
-            .interaction
-            .confirm()
-            .map(|request| request.id.clone())
-            .ok_or_else(|| "permission diff requires a confirmation".to_string())?;
-        (id, state.popup_edit.clone())
-    };
+    let (current_id, intent) =
+        if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
+            let show = inbox.request(&request_id)?;
+            (show.request_id, show.popup_edit)
+        } else if let Some(warm) = app.try_state::<crate::app::WarmPopup>() {
+            let show = warm
+                .show
+                .lock()
+                .map_err(|_| "permission diff state unavailable".to_string())?
+                .clone()
+                .ok_or_else(|| "permission diff request is not assigned".to_string())?;
+            (show.request_id, show.popup_edit)
+        } else {
+            let id = state
+                .interaction
+                .confirm()
+                .map(|request| request.id.clone())
+                .ok_or_else(|| "permission diff requires a confirmation".to_string())?;
+            (id, state.popup_edit.clone())
+        };
     if current_id != request_id {
         return Err("permission diff request changed".to_string());
     }
@@ -209,7 +358,16 @@ pub async fn enrich_permission_diff(
 /// Report that popup content and its hidden native window are ready. The daemon replies with the
 /// authoritative foreground/background presentation after cross-process focus arbitration.
 #[tauri::command]
-pub fn popup_show_window(app: AppHandle) {
+pub fn popup_show_window(app: AppHandle, request_id: Option<String>) {
+    if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
+        if let Some(id) = request_id.filter(|id| inbox.request(id).is_ok()) {
+            let _ = inbox.send(crate::ipc::ClientMsg::PopupReady {
+                request_id: id,
+                window_number: None,
+            });
+        }
+        return;
+    }
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
         let window_number = {
@@ -280,11 +438,26 @@ pub fn set_pushed_agent(agent: PushedAgent) {
 
 /// 弹窗挂载时拉取「已推送的调用方 agent 解析结果」初值（之后变化经 `agent-resolved` 事件实时更新）。
 #[tauri::command]
-pub fn popup_agent_resolved() -> PushedAgent {
-    pushed_agent_slot()
+pub fn popup_agent_resolved(
+    app: AppHandle,
+    request_id: Option<String>,
+) -> Result<PushedAgent, String> {
+    if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
+        let show = inbox.request(
+            request_id
+                .as_deref()
+                .ok_or("shared popup requires a request ID")?,
+        )?;
+        return Ok(PushedAgent {
+            kind: show.agent_kind,
+            pid: show.agent_pid,
+            launch_id: inbox.launch_id(&show.request_id),
+        });
+    }
+    Ok(pushed_agent_slot()
         .lock()
         .map(|s| s.clone())
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 // ===== 项目级待办队列（spec todo-whats-next D7/D9）：直读直写 todos.json，无 daemon 依赖 =====
@@ -917,18 +1090,50 @@ pub struct PopupSubmission {
 }
 
 #[tauri::command]
-pub fn submit_popup(app: AppHandle, submission: PopupSubmission) {
+pub async fn submit_popup(
+    app: AppHandle,
+    submission: PopupSubmission,
+    request_id: Option<String>,
+) -> Result<(), String> {
+    if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
+        let id = request_id.ok_or("shared popup submission requires a request ID")?;
+        return inbox
+            .submit(
+                &id,
+                crate::ipc::ClientMsg::Answer {
+                    request_id: id.clone(),
+                    action: crate::models::ChannelAction::Send,
+                    answers: submission.answers,
+                },
+            )
+            .await;
+    }
     if let Some(bridge) = app.try_state::<crate::app::GuiBridge>() {
         bridge.send_answer(submission.answers);
     }
+    Ok(())
 }
 
 #[tauri::command]
-pub fn submit_confirm_action(
+pub async fn submit_confirm_action(
     app: AppHandle,
     choice_index: usize,
     comment: Option<String>,
+    request_id: Option<String>,
 ) -> Result<(), String> {
+    if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
+        let id = request_id.ok_or("shared confirmation requires a request ID")?;
+        return inbox
+            .submit(
+                &id,
+                crate::ipc::ClientMsg::ConfirmAnswer {
+                    request_id: id.clone(),
+                    choice_index,
+                    comment,
+                },
+            )
+            .await;
+    }
     let bridge = app
         .try_state::<crate::app::GuiBridge>()
         .ok_or_else(|| "confirmation popup requires a daemon bridge".to_string())?;
@@ -937,7 +1142,12 @@ pub fn submit_confirm_action(
 }
 
 #[tauri::command]
-pub fn confirm_popup_ready(app: AppHandle) -> Result<(), String> {
+pub fn confirm_popup_ready(app: AppHandle, request_id: Option<String>) -> Result<(), String> {
+    if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
+        let id = request_id.ok_or("shared confirmation requires a request ID")?;
+        inbox.request(&id)?;
+        return inbox.send(crate::ipc::ClientMsg::ConfirmReady { request_id: id });
+    }
     let bridge = app
         .try_state::<crate::app::GuiBridge>()
         .ok_or_else(|| "confirmation popup requires a daemon bridge".to_string())?;
@@ -946,10 +1156,35 @@ pub fn confirm_popup_ready(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn cancel_popup(app: AppHandle) {
+pub async fn cancel_popup(app: AppHandle, request_id: Option<String>) -> Result<(), String> {
+    if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
+        let id = request_id.ok_or("shared cancellation requires a request ID")?;
+        let show = inbox.request(&id)?;
+        let message = match show.interaction {
+            InteractionRequest::Ask(_) => crate::ipc::ClientMsg::Answer {
+                request_id: id.clone(),
+                action: crate::models::ChannelAction::Cancel,
+                answers: Vec::new(),
+            },
+            InteractionRequest::Confirm(request) => {
+                let choice_index = request
+                    .choices
+                    .iter()
+                    .position(|choice| choice.id == request.dismiss_action_id)
+                    .ok_or("confirmation has no dismiss action")?;
+                crate::ipc::ClientMsg::ConfirmAnswer {
+                    request_id: id.clone(),
+                    choice_index,
+                    comment: None,
+                }
+            }
+        };
+        return inbox.submit(&id, message).await;
+    }
     if let Some(bridge) = app.try_state::<crate::app::GuiBridge>() {
         bridge.send_cancel();
     }
+    Ok(())
 }
 
 // ===== 文件附件：打开 / 预览 / 缩略图 =====
@@ -1029,6 +1264,21 @@ pub async fn popup_preview_prepare(
     version: u64,
 ) -> Result<crate::app::popup_preview::Layout, String> {
     crate::app::popup_preview::request(&window, &request_id)?;
+    if window
+        .app_handle()
+        .try_state::<crate::app::popup_inbox::Inbox>()
+        .is_some()
+    {
+        return Ok(crate::app::popup_inbox_geometry::prepare(
+            &window,
+            None,
+            Some(open),
+            None,
+            None,
+        )
+        .await?
+        .preview_layout());
+    }
     crate::app::popup_preview::wait_idle(&window).await?;
     let app = window.app_handle().clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -1050,6 +1300,34 @@ pub async fn popup_preview_layout(
     version: u64,
 ) -> Result<crate::app::popup_preview::Layout, String> {
     crate::app::popup_preview::request(&window, &request_id)?;
+    if window
+        .app_handle()
+        .try_state::<crate::app::popup_inbox::Inbox>()
+        .is_some()
+    {
+        if main_extent.is_some() {
+            let allocation = crate::app::popup_inbox_geometry::prepare(
+                &window,
+                None,
+                Some(open),
+                None,
+                main_extent,
+            )
+            .await?;
+            return Ok(crate::app::popup_inbox_geometry::commit(
+                &window,
+                allocation.revision,
+                false,
+            )
+            .await?
+            .preview_layout());
+        }
+        return Ok(
+            crate::app::popup_inbox_geometry::commit(&window, version, false)
+                .await?
+                .preview_layout(),
+        );
+    }
     crate::app::popup_preview::wait_idle(&window).await?;
     let app = window.app_handle().clone();
     let owner = window.clone();
@@ -1224,11 +1502,21 @@ pub async fn popup_preview_native(
                 }
                 let size = window.inner_size().map_err(|e| e.to_string())?;
                 let scale = window.scale_factor().map_err(|e| e.to_string())?;
-                let rect = rect.clipped(
-                    layout.unwrap().main_width,
-                    size.width as f64 / scale,
-                    size.height as f64 / scale,
-                );
+                let (main_edge, width, height) = if window
+                    .app_handle()
+                    .try_state::<crate::app::popup_inbox::Inbox>()
+                    .is_some()
+                {
+                    crate::app::popup_inbox_geometry::preview_bounds(&window)
+                        .ok_or("popup layout unavailable")?
+                } else {
+                    (
+                        layout.unwrap().main_width,
+                        size.width as f64 / scale,
+                        size.height as f64 / scale,
+                    )
+                };
+                let rect = rect.clipped(main_edge, width, height);
                 if let Some(rect) = rect {
                     crate::macos_attachment_preview::update_view(
                         &window,
@@ -1695,10 +1983,24 @@ fn effective_popup_agent_console_session(
 /// Open or focus the Agent Window at the exact session matched by the daemon for this popup.
 /// The frontend supplies no session identifier of its own; absence means the shortcut is invalid.
 #[tauri::command]
-pub fn open_agent_console(app: AppHandle, state: State<AppState>) -> Result<(), String> {
-    let session_id = effective_popup_agent_console_session(&app, &state)
-        .filter(|session_id| !session_id.trim().is_empty())
-        .ok_or_else(|| "no matched agent session".to_string())?;
+pub fn open_agent_console(
+    app: AppHandle,
+    state: State<AppState>,
+    request_id: Option<String>,
+) -> Result<(), String> {
+    let session_id = if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
+        inbox
+            .request(
+                request_id
+                    .as_deref()
+                    .ok_or("shared popup requires a request ID")?,
+            )?
+            .agent_console_session_id
+    } else {
+        effective_popup_agent_console_session(&app, &state)
+    }
+    .filter(|session_id| !session_id.trim().is_empty())
+    .ok_or_else(|| "no matched agent session".to_string())?;
     route_open_window(
         app,
         crate::gui_host::WindowKind::Agents,
@@ -1716,8 +2018,27 @@ pub fn open_agent_console(app: AppHandle, state: State<AppState>) -> Result<(), 
 
 /// 从弹窗导航栏打开独立历史窗口：路由到统一宿主（全局单窗），默认过滤到弹窗所属项目。
 #[tauri::command]
-pub fn open_history(app: AppHandle, state: State<AppState>) -> Result<(), String> {
-    let (project, target) = effective_popup_history_context(&app, &state);
+pub fn open_history(
+    app: AppHandle,
+    state: State<AppState>,
+    request_id: Option<String>,
+) -> Result<(), String> {
+    let (project, target) = if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
+        let show = inbox.request(
+            request_id
+                .as_deref()
+                .ok_or("shared popup requires a request ID")?,
+        )?;
+        let target = history_open_target(
+            &show.project,
+            show.agent_kind.as_deref(),
+            show.agent_session_id.as_deref(),
+            show.mcp_instance_id.as_deref(),
+        );
+        (show.project, target)
+    } else {
+        effective_popup_history_context(&app, &state)
+    };
     route_open_history_window(app, project, target);
     Ok(())
 }

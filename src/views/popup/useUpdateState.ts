@@ -71,9 +71,11 @@ export function useUpdateState(deps: {
   }
 
   let unlistenUpdate: UnlistenFn | null = null;
+  let disposed = false;
 
   // 首帧后初始化：先拉初值（规避事件早于监听），再监听 daemon 经 GUI Helper 转发的实时变更。
   async function initUpdateState() {
+    if (disposed) return;
     try {
       const u = await popupUpdateState();
       updateAvailable.value = u.available;
@@ -83,15 +85,19 @@ export function useUpdateState(deps: {
     } catch {
       /* 单进程回退 / 无 daemon：忽略 */
     }
-    unlistenUpdate = await listen<PushedUpdateState>("update-state", (e) => {
+    if (disposed) return;
+    const off = await listen<PushedUpdateState>("update-state", (e) => {
       updateAvailable.value = e.payload.available;
       updatePending.value = e.payload.pending;
       updateLatest.value = e.payload.latestVersion;
       updateApplyMode.value = e.payload.applyMode;
     });
+    if (disposed) off();
+    else unlistenUpdate = off;
   }
 
   function disposeUpdateState() {
+    disposed = true;
     unlistenUpdate?.();
   }
 

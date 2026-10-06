@@ -1,5 +1,6 @@
 # 实现计划：并发 Popup 焦点仲裁与后方级联
 
+> 默认使用 `docs/specs/popup-request-inbox.md` 的统一窗口。可选 `channels.popup.windowMode=independent` 时仍使用本文的冷/热 Helper 焦点与级联路径。
 > Windows 注（2026-08）：本文的 Windows 单进程范围声明是首期历史记录；Windows 已接入 shared
 > daemon/GUI Host，焦点仲裁复用同一业务状态机，桌面实机矩阵仍是发布验收 gate。
 

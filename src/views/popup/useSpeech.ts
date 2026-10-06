@@ -8,6 +8,7 @@ import { formatShortcut } from "../../lib/shortcut";
 
 export function useSpeech(deps: {
   targetQuestion: Readonly<Ref<number>>;
+  active?: Readonly<Ref<boolean>>;
   inputByQ: Ref<string[]>;
   inputRef: ComputedRef<HTMLTextAreaElement | null>;
   autoGrow: (i?: number) => void;
@@ -46,6 +47,7 @@ export function useSpeech(deps: {
   let speechErrorTimer: ReturnType<typeof setTimeout> | null = null;
   // speech-* 事件取消订阅句柄。
   let unlistenSpeech: UnlistenFn[] = [];
+  let disposed = false;
 
   // 后端(Swift/Rust)语音事件以 "key" 或 "key|param" 上报；此处拆解并交给 i18n 翻译，
   // 故 speechStatus/speechError 存「原始 payload」，模板渲染时再翻译（语言切换可即时重渲染）。
@@ -92,6 +94,7 @@ export function useSpeech(deps: {
   }
 
   function startListening() {
+    if (deps.active && !deps.active.value) return;
     if (!speechSupported.value) {
       showSpeechError("needMacos26");
       return;
@@ -154,7 +157,7 @@ export function useSpeech(deps: {
 
   // 「已最终化」片段：移除当前实时片段，再在 interimStart 处永久插入。
   function onSpeechCommitted(delta: string) {
-    if (!delta || suspendSpeechDom) return;
+    if (!listening.value || (deps.active && !deps.active.value) || !delta || suspendSpeechDom) return;
     consumePendingSelection();
     let v = inputByQ.value[speechTargetQ.value] ?? "";
     if (interimLen > 0) {
@@ -169,7 +172,7 @@ export function useSpeech(deps: {
 
   // 实时片段：就地替换 [interimStart, interimStart+interimLen]。
   function onSpeechVolatile(text: string) {
-    if (suspendSpeechDom) return;
+    if (!listening.value || (deps.active && !deps.active.value) || suspendSpeechDom) return;
     // 尚无任何文字、也无既有实时片段时（空回调），不触碰选区。
     if (!text && interimLen === 0) return;
     consumePendingSelection();
@@ -235,6 +238,7 @@ export function useSpeech(deps: {
 
   // 订阅后端 speech-* 事件。
   async function setupSpeechListeners() {
+    if (disposed) return;
     unlistenSpeech.push(
       await listen<string>("speech-committed", (e) => onSpeechCommitted(e.payload))
     );
@@ -243,7 +247,7 @@ export function useSpeech(deps: {
     );
     unlistenSpeech.push(
       await listen<string>("speech-status", (e) => {
-        speechStatus.value = e.payload || null;
+        if (listening.value) speechStatus.value = e.payload || null;
       })
     );
     unlistenSpeech.push(
@@ -253,6 +257,7 @@ export function useSpeech(deps: {
     );
     unlistenSpeech.push(
       await listen<string>("speech-error", (e) => {
+        if (!listening.value) return;
         listening.value = false;
         speechReady.value = false;
         showSpeechError(e.payload || "generic");
@@ -273,10 +278,11 @@ export function useSpeech(deps: {
     } catch {
       speechSupported.value = false;
     }
-    if (speechSupported.value) await setupSpeechListeners();
+    if (!disposed && speechSupported.value) { await setupSpeechListeners(); if (disposed) unlistenSpeech.splice(0).forEach(off => off()); }
   }
 
   function disposeSpeech() {
+    disposed = true;
     stopListening();
     unlistenSpeech.forEach((fn) => fn());
     unlistenSpeech = [];

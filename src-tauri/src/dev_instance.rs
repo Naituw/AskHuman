@@ -79,6 +79,7 @@ pub fn classify_command(argv: &[String]) -> CommandClass {
     };
     match first {
         "--popup"
+        | "--popup-host"
         | "--gui-host"
         | "__permission-diff-worker"
         | "__permission-shell-worker"

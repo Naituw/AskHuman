@@ -37,6 +37,7 @@ use transport::{OwnedReadHalf, OwnedWriteHalf, Stream};
 mod detect;
 mod fork;
 mod inbound;
+mod inbox;
 mod select;
 mod subs;
 mod todo;
@@ -45,6 +46,7 @@ mod watch;
 use detect::*;
 use fork::*;
 use inbound::*;
+use inbox::*;
 use select::*;
 use subs::*;
 use todo::*;
@@ -196,6 +198,7 @@ struct ServerState {
     registry: Arc<RequestRegistry>,
     /// Cross-process popup focus owner and background cascade order.
     popup_focus: Mutex<PopupFocusArbiter>,
+    popup_inbox: Mutex<super::popup_inbox::Host<InteractionEntry>>,
     /// 钉钉长连接 Router（惰性建连、常热复用；连接死亡后按需重连）。
     dd_router: tokio::sync::Mutex<Option<Arc<DdRouter>>>,
     /// 飞书长连接 Router（惰性建连、常热复用；连接死亡后按需重连）。
@@ -731,7 +734,7 @@ async fn check_for_update(state: &Arc<ServerState>) {
                 changed
             };
             if changed {
-                state.registry.broadcast_to_guis(update_state_msg(state));
+                broadcast_popup_state(state, update_state_msg(state));
                 broadcast_tray_state(state);
             }
         }
@@ -752,8 +755,18 @@ fn refresh_update_snapshot(state: &Arc<ServerState>) {
         changed
     };
     if changed {
-        state.registry.broadcast_to_guis(update_state_msg(state));
+        broadcast_popup_state(state, update_state_msg(state));
         broadcast_tray_state(state);
+    }
+}
+
+fn broadcast_popup_state(state: &Arc<ServerState>, message: ServerMsg) {
+    let shared = state.popup_inbox.lock().unwrap().sender();
+    state
+        .registry
+        .broadcast_to_guis_except(message.clone(), shared.as_ref());
+    if let Some(sender) = shared {
+        let _ = sender.send(message);
     }
 }
 
@@ -772,7 +785,7 @@ fn check_pending_update(state: &Arc<ServerState>) {
     if changed {
         crate::update::state::set_pending(true);
         log("binary on disk changed; marking update pending");
-        state.registry.broadcast_to_guis(update_state_msg(state));
+        broadcast_popup_state(state, update_state_msg(state));
         broadcast_tray_state(state);
         // 主动换新（与 Hello 分支同一套语义，spec self-update）：盘上二进制已变即触发排空换新，
         // 不再被动等下一次握手。长连接（状态窗口订阅 / 工作中 agent）只保活、自身不再发 Hello，
@@ -853,6 +866,7 @@ async fn serve(_lock: LockGuard) -> i32 {
         draining: AtomicBool::new(false),
         registry: RequestRegistry::new(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
+        popup_inbox: Mutex::new(super::popup_inbox::Host::default()),
         dd_router: tokio::sync::Mutex::new(None),
         fs_router: tokio::sync::Mutex::new(None),
         tg_router: tokio::sync::Mutex::new(None),
@@ -1262,6 +1276,7 @@ enum Control {
     Submit(Box<TaskRequest>),
     SubmitConfirm(Box<ConfirmTask>),
     Gui(String),
+    PopupHost(String),
     /// 方案6 预热弹窗握手：接管连接，入热池待命、等领用。
     GuiWarm,
     /// 状态窗口订阅：接管连接，持续推送 agent 快照。
@@ -1290,6 +1305,7 @@ async fn handle_conn(stream: Stream, state: Arc<ServerState>) {
         Control::Submit(task) => handle_submit(*task, reader, w, &state).await,
         Control::SubmitConfirm(task) => handle_submit_confirm(*task, reader, w, &state).await,
         Control::Gui(token) => handle_gui(token, reader, w, &state).await,
+        Control::PopupHost(token) => handle_popup_host(token, reader, w, &state).await,
         Control::GuiWarm => handle_gui_warm(reader, w, &state).await,
         Control::AgentsSub => handle_agents_sub(reader, w, &state).await,
         Control::TraySub => handle_tray_sub(reader, w, &state).await,
@@ -1412,6 +1428,7 @@ async fn control_loop(
             ClientMsg::Submit(task) => return Control::Submit(Box::new(task)),
             ClientMsg::SubmitConfirm(task) => return Control::SubmitConfirm(task),
             ClientMsg::GuiHello { token } => return Control::Gui(token),
+            ClientMsg::PopupHostHello { token } => return Control::PopupHost(token),
             // 方案6 预热弹窗握手（无 token）：接管连接入热池待命。
             ClientMsg::GuiWarmReady => return Control::GuiWarm,
             // Agent 生命周期事件上报（默认即发即走；`interject_poll=true` 时回一帧插话裁决）：
@@ -1671,7 +1688,9 @@ async fn control_loop(
             }
             // 托盘「待答」子菜单点击：聚焦/闪烁对应请求的弹窗（即发即走，无回包）。
             ClientMsg::FocusRequest { request_id } => {
-                update_popup_focus(state, |focus| focus.claim_and_focus(&request_id));
+                if !focus_inbox_request(state, &request_id) {
+                    update_popup_focus(state, |focus| focus.claim_and_focus(&request_id));
+                }
             }
             // 状态窗口手动把某 agent 置空闲（纠正漏 hook 卡「工作中」）：变化则持久化 + 推订阅窗口。
             ClientMsg::AgentForceIdle { session_id } => {
@@ -1763,6 +1782,7 @@ async fn control_loop(
             | ClientMsg::PopupReady { .. }
             | ClientMsg::PopupFocused { .. }
             | ClientMsg::PopupDismissed { .. } => {}
+            ClientMsg::PopupHostIdle { .. } => {}
         }
     }
 }
@@ -2575,6 +2595,7 @@ async fn serve_gui(
     };
     if resolved.kind.is_some() || resolved.pid.is_some() || resolved.launch_id.is_some() {
         let _ = gui_tx.send(ServerMsg::AgentResolved {
+            request_id: Some(entry.request_id.clone()),
             kind: resolved.kind,
             pid: resolved.pid,
             launch_id: resolved.launch_id,
@@ -2836,7 +2857,8 @@ async fn handle_gui_warm(mut reader: Reader, w: OwnedWriteHalf, state: &Arc<Serv
     let (assign_tx, assign_rx) = tokio::sync::oneshot::channel::<InteractionEntry>();
     let occupied = {
         let mut pool = state.warm_pool.lock().unwrap();
-        if pool.is_some() {
+        if pool.is_some() || !warm_mode_enabled(state, crate::config::PopupWindowMode::Independent)
+        {
             true
         } else {
             *pool = Some(WarmSlot {
@@ -3154,6 +3176,7 @@ fn spawn_agent_resolve(
         if let Ok(slot) = entry.gui.lock() {
             if let Some(tx) = slot.as_ref() {
                 let _ = tx.send(ServerMsg::AgentResolved {
+                    request_id: Some(entry.request_id.clone()),
                     kind: resolved.kind,
                     pid: resolved.pid,
                     launch_id: resolved.launch_id,
@@ -3876,6 +3899,39 @@ fn dispatch_interaction_popup(
     perf_id: &str,
     perf_autodismiss: bool,
 ) -> bool {
+    if merged_popup(state) {
+        crate::perf::mark(perf_id, "dmn.assigned");
+        dispatch_inbox_popup(entry, state)
+    } else {
+        dispatch_independent_popup(entry, state, perf_id, perf_autodismiss)
+    }
+}
+
+fn merged_popup(state: &Arc<ServerState>) -> bool {
+    state.config.lock().unwrap().channels.popup.window_mode
+        == crate::config::PopupWindowMode::Merged
+}
+fn warm_mode_enabled(state: &Arc<ServerState>, mode: crate::config::PopupWindowMode) -> bool {
+    state
+        .config
+        .lock()
+        .map(|c| popup_prewarm_requested(&c) && c.channels.popup.window_mode == mode)
+        .unwrap_or(false)
+}
+fn maybe_topup_warm(state: &Arc<ServerState>) {
+    if merged_popup(state) {
+        prewarm_inbox(state);
+    } else {
+        topup_independent_warm(state);
+    }
+}
+
+fn dispatch_independent_popup(
+    entry: InteractionEntry,
+    state: &Arc<ServerState>,
+    perf_id: &str,
+    perf_autodismiss: bool,
+) -> bool {
     let request_id = entry.request_id().to_string();
     let seq = entry.seq();
     update_popup_focus(state, |focus| focus.reserve(request_id.clone(), seq));
@@ -3911,8 +3967,11 @@ fn dispatch_interaction_popup(
 
 /// 方案6 补热（top-up，恒维持 1 个待命热实例）。自门控：开关关 / 无显示 / 排空中 / 池非空 / 已在补热
 /// 任一满足则不补。补热进程连上发 `GuiWarmReady` 后由 `handle_gui_warm` 入池并清 `warm_spawning`。
-fn maybe_topup_warm(state: &Arc<ServerState>) {
-    if !warm_enabled(state) || !has_display() || state.draining.load(Ordering::SeqCst) {
+fn topup_independent_warm(state: &Arc<ServerState>) {
+    if !warm_mode_enabled(state, crate::config::PopupWindowMode::Independent)
+        || !has_display()
+        || state.draining.load(Ordering::SeqCst)
+    {
         return;
     }
     if state.warm_pool.lock().unwrap().is_some() {
@@ -3944,6 +4003,7 @@ fn maybe_topup_warm(state: &Arc<ServerState>) {
 /// 方案6 回收：清空热池槽（drop `assign`/`gui_tx` → holder 的 `assign_rx` 收 Err → 走死亡分支 →
 /// drop 其写端 → 热进程收 EOF 自杀）。用于关开关 / 进入排空 / 关停。
 fn recycle_warm(state: &Arc<ServerState>) {
+    recycle_inbox(state);
     let slot = state.warm_pool.lock().unwrap().take();
     if slot.is_some() {
         log("recycling warm popup helper");
@@ -3996,9 +4056,7 @@ async fn on_config_changed(state: &Arc<ServerState>) {
     // 使 `/here`、`/status`、普通消息切槽无需等在途请求结束或 daemon 重启即恢复（有工作中 agent 时）。
     ensure_inbound_listeners(state).await;
     let general = serde_json::to_value(&new.general).unwrap_or(serde_json::Value::Null);
-    state
-        .registry
-        .broadcast_to_guis(ServerMsg::ConfigChanged { general });
+    broadcast_popup_state(state, ServerMsg::ConfigChanged { general });
     // 配置变更可能刚开启菜单栏图标 → 兜底拉起宿主（宿主自身也监听配置，二者均幂等）。
     maybe_spawn_gui_host(&new);
     // 方案6：弹窗预热开关随配置热切换——开则补热（self-gated），关则回收现有热实例。
@@ -4006,7 +4064,7 @@ async fn on_config_changed(state: &Arc<ServerState>) {
     // 待命期切到 Blur 若仍领用旧进程且上屏只挂玻璃，会半透明无材质。重建后按新效果 apply_surface。
     let effect_changed = old.general.window_effect != new.general.window_effect;
     if warm_enabled(state) {
-        if effect_changed {
+        if effect_changed || old.channels.popup.window_mode != new.channels.popup.window_mode {
             recycle_warm(state);
         }
         maybe_topup_warm(state);

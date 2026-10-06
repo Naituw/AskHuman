@@ -94,6 +94,12 @@ fn group_for(command: &str) -> Group {
 fn core(invoke: Invoke<Wry>) -> bool {
     let handler: fn(Invoke<Wry>) -> bool = tauri::generate_handler![
         crate::commands::popup_init,
+        crate::commands::popup_inbox_init,
+        crate::commands::popup_inbox_activate,
+        crate::commands::popup_inbox_idle,
+        crate::commands::popup_inbox_layout,
+        crate::commands::popup_inbox_commit,
+        crate::commands::popup_inbox_finish,
         crate::commands::enrich_permission_diff,
         crate::commands::perf_mark,
         crate::commands::popup_agent_terminal,

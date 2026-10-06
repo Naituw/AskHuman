@@ -13,6 +13,12 @@ Run `AskHuman --settings` (or click the gear in the popup's top-right) to open t
 - **Speech input** (macOS only) — recognition language and trigger shortcut.
 - **Reply-history retention** — defaults to 200; set it to `0` to stop recording and clear existing entries. When the existing count exceeds the limit, a "Clean up now" button appears to trim immediately.
 
+## Answer windows
+
+In **Channels → Popup → Answer windows**, **Merged** is the default. Requests from multiple agents appear in one window, grouped by project in the sidebar. Each request retains its own draft; the window hides after all requests finish.
+
+Choose **Independent** to use one window per request. Changes apply to new requests. Open requests and their drafts stay in their current windows. Both modes use the Popup prewarm setting.
+
 ## Reply history
 
 Every reply (a "send" completed in the popup or any channel, plus a cancel you trigger yourself) is recorded locally so you can refer back to it while answering new questions. System-triggered cancellations (timeout, disconnect, daemon stop) are not recorded.

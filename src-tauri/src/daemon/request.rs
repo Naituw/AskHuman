@@ -270,6 +270,8 @@ pub fn create_internal_confirm(
     let coordinator = ConfirmCoordinator::new(request.clone(), final_tx);
     let show = ShowPayload {
         request_id: request_id.clone(),
+        sequence: 0,
+        kind: crate::ipc::PopupRequestKind::Permission,
         interaction: InteractionRequest::Confirm((*request).clone()),
         popup_edit: None,
         source: source_channel.to_string(),
@@ -449,6 +451,12 @@ impl RequestRegistry {
         let show_mcp_instance_id = task.mcp_instance_id.clone();
         let show = ShowPayload {
             request_id: request_id.clone(),
+            sequence: 0,
+            kind: if task.record_history {
+                crate::ipc::PopupRequestKind::Ask
+            } else {
+                crate::ipc::PopupRequestKind::Stop
+            },
             interaction: InteractionRequest::Ask(request),
             popup_edit: None,
             source: task.source,
@@ -576,6 +584,8 @@ impl RequestRegistry {
         let coordinator = ConfirmCoordinator::with_finalizer(request.clone(), final_tx, finalizer);
         let show = ShowPayload {
             request_id: request_id.clone(),
+            sequence: 0,
+            kind: crate::ipc::PopupRequestKind::Permission,
             interaction: InteractionRequest::Confirm((*request).clone()),
             popup_edit: task.popup_edit.clone(),
             source: task.source.clone(),
@@ -846,20 +856,33 @@ impl RequestRegistry {
 
     /// 向所有已连上的活动 GUI Helper 广播一条消息（如 `ConfigChanged` 实时切主题/语言，A12）。
     pub fn broadcast_to_guis(&self, msg: ServerMsg) {
+        self.broadcast_to_guis_except(msg, None);
+    }
+    pub fn broadcast_to_guis_except(
+        &self,
+        msg: ServerMsg,
+        excluded: Option<&tokio::sync::mpsc::UnboundedSender<ServerMsg>>,
+    ) {
         let inner = self.inner.lock().unwrap();
-        for entry in inner.by_id.values() {
-            if let Ok(slot) = entry.gui.lock() {
+        let mut senders: Vec<tokio::sync::mpsc::UnboundedSender<ServerMsg>> = Vec::new();
+        let entries = inner
+            .by_id
+            .values()
+            .map(|e| &e.gui)
+            .chain(inner.confirm_by_id.values().map(|e| &e.gui));
+        for gui in entries {
+            if let Ok(slot) = gui.lock() {
                 if let Some(tx) = slot.as_ref() {
-                    let _ = tx.send(msg.clone());
+                    if !excluded.is_some_and(|sender| sender.same_channel(tx))
+                        && !senders.iter().any(|sender| sender.same_channel(tx))
+                    {
+                        senders.push(tx.clone());
+                    }
                 }
             }
         }
-        for entry in inner.confirm_by_id.values() {
-            if let Ok(slot) = entry.gui.lock() {
-                if let Some(tx) = slot.as_ref() {
-                    let _ = tx.send(msg.clone());
-                }
-            }
+        for sender in senders {
+            let _ = sender.send(msg.clone());
         }
     }
 }

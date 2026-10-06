@@ -197,6 +197,14 @@ pub fn dispatch() {
         "--gui-host" => {
             crate::app::run_gui_host(crate::config::AppConfig::load_without_secrets());
         }
+        "--popup-host" => {
+            let token = argv
+                .windows(2)
+                .find(|args| args[0] == "--token")
+                .map(|args| args[1].clone())
+                .unwrap_or_default();
+            crate::app::run_popup_host(token);
+        }
         // 隐藏的 GUI Helper 角色：由 Daemon spawn（`--popup --endpoint <sock> --token <tok>`）。
         "--popup" => {
             let mut endpoint = String::new();

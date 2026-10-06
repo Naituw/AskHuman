@@ -4,10 +4,15 @@ pub mod confirm_coordinator;
 pub mod coordinator;
 pub mod gui_host;
 mod invoke;
+pub(crate) mod popup_canvas;
+pub mod popup_inbox;
+pub mod popup_inbox_geometry;
 pub mod popup_preview;
 pub mod popup_preview_actions;
 pub(crate) mod popup_preview_geometry;
+pub mod popup_pulse;
 mod popup_size;
+pub mod popup_transition;
 pub mod terminal_gate;
 pub mod tray_menu;
 
@@ -55,6 +60,7 @@ pub struct AppState {
 #[derive(Clone, Copy)]
 enum View {
     Popup,
+    PopupInbox,
     Settings,
     /// 独立历史窗口；`all` 为 true 时默认展示全部项目。
     History {
@@ -70,6 +76,7 @@ enum View {
 
 /// GUI Helper 模式下，弹窗 ↔ Daemon 的 IPC 接线（由 `run_gui_helper` 建好后传入 `launch`）。
 pub struct PopupIpc {
+    pub host: Option<(u64, bool)>,
     /// 向 Daemon 发送 `answer` 等消息（写任务已在 `run_gui_helper` 中起好）。
     pub gui_tx: tokio::sync::mpsc::UnboundedSender<crate::ipc::ClientMsg>,
     /// Daemon 分配的 request_id（回带在 `answer` 中）。预热（warm）模式领用前为空，收到 `Show` 时填入。
@@ -605,6 +612,70 @@ pub fn run_gui_host(config: AppConfig) -> ! {
 ///
 /// 流程：连 Daemon → 出示一次性 token → 收 `show` → 本进程主线程跑 Tauri 弹窗；
 /// 用户作答 / 取消经 IPC `answer` 回 Daemon；收到 `cancel` 或连接断开即退出。
+pub fn run_popup_host(token: String) -> ! {
+    use crate::ipc::{self, transport, ClientMsg, ServerMsg};
+    use tokio::io::BufReader;
+    let connected = tauri::async_runtime::block_on(async move {
+        let stream = transport::connect().await?;
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        ipc::write_msg(&mut writer, &ClientMsg::PopupHostHello { token }).await?;
+        match ipc::read_msg::<_, ServerMsg>(&mut reader).await? {
+            Some(ServerMsg::PopupHostAccepted {
+                generation,
+                recovered,
+            }) => Ok((reader, writer, generation, recovered)),
+            _ => Err(std::io::Error::other(
+                "popup host was not accepted by daemon",
+            )),
+        }
+    });
+    let (reader, mut writer, generation, recovered) = match connected {
+        Ok(connection) => connection,
+        Err(error) => {
+            stderr_redirect::eprintln_real(&format!("popup host connection failed: {error}"));
+            std::process::exit(3);
+        }
+    };
+    let (tx, mut messages) = tokio::sync::mpsc::unbounded_channel();
+    tauri::async_runtime::spawn(async move {
+        while let Some(message) = messages.recv().await {
+            if ipc::write_msg(&mut writer, &message).await.is_err() {
+                break;
+            }
+        }
+    });
+    let state = AppState {
+        interaction: InteractionRequest::Ask(AskRequest::new(
+            crate::models::MessagePrompt::default(),
+            Vec::new(),
+            false,
+        )),
+        popup_edit: None,
+        config: AppConfig::load_without_secrets(),
+        source: String::new(),
+        project: String::new(),
+        agent_kind: None,
+        agent_session_id: None,
+        mcp_instance_id: None,
+        agent_pid: None,
+        agent_console_session_id: None,
+        created_at_ms: 0,
+    };
+    let ipc = PopupIpc {
+        host: Some((generation, recovered)),
+        gui_tx: tx,
+        request_id: String::new(),
+        reader: Box::pin(reader),
+        warm: true,
+    };
+    if let Err(error) = launch(state, View::PopupInbox, Some(ipc)) {
+        stderr_redirect::eprintln_real(&format!("popup host startup failed: {error}"));
+        std::process::exit(3);
+    }
+    std::process::exit(0);
+}
+
 pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
     use crate::ipc::{self, transport, ClientMsg, ServerMsg};
     use tokio::io::BufReader;
@@ -655,6 +726,7 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
             created_at_ms: 0,
         };
         let popup_ipc = PopupIpc {
+            host: None,
             gui_tx,
             request_id: String::new(),
             reader: Box::pin(reader),
@@ -724,6 +796,7 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
         created_at_ms: show.created_at_ms,
     };
     let popup_ipc = PopupIpc {
+        host: None,
         gui_tx,
         request_id,
         reader: Box::pin(reader),
@@ -750,7 +823,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
     let warm = popup_ipc.as_ref().map(|i| i.warm).unwrap_or(false);
     // 提问模式下抑制「关窗即退出」：收尾 / 等待 Daemon 收尾时弹窗会先关，需留进程主动退出。
     // 设置模式不抑制，关窗即正常退出。宿主模式恒抑制（窗口全关后是否退出由宿主自身判定）。
-    let prevent_autoexit = matches!(view, View::Popup | View::GuiHost);
+    let prevent_autoexit = matches!(view, View::Popup | View::PopupInbox | View::GuiHost);
 
     crate::perf::mark_env("gui.build_start");
     let app = tauri::Builder::default()
@@ -771,6 +844,11 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                     WindowEvent::CloseRequested { api, .. } => {
                         use tauri::Emitter;
                         let app = window.app_handle();
+                        if app.try_state::<popup_inbox::Inbox>().is_some() {
+                            api.prevent_close();
+                            let _ = app.emit("popup-inbox-close", ());
+                            return;
+                        }
                         // 已在收尾（提交/取消触发的 w.close()）→ 放行关闭。
                         let finishing = app
                             .try_state::<GuiBridge>()
@@ -783,8 +861,10 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                         }
                     }
                     WindowEvent::Resized(size) => persist_popup_size(window, *size),
-                    WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {
-                        popup_preview::moved(window)
+                    WindowEvent::Moved(_) => popup_preview::moved(window),
+                    WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                        persist_popup_size(window, *new_inner_size);
+                        popup_preview::moved(window);
                     }
                     WindowEvent::Focused(true) => {
                         popup_preview::moved(window);
@@ -793,6 +873,15 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                         }
                     }
                     WindowEvent::Destroyed => {
+                        if window
+                            .app_handle()
+                            .try_state::<popup_inbox::Inbox>()
+                            .is_some()
+                        {
+                            popup_pulse::cancel();
+                            window.app_handle().exit(3);
+                            return;
+                        }
                         if let Some(bridge) = window.app_handle().try_state::<GuiBridge>() {
                             bridge.popup_destroyed();
                         }
@@ -843,9 +932,19 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             #[cfg(target_os = "macos")]
             crate::macos_dock_icon::set_dock_icon();
             match view {
-                View::Popup => {
+                View::Popup | View::PopupInbox => {
                     {
-                        let mut url = String::from("index.html?view=popup");
+                        let mut url = String::from(if matches!(view, View::PopupInbox) {
+                            "index.html?view=popup-inbox"
+                        } else {
+                            "index.html?view=popup"
+                        });
+                        if matches!(view, View::PopupInbox)
+                            && crate::dev_instance::is_dev_instance()
+                            && std::env::var("ASKHUMAN_INBOX_LAYOUT_REVIEW").as_deref() == Ok("1")
+                        {
+                            url.push_str("&layoutReview=1");
+                        }
                         append_window_effect_query(&mut url, effective_window_effect);
                         let builder =
                             WebviewWindowBuilder::new(app, "popup", WebviewUrl::App(url.into()))
@@ -872,173 +971,184 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                         watch_todos_file(win.clone());
                     }
 
-                    match popup_ipc {
-                        // —— GUI Helper 模式：作答经 IPC 回 Daemon，无本地协调器 / 消息渠道 ——
-                        Some(ipc) => {
-                            let PopupIpc {
-                                gui_tx,
-                                request_id,
-                                reader,
-                                warm: _,
-                            } = ipc;
-                            app.manage(GuiBridge {
-                                tx: gui_tx,
-                                request_id: std::sync::Mutex::new(request_id),
-                                done: AtomicBool::new(false),
-                                ready_sent: AtomicBool::new(false),
-                                presented: AtomicBool::new(false),
-                                app: app.handle().clone(),
-                            });
-                            // 方案6 预热：manage 领用槽（None=待命）；首条 `Show` 经 reader 循环填入并唤醒前端。
-                            if warm {
-                                app.manage(WarmPopup {
-                                    show: std::sync::Mutex::new(None),
-                                    finalized: AtomicBool::new(false),
+                    if matches!(view, View::PopupInbox) {
+                        popup_inbox::setup(app, popup_ipc.expect("popup inbox requires IPC"))?;
+                    } else {
+                        match popup_ipc {
+                            // —— GUI Helper 模式：作答经 IPC 回 Daemon，无本地协调器 / 消息渠道 ——
+                            Some(ipc) => {
+                                let PopupIpc {
+                                    gui_tx,
+                                    request_id,
+                                    reader,
+                                    warm: _,
+                                    host: _,
+                                } = ipc;
+                                app.manage(GuiBridge {
+                                    tx: gui_tx,
+                                    request_id: std::sync::Mutex::new(request_id),
+                                    done: AtomicBool::new(false),
+                                    ready_sent: AtomicBool::new(false),
+                                    presented: AtomicBool::new(false),
+                                    app: app.handle().clone(),
                                 });
-                            }
-                            // 读 Daemon → GUI 的消息：被抢答 cancel / 连接断开 → 退出本进程。
-                            let app_handle = app.handle().clone();
-                            tauri::async_runtime::spawn(async move {
-                                let mut reader = reader;
-                                loop {
-                                    match crate::ipc::read_msg::<_, crate::ipc::ServerMsg>(
-                                        &mut reader,
-                                    )
-                                    .await
-                                    {
-                                        // 方案6 预热领用：首条 `Show` 把请求注入已挂载的待命弹窗。
-                                        // 回填 GuiBridge.request_id + 存入领用槽，再 emit 唤醒前端拉取渲染
-                                        //（前端 pull `popup_init` 取已领用请求 → 绘制 → 调 `popup_show_window` 上屏）。
-                                        Ok(Some(crate::ipc::ServerMsg::Show(show))) => {
-                                            use tauri::{Emitter, Manager};
-                                            // 方案6 埋点：热 helper 无 perf env，领用时由 Show 注入 perf 上下文，
-                                            // 使其 fe.painted/gui.win_show 与 CLI 同 perf_id 关联。
-                                            crate::perf::set_runtime(
-                                                &show.perf_id,
-                                                show.perf_autodismiss,
-                                            );
-                                            crate::perf::mark_env("gui.show_recv");
-                                            if let Some(bridge) =
-                                                app_handle.try_state::<GuiBridge>()
-                                            {
-                                                bridge.set_request_id(show.request_id.clone());
-                                            }
-                                            if let Some(warm_state) =
-                                                app_handle.try_state::<WarmPopup>()
-                                            {
-                                                *warm_state.show.lock().unwrap() = Some(show);
-                                            }
-                                            let _ = app_handle.emit("popup-show", ());
-                                        }
-                                        Ok(Some(crate::ipc::ServerMsg::PresentPopup {
-                                            request_id,
-                                            presentation,
-                                        })) => {
-                                            let matches = app_handle
-                                                .try_state::<GuiBridge>()
-                                                .map(|bridge| bridge.request_id() == request_id)
-                                                .unwrap_or(false);
-                                            if !matches {
-                                                continue;
-                                            }
-                                            let app2 = app_handle.clone();
-                                            let _ = app_handle.run_on_main_thread(move || {
-                                                finalize_popup_show(&app2, presentation);
-                                            });
-                                        }
-                                        Ok(Some(crate::ipc::ServerMsg::Cancel { .. })) => {
-                                            let app2 = app_handle.clone();
-                                            let _ = app_handle.run_on_main_thread(move || {
-                                                if let Some(bridge) = app2.try_state::<GuiBridge>()
-                                                {
-                                                    bridge.dismiss_from_daemon();
-                                                }
-                                            });
-                                        }
-                                        // 配置实时变更（A12）：转发给前端实时切主题/语言。
-                                        // 复用既有 "settings-updated" 事件（前端已监听 general 配置）。
-                                        Ok(Some(crate::ipc::ServerMsg::ConfigChanged {
-                                            general,
-                                        })) => {
-                                            use tauri::Emitter;
-                                            // 先同步原生窗口外观：玻璃/毛玻璃材质随 NSAppearance 切换，
-                                            // 仅靠前端 CSS 会出现「网页变浅、窗体仍深」（见 A12 实测）。
-                                            if let Some(theme) =
-                                                general.get("theme").and_then(|t| t.as_str())
-                                            {
-                                                crate::commands::apply_theme_to_windows(
-                                                    &app_handle,
-                                                    theme,
+                                // 方案6 预热：manage 领用槽（None=待命）；首条 `Show` 经 reader 循环填入并唤醒前端。
+                                if warm {
+                                    app.manage(WarmPopup {
+                                        show: std::sync::Mutex::new(None),
+                                        finalized: AtomicBool::new(false),
+                                    });
+                                }
+                                // 读 Daemon → GUI 的消息：被抢答 cancel / 连接断开 → 退出本进程。
+                                let app_handle = app.handle().clone();
+                                tauri::async_runtime::spawn(async move {
+                                    let mut reader = reader;
+                                    loop {
+                                        match crate::ipc::read_msg::<_, crate::ipc::ServerMsg>(
+                                            &mut reader,
+                                        )
+                                        .await
+                                        {
+                                            // 方案6 预热领用：首条 `Show` 把请求注入已挂载的待命弹窗。
+                                            // 回填 GuiBridge.request_id + 存入领用槽，再 emit 唤醒前端拉取渲染
+                                            //（前端 pull `popup_init` 取已领用请求 → 绘制 → 调 `popup_show_window` 上屏）。
+                                            Ok(Some(crate::ipc::ServerMsg::Show(show))) => {
+                                                use tauri::{Emitter, Manager};
+                                                // 方案6 埋点：热 helper 无 perf env，领用时由 Show 注入 perf 上下文，
+                                                // 使其 fe.painted/gui.win_show 与 CLI 同 perf_id 关联。
+                                                crate::perf::set_runtime(
+                                                    &show.perf_id,
+                                                    show.perf_autodismiss,
                                                 );
+                                                crate::perf::mark_env("gui.show_recv");
+                                                if let Some(bridge) =
+                                                    app_handle.try_state::<GuiBridge>()
+                                                {
+                                                    bridge.set_request_id(show.request_id.clone());
+                                                }
+                                                if let Some(warm_state) =
+                                                    app_handle.try_state::<WarmPopup>()
+                                                {
+                                                    *warm_state.show.lock().unwrap() = Some(show);
+                                                }
+                                                let _ = app_handle.emit("popup-show", ());
                                             }
-                                            // Hot-sync the requested material to the in-flight helper.
-                                            //（热待命进程不在 broadcast 列表，靠 finalize 领用时兜底）。
-                                            // apply_window_effect_to_all 内部 hop 主线程（本 reader 在 tokio worker）。
-                                            if let Some(effect) = general
-                                                .get("windowEffect")
-                                                .and_then(|v| v.as_str())
-                                                .and_then(parse_window_effect)
-                                            {
-                                                apply_window_effect_to_all(&app_handle, effect);
+                                            Ok(Some(crate::ipc::ServerMsg::PresentPopup {
+                                                request_id,
+                                                presentation,
+                                            })) => {
+                                                let matches = app_handle
+                                                    .try_state::<GuiBridge>()
+                                                    .map(|bridge| bridge.request_id() == request_id)
+                                                    .unwrap_or(false);
+                                                if !matches {
+                                                    continue;
+                                                }
+                                                let app2 = app_handle.clone();
+                                                let _ = app_handle.run_on_main_thread(move || {
+                                                    finalize_popup_show(&app2, presentation);
+                                                });
                                             }
-                                            let _ = app_handle.emit("settings-updated", general);
-                                        }
-                                        // 版本自更新态（D→GUI）：缓存进程内 + emit 给弹窗前端
-                                        // （弹窗挂载先 pull `popup_update_state` 取初值，再靠此事件实时更新）。
-                                        Ok(Some(crate::ipc::ServerMsg::UpdateState {
-                                            available,
-                                            latest_version,
-                                            pending,
-                                        })) => {
-                                            use tauri::Emitter;
-                                            let payload = crate::commands::PushedUpdateState {
+                                            Ok(Some(crate::ipc::ServerMsg::Cancel { .. })) => {
+                                                let app2 = app_handle.clone();
+                                                let _ = app_handle.run_on_main_thread(move || {
+                                                    if let Some(bridge) =
+                                                        app2.try_state::<GuiBridge>()
+                                                    {
+                                                        bridge.dismiss_from_daemon();
+                                                    }
+                                                });
+                                            }
+                                            // 配置实时变更（A12）：转发给前端实时切主题/语言。
+                                            // 复用既有 "settings-updated" 事件（前端已监听 general 配置）。
+                                            Ok(Some(crate::ipc::ServerMsg::ConfigChanged {
+                                                general,
+                                            })) => {
+                                                use tauri::Emitter;
+                                                // 先同步原生窗口外观：玻璃/毛玻璃材质随 NSAppearance 切换，
+                                                // 仅靠前端 CSS 会出现「网页变浅、窗体仍深」（见 A12 实测）。
+                                                if let Some(theme) =
+                                                    general.get("theme").and_then(|t| t.as_str())
+                                                {
+                                                    crate::commands::apply_theme_to_windows(
+                                                        &app_handle,
+                                                        theme,
+                                                    );
+                                                }
+                                                // Hot-sync the requested material to the in-flight helper.
+                                                //（热待命进程不在 broadcast 列表，靠 finalize 领用时兜底）。
+                                                // apply_window_effect_to_all 内部 hop 主线程（本 reader 在 tokio worker）。
+                                                if let Some(effect) = general
+                                                    .get("windowEffect")
+                                                    .and_then(|v| v.as_str())
+                                                    .and_then(parse_window_effect)
+                                                {
+                                                    apply_window_effect_to_all(&app_handle, effect);
+                                                }
+                                                let _ =
+                                                    app_handle.emit("settings-updated", general);
+                                            }
+                                            // 版本自更新态（D→GUI）：缓存进程内 + emit 给弹窗前端
+                                            // （弹窗挂载先 pull `popup_update_state` 取初值，再靠此事件实时更新）。
+                                            Ok(Some(crate::ipc::ServerMsg::UpdateState {
                                                 available,
                                                 latest_version,
                                                 pending,
-                                                apply_mode: crate::update::apply_mode(),
-                                            };
-                                            crate::commands::set_pushed_update(payload.clone());
-                                            let _ = app_handle.emit("update-state", payload);
-                                        }
-                                        // 调用方 agent 异步解析结果（D→GUI，方案5/b）：缓存进程内 + emit
-                                        // 给弹窗前端（弹窗挂载先 pull `popup_agent_resolved` 取初值，再靠
-                                        // 此事件实时升级 badge / 「聚焦终端」）。
-                                        Ok(Some(crate::ipc::ServerMsg::AgentResolved {
-                                            kind,
-                                            pid,
-                                            launch_id,
-                                        })) => {
-                                            use tauri::Emitter;
-                                            let payload = crate::commands::PushedAgent {
+                                            })) => {
+                                                use tauri::Emitter;
+                                                let payload = crate::commands::PushedUpdateState {
+                                                    available,
+                                                    latest_version,
+                                                    pending,
+                                                    apply_mode: crate::update::apply_mode(),
+                                                };
+                                                crate::commands::set_pushed_update(payload.clone());
+                                                let _ = app_handle.emit("update-state", payload);
+                                            }
+                                            // 调用方 agent 异步解析结果（D→GUI，方案5/b）：缓存进程内 + emit
+                                            // 给弹窗前端（弹窗挂载先 pull `popup_agent_resolved` 取初值，再靠
+                                            // 此事件实时升级 badge / 「聚焦终端」）。
+                                            Ok(Some(crate::ipc::ServerMsg::AgentResolved {
+                                                request_id: _,
                                                 kind,
                                                 pid,
                                                 launch_id,
-                                            };
-                                            crate::commands::set_pushed_agent(payload.clone());
-                                            let _ = app_handle.emit("agent-resolved", payload);
-                                        }
-                                        // 托盘「待答」子菜单点击：聚焦本弹窗并通知前端闪烁边框。
-                                        Ok(Some(crate::ipc::ServerMsg::FocusPopup { .. })) => {
-                                            use tauri::Emitter;
-                                            let app2 = app_handle.clone();
-                                            let _ = app_handle.run_on_main_thread(move || {
-                                                if let Some(win) = app2.get_webview_window("popup")
-                                                {
-                                                    let _ = win.set_focus();
-                                                }
-                                                let _ = app2.emit("popup-flash", ());
-                                            });
-                                        }
-                                        Ok(Some(_)) => {}
-                                        Ok(None) | Err(_) => {
-                                            app_handle.exit(0);
-                                            break;
+                                            })) => {
+                                                use tauri::Emitter;
+                                                let payload = crate::commands::PushedAgent {
+                                                    kind,
+                                                    pid,
+                                                    launch_id,
+                                                };
+                                                crate::commands::set_pushed_agent(payload.clone());
+                                                let _ = app_handle.emit("agent-resolved", payload);
+                                            }
+                                            // 托盘「待答」子菜单点击：聚焦本弹窗并通知前端闪烁边框。
+                                            Ok(Some(crate::ipc::ServerMsg::FocusPopup {
+                                                ..
+                                            })) => {
+                                                use tauri::Emitter;
+                                                let app2 = app_handle.clone();
+                                                let _ = app_handle.run_on_main_thread(move || {
+                                                    if let Some(win) =
+                                                        app2.get_webview_window("popup")
+                                                    {
+                                                        let _ = win.set_focus();
+                                                    }
+                                                    let _ = app2.emit("popup-flash", ());
+                                                });
+                                            }
+                                            Ok(Some(_)) => {}
+                                            Ok(None) | Err(_) => {
+                                                app_handle.exit(0);
+                                                break;
+                                            }
                                         }
                                     }
-                                }
-                            });
+                                });
+                            }
+                            None => unreachable!("popup view requires daemon IPC"),
                         }
-                        None => unreachable!("popup view requires daemon IPC"),
                     }
                 }
                 View::Settings => {
@@ -1081,6 +1191,20 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
     // 构建成功后、进入事件循环前静默系统噪音日志（如 macOS 的 TSM CapsLock 日志）。
     stderr_redirect::silence();
     app.run(move |app_handle, event| {
+        if let Some(inbox) = app_handle.try_state::<popup_inbox::Inbox>() {
+            if let RunEvent::ExitRequested { code, api, .. } = &event {
+                if code.is_none() {
+                    use tauri::Emitter;
+                    api.prevent_exit();
+                    if inbox.snapshot().requests.is_empty() {
+                        inbox.idle(app_handle);
+                    } else {
+                        let _ = app_handle.emit("popup-inbox-close", ());
+                    }
+                }
+            }
+            return;
+        }
         // 宿主模式：托管窗口全关也不退出（是否退出由宿主自身 evaluate_exit 经 app.exit() 决定）。
         // 故拦下一切「关窗触发」的退出（code=None）；宿主主动退出走 app.exit(code) → code=Some 放行。
         if app_handle.try_state::<gui_host::HostState>().is_some() {
@@ -2277,12 +2401,16 @@ fn window_theme(config: &AppConfig) -> Option<tauri::Theme> {
 fn persist_popup_size(window: &tauri::Window, event_size: tauri::PhysicalSize<u32>) {
     let app = window.app_handle();
     let presented = app
-        .try_state::<GuiBridge>()
-        .is_some_and(|bridge| bridge.presented.load(Ordering::SeqCst) && !bridge.is_done());
+        .try_state::<popup_inbox::Inbox>()
+        .is_some_and(|inbox| inbox.presented())
+        || app
+            .try_state::<GuiBridge>()
+            .is_some_and(|bridge| bridge.presented.load(Ordering::SeqCst) && !bridge.is_done());
     if !presented
         || !window.is_visible().unwrap_or(false)
         || window.is_minimized().unwrap_or(true)
-        || window.is_maximized().unwrap_or(true)
+        || (window.is_maximized().unwrap_or(true)
+            && app.try_state::<popup_inbox::Inbox>().is_none())
     {
         return;
     }

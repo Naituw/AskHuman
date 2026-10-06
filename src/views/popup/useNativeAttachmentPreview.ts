@@ -12,21 +12,25 @@ export function useNativeAttachmentPreview(deps: {
   let frame = 0;
   let disposed = false;
   function update(show: boolean) {
-    if (!isMac) return;
+    if (!isMac || disposed) return Promise.resolve();
     const token = ++version;
     const rect = show ? deps.element.value?.getBoundingClientRect() : null;
     const visible = !!rect && rect.width > 0 && rect.height > 0;
-    void invoke("popup_preview_native", {
+    return invoke<void>("popup_preview_native", {
       requestId: deps.requestId.value, index: visible ? deps.index.value : null, version: token,
       rect: visible ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
       bareEnter: deps.bareEnter.value,
-    }).catch(() => { if (!disposed && token === version && visible) { failed.value = true; update(false); } });
+    }).catch(() => { if (!disposed && token === version && visible) { failed.value = true; void update(false); } });
+  }
+  function syncNativePreview() {
+    cancelAnimationFrame(frame); frame = 0;
+    return update(deps.active.value && !deps.blocked.value && !failed.value);
   }
   function schedule() {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => {
       frame = 0;
-      if (!disposed) update(deps.active.value && !deps.blocked.value && !failed.value);
+      if (!disposed) void syncNativePreview();
     });
   }
   const stopElement = watch(deps.element, element => {
@@ -44,8 +48,8 @@ export function useNativeAttachmentPreview(deps: {
   }, { flush: "sync" });
   const stopLayout = watch([deps.revision, deps.bareEnter], schedule, { flush: "post" });
   onScopeDispose(() => {
-    disposed = true; cancelAnimationFrame(frame); observer?.disconnect();
-    stopElement(); stopActive(); stopBlocked(); stopLayout(); update(false);
+    cancelAnimationFrame(frame); observer?.disconnect();
+    stopElement(); stopActive(); stopBlocked(); stopLayout(); void update(false); disposed = true;
   });
-  return { nativeFailed: failed };
+  return { nativeFailed: failed, syncNativePreview };
 }

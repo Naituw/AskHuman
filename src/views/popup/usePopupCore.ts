@@ -1,11 +1,12 @@
+import { inboxDropPoint } from "./inboxCoordinates";
 // 弹窗核心域：请求/确认状态、按题作答、纵向/顺序导航、键盘快捷键、初始化与生命周期。
 // 语音 / 附件 / 自更新三个子域拆在 useSpeech / useAttachments / useUpdateState，由此处接线。
 // 各 UI 区块子组件经 providePopupContext 注入本上下文（见 context.ts）。
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen as listenEvent, type Event as TauriEvent, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   popupInit,
   enrichPermissionDiff,
@@ -53,6 +54,7 @@ import type {
   ThemeMode,
   TodoEntry,
 } from "../../lib/types";
+import type { PreviewLayout } from "./useAttachmentPreview";
 import { useSpeech } from "./useSpeech";
 import { useAttachments } from "./useAttachments";
 import { useUpdateState } from "./useUpdateState";
@@ -80,7 +82,35 @@ import {
   settleTextareaHeightAfterBlur,
 } from "./textareaAutosize";
 
-export function usePopupCore() {
+export interface InboxLayout {
+  revision: number; sidebarWidth: number; mainWidth: number; mainHeight: number;
+  previewWidth: number; limited: boolean;
+  frame: { width: number; height: number };
+  canvas?: { left: number; width: number; height: number; frozen: boolean } | null;
+}
+export interface PopupScope {
+  layout?: Readonly<Ref<InboxLayout | null>>;
+  pin?: Ref<boolean | null>;
+  nativePreviewSync?: (sync: (() => Promise<void>) | null) => void;
+  requestId: string;
+  active: Readonly<Ref<boolean>>;
+  blocked: Readonly<Ref<boolean>>;
+  ready: (id: string) => void;
+  close: () => void;
+  draft: (id: string, hasDraft: boolean) => void;
+  preview: (open: boolean, mainExtent?: number) => Promise<PreviewLayout>;
+}
+
+export function usePopupCore(scope?: PopupScope) {
+  const popupActive = computed(() => !scope || scope.active.value);
+  const acceptsInput = () => popupActive.value && !scope?.blocked.value;
+  const submissionError = ref<string | null>(null);
+  let disposed = false;
+  async function listen<T = unknown>(event: string, handler: (event: TauriEvent<T>) => void): Promise<UnlistenFn> {
+    const off = await listenEvent<T>(event, handler);
+    if (disposed) { off(); return () => {}; }
+    return off;
+  }
   const { t } = useI18n();
 
   // Localized labels for the markdown code-block copy button. Referencing t()
@@ -94,6 +124,7 @@ export function usePopupCore() {
   const confirmRequest = ref<ConfirmRequest | null>(null);
   const isConfirm = computed(() => confirmRequest.value !== null);
   const confirmChoiceIndex = ref<number | null>(null);
+  const initialConfirmChoice = ref<number | null>(null);
   const confirmComment = ref("");
   const permissionEdit = ref<PermissionEditIntent | null>(null);
   const permissionDiff = ref<PermissionDiffModel | null>(null);
@@ -395,6 +426,7 @@ export function usePopupCore() {
   }
 
   function focusComposer(i: number, manuallyActivated: boolean) {
+    if (!acceptsInput()) return;
     const el = inputRefs.value[i];
     if (!el) return;
     programmaticFocusActivation = { qIndex: i, manuallyActivated };
@@ -530,12 +562,14 @@ export function usePopupCore() {
   let scrollRaf = 0;
   let scrollSpyPending = false;
   function scheduleScrollWork(fromScrollEvent = false) {
+    if (!popupActive.value) return;
     // Geometry-only callers (keyboard activation, ResizeObserver, Teleport) must not hand the
     // current-question pointer back to scroll-spy. Preserve a real scroll intent if calls coalesce.
     if (fromScrollEvent) scrollSpyPending = true;
     if (scrollRaf) return;
     scrollRaf = requestAnimationFrame(() => {
       scrollRaf = 0;
+      if (!popupActive.value) return;
       const hadScrollEvent = scrollSpyPending;
       const now = Date.now();
       const applyScrollSpy = shouldApplyScrollSpy(
@@ -624,7 +658,7 @@ export function usePopupCore() {
 
   // daemon 已严格匹配会话时才会显示；后端从自身状态取目标 session，前端不参与寻址。
   function openAgentConsoleWindow() {
-    openAgentConsole().catch((err) => {
+    openAgentConsole(scope?.requestId).catch((err) => {
       console.warn("open agent console failed", err);
     });
   }
@@ -948,7 +982,7 @@ export function usePopupCore() {
   );
 
   // ===== 子域接线：附件 / 自更新 =====
-  const attach = useAttachments({ attachments, requestId: computed(() => request.value?.id ?? "") });
+  const attach = useAttachments({ attachments, requestId: computed(() => request.value?.id ?? ""), active: popupActive, layout: scope?.preview });
   const update = useUpdateState({ codeCopyLabels });
 
   // 托盘「待答」子菜单点击本弹窗时，边框闪烁一次（accent 蓝脉冲）。
@@ -996,6 +1030,7 @@ export function usePopupCore() {
     pinned.value = !pinned.value;
     try {
       await getCurrentWindow().setAlwaysOnTop(pinned.value);
+      if (scope?.pin) scope.pin.value = pinned.value;
     } catch {
       pinned.value = !pinned.value;
     }
@@ -1020,7 +1055,7 @@ export function usePopupCore() {
   }
 
   function openHistoryWindow() {
-    openHistory().catch(() => {});
+    openHistory(scope?.requestId).catch(() => {});
   }
 
   function openTodosWindow() {
@@ -1131,6 +1166,10 @@ export function usePopupCore() {
 
   function questionAtPoint(x: number, y: number): number {
     if (!verticalMode.value) return current.value;
+    if (scope?.layout?.value?.canvas) {
+      const [cx, cy] = inboxDropPoint(x, y, scope.layout.value);
+      return cardIndexAt(cx, cy) ?? current.value;
+    }
     const dpr = window.devicePixelRatio || 1;
     const candidates: [number, number][] = isWindows
       ? [
@@ -1182,6 +1221,7 @@ export function usePopupCore() {
 
   // 粘贴图片：归到当前聚焦的问题（无聚焦则归当前题 active）。
   async function onPaste(e: ClipboardEvent) {
+    if (!acceptsInput()) return;
     if (selectOnly.value) return;
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -1207,6 +1247,7 @@ export function usePopupCore() {
 
   // ===== Speech follows the unified action target, not passive scroll position. =====
   const speech = useSpeech({
+    active: popupActive,
     targetQuestion: actionQuestionIndex,
     inputByQ,
     inputRef,
@@ -1589,10 +1630,11 @@ export function usePopupCore() {
   async function submit() {
     if (submitting.value || !canSubmit.value) return;
     submitting.value = true;
-    attach.stopPreview(true);
+    submissionError.value = null;
     try {
-      await submitPopup({ answers: collectAnswers() });
-    } catch {
+      await submitPopup({ answers: collectAnswers() }, scope?.requestId);
+    } catch (error) {
+      submissionError.value = String(error);
       submitting.value = false;
     }
   }
@@ -1810,17 +1852,20 @@ export function usePopupCore() {
   async function submitConfirm() {
     if (!confirmCanSubmit.value || confirmChoiceIndex.value === null) return;
     submitting.value = true;
+    submissionError.value = null;
     const comment = showConfirmInput.value
       ? confirmComment.value.slice(0, confirmInput.value?.maxChars ?? 1000)
       : null;
     try {
-      await submitConfirmAction(confirmChoiceIndex.value, comment || null);
-    } catch {
+      await submitConfirmAction(confirmChoiceIndex.value, comment || null, scope?.requestId);
+    } catch (error) {
+      submissionError.value = String(error);
       submitting.value = false;
     }
   }
 
   function requestConfirmClose() {
+    if (scope) { scope.close(); return; }
     if (!submitting.value) showConfirmCloseWarning.value = true;
   }
 
@@ -1840,6 +1885,7 @@ export function usePopupCore() {
 
   // 取消入口：有回答时二次确认，否则直接取消。
   function requestCancel() {
+    if (scope) { scope.close(); return; }
     if (submitting.value) return;
     if (hasAnyAnswer.value) {
       showCancelConfirm.value = true;
@@ -1851,11 +1897,12 @@ export function usePopupCore() {
   async function doCancel() {
     if (submitting.value) return;
     submitting.value = true;
+    submissionError.value = null;
     showCancelConfirm.value = false;
-    attach.stopPreview(true);
     try {
-      await cancelPopup();
-    } catch {
+      await cancelPopup(scope?.requestId);
+    } catch (error) {
+      submissionError.value = String(error);
       submitting.value = false;
     }
   }
@@ -1891,6 +1938,7 @@ export function usePopupCore() {
 
   // ⌘/Ctrl 按下/松开 → 切换 cmdHeld（驱动快捷键 Badge 高亮）。窗口失焦时复位，避免卡住。
   function onKeyup(e: KeyboardEvent) {
+    if (!acceptsInput()) return;
     cmdHeld.value = onlyCmdHeld(e);
   }
   function onWindowBlur() {
@@ -1898,6 +1946,7 @@ export function usePopupCore() {
   }
 
   function onKeydown(e: KeyboardEvent) {
+    if (!acceptsInput()) return;
     const mod = primaryModifierPressed(e);
     cmdHeld.value = onlyCmdHeld(e);
     if (!isConfirm.value && (e.isComposing || e.keyCode === 229)) return;
@@ -2042,17 +2091,21 @@ export function usePopupCore() {
   // 方案6 预热：领用一次性守卫——首个带 request 的 init 才渲染，避免重复领用。
   let adopting = false;
   let interactionRendered = false;
+  let appearance: { theme: ThemeMode; language?: string } | undefined;
+  if (scope?.pin) watch(scope.pin, value => { if (value !== null) pinned.value = value; });
 
   // 把（含 request 的）init 渲染上屏：套主题/语言/来源 → 设 request → 报告 ready → 双 rAF 打点。
   // daemon 收到 ready 后统一决定前景显示或后方级联；冷/热 helper 都保持隐藏到该授权到达。
   function renderInit(init: PopupInit) {
     const interaction = init.interaction;
-    if (!interaction || interactionRendered) return;
+    if (disposed || !interaction || interactionRendered) return;
     interactionRendered = true;
-    applyTheme(init.theme);
+    appearance = { theme: init.theme, language: init.language };
+    if (popupActive.value) applyTheme(init.theme);
     // 精确语言来自 popup_init（零钥匙串）；main.ts 只做 auto 兜底，故此处校正。
-    if (typeof init.language === "string") applyLanguage(init.language);
-    pinned.value = init.alwaysOnTop;
+    if (popupActive.value && typeof init.language === "string") applyLanguage(init.language);
+    pinned.value = scope?.pin?.value ?? init.alwaysOnTop;
+    if (scope?.pin && scope.pin.value === null) scope.pin.value = pinned.value;
     sourceName.value = init.sourceName;
     projectName.value = init.projectName;
     projectPath.value = init.project;
@@ -2092,6 +2145,7 @@ export function usePopupCore() {
           )
         : null;
     if (confirmChoiceIndex.value === -1) confirmChoiceIndex.value = null;
+    initialConfirmChoice.value = confirmChoiceIndex.value;
     // 档位选择器默认停在推荐档（D51）。
     confirmVariantLevel.value =
       interaction.type === "confirm"
@@ -2127,7 +2181,7 @@ export function usePopupCore() {
     const afterPaint = () => {
       // DOM 更新后再聚焦/建观察（此时 textarea / 哨兵已挂载）。
       nextTick(() => {
-        if (!vertical) {
+        if (!vertical && popupActive.value) {
           focusComposerIfInitiallyVisible(0);
           autoGrow(0);
         } else {
@@ -2139,11 +2193,11 @@ export function usePopupCore() {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           perfMarkFe("fe.painted");
-          if (isConfirm.value) confirmPopupReady().catch(() => {});
+          if (isConfirm.value) confirmPopupReady(scope?.requestId).catch(() => {});
           startPermissionDiffEnrichment();
           // harness 模式：内容已上屏即自动取消，免人工点按。
           if (init.perfAutodismiss && !isConfirm.value) {
-            cancelPopup().catch(() => {});
+            cancelPopup(scope?.requestId).catch(() => {});
           }
         });
       });
@@ -2151,7 +2205,9 @@ export function usePopupCore() {
     // Hidden windows have no display link, so readiness must not wait for rAF. nextTick is enough
     // to put this request into the DOM; daemon presentation restores rAF for afterPaint.
     nextTick(() => {
-      popupShowWindow().catch(() => {});
+      if (disposed) return;
+      if (scope) scope.ready(scope.requestId);
+      else popupShowWindow().catch(() => {});
       appearGuardUntil = Date.now() + APPEAR_GUARD_MS;
       afterPaint();
     });
@@ -2164,7 +2220,7 @@ export function usePopupCore() {
     if (request.value || confirmRequest.value || adopting) return;
     adopting = true;
     try {
-      const init = await popupInit();
+      const init = await popupInit(scope?.requestId);
       if (init.interaction) {
         // 热路径领用：丢弃预热阶段缓存的标记（fe.bootstrap/fe.mounted/待命 popup_init 不属本次请求），
         // 只上报领用后的标记（如 fe.painted），避免污染时间线（负的 page boot）。
@@ -2190,12 +2246,11 @@ export function usePopupCore() {
     window.addEventListener("blur", onWindowBlur);
     document.addEventListener("mouseup", speech.onDocMouseUp);
     // 方案6：预热弹窗领用唤醒事件——尽早注册以免漏接（冷路径不会收到，无害）。
-    unlistenShow = await listen("popup-show", () => {
-      void adopt();
-    });
+    if (!scope) unlistenShow = await listen("popup-show", () => { void adopt(); });
     // 关键路径：第一步即取请求内容并渲染，尽快上屏；其余初始化全部移到渲染之后（见 initAfterPaint）。
     try {
-      const init = await popupInit();
+      const init = await popupInit(scope?.requestId);
+      if (disposed) return;
       // 后端在 helper 进程收到 ASKHUMAN_PERF_ID 时置 perf=true：开启前端埋点并冲刷此前缓存的标记。
       if (init.perf) perfEnableFe();
       perfMarkFe("fe.popup_init_done");
@@ -2205,7 +2260,7 @@ export function usePopupCore() {
       } else {
         // 预热待命：先按当前主题/语言渲染（窗口隐藏），等 popup-show 领用。
         applyTheme(init.theme);
-        if (typeof init.language === "string") applyLanguage(init.language);
+        if (popupActive.value && typeof init.language === "string") applyLanguage(init.language);
         // 兜底竞态：领用可能发生在首个 popup_init 与监听注册之间，立即复查一次。
         void adopt();
       }
@@ -2219,6 +2274,7 @@ export function usePopupCore() {
   // 或为用户 / 托盘触发，略晚于首帧注册无碍（自更新态另用 popupUpdateState() 拉初值兜底）。
   // 放此处是为了不阻塞弹窗首屏（原先这些 await 串在 popupInit 之前，正是「加载中」停留的来源）。
   async function initAfterPaint(init: PopupInit) {
+    if (disposed) return;
     // Any process may update todos.json while the question stays open. The popup host watches
     // the file and emits this event to refresh the ordinary todo section or whats-next options.
     unlistenTodos = await listen("todos-updated", () => {
@@ -2227,6 +2283,7 @@ export function usePopupCore() {
     void loadTodos();
     await attach.initAttachmentPreviewListeners();
     unlistenNativePreview = await listen<{ requestId: string; index: number; key: string; metaKey: boolean }>("popup-preview-native-key", event => {
+      if (!acceptsInput()) return;
       const key = event.payload;
       if (key.requestId !== request.value?.id || key.index !== attach.previewIndex.value
           || attach.previewContent.value?.kind !== "native" || showCancelConfirm.value) return;
@@ -2235,6 +2292,7 @@ export function usePopupCore() {
       cmdHeld.value = false;
     });
     unlistenDrop = await getCurrentWebview().onDragDropEvent((event) => {
+      if (!acceptsInput()) return;
       // 拖出自家附件时不接管（那是往外拖，不是往里放）。
       if (attach.draggingOut.value) {
         if (event.payload.type === "drop") attach.draggingOut.value = false;
@@ -2243,7 +2301,10 @@ export function usePopupCore() {
       }
       if (event.payload.type === "over" || event.payload.type === "drop") {
         const pos = event.payload.position;
-        const element = document.elementFromPoint((pos?.x ?? 0) / window.devicePixelRatio, (pos?.y ?? 0) / window.devicePixelRatio);
+        const point = scope?.layout?.value?.canvas
+          ? inboxDropPoint(pos?.x ?? 0, pos?.y ?? 0, scope.layout.value)
+          : [(pos?.x ?? 0) / window.devicePixelRatio, (pos?.y ?? 0) / window.devicePixelRatio];
+        const element = document.elementFromPoint(point[0], point[1]);
         if (element?.closest(".attachment-preview, .attachment-preview-divider")) { dropTargetQ.value = null; return; }
       }
       if (event.payload.type === "over") {
@@ -2261,6 +2322,7 @@ export function usePopupCore() {
       const qIndex = wasOver ?? questionAtPoint(pos?.x ?? 0, pos?.y ?? 0);
       addDroppedPaths(event.payload.paths, qIndex);
     });
+    if (disposed) unlistenDrop?.();
     // 设置变更实时生效（同进程内设置窗口保存后广播 general 配置）。
     unlistenSettings = await listen<{
       theme?: ThemeMode;
@@ -2269,11 +2331,15 @@ export function usePopupCore() {
       speechShortcut?: string;
       popupSubmitKey?: "cmdEnter" | "enter";
     }>("settings-updated", (e) => {
+      if (appearance) {
+        if (typeof e.payload.theme === "string") appearance.theme = e.payload.theme;
+        if (typeof e.payload.language === "string") appearance.language = e.payload.language;
+      }
       // daemon 架构下由 Daemon 经 IPC 下发（独立 GUI Helper 进程）；单进程下由设置窗口同进程广播。
-      if (typeof e.payload.theme === "string") {
+      if (popupActive.value && typeof e.payload.theme === "string") {
         applyTheme(e.payload.theme);
       }
-      if (typeof e.payload.language === "string") applyLanguage(e.payload.language);
+      if (popupActive.value && typeof e.payload.language === "string") applyLanguage(e.payload.language);
       if (typeof e.payload.speechLanguage === "string")
         speech.speechLang.value = e.payload.speechLanguage || "auto";
       if (typeof e.payload.speechShortcut === "string")
@@ -2290,13 +2356,13 @@ export function usePopupCore() {
     // 版本自更新：拉初值 + 订阅实时变更。
     await update.initUpdateState();
     // 原生关闭按钮：后端阻止关闭并转发此事件 → 与 ⌘W 一致走二次确认。
-    unlistenCloseReq = await listen("popup-close-requested", () => {
+    if (!scope) unlistenCloseReq = await listen("popup-close-requested", () => {
       if (isConfirm.value) requestConfirmClose();
       else requestCancel();
     });
     // 托盘「待答」子菜单点击本弹窗：后端已聚焦窗口，这里播放边框闪烁。
     unlistenFlash = await listen("popup-flash", () => {
-      triggerFlash();
+      if (popupActive.value) triggerFlash();
     });
     // 调用方 agent 信息（家族 + pid）由 daemon 从 caller_pid **异步** walk 得到（方案5/b），经
     // `agent-resolved` 后推：先 pull 初值（规避事件早于监听的竞态），再监听实时升级。拿到 pid 才把 badge
@@ -2306,12 +2372,14 @@ export function usePopupCore() {
       void applyAgentResolved(init.agentKind, init.agentPid, undefined);
     }
     unlistenAgent = await listen<{
+      requestId?: string;
       kind?: string | null;
       pid?: number | null;
       launchId?: string | null;
     }>(
       "agent-resolved",
       (e) => {
+        if (scope && e.payload.requestId !== scope.requestId) return;
         void applyAgentResolved(
           e.payload.kind,
           e.payload.pid,
@@ -2320,7 +2388,7 @@ export function usePopupCore() {
       },
     );
     try {
-      const r = await popupAgentResolved();
+      const r = await popupAgentResolved(scope?.requestId);
       if (r.kind || r.pid != null || r.launchId) {
         void applyAgentResolved(r.kind, r.pid, r.launchId);
       }
@@ -2359,6 +2427,7 @@ export function usePopupCore() {
   }
 
   onBeforeUnmount(() => {
+    disposed = true;
     window.removeEventListener("paste", onPaste);
     window.removeEventListener("keydown", onKeydown);
     window.removeEventListener("keyup", onKeyup);
@@ -2386,10 +2455,25 @@ export function usePopupCore() {
     speech.disposeSpeech();
   });
 
+  const hasDraft = computed(() => hasAnyAnswer.value || !!confirmComment.value.trim()
+    || (isConfirm.value && confirmChoiceIndex.value !== initialConfirmChoice.value));
+  if (scope) watch(hasDraft, value => scope.draft(scope.requestId, value), { immediate: true });
+  watch(popupActive, active => {
+    if (!active) { cmdHeld.value = false; speech.stopListening(); }
+    else {
+      if (appearance) { applyTheme(appearance.theme); if (appearance.language) applyLanguage(appearance.language); }
+      nextTick(() => { if (!disposed) { scheduleScrollWork(); find.refreshFind(); } });
+    }
+  });
+
   return {
+    popupActive,
+    submissionError,
+    hasDraft,
     // Native preview uses the same submit policy and temporarily yields to root overlays.
     submitWithBareEnter,
-    nativePreviewBlocked: computed(() => showCancelConfirm.value || showConfirmCloseWarning.value || submitting.value),
+    nativePreviewBlocked: computed(() => !popupActive.value || !!scope?.blocked.value || showCancelConfirm.value || showConfirmCloseWarning.value || submitting.value),
+    registerNativePreviewSync: scope?.nativePreviewSync,
     // In-page find
     findActive: find.findActive,
     findQuery: find.findQuery,

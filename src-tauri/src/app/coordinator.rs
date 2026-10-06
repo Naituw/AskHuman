@@ -311,9 +311,15 @@ impl Coordinator {
     }
 
     /// 投递终态结果：仅首个生效；随后取消其余 Channel 并启动收尾窗口，到时输出并退出。
-    pub fn submit(self: &Arc<Self>, mut result: ChannelResult) {
+    pub fn submit(self: &Arc<Self>, result: ChannelResult) {
+        let _ = self.try_submit(result);
+    }
+
+    /// Return whether this submission won, so a shared popup can acknowledge only its own
+    /// request without treating a rejected or stale answer as a new human decision.
+    pub fn try_submit(self: &Arc<Self>, mut result: ChannelResult) -> bool {
         if !self.terminal.try_set(()) {
-            return;
+            return false;
         }
         let request = { self.inner.lock().unwrap().request.clone() };
         crate::todos::apply_todo_deliveries(&request, &mut result, &self.project);
@@ -391,6 +397,7 @@ impl Coordinator {
                 tokio::spawn(waiter);
             }
         }
+        true
     }
 
     /// Cancel the whole request (CLI disconnected / `daemon stop`): interrupt every channel as
@@ -645,6 +652,17 @@ mod tests {
             },
             true,
         )
+    }
+
+    #[tokio::test]
+    async fn submission_acknowledgement_identifies_the_first_winner() {
+        let mut coordinator = coordinator();
+        Arc::get_mut(&mut coordinator)
+            .unwrap()
+            .record_history_enabled = false;
+        assert!(coordinator.try_submit(ChannelResult::cancel("popup")));
+        assert!(!coordinator.try_submit(ChannelResult::cancel("feishu")));
+        assert_eq!(coordinator.winner_channel_id().as_deref(), Some("popup"));
     }
 
     #[test]

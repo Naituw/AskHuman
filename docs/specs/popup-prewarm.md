@@ -1,12 +1,29 @@
-# 需求：弹窗预热（方案6 —— 进程池压「WebView/页面加载」大头）
+# 弹窗预热：共享 Popup Host
 
-> 状态：已实现（macOS/Linux/Windows，默认开启；无显示、池空或并发请求透明回退冷路径）。
-> 关联：`docs/specs/popup-launch-performance.md`（§4 方案6、§6.3 预热分析、§7 度量方法论）。
-> 实现计划：`docs/plans/popup-prewarm.md`。
+> 默认合并模式见 `docs/specs/popup-request-inbox.md`；可选独立模式沿用下文的单次 Helper 池。
 
-> **实现期补充**：热 helper 的 `AppState` 是待命期只读托管态，不回写领用请求上下文；本次请求的
-> `project/source/agent_*` 保存在 `WarmPopup.show`。`popup_init`、`open_history` 等需要上下文的 command
-> 必须优先读取该领用槽，再回退 `AppState`。这条边界避免热弹窗误用空项目或旧上下文。
+`general.popupPrewarm` 仍是默认开启的常规设置。在 `channels.popup.windowMode=merged` 时，Daemon 创建至多一个隐藏共享宿主，提前
+完成 Tauri/WebView 与统一容器挂载；所有并发请求通过同一认证连接发送。首个正文写入 DOM
+后上屏，不依赖隐藏窗口 rAF。未打开正文惰性创建，已打开正文在同一轮保留挂载。
+
+空队列先隐藏并清理本轮 Sidebar、草稿、附件和几何，再向 Daemon 发送带 generation 的
+Idle。Daemon 再次确认账本为空，按预热设置确认保留或退休；迟到 Idle 不能移除新代次，
+新到达不会被旧轮次关闭。开启预热时复用空宿主，关闭时当前在途请求答完才退出。
+预热连接不计入 active 保活；无显示环境跳过，drain 和换新回收空宿主。
+
+请求上下文位于 `app/popup_inbox.rs` 的 ID 账本，所有命令明确传入 ID，不能读待命 AppState
+作为项目/Agent 来源。Config/Update 状态也发送到空闲宿主。恢复仅重放 Daemon 的 pending
+请求；不延长 Confirm deadline，不自动作出决定；内存草稿丢失明确提示。
+
+实现：`daemon/popup_inbox.rs`、`daemon/runtime/inbox.rs`、`app/popup_inbox.rs`。
+当前验证见 `docs/plans/popup-request-inbox.md`。
+
+## 历史方案与测量记录
+
+选择 `channels.popup.windowMode=independent` 时，下文的单次 Helper 进程池仍为实际路径：
+一个空闲热实例，领用后补充，多个在途请求各自有窗口。模式热切换只回收空闲实例；
+在途窗口答完，草稿不迁移。迟到的旧模式 warm 连接不能重新入池，空宿主不能保活 Daemon。
+下文性能数据是历史测量，不代表合并模式。
 
 ## 1. 背景与目标
 

@@ -65,6 +65,18 @@ const config = computed(() => ctx.config.value!);
     <template v-if="config.channels.popup.enabled">
       <hr class="divider" />
       <div class="row">
+        <span class="label">{{ t("settings.channels.windowMode") }}</span>
+        <span class="spacer"></span>
+        <div class="segmented">
+          <button type="button" :class="{ active: (config.channels.popup.windowMode ?? 'merged') === 'merged' }"
+            @click="config.channels.popup.windowMode = 'merged'; persist()">{{ t("settings.channels.windowModeMerged") }}</button>
+          <button type="button" :class="{ active: config.channels.popup.windowMode === 'independent' }"
+            @click="config.channels.popup.windowMode = 'independent'; persist()">{{ t("settings.channels.windowModeIndependent") }}</button>
+        </div>
+      </div>
+      <p class="card-desc">{{ t("settings.channels.windowModeHint") }}</p>
+      <hr class="divider" />
+      <div class="row">
         <span class="label">{{ t("settings.channels.rememberSize") }}</span>
         <span class="spacer"></span>
         <label class="switch">

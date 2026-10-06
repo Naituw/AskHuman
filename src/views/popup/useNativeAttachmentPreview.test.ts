@@ -53,4 +53,17 @@ describe("embedded native preview coordination", () => {
     expect(mocks.invoke).toHaveBeenLastCalledWith("popup_preview_native", expect.objectContaining({ index: 1 }));
     s.scope.stop();
   });
+  it("acknowledges a position-only move even when no resize observer fires", async () => {
+    const s = setup(); s.index.value = 0; s.active.value = true; s.element.value = s.body; await paint();
+    s.body.getBoundingClientRect = () => ({ x: 812, y: 48, width: 700, height: 652 }) as DOMRect;
+    let acknowledge!: () => void;
+    mocks.invoke.mockImplementationOnce(() => new Promise<void>(resolve => { acknowledge = resolve; }));
+    let finished = false;
+    const sync = s.result.syncNativePreview().then(() => { finished = true; });
+    await nextTick();
+    expect(mocks.invoke).toHaveBeenLastCalledWith("popup_preview_native", expect.objectContaining({ rect: { x: 812, y: 48, width: 700, height: 652 } }));
+    expect(finished).toBe(false);
+    acknowledge(); await sync; expect(finished).toBe(true);
+    s.scope.stop();
+  });
 });

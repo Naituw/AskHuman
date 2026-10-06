@@ -1,12 +1,12 @@
 // Question attachments: activation, keyboard focus, original-file actions and drag-out.
-import { computed, ref, watch, type ComputedRef } from "vue";
+import { computed, ref, watch, type ComputedRef, type Ref } from "vue";
 import { fileIconDataUrl, openPath } from "../../lib/ipc";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type { FileAttachment } from "../../lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAttachmentContent } from "./useAttachmentContent";
-import { useAttachmentPreview } from "./useAttachmentPreview";
+import { useAttachmentPreview, type PreviewLayout } from "./useAttachmentPreview";
 import fallbackDragIcon from "../../../src-tauri/icons/32x32.png?inline";
 
 // The native drag plugin requires PNG even when the attached image is another format.
@@ -15,11 +15,13 @@ const FALLBACK_ICON = fallbackDragIcon;
 export function useAttachments(deps: {
   attachments: ComputedRef<FileAttachment[]>;
   requestId: ComputedRef<string>;
+  active?: Readonly<Ref<boolean>>;
+  layout?: (open: boolean, mainExtent?: number) => Promise<PreviewLayout>;
 }) {
   const { attachments } = deps;
-  const preview = useAttachmentPreview(deps.requestId);
+  const preview = useAttachmentPreview(deps.requestId, deps.active, deps.layout);
   const selectedFile = preview.previewIndex;
-  const content = useAttachmentContent(deps.requestId, selectedFile);
+  const content = useAttachmentContent(deps.requestId, selectedFile, deps.active);
   let disposed = false;
   let menuListener: UnlistenFn | undefined;
   const focusedFile = ref<number | null>(null);
@@ -137,21 +139,21 @@ export function useAttachments(deps: {
   async function initAttachmentPreviewListeners() {
     await preview.initPreviewLayout();
     const off = await listen<{ requestId: string; index: number }>("popup-preview-show", e => {
-      if (!disposed && e.payload.requestId === deps.requestId.value) showPreview(e.payload.index);
+      if (!disposed && (deps.active?.value ?? true) && e.payload.requestId === deps.requestId.value) showPreview(e.payload.index);
     });
     if (disposed) off(); else menuListener = off;
     const copyOff = await listen<{ requestId: string; index: number }>("popup-preview-copy-path", e => {
-      if (!disposed && e.payload.requestId === deps.requestId.value && attachments.value[e.payload.index])
+      if (!disposed && (deps.active?.value ?? true) && e.payload.requestId === deps.requestId.value && attachments.value[e.payload.index])
         void navigator.clipboard.writeText(attachments.value[e.payload.index].path).catch(() => {});
     });
     if (disposed) copyOff(); else { const previous = menuListener; menuListener = () => { previous?.(); copyOff(); }; }
     const errorOff = await listen<{ requestId: string; index: number }>("popup-preview-action-failed", e => {
-      if (!disposed && e.payload.requestId === deps.requestId.value && e.payload.index === selectedFile.value)
+      if (!disposed && (deps.active?.value ?? true) && e.payload.requestId === deps.requestId.value && e.payload.index === selectedFile.value)
         previewActionError.value = true;
     });
     if (disposed) errorOff(); else { const previous = menuListener; menuListener = () => { previous?.(); errorOff(); }; }
     const browserOff = await listen<{ requestId: string; index: number }>("popup-preview-open-browser", e => {
-      if (!disposed && e.payload.requestId === deps.requestId.value) void openBrowser(e.payload.index);
+      if (!disposed && (deps.active?.value ?? true) && e.payload.requestId === deps.requestId.value) void openBrowser(e.payload.index);
     });
     if (disposed) browserOff(); else { const previous = menuListener; menuListener = () => { previous?.(); browserOff(); }; }
   }

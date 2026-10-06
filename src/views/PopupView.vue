@@ -4,6 +4,7 @@
 // 页脚 / 根级弹层。样式统一在 ./popup/popup.css（弹窗为独立窗口，天然隔离）。
 import { useI18n } from "vue-i18n";
 import { computed } from "vue";
+import { type PopupScope } from "./popup/usePopupCore";
 import { createPopupContext } from "./popup/context";
 import PopupNavbar from "./popup/PopupNavbar.vue";
 import ConfirmPane from "./popup/ConfirmPane.vue";
@@ -17,6 +18,9 @@ import PopupOverlays from "./popup/PopupOverlays.vue";
 import AttachmentPreviewPanel from "./popup/AttachmentPreviewPanel.vue";
 import "./popup/popup.css";
 
+const props = defineProps<{ scope?: PopupScope }>();
+const ctx = createPopupContext(props.scope);
+defineExpose({ ctx });
 const { t } = useI18n();
 
 const {
@@ -24,6 +28,7 @@ const {
   confirmRequest,
   isConfirm,
   loadError,
+  submissionError,
   cmdHeld,
   flashing,
   verticalMode,
@@ -39,11 +44,17 @@ const {
   previewOpen,
   previewTransition,
   resizePreview,
-} = createPopupContext();
+} = ctx;
 
-const shellStyle = computed(() => previewLayout.value.side === "closed"
-  ? { gridTemplateColumns: "minmax(0, 1fr)", gridTemplateRows: "minmax(0, 1fr)", gridTemplateAreas: "'main'" }
-  : { gridTemplateColumns: `${previewLayout.value.mainWidth}px 6px minmax(0, 1fr)`, gridTemplateRows: "minmax(0, 1fr)", gridTemplateAreas: "'main divider preview'" });
+const shellStyle = computed(() => {
+  const allocation = props.scope?.layout?.value;
+  const fixed = !!allocation?.canvas && allocation.canvas.frozen !== false;
+  const open = previewLayout.value.side !== "closed";
+  return { gridTemplateColumns: open
+    ? `${allocation?.mainWidth ?? previewLayout.value.mainWidth}px 6px ${fixed ? `${allocation!.previewWidth}px` : "minmax(0, 1fr)"}`
+    : fixed ? `${allocation!.mainWidth}px` : "minmax(0, 1fr)",
+    gridTemplateRows: "minmax(0, 1fr)", gridTemplateAreas: open ? "'main divider preview'" : "'main'" };
+});
 const mainTransitionStyle = computed(() => {
   const transition = previewTransition.value;
   if (!transition || transition.side === "closed") return undefined;
@@ -90,6 +101,7 @@ function beginDivider(event: PointerEvent) {
     <div class="popup popup-main" :class="{ 'cmd-held': cmdHeld }" :style="mainTransitionStyle">
     <div v-if="flashing" class="flash-overlay" aria-hidden="true"></div>
     <PopupNavbar />
+    <p v-if="submissionError" class="status-error popup-submission-error" role="alert">{{ t("popup.inbox.submitError", { message: submissionError }) }}</p>
     <div
       :ref="(el) => (contentRef = el as HTMLElement | null)"
       class="content"

@@ -2,6 +2,7 @@ import AppKit
 import ImageIO
 import QuickLookUI
 import PDFKit
+import QuartzCore
 
 // The result buffer belongs to Swift and is valid only during this synchronous callback.
 typealias ImageCallback = @convention(c) (UnsafePointer<UInt8>?, Int, UInt32, UInt32, Int32) -> Void
@@ -62,7 +63,6 @@ func decodePreviewImage(_ bytes: UnsafePointer<UInt8>, _ length: Int, _ thumbnai
 
 typealias KeyCallback = @convention(c) (UInt16, UInt64) -> Void
 private var nativePreview: EmbeddedPreview?
-
 private final class PDFLoadTicket {
     private let lock = NSLock()
     private var cancelled = false
@@ -98,15 +98,15 @@ private final class EmbeddedPreview {
         view = defaultView
         view.autostarts = false
         view.shouldCloseWithWindow = true
-        window.contentView?.addSubview(view)
+        popupPreviewParent(window)?.addSubview(view)
         pdf.displayMode = .singlePageContinuous
         pdf.autoScales = true
         pdf.isHidden = true
         pdf.backgroundColor = .windowBackgroundColor
-        window.contentView?.addSubview(pdf)
+        popupPreviewParent(window)?.addSubview(pdf)
         spinner.style = .spinning
         spinner.isHidden = true
-        window.contentView?.addSubview(spinner)
+        popupPreviewParent(window)?.addSubview(spinner)
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, !self.surface.isHidden, event.window === self.window,
                   let responder = self.window?.firstResponder as? NSView,
@@ -220,7 +220,7 @@ private final class EmbeddedPreview {
                 let created = QLPreviewView(frame: pdf.frame, style: .normal)!
                 created.autostarts = false
                 created.shouldCloseWithWindow = true
-                window?.contentView?.addSubview(created)
+                window.flatMap { popupPreviewParent($0) }?.addSubview(created)
                 created.previewItem = URL(fileURLWithPath: path) as NSURL
                 cachedViews.append((path, created)); view = created
                 if cachedViews.count > 2 {
@@ -250,6 +250,17 @@ private final class EmbeddedPreview {
     }
 }
 
+// The native surfaces share the WebView's parent and follow its live edge resize directly.
+// Freeze them before reserving an offscreen viewport for a pane animation.
+func popupPreviewResizing(_ enabled: Bool) {
+    guard let preview = nativePreview else { return }
+    let mask: NSView.AutoresizingMask = enabled ? [.width, .height] : []
+    preview.defaultView.autoresizingMask = mask
+    preview.pdf.autoresizingMask = mask
+    for (_, cached) in preview.cachedViews { cached.autoresizingMask = mask }
+    preview.spinner.autoresizingMask = enabled ? [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin] : []
+}
+
 // All view operations are called on Tauri's main thread. Coordinates are CSS points from the
 // top-left of the content area; native AppKit coordinates have their origin at the bottom.
 @_cdecl("ah_preview_update_view")
@@ -257,18 +268,38 @@ func updatePreviewView(_ windowPointer: UnsafeMutableRawPointer, _ request: Unsa
                        _ x: Double, _ y: Double, _ width: Double, _ height: Double,
                        _ bareEnter: Bool, _ keyCallback: @escaping KeyCallback) -> Bool {
     let window = Unmanaged<NSWindow>.fromOpaque(windowPointer).takeUnretainedValue()
-    guard let content = window.contentView else { return false }
+    guard let content = popupPreviewParent(window) else { return false }
     let requestID = String(cString: request)
+    let path = path.map { String(cString: $0) }
+    // A queued DOM measurement must not undo an AppKit live-resize frame with an older
+    // width or height. The merged preview is anchored to the canvas's right and bottom.
+    let responsive = popupCanvasIsResponsive(window)
+    let frame = NSRect(x: x, y: content.isFlipped ? y : content.bounds.height - y - height,
+                       width: responsive ? max(0, content.bounds.width - x) : width,
+                       height: responsive ? max(0, content.bounds.height - y) : height)
+    applyPreviewUpdate(window: window, requestID: requestID, path: path,
+                       frame: frame, bareEnter: bareEnter, keyCallback: keyCallback)
+    return path == nil || nativePreview != nil
+}
+
+private func applyPreviewUpdate(window: NSWindow, requestID: String, path: String?, frame: NSRect,
+                                bareEnter: Bool, keyCallback: @escaping KeyCallback) {
     if let previous = nativePreview, previous.window !== window || previous.requestID != requestID {
         previous.close()
         nativePreview = nil
     }
-    guard let path else { nativePreview?.hide(); return true }
+    guard let path else { nativePreview?.hide(); return }
     if nativePreview == nil {
         nativePreview = EmbeddedPreview(window: window, requestID: requestID, keyCallback: keyCallback)
     }
-    nativePreview?.show(path: String(cString: path), frame: NSRect(x: x,
-        y: content.isFlipped ? y : content.bounds.height - y - height,
-        width: width, height: height), bareEnter: bareEnter)
-    return nativePreview != nil
+    nativePreview?.show(path: path, frame: frame, bareEnter: bareEnter)
+    popupPreviewResizing(popupCanvasIsResponsive(window))
+}
+
+// The explicit Dev review uses this read-only coordinate to verify native preview anchoring.
+@_cdecl("ah_preview_screen_x")
+func previewScreenX() -> Double {
+    guard let preview = nativePreview, !preview.surface.isHidden, let window = preview.window else { return .nan }
+    let frame = preview.surface.convert(preview.surface.bounds, to: nil)
+    return window.convertToScreen(frame).minX
 }

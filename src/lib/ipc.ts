@@ -28,6 +28,7 @@ import type {
   NewTaskProject,
   ForkTaskInit,
   PopupInit,
+  PopupInboxSnapshot,
   PermissionDiffModel,
   PopupSoundSupport,
   PushedAgent,
@@ -56,7 +57,10 @@ import type {
   WindowEffect,
 } from "./types";
 
-export const popupInit = () => invoke<PopupInit>("popup_init");
+export const popupInit = (requestId?: string) => invoke<PopupInit>("popup_init", { requestId });
+export const popupInboxInit = () => invoke<PopupInboxSnapshot>("popup_inbox_init");
+export const popupInboxActivate = (requestId: string) => invoke<void>("popup_inbox_activate", { requestId });
+export const popupInboxIdle = () => invoke<void>("popup_inbox_idle");
 
 export const enrichPermissionDiff = (requestId: string) =>
   invoke<PermissionDiffModel>("enrich_permission_diff", { requestId });
@@ -70,23 +74,24 @@ export const popupAgentTerminal = (pid: number) =>
   invoke<string | null>("popup_agent_terminal", { pid });
 
 /** 拉取调用方 agent 的异步解析结果初值（方案5/b；之后靠 `agent-resolved` 事件实时更新）。 */
-export const popupAgentResolved = () =>
-  invoke<PushedAgent>("popup_agent_resolved");
+export const popupAgentResolved = (requestId?: string) =>
+  invoke<PushedAgent>("popup_agent_resolved", { requestId });
 
 /** Report that popup content is ready; daemon authorizes foreground or background presentation. */
-export const popupShowWindow = () => invoke<void>("popup_show_window");
+export const popupShowWindow = (requestId?: string) => invoke<void>("popup_show_window", { requestId });
 
-export const submitPopup = (submission: PopupSubmission) =>
-  invoke<void>("submit_popup", { submission });
+export const submitPopup = (submission: PopupSubmission, requestId?: string) =>
+  invoke<void>("submit_popup", { submission, requestId });
 
 export const submitConfirmAction = (
   choiceIndex: number,
-  comment?: string | null
-) => invoke<void>("submit_confirm_action", { choiceIndex, comment });
+  comment?: string | null,
+  requestId?: string,
+) => invoke<void>("submit_confirm_action", { choiceIndex, comment, requestId });
 
-export const confirmPopupReady = () => invoke<void>("confirm_popup_ready");
+export const confirmPopupReady = (requestId?: string) => invoke<void>("confirm_popup_ready", { requestId });
 
-export const cancelPopup = () => invoke<void>("cancel_popup");
+export const cancelPopup = (requestId?: string) => invoke<void>("cancel_popup", { requestId });
 
 export const openPath = (path: string) => invoke<void>("open_path", { path });
 
@@ -161,7 +166,7 @@ export const openSettings = (tab?: string) =>
   invoke<void>("open_settings", { tab: tab ?? null });
 
 /** 打开 Agent Window 并定位到 daemon 为当前弹窗严格匹配的会话。 */
-export const openAgentConsole = () => invoke<void>("open_agent_console");
+export const openAgentConsole = (requestId?: string) => invoke<void>("open_agent_console", { requestId });
 
 export const popupImTipVisible = () =>
   invoke<boolean>("popup_im_tip_visible");
@@ -169,7 +174,7 @@ export const popupImTipVisible = () =>
 export const popupImTipDismiss = () =>
   invoke<void>("popup_im_tip_dismiss");
 
-export const openHistory = () => invoke<void>("open_history");
+export const openHistory = (requestId?: string) => invoke<void>("open_history", { requestId });
 
 export const historyInit = () => invoke<HistoryInit>("history_init");
 

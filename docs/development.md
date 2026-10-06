@@ -40,6 +40,11 @@ Current prototypes:
 
 - `agent-console.html` — the two-pane Agent console (spec `docs/specs/gui-agent-console.md`).
   This is the visual/interaction baseline for `views/AgentsView.vue` + `views/console/*`.
+- `popup-inbox.html` — the mock request inbox (spec `docs/specs/popup-request-inbox.md`).
+  Run `./scripts/popup-inbox-demo.sh` for the Vue/Tauri native demo, or add `--auto` for the
+  native geometry/state checks. It starts its own Vite server on port 5198 and does not connect
+  to the product daemon. Logs are written under `.askhuman-dev/`. The Rust example and prototype
+  frontend are excluded from the normal AskHuman binary and release frontend entry.
 
 **Workflow:** iterate UI ideas on the prototype first (cheap, instant feedback, user can review
 in a browser), get the design confirmed, then port to the real views. Keep the prototype in
@@ -193,3 +198,22 @@ git commit -am "release: v0.2.0"
 > Prerequisite: set `NPM_TOKEN` (an npmjs automation token) under the repo's Settings → Secrets. Pre-release versions (e.g. `0.2.0-rc.1`) are published under the npm dist-tag `next` and marked as a GitHub pre-release.
 
 The release architecture and channel-degradation design are documented in [`docs/plans/release-and-channel-degradation.md`](./plans/release-and-channel-degradation.md).
+
+仅用于统一窗口几何验收：在 popup-only Dev Instance 的空队列重启 Daemon 后，以
+`ASKHUMAN_INBOX_LAYOUT_REVIEW=1 AskHuman '测试内容' -q '测试题目'` 启动。本轮窗口顶部
+提供反复显示/隐藏 Sidebar 的按钮，走正式几何事务；结束测试后停止测试 Daemon，再正常
+启动即可恢复普通流程。此环境变量只在 Dev Instance 生效，不改变正常 Sidebar 生命周期。
+
+原生诊断位于该实例的 `state/popup-canvas-review.jsonl`（窗口、呈现层、WebKit/PDF 坐标）
+与 `state/popup-pulse-review.jsonl`（提醒前 WindowServer transform）。它们只查询自身窗口。
+使用临时测试 app bundle 时，从 `src-tauri/Info.plist` 合并麦克风/语音用途声明，并给每类
+测试窗口独立 bundle ID；不能把生产安装 bin 改为测试签名或符号链接。
+
+三栏几何的独立基础实验使用 `./scripts/pane-foundation-demo.sh`，原生 Vue/Tauri 窗口使用
+专用端口 5199；`--auto` 跑坐标、viewport 与输入状态验证。它不连接 Daemon 或读取产品
+配置；固定窗口对照和原生扩窗的验证边界见 `docs/investigations/popup-pane-stability.md`。
+
+普通缩放/固定画布交接：`./scripts/pane-resize-demo.sh --auto` 在 5201 端口验证同一 Swift
+画布桥的自适应布局、固定分区、原生 PDFView 和输入状态。`--polish` 打开隔离交互 Demo，
+包含 mock 请求、附件、未查看标记；不连接 Daemon，不修改产品配置。Demo 样式候选并非
+正式实现，最终正式范围见 `docs/specs/popup-request-inbox.md` §16。

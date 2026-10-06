@@ -17,6 +17,7 @@ pub struct SizeProjection {
 }
 #[derive(Default)]
 pub struct Controller {
+    pub(super) inbox: super::popup_inbox_geometry::Geometry,
     side: Side,
     main: (f64, f64),
     preferred_preview: Option<f64>,
@@ -117,6 +118,17 @@ pub fn assigned_request(
         return Err("attachment preview requires a Popup".into());
     }
     let app = window.app_handle();
+    if let Some(inbox) = app.try_state::<super::popup_inbox::Inbox>() {
+        if require_presented && !inbox.active(request_id) {
+            return Err("Popup request is not active".into());
+        }
+        return inbox
+            .request(request_id)?
+            .interaction
+            .ask()
+            .cloned()
+            .ok_or("attachment preview requires a question".into());
+    }
     let bridge = app
         .try_state::<super::GuiBridge>()
         .ok_or("Popup is not assigned")?;
@@ -337,6 +349,13 @@ pub fn prepare(window: &Window, open: bool, version: u64) -> Result<Layout, Stri
     Ok(layout)
 }
 pub async fn wait_idle(window: &Window) -> Result<(), String> {
+    if window
+        .app_handle()
+        .try_state::<super::popup_inbox::Inbox>()
+        .is_some()
+    {
+        return super::popup_inbox_geometry::wait_idle(window).await;
+    }
     loop {
         if window
             .app_handle()
@@ -358,6 +377,13 @@ pub async fn wait_idle(window: &Window) -> Result<(), String> {
     }
 }
 pub fn published(window: &Window) -> Option<Layout> {
+    if window
+        .app_handle()
+        .try_state::<super::popup_inbox::Inbox>()
+        .is_some()
+    {
+        return super::popup_inbox_geometry::published(window);
+    }
     window
         .app_handle()
         .state::<Mutex<Controller>>()
@@ -582,7 +608,7 @@ fn remember_baseline(window: &Window, main: (f64, f64)) {
         .unwrap()
         .restoring(main);
 }
-fn save_dimensions(main: (f64, f64), preview: Option<f64>) {
+pub(super) fn save_dimensions(main: (f64, f64), preview: Option<f64>) {
     if main.0 < 420.0 || main.1 < 480.0 {
         return;
     }
@@ -598,6 +624,13 @@ fn save_dimensions(main: (f64, f64), preview: Option<f64>) {
     }
 }
 pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjection> {
+    if window
+        .app_handle()
+        .try_state::<super::popup_inbox::Inbox>()
+        .is_some()
+    {
+        return super::popup_inbox_geometry::resized(window, event);
+    }
     let n = sample(window).ok()?;
     if window.inner_size().ok()? != event {
         return None;
@@ -654,6 +687,14 @@ pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjecti
     })
 }
 pub fn moved(window: &Window) {
+    if window
+        .app_handle()
+        .try_state::<super::popup_inbox::Inbox>()
+        .is_some()
+    {
+        super::popup_inbox_geometry::moved(window);
+        return;
+    }
     let Ok(n) = sample(window) else {
         return;
     };

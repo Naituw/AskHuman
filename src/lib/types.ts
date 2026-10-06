@@ -332,6 +332,25 @@ export type PopupAnimation = "none" | "document" | "alert";
 
 export type WindowEffect = "glass" | "blur" | "solid";
 
+/** Daemon-owned navigation metadata; forms pull their own request by ID. */
+export interface PopupInboxRequest {
+  requestId: string;
+  sequence: number;
+  interaction: InteractionRequest;
+  project: string;
+  source: string;
+  lang: string;
+  agentKind?: string | null;
+  agentConsoleSessionId?: string | null;
+  createdAtMs: number;
+  kind?: "ask" | "permission" | "stop";
+}
+export interface PopupInboxSnapshot {
+  requests: PopupInboxRequest[];
+  recovered: boolean;
+  focusedRequestId?: string | null;
+}
+
 export interface PopupInit {
   /** Current interaction. A prewarmed popup returns null until assigned. */
   interaction: InteractionRequest | null;
@@ -705,6 +724,7 @@ export interface PopupSoundSupport {
 
 export interface PopupChannelConfig {
   enabled: boolean;
+  windowMode: "merged" | "independent";
   width: number;
   height: number;
   rememberSize: boolean;

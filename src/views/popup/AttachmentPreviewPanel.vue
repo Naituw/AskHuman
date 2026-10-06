@@ -9,14 +9,16 @@ import AttachmentDiffPreview from "./AttachmentDiffPreview.vue";
 import AttachmentImagePreview from "./AttachmentImagePreview.vue";
 const { t } = useI18n();
 const { previewFile, previewIndex, attachments, showPreview, stopPreview, openFile, openPreviewFile, primaryBrowser, browserOpening, browserActionError, browserErrorIndex, showPreviewMenu, revealFile,
-  previewContent, previewLoading, currentReadingState, onAttachmentDragStart, previewActionError, request, nativePreviewBlocked, previewTransition, previewLayout, submitWithBareEnter } = usePopupContext();
+  popupActive, previewContent, previewLoading, currentReadingState, onAttachmentDragStart, previewActionError, request, nativePreviewBlocked, previewTransition, previewLayout, submitWithBareEnter, registerNativePreviewSync } = usePopupContext();
 const nativeBody = ref<HTMLElement | null>(null);
-const { nativeFailed } = useNativeAttachmentPreview({
+const { nativeFailed, syncNativePreview } = useNativeAttachmentPreview({
   requestId: computed(() => request.value?.id ?? ""), index: previewIndex, element: nativeBody,
-  active: computed(() => previewContent.value?.kind === "native"),
+  active: computed(() => popupActive.value && previewContent.value?.kind === "native"),
   blocked: computed(() => nativePreviewBlocked.value || !!previewTransition.value),
   bareEnter: submitWithBareEnter, revision: computed(() => previewLayout.value.revision),
 });
+registerNativePreviewSync?.(syncNativePreview);
+onBeforeUnmount(() => registerNativePreviewSync?.(null));
 const body = ref<HTMLElement | null>(null);
 const top = ref(0);
 const imageFailed = ref(false);
@@ -46,7 +48,8 @@ watch(previewIndex, (_, old) => {
   imageFailed.value = false; actionError.value = false;
 }, { flush: "sync" });
 const { readingState: ctxState } = usePopupContext();
-watch(previewContent, () => { void restoreScroll(); }, { flush: "post" });
+watch(previewContent, () => { if (popupActive.value) void restoreScroll(); }, { flush: "post" });
+watch(popupActive, value => { if (value) void restoreScroll(); else saveScroll(); }, { flush: "sync" });
 onBeforeUnmount(() => { saveScroll(); restoreVersion++; });
 async function reveal() { actionError.value = false; try { await revealFile(); } catch { actionError.value = true; } }
 function markdownClick(event: MouseEvent) {

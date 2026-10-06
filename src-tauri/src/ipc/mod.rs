@@ -18,7 +18,7 @@ use crate::models::{
 use serde::{Deserialize, Serialize};
 
 /// IPC 协议版本：不兼容变更时 +1，握手不一致即触发换新。
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 fn default_true() -> bool {
     true
@@ -333,11 +333,24 @@ pub struct TrayAgentInfo {
     pub launch_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PopupRequestKind {
+    #[default]
+    Ask,
+    Permission,
+    Stop,
+}
+
 /// Daemon → GUI Helper 的题目下发（show 是 submit 的子集 + Daemon 分配的 request_id + 上下文）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShowPayload {
     pub request_id: String,
+    #[serde(default)]
+    pub sequence: u64,
+    #[serde(default)]
+    pub kind: PopupRequestKind,
     /// Complete daemon-owned interaction, discriminated for popup rendering.
     pub interaction: InteractionRequest,
     /// Local-popup-only native edit intent. Snapshot contents are never carried through daemon IPC.
@@ -418,6 +431,10 @@ pub enum ClientMsg {
     SubmitConfirm(Box<ConfirmTask>),
     /// GUI Helper 握手：出示 Daemon 下发的一次性 token。
     GuiHello { token: String },
+    /// One authenticated connection carries all popup requests for this daemon instance.
+    PopupHostHello { token: String },
+    /// The host has no visible requests; retirement is authorized against the current ledger.
+    PopupHostIdle { generation: u64 },
     /// 预热 GUI Helper 握手（方案6）：由 daemon 以 `--popup --warm` 拉起的进程在建好隐藏窗 + 挂载前端后
     /// 发送，表示「已就绪、入热池待命」。daemon 据此把该连接登记进热池，来请求时直接发 `Show` 领用，
     /// 无需现 spawn 新进程。无 token（领用时才关联具体请求）。
@@ -670,6 +687,22 @@ pub enum ServerMsg {
     },
     /// 下发题目（D→GUI）。
     Show(ShowPayload),
+    PopupHostAccepted {
+        generation: u64,
+        recovered: bool,
+    },
+    PopupHostIdleAck {
+        generation: u64,
+        keep_warm: bool,
+    },
+    PopupHostShutdown,
+    /// Only this request may leave the form after a daemon acknowledgement. Validation errors
+    /// keep its draft available; a losing submission returns the already-established winner.
+    PopupSubmissionAck {
+        request_id: String,
+        winner: Option<String>,
+        error: Option<String>,
+    },
     /// Authorize the helper's first visible presentation after `PopupReady`.
     PresentPopup {
         request_id: String,
@@ -695,6 +728,8 @@ pub enum ServerMsg {
     /// 后推弹窗，使顶栏 badge「后到补全 / 升级为可聚焦终端」。家族在 env 探到时随 Show 即给（这里可能与之
     /// 一致或为 MCP 兜底新探到的），`pid` 供「聚焦终端」。
     AgentResolved {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         kind: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

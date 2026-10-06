@@ -243,10 +243,19 @@ impl Default for GeneralConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PopupWindowMode {
+    #[default]
+    Merged,
+    Independent,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PopupChannelConfig {
     pub enabled: bool,
+    pub window_mode: PopupWindowMode,
     pub width: f64,
     pub height: f64,
     pub remember_size: bool,
@@ -257,6 +266,7 @@ impl Default for PopupChannelConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            window_mode: PopupWindowMode::Merged,
             width: 560.0,
             height: 620.0,
             remember_size: true,
@@ -644,6 +654,20 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn popup_mode_defaults_for_old_config_and_roundtrips_independent() {
+        let old: PopupChannelConfig =
+            serde_json::from_str(r#"{"enabled":true,"width":560}"#).unwrap();
+        assert_eq!(old.window_mode, PopupWindowMode::Merged);
+        let independent: PopupChannelConfig =
+            serde_json::from_str(r#"{"windowMode":"independent"}"#).unwrap();
+        assert_eq!(independent.window_mode, PopupWindowMode::Independent);
+        assert_eq!(
+            serde_json::to_value(independent).unwrap()["windowMode"],
+            "independent"
+        );
+    }
+
+    #[test]
     fn defaults_are_correct() {
         let c = AppConfig::default();
         assert_eq!(c.general.theme, ThemeMode::System);
@@ -657,6 +681,7 @@ mod tests {
         assert_eq!(c.general.menu_bar_icon, MenuBarIconMode::Always);
         assert!(c.general.popup_prewarm);
         assert!(c.channels.popup.enabled);
+        assert_eq!(c.channels.popup.window_mode, PopupWindowMode::Merged);
         assert_eq!(c.channels.popup.width, 560.0);
         assert_eq!(c.channels.popup.height, 620.0);
         assert!(c.channels.popup.remember_size);

@@ -12,7 +12,7 @@
 
 - **Tauri 2**：Rust 后端 + WebView 前端，单一可执行文件 `AskHuman`，跨 macOS / Windows / Linux。
 - **前端**：Vue 3 + Vite + TypeScript，纯手写 macOS 风 CSS（无组件库）。
-- **运行模型**：macOS、Linux 与 Windows 共用「常驻 Daemon + 瘦客户端 CLI + 独立 GUI Helper / GUI Host」；Unix domain socket 与 Windows named pipe 只在传输、进程和桌面适配层分叉。
+- **运行模型**：macOS、Linux 与 Windows 共用「常驻 Daemon + 瘦客户端 CLI + 独立 Popup Host / GUI Host」；Unix domain socket 与 Windows named pipe 只在传输、进程和桌面适配层分叉。
 - **输出契约**：CLI 的 stdout 只输出结果区块，所有日志走 stderr。
 
 ## 运行架构
@@ -24,7 +24,8 @@
 - **AskHuman CLI**（多、短命）：解析 argv（`-f` 在此解析为绝对路径、缺失即退 1）→ 提交 `AskRequest` 给 Daemon → 流式取回结果打到 stdout → 按终态映射退出码 0/1/3。
 - **AskHuman Daemon**（macOS/Linux/Windows 每用户 1 个、常驻、**无 GUI**）：独占四种 IM 的 Router/长连接，承载每请求的 Coordinator/Preemption，集中落盘，监听配置变更，并管理空闲退出、二进制换新和排空。
 - **Codex App 适配器**（macOS）：由 Daemon 独占原生 IPC，将桌面会话状态、控制与新建任务接入现有 registry / Watch / 问答协调；随 Codex 整体集成启停，新任务默认优先 App、可改为优先 CLI。详见 `docs/specs/codex-desktop-session-integration.md`。
-- **Popup Helper**（每弹窗 1 个）：由 Daemon 启动，主线程运行 Tauri 弹窗，收题目、回传答案后退出。预热实例及其边界见 `docs/specs/popup-prewarm.md`。
+- **Popup Host**（默认合并模式，每 Daemon / Dev Instance 至多 1 个）：独立 Tauri 进程，通过一次认证连接承载统一作答窗口；普通提问、权限和 Stop 按请求 ID 路由。答完本轮隐藏，按 popupPrewarm 决定保留空闲宿主或退出；故障由 Daemon 有界重建。见 `docs/specs/popup-request-inbox.md`、`docs/specs/popup-prewarm.md`。
+- **独立 Popup Helper**（可选 `channels.popup.windowMode=independent`）：每请求一个窗口，沿用旧冷热池及焦点仲裁；模式切换只影响新请求，保留在途窗口和草稿。
 - **GUI Host**（macOS/Linux/Windows 每用户至多 1 个、长命）：承载菜单栏/托盘，以及全局唯一的设置、历史、待办、Agent、Interject、新建任务与 Fork 窗口；各打开入口通过自有 IPC 路由到宿主。
 
 **关键约定**：每种 IM 渠道全局只保留一条连接；每个请求仅首个终态回答生效；IPC 和运行状态均为用户私有；既有 stdout、结果区块、退出码和配置兼容契约保持不变。Daemon 排空换新见 `docs/specs/daemon-graceful-drain.md`。
@@ -46,7 +47,8 @@ AskHuman/
     index.html               前端入口、首帧关键样式与平台探测
     main.ts                  挂载 App、引入全局样式
     App.vue                  按 URL 路由 popup/settings/history/agents/interject/todos/newtask/forktask
-    views/PopupView.vue      提问与回答弹窗（编排层；状态与区块组件在 views/popup/）
+    views/PopupInboxView.vue  共享作答窗口、请求导航和统一关闭
+    views/PopupView.vue      每请求提问与回答正文（编排层；状态与区块组件在 views/popup/）
     views/AgentsView.vue     Agent 控制台（双栏：边栏+详情；spec gui-agent-console）
     views/console/           控制台子组件（边栏/指示器/Watch 帧/完整会话/diff 条/交互区/内嵌任务）
     views/InterjectView.vue  Agent 插话编辑器
@@ -126,7 +128,10 @@ AskHuman/
         gui_host.rs          GUI Host、托盘和 daemon 状态订阅
         tray_menu.rs         托盘菜单模型与最小 diff
         coordinator.rs       首答胜出与其它渠道取消
-        popup_preview.rs · popup_preview_geometry.rs  同窗预览几何与主区尺寸投影
+        popup_inbox.rs · popup_inbox_geometry.rs  共享宿主请求状态及三区几何事务
+        popup_canvas.rs · swift/PopupCanvas.swift  过渡固定画布与普通原生自适应布局
+        popup_transition.rs · popup_pulse.rs  非激活前置与合成提醒
+        popup_preview.rs · popup_preview_geometry.rs  预览桥接与兼容几何
         popup_preview_actions.rs  Popup 原文件菜单与跨平台定位
 
       channels/
@@ -235,13 +240,13 @@ AskHuman/
 
 1. `main.rs` → `cli::dispatch()`：在创建任何窗口前按 argv 分流纯信息、管理、GUI 和提问命令。
 2. macOS、Linux 与 Windows 上，CLI 把参数规范化为请求，连接或拉起 Daemon 后提交；本地传输分别使用用户私有的 Unix socket 或 Windows named pipe。
-3. Daemon 登记请求，按配置启动 Popup Helper，并把请求交给已启用的 IM Router；各渠道并行等待回答。
+3. Daemon 登记请求，按配置派发到共享 Popup Host，并把请求交给已启用的 IM Router；各渠道并行等待回答。
 4. Coordinator 只接受首个终态结果，随即取消其它渠道；历史、回复图片和文件在这一汇聚点统一处理。
 5. Daemon 把最终结果回传 CLI；CLI 只负责写 stdout 并按终态返回退出码。
 
 ## 前端 ↔ 后端命令（`commands.rs` ↔ `lib/ipc.ts`）
 
-- 弹窗：`popup_init`、`submit_popup`、`cancel_popup`
+- 弹窗：按 request ID 的 `popup_init`、`submit_popup`、`confirm_popup`、`cancel_popup`；共享容器 `popup_inbox_init` / `activate` / `layout` / `commit` / `idle`
 - Popup 提问附件：`popup_preview_prepare` / `layout`、`popup_preview_read` / `cancel_read` / `thumbnail`、`popup_preview_reveal` / `menu`；原文件打开仍用 `open_path`
 - 其他附件入口：`preview_attachments`、`close_preview`、`read_image_data_url`、`file_icon_data_url`、`show_attachment_menu`
 - 设置：`get_settings`、`save_settings`、`get_prompt`、`set_theme`、`update_theme`、`open_settings`、`popup_sound_support`、`play_popup_sound`

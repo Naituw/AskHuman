@@ -9,20 +9,51 @@ Popup 提问附件采用同窗右侧预览，具体决策见 `docs/specs/popup-a
 
 - 原生窗口下限仍为 420×480。`app/popup_preview.rs` 和 `popup_preview_geometry.rs` 管理固定右侧、必要时整窗左移、受限横向分区与关闭恢复；前端 prepare 后等待绘制，再提交原生几何并异步对账。关闭恢复展开前位置，用户移动过则保持新位置；临时缩窄和展开总宽不写入主区尺寸偏好。`persist_popup_size` 继续过滤预热、收尾、最大化和迟到事件，并读取最新 rememberSize。
 - 预览默认 700 宽，`channels.popup.previewWidth` 单独记忆用户的外缘 / 正常分隔线调整，遵守同一个 rememberSize 开关；空间限制或 DPI 变化造成的临时宽度不覆盖偏好。
-- `useAttachments.ts` 管理列表焦点、点击激活和原文件动作；`useAttachmentPreview.ts` 管理几何意图与布局订阅；`useAttachmentContent.ts` 管理读取代次、64 MiB 内容缓存及每附件的模式、滚动和图片缩放。收起保留本次阅读状态，下一请求清空。
+- `useAttachments.ts` 管理列表焦点、点击激活和原文件动作；`useAttachmentPreview.ts` 管理几何意图与布局订阅；`useAttachmentContent.ts` 管理读取代次、64 MiB 内容缓存及每附件的模式、滚动和图片缩放。收起或切换请求保留各自阅读状态，终态销毁对应上下文。
 - Markdown 的主按钮依阅读模式选择浏览器快照或原文件；双击和列表回车保留原文件动作。`popup_preview_open_browser` 校验请求 / 索引，`attachment_browser.rs` 重新有界读取、生成快照并按 HTTPS 关联选择默认浏览器；`attachment_html.rs` 与 Quick Look 共用文档样式及 24h 临时目录。菜单动作固定且带请求归属，失败保留明确的原文件入口。规则见 `docs/specs/markdown-browser-open.md`。
-- `attachment_preview.rs` 从当前冷 / 热 Popup 的请求附件按索引读取，不接受任意路径；限制字节、文本行数、图片像素与动画帧预算，后台执行并丢弃失效代次。列表缩略图另有读取与缓存预算。Markdown 与普通文本支持 UTF-8、带 BOM 的 UTF-16，无法可靠识别或超限时保留打开和文件管理器定位入口。
+- `attachment_preview.rs` 从显式 request ID 对应的待答附件按索引读取，不接受任意路径；限制字节、文本行数、图片像素与动画帧预算，后台执行并丢弃失效代次。列表缩略图另有读取与缓存预算。Markdown 与普通文本支持 UTF-8、带 BOM 的 UTF-16，无法可靠识别或超限时保留打开和文件管理器定位入口。
 - `AttachmentPreviewPanel.vue` 提供单行标题栏、带边框的原文切换、固定右侧操作区。Markdown 使用 `attachment_markdown.rs` 的静态受限片段；diff 使用 `attachment_diff.rs` 的共享解析模型，由 `AttachmentDiffPreview.vue` 虚拟显示行；代码与原文作为文本展示。`AttachmentImagePreview.vue` 保留动画原字节，以实际溢出决定文件拖出或平移查看，SVG 只通过隔离 img 显示。
 - macOS 的 `macos_attachment_preview.rs` / `swift/AttachmentPreview.swift` 经已有 Swift 构建桥复用 Image I/O、PDFKit 与 QuickLookUI。系统图片生成有界 PNG；PDF 后台创建、保存页坐标与缩放；其他系统文档 / 媒体使用嵌入的 `QLPreviewView`，静态文档视图最多两个，媒体切换后卸载。`useNativeAttachmentPreview.ts` 同步正文矩形、遮罩与代次；命令根据请求索引和有界读取许可验证目标，原生焦点快捷键回到 Popup 业务处理。多图系统图片说明数量和完整原文件入口。范围与系统差异见规格 §5.4。
 - 预览能力与 CLI / IM 的 `isImage` 分类分开：新增系统图片可在 Popup 列表显示缩略图，但发送分类沿用原有七种扩展名。ICO / TGA / PNM 只启用现有 image 的轻量 feature，无新增 codec crate；macOS 系统图片能力不承诺在 Windows / Linux 可用。
 - 窗口拖拽使用主区和预览标题栏、图片周围 / 控件栏及状态背景的显式 `data-tauri-drag-region`，不覆盖按钮、正文、图片本身、滚动条或原生预览；文件拖出共用 `startDrag` 并使用原路径与有效 PNG 图标。原生拖入的预览区 / 分隔线落点不进入回复附件。附件列表空格和方向键、标题栏左右键与正文滚动分别路由；输入法、查找、语音及既有发送 / 取消优先级保留。
 - Popup 更多与右键共用 `popup_preview_menu`。macOS 保留完整原生菜单并将快速查看路由到当前 Popup；Windows / Linux 提供公共文件动作，定位失败显示错误。历史、待办及其他入口继续用已有 Quick Look；它们与 Popup 共用 diff 解析和 Markdown 静态渲染，范围见 `docs/specs/diff-attachment-preview.md`。
 
-## 并发窗口焦点与级联
+## 多请求统一作答窗口
 
-daemon 的 `PopupFocusArbiter` 是跨 helper 的唯一焦点所有者：最早派发的 Popup 可自动前置并取得键盘焦点，后续 Popup 立即显示但不得激活应用。它们按请求序号进入 FIFO；当前 owner 完成、取消、断连或窗口销毁后，最早存活的等待窗口接力。用户直接点击等待窗口或从托盘选择请求会显式转移 owner，原 owner 回到等待队首。
+默认合并模式的 Daemon 派发使用 `daemon/popup_inbox.rs` / `daemon/runtime/inbox.rs` 的单一宿主，
+以一次性 token 和 generation 认证共享连接；普通题、权限和 Stop 共用 `--popup-host`。
+请求账本及终态仍属于 Daemon，IPC submission ACK 按 ID 区分合法提交、渠道抢答和失败。
+同一终态只移除一个请求；连接故障有界重建 pending 请求，明确提示内存草稿丢失。
 
-冷、热 helper 都先隐藏建窗并在内容 `nextTick` 后发送 `PopupReady`，收到 daemon 的 `PresentPopup` 才上屏，从而避免 ready 次序反转焦点归属。macOS 用跨进程 `NSWindow.windowNumber`、`NSWindowBelow` 和系统 `cascadeTopLeftFromPoint:` 在前驱后方非激活级联；Linux 复用同一仲裁协议，采用非主动聚焦和 24 逻辑点级联，精确层级服从 X11/Wayland 窗口管理器。终态与 `PopupDismissed` 分离，并以连接 EOF / 750ms 超时兜底，避免旧窗口关闭期间与下一窗口争抢焦点。完整实施记录见 `docs/plans/popup-focus-arbitration.md`。
+`PopupInboxView.vue` 管理按完整项目路径分组的导航、10pt 未查看蓝点、草稿提示、同项目
+下一条和固定 ID 快照的统一关闭。只有一条时用普通窗口；本轮曾展开的 Sidebar 保持到
+空队列。新到达不切当前正文。首次查看挂载 `PopupView` / `PopupContext`，后来仅隐藏，
+因此每请求草稿、多题进度、回复附件、滚动、焦点/选区及阅读模式独立保留。窗口级键盘、
+粘贴、拖放和原生预览只路由到当前且未被关闭层阻塞的请求；上下文/附件命令显式携带 ID。
+蓝点以 2.8s 周期只改变两个实心蓝色，不改变尺寸或透明度，查看后清除；占位仍为 6pt，
+不移动既有标题和来源行。减少动态效果时静态显示。
+
+`popup_inbox_geometry.rs` 扩展 `popup_preview` 所有者，将 Sidebar / 主区 / 预览分配为一次
+事务。优先缩预览、再缩 Sidebar、最后主区，自动几何不覆盖正常尺寸偏好；外缘和正常
+分隔线调整独立记忆。macOS `popup_canvas.rs` / `swift/PopupCanvas.swift` 仅在 pane 过渡中
+关闭 WebKit autoresizing，以固定 viewport 及原生窗口裁切完成展开。WebKit、PDFKit /
+Quick Look 共用一个画布父视图；逐帧仅移动画布和窗口 frame，不使用截图遮罩。
+过渡前先固定 DOM 的实际宽度，结束后移除离屏 reserve，再切回自适应 CSS。普通外缘
+缩放由 AppKit 同步改变画布/WebKit/原生预览，Rust resize 事件只对账和保存，不能异步
+重设原生 frame。Sidebar 仅由分隔线改宽；预览关闭时正文吸收宽度变化，打开时预览吸收。
+`popup_transition.rs` 负责非激活前置。`popup_pulse.rs` 运行时加载
+SkyLight transform，以 CVDisplayLink 驱动 2.2% / 540ms 无回弹提醒；实际窗口 frame 不变。
+到达提醒合并短时突发，并以前置/蓝点/高亮降级。减少动态效果时跳过缩放。非激活前置
+及最小化恢复保留其他应用键盘焦点，托盘指定请求则允许用户显式聚焦。
+
+GUI Host 保留独立的设置/历史/托盘职责；空宿主不保活 Daemon，沿用 popupPrewarm 控制
+空队列后的待命/退出。`channels.popup.windowMode` 默认 `merged`，设置页可改为 `independent`。
+设置对新提问生效；在途窗口和草稿保留。独立模式继续使用 `PopupFocusArbiter` / 冷热
+Helper 及原有级联；只对所选模式补热，闲置的旧模式宿主回收。当前规格与实施记录见 `docs/specs/popup-request-inbox.md`、
+`docs/plans/popup-request-inbox.md`；旧级联记录见 `docs/plans/popup-focus-arbitration.md`。
+
+共享宿主收到 `ConfigChanged` 时先同步原生窗口主题与材质，再发 `settings-updated`，
+使在途窗口的原生背景和前端颜色一致；切换主题不重建正文或清除草稿。
 
 ## 来源标题与上下文
 
@@ -32,12 +63,12 @@ daemon 的 `PopupFocusArbiter` 是跨 helper 的唯一焦点所有者：最早�
 
 `.brand-time` 显示提问创建时刻的相对时间，满 24 小时后转绝对时间，hover 显示精确时间。时间锚点由 daemon `RequestRegistry::create()` 记录，经 `ShowPayload.created_at_ms` 和 `PopupInit.createdAtMs` 送到前端；缺少旧协议字段时以弹窗构造时刻兜底。
 
-- **Agent badge**：来自 `AppState.agent_kind`。若 `PopupInit.agentTerminal` 表明对应终端可激活，badge 可调用 `focus_agent_terminal(agentPid)` 聚焦 Agent 终端。
+- **Agent badge**：来自按请求 ID 获取的 PopupContext。若 `PopupInit.agentTerminal` 表明对应终端可激活，badge 可调用 `focus_agent_terminal(agentPid)` 聚焦 Agent 终端。
 - **Agent Window 入口**：daemon 仅在调用方 `(agent_kind, agent_session_id)` 精确命中活动
   `AgentRegistry` 记录时下发 `agentConsoleSessionId`；五家 Agent 共用同一门控，不按 pid / cwd
   模糊猜测。顶栏右侧据此显示快捷按钮，经 GUI Host 打开全局唯一 Agent Window 并定位该 session，
   Popup 本身保持等待。置顶 Popup 场景下目标窗口临时使用同级置顶，避免开在其后方。
-- **workspace badge**：来自 `AppState.project`（git 根或 cwd），显示目录名、hover 展示完整路径，点击通过 `open_path` 在文件管理器打开。
+- **workspace badge**：来自按请求 ID 获取的 PopupContext.project（git 根或 cwd），显示目录名、hover 展示完整路径，点击通过 `open_path` 在文件管理器打开。
 
 这些字段通过 `PopupInit{project, projectName, agentKind, agentPid, agentConsoleSessionId}` 上送；
 终端类型在首屏后由 `popup_agent_terminal` 异步解析；预热 Popup 的上下文读取边界另见
