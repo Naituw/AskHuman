@@ -12,7 +12,6 @@ import { inboxGroups, inboxKind, inboxTitle, nextInboxRequest } from "./popup/in
 
 const { t } = useI18n();
 const layoutReview = new URLSearchParams(location.search).get("layoutReview") === "1";
-const slowReview = ref(true);
 const allocation = ref<InboxLayout | null>(null);
 const nativeCanvas = computed(() => !!allocation.value?.canvas);
 const frozenCanvas = computed(() => !!allocation.value?.canvas && allocation.value.canvas.frozen !== false);
@@ -128,9 +127,7 @@ async function geometry(arrival = false, width?: number, mainExtent?: number) {
     await nextTick();
     // Native PDF/Quick Look shares the fixed canvas and is placed before the window reveals it.
     if (active.value) await nativePreviewSync.get(active.value)?.();
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    await invoke("popup_inbox_commit", { revision: prepared.revision,
-      reviewAnimationMs: reduced || width !== undefined || mainExtent !== undefined ? 0 : layoutReview && slowReview.value ? 700 : 220 });
+    await invoke("popup_inbox_commit", { revision: prepared.revision });
     const finished = await invoke<InboxLayout | undefined>("popup_inbox_finish", { revision: prepared.revision, arrival });
     if (finished) allocation.value = finished;
     return prepared;
@@ -178,7 +175,7 @@ async function add(show: PopupInboxRequest, arrival = true) {
   if (show.requestId !== active.value) await popupShowWindow(show.requestId);
   if (arrival) {
     flashed.value.add(show.requestId);
-    later(() => flashed.value.delete(show.requestId), 1200);
+    later(() => flashed.value.delete(show.requestId), 2000);
     await geometry(true);
   } else await geometry();
 }
@@ -319,7 +316,6 @@ onBeforeUnmount(() => {
     <div v-if="renderedSidebar" class="inbox-divider" role="separator" aria-orientation="vertical" :aria-label="t('popup.inbox.resize')" @pointerdown="beginResize"></div>
     <main class="inbox-body" :inert="blocked">
       <button v-if="layoutReview" class="inbox-layout-review" @click="toggleReviewSidebar">{{ renderedSidebar ? '隐藏 Sidebar' : '显示 Sidebar' }} · 几何测试</button>
-      <button v-if="layoutReview" class="inbox-layout-review inbox-review-speed" @click="slowReview = !slowReview">慢速动画：{{ slowReview ? '开' : '关' }}</button>
       <div v-if="recovered" class="inbox-recovery" role="alert">{{ t('popup.inbox.recovered') }}<button @click="recovered = false" :aria-label="t('popup.inbox.dismiss')">×</button></div>
       <div v-for="request in mounted" v-show="request.requestId === active" :key="request.requestId" class="inbox-request" :data-inbox-request="request.requestId" :inert="request.requestId !== active">
         <PopupView :scope="scopeFor(request.requestId)" />
@@ -343,7 +339,6 @@ onBeforeUnmount(() => {
 
 <style>
 .inbox-layout-review { position: absolute; z-index: 90; top: 4px; left: 190px; padding: 4px 12px; border: 1px solid #8884; border-radius: 6px; background: var(--surface-overlay); color: var(--text-primary); font-size: 11px; cursor: pointer; }
-.inbox-review-speed { left: 360px; }
 /* Both layouts keep the same main origin. Only the transition pins the body's extent. */
 .inbox-root.inbox-native { display: block; }
 .inbox-native .inbox-sidebar { position: absolute; left: calc(var(--inbox-canvas-left) - var(--inbox-sidebar) - 6px); top: 0; bottom: 0; width: var(--inbox-sidebar); }
@@ -363,7 +358,7 @@ onBeforeUnmount(() => {
 .inbox-row { display: flex; align-items: flex-start; gap: 7px; width: 100%; padding: 10px 8px; border: 0; border-radius: 8px; text-align: left; background: transparent; color: inherit; cursor: pointer; }
 .inbox-row.selected { background: color-mix(in srgb, #2685e8 12%, transparent); }
 .inbox-row:hover { background: color-mix(in srgb, #2685e8 8%, transparent); }
-.inbox-row.flash { animation: inbox-row-arrival .4s ease-in-out 3; }
+.inbox-row.flash { animation: inbox-row-arrival .4s ease-in-out 5; }
 .inbox-dot { position: relative; flex: 0 0 6px; height: 6px; margin-top: 5px; }
 .inbox-dot.unread::before { content: ''; position: absolute; left: -2px; top: -2px; width: 10px; height: 10px; border-radius: 50%; background: #2685e8; animation: inbox-unread-dot 2.8s cubic-bezier(.4, 0, .2, 1) infinite; }
 .inbox-row-content { min-width: 0; flex: 1; }

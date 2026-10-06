@@ -243,7 +243,6 @@ pub async fn popup_inbox_layout(
 pub async fn popup_inbox_commit(
     window: tauri::Window,
     revision: u64,
-    review_animation_ms: Option<u64>,
 ) -> Result<crate::app::popup_inbox_geometry::Allocation, String> {
     if window.label() != "popup"
         || window
@@ -253,14 +252,7 @@ pub async fn popup_inbox_commit(
     {
         return Err("shared Popup is unavailable".into());
     }
-    let review_ms = if crate::dev_instance::is_dev_instance()
-        && std::env::var_os("ASKHUMAN_INBOX_LAYOUT_REVIEW").is_some()
-    {
-        review_animation_ms.unwrap_or(220).min(1000)
-    } else {
-        review_animation_ms.unwrap_or(220).min(220)
-    };
-    crate::app::popup_inbox_geometry::commit_frame(&window, revision, review_ms).await
+    crate::app::popup_inbox_geometry::commit_frame(&window, revision, 0).await
 }
 #[tauri::command]
 pub async fn popup_inbox_finish(

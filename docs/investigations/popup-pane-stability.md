@@ -118,3 +118,11 @@ macOS 系统 Zoom/恢复还有中间 resize 事件，`isZoomed` 此时可能尚�
 - 本机 Wry 0.55.1 `src/wkwebview/mod.rs`：主 WebView 默认宽高 autoresizing，本实验显式关闭。
 - 本机 Tauri-runtime-wry 2.11.4 `src/lib.rs`：单 WebView `InnerSize` / macOS resize 事件来源。
 - [Apple NSWindow inLiveResize](https://developer.apple.com/documentation/appkit/nswindow/inliveresize)：区分用户实时拖动与程序/系统尺寸变化。
+
+### 后续正式交互：即时 pane 切换
+
+用户明确要求 Sidebar / Preview 即时展开后，正式宿主几何 commit 固定为 0ms，并
+删除正常/Dev 的慢速开关。固定画布保留为布局交接机制，普通外缘缩放继续自适应。
+真实 PDF / Sidebar 展开、收起、自动出现及请求切换的 11 条原生记录均为 0ms / 单次
+提交，正文目标与模型坐标漂移为 0；原生预览位置与草稿保留。详见实施记录 §18。
+独立 harness 的动画实验与上面旧 220/700ms 记录仅作为历史诊断，不描述当前正常行为。

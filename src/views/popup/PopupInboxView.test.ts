@@ -37,15 +37,15 @@ describe("shared popup navigation", () => {
     wrapper = mount(PopupInboxView, { global: { plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })] } });
     await flushPromises();
   }
-  it("keeps an arrival highlighted for all three flashes without clearing unread state", async () => {
+  it("keeps an arrival highlighted for all five flashes without clearing unread state", async () => {
     await start();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     emit("popup-inbox-show", request("c")); await flushPromises();
     const row = wrapper.findAll(".inbox-row")[2];
-    await vi.advanceTimersByTimeAsync(400);
-    expect(row.classes()).toContain("flash");
-    await vi.advanceTimersByTimeAsync(400);
-    expect(row.classes()).toContain("flash");
+    for (let cycle = 0; cycle < 4; cycle++) {
+      await vi.advanceTimersByTimeAsync(400);
+      expect(row.classes()).toContain("flash");
+    }
     await vi.advanceTimersByTimeAsync(400);
     expect(row.classes()).not.toContain("flash");
     expect(row.find(".inbox-dot").classes()).toContain("unread");
