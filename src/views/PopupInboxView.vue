@@ -178,7 +178,7 @@ async function add(show: PopupInboxRequest, arrival = true) {
   if (show.requestId !== active.value) await popupShowWindow(show.requestId);
   if (arrival) {
     flashed.value.add(show.requestId);
-    later(() => flashed.value.delete(show.requestId), 1200);
+    later(() => flashed.value.delete(show.requestId), 3600);
     await geometry(true);
   } else await geometry();
 }
@@ -363,7 +363,7 @@ onBeforeUnmount(() => {
 .inbox-row { display: flex; align-items: flex-start; gap: 7px; width: 100%; padding: 10px 8px; border: 0; border-radius: 8px; text-align: left; background: transparent; color: inherit; cursor: pointer; }
 .inbox-row.selected { background: color-mix(in srgb, #2685e8 12%, transparent); }
 .inbox-row:hover { background: color-mix(in srgb, #2685e8 8%, transparent); }
-.inbox-row.flash { animation: inbox-row-arrival 1.2s ease-out; }
+.inbox-row.flash { animation: inbox-row-arrival 1.2s ease-out 3; }
 .inbox-dot { position: relative; flex: 0 0 6px; height: 6px; margin-top: 5px; }
 .inbox-dot.unread::before { content: ''; position: absolute; left: -2px; top: -2px; width: 10px; height: 10px; border-radius: 50%; background: #2685e8; animation: inbox-unread-dot 2.8s cubic-bezier(.4, 0, .2, 1) infinite; }
 .inbox-row-content { min-width: 0; flex: 1; }

@@ -32,11 +32,25 @@ describe("shared popup navigation", () => {
       if (command === "popup_inbox_layout") return { revision: 1, sidebarWidth: 240, mainWidth: 560, mainHeight: 620, previewWidth: 0 };
     });
   });
-  afterEach(() => { wrapper?.unmount(); vi.unstubAllGlobals(); });
+  afterEach(() => { wrapper?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals(); });
   async function start() {
     wrapper = mount(PopupInboxView, { global: { plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })] } });
     await flushPromises();
   }
+  it("keeps an arrival highlighted for all three flashes without clearing unread state", async () => {
+    await start();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    emit("popup-inbox-show", request("c")); await flushPromises();
+    const row = wrapper.findAll(".inbox-row")[2];
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(row.classes()).toContain("flash");
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(row.classes()).toContain("flash");
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(row.classes()).not.toContain("flash");
+    expect(row.find(".inbox-dot").classes()).toContain("unread");
+    expect(wrapper.find('[data-inbox-request="a"]').isVisible()).toBe(true);
+  });
   it("skips a successor already ended by a batch and opens the surviving arrival", async () => {
     await start(); emit("popup-inbox-show", request("c", "/other")); await flushPromises();
     mock.invoke.mockImplementation(async (command: string, args: { requestId?: string }) => {
