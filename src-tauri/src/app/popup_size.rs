@@ -5,6 +5,18 @@ use crate::config::PopupChannelConfig;
 pub(super) const MIN_WIDTH: f64 = 420.0;
 pub(super) const MIN_HEIGHT: f64 = 480.0;
 
+pub(super) fn restored_sidebar_width(config: &PopupChannelConfig) -> f64 {
+    if config.remember_size
+        && config.sidebar_width.is_finite()
+        && config.sidebar_width > 0.0
+        && config.sidebar_width <= i32::MAX as f64
+    {
+        config.sidebar_width.clamp(180.0, 600.0)
+    } else {
+        PopupChannelConfig::default().sidebar_width
+    }
+}
+
 pub(super) fn restored_preview_width(config: &PopupChannelConfig) -> f64 {
     if config.remember_size
         && config.preview_width.is_finite()
@@ -117,6 +129,28 @@ mod tests {
             config.preview_width = invalid;
             assert_eq!(restored_preview_width(&config), 700.0);
         }
+    }
+    #[test]
+    fn sidebar_width_recovers_old_configs_and_survives_serialization() {
+        let mut config: PopupChannelConfig =
+            serde_json::from_str(r#"{"enabled":true,"rememberSize":true}"#).unwrap();
+        assert_eq!(restored_sidebar_width(&config), 240.0);
+        config.sidebar_width = 330.0;
+        let saved = serde_json::to_string(&config).unwrap();
+        assert!(saved.contains("\"sidebarWidth\":330.0"));
+        let restored = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored_sidebar_width(&restored), 330.0);
+        config.remember_size = false;
+        assert_eq!(restored_sidebar_width(&config), 240.0);
+        config.remember_size = true;
+        for invalid in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::MAX] {
+            config.sidebar_width = invalid;
+            assert_eq!(restored_sidebar_width(&config), 240.0);
+        }
+        config.sidebar_width = 20.0;
+        assert_eq!(restored_sidebar_width(&config), 180.0);
+        config.sidebar_width = 900.0;
+        assert_eq!(restored_sidebar_width(&config), 600.0);
     }
 
     #[test]

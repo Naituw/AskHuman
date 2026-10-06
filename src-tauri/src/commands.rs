@@ -240,6 +240,22 @@ pub async fn popup_inbox_layout(
     .await
 }
 #[tauri::command]
+pub async fn popup_inbox_resize_sidebar(
+    window: tauri::Window,
+    width: f64,
+    finished: bool,
+) -> Result<crate::app::popup_inbox_geometry::Allocation, String> {
+    if window.label() != "popup"
+        || window
+            .app_handle()
+            .try_state::<crate::app::popup_inbox::Inbox>()
+            .is_none()
+    {
+        return Err("shared Popup is unavailable".into());
+    }
+    crate::app::popup_inbox_geometry::resize_sidebar(&window, width, finished).await
+}
+#[tauri::command]
 pub async fn popup_inbox_commit(
     window: tauri::Window,
     revision: u64,

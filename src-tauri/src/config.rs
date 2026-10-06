@@ -260,6 +260,7 @@ pub struct PopupChannelConfig {
     pub height: f64,
     pub remember_size: bool,
     pub preview_width: f64,
+    pub sidebar_width: f64,
 }
 
 impl Default for PopupChannelConfig {
@@ -271,6 +272,7 @@ impl Default for PopupChannelConfig {
             height: 620.0,
             remember_size: true,
             preview_width: 700.0,
+            sidebar_width: 240.0,
         }
     }
 }

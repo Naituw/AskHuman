@@ -305,3 +305,30 @@ commit 删除动画时长参数并固定调用 0ms，前端不再传 220/700ms�
   durationMs=0、samples=1，正文模型坐标相对目标漂移为 0。原生 PDF X 保持原位。
 - A 的原草稿和 PDF 在上述操作中保留；A/B 各自返回准确 JSON，队列归零后正常隐藏。
   测试 Daemon/Host 正常退出，临时菜单栏和尺寸偏好恢复；浏览器与临时 HTTP 服务收尾。
+
+## 19. Sidebar 内部拖动与宽度持久化（2026-10-06）
+
+用户反馈 Sidebar / 正文分隔线错误地扩展窗口左缘，并要求记录 Sidebar 宽度。
+原路径复用 pane 扩窗事务，而且 preferred_sidebar 仅存在内存。现分隔线使用专用命令，
+固定窗口 frame，在 Sidebar / 正文之间重新分配宽度，保持 Preview 的宽度和屏幕位置。
+macOS 同步移动逻辑 DOM 原点，原生 canvas / WebKit 的 frame 与 viewport extent 不变；
+后续 pane 交接和普通外缘对账保留该原点。分隔线不预留离屏 viewport、不修改原生外框。
+
+前端合并在途 pointer 更新，松开后始终提交最终位置，避免漏保存或逐帧写配置。
+pointerdown 阻止默认文字选择。新增 channels.popup.sidebarWidth（默认 240，通常
+180–600），按 rememberSize 保存最终宽度及正常正文尺寸；保存失败显示错误。
+下一轮 / 冷启动读取配置，已有受限布局不会通过分隔线进一步压缩正文。
+
+- 全量 Rust 1252 passed / 3 ignored；前端 230 项 / 40 files、Node 5 项通过，
+  最后补充阻止文字选择后组件 8 项再次通过，类型检查与两次 Dev 安装成功。
+- 真实 CUA 拖动：带原生 PDF 时 240→330→180→330，正文为 560→470→620→470；
+  原生窗口保持 [1496,454,1512,620]，PDF X 始终为 2308。无预览时 330→300、
+  正文 470→500，806×620 外框保持。7 条拖动原生记录中，before/after 的外框、
+  canvas X、viewport 宽高与原生 Preview X 全部相同。
+- 切 B / 回 A 恢复 PDF，两个草稿保留并返回准确 CLI JSON；清空后新一轮恢复
+  Sidebar=300 / 正文=500。完全停止 Dev Daemon / Host、更新最终安装副本后冷启动，
+  仍恢复 300 / 500。最终版再次拖到 340 / 460，外框、viewport 和 PDF 不变，
+  配置保存实际值，AX 不再出现误选正文文字。
+- 六条隔离测试请求全部完成；Dev Daemon 为 0 active 后正常退出；所有临时尺寸、
+  rememberSize 与菜单栏设置按备份恢复，包括原本缺省的 sidebarWidth 字段。
+  主配置和主工作树不改动；其他平台 / 真 IM 等外部 gate 保留原延期安排。

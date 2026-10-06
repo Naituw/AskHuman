@@ -269,13 +269,31 @@ function keydown(event: KeyboardEvent) {
 }
 function beginResize(event: PointerEvent) {
   if (event.button !== 0 || blocked.value) return;
+  event.preventDefault();
   const divider = event.currentTarget as HTMLElement;
   const start = event.clientX, initial = sidebarWidth.value;
   divider.setPointerCapture(event.pointerId);
   let width = initial, frame = 0;
-  const apply = () => { frame = 0; void enqueue(() => geometry(false, width)); };
+  let pending = false, ending = false, stopped = false, lastApplied = initial, finishSent = false;
+  const apply = () => {
+    frame = 0;
+    if (pending || stopped || disposed) return;
+    pending = true;
+    void enqueue(async () => {
+      const requested = width, finished = ending;
+      try {
+        const result = await invoke<InboxLayout>("popup_inbox_resize_sidebar", { width: requested, finished });
+        allocation.value = result;
+        sidebarWidth.value = result.sidebarWidth;
+        lastApplied = requested; finishSent = finished;
+      } catch (e) { stopped = true; throw e; }
+    }).finally(() => {
+      pending = false;
+      if (!disposed && !stopped && !finishSent && (ending || width !== lastApplied) && !frame) frame = requestAnimationFrame(apply);
+    });
+  };
   const move = (e: PointerEvent) => { width = Math.max(180, initial + e.clientX - start); if (!frame) frame = requestAnimationFrame(apply); };
-  const end = () => { cancelAnimationFrame(frame); apply(); divider.removeEventListener("pointermove", move); divider.removeEventListener("lostpointercapture", end); };
+  const end = () => { ending = true; cancelAnimationFrame(frame); frame = 0; apply(); divider.removeEventListener("pointermove", move); divider.removeEventListener("lostpointercapture", end); };
   divider.addEventListener("pointermove", move); divider.addEventListener("lostpointercapture", end);
 }
 onMounted(async () => {

@@ -43,6 +43,10 @@ Quick Look 共用一个画布父视图；逐帧仅移动画布和窗口 frame，
 过渡前先固定 DOM 的实际宽度，结束后移除离屏 reserve，再切回自适应 CSS。普通外缘
 缩放由 AppKit 同步改变画布/WebKit/原生预览，Rust resize 事件只对账和保存，不能异步
 重设原生 frame。Sidebar 仅由分隔线改宽；预览关闭时正文吸收宽度变化，打开时预览吸收。
+Sidebar / 正文分隔线固定窗口外框，在两区之间分配宽度，Preview 的宽度和屏幕位置保持；
+macOS 同步调整 DOM 原点，保留同一原生 viewport。松开后将 Sidebar 宽度写入
+`channels.popup.sidebarWidth`（默认 240，通常范围 180–600），遵守 rememberSize；
+正常正文尺寸随分配保存，下一轮和冷启动恢复。自动受限分配不覆盖正常正文偏好。
 Sidebar / Preview 展开与收起的原生几何提交固定为 0ms，即时切换；固定画布交接
 仍保持正文与原生附件位置，正式 Dev 窗口也不再显示慢速动画开关。
 `popup_transition.rs` 负责非激活前置。`popup_pulse.rs` 运行时加载

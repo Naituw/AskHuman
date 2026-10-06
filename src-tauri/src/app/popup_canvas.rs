@@ -49,6 +49,8 @@ mod mac {
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Sample {
+        window_frame: [f64; 4],
+        canvas_x: f64,
         model_x: f64,
         expected_x: f64,
         server_x: Option<f64>,
@@ -84,6 +86,13 @@ mod mac {
         };
         let preview_x = ah_preview_screen_x();
         Sample {
+            window_frame: [
+                frame.origin.x,
+                frame.origin.y,
+                frame.size.width,
+                frame.size.height,
+            ],
+            canvas_x: canvas_frame.origin.x,
             model_x: frame.origin.x + canvas_frame.origin.x + left,
             expected_x: anchor,
             server_x,
@@ -138,9 +147,13 @@ mod mac {
         let left = allocation.left_span();
         let minimum = allocation.minimum_width();
         let minimum_height = super::super::popup_size::MIN_HEIGHT.min(allocation.frame.height);
+        let review = crate::dev_instance::is_dev_instance()
+            && std::env::var("ASKHUMAN_INBOX_LAYOUT_REVIEW").as_deref() == Ok("1");
+        let plan = allocation.clone();
         let (tx, rx) = oneshot::channel();
         window
             .with_webview(move |platform| unsafe {
+                let before = review.then(|| measure(&platform, canvas.left, plan.frame.x + left));
                 ah_popup_canvas_resume(
                     platform.inner(),
                     canvas.left,
@@ -148,6 +161,21 @@ mod mac {
                     minimum,
                     minimum_height,
                 );
+                if let Some(before) = before {
+                    use std::io::Write;
+                    let after = measure(&platform, canvas.left, plan.frame.x + left);
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(crate::paths::state_dir().join("popup-canvas-resume-review.jsonl"))
+                    {
+                        let _ = writeln!(
+                            file,
+                            "{}",
+                            serde_json::json!({"plan":plan,"before":before,"after":after})
+                        );
+                    }
+                }
                 let _ = tx.send(());
             })
             .map_err(|e| e.to_string())?;

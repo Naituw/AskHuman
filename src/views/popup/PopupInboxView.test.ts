@@ -37,6 +37,46 @@ describe("shared popup navigation", () => {
     wrapper = mount(PopupInboxView, { global: { plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })] } });
     await flushPromises();
   }
+  it("drags only the internal divider and persists the latest position after an in-flight update", async () => {
+    await start();
+    await wrapper.find('[data-form-id="a"]').setValue("retained draft");
+    mock.invoke.mockClear();
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.set(++nextFrame, callback); return nextFrame; });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    const runFrame = () => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback(0)); };
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    mock.invoke.mockImplementation(async (command: string, args: { width: number; finished: boolean }) => {
+      if (command === "popup_inbox_resize_sidebar") {
+        if (!args.finished) await held;
+        return { revision: 2, sidebarWidth: args.width, mainWidth: 800 - args.width, mainHeight: 620, previewWidth: 0 };
+      }
+    });
+    const divider = wrapper.find(".inbox-divider");
+    Object.defineProperty(divider.element, "setPointerCapture", { value: vi.fn(), configurable: true });
+    const pointer = (type: string, clientX: number) => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      divider.element.dispatchEvent(event);
+      if (type === "pointerdown") expect(event.defaultPrevented).toBe(true);
+    };
+    pointer("pointerdown", 240);
+    pointer("pointermove", 300); runFrame(); await flushPromises();
+    expect(mock.invoke).toHaveBeenCalledWith("popup_inbox_resize_sidebar", { width: 300, finished: false });
+    pointer("pointermove", 330);
+    await divider.trigger("lostpointercapture"); await flushPromises();
+    expect(mock.invoke.mock.calls).toHaveLength(1);
+    release(); await flushPromises(); runFrame(); await flushPromises();
+    expect(mock.invoke.mock.calls).toEqual([
+      ["popup_inbox_resize_sidebar", { width: 300, finished: false }],
+      ["popup_inbox_resize_sidebar", { width: 330, finished: true }],
+    ]);
+    expect(wrapper.classes()).not.toContain("inbox-frozen");
+    expect((wrapper.find('[data-form-id="a"]').element as HTMLTextAreaElement).value).toBe("retained draft");
+    expect((wrapper.element as HTMLElement).style.getPropertyValue("--inbox-sidebar")).toBe("330px");
+  });
   it("keeps an arrival highlighted for all five flashes without clearing unread state", async () => {
     await start();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

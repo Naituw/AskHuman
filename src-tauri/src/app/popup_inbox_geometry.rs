@@ -227,7 +227,8 @@ pub async fn prepare(
             .get_or_insert_with(|| super::popup_size::restored_size(&config));
         c.preferred_preview
             .get_or_insert_with(|| super::popup_size::restored_preview_width(&config));
-        c.preferred_sidebar.get_or_insert(240.0);
+        c.preferred_sidebar
+            .get_or_insert_with(|| super::popup_size::restored_sidebar_width(&config));
         let anchor = *c.anchor.get_or_insert((frame.x, frame.y));
         if let Some(sidebar) = sidebar {
             c.sidebar = sidebar;
@@ -310,9 +311,14 @@ pub async fn prepare(
             .canvas_right
             .max(work.map_or(0.0, |w| w.width))
             .max(c.preferred_preview.unwrap() + GAP);
+        let canvas_left = c
+            .published
+            .as_ref()
+            .and_then(|previous| previous.canvas.as_ref())
+            .map_or(606.0, |canvas| canvas.left);
         let canvas = cfg!(target_os = "macos").then(|| Canvas {
-            left: 606.0,
-            width: 606.0 + main_width + c.canvas_right,
+            left: canvas_left,
+            width: canvas_left + main_width + c.canvas_right,
             height: target.height,
             frozen: true,
         });
@@ -453,6 +459,109 @@ pub async fn commit(window: &Window, revision: u64, arrival: bool) -> Result<All
     commit_frame(window, revision, 0).await?;
     finish(window, revision, arrival).await
 }
+fn sidebar_resize(previous: &Allocation, frame: Frame, width: f64) -> Result<Allocation, String> {
+    if !width.is_finite() || previous.sidebar_width <= 0.0 {
+        return Err("Sidebar resize is unavailable".into());
+    }
+    let budget = frame.width
+        - GAP
+        - if previous.preview_width > 0.0 {
+            previous.preview_width + GAP
+        } else {
+            0.0
+        };
+    if budget < 2.0 {
+        return Err("Sidebar resize is unavailable".into());
+    }
+    let main_min = previous.main_width.clamp(1.0, super::popup_size::MIN_WIDTH);
+    let sidebar_min = 180.0_f64.min((budget - main_min).max(1.0));
+    let main_min = main_min.min(budget - sidebar_min);
+    let sidebar_max = 600.0_f64.min(budget - main_min).max(sidebar_min);
+    let sidebar_width = width.clamp(sidebar_min, sidebar_max);
+    let mut allocation = previous.clone();
+    allocation.sidebar_width = sidebar_width;
+    allocation.main_width = budget - sidebar_width;
+    allocation.main_height = frame.height;
+    allocation.frame = frame;
+    if let Some(canvas) = &mut allocation.canvas {
+        // Move the DOM origin with the divider while leaving the native canvas and preview
+        // at exactly the same screen position and viewport extent throughout the drag.
+        canvas.left += sidebar_width - previous.sidebar_width;
+    }
+    allocation.responsive();
+    Ok(allocation)
+}
+pub async fn resize_sidebar(
+    window: &Window,
+    width: f64,
+    finished: bool,
+) -> Result<Allocation, String> {
+    wait_idle(window).await?;
+    super::popup_pulse::cancel();
+    let (frame, scale, work, special) = native(window)?;
+    let view = webview(window)?;
+    let (allocation, remember_main) = {
+        let state = state(window);
+        let mut owner = state.lock().unwrap();
+        let c = &mut owner.inbox;
+        if c.pending || !c.sidebar {
+            return Err("Sidebar resize is unavailable".into());
+        }
+        let previous = c
+            .published
+            .as_ref()
+            .ok_or("Sidebar resize is unavailable")?;
+        let remember_main = !special && !previous.limited;
+        let mut allocation = sidebar_resize(previous, frame, width)?;
+        c.revision += 1;
+        allocation.revision = c.revision;
+        c.pending = true;
+        c.prepared = Some(allocation.clone());
+        (allocation, remember_main)
+    };
+    // The native view frames are unchanged; only the minimum size follows the new split.
+    // Never prepare a reserved viewport or set the outer window frame for divider motion.
+    if let Err(error) = super::popup_canvas::resume(&view, &allocation).await {
+        let state = state(window);
+        let mut owner = state.lock().unwrap();
+        owner.inbox.pending = false;
+        owner.inbox.prepared = None;
+        return Err(error);
+    }
+    {
+        let state = state(window);
+        let mut owner = state.lock().unwrap();
+        let c = &mut owner.inbox;
+        c.pending = false;
+        c.prepared = None;
+        c.published = Some(allocation.clone());
+        c.preferred_sidebar = Some(allocation.sidebar_width);
+        if remember_main {
+            c.preferred_main = Some((allocation.main_width, allocation.main_height));
+            c.normal = Some(frame);
+        }
+        c.anchor = Some((frame.x + allocation.left_span(), frame.y));
+        c.scale = Some(scale);
+        c.work = work;
+        c.special = special;
+    }
+    publish(window, &allocation);
+    if finished {
+        // Persist only the final pointer position, avoiding config writes on every frame.
+        let mut config = crate::config::AppConfig::load_without_secrets();
+        if config.channels.popup.remember_size {
+            config.channels.popup.sidebar_width = allocation.sidebar_width;
+            if remember_main {
+                config.channels.popup.width = allocation.main_width;
+                config.channels.popup.height = allocation.main_height;
+            }
+            config
+                .save()
+                .map_err(|e| format!("Unable to remember sidebar width: {e}"))?;
+        }
+    }
+    Ok(allocation)
+}
 pub fn published(window: &Window) -> Option<Layout> {
     let owner = state(window);
     let owner = owner.lock().ok()?;
@@ -551,9 +660,10 @@ pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjecti
     c.scale = Some(scale);
     c.work = work;
     c.revision += 1;
+    let canvas_left = previous.canvas.as_ref().map_or(606.0, |canvas| canvas.left);
     let canvas = cfg!(target_os = "macos").then(|| Canvas {
-        left: 606.0,
-        width: 606.0 + frame.width - previous.left_span(),
+        left: canvas_left,
+        width: canvas_left + frame.width - previous.left_span(),
         height: frame.height,
         frozen: false,
     });
@@ -692,6 +802,58 @@ mod tests {
         assert!(!canvas.frozen);
         assert_eq!(canvas.left, 606.0);
         assert_eq!(canvas.width, 1872.0);
+    }
+    #[test]
+    fn sidebar_drag_redistributes_inside_fixed_window_and_native_viewport() {
+        for preview in [0.0, 700.0] {
+            let mut previous = layout(preview);
+            previous.responsive();
+            let initial = previous.clone();
+            for width in [340.0, 180.0, 380.0, 260.0, 240.0] {
+                let next = sidebar_resize(&previous, previous.frame, width).unwrap();
+                assert_eq!(next.sidebar_width, width);
+                assert_eq!(next.sidebar_width + next.main_width, 800.0);
+                assert_eq!(next.preview_width, preview);
+                assert_eq!(
+                    serde_json::to_value(next.frame).unwrap(),
+                    serde_json::to_value(initial.frame).unwrap()
+                );
+                let canvas = next.canvas.as_ref().unwrap();
+                let original = initial.canvas.as_ref().unwrap();
+                assert_eq!(canvas.width, original.width);
+                assert_eq!(
+                    next.left_span() - canvas.left,
+                    initial.left_span() - original.left
+                );
+                assert_eq!(
+                    canvas.left + next.main_width,
+                    original.left + initial.main_width
+                );
+                assert!(!canvas.frozen);
+                previous = next;
+            }
+        }
+    }
+    #[test]
+    fn sidebar_drag_respects_main_floor_and_existing_constrained_layout() {
+        let previous = layout(0.0);
+        let wide = sidebar_resize(&previous, previous.frame, 900.0).unwrap();
+        assert_eq!((wide.sidebar_width, wide.main_width), (380.0, 420.0));
+        let narrow = sidebar_resize(&previous, previous.frame, -30.0).unwrap();
+        assert_eq!((narrow.sidebar_width, narrow.main_width), (180.0, 620.0));
+        let mut constrained = previous;
+        constrained.sidebar_width = 150.0;
+        constrained.main_width = 300.0;
+        constrained.frame.width = 456.0;
+        constrained.limited = true;
+        let result = sidebar_resize(&constrained, constrained.frame, 500.0).unwrap();
+        assert_eq!((result.sidebar_width, result.main_width), (150.0, 300.0));
+        assert!(result.limited);
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(sidebar_resize(&constrained, constrained.frame, invalid).is_err());
+        }
+        constrained.sidebar_width = 0.0;
+        assert!(sidebar_resize(&constrained, constrained.frame, 240.0).is_err());
     }
     #[test]
     fn reduces_preview_then_sidebar_then_main() {

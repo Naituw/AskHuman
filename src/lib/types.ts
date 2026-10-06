@@ -729,6 +729,7 @@ export interface PopupChannelConfig {
   height: number;
   rememberSize: boolean;
   previewWidth: number;
+  sidebarWidth: number;
 }
 
 export interface TelegramChannelConfig {
