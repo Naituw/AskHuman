@@ -268,7 +268,7 @@ pub async fn popup_inbox_commit(
     {
         return Err("shared Popup is unavailable".into());
     }
-    crate::app::popup_inbox_geometry::commit_frame(&window, revision, 0).await
+    crate::app::popup_inbox_geometry::commit_frame(&window, revision).await
 }
 #[tauri::command]
 pub async fn popup_inbox_finish(

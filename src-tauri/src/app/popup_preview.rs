@@ -707,15 +707,15 @@ pub fn moved(window: &Window) {
     c.publish(window, &n);
 }
 #[cfg(target_os = "macos")]
-fn primary_button_down(_: &Window) -> bool {
+pub(super) fn primary_button_down(_: &Window) -> bool {
     objc2_app_kit::NSEvent::pressedMouseButtons() & 1 != 0
 }
 #[cfg(target_os = "windows")]
-fn primary_button_down(_: &Window) -> bool {
+pub(super) fn primary_button_down(_: &Window) -> bool {
     unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(1) < 0 }
 }
 #[cfg(target_os = "linux")]
-fn primary_button_down(window: &Window) -> bool {
+pub(super) fn primary_button_down(window: &Window) -> bool {
     use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
     #[link(name = "X11")]
     unsafe extern "C" {

@@ -84,13 +84,14 @@ pub struct Geometry {
     pub pending: bool,
     canvas_right: f64,
     transition_left: f64,
-    animate: bool,
+    transition_frame: Option<Frame>,
     prepared: Option<Allocation>,
     published: Option<Allocation>,
     normal: Option<Frame>,
     special: bool,
     scale: Option<f64>,
     work: Option<Rect>,
+    reconcile_queued: bool,
 }
 pub fn allocate(main: f64, left: f64, right: f64, available: f64) -> (f64, f64, f64) {
     let gaps = if left > 0.0 { GAP } else { 0.0 } + if right > 0.0 { GAP } else { 0.0 };
@@ -172,12 +173,8 @@ fn native(window: &Window) -> Result<(Frame, f64, Option<Rect>, bool), String> {
                 .intersection(*b),
             )
         });
-    Ok((
-        frame,
-        scale,
-        work,
-        window.is_maximized().unwrap_or(true) || window.is_fullscreen().unwrap_or(true),
-    ))
+    let special = window.is_maximized().unwrap_or(true) || window.is_fullscreen().unwrap_or(true);
+    Ok((frame, scale, work, special))
 }
 fn state(window: &Window) -> tauri::State<'_, Mutex<Controller>> {
     window.app_handle().state::<Mutex<Controller>>()
@@ -209,6 +206,7 @@ pub async fn prepare(
     main_extent: Option<f64>,
 ) -> Result<Allocation, String> {
     wait_idle(window).await?;
+    wait_for_pointer(window).await;
     super::popup_pulse::cancel();
     let (frame, scale, work, special) = native(window)?;
     let config = crate::config::AppConfig::load_without_secrets()
@@ -334,11 +332,8 @@ pub async fn prepare(
                 || sidebar_width < left - 0.5
                 || preview_width < right - 0.5,
         };
+        c.transition_frame = Some(frame);
         c.transition_left = c.published.as_ref().map_or(0.0, Allocation::left_span);
-        c.animate = c.published.as_ref().is_some_and(|previous| {
-            (previous.main_width - allocation.main_width).abs() < 0.01
-                && (previous.main_height - allocation.main_height).abs() < 0.01
-        });
         c.prepared = Some(allocation.clone());
         allocation
     };
@@ -359,6 +354,10 @@ pub async fn prepare(
     let revision = allocation.revision;
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        if super::popup_preview::primary_button_down(&owner) {
+            wait_for_pointer(&owner).await;
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
         let expired = {
             let state = state(&owner);
             let mut state = state.lock().unwrap();
@@ -378,12 +377,8 @@ pub async fn prepare(
     publish(window, &allocation);
     Ok(allocation)
 }
-pub async fn commit_frame(
-    window: &Window,
-    revision: u64,
-    review_ms: u64,
-) -> Result<Allocation, String> {
-    let (allocation, special, old_left, animate) = {
+pub async fn commit_frame(window: &Window, revision: u64) -> Result<Allocation, String> {
+    let (mut allocation, special, old_left, source) = {
         let state = state(window);
         let owner = state.lock().unwrap();
         let c = &owner.inbox;
@@ -394,18 +389,32 @@ pub async fn commit_frame(
             c.prepared.clone().ok_or("preview geometry changed")?,
             c.special,
             c.transition_left,
-            c.animate,
+            c.transition_frame.ok_or("preview geometry changed")?,
         )
     };
     let webview = webview(window)?;
     if !special {
-        // Main extent and monitor constraints are discrete layout changes, never animated reflow.
-        let duration = if animate && webview.is_visible().unwrap_or(false) {
-            review_ms
-        } else {
-            0
-        };
-        super::popup_canvas::apply(&webview, &allocation, old_left, duration).await?;
+        wait_for_pointer(window).await;
+        {
+            let state = state(window);
+            let owner = state.lock().unwrap();
+            if !owner.inbox.pending || owner.inbox.revision != revision {
+                return Err("preview geometry changed".into());
+            }
+        }
+        allocation.frame =
+            super::popup_canvas::apply(&webview, &allocation, old_left, source).await?;
+        let owner = state(window);
+        let mut owner = owner.lock().unwrap();
+        let c = &mut owner.inbox;
+        if !c.pending || c.revision != revision {
+            return Err("preview geometry changed".into());
+        }
+        c.anchor = Some((
+            allocation.frame.x + allocation.left_span(),
+            allocation.frame.y,
+        ));
+        c.prepared = Some(allocation.clone());
     }
     Ok(allocation)
 }
@@ -456,7 +465,7 @@ pub async fn finish(window: &Window, revision: u64, arrival: bool) -> Result<All
     Ok(allocation)
 }
 pub async fn commit(window: &Window, revision: u64, arrival: bool) -> Result<Allocation, String> {
-    commit_frame(window, revision, 0).await?;
+    commit_frame(window, revision).await?;
     finish(window, revision, arrival).await
 }
 fn sidebar_resize(previous: &Allocation, frame: Frame, width: f64) -> Result<Allocation, String> {
@@ -736,9 +745,23 @@ pub fn moved(window: &Window) {
         _ => true,
     };
     c.work = work;
+    let reconcile = changed && !c.reconcile_queued;
+    if reconcile {
+        c.reconcile_queued = true;
+    }
     drop(owner);
-    if changed {
-        let _ = window.emit("popup-inbox-reconcile", ());
+    if reconcile {
+        let window = window.clone();
+        tauri::async_runtime::spawn(async move {
+            wait_for_pointer(&window).await;
+            self::state(&window).lock().unwrap().inbox.reconcile_queued = false;
+            let _ = window.emit("popup-inbox-reconcile", ());
+        });
+    }
+}
+async fn wait_for_pointer(window: &Window) {
+    while super::popup_preview::primary_button_down(window) {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
 }
 pub async fn reset(window: &Window) -> Result<(), String> {

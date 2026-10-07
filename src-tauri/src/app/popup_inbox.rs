@@ -388,6 +388,9 @@ impl Inbox {
 pub(super) fn setup(app: &mut tauri::App, ipc: super::PopupIpc) -> tauri::Result<()> {
     let (generation, recovered) = ipc.host.expect("shared popup requires a host lease");
     app.manage(Inbox::new(ipc.gui_tx, generation, recovered));
+    if let Some(window) = app.get_webview_window("popup") {
+        super::popup_pulse::watch_interaction(&window).map_err(std::io::Error::other)?;
+    }
     let app = app.handle().clone();
     tauri::async_runtime::spawn(async move {
         let mut reader = ipc.reader;

@@ -252,8 +252,7 @@ mod mac {
 
     // Static callback storage stays alive even while a display link is being stopped. This
     // avoids a callback/context lifetime race during reset or cancellation.
-    pub fn cancel() {
-        let mut slot = active().lock().unwrap();
+    fn cancel_locked(slot: &mut Option<Animation>) {
         if let Some(anim) = slot.as_mut().filter(|a| !a.done) {
             if let Ok(api) = api() {
                 unsafe {
@@ -264,12 +263,33 @@ mod mac {
         }
     }
 
+    pub fn cancel() {
+        cancel_locked(&mut active().lock().unwrap());
+    }
+    extern "C" fn cancel_for_interaction() {
+        cancel();
+    }
+    pub fn watch_interaction(window: &WebviewWindow) -> Result<(), String> {
+        unsafe extern "C" {
+            fn ah_popup_pulse_watch_interaction(window: *mut c_void, cancel: extern "C" fn());
+        }
+        window
+            .with_webview(|platform| unsafe {
+                ah_popup_pulse_watch_interaction(platform.ns_window(), cancel_for_interaction);
+            })
+            .map_err(|e| e.to_string())
+    }
+
     pub async fn pulse(window: &WebviewWindow) -> Result<PulseProbe, String> {
         let api = api()?;
         let (tx, rx) = oneshot::channel();
         window
             .with_webview(move |platform| unsafe {
                 let result = (|| {
+                    // Restoration, baseline sampling and ownership replacement are one operation.
+                    // A second arrival can never capture the first pulse's scaled transform.
+                    let mut slot = active().lock().unwrap();
+                    cancel_locked(&mut slot);
                     let native = platform.ns_window() as *mut AnyObject;
                     let frame: NSRect = msg_send![native, frame];
                     let visible: bool = msg_send![native, isVisible];
@@ -296,22 +316,38 @@ mod mac {
                     let key = objc2_foundation::NSString::from_str("NSScreenNumber");
                     let number: *mut AnyObject = msg_send![description, objectForKey: &*key];
                     let display: u32 = msg_send![number, unsignedIntValue];
+                    let buttons: usize =
+                        msg_send![AnyClass::get(c"NSEvent").unwrap(), pressedMouseButtons];
+                    let animate = visible && !reduced && buttons == 0;
+                    let id = NEXT.fetch_add(1, Ordering::SeqCst);
+                    if animate {
+                        *slot = Some(Animation {
+                            id,
+                            connection,
+                            window: wid as u32,
+                            original,
+                            cx: bounds.origin.x + bounds.size.width / 2.0,
+                            cy: bounds.origin.y + bounds.size.height / 2.0,
+                            started: Instant::now(),
+                            last_frame: None,
+                            frames: 0,
+                            max_gap_ms: 0.0,
+                            peak_scale: 1.0,
+                            peak_readback: false,
+                            done: false,
+                            error: None,
+                        });
+                    }
                     Ok((
-                        wid as u32,
-                        connection,
-                        original,
-                        bounds,
-                        frame,
-                        display,
-                        visible && !reduced,
+                        id, wid as u32, connection, original, bounds, frame, display, animate,
                     ))
                 })();
                 let _ = tx.send(result);
             })
             .map_err(|e| e.to_string())?;
-        let (wid, connection, original, bounds, native_frame, display, animate) = rx
-            .await
-            .map_err(|_| "private animation preparation disconnected".to_string())??;
+        let (id, wid, connection, original, bounds, native_frame, display, animate) =
+            rx.await
+                .map_err(|_| "private animation preparation disconnected".to_string())??;
         if crate::dev_instance::is_dev_instance()
             && std::env::var("ASKHUMAN_INBOX_LAYOUT_REVIEW").as_deref() == Ok("1")
         {
@@ -348,29 +384,14 @@ mod mac {
         if !animate {
             return Ok(probe);
         }
-        let id = NEXT.fetch_add(1, Ordering::SeqCst);
-        cancel();
-        *active().lock().unwrap() = Some(Animation {
-            id,
-            connection,
-            window: wid,
-            original,
-            cx: bounds.origin.x + bounds.size.width / 2.0,
-            cy: bounds.origin.y + bounds.size.height / 2.0,
-            started: Instant::now(),
-            last_frame: None,
-            frames: 0,
-            max_gap_ms: 0.0,
-            peak_scale: 1.0,
-            peak_readback: false,
-            done: false,
-            error: None,
-        });
         let link = {
             let mut handle: DisplayLink = std::ptr::null_mut();
             let code = unsafe { CVDisplayLinkCreateWithCGDisplay(display, &mut handle) };
             if code != 0 {
-                cancel();
+                let mut slot = active().lock().unwrap();
+                if slot.as_ref().is_some_and(|a| a.id == id) {
+                    cancel_locked(&mut slot);
+                }
                 return Err(format!("display link creation failed: {code}"));
             }
             let guard = LinkGuard {
@@ -408,19 +429,16 @@ mod mac {
             if slot.as_ref().is_none_or(|a| a.id != id) {
                 return Err("animation was replaced".into());
             }
+            let mut restored = Transform::default();
+            probe.transform_restored = unsafe { (api.get)(connection, wid, &mut restored) == 0 }
+                && original.distance(restored) < 0.001;
             slot.take().unwrap()
         };
-        unsafe {
-            let _ = (api.set)(connection, wid, original);
-        }
         probe.frames = anim.frames;
         probe.peak_scale = anim.peak_scale;
         probe.peak_width = native_frame.size.width * anim.peak_scale;
         probe.max_gap_ms = anim.max_gap_ms;
         probe.peak_readback = anim.peak_readback;
-        let mut restored = Transform::default();
-        probe.transform_restored = unsafe { (api.get)(connection, wid, &mut restored) == 0 }
-            && original.distance(restored) < 0.001;
         if let Some(error) = anim.error {
             return Err(error);
         }
@@ -506,4 +524,15 @@ pub async fn pulse(window: &WebviewWindow) -> Result<PulseProbe, String> {
 pub fn cancel() {
     #[cfg(target_os = "macos")]
     mac::cancel();
+}
+
+/// Install the native interaction boundary once on the shared window.
+pub fn watch_interaction(window: &WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return mac::watch_interaction(window);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        Ok(())
+    }
 }

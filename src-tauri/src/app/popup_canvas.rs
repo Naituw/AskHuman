@@ -1,7 +1,5 @@
 //! Pane transitions freeze a native viewport; normal edge drags use native autoresizing.
-use super::popup_inbox_geometry::Allocation;
-#[cfg(not(target_os = "macos"))]
-use super::popup_inbox_geometry::Frame;
+use super::popup_inbox_geometry::{Allocation, Frame};
 use tauri::WebviewWindow;
 
 #[cfg(target_os = "macos")]
@@ -102,6 +100,11 @@ mod mac {
             preview_x: preview_x.is_finite().then_some(preview_x),
         }
     }
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGMainDisplayID() -> u32;
+        fn CGDisplayPixelsHigh(display: u32) -> usize;
+    }
     unsafe extern "C" {
         fn ah_preview_screen_x() -> f64;
         fn ah_popup_canvas_prepare(
@@ -186,115 +189,53 @@ mod mac {
         window: &WebviewWindow,
         allocation: &Allocation,
         old_left: f64,
-        duration_ms: u64,
-    ) -> Result<(), String> {
-        let plan = allocation.frame;
+        source: Frame,
+    ) -> Result<Frame, String> {
+        let plan = allocation.clone();
         let canvas = allocation.canvas.clone().ok_or("missing native canvas")?;
-        let scale = window.scale_factor().map_err(|e| e.to_string())?;
-        let old_position = window
-            .outer_position()
-            .map_err(|e| e.to_string())?
-            .to_logical::<f64>(scale);
-        let old_size = window
-            .outer_size()
-            .map_err(|e| e.to_string())?
-            .to_logical::<f64>(scale);
         let new_left = allocation.left_span();
-        let (tx, rx) = oneshot::channel();
-        window
-            .with_webview(move |platform| unsafe {
-                let native = platform.ns_window() as *mut AnyObject;
-                let from: NSRect = msg_send![native, frame];
-                let mut to = from;
-                to.origin.x += plan.x - old_position.x;
-                to.origin.y += old_position.y - plan.y + old_size.height - plan.height;
-                to.size.width += plan.width - old_size.width;
-                to.size.height += plan.height - old_size.height;
-                let from_anchor = from.origin.x + old_left;
-                let mut to_anchor = to.origin.x + new_left;
-                // Tauri integer readbacks must not introduce a half-point drift into a stable anchor.
-                if (to_anchor - from_anchor).abs() <= 1.0 / scale {
-                    to_anchor = from_anchor;
-                    to.origin.x = to_anchor - new_left;
-                }
-                let _ = tx.send((from, to, from_anchor, to_anchor));
-            })
-            .map_err(|e| e.to_string())?;
-        let (from, to, from_anchor, to_anchor) = rx
-            .await
-            .map_err(|_| "canvas geometry disconnected".to_string())?;
         let review = crate::dev_instance::is_dev_instance()
             && std::env::var("ASKHUMAN_INBOX_LAYOUT_REVIEW").as_deref() == Ok("1");
-        let mut samples = Vec::new();
-        let mut max_gap_ms: f64 = 0.0;
-        let started = std::time::Instant::now();
-        let mut previous = started;
-        loop {
-            let t = if duration_ms == 0 {
-                1.0
-            } else {
-                (started.elapsed().as_secs_f64() * 1000.0 / duration_ms as f64).min(1.0)
-            };
-            let share = t * t * t * (10.0 + t * (-15.0 + 6.0 * t));
-            let mix = |a: f64, b: f64| a + ((b - a) * share * scale).round() / scale;
-            let frame = NSRect::new(
-                objc2_foundation::NSPoint::new(
-                    mix(from.origin.x, to.origin.x),
-                    mix(from.origin.y, to.origin.y),
-                ),
-                objc2_foundation::NSSize::new(
-                    mix(from.size.width, to.size.width),
-                    mix(from.size.height, to.size.height),
-                ),
-            );
-            let anchor = mix(from_anchor, to_anchor);
-            let (tx, rx) = oneshot::channel();
-            window
-                .with_webview(move |platform| unsafe {
-                    let native = platform.ns_window() as *mut AnyObject;
-                    let transaction = AnyClass::get(c"CATransaction").unwrap();
-                    let _: () = msg_send![transaction, begin];
-                    let _: () = msg_send![transaction, setDisableActions: true];
-                    let _: () = msg_send![native, setFrame: frame, display: false];
-                    let actual: NSRect = msg_send![native, frame];
-                    ah_popup_canvas_position(
-                        platform.inner(),
-                        anchor - actual.origin.x - canvas.left,
-                        canvas.height,
-                    );
-                    let _: () = msg_send![native, displayIfNeeded];
-                    let _: () = msg_send![transaction, commit];
-                    let _: () = msg_send![transaction, flush];
-                    let _ = tx.send(review.then(|| measure(&platform, canvas.left, anchor)));
-                })
-                .map_err(|e| e.to_string())?;
-            if let Some(sample) = rx
-                .await
-                .map_err(|_| "canvas frame disconnected".to_string())?
-            {
-                samples.push(sample);
+        let (tx, rx) = oneshot::channel();
+        window.with_webview(move |platform| unsafe {
+            let native = platform.ns_window() as *mut AnyObject;
+            let from: NSRect = msg_send![native, frame];
+            let screen_height = CGDisplayPixelsHigh(CGMainDisplayID()) as f64;
+            let current = Frame { x: from.origin.x, y: screen_height - from.origin.y - from.size.height,
+                width: from.size.width, height: from.size.height };
+            let mut target = super::rebase_target(current, source, plan.frame);
+            let scale: f64 = msg_send![native, backingScaleFactor];
+            let from_anchor = current.x + old_left;
+            let mut anchor = target.x + new_left;
+            if (anchor - from_anchor).abs() <= 1.0 / scale {
+                anchor = from_anchor;
+                target.x = anchor - new_left;
             }
-            let now = std::time::Instant::now();
-            max_gap_ms = max_gap_ms.max(now.duration_since(previous).as_secs_f64() * 1000.0);
-            previous = now;
-            if t >= 1.0 {
-                if review {
-                    use std::io::Write;
-                    let dir = crate::paths::state_dir();
-                    let _ = std::fs::create_dir_all(&dir);
-                    if let Ok(mut file) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(dir.join("popup-canvas-review.jsonl"))
-                    {
-                        let report = serde_json::json!({"revision":allocation.revision,"durationMs":duration_ms,"maxGapMs":max_gap_ms,"samples":samples,"from":[from.origin.x,from.origin.y,from.size.width,from.size.height],"to":[to.origin.x,to.origin.y,to.size.width,to.size.height],"oldSize":[old_size.width,old_size.height],"plan":allocation});
-                        let _ = writeln!(file, "{}", report);
-                    }
+            let frame = NSRect::new(objc2_foundation::NSPoint::new(target.x, screen_height - target.y - target.height),
+                objc2_foundation::NSSize::new(target.width, target.height));
+            let transaction = AnyClass::get(c"CATransaction").unwrap();
+            let _: () = msg_send![transaction, begin];
+            let _: () = msg_send![transaction, setDisableActions: true];
+            let _: () = msg_send![native, setFrame: frame, display: false];
+            let actual: NSRect = msg_send![native, frame];
+            ah_popup_canvas_position(platform.inner(), anchor - actual.origin.x - canvas.left, canvas.height);
+            let _: () = msg_send![native, displayIfNeeded];
+            let _: () = msg_send![transaction, commit];
+            let _: () = msg_send![transaction, flush];
+            if review {
+                use std::io::Write;
+                let dir = crate::paths::state_dir();
+                let _ = std::fs::create_dir_all(&dir);
+                if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("popup-canvas-review.jsonl")) {
+                    let sample = measure(&platform, canvas.left, anchor);
+                    let _ = writeln!(file, "{}", serde_json::json!({"revision":plan.revision,"durationMs":0,"samples":[sample],
+                        "from":[from.origin.x,from.origin.y,from.size.width,from.size.height],"source":source,"plan":plan}));
                 }
-                return Ok(());
             }
-            tokio::time::sleep(std::time::Duration::from_millis(8)).await;
-        }
+            let _ = tx.send(Frame { x: actual.origin.x, y: screen_height - actual.origin.y - actual.size.height,
+                width: actual.size.width, height: actual.size.height });
+        }).map_err(|e| e.to_string())?;
+        rx.await.map_err(|_| "canvas geometry disconnected".into())
     }
 }
 
@@ -315,14 +256,15 @@ pub async fn apply(
     window: &WebviewWindow,
     allocation: &Allocation,
     old_left: f64,
-    duration_ms: u64,
-) -> Result<(), String> {
+    source: Frame,
+) -> Result<Frame, String> {
     #[cfg(target_os = "macos")]
-    return mac::apply(window, allocation, old_left, duration_ms).await;
+    return mac::apply(window, allocation, old_left, source).await;
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (old_left, duration_ms);
-        apply_frame(window, allocation.frame)
+        let _ = (old_left, source);
+        apply_frame(window, allocation.frame)?;
+        Ok(allocation.frame)
     }
 }
 pub async fn resume(window: &WebviewWindow, allocation: &Allocation) -> Result<(), String> {
@@ -349,4 +291,64 @@ fn apply_frame(window: &WebviewWindow, plan: Frame) -> Result<(), String> {
         return Ok(());
     }
     positioned
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn rebase_target(current: Frame, source: Frame, target: Frame) -> Frame {
+    // Pane dimensions are absolute; only position follows a user move during preparation.
+    Frame {
+        x: target.x + current.x - source.x,
+        y: target.y + current.y - source.y,
+        ..target
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn a_later_resize_cannot_compound_the_absolute_pane_size() {
+        let source = Frame {
+            x: 1000.0,
+            y: 200.0,
+            width: 560.0,
+            height: 620.0,
+        };
+        let current = Frame {
+            width: 590.0,
+            height: 650.0,
+            ..source
+        };
+        let target = Frame {
+            x: 754.0,
+            width: 806.0,
+            ..source
+        };
+        let result = rebase_target(current, source, target);
+        assert_eq!((result.width, result.height), (806.0, 620.0));
+        assert_eq!((result.x, result.y), (754.0, 200.0));
+    }
+    #[test]
+    fn a_later_move_preserves_the_answer_anchor_and_vertical_position() {
+        let source = Frame {
+            x: 1000.0,
+            y: 200.0,
+            width: 560.0,
+            height: 620.0,
+        };
+        let current = Frame {
+            x: 1300.5,
+            y: 350.5,
+            ..source
+        };
+        let target = Frame {
+            x: 754.0,
+            width: 806.0,
+            ..source
+        };
+        let result = rebase_target(current, source, target);
+        assert_eq!(result.x + 246.0, current.x);
+        assert_eq!(result.y, current.y);
+        assert_eq!((result.width, result.height), (806.0, 620.0));
+    }
 }

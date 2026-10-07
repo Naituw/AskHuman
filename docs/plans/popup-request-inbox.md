@@ -440,3 +440,20 @@ Demo 验证了回执前保持原问题、回执后成功确认再进入下一条
 `./scripts/install.sh` 已从 main 编译、签名并安装到 `~/.local/bin/AskHuman`；Rust 终态
 分类和原生预览实现未变，本轮不重复此前的真实 PDF 验收。浏览器临时验证页与服务
 在收尾关闭，阶段记录与预览保存在忽略目录 `.askhuman-dev/browser-transition-review/`。
+
+
+## 24. 发布前原生几何 Review（2026-10-07）
+
+用户报告同屏标题栏拖动反复缩放，暂停 0.14.0 发布并要求全面复核。
+范围、缺陷与原生证据见 [原生几何 Review](../investigations/popup-native-geometry-review.md)。
+原始持续缩放暂未复现；诊断版单条和三栏真实拖动均由用户确认稳定。不能把 monitor
+reconcile 的假设当作这个现象的已证实根因。
+
+独立真实 WindowServer harness 复现旧提醒代码在 30ms 重叠时留下缩放，修正后的单次、
+10 组重叠间隔、中途取消均完全恢复。最终代码删除无所有权恢复、增加原生用户操作边界，
+即时 pane 提交使用单次 AppKit 回调的绝对尺寸，保留准备后移动增量，拖动期间暂缓几何
+与合并工作区 reconcile；移除不再使用的正式逐帧 pane 路径。临时诊断代码已删除。
+
+Rust 1256 / 3 ignored，252 Vitest + 5 Node tests、production build、全 targets Clippy 和安装
+通过。真实修正版 Dev 8 次 pane/上下文切换的模型与 WindowServer X 偏差为 0；PDF 位置
+稳定，草稿与成功换题后 PDF 恢复正确。最终拖动确认、新四平台 CI 和发布按 PROGRESS 收口。
