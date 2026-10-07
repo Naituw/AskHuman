@@ -1106,13 +1106,14 @@ pub async fn submit_popup(
     if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
         let id = request_id.ok_or("shared popup submission requires a request ID")?;
         return inbox
-            .submit(
+            .submit_completed(
                 &id,
                 crate::ipc::ClientMsg::Answer {
                     request_id: id.clone(),
                     action: crate::models::ChannelAction::Send,
                     answers: submission.answers,
                 },
+                crate::app::popup_inbox::CompletionFeedback::Sent,
             )
             .await;
     }
@@ -1132,13 +1133,14 @@ pub async fn submit_confirm_action(
     if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
         let id = request_id.ok_or("shared confirmation requires a request ID")?;
         return inbox
-            .submit(
+            .submit_completed(
                 &id,
                 crate::ipc::ClientMsg::ConfirmAnswer {
                     request_id: id.clone(),
                     choice_index,
                     comment,
                 },
+                crate::app::popup_inbox::CompletionFeedback::Submitted,
             )
             .await;
     }

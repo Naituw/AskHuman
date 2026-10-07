@@ -1,19 +1,22 @@
-import { defineComponent, h, onMounted } from "vue";
+import { defineComponent, h, onMounted, onBeforeUnmount } from "vue";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../../i18n/en";
 import type { PopupInboxRequest } from "../../lib/types";
-const mock = vi.hoisted(() => ({ invoke: vi.fn(), nativeSync: vi.fn(async () => {}), handlers: new Map<string, (event: { payload: unknown }) => void>() }));
+import type { PopupScope } from "./usePopupCore";
+const mock = vi.hoisted(() => ({ invoke: vi.fn(), nativeSync: vi.fn(async (_id?: string) => {}), heldReady: new Set<string>(), scopes: new Map<string, PopupScope>(), handlers: new Map<string, (event: { payload: unknown }) => void>() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mock.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: async (name: string, handler: (event: { payload: unknown }) => void) => {
   mock.handlers.set(name, handler); return () => mock.handlers.delete(name);
 } }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ setFocus: vi.fn() }) }));
 vi.mock("../PopupView.vue", () => ({ default: defineComponent({ props: ["scope"], setup(props) {
-  onMounted(() => props.scope.ready(props.scope.requestId));
-  onMounted(() => props.scope.nativePreviewSync?.(mock.nativeSync));
-  return () => h("textarea", { "data-form-id": props.scope.requestId });
+  mock.scopes.set(props.scope.requestId, props.scope);
+  onMounted(() => { if (!mock.heldReady.has(props.scope.requestId)) props.scope.ready(props.scope.requestId); });
+  onMounted(() => props.scope.nativePreviewSync?.(() => mock.nativeSync(props.scope.requestId)));
+  onBeforeUnmount(() => mock.scopes.delete(props.scope.requestId));
+  return () => h("div", [h("div", { class: "content" }, h("textarea", { "data-form-id": props.scope.requestId })), h("div", { class: "footer" }, props.scope.completion?.value ?? "Send")]);
 } }) }));
 import PopupInboxView from "../PopupInboxView.vue";
 import UnreadRipple from "./UnreadRipple.vue";
@@ -25,17 +28,20 @@ function request(id: string, project = "/project"): PopupInboxRequest {
 function emit(name: string, payload: unknown) { mock.handlers.get(name)!({ payload }); }
 describe("shared popup navigation", () => {
   let wrapper: VueWrapper;
+  let unmounted = false;
   beforeEach(() => {
+    unmounted = false;
     mock.handlers.clear(); mock.invoke.mockReset(); mock.nativeSync.mockReset(); mock.nativeSync.mockResolvedValue();
+    mock.heldReady.clear(); mock.scopes.clear();
     vi.stubGlobal("CSS", { escape: (s: string) => s });
     mock.invoke.mockImplementation(async (command: string) => {
       if (command === "popup_inbox_init") return { recovered: false, requests: [request("a"), request("b")] };
       if (command === "popup_inbox_layout") return { revision: 1, sidebarWidth: 240, mainWidth: 560, mainHeight: 620, previewWidth: 0 };
     });
   });
-  afterEach(() => { wrapper?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+  afterEach(() => { if (!unmounted) wrapper?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals(); });
   async function start() {
-    wrapper = mount(PopupInboxView, { global: { plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })] } });
+    wrapper = mount(PopupInboxView, { attachTo: document.body, global: { plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })] } });
     await flushPromises();
   }
   it("drags only the internal divider and persists the latest position after an in-flight update", async () => {
@@ -194,5 +200,142 @@ describe("shared popup navigation", () => {
     emit("popup-inbox-terminal", { requestId: "a", winner: "popup" }); await flushPromises();
     expect(wrapper.findAll(".inbox-row")).toHaveLength(0);
     expect(mock.invoke.mock.calls.some(([cmd]) => cmd === "popup_inbox_idle")).toBe(true);
+  });
+  const phase = () => wrapper.attributes("data-completion-phase");
+  async function tick(ms: number) { await vi.advanceTimersByTimeAsync(ms); await flushPromises(); }
+  it("confirms the completed request, then moves only the body and restores the successor's draft and selection", async () => {
+    await start();
+    await wrapper.findAll(".inbox-row")[1].trigger("click"); await flushPromises();
+    const input = wrapper.find('[data-form-id="b"]').element as HTMLTextAreaElement;
+    input.value = "saved answer"; input.focus(); input.setSelectionRange(2, 5);
+    await wrapper.findAll(".inbox-row")[0].trigger("click"); await flushPromises();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
+    expect(phase()).toBe("confirm");
+    expect(wrapper.find('[data-inbox-request="a"] .footer').text()).toBe("sent");
+    expect(wrapper.find(".inbox-completed-check").exists()).toBe(true);
+    await wrapper.findAll(".inbox-row")[1].trigger("click"); await flushPromises();
+    expect(wrapper.find('[data-inbox-request="a"]').isVisible()).toBe(true);
+    await tick(239); expect(phase()).toBe("confirm");
+    await tick(1); expect(phase()).toBe("out");
+    expect(wrapper.find('[data-inbox-request="a"]').attributes("data-answer-phase")).toBe("out");
+    expect(wrapper.find(".inbox-entry-collapse").exists()).toBe(true);
+    await tick(126); expect(phase()).toBe("in");
+    expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
+    expect(wrapper.find('[data-inbox-request="b"] .footer').text()).toBe("Send");
+    expect(mock.scopes.get("b")!.blocked.value).toBe(true);
+    await tick(174);
+    expect(phase()).toBeUndefined(); expect(wrapper.findAll(".inbox-row")).toHaveLength(1);
+    expect(mock.scopes.get("b")!.blocked.value).toBe(false);
+    expect(input.value).toBe("saved answer"); expect(document.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([2, 5]);
+  });
+  it("waits for an unopened form and native preview before clearing unread or revealing its body", async () => {
+    await start(); mock.heldReady.add("b");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
+    expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(false);
+    await tick(600); expect(phase()).toBe("confirm");
+    expect(wrapper.findAll(".inbox-row")[1].classes()).toContain("unread");
+    mock.scopes.get("b")!.ready("b"); await flushPromises();
+    expect(phase()).toBe("out");
+    let release!: () => void;
+    mock.nativeSync.mockImplementation(async id => { if (id === "b") {
+      expect(mock.scopes.get("b")!.nativePreviewBlocked!.value).toBe(false);
+      await new Promise<void>(resolve => { release = resolve; });
+    } });
+    await tick(126); expect(phase()).toBe("prepare");
+    expect(wrapper.find('[data-inbox-request="b"]').attributes("data-answer-phase")).toBe("prepare");
+    expect(wrapper.find('[data-inbox-request="b"]').classes()).toContain("inbox-preparing");
+    expect(wrapper.find('[data-inbox-request="a"] .footer').text()).toBe("sent");
+    expect(wrapper.findAll(".inbox-row")[0].classes()).toContain("selected");
+    expect(wrapper.findAll(".inbox-row")[1].classes()).toContain("unread");
+    release(); await flushPromises(); expect(phase()).toBe("in");
+    expect(wrapper.findAll(".inbox-row")[1].classes()).not.toContain("unread");
+    await tick(174); expect(phase()).toBeUndefined();
+  });
+  it("skips successors ended during preparation and incorporates arrivals during the confirmation", async () => {
+    await start(); mock.heldReady.add("b");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "submitted" }); await flushPromises();
+    emit("popup-inbox-terminal", { requestId: "b", winner: "slack" });
+    emit("popup-inbox-show", request("c", "/other")); await flushPromises();
+    await tick(240); await tick(126); await tick(174);
+    expect(wrapper.findAll(".inbox-row")).toHaveLength(1);
+    expect(wrapper.find('[data-inbox-request="c"]').isVisible()).toBe(true);
+    expect(wrapper.find(".inbox-error").exists()).toBe(false);
+    expect(mock.invoke.mock.calls.some(([cmd, args]) => cmd === "popup_inbox_activate" && args.requestId === "b")).toBe(false);
+  });
+  it("hides a successor ended during entrance and resumes with the next surviving request", async () => {
+    await start(); emit("popup-inbox-show", request("c")); await flushPromises();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
+    await tick(240); await tick(126); expect(phase()).toBe("in");
+    emit("popup-inbox-terminal", { requestId: "b", winner: "slack" }); await flushPromises();
+    expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(false);
+    await tick(174); expect(wrapper.find('[data-inbox-request="c"]').isVisible()).toBe(true);
+    await tick(174); expect(phase()).toBeUndefined();
+    expect(wrapper.findAll(".inbox-row")).toHaveLength(1);
+  });
+  it("keeps the round open when a request arrives after its previously last answer", async () => {
+    mock.invoke.mockImplementation(async command => {
+      if (command === "popup_inbox_init") return { requests: [request("a")], recovered: false };
+      if (command === "popup_inbox_layout") return { revision: 1, sidebarWidth: 240, mainWidth: 560, mainHeight: 620, previewWidth: 0 };
+    });
+    await start(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
+    await tick(100); emit("popup-inbox-show", request("b")); await flushPromises();
+    await tick(140); await tick(126); await tick(174);
+    expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
+    expect(mock.invoke.mock.calls.some(([cmd]) => cmd === "popup_inbox_idle")).toBe(false);
+  });
+  it("uses only a short confirmation for reduced motion and closes after the last success", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    await start(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "submitted" }); await flushPromises();
+    await tick(139); expect(phase()).toBe("confirm");
+    await tick(1); expect(phase()).toBeUndefined();
+    expect(wrapper.find(".inbox-entry-collapse").exists()).toBe(false);
+    emit("popup-inbox-terminal", { requestId: "b", winner: "popup", completion: "sent" }); await flushPromises();
+    await tick(139); expect(mock.invoke.mock.calls.some(([cmd]) => cmd === "popup_inbox_idle")).toBe(false);
+    await tick(1); expect(wrapper.findAll(".inbox-row")).toHaveLength(0);
+    expect(mock.invoke.mock.calls.some(([cmd]) => cmd === "popup_inbox_idle")).toBe(true);
+  });
+  it("never shows sent feedback for cancellation or an external winner", async () => {
+    await start(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    emit("popup-inbox-terminal", { requestId: "a", winner: "slack", completion: "sent" }); await flushPromises();
+    expect(phase()).toBeUndefined(); expect(wrapper.find(".inbox-completed-check").exists()).toBe(false);
+    await tick(600);
+    emit("popup-inbox-terminal", { requestId: "b", winner: "popup" }); await flushPromises();
+    expect(wrapper.findAll(".inbox-row")).toHaveLength(0); expect(phase()).toBeUndefined();
+  });
+  it("settles all readiness and animation waits on disposal", async () => {
+    await start(); mock.heldReady.add("b"); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
+    await tick(240); wrapper.unmount(); unmounted = true; await flushPromises();
+    const calls = mock.invoke.mock.calls.length;
+    await tick(5000); expect(mock.invoke.mock.calls).toHaveLength(calls);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("finishes a prepared native transaction without committing after disposal", async () => {
+    await start(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let release!: () => void;
+    mock.nativeSync.mockImplementation(async id => { if (id === "b") await new Promise<void>(resolve => { release = resolve; }); });
+    emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
+    await tick(240); await tick(126); expect(phase()).toBe("prepare");
+    wrapper.unmount(); unmounted = true;
+    mock.invoke.mockClear(); release(); await flushPromises();
+    expect(mock.invoke.mock.calls).toEqual([["popup_inbox_finish", { revision: 1, arrival: false }]]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("never reopens a committed answer when the successor's geometry fails", async () => {
+    await start(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    mock.invoke.mockImplementation(async (command: string) => { if (command === "popup_inbox_layout") throw "layout unavailable"; });
+    emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
+    await tick(240); await tick(126);
+    expect(wrapper.find('[data-inbox-request="a"]').exists()).toBe(false);
+    expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
+    expect(wrapper.find(".inbox-error").text()).toBe("layout unavailable");
+    expect(mock.scopes.get("b")!.blocked.value).toBe(false);
   });
 });

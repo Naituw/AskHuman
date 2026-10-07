@@ -3,6 +3,7 @@ import { inboxDropPoint } from "./inboxCoordinates";
 // 语音 / 附件 / 自更新三个子域拆在 useSpeech / useAttachments / useUpdateState，由此处接线。
 // 各 UI 区块子组件经 providePopupContext 注入本上下文（见 context.ts）。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
+import type { CompletionFeedback } from "./inboxTransition";
 import { useI18n } from "vue-i18n";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -92,6 +93,10 @@ export interface PopupScope {
   layout?: Readonly<Ref<InboxLayout | null>>;
   pin?: Ref<boolean | null>;
   nativePreviewSync?: (sync: (() => Promise<void>) | null) => void;
+  nativePreviewBlocked?: Readonly<Ref<boolean>>;
+  completion?: Readonly<Ref<CompletionFeedback | null>>;
+  restoreFocus?: (restore: (() => void) | null) => void;
+  failed?: (error: string) => void;
   requestId: string;
   active: Readonly<Ref<boolean>>;
   blocked: Readonly<Ref<boolean>>;
@@ -2181,7 +2186,7 @@ export function usePopupCore(scope?: PopupScope) {
     const afterPaint = () => {
       // DOM 更新后再聚焦/建观察（此时 textarea / 哨兵已挂载）。
       nextTick(() => {
-        if (!vertical && popupActive.value) {
+        if (!vertical && acceptsInput()) {
           focusComposerIfInitiallyVisible(0);
           autoGrow(0);
         } else {
@@ -2267,6 +2272,7 @@ export function usePopupCore(scope?: PopupScope) {
     } catch (err) {
       console.error("popup_init 失败", err);
       loadError.value = String(err);
+      scope?.failed?.(String(err));
     }
   });
 
@@ -2428,6 +2434,7 @@ export function usePopupCore(scope?: PopupScope) {
 
   onBeforeUnmount(() => {
     disposed = true;
+    scope?.restoreFocus?.(null);
     window.removeEventListener("paste", onPaste);
     window.removeEventListener("keydown", onKeydown);
     window.removeEventListener("keyup", onKeyup);
@@ -2458,6 +2465,14 @@ export function usePopupCore(scope?: PopupScope) {
   const hasDraft = computed(() => hasAnyAnswer.value || !!confirmComment.value.trim()
     || (isConfirm.value && confirmChoiceIndex.value !== initialConfirmChoice.value));
   if (scope) watch(hasDraft, value => scope.draft(scope.requestId, value), { immediate: true });
+  if (scope?.completion) watch(scope.completion, value => {
+    if (value) { submissionError.value = null; submitting.value = true; speech.stopListening(); }
+  });
+  scope?.restoreFocus?.(() => {
+    if (!disposed && acceptsInput() && !verticalMode.value && !isConfirm.value) {
+      focusComposerIfInitiallyVisible(current.value);
+    }
+  });
   watch(popupActive, active => {
     if (!active) { cmdHeld.value = false; speech.stopListening(); }
     else {
@@ -2468,11 +2483,12 @@ export function usePopupCore(scope?: PopupScope) {
 
   return {
     popupActive,
+    completionFeedback: computed(() => scope?.completion?.value ?? null),
     submissionError,
     hasDraft,
     // Native preview uses the same submit policy and temporarily yields to root overlays.
     submitWithBareEnter,
-    nativePreviewBlocked: computed(() => !popupActive.value || !!scope?.blocked.value || showCancelConfirm.value || showConfirmCloseWarning.value || submitting.value),
+    nativePreviewBlocked: computed(() => !popupActive.value || !!(scope?.nativePreviewBlocked ?? scope?.blocked)?.value || showCancelConfirm.value || showConfirmCloseWarning.value || submitting.value),
     registerNativePreviewSync: scope?.nativePreviewSync,
     // In-page find
     findActive: find.findActive,

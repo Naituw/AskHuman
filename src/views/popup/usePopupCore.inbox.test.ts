@@ -34,10 +34,10 @@ describe("mounted inbox forms", () => {
     });
   });
   afterEach(() => { wrappers.forEach(w => w.unmount()); wrappers.length = 0; vi.unstubAllGlobals(); });
-  async function form(id: string, active: Ref<boolean>) {
+  async function form(id: string, active: Ref<boolean>, overrides: Partial<PopupScope> = {}) {
     let ctx!: ReturnType<typeof usePopupCore>;
     const scope: PopupScope = { requestId: id, active, blocked: computed(() => false), ready: vi.fn(), close: vi.fn(), draft: vi.fn(),
-      preview: async () => ({ revision: 1, side: "closed", mainWidth: 560, mainHeight: 620 }) };
+      preview: async () => ({ revision: 1, side: "closed", mainWidth: 560, mainHeight: 620 }), ...overrides };
     const wrapper = mount(defineComponent({ setup() { ctx = usePopupCore(scope); return () => h("div"); } }), {
       global: { plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })] },
     });
@@ -61,5 +61,24 @@ describe("mounted inbox forms", () => {
     await a.ctx.submit();
     expect(a.ctx.inputByQ.value[0]).toBe("unsent"); expect(a.ctx.submitting.value).toBe(false);
     expect(a.ctx.submissionError.value).toContain("connection unavailable");
+  });
+  it("blocks answer shortcuts while allowing the successor's native preview to prepare", async () => {
+    const blocked = ref(true);
+    const a = await form("a", ref(true), { blocked, nativePreviewBlocked: ref(false) });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "1", ctrlKey: true }));
+    expect(a.ctx.chosenByQ.value[0]).toEqual([]);
+    expect(a.ctx.nativePreviewBlocked.value).toBe(false);
+    blocked.value = false;
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "1", ctrlKey: true }));
+    expect(a.ctx.chosenByQ.value[0]).toEqual(["Yes"]);
+  });
+  it("replaces an earlier timeout error with an authoritative late success", async () => {
+    const completion = ref<"sent" | null>(null);
+    const a = await form("a", ref(true), { completion }); a.ctx.inputByQ.value[0] = "answer";
+    mocks.invoke.mockImplementationOnce(async () => { throw "acknowledgement timed out"; });
+    await a.ctx.submit(); expect(a.ctx.submissionError.value).toContain("timed out");
+    completion.value = "sent"; await flushPromises();
+    expect(a.ctx.submissionError.value).toBeNull(); expect(a.ctx.submitting.value).toBe(true);
+    expect(a.ctx.completionFeedback.value).toBe("sent");
   });
 });

@@ -10,6 +10,7 @@ import type { PopupScope, InboxLayout } from "./popup/usePopupCore";
 import type { PopupInboxRequest } from "../lib/types";
 import { cancelPopup, confirmPopupReady, popupInboxActivate, popupInboxIdle, popupInboxInit, popupShowWindow } from "../lib/ipc";
 import { inboxGroups, inboxKind, inboxTitle, nextInboxRequest } from "./popup/inboxQueue";
+import { answerTransition, transitionClock, type CompletionFeedback } from "./popup/inboxTransition";
 
 const { t } = useI18n();
 const layoutReview = new URLSearchParams(location.search).get("layoutReview") === "1";
@@ -50,6 +51,14 @@ const continueButton = ref<HTMLButtonElement | null>(null);
 const root = ref<HTMLElement | null>(null);
 const scopes = new Map<string, PopupScope>();
 const readyIds = new Set<string>();
+const failedIds = new Set<string>();
+const preparedIds = ref(new Set<string>());
+const readyWaiters = new Map<string, Set<() => void>>();
+const focusRestorers = new Map<string, () => void>();
+const earlyArrivals = new Set<string>();
+const motion = ref<{ from: string; completion: CompletionFeedback; phase: "confirm" | "out" | "prepare" | "in";
+  incoming: string | null; reduced: boolean; rowHeight: number; group: string | null; groupHeight: number } | null>(null);
+let clock: ReturnType<typeof transitionClock> | null = null;
 const terminals = new Set<string>();
 const listeners: UnlistenFn[] = [];
 const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -58,8 +67,9 @@ let disposed = false;
 let tail = Promise.resolve();
 const groups = computed(() => inboxGroups(requests.value, groupOrder.value));
 const ordered = computed(() => groups.value.flatMap(group => group.requests));
-const mounted = computed(() => requests.value.filter(r => visited.value.has(r.requestId)));
+const mounted = computed(() => requests.value.filter(r => visited.value.has(r.requestId) || preparedIds.value.has(r.requestId)));
 const blocked = computed(() => !!modal.value || advancing.value);
+const selectedId = computed(() => motion.value?.phase === "prepare" ? motion.value.from : active.value);
 const snapshot = computed(() => requests.value.filter(r => modal.value?.ids.includes(r.requestId)));
 const newAfterModal = computed(() => requests.value.filter(r => !modal.value?.ids.includes(r.requestId)).length);
 const currentSnapshot = computed(() => snapshot.value.filter(r => r.requestId === modal.value?.current));
@@ -68,7 +78,7 @@ function later(fn: () => void, ms: number) {
   timers.add(timer);
 }
 function enqueue(fn: () => Promise<unknown>) {
-  tail = tail.then(async () => { if (!disposed) await fn(); }).catch(e => { error.value = String(e); });
+  tail = tail.then(async () => { if (!disposed) await fn(); }).catch(e => { if (!disposed) error.value = String(e); });
   return tail;
 }
 function rememberFocus() {
@@ -78,14 +88,41 @@ function rememberFocus() {
   const editor = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement ? element : null;
   remembered.set(active.value, { element, start: editor?.selectionStart ?? undefined, end: editor?.selectionEnd ?? undefined });
 }
+function settleReady(id: string) { readyWaiters.get(id)?.forEach(resolve => resolve()); readyWaiters.delete(id); }
+async function prepareRequest(id: string, timer: ReturnType<typeof transitionClock>) {
+  if (terminals.has(id) || timer.cancelled) return;
+  preparedIds.value.add(id);
+  await nextTick();
+  if (readyIds.has(id) || failedIds.has(id) || terminals.has(id) || timer.cancelled) return;
+  await new Promise<void>(resolve => {
+    const finish = () => { off(); readyWaiters.get(id)?.delete(finish); resolve(); };
+    const off = timer.onCancel(finish);
+    const waiters = readyWaiters.get(id) ?? new Set<() => void>();
+    waiters.add(finish); readyWaiters.set(id, waiters);
+  });
+}
+function restoreFocus(id: string) {
+  const saved = remembered.get(id);
+  if (saved?.element.isConnected) {
+    saved.element.focus({ preventScroll: true });
+    if (saved.element instanceof HTMLTextAreaElement || saved.element instanceof HTMLInputElement) {
+      if (saved.start !== undefined) saved.element.setSelectionRange(saved.start, saved.end ?? saved.start);
+    }
+  } else focusRestorers.get(id)?.();
+}
 function scopeFor(id: string): PopupScope {
   let scope = scopes.get(id);
   if (!scope) {
     scope = markRaw<PopupScope>({ layout: allocation, requestId: id, active: computed(() => active.value === id), blocked, pin,
-      ready: () => { void enqueue(async () => {
+      completion: computed(() => motion.value?.from === id ? motion.value.completion : null),
+      nativePreviewBlocked: computed(() => blocked.value && !(motion.value?.incoming === id && ["prepare", "in"].includes(motion.value.phase))),
+      restoreFocus: restore => { if (restore) focusRestorers.set(id, restore); else focusRestorers.delete(id); },
+      failed: () => { failedIds.add(id); settleReady(id); },
+      ready: () => {
+        readyIds.add(id); settleReady(id);
+        void enqueue(async () => {
         if (!requests.value.some(r => r.requestId === id)) return;
-        readyIds.add(id);
-        await popupShowWindow(id);
+        if (active.value === id) await popupShowWindow(id);
       }); },
       close: openClose,
       preview: async (open: boolean, extent?: number) => {
@@ -128,6 +165,7 @@ async function geometry(arrival = false, width?: number, mainExtent?: number) {
     await nextTick();
     // Native PDF/Quick Look shares the fixed canvas and is placed before the window reveals it.
     if (active.value) await nativePreviewSync.get(active.value)?.();
+    if (disposed) throw new Error("popup inbox disposed during layout preparation");
     await invoke("popup_inbox_commit", { revision: prepared.revision });
     const finished = await invoke<InboxLayout | undefined>("popup_inbox_finish", { revision: prepared.revision, arrival });
     if (finished) allocation.value = finished;
@@ -146,13 +184,7 @@ async function select(id: string, explicit = false) {
   await nextTick();
   await geometry();
   if (readyIds.has(id)) await popupShowWindow(id);
-  const saved = remembered.get(id);
-  if (saved?.element.isConnected) {
-    saved.element.focus({ preventScroll: true });
-    if (saved.element instanceof HTMLTextAreaElement || saved.element instanceof HTMLInputElement) {
-      if (saved.start !== undefined) saved.element.setSelectionRange(saved.start, saved.end ?? saved.start);
-    }
-  }
+  restoreFocus(id);
   if (explicit) await getCurrentWindow().setFocus();
 }
 function choose(id: string) {
@@ -162,13 +194,18 @@ function choose(id: string) {
 function toggleReviewSidebar() {
   void enqueue(async () => { sidebar.value = !sidebar.value; await geometry(); });
 }
-async function add(show: PopupInboxRequest, arrival = true) {
-  if (terminals.has(show.requestId)) return;
-  const existing = requests.value.findIndex(r => r.requestId === show.requestId);
-  if (existing >= 0) { requests.value[existing] = show; return; }
+function append(show: PopupInboxRequest) {
   if (!groupOrder.value.includes(show.project)) groupOrder.value.push(show.project);
   requests.value.push(show);
   if (requests.value.length > 1) sidebar.value = true;
+}
+async function add(show: PopupInboxRequest, arrival = true) {
+  if (terminals.has(show.requestId)) return;
+  const existing = requests.value.findIndex(r => r.requestId === show.requestId);
+  if (existing >= 0) {
+    requests.value[existing] = show;
+    if (!earlyArrivals.delete(show.requestId)) return;
+  } else append(show);
   if (active.value === null) await select(show.requestId);
   await nextTick();
   // Ready means that an answer surface exists, including navigation to unopened confirmations.
@@ -184,6 +221,7 @@ function removeLocal(id: string) {
   requests.value = requests.value.filter(r => r.requestId !== id);
   visited.value.delete(id); drafts.value.delete(id); flashed.value.delete(id);
   readyIds.delete(id); scopes.delete(id); remembered.delete(id); previews.delete(id); nativePreviewSync.delete(id);
+  failedIds.delete(id); preparedIds.value.delete(id); focusRestorers.delete(id); earlyArrivals.delete(id); settleReady(id);
 }
 async function finishRound() {
   active.value = null; sidebar.value = false; sidebarWidth.value = 0; groupOrder.value = [];
@@ -206,15 +244,93 @@ async function advance(preferred: string | null) {
   }
   if (!requests.value.length) await finishRound();
 }
-async function terminal(id: string, winner: string) {
+async function completed(id: string, completion: CompletionFeedback) {
+  const timer = transitionClock(); clock = timer;
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  const row = root.value?.querySelector<HTMLElement>(`[data-inbox-row="${CSS.escape(id)}"]`);
+  const group = row?.closest<HTMLElement>(".inbox-group");
+  const from = requests.value.find(r => r.requestId === id)!;
+  motion.value = { from: id, completion, phase: "confirm", incoming: null, reduced,
+    rowHeight: row?.getBoundingClientRect().height ?? 0, group: from.project,
+    groupHeight: group?.getBoundingClientRect().height ?? 0 };
+  advancing.value = true;
+  const candidate = () => nextInboxRequest(ordered.value, id, terminals);
+  const first = candidate();
+  const preparation = first ? prepareRequest(first, timer) : Promise.resolve();
+  try {
+    if (!await timer.wait(reduced ? answerTransition.reducedConfirm : answerTransition.confirm)) return;
+    await preparation;
+    if (disposed) return;
+    // Late arrivals can join this round while the event queue is awaiting confirmation.
+    let next = candidate();
+    if (!next) { removeLocal(id); await finishRound(); return; }
+    await prepareRequest(next, timer);
+    if (disposed) return;
+    motion.value!.phase = reduced ? "prepare" : "out";
+    await nextTick();
+    root.value?.querySelector<HTMLElement>(`[data-inbox-request="${CSS.escape(id)}"] .content`)?.getBoundingClientRect();
+    const collapse = reduced ? Promise.resolve(true) : timer.wait(answerTransition.queue);
+    if (!reduced && !await timer.wait(answerTransition.exit)) return;
+    while (!disposed && !timer.cancelled) {
+      next = candidate();
+      if (!next) break;
+      await prepareRequest(next, timer);
+      if (disposed || timer.cancelled) return;
+      if (terminals.has(next)) { removeLocal(next); continue; }
+      try { await popupInboxActivate(next); }
+      catch (e) {
+        if (!String(e).includes("no longer pending")) throw e;
+        terminals.add(next); removeLocal(next); continue;
+      }
+      if (terminals.has(next)) { removeLocal(next); continue; }
+      motion.value!.incoming = next; motion.value!.phase = "prepare";
+      active.value = next;
+      await nextTick();
+      await geometry();
+      if (disposed) return;
+      if (terminals.has(next)) { removeLocal(next); continue; }
+      // Visibility, unread state and native preview ownership change together.
+      motion.value!.phase = "in";
+      if (readyIds.has(next)) visited.value.add(next);
+      await nextTick();
+      root.value?.querySelector<HTMLElement>(`[data-inbox-request="${CSS.escape(next)}"] .content`)?.getBoundingClientRect();
+      if (readyIds.has(next)) await popupShowWindow(next);
+      if (!reduced && !await timer.wait(answerTransition.enter)) return;
+      if (!terminals.has(next)) break;
+      removeLocal(next);
+    }
+    await collapse;
+    if (disposed) return;
+    removeLocal(id);
+    if (!next) await finishRound();
+  } catch (e) {
+    // A committed answer cannot be reopened even if preparing its successor fails.
+    const preferred = candidate();
+    removeLocal(id);
+    if (active.value === id) active.value = null;
+    if (!disposed && (!active.value || terminals.has(active.value))) await advance(preferred);
+    throw e;
+  } finally {
+    timer.cancel(); if (clock === timer) clock = null;
+    motion.value = null; advancing.value = false;
+    if (!disposed && active.value && !terminals.has(active.value)) {
+      await nextTick(); restoreFocus(active.value);
+    }
+  }
+}
+async function terminal(id: string, winner: string, completion?: CompletionFeedback) {
   terminals.add(id);
   if (!requests.value.some(r => r.requestId === id)) return;
   const wasActive = active.value === id;
   const next = nextInboxRequest(ordered.value, active.value ?? "", new Set([id]));
+  if (wasActive && winner === "popup" && completion && !modal.value) {
+    await completed(id, completion); return;
+  }
   if (wasActive && winner !== "popup") {
     advancing.value = true;
     notice.value = t("popup.inbox.external", { source: winner });
-    await new Promise<void>(resolve => later(resolve, 600));
+    clock = transitionClock(); await clock.wait(600); clock.cancel(); clock = null;
+    if (disposed) return;
     advancing.value = false;
     notice.value = "";
   }
@@ -224,6 +340,18 @@ async function terminal(id: string, winner: string) {
   else if (wasActive || !requests.value.some(r => r.requestId === active.value)) await advance(next);
 }
 function projectName(path: string) { return path.split(/[\\/]/).filter(Boolean).slice(-1)[0] || t("popup.inbox.unknownProject"); }
+function panePhase(id: string) {
+  if (!motion.value) return undefined;
+  if (id !== motion.value.from && motion.value.phase === "prepare") return "prepare";
+  if (motion.value.reduced) return undefined;
+  if (motion.value.incoming === id) return motion.value.phase;
+  if (motion.value.from === id && motion.value.phase !== "confirm") return "out";
+  return undefined;
+}
+function collapseGroup(path: string) {
+  return motion.value?.group === path && !motion.value.reduced && motion.value.phase !== "confirm"
+    && !requests.value.some(r => r.project === path && !terminals.has(r.requestId));
+}
 function consequences(items: PopupInboxRequest[]) {
   const parts = (["ask", "permission", "stop"] as const).map(kind => {
     const n = items.filter(r => inboxKind(r) === kind).length;
@@ -299,8 +427,20 @@ function beginResize(event: PointerEvent) {
 }
 onMounted(async () => {
   window.addEventListener("keydown", keydown, true);
-  listeners.push(await listen<PopupInboxRequest>("popup-inbox-show", event => { void enqueue(() => add(event.payload)); }));
-  listeners.push(await listen<{ requestId: string; winner: string }>("popup-inbox-terminal", event => { void enqueue(() => terminal(event.payload.requestId, event.payload.winner)); }));
+  listeners.push(await listen<PopupInboxRequest>("popup-inbox-show", event => {
+    const show = event.payload;
+    if (motion.value && !terminals.has(show.requestId) && !requests.value.some(r => r.requestId === show.requestId)) {
+      append(show); earlyArrivals.add(show.requestId);
+    }
+    void enqueue(() => add(show));
+  }));
+  listeners.push(await listen<{ requestId: string; winner: string; completion?: CompletionFeedback }>("popup-inbox-terminal", event => {
+    const { requestId, winner, completion } = event.payload;
+    if (terminals.has(requestId)) return;
+    terminals.add(requestId); settleReady(requestId);
+    if (motion.value?.incoming === requestId) { motion.value.incoming = null; motion.value.phase = "prepare"; }
+    void enqueue(() => terminal(requestId, winner, completion));
+  }));
   listeners.push(await listen("popup-inbox-close", openClose));
   listeners.push(await listen<string>("popup-inbox-focus", event => { void enqueue(() => select(event.payload, true)); }));
   listeners.push(await listen<InboxLayout>("popup-inbox-layout", event => { allocation.value = event.payload; sidebarWidth.value = event.payload.sidebarWidth; }));
@@ -314,22 +454,26 @@ onMounted(async () => {
 });
 onBeforeUnmount(() => {
   disposed = true; window.removeEventListener("keydown", keydown, true);
+  clock?.cancel(); readyWaiters.forEach(waiters => waiters.forEach(resolve => resolve())); readyWaiters.clear();
   listeners.forEach(off => off()); timers.forEach(clearTimeout);
 });
 </script>
 
 <template>
-  <div ref="root" class="inbox-root" :class="{ 'inbox-expanded': renderedSidebar, 'inbox-native': nativeCanvas, 'inbox-frozen': frozenCanvas }" :style="rootStyle">
+  <div ref="root" class="inbox-root" :class="{ 'inbox-expanded': renderedSidebar, 'inbox-native': nativeCanvas, 'inbox-frozen': frozenCanvas }" :style="rootStyle" :data-completion-phase="motion?.phase">
     <aside v-if="renderedSidebar" class="inbox-sidebar" :inert="blocked" :aria-label="t('popup.inbox.pending')">
       <header class="inbox-heading" data-tauri-drag-region>{{ t('popup.inbox.pending') }} <span>{{ requests.length }}</span></header>
       <nav class="inbox-navigation" @pointerdown.capture="rememberFocus">
-        <section v-for="group in groups" :key="group.path" class="inbox-group">
+        <section v-for="group in groups" :key="group.path" class="inbox-group" :class="{ 'inbox-group-collapse': collapseGroup(group.path) }" :style="motion?.group === group.path ? { '--completion-group-height': `${motion.groupHeight}px` } : undefined">
           <h2 :title="group.path">{{ projectName(group.path) }} <span>{{ group.requests.length }}</span></h2>
-          <button v-for="request in group.requests" :key="request.requestId" class="inbox-row" :class="{ selected: request.requestId === active, flash: flashed.has(request.requestId), unread: !visited.has(request.requestId) }" :aria-current="request.requestId === active ? 'true' : undefined" :title="inboxTitle(request)" @click="choose(request.requestId)">
+          <div v-for="request in group.requests" :key="request.requestId" class="inbox-entry" :class="{ 'inbox-entry-collapse': motion?.from === request.requestId && motion.phase !== 'confirm' && !motion.reduced }" :style="motion?.from === request.requestId ? { '--completion-row-height': `${motion.rowHeight}px` } : undefined">
+          <button class="inbox-row" :data-inbox-row="request.requestId" :class="{ selected: request.requestId === selectedId, flash: flashed.has(request.requestId) && motion?.from !== request.requestId, unread: !visited.has(request.requestId) }" :aria-current="request.requestId === selectedId ? 'true' : undefined" :title="inboxTitle(request)" @click="choose(request.requestId)">
             <UnreadRipple :active="!visited.has(request.requestId) && !flashed.has(request.requestId)" />
-            <span class="inbox-dot" :class="{ unread: !visited.has(request.requestId) }" :aria-label="!visited.has(request.requestId) ? t('popup.inbox.unread') : undefined"></span>
+            <span v-if="motion?.from === request.requestId" class="inbox-completed-check" aria-hidden="true">✓</span>
+            <span v-else class="inbox-dot" :class="{ unread: !visited.has(request.requestId) }" :aria-label="!visited.has(request.requestId) ? t('popup.inbox.unread') : undefined"></span>
             <span class="inbox-row-content"><strong>{{ inboxTitle(request) || t('popup.inbox.untitled') }}</strong><span class="inbox-row-meta">{{ request.agentKind || request.source }} · {{ t(`popup.inbox.kind.${inboxKind(request)}`) }}<em v-if="drafts.has(request.requestId)">{{ t('popup.inbox.draft') }}</em></span></span>
           </button>
+          </div>
         </section>
       </nav>
     </aside>
@@ -337,10 +481,11 @@ onBeforeUnmount(() => {
     <main class="inbox-body" :inert="blocked">
       <button v-if="layoutReview" class="inbox-layout-review" @click="toggleReviewSidebar">{{ renderedSidebar ? '隐藏 Sidebar' : '显示 Sidebar' }} · 几何测试</button>
       <div v-if="recovered" class="inbox-recovery" role="alert">{{ t('popup.inbox.recovered') }}<button @click="recovered = false" :aria-label="t('popup.inbox.dismiss')">×</button></div>
-      <div v-for="request in mounted" v-show="request.requestId === active" :key="request.requestId" class="inbox-request" :data-inbox-request="request.requestId" :inert="request.requestId !== active">
+      <div v-for="request in mounted" v-show="(request.requestId === active && (!terminals.has(request.requestId) || motion?.from === request.requestId)) || (motion?.phase === 'prepare' && request.requestId === motion.from)" :key="request.requestId" class="inbox-request" :class="{ 'inbox-preparing': motion?.incoming === request.requestId && motion.phase === 'prepare' }" :data-answer-phase="panePhase(request.requestId)" :data-inbox-request="request.requestId" :inert="request.requestId !== active">
         <PopupView :scope="scopeFor(request.requestId)" />
       </div>
     </main>
+    <span class="inbox-completion-announcement" role="status" aria-live="polite">{{ motion ? t(`popup.inbox.${motion.completion}`) : '' }}</span>
     <div v-if="notice" class="inbox-notice" role="status">{{ notice }}</div>
     <div v-if="modal" class="inbox-close-backdrop" @click.self="continueAnswering">
       <section class="inbox-close-dialog" role="dialog" aria-modal="true" aria-labelledby="inbox-close-title">
@@ -375,6 +520,18 @@ onBeforeUnmount(() => {
 .inbox-heading span, .inbox-group h2 span { font-variant-numeric: tabular-nums; opacity: .6; }
 .inbox-navigation { flex: 1; overflow: auto; padding: 0 8px 16px; }
 .inbox-group h2 { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 600; opacity: .6; padding: 16px 12px 7px; margin: 0; overflow: hidden; }
+.inbox-entry-collapse { overflow: hidden; animation: inbox-entry-complete 300ms cubic-bezier(.2, 0, .2, 1) both; }
+.inbox-group-collapse { overflow: hidden; animation: inbox-group-complete 300ms cubic-bezier(.2, 0, .2, 1) both; }
+.inbox-completed-check { position: relative; z-index: 1; flex: 0 0 6px; margin-top: 1px; color: #2685e8; font-size: 11px; }
+.inbox-completion-announcement { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+/* Only the answer body moves; native preview, navbar and footer retain their positions. */
+.inbox-request[data-answer-phase="out"] .content, .inbox-request[data-answer-phase="out"] .composer-dock { animation: inbox-answer-out 126ms cubic-bezier(.4, 0, 1, 1) both; }
+.inbox-request[data-answer-phase="prepare"] .content, .inbox-request[data-answer-phase="prepare"] .composer-dock { opacity: 0; transform: translateY(14px); }
+.inbox-request[data-answer-phase="in"] .content, .inbox-request[data-answer-phase="in"] .composer-dock { animation: inbox-answer-in 174ms cubic-bezier(0, 0, .2, 1) both; }
+@keyframes inbox-answer-out { to { opacity: 0; transform: translateY(-14px); } }
+@keyframes inbox-answer-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes inbox-entry-complete { from { height: var(--completion-row-height); opacity: 1; } to { height: 0; opacity: 0; } }
+@keyframes inbox-group-complete { from { height: var(--completion-group-height); opacity: 1; } to { height: 0; opacity: 0; } }
 .inbox-row { --inbox-ripple-color: rgba(38, 133, 232, .18); position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: flex-start; gap: 7px; width: 100%; padding: 10px 8px; border: 0; border-radius: 8px; text-align: left; background: transparent; color: inherit; cursor: pointer; }
 .theme-dark .inbox-row { --inbox-ripple-color: rgba(38, 133, 232, .252); }
 @media (prefers-color-scheme: dark) { :root:not(.theme-light) .inbox-row { --inbox-ripple-color: rgba(38, 133, 232, .252); } }
@@ -389,7 +546,9 @@ onBeforeUnmount(() => {
 .inbox-row-meta em { font-style: normal; margin-left: auto; }
 .inbox-divider { cursor: col-resize; background: color-mix(in srgb, currentColor 8%, transparent); touch-action: none; }
 .inbox-body { min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.inbox-body[inert], .inbox-sidebar[inert] { pointer-events: none; }
 .inbox-request { flex: 1; min-height: 0; height: 100%; }
+.inbox-request.inbox-preparing { position: absolute; inset: 0; visibility: hidden; }
 .inbox-request .popup-shell, .inbox-request .popup-status { height: 100%; width: 100%; }
 .inbox-recovery { padding: 10px 14px; font-size: 12px; background: #ffe7a880; display: flex; gap: 12px; }
 .inbox-recovery button { margin-left: auto; background: transparent; border: none; color: inherit; cursor: pointer; }

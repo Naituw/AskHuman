@@ -7,12 +7,30 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 type SubmissionReply = oneshot::Sender<Result<(), String>>;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CompletionFeedback {
+    Sent,
+    Submitted,
+}
+struct PendingSubmission {
+    reply: Option<SubmissionReply>,
+    completion: Option<CompletionFeedback>,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Terminal {
+    request_id: String,
+    winner: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completion: Option<CompletionFeedback>,
+}
 #[derive(Default)]
 struct Inner {
     requests: HashMap<String, ShowPayload>,
     terminal: HashSet<String>,
     active: Option<String>,
-    submissions: HashMap<String, SubmissionReply>,
+    submissions: HashMap<String, PendingSubmission>,
     presented: bool,
     launch_ids: HashMap<String, String>,
     focus: Option<String>,
@@ -27,23 +45,45 @@ impl Inner {
         self.requests.insert(show.request_id.clone(), show);
         true
     }
-    fn finish(&mut self, id: &str) {
+    fn finish(&mut self, id: &str, winner: &str) -> Option<Terminal> {
+        if !self.terminal.insert(id.to_owned()) {
+            return None;
+        }
         self.requests.remove(id);
         self.launch_ids.remove(id);
-        self.terminal.insert(id.to_owned());
         if self.active.as_deref() == Some(id) {
             self.active = None;
         }
         if self.focus.as_deref() == Some(id) {
             self.focus = None;
         }
-        if let Some(reply) = self.submissions.remove(id) {
+        let submission = self.submissions.remove(id);
+        let completion = submission
+            .as_ref()
+            .and_then(|submission| submission.completion)
+            .filter(|_| winner == "popup");
+        if let Some(reply) = submission.and_then(|submission| submission.reply) {
             let _ = reply.send(Ok(()));
         }
+        Some(Terminal {
+            request_id: id.to_owned(),
+            winner: winner.to_owned(),
+            completion,
+        })
     }
     fn reject(&mut self, id: &str, error: String) {
-        if let Some(reply) = self.submissions.remove(id) {
+        if let Some(reply) = self
+            .submissions
+            .remove(id)
+            .and_then(|submission| submission.reply)
+        {
             let _ = reply.send(Err(error));
+        }
+    }
+    fn expire_submission(&mut self, id: &str) {
+        // A late terminal still identifies the committed action after its caller timed out.
+        if let Some(submission) = self.submissions.get_mut(id) {
+            submission.reply = None;
         }
     }
 }
@@ -149,16 +189,42 @@ impl Inbox {
         }
     }
     pub async fn submit(&self, id: &str, message: ClientMsg) -> Result<(), String> {
+        self.submit_inner(id, message, None).await
+    }
+    pub async fn submit_completed(
+        &self,
+        id: &str,
+        message: ClientMsg,
+        completion: CompletionFeedback,
+    ) -> Result<(), String> {
+        self.submit_inner(id, message, Some(completion)).await
+    }
+    async fn submit_inner(
+        &self,
+        id: &str,
+        message: ClientMsg,
+        completion: Option<CompletionFeedback>,
+    ) -> Result<(), String> {
         let (reply, result) = oneshot::channel();
         {
             let mut state = self.inner.lock().unwrap();
             if !state.requests.contains_key(id) {
                 return Err("popup request is no longer pending".into());
             }
-            if state.submissions.contains_key(id) {
+            if state
+                .submissions
+                .get(id)
+                .is_some_and(|submission| submission.reply.is_some())
+            {
                 return Err("popup answer is already being sent".into());
             }
-            state.submissions.insert(id.to_string(), reply);
+            state.submissions.insert(
+                id.to_string(),
+                PendingSubmission {
+                    reply: Some(reply),
+                    completion,
+                },
+            );
         }
         if let Err(error) = self.send(message) {
             self.inner.lock().unwrap().submissions.remove(id);
@@ -170,19 +236,18 @@ impl Inbox {
                 Err("popup daemon connection closed before acknowledging the answer".into())
             }
             Err(_) => {
-                self.inner.lock().unwrap().submissions.remove(id);
+                self.inner.lock().unwrap().expire_submission(id);
                 Err("popup answer acknowledgement timed out".into())
             }
         }
     }
     fn finish(&self, app: &AppHandle, id: String, winner: String) {
         let mut state = self.inner.lock().unwrap();
-        state.finish(&id);
+        let Some(terminal) = state.finish(&id, &winner) else {
+            return;
+        };
         drop(state);
-        let _ = app.emit(
-            "popup-inbox-terminal",
-            serde_json::json!({ "requestId": id, "winner": winner }),
-        );
+        let _ = app.emit("popup-inbox-terminal", terminal);
     }
     pub fn receive(&self, app: &AppHandle, message: ServerMsg) {
         match message {
@@ -366,10 +431,69 @@ mod tests {
         let inbox = Inbox::new(tx, 1, false);
         inbox.inner.lock().unwrap().insert(show("a"));
         inbox.activate("a").unwrap();
-        inbox.inner.lock().unwrap().finish("a");
+        assert!(inbox.inner.lock().unwrap().finish("a", "popup").is_some());
         assert!(!inbox.inner.lock().unwrap().insert(show("a")));
         assert!(inbox.activate("a").is_err());
         assert!(inbox.snapshot().requests.is_empty());
+    }
+    #[test]
+    fn completion_feedback_requires_a_local_committed_answer() {
+        for (winner, completion, expected) in [
+            ("popup", Some(CompletionFeedback::Sent), Some("sent")),
+            (
+                "popup",
+                Some(CompletionFeedback::Submitted),
+                Some("submitted"),
+            ),
+            ("popup", None, None),
+            ("slack", Some(CompletionFeedback::Sent), None),
+            ("system", Some(CompletionFeedback::Submitted), None),
+        ] {
+            let mut state = Inner::default();
+            state.insert(show("a"));
+            let (reply, _) = oneshot::channel();
+            state.submissions.insert(
+                "a".into(),
+                PendingSubmission {
+                    reply: Some(reply),
+                    completion,
+                },
+            );
+            let terminal = state.finish("a", winner).unwrap();
+            let payload = serde_json::to_value(terminal).unwrap();
+            assert_eq!(payload["requestId"], "a");
+            assert_eq!(
+                payload.get("completion").and_then(|value| value.as_str()),
+                expected
+            );
+            assert!(
+                state.finish("a", winner).is_none(),
+                "Cancel and Ack must emit only once"
+            );
+        }
+    }
+    #[test]
+    fn late_terminal_retains_timed_out_intent_but_rejection_clears_it() {
+        let mut state = Inner::default();
+        for id in ["a", "b"] {
+            state.insert(show(id));
+            let (reply, _) = oneshot::channel();
+            state.submissions.insert(
+                id.into(),
+                PendingSubmission {
+                    reply: Some(reply),
+                    completion: Some(CompletionFeedback::Sent),
+                },
+            );
+            state.expire_submission(id);
+        }
+        assert_eq!(
+            state.finish("a", "popup").unwrap().completion,
+            Some(CompletionFeedback::Sent)
+        );
+        state.reject("b", "invalid".into());
+        assert!(state.requests.contains_key("b"));
+        assert_eq!(state.finish("b", "popup").unwrap().completion, None);
     }
     #[tokio::test]
     async fn rejection_keeps_the_pending_form_and_allows_retry() {
@@ -412,11 +536,11 @@ mod tests {
         };
         rx.recv().await.unwrap();
         rx.recv().await.unwrap();
-        inbox.inner.lock().unwrap().finish("b");
+        assert!(inbox.inner.lock().unwrap().finish("b", "popup").is_some());
         assert_eq!(b.await.unwrap(), Ok(()));
         assert!(inbox.request("a").is_ok());
         assert!(!a.is_finished());
-        inbox.inner.lock().unwrap().finish("a");
+        assert!(inbox.inner.lock().unwrap().finish("a", "popup").is_some());
         assert_eq!(a.await.unwrap(), Ok(()));
         assert!(inbox.submit("missing", message("missing")).await.is_err());
     }

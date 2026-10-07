@@ -3,6 +3,7 @@
 import { useI18n } from "vue-i18n";
 import { primaryShortcutLabel } from "../../lib/platform";
 import { usePopupContext } from "./context";
+import CompletionLabel from "./CompletionLabel.vue";
 
 const { t } = useI18n();
 const cancelShortcut = primaryShortcutLabel("w");
@@ -15,6 +16,7 @@ const {
   imTipConfigure,
   imTipDismiss,
   submitting,
+  completionFeedback,
   requestCancel,
   canGoPrev,
   goPrev,
@@ -86,13 +88,13 @@ const {
     <button
       v-if="verticalMode ? lastSeen : allViewed"
       class="btn"
-      :class="{ 'btn-primary': submitPrimary }"
+      :class="{ 'btn-primary': submitPrimary, 'completion-success': completionFeedback }"
       type="button"
-      :disabled="submitting || !canSubmit"
+      :disabled="submitting || !!completionFeedback || !canSubmit"
       @click="submit"
     >
-      {{ t("common.submit") }}
-      <kbd v-if="submitShowsCmdEnter" class="sc">{{ submitKeyLabel }}</kbd>
+      <CompletionLabel v-if="completionFeedback" :completion="completionFeedback" />
+      <template v-else>{{ submitting ? t("popup.inbox.sending") : t("common.submit") }}<kbd v-if="submitShowsCmdEnter" class="sc">{{ submitKeyLabel }}</kbd></template>
     </button>
   </div>
 
@@ -104,11 +106,13 @@ const {
     <span class="spacer"></span>
     <button
       class="btn btn-primary"
+      :class="{ 'completion-success': completionFeedback }"
       type="button"
-      :disabled="submitting || !canSubmit"
+      :disabled="submitting || !!completionFeedback || !canSubmit"
       @click="submit"
     >
-      {{ t("popup.send") }} <kbd class="sc">{{ submitKeyLabel }}</kbd>
+      <CompletionLabel v-if="completionFeedback" :completion="completionFeedback" />
+      <template v-else>{{ submitting ? t("popup.inbox.sending") : t("popup.send") }} <kbd class="sc">{{ submitKeyLabel }}</kbd></template>
     </button>
   </div>
 
@@ -119,12 +123,13 @@ const {
     <span class="spacer"></span>
     <button
       class="btn btn-primary"
+      :class="{ 'completion-success': completionFeedback }"
       type="button"
-      :disabled="!confirmCanSubmit"
+      :disabled="!!completionFeedback || !confirmCanSubmit"
       @click="submitConfirm"
     >
-      {{ confirmRequest?.presentation.submitLabel ?? t("common.submit") }}
-      <kbd class="sc">{{ submitKeyLabel }}</kbd>
+      <CompletionLabel v-if="completionFeedback" :completion="completionFeedback" />
+      <template v-else>{{ submitting ? t("popup.inbox.submitting") : confirmRequest?.presentation.submitLabel ?? t("common.submit") }}<kbd class="sc">{{ submitKeyLabel }}</kbd></template>
     </button>
   </div>
 </template>
