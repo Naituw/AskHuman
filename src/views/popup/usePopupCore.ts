@@ -97,6 +97,7 @@ export interface PopupScope {
   completion?: Readonly<Ref<CompletionFeedback | null>>;
   restoreFocus?: (restore: (() => void) | null) => void;
   failed?: (error: string) => void;
+  sending?: () => void;
   requestId: string;
   active: Readonly<Ref<boolean>>;
   blocked: Readonly<Ref<boolean>>;
@@ -1635,6 +1636,7 @@ export function usePopupCore(scope?: PopupScope) {
   async function submit() {
     if (submitting.value || !canSubmit.value) return;
     submitting.value = true;
+    scope?.sending?.();
     submissionError.value = null;
     try {
       await submitPopup({ answers: collectAnswers() }, scope?.requestId);
@@ -1857,6 +1859,7 @@ export function usePopupCore(scope?: PopupScope) {
   async function submitConfirm() {
     if (!confirmCanSubmit.value || confirmChoiceIndex.value === null) return;
     submitting.value = true;
+    scope?.sending?.();
     submissionError.value = null;
     const comment = showConfirmInput.value
       ? confirmComment.value.slice(0, confirmInput.value?.maxChars ?? 1000)
@@ -2483,7 +2486,6 @@ export function usePopupCore(scope?: PopupScope) {
 
   return {
     popupActive,
-    completionFeedback: computed(() => scope?.completion?.value ?? null),
     submissionError,
     hasDraft,
     // Native preview uses the same submit policy and temporarily yields to root overlays.

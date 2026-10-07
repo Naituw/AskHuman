@@ -43,7 +43,7 @@ export default {
   },
   popup: {
     inbox: {
-      sent: "已发送", submitted: "已提交", sending: "发送中…", submitting: "提交中…",
+      sending: "发送中…", submitting: "提交中…",
       pending: "等待回答", unknownProject: "未指定项目", untitled: "提问", unread: "尚未查看", draft: "草稿", resize: "调整待答列表宽度", dismiss: "关闭提示",
       kind: { ask: "提问", permission: "权限", stop: "结束确认" },
       recovered: "作答窗口已恢复。尚未提交的草稿已丢失，请重新填写。",

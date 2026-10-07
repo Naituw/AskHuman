@@ -16,7 +16,7 @@ vi.mock("../PopupView.vue", () => ({ default: defineComponent({ props: ["scope"]
   onMounted(() => { if (!mock.heldReady.has(props.scope.requestId)) props.scope.ready(props.scope.requestId); });
   onMounted(() => props.scope.nativePreviewSync?.(() => mock.nativeSync(props.scope.requestId)));
   onBeforeUnmount(() => mock.scopes.delete(props.scope.requestId));
-  return () => h("div", [h("div", { class: "content" }, h("textarea", { "data-form-id": props.scope.requestId })), h("div", { class: "footer" }, props.scope.completion?.value ?? "Send")]);
+  return () => h("div", [h("div", { class: "content" }, h("textarea", { "data-form-id": props.scope.requestId })), h("div", { class: "footer" }, "Send")]);
 } }) }));
 import PopupInboxView from "../PopupInboxView.vue";
 import UnreadRipple from "./UnreadRipple.vue";
@@ -203,7 +203,7 @@ describe("shared popup navigation", () => {
   });
   const phase = () => wrapper.attributes("data-completion-phase");
   async function tick(ms: number) { await vi.advanceTimersByTimeAsync(ms); await flushPromises(); }
-  it("confirms the completed request, then moves only the body and restores the successor's draft and selection", async () => {
+  it("immediately moves the body after success and restores the successor's draft and selection", async () => {
     await start();
     await wrapper.findAll(".inbox-row")[1].trigger("click"); await flushPromises();
     const input = wrapper.find('[data-form-id="b"]').element as HTMLTextAreaElement;
@@ -211,13 +211,12 @@ describe("shared popup navigation", () => {
     await wrapper.findAll(".inbox-row")[0].trigger("click"); await flushPromises();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
-    expect(phase()).toBe("confirm");
-    expect(wrapper.find('[data-inbox-request="a"] .footer').text()).toBe("sent");
-    expect(wrapper.find(".inbox-completed-check").exists()).toBe(true);
+    expect(phase()).toBe("out");
+    expect(wrapper.find('[data-inbox-request="a"] .footer').text()).toBe("Send");
+    expect(wrapper.text()).not.toContain("Sent");
     await wrapper.findAll(".inbox-row")[1].trigger("click"); await flushPromises();
     expect(wrapper.find('[data-inbox-request="a"]').isVisible()).toBe(true);
-    await tick(239); expect(phase()).toBe("confirm");
-    await tick(1); expect(phase()).toBe("out");
+    expect(phase()).toBe("out");
     expect(wrapper.find('[data-inbox-request="a"]').attributes("data-answer-phase")).toBe("out");
     expect(wrapper.find(".inbox-entry-collapse").exists()).toBe(true);
     await tick(126); expect(phase()).toBe("in");
@@ -235,7 +234,7 @@ describe("shared popup navigation", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
     expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(false);
-    await tick(600); expect(phase()).toBe("confirm");
+    await tick(600); expect(phase()).toBe("waiting");
     expect(wrapper.findAll(".inbox-row")[1].classes()).toContain("unread");
     mock.scopes.get("b")!.ready("b"); await flushPromises();
     expect(phase()).toBe("out");
@@ -247,20 +246,20 @@ describe("shared popup navigation", () => {
     await tick(126); expect(phase()).toBe("prepare");
     expect(wrapper.find('[data-inbox-request="b"]').attributes("data-answer-phase")).toBe("prepare");
     expect(wrapper.find('[data-inbox-request="b"]').classes()).toContain("inbox-preparing");
-    expect(wrapper.find('[data-inbox-request="a"] .footer').text()).toBe("sent");
+    expect(wrapper.find('[data-inbox-request="a"] .footer').text()).toBe("Send");
     expect(wrapper.findAll(".inbox-row")[0].classes()).toContain("selected");
     expect(wrapper.findAll(".inbox-row")[1].classes()).toContain("unread");
     release(); await flushPromises(); expect(phase()).toBe("in");
     expect(wrapper.findAll(".inbox-row")[1].classes()).not.toContain("unread");
     await tick(174); expect(phase()).toBeUndefined();
   });
-  it("skips successors ended during preparation and incorporates arrivals during the confirmation", async () => {
+  it("skips successors ended during preparation and incorporates arrivals while waiting for readiness", async () => {
     await start(); mock.heldReady.add("b");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "submitted" }); await flushPromises();
     emit("popup-inbox-terminal", { requestId: "b", winner: "slack" });
     emit("popup-inbox-show", request("c", "/other")); await flushPromises();
-    await tick(240); await tick(126); await tick(174);
+    await tick(126); await tick(174);
     expect(wrapper.findAll(".inbox-row")).toHaveLength(1);
     expect(wrapper.find('[data-inbox-request="c"]').isVisible()).toBe(true);
     expect(wrapper.find(".inbox-error").exists()).toBe(false);
@@ -270,36 +269,49 @@ describe("shared popup navigation", () => {
     await start(); emit("popup-inbox-show", request("c")); await flushPromises();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
-    await tick(240); await tick(126); expect(phase()).toBe("in");
+    await tick(126); expect(phase()).toBe("in");
     emit("popup-inbox-terminal", { requestId: "b", winner: "slack" }); await flushPromises();
     expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(false);
     await tick(174); expect(wrapper.find('[data-inbox-request="c"]').isVisible()).toBe(true);
     await tick(174); expect(phase()).toBeUndefined();
     expect(wrapper.findAll(".inbox-row")).toHaveLength(1);
   });
-  it("keeps the round open when a request arrives after its previously last answer", async () => {
+  it("closes the last answered request immediately and accepts a subsequent arrival", async () => {
     mock.invoke.mockImplementation(async command => {
       if (command === "popup_inbox_init") return { requests: [request("a")], recovered: false };
       if (command === "popup_inbox_layout") return { revision: 1, sidebarWidth: 240, mainWidth: 560, mainHeight: 620, previewWidth: 0 };
     });
     await start(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
-    await tick(100); emit("popup-inbox-show", request("b")); await flushPromises();
-    await tick(140); await tick(126); await tick(174);
+    expect(phase()).toBeUndefined(); expect(wrapper.findAll(".inbox-row")).toHaveLength(0);
+    expect(mock.invoke.mock.calls.some(([cmd]) => cmd === "popup_inbox_idle")).toBe(true);
+    emit("popup-inbox-show", request("b")); await flushPromises();
     expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
-    expect(mock.invoke.mock.calls.some(([cmd]) => cmd === "popup_inbox_idle")).toBe(false);
   });
-  it("uses only a short confirmation for reduced motion and closes after the last success", async () => {
+  it("switches without a confirmation or animation timer when reduced motion is enabled", async () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
     await start(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "submitted" }); await flushPromises();
-    await tick(139); expect(phase()).toBe("confirm");
-    await tick(1); expect(phase()).toBeUndefined();
+    expect(phase()).toBeUndefined();
+    expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
     expect(wrapper.find(".inbox-entry-collapse").exists()).toBe(false);
     emit("popup-inbox-terminal", { requestId: "b", winner: "popup", completion: "sent" }); await flushPromises();
-    await tick(139); expect(mock.invoke.mock.calls.some(([cmd]) => cmd === "popup_inbox_idle")).toBe(false);
-    await tick(1); expect(wrapper.findAll(".inbox-row")).toHaveLength(0);
+    expect(wrapper.findAll(".inbox-row")).toHaveLength(0);
     expect(mock.invoke.mock.calls.some(([cmd]) => cmd === "popup_inbox_idle")).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("prepares a successor during sending while retaining the current form and unread state", async () => {
+    await start();
+    expect(wrapper.find('[data-inbox-request="b"]').exists()).toBe(false);
+    mock.scopes.get("a")!.sending?.(); await flushPromises();
+    expect(wrapper.find('[data-inbox-request="b"]').exists()).toBe(true);
+    expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(false);
+    expect(wrapper.find('[data-inbox-request="a"]').isVisible()).toBe(true);
+    expect(wrapper.findAll(".inbox-row")[1].classes()).toContain("unread");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
+    expect(phase()).toBe("out");
+    await tick(126); await tick(174); expect(phase()).toBeUndefined();
   });
   it("never shows sent feedback for cancellation or an external winner", async () => {
     await start(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -312,7 +324,7 @@ describe("shared popup navigation", () => {
   it("settles all readiness and animation waits on disposal", async () => {
     await start(); mock.heldReady.add("b"); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
-    await tick(240); wrapper.unmount(); unmounted = true; await flushPromises();
+    wrapper.unmount(); unmounted = true; await flushPromises();
     const calls = mock.invoke.mock.calls.length;
     await tick(5000); expect(mock.invoke.mock.calls).toHaveLength(calls);
     expect(vi.getTimerCount()).toBe(0);
@@ -322,7 +334,7 @@ describe("shared popup navigation", () => {
     let release!: () => void;
     mock.nativeSync.mockImplementation(async id => { if (id === "b") await new Promise<void>(resolve => { release = resolve; }); });
     emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
-    await tick(240); await tick(126); expect(phase()).toBe("prepare");
+    await tick(126); expect(phase()).toBe("prepare");
     wrapper.unmount(); unmounted = true;
     mock.invoke.mockClear(); release(); await flushPromises();
     expect(mock.invoke.mock.calls).toEqual([["popup_inbox_finish", { revision: 1, arrival: false }]]);
@@ -332,7 +344,7 @@ describe("shared popup navigation", () => {
     await start(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     mock.invoke.mockImplementation(async (command: string) => { if (command === "popup_inbox_layout") throw "layout unavailable"; });
     emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
-    await tick(240); await tick(126);
+    await tick(126);
     expect(wrapper.find('[data-inbox-request="a"]').exists()).toBe(false);
     expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
     expect(wrapper.find(".inbox-error").text()).toBe("layout unavailable");

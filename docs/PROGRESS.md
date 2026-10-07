@@ -8,7 +8,7 @@
 macOS 合并/可选独立模式、原生画布过渡、普通外缘缩放修复、10pt 未查看蓝点和持续圆形扩散已接入并安装。
 行为规格见 `docs/specs/popup-request-inbox.md`；实施与验证记录见
 `docs/plans/popup-request-inbox.md` §10–23。最近 Rust 1254 passed / 3 ignored、
-最新前端 254 项通过；原生几何 harness 84 项通过，真实 Sidebar 拖动及宽度恢复已验证。
+最新前端 252 项通过；原生几何 harness 84 项通过，真实 Sidebar 拖动及宽度恢复已验证。
 自动化外缘拖动未成功改变窗口尺寸，
 程序化几何证据不代替物理拖动观感验收。
 

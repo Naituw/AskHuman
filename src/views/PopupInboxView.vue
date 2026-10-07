@@ -56,7 +56,7 @@ const preparedIds = ref(new Set<string>());
 const readyWaiters = new Map<string, Set<() => void>>();
 const focusRestorers = new Map<string, () => void>();
 const earlyArrivals = new Set<string>();
-const motion = ref<{ from: string; completion: CompletionFeedback; phase: "confirm" | "out" | "prepare" | "in";
+const motion = ref<{ from: string; completion: CompletionFeedback; phase: "waiting" | "out" | "prepare" | "in";
   incoming: string | null; reduced: boolean; rowHeight: number; group: string | null; groupHeight: number } | null>(null);
 let clock: ReturnType<typeof transitionClock> | null = null;
 const terminals = new Set<string>();
@@ -118,6 +118,10 @@ function scopeFor(id: string): PopupScope {
       nativePreviewBlocked: computed(() => blocked.value && !(motion.value?.incoming === id && ["prepare", "in"].includes(motion.value.phase))),
       restoreFocus: restore => { if (restore) focusRestorers.set(id, restore); else focusRestorers.delete(id); },
       failed: () => { failedIds.add(id); settleReady(id); },
+      sending: () => {
+        const next = nextInboxRequest(ordered.value, id, terminals);
+        if (next) preparedIds.value.add(next);
+      },
       ready: () => {
         readyIds.add(id); settleReady(id);
         void enqueue(async () => {
@@ -250,7 +254,7 @@ async function completed(id: string, completion: CompletionFeedback) {
   const row = root.value?.querySelector<HTMLElement>(`[data-inbox-row="${CSS.escape(id)}"]`);
   const group = row?.closest<HTMLElement>(".inbox-group");
   const from = requests.value.find(r => r.requestId === id)!;
-  motion.value = { from: id, completion, phase: "confirm", incoming: null, reduced,
+  motion.value = { from: id, completion, phase: "waiting", incoming: null, reduced,
     rowHeight: row?.getBoundingClientRect().height ?? 0, group: from.project,
     groupHeight: group?.getBoundingClientRect().height ?? 0 };
   advancing.value = true;
@@ -258,10 +262,9 @@ async function completed(id: string, completion: CompletionFeedback) {
   const first = candidate();
   const preparation = first ? prepareRequest(first, timer) : Promise.resolve();
   try {
-    if (!await timer.wait(reduced ? answerTransition.reducedConfirm : answerTransition.confirm)) return;
     await preparation;
     if (disposed) return;
-    // Late arrivals can join this round while the event queue is awaiting confirmation.
+    // Readiness is the only gate; there is no success message or deliberate pause.
     let next = candidate();
     if (!next) { removeLocal(id); await finishRound(); return; }
     await prepareRequest(next, timer);
@@ -345,11 +348,11 @@ function panePhase(id: string) {
   if (id !== motion.value.from && motion.value.phase === "prepare") return "prepare";
   if (motion.value.reduced) return undefined;
   if (motion.value.incoming === id) return motion.value.phase;
-  if (motion.value.from === id && motion.value.phase !== "confirm") return "out";
+  if (motion.value.from === id && motion.value.phase !== "waiting") return "out";
   return undefined;
 }
 function collapseGroup(path: string) {
-  return motion.value?.group === path && !motion.value.reduced && motion.value.phase !== "confirm"
+  return motion.value?.group === path && !motion.value.reduced && motion.value.phase !== "waiting"
     && !requests.value.some(r => r.project === path && !terminals.has(r.requestId));
 }
 function consequences(items: PopupInboxRequest[]) {
@@ -466,11 +469,10 @@ onBeforeUnmount(() => {
       <nav class="inbox-navigation" @pointerdown.capture="rememberFocus">
         <section v-for="group in groups" :key="group.path" class="inbox-group" :class="{ 'inbox-group-collapse': collapseGroup(group.path) }" :style="motion?.group === group.path ? { '--completion-group-height': `${motion.groupHeight}px` } : undefined">
           <h2 :title="group.path">{{ projectName(group.path) }} <span>{{ group.requests.length }}</span></h2>
-          <div v-for="request in group.requests" :key="request.requestId" class="inbox-entry" :class="{ 'inbox-entry-collapse': motion?.from === request.requestId && motion.phase !== 'confirm' && !motion.reduced }" :style="motion?.from === request.requestId ? { '--completion-row-height': `${motion.rowHeight}px` } : undefined">
+          <div v-for="request in group.requests" :key="request.requestId" class="inbox-entry" :class="{ 'inbox-entry-collapse': motion?.from === request.requestId && motion.phase !== 'waiting' && !motion.reduced }" :style="motion?.from === request.requestId ? { '--completion-row-height': `${motion.rowHeight}px` } : undefined">
           <button class="inbox-row" :data-inbox-row="request.requestId" :class="{ selected: request.requestId === selectedId, flash: flashed.has(request.requestId) && motion?.from !== request.requestId, unread: !visited.has(request.requestId) }" :aria-current="request.requestId === selectedId ? 'true' : undefined" :title="inboxTitle(request)" @click="choose(request.requestId)">
             <UnreadRipple :active="!visited.has(request.requestId) && !flashed.has(request.requestId)" />
-            <span v-if="motion?.from === request.requestId" class="inbox-completed-check" aria-hidden="true">✓</span>
-            <span v-else class="inbox-dot" :class="{ unread: !visited.has(request.requestId) }" :aria-label="!visited.has(request.requestId) ? t('popup.inbox.unread') : undefined"></span>
+            <span class="inbox-dot" :class="{ unread: !visited.has(request.requestId) }" :aria-label="!visited.has(request.requestId) ? t('popup.inbox.unread') : undefined"></span>
             <span class="inbox-row-content"><strong>{{ inboxTitle(request) || t('popup.inbox.untitled') }}</strong><span class="inbox-row-meta">{{ request.agentKind || request.source }} · {{ t(`popup.inbox.kind.${inboxKind(request)}`) }}<em v-if="drafts.has(request.requestId)">{{ t('popup.inbox.draft') }}</em></span></span>
           </button>
           </div>
@@ -485,7 +487,6 @@ onBeforeUnmount(() => {
         <PopupView :scope="scopeFor(request.requestId)" />
       </div>
     </main>
-    <span class="inbox-completion-announcement" role="status" aria-live="polite">{{ motion ? t(`popup.inbox.${motion.completion}`) : '' }}</span>
     <div v-if="notice" class="inbox-notice" role="status">{{ notice }}</div>
     <div v-if="modal" class="inbox-close-backdrop" @click.self="continueAnswering">
       <section class="inbox-close-dialog" role="dialog" aria-modal="true" aria-labelledby="inbox-close-title">
@@ -522,8 +523,6 @@ onBeforeUnmount(() => {
 .inbox-group h2 { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 600; opacity: .6; padding: 16px 12px 7px; margin: 0; overflow: hidden; }
 .inbox-entry-collapse { overflow: hidden; animation: inbox-entry-complete 300ms cubic-bezier(.2, 0, .2, 1) both; }
 .inbox-group-collapse { overflow: hidden; animation: inbox-group-complete 300ms cubic-bezier(.2, 0, .2, 1) both; }
-.inbox-completed-check { position: relative; z-index: 1; flex: 0 0 6px; margin-top: 1px; color: #2685e8; font-size: 11px; }
-.inbox-completion-announcement { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
 /* Only the answer body moves; native preview, navbar and footer retain their positions. */
 .inbox-request[data-answer-phase="out"] .content, .inbox-request[data-answer-phase="out"] .composer-dock { animation: inbox-answer-out 126ms cubic-bezier(.4, 0, 1, 1) both; }
 .inbox-request[data-answer-phase="prepare"] .content, .inbox-request[data-answer-phase="prepare"] .composer-dock { opacity: 0; transform: translateY(14px); }

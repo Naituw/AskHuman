@@ -1,6 +1,6 @@
 export type CompletionFeedback = "sent" | "submitted";
 
-export const answerTransition = { confirm: 240, reducedConfirm: 140, exit: 126, enter: 174, queue: 300 } as const;
+export const answerTransition = { exit: 126, enter: 174, queue: 300 } as const;
 
 // Every awaited delay settles on disposal, including readiness deadlines.
 export function transitionClock() {

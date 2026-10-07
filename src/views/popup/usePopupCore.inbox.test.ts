@@ -56,11 +56,13 @@ describe("mounted inbox forms", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("submit_popup", expect.objectContaining({ requestId: "b" }));
   });
   it("keeps the draft and shows an acknowledgement failure without closing the request", async () => {
-    const a = await form("a", ref(true)); a.ctx.inputByQ.value[0] = "unsent";
+    const sending = vi.fn();
+    const a = await form("a", ref(true), { sending }); a.ctx.inputByQ.value[0] = "unsent";
     mocks.invoke.mockImplementationOnce(async () => { throw new Error("connection unavailable"); });
     await a.ctx.submit();
     expect(a.ctx.inputByQ.value[0]).toBe("unsent"); expect(a.ctx.submitting.value).toBe(false);
     expect(a.ctx.submissionError.value).toContain("connection unavailable");
+    expect(sending).toHaveBeenCalledOnce();
   });
   it("blocks answer shortcuts while allowing the successor's native preview to prepare", async () => {
     const blocked = ref(true);
@@ -79,6 +81,5 @@ describe("mounted inbox forms", () => {
     await a.ctx.submit(); expect(a.ctx.submissionError.value).toContain("timed out");
     completion.value = "sent"; await flushPromises();
     expect(a.ctx.submissionError.value).toBeNull(); expect(a.ctx.submitting.value).toBe(true);
-    expect(a.ctx.completionFeedback.value).toBe("sent");
   });
 });

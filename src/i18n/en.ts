@@ -43,7 +43,7 @@ export default {
   },
   popup: {
     inbox: {
-      sent: "Sent", submitted: "Submitted", sending: "Sending…", submitting: "Submitting…",
+      sending: "Sending…", submitting: "Submitting…",
       pending: "Waiting for answers", unknownProject: "No project", untitled: "Question", unread: "Unread", draft: "Draft", resize: "Resize request list", dismiss: "Dismiss notice",
       kind: { ask: "Question", permission: "Permission", stop: "Finish task" },
       recovered: "The answer window has recovered. Unsubmitted drafts were lost; please enter them again.",
