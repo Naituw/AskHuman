@@ -67,8 +67,12 @@ CLI/MCP 表示调用 AskHuman 的方式；运行偏好表示新任务的执行�
 
 辅助进程不执行 turn/start。目录可以不是 App 已保存项目；不创建 worktree。默认权限继承目标
 目录配置，省略 approvalPolicy 和 sandbox；YOLO 明确设置 approvalPolicy=never、
-sandbox=danger-full-access，首轮继承线程设置。此处为 SandboxMode；turn/start.sandboxPolicy
-的 SandboxPolicy 类型仍使用 camelCase，不能全局替换拼写。
+sandbox=danger-full-access。App 接管空线程可能按默认权限恢复，因此 YOLO 创建的首轮
+私有 start-turn 还须显式携带 approvalPolicy=never、sandboxPolicy.type=dangerFullAccess；
+此覆盖作用于本轮及后续轮次。默认创建和后续普通发送继承 App 当前线程设置。
+若 YOLO 创建在提交首条任务前发现线程已有活动轮次，保留已创建 ID 并提示检查，不将任务
+作为 steer 发送进未知权限的轮次。thread/start 使用 SandboxMode；turn/start.sandboxPolicy
+的 SandboxPolicy 类型使用 camelCase，不能全局替换拼写。
 App 打开失败保留已创建 ID；传输结果未知保留任务和附件，提示检查原聊天，不回退终端。
 深链接可能切换桌面当前聊天。发送中附件以绝对路径引用，图片同时使用 localImage 输入。
 
@@ -92,6 +96,8 @@ App 打开失败保留已创建 ID；传输结果未知保留任务和附件，�
 设置交互已获用户验收：卡片末尾的偏好与结果、回退原因及右侧刷新按钮、双向切换的即时检测反馈。
 
 2026-10-07 创建契约修复已安装并经用户真实 IM 验收，安全重试通过故障注入和安装版 accepted
-回执复验。另有已证实的权限继承缺口：新 App 接管线程时重新应用 :workspace，导致首轮执行
-没有保持创建阶段的 YOLO；上述首轮继承是目标契约，当前 `inheritThreadSettings=true` 尚不足
-以保证它。后续修复和证据见 PROGRESS、`docs/plans/codex-task-launch-contract-fix.md` §6。
+回执复验。随后证实新 App 接管空线程时重新应用 :workspace，导致仅靠
+`inheritThreadSettings=true` 的首轮没有保持 YOLO。已将首轮改为显式传递 YOLO，安装后
+独立测试线程的 turn_context 为 never / danger-full-access，permission_profile=disabled；
+默认路径仍受限，同 UUID 返回原回执且未重复发送。证据见
+`docs/plans/codex-task-launch-contract-fix.md` §7。

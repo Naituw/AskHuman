@@ -1,6 +1,6 @@
 # Codex 任务启动协议修复与路径验收
 
-> 2026-10-07：用户已通过 AskHuman 确认采用完整方案并要求继续实施；创建报错修复已实现、安装并经用户 IM 验收；另发现 App 接管后覆盖 YOLO 的问题，见 §6。
+> 2026-10-07：创建报错修复已实现、安装并经用户 IM 验收；随后发现的 App 接管覆盖 YOLO 也已修复、安装并核对真实执行权限，见 §7。
 > 依据：`docs/specs/codex-desktop-session-integration.md`、实际操作台账、App 内置
 > `0.162.0-alpha.2` schema，以及 Codex 上游源码和提交历史。
 
@@ -40,6 +40,8 @@ Fork 分支已有该分隔符。
 - 将 `thread/start` 参数组装收敛为单一函数和小型可序列化类型。
 - 默认权限省略 `approvalPolicy` 和 `sandbox`，继承目标目录的有效配置；不固定为 workspace-write。
 - YOLO 明确发送 `approvalPolicy=never`、`sandbox=danger-full-access`。
+- App 接管后，YOLO 创建的首轮显式发送 `approvalPolicy=never` 和
+  `sandboxPolicy.type=dangerFullAccess`，保证覆盖恢复阶段的默认权限（后续批准的修正见 §7）。
 - 保留 `cwd` 和 `ephemeral=false`，辅助进程只创建空线程，不执行 `turn/start`。
 - 权限领域仍只有 AgentDefault / Yolo；不增加新 UI 选项。
 - 独立表示线程的 SandboxMode，避免对其它原生 IPC 字段做全局字符串替换。
@@ -180,3 +182,54 @@ GUI 初始化/提交及 IM 指定来源/最终提交均补齐来源复检。
 当前私有 start-turn 的 `inheritThreadSettings=true` 没有保持预期权限，需要继续核查新版本
 permission profile 和 Desktop 接管契约，并确认修复方向。没有对这个真实线程再次发消息、
 停止或修改权限。此问题已写入 PROGRESS，按用户要求先提交已验收的创建修复。
+
+## 7. App 接管后首轮 YOLO 修复
+
+2026-10-07 用户确认同一任务的输入框显示 Full Access，且没有手动修改权限；要求先分析，
+随后通过 AskHuman 确认首轮显式传递权限的方案，并要求修复、安装及验收最终执行权限。
+
+当前安装 App 26.1002.52244 / 内置 0.162.0-alpha.2 的实际日志：
+
+- 14:12:12.940Z `maybe_resume_success`：hasCurrentPermissions、hasExplicitPermissions、
+  hasLatestThreadSettings、hasLatestTurnParams 均为 false，turnCount=0；恢复请求没有
+  permission override；响应是 on-request / :workspace。
+- 14:12:13.453Z `Reasoning summary turn-start config resolved`：首轮实际请求是
+  approvalPolicy=on-request、permissions=:workspace，useAppServerPermissionDefault=false。
+- 对应 rollout 的 thread_settings_applied 和首轮 turn_context 与日志一致。
+
+安装包 bootstrap 的恢复逻辑没有空线程缓存设置时按 App/server 默认恢复；start-turn 的
+inheritThreadSettings=true 继承恢复后的状态。输入框权限 hook 同时读取线程状态和本机
+agent-mode-by-host-id 偏好，不能作为过去轮次的权限审计。本机保存 local=full-access，
+解释了用户看到的选项与 IM 首轮的实际权限不同。
+
+实施只改 YOLO Create 的首轮请求：显式 approvalPolicy=never、
+sandboxPolicy={type:dangerFullAccess}；不携带冲突的 permissions 字段。当前 App bootstrap
+的请求组装确认显式字段优先；生成的 TurnStartParams schema 明确这些覆盖作用于本轮及
+后续轮次。默认 Create 与 Send 仍继承，不在后来用户改过权限时再次强制 YOLO。
+若恢复期间出现其它活动 turn，不能把 YOLO 新建任务作为 steer 混入该轮；错误保留 created
+台账和原 ID。已有恢复/去重状态机保持不变，结果未知不自动重发。
+
+回归验证：Desktop 相关 Rust 25 项通过，包括恢复为 :workspace 的首轮覆盖、默认/普通
+发送不覆盖、活动轮次保护及此前的进程故障/台账恢复/UUID 去重。首轮字段与实际生成的
+TurnStartParams 固定 schema fixture 对照。Clippy all-targets、安装脚本中的 vue-tsc / Vite
+生产构建、local-install 编译与正式签名、git diff --check 均通过。新 daemon PID 70422。
+
+安装版经真实 App owner 提交的独立测试：
+
+| 路径 | operation / thread | 最终执行上下文 |
+|---|---|---|
+| YOLO Create | 86085a15-13b6-416f-a7e9-1b76af272a7c / 01a116dc-fe5a-71c1-8874-19c2c000827f | approval_policy=never；sandbox_policy.type=danger-full-access；permission_profile.type=disabled |
+| 默认 Create | 0d973851-0a49-4619-839e-429c0427ea8a / 01a116dd-d756-7b93-8536-39937867ffd8 | approval_policy=on-request；sandbox_policy.type=read-only；managed restricted filesystem/network |
+
+App 日志的 YOLO 首轮 requestApprovalPolicy=never、requestSandboxPolicyType=dangerFullAccess、
+requestPermissionProfile=null；对应数据库为 never / disabled。rollout 的 SandboxPolicy 使用
+kebab-case，与 turn/start 的 camelCase 请求编码不同，不应据此替换请求拼写。
+两条线程都实际执行 date +%s，exitCode=0；同 YOLO UUID 重复调用返回原 session ID / accepted，
+台账 mtime 不变，canonical UserMessage 和 turn_context 各一条。恢复重试由上述故障注入
+测试覆盖；本轮没有人为制造真实 App 的断线或未知结果。
+
+测试线程完成命令后按全局 AskHuman 协议进入 whats_next 等待；验收读取了已执行命令及
+权限上下文，随后只停止这两条测试 turn，并确认 idle / interrupted 后归档。未把中断状态
+表述为模型完整结束。原用户工作线程和最初失败操作没有被重放或修改。
+临时操作、回执及上下文摘要保存在
+`/var/folders/sm/h90d_zys04110r1_b2c3b9n80000gn/T/askhuman-yolo-final-z40rzs69/`。

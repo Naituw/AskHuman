@@ -91,15 +91,3 @@ Grok 默认会扫描 Cursor Skills，候选 frontmatter 已设计为对 Cursor �
 是否改 **filewatch** 待权衡——难点：二进制走原子替换（rename 换 inode，需盯父目录 + 按文件名过滤 + 每次替换后重挂，
 参考 `config_watch.rs`）、装在任意目录（`~/.local/bin`/brew/npm 前缀/`.app` bundle…）、且 watcher 仍要 stat/hash 才能确认
 内容**真**变（指纹是内容哈希而非 mtime）。延迟要求松（~15s 够）+ Hello 路径兜底，故暂保持轮询。
-
-## 待修复：Codex Desktop 接管后覆盖 YOLO 权限
-
-2026-10-07 创建报错及安全恢复已修复、安装，用户确认原 IM 创建成功并要求提交。
-但真实操作 `b8f52363-227a-4924-8cc9-b2e562ca39d2` 的台账为 YOLO / accepted，线程
-`01a116b5-1c53-7881-a1e8-5f7ee559241e` 被 App 接管后的 thread_settings_applied 和首轮
-turn_context 却为 on-request / :workspace，网络受限。独立辅助进程设置 never /
-danger-full-access 正确，当前私有 start-turn 的 inheritThreadSettings=true 没有保持它。
-
-下一步核对当前 App 的 permission profile / 接管与提交契约，确认修复方向后实施；需真实
-rollout 验证最终权限，而不能只凭 thread/start 响应通过。不要改动此真实工作线程的权限或
-重发任务。调查与本轮证据见 `docs/plans/codex-task-launch-contract-fix.md` §6。

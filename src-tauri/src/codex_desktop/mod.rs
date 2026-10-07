@@ -485,15 +485,15 @@ impl Bridge {
             Some(session) => session,
             None => return Err(action.fail_before_submit("activate", "Session disappeared")),
         };
-        let (method, params) = control_request(
-            &s,
-            &session_id,
-            id,
-            text,
-            files,
-            matches!(op, Operation::Stop { .. }),
-        )
-        .map_err(|error| action.fail_before_submit("prepare-submit", &error))?;
+        let intent = match &op {
+            Operation::Stop { .. } => ControlIntent::Stop,
+            Operation::Create { permission, .. } if permission == "yolo" => {
+                ControlIntent::YoloCreate
+            }
+            _ => ControlIntent::Inherit,
+        };
+        let (method, params) = control_request(&s, &session_id, id, text, files, intent)
+            .map_err(|error| action.fail_before_submit("prepare-submit", &error))?;
         action
             .submit(&session_id, method, || {
                 self.call(&session_id, method, params)
@@ -502,15 +502,22 @@ impl Bridge {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ControlIntent {
+    Inherit,
+    YoloCreate,
+    Stop,
+}
+
 fn control_request(
     session: &Session,
     session_id: &str,
     id: &str,
     text: &str,
     files: &[String],
-    is_stop: bool,
+    intent: ControlIntent,
 ) -> Result<(&'static str, Value), String> {
-    Ok(if is_stop {
+    Ok(if matches!(intent, ControlIntent::Stop) {
         let turn = protocol::turns(&session.state)
             .into_iter()
             .rev()
@@ -521,6 +528,9 @@ fn control_request(
             json!({"mode":"user-stop","expectedTurnId":turn["turnId"]}),
         )
     } else {
+        if matches!(intent, ControlIntent::YoloCreate) && session.active() {
+            return Err("Created thread already has an active turn. Inspect it before retrying the YOLO task.".into());
+        }
         let mut input_text = text.to_string();
         if !files.is_empty() {
             input_text.push_str("\n\nAttached files:\n");
@@ -544,7 +554,13 @@ fn control_request(
                     .push(json!({"type":"localImage","path":file}));
             }
         }
-        let request = json!({"threadId":session_id,"input":input,"clientUserMessageId":id});
+        let mut request = json!({"threadId":session_id,"input":input,"clientUserMessageId":id});
+        if matches!(intent, ControlIntent::YoloCreate) {
+            // The App can resume an empty thread with its default permissions. Carry
+            // the launch choice into turn/start, where SandboxPolicy is camelCase.
+            request["approvalPolicy"] = json!("never");
+            request["sandboxPolicy"] = json!({"type":"dangerFullAccess"});
+        }
         let context = json!({"inheritThreadSettings":true,"attachments":[],"commentAttachments":[],"fileAttachments":files.iter().map(|p|json!({"path":p,"label":std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy()})).collect::<Vec<_>>()});
         if session.active() {
             (
@@ -612,8 +628,15 @@ mod tests {
             ..Session::default()
         };
         let files = vec!["/tmp/document.md".into(), "/tmp/image.PNG".into()];
-        let (method, params) =
-            control_request(&session, "thread", "operation", "task", &files, false).unwrap();
+        let (method, params) = control_request(
+            &session,
+            "thread",
+            "operation",
+            "task",
+            &files,
+            ControlIntent::Inherit,
+        )
+        .unwrap();
         assert_eq!(method, "thread-follower-start-turn");
         let request = &params["turnStart"]["request"];
         assert_eq!(request["threadId"], "thread");
@@ -633,15 +656,106 @@ mod tests {
         session.state = Arc::new(
             json!({"threadRuntimeStatus":{"type":"active"},"turnHistory":{"kind":"canonical","history":[{"turnId":"current","status":"inProgress","items":[]}]}}),
         );
-        let (method, steer) =
-            control_request(&session, "thread", "operation", "task", &files, false).unwrap();
+        let (method, steer) = control_request(
+            &session,
+            "thread",
+            "operation",
+            "task",
+            &files,
+            ControlIntent::Inherit,
+        )
+        .unwrap();
         assert_eq!(method, "thread-follower-steer-turn");
         assert_eq!(steer["restoreMessage"]["request"], *request);
         assert_eq!(steer["clientUserMessageId"], "operation");
-        let (method, stop) = control_request(&session, "thread", "stop", "", &[], true).unwrap();
+        let (method, stop) =
+            control_request(&session, "thread", "stop", "", &[], ControlIntent::Stop).unwrap();
         assert_eq!(method, "thread-follower-interrupt-turn");
         assert_eq!(stop["expectedTurnId"], "current");
-        assert!(control_request(&Session::default(), "thread", "stop", "", &[], true).is_err());
+        assert!(control_request(
+            &Session::default(),
+            "thread",
+            "stop",
+            "",
+            &[],
+            ControlIntent::Stop
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn yolo_first_turn_overrides_app_resumed_workspace_permissions() {
+        let mut session = Session {
+            connected: true,
+            state: Arc::new(json!({
+                "threadRuntimeStatus":{"type":"idle"},
+                "currentPermissions":{
+                    "approvalPolicy":"on-request",
+                    "activePermissionProfile":{"id":":workspace"},
+                    "sandboxPolicy":{"type":"workspaceWrite","networkAccess":false}
+                }
+            })),
+            ..Session::default()
+        };
+        let (method, params) = control_request(
+            &session,
+            "created",
+            "operation",
+            "task",
+            &[],
+            ControlIntent::YoloCreate,
+        )
+        .unwrap();
+        assert_eq!(method, "thread-follower-start-turn");
+        let request = &params["turnStart"]["request"];
+        let schema: Value =
+            serde_json::from_str(include_str!("fixtures/turn-start-contract.json")).unwrap();
+        assert!(schema["definitions"]["AskForApproval"]["oneOf"][0]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&request["approvalPolicy"]));
+        assert!(schema["definitions"]["SandboxPolicy"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|variant| {
+                variant["properties"]["type"]["enum"]
+                    .as_array()
+                    .is_some_and(|values| values.contains(&request["sandboxPolicy"]["type"]))
+            }));
+        assert_eq!(request["approvalPolicy"], "never");
+        assert_eq!(request["sandboxPolicy"], json!({"type":"dangerFullAccess"}));
+        assert!(request.get("permissions").is_none());
+        assert_eq!(request["threadId"], "created");
+        assert_eq!(request["clientUserMessageId"], "operation");
+        // Ordinary sends and default launches must inherit even after a YOLO launch.
+        for policy in ["workspaceWrite", "dangerFullAccess"] {
+            session.state = Arc::new(json!({"threadRuntimeStatus":{"type":"idle"},
+                "currentPermissions":{"sandboxPolicy":{"type":policy}}}));
+            let (_, inherited) = control_request(
+                &session,
+                "created",
+                "send",
+                "next",
+                &[],
+                ControlIntent::Inherit,
+            )
+            .unwrap();
+            let inherited = &inherited["turnStart"]["request"];
+            assert!(inherited.get("approvalPolicy").is_none());
+            assert!(inherited.get("sandboxPolicy").is_none());
+            assert!(inherited.get("permissions").is_none());
+        }
+        session.state = Arc::new(json!({"threadRuntimeStatus":{"type":"active"}}));
+        assert!(control_request(
+            &session,
+            "created",
+            "operation",
+            "task",
+            &[],
+            ControlIntent::YoloCreate,
+        )
+        .is_err());
     }
 
     #[test]
