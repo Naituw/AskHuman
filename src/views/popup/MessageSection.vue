@@ -61,7 +61,6 @@ const {
           draggable="true"
           :title="file.path"
           @click="selectFile(i, $event)"
-          @dblclick="openFile(file)"
           @dragstart="onAttachmentDragStart(file, $event)"
           @contextmenu="onAttachmentContextMenu(file, i, $event)"
         >

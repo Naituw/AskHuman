@@ -44,6 +44,7 @@ export function useAttachments(deps: {
     if (el) attRefs.value[i] = el as HTMLElement;
   }
   function selectFile(index: number, event?: MouseEvent) {
+    // Respond immediately to the first click; additional clicks in the same gesture do nothing.
     if (Date.now() < suppressClickUntil || (event && event.detail > 1)) return;
     focusedFile.value = index;
     if (selectedFile.value === index) preview.stopPreview();

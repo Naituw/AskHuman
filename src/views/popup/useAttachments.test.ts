@@ -1,4 +1,7 @@
 import { computed, ref } from "vue";
+import { mount } from "@vue/test-utils";
+import { createI18n } from "vue-i18n";
+import en from "../../i18n/en";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileAttachment } from "../../lib/types";
 const mocks = vi.hoisted(() => ({
@@ -19,6 +22,8 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name: string, han
 }) }));
 vi.mock("@crabnebula/tauri-plugin-drag", () => ({ startDrag: mocks.startDrag }));
 import { useAttachments } from "./useAttachments";
+import MessageSection from "./MessageSection.vue";
+import { PopupCtxKey, type PopupContext } from "./context";
 const files: FileAttachment[] = [0, 1, 2].map(i => ({ path: `/tmp/${i}.patch`, name: `${i}.patch`, size: 128, isImage: false }));
 function setup(attachments = files) {
   const requestId = ref("request-1");
@@ -72,10 +77,37 @@ describe("same-window attachment activation", () => {
     expect(state.handleAttachmentKey(key(elements[0], "ArrowRight", { metaKey: true }))).toBe(false);
     expect(state.selectedFile.value).toBe(0);
   });
-  it("does not toggle closed on the second click of a double click", () => {
-    const { state } = setup(); state.selectFile(0, new MouseEvent("click", { detail: 1 }));
-    state.selectFile(0, new MouseEvent("click", { detail: 2 })); state.openFile(files[0]);
-    expect(state.selectedFile.value).toBe(0); expect(mocks.openPath).toHaveBeenCalledWith(files[0].path);
+  it.each([null, 0, 1])("treats a rendered attachment double click as one immediate toggle when selected is %s", async (initial) => {
+    const { state } = setup();
+    const wrapper = mount(MessageSection, {
+      global: {
+        plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })],
+        provide: { [PopupCtxKey as symbol]: {
+          ...state, attachments: computed(() => files), request: ref(null), showDescription: ref(true),
+          messageText: ref(""), viewSource: ref(false), copiedMessage: ref(false), copyMessage: vi.fn(),
+        } as unknown as PopupContext },
+      },
+    });
+    try {
+      if (initial !== null) state.showPreview(initial);
+      await settle();
+      const previousLayouts = mocks.invoke.mock.calls.filter(([command]) => command === "popup_preview_layout").length;
+      const attachment = wrapper.findAll(".attachment")[0];
+      const expected = initial === 0 ? null : 0;
+      attachment.element.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+      expect(state.selectedFile.value).toBe(expected);
+      await settle();
+      attachment.element.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }));
+      attachment.element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+      attachment.element.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 3 }));
+      await settle();
+      expect(state.selectedFile.value).toBe(expected);
+      expect(mocks.openPath).not.toHaveBeenCalled();
+      expect(mocks.invoke.mock.calls.filter(([command]) => command === "popup_preview_layout"))
+        .toHaveLength(previousLayouts + (initial === 1 ? 0 : 1));
+      attachment.element.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+      expect(state.selectedFile.value).toBe(expected === null ? 0 : null);
+    } finally { wrapper.unmount(); state.disposeAttachments(); }
   });
   it("binds native actions to the request and selected original attachment", async () => {
     const { state } = setup(); state.selectFile(2);
@@ -102,7 +134,7 @@ describe("same-window attachment activation", () => {
     state.onAttachmentDragStart(files[0], new Event("dragstart", { cancelable: true }) as DragEvent);
     expect(mocks.startDrag).toHaveBeenCalledWith(expect.objectContaining({ item: [files[0].path], icon: expect.stringContaining("data:image/png;base64,") }), expect.any(Function));
   });
-  it("uses the reading mode for the primary action while Enter and double click keep the source", async () => {
+  it("uses the reading mode for the primary action while Enter keeps the source", async () => {
     const markdown = [{ ...files[0], path: "/tmp/报告 space.MD", name: "报告 space.MD" }];
     const { state, elements } = setup(markdown);
     state.showPreview(0); await settle();
@@ -116,8 +148,7 @@ describe("same-window attachment activation", () => {
     state.currentReadingState.value!.raw = false;
     mocks.openPath.mockClear();
     state.handleAttachmentKey(key(elements[0], "Enter"));
-    state.selectFile(0, new MouseEvent("click", { detail: 2 })); state.openFile(markdown[0]);
-    expect(mocks.openPath).toHaveBeenCalledTimes(2);
+    expect(mocks.openPath).toHaveBeenCalledExactlyOnceWith(markdown[0].path);
     expect(state.primaryBrowser.value).toBe(true);
     state.disposeAttachments();
   });
