@@ -541,6 +541,10 @@
   margin: 14px 0;
 }
 .markdown-body table {
+  /* Keep wide tables scrollable inside parents that clip horizontal overflow. */
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
   margin: 10px 0;
 }
@@ -552,6 +556,37 @@
 }
 .markdown-body thead th {
   background: var(--md-thead-bg);
+}
+
+/* Styled native scrollbars keep overflowing Markdown discoverable at rest. */
+.markdown-body table::-webkit-scrollbar,
+.markdown-body pre::-webkit-scrollbar,
+.mermaid-canvas::-webkit-scrollbar {
+  height: 12px;
+  background: var(--bg-elevated);
+}
+.markdown-body table::-webkit-scrollbar-track,
+.markdown-body pre::-webkit-scrollbar-track,
+.mermaid-canvas::-webkit-scrollbar-track {
+  background: var(--bg-elevated);
+  border-radius: 6px;
+}
+.markdown-body table::-webkit-scrollbar-thumb,
+.markdown-body pre::-webkit-scrollbar-thumb,
+.mermaid-canvas::-webkit-scrollbar-thumb {
+  background: var(--text-tertiary);
+  border: 2px solid var(--bg-elevated);
+  border-radius: 6px;
+}
+.markdown-body table::-webkit-scrollbar-thumb:hover,
+.markdown-body pre::-webkit-scrollbar-thumb:hover,
+.mermaid-canvas::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+.markdown-body table::-webkit-scrollbar-thumb:active,
+.markdown-body pre::-webkit-scrollbar-thumb:active,
+.mermaid-canvas::-webkit-scrollbar-thumb:active {
+  background: var(--text-primary);
 }
 
 /* 纯文本正文 */
