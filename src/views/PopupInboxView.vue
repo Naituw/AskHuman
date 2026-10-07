@@ -78,7 +78,13 @@ function later(fn: () => void, ms: number) {
   timers.add(timer);
 }
 function enqueue(fn: () => Promise<unknown>) {
-  tail = tail.then(async () => { if (!disposed) await fn(); }).catch(e => { if (!disposed) error.value = String(e); });
+  tail = tail.then(async () => { if (!disposed) await fn(); }).catch(e => {
+    if (disposed) return;
+    // Superseded or expired geometry is an internal coordination result. Native
+    // diagnostics retain its cause; it does not tell the user what action to take.
+    if (String(e) === "preview geometry changed") return;
+    error.value = String(e);
+  });
   return tail;
 }
 function rememberFocus() {
@@ -190,6 +196,7 @@ async function select(id: string, explicit = false) {
   if (readyIds.has(id)) await popupShowWindow(id);
   restoreFocus(id);
   if (explicit) await getCurrentWindow().setFocus();
+  if (!modal.value) error.value = "";
 }
 function choose(id: string) {
   if (blocked.value) return;
@@ -229,7 +236,7 @@ function removeLocal(id: string) {
 }
 async function finishRound() {
   active.value = null; sidebar.value = false; sidebarWidth.value = 0; groupOrder.value = [];
-  recovered.value = false; modal.value = null;
+  recovered.value = false; modal.value = null; error.value = ""; notice.value = "";
   pin.value = null;
   await popupInboxIdle();
 }

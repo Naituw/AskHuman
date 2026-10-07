@@ -350,4 +350,53 @@ describe("shared popup navigation", () => {
     expect(wrapper.find(".inbox-error").text()).toBe("layout unavailable");
     expect(mock.scopes.get("b")!.blocked.value).toBe(false);
   });
+  it("keeps an expired native transaction out of user alerts and continues the queue", async () => {
+    await start(); mock.invoke.mockClear();
+    let expired = true;
+    mock.invoke.mockImplementation(async (command: string) => {
+      if (command === "popup_inbox_layout") return { revision: 2, sidebarWidth: 240, mainWidth: 560, mainHeight: 620, previewWidth: 0 };
+      if (command === "popup_inbox_commit" && expired) { expired = false; throw "preview geometry changed"; }
+    });
+    emit("popup-inbox-reconcile", undefined); await flushPromises();
+    expect(mock.invoke).toHaveBeenCalledWith("popup_inbox_finish", { revision: 2, arrival: false });
+    expect(wrapper.find(".inbox-error").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("preview geometry changed");
+    await wrapper.findAll(".inbox-row")[1].trigger("click"); await flushPromises();
+    expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
+    expect(wrapper.find(".inbox-error").exists()).toBe(false);
+  });
+  it("clears a prior queue error after a successful manual request switch", async () => {
+    await start();
+    mock.invoke.mockRejectedValueOnce("window unavailable");
+    emit("popup-inbox-focus", "b"); await flushPromises();
+    expect(wrapper.find(".inbox-error").text()).toBe("window unavailable");
+    await wrapper.findAll(".inbox-row")[1].trigger("click"); await flushPromises();
+    expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
+    expect(wrapper.find(".inbox-error").exists()).toBe(false);
+  });
+  it("does not carry an old queue error into another round on the same host", async () => {
+    mock.invoke.mockImplementation(async command => {
+      if (command === "popup_inbox_init") return { requests: [request("a")], recovered: false };
+      if (command === "popup_inbox_layout") return { revision: 1, sidebarWidth: 0, mainWidth: 560, mainHeight: 620, previewWidth: 0 };
+    });
+    await start();
+    mock.invoke.mockRejectedValueOnce("window unavailable");
+    emit("popup-inbox-focus", "a"); await flushPromises();
+    expect(wrapper.find(".inbox-error").exists()).toBe(true);
+    emit("popup-inbox-terminal", { requestId: "a", winner: "popup" }); await flushPromises();
+    expect(wrapper.find(".inbox-error").exists()).toBe(false);
+    emit("popup-inbox-show", request("b")); await flushPromises();
+    expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
+    expect(wrapper.find(".inbox-error").exists()).toBe(false);
+  });
+  it("retains a cancellation failure while background layout succeeds", async () => {
+    await start(); emit("popup-inbox-close", undefined); await flushPromises();
+    mock.invoke.mockImplementation(async command => {
+      if (command === "cancel_popup") throw "cancellation unavailable";
+      if (command === "popup_inbox_layout") return { revision: 2, sidebarWidth: 240, mainWidth: 560, mainHeight: 620, previewWidth: 0 };
+    });
+    await wrapper.find(".inbox-cancel").trigger("click"); await flushPromises();
+    emit("popup-inbox-reconcile", undefined); await flushPromises();
+    expect(wrapper.find(".status-error").text()).toBe("cancellation unavailable");
+  });
 });

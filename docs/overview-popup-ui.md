@@ -76,6 +76,10 @@ Helper 及原有级联；只对所选模式补热，闲置的旧模式宿主回�
 共享宿主收到 `ConfigChanged` 时先同步原生窗口主题与材质，再发 `settings-updated`，
 使在途窗口的原生背景和前端颜色一致；切换主题不重建正文或清除草稿。
 
+内部布局失效 `preview geometry changed` 不透传为用户提示；具体阶段记录到既有
+`daemon.log` 的 `popup_geometry` 事件，不额外重排窗口。成功切题和本轮结束清除旧队列
+错误，取消失败仍保留在关闭确认内。规则见合并窗口规格 §19。
+
 ## 来源标题与上下文
 
 来源名（弹窗标题与渠道消息头共用）的解析优先级为 **自定义环境变量 `ASKHUMAN_ENV_SOURCE_NAME` > 探测到的发起 Agent 展示名（Claude Code/Codex/Cursor/Grok）> 默认「the Loop」**。后端入口为 `models::source_name_for_agent`；MCP 模式无法从 env 判断家族时先回退默认名称，再由 daemon 异步进程树解析补齐 Agent。

@@ -189,6 +189,10 @@ fn webview(window: &Window) -> Result<WebviewWindow, String> {
         .get_webview_window("popup")
         .ok_or("Popup window is unavailable".into())
 }
+fn geometry_conflict(stage: &'static str) -> String {
+    crate::daemon::lifecycle::log_runtime_event("popup_geometry", stage, None);
+    "preview geometry changed".into()
+}
 pub async fn wait_idle(window: &Window) -> Result<(), String> {
     for _ in 0..150 {
         if !state(window).lock().unwrap().inbox.pending {
@@ -196,7 +200,7 @@ pub async fn wait_idle(window: &Window) -> Result<(), String> {
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    Err("preview geometry changed".into())
+    Err(geometry_conflict("idle_wait_expired"))
 }
 pub async fn prepare(
     window: &Window,
@@ -218,7 +222,7 @@ pub async fn prepare(
         let mut owner = state.lock().unwrap();
         let c = &mut owner.inbox;
         if c.pending {
-            return Err("preview geometry changed".into());
+            return Err(geometry_conflict("prepare_busy"));
         }
         let main = *c
             .preferred_main
@@ -371,6 +375,11 @@ pub async fn prepare(
             }
         };
         if expired {
+            crate::daemon::lifecycle::log_runtime_event(
+                "popup_geometry",
+                "preparation_expired",
+                None,
+            );
             let _ = owner.emit("popup-inbox-reconcile", ());
         }
     });
@@ -383,13 +392,16 @@ pub async fn commit_frame(window: &Window, revision: u64) -> Result<Allocation, 
         let owner = state.lock().unwrap();
         let c = &owner.inbox;
         if !c.pending || c.revision != revision {
-            return Err("preview geometry changed".into());
+            return Err(geometry_conflict("commit_stale"));
         }
         (
-            c.prepared.clone().ok_or("preview geometry changed")?,
+            c.prepared
+                .clone()
+                .ok_or_else(|| geometry_conflict("commit_missing_preparation"))?,
             c.special,
             c.transition_left,
-            c.transition_frame.ok_or("preview geometry changed")?,
+            c.transition_frame
+                .ok_or_else(|| geometry_conflict("commit_missing_frame"))?,
         )
     };
     let webview = webview(window)?;
@@ -399,7 +411,7 @@ pub async fn commit_frame(window: &Window, revision: u64) -> Result<Allocation, 
             let state = state(window);
             let owner = state.lock().unwrap();
             if !owner.inbox.pending || owner.inbox.revision != revision {
-                return Err("preview geometry changed".into());
+                return Err(geometry_conflict("commit_stale_after_pointer"));
             }
         }
         allocation.frame =
@@ -408,7 +420,7 @@ pub async fn commit_frame(window: &Window, revision: u64) -> Result<Allocation, 
         let mut owner = owner.lock().unwrap();
         let c = &mut owner.inbox;
         if !c.pending || c.revision != revision {
-            return Err("preview geometry changed".into());
+            return Err(geometry_conflict("commit_stale_after_apply"));
         }
         c.anchor = Some((
             allocation.frame.x + allocation.left_span(),
@@ -424,10 +436,12 @@ pub async fn finish(window: &Window, revision: u64, arrival: bool) -> Result<All
         let owner = state.lock().unwrap();
         let c = &owner.inbox;
         if !c.pending || c.revision != revision {
-            return Err("preview geometry changed".into());
+            return Err(geometry_conflict("finish_stale"));
         }
         (
-            c.prepared.clone().ok_or("preview geometry changed")?,
+            c.prepared
+                .clone()
+                .ok_or_else(|| geometry_conflict("finish_missing_preparation"))?,
             c.special,
         )
     };
