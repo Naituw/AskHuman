@@ -1502,19 +1502,32 @@ async fn start_task_input_form(
                     id: delivery_request_id.clone(),
                 })
                 .await;
-            let text=match result {
+            let text = match result {
                 Ok(value) => {
-                    if let Some(sid)=value["sessionId"].as_str() {
-                        if let Some(session)=crate::codex_desktop::shared().session(sid) {
-                            if let Some(meta)=session.meta {state.agents.update_desktop(sid,&meta.title,&meta.cwd,true);}
+                    if let Some(sid) = value["sessionId"].as_str() {
+                        if let Some(session) = crate::codex_desktop::shared().session(sid) {
+                            if let Some(meta) = session.meta {
+                                state
+                                    .agents
+                                    .update_desktop(sid, &meta.title, &meta.cwd, true);
+                            }
                         }
-                        let snapshot=state.agents.snapshot();
-                        if let Some(seq)=find_agent_by_session(&snapshot,sid).and_then(|r|r["seq"].as_u64()) {handle_watch_cmd(&state,&channel,Some(seq),&config,lang).await;}
+                        let snapshot = state.agents.snapshot();
+                        if let Some(seq) =
+                            find_agent_by_session(&snapshot, sid).and_then(|r| r["seq"].as_u64())
+                        {
+                            handle_watch_cmd(&state, &channel, Some(seq), &config, lang).await;
+                        }
                     }
-                    if let Some(todo)=todo.as_ref(){let _=crate::todos::take(&todo_project,std::slice::from_ref(&todo.id));}
-                    format!("Codex App accepted the task. Session: {}",value["sessionId"].as_str().unwrap_or_default())
-                },
-                Err(error)=>format!("{error}\nOperation: {delivery_request_id}\nInspect Codex App before creating another task."),
+                    if let Some(todo) = todo.as_ref() {
+                        let _ = crate::todos::take(&todo_project, std::slice::from_ref(&todo.id));
+                    }
+                    format!(
+                        "Codex App accepted the task. Session: {}",
+                        value["sessionId"].as_str().unwrap_or_default()
+                    )
+                }
+                Err(error) => error,
             };
             let _ = reply_channel_text(&channel, &config, &text).await;
             state.watch.notify.notify_one();

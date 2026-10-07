@@ -157,6 +157,15 @@ pub(super) async fn start_fork_source(
         let _ = reply_channel_text(channel_id, config, "Source session is no longer active").await;
         return;
     };
+    if crate::codex_desktop::is_desktop_session(record) {
+        let _ = reply_channel_text(
+            channel_id,
+            config,
+            "Desktop sessions cannot be forked in a terminal",
+        )
+        .await;
+        return;
+    }
     let Some(kind) = record
         .get("kind")
         .and_then(serde_json::Value::as_str)
@@ -519,6 +528,23 @@ async fn start_fork_input(
         let task = result.comment.unwrap_or_default().trim().to_string();
         if task.is_empty() || task.contains('\0') || task.chars().count() > 3000 {
             let _ = reply_channel_text(&channel, &config, "Fork instruction is invalid").await;
+            return;
+        }
+        // Recheck origin after the input card: a hook-backed record may have been
+        // taken over by Desktop while the human was composing the instruction.
+        let snapshot = state.agents.snapshot();
+        let source_record = snapshot.as_array().and_then(|items| {
+            items
+                .iter()
+                .find(|r| r["sessionId"] == payload.source_session_id)
+        });
+        if source_record.is_none_or(crate::codex_desktop::is_desktop_session) {
+            let _ = reply_channel_text(
+                &channel,
+                &config,
+                "Source session is unavailable or belongs to Desktop",
+            )
+            .await;
             return;
         }
         let source = crate::integrations::agent_launch::LaunchSource {

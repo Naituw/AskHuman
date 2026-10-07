@@ -158,6 +158,9 @@ Cursor IDE 有手动 **Duplicate Chat**，但 AskHuman 的启动面是 `cursor-a
 - cwd 存在；
 - 对应 CLI binary、lifecycle、AskHuman integration 与 fork capability 当前可用。
 
+Codex Desktop 来源不进入终端 Fork 选择卡；GUI 初始化与提交、IM 指定来源与输入卡提交
+都复检来源，即使 Desktop 已断线，也不套用 CLI Fork。
+
 不自动选择唯一候选。Cursor、旧版本或 readiness 不通过的 Agent 不做可点击项；卡片尾部按家族汇总
 短原因，例如“Cursor Agent CLI 暂不支持 Fork”或“Grok 版本不含 `--fork-session`”。
 

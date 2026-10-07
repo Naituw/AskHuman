@@ -424,6 +424,9 @@ pub fn fork_options(
     let mut working = Vec::new();
     let mut idle = Vec::new();
     for rec in list {
+        if crate::codex_desktop::is_desktop_session(rec) {
+            continue;
+        }
         let bucket = match rec.get("state").and_then(Value::as_str) {
             Some("working") => &mut working,
             Some("idle") => &mut idle,

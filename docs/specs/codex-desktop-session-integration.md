@@ -47,6 +47,11 @@ CLI/MCP 表示调用 AskHuman 的方式；运行偏好表示新任务的执行�
 - 发送 / 停止 / 新建均有 UUID，在 `state/codex-desktop-actions/` 持久化私有台账。
   相同 ID 不接受不同内容；已接受操作重试只回执，结果未知不自动重发。GUI 保留失败草稿，
   新建待提交 ID 保存在本地；控制台需明确检查原聊天后才能编辑新的发送。
+  新建的明确拒绝记录为 `rejected`，用户再次提交同一 UUID 时可重试；立即落盘线程 ID 和
+  `created` 后，命名、读取、辅助进程退出及 App 接管失败均复用原线程续接。首次任务提交前
+  写 `unknown`，收到接受回执后才写 `accepted`。解析错误仅 -32600/-32602 证明未执行
+  thread/start；其它错误保守处理。台账保留失败阶段、RPC method/code 和已知 ID；ID 落盘
+  失败仍为 unknown，已知 ID 仅作诊断。历史 unknown 不自动降级或清理。
 
 ## 新建链路与权限
 
@@ -54,14 +59,16 @@ CLI/MCP 表示调用 AskHuman 的方式；运行偏好表示新任务的执行�
 验证目录、任务、权限、附件及操作 UUID
   → App 内置 codex app-server --listen stdio://
   → initialize / initialized → thread/start(ephemeral=false)
-  → 立即记录 thread ID → thread/name/set → thread/read(includeTurns=true)
+  → 立即记录 thread ID / created → thread/name/set → thread/read(includeTurns=true)
   → 关闭 stdin，等待辅助进程退出
   → codex://threads/<id> 打开 App → 等待 owner 接管
   → 原生 start-turn 提交首条任务 → 记录 accepted → 待办出队
 ```
 
 辅助进程不执行 turn/start。目录可以不是 App 已保存项目；不创建 worktree。默认权限继承目标
-目录配置；YOLO 明确设置 approvalPolicy=never、sandbox=dangerFullAccess，首轮继承线程设置。
+目录配置，省略 approvalPolicy 和 sandbox；YOLO 明确设置 approvalPolicy=never、
+sandbox=danger-full-access，首轮继承线程设置。此处为 SandboxMode；turn/start.sandboxPolicy
+的 SandboxPolicy 类型仍使用 camelCase，不能全局替换拼写。
 App 打开失败保留已创建 ID；传输结果未知保留任务和附件，提示检查原聊天，不回退终端。
 深链接可能切换桌面当前聊天。发送中附件以绝对路径引用，图片同时使用 localImage 输入。
 
@@ -83,3 +90,8 @@ App 打开失败保留已创建 ID；传输结果未知保留任务和附件，�
 第三方署名与 MIT 许可保存在 `src-tauri/src/codex_desktop/NOTICE.md`。
 
 设置交互已获用户验收：卡片末尾的偏好与结果、回退原因及右侧刷新按钮、双向切换的即时检测反馈。
+
+2026-10-07 创建契约修复已安装并经用户真实 IM 验收，安全重试通过故障注入和安装版 accepted
+回执复验。另有已证实的权限继承缺口：新 App 接管线程时重新应用 :workspace，导致首轮执行
+没有保持创建阶段的 YOLO；上述首轮继承是目标契约，当前 `inheritThreadSettings=true` 尚不足
+以保证它。后续修复和证据见 PROGRESS、`docs/plans/codex-task-launch-contract-fix.md` §6。

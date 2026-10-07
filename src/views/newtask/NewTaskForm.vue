@@ -247,9 +247,11 @@ async function launch(): Promise<void> {
   launchError.value = "";
   try {
     if (selectedKind.value === "codex") {
-      const key=JSON.stringify([selectedProject.value,finalTask.value,effectivePermission.value,selectedTodo.value?.id]);
+      const key=JSON.stringify([selectedProject.value,finalTask.value,effectivePermission.value,selectedTodo.value?.project,selectedTodo.value?.id,selectedTodo.value?.attachments]);
+      // Keep pre-upgrade pending operations pinned to their original receipt.
+      const legacyKey=JSON.stringify([selectedProject.value,finalTask.value,effectivePermission.value,selectedTodo.value?.id]);
       const saved=JSON.parse(localStorage.getItem("codex-desktop-pending-create") || "null");
-      operationId.value = saved?.key === key && typeof saved.id === "string" ? saved.id : crypto.randomUUID();
+      operationId.value = (saved?.key === key || saved?.key === legacyKey) && typeof saved.id === "string" ? saved.id : crypto.randomUUID();
       localStorage.setItem("codex-desktop-pending-create",JSON.stringify({key,id:operationId.value}));
     }
     await newTaskLaunch({

@@ -44,3 +44,26 @@ it("retains the operation ID across failed launches and a preference change", as
   expect(api.launch.mock.calls[1][0].operationId).toBe(first);
   expect(wrapper.emitted("launched")).toBeUndefined();
 });
+it.each(["No task was submitted", "The chat was created, but no task was submitted", "Operation outcome is unknown"])("preserves the draft and retry identity after %s", async (error) => {
+  api.launch.mockRejectedValue(new Error(error));
+  await form();
+  await wrapper.get(".nt-btn-launch").trigger("click"); await flushPromises();
+  const id = api.launch.mock.calls[0][0].operationId;
+  expect(wrapper.get("textarea").element.value).toBe("Task");
+  expect(wrapper.emitted("launched")).toBeUndefined();
+  expect(localStorage.getItem("codex-desktop-pending-create")).toContain(id);
+  await wrapper.get(".nt-btn-launch").trigger("click"); await flushPromises();
+  expect(api.launch.mock.calls[1][0].operationId).toBe(id);
+  api.launch.mockResolvedValue(undefined);
+  await wrapper.get(".nt-btn-launch").trigger("click"); await flushPromises();
+  expect(wrapper.emitted("launched")).toHaveLength(1);
+  expect(localStorage.getItem("codex-desktop-pending-create")).toBeNull();
+});
+it("keeps a pre-upgrade pending operation pinned to the original receipt", async () => {
+  const id = "10000000-0000-4000-8000-000000000001";
+  localStorage.setItem("codex-desktop-pending-create", JSON.stringify({key: JSON.stringify(["/project", "Task", "agent-default", null]), id}));
+  api.launch.mockRejectedValue(new Error("historical unknown"));
+  await form();
+  await wrapper.get(".nt-btn-launch").trigger("click"); await flushPromises();
+  expect(api.launch.mock.calls[0][0].operationId).toBe(id);
+});

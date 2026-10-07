@@ -1,5 +1,6 @@
 //! Optional Codex desktop adapter. Only the daemon owns the live connection.
 //! Protocol attribution and license: see NOTICE.md in this directory.
+mod actions;
 mod launch;
 pub use launch::{
     available, integration_enabled, launch_status, resolve_launch, LaunchStatus, UnavailableReason,
@@ -128,6 +129,10 @@ pub fn shared() -> Arc<Bridge> {
             })
         })
         .clone()
+}
+
+pub fn is_desktop_session(record: &Value) -> bool {
+    record["terminal"] == "codex-app" || record["desktop"].is_object()
 }
 
 impl Bridge {
@@ -365,23 +370,20 @@ impl Bridge {
     }
 
     pub async fn execute(self: &Arc<Self>, op: Operation) -> Result<Value, String> {
-        self.refresh(crate::config::AppConfig::load_without_secrets().codex_desktop)
-            .await;
         if matches!(op, Operation::Status) {
+            self.refresh(crate::config::AppConfig::load_without_secrets().codex_desktop)
+                .await;
             return Ok(self.status());
         }
-        let config = self.config.lock().unwrap().clone();
-        let installation = runtime::detect(&config)?;
         if let Operation::Open { session_id } = op {
+            let installation =
+                runtime::detect(&crate::config::AppConfig::load_without_secrets().codex_desktop)?;
             tokio::task::spawn_blocking(move || {
                 runtime::open(&installation, session_id.as_deref())
             })
             .await
             .map_err(|e| e.to_string())??;
             return Ok(json!({"status":"opened"}));
-        }
-        if !integration_enabled() {
-            return Err("Enable Codex integration in Settings first".into());
         }
         let _guard = self.actions.lock().await;
         let (id, text, files) = match &op {
@@ -395,69 +397,69 @@ impl Bridge {
             _ => unreachable!(),
         };
         uuid::Uuid::parse_str(id).map_err(|_| "Invalid operation ID")?;
-        if text.contains('\0') || text.chars().count() > 100000 || files.len() > 20 {
-            return Err("Invalid task content".into());
-        }
-        if !matches!(op, Operation::Stop { .. }) && text.trim().is_empty() && files.is_empty() {
-            return Err("Enter a task first".into());
-        }
-        for file in files {
-            if !std::path::Path::new(file).is_absolute() || !std::path::Path::new(file).is_file() {
-                return Err(format!("Attachment is unavailable: {file}"));
-            }
-        }
         let folder = crate::paths::state_dir().join("codex-desktop-actions");
         let path = folder.join(format!("{id}.json"));
         let input = serde_json::to_value(&op).map_err(|e| e.to_string())?;
-        let mut ledger = if path.exists() {
-            serde_json::from_slice::<Value>(&std::fs::read(&path).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?
-        } else {
-            json!({"input":input,"status":"prepared"})
-        };
-        if ledger["input"] != input {
-            return Err("An operation ID cannot be reused for different content".into());
+        let mut action = actions::Action::load(path, input)?;
+        // A durable receipt takes precedence over changed files, readiness or preferences.
+        if let Some(receipt) = action.receipt()? {
+            return Ok(receipt);
         }
-        if ledger["status"] == "accepted" {
-            return Ok(ledger);
-        }
-        if ledger["status"] == "unknown" {
-            return Err(format!("Operation outcome is unknown. Inspect the original chat before sending another request. Session: {}",ledger["sessionId"].as_str().unwrap_or("check the desktop chat list")));
-        }
-        let session_id = match &op {
-            Operation::Create {
+        let validation = (|| {
+            if !integration_enabled() {
+                return Err("Enable Codex integration in Settings first".to_string());
+            }
+            if text.contains('\0') || text.chars().count() > 100000 || files.len() > 20 {
+                return Err("Invalid task content".into());
+            }
+            if !matches!(op, Operation::Stop { .. }) && text.trim().is_empty() && files.is_empty() {
+                return Err("Enter a task first".into());
+            }
+            for file in files {
+                if !std::path::Path::new(file).is_absolute()
+                    || !std::path::Path::new(file).is_file()
+                {
+                    return Err(format!("Attachment is unavailable: {file}"));
+                }
+            }
+            if let Operation::Create {
                 cwd, permission, ..
-            } => {
+            } = &op
+            {
                 if !std::path::Path::new(cwd).is_absolute() || !std::path::Path::new(cwd).is_dir() {
                     return Err("Select an existing absolute project directory".into());
                 }
                 if !matches!(permission.as_str(), "agent-default" | "yolo") {
                     return Err("Choose task permissions".into());
                 }
-                if let Some(s) = ledger["sessionId"].as_str() {
-                    s.to_string()
-                } else {
-                    ledger["status"] = json!("unknown");
-                    save(&path, &ledger)?;
-                    let install = installation.clone();
-                    let cwd = cwd.clone();
-                    let title: String = text.chars().take(80).collect();
-                    let yolo = permission == "yolo";
-                    let create_path = path.clone();
-                    let mut creation_ledger = ledger.clone();
-                    let sid = tokio::task::spawn_blocking(move || {
-                        runtime::create(&install, &cwd, &title, yolo, |id| {
-                            creation_ledger["sessionId"] = json!(id);
-                            save(&create_path, &creation_ledger)
-                        })
-                    })
-                    .await
-                    .map_err(|e| e.to_string())??;
-                    ledger["sessionId"] = json!(sid);
-                    ledger["status"] = json!("created");
-                    save(&path, &ledger)?;
-                    sid
-                }
+            }
+            runtime::detect(&crate::config::AppConfig::load_without_secrets().codex_desktop)
+        })();
+        let installation = match validation {
+            Ok(installation) => installation,
+            Err(error) => return Err(action.fail_before_submit("validation", &error)),
+        };
+        self.refresh(crate::config::AppConfig::load_without_secrets().codex_desktop)
+            .await;
+        let session_id = match &op {
+            Operation::Create {
+                cwd, permission, ..
+            } => {
+                let cwd = cwd.clone();
+                let title: String = text.chars().take(80).collect();
+                let yolo = permission == "yolo";
+                let (updated, result) = tokio::task::spawn_blocking(move || {
+                    let result = action.ensure_thread(&installation, &cwd, &title, yolo);
+                    (action, result)
+                })
+                .await
+                .map_err(|e| {
+                    format!(
+                        "Creation helper failed: {e}. Check the operation receipt before retrying."
+                    )
+                })?;
+                action = updated;
+                result?
             }
             Operation::Send { session_id, .. } | Operation::Stop { session_id, .. } => {
                 session_id.clone()
@@ -476,64 +478,86 @@ impl Bridge {
                 title: text.chars().take(80).collect(),
             });
         }
-        self.activate(&session_id).await?;
-        let s = self.session(&session_id).ok_or("Session disappeared")?;
-        let (method, params) = if matches!(op, Operation::Stop { .. }) {
-            let turn = protocol::turns(&s.state)
-                .into_iter()
-                .rev()
-                .find(|t| t["status"] == "inProgress")
-                .ok_or("No active turn to stop")?;
+        if let Err(error) = self.activate(&session_id).await {
+            return Err(action.fail_before_submit("activate", &error));
+        }
+        let s = match self.session(&session_id) {
+            Some(session) => session,
+            None => return Err(action.fail_before_submit("activate", "Session disappeared")),
+        };
+        let (method, params) = control_request(
+            &s,
+            &session_id,
+            id,
+            text,
+            files,
+            matches!(op, Operation::Stop { .. }),
+        )
+        .map_err(|error| action.fail_before_submit("prepare-submit", &error))?;
+        action
+            .submit(&session_id, method, || {
+                self.call(&session_id, method, params)
+            })
+            .await
+    }
+}
+
+fn control_request(
+    session: &Session,
+    session_id: &str,
+    id: &str,
+    text: &str,
+    files: &[String],
+    is_stop: bool,
+) -> Result<(&'static str, Value), String> {
+    Ok(if is_stop {
+        let turn = protocol::turns(&session.state)
+            .into_iter()
+            .rev()
+            .find(|t| t["status"] == "inProgress")
+            .ok_or("No active turn to stop")?;
+        (
+            "thread-follower-interrupt-turn",
+            json!({"mode":"user-stop","expectedTurnId":turn["turnId"]}),
+        )
+    } else {
+        let mut input_text = text.to_string();
+        if !files.is_empty() {
+            input_text.push_str("\n\nAttached files:\n");
+            input_text.push_str(&serde_json::to_string(files).map_err(|e| e.to_string())?);
+        }
+        let mut input = json!([{"type":"text","text":input_text,"text_elements":[]}]);
+        for file in files {
+            if std::path::Path::new(file)
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| {
+                    matches!(
+                        e.to_ascii_lowercase().as_str(),
+                        "png" | "jpg" | "jpeg" | "gif" | "webp"
+                    )
+                })
+            {
+                input
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"type":"localImage","path":file}));
+            }
+        }
+        let request = json!({"threadId":session_id,"input":input,"clientUserMessageId":id});
+        let context = json!({"inheritThreadSettings":true,"attachments":[],"commentAttachments":[],"fileAttachments":files.iter().map(|p|json!({"path":p,"label":std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy()})).collect::<Vec<_>>()});
+        if session.active() {
             (
-                "thread-follower-interrupt-turn",
-                json!({"mode":"user-stop","expectedTurnId":turn["turnId"]}),
+                "thread-follower-steer-turn",
+                json!({"input":input,"clientUserMessageId":id,"restoreMessage":{"request":request,"context":context},"attachments":[]}),
             )
         } else {
-            let mut input_text = text.to_string();
-            if !files.is_empty() {
-                input_text.push_str("\n\nAttached files:\n");
-                input_text.push_str(&serde_json::to_string(files).map_err(|e| e.to_string())?);
-            }
-            let mut input = json!([{"type":"text","text":input_text,"text_elements":[]}]);
-            for file in files {
-                if std::path::Path::new(file)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| {
-                        matches!(
-                            e.to_ascii_lowercase().as_str(),
-                            "png" | "jpg" | "jpeg" | "gif" | "webp"
-                        )
-                    })
-                {
-                    input
-                        .as_array_mut()
-                        .unwrap()
-                        .push(json!({"type":"localImage","path":file}));
-                }
-            }
-            let request = json!({"threadId":session_id,"input":input,"clientUserMessageId":id});
-            let context = json!({"inheritThreadSettings":true,"attachments":[],"commentAttachments":[],"fileAttachments":files.iter().map(|p|json!({"path":p,"label":std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy()})).collect::<Vec<_>>()});
-            if s.active() {
-                (
-                    "thread-follower-steer-turn",
-                    json!({"input":input,"clientUserMessageId":id,"restoreMessage":{"request":request,"context":context},"attachments":[]}),
-                )
-            } else {
-                (
-                    "thread-follower-start-turn",
-                    json!({"turnStart":{"request":request,"context":context}}),
-                )
-            }
-        };
-        ledger["sessionId"] = json!(session_id);
-        ledger["status"] = json!("unknown");
-        save(&path, &ledger)?;
-        self.call(&session_id, method, params).await?;
-        ledger["status"] = json!("accepted");
-        save(&path, &ledger)?;
-        Ok(ledger)
-    }
+            (
+                "thread-follower-start-turn",
+                json!({"turnStart":{"request":request,"context":context}}),
+            )
+        }
+    })
 }
 
 fn save(path: &std::path::Path, value: &Value) -> Result<(), String> {
@@ -579,6 +603,54 @@ mod tests {
     }
     fn snapshot(owner: &str, version: u64, revision: Value) -> Value {
         json!({"method":"thread-stream-state-changed","version":version,"sourceClientId":owner,"params":{"hostId":"local","conversationId":"s","change":{"type":"snapshot","revision":revision,"conversationState":{"id":"s","threadRuntimeStatus":{"type":"idle"}}}}})
+    }
+    #[test]
+    fn control_requests_preserve_target_message_id_attachments_and_expected_turn() {
+        let mut session = Session {
+            connected: true,
+            state: Arc::new(json!({"threadRuntimeStatus":{"type":"idle"}})),
+            ..Session::default()
+        };
+        let files = vec!["/tmp/document.md".into(), "/tmp/image.PNG".into()];
+        let (method, params) =
+            control_request(&session, "thread", "operation", "task", &files, false).unwrap();
+        assert_eq!(method, "thread-follower-start-turn");
+        let request = &params["turnStart"]["request"];
+        assert_eq!(request["threadId"], "thread");
+        assert_eq!(request["clientUserMessageId"], "operation");
+        assert_eq!(
+            request["input"][1],
+            json!({"type":"localImage","path":"/tmp/image.PNG"})
+        );
+        assert!(request["input"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("/tmp/document.md"));
+        assert_eq!(
+            params["turnStart"]["context"]["inheritThreadSettings"],
+            true
+        );
+        session.state = Arc::new(
+            json!({"threadRuntimeStatus":{"type":"active"},"turnHistory":{"kind":"canonical","history":[{"turnId":"current","status":"inProgress","items":[]}]}}),
+        );
+        let (method, steer) =
+            control_request(&session, "thread", "operation", "task", &files, false).unwrap();
+        assert_eq!(method, "thread-follower-steer-turn");
+        assert_eq!(steer["restoreMessage"]["request"], *request);
+        assert_eq!(steer["clientUserMessageId"], "operation");
+        let (method, stop) = control_request(&session, "thread", "stop", "", &[], true).unwrap();
+        assert_eq!(method, "thread-follower-interrupt-turn");
+        assert_eq!(stop["expectedTurnId"], "current");
+        assert!(control_request(&Session::default(), "thread", "stop", "", &[], true).is_err());
+    }
+
+    #[test]
+    fn desktop_origin_remains_identifiable_when_disconnected() {
+        assert!(is_desktop_session(
+            &json!({"terminal":"codex-app","desktop":{"connected":false}})
+        ));
+        assert!(is_desktop_session(&json!({"terminal":"codex-app"})));
+        assert!(!is_desktop_session(&json!({"terminal":"Terminal.app"})));
     }
     #[test]
     fn preference_selects_available_runtime_without_a_connection_requirement() {

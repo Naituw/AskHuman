@@ -39,13 +39,15 @@
 | Agent | 交互启动 | cwd | YOLO 覆盖 | 禁止使用的后台形态 |
 |---|---|---|---|---|
 | Claude Code | `claude <prompt>` | 进程 cwd | `--dangerously-skip-permissions` | `-p` / `--background` |
-| Codex | `codex <prompt>` | 进程 cwd，也支持 `-C` | `--dangerously-bypass-approvals-and-sandbox` | `exec` |
+| Codex | `codex -- <prompt>` | 进程 cwd，也支持 `-C` | `--dangerously-bypass-approvals-and-sandbox` | `exec` |
 | Cursor | `cursor-agent <prompt>` | 进程 cwd，也支持 `--workspace` | `--yolo` | `-p` |
 | Grok | `grok <prompt>` | 进程 cwd，也支持 `--cwd` | `--always-approve` | `-p` / `--single` |
 | Pi | `pi <prompt>` | 进程 cwd | 无内置覆盖参数 | 非交互 print/RPC 形态 |
 
 实现统一先 `chdir(workspace)`，再以 argv 直接启动，不依赖四家不同的 cwd flag。Agent 默认权限模式
 不加任何 override；YOLO 只添加上表固定 flag，不接受 IM 传任意 flags。
+Codex 新建固定为 `codex [fixed-yolo] -- <prompt>`，任务及附件描述始终作为单一 argv，
+前导 `-` / `--`、换行和 shell 特殊字符不会被当作选项或命令。
 
 参考：
 

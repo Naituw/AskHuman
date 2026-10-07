@@ -2694,6 +2694,9 @@ fn fork_task_source(
             })
         })
         .ok_or_else(|| "source session is no longer tracked".to_string())?;
+    if crate::codex_desktop::is_desktop_session(record) {
+        return Err("Desktop sessions cannot be forked in a terminal".into());
+    }
     let state = record
         .get("state")
         .and_then(serde_json::Value::as_str)
@@ -4566,6 +4569,22 @@ pub fn restart_settings(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fork_source_rejects_desktop_origin_at_selection_and_submission() {
+        let snapshot = serde_json::json!([{
+            "sessionId":"desktop", "terminal":"codex-app", "kind":"codex",
+            "state":"idle", "desktop":{"connected":false}
+        }]);
+        for active_only in [true, false] {
+            assert_eq!(
+                fork_task_source(&snapshot, "desktop", active_only)
+                    .err()
+                    .as_deref(),
+                Some("Desktop sessions cannot be forked in a terminal")
+            );
+        }
+    }
 
     #[test]
     fn agent_mode_status_does_not_probe_agent_cli() {

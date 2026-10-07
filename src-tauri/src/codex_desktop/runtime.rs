@@ -143,13 +143,121 @@ pub fn open(installation: &Installation, id: Option<&str>) -> Result<(), String>
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CreationOutcome {
+    Rejected,
+    Created,
+    Unknown,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreationError {
+    pub message: String,
+    pub stage: String,
+    pub method: Option<String>,
+    pub code: Option<i64>,
+    pub session_id: Option<String>,
+    pub outcome: CreationOutcome,
+}
+
+// ThreadStartParams uses SandboxMode (kebab-case), not turn/start's SandboxPolicy.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum ThreadSandboxMode {
+    DangerFullAccess,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadStartParams<'a> {
+    cwd: &'a str,
+    ephemeral: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approval_policy: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sandbox: Option<ThreadSandboxMode>,
+}
+
+fn thread_start_params(cwd: &str, yolo: bool) -> Value {
+    serde_json::to_value(ThreadStartParams {
+        cwd,
+        ephemeral: false,
+        approval_policy: yolo.then_some("never"),
+        sandbox: yolo.then_some(ThreadSandboxMode::DangerFullAccess),
+    })
+    .expect("thread start parameters contain only serializable values")
+}
+
 pub fn create(
     installation: &Installation,
     cwd: &str,
     title: &str,
     yolo: bool,
     on_created: impl FnOnce(&str) -> Result<(), String>,
-) -> Result<String, String> {
+) -> Result<String, CreationError> {
+    create_or_finish(
+        installation,
+        cwd,
+        title,
+        yolo,
+        None,
+        on_created,
+        Duration::from_secs(30),
+    )
+}
+
+pub fn finish_creation(
+    installation: &Installation,
+    cwd: &str,
+    title: &str,
+    id: &str,
+) -> Result<String, CreationError> {
+    create_or_finish(
+        installation,
+        cwd,
+        title,
+        false,
+        Some(id),
+        |_| Ok(()),
+        Duration::from_secs(30),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_or_finish(
+    installation: &Installation,
+    cwd: &str,
+    title: &str,
+    yolo: bool,
+    existing: Option<&str>,
+    on_created: impl FnOnce(&str) -> Result<(), String>,
+    response_timeout: Duration,
+) -> Result<String, CreationError> {
+    let mut session_id = existing.map(str::to_owned);
+    let mut start_attempted = false;
+    let failure = |message: String,
+                   stage: &str,
+                   method: Option<&str>,
+                   code: Option<i64>,
+                   id: &Option<String>,
+                   attempted: bool| CreationError {
+        message,
+        stage: stage.into(),
+        method: method.map(str::to_owned),
+        code,
+        session_id: id.clone(),
+        outcome: if id.is_some() {
+            CreationOutcome::Created
+        } else if !attempted
+            || (method == Some("thread/start") && matches!(code, Some(-32600 | -32602)))
+        {
+            CreationOutcome::Rejected
+        } else {
+            CreationOutcome::Unknown
+        },
+    };
     let mut child = Command::new(&installation.executable)
         .args(["app-server", "--listen", "stdio://"])
         .env("CODEX_HOME", &installation.home)
@@ -158,7 +266,7 @@ pub fn create(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| failure(e.to_string(), "spawn", None, None, &session_id, false))?;
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     let (tx, rx) = mpsc::channel();
@@ -173,57 +281,124 @@ pub fn create(
     });
     let mut counter = 0;
     let result = (|| {
-        let mut request = |method: &str, params: Value| -> Result<Value, String> {
-            counter += 1;
-            writeln!(
-                stdin,
-                "{}",
-                json!({"id":counter,"method":method,"params":params})
-            )
-            .and_then(|_| stdin.flush())
-            .map_err(|e| e.to_string())?;
-            let deadline = std::time::Instant::now() + Duration::from_secs(30);
-            loop {
-                let response = rx
-                    .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
-                    .map_err(|_| {
-                        "Thread creation response unavailable; check the App before creating again"
-                    })?;
-                if response["id"].as_u64() != Some(counter) {
-                    continue;
+        let mut request =
+            |method: &str, params: Value, id: &Option<String>| -> Result<Value, CreationError> {
+                counter += 1;
+                if method == "thread/start" {
+                    start_attempted = true;
                 }
-                if let Some(error) = response.get("error") {
-                    return Err(error["message"]
-                        .as_str()
-                        .unwrap_or("Thread creation rejected")
-                        .to_string());
+                writeln!(
+                    stdin,
+                    "{}",
+                    json!({"id":counter,"method":method,"params":params})
+                )
+                .and_then(|_| stdin.flush())
+                .map_err(|e| {
+                    failure(
+                        e.to_string(),
+                        "write",
+                        Some(method),
+                        None,
+                        id,
+                        start_attempted,
+                    )
+                })?;
+                let deadline = std::time::Instant::now() + response_timeout;
+                loop {
+                    let response = rx
+                        .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                        .map_err(|_| {
+                            failure(
+                                "Thread creation response unavailable".into(),
+                                "response",
+                                Some(method),
+                                None,
+                                id,
+                                start_attempted,
+                            )
+                        })?;
+                    if response["id"].as_u64() != Some(counter) {
+                        continue;
+                    }
+                    if let Some(error) = response.get("error") {
+                        return Err(failure(
+                            error["message"]
+                                .as_str()
+                                .unwrap_or("Thread creation rejected")
+                                .into(),
+                            "response",
+                            Some(method),
+                            error["code"].as_i64(),
+                            id,
+                            start_attempted,
+                        ));
+                    }
+                    if response.get("result").is_none() {
+                        return Err(failure(
+                            "Invalid creation response".into(),
+                            "response",
+                            Some(method),
+                            None,
+                            id,
+                            start_attempted,
+                        ));
+                    }
+                    if method == "initialize" {
+                        writeln!(stdin, "{{\"method\":\"initialized\"}}")
+                            .and_then(|_| stdin.flush())
+                            .map_err(|e| {
+                                failure(
+                                    e.to_string(),
+                                    "write",
+                                    Some("initialized"),
+                                    None,
+                                    id,
+                                    start_attempted,
+                                )
+                            })?;
+                    }
+                    return Ok(response["result"].clone());
                 }
-                if method == "initialize" {
-                    writeln!(stdin, "{{\"method\":\"initialized\"}}")
-                        .and_then(|_| stdin.flush())
-                        .map_err(|e| e.to_string())?;
-                }
-                return Ok(response["result"].clone());
-            }
-        };
+            };
         request(
             "initialize",
             json!({"clientInfo":{"name":"askhuman","title":"AskHuman","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}),
+            &session_id,
         )?;
-        let mut params = json!({"cwd":cwd,"ephemeral":false});
-        if yolo {
-            params["approvalPolicy"] = json!("never");
-            params["sandbox"] = json!("dangerFullAccess");
+        if existing.is_none() {
+            let result = request("thread/start", thread_start_params(cwd, yolo), &session_id)?;
+            let id = result["thread"]["id"]
+                .as_str()
+                .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+                .ok_or_else(|| {
+                    failure(
+                        "No valid thread ID returned".into(),
+                        "thread-id",
+                        Some("thread/start"),
+                        None,
+                        &session_id,
+                        true,
+                    )
+                })?
+                .to_string();
+            session_id = Some(id.clone());
+            on_created(&id).map_err(|e| {
+                let mut error = failure(e, "persist-thread", None, None, &session_id, true);
+                error.outcome = CreationOutcome::Unknown;
+                error
+            })?;
         }
-        let result = request("thread/start", params)?;
-        let id = result["thread"]["id"]
-            .as_str()
-            .ok_or("No thread ID returned")?
-            .to_string();
-        uuid::Uuid::parse_str(&id).map_err(|_| "Invalid created thread ID")?;
-        on_created(&id)?;
-        request("thread/name/set", json!({"threadId":id,"name":title}))?;
-        request("thread/read", json!({"threadId":id,"includeTurns":true}))?;
+        let id = session_id.clone().expect("created or existing thread ID");
+        request(
+            "thread/name/set",
+            json!({"threadId":id,"name":title}),
+            &session_id,
+        )?;
+        request(
+            "thread/read",
+            json!({"threadId":id,"includeTurns":true}),
+            &session_id,
+        )?;
         Ok(id)
     })();
     drop(stdin);
@@ -242,11 +417,15 @@ pub fn create(
         }
     };
     let _ = reader.join();
-    if !exited {
-        return Err(
-            "Creation runtime did not exit cleanly; inspect the desktop chat list before retrying"
-                .into(),
-        );
+    if result.is_ok() && !exited {
+        return Err(failure(
+            "Creation runtime did not exit cleanly".into(),
+            "runtime-exit",
+            None,
+            None,
+            &session_id,
+            start_attempted,
+        ));
     }
     result
 }
@@ -254,6 +433,276 @@ pub fn create(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thread_start_matches_the_bundled_runtime_schema() {
+        let schema: Value =
+            serde_json::from_str(include_str!("fixtures/thread-start-contract.json")).unwrap();
+        let default = thread_start_params("/project", false);
+        assert_eq!(default, json!({"cwd":"/project","ephemeral":false}));
+        let yolo = thread_start_params("/project", true);
+        for field in yolo.as_object().unwrap().keys() {
+            assert!(
+                schema["properties"].get(field).is_some(),
+                "unknown field: {field}"
+            );
+        }
+        assert!(schema["definitions"]["SandboxMode"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&yolo["sandbox"]));
+        assert!(schema["definitions"]["AskForApproval"]["oneOf"][0]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&yolo["approvalPolicy"]));
+    }
+
+    #[cfg(unix)]
+    fn fake_runtime(fault: &str) -> (tempfile::TempDir, Installation) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let executable = dir.path().join("app-server");
+        let trace = dir.path().join("trace.jsonl");
+        let script = format!(
+            "#!/usr/bin/env python3\nFAULT={fault:?}\nTRACE={:?}\n",
+            trace.to_string_lossy()
+        );
+        std::fs::write(&executable, script + r#"
+import json, sys
+for line in sys.stdin:
+    req = json.loads(line)
+    with open(TRACE, 'a') as f:
+        f.write(json.dumps(req) + '\n')
+    method = req['method']
+    if method == 'initialized':
+        continue
+    if method == 'thread/start' and FAULT == 'start-drop':
+        sys.exit(0)
+    if method == 'thread/start' and FAULT == 'start-timeout':
+        continue
+    rejected = (method == 'initialize' and FAULT == 'initialize-reject') or (method == 'thread/start' and FAULT in ['start-reject', 'start-other']) or (method == 'thread/name/set' and FAULT == 'name-reject') or (method == 'thread/read' and FAULT == 'read-reject')
+    if rejected:
+        resp = {'id':req['id'], 'error':{'code':-32000 if FAULT == 'start-other' else -32602, 'message':'injected rejection'}}
+    else:
+        resp = {'id':req['id'], 'result':{'thread':{'id':'10000000-0000-4000-8000-000000000001'}}}
+    print(json.dumps(resp), flush=True)
+sys.exit(1 if FAULT == 'exit' else 0)
+"#).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let installation = Installation {
+            app: dir.path().into(),
+            executable,
+            home: dir.path().into(),
+            socket: dir.path().join("unused"),
+        };
+        (dir, installation)
+    }
+
+    #[cfg(unix)]
+    fn trace(dir: &tempfile::TempDir) -> Vec<Value> {
+        std::fs::read_to_string(dir.path().join("trace.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn creation_helper_emits_only_empty_thread_setup_and_resume_does_not_start_again() {
+        for yolo in [false, true] {
+            let (dir, installation) = fake_runtime("success");
+            let mut persisted = None;
+            let id = create(
+                &installation,
+                dir.path().to_str().unwrap(),
+                "title",
+                yolo,
+                |id| {
+                    persisted = Some(id.to_string());
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(persisted.as_deref(), Some(id.as_str()));
+            let calls = trace(&dir);
+            let methods: Vec<_> = calls
+                .iter()
+                .map(|v| v["method"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                methods,
+                [
+                    "initialize",
+                    "initialized",
+                    "thread/start",
+                    "thread/name/set",
+                    "thread/read"
+                ]
+            );
+            assert_eq!(
+                calls[2]["params"],
+                thread_start_params(dir.path().to_str().unwrap(), yolo)
+            );
+            finish_creation(&installation, dir.path().to_str().unwrap(), "title", &id).unwrap();
+            assert_eq!(
+                trace(&dir)
+                    .iter()
+                    .filter(|r| r["method"] == "thread/start")
+                    .count(),
+                1
+            );
+            assert!(!trace(&dir).iter().any(|r| r["method"] == "turn/start"));
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn helper_failure_classification_retains_rpc_method_code_and_created_id() {
+        for (fault, outcome, method, code, has_id) in [
+            (
+                "initialize-reject",
+                CreationOutcome::Rejected,
+                Some("initialize"),
+                Some(-32602),
+                false,
+            ),
+            (
+                "start-reject",
+                CreationOutcome::Rejected,
+                Some("thread/start"),
+                Some(-32602),
+                false,
+            ),
+            (
+                "start-other",
+                CreationOutcome::Unknown,
+                Some("thread/start"),
+                Some(-32000),
+                false,
+            ),
+            (
+                "start-drop",
+                CreationOutcome::Unknown,
+                Some("thread/start"),
+                None,
+                false,
+            ),
+            (
+                "start-timeout",
+                CreationOutcome::Unknown,
+                Some("thread/start"),
+                None,
+                false,
+            ),
+            (
+                "name-reject",
+                CreationOutcome::Created,
+                Some("thread/name/set"),
+                Some(-32602),
+                true,
+            ),
+            (
+                "read-reject",
+                CreationOutcome::Created,
+                Some("thread/read"),
+                Some(-32602),
+                true,
+            ),
+            ("exit", CreationOutcome::Created, None, None, true),
+        ] {
+            let (dir, installation) = fake_runtime(fault);
+            let err = create_or_finish(
+                &installation,
+                dir.path().to_str().unwrap(),
+                "title",
+                true,
+                None,
+                |_| Ok(()),
+                Duration::from_millis(500),
+            )
+            .unwrap_err();
+            assert_eq!(err.outcome, outcome, "{fault}");
+            assert_eq!(err.method.as_deref(), method, "{fault}");
+            assert_eq!(err.code, code, "{fault}");
+            assert_eq!(err.session_id.is_some(), has_id, "{fault}");
+            assert!(!trace(&dir).iter().any(|r| r["method"] == "turn/start"));
+        }
+        let (dir, mut installation) = fake_runtime("success");
+        let err = create(
+            &installation,
+            dir.path().to_str().unwrap(),
+            "title",
+            true,
+            |_| Err("disk failure".into()),
+        )
+        .unwrap_err();
+        assert_eq!(err.outcome, CreationOutcome::Unknown);
+        assert_eq!(err.stage, "persist-thread");
+        assert!(err.session_id.is_some());
+        assert_eq!(trace(&dir).len(), 3);
+        installation.executable = dir.path().join("missing-runtime");
+        let err = create(
+            &installation,
+            dir.path().to_str().unwrap(),
+            "title",
+            true,
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(err.outcome, CreationOutcome::Rejected);
+        assert_eq!(err.stage, "spawn");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn process_faults_drive_durable_receipts_and_resume_without_duplicate_creation() {
+        use super::super::actions::Action;
+        for fault in [
+            "start-reject",
+            "start-drop",
+            "name-reject",
+            "read-reject",
+            "exit",
+        ] {
+            let (dir, installation) = fake_runtime(fault);
+            let path = dir.path().join("receipt.json");
+            let input = json!({"op":"create","id":"operation","text":"task"});
+            let mut action = Action::load(path.clone(), input.clone()).unwrap();
+            action
+                .ensure_thread(&installation, dir.path().to_str().unwrap(), "title", true)
+                .unwrap_err();
+            let mut retry = Action::load(path, input).unwrap();
+            if fault == "start-drop" {
+                assert!(retry.receipt().is_err());
+                assert_eq!(
+                    trace(&dir)
+                        .iter()
+                        .filter(|r| r["method"] == "thread/start")
+                        .count(),
+                    1
+                );
+                continue;
+            }
+            assert!(retry.receipt().unwrap().is_none());
+            let script = std::fs::read_to_string(&installation.executable)
+                .unwrap()
+                .replace(&format!("FAULT={fault:?}"), "FAULT=\"success\"");
+            std::fs::write(&installation.executable, script).unwrap();
+            retry
+                .ensure_thread(&installation, dir.path().to_str().unwrap(), "title", true)
+                .unwrap();
+            let starts = trace(&dir)
+                .iter()
+                .filter(|r| r["method"] == "thread/start")
+                .count();
+            assert_eq!(
+                starts,
+                if fault == "start-reject" { 2 } else { 1 },
+                "{fault}"
+            );
+        }
+    }
     #[test]
     #[cfg(target_os = "macos")]
     fn installation_check_distinguishes_missing_app_runtime_and_data_without_a_socket() {

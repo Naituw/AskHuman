@@ -940,6 +940,9 @@ fn agent_args(
             if permission == LaunchPermission::Yolo {
                 args.push(yolo_flag(kind).into());
             }
+            if kind == AgentKind::Codex {
+                args.push("--".into());
+            }
             args.push(prompt.into());
         }
         LaunchMode::Fork { source_session_id } => match kind {
@@ -1273,6 +1276,44 @@ fn harden(_path: &Path, _mode: u32) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_new_tasks_keep_option_like_and_multiline_text_as_one_argument() {
+        for prompt in [
+            "ordinary task",
+            "-x",
+            "--help",
+            "--bad-option\nquotes ' \" $HOME $(touch /tmp/never) `echo test`",
+        ] {
+            assert_eq!(
+                agent_args(
+                    AgentKind::Codex,
+                    LaunchPermission::AgentDefault,
+                    &LaunchMode::New,
+                    prompt
+                ),
+                vec!["--", prompt]
+            );
+            assert_eq!(
+                agent_args(
+                    AgentKind::Codex,
+                    LaunchPermission::Yolo,
+                    &LaunchMode::New,
+                    prompt
+                ),
+                vec!["--dangerously-bypass-approvals-and-sandbox", "--", prompt]
+            );
+            assert_eq!(
+                agent_args(
+                    AgentKind::Claude,
+                    LaunchPermission::AgentDefault,
+                    &LaunchMode::New,
+                    prompt
+                ),
+                vec![prompt]
+            );
+        }
+    }
 
     #[test]
     fn yolo_flags_are_fixed() {
