@@ -92,13 +92,19 @@ mod tests {
     #[test]
     fn fresh_snapshots_preserve_sources_and_isolate_same_names() {
         let dir = tempfile::tempdir().unwrap();
-        let source = dir.path().join("报告 <one> space.MD");
+        // Windows disallows angle brackets in file names; ampersands still exercise title escaping.
+        let (filename, escaped_title) = if cfg!(target_os = "windows") {
+            ("报告 &one space.MD", "报告 &amp;one space.MD</title>")
+        } else {
+            ("报告 <one> space.MD", "报告 &lt;one&gt; space.MD</title>")
+        };
+        let source = dir.path().join(filename);
         let original = "# First\n\n<script>bad()</script>\n\n[x](javascript:alert%281%29) ![secret](file:///secret)";
         std::fs::write(&source, original).unwrap();
         let first = snapshot(source.to_str().unwrap()).unwrap();
         let doc = std::fs::read_to_string(&first).unwrap();
         assert!(doc.contains("<h1>First</h1>"));
-        assert!(doc.contains("报告 &lt;one&gt; space.MD</title>"));
+        assert!(doc.contains(escaped_title));
         assert!(doc.contains("Content-Security-Policy"));
         assert!(!doc.contains("<script>"));
         assert!(!doc.contains("javascript:"));
