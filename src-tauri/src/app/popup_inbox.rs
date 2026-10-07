@@ -98,6 +98,7 @@ pub struct Inbox {
 pub struct Snapshot {
     pub requests: Vec<ShowPayload>,
     recovered: bool,
+    presented: bool,
     focused_request_id: Option<String>,
 }
 impl Inbox {
@@ -120,6 +121,7 @@ impl Inbox {
         Snapshot {
             requests,
             recovered: self.recovered,
+            presented: state.presented,
             focused_request_id: state.focus.clone(),
         }
     }
@@ -164,7 +166,6 @@ impl Inbox {
         state.presented = false;
         state.cycle = state.cycle.wrapping_add(1);
         drop(state);
-        super::popup_pulse::cancel();
         if let Some(window) = app.get_webview_window("popup") {
             let _ = window.hide();
         }
@@ -372,7 +373,7 @@ impl Inbox {
         };
         let window = window.clone();
         tauri::async_runtime::spawn(async move {
-            // A burst produces one sound and one pulse after the final geometry transaction.
+            // A burst produces one sound after the final geometry transaction.
             tokio::time::sleep(std::time::Duration::from_millis(180)).await;
             let inbox = window.state::<Inbox>();
             if !inbox.current_cycle(cycle) || inbox.inner.lock().unwrap().arrival != arrival {
@@ -380,7 +381,6 @@ impl Inbox {
             }
             let config = crate::config::AppConfig::load_without_secrets();
             crate::sound::play(&config.general.popup_sound);
-            let _ = super::popup_pulse::pulse(&window).await;
         });
     }
 }
@@ -388,9 +388,6 @@ impl Inbox {
 pub(super) fn setup(app: &mut tauri::App, ipc: super::PopupIpc) -> tauri::Result<()> {
     let (generation, recovered) = ipc.host.expect("shared popup requires a host lease");
     app.manage(Inbox::new(ipc.gui_tx, generation, recovered));
-    if let Some(window) = app.get_webview_window("popup") {
-        super::popup_pulse::watch_interaction(&window).map_err(std::io::Error::other)?;
-    }
     let app = app.handle().clone();
     tauri::async_runtime::spawn(async move {
         let mut reader = ipc.reader;

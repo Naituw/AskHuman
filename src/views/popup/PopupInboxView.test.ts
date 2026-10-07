@@ -20,6 +20,7 @@ vi.mock("../PopupView.vue", () => ({ default: defineComponent({ props: ["scope"]
 } }) }));
 import PopupInboxView from "../PopupInboxView.vue";
 import UnreadRipple from "./UnreadRipple.vue";
+import InboxArrivalNotice from "./InboxArrivalNotice.vue";
 function request(id: string, project = "/project"): PopupInboxRequest {
   return { requestId: id, sequence: id.charCodeAt(0), project, source: "Codex", lang: "en", createdAtMs: 1,
     interaction: { type: "ask", request: { id, isMarkdown: true, selectOnly: false, single: false, outputFormat: "text",
@@ -99,17 +100,17 @@ describe("shared popup navigation", () => {
     expect((wrapper.find('[data-form-id="a"]').element as HTMLTextAreaElement).value).toBe("retained draft");
     expect((wrapper.element as HTMLElement).style.getPropertyValue("--inbox-sidebar")).toBe("330px");
   });
-  it("keeps an arrival highlighted for all five flashes without clearing unread state", async () => {
+  it("highlights once after landing, then starts ripple without clearing unread state", async () => {
     await start();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     emit("popup-inbox-show", request("c")); await flushPromises();
     const row = wrapper.findAll(".inbox-row")[2];
     expect(row.findComponent(UnreadRipple).props("active")).toBe(false);
-    for (let cycle = 0; cycle < 4; cycle++) {
-      await vi.advanceTimersByTimeAsync(400);
-      expect(row.classes()).toContain("flash");
-    }
-    await vi.advanceTimersByTimeAsync(400);
+    expect(row.classes()).not.toContain("flash");
+    wrapper.findComponent(InboxArrivalNotice).vm.$emit("settled", "c", "landed");
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(639); expect(row.classes()).toContain("flash");
+    await vi.advanceTimersByTimeAsync(1);
     expect(row.classes()).not.toContain("flash");
     expect(row.find(".inbox-dot").classes()).toContain("unread");
     expect(row.findComponent(UnreadRipple).props("active")).toBe(true);

@@ -130,7 +130,7 @@ AskHuman/
         coordinator.rs       首答胜出与其它渠道取消
         popup_inbox.rs · popup_inbox_geometry.rs  共享宿主请求状态及三区几何事务
         popup_canvas.rs · swift/PopupCanvas.swift  过渡固定画布与普通原生自适应布局
-        popup_transition.rs · popup_pulse.rs  非激活前置与合成提醒
+        popup_transition.rs  非激活前置（到达提醒由前端气泡动效承担）
         popup_preview.rs · popup_preview_geometry.rs  预览桥接与兼容几何
         popup_preview_actions.rs  Popup 原文件菜单与跨平台定位
 

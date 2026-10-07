@@ -64,10 +64,15 @@ macOS 同步调整 DOM 原点，保留同一原生 viewport。松开后将 Sideb
 保存最终有效尺寸。问题复现与验证记录见 `plans/popup-preview-divider-response.md`。
 Sidebar / Preview 展开与收起的原生几何提交固定为 0ms，即时切换；固定画布交接
 仍保持正文与原生附件位置，正式 Dev 窗口也不再显示慢速动画开关。
-`popup_transition.rs` 负责非激活前置。`popup_pulse.rs` 运行时加载
-SkyLight transform，以 CVDisplayLink 驱动 2.2% / 540ms 无回弹提醒；实际窗口 frame 不变。
-到达提醒合并短时突发，并以前置/蓝点/高亮降级。减少动态效果时跳过缩放。非激活前置
-及最小化恢复保留其他应用键盘焦点，托盘指定请求则允许用户显式聚焦。
+`popup_transition.rs` 负责非激活前置及最小化恢复，保留其他应用键盘焦点；托盘指定请求
+允许用户显式聚焦。第一条直接显示，后续请求在原生布局提交并前置后，由
+`InboxArrivalNotice.vue` / `inboxArrival.ts` 播放中央提问气泡飞入侧栏蓝点的提醒。
+中心由 Sidebar 和正文的实际 DOM 边界计算，排除右侧原生附件预览及离屏画布 reserve。
+每请求独立并发播放，落位后高亮一次并启动已有未读扩散；查看或终态会取消对应动效。
+只在启动时滚动 Sidebar 使目标可见，飞行期间不再次抢滚动；动效层透过鼠标，位于关闭
+确认层下方。换题期间的新到达在换题结束后一起播放。减少动态效果时保留静态未读提示。
+提示音继续合并短时突发。生产路径已移除 WindowServer 整窗缩放；旧 `popup_pulse.rs`
+仅供缩放回归样例引用。完整时序及生命周期见 `specs/popup-arrival-envelope.md`。
 
 GUI Host 保留独立的设置/历史/托盘职责；空宿主不保活 Daemon，沿用 popupPrewarm 控制
 空队列后的待命/退出。`channels.popup.windowMode` 默认 `merged`，在设置「通用 → 弹窗行为」

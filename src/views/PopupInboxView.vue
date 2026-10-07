@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useI18n } from "vue-i18n";
 import PopupView from "./PopupView.vue";
 import UnreadRipple from "./popup/UnreadRipple.vue";
+import InboxArrivalNotice from "./popup/InboxArrivalNotice.vue";
+import { arrivalTiming, type ArrivalEnd, type ArrivalGeometry } from "./popup/inboxArrival";
 import type { PopupScope, InboxLayout } from "./popup/usePopupCore";
 import type { PopupInboxRequest } from "../lib/types";
 import { cancelPopup, confirmPopupReady, popupInboxActivate, popupInboxIdle, popupInboxInit, popupShowWindow } from "../lib/ipc";
@@ -41,6 +43,10 @@ const nativePreviewSync = new Map<string, () => Promise<void>>();
 const visited = ref(new Set<string>());
 const drafts = ref(new Set<string>());
 const flashed = ref(new Set<string>());
+const arriving = ref(new Set<string>());
+const arrivalNotice = ref<InstanceType<typeof InboxArrivalNotice> | null>(null);
+const pendingArrivals = new Set<string>();
+let hostPresented = false;
 const recovered = ref(false);
 const error = ref("");
 const notice = ref("");
@@ -77,6 +83,55 @@ function later(fn: () => void, ms: number) {
   const timer = setTimeout(() => { timers.delete(timer); if (!disposed) fn(); }, ms);
   timers.add(timer);
 }
+function unreadArrival(id: string) {
+  return !visited.value.has(id) && !terminals.has(id) && requests.value.some(request => request.requestId === id);
+}
+function cancelArrival(id: string) {
+  pendingArrivals.delete(id); arriving.value.delete(id); flashed.value.delete(id);
+  arrivalNotice.value?.cancel(id);
+}
+function arrivalSettled(id: string, reason: ArrivalEnd) {
+  pendingArrivals.delete(id); arriving.value.delete(id);
+  if (reason !== "landed" || !unreadArrival(id)) return;
+  flashed.value.add(id);
+  later(() => flashed.value.delete(id), arrivalTiming.land);
+}
+function arrivalRow(id: string) {
+  return root.value?.querySelector<HTMLElement>(`[data-inbox-row="${CSS.escape(id)}"]`);
+}
+function measureArrival(id: string): ArrivalGeometry | null {
+  if (!unreadArrival(id) || !root.value) return null;
+  const row = arrivalRow(id);
+  const nav = row?.closest(".inbox-navigation")?.getBoundingClientRect();
+  const dot = row?.querySelector(".inbox-dot")?.getBoundingClientRect();
+  const main = root.value.querySelector<HTMLElement>(`[data-inbox-request="${CSS.escape(active.value ?? "")}"] .popup-main`)?.getBoundingClientRect();
+  const sidebarBounds = root.value.querySelector(".inbox-sidebar")?.getBoundingClientRect();
+  if (!nav || !dot || !main || !sidebarBounds || !dot.width || !main.width) return null;
+  const x = dot.left + dot.width / 2, y = dot.top + dot.height / 2;
+  // Follow layout changes without scrolling again during a flight.
+  if (x - 5 < nav.left || x + 5 > nav.right || y - 5 < nav.top || y + 5 > nav.bottom) return null;
+  const bounds = root.value.getBoundingClientRect();
+  return {
+    origin: { x: (sidebarBounds.left + main.right) / 2 - bounds.left, y: (main.top + main.bottom) / 2 - bounds.top - 10 },
+    target: { x: x - bounds.left, y: y - bounds.top },
+  };
+}
+function flushArrivals() {
+  if (!hostPresented || document.hidden || advancing.value || !arrivalNotice.value) return;
+  for (const id of [...pendingArrivals]) {
+    pendingArrivals.delete(id);
+    if (!unreadArrival(id)) { cancelArrival(id); continue; }
+    const row = arrivalRow(id), nav = row?.closest<HTMLElement>(".inbox-navigation");
+    if (row && nav) {
+      const r = row.getBoundingClientRect(), n = nav.getBoundingClientRect();
+      // Change only the navigation scroll offset; scrollIntoView can move the answer.
+      if (r.top < n.top) nav.scrollTop += r.top - n.top;
+      else if (r.bottom > n.bottom) nav.scrollTop += r.bottom - n.bottom;
+    }
+    void arrivalNotice.value.play(id);
+  }
+}
+watch(advancing, () => { void nextTick(flushArrivals); });
 function enqueue(fn: () => Promise<unknown>) {
   tail = tail.then(async () => { if (!disposed) await fn(); }).catch(e => {
     if (disposed) return;
@@ -199,6 +254,7 @@ async function select(id: string, explicit = false) {
   await popupInboxActivate(id);
   active.value = id;
   visited.value.add(id);
+  cancelArrival(id);
   await nextTick();
   await geometry();
   if (readyIds.has(id)) await popupShowWindow(id);
@@ -226,23 +282,30 @@ async function add(show: PopupInboxRequest, arrival = true) {
     if (!earlyArrivals.delete(show.requestId)) return;
   } else append(show);
   if (active.value === null) await select(show.requestId);
+  const animate = arrival && unreadArrival(show.requestId);
+  if (animate) arriving.value.add(show.requestId);
   await nextTick();
   // Ready means that an answer surface exists, including navigation to unopened confirmations.
   if (show.interaction.type === "confirm") await confirmPopupReady(show.requestId);
   if (show.requestId !== active.value) await popupShowWindow(show.requestId);
   if (arrival) {
-    flashed.value.add(show.requestId);
-    later(() => flashed.value.delete(show.requestId), 2000);
-    await geometry(true);
+    try {
+      await geometry(true);
+      await nextTick();
+      if (animate && unreadArrival(show.requestId)) { pendingArrivals.add(show.requestId); flushArrivals(); }
+      else cancelArrival(show.requestId);
+    } catch (e) { cancelArrival(show.requestId); throw e; }
   } else await geometry();
 }
 function removeLocal(id: string) {
+  cancelArrival(id);
   requests.value = requests.value.filter(r => r.requestId !== id);
   visited.value.delete(id); drafts.value.delete(id); flashed.value.delete(id);
   readyIds.delete(id); scopes.delete(id); remembered.delete(id); previews.delete(id); nativePreviewSync.delete(id);
   failedIds.delete(id); preparedIds.value.delete(id); focusRestorers.delete(id); earlyArrivals.delete(id); settleReady(id);
 }
 async function finishRound() {
+  pendingArrivals.clear(); arriving.value.clear(); arrivalNotice.value?.clear(); hostPresented = false;
   active.value = null; sidebar.value = false; sidebarWidth.value = 0; groupOrder.value = [];
   recovered.value = false; modal.value = null; error.value = ""; notice.value = "";
   pin.value = null;
@@ -445,17 +508,20 @@ function beginResize(event: PointerEvent) {
 }
 onMounted(async () => {
   window.addEventListener("keydown", keydown, true);
+  document.addEventListener("visibilitychange", flushArrivals);
+  listeners.push(await listen("popup-inbox-presented", () => { hostPresented = true; void nextTick(flushArrivals); }));
   listeners.push(await listen<PopupInboxRequest>("popup-inbox-show", event => {
     const show = event.payload;
     if (motion.value && !terminals.has(show.requestId) && !requests.value.some(r => r.requestId === show.requestId)) {
       append(show); earlyArrivals.add(show.requestId);
+      arriving.value.add(show.requestId);
     }
     void enqueue(() => add(show));
   }));
   listeners.push(await listen<{ requestId: string; winner: string; completion?: CompletionFeedback }>("popup-inbox-terminal", event => {
     const { requestId, winner, completion } = event.payload;
     if (terminals.has(requestId)) return;
-    terminals.add(requestId); settleReady(requestId);
+    terminals.add(requestId); settleReady(requestId); cancelArrival(requestId);
     if (motion.value?.incoming === requestId) { motion.value.incoming = null; motion.value.phase = "prepare"; }
     void enqueue(() => terminal(requestId, winner, completion));
   }));
@@ -464,14 +530,20 @@ onMounted(async () => {
   listeners.push(await listen<InboxLayout>("popup-inbox-layout", event => { allocation.value = event.payload; sidebarWidth.value = event.payload.sidebarWidth; }));
   listeners.push(await listen("popup-inbox-reconcile", () => { void enqueue(() => geometry()); }));
   const snapshot = await popupInboxInit();
+  hostPresented ||= snapshot.presented ?? false;
   recovered.value = snapshot.recovered;
   await enqueue(async () => {
-    for (const request of snapshot.requests) await add(request, false);
+    // A fresh cold host may receive a burst before its WebView subscribes. Restored
+    // or already-presented snapshots keep their unread state without replaying it.
+    const initialArrival = !snapshot.recovered && !hostPresented;
+    for (const request of snapshot.requests) await add(request, initialArrival);
     if (snapshot.focusedRequestId) await select(snapshot.focusedRequestId, true);
   });
 });
 onBeforeUnmount(() => {
   disposed = true; window.removeEventListener("keydown", keydown, true);
+  document.removeEventListener("visibilitychange", flushArrivals);
+  pendingArrivals.clear(); arrivalNotice.value?.clear();
   clock?.cancel(); readyWaiters.forEach(waiters => waiters.forEach(resolve => resolve())); readyWaiters.clear();
   listeners.forEach(off => off()); timers.forEach(clearTimeout);
 });
@@ -486,8 +558,8 @@ onBeforeUnmount(() => {
           <h2 :title="group.path">{{ projectName(group.path) }} <span>{{ group.requests.length }}</span></h2>
           <div v-for="request in group.requests" :key="request.requestId" class="inbox-entry" :class="{ 'inbox-entry-collapse': motion?.from === request.requestId && motion.phase !== 'waiting' && !motion.reduced }" :style="motion?.from === request.requestId ? { '--completion-row-height': `${motion.rowHeight}px` } : undefined">
           <button class="inbox-row" :data-inbox-row="request.requestId" :class="{ selected: request.requestId === selectedId, flash: flashed.has(request.requestId) && motion?.from !== request.requestId, unread: !visited.has(request.requestId) }" :aria-current="request.requestId === selectedId ? 'true' : undefined" :title="inboxTitle(request)" @click="choose(request.requestId)">
-            <UnreadRipple :active="!visited.has(request.requestId) && !flashed.has(request.requestId)" />
-            <span class="inbox-dot" :class="{ unread: !visited.has(request.requestId) }" :aria-label="!visited.has(request.requestId) ? t('popup.inbox.unread') : undefined"></span>
+            <UnreadRipple :active="!visited.has(request.requestId) && !arriving.has(request.requestId) && !flashed.has(request.requestId)" />
+            <span class="inbox-dot" :class="{ unread: !visited.has(request.requestId) && !arriving.has(request.requestId) }" :aria-label="!visited.has(request.requestId) ? t('popup.inbox.unread') : undefined"></span>
             <span class="inbox-row-content"><strong>{{ inboxTitle(request) || t('popup.inbox.untitled') }}</strong><span class="inbox-row-meta">{{ request.agentKind || request.source }} · {{ t(`popup.inbox.kind.${inboxKind(request)}`) }}<em v-if="drafts.has(request.requestId)">{{ t('popup.inbox.draft') }}</em></span></span>
           </button>
           </div>
@@ -502,6 +574,7 @@ onBeforeUnmount(() => {
         <PopupView :scope="scopeFor(request.requestId)" />
       </div>
     </main>
+    <InboxArrivalNotice ref="arrivalNotice" :measure="measureArrival" @settled="arrivalSettled" />
     <div v-if="notice" class="inbox-notice" role="status">{{ notice }}</div>
     <div v-if="modal" class="inbox-close-backdrop" @click.self="continueAnswering">
       <section class="inbox-close-dialog" role="dialog" aria-modal="true" aria-labelledby="inbox-close-title">
@@ -529,7 +602,7 @@ onBeforeUnmount(() => {
 .inbox-native .inbox-close-backdrop { left: var(--inbox-visible-left); width: var(--inbox-visible-width); right: auto; }
 .inbox-native .inbox-notice, .inbox-native .inbox-error { left: calc(var(--inbox-canvas-left) + var(--inbox-main) / 2); }
 .inbox-native .inbox-recovery { width: var(--inbox-main); box-sizing: border-box; }
-.inbox-root { width: 100vw; height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; color: var(--text-primary); }
+.inbox-root { position: relative; width: 100vw; height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; color: var(--text-primary); }
 .inbox-root.inbox-expanded { grid-template-columns: var(--inbox-sidebar) 6px minmax(0, 1fr); }
 .inbox-sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: color-mix(in srgb, var(--bg, #f5f5f5) 72%, transparent); }
 .inbox-heading { display: flex; align-items: center; justify-content: space-between; padding: 30px 16px 14px; font-size: 13px; font-weight: 600; user-select: none; }
@@ -551,7 +624,7 @@ onBeforeUnmount(() => {
 @media (prefers-color-scheme: dark) { :root:not(.theme-light) .inbox-row { --inbox-ripple-color: rgba(38, 133, 232, .252); } }
 .inbox-row.selected { background: color-mix(in srgb, #2685e8 12%, transparent); }
 .inbox-row:hover { background: color-mix(in srgb, #2685e8 8%, transparent); }
-.inbox-row.flash { animation: inbox-row-arrival .4s ease-in-out 5; }
+.inbox-row.flash { animation: inbox-row-arrival 640ms cubic-bezier(.22, 0, .22, 1); }
 .inbox-dot { position: relative; z-index: 1; flex: 0 0 6px; height: 6px; margin-top: 5px; }
 .inbox-dot.unread::before { content: ''; position: absolute; left: -2px; top: -2px; width: 10px; height: 10px; border-radius: 50%; background: #2685e8; animation: inbox-unread-dot 2.8s cubic-bezier(.4, 0, .2, 1) infinite; }
 .inbox-row-content { position: relative; z-index: 1; min-width: 0; flex: 1; }
@@ -579,8 +652,9 @@ onBeforeUnmount(() => {
 .inbox-close-new { opacity: .6; }
 .popup-submission-error { margin: 0; padding: 8px 14px; font-size: 12px; }
 @keyframes inbox-row-arrival {
-  0%, 70%, 100% { box-shadow: inset 0 0 0 100px #2685e800; }
-  20%, 35% { box-shadow: inset 0 0 0 100px #2685e840; }
+  0%, 100% { box-shadow: inset 0 0 0 100px #2685e800; }
+  28% { box-shadow: inset 0 0 0 100px rgba(38, 133, 232, .17); }
+  58% { box-shadow: inset 0 0 0 100px rgba(38, 133, 232, .09); }
 }
 @keyframes inbox-unread-dot { 0%, 100% { background: #2685e8; } 45% { background: #006dff; } 70% { background: #2685e8; } }
 @media (prefers-reduced-motion: reduce) {

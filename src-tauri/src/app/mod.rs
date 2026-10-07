@@ -10,7 +10,6 @@ pub mod popup_inbox_geometry;
 pub mod popup_preview;
 pub mod popup_preview_actions;
 pub(crate) mod popup_preview_geometry;
-pub mod popup_pulse;
 mod popup_size;
 pub mod popup_transition;
 pub mod terminal_gate;
@@ -878,7 +877,6 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                             .try_state::<popup_inbox::Inbox>()
                             .is_some()
                         {
-                            popup_pulse::cancel();
                             window.app_handle().exit(3);
                             return;
                         }

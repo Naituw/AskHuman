@@ -211,7 +211,6 @@ pub async fn prepare(
 ) -> Result<Allocation, String> {
     wait_idle(window).await?;
     wait_for_pointer(window).await;
-    super::popup_pulse::cancel();
     let (frame, scale, work, special) = native(window)?;
     let config = crate::config::AppConfig::load_without_secrets()
         .channels
@@ -520,7 +519,6 @@ pub async fn resize_sidebar(
     finished: bool,
 ) -> Result<Allocation, String> {
     wait_idle(window).await?;
-    super::popup_pulse::cancel();
     let (frame, scale, work, special) = native(window)?;
     let view = webview(window)?;
     let (allocation, remember_main) = {
@@ -618,7 +616,6 @@ pub async fn resize_preview(
 ) -> Result<Allocation, String> {
     wait_idle(window).await?;
     super::popup_preview::request(window, request_id)?;
-    super::popup_pulse::cancel();
     let (frame, scale, work, special) = native(window)?;
     let view = webview(window)?;
     let (allocation, durable) = {
@@ -864,7 +861,6 @@ async fn wait_for_pointer(window: &Window) {
     }
 }
 pub async fn reset(window: &Window) -> Result<(), String> {
-    super::popup_pulse::cancel();
     let allocation = prepare(window, Some(false), Some(false), None, None).await?;
     commit(window, allocation.revision, false).await?;
     let owner = state(window);

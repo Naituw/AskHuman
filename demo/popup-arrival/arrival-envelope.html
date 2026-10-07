@@ -1,0 +1,373 @@
+<div id="arrival-icon-comparison" class="viz-carousel" aria-label="提示图标组合" data-previous-label="上一个图标" data-next-label="下一个图标">
+<section data-variant="柔光瓷面">
+<div id="askhuman-arrival-demo">
+  <div class="viz-controls" aria-label="到达动画预览">
+    <label class="form-label">初始状态 <select class="form-select" data-control="scenario"><option value="expanded">侧栏已展开</option><option value="collapsed">侧栏尚未展开</option></select></label>
+    <button class="btn btn-primary" type="button" data-action="play">新提问到达</button>
+    <button class="btn" type="button" data-action="delay">3 秒后到达</button>
+    <label class="form-check"><input class="form-check-input" type="checkbox" data-control="covered"><span class="form-check-label">被其他窗口遮挡</span></label>
+    <label class="form-check"><input class="form-check-input" type="checkbox" data-control="slow"><span class="form-check-label">慢放</span></label>
+  </div>
+  <div class="arrival-stage viz-dotted-background" aria-label="AskHuman 作答窗口预览">
+    <section class="arrival-window" aria-label="AskHuman" data-expanded="true">
+      <div class="arrival-traffic" aria-hidden="true"><span></span><span></span><span></span></div>
+      <aside class="arrival-sidebar" aria-label="待回答提问"><header>待回答 <span data-count>3</span></header><nav data-navigation></nav></aside>
+      <main class="arrival-main">
+        <header class="arrival-header"><div class="arrival-brand"><i data-lucide="circle-help" aria-hidden="true"></i><span>来自 <b>Codex</b> 的提问</span></div><span class="arrival-project">HumanInLoop</span><span class="arrival-time">刚刚</span></header>
+        <div class="arrival-content">
+          <h2 data-question-title>确认窗口合并后的交互</h2>
+          <p data-question-body>多个 Agent 的提问会放在同一个窗口里。你可以先完成当前回答，再处理新到达的提问。</p>
+          <div class="arrival-options" role="group" aria-label="回答选项">
+            <button class="arrival-option cursor-interaction" type="button" aria-pressed="true"><span class="arrival-radio"></span><span>保留当前提问和输入内容</span><small>推荐</small></button>
+            <button class="arrival-option cursor-interaction" type="button" aria-pressed="false"><span class="arrival-radio"></span><span>切换到最新到达的提问</span></button>
+          </div>
+        </div>
+        <div class="arrival-composer">
+          <label class="arrival-editor-label" for="arrival-reply">补充说明</label>
+          <textarea id="arrival-reply" rows="3" placeholder="输入补充说明…">新提问到达时，我正在写这段回复。光标和键盘输入应该继续保持在这里。</textarea>
+          <div class="arrival-footer"><button class="arrival-attach cursor-interaction" type="button" aria-label="添加附件"><i data-lucide="paperclip" aria-hidden="true"></i></button><span>⌘ Enter 发送</span><button class="arrival-send cursor-interaction" type="button">发送回答 <i data-lucide="arrow-up" aria-hidden="true"></i></button></div>
+        </div>
+      </main>
+      <div class="arrival-overlay" aria-hidden="true" data-overlay></div>
+    </section>
+    <section class="arrival-cover" aria-label="模拟另一个应用窗口" hidden>
+      <header><span aria-hidden="true">● ● ●</span> 工作笔记</header><label for="arrival-external-editor">其他应用中的输入</label>
+      <textarea id="arrival-external-editor" rows="3">我在另一个应用里输入，新提问会让 AskHuman 前置，但输入焦点仍然留在这里。</textarea>
+    </section>
+  </div>
+  <div class="arrival-demo-status"><span data-status role="status" aria-live="polite">等待新提问</span><span data-timing>出现 220 · 停留 500 · 飞入 560 ms</span></div>
+</div>
+</section>
+</div>
+<style>
+#arrival-icon-comparison {
+  --arrival-bg: light-dark(#f0f0f2, #1e1e20); --arrival-side: light-dark(#e9e9ed, #262629);
+  --arrival-text: light-dark(#1d1d1f, #ededf0); --arrival-muted: light-dark(#73737b, #aaaab4);
+  --arrival-line: light-dark(#00000014, #ffffff16); --arrival-control: light-dark(#fafafd, #363639);
+  --arrival-blue: light-dark(#2685e8, #2685e8); --arrival-selection: light-dark(#dbe9fb, #273b55);
+  --arrival-highlight: light-dark(#b7d9ff, #315882); --arrival-paper: light-dark(#ffffff, #eef5ff);
+  --arrival-ink: #1976dc; --arrival-shadow: light-dark(#18284624, #00000066); --arrival-cover: light-dark(#ffffff, #363638);
+  color-scheme: light;
+}
+#arrival-icon-comparison .viz-controls { margin-bottom: 14px; }
+#arrival-icon-comparison .arrival-stage { position: relative; height: 570px; }
+#arrival-icon-comparison .arrival-window { position: absolute; top: 12px; bottom: 28px; right: 24px; width: calc(100% - 48px); max-width: 920px; display: grid; grid-template-columns: 230px minmax(0, 1fr); border-radius: 13px; background: var(--arrival-bg); color: var(--arrival-text); box-shadow: 0 18px 52px var(--arrival-shadow), 0 0 0 1px var(--arrival-line); overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif; }
+#arrival-icon-comparison .arrival-window[data-expanded="false"] { width: calc(100% - 278px); max-width: 690px; grid-template-columns: minmax(0, 1fr); }
+#arrival-icon-comparison .arrival-window[data-expanded="false"] .arrival-sidebar { display: none; }
+#arrival-icon-comparison .arrival-traffic { position: absolute; top: 13px; left: 14px; display: flex; gap: 7px; z-index: 2; }
+#arrival-icon-comparison .arrival-traffic span { width: 11px; height: 11px; border-radius: 50%; background: #ff5f57; box-shadow: inset 0 0 0 .5px #0002; }
+#arrival-icon-comparison .arrival-traffic span:nth-child(2) { background: #febc2e; }
+#arrival-icon-comparison .arrival-traffic span:nth-child(3) { background: #28c840; }
+#arrival-icon-comparison .arrival-sidebar { background: var(--arrival-side); border-right: 1px solid var(--arrival-line); min-width: 0; padding-top: 39px; }
+#arrival-icon-comparison .arrival-sidebar > header { display: flex; justify-content: space-between; padding: 7px 17px 12px; font-size: 13px; font-weight: 500; }
+#arrival-icon-comparison .arrival-sidebar > header span { color: var(--arrival-muted); }
+#arrival-icon-comparison .arrival-sidebar nav { padding: 0 8px; }
+#arrival-icon-comparison .arrival-group-label { margin: 17px 11px 8px; display: flex; justify-content: space-between; font-size: 11px; font-weight: 500; color: var(--arrival-muted); }
+#arrival-icon-comparison .arrival-row { position: relative; display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 8px; padding: 12px 10px; margin: 2px 0; background: transparent; color: var(--arrival-text); font: inherit; isolation: isolate; overflow: hidden; }
+#arrival-icon-comparison .arrival-row[aria-current="true"] { background: var(--arrival-selection); }
+#arrival-icon-comparison .arrival-row:hover { background: color-mix(in srgb, var(--arrival-blue) 9%, var(--arrival-side)); }
+#arrival-icon-comparison .arrival-dot { position: relative; flex: 0 0 10px; height: 10px; margin-top: 4px; border-radius: 50%; }
+#arrival-icon-comparison .arrival-row.is-unread .arrival-dot { background: var(--arrival-blue); }
+#arrival-icon-comparison .arrival-row-copy { position: relative; z-index: 1; min-width: 0; }
+#arrival-icon-comparison .arrival-row-copy strong { display: block; font-size: 12px; font-weight: 500; line-height: 1.5; }
+#arrival-icon-comparison .arrival-row-copy small { display: block; font-size: 11px; margin-top: 6px; color: var(--arrival-muted); }
+#arrival-icon-comparison .arrival-row-wash { position: absolute; inset: 0; background: var(--arrival-highlight); opacity: 0; pointer-events: none; z-index: -1; }
+#arrival-icon-comparison .arrival-main { position: relative; min-width: 0; display: flex; flex-direction: column; padding-top: 31px; }
+#arrival-icon-comparison .arrival-header { min-height: 46px; display: flex; gap: 9px; align-items: center; padding: 0 25px; border-bottom: 1px solid var(--arrival-line); font-size: 12px; }
+#arrival-icon-comparison .arrival-brand { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+#arrival-icon-comparison .arrival-brand svg { width: 20px; height: 20px; color: var(--arrival-blue); }
+#arrival-icon-comparison .arrival-brand b { font-weight: 500; }
+#arrival-icon-comparison .arrival-project { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 5px; padding: 4px 6px; background: color-mix(in srgb, var(--arrival-text) 6%, transparent); color: var(--arrival-muted); }
+#arrival-icon-comparison .arrival-time { margin-left: auto; white-space: nowrap; font-size: 11px; color: var(--arrival-muted); }
+#arrival-icon-comparison .arrival-content { padding: 27px 28px 22px; }
+#arrival-icon-comparison .arrival-content h2 { font-size: 17px; line-height: 1.5; font-weight: 500; margin: 0 0 12px; }
+#arrival-icon-comparison .arrival-content p { font-size: 13px; line-height: 1.8; margin: 0 0 23px; }
+#arrival-icon-comparison .arrival-options { display: grid; gap: 9px; }
+#arrival-icon-comparison .arrival-option { display: flex; align-items: center; gap: 9px; border: 1px solid var(--arrival-line); border-radius: 8px; padding: 11px 12px; background: var(--arrival-control); color: var(--arrival-text); font: inherit; font-size: 12px; text-align: left; }
+#arrival-icon-comparison .arrival-radio { width: 13px; height: 13px; border: 1px solid var(--arrival-muted); border-radius: 50%; flex-shrink: 0; }
+#arrival-icon-comparison .arrival-option[aria-pressed="true"] { border-color: color-mix(in srgb, var(--arrival-blue) 55%, var(--arrival-line)); }
+#arrival-icon-comparison .arrival-option[aria-pressed="true"] .arrival-radio { border: 4px solid var(--arrival-blue); width: 7px; height: 7px; background: var(--arrival-paper); }
+#arrival-icon-comparison .arrival-option small { margin-left: auto; color: var(--arrival-blue); font-size: 11px; }
+#arrival-icon-comparison .arrival-composer { padding: 0 26px 17px; margin-top: auto; }
+#arrival-icon-comparison .arrival-editor-label { display: block; font-size: 11px; margin-bottom: 7px; color: var(--arrival-muted); }
+#arrival-icon-comparison .arrival-composer textarea, #arrival-icon-comparison .arrival-cover textarea { box-sizing: border-box; width: 100%; resize: none; padding: 11px 12px; border: 1px solid var(--arrival-line); border-radius: 8px; background: var(--arrival-control); color: var(--arrival-text); font: 13px/1.7 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif; }
+#arrival-icon-comparison .arrival-footer { display: flex; align-items: center; gap: 9px; margin-top: 10px; font-size: 11px; color: var(--arrival-muted); }
+#arrival-icon-comparison .arrival-attach { display: grid; place-items: center; border: 0; background: transparent; padding: 7px; color: inherit; }
+#arrival-icon-comparison .arrival-send { margin-left: auto; display: flex; align-items: center; gap: 8px; padding: 8px 11px; border: 0; border-radius: 7px; color: #fff; background: #167be9; font: inherit; font-size: 12px; }
+#arrival-icon-comparison .arrival-overlay { position: absolute; inset: 0; z-index: 9; pointer-events: none; }
+#arrival-icon-comparison .arrival-overlay * { pointer-events: none; }
+#arrival-icon-comparison .arrival-floater { position: absolute; top: 0; left: 0; width: 88px; height: 88px; transform-origin: center; will-change: transform, opacity; }
+#arrival-icon-comparison .arrival-halo { position: absolute; inset: -43px; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--arrival-blue) 24%, transparent), color-mix(in srgb, var(--arrival-blue) 9%, transparent) 43%, transparent 70%); }
+#arrival-icon-comparison .arrival-icon-face { position: absolute; inset: 0; display: grid; place-items: center; border-radius: 24px; background: linear-gradient(145deg, var(--arrival-paper), #dfedff); box-shadow: 0 12px 36px #194e9730, 0 1px 2px #ffffffcc inset, 0 0 0 .5px #ffffffaa inset; color: var(--arrival-ink); }
+#arrival-icon-comparison .arrival-icon-face svg { width: 52px !important; height: 52px !important; stroke-width: 1.5px; }
+#arrival-icon-comparison .arrival-question-badge { position: absolute; top: -6px; right: -6px; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--arrival-ink); color: #fff; border: 3px solid var(--arrival-paper); font-size: 21px; line-height: 1; font-weight: 500; box-shadow: 0 3px 10px #194e972b; }
+#arrival-icon-comparison .arrival-morph-dot { position: absolute; inset: 0; border-radius: 50%; background: var(--arrival-blue); opacity: 0; }
+#arrival-icon-comparison .arrival-floater.is-solid .arrival-icon-face { background: transparent; box-shadow: none; color: var(--arrival-blue); }
+#arrival-icon-comparison .arrival-floater.is-solid .arrival-icon-face svg { position: relative; z-index: 1; width: 52px !important; height: 52px !important; clip-path: circle(68% at 50% 50%); }
+#arrival-icon-comparison .arrival-icon-backplate { position: absolute; inset: 0; border-radius: 24px; background: linear-gradient(145deg, var(--arrival-paper), #dfedff); box-shadow: 0 12px 36px #194e9726, 0 1px 2px #ffffffdd inset, 0 0 0 .5px #ffffffaa inset; }
+#arrival-icon-comparison [data-contrast="blue"] .arrival-icon-backplate { background: linear-gradient(145deg, light-dark(#e3efff, #eef5ff), light-dark(#cee0fa, #dfedff)); box-shadow: 0 3px 8px #17477616, 0 12px 26px #194e9726, 0 0 0 .7px light-dark(#8aaddb88, #ffffffaa) inset, 0 1px 0 #ffffff99 inset; }
+#arrival-icon-comparison [data-contrast="white"] .arrival-icon-backplate { background: linear-gradient(145deg, #ffffff, #f2f7ff); box-shadow: 0 4px 10px #2639541c, 0 14px 32px #26467426, 0 0 0 .6px #708baa33, 0 1px 1px #ffffffcc inset; }
+#arrival-icon-comparison [data-contrast="porcelain"] .arrival-icon-backplate { background: linear-gradient(145deg, #ffffff 10%, #f8fbff 47%, #eaf1fb); box-shadow: 0 1px 2px #17345214, 0 5px 10px #1b3d6324, 0 15px 28px #233e622b, 0 0 0 .5px #54729633, 0 1.2px 1px #ffffff inset, 0 -1px 1px #b5c7e044 inset; }
+#arrival-icon-comparison [data-contrast="lifted"] .arrival-icon-backplate { background: linear-gradient(145deg, #ffffff, #f6f9fe); box-shadow: 0 3px 7px #1b2d461a, 0 12px 22px #1b2d4633, 0 24px 44px #1b3f672e, 0 0 0 .5px #7894b433, 0 1px 1px #ffffff inset; }
+#arrival-icon-comparison [data-contrast="rim"] .arrival-icon-backplate { background: linear-gradient(155deg, #ffffff 18%, #f5f8fd 55%, #e7eef8); box-shadow: 0 1px 0 #dde5f0, 0 2px 0 #cbd7e7, 0 3px 0 #bdcade, 0 5px 9px #263b5726, 0 16px 26px #2543642b, 0 0 0 .5px #7691b755, 0 1px 0 #ffffff inset; }
+#arrival-icon-comparison .arrival-floater.is-solid .arrival-halo { inset: -36px; background: radial-gradient(circle, color-mix(in srgb, var(--arrival-blue) 18%, transparent), transparent 68%); }
+#arrival-icon-comparison .arrival-cover { box-sizing: border-box; position: absolute; top: 122px; right: 8px; width: min(410px, 74%); padding: 0 22px 24px; background: var(--arrival-cover); color: var(--arrival-text); border-radius: 12px; box-shadow: 0 18px 60px var(--arrival-shadow), 0 0 0 1px var(--arrival-line); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif; }
+#arrival-icon-comparison .arrival-cover header { font-size: 12px; padding: 14px 0 24px; text-align: center; }
+#arrival-icon-comparison .arrival-cover header span { position: absolute; left: 14px; color: var(--arrival-muted); letter-spacing: 2px; }
+#arrival-icon-comparison .arrival-cover label { display: block; margin-bottom: 12px; font-size: 13px; }
+#arrival-icon-comparison .arrival-demo-status { display: flex; justify-content: space-between; gap: 12px; color: var(--arrival-muted); font: 12px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif; flex-wrap: wrap; }
+@media (max-width: 720px) {
+  #arrival-icon-comparison .arrival-stage { height: 592px; }
+  #arrival-icon-comparison .arrival-window { right: 6px; width: calc(100% - 12px); grid-template-columns: 180px minmax(0, 1fr); }
+  #arrival-icon-comparison .arrival-window[data-expanded="false"] { width: calc(100% - 192px); }
+  #arrival-icon-comparison .arrival-header { padding: 0 17px; }
+  #arrival-icon-comparison .arrival-project, #arrival-icon-comparison .arrival-time { display: none; }
+  #arrival-icon-comparison .arrival-content { padding: 24px 18px 18px; }
+  #arrival-icon-comparison .arrival-composer { padding: 0 17px 15px; }
+}
+@media (max-width: 530px) {
+  #arrival-icon-comparison .arrival-stage { height: 850px; }
+  #arrival-icon-comparison .arrival-window { display: flex; flex-direction: column; }
+  #arrival-icon-comparison .arrival-window[data-expanded="false"] { width: calc(100% - 12px); }
+  #arrival-icon-comparison .arrival-sidebar { padding-top: 34px; border-right: 0; border-bottom: 1px solid var(--arrival-line); }
+  #arrival-icon-comparison .arrival-sidebar > header { padding: 4px 15px 6px; }
+  #arrival-icon-comparison .arrival-sidebar nav { display: grid; grid-template-columns: 1fr 1fr; padding: 0 8px 8px; gap: 0 5px; }
+  #arrival-icon-comparison .arrival-group-label { display: none; }
+  #arrival-icon-comparison .arrival-row { padding: 7px 6px; }
+  #arrival-icon-comparison .arrival-row-copy strong { font-size: 11px; }
+  #arrival-icon-comparison .arrival-row-copy small { font-size: 11px; margin-top: 3px; }
+  #arrival-icon-comparison .arrival-main { flex: 1; padding-top: 10px; }
+  #arrival-icon-comparison .arrival-window[data-expanded="false"] .arrival-main { padding-top: 34px; }
+  #arrival-icon-comparison .arrival-footer > span { display: none; }
+  #arrival-icon-comparison .arrival-cover { top: 240px; }
+}
+@media (pointer: coarse) {
+  #arrival-icon-comparison .arrival-option, #arrival-icon-comparison .arrival-send, #arrival-icon-comparison .arrival-attach { min-height: 44px; box-sizing: border-box; }
+  #arrival-icon-comparison .arrival-composer textarea, #arrival-icon-comparison .arrival-cover textarea { font-size: 16px; }
+}
+</style>
+<script>
+(() => {
+  const original = document.getElementById('askhuman-arrival-demo');
+  const carousel = document.getElementById('arrival-icon-comparison');
+  const variants = [
+    { id: 'solid', name: '柔光瓷面', icon: 'message-circle-question-mark', badge: false, solid: true, contrast: 'porcelain' },
+    { id: 'lifted', name: '高悬浮', icon: 'message-circle-question-mark', badge: false, solid: true, contrast: 'lifted' },
+    { id: 'rim', name: '立体薄边', icon: 'message-circle-question-mark', badge: false, solid: true, contrast: 'rim' },
+    { id: 'reference', name: '原白色悬浮', icon: 'message-circle-question-mark', badge: false, solid: true, contrast: 'white' }
+  ];
+  for (const variant of variants) {
+    let root = original;
+    if (variant.id !== 'solid') {
+      root = original.cloneNode(true);
+      root.id = `askhuman-arrival-${variant.id}`;
+      for (const node of root.querySelectorAll('[id]')) node.id += `-${variant.id}`;
+      for (const label of root.querySelectorAll('label[for]')) label.htmlFor += `-${variant.id}`;
+      const section = document.createElement('section');
+      section.dataset.variant = variant.name; section.hidden = true;
+      section.append(root); carousel.append(section);
+    }
+    root.setAttribute('aria-label', variant.name);
+    root.dataset.contrast = variant.contrast;
+    initDemo(root, variant);
+  }
+  function initDemo(root, variant) {
+  const query = selector => root.querySelector(selector);
+  const windowEl = query('.arrival-window'), overlay = query('[data-overlay]');
+  const navigation = query('[data-navigation]'), editor = query('.arrival-composer textarea');
+  const cover = query('.arrival-cover'), scenario = query('[data-control="scenario"]'), status = query('[data-status]');
+  const preferences = { appear: 220, hold: 500, fly: 560, size: 88 };
+  const initialDraft = editor.value, initialTitle = query('[data-question-title]').textContent, initialBody = query('[data-question-body]').textContent;
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  let items = [], selected = 'current', frame = 0, timeout = 0, generation = 0, sequence = 0;
+  const clamp = t => Math.max(0, Math.min(1, t));
+  const ease = t => { t = clamp(t); return t * t * t * (t * (t * 6 - 15) + 10); };
+  const mix = (a, b, t) => a + (b - a) * t;
+
+  function renderNavigation() {
+    navigation.replaceChildren();
+    for (const project of [...new Set(items.map(item => item.project))]) {
+      const group = items.filter(item => item.project === project);
+      const label = document.createElement('div'); label.className = 'arrival-group-label'; label.textContent = project;
+      const count = document.createElement('span'); count.textContent = group.length; label.append(count); navigation.append(label);
+      for (const item of group) {
+        const row = document.createElement('button'); row.type = 'button'; row.className = 'arrival-row cursor-interaction';
+        row.dataset.requestId = item.id; row.setAttribute('aria-current', String(selected === item.id));
+        if (item.unread) row.classList.add('is-unread');
+        row.innerHTML = '<span class="arrival-row-wash"></span><span class="arrival-dot"></span><span class="arrival-row-copy"><strong></strong><small></small></span>';
+        row.querySelector('strong').textContent = item.title;
+        row.querySelector('small').textContent = `${item.agent} · 提问${item.id === 'current' ? ' · 草稿' : ''}`;
+        row.addEventListener('click', () => selectItem(item.id)); navigation.append(row);
+      }
+    }
+    query('[data-count]').textContent = items.length;
+  }
+  function selectItem(id) {
+    const previous = items.find(item => item.id === selected); if (previous) previous.draft = editor.value;
+    const item = items.find(item => item.id === id); if (!item) return;
+    selected = id; item.unread = false;
+    query('[data-question-title]').textContent = item.title;
+    query('[data-question-body]').textContent = id === 'current' ? initialBody : '这条提问已经放在侧栏里。当前正在编辑的内容会保存在原来的提问中。';
+    editor.value = item.draft || ''; renderNavigation();
+  }
+  function cancelAnimation() { generation++; cancelAnimationFrame(frame); clearTimeout(timeout); overlay.replaceChildren(); }
+  function updateTiming() { query('[data-timing]').textContent = `出现 ${preferences.appear} · 停留 ${preferences.hold} · 飞入 ${preferences.fly} ms`; }
+  function reset() {
+    cancelAnimation();
+    const oldDraft = items.find(item => item.id === 'current')?.draft;
+    const currentDraft = selected === 'current' ? editor.value : oldDraft || initialDraft;
+    selected = 'current';
+    items = [{ id: 'current', title: initialTitle, project: 'HumanInLoop', agent: 'Codex', unread: false, draft: currentDraft }];
+    if (scenario.value === 'expanded') items.push(
+      { id: 'existing', title: '选择附件预览的打开方式', project: 'HumanInLoop', agent: 'Claude Code', unread: false, draft: '' },
+      { id: 'website', title: '确认首页内容的布局', project: 'Website', agent: 'Codex', unread: false, draft: '' }
+    );
+    windowEl.dataset.expanded = String(scenario.value === 'expanded');
+    // Avoid assigning an unchanged value: arrival must preserve the caret and selection.
+    if (editor.value !== currentDraft) editor.value = currentDraft;
+    query('[data-question-title]').textContent = initialTitle; query('[data-question-body]').textContent = initialBody;
+    cover.hidden = !query('[data-control="covered"]').checked; cover.style.zIndex = '3'; windowEl.style.zIndex = '1';
+    query('[data-action="delay"]').textContent = '3 秒后到达'; status.textContent = '等待新提问'; renderNavigation(); updateTiming();
+  }
+  function targetFor(id) {
+    const row = [...navigation.querySelectorAll('[data-request-id]')].find(row => row.dataset.requestId === id); if (!row) return null;
+    const rect = row.querySelector('.arrival-dot').getBoundingClientRect(), origin = windowEl.getBoundingClientRect();
+    return { x: rect.left - origin.left + rect.width / 2, y: rect.top - origin.top + rect.height / 2, row };
+  }
+  function land(id) {
+    const item = items.find(item => item.id === id), target = targetFor(id); if (!item || !target) return;
+    item.unread = selected !== id; target.row.classList.toggle('is-unread', item.unread);
+    if (item.unread && !reducedMotion.matches) target.row.querySelector('.arrival-row-wash').animate(
+      [{ opacity: 0 }, { opacity: .68, offset: .28 }, { opacity: .35, offset: .58 }, { opacity: 0 }],
+      { duration: 640, easing: 'cubic-bezier(.22,0,.22,1)' }
+    );
+    status.textContent = item.unread ? '新提问已放入侧栏 · 点击对应条目查看' : '已查看新提问';
+  }
+  function play() {
+    reset(); const myGeneration = generation, id = `incoming-${++sequence}`;
+    const incoming = { id, title: '选择新提问的提醒效果', project: 'HumanInLoop', agent: 'Codex', unread: false, draft: '' };
+    const index = items.findIndex(item => item.project !== 'HumanInLoop'); items.splice(index < 0 ? items.length : index, 0, incoming);
+    windowEl.dataset.expanded = 'true'; renderNavigation();
+    // Bringing the simulated window forward does not touch document focus.
+    windowEl.style.zIndex = '4'; if (reducedMotion.matches) { land(id); return; }
+    const floater = document.createElement('div'); floater.className = 'arrival-floater';
+    floater.style.opacity = '0';
+    floater.classList.toggle('is-solid', variant.solid);
+    floater.innerHTML = '<div class="arrival-halo"></div><div class="arrival-icon-face"><i data-lucide="mail" aria-hidden="true"></i><span class="arrival-question-badge">?</span></div><div class="arrival-morph-dot"></div>';
+    floater.querySelector('[data-lucide]').dataset.lucide = variant.icon;
+    if (!variant.badge) floater.querySelector('.arrival-question-badge').remove();
+    overlay.append(floater); globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+    const halo = floater.querySelector('.arrival-halo'), face = floater.querySelector('.arrival-icon-face'), dot = floater.querySelector('.arrival-morph-dot');
+    let backplate = null;
+    if (variant.solid) {
+      backplate = document.createElement('div'); backplate.className = 'arrival-icon-backplate'; face.prepend(backplate);
+    }
+    let solidGraphic = null;
+    function prepareSolidGraphic() {
+      const svg = face.querySelector('svg');
+      if (!svg) return null;
+      // Reuse the supplied Lucide geometry; the question punches a real transparent hole.
+      const paths = [...svg.children].filter(node => node.tagName.toLowerCase() === 'path');
+      if (paths.length < 3) return null;
+      const body = paths[0], namespace = svg.namespaceURI;
+      const defs = document.createElementNS(namespace, 'defs');
+      const mask = document.createElementNS(namespace, 'mask');
+      const maskId = `arrival-question-cutout-${variant.id}-${sequence}`;
+      mask.id = maskId;
+      for (const [key, value] of Object.entries({ maskUnits: 'userSpaceOnUse', x: '0', y: '0', width: '24', height: '24' })) mask.setAttribute(key, value);
+      mask.style.maskType = 'luminance';
+      const silhouette = body.cloneNode(true);
+      silhouette.setAttribute('fill', '#fff'); silhouette.setAttribute('stroke', 'none');
+      mask.append(silhouette);
+      const holes = paths.slice(1).map(path => {
+        const hole = path.cloneNode(true);
+        hole.setAttribute('fill', 'none'); hole.setAttribute('stroke', '#000');
+        hole.setAttribute('stroke-width', '1.85'); hole.setAttribute('stroke-linecap', 'round');
+        mask.append(hole); return hole;
+      });
+      defs.append(mask);
+      const gradient = document.createElementNS(namespace, 'linearGradient');
+      const gradientId = `arrival-bubble-fill-${variant.id}-${sequence}`;
+      gradient.id = gradientId;
+      gradient.setAttribute('x1', '0'); gradient.setAttribute('y1', '0');
+      gradient.setAttribute('x2', '.2'); gradient.setAttribute('y2', '1');
+      const highlight = document.createElementNS(namespace, 'stop');
+      highlight.setAttribute('offset', '0'); highlight.style.stopColor = 'color-mix(in srgb, var(--arrival-blue) 85%, white)';
+      const base = document.createElementNS(namespace, 'stop');
+      base.setAttribute('offset', '1'); base.style.stopColor = 'var(--arrival-blue)';
+      gradient.append(highlight, base); defs.append(gradient);
+      body.setAttribute('fill', `url(#${gradientId})`); body.setAttribute('stroke', 'none');
+      body.setAttribute('mask', `url(#${maskId})`);
+      svg.replaceChildren(defs, body);
+      return { svg, holes, highlight };
+    }
+    if (variant.solid) solidGraphic = prepareSolidGraphic();
+    const multiplier = query('[data-control="slow"]').checked ? 2.5 : 1;
+    const appear = preferences.appear * multiplier, hold = preferences.hold * multiplier, fly = preferences.fly * multiplier;
+    let started = null;
+    const normalScale = preferences.size / 88;
+    const endpointScale = 10 / (variant.solid ? 88 * 20 / 24 : 88);
+    let phase = '';
+    function tick(now) {
+      if (generation !== myGeneration) return;
+      const target = targetFor(id); if (!target) { floater.remove(); return; }
+      if (variant.solid && !solidGraphic) solidGraphic = prepareSolidGraphic();
+      // The first preview can be clicked before the host's icon runtime is ready.
+      if (!face.querySelector('svg') || (variant.solid && !solidGraphic)) { frame = requestAnimationFrame(tick); return; }
+      if (started === null) started = now;
+      const elapsed = now - started;
+      const originX = windowEl.clientWidth / 2, originY = windowEl.clientHeight / 2 - 10;
+      let x = originX, y = originY, scale = normalScale, opacity = 1, angle = 0, nextPhase = '中央提示';
+      if (elapsed < appear) {
+        const t = ease(elapsed / appear); scale = normalScale * mix(.78, 1, t); opacity = t; y += mix(13, 0, t);
+      } else if (elapsed >= appear + hold) {
+        nextPhase = '飞入对应条目';
+        const progress = clamp((elapsed - appear - hold) / fly), t = ease(progress), u = 1 - t;
+        const lift = Math.min(62, Math.abs(target.x - originX) * .22 + 22);
+        const c1x = originX - (originX - target.x) * .25, c1y = originY - lift;
+        const c2x = target.x + (originX - target.x) * .25, c2y = target.y - Math.min(30, lift / 2);
+        x = u * u * u * originX + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * target.x;
+        y = u * u * u * originY + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * target.y;
+        scale = mix(normalScale, endpointScale, t); angle = -8 * Math.sin(Math.PI * t);
+        if (variant.solid && solidGraphic) {
+          const morph = ease((progress - .32) / .6);
+          solidGraphic.svg.style.clipPath = `circle(${mix(68, 100 * 10 / 24, morph)}% at 50% 50%)`;
+          solidGraphic.svg.style.transform = `scale(${mix(1, 88 / 52, morph)})`;
+          solidGraphic.highlight.style.stopColor = `color-mix(in srgb, var(--arrival-blue) ${mix(85, 100, morph)}%, white)`;
+          for (const hole of solidGraphic.holes) hole.setAttribute('opacity', String(1 - morph));
+          backplate.style.opacity = 1 - ease((progress - .4) / .45);
+          backplate.style.transform = `scale(${mix(1, .8, morph)})`;
+          backplate.style.borderRadius = `${mix(24, 44, morph)}px`;
+        } else {
+          const morph = ease((progress - .58) / .42); dot.style.opacity = morph; face.style.opacity = 1 - morph;
+        }
+        halo.style.opacity = 1 - ease(progress / .6);
+        if (progress === 1) { floater.remove(); land(id); return; }
+      }
+      if (phase !== nextPhase) { phase = nextPhase; status.textContent = phase; }
+      floater.style.opacity = opacity; floater.style.transform = `translate3d(${x - 44}px, ${y - 44}px, 0) scale(${scale}) rotate(${angle}deg)`;
+      frame = requestAnimationFrame(tick);
+    }
+    frame = requestAnimationFrame(tick);
+  }
+  query('[data-action="play"]').addEventListener('click', play);
+  query('[data-action="delay"]').addEventListener('click', () => {
+    reset(); status.textContent = '3 秒后到达 · 可以回到输入框继续打字'; query('[data-action="delay"]').textContent = '已安排到达…'; timeout = setTimeout(play, 3000);
+  });
+  scenario.addEventListener('change', reset); query('[data-control="covered"]').addEventListener('change', reset);
+  for (const option of root.querySelectorAll('.arrival-option')) option.addEventListener('click', () => {
+    for (const peer of root.querySelectorAll('.arrival-option')) peer.setAttribute('aria-pressed', String(peer === option));
+  });
+  query('.arrival-send').addEventListener('click', () => { status.textContent = '这是动效预览，回复保留在本地'; });
+  query('.arrival-attach').addEventListener('click', () => { status.textContent = '这是动效预览，附件入口仅作展示'; });
+  reducedMotion.addEventListener('change', reset); reset();
+  if (globalThis.Tweak) {
+    const tweak = new Tweak({ container: root, onChange: updateTiming });
+    tweak.addSlider(preferences, 'appear', { label: '出现时长', min: 120, max: 400, step: 20, unit: 'ms' });
+    tweak.addSlider(preferences, 'hold', { label: '中央停留', min: 200, max: 1200, step: 50, unit: 'ms' });
+    tweak.addSlider(preferences, 'fly', { label: '飞入时长', min: 300, max: 1000, step: 20, unit: 'ms' });
+    tweak.addSlider(preferences, 'size', { label: '中央图标尺寸', min: 64, max: 112, step: 4, unit: 'px' });
+  }
+  }
+})();
+</script>

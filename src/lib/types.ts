@@ -348,6 +348,7 @@ export interface PopupInboxRequest {
 export interface PopupInboxSnapshot {
   requests: PopupInboxRequest[];
   recovered: boolean;
+  presented?: boolean;
   focusedRequestId?: string | null;
 }
 
