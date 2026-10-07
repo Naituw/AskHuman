@@ -174,7 +174,18 @@ pub fn install(target: AgentTarget) -> Result<String> {
     if !supported(target) {
         return Err(anyhow!("MCP integration is unsupported for Pi"));
     }
-    write_entry(target)?;
+    write_entry(target, &std::collections::BTreeMap::new())?;
+    Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.mcpConfigInstalled").to_string())
+}
+
+pub(crate) fn install_with_env(
+    target: AgentTarget,
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<String> {
+    if target != AgentTarget::Codex && !env.is_empty() {
+        return Err(anyhow!("environment overrides require Codex MCP"));
+    }
+    write_entry(target, env)?;
     Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.mcpConfigInstalled").to_string())
 }
 
@@ -183,7 +194,7 @@ pub fn update(target: AgentTarget) -> Result<String> {
     if !supported(target) {
         return Err(anyhow!("MCP integration is unsupported for Pi"));
     }
-    write_entry(target)?;
+    write_entry(target, &std::collections::BTreeMap::new())?;
     Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.mcpConfigUpdated").to_string())
 }
 
@@ -215,7 +226,10 @@ pub fn uninstall(target: AgentTarget) -> Result<String> {
     Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.mcpConfigRemoved").to_string())
 }
 
-fn write_entry(target: AgentTarget) -> Result<()> {
+fn write_entry(
+    target: AgentTarget,
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
     let exe = current_exe_string()?;
     let path = config_path(target);
     let original = std::fs::read_to_string(&path);
@@ -224,7 +238,18 @@ fn write_entry(target: AgentTarget) -> Result<()> {
     let updated = match format_of(target) {
         Format::Json => apply_install_json(&text, &exe, json_timeout_ms(target))?,
         Format::Toml if target == AgentTarget::Codex => {
-            install_codex_toml(&path, &text, original_exists, &exe)?;
+            if env.is_empty() {
+                install_codex_toml(&path, &text, original_exists, &exe)?;
+            } else {
+                install_codex_toml_with_state_env(
+                    &path,
+                    &paths::integration_state_file(),
+                    &text,
+                    original_exists,
+                    &exe,
+                    env,
+                )?;
+            }
             return Ok(());
         }
         Format::Toml => apply_install_toml(target, &text, &exe)?,
@@ -250,9 +275,27 @@ fn install_codex_toml_with_state(
     original_exists: bool,
     command: &str,
 ) -> Result<()> {
+    install_codex_toml_with_state_env(
+        path,
+        state_path,
+        original,
+        original_exists,
+        command,
+        &std::collections::BTreeMap::new(),
+    )
+}
+
+fn install_codex_toml_with_state_env(
+    path: &Path,
+    state_path: &Path,
+    original: &str,
+    original_exists: bool,
+    command: &str,
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
     // 安装前必须能读取所有权账本。损坏时中止，避免误认领用户的同名配置。
     let mut state = load_integration_state(state_path)?;
-    let outcome = apply_install_toml_outcome(AgentTarget::Codex, original, command)?;
+    let outcome = apply_install_toml_outcome_env(AgentTarget::Codex, original, command, env)?;
 
     write_text(path, &outcome.text)?;
     if outcome.direct_only_added && !state.codex.direct_only_namespace_added_by_askhuman {
@@ -368,7 +411,7 @@ fn apply_install_json(text: &str, command: &str, timeout_ms: Option<i64>) -> Res
         .object_value_or_create("mcpServers")
         .ok_or_else(|| anyhow!("MCP 配置的 `mcpServers` 不是对象，已中止"))?;
 
-    let entry = match timeout_ms {
+    let mut entry = match timeout_ms {
         Some(ms) => json!({
             "command": command,
             "args": [ARG_MCP],
@@ -379,6 +422,36 @@ fn apply_install_json(text: &str, command: &str, timeout_ms: Option<i64>) -> Res
             "args": [ARG_MCP],
         }),
     };
+    let parsed: Value = jsonc_parser::parse_to_serde_value(source, &ParseOptions::default())?;
+    if let Some(env) = json_entry(&parsed).and_then(|entry| entry.get("env")) {
+        let obj = env
+            .as_object()
+            .ok_or_else(|| anyhow!("MCP env must be an object"))?;
+        for (name, value) in obj {
+            if !valid_env_name(name) || value.as_str().is_none_or(|v| v.contains('\0')) {
+                return Err(anyhow!(
+                    "MCP env must contain valid names and string values without NUL"
+                ));
+            }
+        }
+        if let jsonc_parser::cst::CstInputValue::Object(ref mut properties) = entry {
+            properties.push((
+                "env".into(),
+                jsonc_parser::cst::CstInputValue::Object(
+                    obj.iter()
+                        .map(|(name, value)| {
+                            (
+                                name.clone(),
+                                jsonc_parser::cst::CstInputValue::String(
+                                    value.as_str().unwrap().to_string(),
+                                ),
+                            )
+                        })
+                        .collect(),
+                ),
+            ));
+        }
+    }
     match servers.get(SERVER_NAME) {
         Some(prop) => {
             prop.set_value(entry);
@@ -455,7 +528,21 @@ fn apply_install_toml_outcome(
     text: &str,
     command: &str,
 ) -> Result<TomlInstallOutcome> {
+    apply_install_toml_outcome_env(target, text, command, &std::collections::BTreeMap::new())
+}
+
+fn apply_install_toml_outcome_env(
+    target: AgentTarget,
+    text: &str,
+    command: &str,
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<TomlInstallOutcome> {
     use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table, Value as TomlValue};
+    for (name, val) in env {
+        if !valid_env_name(name) || val.contains('\0') {
+            return Err(anyhow!("invalid environment override"));
+        }
+    }
     let (startup, tool, ask) = toml_profile(target);
     let mut doc = if text.trim().is_empty() {
         DocumentMut::new()
@@ -483,6 +570,30 @@ fn apply_install_toml_outcome(
         .and_then(Item::as_table_mut)
         .ok_or_else(|| anyhow!("config.toml 中 `mcp_servers.askhuman` 不是表，已中止"))?;
 
+    if let Some(existing) = entry.get("env") {
+        let table = existing
+            .as_table_like()
+            .ok_or_else(|| anyhow!("MCP env must be a table"))?;
+        for (name, value) in table.iter() {
+            if !valid_env_name(name) || value.as_str().is_none_or(|v| v.contains('\0')) {
+                return Err(anyhow!(
+                    "MCP env must contain valid names and string values without NUL"
+                ));
+            }
+        }
+    }
+    if !env.is_empty() {
+        if !entry.contains_key("env") {
+            entry.insert("env", Item::Table(Table::new()));
+        }
+        let table = entry
+            .get_mut("env")
+            .and_then(Item::as_table_like_mut)
+            .unwrap();
+        for (name, val) in env {
+            table.insert(name, value(val.as_str()));
+        }
+    }
     entry.insert("command", value(command));
     let mut args = Array::new();
     args.push(ARG_MCP);
@@ -795,6 +906,10 @@ fn collapse_home(p: &Path) -> String {
     } else {
         p.display().to_string()
     }
+}
+
+pub(crate) fn valid_env_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains(['=', '\0'])
 }
 
 #[cfg(test)]
@@ -1292,5 +1407,124 @@ mod tests {
                 .codex
                 .direct_only_namespace_added_by_askhuman
         );
+    }
+}
+
+#[cfg(test)]
+mod env_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn toml_env_merge_preserves_table_and_inline_values_and_is_stable() {
+        for source in [
+            "[mcp_servers.askhuman]\nenv = { KEEP = 'old', DISPLAY = ':0' }\n",
+            "[mcp_servers.askhuman.env]\nKEEP = 'old'\nDISPLAY = ':0'\n",
+        ] {
+            let env = BTreeMap::from([
+                ("DISPLAY".into(), ":1".into()),
+                ("EMPTY".into(), "".into()),
+                ("ESCAPE".into(), "a=\"b\\c\n".into()),
+            ]);
+            let merged =
+                apply_install_toml_outcome_env(AgentTarget::Codex, source, "AskHuman", &env)
+                    .unwrap()
+                    .text;
+            let doc = merged.parse::<toml_edit::DocumentMut>().unwrap();
+            assert_eq!(
+                doc["mcp_servers"]["askhuman"]["env"]["KEEP"].as_str(),
+                Some("old")
+            );
+            assert_eq!(
+                doc["mcp_servers"]["askhuman"]["env"]["ESCAPE"].as_str(),
+                Some("a=\"b\\c\n")
+            );
+            assert_eq!(
+                apply_install_toml(AgentTarget::Codex, &merged, "AskHuman").unwrap(),
+                merged
+            );
+            assert_eq!(
+                apply_install_toml_outcome_env(AgentTarget::Codex, &merged, "AskHuman", &env)
+                    .unwrap()
+                    .text,
+                merged
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_env_aborts_toml_and_json() {
+        for env in ["42", "{ DISPLAY = 42 }", "{ 'BAD=NAME' = 'x' }"] {
+            assert!(apply_install_toml(
+                AgentTarget::Codex,
+                &format!("[mcp_servers.askhuman]\nenv = {env}\n"),
+                "AskHuman"
+            )
+            .is_err());
+        }
+        for timeout in [None, Some(86400000)] {
+            assert!(apply_install_json(
+                r#"{"mcpServers":{"askhuman":{"env":{"DISPLAY":42}}}}"#,
+                "AskHuman",
+                timeout
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn json_env_survives_both_timeout_profiles_only() {
+        let source =
+            r#"{"mcpServers":{"askhuman":{"env":{"DISPLAY":":1","EMPTY":""},"custom":"discard"}}}"#;
+        for timeout in [None, Some(86400000)] {
+            let updated = apply_install_json(source, "AskHuman", timeout).unwrap();
+            let value: Value = serde_json::from_str(&updated).unwrap();
+            assert_eq!(value["mcpServers"]["askhuman"]["env"]["DISPLAY"], ":1");
+            assert!(value["mcpServers"]["askhuman"].get("custom").is_none());
+            assert_eq!(
+                apply_install_json(&updated, "AskHuman", timeout).unwrap(),
+                updated
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod env_transaction_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    #[test]
+    fn unreadable_ownership_prevents_environment_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.toml");
+        let state = dir.path().join("blocked").join("state.json");
+        std::fs::write(dir.path().join("blocked"), "file").unwrap();
+        let original = "[mcp_servers.askhuman.env]\nKEEP = 'old'\n";
+        std::fs::write(&config, original).unwrap();
+        let env = BTreeMap::from([("DISPLAY".into(), ":1".into())]);
+        assert!(install_codex_toml_with_state_env(
+            &config, &state, original, true, "AskHuman", &env
+        )
+        .is_err());
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), original);
+    }
+    #[test]
+    fn malformed_env_does_not_write_config_or_ownership() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.toml");
+        let state = dir.path().join("state.json");
+        let original = "[mcp_servers.askhuman]\nenv = 42\n";
+        std::fs::write(&config, original).unwrap();
+        assert!(install_codex_toml_with_state_env(
+            &config,
+            &state,
+            original,
+            true,
+            "AskHuman",
+            &BTreeMap::new()
+        )
+        .is_err());
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), original);
+        assert!(!state.exists());
     }
 }

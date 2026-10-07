@@ -29,3 +29,9 @@ Every reply (a "send" completed in the popup or any channel, plus a cancel you t
 - **Project identification** — walk up from the command's working directory to the first `.git` repository root; if there's no `.git`, the working directory is used.
 - **Filter** — use one two-level scope menu to pick a project, then "Everything in this project" / "All sessions" or one session from its submenu; space-separated keywords can be layered on top. Native Agent sessions show a best-effort title and short ID; MCP fallbacks are explicitly labeled as approximate sessions.
 - **Clean up** — the context action reads "Delete current search results", "Clear selected session history", or "Clear selected project history" and deletes only the entries frozen when confirmation opens. New matching entries that arrive afterward are retained. "Clear all history" remains separate and is the only item shown for the unfiltered global scope.
+
+## Codex MCP environment overrides
+
+`AskHuman agents mode codex mcp --env DISPLAY=:1` explicitly adds an environment variable to Codex's AskHuman MCP server. Repeat `--env NAME=VALUE` to merge multiple keys; the last repeated key wins. Values may be empty or contain `=`. Names must be nonempty and contain neither `=` nor NUL; values must not contain NUL. Other agents and modes reject this option before changing integration files.
+
+Unspecified variables survive installs and updates, including existing TOML table or inline-table `env` entries. Claude and Cursor updates also preserve an existing JSON `env` object, while rebuilding other managed entry fields. Malformed environment entries abort the configuration write. This is opt-in: AskHuman does not inject desktop environment variables automatically.

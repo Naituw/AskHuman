@@ -82,3 +82,7 @@ daemon 是否在跑 / 各渠道（启用·配置齐全·连接）/ 各 agent 集
 ## 反馈意见
 
 （后续讨论 / 调整记录追加于此）
+
+## Codex MCP environment overrides
+
+`AskHuman agents mode codex mcp --env DISPLAY=:1` opts into explicit MCP environment overrides. Repeat `--env NAME=VALUE`; duplicate keys use the last value. Other agents and modes reject the option before writes. See [MCP environment semantics](mcp.md#codex-mcp-environment-overrides) for validation and preservation behavior.

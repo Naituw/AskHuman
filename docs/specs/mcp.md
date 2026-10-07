@@ -241,3 +241,9 @@ argv 映射：`message`→首个位置参数（或经 `-q` 拆分）；每个 qu
 ## 11. 反馈意见
 
 - （待用户审阅后补充）
+
+## Codex MCP environment overrides
+
+`AskHuman agents mode codex mcp --env DISPLAY=:1` explicitly adds an environment variable to Codex's AskHuman MCP server. Repeat `--env NAME=VALUE` to merge multiple keys; the last repeated key wins. Values may be empty or contain `=`. Names must be nonempty and contain neither `=` nor NUL; values must not contain NUL. Other agents and modes reject this option before changing integration files.
+
+Unspecified variables survive installs and updates, including existing TOML table or inline-table `env` entries. Claude and Cursor updates also preserve an existing JSON `env` object, while rebuilding other managed entry fields. Malformed environment entries abort the configuration write. This is opt-in: AskHuman does not inject desktop environment variables automatically.
