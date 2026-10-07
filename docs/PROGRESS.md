@@ -3,38 +3,11 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 发布前阻断：标题栏拖动反复缩放与 Popup 全面复核
-
-0.14.0 发布仍未完成。版本准备及跨平台 CI 修正已在 main `5449630`，四平台 CI
-`37572278210` 全部通过；首轮 release `37570247220` 在发布阶段前取消，GitHub/npm 均未发布
-0.14.0。远端 `v0.14.0` 仍指向 `e959bad`（tag object `b1363632fcef35f8497118d554d59839b68e2c11`）。
-替换标签的 AskHuman 提问未获批准，用户转而报告拖动标题栏会持续缩放；不得视为发布批准。
-
-用户确认同屏持续发生后要求全面 review。本机诊断随后未复现：单条和 Sidebar + PDF
-三栏的真实拖动均由用户确认稳定；不能宣称已证明原现象的唯一根因。
-Review 已实际复现提醒重叠会残留缩放（旧代码 30ms 间隔 transform drift 1.9554443359375），
-已修正动画恢复/所有权、原生操作前取消、鼠标按住时不启动 pulse，并把即时 pane 提交
-收紧到单次 AppKit 回调的绝对尺寸；拖动期间暂缓几何和合并 monitor reconcile。
-详细证据及范围见 `docs/investigations/popup-native-geometry-review.md`。
-
-修正后的真实 WindowServer 单次、10 组重叠和中途取消均通过，transform drift 为 0。
-本地 Rust 1256 passed / 3 ignored，252 Vitest + 5 Node tests、production build、全 targets
-Clippy 已通过；`./scripts/install.sh` 已安装并签名。临时诊断代码/开关已移除。
-正式 Dev 实测 Sidebar/PDF 开合和上下文切换的 8 次即时提交，模型/WindowServer 正文 X
-偏差为 0，PDF X 稳定；独立草稿恢复、E 提交后 D 的 PDF/草稿及剩一条 Sidebar 已验证。
-隔离测试 D 保持打开用于最终真实拖动确认，Dev 仍 popup-only/menuBar off；测试收尾需
-停止此 Dev daemon，恢复 `.askhuman-dev/geometry-blocker-config-backup.json` 和旧测试 bundle
-binary。主窗口/其他 Agent 请求不得被此测试清理影响。
-
-下一步：提交修复并跑新四平台 CI；用新安装的 AskHuman 交付 review 和最终体验验收，
-获得具体最终 commit 的未发布 v0.14.0 tag 替换批准后再恢复发布。此前 Sidebar 生命周期
-已再次确认：本轮展开后即使剩一条也保留，清空后下一轮重置。
-
 ## 待外部验收：统一作答窗口的真实渠道与其他平台
 
 macOS 合并/可选独立模式、原生画布过渡、普通外缘缩放修复、10pt 未查看蓝点和持续圆形扩散已接入并安装。
 行为规格见 `docs/specs/popup-request-inbox.md`；实施与验证记录见
-`docs/plans/popup-request-inbox.md` §10–23。最近 Rust 1254 passed / 3 ignored、
+`docs/plans/popup-request-inbox.md` §10–24。最近 Rust 1256 passed / 3 ignored、
 最新前端 252 项通过；原生几何 harness 84 项通过，真实 Sidebar 拖动及宽度恢复已验证。
 自动化外缘拖动未成功改变窗口尺寸，
 程序化几何证据不代替物理拖动观感验收。

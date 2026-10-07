@@ -456,4 +456,11 @@ reconcile 的假设当作这个现象的已证实根因。
 
 Rust 1256 / 3 ignored，252 Vitest + 5 Node tests、production build、全 targets Clippy 和安装
 通过。真实修正版 Dev 8 次 pane/上下文切换的模型与 WindowServer X 偏差为 0；PDF 位置
-稳定，草稿与成功换题后 PDF 恢复正确。最终拖动确认、新四平台 CI 和发布按 PROGRESS 收口。
+稳定，草稿与成功换题后 PDF 恢复正确。用户在 AskHuman #61 验收修正版单条及三栏实际
+拖动；隔离 Dev 测试已清理，原配置和测试 binary 已恢复。最终提交 `363e475` 的
+[四平台 CI 与依赖审计](https://github.com/Naituw/AskHuman/actions/runs/37580173657) 全部通过。
+用户在 AskHuman #62 批准更新未发布标签并继续正式发布；[release workflow](https://github.com/Naituw/AskHuman/actions/runs/37581187277)
+全部成功，`v0.14.0` 指向修复提交 `363e475`。[0.14.0](https://github.com/Naituw/AskHuman/releases/tag/v0.14.0)
+的四份下载归档校验和及两份 macOS Developer ID 签名通过；五个 npm 包的版本与 `latest`
+均为 0.14.0，SHA512 integrity 通过，平台 binary 与 GitHub 归档逐字节一致。隔离 npm
+安装实际返回 `AskHuman v0.14.0`。外部 IM / Windows / Linux 视觉 gate 保持原延期决定。

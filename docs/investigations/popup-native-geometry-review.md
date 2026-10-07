@@ -46,8 +46,31 @@ Review 找到并实际复现了独立的提醒动画重叠缺陷，也确认了�
 - 本地完整 Rust 1256 passed / 3 ignored；252 Vitest + 5 Node tests、production build、全 targets
   Clippy 通过，安装及签名成功。新安装的实际 Dev 窗口完成 8 次 Sidebar/PDF 开合和上下文
   切换，模型和 WindowServer 正文 X 偏差均为 0，PDF X 保持 1720。独立草稿、E 成功提交后
-  D 的 PDF/草稿及剩一条 Sidebar 均恢复正确。最终真实拖动确认与新四平台 CI 尚待收口。
+  D 的 PDF/草稿及剩一条 Sidebar 均恢复正确。
+- 修正版新安装后，用户通过 AskHuman #61 确认单条及三栏窗口的实际拖动体验通过。
+  隔离 Dev 测试窗口已清理，原配置及旧测试 bundle binary 已恢复，Dev daemon 已停止。
+- 最终修复提交 `363e475` 的 [四平台 CI 与依赖审计](https://github.com/Naituw/AskHuman/actions/runs/37580173657)
+  全部通过。用户另通过 AskHuman #62 批准更新未发布的标签；发布与产物核验已完成。
 - 用户已接受延期的真实 IM、Windows/Linux 视觉、DPI/多屏矩阵继续保留在 PROGRESS，不用本机证据替代。
+
+## 正式发布结果
+
+`v0.14.0` 已经用户批准，通过 lease 保护将标签从 `e959bad` 更新到最终修复提交
+`363e4758e8a454d9d101b7f4e74b52a11e2ec8d7`。[正式发布流水线](https://github.com/Naituw/AskHuman/actions/runs/37581187277)
+的四平台构建、macOS 签名和 npm/GitHub 发布全部成功。
+[GitHub Release](https://github.com/Naituw/AskHuman/releases/tag/v0.14.0) 于 2026-10-07
+14:33:06（Asia/Shanghai）发布，已确认是最新正式版，四份归档和 SHA256SUMS 均可下载，
+发布正文与仓库的人工 release notes 一致。
+
+发布后实际下载并核验：
+
+- 四份归档通过发布的 SHA256SUMS；解包后的 Mach-O ARM64 / x64、Windows PE x64 和 Linux ELF x64 架构正确。
+- 两份 macOS binary 均通过严格签名校验，identifier 为 `com.naituw.humaninloop`，Developer ID team 为 `DMJXDB9H6Q`。
+- `askhuman` 和 `@humaninloop/{darwin-arm64,darwin-x64,win32-x64,linux-x64}` 均为 `0.14.0`，`latest` 全部指向该版本。
+- 五份 npm tarball 均通过 registry 的 SHA512 integrity；四个平台 npm 包的 binary 与对应 GitHub 归档逐字节一致。
+- 隔离目录实际执行 `npm install askhuman@0.14.0`，确认解析的是包内 ARM64 binary，CLI 返回 `AskHuman v0.14.0`，退出码 0。
+
+以上确认正式产物及本机可执行性，不扩展已延期的其他平台视觉和真实 IM 验收结论。
 
 ## 一手参考
 
