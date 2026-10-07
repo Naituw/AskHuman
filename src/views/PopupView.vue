@@ -3,7 +3,7 @@
 // 各区块子组件 inject）。此处仅负责根布局：导航栏 / 内容区（确认面板 或 Message+问题区）/
 // 页脚 / 根级弹层。样式统一在 ./popup/popup.css（弹窗为独立窗口，天然隔离）。
 import { useI18n } from "vue-i18n";
-import { computed } from "vue";
+import { computed, onBeforeUnmount } from "vue";
 import { type PopupScope } from "./popup/usePopupCore";
 import { createPopupContext } from "./popup/context";
 import PopupNavbar from "./popup/PopupNavbar.vue";
@@ -60,8 +60,11 @@ const mainTransitionStyle = computed(() => {
   if (!transition || transition.side === "closed") return undefined;
   return { position: "absolute" as const, width: `${transition.mainWidth}px`, height: `${transition.mainHeight}px`, left: "0", top: "0" };
 });
+let stopDivider: (() => void) | undefined;
+onBeforeUnmount(() => stopDivider?.());
 function beginDivider(event: PointerEvent) {
   if (event.button !== 0) return;
+  stopDivider?.();
   const target = event.currentTarget as HTMLElement;
   const start = event.clientX;
   const extent = previewLayout.value.mainWidth;
@@ -70,13 +73,16 @@ function beginDivider(event: PointerEvent) {
   let latest = extent;
   const move = (e: PointerEvent) => {
     latest = extent + (e.clientX - start);
-    if (!frame) frame = requestAnimationFrame(() => { frame = 0; resizePreview(latest); });
+    if (!frame) frame = requestAnimationFrame(() => { frame = 0; resizePreview(latest, false); });
   };
-  const end = () => {
-    cancelAnimationFrame(frame); resizePreview(latest);
+  const cleanup = () => {
+    cancelAnimationFrame(frame);
     target.removeEventListener("pointermove", move);
     target.removeEventListener("lostpointercapture", end);
+    stopDivider = undefined;
   };
+  const end = () => { cleanup(); resizePreview(latest, true); };
+  stopDivider = cleanup;
   target.addEventListener("pointermove", move);
   target.addEventListener("lostpointercapture", end);
 }

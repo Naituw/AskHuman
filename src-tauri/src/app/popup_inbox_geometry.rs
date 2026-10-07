@@ -585,6 +585,91 @@ pub async fn resize_sidebar(
     }
     Ok(allocation)
 }
+fn preview_resize(
+    previous: &Allocation,
+    frame: Frame,
+    extent: f64,
+    special: bool,
+) -> Result<(Allocation, bool), String> {
+    let available = frame.width - previous.left_span();
+    let budget = available - GAP;
+    if !extent.is_finite() || previous.preview_width <= 0.0 || budget < 2.0 {
+        return Err("Preview resize is unavailable".into());
+    }
+    let durable = !special && !previous.limited && budget >= 740.0;
+    let main_width = if durable {
+        extent.clamp(420.0, budget - 320.0)
+    } else {
+        super::popup_preview_geometry::inside_main_width(available, extent, None)
+    };
+    let mut allocation = previous.clone();
+    allocation.main_width = main_width;
+    allocation.preview_width = budget - main_width;
+    allocation.main_height = frame.height;
+    allocation.frame = frame;
+    allocation.responsive();
+    Ok((allocation, durable))
+}
+pub async fn resize_preview(
+    window: &Window,
+    request_id: &str,
+    extent: f64,
+    finished: bool,
+) -> Result<Allocation, String> {
+    wait_idle(window).await?;
+    super::popup_preview::request(window, request_id)?;
+    super::popup_pulse::cancel();
+    let (frame, scale, work, special) = native(window)?;
+    let view = webview(window)?;
+    let (allocation, durable) = {
+        let state = state(window);
+        let mut owner = state.lock().unwrap();
+        let c = &mut owner.inbox;
+        if c.pending || !c.preview {
+            return Err("Preview resize is unavailable".into());
+        }
+        let previous = c
+            .published
+            .as_ref()
+            .ok_or("Preview resize is unavailable")?;
+        let (mut allocation, durable) = preview_resize(previous, frame, extent, special)?;
+        c.revision += 1;
+        allocation.revision = c.revision;
+        c.pending = true;
+        c.prepared = Some(allocation.clone());
+        (allocation, durable)
+    };
+    // A divider changes the split and minimum width only. Keep the real window and
+    // responsive native viewport intact, and never wait for the mouse to be released.
+    let result = super::popup_canvas::resume(&view, &allocation).await;
+    {
+        let state = state(window);
+        let mut owner = state.lock().unwrap();
+        let c = &mut owner.inbox;
+        c.pending = false;
+        c.prepared = None;
+        result?;
+        super::popup_preview::request(window, request_id)?;
+        c.published = Some(allocation.clone());
+        if durable {
+            c.preferred_main = Some((allocation.main_width, allocation.main_height));
+            c.preferred_preview = Some(allocation.preview_width);
+            c.normal = Some(frame);
+        }
+        c.anchor = Some((frame.x + allocation.left_span(), frame.y));
+        c.scale = Some(scale);
+        c.work = work;
+        c.special = special;
+    }
+    publish(window, &allocation);
+    if finished && durable {
+        super::popup_preview::save_dimensions(
+            (allocation.main_width, allocation.main_height),
+            Some(allocation.preview_width),
+        );
+    }
+    Ok(allocation)
+}
 pub fn published(window: &Window) -> Option<Layout> {
     let owner = state(window);
     let owner = owner.lock().ok()?;
@@ -891,6 +976,60 @@ mod tests {
         }
         constrained.sidebar_width = 0.0;
         assert!(sidebar_resize(&constrained, constrained.frame, 240.0).is_err());
+    }
+    #[test]
+    fn preview_drag_keeps_window_sidebar_and_native_viewport_unchanged() {
+        for sidebar in [0.0, 240.0] {
+            let mut previous = layout(700.0);
+            previous.sidebar_width = sidebar;
+            previous.frame.width = previous.left_span() + 560.0 + GAP + 700.0;
+            previous.responsive();
+            let initial = previous.clone();
+            for extent in [720.0, 840.0, 420.0, 500.0, 560.0] {
+                let (next, durable) =
+                    preview_resize(&previous, previous.frame, extent, false).unwrap();
+                assert!(durable);
+                assert_eq!(next.main_width, extent);
+                assert_eq!(next.main_width + next.preview_width, 1260.0);
+                assert_eq!(next.sidebar_width, initial.sidebar_width);
+                assert_eq!(
+                    serde_json::to_value(next.frame).unwrap(),
+                    serde_json::to_value(initial.frame).unwrap()
+                );
+                assert_eq!(
+                    serde_json::to_value(&next.canvas).unwrap(),
+                    serde_json::to_value(&initial.canvas).unwrap()
+                );
+                previous = next;
+            }
+        }
+    }
+    #[test]
+    fn preview_drag_clamps_normal_widths_and_keeps_limited_or_special_adjustments_temporary() {
+        let previous = layout(700.0);
+        for (wanted, expected) in [(-30.0, 420.0), (3000.0, 940.0)] {
+            let (next, durable) = preview_resize(&previous, previous.frame, wanted, false).unwrap();
+            assert!(durable);
+            assert_eq!(next.main_width, expected);
+            assert!(next.preview_width >= 320.0);
+        }
+        let (special, durable) = preview_resize(&previous, previous.frame, -30.0, true).unwrap();
+        assert!(!durable);
+        assert_eq!(special.main_width, 240.0);
+        let mut limited = previous.clone();
+        limited.limited = true;
+        limited.frame.width = limited.left_span() + 600.0;
+        let (next, durable) = preview_resize(&limited, limited.frame, 900.0, false).unwrap();
+        assert!(!durable);
+        assert_eq!((next.main_width, next.preview_width), (297.0, 297.0));
+        limited.frame.width = limited.left_span() + 400.0;
+        let (next, durable) = preview_resize(&limited, limited.frame, 900.0, false).unwrap();
+        assert!(!durable);
+        assert_eq!((next.main_width, next.preview_width), (197.0, 197.0));
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(preview_resize(&previous, previous.frame, invalid, false).is_err());
+        }
+        assert!(preview_resize(&layout(0.0), previous.frame, 560.0, false).is_err());
     }
     #[test]
     fn reduces_preview_then_sidebar_then_main() {

@@ -6,7 +6,7 @@ import type { FileAttachment } from "../../lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAttachmentContent } from "./useAttachmentContent";
-import { useAttachmentPreview, type PreviewLayout } from "./useAttachmentPreview";
+import { useAttachmentPreview, type PreviewDelegate } from "./useAttachmentPreview";
 import fallbackDragIcon from "../../../src-tauri/icons/32x32.png?inline";
 
 // The native drag plugin requires PNG even when the attached image is another format.
@@ -16,7 +16,7 @@ export function useAttachments(deps: {
   attachments: ComputedRef<FileAttachment[]>;
   requestId: ComputedRef<string>;
   active?: Readonly<Ref<boolean>>;
-  layout?: (open: boolean, mainExtent?: number) => Promise<PreviewLayout>;
+  layout?: PreviewDelegate;
 }) {
   const { attachments } = deps;
   const preview = useAttachmentPreview(deps.requestId, deps.active, deps.layout);

@@ -312,6 +312,7 @@ pub fn change(
     open: bool,
     main_extent: Option<f64>,
     version: u64,
+    finished: bool,
 ) -> Result<Layout, String> {
     if main_extent.is_none() {
         let n = sample(window)?;
@@ -326,7 +327,7 @@ pub fn change(
             return Err("preview geometry changed".into());
         }
     }
-    change_impl(window, open, main_extent, version)
+    change_impl(window, open, main_extent, version, finished)
 }
 /// Freeze the visible main region before native setters enqueue their work.
 pub fn prepare(window: &Window, open: bool, version: u64) -> Result<Layout, String> {
@@ -397,6 +398,7 @@ fn change_impl(
     open: bool,
     main_extent: Option<f64>,
     version: u64,
+    finished: bool,
 ) -> Result<Layout, String> {
     let n = sample(window)?;
     let state = window.app_handle().state::<Mutex<Controller>>();
@@ -409,6 +411,9 @@ fn change_impl(
     }
     c.intent_version = version;
     let was_open = c.side != Side::Closed;
+    if main_extent.is_some_and(|extent| !extent.is_finite() || !open || !was_open) {
+        return Err("Preview resize is unavailable".into());
+    }
     if open == was_open && main_extent.is_none() {
         return Ok(c.layout(&n));
     }
@@ -451,7 +456,7 @@ fn change_impl(
         let preview = c.preferred_preview;
         drop(c);
         remember_baseline(window, main);
-        if durable {
+        if durable && finished {
             save_dimensions(main, preview);
         }
         return Ok(layout);

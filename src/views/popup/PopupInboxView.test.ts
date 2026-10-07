@@ -44,6 +44,21 @@ describe("shared popup navigation", () => {
     wrapper = mount(PopupInboxView, { attachTo: document.body, global: { plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })] } });
     await flushPromises();
   }
+  it("uses an internal split for preview motion without preparing or committing the window", async () => {
+    await start();
+    await wrapper.find('[data-form-id="a"]').setValue("retained draft");
+    mock.invoke.mockClear();
+    mock.invoke.mockImplementation(async (command: string) => {
+      if (command === "popup_inbox_resize_preview") return { revision: 3, sidebarWidth: 240, mainWidth: 620, mainHeight: 620, previewWidth: 640, limited: false };
+    });
+    const result = await mock.scopes.get("a")!.preview(true, 620, false);
+    expect(mock.invoke.mock.calls).toEqual([["popup_inbox_resize_preview", { requestId: "a", mainExtent: 620, finished: false }]]);
+    expect(result.mainWidth).toBe(620);
+    expect((wrapper.find('[data-form-id="a"]').element as HTMLTextAreaElement).value).toBe("retained draft");
+    mock.invoke.mockClear();
+    await mock.scopes.get("a")!.preview(true, 620, true);
+    expect(mock.invoke.mock.calls).toEqual([["popup_inbox_resize_preview", { requestId: "a", mainExtent: 620, finished: true }]]);
+  });
   it("drags only the internal divider and persists the latest position after an in-flight update", async () => {
     await start();
     await wrapper.find('[data-form-id="a"]').setValue("retained draft");

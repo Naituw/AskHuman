@@ -55,7 +55,7 @@ import type {
   ThemeMode,
   TodoEntry,
 } from "../../lib/types";
-import type { PreviewLayout } from "./useAttachmentPreview";
+import type { PreviewDelegate } from "./useAttachmentPreview";
 import { useSpeech } from "./useSpeech";
 import { useAttachments } from "./useAttachments";
 import { useUpdateState } from "./useUpdateState";
@@ -104,7 +104,7 @@ export interface PopupScope {
   ready: (id: string) => void;
   close: () => void;
   draft: (id: string, hasDraft: boolean) => void;
-  preview: (open: boolean, mainExtent?: number) => Promise<PreviewLayout>;
+  preview: PreviewDelegate;
 }
 
 export function usePopupCore(scope?: PopupScope) {

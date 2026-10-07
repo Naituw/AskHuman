@@ -135,10 +135,18 @@ function scopeFor(id: string): PopupScope {
         if (active.value === id) await popupShowWindow(id);
       }); },
       close: openClose,
-      preview: async (open: boolean, extent?: number) => {
+      preview: async (open: boolean, extent?: number, finished = true) => {
         previews.set(id, open);
         let result: { revision: number; mainWidth: number; mainHeight: number; previewWidth: number; limited: boolean } | undefined;
-        await enqueue(async () => { if (active.value === id) result = await geometry(false, undefined, extent); });
+        await enqueue(async () => {
+          if (active.value !== id) return;
+          if (extent === undefined) result = await geometry();
+          else {
+            const resized = await invoke<InboxLayout>("popup_inbox_resize_preview", { requestId: id, mainExtent: extent, finished });
+            if (active.value === id) allocation.value = resized;
+            result = resized;
+          }
+        });
         if (!result) throw new Error("request is no longer active");
         return { revision: result.revision, mainWidth: result.mainWidth, mainHeight: result.mainHeight, side: result.previewWidth > 0 ? result.limited ? "inside" : "right" : "closed" };
       },

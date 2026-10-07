@@ -256,6 +256,24 @@ pub async fn popup_inbox_resize_sidebar(
     crate::app::popup_inbox_geometry::resize_sidebar(&window, width, finished).await
 }
 #[tauri::command]
+pub async fn popup_inbox_resize_preview(
+    window: tauri::Window,
+    request_id: String,
+    main_extent: f64,
+    finished: bool,
+) -> Result<crate::app::popup_inbox_geometry::Allocation, String> {
+    if window.label() != "popup"
+        || window
+            .app_handle()
+            .try_state::<crate::app::popup_inbox::Inbox>()
+            .is_none()
+    {
+        return Err("shared Popup is unavailable".into());
+    }
+    crate::app::popup_inbox_geometry::resize_preview(&window, &request_id, main_extent, finished)
+        .await
+}
+#[tauri::command]
 pub async fn popup_inbox_commit(
     window: tauri::Window,
     revision: u64,
@@ -1308,26 +1326,23 @@ pub async fn popup_preview_layout(
     open: bool,
     main_extent: Option<f64>,
     version: u64,
+    finished: Option<bool>,
 ) -> Result<crate::app::popup_preview::Layout, String> {
+    if main_extent.is_some() && !open {
+        return Err("Preview resize is unavailable".into());
+    }
     crate::app::popup_preview::request(&window, &request_id)?;
     if window
         .app_handle()
         .try_state::<crate::app::popup_inbox::Inbox>()
         .is_some()
     {
-        if main_extent.is_some() {
-            let allocation = crate::app::popup_inbox_geometry::prepare(
+        if let Some(extent) = main_extent {
+            return Ok(crate::app::popup_inbox_geometry::resize_preview(
                 &window,
-                None,
-                Some(open),
-                None,
-                main_extent,
-            )
-            .await?;
-            return Ok(crate::app::popup_inbox_geometry::commit(
-                &window,
-                allocation.revision,
-                false,
+                &request_id,
+                extent,
+                finished.unwrap_or(true),
             )
             .await?
             .preview_layout());
@@ -1343,8 +1358,15 @@ pub async fn popup_preview_layout(
     let owner = window.clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
-        let result = crate::app::popup_preview::request(&window, &request_id)
-            .and_then(|_| crate::app::popup_preview::change(&window, open, main_extent, version));
+        let result = crate::app::popup_preview::request(&window, &request_id).and_then(|_| {
+            crate::app::popup_preview::change(
+                &window,
+                open,
+                main_extent,
+                version,
+                finished.unwrap_or(true),
+            )
+        });
         let _ = tx.send(result);
     })
     .map_err(|e| e.to_string())?;

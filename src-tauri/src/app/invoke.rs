@@ -99,6 +99,7 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::popup_inbox_idle,
         crate::commands::popup_inbox_layout,
         crate::commands::popup_inbox_resize_sidebar,
+        crate::commands::popup_inbox_resize_preview,
         crate::commands::popup_inbox_commit,
         crate::commands::popup_inbox_finish,
         crate::commands::enrich_permission_diff,

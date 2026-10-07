@@ -59,6 +59,9 @@ Sidebar / 正文分隔线固定窗口外框，在两区之间分配宽度，Prev
 macOS 同步调整 DOM 原点，保留同一原生 viewport。松开后将 Sidebar 宽度写入
 `channels.popup.sidebarWidth`（默认 240，通常范围 180–600），遵守 rememberSize；
 正常正文尺寸随分配保存，下一轮和冷启动恢复。自动受限分配不覆盖正常正文偏好。
+正文 / Preview 分隔线同样使用专用内部调整路径，保持外窗、Sidebar 与响应式 viewport；
+不进入展开 / 收起事务，也不等待鼠标释放。合并 / 独立模式共用最新位置合并队列，松手
+保存最终有效尺寸。问题复现与验证记录见 `plans/popup-preview-divider-response.md`。
 Sidebar / Preview 展开与收起的原生几何提交固定为 0ms，即时切换；固定画布交接
 仍保持正文与原生附件位置，正式 Dev 窗口也不再显示慢速动画开关。
 `popup_transition.rs` 负责非激活前置。`popup_pulse.rs` 运行时加载
