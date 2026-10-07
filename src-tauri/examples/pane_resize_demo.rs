@@ -222,7 +222,7 @@ fn main() {
             resize_open
         ])
         .setup(move |app| {
-            let mut builder = WebviewWindowBuilder::new(
+            let builder = WebviewWindowBuilder::new(
                 app,
                 "pane-resize",
                 WebviewUrl::App(if automatic {
@@ -243,11 +243,9 @@ fn main() {
             .visible(false)
             .resizable(true);
             #[cfg(target_os = "macos")]
-            {
-                builder = builder
-                    .title_bar_style(tauri::TitleBarStyle::Overlay)
-                    .hidden_title(true);
-            }
+            let builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true);
             builder.build()?;
             Ok(())
         })
