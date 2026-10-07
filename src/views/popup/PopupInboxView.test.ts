@@ -45,6 +45,56 @@ describe("shared popup navigation", () => {
     wrapper = mount(PopupInboxView, { attachTo: document.body, global: { plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })] } });
     await flushPromises();
   }
+  it("shows the session task title as secondary text and keeps untitled entries compact", async () => {
+    mock.invoke.mockImplementation(async (command: string) => {
+      if (command === "popup_inbox_init") return { recovered: false, requests: [
+        { ...request("a"), agentKind: "codex", agentSessionTitle: "Improve popup navigation" },
+        { ...request("b"), kind: "stop" },
+      ] };
+      if (command === "popup_inbox_layout") return { revision: 1, sidebarWidth: 240, mainWidth: 560, mainHeight: 620, previewWidth: 0 };
+    });
+    await start();
+    const rows = wrapper.findAll(".inbox-row");
+    expect(rows[0].find("strong").text()).toBe("Request a");
+    expect(rows[0].find(".inbox-session-title").text()).toBe("Improve popup navigation");
+    expect(rows[0].find(".inbox-session-title").attributes("title")).toBe("Improve popup navigation");
+    expect(rows[0].find(".inbox-row-meta .inbox-session-title").exists()).toBe(true);
+    expect(rows[0].find(".inbox-row-agent").text()).toBe("Codex");
+    expect(rows[0].find(".inbox-kind").exists()).toBe(false);
+    expect(rows[1].find(".inbox-session-title").exists()).toBe(false);
+    expect(rows[1].find(".inbox-kind").text()).toBe("Finish task");
+  });
+  it("enriches only the matching request without remounting its draft and ignores late titles", async () => {
+    await start();
+    const editor = wrapper.find('[data-form-id="a"]');
+    await editor.setValue("retained draft");
+    emit("popup-inbox-session-title", { requestId: "a", title: "Task A" });
+    await flushPromises();
+    expect(wrapper.find('[data-inbox-row="a"] .inbox-session-title').text()).toBe("Task A");
+    expect(wrapper.find('[data-inbox-row="b"] .inbox-session-title').exists()).toBe(false);
+    expect(wrapper.find('[data-form-id="a"]').element).toBe(editor.element);
+    expect((editor.element as HTMLTextAreaElement).value).toBe("retained draft");
+    emit("popup-inbox-terminal", { requestId: "b", winner: "system" });
+    emit("popup-inbox-session-title", { requestId: "b", title: "Late task B" });
+    await flushPromises();
+    expect(wrapper.find('[data-inbox-row="b"]').exists()).toBe(false);
+    expect(wrapper.find(".inbox-navigation").text()).not.toContain("Late task B");
+  });
+  it("retains a title pushed after init was requested but before its snapshot was appended", async () => {
+    let release!: (value: unknown) => void;
+    const snapshot = new Promise(resolve => { release = resolve; });
+    mock.invoke.mockImplementation(async (command: string) => {
+      if (command === "popup_inbox_init") return snapshot;
+      if (command === "popup_inbox_layout") return { revision: 1, sidebarWidth: 240, mainWidth: 560, mainHeight: 620, previewWidth: 0 };
+    });
+    const started = start();
+    await flushPromises();
+    emit("popup-inbox-session-title", { requestId: "b", title: "Task B" });
+    release({ recovered: false, requests: [request("a"), request("b")] });
+    await started;
+    await flushPromises();
+    expect(wrapper.find('[data-inbox-row="b"] .inbox-session-title').text()).toBe("Task B");
+  });
   it("uses an internal split for preview motion without preparing or committing the window", async () => {
     await start();
     await wrapper.find('[data-form-id="a"]').setValue("retained draft");

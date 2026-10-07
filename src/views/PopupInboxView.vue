@@ -32,6 +32,7 @@ const rootStyle = computed(() => {
   };
 });
 const requests = ref<PopupInboxRequest[]>([]);
+const sessionTitles = new Map<string, string>();
 const active = ref<string | null>(null);
 const groupOrder = ref<string[]>([]);
 const sidebar = ref(false);
@@ -79,6 +80,13 @@ const selectedId = computed(() => motion.value?.phase === "prepare" ? motion.val
 const snapshot = computed(() => requests.value.filter(r => modal.value?.ids.includes(r.requestId)));
 const newAfterModal = computed(() => requests.value.filter(r => !modal.value?.ids.includes(r.requestId)).length);
 const currentSnapshot = computed(() => snapshot.value.filter(r => r.requestId === modal.value?.current));
+function agentLabel(request: PopupInboxRequest) {
+  const kind = request.agentKind;
+  if (!kind) return request.source;
+  const key = `agents.kind.${kind}`;
+  const label = t(key);
+  return label === key ? kind : label;
+}
 function later(fn: () => void, ms: number) {
   const timer = setTimeout(() => { timers.delete(timer); if (!disposed) fn(); }, ms);
   timers.add(timer);
@@ -271,14 +279,15 @@ function toggleReviewSidebar() {
 }
 function append(show: PopupInboxRequest) {
   if (!groupOrder.value.includes(show.project)) groupOrder.value.push(show.project);
-  requests.value.push(show);
+  requests.value.push({ ...show, agentSessionTitle: sessionTitles.get(show.requestId) ?? show.agentSessionTitle });
   if (requests.value.length > 1) sidebar.value = true;
 }
 async function add(show: PopupInboxRequest, arrival = true) {
   if (terminals.has(show.requestId)) return;
   const existing = requests.value.findIndex(r => r.requestId === show.requestId);
   if (existing >= 0) {
-    requests.value[existing] = show;
+    requests.value[existing] = { ...show, agentSessionTitle: sessionTitles.get(show.requestId)
+      ?? show.agentSessionTitle ?? requests.value[existing].agentSessionTitle };
     if (!earlyArrivals.delete(show.requestId)) return;
   } else append(show);
   if (active.value === null) await select(show.requestId);
@@ -299,6 +308,7 @@ async function add(show: PopupInboxRequest, arrival = true) {
 }
 function removeLocal(id: string) {
   cancelArrival(id);
+  sessionTitles.delete(id);
   requests.value = requests.value.filter(r => r.requestId !== id);
   visited.value.delete(id); drafts.value.delete(id); flashed.value.delete(id);
   readyIds.delete(id); scopes.delete(id); remembered.delete(id); previews.delete(id); nativePreviewSync.delete(id);
@@ -510,6 +520,14 @@ onMounted(async () => {
   window.addEventListener("keydown", keydown, true);
   document.addEventListener("visibilitychange", flushArrivals);
   listeners.push(await listen("popup-inbox-presented", () => { hostPresented = true; void nextTick(flushArrivals); }));
+  listeners.push(await listen<{ requestId: string; title: string }>("popup-inbox-session-title", event => {
+    const { requestId, title } = event.payload;
+    if (terminals.has(requestId) || !title.trim()) return;
+    // Keep enrichment that arrives while init or another request's layout is still pending.
+    sessionTitles.set(requestId, title);
+    const request = requests.value.find(request => request.requestId === requestId);
+    if (request) request.agentSessionTitle = title;
+  }));
   listeners.push(await listen<PopupInboxRequest>("popup-inbox-show", event => {
     const show = event.payload;
     if (motion.value && !terminals.has(show.requestId) && !requests.value.some(r => r.requestId === show.requestId)) {
@@ -560,7 +578,20 @@ onBeforeUnmount(() => {
           <button class="inbox-row" :data-inbox-row="request.requestId" :class="{ selected: request.requestId === selectedId, flash: flashed.has(request.requestId) && motion?.from !== request.requestId, unread: !visited.has(request.requestId) }" :aria-current="request.requestId === selectedId ? 'true' : undefined" :title="inboxTitle(request)" @click="choose(request.requestId)">
             <UnreadRipple :active="!visited.has(request.requestId) && !arriving.has(request.requestId) && !flashed.has(request.requestId)" />
             <span class="inbox-dot" :class="{ unread: !visited.has(request.requestId) && !arriving.has(request.requestId) }" :aria-label="!visited.has(request.requestId) ? t('popup.inbox.unread') : undefined"></span>
-            <span class="inbox-row-content"><strong>{{ inboxTitle(request) || t('popup.inbox.untitled') }}</strong><span class="inbox-row-meta">{{ request.agentKind || request.source }} · {{ t(`popup.inbox.kind.${inboxKind(request)}`) }}<em v-if="drafts.has(request.requestId)">{{ t('popup.inbox.draft') }}</em></span></span>
+            <span class="inbox-row-content">
+              <strong><span v-if="inboxKind(request) !== 'ask'" class="inbox-kind">{{ t(`popup.inbox.kind.${inboxKind(request)}`) }}</span>{{ inboxTitle(request) || t('popup.inbox.untitled') }}</strong>
+              <span class="inbox-row-meta" :class="{ 'has-session': !!request.agentSessionTitle?.trim() }">
+                <span class="inbox-row-agent" :title="agentLabel(request)">{{ agentLabel(request) }}</span>
+                <template v-if="request.agentSessionTitle?.trim()">
+                  <span class="inbox-source-separator" aria-hidden="true">/</span>
+                  <span class="inbox-session" :title="request.agentSessionTitle">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z" /></svg>
+                    <span class="inbox-session-title" :title="request.agentSessionTitle">{{ request.agentSessionTitle }}</span>
+                  </span>
+                </template>
+                <em v-if="drafts.has(request.requestId)">{{ t('popup.inbox.draft') }}</em>
+              </span>
+            </span>
           </button>
           </div>
         </section>
@@ -629,8 +660,15 @@ onBeforeUnmount(() => {
 .inbox-dot.unread::before { content: ''; position: absolute; left: -2px; top: -2px; width: 10px; height: 10px; border-radius: 50%; background: #2685e8; animation: inbox-unread-dot 2.8s cubic-bezier(.4, 0, .2, 1) infinite; }
 .inbox-row-content { position: relative; z-index: 1; min-width: 0; flex: 1; }
 .inbox-row strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; line-height: 1.45; font-weight: 500; }
-.inbox-row-meta { display: flex; gap: 4px; font-size: 10px; opacity: .6; margin-top: 6px; }
-.inbox-row-meta em { font-style: normal; margin-left: auto; }
+.inbox-kind { display: inline-block; vertical-align: 1px; font-size: 9px; line-height: 1.4; font-weight: 400; padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; margin-right: 5px; color: var(--text-secondary); }
+.inbox-row-meta { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 10px; line-height: 1.5; color: var(--text-secondary); margin-top: 6px; }
+.inbox-row-agent { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-row-meta.has-session .inbox-row-agent { flex: 0 0 auto; max-width: 40%; }
+.inbox-source-separator { flex: none; color: var(--text-tertiary); }
+.inbox-session { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; font-size: 11px; }
+.inbox-session svg { flex: none; width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.inbox-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-row-meta em { flex: none; font-size: 9px; font-style: normal; margin-left: auto; }
 .inbox-divider { cursor: col-resize; background: color-mix(in srgb, currentColor 8%, transparent); touch-action: none; }
 .inbox-body { min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .inbox-body[inert], .inbox-sidebar[inert] { pointer-events: none; }

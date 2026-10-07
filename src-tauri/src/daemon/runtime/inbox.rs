@@ -34,7 +34,11 @@ fn detach_entry(entry: &InteractionEntry, tx: &tokio::sync::mpsc::UnboundedSende
         connected.store(false, Ordering::SeqCst);
     }
 }
-fn show_entry(entry: &InteractionEntry, tx: &tokio::sync::mpsc::UnboundedSender<ServerMsg>) {
+fn show_entry(
+    entry: &InteractionEntry,
+    tx: &tokio::sync::mpsc::UnboundedSender<ServerMsg>,
+    state: &Arc<ServerState>,
+) {
     if terminal(entry) {
         return;
     }
@@ -47,7 +51,33 @@ fn show_entry(entry: &InteractionEntry, tx: &tokio::sync::mpsc::UnboundedSender<
             show.agent_pid = resolved.pid.or(show.agent_pid);
         }
     }
+    let identity = show
+        .agent_kind
+        .as_deref()
+        .and_then(AgentKind::parse)
+        .zip(show.agent_session_id.as_deref())
+        .filter(|(_, session_id)| !session_id.trim().is_empty())
+        .map(|(kind, session_id)| (kind, session_id.to_string()));
+    if let Some((kind, session_id)) = &identity {
+        show.agent_session_title = state.agents.cached_session_title(*kind, session_id);
+    }
+    let request_id = show.request_id.clone();
+    let resolve_title = show.agent_session_title.is_none();
     let _ = tx.send(ServerMsg::Show(show));
+    if let Some((kind, session_id)) = identity.filter(|_| resolve_title) {
+        let tx = tx.clone();
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || {
+            let title = state
+                .agents
+                .cached_session_title(kind, &session_id)
+                .or_else(|| crate::agents::title::resolve_title(kind, &session_id))
+                .filter(|title| !title.trim().is_empty());
+            if let Some(title) = title {
+                let _ = tx.send(ServerMsg::PopupSessionTitle { request_id, title });
+            }
+        });
+    }
 }
 fn prune_inbox(state: &Arc<ServerState>) {
     let mut host = state.popup_inbox.lock().unwrap();
@@ -155,7 +185,7 @@ pub(super) fn dispatch_inbox_popup(entry: InteractionEntry, state: &Arc<ServerSt
         return true;
     }
     if let Some(tx) = tx {
-        show_entry(&entry, &tx);
+        show_entry(&entry, &tx, state);
     }
     if let Some(lease) = lease {
         spawn_inbox_host(lease, state);
@@ -231,7 +261,7 @@ pub(super) async fn handle_popup_host(
     prune_inbox(state);
     let requests = state.popup_inbox.lock().unwrap().requests();
     for request in requests {
-        show_entry(&request.value, &tx);
+        show_entry(&request.value, &tx, state);
     }
     {
         let update = state.update.lock().unwrap();

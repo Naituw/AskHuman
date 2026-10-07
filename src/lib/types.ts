@@ -342,6 +342,7 @@ export interface PopupInboxRequest {
   lang: string;
   agentKind?: string | null;
   agentConsoleSessionId?: string | null;
+  agentSessionTitle?: string | null;
   createdAtMs: number;
   kind?: "ask" | "permission" | "stop";
 }

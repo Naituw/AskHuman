@@ -45,6 +45,16 @@ impl Inner {
         self.requests.insert(show.request_id.clone(), show);
         true
     }
+    fn set_session_title(&mut self, id: &str, title: &str) -> bool {
+        let Some(show) = self.requests.get_mut(id) else {
+            return false;
+        };
+        if title.trim().is_empty() {
+            return false;
+        }
+        show.agent_session_title = Some(title.to_string());
+        true
+    }
     fn finish(&mut self, id: &str, winner: &str) -> Option<Terminal> {
         if !self.terminal.insert(id.to_owned()) {
             return None;
@@ -260,6 +270,19 @@ impl Inbox {
                 drop(state);
                 let _ = app.emit("popup-inbox-show", show);
             }
+            ServerMsg::PopupSessionTitle { request_id, title } => {
+                if self
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .set_session_title(&request_id, &title)
+                {
+                    let _ = app.emit(
+                        "popup-inbox-session-title",
+                        serde_json::json!({ "requestId": request_id, "title": title }),
+                    );
+                }
+            }
             ServerMsg::PopupSubmissionAck {
                 request_id,
                 winner,
@@ -424,6 +447,35 @@ mod tests {
             action: crate::models::ChannelAction::Cancel,
             answers: vec![],
         }
+    }
+    #[test]
+    fn session_titles_survive_snapshots_and_cannot_revive_finished_requests() {
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let inbox = Inbox::new(tx, 1, false);
+        let mut state = inbox.inner.lock().unwrap();
+        state.insert(show("a"));
+        state.insert(show("b"));
+        assert!(state.set_session_title("a", "Task A"));
+        assert!(!state.set_session_title("b", "  "));
+        assert!(!state.set_session_title("missing", "Other task"));
+        drop(state);
+        let snapshot = inbox.snapshot();
+        let a = snapshot
+            .requests
+            .iter()
+            .find(|show| show.request_id == "a")
+            .unwrap();
+        let b = snapshot
+            .requests
+            .iter()
+            .find(|show| show.request_id == "b")
+            .unwrap();
+        assert_eq!(a.agent_session_title.as_deref(), Some("Task A"));
+        assert!(b.agent_session_title.is_none());
+        let mut state = inbox.inner.lock().unwrap();
+        state.finish("a", "popup");
+        assert!(!state.set_session_title("a", "Late title"));
+        assert!(!state.insert(show("a")));
     }
     #[test]
     fn ended_requests_cannot_be_replayed_or_activated() {

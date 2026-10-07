@@ -370,6 +370,9 @@ pub struct ShowPayload {
     /// `agent_console_session_id`, this does not require an active AgentRegistry record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session_id: Option<String>,
+    /// Best-effort task title for the exact native session, filled without delaying the form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_title: Option<String>,
     /// MCP process fallback used by reply-history filtering when no native session is available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_instance_id: Option<String>,
@@ -687,6 +690,11 @@ pub enum ServerMsg {
     },
     /// 下发题目（D→GUI）。
     Show(ShowPayload),
+    /// Enrich one pending inbox entry after its native session title becomes available.
+    PopupSessionTitle {
+        request_id: String,
+        title: String,
+    },
     PopupHostAccepted {
         generation: u64,
         recovered: bool,

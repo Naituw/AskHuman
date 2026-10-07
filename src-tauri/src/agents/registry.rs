@@ -865,6 +865,18 @@ impl AgentRegistry {
         true
     }
 
+    /// Read an already-known title, including desktop-provided names, for an exact session.
+    pub fn cached_session_title(&self, kind: AgentKind, session_id: &str) -> Option<String> {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .active
+            .iter()
+            .chain(inner.ended.iter())
+            .find(|record| record.kind == kind && record.session_id == session_id)
+            .and_then(|record| record.title.clone())
+            .filter(|title| !title.trim().is_empty())
+    }
+
     /// Resolve only daemon-registered focus fields for a live session.
     pub fn focus_identity(
         &self,
@@ -1177,6 +1189,26 @@ mod tests {
         assert_eq!(r.working_count(), 0);
     }
 
+    #[test]
+    fn cached_title_preserves_desktop_task_name_and_requires_exact_identity() {
+        let r = reg();
+        r.update_desktop("desktop-session", "Task name from Codex App", "/repo", true);
+        assert_eq!(
+            r.cached_session_title(AgentKind::Codex, "desktop-session")
+                .as_deref(),
+            Some("Task name from Codex App")
+        );
+        assert!(r
+            .cached_session_title(AgentKind::Claude, "desktop-session")
+            .is_none());
+        assert!(r
+            .cached_session_title(AgentKind::Codex, "another-session")
+            .is_none());
+        r.update_desktop("desktop-session", "  ", "/repo", true);
+        assert!(r
+            .cached_session_title(AgentKind::Codex, "desktop-session")
+            .is_none());
+    }
     #[test]
     fn active_session_match_requires_exact_kind_for_every_agent_family() {
         let r = reg();
