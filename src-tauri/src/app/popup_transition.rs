@@ -137,6 +137,10 @@ pub async fn front(window: &WebviewWindow) -> Result<FrontProbe, String> {
                             SWP_NOSIZE, SW_SHOWNOACTIVATE,
                         };
                         let hwnd = w.hwnd().map_err(|e| e.to_string())?.0;
+                        // Keep Tao's visibility flags in sync before the native raise. Popup
+                        // windows are built with focused(false), so this show is nonactivating.
+                        // Native ShowWindow alone leaves hide() as a cached hidden-to-hidden no-op.
+                        w.show().map_err(|e| e.to_string())?;
                         unsafe {
                             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                             SetWindowPos(

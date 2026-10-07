@@ -501,3 +501,27 @@ Preview / 正文分隔线拖动卡顿按用户要求记录为自动待办 #7
 实际绘制与请求完成，不据此报告性能时序。首次隔离测试触发了用户级 Stop Hook 迁移，
 已按生产原有开启偏好恢复；复跑携带相同 capability 偏好并检查用户 Hook 文件逐字节未变。
 隔离实例与临时文件已清理。本轮未扩展既有 Windows/Linux 和真实 IM 外部验收范围。
+
+## 27. Windows 空白窗口修复与合并流程实机验证（2026-10-08）
+
+用户要求先在 Windows VM 复现 [#15](https://github.com/Naituw/AskHuman/issues/15)，再修复，
+并补验最近新增的合并窗口功能。官方 0.14.0 连续三轮完成回答后留下同一个可见空白 HWND；
+源码确认原生 `ShowWindow` 未同步 Tao 的可见状态，导致 `hide()` 被缓存短路。前置路径先
+调用非激活的 Tauri `show()`，保留原生前置；空闲隐藏错误增加持久日志。
+
+修复版通过三轮预热复用、两轮关闭预热和独立模式；真实 Win32 回归覆盖置顶开启 / 关闭各
+三轮显示、可见前置、隐藏，以及两轮最小化恢复，焦点与窗口位置保持。20 个相关 Rust 测试、
+macOS / Windows 全 targets Clippy、格式检查、两平台安装通过。Windows 回归脚本可独立重跑：
+`scripts/popup-visibility-regression.ps1`，需交互式桌面及 Windows SDK 的 `mt.exe`。
+
+实际 WebView2 还通过跨项目分组、逐题草稿、中央气泡飞入未读点、持续 ripple、Markdown 三栏、
+预览展开时的突发到达、内部 Sidebar 拖动、最小化后到达、提交自动换题和关闭快照排除新请求。
+普通提问 / Claude Permission / Codex Stop 混合取消返回各自正确终态；中文草稿及完整文本选区
+在到达期间保持。UI Automation 的文本写入需等待 WebView 更新，使用无到达的稳定选区对照后
+再验证；初次定位遗漏 `Unread` 前缀已修正，不属于产品故障。
+
+本次使用主工作树导出源码到 VM 独立目录，没有创建 Git worktree；保留 Windows 旧仓库及
+0.12.2 安装 / GUI，移除测试 PATH 与单次任务并恢复自动迁移的 Codex Stop Hook 路由。
+SSH 密钥按用户要求保存在交接文档旁。详细根因、证据和边界见
+[Windows #15 验证报告](../investigations/windows-popup-visibility-issue15.md)。Linux、真实 IM、
+多 DPI / 多屏、真实输入法组合态及完整附件格式矩阵仍按 PROGRESS 保留。

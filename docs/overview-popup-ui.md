@@ -70,6 +70,9 @@ Sidebar / Preview 展开与收起的原生几何提交固定为 0ms，即时切�
 `popup_transition.rs` 负责非激活前置及最小化恢复，保留其他应用键盘焦点；托盘指定请求
 允许用户显式聚焦。每轮首条从隐藏窗口出现时应用 `general.appearAnimation` 的 macOS 原生
 动画，先 `orderFront:` 启动系统出现效果，再非激活前置；可见窗口的新到达只前置。
+Windows 前置先调用 Tauri `show()` 同步 Tao 的可见状态，再执行原生非激活显示；仅调用
+`ShowWindow` 会使后续 `hide()` 被隐藏状态缓存跳过，留下空白窗口。空队列隐藏失败记录
+`popup_host / idle_hide_failed`。原生 HWND 回归入口为 `scripts/popup-visibility-regression.ps1`。
 第一条不播中央气泡，后续请求在原生布局提交并前置后，由
 `InboxArrivalNotice.vue` / `inboxArrival.ts` 播放中央提问气泡飞入侧栏蓝点的提醒。
 中心由 Sidebar 和正文的实际 DOM 边界计算，排除右侧原生附件预览及离屏画布 reserve。

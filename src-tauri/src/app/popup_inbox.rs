@@ -177,7 +177,12 @@ impl Inbox {
         state.cycle = state.cycle.wrapping_add(1);
         drop(state);
         if let Some(window) = app.get_webview_window("popup") {
-            let _ = window.hide();
+            if let Err(error) = window.hide() {
+                crate::daemon::lifecycle::log_runtime_event("popup_host", "idle_hide_failed", None);
+                super::stderr_redirect::eprintln_real(&format!(
+                    "popup host idle hide failed: {error}"
+                ));
+            }
         }
         #[cfg(target_os = "macos")]
         {

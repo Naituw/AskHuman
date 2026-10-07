@@ -2,7 +2,7 @@
 
 > 状态：2026-10-07，macOS 正式实现已安装；未读 ripple v2 实机效果已获用户确认。
 > 用户要求：Spec → Vue 3 + Tauri 2 demo → 用户确认满意 → 正式实现。不得以浏览器截图替代原生扩窗验收。
-> 实施计划见 [popup-request-inbox](../plans/popup-request-inbox.md)，当前实现地图见 [Popup UI 概览](../overview-popup-ui.md)。其他平台与真实 IM 外部验收仍按 PROGRESS 的延期安排。
+> 实施计划见 [popup-request-inbox](../plans/popup-request-inbox.md)，当前实现地图见 [Popup UI 概览](../overview-popup-ui.md)。2026-10-08 已补齐 Windows 11 VM 的合并窗口核心流程与到达动效，见计划 §27；Linux、真实 IM 及 DPI/多屏等外部验收仍按 PROGRESS 的延期安排。
 > 关联：[附件预览](popup-attachment-preview-panel.md)、[重复请求收敛](duplicate-ask-coalescing.md)、
 > [权限审批](../plans/agent-permission-approval.md)、[结束确认](agent-stop-confirmation.md)。
 > §9–14 保留旧原型迭代历史；当前到达提醒以 §4.1 和 [气泡动效规格](popup-arrival-envelope.md) 为准。

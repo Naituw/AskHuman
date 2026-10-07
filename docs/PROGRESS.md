@@ -12,9 +12,11 @@ macOS 合并/可选独立模式、原生画布过渡、普通外缘缩放修复�
 自动化外缘拖动未成功改变窗口尺寸，
 程序化几何证据不代替物理拖动观感验收。
 
-用户已同意延期真实 IM 终态及 Windows/Linux 实机、DPI/多屏矩阵（AskHuman 项目
-todo #4：a7d02da0-72d5-4191-954d-d0bcb77d322e）。当前 popup-only Dev Instance
-不能代替真实渠道和其他平台证据；补齐这些外部 gate 后删除本节。
+2026-10-08 已在 Windows 11 24H2 VM 的交互式桌面验证合并窗口核心流程、到达气泡、草稿与选区、
+最小化恢复、Sidebar 拖动、附件三栏和混合类型取消，并复现修复 #15 的空白窗口残留；见计划 §27。
+用户已同意延期的真实 IM 终态、Linux 实机、DPI/多屏矩阵仍待补齐（AskHuman 项目
+todo #4：a7d02da0-72d5-4191-954d-d0bcb77d322e）。上述 Windows popup-only VM 证据
+不能代替这些外部 gate；补齐后删除本节。
 
 ## 待外部验收：Windows / Linux Popup 附件预览面板
 
@@ -23,7 +25,9 @@ todo #4：a7d02da0-72d5-4191-954d-d0bcb77d322e）。当前 popup-only Dev Instan
 `docs/specs/popup-attachment-preview-panel.md`。已验证固定右侧、分隔线、外缘缩窄后的主区恢复、
 最大化后恢复、阅读状态、图片动画 / 平移、原文件打开及多题草稿提交。展开总尺寸未污染主区偏好。
 
-剩余为 Windows / Linux 实机安装、DPI / 多屏、X11 / Wayland、目标应用拖放：保留已确认的外部
+2026-10-08 已补齐 Windows 11 VM 的安装与 Markdown 三栏展开、到达动效排除预览区、Sidebar
+分隔线和草稿保留，见 `docs/plans/popup-request-inbox.md` §27；未据此验收全部附件格式。
+剩余为 Windows 完整附件 / 浏览器 / 拖放矩阵、Linux 实机安装、DPI / 多屏、X11 / Wayland：保留已确认的外部
 gate（AskHuman 项目 todo #3），完成后删除本节。Markdown 浏览器打开也应在这两平台补验系统默认浏览器、HTML 文件关联不同、启动失败和真实菜单；本地记录见 `docs/plans/markdown-browser-open.md`。不得以 macOS 或纯计算测试代替这些平台实机证据。
 
 ## 待外部验收：Windows 发布候选
