@@ -196,18 +196,16 @@ fn open_popup(app: &tauri::AppHandle, automatic: bool) -> tauri::Result<()> {
     } else {
         "prototype/popup-inbox.html?surface=popup"
     };
-    let mut builder = WebviewWindowBuilder::new(app, "inbox-demo", WebviewUrl::App(url.into()))
+    let builder = WebviewWindowBuilder::new(app, "inbox-demo", WebviewUrl::App(url.into()))
         .title("AskHuman · 统一作答原型")
         .inner_size(560.0, 652.0)
         .min_inner_size(420.0, 480.0)
         .position(470.0, 100.0)
         .visible(false);
     #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true);
-    }
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
     let window = builder.build()?;
     window.on_window_event({
         let window = window.clone();

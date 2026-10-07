@@ -286,15 +286,15 @@ impl Inbox {
                         if !inbox.current_cycle(cycle) {
                             return;
                         }
-                        let app_for_policy = app.clone();
-                        let _ = app.run_on_main_thread(move || {
-                            #[cfg(target_os = "macos")]
-                            {
+                        #[cfg(target_os = "macos")]
+                        {
+                            let app_for_policy = app.clone();
+                            let _ = app.run_on_main_thread(move || {
                                 let _ = app_for_policy
                                     .set_activation_policy(tauri::ActivationPolicy::Regular);
                                 crate::macos_dock_icon::set_dock_icon();
-                            }
-                        });
+                            });
+                        }
                         let _ = super::popup_transition::front(&window).await;
                         let config = crate::config::AppConfig::load_without_secrets();
                         let _ = window.set_always_on_top(config.general.always_on_top);

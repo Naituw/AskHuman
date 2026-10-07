@@ -1,6 +1,8 @@
 //! Isolated geometry experiment: one fixed Vue canvas, native clipping, no product IPC or snapshots.
 use serde::Serialize;
-use std::{io::Write, sync::Mutex, time::Instant};
+use std::io::Write;
+#[cfg(target_os = "macos")]
+use std::{sync::Mutex, time::Instant};
 use tauri::{WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 const LEFT: f64 = 241.0;
@@ -10,10 +12,12 @@ const CANVAS: f64 = LEFT + MAIN + RIGHT;
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(any(target_os = "macos", test))]
 struct Edges {
     left: f64,
     right: f64,
 }
+#[cfg(any(target_os = "macos", test))]
 fn interpolate(from: Edges, to: Edges, progress: f64, scale: f64) -> Edges {
     let t = progress.clamp(0.0, 1.0);
     let eased = t * t * t * (10.0 + t * (-15.0 + 6.0 * t));
@@ -49,6 +53,7 @@ struct Report {
 struct State {
     #[cfg(target_os = "macos")]
     base: Mutex<Option<mac::Base>>,
+    #[cfg(target_os = "macos")]
     edges: Mutex<Edges>,
     automatic: bool,
 }
@@ -410,6 +415,7 @@ fn main() {
         .manage(State {
             #[cfg(target_os = "macos")]
             base: Mutex::new(None),
+            #[cfg(target_os = "macos")]
             edges: Mutex::new(Edges {
                 left: 0.0,
                 right: 0.0,
@@ -424,7 +430,7 @@ fn main() {
             foundation_record
         ])
         .setup(move |app| {
-            let mut builder = WebviewWindowBuilder::new(
+            let builder = WebviewWindowBuilder::new(
                 app,
                 "pane-foundation",
                 WebviewUrl::App(if automatic {
@@ -439,11 +445,9 @@ fn main() {
             .visible(false)
             .resizable(false);
             #[cfg(target_os = "macos")]
-            {
-                builder = builder
-                    .title_bar_style(tauri::TitleBarStyle::Overlay)
-                    .hidden_title(true);
-            }
+            let builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true);
             builder.build()?;
             Ok(())
         })
