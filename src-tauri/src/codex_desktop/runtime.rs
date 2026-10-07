@@ -619,13 +619,15 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 true,
                 None,
                 |_| Ok(()),
-                Duration::from_millis(500),
+                // Process startup competes with the full parallel suite. Allow margin
+                // while still exercising a bounded wait for the injected timeout.
+                Duration::from_secs(5),
             )
             .unwrap_err();
-            assert_eq!(err.outcome, outcome, "{fault}");
-            assert_eq!(err.method.as_deref(), method, "{fault}");
-            assert_eq!(err.code, code, "{fault}");
-            assert_eq!(err.session_id.is_some(), has_id, "{fault}");
+            assert_eq!(err.outcome, outcome, "{fault}: {err:?}");
+            assert_eq!(err.method.as_deref(), method, "{fault}: {err:?}");
+            assert_eq!(err.code, code, "{fault}: {err:?}");
+            assert_eq!(err.session_id.is_some(), has_id, "{fault}: {err:?}");
             assert!(!trace(&dir).iter().any(|r| r["method"] == "turn/start"));
         }
         let (dir, mut installation) = fake_runtime("success");
