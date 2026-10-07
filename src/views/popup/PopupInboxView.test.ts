@@ -16,6 +16,7 @@ vi.mock("../PopupView.vue", () => ({ default: defineComponent({ props: ["scope"]
   return () => h("textarea", { "data-form-id": props.scope.requestId });
 } }) }));
 import PopupInboxView from "../PopupInboxView.vue";
+import UnreadRipple from "./UnreadRipple.vue";
 function request(id: string, project = "/project"): PopupInboxRequest {
   return { requestId: id, sequence: id.charCodeAt(0), project, source: "Codex", lang: "en", createdAtMs: 1,
     interaction: { type: "ask", request: { id, isMarkdown: true, selectOnly: false, single: false, outputFormat: "text",
@@ -82,6 +83,7 @@ describe("shared popup navigation", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     emit("popup-inbox-show", request("c")); await flushPromises();
     const row = wrapper.findAll(".inbox-row")[2];
+    expect(row.findComponent(UnreadRipple).props("active")).toBe(false);
     for (let cycle = 0; cycle < 4; cycle++) {
       await vi.advanceTimersByTimeAsync(400);
       expect(row.classes()).toContain("flash");
@@ -89,7 +91,11 @@ describe("shared popup navigation", () => {
     await vi.advanceTimersByTimeAsync(400);
     expect(row.classes()).not.toContain("flash");
     expect(row.find(".inbox-dot").classes()).toContain("unread");
+    expect(row.findComponent(UnreadRipple).props("active")).toBe(true);
     expect(wrapper.find('[data-inbox-request="a"]').isVisible()).toBe(true);
+    await row.trigger("click"); await flushPromises();
+    expect(row.findComponent(UnreadRipple).props("active")).toBe(false);
+    expect(row.classes()).not.toContain("unread");
   });
   it("skips a successor already ended by a batch and opens the surviving arrival", async () => {
     await start(); emit("popup-inbox-show", request("c", "/other")); await flushPromises();

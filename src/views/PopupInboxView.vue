@@ -5,6 +5,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useI18n } from "vue-i18n";
 import PopupView from "./PopupView.vue";
+import UnreadRipple from "./popup/UnreadRipple.vue";
 import type { PopupScope, InboxLayout } from "./popup/usePopupCore";
 import type { PopupInboxRequest } from "../lib/types";
 import { cancelPopup, confirmPopupReady, popupInboxActivate, popupInboxIdle, popupInboxInit, popupShowWindow } from "../lib/ipc";
@@ -324,7 +325,8 @@ onBeforeUnmount(() => {
       <nav class="inbox-navigation" @pointerdown.capture="rememberFocus">
         <section v-for="group in groups" :key="group.path" class="inbox-group">
           <h2 :title="group.path">{{ projectName(group.path) }} <span>{{ group.requests.length }}</span></h2>
-          <button v-for="request in group.requests" :key="request.requestId" class="inbox-row" :class="{ selected: request.requestId === active, flash: flashed.has(request.requestId) }" :aria-current="request.requestId === active ? 'true' : undefined" :title="inboxTitle(request)" @click="choose(request.requestId)">
+          <button v-for="request in group.requests" :key="request.requestId" class="inbox-row" :class="{ selected: request.requestId === active, flash: flashed.has(request.requestId), unread: !visited.has(request.requestId) }" :aria-current="request.requestId === active ? 'true' : undefined" :title="inboxTitle(request)" @click="choose(request.requestId)">
+            <UnreadRipple :active="!visited.has(request.requestId) && !flashed.has(request.requestId)" />
             <span class="inbox-dot" :class="{ unread: !visited.has(request.requestId) }" :aria-label="!visited.has(request.requestId) ? t('popup.inbox.unread') : undefined"></span>
             <span class="inbox-row-content"><strong>{{ inboxTitle(request) || t('popup.inbox.untitled') }}</strong><span class="inbox-row-meta">{{ request.agentKind || request.source }} · {{ t(`popup.inbox.kind.${inboxKind(request)}`) }}<em v-if="drafts.has(request.requestId)">{{ t('popup.inbox.draft') }}</em></span></span>
           </button>
@@ -373,13 +375,15 @@ onBeforeUnmount(() => {
 .inbox-heading span, .inbox-group h2 span { font-variant-numeric: tabular-nums; opacity: .6; }
 .inbox-navigation { flex: 1; overflow: auto; padding: 0 8px 16px; }
 .inbox-group h2 { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 600; opacity: .6; padding: 16px 12px 7px; margin: 0; overflow: hidden; }
-.inbox-row { display: flex; align-items: flex-start; gap: 7px; width: 100%; padding: 10px 8px; border: 0; border-radius: 8px; text-align: left; background: transparent; color: inherit; cursor: pointer; }
+.inbox-row { --inbox-ripple-color: rgba(38, 133, 232, .18); position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: flex-start; gap: 7px; width: 100%; padding: 10px 8px; border: 0; border-radius: 8px; text-align: left; background: transparent; color: inherit; cursor: pointer; }
+.theme-dark .inbox-row { --inbox-ripple-color: rgba(38, 133, 232, .252); }
+@media (prefers-color-scheme: dark) { :root:not(.theme-light) .inbox-row { --inbox-ripple-color: rgba(38, 133, 232, .252); } }
 .inbox-row.selected { background: color-mix(in srgb, #2685e8 12%, transparent); }
 .inbox-row:hover { background: color-mix(in srgb, #2685e8 8%, transparent); }
 .inbox-row.flash { animation: inbox-row-arrival .4s ease-in-out 5; }
-.inbox-dot { position: relative; flex: 0 0 6px; height: 6px; margin-top: 5px; }
+.inbox-dot { position: relative; z-index: 1; flex: 0 0 6px; height: 6px; margin-top: 5px; }
 .inbox-dot.unread::before { content: ''; position: absolute; left: -2px; top: -2px; width: 10px; height: 10px; border-radius: 50%; background: #2685e8; animation: inbox-unread-dot 2.8s cubic-bezier(.4, 0, .2, 1) infinite; }
-.inbox-row-content { min-width: 0; flex: 1; }
+.inbox-row-content { position: relative; z-index: 1; min-width: 0; flex: 1; }
 .inbox-row strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; line-height: 1.45; font-weight: 500; }
 .inbox-row-meta { display: flex; gap: 4px; font-size: 10px; opacity: .6; margin-top: 6px; }
 .inbox-row-meta em { font-style: normal; margin-left: auto; }
@@ -406,5 +410,8 @@ onBeforeUnmount(() => {
   20%, 35% { box-shadow: inset 0 0 0 100px #2685e840; }
 }
 @keyframes inbox-unread-dot { 0%, 100% { background: #2685e8; } 45% { background: #006dff; } 70% { background: #2685e8; } }
-@media (prefers-reduced-motion: reduce) { .inbox-row.flash, .inbox-dot.unread::before { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .inbox-row.flash, .inbox-dot.unread::before { animation: none; }
+  .inbox-row.unread { box-shadow: inset 0 0 0 100px rgba(38, 133, 232, .08); }
+}
 </style>

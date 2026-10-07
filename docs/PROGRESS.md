@@ -5,10 +5,10 @@
 
 ## 待外部验收：统一作答窗口的真实渠道与其他平台
 
-macOS 合并/可选独立模式、原生画布过渡、普通外缘缩放修复和 10pt 未查看蓝点已接入并安装。
+macOS 合并/可选独立模式、原生画布过渡、普通外缘缩放修复、10pt 未查看蓝点和持续圆形扩散已接入并安装。
 行为规格见 `docs/specs/popup-request-inbox.md`；实施与验证记录见
-`docs/plans/popup-request-inbox.md` §10–20。最新 Rust 1252 passed / 3 ignored、
-前端 232 项通过；原生几何 harness 84 项通过，真实 Sidebar 拖动及宽度恢复已验证。
+`docs/plans/popup-request-inbox.md` §10–21。最近 Rust 1252 passed / 3 ignored、
+最新前端 239 项通过；原生几何 harness 84 项通过，真实 Sidebar 拖动及宽度恢复已验证。
 自动化外缘拖动未成功改变窗口尺寸，
 程序化几何证据不代替物理拖动观感验收。
 
