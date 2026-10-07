@@ -110,7 +110,7 @@ pub async fn front(window: &WebviewWindow) -> Result<FrontProbe, String> {
                             SetWindowPos, ShowWindow, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE,
                             SWP_NOSIZE, SW_SHOWNOACTIVATE,
                         };
-                        let hwnd = w.hwnd().map_err(|e| e.to_string())?.0 as *mut std::ffi::c_void;
+                        let hwnd = w.hwnd().map_err(|e| e.to_string())?.0;
                         unsafe {
                             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                             SetWindowPos(
