@@ -117,20 +117,22 @@ fn fail_surface(entry: &InteractionEntry) {
     }
 }
 
-fn spawn_inbox_host(lease: Lease, state: &Arc<ServerState>) -> bool {
+fn spawn_inbox_process(exe: &std::path::Path, token: &str) -> std::io::Result<u32> {
     use std::process::{Command, Stdio};
-    let result = std::env::current_exe().and_then(|exe| {
-        let mut command = Command::new(exe);
-        command
-            .arg("--popup-host")
-            .arg("--token")
-            .arg(&lease.token)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        crate::daemon::spawn::configure_background(&mut command);
-        command.spawn().map(|_| ())
-    });
+    let mut command = Command::new(exe);
+    command
+        .arg("--popup-host")
+        .arg("--token")
+        .arg(token)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    crate::daemon::spawn::configure_background(&mut command);
+    crate::daemon::spawn::spawn_and_reap(&mut command)
+}
+
+fn spawn_inbox_host(lease: Lease, state: &Arc<ServerState>) -> bool {
+    let result = std::env::current_exe().and_then(|exe| spawn_inbox_process(&exe, &lease.token));
     if let Err(error) = result {
         log(&format!("failed to start popup host: {error}"));
         recover_inbox(state, lease.generation);
@@ -425,4 +427,52 @@ pub(super) async fn handle_popup_host(
         recover_inbox(state, generation);
     }
     state.active.fetch_add(1, Ordering::SeqCst);
+}
+
+#[cfg(all(test, unix))]
+mod spawn_tests {
+    use super::spawn_inbox_process;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn shared_host_preserves_arguments_and_reaps_exited_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("popup-host");
+        std::fs::write(
+            &exe,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nexec /bin/sleep 0.1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let pid = spawn_inbox_process(&exe, "token with spaces").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if unsafe { libc::kill(pid as libc::pid_t, 0) } == -1 {
+                assert_eq!(
+                    std::io::Error::last_os_error().raw_os_error(),
+                    Some(libc::ESRCH)
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "shared host {pid} was not reaped"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("popup-host.args")).unwrap(),
+            "--popup-host\n--token\ntoken with spaces\n"
+        );
+    }
+
+    #[test]
+    fn shared_host_spawn_failure_is_returned() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = spawn_inbox_process(&dir.path().join("missing-popup-host"), "token")
+            .expect_err("missing host executable must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    }
 }

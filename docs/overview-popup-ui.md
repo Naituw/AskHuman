@@ -80,7 +80,9 @@ Sidebar / Preview 展开与收起的原生几何提交固定为 0ms，即时切�
 仅供缩放回归样例引用。完整时序及生命周期见 `specs/popup-arrival-envelope.md`。
 
 GUI Host 保留独立的设置/历史/托盘职责；空宿主不保活 Daemon，沿用 popupPrewarm 控制
-空队列后的待命/退出。`channels.popup.windowMode` 默认 `merged`，在设置「通用 → 弹窗行为」
+空队列后的待命/退出。共享宿主、独立冷热 Helper 和 GUI Host 的启动统一走
+`daemon/spawn.rs::spawn_and_reap`；Unix 在启动前分配等待线程，子进程退出后异步回收。
+`channels.popup.windowMode` 默认 `merged`，在设置「通用 → 弹窗行为」
 第一项「提问窗口模式」可改为 `independent`；设置搜索可按模式名称或 Sidebar 定位。
 设置对新提问生效；在途窗口和草稿保留。独立模式继续使用 `PopupFocusArbiter` / 冷热
 Helper 及原有级联；只对所选模式补热，闲置的旧模式宿主回收。当前规格与实施记录见 `docs/specs/popup-request-inbox.md`、

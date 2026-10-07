@@ -484,3 +484,20 @@ Rust 1256 / 3 ignored，252 Vitest + 5 Node tests、production build、全 targe
 不展示内部原文、后续队列继续、手动切题和跨轮清理，以及后台布局不清取消失败。
 Preview / 正文分隔线拖动卡顿按用户要求记录为自动待办 #7
 （`ddd467df-ed9a-4634-b729-2056a9ce7f01`），在本项完成后接续处理。
+
+## 26. Unix 共享宿主子进程回收（2026-10-08）
+
+整合 PR #14 的 MCP 环境变量保留与 Unix GUI 子进程回收后，补齐默认 merged 模式的
+`daemon/runtime/inbox.rs` 启动入口，复用 `daemon/spawn.rs::spawn_and_reap`。普通请求、
+预热与故障重建共用此入口；启动参数、认证、恢复预算与 Windows 启动行为保持原契约。
+新增真实子进程回归验证参数完整传递、退出后回收和启动错误返回。
+
+63 个相关 Rust 测试、格式检查、diff 检查和全 targets Clippy 通过；`./scripts/install.sh`
+已编译、签名并安装到 `~/.local/bin/AskHuman`。macOS 隔离 daemon 实测两次冷启动、两次
+同宿主预热复用及一次 SIGTERM 后重建，共 5 次绘制后自动取消；4 个宿主均在 daemon
+仍存活时完成回收，最终无僵尸子进程。测试配置关闭预热后也正确退出并回收空宿主。
+
+共享宿主尚不输出旧 perf harness 的前端绘制埋点，本次以双 rAF 后触发的自动取消验证
+实际绘制与请求完成，不据此报告性能时序。首次隔离测试触发了用户级 Stop Hook 迁移，
+已按生产原有开启偏好恢复；复跑携带相同 capability 偏好并检查用户 Hook 文件逐字节未变。
+隔离实例与临时文件已清理。本轮未扩展既有 Windows/Linux 和真实 IM 外部验收范围。
