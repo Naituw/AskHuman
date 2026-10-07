@@ -16,6 +16,15 @@ macOS 合并/可选独立模式、原生画布过渡、普通外缘缩放修复�
 todo #4：a7d02da0-72d5-4191-954d-d0bcb77d322e）。当前 popup-only Dev Instance
 不能代替真实渠道和其他平台证据；补齐这些外部 gate 后删除本节。
 
+## 待实施：发送成功后的换题过渡
+
+用户已选择「完成后轻推」设计：成功回执后确认 240ms，再用 300ms 完成当前条目收起
+和正文接替。设计与边界见 `docs/specs/popup-request-inbox.md` D26 / §18，Demo 验证记录见
+`docs/plans/popup-request-inbox.md` §22。当前正式换题逻辑仍为即时切换。
+
+下一步：获得正式实施任务后接入请求 ID 对应的成功反馈、可取消动画与下一条就绪门槛，
+覆盖终态竞态及原生附件 / 焦点 / 草稿，运行安装脚本并验证实际窗口；完成后删除本节。
+
 ## 待外部验收：Windows / Linux Popup 附件预览面板
 
 实现、macOS 安装及用户体验验收已完成，自动回归和真实 WKWebView / AppKit 验证记录见
