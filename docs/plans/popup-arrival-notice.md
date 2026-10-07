@@ -31,3 +31,29 @@
 这次用户反馈确认原生动效与输入体验；关闭确认下层、预览排除、滚动失效及减少动态效果
 另有实现和自动回归覆盖，未逐项取得单独的人工反馈。Windows/Linux、真实 IM 终态及 DPI/多屏
 实机矩阵仍归统一窗口既有外部 gate，不将本次 macOS 反馈扩展为其他平台证据。
+
+## 原生出现动画恢复（已完成）
+
+用户反馈原先的 macOS 弹出动画消失，并批准恢复每轮首条的原生出现动画、保留非激活前置。
+代码追踪发现：合并窗口初始提交 `799334f` 的 `PresentPopup` 绕过独立窗口的
+`finalize_popup_show`，未应用 `general.appearAnimation`；`f5ab320` 移除首条也会播放的旧缩放
+后，首条没有中央气泡，因此漏接原生出现动画的问题更明显。当前配置仍为 `alert`。
+
+`popup_transition::appear` 在隐藏且未最小化时应用配置，调用不变 key 的 `orderFront:`
+启动 AppKit 出现效果，再调用 `orderFrontRegardless` 非激活前置。普通可见到达仍走 `front`，
+最小化恢复仍走系统 `deminiaturize`。Apple 对 animationBehavior 的说明只明确描述
+orderFront / orderOut，因此单独设置属性不能替代原生体验确认。
+
+新增 `popup_appearance_regression` 原生回归样例，使用生产显示路径，检查 Alert / None /
+Document 配置、复用同一窗口下一轮、可见前置不重播、前台应用 PID、key 状态及 native frame。
+样例只读回配置与焦点 / 几何，不将这些读数当作“动画已视觉播放”的证明。
+最初样例在 WebView 创建后仍收到 Wry 的 NSApplication.activate 启动副作用，原有 front
+对照组也在 400ms 后成为 key。样例改为创建阶段禁止自身激活、Ready 后转 Accessory，
+排除启动激活后，原有 front 对照及 4 轮新显示路径均保持前台 PID / key / frame。
+该探针验证的是已运行宿主的原生显示路径，不将其扩展为冷启动焦点矩阵的证据。
+`cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings` 均通过；`./scripts/install.sh`
+编译、签名并安装成功。一次 Clippy 与安装后的缓存回收并行导致 fingerprint 目录消失，
+待安装结束后单独重跑 Clippy 通过，没有将该构建竞争记为代码错误。
+实际清空待答列表后通过新安装的 AskHuman 再弹一轮，用户确认
+「原生弹出动画已恢复，焦点正常」。真实体验与探针分别覆盖视觉出现和非激活显示属性，
+Windows / Linux 的显示路径未调整。

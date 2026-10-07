@@ -1,4 +1,4 @@
-//! Nonactivating window presentation and arrival pulse diagnostics.
+//! Nonactivating window presentation, native appearance and legacy pulse diagnostics.
 use tauri::WebviewWindow;
 
 #[derive(serde::Serialize)]
@@ -11,6 +11,8 @@ pub struct FrontProbe {
     key_after: i64,
     restored: bool,
     minimized_after: bool,
+    visible_before: bool,
+    appear_behavior_applied: Option<isize>,
 }
 
 #[derive(serde::Serialize)]
@@ -60,7 +62,10 @@ mod mac {
         }
     }
 
-    pub async fn front(window: &WebviewWindow) -> Result<FrontProbe, String> {
+    pub async fn front(
+        window: &WebviewWindow,
+        appear_behavior: Option<isize>,
+    ) -> Result<FrontProbe, String> {
         let (tx, rx) = oneshot::channel();
         window
             .with_webview(move |platform| unsafe {
@@ -68,9 +73,21 @@ mod mac {
                 let before = foreground_pid();
                 let key = key_number();
                 let minimized: bool = msg_send![native_window, isMiniaturized];
+                let visible: bool = msg_send![native_window, isVisible];
+                let mut applied = None;
                 if minimized {
                     let _: () =
                         msg_send![native_window, deminiaturize: std::ptr::null_mut::<AnyObject>()];
+                }
+                if !visible && !minimized {
+                    if let Some(behavior) = appear_behavior {
+                        let _: () = msg_send![native_window, setAnimationBehavior: behavior];
+                        applied = Some(msg_send![native_window, animationBehavior]);
+                        // orderFront: starts AppKit's configured appearance without making
+                        // the window key. The following raise also crosses inactive app order.
+                        let _: () =
+                            msg_send![native_window, orderFront: std::ptr::null_mut::<AnyObject>()];
+                    }
                 }
                 // This raises an inactive application's window without making it key or main.
                 // Do not use Tauri show/set_focus or activate the application in this path.
@@ -84,6 +101,8 @@ mod mac {
                     key_after: key_number(),
                     restored: minimized,
                     minimized_after: after,
+                    visible_before: visible,
+                    appear_behavior_applied: applied,
                 });
             })
             .map_err(|e| e.to_string())?;
@@ -92,10 +111,17 @@ mod mac {
     }
 }
 
+/// Apply the configured native animation when a new round reveals a hidden window.
+/// Existing visible windows and minimized restoration retain their normal raise path.
+#[cfg(target_os = "macos")]
+pub async fn appear(window: &WebviewWindow, behavior: isize) -> Result<FrontProbe, String> {
+    mac::front(window, Some(behavior)).await
+}
+
 pub async fn front(window: &WebviewWindow) -> Result<FrontProbe, String> {
     #[cfg(target_os = "macos")]
     {
-        mac::front(window).await
+        mac::front(window, None).await
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -175,6 +201,8 @@ pub async fn front(window: &WebviewWindow) -> Result<FrontProbe, String> {
                         key_after: 0,
                         restored: false,
                         minimized_after: false,
+                        visible_before: false,
+                        appear_behavior_applied: None,
                     })
                 })();
                 let _ = tx.send(result);

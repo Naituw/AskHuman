@@ -319,9 +319,16 @@ impl Inbox {
                                 crate::macos_dock_icon::set_dock_icon();
                             });
                         }
-                        let _ = super::popup_transition::front(&window).await;
                         let config = crate::config::AppConfig::load_without_secrets();
                         let _ = window.set_always_on_top(config.general.always_on_top);
+                        #[cfg(target_os = "macos")]
+                        let _ = super::popup_transition::appear(
+                            &window,
+                            config.general.appear_animation.ns_animation_behavior(),
+                        )
+                        .await;
+                        #[cfg(not(target_os = "macos"))]
+                        let _ = super::popup_transition::front(&window).await;
                         let _ = app.emit("popup-inbox-presented", ());
                         inbox.notify_arrival(&window);
                     }
