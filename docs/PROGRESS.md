@@ -59,7 +59,9 @@ path identity、launchId 平台标记和 rename 覆盖语义均有 Windows 原�
 完整实现、自动测试、本地浏览器 sandbox / 布局验证与 bundle spike 已完成，详见
 `docs/plans/mermaid-rendering.md` 的实施记录。仍需在 Catalina 级 WKWebView、Windows WebView2 与
 Linux WebKitGTK 分别跑一次计划 §8.3 的图型、错误、主题、Find 和回答流程矩阵；当前 macOS Tauri
-Popup 会在本轮安装后先验收。实机 gate 未齐前不降低安全等级或提高系统要求。
+Popup 已完成本机验收。2026-10-09 又补齐 Markdown 附件预览与离线浏览器快照，用户确认两入口与
+深色背景正常；实现、Safari Find / 打印和背景修复记录见 `docs/plans/attachment-mermaid-rendering.md`。
+跨平台补验应包含新增附件入口。实机 gate 未齐前不降低安全等级或提高系统要求。
 
 ## 定期同步：Codex Shell 判定复刻（codex-permission-remember §6.4）
 

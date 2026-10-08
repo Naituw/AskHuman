@@ -97,6 +97,15 @@ describe("normalizeMermaidSandbox", () => {
       ),
     ).toThrow("invalid dimensions");
   });
+
+  it("declares the diagram appearance so dark-mode browser frames stay transparent", () => {
+    const result = normalizeMermaidSandbox(
+      sandbox('<svg viewBox="0 0 240 120"><text>Dark</text></svg>'),
+      "dark",
+    );
+    expect(decodeDocument(result.documentUrl)).toContain(":root{color-scheme:dark}");
+    expect(decodeDocument(result.documentUrl)).toContain("background:transparent");
+  });
 });
 
 describe("mermaidFitScale", () => {
@@ -203,6 +212,20 @@ describe("renderMermaid", () => {
   it("uses the Markdown body font size in the Mermaid theme", async () => {
     const result = await renderMermaid("flowchart TD\nA[Readable]-->B", "light", 12);
     expect(decodeDocument(result.documentUrl)).toContain("font-size:12px");
+  });
+
+  it("renders the reported Scene lifecycle flowchart with labeled and dotted edges", async () => {
+    const result = await renderMermaid(`flowchart TD
+    SD[SceneDelegate：接入与生命周期] --> O[已有 Screen observer]
+    O -->|通用通知，object 为 Scene| W[AppWindow：系统跟随决策]
+    W -->|需要换肤时 applySkin| M[SkinManager：提交皮肤]
+    B[既有业务换肤入口] -->|原调用| M
+    M -->|成功后：实际皮肤深浅色| S[主 Scene.traitOverrides]
+    S --> U[继承外观的窗口和系统控件]
+    O -.handler 经 SceneDelegate 更新原始输入缓存.-> M`, "light");
+    expect(result.findText).toContain("SceneDelegate");
+    expect(result.findText).toContain("Scene.traitOverrides");
+    expect(result.documentUrl).toMatch(/^data:text\/html;charset=UTF-8;base64,/);
   });
 
   it.each([

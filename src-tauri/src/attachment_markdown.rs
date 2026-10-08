@@ -1,5 +1,5 @@
 //! Shared static Markdown renderer. Popup policy limits generated URLs in its trusted WebView.
-use pulldown_cmark::{html, Event, Options, Parser, Tag};
+use pulldown_cmark::{html, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 pub fn supports(path: &str) -> bool {
     std::path::Path::new(path)
         .extension()
@@ -56,7 +56,28 @@ fn render_bounded(src: &str, popup: bool, max_events: usize) -> Result<String, &
         }),
         other => other,
     });
-    let events: Vec<_> = parser.take(max_events.saturating_add(1)).collect();
+    let mut mermaid = false;
+    let events: Vec<_> = parser
+        .flat_map(|event| match event {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(ref info)))
+                if info
+                    .split_whitespace()
+                    .next()
+                    .is_some_and(|language| language.eq_ignore_ascii_case("mermaid")) =>
+            {
+                mermaid = true;
+                vec![
+                    Event::Html("<div class=\"mermaid-block\" data-mermaid-pending>".into()),
+                    event,
+                ]
+            }
+            Event::End(TagEnd::CodeBlock) if std::mem::take(&mut mermaid) => {
+                vec![event, Event::Html("</div>".into())]
+            }
+            other => vec![other],
+        })
+        .take(max_events.saturating_add(1))
+        .collect();
     if events.len() > max_events {
         return Err("limit");
     }
@@ -79,5 +100,14 @@ mod tests {
         assert!(!html.contains("file:///"));
         assert!(html.contains("https://example.com"));
         assert!(html.contains("type=\"checkbox\""));
+    }
+    #[test]
+    fn marks_only_explicit_mermaid_fences_and_preserves_escaped_source() {
+        let html = render("``` Mermaid extra\nflowchart TD\nA[<script>]-->B\n```\n\n```less\nflowchart TD\nA-->B\n```\n\n    flowchart TD", true);
+        assert_eq!(html.matches("data-mermaid-pending").count(), 1);
+        assert!(html.contains("A[&lt;script&gt;]--&gt;B"));
+        assert!(html.contains("class=\"language-less\""));
+        assert!(!render("```not-mermaid mermaid\nx\n```", true).contains("data-mermaid-pending"));
+        assert!(render_bounded("```mermaid\nA\n```", true, 3).is_err());
     }
 }

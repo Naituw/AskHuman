@@ -393,7 +393,10 @@ function parseViewBox(svg: SVGElement): { width: number; height: number } {
  * Convert Mermaid's sandbox iframe string into a no-permission, CSP-locked document.
  * This intentionally fails closed if Mermaid changes the wrapper shape.
  */
-export function normalizeMermaidSandbox(markup: string): MermaidDocument {
+export function normalizeMermaidSandbox(
+  markup: string,
+  colorScheme: MermaidColorScheme = "light",
+): MermaidDocument {
   const outer = new DOMParser().parseFromString(markup, "text/html");
   if (outer.body.children.length !== 1) {
     throw new MermaidRenderError("unsafeOutput", "Unexpected Mermaid sandbox wrapper");
@@ -427,7 +430,8 @@ export function normalizeMermaidSandbox(markup: string): MermaidDocument {
   const lockedDocument =
     "<!doctype html><html><head><meta charset=\"utf-8\">" +
     `<meta http-equiv="Content-Security-Policy" content="${SANDBOX_CSP}">` +
-    "<style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}" +
+    `<style>:root{color-scheme:${colorScheme === "dark" ? "dark" : "light"}}` +
+    "html,body{margin:0;padding:0;background:transparent;overflow:hidden}" +
     "svg{display:block}</style></head><body>" +
     serialized +
     "</body></html>";
@@ -606,7 +610,7 @@ async function renderInternal(
     try {
       mermaid.initialize(mermaidConfig(theme, renderId, fontSize));
       const result = await mermaid.render(renderId, source);
-      return normalizeMermaidSandbox(result.svg);
+      return normalizeMermaidSandbox(result.svg, theme);
     } finally {
       restoreStyleSheet();
     }

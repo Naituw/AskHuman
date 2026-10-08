@@ -1,6 +1,7 @@
 import { defineConfig, type PluginOption } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { visualizer } from "rollup-plugin-visualizer";
+import { preserveMarkedLookbehindDetection } from "./scripts/vite-mermaid";
 
 // Tauri 期望固定端口；前端构建产物输出到 dist/（tauri.conf.json 的 frontendDist）
 const host = process.env.TAURI_DEV_HOST;
@@ -14,20 +15,6 @@ const analyze = process.env.ANALYZE
 // bundler can constant-fold `new RegExp("(?<=…)")` using the build machine and
 // emit an unconditional lookbehind for Safari 13. Keep the pattern dynamic so
 // Catalina falls back to Marked's non-lookbehind rule as intended.
-const preserveMarkedLookbehindDetection: PluginOption = {
-  name: "preserve-marked-lookbehind-detection",
-  enforce: "pre",
-  transform(code, id) {
-    if (!id.includes("/marked") || !id.endsWith("/lib/marked.esm.js")) return;
-    const probe = 'new RegExp("(?<=1)(?<!1)")';
-    if (!code.includes(probe)) return;
-    return code.replace(
-      probe,
-      'new RegExp("(?" + String.fromCharCode(60) + "=1)(?" + String.fromCharCode(60) + "!1)")',
-    );
-  },
-};
-
 export default defineConfig({
   plugins: [preserveMarkedLookbehindDetection, vue(), ...analyze],
   // 前端源码与入口 index.html 都在 src/，故以 src 为 Vite 根目录。

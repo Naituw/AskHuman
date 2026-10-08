@@ -1245,10 +1245,17 @@ pub async fn popup_preview_open_browser(
         .clone()
         .try_acquire_owned()
         .map_err(|_| "browser preview is busy")?;
-    let snapshot =
-        tauri::async_runtime::spawn_blocking(move || crate::attachment_browser::snapshot(&path))
-            .await
-            .map_err(|e| e.to_string())??;
+    let app = window.app_handle().clone();
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        crate::attachment_browser::snapshot(&path, || {
+            app.asset_resolver()
+                .get("attachment-mermaid.js".into())
+                .map(|asset| asset.bytes)
+                .ok_or_else(|| "missing Mermaid renderer".into())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     let launch_path = snapshot.clone();
     #[cfg(target_os = "macos")]
     let result = {

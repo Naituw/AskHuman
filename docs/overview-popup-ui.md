@@ -136,6 +136,13 @@ Message / Question、回复历史详情以及 Agent 控制台的 Watch / 完整�
 或没有 Mermaid fence 时不会加载完整 Mermaid 实现；完整会话还用 IntersectionObserver 只调度可见区
 附近的内容。
 
+Markdown 提问附件的同窗预览也识别显式 Mermaid fence：`attachment_markdown.rs` 只增加内部标记，
+`AttachmentMarkdownContent.vue` 在保留后端 HTML / URL 限制的基础上增强图表，不重新解析附件文本。
+浏览器快照仅在有图表时携带自包含的本地经典脚本，按 nonce 精确允许产品脚本；普通快照仍禁用脚本。
+两者共用 `attachmentMermaid.ts` 的源码切换与布局，并复用同一个 Mermaid adapter、安全清洗及资源上限。
+浏览器按系统外观重绘，离线运行；旧系统 Quick Look 不在这一增强入口内。详见
+`docs/plans/attachment-mermaid-rendering.md`。
+
 每个 Markdown body 最多渲染 10 张图，单图源文最多 40,000 字符，并锁定 `maxEdges=400`。源码先于
 图表可用；单图可复制源码、切换图表 / 源码，加载、语法、清洗或资源限制失败只让该图回退到代码块。
 图表读取所在 Markdown 容器的实际正文字号，随 light / dark / system 有效主题重绘。宽图优先缩到

@@ -7,6 +7,7 @@ import { usePopupContext } from "./context";
 import { useNativeAttachmentPreview } from "./useNativeAttachmentPreview";
 import AttachmentDiffPreview from "./AttachmentDiffPreview.vue";
 import AttachmentImagePreview from "./AttachmentImagePreview.vue";
+import AttachmentMarkdownContent from "../../components/AttachmentMarkdownContent.vue";
 const { t } = useI18n();
 const { previewFile, previewIndex, attachments, showPreview, stopPreview, openFile, openPreviewFile, primaryBrowser, browserOpening, browserActionError, browserErrorIndex, showPreviewMenu, revealFile,
   popupActive, previewContent, previewLoading, currentReadingState, onAttachmentDragStart, previewActionError, request, nativePreviewBlocked, previewTransition, previewLayout, submitWithBareEnter, registerNativePreviewSync } = usePopupContext();
@@ -101,7 +102,7 @@ function markdownClick(event: MouseEvent) {
     </template>
     <div v-else ref="body" class="attachment-preview-body" tabindex="0" @scroll.passive="saveScroll()">
       <pre v-if="previewContent && (raw || previewContent.kind === 'text')" class="attachment-preview-text">{{ 'text' in previewContent ? previewContent.text : '' }}</pre>
-      <article v-else-if="previewContent?.kind === 'markdown'" class="attachment-preview-markdown" @click="markdownClick" v-html="previewContent.html"></article>
+      <AttachmentMarkdownContent v-else-if="previewContent?.kind === 'markdown'" :key="previewIndex ?? 0" class="attachment-preview-markdown" @click="markdownClick" :html="previewContent.html" />
       <template v-else-if="previewContent?.kind === 'diff'">
         <p v-if="previewContent.parsed.notice" class="attachment-preview-notice">{{ t('popup.preview.diffPlain') }}</p>
         <AttachmentDiffPreview :parsed="previewContent.parsed" :viewport="body" :top="top" />

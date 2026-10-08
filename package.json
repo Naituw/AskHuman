@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "vue-tsc --noEmit && vite build && vite build --config vite.attachment.config.ts",
     "test": "vitest run && node --test scripts/*.node-test.mjs",
     "icons:generate": "node scripts/generate-app-icons.mjs",
     "preview": "vite preview",

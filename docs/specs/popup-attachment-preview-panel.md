@@ -151,6 +151,13 @@ Popup 提问附件的“快速查看”直接展开新面板，不再提供 Quic
 
 ### 5.1 Markdown 与 diff
 
+Markdown 预览中的显式 `mermaid` fence 支持图表，沿用正文的 sandbox / 静态 SVG 清洗和
+10 图、40,000 字符 / 图、400 条边限制。单图支持复制与查看源码，错误或超限只回退该图。
+宽图优先适配到容器，但可见字号不低于 12px；剩余溢出横向滚动。图表随应用有效主题重绘，
+切换附件或原文模式后不写入过期渲染结果。正文 HTML 和链接 / 图片 URL 仍由受限后端 renderer
+生成，增强层不重新解析原文或放宽 URL。浏览器快照的同等支持见
+[Markdown 浏览器打开](markdown-browser-open.md#41-mermaid-图表)。
+
 Markdown 默认展示排版后的结果。diff 沿用既有 unified diff 语义：红绿增删底色、原始前缀、
 旧 / 新行号、文件头与变更块；无法解析的内容保留原文。格式与资源边界以
 [diff-attachment-preview.md](diff-attachment-preview.md) 为基础，不增加双栏对照或代码语法高亮。
