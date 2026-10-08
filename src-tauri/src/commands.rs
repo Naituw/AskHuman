@@ -1583,6 +1583,64 @@ pub async fn popup_preview_native(
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewFindRequest {
+    pub request_id: String,
+    pub index: usize,
+    pub generation: u64,
+    pub action: String,
+    pub query: String,
+    pub case_sensitive: bool,
+    pub navigate: bool,
+    pub delta: isize,
+}
+
+/// Search shares the active request's bounded native-preview permit; no path comes from JS.
+#[tauri::command]
+pub async fn popup_preview_find(
+    window: tauri::Window,
+    search: PreviewFindRequest,
+) -> Result<(), String> {
+    crate::app::popup_preview::request(&window, &search.request_id)?;
+    if !matches!(search.action.as_str(), "search" | "cancel" | "go" | "focus")
+        || search.query.len() > 16 * 1024
+    {
+        return Err("invalid preview search".into());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = search;
+        Err("system preview search is only available on macOS".into())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let app = window.app_handle().clone();
+        app.run_on_main_thread(move || {
+            let result = (|| {
+                let request = crate::app::popup_preview::request(&window, &search.request_id)?;
+                let file = request
+                    .message
+                    .files
+                    .get(search.index)
+                    .ok_or("invalid attachment index")?;
+                if !window
+                    .app_handle()
+                    .state::<crate::attachment_preview::NativePermits>()
+                    .check(&search.request_id, search.index, &file.path)
+                {
+                    return Err("attachment changed or is not a system preview".into());
+                }
+                crate::macos_attachment_preview::find_in_view(&window, &search)
+            })();
+            let _ = tx.send(result);
+        })
+        .map_err(|e| e.to_string())?;
+        rx.await.map_err(|e| e.to_string())?
+    }
+}
+
 #[tauri::command]
 pub fn popup_preview_cancel_read(
     window: tauri::Window,

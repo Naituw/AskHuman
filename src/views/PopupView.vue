@@ -7,6 +7,7 @@ import { computed, onBeforeUnmount } from "vue";
 import { type PopupScope } from "./popup/usePopupCore";
 import { createPopupContext } from "./popup/context";
 import PopupNavbar from "./popup/PopupNavbar.vue";
+import FindBar from "./popup/FindBar.vue";
 import ConfirmPane from "./popup/ConfirmPane.vue";
 import MessageSection from "./popup/MessageSection.vue";
 import QuestionCards from "./popup/QuestionCards.vue";
@@ -44,6 +45,9 @@ const {
   previewOpen,
   previewTransition,
   resizePreview,
+  findActive,
+  findScope,
+  noteFindInteraction,
 } = ctx;
 
 const shellStyle = computed(() => {
@@ -99,6 +103,10 @@ function beginDivider(event: PointerEvent) {
   <div
     v-else
     class="popup-shell"
+    @pointerdown.capture="noteFindInteraction"
+    @wheel.capture.passive="noteFindInteraction"
+    @keydown.capture="noteFindInteraction"
+    @focusin.capture="noteFindInteraction"
     :style="shellStyle"
     @dragover.prevent
     @drop.prevent="onDrop"
@@ -107,6 +115,7 @@ function beginDivider(event: PointerEvent) {
     <div class="popup popup-main" :class="{ 'cmd-held': cmdHeld }" :style="mainTransitionStyle">
     <div v-if="flashing" class="flash-overlay" aria-hidden="true"></div>
     <PopupNavbar />
+    <FindBar v-if="findActive && findScope === 'question'" />
     <p v-if="submissionError" class="status-error popup-submission-error" role="alert">{{ t("popup.inbox.submitError", { message: submissionError }) }}</p>
     <div
       :ref="(el) => (contentRef = el as HTMLElement | null)"

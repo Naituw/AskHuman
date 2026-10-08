@@ -112,6 +112,9 @@ export default {
       unsupported: "Preview is not available for this file", encoding: "Text encoding could not be identified reliably", readFailed: "Unable to read this attachment", limit: "This attachment exceeds preview limits. Open it in the default app", imageFailed: "Unable to display this image", actionFailed: "The file manager could not locate this attachment. Retry or open the file",
       diffPlain: "Some content could not be parsed and is shown as source" },
     find: {
+      scope: "Find scope", question: "Question", attachment: "Current file", attachmentPlaceholder: "Find in attachment",
+      attachmentShortcut: "Find in current attachment (⌘F / Ctrl+F)",
+      status: { loading: "Loading", searching: "Searching", unsupported: "Content search is unavailable for this preview", noText: "No searchable text detected", readFailed: "Unable to read attachment", limit: "Attachment exceeds preview limits", error: "Unable to search attachment" },
       label: "Find in popup",
       placeholder: "Find",
       prev: "Previous match",

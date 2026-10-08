@@ -165,14 +165,18 @@ Markdown 提问附件的同窗预览也识别显式 Mermaid fence：`attachment_
 
 ## 页内查找（⌘F / Ctrl+F）
 
-规格见 `docs/specs/popup-find.md`。弹窗支持浏览器式页内查找：⌘F（Windows/Linux 为 Ctrl+F）在
-导航栏右侧操作区叠放查找条（动作按钮渐隐，条自上方滑入），对共享 Message、题干、预设选项、
-附件名以及 Confirm 详情/选项做连续子串匹配（默认不区分大小写，条上 Aa 可切换），高亮全部命中
-并支持上/下一条与循环；顺序多题会跨题匹配并自动切题。渲染后的 Mermaid 图按可见 label 作为一个
-原子命中并高亮整张图，不修改 sandbox 内 SVG；切到单图源码后恢复普通文本逐次匹配。Esc 关闭并清除高亮。实现为
-`usePopupFind` + `FindBar` + `lib/findInDom`，不搜用户答案草稿。视口只归用户导航（打开 / 输入 / 上下条 / Aa）
-所有：DOM 变化（Markdown 重渲染、顺序切题、纵向模式 scroll-spy 改写当前题）只触发 `repaintHighlights` 重画高亮，
-不切题也不滚动（spec F13）。
+规格见 `docs/specs/popup-find.md` 与 `docs/specs/popup-find-scopes.md`。⌘F（Windows/Linux 为 Ctrl+F）
+按最近主动操作的区域选择「提问 / 当前附件」，搜索条在该区域标题栏下占位展开；附件标题栏也有
+查找图标。同一时刻只有一条搜索条，共享关键词与 Aa，切范围清另一范围高亮。提问范围搜索共享
+Message、题干、预设选项、附件名和 Confirm 详情/选项，排除答案草稿；顺序多题跨题定位。渲染后的
+Mermaid 图按可见 label 作为一个原子命中并高亮整张图，不修改 sandbox 内 SVG；切到单图源码后
+恢复普通文本逐次匹配。附件搜索当前模式的 Markdown、文本/代码、完整虚拟 diff，以及 macOS PDF
+可提取文字；不支持和无文字状态明确提示并保留原文件入口。Esc 结束会话并清除高亮。
+
+`usePopupFind` 管理每请求会话和路由，`FindBar` 共用控件，`lib/findInDom` 处理 DOM 高亮；
+`useAttachmentFind` 适配正文、diff 模型及带请求/附件/查询代次的 macOS PDFKit 桥。切附件定位首个
+命中；切模式、重渲染、顺序切题挂载和请求恢复只重画高亮，不主动滚动或抢焦点。纵向模式
+scroll-spy 改写当前题也不视为内容变化（spec F13）。原生正文布局避让搜索条且保持 PDF 阅读位置。
 
 ## 推荐选项
 

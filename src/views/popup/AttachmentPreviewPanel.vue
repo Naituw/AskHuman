@@ -8,9 +8,12 @@ import { useNativeAttachmentPreview } from "./useNativeAttachmentPreview";
 import AttachmentDiffPreview from "./AttachmentDiffPreview.vue";
 import AttachmentImagePreview from "./AttachmentImagePreview.vue";
 import AttachmentMarkdownContent from "../../components/AttachmentMarkdownContent.vue";
+import FindBar from "./FindBar.vue";
+import { useAttachmentFind } from "./useAttachmentFind";
 const { t } = useI18n();
 const { previewFile, previewIndex, attachments, showPreview, stopPreview, openFile, openPreviewFile, primaryBrowser, browserOpening, browserActionError, browserErrorIndex, showPreviewMenu, revealFile,
-  popupActive, previewContent, previewLoading, currentReadingState, onAttachmentDragStart, previewActionError, request, nativePreviewBlocked, previewTransition, previewLayout, submitWithBareEnter, registerNativePreviewSync } = usePopupContext();
+  popupActive, previewContent, previewLoading, currentReadingState, onAttachmentDragStart, previewActionError, request, nativePreviewBlocked, previewTransition, previewLayout, submitWithBareEnter, registerNativePreviewSync,
+  findActive, findScope, openFind, refreshFind, registerAttachmentFind } = usePopupContext();
 const nativeBody = ref<HTMLElement | null>(null);
 const { nativeFailed, syncNativePreview } = useNativeAttachmentPreview({
   requestId: computed(() => request.value?.id ?? ""), index: previewIndex, element: nativeBody,
@@ -25,7 +28,7 @@ const top = ref(0);
 const imageFailed = ref(false);
 const actionError = ref(false);
 const canToggle = computed(() => previewContent.value?.kind === "markdown" || previewContent.value?.kind === "diff");
-const raw = computed(() => canToggle.value && currentReadingState.value?.raw);
+const raw = computed(() => !!(canToggle.value && currentReadingState.value?.raw));
 const reason = computed(() => nativeFailed.value ? "unsupported" : imageFailed.value ? "imageFailed" : previewContent.value?.kind === "unavailable" ? previewContent.value.reason : null);
 let restoreVersion = 0;
 function saveScroll(index = previewIndex.value, mode: "raw" | "preview" = raw.value ? "raw" : "preview") {
@@ -41,6 +44,14 @@ async function restoreScroll() {
   body.value.scrollTop = saved.top; body.value.scrollLeft = saved.left; top.value = body.value.scrollTop;
 }
 function toggleRaw() { saveScroll(); if (currentReadingState.value) currentReadingState.value.raw = !currentReadingState.value.raw; void restoreScroll(); }
+const { adapter, diffQuery, diffCaseSensitive, diffCurrent } = useAttachmentFind({
+  requestId: computed(() => request.value?.id ?? ""), index: previewIndex, content: previewContent,
+  loading: previewLoading, raw, active: popupActive,
+  enabled: computed(() => findActive.value && findScope.value === "attachment"),
+  body, nativeBody, failed: reason, restoreScroll, syncNative: syncNativePreview, setTop: value => { top.value = value; },
+});
+registerAttachmentFind(adapter);
+onBeforeUnmount(() => registerAttachmentFind(null));
 // Save before changing the active index; the renderer is mounted only for the current file.
 watch(previewIndex, (_, old) => {
   if (old !== null && body.value) {
@@ -77,11 +88,15 @@ function markdownClick(event: MouseEvent) {
         <span class="attachment-preview-count" data-tauri-drag-region>{{ (previewIndex ?? 0) + 1 }} / {{ attachments.length }}</span>
         <button type="button" :disabled="previewIndex === 0" :aria-label="t('popup.prev')" @click="showPreview((previewIndex ?? 0) - 1)">‹</button>
         <button type="button" :disabled="previewIndex === attachments.length - 1" :aria-label="t('popup.next')" @click="showPreview((previewIndex ?? 0) + 1)">›</button>
+        <button type="button" class="attachment-preview-find" :title="t('popup.find.attachmentShortcut')" :aria-label="t('popup.find.attachmentShortcut')" @click="openFind(true, 'attachment')">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/></svg>
+        </button>
         <button type="button" class="attachment-preview-open" :disabled="previewLoading || (primaryBrowser && browserOpening)" :aria-busy="primaryBrowser && browserOpening" @click="openPreviewFile()">{{ t(primaryBrowser ? 'popup.preview.openBrowser' : 'popup.preview.open') }}</button>
         <button type="button" :aria-label="t('popup.preview.more')" @click="showPreviewMenu()">⋯</button>
         <button type="button" :aria-label="t('popup.preview.close')" @click="stopPreview()">×</button>
       </div>
     </header>
+    <FindBar v-if="findActive && findScope === 'attachment'" />
     <p v-if="previewActionError" class="attachment-preview-notice" role="alert">{{ t('popup.preview.actionFailed') }}</p>
     <p v-if="browserActionError && browserErrorIndex === previewIndex" class="attachment-preview-notice" role="alert">{{ t(`popup.preview.${browserActionError}`) }} <button type="button" @click="previewFile && openFile(previewFile)">{{ t('popup.preview.openOriginal') }}</button></p>
     <div v-if="previewLoading" class="attachment-preview-status" role="status" data-tauri-drag-region>{{ t('common.loading') }}</div>
@@ -100,12 +115,12 @@ function markdownClick(event: MouseEvent) {
       <p v-if="previewContent.imageCount" class="attachment-preview-notice">{{ t('popup.preview.multipleImages', { n: previewContent.imageCount }) }}</p>
       <div ref="nativeBody" class="attachment-preview-body attachment-preview-native" :aria-label="t('popup.preview.system')"></div>
     </template>
-    <div v-else ref="body" class="attachment-preview-body" tabindex="0" @scroll.passive="saveScroll()">
+    <div v-else ref="body" class="attachment-preview-body" tabindex="0" @scroll.passive="saveScroll()" @markdown-content-updated="refreshFind">
       <pre v-if="previewContent && (raw || previewContent.kind === 'text')" class="attachment-preview-text">{{ 'text' in previewContent ? previewContent.text : '' }}</pre>
       <AttachmentMarkdownContent v-else-if="previewContent?.kind === 'markdown'" :key="previewIndex ?? 0" class="attachment-preview-markdown" @click="markdownClick" :html="previewContent.html" />
       <template v-else-if="previewContent?.kind === 'diff'">
         <p v-if="previewContent.parsed.notice" class="attachment-preview-notice">{{ t('popup.preview.diffPlain') }}</p>
-        <AttachmentDiffPreview :parsed="previewContent.parsed" :viewport="body" :top="top" />
+        <AttachmentDiffPreview :parsed="previewContent.parsed" :viewport="body" :top="top" :query="diffQuery" :case-sensitive="diffCaseSensitive" :current="diffCurrent" />
       </template>
     </div>
   </aside>

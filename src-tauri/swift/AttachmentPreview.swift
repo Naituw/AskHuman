@@ -61,13 +61,65 @@ func decodePreviewImage(_ bytes: UnsafePointer<UInt8>, _ length: Int, _ thumbnai
     }
 }
 
-typealias KeyCallback = @convention(c) (UInt16, UInt64) -> Void
+typealias KeyCallback = @convention(c) (UInt16, UInt64, UnsafePointer<CChar>?) -> Void
+typealias FindCallback = @convention(c) (UnsafePointer<CChar>, Int, UInt64, Int, Int, Int32) -> Void
 private var nativePreview: EmbeddedPreview?
 private final class PDFLoadTicket {
     private let lock = NSLock()
     private var cancelled = false
     func cancel() { lock.lock(); cancelled = true; lock.unlock() }
     var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+}
+
+// Each query owns a distinct PDFDocument. A cancelled query's late delegate notifications
+// cannot be mistaken for notifications from its replacement on the displayed document.
+private final class PDFSearchTask: NSObject, PDFDocumentDelegate {
+    weak var owner: EmbeddedPreview?
+    let request: String
+    let index: Int
+    let generation: UInt64
+    let callback: FindCallback
+    let ticket = PDFLoadTicket()
+    var document: PDFDocument?
+    var hasText = false
+    var navigate: Bool
+    let initial: Int
+    init(owner: EmbeddedPreview, index: Int, generation: UInt64, navigate: Bool, initial: Int, callback: @escaping FindCallback) {
+        self.owner = owner; self.request = owner.requestID; self.index = index
+        self.generation = generation; self.navigate = navigate; self.initial = initial; self.callback = callback
+    }
+    func emit(_ status: Int32) {
+        guard !ticket.isCancelled, let owner, owner.searchTask === self else { return }
+        request.withCString { callback($0, index, generation, owner.findResults.count, owner.findCurrent, status) }
+    }
+    func didMatchString(_ selection: PDFSelection) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.ticket.isCancelled, let owner = self.owner,
+                  owner.searchTask === self, let document = self.document,
+                  let live = owner.pdf.document else { return }
+            if owner.findResults.count >= 50_000 {
+                self.emit(6); self.cancel(); owner.findResults.removeAll(); return
+            }
+            let mapped = PDFSelection(document: live)
+            for page in selection.pages {
+                guard let target = live.page(at: document.index(for: page)) else { continue }
+                for i in 0..<selection.numberOfTextRanges(on: page) {
+                    if let part = target.selection(for: selection.range(at: i, on: page)) { mapped.add(part) }
+                }
+            }
+            if !mapped.pages.isEmpty { owner.findResults.append(mapped) }
+        }
+    }
+    func documentDidEndDocumentFind(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.ticket.isCancelled, let owner = self.owner, owner.searchTask === self else { return }
+            owner.findCurrent = owner.findResults.isEmpty ? -1 : min(max(0, self.initial), owner.findResults.count - 1)
+            owner.paintFind(navigate: self.navigate)
+            self.emit(self.hasText ? 0 : 4)
+            self.document?.delegate = nil; self.document = nil
+        }
+    }
+    func cancel() { ticket.cancel(); document?.cancelFindString(); document?.delegate = nil; document = nil }
 }
 
 private final class EmbeddedPreview {
@@ -80,6 +132,7 @@ private final class EmbeddedPreview {
     let pdfQueue = DispatchQueue(label: "com.askhuman.preview.pdf", qos: .userInitiated)
     var pdfLoad: PDFLoadTicket?
     var pdfActive = false
+    var pdfSource: Data?
     var surface: NSView { pdfActive ? pdf : view }
     struct PDFState { let page: Int; let point: CGPoint; let scale: CGFloat; let automatic: Bool }
     var pdfStates: [String: PDFState] = [:]
@@ -87,6 +140,12 @@ private final class EmbeddedPreview {
     var path: String?
     var states: [String: Any] = [:]
     var monitor: Any?
+    var interactionMonitor: Any?
+    var searchTask: PDFSearchTask?
+    var findResults: [PDFSelection] = []
+    var findCurrent = -1
+    var findGeneration: UInt64 = 0
+    var pendingFind: (() -> Void)?
     var submitWithBareEnter = false
     let keyCallback: KeyCallback
 
@@ -115,11 +174,82 @@ private final class EmbeddedPreview {
             let mods = event.modifierFlags.intersection([.command, .control, .option, .shift])
             let enter = event.keyCode == 36 || event.keyCode == 76
             let submit = enter && (self.submitWithBareEnter ? mods.isEmpty : mods == .command)
-            if (event.keyCode == 53 && mods.isEmpty) || submit || (event.keyCode == 13 && mods == .command) {
-                self.keyCallback(event.keyCode, UInt64(event.modifierFlags.rawValue))
+            let find = (event.keyCode == 3 && mods == .command)
+                || (event.keyCode == 5 && (mods == .command || mods == [.command, .shift]))
+            if (event.keyCode == 53 && mods.isEmpty) || submit || (event.keyCode == 13 && mods == .command) || find {
+                let selection = self.pdfActive ? String((self.pdf.currentSelection?.string ?? "").prefix(200)) : ""
+                if event.keyCode == 3 { self.focusWebView() }
+                selection.withCString { self.keyCallback(event.keyCode, UInt64(event.modifierFlags.rawValue), $0) }
                 return nil
             }
             return event
+        }
+        interactionMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .scrollWheel]) { [weak self] event in
+            guard let self, !self.surface.isHidden, event.window === self.window else { return event }
+            let point = self.surface.convert(event.locationInWindow, from: nil)
+            if self.surface.bounds.contains(point) { self.keyCallback(0, 0, nil) }
+            return event
+        }
+    }
+    func focusWebView() {
+        if let webview = window?.contentView.flatMap({ webView(in: $0) }) { window?.makeFirstResponder(webview) }
+    }
+    func cancelSearch() {
+        pendingFind = nil
+        searchTask?.cancel(); searchTask = nil
+        if !findResults.isEmpty { pdf.clearSelection() }
+        findResults.removeAll(); findCurrent = -1; pdf.highlightedSelections = nil
+    }
+    func paintFind(navigate: Bool) {
+        for (i, selection) in findResults.enumerated() {
+            selection.color = (i == findCurrent ? NSColor.systemOrange : NSColor.systemYellow).withAlphaComponent(0.45)
+        }
+        pdf.highlightedSelections = findResults
+        if findCurrent >= 0 && findCurrent < findResults.count && navigate {
+            pdf.setCurrentSelection(findResults[findCurrent], animate: false)
+            pdf.scrollSelectionToVisible(nil)
+        }
+    }
+    func find(index: Int, generation: UInt64, action: String, query: String, sensitive: Bool,
+              navigate: Bool, delta: Int, callback: @escaping FindCallback) {
+        guard generation >= findGeneration else { return }
+        if action == "focus" { if !surface.isHidden { window?.makeFirstResponder(surface) }; return }
+        if action == "cancel" { findGeneration = generation; cancelSearch(); return }
+        if action == "go" {
+            guard generation == findGeneration, !findResults.isEmpty else { return }
+            findCurrent = (findCurrent + delta % findResults.count + findResults.count) % findResults.count
+            paintFind(navigate: true)
+            requestID.withCString { callback($0, index, generation, findResults.count, findCurrent, 0) }; return
+        }
+        guard action == "search" else { return }
+        findGeneration = generation; cancelSearch()
+        let emit: (Int32) -> Void = { [weak self] status in
+            guard let self, self.findGeneration == generation else { return }
+            self.requestID.withCString { callback($0, index, generation, 0, -1, status) }
+        }
+        if pdfLoad != nil {
+            emit(1)
+            pendingFind = { [weak self] in self?.find(index: index, generation: generation, action: action,
+                query: query, sensitive: sensitive, navigate: navigate, delta: delta, callback: callback) }
+            return
+        }
+        guard pdfActive, let source = pdfSource, pdf.document != nil else { emit(3); return }
+        guard !query.isEmpty else { emit(0); return }
+        let task = PDFSearchTask(owner: self, index: index, generation: generation, navigate: navigate,
+                                 initial: delta, callback: callback)
+        searchTask = task; emit(2)
+        pdfQueue.async { [weak task] in
+            guard let task, !task.ticket.isCancelled else { return }
+            let document = autoreleasepool { PDFDocument(data: source) }
+            let hasText = document.map { document in
+                (0..<document.pageCount).contains { (document.page(at: $0)?.numberOfCharacters ?? 0) > 0 }
+            } ?? false
+            DispatchQueue.main.async { [weak task] in
+                guard let task, !task.ticket.isCancelled, let owner = task.owner, owner.searchTask === task else { return }
+                guard let document, !document.isLocked else { task.emit(5); return }
+                task.document = document; task.hasText = hasText; document.delegate = task
+                document.beginFindString(query, withOptions: sensitive ? [.literal] : [.literal, .caseInsensitive])
+            }
         }
     }
     func save() {
@@ -136,6 +266,7 @@ private final class EmbeddedPreview {
         return nil
     }
     func hide() {
+        cancelSearch()
         save()
         pdfLoad?.cancel(); pdfLoad = nil
         spinner.stopAnimation(nil); spinner.isHidden = true
@@ -148,15 +279,20 @@ private final class EmbeddedPreview {
         view.isHidden = true
         pdf.isHidden = true
         pdf.document = nil
+        pdfSource = nil
         if view === defaultView { view.previewItem = nil }
         path = nil
     }
     func show(path: String, frame: NSRect, bareEnter: Bool) {
         submitWithBareEnter = bareEnter
+        let destination = self.path == path && pdfActive ? pdf.currentDestination : nil
         view.frame = frame
         pdf.frame = frame
+        if let destination { pdf.go(to: destination) }
         spinner.frame = NSRect(x: frame.midX - 16, y: frame.midY - 16, width: 32, height: 32)
         if self.path != path {
+            cancelSearch()
+            pdfSource = nil
             save()
             self.path = path
             // PDFKit provides stable page/zoom restoration without racing Quick Look's
@@ -173,13 +309,21 @@ private final class EmbeddedPreview {
                 spinner.startAnimation(nil)
                 pdfQueue.async { [weak self] in
                     guard !ticket.isCancelled else { return }
-                    let document = autoreleasepool { PDFDocument(url: URL(fileURLWithPath: path)) }
+                    let source: Data? = autoreleasepool {
+                        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
+                        defer { try? handle.close() }
+                        guard let data = try? handle.read(upToCount: 100 * 1024 * 1024 + 1),
+                              data.count <= 100 * 1024 * 1024 else { return nil }
+                        return data
+                    }
+                    let document = source.flatMap { PDFDocument(data: $0) }
                     DispatchQueue.main.async { [weak self] in
                         guard let self, !ticket.isCancelled, self.pdfLoad === ticket,
                               self.path == path else { return }
                         self.pdfLoad = nil
                         self.spinner.stopAnimation(nil); self.spinner.isHidden = true
                         if let document, !document.isLocked {
+                            self.pdfSource = source
                             self.pdf.document = document
                             self.pdf.autoScales = self.pdfStates[path]?.automatic ?? true
                             self.pdf.layoutDocumentView()
@@ -187,10 +331,13 @@ private final class EmbeddedPreview {
                                 if !state.automatic { self.pdf.scaleFactor = state.scale }
                                 self.pdf.go(to: PDFDestination(page: page, at: state.point))
                             }
+                            let pending = self.pendingFind; self.pendingFind = nil; pending?()
                         } else {
+                            self.pdfSource = nil
                             self.pdfActive = false
                             self.pdf.isHidden = true
                             self.selectQL(path: path)
+                            let pending = self.pendingFind; self.pendingFind = nil; pending?()
                         }
                     }
                 }
@@ -240,6 +387,7 @@ private final class EmbeddedPreview {
     func close() {
         hide()
         if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+        if let interactionMonitor { NSEvent.removeMonitor(interactionMonitor); self.interactionMonitor = nil }
         defaultView.close(); defaultView.removeFromSuperview()
         for (_, cached) in cachedViews { cached.close(); cached.removeFromSuperview() }
         cachedViews.removeAll()
@@ -302,4 +450,14 @@ func previewScreenX() -> Double {
     guard let preview = nativePreview, !preview.surface.isHidden, let window = preview.window else { return .nan }
     let frame = preview.surface.convert(preview.surface.bounds, to: nil)
     return window.convertToScreen(frame).minX
+}
+
+@_cdecl("ah_preview_find")
+func findInPreview(_ request: UnsafePointer<CChar>, _ index: Int, _ generation: UInt64,
+                   _ action: UnsafePointer<CChar>, _ query: UnsafePointer<CChar>, _ sensitive: Bool,
+                   _ navigate: Bool, _ delta: Int, _ callback: @escaping FindCallback) -> Bool {
+    guard let preview = nativePreview, preview.requestID == String(cString: request), !preview.surface.isHidden else { return false }
+    preview.find(index: index, generation: generation, action: String(cString: action), query: String(cString: query),
+                 sensitive: sensitive, navigate: navigate, delta: delta, callback: callback)
+    return true
 }

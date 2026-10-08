@@ -109,6 +109,9 @@ export default {
       unsupported: "暂不支持预览此文件", encoding: "无法可靠识别文本编码", readFailed: "无法读取附件", limit: "附件超出预览资源上限，请使用默认应用打开", imageFailed: "无法显示此图片", actionFailed: "文件管理器未能定位附件，请重试或使用打开",
       diffPlain: "部分内容无法解析，已保留原文" },
     find: {
+      scope: "查找范围", question: "提问", attachment: "当前附件", attachmentPlaceholder: "查找附件内容",
+      attachmentShortcut: "查找当前附件内容（⌘F / Ctrl+F）",
+      status: { loading: "加载中", searching: "搜索中", unsupported: "此预览暂不支持内容查找", noText: "未检测到可搜索文字", readFailed: "无法读取附件内容", limit: "附件超过预览资源限制", error: "无法搜索附件内容" },
       label: "在弹窗中查找",
       placeholder: "查找",
       prev: "上一个匹配",

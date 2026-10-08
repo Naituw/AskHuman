@@ -1825,7 +1825,15 @@ export function usePopupCore(scope?: PopupScope) {
     currentQ: current,
     verticalMode,
     revealQuestion: revealQuestionForFind,
+    previewOpen: attach.previewOpen,
+    previewIndex: attach.previewIndex,
+    active: popupActive,
   });
+
+  function noteFindInteraction(event: Event) {
+    if (!acceptsInput() || showCancelConfirm.value || showConfirmCloseWarning.value) return;
+    find.noteFindInteraction(event);
+  }
 
   function startPermissionDiffEnrichment() {
     const edit = permissionEdit.value;
@@ -1952,7 +1960,7 @@ export function usePopupCore(scope?: PopupScope) {
     cmdHeld.value = onlyCmdHeld(e);
     if (!isConfirm.value && (e.isComposing || e.keyCode === 229)) return;
     // In-page find (⌘/Ctrl+F, Esc while open, ⌘G, …) — before business shortcuts.
-    if (find.handleFindKeydown(e)) return;
+    if (!showCancelConfirm.value && !showConfirmCloseWarning.value && find.handleFindKeydown(e)) return;
     if (isConfirm.value) {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -2284,12 +2292,16 @@ export function usePopupCore(scope?: PopupScope) {
     });
     void loadTodos();
     await attach.initAttachmentPreviewListeners();
-    unlistenNativePreview = await listen<{ requestId: string; index: number; key: string; metaKey: boolean }>("popup-preview-native-key", event => {
+    unlistenNativePreview = await listen<{ requestId: string; index: number; key: string; metaKey: boolean; shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean; selection?: string }>("popup-preview-native-key", event => {
       if (!acceptsInput()) return;
       const key = event.payload;
       if (key.requestId !== request.value?.id || key.index !== attach.previewIndex.value
-          || attach.previewContent.value?.kind !== "native" || showCancelConfirm.value) return;
-      onKeydown(new KeyboardEvent("keydown", { key: key.key, metaKey: key.metaKey, cancelable: true }));
+          || attach.previewContent.value?.kind !== "native" || showCancelConfirm.value || showConfirmCloseWarning.value) return;
+      find.noteFindRegion("attachment");
+      if (key.key === "interaction") return;
+      if (key.key === "f" && key.metaKey && !key.altKey && !key.shiftKey) {
+        find.openFind(true, "attachment", key.selection);
+      } else onKeydown(new KeyboardEvent("keydown", { key: key.key, metaKey: key.metaKey, shiftKey: key.shiftKey, ctrlKey: key.ctrlKey, altKey: key.altKey, cancelable: true }));
       // Native responders do not deliver the matching DOM keyup event.
       cmdHeld.value = false;
     });
@@ -2487,6 +2499,10 @@ export function usePopupCore(scope?: PopupScope) {
     registerNativePreviewSync: scope?.nativePreviewSync,
     // In-page find
     findActive: find.findActive,
+    findScope: find.findScope,
+    findStatus: find.findStatus,
+    registerAttachmentFind: find.registerAttachmentFind,
+    noteFindInteraction,
     findQuery: find.findQuery,
     findCaseSensitive: find.findCaseSensitive,
     findCurrent: find.findCurrent,

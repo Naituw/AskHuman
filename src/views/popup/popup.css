@@ -790,26 +790,30 @@
   gap: var(--space-3);
 }
 
-/* —— In-page find in navbar action corner (docs/specs/popup-find.md) —— */
+/* Request-scoped find occupies a temporary row below its pane toolbar. */
 .popup-find-bar {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  z-index: 5;
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content minmax(48px, 1fr) 4.75em repeat(4, 24px);
   align-items: center;
-  gap: 2px;
-  /* Fixed outer width so only the input flexes; count/buttons never reflow the bar. */
-  width: min(320px, calc(100vw - 48px));
-  height: 28px;
-  padding: 0 2px 0 8px;
-  border-radius: 8px;
-  border: var(--hairline) solid var(--border);
-  /* Fully opaque so brand/title never show through on a narrow window. */
+  gap: 3px;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 36px;
+  padding: 4px 10px;
+  border-bottom: var(--hairline) solid var(--border);
   background: var(--surface-overlay);
-  box-shadow: var(--clickable-shadow);
-  pointer-events: auto;
-  transform: translateY(-50%);
+}
+.popup-find-scope { min-width: 0; max-width: 112px; border: none; color: var(--text-primary); background: var(--bg-elevated); border-radius: 5px; font-size: 12px; padding: 4px; }
+.popup-find-status { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-secondary); font-size: 12px; padding: 3px 0; }
+.popup-find-status button { border: none; border-radius: 4px; background: var(--bg-elevated); color: var(--text-primary); padding: 3px 6px; font-size: inherit; }
+.popup-find-btn:disabled { opacity: .35; }
+.popup-find-bar button:focus-visible, .popup-find-scope:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@container (max-width: 340px) {
+  .popup-find-bar { grid-template-columns: repeat(6, minmax(0, 1fr)); padding: 4px 6px; }
+  .popup-find-scope { grid-column: span 2; max-width: none; }
+  .popup-find-input { grid-column: span 4; }
+  .popup-find-count { grid-column: span 2; }
+  .popup-find-btn { justify-self: end; }
 }
 .popup-find-icon {
   width: 13px;

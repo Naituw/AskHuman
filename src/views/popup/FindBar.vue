@@ -1,12 +1,18 @@
 <script setup lang="ts">
-// Floating in-page find bar in the navbar action corner (spec docs/specs/popup-find.md).
-import { nextTick } from "vue";
+// A request-scoped find bar below the active pane toolbar.
+import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { usePopupContext } from "./context";
 
 const { t } = useI18n();
 const {
-  findActive,
+  findScope,
+  findStatus,
+  previewOpen,
+  previewFile,
+  openFind,
+  openFile,
+  findTotal,
   findQuery,
   findCaseSensitive,
   findCountLabel,
@@ -18,43 +24,28 @@ const {
   toggleFindCase,
 } = usePopupContext();
 
-/** Focus after enter animation so the slide-in draws attention (no focus ring). */
-function onFindEnter(el: Element): void {
-  void nextTick(() => {
-    const input =
-      (el.querySelector(".popup-find-input") as HTMLInputElement | null) ??
-      null;
-    input?.focus({ preventScroll: true });
-    if (findQuery) input?.select();
-  });
-}
+const inputEl = ref<HTMLInputElement | null>(null);
+onMounted(() => {
+  findInputEl.value = inputEl.value;
+  void nextTick(() => { inputEl.value?.focus({ preventScroll: true }); inputEl.value?.select(); });
+});
+onBeforeUnmount(() => { if (findInputEl.value === inputEl.value) findInputEl.value = null; });
 </script>
 
 <template>
-  <Transition name="popup-find-slide" @after-enter="onFindEnter">
     <div
-      v-if="findActive"
       class="popup-find-bar"
       role="search"
       :aria-label="t('popup.find.label')"
       @mousedown.stop
       @click.stop
     >
-      <svg
-        class="popup-find-icon"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        aria-hidden="true"
-      >
-        <circle cx="11" cy="11" r="7" />
-        <path d="m21 21-4.3-4.3" />
-      </svg>
+      <select class="popup-find-scope" :value="findScope" :aria-label="t('popup.find.scope')" @change="openFind(false, ($event.target as HTMLSelectElement).value as 'question' | 'attachment')">
+        <option value="question">{{ t('popup.find.question') }}</option>
+        <option value="attachment" :disabled="!previewOpen">{{ t('popup.find.attachment') }}</option>
+      </select>
       <input
-        :ref="(el) => (findInputEl = el as HTMLInputElement | null)"
+        ref="inputEl"
         class="popup-find-input"
         :class="{ empty: findNoMatch }"
         type="search"
@@ -62,7 +53,7 @@ function onFindEnter(el: Element): void {
         autocomplete="off"
         autocorrect="off"
         spellcheck="false"
-        :placeholder="t('popup.find.placeholder')"
+        :placeholder="t(findScope === 'attachment' ? 'popup.find.attachmentPlaceholder' : 'popup.find.placeholder')"
         :aria-keyshortcuts="t('popup.find.ariaShortcut')"
         :value="findQuery"
         @input="onFindQueryInput(($event.target as HTMLInputElement).value)"
@@ -77,6 +68,7 @@ function onFindEnter(el: Element): void {
         class="popup-find-btn"
         :title="t('popup.find.prev')"
         :aria-label="t('popup.find.prev')"
+        :disabled="findStatus !== 'ready' || !findTotal"
         @click="goFind(-1)"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -88,6 +80,7 @@ function onFindEnter(el: Element): void {
         class="popup-find-btn"
         :title="t('popup.find.next')"
         :aria-label="t('popup.find.next')"
+        :disabled="findStatus !== 'ready' || !findTotal"
         @click="goFind(1)"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -101,6 +94,7 @@ function onFindEnter(el: Element): void {
         :title="t('popup.find.caseSensitive')"
         :aria-label="t('popup.find.caseSensitive')"
         :aria-pressed="findCaseSensitive"
+        :disabled="!['ready', 'searching'].includes(findStatus)"
         @click="toggleFindCase"
       >
         Aa
@@ -117,6 +111,9 @@ function onFindEnter(el: Element): void {
           <path d="m6 6 12 12" />
         </svg>
       </button>
+      <span v-if="findStatus !== 'ready'" class="popup-find-status" role="status">
+        {{ t(`popup.find.status.${findStatus}`) }}
+        <button v-if="!['loading', 'searching'].includes(findStatus)" type="button" @click="previewFile && openFile(previewFile)">{{ t('popup.preview.openOriginal') }}</button>
+      </span>
     </div>
-  </Transition>
 </template>

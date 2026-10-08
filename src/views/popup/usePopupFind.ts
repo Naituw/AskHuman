@@ -4,6 +4,7 @@ import {
   nextTick,
   onBeforeUnmount,
   ref,
+  shallowRef,
   watch,
   type Ref,
 } from "vue";
@@ -23,6 +24,7 @@ import type {
   Question,
 } from "../../lib/types";
 import { optionDisplayText } from "./optionDisplay";
+import type { AttachmentFindAdapter, FindScope } from "./attachmentFind";
 
 export interface FindSegment {
   /** Stable id for DOM roots: data-find-seg */
@@ -63,6 +65,9 @@ export function usePopupFind(deps: {
   verticalMode: Ref<boolean>;
   /** Reveal a question without focusing the answer composer (find navigation). */
   revealQuestion: (index: number) => void | Promise<void>;
+  previewOpen?: Readonly<Ref<boolean>>;
+  previewIndex?: Ref<number | null>;
+  active?: Readonly<Ref<boolean>>;
 }) {
   const findActive = ref(false);
   const findQuery = ref("");
@@ -71,20 +76,27 @@ export function usePopupFind(deps: {
   const findCurrent = ref(-1);
   const findInputEl = ref<HTMLInputElement | null>(null);
   const matches = ref<FindMatch[]>([]);
+  const findScope = ref<FindScope>("question");
+  const lastRegion = ref<FindScope>("question");
+  const attachment = shallowRef<AttachmentFindAdapter | null>(null);
+  let restoreAttachmentFocus = false;
   let markedRoot: HTMLElement | null = null;
   let restoreFocusEl: HTMLElement | null = null;
   let applyToken = 0;
+  const isActive = () => deps.active?.value !== false;
 
-  const findTotal = computed(() => matches.value.length);
+  const findTotal = computed(() => findScope.value === "attachment" ? attachment.value?.state.value.total ?? 0 : matches.value.length);
+  const current = computed(() => findScope.value === "attachment" ? attachment.value?.state.value.current ?? -1 : findCurrent.value);
+  const findStatus = computed(() => findScope.value === "attachment" ? attachment.value?.state.value.status ?? "loading" : "ready");
   const findCountLabel = computed(() => {
     const n = findTotal.value;
-    if (!findQuery.value) return "";
+    if (!findQuery.value || findStatus.value !== "ready") return "";
     if (n === 0) return "0/0";
-    return `${findCurrent.value + 1}/${n}`;
+    return `${current.value + 1}/${n}`;
   });
   const findNoMatch = computed(
     () =>
-      findActive.value && findQuery.value.length > 0 && findTotal.value === 0,
+      findActive.value && findStatus.value === "ready" && findQuery.value.length > 0 && findTotal.value === 0,
   );
 
   function buildSegments(): FindSegment[] {
@@ -290,7 +302,7 @@ export function usePopupFind(deps: {
     }
     markedRoot = root;
 
-    if (!findActive.value || !root || !findQuery.value) {
+    if (!findActive.value || findScope.value !== "question" || deps.active?.value === false || !root || !findQuery.value) {
       if (root) clearFindMarks(root);
       return;
     }
@@ -298,13 +310,13 @@ export function usePopupFind(deps: {
     const anchor = matches.value[findCurrent.value] ?? null;
     if (anchor) {
       await ensureQuestionVisible(anchor.qIndex);
-      if (token !== applyToken) return;
+      if (token !== applyToken || findScope.value !== "question" || !isActive()) return;
       // After a sequential switch, re-read DOM-backed segment texts.
       rebuildMatchesKeepingCurrent();
     }
 
     await nextTick();
-    if (token !== applyToken) return;
+    if (token !== applyToken || findScope.value !== "question" || !isActive()) return;
     const currentEl = paintMarks(root);
     if (currentEl) scrollMarkIntoView(currentEl);
   }
@@ -322,7 +334,7 @@ export function usePopupFind(deps: {
       clearFindMarks(markedRoot);
     }
     markedRoot = root;
-    if (!findActive.value || !root || !findQuery.value) {
+    if (!findActive.value || findScope.value !== "question" || deps.active?.value === false || !root || !findQuery.value) {
       if (root) clearFindMarks(root);
       return;
     }
@@ -330,37 +342,57 @@ export function usePopupFind(deps: {
     paintMarks(root);
   }
 
-  function openFind(prefillFromSelection = true): void {
+  function openFind(prefillFromSelection = true, target: FindScope = lastRegion.value, nativeSelection?: string): void {
+    if (target === "attachment" && !deps.previewOpen?.value) target = "question";
+    const wasActive = findActive.value;
+    const changed = findScope.value !== target;
     const active = document.activeElement;
-    if (active instanceof HTMLElement && !active.closest(".popup-find-bar")) {
+    if (!wasActive && active instanceof HTMLElement && !active.closest(".popup-find-bar")) {
       restoreFocusEl = active;
+      restoreAttachmentFocus = target === "attachment";
     }
 
     let prefill = "";
-    if (prefillFromSelection && !findActive.value) {
+    if (prefillFromSelection && !wasActive) {
       const sel = window.getSelection();
-      const t = sel?.toString().trim() ?? "";
+      const region = sel?.anchorNode?.parentElement?.closest(target === "attachment" ? ".attachment-preview-body" : ".content");
+      const validSelection = region && deps.contentRef.value?.contains(region) && sel?.focusNode
+        && deps.contentRef.value.contains(sel.focusNode) && !sel.anchorNode?.parentElement?.closest("textarea, input");
+      const t = target === "attachment" ? nativeSelection ?? attachment.value?.selection() ?? ""
+        : validSelection ? sel?.toString().trim() ?? "" : "";
       if (t) prefill = t.slice(0, MAX_PREFILL);
     }
 
-    // Already open: just re-focus (no re-enter animation).
-    if (findActive.value) {
+    // Already open in this scope: focus the existing search input.
+    if (wasActive && !changed) {
       findInputEl.value?.focus({ preventScroll: true });
       findInputEl.value?.select();
       return;
     }
 
     findActive.value = true;
+    findScope.value = target;
+    applyToken++;
+    if (markedRoot) clearFindMarks(markedRoot);
+    attachment.value?.clear();
+    if (target === "attachment") {
+      if (prefill) findQuery.value = prefill;
+      attachment.value?.search(findQuery.value, findCaseSensitive.value, true);
+      void nextTick(() => { findInputEl.value?.focus({ preventScroll: true }); findInputEl.value?.select(); });
+      return;
+    }
     if (prefill) {
       findQuery.value = prefill;
       rebuildMatches();
       findCurrent.value = matches.value.length > 0 ? 0 : -1;
-    } else if (!findQuery.value) {
+    } else if (findQuery.value) {
+      rebuildMatches(); findCurrent.value = matches.value.length ? 0 : -1;
+    } else {
       matches.value = [];
       findCurrent.value = -1;
     }
 
-    // Focus is applied after the slide-in enter transition (FindBar @after-enter).
+    // FindBar focuses its input on mount; navigation waits for the searchable DOM.
     void nextTick(async () => {
       await navigateToCurrent();
     });
@@ -371,17 +403,23 @@ export function usePopupFind(deps: {
     findQuery.value = "";
     findCurrent.value = -1;
     matches.value = [];
+    findCaseSensitive.value = false;
+    attachment.value?.clear();
     applyToken++;
     if (markedRoot) {
       clearFindMarks(markedRoot);
       markedRoot = null;
     }
     const restore = restoreFocusEl;
+    const nativeRestore = restoreAttachmentFocus;
+    restoreAttachmentFocus = false;
     restoreFocusEl = null;
     void nextTick(() => {
-      if (restore && document.contains(restore)) {
+      if (deps.active?.value === false) return;
+      if (nativeRestore && deps.previewOpen?.value) attachment.value?.restoreFocus();
+      else if (restore && document.contains(restore)) {
         try {
-          restore.focus();
+          restore.focus({ preventScroll: true });
         } catch {
           /* ignore */
         }
@@ -391,6 +429,7 @@ export function usePopupFind(deps: {
 
   async function goFind(delta: number): Promise<void> {
     if (!findActive.value) return;
+    if (findScope.value === "attachment") { await attachment.value?.go(delta); return; }
     const n = matches.value.length;
     if (n === 0) return;
     const cur = findCurrent.value < 0 ? 0 : findCurrent.value;
@@ -400,6 +439,7 @@ export function usePopupFind(deps: {
 
   function onFindQueryInput(value: string): void {
     findQuery.value = value;
+    if (findScope.value === "attachment") { attachment.value?.search(value, findCaseSensitive.value, true); return; }
     rebuildMatches();
     findCurrent.value = matches.value.length > 0 ? 0 : -1;
     void navigateToCurrent();
@@ -407,6 +447,7 @@ export function usePopupFind(deps: {
 
   function toggleFindCase(): void {
     findCaseSensitive.value = !findCaseSensitive.value;
+    if (findScope.value === "attachment") { attachment.value?.search(findQuery.value, findCaseSensitive.value, true, false); return; }
     const prev = matches.value[findCurrent.value];
     rebuildMatches();
     if (prev) {
@@ -426,18 +467,15 @@ export function usePopupFind(deps: {
 
   /** Returns true if the event was handled. */
   function handleFindKeydown(e: KeyboardEvent): boolean {
+    if (e.isComposing || e.keyCode === 229) return false;
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 
     // ⌘/Ctrl+F — open or refocus (no alt/shift).
     if (mod && !e.altKey && !e.shiftKey && key === "f") {
       e.preventDefault();
-      if (findActive.value) {
-        findInputEl.value?.focus();
-        findInputEl.value?.select();
-      } else {
-        openFind(true);
-      }
+      const inBar = e.target instanceof Element && !!e.target.closest(".popup-find-bar");
+      openFind(true, inBar && findActive.value ? findScope.value : lastRegion.value);
       return true;
     }
 
@@ -460,7 +498,7 @@ export function usePopupFind(deps: {
       e.target instanceof HTMLElement &&
       e.target.closest(".popup-find-bar") !== null;
 
-    if (inFindInput && e.key === "Enter") {
+    if (inFindInput && e.key === "Enter" && !mod && !e.altKey) {
       e.preventDefault();
       void goFind(e.shiftKey ? -1 : 1);
       return true;
@@ -485,10 +523,51 @@ export function usePopupFind(deps: {
         deps.questions.value.length,
       ] as const,
     () => {
-      if (!findActive.value || !findQuery.value) return;
+      if (!findActive.value || findScope.value !== "question" || !findQuery.value) return;
       repaintHighlights();
     },
   );
+
+  function noteFindRegion(region: FindScope): void { lastRegion.value = region; }
+  let findTabFocus = false;
+  function noteFindInteraction(event: Event): void {
+    if (!isActive()) return;
+    const element = event.target instanceof Element ? event.target : null;
+    if (!element || element.closest(".popup-find-bar")) return;
+    if (event instanceof KeyboardEvent) {
+      // Pressing a shortcut modifier must not let a stale DOM focus reclaim the region.
+      if (["Meta", "Control", "Alt", "Shift"].includes(event.key)) return;
+      findTabFocus = event.key === "Tab";
+      const mod = isMac ? event.metaKey : event.ctrlKey;
+      if (mod && ["f", "g"].includes(event.key.toLowerCase())) return;
+    } else if (event.type === "focusin") {
+      if (!findTabFocus) return;
+      findTabFocus = false;
+    }
+    if (element.closest(".attachment-preview")) noteFindRegion("attachment");
+    else if (element.closest(".popup-main") && !element.closest(".navbar")) noteFindRegion("question");
+  }
+  function registerAttachmentFind(adapter: AttachmentFindAdapter | null): void {
+    attachment.value?.clear(); attachment.value = adapter;
+    if (adapter && findActive.value && findScope.value === "attachment") adapter.search(findQuery.value, findCaseSensitive.value, false);
+  }
+  if (deps.previewIndex) watch(deps.previewIndex, (index, old) => {
+    if (index !== null && index !== old && deps.active?.value !== false) lastRegion.value = "attachment";
+  }, { flush: "sync" });
+  if (deps.previewOpen) watch(deps.previewOpen, open => {
+    if (!open) {
+      if (findActive.value && findScope.value === "attachment") closeFind();
+      lastRegion.value = "question";
+    }
+  }, { flush: "sync" });
+  if (deps.active) watch(deps.active, active => {
+    applyToken++;
+    if (!active) { if (markedRoot) clearFindMarks(markedRoot); attachment.value?.clear(); }
+    else if (findActive.value) {
+      if (findScope.value === "attachment") attachment.value?.search(findQuery.value, findCaseSensitive.value, false, false);
+      else void nextTick(repaintHighlights);
+    }
+  }, { flush: "sync" });
 
   onBeforeUnmount(() => {
     if (markedRoot) clearFindMarks(markedRoot);
@@ -496,9 +575,14 @@ export function usePopupFind(deps: {
 
   return {
     findActive,
+    findScope,
+    noteFindInteraction,
+    findStatus,
+    noteFindRegion,
+    registerAttachmentFind,
     findQuery,
     findCaseSensitive,
-    findCurrent,
+    findCurrent: current,
     findTotal,
     findCountLabel,
     findNoMatch,
@@ -512,7 +596,8 @@ export function usePopupFind(deps: {
     /** Repaint after the DOM settled (sequential transition, Markdown update); never scrolls. */
     refreshFind: () => {
       if (!findActive.value) return;
-      repaintHighlights();
+      if (findScope.value === "attachment") attachment.value?.refresh();
+      else repaintHighlights();
     },
   };
 }

@@ -19,7 +19,18 @@ unsafe extern "C" {
         width: f64,
         height: f64,
         bare_enter: bool,
-        callback: extern "C" fn(u16, u64),
+        callback: extern "C" fn(u16, u64, *const std::ffi::c_char),
+    ) -> bool;
+    fn ah_preview_find(
+        request: *const std::ffi::c_char,
+        index: usize,
+        generation: u64,
+        action: *const std::ffi::c_char,
+        query: *const std::ffi::c_char,
+        sensitive: bool,
+        navigate: bool,
+        delta: isize,
+        callback: extern "C" fn(*const std::ffi::c_char, usize, u64, usize, isize, i32),
     ) -> bool;
 }
 #[derive(Debug)]
@@ -69,9 +80,16 @@ struct PreviewKey {
     index: usize,
     key: &'static str,
     meta_key: bool,
+    shift_key: bool,
+    ctrl_key: bool,
+    alt_key: bool,
+    selection: String,
 }
-extern "C" fn native_key(code: u16, flags: u64) {
+extern "C" fn native_key(code: u16, flags: u64, selection: *const std::ffi::c_char) {
     let key = match code {
+        0 => "interaction",
+        3 => "f",
+        5 => "g",
         53 => "Escape",
         13 => "w",
         36 | 76 => "Enter",
@@ -87,11 +105,113 @@ extern "C" fn native_key(code: u16, flags: u64) {
                         index: *index,
                         key,
                         meta_key: flags & (1 << 20) != 0,
+                        shift_key: flags & (1 << 17) != 0,
+                        ctrl_key: flags & (1 << 18) != 0,
+                        alt_key: flags & (1 << 19) != 0,
+                        selection: if selection.is_null() {
+                            String::new()
+                        } else {
+                            unsafe { std::ffi::CStr::from_ptr(selection) }
+                                .to_string_lossy()
+                                .into_owned()
+                        },
                     },
                 );
             }
         }
     });
+}
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PreviewFind {
+    request_id: String,
+    index: usize,
+    generation: u64,
+    total: usize,
+    current: isize,
+    status: &'static str,
+}
+extern "C" fn native_find(
+    request: *const std::ffi::c_char,
+    index: usize,
+    generation: u64,
+    total: usize,
+    current: isize,
+    status: i32,
+) {
+    if request.is_null() {
+        return;
+    }
+    let request_id = unsafe { std::ffi::CStr::from_ptr(request) }
+        .to_string_lossy()
+        .into_owned();
+    let status = match status {
+        0 => "ready",
+        1 => "loading",
+        2 => "searching",
+        3 => "unsupported",
+        4 => "noText",
+        6 => "limit",
+        _ => "error",
+    };
+    KEY_TARGET.with(|target| {
+        if let Some((window, id, active_index)) = target.borrow().as_ref() {
+            if id == &request_id
+                && *active_index == index
+                && crate::app::popup_preview::request(window, id).is_ok()
+            {
+                let _ = window.emit(
+                    "popup-preview-find",
+                    PreviewFind {
+                        request_id,
+                        index,
+                        generation,
+                        total,
+                        current,
+                        status,
+                    },
+                );
+            }
+        }
+    });
+}
+pub fn find_in_view(
+    window: &tauri::Window,
+    search: &crate::commands::PreviewFindRequest,
+) -> Result<(), String> {
+    let matches = KEY_TARGET.with(|target| {
+        target
+            .borrow()
+            .as_ref()
+            .is_some_and(|(target_window, id, target_index)| {
+                target_window.label() == window.label()
+                    && id == &search.request_id
+                    && *target_index == search.index
+            })
+    });
+    if !matches {
+        return Err("stale system preview target".into());
+    }
+    let request = CString::new(search.request_id.as_str()).map_err(|_| "invalid request id")?;
+    let action = CString::new(search.action.as_str()).map_err(|_| "invalid search action")?;
+    let query = CString::new(search.query.as_str()).map_err(|_| "invalid search query")?;
+    if unsafe {
+        ah_preview_find(
+            request.as_ptr(),
+            search.index,
+            search.generation,
+            action.as_ptr(),
+            query.as_ptr(),
+            search.case_sensitive,
+            search.navigate,
+            search.delta,
+            native_find,
+        )
+    } {
+        Ok(())
+    } else {
+        Err("system preview unavailable".into())
+    }
 }
 pub fn update_view(
     window: &tauri::Window,

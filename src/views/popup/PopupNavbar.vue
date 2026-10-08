@@ -4,7 +4,6 @@
 // flex 子级顺序）。
 import { useI18n } from "vue-i18n";
 import { usePopupContext } from "./context";
-import FindBar from "./FindBar.vue";
 
 const { t } = useI18n();
 const {
@@ -39,7 +38,6 @@ const {
   openTodosWindow,
   openHistoryWindow,
   openSettingsWindow,
-  findActive,
 } = usePopupContext();
 </script>
 
@@ -103,15 +101,13 @@ const {
         >· {{ popupTimeRel }}</span
       >
     </span>
-    <span class="nav-actions" :class="{ 'find-open': findActive }">
-      <!-- Action buttons fade out while find bar occupies this corner. -->
-      <span class="nav-actions-btns" :aria-hidden="findActive ? 'true' : undefined">
+    <span class="nav-actions">
+      <span class="nav-actions-btns">
         <div v-if="updateAvailable" class="update-wrap">
           <button
             class="nav-btn update-btn"
             type="button"
             :title="t('popup.nav.update')"
-            :tabindex="findActive ? -1 : undefined"
             @click.stop="toggleUpdatePopover"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -165,7 +161,6 @@ const {
           :class="{ active: pinned }"
           type="button"
           :title="t('popup.nav.pin')"
-          :tabindex="findActive ? -1 : undefined"
           @click="togglePin"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -179,7 +174,6 @@ const {
           type="button"
           :title="t('popup.nav.agentConsole')"
           :aria-label="t('popup.nav.agentConsole')"
-          :tabindex="findActive ? -1 : undefined"
           @click="openAgentConsoleWindow"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -191,7 +185,6 @@ const {
           class="nav-btn"
           type="button"
           :title="t('popup.nav.todos')"
-          :tabindex="findActive ? -1 : undefined"
           @click="openTodosWindow"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -204,7 +197,6 @@ const {
           class="nav-btn"
           type="button"
           :title="t('popup.nav.history')"
-          :tabindex="findActive ? -1 : undefined"
           @click="openHistoryWindow"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -217,7 +209,6 @@ const {
           class="nav-btn"
           type="button"
           :title="t('popup.nav.settings')"
-          :tabindex="findActive ? -1 : undefined"
           @click="openSettingsWindow"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -226,7 +217,6 @@ const {
           </svg>
         </button>
       </span>
-      <FindBar />
     </span>
   </header>
   <div
