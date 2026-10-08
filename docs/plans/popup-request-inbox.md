@@ -525,3 +525,29 @@ macOS / Windows 全 targets Clippy、格式检查、两平台安装通过。Wind
 SSH 密钥按用户要求保存在交接文档旁。详细根因、证据和边界见
 [Windows #15 验证报告](../investigations/windows-popup-visibility-issue15.md)。Linux、真实 IM、
 多 DPI / 多屏、真实输入法组合态及完整附件格式矩阵仍按 PROGRESS 保留。
+
+## 28. Markdown 文件链接导致共享页面重载（2026-10-09）
+
+用户报告点击 Message 内文件链接后整个窗口报错。链接处理器只拦截 HTTP(S) / mailto，
+本地路径经浏览器解析成为 `tauri://localhost/Users/...` 并触发页面导航。Tauri 的 SPA 资源
+回退重新加载 index.html，而新 URL 缺少 `view=popup-inbox`，使 App 改挂独立 PopupView，
+最终被共享宿主的 `shared popup requires a request ID` 校验拒绝。已有链接缺口因合并窗口
+扩大了影响范围，不是文件不存在，也不是窗口背景 click 或共享请求路由校验本身失效。
+
+`lib/markdownLinks.ts` 统一读取 authored href、取消导航、解码本地路径并剥离行列号 / 片段，
+相对路径使用当前请求的 project。Message、顺序 / 纵向题干、Confirm 和历史详情共用此逻辑。
+Popup 建窗注入主文档 click / auxclick 捕获保护，保留 Vue 的系统打开动作及 Mermaid 子帧。
+不支持或无上下文的链接保持页面，不降低 Markdown 清洗或共享宿主 ID 校验。
+
+安装后用新二进制的隔离 Popup Host 与受控 IPC 供给两项目请求，实际 WKWebView / AppKit
+点击了带空格、中文及 `:82:5` 的绝对文件链接、两个项目的相对链接、不支持链接及中键
+点击。TextEdit 打开的路径与内容分别匹配两个测试文件，页面 URL 始终保留
+`view=popup-inbox&effect=solid`，Mermaid 图仍显示。跨请求返回保留两份草稿；最终 IPC 收到
+`native draft A` / `native draft B` 的完整 userInput，两份提交获 ACK 后 Host 正常退出 0。
+此验证使用正式 Popup Host 和系统文件打开入口，IPC 请求 / 回执由测试服务提供，不作为
+真实 IM 或其他平台验收证据；未启动替代 daemon，也未修改用户 Agent hooks。测试文件、
+独立 bundle 和 TextEdit 测试窗口已清理。
+
+317 Vitest / 47 files、5 Node tests、类型检查、Rust 格式及 diff 检查通过。
+`./scripts/install.sh` 已编译、签名安装到 `~/.local/bin/AskHuman`。主 daemon 的既有在途
+请求沿用 graceful drain，自然完结后换新；本次未强制取消其他请求。

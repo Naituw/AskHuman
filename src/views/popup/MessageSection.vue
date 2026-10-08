@@ -10,6 +10,7 @@ const {
   request,
   showDescription,
   messageText,
+  projectPath,
   viewSource,
   copiedMessage,
   copyMessage,
@@ -34,6 +35,7 @@ const {
     <MarkdownContent
       v-if="messageText && request?.isMarkdown && !viewSource"
       :source="messageText"
+      :base-directory="projectPath"
       data-find-seg="message"
     />
     <pre

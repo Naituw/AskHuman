@@ -10,6 +10,7 @@ const { t } = useI18n();
 const {
   request,
   questions,
+  projectPath,
   total,
   viewSource,
   chosenByQ,
@@ -51,6 +52,7 @@ const {
     <MarkdownContent
       v-if="request?.isMarkdown && !viewSource && q.message"
       :source="q.message"
+      :base-directory="projectPath"
       :data-find-seg="`q-${qi}-msg`"
     />
     <pre

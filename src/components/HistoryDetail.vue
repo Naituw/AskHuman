@@ -413,6 +413,7 @@ watch(
       <MarkdownContent
         v-if="entry.message.text && entry.isMarkdown"
         :source="entry.message.text"
+        :base-directory="entry.project"
       />
       <pre v-else-if="entry.message.text" class="plain-body">{{ entry.message.text }}</pre>
 
@@ -472,6 +473,7 @@ watch(
       <MarkdownContent
         v-if="entry.isMarkdown && q.message"
         :source="q.message"
+        :base-directory="entry.project"
       />
       <pre v-else-if="q.message" class="plain-body">{{ q.message }}</pre>
 

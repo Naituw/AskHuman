@@ -17,6 +17,7 @@ const {
   onQuestionEntered,
   current,
   currentQuestion,
+  projectPath,
   viewSource,
   chosen,
   single,
@@ -48,6 +49,7 @@ const {
       <MarkdownContent
         v-if="request?.isMarkdown && !viewSource && currentQuestion?.message"
         :source="currentQuestion.message"
+        :base-directory="projectPath"
         :data-find-seg="`q-${current}-msg`"
       />
       <pre

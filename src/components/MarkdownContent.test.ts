@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { i18n } from "../i18n";
 import { markdownReady } from "../lib/markdown";
 import { applyTheme } from "../lib/theme";
+import { openPath } from "../lib/ipc";
 import MarkdownContent from "./MarkdownContent.vue";
 
 const renderMermaid = vi.hoisted(() => vi.fn());
@@ -44,10 +45,56 @@ describe("MarkdownContent", () => {
   beforeAll(() => markdownReady);
 
   beforeEach(() => {
+    vi.mocked(openPath).mockClear();
     renderMermaid.mockReset();
     renderMermaid.mockResolvedValue(renderedDocument);
     i18n.global.locale.value = "en";
     applyTheme("light");
+  });
+
+  it.each(["tauri://localhost/index.html?view=popup-inbox", "http://tauri.localhost/index.html?view=popup-inbox"])("opens local file citations without navigating %s", async baseUrl => {
+    const base = document.createElement("base");
+    base.href = baseUrl; document.head.appendChild(base);
+    try {
+      const wrapper = mount(MarkdownContent, {
+        props: { source: "[file](/Users/test/My%20Report.md:82:5) [relative](docs/report.md#L12)", baseDirectory: "/project" },
+        global: { plugins: [i18n] }, attachTo: document.body,
+      });
+      await flushPromises();
+      for (const anchor of wrapper.findAll("a")) {
+        const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+        anchor.element.dispatchEvent(click);
+        expect(click.defaultPrevented).toBe(true);
+      }
+      expect(openPath).toHaveBeenNthCalledWith(1, "/Users/test/My Report.md");
+      expect(openPath).toHaveBeenNthCalledWith(2, "/project/docs/report.md");
+    } finally { base.remove(); }
+  });
+
+  it("keeps unsupported links inert and opens supported URLs externally", async () => {
+    const wrapper = mount(MarkdownContent, {
+      props: { source: "[unsupported](ftp://example.com/file) [site](https://example.com)" },
+      global: { plugins: [i18n] },
+    });
+    await flushPromises();
+    const anchors = wrapper.findAll("a");
+    const unsupported = new MouseEvent("click", { bubbles: true, cancelable: true });
+    anchors[0].element.dispatchEvent(unsupported);
+    expect(unsupported.defaultPrevented).toBe(true);
+    expect(openPath).not.toHaveBeenCalled();
+    await anchors[1].trigger("click");
+    expect(openPath).toHaveBeenCalledWith("https://example.com/");
+  });
+
+  it("keeps the document intact when the system opener rejects a file", async () => {
+    vi.mocked(openPath).mockRejectedValueOnce(new Error("file unavailable"));
+    const wrapper = mount(MarkdownContent, { props: { source: "[file](/missing/file.md)" }, global: { plugins: [i18n] } });
+    await flushPromises();
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    wrapper.get("a").element.dispatchEvent(click);
+    await flushPromises();
+    expect(click.defaultPrevented).toBe(true);
+    expect(wrapper.get("a").text()).toBe("file");
   });
 
   it("progressively replaces a Mermaid fence and preserves its source", async () => {

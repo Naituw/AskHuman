@@ -946,6 +946,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                         append_window_effect_query(&mut url, effective_window_effect);
                         let builder =
                             WebviewWindowBuilder::new(app, "popup", WebviewUrl::App(url.into()))
+                                .initialization_script(include_str!("popup_navigation.js"))
                                 .title(i18n::tr(lang, "title.popup"))
                                 .inner_size(popup_w, popup_h)
                                 .min_inner_size(popup_size::MIN_WIDTH, popup_size::MIN_HEIGHT)

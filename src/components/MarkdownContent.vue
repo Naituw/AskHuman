@@ -15,7 +15,7 @@ import {
   mermaidFitScale,
 } from "../lib/mermaidLimits";
 import { clearAtomicFindText, setAtomicFindText } from "../lib/findInDom";
-import { openPath } from "../lib/ipc";
+import { handleMarkdownLinkClick } from "../lib/markdownLinks";
 import { handleCodeCopyClick, renderMarkdown } from "../lib/markdown";
 import { loadMermaidAdapter } from "../lib/mermaidLoader";
 import { effectiveColorScheme } from "../lib/theme";
@@ -23,6 +23,7 @@ import { effectiveColorScheme } from "../lib/theme";
 const props = withDefaults(
   defineProps<{
     source: string;
+    baseDirectory?: string;
     enableMermaid?: boolean;
     lazyMermaid?: boolean;
   }>(),
@@ -315,13 +316,7 @@ async function hydrateMermaid(): Promise<void> {
 
 function onRootClick(event: MouseEvent): void {
   if (handleCodeCopyClick(event)) return;
-  const anchor = (event.target as HTMLElement | null)?.closest?.("a") as
-    | HTMLAnchorElement
-    | null;
-  if (!anchor || !/^(https?:|mailto:)/i.test(anchor.href)) return;
-  event.preventDefault();
-  event.stopPropagation();
-  openPath(anchor.href).catch(() => {});
+  handleMarkdownLinkClick(event, props.baseDirectory);
 }
 
 onMounted(() => {

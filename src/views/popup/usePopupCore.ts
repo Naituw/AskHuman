@@ -39,6 +39,7 @@ import {
 import { matchShortcut } from "../../lib/shortcut";
 import { applyLanguage } from "../../i18n";
 import { renderMarkdown, handleCodeCopyClick } from "../../lib/markdown";
+import { handleMarkdownLinkClick } from "../../lib/markdownLinks";
 import { applyTheme, fileToDataUrl } from "../../lib/theme";
 import { mark as perfMarkFe, enable as perfEnableFe } from "../../lib/perf";
 import type {
@@ -1017,19 +1018,11 @@ export function usePopupCore(scope?: PopupScope) {
     });
   }
 
-  // 渲染后的 Markdown 里的链接：用系统默认浏览器打开，避免在弹窗 webview 内跳转。
+  // Open authored Markdown links externally without navigating the popup document.
   function onContentClick(e: MouseEvent) {
     // 代码块的拷贝按钮优先处理（命中即结束，不再走链接逻辑）。
     if (handleCodeCopyClick(e)) return;
-    const anchor = (e.target as HTMLElement | null)?.closest?.("a") as
-      | HTMLAnchorElement
-      | null;
-    if (!anchor) return;
-    const href = anchor.href;
-    if (!/^(https?:|mailto:)/i.test(href)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    openPath(href).catch(() => {});
+    handleMarkdownLinkClick(e, projectPath.value);
   }
 
   async function togglePin() {

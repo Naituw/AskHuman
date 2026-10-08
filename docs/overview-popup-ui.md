@@ -98,6 +98,13 @@ Helper 及原有级联；只对所选模式补热，闲置的旧模式宿主回�
 `daemon.log` 的 `popup_geometry` 事件，不额外重排窗口。成功切题和本轮结束清除旧队列
 错误，取消失败仍保留在关闭确认内。规则见合并窗口规格 §19。
 
+Message、题干及 Confirm 的 Markdown 链接共用 `lib/markdownLinks.ts`，读取原始 `href`
+而不是 WebView 解析后的应用资源 URL。本地文件引用剥离行号 / 列号和片段，解码路径，
+相对路径以该请求的项目目录为基准，经 `open_path` 交给系统默认程序；缺少项目或不支持
+的链接保持原界面。Popup 建窗时注入 `popup_navigation.js`，在主文档捕获阶段取消链接
+的默认 click / auxclick 导航，继续让正文处理器打开目标，不影响 Mermaid sandbox 子帧。
+合并与独立模式使用相同保护，避免链接替换整个作答页面及丢失草稿；规则见规格 §20。
+
 ## 来源标题与上下文
 
 来源名（弹窗标题与渠道消息头共用）的解析优先级为 **自定义环境变量 `ASKHUMAN_ENV_SOURCE_NAME` > 探测到的发起 Agent 展示名（Claude Code/Codex/Cursor/Grok）> 默认「the Loop」**。后端入口为 `models::source_name_for_agent`；MCP 模式无法从 env 判断家族时先回退默认名称，再由 daemon 异步进程树解析补齐 Agent。
