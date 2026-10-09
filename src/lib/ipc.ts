@@ -109,6 +109,7 @@ export const localImageCreateScope = () => invoke<string>("local_image_create_sc
 export const localImagePrepare = (scope: string, path: string) =>
   invoke<{ token: string; width: number; height: number }>("local_image_prepare", { scope, path });
 export const localImageReleaseScope = (scope: string) => invoke<void>("local_image_release_scope", { scope });
+export const localImageReleaseAsset = (scope: string, token: string) => invoke<void>("local_image_release_asset", { scope, token });
 
 export const fileIconDataUrl = (path: string) =>
   invoke<string>("file_icon_data_url", { path });

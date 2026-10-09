@@ -171,6 +171,7 @@ onBeforeUnmount(() => {
           :files="attachments.composerFiles.value"
           @remove-image="attachments.removeComposerImage"
           @remove-file="attachments.removeComposerFile"
+          @image-error="attachments.onComposerImageError"
         />
         <p v-if="attachments.error.value" class="ij-error" role="alert">
           {{ attachments.error.value }}

@@ -10,6 +10,21 @@ use tauri::{
     Assets, Manager, Wry,
 };
 
+struct ProbeFixtures(std::path::PathBuf);
+
+#[tauri::command]
+fn resource_status(
+    window: tauri::Webview,
+    registry: tauri::State<'_, local_image::Registry>,
+    token: String,
+) -> u16 {
+    let request = tauri::http::Request::builder()
+        .uri(format!("{}://localhost/{token}", local_image::SCHEME))
+        .body(Vec::new())
+        .unwrap();
+    registry.respond(window.label(), &request).status().as_u16()
+}
+
 struct ProbePage(String);
 impl Assets<Wry> for ProbePage {
     fn get(&self, key: &AssetKey) -> Option<Cow<'_, [u8]>> {
@@ -31,11 +46,15 @@ fn report_results(app: tauri::AppHandle, results: serde_json::Value) {
     let passed = results["images"].as_array().is_some_and(|images| {
         images
             .iter()
-            .all(|image| image["loaded"] == image["expected"])
+            .all(|image| !image["expected"].is_boolean() || image["loaded"] == image["expected"])
     }) && results["limits"]
         .as_array()
-        .is_some_and(|limits| limits.iter().all(|limit| limit["reason"] == "limit"));
-    app.exit(if passed { 0 } else { 1 });
+        .is_some_and(|limits| limits.iter().all(|limit| limit["reason"] == "limit"))
+        && results["revokedStatus"] == 404;
+    let _ = std::fs::remove_dir_all(&app.state::<ProbeFixtures>().0);
+    // Explicit process status also works when the macOS event loop ignores its exit code.
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    std::process::exit(if passed { 0 } else { 1 });
 }
 fn main() {
     let fixtures = tempfile::tempdir().unwrap();
@@ -73,6 +92,13 @@ fn main() {
 <h1>Tauri production image URL probe</h1><div id="results"></div>
 <script>
 const input=__INPUT__,{invoke,convertFileSrc}=window.__TAURI__.core;
+function testImage(item){return new Promise(resolve=>{
+ const row=document.createElement('p'),image=new Image();row.textContent=item.name+': ';
+ row.appendChild(image);document.querySelector('#results').appendChild(row);
+ const start=performance.now();let finished=false;
+ const done=loaded=>{if(finished)return;finished=true;resolve({...item,loaded,width:image.naturalWidth,height:image.naturalHeight,elapsedMs:performance.now()-start});};
+ image.onload=()=>done(true);image.onerror=()=>done(false);image.src=item.src;setTimeout(()=>done(false),4000);
+});}
 async function main(){
  const scope=await invoke('local_image_create_scope');
  const sources=[
@@ -93,23 +119,29 @@ async function main(){
   let reason=null;try{await invoke('local_image_prepare',{scope,path});}catch(error){reason=String(error);}
   limits.push({path,reason});
  }
- const images=await Promise.all(sources.map(item=>new Promise(resolve=>{
-  const row=document.createElement('p'),image=new Image();row.textContent=item.name+': ';
-  row.appendChild(image);document.querySelector('#results').appendChild(row);
-  const start=performance.now();let finished=false;
-  const done=loaded=>{if(finished)return;finished=true;resolve({...item,loaded,width:image.naturalWidth,height:image.naturalHeight,elapsedMs:performance.now()-start});};
-  image.onload=()=>done(true);image.onerror=()=>done(false);image.src=item.src;setTimeout(()=>done(false),4000);
- })));
+ const images=await Promise.all(sources.map(testImage));
+ const sharedScope=await invoke('local_image_create_scope');
+ const shared=await invoke('local_image_prepare',{scope:sharedScope,path:input.path});
+ const duplicate=await invoke('local_image_prepare',{scope:sharedScope,path:input.path});
+ if(shared.token!==duplicate.token)throw new Error('duplicate image registration');
+ await invoke('local_image_release_asset',{scope:sharedScope,token:shared.token});
+ images.push(await testImage({name:'shared URL after one release',src:convertFileSrc(shared.token,'askhuman-image'),expected:true}));
+ await invoke('local_image_release_asset',{scope:sharedScope,token:duplicate.token});
+ const revokedStatus=await invoke('resource_status',{token:shared.token});
+ images.push(await testImage({name:'previously decoded URL after last release (cache observation)',src:convertFileSrc(shared.token,'askhuman-image')}));
+ await invoke('local_image_release_scope',{scope:sharedScope});
  await invoke('local_image_release_scope',{scope});
- await invoke('report_results',{results:{origin:location.origin,userAgent:navigator.userAgent,images,limits}});
+ await invoke('report_results',{results:{origin:location.origin,userAgent:navigator.userAgent,images,limits,revokedStatus}});
 }
 main().catch(error=>invoke('report_results',{results:{error:String(error)}}));
 </script>"#.replace("__INPUT__", &input.to_string());
     let mut context = tauri::generate_context!();
     context.config_mut().build.dev_url = None;
     context.set_assets(Box::new(ProbePage(page)));
+    let fixtures_path = fixtures.path().to_path_buf();
     tauri::Builder::default()
         .manage(local_image::Registry::default())
+        .manage(ProbeFixtures(fixtures_path.clone()))
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 window
@@ -121,11 +153,13 @@ main().catch(error=>invoke('report_results',{results:{error:String(error)}}));
         .register_asynchronous_uri_scheme_protocol(local_image::SCHEME, local_image::serve)
         .invoke_handler(tauri::generate_handler![
             report_results,
+            resource_status,
             local_image::local_image_create_scope,
             local_image::local_image_prepare,
-            local_image::local_image_release_scope
+            local_image::local_image_release_scope,
+            local_image::local_image_release_asset
         ])
-        .setup(|app| {
+        .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Prohibited);
             tauri::WebviewWindowBuilder::new(
@@ -137,13 +171,16 @@ main().catch(error=>invoke('report_results',{results:{error:String(error)}}));
             .inner_size(560.0, 660.0)
             .focused(false)
             .build()?;
-            let handle = app.handle().clone();
+            let fixtures_path = fixtures_path.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(20));
-                handle.exit(2);
+                let _ = std::fs::remove_dir_all(fixtures_path);
+                std::process::exit(2);
             });
             Ok(())
         })
         .run(context)
         .expect("local image URL probe failed");
+    drop(fixtures);
+    std::process::exit(2);
 }

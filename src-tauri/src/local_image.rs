@@ -39,6 +39,7 @@ struct Asset {
     path: PathBuf,
     stamp: Stamp,
     info: ImageInfo,
+    references: usize,
 }
 struct Scope {
     window: String,
@@ -94,6 +95,20 @@ impl Registry {
             .unwrap()
             .retain(|_, scope| scope.window != window);
     }
+    pub fn release_asset(&self, window: &str, scope: &str, token: &str) {
+        let mut scopes = self.scopes.lock().unwrap();
+        let Some(scope) = scopes.get_mut(scope).filter(|s| s.window == window) else {
+            return;
+        };
+        let Some(asset) = scope.assets.get_mut(token) else {
+            return;
+        };
+        asset.references = asset.references.saturating_sub(1);
+        if asset.references == 0 {
+            scope.pixels = scope.pixels.saturating_sub(asset.info.display_pixels);
+            scope.assets.remove(token);
+        }
+    }
     fn active(&self, window: &str, id: &str) -> bool {
         self.scopes
             .lock()
@@ -107,12 +122,13 @@ impl Registry {
         }
         let path = path.canonicalize().map_err(|_| "readFailed")?;
         {
-            let scopes = self.scopes.lock().unwrap();
+            let mut scopes = self.scopes.lock().unwrap();
             let scope = scopes
-                .get(id)
+                .get_mut(id)
                 .filter(|s| s.window == window)
                 .ok_or("stale")?;
-            if let Some((token, asset)) = scope.assets.iter().find(|(_, a)| a.path == path) {
+            if let Some((token, asset)) = scope.assets.iter_mut().find(|(_, a)| a.path == path) {
+                asset.references = asset.references.saturating_add(1);
                 return Ok(Prepared {
                     token: token.clone(),
                     width: asset.info.width,
@@ -144,9 +160,15 @@ impl Registry {
         }
         let token = uuid::Uuid::new_v4().to_string();
         scope.pixels += info.display_pixels;
-        scope
-            .assets
-            .insert(token.clone(), Asset { path, stamp, info });
+        scope.assets.insert(
+            token.clone(),
+            Asset {
+                path,
+                stamp,
+                info,
+                references: 1,
+            },
+        );
         Ok(Prepared {
             token,
             width: info.width,
@@ -230,6 +252,16 @@ pub fn local_image_release_scope(
     scope: String,
 ) {
     registry.release_scope(window.label(), &scope);
+}
+
+#[tauri::command]
+pub fn local_image_release_asset(
+    window: tauri::Webview,
+    registry: tauri::State<'_, Registry>,
+    scope: String,
+    token: String,
+) {
+    registry.release_asset(window.label(), &scope, &token);
 }
 
 #[tauri::command]
@@ -425,6 +457,57 @@ mod tests {
             registry.respond("history", &get(&second.token)).status(),
             StatusCode::OK
         );
+    }
+    #[test]
+    fn releases_shared_assets_only_after_the_last_reference() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("image.png");
+        png(&path, 3, 4);
+        let registry = Registry::default();
+        let scope = registry.create_scope("history").unwrap();
+        let other = registry.create_scope("history").unwrap();
+        let first = registry.prepare("history", &scope, &path).unwrap();
+        #[cfg(unix)]
+        let alias = temp.path().join("alias.png");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+        #[cfg(not(unix))]
+        let alias = path.clone();
+        let second = registry.prepare("history", &scope, &alias).unwrap();
+        assert_eq!(first.token, second.token);
+        registry.release_asset("popup", &scope, &first.token);
+        registry.release_asset("history", &other, &first.token);
+        registry.release_asset("history", &scope, &first.token);
+        assert_eq!(
+            registry.respond("history", &get(&first.token)).status(),
+            StatusCode::OK
+        );
+        registry.release_asset("history", &scope, &second.token);
+        assert_eq!(
+            registry.respond("history", &get(&first.token)).status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    #[test]
+    fn refunds_the_scope_pixel_budget_when_an_asset_is_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let registry = Registry::default();
+        let scope = registry.create_scope("todos").unwrap();
+        let paths: Vec<_> = (0..3)
+            .map(|i| {
+                let path = temp.path().join(format!("{i}.svg"));
+                std::fs::write(&path, "<svg width='6000' height='6000'/>").unwrap();
+                path
+            })
+            .collect();
+        let first = registry.prepare("todos", &scope, &paths[0]).unwrap();
+        registry.prepare("todos", &scope, &paths[1]).unwrap();
+        assert_eq!(
+            registry.prepare("todos", &scope, &paths[2]).unwrap_err(),
+            "limit"
+        );
+        registry.release_asset("todos", &scope, &first.token);
+        assert!(registry.prepare("todos", &scope, &paths[2]).is_ok());
     }
     #[test]
     fn supports_head_and_rejects_queries_and_write_methods() {

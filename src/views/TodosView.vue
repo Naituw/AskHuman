@@ -13,13 +13,13 @@ import {
 import { applyLanguage } from "../i18n";
 import ComposerAttachments from "../components/ComposerAttachments.vue";
 import TodoAttachmentList from "./todos/TodoAttachmentList.vue";
+import { useLocalImageUrls } from "../lib/localImageUrls";
 import {
   clipboardImageFiles,
   nextTodoSelection,
 } from "./todos/todoInteraction";
 import {
   openNewTask,
-  readImageDataUrl,
   todosAdd,
   todosClear,
   todosComplete,
@@ -96,7 +96,9 @@ interface PastedImageDraft {
   image: ImageAttachment;
 }
 const newPastedImages = ref<PastedImageDraft[]>([]);
-const newFileThumbs = ref<Record<string, string>>({});
+const IMAGE_FILE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?|svg)$/i;
+const newImagePreviews = useLocalImageUrls(computed(() => newFiles.value.filter(path => IMAGE_FILE_EXT.test(path))), { owner: selected });
+const newFileThumbs = newImagePreviews.urls;
 const newAttachmentBusy = ref(false);
 let pastedImageDraftSequence = 0;
 interface NewComposerImage {
@@ -105,6 +107,7 @@ interface NewComposerImage {
   filename: string;
   source: "file" | "pasted";
   sourceKey: string;
+  lazy?: boolean;
 }
 const newComposerImages = computed<NewComposerImage[]>(() => [
   ...newFiles.value.flatMap((path) => {
@@ -113,6 +116,7 @@ const newComposerImages = computed<NewComposerImage[]>(() => [
       ? [
           {
             key: `file:${path}`,
+            lazy: true,
             data,
             filename: draftName(path),
             source: "file" as const,
@@ -332,7 +336,6 @@ async function addEntry(): Promise<void> {
     newText.value = "";
     newFiles.value = [];
     newPastedImages.value = [];
-    newFileThumbs.value = {};
     attachmentError.value = "";
     await nextTick();
     syncAddInputHeight();
@@ -464,22 +467,9 @@ async function commitEdit(): Promise<void> {
   }
 }
 
-const IMAGE_FILE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?|svg)$/i;
-
-async function loadNewFileThumbnail(path: string): Promise<void> {
-  if (!IMAGE_FILE_EXT.test(path) || newFileThumbs.value[path]) return;
-  try {
-    const data = await readImageDataUrl(path);
-    if (newFiles.value.includes(path)) newFileThumbs.value[path] = data;
-  } catch (err) {
-    console.warn("todo draft image preview failed", path, err);
-  }
-}
-
 function appendNewPaths(paths: string[]): void {
   const list = newFiles.value;
   let exceeded = false;
-  const added: string[] = [];
   for (const path of paths) {
     if (list.includes(path)) continue;
     if (list.length + newPastedImages.value.length >= 20) {
@@ -487,16 +477,13 @@ function appendNewPaths(paths: string[]): void {
       continue;
     }
     list.push(path);
-    added.push(path);
   }
   attachmentError.value = exceeded ? t("todosWin.attachmentLimit", { n: 20 }) : "";
-  for (const path of added) void loadNewFileThumbnail(path);
 }
 
 function removeNewFile(path: string): void {
   const index = newFiles.value.indexOf(path);
   if (index >= 0) newFiles.value.splice(index, 1);
-  delete newFileThumbs.value[path];
 }
 
 function removeNewComposerImage(index: number): void {
@@ -510,6 +497,11 @@ function removeNewComposerImage(index: number): void {
     (draft) => draft.key === item.sourceKey
   );
   if (draftIndex >= 0) newPastedImages.value.splice(draftIndex, 1);
+}
+
+function onNewComposerImageError(index: number, event: Event): void {
+  const item = newComposerImages.value[index];
+  if (item?.source === "file") newImagePreviews.fail(item.sourceKey, event);
 }
 
 function removeNewComposerFile(index: number): void {
@@ -1685,6 +1677,7 @@ onBeforeUnmount(() => {
             :files="newComposerFiles"
             @remove-image="removeNewComposerImage"
             @remove-file="removeNewComposerFile"
+            @image-error="onNewComposerImageError"
           />
         </div>
         <p v-if="attachmentError" class="td-attachment-error">{{ attachmentError }}</p>

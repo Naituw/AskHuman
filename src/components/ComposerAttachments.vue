@@ -6,6 +6,7 @@ defineProps<{
     key?: string | number;
     data: string;
     filename?: string | null;
+    lazy?: boolean;
   }>;
   files: Array<{
     key?: string | number;
@@ -17,6 +18,7 @@ defineProps<{
 
 const emit = defineEmits<{
   removeImage: [index: number];
+  imageError: [index: number, event: Event];
   removeFile: [index: number];
   imageContainerRef: [element: HTMLElement | null];
 }>();
@@ -36,7 +38,7 @@ function setImageContainerRef(element: unknown): void {
         class="thumb"
         :title="image.filename ?? undefined"
       >
-        <img :src="image.data" alt="" />
+        <img :src="image.data" alt="" :loading="image.lazy ? 'lazy' : undefined" decoding="async" @error="emit('imageError', index, $event)" />
         <button
           class="remove"
           type="button"

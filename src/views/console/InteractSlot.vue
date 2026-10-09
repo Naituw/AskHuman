@@ -197,6 +197,7 @@ onBeforeUnmount(() => unlistenDrop?.());
           <ComposerAttachments
             :images="attachments.composerImages.value"
             :files="attachments.composerFiles.value"
+            @image-error="attachments.onComposerImageError"
             @remove-image="(index) => editable() && attachments.removeComposerImage(index)"
             @remove-file="(index) => editable() && attachments.removeComposerFile(index)"
           />

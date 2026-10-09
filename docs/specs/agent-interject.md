@@ -209,6 +209,9 @@ Cursor 若按其文档语义改用 `agent_message` 也不断；代价是 Cursor 
 - **附件交互**：composer 与 Agent 控制台均支持选择/拖入任意文件和粘贴图片，也支持仅附件发送；
   composer 重开时恢复队列中的附件引用，默认随编辑后的整体提交保留。附件缩略图读取只发生在桌面 UI，
   不进入 hook 热路径。
+- **composer 图片显示（2026-10-10）**：已选 / 恢复的可用本地图片使用有界原文件 URL，移除、
+  重置和卸载都撤销资源；超限 / 解码失败保留原文件胶囊，发送仍使用 `filePaths`。
+  剪贴板图片运输保持既有格式，见 [display-image-urls.md](../plans/display-image-urls.md)。
 
 ### D8 持久化
 

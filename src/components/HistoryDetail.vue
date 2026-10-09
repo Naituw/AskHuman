@@ -5,18 +5,18 @@ import {
   onBeforeUnmount,
   onMounted,
   ref,
-  watch,
 } from "vue";
 import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import MarkdownContent from "./MarkdownContent.vue";
+import { useLocalImageUrls } from "../lib/localImageUrls";
+import fallbackDragIcon from "../../src-tauri/icons/32x32.png?inline";
 import {
   closePreview,
   fileIconDataUrl,
   openPath,
   previewAttachments,
-  readImageDataUrl,
   showAttachmentMenu,
 } from "../lib/ipc";
 import type { FileAttachment, HistoryAnswer, HistoryEntry } from "../lib/types";
@@ -263,7 +263,7 @@ function onAttachmentContextMenu(file: FileAttachment, i: number, e: MouseEvent)
 
 function onAttachmentDragStart(file: FileAttachment, e: DragEvent) {
   e.preventDefault();
-  const icon = dragIcons.value[file.path] || thumbs.value[file.path] || "";
+  const icon = dragIcons.value[file.path] || fallbackDragIcon;
   startDrag({ item: [file.path], icon }, () => {}).catch(() => {});
 }
 
@@ -303,7 +303,7 @@ async function loadDragIcons() {
     try {
       dragIcons.value[f.path] = await fileIconDataUrl(f.path);
     } catch {
-      /* 取图标失败：拖出时回退缩略图或无预览 */
+      // Native drag uses the bundled PNG icon if the system icon is unavailable.
     }
   }
 }
@@ -339,30 +339,12 @@ onBeforeUnmount(() => {
   stopPreview();
 });
 
-// Image thumbnails: load best-effort; failures render a placeholder.
-const thumbs = ref<Record<string, string>>({});
-const failed = ref<Record<string, boolean>>({});
-
-watch(
-  () => props.entry,
-  async (entry) => {
-    thumbs.value = {};
-    failed.value = {};
-    const paths = entry.answers.flatMap((a) => a.images);
-    const attachImgs = entry.message.files
-      .filter((f) => f.isImage)
-      .map((f) => f.path);
-    for (const p of [...paths, ...attachImgs]) {
-      if (thumbs.value[p] || failed.value[p]) continue;
-      try {
-        thumbs.value[p] = await readImageDataUrl(p);
-      } catch {
-        failed.value[p] = true;
-      }
-    }
-  },
-  { immediate: true }
-);
+const imagePaths = computed(() => [
+  ...props.entry.answers.flatMap(answer => answer.images),
+  ...props.entry.message.files.filter(file => file.isImage).map(file => file.path),
+]);
+const images = useLocalImageUrls(imagePaths, { owner: computed(() => props.entry), lazy: true });
+const thumbs = images.urls;
 </script>
 
 <template>
@@ -439,8 +421,8 @@ watch(
             @dragstart="onAttachmentDragStart(file, $event)"
             @contextmenu="onAttachmentContextMenu(file, i, $event)"
           >
-            <span class="att-icon" :class="{ 'is-image': file.isImage && thumbs[file.path] }">
-              <img v-if="file.isImage && thumbs[file.path]" :src="thumbs[file.path]" alt="" />
+            <span :ref="el => images.observe(el, file.path)" class="att-icon" :class="{ 'is-image': file.isImage && thumbs[file.path] }">
+              <img v-if="file.isImage && thumbs[file.path]" :src="thumbs[file.path]" alt="" loading="lazy" decoding="async" @error="images.fail(file.path, $event)" />
               <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M14 3v4a1 1 0 0 0 1 1h4" />
                 <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
@@ -502,8 +484,8 @@ watch(
 
         <!-- Reply images -->
         <div v-if="(answerOf(i)?.images ?? []).length" class="thumbs">
-          <div v-for="(img, ii) in answerOf(i)?.images ?? []" :key="ii" class="thumb" :title="img" @click="open(img)">
-            <img v-if="thumbs[img]" :src="thumbs[img]" alt="" />
+          <div v-for="(img, ii) in answerOf(i)?.images ?? []" :key="ii" :ref="el => images.observe(el, img)" class="thumb" :title="img" @click="open(img)">
+            <img v-if="thumbs[img]" :src="thumbs[img]" alt="" loading="lazy" decoding="async" @error="images.fail(img, $event)" />
             <div v-else class="thumb-missing">{{ t("history.imageUnavailable") }}</div>
           </div>
         </div>

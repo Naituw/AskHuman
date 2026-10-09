@@ -6,6 +6,8 @@
 > [popup-attachment-preview-panel.md](popup-attachment-preview-panel.md)；下文早期 D6 / D7 由末尾的 2026-10 决策替代。
 > Todo 图片 / 文件附件是独立的持久化与派发需求，见 `docs/specs/todo-attachments.md`；其 128 px
 > 托管缩略图独立于 Popup 的有界图片读取与列表缩略图预算。
+> 历史附件 / 回复图片的纯显示读取已改有界协议 URL，见末尾 2026-10-10 补充；早期 D10 / D12
+> 的 Base64 实现描述不再适用于历史显示。
 
 ## 1. 背景
 
@@ -103,3 +105,10 @@ AskHuman "请看看这个文档有没有问题？" -f ~/Documents/some_file.md -
 - 提问附件的 Markdown 主操作跟随当前阅读模式：渲染模式「浏览器打开」，原文模式「打开」。列表回车始终打开原 MD；双击沿用同窗预览切换，不打开原文件或浏览器。
 - 更多 / 右键菜单固定提供「浏览器打开」与「打开原文件」，打开方式、复制、拖出和文件管理器定位均针对原文件。
 - 浏览器入口使用 HTTPS 的系统默认浏览器关联，重新有界读取并生成本地 HTML 快照，复用已有 24h 预览临时文件清理。设计见 [markdown-browser-open.md](markdown-browser-open.md)。
+
+### 2026-10-10（历史纯显示图片）
+
+- 历史附件图标和回复图片通过窗口 / 记录 scope 的有界原文件 URL 显示，进入可见区域才加载。
+  不再全量 Base64 化。超限 / 解码失败沿用占位，原文件打开与 Quick Look 行为保留。
+- 历史拖出图标采用系统 PNG，取不到时采用应用 PNG；原文件路径仍交给 native drag。
+  记录切换与卸载撤销资源、忽略迟到加载结果。实现见 [display-image-urls.md](../plans/display-image-urls.md)。

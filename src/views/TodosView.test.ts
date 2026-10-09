@@ -2,10 +2,15 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n";
 import TodosView from "./TodosView.vue";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 const ipc = vi.hoisted(() => ({
   openNewTask: vi.fn(async () => {}),
   readImageDataUrl: vi.fn(async () => "data:image/png;base64,cGF0aA=="),
+  localImageCreateScope: vi.fn(async () => "todo-scope"),
+  localImagePrepare: vi.fn(async (_scope: string, path: string) => ({ token: path, width: 10, height: 10 })),
+  localImageReleaseAsset: vi.fn(async () => {}),
+  localImageReleaseScope: vi.fn(async () => {}),
   todosAdd: vi.fn(async () => ({ id: "created" })),
   todosClear: vi.fn(async () => {}),
   todosComplete: vi.fn(async () => {}),
@@ -43,6 +48,9 @@ const tauriEvents = vi.hoisted(() => ({
 }));
 
 vi.mock("../lib/ipc", () => ipc);
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (token: string, scheme: string) => `${scheme}://localhost/${token}`,
+}));
 vi.mock("../lib/theme", () => ({
   applyTheme: vi.fn(),
   fileToDataUrl: vi.fn(async () => "data:image/png;base64,cG5n"),
@@ -58,7 +66,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({ onDragDropEvent: vi.fn(async () => vi.fn()) }),
 }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(async () => null) }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(async (): Promise<string[] | null> => null) }));
 vi.mock("@crabnebula/tauri-plugin-drag", () => ({
   startDrag: vi.fn(async () => {}),
 }));
@@ -177,6 +185,29 @@ describe("TodosView new-todo clipboard attachments", () => {
       [],
       ["attachment-1"]
     );
+    wrapper.unmount();
+  });
+
+  it("submits selected image paths and retains a file chip after a display decoding error", async () => {
+    vi.mocked(openDialog).mockResolvedValueOnce(["/tmp/a.png", "/tmp/b.png"]);
+    const wrapper = mount(TodosView, { attachTo: document.body, global: { plugins: [i18n] } });
+    await flushPromises();
+    await wrapper.get(".td-attach-picker").trigger("click");
+    await flushPromises();
+    expect(wrapper.findAll(".thumb img").map(img => img.attributes("src"))).toEqual([
+      "askhuman-image://localhost//tmp/a.png", "askhuman-image://localhost//tmp/b.png",
+    ]);
+    expect(ipc.readImageDataUrl).not.toHaveBeenCalled();
+    await wrapper.findAll(".thumb img")[0].trigger("error");
+    await flushPromises();
+    expect(wrapper.findAll(".thumb")).toHaveLength(1);
+    expect(wrapper.get(".reply-files").text()).toContain("a.png");
+    expect(ipc.localImageReleaseAsset).toHaveBeenCalledWith("todo-scope", "/tmp/a.png");
+    await wrapper.get(".td-input").setValue("Use original paths");
+    await wrapper.get(".td-btn-add").trigger("click");
+    await flushPromises();
+    expect(ipc.todosAdd).toHaveBeenCalledWith("/project", "Use original paths", false, ["/tmp/a.png", "/tmp/b.png"], []);
+    expect(ipc.localImageReleaseScope).toHaveBeenCalledWith("todo-scope");
     wrapper.unmount();
   });
 

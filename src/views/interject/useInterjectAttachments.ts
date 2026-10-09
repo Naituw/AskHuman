@@ -1,7 +1,7 @@
 import { computed, ref } from "vue";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { fileToDataUrl } from "../../lib/theme";
-import { readImageDataUrl } from "../../lib/ipc";
+import { useLocalImageUrls } from "../../lib/localImageUrls";
 import type { ImageAttachment, InterjectAttachment } from "../../lib/types";
 
 const IMAGE_FILE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?|svg)$/i;
@@ -25,24 +25,15 @@ function fileName(path: string): string {
 export function useInterjectAttachments() {
   const paths = ref<PathDraft[]>([]);
   const pasted = ref<PastedDraft[]>([]);
-  const thumbnails = ref<Record<string, string>>({});
+  const owner = ref(0);
+  const previews = useLocalImageUrls(computed(() => paths.value.filter(item => item.isImage && item.available).map(item => item.path)), { owner });
+  const thumbnails = previews.urls;
   const error = ref("");
   const busy = ref(false);
   let pastedSequence = 0;
 
-  async function loadThumbnail(item: PathDraft): Promise<void> {
-    if (!item.isImage || thumbnails.value[item.path] || !item.available) return;
-    try {
-      const data = await readImageDataUrl(item.path);
-      if (paths.value.some((candidate) => candidate.path === item.path)) {
-        thumbnails.value[item.path] = data;
-      }
-    } catch {
-      // A readable non-previewable image remains a normal file chip.
-    }
-  }
-
   function reset(initial: InterjectAttachment[] = []): void {
+    owner.value++;
     paths.value = initial.map((attachment) => ({
       path: attachment.path,
       name: attachment.name || fileName(attachment.path),
@@ -50,9 +41,7 @@ export function useInterjectAttachments() {
       available: attachment.available,
     }));
     pasted.value = [];
-    thumbnails.value = {};
     error.value = "";
-    for (const item of paths.value) void loadThumbnail(item);
   }
 
   function appendPaths(values: string[]): void {
@@ -67,7 +56,6 @@ export function useInterjectAttachments() {
         available: true,
       };
       paths.value.push(item);
-      void loadThumbnail(item);
     }
     error.value = "";
   }
@@ -127,14 +115,13 @@ export function useInterjectAttachments() {
   function removePath(path: string): void {
     const index = paths.value.findIndex((item) => item.path === path);
     if (index >= 0) paths.value.splice(index, 1);
-    delete thumbnails.value[path];
   }
 
   const composerImages = computed(() => [
     ...paths.value.flatMap((item) => {
       const data = thumbnails.value[item.path];
       return data
-        ? [{ key: `file:${item.path}`, data, filename: item.name, sourcePath: item.path }]
+        ? [{ key: `file:${item.path}`, data, lazy: true, filename: item.name, sourcePath: item.path }]
         : [];
     }),
     ...pasted.value.map((item) => ({
@@ -169,6 +156,11 @@ export function useInterjectAttachments() {
     }
   }
 
+  function onComposerImageError(index: number, event?: Event): void {
+    const item = composerImages.value[index];
+    if (item && "sourcePath" in item) previews.fail(item.sourcePath, event);
+  }
+
   function removeComposerFile(index: number): void {
     const item = composerFiles.value[index];
     if (item) removePath(item.path);
@@ -192,5 +184,6 @@ export function useInterjectAttachments() {
     onPaste,
     removeComposerImage,
     removeComposerFile,
+    onComposerImageError,
   };
 }

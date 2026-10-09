@@ -128,6 +128,7 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::local_image::local_image_create_scope,
         crate::local_image::local_image_prepare,
         crate::local_image::local_image_release_scope,
+        crate::local_image::local_image_release_asset,
         crate::commands::file_icon_data_url,
         crate::commands::show_attachment_menu,
         crate::commands::get_settings,

@@ -10,17 +10,19 @@
 不能把所有 Base64 换成图片 URL。纯显示用途可以优化；内部图片运输可减少重复编码，但需要
 保持提交、CLI、Daemon 与 IM 的数据契约；协议指定的编码及离线文档的自包含约束应保留。
 
-本轮只实现已确认的正文本地图片 URL、懒加载和超限原图入口；2026-10-10 安装后用户确认正常图片、
-超限提示和点击打开原图符合预期并保留。其他项为审计建议，未扩大修改范围。
+正文本地图片 URL、懒加载和超限原图入口已实现；2026-10-10 安装后用户确认正常图片、
+超限提示和点击打开原图符合预期并保留。随后用户确认继续优化历史、待办草稿与 Interject 的
+纯显示图片，已复用同一协议并补齐单资源释放，见 [实施记录](../plans/display-image-urls.md)。
+其他项仍为审计建议。
 
 ## 完整用途清单
 
 | 用途 / 实际入口 | 当前路径与开销 | 优化判断 |
 | --- | --- | --- |
 | Markdown 正文本地图片；`MarkdownContent.vue` | 最初调用 `read_image_data_url`，全文件 → Base64 → IPC JSON → img | 本轮改为注册 token URL、原文件二进制响应、按可见区域加载；可移除 Base64 |
-| 历史附件图片；`HistoryDetail.vue` → `commands.rs::read_image_data_url` | 全量文件转字符串，仅用于显示；未有限额 | 高收益：可复用本轮协议；应该同时补加载预算与生命周期 |
-| 待办新附件预览；`TodosView.vue::loadNewFileThumbnail` | 同一全量接口，显示后实际提交路径 | 高收益：可复用协议；提交路径不需要改 |
-| Interject 已选文件预览；`useInterjectAttachments.ts` | 同一全量接口用于 thumbnails，提交仍是 `filePaths` | 高收益：可复用协议；不影响已选文件提交 |
+| 历史附件 / 回复图片；`HistoryDetail.vue` → `localImageUrls.ts` | 已改有界 token URL；可见区域加载，记录切换 / 卸载撤销资源 | 2026-10-10 已实现；原图打开和 Quick Look 保留，原生拖拽用系统 / 应用小 PNG 图标 |
+| 待办新附件预览；`TodosView.vue` → `localImageUrls.ts` | 已改有界 token URL，移除 / 清空 / 项目切换释放；提交路径保持 | 2026-10-10 已实现；已保存的 128px 缩略图与粘贴运输不变 |
+| Interject 已选文件预览；`useInterjectAttachments.ts` → `localImageUrls.ts` | 已改有界 token URL，移除 / reset / 卸载释放；提交仍是 `filePaths` | 2026-10-10 已实现；不可读 / 超限 / 解码失败保留文件胶囊 |
 | Popup 拖入回复图片；`usePopupCore.ts::addDroppedPaths` | 同一接口返回的 Base64 同时作为预览和 `ImageAttachment.data` 提交 | 不能只替换为 URL；要把显示与传输分开，可把本地路径保留到后端提交阶段 |
 | Popup 选图 / 粘贴、Interject 粘贴、Todo 粘贴；`theme.ts::fileToDataUrl` | FileReader 读 Blob 为 data URL，既显示又经 JSON 提交；由 `image_writer.rs` 解码落盘 | 可先用 `URL.createObjectURL` 显示，移除 / 换题时 revoke；运输可采用 Tauri 二进制上传后返回文件引用，需要另行设计共同提交契约 |
 | 同窗图片预览与列表缩略图；`attachment_preview.rs::image_content` / `png_content`、`useAttachmentContent.ts` | 普通图原文件编码；特殊格式转 PNG 后编码；20 MiB、40M 像素、动画 80M 像素等限制已存在，前端缓存计入字符串成本 | 第二优先级：普通图可用请求范围 token URL；转换后的 PNG 可用有界二进制资源或磁盘缓存。需保留 request ID、取消代次、缓存淘汰和原图动画语义 |
@@ -50,8 +52,8 @@ Base64 长度约为原文件的 4/3。20 MiB 文件会得到约 26.7 MiB 的字�
 的无内存路径。准备阶段只检查头、尺寸、SVG 结构和动画预算，不生成全量 RGBA；响应阶段重新
 读取有界原文件，验证文件指纹与元数据。没有二进制内容的长期 Rust 缓存；后台检查 / 读取串行。
 WebView 解码显示仍消耗像素内存，因此保留单图 20 MiB、40M 画布像素、最多 500 帧，以及每份
-Markdown 注册图片总显示预算 80M 像素。SVG 额外保留 2 MiB、5,000 节点和 65 层限制。
-超限保留“打开原图”，不向 WebView 送大图。
+Markdown 或显示视图 scope 的注册图片总显示预算 80M 像素。SVG 额外保留 2 MiB、5,000 节点
+和 65 层限制。正文超限保留“打开原图”，历史 / 草稿沿用已有占位或文件胶囊，不向 WebView 送大图。
 
 ## macOS / Windows / Linux 兼容性核查
 
@@ -88,6 +90,9 @@ WebContext 重复注册，并从实际请求的 WebView ID 构造 `UriSchemeCont
 `src-tauri/examples/local_image_url_probe.rs` 直接编译生产 `image_resource.rs` / `local_image.rs`，
 使用真实 Tauri 页面和真实 `convertFileSrc`，不接触 daemon、用户配置或其他 agent 请求。自建 PNG、
 GIF、SVG 和超限 fixture，验证原路径 / file URL、授权与撤销、像素和字节拒绝，结果输出 JSON。
+2026-10-10 追加单资源释放：共享引用首次释放仍可加载，最后引用释放后生产注册表返回 404。
+WKWebView 在旧 img 仍持有解码资源时可能复用相同 URL；探针单独记录缓存观察，不把撤销等同于
+立即清除浏览器像素缓存。前端移除旧 DOM / URL，新拥有期使用新 token。
 
 先安装仓库构建依赖并运行 `pnpm build`；然后在有桌面的系统执行：
 

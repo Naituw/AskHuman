@@ -24,6 +24,8 @@ todo #4：a7d02da0-72d5-4191-954d-d0bcb77d322e）。上述 Windows popup-only VM
 其他平台补验应使用最新动效参数，覆盖正文图片的本地 / 项目相对路径、专用协议 URL、
 超限 / 解码失败提示和点击打开原图。Windows / Linux 已按用户要求核对官方资料及依赖源码；
 本轮没有对应实机证据，详见 `docs/investigations/base64-usage-audit.md`。
+后续平台补验还应覆盖历史、待办草稿与 Interject 的纯显示图片 URL、移除 / 切换 / 卸载清理、
+超限文件胶囊与提交原路径；本机自动验证记录见 `docs/plans/display-image-urls.md`。
 
 ## 待外部验收：Windows / Linux Popup 附件预览面板
 
