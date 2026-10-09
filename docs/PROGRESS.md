@@ -18,6 +18,13 @@ macOS 合并/可选独立模式、原生画布过渡、普通外缘缩放修复�
 todo #4：a7d02da0-72d5-4191-954d-d0bcb77d322e）。上述 Windows popup-only VM 证据
 不能代替这些外部 gate；补齐后删除本节。
 
+2026-10-09 macOS 又完成气泡两次弹跳 / 750ms 勾线飞行和正文本地 Markdown 图片的安装与实窗
+验收，见 `docs/plans/popup-arrival-notice.md` 和 `docs/plans/popup-markdown-images.md`。
+2026-10-10 正文本地图片又改为有界原文件 URL / 懒加载 / 超限回退，并经安装和用户实窗验收。
+其他平台补验应使用最新动效参数，覆盖正文图片的本地 / 项目相对路径、专用协议 URL、
+超限 / 解码失败提示和点击打开原图。Windows / Linux 已按用户要求核对官方资料及依赖源码；
+本轮没有对应实机证据，详见 `docs/investigations/base64-usage-audit.md`。
+
 ## 待外部验收：Windows / Linux Popup 附件预览面板
 
 实现、macOS 安装及用户体验验收已完成，自动回归和真实 WKWebView / AppKit 验证记录见

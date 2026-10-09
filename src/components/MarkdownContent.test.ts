@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { i18n } from "../i18n";
 import { markdownReady } from "../lib/markdown";
 import { applyTheme } from "../lib/theme";
-import { openPath } from "../lib/ipc";
+import { openPath, localImageCreateScope, localImagePrepare, localImageReleaseScope } from "../lib/ipc";
 import MarkdownContent from "./MarkdownContent.vue";
 
 const renderMermaid = vi.hoisted(() => vi.fn());
@@ -15,6 +15,13 @@ vi.mock("../lib/mermaid", async (importOriginal) => {
 
 vi.mock("../lib/ipc", () => ({
   openPath: vi.fn(async () => {}),
+  localImageCreateScope: vi.fn(async () => "scope"),
+  localImagePrepare: vi.fn(async () => ({ token: "image", width: 320, height: 180 })),
+  localImageReleaseScope: vi.fn(async () => {}),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (token: string, scheme: string) => `${scheme}://localhost/${token}`,
 }));
 
 const renderedDocument = {
@@ -46,6 +53,10 @@ describe("MarkdownContent", () => {
 
   beforeEach(() => {
     vi.mocked(openPath).mockClear();
+    vi.mocked(localImageCreateScope).mockReset().mockResolvedValue("scope");
+    vi.mocked(localImagePrepare).mockReset().mockResolvedValue({ token: "image", width: 320, height: 180 });
+    vi.mocked(localImageReleaseScope).mockClear();
+    vi.unstubAllGlobals();
     renderMermaid.mockReset();
     renderMermaid.mockResolvedValue(renderedDocument);
     i18n.global.locale.value = "en";
@@ -95,6 +106,109 @@ describe("MarkdownContent", () => {
     await flushPromises();
     expect(click.defaultPrevented).toBe(true);
     expect(wrapper.get("a").text()).toBe("file");
+  });
+
+  it.each(["tauri://localhost/index.html?view=popup-inbox", "http://tauri.localhost/index.html?view=popup-inbox"])("registers authored local images instead of fetching them from %s", async baseUrl => {
+    const base = document.createElement("base"); base.href = baseUrl; document.head.appendChild(base);
+    try {
+      const wrapper = mount(MarkdownContent, {
+        props: { source: "![preview](/Users/test/My%20Preview.png) ![relative](images/chart.png) ![file](file:///Users/test/图.png)", baseDirectory: "/project" },
+        global: { plugins: [i18n] },
+      });
+      await flushPromises();
+      expect(localImagePrepare).toHaveBeenNthCalledWith(1, "scope", "/Users/test/My Preview.png");
+      expect(localImagePrepare).toHaveBeenNthCalledWith(2, "scope", "/project/images/chart.png");
+      expect(localImagePrepare).toHaveBeenNthCalledWith(3, "scope", "/Users/test/图.png");
+      expect(wrapper.findAll("img").map(image => image.attributes("src"))).toEqual(Array(3).fill("askhuman-image://localhost/image"));
+    } finally { base.remove(); }
+  });
+
+  it("shares a read for repeated images and leaves remote images unchanged", async () => {
+    const wrapper = mount(MarkdownContent, {
+      props: { source: "![one](/tmp/image.png) ![two](/tmp/image.png) ![remote](https://example.com/image.png)" },
+      global: { plugins: [i18n] },
+    });
+    await flushPromises();
+    expect(localImagePrepare).toHaveBeenCalledTimes(1);
+    expect(wrapper.findAll("img")[2].attributes("src")).toBe("https://example.com/image.png");
+  });
+
+  it("shows the image label when the file is missing or cannot be decoded", async () => {
+    vi.mocked(localImagePrepare).mockRejectedValueOnce(new Error("missing file"));
+    const wrapper = mount(MarkdownContent, {
+      props: { source: "![missing](/tmp/missing.png) ![invalid](/tmp/invalid.png) ![no project](image.png)" },
+      global: { plugins: [i18n] },
+    });
+    await flushPromises();
+    await wrapper.get("img").trigger("error");
+    expect(wrapper.findAll("img")).toHaveLength(0);
+    expect(wrapper.text()).toContain("Image could not be displayed · missing");
+    expect(wrapper.text()).toContain("Image could not be displayed · invalid");
+    expect(wrapper.text()).toContain("Image could not be displayed · no project");
+  });
+
+  it("discards stale image reads after a project or source change", async () => {
+    const oldImage = deferred<{ token: string; width: number; height: number }>();
+    vi.mocked(localImagePrepare).mockImplementationOnce(() => oldImage.promise);
+    const wrapper = mount(MarkdownContent, {
+      props: { source: "![preview](image.png)", baseDirectory: "/old" },
+      global: { plugins: [i18n] },
+    });
+    await flushPromises();
+    const removed = wrapper.get("img").element;
+    expect(removed.hasAttribute("src")).toBe(false);
+    await wrapper.setProps({ baseDirectory: "/new" }); await flushPromises();
+    oldImage.resolve({ token: "old", width: 320, height: 180 }); await flushPromises();
+    expect(removed.hasAttribute("src")).toBe(false);
+    expect(localImagePrepare).toHaveBeenLastCalledWith("scope", "/new/image.png");
+    expect(wrapper.get("img").attributes("src")).toBe("askhuman-image://localhost/image");
+  });
+
+  it("defers disk work until a local image approaches the viewport", async () => {
+    let notify!: IntersectionObserverCallback;
+    const observed = new Set<Element>();
+    const disconnect = vi.fn(() => observed.clear());
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(callback: IntersectionObserverCallback) { notify = callback; }
+      observe(target: Element) { observed.add(target); }
+      unobserve(target: Element) { observed.delete(target); }
+      disconnect = disconnect;
+    });
+    const wrapper = mount(MarkdownContent, { props: { source: "![preview](/tmp/image.png)", enableMermaid: false }, global: { plugins: [i18n] } });
+    await flushPromises();
+    const image = wrapper.get("img").element;
+    expect(observed.has(image)).toBe(true);
+    expect(localImageCreateScope).not.toHaveBeenCalled();
+    notify([{ target: image, isIntersecting: true, intersectionRatio: 1, boundingClientRect: image.getBoundingClientRect(), intersectionRect: image.getBoundingClientRect(), rootBounds: null, time: 0 }], {} as IntersectionObserver);
+    await flushPromises();
+    expect(localImagePrepare).toHaveBeenCalledWith("scope", "/tmp/image.png");
+    expect(image.getAttribute("src")).toBe("askhuman-image://localhost/image");
+    expect(image.getAttribute("loading")).toBe("lazy");
+    wrapper.unmount(); await flushPromises();
+    expect(disconnect).toHaveBeenCalled();
+    expect(localImageReleaseScope).toHaveBeenCalledWith("scope");
+    expect(image.hasAttribute("src")).toBe(false);
+  });
+
+  it("releases a scope that arrives after the document unmounts", async () => {
+    const pending = deferred<string>(); vi.mocked(localImageCreateScope).mockReturnValueOnce(pending.promise);
+    const wrapper = mount(MarkdownContent, { props: { source: "![preview](/tmp/image.png)" }, global: { plugins: [i18n] } });
+    await flushPromises(); wrapper.unmount(); pending.resolve("late"); await flushPromises();
+    expect(localImageReleaseScope).toHaveBeenCalledWith("late");
+    expect(localImagePrepare).not.toHaveBeenCalled();
+  });
+
+  it("opens original images by click or keyboard, including over-limit fallbacks", async () => {
+    vi.mocked(localImagePrepare).mockRejectedValueOnce("limit");
+    const wrapper = mount(MarkdownContent, { props: { source: "![large](/tmp/large.png) ![small](/tmp/small.png)" }, global: { plugins: [i18n] } });
+    await flushPromises();
+    expect(wrapper.get(".markdown-image-error").text()).toContain("Image is too large");
+    await wrapper.get(".markdown-image-error").trigger("click");
+    expect(openPath).toHaveBeenLastCalledWith("/tmp/large.png");
+    await wrapper.get("img").trigger("keydown", { key: "Enter" });
+    expect(openPath).toHaveBeenLastCalledWith("/tmp/small.png");
+    await wrapper.get("img").trigger("click");
+    expect(openPath).toHaveBeenCalledTimes(3);
   });
 
   it("progressively replaces a Mermaid fence and preserves its source", async () => {

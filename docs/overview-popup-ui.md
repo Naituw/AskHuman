@@ -17,6 +17,7 @@ Popup 提问附件采用同窗右侧预览，具体决策见 `docs/specs/popup-a
 - 预览能力与 CLI / IM 的 `isImage` 分类分开：新增系统图片可在 Popup 列表显示缩略图，但发送分类沿用原有七种扩展名。ICO / TGA / PNM 只启用现有 image 的轻量 feature，无新增 codec crate；macOS 系统图片能力不承诺在 Windows / Linux 可用。
 - 窗口拖拽使用主区和预览标题栏、图片周围 / 控件栏及状态背景的显式 `data-tauri-drag-region`，不覆盖按钮、正文、图片本身、滚动条或原生预览；文件拖出共用 `startDrag` 并使用原路径与有效 PNG 图标。原生拖入的预览区 / 分隔线落点不进入回复附件。附件列表空格和方向键、标题栏左右键与正文滚动分别路由；输入法、查找、语音及既有发送 / 取消优先级保留。
 - Popup 更多与右键共用 `popup_preview_menu`。macOS 保留完整原生菜单并将快速查看路由到当前 Popup；Windows / Linux 提供公共文件动作，定位失败显示错误。历史、待办及其他入口继续用已有 Quick Look；它们与 Popup 共用 diff 解析和 Markdown 静态渲染，范围见 `docs/specs/diff-attachment-preview.md`。
+- 提问正文与各题、历史正文共用 `MarkdownContent.vue`：本地图片按可见区域注册 `local_image.rs` 的窗口 / 文档 scope，再通过 `convertFileSrc(token, "askhuman-image")` 加载原文件二进制。项目相对路径使用请求项目目录，切消息或卸载时撤销 scope。`image_resource.rs` 与附件共用有界读取、尺寸和动画检查；大图、缺失或解码失败保留说明与原图入口，点击图片由系统默认应用打开。实现、预算和跨平台证据见 `docs/plans/popup-markdown-images.md` 与 `docs/investigations/base64-usage-audit.md`。
 
 ## 多请求统一作答窗口
 
@@ -74,7 +75,7 @@ Windows 前置先调用 Tauri `show()` 同步 Tao 的可见状态，再执行原
 `ShowWindow` 会使后续 `hide()` 被隐藏状态缓存跳过，留下空白窗口。空队列隐藏失败记录
 `popup_host / idle_hide_failed`。原生 HWND 回归入口为 `scripts/popup-visibility-regression.ps1`。
 第一条不播中央气泡，后续请求在原生布局提交并前置后，由
-`InboxArrivalNotice.vue` / `inboxArrival.ts` 播放中央提问气泡飞入侧栏蓝点的提醒。
+`InboxArrivalNotice.vue` / `inboxArrival.ts` 播放中央提问气泡弹跳两次、沿勾线飞入侧栏蓝点的提醒。
 中心由 Sidebar 和正文的实际 DOM 边界计算，排除右侧原生附件预览及离屏画布 reserve。
 每请求独立并发播放，落位后高亮一次并启动已有未读扩散；查看或终态会取消对应动效。
 只在启动时滚动 Sidebar 使目标可见，飞行期间不再次抢滚动；动效层透过鼠标，位于关闭

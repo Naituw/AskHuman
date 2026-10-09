@@ -18,6 +18,8 @@ import { clearAtomicFindText, setAtomicFindText } from "../lib/findInDom";
 import { handleMarkdownLinkClick } from "../lib/markdownLinks";
 import { handleCodeCopyClick, renderMarkdown } from "../lib/markdown";
 import { loadMermaidAdapter } from "../lib/mermaidLoader";
+import { localImageCreateScope, localImagePrepare, localImageReleaseScope, openPath } from "../lib/ipc";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { effectiveColorScheme } from "../lib/theme";
 
 const props = withDefaults(
@@ -39,24 +41,123 @@ const mounted = ref(false);
 let generation = 0;
 let observer: IntersectionObserver | null = null;
 let diagramCleanups: Array<() => void> = [];
+let lastAnnouncedHeight = 0;
+let imageCleanup: (() => void) | null = null;
 
 const labels = computed(() => ({
   copyLabel: t("common.copyCode"),
   copiedLabel: t("common.copied"),
 }));
-const html = computed(() => renderMarkdown(props.source, labels.value));
+const html = computed(() => renderMarkdown(props.source, {
+  ...labels.value,
+  localImages: true,
+  baseDirectory: props.baseDirectory,
+}));
 
 function rootHeight(): number {
   return root.value?.getBoundingClientRect().height ?? 0;
 }
 
 function announceUpdate(heightDelta = 0): void {
+  lastAnnouncedHeight = rootHeight();
   root.value?.dispatchEvent(
     new CustomEvent("markdown-content-updated", {
       bubbles: true,
       detail: { heightDelta },
     }),
   );
+}
+
+function hydrateImages(element: HTMLElement, token: number): void {
+  const reads = new Map<string, ReturnType<typeof localImagePrepare>>();
+  let scope: Promise<string> | null = null;
+  let released = false;
+  let imageObserver: IntersectionObserver | null = null;
+  const current = () => !released && mounted.value && token === generation;
+  const release = (id: string) => { void localImageReleaseScope(id).catch(() => {}); };
+  imageCleanup = () => {
+    released = true;
+    imageObserver?.disconnect();
+    if (scope) void scope.then(release, () => {});
+    for (const image of Array.from(element.querySelectorAll<HTMLImageElement>("img[data-local-image]"))) image.removeAttribute("src");
+  };
+  const read = (path: string) => {
+    let result = reads.get(path);
+    if (!result) {
+      scope ??= localImageCreateScope();
+      result = scope.then(id => {
+        if (!current()) throw new Error("stale");
+        return localImagePrepare(id, path);
+      });
+      reads.set(path, result);
+    }
+    return result;
+  };
+  const start = (image: HTMLImageElement) => {
+    if (!current() || !element.contains(image)) return;
+    const path = image.getAttribute("data-local-image") ?? "";
+    const valid = () => current() && root.value?.contains(image);
+    const changed = () => { if (valid()) announceUpdate(rootHeight() - lastAnnouncedHeight); };
+    const failed = (reason: unknown) => {
+      if (!valid()) return;
+      const fallback = document.createElement(path ? "button" : "span");
+      fallback.className = "markdown-image-error";
+      const label = t(reason === "limit" ? "common.imageTooLarge" : "common.imageUnavailable");
+      fallback.textContent = image.alt ? `${label} · ${image.alt}` : label;
+      if (path) {
+        fallback.setAttribute("type", "button");
+        fallback.setAttribute("data-local-image", path);
+        fallback.append(` · ${t("common.imageOpenOriginal")}`);
+      }
+      image.replaceWith(fallback);
+      announceUpdate(rootHeight() - lastAnnouncedHeight);
+    };
+    image.addEventListener("load", changed, { once: true });
+    image.addEventListener("error", () => failed("imageFailed"), { once: true });
+    if (!path) { failed("readFailed"); return; }
+    void read(path).then(result => {
+      if (!valid()) return;
+      image.width = result.width;
+      image.height = result.height;
+      image.src = convertFileSrc(result.token, "askhuman-image");
+    }, failed);
+  };
+  if (typeof IntersectionObserver !== "undefined") {
+    imageObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting || !current()) continue;
+        imageObserver?.unobserve(entry.target);
+        start(entry.target as HTMLImageElement);
+      }
+    }, { root: null, rootMargin: "240px 0px" });
+  }
+  for (const image of Array.from(element.querySelectorAll<HTMLImageElement>("img[data-local-image]"))) {
+    const path = image.getAttribute("data-local-image");
+    image.setAttribute("loading", "lazy");
+    image.setAttribute("decoding", "async");
+    if (path) {
+      image.classList.add("markdown-local-image");
+      image.setAttribute("role", "button");
+      image.tabIndex = 0;
+      image.title = t("common.imageOpenOriginal");
+      image.setAttribute("aria-label", image.alt ? `${image.alt} · ${image.title}` : image.title);
+    }
+    if (!path || !imageObserver) start(image);
+    else imageObserver.observe(image);
+  }
+}
+
+function openLocalImage(event: MouseEvent | KeyboardEvent): boolean {
+  const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-local-image]") : null;
+  const path = target?.getAttribute("data-local-image");
+  if (!path) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  void openPath(path).catch(() => {});
+  return true;
+}
+function onRootKeydown(event: KeyboardEvent): void {
+  if (!event.ctrlKey && !event.metaKey && !event.altKey && (event.key === "Enter" || event.key === " ")) openLocalImage(event);
 }
 
 function statusText(code: "rendering" | "failed" | "tooLarge" | "tooMany"): string {
@@ -286,6 +387,8 @@ function scheduleBlock(wrapper: HTMLElement, token: number): void {
 
 async function hydrateMermaid(): Promise<void> {
   const token = ++generation;
+  imageCleanup?.();
+  imageCleanup = null;
   observer?.disconnect();
   observer = null;
   clearDiagramEffects();
@@ -296,6 +399,7 @@ async function hydrateMermaid(): Promise<void> {
   // Theme and locale changes must start from the original Markdown DOM.
   const beforeHeight = rootHeight();
   element.innerHTML = html.value;
+  hydrateImages(element, token);
   if (!props.enableMermaid) {
     announceUpdate(rootHeight() - beforeHeight);
     return;
@@ -315,6 +419,7 @@ async function hydrateMermaid(): Promise<void> {
 }
 
 function onRootClick(event: MouseEvent): void {
+  if (openLocalImage(event)) return;
   if (handleCodeCopyClick(event)) return;
   handleMarkdownLinkClick(event, props.baseDirectory);
 }
@@ -334,6 +439,8 @@ watch(
 
 onBeforeUnmount(() => {
   mounted.value = false;
+  imageCleanup?.();
+  imageCleanup = null;
   generation += 1;
   observer?.disconnect();
   observer = null;
@@ -347,5 +454,5 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="root" class="markdown-body" v-html="html" @click="onRootClick"></div>
+  <div ref="root" class="markdown-body" v-html="html" @click="onRootClick" @keydown="onRootKeydown"></div>
 </template>

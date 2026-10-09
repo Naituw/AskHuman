@@ -31,6 +31,9 @@ export default {
     copyCode: "Copy code",
     copied: "Copied",
     attachmentBadge: "【{n} attachments】",
+    imageUnavailable: "Image could not be displayed",
+    imageTooLarge: "Image is too large to display here",
+    imageOpenOriginal: "Open original image",
     mermaid: {
       diagram: "Mermaid diagram",
       rendering: "Rendering diagram…",

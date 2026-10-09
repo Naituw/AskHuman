@@ -36,8 +36,10 @@ mod gui_host;
 mod history;
 mod hooks;
 mod i18n;
+mod image_resource;
 mod integrations;
 mod ipc;
+mod local_image;
 mod local_time;
 #[cfg(target_os = "macos")]
 mod macos_attachment_preview;

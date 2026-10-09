@@ -76,6 +76,7 @@ AskHuman/
       macos_quicklook.rs     macOS Quick Look 与文件图标
       macos_menu.rs          macOS 附件原生右键菜单
       attachment_preview.rs Popup 请求内附件有界读取、类型与资源判定
+      image_resource.rs · local_image.rs 共用图片预算与窗口/文档范围的原图二进制 URL
       attachment_diff.rs · attachment_markdown.rs  Popup / Quick Look 共享解析与静态渲染
 
       cli/

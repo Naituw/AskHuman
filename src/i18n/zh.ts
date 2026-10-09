@@ -31,6 +31,9 @@ export default {
     copyCode: "复制代码",
     copied: "已复制",
     attachmentBadge: "【{n} 个附件】",
+    imageUnavailable: "图片无法显示",
+    imageTooLarge: "图片过大，无法在这里显示",
+    imageOpenOriginal: "打开原图",
     mermaid: {
       diagram: "Mermaid 图表",
       rendering: "正在渲染图表…",

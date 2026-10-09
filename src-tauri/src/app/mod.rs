@@ -826,6 +826,10 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
 
     crate::perf::mark_env("gui.build_start");
     let app = tauri::Builder::default()
+        .register_asynchronous_uri_scheme_protocol(
+            crate::local_image::SCHEME,
+            crate::local_image::serve,
+        )
         .plugin(tauri_plugin_drag::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_liquid_glass::init())
@@ -835,8 +839,15 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
         .manage(crate::attachment_preview::ReadGeneration::default())
         .manage(crate::attachment_preview::NativeGeneration::default())
         .manage(crate::attachment_preview::NativePermits::default())
+        .manage(crate::local_image::Registry::default())
         .invoke_handler(invoke::handle)
         .on_window_event(|window, event| {
+            if matches!(event, WindowEvent::Destroyed) {
+                window
+                    .app_handle()
+                    .state::<crate::local_image::Registry>()
+                    .release_window(window.label());
+            }
             match window.label() {
                 // 弹窗：关闭即取消 / 记忆尺寸。
                 "popup" => match event {

@@ -1,5 +1,6 @@
 import type MarkdownIt from "markdown-it";
 import { shallowRef } from "vue";
+import { resolveMarkdownLink } from "./markdownLinks";
 
 // R4 bundle 瘦身：markdown-it（连带 entities/linkify-it 等依赖约 170KB）不进主 chunk，
 // 模块加载时立刻发起动态 import（与主 chunk 剩余执行并行）。渲染器就绪前 renderMarkdown
@@ -15,6 +16,28 @@ export const markdownReady: Promise<void> = import("markdown-it").then(
       linkify: true,
       breaks: true,
     });
+    const validateLink = md.validateLink.bind(md);
+    md.validateLink = value => /^file:/i.test(value)
+      ? resolveMarkdownLink(value) !== null
+      : validateLink(value);
+    const defaultImage = md.renderer.rules.image!.bind(md.renderer);
+    md.renderer.rules.image = (tokens, idx, options, env, self) => {
+      const settings = (env ?? {}) as MarkdownOptions;
+      const token = tokens[idx], source = token.attrGet("src") ?? "";
+      if (settings.localImages) {
+        token.attrSet("loading", "lazy");
+        token.attrSet("decoding", "async");
+      }
+      const local = !/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(source)
+        || /^file:/i.test(source) || /^[a-z]:(?:[\\/]|%5c|%2f)/i.test(source);
+      if (settings.localImages && local) {
+        const resolved = resolveMarkdownLink(source, settings.baseDirectory);
+        token.attrSet("data-local-image", resolved?.kind === "open" ? resolved.target : "");
+        // Prevent the WebView from requesting a local path from its application resource origin.
+        token.attrs = token.attrs?.filter(([name]) => name !== "src") ?? null;
+      }
+      return defaultImage(tokens, idx, options, env, self);
+    };
 
     const defaultFence = md.renderer.rules.fence?.bind(md.renderer);
     md.renderer.rules.fence = (tokens, idx, options, env, self) => {
@@ -41,6 +64,8 @@ export const markdownReady: Promise<void> = import("markdown-it").then(
 export interface MarkdownOptions {
   copyLabel?: string;
   copiedLabel?: string;
+  localImages?: boolean;
+  baseDirectory?: string;
 }
 
 // Copy / done icons reused for the code-block copy button (stroke-based, theme-aware).

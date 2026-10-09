@@ -105,6 +105,11 @@ export const closePreview = () => invoke<void>("close_preview");
 export const readImageDataUrl = (path: string) =>
   invoke<string>("read_image_data_url", { path });
 
+export const localImageCreateScope = () => invoke<string>("local_image_create_scope");
+export const localImagePrepare = (scope: string, path: string) =>
+  invoke<{ token: string; width: number; height: number }>("local_image_prepare", { scope, path });
+export const localImageReleaseScope = (scope: string) => invoke<void>("local_image_release_scope", { scope });
+
 export const fileIconDataUrl = (path: string) =>
   invoke<string>("file_icon_data_url", { path });
 

@@ -18,6 +18,16 @@ describe("renderMarkdown", () => {
     );
   });
 
+  it("keeps local image paths out of the app resource origin when native loading is enabled", () => {
+    const html = renderMarkdown("![preview](/tmp/My%20Preview.png)", { localImages: true });
+    expect(html).toContain('data-local-image="/tmp/My Preview.png"');
+    expect(html).not.toContain("src=");
+    expect(html).toContain('alt="preview"');
+    expect(renderMarkdown("![remote](https://example.com/image.png)", { localImages: true })).toContain('src="https://example.com/image.png"');
+    expect(renderMarkdown("![unsafe](javascript:alert(1))", { localImages: true })).not.toContain("<img");
+    expect(renderMarkdown("![unsafe](data:text/html,test)", { localImages: true })).not.toContain("<img");
+  });
+
   it("wraps fenced code blocks with a localized copy button", () => {
     const html = renderMarkdown("```\nlet x = 1;\n```", {
       copyLabel: "复制",
