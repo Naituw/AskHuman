@@ -21,6 +21,8 @@ function paint(id: string, state: ArrivalFrame) {
   if (!element) return;
   element.style.transform = `translate3d(${state.x - 44}px, ${state.y - 44}px, 0) scale(${state.scale}) rotate(${state.angle}deg)`;
   element.style.opacity = String(state.opacity);
+  element.style.setProperty("--arrival-stretch-x", String(state.stretchX));
+  element.style.setProperty("--arrival-stretch-y", String(state.stretchY));
   element.style.setProperty("--arrival-morph", String(state.morph));
   element.style.setProperty("--arrival-hole", String(1 - state.morph));
   element.style.setProperty("--arrival-plate", String(state.plateOpacity));
@@ -89,7 +91,7 @@ onBeforeUnmount(() => {
 .inbox-arrival-layer * { pointer-events: none; }
 .inbox-arrival-floater { position: absolute; left: 0; top: 0; width: 88px; height: 88px; opacity: 0; transform-origin: center; will-change: transform, opacity; }
 .inbox-arrival-halo { position: absolute; inset: -36px; border-radius: 50%; background: radial-gradient(circle, rgba(38,133,232,.18), transparent 68%); opacity: var(--arrival-halo, 1); }
-.inbox-arrival-face { position: absolute; inset: 0; display: grid; place-items: center; }
+.inbox-arrival-face { position: absolute; inset: 0; display: grid; place-items: center; transform-origin: 50% 100%; transform: scale(var(--arrival-stretch-x, 1), var(--arrival-stretch-y, 1)); }
 .inbox-arrival-plate { position: absolute; inset: 0; border-radius: calc(24px + 20px * var(--arrival-morph, 0)); background: linear-gradient(145deg, #fff 10%, #f8fbff 47%, #eaf1fb); box-shadow: 0 1px 2px #17345214, 0 5px 10px #1b3d6324, 0 15px 28px #233e622b, 0 0 0 .5px #54729633, 0 1.2px 1px #fff inset, 0 -1px 1px #b5c7e044 inset; opacity: var(--arrival-plate, 1); transform: scale(calc(1 - .2 * var(--arrival-morph, 0))); }
 .inbox-arrival-graphic { position: relative; width: 52px; height: 52px; clip-path: circle(var(--arrival-clip, 68%) at 50% 50%); transform: scale(var(--arrival-graphic-scale, 1)); }
 .inbox-arrival-hole { opacity: var(--arrival-hole, 1); }

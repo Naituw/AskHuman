@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../../i18n/en";
 import type { PopupInboxRequest, PopupInboxSnapshot } from "../../lib/types";
 import type { PopupScope } from "./usePopupCore";
+import { arrivalTiming } from "./inboxArrival";
+
+const landedAt = arrivalTiming.appear + arrivalTiming.first + arrivalTiming.second + arrivalTiming.fly;
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), focus: vi.fn(), handlers: new Map<string, (e: { payload: unknown }) => void>() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
@@ -85,10 +88,10 @@ describe("inbox arrival lifecycle", () => {
     expect(document.activeElement).toBe(editor); expect(editor.value).toBe("draftabcdef");
     expect([editor.selectionStart, editor.selectionEnd]).toEqual([3, 8]); expect(mocks.focus).not.toHaveBeenCalled();
     expect(view.get('[data-inbox-row="b"] .inbox-dot').classes()).not.toContain("unread");
-    await step(1280); expect(view.findAll(".inbox-arrival-floater")).toHaveLength(1);
+    await step(landedAt); expect(view.findAll(".inbox-arrival-floater")).toHaveLength(1);
     expect(view.get('[data-inbox-row="b"] .inbox-dot').classes()).toContain("unread");
     expect(view.get('[data-inbox-row="b"]').classes()).toContain("flash");
-    await step(1680); expect(view.findAll(".inbox-arrival-floater")).toHaveLength(0);
+    await step(landedAt + 400); expect(view.findAll(".inbox-arrival-floater")).toHaveLength(0);
   });
   it("uses the answer and sidebar bounds, excluding a native preview and offscreen canvas reserve", async () => {
     mainWidth = 400; const view = await open(); await emit("popup-inbox-show", request("b", 2)); await step(220);

@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AskHuman · 气泡弹跳调试</title>
+<style>
+  :root { color-scheme: light dark; --page: light-dark(#f1f3f6,#181b20); --surface: light-dark(#fff,#272b31); --sidebar: light-dark(#f6f7f9,#22262c); --text: light-dark(#24272d,#edf0f4); --muted: light-dark(#747b86,#a4acb8); --line: light-dark(#e4e7eb,#3b414b); --blue: #2685e8; --selected: light-dark(#e4effd,#223c58); --field: light-dark(#f9fafb,#20242a); }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; padding: 32px; background: var(--page); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  button, select, input { font: inherit; }
+  button { cursor: pointer; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+  .page { max-width: 1170px; margin: auto; }
+  .heading { display: flex; gap: 20px; align-items: baseline; margin-bottom: 24px; }
+  h1 { margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -.4px; }
+  .heading span { color: var(--muted); }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 24px; align-items: start; }
+  .preview { min-width: 0; }
+  .comparison { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .versions { display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: var(--sidebar); }
+  .versions button { border: 0; border-radius: 6px; padding: 6px 12px; background: transparent; color: var(--muted); }
+  .versions button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 4px #00000015; }
+  .version-note { color: var(--muted); font-size: 12px; }
+  .window { height: 530px; display: grid; grid-template-columns: 184px minmax(0,1fr); overflow: hidden; position: relative; isolation: isolate; background: var(--surface); border-radius: 13px; border: 1px solid var(--line); box-shadow: 0 20px 55px #00000012, 0 2px 8px #0000000c; }
+  .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); padding: 0 10px; }
+  .traffic { height: 47px; display: flex; align-items: center; gap: 8px; padding-left: 5px; }
+  .traffic i { width: 11px; height: 11px; border-radius: 50%; background: #ff5f57; }
+  .traffic i:nth-child(2) { background: #febc2e; } .traffic i:nth-child(3) { background: #28c840; }
+  .sidebar-title { padding: 8px 8px 14px; font-size: 12px; color: var(--muted); }
+  .project { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 8px; font-size: 12px; font-weight: 500; }
+  .project small { font-weight: 400; color: var(--muted); }
+  .row { padding: 11px 8px; display: flex; gap: 8px; border-radius: 8px; position: relative; overflow: hidden; margin-bottom: 4px; }
+  .row.selected { background: var(--selected); }
+  .dot { flex: 0 0 10px; height: 10px; border-radius: 50%; margin-top: 4px; background: var(--blue); opacity: 0; position: relative; z-index: 1; }
+  .row-copy { min-width: 0; position: relative; z-index: 1; }
+  .row-title { font-size: 12px; font-weight: 500; }
+  .row-meta { margin-top: 7px; color: var(--muted); font-size: 11px; }
+  .badge { font-size: 10px; font-weight: 400; padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; margin-right: 4px; }
+  .row::before { content: ''; position: absolute; inset: 0; background: var(--blue); opacity: var(--row-pulse,0); }
+  .body { display: flex; flex-direction: column; min-width: 0; }
+  .titlebar { display: flex; height: 47px; align-items: center; gap: 7px; padding: 0 18px; border-bottom: 1px solid var(--line); }
+  .brand { font-weight: 500; } .titlebar small { color: var(--muted); } .titlebar .actions { margin-left: auto; color: var(--muted); letter-spacing: 5px; }
+  .content { flex: 1; padding: 23px 23px 20px; min-height: 0; overflow: hidden; }
+  .content p { margin: 0 0 16px; } .content h2 { font-size: 14px; margin: 27px 0 13px; font-weight: 500; }
+  .context { padding: 12px 14px; border-left: 3px solid var(--line); background: var(--field); color: var(--muted); border-radius: 0 5px 5px 0; }
+  .answer { padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; margin-bottom: 8px; }
+  .answer.chosen { border-color: var(--blue); background: var(--selected); }
+  .draft { margin-top: 15px; border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; min-height: 75px; color: var(--muted); }
+  .footer { height: 51px; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 0 20px; border-top: 1px solid var(--line); }
+  .footer span { padding: 5px 15px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+  .footer .send { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .floater { position: absolute; width: 88px; height: 88px; left: 0; top: 0; pointer-events: none; z-index: 10; opacity: 0; will-change: transform,opacity; }
+  .trace { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; overflow: visible; }
+  .trace path { fill: none; stroke: var(--blue); stroke-width: 1.5; stroke-dasharray: 3 5; opacity: .35; }
+  .halo { position: absolute; inset: -36px; border-radius: 50%; background: radial-gradient(circle, #2685e82e, transparent 68%); opacity: var(--halo,1); }
+  .face { position: absolute; inset: 0; display: grid; place-items: center; transform-origin: 50% 100%; }
+  .plate { position: absolute; inset: 0; border-radius: calc(24px + 20px * var(--morph,0)); background: linear-gradient(145deg,#fff 10%,#f8fbff 47%,#eaf1fb); box-shadow: 0 1px 2px #17345214,0 5px 10px #1b3d6324,0 15px 28px #233e622b,0 0 0 .5px #54729633,0 1.2px 1px #fff inset,0 -1px 1px #b5c7e044 inset; opacity: var(--plate,1); transform: scale(calc(1 - .2 * var(--morph,0))); }
+  .graphic { position: relative; width: 52px; height: 52px; clip-path: circle(var(--clip,68%) at 50% 50%); transform: scale(var(--graphic,1)); }
+  .hole { opacity: var(--hole,1); }
+  .transport { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; margin-top: 20px; }
+  .btn { border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--text); padding: 7px 13px; }
+  .btn.primary { border-color: var(--blue); background: var(--blue); color: #fff; }
+  select { border: 1px solid var(--line); padding: 6px 8px; border-radius: 6px; background: var(--surface); color: var(--text); }
+  .phase { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .timeline { margin: 15px 0 5px; } .timeline input { width: 100%; margin: 0; accent-color: var(--blue); cursor: ew-resize; }
+  .phase-track { display: flex; gap: 2px; height: 22px; color: var(--muted); font-size: 11px; }
+  .phase-track span { display: grid; place-items: center; background: color-mix(in srgb,var(--text) 5%,transparent); border-radius: 3px; white-space: nowrap; overflow: hidden; }
+  .settings { background: var(--surface); border: 1px solid var(--line); padding: 18px; border-radius: 12px; }
+  .settings h2 { margin: 0 0 17px; font-size: 14px; font-weight: 500; }
+  .setting { margin-bottom: 19px; } .setting:last-child { margin-bottom: 0; }
+  .setting label { display: flex; justify-content: space-between; margin-bottom: 7px; font-size: 12px; }
+  .setting output { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .setting input { width: 100%; margin: 0; accent-color: var(--blue); }
+  .setting select { width: 100%; }
+  .setting input:disabled, .setting select:disabled { opacity: .45; cursor: not-allowed; }
+  .settings-note { color: var(--muted); font-size: 12px; margin: -7px 0 17px; }
+  .setting-divider { height: 1px; background: var(--line); margin: 20px 0; }
+  .options { display: flex; gap: 14px; align-items: center; color: var(--muted); font-size: 12px; }
+  .options label { display: flex; align-items: center; gap: 6px; } .options input { accent-color: var(--blue); }
+  .copy { width: 100%; margin-top: 4px; } .summary { color: var(--muted); font-size: 12px; margin-top: 13px; text-align: center; }
+  .copy-data { width: 100%; height: 125px; margin-top: 12px; padding: 8px; border: 1px solid var(--line); color: var(--text); background: var(--field); border-radius: 6px; resize: vertical; font: 11px/1.6 ui-monospace,monospace; }
+  @media (max-width: 1050px) { body { padding: 20px; } .layout { grid-template-columns: minmax(0,1fr); } .settings { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px 20px; } .settings h2,.settings-note,.setting-divider,.copy,.summary,.copy-data { grid-column: 1/-1; } .settings h2 { margin-bottom: 0; } .settings-note { margin: 0; } .setting { margin: 0; } .setting-divider { margin: 2px 0; } }
+  @media (max-width: 620px) { body { padding: 12px; } .heading { display: block; margin-bottom: 15px; } .heading span { font-size: 12px; display: block; margin-top: 5px; } .window { grid-template-columns: 146px minmax(0,1fr); height: 480px; } .sidebar { padding: 0 5px; } .content { padding: 16px 14px; } .titlebar { padding: 0 12px; } .titlebar small,.titlebar .actions { display: none; } .settings { grid-template-columns: repeat(2,minmax(0,1fr)); } .phase { width: 100%; margin-left: 0; } .options { margin-left: auto; } }
+</style>
+</head>
+<body>
+<main class="page" id="arrival-bounce">
+  <div class="heading"><h1>气泡先弹两下，再飞入蓝点</h1><span>Dock 节奏 · 沿勾线下探，再收进蓝点</span></div>
+  <div class="layout">
+    <section class="preview" aria-label="合并作答窗口动画预览">
+      <div class="comparison"><div class="versions" role="group" aria-label="动画版本"><button id="bounce-version" type="button" aria-pressed="true">弹跳版</button><button id="legacy-version" type="button" aria-pressed="false">旧版（无弹跳）</button></div><span class="version-note" id="version-note"></span></div>
+      <div class="window" id="stage">
+        <aside class="sidebar">
+          <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="sidebar-title">等待回答 · 3</div>
+          <div class="project">HumanInLoop <small>3</small></div>
+          <div class="row selected"><span class="dot"></span><div class="row-copy"><div class="row-title"><span class="badge">提问</span>确认搜索的交互方案</div><div class="row-meta">Codex · 当前</div></div></div>
+          <div class="row" id="target-row"><span class="dot" id="target-dot"></span><div class="row-copy"><div class="row-title"><span class="badge">提问</span>新消息：调整气泡动画</div><div class="row-meta">Codex · 刚刚</div></div></div>
+          <div class="row"><span class="dot" style="opacity:1"></span><div class="row-copy"><div class="row-title"><span class="badge">确认</span>附件预览已准备就绪</div><div class="row-meta">Claude Code · 1 分钟前</div></div></div>
+        </aside>
+        <section class="body" id="main-pane">
+          <header class="titlebar"><span class="brand">the Loop</span><small>· Codex · HumanInLoop</small><span class="actions" aria-hidden="true">⌖ ⋯</span></header>
+          <div class="content"><p>分区搜索已经完成，接下来调整新消息的提醒动画。</p><div class="context">新消息到达时，继续保留当前问题和正在编辑的回答。</div><h2>下一步如何推进？</h2><div class="answer chosen">继续调动画效果</div><div class="answer">查看当前方案</div><div class="draft">正在写回答…</div></div>
+          <footer class="footer"><span>取消</span><span class="send">发送 ⌘↵</span></footer>
+        </section>
+        <svg class="trace" id="trace" aria-hidden="true"><path id="trace-path" /></svg>
+        <div class="floater" id="bubble" aria-hidden="true">
+          <div class="halo"></div><div class="face" id="bubble-face"><div class="plate"></div>
+            <!-- MessageCircleQuestionMark: Lucide Icons, ISC license, preserved below. -->
+            <svg viewBox="0 0 24 24" class="graphic">
+              <defs><mask id="bubble-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24" style="mask-type:luminance"><path fill="#fff" d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/><g fill="none" stroke="#000" stroke-width="1.85" stroke-linecap="round" class="hole"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></g></mask><linearGradient id="bubble-blue" x1="0" y1="0" x2=".2" y2="1"><stop id="blue-stop" offset="0" stop-color="#4797eb"/><stop offset="1" stop-color="#2685e8"/></linearGradient></defs>
+              <path fill="url(#bubble-blue)" mask="url(#bubble-mask)" d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+      <div class="transport"><button class="btn primary" id="replay" type="button">重播新消息</button><button class="btn" id="pause" type="button">暂停</button><select id="speed" aria-label="播放速度"><option value="1">正常速度</option><option value="0.5">0.5× 慢放</option><option value="0.25">0.25× 慢放</option></select><div class="options"><label><input id="loop" type="checkbox">循环</label><label><input id="show-trace" type="checkbox" checked>轨迹</label></div><span class="phase" id="phase" aria-live="off"></span></div>
+      <div class="timeline"><input id="timeline" type="range" min="0" max="1000" value="0" step="1" aria-label="动画时间轴"></div>
+      <div class="phase-track" aria-hidden="true"><span id="appear-track">出现</span><span id="hold-track" hidden>停留</span><span id="first-track">第一跳</span><span id="second-track">第二跳</span><span id="fly-track">飞入</span><span id="land-track">落点</span></div>
+    </section>
+    <aside class="settings" aria-label="动画参数">
+      <h2>弹跳版参数</h2>
+      <p class="settings-note" id="settings-note" hidden>旧版固定使用原始轨迹与时长。切回弹跳版可继续调整，参数会保留。</p>
+      <div class="setting"><label for="preset">节奏</label><select id="preset"><option value="dock">Dock 节奏</option><option value="slower">慢一些</option><option value="quiet">轻提醒</option><option value="custom" disabled>自定义</option></select></div>
+      <div class="setting"><label for="first">第一次跳高 <output id="first-value"></output></label><input id="first" type="range" min="8" max="64" step="1"></div>
+      <div class="setting"><label for="second">第二次跳高 <output id="second-value"></output></label><input id="second" type="range" min="4" max="48" step="1"></div>
+      <div class="setting"><label for="bounce">单次弹跳 <output id="bounce-value"></output></label><input id="bounce" type="range" min="400" max="2400" step="50"></div>
+      <div class="setting"><label for="squash">落下挤压 <output id="squash-value"></output></label><input id="squash" type="range" min="0" max="16" step="1"></div>
+      <div class="setting"><label for="peel">第二跳接飞时机 <output id="peel-value"></output></label><input id="peel" type="range" min="60" max="86" step="1"></div>
+      <div class="setting"><label for="hook">勾线下探 <output id="hook-value"></output></label><input id="hook" type="range" min="40" max="150" step="2"></div>
+      <div class="setting"><label for="fly">飞行时长 <output id="fly-value"></output></label><input id="fly" type="range" min="360" max="900" step="10"></div>
+      <div class="setting-divider"></div><button class="btn copy" id="copy" type="button">复制当前参数</button><div class="summary" id="summary"></div><textarea class="copy-data" id="copy-data" aria-label="可复制的动画参数" readonly hidden></textarea>
+    </aside>
+  </div>
+</main>
+<script>
+(() => {
+  'use strict';
+  const root = document.getElementById('arrival-bounce');
+  const el = id => root.querySelector('#' + id);
+  const stage = el('stage'), bubble = el('bubble'), face = el('bubble-face'), dot = el('target-dot'), row = el('target-row');
+  const presets = { dock: { first: 52, second: 32, bounce: 1000, squash: 7, peel: 70, hook: 84, fly: 750 }, slower: { first: 52, second: 32, bounce: 1400, squash: 7, peel: 70, hook: 84, fly: 750 }, quiet: { first: 28, second: 17, bounce: 800, squash: 4, peel: 70, hook: 64, fly: 560 } };
+  let params = { ...presets.dock }, preset = 'dock', version = 'bounce', playhead = 0, playing = false, raf = 0, previous = 0, loopDelay = 0;
+  const appear = 220, land = 640;
+  const legacyTiming = { hold: 500, fly: 560 };
+  const clamp = n => Math.max(0, Math.min(1, n));
+  const ease = n => { const t = clamp(n); return t*t*t*(t*(t*6-15)+10); };
+  const mix = (a,b,t) => a + (b-a)*t;
+  const timings = () => {
+    if(version==='legacy') return {first:0,second:0,hold:legacyTiming.hold,fly:legacyTiming.fly,flyAt:appear+legacyTiming.hold,end:appear+legacyTiming.hold+legacyTiming.fly+land};
+    const second=params.bounce*.88, flyAt=appear+params.bounce+second*params.peel/100;
+    return {first:params.bounce,second,hold:0,fly:params.fly,flyAt,end:flyAt+params.fly+land};
+  };
+  // Cubic Hermite interpolation keeps shape changes continuous at each keyframe.
+  function spline(points, at) {
+    if (at <= points[0][0]) return points[0][1];
+    if (at >= points[points.length-1][0]) return points[points.length-1][1];
+    let i = 0; while (points[i+1][0] < at) i++;
+    const a=points[i], b=points[i+1], dt=b[0]-a[0], t=(at-a[0])/dt;
+    const slope = j => j === 0 || j === points.length-1 ? 0 : (points[j+1][1]-points[j-1][1])/(points[j+1][0]-points[j-1][0]);
+    return (2*t*t*t-3*t*t+1)*a[1] + (t*t*t-2*t*t+t)*dt*slope(i) + (-2*t*t*t+3*t*t)*b[1] + (t*t*t-t*t)*dt*slope(i+1);
+  }
+  function geometry() {
+    const bounds=stage.getBoundingClientRect(), target=dot.getBoundingClientRect(), main=el('main-pane').getBoundingClientRect();
+    return { origin: { x: bounds.width/2, y: (main.top+main.bottom)/2-bounds.top-10 }, target: { x: target.left+target.width/2-bounds.left, y: target.top+target.height/2-bounds.top } };
+  }
+  function contact(p, startVelocity, endVelocity, duration) {
+    // A short contact absorbs downward velocity, then releases into the following hop.
+    return (p*p*p-2*p*p+p)*duration*startVelocity + (p*p*p-p*p)*duration*endVelocity;
+  }
+  function flightPath(origin,target) {
+    // Preserve the original product path for comparison, including its upward lift.
+    if(version==='legacy') {
+      const lift=Math.min(62,Math.abs(target.x-origin.x)*.22+22);
+      return {start:origin,c1:{x:mix(origin.x,target.x,.25),y:origin.y-lift},c2:{x:mix(target.x,origin.x,.25),y:target.y-Math.min(30,lift/2)}};
+    }
+    const second=params.bounce*.88, p=params.peel/100/.90;
+    const start={x:origin.x,y:origin.y-4*params.second*p*(1-p)};
+    const vy=4*params.second*(2*p-1)/(.90*second);
+    // A deep vertical control point makes the descent curl before sweeping toward the dot.
+    const q=.32,u=1-q;
+    const c2={x:mix(target.x,start.x,.7),y:target.y+Math.min(24,params.hook*.2)};
+    const c1={x:start.x,y:(start.y+params.hook-u**3*start.y-3*u*q*q*c2.y-q**3*target.y)/(3*u*u*q)};
+    c1.y=Math.max(c1.y,start.y+params.hook);
+    const dy=3*(c1.y-start.y), ddy=6*(c2.y-2*c1.y+start.y);
+    const rate=vy*params.fly/dy;
+    const incomingAcceleration=8*params.second/(.90*.90*second*second);
+    const acceleration=Math.max(0,Math.min(1.2,(incomingAcceleration*params.fly*params.fly-ddy*rate*rate)/dy));
+    return {start,c1,c2,rate,acceleration};
+  }
+  function hop(t, height, second) {
+    const start=second?0:.06, end=second?.90:.92, air=end-start;
+    const velocity=4*height/air;
+    if(t<start) return contact(t/start,0,-velocity,start);
+    if(t<=end) { const p=(t-start)/air; return -4*height*p*(1-p); }
+    const nextVelocity=-4*params.second/.90/.88;
+    return contact((t-end)/(1-end),velocity,nextVelocity,1-end);
+  }
+  function frame(ms) {
+    const {origin,target}=geometry(), timing=timings(), path=flightPath(origin,target);
+    const result={ x:origin.x,y:origin.y,scale:1,opacity:1,sx:1,sy:1,angle:0,morph:0,plate:1,halo:1,landed:false };
+    if (ms < appear) { const t=ease(ms/appear); result.scale=mix(.78,1,t); result.opacity=t; result.y+=mix(13,0,t); return result; }
+    if (ms < timing.flyAt) {
+      if(version==='legacy') return result;
+      const second=ms>=appear+timing.first, duration=second?timing.second:timing.first;
+      const t=(ms-appear-(second?timing.first:0))/duration, height=second?params.second:params.first, squash=params.squash/100*(second?.72:1);
+      // Most of each hop is ballistic: fast near contact and slow around the apex.
+      // The second descent peels away before contact; it never returns to a resting pose.
+      result.y+=hop(t,height,second);
+      result.sy=second
+        ? 1+squash*.3*Math.sin(Math.PI*clamp(t/.34))**2
+        : spline([[0,1],[.03,1-squash*.6],[.08,1+squash*.3],[.28,1],[.50,1],[.86,1+squash*.15],[.96,1-squash],[1,1]],t);
+      result.sx=1/result.sy;
+      // The face pivots at its lower edge, so compression does not move its contact point.
+      return result;
+    }
+    const progress=clamp((ms-timing.flyAt)/timing.fly);
+    // Quintic progress carries the falling velocity and acceleration into the curved path.
+    const a=path.rate,b=path.acceleration;
+    const t=version==='legacy'?ease(progress):progress===1?1:a*progress+b/2*progress**2+(10-6*a-1.5*b)*progress**3+(-15+8*a+1.5*b)*progress**4+(6-3*a-.5*b)*progress**5,u=1-t;
+    const {start,c1,c2}=path;
+    result.x=u**3*start.x+3*u*u*t*c1.x+3*u*t*t*c2.x+t**3*target.x;
+    result.y=u**3*start.y+3*u*u*t*c1.y+3*u*t*t*c2.y+t**3*target.y;
+    // Ease the shrink-in; its initial derivative stays zero at the unchanged contact scale.
+    result.scale=mix(1,10/(88*20/24),version==='legacy'?t:ease(t));
+    result.angle=-8*Math.sin(Math.PI*ease(progress));
+    result.morph=ease((progress-.32)/.6); result.plate=1-ease((progress-.4)/.45); result.halo=1-ease(progress/.6);
+    result.landed=progress===1; if(result.landed) result.opacity=0;
+    return result;
+  }
+  function paint() {
+    const f=frame(playhead), time=timings();
+    const {origin,target}=geometry(), path=flightPath(origin,target);
+    el('trace').setAttribute('viewBox',`0 0 ${stage.clientWidth} ${stage.clientHeight}`);
+    el('trace').style.display=el('show-trace').checked?'block':'none';
+    const traceStart=version==='legacy'?`M ${origin.x} ${origin.y}`:`M ${origin.x} ${origin.y-params.second} L ${path.start.x} ${path.start.y}`;
+    el('trace-path').setAttribute('d',`${traceStart} C ${path.c1.x} ${path.c1.y} ${path.c2.x} ${path.c2.y} ${target.x} ${target.y}`);
+    bubble.style.transform=`translate3d(${f.x-44}px,${f.y-44}px,0) scale(${f.scale}) rotate(${f.angle}deg)`;
+    bubble.style.opacity=String(f.opacity); face.style.transform=`scale(${f.sx},${f.sy})`;
+    bubble.style.setProperty('--morph',f.morph); bubble.style.setProperty('--hole',1-f.morph); bubble.style.setProperty('--plate',f.plate); bubble.style.setProperty('--halo',f.halo);
+    bubble.style.setProperty('--clip',`${mix(68,100*10/24,f.morph)}%`); bubble.style.setProperty('--graphic',1+(88/52-1)*f.morph);
+    el('blue-stop').setAttribute('stop-color',`rgb(${38+33*(1-f.morph)},${133+18*(1-f.morph)},${232+3*(1-f.morph)})`);
+    dot.style.opacity=f.landed?'1':'0';
+    const landedAt=time.flyAt+time.fly, pulse=clamp((playhead-landedAt)/land);
+    row.style.setProperty('--row-pulse',f.landed?.17*Math.sin(Math.PI*pulse):0);
+    const label=playhead<appear?'出现':playhead<time.flyAt&&version==='legacy'?'停留':playhead<appear+time.first?'第一跳':playhead<time.flyAt?'第二跳':playhead<landedAt?'飞入蓝点':'蓝点落稳';
+    el('phase').textContent=`${label} · ${Math.round(playhead)} / ${Math.round(time.end)} ms`;
+    el('timeline').max=String(time.end); el('timeline').value=String(playhead);
+    el('pause').textContent=playing?'暂停':'继续';
+  }
+  function stop() { playing=false; cancelAnimationFrame(raf); clearTimeout(loopDelay); previous=0; }
+  function tick(now) {
+    if(!playing) return;
+    if(previous) playhead+=Math.min(80,now-previous)*Number(el('speed').value);
+    previous=now;
+    if(playhead>=timings().end) { playhead=timings().end; stop(); paint(); if(el('loop').checked) loopDelay=setTimeout(replay,650); return; }
+    paint(); raf=requestAnimationFrame(tick);
+  }
+  function play() { clearTimeout(loopDelay); playing=true; previous=0; raf=requestAnimationFrame(tick); paint(); }
+  function replay() { stop(); playhead=0; play(); }
+  function save() { try { localStorage.setItem('askhuman-arrival-bounce-v2',JSON.stringify({params,preset,version,flyBaseline:750})); } catch {} }
+  function sync() {
+    for(const key of Object.keys(params)) { el(key).value=params[key]; el(key+'-value').textContent=params[key]+(key==='squash'||key==='peel'?'%':['first','second','hook'].includes(key)?'px':'ms'); }
+    el('preset').value=preset; const time=timings();
+    const legacy=version==='legacy';
+    el('bounce-version').setAttribute('aria-pressed',String(!legacy)); el('legacy-version').setAttribute('aria-pressed',String(legacy));
+    el('version-note').textContent=legacy?'停留 500ms → 原始曲线飞行 560ms':`弹跳两次 → 勾线飞行 ${params.fly}ms`;
+    el('settings-note').hidden=!legacy;
+    for(const key of [...Object.keys(params),'preset']) el(key).disabled=legacy;
+    const tracks={appear:appear,hold:time.hold,first:time.first,second:time.second*params.peel/100,fly:time.fly,land:land};
+    for(const [key,duration] of Object.entries(tracks)) { el(key+'-track').style.flex=String(duration); el(key+'-track').hidden=duration===0; }
+    el('summary').textContent=`进入蓝点 ${Math.round(time.flyAt+time.fly)}ms · 全程 ${Math.round(time.end)}ms`;
+  }
+  for(const name of ['bounce','legacy']) el(name+'-version').addEventListener('click',()=>{ version=name; el('copy-data').hidden=true; sync(); save(); replay(); });
+  el('replay').addEventListener('click',replay);
+  el('pause').addEventListener('click',()=>{ if(playing) { stop(); paint(); } else { if(playhead>=timings().end) playhead=0; play(); } });
+  el('timeline').addEventListener('input',()=>{ stop(); playhead=Number(el('timeline').value); paint(); });
+  el('speed').addEventListener('change',()=>{previous=0;});
+  el('loop').addEventListener('change',()=>{ if(!el('loop').checked) clearTimeout(loopDelay); });
+  el('show-trace').addEventListener('change',paint);
+  el('preset').addEventListener('change',()=>{ preset=el('preset').value; if(presets[preset]) { params={...presets[preset]}; sync(); save(); replay(); } });
+  for(const key of Object.keys(params)) el(key).addEventListener('input',()=>{ params[key]=Number(el(key).value); preset='custom'; sync(); save(); stop(); playhead=Math.min(playhead,timings().end); paint(); });
+  for(const key of Object.keys(params)) el(key).addEventListener('change',replay);
+  el('copy').addEventListener('click',async()=>{ const text=JSON.stringify(version==='legacy'?{style:'legacy-no-bounce',appear,...legacyTiming,land}:{ style:'dock-like-two-bounces',transition:'swoosh-descent-to-flight',...params,secondDuration:params.bounce*.88,secondToFlight:params.bounce*.88*params.peel/100,appear,land },null,2); try { await navigator.clipboard.writeText(text); el('copy').textContent='参数已复制'; setTimeout(()=>{el('copy').textContent='复制当前参数';},1400); } catch { el('copy-data').hidden=false; el('copy-data').value=text; el('copy-data').select(); } });
+  const ranges={first:[8,64],second:[4,48],bounce:[400,2400],squash:[0,16],peel:[60,86],hook:[40,150],fly:[360,900]};
+  try {
+    const saved=JSON.parse(localStorage.getItem('askhuman-arrival-bounce-v2')), candidate={...presets.dock,...saved?.params};
+    if(saved&&Object.keys(ranges).every(key=>Number.isFinite(candidate[key])&&candidate[key]>=ranges[key][0]&&candidate[key]<=ranges[key][1])) {
+      params=Object.fromEntries(Object.keys(ranges).map(key=>[key,candidate[key]]));
+      preset=presets[saved.preset]?saved.preset:'custom'; version=saved.version==='legacy'?'legacy':'bounce';
+      // Apply the agreed flight duration once while preserving the other saved tuning values.
+      if(saved.flyBaseline!==750) { params.fly=750; if(preset==='quiet') preset='custom'; }
+    }
+  } catch {}
+  new ResizeObserver(paint).observe(stage);
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden) { stop(); paint(); } });
+  sync(); save(); paint();
+  if(!matchMedia('(prefers-reduced-motion: reduce)').matches) replay();
+  else { playhead=appear; paint(); }
+})();
+</script>
+<!--
+ISC License
+Copyright (c) 2026 Lucide Icons and Contributors
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+-->
+</body>
+</html>
