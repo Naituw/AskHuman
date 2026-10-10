@@ -13,6 +13,24 @@ use tauri::{
 struct ProbeFixtures(std::path::PathBuf);
 
 #[tauri::command]
+fn generated_image(
+    window: tauri::Webview,
+    registry: tauri::State<'_, local_image::Registry>,
+    scope: String,
+    path: String,
+) -> Result<local_image::Prepared, String> {
+    let source = std::path::Path::new(&path);
+    let stamp = local_image::Stamp::read(source).map_err(str::to_owned)?;
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::new(32, 18)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    registry
+        .prepare_generated(window.label(), &scope, source, stamp, png.get_ref())
+        .map_err(str::to_owned)
+}
+
+#[tauri::command]
 fn resource_status(
     window: tauri::Webview,
     registry: tauri::State<'_, local_image::Registry>,
@@ -50,7 +68,10 @@ fn report_results(app: tauri::AppHandle, results: serde_json::Value) {
     }) && results["limits"]
         .as_array()
         .is_some_and(|limits| limits.iter().all(|limit| limit["reason"] == "limit"))
-        && results["revokedStatus"] == 404;
+        && results["revokedStatus"] == 404
+        && results["generatedRevokedStatus"] == 404;
+    app.state::<local_image::Registry>()
+        .release_window("local-image-probe");
     let _ = std::fs::remove_dir_all(&app.state::<ProbeFixtures>().0);
     // Explicit process status also works when the macOS event loop ignores its exit code.
     let _ = std::io::Write::flush(&mut std::io::stdout());
@@ -110,6 +131,8 @@ async function main(){
   const image=await invoke('local_image_prepare',{scope,path});
   sources.push({name,src:convertFileSrc(image.token,'askhuman-image'),expected:true});
  }
+ const generated=await invoke('generated_image',{scope,path:input.path});
+ sources.push({name:'temporary generated PNG',src:convertFileSrc(generated.token,'askhuman-image'),expected:true});
  const expired=await invoke('local_image_create_scope');
  const asset=await invoke('local_image_prepare',{scope:expired,path:input.path});
  await invoke('local_image_release_scope',{scope:expired});
@@ -131,7 +154,8 @@ async function main(){
  images.push(await testImage({name:'previously decoded URL after last release (cache observation)',src:convertFileSrc(shared.token,'askhuman-image')}));
  await invoke('local_image_release_scope',{scope:sharedScope});
  await invoke('local_image_release_scope',{scope});
- await invoke('report_results',{results:{origin:location.origin,userAgent:navigator.userAgent,images,limits,revokedStatus}});
+ const generatedRevokedStatus=await invoke('resource_status',{token:generated.token});
+ await invoke('report_results',{results:{origin:location.origin,userAgent:navigator.userAgent,images,limits,revokedStatus,generatedRevokedStatus}});
 }
 main().catch(error=>invoke('report_results',{results:{error:String(error)}}));
 </script>"#.replace("__INPUT__", &input.to_string());
@@ -153,6 +177,7 @@ main().catch(error=>invoke('report_results',{results:{error:String(error)}}));
         .register_asynchronous_uri_scheme_protocol(local_image::SCHEME, local_image::serve)
         .invoke_handler(tauri::generate_handler![
             report_results,
+            generated_image,
             resource_status,
             local_image::local_image_create_scope,
             local_image::local_image_prepare,

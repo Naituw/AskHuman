@@ -26,6 +26,8 @@ todo #4：a7d02da0-72d5-4191-954d-d0bcb77d322e）。上述 Windows popup-only VM
 本轮没有对应实机证据，详见 `docs/investigations/base64-usage-audit.md`。
 后续平台补验还应覆盖历史、待办草稿与 Interject 的纯显示图片 URL、移除 / 切换 / 卸载清理、
 超限文件胶囊与提交原路径；本机自动验证记录见 `docs/plans/display-image-urls.md`。
+右侧附件大图也应补验原文件 URL、特殊格式临时 PNG、缓存淘汰 / 过期读取释放和 GIF / WebP 动画；
+历史继续保存原路径，记录见 `docs/plans/attachment-image-urls.md`。
 
 ## 待外部验收：Windows / Linux Popup 附件预览面板
 

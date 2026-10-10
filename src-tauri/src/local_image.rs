@@ -3,6 +3,7 @@ use crate::image_resource::{self, ImageInfo};
 use serde::Serialize;
 use std::{
     collections::HashMap,
+    io::Write,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::SystemTime,
@@ -13,14 +14,94 @@ pub const SCHEME: &str = "askhuman-image";
 const MAX_SCOPES: usize = 256;
 const MAX_IMAGES_PER_SCOPE: usize = 128;
 const MAX_SCOPE_PIXELS: u64 = image_resource::ANIMATION_PIXELS;
+const GENERATED_PREFIX: &str = "askhuman-preview-images-";
+
+struct GeneratedStore {
+    _lock: std::fs::File,
+    dir: tempfile::TempDir,
+}
+fn owner_id(metadata: &std::fs::Metadata) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some(metadata.uid())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        None
+    }
+}
+fn cleanup_generated_dirs(root: &Path, now: SystemTime, owner: Option<u32>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(GENERATED_PREFIX)
+            || !entry.file_type().is_ok_and(|kind| kind.is_dir())
+        {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if owner_id(&metadata) != owner
+            || metadata
+                .modified()
+                .ok()
+                .and_then(|stamp| now.duration_since(stamp).ok())
+                .is_none_or(|age| age.as_secs() < 24 * 60 * 60)
+        {
+            continue;
+        }
+        let Ok(lock) = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(entry.path().join(".lock"))
+        else {
+            continue;
+        };
+        // Never reap a different process's live preview files, even after a long request.
+        if fs2::FileExt::try_lock_exclusive(&lock).is_err() {
+            continue;
+        }
+        drop(lock);
+        let _ = std::fs::remove_dir_all(entry.path());
+    }
+}
+impl GeneratedStore {
+    fn create() -> Result<Self, &'static str> {
+        let dir = tempfile::Builder::new()
+            .prefix(GENERATED_PREFIX)
+            .tempdir()
+            .map_err(|_| "readFailed")?;
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(dir.path().join(".lock"))
+            .map_err(|_| "readFailed")?;
+        fs2::FileExt::lock_exclusive(&lock).map_err(|_| "readFailed")?;
+        let owner = dir
+            .path()
+            .metadata()
+            .ok()
+            .and_then(|metadata| owner_id(&metadata));
+        cleanup_generated_dirs(&std::env::temp_dir(), SystemTime::now(), owner);
+        Ok(Self { _lock: lock, dir })
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Stamp {
+pub struct Stamp {
     bytes: u64,
     modified: Option<SystemTime>,
 }
 impl Stamp {
-    fn read(path: &Path) -> Result<Self, &'static str> {
+    pub fn read(path: &Path) -> Result<Self, &'static str> {
         let metadata = std::fs::metadata(path).map_err(|_| "readFailed")?;
         if !metadata.is_file() {
             return Err("unsupported");
@@ -40,6 +121,8 @@ struct Asset {
     stamp: Stamp,
     info: ImageInfo,
     references: usize,
+    generated: Option<Arc<tempfile::NamedTempFile>>,
+    byte_length: u64,
 }
 struct Scope {
     window: String,
@@ -50,12 +133,14 @@ struct Scope {
 pub struct Registry {
     scopes: Arc<Mutex<HashMap<String, Scope>>>,
     pub workers: Arc<tokio::sync::Semaphore>,
+    generated_store: Arc<Mutex<Option<Arc<GeneratedStore>>>>,
 }
 impl Default for Registry {
     fn default() -> Self {
         Self {
             scopes: Default::default(),
             workers: Arc::new(tokio::sync::Semaphore::new(1)),
+            generated_store: Default::default(),
         }
     }
 }
@@ -65,8 +150,17 @@ pub struct Prepared {
     pub token: String,
     pub width: u32,
     pub height: u32,
+    pub byte_length: u64,
+    pub display_pixels: u64,
 }
 impl Registry {
+    fn generated_store(&self) -> Result<Arc<GeneratedStore>, &'static str> {
+        let mut store = self.generated_store.lock().unwrap();
+        if store.is_none() {
+            *store = Some(Arc::new(GeneratedStore::create()?));
+        }
+        Ok(store.as_ref().unwrap().clone())
+    }
     pub fn create_scope(&self, window: &str) -> Result<String, &'static str> {
         let mut scopes = self.scopes.lock().unwrap();
         if scopes.len() >= MAX_SCOPES {
@@ -133,6 +227,8 @@ impl Registry {
                     token: token.clone(),
                     width: asset.info.width,
                     height: asset.info.height,
+                    byte_length: asset.byte_length,
+                    display_pixels: asset.info.display_pixels,
                 });
             }
         }
@@ -167,12 +263,77 @@ impl Registry {
                 stamp,
                 info,
                 references: 1,
+                generated: None,
+                byte_length: stamp.bytes,
             },
         );
         Ok(Prepared {
             token,
             width: info.width,
             height: info.height,
+            byte_length: stamp.bytes,
+            display_pixels: info.display_pixels,
+        })
+    }
+    pub fn prepare_generated(
+        &self,
+        window: &str,
+        id: &str,
+        source: &Path,
+        stamp: Stamp,
+        bytes: &[u8],
+    ) -> Result<Prepared, &'static str> {
+        if !self.active(window, id) {
+            return Err("stale");
+        }
+        if bytes.len() > image_resource::IMAGE_BYTES {
+            return Err("limit");
+        }
+        let info = image_resource::inspect(bytes, "png")?;
+        if info.mime != "image/png" {
+            return Err("imageFailed");
+        }
+        let source = source.canonicalize().map_err(|_| "readFailed")?;
+        if Stamp::read(&source)? != stamp {
+            return Err("readFailed");
+        }
+        let store = self.generated_store()?;
+        let mut file =
+            tempfile::NamedTempFile::new_in(store.dir.path()).map_err(|_| "readFailed")?;
+        file.write_all(bytes).map_err(|_| "readFailed")?;
+        if Stamp::read(&source)? != stamp {
+            return Err("readFailed");
+        }
+        let byte_length = bytes.len() as u64;
+        let mut scopes = self.scopes.lock().unwrap();
+        let scope = scopes
+            .get_mut(id)
+            .filter(|s| s.window == window)
+            .ok_or("stale")?;
+        if scope.assets.len() >= MAX_IMAGES_PER_SCOPE
+            || scope.pixels.saturating_add(info.display_pixels) > MAX_SCOPE_PIXELS
+        {
+            return Err("limit");
+        }
+        let token = uuid::Uuid::new_v4().to_string();
+        scope.pixels += info.display_pixels;
+        scope.assets.insert(
+            token.clone(),
+            Asset {
+                path: source,
+                stamp,
+                info,
+                references: 1,
+                generated: Some(Arc::new(file)),
+                byte_length,
+            },
+        );
+        Ok(Prepared {
+            token,
+            width: info.width,
+            height: info.height,
+            byte_length,
+            display_pixels: info.display_pixels,
         })
     }
     fn asset(&self, window: &str, token: &str) -> Option<Asset> {
@@ -201,14 +362,23 @@ impl Registry {
             if request.method() == Method::HEAD {
                 return Ok(Vec::new());
             }
-            let bytes = image_resource::read(&asset.path, image_resource::IMAGE_BYTES)?;
-            let extension = asset
-                .path
+            let content_path = asset
+                .generated
+                .as_ref()
+                .map(|file| file.path())
+                .unwrap_or(&asset.path);
+            let bytes = image_resource::read(content_path, image_resource::IMAGE_BYTES)?;
+            let extension = content_path
                 .extension()
                 .and_then(|v| v.to_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            if image_resource::inspect(&bytes, &extension)? != asset.info
+            let extension = if asset.generated.is_some() {
+                "png"
+            } else {
+                &extension
+            };
+            if image_resource::inspect(&bytes, extension)? != asset.info
                 || Stamp::read(&asset.path)? != asset.stamp
             {
                 return Err("readFailed");
@@ -220,7 +390,7 @@ impl Registry {
             Ok(bytes)
         };
         match content() {
-            Ok(bytes) => response(StatusCode::OK, asset.info.mime, bytes, asset.stamp.bytes),
+            Ok(bytes) => response(StatusCode::OK, asset.info.mime, bytes, asset.byte_length),
             Err(_) => response(StatusCode::NOT_FOUND, "text/plain", Vec::new(), 0),
         }
     }
@@ -533,5 +703,101 @@ mod tests {
                 .status(),
             StatusCode::NOT_FOUND
         );
+    }
+    #[test]
+    fn generated_pngs_serve_binary_bytes_and_delete_the_temporary_file_on_release() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.tga");
+        std::fs::write(&source, b"source").unwrap();
+        let png_file = temp.path().join("converted.png");
+        png(&png_file, 10, 8);
+        let bytes = std::fs::read(png_file).unwrap();
+        let registry = Registry::default();
+        let scope = registry.create_scope("popup").unwrap();
+        let prepared = registry
+            .prepare_generated(
+                "popup",
+                &scope,
+                &source,
+                Stamp::read(&source).unwrap(),
+                &bytes,
+            )
+            .unwrap();
+        let generated = registry
+            .asset("popup", &prepared.token)
+            .unwrap()
+            .generated
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_path_buf();
+        assert!(generated.exists());
+        let response = registry.respond("popup", &get(&prepared.token));
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["Content-Type"], "image/png");
+        assert_eq!(
+            response.headers()["Content-Length"],
+            bytes.len().to_string()
+        );
+        assert_eq!(response.body(), &bytes);
+        assert_eq!(
+            (prepared.width, prepared.height, prepared.display_pixels),
+            (10, 8, 80)
+        );
+        registry.release_scope("popup", &scope);
+        assert!(!generated.exists());
+        assert_eq!(
+            registry.respond("popup", &get(&prepared.token)).status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    #[test]
+    fn generated_images_reject_changed_sources_invalid_bytes_and_cancelled_scopes() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.ico");
+        std::fs::write(&source, b"source").unwrap();
+        let stamp = Stamp::read(&source).unwrap();
+        let png_file = temp.path().join("converted.png");
+        png(&png_file, 2, 3);
+        let bytes = std::fs::read(png_file).unwrap();
+        let registry = Registry::default();
+        let scope = registry.create_scope("popup").unwrap();
+        assert!(registry
+            .prepare_generated("popup", &scope, &source, stamp, b"not png")
+            .is_err());
+        std::fs::write(&source, b"changed source").unwrap();
+        assert_eq!(
+            registry
+                .prepare_generated("popup", &scope, &source, stamp, &bytes)
+                .unwrap_err(),
+            "readFailed"
+        );
+        registry.release_scope("popup", &scope);
+        assert_eq!(
+            registry
+                .prepare_generated("popup", &scope, &source, stamp, &bytes)
+                .unwrap_err(),
+            "stale"
+        );
+    }
+    #[test]
+    fn orphan_cleanup_preserves_live_locked_stores() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join(format!("{GENERATED_PREFIX}live"));
+        std::fs::create_dir(&dir).unwrap();
+        let lock = std::fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(dir.join(".lock"))
+            .unwrap();
+        fs2::FileExt::lock_exclusive(&lock).unwrap();
+        let owner = owner_id(&dir.metadata().unwrap());
+        let later = SystemTime::now() + std::time::Duration::from_secs(48 * 60 * 60);
+        cleanup_generated_dirs(root.path(), later, owner);
+        assert!(dir.exists());
+        drop(lock);
+        cleanup_generated_dirs(root.path(), later, owner);
+        assert!(!dir.exists());
     }
 }

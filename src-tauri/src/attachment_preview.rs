@@ -4,6 +4,14 @@ use crate::image_resource::{checked_pixels, read};
 use base64::Engine;
 use serde::Serialize;
 use std::path::Path;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageResource {
+    pub scope: String,
+    pub byte_length: u64,
+    pub display_pixels: u64,
+}
 #[derive(Default)]
 pub struct ReadGeneration(std::sync::Mutex<(String, u64)>);
 impl ReadGeneration {
@@ -45,6 +53,8 @@ pub enum Content {
         url: String,
         width: u32,
         height: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        resource: Option<ImageResource>,
     },
     Native {
         image_count: Option<u32>,
@@ -227,6 +237,15 @@ fn native_content(path: &Path) -> Result<Content, &'static str> {
     Ok(Content::Native { image_count: None })
 }
 fn image_content(bytes: Vec<u8>, extension: &str) -> Result<Content, &'static str> {
+    image_content_with(bytes, extension, &data_image)
+}
+type ImageRenderer<'a> =
+    dyn Fn(Vec<u8>, crate::image_resource::ImageInfo) -> Result<Content, &'static str> + 'a;
+fn image_content_with(
+    bytes: Vec<u8>,
+    extension: &str,
+    render: &ImageRenderer<'_>,
+) -> Result<Content, &'static str> {
     #[cfg(target_os = "macos")]
     if system_image_extension(extension) || extension == "ico" {
         return match crate::macos_attachment_preview::decode_image(&bytes, false) {
@@ -234,7 +253,7 @@ fn image_content(bytes: Vec<u8>, extension: &str) -> Result<Content, &'static st
                 bytes,
                 width,
                 height,
-            }) => Ok(png_content(bytes, width, height)),
+            }) => render_png(bytes, width, height, render),
             Ok(crate::macos_attachment_preview::DecodedImage::Multipage { count }) => {
                 Ok(Content::Native {
                     image_count: Some(count),
@@ -268,34 +287,49 @@ fn image_content(bytes: Vec<u8>, extension: &str) -> Result<Content, &'static st
         if png.get_ref().len() > IMAGE_BYTES {
             return Err("limit");
         }
-        return Ok(png_content(png.into_inner(), w, h));
+        return render_png(png.into_inner(), w, h, render);
     }
-    let crate::image_resource::ImageInfo {
-        mime,
-        width,
-        height,
-        ..
-    } = crate::image_resource::inspect(&bytes, extension)?;
+    let info = crate::image_resource::inspect(&bytes, extension)?;
+    render(bytes, info)
+}
+fn data_image(
+    bytes: Vec<u8>,
+    info: crate::image_resource::ImageInfo,
+) -> Result<Content, &'static str> {
     Ok(Content::Image {
         url: format!(
-            "data:{mime};base64,{}",
+            "data:{};base64,{}",
+            info.mime,
             base64::engine::general_purpose::STANDARD.encode(bytes)
         ),
-        width,
-        height,
+        width: info.width,
+        height: info.height,
+        resource: None,
     })
 }
-fn png_content(bytes: Vec<u8>, width: u32, height: u32) -> Content {
-    Content::Image {
-        url: format!(
-            "data:image/png;base64,{}",
-            base64::engine::general_purpose::STANDARD.encode(bytes)
-        ),
-        width,
-        height,
+fn render_png(
+    bytes: Vec<u8>,
+    width: u32,
+    height: u32,
+    render: &ImageRenderer<'_>,
+) -> Result<Content, &'static str> {
+    if bytes.len() > IMAGE_BYTES {
+        return Err("limit");
     }
+    render(
+        bytes,
+        crate::image_resource::ImageInfo {
+            mime: "image/png",
+            width,
+            height,
+            display_pixels: checked_pixels(width, height)?,
+        },
+    )
 }
 pub fn load(path: &str) -> Content {
+    load_with(path, &data_image)
+}
+fn load_with(path: &str, render: &ImageRenderer<'_>) -> Content {
     let path = Path::new(path);
     let extension = ext(path);
     if cfg!(target_os = "macos") && system_document_extension(&extension) {
@@ -310,7 +344,7 @@ pub fn load(path: &str) -> Content {
     let result = (|| {
         let bytes = read(path, max)?;
         if image {
-            return image_content(bytes, &extension);
+            return image_content_with(bytes, &extension, render);
         }
         let diff = crate::attachment_diff::supports(path.to_str().unwrap_or(""));
         let source = match text(&bytes, !diff) {
@@ -343,6 +377,72 @@ pub fn load(path: &str) -> Content {
     })();
     result.unwrap_or_else(unavailable)
 }
+
+fn url_image(
+    registry: &crate::local_image::Registry,
+    window: &str,
+    prepare: impl FnOnce(&str) -> Result<crate::local_image::Prepared, &'static str>,
+) -> Result<Content, &'static str> {
+    let scope = registry.create_scope(window)?;
+    match prepare(&scope) {
+        Ok(image) => Ok(Content::Image {
+            url: image.token,
+            width: image.width,
+            height: image.height,
+            resource: Some(ImageResource {
+                scope,
+                byte_length: image.byte_length,
+                display_pixels: image.display_pixels,
+            }),
+        }),
+        Err(reason) => {
+            registry.release_scope(window, &scope);
+            Err(reason)
+        }
+    }
+}
+
+/// Keep full-size display images out of JSON; only list thumbnails still use data URLs.
+pub fn load_url(path: &str, registry: &crate::local_image::Registry, window: &str) -> Content {
+    let source = Path::new(path);
+    let extension = ext(source);
+    if !image_extension(&extension) {
+        return load(path);
+    }
+    let converts = (cfg!(target_os = "macos")
+        && (system_image_extension(&extension) || extension == "ico"))
+        || matches!(
+            extension.as_str(),
+            "ico" | "tga" | "pnm" | "ppm" | "pgm" | "pbm" | "pam"
+        );
+    if !converts {
+        return url_image(registry, window, |scope| {
+            registry.prepare(window, scope, source)
+        })
+        .unwrap_or_else(unavailable);
+    }
+    let stamp = match crate::local_image::Stamp::read(source) {
+        Ok(stamp) => stamp,
+        Err(reason) => return unavailable(reason),
+    };
+    load_with(path, &|bytes, _| {
+        url_image(registry, window, |scope| {
+            registry.prepare_generated(window, scope, source, stamp, &bytes)
+        })
+    })
+}
+
+impl Content {
+    pub fn release_image(&self, registry: &crate::local_image::Registry, window: &str) {
+        if let Self::Image {
+            resource: Some(resource),
+            ..
+        } = self
+        {
+            registry.release_scope(window, &resource.scope);
+        }
+    }
+}
 pub fn thumbnail(path: &str) -> Option<String> {
     if !image_extension(&ext(Path::new(path))) {
         return None;
@@ -355,7 +455,7 @@ pub fn thumbnail(path: &str) -> Option<String> {
                 bytes,
                 width,
                 height,
-            } => match png_content(bytes, width, height) {
+            } => match render_png(bytes, width, height, &data_image).ok()? {
                 Content::Image { url, .. } => Some(url),
                 _ => None,
             },
@@ -363,11 +463,9 @@ pub fn thumbnail(path: &str) -> Option<String> {
         };
     }
     match image_content(bytes, &ext(Path::new(path))).ok()? {
-        Content::Image { url, width, height }
-            if u64::from(width) * u64::from(height) <= 4_000_000 =>
-        {
-            Some(url)
-        }
+        Content::Image {
+            url, width, height, ..
+        } if u64::from(width) * u64::from(height) <= 4_000_000 => Some(url),
         _ => None,
     }
 }
@@ -523,7 +621,9 @@ mod tests {
             Err("limit")
         );
         match image_content(bytes.clone(), "gif").unwrap() {
-            Content::Image { url, width, height } => {
+            Content::Image {
+                url, width, height, ..
+            } => {
                 assert_eq!((width, height), (20, 10));
                 assert_eq!(
                     base64::engine::general_purpose::STANDARD
@@ -534,6 +634,77 @@ mod tests {
             }
             _ => panic!("expected image"),
         }
+    }
+    #[test]
+    fn full_image_urls_preserve_original_animation_bytes_without_json_payloads() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("animated.gif");
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut bytes);
+            for _ in 0..2 {
+                encoder
+                    .encode_frame(image::Frame::new(image::RgbaImage::new(20, 10)))
+                    .unwrap();
+            }
+        }
+        std::fs::write(&path, &bytes).unwrap();
+        let registry = crate::local_image::Registry::default();
+        let content = load_url(path.to_str().unwrap(), &registry, "popup");
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(!json.contains("base64"));
+        assert!(json.len() < 512);
+        let Content::Image {
+            url,
+            resource: Some(resource),
+            ..
+        } = &content
+        else {
+            panic!("expected URL image");
+        };
+        assert_eq!(resource.display_pixels, 400);
+        let request = tauri::http::Request::builder()
+            .uri(format!("askhuman-image://localhost/{url}"))
+            .body(Vec::new())
+            .unwrap();
+        assert_eq!(registry.respond("popup", &request).body(), &bytes);
+        content.release_image(&registry, "popup");
+        assert_eq!(
+            registry.respond("popup", &request).status(),
+            tauri::http::StatusCode::NOT_FOUND
+        );
+    }
+    #[test]
+    fn converted_full_images_use_url_pngs_and_keep_thumbnails_separate() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("source.tga");
+        image::RgbaImage::new(4, 3).save(&path).unwrap();
+        let registry = crate::local_image::Registry::default();
+        let content = load_url(path.to_str().unwrap(), &registry, "popup");
+        let Content::Image {
+            url,
+            width,
+            height,
+            resource: Some(resource),
+        } = &content
+        else {
+            panic!("expected converted URL image");
+        };
+        assert_eq!((*width, *height), (4, 3));
+        assert!(resource.byte_length > 0);
+        assert!(!url.starts_with("data:"));
+        let request = tauri::http::Request::builder()
+            .uri(format!("askhuman-image://localhost/{url}"))
+            .body(Vec::new())
+            .unwrap();
+        assert!(registry
+            .respond("popup", &request)
+            .body()
+            .starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert!(thumbnail(path.to_str().unwrap())
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        content.release_image(&registry, "popup");
     }
     #[test]
     fn reliable_text_encoding_and_binary_detection() {
@@ -584,7 +755,9 @@ mod tests {
         let path = directory.path().join("image.ppm");
         std::fs::write(&path, b"P6\n2 1\n255\n\xff\x00\x00\x00\xff\x00").unwrap();
         match load(path.to_str().unwrap()) {
-            Content::Image { url, width, height } => {
+            Content::Image {
+                url, width, height, ..
+            } => {
                 assert_eq!((width, height), (2, 1));
                 assert!(url.starts_with("data:image/png;base64,"));
             }
@@ -613,6 +786,22 @@ mod tests {
     #[test]
     fn system_formats_preserve_native_documents_and_multipage_images() {
         let directory = tempfile::tempdir().unwrap();
+        let registry = crate::local_image::Registry::default();
+        let load = |path: &str| load_url(path, &registry, "popup");
+        for name in ["icon.icns", "icon.ico"] {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("icons")
+                .join(name);
+            let content = load(path.to_str().unwrap());
+            assert!(matches!(
+                content,
+                Content::Image {
+                    resource: Some(_),
+                    ..
+                }
+            ));
+            content.release_image(&registry, "popup");
+        }
         for name in ["document.PDF", "rich.rtf", "office.docx", "audio.wav"] {
             let path = directory.path().join(name);
             std::fs::write(&path, b"test content").unwrap();

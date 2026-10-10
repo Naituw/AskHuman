@@ -9,9 +9,10 @@ Popup 提问附件采用同窗右侧预览，具体决策见 `docs/specs/popup-a
 
 - 原生窗口下限仍为 420×480。`app/popup_preview.rs` 和 `popup_preview_geometry.rs` 管理固定右侧、必要时整窗左移、受限横向分区与关闭恢复；前端 prepare 后等待绘制，再提交原生几何并异步对账。关闭恢复展开前位置，用户移动过则保持新位置；临时缩窄和展开总宽不写入主区尺寸偏好。`persist_popup_size` 继续过滤预热、收尾、最大化和迟到事件，并读取最新 rememberSize。
 - 预览默认 700 宽，`channels.popup.previewWidth` 单独记忆用户的外缘 / 正常分隔线调整，遵守同一个 rememberSize 开关；空间限制或 DPI 变化造成的临时宽度不覆盖偏好。
-- `useAttachments.ts` 管理列表焦点、点击激活和原文件动作；`useAttachmentPreview.ts` 管理几何意图与布局订阅；`useAttachmentContent.ts` 管理读取代次、64 MiB 内容缓存及每附件的模式、滚动和图片缩放。收起或切换请求保留各自阅读状态，终态销毁对应上下文。
+- `useAttachments.ts` 管理列表焦点、点击激活和原文件动作；`useAttachmentPreview.ts` 管理几何意图与布局订阅；`useAttachmentContent.ts` 管理读取代次、WebView 共享的 64 MiB / 8,000 万显示像素 / 128 项内容缓存及每附件的模式、滚动和图片缩放。收起或切换请求保留各自阅读状态，终态销毁对应上下文。
 - 提问附件的双击只执行第一次单击的预览切换，忽略后续 click，不打开外部应用；单击立即响应。Markdown 的主按钮依阅读模式选择浏览器快照或原文件，列表回车继续打开原文件。`popup_preview_open_browser` 校验请求 / 索引，`attachment_browser.rs` 重新有界读取、生成快照并按 HTTPS 关联选择默认浏览器；`attachment_html.rs` 与 Quick Look 共用文档样式及 24h 临时目录。菜单动作固定且带请求归属，失败保留明确的原文件入口。规则见 `docs/specs/markdown-browser-open.md`。
 - `attachment_preview.rs` 从显式 request ID 对应的待答附件按索引读取，不接受任意路径；限制字节、文本行数、图片像素与动画帧预算，后台执行并丢弃失效代次。列表缩略图另有读取与缓存预算。Markdown 与普通文本支持 UTF-8、带 BOM 的 UTF-16，无法可靠识别或超限时保留打开和文件管理器定位入口。
+- 附件大图由 `attachment_preview::load_url` 注册到 `local_image.rs` 的窗口 scope，普通格式读原文件、转换格式读有界临时 PNG；前端只收 token 和成本元数据。缓存与当前显示共同管理引用，过期 / 终态 / 窗口关闭撤销，最后引用删除临时 PNG；历史继续保存原路径。列表小缩略图 Base64 保留，详见 `docs/plans/attachment-image-urls.md`。
 - `AttachmentPreviewPanel.vue` 提供单行标题栏、带边框的原文切换、固定右侧操作区。Markdown 使用 `attachment_markdown.rs` 的静态受限片段；diff 使用 `attachment_diff.rs` 的共享解析模型，由 `AttachmentDiffPreview.vue` 虚拟显示行；代码与原文作为文本展示。`AttachmentImagePreview.vue` 保留动画原字节，以实际溢出决定文件拖出或平移查看，SVG 只通过隔离 img 显示。
 - macOS 的 `macos_attachment_preview.rs` / `swift/AttachmentPreview.swift` 经已有 Swift 构建桥复用 Image I/O、PDFKit 与 QuickLookUI。系统图片生成有界 PNG；PDF 后台创建、保存页坐标与缩放；其他系统文档 / 媒体使用嵌入的 `QLPreviewView`，静态文档视图最多两个，媒体切换后卸载。`useNativeAttachmentPreview.ts` 同步正文矩形、遮罩与代次；命令根据请求索引和有界读取许可验证目标，原生焦点快捷键回到 Popup 业务处理。多图系统图片说明数量和完整原文件入口。范围与系统差异见规格 §5.4。
 - 预览能力与 CLI / IM 的 `isImage` 分类分开：新增系统图片可在 Popup 列表显示缩略图，但发送分类沿用原有七种扩展名。ICO / TGA / PNM 只启用现有 image 的轻量 feature，无新增 codec crate；macOS 系统图片能力不承诺在 Windows / Linux 可用。

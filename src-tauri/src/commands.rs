@@ -1424,6 +1424,7 @@ pub fn preview_attachments(
 #[tauri::command]
 pub async fn popup_preview_read(
     window: tauri::Window,
+    webview: tauri::Webview,
     request_id: String,
     index: usize,
     generation: u64,
@@ -1453,15 +1454,32 @@ pub async fn popup_preview_read(
         return Err("stale attachment read".into());
     }
     let read_path = path.clone();
+    let owner = webview.label().to_owned();
+    let registry = window
+        .app_handle()
+        .state::<crate::local_image::Registry>()
+        .inner()
+        .clone();
+    let read_registry = registry.clone();
+    let read_owner = owner.clone();
     let content = tauri::async_runtime::spawn_blocking(move || {
         let _permit = permit;
-        crate::attachment_preview::load(&read_path)
+        crate::attachment_preview::load_url(&read_path, &read_registry, &read_owner)
     })
     .await
     .map_err(|e| e.to_string())?;
-    crate::app::popup_preview::request(&window, &request_id)?;
-    if !epoch.current(&request_id, generation) {
-        return Err("stale attachment read".into());
+    let current = crate::app::popup_preview::request(&window, &request_id);
+    if current.is_err()
+        || !epoch.current(&request_id, generation)
+        || window
+            .app_handle()
+            .get_webview_window(window.label())
+            .is_none()
+    {
+        content.release_image(&registry, &owner);
+        return Err(current
+            .err()
+            .unwrap_or_else(|| "stale attachment read".into()));
     }
     if matches!(content, crate::attachment_preview::Content::Native { .. }) {
         window

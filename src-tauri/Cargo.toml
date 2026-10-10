@@ -48,6 +48,7 @@ dirs = "6"
 # timezone APIs, including Windows DST rules.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 fs2 = "0.4"
+tempfile = "3"
 base64 = "0.22"
 anyhow = "1"
 thiserror = "2"
@@ -93,7 +94,6 @@ tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 [dev-dependencies]
-tempfile = "3"
 tokio = { version = "1", features = ["test-util"] }
 
 # Unix 下用于在进入 GUI 事件循环前静默系统噪音日志（重定向 stderr）。
