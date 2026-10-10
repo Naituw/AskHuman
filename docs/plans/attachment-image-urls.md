@@ -53,5 +53,7 @@ Unix 同时校验目录所有者，跳过符号链接；其他仍运行的进程
 - `./scripts/install.sh` 完成类型检查、production 前端、local-install 二进制、稳定身份签名与
   `/Users/wutian/.local/bin/AskHuman` 安装。安装后版本命令正常，使用新的 AskHuman 附图交付；
   自动验证与探针通过不等同于用户已完成本次视觉验收。
+- 安装后通过 AskHuman 交付 JPEG、动画 WebP 与 ICNS，用户确认「显示正常，保留当前实现」，
+  并授权推送和发布新的 patch 版本。
 - Windows / Linux 沿用既有实机 gate，
   不以 macOS 结果替代；协议依据与复跑脚本见 [Base64 审计](../investigations/base64-usage-audit.md)。
