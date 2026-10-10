@@ -2528,7 +2528,7 @@ async fn handle_gui(token: String, reader: Reader, w: OwnedWriteHalf, state: &Ar
 /// 冷路径由 `handle_gui` 在 token 握手后调用；热路径由 `handle_gui_warm` 在被领用后调用。
 async fn serve_gui(
     entry: Arc<request::RequestEntry>,
-    mut reader: Reader,
+    reader: Reader,
     gui_tx: tokio::sync::mpsc::UnboundedSender<ServerMsg>,
     writer: tokio::task::JoinHandle<()>,
     state: &Arc<ServerState>,
@@ -2618,12 +2618,21 @@ async fn serve_gui(
     // This prevents the next popup from taking focus while the previous window is still closing.
     let dismiss_timeout = tokio::time::sleep(Duration::from_secs(24 * 60 * 60));
     tokio::pin!(dismiss_timeout);
+    let mut reader = ipc::MessageReader::new(reader);
     let mut awaiting_dismissal = false;
     let mut answer_received = false;
     let mut dismissal_received = false;
     loop {
         tokio::select! {
-            msg = ipc::read_msg::<_, ClientMsg>(&mut reader) => {
+            msg = reader.read::<ClientMsg>() => {
+                let reason = match &msg {
+                    Ok(None) => Some("eof".to_owned()),
+                    Err(error) => Some(ipc::error_summary(error)),
+                    _ => None,
+                };
+                if let Some(reason) = reason {
+                    log(&format!("popup disconnected request_id={} reason={reason}", entry.request_id));
+                }
                 match msg {
                     Ok(Some(ClientMsg::PopupReady {
                         request_id,
@@ -2712,7 +2721,7 @@ async fn serve_gui(
 /// synthetic denial. Readiness is accepted only after the frontend reports its first paint.
 async fn serve_confirm_gui(
     entry: Arc<request::ConfirmEntry>,
-    mut reader: Reader,
+    reader: Reader,
     gui_tx: tokio::sync::mpsc::UnboundedSender<ServerMsg>,
     writer: tokio::task::JoinHandle<()>,
     state: &Arc<ServerState>,
@@ -2734,6 +2743,7 @@ async fn serve_confirm_gui(
         }
     }
 
+    let mut reader = ipc::MessageReader::new(reader);
     let mut failed = false;
     let dismiss_timeout = tokio::time::sleep(Duration::from_secs(24 * 60 * 60));
     tokio::pin!(dismiss_timeout);
@@ -2742,7 +2752,15 @@ async fn serve_confirm_gui(
     let mut dismissal_received = false;
     loop {
         tokio::select! {
-            msg = ipc::read_msg::<_, ClientMsg>(&mut reader) => {
+            msg = reader.read::<ClientMsg>() => {
+                let reason = match &msg {
+                    Ok(None) => Some("eof".to_owned()),
+                    Err(error) => Some(ipc::error_summary(error)),
+                    _ => None,
+                };
+                if let Some(reason) = reason {
+                    log(&format!("confirmation popup disconnected request_id={} reason={reason}", entry.request_id));
+                }
                 match msg {
                     Ok(Some(ClientMsg::PopupReady {
                         request_id,

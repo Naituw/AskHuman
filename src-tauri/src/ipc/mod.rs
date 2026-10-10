@@ -8,7 +8,7 @@
 pub mod codec;
 pub mod transport;
 
-pub use codec::{read_msg, write_msg};
+pub use codec::{error_summary, read_msg, write_msg, MessageReader};
 
 use crate::daemon::lifecycle::Fingerprint;
 use crate::models::{

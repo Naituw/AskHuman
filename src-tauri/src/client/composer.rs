@@ -30,9 +30,10 @@ pub async fn open(session_id: &str) -> (String, usize, Vec<crate::models::FileAt
     let label = crate::gui_host::interject_label(session_id);
     close_by_label(&label); // 同窗重开：先关旧连接（daemon 侧 composer 计数配平）。
 
-    let Ok((mut reader, mut writer)) = super::open_for_subscribe().await else {
+    let Ok((reader, mut writer)) = super::open_for_subscribe().await else {
         return (String::new(), 0, Vec::new());
     };
+    let mut reader = ipc::MessageReader::new(reader);
     let register = ClientMsg::InterjectComposer {
         session_id: session_id.to_string(),
     };
@@ -59,28 +60,44 @@ pub async fn open(session_id: &str) -> (String, usize, Vec<crate::models::FileAt
 
     // 常驻任务：把窗口侧消息（提交等）串行写往 daemon；读端仅探测 daemon 断开。
     // 发送端全部 drop（关窗/取消）→ 排空剩余消息后退出 → 连接关闭 = composer 关闭。
-    let (tx, mut rx) = mpsc::unbounded_channel::<ClientMsg>();
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                m = rx.recv() => match m {
-                    Some(msg) => {
-                        if ipc::write_msg(&mut writer, &msg).await.is_err() {
-                            break;
-                        }
+    let (tx, rx) = mpsc::unbounded_channel::<ClientMsg>();
+    tokio::spawn(run_connection(label.clone(), reader, writer, rx));
+    conns().lock().unwrap().insert(label, tx);
+    (text, entries, attachments)
+}
+
+async fn run_connection<R, W>(
+    label: String,
+    mut reader: ipc::MessageReader<R>,
+    mut writer: W,
+    mut rx: mpsc::UnboundedReceiver<ClientMsg>,
+) where
+    R: tokio::io::AsyncBufRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    loop {
+        tokio::select! {
+            m = rx.recv() => match m {
+                Some(msg) => {
+                    if let Err(error) = ipc::write_msg(&mut writer, &msg).await {
+                        eprintln!("[askhuman-ipc] composer {label} write failed: {}", ipc::error_summary(&error));
+                        break;
                     }
-                    None => break,
-                },
-                r = ipc::read_msg::<_, ServerMsg>(&mut reader) => {
-                    if matches!(r, Ok(None) | Err(_)) {
-                        break; // daemon 断开（重启/换新）：提交将走一次性连接兜底。
+                }
+                None => break,
+            },
+            r = reader.read::<ServerMsg>() => {
+                match r {
+                    Ok(Some(_)) => {}
+                    Ok(None) => { eprintln!("[askhuman-ipc] composer {label} disconnected: eof"); break; }
+                    Err(error) => {
+                        eprintln!("[askhuman-ipc] composer {label} disconnected: {}", ipc::error_summary(&error));
+                        break;
                     }
                 }
             }
         }
-    });
-    conns().lock().unwrap().insert(label, tx);
-    (text, entries, attachments)
+    }
 }
 
 /// 提交插话文本与附件（整体覆盖该 session 的待送达队列；两者都为空＝清空，spec D2）。
@@ -125,13 +142,13 @@ pub async fn one_shot(msg: ClientMsg) {
 
 /// 读到下一帧 `InterjectState`（跳过其它帧）；EOF/错误返回 None。
 async fn read_interject_state<R>(
-    reader: &mut R,
+    reader: &mut ipc::MessageReader<R>,
 ) -> Option<(String, usize, Vec<crate::models::FileAttachment>)>
 where
     R: tokio::io::AsyncBufRead + Unpin,
 {
     loop {
-        match ipc::read_msg::<_, ServerMsg>(reader).await {
+        match reader.read::<ServerMsg>().await {
             Ok(Some(ServerMsg::InterjectState {
                 text,
                 entries,
@@ -161,5 +178,80 @@ mod tests {
         conns().lock().unwrap().insert("interject-test".into(), tx);
         close_by_label("interject-test");
         assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn prefill_timeout_keeps_the_partial_response_for_the_connection() {
+        use tokio::io::AsyncWriteExt;
+        let expected = "late prefill".repeat(2048);
+        let message = ServerMsg::InterjectState {
+            text: expected.clone(),
+            entries: 2,
+            attachments: vec![],
+        };
+        let mut bytes = serde_json::to_vec(&message).unwrap();
+        bytes.push(b'\n');
+        let (mut writer, reader) = tokio::io::duplex(8192);
+        let mut reader = ipc::MessageReader::new(tokio::io::BufReader::new(reader));
+        writer.write_all(&bytes[..1024]).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), read_interject_state(&mut reader))
+                .await
+                .is_err()
+        );
+        let tail = tokio::spawn(async move {
+            writer.write_all(&bytes[1024..]).await.unwrap();
+        });
+        let (text, entries, _) = read_interject_state(&mut reader).await.unwrap();
+        assert_eq!(text, expected);
+        assert_eq!(entries, 2);
+        tail.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn outgoing_messages_preserve_an_incoming_partial_frame() {
+        use tokio::io::AsyncWriteExt;
+        let (client, server) = tokio::io::duplex(128);
+        let (read, write) = tokio::io::split(client);
+        let (read_server, mut write_server) = tokio::io::split(server);
+        let mut read_server = ipc::MessageReader::new(tokio::io::BufReader::new(read_server));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let task = tokio::spawn(run_connection(
+            "isolated-test".into(),
+            ipc::MessageReader::new(tokio::io::BufReader::new(read)),
+            write,
+            rx,
+        ));
+        let mut bytes = serde_json::to_vec(&ServerMsg::InterjectState {
+            text: "state".repeat(4096),
+            entries: 1,
+            attachments: vec![],
+        })
+        .unwrap();
+        bytes.push(b'\n');
+        // A tiny duplex buffer makes write_all wait until the reader has consumed the prefix.
+        write_server.write_all(&bytes[..1024]).await.unwrap();
+        for (text, remaining) in [("first", Some(&bytes[1024..])), ("second", None)] {
+            tx.send(ClientMsg::InterjectSubmit {
+                session_id: "test".into(),
+                text: text.into(),
+                attachments: vec![],
+            })
+            .unwrap();
+            let message =
+                tokio::time::timeout(Duration::from_secs(2), read_server.read::<ClientMsg>())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            assert!(
+                matches!(message, ClientMsg::InterjectSubmit { text: received, .. } if received == text)
+            );
+            if let Some(remaining) = remaining {
+                write_server.write_all(remaining).await.unwrap();
+            }
+        }
+        drop(tx);
+        task.await.unwrap();
     }
 }

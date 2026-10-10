@@ -229,12 +229,15 @@ pub(super) fn focus_inbox_request(state: &Arc<ServerState>, id: &str) -> bool {
     true
 }
 
-pub(super) async fn handle_popup_host(
+pub(super) async fn handle_popup_host<R, W>(
     token: String,
-    mut reader: Reader,
-    writer: OwnedWriteHalf,
+    reader: R,
+    writer: W,
     state: &Arc<ServerState>,
-) {
+) where
+    R: tokio::io::AsyncBufRead + Unpin + Send,
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     // An idle/prewarmed GUI must not keep the daemon alive. The callers waiting for their
     // independent requests provide liveness, including while the host is recovering.
     state.active.fetch_sub(1, Ordering::SeqCst);
@@ -254,7 +257,11 @@ pub(super) async fn handle_popup_host(
     let write_task = tokio::spawn(async move {
         let mut writer = writer;
         while let Some(message) = messages.recv().await {
-            if ipc::write_msg(&mut writer, &message).await.is_err() {
+            if let Err(error) = ipc::write_msg(&mut writer, &message).await {
+                log(&format!(
+                    "popup host write failed generation={generation} reason={}",
+                    ipc::error_summary(&error)
+                ));
                 break;
             }
         }
@@ -277,15 +284,19 @@ pub(super) async fn handle_popup_host(
         let _ = tx.send(ServerMsg::FocusPopup { request_id: id });
     }
     let mut retired = false;
+    let mut reader = ipc::MessageReader::new(reader);
     let mut terminals = tokio::time::interval(Duration::from_millis(100));
     terminals.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
+    let reason = loop {
         let message = tokio::select! {
-            message = ipc::read_msg::<_, ClientMsg>(&mut reader) => message,
-            _ = failed.notified() => break,
+            message = reader.read::<ClientMsg>() => match message {
+                Ok(Some(message)) => message,
+                Ok(None) => break "eof".to_owned(),
+                Err(error) => break ipc::error_summary(&error),
+            },
+            _ = failed.notified() => break "writer_stopped".to_owned(),
             _ = terminals.tick() => { prune_inbox(state); continue; },
         };
-        let Ok(Some(message)) = message else { break };
         match message {
             ClientMsg::PopupHostIdle {
                 generation: requested,
@@ -307,7 +318,7 @@ pub(super) async fn handle_popup_host(
                         keep_warm,
                     });
                     if retired {
-                        break;
+                        break "idle_retirement".to_owned();
                     }
                 }
             }
@@ -414,8 +425,17 @@ pub(super) async fn handle_popup_host(
             ClientMsg::PopupFocused { .. } | ClientMsg::PopupDismissed { .. } => {}
             _ => {}
         }
-    }
+    };
     let requests = state.popup_inbox.lock().unwrap().requests();
+    let ids: Vec<_> = requests
+        .iter()
+        .take(8)
+        .map(|request| request.id.as_str())
+        .collect();
+    log(&format!(
+        "popup host disconnected generation={generation} reason={reason} pending={} request_ids={ids:?}",
+        requests.len()
+    ));
     for request in requests {
         detach_entry(&request.value, &tx);
     }
@@ -428,6 +448,9 @@ pub(super) async fn handle_popup_host(
     }
     state.active.fetch_add(1, Ordering::SeqCst);
 }
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(all(test, unix))]
 mod spawn_tests {
