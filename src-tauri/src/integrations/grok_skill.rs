@@ -18,7 +18,8 @@ use std::path::Path;
 /// skill 文件内的托管标记（识别本应用拥有的文件；用户不应手改）。
 pub const SKILL_MARK: &str = "<!-- AskHuman managed skill: DO NOT EDIT (managed by AskHuman) -->";
 
-/// skill 的 YAML frontmatter（`name` + `description`）。
+/// Skill YAML frontmatter. Cursor filters the Grok-only surface before advertising the skill;
+/// Grok accepts string-valued metadata without changing its own skill discovery.
 ///
 /// **定位（本轮重构）**：把 skill 从「需要提问时才加载的 AskHuman 技能」重定位为「**无条件必读的交互
 /// 协议**」。原因：Grok skill 属懒加载 + 相关性门控，而「向人提问」这个动作对模型是内建行为、不存在能力
@@ -32,6 +33,8 @@ pub const SKILL_MARK: &str = "<!-- AskHuman managed skill: DO NOT EDIT (managed 
 fn frontmatter() -> String {
     "---\n\
 name: interaction-protocol\n\
+metadata:\n  \
+surfaces: grok\n\
 description: >-\n  \
 Mandatory interaction protocol for this environment. You MUST read this skill FIRST in EVERY\n  \
 session, before doing anything else — unconditionally, for every task and topic, even if it seems\n  \

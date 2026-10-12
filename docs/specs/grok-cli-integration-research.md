@@ -266,6 +266,41 @@ user-rules 接口。
 
 结论：Grok 0.2.82 **无任何 hook 通道能把内容注入模型上下文**；always-on 仅剩 §4.3/§4.4 的 rules 级入口。
 
+### 6.5 宿主隔离（2026-10-13）：避免 Cursor 误加载 Grok 的 MCP 协议
+
+Cursor 3.24.12 启用第三方扩展兼容时，会扫描用户及项目的 `.grok/skills/`。真实 Cursor 会话
+`a2a346c7-a679-412f-99eb-bcf82b451f68` 首先读取了本 Skill，随后在 Cursor CLI 集成下反复搜索
+并不存在的 AskHuman MCP 工具，最终才改用本地 CLI。这是不同宿主之间的协议交叉加载，与所选
+模型是否为 Grok 无关。
+
+受管 Skill 的 frontmatter 增加字符串元数据：
+
+```yaml
+metadata:
+  surfaces: grok
+```
+
+Cursor 当前加载器接受字符串或数组形式的 `metadata.surfaces`，在加入 Rule 和 Skill 清单前
+过滤不匹配当前 `ide` / `cli` surface 的文件。Grok 1.0.50 将 metadata 作为普通元数据；隔离
+`GROK_HOME` 下的 `grok inspect --json` 已确认增加该字段后仍能发现 `interaction-protocol`。
+使用字符串符合 Grok 文档的 metadata 字段格式，不增加依赖或关闭任何宿主的第三方兼容开关。
+
+只增加元数据，description 与协议正文保持原样，不添加宿主说明。旧受管 Skill 沿用内容比较
+显示需更新，更新后写入新 frontmatter。已读入旧协议的会话上下文不会被撤回，验收使用新会话。
+该过滤依赖 Cursor 当前实现，升级后须复核其 surface 判断；静态加载验证与 Grok inspect 不
+替代真实模型会话验收。本轮不发起付费模型请求。
+
+安装验证：两个既有 Grok Skill / 共享协议测试通过，Rust 格式及 diff 检查通过；已运行
+`./scripts/install.sh` 并通过新安装的 `AskHuman agents update grok` 更新本机 Skill。
+更新前后逐字节比较确认只有上述元数据新增，description 与正文不变；使用 Cursor 安装包的
+实际 surface 过滤函数验证 `ide` / `cli` 均排除该 Skill，Grok inspect 仍返回原生 Skill 及
+相同 description。其它 Cursor / Grok 配置文件已核对内容哈希一致，模式仍为 Cursor CLI、Grok MCP。
+
+反向核对：本机 Grok 1.0.50 的 `inspect` 仍只发现原生 Grok 的 AskHuman Skill，当前 Cursor 的
+`~/.cursor/rules/askhuman.mdc` 未进入其指令清单。这不代表所有 Cursor 兼容规则都被隔离：
+Grok 仍默认扫描 Cursor skills 和 `*.md` 规则。将来迁移 Cursor 规则载体时，仍需按
+`docs/investigations/cursor-global-rule-user-skill.md` 单独验证反向兼容性。
+
 ## 7. MCP 在两种 harness 下的差异
 
 两种模型最终都通过 Grok 的 MCP client manager 调用 server，但暴露给模型的工具界面不同。
