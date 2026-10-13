@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ReadingState } from "./useAttachmentContent";
-const props = defineProps<{ url: string; width: number; height: number; name: string; state: ReadingState['image'] }>();
+const props = withDefaults(defineProps<{ url: string; width: number; height: number; name: string; state: ReadingState['image']; draggable?: boolean }>(), { draggable: true });
 const emit = defineEmits<{ drag: [event: DragEvent]; error: [] }>();
 const { t } = useI18n();
 const viewport = ref<HTMLElement | null>(null);
@@ -41,7 +41,7 @@ function pan(event: PointerEvent) {
   const end = () => { panning.value = false; target.removeEventListener("pointermove", move); target.removeEventListener("lostpointercapture", end); };
   target.addEventListener("pointermove", move); target.addEventListener("lostpointercapture", end);
 }
-function drag(event: DragEvent) { if (overflowing.value || panning.value) event.preventDefault(); else emit("drag", event); }
+function drag(event: DragEvent) { if (!props.draggable || overflowing.value || panning.value) event.preventDefault(); else emit("drag", event); }
 onMounted(() => {
   const el = viewport.value; if (!el) return;
   observer = new ResizeObserver(() => { box.value = { width: el.clientWidth, height: el.clientHeight }; void measure(); });
@@ -60,7 +60,7 @@ onBeforeUnmount(() => { saveScroll(); observer?.disconnect(); });
     </div>
     <div ref="viewport" class="attachment-image-viewport" tabindex="0" @scroll.passive="saveScroll">
       <div class="attachment-image-stage" data-tauri-drag-region :style="{ minWidth: `${width * factor + 32}px`, minHeight: `${height * factor + 32}px` }">
-        <img :src="url" :alt="name" :style="imageStyle" :draggable="!overflowing && !panning" :class="{ pannable: overflowing, panning }"
+        <img :src="url" :alt="name" :style="imageStyle" :draggable="draggable && !overflowing && !panning" :class="{ pannable: overflowing, panning }"
           @pointerdown="pan" @dragstart="drag" @load="measure(true)" @error="emit('error')" />
       </div>
     </div>

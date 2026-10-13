@@ -11,8 +11,8 @@ import AttachmentMarkdownContent from "../../components/AttachmentMarkdownConten
 import FindBar from "./FindBar.vue";
 import { useAttachmentFind } from "./useAttachmentFind";
 const { t } = useI18n();
-const { previewFile, previewIndex, attachments, showPreview, stopPreview, openFile, openPreviewFile, primaryBrowser, browserOpening, browserActionError, browserErrorIndex, showPreviewMenu, revealFile,
-  popupActive, previewContent, previewLoading, currentReadingState, onAttachmentDragStart, previewActionError, request, nativePreviewBlocked, previewTransition, previewLayout, submitWithBareEnter, registerNativePreviewSync,
+const { previewFile, previewIndex, previewName, previewCount, previewKey, isReplyPreview, showPreview, stopPreview, openFile, openPreviewFile, primaryBrowser, browserOpening, browserActionError, browserErrorIndex, showPreviewMenu, revealFile,
+  popupActive, panelContent: previewContent, panelLoading: previewLoading, panelReadingState: currentReadingState, onAttachmentDragStart, previewActionError, request, nativePreviewBlocked, previewTransition, previewLayout, submitWithBareEnter, registerNativePreviewSync,
   findActive, findScope, openFind, refreshFind, registerAttachmentFind } = usePopupContext();
 const nativeBody = ref<HTMLElement | null>(null);
 const { nativeFailed, syncNativePreview } = useNativeAttachmentPreview({
@@ -53,12 +53,12 @@ const { adapter, diffQuery, diffCaseSensitive, diffCurrent } = useAttachmentFind
 registerAttachmentFind(adapter);
 onBeforeUnmount(() => registerAttachmentFind(null));
 // Save before changing the active index; the renderer is mounted only for the current file.
-watch(previewIndex, (_, old) => {
-  if (old !== null && body.value) {
+watch([previewIndex, isReplyPreview], (_, [old, wasReply]) => {
+  if (!wasReply && old !== null && body.value) {
     const state = ctxState(old); state.scroll[state.raw ? "raw" : "preview"] = { top: body.value.scrollTop, left: body.value.scrollLeft };
   }
-  imageFailed.value = false; actionError.value = false;
 }, { flush: "sync" });
+watch(previewKey, () => { imageFailed.value = false; actionError.value = false; }, { flush: "sync" });
 const { readingState: ctxState } = usePopupContext();
 watch(previewContent, () => { if (popupActive.value) void restoreScroll(); }, { flush: "post" });
 watch(popupActive, value => { if (value) void restoreScroll(); else saveScroll(); }, { flush: "sync" });
@@ -79,37 +79,37 @@ function markdownClick(event: MouseEvent) {
     <!-- Explicit regions preserve the pointer behavior of controls and preview content. -->
     <header class="attachment-preview-toolbar" data-tauri-drag-region>
       <span class="attachment-preview-title" data-tauri-drag-region>
-        <span class="attachment-preview-name" :title="previewFile?.name" data-tauri-drag-region>{{ previewFile?.name }}</span>
+        <span class="attachment-preview-name" :title="previewName || t('popup.replyImage')" data-tauri-drag-region>{{ previewName || t('popup.replyImage') }}</span>
         <span class="attachment-preview-mode-slot" data-tauri-drag-region>
           <button v-if="canToggle" type="button" class="attachment-preview-mode" @click="toggleRaw">{{ t(raw ? 'popup.preview.rendered' : 'popup.preview.raw') }}</button>
         </span>
       </span>
       <div class="attachment-preview-actions" data-tauri-drag-region>
-        <span class="attachment-preview-count" data-tauri-drag-region>{{ (previewIndex ?? 0) + 1 }} / {{ attachments.length }}</span>
+        <span class="attachment-preview-count" data-tauri-drag-region>{{ (previewIndex ?? 0) + 1 }} / {{ previewCount }}</span>
         <button type="button" :disabled="previewIndex === 0" :aria-label="t('popup.prev')" @click="showPreview((previewIndex ?? 0) - 1)">‹</button>
-        <button type="button" :disabled="previewIndex === attachments.length - 1" :aria-label="t('popup.next')" @click="showPreview((previewIndex ?? 0) + 1)">›</button>
-        <button type="button" class="attachment-preview-find" :title="t('popup.find.attachmentShortcut')" :aria-label="t('popup.find.attachmentShortcut')" @click="openFind(true, 'attachment')">
+        <button type="button" :disabled="previewIndex === previewCount - 1" :aria-label="t('popup.next')" @click="showPreview((previewIndex ?? 0) + 1)">›</button>
+        <button v-if="!isReplyPreview" type="button" class="attachment-preview-find" :title="t('popup.find.attachmentShortcut')" :aria-label="t('popup.find.attachmentShortcut')" @click="openFind(true, 'attachment')">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/></svg>
         </button>
-        <button type="button" class="attachment-preview-open" :disabled="previewLoading || (primaryBrowser && browserOpening)" :aria-busy="primaryBrowser && browserOpening" @click="openPreviewFile()">{{ t(primaryBrowser ? 'popup.preview.openBrowser' : 'popup.preview.open') }}</button>
-        <button type="button" :aria-label="t('popup.preview.more')" @click="showPreviewMenu()">⋯</button>
+        <button v-if="!isReplyPreview" type="button" class="attachment-preview-open" :disabled="previewLoading || (primaryBrowser && browserOpening)" :aria-busy="primaryBrowser && browserOpening" @click="openPreviewFile()">{{ t(primaryBrowser ? 'popup.preview.openBrowser' : 'popup.preview.open') }}</button>
+        <button v-if="!isReplyPreview" type="button" :aria-label="t('popup.preview.more')" @click="showPreviewMenu()">⋯</button>
         <button type="button" :aria-label="t('popup.preview.close')" @click="stopPreview()">×</button>
       </div>
     </header>
     <FindBar v-if="findActive && findScope === 'attachment'" />
     <p v-if="previewActionError" class="attachment-preview-notice" role="alert">{{ t('popup.preview.actionFailed') }}</p>
-    <p v-if="browserActionError && browserErrorIndex === previewIndex" class="attachment-preview-notice" role="alert">{{ t(`popup.preview.${browserActionError}`) }} <button type="button" @click="previewFile && openFile(previewFile)">{{ t('popup.preview.openOriginal') }}</button></p>
+    <p v-if="!isReplyPreview && browserActionError && browserErrorIndex === previewIndex" class="attachment-preview-notice" role="alert">{{ t(`popup.preview.${browserActionError}`) }} <button type="button" @click="previewFile && openFile(previewFile)">{{ t('popup.preview.openOriginal') }}</button></p>
     <div v-if="previewLoading" class="attachment-preview-status" role="status" data-tauri-drag-region>{{ t('common.loading') }}</div>
     <div v-else-if="reason" class="attachment-preview-status" role="status" data-tauri-drag-region>
-      <strong>{{ previewFile?.name }}</strong><p>{{ t(`popup.preview.${reason}`) }}</p>
-      <div class="attachment-preview-file-actions" data-tauri-drag-region>
+      <strong>{{ previewName || t('popup.replyImage') }}</strong><p>{{ t(`popup.preview.${reason}`) }}</p>
+      <div v-if="!isReplyPreview" class="attachment-preview-file-actions" data-tauri-drag-region>
         <button type="button" @click="previewFile && openFile(previewFile)">{{ t('popup.preview.open') }}</button>
         <button type="button" @click="reveal()">{{ t(`popup.preview.reveal.${desktopPlatform}`) }}</button>
       </div>
       <p v-if="actionError" role="alert">{{ t('popup.preview.actionFailed') }}</p>
     </div>
-    <AttachmentImagePreview v-else-if="previewContent?.kind === 'image' && currentReadingState" :key="previewIndex ?? 0"
-      v-bind="previewContent" :name="previewFile?.name ?? ''" :state="currentReadingState.image"
+    <AttachmentImagePreview v-else-if="previewContent?.kind === 'image' && currentReadingState" :key="previewKey"
+      v-bind="previewContent" :name="previewName || t('popup.replyImage')" :state="currentReadingState.image" :draggable="!isReplyPreview"
       @drag="previewFile && onAttachmentDragStart(previewFile, $event)" @error="imageFailed = true" />
     <template v-else-if="previewContent?.kind === 'native'">
       <p v-if="previewContent.imageCount" class="attachment-preview-notice">{{ t('popup.preview.multipleImages', { n: previewContent.imageCount }) }}</p>

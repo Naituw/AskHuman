@@ -230,6 +230,20 @@
   object-fit: cover;
   display: block;
 }
+.thumb.previewable.selected,
+.thumb.previewable:focus-within {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.thumb-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: default;
+  outline: none;
+}
 .thumb .remove {
   position: absolute;
   top: 2px;

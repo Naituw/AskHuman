@@ -69,6 +69,7 @@ export default {
     attachments: "Attachments · {n}",
     inputPlaceholder: "Type your reply…",
     addImage: "Add image",
+    replyImage: "Reply image",
     composer: {
       dockedLabel: "Pinned answer editor",
       returnToQuestion: "Return to the editor's question",

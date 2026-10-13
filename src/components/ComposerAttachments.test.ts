@@ -4,6 +4,25 @@ import { i18n } from "../i18n";
 import ComposerAttachments from "./ComposerAttachments.vue";
 
 describe("ComposerAttachments", () => {
+  it("offers an accessible preview button only when enabled and keeps removal separate", async () => {
+    const wrapper = mount(ComposerAttachments, {
+      props: { images: [{ data: "data:image/png;base64,cG5n", filename: "capture.png" }], files: [] },
+      global: { plugins: [i18n] },
+    });
+    expect(wrapper.find(".thumb-preview").exists()).toBe(false);
+    await wrapper.setProps({ previewable: true, selectedImage: 0, questionIndex: 2 });
+    const button = wrapper.get(".thumb-preview");
+    expect(button.attributes("aria-label")).toContain("capture.png");
+    expect(button.attributes("aria-pressed")).toBe("true");
+    expect(button.attributes("data-question-index")).toBe("2");
+    expect(wrapper.get(".thumb").classes()).toContain("selected");
+    await button.trigger("click");
+    expect(wrapper.emitted("previewImage")?.[0][0]).toBe(0);
+    await wrapper.get(".remove").trigger("click");
+    expect(wrapper.emitted("removeImage")).toEqual([[0]]);
+    expect(wrapper.emitted("previewImage")).toHaveLength(1);
+    wrapper.unmount();
+  });
   it("shares thumbnail and file-chip removal behavior across composers", async () => {
     const wrapper = mount(ComposerAttachments, {
       props: {

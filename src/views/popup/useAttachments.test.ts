@@ -3,7 +3,7 @@ import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import en from "../../i18n/en";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { FileAttachment } from "../../lib/types";
+import type { FileAttachment, ImageAttachment } from "../../lib/types";
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(async (_command: string, args: { open: boolean; version: number }) => ({
     revision: args.version, side: args.open ? "right" : "closed", mainWidth: 560, mainHeight: 620,
@@ -25,14 +25,14 @@ import { useAttachments } from "./useAttachments";
 import MessageSection from "./MessageSection.vue";
 import { PopupCtxKey, type PopupContext } from "./context";
 const files: FileAttachment[] = [0, 1, 2].map(i => ({ path: `/tmp/${i}.patch`, name: `${i}.patch`, size: 128, isImage: false }));
-function setup(attachments = files) {
+function setup(attachments = files, replyImages = ref<ImageAttachment[][]>([])) {
   const requestId = ref("request-1");
-  const state = useAttachments({ attachments: computed(() => attachments), requestId: computed(() => requestId.value) });
+  const state = useAttachments({ attachments: computed(() => attachments), requestId: computed(() => requestId.value), replyImages });
   const elements = files.map((_, i) => {
     const el = document.createElement("div"); el.className = "attachment"; el.tabIndex = 0;
     el.dataset.attachmentIndex = String(i); document.body.appendChild(el); state.setAttRef(el, i); return el;
   });
-  return { state, elements, requestId };
+  return { state, elements, requestId, replyImages };
 }
 function key(el: HTMLElement, value: string, extra: KeyboardEventInit = {}) {
   const event = new KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true, ...extra });
@@ -43,6 +43,71 @@ describe("same-window attachment activation", () => {
   beforeEach(() => {
     vi.clearAllMocks(); mocks.listeners.clear(); document.body.replaceChildren();
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+  });
+  it("shares one expanded panel while keeping question and reply navigation separate", async () => {
+    const replies = ref([[0, 1].map(i => ({ data: `data:image/png;base64,${i}`, mediaType: "image/png", filename: `${i}.png` })),
+      [{ data: "data:image/png;base64,other", mediaType: "image/png", filename: "other.png" }]]);
+    const { state } = setup(files, replies);
+    state.showPreview(2); await settle();
+    state.selectReplyImage(0, 0); await settle();
+    expect(state.selectedFile.value).toBeNull();
+    expect(state.previewCount.value).toBe(2);
+    expect(state.previewName.value).toBe("0.png");
+    state.showPreview(1); state.showPreview(2);
+    expect(state.previewIndex.value).toBe(1);
+    expect(state.previewName.value).toBe("1.png");
+    state.selectReplyImage(1, 0);
+    expect(state.previewCount.value).toBe(1);
+    expect(state.previewName.value).toBe("other.png");
+    state.selectFile(0); await settle();
+    expect(state.isReplyPreview.value).toBe(false);
+    expect(state.selectedFile.value).toBe(0);
+    expect(state.previewCount.value).toBe(3);
+    expect(mocks.invoke.mock.calls.filter(([cmd]) => cmd === "popup_preview_layout")).toHaveLength(1);
+    expect(mocks.openPath).not.toHaveBeenCalled();
+    state.disposeAttachments();
+  });
+  it("tracks the selected reply by identity, chooses a neighbor on deletion and closes after the last image", async () => {
+    const replies = ref([[0, 1, 2].map(i => ({ data: `${i}`, mediaType: "image/png", filename: `${i}.png` }))]);
+    const { state } = setup([], replies);
+    state.selectReplyImage(0, 1); await settle();
+    replies.value[0].splice(0, 1);
+    expect(state.previewIndex.value).toBe(0); expect(state.previewName.value).toBe("1.png");
+    replies.value[0].splice(0, 1);
+    expect(state.previewIndex.value).toBe(0); expect(state.previewName.value).toBe("2.png");
+    replies.value[0].splice(0, 1); await settle();
+    expect(state.previewOpen.value).toBe(false); expect(state.selectedReplyImage.value).toBeNull();
+    expect(mocks.invoke).toHaveBeenLastCalledWith("popup_preview_layout", expect.objectContaining({ open: false }));
+    state.disposeAttachments();
+  });
+  it("handles reply toolbar arrows and Escape, ignores repeated clicks, and does not reopen a closed preview on deletion", async () => {
+    const replies = ref([[0, 1].map(i => ({ data: `${i}`, mediaType: "image/png" }))]);
+    const { state } = setup([], replies);
+    state.selectReplyImage(0, 0, new MouseEvent("click", { detail: 1 }));
+    state.selectReplyImage(0, 0, new MouseEvent("click", { detail: 2 }));
+    expect(state.previewOpen.value).toBe(true);
+    const toolbar = document.createElement("div"); toolbar.className = "attachment-preview-toolbar";
+    expect(state.handleAttachmentKey(key(toolbar, "ArrowRight"))).toBe(true);
+    expect(state.selectedReplyImage.value).toBe(1);
+    const thumb = document.createElement("button"); thumb.className = "thumb-preview";
+    thumb.dataset.questionIndex = "0"; thumb.dataset.imageIndex = "1";
+    expect(state.handleAttachmentKey(key(thumb, "ArrowLeft"))).toBe(true);
+    expect(state.selectedReplyImage.value).toBe(0);
+    expect(state.handleAttachmentKey(key(toolbar, "Escape"))).toBe(true);
+    replies.value[0].splice(0, 1);
+    expect(state.previewOpen.value).toBe(false);
+    state.selectReplyImage(0, 0);
+    expect(state.previewOpen.value).toBe(true);
+    state.disposeAttachments();
+  });
+  it("routes a question menu preview back from replies and clears reply selection for a new request", async () => {
+    const { state, requestId } = setup(files, ref([[{ data: "png", mediaType: "image/png" }]]));
+    await state.initAttachmentPreviewListeners(); state.selectReplyImage(0, 0);
+    mocks.listeners.get("popup-preview-show")!({ payload: { requestId: "request-1", index: 2 } });
+    expect(state.selectedFile.value).toBe(2); expect(state.isReplyPreview.value).toBe(false);
+    state.selectReplyImage(0, 0); requestId.value = "request-2";
+    expect(state.previewOpen.value).toBe(false); expect(state.selectedReplyImage.value).toBeNull();
+    state.disposeAttachments();
   });
   it("expands once while switching files, then toggles closed without opening an external app", async () => {
     const { state } = setup(); state.selectFile(0); await settle();

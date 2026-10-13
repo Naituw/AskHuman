@@ -14,9 +14,13 @@ defineProps<{
     name: string;
     available?: boolean;
   }>;
+  previewable?: boolean;
+  selectedImage?: number | null;
+  questionIndex?: number;
 }>();
 
 const emit = defineEmits<{
+  previewImage: [index: number, event: MouseEvent];
   removeImage: [index: number];
   imageError: [index: number, event: Event];
   removeFile: [index: number];
@@ -36,9 +40,16 @@ function setImageContainerRef(element: unknown): void {
         v-for="(image, index) in images"
         :key="image.key ?? index"
         class="thumb"
+        :class="{ previewable, selected: previewable && selectedImage === index }"
         :title="image.filename ?? undefined"
       >
-        <img :src="image.data" alt="" :loading="image.lazy ? 'lazy' : undefined" decoding="async" @error="emit('imageError', index, $event)" />
+        <button v-if="previewable" class="thumb-preview" type="button"
+          :data-question-index="questionIndex" :data-image-index="index"
+          :aria-label="`${t('popup.preview.title')}: ${image.filename || t('popup.replyImage')}`"
+          :aria-pressed="selectedImage === index" @click="emit('previewImage', index, $event)">
+          <img :src="image.data" alt="" decoding="async" draggable="false" @error="emit('imageError', index, $event)" />
+        </button>
+        <img v-else :src="image.data" alt="" :loading="image.lazy ? 'lazy' : undefined" decoding="async" @error="emit('imageError', index, $event)" />
         <button
           class="remove"
           type="button"

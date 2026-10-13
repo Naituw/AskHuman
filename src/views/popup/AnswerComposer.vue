@@ -42,6 +42,9 @@ const {
   focusQuestionAction,
   pickFiles,
   removeImage,
+  selectReplyImage,
+  selectedReplyImage,
+  replyPreviewQuestion,
   removeReplyFile,
 } = usePopupContext();
 
@@ -159,6 +162,10 @@ function handlePickFiles() {
         <ComposerAttachments
           :images="imagesByQ[qIndex] ?? []"
           :files="replyFilesByQ[qIndex] ?? []"
+          previewable
+          :question-index="qIndex"
+          :selected-image="replyPreviewQuestion === qIndex ? selectedReplyImage : null"
+          @preview-image="(index, event) => selectReplyImage(qIndex, index, event)"
           @remove-image="removeImage(qIndex, $event)"
           @remove-file="removeReplyFile(qIndex, $event)"
           @image-container-ref="setThumbsRef($event, qIndex)"

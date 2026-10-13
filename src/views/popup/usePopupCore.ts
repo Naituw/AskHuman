@@ -989,7 +989,8 @@ export function usePopupCore(scope?: PopupScope) {
   );
 
   // ===== 子域接线：附件 / 自更新 =====
-  const attach = useAttachments({ attachments, requestId: computed(() => request.value?.id ?? ""), active: popupActive, layout: scope?.preview });
+  const attach = useAttachments({ attachments, requestId: computed(() => request.value?.id ?? ""), active: popupActive, layout: scope?.preview, replyImages: imagesByQ,
+    replyImageElement: (q, i) => thumbsRefs.value[q]?.querySelector<HTMLElement>(`.thumb-preview[data-image-index="${i}"]`) ?? null });
   const update = useUpdateState({ codeCopyLabels });
 
   // 托盘「待答」子菜单点击本弹窗时，边框闪烁一次（accent 蓝脉冲）。
@@ -2011,7 +2012,7 @@ export function usePopupCore(scope?: PopupScope) {
       return;
     }
     if (e.key === "Escape" && attach.handleAttachmentKey(e)) return;
-    if (e.key === "Enter" && (e.target as Element | null)?.closest(".attachment, .attachment-preview button, .attachment-preview a")) {
+    if (e.key === "Enter" && (e.target as Element | null)?.closest(".attachment, .thumb-preview, .thumb .remove, .attachment-preview button, .attachment-preview a")) {
       if (attach.handleAttachmentKey(e)) return;
       if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) return;
     }
