@@ -315,7 +315,8 @@ fn build_task(
         select_only: false,
         single: true,
         output_format: OutputFormat::Json,
-        record_history: false,
+        record_history: true,
+        stop_confirmation: true,
         agent_kind: Some(kind.as_str().to_string()),
         agent_session_id: Some(session_id.to_string()),
         mcp_instance_id: None,
@@ -701,7 +702,7 @@ mod tests {
     }
 
     #[test]
-    fn internal_task_is_single_free_text_and_skips_history() {
+    fn internal_task_records_history_without_losing_stop_identity() {
         let task = build_task(
             AgentKind::Codex,
             "s1",
@@ -713,7 +714,10 @@ mod tests {
         );
         assert!(task.single);
         assert!(!task.select_only);
-        assert!(!task.record_history);
+        assert!(task.record_history);
+        assert_eq!(task.popup_kind(), crate::ipc::PopupRequestKind::Stop);
+        assert_eq!(task.agent_kind.as_deref(), Some("codex"));
+        assert_eq!(task.agent_session_id.as_deref(), Some("s1"));
         assert_eq!(task.output_format, OutputFormat::Json);
         assert_eq!(task.questions[0].predefined_options.len(), 2);
         assert_eq!(task.message.text, "done");

@@ -107,6 +107,7 @@ fn prepare(sid: &str, s: &Session, r: &Value) -> Option<ClientMsg> {
                 single: true,
                 output_format: OutputFormat::Json,
                 record_history: true,
+                stop_confirmation: false,
                 agent_kind: Some("codex".into()),
                 agent_session_id: Some(sid.into()),
                 mcp_instance_id: None,

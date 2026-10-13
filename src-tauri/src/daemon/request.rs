@@ -418,6 +418,7 @@ impl RequestRegistry {
         // 收敛键一并算好存下，后续合流查找不必重算（spec duplicate-ask-coalescing D1/D2）。
         let session_key = super::ask_dedup::session_key(&task);
         let fingerprint = super::ask_dedup::fingerprint(&task);
+        let popup_kind = task.popup_kind();
 
         // Daemon 分配权威 request_id（用于临时目录）。
         let mut request = AskRequest::new(task.message, task.questions, task.is_markdown);
@@ -453,11 +454,7 @@ impl RequestRegistry {
         let show = ShowPayload {
             request_id: request_id.clone(),
             sequence: 0,
-            kind: if task.record_history {
-                crate::ipc::PopupRequestKind::Ask
-            } else {
-                crate::ipc::PopupRequestKind::Stop
-            },
+            kind: popup_kind,
             interaction: InteractionRequest::Ask(request),
             popup_edit: None,
             source: task.source,
@@ -1049,6 +1046,22 @@ mod tests {
             "agentSessionId": session,
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn stop_popup_identity_survives_history_recording_and_legacy_clients() {
+        for (stop_confirmation, record_history, expected) in [
+            (false, true, crate::ipc::PopupRequestKind::Ask),
+            (true, true, crate::ipc::PopupRequestKind::Stop),
+            (false, false, crate::ipc::PopupRequestKind::Stop),
+        ] {
+            let mut task = ask_task(Some("s1"), "continue?");
+            task.stop_confirmation = stop_confirmation;
+            task.record_history = record_history;
+            let registry = RequestRegistry::new();
+            let (entry, _rx) = registry.create(task, None);
+            assert_eq!(entry.show.kind, expected);
+        }
     }
 
     #[test]

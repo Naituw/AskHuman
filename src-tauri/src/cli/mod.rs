@@ -481,6 +481,7 @@ pub fn dispatch() {
                     single: parsed.single,
                     output_format: parsed.output_format,
                     record_history: true,
+                    stop_confirmation: false,
                     agent_kind: context.agent_kind,
                     agent_session_id: context.agent_session_id,
                     mcp_instance_id: context.mcp_instance_id,

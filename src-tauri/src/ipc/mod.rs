@@ -128,10 +128,13 @@ pub struct TaskRequest {
     /// 结果输出格式（全局）。
     #[serde(default)]
     pub output_format: OutputFormat,
-    /// Whether to record this request in ordinary reply history. Stop confirmation disables it.
+    /// Whether to record this request in ordinary reply history.
     /// Missing fields from older clients default to true for compatibility.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub record_history: bool,
+    /// Stop confirmation identity is independent of reply-history recording.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stop_confirmation: bool,
     /// 调用方 Agent 家族（"claude"/"codex"/"cursor"）——CLI 经 env 探测后顺带上送（生命周期追踪，spec D21）。
     /// 旧 CLI 不带 → None；daemon 据此刷新对应 session 的「最近活动 + TTL」，仅刷新已追踪 session。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -168,6 +171,17 @@ pub struct TaskRequest {
     /// 结果渲染为一段纯文本。旧 CLI 不带 → false（普通提问，行为不变）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub whats_next: bool,
+}
+
+impl TaskRequest {
+    pub fn popup_kind(&self) -> PopupRequestKind {
+        // Older Stop-hook clients identify their requests only by disabling history.
+        if self.stop_confirmation || !self.record_history {
+            PopupRequestKind::Stop
+        } else {
+            PopupRequestKind::Ask
+        }
+    }
 }
 
 /// Hidden PermissionRequest hook → daemon confirmation task. The daemon owns request ids and
@@ -837,10 +851,13 @@ mod tests {
         }"#;
         let legacy: TaskRequest = serde_json::from_str(legacy).unwrap();
         assert!(legacy.record_history);
+        assert!(!legacy.stop_confirmation);
+        assert_eq!(legacy.popup_kind(), PopupRequestKind::Ask);
         assert!(legacy.agent_session_id.is_none());
         assert!(legacy.mcp_instance_id.is_none());
         let serialized = serde_json::to_string(&legacy).unwrap();
         assert!(!serialized.contains("recordHistory"));
+        assert!(!serialized.contains("stopConfirmation"));
         assert!(!serialized.contains("agentSessionId"));
         assert!(!serialized.contains("mcpInstanceId"));
 
@@ -849,9 +866,18 @@ mod tests {
         value["recordHistory"] = serde_json::Value::Bool(false);
         let internal: TaskRequest = serde_json::from_value(value).unwrap();
         assert!(!internal.record_history);
+        assert_eq!(internal.popup_kind(), PopupRequestKind::Stop);
         assert!(serde_json::to_string(&internal)
             .unwrap()
             .contains(r#""recordHistory":false"#));
+
+        let mut recorded_stop = legacy;
+        recorded_stop.stop_confirmation = true;
+        let serialized = serde_json::to_string(&recorded_stop).unwrap();
+        assert!(serialized.contains(r#""stopConfirmation":true"#));
+        let recorded_stop: TaskRequest = serde_json::from_str(&serialized).unwrap();
+        assert!(recorded_stop.record_history);
+        assert_eq!(recorded_stop.popup_kind(), PopupRequestKind::Stop);
 
         let mut value = serde_json::to_value(internal).unwrap();
         value["agentSessionId"] = serde_json::json!("session-1");

@@ -82,7 +82,7 @@
   - `end` / “结束对话”：Destructive，同时作为 dismiss action。
 - 用户自由输入后续指令时，各 IM 应自动选中“继续对话”，不得沿用 Permission 的“预选拒绝”。
 - 终态展示沿用普通 Ask 的既有回答/取消样式和所选项状态，不新增“允许 / 拒绝”或 Stop 专属终态协议。
-- 卡片与交互直接复用普通 Ask 单选流程，不复用 Permission Confirm；Stop 确认不写入普通回复历史。
+- 卡片与交互直接复用普通 Ask 单选流程，不复用 Permission Confirm；Stop 确认与普通问答一样写入回复历史，保存卡片实际显示的正文（沿用 2,000 字符截断）、问题、选项、实际作答和项目/会话/渠道信息，遵循已有容量、搜索与删除规则。已提交记录参与 `show_last`，取消记录仍只在历史窗口展示。
 - 自由文字与选项的结果映射：
   - 选择“继续”时保留可选文字并继续；
   - 只输入文字、未选择选项时视为继续，文字即后续指令；
@@ -207,8 +207,9 @@ watch 并集、渠道扰动、取消及现有卡片终态，不新增 Stop 专�
 
 - 从现有 `client::run_ask_async` 抽出可返回 Final stdout/exit code、而非打印后直接退出的 capture 入口；
 - Stop Hook 用 JSON 输出调用普通 Ask，解析结果后再生成 Claude/Codex/Cursor 的 Hook stdout；
-- 为内部请求增加默认兼容为 `true` 的 `record_history`（或等价）标志，Stop 确认置 `false`，
-  协调器仍完成抢答/收尾但跳过 `history::record`；普通 CLI/MCP Ask 行为不变；
+- Stop 请求设置 `record_history=true`，复用协调器的历史写入；独立的 `stop_confirmation=true`
+  维持 Popup 的 Stop 类型，并纳入去重指纹，避免与同文普通 Ask 合流/重放。旧客户端缺少新字段时，
+  仍兼容以 `record_history=false` 识别 Stop；普通 CLI/MCP Ask 默认值与历史行为不变；
 - capture 入口施加 24 小时客户端 deadline；超时 drop 连接触发现有 daemon EOF 取消，随后 Hook fail-open。
 
 结果映射必须是纯函数并完整测试：
@@ -262,7 +263,8 @@ watch 并集、渠道扰动、取消及现有卡片终态，不新增 Stop 专�
 - 上表五类 Ask 结果到 continue/end 的纯函数映射全覆盖。
 - popup/飞书/Slack/Telegram/钉钉均能“选项 + 自由文字”提交；纯文字视为 continue；end 丢弃文字。
 - 首答胜出、取消、draining、CLI EOF、24h capture timeout、渠道全失败均符合 fail-open。
-- Stop 请求 `record_history=false`，普通 CLI/MCP Ask 仍记录历史，现有历史单测不回归。
+- Stop 请求 `record_history=true` 且 Popup 仍识别为 Stop；完成问答可按原生 session 由 `show_last`
+  恢复，正文与卡片实际显示内容一致。普通 CLI/MCP Ask 与旧客户端兼容，现有历史单测不回归。
 - autoActivation 关/开、活跃槽、watch 并集的候选渠道矩阵。
 - Permission Confirm 的协议、渲染和测试不做功能修改；运行既有测试作为旁路回归。
 

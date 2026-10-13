@@ -67,6 +67,11 @@ pub fn fingerprint(task: &TaskRequest) -> String {
         feed("/q");
     }
     feed("modes");
+    feed(if task.popup_kind() == crate::ipc::PopupRequestKind::Stop {
+        "stop"
+    } else {
+        "ask"
+    });
     feed(if task.is_markdown { "1" } else { "0" });
     feed(if task.select_only { "1" } else { "0" });
     feed(if task.single { "1" } else { "0" });
@@ -228,6 +233,7 @@ mod tests {
             single: false,
             output_format: OutputFormat::Text,
             record_history: true,
+            stop_confirmation: false,
             agent_kind: Some("cursor".into()),
             agent_session_id: Some("session-1".into()),
             mcp_instance_id: None,
@@ -256,6 +262,18 @@ mod tests {
         next.native_request_id = Some("owner:request-2".into());
         assert_ne!(fingerprint(&first), fingerprint(&next));
         assert_eq!(session_key(&first), session_key(&next));
+    }
+
+    #[test]
+    fn stop_and_ordinary_asks_never_coalesce_or_replay_each_other() {
+        let ordinary = task();
+        let mut stop = ordinary.clone();
+        stop.stop_confirmation = true;
+        assert_ne!(fingerprint(&ordinary), fingerprint(&stop));
+
+        let mut legacy_stop = ordinary;
+        legacy_stop.record_history = false;
+        assert_eq!(fingerprint(&legacy_stop), fingerprint(&stop));
     }
 
     #[test]
