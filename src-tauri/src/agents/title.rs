@@ -1,6 +1,6 @@
 //! 把 `session_id` 解析成「对话标题」，复刻各家恢复对话列表里显示的标题（FINDINGS / spec D10）。
 //!
-//! - Cursor：`~/.cursor/chats/*/<sid>/meta.json` 的 `title`；缺失回退 transcript 首条用户消息。
+//! - Cursor: the IDE database name, then CLI chat metadata, then the first user message.
 //! - Codex：`~/.codex/sessions/**/rollout-*-<sid>.jsonl` 首条**真实**用户消息（跳过注入块；
 //!   paginated 会话读 `item_completed` `UserMessage`，legacy 读 `event_msg/user_message`）。
 //! - Claude：`~/.claude/projects/*/<sid>.jsonl` 最后一条 `summary`，否则首条真实用户消息。
@@ -38,6 +38,29 @@ pub fn resolve_title(kind: AgentKind, session_id: &str) -> Option<String> {
     Some(clean_title(&raw))
 }
 
+/// Refresh native names once per popup presentation, retaining cached titles if metadata is absent.
+pub(crate) fn resolve_popup_title(
+    kind: AgentKind,
+    session_id: &str,
+    cached: Option<String>,
+    codex_config: &crate::codex_desktop::Config,
+) -> Option<String> {
+    if session_id.trim().is_empty() {
+        return None;
+    }
+    let saved = match kind {
+        AgentKind::Cursor => cursor_session_name(session_id),
+        AgentKind::Codex => crate::codex_desktop::session_title(codex_config, session_id),
+        _ => None,
+    };
+    saved
+        .or_else(|| cached.filter(|title| !title.trim().is_empty()))
+        .or_else(|| resolve_title(kind, session_id))
+        // The sidebar truncates visually; preserve the full saved name for its tooltip.
+        .map(|title| title.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|title| !title.is_empty())
+}
+
 fn clean_title(s: &str) -> String {
     let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() > MAX_TITLE_CHARS {
@@ -50,7 +73,7 @@ fn clean_title(s: &str) -> String {
 
 // ── Cursor ──
 
-fn cursor_title(session_id: &str) -> Option<String> {
+fn cursor_session_name(session_id: &str) -> Option<String> {
     // 0) IDE 形态：全局 state.vscdb 的官方标题（实时、与 IDE 恢复列表一致）。
     if let Some(t) = super::cursor_vscdb::resolve_title(session_id) {
         return Some(t);
@@ -67,7 +90,14 @@ fn cursor_title(session_id: &str) -> Option<String> {
             }
         }
     }
-    // 2) 回退：transcript 首条用户消息
+    None
+}
+
+fn cursor_title(session_id: &str) -> Option<String> {
+    if let Some(title) = cursor_session_name(session_id) {
+        return Some(title);
+    }
+    // Fall back to the first user message in the transcript.
     // ~/.cursor/projects/*/agent-transcripts/<sid>/<sid>.jsonl
     let projects = paths::cursor_dir().join("projects");
     if let Ok(entries) = fs::read_dir(&projects) {
@@ -567,6 +597,43 @@ pub(super) fn find_file_recursive(root: &Path, suffix: &str, max_depth: usize) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn popup_title_preserves_full_saved_names_and_keeps_cache_when_unavailable() {
+        let home = tempfile::tempdir().unwrap();
+        let config = crate::codex_desktop::Config {
+            codex_home: home.path().to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let db = rusqlite::Connection::open(home.path().join("state_5.sqlite")).unwrap();
+        db.execute_batch("CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,title TEXT);")
+            .unwrap();
+        let name = "长会话名称".repeat(30);
+        db.execute(
+            "INSERT INTO threads VALUES ('session',?1,'Original prompt')",
+            [&name],
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_popup_title(
+                AgentKind::Codex,
+                "session",
+                Some("Old cached name".into()),
+                &config
+            ),
+            Some(name)
+        );
+        db.execute_batch("DROP TABLE threads;").unwrap();
+        assert_eq!(
+            resolve_popup_title(
+                AgentKind::Codex,
+                "session",
+                Some("Cached name".into()),
+                &config
+            ),
+            Some("Cached name".into())
+        );
+    }
 
     #[test]
     fn clean_truncates_and_collapses() {

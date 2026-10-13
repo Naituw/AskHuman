@@ -551,3 +551,30 @@ Popup 建窗注入主文档 click / auxclick 捕获保护，保留 Vue 的系统
 317 Vitest / 47 files、5 Node tests、类型检查、Rust 格式及 diff 检查通过。
 `./scripts/install.sh` 已编译、签名安装到 `~/.local/bin/AskHuman`。主 daemon 的既有在途
 请求沿用 graceful drain，自然完结后换新；本次未强制取消其他请求。
+
+## 29. 下次提问刷新原生会话名（2026-10-13）
+
+用户确认不需要已打开弹窗实时跟随 Cursor / Codex Desktop 的 Rename，只要求下次弹出时
+显示新名称。因此采用展示时的一次异步读取，不增加原生状态订阅、文件监听或标题轮询。
+
+旧实现仅在注册表标题为空时解析名称，Cursor 的非空旧缓存会长期挡住改名结果；Codex 的
+名称则依赖最近会话元数据扫描，已有缓存也不会在展示时刷新。现在每次新请求展示和宿主
+恢复都重新取可信会话的名称：Cursor 复用 IDE 数据库 / CLI chat metadata，Codex 按配置的
+数据目录点查精确线程 ID，不受最近 24 条发现范围限制，也不要求 App IPC 连接可用。
+读取失败保留缓存，再复用原有 transcript 回退；首屏不等待读取，完整原生名称保留给悬浮提示。
+
+自动验证通过：Rust popup 相关 63 项、Codex Desktop 27 项、title 13 项，以及 PopupInboxView
+27 项前端测试（Rust 各过滤集有重叠，不相加为总数）。新增回归使用临时 SQLite / WAL 复现
+非空旧缓存、改名后再次展示、最近发现范围以外的会话、旧 schema 和元数据不可用；已有前端
+测试覆盖标题补齐不重挂草稿、快照竞态和迟到标题不能恢复终态条目。
+Rust 格式、全 targets Clippy（`-D warnings`）与 diff 检查通过。
+
+`./scripts/install.sh` 已编译、签名安装到 `~/.local/bin/AskHuman`。主实例因另一条待答请求
+曾等待 graceful drain，已在原请求自然完结后自动换新；实窗验证使用新安装二进制的临时
+隔离实例。代码始终在主工作树 `main` 开发，没有创建 Git worktree；临时 AskHuman 运行实例
+只用于绕开旧 daemon 的排空等待，验证结束后已停止，后续提问返回主实例。
+
+用户先确认来源行显示 `Cursor 标题更新支持`，随后在 Codex Desktop 原生 Rename 为
+`Cursor 标题更新支持2`。再次生成两个新提问后，两张来源行均读取到新名字，用户确认正确。
+这项实窗证据覆盖 Codex Desktop；Cursor 继续复用其原有的原生会话名读取路径，展示时的
+非空缓存刷新由共享入口回归覆盖，没有据此声称已做 Cursor 的手动 Rename 验收。

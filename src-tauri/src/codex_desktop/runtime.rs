@@ -55,13 +55,7 @@ pub fn inspect(config: &Config) -> Result<Installation, UnavailableReason> {
         } else {
             UnavailableReason::AppNotDetected
         })?;
-    let home = if config.codex_home.trim().is_empty() {
-        std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| crate::paths::home().join(".codex"))
-    } else {
-        PathBuf::from(config.codex_home.trim())
-    };
+    let home = data_home(config);
     if !home.is_absolute() || !home.is_dir() {
         return Err(UnavailableReason::AppDataUnavailable);
     }
@@ -73,7 +67,17 @@ pub fn inspect(config: &Config) -> Result<Installation, UnavailableReason> {
     })
 }
 
-pub fn list(home: &Path) -> Result<Vec<SessionMeta>, String> {
+fn data_home(config: &Config) -> PathBuf {
+    if config.codex_home.trim().is_empty() {
+        std::env::var_os("CODEX_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| crate::paths::home().join(".codex"))
+    } else {
+        PathBuf::from(config.codex_home.trim())
+    }
+}
+
+fn thread_database(home: &Path) -> Result<rusqlite::Connection, String> {
     let mut databases: Vec<_> = std::fs::read_dir(home)
         .map_err(|e| e.to_string())?
         .flatten()
@@ -96,6 +100,10 @@ pub fn list(home: &Path) -> Result<Vec<SessionMeta>, String> {
     .map_err(|e| e.to_string())?;
     conn.busy_timeout(Duration::from_millis(300))
         .map_err(|e| e.to_string())?;
+    Ok(conn)
+}
+
+fn title_expression(conn: &rusqlite::Connection) -> Result<&'static str, String> {
     let columns: Vec<String> = conn
         .prepare("PRAGMA table_info(threads)")
         .map_err(|e| e.to_string())?
@@ -103,11 +111,30 @@ pub fn list(home: &Path) -> Result<Vec<SessionMeta>, String> {
         .map_err(|e| e.to_string())?
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
-    let title = if columns.iter().any(|c| c == "name") {
-        "COALESCE(name,title,'')"
+    Ok(if columns.iter().any(|c| c == "name") {
+        "COALESCE(NULLIF(TRIM(name),''),title,'')"
     } else {
         "COALESCE(title,'')"
-    };
+    })
+}
+
+/// Read the persisted name for an exact session without discovery limits or a live app connection.
+pub(super) fn session_title(config: &Config, session_id: &str) -> Option<String> {
+    let home = data_home(config);
+    if !home.is_absolute() || session_id.trim().is_empty() {
+        return None;
+    }
+    let conn = thread_database(&home).ok()?;
+    let title = title_expression(&conn).ok()?;
+    let sql = format!("SELECT {title} FROM threads WHERE id=?1");
+    let title: String = conn.query_row(&sql, [session_id], |row| row.get(0)).ok()?;
+    let title = title.trim();
+    (!title.is_empty()).then(|| title.to_string())
+}
+
+pub fn list(home: &Path) -> Result<Vec<SessionMeta>, String> {
+    let conn = thread_database(home)?;
+    let title = title_expression(&conn)?;
     let sql = format!("SELECT id, {title}, cwd FROM threads WHERE archived=0 AND (originator IN ('Codex Desktop','codex_work_desktop','codex_mobile_bridge','askhuman') OR (originator IS NULL AND source='vscode')) AND COALESCE(source,'') NOT LIKE '%subagent%' ORDER BY updated_at DESC LIMIT 24");
     let mut statement = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = statement
@@ -751,5 +778,52 @@ sys.exit(1 if FAULT == 'exit' else 0)
         assert_eq!(ids, vec!["created", "app"]);
         drop(db);
         std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn popup_titles_read_committed_renames_from_wal_for_exact_sessions() {
+        let home = tempfile::tempdir().unwrap();
+        let config = Config {
+            codex_home: home.path().to_string_lossy().into_owned(),
+            ..Config::default()
+        };
+        let db = rusqlite::Connection::open(home.path().join("state_5.sqlite")).unwrap();
+        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,title TEXT,cwd TEXT,originator TEXT,source TEXT,archived INTEGER,updated_at INTEGER); INSERT INTO threads VALUES ('older','Old name','Original prompt','/tmp','Codex Desktop','vscode',0,0);").unwrap();
+        for i in 1..=25 {
+            db.execute("INSERT INTO threads VALUES (?1,NULL,'Recent','/tmp','Codex Desktop','vscode',0,?2)", rusqlite::params![format!("newer-{i}"), i]).unwrap();
+        }
+        assert!(!list(home.path()).unwrap().iter().any(|r| r.id == "older"));
+        assert_eq!(session_title(&config, "older").as_deref(), Some("Old name"));
+        db.execute("UPDATE threads SET name='Renamed' WHERE id='older'", [])
+            .unwrap();
+        assert_eq!(session_title(&config, "older").as_deref(), Some("Renamed"));
+        assert_eq!(session_title(&config, "older' OR 1=1 --"), None);
+        db.execute("UPDATE threads SET name='  ' WHERE id='older'", [])
+            .unwrap();
+        assert_eq!(
+            session_title(&config, "older").as_deref(),
+            Some("Original prompt")
+        );
+    }
+
+    #[test]
+    fn popup_titles_support_old_schemas_and_unavailable_metadata() {
+        let home = tempfile::tempdir().unwrap();
+        let config = Config {
+            codex_home: home.path().to_string_lossy().into_owned(),
+            ..Config::default()
+        };
+        assert_eq!(session_title(&config, "session"), None);
+        assert!(!home.path().join("state_5.sqlite").exists());
+        let db = rusqlite::Connection::open(home.path().join("state_5.sqlite")).unwrap();
+        db.execute_batch("CREATE TABLE threads(id TEXT PRIMARY KEY,title TEXT); INSERT INTO threads VALUES ('session','Legacy name');").unwrap();
+        assert_eq!(
+            session_title(&config, "session").as_deref(),
+            Some("Legacy name")
+        );
+        db.execute("UPDATE threads SET title=NULL", []).unwrap();
+        assert_eq!(session_title(&config, "session"), None);
+        db.execute_batch("DROP TABLE threads;").unwrap();
+        assert_eq!(session_title(&config, "session"), None);
     }
 }

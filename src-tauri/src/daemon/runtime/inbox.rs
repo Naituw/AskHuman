@@ -62,18 +62,23 @@ fn show_entry(
         show.agent_session_title = state.agents.cached_session_title(*kind, session_id);
     }
     let request_id = show.request_id.clone();
-    let resolve_title = show.agent_session_title.is_none();
     let _ = tx.send(ServerMsg::Show(show));
-    if let Some((kind, session_id)) = identity.filter(|_| resolve_title) {
+    if let Some((kind, session_id)) = identity {
         let tx = tx.clone();
         let state = state.clone();
+        let entry = entry.clone();
         tokio::task::spawn_blocking(move || {
-            let title = state
-                .agents
-                .cached_session_title(kind, &session_id)
-                .or_else(|| crate::agents::title::resolve_title(kind, &session_id))
-                .filter(|title| !title.trim().is_empty());
-            if let Some(title) = title {
+            if terminal(&entry) {
+                return;
+            }
+            let config = state.config.lock().unwrap().codex_desktop.clone();
+            let title = crate::agents::title::resolve_popup_title(
+                kind,
+                &session_id,
+                state.agents.cached_session_title(kind, &session_id),
+                &config,
+            );
+            if let Some(title) = title.filter(|_| !terminal(&entry)) {
                 let _ = tx.send(ServerMsg::PopupSessionTitle { request_id, title });
             }
         });

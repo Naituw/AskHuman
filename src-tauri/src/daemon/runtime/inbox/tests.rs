@@ -63,6 +63,66 @@ fn request(
     (entry, rx)
 }
 
+#[tokio::test]
+async fn each_popup_refreshes_renamed_sessions_even_with_a_cached_title() {
+    let state = state();
+    let home = tempfile::tempdir().unwrap();
+    state.config.lock().unwrap().codex_desktop.codex_home =
+        home.path().to_string_lossy().into_owned();
+    let db = rusqlite::Connection::open(home.path().join("state_5.sqlite")).unwrap();
+    db.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,title TEXT); INSERT INTO threads VALUES ('session','Native name','Original prompt');").unwrap();
+    state
+        .agents
+        .update_desktop("session", "Stale cached title", "/tmp", false);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut last_entry = None;
+    for expected in ["Native name", "Renamed task", "Stale cached title"] {
+        let task = serde_json::from_value(serde_json::json!({
+            "message": {"text": "popup title regression"}, "questions": [],
+            "isMarkdown": false, "source": "test", "lang": "en",
+            "recordHistory": false, "outputFormat": "json",
+            "agentKind": "codex", "agentSessionId": "session"
+        }))
+        .unwrap();
+        let (entry, _result) = state.registry.create(task, None);
+        let interaction = InteractionEntry::Ask(entry.clone());
+        show_entry(&interaction, &tx, &state);
+        let Some(ServerMsg::Show(show)) = rx.recv().await else {
+            panic!("expected the question before asynchronous title resolution");
+        };
+        assert_eq!(show.request_id, entry.request_id);
+        assert_eq!(
+            show.agent_session_title.as_deref(),
+            Some("Stale cached title")
+        );
+        let message = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap();
+        let Some(ServerMsg::PopupSessionTitle { request_id, title }) = message else {
+            panic!("expected the refreshed native title");
+        };
+        assert_eq!(request_id, entry.request_id);
+        assert_eq!(title, expected);
+        if expected == "Native name" {
+            db.execute("UPDATE threads SET name='Renamed task'", [])
+                .unwrap();
+        } else if expected == "Renamed task" {
+            db.execute_batch("DROP TABLE threads;").unwrap();
+        }
+        // Editing the native name does not publish another title into an already-open popup.
+        assert!(tokio::time::timeout(Duration::from_millis(25), rx.recv())
+            .await
+            .is_err());
+        last_entry = Some(interaction);
+    }
+    let interaction = last_entry.unwrap();
+    if let InteractionEntry::Ask(entry) = &interaction {
+        entry.coordinator.submit(ChannelResult::cancel("popup"));
+    }
+    show_entry(&interaction, &tx, &state);
+    assert!(rx.try_recv().is_err());
+}
+
 struct Observed<R> {
     reader: R,
     consumed: Option<tokio::sync::oneshot::Sender<()>>,
