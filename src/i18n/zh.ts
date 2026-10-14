@@ -922,9 +922,12 @@ export default {
     launchFailed: "Fork 启动失败：{e}",
     busyRetarget: "已有 Fork 正在启动，未切换源会话。",
   },
+  cursorCli: {
+    label: "终端 CLI", partial: "部分受管进程尚未受保护", disabled: "未开启", starting: "正在准备受管入口…", ready: "入口已就绪；已有 CLI 会话需重启", active: "已在受管 CLI 进程生效", missing: "未找到可接管的 Cursor CLI 入口", detaching: "正在恢复 CLI 原生行为…", offline: "AskHuman 服务未运行", unsupported: "目前仅支持 macOS", error: "CLI 尚未完整受保护",
+  },
   cursorDesktop: {
     title: "禁止后台完成后自动续跑",
-    hint: "对所有本地 Cursor Desktop 会话生效。后台任务照常执行，完成后需主动发消息继续；不影响当前 Await 取得结果。需要 AskHuman 持续运行，不覆盖终端 CLI。",
+    hint: "对所有本地 Cursor Desktop 会话生效。后台任务照常执行，完成后需主动发消息继续；不影响当前 Await 取得结果。也覆盖 macOS 受管交互式 CLI，已有 CLI 需重启；直接调用版本目录与 headless 模式不在范围内。需要 AskHuman 持续运行。",
     disabled: "未开启",
     waiting: "等待 Cursor Desktop 窗口",
     attaching: "正在接入 Cursor Desktop…",

@@ -43,6 +43,17 @@ fn print_line(text: &str) {
 
 /// 入口分发：在创建任何窗口前按 argv 分流。
 pub fn dispatch() {
+    // Managed entries are pinned to their owning instance, independently of the caller's cwd.
+    let native_args: Vec<_> = std::env::args_os().collect();
+    if native_args
+        .get(1)
+        .is_some_and(|arg| arg == "--cursor-cli-run")
+    {
+        if let Err(error) = crate::cursor_cli::launch(&native_args[2..]) {
+            eprintln!("AskHuman: {error:#}");
+        }
+        exit(1);
+    }
     // Dev Instance: pin ASKHUMAN_HOME / re-exec worktree bin before any config or GUI load.
     crate::dev_instance::maybe_enter_dev_instance();
 

@@ -227,6 +227,16 @@ fn render_text(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>, lang: L
     if let Some(error) = cursor.error {
         out.push_str(&format!("  {error}\n"));
     }
+    let cli = crate::cursor_cli::status();
+    out.push_str(&format!(
+        "\nCursor CLI\n  background-followup-control: {} ({} entries, {} managed processes)\n",
+        cli.phase,
+        cli.entries.len(),
+        cli.processes.len()
+    ));
+    if let Some(error) = cli.error {
+        out.push_str(&format!("  {error}\n"));
+    }
     out.trim_end().to_string()
 }
 
@@ -332,6 +342,7 @@ fn render_json(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>) -> Stri
         "channels": channels,
         "integrations": integrations,
         "cursorDesktop": crate::cursor_desktop::status(&cfg.cursor_desktop),
+        "cursorCli": crate::cursor_cli::status(),
         "agentTasks": {
             "enabled": cfg.agent_tasks.enabled,
             "keepalive": cfg.general.daemon_lifecycle == crate::config::DaemonLifecycleMode::KeepAlive,

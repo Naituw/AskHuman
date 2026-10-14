@@ -2,13 +2,15 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useI18n } from "vue-i18n";
-import { cursorDesktopStatus, type CursorDesktopStatus } from "../../lib/ipc";
+import { cursorDesktopStatus, cursorCliStatus, type CursorCliStatus, type CursorDesktopStatus } from "../../lib/ipc";
 import { isMac } from "../../lib/platform";
 import { useSettingsContext } from "./context";
 
 const { t } = useI18n();
 const { config, persist, modes, modeBusy } = useSettingsContext();
 const status = ref<CursorDesktopStatus | null>(null);
+const cliStatus = ref<CursorCliStatus | null>(null);
+const cliError = ref("");
 const saving = ref(false);
 const error = ref("");
 const enabled = computed(() => config.value?.cursorDesktop?.suppressBackgroundCompletionFollowUp ?? false);
@@ -24,7 +26,13 @@ async function refresh() {
   const current = ++generation;
   refreshing = current;
   try {
-    const result = await cursorDesktopStatus();
+    const [desktop, cli] = await Promise.allSettled([cursorDesktopStatus(), cursorCliStatus()]);
+    if (desktop.status === "rejected") throw desktop.reason;
+    const result = desktop.value;
+    if (!disposed && current === generation) {
+      cliStatus.value = cli.status === "fulfilled" ? cli.value : null;
+      cliError.value = cli.status === "rejected" ? String(cli.reason) : "";
+    }
     if (disposed || current !== generation) return;
     status.value = result;
     if (config.value) {
@@ -95,6 +103,12 @@ onBeforeUnmount(() => {
   <p class="card-desc agent-hint">{{ t("cursorDesktop.hint") }}</p>
   <p class="card-desc agent-hint" role="status">
     {{ saving ? t("cursorDesktop.saving") : detail ? t("cursorDesktop.error") : t(`cursorDesktop.${phase}`) }}
+  </p>
+  <p class="card-desc agent-hint" role="status" data-cursor-cli>
+    {{ t("cursorCli.label") }}: {{ t(`cursorCli.${!isMac ? 'unsupported' : cliStatus?.phase ?? (enabled ? 'starting' : 'disabled')}`) }}
+  </p>
+  <p v-if="cliError || cliStatus?.error || cliStatus?.processes.find(p => p.error)?.error" class="result err" role="alert">
+    {{ cliError || cliStatus?.error || cliStatus?.processes.find(p => p.error)?.error }}
   </p>
   <p v-if="detail" class="result err" role="alert">{{ detail }}</p>
 </template>

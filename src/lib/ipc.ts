@@ -661,3 +661,10 @@ export interface CodexLaunchStatus {
   integrated: boolean;
 }
 export const codexLaunchStatus = (force = false) => invoke<CodexLaunchStatus>("codex_launch_status", {force});
+
+export interface CursorCliStatus {
+  supported: boolean; enabled: boolean; phase: string; entries: string[];
+  processes: {pid: number; version: string; phase: string; active: boolean; suppressed: number; error?: string}[];
+  error?: string;
+}
+export const cursorCliStatus = () => invoke<CursorCliStatus>("cursor_cli_status");

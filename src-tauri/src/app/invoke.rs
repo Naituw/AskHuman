@@ -75,6 +75,7 @@ fn group_for(command: &str) -> Group {
     } else if command.starts_with("agent_")
         || command.starts_with("cursor_hook_")
         || command.starts_with("cursor_desktop_")
+        || command.starts_with("cursor_cli_")
         || command.starts_with("claude_hook_")
         || command.starts_with("mcp_")
         || matches!(
@@ -173,6 +174,7 @@ fn integration(invoke: Invoke<Wry>) -> bool {
         crate::commands::cursor_hook_uninstall,
         crate::commands::cursor_hook_reveal,
         crate::commands::cursor_desktop_status,
+        crate::commands::cursor_cli_status,
         crate::commands::claude_hook_status,
         crate::commands::claude_hook_install,
         crate::commands::claude_hook_update,
@@ -327,6 +329,7 @@ mod tests {
         assert_eq!(group_for("new_task_projects_refreshed"), Group::Task);
         assert_eq!(group_for("agent_task_workspaces"), Group::Integration);
         assert_eq!(group_for("cursor_desktop_status"), Group::Integration);
+        assert_eq!(group_for("cursor_cli_status"), Group::Integration);
     }
 
     #[test]

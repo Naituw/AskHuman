@@ -4986,3 +4986,8 @@ pub async fn codex_desktop_attachments(
         .map(|f| f.path)
         .collect())
 }
+
+#[tauri::command]
+pub fn cursor_cli_status() -> crate::cursor_cli::Status {
+    crate::cursor_cli::status()
+}

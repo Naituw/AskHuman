@@ -917,6 +917,7 @@ async fn serve(_lock: LockGuard) -> i32 {
     }
 
     crate::cursor_desktop::start();
+    crate::cursor_cli::start();
 
     // The daemon owns desktop subscriptions and routes native prompts through the existing coordinator.
     {
@@ -966,6 +967,7 @@ async fn serve(_lock: LockGuard) -> i32 {
                     || crate::codex_desktop::available(&config.codex_desktop)
                     || crate::cursor_desktop::active(&config.cursor_desktop)
                     || crate::cursor_desktop::needs_cleanup()
+                    || crate::cursor_cli::needs_cleanup()
                 {
                     continue;
                 }

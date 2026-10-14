@@ -947,9 +947,12 @@ export default {
     launchFailed: "Failed to launch fork: {e}",
     busyRetarget: "A fork is already launching; the source was not changed.",
   },
+  cursorCli: {
+    label: "Terminal CLI", partial: "Only some managed processes are protected", disabled: "Off", starting: "Preparing managed entry…", ready: "Entry ready; restart existing CLI sessions", active: "Active in managed CLI processes", missing: "No supported Cursor CLI entry found", detaching: "Restoring native CLI behavior…", offline: "AskHuman service is stopped", unsupported: "Currently available on macOS only", error: "CLI protection is incomplete",
+  },
   cursorDesktop: {
     title: "Prevent background completion follow-ups",
-    hint: "Applies to all local Cursor Desktop chats. Background tasks keep running; send a message to continue after they finish. Active Await calls still receive results. Requires AskHuman to remain running. Terminal CLI is not covered.",
+    hint: "Applies to all local Cursor Desktop chats. Background tasks keep running; send a message to continue after they finish. Active Await calls still receive results. Also covers the managed interactive CLI on macOS; restart existing CLI sessions. Direct version paths and headless modes are outside this scope. Requires AskHuman to remain running.",
     disabled: "Off",
     waiting: "Waiting for a Cursor Desktop window",
     attaching: "Connecting to Cursor Desktop…",

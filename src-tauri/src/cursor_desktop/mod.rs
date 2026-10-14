@@ -147,6 +147,7 @@ pub fn status(config: &Config) -> Status {
 pub fn integration_changed() -> anyhow::Result<()> {
     if configured(&crate::config::AppConfig::load_without_secrets().cursor_desktop)
         || needs_cleanup()
+        || crate::cursor_cli::needs_cleanup()
     {
         // Mode mutation is synchronous and may be called from a Tokio worker. Use the client's
         // serialized startup protocol on a separate thread rather than nesting a runtime.
@@ -161,7 +162,7 @@ pub fn integration_changed() -> anyhow::Result<()> {
                         // An integration uninstall must finish restoration before callers remove
                         // the binary or stop the daemon. This does not wait on Cursor model turns.
                         for _ in 0..60 {
-                            if !needs_cleanup() { return Ok(()); }
+                            if !needs_cleanup() && !crate::cursor_cli::needs_cleanup() { return Ok(()); }
                             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                         }
                         return Err(std::io::Error::other("Cursor restoration is still pending; check doctor before removing AskHuman"));

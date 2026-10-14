@@ -4,8 +4,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import CursorDesktopSettings from "./CursorDesktopSettings.vue";
 import { i18n } from "../../i18n";
 
-const api = vi.hoisted(() => ({ status: vi.fn(), persist: vi.fn(), context: vi.fn(), mac: true }));
-vi.mock("../../lib/ipc", () => ({ cursorDesktopStatus: api.status }));
+const api = vi.hoisted(() => ({ status: vi.fn(), cli: vi.fn(), persist: vi.fn(), context: vi.fn(), mac: true }));
+vi.mock("../../lib/ipc", () => ({ cursorDesktopStatus: api.status, cursorCliStatus: api.cli }));
 vi.mock("./context", () => ({ useSettingsContext: api.context }));
 vi.mock("../../lib/platform", () => ({ get isMac() { return api.mac; } }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
@@ -18,6 +18,7 @@ const state = (enabled = false, phase = enabled ? "active" : "disabled") => ({
 });
 beforeEach(() => {
   api.mac = true;
+  api.cli.mockReset().mockResolvedValue({supported:true, enabled:false, phase:"disabled", entries:[], processes:[]});
   api.status.mockReset().mockResolvedValue(state());
   api.persist.mockReset().mockResolvedValue(undefined);
   config.value.cursorDesktop.suppressBackgroundCompletionFollowUp = false;
@@ -36,7 +37,7 @@ it("defaults off and explains the global Desktop scope", async () => {
   expect((row.get("input").element as HTMLInputElement).checked).toBe(false);
   expect(row.get('[role="status"]').text()).toBe("Off");
   expect(row.text()).toContain("all local Cursor Desktop chats");
-  expect(row.text()).toContain("Terminal CLI is not covered");
+  expect(row.text()).toContain("managed interactive CLI");
   expect(api.persist).not.toHaveBeenCalled();
 });
 
@@ -88,4 +89,11 @@ it("clears a restoration error when an automatic retry succeeds after disabling"
   await flushPromises();
   expect(row.get('[role="status"]').text()).toBe("Off");
   expect(row.find('[role="alert"]').exists()).toBe(false);
+});
+
+it("distinguishes a ready CLI entry from a protected process", async () => {
+  api.cli.mockResolvedValue({supported:true, enabled:true, phase:"ready", entries:["cursor-agent"], processes:[]});
+  const row = await mountRow();
+  expect(row.get("[data-cursor-cli]").text()).toContain("restart existing CLI sessions");
+  expect(row.get("[data-cursor-cli]").text()).not.toContain("Active in managed");
 });
