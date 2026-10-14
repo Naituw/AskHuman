@@ -132,6 +132,20 @@ pub(super) fn session_title(config: &Config, session_id: &str) -> Option<String>
     (!title.is_empty()).then(|| title.to_string())
 }
 
+pub(super) fn session_workspace(config: &Config, session_id: &str) -> Option<String> {
+    let home = data_home(config);
+    if !home.is_absolute() || session_id.trim().is_empty() {
+        return None;
+    }
+    let conn = thread_database(&home).ok()?;
+    let cwd: String = conn
+        .query_row("SELECT cwd FROM threads WHERE id=?1", [session_id], |row| {
+            row.get(0)
+        })
+        .ok()?;
+    (!cwd.trim().is_empty()).then_some(cwd)
+}
+
 pub fn list(home: &Path) -> Result<Vec<SessionMeta>, String> {
     let conn = thread_database(home)?;
     let title = title_expression(&conn)?;

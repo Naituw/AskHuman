@@ -364,6 +364,7 @@ fn parse_permission(agent: Agent, input: &Value) -> Option<ParseOutcome> {
     Some(ParseOutcome::Popup(Box::new(ParsedPermission {
         agent,
         task: ConfirmTask {
+            caller_cwd: Some(cwd.clone()),
             spec,
             popup_edit,
             source: agent.label().into(),

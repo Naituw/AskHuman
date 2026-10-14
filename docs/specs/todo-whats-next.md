@@ -3,6 +3,10 @@
 > 状态：设计定案（2026-07-15，经六轮 AskHuman 评审），待实现。
 > 实现分支：`feat/todo-whats-next`（worktree `../HumanInLoop-todo`，Dev Instance popup-only）。
 
+> 2026-10-15：CLI / MCP / Stop 共用可信会话工作区的项目归属；无可信来源回退原 cwd 规则。
+> Agent 在 A 中开启会话后临时切到 B，待办与 whats-next 仍属于 A，附件相对路径仍从真实调用 cwd 解析。
+> 不迁移旧待办或历史。当前实现边界见 `popup-session-info.md`。
+
 ## 1. 需求
 
 agent 正在执行一个耗时任务时，用户脑中已有下一个想法。用户**不想打断当前任务**（插话

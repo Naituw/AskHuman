@@ -630,11 +630,15 @@ export function usePopupCore(scope?: PopupScope) {
   // 来源 workspace：名称用于标题区展示，完整路径用于 hover 提示。空则隐藏该元素。
   const projectName = ref("");
   const projectPath = ref("");
+  const callerCwd = ref("");
   // 来源 agent：家族标识 + pid + 所在终端类型（决定 badge 是否可点击激活 tab）。
   const agentKind = ref("");
   const agentPid = ref<number | null>(null);
   const agentLaunchId = ref<string | null>(null);
   const agentConsoleSessionId = ref("");
+  const agentSessionId = ref("");
+  const agentSessionTitle = ref("");
+  let earlySessionTitle: { requestId: string; title: string } | undefined;
   const agentTerminal = ref<string | null>(null);
   // agent badge 文案：本地化已知家族名；未知家族回退原始标识。
   const agentLabel = computed(() => {
@@ -1000,6 +1004,7 @@ export function usePopupCore(scope?: PopupScope) {
   let unlistenSettings: UnlistenFn | null = null;
   let unlistenCloseReq: UnlistenFn | null = null;
   let unlistenFlash: UnlistenFn | null = null;
+  let unlistenSessionTitle: UnlistenFn | undefined;
   let unlistenAgent: UnlistenFn | null = null;
   let unlistenTodos: UnlistenFn | null = null;
   // 方案6 预热弹窗：daemon 领用时 emit 的唤醒事件，前端据此 pull 请求并渲染。
@@ -2119,9 +2124,14 @@ export function usePopupCore(scope?: PopupScope) {
     sourceName.value = init.sourceName;
     projectName.value = init.projectName;
     projectPath.value = init.project;
+    callerCwd.value = init.callerCwd ?? "";
     agentKind.value = init.agentKind ?? "";
     agentPid.value = init.agentPid ?? null;
     agentConsoleSessionId.value = init.agentConsoleSessionId ?? "";
+    agentSessionId.value = init.agentSessionId?.trim() ?? "";
+    const requestId = scope?.requestId ?? interaction.request.id;
+    agentSessionTitle.value = earlySessionTitle?.requestId === requestId
+      ? earlySessionTitle.title : init.agentSessionTitle ?? "";
     createdAtMs.value = init.createdAtMs ?? 0;
     // 领用/渲染即刻校准 now，避免 tick 首帧前相对时间偏大。
     nowMs.value = Date.now();
@@ -2256,6 +2266,13 @@ export function usePopupCore(scope?: PopupScope) {
     window.addEventListener("blur", onWindowBlur);
     document.addEventListener("mouseup", speech.onDocMouseUp);
     // 方案6：预热弹窗领用唤醒事件——尽早注册以免漏接（冷路径不会收到，无害）。
+    // Subscribe before taking the snapshot; enrichment can arrive while popup_init is pending.
+    unlistenSessionTitle = await listen<{ requestId: string; title: string }>("popup-session-title", ({ payload }) => {
+      const id = scope?.requestId ?? confirmRequest.value?.id ?? request.value?.id;
+      if (disposed || (id && payload.requestId !== id) || !payload.title.trim()) return;
+      earlySessionTitle = payload;
+      if (interactionRendered) agentSessionTitle.value = payload.title;
+    });
     if (!scope) unlistenShow = await listen("popup-show", () => { void adopt(); });
     // 关键路径：第一步即取请求内容并渲染，尽快上屏；其余初始化全部移到渲染之后（见 initAfterPaint）。
     try {
@@ -2456,6 +2473,7 @@ export function usePopupCore(scope?: PopupScope) {
     unlistenCloseReq?.();
     unlistenFlash?.();
     unlistenAgent?.();
+    unlistenSessionTitle?.();
     unlistenTodos?.();
     unlistenShow?.();
     unlistenNativePreview?.();
@@ -2592,6 +2610,7 @@ export function usePopupCore(scope?: PopupScope) {
     onFocusAgentTerminal,
     projectName,
     projectPath,
+    callerCwd,
     onOpenWorkspace,
     popupTimeRel,
     popupTimeAbs,
@@ -2647,6 +2666,9 @@ export function usePopupCore(scope?: PopupScope) {
     // 顶栏动作
     pinned,
     togglePin,
+    popupRequestId: computed(() => scope?.requestId ?? confirmRequest.value?.id ?? request.value?.id ?? ""),
+    agentSessionId,
+    agentSessionTitle,
     agentConsoleAvailable,
     openAgentConsoleWindow,
     openSettingsWindow,

@@ -135,6 +135,10 @@ pub fn is_desktop_session(record: &Value) -> bool {
     record["terminal"] == "codex-app" || record["desktop"].is_object()
 }
 
+pub(crate) fn session_workspace(config: &Config, session_id: &str) -> Option<String> {
+    runtime::session_workspace(config, session_id)
+}
+
 pub(crate) fn session_title(config: &Config, session_id: &str) -> Option<String> {
     runtime::session_title(config, session_id)
 }

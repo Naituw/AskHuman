@@ -16,6 +16,7 @@ pub mod detect;
 pub mod interject;
 pub mod registry;
 pub mod report;
+pub mod session_info;
 pub mod session_paths;
 pub mod stop;
 pub mod title;

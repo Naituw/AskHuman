@@ -265,11 +265,18 @@ pub struct TodoAddParams {
     /// larger files are retained as references.
     #[serde(default)]
     pub files: Option<Vec<String>>,
+    #[serde(default, rename = "__askhuman_session_token_v1")]
+    #[schemars(skip)]
+    session_token: Option<String>,
 }
 
 // Publicly zero-argument input for `todo_list`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct TodoListParams {}
+pub struct TodoListParams {
+    #[serde(default, rename = "__askhuman_session_token_v1")]
+    #[schemars(skip)]
+    session_token: Option<String>,
+}
 
 // Input for stable-id attachment edits on an existing todo.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -283,6 +290,9 @@ pub struct TodoUpdateParams {
     /// Stable attachment UUIDs to remove from this todo.
     #[serde(default)]
     pub remove_attachment_ids: Option<Vec<String>>,
+    #[serde(default, rename = "__askhuman_session_token_v1")]
+    #[schemars(skip)]
+    session_token: Option<String>,
 }
 
 // Input for `whats_next` (spec todo-whats-next D2).
@@ -354,7 +364,10 @@ impl AskServer {
         Self {
             tool_router: Self::tool_router(),
             mcp_instance_id: uuid::Uuid::new_v4().to_string(),
-            project: crate::project::detect(),
+            project: std::env::current_dir()
+                .ok()
+                .map(|cwd| crate::project::detect_from(&cwd))
+                .unwrap_or_default(),
         }
     }
 
@@ -622,8 +635,8 @@ summarization/compaction, or whenever prior AskHuman details are uncertain. Opti
         name = "todo_add",
         description = "Add a project todo for the human to pick up later (whats-next chips / todos \
 window / IM). Use only when the human asked to record a deferred task or accepted a concrete \
-suggestion for later — never for your own work plan. Attaches to the project of the MCP server's \
-cwd (git root). Optional `files` attach local files explicitly requested by the human. Returns the \
+suggestion for later — never for your own work plan. Uses the trusted native session's project \
+when available, otherwise the MCP server's cwd (git root). Optional `files` attach local files explicitly requested by the human. Returns the \
 stable todo ID, 1-based index, stored text, and attachment IDs on success.",
         // Appending a todo is additive (not destructive) and touches no external world.
         annotations(destructive_hint = false, open_world_hint = false)
@@ -643,7 +656,14 @@ stable todo ID, 1-based index, stored text, and attachment IDs on success.",
                 None,
             ));
         }
-        let project = self.project.clone();
+        let project = self
+            .bound_project(
+                &context.meta,
+                params.session_token.as_deref(),
+                "todo_add",
+                &todo_arguments_value(&params),
+            )
+            .await;
         if project.is_empty() {
             return Err(McpError::internal_error(
                 "cannot determine project (cwd unavailable)",
@@ -715,9 +735,17 @@ these IDs before calling `todo_update`.",
     )]
     async fn todo_list(
         &self,
-        Parameters(_params): Parameters<TodoListParams>,
+        Parameters(params): Parameters<TodoListParams>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let project = self.project.clone();
+        let project = self
+            .bound_project(
+                &context.meta,
+                params.session_token.as_deref(),
+                "todo_list",
+                &todo_arguments_value(&params),
+            )
+            .await;
         let entries = tokio::task::spawn_blocking(move || crate::todos::list(&project))
             .await
             .map_err(|error| {
@@ -751,6 +779,14 @@ required.",
                 None,
             ));
         }
+        let project = self
+            .bound_project(
+                &context.meta,
+                params.session_token.as_deref(),
+                "todo_update",
+                &todo_arguments_value(&params),
+            )
+            .await;
         let add_files = params.add_files.unwrap_or_default();
         let remove_ids = params.remove_attachment_ids.unwrap_or_default();
         if add_files.is_empty() && remove_ids.is_empty() {
@@ -768,7 +804,6 @@ required.",
                 None,
             ));
         }
-        let project = self.project.clone();
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let updated = tokio::task::spawn_blocking(move || {
             crate::todos::update_attachment_ids(&project, &todo_id, &add_files, &remove_ids, &cwd)
@@ -801,6 +836,30 @@ required.",
                 "Failed to update todo: {error}"
             ))])),
         }
+    }
+
+    async fn bound_project(
+        &self,
+        meta: &Meta,
+        token: Option<&str>,
+        tool: &str,
+        arguments: &Value,
+    ) -> String {
+        let binding = self.resolve_binding(meta, token, tool, arguments).await;
+        let fallback = self.project.clone();
+        tokio::task::spawn_blocking(move || {
+            binding
+                .map(|binding| {
+                    crate::project::for_session(
+                        Some(&binding.agent_kind),
+                        Some(&binding.session_id),
+                        std::path::Path::new(&fallback),
+                    )
+                })
+                .unwrap_or(fallback)
+        })
+        .await
+        .unwrap_or_else(|_| self.project.clone())
     }
 
     fn configure_child(
@@ -857,6 +916,16 @@ required.",
             session_id,
         })
     }
+}
+
+/// Canonical public arguments used by the existing Grok binding side channel.
+pub(crate) fn todo_arguments_value(params: &impl Serialize) -> Value {
+    let mut value = serde_json::to_value(params).expect("todo arguments are serializable");
+    if let Some(object) = value.as_object_mut() {
+        object.remove(crate::context_binding::HIDDEN_TOKEN_FIELD);
+        object.retain(|_, value| !value.is_null());
+    }
+    value
 }
 
 fn format_attachment_ids(attachments: &[crate::todo_attachments::TodoAttachment]) -> String {

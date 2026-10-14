@@ -210,6 +210,7 @@ mod tests {
 
     fn task() -> TaskRequest {
         TaskRequest {
+            caller_cwd: None,
             native_request_id: None,
             message: MessagePrompt {
                 text: "hello".into(),

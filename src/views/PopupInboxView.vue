@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SessionIcon from "../components/SessionIcon.vue";
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -520,7 +521,7 @@ onMounted(async () => {
   window.addEventListener("keydown", keydown, true);
   document.addEventListener("visibilitychange", flushArrivals);
   listeners.push(await listen("popup-inbox-presented", () => { hostPresented = true; void nextTick(flushArrivals); }));
-  listeners.push(await listen<{ requestId: string; title: string }>("popup-inbox-session-title", event => {
+  listeners.push(await listen<{ requestId: string; title: string }>("popup-session-title", event => {
     const { requestId, title } = event.payload;
     if (terminals.has(requestId) || !title.trim()) return;
     // Keep enrichment that arrives while init or another request's layout is still pending.
@@ -585,7 +586,7 @@ onBeforeUnmount(() => {
                 <template v-if="request.agentSessionTitle?.trim()">
                   <span class="inbox-source-separator" aria-hidden="true">/</span>
                   <span class="inbox-session" :title="request.agentSessionTitle">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z" /></svg>
+                    <SessionIcon />
                     <span class="inbox-session-title" :title="request.agentSessionTitle">{{ request.agentSessionTitle }}</span>
                   </span>
                 </template>

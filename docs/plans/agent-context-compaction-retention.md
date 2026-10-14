@@ -1,5 +1,9 @@
 # Agent 上下文压缩中的 AskHuman 问答恢复
 
+> 2026-10-15 后续扩展：本文以下“三种工具”描述保留为当时方案记录。当前六个 MCP 工具
+> （含 todo_add / todo_list / todo_update）均复用每调用原生绑定与隐藏 Hook token / Grok 指纹旁路，
+> 新请求和待办按可信会话工作区归项目。当前规格见 `../specs/popup-session-info.md`。
+
 > Windows 注（2026-08）：本文保留首期 Windows 单进程措辞；当前四家上下文恢复在 Windows 通过
 > shared daemon、native caller binding 与 Windows hook command 工作，旧回退描述仅作历史记录。
 

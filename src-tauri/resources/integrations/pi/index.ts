@@ -92,6 +92,18 @@ function spawnJson(
   return { child, result };
 }
 
+async function reportNative(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+  if (!CONFIG.cli && !CONFIG.lifecycle) return;
+  const usage = typeof ctx.getContextUsage === "function" ? ctx.getContextUsage() : undefined;
+  await spawnJson(["__session-info", "pi"], sessionPayload(ctx, {
+    native_context: {
+      model: ctx.model?.id || ctx.model?.name || null,
+      reasoning: pi.getThinkingLevel(),
+      usage: usage ?? null,
+    },
+  }), ctx, SHORT_TIMEOUT_MS).result;
+}
+
 function report(ctx: ExtensionContext, event: string, extra: JsonObject = {}): void {
   const command = spawnJson(
     ["__agent-hook", "pi", event],
@@ -174,11 +186,14 @@ function cancelPendingStop(): void {
 }
 
 export default function askHumanExtension(pi: ExtensionAPI) {
+  pi.on("model_select", async (_event, ctx) => { await reportNative(pi, ctx); });
+  pi.on("thinking_level_select", async (_event, ctx) => { await reportNative(pi, ctx); });
   pi.on("session_start", async (_event, ctx) => {
     generation += 1;
     recoveryPending = false;
     lastRun = undefined;
     cancelPendingStop();
+    await reportNative(pi, ctx);
     if (CONFIG.lifecycle) report(ctx, "session-start");
   });
 
@@ -188,7 +203,8 @@ export default function askHumanExtension(pi: ExtensionAPI) {
     return { systemPrompt: `${event.systemPrompt}\n\n${RECOVERY_PROMPT}` };
   });
 
-  pi.on("session_compact", async () => {
+  pi.on("session_compact", async (_event, ctx) => {
+    await reportNative(pi, ctx);
     if (CONFIG.cli) recoveryPending = true;
   });
 
@@ -196,10 +212,12 @@ export default function askHumanExtension(pi: ExtensionAPI) {
     generation += 1;
     lastRun = undefined;
     cancelPendingStop();
+    await reportNative(pi, ctx);
     if (CONFIG.lifecycle) report(ctx, "turn-start");
   });
 
   pi.on("tool_call", async (event, ctx) => {
+    await reportNative(pi, ctx);
     const input = event.input as JsonObject;
     if (
       CONFIG.cli &&
@@ -240,6 +258,7 @@ export default function askHumanExtension(pi: ExtensionAPI) {
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
+    await reportNative(pi, ctx);
     const run = lastRun;
     if (!CONFIG.stop || !run || run.generation !== generation || run.stopReason !== "stop") {
       if (CONFIG.lifecycle) report(ctx, "turn-end");

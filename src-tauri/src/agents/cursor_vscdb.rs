@@ -178,6 +178,94 @@ pub fn resolve_title(session_id: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Native model/context fields for one exact IDE composer. CLI sessions return None.
+pub(crate) fn session_metadata(session_id: &str) -> Option<Value> {
+    let conn = open()?;
+    let raw: String = conn
+        .query_row(
+            "SELECT value FROM cursorDiskKV WHERE key=?1 AND length(value)<=1048576",
+            [format!("composerData:{session_id}")],
+            |row| row.get(0),
+        )
+        .ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// Match a composer to Cursor's exact workspace index, never its most recently opened folder.
+pub(crate) fn session_workspace(session_id: &str) -> Option<String> {
+    let user = db_path()?.parent()?.parent()?.to_path_buf();
+    workspace_for_session(&user.join("workspaceStorage"), session_id)
+}
+
+fn workspace_for_session(storage: &Path, session_id: &str) -> Option<String> {
+    let mut found = None;
+    let began = std::time::Instant::now();
+    for (index, entry) in std::fs::read_dir(storage)
+        .ok()?
+        .flatten()
+        .take(257)
+        .enumerate()
+    {
+        if index == 256 || began.elapsed() > std::time::Duration::from_millis(250) {
+            return None;
+        }
+        let dir = entry.path();
+        let Ok(conn) = Connection::open_with_flags(
+            dir.join("state.vscdb"),
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        ) else {
+            continue;
+        };
+        let _ = conn.busy_timeout(std::time::Duration::from_millis(50));
+        let Ok(raw) = conn.query_row(
+            "SELECT value FROM ItemTable WHERE key='composer.composerData' AND length(value)<=1048576",
+            [],
+            |row| row.get::<_, String>(0),
+        ) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+            continue;
+        };
+        if !value
+            .get("allComposers")
+            .and_then(Value::as_array)
+            .is_some_and(|entries| {
+                entries
+                    .iter()
+                    .any(|entry| entry["composerId"] == session_id)
+            })
+        {
+            continue;
+        }
+        let Some(workspace) = std::fs::read(dir.join("workspace.json"))
+            .ok()
+            .filter(|bytes| bytes.len() < 65536)
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        else {
+            continue;
+        };
+        let Some(path) = workspace
+            .get("folder")
+            .and_then(Value::as_str)
+            .and_then(|s| tauri::Url::parse(s).ok())
+            .and_then(|url| url.to_file_path().ok())
+            .filter(|path| path.is_dir())
+        else {
+            continue;
+        };
+        let path = std::fs::canonicalize(&path)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned();
+        if found.as_ref().is_some_and(|previous| previous != &path) {
+            return None;
+        }
+        found = Some(path);
+    }
+    found
+}
+
 /// 会话最近更新时刻（`lastUpdatedAt` 毫秒 → SystemTime）；控制台完整会话缓存的失效键。
 pub fn last_updated(session_id: &str) -> Option<std::time::SystemTime> {
     let conn = open()?;
@@ -477,6 +565,50 @@ fn push_tx_events(b: &Value, out: &mut Vec<TranscriptEvent>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn workspace_identity_requires_an_exact_unique_composer_match() {
+        let root = tempfile::tempdir().unwrap();
+        let storage = root.path().join("storage");
+        let a = root.path().join("project a");
+        let b = root.path().join("project b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let add = |key: &str, sid: &str, project: &Path| {
+            let dir = storage.join(key);
+            std::fs::create_dir_all(&dir).unwrap();
+            let conn = Connection::open(dir.join("state.vscdb")).unwrap();
+            conn.execute("CREATE TABLE ItemTable (key TEXT, value TEXT)", [])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO ItemTable VALUES ('composer.composerData', ?1)",
+                [serde_json::json!({"allComposers":[{"composerId":sid}]}).to_string()],
+            )
+            .unwrap();
+            std::fs::write(
+                dir.join("workspace.json"),
+                serde_json::json!({
+                    "folder": tauri::Url::from_directory_path(project).unwrap().as_str()
+                })
+                .to_string(),
+            )
+            .unwrap();
+        };
+        add("one", "exact", &a);
+        add("two", "another", &b);
+        assert_eq!(
+            workspace_for_session(&storage, "exact"),
+            Some(
+                std::fs::canonicalize(&a)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            )
+        );
+        assert!(workspace_for_session(&storage, "unknown").is_none());
+        add("ambiguous", "exact", &b);
+        assert!(workspace_for_session(&storage, "exact").is_none());
+    }
+
     use super::*;
     use crate::agents::activity::{StepState, ToolLabel};
 

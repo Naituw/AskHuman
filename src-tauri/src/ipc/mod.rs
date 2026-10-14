@@ -102,6 +102,9 @@ pub struct ChannelIssueInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskRequest {
+    /// Actual invocation directory, distinct from the session's stable project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_cwd: Option<String>,
     /// Native request identity prevents replaying a previous, equal-looking question.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_request_id: Option<String>,
@@ -189,6 +192,9 @@ impl TaskRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfirmTask {
+    /// Actual invocation directory, distinct from the session's stable project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_cwd: Option<String>,
     pub spec: ConfirmSpec,
     /// Structured native edit intent used only by the local permission popup. It is forwarded in
     /// `ShowPayload`, never copied into the daemon-owned `ConfirmRequest` used by IM/history.
@@ -360,6 +366,9 @@ pub enum PopupRequestKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShowPayload {
+    /// Actual invocation directory, distinct from the session's stable project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_cwd: Option<String>,
     pub request_id: String,
     #[serde(default)]
     pub sequence: u64,
@@ -704,7 +713,7 @@ pub enum ServerMsg {
     },
     /// 下发题目（D→GUI）。
     Show(ShowPayload),
-    /// Enrich one pending inbox entry after its native session title becomes available.
+    /// Enrich one pending popup request after its native session title becomes available.
     PopupSessionTitle {
         request_id: String,
         title: String,
@@ -945,6 +954,7 @@ mod tests {
 
     fn confirm_task() -> ConfirmTask {
         ConfirmTask {
+            caller_cwd: None,
             spec: crate::models::ConfirmSpec {
                 title: "Approve?".into(),
                 context: vec![],

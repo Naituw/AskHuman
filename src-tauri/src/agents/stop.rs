@@ -105,10 +105,12 @@ fn run_inner(args: &[String]) -> Option<Value> {
     // Coordinator (options carry todo_id), not here. Only the first MAX_OPTION_TODOS entries
     // become options (channel option-count limits, round 14); the overflow note goes into the
     // question text. `parse_ask_decision` gets the same truncated list (index math stays aligned).
-    let project = cwd
-        .as_deref()
-        .map(|c| crate::project::detect_from(Path::new(c)))
-        .unwrap_or_default();
+    super::session_info::capture_hook(kind, &input, &env);
+    let project = crate::project::for_session(
+        Some(kind.as_str()),
+        Some(&session_id),
+        Path::new(cwd.as_deref().unwrap_or("")),
+    );
     let mut todos = if project.is_empty() {
         Vec::new()
     } else {
@@ -116,7 +118,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
     };
     let total_todos = todos.len();
     todos.truncate(crate::todos::MAX_OPTION_TODOS);
-    let task = build_task(
+    let mut task = build_task(
         kind,
         &session_id,
         &project,
@@ -125,6 +127,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
         last_message.display.as_deref(),
         lang,
     );
+    task.caller_cwd = cwd.clone();
     let captured = crate::client::run_ask_capture(task, Duration::from_secs(HOOK_WAIT_SECS));
     let decision = captured
         .as_deref()
@@ -305,6 +308,7 @@ fn build_task(
         question.push_str(&note);
     }
     TaskRequest {
+        caller_cwd: None,
         native_request_id: None,
         message: MessagePrompt::new(message, Vec::new()),
         questions: vec![Question::new(question, options)],

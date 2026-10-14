@@ -66,6 +66,7 @@ mod permission_rules;
 mod permission_shell;
 mod permissions;
 mod project;
+mod project_info;
 mod prompts;
 mod secrets;
 mod select;

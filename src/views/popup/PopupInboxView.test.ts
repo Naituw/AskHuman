@@ -68,14 +68,14 @@ describe("shared popup navigation", () => {
     await start();
     const editor = wrapper.find('[data-form-id="a"]');
     await editor.setValue("retained draft");
-    emit("popup-inbox-session-title", { requestId: "a", title: "Task A" });
+    emit("popup-session-title", { requestId: "a", title: "Task A" });
     await flushPromises();
     expect(wrapper.find('[data-inbox-row="a"] .inbox-session-title').text()).toBe("Task A");
     expect(wrapper.find('[data-inbox-row="b"] .inbox-session-title').exists()).toBe(false);
     expect(wrapper.find('[data-form-id="a"]').element).toBe(editor.element);
     expect((editor.element as HTMLTextAreaElement).value).toBe("retained draft");
     emit("popup-inbox-terminal", { requestId: "b", winner: "system" });
-    emit("popup-inbox-session-title", { requestId: "b", title: "Late task B" });
+    emit("popup-session-title", { requestId: "b", title: "Late task B" });
     await flushPromises();
     expect(wrapper.find('[data-inbox-row="b"]').exists()).toBe(false);
     expect(wrapper.find(".inbox-navigation").text()).not.toContain("Late task B");
@@ -89,7 +89,7 @@ describe("shared popup navigation", () => {
     });
     const started = start();
     await flushPromises();
-    emit("popup-inbox-session-title", { requestId: "b", title: "Task B" });
+    emit("popup-session-title", { requestId: "b", title: "Task B" });
     release({ recovered: false, requests: [request("a"), request("b")] });
     await started;
     await flushPromises();

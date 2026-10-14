@@ -269,6 +269,7 @@ pub fn create_internal_confirm(
     let (final_tx, final_rx) = tokio::sync::mpsc::unbounded_channel();
     let coordinator = ConfirmCoordinator::new(request.clone(), final_tx);
     let show = ShowPayload {
+        caller_cwd: None,
         request_id: request_id.clone(),
         sequence: 0,
         kind: crate::ipc::PopupRequestKind::Permission,
@@ -452,6 +453,7 @@ impl RequestRegistry {
         let show_agent_session_id = task.agent_session_id.clone();
         let show_mcp_instance_id = task.mcp_instance_id.clone();
         let show = ShowPayload {
+            caller_cwd: task.caller_cwd,
             request_id: request_id.clone(),
             sequence: 0,
             kind: popup_kind,
@@ -582,6 +584,7 @@ impl RequestRegistry {
         );
         let coordinator = ConfirmCoordinator::with_finalizer(request.clone(), final_tx, finalizer);
         let show = ShowPayload {
+            caller_cwd: task.caller_cwd,
             request_id: request_id.clone(),
             sequence: 0,
             kind: crate::ipc::PopupRequestKind::Permission,
@@ -890,11 +893,6 @@ impl RequestRegistry {
 /// 看门狗等待时长：GUI Helper 在此时长内未连上即判定弹窗拉起失败。
 pub const GUI_CONNECT_TIMEOUT_SECS: u64 = 10;
 
-/// 用于 ServerMsg::Show 的便捷封装。
-pub fn show_msg(entry: &RequestEntry) -> ServerMsg {
-    ServerMsg::Show(entry.show.clone())
-}
-
 /// 托盘「待答」子菜单预览：取 Message 首个非空行，空则取第一题题干，截断到 24 个字符（超出加 …）。
 const PREVIEW_MAX_CHARS: usize = 24;
 
@@ -956,6 +954,7 @@ mod tests {
         })
         .collect();
         ConfirmTask {
+            caller_cwd: None,
             spec: ConfirmSpec {
                 title: "Permission request".into(),
                 context,

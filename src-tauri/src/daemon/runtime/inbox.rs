@@ -34,7 +34,7 @@ fn detach_entry(entry: &InteractionEntry, tx: &tokio::sync::mpsc::UnboundedSende
         connected.store(false, Ordering::SeqCst);
     }
 }
-fn show_entry(
+pub(super) fn show_entry(
     entry: &InteractionEntry,
     tx: &tokio::sync::mpsc::UnboundedSender<ServerMsg>,
     state: &Arc<ServerState>,
@@ -61,9 +61,38 @@ fn show_entry(
     if let Some((kind, session_id)) = &identity {
         show.agent_session_title = state.agents.cached_session_title(*kind, session_id);
     }
-    let request_id = show.request_id.clone();
     let _ = tx.send(ServerMsg::Show(show));
-    if let Some((kind, session_id)) = identity {
+    refresh_session_title(entry, tx, state);
+}
+
+/// Resolve display metadata off the request critical path in either popup mode.
+pub(super) fn refresh_session_title(
+    entry: &InteractionEntry,
+    tx: &tokio::sync::mpsc::UnboundedSender<ServerMsg>,
+    state: &Arc<ServerState>,
+) {
+    let show = entry.show();
+    let kind = show
+        .agent_kind
+        .as_deref()
+        .and_then(AgentKind::parse)
+        .or_else(|| {
+            if let InteractionEntry::Ask(entry) = entry {
+                entry
+                    .resolved_agent
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .and_then(|resolved| resolved.kind.as_deref().and_then(AgentKind::parse))
+            } else {
+                None
+            }
+        });
+    if let Some((kind, session_id)) = kind
+        .zip(show.agent_session_id.clone())
+        .filter(|(_, sid)| !sid.trim().is_empty())
+    {
+        let request_id = show.request_id.clone();
         let tx = tx.clone();
         let state = state.clone();
         let entry = entry.clone();

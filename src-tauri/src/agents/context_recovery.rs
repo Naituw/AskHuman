@@ -17,6 +17,9 @@ pub fn run(args: &[String]) {
         return;
     }
     let input = super::report::read_stdin_json();
+    if let Some(input) = &input {
+        super::session_info::capture_hook(kind, input, &env);
+    }
     let output = match event {
         "session-start" => session_start_output(kind, mode(kind), input.as_ref()),
         "pre-tool-use" => pre_tool_output(kind, input.as_ref(), &env),
@@ -159,6 +162,9 @@ fn askhuman_tool_name(kind: AgentKind, raw: &str) -> Option<&'static str> {
         "ask" => Some("ask"),
         "whats_next" => Some("whats_next"),
         "show_last" => Some("show_last"),
+        "todo_add" => Some("todo_add"),
+        "todo_list" => Some("todo_list"),
+        "todo_update" => Some("todo_update"),
         _ => None,
     }
 }
@@ -188,6 +194,9 @@ fn input_shape_matches(tool_name: &str, input: &Value) -> bool {
         "ask" => &["message", "questions", "files"],
         "whats_next" => &["message", "options", "files"],
         "show_last" => &["count"],
+        "todo_add" => &["text", "auto", "files"],
+        "todo_list" => &[],
+        "todo_update" => &["todoId", "addFiles", "removeAttachmentIds"],
         _ => return false,
     };
     if object.keys().any(|key| !allowed.contains(&key.as_str())) {
@@ -209,7 +218,13 @@ fn input_shape_matches(tool_name: &str, input: &Value) -> bool {
             Some(Value::Number(n)) => n.as_u64().is_some_and(|v| (1..=10).contains(&v)),
             _ => false,
         },
-        "whats_next" => true,
+        "whats_next" | "todo_list" => true,
+        "todo_add" => {
+            serde_json::from_value::<crate::mcp::ask::TodoAddParams>(input.clone()).is_ok()
+        }
+        "todo_update" => {
+            serde_json::from_value::<crate::mcp::ask::TodoUpdateParams>(input.clone()).is_ok()
+        }
         _ => false,
     }
 }
@@ -244,6 +259,30 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn todo_tools_share_trusted_hook_binding_without_exposing_identity_arguments() {
+        for (tool, input) in [
+            ("todo_add", json!({"text":"later", "auto":true})),
+            ("todo_list", json!({})),
+            (
+                "todo_update",
+                json!({"todoId":"id", "addFiles":["relative.txt"]}),
+            ),
+        ] {
+            assert_eq!(
+                askhuman_tool_name(AgentKind::Claude, &format!("mcp__askhuman__{tool}")),
+                Some(tool)
+            );
+            assert!(input_shape_matches(tool, &input));
+            assert!(
+                crate::context_binding::canonical_tool_arguments_sha256(tool, &input).is_some()
+            );
+        }
+        assert!(!input_shape_matches(
+            "todo_list",
+            &json!({"session_id":"guessed"})
+        ));
+    }
     #[test]
     fn compact_prompt_strictly_follows_selected_mode() {
         let input = json!({"source": "compact"});

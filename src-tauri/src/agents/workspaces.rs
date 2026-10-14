@@ -346,12 +346,12 @@ fn scan_cursor(out: &mut Vec<(PathBuf, AgentKind, u64)>) {
 }
 
 #[cfg(not(windows))]
-fn recover_cursor_project_key(encoded: &str) -> Vec<PathBuf> {
+pub(super) fn recover_cursor_project_key(encoded: &str) -> Vec<PathBuf> {
     recover_cursor_path(encoded, Path::new("/"), 0, 2)
 }
 
 #[cfg(windows)]
-fn recover_cursor_project_key(encoded: &str) -> Vec<PathBuf> {
+pub(super) fn recover_cursor_project_key(encoded: &str) -> Vec<PathBuf> {
     let Some((root, remainder)) = windows_cursor_key_root(encoded) else {
         return Vec::new();
     };

@@ -661,3 +661,7 @@ export interface CodexLaunchStatus {
   integrated: boolean;
 }
 export const codexLaunchStatus = (force = false) => invoke<CodexLaunchStatus>("codex_launch_status", {force});
+
+export const popupAgentInfo = (requestId: string) => invoke<import("./types").PopupAgentInfo>("popup_agent_info", { requestId });
+export const popupProjectInfo = (requestId: string) => invoke<import("./types").PopupProjectInfo>("popup_project_info", { requestId });
+export const popupOpenTerminal = (requestId: string, target: "project" | "caller") => invoke<void>("popup_open_terminal", { requestId, target });

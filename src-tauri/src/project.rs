@@ -1,10 +1,9 @@
 //! Project identification for reply history.
 //!
-//! The "current project" is derived from the CLI invocation's working directory: walk up from
-//! `cwd` to the first ancestor containing a `.git` entry (the repo root); fall back to `cwd` when
-//! no repo is found. The canonicalized absolute path is the project key; its basename is the
-//! display name. This is computed by the CLI (and standalone GUI processes) and carried through to
-//! the recording point so history can be filtered per project.
+//! A trusted native session workspace owns the project. Without one, use the CLI invocation's
+//! working directory. Walk up to the first `.git` entry and fall back to that directory itself.
+//! Keep the actual invocation cwd separately so attachment resolution and directory actions do
+//! not change when the stable project differs. Existing history is never migrated.
 
 use std::path::{Path, PathBuf};
 
@@ -15,7 +14,29 @@ pub fn detect() -> String {
         Ok(p) => p,
         Err(_) => return String::new(),
     };
-    detect_from(&cwd)
+    let caller = crate::cli::caller_context();
+    for_session(
+        caller.agent_kind.as_deref(),
+        caller.agent_session_id.as_deref(),
+        &cwd,
+    )
+}
+
+/// A trusted native workspace owns the project even when a tool changes its cwd.
+/// Plain CLI calls and unavailable session metadata retain the original directory rule.
+pub fn for_session(kind: Option<&str>, session_id: Option<&str>, cwd: &Path) -> String {
+    let workspace = kind
+        .and_then(crate::agents::AgentKind::parse)
+        .zip(session_id)
+        .and_then(|(kind, sid)| crate::agents::session_info::workspace(kind, sid));
+    with_workspace(cwd, workspace.as_deref().map(Path::new))
+}
+
+fn with_workspace(cwd: &Path, workspace: Option<&Path>) -> String {
+    if workspace.is_none() && cwd.as_os_str().is_empty() {
+        return String::new();
+    }
+    detect_from(workspace.unwrap_or(cwd))
 }
 
 /// Project key for an explicit directory (e.g. the cwd a hook reported on stdin): its git root,
@@ -75,6 +96,23 @@ mod tests {
         assert_eq!(
             fs::canonicalize(&found).unwrap(),
             fs::canonicalize(root).unwrap()
+        );
+    }
+
+    #[test]
+    fn session_workspace_owns_temp_and_other_repository_calls() {
+        let a = tempdir().unwrap();
+        let b = tempdir().unwrap();
+        let temporary = tempdir().unwrap();
+        fs::create_dir(a.path().join(".git")).unwrap();
+        fs::create_dir(b.path().join(".git")).unwrap();
+        let expected = detect_from(a.path());
+        assert_eq!(with_workspace(temporary.path(), Some(a.path())), expected);
+        assert_eq!(with_workspace(b.path(), Some(a.path())), expected);
+        assert_eq!(with_workspace(b.path(), None), detect_from(b.path()));
+        assert_eq!(
+            with_workspace(temporary.path(), None),
+            detect_from(temporary.path())
         );
     }
 

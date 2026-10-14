@@ -1518,6 +1518,7 @@ async fn control_loop(
                         pid.or_else(|| state.agents.resolve_pid(&session_id, kind, hint_pid));
 
                     let event_cwd = cwd.clone();
+                    let cwd = crate::agents::session_info::workspace(kind, &session_id).or(cwd);
                     let mut changed =
                         state
                             .agents
@@ -1817,11 +1818,20 @@ fn begin_drain(state: &Arc<ServerState>) {
 /// Surface attachment is layered on top of this lifecycle; until one becomes ready, callers
 /// receive an explicit fallback and continue with the agent's native approval UI.
 async fn handle_submit_confirm(
-    task: ConfirmTask,
+    mut task: ConfirmTask,
     mut reader: Reader,
     mut w: OwnedWriteHalf,
     state: &Arc<ServerState>,
 ) {
+    let project = crate::project::for_session(
+        Some(&task.agent_kind),
+        Some(&task.agent_session_id),
+        std::path::Path::new(task.caller_cwd.as_deref().unwrap_or(&task.project)),
+    );
+    if !project.is_empty() {
+        task.project = project;
+    }
+
     if state.draining.load(Ordering::SeqCst) {
         let _ = ipc::write_msg(
             &mut w,
@@ -2064,13 +2074,21 @@ async fn handle_submit_confirm(
 
 /// CLI 提交一次任务：建请求、spawn GUI Helper、流式回结果；CLI 断开则取消。
 async fn handle_submit(
-    task: TaskRequest,
+    mut task: TaskRequest,
     mut reader: Reader,
     mut w: OwnedWriteHalf,
     state: &Arc<ServerState>,
 ) {
     // 性能埋点关联 id（CLI 透传；空=关闭）。daemon 自身启动时无 ASKHUMAN_PERF env，
     // 故各阶段标记一律以本字段非空为开关（见 perf 模块说明）。
+    let project = crate::project::for_session(
+        task.agent_kind.as_deref(),
+        task.agent_session_id.as_deref(),
+        std::path::Path::new(task.caller_cwd.as_deref().unwrap_or(&task.project)),
+    );
+    if !project.is_empty() {
+        task.project = project;
+    }
     let perf_id = task.perf_id.clone();
     let perf_autodismiss = task.perf_autodismiss;
     crate::perf::mark(&perf_id, "dmn.submit_recv");
@@ -2568,7 +2586,7 @@ async fn serve_gui(
     }
 
     // 下发题目。
-    let _ = gui_tx.send(request::show_msg(&entry));
+    inbox::show_entry(&InteractionEntry::Ask(entry.clone()), &gui_tx, state);
 
     // 方案5(b)：若调用方 agent 已异步解析完成（walk 早于本连接），握手即补发 AgentResolved
     // （覆盖「解析早于 helper 连接」竞态；解析晚于连接的情形由 spawn_agent_resolve 自行推送）。
@@ -2734,7 +2752,7 @@ async fn serve_confirm_gui(
     if let Ok(mut slot) = entry.gui.lock() {
         *slot = Some(gui_tx.clone());
     }
-    let _ = gui_tx.send(ServerMsg::Show(entry.show.clone()));
+    inbox::show_entry(&InteractionEntry::Confirm(entry.clone()), &gui_tx, state);
 
     {
         let update = state.update.lock().unwrap();
@@ -3203,6 +3221,10 @@ fn spawn_agent_resolve(
                     pid: resolved.pid,
                     launch_id: resolved.launch_id,
                 });
+                // A trusted session can be available before its Agent family is resolved.
+                if entry.show.agent_kind.is_none() {
+                    inbox::refresh_session_title(&InteractionEntry::Ask(entry.clone()), tx, &state);
+                }
             }
         }
     });

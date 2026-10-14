@@ -283,7 +283,7 @@ impl Inbox {
                     .set_session_title(&request_id, &title)
                 {
                     let _ = app.emit(
-                        "popup-inbox-session-title",
+                        "popup-session-title",
                         serde_json::json!({ "requestId": request_id, "title": title }),
                     );
                 }

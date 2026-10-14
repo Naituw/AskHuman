@@ -2,6 +2,7 @@
 // 顶部导航栏：来源头部（agent/workspace 胶囊 + 相对时间）+ 右侧动作（自更新入口/置顶/待办/
 // 历史/设置）。多根组件：navbar 之外还含自更新浮层背板与「更新待生效」横条（保持 .popup 的
 // flex 子级顺序）。
+import SourcePopover from "./SourcePopover.vue";
 import { useI18n } from "vue-i18n";
 import { usePopupContext } from "./context";
 
@@ -12,6 +13,11 @@ const {
   headerPrefix,
   headerSuffix,
   agentLabel,
+  agentSessionId,
+  agentSessionTitle,
+  popupRequestId,
+  popupActive,
+  callerCwd,
   agentFocusable,
   onFocusAgentTerminal,
   projectName,
@@ -46,13 +52,15 @@ const {
     <span class="brand" :class="{ inline: agentInline }">
       <span class="brand-dot"></span>
       <span class="brand-title">{{ headerPrefix }}</span>
+      <SourcePopover v-if="agentLabel" kind="agent" :request-id="popupRequestId" :active="popupActive" :enabled="!!agentSessionId" :label="agentLabel" :session-id="agentSessionId" :session-title="agentSessionTitle">
       <component
         :is="agentFocusable ? 'button' : 'span'"
         v-if="agentLabel"
         class="brand-chip brand-agent"
         :class="{ clickable: agentFocusable }"
         :type="agentFocusable ? 'button' : undefined"
-        :title="agentFocusable ? t('agents.focusTerminal') : undefined"
+        :tabindex="agentFocusable ? undefined : 0"
+        :title="!agentSessionId && agentFocusable ? t('agents.focusTerminal') : undefined"
         @click="onFocusAgentTerminal"
       >
         <span class="chip-text">{{ agentLabel }}</span>
@@ -72,11 +80,12 @@ const {
           />
         </svg>
       </component>
+      </SourcePopover>
+      <SourcePopover v-if="projectName" kind="project" :request-id="popupRequestId" :active="popupActive" :label="projectName" :project="projectPath" :caller-cwd="callerCwd">
       <button
         v-if="projectName"
         type="button"
         class="brand-chip brand-workspace clickable"
-        :title="projectPath"
         @click="onOpenWorkspace"
       >
         <span class="chip-text">{{ projectName }}</span>
@@ -91,6 +100,7 @@ const {
           />
         </svg>
       </button>
+      </SourcePopover>
       <span v-if="headerSuffix" class="brand-title brand-suffix">{{
         headerSuffix
       }}</span>

@@ -42,6 +42,9 @@ pub fn run(args: &[String]) {
     }
 
     let stdin = read_stdin_json();
+    if let Some(input) = &stdin {
+        super::session_info::capture_hook(intended, input, &env);
+    }
     let session_id = resolve_session_id(intended, &env, stdin.as_ref());
     // 无会话 ID 无法作为身份键（spec D7），直接放弃（best-effort）。
     if session_id.is_empty() {

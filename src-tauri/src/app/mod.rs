@@ -30,6 +30,7 @@ use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 /// 运行时只读状态：供 popup_init 拉取请求内容与主题。
 pub struct AppState {
+    pub caller_cwd: Option<String>,
     pub interaction: InteractionRequest,
     /// Native edit intent used only by the local permission popup.
     pub popup_edit: Option<Box<crate::permission_diff::PermissionEditIntent>>,
@@ -45,6 +46,8 @@ pub struct AppState {
     /// Native Agent session used by reply-history filtering. This is independent from whether the
     /// session is currently tracked by AgentRegistry.
     pub agent_session_id: Option<String>,
+    /// Mutable enrichment for the one request owned by an independent popup.
+    pub agent_session_title: std::sync::Mutex<Option<String>>,
     /// MCP process fallback used only when no native Agent session is available.
     pub mcp_instance_id: Option<String>,
     /// 发起本次提问的 agent 进程 pid，仅弹窗（Daemon 上送）有值；用于「聚焦终端」与终端可激活性判断。
@@ -275,7 +278,7 @@ impl GuiBridge {
         }
     }
 
-    fn request_id(&self) -> String {
+    pub(crate) fn request_id(&self) -> String {
         self.request_id
             .lock()
             .map(|id| id.clone())
@@ -452,6 +455,7 @@ pub(crate) fn is_slack_active(config: &AppConfig) -> bool {
 pub fn run_settings(config: AppConfig) -> ! {
     let lang = Lang::resolve(&config.general.language);
     let state = AppState {
+        caller_cwd: None,
         interaction: InteractionRequest::Ask(AskRequest::new(
             crate::models::MessagePrompt::default(),
             Vec::new(),
@@ -463,6 +467,7 @@ pub fn run_settings(config: AppConfig) -> ! {
         project: crate::project::detect(),
         agent_kind: None,
         agent_session_id: None,
+        agent_session_title: Default::default(),
         mcp_instance_id: None,
         agent_pid: None,
         agent_console_session_id: None,
@@ -484,6 +489,7 @@ pub fn run_settings(config: AppConfig) -> ! {
 pub fn run_history(project: String, all: bool, config: AppConfig) -> ! {
     let lang = Lang::resolve(&config.general.language);
     let state = AppState {
+        caller_cwd: None,
         interaction: InteractionRequest::Ask(AskRequest::new(
             crate::models::MessagePrompt::default(),
             Vec::new(),
@@ -495,6 +501,7 @@ pub fn run_history(project: String, all: bool, config: AppConfig) -> ! {
         project,
         agent_kind: None,
         agent_session_id: None,
+        agent_session_title: Default::default(),
         mcp_instance_id: None,
         agent_pid: None,
         agent_console_session_id: None,
@@ -516,6 +523,7 @@ pub fn run_history(project: String, all: bool, config: AppConfig) -> ! {
 pub fn run_todos(project: String, config: AppConfig) -> ! {
     let lang = Lang::resolve(&config.general.language);
     let state = AppState {
+        caller_cwd: None,
         interaction: InteractionRequest::Ask(AskRequest::new(
             crate::models::MessagePrompt::default(),
             Vec::new(),
@@ -527,6 +535,7 @@ pub fn run_todos(project: String, config: AppConfig) -> ! {
         project,
         agent_kind: None,
         agent_session_id: None,
+        agent_session_title: Default::default(),
         mcp_instance_id: None,
         agent_pid: None,
         agent_console_session_id: None,
@@ -547,6 +556,7 @@ pub fn run_todos(project: String, config: AppConfig) -> ! {
 pub fn run_agents(config: AppConfig) -> ! {
     let lang = Lang::resolve(&config.general.language);
     let state = AppState {
+        caller_cwd: None,
         interaction: InteractionRequest::Ask(AskRequest::new(
             crate::models::MessagePrompt::default(),
             Vec::new(),
@@ -558,6 +568,7 @@ pub fn run_agents(config: AppConfig) -> ! {
         project: crate::project::detect(),
         agent_kind: None,
         agent_session_id: None,
+        agent_session_title: Default::default(),
         mcp_instance_id: None,
         agent_pid: None,
         agent_console_session_id: None,
@@ -584,6 +595,7 @@ pub fn run_gui_host(config: AppConfig) -> ! {
         std::process::exit(0);
     }
     let state = AppState {
+        caller_cwd: None,
         interaction: InteractionRequest::Ask(AskRequest::new(
             crate::models::MessagePrompt::default(),
             Vec::new(),
@@ -595,6 +607,7 @@ pub fn run_gui_host(config: AppConfig) -> ! {
         project: crate::project::detect(),
         agent_kind: None,
         agent_session_id: None,
+        agent_session_title: Default::default(),
         mcp_instance_id: None,
         agent_pid: None,
         agent_console_session_id: None,
@@ -645,6 +658,7 @@ pub fn run_popup_host(token: String) -> ! {
         }
     });
     let state = AppState {
+        caller_cwd: None,
         interaction: InteractionRequest::Ask(AskRequest::new(
             crate::models::MessagePrompt::default(),
             Vec::new(),
@@ -656,6 +670,7 @@ pub fn run_popup_host(token: String) -> ! {
         project: String::new(),
         agent_kind: None,
         agent_session_id: None,
+        agent_session_title: Default::default(),
         mcp_instance_id: None,
         agent_pid: None,
         agent_console_session_id: None,
@@ -707,6 +722,7 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
         });
         // 待命态：无请求；source/project/agent 等领用时由 `Show` 注入（见 setup 的 reader 循环）。
         let state = AppState {
+            caller_cwd: None,
             interaction: InteractionRequest::Ask(AskRequest::new(
                 crate::models::MessagePrompt::default(),
                 Vec::new(),
@@ -718,6 +734,7 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
             project: String::new(),
             agent_kind: None,
             agent_session_id: None,
+            agent_session_title: Default::default(),
             mcp_instance_id: None,
             agent_pid: None,
             agent_console_session_id: None,
@@ -780,6 +797,7 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
 
     let request_id = show.request_id.clone();
     let state = AppState {
+        caller_cwd: show.caller_cwd,
         interaction: show.interaction,
         popup_edit: show.popup_edit,
         // The popup helper never connects to IM (the daemon does); it only needs general/theme/
@@ -789,6 +807,7 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
         project: show.project,
         agent_kind: show.agent_kind,
         agent_session_id: show.agent_session_id,
+        agent_session_title: std::sync::Mutex::new(show.agent_session_title),
         mcp_instance_id: show.mcp_instance_id,
         agent_pid: show.agent_pid,
         agent_console_session_id: show.agent_console_session_id,
@@ -1042,6 +1061,20 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                                                     *warm_state.show.lock().unwrap() = Some(show);
                                                 }
                                                 let _ = app_handle.emit("popup-show", ());
+                                            }
+                                            Ok(Some(crate::ipc::ServerMsg::PopupSessionTitle { request_id, title })) => {
+                                                use tauri::Emitter;
+                                                let matches = app_handle.try_state::<GuiBridge>()
+                                                    .is_some_and(|bridge| bridge.request_id() == request_id && !bridge.done.load(Ordering::SeqCst));
+                                                if !matches || title.trim().is_empty() { continue; }
+                                                if let Some(warm) = app_handle.try_state::<WarmPopup>() {
+                                                    if let Some(show) = warm.show.lock().unwrap().as_mut() {
+                                                        if show.request_id == request_id { show.agent_session_title = Some(title.clone()); }
+                                                    }
+                                                } else if let Some(state) = app_handle.try_state::<AppState>() {
+                                                    *state.agent_session_title.lock().unwrap() = Some(title.clone());
+                                                }
+                                                let _ = app_handle.emit("popup-session-title", serde_json::json!({ "requestId": request_id, "title": title }));
                                             }
                                             Ok(Some(crate::ipc::ServerMsg::PresentPopup {
                                                 request_id,

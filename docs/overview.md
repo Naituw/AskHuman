@@ -98,7 +98,8 @@ AskHuman/
       config.rs              AppConfig 读写、默认值与旧路径兼容
       paths.rs               home/config/temp/history/IPC 等路径
       secrets.rs             系统钥匙串与密钥回退
-      project.rs             从 cwd 识别项目根
+      project.rs             可信会话工作区 / cwd 回退的统一项目归属
+      project_info.rs        Popup 项目卡的只读 Git 与终端目录动作
       history.rs             JSONL 回复历史存储
       show_last.rs           按 Agent session/MCP instance 恢复最近完成问答
       context_binding.rs     MCP 会话的一次性 token 与 Grok 安全旁路绑定
@@ -227,6 +228,7 @@ AskHuman/
         report.rs            生命周期 Hook 上报与去重
         context_recovery.rs  压缩后提示、MCP token 注入与 Grok pending 上报
         title.rs             五家会话标题解析
+        session_info.rs      原生工作区 / 模型 / 上下文与 Hook 私有快照
         activity.rs          transcript 尾部活动解析
         session_paths.rs     Pi 自定义 sessionDir transcript 路径校验与缓存
         cursor_vscdb.rs      Cursor IDE 会话实时源（state.vscdb；活动/标题/完整会话）
@@ -297,7 +299,9 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 
 - `general.historyLimit` 控制 `~/.askhuman/history.jsonl` 的全局保留数；0 停止新增，裁剪/立即清理时清空已有记录。
 - 历史在 Coordinator 的唯一汇聚点记录“发送”和“用户主动取消”，系统取消不记。
-- 记录按 git 根（回退 cwd）归项目；图片和文件只保存路径，读取对旧记录和缺失附件保持兼容。
+- 新请求按可信 Agent 会话工作区的 git 根归项目，无可信来源时回退调用 cwd；实际调用目录独立保存，
+  临时 cd / 跨仓库调用不改变原会话项目。Sidebar、历史、待办与 IM 使用同一归属，不迁移旧记录。
+  图片和文件只保存路径，读取对旧记录和缺失附件保持兼容。见 `docs/specs/popup-session-info.md`。
 - 完成问答额外记录可用的 Agent session ID 和 MCP instance ID；`AskHuman --show-last`
   或 MCP `show_last` 可在上下文压缩后读取当前会话最近一条提问语境与实际答案（省略空字段、
   未选候选项和 recommended 标记）。取得真实 session 后只做精确查询，不向弱键级联；
@@ -362,7 +366,7 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 
 > 规格 `docs/specs/todo-whats-next.md`、`docs/specs/todo-attachments.md`。
 
-- 待办按项目（git 根）归属，`~/.askhuman/state/todos.json` 是唯一数据源：所有进程直读直写 + 文件锁串行化，不依赖 daemon 存活，跨平台。GUI / CLI / MCP 可在创建时或对已有 Todo 独立管理附件；GUI 默认折叠附件摘要，支持新增区 / 每条 Pending Todo 拖入、新增输入框粘贴图片，以及选中行后粘贴剪贴板图片。单文件 ≤10 MiB 由 AskHuman 托管，>10 MiB 保留绝对路径引用（无稳定源路径的剪贴板图片超过阈值则拒绝），每条最多 20 个，并生成最长边 128 px 的图片缓存缩略图。用户可见写操作在落盘失败时必须报错。
+- 待办按统一项目身份（可信会话工作区的 git 根 / cwd 回退）归属，`~/.askhuman/state/todos.json` 是唯一数据源：所有进程直读直写 + 文件锁串行化，不依赖 daemon 存活，跨平台。GUI / CLI / MCP 可在创建时或对已有 Todo 独立管理附件；GUI 默认折叠附件摘要，支持新增区 / 每条 Pending Todo 拖入、新增输入框粘贴图片，以及选中行后粘贴剪贴板图片。单文件 ≤10 MiB 由 AskHuman 托管，>10 MiB 保留绝对路径引用（无稳定源路径的剪贴板图片超过阈值则拒绝），每条最多 20 个，并生成最长边 128 px 的图片缓存缩略图。用户可见写操作在落盘失败时必须报错。
 - Agent 完成任务后必须调 `AskHuman --whats-next`（MCP 为 `whats_next` 工具）：固定提问 + 可选的 Agent 建议任务 + 待办 chip + 恒有「结束本轮」；顺序固定为建议任务、待办、结束，总选项最多 10 条。建议任务仅在确有建议时通过 `-o`/`-o!`（MCP `options`）传入，选择结果保持普通 Ask 的 `[selected_options]` 语义；待办派活为 `[user_input]`，准许结束为 `[selected_options]`，取消为 `[status]`。选中的待办按 id best-effort 出队（Coordinator 汇聚点统一处理）。标记为「自动执行」（⚡）的待办优先级不变：whats-next 时不发卡、直接按队列顺序派发最靠前一条。
 - 送达面：whats-next / 普通提问 Popup 折叠待办区 / Stop 确认卡（兜底）都以选项形式呈现待办；GUI / IM 新建 Agent 任务也可直接执行待办。所有出口在执行前按卡片附件快照与最新 Todo 求交集，托管文件建立请求级交付副本，失效项转为 warning，选项只显示 `【N 个附件】`（支持富文本颜色时为灰色）而不向 IM 上传本地文件。输入面：CLI `todo` 子命令、Popup 内新增、GUI 待办窗口（托盘/AgentsView 入口）、IM `/todo`；IM 创建/管理首版仍只支持文字。
 - IM `/todo`（管理卡：飞书代码卡自带输入表单，钉钉复用提问卡模板 `allow_input`，TG/Slack 文本 + 命令提示）、`/todo-rm`（复用单选卡逐条删除、就地刷新）与 `/todo-auto`（切换自动执行标记）由跨平台 daemon 承载，实现在共享 server core 的 `daemon/runtime/todo.rs`。
@@ -406,7 +410,7 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 - Codex、Grok、Claude 分别写适配自身的长超时配置；Cursor MCP 超时不可配置，推荐 CLI 模式。
 - MCP 没有通用的 Agent session 字段：Codex 使用每调用 `_meta.threadId`，Claude/Cursor
   使用 schema 隐藏的短命一次性 token，Grok 只在进程+项目分区内参数指纹候选唯一时认领；
-  无可信 session 时才回退到当前 MCP instance + project。详见
+  六个工具共用每调用绑定；无可信 session 时才回退到当前 MCP instance + project。详见
   `docs/plans/agent-context-compaction-retention.md`。
 - Codex 配置把 `mcp__askhuman` 加入 Code Mode direct-only namespace，确保 ask 顶层阻塞；最小编辑与所有权记录避免卸载用户原有配置。
 

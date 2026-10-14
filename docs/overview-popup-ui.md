@@ -124,7 +124,10 @@ Message、题干及 Confirm 的 Markdown 链接共用 `lib/markdownLinks.ts`，�
   Popup 本身保持等待。置顶 Popup 场景下目标窗口临时使用同级置顶，避免开在其后方。
 - **workspace badge**：来自按请求 ID 获取的 PopupContext.project（git 根或 cwd），显示目录名、hover 展示完整路径，点击通过 `open_path` 在文件管理器打开。
 
-这些字段通过 `PopupInit{project, projectName, agentKind, agentPid, agentConsoleSessionId}` 上送；
+会话标题元数据已经传至作答区，当前不增加常驻标题行；原生名称来源与缓存刷新规则见
+`docs/specs/popup-session-info.md`。Codex 胶囊的悬浮会话信息仍在设计讨论中。
+
+这些字段通过 `PopupInit{project, projectName, agentKind, agentPid, agentConsoleSessionId, agentSessionId, agentSessionTitle}` 上送；
 终端类型在首屏后由 `popup_agent_terminal` 异步解析；预热 Popup 的上下文读取边界另见
 `docs/specs/popup-prewarm.md`。
 
@@ -185,3 +188,10 @@ scroll-spy 改写当前题也不视为内容变化（spec F13）。原生正文�
 ## 推荐选项
 
 规格见 `docs/specs/recommended-option.md`。`-o!` / `--option!` 与普通选项语义相同，只增加“AI 推荐”标记；一题可有多个推荐项，但不会自动预选。Popup 与历史详情显示绿色推荐 badge，IM 渠道显示本地化推荐前缀；无论展示怎样变化，提交值始终恢复为原始选项文本。
+
+## 来源胶囊悬浮卡
+
+`SourcePopover.vue` 为 Agent / 项目胶囊各提供一张 100ms 悬浮卡，也支持焦点、移入操作、复制与 Esc。
+Agent 展示完整原生标题、Session ID 及可靠的模型 / 上下文；项目展示稳定路径、不同调用目录及 Git 摘要。
+终端动作只接受本请求的已知目录。浮层不占常驻高度；每次打开按需读取，短缓存、无轮询、跨请求失效。
+完整决策与来源边界见 `specs/popup-session-info.md`。

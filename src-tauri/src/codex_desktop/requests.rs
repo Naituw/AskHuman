@@ -96,6 +96,7 @@ fn prepare(sid: &str, s: &Session, r: &Value) -> Option<ClientMsg> {
                 })
                 .collect::<Option<Vec<_>>>()?;
             Some(ClientMsg::Submit(ipc::TaskRequest {
+                caller_cwd: None,
                 native_request_id: Some(format!("{:?}:{}", s.owner, r["id"])),
                 message: MessagePrompt::default(),
                 questions,
@@ -148,6 +149,7 @@ fn prepare(sid: &str, s: &Session, r: &Value) -> Option<ClientMsg> {
                 return None;
             }
             Some(ClientMsg::SubmitConfirm(Box::new(ipc::ConfirmTask {
+                caller_cwd: None,
                 spec: ConfirmSpec {
                     title: if zh {
                         "Codex App 请求批准"

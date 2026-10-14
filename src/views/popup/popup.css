@@ -602,6 +602,9 @@
   align-items: center;
   gap: 3px;
   max-width: 180px;
+  /* Keep span and button chips identical despite their default line heights. */
+  height: 20px;
+  line-height: 16px;
   padding: 2px 7px;
   border: none;
   border-radius: 6px;

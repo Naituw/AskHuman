@@ -334,6 +334,7 @@ export type WindowEffect = "glass" | "blur" | "solid";
 
 /** Daemon-owned navigation metadata; forms pull their own request by ID. */
 export interface PopupInboxRequest {
+  callerCwd?: string | null;
   requestId: string;
   sequence: number;
   interaction: InteractionRequest;
@@ -354,6 +355,7 @@ export interface PopupInboxSnapshot {
 }
 
 export interface PopupInit {
+  callerCwd?: string | null;
   /** Current interaction. A prewarmed popup returns null until assigned. */
   interaction: InteractionRequest | null;
   /** Local-popup-only native edit intent for permission confirmations. */
@@ -371,6 +373,9 @@ export interface PopupInit {
   agentPid?: number | null;
   /** daemon 严格匹配到活动 Agent 记录的会话 ID；有值才显示 Agent Window 快捷入口。 */
   agentConsoleSessionId?: string | null;
+  /** Trusted native session identity, independent from lifecycle tracking. */
+  agentSessionId?: string | null;
+  agentSessionTitle?: string | null;
   /** 界面语言原始值（auto/en/zh）；弹窗据此 applyLanguage，免再走 get_settings()。 */
   language?: string;
   /** 语音识别语言（BCP-47，如 zh-CN；auto 跟随系统）。 */
@@ -1094,4 +1099,19 @@ export interface SlackWaitArgs {
   botToken: string;
   appToken: string;
   code: string;
+}
+
+/** Exact-session, best-effort native facts shown only inside the Agent source card. */
+export interface PopupAgentInfo {
+  workspace?: string | null;
+  model?: string | null;
+  reasoning?: string | null;
+  context?: { usedTokens: number; windowTokens: number; remainingPercent: number; estimated: boolean } | null;
+  reportedAt?: number | null;
+}
+export interface PopupProjectInfo {
+  branch?: string | null;
+  detached: boolean;
+  worktree?: string | null;
+  changes?: { total: number; staged: number; unstaged: number; untracked: number } | null;
 }

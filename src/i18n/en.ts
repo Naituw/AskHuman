@@ -1,5 +1,28 @@
 // English messages (source language). Keys are grouped by namespace.
 export default {
+  sourceInfo: {
+    "agentDetails": "Agent session information",
+    "projectDetails": "Project information",
+    "sessionId": "Session ID",
+    "copySession": "Copy session ID",
+    "projectPath": "Project path",
+    "callerCwd": "Invocation directory",
+    "copyPath": "Copy path",
+    "openTerminal": "Open in terminal",
+    "model": "Model",
+    "reasoning": "Reasoning",
+    "context": "Context",
+    "contextValue": "{n}% left · {used} / {total}",
+    "estimated": "Estimated",
+    "reportedAt": "Recorded {time}",
+    "branch": "Branch",
+    "commit": "Commit",
+    "worktree": "Worktree",
+    "changes": "{n} uncommitted items",
+    "changeDetails": "Staged {staged} · Unstaged {unstaged} · Untracked {untracked}",
+    "copyFailed": "Copy failed. Select the text to copy it manually.",
+    "terminalFailed": "Could not open this directory in a terminal."
+},
   desktop: {
     refresh: "Refresh",
     detectionFailed: "Unable to complete detection",

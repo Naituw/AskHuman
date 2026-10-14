@@ -35,6 +35,10 @@
 > 恢复输出采用纯 CLI 区块，只保留非空 Message/附件、问题与人类实际答案；未选候选项和
 > recommended 标记仍保留在历史记录中，但不重新注入压缩后的模型上下文。
 
+> **实现期补充（2026-10-15）**：六个工具统一使用每调用的可信原生会话绑定。三个 Todo 工具也复用
+> schema 隐藏的 Hook token 与 Grok 指纹旁路，以稳定会话工作区归项目；无绑定时保留 server cwd 回退。
+> 附件相对路径仍按真实 MCP server cwd 解析，不迁移旧待办 / 历史。详见 `popup-session-info.md`。
+
 ## 1. 背景与动机
 
 参考提示词要求 AI 用 Shell 调 `AskHuman` 并把该次工具调用超时设到 24h。这条对 **Cursor / Claude Code** 可行（二者有 PreToolUse/Bash 超时 Hook 把 Shell 工具调用 timeout 抬到 24h），但对 **Codex 不可行**：Codex 没有 Shell 超时 Hook，CLI（Shell）调用超时短且无法延长，等待人类回应时会被强制取消。

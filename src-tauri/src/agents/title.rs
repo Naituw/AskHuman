@@ -3,7 +3,7 @@
 //! - Cursor: the IDE database name, then CLI chat metadata, then the first user message.
 //! - Codex：`~/.codex/sessions/**/rollout-*-<sid>.jsonl` 首条**真实**用户消息（跳过注入块；
 //!   paginated 会话读 `item_completed` `UserMessage`，legacy 读 `event_msg/user_message`）。
-//! - Claude：`~/.claude/projects/*/<sid>.jsonl` 最后一条 `summary`，否则首条真实用户消息。
+//! - Claude: the latest manual title, automatic title, or legacy summary; then the first user message.
 //!
 //! 全部 best-effort：文件可能不存在 / 正在写 / 巨大，任何失败都返回 `None`（窗口显示「未命名」）。
 //! 读 jsonl 有行数与字节上限，避免拖慢 daemon。
@@ -11,7 +11,7 @@
 use crate::paths;
 use serde_json::Value;
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use super::AgentKind;
@@ -20,6 +20,7 @@ use super::AgentKind;
 const MAX_TITLE_CHARS: usize = 80;
 /// 扫描 jsonl 的行数上限。
 const MAX_LINES: usize = 4000;
+const MAX_NAME_TAIL_BYTES: u64 = 1024 * 1024;
 const MAX_PI_HEADER_BYTES: u64 = 64 * 1024;
 const MAX_PI_SESSION_FILES: usize = 4096;
 
@@ -49,11 +50,20 @@ pub(crate) fn resolve_popup_title(
         return None;
     }
     let saved = match kind {
-        AgentKind::Cursor => cursor_session_name(session_id),
-        AgentKind::Codex => crate::codex_desktop::session_title(codex_config, session_id),
-        _ => None,
+        AgentKind::Cursor => cursor_session_name(session_id).map(Some),
+        AgentKind::Codex => crate::codex_desktop::session_title(codex_config, session_id).map(Some),
+        AgentKind::Claude => claude_session_file(session_id)
+            .and_then(|path| claude_session_name(&path))
+            .map(Some),
+        AgentKind::Grok => grok_session_dir(session_id)
+            .and_then(|path| grok_session_name(&path))
+            .map(Some),
+        AgentKind::Pi => pi_session_file(session_id).and_then(|path| pi_session_name(&path)),
     };
+    // Pi records an explicit empty name when the user clears it. Do not resurrect a cached name.
+    let cached = if saved == Some(None) { None } else { cached };
     saved
+        .flatten()
         .or_else(|| cached.filter(|title| !title.trim().is_empty()))
         .or_else(|| resolve_title(kind, session_id))
         // The sidebar truncates visually; preserve the full saved name for its tooltip.
@@ -187,27 +197,32 @@ fn codex_user_message(path: &Path) -> Option<String> {
 
 // ── Claude ──
 
-fn claude_title(session_id: &str) -> Option<String> {
+fn claude_session_file(session_id: &str) -> Option<PathBuf> {
     let projects = paths::claude_dir().join("projects");
     let target = format!("{session_id}.jsonl");
-    let file = find_file_recursive(&projects, &target, 3)?;
-    // 优先：最后一条 summary。
-    if let Some(s) = last_summary(&file) {
-        return Some(s);
-    }
-    first_user_message(&file)
+    find_file_recursive(&projects, &target, 3)
+}
+
+fn claude_title(session_id: &str) -> Option<String> {
+    let file = claude_session_file(session_id)?;
+    claude_session_name(&file).or_else(|| first_user_message(&file))
 }
 
 // ── Grok ──
 
 /// Grok 会话布局：`~/.grok/sessions/<url编码的 cwd>/<session_id>/`，内含 `summary.json`
 /// （`session_summary` / `generated_title` 即恢复列表标题）与 `chat_history.jsonl`。
-/// 优先取 summary 字段；回退扫 `chat_history.jsonl` 的首条真实用户输入。
+/// Prefer generated_title (including manual renames), then session_summary and the first user input.
 ///
 /// 注意 Grok（cursor harness）会把用户真实输入包在 `<user_query>…</user_query>` 里，而其它以 `<`
 /// 开头的块（`<user_info>`/`<git_status>` 等）才是注入上下文；故回退需先**解包** `<user_query>`，
 /// 不能直接套用 [`first_user_message`]（它会把所有以 `<` 开头的文本当注入块跳过）。
 fn grok_title(session_id: &str) -> Option<String> {
+    let dir = grok_session_dir(session_id)?;
+    grok_session_name(&dir).or_else(|| grok_first_query(&dir.join("chat_history.jsonl")))
+}
+
+pub(super) fn grok_session_dir(session_id: &str) -> Option<PathBuf> {
     let sessions = paths::grok_sessions_dir();
     // 遍历各 cwd 目录，定位含本 session_id 子目录者（量小、best-effort）。
     let entries = fs::read_dir(&sessions).ok()?;
@@ -216,33 +231,52 @@ fn grok_title(session_id: &str) -> Option<String> {
         if !dir.is_dir() {
             continue;
         }
-        // 优先：summary.json 的 session_summary，其次 generated_title。
-        let summary = dir.join("summary.json");
-        for field in ["session_summary", "generated_title"] {
-            if let Some(s) = read_json_field(&summary, field) {
-                if !s.trim().is_empty() {
-                    return Some(s);
-                }
-            }
-        }
-        // 回退：chat_history.jsonl 首条真实用户输入（解包 <user_query>、跳过注入块）。
-        let chat = dir.join("chat_history.jsonl");
-        if chat.is_file() {
-            if let Some(t) = grok_first_query(&chat) {
-                return Some(t);
-            }
-        }
+        return Some(dir);
     }
     None
+}
+
+fn grok_session_name(dir: &Path) -> Option<String> {
+    // The generated_title field also holds manual /rename titles (title_is_manual).
+    let file = fs::File::open(dir.join("summary.json")).ok()?;
+    let value: Value = serde_json::from_reader(file.take(MAX_NAME_TAIL_BYTES)).ok()?;
+    ["generated_title", "session_summary"]
+        .into_iter()
+        .find_map(|key| {
+            value
+                .get(key)
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .map(str::to_string)
+        })
 }
 
 // ── Pi ──
 
 fn pi_title(session_id: &str) -> Option<String> {
     let path = pi_session_file(session_id)?;
-    let file = fs::File::open(&path).ok()?;
+    pi_session_name(&path)
+        .flatten()
+        .or_else(|| pi_first_user(&path))
+}
+
+fn pi_session_name(path: &Path) -> Option<Option<String>> {
+    let value = name_tail(path)
+        .into_iter()
+        .rev()
+        .find(|value| value.get("type").and_then(Value::as_str) == Some("session_info"))?;
+    Some(
+        value
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string),
+    )
+}
+
+fn pi_first_user(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
     let reader = BufReader::new(file);
-    let mut latest_name = None;
     let mut first_user = None;
     for (index, line) in reader.lines().enumerate() {
         if index >= MAX_LINES {
@@ -252,13 +286,6 @@ fn pi_title(session_id: &str) -> Option<String> {
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        if value.get("type").and_then(Value::as_str) == Some("session_info") {
-            if let Some(name) = value.get("name").and_then(Value::as_str) {
-                if !name.trim().is_empty() {
-                    latest_name = Some(name.to_string());
-                }
-            }
-        }
         if first_user.is_none()
             && value.get("type").and_then(Value::as_str) == Some("message")
             && value.pointer("/message/role").and_then(Value::as_str) == Some("user")
@@ -271,7 +298,7 @@ fn pi_title(session_id: &str) -> Option<String> {
             }
         }
     }
-    latest_name.or(first_user)
+    first_user
 }
 
 fn pi_session_file(session_id: &str) -> Option<PathBuf> {
@@ -471,31 +498,64 @@ fn is_injected_block(t: &str) -> bool {
     t.is_empty() || t.starts_with('<') || t.starts_with("# AGENTS.md instructions")
 }
 
-/// Claude：扫描取最后一条 summary。
-fn last_summary(path: &Path) -> Option<String> {
-    let file = fs::File::open(path).ok()?;
-    let reader = BufReader::new(file);
-    let mut last: Option<String> = None;
-    for (i, line) in reader.lines().enumerate() {
-        if i >= MAX_LINES {
-            break;
-        }
-        let Ok(line) = line else { break };
-        if !line.contains("summary") {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if v.get("type").and_then(|t| t.as_str()) == Some("summary") {
-            if let Some(s) = v.get("summary").and_then(|s| s.as_str()) {
-                if !s.trim().is_empty() {
-                    last = Some(s.to_string());
-                }
-            }
-        }
+/// Read bounded metadata from the tail so a rename after a long conversation is visible.
+fn name_tail(path: &Path) -> Vec<Value> {
+    let Some(mut file) = fs::File::open(path).ok() else {
+        return Vec::new();
+    };
+    let Some(len) = file.metadata().ok().map(|m| m.len()) else {
+        return Vec::new();
+    };
+    let start = len.saturating_sub(MAX_NAME_TAIL_BYTES);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return Vec::new();
     }
-    last
+    let mut bytes = Vec::new();
+    if file
+        .take(MAX_NAME_TAIL_BYTES)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    text.lines()
+        .skip(usize::from(start > 0))
+        .filter_map(|line| {
+            if !line.contains("custom-title")
+                && !line.contains("ai-title")
+                && !line.contains("summary")
+                && !line.contains("session_info")
+            {
+                return None;
+            }
+            serde_json::from_str(line).ok()
+        })
+        .collect()
+}
+
+fn claude_session_name(path: &Path) -> Option<String> {
+    let values = name_tail(path);
+    // A manual name takes precedence over automatic titles and legacy summaries.
+    [
+        ("custom-title", "customTitle"),
+        ("ai-title", "aiTitle"),
+        ("summary", "summary"),
+    ]
+    .into_iter()
+    .find_map(|(kind, field)| {
+        values.iter().rev().find_map(|value| {
+            (value.get("type").and_then(Value::as_str) == Some(kind))
+                .then(|| {
+                    value
+                        .get(field)
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.trim().is_empty())
+                        .map(str::to_string)
+                })
+                .flatten()
+        })
+    })
 }
 
 /// 判断一行 jsonl 是否「用户消息」。兼容三家不同结构。
@@ -632,6 +692,73 @@ mod tests {
                 &config
             ),
             Some("Cached name".into())
+        );
+    }
+
+    #[test]
+    fn claude_manual_name_wins_over_later_automatic_names_and_refreshes_at_the_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        let mut lines =
+            vec![r#"{"type":"ai-title","aiTitle":"Original automatic name"}"#.to_string()];
+        // Names appended after the old line cap must still be read on the next request.
+        for _ in 0..MAX_LINES + 10 {
+            lines.push(r#"{"type":"progress"}"#.into());
+        }
+        lines.push(r#"{"type":"custom-title","customTitle":"Manual name"}"#.into());
+        lines.push(r#"{"type":"ai-title","aiTitle":"Later automatic name"}"#.into());
+        fs::write(&path, lines.join("\n")).unwrap();
+        assert_eq!(claude_session_name(&path).as_deref(), Some("Manual name"));
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        use std::io::Write;
+        writeln!(
+            file,
+            "\n{}",
+            serde_json::json!({"type":"custom-title","customTitle":"Renamed manual name"})
+        )
+        .unwrap();
+        assert_eq!(
+            claude_session_name(&path).as_deref(),
+            Some("Renamed manual name")
+        );
+    }
+
+    #[test]
+    fn grok_uses_the_native_title_instead_of_the_session_summary_and_rereads_renames() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("summary.json");
+        fs::write(&path, r#"{"session_summary":"Long description","generated_title":"Manual name","title_is_manual":true}"#).unwrap();
+        assert_eq!(
+            grok_session_name(dir.path()).as_deref(),
+            Some("Manual name")
+        );
+        fs::write(
+            &path,
+            r#"{"session_summary":"Long description","generated_title":"Renamed"}"#,
+        )
+        .unwrap();
+        assert_eq!(grok_session_name(dir.path()).as_deref(), Some("Renamed"));
+        fs::write(
+            &path,
+            r#"{"session_summary":"Legacy name","generated_title":" "}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            grok_session_name(dir.path()).as_deref(),
+            Some("Legacy name")
+        );
+    }
+
+    #[test]
+    fn name_tail_drops_partial_json_and_reads_only_its_byte_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        let mut text = format!("{}\n", "x".repeat(MAX_NAME_TAIL_BYTES as usize + 20));
+        text.push_str(r#"{"type":"ai-title","aiTitle":"Latest automatic name"}"#);
+        fs::write(&path, text).unwrap();
+        assert_eq!(
+            claude_session_name(&path).as_deref(),
+            Some("Latest automatic name")
         );
     }
 
@@ -788,7 +915,7 @@ mod tests {
             r#"{"type":"summary","summary":"second"}"#,
         ];
         std::fs::write(&f, lines.join("\n")).unwrap();
-        assert_eq!(last_summary(&f).as_deref(), Some("second"));
+        assert_eq!(claude_session_name(&f).as_deref(), Some("second"));
     }
 
     #[test]
@@ -818,6 +945,43 @@ mod tests {
         assert_eq!(
             pi_title("pi-title-test").as_deref(),
             Some("Named Pi session")
+        );
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        use std::io::Write;
+        for _ in 0..MAX_LINES + 10 {
+            writeln!(file, "\n{}", serde_json::json!({"type":"message"})).unwrap();
+        }
+        let renamed = "Full renamed Pi session ".repeat(10).trim().to_string();
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({"type":"session_info","name":renamed})
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_popup_title(
+                AgentKind::Pi,
+                "pi-title-test",
+                Some("Nonempty stale cache".into()),
+                &Default::default()
+            ),
+            Some(renamed)
+        );
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({"type":"session_info","name":""})
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_popup_title(
+                AgentKind::Pi,
+                "pi-title-test",
+                Some("Stale manual name".into()),
+                &Default::default()
+            )
+            .as_deref(),
+            Some("first prompt")
         );
     }
 }

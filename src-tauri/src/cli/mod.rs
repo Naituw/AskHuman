@@ -66,6 +66,11 @@ pub fn dispatch() {
     }
 
     match argv[1].as_str() {
+        "__session-info" => {
+            if let Some(kind) = argv.get(2).and_then(|s| crate::agents::AgentKind::parse(s)) {
+                crate::agents::session_info::report_cli(kind);
+            }
+        }
         "--help" | "-h" => {
             print_line(&help::help_text(lang));
             exit(0);
@@ -469,6 +474,9 @@ pub fn dispatch() {
                     .as_deref()
                     .and_then(crate::agents::AgentKind::parse);
                 let task = crate::ipc::TaskRequest {
+                    caller_cwd: std::env::current_dir()
+                        .ok()
+                        .map(|p| p.to_string_lossy().into_owned()),
                     native_request_id: None,
                     message,
                     questions,

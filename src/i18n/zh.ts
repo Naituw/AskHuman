@@ -1,5 +1,28 @@
 // 简体中文词条。结构需与 en.ts 一致；缺失项回退英文。
 export default {
+  sourceInfo: {
+    "agentDetails": "Agent 会话信息",
+    "projectDetails": "项目信息",
+    "sessionId": "会话 ID",
+    "copySession": "复制会话 ID",
+    "projectPath": "项目路径",
+    "callerCwd": "调用目录",
+    "copyPath": "复制路径",
+    "openTerminal": "在终端打开",
+    "model": "模型",
+    "reasoning": "推理强度",
+    "context": "上下文",
+    "contextValue": "剩余 {n}% · {used} / {total}",
+    "estimated": "估算",
+    "reportedAt": "记录于 {time}",
+    "branch": "分支",
+    "commit": "提交",
+    "worktree": "Worktree",
+    "changes": "未提交 {n} 项",
+    "changeDetails": "暂存 {staged} · 未暂存 {unstaged} · 未跟踪 {untracked}",
+    "copyFailed": "复制失败，可选中文字手动复制。",
+    "terminalFailed": "无法在终端打开该目录。"
+},
   desktop: {
     refresh: "刷新",
     detectionFailed: "暂时无法完成检测",

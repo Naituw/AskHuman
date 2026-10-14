@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PopupInit {
+    caller_cwd: Option<String>,
     /// Current interaction. A prewarmed helper returns `None` until it is assigned.
     interaction: Option<InteractionRequest>,
     /// Native edit intent used only by the local permission popup.
@@ -32,6 +33,9 @@ pub struct PopupInit {
     agent_pid: Option<u32>,
     /// 已严格匹配到 Agent 状态窗口活动记录的会话 ID；None 时不显示快捷入口。
     agent_console_session_id: Option<String>,
+    /// Trusted native session for per-request session metadata.
+    agent_session_id: Option<String>,
+    agent_session_title: Option<String>,
     /// 界面语言原始值（`auto`/`en`/`zh`）。让弹窗直接据此 `applyLanguage`，免去前端再走 `get_settings()`
     /// （钥匙串）。`auto` 由前端解析为系统语言。
     language: String,
@@ -69,6 +73,7 @@ pub fn popup_init(
         )?;
         let cfg = AppConfig::load_without_secrets();
         return Ok(PopupInit {
+            caller_cwd: show.caller_cwd,
             interaction: Some(show.interaction),
             popup_edit: show.popup_edit,
             theme: theme_str(cfg.general.theme),
@@ -79,6 +84,8 @@ pub fn popup_init(
             agent_kind: show.agent_kind,
             agent_pid: show.agent_pid,
             agent_console_session_id: show.agent_console_session_id,
+            agent_session_id: show.agent_session_id,
+            agent_session_title: show.agent_session_title,
             language: show.lang,
             speech_language: cfg.general.speech_language.clone(),
             speech_shortcut: cfg.general.speech_shortcut.clone(),
@@ -106,6 +113,9 @@ pub fn popup_init(
         language,
         warm,
         created_at_ms,
+        agent_session_id,
+        agent_session_title,
+        caller_cwd,
     ) = if let Some(w) = app.try_state::<crate::app::WarmPopup>() {
         match w.show.lock().ok().and_then(|g| g.clone()) {
             Some(s) => (
@@ -119,6 +129,9 @@ pub fn popup_init(
                 s.lang,
                 true,
                 s.created_at_ms,
+                s.agent_session_id,
+                s.agent_session_title,
+                s.caller_cwd,
             ),
             None => (
                 None,
@@ -131,6 +144,9 @@ pub fn popup_init(
                 default_lang,
                 true,
                 0,
+                None,
+                None,
+                None,
             ),
         }
     } else {
@@ -145,6 +161,9 @@ pub fn popup_init(
             default_lang,
             false,
             state.created_at_ms,
+            state.agent_session_id.clone(),
+            state.agent_session_title.lock().unwrap().clone(),
+            state.caller_cwd.clone(),
         )
     };
     // 预热进程长存、`state.config` 可能滞后：领用时按最新 config 取主题/置顶/语音（无钥匙串）；
@@ -158,6 +177,7 @@ pub fn popup_init(
 
     let project_name = crate::project::display_name(&project);
     Ok(PopupInit {
+        caller_cwd,
         interaction,
         popup_edit,
         theme: theme_str(cfg.general.theme),
@@ -169,6 +189,8 @@ pub fn popup_init(
         agent_kind,
         agent_pid,
         agent_console_session_id,
+        agent_session_id,
+        agent_session_title,
         language,
         speech_language: cfg.general.speech_language.clone(),
         speech_shortcut: cfg.general.speech_shortcut.clone(),
@@ -187,6 +209,121 @@ pub fn popup_inbox_init(app: AppHandle) -> Result<crate::app::popup_inbox::Snaps
         .try_state::<crate::app::popup_inbox::Inbox>()
         .ok_or("popup inbox is unavailable")?
         .snapshot())
+}
+
+fn hover_init(
+    app: AppHandle,
+    state: State<AppState>,
+    request_id: Option<String>,
+) -> Result<PopupInit, String> {
+    if app.try_state::<crate::app::popup_inbox::Inbox>().is_none() {
+        let bridge = app
+            .try_state::<crate::app::GuiBridge>()
+            .ok_or("not a popup window")?;
+        if bridge.is_done()
+            || request_id
+                .as_deref()
+                .is_none_or(|id| id != bridge.request_id())
+        {
+            return Err("popup request identity changed".into());
+        }
+    }
+    popup_init(app, state, request_id)
+}
+
+#[tauri::command]
+pub async fn popup_agent_info(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request_id: Option<String>,
+) -> Result<crate::agents::session_info::SessionInfo, String> {
+    let init = hover_init(app, state, request_id)?;
+    let identity = init
+        .agent_kind
+        .as_deref()
+        .and_then(crate::agents::AgentKind::parse)
+        .zip(init.agent_session_id);
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some((kind, session_id)) = identity else {
+            return crate::agents::session_info::SessionInfo::default();
+        };
+        type Cache = HashMap<
+            (crate::agents::AgentKind, String),
+            (Instant, crate::agents::session_info::SessionInfo),
+        >;
+        static CACHE: std::sync::OnceLock<std::sync::Mutex<Cache>> = std::sync::OnceLock::new();
+        let cache = CACHE.get_or_init(Default::default);
+        let key = (kind, session_id);
+        if let Some((_, value)) = cache
+            .lock()
+            .unwrap()
+            .get(&key)
+            .filter(|(at, _)| at.elapsed() < Duration::from_secs(2))
+        {
+            return value.clone();
+        }
+        let value = crate::agents::session_info::resolve(kind, &key.1);
+        let mut cache = cache.lock().unwrap();
+        if cache.len() >= 128 {
+            cache.clear();
+        }
+        cache.insert(key, (Instant::now(), value.clone()));
+        value
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn popup_project_info(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request_id: Option<String>,
+) -> Result<crate::project_info::GitInfo, String> {
+    let project = hover_init(app, state, request_id)?.project;
+    tauri::async_runtime::spawn_blocking(move || {
+        type Cache = HashMap<String, (Instant, crate::project_info::GitInfo)>;
+        static CACHE: std::sync::OnceLock<std::sync::Mutex<Cache>> = std::sync::OnceLock::new();
+        let cache = CACHE.get_or_init(Default::default);
+        if let Some((_, value)) = cache
+            .lock()
+            .unwrap()
+            .get(&project)
+            .filter(|(at, _)| at.elapsed() < Duration::from_secs(2))
+        {
+            return value.clone();
+        }
+        let value = crate::project_info::read(std::path::Path::new(&project));
+        let mut cache = cache.lock().unwrap();
+        if cache.len() >= 128 {
+            cache.clear();
+        }
+        cache.insert(project, (Instant::now(), value.clone()));
+        value
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn popup_open_terminal(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request_id: Option<String>,
+    target: String,
+) -> Result<(), String> {
+    let init = hover_init(app, state, request_id)?;
+    let path = match target.as_str() {
+        "project" => Some(init.project),
+        "caller" => init.caller_cwd,
+        _ => return Err("unknown popup directory".into()),
+    }
+    .ok_or("directory unavailable")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::project_info::open_terminal(std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub async fn popup_inbox_activate(app: AppHandle, request_id: String) -> Result<(), String> {

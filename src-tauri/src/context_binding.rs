@@ -116,7 +116,12 @@ impl GrokBindingRegistry {
             || project.is_empty()
             || !matches!(
                 qualified_tool_name.as_str(),
-                "askhuman__ask" | "askhuman__whats_next" | "askhuman__show_last"
+                "askhuman__ask"
+                    | "askhuman__whats_next"
+                    | "askhuman__show_last"
+                    | "askhuman__todo_add"
+                    | "askhuman__todo_list"
+                    | "askhuman__todo_update"
             )
         {
             return;
@@ -152,7 +157,12 @@ impl GrokBindingRegistry {
             || project.is_empty()
             || !matches!(
                 qualified_tool_name.as_str(),
-                "askhuman__ask" | "askhuman__whats_next" | "askhuman__show_last"
+                "askhuman__ask"
+                    | "askhuman__whats_next"
+                    | "askhuman__show_last"
+                    | "askhuman__todo_add"
+                    | "askhuman__todo_list"
+                    | "askhuman__todo_update"
             )
         {
             return;
@@ -300,6 +310,15 @@ pub fn canonical_tool_arguments_sha256(tool_name: &str, arguments: &Value) -> Op
             }
             crate::mcp::ask::show_last_arguments_value(&params)
         }
+        "todo_add" => crate::mcp::ask::todo_arguments_value(
+            &serde_json::from_value::<crate::mcp::ask::TodoAddParams>(arguments.clone()).ok()?,
+        ),
+        "todo_list" => crate::mcp::ask::todo_arguments_value(
+            &serde_json::from_value::<crate::mcp::ask::TodoListParams>(arguments.clone()).ok()?,
+        ),
+        "todo_update" => crate::mcp::ask::todo_arguments_value(
+            &serde_json::from_value::<crate::mcp::ask::TodoUpdateParams>(arguments.clone()).ok()?,
+        ),
         _ => return None,
     };
     Some(canonical_arguments_sha256(&normalized))
@@ -313,7 +332,7 @@ pub fn record_grok_pending(
     hook_input: &Value,
     env: &HashMap<String, String>,
 ) {
-    let project = super_project(env, hook_input);
+    let project = super_project(session_id, env, hook_input);
     if project.is_empty() {
         return;
     }
@@ -336,14 +355,14 @@ pub fn record_grok_pending(
     });
 }
 
-fn super_project(env: &HashMap<String, String>, input: &Value) -> String {
+fn super_project(session_id: &str, env: &HashMap<String, String>, input: &Value) -> String {
     let cwd = crate::agents::report::resolve_cwd(env, Some(input))
         .map(PathBuf::from)
         .unwrap_or_default();
     if cwd.as_os_str().is_empty() {
         String::new()
     } else {
-        crate::project::detect_from(&cwd)
+        crate::project::for_session(Some("grok"), Some(session_id), &cwd)
     }
 }
 
@@ -422,7 +441,10 @@ fn consume_token_at(token_dir: &Path, token: &str, expected_tool: &str) -> Optio
 }
 
 fn is_supported_tool(name: &str) -> bool {
-    matches!(name, "ask" | "whats_next" | "show_last")
+    matches!(
+        name,
+        "ask" | "whats_next" | "show_last" | "todo_add" | "todo_list" | "todo_update"
+    )
 }
 
 fn token_path_at(token_dir: &Path, token: &str) -> Option<PathBuf> {

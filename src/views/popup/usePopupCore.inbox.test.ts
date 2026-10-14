@@ -82,4 +82,26 @@ describe("mounted inbox forms", () => {
     completion.value = "sent"; await flushPromises();
     expect(a.ctx.submissionError.value).toBeNull(); expect(a.ctx.submitting.value).toBe(true);
   });
+  it("keeps title enrichment on its request while preserving drafts", async () => {
+    const a = await form("a", ref(true)), b = await form("b", ref(false));
+    a.ctx.inputByQ.value[0] = "retained draft";
+    for (const handler of mocks.handlers.get("popup-session-title")!) handler({ payload: { requestId: "a", title: "Native name" } });
+    await flushPromises();
+    expect(a.ctx.agentSessionTitle.value).toBe("Native name");
+    expect(b.ctx.agentSessionTitle.value).toBe("");
+    expect(a.ctx.inputByQ.value[0]).toBe("retained draft");
+  });
+  it("retains a title delivered while the initialization snapshot is pending", async () => {
+    let release!: (value: PopupInit) => void;
+    const pending = new Promise<PopupInit>(resolve => { release = resolve; });
+    mocks.invoke.mockImplementation(async (command: string) => command === "popup_init" ? pending : {});
+    const started = form("a", ref(true));
+    await flushPromises();
+    for (const handler of mocks.handlers.get("popup-session-title")!) handler({ payload: { requestId: "a", title: "New name" } });
+    release({ ...init("a"), agentSessionId: "native-a", agentSessionTitle: "Old snapshot name" });
+    const { ctx } = await started;
+    await flushPromises();
+    expect(ctx.agentSessionId.value).toBe("native-a");
+    expect(ctx.agentSessionTitle.value).toBe("New name");
+  });
 });
