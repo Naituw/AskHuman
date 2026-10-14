@@ -470,6 +470,7 @@ pub struct PermissionsConfig {
 #[serde(rename_all = "camelCase", default)]
 pub struct AppConfig {
     pub codex_desktop: crate::codex_desktop::Config,
+    pub cursor_desktop: crate::cursor_desktop::Config,
     pub general: GeneralConfig,
     pub channels: ChannelsConfig,
     pub agent_tasks: AgentTasksConfig,

@@ -8,6 +8,7 @@ import IntegrationTab from "./IntegrationTab.vue";
 const useSettingsContext = vi.hoisted(() => vi.fn());
 
 vi.mock("./context", () => ({ useSettingsContext }));
+vi.mock("./CursorDesktopSettings.vue", () => ({ default: { template: '<div class="cursor-desktop-settings-stub" />' } }));
 
 function modeStatus(
   overrides: Partial<AgentModeStatus> = {},
@@ -160,6 +161,15 @@ describe("IntegrationTab", () => {
     expect(row).toBeDefined();
     return row!;
   }
+
+  it("shows Cursor Desktop control only inside an active Cursor integration", () => {
+    const active = mountAgent(agentDefinition("cursor", true), modeStatus());
+    expect(active.wrapper.find(".cursor-desktop-settings-stub").exists()).toBe(true);
+    active.wrapper.unmount();
+    const none = mountAgent(agentDefinition("cursor", true), modeStatus({ mode: "none" }));
+    expect(none.wrapper.find(".cursor-desktop-settings-stub").exists()).toBe(false);
+    none.wrapper.unmount();
+  });
 
   it("shows default-on lifecycle drift inside an active Agent card", async () => {
     const lifecycle = {

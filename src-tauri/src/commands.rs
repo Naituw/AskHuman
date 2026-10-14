@@ -2392,6 +2392,13 @@ pub async fn save_settings(
     mut config: AppConfig,
     secret_actions: SecretActions,
 ) -> Result<(), String> {
+    let cursor_runtime_needed = crate::cursor_desktop::configured(&config.cursor_desktop)
+        || crate::cursor_desktop::configured(&AppConfig::load_without_secrets().cursor_desktop);
+    if cursor_runtime_needed {
+        crate::client::ensure_running()
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     if config.agent_tasks.enabled {
         config.general.daemon_lifecycle = crate::config::DaemonLifecycleMode::KeepAlive;
         crate::integrations::login_item::sync_daemon(true).map_err(|e| e.to_string())?;
@@ -3456,12 +3463,20 @@ pub fn agent_ask_question_set(agent: String, enabled: bool) -> Result<(), String
 }
 
 #[tauri::command]
-pub fn agent_mode_set(app: tauri::AppHandle, agent: String, mode: String) -> Result<(), String> {
-    let a = parse_agent(&agent)?;
-    let m = agent_mode::Mode::parse(&mode).ok_or_else(|| {
-        crate::i18n::tr(crate::i18n::Lang::current(), "cmd.unknownMode").to_string()
-    })?;
-    agent_mode::set(a, m).map_err(|e| e.to_string())?;
+pub async fn agent_mode_set(
+    app: tauri::AppHandle,
+    agent: String,
+    mode: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let a = parse_agent(&agent)?;
+        let m = agent_mode::Mode::parse(&mode).ok_or_else(|| {
+            crate::i18n::tr(crate::i18n::Lang::current(), "cmd.unknownMode").to_string()
+        })?;
+        agent_mode::set(a, m).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     crate::app::gui_host::refresh_integration_updates(&app);
     Ok(())
 }
@@ -4951,6 +4966,12 @@ pub async fn codex_desktop(
     operation: crate::codex_desktop::Operation,
 ) -> Result<serde_json::Value, String> {
     crate::client::codex_desktop(operation).await
+}
+
+#[tauri::command]
+pub fn cursor_desktop_status() -> crate::cursor_desktop::Status {
+    let config = AppConfig::load_without_secrets();
+    crate::cursor_desktop::status(&config.cursor_desktop)
 }
 
 /// Materialize composer files before assigning a stable native send operation.
