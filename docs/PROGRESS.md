@@ -3,6 +3,12 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 实施中：终端 Cursor CLI 后台完成续跑控制
+
+用户已确认 macOS / 交互式 CLI / 受管命令包装 / Desktop 与 CLI 共用现有开关，并于 2026-10-15 授权自主计划、审核、实现验证。见 `specs/cursor-cli-background-followup.md`、`plans/cursor-cli-background-followup.md`。
+
+print/headless 与 Linux/Windows 分别为已记录 todo #6 / #7。真实测试仅 Grok 4.7；不改动已有用户 CLI 会话。真实人工 AskHuman End 验收不能伪造。
+
 ## 待外部验收：统一作答窗口的真实渠道与其他平台
 
 macOS 合并/可选独立模式、原生画布过渡、普通外缘缩放修复、10pt 未查看蓝点和持续圆形扩散已接入并安装。
