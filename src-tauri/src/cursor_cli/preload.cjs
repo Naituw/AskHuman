@@ -21,6 +21,8 @@ function attach(options, dependencies = {}) {
   const guards = new Map();
   const factories = new Map();
   let enabled = false, closed = false;
+  const startedAt = Date.now();
+  const missingRegistry = 'Cursor CLI background registry was not found after startup';
   function save() {
     state.updatedAt = Date.now();
     try {
@@ -32,8 +34,14 @@ function attach(options, dependencies = {}) {
   function policy() {
     try {
       const value = JSON.parse(fileSystem.readFileSync(options.policy, 'utf8'));
-      enabled = value.enabled === true;
-    } catch { /* Retain the last explicit policy across a transient read failure. */ }
+      if (typeof value.enabled !== 'boolean') throw Error('Invalid policy');
+      enabled = value.enabled;
+      if (state.error === 'Unable to read Cursor CLI policy') delete state.error;
+    } catch {
+      // Retain the last explicit policy across a transient read failure.
+      if (!state.error) state.error = 'Unable to read Cursor CLI policy';
+      state.phase = 'error';
+    }
   }
   function restore() {
     for (const [prototype, entry] of guards) {
@@ -64,6 +72,7 @@ function attach(options, dependencies = {}) {
       }
       return batch.filter(item => !completions.includes(item));
     };
+    if (state.error === missingRegistry) delete state.error;
     guards.set(prototype, {descriptor, guard});
     if (enabled) Object.defineProperty(prototype, 'pull', {...descriptor, value: guard});
   }
@@ -93,14 +102,22 @@ function attach(options, dependencies = {}) {
   };
   function refresh() {
     policy();
-    if (!enabled) restore();
-    else {
+    if (!enabled) {
+      restore();
+      if (moduleApi._load === hook) moduleApi._load = originalLoad;
+      for (const [modules, entry] of factories) if (modules[registryId] === entry.wrapped) modules[registryId] = entry.factory;
+    } else {
+      if (moduleApi._load === originalLoad) moduleApi._load = hook;
+      for (const [modules, entry] of factories) if (modules[registryId] === entry.factory) modules[registryId] = entry.wrapped;
       for (const [prototype, entry] of guards) {
         if (prototype.pull === entry.descriptor.value) Object.defineProperty(prototype, 'pull', {...entry.descriptor, value: entry.guard});
         else if (prototype.pull !== entry.guard) {
           state.phase = 'conflict'; state.error = 'Cursor CLI registry changed after attachment';
         }
       }
+    }
+    if (enabled && !guards.size && Date.now() - startedAt > 30000 && !state.error) {
+      state.phase = 'incompatible'; state.error = missingRegistry;
     }
     state.active = enabled && !state.error && guards.size > 0 && [...guards].every(([p, e]) => p.pull === e.guard);
     if (!state.error) state.phase = state.active ? 'active' : enabled ? 'starting' : 'disabled';

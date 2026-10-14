@@ -97,3 +97,20 @@ it("distinguishes a ready CLI entry from a protected process", async () => {
   expect(row.get("[data-cursor-cli]").text()).toContain("restart existing CLI sessions");
   expect(row.get("[data-cursor-cli]").text()).not.toContain("Active in managed");
 });
+
+it("keeps CLI status independent of a failed Desktop status request", async () => {
+  api.status.mockRejectedValue(new Error("Desktop status unavailable"));
+  api.cli.mockResolvedValue({supported:true, enabled:true, phase:"active", entries:["cursor-agent"], processes:[]});
+  const row = await mountRow();
+  expect(row.get("[data-cursor-cli]").text()).toContain("Active in managed CLI");
+  expect(row.get("[role=alert]").text()).toContain("Desktop status unavailable");
+});
+it("retries CLI restoration errors after disabling the shared preference", async () => {
+  vi.useFakeTimers({toFake:["setInterval","clearInterval"]});
+  api.cli.mockResolvedValue({supported:true, enabled:false, phase:"error", entries:[], processes:[],error:"CLI cleanup pending"});
+  const row = await mountRow();
+  expect(row.text()).toContain("CLI cleanup pending");
+  api.cli.mockResolvedValue({supported:true, enabled:false, phase:"disabled", entries:[], processes:[]});
+  vi.advanceTimersByTime(3000); await flushPromises();
+  expect(row.text()).not.toContain("CLI cleanup pending");
+});

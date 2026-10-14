@@ -27,13 +27,13 @@ async function refresh() {
   refreshing = current;
   try {
     const [desktop, cli] = await Promise.allSettled([cursorDesktopStatus(), cursorCliStatus()]);
-    if (desktop.status === "rejected") throw desktop.reason;
-    const result = desktop.value;
     if (!disposed && current === generation) {
       cliStatus.value = cli.status === "fulfilled" ? cli.value : null;
       cliError.value = cli.status === "rejected" ? String(cli.reason) : "";
     }
     if (disposed || current !== generation) return;
+    if (desktop.status === "rejected") throw desktop.reason;
+    const result = desktop.value;
     status.value = result;
     if (config.value) {
       config.value.cursorDesktop ??= { suppressBackgroundCompletionFollowUp: false };
@@ -73,7 +73,7 @@ watch(() => modes.value.cursor.mode, () => { void refresh(); });
 onMounted(async () => {
   window.addEventListener("focus", refresh);
   timer = setInterval(() => {
-    if (enabled.value || ["detaching", "error", "offline"].includes(phase.value)) void refresh();
+    if (enabled.value || ["detaching", "error", "offline"].includes(phase.value) || ["detaching", "error", "offline"].includes(cliStatus.value?.phase ?? "")) void refresh();
   }, 3000);
   unlisten = await listen("settings-updated", () => { void refresh(); });
   if (disposed) { unlisten(); return; }

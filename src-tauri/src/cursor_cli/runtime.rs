@@ -88,10 +88,14 @@ fn owned(entry: &Entry) -> bool {
     }) && fs::read_to_string(&entry.path).is_ok_and(|v| v == entry.wrapper)
 }
 fn verified(entry: &Path) -> Result<PathBuf> {
-    let target = fs::canonicalize(entry)?;
     let root = dirs::home_dir()
         .context("No user home")?
         .join(".local/share/cursor-agent/versions");
+    verified_in(entry, &root)
+}
+fn verified_in(entry: &Path, root: &Path) -> Result<PathBuf> {
+    let root = fs::canonicalize(root)?;
+    let target = fs::canonicalize(entry)?;
     let version = target.parent().context("Invalid Cursor CLI target")?;
     if version.parent() != Some(root.as_path())
         || target.file_name().is_none_or(|name| name != "cursor-agent")
@@ -170,6 +174,37 @@ pub(super) fn needs_cleanup() -> bool {
         || !entries().is_empty()
         || processes(false).iter().any(|p| p.active)
 }
+fn phase(
+    enabled: bool,
+    entries: &[String],
+    processes: &[ProcessStatus],
+    error: bool,
+) -> &'static str {
+    if error {
+        "error"
+    } else if !enabled && processes.iter().any(|p| p.active) {
+        "detaching"
+    } else if !enabled {
+        "disabled"
+    } else if processes
+        .iter()
+        .any(|p| p.phase == "unresponsive" || p.error.is_some())
+    {
+        "error"
+    } else if entries.is_empty() && processes.iter().any(|p| p.active) {
+        "partial"
+    } else if !processes.is_empty() && processes.iter().all(|p| p.active) {
+        "active"
+    } else if processes.iter().any(|p| p.active) {
+        "partial"
+    } else if !processes.is_empty() {
+        "starting"
+    } else if entries.is_empty() {
+        "missing"
+    } else {
+        "ready"
+    }
+}
 pub(super) fn status() -> Status {
     let enabled = crate::cursor_desktop::active(
         &crate::config::AppConfig::load_without_secrets().cursor_desktop,
@@ -178,18 +213,23 @@ pub(super) fn status() -> Status {
     saved.supported = true;
     saved.enabled = enabled;
     saved.processes = processes(false);
-    if now().saturating_sub(saved.updated_at) > 6000 {
-        saved.phase = if enabled || needs_cleanup() {
+    saved.entries = entries()
+        .iter()
+        .filter(|entry| owned(entry))
+        .map(|entry| entry.path.to_string_lossy().into_owned())
+        .collect();
+    saved.phase =
+        if now().saturating_sub(saved.updated_at) > 6000 && (enabled || needs_cleanup()) {
             "offline"
         } else {
-            "disabled"
+            phase(
+                enabled,
+                &saved.entries,
+                &saved.processes,
+                saved.error.is_some(),
+            )
         }
         .into();
-    } else if enabled && saved.phase == "disabled" {
-        saved.phase = "starting".into();
-    } else if !enabled && needs_cleanup() {
-        saved.phase = "detaching".into();
-    }
     saved
 }
 fn restore_owned(entry: &Entry) -> Result<()> {
@@ -231,8 +271,22 @@ fn reconcile(enabled: bool) -> Result<Vec<String>> {
     let mut keep = Vec::new();
     for entry in managed.drain(..) {
         if enabled && owned(&entry) {
-            keep.push(entry);
-            continue;
+            let target = if entry.target.is_absolute() {
+                entry.target.clone()
+            } else {
+                entry
+                    .path
+                    .parent()
+                    .context("Invalid entry")?
+                    .join(&entry.target)
+            };
+            match verified(&target) {
+                Ok(_) => {
+                    keep.push(entry);
+                    continue;
+                }
+                Err(error) => errors.push(error.to_string()),
+            }
         }
         if let Err(error) = restore_owned(&entry) {
             errors.push(error.to_string());
@@ -247,7 +301,13 @@ fn reconcile(enabled: bool) -> Result<Vec<String>> {
             if keep.iter().any(|entry| entry.path == path) || fs::read_link(&path).is_err() {
                 continue;
             }
-            if verified(&path).is_err() {
+            if let Err(error) = verified(&path) {
+                let root = dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".local/share/cursor-agent/versions");
+                if fs::canonicalize(&path).is_ok_and(|target| target.starts_with(&root)) {
+                    errors.push(format!("{name}: {error}"));
+                }
                 continue;
             }
             let entry = Entry {
@@ -291,28 +351,7 @@ pub(super) async fn run() {
                 .map(|entry| entry.path.to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
             let error = result.err().map(|error| error.to_string());
-            let phase = if error.is_some() {
-                "error"
-            } else if !enabled && processes.iter().any(|p| p.active) {
-                "detaching"
-            } else if !enabled {
-                "disabled"
-            } else if processes
-                .iter()
-                .any(|p| p.phase == "unresponsive" || p.error.is_some())
-            {
-                "error"
-            } else if !processes.is_empty() && processes.iter().all(|p| p.active) {
-                "active"
-            } else if processes.iter().any(|p| p.active) {
-                "partial"
-            } else if !processes.is_empty() {
-                "starting"
-            } else if entries.is_empty() {
-                "missing"
-            } else {
-                "ready"
-            };
+            let phase = phase(enabled, &entries, &processes, error.is_some());
             let value = Status {
                 supported: true,
                 enabled,
@@ -358,21 +397,23 @@ fn interactive(args: &[OsString]) -> bool {
     let value_options = [
         "--model",
         "-m",
-        "--resume",
-        "-r",
         "--workspace",
         "--directory",
         "--api-key",
         "--mode",
-        "--worktree",
         "--worktree-base",
         "--browser",
         "--sandbox",
-        "--approve-mcps",
+        "--header",
+        "-H",
+        "--endpoint",
+        "-e",
+        "--add-dir",
+        "--plugin-dir",
     ];
     let mut value = false;
     let mut first_positional = true;
-    for arg in args {
+    for (index, arg) in args.iter().enumerate() {
         let Some(arg) = arg.to_str() else {
             return false;
         };
@@ -396,13 +437,19 @@ fn interactive(args: &[OsString]) -> bool {
             || arg.starts_with("--print=")
             || arg.starts_with("--output-format=")
             || arg.starts_with("--acp=")
+            || (arg.starts_with("-p") && !arg.starts_with("--"))
         {
             return false;
         }
         if arg == "--" {
             break;
         }
-        if value_options.contains(&arg) {
+        if value_options.contains(&arg)
+            || (["--resume", "-r", "--worktree", "-w"].contains(&arg)
+                && args
+                    .get(index + 1)
+                    .is_some_and(|next| !next.to_string_lossy().starts_with('-')))
+        {
             value = true;
         } else if !arg.starts_with('-') && first_positional {
             first_positional = false;
@@ -432,7 +479,8 @@ pub(super) fn launch(args: &[OsString]) -> Result<()> {
             .context("Invalid entry")?
             .join(&entry.target)
     };
-    let native = verified(&target)?;
+    let native = fs::canonicalize(&target).context("Original Cursor CLI target is unavailable")?;
+    let supported = verified(&target);
     let backup_dir = dir().join("original");
     private_dir(&backup_dir)?;
     let original = backup_dir.join(entry.path.file_name().context("Invalid entry name")?);
@@ -448,6 +496,15 @@ pub(super) fn launch(args: &[OsString]) -> Result<()> {
     } else {
         command.env_remove(crate::dev_instance::ASKHUMAN_HOME_ENV);
     }
+    if supported.is_err() {
+        // A vendor launcher update must not make the user's command unusable.
+        let _ = restore_owned(&entry);
+        eprintln!("AskHuman: unsupported Cursor CLI launcher; starting without protection");
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        }
+        return Err(command.exec()).context("Unable to launch Cursor CLI");
+    }
     if {
         use std::io::IsTerminal;
         std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
@@ -462,7 +519,7 @@ pub(super) fn launch(args: &[OsString]) -> Result<()> {
             .build()?
             .block_on(crate::client::ensure_running());
         let preload = dir().join(format!("preload-{}.cjs", revision()));
-        for _ in 0..20 {
+        for _ in 0..60 {
             if preload.is_file()
                 && read::<serde_json::Value>(&dir().join("policy.json"))
                     .is_some_and(|value| value["enabled"] == true)
@@ -471,7 +528,11 @@ pub(super) fn launch(args: &[OsString]) -> Result<()> {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        if service.is_err() || !preload.is_file() {
+        if service.is_err()
+            || !preload.is_file()
+            || !read::<serde_json::Value>(&dir().join("policy.json"))
+                .is_some_and(|value| value["enabled"] == true)
+        {
             eprintln!("AskHuman: Cursor CLI protection unavailable; starting the native CLI");
             unsafe {
                 libc::signal(libc::SIGPIPE, libc::SIG_DFL);
@@ -510,6 +571,10 @@ mod tests {
             vec![],
             vec!["--model", "grok-4.7-low"],
             vec!["--resume", "abc"],
+            vec!["--resume"],
+            vec!["--resume", "--force"],
+            vec!["--approve-mcps"],
+            vec!["--worktree"],
             vec!["--trust", "--force"],
             vec!["agent", "hello"],
             vec!["hello"],
@@ -580,5 +645,52 @@ mod tests {
             .status()
             .unwrap();
         assert_eq!(result.code(), Some(17));
+    }
+
+    #[test]
+    fn status_never_calls_an_empty_or_partial_process_set_fully_active() {
+        let entries = vec!["cursor-agent".into()];
+        assert_eq!(phase(true, &entries, &[], false), "ready");
+        let active = ProcessStatus {
+            active: true,
+            ..ProcessStatus::default()
+        };
+        let starting = ProcessStatus::default();
+        assert_eq!(
+            phase(true, &entries, &[active.clone(), starting], false),
+            "partial"
+        );
+        assert_eq!(
+            phase(true, &[], std::slice::from_ref(&active), false),
+            "partial"
+        );
+        assert_eq!(phase(false, &[], &[active], false), "detaching");
+        assert_eq!(phase(false, &[], &[], false), "disabled");
+    }
+
+    #[test]
+    fn vendor_verification_rejects_foreign_paths_and_changed_launchers() {
+        let root = tempfile::tempdir().unwrap();
+        let version = root.path().join("v1");
+        fs::create_dir(&version).unwrap();
+        let launcher = version.join("cursor-agent");
+        atomic(
+            &launcher,
+            b"CURSOR_INVOKED_AS=x\nNODE_BIN=\"$SCRIPT_DIR/node\"\n$SCRIPT_DIR/index.js\n",
+            0o755,
+        )
+        .unwrap();
+        atomic(&version.join("node"), b"node", 0o755).unwrap();
+        atomic(&version.join("index.js"), b"index", 0o644).unwrap();
+        assert_eq!(
+            verified_in(&launcher, root.path()).unwrap(),
+            fs::canonicalize(&launcher).unwrap()
+        );
+        assert!(verified_in(&launcher, &root.path().join("foreign")).is_err());
+        fs::set_permissions(version.join("node"), fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(verified_in(&launcher, root.path()).is_err());
+        fs::set_permissions(version.join("node"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(&launcher, "unknown vendor contract").unwrap();
+        assert!(verified_in(&launcher, root.path()).is_err());
     }
 }

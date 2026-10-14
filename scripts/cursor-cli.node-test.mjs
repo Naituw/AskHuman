@@ -49,7 +49,7 @@ test('pending Await and completed results remain available without a new notific
 });
 test('disable is checked at pull and re-enable restores the guard',t=>{
   const f=fixture(t);const registry=new f.Registry();f.setPolicy(false);registry.pending.push({id:'native'});
-  assert.deepEqual(registry.pull('chat'),[{id:'native',payload:{kind:'shell'}}]);f.controller.refresh();assert.equal(f.Registry.prototype.pull,f.originalPull);
+  assert.deepEqual(registry.pull('chat'),[{id:'native',payload:{kind:'shell'}}]);f.controller.refresh();assert.equal(f.Registry.prototype.pull,f.originalPull);assert.equal(f.module._load,f.originalLoad);
   f.setPolicy(true);f.controller.refresh();registry.pending.push({id:'managed'});assert.deepEqual(registry.pull('chat'),[]);assert.equal(f.controller.state.active,true);
 });
 test('restore preserves a later foreign prototype wrapper and reports incomplete coverage',t=>{
@@ -80,4 +80,10 @@ test('preload does not leak its bootstrap or require flag to child Node commands
   const boot=JSON.stringify({index,policy,status:join(root,'status.json'),revision:'test'});
   const result=spawnSync(process.execPath,[index],{encoding:'utf8',env:{...process.env,NODE_OPTIONS:`--require ${JSON.stringify(preload)}`,ASKHUMAN_CURSOR_CLI_BOOT:boot}});
   assert.equal(result.status,0,result.stderr);assert.deepEqual(JSON.parse(result.stdout),{});
+});
+
+test('a transient policy read failure retains protection and recovers its diagnostic',t=>{
+  const f=fixture(t);const registry=new f.Registry();writeFileSync(f.options.policy,'invalid JSON');registry.pending.push({id:'during-read-failure'});
+  assert.deepEqual(registry.pull('chat'),[]);assert.match(f.controller.state.error,/policy/);
+  f.setPolicy(true);f.controller.refresh();assert.equal(f.controller.state.error,undefined);assert.equal(f.controller.state.active,true);
 });
