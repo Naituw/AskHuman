@@ -106,13 +106,13 @@ Hook 客户端，并只在该进程内临时停用 Stop Hook，未伪造人类�
 
 - 原生方法、测试进程内 Stop Hook 和临时引用已还原；隔离 CLI 与其 MCP 子进程退出。
 - Inspector 9229 确认无监听；没有改动或停止已有用户 CLI 会话。
-- 原 CLI 配置文件 SHA-256 与测试前一致；厂商安装文件未改，版本未升级。
+- 四次真实调用结束时原 CLI 配置 SHA-256 与测试前一致。随后无模型启动预加载检查期间观察到全局文件另有更新，不能宣称全时段哈希不变；未回滚它。测试始终使用私有 CURSOR_CONFIG_DIR，厂商安装文件未改，版本未升级。
 - 原始证据的关键文件为 `final-native-evidence.json`、`artifact-evidence.json`、
   `visible-assistant-evidence.json`、`baseline-complete.json`、`cleanup.json`；本节保留关键事实，
   不要求 /tmp 文件永久存在。
 
 用户已确认 CLI 沿用“所有后台完成通知都不能自动启动模型”的全局策略，包含未明确结束的
 会话。用户已进一步确认首版仅交互式 CLI；print/headless 后续单独处理，已记录为项目待办 #6
-（`9e794f6e-bfde-4741-975e-793db183076c`）。最终规格仍需确认平台、接入方式和开关归属，
-再把当前原型补齐为可恢复、
-有契约检查的产品链路。不能仅凭本原型宣称终端 CLI 已受现有 Desktop 开关保护。
+（`9e794f6e-bfde-4741-975e-793db183076c`）。用户已确认 macOS、受管命令包装、与 Desktop 共用现有开关，随后授权实现与验证。规格和计划见 `../specs/cursor-cli-background-followup.md`、`../plans/cursor-cli-background-followup.md`。
+
+启动预加载无模型烟测通过，bundled Node 为 v26.8.1，未开 Inspector、未产生调试横幅。普通 `agent` 命令当前优先解析到 Grok，不能改 PATH；产品只接管核验属于 Cursor 的入口。其他平台已记录 todo #7（`db4b3a02-9c5f-415e-81f2-098f8f9a8588`）。

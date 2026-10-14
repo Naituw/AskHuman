@@ -87,9 +87,9 @@ Cursor 的 Stop 停止当前模型轮次，后台 Shell / 子代理可继续运�
 以上是原型阶段的历史边界。后续实现已补齐真实子代理/Await、普通 IDE Agent Host 和产品
 安装链路，完整证据见 [`../plans/cursor-desktop-background-followup.md`](../plans/cursor-desktop-background-followup.md)。
 
-## 5. Cursor CLI 静态分析（禁止实测）
+## 5. Cursor CLI 早期静态分析（历史边界）
 
-用户明确要求 CLI 不实测。本节只读取本机已安装版本 **2026.07.23-e383d2b** 的文件，
+本节写于用户要求 CLI 不实测的 Desktop 阶段；2026-10-15 后续授权和新版实测见 [CLI 调查](cursor-cli-background-followup.md)。当时本节只读取本机已安装版本 **2026.07.23-e383d2b** 的文件，
 没有启动 CLI 会话、发送模型请求或升级版本；结论不自动覆盖较新的 CLI。
 
 安装入口是 `~/.local/bin/cursor-agent`，指向
@@ -111,4 +111,4 @@ Cursor 的 Stop 停止当前模型轮次，后台 Shell / 子代理可继续运�
 都不能据名称认定为关闭自动模型调用。隐藏参数来自本机代码，不是公开稳定配置承诺。
 [CLI 使用说明](https://cursor.com/docs/cli/using)区分交互使用、恢复会话与 headless 模式。
 
-首版 Desktop 规格不自动扩展为终端 CLI 接入；如果未来要支持，需独立调查版本及接入契约。
+终端 CLI 后续已独立调查版本与接入契约，见上述 CLI 调查与 `../specs/cursor-cli-background-followup.md`。

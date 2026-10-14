@@ -30,14 +30,16 @@ Every reply (a "send" completed in the popup or any channel, plus a cancel you t
 - **Filter** — use one two-level scope menu to pick a project, then "Everything in this project" / "All sessions" or one session from its submenu; space-separated keywords can be layered on top. Native Agent sessions show a best-effort title and short ID; MCP fallbacks are explicitly labeled as approximate sessions.
 - **Clean up** — the context action reads "Delete current search results", "Clear selected session history", or "Clear selected project history" and deletes only the entries frozen when confirmation opens. New matching entries that arrive afterward are retained. "Clear all history" remains separate and is the only item shown for the unfiltered global scope.
 
-## Cursor Desktop background follow-ups
+## Cursor background follow-ups
 
 On macOS, **Agents → Cursor → Prevent background completion follow-ups** is off by default and
 available while CLI/MCP integration is active. It applies to every local Cursor Desktop chat,
 including chats that have not called AskHuman. Background commands and subagents keep running and
 retain their results; completion notifications no longer start a model turn automatically. Send a
 message to continue. Active Await calls still receive results. Goals, subscriptions and scheduled
-automation are separate. Terminal Cursor CLI is not covered.
+automation are separate.
+
+The same switch also covers the managed interactive CLI on macOS. AskHuman wraps verified user `cursor-agent` / Cursor `agent` symlinks; command usage stays the same. Restart existing CLI sessions. Settings distinguish entry readiness from protected processes. Print/headless, ACP, direct version paths, Linux and Windows are outside this release. Disabling the switch or integration restores owned entries without overwriting subsequent third-party changes.
 
 While enabled, AskHuman keeps its daemon running and automatically attaches to existing and newly
 opened Cursor windows. Settings distinguish waiting, connecting, active and failed states. Startup
@@ -45,7 +47,7 @@ and reload may require a short attachment period; no special Cursor launch comma
 Disabling the switch or integration restores native behavior without replaying already settled
 notifications or archiving/hiding chats. Stopping the daemon manually can leave existing window guards
 active; disable this switch or integration to restore native follow-ups. `AskHuman doctor --json`
-includes `cursorDesktop` diagnostics.
+includes separate `cursorDesktop` and `cursorCli` diagnostics.
 
 ## Codex MCP environment overrides
 

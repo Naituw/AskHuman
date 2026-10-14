@@ -27,4 +27,44 @@
 
 ## 验证记录
 
-待实现后填写。真实 AskHuman 人工 End gate 如不能由本人完成，明确保留，不伪造答案。
+2026-10-15 已完成实现、自审、安装和自动验证，分支 `codex/cursor-cli-followup`。
+
+| 检查 | 结果 |
+|---|---|
+| Rust 全量 | 1324 passed / 4 ignored |
+| 前端 | 55 文件、385 Vitest passed；25 Node passed |
+| fmt / Clippy / production frontend build | 通过；提交钩子亦通过 |
+| 安装 | `./scripts/install.sh`，签名并安装至独立 Dev Instance |
+| 最终安装 startup smoke | CLI `2026.10.01-e373342`、Node v26.8.1、adapter `1630f242f58d8892`；启动已保护，无 Inspector/调试横幅 |
+| 真实模型 | 本轮 3 次父会话 + 1 次子代理调用，均由调用前校验限制为 Grok 4.7；另一次观察器字段错误在进入原生调用前拦截，没有计为成功请求 |
+| 自动完成续跑 | 真实后台 Shell / 子代理在父会话结束后完成，原生 ACK；观察到 0 次 `backgroundTaskCompletionAction` 模型调用 |
+| Await 竞争 | Shell 764846：工具开始后释放 gate，原生 complete / regexMatch / exitCode 0；子代理 Shell 244283 的阻塞 Await 亦正常取得结果 |
+| Ctrl+C | Shell 764848 在停止后真实成功、ACK，无自动模型；随后手动回复 `AH_MANUAL_OK` |
+| 原生队列无模型矩阵 | Shell / 子代理 × success/error/aborted；含重复入队的 12 条通知均原生 ACK，pending / inflight 清空 |
+| 生命周期 | daemon 重启保留同一 CLI PID 与保护；关闭 / 重开恢复 pull 和 startup loader 的精确函数引用，再接入成功 |
+| 入口所有权 | 已验证入口替换后重接管并保存相对原目标；第三方脚本不覆盖；用户删除不重建；关闭恢复原符号链接 |
+| 非目标模式 | 受管入口 `--print --help` 原样返回 0，不进入交互模型；完整 headless 模型链按已确认范围延期 |
+| 清理 | 所有本轮 CLI 测试 PID 退出、入口恢复并移除测试镜像，Inspector 9229 无监听；原 Cursor 主进程 92826 保留，生产偏好仍关闭 |
+
+真实会话 `a7a2441f-b01f-470b-a5c0-2d65fe690007`，子代理
+`b6c1cfd8-ea65-4386-9725-55f38c78bee7`。原生输出文件 764846 / 764847 /
+244283 / 764848 全部包含预期标记且 exit_code 为 0；子代理持久化 transcript 的可见
+assistant 文本为 `AH_MANAGED_CHILD_OK`。测试观察器只保存请求元数据与工具结果，不读取 thinking。
+
+新版 CLI 原生 Await 会拒绝等待子代理并要求结束当前轮次；不能把该原生限制报告成拦截错误，也不能宣称父会话的子代理 Await 验收成功。子代理真实结果和通知 ACK 已分别验证。
+
+证据目录为本机 `/var/folders/sm/h90d_zys04110r1_b2c3b9n80000gn/T/ah-cli-managed-jcd0w8v6`；
+关键摘要文件：`final-requests.json`、`after-stop.json`、`native-matrix-final.json`、
+`installed-final-smoke.json`、`installed-final-restoration.json`、`durable-output-evidence.json`、
+`replacement-adopted.json`、`foreign-entry-preserved.json`、`deleted-entry-preserved.json`、`cleanup-final.json`。
+本文保留关键事实，不要求临时目录永久存在。
+
+## 最终自审与交付边界
+
+- 修复独立状态请求、部分覆盖误报、停用后错误重试、可选 resume/worktree 参数识别。
+- 停用恢复自身 registry / chunk factory / Node loader；第三方后续包装保留。
+- 策略瞬时读取失败保留上一次明确策略并报告错误，避免意外恢复自动续跑；缺失模块/未知契约报告未保护。
+- 厂商 launcher 改变时恢复自有入口并原样启动，不能因适配失败使原命令不可用。
+- 当前主工作区另有功能仍在修改并已安装自己的二进制，因此本分支只安装到 Dev Instance，未覆盖生产安装或混入其未提交代码。待该任务收口后合并并安装生产版本。
+- 用户已睡觉，未冒充人回答 CLI 的真实 AskHuman End；人工 End 与新 CLI 状态行的观感仍待验收。测试中的 Stop hooks 仅在拥有的测试进程内临时过滤，未改全局 hook 文件，不能把它当作真人 End 证据。
+- Linux/Windows、print/headless 是已确认的后续 todo #7 / #6。

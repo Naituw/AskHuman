@@ -123,6 +123,7 @@ AskHuman/
       commands.rs            前端调用的 Tauri command 集合
       codex_desktop/               可选 macOS Codex App 原生会话与创建适配器
       cursor_desktop/              可选 macOS Cursor Desktop 后台完成续跑控制与私有运行桥
+      cursor_cli/                  共用策略的 macOS 交互式 CLI 入口管理与 startup preload
       integrations/agent_launch.rs  新建/Fork 共用一次性 LaunchRecord、readiness 与固定 argv adapter
 
       app/
@@ -426,7 +427,8 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 
 Cursor Desktop 另有默认关闭的独立“禁止后台完成后自动续跑”能力，由 Daemon 管理普通启动、
 窗口接入和还原，不依赖结束确认或逐会话结束状态。范围与验收真值见
-`docs/specs/cursor-desktop-background-followup.md`；终端 Cursor CLI 不在该能力范围内。
+`docs/specs/cursor-desktop-background-followup.md`；macOS 受管交互式终端 CLI 共用该开关，
+入口接管与恢复见 `docs/specs/cursor-cli-background-followup.md`，headless/直接版本入口不在范围内。
 
 - 处理 Claude Code、Codex、Cursor、Pi 的自然完成；Grok、错误和用户中断不能可靠 continuation，不发卡。
 - Claude Code、Codex、Cursor 的独立开关默认关，Pi 默认开；询问“继续/结束”，24h 或基础设施失败 fail-open，投放沿用活跃槽 ∪ watch 渠道。
