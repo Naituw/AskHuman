@@ -11,6 +11,10 @@ const renderer = fs.readFileSync(new URL("../src-tauri/src/cursor_desktop/render
 const bridge = fs.readFileSync(new URL("../src-tauri/src/cursor_desktop/bridge.js", import.meta.url), "utf8");
 const rendererKey = "__ASKHUMAN_CURSOR_BACKGROUND_V1__";
 const resources = [];
+// The production bridge is macOS-only and requires Unix sockets and POSIX permissions.
+const bridgeTest = (name, run) => test(name, {
+  skip: process.platform === "win32" ? "Unix socket bridge requires a Unix host" : false,
+}, run);
 afterEach(async () => {
   for (const dispose of resources.splice(0).reverse()) await dispose();
 });
@@ -237,7 +241,7 @@ async function until(check) {
   assert.fail("Condition did not become true");
 }
 
-test("private bridge authenticates requests, limits operations, and restores both window types", async () => {
+bridgeTest("private bridge authenticates requests, limits operations, and restores both window types", async () => {
   const windows = [new FakeWindow(1, "agents"), new FakeWindow(2, "ide")];
   const b = await startBridge(windows);
   await until(async () => (await b.request("status")).result.windows.every(w => w.phase === "active"));
@@ -258,7 +262,7 @@ test("private bridge authenticates requests, limits operations, and restores bot
   }
 });
 
-test("new windows and reloaded contexts receive a new guard without layering wrappers", async () => {
+bridgeTest("new windows and reloaded contexts receive a new guard without layering wrappers", async () => {
   const wc = new FakeWindow(1, "agents");
   const b = await startBridge([wc]);
   await until(() => wc.f.context[rendererKey]?.status().enabled === true);
@@ -275,7 +279,7 @@ test("new windows and reloaded contexts receive a new guard without layering wra
   assert.equal(later.f.context[rendererKey].suppressed, 1);
 });
 
-test("a user debugger is left intact and incomplete coverage is reported", async () => {
+bridgeTest("a user debugger is left intact and incomplete coverage is reported", async () => {
   const wc = new FakeWindow(1, "ide");
   wc.devTools = true;
   const b = await startBridge([wc]);
@@ -286,7 +290,7 @@ test("a user debugger is left intact and incomplete coverage is reported", async
   assert.equal(wc.devTools, true);
 });
 
-test("a failed restoration keeps authenticated control available until retry succeeds", async () => {
+bridgeTest("a failed restoration keeps authenticated control available until retry succeeds", async () => {
   const wc = new FakeWindow(1, "agents");
   const b = await startBridge([wc]);
   await until(() => wc.f.context[rendererKey]?.status().enabled === true);
@@ -300,7 +304,7 @@ test("a failed restoration keeps authenticated control available until retry suc
   assert.equal(wc.f.context[rendererKey], undefined);
 });
 
-test("bootstrap recovers a lost credential and stale callbacks cannot remove the new installation", async () => {
+bridgeTest("bootstrap recovers a lost credential and stale callbacks cannot remove the new installation", async () => {
   const wc = new FakeWindow(1, "agents");
   const b = await startBridge([wc]);
   await until(() => wc.f.context[rendererKey]?.status().enabled === true);
@@ -354,7 +358,7 @@ test("a stalled verifier times out without leaving a guard", async () => {
   assert.equal(f.context[rendererKey], undefined);
 });
 
-test("failed native verification is reported as unavailable with no live mutation", async () => {
+bridgeTest("failed native verification is reported as unavailable with no live mutation", async () => {
   const wc = new FakeWindow(1, "ide"), original = Object.getPrototypeOf(wc.f.agent)._runBackgroundTaskCompletionAction;
   wc.f.context.__verify = async () => { throw new Error("Native ACK failed"); };
   const b = await startBridge([wc]);
