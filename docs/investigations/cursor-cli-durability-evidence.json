@@ -1,0 +1,116 @@
+{
+  "observedAt": "2026-10-15",
+  "scope": "static internal module comparison; historical native queue probes retained from earlier tests; newest release not executed or installed",
+  "newestPackage": {
+    "version": "2026.10.14-941492e",
+    "source": "https://downloads.cursor.com/lab/2026.10.14-941492e/darwin/arm64/agent-cli-package.tar.gz",
+    "installerSource": "https://cursor.com/install",
+    "archiveBytes": 178006204,
+    "archiveSha256": "c6d9e2eaa1b1e24221517e0b4206b1f1593792e6f0d8a52e9b507bbe7ab0cc77",
+    "files": [
+      {
+        "archiveMember": "dist-package/index.js",
+        "name": "index.js",
+        "bytes": 8369615,
+        "sha256": "ddadb162e679c03dd467327f9f71900f4d8ddeff7ac5c07a1416cccdd6a9b67c"
+      },
+      {
+        "archiveMember": "dist-package/9030.index.js",
+        "name": "9030.index.js",
+        "bytes": 30949,
+        "sha256": "e5089dee66fb88eb89c3139758b5bae7304743815dd82b1ce7b684ff7fa06633"
+      },
+      {
+        "archiveMember": "dist-package/cursor-agent",
+        "name": "cursor-agent",
+        "bytes": 1096,
+        "sha256": "2ccc9a8e167797641448b5e5c936f006ba137a2555f117f38c5eb76a5238a233"
+      }
+    ],
+    "executedVendorCode": false
+  },
+  "newestLauncher": {
+    "bytes": 1096,
+    "hasCursorInvokedAs": true,
+    "hasBundledNodePath": true,
+    "hasIndexJsPath": true
+  },
+  "samples": [
+    {
+      "version": "2026.07.20-8cc9c0b",
+      "bundledNode": "v24.5.0",
+      "source": "existing official installed release",
+      "registryModuleId": "./src/shared/cli-background-work-registry.ts",
+      "moduleFactoryParsed": true,
+      "moduleFactorySha256": "cc7e3e6c90486742e819b104864153676bcff50c6b9b49ec0631eeb4fcf363da",
+      "exportT": true,
+      "declaresOwnPull": false,
+      "declaresOwnAck": false,
+      "pullUsesSuper": false,
+      "ackUsesForgetInFlight": false,
+      "hasInFlightSubagentIds": false,
+      "runtimeQueueProbePassed": true,
+      "runtimeQueueProbePerformed": true,
+      "hasInFlightSubagentQuery": false,
+      "hasInFlightKindQuery": false,
+      "hasGeneralInFlightMap": false
+    },
+    {
+      "version": "2026.07.23-e383d2b",
+      "bundledNode": "v24.5.0",
+      "source": "existing official installed release",
+      "registryModuleId": "./src/shared/cli-background-work-registry.ts",
+      "moduleFactoryParsed": true,
+      "moduleFactorySha256": "cc7e3e6c90486742e819b104864153676bcff50c6b9b49ec0631eeb4fcf363da",
+      "exportT": true,
+      "declaresOwnPull": false,
+      "declaresOwnAck": false,
+      "pullUsesSuper": false,
+      "ackUsesForgetInFlight": false,
+      "hasInFlightSubagentIds": false,
+      "runtimeQueueProbePassed": true,
+      "runtimeQueueProbePerformed": true,
+      "hasInFlightSubagentQuery": false,
+      "hasInFlightKindQuery": false,
+      "hasGeneralInFlightMap": false
+    },
+    {
+      "version": "2026.10.01-e373342",
+      "bundledNode": "v26.8.1",
+      "source": "existing official installed release",
+      "registryModuleId": "./src/shared/cli-background-work-registry.ts",
+      "moduleFactoryParsed": true,
+      "moduleFactorySha256": "703531d6929088f3378c3b035840cae6396732af99f70e2d0f771aae7e665c91",
+      "exportT": true,
+      "declaresOwnPull": true,
+      "declaresOwnAck": true,
+      "pullUsesSuper": true,
+      "ackUsesForgetInFlight": true,
+      "hasInFlightSubagentIds": true,
+      "runtimeQueueProbePassed": true,
+      "runtimeQueueProbePerformed": true,
+      "hasInFlightSubagentQuery": true,
+      "hasInFlightKindQuery": false,
+      "hasGeneralInFlightMap": false
+    },
+    {
+      "version": "2026.10.14-941492e",
+      "bundledNode": null,
+      "source": "https://downloads.cursor.com/lab/2026.10.14-941492e/darwin/arm64/agent-cli-package.tar.gz",
+      "registryModuleId": "./src/shared/cli-background-work-registry.ts",
+      "moduleFactoryParsed": true,
+      "moduleFactorySha256": "c73e1123d77df509d7e25c1be9feb70e6e1bf1a061273658efcf8ac6595112fb",
+      "exportT": true,
+      "declaresOwnPull": true,
+      "declaresOwnAck": true,
+      "pullUsesSuper": true,
+      "ackUsesForgetInFlight": true,
+      "hasInFlightSubagentIds": false,
+      "runtimeQueueProbePassed": null,
+      "runtimeQueueProbePerformed": false,
+      "hasInFlightSubagentQuery": false,
+      "hasInFlightKindQuery": true,
+      "hasGeneralInFlightMap": true
+    }
+  ]
+}
