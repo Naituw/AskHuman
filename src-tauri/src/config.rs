@@ -470,6 +470,7 @@ pub struct PermissionsConfig {
 #[serde(rename_all = "camelCase", default)]
 pub struct AppConfig {
     pub codex_desktop: crate::codex_desktop::Config,
+    pub cursor_desktop: crate::cursor_desktop::Config,
     pub general: GeneralConfig,
     pub channels: ChannelsConfig,
     pub agent_tasks: AgentTasksConfig,
@@ -654,17 +655,6 @@ fn harden_to(path: &Path, mode: u32) {
 mod tests {
     use super::*;
     use tempfile::tempdir;
-
-    #[test]
-    fn retired_cursor_background_preference_is_ignored_without_losing_other_settings() {
-        let config: AppConfig = serde_json::from_str(
-            r#"{"cursorDesktop":{"suppressBackgroundCompletionFollowUp":true},"general":{"language":"zh"}}"#,
-        ).unwrap();
-        assert_eq!(config.general.language, "zh");
-        let serialized = serde_json::to_value(config).unwrap();
-        assert!(serialized.get("cursorDesktop").is_none());
-        assert_eq!(serialized["general"]["language"], "zh");
-    }
 
     #[test]
     fn popup_mode_defaults_for_old_config_and_roundtrips_independent() {

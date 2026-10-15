@@ -1,10 +1,8 @@
 # Cursor Desktop 后台完成自动续跑控制
 
-> **已撤回（2026-10-15）**：用户否决内部运行时补丁的可靠性；此文保留历史方案/实测，不代表当前功能。
-> 可靠性复审与撤回理由见 [Cursor 后台完成控制复审](../investigations/cursor-background-reliability.md)。
-
-
-状态：实现已安装，macOS Cursor 3.24.12 两条运行路径的核心行为与生命周期验收通过，设置页报错修复已获人类确认；本机按用户选择保持关闭。
+状态：2026-10-16 已按用户授权恢复默认关闭的实验功能，加入原生行为预检并完成安装与六窗口验证。
+恢复实施与安装验证见 [恢复计划](../plans/cursor-desktop-restoration.md)；先前的撤回决定与理由保留于
+[可靠性复审](../investigations/cursor-background-reliability.md)。本机偏好保持关闭。
 
 ## 1. 目标与已确认决策
 
@@ -97,6 +95,13 @@ Cursor 的后台 Shell 或子代理结束后，可以通过完成通知重新启
 - 同一进程、窗口和服务代际只挂载一次；重载后替换旧代际，过期回调不能修改新代际。
 - 定位依赖经过检查的服务与行为契约，不依赖压缩类名、源码行号或整堆扫描。
   记录 Cursor 版本、构建和适配器版本；契约不匹配时停止该路径的修改并报告不可用。
+- 结构检查后，先解除 provider 调试暂停，再创建隔离的原生 store / service 和虚拟 composer
+  运行行为预检。预检不接触真实队列、聊天和文件服务，模型调用边界一律拒绝；验证原生同步
+  ACK / nack、六种任务结果标识、Await 排除、活跃轮次排队和停止后的结算。存在 paired inbox
+  时还检查原生游标排序和缺口保护；3.14 的直接 ACK 契约需明确匹配，不无条件跳过检查。
+- 每次窗口代际的激活必须先通过预检。调用次数与等待时间有界，超时 / 还原会取消激活并释放
+  隔离资源；晚到的 Promise 不能重新安装 guard。只有预检通过、当前原型未变且 owner / revision /
+  lease 一致，才修改真实原型。任何窗口未验证都不能报告全局 active。
 
 ### 4.3 接入资源与恢复
 
@@ -148,7 +153,7 @@ Cursor 的后台 Shell 或子代理结束后，可以通过完成通知重新启
 ### 5.3 发布门槛与现有证据
 
 macOS Cursor Agents 与普通 IDE 两条路径的核心行为、Await、子代理、正常启动和还原都通过后，
-才能将本开关作为正式支持能力。未匹配路径应显示不可用，不能静默回退成“已保护”。
+才能交付本实验开关。未匹配路径应显示不可用，不能静默回退成“已保护”。
 
 实现后已在 Cursor 3.24.12 验收普通 IDE / Agent Host（当前 connect 后端）和 Cursor Agents /
 legacy：真实 Shell、子代理、Await、Stop / AskHuman 明确结束、主动续聊、自动接入、重载、
@@ -158,4 +163,5 @@ Daemon 换新接管和关闭还原均有安装后证据，见实施记录。无�
 ## 6. 文档与范围
 
 实施与验收记录见 [`../plans/cursor-desktop-background-followup.md`](../plans/cursor-desktop-background-followup.md)。
+2026-10-16 的恢复与预检增量见 [`../plans/cursor-desktop-restoration.md`](../plans/cursor-desktop-restoration.md)。
 按实际模块边界更新对应 overview，未通过验收的路径不能写成已验证能力。

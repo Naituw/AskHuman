@@ -3,6 +3,9 @@
 2026-10-15，按已确认的[验证计划](../plans/cursor-desktop-restoration-validation.md)执行。
 本轮验证已完成；生产功能仍撤回，CLI 接管继续延期。
 
+后续：2026-10-16 用户据此授权恢复默认关闭的实验功能并加入原生预检；产品实现与安装后验证
+见 [恢复记录](../plans/cursor-desktop-restoration.md)。下文保留恢复前验证的时间与范围。
+
 ## 结论
 
 三个抽样构建可以共用原来的 bridge 和完成拦截器，只需给 3.14 的“无 paired inbox”

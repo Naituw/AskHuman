@@ -132,6 +132,7 @@ export function useSettingsSearch(deps: {
       // Agents 集成
       e("integration", "settings.integration.promptTitle"),
       e("integration", "settings.integration.stopTitle"),
+      e("integration", "cursorDesktop.title", ["cursorDesktop.hint"]),
       lit("integration", "Claude Code", ["Agent"]),
       lit("integration", "Codex", ["Agent"]),
       lit("integration", "Cursor", ["Agent"]),

@@ -1,0 +1,151 @@
+{
+  "date": "2026-10-16",
+  "kind": "installed-product-native-preflight",
+  "adapterRevision": "085b2d09c2dcf51e",
+  "platform": "27.0.1",
+  "architecture": "arm64",
+  "configuration": {
+    "productionPreferenceEnabled": false,
+    "productionActive": false,
+    "originalCursorPid": 92826,
+    "originalCursorUntouched": true
+  },
+  "cases": [
+    {
+      "minor": "3.14",
+      "surface": "agents",
+      "pid": 104,
+      "checks": 6,
+      "verified": true,
+      "reloadMs": 3619,
+      "nativeTestPassed": true,
+      "restored": {
+        "guardPresent": false,
+        "nativeHandler": true
+      },
+      "newModelLogMarkers": 0,
+      "version": "3.14.27",
+      "verifiedAfterReload": true,
+      "authenticationRejectionPassed": true
+    },
+    {
+      "minor": "3.14",
+      "surface": "ide",
+      "pid": 575,
+      "checks": 6,
+      "verified": true,
+      "reloadMs": 2528,
+      "nativeTestPassed": true,
+      "restored": {
+        "guardPresent": false,
+        "nativeHandler": true
+      },
+      "newModelLogMarkers": 0,
+      "version": "3.14.27",
+      "verifiedAfterReload": true,
+      "authenticationRejectionPassed": true
+    },
+    {
+      "minor": "3.18",
+      "surface": "agents",
+      "pid": 1433,
+      "checks": 8,
+      "verified": true,
+      "reloadMs": 3023,
+      "nativeTestPassed": true,
+      "restored": {
+        "guardPresent": false,
+        "nativeHandler": true
+      },
+      "newModelLogMarkers": 0,
+      "version": "3.18.25",
+      "verifiedAfterReload": true,
+      "authenticationRejectionPassed": true
+    },
+    {
+      "minor": "3.18",
+      "surface": "ide",
+      "pid": 2170,
+      "checks": 8,
+      "verified": true,
+      "reloadMs": 3021,
+      "nativeTestPassed": true,
+      "restored": {
+        "guardPresent": false,
+        "nativeHandler": true
+      },
+      "newModelLogMarkers": 0,
+      "version": "3.18.25",
+      "verifiedAfterReload": true,
+      "authenticationRejectionPassed": true
+    },
+    {
+      "minor": "3.24",
+      "surface": "agents",
+      "pid": 3036,
+      "checks": 10,
+      "verified": true,
+      "reloadMs": 3013,
+      "nativeTestPassed": true,
+      "restored": {
+        "guardPresent": false,
+        "nativeHandler": true
+      },
+      "newModelLogMarkers": 0,
+      "version": "3.24.12",
+      "verifiedAfterReload": true,
+      "authenticationRejectionPassed": true
+    },
+    {
+      "minor": "3.24",
+      "surface": "ide",
+      "pid": 3696,
+      "checks": 10,
+      "verified": true,
+      "reloadMs": 3013,
+      "nativeTestPassed": true,
+      "restored": {
+        "guardPresent": false,
+        "nativeHandler": true
+      },
+      "newModelLogMarkers": 0,
+      "version": "3.24.12",
+      "verifiedAfterReload": true,
+      "authenticationRejectionPassed": true
+    }
+  ],
+  "cleanup": {
+    "ownedProcessesExited": true,
+    "nativeHandlersRestored": true,
+    "testManifestsRemaining": 0,
+    "testSocketsRemaining": 0,
+    "inspectorListenersRemaining": 0,
+    "temporaryControlCredentialsRemoved": true
+  },
+  "validation": {
+    "rustPassed": 1333,
+    "rustIgnored": 4,
+    "vitestPassed": 389,
+    "nodePassed": 32,
+    "clippy": "passed",
+    "format": "passed",
+    "frontendBuild": "passed",
+    "install": "passed"
+  },
+  "sourceHashes": {
+    "bridge.js": "51fde858695f35e10c2087d588dec9c89dcb3e6d972d8308e6835aafa9827b73",
+    "renderer.js": "0fa8fdaa89563d0bb404765daf49fbdb1792c5a48105ec5feedcb72e01a7f540",
+    "preflight.js": "6d8a8727d638956e852360087450ff9eeaebcc89681bee3ebdf1e563aa2a5b64"
+  },
+  "limits": [
+    "Native probes use isolated stores and virtual composers inside real Cursor; they do not start models.",
+    "Grok 4.7 and genuine AskHuman End evidence are reused from the earlier unchanged completion handler acceptance.",
+    "Paired cloud inbox checks use native cursor logic with synthetic paths, not a new cloud child end-to-end run.",
+    "Startup and reload have an attachment gap; future versions and other platforms are not guaranteed."
+  ],
+  "initialHarnessFailure": {
+    "cause": "external reload opened Inspector before the native test checked its closure",
+    "fixed": "wait for an explicit ready-to-reload marker; return errors through restoration cleanup",
+    "countedAsPass": false
+  }
+}

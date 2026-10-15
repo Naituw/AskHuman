@@ -10,6 +10,10 @@
 
 ## 字段地图
 
+- `cursorDesktop.suppressBackgroundCompletionFollowUp`：默认 `false`；macOS Cursor 的 CLI/MCP
+  自动集成有效时，由 Daemon 管理实验性的 Desktop 全局后台完成续跑控制；逐窗口原生行为预检
+  通过后才修改处理器并报告 active。有效能力独立保活，不改写 `general.daemonLifecycle`；
+  None 停止接入但保留偏好，终端 Cursor CLI 不在范围内。
 - `general`
   - `theme`、`language`、`alwaysOnTop`、`appearAnimation`、`windowEffect`（`solid|blur|glass`；配置默认 `blur`，显式 `glass` 在 macOS 26 以下有效值自动解析为 `blur`）
   - `speechLanguage`、`speechShortcut`

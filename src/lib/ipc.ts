@@ -632,6 +632,18 @@ export interface CodexDesktopStatus {
   error?: string; installation?: { app: string; home: string };
   sessions: { id: string; title: string; cwd: string; connected: boolean; active: boolean; error?: string }[];
 }
+
+export interface CursorDesktopStatus {
+  supported: boolean;
+  preferenceEnabled: boolean;
+  enabled: boolean;
+  active: boolean;
+  phase: string;
+  processes: number;
+  windows: {pid: number; id: number; phase: string; surface?: string; suppressed: number; verified: boolean; checks: number; error?: string}[];
+  error?: string;
+}
+export const cursorDesktopStatus = () => invoke<CursorDesktopStatus>("cursor_desktop_status");
 export type CodexDesktopOperation = {op: "status"} | {op: "open"; sessionId?: string}
   | {op: "send"; sessionId: string; text: string; files: string[]; id: string}
   | {op: "stop"; sessionId: string; id: string};
