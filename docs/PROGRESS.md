@@ -3,17 +3,13 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 待合并与人工验收：终端 Cursor CLI 后台完成续跑控制
+## 可靠性复审：Cursor 后台完成续跑控制
 
-实现、自审和独立 Dev Instance 安装验证已完成，位于 `codex/cursor-cli-followup`：
-`7bf7c82` 计划，`dc09602` 实现，`233b1a5` 恢复/诊断修正。规格和完整证据见该分支
-`docs/specs/cursor-cli-background-followup.md`、`docs/plans/cursor-cli-background-followup.md`。
-Rust 1324、Vitest 385、Node 25 全部通过；真实 Grok 4.7 父/子代理、Shell/Await、Ctrl+C、
-手动续聊、原生 ACK/重复通知及入口所有权均已验证。
-
-主工作区另一功能仍在修改并安装自己的二进制，未覆盖该环境。下一步待其收口后合并本分支、
-安装生产版本，补本人实际 AskHuman End 与新状态行观感验收；不能伪造这些人工结果。
-生产偏好按用户此前选择保持关闭。print/headless 与 Linux/Windows 分别为既有 todo #6 / #7。
+用户已否决 CLI 脆弱的入口接管/JS 补丁方案，要求先核对 Desktop 旧版兼容，再研究可靠替代；
+没有合适方案就移除功能，宁可不提供能力。当前工作分支 `codex/cursor-background-reliability`，
+计划见 `docs/plans/cursor-background-reliability.md`。CLI 旧实验分支只保留历史，不再待合并发布。
+Desktop 当前仅有 3.24.12 两条路径的真实证据，不能将单构建通过宣称为旧版或升级保证。
+按最新授权自主调查、必要时移除并安装验证，用户外出期间不等待常规问题。
 
 ## 待外部验收：统一作答窗口的真实渠道与其他平台
 
