@@ -1,0 +1,727 @@
+{
+  "validatedAt": "2026-10-15",
+  "platform": {
+    "version": "3.24.12",
+    "macOS": "27.0.1",
+    "arch": "arm64",
+    "codesignDeepStrictExit": 0,
+    "diagnostic": ""
+  },
+  "productionFeatureRestored": false,
+  "cliImplementationDeferred": true,
+  "candidate": {
+    "sourceCommit": "a00a0cd",
+    "bridgeSha256": "1f72586a0c2a3781542c1073ec55378c8dfc99f7f708920da61e2d21f5dd7192",
+    "originalRendererSha256": "1a4ec99c2244ec9b5ca9b74b90110b4617b057a0f0c4eb427e4523b5dbf7a022",
+    "candidateRendererSha256": "92a66c6f4f86b310c6d333d8dd382f1bbdd22d617928178a2190c8ae7b784d44",
+    "rendererDiff": "--- renderer.js@a00a0cd\n+++ temporary candidate\n@@ -31,13 +31,18 @@\n     if (descriptor) break;\n   }\n   const dispatch = prototype?._maybeDispatchBackgroundCompletions?.toString() ?? \"\";\n+  const pairedInbox = dispatch.includes(\"_commitPairedCloudChildInboxCursor\");\n+  const pairedContract = pairedInbox\n+    ? typeof prototype._commitPairedCloudChildInboxCursor === \"function\"\n+    : typeof prototype._commitPairedCloudChildInboxCursor === \"undefined\" &&\n+      /===\\s*[\"']completed[\"']\\)this\\._backgroundWorkService\\.ack\\(/.test(dispatch);\n   if (typeof descriptor?.value !== \"function\" || descriptor.configurable !== true ||\n       !descriptor.value.toString().includes(\"_runWakeupAction\") ||\n       typeof prototype._runWakeupAction !== \"function\" ||\n       typeof background.ack !== \"function\" || typeof background.nack !== \"function\" ||\n       !dispatch.includes(\"_runBackgroundTaskCompletionAction\") || !dispatch.includes('\"completed\"') ||\n       !dispatch.includes(\"_backgroundWorkService.ack\") || !dispatch.includes(\"_pendingAwaitTaskIdsByComposerId\") ||\n-      !dispatch.includes(\"_commitPairedCloudChildInboxCursor\")) {\n+      !pairedContract) {\n     throw new Error(\"Unsupported background completion contract\");\n   }\n \n"
+  },
+  "vendorPackages": [
+    {
+      "minor": "3.14",
+      "zipBytes": 283097745,
+      "zipSha256": "aad8d3dfa50fffce0314ceeb332cc6a44fee2f76ac15dc2b29d3f92ce7ec3552",
+      "zipCrcVerified": true,
+      "codesignDeepStrictExit": 0,
+      "sourceUrl": "https://downloads.cursor.com/production/047548b00c1a079373d74d00183f32510a4a41e1/darwin/arm64/Cursor-darwin-arm64.zip"
+    },
+    {
+      "minor": "3.18",
+      "zipBytes": 280585783,
+      "zipSha256": "9b12b8e0d0fcc124f474d95e0fd79692485f2b4aa58a123ea4959186725da948",
+      "zipCrcVerified": true,
+      "codesignDeepStrictExit": 0,
+      "sourceUrl": "https://downloads.cursor.com/production/280eca2911f1774689696e5f1efa5a4f97a87af3/darwin/arm64/Cursor-darwin-arm64.zip"
+    }
+  ],
+  "historicalGuard314Rejection": "Error: Unsupported background completion contract",
+  "surfaceChecks": [
+    {
+      "version": "3.14.27",
+      "surface": "agents",
+      "candidateAttached": true,
+      "nativeChecks": [
+        {
+          "name": "shell_and_subagent_ack",
+          "ok": true
+        },
+        {
+          "name": "guard_handles_native_dispatch",
+          "ok": true
+        },
+        {
+          "name": "paired_inbox_branch",
+          "ok": true,
+          "detail": {
+            "calls": 0
+          }
+        },
+        {
+          "name": "await_excluded_other_acked",
+          "ok": true
+        },
+        {
+          "name": "await_native_suppression_settles",
+          "ok": true
+        },
+        {
+          "name": "active_turn_keeps_completion_queued",
+          "ok": true
+        },
+        {
+          "name": "aborted_turn_completion_acked_without_wakeup",
+          "ok": true
+        },
+        {
+          "name": "dispatch_inflight_cleared",
+          "ok": true
+        }
+      ],
+      "modelCallsInNativeProbe": 0,
+      "reloadRecoveryMs": 8032,
+      "nativeHandlerRestored": true
+    },
+    {
+      "version": "3.14.27",
+      "surface": "ide",
+      "candidateAttached": true,
+      "nativeChecks": [
+        {
+          "name": "shell_and_subagent_ack",
+          "ok": true
+        },
+        {
+          "name": "guard_handles_native_dispatch",
+          "ok": true
+        },
+        {
+          "name": "paired_inbox_branch",
+          "ok": true,
+          "detail": {
+            "calls": 0
+          }
+        },
+        {
+          "name": "await_excluded_other_acked",
+          "ok": true
+        },
+        {
+          "name": "await_native_suppression_settles",
+          "ok": true
+        },
+        {
+          "name": "active_turn_keeps_completion_queued",
+          "ok": true
+        },
+        {
+          "name": "aborted_turn_completion_acked_without_wakeup",
+          "ok": true
+        },
+        {
+          "name": "dispatch_inflight_cleared",
+          "ok": true
+        }
+      ],
+      "modelCallsInNativeProbe": 0,
+      "reloadRecoveryMs": 3078,
+      "nativeHandlerRestored": true
+    },
+    {
+      "version": "3.18.25",
+      "surface": "agents",
+      "candidateAttached": true,
+      "nativeChecks": [
+        {
+          "name": "shell_and_subagent_ack",
+          "ok": true
+        },
+        {
+          "name": "guard_handles_native_dispatch",
+          "ok": true
+        },
+        {
+          "name": "paired_inbox_branch",
+          "ok": true,
+          "detail": {
+            "calls": 1
+          }
+        },
+        {
+          "name": "await_excluded_other_acked",
+          "ok": true
+        },
+        {
+          "name": "await_native_suppression_settles",
+          "ok": true
+        },
+        {
+          "name": "active_turn_keeps_completion_queued",
+          "ok": true
+        },
+        {
+          "name": "aborted_turn_completion_acked_without_wakeup",
+          "ok": true
+        },
+        {
+          "name": "dispatch_inflight_cleared",
+          "ok": true
+        },
+        {
+          "name": "native_paired_cursor_advances_sorted_batch",
+          "ok": true
+        },
+        {
+          "name": "native_paired_cursor_preserves_unpresented_gap",
+          "ok": true
+        }
+      ],
+      "modelCallsInNativeProbe": 0,
+      "reloadRecoveryMs": 3839,
+      "nativeHandlerRestored": true
+    },
+    {
+      "version": "3.18.25",
+      "surface": "ide",
+      "candidateAttached": true,
+      "nativeChecks": [
+        {
+          "name": "shell_and_subagent_ack",
+          "ok": true
+        },
+        {
+          "name": "guard_handles_native_dispatch",
+          "ok": true
+        },
+        {
+          "name": "paired_inbox_branch",
+          "ok": true,
+          "detail": {
+            "calls": 1
+          }
+        },
+        {
+          "name": "await_excluded_other_acked",
+          "ok": true
+        },
+        {
+          "name": "await_native_suppression_settles",
+          "ok": true
+        },
+        {
+          "name": "active_turn_keeps_completion_queued",
+          "ok": true
+        },
+        {
+          "name": "aborted_turn_completion_acked_without_wakeup",
+          "ok": true
+        },
+        {
+          "name": "dispatch_inflight_cleared",
+          "ok": true
+        },
+        {
+          "name": "native_paired_cursor_advances_sorted_batch",
+          "ok": true
+        },
+        {
+          "name": "native_paired_cursor_preserves_unpresented_gap",
+          "ok": true
+        }
+      ],
+      "modelCallsInNativeProbe": 0,
+      "reloadRecoveryMs": 3040,
+      "nativeHandlerRestored": true
+    },
+    {
+      "version": "3.24.12",
+      "surface": "agents",
+      "candidateAttached": true,
+      "nativeChecks": [
+        {
+          "name": "shell_and_subagent_ack",
+          "ok": true
+        },
+        {
+          "name": "guard_handles_native_dispatch",
+          "ok": true
+        },
+        {
+          "name": "paired_inbox_branch",
+          "ok": true,
+          "detail": {
+            "calls": 1
+          }
+        },
+        {
+          "name": "await_excluded_other_acked",
+          "ok": true
+        },
+        {
+          "name": "await_native_suppression_settles",
+          "ok": true
+        },
+        {
+          "name": "active_turn_keeps_completion_queued",
+          "ok": true
+        },
+        {
+          "name": "aborted_turn_completion_acked_without_wakeup",
+          "ok": true
+        },
+        {
+          "name": "dispatch_inflight_cleared",
+          "ok": true
+        },
+        {
+          "name": "native_user_cancel_discards_child_before_guard",
+          "ok": true
+        },
+        {
+          "name": "successful_child_after_stop_still_reaches_guard",
+          "ok": true
+        },
+        {
+          "name": "native_paired_cursor_advances_sorted_batch",
+          "ok": true
+        },
+        {
+          "name": "native_paired_cursor_preserves_unpresented_gap",
+          "ok": true
+        }
+      ],
+      "modelCallsInNativeProbe": 0,
+      "reloadRecoveryMs": 3059,
+      "nativeHandlerRestored": true
+    },
+    {
+      "version": "3.24.12",
+      "surface": "ide",
+      "candidateAttached": true,
+      "nativeChecks": [
+        {
+          "name": "shell_and_subagent_ack",
+          "ok": true
+        },
+        {
+          "name": "guard_handles_native_dispatch",
+          "ok": true
+        },
+        {
+          "name": "paired_inbox_branch",
+          "ok": true,
+          "detail": {
+            "calls": 1
+          }
+        },
+        {
+          "name": "await_excluded_other_acked",
+          "ok": true
+        },
+        {
+          "name": "await_native_suppression_settles",
+          "ok": true
+        },
+        {
+          "name": "active_turn_keeps_completion_queued",
+          "ok": true
+        },
+        {
+          "name": "aborted_turn_completion_acked_without_wakeup",
+          "ok": true
+        },
+        {
+          "name": "dispatch_inflight_cleared",
+          "ok": true
+        },
+        {
+          "name": "native_user_cancel_discards_child_before_guard",
+          "ok": true
+        },
+        {
+          "name": "successful_child_after_stop_still_reaches_guard",
+          "ok": true
+        },
+        {
+          "name": "native_paired_cursor_advances_sorted_batch",
+          "ok": true
+        },
+        {
+          "name": "native_paired_cursor_preserves_unpresented_gap",
+          "ok": true
+        }
+      ],
+      "modelCallsInNativeProbe": 0,
+      "reloadRecoveryMs": 3085,
+      "nativeHandlerRestored": true
+    }
+  ],
+  "nativeCheckCount": 60,
+  "realChecksThisRun": [
+    {
+      "version": "3.14.27",
+      "surface": "agents",
+      "runtime": "legacy streamFromAgentBackend",
+      "parentId": "31bd7ee1-fefd-4046-92b1-9ecd0da521d7",
+      "requests": [
+        {
+          "at": 1792077519454,
+          "model": "grok-4.7",
+          "id": "31bd7ee1-fefd-4046-92b1-9ecd0da521d7",
+          "requestId": "8ed5965a-0e62-4575-892f-cae72d0c2ca4"
+        },
+        {
+          "at": 1792077562355,
+          "model": "grok-4.7",
+          "id": "31bd7ee1-fefd-4046-92b1-9ecd0da521d7",
+          "requestId": "a0f96549-2257-4e9e-85a3-ddb7f73ab7b0"
+        },
+        {
+          "at": 1792077571635,
+          "model": "grok-4.7-low",
+          "id": "2386f275-638b-495f-a1dd-713e2b5f56f0",
+          "requestId": "8e40ef31-36a7-47cd-9c74-697b6cf5a78e"
+        }
+      ],
+      "stoppedAtMs": 1792077547436,
+      "afterStopObservationMs": 14499,
+      "requestsAtPostStop": 1,
+      "settledCompletions": [
+        {
+          "at": 1792077533509,
+          "conversationId": "31bd7ee1-fefd-4046-92b1-9ecd0da521d7",
+          "taskId": "66229"
+        },
+        {
+          "at": 1792077548884,
+          "conversationId": "31bd7ee1-fefd-4046-92b1-9ecd0da521d7",
+          "taskId": "66230",
+          "toolCallId": "call-903b3dc5-6550-4e5c-ba13-07729aa1be29-3\nfc_ca4cd0ba-c48d-9327-a8a5-0454c8f20484_0"
+        },
+        {
+          "at": 1792077575842,
+          "conversationId": "31bd7ee1-fefd-4046-92b1-9ecd0da521d7",
+          "taskId": "2386f275-638b-495f-a1dd-713e2b5f56f0",
+          "toolCallId": "call-92f66e69-3c21-46d1-817a-6af3d2fe153f-5\nfc_d726629b-06ba-9b87-8e97-8d12027fc106_0"
+        }
+      ],
+      "finalPending": false,
+      "finalDispatchInFlight": false,
+      "awaitResult": {
+        "taskId": "66229",
+        "runtimeMs": "6269",
+        "outputFilePath": "/Users/wutian/.cursor/projects/tmp-ah-desktop-restore-qa-3-14-agents-workspace/terminals/66229.txt",
+        "outputLength": "329",
+        "regexRequested": true,
+        "regexMatch": "AH_AWAIT_DONE",
+        "exitCode": 0
+      },
+      "childResults": [
+        {
+          "id": "2386f275-638b-495f-a1dd-713e2b5f56f0",
+          "status": "completed",
+          "model": "grok-4.7",
+          "visibleFinalText": "AH_CHILD_DONE"
+        }
+      ],
+      "manualReply": "AH_MANUAL_OK",
+      "askHumanEndReplayed": false,
+      "backgroundShell": {
+        "id": "66230",
+        "toolStatus": "completed",
+        "isRunningInBackground": false,
+        "nativeSettled": true,
+        "retainedTerminalOutputAndExit0": true
+      },
+      "logAudit": {
+        "parentModelRecords": 2,
+        "allModelRecords": 3,
+        "parentCompletedBackendSpans": 2,
+        "note": "A cancelled stream may lack a completed span; request observer and model records are also used"
+      }
+    },
+    {
+      "version": "3.14.27",
+      "surface": "ide",
+      "runtime": "legacy streamFromAgentBackend",
+      "parentId": "9d2948bf-8249-4269-9cca-e64e1624d04d",
+      "requests": [
+        {
+          "at": 1792077702535,
+          "model": "grok-4.7",
+          "id": "9d2948bf-8249-4269-9cca-e64e1624d04d",
+          "requestId": "3cfcfc93-26ed-45f5-9481-1d383e9dd0a4"
+        },
+        {
+          "at": 1792077743868,
+          "model": "grok-4.7",
+          "id": "9d2948bf-8249-4269-9cca-e64e1624d04d",
+          "requestId": "0ccf5bd7-b748-46b9-b04c-150f99732291"
+        },
+        {
+          "at": 1792077749168,
+          "model": "grok-4.7-low",
+          "id": "da03eccc-2a0c-4cff-9cec-d441038bb587",
+          "requestId": "6219ff24-6cdc-4054-9243-b1fdb2b78222"
+        }
+      ],
+      "stoppedAtMs": 1792077722477,
+      "afterStopObservationMs": 18919,
+      "requestsAtPostStop": 1,
+      "settledCompletions": [
+        {
+          "at": 1792077715679,
+          "conversationId": "9d2948bf-8249-4269-9cca-e64e1624d04d",
+          "taskId": "662189"
+        },
+        {
+          "at": 1792077723793,
+          "conversationId": "9d2948bf-8249-4269-9cca-e64e1624d04d",
+          "taskId": "662190",
+          "toolCallId": "call-6e0944c5-cce5-484b-b9a6-00b3311b9933-2\nfc_59eb3afc-cc26-9e21-9ff8-7d4ba5a447b6_0"
+        },
+        {
+          "at": 1792077768249,
+          "conversationId": "9d2948bf-8249-4269-9cca-e64e1624d04d",
+          "taskId": "da03eccc-2a0c-4cff-9cec-d441038bb587",
+          "toolCallId": "call-676c2c55-ccdc-4b4b-b28f-35ee59118675-4\nfc_a5f80a05-2d2b-9bb7-a3fd-a373d89399fc_0"
+        }
+      ],
+      "finalPending": false,
+      "finalDispatchInFlight": false,
+      "awaitResult": {
+        "taskId": "662189",
+        "runtimeMs": "6271",
+        "outputFilePath": "/Users/wutian/.cursor/projects/tmp-ah-desktop-restore-qa-3-14-ide-workspace/terminals/662189.txt",
+        "outputLength": "331",
+        "regexRequested": true,
+        "regexMatch": "AH_AWAIT_DONE",
+        "exitCode": 0
+      },
+      "childResults": [
+        {
+          "id": "da03eccc-2a0c-4cff-9cec-d441038bb587",
+          "status": "completed",
+          "model": "grok-4.7-low",
+          "visibleFinalText": "AH_CHILD_DONE"
+        }
+      ],
+      "manualReply": "AH_MANUAL_OK",
+      "askHumanEndReplayed": false,
+      "backgroundShell": {
+        "id": "662190",
+        "toolStatus": "completed",
+        "isRunningInBackground": false,
+        "nativeSettled": true,
+        "retainedTerminalOutputAndExit0": false
+      },
+      "logAudit": {
+        "parentModelRecords": 2,
+        "allModelRecords": 3,
+        "parentCompletedBackendSpans": 2,
+        "note": "A cancelled stream may lack a completed span; request observer and model records are also used"
+      }
+    },
+    {
+      "version": "3.18.25",
+      "surface": "agents",
+      "runtime": "legacy streamFromAgentBackend",
+      "parentId": "afe11843-8c51-4a9f-b6cf-42bc8c9900e9",
+      "requests": [
+        {
+          "at": 1792077869900,
+          "model": "grok-4.7",
+          "id": "afe11843-8c51-4a9f-b6cf-42bc8c9900e9",
+          "requestId": "dc9d9699-a314-4d7f-8b24-63d527112b2b"
+        },
+        {
+          "at": 1792077932746,
+          "model": "grok-4.7",
+          "id": "afe11843-8c51-4a9f-b6cf-42bc8c9900e9",
+          "requestId": "d45ecc35-fea2-4a2f-a6c6-111e5fd04d9c"
+        },
+        {
+          "at": 1792077942343,
+          "model": "grok-4.7-low",
+          "id": "e0cb9951-0f90-422d-8cb1-8208b6510e71",
+          "requestId": "0811c87a-7622-4e57-985f-a6e3320fe916"
+        }
+      ],
+      "stoppedAtMs": 1792077894276,
+      "afterStopObservationMs": 38118,
+      "requestsAtPostStop": 1,
+      "settledCompletions": [
+        {
+          "at": 1792077885281,
+          "conversationId": "afe11843-8c51-4a9f-b6cf-42bc8c9900e9",
+          "taskId": "945319"
+        },
+        {
+          "at": 1792077895720,
+          "conversationId": "afe11843-8c51-4a9f-b6cf-42bc8c9900e9",
+          "taskId": "945320",
+          "toolCallId": "call-99c24c9d-e13a-4b1b-ac97-6b44dccfa1f2-3\nfc_bea0b645-fce8-9aaf-b14d-ed0a97b42c3c_0"
+        },
+        {
+          "at": 1792077947667,
+          "conversationId": "afe11843-8c51-4a9f-b6cf-42bc8c9900e9",
+          "taskId": "e0cb9951-0f90-422d-8cb1-8208b6510e71",
+          "toolCallId": "call-e9e60caf-4a31-4a90-9e3b-8e9b5f335c83-5\nfc_8c1e9112-f3c2-9724-887d-b725ed0372e8_0"
+        }
+      ],
+      "finalPending": false,
+      "finalDispatchInFlight": false,
+      "awaitResult": {
+        "taskId": "945319",
+        "runtimeMs": "6260",
+        "outputFilePath": "/Users/wutian/.cursor/projects/tmp-ah-desktop-restore-qa-3-18-agents-workspace/terminals/945319.txt",
+        "outputLength": "334",
+        "regexRequested": true,
+        "regexMatch": "AH_AWAIT_DONE",
+        "exitCode": 0
+      },
+      "childResults": [
+        {
+          "id": "e0cb9951-0f90-422d-8cb1-8208b6510e71",
+          "status": "completed",
+          "model": "grok-4.7",
+          "visibleFinalText": "AH_CHILD_DONE"
+        }
+      ],
+      "manualReply": "AH_MANUAL_OK",
+      "askHumanEndReplayed": false,
+      "backgroundShell": {
+        "id": "945320",
+        "toolStatus": "completed",
+        "isRunningInBackground": false,
+        "nativeSettled": true,
+        "retainedTerminalOutputAndExit0": true
+      },
+      "logAudit": {
+        "parentModelRecords": 2,
+        "allModelRecords": 3,
+        "parentCompletedBackendSpans": 1,
+        "note": "A cancelled stream may lack a completed span; request observer and model records are also used"
+      }
+    },
+    {
+      "version": "3.18.25",
+      "surface": "ide",
+      "runtime": "legacy streamFromAgentBackend",
+      "parentId": "3f27cda1-4e96-4e39-a2e4-93554eb4eb27",
+      "requests": [
+        {
+          "at": 1792078048488,
+          "model": "grok-4.7",
+          "id": "3f27cda1-4e96-4e39-a2e4-93554eb4eb27",
+          "requestId": "616a77b1-9e80-4999-8da7-e70c9126c8c7"
+        },
+        {
+          "at": 1792078121273,
+          "model": "grok-4.7",
+          "id": "3f27cda1-4e96-4e39-a2e4-93554eb4eb27",
+          "requestId": "33f210cb-6a16-45b7-acda-daf9564d797e"
+        },
+        {
+          "at": 1792078132874,
+          "model": "grok-4.7-low",
+          "id": "e54e1264-fc66-4daa-abaf-66439cbbd542",
+          "requestId": "e633f456-cfca-4ce9-bbd4-1dc74a9e4f13"
+        }
+      ],
+      "stoppedAtMs": 1792078077169,
+      "afterStopObservationMs": 41741,
+      "requestsAtPostStop": 1,
+      "settledCompletions": [
+        {
+          "at": 1792078066237,
+          "conversationId": "3f27cda1-4e96-4e39-a2e4-93554eb4eb27",
+          "taskId": "302901"
+        },
+        {
+          "at": 1792078078424,
+          "conversationId": "3f27cda1-4e96-4e39-a2e4-93554eb4eb27",
+          "taskId": "302902",
+          "toolCallId": "call-6ab8d84d-7a54-4713-a960-bf291bfaed91-3\nfc_e4e82946-b154-9c3a-8bff-cbba0b90c9f7_0"
+        },
+        {
+          "at": 1792078137028,
+          "conversationId": "3f27cda1-4e96-4e39-a2e4-93554eb4eb27",
+          "taskId": "e54e1264-fc66-4daa-abaf-66439cbbd542",
+          "toolCallId": "call-8584ea94-b22f-494a-a26b-91d3cf95e844-6\nfc_c842285f-c3eb-97b9-a7d2-6b0c99b19d65_0"
+        }
+      ],
+      "finalPending": false,
+      "finalDispatchInFlight": false,
+      "awaitResult": {
+        "taskId": "302901",
+        "runtimeMs": "7110",
+        "outputFilePath": "/Users/wutian/.cursor/projects/tmp-ah-desktop-restore-qa-3-18-ide-workspace/terminals/302901.txt",
+        "outputLength": "326",
+        "regexRequested": true,
+        "regexMatch": "AH_AWAIT_DONE",
+        "exitCode": 0
+      },
+      "childResults": [
+        {
+          "id": "e54e1264-fc66-4daa-abaf-66439cbbd542",
+          "status": "completed",
+          "model": "grok-4.7-low",
+          "visibleFinalText": "AH_CHILD_DONE"
+        }
+      ],
+      "manualReply": "AH_MANUAL_OK",
+      "askHumanEndReplayed": false,
+      "backgroundShell": {
+        "id": "302902",
+        "toolStatus": "completed",
+        "isRunningInBackground": false,
+        "nativeSettled": true,
+        "retainedTerminalOutputAndExit0": true
+      },
+      "logAudit": {
+        "parentModelRecords": 2,
+        "allModelRecords": 3,
+        "parentCompletedBackendSpans": 2,
+        "note": "A cancelled stream may lack a completed span; request observer and model records are also used"
+      }
+    }
+  ],
+  "realRequestCountThisRun": 12,
+  "historical324Evidence": "docs/plans/cursor-desktop-background-followup.md#3-安装后的真实-grok-47-验收",
+  "restartChecks": [
+    {
+      "minor": "3.14",
+      "surface": "agents",
+      "pid": 61956,
+      "active": true
+    },
+    {
+      "minor": "3.18",
+      "surface": "agents",
+      "pid": 62945,
+      "active": true
+    },
+    {
+      "minor": "3.24",
+      "surface": "ide",
+      "pid": 63714,
+      "active": true
+    }
+  ],
+  "cleanup": {
+    "ownedProcessesExited": 9,
+    "inspector9229Listening": false,
+    "controlSocketsRemaining": 0,
+    "originalCursorPid": 92826,
+    "isolatedAuthRowsRemoved": 54
+  },
+  "limitations": [
+    "Only sampled macOS ARM64 builds, not a supported version range or future compatibility guarantee",
+    "3.14 and 3.18 both used legacy; Agent Host connect and genuine AskHuman End use historical 3.24 evidence",
+    "Paired inbox tests invoke native logic with synthetic composer and isolated command/file services, not real cloud children",
+    "3.14 IDE optional 12-second final sampler overlapped reload and failed; retained settlement snapshot and complete request logs, no extra model calls",
+    "3.24 native fixture needed an AI generation-controller map; no additional candidate adapter change was required",
+    "Production daemon integration was not restored or reinstalled in this documentation-only task"
+  ],
+  "requestCountDefinition": "Cursor runAgentLoop generation/request IDs; not a count of underlying provider inference calls or a billing measurement"
+}

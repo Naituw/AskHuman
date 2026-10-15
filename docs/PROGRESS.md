@@ -3,12 +3,6 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 进行中：Cursor Desktop 恢复前验证
-
-用户已选择先验证 Desktop 3.14.27、3.18.25、3.24.12 的兼容与真实行为，再决定是否恢复功能。
-计划见 `docs/plans/cursor-desktop-restoration-validation.md`。使用隔离 Cursor 进程，模型仅 Grok 4.7；
-生产功能保持撤回，CLI 接管继续延期。
-
 ## 延期：Cursor CLI 后台完成控制持久性补强
 
 2026-10-15 用户在入口取舍讨论后决定先不做 CLI 接管。计划与审核见
