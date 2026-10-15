@@ -218,15 +218,6 @@ fn render_text(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>, lang: L
         ));
     }
 
-    let cursor = crate::cursor_desktop::status(&cfg.cursor_desktop);
-    out.push_str(&format!(
-        "\nCursor Desktop\n  background-followup-control: {} ({} windows)\n",
-        cursor.phase,
-        cursor.windows.len(),
-    ));
-    if let Some(error) = cursor.error {
-        out.push_str(&format!("  {error}\n"));
-    }
     out.trim_end().to_string()
 }
 
@@ -331,7 +322,6 @@ fn render_json(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>) -> Stri
         "daemon": daemon,
         "channels": channels,
         "integrations": integrations,
-        "cursorDesktop": crate::cursor_desktop::status(&cfg.cursor_desktop),
         "agentTasks": {
             "enabled": cfg.agent_tasks.enabled,
             "keepalive": cfg.general.daemon_lifecycle == crate::config::DaemonLifecycleMode::KeepAlive,

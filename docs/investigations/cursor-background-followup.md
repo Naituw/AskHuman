@@ -1,5 +1,9 @@
 # Cursor 后台完成自动续跑调查
 
+> **已撤回（2026-10-15）**：用户否决内部运行时补丁的可靠性；此文保留历史方案/实测，不代表当前功能。
+> 可靠性复审与撤回理由见 [Cursor 后台完成控制复审](../investigations/cursor-background-reliability.md)。
+
+
 调查日期：2026-10-13。行为需求见
 [`../specs/cursor-desktop-background-followup.md`](../specs/cursor-desktop-background-followup.md)。
 本文区分本机证据、静态分析与尚未验收事项；不是产品已实现能力说明。

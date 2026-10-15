@@ -916,8 +916,6 @@ async fn serve(_lock: LockGuard) -> i32 {
         });
     }
 
-    crate::cursor_desktop::start();
-
     // The daemon owns desktop subscriptions and routes native prompts through the existing coordinator.
     {
         let state = state.clone();
@@ -964,8 +962,6 @@ async fn serve(_lock: LockGuard) -> i32 {
                 let config = crate::config::AppConfig::load_without_secrets();
                 if config.general.daemon_lifecycle == crate::config::DaemonLifecycleMode::KeepAlive
                     || crate::codex_desktop::available(&config.codex_desktop)
-                    || crate::cursor_desktop::active(&config.cursor_desktop)
-                    || crate::cursor_desktop::needs_cleanup()
                 {
                     continue;
                 }

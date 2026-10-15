@@ -291,13 +291,8 @@ pub(crate) fn set_with_env(
     if target == AgentTarget::Pi && mode == Mode::Mcp {
         return Err(anyhow::anyhow!("Pi only supports None | Cli (no MCP mode)"));
     }
-    let lock = mutation_lock::IntegrationMutationLock::acquire()?;
-    set_unlocked_with_env(target, mode, env)?;
-    drop(lock);
-    if target == AgentTarget::Cursor {
-        crate::cursor_desktop::integration_changed()?;
-    }
-    Ok(())
+    let _lock = mutation_lock::IntegrationMutationLock::acquire()?;
+    set_unlocked_with_env(target, mode, env)
 }
 
 fn set_unlocked_with_env(

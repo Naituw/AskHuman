@@ -3,7 +3,6 @@
 // MCP 配置示例）。
 import { isMac } from "../../lib/platform";
 import CodexDesktopSettings from "./CodexDesktopSettings.vue";
-import CursorDesktopSettings from "./CursorDesktopSettings.vue";
 import { useI18n } from "vue-i18n";
 import { useSettingsContext } from "./context";
 
@@ -828,7 +827,6 @@ const {
     </template>
 
     <CodexDesktopSettings v-if="isMac && a.id === 'codex' && modes.codex.mode !== 'none'" />
-    <CursorDesktopSettings v-if="a.id === 'cursor' && modes.cursor.mode !== 'none'" />
 
     <p
       v-if="modeMessage[a.id]"

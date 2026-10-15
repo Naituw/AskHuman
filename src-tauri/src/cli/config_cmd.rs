@@ -89,8 +89,6 @@ fn set(args: &[String], lang: Lang) -> Result<(), String> {
 
     let mut cfg = AppConfig::load_without_secrets();
 
-    let cursor_was_configured = crate::cursor_desktop::configured(&cfg.cursor_desktop);
-
     if cfgio::is_secret_key(&key) {
         // 密钥：忽略任何位置参数值，仅从 env/file/stdin/隐藏输入取。
         let src = secret_source_from_flags(&args[1..], lang)?;
@@ -132,9 +130,6 @@ fn set(args: &[String], lang: Lang) -> Result<(), String> {
             &format!("{key} 的值非法: {e}"),
         )
     })?;
-    if cursor_was_configured || crate::cursor_desktop::configured(&cfg.cursor_desktop) {
-        cfgio::block_on(crate::client::ensure_running()).map_err(|error| error.to_string())?;
-    }
     cfg.save().map_err(|e| e.to_string())?;
     print_line(&cfgio::t(
         lang,
@@ -173,12 +168,8 @@ fn unset(args: &[String], lang: Lang) -> Result<(), String> {
         .clone();
     let mut cfg = AppConfig::load_without_secrets();
     let mut v = serde_json::to_value(&cfg).unwrap_or(Value::Null);
-    let cursor_was_configured = crate::cursor_desktop::configured(&cfg.cursor_desktop);
     cfgio::set_path(&mut v, key, def)?;
     cfg = serde_json::from_value(v).map_err(|e| e.to_string())?;
-    if cursor_was_configured || crate::cursor_desktop::configured(&cfg.cursor_desktop) {
-        cfgio::block_on(crate::client::ensure_running()).map_err(|error| error.to_string())?;
-    }
     cfg.save().map_err(|e| e.to_string())?;
     print_line(&cfgio::t(
         lang,

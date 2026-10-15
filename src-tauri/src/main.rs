@@ -24,7 +24,6 @@ mod commands;
 mod config;
 mod confirm;
 mod context_binding;
-mod cursor_desktop;
 mod daemon;
 mod dev_instance;
 mod dev_presets;
