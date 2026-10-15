@@ -6,6 +6,8 @@
 
 撤回实验性的后台完成续跑拦截。Desktop 方案也依赖私有 JS 服务、调试器和内部返回协议；旧版存在实质差异，单构建验证不能推导稳定升级兼容。CLI 的入口替换/JS 注入实验不合并发布。没有找到同时保留后台任务、当前 Await 和主动续聊，又选择性禁止后台完成模型轮次的公开控制面。
 
+原问题的关键是两段生命周期：前台轮次结束后，仍运行的后台任务完成事件可以再启动模型轮次；AskHuman 的结束答复也没有取消 Cursor 内部任务。此次撤回恢复普通集成，不再提供阻止 Cursor 原生后台完成唤醒的保证。
+
 ## Desktop 旧版证据
 
 通过官方 [下载页面](https://cursor.com/download) 的 golden 端点取得发行包，读取同一官方 CDN 的 ZIP。使用 HTTP Range 提取主 Info.plist、package/product 与 workbench JS；验证 ZIP CRC 和包内版本。没有安装或启动旧 Desktop，也没有调用模型。第三方索引不作为兼容性证据。
@@ -50,6 +52,6 @@
 
 ## 验证
 
-Rust 1327 passed / 3 ignored；Vitest 382 passed（55 文件）、Node 7 passed；fmt、Clippy 通过。Dev Instance 安装成功，安装后的 MCP show_last 正常，doctor 不再包含 cursorDesktop/cursorCli。生产整合与安装结果见实施计划。
+Rust 1327 passed / 3 ignored；Vitest 382 passed（55 文件）、Node 7 passed；fmt、Clippy 通过。Dev Instance 与主环境均已安装并签名成功；新安装的 MCP show_last 正常，doctor 不再包含 cursorDesktop/cursorCli，生效 config 无退休字段。主环境安装后旧 daemon 正等待另一条问答排空再换新，后台控制已提前关闭。提交与安装记录见 [实施计划](../plans/cursor-background-reliability.md)。
 
-原始证据位于 /tmp/ah-cursor-desktop-compat，包含包内版本、官方来源/CRC、提取的方法与 final-evidence.json；本文保存结论，不要求临时文件永久存在。
+官方来源、版本、ZIP 大小/CRC、workbench SHA-256 与逐项检查结果保存于 [兼容性证据](cursor-desktop-compatibility-evidence.json)。厂商源码及提取的方法仅保留于临时目录 /tmp/ah-cursor-desktop-compat，不要求临时文件永久存在。

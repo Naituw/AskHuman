@@ -28,6 +28,10 @@
 - 撤回 Desktop 提交的功能代码，保留已撤回的历史规格/计划/调查；CLI 旧实验分支不合并，原生命令未被接管。
 - 取消该实验派生的两个待办（headless 与 Linux/Windows）；其他五条待办保留。
 - Rust 1327 passed / 3 ignored；Vitest 382 / 55 文件；Node 7；fmt、Clippy 全部通过。
-- Dev Instance 安装/签名成功，新安装 MCP show_last 正常；doctor 不再包含 Cursor 实验能力。生产整合与安装继续按正常排空策略，不强杀在途问答。
+- Dev Instance 安装/签名成功，新安装 MCP show_last 正常；doctor 不再包含 Cursor 实验能力。
+- `d883d0d` 记录复审计划，`6d78c69` 撤回功能；已快进整合主分支。主环境 `./scripts/install.sh --global` 编译、安装和签名成功。
+- 主环境新安装 MCP show_last 正常；doctor/config 的生效 JSON 均无实验字段。生产状态 disabled、active=false、windows=[]，仅剩状态文件，没有桥接 manifest。`~/.local/bin/agent` 与 `cursor-agent` 均保持厂商链接。
+- 安装后旧 daemon 有一条其他待答问答，处于正常 draining；新二进制已安装，daemon 进程将在该问答完结后换新。没有强制停止 daemon、Cursor 或待答请求。
+- 自有 popup-only Dev Instance 无待答请求，已 disable --purge。已完成项目进度项删除；保留 CLI 实验分支供历史查询。
 
 完整结论与来源见 [可靠性调查](../investigations/cursor-background-reliability.md)。

@@ -1,0 +1,320 @@
+{
+  "observedAt": "2026-10-15",
+  "platform": "darwin-arm64",
+  "scope": "static contract checks only; no old build was installed, launched or runtime verified",
+  "retrieval": "official golden download redirect to vendor CDN; ZIP HTTP Range extraction with CRC and embedded version validation",
+  "samples": [
+    {
+      "version": "2.5.26",
+      "checks": {
+        "provider": false,
+        "services": false,
+        "methodsParsed": false,
+        "runWakeup": false,
+        "completionBranch": false,
+        "nativeAck": false,
+        "awaitExclusion": false,
+        "pairedInboxCommit": false
+      },
+      "staticContractMatches": false,
+      "source": "https://downloads.cursor.com/production/7d96c2a03bb088ad367615e9da1a3fe20fbbc6ae/darwin/arm64/Cursor-darwin-arm64.zip",
+      "archiveBytes": 263613581,
+      "files": {
+        "Info.plist": {
+          "compressed": 2667,
+          "expanded": 39251,
+          "crc": 250491813
+        },
+        "package.json": {
+          "compressed": 244,
+          "expanded": 418,
+          "crc": 2152538615
+        },
+        "product.json": {
+          "compressed": 11841,
+          "expanded": 57009,
+          "crc": 1259503137
+        },
+        "workbench.js": {
+          "compressed": 11589215,
+          "expanded": 51044833,
+          "crc": 591960000
+        }
+      },
+      "workbenchSha256": "0f6a803cc21ef1a22c82acf336080203a3d2c7095aac8ab5733f4e9f595b2ff6"
+    },
+    {
+      "version": "3.0.16",
+      "checks": {
+        "provider": false,
+        "services": true,
+        "methodsParsed": true,
+        "runWakeup": false,
+        "completionBranch": false,
+        "nativeAck": false,
+        "awaitExclusion": true,
+        "pairedInboxCommit": false
+      },
+      "staticContractMatches": false,
+      "source": "https://downloads.cursor.com/production/475871d112608994deb2e3065dfb7c6b0baa0c54/darwin/arm64/Cursor-darwin-arm64.zip",
+      "archiveBytes": 270963220,
+      "files": {
+        "Info.plist": {
+          "compressed": 2689,
+          "expanded": 39351,
+          "crc": 693239740
+        },
+        "package.json": {
+          "compressed": 243,
+          "expanded": 418,
+          "crc": 2338583389
+        },
+        "product.json": {
+          "compressed": 11839,
+          "expanded": 57009,
+          "crc": 2575726215
+        },
+        "workbench.js": {
+          "compressed": 12866082,
+          "expanded": 56451489,
+          "crc": 1989677085
+        }
+      },
+      "workbenchSha256": "a2c959307a76f6d2e343424e2d1edb301abeabb3cd8357f70376376552c9bc88"
+    },
+    {
+      "version": "3.9.16",
+      "checks": {
+        "provider": true,
+        "services": true,
+        "methodsParsed": true,
+        "runWakeup": false,
+        "completionBranch": false,
+        "nativeAck": false,
+        "awaitExclusion": true,
+        "pairedInboxCommit": false
+      },
+      "staticContractMatches": false,
+      "source": "https://downloads.cursor.com/production/042b3c1a4c53f2c3808067f519fbfc67b72cad8b/darwin/arm64/Cursor-darwin-arm64.zip",
+      "archiveBytes": 286612300,
+      "files": {
+        "Info.plist": {
+          "compressed": 2686,
+          "expanded": 39351,
+          "crc": 349932988
+        },
+        "package.json": {
+          "compressed": 243,
+          "expanded": 418,
+          "crc": 2537894251
+        },
+        "product.json": {
+          "compressed": 11874,
+          "expanded": 57177,
+          "crc": 4037853331
+        },
+        "workbench.js": {
+          "compressed": 10612639,
+          "expanded": 46912120,
+          "crc": 1771809398
+        }
+      },
+      "workbenchSha256": "2541dd152a9facf5ae708a0b5d8a90d3074d7432b92901cdb8d50926979746af"
+    },
+    {
+      "version": "3.14.27",
+      "checks": {
+        "provider": true,
+        "services": true,
+        "methodsParsed": true,
+        "runWakeup": true,
+        "completionBranch": true,
+        "nativeAck": true,
+        "awaitExclusion": true,
+        "pairedInboxCommit": false
+      },
+      "staticContractMatches": false,
+      "source": "https://downloads.cursor.com/production/047548b00c1a079373d74d00183f32510a4a41e1/darwin/arm64/Cursor-darwin-arm64.zip",
+      "archiveBytes": 283097745,
+      "files": {
+        "Info.plist": {
+          "compressed": 2689,
+          "expanded": 39353,
+          "crc": 2193931945
+        },
+        "package.json": {
+          "compressed": 243,
+          "expanded": 419,
+          "crc": 728579307
+        },
+        "product.json": {
+          "compressed": 10786,
+          "expanded": 52556,
+          "crc": 1016067723
+        },
+        "workbench.js": {
+          "compressed": 9859363,
+          "expanded": 40577001,
+          "crc": 1835089682
+        }
+      },
+      "workbenchSha256": "ffc0cc1317e2fcdbbe7cf141c0ad1690c86f751c39eb0dd7d64eaf0a82ae4cbf"
+    },
+    {
+      "version": "3.18.25",
+      "checks": {
+        "provider": true,
+        "services": true,
+        "methodsParsed": true,
+        "runWakeup": true,
+        "completionBranch": true,
+        "nativeAck": true,
+        "awaitExclusion": true,
+        "pairedInboxCommit": true
+      },
+      "staticContractMatches": true,
+      "source": "https://downloads.cursor.com/production/280eca2911f1774689696e5f1efa5a4f97a87af3/darwin/arm64/Cursor-darwin-arm64.zip",
+      "archiveBytes": 280585783,
+      "files": {
+        "Info.plist": {
+          "compressed": 2688,
+          "expanded": 39353,
+          "crc": 592003119
+        },
+        "package.json": {
+          "compressed": 244,
+          "expanded": 419,
+          "crc": 3141981321
+        },
+        "product.json": {
+          "compressed": 10709,
+          "expanded": 52297,
+          "crc": 4150004240
+        },
+        "workbench.js": {
+          "compressed": 10317455,
+          "expanded": 42008018,
+          "crc": 2706667512
+        }
+      },
+      "workbenchSha256": "0742e3a8832ad1ccd22300756bfa16edc2d75f0a598e2cdfab0a987c1aef3679"
+    },
+    {
+      "version": "3.20.21",
+      "checks": {
+        "provider": true,
+        "services": true,
+        "methodsParsed": true,
+        "runWakeup": true,
+        "completionBranch": true,
+        "nativeAck": true,
+        "awaitExclusion": true,
+        "pairedInboxCommit": true
+      },
+      "staticContractMatches": true,
+      "source": "https://downloads.cursor.com/production/f09fca384ceca23f7bf21f9c23655b162641d747/darwin/arm64/Cursor-darwin-arm64.zip",
+      "archiveBytes": 298773774,
+      "files": {
+        "Info.plist": {
+          "compressed": 2692,
+          "expanded": 39353,
+          "crc": 139354164
+        },
+        "package.json": {
+          "compressed": 243,
+          "expanded": 419,
+          "crc": 702268859
+        },
+        "product.json": {
+          "compressed": 10714,
+          "expanded": 52335,
+          "crc": 3815456917
+        },
+        "workbench.js": {
+          "compressed": 9823446,
+          "expanded": 38264999,
+          "crc": 1672634879
+        }
+      },
+      "workbenchSha256": "508758544832a1113a10ae9251a8ec2d3c6cecc59aa7e250dd61277ffcae7379"
+    },
+    {
+      "version": "3.22.12",
+      "checks": {
+        "provider": true,
+        "services": true,
+        "methodsParsed": true,
+        "runWakeup": true,
+        "completionBranch": true,
+        "nativeAck": true,
+        "awaitExclusion": true,
+        "pairedInboxCommit": true
+      },
+      "staticContractMatches": true,
+      "source": "https://downloads.cursor.com/production/3a92974361033b2051526321308c2740fe5912c5/darwin/arm64/Cursor-darwin-arm64.zip",
+      "archiveBytes": 301821593,
+      "files": {
+        "Info.plist": {
+          "compressed": 2691,
+          "expanded": 39353,
+          "crc": 2225568497
+        },
+        "package.json": {
+          "compressed": 243,
+          "expanded": 419,
+          "crc": 2233803526
+        },
+        "product.json": {
+          "compressed": 10716,
+          "expanded": 52335,
+          "crc": 2943003362
+        },
+        "workbench.js": {
+          "compressed": 9898320,
+          "expanded": 38673759,
+          "crc": 1891671099
+        }
+      },
+      "workbenchSha256": "8009c99a930bc4ccef0042e8894a92ba933ab950f8a86fe870a82b2113d70dd6"
+    },
+    {
+      "version": "3.23.23",
+      "checks": {
+        "provider": true,
+        "services": true,
+        "methodsParsed": true,
+        "runWakeup": true,
+        "completionBranch": true,
+        "nativeAck": true,
+        "awaitExclusion": true,
+        "pairedInboxCommit": true
+      },
+      "staticContractMatches": true,
+      "source": "https://downloads.cursor.com/production/2dac2428994fe34f12658d9ecad1541b98db2c04/darwin/arm64/Cursor-darwin-arm64.zip",
+      "archiveBytes": 302942924,
+      "files": {
+        "Info.plist": {
+          "compressed": 2691,
+          "expanded": 39353,
+          "crc": 354490460
+        },
+        "package.json": {
+          "compressed": 315,
+          "expanded": 586,
+          "crc": 2373503525
+        },
+        "product.json": {
+          "compressed": 10749,
+          "expanded": 52411,
+          "crc": 593939286
+        },
+        "workbench.js": {
+          "compressed": 10050915,
+          "expanded": 39262113,
+          "crc": 2393109475
+        }
+      },
+      "workbenchSha256": "444498c2672d6172416654b60d267bff8457277441de0049b7a2147468528ad8"
+    }
+  ]
+}
