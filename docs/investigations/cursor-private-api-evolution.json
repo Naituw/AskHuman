@@ -1,0 +1,1222 @@
+{
+  "observedAt": "2026-10-15",
+  "scope": "named internal methods in official macOS ARM64 workbench bundles; static source inspection only; no vendor code executed",
+  "method": "exact identifier counts; isolated method definitions validated with vm.Script compilation; semantic observations from parsed method bodies",
+  "samples": [
+    {
+      "version": "2.5.26",
+      "builtAt": "2026-02-26T04:57:56.825Z",
+      "kind": "historical-workbench",
+      "source": "https://downloads.cursor.com/production/7d96c2a03bb088ad367615e9da1a3fe20fbbc6ae/darwin/arm64/Cursor-darwin-arm64.zip",
+      "workbenchSha256": "0f6a803cc21ef1a22c82acf336080203a3d2c7095aac8ab5733f4e9f595b2ff6",
+      "methods": {
+        "_mirrorDirectSubagentCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_appendCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_backgroundRunKey": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_hasUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_clearUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markParentTaskBubbleCompleted": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "markParentTaskBubbleCompleted": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_runBackgroundTaskCompletionAction": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_maybeDispatchBackgroundCompletions": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_runWakeupAction": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "drainCompletions": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "enqueueCompletion": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "unmarkAwaitedCompletion": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markBackgroundCompletionsSuppressedForTree": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        }
+      }
+    },
+    {
+      "version": "3.0.16",
+      "builtAt": "2026-04-09T05:33:51.767Z",
+      "kind": "historical-workbench",
+      "source": "https://downloads.cursor.com/production/475871d112608994deb2e3065dfb7c6b0baa0c54/darwin/arm64/Cursor-darwin-arm64.zip",
+      "workbenchSha256": "a2c959307a76f6d2e343424e2d1edb301abeabb3cd8357f70376376552c9bc88",
+      "methods": {
+        "_mirrorDirectSubagentCompletionToParentHistory": {
+          "tokenCount": 4,
+          "parsedDefinition": true,
+          "signature": "_mirrorDirectSubagentCompletionToParentHistory(e)",
+          "offsetUtf16": 31826134,
+          "definitionSha256": "5b149c251bfebb0a4e5b6ae317629a2538f02aa9b981a11c7b4798a13fc40f5c",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_appendCompletionToParentHistory": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "async _appendCompletionToParentHistory(e)",
+          "offsetUtf16": 31922450,
+          "definitionSha256": "762a19f25fae2826538ae56db74946501ca50f99abec2c91fc7e7b1bf0da8f57",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_backgroundRunKey": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_hasUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_clearUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markParentTaskBubbleCompleted": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "markParentTaskBubbleCompleted": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_runBackgroundTaskCompletionAction": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "async _runBackgroundTaskCompletionAction(e,t,i)",
+          "offsetUtf16": 46426234,
+          "definitionSha256": "d4bee765519d0eb5d2ceb9eb672acbc2619287f79ba6bbbdd3c11187c39e099c",
+          "callsRunAgentLoop": true,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_maybeDispatchBackgroundCompletions": {
+          "tokenCount": 5,
+          "parsedDefinition": true,
+          "signature": "async _maybeDispatchBackgroundCompletions(e)",
+          "offsetUtf16": 46428444,
+          "definitionSha256": "500465b7158e6aef3fbc6ae04a8065a1660ae08d5a9c037fecb4d30949c967ea",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_runWakeupAction": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "drainCompletions": {
+          "tokenCount": 6,
+          "parsedDefinition": true,
+          "signature": "drainCompletions(n)",
+          "offsetUtf16": 31911053,
+          "definitionSha256": "b25bceee5bb1424c5f64e2de7def49d2466f5890a38752eb6269281dab71553b",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "enqueueCompletion": {
+          "tokenCount": 6,
+          "parsedDefinition": true,
+          "signature": "enqueueCompletion(n)",
+          "offsetUtf16": 31909811,
+          "definitionSha256": "c7f9023bdfcfed1483e76501d3a2c4b9405a86a024bed07b09a00dd09148a8b8",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "unmarkAwaitedCompletion": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markBackgroundCompletionsSuppressedForTree": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        }
+      }
+    },
+    {
+      "version": "3.9.16",
+      "builtAt": "2026-06-27T06:41:01.941Z",
+      "kind": "historical-workbench",
+      "source": "https://downloads.cursor.com/production/042b3c1a4c53f2c3808067f519fbfc67b72cad8b/darwin/arm64/Cursor-darwin-arm64.zip",
+      "workbenchSha256": "2541dd152a9facf5ae708a0b5d8a90d3074d7432b92901cdb8d50926979746af",
+      "methods": {
+        "_mirrorDirectSubagentCompletionToParentHistory": {
+          "tokenCount": 5,
+          "parsedDefinition": true,
+          "signature": "_mirrorDirectSubagentCompletionToParentHistory(n)",
+          "offsetUtf16": 27742075,
+          "definitionSha256": "0789b5ba267bc99950a51cf36a0eed331c796f156165262d47e73304369a3103",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_appendCompletionToParentHistory": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "async _appendCompletionToParentHistory(n)",
+          "offsetUtf16": 29290379,
+          "definitionSha256": "dce82c28cff971b4020dcf95566cd35f9058281eaf03d250c9cec99d07c0f369",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_backgroundRunKey": {
+          "tokenCount": 4,
+          "parsedDefinition": true,
+          "signature": "_backgroundRunKey(n,e)",
+          "offsetUtf16": 29291116,
+          "definitionSha256": "be4ad50e510db4f7c48e2c5c86680d1b1a1ba8860ce38cce104f5766a7d4ed5b",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_markUnprocessedBackgroundRun": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "_markUnprocessedBackgroundRun(n)",
+          "offsetUtf16": 29291945,
+          "definitionSha256": "d70123d5d93abc5eebb4d46b1f1ae81d667e5585df1557dd9ccdd5575c8c552c",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_hasUnprocessedBackgroundRun": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "_hasUnprocessedBackgroundRun(n)",
+          "offsetUtf16": 29292095,
+          "definitionSha256": "59a8b9270b99172e1a936bd57683f2744c4627d092dda6dad8a96a922d3bc559",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_clearUnprocessedBackgroundRun": {
+          "tokenCount": 5,
+          "parsedDefinition": true,
+          "signature": "_clearUnprocessedBackgroundRun(n)",
+          "offsetUtf16": 29292195,
+          "definitionSha256": "0daddcd98ea693e385f5801d5123326da4ba180c8462c32d3f3c96c323b63d6f",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_markParentTaskBubbleCompleted": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "_markParentTaskBubbleCompleted(n)",
+          "offsetUtf16": 29285690,
+          "definitionSha256": "92116c1df48b59840e8b6f4b54a33b1ffb7b68af00a47a682bd480bee118a725",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "markParentTaskBubbleCompleted": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_runBackgroundTaskCompletionAction": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "async _runBackgroundTaskCompletionAction(n,e,t,i)",
+          "offsetUtf16": 39107685,
+          "definitionSha256": "4531f77b687bd88bd2cade15e1db54ccefb62ea90455aacd14d29f05317e1a18",
+          "callsRunAgentLoop": true,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_maybeDispatchBackgroundCompletions": {
+          "tokenCount": 6,
+          "parsedDefinition": true,
+          "signature": "async _maybeDispatchBackgroundCompletions(n)",
+          "offsetUtf16": 39111083,
+          "definitionSha256": "a2eb855bae75246b9c8938d5efbb1b8800c3ea9e26b956ecb3c0d949dfc04dd8",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_runWakeupAction": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "drainCompletions": {
+          "tokenCount": 4,
+          "parsedDefinition": true,
+          "signature": "drainCompletions(n)",
+          "offsetUtf16": 27839562,
+          "definitionSha256": "b25bceee5bb1424c5f64e2de7def49d2466f5890a38752eb6269281dab71553b",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "enqueueCompletion": {
+          "tokenCount": 8,
+          "parsedDefinition": true,
+          "signature": "enqueueCompletion(n)",
+          "offsetUtf16": 27838116,
+          "definitionSha256": "c7f9023bdfcfed1483e76501d3a2c4b9405a86a024bed07b09a00dd09148a8b8",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "unmarkAwaitedCompletion": {
+          "tokenCount": 4,
+          "parsedDefinition": true,
+          "signature": "unmarkAwaitedCompletion(n,e)",
+          "offsetUtf16": 27838958,
+          "definitionSha256": "1735d8cfda0d70e2452bd4d2b4262d5809b8322c61e77dbaf8c6fe8976514ae2",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_markBackgroundCompletionsSuppressedForTree": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "_markBackgroundCompletionsSuppressedForTree(n)",
+          "offsetUtf16": 29291157,
+          "definitionSha256": "1803a4a93819ce0de8a4091fcbee76da11825bc38f6ac4fb7703cbf668401b27",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        }
+      }
+    },
+    {
+      "version": "3.14.27",
+      "builtAt": "2026-08-04T03:29:11.183Z",
+      "kind": "historical-workbench",
+      "source": "https://downloads.cursor.com/production/047548b00c1a079373d74d00183f32510a4a41e1/darwin/arm64/Cursor-darwin-arm64.zip",
+      "workbenchSha256": "ffc0cc1317e2fcdbbe7cf141c0ad1690c86f751c39eb0dd7d64eaf0a82ae4cbf",
+      "methods": {
+        "_mirrorDirectSubagentCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_appendCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_backgroundRunKey": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_hasUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_clearUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markParentTaskBubbleCompleted": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "_markParentTaskBubbleCompleted(e)",
+          "offsetUtf16": 23188164,
+          "definitionSha256": "079a6f5b2e38a2c5d9543781eaa0fcb84757aa14821d2f7d322c802755483a33",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "markParentTaskBubbleCompleted": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_runBackgroundTaskCompletionAction": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "async _runBackgroundTaskCompletionAction(e,t,n,i)",
+          "offsetUtf16": 32293294,
+          "definitionSha256": "870c1d06d4eb8932d95e690023aefc000a15ee42479db3003d9e30d7a82d9408",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": true,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_maybeDispatchBackgroundCompletions": {
+          "tokenCount": 7,
+          "parsedDefinition": true,
+          "signature": "async _maybeDispatchBackgroundCompletions(e)",
+          "offsetUtf16": 32294830,
+          "definitionSha256": "cc15c10ff38446f8cc93283c9f71eb6c3ff7877bb0db7e926327f640534890b4",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": true,
+          "usesRunDispositionSuppress": false
+        },
+        "_runWakeupAction": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "async _runWakeupAction(e,t,n)",
+          "offsetUtf16": 32290391,
+          "definitionSha256": "82289555088fc376152eaf75144d749cfb8c577f6108b3fc577f350fc85749ba",
+          "callsRunAgentLoop": true,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "drainCompletions": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "drainCompletions(e)",
+          "offsetUtf16": 20592458,
+          "definitionSha256": "6df9d8de7b5edaae2782e799dbc0972477286ae58b030263584383e1b2334943",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "enqueueCompletion": {
+          "tokenCount": 4,
+          "parsedDefinition": true,
+          "signature": "enqueueCompletion(e)",
+          "offsetUtf16": 20592034,
+          "definitionSha256": "4c11c5586f1dcba81cad52b2e0d8683059b80c76265983b9357e17e88a56fb08",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "unmarkAwaitedCompletion": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "unmarkAwaitedCompletion(e,t)",
+          "offsetUtf16": 20592181,
+          "definitionSha256": "57a7cc87b3f8ef42533f6a6ff3bf755e34c7f4b2eb3e40b1773aa6cee132b595",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_markBackgroundCompletionsSuppressedForTree": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "_markBackgroundCompletionsSuppressedForTree(e)",
+          "offsetUtf16": 23192839,
+          "definitionSha256": "ca4a53ef4299d4d7781f4301e0612ee24459e5934edc66a5623304f15ed3b28b",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": true
+        }
+      }
+    },
+    {
+      "version": "3.18.25",
+      "builtAt": "2026-08-31T23:08:02.261Z",
+      "kind": "historical-workbench",
+      "source": "https://downloads.cursor.com/production/280eca2911f1774689696e5f1efa5a4f97a87af3/darwin/arm64/Cursor-darwin-arm64.zip",
+      "workbenchSha256": "0742e3a8832ad1ccd22300756bfa16edc2d75f0a598e2cdfab0a987c1aef3679",
+      "methods": {
+        "_mirrorDirectSubagentCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_appendCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_backgroundRunKey": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_hasUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_clearUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markParentTaskBubbleCompleted": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "markParentTaskBubbleCompleted": {
+          "tokenCount": 6,
+          "parsedDefinition": true,
+          "signature": "markParentTaskBubbleCompleted(e)",
+          "offsetUtf16": 22084656,
+          "definitionSha256": "128bbc465e6cb77658c32a41373e86d1454e3f91072c58e70855bbdc8ccb5623",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_runBackgroundTaskCompletionAction": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "async _runBackgroundTaskCompletionAction(e,t,n,i)",
+          "offsetUtf16": 32782857,
+          "definitionSha256": "12bd85d2e0387ebb31f51a7b14903fed0f04574176cac6b04e05d97b101263c6",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": true,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_maybeDispatchBackgroundCompletions": {
+          "tokenCount": 8,
+          "parsedDefinition": true,
+          "signature": "async _maybeDispatchBackgroundCompletions(e)",
+          "offsetUtf16": 32784723,
+          "definitionSha256": "a1c6cead596fe29dbb70c3394d4c2c6aae6b012ce7a872a17485ff94e95f4934",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": true,
+          "usesRunDispositionSuppress": false
+        },
+        "_runWakeupAction": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "async _runWakeupAction(e,t,n)",
+          "offsetUtf16": 32779568,
+          "definitionSha256": "929425ace7c77ddd6fb5ba4d1cb9953838de7f192c7a05e0e78feedfcb287ca2",
+          "callsRunAgentLoop": true,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "drainCompletions": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "drainCompletions(t)",
+          "offsetUtf16": 19878732,
+          "definitionSha256": "eea9a08d7fc79a21abbf7b6e288ea2287fe8abe949db050731245078fafeb504",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "enqueueCompletion": {
+          "tokenCount": 8,
+          "parsedDefinition": true,
+          "signature": "enqueueCompletion(t)",
+          "offsetUtf16": 19877993,
+          "definitionSha256": "6c4c7bfa62ba8e702fb9e0fe7badaf47968a6cbde12e4cbec7377765276b0aa4",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "unmarkAwaitedCompletion": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "unmarkAwaitedCompletion(t,n)",
+          "offsetUtf16": 19878211,
+          "definitionSha256": "595e7da48e36f94301a41d9fc379270313459224bbf1d23d7faebc0ed2b9d41d",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_markBackgroundCompletionsSuppressedForTree": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "_markBackgroundCompletionsSuppressedForTree(e)",
+          "offsetUtf16": 22089356,
+          "definitionSha256": "ca4a53ef4299d4d7781f4301e0612ee24459e5934edc66a5623304f15ed3b28b",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": true
+        }
+      }
+    },
+    {
+      "version": "3.20.21",
+      "builtAt": "2026-09-13T19:02:51.781Z",
+      "kind": "historical-workbench",
+      "source": "https://downloads.cursor.com/production/f09fca384ceca23f7bf21f9c23655b162641d747/darwin/arm64/Cursor-darwin-arm64.zip",
+      "workbenchSha256": "508758544832a1113a10ae9251a8ec2d3c6cecc59aa7e250dd61277ffcae7379",
+      "methods": {
+        "_mirrorDirectSubagentCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_appendCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_backgroundRunKey": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_hasUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_clearUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markParentTaskBubbleCompleted": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "markParentTaskBubbleCompleted": {
+          "tokenCount": 5,
+          "parsedDefinition": true,
+          "signature": "markParentTaskBubbleCompleted(e)",
+          "offsetUtf16": 18793656,
+          "definitionSha256": "8771aabf26dcc5bb4d5cd7c1e144cb758d0921b8a78054371fd45fe084164fc0",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_runBackgroundTaskCompletionAction": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "async _runBackgroundTaskCompletionAction(e,t,n,i)",
+          "offsetUtf16": 29315123,
+          "definitionSha256": "2a60704c06a60baf21ed5dcbe744541935f92275bb0a31f9cc18e220cf83035f",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": true,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_maybeDispatchBackgroundCompletions": {
+          "tokenCount": 8,
+          "parsedDefinition": true,
+          "signature": "async _maybeDispatchBackgroundCompletions(e)",
+          "offsetUtf16": 29318754,
+          "definitionSha256": "0f1332d9764509f9d4aad61df34c56ffd759d305af3f978cd789e041194ffe3b",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": true,
+          "usesRunDispositionSuppress": false
+        },
+        "_runWakeupAction": {
+          "tokenCount": 4,
+          "parsedDefinition": true,
+          "signature": "async _runWakeupAction(e,t,n)",
+          "offsetUtf16": 29311606,
+          "definitionSha256": "bd85805ae54415b498c0ffbced0742d07448997ee11d240581ebe26fdd5a5af9",
+          "callsRunAgentLoop": true,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "drainCompletions": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "drainCompletions(t)",
+          "offsetUtf16": 16437030,
+          "definitionSha256": "eea9a08d7fc79a21abbf7b6e288ea2287fe8abe949db050731245078fafeb504",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "enqueueCompletion": {
+          "tokenCount": 8,
+          "parsedDefinition": true,
+          "signature": "enqueueCompletion(t)",
+          "offsetUtf16": 16436291,
+          "definitionSha256": "6c4c7bfa62ba8e702fb9e0fe7badaf47968a6cbde12e4cbec7377765276b0aa4",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "unmarkAwaitedCompletion": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "unmarkAwaitedCompletion(t,n)",
+          "offsetUtf16": 16436509,
+          "definitionSha256": "595e7da48e36f94301a41d9fc379270313459224bbf1d23d7faebc0ed2b9d41d",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_markBackgroundCompletionsSuppressedForTree": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "_markBackgroundCompletionsSuppressedForTree(e)",
+          "offsetUtf16": 18798278,
+          "definitionSha256": "ca4a53ef4299d4d7781f4301e0612ee24459e5934edc66a5623304f15ed3b28b",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": true
+        }
+      }
+    },
+    {
+      "version": "3.22.12",
+      "builtAt": "2026-09-26T04:55:12.125Z",
+      "kind": "historical-workbench",
+      "source": "https://downloads.cursor.com/production/3a92974361033b2051526321308c2740fe5912c5/darwin/arm64/Cursor-darwin-arm64.zip",
+      "workbenchSha256": "8009c99a930bc4ccef0042e8894a92ba933ab950f8a86fe870a82b2113d70dd6",
+      "methods": {
+        "_mirrorDirectSubagentCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_appendCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_backgroundRunKey": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_hasUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_clearUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markParentTaskBubbleCompleted": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "markParentTaskBubbleCompleted": {
+          "tokenCount": 5,
+          "parsedDefinition": true,
+          "signature": "markParentTaskBubbleCompleted(e)",
+          "offsetUtf16": 18732414,
+          "definitionSha256": "35a12ae41b745613f24e219628b62f2277190b0eaeec2234f84da00650947ebf",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_runBackgroundTaskCompletionAction": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "async _runBackgroundTaskCompletionAction(e,t,n,i)",
+          "offsetUtf16": 29521749,
+          "definitionSha256": "e54cfe214ec9a9cc5438a5fd2c328ceec8cef8587e5ccd9af80c748e9a8d9f1a",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": true,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_maybeDispatchBackgroundCompletions": {
+          "tokenCount": 8,
+          "parsedDefinition": true,
+          "signature": "async _maybeDispatchBackgroundCompletions(e)",
+          "offsetUtf16": 29525450,
+          "definitionSha256": "f36c049355d41bfc758359dc7a1b7e6ff1c3fc83ebab0b964bf580e774bad3d6",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": true,
+          "usesRunDispositionSuppress": false
+        },
+        "_runWakeupAction": {
+          "tokenCount": 4,
+          "parsedDefinition": true,
+          "signature": "async _runWakeupAction(e,t,n)",
+          "offsetUtf16": 29518198,
+          "definitionSha256": "fbbc53cc0119d7609acccdd67fa5f32d68ee448a37a30daf48bcd8c8e250f609",
+          "callsRunAgentLoop": true,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "drainCompletions": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "drainCompletions(t)",
+          "offsetUtf16": 15855665,
+          "definitionSha256": "eea9a08d7fc79a21abbf7b6e288ea2287fe8abe949db050731245078fafeb504",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "enqueueCompletion": {
+          "tokenCount": 8,
+          "parsedDefinition": true,
+          "signature": "enqueueCompletion(t)",
+          "offsetUtf16": 15854926,
+          "definitionSha256": "6c4c7bfa62ba8e702fb9e0fe7badaf47968a6cbde12e4cbec7377765276b0aa4",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "unmarkAwaitedCompletion": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "unmarkAwaitedCompletion(t,n)",
+          "offsetUtf16": 15855144,
+          "definitionSha256": "595e7da48e36f94301a41d9fc379270313459224bbf1d23d7faebc0ed2b9d41d",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_markBackgroundCompletionsSuppressedForTree": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "_markBackgroundCompletionsSuppressedForTree(e)",
+          "offsetUtf16": 18736751,
+          "definitionSha256": "ca4a53ef4299d4d7781f4301e0612ee24459e5934edc66a5623304f15ed3b28b",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": true
+        }
+      }
+    },
+    {
+      "version": "3.23.23",
+      "builtAt": "2026-10-05T01:43:43.807Z",
+      "kind": "historical-workbench",
+      "source": "https://downloads.cursor.com/production/2dac2428994fe34f12658d9ecad1541b98db2c04/darwin/arm64/Cursor-darwin-arm64.zip",
+      "workbenchSha256": "444498c2672d6172416654b60d267bff8457277441de0049b7a2147468528ad8",
+      "methods": {
+        "_mirrorDirectSubagentCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_appendCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_backgroundRunKey": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_hasUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_clearUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markParentTaskBubbleCompleted": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "markParentTaskBubbleCompleted": {
+          "tokenCount": 5,
+          "parsedDefinition": true,
+          "signature": "markParentTaskBubbleCompleted(e)",
+          "offsetUtf16": 19002033,
+          "definitionSha256": "78ee631a9b34122b0985fd2a8ee3b340a200279abe3b696e63b254359081b878",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_runBackgroundTaskCompletionAction": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "async _runBackgroundTaskCompletionAction(e,t,n,i)",
+          "offsetUtf16": 30113174,
+          "definitionSha256": "bc526d1f4a8a6ae4ea87e7717f4666dc673823e861268aff94537b02fa7e6048",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": true,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_maybeDispatchBackgroundCompletions": {
+          "tokenCount": 9,
+          "parsedDefinition": true,
+          "signature": "async _maybeDispatchBackgroundCompletions(e)",
+          "offsetUtf16": 30117310,
+          "definitionSha256": "6bca56aeb6b8dd7688f8e4ff0b1069bbc56ec4b63e513e9b6701fbaed9b1da8a",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": true,
+          "usesRunDispositionSuppress": false
+        },
+        "_runWakeupAction": {
+          "tokenCount": 4,
+          "parsedDefinition": true,
+          "signature": "async _runWakeupAction(e,t,n)",
+          "offsetUtf16": 30109311,
+          "definitionSha256": "2751e1eb913a05fe660118cb23202857c52111ad2cc54a175e6f5f61f285dbe8",
+          "callsRunAgentLoop": true,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "drainCompletions": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "drainCompletions(t)",
+          "offsetUtf16": 16086856,
+          "definitionSha256": "eea9a08d7fc79a21abbf7b6e288ea2287fe8abe949db050731245078fafeb504",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "enqueueCompletion": {
+          "tokenCount": 8,
+          "parsedDefinition": true,
+          "signature": "enqueueCompletion(t)",
+          "offsetUtf16": 16086117,
+          "definitionSha256": "6c4c7bfa62ba8e702fb9e0fe7badaf47968a6cbde12e4cbec7377765276b0aa4",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "unmarkAwaitedCompletion": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "unmarkAwaitedCompletion(t,n)",
+          "offsetUtf16": 16086335,
+          "definitionSha256": "595e7da48e36f94301a41d9fc379270313459224bbf1d23d7faebc0ed2b9d41d",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_markBackgroundCompletionsSuppressedForTree": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "_markBackgroundCompletionsSuppressedForTree(e)",
+          "offsetUtf16": 19006370,
+          "definitionSha256": "ca4a53ef4299d4d7781f4301e0612ee24459e5934edc66a5623304f15ed3b28b",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": true
+        }
+      }
+    },
+    {
+      "version": "3.24.12",
+      "builtAt": "2026-10-09T20:56:41.904Z",
+      "kind": "glass",
+      "source": "installed official Cursor.app",
+      "workbenchSha256": "85d9249b60ef7f9ec60f300cd4954001920724b7962bd107b425fa64bccd8007",
+      "methods": {
+        "_mirrorDirectSubagentCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_appendCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_backgroundRunKey": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_hasUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_clearUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markParentTaskBubbleCompleted": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "markParentTaskBubbleCompleted": {
+          "tokenCount": 5,
+          "parsedDefinition": true,
+          "signature": "markParentTaskBubbleCompleted(t)",
+          "offsetUtf16": 20778504,
+          "definitionSha256": "2e288b7ba87f9d7f9e3c311d2296f46f9f34e9cb9d3f755bc586c72ce21297c1",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_runBackgroundTaskCompletionAction": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "async _runBackgroundTaskCompletionAction(t,e,n,i)",
+          "offsetUtf16": 39369204,
+          "definitionSha256": "c1c08aa151b6aabee84583dab018c2754f64a8cb11db5d4f78c91910e7aa59c0",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": true,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_maybeDispatchBackgroundCompletions": {
+          "tokenCount": 9,
+          "parsedDefinition": true,
+          "signature": "async _maybeDispatchBackgroundCompletions(t)",
+          "offsetUtf16": 39373781,
+          "definitionSha256": "b2c22f56da7d8ab1673cda4d5de081df08a826a7e98eff84210724aba67000ac",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": true,
+          "usesRunDispositionSuppress": false
+        },
+        "_runWakeupAction": {
+          "tokenCount": 4,
+          "parsedDefinition": true,
+          "signature": "async _runWakeupAction(t,e,n)",
+          "offsetUtf16": 39365340,
+          "definitionSha256": "e4c444c4b723e471195c53a8b6dacaa68b3bc0a687d0230cf3ce6ed515947c59",
+          "callsRunAgentLoop": true,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "drainCompletions": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "drainCompletions(e)",
+          "offsetUtf16": 17616856,
+          "definitionSha256": "b29615da226914ee0188f9238065fbff8139197e827764d15016bf57fa69cf58",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "enqueueCompletion": {
+          "tokenCount": 9,
+          "parsedDefinition": true,
+          "signature": "enqueueCompletion(e)",
+          "offsetUtf16": 17616117,
+          "definitionSha256": "ccab68594f632b83ea684ee346c6b380f9d0030ab947e9e9456d7b055c1b1b1a",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "unmarkAwaitedCompletion": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "unmarkAwaitedCompletion(e,n)",
+          "offsetUtf16": 17616335,
+          "definitionSha256": "258ca150a8d6c19a865fe7a5abb492963fe89cc1e3d3f6a5ee46bbef0db9b64f",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_markBackgroundCompletionsSuppressedForTree": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "_markBackgroundCompletionsSuppressedForTree(t)",
+          "offsetUtf16": 20782846,
+          "definitionSha256": "c5cf283dd69282b3fb5ab28a7528c01dee5bfd17bbb6a3c2736f9789aa8fea6f",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": true
+        }
+      }
+    },
+    {
+      "version": "3.24.12",
+      "builtAt": "2026-10-09T20:56:41.904Z",
+      "kind": "desktop",
+      "source": "installed official Cursor.app",
+      "workbenchSha256": "044ce0931100af5fe95403e9a692b02932bc3e13a6763f576b851f503fefa518",
+      "methods": {
+        "_mirrorDirectSubagentCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_appendCompletionToParentHistory": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_backgroundRunKey": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_hasUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_clearUnprocessedBackgroundRun": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "_markParentTaskBubbleCompleted": {
+          "tokenCount": 0,
+          "parsedDefinition": false
+        },
+        "markParentTaskBubbleCompleted": {
+          "tokenCount": 5,
+          "parsedDefinition": true,
+          "signature": "markParentTaskBubbleCompleted(e)",
+          "offsetUtf16": 19487065,
+          "definitionSha256": "e83676b506cb07f126bdfb22e847f98adac4bf2f2a2e571157d5df4ceff09f6b",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_runBackgroundTaskCompletionAction": {
+          "tokenCount": 2,
+          "parsedDefinition": true,
+          "signature": "async _runBackgroundTaskCompletionAction(e,t,n,i)",
+          "offsetUtf16": 30791968,
+          "definitionSha256": "a1ef927759599f551c50a42e579890b388ffc4ba191866cfe9c0eb7813d06a51",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": true,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_maybeDispatchBackgroundCompletions": {
+          "tokenCount": 9,
+          "parsedDefinition": true,
+          "signature": "async _maybeDispatchBackgroundCompletions(e)",
+          "offsetUtf16": 30796545,
+          "definitionSha256": "d29575813e3a9bb4584a3097ab1ec24f4d4b8e05a5141d8c27645f5097c27765",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": true,
+          "usesRunDispositionSuppress": false
+        },
+        "_runWakeupAction": {
+          "tokenCount": 4,
+          "parsedDefinition": true,
+          "signature": "async _runWakeupAction(e,t,n)",
+          "offsetUtf16": 30788104,
+          "definitionSha256": "a431b1691b75e5738783119b80b77d989aa2a208cecf20297f2854573707cd2b",
+          "callsRunAgentLoop": true,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "drainCompletions": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "drainCompletions(t)",
+          "offsetUtf16": 16479256,
+          "definitionSha256": "eea9a08d7fc79a21abbf7b6e288ea2287fe8abe949db050731245078fafeb504",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "enqueueCompletion": {
+          "tokenCount": 8,
+          "parsedDefinition": true,
+          "signature": "enqueueCompletion(t)",
+          "offsetUtf16": 16478517,
+          "definitionSha256": "6c4c7bfa62ba8e702fb9e0fe7badaf47968a6cbde12e4cbec7377765276b0aa4",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "unmarkAwaitedCompletion": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "unmarkAwaitedCompletion(t,n)",
+          "offsetUtf16": 16478735,
+          "definitionSha256": "595e7da48e36f94301a41d9fc379270313459224bbf1d23d7faebc0ed2b9d41d",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": false
+        },
+        "_markBackgroundCompletionsSuppressedForTree": {
+          "tokenCount": 3,
+          "parsedDefinition": true,
+          "signature": "_markBackgroundCompletionsSuppressedForTree(e)",
+          "offsetUtf16": 19491402,
+          "definitionSha256": "ca4a53ef4299d4d7781f4301e0612ee24459e5934edc66a5623304f15ed3b28b",
+          "callsRunAgentLoop": false,
+          "callsRunWakeup": false,
+          "checksCompletedOutcome": false,
+          "usesRunDispositionSuppress": true
+        }
+      }
+    }
+  ]
+}

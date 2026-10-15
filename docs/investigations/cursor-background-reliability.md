@@ -55,3 +55,24 @@
 Rust 1327 passed / 3 ignored；Vitest 382 passed（55 文件）、Node 7 passed；fmt、Clippy 通过。Dev Instance 与主环境均已安装并签名成功；新安装的 MCP show_last 正常，doctor 不再包含 cursorDesktop/cursorCli，生效 config 无退休字段。主环境安装后旧 daemon 正等待另一条问答排空再换新，后台控制已提前关闭。提交与安装记录见 [实施计划](../plans/cursor-background-reliability.md)。
 
 官方来源、版本、ZIP 大小/CRC、workbench SHA-256 与逐项检查结果保存于 [兼容性证据](cursor-desktop-compatibility-evidence.json)。厂商源码及提取的方法仅保留于临时目录 /tmp/ah-cursor-desktop-compat，不要求临时文件永久存在。
+
+## 追加审查：旧版内部接口是否消失
+
+2026-10-15，按用户追问对比旧包与当前 3.24.12。这里的接口均指 workbench 内部方法，不是公开 SDK API。以完整标识符匹配并解析定义，避免把“不再由此路径调用”误判成“方法已删除”；同时检查当前 Agents 与 IDE 两个 bundle。
+
+| 旧接口 | 旧版证据 | 当前 3.24.12 |
+|---|---|---|
+| `_mirrorDirectSubagentCompletionToParentHistory` | 3.0.16、3.9.16 有定义；把子代理完成信息写成父会话的模拟用户消息 | 同名方法/引用均消失；3.14.27 样本已不存在 |
+| `_appendCompletionToParentHistory` | 3.0.16、3.9.16 有定义，子代理完成入队器会调用 | 同名方法/引用均消失；新入队器改用结构化 wakeup 队列，没有原来的 history append 分支 |
+| `_backgroundRunKey`、`_markUnprocessedBackgroundRun`、`_hasUnprocessedBackgroundRun`、`_clearUnprocessedBackgroundRun` | 3.9.16 用 run key 集合与计数器跟踪/抑制后台完成 | 同名方法/引用均消失；3.14.27 已改为运行记录的 `disposition="suppress"` 等状态 |
+| `_markParentTaskBubbleCompleted` | 3.9.16、3.14.27 有定义 | 旧名消失；3.18.25 起抽查到 `markParentTaskBubbleCompleted`，成功/取消/错误状态写入仍在，父 bubble 查找也重构了 |
+
+同时，有几项不能当作删除证据：
+
+- `_runBackgroundTaskCompletionAction` 与 `_maybeDispatchBackgroundCompletions` 从 3.0.16（4 月 9 日构建）到 3.24.12（10 月 9 日构建）都保留，跨度约六个月。
+- `drainCompletions`、`enqueueCompletion`、`unmarkAwaitedCompletion` 在当前版仍有真实方法定义。虽然新版分发器主要用 pull/ack/nack，这些旧方法仍以兼容包装存在。
+- 名称保留不等于调用协议不变：完成入口由 3 参数变成 4 参数，旧版直接 runAgentLoop；较新版委托 _runWakeupAction，分发器按返回的 completed 决定 ACK 或重排。
+
+因此，历史上既有删除/重构，也有持续保留的核心入口。不能把部分辅助方法的消失泛化成所有接入点随时改名。此前“约 1.3 个月”仅指完整旧适配器契约在已抽查样本中的静态匹配跨度（8 月 31 日至 10 月 9 日），不是核心方法的存续时间，也不是未来稳定期预测。
+
+逐构建日期、方法定义/引用状态、源码与方法哈希、参数及调用观察保存于 [内部接口演进证据](cursor-private-api-evolution.json)。本次只做静态研究，没有执行厂商代码或调用模型。
