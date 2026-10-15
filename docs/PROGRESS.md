@@ -3,13 +3,15 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 待合并与人工验收：终端 Cursor CLI 后台完成续跑控制
+## 待修补边界与人工验收：终端 Cursor CLI 后台完成续跑控制
 
 实现、自审和独立 Dev Instance 安装验证已完成，位于 `codex/cursor-cli-followup`：
 `7bf7c82` 计划，`dc09602` 实现，`233b1a5` 恢复/诊断修正。规格和完整证据见该分支
 `docs/specs/cursor-cli-background-followup.md`、`docs/plans/cursor-cli-background-followup.md`。
 Rust 1324、Vitest 385、Node 25 全部通过；真实 Grok 4.7 父/子代理、Shell/Await、Ctrl+C、
 手动续聊、原生 ACK/重复通知及入口所有权均已验证。
+
+2026-10-15 复审发现三项生产合并前缺口：AskHuman 删除/降级后的原命令回退、升级 ABI 语义约束、入口检查到 rename 的并发竞态。详见实施计划末节；尚未修改功能代码，生产合并应暂缓。
 
 主工作区另一功能仍在修改并安装自己的二进制，未覆盖该环境。下一步待其收口后合并本分支、
 安装生产版本，补本人实际 AskHuman End 与新状态行观感验收；不能伪造这些人工结果。
