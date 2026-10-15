@@ -116,3 +116,36 @@ Hook 客户端，并只在该进程内临时停用 Stop Hook，未伪造人类�
 （`9e794f6e-bfde-4741-975e-793db183076c`）。用户已确认 macOS、受管命令包装、与 Desktop 共用现有开关，随后授权实现与验证。规格和计划见 `../specs/cursor-cli-background-followup.md`、`../plans/cursor-cli-background-followup.md`。
 
 启动预加载无模型烟测通过，bundled Node 为 v26.8.1，未开 Inspector、未产生调试横幅。普通 `agent` 命令当前优先解析到 Grok，不能改 PATH；产品只接管核验属于 Cursor 的入口。其他平台已记录 todo #7（`db4b3a02-9c5f-415e-81f2-098f8f9a8588`）。
+
+
+## 6. 旧版本兼容性取样（2026-10-15）
+
+这是启动时的 JS 运行时补丁：用户命令入口包装落盘，CLI 内部模块工厂/原型方法只在内存里替换，未改厂商 JS。
+
+本机完整发行目录有以下三个构建；隐藏的升级暂存目录不作为发行样本，也未执行安装或升级。
+
+| 构建 | bundled Node | 当前产品适配器 | 旧版算法的原生队列探针 |
+|---|---|---|---|
+| `2026.07.20-8cc9c0b` | v24.5.0 | incompatible / active=false | Shell / 子代理 × success/error/aborted，含重复通知，pull→ACK→空批次后 pending 清空 |
+| `2026.07.23-e383d2b` | v24.5.0 | incompatible / active=false | 同上 |
+| `2026.10.01-e373342` | v26.8.1 | active=true；此前真实 Grok 回归通过 | 同上，且新版子代理 inflight 统计为 false |
+
+三个进程均实际启动到交互提示，使用私有配置/数据目录、空工作区、`--disable-auto-update` 和 Grok 4.7 选择。未提交任何聊天消息；AgentClient 模型入口在探针中禁止调用，记录的模型调用为 0。退出均为 0，拥有的测试进程已清理。
+
+旧版本的模块 ID 与导出仍是 `./src/shared/cli-background-work-registry.ts` / `t`，但
+registry 继承基类 `pull` / `ack`，自身原型没有对应 descriptor，也没有新版的
+`inFlightSubagentIds` / `forgetInFlight`。其继承方法为
+`pull(e){return this.wakeups.pull(e)}` 与 `ack(e){this.wakeups.ack(e)}`。
+当前补丁要求本类自有 pull 与新版 ACK 特征，因此拒绝接入；Node v24.5.0 本身已成功加载预加载脚本。
+
+若增加 legacy adapter，应在派生 registry 原型上增加临时 pull 包装，调用继承的原生 ACK；
+恢复时删除新增的自有属性，回到继承链，不能改共享基类。不能要求旧版提供新版独有的 inflight API。
+探针只在独立 registry 实例上验证队列算法，未将 legacy adapter 接入产品，也没有验证旧版真实 Shell/Await/子代理模型链。
+
+结论分层：当前可声明已验证的产品构建仅 `2026.10.01-e373342`；补旧版适配有实物依据可退到
+`2026.07.20-8cc9c0b`，尚不等于旧版产品支持已完成。7 月 20 日之前没有对应发行包证据，不能把此日期写成真正硬下限，也不能声称中间所有日期版本都兼容。
+
+官方 [CLI changelog](https://prod.cursor.com/docs/cli/changelog) 在 v2026.08.11 中记录恢复交互式/headless 的后台任务完成续跑，以及 single-turn 等待子代理的变化。这是必须逐构建验证调度语义的依据，不能仅按 Node 版本或日期推断 ABI 兼容。
+
+原始摘要：`/tmp/ah-cli-old-version-static.json`、本机临时目录
+`/var/folders/sm/h90d_zys04110r1_b2c3b9n80000gn/T/ah-cli-compat-bqgog9lu/summary.json` 与各版本 `compat-<pid>.json`；此处已保存关键结论。
