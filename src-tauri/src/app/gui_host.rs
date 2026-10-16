@@ -41,7 +41,9 @@ pub fn is_hosted_label(label: &str) -> bool {
 //
 // 三态图标由 `scripts/gen_tray_icons.py` 从设计稿 `icons/tray/source.png`
 // 抠图生成：黑色像素=不透明，白色（如 "?"、月牙缺口）=透明。macOS 作为
-// 模板图（系统按菜单栏明暗自动反色）；Linux 直接使用同一张单色图。
+// 模板图（系统按菜单栏明暗自动反色）；Linux / Windows 无原生 template 机制，
+// 由宿主根据当前主题（general.theme / 系统明暗）在加载时动态反相墨水为白色，
+// 确保在深色面板上高对比度显示。
 mod icon_bytes {
     pub const IDLE: &[u8] = include_bytes!("../../icons/tray/tray-idle.png");
     pub const ACTIVE: &[u8] = include_bytes!("../../icons/tray/tray-active.png");
@@ -211,11 +213,25 @@ pub(crate) fn sync_update_check_error(app: &AppHandle, error: &str) {
     refresh_on_main(app);
 }
 
+pub(crate) fn sync_theme(app: &AppHandle, theme: &str) {
+    let Some(state) = app.try_state::<HostState>() else {
+        return;
+    };
+    let mode = match theme {
+        "light" => ThemeMode::Light,
+        "dark" => ThemeMode::Dark,
+        _ => ThemeMode::System,
+    };
+    *state.theme.lock().unwrap() = mode;
+    refresh_on_main(app);
+}
+
 pub struct HostState {
     pub mode: Mutex<MenuBarIconMode>,
     /// 上次已应用的守护进程生命周期模式：用于在配置变更时检测「切到保活」的跃迁，
     /// 从而立即拉起 daemon（打开开关即视为一次触发，见 spec）。
     pub daemon_lifecycle: Mutex<DaemonLifecycleMode>,
+    pub theme: Mutex<ThemeMode>,
     pub lang: Mutex<Lang>,
     pub data: Mutex<TrayData>,
     /// Current-mode integration bundles that need reconciliation, in settings display order.
@@ -252,6 +268,9 @@ pub struct HostState {
 impl HostState {
     fn mode(&self) -> MenuBarIconMode {
         *self.mode.lock().unwrap()
+    }
+    fn theme(&self) -> ThemeMode {
+        *self.theme.lock().unwrap()
     }
     fn lang(&self) -> Lang {
         *self.lang.lock().unwrap()
@@ -290,6 +309,7 @@ pub fn setup(app: &mut tauri::App, config: &AppConfig) -> tauri::Result<()> {
     app.manage(HostState {
         mode: Mutex::new(mode),
         daemon_lifecycle: Mutex::new(config.general.daemon_lifecycle),
+        theme: Mutex::new(config.general.theme),
         lang: Mutex::new(lang),
         data: Mutex::new(initial_tray_data()),
         integration_updates: Mutex::new(detect_integration_updates()),
@@ -377,16 +397,55 @@ fn apply_activation_policy(app: &AppHandle, mode: MenuBarIconMode) {
 
 // ===== 托盘图标 / 菜单 =====
 
-fn decode_icon(bytes: &'static [u8]) -> Option<Image<'static>> {
+/// Invert monochrome tray icon ink (black -> white) while preserving alpha transparency
+/// and anti-aliasing for dark panels on platforms without native template icon support.
+#[cfg(any(not(target_os = "macos"), test))]
+fn invert_tray_icon_ink(image: Image<'static>) -> Image<'static> {
+    let width = image.width();
+    let height = image.height();
+    let mut rgba = image.rgba().to_vec();
+    for pixel in rgba.chunks_exact_mut(4) {
+        if pixel[3] > 0 {
+            pixel[0] = 255 - pixel[0];
+            pixel[1] = 255 - pixel[1];
+            pixel[2] = 255 - pixel[2];
+        }
+    }
+    Image::new_owned(rgba, width, height)
+}
+
+/// Whether non-macOS tray icons should render dark-appearance (light/white ink) artwork.
+/// macOS uses template images natively (`icon_as_template(true)`), so this is a no-op there.
+#[cfg(any(not(target_os = "macos"), test))]
+fn is_dark_tray(theme: ThemeMode) -> bool {
+    match theme {
+        ThemeMode::Dark => true,
+        ThemeMode::Light => false,
+        ThemeMode::System => matches!(dark_light::detect(), Ok(dark_light::Mode::Dark)),
+    }
+}
+
+#[cfg(all(target_os = "macos", not(test)))]
+fn is_dark_tray(_theme: ThemeMode) -> bool {
+    false
+}
+
+fn decode_icon(bytes: &'static [u8], dark: bool) -> Option<Image<'static>> {
     let image = Image::from_bytes(bytes).ok()?;
     #[cfg(target_os = "windows")]
-    {
-        Some(compact_windows_tray_icon(image))
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Some(image)
-    }
+    let image = compact_windows_tray_icon(image);
+
+    #[cfg(not(target_os = "macos"))]
+    let image = if dark {
+        invert_tray_icon_ink(image)
+    } else {
+        image
+    };
+
+    #[cfg(target_os = "macos")]
+    let _ = dark;
+
+    Some(image)
 }
 
 /// Trim transparent pixels and place the result on a square canvas with a one-pixel safety edge.
@@ -460,12 +519,12 @@ fn icon_for(
     daemon_up: bool,
     active_requests: usize,
     integration_attention: bool,
+    dark: bool,
 ) -> Option<Image<'static>> {
-    decode_icon(icon_source(
-        daemon_up,
-        active_requests,
-        integration_attention,
-    ))
+    decode_icon(
+        icon_source(daemon_up, active_requests, integration_attention),
+        dark,
+    )
 }
 
 /// 建立（present=true）或移除（present=false）托盘图标。须在主线程调用。
@@ -483,13 +542,14 @@ fn ensure_tray(app: &AppHandle, present: bool) -> tauri::Result<()> {
         refresh_tray(app);
         return Ok(());
     }
+    let dark = is_dark_tray(state.theme());
     // 建一个空菜单挂上托盘并长期持有；条目交给 refresh_tray 经 diff 填充（之后只就地改 / 最小增删）。
     let menu = Menu::new(app)?;
     let mut builder = TrayIconBuilder::with_id("askhuman-tray")
         .icon_as_template(icon_bytes::TEMPLATE)
         .menu(&menu)
         .show_menu_on_left_click(true);
-    if let Some(img) = decode_icon(icon_bytes::IDLE) {
+    if let Some(img) = decode_icon(icon_bytes::IDLE, dark) {
         builder = builder.icon(img);
     }
     let tray = builder.build(app)?;
@@ -519,6 +579,7 @@ pub fn refresh_tray(app: &AppHandle) {
     let integration_updates = state.integration_updates.lock().unwrap().clone();
     let update_action = state.update_action.lock().unwrap().clone();
     let lang = state.lang();
+    let dark_tray = is_dark_tray(state.theme());
     // 是否有任一家开启了生命周期追踪：未开启时隐藏 Agent 状态相关菜单项（入口 + 忙闲行）。
     let lifecycle_on = crate::integrations::agent_lifecycle::any_installed();
     // 盘上二进制已换新但被打开的窗口挡住自动 re-exec → 菜单出现「重启以完成更新」项（B2）。
@@ -533,13 +594,19 @@ pub fn refresh_tray(app: &AppHandle) {
         lifecycle_on,
         stale,
         &update_action,
+        dark_tray,
     );
     if state.menu_sig.lock().unwrap().as_deref() == Some(sig.as_str()) {
         return;
     }
 
     // 图标（set_icon / set_tooltip 不会关闭已展开菜单）。
-    if let Some(img) = icon_for(up, data.active_requests, !integration_updates.is_empty()) {
+    if let Some(img) = icon_for(
+        up,
+        data.active_requests,
+        !integration_updates.is_empty(),
+        dark_tray,
+    ) {
         let _ = tray.set_icon(Some(img));
         let _ = tray.set_icon_as_template(icon_bytes::TEMPLATE);
     }
@@ -581,6 +648,7 @@ fn menu_signature(
     lifecycle_on: bool,
     stale: bool,
     update_action: &UpdateActionState,
+    dark_tray: bool,
 ) -> String {
     // 待答子菜单内容（id+预览）也入签名：列表/预览变化即触发 diff。
     let pending: String = data
@@ -619,7 +687,7 @@ fn menu_signature(
         .collect::<Vec<_>>()
         .join(";");
     format!(
-        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
+        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}|{}",
         lang,
         up as u8,
         data.version,
@@ -645,6 +713,7 @@ fn menu_signature(
         issues,
         integration_updates.join(","),
         update_action,
+        dark_tray as u8,
     )
 }
 
@@ -1914,6 +1983,7 @@ fn apply_config(app: &AppHandle, cfg: &AppConfig) {
     let new_lang = Lang::resolve(&cfg.general.language);
     let new_mode = cfg.general.menu_bar_icon;
     let old_mode = state.mode();
+    *state.theme.lock().unwrap() = cfg.general.theme;
     *state.lang.lock().unwrap() = new_lang;
     *state.mode.lock().unwrap() = new_mode;
 
@@ -2412,7 +2482,94 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn non_windows_tray_decode_preserves_the_designed_canvas() {
-        let idle = decode_icon(icon_bytes::IDLE).unwrap();
+        let idle = decode_icon(icon_bytes::IDLE, false).unwrap();
         assert_eq!((idle.width(), idle.height()), (48, 36));
+    }
+
+    #[test]
+    fn invert_tray_icon_ink_inverts_black_to_white_and_preserves_alpha() {
+        let mut rgba = vec![0; 4 * 4 * 4];
+        // pixel 0: transparent [0, 0, 0, 0]
+        // pixel 1: solid black ink [0, 0, 0, 255]
+        rgba[4] = 0;
+        rgba[5] = 0;
+        rgba[6] = 0;
+        rgba[7] = 255;
+        // pixel 2: anti-aliased black edge [0, 0, 0, 128]
+        rgba[8] = 0;
+        rgba[9] = 0;
+        rgba[10] = 0;
+        rgba[11] = 128;
+
+        let original = Image::new_owned(rgba.clone(), 4, 4);
+        let inverted = invert_tray_icon_ink(original);
+
+        let inv_rgba = inverted.rgba();
+        // pixel 0 stays transparent
+        assert_eq!(&inv_rgba[0..4], &[0, 0, 0, 0]);
+        // pixel 1 becomes solid white [255, 255, 255, 255]
+        assert_eq!(&inv_rgba[4..8], &[255, 255, 255, 255]);
+        // pixel 2 becomes white with preserved alpha [255, 255, 255, 128]
+        assert_eq!(&inv_rgba[8..12], &[255, 255, 255, 128]);
+
+        // Symmetric check: inverting again restores original
+        let restored = invert_tray_icon_ink(inverted);
+        assert_eq!(restored.rgba(), rgba.as_slice());
+    }
+
+    #[test]
+    fn is_dark_tray_mode_resolves_correctly() {
+        assert!(is_dark_tray(ThemeMode::Dark));
+        assert!(!is_dark_tray(ThemeMode::Light));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn decode_icon_inverts_ink_for_dark_theme() {
+        let light_img = decode_icon(icon_bytes::IDLE, false).unwrap();
+        let dark_img = decode_icon(icon_bytes::IDLE, true).unwrap();
+
+        assert_eq!(light_img.width(), dark_img.width());
+        assert_eq!(light_img.height(), dark_img.height());
+
+        let mut checked = false;
+        for (l, d) in light_img
+            .rgba()
+            .chunks_exact(4)
+            .zip(dark_img.rgba().chunks_exact(4))
+        {
+            assert_eq!(l[3], d[3], "alpha channel must match");
+            if l[3] == 255 {
+                assert_eq!(&l[0..3], &[0, 0, 0], "light mode ink should be black");
+                assert_eq!(&d[0..3], &[255, 255, 255], "dark mode ink should be white");
+                checked = true;
+            }
+        }
+        assert!(checked, "should have checked at least one opaque pixel");
+    }
+
+    #[test]
+    fn menu_signature_changes_when_tray_appearance_flips() {
+        let sig_light = menu_signature(
+            true,
+            Lang::En,
+            &TrayData::default(),
+            &[],
+            false,
+            false,
+            &UpdateActionState::Idle,
+            false,
+        );
+        let sig_dark = menu_signature(
+            true,
+            Lang::En,
+            &TrayData::default(),
+            &[],
+            false,
+            false,
+            &UpdateActionState::Idle,
+            true,
+        );
+        assert_ne!(sig_light, sig_dark);
     }
 }
