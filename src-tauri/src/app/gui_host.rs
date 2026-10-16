@@ -640,6 +640,7 @@ pub fn refresh_tray(app: &AppHandle) {
 /// 决定菜单/图标渲染结果的全部输入拼成的签名：与上次相同即「整次跳过」（菜单已是正确状态，连 diff 都省，
 /// 确保展开的菜单纹丝不动）；不同才进入 diff。**必须覆盖 `build_specs` 与图标/tooltip 的每个输入**，
 /// 否则真变化会被误跳过。uptime 取分钟级文案，避免秒级微变把每次推送都判为「有变化」。
+#[allow(clippy::too_many_arguments)]
 fn menu_signature(
     up: bool,
     lang: Lang,
