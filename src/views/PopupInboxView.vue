@@ -209,6 +209,8 @@ function restoreFocus(id: string) {
 // Files dragged over the window (docs/specs/popup-inbox-collapse.md C28–C32): one window-level controller routes them to any
 // request. Each request's core lends it a receiver, and shows what the pointer would drop onto in the request.
 const receivers = new Map<string, DropReceiver>();
+/** A window change the drag controller started after its drag had left the window (the button is still down). */
+let carrying = false;
 const droppable = computed(() => new Set(requests.value.filter(r => acceptsFiles(r) && !terminals.has(r.requestId)).map(r => r.requestId)));
 const drop = useInboxDrop({
   root: () => root.value, layout: () => allocation.value, view: () => view.value, active: () => active.value,
@@ -217,7 +219,8 @@ const drop = useInboxDrop({
   receiver: id => receivers.get(id),
   open: id => enqueue(() => openForDrag(id)),
   deliver: deliverDrop,
-  springBack: () => { void enqueue(peekShrink); },
+  // The drag has left the window but still holds the button: the shrink must not wait for it to come up.
+  springBack: () => { void enqueue(async () => { carrying = true; try { await peekShrink(); } finally { carrying = false; } }); },
   fail: e => { error.value = String(e); },
 });
 function scopeFor(id: string): PopupScope {
@@ -299,6 +302,9 @@ async function geometry(arrival = false, form: Form = {}) {
       sidebar: sidebar.value || view.value === "collapsed", sidebarWidth: null, preview: previews.get(active.value ?? "") ?? false, mainExtent: null,
       // The page states the window form every time; native treats a missing size as the expanded window.
       ...(view.value === "collapsed" ? { collapsed: form.collapsed ?? { width: mini.value.width, height: mini.value.height } } : {}),
+      // Native holds a window change back while the primary button is down (an edge drag in progress). Files dragged over the
+      // window hold it on purpose, so a change they set off must not wait for the button to come up.
+      ...(drop.dragging.value || carrying ? { dragging: true } : {}),
     });
     allocation.value = prepared;
     sidebarWidth.value = prepared.sidebarWidth;

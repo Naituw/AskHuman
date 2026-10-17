@@ -73,7 +73,7 @@ function confirmation(id: string): PopupInboxRequest {
     detail: { kind: "none" }, choices: [], presentation: "inline", dismissActionId: "deny", createdAtMs: 1, expiresAtMs: 2 } } as unknown as PopupInboxRequest["interaction"] };
 }
 function emit(name: string, payload: unknown) { mock.handlers.get(name)!({ payload }); }
-interface LayoutArgs { sidebar: boolean; collapsed?: { width: number; height: number } }
+interface LayoutArgs { sidebar: boolean; collapsed?: { width: number; height: number }; dragging?: boolean }
 
 // The page the way native and CSS would lay it out. Rows are 40 tall; in the small window the list starts right under the
 // heading, in the open window one row lower. With a canvas (macOS) the page starts at x = 360 and the small window
@@ -856,6 +856,72 @@ describe("files dragged over the window", () => {
       emit("popup-app-active", false);
       await tick(200);
       expect(small()).toBe(true);
+    });
+  });
+
+  // Native holds a window change back while the primary button is down, which it is for the whole drag of files from Finder.
+  describe("window changes while the button is held", () => {
+    it("tells native not to wait for the button when a rest opens the small window", async () => {
+      await smallWindow();
+      mock.invoke.mockClear();
+      await onRow(1, "enter");
+      await tick(500);
+      expect(view()).toBe("expanded");
+      expect(layouts().length).toBeGreaterThan(0);
+      expect(layouts().every(args => args.dragging === true)).toBe(true);
+    });
+
+    it("tells native the same when a rest switches the body", async () => {
+      await peek(0);
+      await onRow(1, "enter");
+      await tick(250 + 126 + 174);
+      expect(visible("b")).toBe(true);
+      expect(layouts().length).toBeGreaterThan(0);
+      expect(layouts().every(args => args.dragging === true)).toBe(true);
+    });
+
+    it("tells native the same for a request that arrives during the drag", async () => {
+      await smallWindow();
+      await onHeading("enter");
+      mock.invoke.mockClear();
+      emit("popup-inbox-show", ask("z")); await flushPromises();
+      expect(view()).toBe("expanded");
+      expect(layouts().length).toBeGreaterThan(0);
+      expect(layouts().every(args => args.dragging === true)).toBe(true);
+    });
+
+    it("tells native the same for the shrink after the drag has left the window with the button still down", async () => {
+      await smallWindow();
+      await onRow(1, "enter");
+      await tick(500);
+      await send("leave");
+      mock.invoke.mockClear();
+      await tick(600);
+      expect(view()).toBe("collapsed");
+      expect(layouts().length).toBeGreaterThan(0);
+      expect(layouts().every(args => args.dragging === true && !!args.collapsed)).toBe(true);
+      // That was the only change the drag set off: the user's next click is an ordinary one.
+      arrange();
+      mock.invoke.mockClear();
+      await row(0).trigger("click"); await flushPromises();
+      expect(view()).toBe("expanded");
+      expect(layouts().every(args => args.dragging === undefined)).toBe(true);
+    });
+
+    it("does not say it for a change that no drag set off: a click, or showing the request after a drop", async () => {
+      await smallWindow();
+      mock.invoke.mockClear();
+      await send("drop", 120, rowY(1), ["/tmp/x.txt"]);
+      expect(view()).toBe("expanded");
+      expect(layouts().length).toBeGreaterThan(0);
+      expect(layouts().every(args => args.dragging === undefined)).toBe(true);
+      // A later shrink of a peek is the user's own, too.
+      await row(0).trigger("click"); await flushPromises();
+      mock.invoke.mockClear();
+      emit("popup-app-active", false);
+      await tick(200);
+      expect(layouts().length).toBeGreaterThan(0);
+      expect(layouts().every(args => args.dragging === undefined)).toBe(true);
     });
   });
 
