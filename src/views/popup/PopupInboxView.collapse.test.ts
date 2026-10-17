@@ -42,6 +42,7 @@ describe("answer later and the small window", () => {
   beforeEach(() => {
     ids = ["a", "b"]; revision = 0; refuse = null;
     mock.handlers.clear(); mock.invoke.mockReset(); mock.focus.mockReset(); mock.heldReady.clear(); mock.scopes.clear();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     vi.stubGlobal("CSS", { escape: (s: string) => s });
     mock.invoke.mockImplementation(async (command: string, args?: LayoutArgs) => {
       if (command === "popup_inbox_init") return { recovered: false, requests: ids.map(id => request(id)) };
@@ -63,8 +64,10 @@ describe("answer later and the small window", () => {
   // The footer button reaches the page through the request's scope; the Sidebar row icon (next phase) reaches it
   // by id, which is also how a request that has never been opened is marked.
   const page = () => wrapper.vm as unknown as { markLater(id: string): void; unmarkLater(id: string): void };
-  const later = async (id: string) => { (mock.scopes.get(id)?.markLater ?? (() => page().markLater(id)))(); await flushPromises(); };
-  const unlater = async (id: string) => { (mock.scopes.get(id)?.unmarkLater ?? (() => page().unmarkLater(id)))(); await flushPromises(); };
+  // Putting a request away can jump to the next one, which swaps the body like a click on its row (C17: 126ms out, 174ms in).
+  const settle = async () => { await flushPromises(); await tick(126 + 174); };
+  const later = async (id: string) => { (mock.scopes.get(id)?.markLater ?? (() => page().markLater(id)))(); await settle(); };
+  const unlater = async (id: string) => { (mock.scopes.get(id)?.unmarkLater ?? (() => page().unmarkLater(id)))(); await settle(); };
   const layouts = () => mock.invoke.mock.calls.filter(([command]) => command === "popup_inbox_layout").map(([, args]) => args as LayoutArgs);
   const calls = (command: string) => mock.invoke.mock.calls.filter(([name]) => name === command).map(([, args]) => args);
   const activated = () => calls("popup_inbox_activate").map(args => args.requestId);
@@ -115,7 +118,6 @@ describe("answer later and the small window", () => {
     });
 
     it("keeps a marked request unread until its body is opened", async () => {
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       await start("a", "b");
       await later("b");
       const row = () => wrapper.findAll(".inbox-row")[1];
@@ -269,8 +271,6 @@ describe("answer later and the small window", () => {
   });
 
   describe("an open request ends (R4, R6, C22)", () => {
-    beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); });
-
     it("takes a user who just answered to the next secondary request and keeps the window open", async () => {
       await start("a", "b");
       await later("b");
@@ -374,7 +374,6 @@ describe("answer later and the small window", () => {
 
   describe("round boundaries and refusal (R9)", () => {
     it("starts the next round expanded and unmarked after the last request ends in the small window", async () => {
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       await start("a");
       await later("a");
       expect(small()).toBe(true);

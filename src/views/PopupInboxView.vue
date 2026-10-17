@@ -379,7 +379,8 @@ async function applyMark(id: string, mark: boolean) {
   if (mark) secondary.value.add(id); else secondary.value.delete(id);
   const target = outcome.state.active;
   if (outcome.effect === "collapse" || outcome.effect === "mini-resize") await shrink(target);
-  else if ((outcome.effect === "switch" || outcome.effect === "expand") && target) await select(target);
+  // Jumping to the next request after putting one away swaps the body like a click on its row does (C17).
+  else if ((outcome.effect === "switch" || outcome.effect === "expand") && target) await select(target, false, false, true);
 }
 // C17: the body being left fades out before the next request takes its place. Nothing to wait for with reduced motion,
 // without a body on screen, or while a body that is itself still fading in is replaced. "fade" means the incoming

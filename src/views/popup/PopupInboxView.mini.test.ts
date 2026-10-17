@@ -48,6 +48,7 @@ describe("the small window and the body swap", () => {
   beforeEach(() => {
     revision = 0; hold = null; reduced = false; native = false; seenLook = [];
     mock.handlers.clear(); mock.invoke.mockReset(); mock.scopes.clear();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     vi.stubGlobal("CSS", { escape: (s: string) => s });
     vi.stubGlobal("matchMedia", () => ({ get matches() { return reduced; }, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
     ids = ["a", "b"];
@@ -83,8 +84,10 @@ describe("the small window and the body swap", () => {
     return () => { hold = null; release(); };
   };
   const tick = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); await flushPromises(); };
-  const later = async (id: string) => { vm().markLater(id); await flushPromises(); };
-  const unlater = async (id: string) => { vm().unmarkLater(id); await flushPromises(); };
+  // Putting a request away can jump to the next one, which swaps the body like a click on its row (C17: 126ms out, 174ms in).
+  const settle = async () => { await flushPromises(); await tick(126 + 174); };
+  const later = async (id: string) => { vm().markLater(id); await settle(); };
+  const unlater = async (id: string) => { vm().unmarkLater(id); await settle(); };
   const visible = (id: string) => wrapper.find(`[data-inbox-request="${id}"]`).isVisible();
 
   describe("the form change and its animation", () => {
@@ -240,7 +243,6 @@ describe("the small window and the body swap", () => {
     });
 
     it("starts the next round with an expanded look", async () => {
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       await start("a");
       await later("a");
       expect(attr("data-view")).toBe("collapsed");
@@ -311,7 +313,6 @@ describe("the small window and the body swap", () => {
   });
 
   describe("switching between requests (C17)", () => {
-    beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); });
     const row = (index: number) => wrapper.findAll(".inbox-row")[index];
     const phase = (id: string) => wrapper.find(`[data-inbox-request="${id}"]`).attributes("data-answer-phase");
 
@@ -394,6 +395,51 @@ describe("the small window and the body swap", () => {
       await tick(600);
       expect(wrapper.findAll(".inbox-row")).toHaveLength(1);
       expect(visible("a")).toBe(true);
+    });
+
+    it("swaps the body when putting the open request away jumps to the next one", async () => {
+      await start("a", "b");
+      vm().markLater("a"); await flushPromises();
+      // The mark is made at once, the row of the next request is selected, and the body being left fades out.
+      expect(row(0).classes()).toContain("secondary");
+      expect(row(1).classes()).toContain("selected");
+      expect(phase("a")).toBe("out");
+      expect(visible("a")).toBe(true);
+      expect(wrapper.find(".inbox-body").attributes("inert")).toBe("true");
+      await tick(126);
+      expect(visible("a")).toBe(false);
+      expect(visible("b")).toBe(true);
+      expect(phase("b")).toBe("in");
+      await tick(174);
+      expect(phase("b")).toBeUndefined();
+    });
+
+    it("ignores a second put-away while the body fades out, since it would belong to a request not seen yet", async () => {
+      await start("a", "b", "c");
+      vm().markLater("a"); await flushPromises();
+      vm().markLater("b"); await flushPromises();
+      await tick(126 + 174);
+      expect(row(1).classes()).not.toContain("secondary");
+      expect(visible("b")).toBe(true);
+      expect(attr("data-view")).toBe("expanded");
+    });
+
+    it("jumps at once with reduced motion when putting the open request away", async () => {
+      reduced = true;
+      await start("a", "b");
+      vm().markLater("a"); await flushPromises();
+      expect(visible("b")).toBe(true);
+      expect(visible("a")).toBe(false);
+      expect(phase("b")).toBeUndefined();
+    });
+
+    it("keeps the body that was fading out when the request it would jump to ends meanwhile", async () => {
+      await start("a", "b");
+      vm().markLater("a"); await flushPromises();
+      mock.handlers.get("popup-inbox-terminal")!({ payload: { requestId: "b", winner: "slack" } });
+      await tick(126);
+      expect(visible("a")).toBe(true);
+      expect(phase("a")).toBeUndefined();
     });
 
     it("does not swap when the window opens from the small one", async () => {

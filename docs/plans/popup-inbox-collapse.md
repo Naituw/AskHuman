@@ -31,7 +31,7 @@
   - `completed()` / `terminal()` / `advance()`：选下一条时先找主要请求，没有则按 C22 找下一条稍后答（用户在场：本窗口内答 / 取消，或远端终结时应用处于激活）；没人在看或窗口本来是小窗 → 缩 / 保持小窗，不翻出旧请求。300ms 行收起与正文接替的时序保持不变。
   - `add()`（新到达）：窗口是小窗 → 展开并显示新请求，非激活前置，播到达气泡（C4）；窗口已展开 → 不切正文，只在行上做气泡 / 未读提示（C19、D7）。
   - 托盘 `popup-inbox-focus`（`select(id, true)`）：显式聚焦某条（含稍后答）→ 展开并打开它（R6）。
-  - `select()` 中点击切换：加 C17 的正文淡出 / 滑入，复用 `answerTransition`（126 / 174ms）的曲线；减少动态效果时直接切。
+  - `select()` 中点击切换（点 Sidebar 行，以及底栏稍后答 / 取消稍后答后的跳转，C35）：加 C17 的正文淡出 / 滑入，复用 `answerTransition`（126 / 174ms）的曲线；减少动态效果时直接切。托盘点选、到达、远端终结后的接替保持即时。
 - 请求 `visited`（蓝点 / ripple）语义不变：稍后答请求未查看时蓝点与 ripple 继续，真正显示正文才清除（R7）。
 
 ### 2.2 窗口事务（Rust + Swift，macOS）
@@ -87,7 +87,7 @@
 
 **P3 前端模型与流程**：`inboxCollapse.ts` + 单测；`PopupInboxView` 的 `secondary` / `view` / 流程接入（§2.1）；`PopupScope` 扩展；`finishRound` 重置。验收：vitest 覆盖 R1–R12 的数据规则、答完跳转（含「没人在看」与「窗口已是小窗」）、到达与托盘、远端终结；既有 `PopupInboxView*.test.ts` 不回退。
 
-**P4 UI**：先抽 `InboxSidebar.vue`（纯重构，单独提交，既有测试不改断言）；再做 Sidebar 行归档盒 / 标签 / 悬停按钮、底栏按钮三种排布、peek 缩回图标（含无 Sidebar 版）、小窗列表外观与测量、交叉淡化与 mini-ring、C17 正文切换动画、`UnreadRipple` / 蓝点 / 到达气泡与小窗的衔接、减少动态效果。验收：组件测试；按 §4.1 隔离安装后用真实多请求（并发 `AskHuman`）目测与测量（§4）。
+**P4 UI**：先抽 `InboxSidebar.vue`（纯重构，单独提交，既有测试不改断言）；再做 Sidebar 行归档盒 / 标签 / 悬停按钮、底栏按钮三种排布、peek 缩回图标（含无 Sidebar 版）、小窗列表外观与测量、交叉淡化与 mini-ring、C17 正文切换动画、`UnreadRipple` / 蓝点 / 到达气泡与小窗的衔接、减少动态效果。验收：组件测试；按 §4.1 隔离安装后用真实多请求（并发 `AskHuman`）目测与测量（§4）——**用户第 9 轮定：推迟到 P5 之后与 P5 合并做一次（§7.1）**。
 
 **P5 激活与切走缩回**：Swift 观察者 + `popup-app-active` + 页面规则（§2.5）；非 macOS 的 `Focused` 路径。验收：vitest 驱动事件序列；实机：从小窗展开后点别的应用 → 缩回；有主要请求时不缩。
 
@@ -154,6 +154,14 @@ cd /tmp && ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1 \
 6. 标题措辞：**「待答 N」**，展开的 Sidebar 与小窗都用它（§2.4）。
 7. 英文文案：按 §2.8 的建议。
 
+### 7.1 检查点（第 9 轮，P4 完成后，2026-10-17）
+
+用户的回答（详见 spec §1.10，C35–C37）：
+
+1. 换题动画范围：**扩到底栏「稍后答 / 取消稍后答」后的跳转**（§2.1 的「`select()` 中点击切换」随之放宽成「点 Sidebar 行 + 底栏稍后答后的跳转」；托盘点选、到达、终结后接替仍即时）。
+2. 实机验证：**P4 + P5 做完后合并做一次**（§4.1 隔离安装），之前只跑静默的自动测试，开始前先告知用户。这修改了 §3 里 P4「验收」中的目视 / 测量项的时间点：它们移到 P5 之后与 P5 的实机项一起做。
+3. P2 / P3 / P4 记录里的补空白决定：认可，按现状继续。
+
 ## 8. 实施与验证记录
 
 每阶段一条：做了什么、验证命令与结果、未验证项。
@@ -206,10 +214,11 @@ cd /tmp && ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1 \
     - 窗口形态：`geometry(arrival, form)` 带小窗尺寸、动画参数与 `started` 回调；`shrink()` 先测量再缩小；`select()` 的展开路径带 `expand` 动画。**`look`（页面画出来的形态）与 `view`（页面向窗口提出的形态）分开**：`look` 在原生开始变化的瞬间（`popup_inbox_commit` 之前）才翻转，交叉淡化因此与窗口同步而不是抢先；`--ms`（交叉淡化时长）只在形态变更期间非 0，Sidebar 出现、拖宽等其它布局变化仍随原生提交瞬时发生（对应原型的 `growing` 规则）。根元素新增 `data-view / -primary / -sidebar / -settled / -lights / -shifting` 与 `--ms / --mini-w / -h / -nav-h`，以及 `mini-ring`。
     - 单请求：没有 Sidebar 列，缩小前用 `loneList` 把列表按原生给的宽度（`Allocation.sidebar_preferred`）隐藏排好再测量；展开时列表留着淡出，窗口长成后才移除；缩小 / 展开失败或被拒时回退 `look` / `settled` / `sidebarWidth`。
     - 控件：`expandFromList`（打开 `defaultOpenTarget`）与 `shrinkWindow`（经模型 `collapseWindow`，仍有主要请求时什么都不做）；`PopupScope.shrinkWindow`。
-    - C17 正文切换：`choose()`（点 Sidebar 行）→ `select(..., animate)`：行立即选中，旧正文 126ms 淡出（此间 `blocked`，该请求的原生预览先隐藏）→ 新正文在 `prepare` 态完成几何与预览就位 → 174ms 淡入；复用已有的 `data-answer-phase` CSS；减少动态效果时即时切换。
+    - C17 正文切换：`choose()`（点 Sidebar 行；检查点后又加上底栏稍后答后的跳转，C35）→ `select(..., animate)`：行立即选中，旧正文 126ms 淡出（此间 `blocked`，该请求的原生预览先隐藏）→ 新正文在 `prepare` 态完成几何与预览就位 → 174ms 淡入；复用已有的 `data-answer-phase` CSS；减少动态效果时即时切换。
     - 到达气泡：小窗展开到新请求时气泡落在已打开的那一行（`shownArrivals`，C4 / C19）。
   - 底栏：新增 `PopupLaterButton.vue`（三种排布共用，紧跟「取消」，标签随标记切换；独立窗口不渲染）；顶栏 `.nav-shrink`（无 Sidebar 的 peek，图钉旁）；`usePopupCore` 的 `laterAvailable / laterMarked / toggleLater / shrinkAvailable / shrinkWindow`、`InboxLayout.sidebarPreferred`、`PopupScope.shrinkWindow`；i18n 中英文。Rust：`Allocation.sidebar_preferred` 与测试。
 - 与计划初稿的差异：①**没有抽 `useInboxCollapse.ts`**：形态编排和 `blocked` / `active` / `geometry` / `select` 缠在一起，抽出来是带十几个依赖的壳；编排仍在视图里（共 `shrink` / `change` / `smallWindow` / `leaveBody` 几个函数）。②单请求缩小前列表要先按「将来的 Sidebar 宽度」排好版才能测量，这个宽度只有原生知道（用户拖出的偏好 + 当前画布），所以在原生的 `Allocation` 上新增了 `sidebar_preferred`（计划里写的是 D5「预留区」做法，落到原生字段上更直接）。③`look` / `view` 分离与 `--ms` 只在形态变更期间有效，是计划没写到的实现细节。
-- 补空白时做的决定（用户未明确过，需要在检查点告知）：①**C17 只用于点 Sidebar 行**。原型是所有换题都带这个动画；这里答完接替本来就有自己的 126 / 174ms，而「底栏稍后回答后跳下一条」「托盘聚焦」「到达」「终结后接替」保持即时——快速连点底栏按钮时，淡出期间的点击会被忽略（淡出 + 就位约 130–200ms），不想让这个常见的连点被吞。②淡出期间的点击**忽略**而不排队；正文还在淡入时再点，直接替换、不再先淡出；目标在淡出期间被终结，则旧正文留下、不切。③换题时旧请求的原生预览（PDF / Quick Look）在点击瞬间隐藏，因为原生视图淡不出来；新请求的预览在就位后随正文出现。④底栏在「取消」旁多了一个按钮，容器宽度 < 520px 时先隐藏快捷键提示避免挤出（视觉取舍，未目测）。⑤到达气泡「落在已选中的那一行」按 spec §6.4 的描述实现。
+- 补空白时做的决定（用户未明确过，需要在检查点告知）：①**C17 最初只用于点 Sidebar 行**（C17 原文的范围；原型是所有换题都带这个动画）：答完接替本来就有自己的 126 / 174ms，而「底栏稍后回答后跳下一条」「托盘聚焦」「到达」「终结后接替」先保持即时——怕快速连点底栏按钮时点击被淡出期间的忽略吞掉。**检查点上用户选了给底栏稍后答 / 取消稍后答后的跳转也加上动画（C35）**，见下面「检查点后的调整」；托盘聚焦、到达、终结后接替仍即时。②淡出期间的点击**忽略**而不排队；正文还在淡入时再点，直接替换、不再先淡出；目标在淡出期间被终结，则旧正文留下、不切。③换题时旧请求的原生预览（PDF / Quick Look）在点击瞬间隐藏，因为原生视图淡不出来；新请求的预览在就位后随正文出现。④底栏在「取消」旁多了一个按钮，容器宽度 < 520px 时先隐藏快捷键提示避免挤出（视觉取舍，未目测）。⑤到达气泡「落在已选中的那一行」按 spec §6.4 的描述实现。
 - 验证（均通过）：`pnpm exec vitest run` 63 files / **551 passed**（P3 的 499 → 新增 52：`inboxMini` 10、页面形态与正文切换 `PopupInboxView.mini` 27、底栏三种排布 `PopupFooter.later` 10、真实表单 `PopupInboxView.later` 3、气泡 `arrival` 2）；`cargo test --bin AskHuman popup_inbox_geometry` 29 passed（+1）；`vue-tsc --noEmit`、`cargo fmt --check`、`vite build`、`node --test scripts/*.node-test.mjs`（32）通过。**既有测试有改动**：点 Sidebar 行现在先走 126ms 淡出，`PopupInboxView.test.ts` 4 个、`.arrival` 1 个、`.collapse` 1 个测试改成假定时器推进 126ms；`.links` 改用减少动态效果（它测的是表单与草稿）；另有两个测试（`retains mounted drafts…`、`.links`）在新行为下会「空过」——点击被淡出屏蔽但断言仍通过——补了 `isVisible` 断言让它们真正检验切换。变异检查：对页面与 Sidebar 做了 33 处单点变异（形态变更 13、正文切换 10、到达与控件 10），首轮 2 处存活——`shrink` 失败后 `look` 的回退（补「绘制后窗口失败」用例后抓到）、行旗标上多余的 `@click.stop`（旗标是行的兄弟节点，并不需要，删除）；另加 1 处「交叉淡化时长在变更后保留」被新增断言抓到。
 - 未验证：**真实窗口**（计划里 P4 的目视与测量项）——像素级外观、动画观感、`measureMini` 在真实字体 / 布局下的高度、`look` 翻转与原生提交的同步、单请求小窗路径端到端、`collapsed` / `sidebarPreferred` 与 Rust 的端到端、Quick Look 预览在换题与小窗时的表现；非 macOS。这些需要按 §4.1 隔离安装后弹出真实窗口，会取走焦点，先问用户（C26）。
+- 检查点后的调整（第 9 轮，C35–C37，用户已回答）：①底栏「稍后答 / 取消稍后答」后的跳转也带 C17 换题动画——`applyMark` 的 `switch` / `expand` 结果改为 `select(target, false, false, true)`（由小窗展开时窗口自己在动，仍不做正文切换；展开态下只翻标记的取消稍后答、标其它行都不涉及换题）。②`PopupInboxView.collapse` / `.mini` 两个测试文件改为整文件使用假定时器，`later` / `unlater` 辅助函数推进 126 + 174ms（改动后曾有 20 个测试因第二次点击被淡出期间忽略而失败，调整后全部恢复）；新增 4 个测试：跳转带淡出 / 滑入、淡出期间第二次稍后答被忽略、减少动态效果时即时、淡出期间目标终结则旧正文留下；把 `applyMark` 的动画参数去掉做单点变异，其中 3 个被抓到（减少动态效果那个本来就不该失败）。`PopupInboxView.later`（真实表单）用减少动态效果，未改。③验证：`vitest run` 63 files / **555 passed**，`vue-tsc --noEmit` 通过。④实机验证按用户安排推迟到 P5 之后与 P5 合并做（C36）。
