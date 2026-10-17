@@ -47,7 +47,7 @@ AskHuman/
     index.html               前端入口、首帧关键样式与平台探测
     main.ts                  挂载 App、引入全局样式
     App.vue                  按 URL 路由 popup/settings/history/agents/interject/todos/newtask/forktask
-    views/PopupInboxView.vue  共享作答窗口、请求导航和统一关闭
+    views/PopupInboxView.vue  共享作答窗口、请求导航、稍后回答与小窗（专题见 overview-popup-ui.md）和统一关闭
     views/PopupView.vue      每请求提问与回答正文（编排层；状态与区块组件在 views/popup/）
     views/AgentsView.vue     Agent 控制台（双栏：边栏+详情；spec gui-agent-console）
     views/console/           控制台子组件（边栏/指示器/Watch 帧/完整会话/diff 条/交互区/内嵌任务）
@@ -133,7 +133,8 @@ AskHuman/
         tray_menu.rs         托盘菜单模型与最小 diff
         coordinator.rs       首答胜出与其它渠道取消
         popup_inbox.rs · popup_inbox_geometry.rs  共享宿主请求状态及三区几何事务
-        popup_canvas.rs · swift/PopupCanvas.swift  过渡固定画布与普通原生自适应布局
+        popup_canvas.rs · swift/PopupCanvas.swift  过渡固定画布与普通原生自适应布局；小窗的缩放由 swift/PopupCollapse.swift 逐帧动画
+        popup_activation.rs · swift/PopupActivation.swift  Popup Host 的应用级激活状态（小窗的切走缩回）
         popup_transition.rs  非激活前置（到达提醒由前端气泡动效承担）
         popup_preview.rs · popup_preview_geometry.rs  预览桥接与兼容几何
         popup_preview_actions.rs  Popup 原文件菜单与跨平台定位

@@ -109,6 +109,41 @@ Message、题干及 Confirm 的 Markdown 链接共用 `lib/markdownLinks.ts`，�
 的默认 click / auxclick 导航，继续让正文处理器打开目标，不影响 Mermaid sandbox 子帧。
 合并与独立模式使用相同保护，避免链接替换整个作答页面及丢失草稿；规则见规格 §20。
 
+## 稍后回答与小窗
+
+合并窗口里可把一条请求标记为「稍后回答」：只是本轮内存里的显示标记，不回答、不取消，仍可浏览和作答，一轮结束即清。
+**所有待答请求都被标记时**，整窗缩成只有 Sidebar 列表的小窗（标题「待答 N」，跟随置顶设置，以左上角为锚、可拖动）；
+只要有一条没标记的请求（含新到达的），窗口就是展开的；展开后无待答主要请求时的窗口叫 peek，用户离开 AskHuman 后会缩回小窗。
+需求决策 C1–C46 与规则 R1–R16 见 `specs/popup-inbox-collapse.md`，实施与验证记录见 `plans/popup-inbox-collapse.md` §8，
+Windows / Linux 的实机补验清单见 `PROGRESS.md`。
+
+- **模型与流程**：`popup/inboxCollapse.ts` 是不依赖 Vue / Tauri 的纯决策（标记 / 取消 / 浏览 / 答完跳转 / 收窗，给出
+  `collapse` / `expand` / `switch` / `mini-resize` 之一；从小窗展开的默认目标是最后打开的 → 第一条未查看 → 列表第一条）。
+  `PopupInboxView.vue` 把结果落到窗口：所有会改窗口形态的动作进同一条串行队列（`enqueue`：`shrink` / `select` / `peekShrink` /
+  `collapseOnLeave`），沿用布局事务 `popup_inbox_layout → popup_inbox_commit(animation) → popup_inbox_finish`。
+  `popup/InboxSidebar.vue` 兼作小窗列表；小窗尺寸（宽 = Sidebar 宽，高 = 前 3 行，其余滚动）由 `popup/inboxMini.ts::measureMini`
+  从真实列表量出，不写入窗口尺寸偏好。单请求没有 Sidebar 列：缩小前先把列表隐藏摆放出来量尺寸，展开后让它淡出（`loneList`）。
+- **窗口事务**：`popup_inbox_geometry.rs` 的 `Allocation.collapsed` 表示窗口是小窗（宽度与 `main_height` 仍描述页面保持排好的展开布局，
+  只有 `frame` 变小）；`Geometry.drift` 抵消「以小窗为锚展开」造成的正文位移，加上小窗被拖动后的 `moved` / `reset`，保证下一轮窗口位置不漂移；
+  `ignores_resize()` 让小窗的 resize 事件不进尺寸偏好。
+  macOS 由 `popup_canvas.rs` → `swift/PopupCollapse.swift` 的显示链路逐帧动画窗口 frame 与固定画布，页面同时交叉淡化列表与正文
+  （`--ms` 驱动，减少动态效果时即时）。Windows / Linux 没有固定画布，由 `popup_canvas::instant` 立即改尺寸与位置（缩小先降最小
+  尺寸、变形后禁用缩放边缘，展开相反），页面是 CSS grid，单请求的列表绝对定位、不占网格列；这条路径在 macOS 上也被编译，
+  但尚未在真实的 Windows / Linux 上验证。
+- **激活与切走缩回**：「用户在 AskHuman」是进程级状态。macOS 由 `popup_activation.rs` + `swift/PopupActivation.swift` 观察
+  `NSApplication` 的激活通知，命令 `popup_app_active` 给起始值、事件 `popup-app-active` 推变化；Windows / Linux 用 popup 窗口的
+  `Focused` 事件。页面对离开留 200ms 抖动保护；有主要请求、窗口已是小窗、拖拽进行中都不触发缩回。
+- **拖入文件**：`popup/useInboxDrop.ts` 注册一个窗口级 `onDragDropEvent`（inbox 下 `usePopupCore` 不再自己监听），事件在
+  `inboxDrop.ts::serialDrag` 里串行并合并。小窗上停留 500ms 展开到指针下那一行的请求（否则默认目标），展开后停留 250ms 切到另一行，
+  Sidebar 列表与正文靠近上下边缘 56px 内自动滚动；松手落到指针下的请求，纵向布局落到指针下的题卡、顺序布局落当前题。
+  拖拽打开的窗口在没有主要请求时，拖走 600ms 后缩回。常量集中在 `inboxDrop.ts` 的 `DRAG`；落点换算（macOS 固定画布要修正 y，
+  Windows 是物理像素、GTK 是 CSS 像素）在 `dropPoints`。失败提示与 `askhuman_drop` 日志见 spec §6.9。
+- **测试与原型**：模型与拖放表驱动测试在 `inboxCollapse.test.ts` / `inboxDrop.test.ts`，页面流程在
+  `PopupInboxView.{collapse,later,leave,drop,mini,columns}.test.ts`。jsdom 不按选择器权重排序规则，依赖层叠结果的 CSS 用
+  `popup/cssCascade.testkit.ts` 的最小层叠解析器测（`InboxSidebar.undo.test.ts`、`PopupInboxView.columns.test.ts`）。
+  独立原型 `swift/prototype/PopupCollapseVerify.swift` + `examples/popup_collapse_demo.rs`（feature `collapse-prototype`，
+  `./scripts/popup-collapse-demo.sh` 运行，不进产品构建）保留作动画与几何的行为参照。
+
 ## 来源标题与上下文
 
 来源名（弹窗标题与渠道消息头共用）的解析优先级为 **自定义环境变量 `ASKHUMAN_ENV_SOURCE_NAME` > 探测到的发起 Agent 展示名（Claude Code/Codex/Cursor/Grok）> 默认「the Loop」**。后端入口为 `models::source_name_for_agent`；MCP 模式无法从 env 判断家族时先回退默认名称，再由 daemon 异步进程树解析补齐 Agent。
