@@ -10,14 +10,16 @@ import InboxSidebar from "./popup/InboxSidebar.vue";
 import InboxArrivalNotice from "./popup/InboxArrivalNotice.vue";
 import { arrivalTiming, type ArrivalEnd, type ArrivalGeometry } from "./popup/inboxArrival";
 import type { DropAim, DropReceiver, PopupScope, InboxLayout } from "./popup/usePopupCore";
-import type { PopupInboxRequest } from "../lib/types";
-import { cancelPopup, confirmPopupReady, popupInboxActivate, popupInboxIdle, popupInboxInit, popupShowWindow } from "../lib/ipc";
+import type { DropLogEntry, DropLogTarget, PopupInboxRequest } from "../lib/types";
+import { cancelPopup, confirmPopupReady, popupDropLog, popupInboxActivate, popupInboxIdle, popupInboxInit, popupShowWindow } from "../lib/ipc";
+import { isMac, primaryShortcutLabel } from "../lib/platform";
 import { inboxGroups, inboxKind, inboxTitle, nextInboxRequest } from "./popup/inboxQueue";
 import * as model from "./popup/inboxCollapse";
 import type { InboxState, View } from "./popup/inboxCollapse";
 import { answerTransition, transitionClock, type CompletionFeedback, type InboxMotion } from "./popup/inboxTransition";
 import { formAnimation, measureMini, type FormAnimation, type FormChange } from "./popup/inboxMini";
-import { acceptsFiles, DRAG } from "./popup/inboxDrop";
+import { acceptsFiles, DRAG, type DropReport } from "./popup/inboxDrop";
+import { addedCount, createDragLog, describeIgnored, describeResult, NOTICE_MS, resultLog, type DropWords } from "./popup/dropFeedback";
 import { useInboxDrop } from "./popup/useInboxDrop";
 
 const { t } = useI18n();
@@ -79,6 +81,8 @@ let hostPresented = false;
 const recovered = ref(false);
 const error = ref("");
 const notice = ref("");
+// A warning (files that did not get attached, and why) stays longer and is marked; a plain notice just informs.
+const noticeLevel = ref<"info" | "warn">("info");
 const modal = ref<{ ids: string[]; current: string | null } | null>(null);
 const cancelBusy = ref(false);
 const advancing = ref(false);
@@ -212,16 +216,35 @@ const receivers = new Map<string, DropReceiver>();
 /** A window change the drag controller started after its drag had left the window (the button is still down). */
 let carrying = false;
 const droppable = computed(() => new Set(requests.value.filter(r => acceptsFiles(r) && !terminals.has(r.requestId)).map(r => r.requestId)));
+// Every drag of the window leaves a line in the diagnostic log, and a drop that adds nothing says why (dropFeedback.ts).
+const dragLog = createDragLog(entry => { void popupDropLog(entry); }, () => ({ view: view.value, requestId: active.value }));
+const dropWords = (): DropWords => ({ t, mac: isMac, paste: primaryShortcutLabel("v") });
+function shortTitle(request: PopupInboxRequest) {
+  const full = inboxTitle(request) || t("popup.inbox.untitled");
+  return full.length > 28 ? `${full.slice(0, 28)}…` : full;
+}
+/** The controller's word on a drag: its start and end go to the log; a drop turned away also goes to the user. */
+function reportDrop(report: DropReport) {
+  if (report.kind === "seen") { dragLog.seen(report.from, report.paths, report.ignored ? { outcome: report.ignored } : {}); return; }
+  if (report.kind === "leave") { dragLog.left(); return; }
+  dragLog.end();
+  if (report.reason !== "own_drag_out" && report.reason !== "no_target") {
+    const request = requests.value.find(r => r.requestId === report.id);
+    const told = describeIgnored(report.reason, dropWords(), request ? shortTitle(request) : undefined);
+    say(told.text, told.level);
+  }
+  dragLog.send({ action: "drop", paths: report.paths, outcome: report.reason, target: report.target, requestId: report.id });
+}
 const drop = useInboxDrop({
   root: () => root.value, layout: () => allocation.value, view: () => view.value, active: () => active.value,
   blocked: () => blocked.value, fallback: () => model.defaultOpenTarget(collapseState()),
   accepts: id => !terminals.has(id) && droppable.value.has(id),
   receiver: id => receivers.get(id),
   open: id => enqueue(() => openForDrag(id)),
-  deliver: deliverDrop,
+  deliver: deliverDrop, report: reportDrop,
   // The drag has left the window but still holds the button: the shrink must not wait for it to come up.
   springBack: () => { void enqueue(async () => { carrying = true; try { await peekShrink(); } finally { carrying = false; } }); },
-  fail: e => { error.value = String(e); },
+  fail: e => { error.value = String(e); dragLog.send({ action: "error" }); },
 });
 function scopeFor(id: string): PopupScope {
   let scope = scopes.get(id);
@@ -521,26 +544,34 @@ async function receiverFor(id: string): Promise<DropReceiver | undefined> {
   }
   return readyIds.has(id) ? receivers.get(id) : undefined;
 }
-function say(message: string) {
+function say(message: string, level: "info" | "warn" = "info") {
   notice.value = message;
-  later(() => { if (notice.value === message) notice.value = ""; }, 2600);
+  noticeLevel.value = level;
+  later(() => { if (notice.value === message) notice.value = ""; }, NOTICE_MS[level]);
 }
 // A drop (C32): the files go to the question the pointer was on (a card), else the one the request is on; then the request
 // that received them is shown, with the window in front and focused, so that leaving AskHuman afterwards shrinks a peek (C23).
-async function deliverDrop(id: string, paths: string[], question: number | null) {
+// Whatever comes of the files is told to the user and logged (§6.9), including when nothing could be attached.
+async function deliverDrop(id: string, paths: string[], question: number | null, landed: DropLogTarget) {
+  dragLog.end();
+  const log = (fields: Omit<DropLogEntry, "action">) => dragLog.send({ ...fields, action: "drop", paths, target: landed, requestId: id });
   const request = requests.value.find(r => r.requestId === id);
-  if (!request || terminals.has(id)) return;
-  const full = inboxTitle(request) || t("popup.inbox.untitled");
-  const title = full.length > 28 ? `${full.slice(0, 28)}…` : full;
+  if (!request || terminals.has(id)) { log({ outcome: "request_gone" }); return; }
+  const title = shortTitle(request);
   const receiver = await receiverFor(id);
-  if (!receiver) { if (!terminals.has(id)) error.value = t("popup.inbox.dropFailed", { title }); return; }
-  const target = question ?? receiver.currentQuestion();
-  const added = await receiver.acceptDrop(paths, target);
-  if (terminals.has(id)) return;
-  if (added) {
-    const several = request.interaction.type === "ask" && request.interaction.request.questions.length > 1;
-    say(several ? t("popup.inbox.dropAddedQuestion", { n: added, title, q: target + 1 }, added) : t("popup.inbox.dropAdded", { n: added, title }, added));
+  if (!receiver) {
+    const gone = terminals.has(id);
+    if (!gone) error.value = t("popup.inbox.dropFailed", { title });
+    log({ outcome: gone ? "request_gone" : "no_receiver" });
+    return;
   }
+  const target = question ?? receiver.currentQuestion();
+  const result = await receiver.acceptDrop(paths, target);
+  log(resultLog(result));
+  if (terminals.has(id)) return;
+  const several = request.interaction.type === "ask" && request.interaction.request.questions.length > 1;
+  const told = describeResult(result, dropWords(), { title, question: several ? target : null, announce: addedCount(result) > 0 });
+  if (told) say(told.text, told.level);
   await enqueue(() => revealDropped(id));
 }
 async function revealDropped(id: string) {
@@ -717,6 +748,7 @@ async function terminal(id: string, winner: string, completion?: CompletionFeedb
   }
   if (wasActive && winner !== "popup") {
     advancing.value = true;
+    noticeLevel.value = "info";
     notice.value = t("popup.inbox.external", { source: winner });
     clock = transitionClock(); await clock.wait(600); clock.cancel(); clock = null;
     if (disposed) return;
@@ -917,7 +949,7 @@ onBeforeUnmount(() => {
     <!-- The small window's accent frame; it fades in once the window has gathered. -->
     <div class="mini-ring" aria-hidden="true"></div>
     <InboxArrivalNotice ref="arrivalNotice" :measure="measureArrival" @settled="arrivalSettled" />
-    <div v-if="notice" class="inbox-notice" role="status">{{ notice }}</div>
+    <div v-if="notice" class="inbox-notice" :data-level="noticeLevel" :role="noticeLevel === 'warn' ? 'alert' : 'status'">{{ notice }}</div>
     <div v-if="modal" class="inbox-close-backdrop" @click.self="continueAnswering">
       <section class="inbox-close-dialog" role="dialog" aria-modal="true" aria-labelledby="inbox-close-title">
         <h2 id="inbox-close-title">{{ t('popup.inbox.closeTitle') }}</h2>
@@ -988,6 +1020,8 @@ onBeforeUnmount(() => {
 .inbox-notice, .inbox-error { position: absolute; z-index: 110; bottom: 30px; left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 12px; background: var(--surface-overlay, #fff); box-shadow: 0 4px 24px #0002; font-size: 13px; }
 /* A notice only informs: it must not catch clicks meant for the footer under it, nor wrap at half the window's width. */
 .inbox-notice { pointer-events: none; width: max-content; max-width: min(420px, 80%); }
+/* A warning says what went wrong and what to do about it: wider, and marked with the warning color. */
+.inbox-notice[data-level="warn"] { max-width: min(520px, 92%); line-height: 1.5; box-shadow: 0 4px 24px #0002, inset 3px 0 0 var(--accent-orange, #ff9500); }
 .inbox-close-backdrop { position: absolute; inset: 0; z-index: 100; background: #0003; display: grid; place-items: center; }
 .inbox-close-dialog { background: var(--surface-overlay, #fff); border-radius: 16px; padding: 24px; width: min(390px, calc(100% - 48px)); box-shadow: 0 12px 60px #0003; color: var(--text-primary, #222); }
 .inbox-close-dialog h2 { font-size: 16px; margin: 0 0 14px; }

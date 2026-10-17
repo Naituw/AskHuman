@@ -9,7 +9,8 @@
 // Pure decisions live in inboxDrop.ts; this applies them to the window the page owns.
 import { ref } from "vue";
 import { isWindows } from "../../lib/platform";
-import { DRAG, dropPoints, dwellTarget, edgeSpeed, sameHit, serialDrag, type DragPayload, type DropHit } from "./inboxDrop";
+import type { DropLogTarget } from "../../lib/types";
+import { DRAG, dropPoints, dwellTarget, edgeSpeed, sameHit, serialDrag, type DragPayload, type DropHit, type DropReport } from "./inboxDrop";
 import type { DropReceiver, InboxLayout } from "./usePopupCore";
 
 type Point = [number, number];
@@ -30,8 +31,10 @@ export interface InboxDropEnv {
   receiver: (id: string) => DropReceiver | undefined;
   /** Open a request: the small window expands onto it, an open window switches its body. Resolves once the window has settled. */
   open: (id: string) => Promise<void>;
-  /** Hand the files to a request (question null: the one it is on) and show it. */
-  deliver: (id: string, paths: string[], question: number | null) => Promise<void>;
+  /** Hand the files to a request (question null: the one it is on) and show it. `target` is what they landed on, for the log. */
+  deliver: (id: string, paths: string[], question: number | null, target: DropLogTarget) => Promise<void>;
+  /** The drag starts or leaves, or a drop is turned away: the page tells the user about it and logs it. */
+  report: (report: DropReport) => void;
   /** The drag opened the window and gave up: shrink it back (only a window with nothing left to answer does). */
   springBack: () => void;
   fail: (error: unknown) => void;
@@ -164,34 +167,49 @@ export function useInboxDrop(env: InboxDropEnv) {
     const aimed = aim.value;
     const collapsed = env.view() === "collapsed";
     finish();
-    if (hit === "preview") return;
+    if (hit === "preview") { env.report({ kind: "turned_away", reason: "on_preview", paths, id: env.active(), target: "preview" }); return; }
     // Not on a row or a card: the open request (for the small window, the one it would open).
     const target = hit ?? aimed;
     const id = target?.id ?? (collapsed ? env.fallback() : env.active());
-    if (!id || !paths.length || !env.accepts(id)) return;
-    await env.deliver(id, paths, target?.kind === "card" ? target.question : null);
+    const landed: DropLogTarget = target?.kind ?? "none";
+    // Nothing is dropped silently any more: every way of not delivering is told to the user and written to the log.
+    if (!id) { env.report({ kind: "turned_away", reason: "no_target", paths, id: null, target: landed }); return; }
+    if (!paths.length) { env.report({ kind: "turned_away", reason: "no_paths", paths, id, target: landed }); return; }
+    if (!env.accepts(id)) { env.report({ kind: "turned_away", reason: "not_accepting", paths, id, target: landed }); return; }
+    await env.deliver(id, paths, target?.kind === "card" ? target.question : null, landed);
   }
 
   async function handle(payload: DragPayload) {
     if (disposed) return;
     // A window change that a wait started finishes first, so that the layout under the pointer is the final one.
     if (opening) await opening;
-    if (payload.type === "leave") { left(); return; }
+    if (payload.type === "leave") { env.report({ kind: "leave" }); left(); return; }
     const id = env.active();
     const own = id ? env.receiver(id) : undefined;
-    if (own?.draggingOut()) {
+    const draggingOut = !!own?.draggingOut();
+    const busy = env.blocked();
+    if (payload.type !== "drop") {
+      env.report({ kind: "seen", from: payload.type, paths: payload.paths ?? [], ...(draggingOut ? { ignored: "own_drag_out" as const } : busy ? { ignored: "busy" as const } : {}) });
+    }
+    if (draggingOut) {
       // One of this request's own attachments is on its way out of the window: that is not files coming in.
       aim.value = null;
       clearDwell();
       stopEdge();
-      if (payload.type === "drop") own.endDragOut();
+      if (payload.type === "drop") {
+        own?.endDragOut();
+        env.report({ kind: "turned_away", reason: "own_drag_out", paths: payload.paths ?? [], id, target: "none" });
+      }
       return;
     }
-    if (env.blocked()) {
+    if (busy) {
       // A dialog or a transition has the window: it takes no files now.
       aim.value = null;
       clearDwell();
-      if (payload.type === "drop") finish();
+      if (payload.type === "drop") {
+        finish();
+        env.report({ kind: "turned_away", reason: "busy", paths: payload.paths ?? [], id, target: "none" });
+      }
       return;
     }
     const position = payload.position ?? { x: 0, y: 0 };

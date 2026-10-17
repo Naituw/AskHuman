@@ -3,7 +3,8 @@ import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../../i18n/en";
-import type { PopupInboxRequest } from "../../lib/types";
+import type { DropLogEntry, PopupInboxRequest } from "../../lib/types";
+import type { DropFailure, DropResult } from "./dropFeedback";
 import type { PopupScope } from "./usePopupCore";
 
 // Files dragged over the inbox window (docs/specs/popup-inbox-collapse.md C28-C32; R13, R15, R16): resting over the small
@@ -24,6 +25,8 @@ const mock = vi.hoisted(() => ({
   previews: new Set<string>(),
   draggingOut: new Set<string>(),
   neverReady: new Set<string>(),
+  // What a request's body made of the files it was handed, when it is not "all of them were attached as files".
+  results: new Map<string, (paths: string[]) => DropResult>(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mock.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: async (name: string, handler: (event: { payload: unknown }) => void) => {
@@ -46,7 +49,7 @@ vi.mock("../PopupView.vue", () => ({ default: defineComponent({ props: ["scope"]
       mock.received.push({ id, paths, question });
       // Dropping on a card of the stacked layout is working on that question.
       if (mock.stacked.has(id)) mock.current.set(id, question);
-      return paths.length;
+      return mock.results.get(id)?.(paths) ?? { requested: paths.length, images: 0, files: paths.length, duplicates: 0, failures: [] };
     },
   });
   onMounted(() => { if (!mock.neverReady.has(id)) scope.ready(id); });
@@ -91,7 +94,7 @@ describe("files dragged over the window", () => {
   beforeEach(() => {
     requests = ["a", "b", "c"].map(id => ask(id)); revision = 0; canvas = false; collapsed = false;
     mock.handlers.clear(); mock.invoke.mockReset(); mock.scopes.clear(); mock.focus.mockReset(); mock.drag = null;
-    mock.rects.clear(); mock.received.length = 0; mock.current.clear(); mock.stacked.clear(); mock.previews.clear(); mock.draggingOut.clear(); mock.neverReady.clear();
+    mock.rects.clear(); mock.received.length = 0; mock.current.clear(); mock.stacked.clear(); mock.previews.clear(); mock.draggingOut.clear(); mock.neverReady.clear(); mock.results.clear();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "performance"] });
     vi.stubGlobal("CSS", { escape: (s: string) => s });
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
@@ -328,7 +331,7 @@ describe("files dragged over the window", () => {
       expect(wrapper.find(".inbox-notice").text()).toBe("Added 1 file to “Request c”");
     });
 
-    it("ignores a drop on a request that cannot take files, and leaves the window as it was", async () => {
+    it("turns away a drop on a request that cannot take files, says so, and leaves the window as it was", async () => {
       requests = [ask("a"), confirmation("b"), ask("c")];
       await smallWindow();
       mock.invoke.mockClear();
@@ -337,7 +340,8 @@ describe("files dragged over the window", () => {
       expect(small()).toBe(true);
       expect(layouts()).toEqual([]);
       expect(mock.focus).not.toHaveBeenCalled();
-      expect(wrapper.find(".inbox-notice").exists()).toBe(false);
+      expect(wrapper.find(".inbox-notice").text()).toBe("“Request b” does not take attachments");
+      expect(wrapper.find(".inbox-notice").attributes("data-level")).toBe("warn");
     });
 
     it("hands a drop released just outside everything to the row it was aimed at a moment ago", async () => {
@@ -347,11 +351,14 @@ describe("files dragged over the window", () => {
       expect(mock.received).toEqual([{ id: "b", paths: ["/tmp/x.txt"], question: 0 }]);
     });
 
-    it("ignores a drop that carries no files", async () => {
+    it("turns away a drop that carries no files (a picture from a web page), and says what to do instead", async () => {
       await smallWindow();
       await send("drop", 120, rowY(1), []);
       expect(mock.received).toEqual([]);
       expect(small()).toBe(true);
+      expect(wrapper.find(".inbox-notice").text()).toContain("No files received");
+      expect(wrapper.find(".inbox-notice").text()).toContain("paste it with");
+      expect(wrapper.find(".inbox-notice").attributes("data-level")).toBe("warn");
     });
 
     it("forgets the notice after a few seconds", async () => {
@@ -522,6 +529,7 @@ describe("files dragged over the window", () => {
       await send("drop", BODY + 400, 300, ["/tmp/x.txt"]);
       expect(mock.received).toEqual([]);
       expect(mock.focus).not.toHaveBeenCalled();
+      expect(wrapper.find(".inbox-notice").text()).toContain("The attachment preview does not take files");
       // Beside it, the answer area takes them.
       await send("drop", BODY + 100, 300, ["/tmp/x.txt"]);
       expect(mock.received).toEqual([{ id: "a", paths: ["/tmp/x.txt"], question: 0 }]);
@@ -592,6 +600,7 @@ describe("files dragged over the window", () => {
       expect(wrapper.findAll(".inbox-row.dwelling")).toHaveLength(0);
       await send("drop", 120, rowY(1), ["/tmp/x.txt"]);
       expect(mock.received).toEqual([]);
+      expect(wrapper.find(".inbox-notice").text()).toContain("The window is busy");
       await tick(1000);
       expect(visible("a")).toBe(true);
     });
@@ -605,8 +614,9 @@ describe("files dragged over the window", () => {
       expect(dragging()).toBe(false);
       await send("drop", 120, rowY(1), ["/tmp/x.txt"]);
       expect(mock.received).toEqual([]);
-      // The request is told the drag is over.
+      // The request is told the drag is over, and the user is told nothing: they were not dropping anything.
       expect(mock.draggingOut.has("a")).toBe(false);
+      expect(wrapper.find(".inbox-notice").exists()).toBe(false);
     });
 
     it("lights a row under the pointer and shows no aim inside the request", async () => {
@@ -947,6 +957,186 @@ describe("files dragged over the window", () => {
       await tick(3000);
       expect(layouts()).toEqual([]);
       expect(mock.drag).toBeNull();
+    });
+  });
+
+  // §6.9: a drop that adds nothing used to be silent, and nothing was kept of any drag. Now the user is told, and each drag
+  // leaves lines in the diagnostic log (labels and counts; the backend writes no path and no file name).
+  describe("telling the user what became of a drop, and writing it to the log", () => {
+    const logged = () => (calls("popup_drop_log") as { entry: DropLogEntry }[]).map(args => args.entry);
+    const told = () => wrapper.find(".inbox-notice");
+    const onBodyDrop = (paths = ["/tmp/x.png"]) => send("drop", BODY + 280, CONTENT.top + 250, paths);
+    const unreadable = (reason: DropFailure["reason"], name = "shot.png", place: DropFailure["place"] = "desktop"): DropFailure =>
+      ({ path: `/Users/me/Desktop/${name}`, name, reason, place, message: "Operation not permitted (os error 1)" });
+
+    it("writes a drag once as it starts, however many events announce it, and the drop with what came of it", async () => {
+      await peek(0);
+      await send("enter", BODY + 280, CONTENT.top + 250, ["/tmp/x.txt", "/tmp/y.txt"]);
+      await send("over", BODY + 280, CONTENT.top + 260);
+      await send("over", BODY + 280, CONTENT.top + 270);
+      await onBodyDrop(["/tmp/x.txt", "/tmp/y.txt"]);
+      expect(logged()).toEqual([
+        { action: "enter", from: "enter", paths: ["/tmp/x.txt", "/tmp/y.txt"], view: "expanded", requestId: "a" },
+        { action: "drop", paths: ["/tmp/x.txt", "/tmp/y.txt"], view: "expanded", requestId: "a", target: "body",
+          outcome: "added", added: 2, images: 0, files: 2, duplicates: 0, failed: [] },
+      ]);
+    });
+
+    it("says where a drag was first seen when its enter never came", async () => {
+      await peek(0);
+      await send("over", BODY + 280, CONTENT.top + 250);
+      expect(logged()).toEqual([{ action: "enter", from: "over", paths: [], view: "expanded", requestId: "a" }]);
+    });
+
+    it("writes a drag that leaves without dropping, and nothing for a leave that follows no drag", async () => {
+      await peek(0);
+      await send("leave");
+      expect(logged()).toEqual([]);
+      await send("enter", BODY + 280, CONTENT.top + 250, ["/tmp/x.txt"]);
+      await send("leave");
+      await send("leave");
+      expect(logged().map(entry => entry.action)).toEqual(["enter", "leave"]);
+    });
+
+    it("starts a new line for the next drag after a drop", async () => {
+      await peek(0);
+      await send("enter", BODY + 280, CONTENT.top + 250, ["/tmp/x.txt"]);
+      await onBodyDrop(["/tmp/x.txt"]);
+      await send("enter", BODY + 280, CONTENT.top + 250, ["/tmp/y.txt"]);
+      await send("leave");
+      expect(logged().map(entry => entry.action)).toEqual(["enter", "drop", "enter", "leave"]);
+    });
+
+    it("tells a read that was refused, with the failed read in the log and a warning that stays longer than a plain notice", async () => {
+      mock.results.set("a", paths => ({ requested: paths.length, images: 0, files: 0, duplicates: 0, failures: [unreadable("permission_denied")] }));
+      await peek(0);
+      await onBodyDrop(["/Users/me/Desktop/shot.png"]);
+      expect(told().text()).toContain("No permission to read “shot.png”");
+      expect(told().attributes("data-level")).toBe("warn");
+      expect(told().attributes("role")).toBe("alert");
+      expect(logged().slice(-1)[0]).toMatchObject({ action: "drop", outcome: "read_failed", target: "body", added: 0,
+        failed: [{ path: "/Users/me/Desktop/shot.png", reason: "permission_denied" }] });
+      await tick(2600);
+      expect(told().exists()).toBe(true);
+      await tick(3400);
+      expect(told().exists()).toBe(false);
+    });
+
+    it("counts what was added and what was not when only some of the files could be read", async () => {
+      mock.results.set("a", () => ({ requested: 3, images: 1, files: 1, duplicates: 0, failures: [unreadable("not_found", "gone.png", "downloads")] }));
+      await peek(0);
+      await onBodyDrop(["/tmp/a.png", "/tmp/b.txt", "/tmp/gone.png"]);
+      expect(told().text()).toBe("Added 2 files, 1 could not be read (file not found)");
+      expect(told().attributes("data-level")).toBe("warn");
+      expect(logged().slice(-1)[0]).toMatchObject({ outcome: "partial", added: 2, images: 1, files: 1, failed: [{ reason: "not_found" }] });
+    });
+
+    it("says when everything dropped was attached already, as plain information", async () => {
+      mock.results.set("a", () => ({ requested: 1, images: 0, files: 0, duplicates: 1, failures: [] }));
+      await peek(0);
+      await onBodyDrop(["/tmp/x.png"]);
+      expect(told().text()).toBe("Those files are already attached");
+      expect(told().attributes("data-level")).toBe("info");
+      expect(told().attributes("role")).toBe("status");
+      expect(logged().slice(-1)[0]).toMatchObject({ outcome: "duplicates", added: 0, duplicates: 1 });
+      await tick(2600);
+      expect(told().exists()).toBe(false);
+    });
+
+    it("keeps a plain notice for what was added, and says nothing more", async () => {
+      await peek(0);
+      await onBodyDrop();
+      expect(told().text()).toBe("Added 1 file to “Request a”");
+      expect(told().attributes("data-level")).toBe("info");
+    });
+
+    describe("a drop that was turned away", () => {
+      it("on an attachment preview: told, and logged with where it fell", async () => {
+        mock.previews.add("a");
+        await peek(0);
+        await send("drop", BODY + 400, 300, ["/tmp/x.txt"]);
+        expect(told().text()).toContain("The attachment preview does not take files");
+        expect(logged().slice(-1)[0]).toEqual({ action: "drop", paths: ["/tmp/x.txt"], view: "expanded", requestId: "a", outcome: "on_preview", target: "preview" });
+      });
+
+      it("on a request that takes no attachments: told, and logged with the request and the row", async () => {
+        requests = [ask("a"), confirmation("b"), ask("c")];
+        await smallWindow();
+        mock.invoke.mockClear();
+        await send("drop", 120, rowY(1), ["/tmp/x.txt"]);
+        expect(told().text()).toBe("“Request b” does not take attachments");
+        expect(logged().slice(-1)[0]).toMatchObject({ action: "drop", outcome: "not_accepting", target: "row", requestId: "b", view: "collapsed" });
+      });
+
+      it("that carries no files: told what to do instead, and logged", async () => {
+        await smallWindow();
+        mock.invoke.mockClear();
+        await send("enter", 120, 20, []);
+        await send("drop", 120, 20, []);
+        expect(told().text()).toContain("No files received");
+        expect(logged()).toMatchObject([
+          { action: "enter", from: "enter", paths: [] },
+          { action: "drop", paths: [], outcome: "no_paths", target: "none", requestId: "c" },
+        ]);
+      });
+
+      it("while a dialog has the window: told, and logged, and the drag that began then is marked", async () => {
+        await peek(0);
+        emit("popup-inbox-close", undefined); await flushPromises();
+        mock.invoke.mockClear();
+        await onRow(1, "enter");
+        await send("drop", 120, rowY(1), ["/tmp/x.txt"]);
+        expect(told().text()).toContain("The window is busy");
+        expect(logged()).toMatchObject([
+          { action: "enter", from: "enter", outcome: "busy" },
+          { action: "drop", outcome: "busy", requestId: "a" },
+        ]);
+      });
+
+      it("for the user's own attachment dragged out: logged, but not told, since nothing was dropped", async () => {
+        await peek(0);
+        mock.draggingOut.add("a");
+        await onRow(1, "enter");
+        await send("drop", 120, rowY(1), ["/tmp/x.txt"]);
+        expect(told().exists()).toBe(false);
+        expect(logged()).toMatchObject([
+          { action: "enter", outcome: "own_drag_out" },
+          { action: "drop", outcome: "own_drag_out", requestId: "a" },
+        ]);
+      });
+    });
+
+    it("logs a request that never got ready to take the files", async () => {
+      mock.neverReady.add("c");
+      await start("a", "b", "c");
+      vm().markLater("c"); vm().markLater("b"); await flushPromises();
+      await later("a");
+      arrange();
+      mock.invoke.mockClear();
+      await send("drop", 120, rowY(2), ["/tmp/x.txt"]);
+      await tick(3000);
+      expect(logged().slice(-1)[0]).toMatchObject({ action: "drop", outcome: "no_receiver", requestId: "c", target: "row" });
+    });
+
+    it("logs an error of the drop itself, and shows it", async () => {
+      mock.results.set("a", () => { throw new Error("boom"); });
+      await peek(0);
+      await onBodyDrop();
+      expect(wrapper.find(".inbox-error").text()).toContain("boom");
+      expect(logged().slice(-1)[0]).toMatchObject({ action: "error", requestId: "a" });
+    });
+
+    it("keeps the diagnostics from ever breaking a drop: a log that cannot be written is ignored", async () => {
+      const normal = mock.invoke.getMockImplementation()!;
+      await peek(0);
+      mock.invoke.mockImplementation(async (command: string, args?: unknown) => {
+        if (command === "popup_drop_log") throw new Error("disk full");
+        return normal(command, args);
+      });
+      await onBodyDrop();
+      expect(mock.received).toEqual([{ id: "a", paths: ["/tmp/x.png"], question: 0 }]);
+      expect(told().text()).toBe("Added 1 file to “Request a”");
+      expect(wrapper.find(".inbox-error").exists()).toBe(false);
     });
   });
 });

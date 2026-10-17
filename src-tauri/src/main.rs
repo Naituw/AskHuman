@@ -65,6 +65,7 @@ mod permission_memory;
 mod permission_rules;
 mod permission_shell;
 mod permissions;
+mod popup_drop;
 mod project;
 mod project_info;
 mod prompts;

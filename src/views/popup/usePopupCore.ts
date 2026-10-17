@@ -20,7 +20,8 @@ import {
   openHistory,
   openTodos,
   openPath,
-  readImageDataUrl,
+  popupDropLog,
+  popupDropReadImage,
   focusAgentTerminal,
   popupAgentTerminal,
   popupAgentResolved,
@@ -32,6 +33,7 @@ import {
 } from "../../lib/ipc";
 import { isFocusableTerminal } from "../../lib/terminals";
 import {
+  isMac,
   isWindows,
   primaryModifierPressed,
   primaryShortcutLabel,
@@ -46,6 +48,7 @@ import type {
   AskRequest,
   ConfirmChoice,
   ConfirmRequest,
+  DropLogTarget,
   FileAttachment,
   ImageAttachment,
   PopupInit,
@@ -57,6 +60,20 @@ import type {
   TodoEntry,
 } from "../../lib/types";
 import type { PreviewDelegate } from "./useAttachmentPreview";
+import {
+  addedCount,
+  createDragLog,
+  describeIgnored,
+  describeResult,
+  emptyResult,
+  failureFrom,
+  fileName,
+  NOTICE_MS,
+  resultLog,
+  type DropNotice,
+  type DropResult,
+  type DropWords,
+} from "./dropFeedback";
 import { useSpeech } from "./useSpeech";
 import { useAttachments } from "./useAttachments";
 import { useUpdateState } from "./useUpdateState";
@@ -104,8 +121,11 @@ export interface DropReceiver {
   /** One of this request's own attachments is being dragged out of the window; that is not a drop coming in. */
   draggingOut: () => boolean;
   endDragOut: () => void;
-  /** Attach the files to a question (in the vertical layout it also becomes the current one). Resolves to how many were added. */
-  acceptDrop: (paths: string[], question: number) => Promise<number>;
+  /**
+   * Attach the files to a question (in the vertical layout it also becomes the current one). Resolves to what became
+   * of them, so that the page can tell the user (dropFeedback.ts).
+   */
+  acceptDrop: (paths: string[], question: number) => Promise<DropResult>;
 }
 /** Where the controller is aiming inside a request: a question card (vertical layout), or null for the body as a whole. */
 export interface DropAim { question: number | null }
@@ -781,6 +801,19 @@ export function usePopupCore(scope?: PopupScope) {
     if (!aim || aim.question !== null) return null;
     return isMulti.value ? t("popup.inbox.dropToQuestion", { n: current.value + 1 }) : t("popup.inbox.dropToRequest");
   });
+  // What became of the last drop, when it is worth saying (dropFeedback.ts). An inbox page shows its own notice, which also
+  // names the request; a standalone popup shows this one under its title bar.
+  const dropNotice = ref<DropNotice | null>(null);
+  let dropNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+  function showDropNotice(notice: DropNotice | null) {
+    if (dropNoticeTimer) clearTimeout(dropNoticeTimer);
+    dropNoticeTimer = null;
+    dropNotice.value = notice;
+    if (notice) dropNoticeTimer = setTimeout(() => { dropNoticeTimer = null; dropNotice.value = null; }, NOTICE_MS[notice.level]);
+  }
+  const dropWords = (): DropWords => ({ t, mac: isMac, paste: primaryShortcutLabel("v") });
+  // The diagnostic log of the drags this popup sees itself (a standalone one; an inbox page logs its window's drags).
+  const dragLog = createDragLog(entry => { void popupDropLog(entry); }, () => ({ requestId: request.value?.id ?? scope?.requestId ?? null }));
   // Passive scrolling only changes `current` (the viewport card). While an editor retains DOM
   // focus, every user action stays owned by that editor until an explicit cross-question action.
   const actionQuestionIndex = computed(() =>
@@ -1282,32 +1315,50 @@ export function usePopupCore(scope?: PopupScope) {
 
   const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?|svg)$/i;
 
-  /** Resolves to how many files were attached (duplicates, unreadable images and a request that takes none add nothing). */
-  async function addDroppedPaths(paths: string[], qIndex: number): Promise<number> {
-    if (selectOnly.value) return 0;
+  /**
+   * Attach dropped files to a question. Resolves to what became of them (dropFeedback.ts): a request that takes none,
+   * files that are there already, and pictures that could not be read (and why) add nothing, and are told apart.
+   */
+  async function addDroppedPaths(paths: string[], qIndex: number): Promise<DropResult> {
+    const result = emptyResult(paths.length);
+    if (selectOnly.value) return { ...result, refused: true };
     endOtherComposer(qIndex);
     const attachPaths = new Set(attachments.value.map((a) => a.path));
-    let addedImage = 0, added = 0;
     for (const path of paths) {
-      if (attachPaths.has(path)) continue;
-      const name = path.split(/[\\/]/).pop() || "file";
+      if (attachPaths.has(path)) { result.duplicates++; continue; }
+      const name = fileName(path);
       if (IMAGE_EXT.test(path)) {
         try {
-          const data = await readImageDataUrl(path);
+          const data = await popupDropReadImage(path);
           const semi = data.indexOf(";");
           const mediaType = semi > 5 ? data.slice(5, semi) : "image/png";
           const images = imagesByQ.value[qIndex];
-          if (images) { images.push({ data, mediaType, filename: name }); addedImage++; added++; }
+          if (images) { images.push({ data, mediaType, filename: name }); result.images++; }
         } catch (err) {
           console.error("读取拖入图片失败", path, err);
+          result.failures.push(failureFrom(path, err));
         }
-      } else if (!(replyFilesByQ.value[qIndex] ?? []).some((f) => f.path === path)) {
+      } else if ((replyFilesByQ.value[qIndex] ?? []).some((f) => f.path === path)) {
+        result.duplicates++;
+      } else {
         const files = replyFilesByQ.value[qIndex];
-        if (files) { files.push({ path, name }); added++; }
+        if (files) { files.push({ path, name }); result.files++; }
       }
     }
-    if (addedImage) scrollImagesIntoView(qIndex);
-    return added;
+    if (result.images) scrollImagesIntoView(qIndex);
+    return result;
+  }
+
+  /** A standalone popup's own drop: attach, tell the user what came of it, and log it. */
+  async function dropInto(paths: string[], qIndex: number, target: DropLogTarget) {
+    const result = await addDroppedPaths(paths, qIndex);
+    showDropNotice(describeResult(result, dropWords(), { announce: false }));
+    dragLog.send({ action: "drop", paths, target, ...resultLog(result) });
+  }
+  /** A standalone popup turned a drop away before trying anything. */
+  function ignoreDrop(reason: "busy" | "on_preview", paths: string[], target: DropLogTarget = "none") {
+    showDropNotice(describeIgnored(reason, dropWords()));
+    dragLog.send({ action: "drop", paths, outcome: reason, target });
   }
 
   function removeReplyFile(qIndex: number, index: number) {
@@ -2416,23 +2467,41 @@ export function usePopupCore(scope?: PopupScope) {
     });
     // An inbox page owns the window's drag events (useInboxDrop) and hands the files to this request's receiver.
     if (!routedByPage) unlistenDrop = await getCurrentWebview().onDragDropEvent((event) => {
-      if (!acceptsInput()) return;
+      const payload = event.payload;
+      const refused = !acceptsInput();
       // 拖出自家附件时不接管（那是往外拖，不是往里放）。
-      if (attach.draggingOut.value) {
-        if (event.payload.type === "drop") attach.draggingOut.value = false;
+      const draggingOut = attach.draggingOut.value;
+      if (payload.type === "enter" || payload.type === "over") {
+        dragLog.seen(payload.type, payload.type === "enter" ? payload.paths : undefined,
+          draggingOut ? { outcome: "own_drag_out" } : refused ? { outcome: "busy" } : {});
+      } else if (payload.type === "leave") dragLog.left();
+      if (refused) {
+        if (payload.type === "drop") { dragLog.end(); ignoreDrop("busy", payload.paths); }
+        return;
+      }
+      if (draggingOut) {
+        if (payload.type === "drop") {
+          attach.draggingOut.value = false;
+          dragLog.end();
+          dragLog.send({ action: "drop", paths: payload.paths, outcome: "own_drag_out" });
+        }
         dropTargetQ.value = null;
         return;
       }
-      if (event.payload.type === "over" || event.payload.type === "drop") {
-        const pos = event.payload.position;
+      if (payload.type === "over" || payload.type === "drop") {
+        const pos = payload.position;
         const point = scope?.layout?.value?.canvas
           ? inboxDropPoint(pos?.x ?? 0, pos?.y ?? 0, scope.layout.value)
           : [(pos?.x ?? 0) / window.devicePixelRatio, (pos?.y ?? 0) / window.devicePixelRatio];
         const element = document.elementFromPoint(point[0], point[1]);
-        if (element?.closest(".attachment-preview, .attachment-preview-divider")) { dropTargetQ.value = null; return; }
+        if (element?.closest(".attachment-preview, .attachment-preview-divider")) {
+          dropTargetQ.value = null;
+          if (payload.type === "drop") { dragLog.end(); ignoreDrop("on_preview", payload.paths, "preview"); }
+          return;
+        }
       }
-      if (event.payload.type === "over") {
-        const pos = event.payload.position;
+      if (payload.type === "over") {
+        const pos = payload.position;
         // 纵向布局下高亮即将落入的那张卡，松手前就能看出附件会进哪一题。
         dropTargetQ.value = verticalMode.value
           ? questionAtPoint(pos?.x ?? 0, pos?.y ?? 0)
@@ -2441,10 +2510,12 @@ export function usePopupCore(scope?: PopupScope) {
       }
       const wasOver = dropTargetQ.value;
       dropTargetQ.value = null;
-      if (event.payload.type !== "drop") return;
-      const pos = event.payload.position;
+      if (payload.type !== "drop") return;
+      dragLog.end();
+      const pos = payload.position;
       const qIndex = wasOver ?? questionAtPoint(pos?.x ?? 0, pos?.y ?? 0);
-      addDroppedPaths(event.payload.paths, qIndex);
+      dropInto(payload.paths, qIndex, verticalMode.value ? "card" : "body")
+        .catch(() => dragLog.send({ action: "error" }));
     });
     if (disposed) unlistenDrop?.();
     // 设置变更实时生效（同进程内设置窗口保存后广播 general 配置）。
@@ -2573,6 +2644,7 @@ export function usePopupCore(scope?: PopupScope) {
     if (timeTicker) window.clearInterval(timeTicker);
     if (flashTimer) window.clearTimeout(flashTimer);
     if (copiedTimer) window.clearTimeout(copiedTimer);
+    if (dropNoticeTimer) clearTimeout(dropNoticeTimer);
     io?.disconnect();
     io = null;
     composerResizeObserver?.disconnect();
@@ -2599,10 +2671,10 @@ export function usePopupCore(scope?: PopupScope) {
     draggingOut: () => attach.draggingOut.value,
     endDragOut: () => { attach.draggingOut.value = false; },
     acceptDrop: async (paths, question) => {
-      const added = await addDroppedPaths(paths, question);
+      const result = await addDroppedPaths(paths, question);
       // Dropping on a card is working on that question, like clicking it.
-      if (added && verticalMode.value) setActive(question, false);
-      return added;
+      if (addedCount(result) && verticalMode.value) setActive(question, false);
+      return result;
     },
   });
   watch(popupActive, active => {
@@ -2731,6 +2803,7 @@ export function usePopupCore(scope?: PopupScope) {
     dropTargetQ: aimedQuestion,
     dropCardLabel,
     dropHint,
+    dropNotice,
     setActive,
     goPrev,
     goNext,

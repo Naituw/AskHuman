@@ -47,6 +47,7 @@ import type {
   ThemeMode,
   DiffFileView,
   DiffStatPage,
+  DropLogEntry,
   ImageAttachment,
   TodoDoneEntry,
   TodoEntry,
@@ -104,6 +105,15 @@ export const closePreview = () => invoke<void>("close_preview");
 
 export const readImageDataUrl = (path: string) =>
   invoke<string>("read_image_data_url", { path });
+
+/** Read a dropped picture. A failure rejects with a `DropReadError` (why, and where the file is), not a string. */
+export const popupDropReadImage = (path: string) =>
+  invoke<string>("popup_drop_read_image", { path });
+
+/** Append one drag event to the diagnostic log. Best-effort: a log that cannot be written never reaches the drop. */
+export const popupDropLog = async (entry: DropLogEntry): Promise<void> => {
+  try { await invoke<void>("popup_drop_log", { entry }); } catch { /* diagnostics only */ }
+};
 
 export const localImageCreateScope = () => invoke<string>("local_image_create_scope");
 export const localImagePrepare = (scope: string, path: string) =>

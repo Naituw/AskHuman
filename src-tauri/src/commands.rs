@@ -1927,17 +1927,23 @@ pub fn close_preview(#[allow(unused_variables)] app: AppHandle) {
     }
 }
 
+/// Read an image file into a base64 data URL. Shared by `read_image_data_url` and the popup's
+/// drop reader (`popup_drop::popup_drop_read_image`), which needs the `io::Error` to say why.
+pub(crate) fn image_data_url(path: &str) -> std::io::Result<String> {
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine;
+    let bytes = std::fs::read(path)?;
+    let mime = image_mime_from_path(path);
+    Ok(format!("data:{};base64,{}", mime, B64.encode(bytes)))
+}
+
 /// 读取本地图片并返回 base64 data URL（供前端缩略图显示）。
 #[tauri::command]
 pub fn read_image_data_url(path: String) -> Result<String, String> {
-    use base64::engine::general_purpose::STANDARD as B64;
-    use base64::Engine;
-    let bytes = std::fs::read(&path).map_err(|e| {
+    image_data_url(&path).map_err(|e| {
         crate::i18n::tr(crate::i18n::Lang::current(), "cmd.readFileFailed")
             .replace("{e}", &e.to_string())
-    })?;
-    let mime = image_mime_from_path(&path);
-    Ok(format!("data:{};base64,{}", mime, B64.encode(bytes)))
+    })
 }
 
 /// 获取文件的系统图标（macOS：NSWorkspace，Finder 同款）并返回 PNG data URL，

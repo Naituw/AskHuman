@@ -3,7 +3,7 @@
 // window opens it, resting on another Sidebar row opens that request, the edges of the list and the body scroll, and a
 // drop goes to whatever is under the pointer at that moment. This file holds the pure decisions; useInboxDrop.ts
 // applies them to the window. Kept free of Vue and Tauri so it can be tested without a window.
-import type { PopupInboxRequest } from "../../lib/types";
+import type { DropLogTarget, PopupInboxRequest } from "../../lib/types";
 import { inboxDropPoint, type CanvasPosition } from "./inboxCoordinates";
 
 /** The prototype's defaults, which the user confirmed by dragging real files (spec §6.8 ④). Not settings. */
@@ -29,6 +29,19 @@ export interface DragPayload {
   paths?: string[];
   position?: { x: number; y: number };
 }
+
+/**
+ * What the controller tells the page about a drag besides handing it files: the page tells the user about a drop that was
+ * turned away (dropFeedback.ts) and writes all of it to the diagnostic log (src-tauri/src/popup_drop.rs). A drag that is
+ * delivered is reported by the page itself, which knows what became of the files.
+ */
+export type DropReport =
+  /** A native `enter` or `over` came in (the first of a drag is what gets logged); `ignored` says why it will be turned away. */
+  | { kind: "seen"; from: "enter" | "over"; paths: string[]; ignored?: "own_drag_out" | "busy" }
+  /** The drag left the window without dropping. */
+  | { kind: "leave" }
+  /** A drop was turned away before anything was tried. */
+  | { kind: "turned_away"; reason: "no_paths" | "on_preview" | "not_accepting" | "busy" | "own_drag_out" | "no_target"; paths: string[]; id: string | null; target: DropLogTarget };
 
 /** What is under the pointer. A card is only ever a target in the vertical layout, where every question is one. */
 export type DropHit =

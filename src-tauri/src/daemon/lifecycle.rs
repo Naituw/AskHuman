@@ -317,6 +317,34 @@ pub fn log_runtime_event(component: &str, action: &str, request_id: Option<&str>
     }
 }
 
+/// Append one already-built JSON line to `daemon.log` (best-effort; a newline is added).
+///
+/// The caller owns what the line may contain: like `log_runtime_event`, nothing user-typed (prompts,
+/// answers, paths, file names) belongs in it. Disabled in unit-test builds so tests never touch the
+/// user's real log.
+pub(crate) fn append_log_line(line: &str) {
+    #[cfg(not(test))]
+    let _ = append_line_to(&log_path(), line);
+
+    #[cfg(test)]
+    let _ = line;
+}
+
+/// Append `line` and a newline to `path`, creating the file and its folder when they are missing. One `write_all` on an
+/// `O_APPEND` file, so a line never lands inside another writer's (the daemon's stderr shares this file).
+fn append_line_to(path: &std::path::Path, line: &str) -> std::io::Result<()> {
+    use std::io::Write;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    file.write_all(format!("{line}\n").as_bytes())
+}
+
 /// daemon.log 轮转阈值：超过即把现有内容挪到 `daemon.log.1`（覆盖上一代）并清空当前文件。
 /// 上限约束为「两代 × 5MB」，正常运行量级下够追溯数周。
 const LOG_ROTATE_LIMIT: u64 = 5 * 1024 * 1024;
@@ -383,6 +411,27 @@ pub fn acquire_lock_at(path: &Path) -> std::io::Result<Option<LockGuard>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appends_a_line_after_what_is_already_there_and_makes_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("not").join("yet").join("daemon.log");
+        append_line_to(&path, r#"{"event":"first"}"#).unwrap();
+        append_line_to(&path, r#"{"event":"second"}"#).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\"event\":\"first\"}\n{\"event\":\"second\"}\n"
+        );
+    }
+
+    #[test]
+    fn leaves_what_an_earlier_writer_wrote_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("daemon.log");
+        std::fs::write(&path, "started\n").unwrap();
+        append_line_to(&path, "{}").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "started\n{}\n");
+    }
 
     #[test]
     fn fingerprint_reflects_current_exe() {

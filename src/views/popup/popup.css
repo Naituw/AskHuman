@@ -1236,6 +1236,20 @@ mark.popup-find-hit-current,
 }
 .drop-hint-enter-active, .drop-hint-leave-active { transition: opacity 120ms ease; }
 .drop-hint-enter-from, .drop-hint-leave-to { opacity: 0; }
+/* What became of files dropped on a standalone popup (dropFeedback.ts): a line under the title bar. */
+.drop-notice {
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.drop-notice[data-level="warn"] {
+  border-left-color: var(--accent-orange, #ff9500);
+  background: color-mix(in srgb, var(--accent-orange, #ff9500) 14%, transparent);
+}
 @keyframes q-flash {
   from {
     opacity: 1;

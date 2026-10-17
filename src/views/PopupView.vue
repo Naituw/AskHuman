@@ -34,6 +34,7 @@ const {
   flashing,
   verticalMode,
   dropHint,
+  dropNotice,
   contentRef,
   fileRef,
   onScroll,
@@ -122,6 +123,8 @@ function beginDivider(event: PointerEvent) {
     <PopupNavbar />
     <FindBar v-if="findActive && findScope === 'question'" />
     <p v-if="submissionError" class="status-error popup-submission-error" role="alert">{{ t("popup.inbox.submitError", { message: submissionError }) }}</p>
+    <!-- What became of files dropped on a standalone popup (an inbox page shows its own notice). -->
+    <p v-if="dropNotice" class="drop-notice" :data-level="dropNotice.level" :role="dropNotice.level === 'warn' ? 'alert' : 'status'">{{ dropNotice.text }}</p>
     <div
       :ref="(el) => (contentRef = el as HTMLElement | null)"
       class="content"

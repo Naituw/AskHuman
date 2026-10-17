@@ -131,6 +131,8 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::preview_attachments,
         crate::commands::close_preview,
         crate::commands::read_image_data_url,
+        crate::popup_drop::popup_drop_read_image,
+        crate::popup_drop::popup_drop_log,
         crate::local_image::local_image_create_scope,
         crate::local_image::local_image_prepare,
         crate::local_image::local_image_release_scope,
