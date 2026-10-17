@@ -173,8 +173,17 @@ cd /tmp && ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1 \
 
 用户的回答（详见 spec §1.12，C39–C40）：
 
-1. 顺带修复的 ACL 缺陷（`1deccff`，不在原计划内）：保留，并写发布说明。
+1. 顺带修复的 ACL 缺陷（`b0c9bbd`，不在原计划内）：保留，并写发布说明。
 2. 下一步：继续 P6；**P6 做完后再一起弹真实窗口给用户试**——P4 / P5 的动画观感、真实鼠标点击 / 拖动小窗、切走缩回的宽限等「仍未验证」项并入那一次会话（§8「P4 + P5 实机验证」）。
+
+### 7.4 P6 完成与实机会话（第 12–13 轮，2026-10-17）
+
+用户的回答（详见 spec §1.13，C41–C46）：
+
+1. P6 记录里的 6 条补空白决定：全部认可，按现状继续（C41–C46）。
+2. 实机会话（P4 + P5 + P6 合并，§8「P4 + P5 + P6 实机会话」）：动画「顺滑」；P5 行为、P6 的触发 / 投放 / 边缘滚动 / 拖出窗口均「符合预期」；视觉「清晰好看，保持」；报告了一个 UI 缺陷（小窗里悬停时「取消稍后答」盖在标题上），已修。
+3. 纵向布局：要再试一轮（3 步），因为按卡落点此前只在自动测试里验证过。
+4. 实机中暴露的 Stop hook 改写问题：记为项目待办，不在本任务里修。
 
 ## 8. 实施与验证记录
 
@@ -182,7 +191,7 @@ cd /tmp && ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1 \
 
 ### P0 准备（2026-10-17）
 
-- 入库：`a894605` spec + 本计划，`3c6962e` 原型（`chore(prototype)`，不进发布说明）。
+- 入库：`9723fd4` spec + 本计划，`2b1c053` 原型（`chore(prototype)`，不进发布说明）。
 - 基线（正式代码尚未改动）：`pnpm exec vitest run` 57 files / **430 passed**（含原型 41）；`node --test scripts/*.node-test.mjs` 32 passed；`vue-tsc --noEmit`、`cargo fmt --check` 通过；Rust 测试在 bin 目标里（无 lib 目标），`cargo test --manifest-path src-tauri/Cargo.toml --bin AskHuman popup`：**65 passed**（bin 共 1337 个），其中 `popup_inbox_geometry` 8 passed。原型 `--auto` 367 项 / `--auto-controls` 18 项沿用上一轮结果（原型源码自那次通过后未再改动），P1 动 Swift 后重跑。
 - 隔离安装试跑（§4.1）：`INSTALL_DIR=/tmp/askhuman-collapse-qa/bin ./scripts/install.sh` 编译 1m12s、签名通过；以 `ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1` 从 `/tmp` 运行，起了独立 daemon（socket 在临时目录），日常 daemon（pid 53110、socket `~/.askhuman/daemon.sock`）不受影响；`daemon stop` 后会留下一个 `--gui-host` 常驻进程，需要 `pkill` 清理（已写进 §4.1）。
 - 发现：日常 `AskHuman` 是 npm 全局包，不是 `~/.local/bin` 里的（见 §4.1、P9、§7）；P9 前要向用户确认「覆盖」的具体含义。
@@ -220,7 +229,7 @@ cd /tmp && ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1 \
 
 ### P4 UI（2026-10-17）
 
-- 先行提交 `89f11b8`（`refactor(popup)`）：把 Sidebar 抽成 `InboxSidebar.vue`，既有测试断言未改（59 files / 499 passed）。
+- 先行提交 `339c3c2`（`refactor(popup)`）：把 Sidebar 抽成 `InboxSidebar.vue`，既有测试断言未改（59 files / 499 passed）。
 - 改动：
   - `InboxSidebar.vue`：标题「待答 N」（小窗里计数是强调色胶囊）；标题栏的两个图标（`.mini-expand`：小窗里「展开」；`.mini-shrink`：peek——展开、没有主要请求、有 Sidebar——里「缩回小窗」，显隐由根元素的 `data-view` / `data-primary` / `data-sidebar` 在 CSS 里决定）；行内归档盒旗标（主要行悬停出图标 → 点击后同位置变常驻「稍后答」→ 悬停变「取消稍后答」；小窗里只在悬停时出现）；还有主要请求时次要行淡显。小窗外观全部取自原型已认可的 CSS：标题上移让出红绿灯位（`.sb-lift`，只在 macOS 原生画布下，`data-lights`）、元信息行收起、`data-settled` 后列表定高可滚动。
   - 新增 `inboxMini.ts`：`MINI_ROWS = 3`、动画参数（缩小 440 / 展开 480 / 小窗改尺寸 240ms，`cubic-bezier(.2,0,0,1)`，减少动态效果时不传动画）、`measureMini`（用 `data-measure` 把根元素同步放进小窗布局量真实 DOM 高度，期间 `data-still` 关掉过渡，不绘制）。
@@ -276,7 +285,7 @@ cd /tmp && ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1 \
   - 新增 `inboxDrop.ts`（纯逻辑，与 Vue / Tauri 无关）：`DRAG` 常量（500 / 250ms、4px、600ms、56px、900px/s、3000ms 挂载上限）、`dropPoints`（原生落点 → 页面点，含 y 修正与非画布的候选顺序）、`dwellTarget`、`edgeSpeed`、`serialDrag`（串行 + 合并）、`acceptsFiles`、`sameHit`。新增 `useInboxDrop.ts`：窗口级控制器（命中检测 `hitAt`、瞄准 `aim`、停留 `dwell`、边缘滚动、拖走缩回、松手投放）。
   - `usePopupCore.ts`：`PopupScope` 加 `dropReceiver` / `dropAim`；有 `dropReceiver` 时 core 不注册自己的 `onDragDropEvent`（独立弹窗不变），把 `DropReceiver`（`currentQuestion` / `draggingOut` / `endDragOut` / `acceptDrop`）借给页面并在卸载时收回；`dropTargetQ` 在 inbox 下取页面的瞄准，新增 `dropCardLabel`（题卡胶囊）与 `dropHint`（整块答案区的框与胶囊）；`addDroppedPaths` 改为返回「真正加了几个」（重复 / 读不出的图片 / 选择题不计数）。
   - `PopupInboxView.vue`：注册唯一的窗口级监听；`deliverDrop`（到按需挂载的请求、`acceptDrop`、提示条、`revealDropped`）、`openForDrag`、`receiverFor`（隐藏挂载 + 3 秒上限）、`peekShrink` 提成共用函数（`collapseOnLeave` 现在在拖拽进行中直接放弃，接上 P5 留给 P6 的那条）；`finishRound` 清控制器；根元素 `data-dragging`；小窗描边在拖放中变实线加粗；提示条不拦截点击。`InboxSidebar.vue`：`can-drop` / `drop-target` 描边与 `dwelling` 进度条。`PopupView.vue` / `QuestionCards.vue` / `popup.css`：虚线框 + 胶囊、题卡胶囊。i18n：`dropToQuestion` / `dropToRequest` / `dropAdded` / `dropAddedQuestion` / `dropFailed`（中英文）。
-- 与计划初稿 §2.7 的差异：①**命中检测放在页面里**（读 DOM：Sidebar 行 / 题卡 `.q-card[data-q-index]` / 预览区），core 只借出接收器并显示瞄准；计划写的是 core 暴露 `dropTargetAt(point)`。这样行、题卡、预览区只有一份命中逻辑，core 里原来的 `questionAtPoint` 只留给独立弹窗。②**给 `popup_inbox_layout` 的 `dragging` 参数补上了第一个调用方**（提交 `61cd7cf`，初稿与 P6 首版都漏了）：原生的 `prepare` / `commit_frame` 在主键按下时会一直等，因为它默认「按着主键 = 用户在拖窗口边缘」；而从 Finder 拖文件时主键同样按着，由停留触发的展开 / 切换、拖走缩回、拖拽中到达的新请求都会等到松手才发生，整个功能在真窗口里等于失效。页面现在对「拖拽进行中」（`drop.dragging`）和「拖走缩回」（拖拽已离开窗口但主键还按着，用 `carrying` 标记，因为 `left()` 先清了 `dragging`）发起的事务传 `dragging: true`；松手后的显示、点击、切走缩回照旧不传。Rust 侧早就支持该参数（`Request.dragging`，且只对被准备的那次事务有效），无需改动；`prepare` 里 3 秒的「前端失联」看门狗遇到主键按着本来就会顺延，不受影响。这个缺陷只有真窗口才会暴露（vitest 里 `popup_inbox_layout` 是 mock），是写完 P6 复核 Rust 调用链时发现的。
+- 与计划初稿 §2.7 的差异：①**命中检测放在页面里**（读 DOM：Sidebar 行 / 题卡 `.q-card[data-q-index]` / 预览区），core 只借出接收器并显示瞄准；计划写的是 core 暴露 `dropTargetAt(point)`。这样行、题卡、预览区只有一份命中逻辑，core 里原来的 `questionAtPoint` 只留给独立弹窗。②**给 `popup_inbox_layout` 的 `dragging` 参数补上了第一个调用方**（提交 `bb1a0f7`，初稿与 P6 首版都漏了）：原生的 `prepare` / `commit_frame` 在主键按下时会一直等，因为它默认「按着主键 = 用户在拖窗口边缘」；而从 Finder 拖文件时主键同样按着，由停留触发的展开 / 切换、拖走缩回、拖拽中到达的新请求都会等到松手才发生，整个功能在真窗口里等于失效。页面现在对「拖拽进行中」（`drop.dragging`）和「拖走缩回」（拖拽已离开窗口但主键还按着，用 `carrying` 标记，因为 `left()` 先清了 `dragging`）发起的事务传 `dragging: true`；松手后的显示、点击、切走缩回照旧不传。Rust 侧早就支持该参数（`Request.dragging`，且只对被准备的那次事务有效），无需改动；`prepare` 里 3 秒的「前端失联」看门狗遇到主键按着本来就会顺延，不受影响。这个缺陷只有真窗口才会暴露（vitest 里 `popup_inbox_layout` 是 mock），是写完 P6 复核 Rust 调用链时发现的。
 - 补空白时做的决定（用户未明确过，需要在检查点告知）：
   1. **哪些请求是落点**：确认类（权限 / 结束确认，没有答案编辑区）与「只选不填」的请求不接收文件——行不画描边，松手落在它们身上被忽略（窗口、焦点、提示条都不变）；但在它们的行上停留仍会打开它们（和点击一样，要看得见）。
   2. **松手后的提示与失败**：提示条「已添加 N 个文件到「标题」」（多题请求加「的第 Q 题」，标题超过 28 个字符截断），2.6 秒后消失、不拦截点击；从没打开过的请求先隐藏挂载（最多等 3 秒），超时则弹错误「无法把文件添加到「标题」」，文件不会改投别处。
@@ -286,3 +295,14 @@ cd /tmp && ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1 \
   6. **被忽略的拖拽**：窗口正在变形 / 换正文 / 有确认层时不接收也不计时；用户把自家附件拖出窗口、或指针在附件预览区上，都不算拖入（与原来一致）。
 - 验证（均通过）：`vitest run` 68 files / **669 passed**（577 → 新增 92：`inboxDrop.test.ts` 19、核心接收器与瞄准 `usePopupCore.inbox.test.ts` +13、页面 `PopupInboxView.drop.test.ts` 60；既有 5 个页面测试文件补了 `@tauri-apps/api/webview` 的 mock，断言未改）；`vue-tsc --noEmit`、`vite build` 通过（本阶段无 Rust / Swift 改动，未重跑）。页面测试复刻原型 S17 / S18 的断言：停留展开（落在行上 / 标题上）、中途离开不展开、换行重新计时、同一行内移动不重计、行描边、松手落点（行 / 标题 / 非目标 / 空文件 / 按需挂载 / 挂载超时）、拖走缩回与取消、不缩自己打开的窗口与松手后的窗口、新请求到达时不缩、展开态的停留切换与不连环（4px 防连环）、松手到正文 / 另一行 / 当前题、对话层与自家附件拖出与预览区、题卡瞄准与落点（单题 / 顺序 / 纵向 / 两种布局下落在别的请求行上）、边缘滚动（Sidebar / 正文 / 小窗列表、越靠边越快、上限、在中间 / 离开后停、滑到指针下的行与卡成为目标）、画布下的 y 修正、拖拽期间切走不缩、一轮结束清状态、卸载清定时器。变异检查：对新代码做了 57 处单点变异（核心 15、控制器 18、页面 24，其中 5 处针对 `dragging` 的传递：不在拖拽中传、不为拖走缩回传、总是传、`carrying` 不复位、拖走缩回不设 `carrying`，全部被抓到），首轮 9 处存活——重复附件守卫、等窗口变化完成、变化后重新瞄准、松手位置落空时回退到上次瞄准、预览区松手、其他请求的瞄准隔离、一轮结束清状态，这 7 处补测试后抓到；另 2 处（拖回时「取消缩回计时」与计时器里的 `dragging` 检查）互为冗余，单独去掉任何一个都不影响行为，同时去掉才失败，保留双重保护。
 - 未验证：**真实的 Finder 拖拽**——事件在小窗固定画布上的真实送达（`enter` / `over` / `drop`）、`dragging: true` 的事务在真实主键按着时确实不等（Rust 单测只覆盖「只对被准备的那次有效」）、y 修正与 x 原点修正（来自对 wry 源码的推导与单测，没有在真窗口上观察）、停留手感与进度条、边缘滚动的真实速度；所有新增 CSS 只通过了构建，没有被肉眼看过（胶囊在半透明底上的可读性、`.drop-hint` 与顶栏 / 输入区的层叠、`overflow: hidden` 的行里进度条的位置、小窗实线描边）；WKWebView 在非激活前置的窗口、应用不在前台时是否照常收到原生拖拽事件；松手后 `setFocus()` 与提示条的实际观感；拖走缩回与 440ms 缩小动画的衔接；非 macOS 的落点单位候选（P7）。按 C40 并入 P4 / P5 剩余的「仍未验证」一起请用户亲手验证。
+
+### P4 + P5 + P6 实机会话（2026-10-17）
+
+- 方法（C40，spec §1.13）：§4.1 的隔离安装（`INSTALL_DIR=/tmp/askhuman-collapse-qa/bin`，从含 `bb1a0f7` 的提交编译），`ASKHUMAN_HOME` 隔离 + 独立 `HOME`（见下面的 hook 事故），请求超时 4 小时；同项目两个请求 A / B 加另一项目的 C，顺序布局（`verticalQuestions: false`）。**这一次由用户亲手操作，Agent 不碰这些窗口**（不用 Computer Use，C26 / C40），清单分动画、P5 行为、P6 触发与投放、边缘滚动与拖出窗口、视觉五组，加一个开放问题。
+- 结果（用户回答，spec §1.13）：动画「顺滑，没有卡顿或跳变」；P5 行为、P6 的触发与投放、边缘滚动与拖出窗口都「符合预期」；视觉「清晰好看，保持」；一个 UI 缺陷（下一条）；纵向布局要再试一轮（3 步）。
+- **UI 缺陷：小窗里悬停某一行时，「取消稍后答」按钮透明，盖在标题上，文字穿过按钮**（用户截图）。根因：小窗里按钮的两条规则（`.inbox-root[data-view="collapsed"] .row-flag.flag-archive.is-secondary`，权重 0,5,0）权重高于展开态的悬停底色规则（`.inbox-entry:hover .flag-archive.is-secondary`，0,4,0），小窗里悬停时底色永远是 `transparent`；小窗又没有给按钮留位置（展开态靠标题右侧 90px 内边距，小窗不能加，否则 `InboxSidebar.measure.test.ts` 守的「测量 pass 与小窗同尺寸」不成立）。修复（`97d2eae`，只动 CSS）：悬停 / 键盘聚焦的底色改为不透明（`color-mix(… var(--accent) 14%, var(--surface-overlay))`，`tokens.css` 的约定：浮层用实底，半透明的 `--card-bg` / `--bg-elevated` 会让下面的文字透出来）；在小窗里的按钮前加一条 16px 的 `::before` 渐变，标题在按钮前淡出而不是被截断；小窗的悬停 / `:focus-visible` 规则里把底色重写一遍（因为它们压过展开态的规则）。验证：用无头 Chrome 在临时的 vite 页面上复现（强制 `:hover`，亮 / 暗两种主题）并对比修复前后的截图，展开态外观不变；新增 `InboxSidebar.undo.test.ts`（4 个测试：手写的最小层叠解析读真实样式表，因为 jsdom 的 `getComputedStyle` 不计选择器权重；小窗里静止时按钮不可见、悬停与键盘聚焦时有实底、展开态的常驻标签与悬停外观不变、小窗静止时无底——最后一条防止夹具对什么都成立）；对 CSS 做 6 处变异（去掉小窗悬停底色、去掉聚焦变体、悬停底色改回半透明、小窗常驻按钮、小窗静止态带底色、展开态常驻标签去底色）全部被抓到。
+- 事故 1（已处理）：**隔离实例的环境变量泄漏进 Agent 的持久 shell**（`ASKHUMAN_HOME` 等被 `export` 过），之后 Agent 自己的 `AskHuman` 提问被路由到隔离 daemon，指纹不一致触发排空，提问排了约 28 分钟；隔离窗口按 30 分钟超时退出，用户没看到第一份清单。处理：清掉变量与隔离进程，重新布置（请求超时改为 4 小时）并补发清单；之后只在单条命令里内联传环境变量，真实调用前核对 `env`。
+- 事故 2（已处理，记为待办 #1）：**隔离实例的 daemon 改写了用户真实的 Cursor / Codex Stop hook**。`ASKHUMAN_HOME` 只隔离配置 / socket / daemon 标签，`paths::home()` 仍是真实 `$HOME`；daemon 启动时 `agent_stop::migrate_outdated()` 发现 hook 命令与自己的 `current_exe()` 不一致就改写，指向 `/tmp/askhuman-collapse-qa/bin/AskHuman`（登录项有 dev-instance 保护，hook 迁移没有）。从 18:02 起每次启动都改了一遍；发现后按备份恢复为 npm 全局包路径并校验，此后隔离实例用 `HOME=/tmp/askhuman-collapse-qa/fakehome` 运行。不在本任务里修，已用 `AskHuman todo` 记录。
+- 顺带：本地 `main` 在 21:51 被另一个会话 rebase 到最新 `origin/main`（并入 PR #16），本任务的提交哈希随之全部改变，spec / 本计划里的引用已按提交标题对应更新（`e4c1a7d` P4、`faff232` P5、`b0c9bbd` ACL、`37bfb86` P6、`bb1a0f7` `dragging`、`97d2eae` 本节的 UI 修复）。
+- 测试：`vitest run` 73 files / **694 passed**（含其他会话并入的测试；本任务新增 `InboxSidebar.undo` 4 个）；`vue-tsc --noEmit`、`vite build` 通过（本次只改 CSS 与测试，未重编 Rust）。
+- 仍未验证：纵向布局的按卡落点（下一轮 3 步）；非 macOS（P7 / 延期 gate）；材质 Solid / Glass 下的小窗按钮观感。
