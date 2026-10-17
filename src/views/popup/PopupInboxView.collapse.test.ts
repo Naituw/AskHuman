@@ -115,11 +115,12 @@ describe("answer later and the small window", () => {
     });
 
     it("keeps a marked request unread until its body is opened", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       await start("a", "b");
       await later("b");
       const row = () => wrapper.findAll(".inbox-row")[1];
       expect(row().classes()).toContain("unread");
-      await row().trigger("click"); await flushPromises();
+      await row().trigger("click"); await tick(126);
       expect(row().classes()).not.toContain("unread");
       expect(scope("b").secondary!.value).toBe(true);
     });

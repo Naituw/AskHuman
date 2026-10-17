@@ -91,6 +91,8 @@ export interface InboxLayout {
   canvas?: { left: number; width: number; height: number; frozen: boolean } | null;
   /** The window is the small mini-list window; the widths above still describe the expanded layout. */
   collapsed?: boolean;
+  /** The Sidebar width the layout has, or would get if one appeared (a single request has none yet). */
+  sidebarPreferred?: number;
 }
 export interface PopupScope {
   layout?: Readonly<Ref<InboxLayout | null>>;
@@ -103,6 +105,8 @@ export interface PopupScope {
   /** Mark / unmark this request "answer later". The page decides what the window does next. */
   markLater?: () => void;
   unmarkLater?: () => void;
+  /** Back to the small window. Offered while nothing is left to answer (a peek); never changes a mark. */
+  shrinkWindow?: () => void;
   restoreFocus?: (restore: (() => void) | null) => void;
   failed?: (error: string) => void;
   sending?: () => void;
@@ -2670,6 +2674,12 @@ export function usePopupCore(scope?: PopupScope) {
     showConfirmCloseWarning,
     dismissConfirmCloseWarning,
     confirmCloseAndDeny,
+    // 稍后回答 / 缩回小窗（仅合并窗口提供；独立单请求窗口没有这些入口）
+    laterAvailable: computed(() => !!scope?.markLater),
+    laterMarked: computed(() => !!scope?.secondary?.value),
+    toggleLater: () => { if (scope?.secondary?.value) scope.unmarkLater?.(); else scope?.markLater?.(); },
+    shrinkAvailable: computed(() => !!scope?.shrinkWindow),
+    shrinkWindow: () => scope?.shrinkWindow?.(),
     // 顶栏动作
     pinned,
     togglePin,

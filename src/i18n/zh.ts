@@ -70,7 +70,10 @@ export default {
   popup: {
     inbox: {
       sending: "发送中…", submitting: "提交中…",
-      pending: "等待回答", unknownProject: "未指定项目", untitled: "提问", unread: "尚未查看", draft: "草稿", resize: "调整待答列表宽度", dismiss: "关闭提示",
+      pending: "待答", unknownProject: "未指定项目", untitled: "提问", unread: "尚未查看", draft: "草稿", resize: "调整待答列表宽度", dismiss: "关闭提示",
+      later: "稍后回答", laterLabel: "稍后答", undoLater: "取消稍后答",
+      laterHint: "先不回答这条；全部都稍后回答后，窗口缩成小窗", undoLaterHint: "恢复为待答",
+      expand: "展开", shrink: "缩回小窗",
       kind: { ask: "提问", permission: "权限", stop: "结束确认" },
       recovered: "作答窗口已恢复。尚未提交的草稿已丢失，请重新填写。",
       external: "当前请求已结束（{source}），即将继续下一条", submitError: "发送未完成，请重试：{message}",

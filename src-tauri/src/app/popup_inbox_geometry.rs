@@ -28,6 +28,9 @@ pub struct Allocation {
     pub revision: u64,
     pub canvas: Option<Canvas>,
     pub sidebar_width: f64,
+    /// The width a Sidebar has, or would get if one appeared: the user's last choice or the default.
+    /// A single request has no Sidebar, yet its small window is the list, so the page needs the width.
+    pub sidebar_preferred: f64,
     pub main_width: f64,
     pub preview_width: f64,
     pub main_height: f64,
@@ -428,6 +431,7 @@ impl Geometry {
             revision: self.revision,
             canvas,
             sidebar_width,
+            sidebar_preferred: self.preferred_sidebar.unwrap_or(sidebar_width),
             main_width,
             preview_width,
             main_height: target.height,
@@ -810,6 +814,7 @@ fn sidebar_resize(previous: &Allocation, frame: Frame, width: f64) -> Result<All
     let sidebar_width = width.clamp(sidebar_min, sidebar_max);
     let mut allocation = previous.clone();
     allocation.sidebar_width = sidebar_width;
+    allocation.sidebar_preferred = sidebar_width;
     allocation.main_width = budget - sidebar_width;
     allocation.main_height = frame.height;
     allocation.frame = frame;
@@ -1085,6 +1090,7 @@ pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjecti
         revision: c.revision,
         canvas,
         sidebar_width: left,
+        sidebar_preferred: c.preferred_sidebar.unwrap_or(left),
         main_width,
         preview_width: right,
         main_height: frame.height,
@@ -1190,6 +1196,7 @@ mod tests {
                 frozen: true,
             }),
             sidebar_width: 240.0,
+            sidebar_preferred: 240.0,
             main_width: 560.0,
             preview_width: preview,
             main_height: 620.0,
@@ -1501,6 +1508,28 @@ mod tests {
         assert_eq!(expanded.frame.y, grown.frame.y);
         assert_eq!(expanded.frame.width, grown.frame.width);
         assert_eq!(expanded.frame.height, grown.frame.height);
+    }
+
+    #[test]
+    fn the_sidebar_width_is_known_before_a_sidebar_exists() {
+        // A single request has no Sidebar, but its small window is the list: the page needs the width
+        // it will have to measure the list before the Sidebar column appears.
+        let mut sim = Sim::new();
+        let single = first_window(&mut sim);
+        assert_eq!(single.sidebar_width, 0.0);
+        assert_eq!(single.sidebar_preferred, 240.0);
+        // The user's choice replaces the default, and survives the Sidebar going away again.
+        let wide = sim.run(Request {
+            sidebar: Some(true),
+            sidebar_width: Some(330.0),
+            ..ask(true, Form::Expanded)
+        });
+        assert_eq!((wide.sidebar_width, wide.sidebar_preferred), (330.0, 330.0));
+        let gone = sim.run(ask(false, Form::Expanded));
+        assert_eq!((gone.sidebar_width, gone.sidebar_preferred), (0.0, 330.0));
+        let small = sim.run(ask(true, Form::Collapsed(MINI)));
+        assert_eq!(small.sidebar_width, 330.0);
+        assert_eq!(small.sidebar_preferred, 330.0);
     }
 
     #[test]

@@ -71,6 +71,9 @@ export default {
     inbox: {
       sending: "Sending…", submitting: "Submitting…",
       pending: "Waiting for answers", unknownProject: "No project", untitled: "Question", unread: "Unread", draft: "Draft", resize: "Resize request list", dismiss: "Dismiss notice",
+      later: "Answer later", laterLabel: "Later", undoLater: "Undo answer later",
+      laterHint: "Set this request aside; the window shrinks once every request is set aside", undoLaterHint: "Mark it as waiting again",
+      expand: "Expand", shrink: "Shrink to small window",
       kind: { ask: "Question", permission: "Permission", stop: "Finish task" },
       recovered: "The answer window has recovered. Unsubmitted drafts were lost; please enter them again.",
       external: "This request ended ({source}). Continuing to the next request…", submitError: "Answer was not sent. Please retry: {message}",

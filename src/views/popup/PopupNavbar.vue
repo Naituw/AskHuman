@@ -39,6 +39,8 @@ const {
   onContentClick,
   pinned,
   togglePin,
+  shrinkAvailable,
+  shrinkWindow,
   agentConsoleAvailable,
   openAgentConsoleWindow,
   openTodosWindow,
@@ -166,6 +168,19 @@ const {
             </div>
           </div>
         </div>
+        <!-- 合并窗口的 peek（只剩「稍后答」）且没有 Sidebar 时，缩回小窗的入口放在图钉旁；显隐由 CSS 按窗口状态决定 -->
+        <button
+          v-if="shrinkAvailable"
+          class="nav-btn nav-shrink"
+          type="button"
+          :title="t('popup.inbox.shrink')"
+          :aria-label="t('popup.inbox.shrink')"
+          @click="shrinkWindow"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
+          </svg>
+        </button>
         <button
           class="nav-btn"
           :class="{ active: pinned }"

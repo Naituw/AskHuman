@@ -687,6 +687,9 @@
   width: 16px;
   height: 16px;
 }
+/* 缩回小窗（合并窗口）：只在 peek 且没有 Sidebar 时出现；有 Sidebar 时同一个动作在 Sidebar 标题栏。 */
+.nav-shrink { display: none; }
+.inbox-root[data-view="expanded"][data-primary="no"][data-sidebar="off"] .nav-shrink { display: inline-flex; }
 /* 版本自更新：入口按钮 + 圆点 + 浮层 + 待生效横条 */
 .update-wrap {
   position: relative;
@@ -1784,6 +1787,12 @@ mark.popup-find-hit-current,
 }
 .btn-danger:hover {
   background: #e23b31;
+}
+
+/* The answer-later button adds a fifth control to the multi-question footer: below this width the keyboard hints
+   (redundant with the buttons) give way first, so that nothing is clipped. */
+@container (max-width: 520px) {
+  .popup-main .footer:has(.btn-later) .sc { display: none; }
 }
 
 @container (max-width: 400px) {

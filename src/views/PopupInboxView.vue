@@ -15,6 +15,7 @@ import { inboxGroups, inboxKind, nextInboxRequest } from "./popup/inboxQueue";
 import * as model from "./popup/inboxCollapse";
 import type { InboxState, View } from "./popup/inboxCollapse";
 import { answerTransition, transitionClock, type CompletionFeedback, type InboxMotion } from "./popup/inboxTransition";
+import { formAnimation, measureMini, type FormAnimation, type FormChange } from "./popup/inboxMini";
 
 const { t } = useI18n();
 const layoutReview = new URLSearchParams(location.search).get("layoutReview") === "1";
@@ -25,7 +26,8 @@ const rootStyle = computed(() => {
   const a = allocation.value;
   const c = a?.canvas;
   const left = a ? a.sidebarWidth + (a.sidebarWidth > 0 ? 6 : 0) : 0;
-  return { '--inbox-sidebar': `${sidebarWidth.value}px`,
+  return { '--inbox-sidebar': `${listWidth.value}px`,
+    '--ms': `${motionMs.value}ms`, '--mini-w': `${mini.value.width}px`, '--mini-h': `${mini.value.height}px`, '--mini-nav-h': `${mini.value.navHeight}px`,
     '--inbox-canvas-left': `${c?.left ?? 0}px`,
     '--inbox-main': c && !frozenCanvas.value && !a?.previewWidth ? 'calc(100vw - var(--inbox-canvas-left))' : `${a?.mainWidth ?? 560}px`,
     '--inbox-body-width': `${a ? a.mainWidth + (a.previewWidth > 0 ? 6 + a.previewWidth : 0) : 560}px`,
@@ -40,7 +42,11 @@ const groupOrder = ref<string[]>([]);
 const sidebar = ref(false);
 const sidebarWidth = ref(0);
 const pin = ref<boolean | null>(null);
-const renderedSidebar = computed(() => sidebarWidth.value > 0);
+// A single request has no Sidebar column, but its small window is the list: before it shrinks the list is laid out
+// hidden (to be measured) and after it expanded the list fades out, both at this width.
+const loneList = ref(0);
+const listWidth = computed(() => sidebarWidth.value || loneList.value);
+const renderedSidebar = computed(() => listWidth.value > 0);
 const previews = new Map<string, boolean>();
 const nativePreviewSync = new Map<string, () => Promise<void>>();
 const visited = ref(new Set<string>());
@@ -48,6 +54,14 @@ const visited = ref(new Set<string>());
 const secondary = ref(new Set<string>());
 const view = ref<View>("expanded");
 const shifting = ref(false);
+// What is painted. `view` is what the page asks of the window; `look` follows it when the native change starts, so
+// the cross-fade runs with the window instead of ahead of it. The rest describes the small window's layout.
+const look = ref<View>("expanded");
+const settled = ref(false);
+const mini = ref({ width: 0, height: 0, navHeight: 0 });
+// How long the page's cross-fade takes, for the duration of a window form change only: anything else that changes the
+// layout (a Sidebar appearing, a resize) happens at once, together with the native commit.
+const motionMs = ref(0);
 // Whether the user is in AskHuman right now; the native app-activation event keeps it current.
 const appActive = ref(true);
 let lastBrowsed: string | null = null;
@@ -56,6 +70,8 @@ const flashed = ref(new Set<string>());
 const arriving = ref(new Set<string>());
 const arrivalNotice = ref<InstanceType<typeof InboxArrivalNotice> | null>(null);
 const pendingArrivals = new Set<string>();
+// Newcomers whose bubble plays although their body is already open: the small window opened onto them (C4).
+const shownArrivals = new Set<string>();
 let hostPresented = false;
 const recovered = ref(false);
 const error = ref("");
@@ -73,6 +89,8 @@ const readyWaiters = new Map<string, Set<() => void>>();
 const focusRestorers = new Map<string, () => void>();
 const earlyArrivals = new Set<string>();
 const motion = ref<InboxMotion | null>(null);
+// Switching between requests in an expanded window (C17): the body being left fades out, then the next one fades in.
+const swap = ref<{ from: string; incoming: string; phase: "out" | "prepare" | "in" } | null>(null);
 let clock: ReturnType<typeof transitionClock> | null = null;
 const terminals = new Set<string>();
 const listeners: UnlistenFn[] = [];
@@ -83,8 +101,11 @@ let tail = Promise.resolve();
 const groups = computed(() => inboxGroups(requests.value, groupOrder.value));
 const ordered = computed(() => groups.value.flatMap(group => group.requests));
 const mounted = computed(() => requests.value.filter(r => visited.value.has(r.requestId) || preparedIds.value.has(r.requestId)));
-const blocked = computed(() => !!modal.value || advancing.value || shifting.value);
-const selectedId = computed(() => motion.value?.phase === "prepare" ? motion.value.from : active.value);
+const blocked = computed(() => !!modal.value || advancing.value || shifting.value || (!!swap.value && swap.value.phase !== "in"));
+// Whether any request is still waiting; when none is, the expanded window is a "peek" (C27).
+const hasPrimary = computed(() => requests.value.some(r => !secondary.value.has(r.requestId)));
+// The row follows the click at once, while the body it will show is still fading out.
+const selectedId = computed(() => swap.value?.phase === "out" ? swap.value.incoming : motion.value?.phase === "prepare" ? motion.value.from : active.value);
 const snapshot = computed(() => requests.value.filter(r => modal.value?.ids.includes(r.requestId)));
 const newAfterModal = computed(() => requests.value.filter(r => !modal.value?.ids.includes(r.requestId)).length);
 const currentSnapshot = computed(() => snapshot.value.filter(r => r.requestId === modal.value?.current));
@@ -93,15 +114,17 @@ function later(fn: () => void, ms: number) {
   timers.add(timer);
 }
 function unreadArrival(id: string) {
-  return !visited.value.has(id) && !terminals.has(id) && requests.value.some(request => request.requestId === id);
+  return (!visited.value.has(id) || shownArrivals.has(id)) && !terminals.has(id) && requests.value.some(request => request.requestId === id);
 }
 function cancelArrival(id: string) {
-  pendingArrivals.delete(id); arriving.value.delete(id); flashed.value.delete(id);
+  pendingArrivals.delete(id); arriving.value.delete(id); flashed.value.delete(id); shownArrivals.delete(id);
   arrivalNotice.value?.cancel(id);
 }
 function arrivalSettled(id: string, reason: ArrivalEnd) {
   pendingArrivals.delete(id); arriving.value.delete(id);
-  if (reason !== "landed" || !unreadArrival(id)) return;
+  const due = unreadArrival(id);
+  shownArrivals.delete(id);
+  if (reason !== "landed" || !due) return;
   flashed.value.add(id);
   later(() => flashed.value.delete(id), arrivalTiming.land);
 }
@@ -185,10 +208,13 @@ function scopeFor(id: string): PopupScope {
   if (!scope) {
     scope = markRaw<PopupScope>({ layout: allocation, requestId: id, active: computed(() => active.value === id), blocked, pin,
       completion: computed(() => motion.value?.from === id ? motion.value.completion : null),
-      nativePreviewBlocked: computed(() => (blocked.value || view.value === "collapsed") && !(motion.value?.incoming === id && ["prepare", "in"].includes(motion.value.phase))),
+      nativePreviewBlocked: computed(() => (blocked.value || view.value === "collapsed")
+        && !(motion.value?.incoming === id && ["prepare", "in"].includes(motion.value.phase))
+        && !(swap.value?.incoming === id && swap.value.phase !== "out")),
       secondary: computed(() => secondary.value.has(id)),
       markLater: () => markLater(id),
       unmarkLater: () => unmarkLater(id),
+      shrinkWindow,
       restoreFocus: restore => { if (restore) focusRestorers.set(id, restore); else focusRestorers.delete(id); },
       failed: () => { failedIds.add(id); settleReady(id); },
       sending: () => {
@@ -224,7 +250,10 @@ function scopeFor(id: string): PopupScope {
   }
   return scope;
 }
-async function geometry(arrival = false, width?: number, mainExtent?: number) {
+// What a layout transaction changes about the window form: the small window's size, how the change is animated, and
+// what to do the moment native starts it (the page's cross-fade starts with the window, not ahead of it).
+interface Form { collapsed?: { width: number; height: number }; animation?: FormAnimation; started?: () => void }
+async function geometry(arrival = false, form: Form = {}) {
   let prepared: InboxLayout | undefined;
   try {
     const current = allocation.value;
@@ -243,9 +272,10 @@ async function geometry(arrival = false, width?: number, mainExtent?: number) {
       body?.getBoundingClientRect();
     }
     prepared = await invoke<InboxLayout>("popup_inbox_layout", {
-      sidebar: sidebar.value, sidebarWidth: width ?? null, preview: previews.get(active.value ?? "") ?? false, mainExtent: mainExtent ?? null,
+      // The small window is always a list column, even for a single request that has no Sidebar when expanded.
+      sidebar: sidebar.value || view.value === "collapsed", sidebarWidth: null, preview: previews.get(active.value ?? "") ?? false, mainExtent: null,
       // The page states the window form every time; native treats a missing size as the expanded window.
-      ...(view.value === "collapsed" ? { collapsed: miniSize() } : {}),
+      ...(view.value === "collapsed" ? { collapsed: form.collapsed ?? { width: mini.value.width, height: mini.value.height } } : {}),
     });
     allocation.value = prepared;
     sidebarWidth.value = prepared.sidebarWidth;
@@ -253,7 +283,8 @@ async function geometry(arrival = false, width?: number, mainExtent?: number) {
     // Native PDF/Quick Look shares the fixed canvas and is placed before the window reveals it.
     if (active.value) await nativePreviewSync.get(active.value)?.();
     if (disposed) throw new Error("popup inbox disposed during layout preparation");
-    await invoke("popup_inbox_commit", { revision: prepared.revision });
+    form.started?.();
+    await invoke("popup_inbox_commit", { revision: prepared.revision, ...(form.animation ? { animation: form.animation } : {}) });
     const finished = await invoke<InboxLayout | undefined>("popup_inbox_finish", { revision: prepared.revision, arrival });
     if (finished) allocation.value = finished;
     return prepared;
@@ -276,8 +307,18 @@ function collapseState(options: { keep?: string; without?: string } = {}): Inbox
 function newcomer(show: PopupInboxRequest) {
   return { requestId: show.requestId, project: show.project, sequence: show.sequence, secondary: false, visited: false };
 }
-// Provisional until the small window renders its own list: any finite size of at least 1 is a valid small window.
-function miniSize() { return { width: sidebarWidth.value || 240, height: 200 }; }
+const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+// The painted side of a window form change: the cross-fade runs for as long as the window animates.
+function change(kind: FormChange, to: View, collapsed?: { width: number; height: number }): Form {
+  const animation = formAnimation(kind, reducedMotion());
+  return { collapsed, animation, started: () => { motionMs.value = animation?.durationMs ?? 0; look.value = to; } };
+}
+// The small window's size: the list's width, and the height measured from the list in its small layout.
+function smallWindow() {
+  const height = root.value && measureMini(root.value);
+  if (!height) throw new Error("The small window cannot be measured");
+  return { width: listWidth.value, ...height };
+}
 // Native refuses to shrink a maximized or full-screen window; the request stays marked and the window stays open.
 const shrinkRefused = (e: unknown) => String(e).includes("cannot shrink");
 // Go to (or stay in) the small window form; `resting` is the request it remembers as its own.
@@ -292,12 +333,33 @@ async function shrink(resting: string | null) {
   view.value = "collapsed"; shifting.value = true;
   try {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    // A single request has no Sidebar column yet: lay its list out hidden, at the width it will have, to measure it.
+    if (!renderedSidebar.value) loneList.value = allocation.value?.sidebarPreferred ?? 240;
     await nextTick();
-    await geometry();
+    const size = smallWindow();
+    settled.value = false;
+    mini.value = size;
+    await geometry(false, change(from === "expanded" ? "collapse" : "resize", "collapsed", { width: size.width, height: size.height }));
+    settled.value = true;
   } catch (e) {
-    view.value = from;
+    view.value = from; look.value = from; settled.value = from === "collapsed";
     if (!shrinkRefused(e)) throw e;
-  } finally { shifting.value = false; }
+  } finally { shifting.value = false; loneList.value = 0; motionMs.value = 0; }
+}
+// The heading's icons: the small window opens (what the user was last on), a peek goes back to the small window.
+function expandFromList() {
+  if (blocked.value) return;
+  void enqueue(async () => {
+    const target = model.defaultOpenTarget(collapseState());
+    if (target) await select(target, true);
+  });
+}
+function shrinkWindow() {
+  if (blocked.value) return;
+  void enqueue(async () => {
+    const outcome = model.collapseWindow(collapseState());
+    if (outcome.effect === "collapse") await shrink(outcome.state.active);
+  });
 }
 // Mount the newcomer hidden, wait until it can be answered, then open it: the small window must not reveal an empty body.
 async function openArrival(id: string, arrival: boolean) {
@@ -319,25 +381,64 @@ async function applyMark(id: string, mark: boolean) {
   if (outcome.effect === "collapse" || outcome.effect === "mini-resize") await shrink(target);
   else if ((outcome.effect === "switch" || outcome.effect === "expand") && target) await select(target);
 }
-async function select(id: string, explicit = false, arrival = false) {
+// C17: the body being left fades out before the next request takes its place. Nothing to wait for with reduced motion,
+// without a body on screen, or while a body that is itself still fading in is replaced. "fade" means the incoming
+// body fades in; "ended" means the request ended during the wait, so the body that was fading out stays.
+async function leaveBody(id: string): Promise<"none" | "fade" | "ended"> {
+  const from = active.value;
+  if (!from || from === id || reducedMotion() || view.value !== "expanded" || motion.value) return "none";
+  if (!requests.value.some(r => r.requestId === from) || terminals.has(from)) return "none";
+  if (swap.value?.phase === "in") return "fade";
+  const timer = transitionClock(); clock = timer;
+  swap.value = { from, incoming: id, phase: "out" };
+  // Mount the next body while the current one fades out.
+  preparedIds.value.add(id);
+  try {
+    await nextTick();
+    // The animation starts from a laid-out frame.
+    root.value?.querySelector<HTMLElement>(`[data-inbox-request="${CSS.escape(from)}"] .content`)?.getBoundingClientRect();
+    if (!await timer.wait(answerTransition.exit)) { swap.value = null; return "none"; }
+  } finally { timer.cancel(); if (clock === timer) clock = null; }
+  if (terminals.has(id) || !requests.value.some(r => r.requestId === id)) { swap.value = null; return "ended"; }
+  return "fade";
+}
+// The incoming body fades in once the window has its final geometry; the swap ends with the fade.
+function swapIn() {
+  const current = swap.value;
+  if (!current) return;
+  current.phase = "in";
+  later(() => { if (swap.value === current) swap.value = null; }, answerTransition.enter);
+}
+async function select(id: string, explicit = false, arrival = false, animate = false) {
   if (!requests.value.some(r => r.requestId === id)) return;
   rememberFocus();
   // R6/C9: opening a request from the small window expands it; the request keeps its mark.
   const expanding = model.browse(collapseState(), id).effect === "expand";
   await popupInboxActivate(id);
+  const left = animate && !expanding ? await leaveBody(id) : "none";
+  if (left === "ended") return;
+  const swapping = left === "fade";
+  if (swapping) swap.value = { from: active.value!, incoming: id, phase: "prepare" };
   active.value = id;
   visited.value.add(id);
   lastBrowsed = id;
   cancelArrival(id);
-  if (expanding) { view.value = "expanded"; shifting.value = true; }
+  // The list the small window shows, in case the expansion has to be undone.
+  const list = sidebarWidth.value;
+  if (expanding) {
+    view.value = "expanded"; shifting.value = true; settled.value = false;
+    // A single request has no Sidebar column once expanded: its list stays, fading out, until the window has grown.
+    if (!sidebar.value) loneList.value = list;
+  }
   try {
     await nextTick();
-    await geometry(arrival);
+    await geometry(arrival, expanding ? change("expand", "expanded") : {});
   } catch (e) {
-    if (expanding) view.value = "collapsed";
+    if (expanding) { view.value = "collapsed"; look.value = "collapsed"; settled.value = true; sidebarWidth.value = list; }
     throw e;
   } finally {
-    if (expanding) shifting.value = false;
+    if (expanding) { shifting.value = false; loneList.value = 0; motionMs.value = 0; }
+    if (swapping) swapIn();
   }
   // The body is inert while the window changes form; focus can only return once Vue has lifted that.
   if (expanding) await nextTick();
@@ -348,7 +449,7 @@ async function select(id: string, explicit = false, arrival = false) {
 }
 function choose(id: string) {
   if (blocked.value) return;
-  void enqueue(() => select(id));
+  void enqueue(() => select(id, false, false, true));
 }
 function toggleReviewSidebar() {
   void enqueue(async () => { sidebar.value = !sidebar.value; await geometry(); });
@@ -371,13 +472,18 @@ async function add(show: PopupInboxRequest, arrival = true) {
   const target = view.value === "collapsed" ? model.arrive(collapseState({ without: show.requestId }), newcomer(show)).state.active : null;
   const opened = target !== null;
   if (opened) await openArrival(target, arrival);
+  // C4: with the window opened onto the newcomer there is no unread row to point at; the bubble lands on the open one.
+  if (opened && arrival && active.value === show.requestId) shownArrivals.add(show.requestId);
   const animate = arrival && unreadArrival(show.requestId);
   if (animate) arriving.value.add(show.requestId);
   await nextTick();
   // Ready means that an answer surface exists, including navigation to unopened confirmations.
   if (show.interaction.type === "confirm") await confirmPopupReady(show.requestId);
   if (show.requestId !== active.value) await popupShowWindow(show.requestId);
-  if (opened) return;
+  if (opened) {
+    if (animate) { pendingArrivals.add(show.requestId); flushArrivals(); }
+    return;
+  }
   if (arrival) {
     try {
       await geometry(true);
@@ -398,12 +504,13 @@ function removeLocal(id: string) {
   failedIds.delete(id); preparedIds.value.delete(id); focusRestorers.delete(id); earlyArrivals.delete(id); settleReady(id);
 }
 async function finishRound() {
-  pendingArrivals.clear(); arriving.value.clear(); arrivalNotice.value?.clear(); hostPresented = false;
+  pendingArrivals.clear(); shownArrivals.clear(); arriving.value.clear(); arrivalNotice.value?.clear(); hostPresented = false;
   active.value = null; sidebar.value = false; sidebarWidth.value = 0; groupOrder.value = [];
   recovered.value = false; modal.value = null; error.value = ""; notice.value = "";
   pin.value = null;
   // R9: the next round starts expanded and unmarked; native resets the window position (C30).
-  secondary.value.clear(); view.value = "expanded"; shifting.value = false; lastBrowsed = null;
+  secondary.value.clear(); view.value = "expanded"; look.value = "expanded"; shifting.value = false; lastBrowsed = null;
+  settled.value = false; loneList.value = 0; motionMs.value = 0; swap.value = null;
   await popupInboxIdle();
 }
 async function advance(preferred: string | null) {
@@ -422,6 +529,8 @@ async function advance(preferred: string | null) {
   if (!requests.value.length) await finishRound();
 }
 async function completed(id: string, completion: CompletionFeedback) {
+  // The answer's own transition takes over from a body swap that is still fading in.
+  swap.value = null;
   const timer = transitionClock(); clock = timer;
   const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
   const row = root.value?.querySelector<HTMLElement>(`[data-inbox-row="${CSS.escape(id)}"]`);
@@ -527,6 +636,10 @@ async function terminal(id: string, winner: string, completion?: CompletionFeedb
   } else if (outcome.effect === "mini-resize") await shrink(null);
 }
 function panePhase(id: string) {
+  if (swap.value) {
+    const { from, incoming, phase } = swap.value;
+    return phase === "out" ? (id === from ? "out" : undefined) : id === incoming ? phase : undefined;
+  }
   if (!motion.value) return undefined;
   if (id !== motion.value.from && motion.value.phase === "prepare") return "prepare";
   if (motion.value.reduced) return undefined;
@@ -679,8 +792,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="root" class="inbox-root" :class="{ 'inbox-expanded': renderedSidebar, 'inbox-native': nativeCanvas, 'inbox-frozen': frozenCanvas }" :style="rootStyle" :data-completion-phase="motion?.phase">
-    <InboxSidebar v-if="renderedSidebar" :groups="groups" :total="requests.length" :selected-id="selectedId" :visited="visited" :arriving="arriving" :flashed="flashed" :drafts="drafts" :blocked="blocked" :motion="motion" :collapsing-group="collapsingGroup()" @choose="choose" @remember="rememberFocus" />
+  <div ref="root" class="inbox-root" :class="{ 'inbox-expanded': renderedSidebar, 'inbox-native': nativeCanvas, 'inbox-frozen': frozenCanvas }" :style="rootStyle" :data-completion-phase="motion?.phase"
+    :data-view="look" :data-primary="hasPrimary ? 'yes' : 'no'" :data-sidebar="sidebar ? 'on' : 'off'" :data-settled="settled ? 'yes' : 'no'" :data-lights="nativeCanvas ? 'hide' : 'keep'" :data-shifting="shifting ? 'yes' : 'no'">
+    <InboxSidebar v-if="renderedSidebar" :groups="groups" :total="requests.length" :selected-id="look === 'collapsed' ? null : selectedId" :visited="visited" :arriving="arriving" :flashed="flashed" :drafts="drafts" :secondary="secondary" :blocked="blocked" :motion="motion" :collapsing-group="collapsingGroup()"
+      @choose="choose" @remember="rememberFocus" @mark="markLater" @unmark="unmarkLater" @expand="expandFromList" @shrink="shrinkWindow" />
     <div v-if="renderedSidebar" class="inbox-divider" role="separator" aria-orientation="vertical" :aria-label="t('popup.inbox.resize')" @pointerdown="beginResize"></div>
     <main class="inbox-body" :inert="blocked || view === 'collapsed'">
       <button v-if="layoutReview" class="inbox-layout-review" @click="toggleReviewSidebar">{{ renderedSidebar ? '隐藏 Sidebar' : '显示 Sidebar' }} · 几何测试</button>
@@ -689,6 +804,8 @@ onBeforeUnmount(() => {
         <PopupView :scope="scopeFor(request.requestId)" />
       </div>
     </main>
+    <!-- The small window's accent frame; it fades in once the window has gathered. -->
+    <div class="mini-ring" aria-hidden="true"></div>
     <InboxArrivalNotice ref="arrivalNotice" :measure="measureArrival" @settled="arrivalSettled" />
     <div v-if="notice" class="inbox-notice" role="status">{{ notice }}</div>
     <div v-if="modal" class="inbox-close-backdrop" @click.self="continueAnswering">
@@ -710,14 +827,34 @@ onBeforeUnmount(() => {
 .inbox-layout-review { position: absolute; z-index: 90; top: 4px; left: 190px; padding: 4px 12px; border: 1px solid #8884; border-radius: 6px; background: var(--surface-overlay); color: var(--text-primary); font-size: 11px; cursor: pointer; }
 /* Both layouts keep the same main origin. Only the transition pins the body's extent. */
 .inbox-root.inbox-native { display: block; }
-.inbox-native .inbox-sidebar { position: absolute; left: calc(var(--inbox-canvas-left) - var(--inbox-sidebar) - 6px); top: 0; bottom: 0; width: var(--inbox-sidebar); }
+/* The Sidebar column sits at the window's left edge (`--inbox-visible-left`), which is also where a single request's list is. */
+.inbox-native .inbox-sidebar { position: absolute; left: var(--inbox-visible-left); top: 0; bottom: 0; width: var(--inbox-sidebar); }
 .inbox-native .inbox-divider { position: absolute; left: calc(var(--inbox-canvas-left) - 6px); top: 0; bottom: 0; width: 6px; }
 .inbox-native .inbox-body { position: absolute; left: var(--inbox-canvas-left); top: 0; bottom: 0; right: 0; width: auto; }
 .inbox-native.inbox-frozen .inbox-body { right: auto; width: var(--inbox-body-width); }
 .inbox-native .inbox-close-backdrop { left: var(--inbox-visible-left); width: var(--inbox-visible-width); right: auto; }
 .inbox-native .inbox-notice, .inbox-native .inbox-error { left: calc(var(--inbox-canvas-left) + var(--inbox-main) / 2); }
 .inbox-native .inbox-recovery { width: var(--inbox-main); box-sizing: border-box; }
-.inbox-root { position: relative; width: 100vw; height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; color: var(--text-primary); }
+.inbox-root {
+  --ms: 0ms; --inbox-ease: cubic-bezier(.2, 0, 0, 1); --inbox-ease-in: cubic-bezier(.4, 0, 1, 1); --inbox-ease-out: cubic-bezier(0, 0, .2, 1);
+  --inbox-lift: 16px; --inbox-win-radius: 16px;
+  position: relative; width: 100vw; height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; color: var(--text-primary);
+}
+/* Measuring the small layout must neither animate nor paint anything. */
+.inbox-root[data-still], .inbox-root[data-still] *, .inbox-root[data-still] *::before, .inbox-root[data-still] *::after { transition: none !important; animation: none !important; }
+/* The answer body and the list cross-fade while the window changes form. */
+.inbox-body { transition: opacity calc(var(--ms) * .5) var(--inbox-ease-out) calc(var(--ms) * .4), visibility 0s linear calc(var(--ms) * .4); }
+.inbox-root[data-view="collapsed"] .inbox-body { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity calc(var(--ms) * .42) var(--inbox-ease-in) 0ms, visibility 0s linear calc(var(--ms) * .42); }
+.inbox-root[data-shifting="yes"] :is(.inbox-body, .inbox-sidebar) { will-change: opacity; }
+.inbox-root[data-shifting="yes"] .sb-lift { will-change: transform; }
+.inbox-divider { transition: opacity calc(var(--ms) * .3) ease; }
+.inbox-root[data-sidebar="off"] .inbox-divider, .inbox-root[data-view="collapsed"] .inbox-divider { opacity: 0; }
+.mini-ring {
+  position: absolute; z-index: 60; left: var(--inbox-visible-left); top: 0; width: var(--mini-w); height: var(--mini-h); border-radius: var(--inbox-win-radius);
+  pointer-events: none; opacity: 0; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent);
+  transition: opacity calc(var(--ms) * .25) ease 0ms;
+}
+.inbox-root[data-view="collapsed"] .mini-ring { opacity: 1; transition: opacity calc(var(--ms) * .4) ease calc(var(--ms) * .6); }
 .inbox-root.inbox-expanded { grid-template-columns: var(--inbox-sidebar) 6px minmax(0, 1fr); }
 /* Only the answer body moves; native preview, navbar and footer retain their positions. */
 .inbox-request[data-answer-phase="out"] .content, .inbox-request[data-answer-phase="out"] .composer-dock { animation: inbox-answer-out 126ms cubic-bezier(.4, 0, 1, 1) both; }

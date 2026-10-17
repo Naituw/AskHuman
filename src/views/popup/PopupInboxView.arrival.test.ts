@@ -120,9 +120,33 @@ describe("inbox arrival lifecycle", () => {
   });
   it("does not resurrect unread state when the flying request is opened", async () => {
     const view = await open(); await emit("popup-inbox-show", request("b", 2)); await step(500);
-    await view.get('[data-inbox-row="b"]').trigger("click"); await flushPromises(); await step(2000);
+    // Opening the row starts the body swap; it takes the exit fade before the request is shown.
+    await view.get('[data-inbox-row="b"]').trigger("click"); await flushPromises();
+    await vi.advanceTimersByTimeAsync(126); await flushPromises(); await step(2000);
     expect(view.findAll(".inbox-arrival-floater")).toHaveLength(0);
     expect(view.get('[data-inbox-row="b"] .inbox-dot').classes()).not.toContain("unread");
+    expect(view.get('[data-inbox-row="b"]').classes()).not.toContain("flash");
+  });
+  it("plays the bubble onto the open row when the small window opens onto a new request", async () => {
+    const view = await open();
+    (view.vm as unknown as { markLater(id: string): void }).markLater("a"); await flushPromises();
+    expect(view.attributes("data-view")).toBe("collapsed");
+    await emit("popup-inbox-show", request("b", 2));
+    expect(view.attributes("data-view")).toBe("expanded");
+    // The newcomer is open, so it is not unread; the bubble still lands on its row.
+    expect(view.get('[data-inbox-row="b"]').classes()).toContain("selected");
+    expect(view.findAll(".inbox-arrival-floater").map(item => item.attributes("data-arrival-id"))).toEqual(["b"]);
+    expect(view.get('[data-inbox-row="b"] .inbox-dot').classes()).not.toContain("unread");
+    await step(landedAt);
+    expect(view.get('[data-inbox-row="b"]').classes()).toContain("flash");
+    await step(landedAt + 400); expect(view.findAll(".inbox-arrival-floater")).toHaveLength(0);
+  });
+  it("does not play a bubble for a request that arrives while the small window stays small", async () => {
+    reduced = true;
+    const view = await open();
+    (view.vm as unknown as { markLater(id: string): void }).markLater("a"); await flushPromises();
+    await emit("popup-inbox-show", request("b", 2));
+    expect(view.findAll(".inbox-arrival-floater")).toHaveLength(0);
     expect(view.get('[data-inbox-row="b"]').classes()).not.toContain("flash");
   });
   it("scrolls only navigation once and lets user scrolling end an offscreen flight", async () => {
