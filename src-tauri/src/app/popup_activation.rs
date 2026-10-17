@@ -52,12 +52,19 @@ pub async fn start(app: &AppHandle, window: &WebviewWindow) -> Result<bool, Stri
     #[cfg(not(target_os = "macos"))]
     {
         let _ = app;
-        window.is_focused().map_err(|e| e.to_string())
+        window_is_focused(window)
     }
 }
 
+/// Windows and Linux: whether the popup window has the focus right now (the start state of the page's rule).
+/// Like `window_focus`, this is not gated by `cfg`, so a macOS build type-checks it too.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn window_is_focused(window: &WebviewWindow) -> Result<bool, String> {
+    window.is_focused().map_err(|e| e.to_string())
+}
+
 /// Windows and Linux: the popup window gaining or losing the focus is the activation signal.
-#[cfg(not(target_os = "macos"))]
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn window_focus(app: &AppHandle, focused: bool) {
     use tauri::Emitter;
     let _ = app.emit(EVENT, focused);

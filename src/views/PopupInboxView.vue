@@ -1003,6 +1003,13 @@ onBeforeUnmount(() => {
   transition-delay: 0ms;
 }
 .inbox-root.inbox-expanded { grid-template-columns: var(--inbox-sidebar) 6px minmax(0, 1fr); }
+/* Windows and Linux have no pinned canvas to lay such a list out beside the body. A list that is not a Sidebar column (a single
+   request's small window, its hidden measuring pass, and the list fading out once the window has expanded) must not take a grid
+   column from the body: the body keeps the whole window it has afterwards, and the list lies at the left edge, where the small
+   window's list is. Otherwise the body is squeezed for the frames before the window changes form, and again until the list goes. */
+.inbox-root:not(.inbox-native)[data-sidebar="off"] { grid-template-columns: minmax(0, 1fr); }
+.inbox-root:not(.inbox-native)[data-sidebar="off"] .inbox-sidebar { position: absolute; left: 0; top: 0; bottom: 0; width: var(--inbox-sidebar); }
+.inbox-root:not(.inbox-native)[data-sidebar="off"] .inbox-divider { display: none; }
 /* Only the answer body moves; native preview, navbar and footer retain their positions. */
 .inbox-request[data-answer-phase="out"] .content, .inbox-request[data-answer-phase="out"] .composer-dock { animation: inbox-answer-out 126ms cubic-bezier(.4, 0, 1, 1) both; }
 .inbox-request[data-answer-phase="prepare"] .content, .inbox-request[data-answer-phase="prepare"] .composer-dock { opacity: 0; transform: translateY(14px); }

@@ -898,9 +898,11 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                         popup_preview::moved(window);
                     }
                     WindowEvent::Focused(focused) => {
-                        // Elsewhere than macOS the window's focus is the "user is in AskHuman" signal.
-                        #[cfg(not(target_os = "macos"))]
-                        popup_activation::window_focus(window.app_handle(), *focused);
+                        // Elsewhere than macOS the window's focus is the "user is in AskHuman" signal (macOS reports the
+                        // application's activation instead, which focus moving between this process's windows does not touch).
+                        if !cfg!(target_os = "macos") {
+                            popup_activation::window_focus(window.app_handle(), *focused);
+                        }
                         if *focused {
                             popup_preview::moved(window);
                             if let Some(bridge) = window.app_handle().try_state::<GuiBridge>() {

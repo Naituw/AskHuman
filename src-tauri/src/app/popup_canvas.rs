@@ -366,8 +366,7 @@ pub async fn apply(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (old_left, source);
-        apply_frame(window, allocation.frame)?;
-        Ok(allocation.frame)
+        instant::apply(window, allocation)
     }
 }
 /// Change the window form (small window <-> expanded layout). Windows and Linux have no pinned
@@ -385,6 +384,35 @@ pub async fn animate(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (source, animation);
+        instant::animate(window, allocation, transition)
+    }
+}
+pub async fn resume(window: &WebviewWindow, allocation: &Allocation) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return mac::resume(window, allocation).await;
+    #[cfg(not(target_os = "macos"))]
+    instant::resume(window, allocation)
+}
+
+/// The window changes of the platforms without a pinned viewport (Windows, Linux): the page's viewport is the
+/// window, so every change is made at once. Only cross-platform window calls are used and the module is not gated by
+/// `cfg`, so a macOS build type-checks it as well even though macOS never calls it.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+mod instant {
+    use super::*;
+
+    pub fn apply(window: &WebviewWindow, allocation: &Allocation) -> Result<Frame, String> {
+        apply_frame(window, allocation.frame)?;
+        Ok(allocation.frame)
+    }
+
+    /// A shrink lowers the minimum size first (the small window is smaller than the normal minimum), then sizes the
+    /// window, then takes its edges away; an expansion gives the edges back first so that the sizing is not refused.
+    pub fn animate(
+        window: &WebviewWindow,
+        allocation: &Allocation,
+        transition: Transition,
+    ) -> Result<Frame, String> {
         let expand = transition == Transition::Expand;
         if expand {
             window.set_resizable(true).map_err(|e| e.to_string())?;
@@ -399,31 +427,29 @@ pub async fn animate(
         }
         Ok(allocation.frame)
     }
-}
-pub async fn resume(window: &WebviewWindow, allocation: &Allocation) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    return mac::resume(window, allocation).await;
-    #[cfg(not(target_os = "macos"))]
-    window
-        .set_min_size(Some(tauri::LogicalSize::new(
-            allocation.minimum_width(),
-            super::popup_size::MIN_HEIGHT.min(allocation.frame.height),
-        )))
-        .map_err(|e| e.to_string())
-}
-#[cfg(not(target_os = "macos"))]
-fn apply_frame(window: &WebviewWindow, plan: Frame) -> Result<(), String> {
-    window
-        .set_size(tauri::LogicalSize::new(plan.width, plan.height))
-        .map_err(|e| e.to_string())?;
-    let positioned = window
-        .set_position(tauri::LogicalPosition::new(plan.x, plan.y))
-        .map_err(|e| e.to_string());
-    #[cfg(target_os = "linux")]
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        return Ok(());
+
+    pub fn resume(window: &WebviewWindow, allocation: &Allocation) -> Result<(), String> {
+        window
+            .set_min_size(Some(tauri::LogicalSize::new(
+                allocation.minimum_width(),
+                super::super::popup_size::MIN_HEIGHT.min(allocation.frame.height),
+            )))
+            .map_err(|e| e.to_string())
     }
-    positioned
+
+    fn apply_frame(window: &WebviewWindow, plan: Frame) -> Result<(), String> {
+        window
+            .set_size(tauri::LogicalSize::new(plan.width, plan.height))
+            .map_err(|e| e.to_string())?;
+        let positioned = window
+            .set_position(tauri::LogicalPosition::new(plan.x, plan.y))
+            .map_err(|e| e.to_string());
+        // A Wayland compositor places windows itself, so a refused position is not an error there.
+        if cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            return Ok(());
+        }
+        positioned
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]
