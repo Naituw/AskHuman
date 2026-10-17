@@ -18,6 +18,7 @@
 > 本文只记录已确认决策、待确认问题和讨论过程；原型证据与实现记录另写 plan。
 > 后记（2026-10-17）：`experimental.verticalQuestions` 的出厂默认已改为开，纵向布局成为产品默认（见 [多问题纵向模式](multi-question-vertical.md) §6）。
 > 下文第 7 轮（C32、§1.8、§6.8）里「顺序布局为默认 / 纵向为实验开关」是当时的状态，两种布局各自的落点规则不变。
+> 后记（2026-10-17）：拖入文件不再有静默失败——每种没加成功的情形都有提示，每次拖拽都往 `daemon.log` 写诊断行（`askhuman_drop`，不含路径与文件名），见 §6.9。
 > 术语：用户最初说「折叠」，随后澄清该词不准确，实际是「标记为当前暂时不想回答」。本文用
 > **次要** 指这个标记、**主要** 指未标记，**小窗 / 折叠态** 指全部次要后缩小的窗口；**peek** 指展开的窗口里只有次要请求
 > （从小窗点开浏览，或答完后跳转到）。界面文案（C21，第 5 轮）：动作「**稍后回答**」、状态「**稍后答**」、撤销「**取消稍后答**」；
@@ -701,3 +702,49 @@ P5（切走缩回，提交 `faff232`）完成后，先告知用户实机验证�
 - 小窗的拖放高亮（实线描边）、行上的进度条、胶囊提示是新增 UI，需要进 i18n。
 - 小窗期间的「停留展开」窗口仍是小窗，不应抢焦点；拖拽展开后放弃要缩回（§6.7 ②）。
 - 新一轮窗口位置不得漂移（C30）对小窗拖动 / 小窗里结束一轮同样适用，见 §6.7 ⑤。
+
+### 6.9 拖入的可见反馈与诊断日志（2026-10-17，正式实现之后）
+
+**起因**：用户在日常版（v0.14.5）遇到几次「拖图片进窗口没加成功」：来源是访达的「下载 / 桌面 / 文稿」（含默认存桌面的截图），「第二次拖就可以了」，当时窗口形态记不清。
+读代码发现拖入的每条失败路径都是**静默**的：图片读取失败只 `console.error`（Popup Host 的 stderr 是 /dev/null，没人看得到）；没有路径、落在预览区 / 分隔条、请求不收附件（确认 / 只选择）、
+窗口在过渡或有对话框，都是直接 `return`；而且没有任何持久化日志，事后分不清是哪一种。已知的猜测（未验证）：macOS 的隐私控制（TCC）对桌面 / 文稿 / 下载 / iCloud / 外接卷的读取返回 EPERM，
+第一次被拒、授权后第二次成功；另外第一次落在预览区 / 分隔条的死区也会表现为「第一次不行」。这一轮不去猜，先让每次拖入都有可见结果、有日志，下次就能对上号。
+
+**决策（用户逐项选了推荐项）**
+
+1. **范围**：只覆盖作答弹窗（合并窗口 + 独立弹窗模式）；Interject / Todos / Console 窗口不变。
+2. **全部情形都提示**（之前静默的）：拖入的内容没有磁盘路径（网页 / 聊天里的图片）→ 提示改按 ⌘V / Ctrl+V 粘贴；图片读取失败（没权限 / 找不到 / 其他，分开说）；落在附件预览区或分隔条；
+   请求不收附件（确认 / 只选择）；窗口忙（过渡或对话框）；拖入的文件已全部在附件里（重复）；部分成功（「已添加 N 个，M 个没能读取（原因）」）。
+   用户自己把附件拖出窗口再松手不算拖入，不提示（只记日志）。
+3. **提示形式**：合并窗口复用底部 toast（`.inbox-notice`）——成功仍 2.6 秒；失败 / 被忽略为警告样式（橙色左边线、`role="alert"`）停 6 秒（要读、要照着做）。
+   独立弹窗在标题栏下显示一行（`.drop-notice`），**只说异常**，成功不说（缩略图已经看得见）。中英文都有（`popup.drop.*`，zh / en 键与占位符一致由测试守住）。
+4. **没权限**：只写文案，不加按钮——指到「系统设置 → 隐私与安全性 → 文件和文件夹」去允许；深链在新版 macOS 上无法在这里验证，所以不做按钮。
+   措辞上补充了一点（回报给用户）：写成「允许 AskHuman（或启动它的终端 / 编辑器）访问「桌面」」，因为 TCC 可能把这次访问算在启动 daemon 的那个 App 头上，只写 AskHuman 可能指错。
+   只有在 macOS 且位置属于受保护类别（桌面 / 文稿 / 下载 / iCloud / 外接与网络卷）时才给这条指引；其他情形只说「请检查文件的访问权限」。
+5. **日志**：写进现有 `~/.askhuman/daemon.log`（Dev Instance 跟随 `ASKHUMAN_HOME`），一行一个 JSON，`event: "askhuman_drop"`，常开、无开关，沿用 5MB×2 轮转。
+   只记固定标签、条数、不透明的请求 UUID、失败原因、位置类别，**不记路径和文件名**：页面把路径交给后端，后端只按位置分类计数（`where`），页面编造的标签反序列化失败、不会进日志，
+   请求 id 只接受字母数字加连字符。有测试专门断言路径和文件名不会出现在行里。
+6. **日志粒度**：每次拖拽三类各一行——开始（`action: enter`，`paths` 为条数，`where` 为位置分布，`from` 为 `enter` / `over`，`over` 表示 `enter` 丢了，`outcome: busy | own_drag_out` 表示这次拖拽会被忽略）、
+   松手结果（`action: drop`，`outcome` / `target` / `added` / `images` / `files` / `duplicates` / `failed`）、拖出窗口未松手（`action: leave`）；控制器自己出错记 `action: error`。
+   `outcome` 取值：`added`、`partial`、`read_failed`、`duplicates`、`no_paths`、`on_preview`、`not_accepting`、`busy`、`own_drag_out`、`no_receiver`、`request_gone`、`no_target`；
+   `target` 取值：`card`、`body`、`row`、`preview`、`none`。一次拖拽不论来多少个 `over` 只写一行开始。
+7. **结构化读取**：新增 `popup_drop_read_image`，失败时拒绝出 `{reason, where, message}`（`permission_denied` / `not_found` / `other`；macOS 的 EPERM 在 Rust 里就是 `PermissionDenied`）；
+   `message` 是系统自己的话（`Is a directory (os error 21)`），只显示、不写日志。旧的 `read_image_data_url` 原样保留（其他窗口在用）；读取仍是一次同步整文件读取。
+
+**怎么读日志**：`rg askhuman_drop ~/.askhuman/daemon.log`。
+
+- 完全没有行 → 原生拖放事件根本没送到页面（窗口 / 系统层面的问题）。
+- `enter` 带 `paths: 0` → 拖入的内容不是磁盘文件（网页 / 聊天里的图片），`drop` 为 `no_paths`。
+- `enter` + `drop` 为 `read_failed`，`failed` 里是 `permission_denied` 且 `where` 是 `desktop` / `documents` / `downloads` 等 → 隐私控制拦了读取；
+  若紧接着第二次同样的文件 `added`，就证实了「第一次被拒、授权后可以」。
+- `drop` 为 `on_preview` → 落在预览区 / 分隔条；`busy` → 窗口在过渡或有对话框；`not_accepting` → 这个请求不收附件。
+- 只有 `enter`、没有 `drop` / `leave` → 松手事件没到页面（例如拖拽中途窗口失去了拖放会话）。
+
+**不做（保持现状，日志出来再定）**：异步读取、预览区接收文件、遇到 EPERM 自动重试、拖入过程中对预览区显示「不可放」的视觉。这些记在 `docs/PROGRESS.md`。
+
+**实现位置**：`src-tauri/src/popup_drop.rs`（两条命令、位置分类、日志行构造，含隐私测试）、`daemon::lifecycle::append_log_line`、`src/views/popup/dropFeedback.ts`（纯逻辑：结果 → 提示 / 日志字段、拖拽日志）、
+`useInboxDrop.ts`（控制器上报 `DropReport`：开始 / 离开 / 被拒的落点）、`PopupInboxView.vue`（toast + 日志）、`usePopupCore.ts`（`addDroppedPaths` 返回 `DropResult`；独立弹窗自己的监听 + `dropNotice`）、
+`PopupView.vue` / `popup.css`（`.drop-notice`）。
+
+**验证**：单元测试（Rust：`popup_drop` 17 条 + 日志追加 2 条；前端：`dropFeedback`、合并窗口、独立弹窗、`PopupView` 提示）、`vue-tsc`、`cargo test`、`cargo clippy`。真实 Finder 拖入、真实的 TCC 弹窗与拒绝无法脚本化，
+需要用户在隔离安装里亲手试（不覆盖日常版）。
