@@ -99,6 +99,12 @@ AskHuman daemon status    # endpoint 应按本树 .askhuman-dev/home/ 独立派�
 - **不要**把生产 bot 凭据写进 dev 实例，也不要指望从主配置一键导入（产品不提供）。  
 - **不要**在两棵树上同时 `enable --preset` 同一预设（平台长连接互斥）；需要并行真 IM 时准备**两套**测试 bot / 两个预设。  
 - **不要**为了「走 dev」去改 agent 全局提示词分支；靠目录标记自动改道。
+- **不要**在实例里运行会改 Agent 集成的显式命令（`AskHuman agents …`、设置页的 Agent 集成开关）来「试一试」：
+  `ASKHUMAN_HOME` 不隔离 `~/.cursor/hooks.json`、`~/.codex/…`、`~/.claude/settings.json` 等，这些写入会落到**真实**用户配置。
+  实例 daemon 启动时的自动迁移已被跳过，但显式命令不受限（见 spec §7.1）。
+- **不要**为了验证只换 `HOME` 起 daemon / GUI Host：沙箱必须同时设**非空 `ASKHUMAN_HOME`**（实例上下文）。
+  launchd label（GUI Host 登录项）按用户全局唯一，与 `HOME` 无关，生产上下文的进程会 `bootout` 并替换真实登录项。
+  需要验证 Agent 集成写入时，用一次性假 `HOME` + 非空 `ASKHUMAN_HOME`，收尾核对真实 hook 文件与登录项未变。
 
 ## 结束 worktree 时（可选）
 

@@ -147,4 +147,6 @@ Agent 不可定位终端时为 span，而项目始终为 button，两者默认�
 `codex` 发现 “on（需更新）”，再用全局 npm 产物执行 `agents stop cursor on` / `codex on` 恢复：
 Stop hook 重新指向全局产物并带回 `confirm`，三家状态均为 on，Agent 配置里没有残留安装产物或临时目录路径；
 Claude 配置未被触碰；LaunchAgents 登录项未变。恢复时偏好文件被重写，多了一个语义等同缺省的 `"pi": null`。
-以后用隔离实例验收，结束后都应当做同样的检查与恢复。
+该问题已在 2026-10-17 从根上修复：实例上下文的 daemon 启动时不再迁移全局 hook
+（见 [`../specs/dev-instance-parallel.md`](../specs/dev-instance-parallel.md) §7.1），
+不会再发生同类副作用。显式 `AskHuman agents …` 仍会写用户级文件，在隔离实例里运行它们后仍应核对 hook 状态。

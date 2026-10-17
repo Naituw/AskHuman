@@ -8,7 +8,14 @@
 //!   window style 启动 console-subsystem EXE，登录时不闪控制台。
 //!
 //! 全部 best-effort：写文件 + 尽力 load/unload；失败不阻塞模式切换（图标仍可由 daemon 兜底拉起）。
+//!
+//! Dev Instance（隔离实例）上下文**绝不**读写用户级全局登录项：LaunchAgents / autostart 的 label
+//! 全用户唯一，实例写入会把生产的开机自启劫持到 worktree 二进制（launchd 用无 `ASKHUMAN_HOME`
+//! 的环境重启它 → 以生产 home 运行外来构建，生产托盘/窗口被旧代码接管；卸载路径则会误删生产
+//! 登录项）。用户实证 2026-07-25：并行 worktree 实例反复劫持导致控制台无限 Loading。每个读写
+//! 入口都先过 `is_dev_instance_context`（与 Agent hook 自动迁移共用，定义见 `dev_instance`）。
 
+use crate::dev_instance::is_dev_instance_context;
 #[cfg(unix)]
 use std::path::PathBuf;
 
@@ -27,22 +34,6 @@ fn current_exe() -> String {
         .ok()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "AskHuman".to_string())
-}
-
-/// Dev Instance（隔离实例）上下文：**绝不**读写用户级全局登录项。
-/// LaunchAgents / autostart 的 label 全用户唯一，dev 实例写入会把生产的开机自启劫持到
-/// worktree 二进制（launchd 用无 `ASKHUMAN_HOME` 的环境重启它 → 以生产 home 运行外来构建，
-/// 生产托盘/窗口被旧代码接管；卸载路径则会误删生产登录项）。用户实证 2026-07-25：并行
-/// worktree 实例反复劫持导致控制台无限 Loading。判定用 env + exe 路径双料（launchd 重启的
-/// 进程无 env，靠 `.askhuman-dev` 路径段兜底）。
-fn is_dev_instance_context() -> bool {
-    if std::env::var(crate::dev_instance::ASKHUMAN_HOME_ENV).is_ok_and(|v| !v.trim().is_empty()) {
-        return true;
-    }
-    std::env::current_exe().is_ok_and(|p| {
-        p.components()
-            .any(|c| c.as_os_str() == crate::dev_instance::DEV_DIR)
-    })
 }
 
 // ===== Windows: per-user Run registry values =====
@@ -744,23 +735,5 @@ mod tests {
             "command = \"\"\"C:\\Program Files\\AskHuman\\AskHuman.exe\"\" --gui-host\""
         ));
         assert!(script.contains("shell.Run command, 0, False"));
-    }
-
-    /// Dev 实例上下文判定（防生产登录项劫持，用户实证 2026-07-25）：`ASKHUMAN_HOME` 置位
-    /// 即视为隔离实例。exe 路径分支（launchd 重启无 env 的兜底）无法在测试内伪造，仅测 env 分支。
-    #[test]
-    fn dev_instance_context_follows_home_env() {
-        // 与 paths.rs 的 env 测试同约定：串行修改进程 env，结束后恢复。
-        let key = crate::dev_instance::ASKHUMAN_HOME_ENV;
-        let prev = std::env::var_os(key);
-        std::env::set_var(key, "/tmp/x/.askhuman-dev/home");
-        assert!(is_dev_instance_context());
-        std::env::remove_var(key);
-        // 无 env 时结果取决于测试二进制路径（target/ 下不含 .askhuman-dev）→ false。
-        assert!(!is_dev_instance_context());
-        match prev {
-            Some(v) => std::env::set_var(key, v),
-            None => std::env::remove_var(key),
-        }
     }
 }
