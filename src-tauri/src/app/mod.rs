@@ -12,6 +12,7 @@ pub mod popup_preview;
 pub mod popup_preview_actions;
 pub(crate) mod popup_preview_geometry;
 mod popup_size;
+pub(crate) mod popup_title;
 pub mod popup_transition;
 pub mod terminal_gate;
 pub mod tray_menu;

@@ -1,0 +1,68 @@
+/* Prototype-only styles for the "Agent session title in the popup" prototype: the stage and the fake window
+   around the real popup, and the title variants. Nothing here ships; the product's popup.css is used as is. */
+
+html.pt-frame { --pt-desk: linear-gradient(135deg, #c6d1e1 0%, #e4dcef 100%); }
+html.pt-frame.theme-dark { --pt-desk: linear-gradient(135deg, #14171c 0%, #1d1a24 100%); }
+html.pt-frame body, html.pt-frame #app { background: var(--pt-desk); overflow: hidden; }
+
+.pt-stage { height: 100%; display: flex; align-items: flex-start; justify-content: center; padding: 20px; }
+.pt-window {
+  position: relative; flex: none; width: var(--pt-win-w); height: var(--pt-win-h); border-radius: 16px; overflow: hidden; background: var(--bg);
+  box-shadow: 0 0 0 .5px rgba(0, 0, 0, .28), 0 20px 50px rgba(0, 0, 0, .26), 0 3px 10px rgba(0, 0, 0, .14);
+}
+.theme-dark .pt-window { box-shadow: 0 0 0 .5px rgba(255, 255, 255, .2), 0 20px 50px rgba(0, 0, 0, .6), 0 3px 10px rgba(0, 0, 0, .4); }
+.pt-window[data-platform="win"] { border-radius: 8px; }
+.pt-body { position: absolute; inset: 0; display: flex; }
+.pt-window[data-platform="win"] .pt-body { top: 32px; }
+.pt-main { position: relative; flex: 1; min-width: 0; min-height: 0; }
+/* As in the shared window: the popup fills its pane instead of the viewport. */
+.pt-main .popup-shell, .pt-main .popup-status { height: 100%; width: 100%; }
+.pt-sidebar {
+  flex: none; width: 240px; display: flex; flex-direction: column; min-height: 0;
+  --ms: 0ms; --inbox-ease: cubic-bezier(.2, 0, 0, 1); --inbox-ease-in: cubic-bezier(.4, 0, 1, 1); --inbox-ease-out: cubic-bezier(0, 0, .2, 1); --inbox-lift: 16px;
+}
+.pt-sidebar > .inbox-sidebar { flex: 1; }
+.pt-divider { flex: none; width: 6px; background: color-mix(in srgb, currentColor 8%, transparent); }
+
+/* macOS traffic lights (schematic: the real window draws its own). */
+.pt-lights { position: absolute; z-index: 30; top: 8px; left: 13px; display: flex; gap: 8px; pointer-events: none; }
+.pt-lights i { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .2); }
+.pt-lights i:nth-child(1) { background: #ff5f57; }
+.pt-lights i:nth-child(2) { background: #febc2e; }
+.pt-lights i:nth-child(3) { background: #28c840; }
+/* Windows / Linux native title bar (schematic). */
+.pt-winbar {
+  position: absolute; z-index: 30; inset: 0 0 auto 0; height: 32px; display: flex; align-items: center; gap: 8px; padding-left: 10px;
+  background: color-mix(in srgb, var(--bg) 86%, #8a8a8a); border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-primary);
+}
+.pt-win-icon { flex: none; width: 14px; height: 14px; border-radius: 4px; background: var(--accent); }
+.pt-win-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-winctl { display: flex; height: 100%; }
+.pt-winctl > span { width: 46px; display: grid; place-items: center; color: var(--text-secondary); }
+.pt-winctl svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; }
+
+.pt-fade-enter-active { transition: opacity 180ms ease; }
+.pt-fade-enter-from { opacity: 0; }
+.pt-caption svg, .pt-reply svg { flex: none; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* A (chosen, shipped): the title sits in the strip the macOS traffic lights leave empty. It is the product's own
+   `.session-strip` (PopupNavbar.vue); a cell that is not about A hides it so the alternative shows on its own. */
+.pt-stage:not([data-variant~="strip"]) .session-strip { display: none !important; }
+
+/* B: a caption at the top of the scrolling answer area; it scrolls away with the message. */
+.pt-caption { order: -1; display: flex; align-items: center; gap: 5px; min-width: 0; margin-bottom: -4px; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text-secondary); }
+.pt-caption > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* C: "reply to" in the free room between the footer's buttons. */
+.pt-stage[data-variant~="reply"] .footer > .spacer { display: none; }
+.pt-stage[data-variant~="reply"] .footer > .spacer ~ .btn { order: 2; }
+.pt-stage[data-variant~="reply"] .footer > .pt-reply { order: 1; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 5px; padding-left: 8px; font-size: 12px; color: var(--text-secondary); }
+.pt-reply-label { flex: none; opacity: .85; }
+.pt-reply-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+
+/* D: the title inside the Agent chip (the chip may now shrink, and the title gives way first). */
+.pt-stage[data-variant~="inline"] .brand-agent { max-width: none; flex: 0 1 auto; min-width: 0; }
+.pt-stage[data-variant~="inline"] .brand-agent .chip-text { flex: none; }
+.pt-stage[data-variant~="inline"] .brand-agent .chip-arrow { order: 3; }
+.pt-chip-sep { order: 1; flex: none; opacity: .45; }
+.pt-chip-title { order: 2; flex: 0 100 auto; min-width: 2.5em; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -2601,9 +2601,9 @@ pub async fn save_settings(
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.set_title(crate::i18n::tr(lang, "title.settings"));
     }
-    if let Some(w) = app.get_webview_window("popup") {
-        let _ = w.set_title(crate::i18n::tr(lang, "title.popup"));
-    }
+    // On Windows / Linux the popup title also carries the Agent session title, so rebuild it
+    // instead of resetting it to the plain app name.
+    crate::app::popup_title::refresh(&app, lang);
     Ok(())
 }
 

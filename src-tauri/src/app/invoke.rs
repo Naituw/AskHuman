@@ -98,6 +98,7 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::popup_agent_info,
         crate::commands::popup_project_info,
         crate::commands::popup_open_terminal,
+        crate::app::popup_title::popup_set_session_title,
         crate::commands::popup_inbox_init,
         crate::commands::popup_inbox_activate,
         crate::commands::popup_inbox_idle,

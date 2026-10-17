@@ -72,6 +72,13 @@ Current prototypes:
   that needs a real app switch (S15 hands the activation to Finder); `--burst` / `--video` / the interactive mode keep
   the normal active window. Anything that takes the focus must be agreed with the user first. To prove a run is silent,
   poll `lsappinfo front` while it runs: the front app must stay the one you started from.
+- `popup-session-title.html` — where the Agent session title shows inside the popup (spec
+  `docs/specs/popup-session-info.md`). Every cell is an iframe running the **real** `PopupView` against `mockIPC`
+  (`sessionTitleMock.ts`). The chosen placement, the title strip (`strip`), now ships in `PopupNavbar`, so that cell is
+  the product itself; the rejected placements (`caption|reply|inline`, `SessionTitleFrame.vue`, teleported into the
+  real DOM) are the only prototype code, and a cell without `strip` hides the product's strip for comparison. Controls
+  cover theme, title length, window width and late arrival; `popup-session-title-frame.html?variant=strip|caption|reply|inline&…`
+  renders one window. Pure browser, no Tauri, so the Windows / Linux native title is only drawn as an illustration.
 
 **Workflow:** iterate UI ideas on the prototype first (cheap, instant feedback, user can review
 in a browser), get the design confirmed, then port to the real views. Keep the prototype in

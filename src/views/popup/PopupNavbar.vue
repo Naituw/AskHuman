@@ -2,9 +2,12 @@
 // 顶部导航栏：来源头部（agent/workspace 胶囊 + 相对时间）+ 右侧动作（自更新入口/置顶/待办/
 // 历史/设置）。多根组件：navbar 之外还含自更新浮层背板与「更新待生效」横条（保持 .popup 的
 // flex 子级顺序）。
+import { computed } from "vue";
+import SessionIcon from "../../components/SessionIcon.vue";
 import SourcePopover from "./SourcePopover.vue";
 import { useI18n } from "vue-i18n";
 import { usePopupContext } from "./context";
+import { usePopupWindowTitle } from "./usePopupWindowTitle";
 
 const { t } = useI18n();
 const {
@@ -47,10 +50,21 @@ const {
   openHistoryWindow,
   openSettingsWindow,
 } = usePopupContext();
+
+// The Agent session title: drawn in the title strip on macOS, written into the native window title elsewhere.
+const sessionTitle = computed(() => (agentSessionTitle.value || "").trim());
+usePopupWindowTitle(sessionTitle, popupActive);
 </script>
 
 <template>
   <header class="navbar" :class="{ scrolled }" data-tauri-drag-region>
+    <!-- macOS only (CSS): the Agent session title in the title strip beside the traffic lights. It is out of flow, so it adds no height and a late title shifts nothing. -->
+    <Transition name="session-strip">
+      <div v-if="sessionTitle" class="session-strip">
+        <SessionIcon />
+        <span class="session-strip-title">{{ sessionTitle }}</span>
+      </div>
+    </Transition>
     <span class="brand" :class="{ inline: agentInline }">
       <span class="brand-dot"></span>
       <span class="brand-title">{{ headerPrefix }}</span>
@@ -253,3 +267,67 @@ const {
     {{ t("popup.update.pendingBanner") }}
   </div>
 </template>
+
+<style>
+/*
+ * The Agent session title (docs/specs/popup-session-info.md). macOS only: Windows / Linux show it in the
+ * native window title instead.
+ *
+ * It sits in the title strip the traffic lights leave empty (the navbar's 30px top padding in popup.css),
+ * centered between the lights and the right edge. It is out of flow, so it adds no height and a title that
+ * arrives late moves nothing, and with no title the window is exactly as it was. It is display only: pointer
+ * events pass through to the draggable navbar, and the full title stays in the Agent chip's hover card.
+ */
+.session-strip {
+  display: none;
+}
+.macos .navbar {
+  position: relative;
+}
+.macos .session-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 30px;
+  /* Clear the traffic lights on the left and mirror it on the right so the title stays centered. */
+  padding: 0 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  pointer-events: none;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  color: var(--text-secondary);
+}
+.session-strip svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.session-strip-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-strip-enter-active {
+  transition: opacity 180ms ease;
+}
+.session-strip-enter-from {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-strip-enter-active {
+    transition: none;
+  }
+}
+</style>
