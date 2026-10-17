@@ -142,7 +142,8 @@ Windows / Linux 的实机补验清单见 `PROGRESS.md`。
   `PopupInboxView.{collapse,later,leave,drop,mini,columns}.test.ts`。jsdom 不按选择器权重排序规则，依赖层叠结果的 CSS 用
   `popup/cssCascade.testkit.ts` 的最小层叠解析器测（`InboxSidebar.undo.test.ts`、`PopupInboxView.columns.test.ts`）。
   独立原型 `swift/prototype/PopupCollapseVerify.swift` + `examples/popup_collapse_demo.rs`（feature `collapse-prototype`，
-  `./scripts/popup-collapse-demo.sh` 运行，不进产品构建）保留作动画与几何的行为参照。
+  `./scripts/popup-collapse-demo.sh` 运行，不进产品构建）保留作动画与几何的行为参照：`--auto`（367 项）与 `--auto-controls`（18 项）
+  静默运行、不取焦点；`--focus`、`--burst`、`--video` 和交互模式会取走键盘焦点，运行前先问用户（spec C26）。
 
 ## 来源标题与上下文
 

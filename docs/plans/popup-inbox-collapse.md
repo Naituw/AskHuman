@@ -329,3 +329,12 @@ cd /tmp && ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1 \
 - 文档：`docs/overview-popup-ui.md` 新增「稍后回答与小窗」一节（语义、模型与流程、窗口事务、激活、拖入文件、测试与原型的实现地图，指向 spec / 本计划 / PROGRESS）；主 `docs/overview.md` 只补了模块地图里的三行（`PopupInboxView` 的职责、`swift/PopupCollapse.swift`、`popup_activation.rs` + `swift/PopupActivation.swift`），全局心智模型与不变量没有变；spec 顶部状态改为「已实现」，并写明 P9 与 Windows / Linux 实机仍未做。
 - `docs/PROGRESS.md`：与上面 §3 P8 的原文不同——**没有删除**「进行中」一节，而是把它改写成「只剩 P9」。P9 还要等用户确认「覆盖」的含义，是真实的未完成事项；Windows / Linux 的 gate 已在 P7 单独成节。P9 完成后再删除该节。
 - 验证：本阶段只改了 `docs/` 下的文档，没有代码改动；自动测试沿用 P7 的结果。
+
+### P9 总验收与安装（2026-10-18 凌晨）
+
+- 自动测试全部重跑：`vitest run` 76 files / **771 passed**；`node --test scripts/*.node-test.mjs` 32 passed；`cargo test` **1381 passed**、4 ignored；`vue-tsc --noEmit`、`vite build`、`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过（本机 1.88 对 `build.rs:68` 报既有的 `uninlined_format_args`，用 `-A` 屏蔽，与本任务无关）；原型 `scripts/popup-collapse-demo.sh --auto` 367 PASS / 0 FAIL、`--auto-controls` 18 PASS / 0 FAIL，与 P0 基线一致（静默，没取焦点）。
+- 覆盖安装之前先向用户说明了实际情况（第 15 轮）：日常 `AskHuman` 是 npm 全局包 v0.14.5（PATH 里第一个），日常 daemon、GUI Host、Cursor / Codex 的 hooks 都指向它；`~/.local/bin/AskHuman` 在 22:03 由另一个会话装入；默认 `install.sh` 只装 `~/.local/bin`，不动 npm 包 / daemon / hooks，所以装完日常窗口里仍看不到新功能（要等发布新版本）；也不用新二进制直接对日常 daemon 提问（二进制不同会让 daemon 排空重启）。用户回答：「覆盖」= **只装到 `~/.local/bin`（默认 `install.sh`，覆盖 22:03 那个）**，不动 npm 包、日常 daemon 和 hooks；最后一次实机验收「**不用**：只验证安装产物，其余沿用之前各轮的实机结论」。
+- 安装：工作树干净（HEAD `6c726cd`）时运行默认 `./scripts/install.sh`——`local-install` 增量编译 17 秒，Developer ID 签名（`com.naituw.humaninloop`），装入 `~/.local/bin/AskHuman`（46,131,856 字节）。验证：`--version` 为 v0.14.5；`codesign --verify --strict` 通过；npm 包的二进制（2026-10-16 13:39）、日常 daemon（PID 90251）、GUI Host、两份 hooks 都没有变化；用隔离的 `ASKHUMAN_HOME` + 假 `HOME` 启动新二进制的 daemon，`daemon status` 返回 `running` / `0.14.5 (protocol 3)`，随后 `daemon stop`。
+- 一个小坑（给以后做隔离验证的会话）：隔离实例 `daemon stop` 之后，launchd 里还留着 `com.naituw.humaninloop.daemon.instance.<hash>` 的登记（没有进程），要手动 `launchctl bootout gui/$(id -u)/<label>`；这次已清掉，现在 launchd 里只有日常的两个标签。不在本任务里改它。
+- 清理：隔离实例、`git worktree`、变异测试目录、截图和其他临时文件都已删除；顺手清了 `src-tauri/target/debug` 里可重建的 `examples` / `incremental`（磁盘紧张，空闲只有 7–9 GiB，dev 档缓存是这轮跑测试涨起来的）。
+- 结果：P0–P9 全部完成；macOS 的全部行为由用户在真实窗口验收（第 13–14 轮）。第 14 轮验收的构建（`c9fb69d`）之后合进来的代码只有三项：另一个会话的拖入失败提示（`0d55c68`，该会话自己实机验过）、隔离实例不再改写全局 hooks 的修复（`2224f82`，只影响隔离实例）、P7（macOS 上不改行为）。唯一延期的是 Windows / Linux 实机验收（`docs/PROGRESS.md`，项目待办 #1）。`docs/PROGRESS.md` 里「进行中」一节已删除。

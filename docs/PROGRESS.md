@@ -3,20 +3,6 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 进行中：合并窗口折叠态（只剩 P9：总验收与覆盖安装）
-
-「稍后回答」标记与小窗（需求决策 `docs/specs/popup-inbox-collapse.md`，实施计划与逐阶段记录 `docs/plans/popup-inbox-collapse.md` §8）的 P0–P8
-已实现并提交：macOS 的标记、小窗、动画、切走缩回、拖入文件由用户在真实窗口验收（第 13–14 轮）；Windows / Linux 走即时路径，实机验收延期
-（见下面单独的 gate）。当前实现地图见 `docs/overview-popup-ui.md`「稍后回答与小窗」。
-
-下一步（计划 P9）：全部自动测试（vitest、cargo、node、原型 `--auto`）再跑一遍；**覆盖日常二进制之前先向用户说明实际情况，并确认「覆盖」
-具体怎么做**（用户第 8 轮定「全部完成再覆盖」，中间阶段一律用计划 §4.1 的隔离安装）：日常 `AskHuman` 是 npm 全局包
-（`~/.nvm/versions/node/v24.18.0/lib/node_modules/askhuman`，PATH 里排在前面）；`~/.local/bin/AskHuman` 在 2026-10-17 22:03 出现并带
-`.askhuman-install-state`，应是另一个会话运行 `./scripts/install.sh` 装的，不是本任务装的。得到同意后才运行默认 `./scripts/install.sh`，
-再用新装的 `AskHuman` 做最终实机验收；之后清理 `/tmp/askhuman-collapse-qa`（含其中的 `git worktree`）、`/tmp/askhuman-mut` 等临时物。
-完成后删除本节。原型（`./scripts/popup-collapse-demo.sh`）的 `--auto` / `--auto-controls` 是静默的；`--focus`、`--burst`、`--video` 和交互模式会取走焦点，
-运行前先问用户（C26）。
-
 ## 待观察：拖入文件失败（`daemon.log` 的 `askhuman_drop` 行）
 
 2026-10-17 用户在日常版（v0.14.5）遇到几次「拖图片进窗口没加附件」（来源访达的下载 / 桌面 / 文稿，第二次拖就可以）。根因没有证实（最可能是 macOS 隐私控制拒绝读取，
