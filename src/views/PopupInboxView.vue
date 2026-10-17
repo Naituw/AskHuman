@@ -1,21 +1,20 @@
 <script setup lang="ts">
-import SessionIcon from "../components/SessionIcon.vue";
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useI18n } from "vue-i18n";
 import PopupView from "./PopupView.vue";
-import UnreadRipple from "./popup/UnreadRipple.vue";
+import InboxSidebar from "./popup/InboxSidebar.vue";
 import InboxArrivalNotice from "./popup/InboxArrivalNotice.vue";
 import { arrivalTiming, type ArrivalEnd, type ArrivalGeometry } from "./popup/inboxArrival";
 import type { PopupScope, InboxLayout } from "./popup/usePopupCore";
 import type { PopupInboxRequest } from "../lib/types";
 import { cancelPopup, confirmPopupReady, popupInboxActivate, popupInboxIdle, popupInboxInit, popupShowWindow } from "../lib/ipc";
-import { inboxGroups, inboxKind, inboxTitle, nextInboxRequest } from "./popup/inboxQueue";
+import { inboxGroups, inboxKind, nextInboxRequest } from "./popup/inboxQueue";
 import * as model from "./popup/inboxCollapse";
 import type { InboxState, View } from "./popup/inboxCollapse";
-import { answerTransition, transitionClock, type CompletionFeedback } from "./popup/inboxTransition";
+import { answerTransition, transitionClock, type CompletionFeedback, type InboxMotion } from "./popup/inboxTransition";
 
 const { t } = useI18n();
 const layoutReview = new URLSearchParams(location.search).get("layoutReview") === "1";
@@ -73,8 +72,7 @@ const preparedIds = ref(new Set<string>());
 const readyWaiters = new Map<string, Set<() => void>>();
 const focusRestorers = new Map<string, () => void>();
 const earlyArrivals = new Set<string>();
-const motion = ref<{ from: string; completion: CompletionFeedback; phase: "waiting" | "out" | "prepare" | "in";
-  incoming: string | null; reduced: boolean; rowHeight: number; group: string | null; groupHeight: number } | null>(null);
+const motion = ref<InboxMotion | null>(null);
 let clock: ReturnType<typeof transitionClock> | null = null;
 const terminals = new Set<string>();
 const listeners: UnlistenFn[] = [];
@@ -90,13 +88,6 @@ const selectedId = computed(() => motion.value?.phase === "prepare" ? motion.val
 const snapshot = computed(() => requests.value.filter(r => modal.value?.ids.includes(r.requestId)));
 const newAfterModal = computed(() => requests.value.filter(r => !modal.value?.ids.includes(r.requestId)).length);
 const currentSnapshot = computed(() => snapshot.value.filter(r => r.requestId === modal.value?.current));
-function agentLabel(request: PopupInboxRequest) {
-  const kind = request.agentKind;
-  if (!kind) return request.source;
-  const key = `agents.kind.${kind}`;
-  const label = t(key);
-  return label === key ? kind : label;
-}
 function later(fn: () => void, ms: number) {
   const timer = setTimeout(() => { timers.delete(timer); if (!disposed) fn(); }, ms);
   timers.add(timer);
@@ -535,7 +526,6 @@ async function terminal(id: string, winner: string, completion?: CompletionFeedb
     else await advance(outcome.state.active);
   } else if (outcome.effect === "mini-resize") await shrink(null);
 }
-function projectName(path: string) { return path.split(/[\\/]/).filter(Boolean).slice(-1)[0] || t("popup.inbox.unknownProject"); }
 function panePhase(id: string) {
   if (!motion.value) return undefined;
   if (id !== motion.value.from && motion.value.phase === "prepare") return "prepare";
@@ -544,9 +534,11 @@ function panePhase(id: string) {
   if (motion.value.from === id && motion.value.phase !== "waiting") return "out";
   return undefined;
 }
-function collapseGroup(path: string) {
-  return motion.value?.group === path && !motion.value.reduced && motion.value.phase !== "waiting"
-    && !requests.value.some(r => r.project === path && !terminals.has(r.requestId));
+// The project group that folds away with the request that just ended (its last one), if any.
+function collapsingGroup() {
+  const path = motion.value?.group;
+  if (!path || motion.value!.reduced || motion.value!.phase === "waiting") return null;
+  return requests.value.some(r => r.project === path && !terminals.has(r.requestId)) ? null : path;
 }
 function consequences(items: PopupInboxRequest[]) {
   const parts = (["ask", "permission", "stop"] as const).map(kind => {
@@ -688,34 +680,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="inbox-root" :class="{ 'inbox-expanded': renderedSidebar, 'inbox-native': nativeCanvas, 'inbox-frozen': frozenCanvas }" :style="rootStyle" :data-completion-phase="motion?.phase">
-    <aside v-if="renderedSidebar" class="inbox-sidebar" :inert="blocked" :aria-label="t('popup.inbox.pending')">
-      <header class="inbox-heading" data-tauri-drag-region>{{ t('popup.inbox.pending') }} <span>{{ requests.length }}</span></header>
-      <nav class="inbox-navigation" @pointerdown.capture="rememberFocus">
-        <section v-for="group in groups" :key="group.path" class="inbox-group" :class="{ 'inbox-group-collapse': collapseGroup(group.path) }" :style="motion?.group === group.path ? { '--completion-group-height': `${motion.groupHeight}px` } : undefined">
-          <h2 :title="group.path">{{ projectName(group.path) }} <span>{{ group.requests.length }}</span></h2>
-          <div v-for="request in group.requests" :key="request.requestId" class="inbox-entry" :class="{ 'inbox-entry-collapse': motion?.from === request.requestId && motion.phase !== 'waiting' && !motion.reduced }" :style="motion?.from === request.requestId ? { '--completion-row-height': `${motion.rowHeight}px` } : undefined">
-          <button class="inbox-row" :data-inbox-row="request.requestId" :class="{ selected: request.requestId === selectedId, flash: flashed.has(request.requestId) && motion?.from !== request.requestId, unread: !visited.has(request.requestId) }" :aria-current="request.requestId === selectedId ? 'true' : undefined" :title="inboxTitle(request)" @click="choose(request.requestId)">
-            <UnreadRipple :active="!visited.has(request.requestId) && !arriving.has(request.requestId) && !flashed.has(request.requestId)" />
-            <span class="inbox-dot" :class="{ unread: !visited.has(request.requestId) && !arriving.has(request.requestId) }" :aria-label="!visited.has(request.requestId) ? t('popup.inbox.unread') : undefined"></span>
-            <span class="inbox-row-content">
-              <strong><span v-if="inboxKind(request) !== 'ask'" class="inbox-kind">{{ t(`popup.inbox.kind.${inboxKind(request)}`) }}</span>{{ inboxTitle(request) || t('popup.inbox.untitled') }}</strong>
-              <span class="inbox-row-meta" :class="{ 'has-session': !!request.agentSessionTitle?.trim() }">
-                <span class="inbox-row-agent" :title="agentLabel(request)">{{ agentLabel(request) }}</span>
-                <template v-if="request.agentSessionTitle?.trim()">
-                  <span class="inbox-source-separator" aria-hidden="true">/</span>
-                  <span class="inbox-session" :title="request.agentSessionTitle">
-                    <SessionIcon />
-                    <span class="inbox-session-title" :title="request.agentSessionTitle">{{ request.agentSessionTitle }}</span>
-                  </span>
-                </template>
-                <em v-if="drafts.has(request.requestId)">{{ t('popup.inbox.draft') }}</em>
-              </span>
-            </span>
-          </button>
-          </div>
-        </section>
-      </nav>
-    </aside>
+    <InboxSidebar v-if="renderedSidebar" :groups="groups" :total="requests.length" :selected-id="selectedId" :visited="visited" :arriving="arriving" :flashed="flashed" :drafts="drafts" :blocked="blocked" :motion="motion" :collapsing-group="collapsingGroup()" @choose="choose" @remember="rememberFocus" />
     <div v-if="renderedSidebar" class="inbox-divider" role="separator" aria-orientation="vertical" :aria-label="t('popup.inbox.resize')" @pointerdown="beginResize"></div>
     <main class="inbox-body" :inert="blocked || view === 'collapsed'">
       <button v-if="layoutReview" class="inbox-layout-review" @click="toggleReviewSidebar">{{ renderedSidebar ? '隐藏 Sidebar' : '显示 Sidebar' }} · 几何测试</button>
@@ -754,43 +719,15 @@ onBeforeUnmount(() => {
 .inbox-native .inbox-recovery { width: var(--inbox-main); box-sizing: border-box; }
 .inbox-root { position: relative; width: 100vw; height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; color: var(--text-primary); }
 .inbox-root.inbox-expanded { grid-template-columns: var(--inbox-sidebar) 6px minmax(0, 1fr); }
-.inbox-sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: color-mix(in srgb, var(--bg, #f5f5f5) 72%, transparent); }
-.inbox-heading { display: flex; align-items: center; justify-content: space-between; padding: 30px 16px 14px; font-size: 13px; font-weight: 600; user-select: none; }
-.inbox-heading span, .inbox-group h2 span { font-variant-numeric: tabular-nums; opacity: .6; }
-.inbox-navigation { flex: 1; overflow: auto; padding: 0 8px 16px; }
-.inbox-group h2 { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 600; opacity: .6; padding: 16px 12px 7px; margin: 0; overflow: hidden; }
-.inbox-entry-collapse { overflow: hidden; animation: inbox-entry-complete 300ms cubic-bezier(.2, 0, .2, 1) both; }
-.inbox-group-collapse { overflow: hidden; animation: inbox-group-complete 300ms cubic-bezier(.2, 0, .2, 1) both; }
 /* Only the answer body moves; native preview, navbar and footer retain their positions. */
 .inbox-request[data-answer-phase="out"] .content, .inbox-request[data-answer-phase="out"] .composer-dock { animation: inbox-answer-out 126ms cubic-bezier(.4, 0, 1, 1) both; }
 .inbox-request[data-answer-phase="prepare"] .content, .inbox-request[data-answer-phase="prepare"] .composer-dock { opacity: 0; transform: translateY(14px); }
 .inbox-request[data-answer-phase="in"] .content, .inbox-request[data-answer-phase="in"] .composer-dock { animation: inbox-answer-in 174ms cubic-bezier(0, 0, .2, 1) both; }
 @keyframes inbox-answer-out { to { opacity: 0; transform: translateY(-14px); } }
 @keyframes inbox-answer-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes inbox-entry-complete { from { height: var(--completion-row-height); opacity: 1; } to { height: 0; opacity: 0; } }
-@keyframes inbox-group-complete { from { height: var(--completion-group-height); opacity: 1; } to { height: 0; opacity: 0; } }
-.inbox-row { --inbox-ripple-color: rgba(38, 133, 232, .18); position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: flex-start; gap: 7px; width: 100%; padding: 10px 8px; border: 0; border-radius: 8px; text-align: left; background: transparent; color: inherit; cursor: pointer; }
-.theme-dark .inbox-row { --inbox-ripple-color: rgba(38, 133, 232, .252); }
-@media (prefers-color-scheme: dark) { :root:not(.theme-light) .inbox-row { --inbox-ripple-color: rgba(38, 133, 232, .252); } }
-.inbox-row.selected { background: color-mix(in srgb, #2685e8 12%, transparent); }
-.inbox-row:hover { background: color-mix(in srgb, #2685e8 8%, transparent); }
-.inbox-row.flash { animation: inbox-row-arrival 640ms cubic-bezier(.22, 0, .22, 1); }
-.inbox-dot { position: relative; z-index: 1; flex: 0 0 6px; height: 6px; margin-top: 5px; }
-.inbox-dot.unread::before { content: ''; position: absolute; left: -2px; top: -2px; width: 10px; height: 10px; border-radius: 50%; background: #2685e8; animation: inbox-unread-dot 2.8s cubic-bezier(.4, 0, .2, 1) infinite; }
-.inbox-row-content { position: relative; z-index: 1; min-width: 0; flex: 1; }
-.inbox-row strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; line-height: 1.45; font-weight: 500; }
-.inbox-kind { display: inline-block; vertical-align: 1px; font-size: 9px; line-height: 1.4; font-weight: 400; padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; margin-right: 5px; color: var(--text-secondary); }
-.inbox-row-meta { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 10px; line-height: 1.5; color: var(--text-secondary); margin-top: 6px; }
-.inbox-row-agent { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inbox-row-meta.has-session .inbox-row-agent { flex: 0 0 auto; max-width: 40%; }
-.inbox-source-separator { flex: none; color: var(--text-tertiary); }
-.inbox-session { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; font-size: 11px; }
-.inbox-session svg { flex: none; width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.inbox-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inbox-row-meta em { flex: none; font-size: 9px; font-style: normal; margin-left: auto; }
 .inbox-divider { cursor: col-resize; background: color-mix(in srgb, currentColor 8%, transparent); touch-action: none; }
 .inbox-body { min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; }
-.inbox-body[inert], .inbox-sidebar[inert] { pointer-events: none; }
+.inbox-body[inert] { pointer-events: none; }
 .inbox-request { flex: 1; min-height: 0; height: 100%; }
 .inbox-request.inbox-preparing { position: absolute; inset: 0; visibility: hidden; }
 .inbox-request .popup-shell, .inbox-request .popup-status { height: 100%; width: 100%; }
@@ -808,14 +745,4 @@ onBeforeUnmount(() => {
 .inbox-close-dialog .inbox-cancel { color: #d74343; }
 .inbox-close-new { opacity: .6; }
 .popup-submission-error { margin: 0; padding: 8px 14px; font-size: 12px; }
-@keyframes inbox-row-arrival {
-  0%, 100% { box-shadow: inset 0 0 0 100px #2685e800; }
-  28% { box-shadow: inset 0 0 0 100px rgba(38, 133, 232, .17); }
-  58% { box-shadow: inset 0 0 0 100px rgba(38, 133, 232, .09); }
-}
-@keyframes inbox-unread-dot { 0%, 100% { background: #2685e8; } 45% { background: #006dff; } 70% { background: #2685e8; } }
-@media (prefers-reduced-motion: reduce) {
-  .inbox-row.flash, .inbox-dot.unread::before { animation: none; }
-  .inbox-row.unread { box-shadow: inset 0 0 0 100px rgba(38, 133, 232, .08); }
-}
 </style>
