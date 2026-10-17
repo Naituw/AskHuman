@@ -141,6 +141,8 @@ private final class CollapseRun: NSObject {
     var interval = 1.0 / 60.0
     var maxError = 0.0
     var finished = false
+    /// The whole change was applied in `begin()` as one placement.
+    var instant = false
 
     init(window: NSWindow, webview: UnsafeMutableRawPointer, params: CollapseParams,
          done: PopupCollapseDone, userData: UnsafeMutableRawPointer?) {
@@ -165,13 +167,26 @@ private final class CollapseRun: NSObject {
         }
     }
 
+    /// The screen holding the largest part of `rect`. Unlike `window.screen` this also answers for a
+    /// window that is ordered out (a round's reset), so a hidden window never jumps to the main display.
+    private func screen(holding rect: NSRect) -> NSScreen? {
+        var best: NSScreen?
+        var bestArea: CGFloat = -1
+        for candidate in NSScreen.screens {
+            let overlap = candidate.frame.intersection(rect)
+            let area = overlap.isNull ? 0 : overlap.width * overlap.height
+            if area > bestArea { best = candidate; bestArea = area }
+        }
+        return best ?? window.screen ?? NSScreen.main
+    }
+
     /// Final frame: top-left anchored, shifted horizontally by `toDX`, then kept on the visible screen.
     private func target(from: NSRect) -> NSRect {
         var width = params.toWidth > 0 ? params.toWidth : from.width
         var height = params.toHeight > 0 ? params.toHeight : from.height
         var x = from.minX + params.toDX
         var top = from.maxY
-        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
+        if let visible = screen(holding: from)?.visibleFrame {
             width = min(width, visible.width)
             height = min(height, visible.height)
             x = min(max(x, visible.minX), max(visible.minX, visible.maxX - width))
@@ -211,7 +226,9 @@ private final class CollapseRun: NSObject {
             setLights(alpha: lightsFrom, hidden: false)
         }
 
-        if params.durationMs <= 0 {
+        // Nobody sees a hidden or minimized window change, and its display link may never tick.
+        if params.durationMs <= 0 || !window.isVisible || window.isMiniaturized {
+            instant = true
             frames = 1
             place(to, canvasX: canvasEnd, lightsAlpha: nil)
             complete()
@@ -330,7 +347,7 @@ private final class CollapseRun: NSObject {
         if finished { return }
         finished = true
         stopClock()
-        if params.durationMs > 0 { place(to, canvasX: canvasEnd, lightsAlpha: nil) }
+        if !instant { place(to, canvasX: canvasEnd, lightsAlpha: nil) }
         switch params.lights {
         // "settle" fades nothing but guarantees the final state (a resize that interrupted a fade-out).
         case "hide", "settle": setLights(alpha: 1, hidden: true)

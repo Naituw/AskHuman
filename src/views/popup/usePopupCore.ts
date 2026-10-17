@@ -89,6 +89,8 @@ export interface InboxLayout {
   previewWidth: number; limited: boolean;
   frame: { width: number; height: number };
   canvas?: { left: number; width: number; height: number; frozen: boolean } | null;
+  /** The window is the small mini-list window; the widths above still describe the expanded layout. */
+  collapsed?: boolean;
 }
 export interface PopupScope {
   layout?: Readonly<Ref<InboxLayout | null>>;

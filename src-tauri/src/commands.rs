@@ -358,7 +358,10 @@ pub async fn popup_inbox_layout(
     sidebar_width: Option<f64>,
     preview: bool,
     main_extent: Option<f64>,
+    collapsed: Option<crate::app::popup_inbox_geometry::Mini>,
+    dragging: Option<bool>,
 ) -> Result<crate::app::popup_inbox_geometry::Allocation, String> {
+    use crate::app::popup_inbox_geometry::{Form, Request};
     if window.label() != "popup"
         || window
             .app_handle()
@@ -369,10 +372,17 @@ pub async fn popup_inbox_layout(
     }
     crate::app::popup_inbox_geometry::prepare(
         &window,
-        Some(sidebar),
-        Some(preview),
-        sidebar_width,
-        main_extent,
+        Request {
+            sidebar: Some(sidebar),
+            preview: Some(preview),
+            sidebar_width,
+            main_extent,
+            // The page states the form it wants every time: a small window size asks for the
+            // small window, none asks for the expanded one.
+            form: collapsed.map_or(Form::Expanded, Form::Collapsed),
+            dragging: dragging.unwrap_or(false),
+            home: false,
+        },
     )
     .await
 }
@@ -414,6 +424,7 @@ pub async fn popup_inbox_resize_preview(
 pub async fn popup_inbox_commit(
     window: tauri::Window,
     revision: u64,
+    animation: Option<crate::app::popup_inbox_geometry::Animation>,
 ) -> Result<crate::app::popup_inbox_geometry::Allocation, String> {
     if window.label() != "popup"
         || window
@@ -423,7 +434,7 @@ pub async fn popup_inbox_commit(
     {
         return Err("shared Popup is unavailable".into());
     }
-    crate::app::popup_inbox_geometry::commit_frame(&window, revision).await
+    crate::app::popup_inbox_geometry::commit_frame(&window, revision, animation).await
 }
 #[tauri::command]
 pub async fn popup_inbox_finish(
@@ -1443,10 +1454,10 @@ pub async fn popup_preview_prepare(
     {
         return Ok(crate::app::popup_inbox_geometry::prepare(
             &window,
-            None,
-            Some(open),
-            None,
-            None,
+            crate::app::popup_inbox_geometry::Request {
+                preview: Some(open),
+                ..Default::default()
+            },
         )
         .await?
         .preview_layout());
@@ -1492,7 +1503,7 @@ pub async fn popup_preview_layout(
             .preview_layout());
         }
         return Ok(
-            crate::app::popup_inbox_geometry::commit(&window, version, false)
+            crate::app::popup_inbox_geometry::commit(&window, version, None, false)
                 .await?
                 .preview_layout(),
         );
