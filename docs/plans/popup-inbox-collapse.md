@@ -97,7 +97,7 @@
 
 **P8 文案与文档**：i18n 中英；`docs/overview-popup-ui.md` 更新（窗口模型 / 小窗 / 拖放 / 激活）；spec 状态改为「已实现」并链接本计划；本计划 §8 填实施与验证记录；`docs/PROGRESS.md` 删除本事项的 section，补上 Windows / Linux 延期 gate；主 overview 只有全局心智模型变化时才改（预期不改）。
 
-**P9 总验收与覆盖安装**：全部阶段的自动测试再跑一遍（含原型 `--auto` 作行为参照）；通知用户后才执行一次默认 `./scripts/install.sh` 覆盖日常二进制，之后用新装的 `AskHuman` 提问做最终实机验收（AGENTS.md 流程），并在 §8 记录。
+**P9 总验收与覆盖安装**：全部阶段的自动测试再跑一遍（含原型 `--auto` 作行为参照）；然后**先向用户说明实际情况再动手**——默认安装目标 `~/.local/bin` 目前为空、日常 `AskHuman` 是 npm 全局包（§4.1），确认「覆盖」具体怎么做（只安装到 `~/.local/bin`，还是进一步让开发版接管日常 daemon），得到同意后才执行默认 `./scripts/install.sh`，再用新装的 `AskHuman` 提问做最终实机验收（AGENTS.md 流程），并在 §8 记录。
 
 ## 4. 验证矩阵
 
@@ -114,7 +114,7 @@
 
 ### 4.1 中间阶段的实机验证（不覆盖日常二进制）
 
-用户要求全部完成再覆盖日常二进制（§7），所以中间阶段不跑默认的 `./scripts/install.sh`。需要真实产品窗口时：
+用户要求全部完成再覆盖日常二进制（§7），所以中间阶段不跑默认的 `./scripts/install.sh`。（P0 实测：这台机器日常用的 `AskHuman` 是 nvm 下的 npm 全局包 `~/.nvm/versions/node/*/bin/AskHuman`，其 daemon 用默认 `~/.askhuman`；`~/.local/bin/AskHuman` 目前不存在。所以默认安装不会替换 PATH 上排前面的那个，真正会产生「覆盖」效果的是开发版二进制以默认 home 运行、与日常实例共用 `~/.askhuman` 的 daemon 与配置——这正是下面的隔离做法要避免的。）需要真实产品窗口时：
 
 ```bash
 # 只写临时目录；编译仍用 src-tauri/target/local-install，安装脚本在显式 INSTALL_DIR 下不碰 ~/.local/bin
@@ -124,7 +124,7 @@ cd /tmp && ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1 \
   /tmp/askhuman-collapse-qa/bin/AskHuman -q "…" -o "…"
 ```
 
-依据：`docs/specs/dev-instance-parallel.md` §5.3 / §6.2（显式 `ASKHUMAN_HOME`、显式 `INSTALL_DIR` 优先；实例进程不写登录项）。P0 先用一个无害提问试跑，确认 `AskHuman daemon status`（日常实例）不受影响、临时实例的 daemon 在测试后可 `daemon stop` 干净退出，之后才用于 P2 起的验证。该 daemon 与窗口属于临时实例，测试结束必须停掉并清理 `/tmp/askhuman-collapse-qa`。弹窗仍是非激活前置，但真实交互（点击、拖拽）需要用户在场，先问再弹。
+依据：`docs/specs/dev-instance-parallel.md` §5.3 / §6.2（显式 `ASKHUMAN_HOME`、显式 `INSTALL_DIR` 优先；实例进程不写登录项）。**P0 已试跑通过**（见 §8）：临时实例起了独立 daemon（socket 在 `/tmp/askhuman-collapse-qa/home/`），日常 daemon（pid 与 uptime 不变）未受影响。每次测试结束必须清理：`daemon stop` 后还会留下一个 `--gui-host` 常驻进程，需 `pkill -f "/tmp/askhuman-collapse-qa/bin/AskHuman"`；整个任务结束时再删 `/tmp/askhuman-collapse-qa`。弹窗仍是非激活前置，但真实交互（点击、拖拽）需要用户在场，先问再弹。
 
 ## 5. 风险与对策
 
@@ -147,7 +147,7 @@ cd /tmp && ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1 \
 用户通过了本计划，并就下列事项作答（AskHuman 原话选项 + 补充）：
 
 1. 计划：通过，按计划实施。
-2. 实施位置：**就在当前主工作树做，不建 worktree / Dev Instance**；补充要求「**全部完成再覆盖二进制**」——所以中间阶段不运行默认的 `./scripts/install.sh`（它会覆盖 `~/.local/bin` 的日常 `AskHuman`），改用 §4.1 的隔离安装验证，全部完成后才覆盖一次（P9）。
+2. 实施位置：**就在当前主工作树做，不建 worktree / Dev Instance**；补充要求「**全部完成再覆盖二进制**」——所以中间阶段不运行默认的 `./scripts/install.sh`，改用 §4.1 的隔离安装验证，全部完成后才覆盖一次（P9）。（提问时我把「日常二进制」写成了 `~/.local/bin` 里的那个，P0 实测并非如此，见 §4.1 与 P9；P9 动手前会再向用户确认「覆盖」的具体含义。）
 3. 提交：**逐阶段提交**（§6）。
 4. 原型（`src/prototype/` 下的 Collapse*、`popup_collapse_demo.rs`、`scripts/popup-collapse-*`、`swift/PopupCollapse*.swift`）：**进仓库**，作为行为参照与回归基线（`chore` / `test` 类型，不进发布说明；同已有的 `popup_inbox_demo`、`pane_resize_demo` 惯例）。
 5. 实验开关：**不留**，直接作为正式行为。
@@ -156,4 +156,11 @@ cd /tmp && ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1 \
 
 ## 8. 实施与验证记录
 
-（实施开始后填写；每阶段一条：做了什么、验证命令与结果、未验证项。）
+每阶段一条：做了什么、验证命令与结果、未验证项。
+
+### P0 准备（2026-10-17）
+
+- 入库：`a894605` spec + 本计划，`3c6962e` 原型（`chore(prototype)`，不进发布说明）。
+- 基线（正式代码尚未改动）：`pnpm exec vitest run` 57 files / **430 passed**（含原型 41）；`node --test scripts/*.node-test.mjs` 32 passed；`vue-tsc --noEmit`、`cargo fmt --check` 通过；Rust 测试在 bin 目标里（无 lib 目标），`cargo test --manifest-path src-tauri/Cargo.toml --bin AskHuman popup`：**65 passed**（bin 共 1337 个），其中 `popup_inbox_geometry` 8 passed。原型 `--auto` 367 项 / `--auto-controls` 18 项沿用上一轮结果（原型源码自那次通过后未再改动），P1 动 Swift 后重跑。
+- 隔离安装试跑（§4.1）：`INSTALL_DIR=/tmp/askhuman-collapse-qa/bin ./scripts/install.sh` 编译 1m12s、签名通过；以 `ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1` 从 `/tmp` 运行，起了独立 daemon（socket 在临时目录），日常 daemon（pid 53110、socket `~/.askhuman/daemon.sock`）不受影响；`daemon stop` 后会留下一个 `--gui-host` 常驻进程，需要 `pkill` 清理（已写进 §4.1）。
+- 发现：日常 `AskHuman` 是 npm 全局包，不是 `~/.local/bin` 里的（见 §4.1、P9、§7）；P9 前要向用户确认「覆盖」的具体含义。
