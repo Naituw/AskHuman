@@ -3186,6 +3186,7 @@ pub fn play_popup_sound(name: String) {
 #[tauri::command]
 pub fn set_theme(app: AppHandle, theme: String) {
     apply_theme_to_windows(&app, &theme);
+    crate::app::gui_host::sync_theme(&app, &theme);
 }
 
 /// 从弹窗导航栏切换主题：写入配置并实时应用到所有窗口。
@@ -3201,6 +3202,7 @@ pub fn update_theme(app: AppHandle, theme: String) -> Result<(), String> {
     };
     cfg.save().map_err(|e| e.to_string())?;
     apply_theme_to_windows(&app, &theme);
+    crate::app::gui_host::sync_theme(&app, &theme);
     Ok(())
 }
 
