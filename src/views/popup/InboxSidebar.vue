@@ -208,12 +208,20 @@ function projectName(path: string) { return path.split(/[\\/]/).filter(Boolean).
 /* A set aside row keeps its label visible (a quiet pill) and turns it into the undo button while hovered or focused. */
 .row-flag.flag-archive.is-secondary { opacity: 1; background: var(--card-bg); }
 .flag-archive.is-secondary .fa-state { opacity: 1; }
-.inbox-entry:hover .flag-archive.is-secondary, .flag-archive.is-secondary:focus-visible { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+/* The undo button's fill is opaque (tokens.css: translucent washes let what is underneath show through): the small window keeps
+   no room for it, so there it is drawn over the end of the title, and the title fades into it rather than running through it. */
+.inbox-entry:hover .flag-archive.is-secondary, .flag-archive.is-secondary:focus-visible { background: color-mix(in srgb, var(--accent) 14%, var(--surface-overlay)); color: var(--accent); }
+.inbox-root[data-view="collapsed"] .row-flag.flag-archive.is-secondary::before {
+  content: ""; position: absolute; right: 100%; top: 0; bottom: 0; width: 16px; pointer-events: none;
+  background: linear-gradient(to right, transparent, color-mix(in srgb, var(--accent) 14%, var(--surface-overlay)));
+}
 .inbox-entry:hover .flag-archive.is-secondary .fa-state, .flag-archive.is-secondary:focus-visible .fa-state { opacity: 0; }
 .inbox-entry:hover .flag-archive.is-secondary .fa-undo, .flag-archive.is-secondary:focus-visible .fa-undo { opacity: 1; }
-/* The small window lists set aside rows only: no standing label there, just the undo button on hover. */
+/* The small window lists set aside rows only: no standing label there, just the undo button on hover (or keyboard focus).
+   These rules are more specific than the hover look above, so the button's fill has to be restated here. */
 .inbox-root[data-view="collapsed"] .row-flag.flag-archive.is-secondary { opacity: 0; background: transparent; }
-.inbox-root[data-view="collapsed"] .inbox-entry:hover .row-flag.flag-archive.is-secondary { opacity: 1; }
+.inbox-root[data-view="collapsed"] .inbox-entry:hover .row-flag.flag-archive.is-secondary,
+.inbox-root[data-view="collapsed"] .row-flag.flag-archive.is-secondary:focus-visible { opacity: 1; background: color-mix(in srgb, var(--accent) 14%, var(--surface-overlay)); }
 .inbox-sidebar[inert] { pointer-events: none; }
 @keyframes inbox-row-arrival {
   0%, 100% { box-shadow: inset 0 0 0 100px #2685e800; }
