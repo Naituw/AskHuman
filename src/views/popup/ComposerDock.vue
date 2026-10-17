@@ -9,6 +9,7 @@ const {
   composerOwnerQ,
   dockedComposerQ,
   setComposerDockRef,
+  composerDockTargetId,
   returnComposerHome,
 } = usePopupContext();
 </script>
@@ -35,6 +36,6 @@ const {
       </svg>
       <span>{{ t("popup.question.indexed", { i: composerOwnerQ + 1, n: total }) }}</span>
     </button>
-    <div id="popup-composer-dock-target" class="composer-dock-target"></div>
+    <div :id="composerDockTargetId" class="composer-dock-target"></div>
   </section>
 </template>

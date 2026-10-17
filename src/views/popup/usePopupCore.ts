@@ -140,6 +140,10 @@ export interface PopupScope {
   preview: PreviewDelegate;
 }
 
+// The shared window mounts one popup form per request in the same document, and each form has its own composer
+// dock. A fixed Teleport target id would make every form resolve to whichever dock comes first in the document.
+let composerDockSeq = 0;
+
 export function usePopupCore(scope?: PopupScope) {
   const popupActive = computed(() => !scope || scope.active.value);
   const acceptsInput = () => popupActive.value && !scope?.blocked.value;
@@ -233,6 +237,13 @@ export function usePopupCore(scope?: PopupScope) {
   const composerAnchorRefs = ref<(HTMLElement | null)[]>([]);
   const composerHomeRefs = ref<(HTMLElement | null)[]>([]);
   const composerDockRef = ref<HTMLElement | null>(null);
+  /** Teleport target of this form's own dock (see composerDockSeq): never shared with another form. */
+  const composerDockTargetId = `popup-composer-dock-target-${++composerDockSeq}`;
+  /**
+   * Set once a docking attempt left the editor outside this form's dock. The editor then stays inline for the rest of
+   * the request (spec popup-pinned-composer §9): an unpinned editor beats an empty dock bar and an invisible editor.
+   */
+  let dockUnavailable = false;
   const composerInlineHeights: number[] = [];
   const composerHomeHeights: number[] = [];
   const composerSelections: { start: number; end: number }[] = [];
@@ -317,6 +328,33 @@ export function usePopupCore(scope?: PopupScope) {
     };
   }
 
+  /** Whether the editor really sits in this form's dock. No editor mounted means nothing to judge. */
+  function composerLanded(editor: HTMLElement | null | undefined): boolean {
+    if (!editor) return true;
+    const dock = composerDockRef.value;
+    return !!dock && dock.contains(editor);
+  }
+
+  /** The Teleport did not deliver the editor to this form's dock: put it back inline and stop trying. */
+  function abandonDock(
+    i: number,
+    shouldFocus: boolean,
+    selection: { start: number; end: number } | undefined
+  ) {
+    console.warn("popup composer dock unavailable; keeping the answer editor inline", composerDockTargetId);
+    dockUnavailable = true;
+    dockedComposerQ.value = null;
+    nextTick(() => {
+      const back = inputRefs.value[i];
+      if (shouldFocus && back) {
+        focusComposer(i, ownerManuallyActivated.value);
+        if (selection) back.setSelectionRange(selection.start, selection.end);
+      }
+      autoGrow(i);
+      scheduleScrollWork();
+    });
+  }
+
   function setDockedComposer(next: number | null) {
     if (dockedComposerQ.value === next) return;
     const movingQ = next ?? dockedComposerQ.value ?? composerOwnerQ.value;
@@ -342,6 +380,10 @@ export function usePopupCore(scope?: PopupScope) {
     dockedComposerQ.value = next;
     nextTick(() => {
       const moved = inputRefs.value[movingQ];
+      if (next !== null && !composerLanded(moved)) {
+        abandonDock(movingQ, shouldFocus, selection);
+        return;
+      }
       if (shouldFocus && moved) {
         focusComposer(movingQ, ownerManuallyActivated.value);
         if (selection) moved.setSelectionRange(selection.start, selection.end);
@@ -428,12 +470,13 @@ export function usePopupCore(scope?: PopupScope) {
     const shouldDock = resolveComposerDocked(
       currentlyDocked,
       currentlyDocked ||
-        canComposerDock(
-          focusedQ.value === i,
-          ownerManuallyActivated.value,
-          ownerSeenInline.value,
-          ownerScrolledUpAfterActivation.value
-        ),
+        (!dockUnavailable &&
+          canComposerDock(
+            focusedQ.value === i,
+            ownerManuallyActivated.value,
+            ownerSeenInline.value,
+            ownerScrolledUpAfterActivation.value
+          )),
       geometry
     );
     if (shouldDock !== currentlyDocked) setDockedComposer(shouldDock ? i : null);
@@ -518,6 +561,7 @@ export function usePopupCore(scope?: PopupScope) {
     for (const el of composerHomeRefs.value) if (el) composerResizeObserver?.unobserve(el);
     composerOwnerQ.value = null;
     dockedComposerQ.value = null;
+    dockUnavailable = false;
     ownerSeenInline.value = false;
     ownerManuallyActivated.value = false;
     ownerScrolledUpAfterActivation.value = false;
@@ -2647,6 +2691,7 @@ export function usePopupCore(scope?: PopupScope) {
     setComposerAnchorRef,
     setComposerHomeRef,
     setComposerDockRef,
+    composerDockTargetId,
     composerAnchorStyle,
     setCardRef,
     setSentinelRef,
