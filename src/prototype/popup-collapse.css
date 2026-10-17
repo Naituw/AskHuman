@@ -150,8 +150,9 @@
 /* The small window lists secondary rows only: no standing label there, just the undo button on hover. */
 .stage[data-view="collapsed"] .row-flag.flag-archive.is-secondary { opacity: 0; background: transparent; }
 .stage[data-view="collapsed"] .inbox-entry:hover .row-flag.flag-archive.is-secondary { opacity: 1; }
-/* The label sits over the end of the title: keep the first line clear of it (the text re-wraps once, when the row is put away). */
-.stage[data-rowaction="archive"][data-view="expanded"] .inbox-row.secondary strong { padding-right: 90px; }
+/* The label sits over the end of the title: keep the first line clear of it (the text re-wraps once, when the row is put away).
+   Not while measuring the small window, which has no label (same rule as the product's InboxSidebar). */
+.stage[data-rowaction="archive"][data-view="expanded"]:not([data-measure]) .inbox-row.secondary strong { padding-right: 90px; }
 .stage[data-rowaction="archive"] .inbox-put-away { display: none; }
 /* The blue dot stays hidden until the arrival bubble has landed on it. */
 .inbox-row.arriving .inbox-dot::before { opacity: 0; }

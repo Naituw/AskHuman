@@ -132,7 +132,8 @@ function projectName(path: string) { return path.split(/[\\/]/).filter(Boolean).
 .inbox-root[data-view="expanded"][data-primary="no"][data-sidebar="on"] .mini-shrink { display: inline-flex; }
 /* The small window: the same column, in the accent colour, with the count as a pill. */
 .inbox-root[data-view="collapsed"] .inbox-heading { color: var(--accent); }
-.inbox-root[data-view="collapsed"] .inbox-heading .inbox-count { opacity: 1; color: #fff; background: var(--accent); padding: 1px 7px; border-radius: 9px; font-size: 12px; }
+/* The pill is part of what the small window's height is measured from, so the measuring pass lays it out too. */
+.inbox-root:is([data-view="collapsed"], [data-measure]) .inbox-heading .inbox-count { opacity: 1; color: #fff; background: var(--accent); padding: 1px 7px; border-radius: 9px; font-size: 12px; }
 .inbox-navigation { position: relative; flex: 1; min-height: 0; overflow: auto; padding: 0 8px 16px; }
 /* Settled in the small window: the list is as tall as its rows and scrolls inside the window. */
 .inbox-root[data-settled="yes"] .inbox-navigation { flex: none; height: var(--mini-nav-h); }
@@ -170,8 +171,10 @@ function projectName(path: string) { return path.split(/[\\/]/).filter(Boolean).
 /* Set aside rows are only dimmed next to requests that are still waiting; when all are set aside they read normally. */
 .inbox-root[data-primary="yes"] .inbox-row.secondary .inbox-row-content { opacity: .5; }
 .inbox-root[data-primary="yes"] .inbox-row.secondary:hover .inbox-row-content { opacity: .85; }
-/* The label sits over the end of the title: keep the first line clear of it. */
-.inbox-root[data-view="expanded"] .inbox-row.secondary strong { padding-right: 90px; }
+/* The label sits over the end of the title: keep the first line clear of it. The small window has no label, and it is
+   measured while the root still reads "expanded", so the measuring pass must not leave this room (it would wrap titles
+   that fit in the small window and make the window too tall). */
+.inbox-root[data-view="expanded"]:not([data-measure]) .inbox-row.secondary strong { padding-right: 90px; }
 .row-flag {
   position: absolute; right: 6px; top: 7px; z-index: 3; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px;
   display: grid; place-items: center; background: transparent; color: var(--text-secondary); cursor: pointer; opacity: 0; transition: opacity 120ms ease;
