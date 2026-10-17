@@ -78,7 +78,8 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 
-cargo build --manifest-path src-tauri/Cargo.toml --example popup_collapse_demo
+# The verification-only Swift helpers (swift/prototype/) are compiled only with this feature.
+cargo build --manifest-path src-tauri/Cargo.toml --example popup_collapse_demo --features collapse-prototype
 DEMO_EXE="$DEMO_ROOT/src-tauri/target/debug/examples/popup_collapse_demo"
 if [ "$(uname -s)" = "Darwin" ]; then
   # A separate app identity keeps the prototype apart from the product (Dock, window lists, UI inspection).

@@ -50,8 +50,12 @@ Current prototypes:
   `--effect blur|glass|solid` picks the window material), or add `--auto` for the native
   geometry/state checks and per-transition frame statistics (`--auto-controls` instead has the
   controller window drive the answer window through its real event channel). It uses its own Vite port 5199 and
-  app identity, never connects to the daemon, and the animation driver lives in
-  `src-tauri/swift/PopupCollapse.swift`. The same Swift file can screenshot the app's own windows
+  app identity, never connects to the daemon. The animation driver (`ah_collapse_animate`) lives in
+  `src-tauri/swift/PopupCollapse.swift` and is part of the product build. Everything that only exists to verify it
+  lives in `src-tauri/swift/prototype/PopupCollapseVerify.swift` and is compiled **only** with the `collapse-prototype`
+  Cargo feature (`scripts/popup-collapse-demo.sh` passes it; build the example by hand with
+  `cargo build --manifest-path src-tauri/Cargo.toml --example popup_collapse_demo --features collapse-prototype`),
+  so the product binary carries none of it. Those helpers can screenshot the app's own windows
   (CoreGraphics via `dlsym`, no screen-recording permission needed) and diff regions of two captures; the
   `--auto` run uses that for pixel checks and writes review PNGs to `.askhuman-dev/popup-collapse-shots/`.
   `--video` measures what the display really shows during collapse / expand: a plain backdrop window sits behind the

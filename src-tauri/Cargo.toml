@@ -14,11 +14,21 @@ default-run = "AskHuman"
 name = "AskHuman"
 path = "src/main.rs"
 
+# Needs the verification-only Swift helpers, which are compiled solely with `collapse-prototype`.
+# scripts/popup-collapse-demo.sh passes the feature; plain `cargo build/test` skips this example.
+[[example]]
+name = "popup_collapse_demo"
+path = "examples/popup_collapse_demo.rs"
+required-features = ["collapse-prototype"]
+
 [features]
 # 生产构建（直接 `cargo build --release`，不经 tauri CLI）必须启用此特性：
 # 否则 tauri 的 build.rs 判定 dev=true，二进制会去连 devUrl(localhost) 而非内嵌资源，导致白屏。
 # 注意：`pnpm tauri dev` 不启用此特性，仍走 dev server 热重载。请勿移除。
 custom-protocol = ["tauri/custom-protocol"]
+# Native collapse prototype (examples/popup_collapse_demo.rs): also compiles swift/prototype/*.swift
+# (window capture, burst recording, activation test hooks). Never enable it in product builds.
+collapse-prototype = []
 
 [build-dependencies]
 tauri-build = { version = "2" }
