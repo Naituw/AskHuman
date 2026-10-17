@@ -13,6 +13,8 @@ import type { PopupScope, InboxLayout } from "./popup/usePopupCore";
 import type { PopupInboxRequest } from "../lib/types";
 import { cancelPopup, confirmPopupReady, popupInboxActivate, popupInboxIdle, popupInboxInit, popupShowWindow } from "../lib/ipc";
 import { inboxGroups, inboxKind, inboxTitle, nextInboxRequest } from "./popup/inboxQueue";
+import * as model from "./popup/inboxCollapse";
+import type { InboxState, View } from "./popup/inboxCollapse";
 import { answerTransition, transitionClock, type CompletionFeedback } from "./popup/inboxTransition";
 
 const { t } = useI18n();
@@ -43,6 +45,13 @@ const renderedSidebar = computed(() => sidebarWidth.value > 0);
 const previews = new Map<string, boolean>();
 const nativePreviewSync = new Map<string, () => Promise<void>>();
 const visited = ref(new Set<string>());
+// "Answer later" (secondary) marks, and whether the window is the small one (docs/specs/popup-inbox-collapse.md).
+const secondary = ref(new Set<string>());
+const view = ref<View>("expanded");
+const shifting = ref(false);
+// Whether the user is in AskHuman right now; the native app-activation event keeps it current.
+const appActive = ref(true);
+let lastBrowsed: string | null = null;
 const drafts = ref(new Set<string>());
 const flashed = ref(new Set<string>());
 const arriving = ref(new Set<string>());
@@ -76,7 +85,7 @@ let tail = Promise.resolve();
 const groups = computed(() => inboxGroups(requests.value, groupOrder.value));
 const ordered = computed(() => groups.value.flatMap(group => group.requests));
 const mounted = computed(() => requests.value.filter(r => visited.value.has(r.requestId) || preparedIds.value.has(r.requestId)));
-const blocked = computed(() => !!modal.value || advancing.value);
+const blocked = computed(() => !!modal.value || advancing.value || shifting.value);
 const selectedId = computed(() => motion.value?.phase === "prepare" ? motion.value.from : active.value);
 const snapshot = computed(() => requests.value.filter(r => modal.value?.ids.includes(r.requestId)));
 const newAfterModal = computed(() => requests.value.filter(r => !modal.value?.ids.includes(r.requestId)).length);
@@ -185,7 +194,10 @@ function scopeFor(id: string): PopupScope {
   if (!scope) {
     scope = markRaw<PopupScope>({ layout: allocation, requestId: id, active: computed(() => active.value === id), blocked, pin,
       completion: computed(() => motion.value?.from === id ? motion.value.completion : null),
-      nativePreviewBlocked: computed(() => blocked.value && !(motion.value?.incoming === id && ["prepare", "in"].includes(motion.value.phase))),
+      nativePreviewBlocked: computed(() => (blocked.value || view.value === "collapsed") && !(motion.value?.incoming === id && ["prepare", "in"].includes(motion.value.phase))),
+      secondary: computed(() => secondary.value.has(id)),
+      markLater: () => markLater(id),
+      unmarkLater: () => unmarkLater(id),
       restoreFocus: restore => { if (restore) focusRestorers.set(id, restore); else focusRestorers.delete(id); },
       failed: () => { failedIds.add(id); settleReady(id); },
       sending: () => {
@@ -241,6 +253,8 @@ async function geometry(arrival = false, width?: number, mainExtent?: number) {
     }
     prepared = await invoke<InboxLayout>("popup_inbox_layout", {
       sidebar: sidebar.value, sidebarWidth: width ?? null, preview: previews.get(active.value ?? "") ?? false, mainExtent: mainExtent ?? null,
+      // The page states the window form every time; native treats a missing size as the expanded window.
+      ...(view.value === "collapsed" ? { collapsed: miniSize() } : {}),
     });
     allocation.value = prepared;
     sidebarWidth.value = prepared.sidebarWidth;
@@ -257,15 +271,85 @@ async function geometry(arrival = false, width?: number, mainExtent?: number) {
     throw e;
   }
 }
-async function select(id: string, explicit = false) {
+// The page's requests as the pure model sees them. Requests whose end is already known (queued behind the current
+// work) are left out, except the one a decision is about (`keep`) or one that is about to be added (`without`).
+function collapseState(options: { keep?: string; without?: string } = {}): InboxState {
+  return {
+    requests: requests.value
+      .filter(r => r.requestId !== options.without && (!terminals.has(r.requestId) || r.requestId === options.keep))
+      .map(r => ({ requestId: r.requestId, project: r.project, sequence: r.sequence,
+        secondary: secondary.value.has(r.requestId), visited: visited.value.has(r.requestId) })),
+    groupOrder: groupOrder.value, active: active.value, view: view.value, lastBrowsed,
+  };
+}
+function newcomer(show: PopupInboxRequest) {
+  return { requestId: show.requestId, project: show.project, sequence: show.sequence, secondary: false, visited: false };
+}
+// Provisional until the small window renders its own list: any finite size of at least 1 is a valid small window.
+function miniSize() { return { width: sidebarWidth.value || 240, height: 200 }; }
+// Native refuses to shrink a maximized or full-screen window; the request stays marked and the window stays open.
+const shrinkRefused = (e: unknown) => String(e).includes("cannot shrink");
+// Go to (or stay in) the small window form; `resting` is the request it remembers as its own.
+async function shrink(resting: string | null) {
+  // A close confirmation is on screen, so the user is here: the small window has no room for it.
+  if (modal.value) return;
+  const from = view.value;
+  rememberFocus();
+  if (resting !== null) active.value = resting;
+  // Arrival bubbles belong to the expanded window.
+  for (const id of [...pendingArrivals, ...arriving.value]) cancelArrival(id);
+  view.value = "collapsed"; shifting.value = true;
+  try {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    await nextTick();
+    await geometry();
+  } catch (e) {
+    view.value = from;
+    if (!shrinkRefused(e)) throw e;
+  } finally { shifting.value = false; }
+}
+// Mount the newcomer hidden, wait until it can be answered, then open it: the small window must not reveal an empty body.
+async function openArrival(id: string, arrival: boolean) {
+  const timer = transitionClock();
+  try { await prepareRequest(id, timer); } finally { timer.cancel(); }
+  if (disposed || terminals.has(id) || !requests.value.some(r => r.requestId === id)) return;
+  await select(id, false, arrival);
+}
+// The footer / Sidebar "answer later" actions (C10, C11, C24). Marking only changes a display mark: nothing is
+// answered or cancelled, and a mark never survives the round.
+function markLater(id: string) { if (!blocked.value) void enqueue(() => applyMark(id, true)); }
+function unmarkLater(id: string) { if (!blocked.value) void enqueue(() => applyMark(id, false)); }
+async function applyMark(id: string, mark: boolean) {
+  if (terminals.has(id) || !requests.value.some(r => r.requestId === id)) return;
+  const state = collapseState();
+  const outcome = mark ? model.markSecondary(state, id) : model.unmark(state, id);
+  if (mark) secondary.value.add(id); else secondary.value.delete(id);
+  const target = outcome.state.active;
+  if (outcome.effect === "collapse" || outcome.effect === "mini-resize") await shrink(target);
+  else if ((outcome.effect === "switch" || outcome.effect === "expand") && target) await select(target);
+}
+async function select(id: string, explicit = false, arrival = false) {
   if (!requests.value.some(r => r.requestId === id)) return;
   rememberFocus();
+  // R6/C9: opening a request from the small window expands it; the request keeps its mark.
+  const expanding = model.browse(collapseState(), id).effect === "expand";
   await popupInboxActivate(id);
   active.value = id;
   visited.value.add(id);
+  lastBrowsed = id;
   cancelArrival(id);
-  await nextTick();
-  await geometry();
+  if (expanding) { view.value = "expanded"; shifting.value = true; }
+  try {
+    await nextTick();
+    await geometry(arrival);
+  } catch (e) {
+    if (expanding) view.value = "collapsed";
+    throw e;
+  } finally {
+    if (expanding) shifting.value = false;
+  }
+  // The body is inert while the window changes form; focus can only return once Vue has lifted that.
+  if (expanding) await nextTick();
   if (readyIds.has(id)) await popupShowWindow(id);
   restoreFocus(id);
   if (explicit) await getCurrentWindow().setFocus();
@@ -292,12 +376,17 @@ async function add(show: PopupInboxRequest, arrival = true) {
     if (!earlyArrivals.delete(show.requestId)) return;
   } else append(show);
   if (active.value === null) await select(show.requestId);
+  // C4: the small window opens onto the newcomer (a primary request); an expanded one keeps its body (D7).
+  const target = view.value === "collapsed" ? model.arrive(collapseState({ without: show.requestId }), newcomer(show)).state.active : null;
+  const opened = target !== null;
+  if (opened) await openArrival(target, arrival);
   const animate = arrival && unreadArrival(show.requestId);
   if (animate) arriving.value.add(show.requestId);
   await nextTick();
   // Ready means that an answer surface exists, including navigation to unopened confirmations.
   if (show.interaction.type === "confirm") await confirmPopupReady(show.requestId);
   if (show.requestId !== active.value) await popupShowWindow(show.requestId);
+  if (opened) return;
   if (arrival) {
     try {
       await geometry(true);
@@ -312,6 +401,8 @@ function removeLocal(id: string) {
   sessionTitles.delete(id);
   requests.value = requests.value.filter(r => r.requestId !== id);
   visited.value.delete(id); drafts.value.delete(id); flashed.value.delete(id);
+  secondary.value.delete(id);
+  if (lastBrowsed === id) lastBrowsed = null;
   readyIds.delete(id); scopes.delete(id); remembered.delete(id); previews.delete(id); nativePreviewSync.delete(id);
   failedIds.delete(id); preparedIds.value.delete(id); focusRestorers.delete(id); earlyArrivals.delete(id); settleReady(id);
 }
@@ -320,6 +411,8 @@ async function finishRound() {
   active.value = null; sidebar.value = false; sidebarWidth.value = 0; groupOrder.value = [];
   recovered.value = false; modal.value = null; error.value = ""; notice.value = "";
   pin.value = null;
+  // R9: the next round starts expanded and unmarked; native resets the window position (C30).
+  secondary.value.clear(); view.value = "expanded"; shifting.value = false; lastBrowsed = null;
   await popupInboxIdle();
 }
 async function advance(preferred: string | null) {
@@ -347,7 +440,12 @@ async function completed(id: string, completion: CompletionFeedback) {
     rowHeight: row?.getBoundingClientRect().height ?? 0, group: from.project,
     groupHeight: group?.getBoundingClientRect().height ?? 0 };
   advancing.value = true;
-  const candidate = () => nextInboxRequest(ordered.value, id, terminals);
+  // R4/C22: the next primary request; with only secondary ones left, the user who just answered is taken to the next of them.
+  const candidate = () => {
+    // The answered request was the open one in an expanded window, even after the body has moved on to a successor.
+    const outcome = model.finish({ ...collapseState({ keep: id }), active: id, view: "expanded" }, id, { engaged: true });
+    return outcome.effect === "switch" || outcome.effect === "expand" ? outcome.state.active : null;
+  };
   const first = candidate();
   const preparation = first ? prepareRequest(first, timer) : Promise.resolve();
   try {
@@ -376,7 +474,7 @@ async function completed(id: string, completion: CompletionFeedback) {
       }
       if (terminals.has(next)) { removeLocal(next); continue; }
       motion.value!.incoming = next; motion.value!.phase = "prepare";
-      active.value = next;
+      active.value = next; lastBrowsed = next; view.value = "expanded";
       await nextTick();
       await geometry();
       if (disposed) return;
@@ -414,7 +512,6 @@ async function terminal(id: string, winner: string, completion?: CompletionFeedb
   terminals.add(id);
   if (!requests.value.some(r => r.requestId === id)) return;
   const wasActive = active.value === id;
-  const next = nextInboxRequest(ordered.value, active.value ?? "", new Set([id]));
   if (wasActive && winner === "popup" && completion && !modal.value) {
     await completed(id, completion); return;
   }
@@ -426,10 +523,17 @@ async function terminal(id: string, winner: string, completion?: CompletionFeedb
     advancing.value = false;
     notice.value = "";
   }
+  // R4/R6/C22: decide with the queue as it is now. A user who is here (this window, or the app is active) is taken
+  // to the next request; when nobody is looking and only secondary requests remain, the window goes small.
+  const engaged = winner === "popup" || appActive.value || !!modal.value;
+  const outcome = model.finish(collapseState({ keep: id }), id, { engaged });
   removeLocal(id);
   if (modal.value && !snapshot.value.length) modal.value = null;
   if (!requests.value.length) await finishRound();
-  else if (wasActive || !requests.value.some(r => r.requestId === active.value)) await advance(next);
+  else if (wasActive || !requests.value.some(r => r.requestId === active.value)) {
+    if (outcome.effect === "collapse" || outcome.effect === "mini-resize") await shrink(outcome.state.active);
+    else await advance(outcome.state.active);
+  } else if (outcome.effect === "mini-resize") await shrink(null);
 }
 function projectName(path: string) { return path.split(/[\\/]/).filter(Boolean).slice(-1)[0] || t("popup.inbox.unknownProject"); }
 function panePhase(id: string) {
@@ -454,6 +558,19 @@ function consequences(items: PopupInboxRequest[]) {
   return parts.join(t("popup.inbox.separator"));
 }
 function openClose() {
+  if (!requests.value.length || modal.value || advancing.value) return;
+  // The confirmation has no room in the small window: expand onto the request it would open first (spec §2.3).
+  if (view.value === "collapsed") {
+    void enqueue(async () => {
+      const target = model.defaultOpenTarget(collapseState());
+      if (target) await select(target, true);
+      showCloseDialog();
+    });
+    return;
+  }
+  showCloseDialog();
+}
+function showCloseDialog() {
   if (!requests.value.length || modal.value || advancing.value) return;
   rememberFocus();
   modal.value = { ids: requests.value.map(r => r.requestId), current: active.value };
@@ -544,6 +661,7 @@ onMounted(async () => {
     if (motion.value?.incoming === requestId) { motion.value.incoming = null; motion.value.phase = "prepare"; }
     void enqueue(() => terminal(requestId, winner, completion));
   }));
+  listeners.push(await listen<boolean>("popup-app-active", event => { appActive.value = !!event.payload; }));
   listeners.push(await listen("popup-inbox-close", openClose));
   listeners.push(await listen<string>("popup-inbox-focus", event => { void enqueue(() => select(event.payload, true)); }));
   listeners.push(await listen<InboxLayout>("popup-inbox-layout", event => { allocation.value = event.payload; sidebarWidth.value = event.payload.sidebarWidth; }));
@@ -599,7 +717,7 @@ onBeforeUnmount(() => {
       </nav>
     </aside>
     <div v-if="renderedSidebar" class="inbox-divider" role="separator" aria-orientation="vertical" :aria-label="t('popup.inbox.resize')" @pointerdown="beginResize"></div>
-    <main class="inbox-body" :inert="blocked">
+    <main class="inbox-body" :inert="blocked || view === 'collapsed'">
       <button v-if="layoutReview" class="inbox-layout-review" @click="toggleReviewSidebar">{{ renderedSidebar ? '隐藏 Sidebar' : '显示 Sidebar' }} · 几何测试</button>
       <div v-if="recovered" class="inbox-recovery" role="alert">{{ t('popup.inbox.recovered') }}<button @click="recovered = false" :aria-label="t('popup.inbox.dismiss')">×</button></div>
       <div v-for="request in mounted" v-show="(request.requestId === active && (!terminals.has(request.requestId) || motion?.from === request.requestId)) || (motion?.phase === 'prepare' && request.requestId === motion.from)" :key="request.requestId" class="inbox-request" :class="{ 'inbox-preparing': motion?.incoming === request.requestId && motion.phase === 'prepare' }" :data-answer-phase="panePhase(request.requestId)" :data-inbox-request="request.requestId" :inert="request.requestId !== active">

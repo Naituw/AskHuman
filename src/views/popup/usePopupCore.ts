@@ -98,6 +98,11 @@ export interface PopupScope {
   nativePreviewSync?: (sync: (() => Promise<void>) | null) => void;
   nativePreviewBlocked?: Readonly<Ref<boolean>>;
   completion?: Readonly<Ref<CompletionFeedback | null>>;
+  /** This request is marked "answer later" (R1): a display mark that never cancels or answers it. */
+  secondary?: Readonly<Ref<boolean>>;
+  /** Mark / unmark this request "answer later". The page decides what the window does next. */
+  markLater?: () => void;
+  unmarkLater?: () => void;
   restoreFocus?: (restore: (() => void) | null) => void;
   failed?: (error: string) => void;
   sending?: () => void;
