@@ -1193,6 +1193,49 @@ mark.popup-find-hit-current,
   outline: 1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent);
   outline-offset: -1.5px;
 }
+/* In the inbox the card also names its question in a pill (the page sets the label only there). */
+.q-card[data-drop-label]::after {
+  content: attr(data-drop-label);
+  position: absolute;
+  z-index: 3;
+  right: 12px;
+  top: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  pointer-events: none;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--bg-elevated) 82%, var(--accent));
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 6px 18px rgb(0 0 0 / 28%);
+}
+/* Files dragged over the answer area of an inbox request (docs/specs/popup-inbox-collapse.md R15): a dashed frame
+   with a pill says where they will go. `.popup-main` is a containing block (container-type), so this hugs the answer
+   area and leaves an attachment preview beside it out. */
+.drop-hint {
+  position: absolute;
+  inset: 8px;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  border: 2px dashed color-mix(in srgb, var(--accent) 65%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.drop-hint > span {
+  padding: 8px 16px;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--bg-elevated) 82%, var(--accent));
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 6px 18px rgb(0 0 0 / 28%);
+}
+.drop-hint-enter-active, .drop-hint-leave-active { transition: opacity 120ms ease; }
+.drop-hint-enter-from, .drop-hint-leave-to { opacity: 0; }
 @keyframes q-flash {
   from {
     opacity: 1;

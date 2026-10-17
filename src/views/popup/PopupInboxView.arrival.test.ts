@@ -15,6 +15,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: async (name: string, fn: (e: {
   mocks.handlers.set(name, fn); return () => mocks.handlers.delete(name);
 } }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ setFocus: mocks.focus }) }));
+vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) }));
 vi.mock("../PopupView.vue", () => ({ default: defineComponent({ props: ["scope"], setup(props) {
   onMounted(() => (props.scope as PopupScope).ready((props.scope as PopupScope).requestId));
   return () => h("div", { class: "popup-main" }, [h("textarea", { "data-editor": (props.scope as PopupScope).requestId })]);

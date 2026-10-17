@@ -24,6 +24,10 @@ defineProps<{
   motion: InboxMotion | null;
   /** The project whose group is folding away because its last request just ended. */
   collapsingGroup: string | null;
+  /** Files are dragged over the window: the requests that can take them, the row under the pointer, and the row that a wait opens. */
+  droppable?: ReadonlySet<string>;
+  dropTarget?: string | null;
+  dwell?: { id: string; ms: number } | null;
 }>();
 const emit = defineEmits<{
   choose: [id: string];
@@ -64,7 +68,7 @@ function projectName(path: string) { return path.split(/[\\/]/).filter(Boolean).
         <section v-for="group in groups" :key="group.path" class="inbox-group" :class="{ 'inbox-group-collapse': collapsingGroup === group.path }" :style="motion?.group === group.path ? { '--completion-group-height': `${motion.groupHeight}px` } : undefined">
           <h2 :title="group.path">{{ projectName(group.path) }} <span>{{ group.requests.length }}</span></h2>
           <div v-for="request in group.requests" :key="request.requestId" class="inbox-entry" :class="{ 'inbox-entry-collapse': motion?.from === request.requestId && motion.phase !== 'waiting' && !motion.reduced }" :style="motion?.from === request.requestId ? { '--completion-row-height': `${motion.rowHeight}px` } : undefined">
-            <button class="inbox-row" :data-inbox-row="request.requestId" :class="{ selected: request.requestId === selectedId, secondary: secondary.has(request.requestId), flash: flashed.has(request.requestId) && motion?.from !== request.requestId, unread: !visited.has(request.requestId) }" :aria-current="request.requestId === selectedId ? 'true' : undefined" :title="inboxTitle(request)" @click="emit('choose', request.requestId)">
+            <button class="inbox-row" :data-inbox-row="request.requestId" :class="{ selected: request.requestId === selectedId, secondary: secondary.has(request.requestId), flash: flashed.has(request.requestId) && motion?.from !== request.requestId, unread: !visited.has(request.requestId), 'can-drop': droppable?.has(request.requestId), 'drop-target': dropTarget === request.requestId, dwelling: dwell?.id === request.requestId }" :style="dwell?.id === request.requestId ? { '--dwell-ms': `${dwell.ms}ms` } : undefined" :aria-current="request.requestId === selectedId ? 'true' : undefined" :title="inboxTitle(request)" @click="emit('choose', request.requestId)">
               <UnreadRipple :active="!visited.has(request.requestId) && !arriving.has(request.requestId) && !flashed.has(request.requestId)" />
               <span class="inbox-dot" :class="{ unread: !visited.has(request.requestId) && !arriving.has(request.requestId) }" :aria-label="!visited.has(request.requestId) ? t('popup.inbox.unread') : undefined"></span>
               <span class="inbox-row-content">
@@ -148,6 +152,15 @@ function projectName(path: string) { return path.split(/[\\/]/).filter(Boolean).
 @media (prefers-color-scheme: dark) { :root:not(.theme-light) .inbox-row { --inbox-ripple-color: rgba(38, 133, 232, .252); } }
 .inbox-row.selected { background: color-mix(in srgb, #2685e8 12%, transparent); }
 .inbox-row:hover { background: color-mix(in srgb, #2685e8 8%, transparent); }
+/* Files dragged over the window (docs/specs/popup-inbox-collapse.md C28): every row that takes them reads as a target, and
+   the one under the pointer is lit. The row that a wait is about to open (C31) fills a bar along its bottom edge. */
+.inbox-root[data-dragging="yes"] .inbox-row.can-drop { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
+.inbox-root[data-dragging="yes"] .inbox-row.drop-target { background: color-mix(in srgb, var(--accent) 18%, transparent); box-shadow: inset 0 0 0 2px var(--accent); }
+.inbox-row.dwelling::after {
+  content: ""; position: absolute; z-index: 2; left: 8px; bottom: 0; height: 3px; border-radius: 3px; background: var(--accent);
+  animation: inbox-dwell var(--dwell-ms) linear forwards;
+}
+@keyframes inbox-dwell { from { width: 0; } to { width: calc(100% - 16px); } }
 .inbox-row.flash { animation: inbox-row-arrival 640ms cubic-bezier(.22, 0, .22, 1); }
 .inbox-dot { position: relative; z-index: 1; flex: 0 0 6px; height: 6px; margin-top: 5px; }
 .inbox-dot.unread::before { content: ''; position: absolute; left: -2px; top: -2px; width: 10px; height: 10px; border-radius: 50%; background: #2685e8; animation: inbox-unread-dot 2.8s cubic-bezier(.4, 0, .2, 1) infinite; }

@@ -2,20 +2,23 @@
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useI18n } from "vue-i18n";
 import PopupView from "./PopupView.vue";
 import InboxSidebar from "./popup/InboxSidebar.vue";
 import InboxArrivalNotice from "./popup/InboxArrivalNotice.vue";
 import { arrivalTiming, type ArrivalEnd, type ArrivalGeometry } from "./popup/inboxArrival";
-import type { PopupScope, InboxLayout } from "./popup/usePopupCore";
+import type { DropAim, DropReceiver, PopupScope, InboxLayout } from "./popup/usePopupCore";
 import type { PopupInboxRequest } from "../lib/types";
 import { cancelPopup, confirmPopupReady, popupInboxActivate, popupInboxIdle, popupInboxInit, popupShowWindow } from "../lib/ipc";
-import { inboxGroups, inboxKind, nextInboxRequest } from "./popup/inboxQueue";
+import { inboxGroups, inboxKind, inboxTitle, nextInboxRequest } from "./popup/inboxQueue";
 import * as model from "./popup/inboxCollapse";
 import type { InboxState, View } from "./popup/inboxCollapse";
 import { answerTransition, transitionClock, type CompletionFeedback, type InboxMotion } from "./popup/inboxTransition";
 import { formAnimation, measureMini, type FormAnimation, type FormChange } from "./popup/inboxMini";
+import { acceptsFiles, DRAG } from "./popup/inboxDrop";
+import { useInboxDrop } from "./popup/useInboxDrop";
 
 const { t } = useI18n();
 const layoutReview = new URLSearchParams(location.search).get("layoutReview") === "1";
@@ -203,10 +206,30 @@ function restoreFocus(id: string) {
     }
   } else focusRestorers.get(id)?.();
 }
+// Files dragged over the window (docs/specs/popup-inbox-collapse.md C28–C32): one window-level controller routes them to any
+// request. Each request's core lends it a receiver, and shows what the pointer would drop onto in the request.
+const receivers = new Map<string, DropReceiver>();
+const droppable = computed(() => new Set(requests.value.filter(r => acceptsFiles(r) && !terminals.has(r.requestId)).map(r => r.requestId)));
+const drop = useInboxDrop({
+  root: () => root.value, layout: () => allocation.value, view: () => view.value, active: () => active.value,
+  blocked: () => blocked.value, fallback: () => model.defaultOpenTarget(collapseState()),
+  accepts: id => !terminals.has(id) && droppable.value.has(id),
+  receiver: id => receivers.get(id),
+  open: id => enqueue(() => openForDrag(id)),
+  deliver: deliverDrop,
+  springBack: () => { void enqueue(peekShrink); },
+  fail: e => { error.value = String(e); },
+});
 function scopeFor(id: string): PopupScope {
   let scope = scopes.get(id);
   if (!scope) {
     scope = markRaw<PopupScope>({ layout: allocation, requestId: id, active: computed(() => active.value === id), blocked, pin,
+      dropReceiver: receiver => { if (receiver) receivers.set(id, receiver); else receivers.delete(id); },
+      // Only the open request shows an aim, and only inside the request: a row is the Sidebar's to light.
+      dropAim: computed<DropAim | null>(() => {
+        const hit = drop.aim.value;
+        return hit && hit.id === id && hit.kind !== "row" ? { question: hit.kind === "card" ? hit.question : null } : null;
+      }),
       completion: computed(() => motion.value?.from === id ? motion.value.completion : null),
       nativePreviewBlocked: computed(() => (blocked.value || view.value === "collapsed")
         && !(motion.value?.incoming === id && ["prepare", "in"].includes(motion.value.phase))
@@ -354,21 +377,23 @@ function expandFromList() {
     if (target) await select(target, true);
   });
 }
+// A peek (expanded, nothing left to answer) goes back to the small window; a request that is still waiting keeps the
+// window open, and marks and drafts are untouched.
+async function peekShrink() {
+  const outcome = model.collapseWindow(collapseState());
+  if (outcome.effect === "collapse") await shrink(outcome.state.active);
+}
 function shrinkWindow() {
   if (blocked.value) return;
-  void enqueue(async () => {
-    const outcome = model.collapseWindow(collapseState());
-    if (outcome.effect === "collapse") await shrink(outcome.state.active);
-  });
+  void enqueue(peekShrink);
 }
-// C23: the user left AskHuman while the expanded window shows only requests put away (a peek): it shrinks back. Any
-// request that is still waiting keeps the window open; marks and drafts are untouched. Checked inside the queue, so a
-// window change in flight finishes first and the user having come back meanwhile cancels it.
+// C23: the user left AskHuman while the window is a peek: it shrinks back. Checked inside the queue, so a window change
+// in flight finishes first and the user having come back meanwhile cancels it. Files being dragged over the window are
+// the user working with it, wherever the focus is (spec §2.5): the drag itself shrinks the window back if it gives up.
 function collapseOnLeave() {
   void enqueue(async () => {
-    if (appActive.value) return;
-    const outcome = model.collapseWindow(collapseState());
-    if (outcome.effect === "collapse") await shrink(outcome.state.active);
+    if (appActive.value || drop.dragging.value) return;
+    await peekShrink();
   });
 }
 // Focus can hop between two windows of the process in a blink; only leaving for longer than this counts as leaving.
@@ -475,6 +500,49 @@ function choose(id: string) {
   if (blocked.value) return;
   void enqueue(() => select(id, false, false, true));
 }
+// A drag rested on a row (C31): the small window opens onto its request, an open window switches its body, like a click
+// (the mark stays, and no focus is taken: the user is still carrying files). Runs in the queue.
+async function openForDrag(id: string) {
+  if (terminals.has(id) || !requests.value.some(r => r.requestId === id) || blocked.value) return;
+  await select(id, false, false, true);
+}
+// A request that has never been opened has no core yet: mount it hidden and wait until it can take files.
+async function receiverFor(id: string): Promise<DropReceiver | undefined> {
+  if (!readyIds.has(id) || !receivers.has(id)) {
+    const timer = transitionClock();
+    void timer.wait(DRAG.mountMs).then(waited => { if (waited) timer.cancel(); });
+    try { await prepareRequest(id, timer); } finally { timer.cancel(); }
+  }
+  return readyIds.has(id) ? receivers.get(id) : undefined;
+}
+function say(message: string) {
+  notice.value = message;
+  later(() => { if (notice.value === message) notice.value = ""; }, 2600);
+}
+// A drop (C32): the files go to the question the pointer was on (a card), else the one the request is on; then the request
+// that received them is shown, with the window in front and focused, so that leaving AskHuman afterwards shrinks a peek (C23).
+async function deliverDrop(id: string, paths: string[], question: number | null) {
+  const request = requests.value.find(r => r.requestId === id);
+  if (!request || terminals.has(id)) return;
+  const full = inboxTitle(request) || t("popup.inbox.untitled");
+  const title = full.length > 28 ? `${full.slice(0, 28)}…` : full;
+  const receiver = await receiverFor(id);
+  if (!receiver) { if (!terminals.has(id)) error.value = t("popup.inbox.dropFailed", { title }); return; }
+  const target = question ?? receiver.currentQuestion();
+  const added = await receiver.acceptDrop(paths, target);
+  if (terminals.has(id)) return;
+  if (added) {
+    const several = request.interaction.type === "ask" && request.interaction.request.questions.length > 1;
+    say(several ? t("popup.inbox.dropAddedQuestion", { n: added, title, q: target + 1 }, added) : t("popup.inbox.dropAdded", { n: added, title }, added));
+  }
+  await enqueue(() => revealDropped(id));
+}
+async function revealDropped(id: string) {
+  if (terminals.has(id) || !requests.value.some(r => r.requestId === id) || blocked.value) return;
+  // Already open: nothing to switch to, only the focus to take.
+  if (active.value === id && view.value === "expanded") await getCurrentWindow().setFocus();
+  else await select(id, true, false, true);
+}
 function toggleReviewSidebar() {
   void enqueue(async () => { sidebar.value = !sidebar.value; await geometry(); });
 }
@@ -524,7 +592,7 @@ function removeLocal(id: string) {
   visited.value.delete(id); drafts.value.delete(id); flashed.value.delete(id);
   secondary.value.delete(id);
   if (lastBrowsed === id) lastBrowsed = null;
-  readyIds.delete(id); scopes.delete(id); remembered.delete(id); previews.delete(id); nativePreviewSync.delete(id);
+  readyIds.delete(id); scopes.delete(id); receivers.delete(id); remembered.delete(id); previews.delete(id); nativePreviewSync.delete(id);
   failedIds.delete(id); preparedIds.value.delete(id); focusRestorers.delete(id); earlyArrivals.delete(id); settleReady(id);
 }
 async function finishRound() {
@@ -535,6 +603,8 @@ async function finishRound() {
   // R9: the next round starts expanded and unmarked; native resets the window position (C30).
   secondary.value.clear(); view.value = "expanded"; look.value = "expanded"; shifting.value = false; lastBrowsed = null;
   settled.value = false; loneList.value = 0; motionMs.value = 0; swap.value = null;
+  // A drag that was over the window when the round ended does not carry into the next one.
+  drop.reset();
   await popupInboxIdle();
 }
 async function advance(preferred: string | null) {
@@ -801,6 +871,8 @@ onMounted(async () => {
   listeners.push(await listen<string>("popup-inbox-focus", event => { void enqueue(() => select(event.payload, true)); }));
   listeners.push(await listen<InboxLayout>("popup-inbox-layout", event => { allocation.value = event.payload; sidebarWidth.value = event.payload.sidebarWidth; }));
   listeners.push(await listen("popup-inbox-reconcile", () => { void enqueue(() => geometry()); }));
+  // The window's own drag-drop events (C28): one listener routes a drag to any request, instead of each request's core.
+  listeners.push(await getCurrentWebview().onDragDropEvent(event => { void drop.onEvent(event.payload); }));
   const snapshot = await popupInboxInit();
   hostPresented ||= snapshot.presented ?? false;
   recovered.value = snapshot.recovered;
@@ -813,7 +885,7 @@ onMounted(async () => {
   });
 });
 onBeforeUnmount(() => {
-  disposed = true; window.removeEventListener("keydown", keydown, true);
+  disposed = true; drop.dispose(); window.removeEventListener("keydown", keydown, true);
   document.removeEventListener("visibilitychange", flushArrivals);
   pendingArrivals.clear(); arrivalNotice.value?.clear();
   clock?.cancel(); readyWaiters.forEach(waiters => waiters.forEach(resolve => resolve())); readyWaiters.clear();
@@ -823,8 +895,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="inbox-root" :class="{ 'inbox-expanded': renderedSidebar, 'inbox-native': nativeCanvas, 'inbox-frozen': frozenCanvas }" :style="rootStyle" :data-completion-phase="motion?.phase"
-    :data-view="look" :data-primary="hasPrimary ? 'yes' : 'no'" :data-sidebar="sidebar ? 'on' : 'off'" :data-settled="settled ? 'yes' : 'no'" :data-lights="nativeCanvas ? 'hide' : 'keep'" :data-shifting="shifting ? 'yes' : 'no'">
+    :data-view="look" :data-primary="hasPrimary ? 'yes' : 'no'" :data-sidebar="sidebar ? 'on' : 'off'" :data-settled="settled ? 'yes' : 'no'" :data-lights="nativeCanvas ? 'hide' : 'keep'" :data-shifting="shifting ? 'yes' : 'no'"
+    :data-dragging="drop.dragging.value ? 'yes' : 'no'">
     <InboxSidebar v-if="renderedSidebar" :groups="groups" :total="requests.length" :selected-id="look === 'collapsed' ? null : selectedId" :visited="visited" :arriving="arriving" :flashed="flashed" :drafts="drafts" :secondary="secondary" :blocked="blocked" :motion="motion" :collapsing-group="collapsingGroup()"
+      :droppable="droppable" :drop-target="drop.aim.value?.kind === 'row' ? drop.aim.value.id : null" :dwell="drop.dwell.value"
       @choose="choose" @remember="rememberFocus" @mark="markLater" @unmark="unmarkLater" @expand="expandFromList" @shrink="shrinkWindow" />
     <div v-if="renderedSidebar" class="inbox-divider" role="separator" aria-orientation="vertical" :aria-label="t('popup.inbox.resize')" @pointerdown="beginResize"></div>
     <main class="inbox-body" :inert="blocked || view === 'collapsed'">
@@ -885,6 +959,11 @@ onBeforeUnmount(() => {
   transition: opacity calc(var(--ms) * .25) ease 0ms;
 }
 .inbox-root[data-view="collapsed"] .mini-ring { opacity: 1; transition: opacity calc(var(--ms) * .4) ease calc(var(--ms) * .6); }
+/* Files over the small window: the accent frame turns solid and bold, so it is clear that resting here opens the window. */
+.inbox-root[data-dragging="yes"][data-view="collapsed"] .mini-ring {
+  opacity: 1; box-shadow: inset 0 0 0 3px var(--accent), inset 0 0 26px color-mix(in srgb, var(--accent) 35%, transparent);
+  transition-delay: 0ms;
+}
 .inbox-root.inbox-expanded { grid-template-columns: var(--inbox-sidebar) 6px minmax(0, 1fr); }
 /* Only the answer body moves; native preview, navbar and footer retain their positions. */
 .inbox-request[data-answer-phase="out"] .content, .inbox-request[data-answer-phase="out"] .composer-dock { animation: inbox-answer-out 126ms cubic-bezier(.4, 0, 1, 1) both; }
@@ -901,6 +980,8 @@ onBeforeUnmount(() => {
 .inbox-recovery { padding: 10px 14px; font-size: 12px; background: #ffe7a880; display: flex; gap: 12px; }
 .inbox-recovery button { margin-left: auto; background: transparent; border: none; color: inherit; cursor: pointer; }
 .inbox-notice, .inbox-error { position: absolute; z-index: 110; bottom: 30px; left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 12px; background: var(--surface-overlay, #fff); box-shadow: 0 4px 24px #0002; font-size: 13px; }
+/* A notice only informs: it must not catch clicks meant for the footer under it, nor wrap at half the window's width. */
+.inbox-notice { pointer-events: none; width: max-content; max-width: min(420px, 80%); }
 .inbox-close-backdrop { position: absolute; inset: 0; z-index: 100; background: #0003; display: grid; place-items: center; }
 .inbox-close-dialog { background: var(--surface-overlay, #fff); border-radius: 16px; padding: 24px; width: min(390px, calc(100% - 48px)); box-shadow: 0 12px 60px #0003; color: var(--text-primary, #222); }
 .inbox-close-dialog h2 { font-size: 16px; margin: 0 0 14px; }

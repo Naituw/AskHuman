@@ -11,6 +11,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: async (name: string, handler: 
   mock.handlers.set(name, handler); return () => mock.handlers.delete(name);
 } }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ setFocus: vi.fn() }) }));
+vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) }));
 vi.mock("../PopupView.vue", () => ({ default: defineComponent({ props: ["scope"], setup(props) {
   mock.scopes.set(props.scope.requestId, props.scope);
   onMounted(() => { if (!mock.heldReady.has(props.scope.requestId)) props.scope.ready(props.scope.requestId); });

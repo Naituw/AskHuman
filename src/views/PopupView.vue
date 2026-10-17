@@ -33,6 +33,7 @@ const {
   cmdHeld,
   flashing,
   verticalMode,
+  dropHint,
   contentRef,
   fileRef,
   onScroll,
@@ -114,6 +115,10 @@ function beginDivider(event: PointerEvent) {
   >
     <div class="popup popup-main" :class="{ 'cmd-held': cmdHeld }" :style="mainTransitionStyle">
     <div v-if="flashing" class="flash-overlay" aria-hidden="true"></div>
+    <!-- Files over the answer area (inbox): a dashed frame and a pill that says where they will go. -->
+    <Transition name="drop-hint">
+      <div v-if="dropHint" class="drop-hint" aria-hidden="true"><span>{{ dropHint }}</span></div>
+    </Transition>
     <PopupNavbar />
     <FindBar v-if="findActive && findScope === 'question'" />
     <p v-if="submissionError" class="status-error popup-submission-error" role="alert">{{ t("popup.inbox.submitError", { message: submissionError }) }}</p>
