@@ -361,6 +361,29 @@ function shrinkWindow() {
     if (outcome.effect === "collapse") await shrink(outcome.state.active);
   });
 }
+// C23: the user left AskHuman while the expanded window shows only requests put away (a peek): it shrinks back. Any
+// request that is still waiting keeps the window open; marks and drafts are untouched. Checked inside the queue, so a
+// window change in flight finishes first and the user having come back meanwhile cancels it.
+function collapseOnLeave() {
+  void enqueue(async () => {
+    if (appActive.value) return;
+    const outcome = model.collapseWindow(collapseState());
+    if (outcome.effect === "collapse") await shrink(outcome.state.active);
+  });
+}
+// Focus can hop between two windows of the process in a blink; only leaving for longer than this counts as leaving.
+const LEAVE_GRACE_MS = 200;
+let leaving: ReturnType<typeof setTimeout> | null = null;
+function appActivity(active: boolean) {
+  appActive.value = active;
+  if (leaving) { clearTimeout(leaving); timers.delete(leaving); leaving = null; }
+  if (active) return;
+  const timer = leaving = setTimeout(() => {
+    timers.delete(timer); leaving = null;
+    if (!disposed) collapseOnLeave();
+  }, LEAVE_GRACE_MS);
+  timers.add(timer);
+}
 // Mount the newcomer hidden, wait until it can be answered, then open it: the small window must not reveal an empty body.
 async function openArrival(id: string, arrival: boolean) {
   const timer = transitionClock();
@@ -767,7 +790,13 @@ onMounted(async () => {
     if (motion.value?.incoming === requestId) { motion.value.incoming = null; motion.value.phase = "prepare"; }
     void enqueue(() => terminal(requestId, winner, completion));
   }));
-  listeners.push(await listen<boolean>("popup-app-active", event => { appActive.value = !!event.payload; }));
+  // A popup can be shown without activating the app, so the starting state is asked of native; an event that arrives
+  // before the answer is newer than it.
+  let activityHeard = false;
+  listeners.push(await listen<boolean>("popup-app-active", event => { activityHeard = true; appActivity(!!event.payload); }));
+  void invoke<boolean>("popup_app_active")
+    .then(active => { if (!activityHeard && typeof active === "boolean") appActive.value = active; })
+    .catch(() => {});
   listeners.push(await listen("popup-inbox-close", openClose));
   listeners.push(await listen<string>("popup-inbox-focus", event => { void enqueue(() => select(event.payload, true)); }));
   listeners.push(await listen<InboxLayout>("popup-inbox-layout", event => { allocation.value = event.payload; sidebarWidth.value = event.payload.sidebarWidth; }));

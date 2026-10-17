@@ -91,7 +91,7 @@
 
 **P5 激活与切走缩回**：Swift 观察者 + `popup-app-active` + 页面规则（§2.5）；非 macOS 的 `Focused` 路径。验收：vitest 驱动事件序列；实机：从小窗展开后点别的应用 → 缩回；有主要请求时不缩。
 
-**P6 拖放**：`useInboxDrop.ts`、scope 扩展、`usePopupCore` 在 inbox 下让位、高亮 / 进度条 / 边缘滚动 / 按题落点、y 修正、串行合并（§2.7）。验收：vitest 复刻原型 S17 / S18 的断言（停留展开、不连环切换、落点表、边缘滚动、纵向 / 顺序、单题）；实机让用户真拖一次。
+**P6 拖放**：`useInboxDrop.ts`、scope 扩展、`usePopupCore` 在 inbox 下让位、高亮 / 进度条 / 边缘滚动 / 按题落点、y 修正、串行合并（§2.7）；**把「拖拽进行中不触发切走缩回」接进 P5 的 `collapseOnLeave`**（P5 还没有拖拽状态，§2.5 里的这条规则留到这里补）。验收：vitest 复刻原型 S17 / S18 的断言（停留展开、不连环切换、落点表、边缘滚动、纵向 / 顺序、单题）；实机让用户真拖一次。
 
 **P7 Windows / Linux 即时路径**：非 macOS 的小窗实现与最小尺寸 / 红绿灯处理；本机能做的范围内以 `cfg` 检查覆盖；**实机验证记入延期 gate**（`docs/PROGRESS.md`），不据此宣称这两个平台已验收。
 
@@ -222,3 +222,14 @@ cd /tmp && ASKHUMAN_HOME=/tmp/askhuman-collapse-qa/home ASKHUMAN_NO_KEYCHAIN=1 \
 - 验证（均通过）：`pnpm exec vitest run` 63 files / **551 passed**（P3 的 499 → 新增 52：`inboxMini` 10、页面形态与正文切换 `PopupInboxView.mini` 27、底栏三种排布 `PopupFooter.later` 10、真实表单 `PopupInboxView.later` 3、气泡 `arrival` 2）；`cargo test --bin AskHuman popup_inbox_geometry` 29 passed（+1）；`vue-tsc --noEmit`、`cargo fmt --check`、`vite build`、`node --test scripts/*.node-test.mjs`（32）通过。**既有测试有改动**：点 Sidebar 行现在先走 126ms 淡出，`PopupInboxView.test.ts` 4 个、`.arrival` 1 个、`.collapse` 1 个测试改成假定时器推进 126ms；`.links` 改用减少动态效果（它测的是表单与草稿）；另有两个测试（`retains mounted drafts…`、`.links`）在新行为下会「空过」——点击被淡出屏蔽但断言仍通过——补了 `isVisible` 断言让它们真正检验切换。变异检查：对页面与 Sidebar 做了 33 处单点变异（形态变更 13、正文切换 10、到达与控件 10），首轮 2 处存活——`shrink` 失败后 `look` 的回退（补「绘制后窗口失败」用例后抓到）、行旗标上多余的 `@click.stop`（旗标是行的兄弟节点，并不需要，删除）；另加 1 处「交叉淡化时长在变更后保留」被新增断言抓到。
 - 未验证：**真实窗口**（计划里 P4 的目视与测量项）——像素级外观、动画观感、`measureMini` 在真实字体 / 布局下的高度、`look` 翻转与原生提交的同步、单请求小窗路径端到端、`collapsed` / `sidebarPreferred` 与 Rust 的端到端、Quick Look 预览在换题与小窗时的表现；非 macOS。这些需要按 §4.1 隔离安装后弹出真实窗口，会取走焦点，先问用户（C26）。
 - 检查点后的调整（第 9 轮，C35–C37，用户已回答）：①底栏「稍后答 / 取消稍后答」后的跳转也带 C17 换题动画——`applyMark` 的 `switch` / `expand` 结果改为 `select(target, false, false, true)`（由小窗展开时窗口自己在动，仍不做正文切换；展开态下只翻标记的取消稍后答、标其它行都不涉及换题）。②`PopupInboxView.collapse` / `.mini` 两个测试文件改为整文件使用假定时器，`later` / `unlater` 辅助函数推进 126 + 174ms（改动后曾有 20 个测试因第二次点击被淡出期间忽略而失败，调整后全部恢复）；新增 4 个测试：跳转带淡出 / 滑入、淡出期间第二次稍后答被忽略、减少动态效果时即时、淡出期间目标终结则旧正文留下；把 `applyMark` 的动画参数去掉做单点变异，其中 3 个被抓到（减少动态效果那个本来就不该失败）。`PopupInboxView.later`（真实表单）用减少动态效果，未改。③验证：`vitest run` 63 files / **555 passed**，`vue-tsc --noEmit` 通过。④实机验证按用户安排推迟到 P5 之后与 P5 合并做（C36）。
+
+### P5 激活与切走缩回（2026-10-17）
+
+- 改动：
+  - 新增 `swift/PopupActivation.swift`：`ah_popup_activation_observe(changed)`——主线程上（一次）注册 `NSApplication.didBecomeActive / didResignActive` 观察者，回调带 `Int32`，并返回当前是否激活。
+  - 新增 `app/popup_activation.rs`：macOS 把回调转成 `popup-app-active`（bool）事件（`OnceLock<AppHandle>` 持有句柄）；`start()` 在主线程安装观察者并回读当前状态；非 macOS 用 popup 窗口的 `is_focused()` 作起始状态，`window_focus()` 由 `on_window_event` 的 `Focused(bool)` 发同名事件。新命令 `popup_app_active`（`commands.rs` / `invoke.rs`）：页面挂好监听后问一次，既启动事件又取起始状态。
+  - `PopupInboxView.vue`：事件走 `appActivity()`——记录 `appActive`；离开（`false`）时起 200ms 宽限计时器（`LEAVE_GRACE_MS`，回来即取消、卸载时一并清掉），到期调 `collapseOnLeave()`：入串行队列，轮到它时先看用户是否已回来，再让模型 `collapseWindow` 判定（展开且没有主要请求才 `collapse`），`shrink()` 自带确认层早退，所以进行中的窗口变更会先做完、确认层下不缩、已是小窗不动作。起始状态：`popup_app_active` 的回答只在这之前没收到过事件、且是 boolean 时采用（未知 / 失败保持「在场」默认），而且它本身不触发缩回——只有事件才算「离开」。
+- 与计划初稿 §2.5 的差异（补空白）：①计划里只有事件、页面默认「在场」；但弹窗可能非激活前置（应用根本不是激活的），C22 的「没人在看」需要起始状态，所以多了 `popup_app_active` 命令。②200ms 保护放在页面（计划本来就这么写）；macOS 用应用级通知后同进程窗口之间切换不产生事件，它主要服务非 macOS 的窗口焦点路径。③非 macOS 的几行（起始状态与 `Focused` 事件）一并写了，但本机无法编译 / 验证，记入 P7 与延期 gate。
+- 补空白时做的决定（需要在检查点告知）：①确认层打开时用户离开 → 这次离开被丢弃，用户回来关掉确认层后窗口不补缩，等下一次离开；②起始状态晚到且为「不在场」时不缩回（那时不可能有 peek：peek 需要用户在场操作）；③「拖拽进行中不触发」留给 P6（已写进 P6 清单）。
+- 验证（均通过）：`vitest run` 64 files / **571 passed**（555 → 新增 16：`PopupInboxView.leave.test.ts`——peek 在宽限期后缩回并保留标记与草稿、宽限期内回来不缩、宽限期按最后一次离开算、回来再离开会再缩、确认层下不缩、进行中的展开先完成再缩、排队期间用户回来则放弃、卸载后不缩、有主要请求不缩、已是小窗不动作、起始状态各种情形：只问一次、未知按在场、非激活弹窗上远端终结改为缩小、晚到的「不在场」不缩 peek、事件先于回答、回答失败不报错）；`vue-tsc --noEmit`、`cargo fmt --check` 通过；`cargo test --bin AskHuman popup_inbox_geometry` 29 passed（同时编译并链接了新 Swift 符号，`nm` 可见 `_ah_popup_activation_observe`）；`swiftc -typecheck` 通过。变异检查：对新逻辑做了 14 处单点变异（计时器不触发、无宽限、宽限加倍、回来不取消、排队中不看回来、不记录 `appActive`、起始状态盲目采用 / 覆盖事件、事件不标记已听到、失败不吞、起始状态也起计时器等），除 2 处等价变异（回来不清计时器：到期时队列里还会再看一次 `appActive`；连续两次离开保留第一个计时器：不存在连续两个 `false` 的真实序列）外都被抓到，其中「起始状态也起计时器」最初没被抓到，改成「peek 之后才收到晚到的回答」后抓到。
+- 未验证：**真实的应用激活**——macOS 上点别的应用 → 200ms 后缩回、点回来取消、有主要请求时不缩、文件选择面板 / Quick Look 打开时不误判离开；起始状态在真实「非激活前置」弹窗上是否为 false；非 macOS 的编译与行为（P7 / 延期 gate）。按 C36 与 P4 的实机项合并做一次。

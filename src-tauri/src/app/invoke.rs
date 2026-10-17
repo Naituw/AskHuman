@@ -106,6 +106,7 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::popup_inbox_resize_preview,
         crate::commands::popup_inbox_commit,
         crate::commands::popup_inbox_finish,
+        crate::commands::popup_app_active,
         crate::commands::enrich_permission_diff,
         crate::commands::perf_mark,
         crate::commands::popup_agent_terminal,

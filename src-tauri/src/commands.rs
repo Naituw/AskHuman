@@ -452,6 +452,15 @@ pub async fn popup_inbox_finish(
     }
     crate::app::popup_inbox_geometry::finish(&window, revision, arrival).await
 }
+/// Whether the Popup Host is the active application right now. Asking also starts the `popup-app-active` events, so
+/// the shared popup page asks once after it listens (answer-later "peek", spec C23).
+#[tauri::command]
+pub async fn popup_app_active(app: AppHandle) -> Result<bool, String> {
+    let window = app
+        .get_webview_window("popup")
+        .ok_or("popup window is unavailable")?;
+    crate::app::popup_activation::start(&app, &window).await
+}
 #[tauri::command]
 pub async fn popup_inbox_idle(app: AppHandle) -> Result<(), String> {
     let inbox = app
