@@ -269,7 +269,7 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 
 - 弹窗支持 Markdown、附件拖入 / 拖出、同窗右侧附件预览与原文件菜单；其他入口保留既有预览。
 - 来源名优先级为自定义环境变量 > 发起 Agent > 默认「the Loop」；头部同时展示 Agent、workspace 和提问时间。
-- 多问题纵向模式由实验开关控制，设计见 `docs/specs/multi-question-vertical.md`。
+- 多问题默认纵向平铺全部问题（`experimental.verticalQuestions` 默认开，设置可关回一次一题），设计见 `docs/specs/multi-question-vertical.md`。
 - 推荐选项不自动预选，提交值始终为原文，规格见 `docs/specs/recommended-option.md`。
 
 ## UI / 主题

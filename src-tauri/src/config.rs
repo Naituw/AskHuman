@@ -421,13 +421,24 @@ impl Default for ChannelsConfig {
 /// 实验性高级功能（spec D15）：默认隐藏，需在「通用」Tab 底部的隐蔽开关里打开后才显示「实验」Tab。
 /// macOS、Linux 与 Windows 都暴露该设置；生命周期追踪由共享 daemon 承载。
 /// 各 Agent 的「追踪开启」真值以 lifecycle hook 是否已安装为准（实时查询），故此处只需保存「是否显露实验区」。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ExperimentalConfig {
     /// 是否显露「实验」Tab（隐蔽开关，默认关）。
     pub enabled: bool,
-    /// 多问题弹窗是否「纵向同时显示所有问题」（默认关 = 旧版「一次一题 + 上/下一步」）。
+    /// 多问题弹窗是否「纵向同时显示所有问题」（默认开 = 按顺序纵向平铺全部问题；关 = 旧版「一次一题 + 上/下一步」）。
+    /// 只有新配置和缺该字段的旧配置走默认；已落盘的显式值（含 `false`）保持不变。
     pub vertical_questions: bool,
+}
+
+impl Default for ExperimentalConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            // 老配置缺该字段时（容器级 `#[serde(default)]` 回退到此）按开处理。
+            vertical_questions: true,
+        }
+    }
 }
 
 /// IM-created Agent task settings. The feature is opt-in because enabling it also requires the
@@ -734,6 +745,30 @@ mod tests {
         let c: AppConfig = serde_json::from_str(json).unwrap();
         assert!(c.channels.auto_activation);
         assert!(c.channels.auto_end_watch);
+    }
+
+    #[test]
+    fn vertical_questions_default_on_but_an_explicit_choice_is_preserved() {
+        // 出厂默认：多问题纵向平铺；「实验」Tab 仍默认隐藏。
+        let c = AppConfig::default();
+        assert!(c.experimental.vertical_questions);
+        assert!(!c.experimental.enabled);
+
+        // 缺整个 experimental 段、或只缺该字段的老配置，都跟随默认。
+        let no_section: AppConfig = serde_json::from_str("{}").unwrap();
+        assert!(no_section.experimental.vertical_questions);
+        let no_field: AppConfig =
+            serde_json::from_str(r#"{"experimental":{"enabled":true}}"#).unwrap();
+        assert!(no_field.experimental.enabled);
+        assert!(no_field.experimental.vertical_questions);
+
+        // 已落盘的显式值不被默认值覆盖（含设置页保存下来的 false）。
+        let explicit_off: AppConfig =
+            serde_json::from_str(r#"{"experimental":{"verticalQuestions":false}}"#).unwrap();
+        assert!(!explicit_off.experimental.vertical_questions);
+        let roundtrip: AppConfig =
+            serde_json::from_str(&serde_json::to_string(&explicit_off).unwrap()).unwrap();
+        assert!(!roundtrip.experimental.vertical_questions);
     }
 
     #[test]

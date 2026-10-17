@@ -1,6 +1,6 @@
 # 需求：多问题弹窗改「纵向列表」
 
-> 状态：已实现，由 `experimental.verticalQuestions` 门控，默认关闭。
+> 状态：已实现，由 `experimental.verticalQuestions` 控制；2026-10-17 起出厂默认开启（见 §6）。
 > 关联计划：`docs/plans/multi-question-vertical.md`
 > 关联既有：`docs/specs/multi-question.md`（多问题基础能力）
 
@@ -105,3 +105,10 @@
 ### 2026-07（回看 Message 时固定输入框）
 
 `docs/specs/popup-pinned-composer.md` 对 §3.5 增加一条局部覆盖：用户激活某题输入框后向上回看、原输入位置落到视口下方时，输入框停靠在底部；停靠期间即使失焦且为空也保持展开。它重新回到原位后，既有“失焦且为空则折回一行”规则继续生效。composer owner 与本规格的当前题指针相互独立，滚动更新当前题不会改变停靠输入的答案归属。
+
+### 2026-10-17（出厂默认改为纵向）
+
+用户要求多问题请求默认「按顺序纵向显示全部问题」，即本规格的纵向模式；`experimental.verticalQuestions` 的出厂默认由关改为开，旧版「一次一题 + 上一个 / 下一个」仍可在设置「通用」Tab 关掉后使用。
+
+- 只改默认：新配置与缺该字段的旧配置（Rust `ExperimentalConfig::default()`、前端 `init.verticalQuestions ?? true`）跟随新默认；已落盘的显式值（含 `false`）不迁移，因为设置页总是保存整份配置，无法区分「用户主动关」与「当时的默认关」。
+- 配置键不改名，设置页开关与文案不变；单问题（n=1）仍不受影响。

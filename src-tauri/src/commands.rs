@@ -45,7 +45,7 @@ pub struct PopupInit {
     speech_shortcut: String,
     /// 提交快捷键：`cmdEnter`（⌘/Ctrl+Enter）或 `enter`（裸 Enter）。
     popup_submit_key: String,
-    /// 实验：多问题弹窗是否纵向同时显示所有问题（默认关 = 旧版一次一题）。
+    /// 多问题弹窗是否纵向同时显示所有问题（默认开；关 = 旧版一次一题）。
     vertical_questions: bool,
     /// 性能埋点是否开启（helper 进程收到了 `ASKHUMAN_PERF_ID`）；前端据此决定是否上报 perf 标记。
     perf: bool,

@@ -763,9 +763,9 @@ export function usePopupCore(scope?: PopupScope) {
   const questions = computed<Question[]>(() => request.value?.questions ?? []);
   const total = computed(() => questions.value.length);
   const isMulti = computed(() => total.value > 1);
-  // 实验开关：多问题是否纵向同时显示（来自 popup_init）。verticalMode = 开关开 且 多问题。
+  // 开关：多问题是否纵向同时显示（来自 popup_init，出厂默认开）。verticalMode = 开关开 且 多问题。
   // 关 / 单问题 → 旧版「一次一题 + 上/下一步」（sequential）。
-  const verticalEnabled = ref(false);
+  const verticalEnabled = ref(true);
   const verticalMode = computed(() => verticalEnabled.value && isMulti.value);
   // 拖拽悬停中的目标题（纵向布局才有意义）：驱动卡片高亮，松手前即可看出落点。
   const dropTargetQ = ref<number | null>(null);
@@ -2232,7 +2232,7 @@ export function usePopupCore(scope?: PopupScope) {
     if (init.popupSubmitKey === "enter" || init.popupSubmitKey === "cmdEnter") {
       popupSubmitKey.value = init.popupSubmitKey;
     }
-    verticalEnabled.value = init.verticalQuestions ?? false;
+    verticalEnabled.value = init.verticalQuestions ?? true;
     const req = interaction.type === "ask" ? interaction.request : null;
     request.value = req;
     const whatsNextQuestion = req?.whatsNext ? req.questions[0] : null;

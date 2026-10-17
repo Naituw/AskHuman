@@ -384,7 +384,7 @@ export interface PopupInit {
   speechShortcut?: string;
   /** 提交快捷键：cmdEnter（默认）或 enter。 */
   popupSubmitKey?: PopupSubmitKey;
-  /** 实验：多问题弹窗纵向同时显示所有问题（默认关 = 旧版一次一题）。 */
+  /** 多问题弹窗纵向同时显示所有问题（默认开；关 = 旧版一次一题）。 */
   verticalQuestions?: boolean;
   /** 性能埋点是否开启（helper 收到 ASKHUMAN_PERF_ID）；前端据此决定是否上报 perf 标记。 */
   perf?: boolean;
@@ -788,7 +788,7 @@ export interface ChannelsConfig {
 /** 实验性功能开关（默认隐藏；开启后显示「实验」Tab）。 */
 export interface ExperimentalConfig {
   enabled: boolean;
-  /** 多问题弹窗纵向同时显示所有问题（默认关 = 旧版一次一题）。 */
+  /** 多问题弹窗纵向同时显示所有问题（默认开；关 = 旧版一次一题）。 */
   verticalQuestions: boolean;
 }
 
