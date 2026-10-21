@@ -8,7 +8,7 @@
 2026-10-17 用户在日常版（v0.14.5）遇到几次「拖图片进窗口没加附件」（来源访达的下载 / 桌面 / 文稿，第二次拖就可以）。已加每种情形的可见提示和不含路径的诊断日志，
 决策与读日志的办法见 `docs/specs/popup-inbox-collapse.md` §6.9。
 2026-10-22 查到并修复了主因：拖拽开始时 AskHuman 不是前台，wry 在 `draggingEntered:` 里读文件被系统拒绝（`permission_denied`）；macOS 上现在带文件的拖拽进入窗口时先取前台、
-拖走不松手再还回（`popup_drag_front.rs` + `swift/PopupDragFront.swift`，根因与验证见 spec §6.10）。Dev Instance 里用自动化的 Dock 堆栈拖拽验证过，用户还没在日常版里用含修复的构建试过。
+拖走不松手再还回（`popup_drag_front.rs` + `swift/PopupDragFront.swift`，根因与验证见 spec §6.10）。Dev Instance 里用自动化的 Dock 堆栈拖拽验证过；同日日常版覆盖安装含修复的构建后，用户亲自把 Dock「下载」堆栈里的图片拖进弹窗成功，`askhuman_drop` 记 `added`。
 
 真实窗口验证（2026-10-17，隔离安装，用户随手拖了 4 次「下载」里的文件）：落到普通请求正文 / 多问题卡片各一次 → `added`，落到「只能选择」的请求两次 →
 `not_accepting` 并确认看到橙边提示「…不接收附件」；日志的位置类别、落点、请求编号都对得上，没有读取失败。用户决定不再补测，下面这些**没在真窗口里看过**，只有自动测试覆盖：
@@ -16,7 +16,7 @@
 （用户没答）、独立弹窗标题栏下的一行。等日常版里真遇到时再对号。
 
 待做：
-- 用含修复的构建覆盖安装日常版后观察还有没有「拖不进去」，有就先 `rg askhuman_drop ~/.askhuman/daemon.log` 对号入座（这时再出现 `permission_denied` 才是真的权限问题）。
+- 日常版已装含修复的构建，继续观察还有没有「拖不进去」，有就先 `rg askhuman_drop ~/.askhuman/daemon.log` 对号入座（这时再出现 `permission_denied` 才是真的权限问题）。
 - 修复没在真机上验证过的部分：Finder 窗口 / 桌面作为拖拽来源（只测了 Dock「下载」堆栈）、其他 macOS 版本。钩子靠 wry 的类名与方法名，升级 wry 后要确认它还装得上
   （`daemon.log` 里出现 `askhuman_drag_front` 行、`installed` 为 false 就是没装上）。
 - **日志出来再定**（目前都不做）：图片读取改成异步（现在是一次同步整文件读取，大图 / 网络盘会卡界面）；预览区接收文件（现在落上去只提示、不收）；拖入过程中对预览区显示「不可放」的视觉。
