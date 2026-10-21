@@ -6,6 +6,7 @@ pub mod gui_host;
 mod invoke;
 pub mod popup_activation;
 pub(crate) mod popup_canvas;
+mod popup_drag_front;
 pub mod popup_inbox;
 pub mod popup_inbox_geometry;
 pub mod popup_preview;
@@ -1002,6 +1003,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                                 .theme(theme);
                         let win =
                             apply_surface(builder, window_bg, effective_window_effect).build()?;
+                        popup_drag_front::install(&win);
                         #[cfg(target_os = "macos")]
                         set_runtime_window_effect_with_bg(&win, window_effect, window_bg);
                         // Todos may be added from the separate manager window, CLI, MCP, or IM

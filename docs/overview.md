@@ -135,6 +135,7 @@ AskHuman/
         popup_inbox.rs · popup_inbox_geometry.rs  共享宿主请求状态及三区几何事务
         popup_canvas.rs · swift/PopupCanvas.swift  过渡固定画布与普通原生自适应布局；小窗的缩放由 swift/PopupCollapse.swift 逐帧动画
         popup_activation.rs · swift/PopupActivation.swift  Popup Host 的应用级激活状态（小窗的切走缩回）
+        popup_drag_front.rs · swift/PopupDragFront.swift  macOS：文件拖进 Popup 时先取前台再让 web view 读文件，拖走不松手则还回原前台应用
         popup_transition.rs  非激活前置（到达提醒由前端气泡动效承担）
         popup_preview.rs · popup_preview_geometry.rs  预览桥接与兼容几何
         popup_preview_actions.rs  Popup 原文件菜单与跨平台定位

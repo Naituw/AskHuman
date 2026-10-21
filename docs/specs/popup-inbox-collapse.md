@@ -712,7 +712,7 @@ P5（切走缩回，提交 `faff232`）完成后，先告知用户实机验证�
 - 命中判断的 y 要按 §6.7 ② 的 wry 坑修正（小窗 / 动画中 WebView 比窗口高）；事件要串行 + 合并（§6.7 ⑥）；等待用定时器、不占事件链。
 - 边缘滚动要同时给 Sidebar 列表和正文区域；产品的纵向布局现在没有这个能力，是新增。
 - 小窗的拖放高亮（实线描边）、行上的进度条、胶囊提示是新增 UI，需要进 i18n。
-- 小窗期间的「停留展开」窗口仍是小窗，不应抢焦点；拖拽展开后放弃要缩回（§6.7 ②）。
+- 小窗期间的「停留展开」窗口仍是小窗，不应抢焦点；拖拽展开后放弃要缩回（§6.7 ②）。〔后续：带文件的拖拽进入窗口时，macOS 要求 AskHuman 先是前台才读得到文件，所以现在会取前台、拖走不松手再还回，见 §6.10〕
 - 新一轮窗口位置不得漂移（C30）对小窗拖动 / 小窗里结束一轮同样适用，见 §6.7 ⑤。
 
 ### 6.9 拖入的可见反馈与诊断日志（2026-10-17，正式实现之后）
@@ -748,11 +748,11 @@ P5（切走缩回，提交 `faff232`）完成后，先告知用户实机验证�
 - 完全没有行 → 原生拖放事件根本没送到页面（窗口 / 系统层面的问题）。
 - `enter` 带 `paths: 0` → 拖入的内容不是磁盘文件（网页 / 聊天里的图片），`drop` 为 `no_paths`。
 - `enter` + `drop` 为 `read_failed`，`failed` 里是 `permission_denied` 且 `where` 是 `desktop` / `documents` / `downloads` 等 → 隐私控制拦了读取；
-  若紧接着第二次同样的文件 `added`，就证实了「第一次被拒、授权后可以」。
+  若紧接着第二次同样的文件 `added`，就证实了「第一次被拒、授权后可以」。〔2026-10-22：这条的主因已找到——拖拽开始时 AskHuman 不在前台，见 §6.10 并已修复；装了含修复的构建后再出现，才是真的权限问题。〕
 - `drop` 为 `on_preview` → 落在预览区 / 分隔条；`busy` → 窗口在过渡或有对话框；`not_accepting` → 这个请求不收附件。
 - 只有 `enter`、没有 `drop` / `leave` → 松手事件没到页面（例如拖拽中途窗口失去了拖放会话）。
 
-**不做（保持现状，日志出来再定）**：异步读取、预览区接收文件、遇到 EPERM 自动重试、拖入过程中对预览区显示「不可放」的视觉。这些记在 `docs/PROGRESS.md`。
+**不做（保持现状，日志出来再定）**：异步读取、预览区接收文件、遇到 EPERM 自动重试（2026-10-22 起不再需要：失败的根因是前台，已在 §6.10 修复）、拖入过程中对预览区显示「不可放」的视觉。这些记在 `docs/PROGRESS.md`。
 
 **实现位置**：`src-tauri/src/popup_drop.rs`（两条命令、位置分类、日志行构造，含隐私测试）、`daemon::lifecycle::append_log_line`、`src/views/popup/dropFeedback.ts`（纯逻辑：结果 → 提示 / 日志字段、拖拽日志）、
 `useInboxDrop.ts`（控制器上报 `DropReport`：开始 / 离开 / 被拒的落点）、`PopupInboxView.vue`（toast + 日志）、`usePopupCore.ts`（`addDroppedPaths` 返回 `DropResult`；独立弹窗自己的监听 + `dropNotice`）、
@@ -761,3 +761,40 @@ P5（切走缩回，提交 `faff232`）完成后，先告知用户实机验证�
 **验证**：单元测试（Rust：`popup_drop` 17 条 + 日志追加 2 条；前端：`dropFeedback`、合并窗口、独立弹窗、`PopupView` 提示）、`vue-tsc`、`cargo test`、`cargo clippy`。真实 Finder 拖入、真实的 TCC 弹窗与拒绝无法脚本化，
 所以在隔离安装里（不覆盖日常版）请用户亲手试过一次：随手拖了 4 次「下载」里的文件，落到普通请求正文 / 多问题卡片各 `added`、落到「只能选择」的请求两次 `not_accepting`
 （用户确认看到橙边提示「…不接收附件」），日志的位置类别、落点和请求编号与操作一致。桌面文件 / 授权弹窗、网页图片、预览区、读取失败等情形用户决定不再补测，只有自动测试覆盖，见 `docs/PROGRESS.md`。
+
+### 6.10 从后台拖入读不到文件的根因与修复（2026-10-22）
+
+**现象**：从 Dock「下载」堆栈把刚下载的图片拖进作答窗口，只要**拖拽开始时 AskHuman 不是前台应用**就加不上（`askhuman_drop` 的 `drop` 为 `read_failed`，`failed` 是
+`permission_denied`，`where` 是 `downloads`）；AskHuman 在前台时同样的文件能加上。这很可能就是 §6.9 记下的「第一次拖不进去、第二次可以」的原因（第一次失败之后用户点过窗口，窗口成了前台；当时没有日志可证）。
+
+**根因（用 `log stream` 对着 `pboard` / `launchservicesd` / `kernel` 的时间线证实）**：
+
+- macOS 的 `pboard` 在拖拽目标**第一次取拖拽粘贴板数据**时记录 `Target frontmost: 1 / 0`；目标不在前台时，之后对拖入文件的 `open()` 被内核拒绝（`deny(1) file-read-data`，「下载」受 TCC 保护），读取得到 `EPERM`。
+- wry 的 `WryWebView`（0.55.1）在 `draggingEntered:` 里就同步读文件列表（`propertyListForType:NSFilenamesPboardType`，即 `collect_paths`），所以 AskHuman 必须在**这一刻之前**成为前台。
+  指针进入窗口到 `draggingEntered:` 送达约 35ms；页面在 `enter` 事件里再 `setFocus`（再过约 8ms）已经晚了——这条路径做过原型，确认无效，已回退。
+
+**修复（只改 macOS，原生）**：`src-tauri/src/app/popup_drag_front.rs` + `src-tauri/swift/PopupDragFront.swift`。创建作答窗口（`View::Popup | View::PopupInbox`）后，用 Tauri `with_webview` 取到 web view，登记给 Swift；
+第一次登记时对 web view 的类（`wry::…::WryWebView0.55.1`，objc2 自动生成的类名，运行时的 KVO 子类继承同一个方法实现）做 method swizzle，三个钩子只对登记过的 web view 生效：
+
+- `draggingEntered:`：拖拽带 `public.file-url` / `NSFilenamesPboardType` 且 AskHuman 不是前台时，先 `NSApplication.activate(ignoringOtherApps:)`，最多等 150ms 直到 `NSRunningApplication.isActive`，再调用原实现（此时 wry 才读文件）；同时记下原来的前台应用。
+- `draggingExited:`：调用原实现后，如果这次的前台是我们取的，就把前台还给原来的应用（macOS 14+ 用 `activate(from:options:)`，更早用 `activate(options:)`）；页面随之收到 `popup-app-active=false`。
+- `performDragOperation:`：松手即清掉「还回」状态——用户在用 AskHuman，前台保持（与 §6.7 ② 的「松手后前置」一致）。
+
+安装失败（比如 wry 升级后类名或方法变了）保持旧行为、不影响拖入本身，并往 `daemon.log` 写一行 `event: "askhuman_drag_front"`（`installed: false` 加固定的原因标签；Popup Host 的 stderr 没人看）。Windows / Linux 没有这条机制，这个模块是空操作。
+
+**用户的决定**：只留原生钩子，页面里的 `setFocus` + 失败提示（「已切到前台，请再拖一次」）的原型整个回退；「拖走不松手时把前台还给原来的应用」要做；提交前由我自动化验证，不让用户反复手拖。
+
+**对 §6.8 的影响**：「停留展开的窗口不应抢焦点」对**带文件的拖拽**不再成立——为了读到文件，拖着文件进入窗口（含小窗）就会取前台；拖走不松手则还回，不留副作用。非文件的拖拽（网页里的文字等）不触发。
+
+**验证**（Dev Instance，macOS 27.0，用 Accessibility + CGEvent 驱动真实鼠标，从 Dock「下载」堆栈拖 `~/Downloads` 里新生成的带 quarantine 的 PNG；每个场景至少两轮）：
+
+| 场景 | 结果 |
+|---|---|
+| 修复前，AskHuman 在后台 | 稳定 `read_failed:permission_denied`，内核有 `deny(1)` |
+| 后台（`bg`） / 前台（`fg`） | 均 `added` |
+| 拖拽途中前台被别的应用抢走（`fg_back_300`） | `added`（第一次读取时已是前台） |
+| 小窗（全部稍后答）里后台拖入（`collapsed_bg`） | `added`，`SETFRONT` 在指针进入后约 40ms，早于 `Target frontmost: 1` |
+| 拖走不松手（`leave`、`collapsed_leave`） | 前台在指针离开后 7–12ms 内还给原应用，窗口最后仍是小窗 |
+| 穿过 popup 继续拖到原前台应用的另一个 AppKit 窗口再松手（`through`） | 那个窗口 `draggingEntered:` 时已是前台，读取成功 |
+
+**没有验证**：Finder 窗口 / 桌面作为来源（只测了 Dock 堆栈）、其他 macOS 版本、Windows / Linux（没有这条机制）。见 `docs/PROGRESS.md`。

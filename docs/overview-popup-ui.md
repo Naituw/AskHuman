@@ -138,6 +138,9 @@ Windows / Linux 的实机补验清单见 `PROGRESS.md`。
   Sidebar 列表与正文靠近上下边缘 56px 内自动滚动；松手落到指针下的请求，纵向布局落到指针下的题卡、顺序布局落当前题。
   拖拽打开的窗口在没有主要请求时，拖走 600ms 后缩回。常量集中在 `inboxDrop.ts` 的 `DRAG`；落点换算（macOS 固定画布要修正 y，
   Windows 是物理像素、GTK 是 CSS 像素）在 `dropPoints`。失败提示与 `askhuman_drop` 日志见 spec §6.9。
+  macOS 上 wry 在 `draggingEntered:` 里就读文件列表，AskHuman 此时不是前台的话系统会拒绝之后的读取，所以
+  `popup_drag_front.rs` + `swift/PopupDragFront.swift` 给 popup 的 web view 的三个拖拽方法加了钩子：带文件的拖拽进入时先取前台、
+  拖走不松手则把前台还给原来的应用、松手则留在前台；根因与验证见 spec §6.10。
 - **测试与原型**：模型与拖放表驱动测试在 `inboxCollapse.test.ts` / `inboxDrop.test.ts`，页面流程在
   `PopupInboxView.{collapse,later,leave,drop,mini,columns}.test.ts`。jsdom 不按选择器权重排序规则，依赖层叠结果的 CSS 用
   `popup/cssCascade.testkit.ts` 的最小层叠解析器测（`InboxSidebar.undo.test.ts`、`PopupInboxView.columns.test.ts`）。
