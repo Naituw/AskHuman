@@ -3,6 +3,7 @@
 
 use super::cfgio;
 use super::channel_cmd;
+use super::install_check;
 use crate::config::AppConfig;
 use crate::i18n::Lang;
 use crate::integrations::agent_rules::AgentTarget;
@@ -19,6 +20,11 @@ fn daemon_login_ready() -> bool {
 }
 
 pub fn dispatch(args: &[String], lang: Lang) {
+    // `doctor install` is the installed-binaries check on its own (`install.sh` calls it).
+    if args.first().map(String::as_str) == Some("install") {
+        install_check::dispatch(&args[1..], lang);
+        return;
+    }
     let json = args.iter().any(|a| a == "--json");
     if args
         .iter()
@@ -26,23 +32,29 @@ pub fn dispatch(args: &[String], lang: Lang) {
     {
         super::print_line(&cfgio::t(
             lang,
-            "AskHuman doctor [--json] — one-screen health check (daemon, channels, integrations)",
-            "AskHuman doctor [--json] —— 一屏体检（daemon、渠道、集成）",
+            "AskHuman doctor [--json] — one-screen health check (daemon, installed binaries, channels, integrations)\nAskHuman doctor install [--warn-only] [--json] — only the installed-binaries check",
+            "AskHuman doctor [--json] —— 一屏体检（daemon、已装二进制、渠道、集成）\nAskHuman doctor install [--warn-only] [--json] —— 只做已装二进制检查",
         ));
         return;
     }
 
     let cfg = AppConfig::load_without_secrets();
     let status = cfgio::daemon_status();
+    let install = install_check::collect(status.as_ref());
 
     if json {
-        super::print_line(&render_json(&cfg, &status));
+        super::print_line(&render_json(&cfg, &status, &install, lang));
     } else {
-        super::print_line(&render_text(&cfg, &status, lang));
+        super::print_line(&render_text(&cfg, &status, &install, lang));
     }
 }
 
-fn render_text(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>, lang: Lang) -> String {
+fn render_text(
+    cfg: &AppConfig,
+    status: &Option<crate::ipc::StatusInfo>,
+    install: &install_check::Report,
+    lang: Lang,
+) -> String {
     let yes = cfgio::t(lang, "yes", "是");
     let no = cfgio::t(lang, "no", "否");
     let yn = |b: bool| if b { yes.clone() } else { no.clone() };
@@ -73,6 +85,22 @@ fn render_text(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>, lang: L
             no
         )),
     }
+
+    if let Some(s) = status.as_ref().filter(|s| !s.exe_path.is_empty()) {
+        out.push_str(&format!(
+            "  {}: {}{}\n",
+            cfgio::t(lang, "binary", "二进制"),
+            s.exe_path,
+            s.fingerprint
+                .map(|fp| format!("  fp {}", fp.short()))
+                .unwrap_or_default(),
+        ));
+    }
+
+    // Install
+    out.push('\n');
+    out.push_str(&install_check::render_text(install, lang, false));
+    out.push('\n');
 
     // Channels
     let conns = status
@@ -248,7 +276,12 @@ fn mode_label(m: agent_mode::Mode, lang: Lang) -> String {
     }
 }
 
-fn render_json(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>) -> String {
+fn render_json(
+    cfg: &AppConfig,
+    status: &Option<crate::ipc::StatusInfo>,
+    install: &install_check::Report,
+    lang: Lang,
+) -> String {
     let conns = status
         .as_ref()
         .map(|s| s.im_connections.clone())
@@ -319,6 +352,9 @@ fn render_json(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>) -> Stri
             "version": s.version,
             "activeRequests": s.active_requests,
             "imConnections": s.im_connections,
+            "exePath": s.exe_path,
+            "fingerprint": s.fingerprint.map(|fp| fp.short()),
+            "binaryConflict": s.binary_conflict,
         }),
         None => serde_json::json!({ "running": false }),
     };
@@ -329,6 +365,7 @@ fn render_json(cfg: &AppConfig, status: &Option<crate::ipc::StatusInfo>) -> Stri
         .count();
     serde_json::to_string_pretty(&serde_json::json!({
         "daemon": daemon,
+        "install": install_check::render_json_value(install, lang),
         "channels": channels,
         "integrations": integrations,
         "cursorDesktop": crate::cursor_desktop::status(&cfg.cursor_desktop),

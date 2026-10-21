@@ -18,6 +18,9 @@ use crate::models::{
 use serde::{Deserialize, Serialize};
 
 /// IPC 协议版本：不兼容变更时 +1，握手不一致即触发换新。
+///
+/// 改本文件的消息类型前先读 `docs/overview.md` 的「IPC 协议号」：什么改动要 +1、什么不要，
+/// 以及 +1 时要同步更新的文档。
 pub const PROTOCOL_VERSION: u32 = 3;
 
 fn default_true() -> bool {
@@ -82,6 +85,43 @@ pub struct StatusInfo {
     /// 各渠道最近一次未恢复的故障（R7 渠道故障可见化；旧 Daemon 回包缺字段 → 空）。
     #[serde(default)]
     pub channel_issues: Vec<ChannelIssueInfo>,
+    /// Executable this daemon runs, captured at startup (older daemons omit it → empty).
+    #[serde(default)]
+    pub exe_path: String,
+    /// Content fingerprint of that executable at startup (older daemons omit it → `None`).
+    #[serde(default)]
+    pub fingerprint: Option<Fingerprint>,
+    /// Set while the daemon refuses to give way to clients running a different binary
+    /// (`docs/specs/daemon-graceful-drain.md` §6; older daemons omit it → `None`).
+    #[serde(default)]
+    pub binary_conflict: Option<BinaryConflictInfo>,
+}
+
+/// Two differently built AskHuman binaries keep replacing each other's daemon, so the daemon now
+/// serves both instead. Shown by `daemon status` and `doctor`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinaryConflictInfo {
+    /// Unix milliseconds: when the hold began and when a differing client was last served.
+    pub since_ms: u64,
+    pub last_ms: u64,
+    /// Hellos from differing clients answered since the hold began.
+    pub shared: u64,
+    /// The latest differing client, as its handshake described it.
+    pub client_version: String,
+    pub client_protocol_version: u32,
+    pub client_path: String,
+    pub client_pid: u32,
+}
+
+impl BinaryConflictInfo {
+    /// "v0.14.5 (pid 4242) /old/AskHuman": the client a human has to go and find.
+    pub fn client_summary(&self) -> String {
+        format!(
+            "v{} (pid {}) {}",
+            self.client_version, self.client_pid, self.client_path
+        )
+    }
 }
 
 /// 一条渠道故障摘要（R7）：渠道 id + 错误文案 + 首次出现时间。该渠道下一次成功操作即从
@@ -1065,6 +1105,47 @@ mod tests {
         assert!(!info.draining);
         assert_eq!(info.active_requests, 3);
         assert!(info.im_connections.is_empty());
+        // The binary facts were added later: an older daemon reports none of them.
+        assert!(info.exe_path.is_empty());
+        assert!(info.fingerprint.is_none());
+        assert!(info.binary_conflict.is_none());
+    }
+
+    /// The binary facts survive a round trip, and a payload from a newer daemon with fields this
+    /// build does not know still decodes.
+    #[test]
+    fn status_info_binary_facts_round_trip() {
+        let info = StatusInfo {
+            pid: 7,
+            version: "0.15.0".into(),
+            protocol_version: PROTOCOL_VERSION,
+            uptime_secs: 1,
+            socket: "/tmp/s".into(),
+            active_requests: 0,
+            im_connections: Vec::new(),
+            draining: false,
+            channel_issues: Vec::new(),
+            exe_path: "/bin/AskHuman".into(),
+            fingerprint: Some(Fingerprint { size: 5, hash: 9 }),
+            binary_conflict: Some(BinaryConflictInfo {
+                since_ms: 1,
+                last_ms: 2,
+                shared: 3,
+                client_version: "0.14.5".into(),
+                client_protocol_version: 3,
+                client_path: "/old/AskHuman".into(),
+                client_pid: 11,
+            }),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains(r#""exePath":"/bin/AskHuman""#));
+        assert!(json.contains(r#""binaryConflict":{"sinceMs":1"#));
+        let back: StatusInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.fingerprint, Some(Fingerprint { size: 5, hash: 9 }));
+        assert_eq!(back.binary_conflict.unwrap().client_pid, 11);
+
+        let newer = json.replacen('{', r#"{"somethingNew":true,"#, 1);
+        assert!(serde_json::from_str::<StatusInfo>(&newer).is_ok());
     }
 
     /// 新增枚举值序列化往返。

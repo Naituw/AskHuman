@@ -18,6 +18,14 @@ pub struct Fingerprint {
     pub hash: u64,
 }
 
+impl Fingerprint {
+    /// Eight hex digits of the content hash: enough to tell two binaries apart in a log line or a
+    /// `doctor` listing.
+    pub fn short(&self) -> String {
+        format!("{:08x}", self.hash >> 32)
+    }
+}
+
 /// 计算当前可执行文件的指纹（解析失败回退到全 0）。
 ///
 /// 哈希基于文件内容，因此每次调用都要读盘；为避免每次 CLI 调用都重哈希几 MB 的二进制，
@@ -47,6 +55,16 @@ pub fn fingerprint_at(path: &Path) -> Fingerprint {
     }
     let hash = hash_file(path).unwrap_or(0);
     store_cached_hash(path, size, mtime_ms, hash);
+    Fingerprint { size, hash }
+}
+
+/// Fingerprint of the file at `path` without touching the `binhash.json` cache.
+///
+/// For inspecting binaries that are not this process's own (`doctor install` scans other copies on
+/// PATH): their paths would only bloat the cache, and a cached hash is useless for a one-off look.
+pub fn fingerprint_uncached(path: &Path) -> Fingerprint {
+    let size = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+    let hash = hash_file(path).unwrap_or(0);
     Fingerprint { size, hash }
 }
 

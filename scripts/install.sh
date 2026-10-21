@@ -292,3 +292,8 @@ echo "==> 完成：$INSTALL_DIR/AskHuman"
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
   echo "提示: $INSTALL_DIR 不在 PATH 中，请将其加入 PATH。"
 fi
+
+# 多份安装 / PATH 遮蔽检查：内容不同的 AskHuman 并存时会轮流把对方的 daemon 顶掉
+# （docs/specs/daemon-graceful-drain.md §6）。只在发现冲突时输出；检查失败不影响安装结果。
+# Dev Instance 安装有独立 daemon，检查会自行跳过。
+"$INSTALLED_BIN" doctor install --warn-only || true

@@ -9,6 +9,7 @@ pub mod doctor;
 pub mod file_attachment;
 pub mod help;
 pub mod image_writer;
+pub mod install_check;
 pub mod output;
 pub mod todo_cmd;
 pub mod update_cmd;

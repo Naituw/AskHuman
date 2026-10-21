@@ -171,3 +171,15 @@ Grok 默认会扫描 Cursor Skills，候选 frontmatter 已设计为对 Cursor �
 
 下一步先确认保留旧 Popup Host 还是重建新版弹窗并恢复草稿，再设计跨版本兼容、多等待者、IM 卡片
 接管和 Windows exe 文件锁处理；以上均为待评估事项，现有 graceful drain 策略继续有效。
+
+## 待办：多份安装互顶刹车的收尾（Windows 与配置扫描）
+
+2026-10-22 落地了 Daemon 的 hold（同一对二进制 10 分钟内互顶 ≥2 次后不再让位）、换新原因记录和
+`AskHuman doctor install`，决策与验收见 `docs/specs/daemon-graceful-drain.md` D10–D12、§6。macOS 上做过
+隔离 e2e 与真机 PATH 扫描。下面两项用户决定之后再做（AskHuman 项目 todo #2、#3）：
+
+- `scripts/install-windows.ps1` 装完后调用 `AskHuman doctor install --warn-only`。Rust 侧已跨平台编译，
+  但 Windows 上的 PATH 扫描（只查 `AskHuman.exe`，不解析 npm 的 `.cmd` shim；`canonicalize` 会带
+  `\\?\` 前缀）与 `--version` 探测没在 Windows 实机验过。
+- 扫描各 Agent 的 hooks / MCP 配置里写死的 AskHuman 路径，与 Daemon 实际运行的二进制对比。
+  现有补救是装完用 `AskHuman agents update` 重写。

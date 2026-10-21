@@ -26,6 +26,10 @@ After making any change to this project's functionality or logic, verify the res
 ./scripts/install-windows.cmd
 ```
 
+## Changing IPC messages
+
+Before editing the message types in [`src-tauri/src/ipc/mod.rs`](src-tauri/src/ipc/mod.rs) (`ClientMsg`, `ServerMsg` and their payloads), read the [“IPC 协议号”](docs/overview.md#ipc-协议号protocol_version) section of `docs/overview.md`. It says which changes must bump `PROTOCOL_VERSION` and which must not, and what to update when you bump. In short: an additive field with `#[serde(default)]` never bumps; a new enum variant an older peer can receive, or any change an older peer would misread, always does. A daemon may serve clients of the same protocol number but a different build, so “same number” has to keep meaning “can talk”.
+
 ## Code comments
 
 Write code comments in English.

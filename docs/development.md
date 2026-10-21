@@ -133,6 +133,14 @@ request a network timestamp). After a successful copy it enforces per-profile ta
 Cargo-coordinated cleanup: local package artifacts are removed first, while dependency caches are
 retained whenever they fit.
 
+The script ends by running `AskHuman doctor install --warn-only` with the freshly installed binary.
+It prints nothing unless AskHuman copies would fight over the daemon: a different build earlier on
+`PATH` than the one just installed, several builds on `PATH`, or a daemon hold already in effect.
+Several names for one file count as one copy and are not reported: with `~/.local/bin/AskHuman`
+symlinked to the binary inside the npm package, an install writes through the link and every name
+runs the same build. See `docs/specs/daemon-graceful-drain.md` D12. A Dev Instance install skips the
+`PATH` comparison.
+
 Default dev/test builds retain line tables for file/line backtraces without full debugger local
 variable metadata. When full source-level debugger information is needed, use:
 

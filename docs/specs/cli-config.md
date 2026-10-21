@@ -61,6 +61,8 @@ Windows named-pipe daemon 已在平台对齐项目落地；本命令面在 macOS
 
 ### `AskHuman doctor [--json]` —— 一屏体检
 daemon 是否在跑 / 各渠道（启用·配置齐全·连接）/ 各 agent 集成（Rules·Hook·生命周期 装没装·是否需更新）。
+另有「安装」小节：本机 PATH 上有几份 AskHuman、哪份生效、Daemon 来自哪份、近期的换新记录。`AskHuman doctor install [--warn-only] [--json]`
+可单独运行它（`install.sh` 装完后以 `--warn-only` 调用），规则见 `docs/specs/daemon-graceful-drain.md` D12。
 
 ## 关键决策（访谈锁定）
 

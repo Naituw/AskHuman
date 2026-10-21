@@ -6,6 +6,7 @@ use super::config_watch;
 use super::lifecycle::{self, DaemonMeta, LockGuard};
 use super::popup_focus::{PopupEffect, PopupFocusArbiter, ReadyMetadata};
 use super::request::{self, InteractionEntry, RequestEntry, RequestRegistry};
+use super::restart_guard;
 use crate::agents::registry::AgentRegistry;
 use crate::agents::{AgentKind, LifecycleEvent};
 use crate::app::confirm_coordinator::ConfirmOutcome;
@@ -186,6 +187,12 @@ fn run_cmd(background: bool) -> i32 {
 
 struct ServerState {
     startup_fp: lifecycle::Fingerprint,
+    /// Executable this daemon started from. Captured once: after an in-place update `current_exe()`
+    /// may name a path that no longer exists (Linux `... (deleted)`).
+    exe_path: String,
+    /// Refusal to give way to clients on a different binary once two binaries keep swapping the
+    /// daemon between them (`docs/specs/daemon-graceful-drain.md` §6).
+    restart_hold: restart_guard::HoldState,
     started_at: u64,
     /// 当前打开的连接数（CLI 提交连接 / GUI 连接 / 控制连接）。用于空闲退出判定：
     /// 提交连接在请求存续期间保持打开，故人在环里的长等待算「活动」，不会被空闲计时杀掉。
@@ -796,7 +803,22 @@ fn check_pending_update(state: &Arc<ServerState>) {
             .map(|v| v != "0")
             .unwrap_or(true);
         if auto_restart {
-            log("binary on disk changed; draining for restart");
+            restart_guard::record(restart_guard::Yield {
+                at_ms: now_ms(),
+                trigger: restart_guard::Trigger::Disk,
+                drained: state.registry.active_count() > 0,
+                daemon_pid: std::process::id(),
+                daemon_version: version(),
+                from: state.startup_fp,
+                to: now_fp,
+                client: None,
+            });
+            log(&format!(
+                "binary on disk changed; draining for restart (exe={} fp {} -> {})",
+                state.exe_path,
+                state.startup_fp.short(),
+                now_fp.short(),
+            ));
             begin_drain(state);
         }
     }
@@ -811,6 +833,9 @@ async fn serve(_lock: LockGuard) -> i32 {
         }
     };
     let startup_fp = lifecycle::current_fingerprint();
+    let exe_path = std::env::current_exe()
+        .map(|path| path.display().to_string())
+        .unwrap_or_default();
     let started_at = now_secs();
     let meta = DaemonMeta {
         pid: std::process::id(),
@@ -823,9 +848,15 @@ async fn serve(_lock: LockGuard) -> i32 {
     if let Err(e) = lifecycle::write_meta(&meta) {
         log(&format!("failed to write daemon.json: {}", e));
     }
+    // `exe` and `fp` name the binary this daemon came from, so a daemon that keeps being replaced by
+    // another copy is traceable from the log alone.
     log(&format!(
-        "started pid={} version={} protocol={}",
-        meta.pid, meta.version, meta.protocol_version
+        "started pid={} version={} protocol={} exe={} fp={}",
+        meta.pid,
+        meta.version,
+        meta.protocol_version,
+        exe_path,
+        startup_fp.short(),
     ));
 
     // Ensure the user hooks directory exists and includes a sample script.
@@ -867,6 +898,8 @@ async fn serve(_lock: LockGuard) -> i32 {
 
     let state = Arc::new(ServerState {
         startup_fp,
+        exe_path,
+        restart_hold: restart_guard::HoldState::default(),
         started_at,
         active: AtomicUsize::new(0),
         last_active: Mutex::new(Instant::now()),
@@ -1374,12 +1407,53 @@ async fn control_loop(
                 let now_fp = lifecycle::current_fingerprint();
                 // 指纹按「内容哈希」比对（与路径/mtime 无关）：
                 // 自身盘上二进制内容被换 / 客户端二进制内容不一致 / 协议不一致 → 过时，让位换新。
-                let stale = now_fp != state.startup_fp
-                    || hello.fingerprint != state.startup_fp
-                    || hello.protocol_version != ipc::PROTOCOL_VERSION;
+                let own_changed = now_fp != state.startup_fp;
+                let protocol_differs = hello.protocol_version != ipc::PROTOCOL_VERSION;
+                let mut stale =
+                    own_changed || hello.fingerprint != state.startup_fp || protocol_differs;
                 let auto_restart = std::env::var("ASKHUMAN_DAEMON_AUTORESTART")
                     .map(|v| v != "0")
                     .unwrap_or(true);
+                let peer = restart_guard::Peer::from_hello(&hello);
+                // Two differently built binaries in use at once make the daemon give way to each
+                // other forever. Once the same pair has swapped twice within ten minutes, stop
+                // giving way to a client that merely differs in content and serve it as it is
+                // (spec daemon-graceful-drain §6). An upgrade (own binary changed on disk) and a
+                // client on another protocol version are never held.
+                if stale && auto_restart && restart_guard::holdable(own_changed, protocol_differs) {
+                    match state.restart_hold.assess(
+                        now_ms(),
+                        state.startup_fp,
+                        &peer,
+                        restart_guard::load,
+                    ) {
+                        restart_guard::Verdict::Yield => {}
+                        restart_guard::Verdict::Hold {
+                            started,
+                            log: log_due,
+                            shared,
+                        } => {
+                            stale = false;
+                            if started {
+                                log(&format!(
+                                    "restart hold: two binaries keep replacing each other's daemon; serving a {} \
+                                     next to this daemon (v{} pid={} exe={} fp={}), automatic replacement paused",
+                                    peer.describe(),
+                                    version(),
+                                    std::process::id(),
+                                    state.exe_path,
+                                    state.startup_fp.short(),
+                                ));
+                            } else if log_due {
+                                log(&format!(
+                                    "restart hold: still serving a {} ({} hellos shared)",
+                                    peer.describe(),
+                                    shared
+                                ));
+                            }
+                        }
+                    }
+                }
                 // 过时且有在途请求 → 进入排空（不打断在途）；无在途 → 立即换新（零延迟）。
                 let draining = stale && auto_restart && state.registry.active_count() > 0;
                 let restarting = stale && auto_restart && !draining;
@@ -1400,13 +1474,47 @@ async fn control_loop(
                     },
                 };
                 let _ = ipc::write_msg(w, &ServerMsg::HelloAck(ack)).await;
+                // Say who made the daemon give way: with several AskHuman copies installed the
+                // client's version, path and pid are the only way to tell them apart afterwards.
+                let yield_detail = if draining || restarting {
+                    let trigger = restart_guard::trigger_for(own_changed, protocol_differs);
+                    restart_guard::record(restart_guard::Yield {
+                        at_ms: now_ms(),
+                        trigger,
+                        drained: draining,
+                        daemon_pid: std::process::id(),
+                        daemon_version: version(),
+                        from: state.startup_fp,
+                        to: if own_changed {
+                            now_fp
+                        } else {
+                            hello.fingerprint
+                        },
+                        client: Some(peer.clone()),
+                    });
+                    format!(
+                        "reason: {}; {}; daemon v{} pid={} exe={} fp={}",
+                        trigger.label(),
+                        peer.describe(),
+                        version(),
+                        std::process::id(),
+                        state.exe_path,
+                        state.startup_fp.short(),
+                    )
+                } else {
+                    String::new()
+                };
                 if draining {
-                    log("stale binary/protocol detected with active requests; draining");
+                    log(&format!(
+                        "stale binary/protocol detected with active requests; draining ({yield_detail})"
+                    ));
                     begin_drain(state);
                     continue;
                 }
                 if restarting {
-                    log("stale binary/protocol detected; shutting down for restart");
+                    log(&format!(
+                        "stale binary/protocol detected; shutting down for restart ({yield_detail})"
+                    ));
                     state.shutdown.notify_one();
                     return Control::Closed;
                 }
@@ -1422,6 +1530,19 @@ async fn control_loop(
                     im_connections: active_im_connections(state).await,
                     draining: state.draining.load(Ordering::SeqCst),
                     channel_issues: channel_issue_infos(),
+                    exe_path: state.exe_path.clone(),
+                    fingerprint: Some(state.startup_fp),
+                    binary_conflict: state.restart_hold.snapshot(now_ms()).map(|hold| {
+                        ipc::BinaryConflictInfo {
+                            since_ms: hold.since_ms,
+                            last_ms: hold.last_ms,
+                            shared: hold.shared,
+                            client_version: hold.peer.version,
+                            client_protocol_version: hold.peer.protocol_version,
+                            client_path: hold.peer.path,
+                            client_pid: hold.peer.pid,
+                        }
+                    }),
                 };
                 let _ = ipc::write_msg(w, &ServerMsg::Status(info)).await;
             }
@@ -4225,6 +4346,7 @@ fn start_cmd() -> i32 {
 }
 
 fn stop_cmd(force: bool) -> i32 {
+    restart_guard::clear();
     block_on(async {
         if !client::request_stop(force).await {
             println!("askhuman daemon: not running");
@@ -4238,6 +4360,9 @@ fn stop_cmd(force: bool) -> i32 {
 }
 
 fn restart_cmd(force: bool) -> i32 {
+    // An explicit restart starts over: forget which binaries swapped the daemon so far, otherwise
+    // the new daemon would re-enter the hold it was restarted to leave.
+    restart_guard::clear();
     block_on(async {
         if client::request_stop(force).await {
             wait_stopped(force).await;
@@ -4326,6 +4451,14 @@ fn print_status(info: &StatusInfo) {
     );
     println!("  uptime     {}s", info.uptime_secs);
     println!("  socket     {}", info.socket);
+    // Which copy of AskHuman this daemon runs: with several installed it is the first thing to
+    // check when requests keep landing on an unexpected version.
+    if !info.exe_path.is_empty() {
+        match &info.fingerprint {
+            Some(fp) => println!("  binary     {} (fp {})", info.exe_path, fp.short()),
+            None => println!("  binary     {}", info.exe_path),
+        }
+    }
     println!(
         "  requests   {} active{}",
         info.active_requests,
@@ -4337,6 +4470,16 @@ fn print_status(info: &StatusInfo) {
         info.im_connections.join(", ")
     };
     println!("  im conns   {}", im);
+    if let Some(conflict) = &info.binary_conflict {
+        let minutes = now_ms().saturating_sub(conflict.since_ms) / 60_000;
+        println!(
+            "  warning    another AskHuman binary is sharing this daemon since {} min ago: {} \
+             (automatic replacement paused; `AskHuman doctor` lists the installed copies, \
+             `AskHuman daemon restart` ends the pause)",
+            minutes,
+            conflict.client_summary(),
+        );
+    }
 }
 
 #[cfg(test)]

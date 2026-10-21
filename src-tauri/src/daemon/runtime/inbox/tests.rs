@@ -9,6 +9,8 @@ fn state() -> Arc<ServerState> {
     config.general.popup_prewarm = false;
     Arc::new(ServerState {
         startup_fp: lifecycle::Fingerprint { size: 0, hash: 0 },
+        exe_path: String::new(),
+        restart_hold: Default::default(),
         started_at: 0,
         active: AtomicUsize::new(1),
         last_active: Mutex::new(Instant::now()),

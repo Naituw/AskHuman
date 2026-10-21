@@ -30,6 +30,8 @@
 
 **关键约定**：每种 IM 渠道全局只保留一条连接；每个请求仅首个终态回答生效；IPC 和运行状态均为用户私有；既有 stdout、结果区块、退出码和配置兼容契约保持不变。Daemon 排空换新见 `docs/specs/daemon-graceful-drain.md`。
 
+**多份二进制并存**：握手比较的是二进制内容指纹，所以内容不同的两份 AskHuman（npm 全局安装 + `install.sh` 本地构建等）会轮流把对方的 Daemon 顶掉。Daemon 因此记录每次让位的原因与客户端，并在同一对二进制 10 分钟内互顶 ≥2 次后不再为「内容不同但协议号相同」的客户端让位（hold）；`daemon status`、`doctor` 与 `install.sh` 会指出多份安装、PATH 遮蔽和 hold。设计见同一份 spec 的 D10–D12 与 §6。
+
 **重复提问收敛**（`docs/specs/duplicate-ask-coalescing.md`）：agent 那一轮被中断后常原样重发同一个提问，而被中断的 CLI 进程不会被杀。Daemon 因此在建请求前先按「会话键 + 提问指纹」判重——同一提问仍在等人回答就合流到那张卡（多等待者共享一个终态，全部离场才取消），5 分钟内已答过则直接重放上次答案并在 `status` 说明。历史、待办出队与 `ask-received` 仍只发生一次。
 
 **Dev Instance（并行 / WorkTree 开发）**：每个已 `dev enable` 的 git 工作树可有独立 `ASKHUMAN_HOME`（`.askhuman-dev/home`）+ 实例 bin + 默认 popup-only 渠道，与主环境 daemon/生产 bot 隔离；入口按 cwd 标记 re-exec。`ASKHUMAN_HOME` 只隔离配置 / socket / daemon 标签，不隔离 `$HOME` 下的 Agent hook 文件与用户级登录项：实例进程对它们的**自动**写入（登录项同步、启动时的 hook 迁移）一律跳过，显式 `agents …` 命令除外。详见 `docs/specs/dev-instance-parallel.md`、`docs/agent-worktree-setup.md`。
@@ -86,7 +88,8 @@ AskHuman/
         config_cmd.rs        config 子命令
         channel_cmd.rs       channel 配置、测试与识别子命令
         agents_cmd.rs        agents 模式、状态与 capability 子命令
-        doctor.rs            daemon、渠道和 Agent 集成体检
+        doctor.rs            daemon、已装二进制、渠道和 Agent 集成体检
+        install_check.rs     已装 AskHuman 二进制 / PATH 遮蔽 / Daemon 互顶检查（doctor install）
         debug_cmd.rs         不进入 help 的调试子命令
         todo_cmd.rs          todo add/list/attach/detach/rm/clear 子命令
         file_attachment.rs   -f 路径解析与校验
@@ -216,6 +219,7 @@ AskHuman/
           subs.rs            GUI/托盘/Agent 订阅广播与 Interject 连接
           detect.rs          渠道自动识别流程
         lifecycle.rs         单实例、指纹与空闲生命周期
+        restart_guard.rs     换新原因记录，以及两份二进制互相顶替时拒绝再让位（hold）
         spawn.rs             Daemon 脱离启动
         request.rs           请求登记、Coordinator 与 GUI token
         config_watch.rs      config.json 监听与重载
@@ -250,6 +254,25 @@ AskHuman/
 3. Daemon 登记请求，按配置派发到共享 Popup Host，并把请求交给已启用的 IM Router；各渠道并行等待回答。
 4. Coordinator 只接受首个终态结果，随即取消其它渠道；历史、回复图片和文件在这一汇聚点统一处理。
 5. Daemon 把最终结果回传 CLI；CLI 只负责写 stdout 并按终态返回退出码。
+
+## IPC 协议号（`PROTOCOL_VERSION`）
+
+> 常量在 `src-tauri/src/ipc/mod.rs`；换新、排空与互顶的约定见 `docs/specs/daemon-graceful-drain.md`（D5、D10–D12）。
+
+CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`ClientMsg` / `ServerMsg` 及其载荷）通信。握手（`ClientHello`）要求**协议号严格相等**，且二进制内容指纹一致，否则 Daemon 让位换新；没有版本协商，也没有降级模式——新 Daemon 不会为旧协议号的客户端保留旧行为，而是换成客户端那一份。唯一例外是 hold（上一节「多份二进制并存」）：协议号相同、内容不同的客户端会被当前 Daemon 直接服务，所以**同一协议号内必须保持互通**。
+
+改 `ipc/mod.rs` 里的消息类型前，先按下表判断要不要 +1：
+
+| 改动 | 是否 +1 |
+|---|---|
+| 给已有结构体加字段，带 `#[serde(default)]`（或 `Option`），缺省值对旧端行为无害 | 不 +1：新端读得懂旧消息，旧端忽略多出来的字段 |
+| 新增枚举变体（`ClientMsg` / `ServerMsg` / `HelloStatus` 等） | 旧端可能收到它就 +1（旧端解码失败会断连）；能证明旧端永远收不到才可不加 |
+| 删除 / 重命名字段或变体、改字段类型或含义、新增必填字段、改握手或消息先后顺序 | 必须 +1 |
+| 只改 Rust 内部实现、不改线上 JSON 形态 | 不 +1 |
+
++1 的代价是每个跨号的客户端与 Daemon 互相让位、旧客户端无法与新 Daemon 共存，所以能用「加可选字段」解决的不要 +1。+1 时：改常量，在下面的历史补一行（日期、提交、变更点），并在 `daemon-graceful-drain.md` 记下升级过渡期的影响。
+
+**历史**（当前为 3）：1 = Daemon 骨架（`9660532`，2026-06-07）；2 = 结构化确认（`2c76c44`，2026-07-11）；3 = 共享作答窗口，新增 `PopupHostHello` / `PopupHostIdle` / `PopupHostAccepted` / `PopupSubmissionAck` / `PopupRequestKind` 等（`799334f`，2026-10-06）。对应发布版：0.4.3–0.8.2 为 1，0.9.1–0.13.2 为 2，0.14.2 起为 3。排空相关的增量（`HelloStatus::Draining`、`ServerMsg::Draining`、`Stop.force`、`StatusInfo.draining`）和 `StatusInfo` 的二进制信息字段都没有 +1。
 
 ## 前端 ↔ 后端命令（`commands.rs` ↔ `lib/ipc.ts`）
 
@@ -402,7 +425,7 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
   提示严格只指向用户当前选中的入口，缺失/过期并入当前 Hook 或 MCP 产物的更新状态。
 - 全局交互协议把 Sub Agent 作为唯一例外并禁止其使用 AskHuman；Claude/Codex mode 另带 `SubagentStart` 提示 Hook，Cursor/Grok/Pi 只依赖协议文本。
 - `agents update [<agent>]` 按当前 mode 重新 reconcile 单家或全部托管产物；重复设置相同 mode 也会完整更新，但不改独立保存的 capability 偏好。
-- `config` 是通用键值兜底，`doctor` 汇总 Daemon、渠道和集成；两者复用同一配置与集成模块，不维护第二套逻辑。
+- `config` 是通用键值兜底，`doctor` 汇总 Daemon、已装二进制、渠道和集成；两者复用同一配置与集成模块，不维护第二套逻辑。`doctor install` 单独检查已装二进制（`install.sh` 装完后调用）。
 
 ## MCP 支持（CLI 之外的第二种集成形态）
 

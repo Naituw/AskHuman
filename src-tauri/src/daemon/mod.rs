@@ -6,6 +6,7 @@ pub mod lifecycle;
 pub mod popup_focus;
 pub mod popup_inbox;
 pub mod request;
+pub mod restart_guard;
 pub mod spawn;
 
 /// `AskHuman daemon <sub>` 入口。永不返回（自行退出进程）。
