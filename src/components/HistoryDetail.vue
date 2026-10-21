@@ -212,6 +212,8 @@ const { attach: preview } = useHistoryPreviewContext();
 const attachments = computed(() => props.entry.message.files);
 const {
   selectedFile,
+  missing,
+  refusedDrag,
   setAttRef,
   selectFile,
   openFile,
@@ -303,7 +305,7 @@ const thumbs = images.urls;
             :ref="(el) => setAttRef(el as Element | null, i)"
             class="attachment"
             :data-attachment-index="i"
-            :class="{ selected: selectedFile === i }"
+            :class="{ selected: selectedFile === i, missing: missing.has(file.path) }"
             tabindex="0"
             draggable="true"
             :title="file.path"
@@ -320,7 +322,7 @@ const thumbs = images.urls;
             </span>
             <span class="att-meta">
               <span class="att-name">{{ file.name }}</span>
-              <span class="att-size">{{ formatBytes(file.size) }}</span>
+              <span class="att-size">{{ missing.has(file.path) ? t("popup.preview.missing") : formatBytes(file.size) }}</span>
             </span>
           </div>
         </div>
@@ -328,6 +330,10 @@ const thumbs = images.urls;
         <div v-if="browserActionError && browserErrorFile && browserErrorIndex !== selectedFile" class="attachment-browser-error" role="alert">
           <span>{{ browserErrorFile.name }} — {{ t(`popup.preview.${browserActionError}`) }}</span>
           <button type="button" @click="openFile(browserErrorFile)">{{ t("popup.preview.openOriginal") }}</button>
+        </div>
+        <!-- A drag of a file that is gone is refused: say why, as the popup does. -->
+        <div v-if="refusedDrag" class="attachment-browser-error" role="alert">
+          <span>{{ refusedDrag.name }} — {{ t("popup.preview.missing") }}</span>
         </div>
       </div>
     </template>

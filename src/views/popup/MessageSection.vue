@@ -17,6 +17,8 @@ const {
   attachments,
   selectedFile,
   thumbs,
+  missing,
+  refusedDrag,
   setAttRef,
   selectFile,
   openFile,
@@ -58,7 +60,7 @@ const {
           :ref="(el) => setAttRef(el as Element | null, i)"
           class="attachment"
           :data-attachment-index="i"
-          :class="{ selected: selectedFile === i }"
+          :class="{ selected: selectedFile === i, missing: missing.has(file.path) }"
           tabindex="0"
           draggable="true"
           :title="file.path"
@@ -75,13 +77,17 @@ const {
           </span>
           <span class="att-meta">
             <span class="att-name" :data-find-seg="`att-${i}`">{{ file.name }}</span>
-            <span class="att-size" data-find-skip>{{ formatBytes(file.size) }}</span>
+            <span class="att-size" data-find-skip>{{ missing.has(file.path) ? t("popup.preview.missing") : formatBytes(file.size) }}</span>
           </span>
         </div>
       </div>
       <div v-if="browserActionError && browserErrorFile && browserErrorIndex !== selectedFile" class="attachment-browser-error" role="alert">
         <span>{{ browserErrorFile.name }} — {{ t(`popup.preview.${browserActionError}`) }}</span>
         <button type="button" @click="openFile(browserErrorFile)">{{ t('popup.preview.openOriginal') }}</button>
+      </div>
+      <!-- A drag of a file that is gone is refused (the system would start nothing); say why instead of staying silent. -->
+      <div v-if="refusedDrag" class="attachment-browser-error" role="alert">
+        <span>{{ refusedDrag.name }} — {{ t("popup.preview.missing") }}</span>
       </div>
     </div>
   </template>

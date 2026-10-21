@@ -1900,6 +1900,20 @@ pub fn read_image_data_url(path: String) -> Result<String, String> {
     })
 }
 
+/// Whether each attachment's file is still there, in the order asked. Only a file the system says is not found counts as
+/// gone: a path that cannot be examined for any other reason (a refused look at a protected folder, say) is not marked,
+/// since a wrong "gone" costs the user a file they could still use.
+#[tauri::command]
+pub fn attachments_exist(paths: Vec<String>) -> Vec<bool> {
+    paths
+        .iter()
+        .map(|path| match std::fs::metadata(path) {
+            Ok(_) => true,
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        })
+        .collect()
+}
+
 /// 获取文件的系统图标（macOS：NSWorkspace，Finder 同款）并返回 PNG data URL，
 /// 供前端把 -f 附件胶囊拖出到其它应用时作为拖拽预览图标。
 #[tauri::command]
@@ -5066,6 +5080,41 @@ mod tests {
         );
         assert!(history_open_target("", None, None, Some("instance")).is_none());
         assert!(history_open_target("/p", Some("codex"), None, None).is_none());
+    }
+
+    #[test]
+    fn attachments_exist_answers_per_path_in_the_order_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        let text = |path: &std::path::Path| path.to_string_lossy().into_owned();
+        // A file, a file that was cleaned up, a folder (still there) and an empty path (nothing to find).
+        assert_eq!(
+            attachments_exist(vec![
+                text(&file),
+                text(&dir.path().join("gone.png")),
+                text(dir.path()),
+                String::new(),
+            ]),
+            vec![true, false, true, false]
+        );
+        assert!(attachments_exist(Vec::new()).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attachments_exist_keeps_a_file_it_was_not_allowed_to_look_at() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        let file = locked.join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let answer = attachments_exist(vec![file.to_string_lossy().into_owned()]);
+        // Restore before asserting so the temporary folder can be removed even when the assertion fails.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(answer, vec![true]);
     }
 }
 

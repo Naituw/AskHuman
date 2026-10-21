@@ -283,7 +283,7 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 - 弹窗：按 request ID 的 `popup_init`、`submit_popup`、`confirm_popup`、`cancel_popup`；共享容器 `popup_inbox_init` / `activate` / `layout` / `commit` / `idle`
 - 附件面板（Popup 提问附件与历史详情）：`popup_preview_prepare` / `layout`、`popup_preview_read` / `cancel_read` / `thumbnail`、`popup_preview_reveal` / `menu`（命令名沿用；`request_id` 实为所有者 ID：Popup 请求 ID，或历史窗口的 `history:<条目 ID>`）；原文件打开仍用 `open_path`
 - Popup 拖入文件（`popup_drop.rs`）：`popup_drop_read_image`（读拖入的图片，失败时拒绝出 `{reason, where, message}`）、`popup_drop_log`（把每次拖拽的结果写进 `daemon.log` 的 `askhuman_drop` 行，只记标签与计数，不记路径和文件名）
-- 其他附件入口：`preview_attachments`、`close_preview`、`read_image_data_url`、`file_icon_data_url`、`show_attachment_menu`
+- 其他附件入口：`preview_attachments`、`close_preview`、`read_image_data_url`、`file_icon_data_url`、`show_attachment_menu`、`attachments_exist`（逐路径答复原文件是否还在，只有 `NotFound` 算不存在；弹窗与历史的胶囊据此标出已不存在的附件并拒绝拖出）
 - 设置：`get_settings`、`save_settings`、`get_prompt`、`set_theme`、`update_theme`、`open_settings`、`popup_sound_support`、`play_popup_sound`
 - 历史：`open_history`、`history_init`、`get_history`、`get_history_projects`、`history_count`、`trim_history`、`resolve_history_session_titles`、`delete_history_entries`、`clear_all_history`
 - Cursor / Claude 超时 Hook 与 Pi Extension：前两者保留专用命令；统一设置入口走 `agent_mode_*` 与 `agent_hook_reveal` / `open`

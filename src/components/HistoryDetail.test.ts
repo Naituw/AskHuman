@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import HistoryDetail from "./HistoryDetail.vue";
 import { i18n } from "../i18n";
 import type { HistoryEntry } from "../lib/types";
-import { localImagePrepare, localImageReleaseScope, openPath, readImageDataUrl } from "../lib/ipc";
+import { attachmentsExist, localImagePrepare, localImageReleaseScope, openPath, readImageDataUrl } from "../lib/ipc";
 import { provideHistoryPreview, useHistoryPreview, type HistoryPreview } from "../views/history/useHistoryPreview";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 
@@ -31,6 +31,7 @@ vi.mock("@crabnebula/tauri-plugin-drag", () => ({
 
 vi.mock("../lib/ipc", () => ({
   fileIconDataUrl: vi.fn(async () => ""),
+  attachmentsExist: vi.fn(async (paths: string[]) => paths.map(() => true)),
   openPath: vi.fn(async () => {}),
   readImageDataUrl: vi.fn(async () => ""),
   localImageCreateScope: vi.fn(async () => "history-scope"),
@@ -71,6 +72,7 @@ describe("HistoryDetail", () => {
     vi.clearAllMocks();
     document.body.replaceChildren();
     i18n.global.locale.value = "en";
+    vi.mocked(attachmentsExist).mockImplementation(async paths => paths.map(() => true));
     mocks.invoke.mockImplementation(async (_command: string, args: { open?: boolean; version?: number }) => ({
       revision: args.version, side: args.open ? "right" : "closed", mainWidth: 600, mainHeight: 620,
     }));
@@ -245,6 +247,41 @@ describe("HistoryDetail", () => {
     expect(notice.text()).toContain("a.md");
     await notice.get("button").trigger("click");
     expect(openPath).toHaveBeenCalledExactlyOnceWith("/tmp/a.md");
+    wrapper.unmount();
+  });
+
+  it("marks an attachment whose file is gone, refuses to drag it and says why until another entry is shown", async () => {
+    vi.mocked(attachmentsExist).mockImplementation(async paths => paths.map(path => path !== "/tmp/gone.png"));
+    const entry = baseEntry({
+      id: "gone", message: { text: "files", files: [
+        { path: "/tmp/here.png", name: "here.png", size: 10, isImage: true },
+        { path: "/tmp/gone.png", name: "gone.png", size: 2048, isImage: true },
+      ] },
+    });
+    const { wrapper, current } = mountDetail(entry);
+    await flushPromises();
+    expect(attachmentsExist).toHaveBeenCalledWith(["/tmp/here.png", "/tmp/gone.png"]);
+    const chips = wrapper.findAll(".attachment");
+    expect(chips.map(chip => chip.classes("missing"))).toEqual([false, true]);
+    expect(chips[0].get(".att-size").text()).toBe("10 B");
+    expect(chips[1].get(".att-size").text()).toBe("The file no longer exists");
+    expect(wrapper.find(".attachment-browser-error").exists()).toBe(false);
+
+    await chips[1].trigger("dragstart");
+    await flushPromises();
+    expect(startDrag).not.toHaveBeenCalled();
+    expect(wrapper.get(".attachment-browser-error").text()).toBe("gone.png — The file no longer exists");
+
+    await chips[0].trigger("dragstart");
+    await flushPromises();
+    expect(startDrag).toHaveBeenCalledOnce();
+
+    current.value = baseEntry({
+      id: "next", message: { text: "", files: [{ path: "/tmp/next.md", name: "next.md", size: 1, isImage: false }] },
+    });
+    await flushPromises();
+    expect(wrapper.find(".attachment-browser-error").exists()).toBe(false);
+    expect(wrapper.get(".attachment").classes()).not.toContain("missing");
     wrapper.unmount();
   });
 });

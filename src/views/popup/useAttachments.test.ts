@@ -10,11 +10,12 @@ const mocks = vi.hoisted(() => ({
   })),
   openPath: vi.fn(async () => {}),
   startDrag: vi.fn(async () => {}),
+  attachmentsExist: vi.fn(async (paths: string[]) => paths.map(() => true)),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("../../lib/ipc", () => ({
-  fileIconDataUrl: vi.fn(async () => ""), openPath: mocks.openPath,
+  fileIconDataUrl: vi.fn(async () => ""), openPath: mocks.openPath, attachmentsExist: mocks.attachmentsExist,
   readImageDataUrl: vi.fn(async () => ""), showAttachmentMenu: vi.fn(async () => {}),
 }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name: string, handler: (event: { payload: unknown }) => void) => {
@@ -42,6 +43,7 @@ async function settle() { for (let i=0; i<30; i++) await Promise.resolve(); }
 describe("same-window attachment activation", () => {
   beforeEach(() => {
     vi.clearAllMocks(); mocks.listeners.clear(); document.body.replaceChildren();
+    mocks.attachmentsExist.mockImplementation(async paths => paths.map(() => true));
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
   });
   it("shares one expanded panel while keeping question and reply navigation separate", async () => {
@@ -196,7 +198,7 @@ describe("same-window attachment activation", () => {
   it("drops queued geometry work when disposed and uses a PNG fallback for drag-out", async () => {
     const { state } = setup(); state.selectFile(0); state.disposeAttachments(); await settle();
     expect(mocks.invoke).not.toHaveBeenCalled();
-    state.onAttachmentDragStart(files[0], new Event("dragstart", { cancelable: true }) as DragEvent);
+    await state.onAttachmentDragStart(files[0], new Event("dragstart", { cancelable: true }) as DragEvent);
     expect(mocks.startDrag).toHaveBeenCalledWith(expect.objectContaining({ item: [files[0].path], icon: expect.stringContaining("data:image/png;base64,") }), expect.any(Function));
   });
   it("uses the reading mode for the primary action while Enter keeps the source", async () => {
@@ -255,5 +257,117 @@ describe("same-window attachment activation", () => {
     reject("failed"); await opening; await settle();
     expect(state.browserActionError.value).toBeNull(); expect(state.browserOpening.value).toBe(false);
     mocks.invoke.mockImplementation(original); state.disposeAttachments();
+  });
+  describe("an attachment whose file is gone", () => {
+    const dragEvent = () => new Event("dragstart", { cancelable: true }) as DragEvent;
+    const gone = (...indexes: number[]) => mocks.attachmentsExist.mockImplementation(async paths =>
+      paths.map(path => !indexes.some(i => path === files[i].path)));
+    it("is marked when the list is shown, from one look at every path in order", async () => {
+      gone(1);
+      const { state } = setup(); await settle();
+      expect(mocks.attachmentsExist).toHaveBeenCalledExactlyOnceWith(files.map(file => file.path));
+      expect([...state.missing.value]).toEqual([files[1].path]);
+      state.disposeAttachments();
+    });
+    it("is looked for again when the request's list changes, and a list without files is not looked at", async () => {
+      const list = ref(files);
+      const requestId = ref("request-1");
+      const state = useAttachments({ attachments: computed(() => list.value), requestId: computed(() => requestId.value) });
+      await settle(); gone(0);
+      requestId.value = "request-2"; await settle();
+      expect([...state.missing.value]).toEqual([files[0].path]);
+      mocks.attachmentsExist.mockClear(); list.value = []; await settle();
+      expect(mocks.attachmentsExist).not.toHaveBeenCalled();
+      expect(state.missing.value.size).toBe(0);
+      state.disposeAttachments();
+    });
+    it.each([
+      ["a failed look", () => mocks.attachmentsExist.mockRejectedValue(new Error("no ipc"))],
+      ["an answer that does not match what was asked", () => mocks.attachmentsExist.mockResolvedValue([false, false])],
+      ["no answer at all", () => mocks.attachmentsExist.mockResolvedValue(undefined as unknown as boolean[])],
+    ])("marks nothing after %s", async (_, arrange) => {
+      arrange();
+      const { state } = setup(); await settle();
+      expect(state.missing.value.size).toBe(0);
+      const event = dragEvent();
+      await state.onAttachmentDragStart(files[1], event);
+      expect(mocks.startDrag).toHaveBeenCalledOnce();
+      expect(state.refusedDrag.value).toBeNull();
+      state.disposeAttachments();
+    });
+    it("is refused a drag, which says so instead of starting nothing in silence", async () => {
+      gone(1);
+      const { state } = setup(); await settle();
+      const event = dragEvent();
+      await state.onAttachmentDragStart(files[1], event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(mocks.startDrag).not.toHaveBeenCalled();
+      expect(state.draggingOut.value).toBe(false);
+      expect(state.refusedDrag.value).toEqual(files[1]);
+      // The file that is still there drags as before.
+      await state.onAttachmentDragStart(files[0], dragEvent());
+      expect(mocks.startDrag).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ item: [files[0].path] }), expect.any(Function));
+      expect(state.draggingOut.value).toBe(true);
+      state.disposeAttachments();
+    });
+    it("is refused at once when already marked, without another look", async () => {
+      gone(1);
+      const { state } = setup(); await settle(); mocks.attachmentsExist.mockClear();
+      await state.onAttachmentDragStart(files[1], dragEvent());
+      expect(mocks.attachmentsExist).not.toHaveBeenCalled();
+      expect(state.refusedDrag.value).toEqual(files[1]);
+      state.disposeAttachments();
+    });
+    it("is found out when a drag starts for a file that went after the list was shown", async () => {
+      const { state } = setup(); await settle();
+      expect(state.missing.value.size).toBe(0);
+      gone(2);
+      await state.onAttachmentDragStart(files[2], dragEvent());
+      expect(mocks.attachmentsExist).toHaveBeenLastCalledWith([files[2].path]);
+      expect(mocks.startDrag).not.toHaveBeenCalled();
+      expect(state.refusedDrag.value).toEqual(files[2]);
+      expect([...state.missing.value]).toEqual([files[2].path]);
+      state.disposeAttachments();
+    });
+    it("takes back the refusal notice after a while and when another request takes the list", async () => {
+      vi.useFakeTimers();
+      try {
+        gone(1);
+        const { state, requestId } = setup(); await vi.advanceTimersByTimeAsync(0);
+        await state.onAttachmentDragStart(files[1], dragEvent());
+        expect(state.refusedDrag.value).toEqual(files[1]);
+        await vi.advanceTimersByTimeAsync(5999); expect(state.refusedDrag.value).toEqual(files[1]);
+        await vi.advanceTimersByTimeAsync(1); expect(state.refusedDrag.value).toBeNull();
+        await state.onAttachmentDragStart(files[1], dragEvent());
+        expect(state.refusedDrag.value).toEqual(files[1]);
+        requestId.value = "request-2"; await vi.advanceTimersByTimeAsync(0);
+        expect(state.refusedDrag.value).toBeNull();
+        state.disposeAttachments();
+      } finally { vi.useRealTimers(); }
+    });
+    it("shows on the chip and under the list in the popup's message section", async () => {
+      gone(1);
+      const { state } = setup(); await settle();
+      const wrapper = mount(MessageSection, {
+        global: {
+          plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })],
+          provide: { [PopupCtxKey as symbol]: {
+            ...state, attachments: computed(() => files), request: ref(null), showDescription: ref(true),
+            messageText: ref(""), viewSource: ref(false), copiedMessage: ref(false), copyMessage: vi.fn(),
+          } as unknown as PopupContext },
+        },
+      });
+      try {
+        const chips = wrapper.findAll(".attachment");
+        expect(chips.map(chip => chip.classes("missing"))).toEqual([false, true, false]);
+        expect(chips[1].find(".att-size").text()).toBe("The file no longer exists");
+        expect(chips[0].find(".att-size").text()).toBe("128 B");
+        expect(wrapper.find(".attachment-browser-error").exists()).toBe(false);
+        await chips[1].trigger("dragstart"); await settle();
+        const notice = wrapper.find(".attachment-browser-error");
+        expect(notice.attributes("role")).toBe("alert");
+        expect(notice.text()).toBe("1.patch — The file no longer exists");
+      } finally { wrapper.unmount(); state.disposeAttachments(); }
+    });
   });
 });

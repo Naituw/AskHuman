@@ -1133,6 +1133,19 @@ mark.popup-find-hit-current,
   font-size: 11px;
   color: var(--text-secondary);
 }
+/* An attachment whose file is gone (the popup and History share this): the name is struck through as in the composer, and the
+   size line says so in the warning tone of the notice under the list. */
+.attachment.missing .att-icon {
+  opacity: 0.5;
+  filter: grayscale(1);
+}
+.attachment.missing .att-name {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+.attachment.missing .att-size {
+  color: color-mix(in srgb, #d97706 85%, var(--text-primary));
+}
 /* 问题头部：问号图标 + 「Question i/n」，与 Message 同样式区隔靠分割线 */
 .q-header {
   display: flex;

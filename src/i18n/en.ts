@@ -163,7 +163,7 @@ export default {
     preview: { openBrowser: "Open in browser", openOriginal: "Open original file", browserFailed: "Unable to open the rendered preview in your default browser. Retry or open the original file.", multipleImages: "Contains {n} images. Open the original file to inspect all images.", system: "System preview", title: "Attachment preview", open: "Open", close: "Close preview", resize: "Resize preview area",
       raw: "View source", rendered: "View preview", more: "More actions", fit: "Fit", zoomIn: "Zoom in", zoomOut: "Zoom out",
       reveal: { mac: "Show in Finder", windows: "Show in File Explorer", linux: "Show in file manager" },
-      unsupported: "Preview is not available for this file", encoding: "Text encoding could not be identified reliably", readFailed: "Unable to read this attachment", limit: "This attachment exceeds preview limits. Open it in the default app", imageFailed: "Unable to display this image", actionFailed: "The file manager could not locate this attachment. Retry or open the file",
+      unsupported: "Preview is not available for this file", encoding: "Text encoding could not be identified reliably", readFailed: "Unable to read this attachment", missing: "The file no longer exists", limit: "This attachment exceeds preview limits. Open it in the default app", imageFailed: "Unable to display this image", actionFailed: "The file manager could not locate this attachment. Retry or open the file",
       diffPlain: "Some content could not be parsed and is shown as source" },
     find: {
       scope: "Find scope", question: "Question", attachment: "Current file", attachmentPlaceholder: "Find in attachment",

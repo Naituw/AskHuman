@@ -1,6 +1,6 @@
 // Popup attachments and reply images: activation, keyboard focus and preview routing.
-import { computed, ref, watch, type ComputedRef, type Ref } from "vue";
-import { fileIconDataUrl, openPath } from "../../lib/ipc";
+import { computed, ref, shallowRef, watch, type ComputedRef, type Ref } from "vue";
+import { attachmentsExist, fileIconDataUrl, openPath } from "../../lib/ipc";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type { FileAttachment, ImageAttachment } from "../../lib/types";
 import { invoke } from "@tauri-apps/api/core";
@@ -54,6 +54,39 @@ export function useAttachments(deps: {
   const attRefs = ref<HTMLElement[]>([]);
   const draggingOut = ref(false);
   let suppressClickUntil = 0;
+
+  // Attachments whose file is gone, by path. A file that was there when the request arrived may be cleaned up later (a screenshot
+  // in a temp folder, say) and the system silently refuses to drag a missing file, so the list is looked at when it is shown (the
+  // chips are marked) and a file is looked at once more when a drag of it starts.
+  const missing = shallowRef<ReadonlySet<string>>(new Set());
+  /** The attachment a drag was refused for; the line under the list says why until it times out or the owner changes. */
+  const refusedDrag = ref<FileAttachment | null>(null);
+  let refusedTimer: ReturnType<typeof setTimeout> | undefined;
+  let missingToken = 0;
+  /** The paths among `files` that are gone, or null when the look failed (a failed look says nothing about the files). */
+  async function lookForMissing(files: FileAttachment[]): Promise<Set<string> | null> {
+    try {
+      const present = await attachmentsExist(files.map(file => file.path));
+      if (!Array.isArray(present) || present.length !== files.length) return null;
+      return new Set(files.filter((_, i) => present[i] === false).map(file => file.path));
+    } catch { return null; }
+  }
+  async function refreshMissing() {
+    const token = ++missingToken, files = [...attachments.value];
+    if (!files.length) { if (missing.value.size) missing.value = new Set(); return; }
+    const gone = await lookForMissing(files);
+    if (gone && !disposed && token === missingToken) missing.value = gone;
+  }
+  const stopMissingWatch = watch(
+    () => `${deps.requestId.value}\0${attachments.value.map(file => file.path).join("\0")}`,
+    () => { clearTimeout(refusedTimer); refusedDrag.value = null; void refreshMissing(); },
+    { immediate: true },
+  );
+  function refuseDrag(file: FileAttachment) {
+    clearTimeout(refusedTimer);
+    refusedDrag.value = file;
+    refusedTimer = setTimeout(() => { refusedDrag.value = null; }, 6000);
+  }
 
   function setAttRef(el: Element | null, i: number) {
     if (el) attRefs.value[i] = el as HTMLElement;
@@ -204,10 +237,19 @@ export function useAttachments(deps: {
     if (isReplyPreview.value) preview.stopPreview(true);
     reply.reset(); isReplyPreview.value = false;
   }, { flush: "sync" });
-  function disposeAttachments() { disposed = true; browserToken++; stopReplyRequest(); reply.dispose(); stopBrowserWatch(); stopErrorWatch(); menuListener?.(); content.disposeContent(); preview.disposePreview(); }
-  function onAttachmentDragStart(file: FileAttachment, e: DragEvent) {
+  function disposeAttachments() {
+    disposed = true; browserToken++; missingToken++; clearTimeout(refusedTimer); stopMissingWatch();
+    stopReplyRequest(); reply.dispose(); stopBrowserWatch(); stopErrorWatch(); menuListener?.(); content.disposeContent(); preview.disposePreview();
+  }
+  async function onAttachmentDragStart(file: FileAttachment, e: DragEvent) {
     e.preventDefault();
     suppressClickUntil = Date.now() + 500;
+    // A file marked gone is refused at once; any other is looked at again, since it may have gone after the list was checked.
+    if (!missing.value.has(file.path)) {
+      const gone = await lookForMissing([file]);
+      if (gone?.has(file.path)) missing.value = new Set([...missing.value, file.path]);
+    }
+    if (missing.value.has(file.path)) { refuseDrag(file); return; }
     draggingOut.value = true;
     startDrag({ item: [file.path], icon: dragIcons.value[file.path] || FALLBACK_ICON }, () => {
       suppressClickUntil = Date.now() + 300;
@@ -226,7 +268,7 @@ export function useAttachments(deps: {
     panelContent: computed(() => isReplyPreview.value ? reply.content.value : content.previewContent.value),
     panelLoading: computed(() => isReplyPreview.value ? reply.loading.value : content.previewLoading.value),
     panelReadingState: computed(() => isReplyPreview.value ? reply.readingState.value : content.currentReadingState.value),
-    thumbs, draggingOut, setAttRef, selectFile, openFile, openBrowser, openPreviewFile, primaryBrowser, browserOpening, browserActionError, browserErrorIndex, browserErrorFile, onBackgroundClick,
+    thumbs, draggingOut, missing, refusedDrag, setAttRef, selectFile, openFile, openBrowser, openPreviewFile, primaryBrowser, browserOpening, browserActionError, browserErrorIndex, browserErrorFile, onBackgroundClick,
     handleAttachmentKey, formatBytes, loadThumbs, loadDragIcons, onAttachmentContextMenu, onAttachmentDragStart,
     initAttachmentPreviewListeners, disposeAttachments,
   };

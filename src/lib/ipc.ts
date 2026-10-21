@@ -124,6 +124,10 @@ export const localImageReleaseAsset = (scope: string, token: string) => invoke<v
 export const fileIconDataUrl = (path: string) =>
   invoke<string>("file_icon_data_url", { path });
 
+/** Per path, in the order given: false only when the file is no longer there (a path that cannot be examined stays true). */
+export const attachmentsExist = (paths: string[]) =>
+  invoke<boolean[]>("attachments_exist", { paths });
+
 export const showAttachmentMenu = (path: string) =>
   invoke<void>("show_attachment_menu", { path });
 
