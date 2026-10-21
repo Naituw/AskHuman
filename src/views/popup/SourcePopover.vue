@@ -14,6 +14,11 @@ let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 const owner = Symbol("source-card");
 let layoutObserver: ResizeObserver | undefined;
 let generation = 0, loadedAt = 0, disposed = false, suppressFocus = false;
+// Focus opens the card only when a person just asked for it: Tab / Shift+Tab, or a press on the chip. WebKit also hands the
+// first control of a freshly loaded page its focus while the window is still hidden, and focus restores land on the chip
+// too; neither is a request, and a card open before the window even shows is what that used to cause.
+const INTENT_MS = 400;
+let intentAt = -Infinity;
 function trigger() { return anchor.value?.querySelector<HTMLElement>(".brand-chip") ?? null; }
 function position() {
   const element = trigger(); if (!element || !open.value) return;
@@ -57,17 +62,27 @@ function close(restore = false) {
   open.value = false;
   if (restore && focused) { suppressFocus = true; trigger()?.focus(); queueMicrotask(() => { suppressFocus = false; }); }
 }
-function focus() { if (!suppressFocus) void show(); }
+function focus(event: FocusEvent) {
+  if (suppressFocus) return;
+  if (Date.now() - intentAt < INTENT_MS) { void show(); return; }
+  // A page that owns no focus has not been shown yet, so this is the initial focus nobody chose. Drop it, or the chip wears
+  // a focus ring (and, for a terminal Agent, answers Space / Enter) as soon as the window becomes key.
+  if (!document.hasFocus() && event.target instanceof HTMLElement) event.target.blur();
+}
 function key(event: KeyboardEvent) {
+  if (event.key === "Tab") intentAt = Date.now();
   if (event.key === "Escape" && open.value) { event.preventDefault(); event.stopImmediatePropagation(); close(true); }
   if (event.key === "ArrowDown" && anchor.value?.contains(document.activeElement) && props.enabled && props.active) {
     event.preventDefault(); event.stopPropagation(); void show().then(() => card.value?.querySelector<HTMLButtonElement>("button")?.focus());
   }
 }
 function outside(event: PointerEvent) {
-  if (!anchor.value?.contains(event.target as Node) && !card.value?.contains(event.target as Node)) close();
+  if (anchor.value?.contains(event.target as Node)) intentAt = Date.now();
+  else if (!card.value?.contains(event.target as Node)) close();
 }
 function blur() { close(); }
+// A hidden window keeps its page, so a card left open there would be the first thing the next pop-up shows.
+function hidden() { if (document.visibilityState === "hidden") close(); }
 function otherOpen(event: Event) { if ((event as CustomEvent).detail !== owner) close(); }
 async function copy(value: string, id: string) {
   try {
@@ -115,12 +130,14 @@ onMounted(() => {
   window.addEventListener("popup-source-open",otherOpen);
   window.addEventListener("keydown",key,true); window.addEventListener("pointerdown",outside,true);
   window.addEventListener("resize",position); window.addEventListener("blur",blur);
+  document.addEventListener("visibilitychange",hidden);
 });
 onBeforeUnmount(() => {
   disposed=true; close(); clearTimeout(copiedTimer); layoutObserver?.disconnect();
   window.removeEventListener("popup-source-open",otherOpen);
   window.removeEventListener("keydown",key,true); window.removeEventListener("pointerdown",outside,true);
   window.removeEventListener("resize",position); window.removeEventListener("blur",blur);
+  document.removeEventListener("visibilitychange",hidden);
 });
 </script>
 

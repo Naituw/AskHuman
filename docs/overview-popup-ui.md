@@ -232,7 +232,8 @@ scroll-spy 改写当前题也不视为内容变化（spec F13）。原生正文�
 
 ## 来源胶囊悬浮卡
 
-`SourcePopover.vue` 为 Agent / 项目胶囊各提供一张 100ms 悬浮卡，也支持焦点、移入操作、复制与 Esc。
+`SourcePopover.vue` 为 Agent / 项目胶囊各提供一张 100ms 悬浮卡，也支持 Tab 聚焦、移入操作、复制与 Esc；
+WebKit 载入页面时给第一个控件的初始焦点和程序性聚焦不算用户意图，不会打开卡片。
 Agent 展示完整原生标题、Session ID 及可靠的模型 / 上下文；项目展示稳定路径、不同调用目录及 Git 摘要。
 终端动作只接受本请求的已知目录。浮层不占常驻高度；每次打开按需读取，短缓存、无轮询、跨请求失效。
 完整决策与来源边界见 `specs/popup-session-info.md`。

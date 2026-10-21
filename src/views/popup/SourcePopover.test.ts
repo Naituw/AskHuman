@@ -15,7 +15,7 @@ describe("source information cards",()=>{
     mocks.project.mockResolvedValue({ branch:"main",detached:false,changes:{total:3,staged:1,unstaged:1,untracked:1} });
     mocks.terminal.mockResolvedValue(undefined);
   });
-  afterEach(()=>{wrappers.forEach(w=>w.unmount());wrappers.length=0;vi.useRealTimers();document.body.innerHTML="";});
+  afterEach(()=>{wrappers.forEach(w=>w.unmount());wrappers.length=0;vi.useRealTimers();vi.restoreAllMocks();document.body.innerHTML="";});
   function start(kind:"agent"|"project"="agent") {
     const wrapper=mount(SourcePopover,{attachTo:document.body,props:{kind,requestId:"request-a",active:true,label:kind==="agent"?"Codex":"Repo",sessionId:"exact-session",sessionTitle:"Native task name",project:"/repo/a",callerCwd:"/tmp/report"},
       slots:{default:()=>h("button",{class:"brand-chip",onClick:mocks.click},kind==="agent"?"Codex":"Repo")},global:{plugins:[createI18n({legacy:false,locale:"en",messages:{en}})]}});
@@ -62,5 +62,44 @@ describe("source information cards",()=>{
     expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("Model");
     await hover(p);expect(document.querySelectorAll('[role="dialog"]').length).toBe(1);
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("/repo/a");
+  });
+  describe("focus",()=>{
+    const card=()=>document.querySelector('[role="dialog"]');
+    const chipOf=(wrapper:VueWrapper)=>wrapper.find(".brand-chip").element as HTMLButtonElement;
+    const tab=()=>window.dispatchEvent(new KeyboardEvent("keydown",{key:"Tab",bubbles:true,cancelable:true}));
+    it("drops the initial focus WebKit gives a page that owns no focus, and does not open the card",async()=>{
+      // The first control of a freshly loaded page is focused while its window is still hidden, long before anyone looks.
+      vi.spyOn(document,"hasFocus").mockReturnValue(false);
+      const wrapper=start(),chip=chipOf(wrapper);chip.focus();await vi.advanceTimersByTimeAsync(500);await flushPromises();
+      expect(card()).toBeNull();expect(mocks.agent).not.toHaveBeenCalled();expect(document.activeElement).not.toBe(chip);
+    });
+    it("keeps a focus restored while the page is focused but does not open the card for it",async()=>{
+      const wrapper=start(),chip=chipOf(wrapper);chip.focus();await vi.advanceTimersByTimeAsync(500);await flushPromises();
+      expect(card()).toBeNull();expect(mocks.agent).not.toHaveBeenCalled();expect(document.activeElement).toBe(chip);
+    });
+    it("opens the card when Tab reaches the chip, and ignores a Tab that is long past",async()=>{
+      const wrapper=start(),chip=chipOf(wrapper);
+      tab();chip.focus();await flushPromises();expect(card()?.textContent).toContain("Native task name");
+      chip.blur();await vi.advanceTimersByTimeAsync(200);expect(card()).toBeNull();
+      tab();await vi.advanceTimersByTimeAsync(500);chip.focus();await vi.advanceTimersByTimeAsync(200);await flushPromises();expect(card()).toBeNull();
+    });
+    it("opens the card when the chip is pressed, but not when something else is",async()=>{
+      const wrapper=start(),chip=chipOf(wrapper);
+      document.body.dispatchEvent(new Event("pointerdown",{bubbles:true}));chip.focus();await flushPromises();expect(card()).toBeNull();
+      chip.blur();await wrapper.find(".brand-chip").trigger("pointerdown");chip.focus();await flushPromises();expect(card()).not.toBeNull();
+    });
+    it("gives the focus back to the chip on Escape without opening the card again",async()=>{
+      const wrapper=start(),chip=chipOf(wrapper);
+      tab();chip.focus();await flushPromises();await vi.advanceTimersByTimeAsync(500);
+      window.dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowDown",bubbles:true,cancelable:true}));await flushPromises();
+      expect(card()?.contains(document.activeElement)).toBe(true);
+      window.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true}));await vi.advanceTimersByTimeAsync(500);await flushPromises();
+      expect(card()).toBeNull();expect(document.activeElement).toBe(chip);
+    });
+    it("closes a card that is open when the window is hidden",async()=>{
+      const wrapper=start();await hover(wrapper);expect(card()).not.toBeNull();
+      vi.spyOn(document,"visibilityState","get").mockReturnValue("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));await nextTick();expect(card()).toBeNull();
+    });
   });
 });
