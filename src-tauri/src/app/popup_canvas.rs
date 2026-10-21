@@ -1,5 +1,5 @@
 //! Pane transitions freeze a native viewport; normal edge drags use native autoresizing.
-use super::popup_inbox_geometry::{Allocation, Frame};
+use super::popup_inbox_geometry::{Allocation, Animation, Frame, Transition};
 use tauri::WebviewWindow;
 
 #[cfg(target_os = "macos")]
@@ -105,8 +105,17 @@ mod mac {
         fn CGMainDisplayID() -> u32;
         fn CGDisplayPixelsHigh(display: u32) -> usize;
     }
+    type AnimateDone = extern "C" fn(*mut std::ffi::c_void, *const f64, i32);
+
     unsafe extern "C" {
         fn ah_preview_screen_x() -> f64;
+        fn ah_collapse_animate(
+            webview: *mut std::ffi::c_void,
+            window: *mut std::ffi::c_void,
+            json: *const std::ffi::c_char,
+            done: AnimateDone,
+            user: *mut std::ffi::c_void,
+        );
         fn ah_popup_canvas_prepare(
             view: *mut std::ffi::c_void,
             left: f64,
@@ -237,6 +246,100 @@ mod mac {
         }).map_err(|e| e.to_string())?;
         rx.await.map_err(|_| "canvas geometry disconnected".into())
     }
+
+    extern "C" fn animated(user: *mut std::ffi::c_void, values: *const f64, count: i32) {
+        // Ownership of the boxed sender comes back exactly once per animation.
+        let sender = unsafe { Box::from_raw(user as *mut oneshot::Sender<Vec<f64>>) };
+        let report = if values.is_null() || count <= 0 {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(values, count as usize) }.to_vec()
+        };
+        let _ = sender.send(report);
+    }
+
+    /// Collapse, expand or resize the small window with the display-link driver (PopupCollapse.swift).
+    /// The window keeps its top-left corner (plus the clamped shift in `allocation.frame`), the pinned
+    /// viewport stays where it is on screen, and without an animation the change is a single frame.
+    pub async fn animate(
+        window: &WebviewWindow,
+        allocation: &Allocation,
+        transition: Transition,
+        source: Frame,
+        animation: Option<Animation>,
+    ) -> Result<Frame, String> {
+        let canvas = allocation.canvas.clone().ok_or("missing native canvas")?;
+        let duration = animation
+            .map(|a| a.duration_ms)
+            .filter(|n| n.is_finite())
+            .map_or(0.0, |n| n.clamp(0.0, 2000.0));
+        let curve = animation
+            .and_then(|a| a.curve)
+            .filter(|c| c.iter().all(|n| n.is_finite()))
+            .unwrap_or([0.2, 0.0, 0.0, 1.0]);
+        let (lights, lights_start, lights_end) = match transition {
+            Transition::Expand => ("show", 0.45, 1.0),
+            Transition::Collapse => ("hide", 0.0, 0.35),
+            // The small window stays without traffic lights; this only makes sure they are gone.
+            _ => ("settle", 0.0, 0.4),
+        };
+        let expand = transition == Transition::Expand;
+        let params = serde_json::json!({
+            "toWidth": allocation.frame.width,
+            "toHeight": allocation.frame.height,
+            // Relative to the frame the driver starts from, so a move since `source` is kept.
+            "toDX": allocation.frame.x - source.x,
+            "canvasX1": allocation.left_span() - canvas.left,
+            "durationMs": duration,
+            "curve": curve,
+            "lights": lights,
+            "lightsStart": lights_start,
+            "lightsEnd": lights_end,
+            // The small window cannot be resized by its edges.
+            "resizable": expand,
+            // Expanding unpins the viewport and gives the window back the minimum size it was
+            // created with; `finish` then sets the minimum of the current layout.
+            "resume": expand,
+            "minWidth": super::super::popup_size::MIN_WIDTH,
+            "minHeight": super::super::popup_size::MIN_HEIGHT,
+        });
+        let json = std::ffi::CString::new(params.to_string()).map_err(|e| e.to_string())?;
+        let (tx, rx) = oneshot::channel::<Vec<f64>>();
+        let user = Box::into_raw(Box::new(tx)) as usize;
+        let scheduled = window.with_webview(move |platform| unsafe {
+            ah_collapse_animate(
+                platform.inner(),
+                platform.ns_window(),
+                json.as_ptr(),
+                animated,
+                user as *mut std::ffi::c_void,
+            );
+        });
+        if let Err(error) = scheduled {
+            // The closure never ran, so the sender is still ours to drop.
+            drop(unsafe { Box::from_raw(user as *mut oneshot::Sender<Vec<f64>>) });
+            return Err(error.to_string());
+        }
+        let wait = std::time::Duration::from_millis(duration as u64 + 5000);
+        let values = tokio::time::timeout(wait, rx)
+            .await
+            .map_err(|_| "window animation timed out".to_string())?
+            .map_err(|_| "window animation callback dropped".to_string())?;
+        // Report layout (PopupCollapse.swift): 5 finalX, 6 finalTop, 7 finalW, 8 finalH, 9 cancelled.
+        if values.len() < 10 {
+            return Err("window animation returned no report".into());
+        }
+        if values[9] != 0.0 {
+            return Err("window animation was interrupted".into());
+        }
+        let screen_height = unsafe { CGDisplayPixelsHigh(CGMainDisplayID()) } as f64;
+        Ok(Frame {
+            x: values[5],
+            y: screen_height - values[6],
+            width: values[7],
+            height: values[8],
+        })
+    }
 }
 
 pub async fn prepare(
@@ -263,34 +366,90 @@ pub async fn apply(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (old_left, source);
-        apply_frame(window, allocation.frame)?;
-        Ok(allocation.frame)
+        instant::apply(window, allocation)
+    }
+}
+/// Change the window form (small window <-> expanded layout). Windows and Linux have no pinned
+/// viewport to keep still, so the change is instant there: the minimum size is lowered for the small
+/// window and its edges stop resizing; expanding gives the edges back (`resume` restores the minimum).
+pub async fn animate(
+    window: &WebviewWindow,
+    allocation: &Allocation,
+    transition: Transition,
+    source: Frame,
+    animation: Option<Animation>,
+) -> Result<Frame, String> {
+    #[cfg(target_os = "macos")]
+    return mac::animate(window, allocation, transition, source, animation).await;
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (source, animation);
+        instant::animate(window, allocation, transition)
     }
 }
 pub async fn resume(window: &WebviewWindow, allocation: &Allocation) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     return mac::resume(window, allocation).await;
     #[cfg(not(target_os = "macos"))]
-    window
-        .set_min_size(Some(tauri::LogicalSize::new(
-            allocation.minimum_width(),
-            super::popup_size::MIN_HEIGHT.min(allocation.frame.height),
-        )))
-        .map_err(|e| e.to_string())
+    instant::resume(window, allocation)
 }
-#[cfg(not(target_os = "macos"))]
-fn apply_frame(window: &WebviewWindow, plan: Frame) -> Result<(), String> {
-    window
-        .set_size(tauri::LogicalSize::new(plan.width, plan.height))
-        .map_err(|e| e.to_string())?;
-    let positioned = window
-        .set_position(tauri::LogicalPosition::new(plan.x, plan.y))
-        .map_err(|e| e.to_string());
-    #[cfg(target_os = "linux")]
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        return Ok(());
+
+/// The window changes of the platforms without a pinned viewport (Windows, Linux): the page's viewport is the
+/// window, so every change is made at once. Only cross-platform window calls are used and the module is not gated by
+/// `cfg`, so a macOS build type-checks it as well even though macOS never calls it.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+mod instant {
+    use super::*;
+
+    pub fn apply(window: &WebviewWindow, allocation: &Allocation) -> Result<Frame, String> {
+        apply_frame(window, allocation.frame)?;
+        Ok(allocation.frame)
     }
-    positioned
+
+    /// A shrink lowers the minimum size first (the small window is smaller than the normal minimum), then sizes the
+    /// window, then takes its edges away; an expansion gives the edges back first so that the sizing is not refused.
+    pub fn animate(
+        window: &WebviewWindow,
+        allocation: &Allocation,
+        transition: Transition,
+    ) -> Result<Frame, String> {
+        let expand = transition == Transition::Expand;
+        if expand {
+            window.set_resizable(true).map_err(|e| e.to_string())?;
+        } else {
+            window
+                .set_min_size(Some(tauri::LogicalSize::new(1.0, 1.0)))
+                .map_err(|e| e.to_string())?;
+        }
+        apply_frame(window, allocation.frame)?;
+        if !expand {
+            window.set_resizable(false).map_err(|e| e.to_string())?;
+        }
+        Ok(allocation.frame)
+    }
+
+    pub fn resume(window: &WebviewWindow, allocation: &Allocation) -> Result<(), String> {
+        window
+            .set_min_size(Some(tauri::LogicalSize::new(
+                allocation.minimum_width(),
+                super::super::popup_size::MIN_HEIGHT.min(allocation.frame.height),
+            )))
+            .map_err(|e| e.to_string())
+    }
+
+    fn apply_frame(window: &WebviewWindow, plan: Frame) -> Result<(), String> {
+        window
+            .set_size(tauri::LogicalSize::new(plan.width, plan.height))
+            .map_err(|e| e.to_string())?;
+        let positioned = window
+            .set_position(tauri::LogicalPosition::new(plan.x, plan.y))
+            .map_err(|e| e.to_string());
+        // A Wayland compositor places windows itself, so a refused position is not an error there.
+        if cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            return Ok(());
+        }
+        positioned
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]

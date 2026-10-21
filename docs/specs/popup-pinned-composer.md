@@ -197,7 +197,7 @@ footer 则固定在滚动容器外。用户已经在输入框中开始编辑后�
 - 固定区使用 `role="region"` 和本地化 aria-label；返回按钮有 title / aria-label。
 - Teleport 后 textarea 保持原 label / placeholder 语义和键盘 Tab 可达性。
 - `prefers-reduced-motion` 下回原题滚动改为即时；固定 / 回位本身不依赖动画。
-- 若 `ResizeObserver` 或 Teleport target 异常，降级为普通内联输入框，不阻断作答和提交。
+- 若 `ResizeObserver` 或 Teleport target 异常（含 Teleport 后编辑器没有落进本实例的固定区），降级为普通内联输入框，不阻断作答和提交。
 
 ## 10. 验收标准
 
@@ -215,3 +215,18 @@ footer 则固定在滚动容器外。用户已经在输入框中开始编辑后�
 8. DOM 移动前有焦点时保留焦点与选区；用户主动点 Message 失焦后不被强行抢焦点。
 9. `select-only`、权限确认、提交 / 取消和答案输出契约无回归；固定 textarea 填写后按 `⌘↵` 直接继续 / 提交，不因原题卡在屏外而跳回第 1 题。
 10. macOS / Windows / Linux WebView 中完成至少一次单题与纵向多题手工验证。
+11. 合并窗口里同时挂载多份弹窗表单（含已隐藏的）时，每份表单都固定进自己的固定区，不因挂载顺序落进别人的固定区；固定区目标缺失时输入框保持内联，不消失。
+
+## 11. 反馈意见
+
+### 2026-10-17（合并窗口里固定后输入框消失）
+
+现象：固定输入框进入后，底部只剩一条很矮的空条，输入框不见了。
+
+原因：合并窗口会在同一文档里同时挂载多份 `PopupView`（已访问或预挂载的请求，之后用 `v-show` 隐藏），每份都带一个固定区，但 Teleport 的目标曾是固定 id `#popup-composer-dock-target`。Vue 对字符串 `to` 只在挂载时用 `document.querySelector` 解析一次，永远取文档里第一个匹配，所以后挂载的表单会把编辑器送进更早、已隐藏表单的固定区——自己的固定区只剩空的外壳（约 19px），编辑器则在看不见、也无法聚焦的节点里。
+
+修复：
+
+- 固定区目标 id 按实例唯一（`usePopupCore` 的 `composerDockTargetId`），`ComposerDock.vue` 与 `AnswerComposer.vue` 都用它，每份表单只会固定进自己的固定区。
+- 兜底（落实 §9）：Teleport 之后若编辑器没落进本实例的固定区，立即取消固定、回到内联，并停用该实例的后续固定尝试，输入框不会消失。
+- 回归测试：`PopupView.dock.test.ts` 用真实 `PopupView` 覆盖多表单同挂载、先挂载的表单已隐藏或已卸载、固定区目标缺失三种情形；之前所有 `PopupInboxView.*` 测试都把 `PopupView` 换成了桩，所以这类跨实例冲突没有被覆盖。

@@ -47,6 +47,7 @@ import type {
   ThemeMode,
   DiffFileView,
   DiffStatPage,
+  DropLogEntry,
   ImageAttachment,
   TodoDoneEntry,
   TodoEntry,
@@ -104,6 +105,15 @@ export const closePreview = () => invoke<void>("close_preview");
 
 export const readImageDataUrl = (path: string) =>
   invoke<string>("read_image_data_url", { path });
+
+/** Read a dropped picture. A failure rejects with a `DropReadError` (why, and where the file is), not a string. */
+export const popupDropReadImage = (path: string) =>
+  invoke<string>("popup_drop_read_image", { path });
+
+/** Append one drag event to the diagnostic log. Best-effort: a log that cannot be written never reaches the drop. */
+export const popupDropLog = async (entry: DropLogEntry): Promise<void> => {
+  try { await invoke<void>("popup_drop_log", { entry }); } catch { /* diagnostics only */ }
+};
 
 export const localImageCreateScope = () => invoke<string>("local_image_create_scope");
 export const localImagePrepare = (scope: string, path: string) =>
@@ -665,3 +675,5 @@ export const codexLaunchStatus = (force = false) => invoke<CodexLaunchStatus>("c
 export const popupAgentInfo = (requestId: string) => invoke<import("./types").PopupAgentInfo>("popup_agent_info", { requestId });
 export const popupProjectInfo = (requestId: string) => invoke<import("./types").PopupProjectInfo>("popup_project_info", { requestId });
 export const popupOpenTerminal = (requestId: string, target: "project" | "caller") => invoke<void>("popup_open_terminal", { requestId, target });
+/** Put the Agent session title into the popup window's native title (Windows / Linux); `null` restores the plain title. */
+export const popupSetSessionTitle = (title: string | null) => invoke<void>("popup_set_session_title", { title });

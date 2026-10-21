@@ -6,6 +6,8 @@ import AnswerComposer from "./AnswerComposer.vue";
 import { PopupCtxKey, type PopupContext } from "./context";
 
 const targets: HTMLElement[] = [];
+// The composer teleports into the dock its own form provides, not into a fixed document-wide id.
+const DOCK_TARGET_ID = "popup-composer-dock-target-test";
 
 afterEach(() => {
   for (const target of targets.splice(0)) target.remove();
@@ -13,7 +15,7 @@ afterEach(() => {
 
 function dockTarget(): HTMLElement {
   const target = document.createElement("div");
-  target.id = "popup-composer-dock-target";
+  target.id = DOCK_TARGET_ID;
   document.body.appendChild(target);
   targets.push(target);
   return target;
@@ -27,6 +29,7 @@ function popupContext(dockedComposerQ = ref<number | null>(null)): PopupContext 
     imagesByQ: ref([[]]),
     replyFilesByQ: ref([[]]),
     dockedComposerQ,
+    composerDockTargetId: DOCK_TARGET_ID,
     expandedQ: () => true,
     setInputRef: (el: HTMLTextAreaElement | null, i: number) => {
       inputRefs[i] = el;

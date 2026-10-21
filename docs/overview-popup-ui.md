@@ -17,7 +17,7 @@ Popup 提问附件和回复图片采用同窗右侧预览，具体决策见 `doc
 - `AttachmentPreviewPanel.vue` 提供单行标题栏、带边框的原文切换、固定右侧操作区。Markdown 使用 `attachment_markdown.rs` 的静态受限片段；diff 使用 `attachment_diff.rs` 的共享解析模型，由 `AttachmentDiffPreview.vue` 虚拟显示行；代码与原文作为文本展示。`AttachmentImagePreview.vue` 保留动画原字节，以实际溢出决定文件拖出或平移查看，SVG 只通过隔离 img 显示。
 - macOS 的 `macos_attachment_preview.rs` / `swift/AttachmentPreview.swift` 经已有 Swift 构建桥复用 Image I/O、PDFKit 与 QuickLookUI。系统图片生成有界 PNG；PDF 后台创建、保存页坐标与缩放；其他系统文档 / 媒体使用嵌入的 `QLPreviewView`，静态文档视图最多两个，媒体切换后卸载。`useNativeAttachmentPreview.ts` 同步正文矩形、遮罩与代次；命令根据请求索引和有界读取许可验证目标，原生焦点快捷键回到 Popup 业务处理。多图系统图片说明数量和完整原文件入口。范围与系统差异见规格 §5.4。
 - 预览能力与 CLI / IM 的 `isImage` 分类分开：新增系统图片可在 Popup 列表显示缩略图，但发送分类沿用原有七种扩展名。ICO / TGA / PNM 只启用现有 image 的轻量 feature，无新增 codec crate；macOS 系统图片能力不承诺在 Windows / Linux 可用。
-- 窗口拖拽使用主区和预览标题栏、图片周围 / 控件栏及状态背景的显式 `data-tauri-drag-region`，不覆盖按钮、正文、图片本身、滚动条或原生预览；文件拖出共用 `startDrag` 并使用原路径与有效 PNG 图标。原生拖入的预览区 / 分隔线落点不进入回复附件。附件列表空格和方向键、标题栏左右键与正文滚动分别路由；输入法、查找、语音及既有发送 / 取消优先级保留。
+- 窗口拖拽使用主区和预览标题栏、图片周围 / 控件栏及状态背景的显式 `data-tauri-drag-region`，不覆盖按钮、正文、图片本身、滚动条或原生预览；文件拖出共用 `startDrag` 并使用原路径与有效 PNG 图标。原生拖入的预览区 / 分隔线落点不进入回复附件。拖入没加成功的各种情形（没有路径、读取失败并区分没权限、落在预览区、请求不收附件、窗口忙、全部重复、部分成功）都有提示，每次拖拽的结果写进 `daemon.log` 的 `askhuman_drop` 行（不含路径），见 [`specs/popup-inbox-collapse.md`](specs/popup-inbox-collapse.md) §6.9。附件列表空格和方向键、标题栏左右键与正文滚动分别路由；输入法、查找、语音及既有发送 / 取消优先级保留。
 - Popup 更多与右键共用 `popup_preview_menu`。macOS 保留完整原生菜单并将快速查看路由到当前 Popup；Windows / Linux 提供公共文件动作，定位失败显示错误。历史、待办及其他入口继续用已有 Quick Look；它们与 Popup 共用 diff 解析和 Markdown 静态渲染，范围见 `docs/specs/diff-attachment-preview.md`。
 - 提问正文与各题、历史正文共用 `MarkdownContent.vue`：本地图片按可见区域注册 `local_image.rs` 的窗口 / 文档 scope，再通过 `convertFileSrc(token, "askhuman-image")` 加载原文件二进制。项目相对路径使用请求项目目录，切消息或卸载时撤销 scope。`image_resource.rs` 与附件共用有界读取、尺寸和动画检查；大图、缺失或解码失败保留说明与原图入口，点击图片由系统默认应用打开。实现、预算和跨平台证据见 `docs/plans/popup-markdown-images.md` 与 `docs/investigations/base64-usage-audit.md`。
 
@@ -109,6 +109,42 @@ Message、题干及 Confirm 的 Markdown 链接共用 `lib/markdownLinks.ts`，�
 的默认 click / auxclick 导航，继续让正文处理器打开目标，不影响 Mermaid sandbox 子帧。
 合并与独立模式使用相同保护，避免链接替换整个作答页面及丢失草稿；规则见规格 §20。
 
+## 稍后回答与小窗
+
+合并窗口里可把一条请求标记为「稍后回答」：只是本轮内存里的显示标记，不回答、不取消，仍可浏览和作答，一轮结束即清。
+**所有待答请求都被标记时**，整窗缩成只有 Sidebar 列表的小窗（标题「待答 N」，跟随置顶设置，以左上角为锚、可拖动）；
+只要有一条没标记的请求（含新到达的），窗口就是展开的；展开后无待答主要请求时的窗口叫 peek，用户离开 AskHuman 后会缩回小窗。
+需求决策 C1–C46 与规则 R1–R16 见 `specs/popup-inbox-collapse.md`，实施与验证记录见 `plans/popup-inbox-collapse.md` §8，
+Windows / Linux 的实机补验清单见 `PROGRESS.md`。
+
+- **模型与流程**：`popup/inboxCollapse.ts` 是不依赖 Vue / Tauri 的纯决策（标记 / 取消 / 浏览 / 答完跳转 / 收窗，给出
+  `collapse` / `expand` / `switch` / `mini-resize` 之一；从小窗展开的默认目标是最后打开的 → 第一条未查看 → 列表第一条）。
+  `PopupInboxView.vue` 把结果落到窗口：所有会改窗口形态的动作进同一条串行队列（`enqueue`：`shrink` / `select` / `peekShrink` /
+  `collapseOnLeave`），沿用布局事务 `popup_inbox_layout → popup_inbox_commit(animation) → popup_inbox_finish`。
+  `popup/InboxSidebar.vue` 兼作小窗列表；小窗尺寸（宽 = Sidebar 宽，高 = 前 3 行，其余滚动）由 `popup/inboxMini.ts::measureMini`
+  从真实列表量出，不写入窗口尺寸偏好。单请求没有 Sidebar 列：缩小前先把列表隐藏摆放出来量尺寸，展开后让它淡出（`loneList`）。
+- **窗口事务**：`popup_inbox_geometry.rs` 的 `Allocation.collapsed` 表示窗口是小窗（宽度与 `main_height` 仍描述页面保持排好的展开布局，
+  只有 `frame` 变小）；`Geometry.drift` 抵消「以小窗为锚展开」造成的正文位移，加上小窗被拖动后的 `moved` / `reset`，保证下一轮窗口位置不漂移；
+  `ignores_resize()` 让小窗的 resize 事件不进尺寸偏好。
+  macOS 由 `popup_canvas.rs` → `swift/PopupCollapse.swift` 的显示链路逐帧动画窗口 frame 与固定画布，页面同时交叉淡化列表与正文
+  （`--ms` 驱动，减少动态效果时即时）。Windows / Linux 没有固定画布，由 `popup_canvas::instant` 立即改尺寸与位置（缩小先降最小
+  尺寸、变形后禁用缩放边缘，展开相反），页面是 CSS grid，单请求的列表绝对定位、不占网格列；这条路径在 macOS 上也被编译，
+  但尚未在真实的 Windows / Linux 上验证。
+- **激活与切走缩回**：「用户在 AskHuman」是进程级状态。macOS 由 `popup_activation.rs` + `swift/PopupActivation.swift` 观察
+  `NSApplication` 的激活通知，命令 `popup_app_active` 给起始值、事件 `popup-app-active` 推变化；Windows / Linux 用 popup 窗口的
+  `Focused` 事件。页面对离开留 200ms 抖动保护；有主要请求、窗口已是小窗、拖拽进行中都不触发缩回。
+- **拖入文件**：`popup/useInboxDrop.ts` 注册一个窗口级 `onDragDropEvent`（inbox 下 `usePopupCore` 不再自己监听），事件在
+  `inboxDrop.ts::serialDrag` 里串行并合并。小窗上停留 500ms 展开到指针下那一行的请求（否则默认目标），展开后停留 250ms 切到另一行，
+  Sidebar 列表与正文靠近上下边缘 56px 内自动滚动；松手落到指针下的请求，纵向布局落到指针下的题卡、顺序布局落当前题。
+  拖拽打开的窗口在没有主要请求时，拖走 600ms 后缩回。常量集中在 `inboxDrop.ts` 的 `DRAG`；落点换算（macOS 固定画布要修正 y，
+  Windows 是物理像素、GTK 是 CSS 像素）在 `dropPoints`。失败提示与 `askhuman_drop` 日志见 spec §6.9。
+- **测试与原型**：模型与拖放表驱动测试在 `inboxCollapse.test.ts` / `inboxDrop.test.ts`，页面流程在
+  `PopupInboxView.{collapse,later,leave,drop,mini,columns}.test.ts`。jsdom 不按选择器权重排序规则，依赖层叠结果的 CSS 用
+  `popup/cssCascade.testkit.ts` 的最小层叠解析器测（`InboxSidebar.undo.test.ts`、`PopupInboxView.columns.test.ts`）。
+  独立原型 `swift/prototype/PopupCollapseVerify.swift` + `examples/popup_collapse_demo.rs`（feature `collapse-prototype`，
+  `./scripts/popup-collapse-demo.sh` 运行，不进产品构建）保留作动画与几何的行为参照：`--auto`（367 项）与 `--auto-controls`（18 项）
+  静默运行、不取焦点；`--focus`、`--burst`、`--video` 和交互模式会取走键盘焦点，运行前先问用户（spec C26）。
+
 ## 来源标题与上下文
 
 来源名（弹窗标题与渠道消息头共用）的解析优先级为 **自定义环境变量 `ASKHUMAN_ENV_SOURCE_NAME` > 探测到的发起 Agent 展示名（Claude Code/Codex/Cursor/Grok）> 默认「the Loop」**。后端入口为 `models::source_name_for_agent`；MCP 模式无法从 env 判断家族时先回退默认名称，再由 daemon 异步进程树解析补齐 Agent。
@@ -124,8 +160,10 @@ Message、题干及 Confirm 的 Markdown 链接共用 `lib/markdownLinks.ts`，�
   Popup 本身保持等待。置顶 Popup 场景下目标窗口临时使用同级置顶，避免开在其后方。
 - **workspace badge**：来自按请求 ID 获取的 PopupContext.project（git 根或 cwd），显示目录名、hover 展示完整路径，点击通过 `open_path` 在文件管理器打开。
 
-会话标题元数据已经传至作答区，当前不增加常驻标题行；原生名称来源与缓存刷新规则见
-`docs/specs/popup-session-info.md`。Codex 胶囊的悬浮会话信息仍在设计讨论中。
+Agent 会话标题显示在作答区的标题位置：macOS 在标题栏（`PopupNavbar.vue` 里红绿灯旁的 `.session-strip`，
+绝对定位、不占高度），Windows / Linux 写进原生窗口标题（页面经 `popup_set_session_title` 上报，
+`app/popup_title.rs` 合成 `<标题> — AskHuman`）。不增加常驻标题行，也不预留高度。原生名称来源与缓存刷新规则、
+决策见 `docs/specs/popup-session-info.md`；Agent / 项目胶囊的悬浮信息见下文「来源胶囊悬浮卡」。
 
 这些字段通过 `PopupInit{project, projectName, agentKind, agentPid, agentConsoleSessionId, agentSessionId, agentSessionTitle}` 上送；
 终端类型在首屏后由 `popup_agent_terminal` 异步解析；预热 Popup 的上下文读取边界另见
@@ -160,7 +198,7 @@ Markdown 提问附件的同窗预览也识别显式 Mermaid fence：`attachment_
 
 ## 多问题纵向模式
 
-设计见 `docs/specs/multi-question-vertical.md`，实现计划见 `docs/plans/multi-question-vertical.md`。该模式仅在 `experimental.verticalQuestions` 开启且问题数大于 1 时生效；关闭时保留一次一题的左右切换。
+设计见 `docs/specs/multi-question-vertical.md`，实现计划见 `docs/plans/multi-question-vertical.md`。该模式由 `experimental.verticalQuestions` 控制，出厂默认开启（设置「通用」Tab 可关），仅在开启且问题数大于 1 时生效；关闭时保留一次一题的左右切换。
 
 纵向模式由 `PopupView` 同时渲染所有题卡。scroll-spy `current` 表示视口题，统一动作目标为 `actionQ = focusedQ ?? current`：textarea 仍聚焦时，被动滚动不会改变快捷键、选项角标、语音或页脚导航的题目归属；失焦后才交回视口题。`⌘1–9` 选择动作题后会把该题滚回可见，显式点击另一题选项或导航才 blur 旧编辑器并移交上下文。若聚焦题卡完全滚出内容视口且未固定，则焦点与 owner 一并结束；固定判定先执行，部分可见或已固定的编辑器不受影响。程序化导航期间有短暂锁定避免抖动，composer-only 几何测量不能触发 scroll-spy。每题用 visited 状态跟踪是否看过，最后一题可见后才显示发送按钮。选项、文本、图片和回复文件均按题目索引保存；拖放图片按原生落点归属题卡（悬停期间高亮目标卡；落点坐标 macOS/Linux 为 CSS 像素、Windows 为物理像素，两种解释互为兜底），粘贴图片归当前聚焦题。单题不启用这些纵向模式样式与状态。
 
@@ -168,7 +206,7 @@ Markdown 提问附件的同窗预览也识别显式 Mermaid fence：`attachment_
 
 普通问答的单题、顺序多题和纵向多题共用 `AnswerComposer.vue`。纵向题卡的折叠空态与聚焦空态保持和单行预设答案相同的紧凑高度，未聚焦时 hover 也沿用预设答案的高亮底色。空白聚焦态的语音 / 图片按钮同行靠右；出现第一个字符后，文字区恢复整行宽度，按钮移到输入框内部的下一行，后续多行只增长文字区。输入自增高不在 live textarea 上经过 `height:auto`：普通输入只在确需增长时写一次最终高度，删除 / undo 等缩短路径使用固定定位的隐藏镜像测量，避免 WebKit 因临时塌缩反复锚定 `.content`。focus ring 由非滚动的 `.input-wrap::after` 按 `:focus-within` 绘制，避免 WebKit 在聚焦 textarea 增高时只重绘阴影的局部脏区。blur 时已展开输入框保留输入阶段测得的高度，只有确实折叠时才清除内联高度，避免 WebKit 滚动锚定在点击期间移动题卡。最后一个选项到输入框的布局间距等于选项间距加 focus-ring 宽度，使激活后的可见间距仍与答案之间一致。单题 / 顺序模式上屏时只有 textarea home 在 `.content` 内至少可见 50% 才自动 focus；不足时保持未激活，后来滚入视口也不追补自动 focus。textarea 获得焦点后成为最近激活的编辑器；它仍有实际 focus，具备“用户手动激活过”或“曾完整显示”任一资格，并在激活后发生向上滚动时，原输入位置落到 `.content` 视口下方会把同一个编辑器 DOM 通过 Teleport 移到 `.content` 与 footer 之间的底部固定区。点击一个已被底边裁切的输入框本身不立即固定；弹出时的自动聚焦、异步布局或 resize 也不会自行触发固定。未固定前先失焦再滚动不会固定；已经固定后 blur 不清除编辑器归属，因此选择或复制 Message 文字不会让固定区消失。高输入框的固定与回位都按固定态可见高度投影：向上回看时先由内容区底边逐步裁切到约 120px 再停靠，向下时在原位能承接这段高度后回位并继续逐步露出，从而避免 `240px ↔ 120px` 引起顶部与预设答案间距跳变。
 
-固定判定与小幅滞回在 `composerDock.ts`，owner、占位高度、ResizeObserver、焦点 / 选区和输入法组合态保护在 `usePopupCore.ts`，固定区外壳由 `ComposerDock.vue` 提供。纵向多题的 composer owner 与 scroll-spy `current` 解耦；固定区显示 `Question i/n` 并可回到原题。固定编辑器仍有焦点时，统一动作目标留在该题：`⌘↵` 跳过题卡 reveal-first，`⌘1–9` 选择后将题卡滚回可见，显式跨题动作才结束旧焦点。完整行为见 `docs/specs/popup-pinned-composer.md`，实施记录见 `docs/plans/popup-pinned-composer.md`。
+固定判定与小幅滞回在 `composerDock.ts`，owner、占位高度、ResizeObserver、焦点 / 选区和输入法组合态保护在 `usePopupCore.ts`，固定区外壳由 `ComposerDock.vue` 提供。合并窗口会在同一文档里同时挂载多份 `PopupView`，各自带一个固定区，所以 Teleport 目标 id 按实例唯一（`composerDockTargetId`），不能共用固定 id，否则 `querySelector` 会把编辑器送进文档里第一个、可能已被隐藏的固定区；Teleport 之后若编辑器没落进本实例的固定区，就回退为内联编辑器并不再重试。纵向多题的 composer owner 与 scroll-spy `current` 解耦；固定区显示 `Question i/n` 并可回到原题。固定编辑器仍有焦点时，统一动作目标留在该题：`⌘↵` 跳过题卡 reveal-first，`⌘1–9` 选择后将题卡滚回可见，显式跨题动作才结束旧焦点。完整行为见 `docs/specs/popup-pinned-composer.md`，实施记录见 `docs/plans/popup-pinned-composer.md`。
 
 ## 页内查找（⌘F / Ctrl+F）
 

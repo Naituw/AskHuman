@@ -1,12 +1,17 @@
 import type { PopupInboxRequest } from "../../lib/types";
 
-export function inboxGroups(requests: PopupInboxRequest[], order: string[]) {
+/** The fields the queue ordering reads; `inboxCollapse` runs the same ordering over its own request records. */
+interface Queued {
+  requestId: string;
+  project: string;
+}
+export function inboxGroups<T extends Queued & { sequence: number }>(requests: T[], order: string[]) {
   return order.map(path => ({ path, requests: requests.filter(r => r.project === path)
     .sort((a, b) => a.sequence - b.sequence || a.requestId.localeCompare(b.requestId)) }))
     .filter(group => group.requests.length);
 }
 /** Continue within the current project, then advance through stable project groups. */
-export function nextInboxRequest(ordered: PopupInboxRequest[], active: string, removed: Set<string>): string | null {
+export function nextInboxRequest(ordered: Queued[], active: string, removed: Set<string>): string | null {
   const index = ordered.findIndex(r => r.requestId === active);
   const project = ordered[index]?.project;
   const cycle = [...ordered.slice(index + 1), ...ordered.slice(0, index)];

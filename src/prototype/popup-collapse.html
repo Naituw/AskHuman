@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AskHuman · 折叠态原型</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #f0f0f2; }
+      @media (prefers-color-scheme: dark) { html, body { background: #1e1e1e; } }
+      html.material-translucent { background: transparent !important; }
+      html.material-translucent body { background: rgba(255, 255, 255, 0.3); }
+      @media (prefers-color-scheme: dark) { html.material-translucent body { background: rgba(0, 0, 0, 0.3); } }
+    </style>
+    <script>
+      // Same first-frame material classes as the product (src/index.html). The controller stays opaque.
+      try {
+        if (/Mac/.test(navigator.userAgent)) {
+          var params = new URLSearchParams(location.search);
+          var root = document.documentElement;
+          var effect = params.get("effect");
+          root.classList.add("macos");
+          root.classList.add(effect === "solid" || params.get("surface") === "controls" ? "material-solid" : "material-translucent");
+        }
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/prototype/popup-collapse-main.ts"></script>
+  </body>
+</html>

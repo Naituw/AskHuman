@@ -45,6 +45,40 @@ Current prototypes:
   native geometry/state checks. It starts its own Vite server on port 5198 and does not connect
   to the product daemon. Logs are written under `.askhuman-dev/`. The Rust example and prototype
   frontend are excluded from the normal AskHuman binary and release frontend entry.
+- `popup-collapse.html` — the collapsible inbox window (spec `docs/specs/popup-inbox-collapse.md`).
+  Run `./scripts/popup-collapse-demo.sh` for the native demo (controller window + answer window;
+  `--effect blur|glass|solid` picks the window material), or add `--auto` for the native
+  geometry/state checks and per-transition frame statistics (`--auto-controls` instead has the
+  controller window drive the answer window through its real event channel). It uses its own Vite port 5199 and
+  app identity, never connects to the daemon. The animation driver (`ah_collapse_animate`) lives in
+  `src-tauri/swift/PopupCollapse.swift` and is part of the product build. Everything that only exists to verify it
+  lives in `src-tauri/swift/prototype/PopupCollapseVerify.swift` and is compiled **only** with the `collapse-prototype`
+  Cargo feature (`scripts/popup-collapse-demo.sh` passes it; build the example by hand with
+  `cargo build --manifest-path src-tauri/Cargo.toml --example popup_collapse_demo --features collapse-prototype`),
+  so the product binary carries none of it. Those helpers can screenshot the app's own windows
+  (CoreGraphics via `dlsym`, no screen-recording permission needed) and diff regions of two captures; the
+  `--auto` run uses that for pixel checks and writes review PNGs to `.askhuman-dev/popup-collapse-shots/`.
+  `--video` measures what the display really shows during collapse / expand: a plain backdrop window sits behind the
+  answer window while `scripts/popup-collapse-frames.swift` (ScreenCaptureKit, needs the terminal's Screen Recording
+  permission) logs every delivered frame's display time and window bounding box into
+  `.askhuman-dev/popup-collapse-frames.tsv`; the demo logs per-tick driver timings into the jsonl log. Pick variants and
+  interleave them with `ASKHUMAN_DEMO_QUERY="cycles=2&rounds=5&variants=base,ctl-driver,hidden"` (`ctl-*` are plain-window
+  reference animations). Frame pacing depends heavily on the machine's momentary WindowServer load, so only compare
+  variants that ran interleaved (`rounds`), never one after another. `--burst` captures the app's own window
+  (it disturbs the main thread; good for tearing, not for judging smoothness).
+  `--auto` and `--auto-controls` run **silently**: the process replaces `-[NSApplication activateIgnoringOtherApps:]`
+  with a no-op (`ah_collapse_forbid_activation`) and shows its windows without focusing them, so a scripted run never takes
+  the keyboard focus from whoever is working (the user objected to exactly that). Add `--focus` only for the one check
+  that needs a real app switch (S15 hands the activation to Finder); `--burst` / `--video` / the interactive mode keep
+  the normal active window. Anything that takes the focus must be agreed with the user first. To prove a run is silent,
+  poll `lsappinfo front` while it runs: the front app must stay the one you started from.
+- `popup-session-title.html` — where the Agent session title shows inside the popup (spec
+  `docs/specs/popup-session-info.md`). Every cell is an iframe running the **real** `PopupView` against `mockIPC`
+  (`sessionTitleMock.ts`). The chosen placement, the title strip (`strip`), now ships in `PopupNavbar`, so that cell is
+  the product itself; the rejected placements (`caption|reply|inline`, `SessionTitleFrame.vue`, teleported into the
+  real DOM) are the only prototype code, and a cell without `strip` hides the product's strip for comparison. Controls
+  cover theme, title length, window width and late arrival; `popup-session-title-frame.html?variant=strip|caption|reply|inline&…`
+  renders one window. Pure browser, no Tauri, so the Windows / Linux native title is only drawn as an illustration.
 
 **Workflow:** iterate UI ideas on the prototype first (cheap, instant feedback, user can review
 in a browser), get the design confirmed, then port to the real views. Keep the prototype in

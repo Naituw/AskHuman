@@ -11,6 +11,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: async (name: string, handler: 
   mock.handlers.set(name, handler); return () => mock.handlers.delete(name);
 } }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ setFocus: vi.fn() }) }));
+vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) }));
 vi.mock("../PopupView.vue", () => ({ default: defineComponent({ props: ["scope"], setup(props) {
   mock.scopes.set(props.scope.requestId, props.scope);
   onMounted(() => { if (!mock.heldReady.has(props.scope.requestId)) props.scope.ready(props.scope.requestId); });
@@ -165,7 +166,7 @@ describe("shared popup navigation", () => {
     expect(row.find(".inbox-dot").classes()).toContain("unread");
     expect(row.findComponent(UnreadRipple).props("active")).toBe(true);
     expect(wrapper.find('[data-inbox-request="a"]').isVisible()).toBe(true);
-    await row.trigger("click"); await flushPromises();
+    await row.trigger("click"); await tick(126);
     expect(row.findComponent(UnreadRipple).props("active")).toBe(false);
     expect(row.classes()).not.toContain("unread");
   });
@@ -184,8 +185,11 @@ describe("shared popup navigation", () => {
   });
   it("retains mounted drafts and keeps arrivals out of the close snapshot", async () => {
     await start(); await wrapper.find('[data-form-id="a"]').setValue("draft a");
-    await wrapper.findAll(".inbox-row")[1].trigger("click"); await flushPromises();
-    await wrapper.findAll(".inbox-row")[0].trigger("click"); await flushPromises();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await wrapper.findAll(".inbox-row")[1].trigger("click"); await tick(126);
+    expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
+    await wrapper.findAll(".inbox-row")[0].trigger("click"); await tick(126);
+    expect(wrapper.find('[data-inbox-request="a"]').isVisible()).toBe(true);
     expect((wrapper.find('[data-form-id="a"]').element as HTMLTextAreaElement).value).toBe("draft a");
     emit("popup-inbox-close", undefined); await flushPromises();
     emit("popup-inbox-show", request("c")); await flushPromises();
@@ -271,11 +275,11 @@ describe("shared popup navigation", () => {
   async function tick(ms: number) { await vi.advanceTimersByTimeAsync(ms); await flushPromises(); }
   it("immediately moves the body after success and restores the successor's draft and selection", async () => {
     await start();
-    await wrapper.findAll(".inbox-row")[1].trigger("click"); await flushPromises();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await wrapper.findAll(".inbox-row")[1].trigger("click"); await tick(126);
     const input = wrapper.find('[data-form-id="b"]').element as HTMLTextAreaElement;
     input.value = "saved answer"; input.focus(); input.setSelectionRange(2, 5);
-    await wrapper.findAll(".inbox-row")[0].trigger("click"); await flushPromises();
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await wrapper.findAll(".inbox-row")[0].trigger("click"); await tick(126);
     emit("popup-inbox-terminal", { requestId: "a", winner: "popup", completion: "sent" }); await flushPromises();
     expect(phase()).toBe("out");
     expect(wrapper.find('[data-inbox-request="a"] .footer').text()).toBe("Send");
@@ -418,6 +422,7 @@ describe("shared popup navigation", () => {
   });
   it("keeps an expired native transaction out of user alerts and continues the queue", async () => {
     await start(); mock.invoke.mockClear();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let expired = true;
     mock.invoke.mockImplementation(async (command: string) => {
       if (command === "popup_inbox_layout") return { revision: 2, sidebarWidth: 240, mainWidth: 560, mainHeight: 620, previewWidth: 0 };
@@ -427,16 +432,17 @@ describe("shared popup navigation", () => {
     expect(mock.invoke).toHaveBeenCalledWith("popup_inbox_finish", { revision: 2, arrival: false });
     expect(wrapper.find(".inbox-error").exists()).toBe(false);
     expect(wrapper.text()).not.toContain("preview geometry changed");
-    await wrapper.findAll(".inbox-row")[1].trigger("click"); await flushPromises();
+    await wrapper.findAll(".inbox-row")[1].trigger("click"); await tick(126);
     expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
     expect(wrapper.find(".inbox-error").exists()).toBe(false);
   });
   it("clears a prior queue error after a successful manual request switch", async () => {
     await start();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     mock.invoke.mockRejectedValueOnce("window unavailable");
     emit("popup-inbox-focus", "b"); await flushPromises();
     expect(wrapper.find(".inbox-error").text()).toBe("window unavailable");
-    await wrapper.findAll(".inbox-row")[1].trigger("click"); await flushPromises();
+    await wrapper.findAll(".inbox-row")[1].trigger("click"); await tick(126);
     expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
     expect(wrapper.find(".inbox-error").exists()).toBe(false);
   });

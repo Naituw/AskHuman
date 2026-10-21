@@ -36,14 +36,22 @@ fn build_swift_bridges(manifest_dir: &str) {
 
     // 收集 swift 源文件。
     let mut sources: Vec<String> = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(&swift_dir) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.extension().and_then(|s| s.to_str()) == Some("swift") {
-                println!("cargo:rerun-if-changed={}", p.display());
-                sources.push(p.to_string_lossy().into_owned());
+    let mut collect = |dir: &Path| {
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().and_then(|s| s.to_str()) == Some("swift") {
+                    println!("cargo:rerun-if-changed={}", p.display());
+                    sources.push(p.to_string_lossy().into_owned());
+                }
             }
         }
+    };
+    collect(&swift_dir);
+    // Prototype-only verification helpers (window capture, burst recording, forced-activation test
+    // hooks) are compiled solely for the collapse prototype; the product binary never contains them.
+    if std::env::var_os("CARGO_FEATURE_COLLAPSE_PROTOTYPE").is_some() {
+        collect(&swift_dir.join("prototype"));
     }
     if sources.is_empty() {
         panic!(

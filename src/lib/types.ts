@@ -326,6 +326,44 @@ export interface ImageAttachment {
   filename?: string | null;
 }
 
+// ===== Files dropped onto an answer popup (src-tauri/src/popup_drop.rs; docs/specs/popup-inbox-collapse.md §6.9) =====
+
+/** Where a dropped file lives, as far as the system treats the place specially. A label from the backend, never a path. */
+export type DropPlace = "desktop" | "documents" | "downloads" | "icloud" | "volume" | "other";
+export type DropReadReason = "permission_denied" | "not_found" | "other";
+/** What `popup_drop_read_image` rejects with when a dropped picture cannot be read. */
+export interface DropReadError {
+  reason: DropReadReason;
+  where: DropPlace;
+  /** The system's own words for the failure. */
+  message: string;
+}
+export type DropLogAction = "enter" | "leave" | "drop" | "error";
+/** What became of a drop; the backend rejects a label that is not one of these. */
+export type DropLogOutcome =
+  | "added" | "partial" | "read_failed" | "duplicates" | "no_paths" | "on_preview"
+  | "not_accepting" | "busy" | "own_drag_out" | "no_receiver" | "request_gone" | "no_target";
+export type DropLogTarget = "card" | "body" | "row" | "preview" | "none";
+/**
+ * One drag event for the diagnostic log (`daemon.log`). The backend writes labels and counts only: `paths` are counted
+ * and classed by place there, and neither they nor any file name reach the log.
+ */
+export interface DropLogEntry {
+  action: DropLogAction;
+  requestId?: string | null;
+  view?: "expanded" | "collapsed";
+  /** The native event the drag was first seen by: `over` when the `enter` was missed. */
+  from?: "enter" | "over";
+  paths?: string[];
+  outcome?: DropLogOutcome;
+  target?: DropLogTarget;
+  added?: number;
+  images?: number;
+  files?: number;
+  duplicates?: number;
+  failed?: { path: string; reason: DropReadReason }[];
+}
+
 export type ThemeMode = "system" | "light" | "dark";
 
 export type PopupAnimation = "none" | "document" | "alert";
@@ -384,7 +422,7 @@ export interface PopupInit {
   speechShortcut?: string;
   /** 提交快捷键：cmdEnter（默认）或 enter。 */
   popupSubmitKey?: PopupSubmitKey;
-  /** 实验：多问题弹窗纵向同时显示所有问题（默认关 = 旧版一次一题）。 */
+  /** 多问题弹窗纵向同时显示所有问题（默认开；关 = 旧版一次一题）。 */
   verticalQuestions?: boolean;
   /** 性能埋点是否开启（helper 收到 ASKHUMAN_PERF_ID）；前端据此决定是否上报 perf 标记。 */
   perf?: boolean;
@@ -788,7 +826,7 @@ export interface ChannelsConfig {
 /** 实验性功能开关（默认隐藏；开启后显示「实验」Tab）。 */
 export interface ExperimentalConfig {
   enabled: boolean;
-  /** 多问题弹窗纵向同时显示所有问题（默认关 = 旧版一次一题）。 */
+  /** 多问题弹窗纵向同时显示所有问题（默认开；关 = 旧版一次一题）。 */
   verticalQuestions: boolean;
 }
 

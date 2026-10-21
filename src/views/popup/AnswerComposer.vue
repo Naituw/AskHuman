@@ -16,6 +16,7 @@ const {
   replyFilesByQ,
   expandedQ,
   dockedComposerQ,
+  composerDockTargetId,
   setInputRef,
   setComposerAnchorRef,
   setComposerHomeRef,
@@ -48,6 +49,8 @@ const {
   removeReplyFile,
 } = usePopupContext();
 
+// This form's own dock: the shared window mounts several forms, so the target cannot be one fixed id.
+const dockTarget = `#${composerDockTargetId}`;
 const isDocked = computed(() => dockedComposerQ.value === props.qIndex);
 const isExpanded = computed(
   () => isDocked.value || !props.collapsible || expandedQ(props.qIndex)
@@ -77,7 +80,7 @@ function handlePickFiles() {
     :class="{ 'is-docked': isDocked }"
     :style="composerAnchorStyle(qIndex)"
   >
-    <Teleport defer to="#popup-composer-dock-target" :disabled="!isDocked">
+    <Teleport defer :to="dockTarget" :disabled="!isDocked">
       <div
         class="answer-composer"
         :class="{ 'is-docked': isDocked, 'is-collapsible': collapsible }"

@@ -31,7 +31,7 @@
 - `agentTasks.enabled`：从 IM 创建电脑端 Agent 任务，默认 `false`；开启会强制 `daemonLifecycle=keepalive` 并同步 daemon 登录项。入口在设置「高级」Tab（2026-07-25 从「实验」转正）
 - `agentTasks.permissionPrompt`：`ask|agent-default|yolo`，默认 `ask`
 - `experimental.enabled`：显示实验区，默认 `false`（当前实验区为空，留作下一个实验功能的落点）
-- `experimental.verticalQuestions`：多问题纵向显示，默认 `false`
+- `experimental.verticalQuestions`：多问题纵向同时显示全部问题，默认 `true`（设置「通用」Tab 可关回旧版一次一题；配置键沿用 `experimental.` 前缀）。2026-10-17 起出厂默认由关改为开：新配置与缺该字段的旧配置跟随新默认，已落盘的显式值（含 `false`）不迁移
 
 ## 读取入口
 

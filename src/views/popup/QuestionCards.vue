@@ -22,6 +22,7 @@ const {
   setCardRef,
   setSentinelRef,
   dropTargetQ,
+  dropCardLabel,
 } = usePopupContext();
 </script>
 
@@ -33,6 +34,7 @@ const {
     class="q-card"
     :class="{ 'drop-target': dropTargetQ === qi }"
     :data-q-index="qi"
+    :data-drop-label="dropTargetQ === qi ? dropCardLabel : undefined"
     @mousedown="setActive(qi, false)"
   >
     <!-- 问题头部：问号图标 + 「Question i/n」。每题上方加分割线（与 Message/上一题区隔）。 -->

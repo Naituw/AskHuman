@@ -162,6 +162,21 @@ PowerShell 5.1 兼容脚本）。两者共享以下语义：
   卸载路径则会误删生产登录项。`login_item.rs` 对全部读写入口做实例上下文守卫
   （`ASKHUMAN_HOME` 置位或 exe 含 `.askhuman-dev` 路径段 → no-op）；生产进程启动时的
   幂等同步（exe 比对）自然回写自愈。
+- **禁止自动改写用户级全局 Agent hook 配置**（2026-10-17 补；同一问题 10-15 与 10-17 各出现一次）：
+  Cursor / Codex / Claude 的 hook 与 Pi 扩展位于 `paths::home()`（真实 `$HOME`），`ASKHUMAN_HOME`
+  只隔离配置 / socket / daemon 标签，**不隔离它们**。daemon 启动时的 `agent_stop::migrate_outdated()` 与
+  `agent_ask_question::migrate_outdated()` 会把「与自己的 `current_exe()`、自己 home 里的偏好不一致」的
+  hook 改写成指向自己——实例 daemon 因此会把**生产** hook 劫持到 worktree / QA 二进制，并因新 home 没有
+  `stop-preferences.json` 而丢掉 `confirm`。`dev_instance::is_dev_instance_context()`（与登录项守卫共用同一
+  判定：`ASKHUMAN_HOME` 非空，或 exe 含 `.askhuman-dev` 路径段）为真时，`daemon/runtime/mod.rs::serve`
+  **整段跳过**这些启动迁移（daemon.log：`instance context: skipped the shared Agent hook migrations`）；
+  今后新增任何会改写共享文件的启动迁移，必须放进同一个分支。
+  **范围仅限自动行为**：显式的 `AskHuman agents …` 与设置页的 Agent 集成开关是用户动作，不受守卫，
+  在实例里运行它们仍会写**真实**用户配置。
+- **验证实例行为时不能只换 `HOME`**（2026-10-17 教训）：launchd label（GUI Host 登录项
+  `com.naituw.humaninloop.guihost`）按用户全局唯一，与 `HOME` 无关。只换 `HOME`、不设非空 `ASKHUMAN_HOME`
+  的 daemon / GUI Host 属于**生产上下文**，会 `bootout` 并替换真实登录项。沙箱验证必须同时设非空
+  `ASKHUMAN_HOME`，收尾时核对真实登录项（launchd pid 与 plist）未变。
 
 ### 7.2 机器级渠道预设（跨 WorkTree 复用模板 + 独占租约）
 
@@ -222,7 +237,7 @@ AskHuman dev enable --preset feishu-test
 | macOS launchd | 每实例按 `ASKHUMAN_HOME` 派生独立 daemon label；与主实例、其它工作树互不 bootout；登出时随当前 GUI domain 退出 |
 | Windows process spawn | detached daemon 禁止继承调用者 handles；PowerShell/CI 捕获 `daemon start` 输出可正常收到 EOF |
 | GUI host | 每实例独立 socket/named-pipe 与 lock（避免与主 tray 抢）；disable 同时关闭本实例 host |
-| Agent lifecycle hooks | 用户级全局 hook 仍可能触发；事件打到**实际 exec 到的**那个 daemon（cwd 正确则进实例）。不在一期改 hook 安装布局 |
+| Agent lifecycle hooks | 用户级全局 hook 仍可能触发；事件打到**实际 exec 到的**那个 daemon（cwd 正确则进实例）。不在一期改 hook 安装布局。实例 daemon 启动时**不**自动迁移（改写）这些全局 hook，见 §7.1 |
 | 自更新 | 仅主环境产品路径关心；dev bin 不走应用内 self-update 到生产目录 |
 
 ## 9. 非目标（一期）

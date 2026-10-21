@@ -2,6 +2,7 @@
 // 页脚区（多根组件）：R6 一次性 IM 引导条 + 三种底部按钮排布（多题导航 / 单题发送 / 确认提交）。
 import { useI18n } from "vue-i18n";
 import { primaryShortcutLabel } from "../../lib/platform";
+import PopupLaterButton from "./PopupLaterButton.vue";
 import { usePopupContext } from "./context";
 
 const { t } = useI18n();
@@ -62,6 +63,7 @@ const {
     <button class="btn" type="button" :disabled="submitting" @click="requestCancel">
       {{ t("common.cancel") }} <kbd class="sc">{{ cancelShortcut }}</kbd>
     </button>
+    <PopupLaterButton />
     <span class="spacer"></span>
     <button
       class="btn"
@@ -101,6 +103,7 @@ const {
     <button class="btn" type="button" :disabled="submitting" @click="requestCancel">
       {{ t("common.cancel") }} <kbd class="sc">{{ cancelShortcut }}</kbd>
     </button>
+    <PopupLaterButton />
     <span class="spacer"></span>
     <button
       class="btn btn-primary"
@@ -116,6 +119,7 @@ const {
     <button class="btn" type="button" :disabled="submitting" @click="requestConfirmClose">
       {{ t("common.cancel") }} <kbd class="sc">{{ cancelShortcut }}</kbd>
     </button>
+    <PopupLaterButton />
     <span class="spacer"></span>
     <button
       class="btn btn-primary"

@@ -45,7 +45,7 @@ pub struct PopupInit {
     speech_shortcut: String,
     /// 提交快捷键：`cmdEnter`（⌘/Ctrl+Enter）或 `enter`（裸 Enter）。
     popup_submit_key: String,
-    /// 实验：多问题弹窗是否纵向同时显示所有问题（默认关 = 旧版一次一题）。
+    /// 多问题弹窗是否纵向同时显示所有问题（默认开；关 = 旧版一次一题）。
     vertical_questions: bool,
     /// 性能埋点是否开启（helper 进程收到了 `ASKHUMAN_PERF_ID`）；前端据此决定是否上报 perf 标记。
     perf: bool,
@@ -358,7 +358,10 @@ pub async fn popup_inbox_layout(
     sidebar_width: Option<f64>,
     preview: bool,
     main_extent: Option<f64>,
+    collapsed: Option<crate::app::popup_inbox_geometry::Mini>,
+    dragging: Option<bool>,
 ) -> Result<crate::app::popup_inbox_geometry::Allocation, String> {
+    use crate::app::popup_inbox_geometry::{Form, Request};
     if window.label() != "popup"
         || window
             .app_handle()
@@ -369,10 +372,17 @@ pub async fn popup_inbox_layout(
     }
     crate::app::popup_inbox_geometry::prepare(
         &window,
-        Some(sidebar),
-        Some(preview),
-        sidebar_width,
-        main_extent,
+        Request {
+            sidebar: Some(sidebar),
+            preview: Some(preview),
+            sidebar_width,
+            main_extent,
+            // The page states the form it wants every time: a small window size asks for the
+            // small window, none asks for the expanded one.
+            form: collapsed.map_or(Form::Expanded, Form::Collapsed),
+            dragging: dragging.unwrap_or(false),
+            home: false,
+        },
     )
     .await
 }
@@ -414,6 +424,7 @@ pub async fn popup_inbox_resize_preview(
 pub async fn popup_inbox_commit(
     window: tauri::Window,
     revision: u64,
+    animation: Option<crate::app::popup_inbox_geometry::Animation>,
 ) -> Result<crate::app::popup_inbox_geometry::Allocation, String> {
     if window.label() != "popup"
         || window
@@ -423,7 +434,7 @@ pub async fn popup_inbox_commit(
     {
         return Err("shared Popup is unavailable".into());
     }
-    crate::app::popup_inbox_geometry::commit_frame(&window, revision).await
+    crate::app::popup_inbox_geometry::commit_frame(&window, revision, animation).await
 }
 #[tauri::command]
 pub async fn popup_inbox_finish(
@@ -440,6 +451,15 @@ pub async fn popup_inbox_finish(
         return Err("shared Popup is unavailable".into());
     }
     crate::app::popup_inbox_geometry::finish(&window, revision, arrival).await
+}
+/// Whether the Popup Host is the active application right now. Asking also starts the `popup-app-active` events, so
+/// the shared popup page asks once after it listens (answer-later "peek", spec C23).
+#[tauri::command]
+pub async fn popup_app_active(app: AppHandle) -> Result<bool, String> {
+    let window = app
+        .get_webview_window("popup")
+        .ok_or("popup window is unavailable")?;
+    crate::app::popup_activation::start(&app, &window).await
 }
 #[tauri::command]
 pub async fn popup_inbox_idle(app: AppHandle) -> Result<(), String> {
@@ -1443,10 +1463,10 @@ pub async fn popup_preview_prepare(
     {
         return Ok(crate::app::popup_inbox_geometry::prepare(
             &window,
-            None,
-            Some(open),
-            None,
-            None,
+            crate::app::popup_inbox_geometry::Request {
+                preview: Some(open),
+                ..Default::default()
+            },
         )
         .await?
         .preview_layout());
@@ -1492,7 +1512,7 @@ pub async fn popup_preview_layout(
             .preview_layout());
         }
         return Ok(
-            crate::app::popup_inbox_geometry::commit(&window, version, false)
+            crate::app::popup_inbox_geometry::commit(&window, version, None, false)
                 .await?
                 .preview_layout(),
         );
@@ -1907,17 +1927,23 @@ pub fn close_preview(#[allow(unused_variables)] app: AppHandle) {
     }
 }
 
+/// Read an image file into a base64 data URL. Shared by `read_image_data_url` and the popup's
+/// drop reader (`popup_drop::popup_drop_read_image`), which needs the `io::Error` to say why.
+pub(crate) fn image_data_url(path: &str) -> std::io::Result<String> {
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine;
+    let bytes = std::fs::read(path)?;
+    let mime = image_mime_from_path(path);
+    Ok(format!("data:{};base64,{}", mime, B64.encode(bytes)))
+}
+
 /// 读取本地图片并返回 base64 data URL（供前端缩略图显示）。
 #[tauri::command]
 pub fn read_image_data_url(path: String) -> Result<String, String> {
-    use base64::engine::general_purpose::STANDARD as B64;
-    use base64::Engine;
-    let bytes = std::fs::read(&path).map_err(|e| {
+    image_data_url(&path).map_err(|e| {
         crate::i18n::tr(crate::i18n::Lang::current(), "cmd.readFileFailed")
             .replace("{e}", &e.to_string())
-    })?;
-    let mime = image_mime_from_path(&path);
-    Ok(format!("data:{};base64,{}", mime, B64.encode(bytes)))
+    })
 }
 
 /// 获取文件的系统图标（macOS：NSWorkspace，Finder 同款）并返回 PNG data URL，
@@ -2581,9 +2607,9 @@ pub async fn save_settings(
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.set_title(crate::i18n::tr(lang, "title.settings"));
     }
-    if let Some(w) = app.get_webview_window("popup") {
-        let _ = w.set_title(crate::i18n::tr(lang, "title.popup"));
-    }
+    // On Windows / Linux the popup title also carries the Agent session title, so rebuild it
+    // instead of resetting it to the plain app name.
+    crate::app::popup_title::refresh(&app, lang);
     Ok(())
 }
 

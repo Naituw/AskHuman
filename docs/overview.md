@@ -32,7 +32,7 @@
 
 **重复提问收敛**（`docs/specs/duplicate-ask-coalescing.md`）：agent 那一轮被中断后常原样重发同一个提问，而被中断的 CLI 进程不会被杀。Daemon 因此在建请求前先按「会话键 + 提问指纹」判重——同一提问仍在等人回答就合流到那张卡（多等待者共享一个终态，全部离场才取消），5 分钟内已答过则直接重放上次答案并在 `status` 说明。历史、待办出队与 `ask-received` 仍只发生一次。
 
-**Dev Instance（并行 / WorkTree 开发）**：每个已 `dev enable` 的 git 工作树可有独立 `ASKHUMAN_HOME`（`.askhuman-dev/home`）+ 实例 bin + 默认 popup-only 渠道，与主环境 daemon/生产 bot 隔离；入口按 cwd 标记 re-exec。详见 `docs/specs/dev-instance-parallel.md`、`docs/agent-worktree-setup.md`。
+**Dev Instance（并行 / WorkTree 开发）**：每个已 `dev enable` 的 git 工作树可有独立 `ASKHUMAN_HOME`（`.askhuman-dev/home`）+ 实例 bin + 默认 popup-only 渠道，与主环境 daemon/生产 bot 隔离；入口按 cwd 标记 re-exec。`ASKHUMAN_HOME` 只隔离配置 / socket / daemon 标签，不隔离 `$HOME` 下的 Agent hook 文件与用户级登录项：实例进程对它们的**自动**写入（登录项同步、启动时的 hook 迁移）一律跳过，显式 `agents …` 命令除外。详见 `docs/specs/dev-instance-parallel.md`、`docs/agent-worktree-setup.md`。
 
 ## 目录结构
 
@@ -47,7 +47,7 @@ AskHuman/
     index.html               前端入口、首帧关键样式与平台探测
     main.ts                  挂载 App、引入全局样式
     App.vue                  按 URL 路由 popup/settings/history/agents/interject/todos/newtask/forktask
-    views/PopupInboxView.vue  共享作答窗口、请求导航和统一关闭
+    views/PopupInboxView.vue  共享作答窗口、请求导航、稍后回答与小窗（专题见 overview-popup-ui.md）和统一关闭
     views/PopupView.vue      每请求提问与回答正文（编排层；状态与区块组件在 views/popup/）
     views/AgentsView.vue     Agent 控制台（双栏：边栏+详情；spec gui-agent-console）
     views/console/           控制台子组件（边栏/指示器/Watch 帧/完整会话/diff 条/交互区/内嵌任务）
@@ -122,6 +122,7 @@ AskHuman/
       dingtalk/confirm.rs    钉钉双动作确认卡
       sound.rs               跨平台弹窗提示音
       commands.rs            前端调用的 Tauri command 集合
+      popup_drop.rs          Popup 拖入文件：失败带原因与位置类别的图片读取，以及不含路径的拖拽诊断日志
       codex_desktop/               可选 macOS Codex App 原生会话与创建适配器
       cursor_desktop/              可选 macOS Cursor Desktop 后台完成续跑控制与私有运行桥
       integrations/agent_launch.rs  新建/Fork 共用一次性 LaunchRecord、readiness 与固定 argv adapter
@@ -132,7 +133,8 @@ AskHuman/
         tray_menu.rs         托盘菜单模型与最小 diff
         coordinator.rs       首答胜出与其它渠道取消
         popup_inbox.rs · popup_inbox_geometry.rs  共享宿主请求状态及三区几何事务
-        popup_canvas.rs · swift/PopupCanvas.swift  过渡固定画布与普通原生自适应布局
+        popup_canvas.rs · swift/PopupCanvas.swift  过渡固定画布与普通原生自适应布局；小窗的缩放由 swift/PopupCollapse.swift 逐帧动画
+        popup_activation.rs · swift/PopupActivation.swift  Popup Host 的应用级激活状态（小窗的切走缩回）
         popup_transition.rs  非激活前置（到达提醒由前端气泡动效承担）
         popup_preview.rs · popup_preview_geometry.rs  预览桥接与兼容几何
         popup_preview_actions.rs  Popup 原文件菜单与跨平台定位
@@ -252,6 +254,7 @@ AskHuman/
 
 - 弹窗：按 request ID 的 `popup_init`、`submit_popup`、`confirm_popup`、`cancel_popup`；共享容器 `popup_inbox_init` / `activate` / `layout` / `commit` / `idle`
 - Popup 提问附件：`popup_preview_prepare` / `layout`、`popup_preview_read` / `cancel_read` / `thumbnail`、`popup_preview_reveal` / `menu`；原文件打开仍用 `open_path`
+- Popup 拖入文件（`popup_drop.rs`）：`popup_drop_read_image`（读拖入的图片，失败时拒绝出 `{reason, where, message}`）、`popup_drop_log`（把每次拖拽的结果写进 `daemon.log` 的 `askhuman_drop` 行，只记标签与计数，不记路径和文件名）
 - 其他附件入口：`preview_attachments`、`close_preview`、`read_image_data_url`、`file_icon_data_url`、`show_attachment_menu`
 - 设置：`get_settings`、`save_settings`、`get_prompt`、`set_theme`、`update_theme`、`open_settings`、`popup_sound_support`、`play_popup_sound`
 - 历史：`open_history`、`history_init`、`get_history`、`get_history_projects`、`history_count`、`trim_history`、`resolve_history_session_titles`、`delete_history_entries`、`clear_all_history`
@@ -269,7 +272,7 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 
 - 弹窗支持 Markdown、附件拖入 / 拖出、同窗右侧附件预览与原文件菜单；其他入口保留既有预览。
 - 来源名优先级为自定义环境变量 > 发起 Agent > 默认「the Loop」；头部同时展示 Agent、workspace 和提问时间。
-- 多问题纵向模式由实验开关控制，设计见 `docs/specs/multi-question-vertical.md`。
+- 多问题默认纵向平铺全部问题（`experimental.verticalQuestions` 默认开，设置可关回一次一题），设计见 `docs/specs/multi-question-vertical.md`。
 - 推荐选项不自动预选，提交值始终为原文，规格见 `docs/specs/recommended-option.md`。
 
 ## UI / 主题

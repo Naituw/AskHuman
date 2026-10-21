@@ -687,6 +687,9 @@
   width: 16px;
   height: 16px;
 }
+/* 缩回小窗（合并窗口）：只在 peek 且没有 Sidebar 时出现；有 Sidebar 时同一个动作在 Sidebar 标题栏。 */
+.nav-shrink { display: none; }
+.inbox-root[data-view="expanded"][data-primary="no"][data-sidebar="off"] .nav-shrink { display: inline-flex; }
 /* 版本自更新：入口按钮 + 圆点 + 浮层 + 待生效横条 */
 .update-wrap {
   position: relative;
@@ -1189,6 +1192,63 @@ mark.popup-find-hit-current,
   opacity: 1;
   outline: 1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent);
   outline-offset: -1.5px;
+}
+/* In the inbox the card also names its question in a pill (the page sets the label only there). */
+.q-card[data-drop-label]::after {
+  content: attr(data-drop-label);
+  position: absolute;
+  z-index: 3;
+  right: 12px;
+  top: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  pointer-events: none;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--bg-elevated) 82%, var(--accent));
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 6px 18px rgb(0 0 0 / 28%);
+}
+/* Files dragged over the answer area of an inbox request (docs/specs/popup-inbox-collapse.md R15): a dashed frame
+   with a pill says where they will go. `.popup-main` is a containing block (container-type), so this hugs the answer
+   area and leaves an attachment preview beside it out. */
+.drop-hint {
+  position: absolute;
+  inset: 8px;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  border: 2px dashed color-mix(in srgb, var(--accent) 65%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.drop-hint > span {
+  padding: 8px 16px;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--bg-elevated) 82%, var(--accent));
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 6px 18px rgb(0 0 0 / 28%);
+}
+.drop-hint-enter-active, .drop-hint-leave-active { transition: opacity 120ms ease; }
+.drop-hint-enter-from, .drop-hint-leave-to { opacity: 0; }
+/* What became of files dropped on a standalone popup (dropFeedback.ts): a line under the title bar. */
+.drop-notice {
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.drop-notice[data-level="warn"] {
+  border-left-color: var(--accent-orange, #ff9500);
+  background: color-mix(in srgb, var(--accent-orange, #ff9500) 14%, transparent);
 }
 @keyframes q-flash {
   from {
@@ -1784,6 +1844,12 @@ mark.popup-find-hit-current,
 }
 .btn-danger:hover {
   background: #e23b31;
+}
+
+/* The answer-later button adds a fifth control to the multi-question footer: below this width the keyboard hints
+   (redundant with the buttons) give way first, so that nothing is clipped. */
+@container (max-width: 520px) {
+  .popup-main .footer:has(.btn-later) .sc { display: none; }
 }
 
 @container (max-width: 400px) {

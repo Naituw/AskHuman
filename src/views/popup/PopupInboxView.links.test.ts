@@ -24,6 +24,8 @@ describe("file links in real shared popup forms", () => {
   afterEach(() => vi.unstubAllGlobals());
   it("opens each request's own file and preserves both forms and their drafts", async () => {
     vi.stubGlobal("CSS", { escape: (value: string) => value });
+    // This test is about forms and drafts, not motion: requests are switched without the body swap animation.
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { queueMicrotask(() => callback(0)); return 1; });
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
     const a = request("a"), b = request("b");
@@ -56,12 +58,14 @@ describe("file links in real shared popup forms", () => {
 
       await wrapper.get('[data-inbox-row="b"]').trigger("click");
       await flushPromises();
+      expect(wrapper.get('[data-inbox-request="b"]').isVisible()).toBe(true);
       const editorB = wrapper.get('[data-inbox-request="b"] textarea');
       await editorB.setValue("draft B");
       await wrapper.get('[data-inbox-request="b"] .markdown-body a').trigger("click");
       expect(invoke).toHaveBeenCalledWith("open_path", { path: "/project-b/docs/report.md" });
       await wrapper.get('[data-inbox-row="a"]').trigger("click");
       await flushPromises();
+      expect(wrapper.get('[data-inbox-request="a"]').isVisible()).toBe(true);
       expect((editorA.element as HTMLTextAreaElement).value).toBe("draft A");
       expect((editorB.element as HTMLTextAreaElement).value).toBe("draft B");
       expect(wrapper.find(".status-error").exists()).toBe(false);

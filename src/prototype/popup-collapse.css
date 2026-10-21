@@ -1,0 +1,355 @@
+/* Mock answer window + controller for the collapsible inbox prototype.
+   The Sidebar rules mirror PopupInboxView.vue so the small list looks like the real Sidebar. */
+
+:root {
+  --sb-w: 260px;
+  --lift: 16px;
+  --win-radius: 16px;
+  --ms: 440ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --mini-w: 260px;
+  --mini-h: 200px;
+  --mini-nav-h: 120px;
+  /* Canvas x of the window's left edge, and the width of the Sidebar column when it exists (set by the stage). */
+  --v: 0px;
+  --span: 0px;
+}
+
+.stage { position: fixed; inset: 0; overflow: hidden; color: var(--text-primary); font-size: 13px; user-select: none; -webkit-user-select: none; }
+.stage *, .stage *::before, .stage *::after { box-sizing: border-box; }
+.stage textarea { user-select: text; -webkit-user-select: text; }
+.stage.no-motion, .stage.no-motion * { transition: none !important; animation: none !important; }
+/* Debug switch (scripted video runs): no CSS animations at all, transitions stay. */
+.stage.no-anim, .stage.no-anim *, .stage.no-anim *::before, .stage.no-anim *::after { animation: none !important; }
+.stage button { font: inherit; color: inherit; }
+
+/* ---------------------------------------------------------------- Sidebar / small list */
+.pane-sidebar {
+  position: absolute; left: var(--v); top: 0; bottom: 0; width: var(--sb-w);
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  background: color-mix(in srgb, var(--bg, #f5f5f5) 72%, transparent);
+  will-change: opacity;
+  transition: opacity calc(var(--ms) * 0.4) var(--ease-out) 0ms, visibility 0s linear 0ms;
+}
+/* Single request, expanded: there is no Sidebar column. */
+.stage[data-view="expanded"][data-sidebar="off"] .pane-sidebar {
+  opacity: 0; visibility: hidden;
+  transition: opacity calc(var(--ms) * 0.3) var(--ease-in) 0ms, visibility 0s linear calc(var(--ms) * 0.3);
+}
+/* Capsule form: the list is not the small window. */
+.stage[data-view="collapsed"][data-form="capsule"] .pane-sidebar {
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity calc(var(--ms) * 0.35) var(--ease-in) 0ms, visibility 0s linear calc(var(--ms) * 0.35);
+}
+/* List form coming from a window without Sidebar: the list fades in under the leaving body. */
+.stage[data-view="collapsed"][data-form="list"] .pane-sidebar {
+  transition: opacity calc(var(--ms) * 0.45) var(--ease-out) calc(var(--ms) * 0.2), visibility 0s linear 0ms;
+}
+
+.sb-lift {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; will-change: transform;
+  transition: transform var(--ms) var(--ease);
+}
+.stage[data-lights="hide"]:is([data-view="collapsed"], [data-measure]) .sb-lift { transform: translateY(calc(var(--lift) * -1)); }
+
+.inbox-heading {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 30px 16px 14px; font-size: 13px; font-weight: 600; user-select: none;
+}
+.inbox-heading .inbox-count { font-variant-numeric: tabular-nums; opacity: 0.6; transition: all calc(var(--ms) * 0.5) var(--ease); }
+/* One slot in the heading, two icons: "展开" in the small window, "缩回小窗" in a peek (C27). */
+.mini-expand, .mini-shrink {
+  display: none; align-items: center; justify-content: center; width: 24px; height: 24px; margin: -4px -6px -4px auto;
+  padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); cursor: pointer;
+}
+.mini-expand:hover, .mini-shrink:hover { background: var(--card-bg); color: var(--text-primary); }
+.stage[data-view="collapsed"][data-form="list"] .mini-expand { display: inline-flex; }
+/* A peek: expanded, and nothing left to answer. Without a primary request nothing else holds the window open. */
+.stage[data-view="expanded"][data-primary="no"][data-sidebar="on"] .mini-shrink { display: inline-flex; }
+.mini-expand svg, .mini-shrink svg, .row-flag svg, .pc-icon svg, .cap-chevron svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.inbox-navigation { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 16px; scrollbar-width: thin; }
+.stage[data-settled="yes"] .inbox-navigation { flex: none; height: var(--mini-nav-h); }
+.inbox-group h2 { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 600; opacity: 0.6; padding: 16px 12px 7px; margin: 0; overflow: hidden; }
+.inbox-group h2 span:last-child { font-variant-numeric: tabular-nums; }
+.inbox-entry { position: relative; }
+.inbox-row {
+  --inbox-ripple-color: rgba(38, 133, 232, 0.18);
+  position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: flex-start; gap: 7px;
+  width: 100%; padding: 10px 8px; border: 0; border-radius: 8px; text-align: left; background: transparent; color: inherit; cursor: pointer;
+}
+.theme-dark .inbox-row { --inbox-ripple-color: rgba(38, 133, 232, 0.252); }
+@media (prefers-color-scheme: dark) { :root:not(.theme-light) .inbox-row { --inbox-ripple-color: rgba(38, 133, 232, 0.252); } }
+.inbox-row.selected { background: color-mix(in srgb, #2685e8 12%, transparent); }
+.inbox-row:hover { background: color-mix(in srgb, #2685e8 8%, transparent); }
+.inbox-row.flash { animation: pc-row-arrival 640ms cubic-bezier(0.22, 0, 0.22, 1); }
+.inbox-dot { position: relative; z-index: 1; flex: 0 0 6px; height: 6px; margin-top: 5px; }
+.inbox-dot.unread::before { content: ''; position: absolute; left: -2px; top: -2px; width: 10px; height: 10px; border-radius: 50%; background: #2685e8; animation: pc-unread-dot 2.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+.inbox-row-content { position: relative; z-index: 1; min-width: 0; flex: 1; transition: opacity 240ms ease; }
+.inbox-row strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; line-height: 1.45; font-weight: 500; padding-right: 18px; }
+.inbox-kind { display: inline-block; vertical-align: 1px; font-size: 9px; line-height: 1.4; font-weight: 400; padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; margin-right: 5px; color: var(--text-secondary); }
+.inbox-row-meta {
+  display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 10px; line-height: 1.5; color: var(--text-secondary);
+  margin-top: 6px; max-height: 20px; overflow: hidden;
+  transition: max-height calc(var(--ms) * 0.8) var(--ease), margin-top calc(var(--ms) * 0.8) var(--ease), opacity calc(var(--ms) * 0.5) ease;
+}
+.stage[data-density="compact"]:is([data-view="collapsed"], [data-measure]) .inbox-row-meta { max-height: 0; margin-top: 0; opacity: 0; }
+.inbox-row-agent { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; max-width: 40%; }
+.inbox-source-separator { flex: none; color: var(--text-tertiary); }
+.inbox-session { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; font-size: 11px; }
+.inbox-session svg { flex: none; width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.inbox-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-row-meta em { flex: none; font-size: 9px; font-style: normal; margin-left: auto; }
+.inbox-row-meta em + em { margin-left: 0; }
+.inbox-put-away { flex: none; font-size: 9px; font-style: normal; padding: 0 4px; border-radius: 3px; background: var(--card-bg); }
+
+/* Secondary rows: only de-emphasised relative to primary ones. When everything is secondary (small window) they read normally. */
+.stage[data-primary="yes"] .inbox-row.secondary .inbox-row-content { opacity: 0.5; }
+.stage[data-primary="yes"] .inbox-row.secondary:hover .inbox-row-content { opacity: 0.85; }
+
+.row-flag {
+  position: absolute; right: 6px; top: 7px; z-index: 3; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px;
+  display: grid; place-items: center; background: transparent; color: var(--text-secondary); cursor: pointer; opacity: 0; transition: opacity 120ms ease;
+}
+.inbox-entry:hover .row-flag, .row-flag:focus-visible, .stage[data-force-flags] .row-flag { opacity: 1; }
+.row-flag:hover { background: var(--card-bg); color: var(--text-primary); }
+/* Text pill: says what it does. It floats over the end of the title on hover. */
+.row-flag.flag-text {
+  width: auto; padding: 0 8px; font-size: 11px; line-height: 20px; white-space: nowrap;
+  background: var(--surface-overlay, var(--card-bg)); border: var(--hairline, 1px) solid var(--border);
+}
+.row-flag.flag-text:hover { background: var(--card-bg); }
+
+/* Archive box. One slot at the end of the title with three looks:  primary row -> icon on hover;  secondary row ->
+   "稍后答" label that stays;  hover on a secondary row -> the label turns into the "取消稍后答" button (the two texts
+   share one grid cell, so the button keeps its size while it swaps). */
+.row-flag.flag-archive { width: auto; min-width: 22px; height: 22px; padding: 0 5px; }
+.flag-archive .fa-stack { display: grid; }
+.flag-archive .fa-stack > span {
+  grid-area: 1 / 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  font-size: 10px; line-height: 20px; white-space: nowrap; transition: opacity 140ms ease, color 140ms ease;
+}
+.flag-archive svg { width: 13px; height: 13px; }
+.flag-archive .fa-state, .flag-archive .fa-undo { opacity: 0; }
+/* The look that does not apply leaves the cell, so the button is only as wide as what it shows. */
+.row-flag.flag-archive:not(.is-secondary) .fa-state, .row-flag.flag-archive:not(.is-secondary) .fa-undo { display: none; }
+.row-flag.flag-archive.is-secondary .fa-put { display: none; }
+/* A secondary row keeps its label visible (hairline pill, quiet colour) ... */
+.row-flag.flag-archive.is-secondary { opacity: 1; background: var(--card-bg); }
+.flag-archive.is-secondary .fa-state { opacity: 1; }
+/* ... and turns into the undo button while the row is hovered or focused. */
+.inbox-entry:hover .flag-archive.is-secondary, .flag-archive.is-secondary:focus-visible, .stage[data-force-flags] .flag-archive.is-secondary {
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
+}
+.inbox-entry:hover .flag-archive.is-secondary .fa-state, .flag-archive.is-secondary:focus-visible .fa-state,
+.stage[data-force-flags] .flag-archive.is-secondary .fa-state { opacity: 0; }
+.inbox-entry:hover .flag-archive.is-secondary .fa-undo, .flag-archive.is-secondary:focus-visible .fa-undo,
+.stage[data-force-flags] .flag-archive.is-secondary .fa-undo { opacity: 1; }
+/* The small window lists secondary rows only: no standing label there, just the undo button on hover. */
+.stage[data-view="collapsed"] .row-flag.flag-archive.is-secondary { opacity: 0; background: transparent; }
+.stage[data-view="collapsed"] .inbox-entry:hover .row-flag.flag-archive.is-secondary { opacity: 1; }
+/* The label sits over the end of the title: keep the first line clear of it (the text re-wraps once, when the row is put away).
+   Not while measuring the small window, which has no label (same rule as the product's InboxSidebar). */
+.stage[data-rowaction="archive"][data-view="expanded"]:not([data-measure]) .inbox-row.secondary strong { padding-right: 90px; }
+.stage[data-rowaction="archive"] .inbox-put-away { display: none; }
+/* The blue dot stays hidden until the arrival bubble has landed on it. */
+.inbox-row.arriving .inbox-dot::before { opacity: 0; }
+
+.inbox-rows { position: relative; }
+.pc-move { transition: transform 260ms var(--ease); }
+.pc-list-leave-active { transition: opacity 200ms ease, transform 200ms ease; }
+.pc-list-leave-to { opacity: 0; transform: translateX(-8px); }
+.pc-list-leave-active { position: absolute; left: 0; right: 0; }
+
+.inbox-divider { position: absolute; left: calc(var(--v) + var(--sb-w)); top: 0; bottom: 0; width: 6px; background: color-mix(in srgb, currentColor 8%, transparent); transition: opacity calc(var(--ms) * 0.3) ease; }
+.stage[data-sidebar="off"] .inbox-divider, .stage[data-view="collapsed"] .inbox-divider { opacity: 0; }
+
+/* ---------------------------------------------------------------- Body */
+.pane-main {
+  position: absolute; left: calc(var(--v) + var(--span)); right: 0; top: 0; bottom: 0; display: flex; flex-direction: column; min-width: 0;
+  will-change: opacity;
+  transition: opacity calc(var(--ms) * 0.5) var(--ease-out) calc(var(--ms) * 0.4), visibility 0s linear calc(var(--ms) * 0.4);
+}
+.stage[data-view="collapsed"] .pane-main {
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity calc(var(--ms) * 0.42) var(--ease-in) 0ms, visibility 0s linear calc(var(--ms) * 0.42);
+}
+.pc-navbar { min-height: 70px; padding: 31px 20px 12px; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.pc-origin { display: flex; align-items: center; gap: 8px; overflow: hidden; font-size: 13px; white-space: nowrap; }
+.pc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+.pc-chip { color: var(--text-secondary); background: var(--bg-elevated); padding: 3px 7px; border-radius: 5px; overflow: hidden; text-overflow: ellipsis; }
+.pc-actions { display: flex; gap: 2px; }
+.pc-icon { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.pc-icon:hover { background: var(--card-bg); color: var(--text-primary); }
+.pc-icon[aria-pressed="true"] { color: var(--accent); }
+/* The peek's shrink icon for a window without Sidebar (the Sidebar one covers every other case). */
+.pc-shrink { display: none; }
+.stage[data-view="expanded"][data-primary="no"][data-sidebar="off"] .pc-shrink { display: grid; }
+.pc-bodies { position: relative; flex: 1; min-height: 0; }
+.pc-body { position: absolute; inset: 0; overflow-y: auto; padding: 14px 24px 24px; }
+.pc-session { font-size: 12px; color: var(--text-secondary); margin: 0 0 12px; }
+.pc-body h1 { font-size: 19px; font-weight: 600; line-height: 1.5; margin: 6px 0 14px; }
+.pc-message { font-size: 14px; line-height: 1.75; margin: 0 0 20px; }
+.pc-command { font-family: var(--font-mono); font-size: 13px; background: var(--bg-elevated); border-radius: 6px; padding: 12px; margin: 0 0 20px; }
+.pc-options { display: flex; flex-direction: column; gap: 10px; margin-bottom: 21px; }
+.pc-option { display: flex; align-items: flex-start; gap: 11px; padding: 13px 14px; background: var(--control-bg); border: 1px solid transparent; border-radius: 8px; font-size: 13px; line-height: 1.55; text-align: left; box-shadow: var(--clickable-shadow); cursor: pointer; }
+.pc-option.chosen { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--control-bg)); }
+.pc-option-index { color: var(--text-secondary); font-size: 12px; }
+.pc-label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+.pc-answer { width: 100%; resize: none; min-height: 96px; font: inherit; font-size: 14px; line-height: 1.6; padding: 12px; color: var(--text-primary); background: var(--control-bg); border: 1px solid var(--control-border); border-radius: 8px; }
+.pc-answer:focus { outline: none; box-shadow: var(--focus-ring); border-color: var(--accent); }
+.pc-footer { display: flex; align-items: center; gap: 8px; padding: 14px 20px; border-top: var(--hairline) solid var(--border); }
+.pc-footer .spacer { flex: 1; }
+.pc-footer .btn { font-size: 13px; }
+.pc-footer kbd { opacity: 0.65; font-size: 11px; margin-left: 8px; font-family: inherit; }
+.pc-swap-leave-active { transition: opacity 126ms cubic-bezier(0.4, 0, 1, 1), transform 126ms cubic-bezier(0.4, 0, 1, 1); }
+.pc-swap-enter-active { transition: opacity 174ms cubic-bezier(0, 0, 0.2, 1), transform 174ms cubic-bezier(0, 0, 0.2, 1); }
+.pc-swap-leave-to { opacity: 0; transform: translateY(-14px); }
+.pc-swap-enter-from { opacity: 0; transform: translateY(14px); }
+.pc-toast { position: absolute; z-index: 5; top: 60px; left: 50%; transform: translateX(-50%); background: var(--surface-overlay); border: 1px solid var(--border); box-shadow: var(--clickable-shadow); border-radius: 8px; padding: 8px 14px; font-size: 12px; white-space: nowrap; pointer-events: none; }
+.pc-error { position: absolute; z-index: 6; left: 24px; right: 24px; bottom: 80px; color: #c33; font-size: 12px; }
+
+/* ---------------------------------------------------------------- Files dragged over the window (C28) */
+/* While files are carried over the window every request row reads as a target; the one under the pointer is lit. */
+.stage[data-dragging="yes"] .inbox-row { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
+.inbox-row.drop-target { background: color-mix(in srgb, var(--accent) 18%, transparent); box-shadow: inset 0 0 0 2px var(--accent); }
+/* Over the answer area: a dashed frame with a label says where the files will go. */
+.pane-main::after {
+  content: ""; position: absolute; z-index: 4; inset: 8px; pointer-events: none;
+  border: 2px dashed color-mix(in srgb, var(--accent) 65%, transparent); border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  opacity: 0; transition: opacity 120ms ease;
+}
+/* The label is a pill of its own so that it stays legible over whatever the body shows underneath. */
+.pane-main::before {
+  content: attr(data-drop-label); position: absolute; z-index: 5; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  padding: 8px 16px; border-radius: 999px; pointer-events: none; white-space: nowrap;
+  background: color-mix(in srgb, var(--bg-elevated) 82%, var(--accent)); color: var(--accent); font-size: 13px; font-weight: 600;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 6px 18px rgb(0 0 0 / 28%);
+  opacity: 0; transition: opacity 120ms ease;
+}
+.pane-main.drop-target::after, .pane-main.drop-target::before { opacity: 1; }
+/* The wait before a drag opens something (small window → a request, Sidebar → another request): a bar fills along the row it will open. */
+.inbox-row.dwelling::after {
+  content: ""; position: absolute; z-index: 2; left: 8px; bottom: 0; height: 3px; border-radius: 3px; background: var(--accent);
+  animation: pc-dwell var(--dwell-ms) linear forwards;
+}
+@keyframes pc-dwell { from { width: 0; } to { width: calc(100% - 16px); } }
+
+/* ---------------------------------------------------------------- Several questions in one request (C32) */
+.pc-question.multi { margin: 0 0 18px; }
+.pc-qhead { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 11px; color: var(--text-secondary); letter-spacing: 0.02em; }
+.pc-qhead::after { content: ""; flex: 1; height: var(--hairline); background: var(--border); }
+.pc-qtext { font-size: 15px; font-weight: 600; line-height: 1.55; margin: 0 0 12px; }
+/* Vertical layout: every question is a card; the current one (where keys and drops without aim go) has a tinted frame. */
+.pc-question.card {
+  position: relative; padding: 14px 16px 18px; margin: 0 0 16px; border: 1px solid var(--border); border-radius: 12px;
+  background: color-mix(in srgb, var(--card-bg) 55%, transparent);
+}
+.pc-question.card.current { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.pc-question.card .pc-options { margin-bottom: 16px; }
+.pc-question.card .pc-attachments { margin-top: 12px; }
+/* Over a card the dashed frame hugs the card and its own pill names the question. */
+.pc-question.card::after {
+  content: ""; position: absolute; inset: -1px; pointer-events: none; border: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent); opacity: 0; transition: opacity 120ms ease;
+}
+.pc-question.card::before {
+  content: attr(data-drop-label); position: absolute; z-index: 3; right: 12px; top: 6px; padding: 6px 14px; border-radius: 999px;
+  pointer-events: none; white-space: nowrap; background: color-mix(in srgb, var(--bg-elevated) 82%, var(--accent)); color: var(--accent); font-size: 13px; font-weight: 600;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 6px 18px rgb(0 0 0 / 28%); opacity: 0; transition: opacity 120ms ease;
+}
+.pc-question.card.drop-target::after, .pc-question.card.drop-target::before { opacity: 1; }
+/* The small window: the accent ring becomes a solid frame, so it is clear that dropping here opens the window. */
+.stage[data-dragging="yes"][data-view="collapsed"] .mini-ring {
+  opacity: 1; animation: none !important;
+  box-shadow: inset 0 0 0 3px var(--accent), inset 0 0 26px color-mix(in srgb, var(--accent) 35%, transparent);
+  transition-delay: 0ms;
+}
+.pc-attachments { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; padding: 0; }
+.pc-attachment {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 5px 4px 8px; border-radius: 7px;
+  background: var(--control-bg); border: 1px solid var(--control-border); font-size: 12px;
+}
+.pc-attachment svg { flex: none; width: 13px; height: 13px; fill: none; stroke: var(--text-secondary); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.pc-attachment span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-attachment button {
+  display: grid; place-items: center; flex: none; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: var(--text-secondary); font-size: 13px; line-height: 1; cursor: pointer;
+}
+.pc-attachment button:hover { background: var(--card-bg); color: var(--text-primary); }
+
+/* ---------------------------------------------------------------- Capsule */
+.capsule {
+  position: absolute; left: var(--v); top: 0; display: flex; align-items: center; gap: 8px; width: max-content; height: 34px;
+  padding: 0 10px 0 14px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: default; touch-action: none;
+  background: color-mix(in srgb, var(--bg, #f5f5f5) 72%, transparent);
+  opacity: 0; visibility: hidden; will-change: opacity;
+  transition: opacity calc(var(--ms) * 0.3) var(--ease-in) 0ms, visibility 0s linear calc(var(--ms) * 0.3);
+}
+.stage[data-view="collapsed"][data-form="capsule"] .capsule {
+  opacity: 1; visibility: visible;
+  transition: opacity calc(var(--ms) * 0.45) var(--ease-out) calc(var(--ms) * 0.45), visibility 0s linear calc(var(--ms) * 0.45);
+}
+.cap-dot { width: 8px; height: 8px; border-radius: 50%; background: #2685e8; flex: none; }
+.cap-count { font-variant-numeric: tabular-nums; }
+.cap-chevron { display: grid; place-items: center; width: 20px; height: 20px; color: var(--text-secondary); }
+
+/* ---------------------------------------------------------------- Conspicuousness of the small window */
+.mini-ring {
+  position: absolute; left: var(--v); top: 0; width: var(--mini-w); height: var(--mini-h); border-radius: var(--win-radius); pointer-events: none;
+  opacity: 0; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent);
+  transition: opacity calc(var(--ms) * 0.25) ease 0ms;
+}
+.stage[data-view="collapsed"]:not([data-salience="low"]) .mini-ring { opacity: 1; transition: opacity calc(var(--ms) * 0.4) ease calc(var(--ms) * 0.6); }
+.stage[data-view="collapsed"][data-salience="high"][data-settled="yes"] .mini-ring { animation: pc-breathe 3.2s ease-in-out infinite; }
+.stage[data-view="collapsed"]:not([data-salience="low"]) .inbox-heading { color: var(--accent); }
+.stage[data-view="collapsed"]:not([data-salience="low"]) .inbox-heading .inbox-count { opacity: 1; color: #fff; background: var(--accent); padding: 1px 7px; border-radius: 9px; font-size: 12px; }
+.stage[data-view="collapsed"][data-salience="high"] .inbox-heading { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.stage[data-view="collapsed"]:not([data-salience="low"]) .capsule .cap-dot { background: var(--accent); }
+.stage[data-view="collapsed"][data-salience="high"] .capsule { background: var(--accent); color: #fff; }
+.stage[data-view="collapsed"][data-salience="high"] .capsule .cap-dot { background: #fff; }
+.stage[data-view="collapsed"][data-salience="high"] .capsule .cap-chevron { color: rgba(255, 255, 255, 0.85); }
+
+@keyframes pc-row-arrival {
+  0%, 100% { box-shadow: inset 0 0 0 100px #2685e800; }
+  28% { box-shadow: inset 0 0 0 100px rgba(38, 133, 232, 0.17); }
+  58% { box-shadow: inset 0 0 0 100px rgba(38, 133, 232, 0.09); }
+}
+@keyframes pc-unread-dot { 0%, 100% { background: #2685e8; } 45% { background: #006dff; } 70% { background: #2685e8; } }
+@keyframes pc-breathe {
+  0%, 100% { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent), inset 0 0 0 transparent; }
+  50% { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 95%, transparent), inset 0 0 22px color-mix(in srgb, var(--accent) 30%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inbox-row.flash, .inbox-dot.unread::before, .stage[data-salience="high"] .mini-ring { animation: none !important; }
+}
+
+/* ---------------------------------------------------------------- Controller */
+.ctl { height: 100vh; overflow-y: auto; padding: 18px 20px 28px; background: var(--bg); color: var(--text-primary); font-size: 12px; user-select: none; -webkit-user-select: none; }
+.ctl * { box-sizing: border-box; }
+.ctl h1 { font-size: 17px; margin: 0 0 4px; }
+.ctl h2 { font-size: 12px; margin: 18px 0 8px; color: var(--text-secondary); font-weight: 600; letter-spacing: 0.02em; }
+.ctl p { margin: 0 0 6px; color: var(--text-secondary); line-height: 1.6; }
+.ctl .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.ctl .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
+.ctl .btn { font-size: 12px; padding: 7px 8px; }
+.ctl .row { display: flex; align-items: center; gap: 8px; margin: 7px 0; }
+.ctl .row > label { width: 78px; flex: none; color: var(--text-secondary); }
+.ctl .row input[type="range"] { flex: 1; min-width: 0; }
+.ctl .row .val { width: 54px; text-align: right; font-variant-numeric: tabular-nums; flex: none; }
+.ctl .seg { display: flex; flex: 1; border: 1px solid var(--control-border); border-radius: 7px; overflow: hidden; }
+.ctl .seg button { flex: 1; padding: 5px 4px; border: 0; background: transparent; color: var(--text-primary); font-size: 12px; cursor: pointer; border-right: 1px solid var(--control-border); }
+.ctl .seg button:last-child { border-right: 0; }
+.ctl .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.ctl select, .ctl input[type="number"] { flex: 1; min-width: 0; font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--control-border); background: var(--control-bg); color: var(--text-primary); }
+.ctl .custom { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin: 4px 0 4px 86px; }
+.ctl .status { white-space: pre-line; padding: 10px 12px; border-radius: 8px; background: var(--card-bg); line-height: 1.7; font-variant-numeric: tabular-nums; }
+.ctl .foot { margin-top: 14px; font-size: 11px; }
+
+/* The Sidebar appears with an instant commit (product D17): nothing fades or slides while it is revealed. */
+.stage[data-phase="growing"] .pane-sidebar,
+.stage[data-phase="growing"] .inbox-divider,
+.stage[data-phase="growing"] .pane-main { transition: none !important; }

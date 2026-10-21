@@ -833,7 +833,15 @@ async fn serve(_lock: LockGuard) -> i32 {
 
     // Stop and question-takeover compatibility migrations remain automatic. Lifecycle drift is
     // surfaced through the Agent integration update flow; it has no separate startup migration.
-    {
+    //
+    // Production daemon only. These rewrite the user-level Agent hook files so they point at THIS
+    // executable and follow THIS home's preferences; an isolated / Dev Instance daemon would hijack
+    // the production hooks (and, with a fresh home that has no preferences, drop `confirm`). Explicit
+    // `AskHuman agents ...` commands are not affected. Any new startup migration of shared files
+    // belongs inside this branch.
+    if crate::dev_instance::is_dev_instance_context() {
+        log("instance context: skipped the shared Agent hook migrations");
+    } else {
         let migrated = crate::integrations::agent_stop::migrate_outdated();
         if !migrated.is_empty() {
             let names: Vec<&str> = migrated.iter().map(|kind| kind.as_str()).collect();

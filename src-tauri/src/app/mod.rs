@@ -4,6 +4,7 @@ pub mod confirm_coordinator;
 pub mod coordinator;
 pub mod gui_host;
 mod invoke;
+pub mod popup_activation;
 pub(crate) mod popup_canvas;
 pub mod popup_inbox;
 pub mod popup_inbox_geometry;
@@ -11,6 +12,7 @@ pub mod popup_preview;
 pub mod popup_preview_actions;
 pub(crate) mod popup_preview_geometry;
 mod popup_size;
+pub(crate) mod popup_title;
 pub mod popup_transition;
 pub mod terminal_gate;
 pub mod tray_menu;
@@ -895,10 +897,17 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                         persist_popup_size(window, *new_inner_size);
                         popup_preview::moved(window);
                     }
-                    WindowEvent::Focused(true) => {
-                        popup_preview::moved(window);
-                        if let Some(bridge) = window.app_handle().try_state::<GuiBridge>() {
-                            bridge.send_popup_focused();
+                    WindowEvent::Focused(focused) => {
+                        // Elsewhere than macOS the window's focus is the "user is in AskHuman" signal (macOS reports the
+                        // application's activation instead, which focus moving between this process's windows does not touch).
+                        if !cfg!(target_os = "macos") {
+                            popup_activation::window_focus(window.app_handle(), *focused);
+                        }
+                        if *focused {
+                            popup_preview::moved(window);
+                            if let Some(bridge) = window.app_handle().try_state::<GuiBridge>() {
+                                bridge.send_popup_focused();
+                            }
                         }
                     }
                     WindowEvent::Destroyed => {

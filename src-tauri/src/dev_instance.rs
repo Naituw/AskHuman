@@ -5,6 +5,7 @@
 //! present) re-execs into that tree's isolated binary + `ASKHUMAN_HOME`.
 //! See `docs/specs/dev-instance-parallel.md`.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Env var: overrides `paths::config_dir()` (instance home root).
@@ -19,6 +20,36 @@ pub const DEV_DIR: &str = ".askhuman-dev";
 /// Whether this process is running in a Dev Instance (non-empty `ASKHUMAN_HOME`).
 pub fn is_dev_instance() -> bool {
     std::env::var_os(ASKHUMAN_HOME_ENV).is_some_and(|v| !v.is_empty())
+}
+
+/// Whether this process must leave **user-level global state** alone: the login items and the
+/// Agent hook files (`~/.cursor/hooks.json`, `~/.codex/hooks.json`, `~/.claude/settings.json`, the
+/// Pi extension).
+///
+/// An instance (a Dev Instance, or any process run with its own `ASKHUMAN_HOME`) shares those
+/// files with the production install. Writing them from an instance hijacks production: the
+/// entries would point at the instance binary and follow the instance's own, usually empty,
+/// preferences. This happened to the login items (2026-07-25) and twice more in 2026-10, when an
+/// isolated QA daemon's startup migration rewrote the user's Stop hooks and dropped `confirm`.
+///
+/// The env var alone is not enough: launchd restarts a daemon without the instance env, so the
+/// executable path (a `.askhuman-dev` segment) is checked as well.
+///
+/// This guards *automatic* writes. Explicit user actions (`AskHuman agents ...`, the settings
+/// page) are not blocked.
+pub fn is_dev_instance_context() -> bool {
+    is_dev_instance_context_for(
+        std::env::var_os(ASKHUMAN_HOME_ENV).as_deref(),
+        std::env::current_exe().ok().as_deref(),
+    )
+}
+
+fn is_dev_instance_context_for(home_env: Option<&OsStr>, exe: Option<&Path>) -> bool {
+    // An empty value counts as unset, exactly like `paths::config_dir()`.
+    if home_env.is_some_and(|value| !value.is_empty()) {
+        return true;
+    }
+    exe.is_some_and(|path| path.components().any(|part| part.as_os_str() == DEV_DIR))
 }
 
 /// Walk upward from `start` looking for `<ancestor>/.askhuman-dev/enabled`.
@@ -193,6 +224,39 @@ fn reexec_into(bin: &Path, home: &Path, argv: &[String]) -> ! {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn instance_context_follows_home_env_or_exe_path() {
+        let ordinary = Path::new("/usr/local/bin/AskHuman");
+        let in_worktree = Path::new("/work/wt/.askhuman-dev/bin/AskHuman");
+        let home = OsStr::new("/tmp/qa/home");
+
+        // The case that rewrote the user's Stop hooks: an isolated home with an ordinary binary.
+        assert!(is_dev_instance_context_for(Some(home), Some(ordinary)));
+        // launchd restarts a daemon without the instance env; its path still gives it away.
+        assert!(is_dev_instance_context_for(None, Some(in_worktree)));
+        assert!(is_dev_instance_context_for(Some(home), Some(in_worktree)));
+        // The production install: no instance env, ordinary path.
+        assert!(!is_dev_instance_context_for(None, Some(ordinary)));
+        // Nothing to go on: not treated as an instance.
+        assert!(!is_dev_instance_context_for(None, None));
+        // An empty value is "unset", like `paths::config_dir()`.
+        assert!(!is_dev_instance_context_for(
+            Some(OsStr::new("")),
+            Some(ordinary)
+        ));
+        // Only a whole path segment counts, not a lookalike.
+        for lookalike in [
+            "/x/not.askhuman-dev/bin/AskHuman",
+            "/x/.askhuman-dev-old/bin/AskHuman",
+            "/x/askhuman-dev/bin/AskHuman",
+        ] {
+            assert!(!is_dev_instance_context_for(
+                None,
+                Some(Path::new(lookalike))
+            ));
+        }
+    }
 
     #[test]
     fn find_dev_root_nearest_marker() {

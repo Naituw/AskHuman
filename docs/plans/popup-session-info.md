@@ -95,3 +95,58 @@ Agent 不可定位终端时为 span，而项目始终为 button，两者默认�
 在共用 `.brand-chip` 中固定 height 20px / line-height 16px，保持相同的垂直 padding。
 再次运行 `./scripts/install.sh` 成功；使用安装产物的原生 WKWebView 验证两者顶底对齐，
 截图为 `.askhuman-dev/session-info-qa/chip-heights.png`。低影响 CSS 修正未新增镜像样式的单元测试。
+
+## 标题栏显示实施（2026-10-17）
+
+需求与决定见 [`../specs/popup-session-info.md`](../specs/popup-session-info.md#标题栏显示2026-10-17)。
+用户在原型上选定标题栏方案、轻字重、Windows / Linux 写进原生窗口标题，并要求直接在产品里实现。
+
+### 实施结果
+
+- `PopupNavbar.vue`：导航栏首个子元素 `.session-strip`（macOS 由 CSS 显示：绝对定位、30px、
+  `pointer-events: none`、12px / 500 / 次要色、180ms 淡入）。样式放在该组件自己的 `<style>`，没有改 `popup.css`。
+- `usePopupWindowTitle.ts` 与 `ipc.ts::popupSetSessionTitle`：非 macOS 且为当前选中请求时上报会话标题。
+- `app/popup_title.rs`：`popup_set_session_title` 命令（只接受 `popup` 窗口）、`normalize` / `compose` / `refresh`；
+  `save_settings` 改为调用 `refresh`，切换语言不再把标题重置为 “AskHuman”。没有对所有窗口开放
+  `core:window:allow-set-title`。
+- 原型同步：A 现在就是产品组件本身（其余格子是被否决的备选，对照时隐藏产品的标题栏），去掉 A 的字重开关。
+
+### 自动验证
+
+| 检查 | 结果 |
+| --- | --- |
+| Vitest 全量 | 690 passed（72 files），其中新增 12 个：上报逻辑 7 个（macOS / 非 macOS、迟到、非选中请求、卸载后、失败）、导航栏 5 个 |
+| Node 全量 | 32 passed |
+| TypeScript | `vue-tsc --noEmit` 通过（含原型） |
+| Rust | `popup_title` 7 个单测通过；`cargo fmt --check` 通过；clippy `-D warnings` 通过 |
+| 安装 | `./scripts/install.sh` 成功（local-install） |
+
+先写的单测抓到一个真问题：先去控制字符再按空白拆词，会把 `\t` / `\n` 两侧的词粘在一起，已改为先拆词再过滤。
+本机较新的 clippy 对 `build.rs` 里既有的 `uninlined_format_args` 报错，与本改动无关；屏蔽该条后全 targets 通过。
+
+### macOS 原生验收
+
+共享 daemon 另有 2 个在途请求，换新会让提问排队，所以用安装产物在一次性实例里验证
+（`ASKHUMAN_HOME=/tmp/askhuman-title-verify/home`，独立 launchd 标签，用 `ASKHUMAN_FROM_MCP` +
+`ASKHUMAN_MCP_AGENT_KIND/SESSION_ID` 绑定到本次 Cursor 会话以解析真实标题）。脚本与截图在忽略目录
+`.askhuman-dev/session-title/`（`native-verify.sh`、`shots/native-*.png`）。
+
+- 独立窗口：标题和红绿灯在同一水平带上、窗口正中；原生窗口标题保持 “AskHuman”（macOS 不上报）。
+- 合并窗口（两个请求，出现 Sidebar）：标题居中于右侧主面板，Sidebar 行里的标题照旧。
+- 拖动：App 级合成拖拽触发不了原生窗口拖动（对已知可拖动区域的对照实验同样没有移动窗口），不能作为证据；
+  改在真实 WebKit 里复现 Tauri 的判定：在标题文字 / 图标上按下鼠标，命中的是带 `data-tauri-drag-region` 的导航栏，
+  而对照组（点在胶囊上）不命中。
+- 无布局位移：有无标题时导航栏、表头、动作区、内容区的位置逐像素一致；无标题时不渲染该元素。
+- Windows / Linux 的原生窗口标题没有实机证据，只有 Rust 单元测试覆盖标题的规整与拼接。
+
+### 隔离实例的副作用与恢复
+
+一次性实例用的是安装产物，它启动时会执行 `agent_stop::migrate_outdated()`。新建的 home 里没有
+`stop-preferences.json`，Cursor / Codex 的结束确认偏好按默认值视为关闭，于是用户全局的 Cursor、Codex Stop hook
+被改写成指向安装产物、且不再带 `confirm`（偏好文件本身未变）。验收后用 `AskHuman agents stop cursor` /
+`codex` 发现 “on（需更新）”，再用全局 npm 产物执行 `agents stop cursor on` / `codex on` 恢复：
+Stop hook 重新指向全局产物并带回 `confirm`，三家状态均为 on，Agent 配置里没有残留安装产物或临时目录路径；
+Claude 配置未被触碰；LaunchAgents 登录项未变。恢复时偏好文件被重写，多了一个语义等同缺省的 `"pi": null`。
+该问题已在 2026-10-17 从根上修复：实例上下文的 daemon 启动时不再迁移全局 hook
+（见 [`../specs/dev-instance-parallel.md`](../specs/dev-instance-parallel.md) §7.1），
+不会再发生同类副作用。显式 `AskHuman agents …` 仍会写用户级文件，在隔离实例里运行它们后仍应核对 hook 状态。
