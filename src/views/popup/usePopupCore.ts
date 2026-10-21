@@ -118,8 +118,12 @@ export interface InboxLayout {
 export interface DropReceiver {
   /** The question the request is on: where files go that are not aimed at a card. */
   currentQuestion: () => number;
-  /** One of this request's own attachments is being dragged out of the window; that is not a drop coming in. */
+  /**
+   * One of this request's own attachments is being dragged out of the window. The controller lets that drag reach the
+   * other requests (R17), but never this one: its files are no drop coming in.
+   */
   draggingOut: () => boolean;
+  /** That drag ended in the window (dropped on a request or turned away), so the attachment is no longer on its way out. */
   endDragOut: () => void;
   /**
    * Attach the files to a question (in the vertical layout it also becomes the current one). Resolves to what became

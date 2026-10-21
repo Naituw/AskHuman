@@ -605,25 +605,265 @@ describe("files dragged over the window", () => {
       expect(visible("a")).toBe(true);
     });
 
-    it("does not count the user dragging one of the request's own attachments out of the window", async () => {
-      await peek(0);
-      mock.draggingOut.add("a");
-      await onRow(1, "enter");
-      expect(wrapper.findAll(".inbox-row.dwelling")).toHaveLength(0);
-      expect(wrapper.findAll(".inbox-row.drop-target")).toHaveLength(0);
-      expect(dragging()).toBe(false);
-      await send("drop", 120, rowY(1), ["/tmp/x.txt"]);
-      expect(mock.received).toEqual([]);
-      // The request is told the drag is over, and the user is told nothing: they were not dropping anything.
-      expect(mock.draggingOut.has("a")).toBe(false);
-      expect(wrapper.find(".inbox-notice").exists()).toBe(false);
-    });
-
     it("lights a row under the pointer and shows no aim inside the request", async () => {
       await peek(0);
       await onRow(1, "enter");
       expect(row(1).classes()).toContain("drop-target");
       expect(aimOf("a")).toBe("none");
+    });
+  });
+
+  // R17: the files may be an attachment of one of the window's own requests that the user took out of it. They reach every
+  // other request the way files from Finder do; the request they came from takes nothing, and says nothing about it.
+  describe("an attachment dragged out of one request", () => {
+    const told = () => wrapper.find(".inbox-notice");
+    const logged = () => (calls("popup_drop_log") as { entry: DropLogEntry }[]).map(args => args.entry);
+    const OWN = ["/tmp/own.txt"];
+    /** The user takes an attachment of `id` out of its body: the request's receiver says so, and native starts the drag over the window. */
+    async function takeOut(id: string, x = BODY + 280, y = CONTENT.top + 250) {
+      mock.draggingOut.add(id);
+      await send("enter", x, y, OWN);
+    }
+    const letters = "abcdefghijklmnopqrstuvwxyz".split("");
+
+    it("is a drag like any other: the other requests' rows are lit, and the one under the pointer is the target", async () => {
+      await peek(0);
+      await takeOut("a");
+      expect(dragging()).toBe(true);
+      await onRow(1);
+      expect(row(1).classes()).toEqual(expect.arrayContaining(["can-drop", "drop-target"]));
+      expect(row(2).classes()).toContain("can-drop");
+      expect(row(2).classes()).not.toContain("drop-target");
+    });
+
+    it("never lights the request it came from, whether the pointer is on its row or in its body", async () => {
+      await peek(0);
+      await takeOut("a");
+      expect(row(0).classes()).not.toContain("can-drop");
+      expect(aimOf("a")).toBe("none");
+      await onRow(0);
+      expect(row(0).classes()).not.toContain("drop-target");
+      expect(wrapper.findAll(".inbox-row.drop-target")).toHaveLength(0);
+    });
+
+    it("lights a request only for as long as it can take the files, like any drag", async () => {
+      requests = [ask("a"), confirmation("b"), ask("c")];
+      await peek(0);
+      await takeOut("a");
+      expect(row(1).classes()).not.toContain("can-drop");
+      expect(row(2).classes()).toContain("can-drop");
+      await onRow(1);
+      expect(row(1).classes()).not.toContain("drop-target");
+    });
+
+    it("opens another request's body after resting on its row, and a request it came from can be opened the same way", async () => {
+      await peek(0);
+      await takeOut("a");
+      await onRow(1);
+      expect(row(1).classes()).toContain("dwelling");
+      expect(row(1).attributes("style")).toContain("--dwell-ms: 250ms");
+      await tick(250 + 126 + 174);
+      expect(visible("b")).toBe(true);
+      expect(visible("a")).toBe(false);
+      expect(mock.focus).not.toHaveBeenCalled();
+      // Not the open request any more, and still no target: resting on its row only brings its body back.
+      arrange();
+      await onRow(0);
+      expect(row(0).classes()).toContain("dwelling");
+      expect(row(0).classes()).not.toContain("drop-target");
+      await tick(250 + 126 + 174);
+      expect(visible("a")).toBe(true);
+    });
+
+    it("goes to the request whose row it is dropped on, which is shown; the request it came from is told the drag is over", async () => {
+      await peek(0);
+      await takeOut("a");
+      await send("drop", 120, rowY(2), OWN);
+      await tick(126 + 174);
+      expect(mock.received).toEqual([{ id: "c", paths: OWN, question: 0 }]);
+      expect(visible("c")).toBe(true);
+      expect(mock.draggingOut.has("a")).toBe(false);
+      expect(dragging()).toBe(false);
+      expect(mock.focus).toHaveBeenCalledTimes(1);
+      expect(told().text()).toBe("Added 1 file to “Request c”");
+      // Nothing of the drag is left: the request it came from takes files again.
+      expect(row(0).classes()).toContain("can-drop");
+    });
+
+    it("goes to the body of the request it was taken to by resting on its row", async () => {
+      await peek(0);
+      await takeOut("a");
+      await onRow(1);
+      await tick(250 + 126 + 174);
+      arrange();
+      await onBody();
+      expect(aimOf("b")).toBe("request");
+      await send("drop", BODY + 280, CONTENT.top + 250, OWN);
+      expect(mock.received).toEqual([{ id: "b", paths: OWN, question: 0 }]);
+      expect(told().text()).toBe("Added 1 file to “Request b”");
+    });
+
+    it("goes to the question card it is dropped on in the stacked layout", async () => {
+      mock.stacked.set("a", 2); mock.stacked.set("b", 3);
+      await peek(0);
+      await takeOut("a");
+      await onRow(1);
+      await tick(250 + 126 + 174);
+      arrange();
+      const y = CONTENT.top + 20 + 150 * 2 + 60;
+      await send("over", BODY + 280, y);
+      expect(aimOf("b")).toBe("2");
+      await send("drop", BODY + 280, y, OWN);
+      expect(mock.received).toEqual([{ id: "b", paths: OWN, question: 2 }]);
+      expect(told().text()).toBe("Added 1 file to “Request b”, question 3");
+    });
+
+    it("is turned away like any files by a request that cannot take them, and says so", async () => {
+      requests = [ask("a"), confirmation("b"), ask("c")];
+      await peek(0);
+      await takeOut("a");
+      await send("drop", 120, rowY(1), OWN);
+      expect(mock.received).toEqual([]);
+      expect(told().text()).toBe("“Request b” does not take attachments");
+      expect(mock.draggingOut.has("a")).toBe(false);
+    });
+
+    describe("dropped back on the request it came from", () => {
+      // Where on the page (looked up once the page is there: the row's height depends on the window's form).
+      const places: [string, () => [number, number]][] = [
+        ["its row", () => [120, rowY(0)]],
+        ["its body", () => [BODY + 280, CONTENT.top + 250]],
+        ["below its questions", () => [BODY + 280, 580]],
+        ["its attachment preview", () => [BODY + 400, 300]],
+      ];
+      it.each(places)("does nothing on %s, and tells the user nothing", async (_place, at) => {
+        mock.previews.add("a");
+        await peek(0);
+        await takeOut("a");
+        mock.focus.mockClear();
+        await send("drop", ...at(), OWN);
+        expect(mock.received).toEqual([]);
+        expect(told().exists()).toBe(false);
+        expect(mock.focus).not.toHaveBeenCalled();
+        expect(visible("a")).toBe(true);
+        expect(mock.draggingOut.has("a")).toBe(false);
+        expect(dragging()).toBe(false);
+        expect(logged().slice(-1)[0]).toMatchObject({ action: "drop", outcome: "own_drag_out", own: true, requestId: "a" });
+      });
+
+      it("is the same on a window with one request, which has nowhere else to take it", async () => {
+        await start("a");
+        await takeOut("a");
+        expect(dragging()).toBe(true);
+        await send("drop", BODY + 280, CONTENT.top + 250, OWN);
+        expect(mock.received).toEqual([]);
+        expect(told().exists()).toBe(false);
+        expect(mock.draggingOut.has("a")).toBe(false);
+      });
+    });
+
+    it("is turned away by another request's attachment preview, which takes no files, and says so", async () => {
+      mock.previews.add("b");
+      await peek(0);
+      await takeOut("a");
+      await onRow(1);
+      await tick(250 + 126 + 174);
+      arrange();
+      await send("drop", BODY + 400, 300, OWN);
+      expect(mock.received).toEqual([]);
+      expect(told().text()).toContain("The attachment preview does not take files");
+      expect(mock.draggingOut.has("a")).toBe(false);
+      expect(logged().slice(-1)[0]).toMatchObject({ outcome: "on_preview", own: true, requestId: "b", target: "preview" });
+    });
+
+    it("is turned away while a dialog has the window, like any drag, and the request is told it is over", async () => {
+      await peek(0);
+      mock.draggingOut.add("a");
+      emit("popup-inbox-close", undefined); await flushPromises();
+      await onRow(1, "enter");
+      expect(dragging()).toBe(false);
+      await send("drop", 120, rowY(1), OWN);
+      expect(mock.received).toEqual([]);
+      expect(told().text()).toContain("The window is busy");
+      expect(mock.draggingOut.has("a")).toBe(false);
+      expect(logged()).toMatchObject([
+        { action: "enter", outcome: "busy", own: true },
+        { action: "drop", outcome: "busy", own: true, requestId: "a" },
+      ]);
+    });
+
+    it("keeps the body it comes from where it is while the pointer rests at its edge", async () => {
+      mock.stacked.set("a", 8);
+      await peek(0);
+      const content = wrapper.find('[data-inbox-request="a"] .content').element;
+      scroller(content, 60 + 150 * 8, 500);
+      arrange();
+      await takeOut("a", BODY + 280, CONTENT.top + CONTENT.height - 4);
+      await tick(1000);
+      expect(content.scrollTop).toBe(0);
+      // The cards that are not scrolled are the ones the user can still drop on: none of this request's.
+      expect(aimOf("a")).toBe("none");
+    });
+
+    it("scrolls the list at its edge, as for any drag", async () => {
+      await start(...letters);
+      const navigation = wrapper.find(".inbox-navigation").element;
+      scroller(navigation, letters.length * ROW + 30, 520);
+      arrange();
+      await takeOut("a", 120, 619);
+      await tick(500);
+      expect(navigation.scrollTop).toBeGreaterThan(200);
+    });
+
+    it("scrolls the body of another request at its edge, and aims at the card that slides under the pointer", async () => {
+      mock.stacked.set("b", 8);
+      await peek(0);
+      await takeOut("a");
+      await onRow(1);
+      await tick(250 + 126 + 174);
+      const content = wrapper.find('[data-inbox-request="b"] .content').element;
+      scroller(content, 60 + 150 * 8, 500);
+      arrange();
+      await send("over", BODY + 280, CONTENT.top + CONTENT.height - 4);
+      await tick(600);
+      expect(content.scrollTop).toBeGreaterThan(300);
+      expect(aimOf("b")).not.toBe("none");
+    });
+
+    it("is the same drag when it leaves the window and comes back, and none once the system has ended it", async () => {
+      await peek(0);
+      await takeOut("a");
+      await send("leave");
+      expect(dragging()).toBe(false);
+      // The attachment is still on its way: nothing here ends it but a drop.
+      expect(mock.draggingOut.has("a")).toBe(true);
+      await onRow(1, "enter");
+      expect(row(0).classes()).not.toContain("can-drop");
+      expect(row(1).classes()).toContain("drop-target");
+      await send("leave");
+      // It landed in another app: the request clears its own flag, and files dragged in after that can go anywhere.
+      mock.draggingOut.delete("a");
+      await onRow(0, "enter");
+      expect(row(0).classes()).toEqual(expect.arrayContaining(["can-drop", "drop-target"]));
+      await send("drop", 120, rowY(0), ["/tmp/x.txt"]);
+      expect(mock.received).toEqual([{ id: "a", paths: ["/tmp/x.txt"], question: 0 }]);
+    });
+
+    describe("in the log", () => {
+      it("marks the drag when it starts and what became of it, and marks no drag of files from another app", async () => {
+        await peek(0);
+        await send("enter", BODY + 280, CONTENT.top + 250, ["/tmp/other.txt"]);
+        await send("drop", BODY + 280, CONTENT.top + 250, ["/tmp/other.txt"]);
+        await takeOut("a");
+        await send("drop", 120, rowY(2), OWN);
+        const lines = logged();
+        expect(lines.map(line => line.action)).toEqual(["enter", "drop", "enter", "drop"]);
+        expect(lines[0]).not.toHaveProperty("own");
+        expect(lines[1]).not.toHaveProperty("own");
+        expect(lines[2]).toMatchObject({ action: "enter", from: "enter", own: true });
+        expect(lines[2]).not.toHaveProperty("outcome");
+        expect(lines[3]).toMatchObject({ action: "drop", outcome: "added", target: "row", requestId: "c", own: true, added: 1, files: 1 });
+      });
     });
   });
 
@@ -1093,15 +1333,15 @@ describe("files dragged over the window", () => {
         ]);
       });
 
-      it("for the user's own attachment dragged out: logged, but not told, since nothing was dropped", async () => {
+      it("for an attachment dropped back on the request it came from: logged, but not told, since nothing was dropped", async () => {
         await peek(0);
         mock.draggingOut.add("a");
-        await onRow(1, "enter");
-        await send("drop", 120, rowY(1), ["/tmp/x.txt"]);
+        await onRow(0, "enter");
+        await send("drop", 120, rowY(0), ["/tmp/x.txt"]);
         expect(told().exists()).toBe(false);
         expect(logged()).toMatchObject([
-          { action: "enter", outcome: "own_drag_out" },
-          { action: "drop", outcome: "own_drag_out", requestId: "a" },
+          { action: "enter", own: true },
+          { action: "drop", outcome: "own_drag_out", own: true, target: "row", requestId: "a" },
         ]);
       });
     });

@@ -215,7 +215,16 @@ function restoreFocus(id: string) {
 const receivers = new Map<string, DropReceiver>();
 /** A window change the drag controller started after its drag had left the window (the button is still down). */
 let carrying = false;
-const droppable = computed(() => new Set(requests.value.filter(r => acceptsFiles(r) && !terminals.has(r.requestId)).map(r => r.requestId)));
+// The requests the drag can drop onto: not one it cannot put files in, and not the one an attachment is being dragged out of (R17).
+// (Typed outright: the controller below reads this set, and this reads the controller.)
+const droppable = computed<Set<string>>(() => new Set(requests.value
+  .filter(r => acceptsFiles(r) && !terminals.has(r.requestId) && r.requestId !== drop.source.value)
+  .map(r => r.requestId)));
+/** The request one of whose own attachments is being dragged out of the window, if any. */
+function draggingOutOf(): string | null {
+  for (const [id, receiver] of receivers) if (receiver.draggingOut()) return id;
+  return null;
+}
 // Every drag of the window leaves a line in the diagnostic log, and a drop that adds nothing says why (dropFeedback.ts).
 const dragLog = createDragLog(entry => { void popupDropLog(entry); }, () => ({ view: view.value, requestId: active.value }));
 const dropWords = (): DropWords => ({ t, mac: isMac, paste: primaryShortcutLabel("v") });
@@ -225,7 +234,10 @@ function shortTitle(request: PopupInboxRequest) {
 }
 /** The controller's word on a drag: its start and end go to the log; a drop turned away also goes to the user. */
 function reportDrop(report: DropReport) {
-  if (report.kind === "seen") { dragLog.seen(report.from, report.paths, report.ignored ? { outcome: report.ignored } : {}); return; }
+  if (report.kind === "seen") {
+    dragLog.seen(report.from, report.paths, { ...(report.ignored ? { outcome: report.ignored } : {}), ...(report.own ? { own: true } : {}) });
+    return;
+  }
   if (report.kind === "leave") { dragLog.left(); return; }
   dragLog.end();
   if (report.reason !== "own_drag_out" && report.reason !== "no_target") {
@@ -233,12 +245,13 @@ function reportDrop(report: DropReport) {
     const told = describeIgnored(report.reason, dropWords(), request ? shortTitle(request) : undefined);
     say(told.text, told.level);
   }
-  dragLog.send({ action: "drop", paths: report.paths, outcome: report.reason, target: report.target, requestId: report.id });
+  dragLog.send({ action: "drop", paths: report.paths, outcome: report.reason, target: report.target, requestId: report.id, ...(report.own ? { own: true } : {}) });
 }
 const drop = useInboxDrop({
   root: () => root.value, layout: () => allocation.value, view: () => view.value, active: () => active.value,
   blocked: () => blocked.value, fallback: () => model.defaultOpenTarget(collapseState()),
   accepts: id => !terminals.has(id) && droppable.value.has(id),
+  draggingOut: draggingOutOf,
   receiver: id => receivers.get(id),
   open: id => enqueue(() => openForDrag(id)),
   deliver: deliverDrop, report: reportDrop,
@@ -552,9 +565,9 @@ function say(message: string, level: "info" | "warn" = "info") {
 // A drop (C32): the files go to the question the pointer was on (a card), else the one the request is on; then the request
 // that received them is shown, with the window in front and focused, so that leaving AskHuman afterwards shrinks a peek (C23).
 // Whatever comes of the files is told to the user and logged (§6.9), including when nothing could be attached.
-async function deliverDrop(id: string, paths: string[], question: number | null, landed: DropLogTarget) {
+async function deliverDrop(id: string, paths: string[], question: number | null, landed: DropLogTarget, own: boolean) {
   dragLog.end();
-  const log = (fields: Omit<DropLogEntry, "action">) => dragLog.send({ ...fields, action: "drop", paths, target: landed, requestId: id });
+  const log = (fields: Omit<DropLogEntry, "action">) => dragLog.send({ ...fields, action: "drop", paths, target: landed, requestId: id, ...(own ? { own } : {}) });
   const request = requests.value.find(r => r.requestId === id);
   if (!request || terminals.has(id)) { log({ outcome: "request_gone" }); return; }
   const title = shortTitle(request);

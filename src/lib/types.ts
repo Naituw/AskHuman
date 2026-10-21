@@ -357,6 +357,8 @@ export interface DropLogEntry {
   paths?: string[];
   outcome?: DropLogOutcome;
   target?: DropLogTarget;
+  /** The files are an attachment one of the window's own requests was dragged out of (R17), not files from another app. */
+  own?: boolean;
   added?: number;
   images?: number;
   files?: number;

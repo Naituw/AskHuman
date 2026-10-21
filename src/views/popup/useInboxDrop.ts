@@ -1,11 +1,14 @@
-// The inbox window's drop controller (docs/specs/popup-inbox-collapse.md C28, C31, C32; R13, R15, R16). The page registers
-// ONE listener for the window's native drag-drop events (the WebView cannot see file paths in HTML drag events) and routes
-// them here, so that a single drag can reach any pending request and any of its questions, the way a drag in Finder
-// opens folders ("spring-loading"):
+// The inbox window's drop controller (docs/specs/popup-inbox-collapse.md C28, C31, C32, C47; R13, R15, R16, R17). The page
+// registers ONE listener for the window's native drag-drop events (the WebView cannot see file paths in HTML drag events)
+// and routes them here, so that a single drag can reach any pending request and any of its questions, the way a drag in
+// Finder opens folders ("spring-loading"):
 //  - resting over the small window opens it, onto the row under the pointer (anywhere else: the default request);
 //  - resting on another Sidebar row opens that request; the row fills a bar while it waits;
 //  - the top and bottom edge of the list and of the body scroll, so that every row and every question card can be reached;
 //  - a drop goes to whatever is under the pointer at that moment, without waiting for any of that.
+// The files may be an attachment of one of the window's own requests that the user took out of it (R17). They go the same
+// ways, except that the request they came from is no target: it is not lit, a drop on it does nothing, and its body does
+// not scroll under the pointer.
 // Pure decisions live in inboxDrop.ts; this applies them to the window the page owns.
 import { ref } from "vue";
 import { isWindows } from "../../lib/platform";
@@ -26,13 +29,21 @@ export interface InboxDropEnv {
   blocked: () => boolean;
   /** The request the small window would open on its own. */
   fallback: () => string | null;
-  /** Whether a request can take files at all (a confirmation or a select-only request cannot). */
+  /**
+   * Whether a request can take the files being dragged: it has somewhere to put them (a confirmation or a select-only
+   * request has not), and they are not its own attachment.
+   */
   accepts: (id: string) => boolean;
+  /** The request one of whose own attachments the user is dragging out of the window right now, wherever the drag is. */
+  draggingOut: () => string | null;
   receiver: (id: string) => DropReceiver | undefined;
   /** Open a request: the small window expands onto it, an open window switches its body. Resolves once the window has settled. */
   open: (id: string) => Promise<void>;
-  /** Hand the files to a request (question null: the one it is on) and show it. `target` is what they landed on, for the log. */
-  deliver: (id: string, paths: string[], question: number | null, target: DropLogTarget) => Promise<void>;
+  /**
+   * Hand the files to a request (question null: the one it is on) and show it. `target` is what they landed on, for the
+   * log; `own` that they are an attachment of another request of this window.
+   */
+  deliver: (id: string, paths: string[], question: number | null, target: DropLogTarget, own: boolean) => Promise<void>;
   /** The drag starts or leaves, or a drop is turned away: the page tells the user about it and logs it. */
   report: (report: DropReport) => void;
   /** The drag opened the window and gave up: shrink it back (only a window with nothing left to answer does). */
@@ -47,6 +58,8 @@ export function useInboxDrop(env: InboxDropEnv) {
   const aim = ref<DropHit | null>(null);
   /** The request a running wait will open, and how long the wait is. */
   const dwell = ref<{ id: string; ms: number } | null>(null);
+  /** The request the dragged files are an attachment of, when the user took them out of one of the window's requests (R17). */
+  const source = ref<string | null>(null);
   let timer: ReturnType<typeof setTimeout> | null = null;
   let springTimer: ReturnType<typeof setTimeout> | null = null;
   /** Page coordinates of the pointer at the last event: edge scrolling and re-aiming after a layout change use it. */
@@ -137,6 +150,7 @@ export function useInboxDrop(env: InboxDropEnv) {
   function finish() {
     dragging.value = false;
     aim.value = null;
+    source.value = null;
     pointer = null;
     hold = null;
     openedByDrag = false;
@@ -148,6 +162,7 @@ export function useInboxDrop(env: InboxDropEnv) {
   function left() {
     dragging.value = false;
     aim.value = null;
+    source.value = null;
     pointer = null;
     hold = null;
     clearDwell();
@@ -166,17 +181,30 @@ export function useInboxDrop(env: InboxDropEnv) {
     const { hit } = probe(position);
     const aimed = aim.value;
     const collapsed = env.view() === "collapsed";
+    const from = source.value;
+    const own = from !== null;
     finish();
-    if (hit === "preview") { env.report({ kind: "turned_away", reason: "on_preview", paths, id: env.active(), target: "preview" }); return; }
+    // The drag is over, wherever the attachment landed: the request it came from is no longer waiting for it to come back.
+    if (from) env.receiver(from)?.endDragOut();
+    const turnedAway = (reason: Extract<DropReport, { kind: "turned_away" }>["reason"], id: string | null, target: DropLogTarget) =>
+      env.report({ kind: "turned_away", reason, paths, id, target, ...(own ? { own } : {}) });
+    if (hit === "preview") {
+      // A preview takes no files; an attachment dropped on the preview of the request it came from is no drop at all.
+      const id = env.active();
+      turnedAway(own && id === from ? "own_drag_out" : "on_preview", id, "preview");
+      return;
+    }
     // Not on a row or a card: the open request (for the small window, the one it would open).
     const target = hit ?? aimed;
     const id = target?.id ?? (collapsed ? env.fallback() : env.active());
     const landed: DropLogTarget = target?.kind ?? "none";
     // Nothing is dropped silently any more: every way of not delivering is told to the user and written to the log.
-    if (!id) { env.report({ kind: "turned_away", reason: "no_target", paths, id: null, target: landed }); return; }
-    if (!paths.length) { env.report({ kind: "turned_away", reason: "no_paths", paths, id, target: landed }); return; }
-    if (!env.accepts(id)) { env.report({ kind: "turned_away", reason: "not_accepting", paths, id, target: landed }); return; }
-    await env.deliver(id, paths, target?.kind === "card" ? target.question : null, landed);
+    if (!id) { turnedAway("no_target", null, landed); return; }
+    // An attachment goes to any request but the one it came from, which has it already.
+    if (id === from) { turnedAway("own_drag_out", id, landed); return; }
+    if (!paths.length) { turnedAway("no_paths", id, landed); return; }
+    if (!env.accepts(id)) { turnedAway("not_accepting", id, landed); return; }
+    await env.deliver(id, paths, target?.kind === "card" ? target.question : null, landed, own);
   }
 
   async function handle(payload: DragPayload) {
@@ -184,31 +212,23 @@ export function useInboxDrop(env: InboxDropEnv) {
     // A window change that a wait started finishes first, so that the layout under the pointer is the final one.
     if (opening) await opening;
     if (payload.type === "leave") { env.report({ kind: "leave" }); left(); return; }
-    const id = env.active();
-    const own = id ? env.receiver(id) : undefined;
-    const draggingOut = !!own?.draggingOut();
+    // One of the window's own attachments may be on its way out (the drag may have taken it to another request since):
+    // the files then come from a request, and that one never takes them back.
+    source.value = env.draggingOut();
+    const own = source.value !== null;
     const busy = env.blocked();
     if (payload.type !== "drop") {
-      env.report({ kind: "seen", from: payload.type, paths: payload.paths ?? [], ...(draggingOut ? { ignored: "own_drag_out" as const } : busy ? { ignored: "busy" as const } : {}) });
-    }
-    if (draggingOut) {
-      // One of this request's own attachments is on its way out of the window: that is not files coming in.
-      aim.value = null;
-      clearDwell();
-      stopEdge();
-      if (payload.type === "drop") {
-        own?.endDragOut();
-        env.report({ kind: "turned_away", reason: "own_drag_out", paths: payload.paths ?? [], id, target: "none" });
-      }
-      return;
+      env.report({ kind: "seen", from: payload.type, paths: payload.paths ?? [], ...(busy ? { ignored: "busy" as const } : {}), ...(own ? { own } : {}) });
     }
     if (busy) {
       // A dialog or a transition has the window: it takes no files now.
       aim.value = null;
       clearDwell();
       if (payload.type === "drop") {
+        const from = source.value;
         finish();
-        env.report({ kind: "turned_away", reason: "busy", paths: payload.paths ?? [], id, target: "none" });
+        if (from) env.receiver(from)?.endDragOut();
+        env.report({ kind: "turned_away", reason: "busy", paths: payload.paths ?? [], id: env.active(), target: "none", ...(own ? { own } : {}) });
       }
       return;
     }
@@ -234,8 +254,9 @@ export function useInboxDrop(env: InboxDropEnv) {
     const side = root.querySelector<HTMLElement>(".inbox-sidebar")?.getBoundingClientRect();
     const inSide = !!side && side.width > 0 && x >= side.left && x < side.right;
     const id = env.active();
+    // The body an attachment is being dragged out of stays where it is: scrolling it would move what the user holds.
     const element = inSide ? root.querySelector<HTMLElement>(".inbox-navigation")
-      : id ? root.querySelector<HTMLElement>(`[data-inbox-request="${CSS.escape(id)}"] .content`) : null;
+      : id && id !== source.value ? root.querySelector<HTMLElement>(`[data-inbox-request="${CSS.escape(id)}"] .content`) : null;
     if (!element) return null;
     const speed = edgeSpeed(element.getBoundingClientRect(), y, { top: element.scrollTop, height: element.scrollHeight, client: element.clientHeight });
     return speed ? { element, speed } : null;
@@ -271,7 +292,7 @@ export function useInboxDrop(env: InboxDropEnv) {
   }
 
   return {
-    dragging, aim, dwell,
+    dragging, aim, dwell, source,
     /** Feed the window's native drag-drop events here, in the order they arrive. */
     onEvent: serialDrag(handle, env.fail),
     /** A new round starts with no drag in it. */

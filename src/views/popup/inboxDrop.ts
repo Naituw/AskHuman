@@ -1,8 +1,9 @@
-// Files dragged over the inbox window (docs/specs/popup-inbox-collapse.md C28, C31, C32; R13, R15, R16). Like dragging
-// onto folders in Finder, one drag has to reach any pending request and any of its questions: resting over the small
-// window opens it, resting on another Sidebar row opens that request, the edges of the list and the body scroll, and a
-// drop goes to whatever is under the pointer at that moment. This file holds the pure decisions; useInboxDrop.ts
-// applies them to the window. Kept free of Vue and Tauri so it can be tested without a window.
+// Files dragged over the inbox window (docs/specs/popup-inbox-collapse.md C28, C31, C32, C47; R13, R15, R16, R17). Like
+// dragging onto folders in Finder, one drag has to reach any pending request and any of its questions: resting over the
+// small window opens it, resting on another Sidebar row opens that request, the edges of the list and the body scroll,
+// and a drop goes to whatever is under the pointer at that moment. The files may also be an attachment of one of the
+// window's own requests, taken out of it: that drag reaches every request but the one it came from. This file holds the
+// pure decisions; useInboxDrop.ts applies them to the window. Kept free of Vue and Tauri so it can be tested without a window.
 import type { DropLogTarget, PopupInboxRequest } from "../../lib/types";
 import { inboxDropPoint, type CanvasPosition } from "./inboxCoordinates";
 
@@ -36,12 +37,18 @@ export interface DragPayload {
  * delivered is reported by the page itself, which knows what became of the files.
  */
 export type DropReport =
-  /** A native `enter` or `over` came in (the first of a drag is what gets logged); `ignored` says why it will be turned away. */
-  | { kind: "seen"; from: "enter" | "over"; paths: string[]; ignored?: "own_drag_out" | "busy" }
+  /**
+   * A native `enter` or `over` came in (the first of a drag is what gets logged); `ignored` says why it will be turned
+   * away, `own` that the files are an attachment one of the window's requests is being dragged out of.
+   */
+  | { kind: "seen"; from: "enter" | "over"; paths: string[]; ignored?: "busy"; own?: boolean }
   /** The drag left the window without dropping. */
   | { kind: "leave" }
-  /** A drop was turned away before anything was tried. */
-  | { kind: "turned_away"; reason: "no_paths" | "on_preview" | "not_accepting" | "busy" | "own_drag_out" | "no_target"; paths: string[]; id: string | null; target: DropLogTarget };
+  /**
+   * A drop was turned away before anything was tried. `own_drag_out` is an attachment dropped back on the request it
+   * came from: that is no drop, so the user is told nothing.
+   */
+  | { kind: "turned_away"; reason: "no_paths" | "on_preview" | "not_accepting" | "busy" | "own_drag_out" | "no_target"; paths: string[]; id: string | null; target: DropLogTarget; own?: boolean };
 
 /** What is under the pointer. A card is only ever a target in the vertical layout, where every question is one. */
 export type DropHit =

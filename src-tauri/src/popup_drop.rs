@@ -169,7 +169,7 @@ pub enum DropOutcome {
     NotAccepting,
     /// A dialog or a window change had the window.
     Busy,
-    /// One of the request's own attachments was on its way out of the window.
+    /// An attachment was dropped back on the request it came from, which has it already.
     OwnDragOut,
     /// The request could not be made ready to take files.
     NoReceiver,
@@ -207,6 +207,9 @@ pub struct DropLogEntry {
     pub outcome: Option<DropOutcome>,
     #[serde(default)]
     pub target: Option<DropTarget>,
+    /// The files are an attachment one of the window's own requests was dragged out of, not files from another app.
+    #[serde(default)]
+    pub own: Option<bool>,
     #[serde(default)]
     pub added: Option<u32>,
     #[serde(default)]
@@ -247,6 +250,8 @@ struct DropLine {
     outcome: Option<DropOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     target: Option<DropTarget>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    own: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     added: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -293,6 +298,7 @@ fn build_line(entry: &DropLogEntry, timestamp_ms: u64, pid: u32, home: &Path) ->
         places,
         outcome: entry.outcome,
         target: entry.target,
+        own: entry.own,
         added: entry.added,
         images: entry.images,
         files: entry.files,
@@ -476,6 +482,18 @@ mod tests {
     }
 
     #[test]
+    fn marks_a_drag_of_the_windows_own_attachment_and_says_nothing_for_other_files() {
+        let own = line(serde_json::json!({
+            "action": "drop", "own": true, "outcome": "added", "target": "row", "paths": ["/tmp/a.png"],
+        }));
+        assert_eq!(own["own"], true);
+        let other = line(
+            serde_json::json!({ "action": "drop", "outcome": "added", "paths": ["/tmp/a.png"] }),
+        );
+        assert!(other.get("own").is_none());
+    }
+
+    #[test]
     fn records_a_drop_that_carried_no_files_as_zero_paths() {
         let written =
             line(serde_json::json!({ "action": "drop", "paths": [], "outcome": "no_paths" }));
@@ -527,6 +545,7 @@ mod tests {
             serde_json::json!({ "action": "drop", "outcome": "my secret text" }),
             serde_json::json!({ "action": "typed by a person" }),
             serde_json::json!({ "action": "drop", "target": "/Users/alice" }),
+            serde_json::json!({ "action": "drop", "own": "/Users/alice" }),
             serde_json::json!({ "action": "drop", "failed": [{ "path": "/x", "reason": "because" }] }),
         ] {
             assert!(serde_json::from_value::<DropLogEntry>(bad).is_err());
