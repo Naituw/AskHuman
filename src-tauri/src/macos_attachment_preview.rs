@@ -1,6 +1,8 @@
-//! System image decoding and a request-scoped Quick Look view inside the Popup.
+//! System image decoding and an owner-scoped Quick Look view inside a preview panel: the Popup's
+//! or the History window's. Each window has at most one native preview; the owner id (request id
+//! or `history:<entry id>`) tells their callbacks apart.
 use serde::Serialize;
-use std::{cell::RefCell, ffi::CString};
+use std::{cell::RefCell, collections::HashMap, ffi::CString};
 use tauri::Emitter;
 
 unsafe extern "C" {
@@ -19,8 +21,9 @@ unsafe extern "C" {
         width: f64,
         height: f64,
         bare_enter: bool,
-        callback: extern "C" fn(u16, u64, *const std::ffi::c_char),
+        callback: extern "C" fn(*const std::ffi::c_char, u16, u64, *const std::ffi::c_char),
     ) -> bool;
+    fn ah_preview_release_window(window: *mut std::ffi::c_void);
     fn ah_preview_find(
         request: *const std::ffi::c_char,
         index: usize,
@@ -46,7 +49,13 @@ pub enum DecodedImage {
 }
 thread_local! {
     static IMAGE_RESULT: RefCell<Option<Result<DecodedImage, &'static str>>> = const { RefCell::new(None) };
-    static KEY_TARGET: RefCell<Option<(tauri::Window, String, usize)>> = const { RefCell::new(None) };
+    /// The attachment each window's native view currently shows, by owner id. Native callbacks
+    /// carry only the owner id, so this is how they find their window.
+    static TARGETS: RefCell<HashMap<String, (tauri::Window, usize)>> = RefCell::new(HashMap::new());
+}
+
+fn target_of(owner_id: &str) -> Option<(tauri::Window, usize)> {
+    TARGETS.with(|targets| targets.borrow().get(owner_id).cloned())
 }
 extern "C" fn image_result(bytes: *const u8, length: usize, width: u32, height: u32, status: i32) {
     let result = match status {
@@ -85,7 +94,15 @@ struct PreviewKey {
     alt_key: bool,
     selection: String,
 }
-extern "C" fn native_key(code: u16, flags: u64, selection: *const std::ffi::c_char) {
+extern "C" fn native_key(
+    request: *const std::ffi::c_char,
+    code: u16,
+    flags: u64,
+    selection: *const std::ffi::c_char,
+) {
+    if request.is_null() {
+        return;
+    }
     let key = match code {
         0 => "interaction",
         3 => "f",
@@ -95,31 +112,34 @@ extern "C" fn native_key(code: u16, flags: u64, selection: *const std::ffi::c_ch
         36 | 76 => "Enter",
         _ => return,
     };
-    KEY_TARGET.with(|target| {
-        if let Some((window, request_id, index)) = target.borrow().as_ref() {
-            if crate::app::popup_preview::request(window, request_id).is_ok() {
-                let _ = window.emit(
-                    "popup-preview-native-key",
-                    PreviewKey {
-                        request_id: request_id.clone(),
-                        index: *index,
-                        key,
-                        meta_key: flags & (1 << 20) != 0,
-                        shift_key: flags & (1 << 17) != 0,
-                        ctrl_key: flags & (1 << 18) != 0,
-                        alt_key: flags & (1 << 19) != 0,
-                        selection: if selection.is_null() {
-                            String::new()
-                        } else {
-                            unsafe { std::ffi::CStr::from_ptr(selection) }
-                                .to_string_lossy()
-                                .into_owned()
-                        },
-                    },
-                );
-            }
-        }
-    });
+    let request_id = unsafe { std::ffi::CStr::from_ptr(request) }
+        .to_string_lossy()
+        .into_owned();
+    let Some((window, index)) = target_of(&request_id) else {
+        return;
+    };
+    // The owner must still be valid: the Popup's request is active, the history entry exists.
+    if crate::app::attachment_owner::files(&window, &request_id, true).is_ok() {
+        let _ = window.emit(
+            "popup-preview-native-key",
+            PreviewKey {
+                request_id,
+                index,
+                key,
+                meta_key: flags & (1 << 20) != 0,
+                shift_key: flags & (1 << 17) != 0,
+                ctrl_key: flags & (1 << 18) != 0,
+                alt_key: flags & (1 << 19) != 0,
+                selection: if selection.is_null() {
+                    String::new()
+                } else {
+                    unsafe { std::ffi::CStr::from_ptr(selection) }
+                        .to_string_lossy()
+                        .into_owned()
+                },
+            },
+        );
+    }
 }
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -154,40 +174,30 @@ extern "C" fn native_find(
         6 => "limit",
         _ => "error",
     };
-    KEY_TARGET.with(|target| {
-        if let Some((window, id, active_index)) = target.borrow().as_ref() {
-            if id == &request_id
-                && *active_index == index
-                && crate::app::popup_preview::request(window, id).is_ok()
-            {
-                let _ = window.emit(
-                    "popup-preview-find",
-                    PreviewFind {
-                        request_id,
-                        index,
-                        generation,
-                        total,
-                        current,
-                        status,
-                    },
-                );
-            }
+    if let Some((window, active_index)) = target_of(&request_id) {
+        if active_index == index
+            && crate::app::attachment_owner::files(&window, &request_id, true).is_ok()
+        {
+            let _ = window.emit(
+                "popup-preview-find",
+                PreviewFind {
+                    request_id,
+                    index,
+                    generation,
+                    total,
+                    current,
+                    status,
+                },
+            );
         }
-    });
+    }
 }
 pub fn find_in_view(
     window: &tauri::Window,
     search: &crate::commands::PreviewFindRequest,
 ) -> Result<(), String> {
-    let matches = KEY_TARGET.with(|target| {
-        target
-            .borrow()
-            .as_ref()
-            .is_some_and(|(target_window, id, target_index)| {
-                target_window.label() == window.label()
-                    && id == &search.request_id
-                    && *target_index == search.index
-            })
+    let matches = target_of(&search.request_id).is_some_and(|(target_window, target_index)| {
+        target_window.label() == window.label() && target_index == search.index
     });
     if !matches {
         return Err("stale system preview target".into());
@@ -234,8 +244,13 @@ pub fn update_view(
         height: 0.0,
     };
     let rect = rect.as_ref().unwrap_or(&zero);
-    KEY_TARGET.with(|target| {
-        *target.borrow_mut() = index.map(|index| (window.clone(), request_id.to_owned(), index))
+    TARGETS.with(|targets| {
+        let mut targets = targets.borrow_mut();
+        // One native preview per window: its new target (or none) replaces the old one.
+        targets.retain(|_, (target, _)| target.label() != window.label());
+        if let Some(index) = index {
+            targets.insert(request_id.to_owned(), (window.clone(), index));
+        }
     });
     let result = unsafe {
         ah_preview_update_view(
@@ -254,6 +269,17 @@ pub fn update_view(
         Ok(())
     } else {
         Err("system preview unavailable".into())
+    }
+}
+/// Remove a closing window's native preview: its views, key monitors and callback target.
+pub fn release_window(window: &tauri::Window) {
+    TARGETS.with(|targets| {
+        targets
+            .borrow_mut()
+            .retain(|_, (target, _)| target.label() != window.label())
+    });
+    if let Ok(pointer) = window.ns_window() {
+        unsafe { ah_preview_release_window(pointer) };
     }
 }
 #[cfg(test)]

@@ -31,6 +31,12 @@ import {
   workspaceNameOf,
 } from "../lib/history";
 import HistoryDetail from "../components/HistoryDetail.vue";
+import AttachmentPreviewPanel from "./popup/AttachmentPreviewPanel.vue";
+import { provideAttachmentPanel } from "./popup/attachmentPanelContext";
+import { frozenMainStyle, PREVIEW_DIVIDER_WIDTH, usePreviewDivider } from "./popup/usePreviewDivider";
+import { LIST_COLLAPSE_BELOW, provideHistoryPreview, useHistoryPreview } from "./history/useHistoryPreview";
+// The panel and its divider are styled by the popup stylesheet (the same panel as in the popup).
+import "./popup/popup.css";
 
 const { t, locale } = useI18n();
 const ALL = "__all__";
@@ -335,6 +341,36 @@ const activeSessionTitle = computed(() => {
   if (!entry) return "";
   return sessionTitles.value[historySessionToken(historySessionOf(entry))] ?? "";
 });
+
+// —— 附件预览：与弹窗同一块面板；窗口向右展开，放不下时回落为窗口内分栏（spec §10）——
+// 预览跟随当前条目：换条目 / 条目被删时先收起，新条目从关闭开始。
+const preview = provideHistoryPreview(
+  useHistoryPreview({ entry: activeEntry, blocked: computed(() => confirmKind.value !== null) })
+);
+provideAttachmentPanel(preview.panel);
+const { previewLayout, previewOpen, previewTransition, resizePreview } = preview.attach;
+const { beginDivider } = usePreviewDivider({
+  mainWidth: () => previewLayout.value.mainWidth,
+  resize: resizePreview,
+});
+const panelShown = computed(() => previewLayout.value.side !== "closed");
+// While the window is resized for the panel the main region keeps the width it had.
+const mainWidthNow = computed(() => {
+  const transition = previewTransition.value;
+  return transition && transition.side !== "closed" ? transition.mainWidth : previewLayout.value.mainWidth;
+});
+// With the panel inside the window the main region may be too narrow for list + detail: the list steps aside.
+const listCollapsed = computed(() => panelShown.value && mainWidthNow.value < LIST_COLLAPSE_BELOW);
+const shellStyle = computed(() => ({
+  gridTemplateColumns: panelShown.value
+    ? `${previewLayout.value.mainWidth}px ${PREVIEW_DIVIDER_WIDTH}px minmax(0, 1fr)`
+    : "minmax(0, 1fr)",
+  gridTemplateRows: "minmax(0, 1fr)",
+  gridTemplateAreas: panelShown.value ? "'main divider preview'" : "'main'",
+  // The scope button and menu size themselves from the main region, not from the window.
+  "--history-main-width": panelShown.value ? `${mainWidthNow.value}px` : "100vw",
+}));
+const mainStyle = computed(() => frozenMainStyle(previewTransition.value));
 
 function escapeHtml(value: string): string {
   return value.replace(
@@ -709,253 +745,282 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="history">
-    <header class="hist-header" data-tauri-drag-region>
-      <span class="hist-title" data-tauri-drag-region>{{ t("history.title") }}</span>
-      <div class="hist-tools">
-        <span v-if="deleteNotice" class="hist-notice" role="status">{{ deleteNotice }}</span>
-        <div class="scope-wrap">
-          <button
-            class="scope-btn"
-            :class="{ 'session-scoped': selectedSession !== ALL_HISTORY_SESSIONS }"
-            type="button"
-            :title="scopeButtonTooltip"
-            :aria-label="t('history.scopeFilter')"
-            :aria-expanded="scopeMenuOpen"
-            aria-haspopup="menu"
-            @click="toggleScopeMenu"
-          >
-            <svg class="scope-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M6 12h12M10 19h4" /></svg>
-            <span class="scope-btn-label">{{ scopeButtonLabel }}</span>
-            <svg class="scope-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
-          </button>
-          <div v-if="scopeMenuOpen" class="scope-menu" role="menu">
-            <div class="scope-project-menu" :aria-label="t('history.projectFilter')">
-              <button
-                v-for="o in projectOptions"
-                :key="o.token"
-                type="button"
-                role="menuitem"
-                :class="{
-                  active: scopeMenuProject === o.token,
-                  selected: selected === o.token,
-                }"
-                :title="o.title"
-                @pointerenter="scopeMenuProject = o.token"
-                @focus="scopeMenuProject = o.token"
-                @click="scopeMenuProject = o.token"
-              >
-                <span class="scope-project-label">{{ o.label }}</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>
-              </button>
-            </div>
-            <div class="scope-session-menu" :aria-label="t('history.sessionFilter')">
-              <button
-                type="button"
-                role="menuitemradio"
-                :aria-checked="
-                  selected === scopeMenuProject &&
-                  selectedSession === ALL_HISTORY_SESSIONS
-                "
-                :class="{
-                  selected:
-                    selected === scopeMenuProject &&
-                    selectedSession === ALL_HISTORY_SESSIONS,
-                }"
-                @click="selectScope(scopeMenuProject, ALL_HISTORY_SESSIONS)"
-              >
-                <span class="scope-check">✓</span>
-                <span>{{ scopeMenuAllSessionsLabel }}</span>
-              </button>
-              <div
-                v-if="scopeMenuSpecificSessionOptions.length"
-                class="scope-divider"
-                role="separator"
-              ></div>
-              <button
-                v-for="o in scopeMenuSpecificSessionOptions"
-                :key="o.token"
-                type="button"
-                role="menuitemradio"
-                :aria-checked="
-                  selected === scopeMenuProject && selectedSession === o.token
-                "
-                :class="{
-                  selected:
-                    selected === scopeMenuProject && selectedSession === o.token,
-                }"
-                :title="o.title"
-                @click="selectScope(scopeMenuProject, o.token)"
-              >
-                <span class="scope-check">✓</span>
-                <span class="scope-session-label">{{ o.label }}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-        <div class="clear-wrap">
-          <button class="clear-btn" type="button" @click="toggleCleanupMenu">
-            {{ t("history.cleanup") }}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
-          </button>
-          <div v-if="menuOpen" class="clear-menu">
+  <div class="history-shell" :style="shellStyle">
+    <div class="history" :class="{ 'list-collapsed': listCollapsed }" :style="mainStyle">
+      <header class="hist-header" data-tauri-drag-region>
+        <span class="hist-title" data-tauri-drag-region>{{ t("history.title") }}</span>
+        <div class="hist-tools">
+          <span v-if="deleteNotice" class="hist-notice" role="status">{{ deleteNotice }}</span>
+          <div class="scope-wrap">
             <button
-              v-if="showScopeCleanup"
+              class="scope-btn"
+              :class="{ 'session-scoped': selectedSession !== ALL_HISTORY_SESSIONS }"
               type="button"
-              :disabled="cleanupScopeEntries.length === 0"
-              @click="askClear('scope')"
+              :title="scopeButtonTooltip"
+              :aria-label="t('history.scopeFilter')"
+              :aria-expanded="scopeMenuOpen"
+              aria-haspopup="menu"
+              @click="toggleScopeMenu"
             >
-              {{ scopeCleanupLabel }}
+              <svg class="scope-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M6 12h12M10 19h4" /></svg>
+              <span class="scope-btn-label">{{ scopeButtonLabel }}</span>
+              <svg class="scope-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
             </button>
-            <button type="button" @click="askClear('all')">
-              {{ t("history.clearAllCount", { n: entries.length }) }}
+            <div v-if="scopeMenuOpen" class="scope-menu" role="menu">
+              <div class="scope-project-menu" :aria-label="t('history.projectFilter')">
+                <button
+                  v-for="o in projectOptions"
+                  :key="o.token"
+                  type="button"
+                  role="menuitem"
+                  :class="{
+                    active: scopeMenuProject === o.token,
+                    selected: selected === o.token,
+                  }"
+                  :title="o.title"
+                  @pointerenter="scopeMenuProject = o.token"
+                  @focus="scopeMenuProject = o.token"
+                  @click="scopeMenuProject = o.token"
+                >
+                  <span class="scope-project-label">{{ o.label }}</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>
+                </button>
+              </div>
+              <div class="scope-session-menu" :aria-label="t('history.sessionFilter')">
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  :aria-checked="
+                    selected === scopeMenuProject &&
+                    selectedSession === ALL_HISTORY_SESSIONS
+                  "
+                  :class="{
+                    selected:
+                      selected === scopeMenuProject &&
+                      selectedSession === ALL_HISTORY_SESSIONS,
+                  }"
+                  @click="selectScope(scopeMenuProject, ALL_HISTORY_SESSIONS)"
+                >
+                  <span class="scope-check">✓</span>
+                  <span>{{ scopeMenuAllSessionsLabel }}</span>
+                </button>
+                <div
+                  v-if="scopeMenuSpecificSessionOptions.length"
+                  class="scope-divider"
+                  role="separator"
+                ></div>
+                <button
+                  v-for="o in scopeMenuSpecificSessionOptions"
+                  :key="o.token"
+                  type="button"
+                  role="menuitemradio"
+                  :aria-checked="
+                    selected === scopeMenuProject && selectedSession === o.token
+                  "
+                  :class="{
+                    selected:
+                      selected === scopeMenuProject && selectedSession === o.token,
+                  }"
+                  :title="o.title"
+                  @click="selectScope(scopeMenuProject, o.token)"
+                >
+                  <span class="scope-check">✓</span>
+                  <span class="scope-session-label">{{ o.label }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="clear-wrap">
+            <button class="clear-btn" type="button" @click="toggleCleanupMenu">
+              {{ t("history.cleanup") }}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
             </button>
+            <div v-if="menuOpen" class="clear-menu">
+              <button
+                v-if="showScopeCleanup"
+                type="button"
+                :disabled="cleanupScopeEntries.length === 0"
+                @click="askClear('scope')"
+              >
+                {{ scopeCleanupLabel }}
+              </button>
+              <button type="button" @click="askClear('all')">
+                {{ t("history.clearAllCount", { n: entries.length }) }}
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    </header>
+      </header>
 
-    <div class="hist-search">
-      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-      <input
-        v-model="query"
-        type="search"
-        class="search-input"
-        :placeholder="t('history.searchPlaceholder')"
-      />
-      <button
-        v-if="query"
-        type="button"
-        class="search-clear"
-        :title="t('history.searchClear')"
-        @click="query = ''"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-      </button>
-    </div>
-
-    <div class="hist-body">
-      <!-- Left list -->
-      <ul v-if="filteredEntries.length" class="entry-list">
-        <li
-          v-for="e in filteredEntries"
-          :key="e.id"
-          class="entry"
-          :class="{ active: e.id === activeId }"
-          @click="activeId = e.id"
-        >
-          <div class="entry-top">
-            <span class="badge" :class="e.action">{{ channelName(e.channel) }}</span>
-            <span v-if="agentLabelOf(e)" class="agent-badge">{{ agentLabelOf(e) }}</span>
-            <span class="entry-time">{{ relativeTime(e.timestampMs) }}</span>
-          </div>
-          <div class="entry-summary" v-html="highlightedSummary(e)"></div>
-          <div
-            v-if="workspaceNameOf(e)"
-            class="entry-workspace"
-            :title="e.project"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" /></svg>
-            <span class="ws-name" v-html="highlightText(workspaceNameOf(e))"></span>
-          </div>
-        </li>
-      </ul>
-      <div
-        v-else-if="keywords.length || selectedSession !== ALL_HISTORY_SESSIONS"
-        class="empty"
-      >
-        <p class="empty-title">{{ t("history.searchEmpty") }}</p>
-        <p class="empty-hint">{{ t("history.searchEmptyHint") }}</p>
-      </div>
-      <div v-else class="empty">
-        <p class="empty-title">{{ t("history.empty") }}</p>
-        <p class="empty-hint">{{ t("history.emptyHint") }}</p>
-      </div>
-
-      <!-- Right detail -->
-      <div class="detail-pane">
-        <HistoryDetail
-          v-if="activeEntry"
-          :key="activeEntry.id"
-          :entry="activeEntry"
-          :session-title="activeSessionTitle"
+      <div class="hist-search">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+        <input
+          v-model="query"
+          type="search"
+          class="search-input"
+          :placeholder="t('history.searchPlaceholder')"
         />
-        <div v-else class="select-hint">{{ t("history.selectHint") }}</div>
-      </div>
-    </div>
-
-    <!-- Destructive confirmation -->
-    <div v-if="confirmKind" class="overlay" @click.self="closeConfirm">
-      <div class="dialog">
-        <h3>
-          {{
-            confirmKind === "all"
-              ? t("history.confirmClearAllTitle")
-              : scopeConfirmTitle
-          }}
-        </h3>
-        <p>
-          {{
-            confirmKind === "all"
-              ? t("history.confirmClearAllDesc")
-              : scopeConfirmDesc
-          }}
-        </p>
-        <dl
-          v-if="confirmKind === 'scope' && pendingDeleteContext"
-          class="delete-context"
+        <button
+          v-if="query"
+          type="button"
+          class="search-clear"
+          :title="t('history.searchClear')"
+          @click="query = ''"
         >
-          <div>
-            <dt>{{ t("history.deleteScopeProject") }}</dt>
-            <dd>{{ pendingDeleteContext.project }}</dd>
-          </div>
-          <div>
-            <dt>{{ t("history.deleteScopeSession") }}</dt>
-            <dd>{{ pendingDeleteContext.session }}</dd>
-          </div>
-          <div>
-            <dt>{{ t("history.deleteScopeKeywords") }}</dt>
-            <dd>{{ pendingDeleteContext.keywords }}</dd>
-          </div>
-        </dl>
-        <p v-if="deleteError" class="dialog-error" role="alert">{{ deleteError }}</p>
-        <div class="dialog-actions">
-          <button
-            class="btn-ghost"
-            type="button"
-            :disabled="deleteBusy"
-            @click="closeConfirm"
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
+      </div>
+
+      <div class="hist-body">
+        <!-- Left list -->
+        <ul v-if="filteredEntries.length" class="entry-list">
+          <li
+            v-for="e in filteredEntries"
+            :key="e.id"
+            class="entry"
+            :class="{ active: e.id === activeId }"
+            @click="activeId = e.id"
           >
-            {{ t("history.confirmCancel") }}
-          </button>
-          <button
-            class="btn-danger"
-            type="button"
-            :disabled="deleteBusy"
-            @click="doClear"
-          >
+            <div class="entry-top">
+              <span class="badge" :class="e.action">{{ channelName(e.channel) }}</span>
+              <span v-if="agentLabelOf(e)" class="agent-badge">{{ agentLabelOf(e) }}</span>
+              <span class="entry-time">{{ relativeTime(e.timestampMs) }}</span>
+            </div>
+            <div class="entry-summary" v-html="highlightedSummary(e)"></div>
+            <div
+              v-if="workspaceNameOf(e)"
+              class="entry-workspace"
+              :title="e.project"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" /></svg>
+              <span class="ws-name" v-html="highlightText(workspaceNameOf(e))"></span>
+            </div>
+          </li>
+        </ul>
+        <div
+          v-else-if="keywords.length || selectedSession !== ALL_HISTORY_SESSIONS"
+          class="empty"
+        >
+          <p class="empty-title">{{ t("history.searchEmpty") }}</p>
+          <p class="empty-hint">{{ t("history.searchEmptyHint") }}</p>
+        </div>
+        <div v-else class="empty">
+          <p class="empty-title">{{ t("history.empty") }}</p>
+          <p class="empty-hint">{{ t("history.emptyHint") }}</p>
+        </div>
+
+        <!-- Right detail -->
+        <div class="detail-pane">
+          <HistoryDetail
+            v-if="activeEntry"
+            :key="activeEntry.id"
+            :entry="activeEntry"
+            :session-title="activeSessionTitle"
+          />
+          <div v-else class="select-hint">{{ t("history.selectHint") }}</div>
+        </div>
+      </div>
+
+      <!-- Destructive confirmation -->
+      <div v-if="confirmKind" class="overlay" @click.self="closeConfirm">
+        <div class="dialog">
+          <h3>
             {{
-              deleteBusy
-                ? t("history.deleting")
-                : confirmKind === "all"
-                  ? t("history.confirmOk")
-                  : pendingDeleteScopeKind === "search"
-                    ? t("history.deleteOk")
-                    : t("history.confirmOk")
+              confirmKind === "all"
+                ? t("history.confirmClearAllTitle")
+                : scopeConfirmTitle
             }}
-          </button>
+          </h3>
+          <p>
+            {{
+              confirmKind === "all"
+                ? t("history.confirmClearAllDesc")
+                : scopeConfirmDesc
+            }}
+          </p>
+          <dl
+            v-if="confirmKind === 'scope' && pendingDeleteContext"
+            class="delete-context"
+          >
+            <div>
+              <dt>{{ t("history.deleteScopeProject") }}</dt>
+              <dd>{{ pendingDeleteContext.project }}</dd>
+            </div>
+            <div>
+              <dt>{{ t("history.deleteScopeSession") }}</dt>
+              <dd>{{ pendingDeleteContext.session }}</dd>
+            </div>
+            <div>
+              <dt>{{ t("history.deleteScopeKeywords") }}</dt>
+              <dd>{{ pendingDeleteContext.keywords }}</dd>
+            </div>
+          </dl>
+          <p v-if="deleteError" class="dialog-error" role="alert">{{ deleteError }}</p>
+          <div class="dialog-actions">
+            <button
+              class="btn-ghost"
+              type="button"
+              :disabled="deleteBusy"
+              @click="closeConfirm"
+            >
+              {{ t("history.confirmCancel") }}
+            </button>
+            <button
+              class="btn-danger"
+              type="button"
+              :disabled="deleteBusy"
+              @click="doClear"
+            >
+              {{
+                deleteBusy
+                  ? t("history.deleting")
+                  : confirmKind === "all"
+                    ? t("history.confirmOk")
+                    : pendingDeleteScopeKind === "search"
+                      ? t("history.deleteOk")
+                      : t("history.confirmOk")
+              }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
+    <div
+      v-if="panelShown"
+      class="attachment-preview-divider horizontal"
+      role="separator"
+      tabindex="0"
+      :aria-label="t('popup.preview.resize')"
+      aria-orientation="vertical"
+      @pointerdown.prevent="beginDivider"
+      @keydown.left.prevent="resizePreview(previewLayout.mainWidth - 20)"
+      @keydown.right.prevent="resizePreview(previewLayout.mainWidth + 20)"
+    />
+    <AttachmentPreviewPanel v-if="previewOpen && panelShown" />
   </div>
 </template>
 
 <style scoped>
+/* The preview panel and its divider are grid siblings of the main region, as in the popup. */
+.history-shell {
+  position: relative;
+  display: grid;
+  height: 100%;
+  overflow: hidden;
+}
 .history {
+  grid-area: main;
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
   color: var(--text-primary);
+}
+/* With the panel inside the window there is no room for list + detail: the detail keeps the width. */
+.history.list-collapsed .entry-list,
+.history.list-collapsed .empty {
+  display: none;
 }
 /* Header */
 .hist-header {
@@ -1004,7 +1069,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: clamp(240px, 40vw, 420px);
+  width: clamp(240px, calc(var(--history-main-width, 100vw) * 0.4), 420px);
   height: 30px;
   padding: 0 8px;
   border: var(--hairline) solid var(--border);
@@ -1045,7 +1110,7 @@ onBeforeUnmount(() => {
   right: 0;
   display: grid;
   grid-template-columns: minmax(170px, 0.8fr) minmax(260px, 1.35fr);
-  width: min(560px, calc(100vw - 28px));
+  width: min(560px, calc(var(--history-main-width, 100vw) - 28px));
   max-height: min(420px, calc(100vh - 100px));
   overflow: hidden;
   border: var(--hairline) solid var(--border);
@@ -1143,7 +1208,7 @@ onBeforeUnmount(() => {
   right: 0;
   top: calc(100% + 4px);
   z-index: 10;
-  min-width: 300px;
+  min-width: min(300px, calc(var(--history-main-width, 100vw) - 28px));
   display: flex;
   flex-direction: column;
   padding: 4px;

@@ -17,6 +17,8 @@ func popupCanvasIsResponsive(_ window: NSWindow) -> Bool {
     guard let canvas = popupCanvas, canvas.window === window else { return false }
     return canvas.autoresizingMask.contains(.width)
 }
+// The one window that hosts a canvas; other windows (history) draw their preview in contentView.
+func popupCanvasWindow() -> NSWindow? { popupCanvas?.window }
 
 @_cdecl("ah_popup_canvas_prepare")
 func preparePopupCanvas(_ pointer: UnsafeMutableRawPointer, _ left: Double,
@@ -44,7 +46,7 @@ func preparePopupCanvas(_ pointer: UnsafeMutableRawPointer, _ left: Double,
     CATransaction.setDisableActions(true)
     canvas.autoresizingMask = []
     webview.autoresizingMask = []
-    popupPreviewResizing(false)
+    popupPreviewResizing(canvas.window, false)
     let parent = canvas.superview!
     canvas.frame = NSRect(x: visibleLeft - left,
         y: parent.isFlipped ? 0 : parent.bounds.height - height, width: width, height: height)
@@ -68,7 +70,7 @@ func resumePopupCanvas(_ pointer: UnsafeMutableRawPointer, _ left: Double,
     webview.frame = NSRect(x: 0, y: 0, width: width, height: height)
     canvas.autoresizingMask = [.width, .height]
     webview.autoresizingMask = [.width, .height]
-    popupPreviewResizing(true)
+    popupPreviewResizing(window, true)
     window.minSize = NSSize(width: minimumWidth, height: minimumHeight)
     CATransaction.commit()
 }

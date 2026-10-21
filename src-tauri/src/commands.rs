@@ -1380,21 +1380,18 @@ pub fn open_path(path: String) -> Result<(), String> {
     open_with_system(&path)
 }
 
-/// Generate a fresh snapshot only for a Markdown attachment assigned to the active question.
+// The preview commands below take an owner id (`request_id`: the Popup's active request, or
+// `history:<entry id>` in the History window) and an index. The file always comes from
+// `attachment_owner`, never from the frontend. Their names predate the History window.
+
+/// Generate a fresh snapshot only for a Markdown attachment assigned to the owner.
 #[tauri::command]
 pub async fn popup_preview_open_browser(
     window: tauri::Window,
     request_id: String,
     index: usize,
 ) -> Result<(), String> {
-    let request = crate::app::popup_preview::request(&window, &request_id)?;
-    let path = request
-        .message
-        .files
-        .get(index)
-        .ok_or("invalid attachment index")?
-        .path
-        .clone();
+    let path = crate::app::attachment_owner::file(&window, &request_id, index, true)?.path;
     static OPENERS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
         std::sync::OnceLock::new();
     let permit = OPENERS
@@ -1421,7 +1418,7 @@ pub async fn popup_preview_open_browser(
             .app_handle()
             .clone()
             .run_on_main_thread(move || {
-                let result = crate::app::popup_preview::request(&window, &request_id)
+                let result = crate::app::attachment_owner::file(&window, &request_id, index, true)
                     .and_then(|_| crate::attachment_browser::open(&launch_path));
                 let _ = tx.send(result);
             })
@@ -1433,7 +1430,7 @@ pub async fn popup_preview_open_browser(
     };
     #[cfg(not(target_os = "macos"))]
     let result = tauri::async_runtime::spawn_blocking(move || {
-        crate::app::popup_preview::request(&window, &request_id)?;
+        crate::app::attachment_owner::file(&window, &request_id, index, true)?;
         crate::attachment_browser::open(&launch_path)
     })
     .await
@@ -1455,12 +1452,8 @@ pub async fn popup_preview_prepare(
     open: bool,
     version: u64,
 ) -> Result<crate::app::popup_preview::Layout, String> {
-    crate::app::popup_preview::request(&window, &request_id)?;
-    if window
-        .app_handle()
-        .try_state::<crate::app::popup_inbox::Inbox>()
-        .is_some()
-    {
+    crate::app::attachment_owner::check_window(&window, &request_id)?;
+    if crate::app::popup_preview::uses_inbox(&window) {
         return Ok(crate::app::popup_inbox_geometry::prepare(
             &window,
             crate::app::popup_inbox_geometry::Request {
@@ -1475,7 +1468,7 @@ pub async fn popup_preview_prepare(
     let app = window.app_handle().clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
-        let result = crate::app::popup_preview::request(&window, &request_id)
+        let result = crate::app::attachment_owner::check_window(&window, &request_id)
             .and_then(|_| crate::app::popup_preview::prepare(&window, open, version));
         let _ = tx.send(result);
     })
@@ -1495,12 +1488,8 @@ pub async fn popup_preview_layout(
     if main_extent.is_some() && !open {
         return Err("Preview resize is unavailable".into());
     }
-    crate::app::popup_preview::request(&window, &request_id)?;
-    if window
-        .app_handle()
-        .try_state::<crate::app::popup_inbox::Inbox>()
-        .is_some()
-    {
+    crate::app::attachment_owner::check_window(&window, &request_id)?;
+    if crate::app::popup_preview::uses_inbox(&window) {
         if let Some(extent) = main_extent {
             return Ok(crate::app::popup_inbox_geometry::resize_preview(
                 &window,
@@ -1522,15 +1511,16 @@ pub async fn popup_preview_layout(
     let owner = window.clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
-        let result = crate::app::popup_preview::request(&window, &request_id).and_then(|_| {
-            crate::app::popup_preview::change(
-                &window,
-                open,
-                main_extent,
-                version,
-                finished.unwrap_or(true),
-            )
-        });
+        let result =
+            crate::app::attachment_owner::check_window(&window, &request_id).and_then(|_| {
+                crate::app::popup_preview::change(
+                    &window,
+                    open,
+                    main_extent,
+                    version,
+                    finished.unwrap_or(true),
+                )
+            });
         let _ = tx.send(result);
     })
     .map_err(|e| e.to_string())?;
@@ -1577,7 +1567,7 @@ pub fn preview_attachments(
     }
 }
 
-/// Read only an attachment assigned to the active question, off the GUI thread.
+/// Read only an attachment assigned to the owner, off the GUI thread.
 #[tauri::command]
 pub async fn popup_preview_read(
     window: tauri::Window,
@@ -1586,14 +1576,7 @@ pub async fn popup_preview_read(
     index: usize,
     generation: u64,
 ) -> Result<crate::attachment_preview::Loaded, String> {
-    let request = crate::app::popup_preview::request(&window, &request_id)?;
-    let path = request
-        .message
-        .files
-        .get(index)
-        .ok_or("invalid attachment index")?
-        .path
-        .clone();
+    let path = crate::app::attachment_owner::file(&window, &request_id, index, true)?.path;
     let epoch = window
         .app_handle()
         .state::<crate::attachment_preview::ReadGeneration>();
@@ -1606,7 +1589,7 @@ pub async fn popup_preview_read(
         .acquire_owned()
         .await
         .map_err(|e| e.to_string())?;
-    crate::app::popup_preview::request(&window, &request_id)?;
+    crate::app::attachment_owner::file(&window, &request_id, index, true)?;
     if !epoch.current(&request_id, generation) {
         return Err("stale attachment read".into());
     }
@@ -1625,7 +1608,7 @@ pub async fn popup_preview_read(
     })
     .await
     .map_err(|e| e.to_string())?;
-    let current = crate::app::popup_preview::request(&window, &request_id);
+    let current = crate::app::attachment_owner::file(&window, &request_id, index, true);
     if current.is_err()
         || !epoch.current(&request_id, generation)
         || window
@@ -1661,7 +1644,7 @@ pub async fn popup_preview_native(
     rect: Option<crate::attachment_preview::ViewRect>,
     bare_enter: bool,
 ) -> Result<(), String> {
-    crate::app::popup_preview::request(&window, &request_id)?;
+    crate::app::attachment_owner::check_window(&window, &request_id)?;
     let app = window.app_handle();
     app.state::<crate::attachment_preview::NativeGeneration>()
         .0
@@ -1677,7 +1660,7 @@ pub async fn popup_preview_native(
         let window = window.clone();
         app.run_on_main_thread(move || {
             let result = (|| {
-                let request = crate::app::popup_preview::request(&window, &request_id)?;
+                crate::app::attachment_owner::check_window(&window, &request_id)?;
                 if !window
                     .app_handle()
                     .state::<crate::attachment_preview::NativeGeneration>()
@@ -1702,11 +1685,7 @@ pub async fn popup_preview_native(
                         bare_enter,
                     );
                 };
-                let file = request
-                    .message
-                    .files
-                    .get(index)
-                    .ok_or("invalid attachment index")?;
+                let file = crate::app::attachment_owner::file(&window, &request_id, index, true)?;
                 if !window
                     .app_handle()
                     .state::<crate::attachment_preview::NativePermits>()
@@ -1716,11 +1695,7 @@ pub async fn popup_preview_native(
                 }
                 let size = window.inner_size().map_err(|e| e.to_string())?;
                 let scale = window.scale_factor().map_err(|e| e.to_string())?;
-                let (main_edge, width, height) = if window
-                    .app_handle()
-                    .try_state::<crate::app::popup_inbox::Inbox>()
-                    .is_some()
-                {
+                let (main_edge, width, height) = if crate::app::popup_preview::uses_inbox(&window) {
                     crate::app::popup_inbox_geometry::preview_bounds(&window)
                         .ok_or("popup layout unavailable")?
                 } else {
@@ -1771,13 +1746,13 @@ pub struct PreviewFindRequest {
     pub delta: isize,
 }
 
-/// Search shares the active request's bounded native-preview permit; no path comes from JS.
+/// Search shares the owner's bounded native-preview permit; no path comes from JS.
 #[tauri::command]
 pub async fn popup_preview_find(
     window: tauri::Window,
     search: PreviewFindRequest,
 ) -> Result<(), String> {
-    crate::app::popup_preview::request(&window, &search.request_id)?;
+    crate::app::attachment_owner::check_window(&window, &search.request_id)?;
     if !matches!(search.action.as_str(), "search" | "cancel" | "go" | "focus")
         || search.query.len() > 16 * 1024
     {
@@ -1794,12 +1769,12 @@ pub async fn popup_preview_find(
         let app = window.app_handle().clone();
         app.run_on_main_thread(move || {
             let result = (|| {
-                let request = crate::app::popup_preview::request(&window, &search.request_id)?;
-                let file = request
-                    .message
-                    .files
-                    .get(search.index)
-                    .ok_or("invalid attachment index")?;
+                let file = crate::app::attachment_owner::file(
+                    &window,
+                    &search.request_id,
+                    search.index,
+                    true,
+                )?;
                 if !window
                     .app_handle()
                     .state::<crate::attachment_preview::NativePermits>()
@@ -1822,7 +1797,7 @@ pub fn popup_preview_cancel_read(
     request_id: String,
     generation: u64,
 ) -> Result<(), String> {
-    crate::app::popup_preview::request(&window, &request_id)?;
+    crate::app::attachment_owner::check_window(&window, &request_id)?;
     window
         .app_handle()
         .state::<crate::attachment_preview::ReadGeneration>()
@@ -1835,19 +1810,12 @@ pub async fn popup_preview_thumbnail(
     request_id: String,
     index: usize,
 ) -> Result<Option<String>, String> {
-    let request = crate::app::popup_preview::assigned_request(&window, &request_id, false)?;
-    let path = request
-        .message
-        .files
-        .get(index)
-        .ok_or("invalid attachment index")?
-        .path
-        .clone();
+    let path = crate::app::attachment_owner::file(&window, &request_id, index, false)?.path;
     let image =
         tauri::async_runtime::spawn_blocking(move || crate::attachment_preview::thumbnail(&path))
             .await
             .map_err(|e| e.to_string())?;
-    crate::app::popup_preview::assigned_request(&window, &request_id, false)?;
+    crate::app::attachment_owner::file(&window, &request_id, index, false)?;
     Ok(image)
 }
 
@@ -1857,14 +1825,7 @@ pub async fn popup_preview_reveal(
     request_id: String,
     index: usize,
 ) -> Result<(), String> {
-    let request = crate::app::popup_preview::request(&window, &request_id)?;
-    let path = request
-        .message
-        .files
-        .get(index)
-        .ok_or("invalid attachment index")?
-        .path
-        .clone();
+    let path = crate::app::attachment_owner::file(&window, &request_id, index, true)?.path;
     #[cfg(target_os = "macos")]
     {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -1891,22 +1852,15 @@ pub fn popup_preview_menu(
     request_id: String,
     index: usize,
 ) -> Result<(), String> {
-    let request = crate::app::popup_preview::request(&window, &request_id)?;
-    let path = request
-        .message
-        .files
-        .get(index)
-        .ok_or("invalid attachment index")?
-        .path
-        .clone();
+    let path = crate::app::attachment_owner::file(&window, &request_id, index, true)?.path;
     let app = window.app_handle().clone();
     app.clone()
         .run_on_main_thread(move || {
-            if crate::app::popup_preview::request(&window, &request_id).is_err() {
+            if crate::app::attachment_owner::file(&window, &request_id, index, true).is_err() {
                 return;
             }
             #[cfg(target_os = "macos")]
-            crate::macos_menu::show_popup(app, path, request_id, index);
+            crate::macos_menu::show_attachment(app, path, request_id, index);
             #[cfg(not(target_os = "macos"))]
             {
                 let _ = path;

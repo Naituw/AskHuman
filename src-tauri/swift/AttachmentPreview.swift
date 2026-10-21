@@ -61,9 +61,12 @@ func decodePreviewImage(_ bytes: UnsafePointer<UInt8>, _ length: Int, _ thumbnai
     }
 }
 
-typealias KeyCallback = @convention(c) (UInt16, UInt64, UnsafePointer<CChar>?) -> Void
+// Both callbacks name the owner (request id) they belong to: several windows can show a native
+// preview at once, and one process-wide callback must tell them apart.
+typealias KeyCallback = @convention(c) (UnsafePointer<CChar>, UInt16, UInt64, UnsafePointer<CChar>?) -> Void
 typealias FindCallback = @convention(c) (UnsafePointer<CChar>, Int, UInt64, Int, Int, Int32) -> Void
-private var nativePreview: EmbeddedPreview?
+// At most one preview per window, so the Popup's and the history window's never evict each other.
+private var nativePreviews: [ObjectIdentifier: EmbeddedPreview] = [:]
 private final class PDFLoadTicket {
     private let lock = NSLock()
     private var cancelled = false
@@ -179,7 +182,11 @@ private final class EmbeddedPreview {
             if (event.keyCode == 53 && mods.isEmpty) || submit || (event.keyCode == 13 && mods == .command) || find {
                 let selection = self.pdfActive ? String((self.pdf.currentSelection?.string ?? "").prefix(200)) : ""
                 if event.keyCode == 3 { self.focusWebView() }
-                selection.withCString { self.keyCallback(event.keyCode, UInt64(event.modifierFlags.rawValue), $0) }
+                self.requestID.withCString { request in
+                    selection.withCString {
+                        self.keyCallback(request, event.keyCode, UInt64(event.modifierFlags.rawValue), $0)
+                    }
+                }
                 return nil
             }
             return event
@@ -187,7 +194,7 @@ private final class EmbeddedPreview {
         interactionMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .scrollWheel]) { [weak self] event in
             guard let self, !self.surface.isHidden, event.window === self.window else { return event }
             let point = self.surface.convert(event.locationInWindow, from: nil)
-            if self.surface.bounds.contains(point) { self.keyCallback(0, 0, nil) }
+            if self.surface.bounds.contains(point) { self.requestID.withCString { self.keyCallback($0, 0, 0, nil) } }
             return event
         }
     }
@@ -400,8 +407,8 @@ private final class EmbeddedPreview {
 
 // The native surfaces share the WebView's parent and follow its live edge resize directly.
 // Freeze them before reserving an offscreen viewport for a pane animation.
-func popupPreviewResizing(_ enabled: Bool) {
-    guard let preview = nativePreview else { return }
+func popupPreviewResizing(_ window: NSWindow?, _ enabled: Bool) {
+    guard let window, let preview = nativePreviews[ObjectIdentifier(window)] else { return }
     let mask: NSView.AutoresizingMask = enabled ? [.width, .height] : []
     preview.defaultView.autoresizingMask = mask
     preview.pdf.autoresizingMask = mask
@@ -427,27 +434,49 @@ func updatePreviewView(_ windowPointer: UnsafeMutableRawPointer, _ request: Unsa
                        height: responsive ? max(0, content.bounds.height - y) : height)
     applyPreviewUpdate(window: window, requestID: requestID, path: path,
                        frame: frame, bareEnter: bareEnter, keyCallback: keyCallback)
-    return path == nil || nativePreview != nil
+    return path == nil || nativePreviews[ObjectIdentifier(window)] != nil
+}
+
+// A preview whose window has been deallocated can never be shown again; its views and event
+// monitors would otherwise stay alive for the rest of the process.
+private func pruneReleasedPreviews() {
+    for (key, preview) in nativePreviews where preview.window == nil {
+        preview.close()
+        nativePreviews[key] = nil
+    }
 }
 
 private func applyPreviewUpdate(window: NSWindow, requestID: String, path: String?, frame: NSRect,
                                 bareEnter: Bool, keyCallback: @escaping KeyCallback) {
-    if let previous = nativePreview, previous.window !== window || previous.requestID != requestID {
+    pruneReleasedPreviews()
+    let key = ObjectIdentifier(window)
+    // A different owner in the same window replaces the previous preview.
+    if let previous = nativePreviews[key], previous.window !== window || previous.requestID != requestID {
         previous.close()
-        nativePreview = nil
+        nativePreviews[key] = nil
     }
-    guard let path else { nativePreview?.hide(); return }
-    if nativePreview == nil {
-        nativePreview = EmbeddedPreview(window: window, requestID: requestID, keyCallback: keyCallback)
-    }
-    nativePreview?.show(path: path, frame: frame, bareEnter: bareEnter)
-    popupPreviewResizing(popupCanvasIsResponsive(window))
+    guard let path else { nativePreviews[key]?.hide(); return }
+    let preview = nativePreviews[key]
+        ?? EmbeddedPreview(window: window, requestID: requestID, keyCallback: keyCallback)
+    nativePreviews[key] = preview
+    preview.show(path: path, frame: frame, bareEnter: bareEnter)
+    popupPreviewResizing(window, popupCanvasIsResponsive(window))
+}
+
+// A window that is going away takes its native preview with it.
+@_cdecl("ah_preview_release_window")
+func releasePreviewWindow(_ windowPointer: UnsafeMutableRawPointer) {
+    let window = Unmanaged<NSWindow>.fromOpaque(windowPointer).takeUnretainedValue()
+    nativePreviews.removeValue(forKey: ObjectIdentifier(window))?.close()
 }
 
 // The explicit Dev review uses this read-only coordinate to verify native preview anchoring.
 @_cdecl("ah_preview_screen_x")
 func previewScreenX() -> Double {
-    guard let preview = nativePreview, !preview.surface.isHidden, let window = preview.window else { return .nan }
+    // The review drives the Popup's canvas; prefer that window's preview.
+    let popup = popupCanvasWindow().flatMap { nativePreviews[ObjectIdentifier($0)] }
+    guard let preview = popup ?? nativePreviews.values.first(where: { !$0.surface.isHidden }),
+          !preview.surface.isHidden, let window = preview.window else { return .nan }
     let frame = preview.surface.convert(preview.surface.bounds, to: nil)
     return window.convertToScreen(frame).minX
 }
@@ -456,7 +485,9 @@ func previewScreenX() -> Double {
 func findInPreview(_ request: UnsafePointer<CChar>, _ index: Int, _ generation: UInt64,
                    _ action: UnsafePointer<CChar>, _ query: UnsafePointer<CChar>, _ sensitive: Bool,
                    _ navigate: Bool, _ delta: Int, _ callback: @escaping FindCallback) -> Bool {
-    guard let preview = nativePreview, preview.requestID == String(cString: request), !preview.surface.isHidden else { return false }
+    let owner = String(cString: request)
+    guard let preview = nativePreviews.values.first(where: { $0.requestID == owner }),
+          !preview.surface.isHidden else { return false }
     preview.find(index: index, generation: generation, action: String(cString: action), query: String(cString: query),
                  sensitive: sensitive, navigate: navigate, delta: delta, callback: callback)
     return true

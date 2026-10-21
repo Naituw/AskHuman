@@ -5,7 +5,7 @@
 
 ## 已确认范围
 
-- 扩展名 `.diff` / `.patch` 大小写不敏感；Popup 使用同窗面板，macOS 其他入口使用原生 Quick Look。
+- 扩展名 `.diff` / `.patch` 大小写不敏感；Popup 与历史详情使用同窗面板，macOS 其他入口（待办等）使用原生 Quick Look。
 - 单栏 unified diff；显示新增绿色底、删除红色底、原始 `+` / `-` 前缀、旧 / 新行号、文件头与变更块。
 - `attachment_diff::parse` 返回同一份文件段与行模型；Quick Look 生成静态 HTML，Popup 通过 Vue 文本插值虚拟显示行，保留原文切换和每附件阅读状态。
 - Popup 的激活、键盘和跨平台文件操作由关联面板规格定义；其他入口保留原生预览流程。

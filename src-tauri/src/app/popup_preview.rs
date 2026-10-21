@@ -1,8 +1,104 @@
-//! Native geometry owner for the fixed right-side Popup attachment panel.
+//! Native geometry owner for the fixed right-side attachment panel, in the Popup and in the
+//! History window. Each window has its own [`Controller`]; the rules are the same, only the
+//! minimum main width, the size memory and the liveness check differ (see [`Policy`]).
+use super::attachment_owner::HISTORY;
 use super::popup_preview_geometry::{self as geometry, Rect, Side, DIVIDER};
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize, Window};
+
+/// The History window's controller. A newtype, so it can sit beside the Popup's in managed state.
+#[derive(Default)]
+pub struct HistoryController(Mutex<Controller>);
+
+/// The window-specific part of the layout rules.
+struct Policy {
+    /// Event that carries published layouts. Windows must not hear each other's layouts: a layout
+    /// has no owner id, and revisions are per controller.
+    event: &'static str,
+    /// Smallest main region while the preview is a durable right-hand pane: the Popup's answer
+    /// form, or the whole history UI.
+    min_main: f64,
+    /// Whether the user's sizing is remembered (written to the Popup preferences). The history
+    /// window only borrows the Popup's default preview width and never writes it back.
+    persists: bool,
+}
+const POPUP_POLICY: Policy = Policy {
+    event: "popup-preview-layout",
+    min_main: 420.0,
+    persists: true,
+};
+const HISTORY_POLICY: Policy = Policy {
+    event: "history-preview-layout",
+    min_main: 600.0,
+    persists: false,
+};
+/// The history window's creation size; the restore size when it was never seen un-maximized.
+const HISTORY_SIZE: (f64, f64) = (820.0, 600.0);
+/// A readable preview (320) plus the divider.
+const MIN_PANE: f64 = 320.0 + DIVIDER;
+
+fn is_history(window: &Window) -> bool {
+    window.label() == HISTORY
+}
+fn policy(window: &Window) -> &'static Policy {
+    if is_history(window) {
+        &HISTORY_POLICY
+    } else {
+        &POPUP_POLICY
+    }
+}
+fn controller(window: &Window) -> &Mutex<Controller> {
+    if is_history(window) {
+        &window.state::<HistoryController>().inner().0
+    } else {
+        window.state::<Mutex<Controller>>().inner()
+    }
+}
+/// Only the Popup window is laid out by the Inbox; the History window never is, even when the
+/// process hosts an Inbox as well.
+pub fn uses_inbox(window: &Window) -> bool {
+    window.label() == super::attachment_owner::POPUP
+        && window
+            .app_handle()
+            .try_state::<super::popup_inbox::Inbox>()
+            .is_some()
+}
+/// Whether the window can still host a preview: the Popup until its request is done, the
+/// History window until it is closed.
+fn alive(window: &Window) -> bool {
+    if is_history(window) {
+        window.app_handle().get_webview_window(HISTORY).is_some()
+    } else {
+        window
+            .app_handle()
+            .try_state::<super::GuiBridge>()
+            .is_some_and(|b| !b.is_done())
+    }
+}
+/// A settling layout stops when its window has been finished with.
+fn abandoned(window: &Window) -> bool {
+    if is_history(window) {
+        window.app_handle().get_webview_window(HISTORY).is_none()
+    } else {
+        window
+            .app_handle()
+            .try_state::<super::GuiBridge>()
+            .is_some_and(|b| b.is_done())
+    }
+}
+/// Forget the closed History window's layout; the next one starts from nothing.
+pub fn reset_history(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<HistoryController>() {
+        if let Ok(mut c) = state.0.lock() {
+            *c = Controller::default();
+        }
+    }
+}
+/// A durable split needs room for the minimum main region beside a readable preview.
+fn can_split(inner_width: f64, min_main: f64) -> bool {
+    inner_width >= min_main + MIN_PANE
+}
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Layout {
@@ -250,7 +346,7 @@ impl Controller {
         self.revision += 1;
         let layout = self.layout(n);
         self.published = Some(layout.clone());
-        let _ = window.emit("popup-preview-layout", &layout);
+        let _ = window.emit(policy(window).event, &layout);
         layout
     }
     fn project(&mut self, n: &Native) {
@@ -260,7 +356,7 @@ impl Controller {
         self.main.1 = n.inner.1;
         self.special_width = None;
         self.native_width_changed = (n.inner.0 - self.main.0).abs() > 1.0 / n.scale;
-        if n.inner.0 < self.main.0 + 326.0 || !n.positioning {
+        if n.inner.0 < self.main.0 + MIN_PANE || !n.positioning {
             self.side = Side::Inside;
         } else if self.inside_fraction.is_none() {
             self.side = Side::Right;
@@ -316,7 +412,7 @@ pub fn change(
 ) -> Result<Layout, String> {
     if main_extent.is_none() {
         let n = sample(window)?;
-        let state = window.app_handle().state::<Mutex<Controller>>();
+        let state = controller(window);
         let mut c = state.lock().map_err(|_| "preview layout unavailable")?;
         let prepared = c.prepared.take().ok_or("preview geometry changed")?;
         if prepared.version != version
@@ -332,7 +428,7 @@ pub fn change(
 /// Freeze the visible main region before native setters enqueue their work.
 pub fn prepare(window: &Window, open: bool, version: u64) -> Result<Layout, String> {
     let n = sample(window)?;
-    let state = window.app_handle().state::<Mutex<Controller>>();
+    let state = controller(window);
     let mut c = state.lock().map_err(|_| "preview layout unavailable")?;
     if c.pending || version < c.intent_version {
         return Err("preview geometry changed".into());
@@ -350,24 +446,19 @@ pub fn prepare(window: &Window, open: bool, version: u64) -> Result<Layout, Stri
     Ok(layout)
 }
 pub async fn wait_idle(window: &Window) -> Result<(), String> {
-    if window
-        .app_handle()
-        .try_state::<super::popup_inbox::Inbox>()
-        .is_some()
-    {
+    if uses_inbox(window) {
         return super::popup_inbox_geometry::wait_idle(window).await;
     }
     loop {
-        if window
-            .app_handle()
-            .try_state::<super::GuiBridge>()
-            .is_none_or(|b| b.is_done())
-        {
-            return Err("Popup is no longer active".into());
+        if !alive(window) {
+            return Err(if is_history(window) {
+                "History window is closed"
+            } else {
+                "Popup is no longer active"
+            }
+            .into());
         }
-        if !window
-            .app_handle()
-            .state::<Mutex<Controller>>()
+        if !controller(window)
             .lock()
             .map_err(|_| "preview layout unavailable")?
             .pending
@@ -378,20 +469,10 @@ pub async fn wait_idle(window: &Window) -> Result<(), String> {
     }
 }
 pub fn published(window: &Window) -> Option<Layout> {
-    if window
-        .app_handle()
-        .try_state::<super::popup_inbox::Inbox>()
-        .is_some()
-    {
+    if uses_inbox(window) {
         return super::popup_inbox_geometry::published(window);
     }
-    window
-        .app_handle()
-        .state::<Mutex<Controller>>()
-        .lock()
-        .ok()?
-        .published
-        .clone()
+    controller(window).lock().ok()?.published.clone()
 }
 fn change_impl(
     window: &Window,
@@ -401,7 +482,8 @@ fn change_impl(
     finished: bool,
 ) -> Result<Layout, String> {
     let n = sample(window)?;
-    let state = window.app_handle().state::<Mutex<Controller>>();
+    let state = controller(window);
+    let rules = policy(window);
     let mut c = state.lock().map_err(|_| "preview layout unavailable")?;
     if version < c.intent_version {
         return Ok(c.layout(&n));
@@ -419,6 +501,7 @@ fn change_impl(
     }
     if !was_open {
         c.preview_baseline = Some(Target::from_native(&n));
+        // The History window reads the Popup's preview preferences but never writes them.
         let config = crate::config::AppConfig::load_without_secrets()
             .channels
             .popup;
@@ -428,7 +511,13 @@ fn change_impl(
         c.main = if n.special {
             c.normal
                 .map(|frame| (frame.inner.0 / frame.scale, frame.inner.1 / frame.scale))
-                .unwrap_or_else(|| super::popup_size::restored_size(&config))
+                .unwrap_or_else(|| {
+                    if rules.persists {
+                        super::popup_size::restored_size(&config)
+                    } else {
+                        HISTORY_SIZE
+                    }
+                })
         } else {
             n.inner
         };
@@ -443,9 +532,9 @@ fn change_impl(
         c.special_width = n.special.then_some(n.inner.0);
     }
     if let Some(extent) = main_extent.filter(|n| n.is_finite()) {
-        let durable = c.side == Side::Right && !n.special && n.inner.0 >= 746.0;
+        let durable = c.side == Side::Right && !n.special && can_split(n.inner.0, rules.min_main);
         if durable {
-            c.main.0 = extent.clamp(420.0, n.inner.0 - 326.0);
+            c.main.0 = extent.clamp(rules.min_main, n.inner.0 - MIN_PANE);
             c.preferred_preview = Some(n.inner.0 - c.main.0 - DIVIDER);
         } else {
             c.inside_fraction = Some(extent / (n.inner.0 - DIVIDER).max(1.0));
@@ -456,7 +545,7 @@ fn change_impl(
         let preview = c.preferred_preview;
         drop(c);
         remember_baseline(window, main);
-        if durable && finished {
+        if durable && finished && rules.persists {
             save_dimensions(main, preview);
         }
         return Ok(layout);
@@ -535,14 +624,8 @@ fn settle(window: &Window, initial: Target, rollback: Option<Target>, version: u
             if window
                 .app_handle()
                 .run_on_main_thread(move || {
-                    let state = w.app_handle().state::<Mutex<Controller>>();
-                    let mut c = state.lock().unwrap();
-                    if c.intent_version != version
-                        || !c.pending
-                        || w.app_handle()
-                            .try_state::<super::GuiBridge>()
-                            .is_some_and(|b| b.is_done())
-                    {
+                    let mut c = controller(&w).lock().unwrap();
+                    if c.intent_version != version || !c.pending || abandoned(&w) {
                         let _ = tx.send((false, false, None));
                         return;
                     }
@@ -606,6 +689,10 @@ fn settle(window: &Window, initial: Target, rollback: Option<Target>, version: u
     });
 }
 fn remember_baseline(window: &Window, main: (f64, f64)) {
+    // The size memory belongs to the Popup; the history window has no size to remember.
+    if !policy(window).persists {
+        return;
+    }
     window
         .app_handle()
         .state::<Mutex<super::popup_size::SizeMemory>>()
@@ -629,18 +716,14 @@ pub(super) fn save_dimensions(main: (f64, f64), preview: Option<f64>) {
     }
 }
 pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjection> {
-    if window
-        .app_handle()
-        .try_state::<super::popup_inbox::Inbox>()
-        .is_some()
-    {
+    if uses_inbox(window) {
         return super::popup_inbox_geometry::resized(window, event);
     }
     let n = sample(window).ok()?;
     if window.inner_size().ok()? != event {
         return None;
     }
-    let state = window.app_handle().state::<Mutex<Controller>>();
+    let state = controller(window);
     let mut c = state.lock().ok()?;
     if c.pending {
         return None;
@@ -692,19 +775,14 @@ pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjecti
     })
 }
 pub fn moved(window: &Window) {
-    if window
-        .app_handle()
-        .try_state::<super::popup_inbox::Inbox>()
-        .is_some()
-    {
+    if uses_inbox(window) {
         super::popup_inbox_geometry::moved(window);
         return;
     }
     let Ok(n) = sample(window) else {
         return;
     };
-    let state = window.app_handle().state::<Mutex<Controller>>();
-    let mut c = state.lock().unwrap();
+    let mut c = controller(window).lock().unwrap();
     if c.pending {
         return;
     }
@@ -858,5 +936,46 @@ mod tests {
         expanded.outer.x = 0.0;
         c.notice_move(&expanded);
         assert!(c.user_moved);
+    }
+
+    #[test]
+    fn the_history_window_keeps_a_wider_main_region_and_remembers_nothing() {
+        // A durable split needs the minimum main region plus a readable preview.
+        assert!(!can_split(745.0, POPUP_POLICY.min_main));
+        assert!(can_split(746.0, POPUP_POLICY.min_main));
+        assert!(!can_split(925.0, HISTORY_POLICY.min_main));
+        assert!(can_split(926.0, HISTORY_POLICY.min_main));
+        // Divider drags are clamped inside that range, so `clamp` can never see min > max.
+        for rules in [&POPUP_POLICY, &HISTORY_POLICY] {
+            let inner = rules.min_main + MIN_PANE;
+            assert!(can_split(inner, rules.min_main));
+            assert!(rules.min_main <= inner - MIN_PANE);
+        }
+        // Only the Popup writes sizes back to the preferences, and windows never share a layout event.
+        for (rules, persists) in [(&POPUP_POLICY, true), (&HISTORY_POLICY, false)] {
+            assert_eq!(rules.persists, persists);
+        }
+        assert_ne!(POPUP_POLICY.event, HISTORY_POLICY.event);
+        // The restore size used for a never-seen-normal window already satisfies the minimum.
+        assert!(HISTORY_SIZE.0 >= HISTORY_POLICY.min_main);
+    }
+
+    #[test]
+    fn history_geometry_uses_the_same_split_rules_with_its_wider_main_region() {
+        // An 820-wide history UI needs 1146 to sit beside a readable preview; below that the
+        // preview is temporarily inside the window.
+        let mut c = Controller {
+            side: Side::Right,
+            main: (820.0, 600.0),
+            ..Default::default()
+        };
+        c.project(&native(1200.0));
+        assert_eq!(c.side, Side::Right);
+        c.project(&native(900.0));
+        assert_eq!(c.side, Side::Inside);
+        // Inside, the main region keeps the share the preview leaves it (not the wanted 820).
+        assert_eq!(c.layout(&native(900.0)).main_width, 574.0);
+        c.project(&native(1200.0));
+        assert_eq!(c.layout(&native(1200.0)).main_width, 820.0);
     }
 }

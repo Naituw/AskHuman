@@ -10,7 +10,15 @@ export interface PreviewLayout {
 }
 export type PreviewDelegate = (open: boolean, mainExtent?: number, finished?: boolean) => Promise<PreviewLayout>;
 
-export function useAttachmentPreview(requestId: ComputedRef<string>, active?: Readonly<Ref<boolean>>, delegate?: PreviewDelegate) {
+/** The Popup controller publishes here; the History window has its own event so the two never mix. */
+export const POPUP_LAYOUT_EVENT = "popup-preview-layout";
+export const HISTORY_LAYOUT_EVENT = "history-preview-layout";
+
+/**
+ * `requestId` is the owner id of the attachments on show: the request id in a Popup, `history:<entry id>`
+ * in the History window. `layoutEvent` names the event the window's own geometry controller publishes.
+ */
+export function useAttachmentPreview(requestId: ComputedRef<string>, active?: Readonly<Ref<boolean>>, delegate?: PreviewDelegate, layoutEvent: string = POPUP_LAYOUT_EVENT) {
   const previewIndex = ref<number | null>(null);
   const previewLayout = ref<PreviewLayout>({ revision: 0, side: "closed", mainWidth: 560, mainHeight: 620 });
   const previewOpen = computed(() => previewIndex.value !== null);
@@ -73,7 +81,7 @@ export function useAttachmentPreview(requestId: ComputedRef<string>, active?: Re
     if (!finalizing) layout(false);
   }
   async function initPreviewLayout() {
-    const off = await listen<PreviewLayout>("popup-preview-layout", e => applyLayout(e.payload));
+    const off = await listen<PreviewLayout>(layoutEvent, e => applyLayout(e.payload));
     if (disposed) off(); else unlisten = off;
   }
   const stopActive = active ? watch(active, value => {

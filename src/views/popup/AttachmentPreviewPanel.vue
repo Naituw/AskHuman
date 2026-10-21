@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { desktopPlatform } from "../../lib/platform";
 import { openPath } from "../../lib/ipc";
-import { usePopupContext } from "./context";
+import { useAttachmentPanelContext } from "./attachmentPanelContext";
 import { useNativeAttachmentPreview } from "./useNativeAttachmentPreview";
 import AttachmentDiffPreview from "./AttachmentDiffPreview.vue";
 import AttachmentImagePreview from "./AttachmentImagePreview.vue";
@@ -11,12 +11,13 @@ import AttachmentMarkdownContent from "../../components/AttachmentMarkdownConten
 import FindBar from "./FindBar.vue";
 import { useAttachmentFind } from "./useAttachmentFind";
 const { t } = useI18n();
+// The host (Popup or History window) decides which owner the panel reads and whether find is wired.
 const { previewFile, previewIndex, previewName, previewCount, previewKey, isReplyPreview, showPreview, stopPreview, openFile, openPreviewFile, primaryBrowser, browserOpening, browserActionError, browserErrorIndex, showPreviewMenu, revealFile,
-  popupActive, panelContent: previewContent, panelLoading: previewLoading, panelReadingState: currentReadingState, onAttachmentDragStart, previewActionError, request, nativePreviewBlocked, previewTransition, previewLayout, submitWithBareEnter, registerNativePreviewSync,
-  findActive, findScope, openFind, refreshFind, registerAttachmentFind } = usePopupContext();
+  popupActive, panelContent: previewContent, panelLoading: previewLoading, panelReadingState: currentReadingState, onAttachmentDragStart, previewActionError, ownerId, nativePreviewBlocked, previewTransition, previewLayout, submitWithBareEnter, registerNativePreviewSync,
+  findSupported, findActive, findScope, openFind, refreshFind, registerAttachmentFind, readingState: ctxState } = useAttachmentPanelContext();
 const nativeBody = ref<HTMLElement | null>(null);
 const { nativeFailed, syncNativePreview } = useNativeAttachmentPreview({
-  requestId: computed(() => request.value?.id ?? ""), index: previewIndex, element: nativeBody,
+  requestId: ownerId, index: previewIndex, element: nativeBody,
   active: computed(() => popupActive.value && previewContent.value?.kind === "native"),
   blocked: computed(() => nativePreviewBlocked.value || !!previewTransition.value),
   bareEnter: submitWithBareEnter, revision: computed(() => previewLayout.value.revision),
@@ -45,7 +46,7 @@ async function restoreScroll() {
 }
 function toggleRaw() { saveScroll(); if (currentReadingState.value) currentReadingState.value.raw = !currentReadingState.value.raw; void restoreScroll(); }
 const { adapter, diffQuery, diffCaseSensitive, diffCurrent } = useAttachmentFind({
-  requestId: computed(() => request.value?.id ?? ""), index: previewIndex, content: previewContent,
+  requestId: ownerId, index: previewIndex, content: previewContent,
   loading: previewLoading, raw, active: popupActive,
   enabled: computed(() => findActive.value && findScope.value === "attachment"),
   body, nativeBody, failed: reason, restoreScroll, syncNative: syncNativePreview, setTop: value => { top.value = value; },
@@ -59,7 +60,6 @@ watch([previewIndex, isReplyPreview], (_, [old, wasReply]) => {
   }
 }, { flush: "sync" });
 watch(previewKey, () => { imageFailed.value = false; actionError.value = false; }, { flush: "sync" });
-const { readingState: ctxState } = usePopupContext();
 watch(previewContent, () => { if (popupActive.value) void restoreScroll(); }, { flush: "post" });
 watch(popupActive, value => { if (value) void restoreScroll(); else saveScroll(); }, { flush: "sync" });
 onBeforeUnmount(() => { saveScroll(); restoreVersion++; });
@@ -88,7 +88,7 @@ function markdownClick(event: MouseEvent) {
         <span class="attachment-preview-count" data-tauri-drag-region>{{ (previewIndex ?? 0) + 1 }} / {{ previewCount }}</span>
         <button type="button" :disabled="previewIndex === 0" :aria-label="t('popup.prev')" @click="showPreview((previewIndex ?? 0) - 1)">‹</button>
         <button type="button" :disabled="previewIndex === previewCount - 1" :aria-label="t('popup.next')" @click="showPreview((previewIndex ?? 0) + 1)">›</button>
-        <button v-if="!isReplyPreview" type="button" class="attachment-preview-find" :title="t('popup.find.attachmentShortcut')" :aria-label="t('popup.find.attachmentShortcut')" @click="openFind(true, 'attachment')">
+        <button v-if="findSupported && !isReplyPreview" type="button" class="attachment-preview-find" :title="t('popup.find.attachmentShortcut')" :aria-label="t('popup.find.attachmentShortcut')" @click="openFind(true, 'attachment')">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/></svg>
         </button>
         <button v-if="!isReplyPreview" type="button" class="attachment-preview-open" :disabled="previewLoading || (primaryBrowser && browserOpening)" :aria-busy="primaryBrowser && browserOpening" @click="openPreviewFile()">{{ t(primaryBrowser ? 'popup.preview.openBrowser' : 'popup.preview.open') }}</button>

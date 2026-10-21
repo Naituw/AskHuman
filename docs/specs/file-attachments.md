@@ -112,3 +112,9 @@ AskHuman "请看看这个文档有没有问题？" -f ~/Documents/some_file.md -
   不再全量 Base64 化。超限 / 解码失败沿用占位，原文件打开与 Quick Look 行为保留。
 - 历史拖出图标采用系统 PNG，取不到时采用应用 PNG；原文件路径仍交给 native drag。
   记录切换与卸载撤销资源、忽略迟到加载结果。实现见 [display-image-urls.md](../plans/display-image-urls.md)。
+
+### 2026-10-22（历史详情同窗预览）
+
+- 历史详情的提问附件与回复图片改用 Popup 的同窗右侧面板：单击 / 空格展开，双击不再打开，打开原文件改用标题栏、回车与右键菜单。
+  回复里的普通文件仍单击打开；待办窗口仍用旧入口。因此上文 2026-10 “历史、待办和回复附件仍用已有入口”与 2026-10-10
+  “Quick Look 行为保留”对历史详情不再适用。规则见 [popup-attachment-preview-panel.md](popup-attachment-preview-panel.md) §10。

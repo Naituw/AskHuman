@@ -15,14 +15,19 @@ const FALLBACK_ICON = fallbackDragIcon;
 
 export function useAttachments(deps: {
   attachments: ComputedRef<FileAttachment[]>;
+  /** Owner id of the attachments on show: the request id in a Popup, `history:<entry id>` in History. */
   requestId: ComputedRef<string>;
   active?: Readonly<Ref<boolean>>;
   layout?: PreviewDelegate;
+  /** Event the window's own geometry controller publishes layouts on (the Popup's by default). */
+  layoutEvent?: string;
   replyImages?: Readonly<Ref<ImageAttachment[][]>>;
+  /** Maps a reply image to the URL to display (History keeps paths, not data URLs). */
+  replyResolve?: (image: ImageAttachment) => Promise<string>;
   replyImageElement?: (qIndex: number, index: number) => HTMLElement | null;
 }) {
   const { attachments } = deps;
-  const preview = useAttachmentPreview(deps.requestId, deps.active, deps.layout);
+  const preview = useAttachmentPreview(deps.requestId, deps.active, deps.layout, deps.layoutEvent);
   const isReplyPreview = ref(false);
   const selectedFile = computed(() => isReplyPreview.value ? null : preview.previewIndex.value);
   const content = useAttachmentContent(deps.requestId, selectedFile, deps.active);
@@ -31,7 +36,7 @@ export function useAttachments(deps: {
     index => {
       if (!isReplyPreview.value || !preview.previewOpen.value) return;
       if (index === null) stopPreview(); else preview.showPreview(index);
-    });
+    }, deps.replyResolve);
   let disposed = false;
   let menuListener: UnlistenFn | undefined;
   const focusedFile = ref<number | null>(null);

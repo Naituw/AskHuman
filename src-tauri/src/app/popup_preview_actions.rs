@@ -1,4 +1,5 @@
-//! Original-file actions for the Popup menu, isolated from other attachment entry points.
+//! Original-file actions for the attachment panel menu (Popup and History), isolated from other
+//! attachment entry points.
 use tauri::AppHandle;
 #[cfg(not(target_os = "macos"))]
 use tauri::Emitter;
@@ -47,12 +48,7 @@ pub fn reveal(path: &str) -> Result<(), String> {
 pub fn menu(window: &tauri::Window, request_id: &str, index: usize) -> Result<(), String> {
     use tauri::menu::{ContextMenu, Menu, MenuItem};
     let lang = crate::i18n::Lang::current();
-    let request = super::popup_preview::request(window, request_id)?;
-    let file = request
-        .message
-        .files
-        .get(index)
-        .ok_or("invalid attachment index")?;
+    let file = super::attachment_owner::file(window, request_id, index, true)?;
     let markdown = crate::attachment_markdown::supports(&file.path);
     let mut definitions = vec![
         (
@@ -129,13 +125,15 @@ pub fn handle_menu(app: &AppHandle, id: &str) {
     let Ok(index) = index.parse::<usize>() else {
         return;
     };
-    let Some(window) = app.get_webview_window("popup").map(|w| w.as_ref().window()) else {
+    // The owner id names the window: a History owner id (`history:<entry>`) keeps its colon,
+    // because only the last two segments are split off above.
+    let Some(window) = app
+        .get_webview_window(super::attachment_owner::window_label(request_id))
+        .map(|w| w.as_ref().window())
+    else {
         return;
     };
-    let Ok(request) = super::popup_preview::request(&window, request_id) else {
-        return;
-    };
-    let Some(file) = request.message.files.get(index) else {
+    let Ok(file) = super::attachment_owner::file(&window, request_id, index, true) else {
         return;
     };
     let target = serde_json::json!({ "requestId": request_id, "index": index });

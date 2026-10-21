@@ -3,6 +3,8 @@
 > 关联规格：[popup-attachment-preview-panel.md](../specs/popup-attachment-preview-panel.md)
 > 状态：实现、自动验证、macOS 安装及用户体验验收已完成；已确认 Windows / Linux 实机 gate 保留。
 > 以 2026-10-05 当前工作区为起点；macOS 独立原型只作为交互参考，不能替代 Tauri / 三平台验收。
+> 2026-10-22 起历史详情也接入这块面板，所有者层、历史窗口几何与原生视图的泛化见
+> [history-attachment-preview.md](history-attachment-preview.md)；下文“其他入口继续使用现有实现”不再包含历史。
 
 ## 0. 已确认目标与当前接入点
 

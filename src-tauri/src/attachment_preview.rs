@@ -1,4 +1,5 @@
-//! Bounded readers for attachments already assigned to the current Popup request.
+//! Bounded readers for attachments already assigned to a preview owner: the current Popup
+//! request, or one entry of the history window.
 pub use crate::image_resource::IMAGE_BYTES;
 use crate::image_resource::{checked_pixels, read};
 use base64::Engine;
@@ -12,11 +13,22 @@ pub struct ImageResource {
     pub byte_length: u64,
     pub display_pixels: u64,
 }
+
+/// Owner ids of history entries start with this prefix; every other id is a Popup request.
+pub const HISTORY_OWNER_PREFIX: &str = "history:";
+/// The Popup and the history window each have one active owner at a time. They live in separate
+/// slots so one window's reads and permits can never invalidate the other's.
+fn slot(owner: &str) -> usize {
+    usize::from(owner.starts_with(HISTORY_OWNER_PREFIX))
+}
+const HISTORY_SLOT: usize = 1;
+
 #[derive(Default)]
-pub struct ReadGeneration(std::sync::Mutex<(String, u64)>);
+pub struct ReadGeneration(std::sync::Mutex<[(String, u64); 2]>);
 impl ReadGeneration {
     pub fn invalidate(&self, request: &str, generation: u64) {
         let mut state = self.0.lock().unwrap();
+        let state = &mut state[slot(request)];
         if state.0 != request {
             *state = (request.to_owned(), generation);
         } else {
@@ -25,7 +37,13 @@ impl ReadGeneration {
     }
     pub fn current(&self, request: &str, generation: u64) -> bool {
         let state = self.0.lock().unwrap();
+        let state = &state[slot(request)];
         state.0 == request && state.1 == generation
+    }
+    /// A recreated history window restarts its generation counter, so the previous window's
+    /// high-water mark must not outlive it.
+    pub fn forget_history(&self) {
+        self.0.lock().unwrap()[HISTORY_SLOT] = Default::default();
     }
 }
 pub const TEXT_BYTES: usize = 2 * 1024 * 1024;
@@ -512,13 +530,14 @@ pub struct NativeGeneration(pub ReadGeneration);
 type NativeStamp = (u64, Option<std::time::SystemTime>);
 type NativePermitMap = (String, std::collections::HashMap<usize, NativeStamp>);
 #[derive(Default)]
-pub struct NativePermits(std::sync::Mutex<NativePermitMap>);
+pub struct NativePermits(std::sync::Mutex<[NativePermitMap; 2]>);
 impl NativePermits {
     pub fn allow(&self, request: &str, index: usize, path: &str) {
         let Ok(metadata) = std::fs::metadata(path) else {
             return;
         };
         let mut state = self.0.lock().unwrap();
+        let state = &mut state[slot(request)];
         if state.0 != request {
             *state = (request.to_owned(), Default::default());
         }
@@ -531,10 +550,14 @@ impl NativePermits {
             return false;
         };
         let state = self.0.lock().unwrap();
+        let state = &state[slot(request)];
         metadata.is_file()
             && metadata.len() <= NATIVE_BYTES
             && state.0 == request
             && state.1.get(&index) == Some(&(metadata.len(), metadata.modified().ok()))
+    }
+    pub fn forget_history(&self) {
+        self.0.lock().unwrap()[HISTORY_SLOT] = Default::default();
     }
 }
 
@@ -601,6 +624,32 @@ mod tests {
         epoch.invalidate("second", 1);
         assert!(epoch.current("second", 1));
         assert!(!epoch.current("first", 4));
+    }
+
+    #[test]
+    fn popup_and_history_generations_do_not_invalidate_each_other() {
+        let epoch = ReadGeneration::default();
+        epoch.invalidate("request", 5);
+        epoch.invalidate("history:entry", 2);
+        assert!(epoch.current("request", 5));
+        assert!(epoch.current("history:entry", 2));
+        // A newer owner replaces only its own window's slot.
+        epoch.invalidate("history:other", 1);
+        assert!(!epoch.current("history:entry", 2));
+        assert!(epoch.current("request", 5));
+    }
+
+    #[test]
+    fn a_recreated_history_window_restarts_its_generation() {
+        let epoch = ReadGeneration::default();
+        epoch.invalidate("history:entry", 9);
+        epoch.invalidate("request", 5);
+        epoch.forget_history();
+        assert!(!epoch.current("history:entry", 9));
+        // The new window counts from zero again and must be accepted.
+        epoch.invalidate("history:entry", 1);
+        assert!(epoch.current("history:entry", 1));
+        assert!(epoch.current("request", 5));
     }
     #[test]
     fn animations_keep_the_original_bytes_and_enforce_canvas_budget() {
@@ -781,6 +830,23 @@ mod tests {
         assert!(!permits.check("r", 1, path));
         std::fs::write(path, b"changed document").unwrap();
         assert!(!permits.check("r", 0, path));
+    }
+
+    #[test]
+    fn native_permits_are_kept_per_window_and_forgotten_with_the_history_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("document.pdf");
+        std::fs::write(&path, b"original").unwrap();
+        let path = path.to_str().unwrap();
+        let permits = NativePermits::default();
+        permits.allow("history:entry", 0, path);
+        // A Popup permit does not evict the history window's, nor the other way around.
+        permits.allow("request", 0, path);
+        assert!(permits.check("history:entry", 0, path));
+        assert!(permits.check("request", 0, path));
+        permits.forget_history();
+        assert!(!permits.check("history:entry", 0, path));
+        assert!(permits.check("request", 0, path));
     }
     #[cfg(target_os = "macos")]
     #[test]

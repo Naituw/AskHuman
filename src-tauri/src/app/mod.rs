@@ -1,5 +1,6 @@
 //! Tauri runtime for daemon-backed popups and shared desktop windows.
 
+pub mod attachment_owner;
 pub mod confirm_coordinator;
 pub mod coordinator;
 pub mod gui_host;
@@ -858,6 +859,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
         .manage(state)
         .manage(std::sync::Mutex::new(popup_size::SizeMemory::default()))
         .manage(std::sync::Mutex::new(popup_preview::Controller::default()))
+        .manage(popup_preview::HistoryController::default())
         .manage(crate::attachment_preview::ReadGeneration::default())
         .manage(crate::attachment_preview::NativeGeneration::default())
         .manage(crate::attachment_preview::NativePermits::default())
@@ -924,6 +926,26 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                             bridge.popup_destroyed();
                         }
                     }
+                    _ => {}
+                },
+                // 历史窗口：详情页与弹窗共用附件右侧面板，窗口几何在此同步（不记忆尺寸）；
+                // 关窗时先释放原生预览视图，再清 Liquid Glass（见下一分支的说明）。
+                "history" => match event {
+                    WindowEvent::CloseRequested { .. } => {
+                        #[cfg(target_os = "macos")]
+                        {
+                            crate::macos_attachment_preview::release_window(window);
+                            clear_window_glass(window);
+                        }
+                    }
+                    WindowEvent::Resized(size) => {
+                        let _ = popup_preview::resized(window, *size);
+                    }
+                    WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                        popup_preview::moved(window)
+                    }
+                    WindowEvent::Focused(true) => popup_preview::moved(window),
+                    WindowEvent::Destroyed => attachment_owner::forget_history(window.app_handle()),
                     _ => {}
                 },
                 // 设置窗口关闭时清掉 Liquid Glass 注册表条目：插件按 label 缓存玻璃视图，

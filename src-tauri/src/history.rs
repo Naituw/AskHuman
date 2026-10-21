@@ -6,12 +6,14 @@
 //! file just renders a placeholder). Mutating ops hold a cross-process file lock. Rewrites use an
 //! atomic temp-file rename, while full deletion removes the store. Reads tolerate malformed lines.
 
-use crate::models::{ChannelAction, MessagePrompt, Question};
+use crate::models::{ChannelAction, FileAttachment, MessagePrompt, Question};
 use crate::paths;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 /// One question's recorded answer (paths only, no base64).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -188,6 +190,15 @@ pub fn projects() -> Vec<ProjectInfo> {
 /// Total number of entries.
 pub fn count() -> usize {
     read_all_at(&paths::history_file()).len()
+}
+
+/// Message attachments recorded for one entry. `None` means the entry does not exist; an entry
+/// without attachments yields an empty list. The history window's preview commands use this to
+/// decide which files a window may read, so it sits on the command hot path: the parsed index is
+/// reused until the file's fingerprint changes and a repeat call costs one `stat`.
+pub fn attachment_files(id: &str) -> Option<Vec<FileAttachment>> {
+    static INDEX: Mutex<AttachmentIndex> = Mutex::new(AttachmentIndex::new());
+    INDEX.lock().ok()?.lookup(&paths::history_file(), id)
 }
 
 /// Trim to the most recent `limit` entries (`limit == 0` clears all). Returns the remaining entry
@@ -425,6 +436,54 @@ fn read_text_strict_at(path: &Path) -> io::Result<String> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error),
     })
+}
+
+/// What identifies one version of the history file. Writers replace it by rename, so the inode
+/// (where the platform has one) catches rewrites that keep both length and mtime.
+type Fingerprint = (u64, Option<SystemTime>, u64);
+
+fn fingerprint(path: &Path) -> Option<Fingerprint> {
+    let meta = std::fs::metadata(path).ok()?;
+    #[cfg(unix)]
+    let inode = {
+        use std::os::unix::fs::MetadataExt;
+        meta.ino()
+    };
+    #[cfg(not(unix))]
+    let inode = 0;
+    Some((meta.len(), meta.modified().ok(), inode))
+}
+
+/// Entry id -> message attachments, rebuilt only when the history file changes.
+struct AttachmentIndex {
+    source: Option<(PathBuf, Option<Fingerprint>)>,
+    entries: Option<HashMap<String, Vec<FileAttachment>>>,
+}
+
+impl AttachmentIndex {
+    const fn new() -> Self {
+        Self {
+            source: None,
+            entries: None,
+        }
+    }
+
+    fn lookup(&mut self, path: &Path, id: &str) -> Option<Vec<FileAttachment>> {
+        // Fingerprint first, then read: a write in between only makes the next lookup rebuild.
+        let print = fingerprint(path);
+        let fresh = matches!(&self.source, Some((cached, cached_print))
+            if cached == path && *cached_print == print);
+        if !fresh {
+            self.entries = Some(
+                read_all_at(path)
+                    .into_iter()
+                    .map(|entry| (entry.id, entry.message.files))
+                    .collect(),
+            );
+            self.source = Some((path.to_path_buf(), print));
+        }
+        self.entries.as_ref()?.get(id).cloned()
+    }
 }
 
 fn write_all_at(path: &Path, entries: &[HistoryEntry]) -> std::io::Result<()> {
@@ -754,5 +813,71 @@ mod tests {
         // Trimming to 0 clears everything.
         assert_eq!(trim_at(&path, 0), 0);
         assert_eq!(read_all_at(&path).len(), 0);
+    }
+
+    fn attachment(path: &str) -> FileAttachment {
+        FileAttachment {
+            path: path.to_string(),
+            name: path.rsplit('/').next().unwrap().to_string(),
+            size: 3,
+            is_image: false,
+        }
+    }
+
+    #[test]
+    fn attachment_index_follows_the_history_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        let mut index = AttachmentIndex::new();
+        // A missing file has no entries, and that answer is cached without error.
+        assert_eq!(index.lookup(&path, "a"), None);
+
+        let mut with_files = entry("a", "/p", 1);
+        with_files.message.files = vec![attachment("/tmp/one.md"), attachment("/tmp/two.png")];
+        record_at(&path, with_files.clone(), 200);
+        record_at(&path, entry("plain", "/p", 2), 200);
+        assert_eq!(index.lookup(&path, "a"), Some(with_files.message.files));
+        // An entry without attachments exists; an unknown id does not.
+        assert_eq!(index.lookup(&path, "plain"), Some(Vec::new()));
+        assert_eq!(index.lookup(&path, "missing"), None);
+
+        // The cache is refreshed when the file changes.
+        assert_eq!(delete_ids_at(&path, &["a".to_string()]).unwrap(), 1);
+        assert_eq!(index.lookup(&path, "a"), None);
+        assert_eq!(index.lookup(&path, "plain"), Some(Vec::new()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attachment_index_notices_a_same_size_rewrite() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        record_at(&path, entry("a", "/p", 1), 200);
+        let mut index = AttachmentIndex::new();
+        assert!(index.lookup(&path, "a").is_some());
+        // Same byte length and (on a coarse clock) the same mtime; only the rename's inode differs.
+        let stamp = std::fs::metadata(&path).unwrap().modified().unwrap();
+        write_all_at(&path, &[entry("b", "/p", 1)]).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(stamp)
+            .unwrap();
+        assert_eq!(index.lookup(&path, "a"), None);
+        assert!(index.lookup(&path, "b").is_some());
+    }
+
+    #[test]
+    fn attachment_index_is_not_reused_for_another_file() {
+        let dir = tempdir().unwrap();
+        let first = dir.path().join("first.jsonl");
+        let second = dir.path().join("second.jsonl");
+        record_at(&first, entry("only-first", "/p", 1), 200);
+        record_at(&second, entry("only-second", "/p", 1), 200);
+        let mut index = AttachmentIndex::new();
+        assert!(index.lookup(&first, "only-first").is_some());
+        assert_eq!(index.lookup(&second, "only-first"), None);
+        assert!(index.lookup(&second, "only-second").is_some());
     }
 }

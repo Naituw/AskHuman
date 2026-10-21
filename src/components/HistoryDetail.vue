@@ -1,25 +1,10 @@
 <script setup lang="ts">
-import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  ref,
-} from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import MarkdownContent from "./MarkdownContent.vue";
 import { useLocalImageUrls } from "../lib/localImageUrls";
-import fallbackDragIcon from "../../src-tauri/icons/32x32.png?inline";
-import {
-  closePreview,
-  fileIconDataUrl,
-  openPath,
-  previewAttachments,
-  showAttachmentMenu,
-} from "../lib/ipc";
-import type { FileAttachment, HistoryAnswer, HistoryEntry } from "../lib/types";
+import { openPath } from "../lib/ipc";
+import type { HistoryAnswer, HistoryEntry } from "../lib/types";
 import {
   agentKindOf,
   customSourceOf,
@@ -27,6 +12,7 @@ import {
   shortSessionId,
   workspaceNameOf,
 } from "../lib/history";
+import { useHistoryPreviewContext } from "../views/history/useHistoryPreview";
 
 const props = defineProps<{ entry: HistoryEntry; sessionTitle?: string }>();
 const { t, locale } = useI18n();
@@ -220,123 +206,27 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// —— Message 附件交互（与弹窗一致：选中 / 空格预览 + 方向键切换 / 双击打开 / 右键菜单 / 拖出）——
+// —— 附件交互与弹窗完全一致：单击 / 空格在窗口内展开与收起预览，方向键切换，右键菜单，拖出 ——
+// 状态与行为来自历史窗口唯一的预览控制器（useHistoryPreview）；预览面板在 HistoryView 的右栏。
+const { attach: preview } = useHistoryPreviewContext();
 const attachments = computed(() => props.entry.message.files);
-const selectedFile = ref<number | null>(null);
-const attRefs = ref<HTMLElement[]>([]);
-const dragIcons = ref<Record<string, string>>({});
-const previewing = ref(false);
+const {
+  selectedFile,
+  setAttRef,
+  selectFile,
+  openFile,
+  onAttachmentContextMenu,
+  onAttachmentDragStart,
+  selectReplyImage,
+  replyPreviewQuestion,
+  selectedReplyImage,
+  browserActionError,
+  browserErrorFile,
+  browserErrorIndex,
+} = preview;
 
-function setAttRef(el: Element | null, i: number) {
-  if (el) attRefs.value[i] = el as HTMLElement;
-}
-
-function focusAttachment(index: number) {
-  selectedFile.value = index;
-  attRefs.value[index]?.focus();
-}
-
-function selectFile(index: number) {
-  focusAttachment(index);
-}
-
-function previewSelected(index: number) {
-  focusAttachment(index);
-  previewing.value = true;
-  previewAttachments(
-    attachments.value.map((f) => f.path),
-    index
-  ).catch(() => {});
-}
-
-function stopPreview() {
-  if (!previewing.value) return;
-  previewing.value = false;
-  closePreview().catch(() => {});
-}
-
-function onAttachmentContextMenu(file: FileAttachment, i: number, e: MouseEvent) {
-  e.preventDefault();
-  selectFile(i);
-  showAttachmentMenu(file.path).catch(() => {});
-}
-
-function onAttachmentDragStart(file: FileAttachment, e: DragEvent) {
-  e.preventDefault();
-  const icon = dragIcons.value[file.path] || fallbackDragIcon;
-  startDrag({ item: [file.path], icon }, () => {}).catch(() => {});
-}
-
-function handleAttachmentKey(e: KeyboardEvent): boolean {
-  if (!attachments.value.length) return false;
-  const i = selectedFile.value;
-  if (i === null) return false;
-  if (e.key === "Enter") {
-    open(attachments.value[i].path);
-  } else if (e.key === " ") {
-    previewSelected(i);
-  } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-    if (i < attachments.value.length - 1) focusAttachment(i + 1);
-  } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-    if (i > 0) focusAttachment(i - 1);
-  } else {
-    return false;
-  }
-  e.preventDefault();
-  return true;
-}
-
-function onKeydown(e: KeyboardEvent) {
-  handleAttachmentKey(e);
-}
-
-// 点击附件以外区域：取消选中并关闭预览。
-function onDetailClick(e: MouseEvent) {
-  if ((e.target as HTMLElement).closest(".attachment")) return;
-  if (selectedFile.value !== null) selectedFile.value = null;
-  stopPreview();
-}
-
-async function loadDragIcons() {
-  for (const f of attachments.value) {
-    if (dragIcons.value[f.path]) continue;
-    try {
-      dragIcons.value[f.path] = await fileIconDataUrl(f.path);
-    } catch {
-      // Native drag uses the bundled PNG icon if the system icon is unavailable.
-    }
-  }
-}
-
-let unlistenIndex: UnlistenFn | null = null;
-let unlistenClosed: UnlistenFn | null = null;
-
-onMounted(async () => {
-  window.addEventListener("keydown", onKeydown);
-  unlistenIndex = await listen<number>("preview-index", (e) => {
-    const i = e.payload;
-    if (i >= 0 && i < attachments.value.length) {
-      selectedFile.value = i;
-      nextTick(() => {
-        const el = attRefs.value[i];
-        el?.focus();
-        el?.scrollIntoView({ block: "nearest" });
-      });
-    }
-  });
-  unlistenClosed = await listen("preview-closed", () => {
-    previewing.value = false;
-    const i = selectedFile.value;
-    if (i !== null) nextTick(() => attRefs.value[i]?.focus());
-  });
-  loadDragIcons();
-});
-
-onBeforeUnmount(() => {
-  window.removeEventListener("keydown", onKeydown);
-  unlistenIndex?.();
-  unlistenClosed?.();
-  stopPreview();
+onMounted(() => {
+  void preview.loadDragIcons();
 });
 
 const imagePaths = computed(() => [
@@ -348,7 +238,7 @@ const thumbs = images.urls;
 </script>
 
 <template>
-  <div class="detail" @click="onDetailClick">
+  <div class="detail">
     <!-- Status banner -->
     <div class="status-banner" :class="{ cancel: isCancel }">
       <span class="status-dot"></span>
@@ -412,12 +302,12 @@ const thumbs = images.urls;
             :key="file.path"
             :ref="(el) => setAttRef(el as Element | null, i)"
             class="attachment"
+            :data-attachment-index="i"
             :class="{ selected: selectedFile === i }"
             tabindex="0"
             draggable="true"
             :title="file.path"
-            @click="selectFile(i)"
-            @dblclick="open(file.path)"
+            @click="selectFile(i, $event)"
             @dragstart="onAttachmentDragStart(file, $event)"
             @contextmenu="onAttachmentContextMenu(file, i, $event)"
           >
@@ -433,6 +323,11 @@ const thumbs = images.urls;
               <span class="att-size">{{ formatBytes(file.size) }}</span>
             </span>
           </div>
+        </div>
+        <!-- Opening in the browser failed for a file the panel is not showing: say so here, as the popup does. -->
+        <div v-if="browserActionError && browserErrorFile && browserErrorIndex !== selectedFile" class="attachment-browser-error" role="alert">
+          <span>{{ browserErrorFile.name }} — {{ t(`popup.preview.${browserActionError}`) }}</span>
+          <button type="button" @click="openFile(browserErrorFile)">{{ t("popup.preview.openOriginal") }}</button>
         </div>
       </div>
     </template>
@@ -482,11 +377,28 @@ const thumbs = images.urls;
           <pre class="reply-text">{{ answerOf(i)?.userInput }}</pre>
         </div>
 
-        <!-- Reply images -->
+        <!-- Reply images: open in the preview panel like the ones in the popup's composer -->
         <div v-if="(answerOf(i)?.images ?? []).length" class="thumbs">
-          <div v-for="(img, ii) in answerOf(i)?.images ?? []" :key="ii" :ref="el => images.observe(el, img)" class="thumb" :title="img" @click="open(img)">
-            <img v-if="thumbs[img]" :src="thumbs[img]" alt="" loading="lazy" decoding="async" @error="images.fail(img, $event)" />
-            <div v-else class="thumb-missing">{{ t("history.imageUnavailable") }}</div>
+          <div
+            v-for="(img, ii) in answerOf(i)?.images ?? []"
+            :key="ii"
+            :ref="el => images.observe(el, img)"
+            class="thumb previewable"
+            :class="{ selected: replyPreviewQuestion === i && selectedReplyImage === ii }"
+            :title="img"
+          >
+            <button
+              class="thumb-preview"
+              type="button"
+              :data-question-index="i"
+              :data-image-index="ii"
+              :aria-label="`${t('popup.preview.title')}: ${fileName(img)}`"
+              :aria-pressed="replyPreviewQuestion === i && selectedReplyImage === ii"
+              @click="selectReplyImage(i, ii, $event)"
+            >
+              <img v-if="thumbs[img]" :src="thumbs[img]" alt="" loading="lazy" decoding="async" draggable="false" @error="images.fail(img, $event)" />
+              <div v-else class="thumb-missing">{{ t("history.imageUnavailable") }}</div>
+            </button>
           </div>
         </div>
 

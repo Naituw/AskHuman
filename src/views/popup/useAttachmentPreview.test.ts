@@ -5,7 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name: string, fn: (e: { payload: unknown }) => void) => {
   mocks.listeners.set(name, fn); return () => mocks.listeners.delete(name);
 }) }));
-import { useAttachmentPreview, type PreviewLayout } from "./useAttachmentPreview";
+import { HISTORY_LAYOUT_EVENT, useAttachmentPreview, type PreviewLayout } from "./useAttachmentPreview";
 const right: PreviewLayout = { revision: 1, side: "right", mainWidth: 560, mainHeight: 620 };
 async function flush() { for (let i = 0; i < 20; i++) await Promise.resolve(); }
 describe("preview resize paint handshake", () => {
@@ -91,6 +91,20 @@ describe("preview resize paint handshake", () => {
     expect(state.previewTransition.value).toBeNull();
     expect(state.previewLayout.value).toEqual(right);
     state.disposePreview();
+  });
+  it("takes layouts only from the event its own window publishes on", async () => {
+    const popup = useAttachmentPreview(computed(() => "request-1"));
+    await popup.initPreviewLayout();
+    expect([...mocks.listeners.keys()]).toEqual(["popup-preview-layout"]);
+    popup.disposePreview();
+    expect(mocks.listeners.size).toBe(0);
+
+    const history = useAttachmentPreview(computed(() => "history:entry"), undefined, undefined, HISTORY_LAYOUT_EVENT);
+    await history.initPreviewLayout();
+    expect([...mocks.listeners.keys()]).toEqual(["history-preview-layout"]);
+    mocks.listeners.get("history-preview-layout")!({ payload: right });
+    expect(history.previewLayout.value).toEqual(right);
+    history.disposePreview();
   });
   it("cannot resize a disposed Popup after a late preparation result", async () => {
     let finish!: (layout: PreviewLayout) => void;

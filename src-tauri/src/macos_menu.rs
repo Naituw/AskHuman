@@ -68,8 +68,14 @@ pub fn choose_directory() -> Result<Option<String>, String> {
 struct Ivars {
     app: AppHandle,
     path: String,
-    popup: Option<(String, usize)>,
+    /// Owner id and index when the menu belongs to a preview panel attachment (Popup or History).
+    owner: Option<(String, usize)>,
     app_urls: RefCell<Vec<Retained<NSURL>>>,
+}
+
+/// The window an owner's menu was opened from.
+fn owner_window(app: &AppHandle, owner_id: &str) -> Option<tauri::WebviewWindow> {
+    app.get_webview_window(crate::app::attachment_owner::window_label(owner_id))
 }
 
 define_class!(
@@ -90,11 +96,11 @@ define_class!(
 );
 
 impl Target {
-    fn new(app: AppHandle, path: String, popup: Option<(String, usize)>) -> Retained<Self> {
+    fn new(app: AppHandle, path: String, owner: Option<(String, usize)>) -> Retained<Self> {
         let this = Self::alloc().set_ivars(Ivars {
             app,
             path,
-            popup,
+            owner,
             app_urls: RefCell::new(Vec::new()),
         });
         unsafe { msg_send![super(this), init] }
@@ -102,22 +108,16 @@ impl Target {
 
     unsafe fn perform(&self, tag: isize) {
         let path = self.ivars().path.clone();
-        if let Some((request_id, index)) = &self.ivars().popup {
-            let Some(window) = self
-                .ivars()
-                .app
-                .get_webview_window("popup")
-                .map(|w| w.as_ref().window())
+        if let Some((owner_id, index)) = &self.ivars().owner {
+            let Some(window) =
+                owner_window(&self.ivars().app, owner_id).map(|w| w.as_ref().window())
             else {
                 return;
             };
-            if !crate::app::popup_preview::request(&window, request_id).is_ok_and(|request| {
-                request
-                    .message
-                    .files
-                    .get(*index)
-                    .is_some_and(|file| file.path == path)
-            }) {
+            // The menu may outlive its attachment (the owner closed or the entry was deleted).
+            if !crate::app::attachment_owner::file(&window, owner_id, *index, true)
+                .is_ok_and(|file| file.path == path)
+            {
                 return;
             }
         }
@@ -125,11 +125,11 @@ impl Target {
         let url = file_url(&path);
         match tag {
             TAG_OPEN_BROWSER => {
-                if let Some((request_id, index)) = &self.ivars().popup {
-                    if let Some(window) = self.ivars().app.get_webview_window("popup") {
+                if let Some((owner_id, index)) = &self.ivars().owner {
+                    if let Some(window) = owner_window(&self.ivars().app, owner_id) {
                         let _ = window.emit(
                             "popup-preview-open-browser",
-                            serde_json::json!({ "requestId": request_id, "index": index }),
+                            serde_json::json!({ "requestId": owner_id, "index": index }),
                         );
                     }
                 }
@@ -141,16 +141,13 @@ impl Target {
                 let _ = reveal_file(&path);
             }
             TAG_QUICKLOOK => {
-                if let Some((request_id, index)) = &self.ivars().popup {
-                    if let Some(window) = self
-                        .ivars()
-                        .app
-                        .get_webview_window("popup")
-                        .map(|w| w.as_ref().window())
+                if let Some((owner_id, index)) = &self.ivars().owner {
+                    if let Some(window) =
+                        owner_window(&self.ivars().app, owner_id).map(|w| w.as_ref().window())
                     {
                         let _ = window.emit(
                             "popup-preview-show",
-                            serde_json::json!({ "requestId": request_id, "index": index }),
+                            serde_json::json!({ "requestId": owner_id, "index": index }),
                         );
                     }
                     return;
@@ -381,21 +378,22 @@ fn basename(path: &str) -> String {
 pub fn show(app: AppHandle, path: String) {
     show_context(app, path, None);
 }
-pub fn show_popup(app: AppHandle, path: String, request_id: String, index: usize) {
-    show_context(app, path, Some((request_id, index)));
+/// Menu for an attachment shown in a preview panel; `owner_id` selects the Popup or History window.
+pub fn show_attachment(app: AppHandle, path: String, owner_id: String, index: usize) {
+    show_context(app, path, Some((owner_id, index)));
 }
-fn show_context(app: AppHandle, path: String, popup: Option<(String, usize)>) {
+fn show_context(app: AppHandle, path: String, owner: Option<(String, usize)>) {
     if MainThreadMarker::new().is_none() {
         return;
     }
     let lang = Lang::current();
-    let markdown = popup.is_some() && crate::attachment_markdown::supports(&path);
+    let markdown = owner.is_some() && crate::attachment_markdown::supports(&path);
     let name = basename(&path);
-    let popup_window = popup
+    let owner_ns_window = owner
         .as_ref()
-        .and_then(|_| app.get_webview_window("popup"))
+        .and_then(|(id, _)| owner_window(&app, id))
         .and_then(|w| w.ns_window().ok());
-    let target = Target::new(app, path.clone(), popup);
+    let target = Target::new(app, path.clone(), owner);
 
     unsafe {
         let menu = new_menu();
@@ -477,12 +475,12 @@ fn show_context(app: AppHandle, path: String, popup: Option<(String, usize)>) {
         );
         add_item(menu, tr(lang, "menu.copyPath"), TAG_COPY_PATH, &target);
 
-        // Associate Popup menus with their invoking window, including keyboard activation.
+        // Associate panel menus with their invoking window, including keyboard activation.
         let event_cls = AnyClass::get(c"NSEvent").expect("NSEvent");
         let mut loc: NSPoint = msg_send![event_cls, mouseLocation];
         let nil_item: *mut AnyObject = std::ptr::null_mut();
         let mut view: *mut AnyObject = std::ptr::null_mut();
-        if let Some(window) = popup_window {
+        if let Some(window) = owner_ns_window {
             let window = window as *mut AnyObject;
             view = msg_send![window, contentView];
             if !view.is_null() {

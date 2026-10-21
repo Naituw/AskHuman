@@ -59,7 +59,8 @@ AskHuman/
     views/ForkTaskView.vue   原生会话 Fork 独立窗口（固定源会话 + 权限 + 分支指令）
     views/newtask/LaunchPermission.vue  新建/Fork 共用权限控件
     views/SettingsView.vue   设置页（编排层；各 tab 组件与域逻辑在 views/settings/）
-    views/HistoryView.vue    回复历史列表、搜索与筛选
+    views/HistoryView.vue    回复历史列表、搜索与筛选；右侧附件预览面板与分栏
+    views/history/useHistoryPreview.ts  历史窗口唯一的附件预览控制器（面板本体复用 views/popup/）
     components/HistoryDetail.vue  单条历史的只读详情
     lib/history.ts           历史记录展示相关纯函数
     lib/ipc.ts               Tauri invoke 封装
@@ -140,8 +141,9 @@ AskHuman/
         popup_activation.rs · swift/PopupActivation.swift  Popup Host 的应用级激活状态（小窗的切走缩回）
         popup_drag_front.rs · swift/PopupDragFront.swift  macOS：文件拖进 Popup 时先取前台再让 web view 读文件，拖走不松手则还回原前台应用
         popup_transition.rs  非激活前置（到达提醒由前端气泡动效承担）
-        popup_preview.rs · popup_preview_geometry.rs  预览桥接与兼容几何
-        popup_preview_actions.rs  Popup 原文件菜单与跨平台定位
+        popup_preview.rs · popup_preview_geometry.rs  附件面板的窗口几何（Popup 与历史窗口各一个控制器）
+        popup_preview_actions.rs  附件面板（Popup / 历史）的原文件菜单与跨平台定位
+        attachment_owner.rs  预览命令的授权入口：所有者 ID（Popup 请求 / 历史条目）→ 附件，路径只来自后端
 
       channels/
         mod.rs               Channel、ResultSink 与 Preemption 抽象
@@ -277,7 +279,7 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 ## 前端 ↔ 后端命令（`commands.rs` ↔ `lib/ipc.ts`）
 
 - 弹窗：按 request ID 的 `popup_init`、`submit_popup`、`confirm_popup`、`cancel_popup`；共享容器 `popup_inbox_init` / `activate` / `layout` / `commit` / `idle`
-- Popup 提问附件：`popup_preview_prepare` / `layout`、`popup_preview_read` / `cancel_read` / `thumbnail`、`popup_preview_reveal` / `menu`；原文件打开仍用 `open_path`
+- 附件面板（Popup 提问附件与历史详情）：`popup_preview_prepare` / `layout`、`popup_preview_read` / `cancel_read` / `thumbnail`、`popup_preview_reveal` / `menu`（命令名沿用；`request_id` 实为所有者 ID：Popup 请求 ID，或历史窗口的 `history:<条目 ID>`）；原文件打开仍用 `open_path`
 - Popup 拖入文件（`popup_drop.rs`）：`popup_drop_read_image`（读拖入的图片，失败时拒绝出 `{reason, where, message}`）、`popup_drop_log`（把每次拖拽的结果写进 `daemon.log` 的 `askhuman_drop` 行，只记标签与计数，不记路径和文件名）
 - 其他附件入口：`preview_attachments`、`close_preview`、`read_image_data_url`、`file_icon_data_url`、`show_attachment_menu`
 - 设置：`get_settings`、`save_settings`、`get_prompt`、`set_theme`、`update_theme`、`open_settings`、`popup_sound_support`、`play_popup_sound`
@@ -294,7 +296,7 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 
 Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-popup-ui.md`：
 
-- 弹窗支持 Markdown、附件拖入 / 拖出、同窗右侧附件预览与原文件菜单；其他入口保留既有预览。
+- 弹窗支持 Markdown、附件拖入 / 拖出、同窗右侧附件预览与原文件菜单；历史详情共用同一块预览面板，待办等其他入口保留既有预览。
 - 来源名优先级为自定义环境变量 > 发起 Agent > 默认「the Loop」；头部同时展示 Agent、workspace 和提问时间。
 - 多问题默认纵向平铺全部问题（`experimental.verticalQuestions` 默认开，设置可关回一次一题），设计见 `docs/specs/multi-question-vertical.md`。
 - 推荐选项不自动预选，提交值始终为原文，规格见 `docs/specs/recommended-option.md`。

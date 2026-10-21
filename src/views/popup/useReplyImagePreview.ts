@@ -2,10 +2,15 @@ import { computed, reactive, ref, shallowRef, watch, type Ref } from "vue";
 import type { ImageAttachment } from "../../lib/types";
 import { newReadingState, type PreviewContent } from "./useAttachmentContent";
 
+/**
+ * `resolve` turns an image into the URL to display. The Popup keeps reply images as data URLs and leaves it
+ * out; the History window stores file paths and resolves them to display URLs on demand.
+ */
 export function useReplyImagePreview(
   imagesByQ: Readonly<Ref<ImageAttachment[][]>>,
   enabled: Readonly<Ref<boolean>>,
   onListChange: (index: number | null) => void,
+  resolve?: (image: ImageAttachment) => Promise<string>,
 ) {
   const questionIndex = ref<number | null>(null);
   const image = shallowRef<ImageAttachment | null>(null);
@@ -17,7 +22,7 @@ export function useReplyImagePreview(
   let nextKey = 0;
   let selecting = false;
   let records = new WeakMap<ImageAttachment, {
-    key: number; state: ReturnType<typeof newReadingState>; width?: number; height?: number;
+    key: number; state: ReturnType<typeof newReadingState>; url?: string; width?: number; height?: number;
   }>();
   function record(value: ImageAttachment) {
     let entry = records.get(value);
@@ -47,20 +52,27 @@ export function useReplyImagePreview(
     content.value = null; loading.value = false;
     if (!value || !visible) return;
     const entry = record(value);
-    const show = () => { content.value = { kind: "image", url: value.data, width: entry.width!, height: entry.height! }; };
-    if (entry.width && entry.height) { show(); return; }
+    const show = () => { content.value = { kind: "image", url: entry.url ?? value.data, width: entry.width!, height: entry.height! }; };
+    if (entry.width && entry.height && (entry.url || !resolve)) { show(); return; }
     loading.value = true;
-    const probe = new Image();
+    let probe: HTMLImageElement | undefined;
     let cancelled = false;
-    cleanup(() => { cancelled = true; probe.onload = null; probe.onerror = null; probe.src = ""; });
-    probe.onload = () => {
+    cleanup(() => { cancelled = true; if (probe) { probe.onload = null; probe.onerror = null; probe.src = ""; } });
+    const failed = () => { if (!cancelled) { loading.value = false; content.value = { kind: "unavailable", reason: "imageFailed" }; } };
+    const start = (url: string) => {
       if (cancelled) return;
-      loading.value = false;
-      if (!probe.naturalWidth || !probe.naturalHeight) { content.value = { kind: "unavailable", reason: "imageFailed" }; return; }
-      entry.width = probe.naturalWidth; entry.height = probe.naturalHeight; show();
+      const image = probe = new Image();
+      image.onload = () => {
+        if (cancelled) return;
+        loading.value = false;
+        if (!image.naturalWidth || !image.naturalHeight) { content.value = { kind: "unavailable", reason: "imageFailed" }; return; }
+        entry.url = url; entry.width = image.naturalWidth; entry.height = image.naturalHeight; show();
+      };
+      image.onerror = failed;
+      image.src = url;
     };
-    probe.onerror = () => { if (!cancelled) { loading.value = false; content.value = { kind: "unavailable", reason: "imageFailed" }; } };
-    probe.src = value.data;
+    // Without a resolver the probe starts synchronously, exactly as before.
+    if (resolve) resolve(value).then(start, failed); else start(value.data);
   }, { flush: "sync" });
   function reset() { image.value = null; questionIndex.value = null; records = new WeakMap(); }
   function dispose() { stopItems(); stopLoad(); reset(); content.value = null; loading.value = false; }

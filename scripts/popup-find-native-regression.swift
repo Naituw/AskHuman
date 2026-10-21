@@ -10,7 +10,10 @@ private var keys: [UInt16] = []
 private let findReply: FindCallback = { _, _, generation, total, current, status in
     replies.append(Reply(generation: generation, total: total, current: current, status: status))
 }
-private let keyReply: KeyCallback = { code, _, _ in keys.append(code) }
+private var keyOwners: [String] = []
+private let keyReply: KeyCallback = { request, code, _, _ in
+    keyOwners.append(String(cString: request)); keys.append(code)
+}
 
 @main struct NativeFindRegression {
     static func check(_ value: @autoclosure () -> Bool, _ name: String) {
@@ -88,11 +91,39 @@ private let keyReply: KeyCallback = { code, _, _ in keys.append(code) }
             windowNumber: window.windowNumber, context: nil, characters: "f", charactersIgnoringModifiers: "f", isARepeat: false, keyCode: 3)!
         app.sendEvent(event)
         check(keys.contains(3), "Cmd+F is forwarded from the native responder")
+        check(keyOwners.last == "request", "key callbacks name the owner that produced them")
         check(window.firstResponder === webview, "Cmd+F yields native focus to the WebView")
         show(scanPDF); find(7, query: "alpha")
         check(awaitReply(7, status: 4).total == 0, "image-only PDF reports no searchable text")
         find(8, query: "", action: "cancel")
         check(pdf.highlightedSelections == nil, "closing search clears native highlights")
+
+        // Two windows keep independent previews (Popup and history window in one process).
+        func visiblePDF(in target: NSWindow) -> Bool {
+            target.contentView!.subviews.contains { ($0 as? PDFView).map { !$0.isHidden } ?? false }
+        }
+        let second = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 1266, height: 620), styleMask: [.titled], backing: .buffered, defer: false)
+        second.isReleasedWhenClosed = false
+        second.contentView!.addSubview(WKWebView(frame: second.contentView!.bounds))
+        second.makeKeyAndOrderFront(nil)
+        defer { second.orderOut(nil); second.close() }
+        let secondPointer = Unmanaged.passUnretained(second).toOpaque()
+        check(visiblePDF(in: window), "first window shows its preview")
+        let shown = "history:entry".withCString { request in textPDF.path.withCString { path in
+            updatePreviewView(secondPointer, request, path, 566, 48, 700, 572, false, keyReply)
+        } }
+        check(shown, "second window accepts its own attachment")
+        check(visiblePDF(in: window), "showing another window's preview leaves the first one in place")
+        find(9, query: "alpha")
+        check(awaitReply(9, status: 4).total == 0, "find still addresses the first window's owner")
+        "history:entry".withCString { request in
+            check(findInPreview(request, 0, 10, "search", "alpha", false, true, 0, findReply),
+                  "find addresses the second window's owner")
+        }
+        check(awaitReply(10).total == 5, "the second window searches its own document")
+        releasePreviewWindow(secondPointer)
+        check(second.contentView!.subviews.allSatisfy { !($0 is PDFView) }, "releasing a window removes its preview views")
+        check(visiblePDF(in: window), "releasing one window leaves the other's preview alone")
         print("Native PDF find regression passed")
     }
 }
