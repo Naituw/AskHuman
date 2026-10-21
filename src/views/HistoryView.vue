@@ -35,6 +35,10 @@ import AttachmentPreviewPanel from "./popup/AttachmentPreviewPanel.vue";
 import { provideAttachmentPanel } from "./popup/attachmentPanelContext";
 import { frozenMainStyle, PREVIEW_DIVIDER_WIDTH, usePreviewDivider } from "./popup/usePreviewDivider";
 import { LIST_COLLAPSE_BELOW, provideHistoryPreview, useHistoryPreview } from "./history/useHistoryPreview";
+import AttachmentChips from "./history/AttachmentChips.vue";
+import AttachmentFilter from "./history/AttachmentFilter.vue";
+import { useAttachmentFilter } from "./history/useAttachmentFilter";
+import { attachmentCountOf } from "../lib/historyAttachments";
 // The panel and its divider are styled by the popup stylesheet (the same panel as in the popup).
 import "./popup/popup.css";
 
@@ -60,6 +64,8 @@ const pendingDeleteContext = ref<null | {
   project: string;
   session: string;
   keywords: string;
+  /** The attachment conditions in words; empty when none are active. */
+  attachments: string;
 }>(null);
 const deleteBusy = ref(false);
 const deleteError = ref("");
@@ -273,7 +279,9 @@ const sessionEntries = computed(() =>
   )
 );
 
-const filteredEntries = computed(() => {
+// Project → session → keywords. The attachment conditions narrow this further and are a separate step so that
+// changing a suffix never re-runs the (comparatively expensive) keyword matching.
+const searchedEntries = computed(() => {
   const kws = keywords.value;
   if (!kws.length) return sessionEntries.value;
   return sessionEntries.value.filter((entry) => {
@@ -282,16 +290,28 @@ const filteredEntries = computed(() => {
   });
 });
 
+const attach = useAttachmentFilter({ entries, searched: searchedEntries });
+const {
+  filter: attachFilter,
+  open: attachOpen,
+  active: attachActive,
+  filtered: filteredEntries,
+  facet: attachFacet,
+  chips: attachChips,
+} = attach;
+
+// An attachment condition makes the list a search result: cleanup must only touch what is visible.
+const isSearching = computed(() => keywords.value.length > 0 || attachActive.value);
 const cleanupScopeKind = computed<"search" | "session" | "project" | "all">(
   () => {
-    if (keywords.value.length) return "search";
+    if (isSearching.value) return "search";
     if (selectedSession.value !== ALL_HISTORY_SESSIONS) return "session";
     if (selected.value !== ALL) return "project";
     return "all";
   }
 );
 const cleanupScopeEntries = computed(() =>
-  keywords.value.length ? filteredEntries.value : sessionEntries.value
+  isSearching.value ? filteredEntries.value : sessionEntries.value
 );
 const showScopeCleanup = computed(() => cleanupScopeKind.value !== "all");
 const scopeCleanupLabel = computed(() => {
@@ -400,6 +420,14 @@ function highlightText(value: string): string {
 
 function highlightedSummary(entry: HistoryEntry): string {
   return highlightText(summaryOf(entry) || t("history.noReply"));
+}
+
+function attachmentTotal(entry: HistoryEntry): number {
+  return attachmentCountOf(attach.factsOf(entry), "all");
+}
+
+function attachmentBadgeTitle(entry: HistoryEntry): string {
+  return attach.badgeTitle(attach.factsOf(entry));
 }
 
 function summaryOf(entry: HistoryEntry): string {
@@ -593,6 +621,7 @@ async function handleOpenRequest(request: HistoryOpenRequest) {
   pendingDeleteScopeKind.value = null;
   deleteError.value = "";
   query.value = "";
+  attach.reset();
   await applyOpenRequest(request);
 }
 
@@ -613,6 +642,7 @@ function askClear(kind: "scope" | "all") {
       project: selectedProjectOption.value.compactLabel,
       session: selectedSessionOption.value.compactLabel,
       keywords: query.value.trim() || t("history.noKeywords"),
+      attachments: attach.summary.value,
     };
   } else {
     pendingDeleteIds.value = [];
@@ -852,23 +882,40 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <div class="hist-search">
-        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-        <input
-          v-model="query"
-          type="search"
-          class="search-input"
-          :placeholder="t('history.searchPlaceholder')"
+      <div class="hist-searchbar">
+        <div class="hist-search">
+          <div class="search-field">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+            <input
+              v-model="query"
+              type="search"
+              class="search-input"
+              :placeholder="t('history.searchPlaceholder')"
+            />
+            <button
+              v-if="query"
+              type="button"
+              class="search-clear"
+              :title="t('history.searchClear')"
+              @click="query = ''"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <AttachmentFilter
+            v-model="attachFilter"
+            v-model:open="attachOpen"
+            :facet="attachFacet"
+            :match-count="filteredEntries.length"
+            :chip-count="attachChips.length"
+          />
+        </div>
+        <AttachmentChips
+          v-if="attachChips.length"
+          :items="attachChips"
+          @remove="attach.removeChip"
+          @clear="attach.clear"
         />
-        <button
-          v-if="query"
-          type="button"
-          class="search-clear"
-          :title="t('history.searchClear')"
-          @click="query = ''"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-        </button>
       </div>
 
       <div class="hist-body">
@@ -884,6 +931,14 @@ onBeforeUnmount(() => {
             <div class="entry-top">
               <span class="badge" :class="e.action">{{ channelName(e.channel) }}</span>
               <span v-if="agentLabelOf(e)" class="agent-badge">{{ agentLabelOf(e) }}</span>
+              <span
+                v-if="attachmentTotal(e)"
+                class="entry-attach"
+                :title="attachmentBadgeTitle(e)"
+                :aria-label="t('history.attach.badge', { n: attachmentTotal(e) })"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>{{ attachmentTotal(e) }}
+              </span>
               <span class="entry-time">{{ relativeTime(e.timestampMs) }}</span>
             </div>
             <div class="entry-summary" v-html="highlightedSummary(e)"></div>
@@ -898,11 +953,16 @@ onBeforeUnmount(() => {
           </li>
         </ul>
         <div
-          v-else-if="keywords.length || selectedSession !== ALL_HISTORY_SESSIONS"
+          v-else-if="isSearching || selectedSession !== ALL_HISTORY_SESSIONS"
           class="empty"
         >
           <p class="empty-title">{{ t("history.searchEmpty") }}</p>
-          <p class="empty-hint">{{ t("history.searchEmptyHint") }}</p>
+          <p class="empty-hint">
+            {{ attachActive ? t("history.searchEmptyHintAttach") : t("history.searchEmptyHint") }}
+          </p>
+          <button v-if="attachActive" type="button" class="empty-action" @click="attach.clear">
+            {{ t("history.attach.clear") }}
+          </button>
         </div>
         <div v-else class="empty">
           <p class="empty-title">{{ t("history.empty") }}</p>
@@ -953,6 +1013,10 @@ onBeforeUnmount(() => {
             <div>
               <dt>{{ t("history.deleteScopeKeywords") }}</dt>
               <dd>{{ pendingDeleteContext.keywords }}</dd>
+            </div>
+            <div v-if="pendingDeleteContext.attachments">
+              <dt>{{ t("history.deleteScopeAttachments") }}</dt>
+              <dd>{{ pendingDeleteContext.attachments }}</dd>
             </div>
           </dl>
           <p v-if="deleteError" class="dialog-error" role="alert">{{ deleteError }}</p>
@@ -1234,18 +1298,26 @@ onBeforeUnmount(() => {
   opacity: 0.4;
   cursor: default;
 }
-/* Search bar */
-.hist-search {
+/* Search bar: the field and the attachment filter button, then the active attachment conditions as tags. */
+.hist-searchbar {
   flex: 0 0 auto;
-  position: relative;
+  border-bottom: var(--hairline) solid var(--border);
+}
+.hist-search {
   display: flex;
   align-items: center;
   padding: 8px 14px;
-  border-bottom: var(--hairline) solid var(--border);
+}
+.search-field {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
 }
 .search-icon {
   position: absolute;
-  left: 24px;
+  left: 10px;
   width: 14px;
   height: 14px;
   color: var(--text-secondary);
@@ -1253,6 +1325,7 @@ onBeforeUnmount(() => {
 }
 .search-input {
   flex: 1 1 auto;
+  min-width: 0;
   height: 30px;
   padding: 0 30px 0 32px;
   border: var(--hairline) solid var(--control-border);
@@ -1273,7 +1346,7 @@ onBeforeUnmount(() => {
 }
 .search-clear {
   position: absolute;
-  right: 20px;
+  right: 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1354,9 +1427,29 @@ onBeforeUnmount(() => {
 }
 .entry-time {
   margin-left: auto;
+  flex: 0 0 auto;
   font-size: 11px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Paperclip + attachment count, right before the time (the time keeps the right edge). */
+.entry-attach {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.entry-attach svg {
+  width: 11px;
+  height: 11px;
+}
+.entry-attach + .entry-time {
+  margin-left: 0;
 }
 .entry-workspace {
   display: flex;
@@ -1418,6 +1511,25 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--text-secondary);
   margin: 0;
+}
+.empty-action {
+  height: 28px;
+  margin-top: 8px;
+  padding: 0 12px;
+  border: var(--hairline) solid var(--control-border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--control-bg);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: var(--clickable-shadow);
+}
+.empty-action:hover {
+  background: var(--control-hover-bg, var(--control-bg));
+}
+.empty-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
 }
 /* Detail pane */
 .detail-pane {

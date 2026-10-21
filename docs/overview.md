@@ -61,8 +61,10 @@ AskHuman/
     views/SettingsView.vue   设置页（编排层；各 tab 组件与域逻辑在 views/settings/）
     views/HistoryView.vue    回复历史列表、搜索与筛选；右侧附件预览面板与分栏
     views/history/useHistoryPreview.ts  历史窗口唯一的附件预览控制器（面板本体复用 views/popup/）
+    views/history/useAttachmentFilter.ts · AttachmentFilter.vue · AttachmentChips.vue  附件筛选（状态、按钮 + 面板、条件标签）
     components/HistoryDetail.vue  单条历史的只读详情
     lib/history.ts           历史记录展示相关纯函数
+    lib/historyAttachments.ts  附件事实（数量 / 后缀）与筛选的纯函数
     lib/ipc.ts               Tauri invoke 封装
     lib/types.ts             与 Rust 模型对齐的 TS 类型
     lib/markdown.ts          Markdown 渲染与代码复制
@@ -338,7 +340,8 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 - 历史窗口用单一两级菜单按“项目 → 单个 session → 多关键词 AND 搜索”组合筛选；真实 Agent session 使用
   `agentKind + agentSessionId`，缺失时才以 `project + mcpInstanceId` 作为明确标注的近似分组。
   从弹窗进入会优先定位本次 ask 的真实历史绑定，已打开的全局单窗也会重新定位。
-- 清理菜单按上下文显示“删除当前搜索结果 / 清空所选会话 / 清空所选项目”；范围清理只提交确认时
+  搜索框旁的“附件”筛选（有无附件 / 提问·回复来源 / 后缀多选，纯前端、不落盘）与它们叠加。
+- 清理菜单按上下文显示“删除当前搜索结果 / 清空所选会话 / 清空所选项目”（关键词或附件条件生效即视为搜索）；范围清理只提交确认时
   冻结的 entry ID，全量清空是独立动作，两者都只改
   `history.jsonl`，不触碰 daemon 重放缓存或待答卡片。完整约束见 `docs/specs/reply-history.md`。
 
