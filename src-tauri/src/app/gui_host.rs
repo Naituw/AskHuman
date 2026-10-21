@@ -42,8 +42,9 @@ pub fn is_hosted_label(label: &str) -> bool {
 // 三态图标由 `scripts/gen_tray_icons.py` 从设计稿 `icons/tray/source.png`
 // 抠图生成：黑色像素=不透明，白色（如 "?"、月牙缺口）=透明。macOS 作为
 // 模板图（系统按菜单栏明暗自动反色）；Linux / Windows 无原生 template 机制，
-// 由宿主根据当前主题（general.theme / 系统明暗）在加载时动态反相墨水为白色，
-// 确保在深色面板上高对比度显示。
+// 由宿主仅按系统面板/任务栏明暗（Windows 读取 SystemUsesLightTheme、Linux 识别
+// GNOME 默认深色顶栏与 XDG Desktop Portal color-scheme，不与窗口主题 general.theme 耦合）
+// 在加载时动态反相墨水为白色，确保在深色面板上高对比度显示。
 mod icon_bytes {
     pub const IDLE: &[u8] = include_bytes!("../../icons/tray/tray-idle.png");
     pub const ACTIVE: &[u8] = include_bytes!("../../icons/tray/tray-active.png");
@@ -213,25 +214,11 @@ pub(crate) fn sync_update_check_error(app: &AppHandle, error: &str) {
     refresh_on_main(app);
 }
 
-pub(crate) fn sync_theme(app: &AppHandle, theme: &str) {
-    let Some(state) = app.try_state::<HostState>() else {
-        return;
-    };
-    let mode = match theme {
-        "light" => ThemeMode::Light,
-        "dark" => ThemeMode::Dark,
-        _ => ThemeMode::System,
-    };
-    *state.theme.lock().unwrap() = mode;
-    refresh_on_main(app);
-}
-
 pub struct HostState {
     pub mode: Mutex<MenuBarIconMode>,
     /// 上次已应用的守护进程生命周期模式：用于在配置变更时检测「切到保活」的跃迁，
     /// 从而立即拉起 daemon（打开开关即视为一次触发，见 spec）。
     pub daemon_lifecycle: Mutex<DaemonLifecycleMode>,
-    pub theme: Mutex<ThemeMode>,
     pub lang: Mutex<Lang>,
     pub data: Mutex<TrayData>,
     /// Current-mode integration bundles that need reconciliation, in settings display order.
@@ -268,9 +255,6 @@ pub struct HostState {
 impl HostState {
     fn mode(&self) -> MenuBarIconMode {
         *self.mode.lock().unwrap()
-    }
-    fn theme(&self) -> ThemeMode {
-        *self.theme.lock().unwrap()
     }
     fn lang(&self) -> Lang {
         *self.lang.lock().unwrap()
@@ -309,7 +293,6 @@ pub fn setup(app: &mut tauri::App, config: &AppConfig) -> tauri::Result<()> {
     app.manage(HostState {
         mode: Mutex::new(mode),
         daemon_lifecycle: Mutex::new(config.general.daemon_lifecycle),
-        theme: Mutex::new(config.general.theme),
         lang: Mutex::new(lang),
         data: Mutex::new(initial_tray_data()),
         integration_updates: Mutex::new(detect_integration_updates()),
@@ -414,20 +397,113 @@ fn invert_tray_icon_ink(image: Image<'static>) -> Image<'static> {
     Image::new_owned(rgba, width, height)
 }
 
-/// Whether non-macOS tray icons should render dark-appearance (light/white ink) artwork.
-/// macOS uses template images natively (`icon_as_template(true)`), so this is a no-op there.
-#[cfg(any(not(target_os = "macos"), test))]
-fn is_dark_tray(theme: ThemeMode) -> bool {
-    match theme {
-        ThemeMode::Dark => true,
-        ThemeMode::Light => false,
-        ThemeMode::System => matches!(dark_light::detect(), Ok(dark_light::Mode::Dark)),
-    }
+#[cfg(any(target_os = "windows", test))]
+const fn parse_windows_light_theme_dword(dword: u32) -> bool {
+    dword == 0
 }
 
-#[cfg(all(target_os = "macos", not(test)))]
-fn is_dark_tray(_theme: ThemeMode) -> bool {
-    false
+/// Read the Windows shell/taskbar theme (`SystemUsesLightTheme`) rather than the application
+/// theme (`AppsUseLightTheme` used by `dark_light::detect()`), since the notification area sits
+/// on the Windows taskbar and the two modes can be configured independently under Custom color mode.
+#[cfg(target_os = "windows")]
+fn windows_taskbar_is_dark() -> Option<bool> {
+    use std::ptr;
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
+    };
+
+    struct Key(HKEY);
+    impl Drop for Key {
+        fn drop(&mut self) {
+            unsafe {
+                RegCloseKey(self.0);
+            }
+        }
+    }
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    let subkey = wide(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+    let mut key: HKEY = ptr::null_mut();
+    let status =
+        unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_READ, &mut key) };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+    let key = Key(key);
+    let name = wide("SystemUsesLightTheme");
+    let mut kind: u32 = 0;
+    let mut data: u32 = 0;
+    let mut bytes = std::mem::size_of::<u32>() as u32;
+    let status = unsafe {
+        RegQueryValueExW(
+            key.0,
+            name.as_ptr(),
+            ptr::null(),
+            &mut kind,
+            (&mut data as *mut u32).cast(),
+            &mut bytes,
+        )
+    };
+    if status != ERROR_SUCCESS || kind != REG_DWORD || bytes != std::mem::size_of::<u32>() as u32 {
+        return None;
+    }
+    Some(parse_windows_light_theme_dword(data))
+}
+
+/// Standard GNOME Shell (`GNOME`, `ubuntu:GNOME`, `pop:GNOME`) renders a dark top bar by default
+/// even when the user's color-scheme preference is default/light. Exclude classic/flashback/budgie
+/// sessions whose panels follow the light theme or independent styling.
+#[cfg(any(target_os = "linux", test))]
+fn is_gnome_dark_top_bar_env(
+    xdg_current_desktop: Option<&str>,
+    xdg_session_desktop: Option<&str>,
+) -> bool {
+    let tokens = || {
+        xdg_current_desktop
+            .into_iter()
+            .chain(xdg_session_desktop)
+            .flat_map(|v| v.split(':'))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+    if tokens().any(|part| {
+        part.eq_ignore_ascii_case("gnome-classic")
+            || part.eq_ignore_ascii_case("gnome-flashback")
+            || part.eq_ignore_ascii_case("budgie")
+    }) {
+        return false;
+    }
+    tokens().any(|part| part.eq_ignore_ascii_case("gnome"))
+}
+
+/// Whether non-macOS tray icons should render dark-appearance (light/white ink) artwork.
+/// Follows only the OS panel/taskbar appearance (never AskHuman's own `general.theme` window setting).
+/// macOS uses template images natively (`icon_as_template(true)`), so this returns `false` there.
+fn is_dark_tray() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        false
+    }
+    #[cfg(target_os = "windows")]
+    {
+        windows_taskbar_is_dark()
+            .unwrap_or_else(|| matches!(dark_light::detect(), Ok(dark_light::Mode::Dark)))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        #[cfg(target_os = "linux")]
+        if is_gnome_dark_top_bar_env(
+            std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+            std::env::var("XDG_SESSION_DESKTOP").ok().as_deref(),
+        ) {
+            return true;
+        }
+        matches!(dark_light::detect(), Ok(dark_light::Mode::Dark))
+    }
 }
 
 fn decode_icon(bytes: &'static [u8], dark: bool) -> Option<Image<'static>> {
@@ -542,7 +618,7 @@ fn ensure_tray(app: &AppHandle, present: bool) -> tauri::Result<()> {
         refresh_tray(app);
         return Ok(());
     }
-    let dark = is_dark_tray(state.theme());
+    let dark = is_dark_tray();
     // 建一个空菜单挂上托盘并长期持有；条目交给 refresh_tray 经 diff 填充（之后只就地改 / 最小增删）。
     let menu = Menu::new(app)?;
     let mut builder = TrayIconBuilder::with_id("askhuman-tray")
@@ -579,7 +655,7 @@ pub fn refresh_tray(app: &AppHandle) {
     let integration_updates = state.integration_updates.lock().unwrap().clone();
     let update_action = state.update_action.lock().unwrap().clone();
     let lang = state.lang();
-    let dark_tray = is_dark_tray(state.theme());
+    let dark_tray = is_dark_tray();
     // 是否有任一家开启了生命周期追踪：未开启时隐藏 Agent 状态相关菜单项（入口 + 忙闲行）。
     let lifecycle_on = crate::integrations::agent_lifecycle::any_installed();
     // 盘上二进制已换新但被打开的窗口挡住自动 re-exec → 菜单出现「重启以完成更新」项（B2）。
@@ -1984,7 +2060,6 @@ fn apply_config(app: &AppHandle, cfg: &AppConfig) {
     let new_lang = Lang::resolve(&cfg.general.language);
     let new_mode = cfg.general.menu_bar_icon;
     let old_mode = state.mode();
-    *state.theme.lock().unwrap() = cfg.general.theme;
     *state.lang.lock().unwrap() = new_lang;
     *state.mode.lock().unwrap() = new_mode;
 
@@ -2519,9 +2594,46 @@ mod tests {
     }
 
     #[test]
-    fn is_dark_tray_mode_resolves_correctly() {
-        assert!(is_dark_tray(ThemeMode::Dark));
-        assert!(!is_dark_tray(ThemeMode::Light));
+    fn windows_light_theme_dword_zero_means_dark_taskbar() {
+        assert!(parse_windows_light_theme_dword(0));
+        assert!(!parse_windows_light_theme_dword(1));
+        assert!(!parse_windows_light_theme_dword(2));
+    }
+
+    #[test]
+    fn gnome_dark_top_bar_detection_matches_standard_gnome_and_excludes_light_panel_variants() {
+        // Standard GNOME Shell sessions have a dark top bar regardless of light/dark preference.
+        assert!(is_gnome_dark_top_bar_env(Some("GNOME"), None));
+        assert!(is_gnome_dark_top_bar_env(
+            Some("ubuntu:GNOME"),
+            Some("ubuntu")
+        ));
+        assert!(is_gnome_dark_top_bar_env(Some("pop:GNOME"), Some("pop")));
+        assert!(is_gnome_dark_top_bar_env(None, Some("gnome")));
+
+        // Variants that use a light panel in light mode or their own panel styling must fall
+        // through to XDG portal detection rather than forcing dark-bar ink.
+        assert!(!is_gnome_dark_top_bar_env(
+            Some("GNOME-Classic:GNOME"),
+            Some("gnome-classic")
+        ));
+        assert!(!is_gnome_dark_top_bar_env(
+            Some("GNOME-Flashback:GNOME"),
+            Some("gnome-flashback-metacity")
+        ));
+        assert!(!is_gnome_dark_top_bar_env(
+            Some("Budgie:GNOME"),
+            Some("budgie-desktop")
+        ));
+
+        // Other desktops/compositors use XDG portal detection.
+        assert!(!is_gnome_dark_top_bar_env(
+            Some("Hyprland"),
+            Some("Hyprland")
+        ));
+        assert!(!is_gnome_dark_top_bar_env(Some("sway"), Some("sway")));
+        assert!(!is_gnome_dark_top_bar_env(Some("KDE"), Some("plasma")));
+        assert!(!is_gnome_dark_top_bar_env(None, None));
     }
 
     #[cfg(not(target_os = "macos"))]
