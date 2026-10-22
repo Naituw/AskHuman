@@ -41,7 +41,10 @@ pub fn is_hosted_label(label: &str) -> bool {
 //
 // 三态图标由 `scripts/gen_tray_icons.py` 从设计稿 `icons/tray/source.png`
 // 抠图生成：黑色像素=不透明，白色（如 "?"、月牙缺口）=透明。macOS 作为
-// 模板图（系统按菜单栏明暗自动反色）；Linux 直接使用同一张单色图。
+// 模板图（系统按菜单栏明暗自动反色）；Linux / Windows 无原生 template 机制，
+// 由宿主仅按系统面板/任务栏明暗（Windows 读取 SystemUsesLightTheme、Linux 识别
+// GNOME 默认深色顶栏与 XDG Desktop Portal color-scheme，不与窗口主题 general.theme 耦合）
+// 在加载时动态反相墨水为白色，确保在深色面板上高对比度显示。
 mod icon_bytes {
     pub const IDLE: &[u8] = include_bytes!("../../icons/tray/tray-idle.png");
     pub const ACTIVE: &[u8] = include_bytes!("../../icons/tray/tray-active.png");
@@ -377,16 +380,148 @@ fn apply_activation_policy(app: &AppHandle, mode: MenuBarIconMode) {
 
 // ===== 托盘图标 / 菜单 =====
 
-fn decode_icon(bytes: &'static [u8]) -> Option<Image<'static>> {
-    let image = Image::from_bytes(bytes).ok()?;
+/// Invert monochrome tray icon ink (black -> white) while preserving alpha transparency
+/// and anti-aliasing for dark panels on platforms without native template icon support.
+#[cfg(any(not(target_os = "macos"), test))]
+fn invert_tray_icon_ink(image: Image<'static>) -> Image<'static> {
+    let width = image.width();
+    let height = image.height();
+    let mut rgba = image.rgba().to_vec();
+    for pixel in rgba.chunks_exact_mut(4) {
+        if pixel[3] > 0 {
+            pixel[0] = 255 - pixel[0];
+            pixel[1] = 255 - pixel[1];
+            pixel[2] = 255 - pixel[2];
+        }
+    }
+    Image::new_owned(rgba, width, height)
+}
+
+#[cfg(any(target_os = "windows", test))]
+const fn parse_windows_light_theme_dword(dword: u32) -> bool {
+    dword == 0
+}
+
+/// Read the Windows shell/taskbar theme (`SystemUsesLightTheme`) rather than the application
+/// theme (`AppsUseLightTheme` used by `dark_light::detect()`), since the notification area sits
+/// on the Windows taskbar and the two modes can be configured independently under Custom color mode.
+#[cfg(target_os = "windows")]
+fn windows_taskbar_is_dark() -> Option<bool> {
+    use std::ptr;
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
+    };
+
+    struct Key(HKEY);
+    impl Drop for Key {
+        fn drop(&mut self) {
+            unsafe {
+                RegCloseKey(self.0);
+            }
+        }
+    }
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    let subkey = wide(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+    let mut key: HKEY = ptr::null_mut();
+    let status =
+        unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_READ, &mut key) };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+    let key = Key(key);
+    let name = wide("SystemUsesLightTheme");
+    let mut kind: u32 = 0;
+    let mut data: u32 = 0;
+    let mut bytes = std::mem::size_of::<u32>() as u32;
+    let status = unsafe {
+        RegQueryValueExW(
+            key.0,
+            name.as_ptr(),
+            ptr::null(),
+            &mut kind,
+            (&mut data as *mut u32).cast(),
+            &mut bytes,
+        )
+    };
+    if status != ERROR_SUCCESS || kind != REG_DWORD || bytes != std::mem::size_of::<u32>() as u32 {
+        return None;
+    }
+    Some(parse_windows_light_theme_dword(data))
+}
+
+/// Standard GNOME Shell (`GNOME`, `ubuntu:GNOME`, `pop:GNOME`) renders a dark top bar by default
+/// even when the user's color-scheme preference is default/light. Exclude classic/flashback/budgie
+/// sessions whose panels follow the light theme or independent styling.
+#[cfg(any(target_os = "linux", test))]
+fn is_gnome_dark_top_bar_env(
+    xdg_current_desktop: Option<&str>,
+    xdg_session_desktop: Option<&str>,
+) -> bool {
+    let tokens = || {
+        xdg_current_desktop
+            .into_iter()
+            .chain(xdg_session_desktop)
+            .flat_map(|v| v.split(':'))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+    if tokens().any(|part| {
+        part.eq_ignore_ascii_case("gnome-classic")
+            || part.eq_ignore_ascii_case("gnome-flashback")
+            || part.eq_ignore_ascii_case("budgie")
+    }) {
+        return false;
+    }
+    tokens().any(|part| part.eq_ignore_ascii_case("gnome"))
+}
+
+/// Whether non-macOS tray icons should render dark-appearance (light/white ink) artwork.
+/// Follows only the OS panel/taskbar appearance (never AskHuman's own `general.theme` window setting).
+/// macOS uses template images natively (`icon_as_template(true)`), so this returns `false` there.
+fn is_dark_tray() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        false
+    }
     #[cfg(target_os = "windows")]
     {
-        Some(compact_windows_tray_icon(image))
+        windows_taskbar_is_dark()
+            .unwrap_or_else(|| matches!(dark_light::detect(), Ok(dark_light::Mode::Dark)))
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
-        Some(image)
+        #[cfg(target_os = "linux")]
+        if is_gnome_dark_top_bar_env(
+            std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+            std::env::var("XDG_SESSION_DESKTOP").ok().as_deref(),
+        ) {
+            return true;
+        }
+        matches!(dark_light::detect(), Ok(dark_light::Mode::Dark))
     }
+}
+
+fn decode_icon(bytes: &'static [u8], dark: bool) -> Option<Image<'static>> {
+    let image = Image::from_bytes(bytes).ok()?;
+    #[cfg(target_os = "windows")]
+    let image = compact_windows_tray_icon(image);
+
+    #[cfg(not(target_os = "macos"))]
+    let image = if dark {
+        invert_tray_icon_ink(image)
+    } else {
+        image
+    };
+
+    #[cfg(target_os = "macos")]
+    let _ = dark;
+
+    Some(image)
 }
 
 /// Trim transparent pixels and place the result on a square canvas with a one-pixel safety edge.
@@ -460,12 +595,12 @@ fn icon_for(
     daemon_up: bool,
     active_requests: usize,
     integration_attention: bool,
+    dark: bool,
 ) -> Option<Image<'static>> {
-    decode_icon(icon_source(
-        daemon_up,
-        active_requests,
-        integration_attention,
-    ))
+    decode_icon(
+        icon_source(daemon_up, active_requests, integration_attention),
+        dark,
+    )
 }
 
 /// 建立（present=true）或移除（present=false）托盘图标。须在主线程调用。
@@ -483,13 +618,14 @@ fn ensure_tray(app: &AppHandle, present: bool) -> tauri::Result<()> {
         refresh_tray(app);
         return Ok(());
     }
+    let dark = is_dark_tray();
     // 建一个空菜单挂上托盘并长期持有；条目交给 refresh_tray 经 diff 填充（之后只就地改 / 最小增删）。
     let menu = Menu::new(app)?;
     let mut builder = TrayIconBuilder::with_id("askhuman-tray")
         .icon_as_template(icon_bytes::TEMPLATE)
         .menu(&menu)
         .show_menu_on_left_click(true);
-    if let Some(img) = decode_icon(icon_bytes::IDLE) {
+    if let Some(img) = decode_icon(icon_bytes::IDLE, dark) {
         builder = builder.icon(img);
     }
     let tray = builder.build(app)?;
@@ -519,6 +655,7 @@ pub fn refresh_tray(app: &AppHandle) {
     let integration_updates = state.integration_updates.lock().unwrap().clone();
     let update_action = state.update_action.lock().unwrap().clone();
     let lang = state.lang();
+    let dark_tray = is_dark_tray();
     // 是否有任一家开启了生命周期追踪：未开启时隐藏 Agent 状态相关菜单项（入口 + 忙闲行）。
     let lifecycle_on = crate::integrations::agent_lifecycle::any_installed();
     // 盘上二进制已换新但被打开的窗口挡住自动 re-exec → 菜单出现「重启以完成更新」项（B2）。
@@ -533,13 +670,19 @@ pub fn refresh_tray(app: &AppHandle) {
         lifecycle_on,
         stale,
         &update_action,
+        dark_tray,
     );
     if state.menu_sig.lock().unwrap().as_deref() == Some(sig.as_str()) {
         return;
     }
 
     // 图标（set_icon / set_tooltip 不会关闭已展开菜单）。
-    if let Some(img) = icon_for(up, data.active_requests, !integration_updates.is_empty()) {
+    if let Some(img) = icon_for(
+        up,
+        data.active_requests,
+        !integration_updates.is_empty(),
+        dark_tray,
+    ) {
         let _ = tray.set_icon(Some(img));
         let _ = tray.set_icon_as_template(icon_bytes::TEMPLATE);
     }
@@ -573,6 +716,7 @@ pub fn refresh_tray(app: &AppHandle) {
 /// 决定菜单/图标渲染结果的全部输入拼成的签名：与上次相同即「整次跳过」（菜单已是正确状态，连 diff 都省，
 /// 确保展开的菜单纹丝不动）；不同才进入 diff。**必须覆盖 `build_specs` 与图标/tooltip 的每个输入**，
 /// 否则真变化会被误跳过。uptime 取分钟级文案，避免秒级微变把每次推送都判为「有变化」。
+#[allow(clippy::too_many_arguments)]
 fn menu_signature(
     up: bool,
     lang: Lang,
@@ -581,6 +725,7 @@ fn menu_signature(
     lifecycle_on: bool,
     stale: bool,
     update_action: &UpdateActionState,
+    dark_tray: bool,
 ) -> String {
     // 待答子菜单内容（id+预览）也入签名：列表/预览变化即触发 diff。
     let pending: String = data
@@ -619,7 +764,7 @@ fn menu_signature(
         .collect::<Vec<_>>()
         .join(";");
     format!(
-        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
+        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}|{}",
         lang,
         up as u8,
         data.version,
@@ -645,6 +790,7 @@ fn menu_signature(
         issues,
         integration_updates.join(","),
         update_action,
+        dark_tray as u8,
     )
 }
 
@@ -2412,7 +2558,131 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn non_windows_tray_decode_preserves_the_designed_canvas() {
-        let idle = decode_icon(icon_bytes::IDLE).unwrap();
+        let idle = decode_icon(icon_bytes::IDLE, false).unwrap();
         assert_eq!((idle.width(), idle.height()), (48, 36));
+    }
+
+    #[test]
+    fn invert_tray_icon_ink_inverts_black_to_white_and_preserves_alpha() {
+        let mut rgba = vec![0; 4 * 4 * 4];
+        // pixel 0: transparent [0, 0, 0, 0]
+        // pixel 1: solid black ink [0, 0, 0, 255]
+        rgba[4] = 0;
+        rgba[5] = 0;
+        rgba[6] = 0;
+        rgba[7] = 255;
+        // pixel 2: anti-aliased black edge [0, 0, 0, 128]
+        rgba[8] = 0;
+        rgba[9] = 0;
+        rgba[10] = 0;
+        rgba[11] = 128;
+
+        let original = Image::new_owned(rgba.clone(), 4, 4);
+        let inverted = invert_tray_icon_ink(original);
+
+        let inv_rgba = inverted.rgba();
+        // pixel 0 stays transparent
+        assert_eq!(&inv_rgba[0..4], &[0, 0, 0, 0]);
+        // pixel 1 becomes solid white [255, 255, 255, 255]
+        assert_eq!(&inv_rgba[4..8], &[255, 255, 255, 255]);
+        // pixel 2 becomes white with preserved alpha [255, 255, 255, 128]
+        assert_eq!(&inv_rgba[8..12], &[255, 255, 255, 128]);
+
+        // Symmetric check: inverting again restores original
+        let restored = invert_tray_icon_ink(inverted);
+        assert_eq!(restored.rgba(), rgba.as_slice());
+    }
+
+    #[test]
+    fn windows_light_theme_dword_zero_means_dark_taskbar() {
+        assert!(parse_windows_light_theme_dword(0));
+        assert!(!parse_windows_light_theme_dword(1));
+        assert!(!parse_windows_light_theme_dword(2));
+    }
+
+    #[test]
+    fn gnome_dark_top_bar_detection_matches_standard_gnome_and_excludes_light_panel_variants() {
+        // Standard GNOME Shell sessions have a dark top bar regardless of light/dark preference.
+        assert!(is_gnome_dark_top_bar_env(Some("GNOME"), None));
+        assert!(is_gnome_dark_top_bar_env(
+            Some("ubuntu:GNOME"),
+            Some("ubuntu")
+        ));
+        assert!(is_gnome_dark_top_bar_env(Some("pop:GNOME"), Some("pop")));
+        assert!(is_gnome_dark_top_bar_env(None, Some("gnome")));
+
+        // Variants that use a light panel in light mode or their own panel styling must fall
+        // through to XDG portal detection rather than forcing dark-bar ink.
+        assert!(!is_gnome_dark_top_bar_env(
+            Some("GNOME-Classic:GNOME"),
+            Some("gnome-classic")
+        ));
+        assert!(!is_gnome_dark_top_bar_env(
+            Some("GNOME-Flashback:GNOME"),
+            Some("gnome-flashback-metacity")
+        ));
+        assert!(!is_gnome_dark_top_bar_env(
+            Some("Budgie:GNOME"),
+            Some("budgie-desktop")
+        ));
+
+        // Other desktops/compositors use XDG portal detection.
+        assert!(!is_gnome_dark_top_bar_env(
+            Some("Hyprland"),
+            Some("Hyprland")
+        ));
+        assert!(!is_gnome_dark_top_bar_env(Some("sway"), Some("sway")));
+        assert!(!is_gnome_dark_top_bar_env(Some("KDE"), Some("plasma")));
+        assert!(!is_gnome_dark_top_bar_env(None, None));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn decode_icon_inverts_ink_for_dark_theme() {
+        let light_img = decode_icon(icon_bytes::IDLE, false).unwrap();
+        let dark_img = decode_icon(icon_bytes::IDLE, true).unwrap();
+
+        assert_eq!(light_img.width(), dark_img.width());
+        assert_eq!(light_img.height(), dark_img.height());
+
+        let mut checked = false;
+        for (l, d) in light_img
+            .rgba()
+            .chunks_exact(4)
+            .zip(dark_img.rgba().chunks_exact(4))
+        {
+            assert_eq!(l[3], d[3], "alpha channel must match");
+            if l[3] == 255 {
+                assert_eq!(&l[0..3], &[0, 0, 0], "light mode ink should be black");
+                assert_eq!(&d[0..3], &[255, 255, 255], "dark mode ink should be white");
+                checked = true;
+            }
+        }
+        assert!(checked, "should have checked at least one opaque pixel");
+    }
+
+    #[test]
+    fn menu_signature_changes_when_tray_appearance_flips() {
+        let sig_light = menu_signature(
+            true,
+            Lang::En,
+            &TrayData::default(),
+            &[],
+            false,
+            false,
+            &UpdateActionState::Idle,
+            false,
+        );
+        let sig_dark = menu_signature(
+            true,
+            Lang::En,
+            &TrayData::default(),
+            &[],
+            false,
+            false,
+            &UpdateActionState::Idle,
+            true,
+        );
+        assert_ne!(sig_light, sig_dark);
     }
 }
