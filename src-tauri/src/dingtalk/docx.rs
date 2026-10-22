@@ -598,7 +598,7 @@ mod tests {
         let reader = std::io::Cursor::new(bytes);
         let mut zip = zip::ZipArchive::new(reader).unwrap();
         (0..zip.len())
-            .map(|i| zip.by_index(i).unwrap().name().to_string())
+            .map(|i| zip.by_index(i).unwrap().name().unwrap().into_owned())
             .collect()
     }
 
@@ -613,6 +613,42 @@ mod tests {
             "word/document.xml",
         ] {
             assert!(names.iter().any(|n| n == need), "missing part: {need}");
+        }
+    }
+
+    #[test]
+    fn docx_parts_decompress_as_valid_xml_and_preserve_unicode() {
+        use std::io::Read;
+
+        let bytes =
+            build_markdown_docx("# 中文标题\n\n正文 & emoji 🐟\n\n```text\n<&> 中文代码\n```\n")
+                .unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut document_text = None;
+        for index in 0..archive.len() {
+            let mut part = archive.by_index(index).unwrap();
+            assert_eq!(part.compression(), zip::CompressionMethod::Deflated);
+            let mut xml = String::new();
+            part.read_to_string(&mut xml).unwrap();
+            let parsed = roxmltree::Document::parse(&xml).unwrap();
+            if part.name().unwrap() == "word/document.xml" {
+                document_text = Some(
+                    parsed
+                        .descendants()
+                        .filter(|node| {
+                            node.has_tag_name((
+                                "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+                                "t",
+                            ))
+                        })
+                        .filter_map(|node| node.text())
+                        .collect::<String>(),
+                );
+            }
+        }
+        let text = document_text.expect("DOCX must contain the main document part");
+        for expected in ["中文标题", "正文 & emoji 🐟", "<&> 中文代码"] {
+            assert!(text.contains(expected), "missing document text: {expected}");
         }
     }
 

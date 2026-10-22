@@ -112,7 +112,7 @@ pub fn reconnect_delay(attempt: u32) -> std::time::Duration {
 /// Whether reconnect `attempt` (0-based) deserves a log line: the first three attempts, then
 /// every tenth, so a multi-hour outage does not flood `daemon.log`.
 pub fn should_log_reconnect(attempt: u32) -> bool {
-    attempt < 3 || attempt % 10 == 0
+    attempt < 3 || attempt.is_multiple_of(10)
 }
 
 /// Message recorded in the health table while a router is between connections.

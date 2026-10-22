@@ -96,7 +96,7 @@ fn text(bytes: &[u8], utf16: bool) -> Result<String, &'static str> {
     let text = if utf16 && (bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff])) {
         let little = bytes[0] == 0xff;
         let bytes = &bytes[2..];
-        if bytes.len() % 2 != 0 {
+        if !bytes.len().is_multiple_of(2) {
             return Err("encoding");
         }
         let units: Vec<_> = bytes

@@ -5,9 +5,8 @@ description = "HumanInLoop - Human-in-the-loop interaction tool (Rust + Tauri)"
 authors = ["Naituw"]
 license = "MIT"
 edition = "2021"
-# 实际下限：代码已使用 1.82+ 才 stable 的 API（如 Option::is_none_or），
-# clippy 的 incompatible_msrv lint 以此声明为准。
-rust-version = "1.82"
+# ZIP security fixes and the locked image/serde_with/time dependencies require Rust 1.88.
+rust-version = "1.88"
 default-run = "AskHuman"
 
 [[bin]]
@@ -38,8 +37,7 @@ tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-pn
 raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Line-oriented permission preview diffs. Keep 2.x for the repository's Rust 1.82 MSRV;
-# similar 3.x requires Rust 1.85.
+# Line-oriented permission preview diffs; retain the existing 2.x API.
 similar = "2.7"
 # 以 CST 做“保留格式的最小化编辑”改写 hooks.json / settings.json：
 # 只触碰本应用注入的条目，用户的注释 / 缩进 / 转义（如 http:\/\/）逐字节保留；
@@ -85,8 +83,8 @@ sys-locale = "0.3.2"
 # Markdown 解析（文本附件转 docx + macOS QuickLook 渲染预览）。禁用 simd 等默认特性以控体积，
 # 仅保留 `html`（QuickLook 预览把 .md 渲染成 HTML 走原生面板，见 macos_quicklook.rs）。
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
-# 打包 docx（OOXML zip）。仅启用 flate2+zlib-rs 的 deflate 后端（快且小，避免 zopfli）。
-zip = { version = "4.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# Package DOCX with the patched ZIP writer; enable only the existing zlib-rs deflate backend.
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 roxmltree = "0.20"
 # Shared channel conversion and Popup codecs; keep default codecs disabled to control size.
 # ICO reuses PNG/BMP, and TGA/PNM add no external decoder crates.

@@ -597,7 +597,7 @@ fn query_process_command_line(process: windows_sys::Win32::Foundation::HANDLE) -
     }
     let value = unsafe { &*(storage.as_ptr().cast::<UnicodeString>()) };
     let byte_len = value.length as usize;
-    if byte_len == 0 || byte_len % 2 != 0 || value.buffer.is_null() {
+    if byte_len == 0 || !byte_len.is_multiple_of(2) || value.buffer.is_null() {
         return None;
     }
     let storage_start = storage.as_ptr() as usize;

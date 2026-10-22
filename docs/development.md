@@ -4,7 +4,7 @@ Engineering notes for contributors. User-facing docs live in [`docs/wiki/`](./wi
 
 ## Prerequisites
 
-- [Rust toolchain](https://rustup.rs)
+- [Rust toolchain](https://rustup.rs) 1.88 or newer (required by the patched ZIP dependency and the locked image/serde_with/time versions)
 - [pnpm](https://pnpm.io) (Node 20+)
 - macOS only: an Xcode SDK is required because some macOS-native pieces are built from Swift via `build.rs`.
 
