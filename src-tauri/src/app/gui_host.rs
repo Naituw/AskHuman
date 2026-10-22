@@ -387,7 +387,7 @@ fn invert_tray_icon_ink(image: Image<'static>) -> Image<'static> {
     let width = image.width();
     let height = image.height();
     let mut rgba = image.rgba().to_vec();
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
         if pixel[3] > 0 {
             pixel[0] = 255 - pixel[0];
             pixel[1] = 255 - pixel[1];
@@ -2648,8 +2648,10 @@ mod tests {
         let mut checked = false;
         for (l, d) in light_img
             .rgba()
-            .chunks_exact(4)
-            .zip(dark_img.rgba().chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(dark_img.rgba().as_chunks::<4>().0)
         {
             assert_eq!(l[3], d[3], "alpha channel must match");
             if l[3] == 255 {
