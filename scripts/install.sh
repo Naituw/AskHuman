@@ -173,6 +173,30 @@ _file_sha256() {
   fi
 }
 
+# Keep symlink entry points intact (for example ~/.local/bin -> an npm package).
+# Stage beside the resolved target so the final rename stays on one filesystem.
+resolve_install_target() {
+  local target="$1" link hops=0 dir
+  while [ -L "$target" ]; do
+    if [ "$hops" -ge 40 ]; then
+      echo "错误: 安装目标的符号链接层数过多: $1" >&2
+      return 1
+    fi
+    link="$(readlink "$target")"
+    case "$link" in
+      /*) target="$link" ;;
+      *) target="$(dirname "$target")/$link" ;;
+    esac
+    hops=$((hops + 1))
+  done
+  if [ -d "$target" ]; then
+    echo "错误: 安装目标是目录: $target" >&2
+    return 1
+  fi
+  dir="$(cd "$(dirname "$target")" && pwd -P)" || return 1
+  printf '%s/%s\n' "$dir" "$(basename "$target")"
+}
+
 echo "==> 安装到 $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 INSTALLED_BIN="$INSTALL_DIR/AskHuman"
@@ -190,12 +214,17 @@ if [ -n "$SOURCE_HASH" ] && [ -f "$INSTALLED_BIN" ] && [ -f "$INSTALL_STATE" ]; 
 fi
 
 if [ "$SKIP_COPY" -eq 0 ]; then
-  cp "$BIN_PATH" "$INSTALLED_BIN"
-  chmod 0755 "$INSTALLED_BIN"
+  INSTALL_TARGET="$(resolve_install_target "$INSTALLED_BIN")"
+  STAGED_BIN="$(mktemp "${INSTALL_TARGET}.new.XXXXXX")"
+  trap 'rm -f "$STAGED_BIN"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  cp "$BIN_PATH" "$STAGED_BIN"
+  chmod 0755 "$STAGED_BIN"
 
   if [ "$(uname)" = "Darwin" ]; then
-    # 清除 quarantine，降低拷贝后被 Gatekeeper 拦截的概率
-    xattr -d com.apple.quarantine "$INSTALL_DIR/AskHuman" 2>/dev/null || true
+    # Remove quarantine before signing the unpublished file.
+    xattr -d com.apple.quarantine "$STAGED_BIN" 2>/dev/null || true
     # Sign with a stable identity + fixed identifier so the OS keychain trusts the binary across
     # rebuilds (its designated requirement is cdhash-independent) → secret reads stay prompt-free.
     # Identity: $CODESIGN_IDENTITY if set, else prefer a "Developer ID Application" cert, else the
@@ -216,19 +245,24 @@ if [ "$SKIP_COPY" -eq 0 ]; then
     [ -z "$IDENTITY" ] && IDENTITY="-"
     if [ "$IDENTITY" = "-" ]; then
       echo "==> 签名 (ad-hoc; 设置 CODESIGN_IDENTITY 可避免每次重装的钥匙串弹框)"
-      codesign -i com.naituw.humaninloop --force --timestamp=none --sign "$IDENTITY" "$INSTALLED_BIN"
+      codesign -i com.naituw.humaninloop --force --timestamp=none --sign "$IDENTITY" "$STAGED_BIN"
     else
       echo "==> 签名 (identity: $IDENTITY, identifier: com.naituw.humaninloop)"
-      if ! codesign -i com.naituw.humaninloop --force --timestamp=none --sign "$IDENTITY" "$INSTALLED_BIN"; then
+      if ! codesign -i com.naituw.humaninloop --force --timestamp=none --sign "$IDENTITY" "$STAGED_BIN"; then
         echo "==> 后台进程无法使用正式签名私钥，改由用户 GUI 会话完成签名"
-        sign_via_gui_launchd "$IDENTITY" "$INSTALLED_BIN" || {
+        sign_via_gui_launchd "$IDENTITY" "$STAGED_BIN" || {
           echo "错误: 正式签名失败，安装已中止" >&2
           exit 1
         }
       fi
     fi
-    codesign --verify --strict "$INSTALLED_BIN"
+    codesign --verify --strict "$STAGED_BIN"
   fi
+
+  # Never modify an inode still mapped by MCP/daemon/GUI processes. Publish only
+  # after signing and verification succeed, leaving the old install intact on failure.
+  mv -f "$STAGED_BIN" "$INSTALL_TARGET"
+  trap - EXIT INT TERM
 
   if [ -n "$SOURCE_HASH" ]; then
     INSTALLED_HASH="$(_file_sha256 "$INSTALLED_BIN" 2>/dev/null || true)"

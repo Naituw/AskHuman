@@ -103,6 +103,36 @@
 - **并发**：客户端若并发调用 `ask`，各自 spawn 独立子进程，daemon 已支持并发请求（每请求独立 Coordinator）。
 - **环境边界**：子进程保留 cwd 与普通环境，但先清除长驻 MCP server 可能继承的四家原生 session 变量；只用每调用的可信绑定写内部环境。
 
+### 本地安装期间的连接连续性（2026-10-23）
+
+用户确认的范围是安装新版后在同一 Agent 会话继续提问；已受理的问题先答完，再按现有 graceful
+drain 换新版。即时迁移在途问题/草稿仍属 `docs/PROGRESS.md` 中的独立延期事项。
+
+本机定位到旧 `install.sh` 的直接覆盖与后置签名窗口：2026-10-23 的 macOS crash report 中，
+多个父进程为 `codex` 的 AskHuman 因 `SIGKILL (Code Signature Invalid)` / `CODESIGNING: Invalid Page`
+退出，另有刚启动的进程因 `Taskgated Invalid Signature` 退出。此时损坏的是 MCP 自身的进程/STDIO
+连接，单靠 daemon 排空无法保护它。
+
+- macOS/Linux 安装在目标同目录的临时文件上完成复制、权限、签名与校验，然后原子替换；失败保留
+  原文件和安装状态，清理临时文件。符号链接保持，替换最终目标，避免打断单份 npm/CLI 共享布局。
+- MCP 启动时缓存 `current_exe()` 路径，`ask`/`whats_next` 以后始终从这个路径启动当前磁盘上的 CLI；
+  避免 Linux 在原 inode 被替换后返回 ` (deleted)` 路径。旧 MCP 进程保持运行、STDIO 不重连。
+- MCP 自身的工具定义、上下文绑定与进程内 Todo/历史处理仍是旧版本，更新这些逻辑需要客户端重启
+  MCP 连接；本修复不承诺热加载工具 Schema，也不涉及 Windows exe 文件锁。
+- Linux 上首次升级前已经启动的旧 MCP 没有路径缓存，原子替换后可能仍需重建一次连接；macOS
+  当前会话的可用性须通过真实安装后继续调用 MCP 验证，不把模拟测试当作此项证据。
+
+自动回归：`scripts/install-unix.node-test.mjs` 检查旧打开文件仍保有旧内容、签名/校验失败回退、首次
+安装、符号链接和无变化跳过；Rust `same_mcp_connection_uses_replaced_cli_for_ask_and_whats_next`
+在同一条 MCP 连接上替换 CLI，验证两种提问均使用新文件。
+
+本机验收（2026-10-23）：6 项安装回归、28 项 MCP 测试通过；执行 `./scripts/install.sh` 后正式签名
+校验通过，安装文件 inode 已改变，安装前的 19 个 MCP 进程 PID/启动时间全部保持，安装后的实际
+问答结束再检查仍无 MCP 退出/新增进程，也无新增 AskHuman crash report。旧 daemon（PID 53902，
+指纹 `98e58c74`）带 2 个在途请求进入 drain，日志记录正常 stopped 后由新版 daemon（PID 89832，
+指纹 `bda7bd40`）接管。同一 Codex 会话随后通过原 MCP 发出的验收提问正常返回，用户确认
+“正常出现，可以作答”。Linux 分支为安装脚本模拟与 Unix Rust 回归，未据此声称 Linux 桌面实机验收。
+
 ### Codex 内部 thread 前置边界
 
 Codex 把 per-turn metadata 放在请求 `_meta["x-codex-turn-metadata"]`；AskHuman 兼容该值为 JSON

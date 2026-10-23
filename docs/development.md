@@ -133,6 +133,21 @@ request a network timestamp). After a successful copy it enforces per-profile ta
 Cargo-coordinated cleanup: local package artifacts are removed first, while dependency caches are
 retained whenever they fit.
 
+On macOS/Linux, installation stages the binary next to the destination, sets permissions, and
+finishes macOS signing and verification before atomically replacing the destination. Running MCP,
+daemon, and GUI processes keep their original executable inode; overwriting or re-signing that
+inode can terminate them with a macOS code-signature error. A signing/verification failure leaves
+the installed binary and its saved hash state intact. Symlink entry points are preserved by
+replacing their resolved target. MCP caches its executable path at startup so subsequent
+`ask`/`whats_next` calls launch the newly installed CLI, including on Linux where resolving a
+replaced process image again may return a path ending in ` (deleted)`.
+
+This supports continued questions in the same Agent session across local installs. Existing
+questions finish under the old daemon before graceful drain switches to the new build. MCP tool
+schemas and code running inside the MCP process itself stay at that process's original version
+until the client restarts its MCP connection. Windows installation still follows its separate
+executable-lock handling; it is not covered by the Unix atomic replacement behavior.
+
 The script ends by running `AskHuman doctor install --warn-only` with the freshly installed binary.
 It prints nothing unless AskHuman copies would fight over the daemon: a different build earlier on
 `PATH` than the one just installed, several builds on `PATH`, or a daemon hold already in effect.

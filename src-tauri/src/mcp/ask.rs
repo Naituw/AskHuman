@@ -356,6 +356,9 @@ pub struct AskServer {
     tool_router: ToolRouter<Self>,
     mcp_instance_id: String,
     project: String,
+    // Resolve once before updates unlink the running image. On Linux, current_exe()
+    // would then return a nonexistent " (deleted)" path instead of the new CLI.
+    executable: Result<PathBuf, String>,
 }
 
 #[tool_router(router = tool_router)]
@@ -368,6 +371,7 @@ impl AskServer {
                 .ok()
                 .map(|cwd| crate::project::detect_from(&cwd))
                 .unwrap_or_default(),
+            executable: std::env::current_exe().map_err(|error| error.to_string()),
         }
     }
 
@@ -436,15 +440,7 @@ of files the human attached), and `[status]` (present on cancel or for a replaye
             )
             .await;
         let argv = build_argv(&params);
-        let exe = std::env::current_exe().map_err(|e| {
-            McpError::internal_error(format!("cannot locate AskHuman executable: {e}"), None)
-        })?;
-
-        // stdin 置空、stdout/stderr 捕获，确保子进程不碰 MCP 的 STDIO 协议流。
-        // `ASKHUMAN_FROM_MCP=1`：告知子进程这是 MCP 发起，daemon 据此「只刷新、不新建」会话（防幽灵）。
-        let mut command = tokio::process::Command::new(exe);
-        command.args(&argv);
-        self.configure_child(&mut command, binding.as_ref());
+        let command = self.child_command(&argv, binding.as_ref())?;
         let call_cancel = cancel.child_token();
         let turn_abort_monitor = start_codex_turn_abort_monitor(&context.meta, call_cancel.clone());
         let output_result = capture_output(command, call_cancel).await;
@@ -528,12 +524,7 @@ approves ending the turn — only then may you end it.",
             )
             .await;
         let argv = build_whats_next_argv(&params);
-        let exe = std::env::current_exe().map_err(|e| {
-            McpError::internal_error(format!("cannot locate AskHuman executable: {e}"), None)
-        })?;
-        let mut command = tokio::process::Command::new(exe);
-        command.args(&argv);
-        self.configure_child(&mut command, binding.as_ref());
+        let command = self.child_command(&argv, binding.as_ref())?;
         let call_cancel = cancel.child_token();
         let turn_abort_monitor = start_codex_turn_abort_monitor(&context.meta, call_cancel.clone());
         let output_result = capture_output(command, call_cancel).await;
@@ -860,6 +851,20 @@ required.",
         })
         .await
         .unwrap_or_else(|_| self.project.clone())
+    }
+
+    fn child_command(
+        &self,
+        argv: &[String],
+        binding: Option<&crate::context_binding::AgentBinding>,
+    ) -> Result<tokio::process::Command, McpError> {
+        let executable = self.executable.as_ref().map_err(|error| {
+            McpError::internal_error(format!("cannot locate AskHuman executable: {error}"), None)
+        })?;
+        let mut command = tokio::process::Command::new(executable);
+        command.args(argv);
+        self.configure_child(&mut command, binding);
+        Ok(command)
     }
 
     fn configure_child(
@@ -1580,6 +1585,79 @@ mod tests {
                 response.pointer("/error/message"),
                 Some(&json!(CODEX_BLOCKED_THREAD_MESSAGE))
             );
+        }
+
+        drop(write);
+        drop(reader);
+        server_task.await??;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn same_mcp_connection_uses_replaced_cli_for_ask_and_whats_next() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        let executable = dir.path().join("AskHuman");
+        let mut server = AskServer::new();
+        server.executable = Ok(executable.clone());
+        let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
+        let server_task = tokio::spawn(async move {
+            server.serve(server_transport).await?.waiting().await?;
+            anyhow::Ok(())
+        });
+        let (read, mut write) = tokio::io::split(client_transport);
+        let mut reader = BufReader::new(read);
+        send_json(
+            &mut write,
+            json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05", "capabilities": {},
+                    "clientInfo": { "name": "install-test", "version": "0" }
+                }
+            }),
+        )
+        .await;
+        assert!(read_response(&mut reader, 1).await.get("result").is_some());
+        send_json(
+            &mut write,
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        )
+        .await;
+
+        let thread_id = uuid::Uuid::new_v4().to_string();
+        let mut id = 2;
+        for build in ["before-install", "after-install"] {
+            let staged = dir.path().join("AskHuman.new");
+            std::fs::write(
+                &staged,
+                format!("#!/bin/sh\nprintf '[user_input]\\n{build}\\n'\n"),
+            )?;
+            std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
+            std::fs::rename(&staged, &executable)?;
+            for tool in ["ask", "whats_next"] {
+                send_json(
+                    &mut write,
+                    json!({
+                        "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                        "params": {
+                            "_meta": { "threadId": thread_id },
+                            "name": tool, "arguments": { "message": "test" }
+                        }
+                    }),
+                )
+                .await;
+                let response = read_response(&mut reader, id).await;
+                assert_eq!(
+                    response.pointer("/result/content/0/text"),
+                    Some(&json!(format!("[user_input]\n{build}"))),
+                    "{tool}: {response}"
+                );
+                assert_ne!(response.pointer("/result/isError"), Some(&json!(true)));
+                id += 1;
+            }
         }
 
         drop(write);
