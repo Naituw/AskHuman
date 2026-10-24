@@ -179,7 +179,15 @@ INSTALLED_BIN="$INSTALL_DIR/AskHuman"
 INSTALL_STATE="$INSTALL_DIR/.askhuman-install-state"
 SOURCE_HASH="$(_file_sha256 "$BIN_PATH" 2>/dev/null || true)"
 SKIP_COPY=0
-if [ -n "$SOURCE_HASH" ] && [ -f "$INSTALLED_BIN" ] && [ -f "$INSTALL_STATE" ]; then
+if [ "$(uname)" = "Linux" ]; then
+  # Build a host helper with the existing Rust toolchain; no extra runtime package.
+  PUBLISHER_DIR="$(mktemp -d "${TMPDIR:-/tmp}/askhuman-publisher.XXXXXX")"
+  trap 'rm -f "$PUBLISHER_DIR/install-linux"; rmdir "$PUBLISHER_DIR"' EXIT
+  rustc --edition=2021 "$SCRIPT_DIR/install-linux.rs" -o "$PUBLISHER_DIR/install-linux"
+  "$PUBLISHER_DIR/install-linux" "$BIN_PATH" "$INSTALL_DIR"
+  SKIP_COPY=1
+fi
+if [ "$SKIP_COPY" -eq 0 ] && [ -n "$SOURCE_HASH" ] && [ -f "$INSTALLED_BIN" ] && [ -f "$INSTALL_STATE" ]; then
   STATE_SOURCE="$(sed -n 's/^source=//p' "$INSTALL_STATE" | head -n1)"
   STATE_INSTALLED="$(sed -n 's/^installed=//p' "$INSTALL_STATE" | head -n1)"
   INSTALLED_HASH="$(_file_sha256 "$INSTALLED_BIN" 2>/dev/null || true)"
