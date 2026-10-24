@@ -7,6 +7,7 @@ pub mod agent_permission;
 pub mod agent_rules;
 pub mod agent_stop;
 pub mod agent_subagent_guard;
+pub mod antigravity_rule;
 pub mod claude_hook;
 pub mod cursor_hook;
 pub mod grok_skill;

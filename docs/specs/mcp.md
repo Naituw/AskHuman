@@ -1,9 +1,9 @@
-# 需求：MCP 模式支持（Codex / Claude Code / Cursor / Grok）
+# 需求：MCP 模式支持（Codex / Claude Code / Cursor / Grok / Antigravity）
 
-> 状态：已实现，覆盖 Codex / Claude Code / Cursor / Grok。
+> 状态：已实现，覆盖 Codex / Claude Code / Cursor / Grok；Antigravity 在 Unix 上支持 MCP。
 > Pi Agent 明确不进入 MCP 能力面：Pi 集成只提供 None/CLI，并由受管 Extension 处理超时与生命周期；见 `docs/plans/pi-agent-integration.md`。
 > 关联计划：`docs/plans/mcp.md`
-> 影响面：新增 `AskHuman mcp` 子命令（STDIO MCP server）、MCP 工具与参考提示词、四家 MCP 配置集成、设置「Agent」Tab 三态模式、`agents`/`doctor` CLI 状态、i18n 与 `rmcp`依赖。上下文恢复另追加了向后兼容的 daemon IPC 内部消息，**不改** stdout 结果区块契约、退出码语义、四个 IM 渠道和弹窗交互。
+> 影响面：新增 `AskHuman mcp` 子命令（STDIO MCP server）、MCP 工具与参考提示词、五家 MCP 配置集成、设置「Agent」Tab 的模式选择、`agents`/`doctor` CLI 状态、i18n 与 `rmcp`依赖。上下文恢复另追加了向后兼容的 daemon IPC 内部消息，**不改** stdout 结果区块契约、退出码语义、四个 IM 渠道和弹窗交互。
 
 > **实现期补充（2026-07）**：Grok 仅支持 None/MCP，产物为 interaction-protocol skill +
 > `~/.grok/config.toml`，并写 per-tool `ask` 超时。MCP 客户端可能清空 Agent 环境变量，子 CLI 因此把
@@ -51,32 +51,33 @@
 - **Rust 官方 SDK `rmcp`**（0.16，`server` + `transport-io` + 宏）可低成本实现 STDIO server。
 - **MCP（STDIO）拿不到 turn 级生命周期**：MCP server 由客户端在 **session 期间**拉起常驻，协议无 turn-start/turn-end 通知，server 只在「工具被调用」时知情。故 MCP **替代不了** lifecycle hook 的 turn 追踪。
 
-因此本需求为四家 Agent 增加 **MCP 模式**，与现有 **CLI 模式**互斥；Grok 因 CLI harness 限制仅提供 MCP。
+MCP 模式当前覆盖 Codex、Claude Code、Cursor、Grok 与 Unix 上的 Antigravity。各客户端按自身能力提供
+**None / CLI / MCP** 的适用子集：Grok 仅 None/MCP，Antigravity 在 Unix 提供三者并推荐 CLI。
 
 ## 2. 目标形态
 
 - 新增子命令 `AskHuman mcp`：以 STDIO 运行 MCP server，暴露 `ask`、`whats_next`、
   `show_last`、`todo_add`、`todo_list`、`todo_update`；`ask` 覆盖现 CLI `AskHuman` 的全部提问能力。
 - MCP server 为**薄壳**：每次 `ask` 调用就 spawn 一个现有的 `AskHuman …` 子进程（默认文本输出），复用全部既有 ask 流程（弹窗 / IM / 抢答 / 历史 / 落盘 / 排空与重连），结果区块文本原样透传，再把人类回复中的图片读回、转 `ImageContent` 直接返回给模型。
-- 自动集成：每家 Agent 改为「**CLI | MCP | 未集成**」三态互斥选择。CLI 模式绑定 `Rule + 超时 Hook`，MCP 模式绑定 `Rule + MCP 配置`。
+- 自动集成：每家 Agent 按自身能力提供互斥模式选择。CLI 模式通常绑定 `Rule + 超时 Hook`，MCP 模式通常绑定 `Rule + MCP 配置`；没有相应适配器的客户端不安装该产物。
 - 手动集成：参考提示词提供 **CLI 版 / MCP 版**两份可切换展示；MCP 版同时展示各家 **MCP 配置实例**。
 
 ## 3. 已确认决策
 
 | 编号 | 决策项 | 结论 |
 |---|---|---|
-| D1 | 模式互斥 | 每个 agent 三态「CLI / MCP / 未集成」，互斥。同一 agent 不同时安装 CLI 与 MCP 产物（避免双触发/冲突） |
+| D1 | 模式互斥 | 每个 agent 按能力提供「CLI / MCP / 未集成」的互斥子集，同一 agent 不同时安装 CLI 与 MCP 产物（避免双触发/冲突）。Grok 仅 None/MCP；Pi 仅 None/CLI；Antigravity 在 Unix 为三态。 |
 | D2 | MCP server 形态 | **薄壳**：不自带提问/弹窗/IM 逻辑；正常 `ask` 调用 spawn 现有 `AskHuman …` 子进程（默认文本输出）复用全流程。Codex 拦截来源（`system` / `ambient_suggestions`）thread 在 spawn 前本地拒绝 |
 | D3 | 启动方式 | 新增 busybox 角色子命令 `AskHuman mcp`（与 `daemon`/`--popup`/`__agent-hook` 并列），用 `rmcp` 跑 STDIO server |
 | D4 | 工具与 Schema | `ask` 入参为 `message`、`questions[{question, options[{text, recommended}]}]`、`files[]`；`whats_next` 承载完成报告/建议，`show_last` 对模型为零业务参数；`todo_add` 写项目待办，`todo_list` 只读列稳定 Todo/附件 ID，`todo_update` 按稳定 ID 增删附件。会话 token 字段可被托管 Hook 注入但必须从 `tools/list` schema 隐藏。`questions` / `options` item 直接内联，不得依赖本地 `$ref` |
 | D5 | 输出（文本区块透传 + 图片直返）| `ask` **不声明 output schema**、不返回 `structuredContent`：子进程以默认文本模式调用，stdout 的结果区块（`[selected_options]` / `[user_input]` / `[files]` / `[status]`，多题 `# Qn` 分组）**原样透传**为 `content[0]` 的 `TextContent`，与 CLI 契约同一份字节。**取消时**即 `[status]` 区块引导文案（必须重新确认直到用户明确答复，不得当作放行）。区块格式说明放在工具 description（tools/list 每会话必达，替代 CLI 侧 `--agent-help` 的对应两节）。人类回复中的图片按 `[files]` 区块路径读出后以 `ImageContent`(base64+mimeType) 一并放入 `content` 直返模型；非图片文件以路径出现在 `[files]` 区块中。三个 Todo 工具返回包含稳定 ID 的文本结果。（二轮定案 2026-07-25，依据见 §10） |
-| D6 | 超时 | MCP 模式**不需要超时 Hook**，但需按各家机制配置工具超时（否则长等待被取消）：**Codex** 写 `tool_timeout_sec=86400`(秒)+`startup_timeout_sec=30`；**Grok** 另写 `tool_timeouts = { ask = 86400 }`；**Claude Code(CLI)** 在 `mcpServers.askhuman` 写 `timeout=86400000`(**毫秒**,24h)；**Cursor** 工具/elicitation 超时 ~60s **硬编码不可配置**，不写 timeout（Cursor 推荐 CLI 模式） |
-| D7 | MCP 配置落点 | **用户级全局**（与现有 Rules/Hook 一致）：Codex `~/.codex/config.toml`、Grok `~/.grok/config.toml`、Claude `~/.claude.json`（top-level `mcpServers`）、Cursor `~/.cursor/mcp.json` |
-| D8 | 模式切换 | **一键切换**：切到另一模式时自动卸载旧模式全部产物，再安装新模式。选「未集成」= 卸载当前模式全部产物 |
-| D9 | turn 生命周期 | MCP 仍拿不到 turn 周期，因此 active MCP 自动集成继续安装原生 lifecycle Hook。Lifecycle 是 mode 拥有的可选 capability：首次集成默认开、用户可显式关闭；切到 None 时卸载实际产物但保留偏好。 |
+| D6 | 超时 | MCP 模式**不需要超时 Hook**，但需按各家机制配置工具超时（否则长等待被取消）：**Codex** 写 `tool_timeout_sec=86400`(秒)+`startup_timeout_sec=30`；**Grok** 另写 `tool_timeouts = { ask = 86400 }`；**Claude Code(CLI)** 在 `mcpServers.askhuman` 写 `timeout=86400000`(**毫秒**,24h)；**Cursor** 工具/elicitation 超时 ~60s **硬编码不可配置**，不写 timeout（Cursor 推荐 CLI 模式）；**Antigravity** 写 `timeoutSeconds=86400`。这些都是配置预算，不证明真实 24h 等待已验证。 |
+| D7 | MCP 配置落点 | **用户级全局**（与现有 Rules/Hook 一致）：Codex `~/.codex/config.toml`、Grok `~/.grok/config.toml`、Claude `~/.claude.json`（top-level `mcpServers`）、Cursor `~/.cursor/mcp.json`、Antigravity `~/.gemini/config/mcp_config.json` |
+| D8 | 模式切换 | **一键切换**：切到另一模式时自动卸载旧模式全部产物，再安装新模式。选「未集成」= 卸载当前模式全部产物。Antigravity 先发布 MCP 配置再协调规则，失败恢复为条件操作，不是跨文件原子事务；详见 `antigravity.md`。 |
+| D9 | turn 生命周期 | MCP 仍拿不到 turn 周期，因此有原生适配器的 active MCP 集成继续安装 lifecycle Hook。Lifecycle 是 mode 拥有的可选 capability：首次集成默认开、用户可显式关闭；切到 None 时卸载实际产物但保留偏好。Antigravity 没有 lifecycle 适配器，CLI/MCP 均不安装该能力。 |
 | D10 | 双版本提示词 | 新增 `prompts::mcp_reference()`：把「用 Shell 调 AskHuman、设 24h 超时、先跑 --agent-help」改为「调用 MCP 工具 `ask`」；其余交互纪律（必须提问、推荐选项、附件、结束前回执等）保留。手动集成卡支持 CLI/MCP 切换显示 |
 | D11 | 自动重连 | MCP server **不持 ask 子流程的 daemon 长连接**：每次 `ask`/`whats_next` 都新起子进程→新走 `ensure_running`/排空等待/提交。daemon 更新后 MCP server 继续存活，后续调用自动连到新 daemon |
-| D12 | 平台范围 | **macOS / Linux / Windows**。统一用 spawn 子进程：三平台子进程都是「瘦客户端→shared daemon」；传输差异留在 Unix socket / Windows named pipe adapter。MCP server 自身不直接弹窗，避免 STDIO 主循环与 Tauri 主线程冲突。 |
+| D12 | 平台范围 | **macOS / Linux / Windows**。统一用 spawn 子进程：三平台子进程都是「瘦客户端→shared daemon」；传输差异留在 Unix socket / Windows named pipe adapter。MCP server 自身不直接弹窗，避免 STDIO 主循环与 Tauri 主线程冲突。Antigravity 的规则/MCP 配置写入适配器仅支持 Unix；其 MCP server 运行时跨平台不构成 Windows Antigravity 集成验收。 |
 | D13 | 漂移检测 | `needs_update` 覆盖 MCP Rule + MCP 配置：已安装但内置提示词/配置模板有更新时显示「更新」 |
 | D14 | CLI/doctor | `agents mode/update/show` 与 `doctor` 纳入 MCP 模式状态与整包操作（headless 一致可用） |
 | D15 | 命名 | 子命令 `mcp`；工具名 `ask` / `whats_next` / `show_last` / `todo_add` / `todo_list` / `todo_update`；各家配置中 server 名 `askhuman` |
@@ -101,7 +102,7 @@
 
 - **ask 主流程不变**：子进程仍是普通 CLI ask；上下文恢复只新增 MCP instance 注册与 Grok pending/claim 内部 IPC 消息。
 - **并发**：客户端若并发调用 `ask`，各自 spawn 独立子进程，daemon 已支持并发请求（每请求独立 Coordinator）。
-- **环境边界**：子进程保留 cwd 与普通环境，但先清除长驻 MCP server 可能继承的四家原生 session 变量；只用每调用的可信绑定写内部环境。
+- **环境边界**：子进程保留 cwd 与普通环境，但先清除长驻 MCP server 可能继承的其它 Agent 原生 session 变量；只用每调用的可信绑定写内部环境。
 
 ### Codex 内部 thread 前置边界
 
@@ -172,10 +173,10 @@ argv 映射：`message`→首个位置参数（或经 `-q` 拆分）；每个 qu
 
 ## 6. 自动集成 UI（设置「Agent」Tab）
 
-- 每家 Agent（Cursor / Claude Code / Codex）从「分散的 Rule/Hook 卡」改为一个**三态模式选择**：`CLI | MCP | 未集成`（互斥）。
+- Agent 卡按自身能力展示模式选择；当前 Cursor / Claude Code / Codex / Antigravity 提供 `CLI | MCP | 未集成`，Grok 为 `MCP | 未集成`，Pi 为 `CLI | 未集成`。Antigravity 推荐 CLI、也可选择 MCP，但不安装 timeout Hook 或 lifecycle。
 - 选中某模式后，其下展示该模式**绑定的产物**及安装/更新状态：
-  - **CLI**：CLI 版 Rule + 超时 Hook（Codex 无 Hook，仅 Rule）。
-  - **MCP**：MCP 版 Rule + MCP 配置（展示落点路径、可「打开/定位」）。
+  - **CLI**：CLI 版 Rule + 超时 Hook（Codex 与 Antigravity 无 Hook，仅 Rule）。
+  - **MCP**：MCP 版 Rule + MCP 配置（展示落点路径、可「打开/定位」；Antigravity 同样不安装 lifecycle）。
 - 切换模式：一键（自动卸旧装新）。选「未集成」：卸载当前模式全部产物。
 - 产物内容过期（提示词/配置模板更新）时显示橙色「更新」。
 - 手动集成区：参考提示词卡支持 **CLI / MCP** 切换；MCP 版附**该家 MCP 配置实例**片段。
@@ -200,6 +201,11 @@ argv 映射：`message`→首个位置参数（或经 `-q` 拆分）；每个 qu
   ```json
   { "mcpServers": { "askhuman": { "command": "<绝对路径>", "args": ["mcp"], "timeout": 86400000 } } }
   ```
+- **Antigravity**：`~/.gemini/config/mcp_config.json`（JSONC，`mcpServers.askhuman`），写秒级 `timeoutSeconds`。仅 Unix 允许 Antigravity 集成变更：
+  ```json
+  { "mcpServers": { "askhuman": { "command": "<绝对路径>", "args": ["mcp"], "timeoutSeconds": 86400 } } }
+  ```
+  Antigravity 没有可信原生 session；MCP 历史恢复只回退到 MCP instance + project，实例跨会话时可能歧义，重启后开始新的历史作用域。完整行为见 [`antigravity.md`](./antigravity.md)。
 
 ## 8. 约束与既有规则（不可破坏）
 
@@ -217,11 +223,11 @@ argv 映射：`message`→首个位置参数（或经 `-q` 拆分）；每个 qu
 3. `ask` 覆盖核心能力：多问题、`options`/`recommended`、`files` 均按 CLI 语义生效；`message`/`question` 按 Markdown 渲染，本地 Popup 的显式 Mermaid fence 渐进渲染且四个 IM 渠道保持源码；取消时输出顶层 `status` 引导。
 4. 人类回复图片：模型侧收到 `ImageContent`（可见图像），非图片文件以路径出现在文本中。
 5. daemon 因版本更新 drain/重启：已运行的 MCP server 不退出，下一次 `ask` 自动连到新 daemon（撞排空时等待后成功）。
-6. 设置「Agent」Tab：三态模式互斥；一键切换自动卸旧装新；首次自动集成默认开启 lifecycle；
+6. 设置「Agent」Tab：各 Agent 的适用模式互斥；一键切换自动卸旧装新；有 lifecycle 适配器的首次自动集成默认开启；
    选「未集成」清除全部实际产物但保留 capability 偏好；产物过期显示「更新」。
-7. 手动集成：CLI/MCP 提示词可切换；MCP 版显示三家配置实例。
+7. 手动集成：CLI/MCP 提示词可切换；MCP 版显示所支持客户端的配置实例。
 8. `agents mode/update/show` 与 `doctor` 正确反映 MCP 状态；旧逐产物 `--mcp` 写接口不再执行；headless 可用。
-9. 三家 MCP 配置写入为最小化编辑：保留用户其它条目/注释；重复安装幂等；卸载只移除自有条目；解析失败不破坏文件（单测覆盖）。
+9. MCP 配置写入为最小化编辑：保留用户其它条目/注释；重复安装幂等；卸载只移除自有条目；解析失败不破坏文件（单测覆盖）。
 10. Windows：`AskHuman mcp` 与 macOS/Linux 一样由子进程进入 shared daemon；提问、IM 抢答、历史、排空与 Agent 上下文语义一致，本地 IPC 使用用户私有 named pipe。
 11. 既有 CLI 模式（Rule/Hook）与所有现有功能回归正常。
 12. raw `tools/call` 携带 Codex `thread_source=system` 或 `ambient_suggestions` 时五个交互/副作用工具均返回固定

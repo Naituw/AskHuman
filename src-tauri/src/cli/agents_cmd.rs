@@ -13,7 +13,16 @@ use crate::integrations::{
 use serde_json::Value;
 use std::process::exit;
 
-const AGENTS: [&str; 5] = ["cursor", "claude", "codex", "grok", "pi"];
+const AGENTS: [&str; 6] = ["cursor", "claude", "codex", "grok", "pi", "antigravity"];
+
+// Dedicated queries remain available and return an explicit unsupported-platform error.
+pub(super) fn aggregate_agents() -> Vec<&'static str> {
+    AGENTS
+        .iter()
+        .copied()
+        .filter(|name| *name != "antigravity" || cfg!(unix))
+        .collect()
+}
 
 pub fn dispatch(args: &[String], lang: Lang) {
     // 无子命令 → 打印 help（与 channel/config 一致；不再默认开状态窗口）。
@@ -173,8 +182,8 @@ fn mode_cmd(args: &[String], lang: Lang) -> Result<(), String> {
     let target = AgentTarget::parse(agent).ok_or_else(|| {
         cfgio::t(
             lang,
-            &format!("unknown agent: {agent} (expected cursor|claude|codex|grok|pi)"),
-            &format!("未知 agent: {agent}（应为 cursor|claude|codex|grok|pi）"),
+            &format!("unknown agent: {agent} (expected cursor|claude|codex|grok|pi|antigravity)"),
+            &format!("未知 agent: {agent}（应为 cursor|claude|codex|grok|pi|antigravity）"),
         )
     })?;
     let kind = AgentKind::parse(agent).unwrap();
@@ -182,7 +191,17 @@ fn mode_cmd(args: &[String], lang: Lang) -> Result<(), String> {
     match args.get(1) {
         // 仅查询：当前模式 + 是否需更新。
         None => {
-            let upd = if agent_mode::needs_update(target) {
+            let (mode, needs_update) = if target == AgentTarget::Antigravity {
+                let (mode, updates, _) =
+                    agent_mode::antigravity_status().map_err(|e| e.to_string())?;
+                (mode, updates.rule || updates.hook || updates.mcp)
+            } else {
+                (
+                    agent_mode::current(target),
+                    agent_mode::needs_update(target),
+                )
+            };
+            let upd = if needs_update {
                 cfgio::t(lang, " (needs update)", "（需更新）")
             } else {
                 String::new()
@@ -190,7 +209,7 @@ fn mode_cmd(args: &[String], lang: Lang) -> Result<(), String> {
             print_line(&format!(
                 "[{}] {}{}",
                 kind.label(),
-                mode_label(agent_mode::current(target), lang),
+                mode_label(mode, lang),
                 upd
             ));
             Ok(())
@@ -255,10 +274,35 @@ fn parse_target(agent: &str, lang: Lang) -> Result<AgentTarget, String> {
     AgentTarget::parse(agent).ok_or_else(|| {
         cfgio::t(
             lang,
-            &format!("unknown agent: {agent} (expected cursor|claude|codex|grok|pi)"),
-            &format!("未知 agent: {agent}（应为 cursor|claude|codex|grok|pi）"),
+            &format!("unknown agent: {agent} (expected cursor|claude|codex|grok|pi|antigravity)"),
+            &format!("未知 agent: {agent}（应为 cursor|claude|codex|grok|pi|antigravity）"),
         )
     })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct AggregateUpdatePlan {
+    targets: Vec<(String, AgentTarget)>,
+    failures: Vec<(String, String)>,
+}
+
+fn plan_aggregate_updates(
+    names: impl IntoIterator<Item = &'static str>,
+    mut included: impl FnMut(AgentTarget) -> Result<bool, String>,
+) -> AggregateUpdatePlan {
+    let mut plan = AggregateUpdatePlan {
+        targets: Vec::new(),
+        failures: Vec::new(),
+    };
+    for name in names {
+        let target = AgentTarget::parse(name).unwrap();
+        match included(target) {
+            Ok(true) => plan.targets.push((name.to_string(), target)),
+            Ok(false) => {}
+            Err(error) => plan.failures.push((name.to_string(), error)),
+        }
+    }
+    plan
 }
 
 fn update_cmd(args: &[String], lang: Lang) -> Result<(), String> {
@@ -269,20 +313,29 @@ fn update_cmd(args: &[String], lang: Lang) -> Result<(), String> {
             "用法: agents update [<agent>]（不再支持产物 flags）",
         ));
     }
-    let targets: Vec<(String, AgentTarget)> = if let Some(agent) = args.first() {
+    let mut failures = Vec::new();
+    let targets = if let Some(agent) = args.first() {
         vec![(agent.clone(), parse_target(agent, lang)?)]
     } else {
-        AGENTS
-            .iter()
-            .filter_map(|agent| {
-                let target = AgentTarget::parse(agent)?;
-                (agent_mode::current(target) != agent_mode::Mode::None
+        let plan = plan_aggregate_updates(aggregate_agents(), |target| {
+            if target == AgentTarget::Antigravity {
+                let (mode, updates, _) =
+                    agent_mode::antigravity_status().map_err(|error| error.to_string())?;
+                Ok(mode != agent_mode::Mode::None || updates.rule || updates.hook || updates.mcp)
+            } else {
+                Ok(agent_mode::current(target) != agent_mode::Mode::None
                     || agent_mode::needs_update(target))
-                .then(|| ((*agent).to_string(), target))
-            })
-            .collect()
+            }
+        });
+        for (name, error) in plan.failures {
+            print_line(&format!(
+                "[{name}] {}{error}",
+                cfgio::t(lang, "error: ", "错误: ")
+            ));
+            failures.push(name);
+        }
+        plan.targets
     };
-    let mut failures = Vec::new();
     for (name, target) in targets {
         match agent_mode::update(target) {
             Ok(()) => print_line(&format!("[{name}] {}", cfgio::t(lang, "updated", "已更新"))),
@@ -427,6 +480,18 @@ fn lifecycle_cmd(args: &[String], lang: Lang) -> Result<(), String> {
     Ok(())
 }
 
+fn cleanup_targets() -> Vec<(AgentTarget, AgentKind)> {
+    aggregate_agents()
+        .into_iter()
+        .map(|name| {
+            (
+                AgentTarget::parse(name).unwrap(),
+                AgentKind::parse(name).unwrap(),
+            )
+        })
+        .collect()
+}
+
 fn cleanup_cmd(args: &[String], lang: Lang) -> Result<(), String> {
     if !args.is_empty() {
         return Err(cfgio::t(
@@ -437,13 +502,7 @@ fn cleanup_cmd(args: &[String], lang: Lang) -> Result<(), String> {
     }
 
     let mut errors = Vec::new();
-    for (target, kind) in [
-        (AgentTarget::Cursor, AgentKind::Cursor),
-        (AgentTarget::ClaudeCode, AgentKind::Claude),
-        (AgentTarget::Codex, AgentKind::Codex),
-        (AgentTarget::Grok, AgentKind::Grok),
-        (AgentTarget::Pi, AgentKind::Pi),
-    ] {
+    for (target, kind) in cleanup_targets() {
         if let Err(error) = agent_mode::set(target, agent_mode::Mode::None) {
             errors.push(format!("{} integration: {error}", kind.label()));
         }
@@ -482,7 +541,7 @@ fn show(args: &[String], lang: Lang) -> Result<(), String> {
             }
             vec![a]
         }
-        _ => AGENTS.to_vec(),
+        _ => aggregate_agents(),
     };
 
     // Show the target-specific body for a single agent. The all-agent view keeps the generic
@@ -503,6 +562,17 @@ fn show(args: &[String], lang: Lang) -> Result<(), String> {
 
     for name in targets {
         let target = AgentTarget::parse(name).unwrap();
+        let (mode, rule_installed, rule_outdated) = if target == AgentTarget::Antigravity {
+            let (mode, updates, installed) =
+                agent_mode::antigravity_status().map_err(|e| e.to_string())?;
+            (mode, installed, updates.rule)
+        } else {
+            (
+                agent_mode::current(target),
+                agent_rules::is_installed(target),
+                agent_rules::needs_update(target),
+            )
+        };
         let kind = AgentKind::parse(name).unwrap();
         print_line(&format!("[{}]", kind.label()));
 
@@ -510,14 +580,14 @@ fn show(args: &[String], lang: Lang) -> Result<(), String> {
         print_line(&format!(
             "  {}: {}",
             cfgio::t(lang, "mode", "模式"),
-            mode_label(agent_mode::current(target), lang)
+            mode_label(mode, lang)
         ));
 
         // Rules
-        let rules = if agent_rules::is_installed(target) {
+        let rules = if rule_installed {
             format!(
                 "{yes}{}",
-                if agent_rules::needs_update(target) {
+                if rule_outdated {
                     upd.clone()
                 } else {
                     String::new()
@@ -555,7 +625,7 @@ fn show(args: &[String], lang: Lang) -> Result<(), String> {
                 &no,
                 &upd,
             ),
-            AgentTarget::Codex | AgentTarget::Grok => na.clone(),
+            AgentTarget::Codex | AgentTarget::Grok | AgentTarget::Antigravity => na.clone(),
             AgentTarget::Pi => hook_state(
                 agent_mode::timeout_hook_is_installed(target),
                 agent_mode::timeout_hook_needs_update(target),
@@ -672,7 +742,7 @@ fn hook_state(installed: bool, needs_update: bool, yes: &str, no: &str, upd: &st
 fn help(lang: Lang) -> String {
     cfgio::t(
         lang,
-        "AskHuman agents — agent status + integrations (cursor | claude | codex | grok | pi)\n\
+        "AskHuman agents — agent status + integrations (cursor | claude | codex | grok | pi | antigravity)\n\
 \n\
   agents monitor [--json|--text]     Live agent status (opens a window when a GUI is available)\n\
   agents mode <agent> [none|cli|mcp] Switch the integration mode (omit to query); auto-swaps products\n\
@@ -684,11 +754,12 @@ fn help(lang: Lang) -> String {
   agents cleanup                     Remove every AskHuman-managed Agent artifact\n\
   agents show [<agent>]              Manual-integration prompt + paste paths + install status\n\
 \n\
-  Modes: cli = rules + runtime + default-on lifecycle; mcp = rules/skill + MCP + default-on lifecycle; none = remove.\n\
+  Modes: cli = rules + runtime + lifecycle where supported; mcp = rules/skill + MCP + lifecycle where supported; none = remove.\n\
   Grok only supports none | mcp (skill + MCP config); it has no CLI mode and no timeout hook.\n\
   Pi only supports none | cli; its runtime artifact is a managed Extension and Stop defaults on.\n\
+  Antigravity supports none | cli | mcp on Unix; CLI is recommended; advanced capabilities remain unsupported.\n\
   Legacy install/uninstall and per-artifact write flags have been removed.",
-        "AskHuman agents —— agent 状态 + 集成（cursor | claude | codex | grok | pi）\n\
+        "AskHuman agents —— agent 状态 + 集成（cursor | claude | codex | grok | pi | antigravity）\n\
 \n\
   agents monitor [--json|--text]     实时 agent 状态（有 GUI 时开窗）\n\
   agents mode <agent> [none|cli|mcp] 切换集成模式（省略则查询）；自动切换底层产物\n\
@@ -700,9 +771,10 @@ fn help(lang: Lang) -> String {
   agents cleanup                     移除全部由 AskHuman 托管的 Agent 产物\n\
   agents show [<agent>]              手动集成提示词 + 粘贴位置 + 安装状态\n\
 \n\
-  模式: cli = 规则 + runtime + 默认开启的生命周期；mcp = 规则/skill + MCP + 默认开启的生命周期；none = 移除。\n\
+  模式: cli = 规则 + runtime + 受支持的生命周期；mcp = 规则/skill + MCP + 受支持的生命周期；none = 移除。\n\
   Grok 仅支持 none | mcp（skill + MCP 配置）；无 CLI 模式、无超时 hook。\n\
   Pi 仅支持 none | cli；运行时产物为托管 Extension，Stop 默认开启。\n\
+  Antigravity 在 Unix 支持 none | cli | mcp；推荐 CLI，高级能力仍不支持。\n\
   旧 install/uninstall 与逐产物写 flags 已移除。",
     )
 }
@@ -762,8 +834,61 @@ mod mode_env_tests {
             (AgentTarget::Codex, agent_mode::Mode::Cli),
             (AgentTarget::Codex, agent_mode::Mode::None),
             (AgentTarget::Pi, agent_mode::Mode::Mcp),
+            (AgentTarget::Antigravity, agent_mode::Mode::Cli),
+            (AgentTarget::Antigravity, agent_mode::Mode::Mcp),
         ] {
             assert!(parse_mode_env(target, mode, &args(&["--env", "DISPLAY=:1"])).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod antigravity_aggregate_tests {
+    use super::*;
+
+    #[test]
+    fn aggregate_queries_preserve_existing_agents_and_dedicated_family_parse() {
+        let targets = aggregate_agents();
+        assert_eq!(&targets[..5], &["cursor", "claude", "codex", "grok", "pi"]);
+        assert_eq!(targets.contains(&"antigravity"), cfg!(unix));
+        assert_eq!(agent_rules::supported(AgentTarget::Antigravity), cfg!(unix));
+        assert_eq!(targets.len(), if cfg!(unix) { 6 } else { 5 });
+        let cleanup = cleanup_targets();
+        assert_eq!(cleanup.len(), targets.len());
+        assert_eq!(
+            cleanup.contains(&(AgentTarget::Antigravity, AgentKind::Antigravity)),
+            cfg!(unix)
+        );
+        for (name, (target, kind)) in targets.iter().zip(cleanup) {
+            assert_eq!(AgentTarget::parse(name), Some(target));
+            assert_eq!(AgentKind::parse(name), Some(kind));
+        }
+        assert_eq!(
+            AgentTarget::parse("antigravity"),
+            Some(AgentTarget::Antigravity)
+        );
+    }
+
+    #[test]
+    fn aggregate_update_plan_keeps_healthy_targets_after_status_error() {
+        let plan =
+            plan_aggregate_updates(["cursor", "antigravity", "codex"], |target| match target {
+                AgentTarget::Cursor => Ok(true),
+                AgentTarget::Antigravity => Err("Antigravity state unavailable".into()),
+                AgentTarget::Codex => Ok(false),
+                _ => unreachable!(),
+            });
+
+        assert_eq!(
+            plan.targets,
+            vec![("cursor".to_string(), AgentTarget::Cursor)]
+        );
+        assert_eq!(
+            plan.failures,
+            vec![(
+                "antigravity".to_string(),
+                "Antigravity state unavailable".to_string()
+            )]
+        );
     }
 }

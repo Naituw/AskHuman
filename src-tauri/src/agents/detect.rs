@@ -69,6 +69,9 @@ pub fn detect_running_agent_from(env: &HashMap<String, String>) -> Option<AgentK
     if has("CLAUDECODE") || has("CLAUDE_CODE_SESSION_ID") {
         return Some(AgentKind::Claude);
     }
+    if has("ANTIGRAVITY_CONVERSATION_ID") {
+        return Some(AgentKind::Antigravity);
+    }
     None
 }
 
@@ -93,11 +96,15 @@ pub fn session_id_env_var(kind: AgentKind) -> &'static str {
         // Grok 在每个 hook 子进程注入 `GROK_SESSION_ID`（见 grok hooks 文档）。
         AgentKind::Grok => "GROK_SESSION_ID",
         AgentKind::Pi => "PI_SESSION_ID",
+        AgentKind::Antigravity => "ANTIGRAVITY_CONVERSATION_ID",
     }
 }
 
 /// 从一个 env map 取指定家族的会话 ID。
 pub fn session_id_from_env_map(kind: AgentKind, env: &HashMap<String, String>) -> Option<String> {
+    if kind == AgentKind::Antigravity {
+        return None;
+    }
     env.get(session_id_env_var(kind))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -134,6 +141,7 @@ fn matches_agent(entry: &ProcEntry, kind: AgentKind) -> bool {
         }
         // Grok 可执行名为 `grok`（软链）或 `grok-macos-*`（真身），故按子串 `grok` 匹配。
         AgentKind::Grok => comm.contains("grok") || argv0_base.contains("grok"),
+        AgentKind::Antigravity => comm == "agy" || argv0_base == "agy" || argv0_base == "agy.exe",
         // Keep Pi matching exact: the two-letter name appears in ordinary arguments frequently.
         AgentKind::Pi => {
             argv0_base == "pi"
@@ -258,12 +266,13 @@ pub fn walk_agent_pid_from_self(kind: AgentKind) -> Option<u32> {
 /// 会话 ID），但进程树依旧能定位到 agent 本体。返回的 pid 是当次现取、真实存活的（可用作 registry
 /// 按 pid 匹配的键）；拿不到 `session_id`。
 pub fn walk_any_agent(start_pid: u32) -> Option<(AgentKind, u32)> {
-    const KINDS: [AgentKind; 5] = [
+    const KINDS: [AgentKind; 6] = [
         AgentKind::Pi,
         AgentKind::Grok,
         AgentKind::Codex,
         AgentKind::Claude,
         AgentKind::Cursor,
+        AgentKind::Antigravity,
     ];
     process_chain(start_pid)
         .into_iter()
@@ -910,5 +919,28 @@ mod tests {
         };
         assert!(!is_self(&e));
         assert!(matches_agent(&e, AgentKind::Codex));
+    }
+}
+
+#[cfg(test)]
+mod antigravity_detection_tests {
+    use super::*;
+    #[test]
+    fn cli_ancestry_is_precise_and_does_not_authenticate_a_session() {
+        let mut process = ProcEntry {
+            pid: 100,
+            ppid: 1,
+            comm: "agy".into(),
+            command: "/nix/store/example/bin/agy --headless".into(),
+        };
+        assert!(matches_agent(&process, AgentKind::Antigravity));
+        process.comm = "Code.exe".into();
+        process.command = "Code.exe --type=extensionHost".into();
+        assert!(!matches_agent(&process, AgentKind::Antigravity));
+        process.comm = "sh".into();
+        process.command = "sh -c echo agy".into();
+        assert!(!matches_agent(&process, AgentKind::Antigravity));
+        let env = HashMap::from([("ANTIGRAVITY_CONVERSATION_ID".into(), "not-authority".into())]);
+        assert_eq!(session_id_from_env_map(AgentKind::Antigravity, &env), None);
     }
 }

@@ -23,6 +23,7 @@ export const AGENT_INSTALL_DOCS: Record<AgentKind, string> = {
   cursor: "https://cursor.com/docs/cli/installation",
   grok: "https://docs.x.ai/build/overview",
   pi: "https://github.com/earendil-works/pi",
+  antigravity: "https://www.agy.dev/docs/",
 };
 
 export function useAgentTasks(core: SettingsCore) {
@@ -172,6 +173,7 @@ export function useAgentTasks(core: SettingsCore) {
       cursor: "Cursor",
       grok: "Grok",
       pi: "Pi",
+      antigravity: "Antigravity",
     };
     return workspace.agents.map((kind) => labels[kind]).join(" · ");
   }

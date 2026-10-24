@@ -40,7 +40,7 @@ fn add(project: &str, args: &[String], lang: Lang) -> ! {
         Ok(parsed) => parsed,
         Err(message) => cli_error(lang, &message),
     };
-    let agent = crate::agents::detect::detect_invoking_agent();
+    let agent = super::caller_agent_hint().or_else(crate::agents::detect::detect_invoking_agent);
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let added = crate::todos::add_with_attachments(project, &text, auto, agent, &files, &cwd);
     let entry = match added {

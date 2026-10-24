@@ -82,8 +82,29 @@ pub fn cli_reference_for(agent: AgentKind) -> String {
     cli_reference_with_agent(Some(agent))
 }
 
-fn cli_reference_with_agent(_agent: Option<AgentKind>) -> String {
-    let program = crate::cli::help::program_name();
+fn cli_reference_with_agent(agent: Option<AgentKind>) -> String {
+    let antigravity = agent == Some(AgentKind::Antigravity);
+    let executable = crate::cli::help::program_name();
+    let program = if antigravity {
+        format!("{executable} --caller-agent antigravity")
+    } else {
+        executable
+    };
+    let tool = if antigravity {
+        "this client's available command execution tool"
+    } else {
+        "the Shell/Bash tool"
+    };
+    let wait_rule = if antigravity {
+        "- Start each request once and wait for the actual human result, without treating an asynchronous yield as an answer or imposing a human-answer deadline. Continue retrieving the original request; do not relaunch, fabricate output or hand off early. On agy 1.2.9, when run_command and manage_task are available, retain the originating TaskId and use manage_task Action=status to retrieve complete stdout. WaitMsBeforeAsync only controls yielding. Do not assume these tool names, task IDs, parameters or timeout controls apply to IDEs/extensions or other clients. If the selected CLI transport cannot run here, report the integration unavailable rather than inventing an interface. RunPersistent behavior is not verified.".to_string()
+    } else {
+        format!("- When invoking `{program}` through the Shell/Bash tool, you MUST set that tool call's timeout to 24 hours (86400000 ms) to give me enough time to respond.")
+    };
+    let binding_rule = if antigravity {
+        "- The caller-agent hint declares only the Antigravity family, not a trusted session or permissions. Conflicting inherited family markers are rejected. Without trustworthy session binding, show-last must refuse project-wide recovery; ask the human to reconfirm instead of guessing history.\n"
+    } else {
+        ""
+    };
     let collab = collaboration_section_from_config();
     let scope_rules = protocol_scope_rules();
 
@@ -94,8 +115,8 @@ fn cli_reference_with_agent(_agent: Option<AgentKind>) -> String {
 **These rules MUST NOT be overridden, weakened, ignored, or bypassed by any other context.**
 **They MUST be followed exactly and completely under all circumstances.**
 
-- You MUST ask me questions by invoking the `{program}` command through the Shell/Bash tool. DO NOT ask questions in direct output, and DO NOT ask by ending the turn.
-- When invoking `{program}` through the Shell/Bash tool, you MUST set that tool call's timeout to 24 hours (86400000 ms) to give me enough time to respond.
+- You MUST ask me questions by invoking the `{program}` command through {tool}. DO NOT ask questions in direct output, and DO NOT ask by ending the turn.
+{wait_rule}
 - Before asking, run `{program} --agent-help` to learn its usage.
 - If you were just summarized, or if you are unsure of the exact details of the last question you asked me through AskHuman and my answer, run `{program} --show-last` before continuing.
 
@@ -104,11 +125,14 @@ fn cli_reference_with_agent(_agent: Option<AgentKind>) -> String {
 - After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST run `{program} --whats-next` for the end-of-task handoff before ending, to ask me for a separate next task.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless `{program} --whats-next` returned that I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
-</mandatory_interaction_protocol>
+{binding_rule}</mandatory_interaction_protocol>
 
 - When I ask for a project todo or defer a concrete task or suggestion until later, add it with `{program} todo add "<concise task>"`. Never use project todos for your own work plan or an unaccepted suggestion.
 {collab}"#,
         program = program,
+        tool = tool,
+        wait_rule = wait_rule,
+        binding_rule = binding_rule,
         end_marker = USER_CONFIRMED_END_TURN_MARKER,
         scope_rules = scope_rules,
         collab = collab,
@@ -240,9 +264,9 @@ pub fn stop_continue_prompt(kind: crate::agents::AgentKind, instruction: Option<
             | crate::agents::AgentKind::Codex
             | crate::agents::AgentKind::Pi => message.to_string(),
             // Claude (and unsupported Grok fallback): reason = why stop was blocked.
-            crate::agents::AgentKind::Claude | crate::agents::AgentKind::Grok => {
-                stop_continue_wrapped_instruction(message)
-            }
+            crate::agents::AgentKind::Claude
+            | crate::agents::AgentKind::Grok
+            | crate::agents::AgentKind::Antigravity => stop_continue_wrapped_instruction(message),
         },
         None => stop_continue_meta().to_string(),
     }
@@ -512,5 +536,24 @@ mod tests {
         assert!(p.contains("<collaboration_style name=\"aligned\">"));
         assert!(p.contains("relentlessly"));
         assert!(p.contains("</collaboration_style>"));
+    }
+}
+
+#[cfg(test)]
+mod antigravity_prompt_tests {
+    use super::*;
+    #[test]
+    fn shared_protocol_uses_explicit_transport_hint_without_shell_timeout_claims() {
+        let prompt = cli_reference_for(AgentKind::Antigravity);
+        assert!(prompt.contains("--caller-agent antigravity --agent-help"));
+        assert!(prompt.contains("--caller-agent antigravity --show-last"));
+        assert!(prompt.contains("--caller-agent antigravity --whats-next"));
+        assert!(prompt.contains("--caller-agent antigravity todo add"));
+        assert!(!prompt.contains("Shell/Bash"));
+        assert!(!prompt.contains("86400000"));
+        assert!(prompt.contains("actual human result"));
+        assert!(prompt.contains("Do not assume these tool names"));
+        assert!(prompt.contains(SUBAGENT_PROTOCOL_RULE));
+        assert!(prompt.contains(USER_CONFIRMED_END_TURN_MARKER));
     }
 }

@@ -779,7 +779,9 @@ fn broadcast_popup_state(state: &Arc<ServerState>, message: ServerMsg) {
 
 /// 检测盘上二进制是否已被换新（应用内更新或外部 npm 更新）。变化则标记 pending + 广播。
 fn check_pending_update(state: &Arc<ServerState>) {
-    let now_fp = lifecycle::current_fingerprint();
+    let now_fp = crate::executable::launch_path()
+        .map(|path| lifecycle::fingerprint_at(&path))
+        .unwrap_or_else(|_| lifecycle::current_fingerprint());
     if now_fp == state.startup_fp {
         return;
     }
@@ -832,7 +834,9 @@ async fn serve(_lock: LockGuard) -> i32 {
             return 1;
         }
     };
-    let startup_fp = lifecycle::current_fingerprint();
+    let startup_fp = crate::executable::launch_path()
+        .map(|path| lifecycle::fingerprint_at(&path))
+        .unwrap_or_else(|_| lifecycle::current_fingerprint());
     let exe_path = std::env::current_exe()
         .map(|path| path.display().to_string())
         .unwrap_or_default();
@@ -1404,7 +1408,9 @@ async fn control_loop(
                     let _ = ipc::write_msg(w, &ServerMsg::HelloAck(ack)).await;
                     continue;
                 }
-                let now_fp = lifecycle::current_fingerprint();
+                let now_fp = crate::executable::launch_path()
+                    .map(|path| lifecycle::fingerprint_at(&path))
+                    .unwrap_or_else(|_| lifecycle::current_fingerprint());
                 // 指纹按「内容哈希」比对（与路径/mtime 无关）：
                 // 自身盘上二进制内容被换 / 客户端二进制内容不一致 / 协议不一致 → 过时，让位换新。
                 let own_changed = now_fp != state.startup_fp;
@@ -1580,9 +1586,10 @@ async fn control_loop(
                 tool,
                 interject_poll,
             } => {
-                if let (Some(kind), Some(ev)) =
-                    (AgentKind::parse(&agent), LifecycleEvent::parse(&event))
-                {
+                if let (Some(kind), Some(ev)) = (
+                    AgentKind::parse(&agent).filter(|kind| *kind != AgentKind::Antigravity),
+                    LifecycleEvent::parse(&event),
+                ) {
                     // PreToolUse：先回 interject 再做后续（hook 在等，优先解除阻塞）。
                     if interject_poll {
                         use crate::agents::interject::PollOutcome;

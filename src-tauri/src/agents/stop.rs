@@ -156,7 +156,7 @@ fn is_natural_stop(kind: AgentKind, input: &Value) -> bool {
             .or_else(|| input.get("hookEventName"))
             .and_then(Value::as_str)
             .is_some_and(|event| event.eq_ignore_ascii_case("stop")),
-        AgentKind::Grok => false,
+        AgentKind::Grok | AgentKind::Antigravity => false,
         AgentKind::Pi => {
             input.get("stop_reason").and_then(Value::as_str) == Some("stop")
                 && input
@@ -199,7 +199,7 @@ fn last_assistant_message(kind: AgentKind, input: &Value) -> LastAssistantMessag
             .filter(|text| !text.trim().is_empty())
             .map(str::to_string),
         AgentKind::Cursor => cursor_last_message(input),
-        AgentKind::Grok => None,
+        AgentKind::Grok | AgentKind::Antigravity => None,
         AgentKind::Pi => input
             .get("last_assistant_message")
             .or_else(|| input.get("lastAssistantMessage"))
@@ -411,7 +411,7 @@ fn continuation_output(kind: AgentKind, prompt: &str) -> Value {
         AgentKind::Claude | AgentKind::Codex => {
             json!({ "decision": "block", "reason": prompt })
         }
-        AgentKind::Grok => json!({}),
+        AgentKind::Grok | AgentKind::Antigravity => json!({}),
         AgentKind::Pi => json!({ "followup_message": prompt }),
     }
 }

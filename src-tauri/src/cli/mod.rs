@@ -18,6 +18,13 @@ use crate::i18n::{self, Lang};
 use std::collections::HashMap;
 use std::process::exit;
 
+static CALLER_AGENT_HINT: std::sync::OnceLock<crate::agents::AgentKind> =
+    std::sync::OnceLock::new();
+
+pub(super) fn caller_agent_hint() -> Option<crate::agents::AgentKind> {
+    CALLER_AGENT_HINT.get().copied()
+}
+
 pub(crate) const FROM_MCP_ENV: &str = "ASKHUMAN_FROM_MCP";
 pub(crate) const MCP_INSTANCE_ID_ENV: &str = "ASKHUMAN_MCP_INSTANCE_ID";
 pub(crate) const MCP_AGENT_KIND_ENV: &str = "ASKHUMAN_MCP_AGENT_KIND";
@@ -47,7 +54,17 @@ pub fn dispatch() {
     // Dev Instance: pin ASKHUMAN_HOME / re-exec worktree bin before any config or GUI load.
     crate::dev_instance::maybe_enter_dev_instance();
 
-    let argv: Vec<String> = std::env::args().collect();
+    let raw_argv: Vec<String> = std::env::args().collect();
+    let (argv, hint) = match parse_caller_hint(&raw_argv, &std::env::vars().collect()) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            eprintln!("AskHuman: {error}");
+            exit(1);
+        }
+    };
+    if let Some(hint) = hint {
+        let _ = CALLER_AGENT_HINT.set(hint);
+    }
     let lang = Lang::current();
 
     // 完全无参数：报错 + 通用 Help（让用户直接 `AskHuman` 即可看到全部用法，而非仅提问说明）。
@@ -103,7 +120,14 @@ pub fn dispatch() {
                     exit(1);
                 }
             };
-            let context = caller_context();
+            let mut context = caller_context();
+            if context.agent_kind.is_none()
+                && !context.from_mcp
+                && crate::agents::detect::detect_invoking_agent()
+                    == Some(crate::agents::AgentKind::Antigravity)
+            {
+                context.agent_kind = Some("antigravity".into());
+            }
             let transcript = match (&context.agent_kind, &context.agent_session_id) {
                 (Some(agent_kind), Some(session_id)) => Some(crate::show_last::TranscriptHint {
                     agent_kind: agent_kind.clone(),
@@ -707,7 +731,13 @@ fn whats_next_question_from_entries(
 /// Resolve the calling Agent with environment-only work so it is safe on the ask hot path and
 /// available to daemon-backed Unix and Windows builds.
 pub(crate) fn caller_context() -> CallerContext {
-    caller_context_from_env(&std::env::vars().collect())
+    let mut context = caller_context_from_env(&std::env::vars().collect());
+    if CALLER_AGENT_HINT.get() == Some(&crate::agents::AgentKind::Antigravity) {
+        context.agent_kind = Some("antigravity".into());
+        context.agent_session_id = None;
+        context.mcp_instance_id = None;
+    }
+    context
 }
 
 fn caller_context_from_env(env: &HashMap<String, String>) -> CallerContext {
@@ -720,6 +750,14 @@ fn caller_context_from_env(env: &HashMap<String, String>) -> CallerContext {
     if from_mcp {
         let kind = nonempty(MCP_AGENT_KIND_ENV)
             .filter(|value| crate::agents::AgentKind::parse(value).is_some());
+        if kind.as_deref() == Some("antigravity") {
+            return CallerContext {
+                agent_kind: kind,
+                agent_session_id: None,
+                mcp_instance_id: None,
+                from_mcp: true,
+            };
+        }
         let session_id = nonempty(MCP_AGENT_SESSION_ID_ENV);
         let (agent_kind, agent_session_id) = match (kind, session_id) {
             (Some(kind), Some(session_id)) => (Some(kind), Some(session_id)),
@@ -1038,5 +1076,84 @@ mod tests {
         );
         assert_eq!(question.predefined_options.len(), 1);
         assert_eq!(question.predefined_options[0].text, "End this turn");
+    }
+}
+
+/// Strip only the reserved global hint before dispatch; it never supplies session authority.
+fn parse_caller_hint(
+    argv: &[String],
+    env: &HashMap<String, String>,
+) -> Result<(Vec<String>, Option<crate::agents::AgentKind>), String> {
+    let mut clean = argv.first().cloned().into_iter().collect::<Vec<_>>();
+    let mut hint = None;
+    let mut i = 1;
+    // Global hints are a prefix. Command payloads must never be parsed as identity flags.
+    while argv.get(i).is_some_and(|s| s == "--caller-agent") {
+        if hint.is_some() {
+            return Err("duplicate --caller-agent hint".into());
+        }
+        i += 1;
+        let value = argv.get(i).ok_or("missing --caller-agent value")?;
+        let kind = crate::agents::AgentKind::parse(value).ok_or("unknown caller agent")?;
+        if kind != crate::agents::AgentKind::Antigravity {
+            return Err("--caller-agent currently supports antigravity only".into());
+        }
+        hint = Some(kind);
+        i += 1;
+    }
+    clean.extend_from_slice(&argv[i.min(argv.len())..]);
+    let native = env.contains_key("ANTIGRAVITY_CONVERSATION_ID");
+    if hint.is_some() || native {
+        let mut other_env = env.clone();
+        other_env.remove("ANTIGRAVITY_CONVERSATION_ID");
+        if crate::agents::detect::detect_running_agent_from(&other_env).is_some()
+            || env
+                .get(MCP_AGENT_KIND_ENV)
+                .is_some_and(|s| s != "antigravity" && !s.trim().is_empty())
+        {
+            return Err("Antigravity caller conflicts with inherited Agent family markers; refusing cross-family identity".into());
+        }
+    }
+    Ok((clean, hint))
+}
+
+#[cfg(test)]
+mod antigravity_caller_tests {
+    use super::*;
+    #[test]
+    fn hint_validation_and_unbound_identity() {
+        let args = vec![
+            "AskHuman".into(),
+            "--caller-agent".into(),
+            "antigravity".into(),
+            "--show-last".into(),
+        ];
+        let (clean, hint) = parse_caller_hint(&args, &HashMap::new()).unwrap();
+        assert_eq!(clean, vec!["AskHuman", "--show-last"]);
+        assert_eq!(hint, Some(crate::agents::AgentKind::Antigravity));
+        let env = HashMap::from([("CODEX_THREAD_ID".into(), "foreign".into())]);
+        assert!(parse_caller_hint(&args, &env).is_err());
+        let mut duplicate = args[..3].to_vec();
+        duplicate.extend([
+            "--caller-agent".into(),
+            "antigravity".into(),
+            "--show-last".into(),
+        ]);
+        assert!(parse_caller_hint(&duplicate, &HashMap::new()).is_err());
+        let unknown = vec!["AskHuman".into(), "--caller-agent".into(), "gemini".into()];
+        assert!(parse_caller_hint(&unknown, &HashMap::new()).is_err());
+        let payload = vec!["AskHuman".into(), "-m".into(), "--caller-agent".into()];
+        assert_eq!(
+            parse_caller_hint(&payload, &HashMap::new()).unwrap().0,
+            payload
+        );
+        let native = HashMap::from([(
+            "ANTIGRAVITY_CONVERSATION_ID".into(),
+            "untrusted-uuid".into(),
+        )]);
+        let context = caller_context_from_env(&native);
+        assert_eq!(context.agent_kind.as_deref(), Some("antigravity"));
+        assert_eq!(context.agent_session_id, None);
+        assert!(show_last_cli_scope(context.agent_kind, None, "project".into()).is_err());
     }
 }

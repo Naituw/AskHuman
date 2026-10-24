@@ -348,6 +348,7 @@ fn push_events(kind: AgentKind, v: &Value, out: &mut Vec<Ev>) {
         AgentKind::Codex => push_events_codex(v, out),
         AgentKind::Grok => push_events_grok(v, out),
         AgentKind::Pi => push_events_pi(v, out),
+        AgentKind::Antigravity => {}
     }
 }
 

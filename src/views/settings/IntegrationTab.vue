@@ -24,6 +24,8 @@ const {
   piVersionLoading,
   modeBusy,
   modeMessage,
+  modeReadError,
+  refreshMode,
   modeError,
   setMode,
   togglePermission,
@@ -271,7 +273,7 @@ const {
     <div class="row agent-row">
       <p class="card-title">{{ a.title }}</p>
       <span class="spacer"></span>
-      <div class="segmented">
+      <div v-if="!modeReadError?.[a.id]" class="segmented">
         <button
           v-if="a.hasCli"
           type="button"
@@ -310,9 +312,11 @@ const {
       </div>
     </div>
 
+    <p v-if="a.id === 'antigravity'" class="card-desc">{{ t("settings.integration.antigravityScope") }}</p>
+    <button v-if="modeReadError?.[a.id]" type="button" class="btn" @click="refreshMode(a.id)">{{ t("settings.integration.retryStatus") }}</button>
 
     <div
-      v-if="modes[a.id].mode === 'none' && modes[a.id].lifecycle.cleanupRequired"
+      v-if="!modeReadError?.[a.id] && modes[a.id].mode === 'none' && modes[a.id].lifecycle.cleanupRequired"
       :id="`lifecycle-${a.id}`"
       class="result err lifecycle-cleanup row"
       :class="{ 'settings-target-highlight': settingsTargetHighlight === `lifecycle-${a.id}` }"
@@ -329,7 +333,7 @@ const {
       </button>
     </div>
 
-    <template v-if="modes[a.id].mode !== 'none'">
+    <template v-if="!modeReadError?.[a.id] && modes[a.id].mode !== 'none'">
       <hr class="divider" />
 
       <p
@@ -503,7 +507,9 @@ const {
                 :class="modes[a.id].recoveryHookInstalled ? 'on' : 'off'"
               ></span>
               {{
-                modes[a.id].recoveryHookInstalled
+                a.id === 'antigravity'
+                  ? t("settings.integration.capabilityUnsupported")
+                  : modes[a.id].recoveryHookInstalled
                   ? t("settings.integration.installed")
                   : t("settings.integration.notInstalled")
               }}
@@ -521,7 +527,7 @@ const {
             </button>
           </div>
           <p class="card-desc agent-hint">
-            {{ t("settings.integration.codexRecoveryHookHint") }}
+            {{ t(a.id === 'antigravity' ? "settings.integration.antigravityRecoveryUnsupported" : "settings.integration.codexRecoveryHookHint") }}
           </p>
         </template>
       </template>
@@ -591,7 +597,7 @@ const {
 
     </template>
 
-    <template v-if="modes[a.id].mode !== 'none'">
+    <template v-if="!modeReadError?.[a.id] && modes[a.id].mode !== 'none'">
       <hr class="divider" />
       <template v-if="modes[a.id].stop.supported">
         <div class="row agent-row">
@@ -791,7 +797,9 @@ const {
             :class="modes[a.id].lifecycle.installed ? 'on' : 'off'"
           ></span>
           {{
-            modes[a.id].lifecycle.installed
+            !modes[a.id].lifecycle.supported
+              ? t("settings.integration.capabilityUnsupported")
+              : modes[a.id].lifecycle.installed
               ? t("settings.integration.configured")
               : t("settings.integration.notConfigured")
           }}
@@ -807,7 +815,7 @@ const {
           <span class="dot-update"></span
           >{{ t("settings.integration.update") }}
         </button>
-        <label class="switch">
+        <label v-if="modes[a.id].lifecycle.supported" class="switch">
           <input
             type="checkbox"
             :checked="modes[a.id].lifecycle.enabled"
@@ -823,7 +831,7 @@ const {
         </label>
       </div>
       <p class="card-desc agent-hint">
-        {{ t("settings.integration.lifecycleHint") }}
+        {{ t(a.id === 'antigravity' ? "settings.integration.antigravityLifecycleUnsupported" : "settings.integration.lifecycleHint") }}
       </p>
     </template>
 

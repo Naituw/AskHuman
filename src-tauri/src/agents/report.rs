@@ -30,6 +30,9 @@ pub fn run(args: &[String]) {
     let Some(intended) = args.first().and_then(|s| AgentKind::parse(s)) else {
         return;
     };
+    if intended == AgentKind::Antigravity {
+        return;
+    }
     let Some(event) = args.get(1).and_then(|s| super::LifecycleEvent::parse(s)) else {
         return;
     };
@@ -280,6 +283,9 @@ pub(super) fn resolve_session_id(
     env: &HashMap<String, String>,
     stdin: Option<&Value>,
 ) -> String {
+    if kind == AgentKind::Antigravity {
+        return String::new();
+    }
     if let Some(s) = detect::session_id_from_env_map(kind, env) {
         return s;
     }
