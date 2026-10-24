@@ -1213,13 +1213,13 @@ mod platform {
         use std::os::unix::fs::{symlink, PermissionsExt};
         fn context() -> (tempfile::TempDir, RuleContext) {
             let home = tempfile::tempdir().unwrap();
-            let state = home.path().join(".askhuman");
+            // macOS temporary roots can contain system symlinks; fixtures need physical paths.
+            let home_path = home.path().canonicalize().unwrap();
+            let state = home_path.join(".askhuman");
             std::fs::create_dir(&state).unwrap();
             std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
             let ctx = RuleContext {
-                target_path: home
-                    .path()
-                    .join(".gemini/config/rules/askhuman-antigravity.md"),
+                target_path: home_path.join(".gemini/config/rules/askhuman-antigravity.md"),
                 integration_state_file: state.join("integration-state.json"),
                 generation_version: "1".into(),
                 rendered_bytes: body("first"),

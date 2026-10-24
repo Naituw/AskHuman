@@ -849,13 +849,13 @@ mod antigravity_transition_tests {
     impl Fixture {
         fn new() -> Self {
             let root = tempfile::tempdir().unwrap();
-            let state = root.path().join("state");
+            // Resolve only the trusted fixture root, preserving strict checks below it.
+            let root_path = root.path().canonicalize().unwrap();
+            let state = root_path.join("state");
             std::fs::create_dir(&state).unwrap();
             std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
             let context = RuleContext {
-                target_path: root
-                    .path()
-                    .join(".gemini/config/rules/askhuman-antigravity.md"),
+                target_path: root_path.join(".gemini/config/rules/askhuman-antigravity.md"),
                 integration_state_file: state.join("integration-state.json"),
                 generation_version: "1".into(),
                 variant: "cli".into(),
@@ -866,7 +866,7 @@ mod antigravity_transition_tests {
                 b"{\"codex\":{\"kept\":true},\"future\":9}",
             )
             .unwrap();
-            let config = root.path().join(".gemini/config/mcp_config.json");
+            let config = root_path.join(".gemini/config/mcp_config.json");
             Self {
                 _root: root,
                 context,

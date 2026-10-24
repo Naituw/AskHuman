@@ -4847,7 +4847,9 @@ mod tests {
         const CHILD: &str = "ASKHUMAN_TEST_RULE_COMMAND_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let root = tempfile::tempdir().unwrap();
-            let state = root.path().join("state");
+            // Keep the child HOME free of temporary-root aliases such as macOS /var.
+            let root_path = root.path().canonicalize().unwrap();
+            let state = root_path.join("state");
             std::fs::create_dir(&state).unwrap();
             std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
             let result = std::process::Command::new(std::env::current_exe().unwrap())
@@ -4857,7 +4859,7 @@ mod tests {
                     "--nocapture",
                 ])
                 .env(CHILD, "1")
-                .env("HOME", root.path())
+                .env("HOME", &root_path)
                 .env("ASKHUMAN_HOME", state)
                 .output()
                 .unwrap();
