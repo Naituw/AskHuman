@@ -35,6 +35,7 @@ pub fn resolve_title(kind: AgentKind, session_id: &str) -> Option<String> {
         AgentKind::Claude => claude_title(session_id),
         AgentKind::Grok => grok_title(session_id),
         AgentKind::Pi => pi_title(session_id),
+        AgentKind::Antigravity => None,
     }?;
     Some(clean_title(&raw))
 }
@@ -59,6 +60,7 @@ pub(crate) fn resolve_popup_title(
             .and_then(|path| grok_session_name(&path))
             .map(Some),
         AgentKind::Pi => pi_session_file(session_id).and_then(|path| pi_session_name(&path)),
+        AgentKind::Antigravity => None,
     };
     // Pi records an explicit empty name when the user clears it. Do not resurrect a cached name.
     let cached = if saved == Some(None) { None } else { cached };
@@ -407,6 +409,7 @@ pub(crate) fn transcript_path(kind: AgentKind, session_id: &str) -> Option<PathB
         return None;
     }
     match kind {
+        AgentKind::Antigravity => None,
         // ~/.cursor/projects/*/agent-transcripts/<sid>/<sid>.jsonl
         AgentKind::Cursor => {
             let projects = paths::cursor_dir().join("projects");

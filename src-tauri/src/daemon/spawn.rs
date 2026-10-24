@@ -55,7 +55,7 @@ fn spawn_windows_detached() -> std::io::Result<()> {
         STARTUPINFOW,
     };
 
-    let exe = std::env::current_exe()?;
+    let exe = crate::executable::launch_path()?;
     let mut application: Vec<u16> = exe.as_os_str().encode_wide().collect();
     application.push(0);
 
@@ -150,7 +150,7 @@ fn spawn_plain_detached() -> std::io::Result<()> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
 
-    let exe = std::env::current_exe()?;
+    let exe = crate::executable::launch_path()?;
     if let Some(dir) = lifecycle::log_path().parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -210,7 +210,7 @@ fn spawn_via_gui_launchd(policy: SpawnPolicy) -> std::io::Result<()> {
     use super::lifecycle;
     use std::process::{Command, Stdio};
 
-    let exe = std::env::current_exe()?;
+    let exe = crate::executable::launch_path()?;
     let log = lifecycle::log_path();
     if let Some(dir) = log.parent() {
         std::fs::create_dir_all(dir)?;

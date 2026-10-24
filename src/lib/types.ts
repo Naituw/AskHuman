@@ -550,7 +550,7 @@ export interface AgentsInit {
   newTaskSupported: boolean;
 }
 
-export type AgentKind = "claude" | "codex" | "cursor" | "grok" | "pi";
+export type AgentKind = "claude" | "codex" | "cursor" | "grok" | "pi" | "antigravity";
 
 /** Lifecycle preference and artifact state inside an Agent integration. */
 export interface LifecycleStatus {
@@ -988,7 +988,7 @@ export interface ClaudeHookStatus {
   supported: boolean;
 }
 
-export type AgentId = "cursor" | "claude" | "codex" | "grok" | "pi";
+export type AgentId = "cursor" | "claude" | "codex" | "grok" | "pi" | "antigravity";
 
 export interface UpdateInfo {
   available: boolean;

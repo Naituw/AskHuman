@@ -1931,6 +1931,7 @@ dependencies = [
  "fs2",
  "futures-util",
  "gio",
+ "gtk",
  "image",
  "jsonc-parser",
  "keyring",

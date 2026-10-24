@@ -8,8 +8,12 @@
 //! （每次调用都是新起子进程、重新连接 daemon，因此 MCP server 进程可长期存活、跨 daemon 重启）。
 
 pub(crate) mod ask;
+mod transport;
 
-use rmcp::{transport::stdio, ServiceExt};
+use rmcp::{
+    transport::{stdio, IntoTransport},
+    ServiceExt,
+};
 
 // （`whats_next` 见 spec todo-whats-next D2：完成任务后必调，结果为下一个任务或「准许结束」。）
 
@@ -31,7 +35,8 @@ async fn serve() -> i32 {
     let parent = mcp_parent_process();
     let server = ask::AskServer::new();
     server.register_instance().await;
-    match server.serve(stdio()).await {
+    let transport = transport::LegacyDiscoveryTransport::new(stdio().into_transport());
+    match server.serve(transport).await {
         Ok(service) => {
             #[cfg(windows)]
             let parent_watcher = parent.map(|parent| {

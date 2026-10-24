@@ -5,6 +5,8 @@ pub mod confirm_coordinator;
 pub mod coordinator;
 pub mod gui_host;
 mod invoke;
+#[cfg(target_os = "linux")]
+mod linux_dpi;
 pub mod popup_activation;
 pub(crate) mod popup_canvas;
 mod popup_drag_front;
@@ -993,6 +995,8 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             crate::macos_dock_icon::set_dock_icon();
             match view {
                 View::Popup | View::PopupInbox => {
+                    #[cfg(target_os = "linux")]
+                    linux_dpi::ensure_valid_resolution()?;
                     {
                         let mut url = String::from(if matches!(view, View::PopupInbox) {
                             "index.html?view=popup-inbox"
@@ -1264,8 +1268,11 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
         .build(tauri::generate_context!())?;
     crate::perf::mark_env("gui.build_done");
 
-    // 构建成功后、进入事件循环前静默系统噪音日志（如 macOS 的 TSM CapsLock 日志）。
-    stderr_redirect::silence();
+    // The daemon drains PopupInbox stderr and retains it only on failure. Keep native fatal
+    // errors visible there; other GUI roles still suppress routine platform noise.
+    if !matches!(view, View::PopupInbox) {
+        stderr_redirect::silence();
+    }
     app.run(move |app_handle, event| {
         if let Some(inbox) = app_handle.try_state::<popup_inbox::Inbox>() {
             if let RunEvent::ExitRequested { code, api, .. } = &event {

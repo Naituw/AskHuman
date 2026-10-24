@@ -190,13 +190,14 @@ AskHuman/
         agent_permission.rs  Claude/Codex 权限审批集成
         cursor_hook.rs       Cursor 超时 Hook 管理
         claude_hook.rs       Claude Code 超时 Hook 管理
-        agent_lifecycle.rs   五家 Agent 生命周期管理（原生 Hook + Pi Extension）
+        agent_lifecycle.rs   五家已适配 Agent 的生命周期管理（原生 Hook + Pi Extension；Antigravity 不支持）
         agent_launch.rs      Agent readiness、一次性启动记录与 Terminal.app / Windows Terminal helper
         agent_rules.rs       Agent 全局 Rules 管理
         agent_subagent_guard.rs  Claude/Codex SubagentStart 提示 Hook
         agent_context_recovery.rs  集成 mode 托管的压缩恢复/会话绑定 Hook
+        antigravity_rule.rs Antigravity 共享规则的严格所有权、恢复日志与 Unix 写入
         grok_skill.rs        Grok interaction-protocol skill 管理
-        mcp_config.rs        四家 MCP server 配置管理
+        mcp_config.rs        五家 MCP server 配置管理
         pi_extension.rs      Pi CLI/生命周期/插话/Stop 共用 Extension 管理
         agent_mode.rs        None/CLI/MCP 模式编排
         agent_stop.rs        Agent Stop 结束确认配置
@@ -388,7 +389,7 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 
 > 需求 `docs/specs/agent-interject.md`，计划 `docs/plans/agent-interject.md`。
 
-- 插话依赖生命周期追踪，对工作中的 Claude Code、Codex、Cursor、Pi 开放；Grok 不支持。Pi Extension 在 `tool_call` 等待同一 daemon 裁决，并把消息转换为原生 `{block, reason}`。
+- 插话依赖生命周期追踪，对工作中的 Claude Code、Codex、Cursor、Pi 开放；Grok 与 Antigravity 不支持。Pi Extension 在 `tool_call` 等待同一 daemon 裁决，并把消息转换为原生 `{block, reason}`。
 - Daemon 按 session 维护并持久化待送达队列；GUI composer 整体覆盖，IM `/msg` 追加。
 - Agent 下一次 PreToolUse 读取并原子消费消息；composer 已打开时 hook 可等待提交或取消，热路径不做文件 IO。
 - 排队消息被实际读取后向来源 IM 发阅读回执；即时送达、撤回、覆盖或未消费的消息不回执。
@@ -425,10 +426,12 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 - `agents mode` 维护 None/CLI/MCP 整包；permission/stop 的 preference 独立保存，但只有集成 mode
   才安装交互接管产物，None 隐藏对应设置并卸载其 active 能力。Lifecycle 也是 mode 拥有的可选
   capability：默认开、可显式关闭、None 卸载而保留偏好。Grok 仅 None/MCP 且不支持 stop/interject；
-  Pi 仅 None/CLI、不提供 MCP 或内置权限模式，最低支持版本为 0.82.0。
+  Pi 仅 None/CLI、不提供 MCP 或内置权限模式，最低支持版本为 0.82.0。Antigravity 在 Unix 支持
+  None/CLI/MCP，推荐 CLI；Windows 集成变更明确不支持，且 Antigravity 不提供 lifecycle、Stop、
+  permission、recovery、interject 或 launch/fork 能力。详见 `docs/specs/antigravity.md`。
 - 上下文恢复 Hook 由当前 mode 独立托管，不依赖可关闭的 lifecycle tracking；CLI/MCP
   提示严格只指向用户当前选中的入口，缺失/过期并入当前 Hook 或 MCP 产物的更新状态。
-- 全局交互协议把 Sub Agent 作为唯一例外并禁止其使用 AskHuman；Claude/Codex mode 另带 `SubagentStart` 提示 Hook，Cursor/Grok/Pi 只依赖协议文本。
+- 全局交互协议把 Sub Agent 作为唯一例外并禁止其使用 AskHuman；Claude/Codex mode 另带 `SubagentStart` 提示 Hook，Cursor/Grok/Pi/Antigravity 只依赖协议文本。
 - `agents update [<agent>]` 按当前 mode 重新 reconcile 单家或全部托管产物；重复设置相同 mode 也会完整更新，但不改独立保存的 capability 偏好。
 - `config` 是通用键值兜底，`doctor` 汇总 Daemon、已装二进制、渠道和集成；两者复用同一配置与集成模块，不维护第二套逻辑。`doctor install` 单独检查已装二进制（`install.sh` 装完后调用）。
 
@@ -440,6 +443,12 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 - `ask` 入参为 message/questions/files；输出为 CLI 同款结果区块文本（原样透传，无 output schema / structuredContent）加图片 ImageContent。MCP 取消会终止子 CLI，并通过 socket EOF 取消 Daemon 请求。
 - Agent 自动集成通常是 None/CLI/MCP 互斥；Grok 仅 None/MCP，其 MCP 产物是 skill + config；Pi 仅 None/CLI，其 CLI 产物是 Rules + 单个受管 Extension，自动集成 UI 不展示 MCP。
 - Codex、Grok、Claude 分别写适配自身的长超时配置；Cursor MCP 超时不可配置，推荐 CLI 模式。
+- Antigravity 在 Unix 支持 None/CLI/MCP，CLI 推荐、MCP 可选；共享规则位于
+  `~/.gemini/config/rules/askhuman-antigravity.md`，MCP 配置位于
+  `~/.gemini/config/mcp_config.json` 并写 `timeoutSeconds=86400`。Antigravity 没有可信原生
+  session：CLI `show-last` 拒绝项目级回退，MCP 只能回退到 instance + project。Windows 集成
+  变更明确不支持；MCP server 本身跨平台不等于 Antigravity 集成已获 Windows 验收。详见
+  `docs/specs/antigravity.md`。
 - MCP 没有通用的 Agent session 字段：Codex 使用每调用 `_meta.threadId`，Claude/Cursor
   使用 schema 隐藏的短命一次性 token，Grok 只在进程+项目分区内参数指纹候选唯一时认领；
   六个工具共用每调用绑定；无可信 session 时才回退到当前 MCP instance + project。详见

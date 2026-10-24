@@ -9,6 +9,9 @@ pub fn run(args: &[String]) {
     let Some(kind) = args.first().and_then(|value| AgentKind::parse(value)) else {
         return;
     };
+    if kind == AgentKind::Antigravity {
+        return;
+    }
     let Some(event) = args.get(1).map(String::as_str) else {
         return;
     };
@@ -37,6 +40,7 @@ fn mode(kind: AgentKind) -> Mode {
         AgentKind::Cursor => crate::integrations::agent_rules::AgentTarget::Cursor,
         AgentKind::Grok => crate::integrations::agent_rules::AgentTarget::Grok,
         AgentKind::Pi => crate::integrations::agent_rules::AgentTarget::Pi,
+        AgentKind::Antigravity => crate::integrations::agent_rules::AgentTarget::Antigravity,
     })
 }
 
@@ -120,7 +124,7 @@ fn pre_tool_output_for_mode(
         }
         // Pi recovery is injected by the managed extension's `before_agent_start` handler.
         AgentKind::Pi => None,
-        AgentKind::Codex => None,
+        AgentKind::Codex | AgentKind::Antigravity => None,
     }
 }
 
@@ -155,7 +159,7 @@ fn askhuman_tool_name(kind: AgentKind, raw: &str) -> Option<&'static str> {
         AgentKind::Claude => "mcp__askhuman__",
         AgentKind::Cursor => "MCP:",
         AgentKind::Grok => "askhuman__",
-        AgentKind::Codex | AgentKind::Pi => return None,
+        AgentKind::Codex | AgentKind::Pi | AgentKind::Antigravity => return None,
     };
     let name = raw.strip_prefix(prefix)?;
     match name {

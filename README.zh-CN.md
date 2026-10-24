@@ -78,7 +78,9 @@ AskHuman --history    # 打开回复历史（加 --all 看全部项目）
 为了让 Agent 在结束或需要确认时主动调用 `AskHuman`，需要把相应提示词加入 Agent 的全局提示词。运行 `AskHuman --settings` 打开设置，进入 **Agents** 面板，按需选择：
 
 - **手动集成**：复制参考提示词，自行加入你的 Agent 全局提示词（如 Cursor Rules / `AGENTS.md` / `CLAUDE.md`）。
-- **自动集成**：一键为 Cursor / Claude Code / Codex 安装全局 Rules；还可安装超时 Hook（检测到调用 `AskHuman` 时，自动把工具调用超时延长到 24 小时，避免等待你回应时被强制取消）。
+- **自动集成**：为每个受支持的 Agent 选择集成模式。CLI 模式安装该 Agent 对应的指令产物，并在可用时安装超时 Hook，避免等待你回应期间被取消；MCP 模式改为安装对应指令产物与 MCP server 配置。
+
+Antigravity 在 Unix 上支持 **未集成**、**CLI**、**MCP** 三种互斥模式，推荐 **CLI**，也可选择 **MCP**。集成会为 Antigravity 家族安装一份共享规则；具体客户端是否读取规则、能否执行所选调用方式，仍取决于该客户端。Windows 上目前会明确拒绝 Antigravity 集成变更。配置路径、会话限制和未支持能力见 [Antigravity 集成](docs/wiki/antigravity-setup.md)。
 
 ### 三、配置沟通渠道
 

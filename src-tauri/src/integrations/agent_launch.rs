@@ -413,6 +413,13 @@ pub fn fork_readiness(kind: AgentKind) -> ForkReadiness {
 }
 
 fn fork_readiness_uncached(kind: AgentKind) -> ForkReadiness {
+    if kind == AgentKind::Antigravity {
+        return ForkReadiness {
+            kind,
+            ready: false,
+            diagnostics: vec!["Antigravity launch/fork is unsupported".into()],
+        };
+    }
     if kind == AgentKind::Cursor {
         return ForkReadiness {
             kind,
@@ -442,7 +449,7 @@ fn fork_readiness_uncached(kind: AgentKind) -> ForkReadiness {
         AgentKind::Codex => probe_help(&executable, &["fork", "--help"]).is_some_and(|text| {
             text.contains("SESSION_ID") && text.to_ascii_lowercase().contains("fork")
         }),
-        AgentKind::Cursor => false,
+        AgentKind::Cursor | AgentKind::Antigravity => false,
         AgentKind::Pi => {
             probe_help(&executable, &["--help"]).is_some_and(|text| text.contains("--fork"))
         }
@@ -633,6 +640,9 @@ fn create_record_internal(
     warnings: &[String],
     launch_mode: LaunchMode,
 ) -> Result<LaunchRecord> {
+    if kind == AgentKind::Antigravity {
+        return Err(anyhow!("Antigravity launch/fork is unsupported"));
+    }
     if kind == AgentKind::Pi && permission != LaunchPermission::AgentDefault {
         return Err(anyhow!(
             "Pi does not expose a built-in permission mode; use AgentDefault"
@@ -674,7 +684,7 @@ fn create_record_internal(
             return Err(anyhow!(fork.diagnostics.join("; ")));
         }
     }
-    let askhuman_executable = std::env::current_exe()
+    let askhuman_executable = crate::executable::launch_path()
         .context("failed to resolve AskHuman executable")?
         .to_string_lossy()
         .to_string();
@@ -892,7 +902,7 @@ fn validate_claim(record: &LaunchRecord, token: &str) -> Result<()> {
             "Agent executable changed after launch was requested"
         ));
     }
-    let current = std::env::current_exe()?;
+    let current = crate::executable::launch_path()?;
     if !crate::path_identity::equivalent(&current.to_string_lossy(), &record.askhuman_executable) {
         return Err(anyhow!(
             "AskHuman executable changed after launch was requested"
@@ -946,6 +956,7 @@ fn agent_args(
             args.push(prompt.into());
         }
         LaunchMode::Fork { source_session_id } => match kind {
+            AgentKind::Antigravity => return Vec::new(),
             AgentKind::Claude | AgentKind::Grok => {
                 if permission == LaunchPermission::Yolo {
                     args.push(yolo_flag(kind).into());
@@ -1166,6 +1177,7 @@ fn target(kind: AgentKind) -> AgentTarget {
         AgentKind::Cursor => AgentTarget::Cursor,
         AgentKind::Grok => AgentTarget::Grok,
         AgentKind::Pi => AgentTarget::Pi,
+        AgentKind::Antigravity => AgentTarget::Antigravity,
     }
 }
 
@@ -1176,6 +1188,7 @@ fn command_name(kind: AgentKind) -> &'static str {
         AgentKind::Cursor => "cursor-agent",
         AgentKind::Grok => "grok",
         AgentKind::Pi => "pi",
+        AgentKind::Antigravity => "agy",
     }
 }
 
@@ -1185,7 +1198,7 @@ fn yolo_flag(kind: AgentKind) -> &'static str {
         AgentKind::Codex => "--dangerously-bypass-approvals-and-sandbox",
         AgentKind::Cursor => "--yolo",
         AgentKind::Grok => "--always-approve",
-        AgentKind::Pi => "",
+        AgentKind::Pi | AgentKind::Antigravity => "",
     }
 }
 

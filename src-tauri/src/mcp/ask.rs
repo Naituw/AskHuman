@@ -436,7 +436,7 @@ of files the human attached), and `[status]` (present on cancel or for a replaye
             )
             .await;
         let argv = build_argv(&params);
-        let exe = std::env::current_exe().map_err(|e| {
+        let exe = crate::executable::launch_path().map_err(|e| {
             McpError::internal_error(format!("cannot locate AskHuman executable: {e}"), None)
         })?;
 
@@ -528,7 +528,7 @@ approves ending the turn — only then may you end it.",
             )
             .await;
         let argv = build_whats_next_argv(&params);
-        let exe = std::env::current_exe().map_err(|e| {
+        let exe = crate::executable::launch_path().map_err(|e| {
             McpError::internal_error(format!("cannot locate AskHuman executable: {e}"), None)
         })?;
         let mut command = tokio::process::Command::new(exe);

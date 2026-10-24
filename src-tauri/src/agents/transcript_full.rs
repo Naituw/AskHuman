@@ -611,6 +611,7 @@ fn push_full(
         AgentKind::Codex => push_codex(v, out, open_tools),
         AgentKind::Grok => push_grok(v, out, open_tools),
         AgentKind::Pi => push_pi(v, out, open_tools),
+        AgentKind::Antigravity => {}
     }
 }
 
