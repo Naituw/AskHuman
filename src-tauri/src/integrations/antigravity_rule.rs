@@ -203,6 +203,14 @@ mod platform {
             links: meta.nlink(),
         }
     }
+    fn same_directory_identity(actual: &FileIdentity, expected: &FileIdentity) -> bool {
+        // Directory link counts can change as entries are added or removed. Regular-file
+        // identity comparisons still include link counts to reject hard links.
+        actual.device == expected.device
+            && actual.inode == expected.inode
+            && actual.owner == expected.owner
+            && actual.mode == expected.mode
+    }
     fn hash(bytes: &[u8]) -> String {
         format!("{:x}", Sha256::digest(bytes))
     }
@@ -434,7 +442,7 @@ mod platform {
         fn remove_empty(&self, component: &std::ffi::OsStr, expected: &FileIdentity) -> Result<()> {
             self.verify()?;
             let child = self.child(component)?;
-            if &identity(&child.file.metadata()?) != expected {
+            if !same_directory_identity(&identity(&child.file.metadata()?), expected) {
                 bail!("created directory identity drift");
             }
             let n = name(component)?;
@@ -768,8 +776,13 @@ mod platform {
     }
     fn require_transaction_directory(txn: &Dir, j: &Journal) -> Result<()> {
         private(txn)?;
-        if identity(&txn.file.metadata()?) != j.transaction_directory_identity {
-            bail!("NeedsRepair: transaction directory identity drift");
+        let actual = identity(&txn.file.metadata()?);
+        if !same_directory_identity(&actual, &j.transaction_directory_identity) {
+            bail!(
+                "NeedsRepair: transaction directory identity drift: expected {:?}, found {:?}",
+                j.transaction_directory_identity,
+                actual
+            );
         }
         Ok(())
     }
@@ -1460,6 +1473,69 @@ mod platform {
             recover(&ctx, &state).unwrap();
             assert_eq!(std::fs::read(&ctx.integration_state_file).unwrap(), before);
         }
+        #[test]
+        fn recovery_accepts_directory_entry_count_changes_but_rejects_identity_drift() {
+            for field in ["links", "device", "inode", "owner", "mode"] {
+                let (_home, mut ctx) = context();
+                put_ledger(&ctx);
+                super::super::install_unlocked(&ctx).unwrap();
+                let target = std::fs::read(&ctx.target_path).unwrap();
+                let ledger = std::fs::read(&ctx.integration_state_file).unwrap();
+                ctx.generation_version = "2".into();
+                ctx.rendered_bytes = body("replacement");
+                fail("prepared");
+                assert!(mutate(&ctx, false).is_err());
+                clear();
+                let state = Dir::open(ctx.integration_state_file.parent().unwrap()).unwrap();
+                let mut journal: Journal =
+                    serde_json::from_slice(&read_journal(&state).unwrap().unwrap().bytes).unwrap();
+                // Model mutable directory entry counts independently of the host filesystem.
+                let expected = &mut journal.transaction_directory_identity;
+                match field {
+                    "links" => expected.links += 1,
+                    "device" => expected.device ^= 1,
+                    "inode" => expected.inode ^= 1,
+                    "owner" => expected.owner ^= 1,
+                    "mode" => expected.mode ^= 0o100,
+                    _ => unreachable!(),
+                }
+                save_journal(&state, &journal).unwrap();
+                let result = recover(&ctx, &state);
+                if field == "links" {
+                    result.unwrap();
+                    assert!(read_journal(&state).unwrap().is_none());
+                } else {
+                    assert!(result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("directory identity drift"));
+                    assert!(read_journal(&state).unwrap().is_some());
+                }
+                assert_eq!(std::fs::read(&ctx.target_path).unwrap(), target);
+                assert_eq!(std::fs::read(&ctx.integration_state_file).unwrap(), ledger);
+            }
+        }
+
+        #[test]
+        fn recovery_preserves_unknown_transaction_directory_entries() {
+            let (_home, ctx) = context();
+            fail("prepared");
+            assert!(mutate(&ctx, false).is_err());
+            clear();
+            let state = Dir::open(ctx.integration_state_file.parent().unwrap()).unwrap();
+            let journal: Journal =
+                serde_json::from_slice(&read_journal(&state).unwrap().unwrap().bytes).unwrap();
+            let unknown = state
+                .path
+                .join(PRIVATE_STATE)
+                .join(&journal.transaction_dir)
+                .join("unknown");
+            std::fs::write(&unknown, b"preserve unknown bytes").unwrap();
+            assert!(recover(&ctx, &state).is_err());
+            assert_eq!(std::fs::read(&unknown).unwrap(), b"preserve unknown bytes");
+            assert!(read_journal(&state).unwrap().is_some());
+        }
+
         #[test]
         fn existing_shared_state_parent_works_with_private_journal() {
             let (_home, ctx) = context();
