@@ -4840,6 +4840,63 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn public_rule_commands_preserve_antigravity_mcp_bundle() {
+        use std::os::unix::fs::PermissionsExt;
+        const CHILD: &str = "ASKHUMAN_TEST_RULE_COMMAND_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            let state = root.path().join("state");
+            std::fs::create_dir(&state).unwrap();
+            std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "commands::tests::public_rule_commands_preserve_antigravity_mcp_bundle",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("HOME", root.path())
+                .env("ASKHUMAN_HOME", state)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "stdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            return;
+        }
+        let target = agent_rules::AgentTarget::Antigravity;
+        agent_mode::set(target, agent_mode::Mode::Mcp).unwrap();
+        let files = [
+            crate::paths::antigravity_rule_file(),
+            crate::paths::antigravity_mcp_config_json(),
+            crate::paths::integration_state_file(),
+        ];
+        let before = files.each_ref().map(|path| std::fs::read(path).unwrap());
+        for variant in [agent_rules::Variant::Cli, agent_rules::Variant::Mcp] {
+            assert!(agent_rules::install_variant(target, variant).is_err());
+            assert!(agent_rules::update_variant(target, variant).is_err());
+            assert_eq!(
+                files.each_ref().map(|path| std::fs::read(path).unwrap()),
+                before
+            );
+        }
+        for command in [agent_rule_install, agent_rule_update, agent_rule_uninstall] {
+            assert!(command("antigravity".to_string()).is_err());
+            assert_eq!(
+                files.each_ref().map(|path| std::fs::read(path).unwrap()),
+                before
+            );
+            let (mode, _, installed) = agent_mode::antigravity_status().unwrap();
+            assert_eq!(mode, agent_mode::Mode::Mcp);
+            assert!(installed);
+        }
+    }
+
     #[test]
     fn fork_source_rejects_desktop_origin_at_selection_and_submission() {
         let snapshot = serde_json::json!([{

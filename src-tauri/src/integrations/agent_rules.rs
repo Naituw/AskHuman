@@ -358,6 +358,11 @@ fn collapse_home(p: &Path) -> String {
 
 /// 安装：写入最新推荐提示词（默认 CLI 变体，保持现状语义）。
 pub fn install(agent: AgentTarget) -> Result<String> {
+    if agent == AgentTarget::Antigravity {
+        anyhow::bail!(
+            "install Antigravity through AskHuman agents mode antigravity <cli|mcp> to preserve its mode bundle"
+        );
+    }
     install_variant(agent, Variant::Cli)
 }
 
@@ -381,8 +386,9 @@ pub(crate) fn install_variant_unlocked(agent: AgentTarget, variant: Variant) -> 
 
 pub fn install_variant(agent: AgentTarget, variant: Variant) -> Result<String> {
     if agent == AgentTarget::Antigravity {
-        let _lock = super::mutation_lock::IntegrationMutationLock::acquire()?;
-        return install_variant_unlocked(agent, variant);
+        anyhow::bail!(
+            "install Antigravity through AskHuman agents mode antigravity <cli|mcp> to preserve its mode bundle"
+        );
     }
     install_variant_unlocked(agent, variant)
 }
@@ -451,8 +457,9 @@ pub(crate) fn uninstall_unlocked(agent: AgentTarget) -> Result<String> {
 
 pub fn uninstall(agent: AgentTarget) -> Result<String> {
     if agent == AgentTarget::Antigravity {
-        let _lock = super::mutation_lock::IntegrationMutationLock::acquire()?;
-        return uninstall_unlocked(agent);
+        anyhow::bail!(
+            "remove Antigravity through AskHuman agents mode antigravity none to preserve its mode bundle"
+        );
     }
     uninstall_unlocked(agent)
 }

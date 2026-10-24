@@ -129,7 +129,7 @@ impl PreparedAntigravityConfig {
             return Ok(());
         }
         match desired {
-            Some(text) => write_text(&self.path, text),
+            Some(text) => write_antigravity_text(&self.path, text, expected),
             None => std::fs::remove_file(&self.path).map_err(Into::into),
         }
     }
@@ -141,6 +141,85 @@ impl PreparedAntigravityConfig {
     pub(crate) fn restore(&self) -> Result<()> {
         self.replace_if_unchanged(&self.after, &self.before)
     }
+}
+
+#[cfg(unix)]
+fn write_antigravity_text(path: &Path, text: &str, expected: &Option<String>) -> Result<()> {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let identity = |meta: &std::fs::Metadata| {
+        (
+            meta.dev(),
+            meta.ino(),
+            meta.uid(),
+            meta.gid(),
+            meta.mode(),
+            meta.nlink(),
+        )
+    };
+    let before = match std::fs::symlink_metadata(path) {
+        Ok(meta) => {
+            // A replacement must retain the effective user's ownership and reject linked files.
+            if !meta.is_file() || meta.uid() != unsafe { libc::geteuid() } || meta.nlink() != 1 {
+                return Err(anyhow!(
+                    "refusing non-owned or linked MCP config {}",
+                    path.display()
+                ));
+            }
+            Some(meta)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("MCP config has no parent directory"))?;
+    std::fs::create_dir_all(parent)?;
+    // NamedTempFile creates a private 0600 file; explicitly set it before writing any secret bytes.
+    let mut staged = tempfile::Builder::new()
+        .prefix(".askhuman-mcp-")
+        .tempfile_in(parent)?;
+    staged
+        .as_file()
+        .set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    if let Some(meta) = &before {
+        // Preserve the validated owner/group; failure leaves the original file in place.
+        if unsafe { libc::fchown(staged.as_file().as_raw_fd(), meta.uid(), meta.gid()) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        // Preserve stricter owner permissions and never grant group/other access.
+        staged
+            .as_file()
+            .set_permissions(std::fs::Permissions::from_mode(meta.mode() & 0o600))?;
+    }
+    staged.write_all(text.as_bytes())?;
+    staged.as_file().sync_all()?;
+    let current = match std::fs::symlink_metadata(path) {
+        Ok(meta) => Some(meta),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    if current.as_ref().map(identity) != before.as_ref().map(identity)
+        || read_optional_config(path)? != *expected
+    {
+        return Err(anyhow!(
+            "MCP config changed before publication; preserving {}",
+            path.display()
+        ));
+    }
+    staged
+        .persist(path)
+        .with_context(|| format!("cannot publish private MCP config {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_antigravity_text(_: &Path, _: &str, _: &Option<String>) -> Result<()> {
+    Err(anyhow!(
+        "Antigravity MCP config mutation is unsupported on this platform"
+    ))
 }
 
 pub(crate) fn prepare_antigravity_config(install: bool) -> Result<PreparedAntigravityConfig> {
@@ -1069,6 +1148,64 @@ mod tests {
     use super::*;
 
     const EXE: &str = "/Users/u/.local/bin/AskHuman";
+
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_config_publication_preserves_private_permissions() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        for mode in [None, Some(0o600), Some(0o640), Some(0o644), Some(0o400)] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mcp_config.json");
+            if let Some(mode) = mode {
+                std::fs::write(
+                    &path,
+                    r#"{"mcpServers":{"other":{"env":{"KEY":"secret"}}}}"#,
+                )
+                .unwrap();
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            }
+            let before = std::fs::metadata(&path).ok();
+            let plan = PreparedAntigravityConfig::prepare(path.clone(), true, EXE).unwrap();
+            plan.apply().unwrap();
+            let after = std::fs::metadata(&path).unwrap();
+            assert_eq!(after.mode() & 0o777, mode.unwrap_or(0o600) & 0o600);
+            if let Some(before) = before {
+                assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
+                assert!(std::fs::read_to_string(&path).unwrap().contains("secret"));
+            }
+            plan.restore().unwrap();
+            if let Some(mode) = mode {
+                assert_eq!(
+                    std::fs::metadata(&path).unwrap().mode() & 0o777,
+                    mode & 0o600
+                );
+            } else {
+                assert!(!path.exists());
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_config_publication_rejects_links_without_changing_secrets() {
+        use std::os::unix::fs::symlink;
+        for hard_link in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let original = dir.path().join("secrets.json");
+            let path = dir.path().join("mcp_config.json");
+            let contents = r#"{"mcpServers":{"other":{"env":{"KEY":"secret"}}}}"#;
+            std::fs::write(&original, contents).unwrap();
+            if hard_link {
+                std::fs::hard_link(&original, &path).unwrap();
+            } else {
+                symlink(&original, &path).unwrap();
+            }
+            let plan = PreparedAntigravityConfig::prepare(path.clone(), true, EXE).unwrap();
+            assert!(plan.apply().is_err());
+            assert_eq!(std::fs::read_to_string(&original).unwrap(), contents);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+        }
+    }
 
     fn to_value(text: &str) -> Value {
         jsonc_parser::parse_to_serde_value::<Value>(text, &ParseOptions::default()).unwrap()
