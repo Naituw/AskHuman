@@ -7,35 +7,7 @@ import XCTest
 /// The Swift phone engine against the real Rust gateway in a real daemon, over a local broker.
 ///
 ///   AH_E2E_BIN=<installed AskHuman> AH_E2E_BROKER_DIR=ios/Tools/local-broker swift test --filter AHE2ETests
-final class E2ETests: XCTestCase {
-    var environment: E2EEnvironment!
-    var broker: LocalBroker!
-    var mac: MacInstance!
-    var phone: E2EPhone!
-
-    override func setUp() async throws {
-        environment = try E2EEnvironment.current()
-        broker = try await LocalBroker(environment: environment)
-        mac = try await MacInstance(environment: environment, broker: broker)
-        phone = E2EPhone()
-    }
-
-    override func tearDown() async throws {
-        await phone?.close()
-        await mac?.stop()
-        broker?.stop()
-    }
-
-    private func assertFinishes(_ cmd: Cmd, file: StaticString = #filePath, line: UInt = #line) async {
-        let status = await cmd.wait(timeout: 20)
-        XCTAssertEqual(status, 0, cmd.stderr, file: file, line: line)
-    }
-
-    private func pair() async throws {
-        let code = try await mac.startPairing()
-        try await phone.pair(with: mac, code: code)
-    }
-
+final class E2ETests: E2ECase {
     func testPairingThenAnAnswerReachesTheAskingProcess() async throws {
         try await pair()
         let devices = try await mac.jsonArray(["channel", "ios", "devices", "--json"])
