@@ -10,7 +10,7 @@ import PackageDescription
 //   AHMarkdown   Markdown parsing into render blocks
 //   AHMock       in-memory backend with sample data (previews, screenshots, UI tests)
 //
-// The notification extension links AHProtocol only.
+// The notification extension links AHProtocol and AHStore (it only reads keys from the keychain).
 let package = Package(
     name: "AskHumanKit",
     platforms: [.iOS(.v17), .macOS(.v14)],
@@ -41,6 +41,7 @@ let package = Package(
         .target(name: "AHMock", dependencies: ["AHProtocol", "AHCore"]),
         .testTarget(name: "AHProtocolTests", dependencies: ["AHProtocol"]),
         .testTarget(name: "AHStoreTests", dependencies: ["AHStore"]),
-        .testTarget(name: "AHCoreTests", dependencies: ["AHCore", "AHProtocol", "AHStore"]),
+        .testTarget(name: "AHTransportTests", dependencies: ["AHTransport", "AHProtocol"]),
+        .testTarget(name: "AHCoreTests", dependencies: ["AHCore", "AHProtocol", "AHStore", "AHTransport"]),
     ]
 )

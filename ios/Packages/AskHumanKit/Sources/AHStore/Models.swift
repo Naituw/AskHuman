@@ -173,6 +173,8 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
 /// How a request ended, for the local history.
 public enum HistoryOutcome: String, Codable, Sendable {
     case answered, cancelled, expired, answeredElsewhere, dismissed
+    /// Finished while the phone was away; the reason is unknown.
+    case ended
 }
 
 public struct HistoryEntry: Codable, Equatable, Sendable, Identifiable {
