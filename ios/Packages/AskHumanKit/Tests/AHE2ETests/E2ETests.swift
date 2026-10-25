@@ -15,8 +15,7 @@ final class E2ETests: E2ECase {
         XCTAssertEqual(devices.first?["name"] as? String, "E2E iPhone")
 
         let ask = try mac.ask(["-q", "Pick one", "-o", "Alpha", "-o", "Beta"])
-        await eventually("the request on the phone") { await self.phone.state().inbox.count == 1 }
-        let item = try unwrap(await phone.state().inbox.first)
+        let item = try await phone.request()
         XCTAssertEqual(item.view?.ask?.questions.first?.text, "Pick one")
         XCTAssertEqual(item.view?.ask?.questions.first?.options.map(\.text), ["Alpha", "Beta"])
 
@@ -42,8 +41,7 @@ final class E2ETests: E2ECase {
         try await phone.pair(with: mac, code: code)
 
         let ask = try mac.ask(["-q", "Pick one", "-o", "Alpha", "-o", "Beta"])
-        await eventually("the request on the phone") { await self.phone.state().inbox.count == 1 }
-        let item = try unwrap(await phone.state().inbox.first)
+        let item = try await phone.request()
         _ = try await phone.engine.submitAnswer(macId: item.macId, requestId: item.requestId, action: "send", answers: [AnswerItem(q: 0, sel: [0])])
         await assertFinishes(ask)
 
@@ -94,8 +92,7 @@ final class E2ETests: E2ECase {
             "-q", "First?", "-o", "Yes", "-o", "No",
             "-q", "Second?", "-o", "Red", "-o", "Blue",
         ])
-        await eventually("the request") { await self.phone.state().inbox.count == 1 }
-        let item = try unwrap(await phone.state().inbox.first)
+        let item = try await phone.request()
         let view = try unwrap(item.view?.ask)
         XCTAssertEqual(view.message.text, "Shared context for both")
         XCTAssertEqual(view.questions.count, 2)
@@ -116,8 +113,7 @@ final class E2ETests: E2ECase {
     func testTheMacRejectsAnswersThatBreakSelectOnly() async throws {
         try await pair()
         let ask = try mac.ask(["--select-only", "-q", "Pick", "-o", "A", "-o", "B"])
-        await eventually("the request") { await self.phone.state().inbox.count == 1 }
-        let item = try unwrap(await phone.state().inbox.first)
+        let item = try await phone.request()
         XCTAssertEqual(item.view?.ask?.selectOnly, true)
 
         let bad = try await phone.engine.submitAnswer(
@@ -140,8 +136,7 @@ final class E2ETests: E2ECase {
     func testCancellingFromThePhoneEndsTheAskWithACancelledStatus() async throws {
         try await pair()
         let ask = try mac.ask(["-q", "Pick", "-o", "A"])
-        await eventually("the request") { await self.phone.state().inbox.count == 1 }
-        let item = try unwrap(await phone.state().inbox.first)
+        let item = try await phone.request()
         _ = try await phone.engine.submitAnswer(macId: item.macId, requestId: item.requestId, action: "cancel", answers: [])
         _ = await ask.wait(timeout: 20)
         XCTAssertTrue(ask.stdout.contains("canceled"), ask.stdout)
@@ -162,8 +157,7 @@ final class E2ETests: E2ECase {
         try await pair()
         let message = "# Title\n\n- item `code`\n\n```swift\nlet x = 1\n```\n"
         let ask = try mac.ask(["--stdin", "-q", "OK?", "-o", "OK"], stdin: message)
-        await eventually("the request") { await self.phone.state().inbox.count == 1 }
-        let item = try unwrap(await phone.state().inbox.first)
+        let item = try await phone.request()
         XCTAssertEqual(item.view?.ask?.isMarkdown, true)
         XCTAssertEqual(item.view?.ask?.message.text.trimmingCharacters(in: .whitespacesAndNewlines), message.trimmingCharacters(in: .whitespacesAndNewlines))
         ask.terminate()
@@ -204,8 +198,7 @@ final class E2ETests: E2ECase {
     func testThePhoneRestartingKeepsItsPairingAndFindsThePendingRequestAgain() async throws {
         try await pair()
         let ask = try mac.ask(["-q", "Survive the app being killed?", "-o", "Yes", "-o", "No"])
-        await eventually("the request") { await self.phone.state().inbox.count == 1 }
-        let before = try unwrap(await phone.state().inbox.first)
+        let before = try await phone.request()
 
         // The app is killed: its engine is gone, the keychain and the files stay. (The old object
         // stays alive until the end, or its deinit would delete the files the new one reads.)
@@ -221,6 +214,7 @@ final class E2ETests: E2ECase {
 
         await eventually("the pairing to be back online") { await self.phone.state().macs.first?.link == .online }
         await eventually("the pending request to come back") { await self.phone.state().inbox.map(\.requestId) == [before.requestId] }
+        await phone.requests(1)
         _ = try await phone.engine.submitAnswer(
             macId: before.macId, requestId: before.requestId, action: "send", answers: [AnswerItem(q: 0, sel: [1])]
         )
@@ -258,8 +252,7 @@ final class E2ETests: E2ECase {
     func testAPermissionPromptIsDecidedOnThePhone() async throws {
         try await pair()
         let hook = try mac.ask(["__permission-hook", "claude"], stdin: Self.permissionPayload)
-        await eventually("the confirmation") { await self.phone.state().inbox.count == 1 }
-        let item = try unwrap(await phone.state().inbox.first)
+        let item = try await phone.request()
         XCTAssertEqual(item.view?.kind, "confirm")
         let confirm = try unwrap(item.view?.confirm)
         XCTAssertTrue(confirm.context.contains { $0.value.contains("rm -rf build") || $0.value == "Bash" }, "context: \(confirm.context)")
@@ -271,6 +264,7 @@ final class E2ETests: E2ECase {
         )
         await assertFinishes(hook)
         XCTAssertTrue(hook.stdout.contains("\"allow\""), "hook output: \(hook.stdout)")
+        await eventually("the history entry") { await self.phone.engine.history().first != nil }
         let entry = try unwrap(await phone.engine.history().first)
         XCTAssertEqual(entry.outcome, .answered)
         XCTAssertEqual(entry.confirmChoice, allow.label)
@@ -279,8 +273,7 @@ final class E2ETests: E2ECase {
     func testDenyingAPermissionPromptWithAReason() async throws {
         try await pair()
         let hook = try mac.ask(["__permission-hook", "claude"], stdin: Self.permissionPayload)
-        await eventually("the confirmation") { await self.phone.state().inbox.count == 1 }
-        let item = try unwrap(await phone.state().inbox.first)
+        let item = try await phone.request()
         let confirm = try unwrap(item.view?.confirm)
         let deny = try unwrap(confirm.choices.first { $0.role == "danger" } ?? confirm.choices.last)
         _ = try await phone.engine.submitConfirm(
@@ -293,8 +286,7 @@ final class E2ETests: E2ECase {
     func testTheWhatsNextRequestIsFlaggedAndCarriesItsSuggestions() async throws {
         try await pair()
         let ask = try mac.ask(["--whats-next", "Finished the work", "-o", "Write the docs", "-o!", "Ship it"])
-        await eventually("the request") { await self.phone.state().inbox.count == 1 }
-        let item = try unwrap(await phone.state().inbox.first)
+        let item = try await phone.request()
         let view = try unwrap(item.view?.ask)
         XCTAssertTrue(view.whatsNext)
         let options = view.questions.first?.options ?? []
@@ -312,12 +304,8 @@ final class E2ETests: E2ECase {
         addTeardownBlock { await second.close() }
 
         let ask = try mac.ask(["-q", "Who is first?", "-o", "Me"])
-        await eventually("both phones to get the request") {
-            let first = await self.phone.state().inbox.count
-            let other = await second.state().inbox.count
-            return first == 1 && other == 1
-        }
-        let item = try unwrap(await phone.state().inbox.first)
+        let item = try await phone.request()
+        _ = await second.requests(1)
         _ = try await phone.engine.submitAnswer(
             macId: item.macId, requestId: item.requestId, action: "send", answers: [AnswerItem(q: 0, sel: [0])]
         )
@@ -350,8 +338,7 @@ final class E2ETests: E2ECase {
 
         let homeAsk = try mac.ask(["-q", "From home?", "-o", "Yes"])
         let officeAsk = try otherMac.ask(["-q", "From the office?", "-o", "Yes"])
-        await eventually("both requests") { await self.phone.state().inbox.count == 2 }
-        let inbox = await phone.state().inbox
+        let inbox = await phone.requests(2)
         XCTAssertEqual(Set(inbox.map(\.macName)), ["E2E Mac", "Office Mac"])
         for item in inbox {
             _ = try await phone.engine.submitAnswer(
@@ -370,8 +357,7 @@ final class E2ETests: E2ECase {
         let body = String(repeating: "line of text\n", count: 40_000)
         try body.write(to: file, atomically: true, encoding: .utf8)
         let ask = try mac.ask(["See the file", "-f", file.path, "-q", "Fine?", "-o", "Yes"])
-        await eventually("the request") { await self.phone.state().inbox.count == 1 }
-        let item = try unwrap(await phone.state().inbox.first)
+        let item = try await phone.request()
         let asset = try unwrap(item.view?.ask?.message.files.first)
         XCTAssertEqual(asset.name, "notes.txt")
         XCTAssertEqual(asset.size, UInt64(body.utf8.count))
@@ -385,8 +371,7 @@ final class E2ETests: E2ECase {
     func testAReplyAttachmentArrivesAsAFileOnTheMac() async throws {
         try await pair()
         let ask = try mac.ask(["-q", "Send me a file", "-o", "Done"])
-        await eventually("the request") { await self.phone.state().inbox.count == 1 }
-        let item = try unwrap(await phone.state().inbox.first)
+        let item = try await phone.request()
         let payload = Data((0..<400_000).map { UInt8($0 % 251) })
         let uploadId = try await phone.engine.upload(
             macId: item.macId, requestId: item.requestId,

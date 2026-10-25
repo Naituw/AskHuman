@@ -16,7 +16,10 @@ final class E2EPhone: @unchecked Sendable {
     private var collected: [EngineEvent] = []
     private var eventTask: Task<Void, Never>?
 
-    init(deviceName: String = "E2E iPhone", secrets: MemorySecretStore = MemorySecretStore(), root: URL? = nil) {
+    init(
+        deviceName: String = "E2E iPhone", bundleId: String = "com.example.e2e", secrets: MemorySecretStore = MemorySecretStore(),
+        root: URL? = nil
+    ) {
         self.root = root ?? FileManager.default.temporaryDirectory.appendingPathComponent("ah-e2e-phone-\(UUID().uuidString.prefix(8))")
         self.secrets = secrets
         vault = Vault(secrets: secrets)
@@ -24,7 +27,7 @@ final class E2EPhone: @unchecked Sendable {
         engine = PhoneEngine(
             vault: vault, store: store, broker: MQTTBrokerClient(),
             config: EngineConfig(
-                deviceName: deviceName, appVersion: "e2e", bundleId: "com.example.e2e", pushEnv: "dev", allowPlainLoopback: true,
+                deviceName: deviceName, appVersion: "e2e", bundleId: bundleId, pushEnv: "dev", allowPlainLoopback: true,
                 assetDirectory: self.root.appendingPathComponent("assets")
             )
         )
@@ -49,6 +52,23 @@ final class E2EPhone: @unchecked Sendable {
 
     var events: [EngineEvent] { lock.withLock { collected } }
     func state() async -> EngineState { await engine.snapshot() }
+
+    /// Waits until the phone shows `count` requests with their content, and returns them. A request
+    /// may arrive as a summary first (the content follows in a second step, always so over a slow
+    /// link), and an answer can only be given once the content is there.
+    @discardableResult
+    func requests(_ count: Int = 1, file: StaticString = #filePath, line: UInt = #line) async -> [InboxItem] {
+        await eventually("\(count) request(s) with their content on the phone", file: file, line: line) {
+            let inbox = await self.state().inbox
+            return inbox.count == count && inbox.allSatisfy { $0.view != nil }
+        }
+        return await state().inbox
+    }
+
+    /// The only request on the phone, once its content is there.
+    func request(file: StaticString = #filePath, line: UInt = #line) async throws -> InboxItem {
+        try unwrap(await requests(1, file: file, line: line).first, file: file, line: line)
+    }
 
     /// Pairs with the Mac behind `code`: compares the check codes, lets the Mac allow, waits for the first sync.
     func pair(with mac: MacInstance, code: String, file: StaticString = #filePath, line: UInt = #line) async throws {

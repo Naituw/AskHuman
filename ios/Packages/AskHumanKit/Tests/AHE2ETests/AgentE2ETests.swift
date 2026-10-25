@@ -138,6 +138,9 @@ final class AgentE2ETests: E2ECase {
         await eventually("all sessions") { await self.phone.state().agents.count == Wire.maxFollow + 1 }
         for number in 0..<Wire.maxFollow {
             try await phone.engine.setFollow(macId: macId, agentKey: key("e2e-many-\(number)"), on: true)
+            // The phone shows a follow at once and takes the Mac's list as the truth when it arrives:
+            // let the Mac have its say before the next one, or a late list undoes the marks in between.
+            await eventually("the Mac to confirm follow \(number + 1)") { await self.phone.engine.followRequests[macId] == nil }
         }
         do {
             try await phone.engine.setFollow(macId: macId, agentKey: key("e2e-many-\(Wire.maxFollow)"), on: true)
