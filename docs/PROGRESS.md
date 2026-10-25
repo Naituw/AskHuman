@@ -3,6 +3,31 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 进行中：iOS 原生渠道（实现中）
+
+2026-10-24 用户要求整理交接（[移动渠道交接](investigations/native-ios-channel-handoff.md)：杭州 EMQX 传输验证包、
+Mac / iOS 交互原型、双向消息与进程重启补发已验证）。2026-10-25 经多轮问答定稿设计：需求
+[`docs/specs/ios-channel.md`](specs/ios-channel.md)，计划 [`docs/plans/ios-channel.md`](plans/ios-channel.md)
+（作为新渠道 `ios`；EMQX 杭州 + 腾讯云云函数推送中继 + 端到端加密；多 Mac 配对同一部手机；回答 / 确认 / 附件 /
+Watch / Follow / 插话 / 新任务）。**设计已于 2026-10-25 获用户批准，实现在 worktree `HumanInLoop-ios`（分支 `feat/ios-channel`）进行。**
+
+当前阶段与下一步见本节末尾的「进度」；计划里的 P0 门禁（并行推进）：Rust 新依赖探针、EMQX ACL 与真机 TLS / WSS 实测、中继最小版与真机 APNs 实测、
+腾讯云计费核对、公司网络端口探测；任一项不达标先停下来问用户，不自行换方案。
+
+约束沿用交接：两个 EMQX 实例的消费上限保持 0，不创建管理 API Key，不泄露任何密钥或本地私有配置；不得把模拟器 /
+演示 Agent 验证当作完整渠道验收；真实 Agent 的启动 / 发 prompt 测试必须先经用户批准。
+
+进度（阶段完成后更新；用户已取消 P2 / P4 的中间评审门，一路做到可用原型后统一验收）：
+- [ ] P0.1 Rust 依赖探针；账号侧准备（Apple App ID / APNs 密钥 / EMQX 用户与授权 / 腾讯云函数）由 Agent 协助用户完成，不读取任何密钥内容
+- [ ] P1 协议与密码学核心（Rust + Swift + 跨语言夹具）
+- [ ] 推送中继 `relay/`
+- [ ] P3 Mac Gateway + 配对 + IPC 3→4 + 设置页 / CLI
+- [ ] P4 问答闭环（`IosChannel` / 确认 / 附件 / 推送 / 通知扩展）
+- [ ] P5 Agents（Follow / 观察 / 插话 / `failed`）
+- [ ] P6 新任务
+- [ ] iOS App（随上述阶段并行推进）
+- [ ] P7 加固与真机 / 公司网络 / 真 APNs 实测；P8 文档与收尾
+
 ## 待观察：拖入文件失败（`daemon.log` 的 `askhuman_drop` 行）
 
 2026-10-17 用户在日常版（v0.14.5）遇到几次「拖图片进窗口没加附件」（来源访达的下载 / 桌面 / 文稿，第二次拖就可以）。已加每种情形的可见提示和不含路径的诊断日志，
