@@ -39,6 +39,7 @@ mod hooks;
 mod i18n;
 mod image_resource;
 mod integrations;
+mod ios;
 mod ipc;
 mod local_image;
 mod local_time;

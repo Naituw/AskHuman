@@ -100,6 +100,19 @@ tree-sitter-bash = "=0.25.1"
 # rmcp 每请求 CancellationToken：MCP client 取消 tools/call 时 ask 据此杀 CLI 子进程。
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+# iOS channel (docs/plans/ios-channel.md): MQTT transport, end-to-end crypto, pairing QR codes.
+# rumqttc's `use-rustls-no-provider` keeps the single `ring` rustls provider that reqwest and
+# tokio-tungstenite already use (no second aws-lc-rs provider in the process).
+rumqttc = { version = "0.25", default-features = false, features = ["use-rustls-no-provider", "websocket"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "0.26"
+chacha20poly1305 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+hkdf = "0.12"
+hmac = "0.12"
+subtle = "2"
+getrandom = "0.2"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

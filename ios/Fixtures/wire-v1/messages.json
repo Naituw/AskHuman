@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "note": "One or more samples per message type. Every implementation decodes `body` into its typed model, encodes it back and must get a JSON value equal to `body` (keys unordered, absent optionals omitted).",
+  "samples": [
+    {"type": "pair.request", "body": {"phoneId": "3qjxfkln6hdpmcvbtzaswe4r5y", "name": "Wutian iPhone", "ek": "BXkzYb0PqN0oQmwFh0wJ6wG2uK1m0o3cV3tqYhS9m1A", "appVer": "1.0 (1)", "proto": 1}},
+    {"type": "pair.pending", "body": {"macId": "mfx2c3rhs6kq7tw4dnb5vypa2e"}},
+    {"type": "pair.reject", "body": {"reason": "rejected"}},
+    {"type": "pair.accept", "body": {"macId": "mfx2c3rhs6kq7tw4dnb5vypa2e", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true}}},
+    {"type": "pair.done", "name": "min", "body": {"name": "Wutian iPhone"}},
+    {"type": "pair.done", "name": "full", "body": {"name": "Wutian iPhone", "handle": "v1.AAAA", "env": "sandbox", "expiresAt": 1808000000}},
+
+    {"type": "hello", "body": {"nonce": "q3ZkL1m0Xw4", "proto": 1, "appVer": "1.0 (1)", "deviceName": "Wutian iPhone"}},
+    {"type": "hello.ack", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": false, "interject": true, "watch": true}, "slot": {"active": true, "autoActivation": true}}},
+    {"type": "error", "name": "min", "body": {"ref": "m1", "code": "unknown_type"}},
+    {"type": "error", "name": "full", "body": {"ref": "m2", "code": "clock_skew", "message": "message timestamp outside the allowed window"}},
+    {"type": "resync", "body": {"stream": "inbox"}},
+    {"type": "ping", "body": {"t": 1792900000000}},
+    {"type": "pong", "body": {"t": 1792900000000}},
+    {"type": "mac.info", "body": {"macName": "Office Mac"}},
+    {"type": "unpair", "body": {}},
+    {"type": "unpaired", "body": {}},
+    {"type": "push.register", "body": {"handle": "v1.AAAA", "env": "production", "expiresAt": 1808000000}},
+    {"type": "push.state", "body": {"status": "ok"}},
+
+    {"type": "inbox.snapshot", "body": {"epoch": "0123456789abcdef", "rev": 7, "items": [
+      {"id": "req1", "kind": "ask", "project": {"key": "p1", "name": "HumanInLoop"}, "agent": {"kind": "claude", "label": "Claude Code"}, "createdAt": 1792900000000, "preview": "Which approach do you prefer?", "contentHash": "sha256-abc", "size": 2048}
+    ]}},
+    {"type": "request.new", "name": "ask", "body": {"rev": 8, "full": true, "request": {
+      "id": "req1", "kind": "ask", "createdAt": 1792900000000,
+      "agent": {"kind": "claude", "label": "Claude Code"}, "project": {"key": "p1", "name": "HumanInLoop"},
+      "source": "mcp", "contentHash": "sha256-abc",
+      "ask": {
+        "isMarkdown": true,
+        "message": {"text": "Pick one **option**", "files": [
+          {"assetId": "a1", "name": "diagram.png", "size": 48213, "mime": "image/png", "isImage": true, "thumb": "/9j/4AAQ"},
+          {"assetId": "a2", "name": "log.txt", "size": 1200, "mime": "text/plain", "isImage": false},
+          {"assetId": "a3", "name": "big.zip", "size": 20971520, "mime": "application/zip", "isImage": false, "tooLarge": true}
+        ]},
+        "questions": [
+          {"text": "Which approach?", "options": [{"text": "A", "recommended": true}, {"text": "B", "recommended": false, "todo": true}]},
+          {"text": "Anything else?", "options": []}
+        ],
+        "selectOnly": false, "single": true, "whatsNext": true
+      }
+    }}},
+    {"type": "request.new", "name": "confirm", "body": {"rev": 9, "full": false, "request": {
+      "id": "req2", "kind": "confirm", "createdAt": 1792900001000,
+      "agent": {"kind": "codex", "label": "Codex"}, "project": {"key": "p2", "name": "Other"},
+      "source": "hook", "contentHash": "sha256-def", "truncated": true,
+      "confirm": {
+        "title": "Run command?",
+        "context": [{"id": "cwd", "label": "Directory", "value": "/Users/x/proj", "kind": "path"}],
+        "detail": {"summary": "rm -rf build", "bodyMd": "```\nrm -rf build\n```"},
+        "choices": [
+          {"wireIndex": 0, "label": "Allow", "description": "", "role": "primary", "recommended": true},
+          {"wireIndex": 1, "label": "Deny", "description": "Stop here", "role": "danger", "recommended": false}
+        ],
+        "defaultIndex": 0,
+        "input": {"id": "note", "label": "Reason", "placeholder": "optional", "maxChars": 200, "visibleWhenIndex": 1, "required": true},
+        "dismissIndex": 1, "submitLabel": "Submit", "expiresAt": 1792900600000
+      }
+    }}},
+    {"type": "request.get", "body": {"requestId": "req1"}},
+    {"type": "request.full", "body": {"request": {
+      "id": "req2", "kind": "confirm", "createdAt": 1792900001000,
+      "agent": {"kind": "codex", "label": "Codex"}, "project": {"key": "p2", "name": "Other"},
+      "source": "hook", "contentHash": "sha256-def",
+      "confirm": {
+        "title": "Allow?", "context": [], "detail": {"summary": "s", "bodyMd": ""},
+        "choices": [{"wireIndex": 0, "label": "Yes", "description": "", "role": "default", "recommended": false}],
+        "submitLabel": "Submit", "expiresAt": 1792900600000
+      }
+    }}},
+    {"type": "request.ack", "body": {"requestId": "req1"}},
+    {"type": "request.seen", "body": {"requestId": "req1"}},
+    {"type": "request.resolved", "name": "min", "body": {"rev": 10, "requestId": "req1", "how": "answered"}},
+    {"type": "request.resolved", "name": "full", "body": {"rev": 11, "requestId": "req2", "how": "answeredElsewhere", "by": "Feishu"}},
+    {"type": "answer.submit", "name": "send", "body": {"clientMsgId": "c1", "requestId": "req1", "action": "send", "answers": [
+      {"q": 0, "sel": [0, 1], "text": "because", "images": ["u1"], "files": ["u2"]},
+      {"q": 1, "sel": [], "images": [], "files": []}
+    ]}},
+    {"type": "answer.submit", "name": "cancel", "body": {"clientMsgId": "c2", "requestId": "req1", "action": "cancel", "answers": []}},
+    {"type": "answer.ack", "name": "min", "body": {"clientMsgId": "c1", "requestId": "req1", "status": "accepted"}},
+    {"type": "answer.ack", "name": "full", "body": {"clientMsgId": "c1", "requestId": "req1", "status": "invalid", "reason": "question 1 needs an answer"}},
+    {"type": "confirm.decide", "name": "choice", "body": {"clientMsgId": "c3", "requestId": "req2", "wireIndex": 1, "input": "not needed"}},
+    {"type": "confirm.decide", "name": "dismiss", "body": {"clientMsgId": "c4", "requestId": "req2", "dismiss": true}},
+    {"type": "confirm.ack", "body": {"clientMsgId": "c3", "requestId": "req2", "status": "lost", "reason": "answered elsewhere"}},
+
+    {"type": "agents.snapshot", "body": {"epoch": "0123456789abcdef", "rev": 3, "agents": [
+      {"key": "claude:s1", "kind": "claude", "kindLabel": "Claude Code", "sessionId": "s1", "title": "Refactor gateway",
+       "project": {"key": "p1", "name": "HumanInLoop"}, "state": "working", "startedAt": 1792890000000, "lastActivityAt": 1792900000000,
+       "activeElapsedSecs": 600, "turnSteps": 12, "currentTool": "Edit", "waitingRequestId": "req1", "waitingPreview": "Which approach?",
+       "pendingInterject": 2, "lastTurnFailed": true, "canInterject": {"ok": false, "reason": "not supported"}, "followed": true},
+      {"key": "codex:s2", "kind": "codex", "kindLabel": "Codex", "sessionId": "s2", "title": "Write tests",
+       "project": {"key": "p2", "name": "Other"}, "state": "idle", "startedAt": 1792890000000, "lastActivityAt": 1792899000000,
+       "activeElapsedSecs": 0, "turnSteps": 0, "canInterject": {"ok": true}, "followed": false}
+    ]}},
+    {"type": "agents.delta", "body": {"rev": 4, "upsert": [
+      {"key": "codex:s2", "kind": "codex", "kindLabel": "Codex", "sessionId": "s2", "title": "Write tests",
+       "project": {"key": "p2", "name": "Other"}, "state": "ended", "startedAt": 1792890000000, "lastActivityAt": 1792899500000,
+       "activeElapsedSecs": 30, "turnSteps": 3, "canInterject": {"ok": false, "reason": "ended"}, "followed": false}
+    ], "remove": ["claude:s1"]}},
+    {"type": "follow.set", "body": {"clientMsgId": "c5", "agentKey": "claude:s1", "on": true}},
+    {"type": "follow.state", "name": "min", "body": {"rev": 2, "keys": ["claude:s1"]}},
+    {"type": "follow.state", "name": "limit", "body": {"rev": 3, "keys": [], "error": "limit"}},
+    {"type": "follow.event", "body": {"agentKey": "claude:s1", "kind": "waiting", "title": "Refactor gateway", "project": "HumanInLoop", "preview": "Waiting for your answer"}},
+    {"type": "watch.open", "body": {"agentKey": "claude:s1"}},
+    {"type": "watch.close", "body": {"agentKey": "claude:s1"}},
+    {"type": "watch.frame", "body": {"agentKey": "claude:s1", "seq": 5, "frame": {"kind": "tool", "text": "Edit src/main.rs"}}},
+    {"type": "watch.closed", "body": {"agentKey": "claude:s1", "reason": "ended"}},
+    {"type": "interject.send", "body": {"clientMsgId": "c6", "agentKey": "claude:s1", "text": "Also add tests", "files": ["u3"]}},
+    {"type": "interject.ack", "name": "min", "body": {"clientMsgId": "c6", "agentKey": "claude:s1", "status": "queued", "pending": 1}},
+    {"type": "interject.ack", "name": "rejected", "body": {"clientMsgId": "c6", "agentKey": "claude:s1", "status": "rejected", "reason": "ended", "pending": 0}},
+    {"type": "interject.clear", "body": {"clientMsgId": "c7", "agentKey": "claude:s1"}},
+    {"type": "interject.query", "body": {"agentKey": "claude:s1"}},
+    {"type": "interject.state", "name": "min", "body": {"agentKey": "claude:s1", "pending": 0}},
+    {"type": "interject.state", "name": "text", "body": {"agentKey": "claude:s1", "pending": 1, "text": "Also add tests"}},
+    {"type": "interject.consumed", "body": {"agentKey": "claude:s1"}},
+
+    {"type": "task.options.get", "body": {}},
+    {"type": "task.options", "name": "enabled", "body": {"enabled": true, "permissionMode": "ask",
+      "workspaces": [{"id": "w1", "label": "HumanInLoop", "subtitle": "~/Developer/HumanInLoop", "pinned": true, "lastUsedAt": 1792900000000}],
+      "agents": [
+        {"kind": "claude", "label": "Claude Code", "ready": true, "subtitle": "claude", "permissionSelectable": true},
+        {"kind": "codex", "label": "Codex", "ready": false, "subtitle": "codex", "permissionSelectable": false, "reason": "not installed"}
+      ]}},
+    {"type": "task.options", "name": "blocked", "body": {"enabled": false, "blocked": "disabled", "permissionMode": "yolo", "workspaces": [], "agents": []}},
+    {"type": "task.todos.get", "body": {"workspaceId": "w1"}},
+    {"type": "task.todos", "body": {"workspaceId": "w1", "todos": [{"id": "t1", "text": "Write docs", "auto": false, "attachments": 2}], "overflow": 3}},
+    {"type": "task.create", "name": "full", "body": {"clientMsgId": "c8", "workspaceId": "w1", "agentKind": "claude", "permission": "yolo", "todoId": "t1", "text": "Do the thing"}},
+    {"type": "task.create", "name": "min", "body": {"clientMsgId": "c9", "workspaceId": "w1", "agentKind": "codex", "permission": "default", "text": "Do the thing"}},
+    {"type": "task.status", "name": "min", "body": {"clientMsgId": "c8", "stage": "launching"}},
+    {"type": "task.status", "name": "full", "body": {"clientMsgId": "c8", "stage": "watching", "reason": "matched", "agentKey": "claude:s9"}},
+    {"type": "slot.take", "body": {"clientMsgId": "c10"}},
+    {"type": "slot.state", "body": {"rev": 5, "active": true, "autoActivation": false}},
+
+    {"type": "asset.get", "body": {"assetId": "a1", "from": 0, "count": 4}},
+    {"type": "asset.chunk", "name": "first", "body": {"assetId": "a1", "index": 0, "total": 3, "size": 196608, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "data": "AAEC"}},
+    {"type": "asset.chunk", "name": "next", "body": {"assetId": "a1", "index": 1, "total": 3, "size": 100, "data": "AAEC"}},
+    {"type": "asset.error", "body": {"assetId": "a1", "reason": "notFound"}},
+    {"type": "upload.begin", "body": {"uploadId": "u1", "name": "photo.jpg", "mime": "image/jpeg", "size": 400000, "chunks": 3, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "scope": {"requestId": "req1"}}},
+    {"type": "upload.begin", "name": "agent", "body": {"uploadId": "u3", "name": "note.txt", "mime": "text/plain", "size": 10, "chunks": 1, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "scope": {"agentKey": "claude:s1"}}},
+    {"type": "upload.chunk", "body": {"uploadId": "u1", "index": 0, "data": "AAEC"}},
+    {"type": "upload.ack", "name": "min", "body": {"uploadId": "u1", "nextIndex": 1, "status": "ok"}},
+    {"type": "upload.ack", "name": "error", "body": {"uploadId": "u1", "nextIndex": 0, "status": "error", "reason": "hash mismatch"}},
+    {"type": "upload.cancel", "body": {"uploadId": "u1"}}
+  ]
+}
