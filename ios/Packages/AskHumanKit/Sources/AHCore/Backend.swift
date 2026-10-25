@@ -47,6 +47,36 @@ public protocol RemoteBackend: AnyObject, Sendable {
     /// Downloads an attachment of a request into the cache.
     func download(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL
 
+    // agents
+    /// Follows an Agent (the Mac pushes when it finishes, fails or asks something); at most
+    /// `Wire.maxFollow` per Mac. Throws `.rejected("limit")` when the list is full.
+    func setFollow(macId: String, agentKey: String, on: Bool) async throws
+    /// Opens or closes the live frames of one Agent. A watch the user keeps open is asked for again
+    /// after a reconnect.
+    func watch(macId: String, agentKey: String, open: Bool) async
+    /// Sends a message to a working Agent. `clientMsgId` makes a retry of a failed attempt idempotent
+    /// (pass the same one again). Throws `.rejected(reason)` when the Mac refused it.
+    func sendInterject(
+        macId: String, agentKey: String, text: String, files: [UploadSource], clientMsgId: String?,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> InterjectOutcome
+    /// Withdraws the messages still waiting for an Agent; returns how many are left.
+    func clearInterject(macId: String, agentKey: String) async throws -> Int
+    /// The messages still waiting for an Agent, with their text (to take them back into the editor).
+    func queryInterject(macId: String, agentKey: String) async throws -> InterjectInfo
+
+    // tasks
+    /// Asks a Mac for the workspaces and Agents a new task may use (answer lands in the state).
+    func loadTaskOptions(macId: String) async
+    func loadTaskTodos(macId: String, workspaceId: String) async
+    /// Sends a new task; returns its id (the progress is in `EngineState.tasks`).
+    func createTask(macId: String, draft: TaskDraft) async throws -> String
+    /// Sends a task whose outcome is unknown again, under the same id.
+    func retryTask(id: String) async throws
+    func dismissTask(id: String) async
+    /// Makes this phone the one that receives the Mac's questions now.
+    func takeSlot(macId: String) async throws
+
     // history
     func history() async -> [HistoryEntry]
     func deleteHistory(id: String) async

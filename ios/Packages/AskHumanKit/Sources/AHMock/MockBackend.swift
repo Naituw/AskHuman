@@ -29,14 +29,37 @@ public actor MockBackend: RemoteBackend {
     public nonisolated let states: AsyncStream<EngineState>
     public nonisolated let events: AsyncStream<EngineEvent>
 
+    /// A message to an Agent as the mock received it (for tests).
+    public struct InterjectRecord: Equatable, Sendable {
+        public var macId: String
+        public var agentKey: String
+        public var text: String
+        public var files: Int
+    }
+
     private let stateOut: AsyncStream<EngineState>.Continuation
-    private let eventOut: AsyncStream<EngineEvent>.Continuation
-    private var state: EngineState
+    let eventOut: AsyncStream<EngineEvent>.Continuation
+    var state: EngineState
     private var entries: [HistoryEntry]
-    private let latency: Double
-    private let now: @Sendable () -> Date
+    let latency: Double
+    let now: @Sendable () -> Date
     private var pairingTask: Task<Void, Never>?
-    private var counter = 0
+    var counter = 0
+
+    // Agents, watches, interjections and tasks (`MockBackend+Agents.swift`).
+    var watchTasks: [String: Task<Void, Never>] = [:]
+    var interjectQueues: [String: [String]] = [:]
+    var taskTasks: [String: Task<Void, Never>] = [:]
+    var taskDrafts: [String: TaskDraft] = [:]
+    public internal(set) var interjects: [InterjectRecord] = []
+    public internal(set) var createdTasks: [TaskDraft] = []
+    /// Makes the next new task fail with this reason (a one-shot).
+    public var failNextTask: String?
+    /// How many Agents one Mac may follow (the real limit unless a test lowers it).
+    public var followLimit = Wire.maxFollow
+    /// The Agent picks queued messages up after this many seconds (scaled by the latency);
+    /// `nil` keeps them queued until `consumeInterjects` is called.
+    public var interjectConsumeDelay: Double? = 4
 
     public private(set) var submissions: [Submission] = []
     public private(set) var uploads: [UploadSource] = []
@@ -63,7 +86,7 @@ public actor MockBackend: RemoteBackend {
                 phase: .connected(via: "tcp"), foreground: true, macs: MockData.macs(now: date), inbox: MockData.inbox(now: date),
                 push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1,
                 traffic: TrafficStats(month: "2026-10", sentBytes: 18_432, receivedBytes: 96_210, sentMessages: 41, receivedMessages: 77),
-                brokerHost: "broker.example.com"
+                brokerHost: "broker.example.com", agents: MockData.agents(now: date)
             )
             entries = MockData.history(now: date)
         case .empty:
@@ -164,6 +187,7 @@ public actor MockBackend: RemoteBackend {
         guard let mac = state.macs.first(where: { $0.id == macId }) else { return }
         state.macs.removeAll { $0.id == macId }
         state.inbox.removeAll { $0.macId == macId }
+        dropAgents(of: macId)
         refreshCounts()
         publish()
         eventOut.yield(.macUnpaired(macId: macId, macName: mac.name))
@@ -171,9 +195,14 @@ public actor MockBackend: RemoteBackend {
 
     public func forgetAll() async {
         pairingTask?.cancel()
-        for mac in state.macs { eventOut.yield(.macUnpaired(macId: mac.id, macName: mac.name)) }
+        for mac in state.macs {
+            eventOut.yield(.macUnpaired(macId: mac.id, macName: mac.name))
+            dropAgents(of: mac.id)
+        }
         state.macs = []
         state.inbox = []
+        state.agents = []
+        state.tasks = []
         state.pairing = nil
         state.brokerHost = nil
         state.phase = .idle
@@ -375,18 +404,18 @@ public actor MockBackend: RemoteBackend {
 
     // MARK: helpers
 
-    private func pause(_ seconds: Double) async {
+    func pause(_ seconds: Double) async {
         let scaled = seconds * latency
         if scaled > 0 { try? await Task.sleep(for: .seconds(scaled)) }
     }
 
-    private func refreshCounts() {
+    func refreshCounts() {
         for index in state.macs.indices {
             state.macs[index].pendingCount = state.inbox.filter { $0.macId == state.macs[index].id }.count
         }
     }
 
-    private func publish() {
+    func publish() {
         stateOut.yield(state)
     }
 }

@@ -17,7 +17,7 @@ final class TestMac: @unchecked Sendable {
     let client: LoopbackClient
     var epoch = "epoch-\(UUID().uuidString.prefix(6))"
 
-    private let lock = NSLock()
+    let lock = NSLock()
     private var task: Task<Void, Never>?
     private var keys: [String: (kid: Int, m2p: Data, p2m: Data)] = [:]
     private var ticket: (id: String, secret: Data, key: Data, pair: AHCrypto.KeyPair)?
@@ -41,6 +41,29 @@ final class TestMac: @unchecked Sendable {
     /// Reason the Mac refuses uploads with (nil = accept).
     var uploadError: String?
     var ignoreUploads = false
+
+    // Agents, follow, watch, interject and tasks: see `TestMac+Agents.swift`.
+    var agents: [String: AgentView] = [:]
+    var agentsRev: UInt64 = 1
+    var followKeys: [String] = []
+    var followRev: UInt64 = 1
+    var slotRev: UInt64 = 1
+    var slotActive = true
+    /// What the Mac answers to `interject.send` (nil = no answer at all).
+    var interjectReply: (status: String, reason: String?, pending: UInt64)? = ("queued", nil, 1)
+    var interjectQueue: [String] = []
+    var taskOptions = TaskOptions(
+        enabled: true, permissionMode: "ask",
+        workspaces: [WorkspaceOption(id: "ws1", label: "HumanInLoop", subtitle: "~/Developer", pinned: true, lastUsedAt: 0)],
+        agents: [AgentOption(kind: "claude", label: "Claude Code", ready: true, subtitle: "Terminal", permissionSelectable: true)]
+    )
+    var todos: [TodoOption] = []
+    /// The statuses the Mac sends, in order, after it received a `task.create`.
+    var taskScript: [(stage: String, reason: String?, agentKey: String?)] = [("accepted", nil, nil), ("launched", nil, nil)]
+    var ignoreTasks = false
+    var ignoreTaskOptions = false
+    var watchOpens: [String] = []
+    var watchCloses: [String] = []
 
     init(broker: LoopbackBroker, user: String, clock: ManualClock, macId: String = Bytes.newId(), macName: String = "Home Mac") {
         self.user = user
@@ -272,7 +295,15 @@ final class TestMac: @unchecked Sendable {
             guard autoHello, let hello = try? plain.body(as: Hello.self) else { return }
             await sendHelloSync(to: phoneId, nonce: hello.nonce)
         case Wire.T.resync:
-            if let resync = try? plain.body(as: Resync.self), resync.stream == "inbox" { await sendInboxSnapshot(to: phoneId) }
+            if let resync = try? plain.body(as: Resync.self) {
+                switch resync.stream {
+                case "inbox": await sendInboxSnapshot(to: phoneId)
+                case "agents": await sendAgentsSnapshot(to: phoneId)
+                case "follow": await sendFollowState(to: phoneId)
+                case "slot": await sendDown(SlotState(rev: slotRev, active: slotActive, autoActivation: false), to: phoneId)
+                default: break
+                }
+            }
         case RequestGet.type:
             if dropNextRequestGet { dropNextRequestGet = false; return }
             if let get = try? plain.body(as: RequestGet.self) {
@@ -310,17 +341,19 @@ final class TestMac: @unchecked Sendable {
         case UploadChunk.type:
             if let chunk = try? plain.body(as: UploadChunk.self) { await takeUploadChunk(chunk, from: phoneId) }
         default:
-            break
+            await handleAgents(plain, from: phoneId)
         }
     }
 
     func sendHelloSync(to phoneId: String, nonce: String) async {
         await sendDown(
-            HelloAck(nonce: nonce, epoch: epoch, macName: macName, caps: caps, slot: SlotInfo(active: true, autoActivation: false)),
+            HelloAck(nonce: nonce, epoch: epoch, macName: macName, caps: caps, slot: SlotInfo(active: slotActive, autoActivation: false)),
             to: phoneId
         )
         await sendInboxSnapshot(to: phoneId)
-        await sendDown(SlotState(rev: 1, active: true, autoActivation: false), to: phoneId)
+        await sendAgentsSnapshot(to: phoneId)
+        await sendFollowState(to: phoneId)
+        await sendDown(SlotState(rev: slotRev, active: slotActive, autoActivation: false), to: phoneId)
     }
 
     func sendInboxSnapshot(to phoneId: String) async {

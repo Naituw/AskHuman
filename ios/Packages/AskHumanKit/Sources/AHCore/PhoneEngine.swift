@@ -89,6 +89,22 @@ public actor PhoneEngine: RemoteBackend {
     var uploadMailboxes: [String: UploadMailbox] = [:]
     var uploadOwners: [String: String] = [:]
 
+    // MARK: agents, watches, interjections and tasks
+
+    /// Watches the user has open (`AgentItem.id`): the Mac forgets them with the connection, so
+    /// they are asked for again after every handshake.
+    var wantedWatches: Set<String> = []
+    var watches: [String: WatchState] = [:]
+    /// The Agent of the last `follow.set` per Mac, to name the one a `limit` refusal is about.
+    var followRequests: [String: String] = [:]
+    var interjectBoxes: [String: ReplyMailbox<InterjectAck>] = [:]
+    var interjectStateBoxes: [String: ReplyMailbox<InterjectState>] = [:]
+    var taskOptions: [String: TaskOptionsState] = [:]
+    var taskTodos: [String: [TodoOption]] = [:]
+    var tasks: [TaskProgress] = []
+    /// What was sent for each task, so a failed one can be sent again unchanged.
+    var taskBodies: [String: TaskCreate] = [:]
+
     public init(
         vault: Vault, store: LocalStore, broker: BrokerClient, clock: EngineClock = SystemEngineClock(),
         relay: RelayRegistering = HTTPRelayClient(), config: EngineConfig
@@ -197,6 +213,9 @@ public actor PhoneEngine: RemoteBackend {
             macs[id]?.resetSession()
         }
         failTransfers(with: .macOffline)
+        failInterjects(for: nil, with: .macOffline)
+        watches = [:]
+        interruptTasks()
     }
 
     // MARK: timers
@@ -440,7 +459,12 @@ public actor PhoneEngine: RemoteBackend {
         guard var mac = macs[device] else { return }
         let wasOnline = mac.online
         if presence.o != 1 {
-            if wasOnline { failTransfers(for: device, with: .macOffline) }
+            if wasOnline {
+                failTransfers(for: device, with: .macOffline)
+                failInterjects(for: device, with: .macOffline)
+                dropWatches(of: device)
+                interruptTasks(of: device)
+            }
             mac.resetSession()
         }
         mac.presence = presence
@@ -490,6 +514,18 @@ public actor PhoneEngine: RemoteBackend {
             case AnswerAck.type: await onAnswerAck(macId, try plain.body(as: AnswerAck.self))
             case ConfirmAck.type: await onConfirmAck(macId, try plain.body(as: ConfirmAck.self))
             case SlotState.type: onSlotState(macId, try plain.body(as: SlotState.self))
+            case AgentsSnapshot.type: await onAgentsSnapshot(macId, try plain.body(as: AgentsSnapshot.self))
+            case AgentsDelta.type: await onAgentsDelta(macId, try plain.body(as: AgentsDelta.self))
+            case FollowState.type: onFollowState(macId, try plain.body(as: FollowState.self))
+            case FollowEvent.type: onFollowEvent(macId, try plain.body(as: FollowEvent.self))
+            case WatchFrame.type: await onWatchFrame(macId, try plain.body(as: WatchFrame.self))
+            case WatchClosed.type: onWatchClosed(macId, try plain.body(as: WatchClosed.self))
+            case InterjectAck.type: onInterjectAck(macId, try plain.body(as: InterjectAck.self))
+            case InterjectState.type: onInterjectState(macId, try plain.body(as: InterjectState.self))
+            case InterjectConsumed.type: onInterjectConsumed(macId, try plain.body(as: InterjectConsumed.self))
+            case TaskOptions.type: onTaskOptions(macId, try plain.body(as: TaskOptions.self))
+            case TaskTodos.type: onTaskTodos(macId, try plain.body(as: TaskTodos.self))
+            case TaskStatus.type: onTaskStatus(macId, try plain.body(as: TaskStatus.self))
             case AssetChunk.type: await onAssetChunk(macId, try plain.body(as: AssetChunk.self))
             case AssetError.type: onAssetError(macId, try plain.body(as: AssetError.self))
             case UploadAck.type: onUploadAck(macId, try plain.body(as: UploadAck.self))
@@ -586,7 +622,8 @@ public actor PhoneEngine: RemoteBackend {
         }.sorted { $0.summary.createdAt > $1.summary.createdAt }
         return EngineState(
             phase: phase, foreground: foreground, macs: list, inbox: inbox, pairing: pairingState(), clockSkew: clockSkew,
-            push: pushStatus, historyRevision: historyRevision, traffic: traffic, brokerHost: activeSettings?.host
+            push: pushStatus, historyRevision: historyRevision, traffic: traffic, brokerHost: activeSettings?.host,
+            agents: agentItems(), watches: watches, taskOptions: taskOptions, taskTodos: taskTodos, tasks: tasks
         )
     }
 
@@ -617,6 +654,11 @@ struct MacRuntime {
     var slot: SlotInfo?
     var slotRev: UInt64?
     var inboxRev: UInt64?
+    var agents: [String: AgentView] = [:]
+    var agentsRev: UInt64?
+    /// Agent keys the Mac says are followed.
+    var follow: Set<String> = []
+    var followRev: UInt64?
     var pushStatus: String?
     var dedup = DedupWindow()
     var lastSeenAt: Date?
@@ -636,6 +678,9 @@ struct MacRuntime {
         slot = nil
         slotRev = nil
         inboxRev = nil
+        agents = [:]
+        agentsRev = nil
+        followRev = nil
     }
 }
 

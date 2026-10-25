@@ -186,6 +186,14 @@ extension PhoneEngine {
     ) async throws -> String {
         guard macs[macId]?.sync == .synced else { throw BackendError.macOffline }
         guard requests[CachedRequest.key(macId, requestId)] != nil else { throw BackendError.unknownRequest }
+        return try await performUpload(macId: macId, scope: UploadScope(requestId: requestId), source: source, progress: progress)
+    }
+
+    /// Pushes one file to a Mac for a question (`requestId` scope) or an Agent (`agentKey` scope).
+    func performUpload(
+        macId: String, scope: UploadScope, source: UploadSource, progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> String {
+        guard macs[macId]?.sync == .synced else { throw BackendError.macOffline }
         guard !source.data.isEmpty, source.data.count <= Wire.maxAssetBytes else { throw BackendError.tooLarge }
 
         let uploadId = Bytes.newId()
@@ -213,7 +221,7 @@ extension PhoneEngine {
         await send(
             UploadBegin(
                 uploadId: uploadId, name: source.name, mime: source.mime, size: size, chunks: UInt64(chunks), sha256: digest,
-                scope: UploadScope(requestId: requestId)
+                scope: scope
             ),
             to: macId
         )

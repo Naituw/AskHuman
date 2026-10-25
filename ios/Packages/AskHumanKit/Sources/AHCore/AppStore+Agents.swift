@@ -1,0 +1,204 @@
+import Foundation
+import AHProtocol
+
+/// Which Agents the Agents tab lists.
+public enum AgentFilter: Hashable, Sendable {
+    case all
+    case followed
+    case mac(String)
+}
+
+/// Agents of one state, in the order the tab shows them (questions first).
+public struct AgentSection: Identifiable, Equatable, Sendable {
+    /// `waiting`, `working`, `idle` or `ended`.
+    public var id: String
+    public var items: [AgentItem]
+}
+
+extension AppStore {
+    // MARK: list
+
+    public func agentItems(filter: AgentFilter? = nil) -> [AgentItem] {
+        let active = filter ?? agentFilter
+        return state.agents.filter { item in
+            switch active {
+            case .all: return true
+            case .followed: return item.view.followed
+            case .mac(let id): return item.macId == id
+            }
+        }
+    }
+
+    public func agentSections(filter: AgentFilter? = nil) -> [AgentSection] {
+        let items = agentItems(filter: filter)
+        func bucket(_ state: String) -> String {
+            ["waiting", "working", "ended"].contains(state) ? state : "idle"
+        }
+        return ["waiting", "working", "idle", "ended"].compactMap { id in
+            let group = items.filter { bucket($0.view.state) == id }
+            return group.isEmpty ? nil : AgentSection(id: id, items: group)
+        }
+    }
+
+    public func agent(id: String) -> AgentItem? {
+        state.agents.first { $0.id == id }
+    }
+
+    /// The Agent of a page: the live one, or the last known version of one that is gone.
+    public func displayAgent(id: String) -> AgentItem? {
+        agent(id: id) ?? retainedAgents[id]?.item
+    }
+
+    public func watchState(id: String) -> WatchState? {
+        state.watches[id]
+    }
+
+    public var followedCount: Int { state.agents.filter { $0.view.followed }.count }
+
+    public var waitingAgentCount: Int { state.agents.filter { $0.view.state == "waiting" }.count }
+
+    /// Macs a task can be started on (online and told the phone may).
+    public var taskMacs: [MacState] {
+        state.macs.filter { $0.link == .online && $0.caps.newTask }
+    }
+
+    // MARK: opening
+
+    public func openAgent(macId: String, agentKey: String) {
+        tab = .agents
+        let id = AgentItem.key(macId, agentKey)
+        guard agentPath.last != id else { return }
+        agentPath = [id]
+    }
+
+    /// Opens or closes the live frames of the Agent a page shows.
+    func setWatch(_ id: String, open: Bool) {
+        guard let (macId, agentKey) = AgentItem.split(id) else { return }
+        let backend = backend
+        Task { await backend.watch(macId: macId, agentKey: agentKey, open: open) }
+    }
+
+    func presentFollowEvent(macId: String, event: FollowEvent) {
+        guard state.foreground else { return }
+        let id = AgentItem.key(macId, event.agentKey)
+        // The page of that Agent shows it already.
+        if tab == .agents, agentPath.last == id { return }
+        arrivalTick += 1
+        show(Banner(
+            kind: .agent(macId: macId, agentKey: event.agentKey, event: event.kind),
+            title: event.title.isEmpty ? event.project : event.title,
+            subtitle: event.preview.isEmpty ? event.project : event.preview
+        ))
+    }
+
+    // MARK: actions
+
+    /// Follows or unfollows an Agent. Returns `false` when the Mac refused or could not be reached.
+    @discardableResult
+    public func setFollow(_ item: AgentItem, on: Bool) async -> Bool {
+        do {
+            try await backend.setFollow(macId: item.macId, agentKey: item.agentKey, on: on)
+            return true
+        } catch BackendError.rejected(let reason) where reason == "limit" {
+            show(Banner(kind: .followLimit, title: ""))
+        } catch {
+            show(Banner(kind: .warning, title: item.macName, subtitle: error.localizedDescription))
+        }
+        return false
+    }
+
+    public func interject(
+        _ item: AgentItem, text: String, files: [UploadSource], clientMsgId: String?, progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> InterjectOutcome {
+        try await backend.sendInterject(
+            macId: item.macId, agentKey: item.agentKey, text: text, files: files, clientMsgId: clientMsgId, progress: progress
+        )
+    }
+
+    /// Withdraws the messages still waiting for an Agent.
+    public func clearInterject(_ item: AgentItem) async throws {
+        _ = try await backend.clearInterject(macId: item.macId, agentKey: item.agentKey)
+    }
+
+    /// Takes the waiting messages back: returns their text (to edit again) and withdraws them.
+    public func recallInterject(_ item: AgentItem) async throws -> String {
+        let info = try await backend.queryInterject(macId: item.macId, agentKey: item.agentKey)
+        _ = try await backend.clearInterject(macId: item.macId, agentKey: item.agentKey)
+        return info.text ?? ""
+    }
+
+    // MARK: new tasks
+
+    /// Opens the new task form, on `macId` or the first Mac that can start tasks.
+    public func presentNewTask(macId: String? = nil) {
+        guard let target = macId ?? taskMacs.first?.id else { return }
+        let composer = TaskComposer(macId: target)
+        taskComposer = composer
+        let backend = backend
+        Task { await backend.loadTaskOptions(macId: target) }
+    }
+
+    public func dismissNewTask() {
+        taskComposer = nil
+    }
+
+    public func selectTaskMac(_ macId: String) {
+        guard let composer = taskComposer, composer.macId != macId else { return }
+        composer.switchMac(to: macId)
+        let backend = backend
+        Task { await backend.loadTaskOptions(macId: macId) }
+    }
+
+    public func reloadTaskOptions() {
+        guard let macId = taskComposer?.macId else { return }
+        let backend = backend
+        Task { await backend.loadTaskOptions(macId: macId) }
+    }
+
+    /// Chooses a workspace; its TODOs are asked for.
+    public func selectTaskWorkspace(_ workspaceId: String) {
+        guard let composer = taskComposer else { return }
+        composer.workspaceId = workspaceId
+        composer.todoId = nil
+        let macId = composer.macId
+        let backend = backend
+        Task { await backend.loadTaskTodos(macId: macId, workspaceId: workspaceId) }
+    }
+
+    /// Fills in the form's defaults once the choices of its Mac are there.
+    public func taskOptionsArrived() {
+        guard let composer = taskComposer, case .ready(let options)? = state.taskOptions[composer.macId] else { return }
+        let before = composer.workspaceId
+        composer.applyDefaults(options: options, defaults: defaults)
+        if let workspaceId = composer.workspaceId, workspaceId != before, state.todos(macId: composer.macId, workspaceId: workspaceId) == nil {
+            let macId = composer.macId
+            let backend = backend
+            Task { await backend.loadTaskTodos(macId: macId, workspaceId: workspaceId) }
+        }
+    }
+
+    /// Sends the form. Returns the id of the task to watch, or `nil` when the form is incomplete.
+    public func createTask() async throws -> String? {
+        guard let composer = taskComposer, case .ready(let options)? = state.taskOptions[composer.macId],
+              let draft = composer.draft(options: options)
+        else { return nil }
+        composer.remember(defaults: defaults)
+        return try await backend.createTask(macId: composer.macId, draft: draft)
+    }
+
+    public func task(id: String) -> TaskProgress? {
+        state.tasks.first { $0.id == id }
+    }
+
+    public func retryTask(_ id: String) async throws {
+        try await backend.retryTask(id: id)
+    }
+
+    public func dismissTask(_ id: String) async {
+        await backend.dismissTask(id: id)
+    }
+
+    public func takeSlot(_ mac: MacState) async throws {
+        try await backend.takeSlot(macId: mac.id)
+    }
+}

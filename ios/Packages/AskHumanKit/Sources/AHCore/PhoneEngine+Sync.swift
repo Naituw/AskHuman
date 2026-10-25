@@ -54,6 +54,9 @@ extension PhoneEngine {
         mac.slot = ack.slot
         mac.inboxRev = nil
         mac.slotRev = nil
+        mac.agents = [:]
+        mac.agentsRev = nil
+        mac.followRev = nil
         if !ack.macName.isEmpty, ack.macName != mac.record.macName {
             mac.record.macName = ack.macName
             try? vault.savePairing(mac.record)
@@ -108,6 +111,12 @@ extension PhoneEngine {
     /// Forgets a Mac: keys, cached requests, outbox, notes and history.
     func removeMac(_ macId: String) {
         failTransfers(for: macId, with: .unknownMac)
+        failInterjects(for: macId, with: .unknownMac)
+        dropWatches(of: macId, forget: true)
+        interruptTasks(of: macId, forget: true)
+        taskOptions[macId] = nil
+        taskTodos = taskTodos.filter { !$0.key.hasPrefix(macId + "|") }
+        followRequests[macId] = nil
         cancelTimer("hello." + macId)
         vault.removePairing(macId: macId)
         store.forget(macId: macId)

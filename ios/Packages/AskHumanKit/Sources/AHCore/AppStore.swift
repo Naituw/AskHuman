@@ -33,7 +33,15 @@ public struct FinishedRequest: Equatable, Sendable {
 
 /// A short message over the app: a new request, a failure, a notice.
 public struct Banner: Identifiable, Equatable, Sendable {
-    public enum Kind: Sendable, Equatable { case request(macId: String, requestId: String), info, warning }
+    public enum Kind: Sendable, Equatable {
+        case request(macId: String, requestId: String)
+        /// A followed Agent finished (`done`), failed (`failed`) or asks something (`waiting`).
+        case agent(macId: String, agentKey: String, event: String)
+        /// The Mac already follows as many Agents as it allows.
+        case followLimit
+        case info
+        case warning
+    }
 
     public var id = UUID()
     public var kind: Kind
@@ -57,7 +65,7 @@ public final class AppStore {
     /// Requests that ended while open, by inbox item id.
     public private(set) var finished: [String: FinishedRequest] = [:]
     /// Bumps for every request that arrives while the app is in the foreground (the UI plays a haptic).
-    public private(set) var arrivalTick = 0
+    public internal(set) var arrivalTick = 0
     public private(set) var started = false
 
     public var tab: AppTab = .inbox
@@ -70,6 +78,19 @@ public final class AppStore {
         }
     }
     public var banner: Banner?
+    /// Ids (`macId|agentKey`) of the Agents pushed on the Agents stack. The live frames of an Agent
+    /// are asked for while its page is on the stack.
+    public var agentPath: [String] = [] {
+        didSet {
+            for id in Set(agentPath).subtracting(oldValue) { setWatch(id, open: true) }
+            for id in Set(oldValue).subtracting(agentPath) { setWatch(id, open: false) }
+        }
+    }
+    public var agentFilter: AgentFilter = .all
+    /// When the Agent of an Agent page last picked up the messages sent to it (by `AgentItem.id`).
+    public private(set) var consumed: [String: Date] = [:]
+    /// The new task form while its sheet is open.
+    public var taskComposer: TaskComposer?
     /// Jump to the next pending request after a submission.
     public var autoAdvance: Bool {
         didSet { defaults.set(autoAdvance, forKey: Self.autoAdvanceKey) }
@@ -77,7 +98,7 @@ public final class AppStore {
 
     @ObservationIgnored public let backend: RemoteBackend
     @ObservationIgnored public let drafts: DraftStore
-    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored private var composers: [String: AnswerComposer] = [:]
     @ObservationIgnored private var confirmComposers: [String: ConfirmComposer] = [:]
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
@@ -88,6 +109,8 @@ public final class AppStore {
     @ObservationIgnored private var bannerTask: Task<Void, Never>?
     /// Arrivals whose request is not in the published state yet (events and states travel apart).
     @ObservationIgnored private var pendingArrivals: [String: (macId: String, requestId: String)] = [:]
+    /// Every Agent seen on the Agents tab, kept while its page may still be open.
+    @ObservationIgnored var retainedAgents: [String: (item: AgentItem, at: Date)] = [:]
 
     private static let autoAdvanceKey = "ah.autoAdvance"
 
@@ -142,6 +165,11 @@ public final class AppStore {
         for key in confirmComposers.keys where !live.contains(key) && !inboxPath.contains(key) {
             confirmComposers[key] = nil
         }
+        taskOptionsArrived()
+        for item in next.agents { retainedAgents[item.id] = (item, now) }
+        for (key, entry) in retainedAgents where now.timeIntervalSince(entry.at) > 600 && !agentPath.contains(key) {
+            retainedAgents[key] = nil
+        }
         presentArrivals()
     }
 
@@ -188,6 +216,12 @@ public final class AppStore {
             show(Banner(kind: .warning, title: macName))
         case .pairingFinished:
             break
+        case .followEvent(let macId, let event):
+            presentFollowEvent(macId: macId, event: event)
+        case .followRefused:
+            show(Banner(kind: .followLimit, title: ""))
+        case .interjectConsumed(let macId, let agentKey):
+            consumed[AgentItem.key(macId, agentKey)] = Date()
         }
     }
 
@@ -403,6 +437,8 @@ public final class AppStore {
     public func rename(_ mac: MacState, to alias: String?) async { await backend.renameMac(macId: mac.id, alias: alias) }
     public func forgetAll() async {
         inboxPath = []
+        agentPath = []
+        taskComposer = nil
         await backend.forgetAll()
     }
 

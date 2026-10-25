@@ -171,11 +171,22 @@ public struct EngineState: Sendable, Equatable {
     public var traffic: TrafficStats?
     /// `host` of the broker (for the Mac screen); `nil` before the first pairing.
     public var brokerHost: String?
+    /// Agent sessions of every Mac that is online (active ones first).
+    public var agents: [AgentItem]
+    /// Live watches that are open, by `AgentItem.id`.
+    public var watches: [String: WatchState]
+    /// What a new task may choose from, by Mac id.
+    public var taskOptions: [String: TaskOptionsState]
+    /// TODOs offered per workspace, by `macId|workspaceId`.
+    public var taskTodos: [String: [TodoOption]]
+    /// Tasks created from this phone, newest first.
+    public var tasks: [TaskProgress]
 
     public init(
         phase: ConnectionPhase = .idle, foreground: Bool = false, macs: [MacState] = [], inbox: [InboxItem] = [],
         pairing: PairingState? = nil, clockSkew: Bool = false, push: PushStatus = .noToken, historyRevision: Int = 0,
-        traffic: TrafficStats? = nil, brokerHost: String? = nil
+        traffic: TrafficStats? = nil, brokerHost: String? = nil, agents: [AgentItem] = [], watches: [String: WatchState] = [:],
+        taskOptions: [String: TaskOptionsState] = [:], taskTodos: [String: [TodoOption]] = [:], tasks: [TaskProgress] = []
     ) {
         self.phase = phase
         self.foreground = foreground
@@ -187,6 +198,11 @@ public struct EngineState: Sendable, Equatable {
         self.historyRevision = historyRevision
         self.traffic = traffic
         self.brokerHost = brokerHost
+        self.agents = agents
+        self.watches = watches
+        self.taskOptions = taskOptions
+        self.taskTodos = taskTodos
+        self.tasks = tasks
     }
 }
 
@@ -196,6 +212,12 @@ public enum EngineEvent: Sendable, Equatable {
     case requestFinished(macId: String, requestId: String, outcome: HistoryOutcome, by: String?)
     case macUnpaired(macId: String, macName: String)
     case pairingFinished(macId: String)
+    /// A followed Agent finished, failed or is waiting for an answer somewhere else.
+    case followEvent(macId: String, event: FollowEvent)
+    /// The Mac refused to follow one more Agent (the limit is reached).
+    case followRefused(macId: String, agentKey: String)
+    /// The Agent picked up the messages queued for it.
+    case interjectConsumed(macId: String, agentKey: String)
 }
 
 public enum BackendError: Error, Sendable, Equatable, LocalizedError {
@@ -208,6 +230,8 @@ public enum BackendError: Error, Sendable, Equatable, LocalizedError {
     case timedOut
     case cancelled
     case unavailable(String)
+    /// The Mac refused the message; the reason is a short code (`notWorking`, `unsupported`, `empty`, …).
+    case rejected(String)
 
     public var errorDescription: String? {
         switch self {
@@ -219,6 +243,7 @@ public enum BackendError: Error, Sendable, Equatable, LocalizedError {
         case .timedOut: return "Timed out."
         case .cancelled: return "Cancelled."
         case .unavailable(let reason): return reason
+        case .rejected(let reason): return reason
         }
     }
 }

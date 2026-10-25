@@ -540,6 +540,11 @@ public struct ConfirmAck: WireMessage {
 public struct CanInterject: Codable, Equatable, Hashable, Sendable {
     public var ok: Bool
     public var reason: String?
+
+    public init(ok: Bool, reason: String? = nil) {
+        self.ok = ok
+        self.reason = reason
+    }
 }
 
 public struct AgentView: Codable, Equatable, Hashable, Sendable, Identifiable {
@@ -566,6 +571,32 @@ public struct AgentView: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var followed: Bool
 
     public var id: String { key }
+
+    public init(
+        key: String, kind: String, kindLabel: String, sessionId: String, title: String, project: ProjectRef, state: String,
+        startedAt: Int64, lastActivityAt: Int64, activeElapsedSecs: UInt64 = 0, turnSteps: UInt64 = 0, currentTool: String? = nil,
+        waitingRequestId: String? = nil, waitingPreview: String? = nil, pendingInterject: UInt64 = 0, lastTurnFailed: Bool = false,
+        canInterject: CanInterject = CanInterject(ok: false), followed: Bool = false
+    ) {
+        self.key = key
+        self.kind = kind
+        self.kindLabel = kindLabel
+        self.sessionId = sessionId
+        self.title = title
+        self.project = project
+        self.state = state
+        self.startedAt = startedAt
+        self.lastActivityAt = lastActivityAt
+        self.activeElapsedSecs = activeElapsedSecs
+        self.turnSteps = turnSteps
+        self.currentTool = currentTool
+        self.waitingRequestId = waitingRequestId
+        self.waitingPreview = waitingPreview
+        self.pendingInterject = pendingInterject
+        self.lastTurnFailed = lastTurnFailed
+        self.canInterject = canInterject
+        self.followed = followed
+    }
 }
 
 public struct AgentsSnapshot: WireMessage {
@@ -611,6 +642,14 @@ public struct FollowEvent: WireMessage {
     public var title: String
     public var project: String
     public var preview: String
+
+    public init(agentKey: String, kind: String, title: String, project: String, preview: String) {
+        self.agentKey = agentKey
+        self.kind = kind
+        self.title = title
+        self.project = project
+        self.preview = preview
+    }
 }
 
 public struct WatchOpen: WireMessage {
@@ -710,6 +749,14 @@ public struct WorkspaceOption: Codable, Equatable, Hashable, Sendable, Identifia
     public var subtitle: String
     public var pinned: Bool
     public var lastUsedAt: Int64
+
+    public init(id: String, label: String, subtitle: String, pinned: Bool = false, lastUsedAt: Int64 = 0) {
+        self.id = id
+        self.label = label
+        self.subtitle = subtitle
+        self.pinned = pinned
+        self.lastUsedAt = lastUsedAt
+    }
 }
 
 public struct AgentOption: Codable, Equatable, Hashable, Sendable {
@@ -719,6 +766,15 @@ public struct AgentOption: Codable, Equatable, Hashable, Sendable {
     public var subtitle: String
     public var permissionSelectable: Bool
     public var reason: String?
+
+    public init(kind: String, label: String, ready: Bool, subtitle: String, permissionSelectable: Bool, reason: String? = nil) {
+        self.kind = kind
+        self.label = label
+        self.ready = ready
+        self.subtitle = subtitle
+        self.permissionSelectable = permissionSelectable
+        self.reason = reason
+    }
 }
 
 public struct TaskOptions: WireMessage {
@@ -729,6 +785,14 @@ public struct TaskOptions: WireMessage {
     public var permissionMode: String
     public var workspaces: [WorkspaceOption]
     public var agents: [AgentOption]
+
+    public init(enabled: Bool, blocked: String? = nil, permissionMode: String, workspaces: [WorkspaceOption], agents: [AgentOption]) {
+        self.enabled = enabled
+        self.blocked = blocked
+        self.permissionMode = permissionMode
+        self.workspaces = workspaces
+        self.agents = agents
+    }
 }
 
 public struct TaskTodosGet: WireMessage {
@@ -743,6 +807,13 @@ public struct TodoOption: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var text: String
     public var auto: Bool
     public var attachments: UInt64
+
+    public init(id: String, text: String, auto: Bool = false, attachments: UInt64 = 0) {
+        self.id = id
+        self.text = text
+        self.auto = auto
+        self.attachments = attachments
+    }
 }
 
 public struct TaskTodos: WireMessage {
