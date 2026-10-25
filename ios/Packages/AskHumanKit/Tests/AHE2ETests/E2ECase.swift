@@ -55,6 +55,18 @@ class E2ECase: XCTestCase {
         try? lines.joined(separator: "\n").write(to: target.appendingPathComponent("phone.txt"), atomically: true, encoding: .utf8)
     }
 
+    /// Prints the numbers and merges them into the JSON report when `AH_E2E_REPORT` names a file.
+    func report(_ numbers: [String: Any]) {
+        print("[e2e] \(name): \(numbers)")
+        guard let path = ProcessInfo.processInfo.environment["AH_E2E_REPORT"], !path.isEmpty else { return }
+        let url = URL(fileURLWithPath: path)
+        var all = (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        all[name] = numbers
+        if let data = try? JSONSerialization.data(withJSONObject: all, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: url)
+        }
+    }
+
     func assertFinishes(_ cmd: Cmd, file: StaticString = #filePath, line: UInt = #line) async {
         let status = await cmd.wait(timeout: 20)
         XCTAssertEqual(status, 0, cmd.stderr, file: file, line: line)

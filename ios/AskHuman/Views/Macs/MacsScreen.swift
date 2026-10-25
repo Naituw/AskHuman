@@ -161,6 +161,8 @@ private struct NotificationRow: View {
                     StatusDot(color: statusColor)
                     Text(statusText)
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("push-status")
             }
         case .notDetermined, .unknown:
             VStack(alignment: .leading, spacing: 8) {

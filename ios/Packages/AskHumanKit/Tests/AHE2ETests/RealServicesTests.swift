@@ -152,16 +152,4 @@ final class RealServicesTests: E2ECase {
             "p95": ms(percentile(seconds, 0.95)), "max": ms(seconds.max() ?? .nan),
         ]
     }
-
-    /// Prints the numbers and merges them into the JSON report when `AH_E2E_REPORT` names a file.
-    private func report(_ numbers: [String: Any]) {
-        print("[real-services] \(name): \(numbers)")
-        guard let path = ProcessInfo.processInfo.environment["AH_E2E_REPORT"], !path.isEmpty else { return }
-        let url = URL(fileURLWithPath: path)
-        var all = (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
-        all[name] = numbers
-        if let data = try? JSONSerialization.data(withJSONObject: all, options: [.prettyPrinted, .sortedKeys]) {
-            try? data.write(to: url)
-        }
-    }
 }
