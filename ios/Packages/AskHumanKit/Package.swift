@@ -43,5 +43,7 @@ let package = Package(
         .testTarget(name: "AHStoreTests", dependencies: ["AHStore"]),
         .testTarget(name: "AHTransportTests", dependencies: ["AHTransport", "AHProtocol"]),
         .testTarget(name: "AHCoreTests", dependencies: ["AHCore", "AHProtocol", "AHStore", "AHTransport"]),
+        // Runs the real engine against a real Mac daemon over a local broker; skipped unless AH_E2E_BIN is set.
+        .testTarget(name: "AHE2ETests", dependencies: ["AHCore", "AHProtocol", "AHStore", "AHTransport"]),
     ]
 )
