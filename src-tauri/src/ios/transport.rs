@@ -625,6 +625,79 @@ async fn supervise(
     }
 }
 
+/// What a successful connectivity probe learned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbeReport {
+    /// Transport that worked: `tls`, `wss` or `tcp`.
+    pub via: String,
+    /// Time from the first connection attempt to the message coming back.
+    pub elapsed_ms: u64,
+}
+
+/// "Test connection" of the settings page: connects like the gateway would (TLS first, WSS as the
+/// fallback) and sends one message to itself through the broker, which proves the credentials and
+/// the access rules in one go. Uses a throwaway client id and writes nothing retained.
+pub async fn probe(mut params: ConnectParams, limit: Duration) -> Result<ProbeReport, String> {
+    let id = super::crypto::new_id();
+    let topic = format!("ah/{}/t/{id}", params.username);
+    params.client_id = format!("probe-{id}");
+    params.will = Will {
+        topic: topic.clone(),
+        payload: Vec::new(),
+        retain: false,
+    };
+    params.prefer = None;
+    let (transport, mut events) = RumqttcTransport::spawn(params);
+    let started = std::time::Instant::now();
+    let deadline = tokio::time::Instant::now() + limit;
+    let mut via: Option<String> = None;
+    let mut last_error = String::new();
+    let outcome = loop {
+        let event = tokio::select! {
+            event = events.recv() => event,
+            _ = tokio::time::sleep_until(deadline) => break Err(match &via {
+                Some(via) => format!(
+                    "connected via {via}, but a test message did not come back: check the broker's access rules for topics under ah/<username>/"
+                ),
+                None if last_error.is_empty() => "timed out".to_string(),
+                None => format!("timed out ({last_error})"),
+            }),
+        };
+        match event {
+            Some(TransportEvent::Connected { via: used }) => {
+                via = Some(used);
+                let sent = async {
+                    transport.subscribe(&topic).await?;
+                    transport.publish(&topic, b"probe".to_vec(), false).await
+                }
+                .await;
+                if let Err(error) = sent {
+                    break Err(error);
+                }
+            }
+            Some(TransportEvent::Message { topic: got, .. }) if got == topic => {
+                break Ok(ProbeReport {
+                    via: via.clone().unwrap_or_default(),
+                    elapsed_ms: started.elapsed().as_millis() as u64,
+                });
+            }
+            Some(TransportEvent::Message { .. }) => {}
+            Some(TransportEvent::Disconnected {
+                reason,
+                auth_failed,
+            }) => {
+                if auth_failed {
+                    break Err(format!("the broker rejected the credentials ({reason})"));
+                }
+                last_error = reason;
+            }
+            None => break Err("the connection supervisor stopped".to_string()),
+        }
+    };
+    transport.disconnect().await;
+    outcome
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

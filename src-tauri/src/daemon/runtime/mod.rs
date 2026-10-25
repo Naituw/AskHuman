@@ -39,6 +39,7 @@ mod detect;
 mod fork;
 mod inbound;
 mod inbox;
+mod ios;
 mod select;
 mod subs;
 mod todo;
@@ -48,6 +49,7 @@ use detect::*;
 use fork::*;
 use inbound::*;
 use inbox::*;
+use ios::*;
 use select::*;
 use subs::*;
 use todo::*;
@@ -254,6 +256,9 @@ struct ServerState {
     /// 每会话最近一条已完成问答（spec duplicate-ask-coalescing D5）：agent 被中断后原样重发
     /// 同一个提问时直接回放上次答案，不再打扰人。仅内存，daemon 换新即失效。
     replay: Mutex<crate::daemon::ask_dedup::ReplayCache>,
+    /// iOS channel gateway (`docs/plans/ios-channel.md` §4.3), present while the channel is enabled
+    /// and configured. See `ios.rs`.
+    ios: Mutex<Option<IosSlot>>,
 }
 
 /// 一条控制台焦点订阅（`tx` 即该 agents 订阅者的发送端；同一订阅者重设焦点就地更新）。
@@ -929,6 +934,7 @@ async fn serve(_lock: LockGuard) -> i32 {
         gui_focus: Mutex::new(Vec::new()),
         last_waiting: Mutex::new(Vec::new()),
         replay: Mutex::new(crate::daemon::ask_dedup::ReplayCache::new()),
+        ios: Mutex::new(None),
     });
 
     // SIGTERM = `daemon stop` (graceful). launchd `bootout`, user logout and a plain `kill <pid>`
@@ -1152,6 +1158,14 @@ async fn serve(_lock: LockGuard) -> i32 {
         });
     }
 
+    // iOS channel: connect to the broker as soon as the daemon is up (a no-op unless enabled).
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            ensure_ios_gateway(&st).await;
+        });
+    }
+
     // `/watch` 实时关注引擎（spec docs/specs/im-watch.md）：先恢复持久化订阅（重启后继续
     // 编辑同一张卡），再进入 Notify / 自适应 tick 循环。
     {
@@ -1207,6 +1221,8 @@ async fn serve(_lock: LockGuard) -> i32 {
     // 第 15 轮定案：graceful 关停（drain/stop/install 换新）前把活动单选/确认卡定格「已失效」，
     // 避免重启后旧卡（台账不持久化）点击静默无响应。限时兜底，不拖关停。
     let _ = tokio::time::timeout(Duration::from_secs(8), finalize_all_select_cards(&state)).await;
+    // The phones learn right away that this Mac is gone, instead of waiting for the broker's will.
+    stop_ios_gateway(&state).await;
 
     // 方案6：关停前回收热实例（drop 连接 → 热进程收 EOF 自杀，不悬挂）。先置 `draining` 再回收，
     // 否则被回收的热实例走死亡分支会 `maybe_topup_warm` 又拉起一个新热进程（孤儿，daemon 已停）。
@@ -1893,6 +1909,14 @@ async fn control_loop(
                         .await;
                     }
                 }
+            }
+            // iOS channel management (settings window / CLI): the gateway lives in this daemon.
+            ClientMsg::Ios { op } => {
+                let reply = match handle_ios_op(state, op).await {
+                    Ok(result) => ServerMsg::Ios { result },
+                    Err(message) => ServerMsg::Error { message },
+                };
+                let _ = ipc::write_msg(w, &reply).await;
             }
             // 自动识别（Q6）：就地处理（可能阻塞至多 120s 等用户发码），完成后回结果继续循环。
             // 排空期拒绝（兜底；正常情况下客户端在 Hello 即被挡住而回退进程内识别）。
@@ -3379,11 +3403,15 @@ async fn agent_kind_for_im(
 /// 可安全用 `load_without_secrets()` 的结果判定（`enabled` 不是密钥）。
 fn any_im_enabled(config: &AppConfig) -> bool {
     let ch = &config.channels;
-    ch.dingding.enabled || ch.feishu.enabled || ch.telegram.enabled || ch.slack.enabled
+    ch.dingding.enabled
+        || ch.feishu.enabled
+        || ch.telegram.enabled
+        || ch.slack.enabled
+        || ch.ios.enabled
 }
 
 /// 当前配置完整、可实际投递的 IM 渠道，顺序与既有投递顺序一致。
-fn available_im_channels(config: &AppConfig) -> Vec<&'static str> {
+fn available_im_channels(state: &ServerState, config: &AppConfig) -> Vec<&'static str> {
     let mut available = Vec::new();
     if crate::app::is_dingding_active(config) {
         available.push("dingding");
@@ -3396,6 +3424,9 @@ fn available_im_channels(config: &AppConfig) -> Vec<&'static str> {
     }
     if crate::app::is_slack_active(config) {
         available.push("slack");
+    }
+    if ios_can_deliver(state, config) {
+        available.push("ios");
     }
     available
 }
@@ -3480,7 +3511,7 @@ async fn attach_im_channels(
             .collect(),
         None => Vec::new(),
     };
-    let available = available_im_channels(&config);
+    let available = available_im_channels(state, &config);
     let candidates = select_im_delivery_candidates(
         config.channels.auto_activation,
         &available,
@@ -3595,6 +3626,27 @@ async fn attach_im_channels(
         }
     }
 
+    if candidates.contains(&"ios") {
+        match ios_channel_for(state, &request.id) {
+            Some(ch) => {
+                let origin = im_conversation_origin(entry, agent_kind);
+                attached |= attach_channel(entry, ch, &request, &origin, &sink);
+            }
+            None => {
+                let _ = ipc::write_msg(
+                    w,
+                    &ServerMsg::Warn {
+                        text: format!(
+                            "{}iOS channel is not available",
+                            crate::i18n::warn_prefix(lang)
+                        ),
+                    },
+                )
+                .await;
+            }
+        }
+    }
+
     attached
 }
 
@@ -3632,7 +3684,7 @@ fn confirm_im_candidates(
         .filter(|watch| watch.session_id == entry.agent_session_id && !watch.rewatchable)
         .map(|watch| watch.channel.clone())
         .collect();
-    let available = available_im_channels(config);
+    let available = available_im_channels(state, config);
     select_im_delivery_candidates(
         config.channels.auto_activation,
         &available,
@@ -3706,6 +3758,16 @@ async fn attach_confirm_im_channels(
                 ),
                 None => {
                     if entry.mark_failed("dingding", "DingTalk router unavailable") {
+                        entry
+                            .coordinator
+                            .fallback(ConfirmFallbackReason::NoAvailableChannel);
+                    }
+                }
+            },
+            "ios" => match ios_gateway(state) {
+                Some(gateway) => crate::channels::confirm::start_ios(entry.clone(), gateway),
+                None => {
+                    if entry.mark_failed("ios", "iOS gateway unavailable") {
                         entry
                             .coordinator
                             .fallback(ConfirmFallbackReason::NoAvailableChannel);
@@ -4228,6 +4290,7 @@ async fn on_config_changed(state: &Arc<ServerState>) {
     // 凭据/收件人变更已停掉旧入站监听（见 invalidate_changed_routers）；这里立即按新配置重建，
     // 使 `/here`、`/status`、普通消息切槽无需等在途请求结束或 daemon 重启即恢复（有工作中 agent 时）。
     ensure_inbound_listeners(state).await;
+    ensure_ios_gateway(state).await;
     let general = serde_json::to_value(&new.general).unwrap_or(serde_json::Value::Null);
     broadcast_popup_state(state, ServerMsg::ConfigChanged { general });
     // 配置变更可能刚开启菜单栏图标 → 兜底拉起宿主（宿主自身也监听配置，二者均幂等）。

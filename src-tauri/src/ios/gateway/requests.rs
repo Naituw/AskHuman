@@ -5,19 +5,22 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use super::Actor;
 use crate::ios::envelope;
 use crate::ios::push::PushOutcome;
 use crate::ios::store::{JournalEntry, JournalLookup, JournalResult};
+use crate::ios::views;
+use crate::ios::views::AssetSource;
 use crate::ios::wire::{
     self, t, AnswerAck, AnswerSubmit, ConfirmAck, ConfirmDecide, PushPlain, RelayPush,
     RequestSummary, RequestView, INLINE_REQUEST_BYTES, MAX_PLAIN_BYTES, PUSH_FALLBACK_SECS,
     PUSH_PREVIEW_MAX_CHARS,
 };
-use crate::models::{AskRequest, ChannelAction, ChannelResult, QuestionAnswer};
+use crate::models::{AskRequest, ChannelAction, ChannelResult, ImageAttachment, QuestionAnswer};
+use base64::Engine;
 
 /// How long a request may stay undeliverable (broker down, no push) before the surface is
 /// reported lost.
@@ -78,6 +81,8 @@ pub struct DeliverRequest {
     pub ask: Option<Arc<AskRequest>>,
     /// Unix milliseconds after which the request is void (confirmations).
     pub deadline_ms: Option<i64>,
+    /// Files the phone may download while the request is pending.
+    pub assets: Vec<AssetSource>,
 }
 
 /// How a request ended, as far as the phones are concerned.
@@ -118,6 +123,7 @@ pub(crate) struct Pending {
     pub sink: Sink,
     pub ask: Option<Arc<AskRequest>>,
     pub deadline_ms: Option<i64>,
+    pub assets: Vec<AssetSource>,
     pub unreachable_since: Option<i64>,
     pub phones: HashMap<String, PhoneDelivery>,
 }
@@ -146,6 +152,14 @@ impl Requests {
 
     pub fn find_mut(&mut self, id: &str) -> Option<&mut Pending> {
         self.pending.iter_mut().find(|p| p.view.id == id)
+    }
+
+    /// A downloadable file of any pending request.
+    pub fn find_asset(&self, asset_id: &str) -> Option<&AssetSource> {
+        self.pending
+            .iter()
+            .flat_map(|p| p.assets.iter())
+            .find(|a| a.asset_id == asset_id)
     }
 
     pub fn forget_phone(&mut self, phone_id: &str) {
@@ -221,13 +235,36 @@ fn short_hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))[..16].to_string()
 }
 
-/// Shrinks the long texts of a view until its JSON fits comfortably into one message.
+/// Keeps the first `keep` thumbnails of a view; `true` when any was dropped.
+fn drop_thumbs(view: &mut RequestView, keep: usize) -> bool {
+    let mut dropped = false;
+    if let Some(ask) = view.ask.as_mut() {
+        let mut kept = 0;
+        for file in &mut ask.message.files {
+            if file.thumb.is_some() {
+                if kept < keep {
+                    kept += 1;
+                } else {
+                    file.thumb = None;
+                    dropped = true;
+                }
+            }
+        }
+    }
+    dropped
+}
+
+/// Shrinks a view until its JSON fits comfortably into one message: thumbnails go first (they
+/// are only a convenience), then the long texts are halved.
 fn fit_view(mut view: RequestView) -> (RequestView, Vec<u8>) {
     let budget = MAX_PLAIN_BYTES - 16 * 1024;
     for _ in 0..24 {
         let json = serde_json::to_vec(&view).expect("view serializes");
         if json.len() <= budget {
             return (view, json);
+        }
+        if drop_thumbs(&mut view, 6) || drop_thumbs(&mut view, 0) {
+            continue;
         }
         view.truncated = true;
         let halve = |text: &mut String| {
@@ -253,6 +290,7 @@ fn fit_view(mut view: RequestView) -> (RequestView, Vec<u8>) {
 /// The compact form sent inline when the full request is large; the phone fetches the rest.
 fn light_view(view: &RequestView) -> RequestView {
     let mut light = view.clone();
+    drop_thumbs(&mut light, 0);
     if let Some(ask) = light.ask.as_mut() {
         ask.message.text = truncate_chars(&ask.message.text, 1_000);
         ask.questions.clear();
@@ -322,6 +360,10 @@ impl Actor {
         if self.requests.find(&req.view.id).is_some() {
             return;
         }
+        // Decided elsewhere while the view was being prepared.
+        if req.sink.winner().is_some() {
+            return;
+        }
         let targets: Vec<String> = self
             .store
             .state
@@ -349,6 +391,7 @@ impl Actor {
             sink: req.sink,
             ask: req.ask,
             deadline_ms: req.deadline_ms,
+            assets: req.assets,
             unreachable_since: None,
             phones: HashMap::new(),
         };
@@ -773,7 +816,7 @@ impl Actor {
 
     fn build_answers(
         &mut self,
-        _phone_id: &str,
+        phone_id: &str,
         ask: &AskRequest,
         submit: &AnswerSubmit,
     ) -> Result<Vec<QuestionAnswer>, String> {
@@ -813,19 +856,52 @@ impl Actor {
                     return Err("answer text too long".into());
                 }
             }
-            if ask.select_only
-                && (text.is_some() || !item.images.is_empty() || !item.files.is_empty())
-            {
+            let has_attachments = !item.images.is_empty() || !item.files.is_empty();
+            if ask.select_only && (text.is_some() || has_attachments) {
                 return Err("this question accepts only the listed options".into());
-            }
-            if !item.images.is_empty() || !item.files.is_empty() {
-                return Err("attachments are not supported yet".into());
             }
             answers[item.q] = QuestionAnswer {
                 selected_options: selected,
                 user_input: text.map(str::to_string),
                 ..QuestionAnswer::default()
             };
+        }
+        // Uploads are consumed only once the whole answer is known to be valid, so a rejected
+        // answer can be corrected and resubmitted without uploading again.
+        let all_ids: Vec<String> = submit
+            .answers
+            .iter()
+            .flat_map(|item| item.images.iter().chain(item.files.iter()))
+            .cloned()
+            .collect();
+        let mut uploads = self
+            .take_uploads(phone_id, &submit.request_id, &all_ids)?
+            .into_iter();
+        for item in &submit.answers {
+            let answer = &mut answers[item.q];
+            for _ in &item.images {
+                let Some(file) = uploads.next() else { break };
+                let bytes = std::fs::read(&file.path)
+                    .map_err(|_| "attachment is not available".to_string())?;
+                let media_type = if file.mime.starts_with("image/") {
+                    file.mime.clone()
+                } else {
+                    views::mime_for(&file.name).to_string()
+                };
+                answer.images.push(ImageAttachment {
+                    data: base64::engine::general_purpose::STANDARD.encode(bytes),
+                    media_type,
+                    filename: Some(file.name.clone()),
+                });
+                // The image travels inside the answer; the staged copy is no longer needed.
+                if let Some(dir) = file.path.parent() {
+                    let _ = std::fs::remove_dir_all(dir);
+                }
+            }
+            for _ in &item.files {
+                let Some(file) = uploads.next() else { break };
+                answer.files.push(file.path.display().to_string());
+            }
         }
         Ok(answers)
     }
@@ -915,6 +991,13 @@ impl Actor {
         }
     }
 
+    /// Hands every request back to the daemon as a lost surface.
+    pub(super) fn drop_requests(&mut self, reason: &str) {
+        for pending in self.requests.pending.drain(..) {
+            pending.sink.surface_lost(reason);
+        }
+    }
+
     pub(super) async fn tick_requests(&mut self, now: i64) {
         // Expired confirmations the daemon did not report.
         let expired: Vec<String> = self
@@ -933,10 +1016,7 @@ impl Actor {
         let mut lost = Vec::new();
         for pending in &mut self.requests.pending {
             match pending.unreachable_since {
-                Some(since) if connected => {
-                    let _ = since;
-                    pending.unreachable_since = None;
-                }
+                Some(_) if connected => pending.unreachable_since = None,
                 Some(since) if now - since >= UNREACHABLE_GRACE_MS => {
                     lost.push(pending.view.id.clone());
                 }
@@ -969,19 +1049,15 @@ impl Actor {
             let Some(view) = self.requests.find(&request_id).map(|p| p.view.clone()) else {
                 continue;
             };
-            let pushed = self.push_request(&phone_id, &view, now);
+            // Without a push path there is nothing more to try; do not retry every tick either way.
+            self.push_request(&phone_id, &view, now);
             if let Some(delivery) = self
                 .requests
                 .find_mut(&request_id)
                 .and_then(|p| p.phones.get_mut(&phone_id))
             {
-                // Without a push path there is nothing more to try; do not retry every tick.
                 delivery.pushed = true;
-                let _ = pushed;
             }
         }
     }
 }
-
-#[allow(dead_code)]
-fn _assert_json(_: &Value) {}

@@ -106,6 +106,8 @@ pub struct FakeAsk {
     pub results: Mutex<Vec<ChannelResult>>,
     pub win: AtomicBool,
     pub lost: Mutex<Vec<String>>,
+    /// Channel that decided the request; like the real coordinator, unset until somebody did.
+    pub decided: Mutex<Option<String>>,
 }
 
 impl FakeAsk {
@@ -114,6 +116,7 @@ impl FakeAsk {
             results: Mutex::new(Vec::new()),
             win: AtomicBool::new(true),
             lost: Mutex::new(Vec::new()),
+            decided: Mutex::new(None),
         })
     }
 }
@@ -121,11 +124,13 @@ impl FakeAsk {
 impl AskSink for FakeAsk {
     fn try_submit(&self, result: ChannelResult) -> bool {
         self.results.lock().unwrap().push(result);
-        self.win.load(Ordering::SeqCst)
+        let won = self.win.load(Ordering::SeqCst);
+        *self.decided.lock().unwrap() = Some(if won { "ios" } else { "popup" }.into());
+        won
     }
 
     fn winner(&self) -> Option<String> {
-        Some("popup".into())
+        self.decided.lock().unwrap().clone()
     }
 
     fn surface_lost(&self, reason: &str) {
@@ -137,6 +142,7 @@ pub struct FakeConfirm {
     pub decisions: Mutex<Vec<(usize, Option<String>)>>,
     pub result: Mutex<Result<bool, String>>,
     pub lost: Mutex<Vec<String>>,
+    pub decided: Mutex<Option<String>>,
 }
 
 impl FakeConfirm {
@@ -145,6 +151,7 @@ impl FakeConfirm {
             decisions: Mutex::new(Vec::new()),
             result: Mutex::new(Ok(true)),
             lost: Mutex::new(Vec::new()),
+            decided: Mutex::new(None),
         })
     }
 }
@@ -152,11 +159,17 @@ impl FakeConfirm {
 impl ConfirmSink for FakeConfirm {
     fn decide(&self, wire_index: usize, comment: Option<String>) -> Result<bool, String> {
         self.decisions.lock().unwrap().push((wire_index, comment));
-        self.result.lock().unwrap().clone()
+        let result = self.result.lock().unwrap().clone();
+        match &result {
+            Ok(true) => *self.decided.lock().unwrap() = Some("ios".into()),
+            Ok(false) => *self.decided.lock().unwrap() = Some("feishu".into()),
+            Err(_) => {}
+        }
+        result
     }
 
     fn winner(&self) -> Option<String> {
-        Some("feishu".into())
+        self.decided.lock().unwrap().clone()
     }
 
     fn surface_lost(&self, reason: &str) {

@@ -2000,7 +2000,7 @@ pub(super) async fn backfill_inflight(
         if entry.coordinator.is_finalizing() || entry.coordinator.has_channel(channel_id) {
             continue;
         }
-        if let Some(ch) = build_im_channel(channel_id, config, state).await {
+        if let Some(ch) = build_im_channel(channel_id, &entry.request().id, config, state).await {
             entry.coordinator.register(ch.clone());
             let origin = super::im_conversation_origin(&entry, None);
             ch.start(entry.request(), &origin, entry.coordinator.clone());
@@ -2026,6 +2026,7 @@ pub(super) async fn backfill_inflight(
 /// 为补推构造一个挂共享 Router 的渠道实例（各渠道仅此处差异：取对应 Router + 构造对应 Channel）。
 pub(super) async fn build_im_channel(
     channel_id: &str,
+    request_id: &str,
     config: &AppConfig,
     state: &Arc<ServerState>,
 ) -> Option<Arc<dyn Channel>> {
@@ -2053,6 +2054,12 @@ pub(super) async fn build_im_channel(
                 config.channels.telegram.clone(),
                 router,
             ))
+        }
+        "ios" => {
+            if !ios_can_deliver(state, config) {
+                return None;
+            }
+            ios_channel_for(state, request_id)?
         }
         _ => return None,
     };

@@ -35,6 +35,7 @@ fn deliver_ask(fx: &Fixture, id: &str) -> Arc<FakeAsk> {
         sink: Sink::Ask(sink.clone()),
         ask: Some(ask),
         deadline_ms: None,
+        assets: Vec::new(),
     });
     sink
 }
@@ -46,6 +47,7 @@ fn deliver_confirm(fx: &Fixture, id: &str, ttl_ms: i64) -> Arc<FakeConfirm> {
         sink: Sink::Confirm(sink.clone()),
         ask: None,
         deadline_ms: Some(BASE_MS + ttl_ms),
+        assets: Vec::new(),
     });
     sink
 }
@@ -177,7 +179,7 @@ async fn invalid_answers_are_rejected_without_touching_the_request() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn attachments_in_answers_are_refused_until_uploads_exist() {
+async fn answers_referencing_unknown_uploads_are_invalid() {
     let fx = Fixture::new().await;
     let mut phone = fx.live_phone().await;
     deliver_ask(&fx, "req1");
@@ -322,6 +324,7 @@ async fn large_requests_arrive_as_a_summary_first_and_huge_ones_are_truncated() 
         sink: Sink::Ask(FakeAsk::new()),
         ask: Some(ask),
         deadline_ms: None,
+        assets: Vec::new(),
     });
     let new: wire::RequestNew = phone.recv_body(t::REQUEST_NEW).await;
     assert!(!new.full, "too large to send inline");
@@ -352,6 +355,7 @@ async fn large_requests_arrive_as_a_summary_first_and_huge_ones_are_truncated() 
         sink: Sink::Ask(FakeAsk::new()),
         ask: Some(ask),
         deadline_ms: None,
+        assets: Vec::new(),
     });
     phone.recv(t::REQUEST_NEW).await;
     phone

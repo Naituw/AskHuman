@@ -4140,6 +4140,104 @@ pub async fn telegram_test(args: TelegramTestArgs) -> Result<String, String> {
         .map_err(|e| e.localized(lang))
 }
 
+// ===== iOS channel =====
+
+/// Pairing, device list and the other management operations: the gateway lives in the daemon.
+#[tauri::command]
+pub async fn ios_op(op: crate::ipc::IosOp) -> Result<crate::ipc::IosResult, String> {
+    crate::client::ios_op(op).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IosTestArgs {
+    pub host: String,
+    pub port: u16,
+    pub ws_port: u16,
+    pub username: String,
+    pub password: String,
+    #[serde(default)]
+    pub insecure_local: bool,
+}
+
+/// Tests the broker settings of the form (not yet saved): connects, subscribes and sends a
+/// message to itself through the broker.
+#[tauri::command]
+pub async fn ios_test(args: IosTestArgs) -> Result<String, String> {
+    let lang = crate::i18n::Lang::current();
+    if args.host.trim().is_empty() || args.username.trim().is_empty() {
+        return Err(crate::i18n::tr(lang, "cmd.iosFillBroker").to_string());
+    }
+    if !crate::ios::wire::is_valid_broker_user(args.username.trim()) {
+        return Err(crate::i18n::tr(lang, "cmd.iosBadUser").to_string());
+    }
+    let password = fallback_secret(&args.password, |c| c.channels.ios.password.clone());
+    let report = crate::ios::transport::probe(
+        crate::ios::transport::ConnectParams {
+            host: args.host.trim().to_string(),
+            tls_port: args.port,
+            wss_port: args.ws_port,
+            username: args.username.trim().to_string(),
+            password,
+            client_id: String::new(),
+            will: crate::ios::transport::Will {
+                topic: String::new(),
+                payload: Vec::new(),
+                retain: false,
+            },
+            prefer: None,
+            insecure_local: args.insecure_local,
+        },
+        std::time::Duration::from_secs(20),
+    )
+    .await?;
+    Ok(crate::i18n::tr(lang, "cmd.iosTestOk")
+        .replace("{via}", &report.via)
+        .replace("{ms}", &report.elapsed_ms.to_string()))
+}
+
+/// Broker settings as pasteable `ahconn1.` text (includes the broker password).
+#[tauri::command]
+pub fn ios_connection_export() -> Result<String, String> {
+    let config = AppConfig::load();
+    let ios = &config.channels.ios;
+    if ios.host.trim().is_empty() || ios.username.trim().is_empty() {
+        return Err(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.iosFillBroker").to_string());
+    }
+    Ok(crate::ios::connstr::Connection::from_config(ios).encode())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IosConnectionFields {
+    pub host: String,
+    pub port: u16,
+    pub ws_port: u16,
+    pub username: String,
+    pub password: String,
+    pub relay_url: String,
+}
+
+/// Parses pasted `ahconn1.` text into form fields (nothing is saved).
+#[tauri::command]
+pub fn ios_connection_import(text: String) -> Result<IosConnectionFields, String> {
+    let connection = crate::ios::connstr::Connection::decode(&text)?;
+    Ok(IosConnectionFields {
+        host: connection.host,
+        port: connection.port,
+        ws_port: connection.ws_port,
+        username: connection.username,
+        password: connection.password,
+        relay_url: connection.relay_url,
+    })
+}
+
+/// SVG of a QR code carrying `text` (the pairing code).
+#[tauri::command]
+pub fn ios_pair_qr(text: String) -> Result<String, String> {
+    crate::ios::qr::svg(&text)
+}
+
 // ===== 钉钉测试连接 / userId 自动识别 =====
 
 use crate::config::DingTalkChannelConfig;

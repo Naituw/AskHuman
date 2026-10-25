@@ -924,7 +924,9 @@ msg!(AssetGet, t::ASSET_GET);
 pub struct AssetChunk {
     pub asset_id: String,
     pub index: u64,
+    /// Number of chunks of the whole file.
     pub total: u64,
+    /// Size of the whole file in bytes.
     pub size: u64,
     /// SHA-256 (hex) of the whole file, present on the first chunk only.
     #[serde(default, skip_serializing_if = "Option::is_none")]

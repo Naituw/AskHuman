@@ -455,6 +455,16 @@ pub(crate) fn is_slack_active(config: &AppConfig) -> bool {
     slack.enabled && !slack.user_id.trim().is_empty() && SlackClient::new(slack).is_ok()
 }
 
+/// Whether the iOS channel has the settings a broker connection needs. Whether a phone can be
+/// reached right now is runtime state of the daemon's gateway, checked separately.
+pub(crate) fn is_ios_active(config: &AppConfig) -> bool {
+    let ios = &config.channels.ios;
+    ios.enabled
+        && !ios.host.trim().is_empty()
+        && !ios.password.trim().is_empty()
+        && crate::ios::wire::is_valid_broker_user(ios.username.trim())
+}
+
 /// 设置模式：创建设置窗口。
 pub fn run_settings(config: AppConfig) -> ! {
     let lang = Lang::resolve(&config.general.language);

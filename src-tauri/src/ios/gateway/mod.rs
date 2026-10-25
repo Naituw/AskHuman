@@ -5,6 +5,7 @@
 //! handled one at a time, so state needs no locks. The daemon talks to it through the cloneable
 //! [`IosGateway`] handle and answers its questions through the [`Host`] trait.
 
+mod assets;
 mod pairing;
 pub mod requests;
 mod support;
@@ -12,6 +13,8 @@ mod support;
 mod testkit;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_assets;
 #[cfg(test)]
 mod tests_requests;
 
@@ -33,6 +36,7 @@ use super::transport::{BrokerTransport, TransportEvent};
 use super::wire::{self, t, Caps, Msg, Presence, SlotInfo, CLOCK_SKEW_MS, KID_PAIR, PROTO};
 use crate::config::IosChannelConfig;
 
+use assets::Uploads;
 pub use pairing::PairInfo;
 use requests::{DeliverRequest, Resolution};
 use support::{Dedup, Outbox};
@@ -147,6 +151,8 @@ pub(crate) enum Cmd {
         outcome: PushOutcome,
     },
     Shutdown(oneshot::Sender<()>),
+    /// Shutdown of a gateway that is being replaced (see [`IosGateway::retire`]).
+    Retire(oneshot::Sender<()>),
 }
 
 /// Everything the gateway is built from.
@@ -204,6 +210,12 @@ impl IosGateway {
 
     pub fn is_connected(&self) -> bool {
         self.status.connected.load(Ordering::Relaxed)
+    }
+
+    /// At least one phone is paired: requests have somewhere to go (even if the broker is down,
+    /// the push path may still work).
+    pub fn has_active_phone(&self) -> bool {
+        self.status.has_active_phone.load(Ordering::Relaxed)
     }
 
     /// Whether any phone is watching an Agent live (keeps an idle daemon alive).
@@ -288,6 +300,15 @@ impl IosGateway {
         }
     }
 
+    /// Like [`Self::shutdown`] for a gateway that is being replaced: the requests it still
+    /// holds are reported as lost surfaces, so the daemon can hand them to the successor.
+    pub async fn retire(&self) {
+        let (tx, rx) = oneshot::channel();
+        if self.cmd.send(Cmd::Retire(tx)).is_ok() {
+            let _ = tokio::time::timeout(Duration::from_secs(6), rx).await;
+        }
+    }
+
     /// Publishes offline presence, flushes and disconnects.
     pub async fn shutdown(&self) {
         let (tx, rx) = oneshot::channel();
@@ -342,6 +363,9 @@ pub(crate) struct Actor {
     pub pairing: Option<pairing::Pairing>,
     pub revs: Revs,
     pub requests: requests::Requests,
+    pub uploads: Uploads,
+    /// Last slot state announced to the phones (`None` until the first tick).
+    pub last_slot: Option<SlotInfo>,
 
     pub dirty: bool,
     pub last_flush_ms: i64,
@@ -403,6 +427,8 @@ impl Actor {
             pairing: None,
             revs: Revs::default(),
             requests: requests::Requests::default(),
+            uploads: Uploads::default(),
+            last_slot: None,
             dirty: false,
             last_flush_ms: now,
             last_prune_ms: now,
@@ -431,6 +457,7 @@ impl Actor {
             actor.rt.remove(&id);
         }
         actor.store.journal_prune(now);
+        actor.sweep_upload_files();
         actor.refresh_status();
         actor
     }
@@ -469,6 +496,12 @@ impl Actor {
                 Some(event) = events.recv() => self.on_transport(event).await,
                 cmd = cmds.recv() => match cmd {
                     Some(Cmd::Shutdown(done)) => {
+                        self.shutdown().await;
+                        let _ = done.send(());
+                        break;
+                    }
+                    Some(Cmd::Retire(done)) => {
+                        self.drop_requests("iOS gateway restarted");
                         self.shutdown().await;
                         let _ = done.send(());
                         break;
@@ -517,7 +550,7 @@ impl Actor {
                 }
             }
             Cmd::PushResult { phone_id, outcome } => self.on_push_result(&phone_id, outcome),
-            Cmd::Shutdown(_) => unreachable!("handled in run"),
+            Cmd::Shutdown(_) | Cmd::Retire(_) => unreachable!("handled in run"),
         }
     }
 
@@ -795,6 +828,22 @@ impl Actor {
                 let decide = body!(wire::ConfirmDecide);
                 self.on_confirm_decide(phone_id, decide).await;
             }
+            t::ASSET_GET => {
+                let get = body!(wire::AssetGet);
+                self.on_asset_get(phone_id, get);
+            }
+            t::UPLOAD_BEGIN => {
+                let begin = body!(wire::UploadBegin);
+                self.on_upload_begin(phone_id, begin);
+            }
+            t::UPLOAD_CHUNK => {
+                let chunk = body!(wire::UploadChunk);
+                self.on_upload_chunk(phone_id, chunk);
+            }
+            t::UPLOAD_CANCEL => {
+                let cancel = body!(wire::UploadCancel);
+                self.on_upload_cancel(phone_id, cancel);
+            }
             _ => self.send_error(phone_id, &plain.i, "unknown_type", None),
         }
     }
@@ -961,6 +1010,7 @@ impl Actor {
     /// Drops a pairing for good (the phone asked for it, or the user revoked it).
     pub(crate) fn remove_phone(&mut self, phone_id: &str) -> bool {
         self.requests.forget_phone(phone_id);
+        self.drop_phone_uploads(phone_id);
         self.rt.remove(phone_id);
         let removed = self.store.remove_phone(phone_id);
         self.refresh_status();
@@ -983,6 +1033,8 @@ impl Actor {
         let now = self.now();
         self.tick_pairing(now).await;
         self.tick_requests(now).await;
+        self.prune_uploads(now);
+        self.tick_slot();
         if let Some(at) = self.sync_at {
             if now >= at {
                 self.sync_at = None;
@@ -1012,6 +1064,27 @@ impl Actor {
         if now - self.last_prune_ms >= 3_600_000 {
             self.last_prune_ms = now;
             self.store.journal_prune(now);
+            self.sweep_upload_files();
+        }
+    }
+
+    /// Tells the live phones when the slot (is iOS the active channel?) changes.
+    fn tick_slot(&mut self) {
+        let slot = self.host.slot();
+        let previous = self.last_slot.replace(slot.clone());
+        if previous.is_none_or(|previous| previous == slot) {
+            return;
+        }
+        self.revs.slot += 1;
+        for phone_id in self.live_phones() {
+            self.send(
+                &phone_id,
+                &wire::SlotState {
+                    rev: self.revs.slot,
+                    active: slot.active,
+                    auto_activation: slot.auto_activation,
+                },
+            );
         }
     }
 

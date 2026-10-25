@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod dingding;
 pub mod feishu;
 pub mod health;
+pub mod ios;
 pub mod popup;
 pub mod slack;
 pub mod telegram;
@@ -23,14 +24,18 @@ pub type ResultSink = Arc<Coordinator>;
 pub struct ConversationOrigin {
     source: String,
     agent_label: Option<String>,
+    /// Stable Agent family id (`codex`, `claude`, …) when the caller is a known Agent.
+    agent_kind: Option<String>,
     project_name: Option<String>,
+    /// Project key as the caller reported it (usually the workspace path).
+    project_key: String,
 }
 
 impl ConversationOrigin {
     pub fn new(source: &str, agent_kind: Option<&str>, project: &str) -> Self {
-        let agent_label = agent_kind
-            .and_then(crate::agents::AgentKind::parse)
-            .map(|kind| kind.label().to_string());
+        let agent = agent_kind.and_then(crate::agents::AgentKind::parse);
+        let agent_label = agent.map(|kind| kind.label().to_string());
+        let agent_kind = agent.map(|kind| kind.as_str().to_string());
         let source = source.trim();
         // MCP requests initially use the generic fallback. Once daemon resolution identifies an
         // Agent, mirror Popup's inline badge by treating that Agent as the effective source.
@@ -47,8 +52,31 @@ impl ConversationOrigin {
         Self {
             source,
             agent_label,
+            agent_kind,
             project_name: (!project_name.trim().is_empty()).then_some(project_name),
+            project_key: project.to_string(),
         }
+    }
+
+    /// Display name of whoever asked (custom source, else the Agent, else the default).
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub fn agent_label(&self) -> Option<&str> {
+        self.agent_label.as_deref()
+    }
+
+    pub fn agent_kind(&self) -> Option<&str> {
+        self.agent_kind.as_deref()
+    }
+
+    pub fn project_name(&self) -> Option<&str> {
+        self.project_name.as_deref()
+    }
+
+    pub fn project_key(&self) -> &str {
+        &self.project_key
     }
 
     /// `Message from …` / `Question from …`, followed by distinct Agent and project labels.

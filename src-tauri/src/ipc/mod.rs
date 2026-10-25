@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// 改本文件的消息类型前先读 `docs/overview.md` 的「IPC 协议号」：什么改动要 +1、什么不要，
 /// 以及 +1 时要同步更新的文档。
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 fn default_true() -> bool {
     true
@@ -323,6 +323,54 @@ pub enum PermissionRulesResult {
     },
     Reset {
         removed: usize,
+    },
+}
+
+/// iOS channel operations (settings process / CLI → Daemon). The daemon owns the gateway, its
+/// pairings and the broker connection; callers never touch `~/.askhuman/ios` directly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum IosOp {
+    /// Gateway state: broker connection, paired phones, pairing in progress.
+    State,
+    /// Starts a pairing ticket (replaces one in progress) and returns the pairing code.
+    PairStart,
+    PairCancel,
+    /// The user compared the check codes on the Mac and decided.
+    PairDecision {
+        ticket_id: String,
+        allow: bool,
+    },
+    Revoke {
+        phone_id: String,
+    },
+    Rename {
+        phone_id: String,
+        name: String,
+    },
+}
+
+/// `IosOp` reply.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum IosResult {
+    /// `None` while the gateway is not running (channel disabled or not configured).
+    State {
+        state: Option<Box<crate::ios::gateway::GatewayState>>,
+    },
+    Pairing {
+        ticket_id: String,
+        code: String,
+        expires_at_ms: i64,
+    },
+    /// The operation was applied (or there was nothing to do).
+    Done {
+        #[serde(default = "default_true")]
+        found: bool,
     },
 }
 
@@ -651,6 +699,8 @@ pub enum ClientMsg {
     InterjectQuery { session_id: String },
     /// 权限授权管理面板操作（设置进程，§6.3）。回一帧 `PermissionRules`。
     PermissionRules { op: PermissionRulesOp },
+    /// iOS channel management (settings process / CLI). Replies with one `Ios` frame.
+    Ios { op: IosOp },
     /// GUI 启动新任务后把活跃槽切到 popup（spec gui-agent-task-launch G11）：人在电脑旁，
     /// 新 Agent 的提问默认弹窗。即发即走，无回包；旧 daemon 解析失败断连无副作用。
     ActivatePopupSlot,
@@ -882,6 +932,10 @@ pub enum ServerMsg {
     /// 权限授权管理面板回帧（D→设置进程，§6.3）。
     PermissionRules {
         result: PermissionRulesResult,
+    },
+    /// iOS channel management reply (`ClientMsg::Ios`).
+    Ios {
+        result: IosResult,
     },
 }
 

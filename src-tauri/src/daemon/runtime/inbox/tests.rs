@@ -40,6 +40,7 @@ fn state() -> Arc<ServerState> {
         gui_focus: Default::default(),
         last_waiting: Default::default(),
         replay: Mutex::new(crate::daemon::ask_dedup::ReplayCache::new()),
+        ios: Mutex::new(None),
     })
 }
 

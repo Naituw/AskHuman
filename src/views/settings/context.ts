@@ -37,7 +37,13 @@ export interface SettingsCore {
   persist: () => Promise<void>;
 }
 
-type ClearedKey = "dingding" | "feishu" | "telegram" | "slackBot" | "slackApp";
+type ClearedKey =
+  | "dingding"
+  | "feishu"
+  | "telegram"
+  | "slackBot"
+  | "slackApp"
+  | "iosBroker";
 
 function createCore() {
   const config = ref<AppConfig | null>(null);
@@ -51,6 +57,7 @@ function createCore() {
     telegramToken: false,
     slackBotToken: false,
     slackAppToken: false,
+    iosBrokerPassword: false,
   });
   const secretCleared = ref({
     dingding: false,
@@ -58,6 +65,7 @@ function createCore() {
     telegram: false,
     slackBot: false,
     slackApp: false,
+    iosBroker: false,
   });
   const SECRET_PLACEHOLDER = "••••••••";
 
@@ -89,6 +97,10 @@ function createCore() {
         c.slack.appToken,
         secretCleared.value.slackApp
       ),
+      iosBrokerPassword: secretActionFor(
+        c.ios.password,
+        secretCleared.value.iosBroker
+      ),
     };
     await saveSettings(config.value, actions);
     // Reflect the saved state: a set secret becomes a "Saved" placeholder, a cleared one becomes
@@ -98,6 +110,7 @@ function createCore() {
     finalizeSecret(actions.telegramToken, "telegramToken", "telegram");
     finalizeSecret(actions.slackBotToken, "slackBotToken", "slackBot");
     finalizeSecret(actions.slackAppToken, "slackAppToken", "slackApp");
+    finalizeSecret(actions.iosBrokerPassword, "iosBrokerPassword", "iosBroker");
   }
 
   function finalizeSecret(
@@ -114,6 +127,7 @@ function createCore() {
       else if (clearedKey === "feishu") c.feishu.appSecret = "";
       else if (clearedKey === "slackBot") c.slack.botToken = "";
       else if (clearedKey === "slackApp") c.slack.appToken = "";
+      else if (clearedKey === "iosBroker") c.ios.password = "";
       else c.telegram.botToken = "";
     }
     secretCleared.value[clearedKey] = false;
@@ -128,6 +142,7 @@ function createCore() {
     else if (channel === "feishu") c.feishu.appSecret = "";
     else if (channel === "slackBot") c.slack.botToken = "";
     else if (channel === "slackApp") c.slack.appToken = "";
+    else if (channel === "iosBroker") c.ios.password = "";
     else c.telegram.botToken = "";
     secretCleared.value[channel] = true;
     persist();

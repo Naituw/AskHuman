@@ -315,6 +315,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "channel.sourceDingTalk" => pick(lang, "DingTalk", "钉钉"),
         "channel.sourceFeishu" => pick(lang, "Feishu", "飞书"),
         "channel.sourceSlack" => pick(lang, "Slack", "Slack"),
+        "channel.sourceIos" => pick(lang, "iOS", "iOS"),
         // Cancel source: the caller (CLI/terminal cancelled the request).
         "channel.sourceCaller" => pick(lang, "Caller", "调用方"),
         // Every delivery surface went away before anyone answered (popup helper died, IM
@@ -1204,6 +1205,23 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             lang,
             "Test message sent! Your Telegram Bot is configured correctly.",
             "测试消息发送成功！Telegram Bot 配置正确。",
+        ),
+
+        // —— iOS channel (commands.ios_*) ——
+        "cmd.iosFillBroker" => pick(
+            lang,
+            "Fill in the broker host and username first",
+            "请先填写 Broker 主机和用户名",
+        ),
+        "cmd.iosBadUser" => pick(
+            lang,
+            "The username may only contain letters and digits",
+            "用户名只能包含字母和数字",
+        ),
+        "cmd.iosTestOk" => pick(
+            lang,
+            "Connected via {via} ({ms} ms). The broker accepted the credentials and routed a test message.",
+            "已通过 {via} 连通（{ms} ms）。Broker 已接受凭据并成功转发测试消息。",
         ),
 
         // —— 钉钉测试连接 / 自动识别（commands.dingtalk_test / dingtalk_detect_*）——
