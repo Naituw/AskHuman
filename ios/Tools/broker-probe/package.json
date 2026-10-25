@@ -1,0 +1,10 @@
+{
+  "name": "askhuman-broker-probe",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Reachability and access-rule probes for the MQTT broker behind the iOS channel (manual checks, not part of any build).",
+  "type": "commonjs",
+  "dependencies": {
+    "mqtt-packet": "9.0.2"
+  }
+}
