@@ -20,14 +20,23 @@ final class Cmd: @unchecked Sendable {
         process.standardOutput = outPipe
         process.standardError = errPipe
         process.standardInput = inPipe
+        // At end of file the handler must remove itself: a pipe that reached EOF stays readable, so
+        // a handler left in place is called again and again, and every finished child would keep a
+        // core busy until the test run ends.
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let chunk = handle.availableData
-            guard !chunk.isEmpty, let self else { return }
+            guard !chunk.isEmpty, let self else {
+                handle.readabilityHandler = nil
+                return
+            }
             self.lock.withLock { self.outData.append(chunk) }
         }
         errPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let chunk = handle.availableData
-            guard !chunk.isEmpty, let self else { return }
+            guard !chunk.isEmpty, let self else {
+                handle.readabilityHandler = nil
+                return
+            }
             self.lock.withLock { self.errData.append(chunk) }
         }
         pendingStdin = stdin
