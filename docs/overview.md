@@ -73,6 +73,7 @@ AskHuman/
 
   src-tauri/                 Rust 后端
     Cargo.toml               Rust 依赖与 feature
+    vendor/drag/             drag 2.1.1 的本地补丁副本（[patch.crates-io]，只改 objc2 特性声明；原因见 docs/development.md）
     tauri.conf.json          Tauri 构建和窗口配置
     capabilities/default.json 窗口能力权限
     src/

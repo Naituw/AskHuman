@@ -133,6 +133,31 @@ request a network timestamp). After a successful copy it enforces per-profile ta
 Cargo-coordinated cleanup: local package artifacts are removed first, while dependency caches are
 retained whenever they fit.
 
+The budgets are 4 / 6 / 6 / 4 GiB for `local-install` / `dev` / `full-debug` / `release` in the main
+checkout and 3 / 5 / 5 / 3 GiB in a linked git worktree, where several copies of `target/` add up.
+The Swift speech bridge's Clang/Swift module cache is shared by every profile in
+`src-tauri/target/swift-module-cache` (about 250 MiB; it is deleted and rebuilt in about 25 seconds
+when it outgrows 768 MiB). Budget cleanups, sweeps, a changed compiler/SDK pair and a stray
+`RUSTC_BOOTSTRAP` are appended to `src-tauri/target/askhuman-cache.log` (newest 200 lines); read it
+first when a build was unexpectedly cold.
+
+Do not `export` `RUSTC_BOOTSTRAP` or `RUSTFLAGS` in a shell that builds this project. Several build
+scripts record `RUSTC_BOOTSTRAP` in their fingerprint, so setting it recompiles most of the
+dependency tree (about 120 units) and unsetting it does so again; `RUSTFLAGS` is part of every
+unit's fingerprint. `install.sh` unsets `RUSTC_BOOTSTRAP` for its own build and says so. Put such a
+variable in front of the one command that needs it instead, for example
+`RUSTC_BOOTSTRAP=1 cargo build -Z unstable-options --unit-graph`.
+
+Mind Cargo feature unification when adding macOS dependencies. The `objc2-*` framework crates have
+one feature per header and enable all of them by default (about 300 bindings for AppKit), and a
+single dependency that leaves the defaults on re-enables them for the whole graph.
+`src-tauri/Cargo.toml` therefore turns the defaults off and lists the bindings it uses; if a build
+fails with an unresolved `objc2_*` import or a missing method, add that type's feature (named after
+its header). `drag` is vendored in `src-tauri/vendor/drag` only so that its own objc2 dependencies
+can do the same: its published manifest omits `default-features = false`. Drop the
+`[patch.crates-io]` entry and the vendored copy once upstream releases a fixed manifest; the
+comments in `Cargo.toml` and in the vendored manifest say exactly what differs.
+
 On macOS/Linux, installation stages the binary next to the destination, sets permissions, and
 finishes macOS signing and verification before atomically replacing the destination. Running MCP,
 daemon, and GUI processes keep their original executable inode; overwriting or re-signing that
@@ -176,6 +201,12 @@ AskHuman "…"                           # auto re-exec into this instance
 ```
 
 Default instance config is popup-only and never reads the main keychain. Optional machine-level channel presets live in `~/.askhuman/dev-presets/` with exclusive leases.
+
+A new worktree starts with an empty `src-tauri/target/` and compiles every dependency (several
+minutes; its `target/` then grows to several GiB). On macOS/APFS, `./scripts/seed-worktree-target.sh`
+seeds it from the main checkout with copy-on-write clones so that the first install compiles only
+this project. It is optional and never run by `dev enable`; see the seeding step and its caveats in
+[`docs/agent-worktree-setup.md`](./agent-worktree-setup.md).
 
 ## Checklist: adding a new IM channel
 
