@@ -17,13 +17,14 @@ pub fn t(lang: Lang, en: &str, zh: &str) -> String {
     }
 }
 
-/// 5 个密钥键（点号 camelCase，与 `secrets` 账户常量一致）。
-pub const SECRET_KEYS: [&str; 5] = [
+/// 6 个密钥键（点号 camelCase，与 `secrets` 账户常量一致）。
+pub const SECRET_KEYS: [&str; 6] = [
     secrets::ACCOUNT_DINGTALK_SECRET,
     secrets::ACCOUNT_FEISHU_SECRET,
     secrets::ACCOUNT_TELEGRAM_TOKEN,
     secrets::ACCOUNT_SLACK_BOT_TOKEN,
     secrets::ACCOUNT_SLACK_APP_TOKEN,
+    secrets::ACCOUNT_IOS_BROKER_PASSWORD,
 ];
 
 /// 该点号键是否为密钥键（值只进钥匙串、不落 config.json、不进 argv）。

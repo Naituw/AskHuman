@@ -5,6 +5,10 @@
 
 pub mod crypto;
 pub mod envelope;
+pub mod gateway;
+pub mod push;
+pub mod store;
+pub mod transport;
 pub mod wire;
 
 #[cfg(test)]

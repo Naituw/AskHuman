@@ -232,6 +232,7 @@ fn assign_secret_field(cfg: &mut AppConfig, key: &str, val: String) {
         k if k == secrets::ACCOUNT_TELEGRAM_TOKEN => cfg.channels.telegram.bot_token = val,
         k if k == secrets::ACCOUNT_SLACK_BOT_TOKEN => cfg.channels.slack.bot_token = val,
         k if k == secrets::ACCOUNT_SLACK_APP_TOKEN => cfg.channels.slack.app_token = val,
+        k if k == secrets::ACCOUNT_IOS_BROKER_PASSWORD => cfg.channels.ios.password = val,
         _ => {}
     }
 }
@@ -274,7 +275,8 @@ fn help(lang: Lang) -> String {
 \n\
   Keys: general.* / channels.<name>.* / channels.autoActivation / experimental.enabled\n\
   Secret keys: channels.dingding.clientSecret, channels.feishu.appSecret,\n\
-               channels.telegram.botToken, channels.slack.botToken, channels.slack.appToken",
+               channels.telegram.botToken, channels.slack.botToken, channels.slack.appToken,\n\
+               channels.ios.brokerPassword",
         "AskHuman config —— 对 ~/.askhuman/config.json 的通用键值（兜底；渠道配置优先用 'channel'）\n\
 \n\
   config show [--json]            打印生效配置（密钥显示为 ●●●）\n\
@@ -286,7 +288,8 @@ fn help(lang: Lang) -> String {
 \n\
   键：general.* / channels.<渠道>.* / channels.autoActivation / experimental.enabled\n\
   密钥键：channels.dingding.clientSecret、channels.feishu.appSecret、\n\
-          channels.telegram.botToken、channels.slack.botToken、channels.slack.appToken",
+          channels.telegram.botToken、channels.slack.botToken、channels.slack.appToken、\n\
+          channels.ios.brokerPassword",
     )
 }
 

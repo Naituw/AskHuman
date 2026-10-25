@@ -13,7 +13,7 @@ struct SecretSpec {
     field: fn(&mut AppConfig) -> &mut String,
 }
 
-const SECRET_SPECS: [SecretSpec; 5] = [
+const SECRET_SPECS: [SecretSpec; 6] = [
     SecretSpec {
         account: secrets::ACCOUNT_DINGTALK_SECRET,
         field: |c| &mut c.channels.dingding.client_secret,
@@ -33,6 +33,10 @@ const SECRET_SPECS: [SecretSpec; 5] = [
     SecretSpec {
         account: secrets::ACCOUNT_SLACK_APP_TOKEN,
         field: |c| &mut c.channels.slack.app_token,
+    },
+    SecretSpec {
+        account: secrets::ACCOUNT_IOS_BROKER_PASSWORD,
+        field: |c| &mut c.channels.ios.password,
     },
 ];
 
@@ -384,6 +388,47 @@ pub struct SlackChannelConfig {
     pub user_id: String,
 }
 
+/// iOS 渠道配置（docs/specs/ios-channel.md）。
+/// 形态：自备 MQTT broker（EMQX）+ 推送中继；手机与 Mac 之间端到端加密，broker 只见密文。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct IosChannelConfig {
+    pub enabled: bool,
+    /// Broker 主机名（EMQX 实例域名）。
+    pub host: String,
+    /// MQTT over TLS 端口。
+    pub port: u16,
+    /// MQTT over WSS 端口（TLS 端口被封时的备用）。
+    pub ws_port: u16,
+    /// Broker 用户名（只用字母数字，同时是话题命名空间 `ah/{username}/`）。
+    pub username: String,
+    /// Broker 密码（进钥匙串，见 `SECRET_SPECS`）。
+    pub password: String,
+    /// 推送中继地址（腾讯云函数 URL，HTTPS）。
+    pub relay_url: String,
+    /// 本机在手机上的显示名；留空取主机名。
+    pub mac_name: String,
+    /// 测试用：用明文 TCP 直连 `host:port`（仅允许回环地址，Debug 联调用）。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub insecure_local: bool,
+}
+
+impl Default for IosChannelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: String::new(),
+            port: 8883,
+            ws_port: 8084,
+            username: String::new(),
+            password: String::new(),
+            relay_url: String::new(),
+            mac_name: String::new(),
+            insecure_local: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ChannelsConfig {
@@ -392,6 +437,7 @@ pub struct ChannelsConfig {
     pub dingding: DingTalkChannelConfig,
     pub feishu: FeishuChannelConfig,
     pub slack: SlackChannelConfig,
+    pub ios: IosChannelConfig,
     /// 「IM 渠道按需发送」开关（默认关 = 旧「每次提问全发所有启用 IM」行为；显式配置的用户设置保持原值）。
     /// 开启后：仅当前活跃槽对应的 IM 收提问卡片；在 agent 工作期间于某 IM 发 `/here`（或「这里」）
     /// 即把该渠道设为活跃槽。配置字段独立于 `experimental`，显式写入的用户选择跨版本保留。
@@ -411,6 +457,7 @@ impl Default for ChannelsConfig {
             dingding: DingTalkChannelConfig::default(),
             feishu: FeishuChannelConfig::default(),
             slack: SlackChannelConfig::default(),
+            ios: IosChannelConfig::default(),
             auto_activation: false,
             // 子开关默认开：老配置缺该字段时（容器级 `#[serde(default)]` 回退到此）按开处理。
             auto_end_watch: true,
@@ -721,6 +768,11 @@ mod tests {
         assert!(c.channels.slack.bot_token.is_empty());
         assert!(c.channels.slack.app_token.is_empty());
         assert!(c.channels.slack.user_id.is_empty());
+        // iOS 默认未启用，端口为 EMQX 标准的 TLS / WSS 端口。
+        assert!(!c.channels.ios.enabled);
+        assert_eq!((c.channels.ios.port, c.channels.ios.ws_port), (8883, 8084));
+        assert!(c.channels.ios.host.is_empty() && c.channels.ios.password.is_empty());
+        assert!(!c.channels.ios.insecure_local);
         // 「按需发送」默认关；子开关「自动结束 watch」默认开。
         assert!(!c.channels.auto_activation);
         assert!(c.channels.auto_end_watch);
@@ -736,6 +788,41 @@ mod tests {
             serde_json::from_str::<WindowEffect>(&json).unwrap(),
             WindowEffect::Solid
         );
+    }
+
+    #[test]
+    fn old_config_without_ios_section_loads_and_partial_ios_keeps_port_defaults() {
+        let old: AppConfig =
+            serde_json::from_str(r#"{"channels":{"autoActivation":true}}"#).unwrap();
+        assert_eq!(old.channels.ios, IosChannelConfig::default());
+        let partial: AppConfig = serde_json::from_str(
+            r#"{"channels":{"ios":{"enabled":true,"host":"broker.example","username":"u1"}}}"#,
+        )
+        .unwrap();
+        let ios = &partial.channels.ios;
+        assert!(ios.enabled);
+        assert_eq!(
+            (ios.host.as_str(), ios.port, ios.ws_port),
+            ("broker.example", 8883, 8084)
+        );
+        // The test-only flag stays out of serialized configs unless it is on.
+        let json = serde_json::to_value(&partial).unwrap();
+        assert!(json["channels"]["ios"].get("insecureLocal").is_none());
+        assert_eq!(json["channels"]["ios"]["relayUrl"], "");
+    }
+
+    #[test]
+    fn broker_password_is_a_keychain_secret() {
+        assert!(SECRET_SPECS
+            .iter()
+            .any(|spec| spec.account == secrets::ACCOUNT_IOS_BROKER_PASSWORD));
+        let mut cfg = AppConfig::default();
+        cfg.channels.ios.password = "pw".into();
+        let spec = SECRET_SPECS
+            .iter()
+            .find(|spec| spec.account == secrets::ACCOUNT_IOS_BROKER_PASSWORD)
+            .unwrap();
+        assert_eq!((spec.field)(&mut cfg), "pw");
     }
 
     #[test]

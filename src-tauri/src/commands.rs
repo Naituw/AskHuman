@@ -2460,6 +2460,7 @@ pub struct SecretsPresent {
     telegram_token: bool,
     slack_bot_token: bool,
     slack_app_token: bool,
+    ios_broker_password: bool,
 }
 
 /// Settings payload: the config with secrets blanked, plus per-secret presence flags.
@@ -2492,6 +2493,7 @@ pub struct SecretActions {
     telegram_token: SecretAction,
     slack_bot_token: SecretAction,
     slack_app_token: SecretAction,
+    ios_broker_password: SecretAction,
 }
 
 #[tauri::command]
@@ -2504,6 +2506,7 @@ pub fn get_settings() -> SettingsPayload {
         telegram_token: !config.channels.telegram.bot_token.is_empty(),
         slack_bot_token: !config.channels.slack.bot_token.is_empty(),
         slack_app_token: !config.channels.slack.app_token.is_empty(),
+        ios_broker_password: !config.channels.ios.password.is_empty(),
     };
     // Never let resolved secrets reach the UI; the page shows a fixed-length placeholder instead.
     config.channels.dingding.client_secret.clear();
@@ -2511,6 +2514,7 @@ pub fn get_settings() -> SettingsPayload {
     config.channels.telegram.bot_token.clear();
     config.channels.slack.bot_token.clear();
     config.channels.slack.app_token.clear();
+    config.channels.ios.password.clear();
     SettingsPayload {
         config,
         secrets_present,
@@ -2561,6 +2565,11 @@ pub async fn save_settings(
         &mut config.channels.slack.app_token,
         crate::secrets::ACCOUNT_SLACK_APP_TOKEN,
         secret_actions.slack_app_token,
+    );
+    apply_secret_action(
+        &mut config.channels.ios.password,
+        crate::secrets::ACCOUNT_IOS_BROKER_PASSWORD,
+        secret_actions.ios_broker_password,
     );
     config.save().map_err(|e| e.to_string())?;
     if config.agent_tasks.enabled {
