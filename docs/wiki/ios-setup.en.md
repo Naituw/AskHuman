@@ -63,7 +63,7 @@ Agent ─► AskHuman on the Mac ──MQTT (TLS)──► EMQX ──► AskHum
    - broker host, TLS port (8883), WSS port (8084), username, password;
    - the push relay URL (the function URL);
    - the name this Mac shows on the phone (empty uses the computer name).
-3. Click **Test connection**: it reports whether `tls` or `wss` was used and the round-trip time.
+3. Click **Test connection**: it connects to the broker and sends itself a message, reporting whether `tls` or `wss` was used and the round-trip time; then it asks the relay for its health and reports how fast it answered and whether it has an APNs key (without a relay address it warns that the phone gets no pushes).
 4. The same from the command line:
 
    ```bash
