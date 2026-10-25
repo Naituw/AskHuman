@@ -14,16 +14,20 @@ Watch / Follow / 插话 / 新任务），实现地图见 [`docs/overview-ios.md`
 
 **状态（2026-10-25）**：Mac Gateway / IPC 3→4 / 设置页 / CLI、推送中继 `relay/`、iOS App（收件箱 · 作答 · 确认 ·
 附件 · Agents · 关注 · 实时观察 · 插话 · 新任务 · 历史 · 配对 · 通知扩展）全部实现，通过 Rust / Swift / 中继 / 前端测试、
-模拟器 UI 测试（en + zh-Hans）和「真实 daemon + 本地 broker」端到端测试。**尚未接入任何真实服务。**
+模拟器 UI 测试（en + zh-Hans）和「真实 daemon + 本地 broker」端到端测试。真实服务接入进度：**EMQX 国区实例已接通并验证**
+（Mac 连得上、账号互相隔离、延迟已量，见 [P0 记录](investigations/ios-channel-p0.md)），**APNs 密钥已创建**（`.p8` 在用户下载目录）；
+腾讯云中继与真机推送尚未做。
 
 约束沿用交接：两个 EMQX 实例的消费上限保持 0，不创建管理 API Key，不泄露任何密钥或本地私有配置；不得把模拟器 /
 演示 Agent 验证当作完整渠道验收；真实 Agent 的启动 / 发 prompt 测试必须先经用户批准；密码 / `.p8` 只由用户自己输入，Agent 不读取。
 
 下一步（需要用户账号，一次一步经 AskHuman 引导）：
-- [ ] EMQX 控制台（国内站 `cloud.emqx.com`，实例 AskHumanCN）：新建用户名 + ACL（`ah/${username}/#` 允许收发、`#` 兜底拒绝），密码由用户自己输入
-- [ ] Apple：生成 APNs 密钥（.p8 只落本机下载目录，Agent 只记录 Key ID 与 Team ID `DMJXDB9H6Q`）
-- [ ] 腾讯云：上传 `relay/dist/askhuman-relay.zip`（Web 函数，Node.js 20，`ap-hongkong`，128 MB，15 s），环境变量由用户粘贴，创建函数 URL
-- [ ] P0 门禁实测并写 `docs/investigations/ios-channel-p0.md`：Mac / 手机到 EMQX 的 TLS 8883 / WSS 8084 与 RTT、中继 `/v1/health` 成功率与 p95、真机 APNs（≥ 30 次、加密预览、扩展解密、点击回到 App）、腾讯云计费、公司网络端口；任一项不达标先停下问用户，不自行换方案
+- [ ] 腾讯云：上传 `relay/dist/askhuman-relay.zip`（Web 函数，Node.js 20，`ap-hongkong`，128 MB，15 s），环境变量由用户粘贴
+  （`APNS_KEY_P8` 单行、换行写成字面 `\n`；`APNS_KEY_ID` = `<KEY-ID>`，`APNS_TEAM_ID` = `DMJXDB9H6Q`，`APNS_TOPIC` = `com.naituw.humaninloop.ios`，
+  `RELAY_HANDLE_KEY` = 32 字节随机数的 base64），创建函数 URL，再在 Mac 设置里填中继地址。Cursor 内置浏览器不能上传本地文件，选 zip 这一步要用户自己点
+- [ ] P0 门禁剩余项（记在 `docs/investigations/ios-channel-p0.md`）：中继 `/v1/health` 成功率与 p95、真机 APNs（≥ 30 次、加密预览、扩展解密、点击回到 App）、
+  手机 Wi-Fi / 蜂窝到 EMQX 的 TLS 与 WSS 往返各 100 次、腾讯云计费、公司网络端口（用户在那个网络运行 `ios/Tools/broker-probe/probe.cjs`）；
+  任一项不达标先停下问用户，不自行换方案
 - [ ] 真机安装（用户在模拟器验收之后）：真 APNs 的前台 / 后台 / 锁屏 / 强退送达差异、Wi-Fi / 蜂窝 / 切网、通知权限被拒、token 刷新、跨渠道同时回答、Mac 睡眠恢复、设备撤销、重装遗留配对（计划 §9 手工矩阵）
 - [ ] 性能口径（需求 D10 四条）与流量预算（典型场景 ≤ 300 MB / 月）分段实测，报告原始分布与全部超时
 - [ ] 合并前：IM `/new` 已改用共享 `daemon/runtime/task_launch.rs`，popup-only 的 Dev Instance 无法操作 IM，需在真实飞书 / Slack 上回归一次 `/new`；

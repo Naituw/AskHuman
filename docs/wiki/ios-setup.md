@@ -23,17 +23,19 @@ Agent ─► Mac 上的 AskHuman ──MQTT（TLS）──► EMQX ──► iPh
 1. 在 [EMQX Cloud](https://cloud.emqx.com/)（国内站）或 [国际站](https://cloud-intl.emqx.com/) 创建一个 **Serverless** 部署（每月免费 100 万连接分钟、1 GB 流量）。
 2. 在部署的「概览」里记下**连接地址**和端口：TLS `8883`，WSS `8084`。
 3. **认证**：添加一个用户名 / 密码。用户名只用**字母和数字**（它同时是这条线路的话题命名空间 `ah/<用户名>/`）。
-4. **授权（ACL）**：添加两条规则，顺序不能反——
-   - 允许：用户名匹配时，对话题 `ah/${username}/#` 发布和订阅；
-   - 拒绝：所有用户，话题 `#`（兜底）。
+4. **授权（ACL）**（控制台「访问控制 → 客户端授权」）。这个页面默认是**黑名单模式：没被明确拒绝的请求一律放行**，所以下面第 1 条兜底**必须有**，否则任何账号都能读写别人的话题：
+   1. 切到「全部用户」标签，添加：话题 `#`，动作「发布 & 订阅」，**不允许**（兜底）。
+   2. 切到「用户名」标签，添加：用户名填上一步建的用户名，话题 `ah/<用户名>/#`，动作「发布 & 订阅」，**允许**。EMQX 先看这个账号自己的规则，再看「全部用户」规则，所以只有自己的话题放行。
+   
+   配好后可以用 `ios/Tools/broker-probe/acl-check.cjs` 验证隔离（需要一个账号的用户名和密码，在 `ios/Tools/broker-probe` 里先 `npm install`；密码通过环境变量 `AH_PROBE_PASSWORD` 传入，见脚本开头的说明）。
 5. **消费上限保持 0**。免费额度用完后服务会暂停，但不会自动扣费；AskHuman 会在你接近额度时提示（见下文「流量与费用」）。
 
-> 给朋友用：为每个人另建一个用户名 / 密码，各自一份 ACL，互相看不到对方的话题。
+> 给朋友用：为每个人另建一个用户名 / 密码，并各加一条自己的 `ah/<用户名>/#` 允许规则（第 2 条）；「全部用户」的兜底拒绝不要动。这样互相看不到对方的话题。
 
 ## 二、准备 Apple 开发者资源
 
 1. 在 Apple Developer → Identifiers 注册两个 App ID：主 App `com.naituw.humaninloop.ios`（勾选 **Push Notifications**）和通知扩展 `com.naituw.humaninloop.ios.notification`（不需要任何能力）。使用自己的团队时，把 `ios/project.yml` 里的 Team 与 Bundle ID 一并改成自己的，并让中继的 `APNS_TOPIC` 与主 App 的 Bundle ID 一致。
-2. Keys → 新建一个启用 **Apple Push Notifications service (APNs)** 的密钥，下载 `.p8` 文件（**只能下载一次**），记下 **Key ID** 和你的 **Team ID**。
+2. Keys → 新建一个启用 **Apple Push Notifications service (APNs)** 的密钥。点 APNs 一行的 Configure，环境选 **Sandbox & Production**（开发构建走沙盒、TestFlight / 正式版走生产，一把密钥通用；此时限制只能选 Team Scoped）——这两项**保存后 Apple 不允许修改**。注册后下载 `.p8` 文件（**只能下载一次**），记下 **Key ID** 和你的 **Team ID**。
 
 ## 三、部署推送中继
 

@@ -101,7 +101,7 @@ docs/wiki/ios-setup.md(.en.md) 用户配置指南（EMQX、腾讯云、Apple、�
 | `ah/{u}/p/{ticketId}` | 双向 | 配对通道，仅配对期间订阅；用票据密钥加密 |
 
 订阅数：Mac ≤ 3（`u/{macId}`、`s/+`、配对期 `p/{ticketId}`），手机 ≤ 3（`d/{phoneId}`、`s/+`、配对期 `p/{ticketId}`），均在 EMQX 的 10 个订阅上限内。
-EMQX Serverless 控制台配置（用户手动，见 §10）：认证加一组用户名 / 密码；授权的「所有用户」规则：允许发布 / 订阅 `ah/${username}/#`，并加兜底「拒绝 `#`」。
+EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密码；授权：「用户名」规则允许该用户名发布 / 订阅 `ah/<该用户名>/#`，「全部用户」规则兜底「拒绝 `#`」。实例的授权模式默认是黑名单（未命中规则放行），所以这条兜底必须有。实测采用的是每个用户名一条字面规则（而不是「全部用户」下的 `${username}` 占位符规则），已用 `ios/Tools/broker-probe/acl-check.cjs` 验证隔离，记录见 `docs/investigations/ios-channel-p0.md`。
 会话：MQTT 3.1.1，`clean session = true`，不依赖 broker 排队；离线期间的状态一律靠重连后的快照对齐。
 
 ### 3.2 信封与加密
@@ -482,7 +482,7 @@ EMQX Serverless 控制台配置（用户手动，见 §10）：认证加一组�
 ## 10. 用户手动步骤（我不接触任何密钥）
 
 1. **Apple**：创建 App ID `com.naituw.humaninloop.ios`（开启 Push Notifications）与 `…ios.notification`；创建 APNs 认证密钥（.p8），记下 Key ID 与 Team ID；在 App Store Connect 建 App 记录与 TestFlight；首次上传时回答出口合规问卷；准备外部测试所需的隐私政策网址与联系邮箱。
-2. **EMQX 控制台**：为本部署建一个用户名 / 密码（只含字母数字）；授权加规则「所有用户：允许发布 / 订阅 `ah/${username}/#`」与兜底「拒绝 `#`」；给朋友另建各自的用户名 / 密码；确认消费上限保持 0。
+2. **EMQX 控制台**：为本部署建一个用户名 / 密码（只含字母数字）；授权加「用户名」规则（允许发布 / 订阅 `ah/<该用户名>/#`）与「全部用户」兜底「拒绝 `#`」；给朋友另建各自的用户名 / 密码并各加一条自己的允许规则；确认消费上限保持 0。
 3. **腾讯云**：先在费用中心核对云函数计费规则；新建 Web 函数（Node.js 20，`ap-hongkong`，128 MB，超时 15 秒）；上传 `relay/scripts/build-zip.sh` 产出的 zip；在函数配置里填 §5.2 的环境变量（p8 内容直接粘贴到控制台）；创建函数 URL（公网、授权「开放」）；把 URL 填进 Mac 设置的中继地址。
 4. **设备**：用 Xcode 把开发构建装到真机；P4 起用 TestFlight（朋友可作为外部测试员，首个构建需 Beta 审核；也可作为内部测试员，无需审核但需 App Store Connect 角色）。
 5. **公司 Mac**：执行 P0 的网络探测命令并回传结果。

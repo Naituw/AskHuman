@@ -23,17 +23,19 @@ Agent ─► AskHuman on the Mac ──MQTT (TLS)──► EMQX ──► AskHum
 1. Create a **Serverless** deployment on [EMQX Cloud](https://cloud.emqx.com/) (China site) or the [international site](https://cloud-intl.emqx.com/) (free tier: 1 million connection minutes and 1 GB of traffic a month).
 2. Note the **connection address** on the deployment overview, and the ports: TLS `8883`, WSS `8084`.
 3. **Authentication**: add a username and password. Use **letters and digits only** for the username (it is also the topic namespace `ah/<username>/` of the line).
-4. **Authorization (ACL)**: add two rules, in this order —
-   - Allow: for that username, publish and subscribe on `ah/${username}/#`;
-   - Deny: all users, topic `#` (catch-all).
+4. **Authorization (ACL)** (console: Access Control → Client Authorization). The page defaults to **blacklist mode: anything not explicitly denied is allowed**, so rule 1 below, the catch-all, is **required**; without it every account can read and write everyone else's topics:
+   1. Switch to the "All users" tab and add: topic `#`, action "Publish & Subscribe", **Deny** (catch-all).
+   2. Switch to the "Username" tab and add: the username from the previous step, topic `ah/<username>/#`, action "Publish & Subscribe", **Allow**. EMQX checks the account's own rules first and the "All users" rules after, so only its own topics get through.
+
+   Afterwards you can check the isolation with `ios/Tools/broker-probe/acl-check.cjs` (it needs one account's username and password; run `npm install` in `ios/Tools/broker-probe` first and pass the password in the `AH_PROBE_PASSWORD` environment variable, see the notes at the top of the script).
 5. **Keep the spend cap at 0.** When the free quota is used up the service pauses; nothing is charged automatically. AskHuman warns you as you approach the quota (see "Traffic and cost").
 
-> Sharing with a friend: create a separate username and password with their own ACL for each person; they cannot see each other's topics.
+> Sharing with a friend: create a separate username and password for each person and add one `ah/<username>/#` allow rule of their own (rule 2); leave the "All users" catch-all alone. They cannot see each other's topics.
 
 ## 2. Prepare the Apple developer resources
 
 1. In Apple Developer → Identifiers register two App IDs: the app `com.naituw.humaninloop.ios` (enable **Push Notifications**) and the notification extension `com.naituw.humaninloop.ios.notification` (no capabilities). With your own team, change the team and the bundle IDs in `ios/project.yml` too, and make the relay's `APNS_TOPIC` equal the app's bundle ID.
-2. Keys → create a key with **Apple Push Notifications service (APNs)** enabled, download the `.p8` file (**you can only download it once**) and note the **Key ID** and your **Team ID**.
+2. Keys → create a key with **Apple Push Notifications service (APNs)** enabled. Click Configure on the APNs row and pick the environment **Sandbox & Production** (development builds use the sandbox, TestFlight and the App Store use production, and one key serves both; the restriction then has to be Team Scoped). Apple **does not let you change these two settings after saving**. After registering, download the `.p8` file (**you can only download it once**) and note the **Key ID** and your **Team ID**.
 
 ## 3. Deploy the push relay
 
