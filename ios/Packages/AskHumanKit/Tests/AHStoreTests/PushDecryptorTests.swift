@@ -19,10 +19,15 @@ final class PushDecryptorTests: XCTestCase {
         PushPlain(k: kind, rid: "req-1", mac: "Home", agent: "Claude Code", project: "relay", text: "Pick a database", ts: 1_700_000_000_000)
     }
 
-    private func userInfo(sealedWith key: Data, scope: EnvelopeScope = .push, sender: String? = nil, plain: PushPlain) throws -> [AnyHashable: Any] {
+    /// The `userInfo` of a push as the relay builds it: `ah` holds `{f, k, n, c}` and no version
+    /// (`relay/src/core.js` copies exactly those four fields), unless `withVersion` says otherwise.
+    private func userInfo(
+        sealedWith key: Data, scope: EnvelopeScope = .push, sender: String? = nil, plain: PushPlain, withVersion: Bool = false
+    ) throws -> [AnyHashable: Any] {
         let body = try AHJSON.encoder.encode(plain)
         let envelope = AHEnvelope.seal(key: key, scope: scope, sender: sender ?? macId, kid: 1, plaintext: body)
-        let object = try JSONSerialization.jsonObject(with: AHEnvelope.encode(envelope))
+        var object = try XCTUnwrap(try JSONSerialization.jsonObject(with: AHEnvelope.encode(envelope)) as? [String: Any])
+        if !withVersion { object["v"] = nil }
         return ["aps": ["alert": ["loc-key": "PUSH_ASK"]], "ah": object]
     }
 
@@ -33,6 +38,19 @@ final class PushDecryptorTests: XCTestCase {
         XCTAssertEqual(push.macId, macId)
         XCTAssertEqual(push.plain, plain())
         XCTAssertEqual(push.kind, .ask)
+    }
+
+    func testAnEnvelopeThatCarriesItsVersionIsAcceptedToo() throws {
+        let info = try userInfo(sealedWith: key, plain: plain(), withVersion: true)
+        XCTAssertEqual(try PushDecryptor.decrypt(userInfo: info, vault: try makeVault()).get().plain, plain())
+    }
+
+    func testAVersionWeDoNotSpeakIsRefused() throws {
+        var info = try userInfo(sealedWith: key, plain: plain())
+        var object = try XCTUnwrap(info["ah"] as? [String: Any])
+        object["v"] = 2
+        info["ah"] = object
+        XCTAssertEqual(PushDecryptor.decrypt(userInfo: info, vault: try makeVault()), .failure(.malformed))
     }
 
     func testKindsAreMapped() {
@@ -77,5 +95,9 @@ final class PushDecryptorTests: XCTestCase {
         let envelope = AHEnvelope.seal(key: key, scope: .push, sender: macId, kid: 1, plaintext: body)
         let object = try JSONSerialization.jsonObject(with: AHEnvelope.encode(envelope))
         XCTAssertEqual(PushDecryptor.decrypt(userInfo: ["ah": object], vault: try makeVault()), .failure(.malformed))
+        // ...and the same without the version, as the relay forwards it.
+        var bare = try XCTUnwrap(object as? [String: Any])
+        bare["v"] = nil
+        XCTAssertEqual(PushDecryptor.decrypt(userInfo: ["ah": bare], vault: try makeVault()), .failure(.malformed))
     }
 }

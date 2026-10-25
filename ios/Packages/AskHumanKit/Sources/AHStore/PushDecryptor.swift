@@ -52,8 +52,12 @@ public enum PushDecryptor {
 
     public static func decrypt(userInfo: [AnyHashable: Any], vault: Vault) -> Result<DecryptedPush, Failure> {
         guard let object = userInfo["ah"] else { return .failure(.noPayload) }
-        guard JSONSerialization.isValidJSONObject(object),
-              let data = try? JSONSerialization.data(withJSONObject: object),
+        guard var fields = object as? [String: Any] else { return .failure(.malformed) }
+        // The relay forwards the envelope as {f, k, n, c} (plan §4.8), without the version: a push is
+        // version 1 by construction. A version that is there must still be the one we speak.
+        if fields["v"] == nil { fields["v"] = Wire.proto }
+        guard JSONSerialization.isValidJSONObject(fields),
+              let data = try? JSONSerialization.data(withJSONObject: fields),
               let envelope = try? AHEnvelope.parse(data)
         else { return .failure(.malformed) }
         guard let pairing = vault.pairing(macId: envelope.f) else { return .failure(.unknownMac) }
