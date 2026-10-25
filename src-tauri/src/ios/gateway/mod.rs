@@ -332,6 +332,28 @@ pub(crate) struct PhoneRt {
     pub dedup: Dedup,
 }
 
+impl PhoneRt {
+    fn with_presence(presence: Option<&Presence>) -> Self {
+        let mut rt = Self::default();
+        if let Some(presence) = presence {
+            rt.apply_presence(presence);
+        }
+        rt
+    }
+
+    fn apply_presence(&mut self, presence: &Presence) {
+        self.online = presence.o == 1;
+        self.foreground = presence.o == 1 && presence.fg == 1;
+        self.presence_ts = presence.t;
+        if !self.online {
+            self.hello_at = None;
+        }
+    }
+}
+
+/// Phone devices remembered by presence at most; a shared broker account can carry many.
+const PRESENCE_CACHE_MAX: usize = 512;
+
 #[derive(Default)]
 pub(crate) struct Revs {
     pub inbox: u64,
@@ -360,6 +382,10 @@ pub(crate) struct Actor {
     pub sync_at: Option<i64>,
 
     pub rt: HashMap<String, PhoneRt>,
+    /// Latest presence of every phone device seen on this broker connection, paired or not. A
+    /// retained presence message arrives once, when subscribing, which is usually long before the
+    /// phone gets paired.
+    pub presence_cache: HashMap<String, Presence>,
     pub pairing: Option<pairing::Pairing>,
     pub revs: Revs,
     pub requests: requests::Requests,
@@ -424,6 +450,7 @@ impl Actor {
             last_error: None,
             sync_at: None,
             rt: HashMap::new(),
+            presence_cache: HashMap::new(),
             pairing: None,
             revs: Revs::default(),
             requests: requests::Requests::default(),
@@ -657,6 +684,7 @@ impl Actor {
             rt.foreground = false;
             rt.hello_at = None;
         }
+        self.presence_cache.clear();
         self.sync_at = None;
         self.refresh_status();
     }
@@ -703,15 +731,20 @@ impl Actor {
         if presence.r != "phone" {
             return;
         }
-        let Some(rt) = self.rt.get_mut(device) else {
-            return;
-        };
-        rt.online = presence.o == 1;
-        rt.foreground = presence.o == 1 && presence.fg == 1;
-        rt.presence_ts = presence.t;
-        if !rt.online {
-            rt.hello_at = None;
+        if self.presence_cache.len() < PRESENCE_CACHE_MAX
+            || self.presence_cache.contains_key(device)
+        {
+            self.presence_cache
+                .insert(device.to_string(), presence.clone());
         }
+        if let Some(rt) = self.rt.get_mut(device) {
+            rt.apply_presence(&presence);
+        }
+    }
+
+    /// Runtime state for a phone that just got paired: starts from what its presence said before.
+    pub(crate) fn new_phone_rt(&self, phone_id: &str) -> PhoneRt {
+        PhoneRt::with_presence(self.presence_cache.get(phone_id))
     }
 
     async fn on_up(&mut self, topic: &str, payload: &[u8]) {

@@ -200,6 +200,35 @@ async fn phone_presence_is_tracked() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_phone_that_was_online_before_pairing_is_online_right_after() {
+    // The retained presence of a phone arrives once, while the Mac is not yet paired with it; a
+    // second Mac paired with a phone that is already connected has to remember it.
+    let fx = Fixture::new().await;
+    let mut phone = TestPhone::connect(&fx).await;
+    phone.set_presence(true, true).await;
+    phone.pair(&fx).await;
+
+    let state = fx.gateway.state().await.unwrap();
+    assert_eq!(
+        (state.phones[0].online, state.phones[0].foreground),
+        (true, true)
+    );
+
+    // Going offline before pairing is remembered as well.
+    let mut other = TestPhone::connect(&fx).await;
+    other.set_presence(true, true).await;
+    other.set_presence(false, false).await;
+    other.pair(&fx).await;
+    let state = fx.gateway.state().await.unwrap();
+    let other_view = state
+        .phones
+        .iter()
+        .find(|p| p.phone_id == other.phone_id)
+        .unwrap();
+    assert!(!other_view.online);
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_broker_outage_is_reported_and_the_gateway_recovers_by_itself() {
     let fx = Fixture::new().await;
     let mut phone = fx.pair_phone().await;

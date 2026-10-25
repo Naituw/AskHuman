@@ -88,8 +88,11 @@ pub struct DeliverRequest {
 /// How a request ended, as far as the phones are concerned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution {
-    /// A phone answered it.
+    /// The iOS channel answered it, without knowing which phone did.
     Answered,
+    /// A specific phone answered it (its id): that phone is told "answered", the others
+    /// "answered elsewhere" with its name.
+    AnsweredByPhone(String),
     /// Another channel answered it (display name of that channel).
     AnsweredElsewhere(String),
     Cancelled(String),
@@ -99,7 +102,7 @@ pub enum Resolution {
 impl Resolution {
     fn wire(&self) -> (&'static str, Option<String>) {
         match self {
-            Resolution::Answered => ("answered", None),
+            Resolution::Answered | Resolution::AnsweredByPhone(_) => ("answered", None),
             Resolution::AnsweredElsewhere(by) => ("answeredElsewhere", Some(by.clone())),
             Resolution::Cancelled(by) => ("cancelled", Some(by.clone())),
             Resolution::Expired => ("expired", None),
@@ -132,6 +135,8 @@ struct Recent {
     id: String,
     how: &'static str,
     by: Option<String>,
+    /// The phone that answered, when one did.
+    winner: Option<String>,
     ts: i64,
 }
 
@@ -168,11 +173,19 @@ impl Requests {
         }
     }
 
-    fn remember(&mut self, id: &str, how: &'static str, by: Option<String>, now: i64) {
+    fn remember(
+        &mut self,
+        id: &str,
+        how: &'static str,
+        by: Option<String>,
+        winner: Option<String>,
+        now: i64,
+    ) {
         self.recent.push_back(Recent {
             id: id.to_string(),
             how,
             by,
+            winner,
             ts: now,
         });
         while self.recent.len() > RECENT_KEEP
@@ -568,13 +581,18 @@ impl Actor {
             return;
         }
         if let Some(recent) = self.requests.recent(request_id) {
-            let (how, by) = (recent.how, recent.by.clone());
+            let (how, by) = self.resolution_for(
+                phone_id,
+                recent.how,
+                &recent.by.clone(),
+                recent.winner.as_deref(),
+            );
             self.send(
                 phone_id,
                 &wire::RequestResolved {
                     rev: self.revs.inbox,
                     request_id: request_id.to_string(),
-                    how: how.to_string(),
+                    how,
                     by,
                 },
             );
@@ -655,7 +673,11 @@ impl Actor {
         self.finish_journal(&submit.client_msg_id, t::ANSWER_ACK, &ack);
         self.send(phone_id, &ack);
         if status == "accepted" {
-            self.resolve(&submit.request_id, Resolution::Answered).await;
+            self.resolve(
+                &submit.request_id,
+                Resolution::AnsweredByPhone(phone_id.to_string()),
+            )
+            .await;
         }
     }
 
@@ -683,7 +705,11 @@ impl Actor {
         self.finish_journal(&decide.client_msg_id, t::CONFIRM_ACK, &ack);
         self.send(phone_id, &ack);
         if status == "accepted" {
-            self.resolve(&decide.request_id, Resolution::Answered).await;
+            self.resolve(
+                &decide.request_id,
+                Resolution::AnsweredByPhone(phone_id.to_string()),
+            )
+            .await;
         }
     }
 
@@ -957,8 +983,13 @@ impl Actor {
         let pending = self.requests.pending.remove(position);
         let now = self.now();
         let (how, by) = resolution.wire();
+        let winner = match &resolution {
+            Resolution::AnsweredByPhone(phone_id) => Some(phone_id.clone()),
+            _ => None,
+        };
         self.revs.inbox += 1;
-        self.requests.remember(request_id, how, by.clone(), now);
+        self.requests
+            .remember(request_id, how, by.clone(), winner.clone(), now);
 
         let phones: Vec<String> = self
             .store
@@ -967,6 +998,7 @@ impl Actor {
             .map(|p| p.phone_id.clone())
             .collect();
         for phone_id in phones {
+            let (how, by) = self.resolution_for(&phone_id, how, &by, winner.as_deref());
             let online = self.rt.get(&phone_id).is_some_and(|rt| rt.online);
             if online {
                 self.send(
@@ -974,7 +1006,7 @@ impl Actor {
                     &wire::RequestResolved {
                         rev: self.revs.inbox,
                         request_id: request_id.to_string(),
-                        how: how.to_string(),
+                        how: how.clone(),
                         by: by.clone(),
                     },
                 );
@@ -984,11 +1016,32 @@ impl Actor {
             if delivery.is_some_and(|d| d.pushed && !d.seen) {
                 let text = match &by {
                     Some(by) => format!("{how}: {by}"),
-                    None => how.to_string(),
+                    None => how.clone(),
                 };
                 self.push_resolved(&phone_id, &pending.view, &text, now);
             }
         }
+    }
+
+    /// What one phone is told about how a request ended: a phone that lost to another phone hears
+    /// "answered elsewhere" with the winner's name instead of a plain "answered".
+    fn resolution_for(
+        &self,
+        phone_id: &str,
+        how: &str,
+        by: &Option<String>,
+        winner: Option<&str>,
+    ) -> (String, Option<String>) {
+        if let Some(winner) = winner.filter(|w| *w != phone_id) {
+            let name = self
+                .store
+                .state
+                .phone(winner)
+                .map(|p| p.display_name().to_string())
+                .unwrap_or_else(|| "iOS".to_string());
+            return ("answeredElsewhere".to_string(), Some(name));
+        }
+        (how.to_string(), by.clone())
     }
 
     /// Hands every request back to the daemon as a lost surface.

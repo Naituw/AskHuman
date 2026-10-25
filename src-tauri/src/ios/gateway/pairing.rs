@@ -283,7 +283,8 @@ impl Actor {
             follow_set: Vec::new(),
             push: None,
         });
-        self.rt.insert(phone_id.clone(), Default::default());
+        let rt = self.new_phone_rt(&phone_id);
+        self.rt.insert(phone_id.clone(), rt);
         if let Some(pairing) = self.pairing.as_mut() {
             pairing.stage = Stage::Accepted {
                 phone_id: phone_id.clone(),

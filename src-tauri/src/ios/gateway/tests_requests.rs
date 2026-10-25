@@ -154,6 +154,56 @@ async fn losing_the_race_reports_who_won() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn the_phone_that_lost_to_another_phone_is_told_who_answered() {
+    let fx = Fixture::new().await;
+    let mut first = fx.live_phone().await;
+    let mut second = fx.live_phone().await;
+    deliver_ask(&fx, "req1");
+    first.recv(t::REQUEST_NEW).await;
+    second.recv(t::REQUEST_NEW).await;
+
+    first
+        .send(&answer("c1", "req1", vec![item(0, &[0], None)]))
+        .await;
+    let ack: wire::AnswerAck = first.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "accepted");
+
+    let winner: wire::RequestResolved = first.recv_body(t::REQUEST_RESOLVED).await;
+    assert_eq!(winner.how, "answered");
+    assert_eq!(winner.by, None);
+
+    let loser: wire::RequestResolved = second.recv_body(t::REQUEST_RESOLVED).await;
+    assert_eq!(loser.how, "answeredElsewhere");
+    let winner_name = fx
+        .gateway
+        .state()
+        .await
+        .unwrap()
+        .phones
+        .iter()
+        .find(|p| p.phone_id == first.phone_id)
+        .map(|p| p.name.clone())
+        .unwrap();
+    assert_eq!(loser.by.as_deref(), Some(winner_name.as_str()));
+
+    // Asking again later gives each phone the same account of what happened.
+    second
+        .send(&wire::RequestGet {
+            request_id: "req1".into(),
+        })
+        .await;
+    let again: wire::RequestResolved = second.recv_body(t::REQUEST_RESOLVED).await;
+    assert_eq!(again.how, "answeredElsewhere");
+    first
+        .send(&wire::RequestGet {
+            request_id: "req1".into(),
+        })
+        .await;
+    let own: wire::RequestResolved = first.recv_body(t::REQUEST_RESOLVED).await;
+    assert_eq!(own.how, "answered");
+}
+
+#[tokio::test(start_paused = true)]
 async fn invalid_answers_are_rejected_without_touching_the_request() {
     let fx = Fixture::new().await;
     let mut phone = fx.live_phone().await;
