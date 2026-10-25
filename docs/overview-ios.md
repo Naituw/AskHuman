@@ -66,9 +66,12 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 | 中继 | `cd relay && npm test` |
 | 设置页 | `npx vitest run src/views/settings` |
 | App UI（模拟器） | `xcodebuild test -project ios/AskHuman.xcodeproj -scheme AskHuman -destination 'platform=iOS Simulator,id=<UDID>' -derivedDataPath ios/build/DerivedData CODE_SIGNING_ALLOWED=NO -parallel-testing-enabled NO -collect-test-diagnostics never`（`TEST_RUNNER_AH_UI_LANG=zh-Hans` 切中文，`TEST_RUNNER_AH_UI_SHOTS=<dir>` 保存截图）。必须前台跑；后台会被工具杀掉 |
-| 真实 daemon 端到端 | `cd ios/Packages/AskHumanKit && AH_E2E_BIN=<已安装的 AskHuman> AH_E2E_BROKER_DIR=<ios/Tools/local-broker> swift test --filter AHE2ETests`（缺环境变量时自动跳过） |
+| 真实 daemon 端到端（本地 broker） | `cd ios/Packages/AskHumanKit && AH_E2E_BIN=<已安装的 AskHuman> AH_E2E_BROKER_DIR=<ios/Tools/local-broker> swift test --filter AHE2ETests`（缺环境变量时自动跳过） |
+| 真实 daemon 端到端（真实 EMQX + 中继） | 同上，把 `AH_E2E_BROKER_DIR` 换成 `AH_E2E_REAL_FROM=<已配置好 ios 渠道的实例的 ASKHUMAN_HOME>` 与 `AH_E2E_BUNDLE_ID=<App 的 Bundle ID>`（中继只收这个 ID）；多出 3 项只在真实服务上跑的检查（真中继 + 真 APNs 沙盒、延迟目标） |
 
 端到端测试台会起**一台一次性的 Mac**：独立 `ASKHUMAN_HOME`、`HOME`、`ASKHUMAN_NO_KEYCHAIN=1`，加本地 Node broker；`agentTasks.enabled` 保持关闭，所以不会真的启动任何终端。伪造的 Agent 会话通过隐藏命令 `AskHuman __agent-hook <agent> <event>` 注入。
+
+真实服务模式不起本地 broker：一次性 Mac 用 `channel ios export` 取出实例的连接串（只在测试进程的内存里，经 stdin 交给 `channel set ios --connection-stdin`，不显示、不落盘），手机侧是 macOS 上真正的 `PhoneEngine` + `MQTTBrokerClient`。每个用例的 Mac / 手机 ID 都是新生成的，话题互不重叠（共用同一个 EMQX 账号），但会消耗真实 EMQX 的流量与中继调用。`AH_E2E_REPORT=<json>` 写入延迟统计，`AH_E2E_KEEP_LOGS=<目录>` 让失败的用例留下 Mac 的 daemon 日志与手机侧摘要（都不含秘密）。
 
 ## 不变量与注意点
 
@@ -76,5 +79,6 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 - **IPC 协议号**：当前为 4，由 `ClientMsg::Ios` / `ServerMsg::Ios` 带来。给 `IosOp` / `IosResult` 加带 `#[serde(default)]` 的字段不 +1；规则见 `docs/overview.md` 的「IPC 协议号」。
 - **线协议**：`ios/wire.rs` 与 `AHProtocol` 的限额常量（信封 ≤ 900,000 B、分块 192 KB、附件 ≤ 10 MB、每次回复 ≤ 5 个附件、令牌桶 6/s 突发 10、Follow ≤ 5、任务正文 ≤ 3000 字、插话 ≤ 20,000 字、Watch 间隔 ≥ 2 s 且每手机 ≤ 2 路）两边必须一致；改任何一边先改夹具。
 - **幂等**：状态变更消息（回答、插话、`task.create` 等）按 `msgId` 进幂等日志，重放返回同一结果、同 ID 不同内容被拒绝。
+- **「活着」的手机**：Gateway 只向「在线 + 前台 + 已 hello」的手机实时投递。App 在首次同步之后才发布前台状态，所以 hello 与前台状态之间的变化（新请求、Agent、Follow）不会被实时发出；`Actor::on_presence` 在手机由此变为「活着」时补发四个快照。改动这一段先看 `tests_requests` / `tests_agents` 里 `…between_hello_and_the_foreground_presence…` 两个用例。
 - **成本红线**：EMQX 消费上限保持 0（额度用尽即停，不自动付费）；不创建管理 API Key；Mac 与手机本机统计流量，80% 免费额度时预警。
 - **保密**：broker 密码、配对码、方向密钥不得出现在日志、命令输出、文档与提交里；`E2ETests.testSecretsNeverReachTheLogsOrTheCommandOutput` 守着这条。

@@ -514,7 +514,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 
 ## 13. 实施记录（与计划的差异）
 
-截至 2026-10-25：P1、P3、P4、P5、P6 的代码与自动化验证已完成（Rust / Swift / 中继 / 前端测试、模拟器 UI 测试 en + zh-Hans、「真实 daemon + 本地 broker」端到端 28 项），**P0 的账号侧门禁、P7 的真机 / 真网络部分与 P8 的发布事项尚未进行**（见 `docs/PROGRESS.md`）。实现与上文不同或超出上文的地方：
+截至 2026-10-25：P1、P3、P4、P5、P6 的代码与自动化验证已完成（Rust / Swift / 中继 / 前端测试、模拟器 UI 测试 en + zh-Hans、「真实 daemon + 本地 broker」端到端 30 项，另对真实 EMQX + 中继跑同一套并加 3 项只在真实服务上的检查，共 33 项全过），**P0 的账号侧门禁、P7 的真机 / 真网络部分与 P8 的发布事项尚未进行**（见 `docs/PROGRESS.md`）。实现与上文不同或超出上文的地方：
 
 - **iOS 本地存储不用 SwiftData**：`AHStore` 用文件型 JSON（每个键一个文件，`completeFileProtectionUntilFirstUserAuthentication`；`JSONFile` / `JSONDirectory`）。它能在 macOS 上作为纯 SwiftPM 包测试，通知扩展也无需模型容器。§6.2 / §11 里与 SwiftData 相关的表述以此为准。
 - **通知扩展链接 `AHProtocol` + `AHStore`**（原计划只链接前者）：`PushDecryptor` 与钥匙串 `Vault` 在 `AHStore`；扩展仍不链接 MQTT、Markdown，也不联网。
@@ -527,4 +527,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 - **隔离规则**：任何隔离运行的 Mac / daemon 必须设置 `ASKHUMAN_HOME`（只改 `HOME` 曾导致隔离的 daemon 复用了正式 launchd 标签并顶掉正式 daemon）；`launchd_label` 现在在只覆盖 `HOME` 时也用独立标签（单独提交），测试台在启动前断言 `ASKHUMAN_HOME` 位于临时目录，并只清理携带该目录的进程。
 - **工具**：`ios/Tools/make-catalog.py` 由编译器的 `.stringsdata` 生成中英字符串目录（缺中文翻译会失败）；UI 测试新增启动参数 `-AHOpenAgent` / `-AHNewTask` / `-AHHoldInterjects` / `-AHFollowEvent` 与场景 `quota`；UI 测试用 `-collect-test-diagnostics never`。
 - **任务表单**：权限（行动前先询问 / 自动执行）没有预选，必须明确选择后才能提交。
+- **端到端测试可对真实服务运行**（用户 2026-10-25 允许）：`AH_E2E_REAL_FROM` / `AH_E2E_BUNDLE_ID` 让一次性 Mac 导入已部署实例的连接串（只在内存里），同一套用例对真实 EMQX + 中继跑一遍，另有 3 项只在真实服务上的检查（真中继 + 真 APNs 沙盒的 `BadDeviceToken` → `gone` → 新 token 恢复、别的 Bundle ID 被中继拒绝、前台往返延迟）。做法见 `docs/overview-ios.md`；数字见 `docs/investigations/ios-channel-p0.md` §3.6。这不替代 §9 要求的真机真 APNs 矩阵。
+- **修复：先 hello、后上报前台的手机漏收中间的变化**（真实服务的延迟暴露的 Mac 端竞态，设计不变）：App 在首次同步后才发布 `fg=1`，而 Gateway 以「在线 + 前台 + 已 hello」判断「活着」。hello 与前台状态之间创建的请求（以及 Agent / Follow 的变化）既没被实时发出，hello 的快照又早于它，手机就一直看不到，直到下一次重连。现在 `Actor::on_presence` 在手机由此变为「活着」时补发四个快照；两个 Rust 用例（请求、Agent）撤掉修复就会失败。本地 broker 延迟太低，此前一直没撞上。
+- **测试台修正**：`Cmd` 的 `readabilityHandler` 在 EOF 时必须清掉，否则已结束的子进程会让运行器空转到 500% CPU；E2E 里「请求出现在收件箱」与「请求带着内容」是两步（慢链路上先摘要后全文），用例改为等内容再作答，历史条目在 Mac 确认之后才写，Follow 要等 Mac 的列表回来再点下一个。
 
