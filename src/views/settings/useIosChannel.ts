@@ -232,6 +232,7 @@ export function useIosChannel() {
         wsPort: c.wsPort,
         username: c.username,
         password: c.password,
+        relayUrl: c.relayUrl,
       });
       testError.value = false;
     } catch (e) {

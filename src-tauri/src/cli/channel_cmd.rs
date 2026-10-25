@@ -457,6 +457,7 @@ fn test(args: &[String], lang: Lang) -> Result<(), String> {
                     username: cfg.channels.ios.username.clone(),
                     password: String::new(),
                     insecure_local: cfg.channels.ios.insecure_local,
+                    relay_url: cfg.channels.ios.relay_url.clone(),
                 })
                 .await
             }

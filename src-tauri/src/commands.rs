@@ -4158,10 +4158,13 @@ pub struct IosTestArgs {
     pub password: String,
     #[serde(default)]
     pub insecure_local: bool,
+    /// Push relay address of the form; empty skips the relay check.
+    #[serde(default)]
+    pub relay_url: String,
 }
 
-/// Tests the broker settings of the form (not yet saved): connects, subscribes and sends a
-/// message to itself through the broker.
+/// Tests the settings of the form (not yet saved): connects to the broker, subscribes and sends a
+/// message to itself through it; then asks the relay (when an address is set) for its health.
 #[tauri::command]
 pub async fn ios_test(args: IosTestArgs) -> Result<String, String> {
     let lang = crate::i18n::Lang::current();
@@ -4191,9 +4194,24 @@ pub async fn ios_test(args: IosTestArgs) -> Result<String, String> {
         std::time::Duration::from_secs(20),
     )
     .await?;
-    Ok(crate::i18n::tr(lang, "cmd.iosTestOk")
+    let broker = crate::i18n::tr(lang, "cmd.iosTestOk")
         .replace("{via}", &report.via)
-        .replace("{ms}", &report.elapsed_ms.to_string()))
+        .replace("{ms}", &report.elapsed_ms.to_string());
+    if args.relay_url.trim().is_empty() {
+        return Ok(format!(
+            "{broker} {}",
+            crate::i18n::tr(lang, "cmd.iosRelayNone")
+        ));
+    }
+    match crate::ios::push::check_health(&args.relay_url).await {
+        Ok(health) if health.apns => Ok(format!(
+            "{broker} {}",
+            crate::i18n::tr(lang, "cmd.iosRelayOk").replace("{ms}", &health.elapsed_ms.to_string())
+        )),
+        Ok(health) => Err(crate::i18n::tr(lang, "cmd.iosRelayNoApns")
+            .replace("{ms}", &health.elapsed_ms.to_string())),
+        Err(error) => Err(crate::i18n::tr(lang, "cmd.iosRelayFailed").replace("{error}", &error)),
+    }
 }
 
 /// Broker settings as pasteable `ahconn1.` text (includes the broker password).

@@ -68,6 +68,7 @@ describe("IosChannelCard", () => {
     i18n.global.locale.value = "en";
     iosOp.mockReset();
     iosPairQr.mockReset();
+    iosTest.mockReset();
     persist.mockClear();
     iosPairQr.mockResolvedValue('<svg id="qr"></svg>');
     config = makeConfig(true);
@@ -218,6 +219,34 @@ describe("IosChannelCard", () => {
     confirm.click();
     await flushPromises();
     expect(iosOp).toHaveBeenCalledWith({ op: "revoke", phoneId: "p1" });
+    wrapper.unmount();
+  });
+
+  it("tests the broker and the relay address of the form", async () => {
+    iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+    iosTest.mockResolvedValue("Connected via tls (160 ms). The relay answered in 850 ms and can send pushes.");
+    const wrapper = mountCard();
+    await flushPromises();
+    const testButton = () => wrapper.findAll("button").find((b) => b.text() === "Test connection")!;
+
+    await testButton().trigger("click");
+    await flushPromises();
+    expect(iosTest).toHaveBeenCalledWith({
+      host: "broker.example.com",
+      port: 8883,
+      wsPort: 8084,
+      username: "abc123",
+      password: "",
+      relayUrl: "https://relay.example.com",
+    });
+    expect(wrapper.get(".result").classes()).toContain("ok");
+    expect(wrapper.get(".result").text()).toContain("The relay answered in 850 ms");
+
+    iosTest.mockRejectedValue("The broker works, but the relay check failed: the relay did not answer in time");
+    await testButton().trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".result").classes()).toContain("err");
+    expect(wrapper.get(".result").text()).toContain("the relay check failed");
     wrapper.unmount();
   });
 

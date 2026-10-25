@@ -148,6 +148,8 @@ export const iosTest = (args: {
   wsPort: number;
   username: string;
   password: string;
+  /** Push relay address; when set, its health is checked too. */
+  relayUrl?: string;
 }) => invoke<string>("ios_test", { args });
 export const iosConnectionExport = () => invoke<string>("ios_connection_export");
 export const iosConnectionImport = (text: string) =>
