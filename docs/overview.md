@@ -276,7 +276,7 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 
 +1 的代价是每个跨号的客户端与 Daemon 互相让位、旧客户端无法与新 Daemon 共存，所以能用「加可选字段」解决的不要 +1。+1 时：改常量，在下面的历史补一行（日期、提交、变更点），并在 `daemon-graceful-drain.md` 记下升级过渡期的影响。
 
-**历史**（当前为 3）：1 = Daemon 骨架（`9660532`，2026-06-07）；2 = 结构化确认（`2c76c44`，2026-07-11）；3 = 共享作答窗口，新增 `PopupHostHello` / `PopupHostIdle` / `PopupHostAccepted` / `PopupSubmissionAck` / `PopupRequestKind` 等（`799334f`，2026-10-06）。对应发布版：0.4.3–0.8.2 为 1，0.9.1–0.13.2 为 2，0.14.2 起为 3。排空相关的增量（`HelloStatus::Draining`、`ServerMsg::Draining`、`Stop.force`、`StatusInfo.draining`）和 `StatusInfo` 的二进制信息字段都没有 +1。
+**历史**（当前为 4）：1 = Daemon 骨架（`9660532`，2026-06-07）；2 = 结构化确认（`2c76c44`，2026-07-11）；3 = 共享作答窗口，新增 `PopupHostHello` / `PopupHostIdle` / `PopupHostAccepted` / `PopupSubmissionAck` / `PopupRequestKind` 等（`799334f`，2026-10-06）；4 = iOS 渠道管理，新增 `ClientMsg::Ios` / `ServerMsg::Ios`（`IosOp` / `IosResult`）（`128bffd`，2026-10-25）。对应发布版：0.4.3–0.8.2 为 1，0.9.1–0.13.2 为 2，0.14.2 起为 3，4 尚未发布。排空相关的增量（`HelloStatus::Draining`、`ServerMsg::Draining`、`Stop.force`、`StatusInfo.draining`）和 `StatusInfo` 的二进制信息字段都没有 +1。
 
 ## 前端 ↔ 后端命令（`commands.rs` ↔ `lib/ipc.ts`）
 

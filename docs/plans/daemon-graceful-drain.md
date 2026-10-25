@@ -30,6 +30,8 @@
 
 过渡期边界（记录，不处理）：旧二进制 CLI 收到 `Draining` 枚举值会解码失败 → 现有代码按连接异常处理（重试后退 3）。正常流程不出现（盘上已是新二进制，新发起的 CLI 都是新代码）。
 
+> 协议号 3 → 4（iOS 渠道管理，`ClientMsg::Ios` / `ServerMsg::Ios`，见 `docs/overview.md`「IPC 协议号」历史）：升级期间新旧二进制的 CLI / Popup Host / GUI Host 与 Daemon 互相让位换新，沿用上面的排空与重试路径，没有额外的过渡逻辑。
+
 ## 2. Daemon 端（`src-tauri/src/daemon/mod.rs`）
 
 ### 2.1 状态与排空看门狗
