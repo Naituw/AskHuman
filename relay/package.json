@@ -1,0 +1,14 @@
+{
+  "name": "askhuman-push-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stateless APNs push relay for the AskHuman iOS channel (Tencent SCF web function).",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build": "./scripts/build-zip.sh"
+  }
+}
