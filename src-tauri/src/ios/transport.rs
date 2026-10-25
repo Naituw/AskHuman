@@ -531,6 +531,18 @@ fn classify(error: &rumqttc::ConnectionError) -> (String, bool) {
     (error.to_string(), auth)
 }
 
+/// The transport to start with. Plain TCP is for loopback test brokers only: a remote host always
+/// gets TLS, whatever the config says.
+fn first_via(params: &ConnectParams) -> Via {
+    if params.insecure_local && is_loopback_host(&params.host) {
+        Via::Plain
+    } else if params.prefer.as_deref() == Some("wss") {
+        Via::Wss
+    } else {
+        Via::Tls
+    }
+}
+
 async fn supervise(
     params: ConnectParams,
     shared: Arc<Shared>,
@@ -539,13 +551,7 @@ async fn supervise(
 ) {
     use rumqttc::{AsyncClient, Event, NetworkOptions, Packet};
 
-    let mut via = if params.insecure_local {
-        Via::Plain
-    } else if params.prefer.as_deref() == Some("wss") {
-        Via::Wss
-    } else {
-        Via::Tls
-    };
+    let mut via = first_via(&params);
     let mut attempt = 0u32;
     loop {
         let options = build_options(&params, via);
@@ -721,6 +727,44 @@ mod tests {
         assert!(is_loopback_host("::1"));
         assert!(!is_loopback_host("192.168.1.2"));
         assert!(!is_loopback_host("broker.example.com"));
+    }
+
+    fn params(host: &str, insecure_local: bool, prefer: Option<&str>) -> ConnectParams {
+        ConnectParams {
+            host: host.into(),
+            tls_port: 8883,
+            wss_port: 8084,
+            username: "u".into(),
+            password: "p".into(),
+            client_id: "c".into(),
+            will: Will {
+                topic: String::new(),
+                payload: Vec::new(),
+                retain: false,
+            },
+            prefer: prefer.map(str::to_string),
+            insecure_local,
+        }
+    }
+
+    #[test]
+    fn plain_tcp_is_only_ever_used_towards_loopback() {
+        assert_eq!(first_via(&params("127.0.0.1", true, None)), Via::Plain);
+        assert_eq!(first_via(&params("localhost", true, None)), Via::Plain);
+        // A remote host gets TLS even when the config asks for plain TCP.
+        assert_eq!(
+            first_via(&params("broker.example.com", true, None)),
+            Via::Tls
+        );
+        assert_eq!(
+            first_via(&params("broker.example.com", true, Some("wss"))),
+            Via::Wss
+        );
+        assert_eq!(first_via(&params("127.0.0.1", false, None)), Via::Tls);
+        assert_eq!(
+            first_via(&params("127.0.0.1", false, Some("wss"))),
+            Via::Wss
+        );
     }
 
     #[test]
