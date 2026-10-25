@@ -3,30 +3,37 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 进行中：iOS 原生渠道（实现中）
+## 进行中：iOS 原生渠道（原型已完成，待真实服务与真机验收）
 
 2026-10-24 用户要求整理交接（[移动渠道交接](investigations/native-ios-channel-handoff.md)：杭州 EMQX 传输验证包、
 Mac / iOS 交互原型、双向消息与进程重启补发已验证）。2026-10-25 经多轮问答定稿设计：需求
 [`docs/specs/ios-channel.md`](specs/ios-channel.md)，计划 [`docs/plans/ios-channel.md`](plans/ios-channel.md)
 （作为新渠道 `ios`；EMQX 杭州 + 腾讯云云函数推送中继 + 端到端加密；多 Mac 配对同一部手机；回答 / 确认 / 附件 /
-Watch / Follow / 插话 / 新任务）。**设计已于 2026-10-25 获用户批准，实现在 worktree `HumanInLoop-ios`（分支 `feat/ios-channel`）进行。**
+Watch / Follow / 插话 / 新任务），实现地图见 [`docs/overview-ios.md`](overview-ios.md)，用户说明见
+[`docs/wiki/ios-setup.md`](wiki/ios-setup.md)。实现在 worktree `HumanInLoop-ios`（分支 `feat/ios-channel`）。
 
-当前阶段与下一步见本节末尾的「进度」；计划里的 P0 门禁（并行推进）：Rust 新依赖探针、EMQX ACL 与真机 TLS / WSS 实测、中继最小版与真机 APNs 实测、
-腾讯云计费核对、公司网络端口探测；任一项不达标先停下来问用户，不自行换方案。
+**状态（2026-10-25）**：Mac Gateway / IPC 3→4 / 设置页 / CLI、推送中继 `relay/`、iOS App（收件箱 · 作答 · 确认 ·
+附件 · Agents · 关注 · 实时观察 · 插话 · 新任务 · 历史 · 配对 · 通知扩展）全部实现，通过 Rust / Swift / 中继 / 前端测试、
+模拟器 UI 测试（en + zh-Hans）和「真实 daemon + 本地 broker」端到端测试。**尚未接入任何真实服务。**
 
 约束沿用交接：两个 EMQX 实例的消费上限保持 0，不创建管理 API Key，不泄露任何密钥或本地私有配置；不得把模拟器 /
-演示 Agent 验证当作完整渠道验收；真实 Agent 的启动 / 发 prompt 测试必须先经用户批准。
+演示 Agent 验证当作完整渠道验收；真实 Agent 的启动 / 发 prompt 测试必须先经用户批准；密码 / `.p8` 只由用户自己输入，Agent 不读取。
 
-进度（阶段完成后更新；用户已取消 P2 / P4 的中间评审门，一路做到可用原型后统一验收）：
-- [ ] P0.1 Rust 依赖探针；账号侧准备（Apple App ID / APNs 密钥 / EMQX 用户与授权 / 腾讯云函数）由 Agent 协助用户完成，不读取任何密钥内容
-- [ ] P1 协议与密码学核心（Rust + Swift + 跨语言夹具）
-- [ ] 推送中继 `relay/`
-- [ ] P3 Mac Gateway + 配对 + IPC 3→4 + 设置页 / CLI
-- [ ] P4 问答闭环（`IosChannel` / 确认 / 附件 / 推送 / 通知扩展）
-- [ ] P5 Agents（Follow / 观察 / 插话 / `failed`）
-- [ ] P6 新任务
-- [ ] iOS App（随上述阶段并行推进）
-- [ ] P7 加固与真机 / 公司网络 / 真 APNs 实测；P8 文档与收尾
+下一步（需要用户账号，一次一步经 AskHuman 引导）：
+- [ ] EMQX 控制台（国内站 `cloud.emqx.com`，实例 AskHumanCN）：新建用户名 + ACL（`ah/${username}/#` 允许收发、`#` 兜底拒绝），密码由用户自己输入
+- [ ] Apple：生成 APNs 密钥（.p8 只落本机下载目录，Agent 只记录 Key ID 与 Team ID `DMJXDB9H6Q`）
+- [ ] 腾讯云：上传 `relay/dist/askhuman-relay.zip`（Web 函数，Node.js 20，`ap-hongkong`，128 MB，15 s），环境变量由用户粘贴，创建函数 URL
+- [ ] P0 门禁实测并写 `docs/investigations/ios-channel-p0.md`：Mac / 手机到 EMQX 的 TLS 8883 / WSS 8084 与 RTT、中继 `/v1/health` 成功率与 p95、真机 APNs（≥ 30 次、加密预览、扩展解密、点击回到 App）、腾讯云计费、公司网络端口；任一项不达标先停下问用户，不自行换方案
+- [ ] 真机安装（用户在模拟器验收之后）：真 APNs 的前台 / 后台 / 锁屏 / 强退送达差异、Wi-Fi / 蜂窝 / 切网、通知权限被拒、token 刷新、跨渠道同时回答、Mac 睡眠恢复、设备撤销、重装遗留配对（计划 §9 手工矩阵）
+- [ ] 性能口径（需求 D10 四条）与流量预算（典型场景 ≤ 300 MB / 月）分段实测，报告原始分布与全部超时
+- [ ] 合并前：IM `/new` 已改用共享 `daemon/runtime/task_launch.rs`，popup-only 的 Dev Instance 无法操作 IM，需在真实飞书 / Slack 上回归一次 `/new`；
+  与主工作区里这几份文档的旧副本（`docs/PROGRESS.md`、`docs/specs/ios-channel.md`、`docs/plans/ios-channel.md`）对齐；
+  决定是否公开该渠道（README 链接、去掉提交的 `Release-Note: skip`）；是否在 CI 增加 `relay` 的 `node --test` 与 `swift test`（建议只加这两项，不加 `xcodebuild`）
+
+已知延期（不阻塞原型）：
+- Codex 桌面 App 的会话暂不支持手机插话（返回 `unsupported`）；Pi 的扩展需要在设置里重新保存 / 刷新后才会上报失败的回合。
+- 提问正文里的本地图片尚未改写为 `ahasset://`，列表项的墓碑展示也未做；撤回插话只取回文字、不取回附件。
+- 发行给朋友之前：EMQX 自动开户与额度共享、TestFlight 外部测试说明、隐私政策网址与联系邮箱。
 
 ## 待观察：拖入文件失败（`daemon.log` 的 `askhuman_drop` 行）
 

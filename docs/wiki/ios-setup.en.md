@@ -1,0 +1,116 @@
+# iOS app channel setup (experimental)
+
+[简体中文](./ios-setup.md) | English
+
+The AskHuman iOS app is a communication channel next to Feishu and Slack: your Agent asks on the Mac, you answer on your iPhone. You can also see what your Agents are doing, watch one live, send it a message and start new tasks. **Several Macs can pair with one phone** (home and office, say); all their questions land in one inbox.
+
+> This is an **experimental feature** and you bring three things yourself: an MQTT broker (the free tier of EMQX Serverless is enough), a push relay (a Tencent Cloud function, free tier is enough) and an Apple developer account (to create a push key and install the app). The steps below cover all of it.
+
+## How it works, and who can see what
+
+```
+Agent ─► AskHuman on the Mac ──MQTT (TLS)──► EMQX ──► AskHuman on the iPhone
+                 └── push relay (cloud function) ──► APNs ──► iPhone notification
+```
+
+- **End-to-end encrypted.** Every pairing creates a pair of keys only that Mac and that phone know. EMQX and the push relay see ciphertext and metadata such as "who is online", never your questions or answers.
+- **Your APNs key lives only in the cloud function.** The Mac holds no Apple key; the relay is stateless and forwards the encrypted preview to Apple from a fixed allowlist.
+- **Push content is encrypted too.** The question summary on the lock screen is decrypted by the notification extension on the phone; if that fails you only see a generic line.
+- **One broker account for all your Macs.** Set up the first Mac, then paste its "connection string" into the others.
+
+## 1. Prepare EMQX (the broker)
+
+1. Create a **Serverless** deployment on [EMQX Cloud](https://cloud.emqx.com/) (China site) or the [international site](https://cloud-intl.emqx.com/) (free tier: 1 million connection minutes and 1 GB of traffic a month).
+2. Note the **connection address** on the deployment overview, and the ports: TLS `8883`, WSS `8084`.
+3. **Authentication**: add a username and password. Use **letters and digits only** for the username (it is also the topic namespace `ah/<username>/` of the line).
+4. **Authorization (ACL)**: add two rules, in this order —
+   - Allow: for that username, publish and subscribe on `ah/${username}/#`;
+   - Deny: all users, topic `#` (catch-all).
+5. **Keep the spend cap at 0.** When the free quota is used up the service pauses; nothing is charged automatically. AskHuman warns you as you approach the quota (see "Traffic and cost").
+
+> Sharing with a friend: create a separate username and password with their own ACL for each person; they cannot see each other's topics.
+
+## 2. Prepare the Apple developer resources
+
+1. In Apple Developer → Identifiers register two App IDs: the app `com.naituw.humaninloop.ios` (enable **Push Notifications**) and the notification extension `com.naituw.humaninloop.ios.notification` (no capabilities). With your own team, change the team and the bundle IDs in `ios/project.yml` too, and make the relay's `APNS_TOPIC` equal the app's bundle ID.
+2. Keys → create a key with **Apple Push Notifications service (APNs)** enabled, download the `.p8` file (**you can only download it once**) and note the **Key ID** and your **Team ID**.
+
+## 3. Deploy the push relay
+
+1. Run `relay/scripts/build-zip.sh` in the repository to get `relay/dist/askhuman-relay.zip`.
+2. Tencent Cloud console → Cloud Function → create a **Web function**: runtime Node.js 20, region Hong Kong (no ICP filing needed, reaches APNs), 128 MB of memory, 15 s timeout, upload the zip.
+3. Set the environment variables on the function:
+
+   | Variable | Content |
+   |---|---|
+   | `APNS_KEY_P8` | the whole `.p8` file (paste it; line breaks may be written as a literal `\n`) |
+   | `APNS_KEY_ID` | the key's Key ID |
+   | `APNS_TEAM_ID` | your Team ID |
+   | `APNS_TOPIC` | `com.naituw.humaninloop.ios` (the app's bundle ID) |
+   | `RELAY_HANDLE_KEY` | 32 random bytes in base64 (for example `openssl rand -base64 32`) |
+   | `REVOKED_RIDS` | (optional) handle ids to revoke by hand, comma separated |
+
+4. Create the **function URL** (public access, authorization "open"). `<function URL>/v1/health` should answer `{"ok":true,"v":1,"apns":true}`.
+
+> Keep the `.p8` and `RELAY_HANDLE_KEY` in the function's environment variables only: not in the repository, a chat or a screenshot.
+
+## 4. Turn it on on the Mac
+
+1. AskHuman Settings → **General** → at the very bottom turn on "Experimental features"; an "Experimental" tab appears (or run `AskHuman config set experimental.enabled true`).
+2. **Experimental** → **iOS App channel**, switch it on and fill in:
+   - broker host, TLS port (8883), WSS port (8084), username, password;
+   - the push relay URL (the function URL);
+   - the name this Mac shows on the phone (empty uses the computer name).
+3. Click **Test connection**: it reports whether `tls` or `wss` was used and the round-trip time.
+4. The same from the command line:
+
+   ```bash
+   AskHuman channel set ios --enable --host <host> --username <username> \
+     --relay-url <function URL> --password-stdin        # the password is read from stdin
+   AskHuman channel test ios
+   ```
+
+5. **A second Mac**: on the first one click **Copy connection string** (it contains the broker password: pass it only between your own devices); on the second paste it under "Reuse another Mac's settings" and click Import. On the command line: `AskHuman channel ios export` and `AskHuman channel ios import -`.
+
+> The iOS channel does not force the daemon to stay up: it is running while your Agents work, and when it has stopped the phone shows that Mac as offline. To keep the Mac reachable at all times set the daemon lifecycle to keepalive (Settings → Advanced; turning on "Create Agent tasks from IM" does it for you).
+
+## 5. Install the app and pair
+
+1. Open `ios/AskHuman.xcodeproj` in Xcode (run `cd ios && xcodegen generate` first), pick your device and Run; or install through TestFlight. Allow notifications on first launch.
+2. On the Mac: Settings → Experimental → iOS App channel → **Pair a new phone** (command line: `AskHuman channel ios pair`). A QR code and a pairing code appear, **valid for 5 minutes and for one use**.
+3. On the phone: the **Macs** tab → **Add a Mac** → **Scan QR code** (or "Paste the pairing code" when scanning is awkward).
+4. The phone and the Mac each show a **6-digit check code**. Compare them and click **Allow** on the Mac. Pairing is done and the phone immediately receives the Mac's open requests.
+5. To undo it: click **Revoke** next to the phone in the Mac settings (`AskHuman channel ios revoke <name>`); on the phone use "Unpair this Mac" in the Mac's details, or "Forget all pairings" at the bottom of the Macs tab. After reinstalling the app the phone asks whether to keep the pairings left in the keychain.
+
+## 6. Everyday use
+
+- **Inbox**: questions from all your Macs, grouped by project and filterable by Mac. Open one to pick one or several options, add a note, attach images and files; a multi-question request is one vertical page, recommended options carry a star (nothing is preselected). Actions that need your decision (permissions, Stop) have a dedicated confirmation page.
+- **Answering across channels**: when the same question shows up in the Mac popup, Feishu and the phone, the first answer wins and the others are told it was handled.
+- **Agents tab**: the Agent sessions of every Mac. **Follow** one (up to 5 per Mac) to get a push when it finishes, waits for you or fails; open it to **watch live** (only while the app is in the foreground, up to 2 at a time) or to **send a message** (queued → read by the Agent; edit or withdraw it before that).
+- **New task**: the "New task" button on the Agents tab: pick the Mac, project, Agent kind, the permission (ask before acting / run automatically; you must choose one) and optionally a TODO, confirm with Face ID and the Mac launches it in a terminal. It needs "Create Agent tasks from IM" turned on on that Mac, with its prerequisites.
+- **History**: answered requests and attachments are kept on the phone.
+
+## Traffic and cost
+
+- EMQX China-site free tier: 1 million connection minutes and 1 GB of traffic (in plus out) a month; typical use (100 requests a day, one hour of live watching a day) stays far below 300 MB a month.
+- The Mac settings and the phone's Macs tab both show this month's traffic (counted locally; a message counts twice, published and delivered). **At 80% of the free quota it turns amber**, and red when it is probably gone. With the spend cap at 0 the broker then refuses connections and the app says so: "the broker refused the connection, this month's free allowance may be used up".
+- The cloud function sees very few calls (roughly 1,000 to 20,000 a month); check your account's billing rules in the cost center before deploying so there is no surprise fixed fee.
+
+## Troubleshooting
+
+| Symptom | What to do |
+|---|---|
+| Settings say "Broker not connected" | Click "Test connection" for the reason; when the office network blocks 8883 it falls back to WSS 8084 by itself; an authentication failure is usually a wrong password or ACL |
+| No pushes, but requests arrive while the app is open | Check the system notification permission; look for "push is no longer valid" under the phone in the Mac settings; make sure `<function URL>/v1/health` says `apns:true` |
+| Pushes arrive with a generic text only | The notification extension could not decrypt: make sure both sides share the same pairing; after reinstalling the app pair again or keep the old pairings |
+| "This phone's clock differs too much from a Mac's" | Messages have a ±15 minute replay window; fix Date & Time on the phone |
+| You want a Mac gone from the phone | Unpair it in the phone's Mac details and revoke the phone on the Mac |
+| That Mac shows offline on the phone | Its daemon is not running (it exits when idle without Agent activity): have an Agent ask once, or set the daemon lifecycle to keepalive |
+| Traffic warning | Use less live watching and fewer attachments, or check the usage in the EMQX console; the local count only covers this device's messages |
+
+## Limits
+
+- Experimental: the settings entry and the commands are hidden by default and details may change.
+- Live watching only works while the app is in the foreground and stops in the background.
+- Codex desktop App sessions cannot be messaged from the phone yet; Codex has no "failed" state, so there is no "failed" push for it.
+- Withdrawing a message gives back the text only, not the attachments you had picked.

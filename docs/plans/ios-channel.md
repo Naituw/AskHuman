@@ -511,3 +511,20 @@ EMQX Serverless 控制台配置（用户手动，见 §10）：认证加一组�
 - 每阶段完成后检查 `docs/overview.md`、本需求与计划是否已不准确，只改对应文档；P8 统一更新 overview。
 - 不改动用户其它进行中的未提交工作（当前工作区里的 `codex_desktop`、`popup` 相关修改与 `docs/investigations/native-ios-channel-handoff.md` 等）。
 - 开发开始后，计划与需求不得擅自变更；需要调整先经 AskHuman 确认，并把结论追加到需求文档「反馈意见」。
+
+## 13. 实施记录（与计划的差异）
+
+截至 2026-10-25：P1、P3、P4、P5、P6 的代码与自动化验证已完成（Rust / Swift / 中继 / 前端测试、模拟器 UI 测试 en + zh-Hans、「真实 daemon + 本地 broker」端到端 28 项），**P0 的账号侧门禁、P7 的真机 / 真网络部分与 P8 的发布事项尚未进行**（见 `docs/PROGRESS.md`）。实现与上文不同或超出上文的地方：
+
+- **iOS 本地存储不用 SwiftData**：`AHStore` 用文件型 JSON（每个键一个文件，`completeFileProtectionUntilFirstUserAuthentication`；`JSONFile` / `JSONDirectory`）。它能在 macOS 上作为纯 SwiftPM 包测试，通知扩展也无需模型容器。§6.2 / §11 里与 SwiftData 相关的表述以此为准。
+- **通知扩展链接 `AHProtocol` + `AHStore`**（原计划只链接前者）：`PushDecryptor` 与钥匙串 `Vault` 在 `AHStore`；扩展仍不链接 MQTT、Markdown，也不联网。
+- **任务启动抽取成共享模块** `daemon/runtime/task_launch.rs`（`task_gate` / 启动记录 / 失败映射），IM `/new` 与 iOS 共用。popup-only 的 Dev Instance 不能操作 IM，所以 `/new` 的真实回归留给合并前的人工检查。
+- **`failed` 标志**：`AgentEvent.failed` 与 Watch 帧的 `failed` 字段按计划实现；Pi 的扩展需要在设置里重新保存 / 刷新后才会上报失败的回合。
+- **推送点击路由**：`follow.*` 推送的 `rid` 是 Agent key，点击打开 Agent 页，其余打开请求；App 在前台且已显示对应内容时不再弹系统横幅（`AppStore.openNotification` / `coversNotification`）。
+- **流量预警**（P7）：本机统计的流量按「发布 + 投递各计一次」折算成 EMQX 额度（1 GiB / 月）的占比，80% 起黄色提示、100% 起红色，Mac 设置页与手机「Mac」页 / 收件箱都有；拒绝连接的提示里点明「免费额度可能用完」。
+- **`insecureLocal` 只对回环地址生效**（`ios/transport.rs::first_via`）：此前只有判断函数没有强制。
+- **安全自检**：端到端测试 `testSecretsNeverReachTheLogsOrTheCommandOutput` 在配对 + 问答之后，检查 broker 密码、配对码与两个方向密钥（base64 / base64url / hex）不出现在任何 `*.log` 与命令输出里。
+- **隔离规则**：任何隔离运行的 Mac / daemon 必须设置 `ASKHUMAN_HOME`（只改 `HOME` 曾导致隔离的 daemon 复用了正式 launchd 标签并顶掉正式 daemon）；`launchd_label` 现在在只覆盖 `HOME` 时也用独立标签（单独提交），测试台在启动前断言 `ASKHUMAN_HOME` 位于临时目录，并只清理携带该目录的进程。
+- **工具**：`ios/Tools/make-catalog.py` 由编译器的 `.stringsdata` 生成中英字符串目录（缺中文翻译会失败）；UI 测试新增启动参数 `-AHOpenAgent` / `-AHNewTask` / `-AHHoldInterjects` / `-AHFollowEvent` 与场景 `quota`；UI 测试用 `-collect-test-diagnostics never`。
+- **任务表单**：权限（行动前先询问 / 自动执行）没有预选，必须明确选择后才能提交。
+

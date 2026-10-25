@@ -1,6 +1,6 @@
 # 需求：iOS 原生渠道（AskHuman Mobile）
 
-> 状态：设计稿，待用户审阅（尚未实现；本文是 2026-10-25 多轮 AskHuman 问答后的定稿，不含任何实现）。
+> 状态：已于 2026-10-25 获用户批准并实现为可用原型（模拟器与本地 broker 验证通过）；真实 EMQX / 中继 / APNs 与真机验收待进行，进度见 `docs/PROGRESS.md`。实现与计划的差异见 `docs/plans/ios-channel.md` §13。本文是 2026-10-25 多轮 AskHuman 问答后的定稿。
 > 关联计划：`docs/plans/ios-channel.md`
 > 前置资料：`docs/investigations/native-ios-channel-handoff.md`（2026-10-24 交接：EMQX 杭州实测、Mac / iOS 交互原型、费用模型）
 > 依赖：Daemon 渠道体系（`Channel` / Coordinator）、统一作答窗口（`popup-request-inbox.md`）、IM watch（`im-watch.md`）、插话（`agent-interject.md`）、IM 创建任务（`im-agent-task-launch.md`）、「实验」设置 Tab。
