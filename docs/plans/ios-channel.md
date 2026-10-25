@@ -514,7 +514,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 
 ## 13. 实施记录（与计划的差异）
 
-截至 2026-10-25：P1、P3、P4、P5、P6 的代码与自动化验证已完成（Rust / Swift / 中继 / 前端测试、模拟器 UI 测试 en + zh-Hans、「真实 daemon + 本地 broker」端到端 30 项，另对真实 EMQX + 中继跑同一套并加 3 项只在真实服务上的检查，共 33 项全过），**P0 的账号侧门禁、P7 的真机 / 真网络部分与 P8 的发布事项尚未进行**（见 `docs/PROGRESS.md`）。实现与上文不同或超出上文的地方：
+截至 2026-10-25：P1、P3、P4、P5、P6 的代码与自动化验证已完成（Rust / Swift / 中继 / 前端测试、模拟器 UI 测试 en + zh-Hans、「真实 daemon + 本地 broker」端到端 30 项，另对真实 EMQX + 中继跑同一套并加 3 项只在真实服务上的检查，共 33 项全过；再加「模拟器上的真 App 对真实 EMQX + 中继 + 真 APNs 沙盒」的完整场景，连续三次全过），P0 的账号侧门禁（EMQX、APNs 密钥、中继、计费）已通过（见 `docs/investigations/ios-channel-p0.md`），**P0 的手机侧门禁、P7 的真机 / 真网络部分与 P8 的发布事项尚未进行**（见 `docs/PROGRESS.md`）。实现与上文不同或超出上文的地方：
 
 - **iOS 本地存储不用 SwiftData**：`AHStore` 用文件型 JSON（每个键一个文件，`completeFileProtectionUntilFirstUserAuthentication`；`JSONFile` / `JSONDirectory`）。它能在 macOS 上作为纯 SwiftPM 包测试，通知扩展也无需模型容器。§6.2 / §11 里与 SwiftData 相关的表述以此为准。
 - **通知扩展链接 `AHProtocol` + `AHStore`**（原计划只链接前者）：`PushDecryptor` 与钥匙串 `Vault` 在 `AHStore`；扩展仍不链接 MQTT、Markdown，也不联网。
@@ -530,4 +530,12 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 - **端到端测试可对真实服务运行**（用户 2026-10-25 允许）：`AH_E2E_REAL_FROM` / `AH_E2E_BUNDLE_ID` 让一次性 Mac 导入已部署实例的连接串（只在内存里），同一套用例对真实 EMQX + 中继跑一遍，另有 3 项只在真实服务上的检查（真中继 + 真 APNs 沙盒的 `BadDeviceToken` → `gone` → 新 token 恢复、别的 Bundle ID 被中继拒绝、前台往返延迟）。做法见 `docs/overview-ios.md`；数字见 `docs/investigations/ios-channel-p0.md` §3.6。这不替代 §9 要求的真机真 APNs 矩阵。
 - **修复：先 hello、后上报前台的手机漏收中间的变化**（真实服务的延迟暴露的 Mac 端竞态，设计不变）：App 在首次同步后才发布 `fg=1`，而 Gateway 以「在线 + 前台 + 已 hello」判断「活着」。hello 与前台状态之间创建的请求（以及 Agent / Follow 的变化）既没被实时发出，hello 的快照又早于它，手机就一直看不到，直到下一次重连。现在 `Actor::on_presence` 在手机由此变为「活着」时补发四个快照；两个 Rust 用例（请求、Agent）撤掉修复就会失败。本地 broker 延迟太低，此前一直没撞上。
 - **测试台修正**：`Cmd` 的 `readabilityHandler` 在 EOF 时必须清掉，否则已结束的子进程会让运行器空转到 500% CPU；E2E 里「请求出现在收件箱」与「请求带着内容」是两步（慢链路上先摘要后全文），用例改为等内容再作答，历史条目在 Mac 确认之后才写，Follow 要等 Mac 的列表回来再点下一个。
+- **模拟器上的真 App 对真实服务的完整场景**（用户 2026-10-25 要求先在模拟器测完再上真机；不替代 §9 的真机矩阵）：`SimulatorLiveTests`（宿主，一次性 Mac，同「真实服务」模式）通过 `xcodebuild test-without-building` 启动 `AskHumanLiveUITests`（XCUITest，驱动真正的 App、钥匙串与通知扩展）。场景：配对且两端校验码一致 → 通知权限 → token → 中继登记 → Mac 持有句柄；前台单题；多题 + 自由文本；App 退到后台后 Mac 察觉手机离开；一次真 APNs 沙盒推送 → 通知扩展解密出文本 → 点击横幅打开请求 → 回答；手机侧解除配对。连续三次通过（各约 2 分钟）。模拟器收得到真 APNs 沙盒推送且会运行通知扩展，`simctl push` 不会运行扩展，所以不用它。三次的范围（只有三个样本，不是分布）：Mac 提问 → 手机显示请求 1.15–1.22 s，点发送 → 行消失 1.13 s（两者含 UI 自动化的轮询，是上界），Mac 察觉手机离开 0.43–0.76 s，Mac 提问 → 横幅出现 2.1–2.3 s。
+  做法与护栏：配对码含 broker 密码，只经命名管道（FIFO）从宿主交给 UI 测试——不写文件、不进环境变量、不进剪贴板，码在屏幕上时不截图；`xcresult` 结束时删除（只在配对码出现之前失败时保留供诊断），结束后在日志与模拟器键盘日志里扫描配对码，发现即删除并判失败；两端用「会合点」文件互相等待，Mac 的五分钟配对窗口从 UI 测试准备好收码时才开始。模拟器每次先卸载 App（同时清掉通知权限）、`simctl keychain reset`（卸载不清钥匙串），再等设备 CPU 静下来；默认不 `simctl erase`（刚抹掉的设备首次开机要占满一个核好几分钟，饿死 xcodebuild），需要时设 `AH_E2E_SIM_ERASE=1`。设备由 `AH_E2E_SIM_UDID` 指定，要给它一台专用设备。构建需要签名（推送要真 token）：先 `xcodegen generate`，再 `xcodebuild build-for-testing … -derivedDataPath ios/build/DerivedDataLive -allowProvisioningUpdates`；必须前台跑，机器负载高时耗时成倍增加。
+- **这次运行找出的四个真实缺陷**（均已修复，设计不变；每个都先有失败的确定性测试）：
+  1. 点击推送横幅崩溃（iOS 27 的 UIKit 主线程断言）：`UNUserNotificationCenterDelegate` 的 async 方法是 `nonisolated`，系统的完成回调落在协作线程池上。改为 `@MainActor` 方法 + `@preconcurrency` 一致性。
+  2. 通知扩展解不开真实推送（一律 `malformed`，退回通用文案）：中继转给 APNs 的是 `ah = {f,k,n,c}`（§3.4 / §5.3），没有 Mac 封装时带的 `v`。`PushDecryptor` 缺 `v` 时按本协议版本处理，带了别的版本仍拒绝；单元测试改用中继的形状（此前用 Mac 的形状，所以没发现）。教训：跨语言 / 跨进程契约的测试夹具要取自真实下游收到的形状。
+  3. 快速 inactive → active 之后永久断线：`setForeground(false)` 在 `goodbye()` 处挂起，其间返回前台的那次调用看到「连接还起着」什么都不做，随后 goodbye 把连接断了。现在 goodbye 之后若应在前台就重连。
+  4. 推送句柄没有可靠送到 Mac：`pushSent` 在发送前置位且不随会话重置、握手完成但尚未同步（`.acked`）的 Mac 被跳过、发送失败不回滚。现在每次握手清空并重发，失败回滚，token 在 ack 与首个快照之间到达也立即发送。
+- **保留的取舍（没改，待用户决定）**：`scenePhase == .inactive`（系统弹窗、通知中心、控制中心）会触发 `goodbye` 并重连，每次系统弹窗都有一次连接抖动；把 `.inactive` 视为仍在前台（或加去抖）属于设计变更。另外 Mac 只会发 `push.state` 的 `ok` / `gone`，不发 §3.4 里写的 `missing` / `error`；由手机在每次握手重发句柄覆盖。
 

@@ -55,7 +55,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 - 通知扩展 `AskHumanNotification` 只解密预览（`NotificationText`），不连网络。点击通知经 `AppStore.openNotification` 路由：提问类打开请求，`follow.*` 打开 Agent 页。
 - 本地化：`Localizable.xcstrings`（en + zh-Hans）由 `ios/Tools/make-catalog.py` 从编译器产出的 `.stringsdata` 生成——先 `xcodebuild build -derivedDataPath build/DerivedData …`，再跑脚本；缺中文翻译会让脚本失败。
 - Mock 模式启动参数：`-AHMock YES -AHScenario demo|empty|offline|quota -AHLatency <x> -AHTab inbox|agents|history|macs -AHOpen <id> -AHAutoAdvance YES|NO -AHOpenAgent <key> -AHNewTask YES -AHHoldInterjects YES -AHFollowEvent done|failed|waiting`。
-- XCUITest 经验：容器 view 上的 `accessibilityIdentifier` 需要 `.accessibilityElement(children: .contain/.combine)` 才找得到子元素；Form / List 的懒加载行需要滚动到附近才存在；浮动 TabBar 会挡住详情页底部，详情页用 `.toolbar(.hidden, for: .tabBar)`。
+- XCUITest 经验：容器 view 上的 `accessibilityIdentifier` 需要 `.accessibilityElement(children: .contain/.combine)` 才找得到子元素；Form / List 的懒加载行需要滚动到附近才存在；浮动 TabBar 会挡住详情页底部，详情页用 `.toolbar(.hidden, for: .tabBar)`。推送横幅是 springboard 里的 `BannerNotification`（标识 `NotificationShortLookView`），权限弹窗按钮是 `springboard.alerts.buttons["Allow"]`；合并后的 `push-status` 行标签形如 `Notifications, On`，判断用 `hasSuffix`。
 
 ## 验证
 
@@ -68,10 +68,13 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 | App UI（模拟器） | `xcodebuild test -project ios/AskHuman.xcodeproj -scheme AskHuman -destination 'platform=iOS Simulator,id=<UDID>' -derivedDataPath ios/build/DerivedData CODE_SIGNING_ALLOWED=NO -parallel-testing-enabled NO -collect-test-diagnostics never`（`TEST_RUNNER_AH_UI_LANG=zh-Hans` 切中文，`TEST_RUNNER_AH_UI_SHOTS=<dir>` 保存截图）。必须前台跑；后台会被工具杀掉 |
 | 真实 daemon 端到端（本地 broker） | `cd ios/Packages/AskHumanKit && AH_E2E_BIN=<已安装的 AskHuman> AH_E2E_BROKER_DIR=<ios/Tools/local-broker> swift test --filter AHE2ETests`（缺环境变量时自动跳过） |
 | 真实 daemon 端到端（真实 EMQX + 中继） | 同上，把 `AH_E2E_BROKER_DIR` 换成 `AH_E2E_REAL_FROM=<已配置好 ios 渠道的实例的 ASKHUMAN_HOME>` 与 `AH_E2E_BUNDLE_ID=<App 的 Bundle ID>`（中继只收这个 ID）；多出 3 项只在真实服务上跑的检查（真中继 + 真 APNs 沙盒、延迟目标） |
+| 真实服务 + 模拟器上的真 App | 先 `xcodegen generate`，在 `ios/` 下 `xcodebuild build-for-testing -project AskHuman.xcodeproj -scheme AskHuman -destination 'platform=iOS Simulator,id=<UDID>' -derivedDataPath build/DerivedDataLive -allowProvisioningUpdates`（要签名：推送需要真 token）；再在 `ios/Packages/AskHumanKit` 下 `AH_E2E_BIN=… AH_E2E_REAL_FROM=… AH_E2E_BUNDLE_ID=… AH_E2E_SIM_UDID=<UDID> swift test --filter SimulatorLiveTests`（缺 `AH_E2E_SIM_UDID` 或构建产物时跳过）。要一台专用模拟器，必须前台跑，约 2 分钟，机器忙时成倍 |
 
 端到端测试台会起**一台一次性的 Mac**：独立 `ASKHUMAN_HOME`、`HOME`、`ASKHUMAN_NO_KEYCHAIN=1`，加本地 Node broker；`agentTasks.enabled` 保持关闭，所以不会真的启动任何终端。伪造的 Agent 会话通过隐藏命令 `AskHuman __agent-hook <agent> <event>` 注入。
 
 真实服务模式不起本地 broker：一次性 Mac 用 `channel ios export` 取出实例的连接串（只在测试进程的内存里，经 stdin 交给 `channel set ios --connection-stdin`，不显示、不落盘），手机侧是 macOS 上真正的 `PhoneEngine` + `MQTTBrokerClient`。每个用例的 Mac / 手机 ID 都是新生成的，话题互不重叠（共用同一个 EMQX 账号），但会消耗真实 EMQX 的流量与中继调用。`AH_E2E_REPORT=<json>` 写入延迟统计，`AH_E2E_KEEP_LOGS=<目录>` 让失败的用例留下 Mac 的 daemon 日志与手机侧摘要（都不含秘密）。
+
+模拟器场景（`SimulatorLiveTests` + `AskHumanLiveUITests`）把一次性 Mac 留在宿主进程里，手机侧是 `xcodebuild test-without-building` 启动的 XCUITest，两边用 `ui/` `host/` 目录里的「会合点」文件互相等待。它走完：配对与校验码 → 通知权限 → token → 中继登记 → Mac 持有句柄 → 前台单题 / 多题 → App 离开前台 → 一次真 APNs 沙盒推送（模拟器收得到，扩展会运行；`simctl push` 不会运行扩展）→ 点击横幅 → 解除配对。配对码含 broker 密码，只经命名管道从宿主交给 UI 测试（不落文件、不进环境变量 / 剪贴板，码在屏幕上时不截图），`xcresult` 结束时删除，并在日志与模拟器键盘日志里扫描配对码。模拟器默认只卸载 App + `simctl keychain reset` + 等 CPU 静下来；`AH_E2E_SIM_ERASE=1` 才抹掉设备（首次开机要占满一个核好几分钟）。`AH_E2E_SHOTS=<目录>` 保留截图。
 
 ## 不变量与注意点
 
@@ -80,5 +83,9 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 - **线协议**：`ios/wire.rs` 与 `AHProtocol` 的限额常量（信封 ≤ 900,000 B、分块 192 KB、附件 ≤ 10 MB、每次回复 ≤ 5 个附件、令牌桶 6/s 突发 10、Follow ≤ 5、任务正文 ≤ 3000 字、插话 ≤ 20,000 字、Watch 间隔 ≥ 2 s 且每手机 ≤ 2 路）两边必须一致；改任何一边先改夹具。
 - **幂等**：状态变更消息（回答、插话、`task.create` 等）按 `msgId` 进幂等日志，重放返回同一结果、同 ID 不同内容被拒绝。
 - **「活着」的手机**：Gateway 只向「在线 + 前台 + 已 hello」的手机实时投递。App 在首次同步之后才发布前台状态，所以 hello 与前台状态之间的变化（新请求、Agent、Follow）不会被实时发出；`Actor::on_presence` 在手机由此变为「活着」时补发四个快照。改动这一段先看 `tests_requests` / `tests_agents` 里 `…between_hello_and_the_foreground_presence…` 两个用例。
+- **推送信封没有 `v`**：中继转给 APNs 的 `ah` 只有 `{f,k,n,c}`（Mac 封装时的 `v` 不转发），`PushDecryptor` 缺 `v` 时按本协议处理、带了别的版本则拒绝。改推送载荷或中继的白名单时，同步改 `PushDecryptorTests` 里「中继的形状」，否则单元测试与真实推送会各说各话。
+- **通知代理方法必须在主 actor 上**：`AppDelegate` 的 `UNUserNotificationCenterDelegate` 方法是 `@MainActor`（一致性标 `@preconcurrency`）；写成 `nonisolated async` 时系统的完成回调落在协作线程池，iOS 27 上点推送横幅会崩溃。
+- **每次握手都把推送句柄再给 Mac**：`PhoneEngine` 在每次 `hello.ack` 清空 `pushSent` 并重发，发送失败要回滚标记，token 在 ack 与首个快照之间到达也立即发；Mac 只会回 `push.state` 的 `ok` / `gone`，不会反过来索要句柄。
+- **离开 / 返回前台的竞态**：`setForeground(false)` 在 `goodbye()` 处挂起，goodbye 之后若应在前台必须重连（`ConnectionTests.testComingBackWhileTheGoodbyeIsOnItsWayStillReconnects`）。`scenePhase == .inactive`（系统弹窗、通知中心）目前同样算离开前台，会让连接抖动一次——已知，未改。
 - **成本红线**：EMQX 消费上限保持 0（额度用尽即停，不自动付费）；不创建管理 API Key；Mac 与手机本机统计流量，80% 免费额度时预警。
 - **保密**：broker 密码、配对码、方向密钥不得出现在日志、命令输出、文档与提交里；`E2ETests.testSecretsNeverReachTheLogsOrTheCommandOutput` 守着这条。
