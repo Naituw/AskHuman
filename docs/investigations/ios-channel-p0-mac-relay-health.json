@@ -1,0 +1,941 @@
+{
+ "what": "GET /v1/health on the Tencent SCF relay (ap-hongkong), 100 sequential rounds, a fresh TCP+TLS connection each round (curl), 500 ms apart",
+ "date": "2026-10-25",
+ "from": "development Mac, home network, default route (TUN proxy with Fake-IP DNS in the path; not a proxy-off measurement)",
+ "rounds": 100,
+ "ok": 100,
+ "successRate": 100.0,
+ "summaryMs": {
+  "connectMs": {
+   "p50": 7,
+   "p95": 24,
+   "p99": 80,
+   "max": 80,
+   "min": 5
+  },
+  "tlsMs": {
+   "p50": 481,
+   "p95": 554,
+   "p99": 1398,
+   "max": 1398,
+   "min": 463
+  },
+  "ttfbMs": {
+   "p50": 820,
+   "p95": 1401,
+   "p99": 3282,
+   "max": 3282,
+   "min": 789
+  },
+  "totalMs": {
+   "p50": 820,
+   "p95": 1401,
+   "p99": 3282,
+   "max": 3282,
+   "min": 789
+  }
+ },
+ "roundsOver1500ms": 4,
+ "samples": [
+  {
+   "i": 0,
+   "ts": 1792938155,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 507,
+   "ttfbMs": 856,
+   "totalMs": 856
+  },
+  {
+   "i": 1,
+   "ts": 1792938156,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 498,
+   "ttfbMs": 846,
+   "totalMs": 846
+  },
+  {
+   "i": 2,
+   "ts": 1792938157,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 478,
+   "ttfbMs": 815,
+   "totalMs": 815
+  },
+  {
+   "i": 3,
+   "ts": 1792938158,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 484,
+   "ttfbMs": 837,
+   "totalMs": 837
+  },
+  {
+   "i": 4,
+   "ts": 1792938159,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 479,
+   "ttfbMs": 801,
+   "totalMs": 801
+  },
+  {
+   "i": 5,
+   "ts": 1792938160,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 495,
+   "ttfbMs": 835,
+   "totalMs": 835
+  },
+  {
+   "i": 6,
+   "ts": 1792938160,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 481,
+   "ttfbMs": 820,
+   "totalMs": 820
+  },
+  {
+   "i": 7,
+   "ts": 1792938161,
+   "ok": true,
+   "connectMs": 9,
+   "tlsMs": 484,
+   "ttfbMs": 820,
+   "totalMs": 820
+  },
+  {
+   "i": 8,
+   "ts": 1792938162,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 478,
+   "ttfbMs": 802,
+   "totalMs": 802
+  },
+  {
+   "i": 9,
+   "ts": 1792938163,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 492,
+   "ttfbMs": 841,
+   "totalMs": 841
+  },
+  {
+   "i": 10,
+   "ts": 1792938164,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 477,
+   "ttfbMs": 804,
+   "totalMs": 804
+  },
+  {
+   "i": 11,
+   "ts": 1792938165,
+   "ok": true,
+   "connectMs": 5,
+   "tlsMs": 479,
+   "ttfbMs": 825,
+   "totalMs": 825
+  },
+  {
+   "i": 12,
+   "ts": 1792938165,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 478,
+   "ttfbMs": 816,
+   "totalMs": 816
+  },
+  {
+   "i": 13,
+   "ts": 1792938166,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 477,
+   "ttfbMs": 816,
+   "totalMs": 816
+  },
+  {
+   "i": 14,
+   "ts": 1792938167,
+   "ok": true,
+   "connectMs": 31,
+   "tlsMs": 504,
+   "ttfbMs": 841,
+   "totalMs": 841
+  },
+  {
+   "i": 15,
+   "ts": 1792938168,
+   "ok": true,
+   "connectMs": 14,
+   "tlsMs": 486,
+   "ttfbMs": 821,
+   "totalMs": 821
+  },
+  {
+   "i": 16,
+   "ts": 1792938169,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 480,
+   "ttfbMs": 811,
+   "totalMs": 811
+  },
+  {
+   "i": 17,
+   "ts": 1792938170,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 484,
+   "ttfbMs": 827,
+   "totalMs": 827
+  },
+  {
+   "i": 18,
+   "ts": 1792938170,
+   "ok": true,
+   "connectMs": 5,
+   "tlsMs": 481,
+   "ttfbMs": 817,
+   "totalMs": 817
+  },
+  {
+   "i": 19,
+   "ts": 1792938171,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 483,
+   "ttfbMs": 818,
+   "totalMs": 818
+  },
+  {
+   "i": 20,
+   "ts": 1792938172,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 476,
+   "ttfbMs": 826,
+   "totalMs": 827
+  },
+  {
+   "i": 21,
+   "ts": 1792938173,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 488,
+   "ttfbMs": 832,
+   "totalMs": 832
+  },
+  {
+   "i": 22,
+   "ts": 1792938174,
+   "ok": true,
+   "connectMs": 10,
+   "tlsMs": 475,
+   "ttfbMs": 831,
+   "totalMs": 831
+  },
+  {
+   "i": 23,
+   "ts": 1792938175,
+   "ok": true,
+   "connectMs": 10,
+   "tlsMs": 482,
+   "ttfbMs": 825,
+   "totalMs": 825
+  },
+  {
+   "i": 24,
+   "ts": 1792938176,
+   "ok": true,
+   "connectMs": 10,
+   "tlsMs": 481,
+   "ttfbMs": 809,
+   "totalMs": 809
+  },
+  {
+   "i": 25,
+   "ts": 1792938176,
+   "ok": true,
+   "connectMs": 9,
+   "tlsMs": 487,
+   "ttfbMs": 820,
+   "totalMs": 820
+  },
+  {
+   "i": 26,
+   "ts": 1792938177,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 477,
+   "ttfbMs": 825,
+   "totalMs": 825
+  },
+  {
+   "i": 27,
+   "ts": 1792938178,
+   "ok": true,
+   "connectMs": 22,
+   "tlsMs": 477,
+   "ttfbMs": 793,
+   "totalMs": 793
+  },
+  {
+   "i": 28,
+   "ts": 1792938179,
+   "ok": true,
+   "connectMs": 18,
+   "tlsMs": 508,
+   "ttfbMs": 875,
+   "totalMs": 875
+  },
+  {
+   "i": 29,
+   "ts": 1792938180,
+   "ok": true,
+   "connectMs": 9,
+   "tlsMs": 478,
+   "ttfbMs": 817,
+   "totalMs": 817
+  },
+  {
+   "i": 30,
+   "ts": 1792938181,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 500,
+   "ttfbMs": 834,
+   "totalMs": 834
+  },
+  {
+   "i": 31,
+   "ts": 1792938182,
+   "ok": true,
+   "connectMs": 10,
+   "tlsMs": 465,
+   "ttfbMs": 794,
+   "totalMs": 795
+  },
+  {
+   "i": 32,
+   "ts": 1792938182,
+   "ok": true,
+   "connectMs": 18,
+   "tlsMs": 513,
+   "ttfbMs": 835,
+   "totalMs": 835
+  },
+  {
+   "i": 33,
+   "ts": 1792938183,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 484,
+   "ttfbMs": 883,
+   "totalMs": 883
+  },
+  {
+   "i": 34,
+   "ts": 1792938184,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 494,
+   "ttfbMs": 822,
+   "totalMs": 822
+  },
+  {
+   "i": 35,
+   "ts": 1792938185,
+   "ok": true,
+   "connectMs": 14,
+   "tlsMs": 488,
+   "ttfbMs": 823,
+   "totalMs": 823
+  },
+  {
+   "i": 36,
+   "ts": 1792938186,
+   "ok": true,
+   "connectMs": 10,
+   "tlsMs": 494,
+   "ttfbMs": 832,
+   "totalMs": 832
+  },
+  {
+   "i": 37,
+   "ts": 1792938187,
+   "ok": true,
+   "connectMs": 24,
+   "tlsMs": 495,
+   "ttfbMs": 827,
+   "totalMs": 827
+  },
+  {
+   "i": 38,
+   "ts": 1792938188,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 471,
+   "ttfbMs": 801,
+   "totalMs": 801
+  },
+  {
+   "i": 39,
+   "ts": 1792938189,
+   "ok": true,
+   "connectMs": 17,
+   "tlsMs": 483,
+   "ttfbMs": 820,
+   "totalMs": 820
+  },
+  {
+   "i": 40,
+   "ts": 1792938189,
+   "ok": true,
+   "connectMs": 18,
+   "tlsMs": 473,
+   "ttfbMs": 794,
+   "totalMs": 794
+  },
+  {
+   "i": 41,
+   "ts": 1792938190,
+   "ok": true,
+   "connectMs": 29,
+   "tlsMs": 500,
+   "ttfbMs": 828,
+   "totalMs": 828
+  },
+  {
+   "i": 42,
+   "ts": 1792938191,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 466,
+   "ttfbMs": 804,
+   "totalMs": 804
+  },
+  {
+   "i": 43,
+   "ts": 1792938192,
+   "ok": true,
+   "connectMs": 10,
+   "tlsMs": 470,
+   "ttfbMs": 907,
+   "totalMs": 907
+  },
+  {
+   "i": 44,
+   "ts": 1792938193,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 468,
+   "ttfbMs": 802,
+   "totalMs": 802
+  },
+  {
+   "i": 45,
+   "ts": 1792938194,
+   "ok": true,
+   "connectMs": 80,
+   "tlsMs": 554,
+   "ttfbMs": 896,
+   "totalMs": 896
+  },
+  {
+   "i": 46,
+   "ts": 1792938195,
+   "ok": true,
+   "connectMs": 10,
+   "tlsMs": 467,
+   "ttfbMs": 798,
+   "totalMs": 801
+  },
+  {
+   "i": 47,
+   "ts": 1792938196,
+   "ok": true,
+   "connectMs": 46,
+   "tlsMs": 509,
+   "ttfbMs": 846,
+   "totalMs": 846
+  },
+  {
+   "i": 48,
+   "ts": 1792938196,
+   "ok": true,
+   "connectMs": 14,
+   "tlsMs": 499,
+   "ttfbMs": 838,
+   "totalMs": 838
+  },
+  {
+   "i": 49,
+   "ts": 1792938197,
+   "ok": true,
+   "connectMs": 18,
+   "tlsMs": 488,
+   "ttfbMs": 813,
+   "totalMs": 813
+  },
+  {
+   "i": 50,
+   "ts": 1792938198,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 491,
+   "ttfbMs": 822,
+   "totalMs": 822
+  },
+  {
+   "i": 51,
+   "ts": 1792938199,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 469,
+   "ttfbMs": 799,
+   "totalMs": 799
+  },
+  {
+   "i": 52,
+   "ts": 1792938200,
+   "ok": true,
+   "connectMs": 24,
+   "tlsMs": 499,
+   "ttfbMs": 845,
+   "totalMs": 846
+  },
+  {
+   "i": 53,
+   "ts": 1792938201,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 470,
+   "ttfbMs": 803,
+   "totalMs": 804
+  },
+  {
+   "i": 54,
+   "ts": 1792938202,
+   "ok": true,
+   "connectMs": 15,
+   "tlsMs": 490,
+   "ttfbMs": 819,
+   "totalMs": 819
+  },
+  {
+   "i": 55,
+   "ts": 1792938203,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 463,
+   "ttfbMs": 1283,
+   "totalMs": 1283
+  },
+  {
+   "i": 56,
+   "ts": 1792938204,
+   "ok": true,
+   "connectMs": 13,
+   "tlsMs": 513,
+   "ttfbMs": 884,
+   "totalMs": 884
+  },
+  {
+   "i": 57,
+   "ts": 1792938205,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 614,
+   "ttfbMs": 1109,
+   "totalMs": 1109
+  },
+  {
+   "i": 58,
+   "ts": 1792938206,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 509,
+   "ttfbMs": 865,
+   "totalMs": 865
+  },
+  {
+   "i": 59,
+   "ts": 1792938207,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 1398,
+   "ttfbMs": 2806,
+   "totalMs": 2806
+  },
+  {
+   "i": 60,
+   "ts": 1792938210,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 524,
+   "ttfbMs": 2112,
+   "totalMs": 2112
+  },
+  {
+   "i": 61,
+   "ts": 1792938212,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 604,
+   "ttfbMs": 3282,
+   "totalMs": 3282
+  },
+  {
+   "i": 62,
+   "ts": 1792938215,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 489,
+   "ttfbMs": 1401,
+   "totalMs": 1401
+  },
+  {
+   "i": 63,
+   "ts": 1792938216,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 1205,
+   "ttfbMs": 3276,
+   "totalMs": 3276
+  },
+  {
+   "i": 64,
+   "ts": 1792938220,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 481,
+   "ttfbMs": 823,
+   "totalMs": 823
+  },
+  {
+   "i": 65,
+   "ts": 1792938221,
+   "ok": true,
+   "connectMs": 5,
+   "tlsMs": 469,
+   "ttfbMs": 809,
+   "totalMs": 809
+  },
+  {
+   "i": 66,
+   "ts": 1792938221,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 486,
+   "ttfbMs": 830,
+   "totalMs": 831
+  },
+  {
+   "i": 67,
+   "ts": 1792938222,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 469,
+   "ttfbMs": 789,
+   "totalMs": 789
+  },
+  {
+   "i": 68,
+   "ts": 1792938223,
+   "ok": true,
+   "connectMs": 9,
+   "tlsMs": 475,
+   "ttfbMs": 819,
+   "totalMs": 819
+  },
+  {
+   "i": 69,
+   "ts": 1792938224,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 469,
+   "ttfbMs": 798,
+   "totalMs": 798
+  },
+  {
+   "i": 70,
+   "ts": 1792938225,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 487,
+   "ttfbMs": 828,
+   "totalMs": 828
+  },
+  {
+   "i": 71,
+   "ts": 1792938226,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 472,
+   "ttfbMs": 795,
+   "totalMs": 795
+  },
+  {
+   "i": 72,
+   "ts": 1792938226,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 476,
+   "ttfbMs": 825,
+   "totalMs": 825
+  },
+  {
+   "i": 73,
+   "ts": 1792938227,
+   "ok": true,
+   "connectMs": 5,
+   "tlsMs": 463,
+   "ttfbMs": 810,
+   "totalMs": 810
+  },
+  {
+   "i": 74,
+   "ts": 1792938228,
+   "ok": true,
+   "connectMs": 13,
+   "tlsMs": 486,
+   "ttfbMs": 816,
+   "totalMs": 816
+  },
+  {
+   "i": 75,
+   "ts": 1792938229,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 468,
+   "ttfbMs": 798,
+   "totalMs": 798
+  },
+  {
+   "i": 76,
+   "ts": 1792938230,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 485,
+   "ttfbMs": 819,
+   "totalMs": 819
+  },
+  {
+   "i": 77,
+   "ts": 1792938230,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 470,
+   "ttfbMs": 793,
+   "totalMs": 793
+  },
+  {
+   "i": 78,
+   "ts": 1792938231,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 484,
+   "ttfbMs": 828,
+   "totalMs": 828
+  },
+  {
+   "i": 79,
+   "ts": 1792938232,
+   "ok": true,
+   "connectMs": 9,
+   "tlsMs": 477,
+   "ttfbMs": 810,
+   "totalMs": 811
+  },
+  {
+   "i": 80,
+   "ts": 1792938233,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 485,
+   "ttfbMs": 837,
+   "totalMs": 837
+  },
+  {
+   "i": 81,
+   "ts": 1792938234,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 478,
+   "ttfbMs": 800,
+   "totalMs": 801
+  },
+  {
+   "i": 82,
+   "ts": 1792938235,
+   "ok": true,
+   "connectMs": 8,
+   "tlsMs": 482,
+   "ttfbMs": 823,
+   "totalMs": 823
+  },
+  {
+   "i": 83,
+   "ts": 1792938235,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 475,
+   "ttfbMs": 806,
+   "totalMs": 806
+  },
+  {
+   "i": 84,
+   "ts": 1792938236,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 477,
+   "ttfbMs": 818,
+   "totalMs": 818
+  },
+  {
+   "i": 85,
+   "ts": 1792938237,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 476,
+   "ttfbMs": 802,
+   "totalMs": 802
+  },
+  {
+   "i": 86,
+   "ts": 1792938238,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 485,
+   "ttfbMs": 868,
+   "totalMs": 868
+  },
+  {
+   "i": 87,
+   "ts": 1792938239,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 465,
+   "ttfbMs": 796,
+   "totalMs": 796
+  },
+  {
+   "i": 88,
+   "ts": 1792938240,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 475,
+   "ttfbMs": 815,
+   "totalMs": 815
+  },
+  {
+   "i": 89,
+   "ts": 1792938240,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 477,
+   "ttfbMs": 825,
+   "totalMs": 825
+  },
+  {
+   "i": 90,
+   "ts": 1792938241,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 475,
+   "ttfbMs": 810,
+   "totalMs": 811
+  },
+  {
+   "i": 91,
+   "ts": 1792938242,
+   "ok": true,
+   "connectMs": 9,
+   "tlsMs": 473,
+   "ttfbMs": 812,
+   "totalMs": 812
+  },
+  {
+   "i": 92,
+   "ts": 1792938243,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 484,
+   "ttfbMs": 841,
+   "totalMs": 842
+  },
+  {
+   "i": 93,
+   "ts": 1792938244,
+   "ok": true,
+   "connectMs": 7,
+   "tlsMs": 469,
+   "ttfbMs": 802,
+   "totalMs": 802
+  },
+  {
+   "i": 94,
+   "ts": 1792938245,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 473,
+   "ttfbMs": 822,
+   "totalMs": 822
+  },
+  {
+   "i": 95,
+   "ts": 1792938245,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 475,
+   "ttfbMs": 811,
+   "totalMs": 811
+  },
+  {
+   "i": 96,
+   "ts": 1792938246,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 482,
+   "ttfbMs": 810,
+   "totalMs": 810
+  },
+  {
+   "i": 97,
+   "ts": 1792938247,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 468,
+   "ttfbMs": 806,
+   "totalMs": 806
+  },
+  {
+   "i": 98,
+   "ts": 1792938248,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 476,
+   "ttfbMs": 806,
+   "totalMs": 806
+  },
+  {
+   "i": 99,
+   "ts": 1792938249,
+   "ok": true,
+   "connectMs": 6,
+   "tlsMs": 475,
+   "ttfbMs": 800,
+   "totalMs": 800
+  }
+ ]
+}

@@ -3,7 +3,7 @@
 对应 [`docs/plans/ios-channel.md`](../plans/ios-channel.md) 的 P0（0.2 EMQX、APNs、腾讯云中继）。每一项记录**做了什么、量到什么、
 哪些还没做**；任一项不达标先停下问用户，不自行换方案。密码、`.p8` 内容、配对码等秘密不写进本文。
 
-状态（2026-10-25）：EMQX 与 APNs 密钥完成；腾讯云中继、真机推送、手机侧延迟、公司网络端口尚未做。
+状态（2026-10-25）：EMQX、APNs 密钥、腾讯云中继（Mac 侧）完成，真机签名构建通过；真机推送、手机侧延迟、公司网络端口尚未做。
 
 | 项 | 状态 | 证据 |
 |---|---|---|
@@ -12,8 +12,13 @@
 | 产品内「测试连接」走通真实 broker | 完成 | §1.3 |
 | 账号隔离（同账号内收发、跨账号被拒） | 完成 | §1.4 |
 | Apple APNs 密钥 | 完成 | §2 |
-| 腾讯云函数中继：部署、`/v1/health` 成功率与 p95、计费 | 未做 | §3 |
-| 真机 APNs ≥ 30 次（加密预览 / 通知扩展 / 点击回到 App） | 未做 | 需要真机与中继 |
+| 腾讯云函数中继：部署 | 完成 | §3.1 |
+| 中继 `/v1/health` 成功率与 p95（Mac，家用网络） | 完成（达标；该路径经过代理，不是关代理口径） | §3.2，原始数据 `ios-channel-p0-mac-relay-health.json` |
+| 中继到 APNs：沙盒 / 生产的提供方凭据、香港到 APNs 的 HTTP/2 出口（假 token） | 完成 | §3.3 |
+| 腾讯云计费（无固定月费） | 官方文档已核对，待用户在账号里确认 | §3.5 |
+| 真机签名构建（自动签名，主 App 与通知扩展） | 完成 | §4 |
+| 中继 `/v1/health` ×100（手机 Wi-Fi / 蜂窝，关闭代理） | 未做 | 需要真机 |
+| 真机 APNs ≥ 30 次（加密预览 / 通知扩展 / 点击回到 App） | 未做 | 需要真机 |
 | 手机（Wi-Fi / 蜂窝）到 EMQX 的 TLS 与 WSS 往返，各 100 次 | 未做 | 需要真机 |
 | 公司网络端口探测（8883 / 8084 / 中继域名） | 未做 | 用户在公司网络运行 §1.2 的探针 |
 
@@ -83,9 +88,77 @@ AH_PROBE_PASSWORD=… node acl-check.cjs --host <实例域名> --user <测试账
 
 ## 3. 腾讯云函数中继
 
-未做。计划：Web 函数、Node.js 20、`ap-hongkong`、128 MB、15 s，上传 `relay/dist/askhuman-relay.zip`
-（`relay/scripts/build-zip.sh`），环境变量 `APNS_KEY_P8`（单行，换行写成字面 `\n`）、`APNS_KEY_ID`、`APNS_TEAM_ID`、`APNS_TOPIC`、
-`RELAY_HANDLE_KEY`（32 字节随机数的 base64），创建公网函数 URL，检查 `/v1/health`，再在 Mac 设置里填中继地址。
+### 3.1 部署（2026-10-25）
+
+控制台表单由 Agent 在 Cursor 内置浏览器里操作；登录、选 zip 文件、两个机密环境变量由用户亲自完成。
+
+- 函数 `askhuman-relay`：Web 函数、Node.js 20.19、中国香港（`ap-hongkong`）、监听端口 9000、内存 128 MB、执行超时 15 s、日志投递关闭
+  （不引入额外计费项）。
+- 代码包：`relay/scripts/build-zip.sh` 产出的 `askhuman-relay.zip`（6,856 字节：`scf_bootstrap`、`src/core.js`、`src/adapters/scf.js`，
+  零 npm 依赖），由用户在系统文件选择框里选定。控制台把「启动命令」标成必填，填的是与 zip 里 `scf_bootstrap` 相同的脚本。
+- 环境变量 5 个：`APNS_KEY_ID`、`APNS_TEAM_ID`、`APNS_TOPIC` 由 Agent 填写；机密的 `APNS_KEY_P8`（单行，换行写成字面 `\n`）与
+  `RELAY_HANDLE_KEY`（32 字节随机数的 base64）由用户自己粘贴，Agent 只核对过字符数、没有读取内容，剪贴板事后已清空。
+- 函数 URL：公网访问、授权类型「开放」（鉴权由中继自己做：句柄是 AES-GCM 不透明串，`/v1/register` 只收 `APNS_TOPIC` 的 Bundle ID）。
+  这个 URL 带账号的 APPID，**不写进文档与提交**，只存在 Mac 的本机配置里（`AskHuman channel set ios --relay-url …`）。
+- 端点：TLS 1.3、HTTP/1.1（服务端不协商 h2）、通配证书 `*.tencentscf.com`（DigiCert OV）。
+
+### 3.2 `/v1/health`：成功率与延迟（Mac，家用网络，2026-10-25）
+
+100 轮，每轮新开 TCP + TLS 连接，间隔 500 ms，`curl` 计时。原始数据：
+[`ios-channel-p0-mac-relay-health.json`](ios-channel-p0-mac-relay-health.json)。
+
+| 口径 | 成功 | p50 | p95 | p99 / max |
+|---|---|---|---|---|
+| 整个请求（连接 + TLS + 首字节） | 100 / 100 | 820 ms | **1401 ms** | 3282 / 3282 ms |
+| 其中 TLS 握手（TLS 1.3，一个往返） | | 472 ms | 518 ms | 1392 ms |
+| 其中请求往返（函数处理 + 回包） | | 338 ms | 912 ms | 2678 ms |
+
+计划门禁（成功率 ≥ 99%、p95 ≤ 1.5 s）在这条路径上达标，但 p95 只剩 99 ms 余量；超过 1.5 s 的 4 轮（2806 / 2112 / 3282 / 3276 ms）
+是**连续的第 59–63 轮**，像一次短暂的网络 / 代理抖动或函数实例切换，不是均匀分布，而超过 1 s 的共 7 轮。
+
+**口径警告**：这台 Mac 的流量经过 TUN 代理和旁路由——TCP 连接 7 ms 就完成，说明握手被本地 / 网关的透明代理接走；TLS 握手却要 472 ms，
+说明真实路径的往返约 470 ms。所以这组数只是「家用网络，默认路由」的参考，**不是计划要求的「关闭代理」口径**；关闭代理的证据
+等手机在蜂窝网络上测（第 0.3 项）。
+
+创建函数后的第一个请求约 4 s（冷启动 + TLS 握手），此后稳定在 1 s 以内。
+
+### 3.3 中继到 APNs（假 token 验证提供方凭据与出口）
+
+用随机 64 位十六进制当设备 token 走一遍 `/v1/register` → `/v1/push`。APNs 先验证提供方 JWT（`.p8`、Key ID、Team ID）、再验证 token：
+回 `BadDeviceToken` 就说明密钥链路对、**香港函数到 APNs 的 HTTP/2 出口可用**；密钥或 Team ID 不对会是 403 `InvalidProviderToken`（中继映射为 502）。
+
+| 用例 | 结果 |
+|---|---|
+| 沙盒：`register` → `push`（假 token） | 200（1103 ms）→ 410 `gone` / `BadDeviceToken`（1151 ms） |
+| 生产：`register` → `push`（假 token） | 200（332 ms）→ 410 `gone` / `BadDeviceToken`（472 ms） |
+| 乱码句柄 | 401 `bad_handle` |
+| 其他 Bundle ID 注册 | 400 `bad_request` |
+| `locKey` 不在白名单 | 400 `bad_request` |
+| 载荷超过 4096 字节 | 413 `too_large` |
+| 未知路径 | 404 `not_found` |
+
+沙盒和生产两个环境 APNs 都接受，说明 Team Scoped 的「Sandbox & Production」密钥按预期通用。**真 token 的送达还没验证**（第 0.4 项，等真机）。
+
+### 3.4 计费（第 0.5 项，待用户确认）
+
+以下来自腾讯云国内站的官方文档，不是用户账号里的账单页：
+
+- 新用户前三个月有免费额度；之后纯按量计费：调用次数 0.0133 元 / 万次、资源使用 0.00011108 元 / GBs、公网出流量（香港）1.00 元 / GB。
+  文档里没有固定月费或最低消费。估算每次推送是一次调用 + 约 0.5 s × 128 MB + 不到 1 KB 出流量，一万次推送的费用约一毛钱量级。
+- 国际站文档里另有「基础套餐 0.06 美元 / 天（上月用量为 0 则免）」的说法，国内站文档没有，**需要用户在费用中心确认这个账号没有**。
+  红线是不接受固定月费。
+
+### 3.5 开放风险
+
+控制台把默认的函数 URL 标成「仅供测试使用」，免责说明的细则没能打开，官方文档也没写它的限速或下线条件。原型期不阻塞；如果之后
+要给朋友长期使用，建议给函数绑一个自定义域名（香港地域不需要备案）。是否这样做、何时做，由用户决定。
+
+## 4. 真机签名构建
+
+`xcodebuild -scheme AskHuman -configuration Debug -destination 'generic/platform=iOS' -allowProvisioningUpdates build`：**BUILD SUCCEEDED**。
+Xcode 自动签名（开发证书 + 自动生成的「iOS Team Provisioning Profile」），主 App 与通知扩展都通过 `ValidateEmbeddedBinary`，
+说明 App ID、推送能力、共享钥匙串组在开发者账号里是对得上的。唯一的警告是「All interface orientations must be supported unless the
+app requires full screen」，只对 iPad 多任务有意义（本 App 只做 iPhone、竖屏）。
 
 ## 操作备忘（Cursor 内置浏览器的限制，下次别再试）
 
