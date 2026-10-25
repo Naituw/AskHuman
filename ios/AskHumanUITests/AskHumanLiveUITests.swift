@@ -108,7 +108,8 @@ final class AskHumanLiveUITests: XCTestCase {
             let sentAt = nowMs()
             XCTAssertTrue(rowGone("inbox-row-", timeout: 90), "the request stayed in the inbox")
             let leftAt = nowMs()
-            _ = rendezvous("ask-single-answered", "shown=\(shownAt - asked) sent=\(sentAt) left=\(leftAt - sentAt)")
+            // Both figures include the automation's own polling, so they are upper bounds.
+            _ = rendezvous("ask-single-answered", "shown=\(shownAt - asked) left=\(leftAt - sentAt)")
         }
 
         try step("answer two questions with a free text") {
