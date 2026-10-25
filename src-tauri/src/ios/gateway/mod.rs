@@ -842,12 +842,19 @@ impl Actor {
             self.presence_cache
                 .insert(device.to_string(), presence.clone());
         }
+        let was_live = self.is_live(device);
         if let Some(rt) = self.rt.get_mut(device) {
             rt.apply_presence(&presence);
             // Live views only run in the foreground.
             if !rt.foreground {
                 rt.watches.clear();
             }
+        }
+        // The app reports "foreground" only after its first sync, so a phone that said hello
+        // first counts as live only from here on: whatever changed in between (a new request
+        // above all) was not sent to it live and its hello snapshots predate it. Catch it up.
+        if !was_live && self.is_live(device) {
+            self.send_snapshots(device);
         }
         self.refresh_status();
     }
@@ -1114,6 +1121,11 @@ impl Actor {
             slot: self.host.slot(),
         };
         self.send(phone_id, &ack);
+        self.send_snapshots(phone_id);
+    }
+
+    /// The current state of every stream, as the phone gets it after `hello`.
+    fn send_snapshots(&mut self, phone_id: &str) {
         for stream in ["inbox", "agents", "follow", "slot"] {
             self.send_stream_snapshot(phone_id, stream);
         }

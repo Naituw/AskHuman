@@ -470,6 +470,47 @@ async fn an_offline_phone_is_pushed_and_finds_the_request_when_it_returns() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_request_that_came_between_hello_and_the_foreground_presence_is_caught_up() {
+    // The app says "foreground" only after its first sync. A request created before that was not
+    // sent live (the phone is not live yet) and the hello snapshots predate it.
+    let fx = Fixture::new().await;
+    let mut phone = fx.pair_phone_without_push().await;
+    phone.set_presence(true, false).await;
+    phone.hello().await;
+    phone.clear_queue();
+
+    deliver_ask(&fx, "req1");
+    assert!(
+        !phone.gets(t::REQUEST_NEW, SECOND).await,
+        "the phone is not live yet"
+    );
+
+    phone.set_presence(true, true).await;
+    let inbox: wire::InboxSnapshot = phone.recv_body(t::INBOX_SNAPSHOT).await;
+    assert_eq!(inbox.items.len(), 1);
+    assert_eq!(inbox.items[0].id, "req1");
+
+    // From then on the request stream is live: no second catch-up, deltas as usual.
+    phone.clear_queue();
+    deliver_ask(&fx, "req2");
+    let new: wire::RequestNew = phone.recv_body(t::REQUEST_NEW).await;
+    assert_eq!(new.request.id, "req2");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_phone_that_says_foreground_again_without_a_change_is_not_sent_snapshots() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    // Let the one-off resync the Mac does a second after it connected come and go.
+    tokio::time::sleep(Duration::from_millis(1_300)).await;
+    phone.clear_queue();
+    // The retained presence arrives again (a Mac reconnecting to the broker sees it): the phone
+    // was live all along, so nothing is repeated.
+    phone.set_presence(true, true).await;
+    assert!(!phone.gets(t::INBOX_SNAPSHOT, SECOND).await);
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_push_fallback_fires_when_the_foreground_phone_does_not_acknowledge() {
     let fx = Fixture::new().await;
     let mut phone = fx.live_phone().await;

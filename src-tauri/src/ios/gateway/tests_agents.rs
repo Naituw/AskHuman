@@ -131,6 +131,32 @@ async fn a_ticking_clock_alone_sends_nothing() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_agent_change_between_hello_and_the_foreground_presence_is_caught_up() {
+    // The app says "foreground" only after its first sync: until then it gets no deltas.
+    let fx = Fixture::new().await;
+    fx.host
+        .set_agents(vec![sample_agent("claude:s1", "working")]);
+    let mut phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    phone.hello().await;
+    snapshot(&mut phone).await;
+
+    fx.host
+        .update_agent("claude:s1", |a| a.state = "idle".into());
+    assert!(!phone.gets(t::AGENTS_DELTA, 3 * SECOND).await);
+
+    phone.set_presence(true, true).await;
+    let snap: wire::AgentsSnapshot = phone.recv_body(t::AGENTS_SNAPSHOT).await;
+    assert_eq!(snap.agents[0].state, "idle");
+
+    // The stream continues right after the snapshot.
+    fx.host
+        .update_agent("claude:s1", |a| a.state = "working".into());
+    let delta: wire::AgentsDelta = phone.recv_body(t::AGENTS_DELTA).await;
+    assert_eq!(delta.rev, snap.rev + 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_background_phone_gets_no_deltas_but_a_fresh_snapshot_on_hello() {
     let (fx, mut phone) = with_agent().await;
     phone.set_presence(true, false).await;
