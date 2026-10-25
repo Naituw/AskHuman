@@ -86,7 +86,7 @@ fn build_swift_bridges(manifest_dir: &str) {
     let swift_lib_dir = toolchain_usr.join("lib/swift/macosx");
 
     let lib_path = Path::new(&out_dir).join("libahspeech.a");
-    let module_cache = Path::new(&out_dir).join("swift-module-cache");
+    let module_cache = swift_module_cache_dir(Path::new(&out_dir));
     std::fs::create_dir_all(&module_cache).expect("无法创建 Swift module cache");
 
     // 编译为静态库。-static -emit-library 产出 .a；autolink 指令(框架/swiftCore)内嵌到对象中。
@@ -104,8 +104,8 @@ fn build_swift_bridges(manifest_dir: &str) {
         "-parse-as-library",
         "-module-name",
         "ahspeech",
-        // Keep Clang/Swift modules inside Cargo's profile cache. Builds launched from sandboxed
-        // agents may not write ~/.cache/clang, and profile cleanup should own these intermediates.
+        // Keep Clang/Swift modules under `target/` instead of ~/.cache/clang: builds launched from
+        // sandboxed agents may not write the latter. See `swift_module_cache_dir` for the layout.
         "-module-cache-path",
         module_cache
             .to_str()
@@ -132,6 +132,34 @@ fn build_swift_bridges(manifest_dir: &str) {
         lib_path.display()
     );
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
+}
+
+/// Directory for the Clang/Swift module cache (`.pcm` files, about 240 MiB).
+///
+/// `OUT_DIR` is `<target>[/<triple>]/<profile>/build/<package>-<hash>/out`. Cargo creates a fresh
+/// one for every profile and again whenever the build script's inputs change (dependencies,
+/// features, toolchain), so a cache kept there is rebuilt cold (about 25 s) each time and
+/// duplicated per profile. Use a single `swift-module-cache` next to the profile directories
+/// instead: still under `target/` (writable for sandboxed agents, removed by a full `cargo clean`),
+/// shared by every profile of that target directory, and untouched by `cargo clean -p`/`--profile`.
+///
+/// Clang module files embed their absolute cache path and refuse to load once the directory is
+/// copied or moved, so anything that clones a `target/` somewhere else must drop this directory
+/// first (scripts/seed-worktree-target.sh does); the next build recreates it.
+fn swift_module_cache_dir(out_dir: &std::path::Path) -> std::path::PathBuf {
+    // Ancestors of OUT_DIR: out, <package>-<hash>, build, <profile>, <target>[/<triple>].
+    let mut ancestors = out_dir.ancestors();
+    let build_dir = ancestors.nth(2);
+    let target_root = ancestors.nth(1);
+    match (build_dir, target_root) {
+        (Some(build), Some(root))
+            if build.file_name().and_then(|name| name.to_str()) == Some("build") =>
+        {
+            root.join("swift-module-cache")
+        }
+        // Unexpected layout (custom build directory, future Cargo change): stay private to this build.
+        _ => out_dir.join("swift-module-cache"),
+    }
 }
 
 fn run_capture(cmd: &str, args: &[&str]) -> String {
