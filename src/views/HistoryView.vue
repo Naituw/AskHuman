@@ -1229,6 +1229,9 @@ onBeforeUnmount(() => {
   right: 0;
   display: grid;
   grid-template-columns: minmax(170px, 0.8fr) minmax(260px, 1.35fr);
+  /* A row clamped to the menu height (instead of one sized to its content) lets each column scroll
+     under max-height rather than being cut off by it. */
+  grid-template-rows: minmax(0, 1fr);
   width: min(560px, calc(var(--history-main-width, 100vw) - 28px));
   max-height: min(420px, calc(100vh - 100px));
   overflow: hidden;
