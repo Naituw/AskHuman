@@ -1,0 +1,125 @@
+import SwiftUI
+import AHCore
+
+struct RootView: View {
+    @Environment(AppStore.self) private var store
+    @Environment(PushCoordinator.self) private var push
+    let leftoverPairings: Int
+    @State private var showPairing = false
+    @State private var links = LinkPresenter()
+    @State private var askAboutLeftovers: Bool
+    @Environment(\.launchOptions) private var launch
+
+    init(leftoverPairings: Int) {
+        self.leftoverPairings = leftoverPairings
+        _askAboutLeftovers = State(initialValue: leftoverPairings > 0)
+    }
+
+    var body: some View {
+        @Bindable var store = store
+        TabView(selection: $store.tab) {
+            InboxScreen(showPairing: $showPairing)
+                .tabItem { Label("Inbox", systemImage: "tray.full") }
+                .tag(AppTab.inbox)
+                .badge(store.pendingCount)
+            AgentsScreen()
+                .tabItem { Label("Agents", systemImage: "person.2.wave.2") }
+                .tag(AppTab.agents)
+            HistoryScreen()
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                .tag(AppTab.history)
+            MacsScreen(showPairing: $showPairing)
+                .tabItem { Label("Macs", systemImage: "desktopcomputer") }
+                .tag(AppTab.macs)
+        }
+        .environment(links)
+        .overlay(alignment: .top) { InAppBanner() }
+        .sheet(isPresented: $showPairing) { PairingSheet() }
+        .confirmationDialog(
+            "Open this link?", isPresented: Binding(get: { links.pending != nil }, set: { if !$0 { links.pending = nil } }),
+            titleVisibility: .visible, presenting: links.pending
+        ) { url in
+            Button("Open \(links.pendingDomain)") { links.presented = url }
+            Button("Cancel", role: .cancel) {}
+        } message: { url in
+            Text(url.absoluteString)
+        }
+        .sheet(item: $links.presented) { url in SafariView(url: url).ignoresSafeArea() }
+        .alert("Pairings from a previous install", isPresented: $askAboutLeftovers) {
+            Button("Keep them") {}
+            Button("Remove them", role: .destructive) { Task { await store.forgetAll() } }
+        } message: {
+            Text("This phone still holds \(leftoverPairings) pairing(s) from before AskHuman was reinstalled. Keep using them, or start fresh?")
+        }
+        .sensoryFeedback(.impact(weight: .light), trigger: store.arrivalTick)
+        .onChange(of: store.pendingCount) { _, count in push.updateBadge(count) }
+        .onChange(of: store.state.pairing?.stage) { _, stage in
+            // A pairing started from a notification-less state (a deep link in the future) opens the sheet.
+            if stage != nil, !showPairing { showPairing = true }
+        }
+    }
+}
+
+/// The banner that slides in when a request arrives while the app is open.
+struct InAppBanner: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            if let banner = store.banner {
+                BannerCard(banner: banner)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .onTapGesture {
+                        if case .request(let macId, let requestId) = banner.kind { store.open(macId: macId, requestId: requestId) }
+                        store.dismissBanner()
+                    }
+                    .gesture(DragGesture(minimumDistance: 8).onEnded { value in
+                        if value.translation.height < -8 { store.dismissBanner() }
+                    })
+            }
+        }
+        .animation(.spring(duration: 0.35), value: store.banner)
+    }
+}
+
+private struct BannerCard: View {
+    let banner: Banner
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(banner.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                if let subtitle = banner.subtitle, !subtitle.isEmpty {
+                    Text(subtitle).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("banner")
+    }
+
+    private var symbol: String {
+        switch banner.kind {
+        case .request: "bell.badge.fill"
+        case .info: "info.circle.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var tint: Color {
+        switch banner.kind {
+        case .request: .accentColor
+        case .info: .blue
+        case .warning: .orange
+        }
+    }
+}
