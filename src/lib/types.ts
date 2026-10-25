@@ -1021,6 +1021,16 @@ export interface IosPairing {
   sas?: string;
 }
 
+/** Broker traffic of one month, counted on this Mac. */
+export interface IosTraffic {
+  /** `YYYY-MM` the counters belong to. */
+  month: string;
+  bytesIn: number;
+  bytesOut: number;
+  msgsIn: number;
+  msgsOut: number;
+}
+
 export interface IosGatewayState {
   connected: boolean;
   /** `tls` | `wss` | `tcp` */
@@ -1030,6 +1040,7 @@ export interface IosGatewayState {
   macName: string;
   phones: IosPhone[];
   pairing?: IosPairing;
+  traffic?: IosTraffic;
   pendingRequests: number;
 }
 

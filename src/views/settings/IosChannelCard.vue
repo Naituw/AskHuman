@@ -6,6 +6,7 @@ import { useI18n } from "vue-i18n";
 import { useSettingsContext } from "./context";
 import { useIosChannel } from "./useIosChannel";
 import type { IosPhone } from "../../lib/types";
+import { formatBytes, quotaShare, trafficLevel } from "./iosTraffic";
 
 const { t } = useI18n();
 const { persist, secretsPresent, SECRET_PLACEHOLDER, clearSecret } = useSettingsContext();
@@ -52,6 +53,28 @@ const statusText = computed(() => {
   return s.lastError ? `${base}: ${s.lastError}` : base;
 });
 
+// Monthly traffic as this Mac counted it, with a warning before the free quota runs out.
+const traffic = computed(() => {
+  const tr = state.value?.traffic;
+  return tr && tr.msgsIn + tr.msgsOut > 0 ? tr : null;
+});
+const trafficLevelNow = computed(() => (traffic.value ? trafficLevel(traffic.value) : "ok"));
+const trafficText = computed(() => {
+  const tr = traffic.value;
+  if (!tr) return "";
+  const share = quotaShare(tr);
+  return t("settings.experimental.ios.traffic", {
+    out: formatBytes(tr.bytesOut),
+    in: formatBytes(tr.bytesIn),
+    percent: share < 0.01 ? "<1%" : `${Math.round(share * 100)}%`,
+  });
+});
+const trafficWarning = computed(() => {
+  if (trafficLevelNow.value === "full") return t("settings.experimental.ios.trafficFull");
+  if (trafficLevelNow.value === "warn") return t("settings.experimental.ios.trafficWarn");
+  return "";
+});
+
 const pairNoticeText = computed(() => {
   const n = pairNotice.value;
   if (!n) return "";
@@ -96,6 +119,8 @@ function pushWarning(phone: IosPhone): string {
         <span class="dot" :class="statusKind === 'ok' ? 'on' : 'off'"></span>
         {{ statusText }}
       </p>
+      <p v-if="trafficText" class="card-desc ios-traffic" :class="trafficLevelNow">{{ trafficText }}</p>
+      <p v-if="trafficWarning" class="ios-traffic-warning" :class="trafficLevelNow">{{ trafficWarning }}</p>
       <hr class="divider" />
 
       <p class="ios-section-title">{{ t("settings.experimental.ios.connectionTitle") }}</p>

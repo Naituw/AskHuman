@@ -106,6 +106,49 @@ describe("IosChannelCard", () => {
     wrapper.unmount();
   });
 
+  it("shows this month's traffic and warns before the free quota is used up", async () => {
+    const mib = 1024 * 1024;
+    iosOp.mockResolvedValue({
+      kind: "state",
+      state: gateway({ traffic: { month: "2026-10", bytesIn: 2 * mib, bytesOut: 3 * mib, msgsIn: 4, msgsOut: 5 } }),
+    });
+    const wrapper = mountCard();
+    await flushPromises();
+    expect(wrapper.get(".ios-traffic").text()).toContain("sent 3.0 MB, received 2.0 MB, about <1%");
+    expect(wrapper.find(".ios-traffic-warning").exists()).toBe(false);
+    wrapper.unmount();
+
+    iosOp.mockResolvedValue({
+      kind: "state",
+      state: gateway({ traffic: { month: "2026-10", bytesIn: 220 * mib, bytesOut: 220 * mib, msgsIn: 4, msgsOut: 5 } }),
+    });
+    const warned = mountCard();
+    await flushPromises();
+    expect(warned.get(".ios-traffic-warning").classes()).toContain("warn");
+    expect(warned.get(".ios-traffic-warning").text()).toContain("close to EMQX's free quota");
+    warned.unmount();
+
+    iosOp.mockResolvedValue({
+      kind: "state",
+      state: gateway({ traffic: { month: "2026-10", bytesIn: 300 * mib, bytesOut: 300 * mib, msgsIn: 4, msgsOut: 5 } }),
+    });
+    const full = mountCard();
+    await flushPromises();
+    expect(full.get(".ios-traffic-warning").classes()).toContain("full");
+    full.unmount();
+  });
+
+  it("says nothing about traffic before any message was exchanged", async () => {
+    iosOp.mockResolvedValue({
+      kind: "state",
+      state: gateway({ traffic: { month: "2026-10", bytesIn: 0, bytesOut: 0, msgsIn: 0, msgsOut: 0 } }),
+    });
+    const wrapper = mountCard();
+    await flushPromises();
+    expect(wrapper.find(".ios-traffic").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
   it("says so when the gateway is not running", async () => {
     iosOp.mockResolvedValue({ kind: "state", state: null });
     const wrapper = mountCard();

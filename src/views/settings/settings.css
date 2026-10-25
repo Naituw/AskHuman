@@ -1172,6 +1172,21 @@
 .ios-status {
   margin: 0 0 var(--space-3);
 }
+.ios-traffic {
+  margin: 0 0 var(--space-2);
+}
+.ios-traffic-warning {
+  margin: 0 0 var(--space-3);
+  font-size: 12px;
+}
+.ios-traffic.warn,
+.ios-traffic-warning.warn {
+  color: #ff9f0a;
+}
+.ios-traffic.full,
+.ios-traffic-warning.full {
+  color: #ff453a;
+}
 .ios-section-title {
   margin: 0 0 var(--space-2);
   font-size: 12.5px;
