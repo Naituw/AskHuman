@@ -151,6 +151,24 @@ public actor PhoneEngine: RemoteBackend {
         publish()
     }
 
+    public func refresh() async {
+        guard foreground else { return }
+        switch phase {
+        case .backoff, .refused:
+            phase = .idle
+            backoff.reset()
+            startConnecting()
+        case .idle:
+            startConnecting()
+        case .connecting, .connected:
+            break
+        }
+        for (id, mac) in macs where mac.online {
+            await requestResync(id, stream: "inbox")
+        }
+        publish()
+    }
+
     /// Says goodbye (offline presence) and drops the connection.
     func goodbye() async {
         cancelTimer("connect")

@@ -14,6 +14,9 @@ public protocol RemoteBackend: AnyObject, Sendable {
     func start() async
     /// `true` connects to the broker; `false` says goodbye and disconnects.
     func setForeground(_ foreground: Bool) async
+    /// Pull to refresh: reconnects when the link is down and asks every reachable Mac for an
+    /// authoritative inbox snapshot.
+    func refresh() async
 
     // pairing
     func startPairing(code: String) async

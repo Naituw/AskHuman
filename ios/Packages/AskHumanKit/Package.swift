@@ -38,11 +38,14 @@ let package = Package(
         ),
         .target(name: "AHCore", dependencies: ["AHProtocol", "AHStore", "AHTransport"]),
         .target(name: "AHMarkdown"),
-        .target(name: "AHMock", dependencies: ["AHProtocol", "AHCore"]),
+        .target(name: "AHMock", dependencies: ["AHProtocol", "AHStore", "AHCore"]),
         .testTarget(name: "AHProtocolTests", dependencies: ["AHProtocol"]),
+        .testTarget(name: "AHMarkdownTests", dependencies: ["AHMarkdown"]),
         .testTarget(name: "AHStoreTests", dependencies: ["AHStore"]),
         .testTarget(name: "AHTransportTests", dependencies: ["AHTransport", "AHProtocol"]),
         .testTarget(name: "AHCoreTests", dependencies: ["AHCore", "AHProtocol", "AHStore", "AHTransport"]),
+        // The observable layer the screens use (composers, app store), driven by the mock backend.
+        .testTarget(name: "AHAppTests", dependencies: ["AHCore", "AHMock", "AHProtocol", "AHStore"]),
         // Runs the real engine against a real Mac daemon over a local broker; skipped unless AH_E2E_BIN is set.
         .testTarget(name: "AHE2ETests", dependencies: ["AHCore", "AHProtocol", "AHStore", "AHTransport"]),
     ]

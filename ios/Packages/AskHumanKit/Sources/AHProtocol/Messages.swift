@@ -269,11 +269,23 @@ public struct ConfirmFieldView: Codable, Equatable, Hashable, Sendable {
     public var value: String
     /// `text`, `path` or `timestamp`.
     public var kind: String
+
+    public init(id: String, label: String, value: String, kind: String) {
+        self.id = id
+        self.label = label
+        self.value = value
+        self.kind = kind
+    }
 }
 
 public struct ConfirmDetailView: Codable, Equatable, Hashable, Sendable {
     public var summary: String
     public var bodyMd: String
+
+    public init(summary: String, bodyMd: String) {
+        self.summary = summary
+        self.bodyMd = bodyMd
+    }
 }
 
 public struct ConfirmChoiceView: Codable, Equatable, Hashable, Sendable {
@@ -283,6 +295,14 @@ public struct ConfirmChoiceView: Codable, Equatable, Hashable, Sendable {
     /// Action role (`default`, `primary`, `danger`, …), lowercase.
     public var role: String
     public var recommended: Bool
+
+    public init(wireIndex: Int, label: String, description: String, role: String, recommended: Bool) {
+        self.wireIndex = wireIndex
+        self.label = label
+        self.description = description
+        self.role = role
+        self.recommended = recommended
+    }
 }
 
 public struct ConfirmInputView: Codable, Equatable, Hashable, Sendable {
@@ -294,6 +314,17 @@ public struct ConfirmInputView: Codable, Equatable, Hashable, Sendable {
     public var visibleWhenIndex: Int?
     /// Whether a non-empty value is required when the input is visible.
     @OmitFalse public var required: Bool
+
+    public init(
+        id: String, label: String, placeholder: String, maxChars: Int, visibleWhenIndex: Int? = nil, required: Bool = false
+    ) {
+        self.id = id
+        self.label = label
+        self.placeholder = placeholder
+        self.maxChars = maxChars
+        self.visibleWhenIndex = visibleWhenIndex
+        self.required = required
+    }
 }
 
 public struct ConfirmView: Codable, Equatable, Hashable, Sendable {
@@ -308,6 +339,22 @@ public struct ConfirmView: Codable, Equatable, Hashable, Sendable {
     public var submitLabel: String
     /// Unix milliseconds.
     public var expiresAt: Int64
+
+    public init(
+        title: String, context: [ConfirmFieldView], detail: ConfirmDetailView, choices: [ConfirmChoiceView],
+        defaultIndex: Int? = nil, input: ConfirmInputView? = nil, dismissIndex: Int? = nil, submitLabel: String,
+        expiresAt: Int64
+    ) {
+        self.title = title
+        self.context = context
+        self.detail = detail
+        self.choices = choices
+        self.defaultIndex = defaultIndex
+        self.input = input
+        self.dismissIndex = dismissIndex
+        self.submitLabel = submitLabel
+        self.expiresAt = expiresAt
+    }
 }
 
 public struct RequestView: Codable, Equatable, Hashable, Sendable {

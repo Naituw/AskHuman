@@ -16,6 +16,7 @@ public enum Wire {
     public static let assetChunkBytes = 192 * 1024
     public static let maxAssetBytes = 10 * 1024 * 1024
     public static let maxReplyAttachments = 5
+    public static let maxAnswerTextChars = 64 * 1024
     public static let maxImageEdge = 2048
     public static let maxAssetChunksPerGet = 8
     public static let maxRequestImages = 20

@@ -47,6 +47,33 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(h.mac.count(Wire.T.hello), 3, "three attempts, then it waits for the Mac's presence to change")
     }
 
+    func testRefreshAsksEveryReachableMacForAFreshInboxSnapshot() async throws {
+        let h = Harness()
+        await h.pair()
+        let before = h.mac.received(Wire.T.resync).filter { (try? $0.body(as: Resync.self).stream) == "inbox" }.count
+        await h.engine.refresh()
+        await eventually("an inbox resync") {
+            h.mac.received(Wire.T.resync).filter { (try? $0.body(as: Resync.self).stream) == "inbox" }.count == before + 1
+        }
+    }
+
+    func testRefreshReconnectsWhenTheLinkIsWaitingToRetry() async throws {
+        let h = Harness()
+        await h.pair()
+        h.phone.refusedKinds = [.tls, .wss]
+        h.phone.drop()
+        await eventually("broker down") { await h.state().macs.first?.link == .brokerDown }
+        await h.advance(until: {
+            if case .backoff = await h.state().phase { return true }
+            return false
+        }, "a backoff after the failed reconnect")
+
+        // The user pulls to refresh once the network is back: no waiting for the backoff timer.
+        h.phone.refusedKinds = []
+        await h.engine.refresh()
+        await eventually("online again without advancing the clock") { await h.state().macs.first?.link == .online }
+    }
+
     func testANewEpochTriggersANewHandshake() async throws {
         let h = Harness()
         await h.pair()
