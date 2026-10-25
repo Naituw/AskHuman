@@ -230,6 +230,43 @@ final class AppStoreTests: XCTestCase {
         XCTAssertNil(store.finished[select.id], "closing the page forgets the notice")
     }
 
+    func testAfterOurAnswerTheNextPendingRequestOpens() async throws {
+        await make()
+        let select = try item("req-select")
+        store.open(macId: select.macId, requestId: select.requestId)
+        let composer = try XCTUnwrap(store.composer(for: select))
+        composer.toggle(question: 0, option: 0)
+        try await store.send(composer, item: select)
+        await eventually("moved on") { self.store.inboxPath.last != select.id && self.store.inboxPath.count == 1 }
+        let next = try XCTUnwrap(store.inboxPath.last)
+        XCTAssertNotEqual(next, select.id)
+        XCTAssertEqual(store.item(id: next)?.state, .pending)
+    }
+
+    func testWithAutoAdvanceOffTheListComesBack() async throws {
+        await make()
+        store.autoAdvance = false
+        let select = try item("req-select")
+        store.open(macId: select.macId, requestId: select.requestId)
+        let composer = try XCTUnwrap(store.composer(for: select))
+        composer.toggle(question: 0, option: 0)
+        try await store.send(composer, item: select)
+        await eventually("popped") { self.store.inboxPath.isEmpty }
+    }
+
+    func testAnEndedPageKeepsShowingTheRequestWithANotice() async throws {
+        await make()
+        let select = try item("req-select")
+        store.open(macId: select.macId, requestId: select.requestId)
+        store.autoAdvance = false
+        // Not our own submission: the mock cannot model that, so end it by cancelling from elsewhere.
+        let composer = try XCTUnwrap(store.composer(for: select))
+        composer.toggle(question: 0, option: 0)
+        try await store.send(composer, item: select)
+        await eventually { self.store.item(id: select.id) == nil }
+        XCTAssertEqual(store.displayItem(id: select.id)?.requestId, "req-select", "the page still has its request")
+    }
+
     func testClosingAFormSavesTheDraftButKeepsItWhileThePendingRequestExists() async throws {
         await make()
         let migration = try item("req-migration")

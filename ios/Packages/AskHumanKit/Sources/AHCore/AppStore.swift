@@ -62,8 +62,13 @@ public final class AppStore {
 
     public var tab: AppTab = .inbox
     public var filter: InboxFilter = .all
-    /// Ids (`macId/requestId`) of the requests pushed on the inbox stack.
-    public var inboxPath: [String] = []
+    /// Ids (`macId/requestId`) of the requests pushed on the inbox stack. A request that leaves the
+    /// stack is closed: its draft is saved, or dropped when the request is over.
+    public var inboxPath: [String] = [] {
+        didSet {
+            for id in Set(oldValue).subtracting(inboxPath) { closed(id: id) }
+        }
+    }
     public var banner: Banner?
     /// Jump to the next pending request after a submission.
     public var autoAdvance: Bool {
@@ -77,6 +82,9 @@ public final class AppStore {
     @ObservationIgnored private var confirmComposers: [String: ConfirmComposer] = [:]
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var lastHistoryRevision = -1
+    /// Every request seen in the inbox, kept while its page may still be open: when the request ends
+    /// the page keeps showing it (with a notice) instead of going blank.
+    @ObservationIgnored private var retained: [String: (item: InboxItem, at: Date)] = [:]
     @ObservationIgnored private var bannerTask: Task<Void, Never>?
     /// Arrivals whose request is not in the published state yet (events and states travel apart).
     @ObservationIgnored private var pendingArrivals: [String: (macId: String, requestId: String)] = [:]
@@ -117,6 +125,11 @@ public final class AppStore {
 
     private func apply(_ next: EngineState) async {
         state = next
+        let now = Date()
+        for item in next.inbox { retained[item.id] = (item, now) }
+        for (key, entry) in retained where now.timeIntervalSince(entry.at) > 600 && !inboxPath.contains(key) {
+            retained[key] = nil
+        }
         if next.historyRevision != lastHistoryRevision {
             lastHistoryRevision = next.historyRevision
             history = await backend.history()
@@ -161,6 +174,11 @@ public final class AppStore {
             pendingArrivals[key] = nil
             if inboxPath.contains(key) {
                 finished[key] = FinishedRequest(outcome: outcome, by: by, at: Date())
+                // Our own submission went through: move on.
+                if by == nil, outcome == .answered || outcome == .cancelled || outcome == .dismissed,
+                   let sent = retained[key]?.item, case .sending = sent.state {
+                    advance(from: key)
+                }
             }
             if case .request(let bannerMac, let bannerId)? = banner?.kind, bannerMac == macId, bannerId == requestId {
                 banner = nil
@@ -235,6 +253,25 @@ public final class AppStore {
         state.inbox.first { $0.id == id }
     }
 
+    /// The request for a page: the live one, or the last known version of one that just ended.
+    public func displayItem(id: String) -> InboxItem? {
+        item(id: id) ?? retained[id]?.item
+    }
+
+    public func isOnline(macId: String) -> Bool {
+        state.macs.first { $0.id == macId }?.link == .online
+    }
+
+    /// After a submission went through: show the next pending request, or return to the list.
+    public func advance(from id: String) {
+        guard inboxPath.last == id else { return }
+        if autoAdvance, let next = nextPending(after: id) {
+            inboxPath = [next.id]
+        } else {
+            inboxPath = []
+        }
+    }
+
     public var pendingCount: Int { state.inbox.count }
     public var unreadCount: Int { state.inbox.filter(\.unread).count }
 
@@ -287,7 +324,13 @@ public final class AppStore {
             composers[id] = nil
             confirmComposers[id] = nil
             finished[id] = nil
+            retained[id] = nil
         }
+    }
+
+    /// Downloads an attachment of a request.
+    public func download(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
+        try await backend.download(macId: macId, asset: asset, progress: progress)
     }
 
     // MARK: actions
@@ -358,6 +401,11 @@ public final class AppStore {
     public func finishPairing() async { await backend.finishPairing() }
     public func unpair(_ mac: MacState) async { await backend.unpair(macId: mac.id) }
     public func rename(_ mac: MacState, to alias: String?) async { await backend.renameMac(macId: mac.id, alias: alias) }
+    public func forgetAll() async {
+        inboxPath = []
+        await backend.forgetAll()
+    }
 
     public func updatePushToken(_ token: Data?) async { await backend.updatePushToken(token) }
+    public func setDeviceName(_ name: String) async { await backend.setDeviceName(name) }
 }

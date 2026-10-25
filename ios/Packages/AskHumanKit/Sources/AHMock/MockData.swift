@@ -66,7 +66,7 @@ public enum MockData {
                 isMarkdown: true,
                 message: MessageView(text: message, files: [
                     AssetRef(assetId: "asset-plan", name: "migration-plan.md", size: 4_812, mime: "text/markdown", isImage: false),
-                    AssetRef(assetId: "asset-chart", name: "latency.png", size: 183_422, mime: "image/png", isImage: true),
+                    AssetRef(assetId: "asset-chart", name: "latency.png", size: 183_422, mime: "image/png", isImage: true, thumb: chartThumb),
                     AssetRef(assetId: "asset-diff", name: "schema.diff", size: 2_204, mime: "text/x-diff", isImage: false),
                 ]),
                 questions: [
@@ -276,22 +276,27 @@ public enum MockData {
         }
     }
 
-    static func chartPNG() -> Data? {
-        let width = 640, height = 360
+    static func chartPNG() -> Data? { chart(width: 640, height: 360, type: .png) }
+
+    /// A small JPEG preview of the chart, as a Mac attaches to an image asset.
+    static let chartThumb: String = chart(width: 192, height: 108, type: .jpeg).map(Bytes.b64u) ?? ""
+
+    private static func chart(width: Int, height: Int, type: UTType) -> Data? {
         guard let context = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
+        let scale = CGFloat(width) / 640
         context.setFillColor(CGColor(red: 0.96, green: 0.97, blue: 1, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         let bars: [CGFloat] = [0.35, 0.5, 0.42, 0.7, 0.62, 0.88, 0.75]
         for (index, value) in bars.enumerated() {
             context.setFillColor(CGColor(red: 0.2, green: 0.45 + CGFloat(index) * 0.05, blue: 0.95, alpha: 1))
-            context.fill(CGRect(x: 40 + index * 85, y: 30, width: 60, height: Int(value * 280)))
+            context.fill(CGRect(x: (40 + CGFloat(index) * 85) * scale, y: 30 * scale, width: 60 * scale, height: value * 280 * scale))
         }
         guard let image = context.makeImage() else { return nil }
         let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { return nil }
+        guard let destination = CGImageDestinationCreateWithData(data, type.identifier as CFString, 1, nil) else { return nil }
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else { return nil }
         return data as Data

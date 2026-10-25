@@ -18,6 +18,9 @@ public protocol RemoteBackend: AnyObject, Sendable {
     /// authoritative inbox snapshot.
     func refresh() async
 
+    /// The name the Macs show for this phone (used by pairings made and sessions opened from now on).
+    func setDeviceName(_ name: String) async
+
     // pairing
     func startPairing(code: String) async
     func cancelPairing() async
@@ -25,6 +28,8 @@ public protocol RemoteBackend: AnyObject, Sendable {
     func finishPairing() async
     func unpair(macId: String) async
     func renameMac(macId: String, alias: String?) async
+    /// Removes every pairing and the broker account (the phone is as after a fresh install).
+    func forgetAll() async
 
     // requests
     /// The request was opened in the UI: clears the unread flag and tells the Mac.

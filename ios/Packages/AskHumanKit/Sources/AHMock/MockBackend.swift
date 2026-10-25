@@ -99,6 +99,12 @@ public actor MockBackend: RemoteBackend {
         publish()
     }
 
+    public private(set) var deviceName = "iPhone"
+
+    public func setDeviceName(_ name: String) async {
+        deviceName = name
+    }
+
     // MARK: pairing
 
     public func startPairing(code: String) async {
@@ -161,6 +167,17 @@ public actor MockBackend: RemoteBackend {
         refreshCounts()
         publish()
         eventOut.yield(.macUnpaired(macId: macId, macName: mac.name))
+    }
+
+    public func forgetAll() async {
+        pairingTask?.cancel()
+        for mac in state.macs { eventOut.yield(.macUnpaired(macId: mac.id, macName: mac.name)) }
+        state.macs = []
+        state.inbox = []
+        state.pairing = nil
+        state.brokerHost = nil
+        state.phase = .idle
+        publish()
     }
 
     public func renameMac(macId: String, alias: String?) async {

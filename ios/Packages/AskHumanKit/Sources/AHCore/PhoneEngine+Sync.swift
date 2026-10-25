@@ -140,10 +140,36 @@ extension PhoneEngine {
         publish()
     }
 
+    public func setDeviceName(_ name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        config.deviceName = String(trimmed.prefix(60))
+    }
+
     public func unpair(macId: String) async {
         guard macs[macId] != nil else { return }
         if macs[macId]?.sync == .synced { await send(Unpair(), to: macId) }
         removeMac(macId)
+        publish()
+    }
+
+    /// Back to the first-launch state: every pairing, the broker account and the push handle are
+    /// gone (the history of answered requests stays until it is cleared).
+    public func forgetAll() async {
+        if pairingFlow != nil { await cancelPairing() }
+        for macId in Array(macs.keys) {
+            if macs[macId]?.sync == .synced { await send(Unpair(), to: macId) }
+            removeMac(macId)
+        }
+        vault.broker = nil
+        vault.push = nil
+        settings = nil
+        pushSent = [:]
+        pushStatus = deviceToken == nil ? .noToken : .noRelay
+        terminalPairing = nil
+        broker.disconnect()
+        resetConnectionState()
+        phase = .idle
         publish()
     }
 }

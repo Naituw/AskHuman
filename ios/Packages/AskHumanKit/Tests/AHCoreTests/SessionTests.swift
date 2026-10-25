@@ -400,6 +400,26 @@ final class SessionTests: XCTestCase {
         XCTAssertTrue(macs.isEmpty)
     }
 
+    func testForgettingEverythingTellsTheMacsAndClearsTheBrokerAccount() async throws {
+        let h = Harness()
+        await h.pair()
+        await h.mac.deliver(sampleAsk())
+        await eventually("inbox") { await h.state().inbox.count == 1 }
+        XCTAssertNotNil(h.vault.broker)
+
+        await h.engine.forgetAll()
+        await eventually("unpair message") { h.mac.count(Wire.T.unpair) == 1 }
+        XCTAssertTrue(h.vault.pairings().isEmpty)
+        XCTAssertNil(h.vault.broker)
+        XCTAssertNil(h.vault.push)
+        XCTAssertTrue(h.store.cachedRequests().isEmpty)
+        let state = await h.state()
+        XCTAssertTrue(state.macs.isEmpty)
+        XCTAssertTrue(state.inbox.isEmpty)
+        XCTAssertNil(state.brokerHost)
+        XCTAssertEqual(state.phase, .idle)
+    }
+
     func testRenamingAMacKeepsItsRealName() async throws {
         let h = Harness()
         await h.pair()

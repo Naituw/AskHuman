@@ -169,4 +169,14 @@ public struct PushPlain: Codable, Equatable, Sendable {
     /// Preview text (≤ 120 characters).
     public var text: String
     public var ts: Int64
+
+    public init(k: String, rid: String? = nil, mac: String, agent: String, project: String, text: String, ts: Int64) {
+        self.k = k
+        self.rid = rid
+        self.mac = mac
+        self.agent = agent
+        self.project = project
+        self.text = text
+        self.ts = ts
+    }
 }
