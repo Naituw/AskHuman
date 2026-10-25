@@ -173,7 +173,8 @@ final class LocalStoreTests: XCTestCase {
         XCTAssertEqual(stats(1000).brokerEstimateBytes, 2000, "published once, delivered once")
         XCTAssertEqual(stats(quota / 4).quotaShare, 0.5, accuracy: 0.0001)
         XCTAssertEqual(stats(quota * 39 / 100).level, .ok)
-        XCTAssertEqual(stats(quota * 40 / 100).level, .warning)
+        // Rounded up: plain integer division would land one byte short of the 80% edge.
+        XCTAssertEqual(stats((quota * 40 + 99) / 100).level, .warning)
         XCTAssertEqual(stats(quota * 49 / 100).level, .warning)
         XCTAssertEqual(stats(quota / 2).level, .exhausted)
     }
