@@ -91,6 +91,8 @@ public final class AppStore {
     public private(set) var consumed: [String: Date] = [:]
     /// The new task form while its sheet is open.
     public var taskComposer: TaskComposer?
+    /// The task whose progress the sheet shows (after sending it, or when opened from the list).
+    public var viewingTask: String?
     /// Jump to the next pending request after a submission.
     public var autoAdvance: Bool {
         didSet { defaults.set(autoAdvance, forKey: Self.autoAdvanceKey) }
@@ -111,6 +113,7 @@ public final class AppStore {
     @ObservationIgnored private var pendingArrivals: [String: (macId: String, requestId: String)] = [:]
     /// Every Agent seen on the Agents tab, kept while its page may still be open.
     @ObservationIgnored var retainedAgents: [String: (item: AgentItem, at: Date)] = [:]
+    @ObservationIgnored var interjectComposers: [String: InterjectComposer] = [:]
 
     private static let autoAdvanceKey = "ah.autoAdvance"
 
@@ -169,6 +172,9 @@ public final class AppStore {
         for item in next.agents { retainedAgents[item.id] = (item, now) }
         for (key, entry) in retainedAgents where now.timeIntervalSince(entry.at) > 600 && !agentPath.contains(key) {
             retainedAgents[key] = nil
+        }
+        for key in interjectComposers.keys where retainedAgents[key] == nil && !agentPath.contains(key) {
+            interjectComposers[key] = nil
         }
         presentArrivals()
     }

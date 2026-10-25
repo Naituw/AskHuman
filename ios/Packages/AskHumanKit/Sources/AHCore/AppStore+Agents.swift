@@ -115,6 +115,40 @@ extension AppStore {
         )
     }
 
+    /// The message form of an Agent's page (kept while the page may still be open).
+    public func interjectComposer(for item: AgentItem) -> InterjectComposer {
+        if let existing = interjectComposers[item.id] { return existing }
+        let composer = InterjectComposer(key: item.id)
+        interjectComposers[item.id] = composer
+        return composer
+    }
+
+    /// Uploads the attachments and sends the message; the form is emptied once the Mac took it.
+    @discardableResult
+    public func send(_ composer: InterjectComposer, to item: AgentItem) async throws -> InterjectOutcome {
+        composer.isSending = true
+        composer.uploadProgress = nil
+        defer {
+            composer.isSending = false
+            composer.uploadProgress = nil
+        }
+        // A send whose outcome is unknown is repeated under the same id: the Mac answers it from its journal.
+        let id = composer.pendingMessageId ?? Bytes.newMsgId()
+        composer.pendingMessageId = id
+        do {
+            let outcome = try await backend.sendInterject(
+                macId: item.macId, agentKey: item.agentKey, text: composer.trimmedText, files: try composer.sources(), clientMsgId: id,
+                progress: { fraction in Task { @MainActor in composer.uploadProgress = fraction } }
+            )
+            composer.reset()
+            return outcome
+        } catch {
+            // A refusal is final: the next try is a new message.
+            if case BackendError.rejected = error { composer.pendingMessageId = nil }
+            throw error
+        }
+    }
+
     /// Withdraws the messages still waiting for an Agent.
     public func clearInterject(_ item: AgentItem) async throws {
         _ = try await backend.clearInterject(macId: item.macId, agentKey: item.agentKey)
@@ -138,8 +172,23 @@ extension AppStore {
         Task { await backend.loadTaskOptions(macId: target) }
     }
 
+    /// Closes the new task sheet. A task that was sent keeps going.
     public func dismissNewTask() {
         taskComposer = nil
+        viewingTask = nil
+    }
+
+    /// Shows how a task that was sent is doing.
+    public func presentTaskProgress(_ id: String) {
+        viewingTask = id
+    }
+
+    /// Whether the new task sheet is up.
+    public var isTaskSheetPresented: Bool { taskComposer != nil || viewingTask != nil }
+
+    /// Tasks still on their way to an Agent, or that never got there: the Agents tab lists them.
+    public var openTasks: [TaskProgress] {
+        state.tasks.filter { !$0.foundAgent }
     }
 
     public func selectTaskMac(_ macId: String) {

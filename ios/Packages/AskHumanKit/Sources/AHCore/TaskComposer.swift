@@ -2,6 +2,14 @@ import Foundation
 import Observation
 import AHProtocol
 
+/// How the user lets a new task act when the Mac asks every time.
+public enum PermissionChoice: String, Sendable {
+    /// The Agent asks before it acts.
+    case standard = "default"
+    /// The Agent skips its permission prompts.
+    case yolo
+}
+
 /// The new task form: which Mac, workspace and Agent, how it may act, and what it should do.
 @MainActor
 @Observable
@@ -12,8 +20,8 @@ public final class TaskComposer {
     public var macId: String
     public var workspaceId: String?
     public var agentKind: String?
-    /// The user turned "skip permission prompts" on (only offered when the Mac lets the phone choose).
-    public var yolo = false
+    /// What the user chose when the Mac lets the phone choose: nothing is preselected.
+    public var permissionChoice: PermissionChoice?
     public var todoId: String?
     public var text = ""
 
@@ -47,7 +55,14 @@ public final class TaskComposer {
         workspaceId = nil
         agentKind = nil
         todoId = nil
-        yolo = false
+        permissionChoice = nil
+    }
+
+    /// Picks the Agent. The permission choice is made again for another Agent.
+    public func selectAgent(_ kind: String) {
+        guard kind != agentKind else { return }
+        agentKind = kind
+        permissionChoice = nil
     }
 
     public func remember(defaults: UserDefaults) {
@@ -78,7 +93,7 @@ public final class TaskComposer {
         switch options.permissionMode {
         case "yolo": return "yolo"
         case "agentDefault": return "default"
-        default: return offersPermissionChoice(in: options) && yolo ? "yolo" : "default"
+        default: return offersPermissionChoice(in: options) ? (permissionChoice ?? .standard).rawValue : "default"
         }
     }
 
@@ -89,6 +104,7 @@ public final class TaskComposer {
     public func canSubmit(options: TaskOptions) -> Bool {
         guard options.enabled, workspace(in: options) != nil, let agent = agent(in: options), agent.ready else { return false }
         guard !overLimit else { return false }
+        if offersPermissionChoice(in: options), permissionChoice == nil { return false }
         return !trimmedText.isEmpty || todoId != nil
     }
 

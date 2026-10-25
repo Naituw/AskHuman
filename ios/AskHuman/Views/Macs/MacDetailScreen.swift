@@ -9,6 +9,8 @@ struct MacDetailScreen: View {
     @State private var renaming = false
     @State private var alias = ""
     @State private var confirmUnpair = false
+    @State private var taking = false
+    @State private var problem: String?
 
     var body: some View {
         if let mac = store.macs.first(where: { $0.id == macId }) {
@@ -44,6 +46,18 @@ struct MacDetailScreen: View {
                             LabeledContent("Questions go to") {
                                 Text(slot.active ? "This phone" : "Another channel")
                             }
+                            if !slot.active {
+                                Button {
+                                    takeOver(mac)
+                                } label: {
+                                    HStack {
+                                        Text("Send questions to this phone")
+                                        if taking { Spacer(); ProgressView() }
+                                    }
+                                }
+                                .disabled(taking || mac.link != .online)
+                                .accessibilityIdentifier("take-slot")
+                            }
                         } else {
                             Label("Every question is sent to your phone.", systemImage: "iphone.radiowaves.left.and.right")
                                 .font(.footnote)
@@ -72,6 +86,11 @@ struct MacDetailScreen: View {
             } message: {
                 Text("Leave it empty to use the name the Mac gives itself.")
             }
+            .alert("Could not switch", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(problem ?? "")
+            }
             .confirmationDialog("Unpair \(mac.name)?", isPresented: $confirmUnpair, titleVisibility: .visible) {
                 Button("Unpair", role: .destructive) {
                     Task {
@@ -83,6 +102,14 @@ struct MacDetailScreen: View {
             }
         } else {
             ContentUnavailableView("This Mac is no longer paired", systemImage: "desktopcomputer.slash")
+        }
+    }
+
+    private func takeOver(_ mac: MacState) {
+        taking = true
+        Task {
+            do { try await store.takeSlot(mac) } catch { problem = error.userMessage }
+            taking = false
         }
     }
 

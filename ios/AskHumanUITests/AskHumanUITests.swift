@@ -10,6 +10,13 @@ final class AskHumanUITests: XCTestCase {
     private let homeMac = "mockhomemacmacmacmacmacmac"
     private let officeMac = "mockofficemacmacmacmacmac"
 
+    private let workingAgent = "claude:cc-flaky"
+    private let waitingAgent = "cursor:cur-migrate"
+    private let idleAgent = "codex:cdx-notes"
+    private let endedAgent = "cursor:cur-readme"
+    private let officeAgent = "claude:cc-users"
+    private let unsupportedAgent = "codex:cdx-leak"
+
     override func setUp() async throws {
         continueAfterFailure = false
     }
@@ -67,6 +74,12 @@ final class AskHumanUITests: XCTestCase {
 
     /// Scrolls the form until the element sits in the visible area, clear of the bars at either end.
     private func reveal(_ id: String) {
+        // A lazy form only creates the rows near the visible area: scroll until the element exists.
+        var tries = 0
+        while !element(id).exists, tries < 8 {
+            app.swipeUp(velocity: .slow)
+            tries += 1
+        }
         let target = requireElement(id)
         let screen = app.windows.firstMatch.frame
         for _ in 0..<10 {
@@ -97,6 +110,15 @@ final class AskHumanUITests: XCTestCase {
         field.tap()
         field.typeText(text)
     }
+
+    /// Waits until the element's accessibility label equals `label`.
+    private func waitForLabel(_ id: String, _ label: String, timeout: TimeInterval = 10) -> Bool {
+        let predicate = NSPredicate(format: "label == %@", label)
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element(id))
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func localized(_ en: String, _ zh: String) -> String { language == "en" ? en : zh }
 
     private func answeredCount() -> String {
         requireElement("answered-count").label
@@ -331,5 +353,146 @@ final class AskHumanUITests: XCTestCase {
         requireElement("option-0-0").tap()
         XCTAssertFalse(send.isEnabled, "nothing can be sent while the Mac is offline")
         shot("62-answer-offline")
+    }
+
+    // MARK: agents
+
+    func testAgentsTabListsSessionsByStateAndFilters() {
+        launch(extra: ["-AHTab", "agents"])
+        for key in [workingAgent, waitingAgent, idleAgent, endedAgent, officeAgent, unsupportedAgent] {
+            _ = requireElement("agent-row-\(key)")
+        }
+        _ = requireElement("new-task")
+        shot("70-agents")
+
+        requireElement("agent-filter-followed").tap()
+        XCTAssertTrue(gone("agent-row-\(waitingAgent)"))
+        XCTAssertTrue(element("agent-row-\(workingAgent)").exists)
+        XCTAssertTrue(element("agent-row-\(officeAgent)").exists)
+        shot("71-agents-following")
+
+        requireElement("agent-filter-mac-\(officeMac)").tap()
+        XCTAssertTrue(gone("agent-row-\(workingAgent)"))
+        XCTAssertTrue(element("agent-row-\(officeAgent)").exists)
+        XCTAssertTrue(element("agent-row-\(unsupportedAgent)").exists)
+
+        requireElement("agent-filter-all").tap()
+        _ = requireElement("agent-row-\(waitingAgent)")
+    }
+
+    func testAWorkingAgentShowsALiveViewAndCanBeUnfollowed() {
+        launch(extra: ["-AHTab", "agents"])
+        requireElement("agent-row-\(workingAgent)").tap()
+        _ = requireElement("watch-card")
+        _ = requireElement("watch-live")
+        shot("72-agent-working")
+
+        XCTAssertTrue(waitForLabel("follow-button", localized("Following", "已关注")))
+        requireElement("follow-button").tap()
+        XCTAssertTrue(waitForLabel("follow-button", localized("Follow", "关注")), "the Mac took the follow back")
+        requireElement("follow-button").tap()
+        XCTAssertTrue(waitForLabel("follow-button", localized("Following", "已关注")))
+    }
+
+    func testAMessageToAWorkingAgentIsQueuedAndCanBeWithdrawn() {
+        launch(extra: ["-AHTab", "agents", "-AHOpenAgent", workingAgent, "-AHHoldInterjects", "YES"])
+        let field = requireElement("interject-field")
+        let send = requireElement("interject-send")
+        XCTAssertFalse(send.isEnabled, "nothing to send yet")
+        field.tap()
+        field.typeText("Also run the Windows build.")
+        XCTAssertTrue(send.isEnabled)
+        shot("73-interject-typed")
+        send.tap()
+        _ = requireElement("interject-pending")
+        XCTAssertTrue(send.waitForExistence(timeout: 2))
+        XCTAssertFalse(send.isEnabled, "the form is empty again")
+        shot("74-interject-pending")
+        requireElement("interject-withdraw").tap()
+        XCTAssertTrue(gone("interject-pending"))
+    }
+
+    func testEditingQueuedMessagesPutsTheirTextBack() {
+        launch(extra: ["-AHTab", "agents", "-AHOpenAgent", workingAgent, "-AHHoldInterjects", "YES"])
+        let field = requireElement("interject-field")
+        field.tap()
+        field.typeText("Check the Linux build too.")
+        requireElement("interject-send").tap()
+        requireElement("interject-edit").tap()
+        XCTAssertTrue(gone("interject-pending"))
+        XCTAssertEqual(requireElement("interject-field").value as? String, "Check the Linux build too.")
+    }
+
+    func testTheAgentPickingUpAMessageIsAnnounced() {
+        launch(extra: ["-AHTab", "agents", "-AHOpenAgent", workingAgent])
+        let field = requireElement("interject-field")
+        field.tap()
+        field.typeText("Please keep going.")
+        requireElement("interject-send").tap()
+        XCTAssertTrue(waitForLabel("interject-notice", localized("The Agent read your message.", "Agent 已读取你的消息。"), timeout: 15))
+        shot("75-interject-read")
+        XCTAssertTrue(gone("interject-pending"))
+    }
+
+    func testAnAgentThatCannotReceiveMessagesSaysWhy() {
+        launch(extra: ["-AHTab", "agents", "-AHOpenAgent", unsupportedAgent])
+        _ = requireElement("interject-unavailable")
+        XCTAssertFalse(element("interject-field").exists)
+        shot("76-agent-unsupported")
+    }
+
+    func testAnAgentWaitingForAnAnswerLinksToItsQuestion() {
+        launch(extra: ["-AHTab", "agents", "-AHOpenAgent", waitingAgent])
+        shot("77-agent-waiting")
+        requireElement("answer-waiting").tap()
+        _ = requireElement("send-button")
+    }
+
+    func testAFollowedAgentFinishingShowsABannerThatOpensIt() {
+        launch(extra: ["-AHTab", "agents", "-AHFollowEvent", "done"])
+        let banner = requireElement("banner", timeout: 15)
+        shot("78-follow-banner")
+        XCTAssertTrue(banner.label.contains(localized("Agent finished", "Agent 已完成")))
+        banner.tap()
+        _ = requireElement("watch-card")
+    }
+
+    func testCreatingATaskWalksThroughTheFormAndOpensTheNewAgent() {
+        launch(extra: ["-AHTab", "agents"])
+        requireElement("new-task").tap()
+        let start = requireElement("task-start")
+        XCTAssertFalse(start.isEnabled)
+        shot("79-task-form")
+        // The Mac asks every time: nothing is preselected, so the choice comes first.
+        tapOption("task-permission-default")
+        XCTAssertFalse(start.isEnabled, "still no text")
+        type("Add a dark mode toggle to the settings page.", into: "task-text")
+        XCTAssertTrue(start.isEnabled)
+        shot("80-task-filled")
+        start.tap()
+        _ = requireElement("task-progress")
+        shot("81-task-progress")
+        requireElement("task-open-agent", timeout: 30).tap()
+        _ = requireElement("watch-card")
+    }
+
+    func testLeavingAFilledTaskFormAsksBeforeDiscarding() {
+        launch(extra: ["-AHTab", "agents", "-AHNewTask", "YES"])
+        type("A task I may not send.", into: "task-text")
+        requireElement("task-cancel").tap()
+        let discard = app.buttons.matching(NSPredicate(format: "label == %@", localized("Discard", "放弃"))).firstMatch
+        XCTAssertTrue(discard.waitForExistence(timeout: 5))
+        shot("82-task-discard")
+        discard.tap()
+        XCTAssertTrue(gone("task-start"))
+    }
+
+    func testAMacCanBeToldToSendQuestionsToThisPhone() {
+        launch(extra: ["-AHTab", "macs"])
+        requireElement("mac-row-\(homeMac)").tap()
+        reveal("take-slot")
+        shot("83-take-slot")
+        requireElement("take-slot").tap()
+        XCTAssertTrue(gone("take-slot", timeout: 15))
     }
 }

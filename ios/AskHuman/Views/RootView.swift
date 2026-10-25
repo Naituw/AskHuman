@@ -1,5 +1,6 @@
 import SwiftUI
 import AHCore
+import AHProtocol
 
 struct RootView: View {
     @Environment(AppStore.self) private var store
@@ -22,7 +23,7 @@ struct RootView: View {
                 .tabItem { Label("Inbox", systemImage: "tray.full") }
                 .tag(AppTab.inbox)
                 .badge(store.pendingCount)
-            AgentsScreen()
+            AgentsScreen(showPairing: $showPairing)
                 .tabItem { Label("Agents", systemImage: "person.2.wave.2") }
                 .tag(AppTab.agents)
             HistoryScreen()
@@ -72,7 +73,11 @@ struct InAppBanner: View {
                     .padding(.top, 4)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .onTapGesture {
-                        if case .request(let macId, let requestId) = banner.kind { store.open(macId: macId, requestId: requestId) }
+                        switch banner.kind {
+                        case .request(let macId, let requestId): store.open(macId: macId, requestId: requestId)
+                        case .agent(let macId, let agentKey, _): store.openAgent(macId: macId, agentKey: agentKey)
+                        case .followLimit, .info, .warning: break
+                        }
                         store.dismissBanner()
                     }
                     .gesture(DragGesture(minimumDistance: 8).onEnded { value in
@@ -93,8 +98,11 @@ private struct BannerCard: View {
                 .font(.title3)
                 .foregroundStyle(tint)
             VStack(alignment: .leading, spacing: 2) {
-                Text(banner.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                if let subtitle = banner.subtitle, !subtitle.isEmpty {
+                if let label = eventLabel {
+                    Text(label).font(.caption.weight(.semibold)).foregroundStyle(tint)
+                }
+                titleText.font(.subheadline.weight(.semibold)).lineLimit(1)
+                if let subtitle, !subtitle.isEmpty {
                     Text(subtitle).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                 }
             }
@@ -110,6 +118,13 @@ private struct BannerCard: View {
     private var symbol: String {
         switch banner.kind {
         case .request: "bell.badge.fill"
+        case .agent(_, _, let event):
+            switch event {
+            case "failed": "xmark.octagon.fill"
+            case "waiting": "questionmark.bubble.fill"
+            default: "checkmark.circle.fill"
+            }
+        case .followLimit: "star.slash.fill"
         case .info: "info.circle.fill"
         case .warning: "exclamationmark.triangle.fill"
         }
@@ -118,8 +133,35 @@ private struct BannerCard: View {
     private var tint: Color {
         switch banner.kind {
         case .request: .accentColor
+        case .agent(_, _, let event):
+            switch event {
+            case "failed": .red
+            case "waiting": .orange
+            default: .green
+            }
+        case .followLimit: .orange
         case .info: .blue
         case .warning: .orange
         }
+    }
+
+    /// What happened to a followed Agent.
+    private var eventLabel: LocalizedStringKey? {
+        guard case .agent(_, _, let event) = banner.kind else { return nil }
+        switch event {
+        case "failed": return "Agent failed"
+        case "waiting": return "Agent needs you"
+        default: return "Agent finished"
+        }
+    }
+
+    private var titleText: Text {
+        if case .followLimit = banner.kind { return Text("Follow limit reached") }
+        return Text(banner.title)
+    }
+
+    private var subtitle: String? {
+        if case .followLimit = banner.kind { return String(localized: "A Mac follows up to \(Wire.maxFollow) Agents. Unfollow one first.") }
+        return banner.subtitle
     }
 }

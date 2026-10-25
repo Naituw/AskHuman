@@ -58,7 +58,7 @@ final class TaskComposerTests: XCTestCase {
     func testThePermissionFollowsTheMacsSettingAndTheAgent() {
         let composer = TaskComposer(macId: "mac")
         composer.applyDefaults(options: options(), defaults: defaults())
-        composer.yolo = true
+        composer.permissionChoice = .yolo
 
         XCTAssertTrue(composer.offersPermissionChoice(in: options(mode: "ask")))
         XCTAssertEqual(composer.permission(in: options(mode: "ask")), "yolo")
@@ -69,10 +69,41 @@ final class TaskComposerTests: XCTestCase {
         XCTAssertEqual(composer.permission(in: options(mode: "ask", selectable: false)), "default", "an Agent without a mode cannot skip prompts")
     }
 
+    func testWhenTheMacAsksTheChoiceIsNotPreselectedAndNeededToSubmit() {
+        let composer = TaskComposer(macId: "mac")
+        let asking = options(mode: "ask")
+        composer.applyDefaults(options: asking, defaults: defaults())
+        composer.text = "Fix the build"
+        XCTAssertNil(composer.permissionChoice, "nothing is preselected")
+        XCTAssertFalse(composer.canSubmit(options: asking), "the user has to choose")
+        XCTAssertNil(composer.draft(options: asking))
+
+        composer.permissionChoice = .standard
+        XCTAssertTrue(composer.canSubmit(options: asking))
+        XCTAssertEqual(composer.draft(options: asking)?.permission, "default")
+        composer.permissionChoice = .yolo
+        XCTAssertEqual(composer.draft(options: asking)?.permission, "yolo")
+
+        XCTAssertNotNil(composer.draft(options: options(mode: "agentDefault")), "a fixed setting needs no choice")
+        composer.permissionChoice = nil
+        XCTAssertTrue(composer.canSubmit(options: options(mode: "ask", selectable: false)), "an Agent without a mode needs no choice")
+    }
+
+    func testAnotherAgentAsksForTheChoiceAgain() {
+        let composer = TaskComposer(macId: "mac")
+        composer.applyDefaults(options: options(), defaults: defaults())
+        composer.permissionChoice = .yolo
+        composer.selectAgent(composer.agentKind ?? "")
+        XCTAssertEqual(composer.permissionChoice, .yolo, "the same Agent keeps it")
+        composer.selectAgent("codex")
+        XCTAssertNil(composer.permissionChoice)
+    }
+
     func testSubmittingNeedsATextOrATodoAndAnAgentThatIsReady() {
         let composer = TaskComposer(macId: "mac")
         let choices = options()
         composer.applyDefaults(options: choices, defaults: defaults())
+        composer.permissionChoice = .standard
         XCTAssertFalse(composer.canSubmit(options: choices), "nothing to do yet")
         composer.text = "  \n "
         XCTAssertFalse(composer.canSubmit(options: choices), "blank text does not count")
@@ -90,6 +121,7 @@ final class TaskComposerTests: XCTestCase {
         let composer = TaskComposer(macId: "mac")
         let choices = options()
         composer.applyDefaults(options: choices, defaults: defaults())
+        composer.permissionChoice = .standard
         composer.text = String(repeating: "a", count: TaskComposer.maxChars)
         XCTAssertFalse(composer.overLimit)
         XCTAssertTrue(composer.canSubmit(options: choices))
@@ -103,6 +135,7 @@ final class TaskComposerTests: XCTestCase {
         let composer = TaskComposer(macId: "mac")
         let choices = options()
         composer.applyDefaults(options: choices, defaults: defaults())
+        composer.permissionChoice = .standard
         composer.text = "  Fix the build \n"
         composer.todoId = "todo-9"
         let draft = try XCTUnwrap(composer.draft(options: choices))
@@ -117,13 +150,13 @@ final class TaskComposerTests: XCTestCase {
         composer.applyDefaults(options: options(), defaults: defaults())
         composer.text = "Keep"
         composer.todoId = "t"
-        composer.yolo = true
+        composer.permissionChoice = .yolo
         composer.switchMac(to: "other")
         XCTAssertEqual(composer.macId, "other")
         XCTAssertNil(composer.workspaceId)
         XCTAssertNil(composer.agentKind)
         XCTAssertNil(composer.todoId)
-        XCTAssertFalse(composer.yolo)
+        XCTAssertNil(composer.permissionChoice)
         XCTAssertEqual(composer.text, "Keep")
     }
 }

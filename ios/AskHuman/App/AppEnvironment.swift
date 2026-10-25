@@ -14,6 +14,14 @@ struct LaunchOptions {
     var latency = 1.0
     var tab: AppTab?
     var openRequest: String?
+    /// An Agent (its key, or `macId|key`) whose page opens first.
+    var openAgent: String?
+    /// Opens the new task sheet first.
+    var newTask = false
+    /// The mock Agents never pick up the messages sent to them (UI tests that withdraw one).
+    var holdInterjects = false
+    /// A followed Agent reports `done`, `failed` or `waiting` a moment after launch (the follow banner).
+    var followEvent: String?
     /// Forces "open the next request after sending" on or off (UI tests need a fixed value).
     var autoAdvance: Bool?
 
@@ -25,6 +33,10 @@ struct LaunchOptions {
         if defaults.object(forKey: "AHLatency") != nil { latency = defaults.double(forKey: "AHLatency") }
         tab = defaults.string(forKey: "AHTab").flatMap(AppTab.init(rawValue:))
         openRequest = defaults.string(forKey: "AHOpen")
+        openAgent = defaults.string(forKey: "AHOpenAgent")
+        newTask = defaults.bool(forKey: "AHNewTask")
+        holdInterjects = defaults.bool(forKey: "AHHoldInterjects")
+        followEvent = defaults.string(forKey: "AHFollowEvent")
         if defaults.object(forKey: "AHAutoAdvance") != nil { autoAdvance = defaults.bool(forKey: "AHAutoAdvance") }
     }
 }
@@ -49,6 +61,13 @@ final class AppEnvironment {
         if launch.mock {
             let backend = MockBackend(scenario: launch.scenario, latency: launch.latency)
             mock = backend
+            if launch.holdInterjects { Task { await backend.setInterjectConsumeDelay(nil) } }
+            if let kind = launch.followEvent {
+                Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    await backend.simulateFollowEvent(kind: kind)
+                }
+            }
             drafts = MemoryDraftStore()
             // Every mock run starts from the same preferences, whatever an earlier run left behind.
             let suite = UserDefaults(suiteName: "ah.mock") ?? defaults
@@ -101,6 +120,17 @@ final class AppEnvironment {
             if let item = store.state.inbox.first(where: { $0.requestId == request || $0.id == request }) {
                 store.open(macId: item.macId, requestId: item.requestId)
             }
+        }
+        if let agent = launch.openAgent {
+            for _ in 0..<50 where store.state.agents.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
+            if let item = store.state.agents.first(where: { $0.agentKey == agent || $0.id == agent }) {
+                store.openAgent(macId: item.macId, agentKey: item.agentKey)
+            }
+        }
+        if launch.newTask {
+            for _ in 0..<50 where store.taskMacs.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
+            store.tab = .agents
+            store.presentNewTask()
         }
     }
 }

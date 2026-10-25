@@ -11,13 +11,6 @@ struct ReplyAttachmentBar: View {
     let composer: AnswerComposer
     let question: Int
 
-    @State private var photoItems: [PhotosPickerItem] = []
-    @State private var showPhotos = false
-    @State private var showCamera = false
-    @State private var showFiles = false
-    @State private var problem: String?
-    @State private var working = false
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             let attachments = composer.answers.indices.contains(question) ? composer.answers[question].attachments : []
@@ -27,27 +20,56 @@ struct ReplyAttachmentBar: View {
                 }
             }
             if composer.canAttachMore {
-                Menu {
-                    Button { showPhotos = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                        Button { showCamera = true } label: { Label("Take Photo", systemImage: "camera") }
-                    }
-                    Button { showFiles = true } label: { Label("Choose File", systemImage: "doc") }
-                } label: {
-                    HStack(spacing: 6) {
-                        if working { ProgressView().controlSize(.small) } else { Image(systemName: "paperclip") }
-                        Text("Add attachment")
-                    }
-                    .font(.subheadline)
+                AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachmentCount, identifier: "add-attachment-\(question)") { name, mime, data, isImage in
+                    try composer.addAttachment(name: name, mime: mime, data: data, isImage: isImage, question: question)
                 }
-                .disabled(working)
-                .accessibilityIdentifier("add-attachment-\(question)")
             }
         }
-        .photosPicker(
-            isPresented: $showPhotos, selection: $photoItems,
-            maxSelectionCount: max(1, Wire.maxReplyAttachments - composer.attachmentCount), matching: .images
-        )
+    }
+}
+
+/// The "Add attachment" menu: photo library, camera and files. Every picked file goes through
+/// `add`, which stores it or throws why it cannot.
+struct AttachmentMenu: View {
+    /// How many more files the form accepts.
+    let remaining: Int
+    let identifier: String
+    var compact = false
+    let add: (_ name: String, _ mime: String, _ data: Data, _ isImage: Bool) throws -> Void
+
+    @State private var photoItems: [PhotosPickerItem] = []
+    @State private var showPhotos = false
+    @State private var showCamera = false
+    @State private var showFiles = false
+    @State private var problem: String?
+    @State private var working = false
+
+    var body: some View {
+        Menu {
+            Button { showPhotos = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button { showCamera = true } label: { Label("Take Photo", systemImage: "camera") }
+            }
+            Button { showFiles = true } label: { Label("Choose File", systemImage: "doc") }
+        } label: {
+            if compact {
+                Group {
+                    if working { ProgressView().controlSize(.small) } else { Image(systemName: "paperclip") }
+                }
+                .font(.title3)
+                .frame(width: 32, height: 32)
+            } else {
+                HStack(spacing: 6) {
+                    if working { ProgressView().controlSize(.small) } else { Image(systemName: "paperclip") }
+                    Text("Add attachment")
+                }
+                .font(.subheadline)
+            }
+        }
+        .disabled(working)
+        .accessibilityLabel("Add attachment")
+        .accessibilityIdentifier(identifier)
+        .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: max(1, remaining), matching: .images)
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
             photoItems = []
@@ -89,7 +111,7 @@ struct ReplyAttachmentBar: View {
             problem = String(localized: "That image could not be processed.")
             return
         }
-        add(name: name, mime: "image/jpeg", data: output.data, isImage: true)
+        store(name: name, mime: "image/jpeg", data: output.data, isImage: true)
     }
 
     private func addFiles(_ urls: [URL]) async {
@@ -111,21 +133,21 @@ struct ReplyAttachmentBar: View {
             if type?.conforms(to: .image) == true {
                 addImage(data, name: url.deletingPathExtension().lastPathComponent + ".jpg")
             } else {
-                add(name: url.lastPathComponent, mime: type?.preferredMIMEType ?? "application/octet-stream", data: data, isImage: false)
+                store(name: url.lastPathComponent, mime: type?.preferredMIMEType ?? "application/octet-stream", data: data, isImage: false)
             }
         }
     }
 
-    private func add(name: String, mime: String, data: Data, isImage: Bool) {
+    private func store(name: String, mime: String, data: Data, isImage: Bool) {
         do {
-            try composer.addAttachment(name: name, mime: mime, data: data, isImage: isImage, question: question)
+            try add(name, mime, data, isImage)
         } catch {
             problem = error.userMessage
         }
     }
 }
 
-private struct ReplyAttachmentRow: View {
+struct ReplyAttachmentRow: View {
     let attachment: DraftAttachment
     let url: URL
     let onRemove: () -> Void

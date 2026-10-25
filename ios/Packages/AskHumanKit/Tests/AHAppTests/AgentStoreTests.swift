@@ -203,6 +203,9 @@ final class AgentStoreTests: XCTestCase {
         store.presentNewTask(macId: MockData.homeMacId)
         await eventually { self.store.taskComposer?.workspaceId != nil }
         store.taskComposer?.text = "Add a dark mode toggle"
+        let early = try await store.createTask()
+        XCTAssertNil(early, "the Mac asks and the user has not chosen how the Agent may act")
+        store.taskComposer?.permissionChoice = .standard
         let id = try await store.createTask()
         let taskId = try XCTUnwrap(id)
         await eventually("watching") { self.store.task(id: taskId)?.stage == "watching" }
@@ -223,6 +226,7 @@ final class AgentStoreTests: XCTestCase {
         store.presentNewTask(macId: MockData.homeMacId)
         await eventually { self.store.taskComposer?.workspaceId != nil }
         store.taskComposer?.text = "Do it"
+        store.taskComposer?.permissionChoice = .standard
         let created = try await store.createTask()
         let taskId = try XCTUnwrap(created)
         await eventually("failed") { self.store.task(id: taskId)?.stage == "failed" }
