@@ -31,6 +31,8 @@ final class TestMac: @unchecked Sendable {
 
     /// Behaviors tests can switch.
     var autoHello = true
+    /// A slow Mac: it answers `hello` with the ack only; `sendSnapshots(to:)` sends the rest.
+    var holdSnapshots = false
     var answerStatus = "accepted"
     var ignoreAnswers = false
     var dropNextRequestGet = false
@@ -350,6 +352,12 @@ final class TestMac: @unchecked Sendable {
             HelloAck(nonce: nonce, epoch: epoch, macName: macName, caps: caps, slot: SlotInfo(active: slotActive, autoActivation: false)),
             to: phoneId
         )
+        if holdSnapshots { return }
+        await sendSnapshots(to: phoneId)
+    }
+
+    /// What follows the ack of a handshake (the phone is `synced` once the inbox snapshot is in).
+    func sendSnapshots(to phoneId: String) async {
         await sendInboxSnapshot(to: phoneId)
         await sendAgentsSnapshot(to: phoneId)
         await sendFollowState(to: phoneId)

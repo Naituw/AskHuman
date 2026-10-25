@@ -163,6 +163,11 @@ public actor PhoneEngine: RemoteBackend {
             startConnecting()
         } else {
             await goodbye()
+            // The goodbye suspends this actor while the offline presence goes out. When the app came back
+            // in the meantime (a system alert, the notification center …), its `startConnecting` found the
+            // old link still up and did nothing, and the goodbye then dropped that link: the app would
+            // sit there disconnected, in the foreground, until the next change of scene phase.
+            if foreground { startConnecting() }
         }
         publish()
     }
@@ -643,6 +648,9 @@ enum SyncPhase: Equatable {
     case helloSent(nonce: String, attempt: Int)
     case acked
     case synced
+
+    /// The Mac answered `hello`: from there on it takes what the phone sends, snapshots or not.
+    var isHandshaken: Bool { self == .acked || self == .synced }
 }
 
 struct MacRuntime {

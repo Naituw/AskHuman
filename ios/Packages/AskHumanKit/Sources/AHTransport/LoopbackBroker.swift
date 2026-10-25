@@ -87,7 +87,22 @@ public final class LoopbackClient: BrokerClient, @unchecked Sendable {
     private var via: BrokerEndpoint.Kind = .tls
     /// Endpoint kinds the test broker refuses (to exercise the TLS → WSS fallback).
     public var refusedKinds: Set<BrokerEndpoint.Kind> = []
+    private var publishesFail = false
+    private var publishHook: (@Sendable (String) async -> Void)?
     private var attemptLog: [BrokerEndpoint.Kind] = []
+
+    /// A link that takes nothing: publishes return `false` while the client still looks connected, as
+    /// in the moments before a dropped connection is noticed.
+    public var failsPublishes: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return publishesFail }
+        set { lock.lock(); publishesFail = newValue; lock.unlock() }
+    }
+
+    /// Awaited with the topic before every publish: a test can hold a message on its way with it.
+    public var beforePublish: (@Sendable (String) async -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return publishHook }
+        set { lock.lock(); publishHook = newValue; lock.unlock() }
+    }
 
     /// Endpoint kind of every connection attempt, in order (tests inspect them).
     public var attempts: [BrokerEndpoint.Kind] {
@@ -190,8 +205,9 @@ public final class LoopbackClient: BrokerClient, @unchecked Sendable {
     }
 
     public func publish(topic: String, payload: Data, retain: Bool) async -> Bool {
+        if let hook = beforePublish { await hook(topic) }
         let (owner, live) = session()
-        guard live else { return false }
+        guard live, !failsPublishes else { return false }
         return broker.publish(from: self, user: owner, topic: topic, payload: payload, retain: retain)
     }
 

@@ -22,6 +22,57 @@ final class PushTests: XCTestCase {
         XCTAssertEqual(status, .registered(expiresAt: Date(timeIntervalSince1970: 1_900_000_000)))
     }
 
+    /// Found on a simulator: the permission alert makes the app inactive (the engine says goodbye) and
+    /// active again at once; the token arrives in between, the handle was "sent" into a link that was
+    /// going down, and the phone never tried again, so the Mac held no handle and no push ever came.
+    func testAHandleThatCouldNotBeSentGoesOutWithTheNextHandshake() async throws {
+        let h = Harness()
+        await h.pair(relayUrl: "https://relay.test")
+        h.phone.failsPublishes = true
+        await h.engine.updatePushToken(token)
+        XCTAssertEqual(h.relay.calls, 1)
+        XCTAssertEqual(h.mac.count(Wire.T.pushRegister), 0, "nothing could be sent yet")
+
+        h.phone.failsPublishes = false
+        await h.engine.setForeground(false)
+        await h.engine.setForeground(true)
+        await eventually("push.register with the next handshake") { h.mac.count(Wire.T.pushRegister) == 1 }
+        XCTAssertEqual(h.relay.calls, 1, "the handle is still the one the relay gave")
+    }
+
+    /// The token (and the relay's answer) can land between the Mac's ack and its first snapshot.
+    func testAHandleThatIsReadyBetweenTheAckAndTheFirstSnapshotIsSentAtOnce() async throws {
+        let h = Harness()
+        await h.pair(relayUrl: "https://relay.test")
+        await h.engine.setForeground(false)
+        h.mac.holdSnapshots = true
+        await h.engine.setForeground(true)
+        let id = h.mac.macId
+        await eventually("the handshake without snapshots") { await h.engine.macs[id]?.sync == .acked }
+
+        await h.engine.updatePushToken(token)
+        await eventually("push.register before any snapshot") { h.mac.count(Wire.T.pushRegister) == 1 }
+        h.mac.holdSnapshots = false
+        await h.mac.sendSnapshots(to: h.mac.pairedPhones[0])
+        await eventually("the session to finish") { await h.state().macs.first?.link == .online }
+        XCTAssertEqual(h.mac.count(Wire.T.pushRegister), 1)
+    }
+
+    /// The Mac never says that it lost a handle, so every session starts by giving it the current one.
+    func testEveryHandshakeGivesTheMacTheHandleAgain() async throws {
+        let h = Harness()
+        await h.pair(relayUrl: "https://relay.test")
+        await h.engine.updatePushToken(token)
+        await eventually("first push.register") { h.mac.count(Wire.T.pushRegister) == 1 }
+
+        await h.engine.setForeground(false)
+        await h.engine.setForeground(true)
+        await eventually("push.register of the second session") { h.mac.count(Wire.T.pushRegister) == 2 }
+        XCTAssertEqual(h.relay.calls, 1, "the relay is not asked again")
+        let handles = try h.mac.received(Wire.T.pushRegister).map { try $0.body(as: PushRegister.self).handle }
+        XCTAssertEqual(handles, ["v1.handle-1", "v1.handle-1"])
+    }
+
     func testTheSameTokenIsNotRegisteredTwice() async throws {
         let h = Harness()
         await h.pair(relayUrl: "https://relay.test")

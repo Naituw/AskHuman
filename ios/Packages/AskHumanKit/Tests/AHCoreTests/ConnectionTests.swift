@@ -42,6 +42,31 @@ final class ConnectionTests: XCTestCase {
         await eventually("fg again") { h.presence(of: h.phoneId)?.fg == 1 }
     }
 
+    /// Found on a simulator: the permission alert makes the app inactive and active again within
+    /// milliseconds. The return found the old link still up (the goodbye was on its way), did nothing, and
+    /// the goodbye then dropped the link: the app stayed disconnected in the foreground.
+    func testComingBackWhileTheGoodbyeIsOnItsWayStillReconnects() async throws {
+        let h = Harness()
+        await h.pair()
+        await eventually("fg") { h.presence(of: h.phoneId)?.fg == 1 }
+
+        // Hold the goodbye (the offline presence) on its way.
+        let gate = Gate()
+        let presenceTopic = Wire.topicPresence(user: "u1", deviceId: h.phoneId)
+        h.phone.beforePublish = { topic in if topic == presenceTopic { await gate.hold() } }
+        let leaving = Task { await h.engine.setForeground(false) }
+        await eventually("the goodbye to be on its way") { await gate.isHolding }
+
+        await h.engine.setForeground(true)
+        h.phone.beforePublish = nil
+        await gate.release()
+        await leaving.value
+
+        await eventually("connected again") { h.phone.isConnected }
+        await eventually("online again") { await h.state().macs.first?.link == .online }
+        await eventually("fg again") { h.presence(of: h.phoneId)?.fg == 1 }
+    }
+
     func testALostConnectionIsRetriedWithBackoffAndResynced() async throws {
         let h = Harness()
         await h.pair()
@@ -122,5 +147,22 @@ final class ConnectionTests: XCTestCase {
         XCTAssertLessThan(h.mac.count(Wire.T.ping), 25, "the rest waits for tokens")
         await h.advance(until: { h.mac.count(Wire.T.ping) == 25 }, step: 0.5, limit: 20, "all pings")
         await sender.value
+    }
+}
+
+/// Holds a caller until the test lets it go.
+private actor Gate {
+    private(set) var isHolding = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func hold() async {
+        isHolding = true
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    func release() {
+        isHolding = false
+        waiter?.resume()
+        waiter = nil
     }
 }

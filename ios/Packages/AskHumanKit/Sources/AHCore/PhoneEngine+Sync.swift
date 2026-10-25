@@ -66,6 +66,9 @@ extension PhoneEngine {
         meta.lastEpoch = ack.epoch
         meta.lastSeenAt = clock.now()
         store.saveMeta(meta, macId: macId)
+        // Every session starts with the Mac getting the handle again: a message sent while the link was
+        // going down, or dropped on the way, is otherwise lost for good, and nothing tells the phone.
+        pushSent[macId] = nil
         await sendPushHandle(to: macId)
     }
 

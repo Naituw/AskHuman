@@ -16,7 +16,10 @@ extension PhoneEngine {
             pushStatus = .noToken
         } else {
             await registerPushIfNeeded()
-            for id in macs.keys.sorted() where macs[id]?.sync == .synced { await sendPushHandle(to: id) }
+            // Registering takes a network round trip: the session may have moved on (or ended) meanwhile.
+            // A Mac that answered `hello` takes the handle even before its snapshots arrive, and one that
+            // did not yet gets it with its next handshake (`onHelloAck`).
+            for id in macs.keys.sorted() where macs[id]?.sync.isHandshaken == true { await sendPushHandle(to: id) }
         }
         publish()
     }
@@ -55,11 +58,14 @@ extension PhoneEngine {
         }
     }
 
-    /// Gives a Mac the current handle (once per handle and session).
+    /// Gives a Mac the current handle (once per handle and session). Only a message that went out counts
+    /// as sent: the link can be going down while this runs, and a handle the Mac never got means no push
+    /// ever reaches this phone (the Mac does not ask for it).
     func sendPushHandle(to macId: String) async {
         guard let registration = vault.push, pushSent[macId] != registration.handle else { return }
         pushSent[macId] = registration.handle
-        await send(PushRegister(handle: registration.handle, env: registration.env, expiresAt: registration.expiresAt), to: macId)
+        let sent = await send(PushRegister(handle: registration.handle, env: registration.env, expiresAt: registration.expiresAt), to: macId)
+        if !sent, pushSent[macId] == registration.handle { pushSent[macId] = nil }
     }
 
     func onPushState(_ macId: String, _ state: PushState) {
