@@ -13,6 +13,8 @@ public actor MockBackend: RemoteBackend {
         case empty
         /// Paired Macs that are not reachable.
         case offline
+        /// The demo, with this month's traffic close to the broker's free quota.
+        case quota
     }
 
     /// A submission as the mock received it (for tests).
@@ -81,11 +83,14 @@ public actor MockBackend: RemoteBackend {
         let date = now()
         var initial: EngineState
         switch scenario {
-        case .demo:
+        case .demo, .quota:
+            let traffic = scenario == .quota
+                ? TrafficStats(month: "2026-10", sentBytes: 230_000_000, receivedBytes: 240_000_000, sentMessages: 41_000, receivedMessages: 77_000)
+                : TrafficStats(month: "2026-10", sentBytes: 18_432, receivedBytes: 96_210, sentMessages: 41, receivedMessages: 77)
             initial = EngineState(
                 phase: .connected(via: "tcp"), foreground: true, macs: MockData.macs(now: date), inbox: MockData.inbox(now: date),
                 push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1,
-                traffic: TrafficStats(month: "2026-10", sentBytes: 18_432, receivedBytes: 96_210, sentMessages: 41, receivedMessages: 77),
+                traffic: traffic,
                 brokerHost: "broker.example.com", agents: MockData.agents(now: date)
             )
             entries = MockData.history(now: date)

@@ -144,6 +144,8 @@ private struct ConnectionNotices: View {
                         Image(systemName: notice.symbol).foregroundStyle(notice.color)
                     }
                     .listRowBackground(notice.color.opacity(0.1))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("notice-" + notice.id)
                 }
             }
         }
@@ -160,12 +162,21 @@ private struct ConnectionNotices: View {
         var result: [Notice] = []
         switch store.state.phase {
         case .refused:
-            result.append(Notice(id: "refused", text: "The broker refused the connection. Check its settings on your Mac and pair again.", symbol: "exclamationmark.octagon.fill", color: .red))
+            result.append(Notice(id: "refused", text: "The broker refused the connection. Its settings may have changed, or this month's free data allowance may be used up. Check on your Mac, then pair again.", symbol: "exclamationmark.octagon.fill", color: .red))
         case .backoff, .connecting:
             if store.hasPairedMacs, store.state.foreground {
                 result.append(Notice(id: "broker", text: "Connecting to the broker… Pull down to retry.", symbol: "wifi.exclamationmark", color: .orange))
             }
         default: break
+        }
+        if store.hasPairedMacs, let traffic = store.state.traffic {
+            switch traffic.level {
+            case .ok: break
+            case .warning:
+                result.append(Notice(id: "traffic", text: "This month's data use is close to the broker's free allowance. The service pauses when it runs out.", symbol: "gauge.with.dots.needle.67percent", color: .orange))
+            case .exhausted:
+                result.append(Notice(id: "traffic", text: "This month's free data allowance may be used up, so the broker may refuse connections.", symbol: "gauge.with.dots.needle.100percent", color: .red))
+            }
         }
         if store.state.clockSkew {
             result.append(Notice(id: "clock", text: "This phone's clock differs too much from a Mac's, so some messages are ignored. Check Date & Time in Settings.", symbol: "clock.badge.exclamationmark.fill", color: .orange))

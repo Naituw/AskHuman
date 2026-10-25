@@ -561,6 +561,16 @@
         }
       }
     },
+    "By this phone's count the free allowance may be used up, so the broker may refuse connections. Check the usage in the EMQX console." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按这部手机的统计，免费额度可能已用完，Broker 可能会拒绝连接。请到 EMQX 控制台确认用量。"
+          }
+        }
+      }
+    },
     "Cancel" : {
       "localizations" : {
         "zh-Hans" : {
@@ -707,6 +717,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "关闭"
+          }
+        }
+      }
+    },
+    "Close to the broker's free allowance of 1 GB a month. The service pauses when it runs out; nothing is charged." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快用完 Broker 每月 1 GB 的免费额度了。用完后服务会暂停，不会产生扣费。"
           }
         }
       }
@@ -1011,12 +1031,12 @@
         }
       }
     },
-    "Estimated from what this phone sent and received through the broker." : {
+    "Estimated from what this phone sent and received through the broker. The broker's free allowance is 1 GB a month." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "根据这部手机通过 Broker 收发的数据估算。"
+            "value" : "根据这部手机通过 Broker 收发的数据估算。Broker 每月的免费额度是 1 GB。"
           }
         }
       }
@@ -1637,6 +1657,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "好"
+          }
+        }
+      }
+    },
+    "Of the free allowance" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "占免费额度"
           }
         }
       }
@@ -2803,12 +2833,12 @@
         }
       }
     },
-    "The broker refused the connection. Check its settings on your Mac and pair again." : {
+    "The broker refused the connection. Its settings may have changed, or this month's free data allowance may be used up. Check on your Mac, then pair again." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Broker 拒绝了连接。请在 Mac 上检查它的设置，然后重新配对。"
+            "value" : "Broker 拒绝了连接。可能是它的设置变了，也可能是本月的免费流量额度已用完。请在 Mac 上检查，然后重新配对。"
           }
         }
       }
@@ -3059,6 +3089,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "本月"
+          }
+        }
+      }
+    },
+    "This month's data use is close to the broker's free allowance. The service pauses when it runs out." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本月流量快用完 Broker 的免费额度了。用完后服务会暂停。"
+          }
+        }
+      }
+    },
+    "This month's free data allowance may be used up, so the broker may refuse connections." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本月的免费流量额度可能已用完，Broker 可能会拒绝连接。"
           }
         }
       }

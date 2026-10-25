@@ -210,6 +210,15 @@ final class AppStoreTests: XCTestCase {
         XCTAssertNil(store.confirmComposer(for: try item("req-migration")))
     }
 
+    // MARK: data allowance
+
+    func testTheDemoIsFarFromTheFreeAllowanceAndTheQuotaScenarioIsNearIt() async {
+        await make()
+        XCTAssertEqual(store.state.traffic?.level, .ok)
+        await make(.quota)
+        XCTAssertEqual(store.state.traffic?.level, .warning)
+    }
+
     // MARK: lifecycle of open requests
 
     func testAnOpenRequestThatFinishesElsewhereIsRemembered() async throws {

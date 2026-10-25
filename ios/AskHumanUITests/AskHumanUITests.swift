@@ -355,6 +355,14 @@ final class AskHumanUITests: XCTestCase {
         shot("62-answer-offline")
     }
 
+    func testTheInboxWarnsBeforeTheFreeDataAllowanceRunsOut() {
+        launch("quota")
+        _ = requireElement("inbox-row-req-select")
+        let notice = requireElement("notice-traffic")
+        XCTAssertTrue(notice.label.contains(localized("close to the broker's free allowance", "快用完")), notice.label)
+        shot("63-inbox-quota")
+    }
+
     // MARK: agents
 
     func testAgentsTabListsSessionsByStateAndFilters() {

@@ -1,6 +1,7 @@
 import SwiftUI
 import AHCore
 import AHProtocol
+import AHStore
 
 /// The Macs tab: paired Macs, adding one, and the app's settings.
 struct MacsScreen: View {
@@ -54,10 +55,18 @@ struct MacsScreen: View {
                         LabeledContent("Sent", value: Int(traffic.sentBytes).formatted(.file))
                         LabeledContent("Received", value: Int(traffic.receivedBytes).formatted(.file))
                         LabeledContent("Messages", value: "\(traffic.sentMessages + traffic.receivedMessages)")
+                        LabeledContent("Of the free allowance", value: Self.share(of: traffic))
                     } header: {
                         Text("This month")
                     } footer: {
-                        Text("Estimated from what this phone sent and received through the broker.")
+                        switch traffic.level {
+                        case .ok:
+                            Text("Estimated from what this phone sent and received through the broker. The broker's free allowance is 1 GB a month.")
+                        case .warning:
+                            Text("Close to the broker's free allowance of 1 GB a month. The service pauses when it runs out; nothing is charged.")
+                        case .exhausted:
+                            Text("By this phone's count the free allowance may be used up, so the broker may refuse connections. Check the usage in the EMQX console.")
+                        }
                     }
                 }
 
@@ -89,6 +98,12 @@ struct MacsScreen: View {
     private func saveDeviceName() {
         DeviceName.current = deviceName
         Task { await store.setDeviceName(DeviceName.current) }
+    }
+
+    /// "<1%", "37%": what the traffic is likely to have used of the broker's free allowance.
+    private static func share(of traffic: TrafficStats) -> String {
+        let share = traffic.quotaShare
+        return share < 0.01 ? "<1%" : share.formatted(.percent.precision(.fractionLength(0)))
     }
 
     private static var version: String {
