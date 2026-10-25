@@ -127,36 +127,127 @@ final class AskHumanLiveUITests: XCTestCase {
             _ = rendezvous("ask-multi-answered")
         }
 
+        try step("allow and refuse the permission prompts of an Agent") {
+            // First one is allowed, the second refused with a reason; both come with the Mac's own choices.
+            _ = rendezvous("permission-allow")
+            requireRow("inbox-row-", timeout: 90).tap()
+            let choices = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'choice-'"))
+            XCTAssertTrue(choices.firstMatch.waitForExistence(timeout: 40), "the prompt offered no choices")
+            XCTAssertGreaterThanOrEqual(choices.count, 2, "a permission prompt offers at least allow and refuse")
+            let submit = requireElement("submit-button")
+            XCTAssertFalse(submit.isEnabled, "nothing is chosen yet")
+            shot("permission-prompt")
+            choices.firstMatch.tap()
+            XCTAssertTrue(submit.isEnabled, "the choice did not enable the button")
+            submit.tap()
+            XCTAssertTrue(rowGone("inbox-row-", timeout: 90), "the prompt stayed in the inbox")
+            _ = rendezvous("permission-allow-done")
+
+            _ = rendezvous("permission-deny")
+            requireRow("inbox-row-", timeout: 90).tap()
+            XCTAssertTrue(choices.firstMatch.waitForExistence(timeout: 40), "the second prompt offered no choices")
+            choices.allElementsBoundByIndex.last?.tap()
+            let reason = requireElement("confirm-input")
+            reason.tap()
+            reason.typeText("Run the tests first.")
+            shot("permission-refuse")
+            requireElement("submit-button").tap()
+            XCTAssertTrue(rowGone("inbox-row-", timeout: 90), "the prompt stayed in the inbox")
+            _ = rendezvous("permission-deny-done")
+        }
+
+        try step("watch, follow and message an Agent") {
+            // The host reports a working session the way an Agent's own hooks do.
+            _ = rendezvous("agent-start")
+            app.tabBars.buttons["Agents"].tap()
+            let row = requireElement("agent-row-claude:live-agent", timeout: 60)
+            shot("agents-list")
+            row.tap()
+            _ = requireElement("watch-card")
+            // The live badge shows once the first frame came in from the Mac.
+            _ = requireElement("watch-live", timeout: 60)
+            shot("agent-watch")
+
+            XCTAssertTrue(waitForLabel("follow-button", "Follow"), "the Agent was followed before the phone asked")
+            requireElement("follow-button").tap()
+            XCTAssertTrue(waitForLabel("follow-button", "Following", timeout: 60), "the Mac did not confirm the follow")
+            shot("agent-followed")
+
+            // A message to the working Agent is queued until its next step.
+            let field = requireElement("interject-field")
+            field.tap()
+            field.typeText("Also run the lint.")
+            requireElement("interject-send").tap()
+            _ = requireElement("interject-pending", timeout: 60)
+            shot("interject-queued")
+            // The host makes the Agent take that step; the read receipt is on screen for a few seconds only.
+            announce("agent-message")
+            XCTAssertTrue(waitForNotice("The Agent read your message.", timeout: 90), "no read receipt for the message")
+            shot("interject-read")
+            XCTAssertTrue(rowGone("interject-pending", timeout: 30), "the message stayed queued")
+
+            // The step is the Agent's current tool in the list.
+            app.navigationBars.buttons.firstMatch.tap()
+            let tool = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'cargo test'")).firstMatch
+            XCTAssertTrue(tool.waitForExistence(timeout: 60), "the list never showed the Agent's tool call")
+            shot("agents-list-working")
+
+            // The turn ends while the list is open: a followed Agent finishing is announced in the app.
+            _ = rendezvous("agent-finish")
+            let banner = requireElement("banner", timeout: 60)
+            shot("follow-banner")
+            XCTAssertTrue(banner.label.contains("Agent finished"), "banner: \(banner.label)")
+            banner.tap()
+            _ = requireElement("watch-card")
+            _ = rendezvous("agent-finished")
+        }
+
+        try step("see what a Mac that has Agent tasks switched off says") {
+            // The page of the Agent covers the tab bar: go back to the list first.
+            app.navigationBars.buttons.firstMatch.tap()
+            requireElement("new-task").tap()
+            let why = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Agent tasks are turned off'")).firstMatch
+            XCTAssertTrue(why.waitForExistence(timeout: 60), "the form did not say that tasks are switched off")
+            shot("task-switched-off")
+            requireElement("task-cancel").tap()
+            XCTAssertTrue(rowGone("task-cancel", timeout: 20), "the form stayed open")
+        }
+
         try step("get a push while the app is away") {
             // The host times how long the Mac takes to notice that the phone left.
-            announce("leaving")
-            XCUIDevice.shared.press(.home)
-            XCTAssertTrue(
-                app.wait(for: .runningBackground, timeout: 30) || app.state == .runningBackgroundSuspended,
-                "the app did not leave the foreground"
-            )
-            // The host waits until the Mac knows the phone is away, then asks.
-            let asked = Double(rendezvous("away")) ?? 0
+            let asked = leaveForTheHomeScreen(announcing: "leaving", rendezvousAt: "away")
             // The banner stays for a few seconds only: whatever it says, it goes to the host, which knows
             // what it should say (the decrypted question, not the generic text).
-            let banner = springboard.descendants(matching: .any).matching(identifier: "NotificationShortLookView").firstMatch
-            guard banner.waitForExistence(timeout: 90) else {
-                shot("push-missing")
+            guard let push = openPushBanner(askedAt: asked) else {
                 _ = rendezvous("pushed", "seen=-1 text=(no banner)")
                 return XCTFail("no notification banner arrived")
             }
-            let seenAt = nowMs()
-            let text = banner.label
-            shot("push-banner")
-            // Tap it before talking to the host: it goes away after a few seconds.
-            banner.tap()
-            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 40), "the tap did not open the app")
-            _ = rendezvous("pushed", "seen=\(seenAt - asked) text=\(text)")
+            _ = rendezvous("pushed", "seen=\(push.seen) text=\(push.text)")
             requireElement("option-0-0").tap()
             shot("push-opened-request")
             requireElement("send-button").tap()
             XCTAssertTrue(rowGone("inbox-row-", timeout: 90), "the request stayed in the inbox")
             _ = rendezvous("pushed-answered")
+        }
+
+        try step("get a push when a followed Agent finishes while the app is away") {
+            let asked = leaveForTheHomeScreen(announcing: "leaving-again", rendezvousAt: "away-again")
+            guard let push = openPushBanner(askedAt: asked) else {
+                _ = rendezvous("follow-pushed", "seen=-1 text=(no banner)")
+                return XCTFail("no notification banner arrived for the followed Agent")
+            }
+            _ = rendezvous("follow-pushed", "seen=\(push.seen) text=\(push.text)")
+            // The tap on a follow notification opens the page of the Agent.
+            _ = requireElement("watch-card", timeout: 60)
+            shot("follow-push-opened")
+        }
+
+        try step("the answered requests are in the history") {
+            // The page of the Agent covers the tab bar: go back to the list first.
+            app.navigationBars.buttons.firstMatch.tap()
+            app.tabBars.buttons["History"].tap()
+            _ = requireRow("history-row-", timeout: 40)
+            shot("history")
         }
 
         try step("unpair from the phone") {
@@ -238,6 +329,52 @@ final class AskHumanLiveUITests: XCTestCase {
     private func tapElement(_ id: String) {
         reveal(id)
         requireElement(id).tap()
+    }
+
+    /// Waits until the element's accessibility label equals `label`.
+    private func waitForLabel(_ id: String, _ label: String, timeout: TimeInterval = 30) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label), object: element(id))
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    /// Waits for the short-lived notice of an Agent page (it is on screen for three seconds only, so
+    /// this looks often instead of waiting on an expectation).
+    private func waitForNotice(_ text: String, timeout: TimeInterval) -> Bool {
+        let notice = element("interject-notice")
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if notice.exists, notice.label == text { return true }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        return false
+    }
+
+    /// Presses Home and waits for the host's go-ahead (it first waits until the Mac knows that the phone
+    /// is away, then does what should reach the phone as a push). Returns when the host acted, in ms.
+    private func leaveForTheHomeScreen(announcing leaving: String, rendezvousAt away: String) -> Double {
+        announce(leaving)
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(
+            app.wait(for: .runningBackground, timeout: 30) || app.state == .runningBackgroundSuspended,
+            "the app did not leave the foreground"
+        )
+        return Double(rendezvous(away)) ?? 0
+    }
+
+    /// Waits for a notification banner, notes how long it took and what it says, and taps it: the banner
+    /// goes away after a few seconds, so nothing else comes first. Opens the app.
+    private func openPushBanner(askedAt: Double) -> (seen: Double, text: String)? {
+        let banner = springboard.descendants(matching: .any).matching(identifier: "NotificationShortLookView").firstMatch
+        guard banner.waitForExistence(timeout: 90) else {
+            shot("push-missing")
+            return nil
+        }
+        let seen = nowMs() - askedAt
+        let text = banner.label
+        shot("push-banner")
+        banner.tap()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 40), "the tap did not open the app")
+        return (seen, text)
     }
 
     /// Scrolls until the element exists and sits clear of the bars at either end.

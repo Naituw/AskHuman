@@ -115,6 +115,49 @@ final class SimulatorLiveTests: E2ECase {
             for expected in ["Yes", "because", "Blue"] { XCTAssertTrue(multi.stdout.contains(expected), "missing \(expected): \(multi.stdout)") }
             try live.release("ask-multi-answered")
 
+            // The permission hook that Agents call asks on the phone: one prompt is allowed, one refused with a reason.
+            _ = try await live.arrive("permission-allow")
+            let allowed = try mac.ask(["__permission-hook", "claude"], stdin: Self.permissionPayload)
+            try live.release("permission-allow")
+            _ = try await live.arrive("permission-allow-done", timeout: 300)
+            let allowedStatus = await allowed.wait(timeout: 30)
+            XCTAssertEqual(allowedStatus, 0, allowed.stderr)
+            XCTAssertTrue(allowed.stdout.contains("\"allow\""), "hook output: \(allowed.stdout)")
+            try live.release("permission-allow-done")
+            _ = try await live.arrive("permission-deny")
+            let refused = try mac.ask(["__permission-hook", "claude"], stdin: Self.permissionPayload)
+            try live.release("permission-deny")
+            _ = try await live.arrive("permission-deny-done", timeout: 300)
+            let refusedStatus = await refused.wait(timeout: 30)
+            XCTAssertEqual(refusedStatus, 0, refused.stderr)
+            XCTAssertTrue(refused.stdout.contains("deny"), "hook output: \(refused.stdout)")
+            XCTAssertTrue(refused.stdout.contains("Run the tests first."), "the reason did not reach the Agent: \(refused.stdout)")
+            try live.release("permission-deny-done")
+
+            // An Agent session on the Mac, as the Agent's own hooks report it: the phone lists it, watches it
+            // live, follows it and queues a message that the Agent's next step has to carry.
+            _ = try await live.arrive("agent-start")
+            try await hook("session-start")
+            try await hook("turn-start")
+            try live.release("agent-start")
+            _ = try await live.arrive("agent-message", timeout: 300)
+            // The phone shows the message as queued once the Mac took it, but allow for a slow link anyway:
+            // every step asks the Mac for what is waiting, and only the first one gets the message.
+            var carried = ""
+            for _ in 0..<40 {
+                carried = try await hook("activity", extra: toolCall("cargo test")).stdout
+                if carried.contains(Self.message) { break }
+                try await Task.sleep(nanoseconds: 500_000_000)
+            }
+            XCTAssertTrue(carried.contains(Self.message), "the Agent's step did not carry the message: \(carried)")
+            try live.release("agent-message")
+            // The turn ends while the phone shows the list of Agents: a followed Agent finishing is announced.
+            _ = try await live.arrive("agent-finish", timeout: 300)
+            try await hook("turn-end")
+            try live.release("agent-finish")
+            _ = try await live.arrive("agent-finished", timeout: 300)
+            try live.release("agent-finished")
+
             // The app is away: the question reaches the phone as a push (real relay, real APNs sandbox).
             // First, how long the Mac takes to notice that the phone left (Home pressed → "foreground: false").
             _ = try await live.arrive("leaving", timeout: 300)
@@ -136,6 +179,21 @@ final class SimulatorLiveTests: E2ECase {
             XCTAssertTrue(pushed.stdout.contains("Yes"), "answer: \(pushed.stdout)")
             try live.release("pushed-answered")
 
+            // A followed Agent that finishes a turn while the phone is away comes as a push, too: a different
+            // kind of notification (it opens the Agent, not a request).
+            _ = try await live.arrive("leaving-again", timeout: 300)
+            let leftAgain = await poll(timeout: 30) { (await self.devices().first?["foreground"] as? Bool) == false }
+            XCTAssertTrue(leftAgain, "the Mac never saw the phone leave the foreground the second time")
+            _ = try await live.arrive("away-again", timeout: 240)
+            let finishedAt = Date()
+            try await hook("turn-start")
+            try await hook("turn-end")
+            try live.release("away-again", String(Int(finishedAt.timeIntervalSince1970 * 1000)))
+            let followBanner = try await live.arrive("follow-pushed", timeout: 300)
+            numbers["followPushBanner"] = followBanner
+            XCTAssertTrue(followBanner.contains("Finished"), "the notification extension did not show what happened to the Agent: \(followBanner)")
+            try live.release("follow-pushed")
+
             // Unpairing on the phone reaches the Mac.
             _ = try await live.arrive("unpaired", timeout: 300)
             let forgotten = await poll(timeout: 30) { await self.devices().isEmpty }
@@ -155,6 +213,32 @@ final class SimulatorLiveTests: E2ECase {
     }
 
     // MARK: Mac side helpers
+
+    /// What the UI test types to the Agent (see `AskHumanLiveUITests`).
+    private static let message = "Also run the lint."
+
+    /// What Claude Code's permission hook is given.
+    private static let permissionPayload = """
+    {"hook_event_name":"PermissionRequest","session_id":"live-permission","cwd":"/tmp/live-project","permission_mode":"default","tool_name":"Bash","tool_input":{"command":"rm -rf build","description":"Remove the build folder"}}
+    """
+
+    /// Reports an event of an Agent session to the Mac the way the Agent's own hooks do (the hidden
+    /// `__agent-hook` command). The session is `claude:live-agent`; no terminal is ever launched.
+    @discardableResult
+    private func hook(_ event: String, extra: [String: Any] = [:]) async throws -> CmdResult {
+        let project = mac.home.appendingPathComponent("project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        var payload: [String: Any] = ["session_id": "live-agent", "cwd": project.path]
+        payload.merge(extra) { _, new in new }
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let result = try await mac.cli(["__agent-hook", "claude", event], stdin: String(decoding: data, as: UTF8.self), timeout: 30)
+        XCTAssertEqual(result.status, 0, result.stderr)
+        return result
+    }
+
+    private func toolCall(_ command: String) -> [String: Any] {
+        ["hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": ["command": command]]
+    }
 
     private func devices() async -> [[String: Any]] {
         (try? await mac.jsonArray(["channel", "ios", "devices", "--json"])) ?? []
