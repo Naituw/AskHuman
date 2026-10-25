@@ -34,7 +34,7 @@
 
 **重复提问收敛**（`docs/specs/duplicate-ask-coalescing.md`）：agent 那一轮被中断后常原样重发同一个提问，而被中断的 CLI 进程不会被杀。Daemon 因此在建请求前先按「会话键 + 提问指纹」判重——同一提问仍在等人回答就合流到那张卡（多等待者共享一个终态，全部离场才取消），5 分钟内已答过则直接重放上次答案并在 `status` 说明。历史、待办出队与 `ask-received` 仍只发生一次。
 
-**Dev Instance（并行 / WorkTree 开发）**：每个已 `dev enable` 的 git 工作树可有独立 `ASKHUMAN_HOME`（`.askhuman-dev/home`）+ 实例 bin + 默认 popup-only 渠道，与主环境 daemon/生产 bot 隔离；入口按 cwd 标记 re-exec。`ASKHUMAN_HOME` 只隔离配置 / socket / daemon 标签，不隔离 `$HOME` 下的 Agent hook 文件与用户级登录项：实例进程对它们的**自动**写入（登录项同步、启动时的 hook 迁移）一律跳过，显式 `agents …` 命令除外。详见 `docs/specs/dev-instance-parallel.md`、`docs/agent-worktree-setup.md`。
+**Dev Instance（并行 / WorkTree 开发）**：每个已 `dev enable` 的 git 工作树可有独立 `ASKHUMAN_HOME`（`.askhuman-dev/home`）+ 实例 bin + 默认 popup-only 渠道，与主环境 daemon/生产 bot 隔离；入口按 cwd 标记 re-exec。`ASKHUMAN_HOME` 只隔离配置 / socket / daemon 标签（配置目录不是账户自己的 `~/.askhuman` 时，如只换 `$HOME` 的沙箱，daemon 标签同样独立），不隔离 `$HOME` 下的 Agent hook 文件与用户级登录项：实例进程对它们的**自动**写入（登录项同步、启动时的 hook 迁移）一律跳过，显式 `agents …` 命令除外。详见 `docs/specs/dev-instance-parallel.md`、`docs/agent-worktree-setup.md`。
 
 ## 目录结构
 

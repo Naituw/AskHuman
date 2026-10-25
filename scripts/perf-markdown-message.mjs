@@ -121,6 +121,8 @@ function childEnv(home) {
   return {
     ...process.env,
     HOME: home,
+    // An instance of its own (launchd label, login items, hook files); HOME alone is not enough.
+    ASKHUMAN_HOME: join(home, ".askhuman"),
     ASKHUMAN_NO_KEYCHAIN: "1",
     ASKHUMAN_ENV_SOURCE_NAME: "Markdown Perf",
   };
