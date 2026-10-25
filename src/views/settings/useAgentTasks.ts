@@ -36,7 +36,10 @@ export function useAgentTasks(core: SettingsCore) {
   const workspacePanelOpen = ref(false);
   const workspaceMenuPath = ref<string | null>(null);
   let taskSettingsInflight: Promise<void> | null = null;
-  let piReadinessInflight: Promise<AgentTaskReadiness | undefined> | null = null;
+  const readinessInflight = new Map<
+    AgentKind,
+    Promise<AgentTaskReadiness | undefined>
+  >();
 
   async function refreshAgentTaskSettings(scan = false) {
     taskSettingsBusy.value = true;
@@ -66,24 +69,33 @@ export function useAgentTasks(core: SettingsCore) {
     await taskSettingsInflight;
   }
 
-  async function ensurePiReadiness(): Promise<AgentTaskReadiness | undefined> {
-    const existing = taskReadiness.value.find((item) => item.kind === "pi");
+  // Probe a single agent (login-shell lookup + `--version`) instead of all five. Used by the
+  // integration tab for the agents whose card reports a version requirement.
+  async function ensureAgentReadiness(
+    kind: AgentKind,
+  ): Promise<AgentTaskReadiness | undefined> {
+    const existing = taskReadiness.value.find((item) => item.kind === kind);
     if (existing) return existing;
-    if (piReadinessInflight) return piReadinessInflight;
+    const inflight = readinessInflight.get(kind);
+    if (inflight) return inflight;
     const run = (async () => {
-      const items = await agentTaskReadiness({ kind: "pi" });
-      const item = items.find((entry) => entry.kind === "pi") ?? items[0];
+      const items = await agentTaskReadiness({ kind });
+      const item = items.find((entry) => entry.kind === kind) ?? items[0];
       if (item) {
-        const rest = taskReadiness.value.filter((entry) => entry.kind !== "pi");
+        const rest = taskReadiness.value.filter((entry) => entry.kind !== kind);
         taskReadiness.value = [...rest, item];
       }
       return item;
     })();
-    piReadinessInflight = run.finally(() => {
-      if (piReadinessInflight === run) piReadinessInflight = null;
+    const tracked = run.finally(() => {
+      if (readinessInflight.get(kind) === tracked) readinessInflight.delete(kind);
     });
-    return piReadinessInflight;
+    readinessInflight.set(kind, tracked);
+    return tracked;
   }
+
+  const ensurePiReadiness = () => ensureAgentReadiness("pi");
+  const ensureCodexReadiness = () => ensureAgentReadiness("codex");
 
   // 开启走确认弹层（列出保活/登录项等副作用，用户点「继续开启」才生效）；关闭直接持久化。
   const agentTasksConfirmOpen = ref(false);
@@ -235,6 +247,7 @@ export function useAgentTasks(core: SettingsCore) {
     refreshAgentTaskSettings,
     ensureAgentTaskSettings,
     ensurePiReadiness,
+    ensureCodexReadiness,
     agentTasksConfirmOpen,
     toggleAgentTasks,
     confirmEnableAgentTasks,

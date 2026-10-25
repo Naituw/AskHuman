@@ -10,6 +10,7 @@ import {
   agentPermissionSet,
   agentAskQuestionSet,
   agentStopSet,
+  agentDelegatedSet,
   agentLifecycleInstall,
   agentLifecycleUninstall,
   agentRuleReveal,
@@ -40,12 +41,18 @@ export function useIntegration(
   tasks: {
     refreshAgentTaskSettings: (scan?: boolean) => Promise<void>;
     ensurePiReadiness: () => Promise<AgentTaskReadiness | undefined>;
+    ensureCodexReadiness: () => Promise<AgentTaskReadiness | undefined>;
     taskReadiness: { value: AgentTaskReadiness[] };
   },
 ) {
   const { t } = useI18n();
   const { config, persist } = core;
-  const { refreshAgentTaskSettings, ensurePiReadiness, taskReadiness } = tasks;
+  const {
+    refreshAgentTaskSettings,
+    ensurePiReadiness,
+    ensureCodexReadiness,
+    taskReadiness,
+  } = tasks;
 
   // 「在文件管理器中显示」的按平台措辞（访达 / 文件资源管理器 / 文件管理器），单一来源。
   const revealLabel = computed(() => {
@@ -63,18 +70,20 @@ export function useIntegration(
   // 且无法延长 CLI 超时，故推荐 MCP；Cursor / Claude Code 有可靠超时 Hook，推荐 CLI。
   // `hasCli`：是否提供 CLI 档（超时 Hook 方案）。Grok 的 Composer CLI 会自动后台化，
   // 超时不可靠，故仅 None|Mcp 两态。`instructionKind`：指令载体（规则文件 vs skill）。
+  // Codex's carrier is the SessionStart hook ("hook"): the protocol is injected at session start
+  // instead of living in a static AGENTS.md block.
   const AGENTS: {
     id: AgentId;
     title: string;
     hasTimeoutHook: boolean;
     hasCli: boolean;
     hasMcp: boolean;
-    instructionKind: "rule" | "skill";
+    instructionKind: "rule" | "skill" | "hook";
     recommended: AgentMode;
   }[] = [
     { id: "cursor", title: "Cursor", hasTimeoutHook: true, hasCli: true, hasMcp: true, instructionKind: "rule", recommended: "cli" },
     { id: "claude", title: "Claude Code", hasTimeoutHook: true, hasCli: true, hasMcp: true, instructionKind: "rule", recommended: "cli" },
-    { id: "codex", title: "Codex", hasTimeoutHook: false, hasCli: true, hasMcp: true, instructionKind: "rule", recommended: "mcp" },
+    { id: "codex", title: "Codex", hasTimeoutHook: false, hasCli: true, hasMcp: true, instructionKind: "hook", recommended: "mcp" },
     { id: "grok", title: "Grok", hasTimeoutHook: false, hasCli: false, hasMcp: true, instructionKind: "skill", recommended: "mcp" },
     { id: "pi", title: "Pi", hasTimeoutHook: true, hasCli: true, hasMcp: false, instructionKind: "rule", recommended: "cli" },
   ];
@@ -118,6 +127,7 @@ export function useIntegration(
       outdated: false,
       otherHandlersDetected: false,
     },
+    delegated: { supported: false, enabled: false },
     askQuestion: {
       supported: false,
       enabled: false,
@@ -175,9 +185,26 @@ export function useIntegration(
     if (item) overlayPiVersion(item);
   }
 
+  // Codex: the version floor is the one for SessionStart-hook protocol delivery. An unreadable
+  // version (Codex not installed) counts as supported, so the card never shows a false alarm.
+  function overlayCodexVersion(item: AgentTaskReadiness) {
+    modes.value.codex = {
+      ...modes.value.codex,
+      agentVersion: item.version,
+      minimumVersion: item.protocolMinimumVersion ?? null,
+      versionSupported: item.protocolSupported !== false,
+    };
+  }
+
+  function overlayCodexVersionIfKnown() {
+    const item = taskReadiness.value.find((entry) => entry.kind === "codex");
+    if (item) overlayCodexVersion(item);
+  }
+
   async function refreshMode(agent: AgentId) {
     modes.value[agent] = await agentModeStatus(agent);
     if (agent === "pi") overlayPiVersionIfKnown();
+    if (agent === "codex") overlayCodexVersionIfKnown();
   }
 
   const integrationLoading = ref(true);
@@ -186,6 +213,8 @@ export function useIntegration(
   let integrationReady = false;
   let piVersionInflight: Promise<void> | null = null;
   let piVersionReady = false;
+  let codexVersionInflight: Promise<void> | null = null;
+  let codexVersionReady = false;
 
   async function ensureIntegration() {
     if (integrationReady) return;
@@ -216,6 +245,27 @@ export function useIntegration(
       if (piVersionInflight === run) piVersionInflight = null;
     });
     return piVersionInflight;
+  }
+
+  // Informational only (no spinner, no error surface): the card shows a message only after the
+  // probe confirms an old Codex.
+  async function ensureCodexVersion() {
+    if (codexVersionReady) return;
+    if (codexVersionInflight) return codexVersionInflight;
+    const run = (async () => {
+      try {
+        const item = await ensureCodexReadiness();
+        if (item) overlayCodexVersion(item);
+      } catch {
+        /* A failed probe leaves the default "supported" state. */
+      } finally {
+        codexVersionReady = true;
+      }
+    })();
+    codexVersionInflight = run.finally(() => {
+      if (codexVersionInflight === run) codexVersionInflight = null;
+    });
+    return codexVersionInflight;
   }
 
   // 一键切换到目标模式（含「未集成」）：自动卸旧装新。
@@ -293,6 +343,23 @@ export function useIntegration(
     modeMessage.value[agent] = null;
     try {
       await agentStopSet(agent, enabled);
+      modeError.value[agent] = false;
+    } catch (e) {
+      modeMessage.value[agent] = String(e);
+      modeError.value[agent] = true;
+    } finally {
+      modeBusy.value[agent] = false;
+      await refreshMode(agent);
+    }
+  }
+
+  // "Allow delegated runs to use AskHuman": a pure preference, no artifact is rewritten.
+  async function toggleDelegated(agent: AgentId, enabled: boolean) {
+    if (modeBusy.value[agent]) return;
+    modeBusy.value[agent] = true;
+    modeMessage.value[agent] = null;
+    try {
+      await agentDelegatedSet(agent, enabled);
       modeError.value[agent] = false;
     } catch (e) {
       modeMessage.value[agent] = String(e);
@@ -531,6 +598,7 @@ tool_timeout_sec = 86400`,
     piVersionLoading,
     ensureIntegration,
     ensurePiVersion,
+    ensureCodexVersion,
     modeBusy,
     modeMessage,
     modeError,
@@ -539,6 +607,7 @@ tool_timeout_sec = 86400`,
     togglePermission,
     toggleLifecycle,
     toggleStop,
+    toggleDelegated,
     toggleAskQuestion,
     permissionBlockedText,
     updateArtifact,

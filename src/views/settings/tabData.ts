@@ -3,6 +3,7 @@ import type { Tab } from "./context";
 export type SettingsLoad =
   | { type: "integration-status" }
   | { type: "pi-version" }
+  | { type: "codex-version" }
   | { type: "general" }
   | { type: "about" }
   | { type: "agent-tasks"; force: boolean };
@@ -13,7 +14,11 @@ export function tabLoads(tab: Tab, supportsAgentTasks: boolean): SettingsLoad[] 
     case "general":
       return [{ type: "general" }, { type: "about" }];
     case "integration":
-      return [{ type: "integration-status" }, { type: "pi-version" }];
+      return [
+        { type: "integration-status" },
+        { type: "pi-version" },
+        { type: "codex-version" },
+      ];
     case "advanced":
       return supportsAgentTasks ? [{ type: "agent-tasks", force: false }] : [];
     default:

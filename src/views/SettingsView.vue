@@ -68,6 +68,8 @@ function runLoad(load: SettingsLoad): Promise<void> {
       return ctx.ensureIntegration();
     case "pi-version":
       return ctx.ensurePiVersion();
+    case "codex-version":
+      return ctx.ensureCodexVersion();
     case "general":
       return ctx.ensureGeneral();
     case "about":
