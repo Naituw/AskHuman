@@ -624,6 +624,11 @@ pub enum ClientMsg {
         /// hook 侧 300ms 超时放行（fail-open）；旧 report 不带 → false（保持即发即走）。
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         interject_poll: bool,
+        /// A `turn-end` that ended in an error (API failure, aborted by a crash) rather than a
+        /// normal finish. Drives the iOS "task failed" notification; nothing else reads it. An
+        /// old hook never sets it and an old daemon ignores it, so it needs no protocol bump.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        failed: bool,
     },
     /// Register one long-lived AskHuman MCP server process for Grok's best-effort session binding.
     McpInstanceRegister {
@@ -1410,9 +1415,11 @@ mod tests {
             ts: 0,
             tool: None,
             interject_poll: false,
+            failed: false,
         })
         .unwrap();
         assert!(!out.contains("interject_poll"));
+        assert!(!out.contains("failed"));
         // true 时带字段。
         let out = serde_json::to_string(&ClientMsg::AgentEvent {
             agent: "claude".into(),
@@ -1427,9 +1434,43 @@ mod tests {
             ts: 0,
             tool: None,
             interject_poll: true,
+            failed: false,
         })
         .unwrap();
         assert!(out.contains(r#""interject_poll":true"#));
+    }
+
+    /// `failed` is optional both ways: a report without it means "not failed", and an event that
+    /// did not fail serializes exactly as before.
+    #[test]
+    fn agent_event_failed_defaults_false_and_is_sent_only_when_set() {
+        let old = r#"{"type":"agentEvent","agent":"claude","event":"turn-end","session_id":"s1"}"#;
+        match serde_json::from_str::<ClientMsg>(old).unwrap() {
+            ClientMsg::AgentEvent { failed, .. } => assert!(!failed),
+            other => panic!("unexpected: {:?}", other),
+        }
+        let new = r#"{"type":"agentEvent","agent":"claude","event":"turn-end","session_id":"s1","failed":true}"#;
+        match serde_json::from_str::<ClientMsg>(new).unwrap() {
+            ClientMsg::AgentEvent { failed, .. } => assert!(failed),
+            other => panic!("unexpected: {:?}", other),
+        }
+        let out = serde_json::to_string(&ClientMsg::AgentEvent {
+            agent: "claude".into(),
+            event: "turn-end".into(),
+            session_id: "s1".into(),
+            pid: None,
+            hint_pid: None,
+            cwd: None,
+            transcript_path: None,
+            launch_id: None,
+            prompt_sha256: None,
+            ts: 0,
+            tool: None,
+            interject_poll: false,
+            failed: true,
+        })
+        .unwrap();
+        assert!(out.contains(r#""failed":true"#));
     }
 
     /// 插话裁决帧序列化往返（action 小写；text 缺省为空串）。

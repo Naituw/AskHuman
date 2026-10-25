@@ -40,8 +40,11 @@ mod fork;
 mod inbound;
 mod inbox;
 mod ios;
+mod ios_agents;
+mod ios_tasks;
 mod select;
 mod subs;
+mod task_launch;
 mod todo;
 mod watch;
 
@@ -331,6 +334,9 @@ fn update_popup_focus(
 struct PendingLaunchWatch {
     id: String,
     channel: Option<String>,
+    /// `(phone id, task.create message id)` when an iOS phone asked for the task: the matched
+    /// session is reported to the phone's gateway instead of an IM channel.
+    ios: Option<(String, String)>,
     kind: AgentKind,
     cwd: String,
     task_sha256: String,
@@ -1029,6 +1035,8 @@ async fn serve(_lock: LockGuard) -> i32 {
                         .unwrap()
                         .iter()
                         .any(|s| !s.rewatchable)
+                    // A phone watching an Agent live is the same kind of subscription.
+                    && ios_gateway(&state).is_none_or(|gateway| gateway.live_watch_count() == 0)
                 {
                     let idle = state
                         .last_active
@@ -1595,6 +1603,7 @@ async fn control_loop(
                 ts,
                 tool,
                 interject_poll,
+                failed,
             } => {
                 if let (Some(kind), Some(ev)) =
                     (AgentKind::parse(&agent), LifecycleEvent::parse(&event))
@@ -1718,6 +1727,13 @@ async fn control_loop(
                     }
                     ensure_inbound_listeners(state).await;
                     state.watch.notify.notify_one();
+                    if let Some(gateway) = ios_gateway(state) {
+                        gateway.agent_event(crate::ios::gateway::AgentEventInfo {
+                            agent_key: ios_agents::agent_key(kind, &session_id),
+                            event: ios_agents::event_kind(ev),
+                            failed,
+                        });
+                    }
                     if matches!(ev, LifecycleEvent::TurnStart) {
                         match_pending_launch_watch(
                             state,
@@ -1813,6 +1829,7 @@ async fn control_loop(
                     .push(PendingLaunchWatch {
                         id,
                         channel: None,
+                        ios: None,
                         kind,
                         cwd,
                         task_sha256,
@@ -4702,6 +4719,7 @@ mod tests {
         let item = PendingLaunchWatch {
             id: "launch-1".into(),
             channel: Some("feishu".into()),
+            ios: None,
             kind: AgentKind::Codex,
             cwd: "/tmp/project".into(),
             task_sha256: "hash-1".into(),

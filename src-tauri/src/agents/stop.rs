@@ -57,14 +57,26 @@ fn run_inner(args: &[String]) -> Option<Value> {
     // completed turn. Non-natural stops only retain the existing lifecycle turn-end behavior.
     if !is_natural_stop(kind, &input) {
         if track {
-            super::report::report_simple_event(kind, LifecycleEvent::TurnEnd, session_id, cwd);
+            super::report::report_simple_event(
+                kind,
+                LifecycleEvent::TurnEnd,
+                session_id,
+                cwd,
+                turn_failed(kind, &input),
+            );
         }
         return None;
     }
 
     if !confirm {
         if track {
-            super::report::report_simple_event(kind, LifecycleEvent::TurnEnd, session_id, cwd);
+            super::report::report_simple_event(
+                kind,
+                LifecycleEvent::TurnEnd,
+                session_id,
+                cwd,
+                false,
+            );
         }
         return None;
     }
@@ -87,7 +99,13 @@ fn run_inner(args: &[String]) -> Option<Value> {
                 .and_then(Value::as_str),
         });
         if track {
-            super::report::report_simple_event(kind, LifecycleEvent::TurnEnd, session_id, cwd);
+            super::report::report_simple_event(
+                kind,
+                LifecycleEvent::TurnEnd,
+                session_id,
+                cwd,
+                false,
+            );
         }
         return None;
     }
@@ -95,7 +113,13 @@ fn run_inner(args: &[String]) -> Option<Value> {
     let last_message = last_assistant_message(kind, &input);
     if last_message.user_confirmed_end_turn {
         if track {
-            super::report::report_simple_event(kind, LifecycleEvent::TurnEnd, session_id, cwd);
+            super::report::report_simple_event(
+                kind,
+                LifecycleEvent::TurnEnd,
+                session_id,
+                cwd,
+                false,
+            );
         }
         return None;
     }
@@ -141,7 +165,13 @@ fn run_inner(args: &[String]) -> Option<Value> {
         )),
         StopDecision::End => {
             if track {
-                super::report::report_simple_event(kind, LifecycleEvent::TurnEnd, session_id, cwd);
+                super::report::report_simple_event(
+                    kind,
+                    LifecycleEvent::TurnEnd,
+                    session_id,
+                    cwd,
+                    false,
+                );
             }
             None
         }
@@ -164,6 +194,21 @@ fn is_natural_stop(kind: AgentKind, input: &Value) -> bool {
                     .and_then(Value::as_str)
                     .is_some_and(|event| event.eq_ignore_ascii_case("stop"))
         }
+    }
+}
+
+/// Whether a hook payload describes a turn that ended in an error (as opposed to finishing or
+/// being interrupted by the user). Codex has no failure hook, so it never reports one.
+pub(super) fn turn_failed(kind: AgentKind, input: &Value) -> bool {
+    let text = |key: &str| input.get(key).and_then(Value::as_str);
+    match kind {
+        AgentKind::Claude | AgentKind::Grok => text("hook_event_name")
+            .or_else(|| text("hookEventName"))
+            .is_some_and(|event| event.eq_ignore_ascii_case("stopfailure")),
+        // `aborted` is the user pressing stop, not a failure.
+        AgentKind::Cursor => text("status") == Some("error"),
+        AgentKind::Pi => text("stop_reason") == Some("error"),
+        AgentKind::Codex => false,
     }
 }
 
@@ -454,6 +499,37 @@ mod tests {
         assert!(!is_natural_stop(
             AgentKind::Pi,
             &json!({"hook_event_name":"Stop","stop_reason":"error"})
+        ));
+    }
+
+    #[test]
+    fn turn_failed_matrix() {
+        for kind in [AgentKind::Claude, AgentKind::Grok] {
+            assert!(turn_failed(kind, &json!({"hook_event_name":"StopFailure"})));
+            assert!(turn_failed(kind, &json!({"hookEventName":"stopfailure"})));
+            assert!(!turn_failed(kind, &json!({"hook_event_name":"Stop"})));
+            assert!(!turn_failed(kind, &json!({})));
+        }
+        assert!(turn_failed(AgentKind::Cursor, &json!({"status":"error"})));
+        assert!(!turn_failed(
+            AgentKind::Cursor,
+            &json!({"status":"aborted"})
+        ));
+        assert!(!turn_failed(
+            AgentKind::Cursor,
+            &json!({"status":"completed"})
+        ));
+        assert!(turn_failed(AgentKind::Pi, &json!({"stop_reason":"error"})));
+        assert!(!turn_failed(
+            AgentKind::Pi,
+            &json!({"stop_reason":"aborted"})
+        ));
+        assert!(!turn_failed(AgentKind::Pi, &json!({"stop_reason":"stop"})));
+        assert!(!turn_failed(AgentKind::Pi, &json!({})));
+        // Codex cannot tell: whatever the payload says, it is never a failure.
+        assert!(!turn_failed(
+            AgentKind::Codex,
+            &json!({"hook_event_name":"StopFailure","status":"error","stop_reason":"error"})
         ));
     }
 

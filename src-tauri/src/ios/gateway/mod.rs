@@ -5,24 +5,33 @@
 //! handled one at a time, so state needs no locks. The daemon talks to it through the cloneable
 //! [`IosGateway`] handle and answers its questions through the [`Host`] trait.
 
+mod agents;
 mod assets;
+mod hostapi;
 mod pairing;
 pub mod requests;
 mod support;
+mod tasks;
 #[cfg(test)]
 mod testkit;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_agents;
+#[cfg(test)]
 mod tests_assets;
 #[cfg(test)]
 mod tests_requests;
+#[cfg(test)]
+mod tests_tasks;
+mod watch;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -33,17 +42,26 @@ use super::envelope::{self, Plain, Scope};
 use super::push::{PushClient, PushOutcome};
 use super::store::{PhoneState, Store, Traffic};
 use super::transport::{BrokerTransport, TransportEvent};
-use super::wire::{self, t, Caps, Msg, Presence, SlotInfo, CLOCK_SKEW_MS, KID_PAIR, PROTO};
+use super::wire::{
+    self, t, AgentView, Caps, Msg, Presence, SlotInfo, CLOCK_SKEW_MS, KID_PAIR, PROTO,
+};
 use crate::config::IosChannelConfig;
 
 use assets::Uploads;
+pub use hostapi::{
+    AgentEventInfo, AgentEventKind, FrameData, InterjectResult, StagedFile, TaskChoices,
+    TaskLaunch, TodoChoices,
+};
 pub use pairing::PairInfo;
 use requests::{DeliverRequest, Resolution};
 use support::{Dedup, Outbox};
 
 // ---------------------------------------------------------------- host
 
-/// What the gateway needs to know about the daemon around it.
+/// What the gateway needs to know about the daemon around it. Everything beyond the first four
+/// methods has a conservative default (nothing to show, nothing allowed), so a host only
+/// implements what it supports.
+#[async_trait]
 pub trait Host: Send + Sync + 'static {
     /// Unix milliseconds. Tests substitute a virtual clock.
     fn now_ms(&self) -> i64 {
@@ -57,6 +75,48 @@ pub trait Host: Send + Sync + 'static {
     fn caps(&self) -> Caps;
     /// Whether iOS is the active channel slot and whether the slot follows `/here` automatically.
     fn slot(&self) -> SlotInfo;
+
+    /// Agent sessions the phones may see, with `followed` left false (the gateway knows which
+    /// phone follows what). Called at most about once a second while it matters.
+    fn agents(&self) -> Vec<AgentView> {
+        Vec::new()
+    }
+    /// The current Watch frame of an Agent, `None` when the session is unknown.
+    fn watch_frame(&self, _agent_key: &str) -> Option<FrameData> {
+        None
+    }
+    /// Hands an interjection to the Agent (queue or direct delivery).
+    async fn interject(
+        &self,
+        _phone_id: &str,
+        _agent_key: &str,
+        _text: &str,
+        _files: Vec<StagedFile>,
+    ) -> InterjectResult {
+        InterjectResult::rejected("unsupported")
+    }
+    /// Drops the interjections still waiting for the Agent; `true` when there were any.
+    fn interject_clear(&self, _agent_key: &str) -> bool {
+        false
+    }
+    /// Number and full text of the interjections still waiting for the Agent.
+    fn interject_state(&self, _agent_key: &str) -> (u64, String) {
+        (0, String::new())
+    }
+    /// Workspaces and Agents a new task can use.
+    async fn task_choices(&self) -> TaskChoices {
+        TaskChoices::blocked("agentDefault", "unsupported")
+    }
+    /// Todos of the project a workspace belongs to.
+    async fn task_todos(&self, _workspace: &str) -> TodoChoices {
+        TodoChoices::default()
+    }
+    /// Starts the Agent in a new terminal window. `Err` carries a short reason for the phone.
+    async fn task_create(&self, _launch: TaskLaunch) -> Result<(), String> {
+        Err("unsupported".to_string())
+    }
+    /// Makes iOS the active channel (the phone's "take over questions" button).
+    async fn take_slot(&self) {}
 }
 
 // ---------------------------------------------------------------- views for IPC and settings
@@ -153,6 +213,9 @@ pub(crate) enum Cmd {
     Shutdown(oneshot::Sender<()>),
     /// Shutdown of a gateway that is being replaced (see [`IosGateway::retire`]).
     Retire(oneshot::Sender<()>),
+    /// Work that continues inside the actor once something asynchronous finished (a host call, a
+    /// daemon event). Keeps the command set small.
+    Run(Box<dyn FnOnce(&mut Actor) + Send>),
 }
 
 /// Everything the gateway is built from.
@@ -275,6 +338,33 @@ impl IosGateway {
         let _ = self.cmd.send(Cmd::Deliver(Box::new(request)));
     }
 
+    /// An Agent session reported a lifecycle event (drives the Follow notifications).
+    pub fn agent_event(&self, info: AgentEventInfo) {
+        let _ = self
+            .cmd
+            .send(Cmd::Run(Box::new(move |actor| actor.on_agent_event(info))));
+    }
+
+    /// A queued interjection that came from `phone_id` was handed to the Agent.
+    pub fn interject_consumed(&self, phone_id: &str, agent_key: &str) {
+        let (phone_id, agent_key) = (phone_id.to_string(), agent_key.to_string());
+        let _ = self.cmd.send(Cmd::Run(Box::new(move |actor| {
+            actor.on_interject_consumed(&phone_id, &agent_key)
+        })));
+    }
+
+    /// The Agent session started for a task created from `phone_id` showed up.
+    pub fn task_matched(&self, phone_id: &str, client_msg_id: &str, agent_key: &str) {
+        let (phone_id, client_msg_id, agent_key) = (
+            phone_id.to_string(),
+            client_msg_id.to_string(),
+            agent_key.to_string(),
+        );
+        let _ = self.cmd.send(Cmd::Run(Box::new(move |actor| {
+            actor.on_task_matched(&phone_id, &client_msg_id, &agent_key)
+        })));
+    }
+
     /// The request reached a terminal state somewhere (answered, cancelled, expired).
     pub fn resolve(&self, request_id: &str, resolution: Resolution) {
         let _ = self.cmd.send(Cmd::Resolve {
@@ -330,6 +420,14 @@ pub(crate) struct PhoneRt {
     pub hello_at: Option<i64>,
     pub device_name: String,
     pub dedup: Dedup,
+    /// Revision of this phone's `agents` stream (the stream differs per phone: `followed`).
+    pub agents_rev: u64,
+    /// What this phone's Agents list shows right now, for computing deltas.
+    pub agents_sent: HashMap<String, AgentView>,
+    /// Live Agent views (plan §3.4 `watch.open`); only while the phone is in the foreground.
+    pub watches: Vec<watch::WatchRt>,
+    /// Workspaces offered by the last `task.options`, valid for a while.
+    pub workspaces: Option<tasks::WorkspaceMap>,
 }
 
 impl PhoneRt {
@@ -357,7 +455,6 @@ const PRESENCE_CACHE_MAX: usize = 512;
 #[derive(Default)]
 pub(crate) struct Revs {
     pub inbox: u64,
-    pub agents: u64,
     pub follow: u64,
     pub slot: u64,
 }
@@ -390,6 +487,8 @@ pub(crate) struct Actor {
     pub revs: Revs,
     pub requests: requests::Requests,
     pub uploads: Uploads,
+    /// Agent list cache, Follow bookkeeping and tasks waiting for their session.
+    pub live: agents::Live,
     /// Last slot state announced to the phones (`None` until the first tick).
     pub last_slot: Option<SlotInfo>,
 
@@ -455,6 +554,7 @@ impl Actor {
             revs: Revs::default(),
             requests: requests::Requests::default(),
             uploads: Uploads::default(),
+            live: agents::Live::default(),
             last_slot: None,
             dirty: false,
             last_flush_ms: now,
@@ -500,6 +600,9 @@ impl Actor {
         self.status
             .has_active_phone
             .store(self.store.state.has_active_phone(), Ordering::Relaxed);
+        self.status
+            .live_watch
+            .store(self.live_watch_total(), Ordering::Relaxed);
     }
 
     pub(crate) fn mac_name(&self) -> String {
@@ -577,6 +680,7 @@ impl Actor {
                 }
             }
             Cmd::PushResult { phone_id, outcome } => self.on_push_result(&phone_id, outcome),
+            Cmd::Run(work) => work(self),
             Cmd::Shutdown(_) | Cmd::Retire(_) => unreachable!("handled in run"),
         }
     }
@@ -683,6 +787,7 @@ impl Actor {
             rt.online = false;
             rt.foreground = false;
             rt.hello_at = None;
+            rt.watches.clear();
         }
         self.presence_cache.clear();
         self.sync_at = None;
@@ -739,7 +844,12 @@ impl Actor {
         }
         if let Some(rt) = self.rt.get_mut(device) {
             rt.apply_presence(&presence);
+            // Live views only run in the foreground.
+            if !rt.foreground {
+                rt.watches.clear();
+            }
         }
+        self.refresh_status();
     }
 
     /// Runtime state for a phone that just got paired: starts from what its presence said before.
@@ -877,6 +987,43 @@ impl Actor {
                 let cancel = body!(wire::UploadCancel);
                 self.on_upload_cancel(phone_id, cancel);
             }
+            t::FOLLOW_SET => {
+                let set = body!(wire::FollowSet);
+                self.on_follow_set(phone_id, set);
+            }
+            t::WATCH_OPEN => {
+                let open = body!(wire::WatchOpen);
+                self.on_watch_open(phone_id, &open.agent_key);
+            }
+            t::WATCH_CLOSE => {
+                let close = body!(wire::WatchClose);
+                self.on_watch_close(phone_id, &close.agent_key);
+            }
+            t::INTERJECT_SEND => {
+                let send = body!(wire::InterjectSend);
+                self.on_interject_send(phone_id, send).await;
+            }
+            t::INTERJECT_CLEAR => {
+                let clear = body!(wire::InterjectClear);
+                self.on_interject_clear(phone_id, &clear.agent_key);
+            }
+            t::INTERJECT_QUERY => {
+                let query = body!(wire::InterjectQuery);
+                self.on_interject_query(phone_id, &query.agent_key);
+            }
+            t::TASK_OPTIONS_GET => self.on_task_options_get(phone_id),
+            t::TASK_TODOS_GET => {
+                let get = body!(wire::TaskTodosGet);
+                self.on_task_todos_get(phone_id, &get.workspace_id);
+            }
+            t::TASK_CREATE => {
+                let create = body!(wire::TaskCreate);
+                self.on_task_create(phone_id, create);
+            }
+            t::SLOT_TAKE => {
+                let take = body!(wire::SlotTake);
+                self.on_slot_take(phone_id, &take.client_msg_id);
+            }
             _ => self.send_error(phone_id, &plain.i, "unknown_type", None),
         }
     }
@@ -978,14 +1125,7 @@ impl Actor {
                 let snapshot = self.inbox_snapshot();
                 self.send(phone_id, &snapshot);
             }
-            "agents" => {
-                let snapshot = wire::AgentsSnapshot {
-                    epoch: self.epoch.clone(),
-                    rev: self.revs.agents,
-                    agents: Vec::new(),
-                };
-                self.send(phone_id, &snapshot);
-            }
+            "agents" => self.send_agents_snapshot(phone_id),
             "follow" => {
                 let keys = self
                     .store
@@ -1068,6 +1208,10 @@ impl Actor {
         self.tick_requests(now).await;
         self.prune_uploads(now);
         self.tick_slot();
+        self.tick_agents(now);
+        self.tick_follow(now);
+        self.tick_watch(now);
+        self.tick_tasks(now);
         if let Some(at) = self.sync_at {
             if now >= at {
                 self.sync_at = None;

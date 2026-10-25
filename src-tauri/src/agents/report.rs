@@ -76,6 +76,13 @@ pub fn run(args: &[String]) {
         && intended != AgentKind::Grok
         && stdin.as_ref().and_then(detect_phase) == Some(ToolPhase::Pre);
 
+    // Only a turn that ended in an error counts: Claude and Grok send `StopFailure`, Cursor a
+    // `stop` with `status: error`, Pi a `stop_reason` of `error`.
+    let failed = matches!(event, super::LifecycleEvent::TurnEnd)
+        && stdin
+            .as_ref()
+            .is_some_and(|input| super::stop::turn_failed(intended, input));
+
     let msg = ClientMsg::AgentEvent {
         agent: intended.as_str().to_string(),
         event: event.as_str().to_string(),
@@ -89,6 +96,7 @@ pub fn run(args: &[String]) {
         ts: 0,
         tool,
         interject_poll,
+        failed,
     };
     if interject_poll {
         if let crate::client::InterjectPollOutcome::Deny { text, attachments } =
@@ -108,12 +116,14 @@ pub(super) fn should_skip(intended: AgentKind, env: &HashMap<String, String>) ->
         || (intended == AgentKind::Claude && running == Some(AgentKind::Cursor))
 }
 
-/// Send a lifecycle event without tool data or interjection polling.
+/// Send a lifecycle event without tool data or interjection polling. `failed` marks a turn that
+/// ended in an error.
 pub(super) fn report_simple_event(
     intended: AgentKind,
     event: super::LifecycleEvent,
     session_id: String,
     cwd: Option<String>,
+    failed: bool,
 ) {
     if session_id.trim().is_empty() {
         return;
@@ -134,6 +144,7 @@ pub(super) fn report_simple_event(
         ts: 0,
         tool: None,
         interject_poll: false,
+        failed,
     });
 }
 
@@ -441,6 +452,8 @@ struct HookInputSummary {
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
+    stop_reason: Option<String>,
+    #[serde(default)]
     transcript_path: Option<String>,
     #[serde(default, rename = "transcriptPath")]
     transcript_path_camel: Option<String>,
@@ -495,6 +508,7 @@ impl HookInputSummary {
             self.tool_name.or(self.tool_name_camel).or(self.tool),
         );
         insert_summary_string(&mut map, "status", self.status);
+        insert_summary_string(&mut map, "stop_reason", self.stop_reason);
         insert_summary_string(
             &mut map,
             "transcript_path",
@@ -619,6 +633,26 @@ mod tests {
 
             let parsed = read_stdin_json_from(&mut reader, 128).unwrap();
             assert_eq!(extract_tool(Some(&parsed)).unwrap().phase, expected);
+        }
+    }
+
+    /// A huge Stop payload (a long last message) is summarized, and the summary must still say
+    /// whether the turn failed.
+    #[test]
+    fn oversized_stop_payloads_keep_their_failure_markers() {
+        for (kind, fields) in [
+            (AgentKind::Claude, json!({"hook_event_name": "StopFailure"})),
+            (AgentKind::Cursor, json!({"status": "error"})),
+            (AgentKind::Pi, json!({"stop_reason": "error"})),
+        ] {
+            let mut payload = fields;
+            payload["session_id"] = json!("session-stop");
+            payload["last_assistant_message"] = json!("A".repeat(4_096));
+            let bytes = serde_json::to_vec(&payload).unwrap();
+            let mut reader = Cursor::new(bytes.as_slice());
+
+            let parsed = read_stdin_json_from(&mut reader, 128).unwrap();
+            assert!(super::super::stop::turn_failed(kind, &parsed), "{kind:?}");
         }
     }
 

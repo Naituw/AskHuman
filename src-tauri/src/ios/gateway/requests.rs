@@ -362,7 +362,7 @@ impl Actor {
         }
     }
 
-    fn is_live(&self, phone_id: &str) -> bool {
+    pub(super) fn is_live(&self, phone_id: &str) -> bool {
         self.rt
             .get(phone_id)
             .is_some_and(|rt| rt.online && rt.foreground && rt.hello_at.is_some())
@@ -624,7 +624,7 @@ impl Actor {
 
     // ------------------------------------------------------------ answers
 
-    fn replay_or_start(
+    pub(super) fn replay_or_start(
         &mut self,
         phone_id: &str,
         client_msg_id: &str,
@@ -713,7 +713,12 @@ impl Actor {
         }
     }
 
-    fn finish_journal<M: wire::Msg>(&mut self, client_msg_id: &str, msg_type: &str, ack: &M) {
+    pub(super) fn finish_journal<M: wire::Msg>(
+        &mut self,
+        client_msg_id: &str,
+        msg_type: &str,
+        ack: &M,
+    ) {
         let now = self.now();
         self.store.journal_finish(
             client_msg_id,

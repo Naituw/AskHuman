@@ -1,8 +1,8 @@
 //! Test helpers for the gateway: a virtual-clock host, a recording push client and `TestPhone`,
 //! a phone-side implementation of the protocol built on the same crypto as the Mac.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -11,7 +11,10 @@ use serde::de::DeserializeOwned;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::requests::{AskSink, ConfirmSink};
-use super::{GatewayDeps, Host, IosGateway};
+use super::{
+    FrameData, GatewayDeps, Host, InterjectResult, IosGateway, StagedFile, TaskChoices, TaskLaunch,
+    TodoChoices,
+};
 use crate::config::IosChannelConfig;
 use crate::ios::crypto::{self, KeyPair, PairContext};
 use crate::ios::envelope::{self, Plain, Scope};
@@ -21,9 +24,9 @@ use crate::ios::transport::{
     BrokerTransport, LoopbackBroker, LoopbackTransport, TransportEvent, Will,
 };
 use crate::ios::wire::{
-    self, t, AgentRef, AskView, Caps, ConfirmChoiceView, ConfirmDetailView, ConfirmView, Msg,
-    OptionView, PairCode, Presence, ProjectRef, QuestionView, RelayPush, RequestView, SlotInfo,
-    KID_TICKET,
+    self, t, AgentRef, AgentView, AskView, CanInterject, Caps, ConfirmChoiceView,
+    ConfirmDetailView, ConfirmView, Msg, OptionView, PairCode, Presence, ProjectRef, QuestionView,
+    RelayPush, RequestView, SlotInfo, KID_TICKET,
 };
 use crate::models::{AskRequest, ChannelResult, MessagePrompt, OptionItem, Question};
 
@@ -32,10 +35,28 @@ pub const USER: &str = "u1";
 
 // ---------------------------------------------------------------- host and push
 
-/// Clock follows tokio's (pausable) time, so tests run instantly and deterministically.
+/// Clock follows tokio's (pausable) time, so tests run instantly and deterministically. The
+/// scripted fields stand in for the daemon's Agent registry, terminal and interject queue.
 pub struct TestHost {
     start: tokio::time::Instant,
     pub slot: Mutex<SlotInfo>,
+    pub agents: Mutex<Vec<AgentView>>,
+    pub frames: Mutex<HashMap<String, FrameData>>,
+    /// What `interject` answers; `None` means "queued, one pending".
+    pub interject_result: Mutex<Option<InterjectResult>>,
+    /// `(phone, agent, text, file count)` of every interjection that reached the host.
+    pub interjects: Mutex<Vec<(String, String, String, usize)>>,
+    pub interject_pending: Mutex<(u64, String)>,
+    /// Files of the latest interjection.
+    pub staged: Mutex<Vec<StagedFile>>,
+    pub cleared: Mutex<Vec<String>>,
+    pub choices: Mutex<TaskChoices>,
+    pub todos: Mutex<TodoChoices>,
+    pub task_result: Mutex<Result<(), String>>,
+    /// Virtual time `task_create` takes.
+    pub task_delay_ms: AtomicU64,
+    pub launches: Mutex<Vec<TaskLaunch>>,
+    pub slot_taken: AtomicUsize,
 }
 
 impl TestHost {
@@ -46,10 +67,54 @@ impl TestHost {
                 active: true,
                 auto_activation: true,
             }),
+            agents: Mutex::new(Vec::new()),
+            frames: Mutex::new(HashMap::new()),
+            interject_result: Mutex::new(None),
+            interjects: Mutex::new(Vec::new()),
+            interject_pending: Mutex::new((0, String::new())),
+            staged: Mutex::new(Vec::new()),
+            cleared: Mutex::new(Vec::new()),
+            choices: Mutex::new(sample_choices()),
+            todos: Mutex::new(TodoChoices::default()),
+            task_result: Mutex::new(Ok(())),
+            task_delay_ms: AtomicU64::new(0),
+            launches: Mutex::new(Vec::new()),
+            slot_taken: AtomicUsize::new(0),
         })
+    }
+
+    /// Replaces the Agent list.
+    pub fn set_agents(&self, agents: Vec<AgentView>) {
+        *self.agents.lock().unwrap() = agents;
+    }
+
+    /// Changes one Agent in place (state, tool, …).
+    pub fn update_agent(&self, key: &str, change: impl FnOnce(&mut AgentView)) {
+        let mut agents = self.agents.lock().unwrap();
+        if let Some(agent) = agents.iter_mut().find(|a| a.key == key) {
+            change(agent);
+        }
+    }
+
+    pub fn set_frame(&self, key: &str, sig: &str, text: &str, ended: bool) {
+        self.frames.lock().unwrap().insert(
+            key.to_string(),
+            FrameData {
+                frame: serde_json::json!({
+                    "phase": if ended { "ended" } else { "working" },
+                    "title": "Refactor",
+                    "text": text,
+                    "steps": [],
+                    "todos": [],
+                }),
+                sig: sig.to_string(),
+                ended,
+            },
+        );
     }
 }
 
+#[async_trait]
 impl Host for TestHost {
     fn now_ms(&self) -> i64 {
         BASE_MS + self.start.elapsed().as_millis() as i64
@@ -69,6 +134,129 @@ impl Host for TestHost {
 
     fn slot(&self) -> SlotInfo {
         self.slot.lock().unwrap().clone()
+    }
+
+    fn agents(&self) -> Vec<AgentView> {
+        self.agents.lock().unwrap().clone()
+    }
+
+    fn watch_frame(&self, agent_key: &str) -> Option<FrameData> {
+        self.frames.lock().unwrap().get(agent_key).cloned()
+    }
+
+    async fn interject(
+        &self,
+        phone_id: &str,
+        agent_key: &str,
+        text: &str,
+        files: Vec<StagedFile>,
+    ) -> InterjectResult {
+        self.interjects.lock().unwrap().push((
+            phone_id.to_string(),
+            agent_key.to_string(),
+            text.to_string(),
+            files.len(),
+        ));
+        *self.staged.lock().unwrap() = files;
+        self.interject_result
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or(InterjectResult {
+                status: "queued",
+                reason: None,
+                pending: 1,
+            })
+    }
+
+    fn interject_clear(&self, agent_key: &str) -> bool {
+        self.cleared.lock().unwrap().push(agent_key.to_string());
+        *self.interject_pending.lock().unwrap() = (0, String::new());
+        true
+    }
+
+    fn interject_state(&self, _agent_key: &str) -> (u64, String) {
+        self.interject_pending.lock().unwrap().clone()
+    }
+
+    async fn task_choices(&self) -> TaskChoices {
+        self.choices.lock().unwrap().clone()
+    }
+
+    async fn task_todos(&self, _workspace: &str) -> TodoChoices {
+        self.todos.lock().unwrap().clone()
+    }
+
+    async fn task_create(&self, launch: TaskLaunch) -> Result<(), String> {
+        let delay = self.task_delay_ms.load(Ordering::SeqCst);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
+        self.launches.lock().unwrap().push(launch);
+        self.task_result.lock().unwrap().clone()
+    }
+
+    async fn take_slot(&self) {
+        self.slot_taken.fetch_add(1, Ordering::SeqCst);
+        self.slot.lock().unwrap().active = true;
+    }
+}
+
+/// An Agent session as the daemon would describe it.
+pub fn sample_agent(key: &str, state: &str) -> AgentView {
+    let (kind, session) = key.split_once(':').unwrap_or(("claude", key));
+    AgentView {
+        key: key.to_string(),
+        kind: kind.to_string(),
+        kind_label: "Claude Code".into(),
+        session_id: session.to_string(),
+        title: format!("Task {session}"),
+        project: ProjectRef {
+            key: "/tmp/proj".into(),
+            name: "proj".into(),
+        },
+        state: state.to_string(),
+        started_at: BASE_MS - 60_000,
+        last_activity_at: BASE_MS,
+        active_elapsed_secs: 30,
+        turn_steps: 0,
+        current_tool: None,
+        waiting_request_id: None,
+        waiting_preview: None,
+        pending_interject: 0,
+        last_turn_failed: false,
+        can_interject: CanInterject {
+            ok: state == "working",
+            reason: (state != "working").then(|| "notWorking".to_string()),
+        },
+        followed: false,
+    }
+}
+
+/// Workspaces and Agents a phone can pick from.
+pub fn sample_choices() -> TaskChoices {
+    TaskChoices {
+        options: wire::TaskOptions {
+            enabled: true,
+            blocked: None,
+            permission_mode: "ask".into(),
+            workspaces: vec![wire::WorkspaceOption {
+                id: "ws1".into(),
+                label: "proj".into(),
+                subtitle: "~/dev".into(),
+                pinned: true,
+                last_used_at: BASE_MS,
+            }],
+            agents: vec![wire::AgentOption {
+                kind: "claude".into(),
+                label: "Claude Code".into(),
+                ready: true,
+                subtitle: "hooks".into(),
+                permission_selectable: true,
+                reason: None,
+            }],
+        },
+        workspaces: HashMap::from([("ws1".to_string(), "/tmp/proj".to_string())]),
     }
 }
 

@@ -30,7 +30,10 @@ pub(crate) struct Upload {
     size: u64,
     chunks: u64,
     sha256: String,
+    /// Question the file answers (reply attachments), or `None` for an Agent upload.
     request_id: Option<String>,
+    /// Agent the file is for (interjections), when it is not tied to a question.
+    agent_key: Option<String>,
     next: u64,
     received: u64,
     hasher: Sha256,
@@ -195,24 +198,35 @@ impl Actor {
         if !hash_ok {
             return reject(self, "invalid");
         }
-        // Reply attachments belong to a pending question.
-        match begin.scope.request_id.as_deref() {
-            Some(request_id) if self.requests.find(request_id).is_some() => {}
-            Some(_) => return reject(self, "gone"),
-            None => return reject(self, "invalid"),
+        // Reply attachments belong to a pending question, interjection files to an Agent.
+        let agent_known = begin
+            .scope
+            .agent_key
+            .as_deref()
+            .map(|key| self.known_agent(key).is_some());
+        match (begin.scope.request_id.as_deref(), agent_known) {
+            (Some(request_id), _) if self.requests.find(request_id).is_some() => {}
+            (Some(_), _) => return reject(self, "gone"),
+            (None, Some(true)) => {}
+            (None, Some(false)) => return reject(self, "gone"),
+            (None, None) => return reject(self, "invalid"),
         }
         let (count, bytes) = self.uploads.staged_for(phone_id);
         if count >= MAX_STAGED_UPLOADS_PER_PHONE || bytes + begin.size > MAX_STAGED_BYTES_PER_PHONE
         {
             return reject(self, "busy");
         }
-        let for_request = self
+        let for_scope = self
             .uploads
             .by_id
             .values()
-            .filter(|u| u.phone_id == phone_id && u.request_id == begin.scope.request_id)
+            .filter(|u| {
+                u.phone_id == phone_id
+                    && u.request_id == begin.scope.request_id
+                    && u.agent_key == begin.scope.agent_key
+            })
             .count();
-        if for_request >= MAX_REPLY_ATTACHMENTS {
+        if for_scope >= MAX_REPLY_ATTACHMENTS {
             return reject(self, "tooMany");
         }
         let dir = self.store.dir().join("uploads").join(&id);
@@ -232,6 +246,7 @@ impl Actor {
                 chunks: begin.chunks,
                 sha256: begin.sha256.to_ascii_lowercase(),
                 request_id: begin.scope.request_id.clone(),
+                agent_key: begin.scope.agent_key.clone(),
                 next: 0,
                 received: 0,
                 hasher: Sha256::new(),
@@ -336,17 +351,40 @@ impl Actor {
         request_id: &str,
         ids: &[String],
     ) -> Result<Vec<UploadedFile>, String> {
-        let mut files = Vec::with_capacity(ids.len());
         for id in ids {
             let usable = self.uploads.by_id.get(id).is_some_and(|u| {
-                u.phone_id == phone_id
-                    && u.complete
-                    && u.request_id.as_deref().is_none_or(|r| r == request_id)
+                u.phone_id == phone_id && u.complete && u.request_id.as_deref() == Some(request_id)
             });
             if !usable {
                 return Err("attachment is not available".into());
             }
         }
+        Ok(self.consume_uploads(ids))
+    }
+
+    /// Like [`Self::take_uploads`] for the files of an interjection to `agent_key`.
+    pub(super) fn take_agent_uploads(
+        &mut self,
+        phone_id: &str,
+        agent_key: &str,
+        ids: &[String],
+    ) -> Result<Vec<UploadedFile>, String> {
+        for id in ids {
+            let usable = self.uploads.by_id.get(id).is_some_and(|u| {
+                u.phone_id == phone_id
+                    && u.complete
+                    && u.request_id.is_none()
+                    && u.agent_key.as_deref() == Some(agent_key)
+            });
+            if !usable {
+                return Err("attachment is not available".into());
+            }
+        }
+        Ok(self.consume_uploads(ids))
+    }
+
+    fn consume_uploads(&mut self, ids: &[String]) -> Vec<UploadedFile> {
+        let mut files = Vec::with_capacity(ids.len());
         for id in ids {
             if let Some(upload) = self.uploads.by_id.remove(id) {
                 files.push(UploadedFile {
@@ -356,7 +394,7 @@ impl Actor {
                 });
             }
         }
-        Ok(files)
+        files
     }
 
     pub(super) fn drop_phone_uploads(&mut self, phone_id: &str) {

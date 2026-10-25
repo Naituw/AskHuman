@@ -4,9 +4,13 @@
 
 use std::sync::Weak;
 
+use super::ios_agents::{self, ProjectCache};
 use super::*;
 use crate::config::IosChannelConfig;
-use crate::ios::gateway::{GatewayDeps, Host, IosGateway};
+use crate::ios::gateway::{
+    FrameData, GatewayDeps, Host, InterjectResult, IosGateway, StagedFile, TaskChoices, TaskLaunch,
+    TodoChoices,
+};
 use crate::ios::push::HttpPushClient;
 use crate::ios::store::Store;
 use crate::ios::transport::{ConnectParams, RumqttcTransport, Will};
@@ -50,8 +54,10 @@ pub(super) struct IosSlot {
 struct DaemonHost {
     state: Weak<ServerState>,
     computer_name: String,
+    projects: ProjectCache,
 }
 
+#[async_trait::async_trait]
 impl Host for DaemonHost {
     fn mac_name(&self) -> String {
         self.computer_name.clone()
@@ -59,9 +65,73 @@ impl Host for DaemonHost {
 
     fn caps(&self) -> Caps {
         Caps {
-            new_task: false,
-            interject: false,
-            watch: false,
+            new_task: true,
+            interject: true,
+            watch: true,
+        }
+    }
+
+    fn agents(&self) -> Vec<wire::AgentView> {
+        match self.state.upgrade() {
+            Some(state) => ios_agents::agent_views(&state, &self.projects),
+            None => Vec::new(),
+        }
+    }
+
+    fn watch_frame(&self, agent_key: &str) -> Option<FrameData> {
+        ios_agents::watch_frame(&self.state.upgrade()?, agent_key)
+    }
+
+    async fn interject(
+        &self,
+        phone_id: &str,
+        agent_key: &str,
+        text: &str,
+        files: Vec<StagedFile>,
+    ) -> InterjectResult {
+        match self.state.upgrade() {
+            Some(state) => ios_agents::interject(&state, phone_id, agent_key, text, files),
+            None => InterjectResult::rejected("unavailable"),
+        }
+    }
+
+    fn interject_clear(&self, agent_key: &str) -> bool {
+        self.state
+            .upgrade()
+            .is_some_and(|state| ios_agents::interject_clear(&state, agent_key))
+    }
+
+    fn interject_state(&self, agent_key: &str) -> (u64, String) {
+        match self.state.upgrade() {
+            Some(state) => ios_agents::interject_state(&state, agent_key),
+            None => (0, String::new()),
+        }
+    }
+
+    async fn task_choices(&self) -> TaskChoices {
+        match self.state.upgrade() {
+            Some(state) => ios_tasks::choices(&state).await,
+            None => TaskChoices::blocked("agentDefault", "unavailable"),
+        }
+    }
+
+    async fn task_todos(&self, workspace: &str) -> TodoChoices {
+        let workspace = workspace.to_string();
+        tokio::task::spawn_blocking(move || ios_tasks::todos(&workspace))
+            .await
+            .unwrap_or_default()
+    }
+
+    async fn task_create(&self, launch: TaskLaunch) -> Result<(), String> {
+        match self.state.upgrade() {
+            Some(state) => ios_tasks::create(&state, launch).await,
+            None => Err("unavailable".to_string()),
+        }
+    }
+
+    async fn take_slot(&self) {
+        if let Some(state) = self.state.upgrade() {
+            let _ = set_active_channel(&state, "ios").await;
         }
     }
 
@@ -143,6 +213,7 @@ fn build_gateway(state: &Arc<ServerState>, cfg: &IosChannelConfig) -> Arc<IosGat
     let host = Arc::new(DaemonHost {
         state: Arc::downgrade(state),
         computer_name: computer_name(),
+        projects: ProjectCache::default(),
     });
     Arc::new(IosGateway::start(GatewayDeps {
         host,
