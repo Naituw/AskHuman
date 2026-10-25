@@ -25,17 +25,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let info = notification.request.content.userInfo
         let rid = info["rid"] as? String
         let mac = info["mac"] as? String
+        let kind = info["kind"] as? String
         let known = await MainActor.run { () -> Bool in
             guard let store = AppEnvironment.current?.store, let rid, let mac else { return false }
-            return store.state.foreground && store.item(id: mac + "/" + rid) != nil
+            return store.coversNotification(macId: mac, rid: rid, kind: kind)
         }
         return known ? [] : [.banner, .list, .sound]
     }
 
-    /// The user tapped a notification: open the request it is about.
+    /// The user tapped a notification: open the request or the Agent it is about.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
         guard let rid = info["rid"] as? String, let mac = info["mac"] as? String else { return }
-        await MainActor.run { AppEnvironment.current?.store.open(macId: mac, requestId: rid) }
+        let kind = info["kind"] as? String
+        await MainActor.run { AppEnvironment.current?.store.openNotification(macId: mac, rid: rid, kind: kind) }
     }
 }

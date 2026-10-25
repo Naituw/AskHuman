@@ -86,6 +86,30 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertNil(store.banner, "pushes cover the background")
     }
 
+    // MARK: notifications
+
+    func testTappingAFollowNotificationOpensTheAgentAndARequestOneOpensTheRequest() async {
+        await make()
+        let agentKey = MockData.workingAgentKey
+        store.openNotification(macId: MockData.homeMacId, rid: agentKey, kind: "follow.done")
+        XCTAssertEqual(store.tab, .agents)
+        XCTAssertEqual(store.agentPath, [AgentItem.key(MockData.homeMacId, agentKey)])
+
+        let request = store.state.inbox.first!
+        store.openNotification(macId: request.macId, rid: request.requestId, kind: "ask")
+        XCTAssertEqual(store.tab, .inbox)
+        XCTAssertEqual(store.inboxPath, [request.id])
+    }
+
+    func testANotificationForWhatIsOnScreenIsNotShownAgain() async {
+        await make()
+        let request = store.state.inbox.first!
+        XCTAssertTrue(store.coversNotification(macId: request.macId, rid: request.requestId, kind: "ask"))
+        XCTAssertTrue(store.coversNotification(macId: MockData.homeMacId, rid: MockData.workingAgentKey, kind: "follow.waiting"))
+        XCTAssertFalse(store.coversNotification(macId: MockData.homeMacId, rid: "unknown", kind: "ask"))
+        XCTAssertFalse(store.coversNotification(macId: MockData.homeMacId, rid: "claude:unknown", kind: "follow.done"))
+    }
+
     // MARK: watch
 
     func testTheLiveFramesFollowThePageOnTheStack() async {

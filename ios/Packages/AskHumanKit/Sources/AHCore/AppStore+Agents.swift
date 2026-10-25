@@ -71,6 +71,26 @@ extension AppStore {
         agentPath = [id]
     }
 
+    /// Opens what a tapped notification is about: the Agent of a follow notification (`follow.*`,
+    /// whose `rid` is the Agent key), else the request.
+    public func openNotification(macId: String, rid: String, kind: String?) {
+        if kind?.hasPrefix("follow.") == true {
+            openAgent(macId: macId, agentKey: rid)
+        } else {
+            open(macId: macId, requestId: rid)
+        }
+    }
+
+    /// A notification that arrives while the app is open is redundant when the app already shows
+    /// what it is about (the in-app banner covers new requests and follow events).
+    public func coversNotification(macId: String, rid: String, kind: String?) -> Bool {
+        guard state.foreground else { return false }
+        if kind?.hasPrefix("follow.") == true {
+            return state.agent(macId: macId, agentKey: rid) != nil
+        }
+        return item(id: macId + "/" + rid) != nil
+    }
+
     /// Opens or closes the live frames of the Agent a page shows.
     func setWatch(_ id: String, open: Bool) {
         guard let (macId, agentKey) = AgentItem.split(id) else { return }
