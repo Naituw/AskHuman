@@ -1,5 +1,6 @@
 pub mod agent_ask_question;
 pub mod agent_context_recovery;
+pub mod agent_delegated;
 pub mod agent_launch;
 pub mod agent_lifecycle;
 pub mod agent_mode;
@@ -8,6 +9,7 @@ pub mod agent_rules;
 pub mod agent_stop;
 pub mod agent_subagent_guard;
 pub mod claude_hook;
+pub mod codex_protocol;
 pub mod cursor_hook;
 pub mod grok_skill;
 pub mod hook_edit;

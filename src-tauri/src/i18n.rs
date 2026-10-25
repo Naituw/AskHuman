@@ -1182,6 +1182,26 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "cmd.ruleInstalled" => pick(lang, "Rule written", "已写入规则文件"),
         "cmd.ruleUpdated" => pick(lang, "Prompt updated to the latest version", "已更新到最新提示词"),
         "cmd.ruleRemoved" => pick(lang, "Rule removed", "已从规则文件移除"),
+        "cmd.codexProtocolInstalled" => pick(
+            lang,
+            "Protocol installed (delivered by the Codex SessionStart hook)",
+            "已安装协议（由 Codex SessionStart Hook 交付）",
+        ),
+        "cmd.codexProtocolUpdated" => pick(
+            lang,
+            "Protocol updated (delivered by the Codex SessionStart hook)",
+            "已更新协议（由 Codex SessionStart Hook 交付）",
+        ),
+        "cmd.codexProtocolUnsupported" => pick(
+            lang,
+            "This Codex version ({version}) does not support protocol injection; Codex {minimum} or newer is required",
+            "该版本不支持协议注入（Codex {version}），需要 Codex {minimum} 或更高版本",
+        ),
+        "cmd.codexProtocolNotTrusted" => pick(
+            lang,
+            "Codex did not accept the AskHuman SessionStart hook, so nothing was changed",
+            "Codex 未接受 AskHuman 的 SessionStart Hook，未做任何改动",
+        ),
         "cmd.skillInstalled" => pick(lang, "Skill written", "已写入 skill 文件"),
         "cmd.skillUpdated" => pick(lang, "Skill updated to the latest version", "已更新 skill 到最新"),
         "cmd.skillRemoved" => pick(lang, "Skill removed", "已移除 skill 文件"),

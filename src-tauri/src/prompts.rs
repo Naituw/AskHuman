@@ -178,6 +178,53 @@ pub fn grok_skill_body() -> String {
     )
 }
 
+/// What the Codex SessionStart hook injects as `additionalContext` (spec
+/// `codex-delegated-run-silence` D8/D9): the interaction protocol behind a marker line.
+pub struct CodexProtocol {
+    /// `askhuman-protocol:<mode>:<hash8>` — identifies this exact protocol text: any change of
+    /// mode, collaboration style, custom wording, or built-in prompt changes the hash. The first
+    /// line of [`Self::text`] wraps it in an HTML comment; resume / fork scan the rollout for it so
+    /// the same text is not injected twice. Only ASCII letters, digits, `-` and `:`, so JSON
+    /// escaping can never alter it.
+    pub needle: String,
+    pub text: String,
+}
+
+/// Render the Codex protocol. `compact` appends the post-compaction recovery sentence: compaction
+/// drops the earlier injection, so the whole protocol is injected again together with it.
+pub fn codex_protocol(mcp: bool, compact: bool) -> CodexProtocol {
+    let body = if mcp {
+        mcp_reference_for(AgentKind::Codex)
+    } else {
+        cli_reference_for(AgentKind::Codex)
+    };
+    codex_protocol_from_body(mcp, &body, compact)
+}
+
+fn codex_protocol_from_body(mcp: bool, body: &str, compact: bool) -> CodexProtocol {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(body.as_bytes());
+    let hash: String = digest
+        .iter()
+        .take(4)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let needle = format!(
+        "askhuman-protocol:{}:{hash}",
+        if mcp { "mcp" } else { "cli" }
+    );
+    let mut text = format!("<!-- {needle} -->\n{body}");
+    if compact {
+        text.push_str("\n\n");
+        text.push_str(if mcp {
+            compact_recovery_mcp_prompt()
+        } else {
+            compact_recovery_cli_prompt()
+        });
+    }
+    CodexProtocol { needle, text }
+}
+
 pub const fn compact_recovery_cli_prompt() -> &'static str {
     "You were just summarized. Run `AskHuman --show-last` now to retrieve the full last AskHuman question and answer before continuing."
 }
@@ -270,6 +317,67 @@ Before doing anything else, ask the user immediately using the questioning tool 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_protocol_marker_identifies_mode_and_exact_body() {
+        let cli = codex_protocol_from_body(false, "BODY", false);
+        let mcp = codex_protocol_from_body(true, "BODY", false);
+        let changed = codex_protocol_from_body(false, "BODY!", false);
+        assert!(cli.needle.starts_with("askhuman-protocol:cli:"));
+        assert!(mcp.needle.starts_with("askhuman-protocol:mcp:"));
+        // Same body, same hash; a different mode or body is a different marker.
+        assert_eq!(cli.needle.split(':').nth(2), mcp.needle.split(':').nth(2));
+        assert_ne!(cli.needle, mcp.needle);
+        assert_ne!(cli.needle, changed.needle);
+        assert_eq!(
+            cli.needle,
+            codex_protocol_from_body(false, "BODY", false).needle
+        );
+        // Eight hex digits, nothing JSON could ever escape.
+        let hash = cli.needle.rsplit(':').next().unwrap();
+        assert_eq!(hash.len(), 8);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(cli
+            .needle
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == ':'));
+    }
+
+    #[test]
+    fn codex_protocol_text_leads_with_the_marker_line_and_keeps_the_body_intact() {
+        let protocol = codex_protocol_from_body(false, "BODY LINE 1\nBODY LINE 2", false);
+        assert_eq!(
+            protocol.text,
+            format!("<!-- {} -->\nBODY LINE 1\nBODY LINE 2", protocol.needle)
+        );
+        assert!(!protocol.text.contains("You were just summarized"));
+    }
+
+    #[test]
+    fn codex_protocol_after_compaction_appends_the_matching_recovery_sentence() {
+        let cli = codex_protocol_from_body(false, "BODY", true);
+        let mcp = codex_protocol_from_body(true, "BODY", true);
+        assert!(cli.text.ends_with(compact_recovery_cli_prompt()));
+        assert!(mcp.text.ends_with(compact_recovery_mcp_prompt()));
+        // The marker identifies the protocol, not the recovery sentence: a compacted injection and
+        // a plain one of the same text carry the same marker.
+        assert_eq!(
+            cli.needle,
+            codex_protocol_from_body(false, "BODY", false).needle
+        );
+        assert!(!cli.text.contains("MCP `show_last`"));
+        assert!(!mcp.text.contains("AskHuman --show-last"));
+    }
+
+    #[test]
+    fn codex_protocol_uses_the_shared_agent_protocol_bodies() {
+        let cli = codex_protocol(false, false);
+        let mcp = codex_protocol(true, false);
+        assert!(cli.text.contains(&cli_reference_for(AgentKind::Codex)));
+        assert!(mcp.text.contains(&mcp_reference_for(AgentKind::Codex)));
+        assert!(cli.text.contains(SUBAGENT_PROTOCOL_RULE));
+        assert!(mcp.text.contains(SUBAGENT_DELEGATION_RULE));
+    }
 
     #[test]
     fn interject_deny_reason_wraps_message() {

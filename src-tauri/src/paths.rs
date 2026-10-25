@@ -118,6 +118,18 @@ pub fn stop_preferences_file() -> PathBuf {
     config_dir().join("stop-preferences.json")
 }
 
+/// Whether delegated (non-interactive) runs of an agent may use AskHuman. Default off = silent, as
+/// if AskHuman were not integrated (spec codex-delegated-run-silence D2). Pure preference.
+pub fn delegated_preferences_file() -> PathBuf {
+    config_dir().join("delegated-preferences.json")
+}
+
+/// Per-session markers written by the Codex SessionStart hook for runs it classified as delegated
+/// (`<state>/codex-delegated/<id>.json`). Read by the MCP guard, Stop, and PermissionRequest.
+pub fn codex_delegated_marker_dir() -> PathBuf {
+    state_dir().join("codex-delegated")
+}
+
 /// Per-agent lifecycle tracking preference. Tracking is available only while the corresponding
 /// automatic Agent integration is active, but the explicit preference survives mode changes.
 pub fn lifecycle_preferences_file() -> PathBuf {

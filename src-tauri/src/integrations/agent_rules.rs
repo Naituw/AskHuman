@@ -4,7 +4,9 @@
 //! writing the owned `begin/end` block; content outside the block is always preserved. Targets:
 //! - Cursor：`~/.cursor/rules/askhuman.mdc`（`alwaysApply` frontmatter + 托管区块）。
 //! - Claude Code：`~/.claude/CLAUDE.md` 内的托管区块。
-//! - Codex：`~/.codex/AGENTS.md` 内的托管区块。
+//! - Codex：协议由 SessionStart hook 动态交付（[`crate::integrations::codex_protocol`]），本模块对
+//!   Codex 的所有查询 / 安装 / 卸载 / 打开一律委托它；`~/.codex/AGENTS.md` 内的托管区块只是旧版遗留，
+//!   仅用于识别与迁移。
 //! - Pi：`~/.pi/agent/AGENTS.md` 内的托管区块。
 //!
 //! 「更新」用于内置提示词随版本变化后，把已安装的旧正文覆盖为最新（仅替换区块内部）。
@@ -77,7 +79,23 @@ impl AgentTarget {
         matches!(self, AgentTarget::Grok)
     }
 
+    /// 该 target 的协议载体是否为 Codex SessionStart hook（委托 `codex_protocol`，区块仅为旧版遗留）。
+    fn is_codex_protocol(self) -> bool {
+        matches!(self, AgentTarget::Codex)
+    }
+
+    /// 展示 / 定位 / 打开用的文件：Codex 是承载协议的 `hooks.json`（而非遗留的 `AGENTS.md`），
+    /// 其余与 [`Self::file`] 相同。
+    fn shown_file(self) -> PathBuf {
+        if self.is_codex_protocol() {
+            crate::integrations::codex_protocol::display_file()
+        } else {
+            self.file()
+        }
+    }
+
     /// 目标规则文件路径（Grok 返回其 skill 文件路径，仅用于展示；实际读写走 `grok_skill`）。
+    /// Codex 返回遗留的 `AGENTS.md`，只有 `codex_protocol` 的迁移 / 刷新逻辑会读写它。
     fn file(self) -> PathBuf {
         match self {
             AgentTarget::Cursor => paths::cursor_rule_file(),
@@ -224,6 +242,9 @@ pub fn is_installed(agent: AgentTarget) -> bool {
     if agent.is_grok_skill() {
         return crate::integrations::grok_skill::is_installed();
     }
+    if agent.is_codex_protocol() {
+        return crate::integrations::codex_protocol::is_installed();
+    }
     let path = agent.file();
     let Ok(text) = std::fs::read_to_string(&path) else {
         return false;
@@ -249,6 +270,11 @@ pub fn needs_update_variant(agent: AgentTarget, variant: Variant) -> bool {
     if agent.is_grok_skill() {
         return crate::integrations::grok_skill::needs_update();
     }
+    if agent.is_codex_protocol() {
+        // The hook text is rendered at run time, so there is no body to compare: the hook being
+        // outdated / untrusted or a legacy block still being present is what needs updating.
+        return crate::integrations::codex_protocol::needs_update();
+    }
     let Ok(text) = std::fs::read_to_string(agent.file()) else {
         return false;
     };
@@ -266,6 +292,11 @@ pub fn installed_variant(agent: AgentTarget) -> Option<Variant> {
     if agent.is_grok_skill() {
         // Grok 只有 MCP 语义：装了 skill 即视为 Mcp 变体，未装为 None。
         return crate::integrations::grok_skill::is_installed().then_some(Variant::Mcp);
+    }
+    if agent.is_codex_protocol() {
+        // Only a legacy block carries a variant; a migrated install derives its mode from the MCP
+        // configuration (see `agent_mode::current`).
+        return crate::integrations::codex_protocol::legacy_variant();
     }
     let text = std::fs::read_to_string(agent.file()).ok()?;
     if let Some(body) = block_body(&text) {
@@ -306,6 +337,12 @@ pub fn display_path(agent: AgentTarget) -> String {
     if agent.is_grok_skill() {
         return crate::integrations::grok_skill::display_path();
     }
+    collapse_home(&agent.shown_file())
+}
+
+/// Where a user pastes the reference prompt by hand (manual integration). For Codex this is still
+/// `AGENTS.md`, even though the automatic integration delivers the protocol through a hook.
+pub fn manual_paste_path(agent: AgentTarget) -> String {
     collapse_home(&agent.file())
 }
 
@@ -335,6 +372,12 @@ pub fn install_variant(agent: AgentTarget, variant: Variant) -> Result<String> {
     if agent.is_grok_skill() {
         return crate::integrations::grok_skill::install();
     }
+    if agent.is_codex_protocol() {
+        crate::integrations::codex_protocol::install(codex_mode(variant))?;
+        return Ok(
+            crate::i18n::tr(crate::i18n::Lang::current(), "cmd.codexProtocolInstalled").to_string(),
+        );
+    }
     write_rule(agent, &variant.body(agent))?;
     Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.ruleInstalled").to_string())
 }
@@ -344,8 +387,21 @@ pub fn update_variant(agent: AgentTarget, variant: Variant) -> Result<String> {
     if agent.is_grok_skill() {
         return crate::integrations::grok_skill::update();
     }
+    if agent.is_codex_protocol() {
+        crate::integrations::codex_protocol::install(codex_mode(variant))?;
+        return Ok(
+            crate::i18n::tr(crate::i18n::Lang::current(), "cmd.codexProtocolUpdated").to_string(),
+        );
+    }
     write_rule(agent, &variant.body(agent))?;
     Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.ruleUpdated").to_string())
+}
+
+fn codex_mode(variant: Variant) -> crate::integrations::agent_mode::Mode {
+    match variant {
+        Variant::Cli => crate::integrations::agent_mode::Mode::Cli,
+        Variant::Mcp => crate::integrations::agent_mode::Mode::Mcp,
+    }
 }
 
 /// 把指定提示词正文写入目标文件（共享文件 upsert 区块 / Cursor 写 frontmatter + 区块、迁移旧格式）。
@@ -370,6 +426,10 @@ fn write_rule(agent: AgentTarget, body: &str) -> Result<()> {
 pub fn uninstall(agent: AgentTarget) -> Result<String> {
     if agent.is_grok_skill() {
         return crate::integrations::grok_skill::uninstall();
+    }
+    if agent.is_codex_protocol() {
+        crate::integrations::codex_protocol::uninstall()?;
+        return Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.ruleRemoved").to_string());
     }
     let path = agent.file();
     let lang = crate::i18n::Lang::current();
@@ -397,7 +457,7 @@ pub fn reveal(agent: AgentTarget) {
     if agent.is_grok_skill() {
         return crate::integrations::grok_skill::reveal();
     }
-    let path = agent.file();
+    let path = agent.shown_file();
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("open")
@@ -425,7 +485,7 @@ pub fn open(agent: AgentTarget) {
     if agent.is_grok_skill() {
         return crate::integrations::grok_skill::open();
     }
-    let path = agent.file();
+    let path = agent.shown_file();
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("open").arg(&path).spawn();

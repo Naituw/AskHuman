@@ -74,6 +74,12 @@ pub fn run(agent: Option<&str>) -> Option<String> {
         return None;
     }
     let input: Value = serde_json::from_slice(&bytes).ok()?;
+    // A delegated Codex run has no human behind it: answer nothing so Codex applies its own
+    // approval handling, exactly as if AskHuman were not integrated.
+    if let Some(reason) = delegated_silence(agent, &input, &crate::agents::delegated::silenced) {
+        audit_silenced_permission(&input, &reason);
+        return None;
+    }
     let parsed = match parse_permission(agent, &input)? {
         ParseOutcome::AutoAllow => {
             let value = json!({
@@ -88,6 +94,36 @@ pub fn run(agent: Option<&str>) -> Option<String> {
     };
     let result = crate::client::run_confirm(parsed.task.clone())?;
     decision_output(&parsed, &result).and_then(|value| serde_json::to_string(&value).ok())
+}
+
+/// Audit reason when this request comes from a delegated Codex run (spec
+/// `codex-delegated-run-silence` D3). Only Codex has delegated runs; `silenced` is injected so the
+/// decision is testable without touching the process table or the user's preference file.
+fn delegated_silence(
+    agent: Agent,
+    input: &Value,
+    silenced: &dyn Fn(&str, Option<&Value>) -> Option<String>,
+) -> Option<String> {
+    if agent != Agent::Codex {
+        return None;
+    }
+    let session_id = crate::agents::delegated::session_id_of(input).unwrap_or_default();
+    silenced(&session_id, Some(input))
+}
+
+fn audit_silenced_permission(input: &Value, reason: &str) {
+    let session_id = crate::agents::delegated::session_id_of(input);
+    crate::daemon::lifecycle::log_guard_audit(crate::daemon::lifecycle::GuardAudit {
+        component: "permission_hook",
+        action: "suppressed",
+        reason,
+        tool: None,
+        agent: Some("codex"),
+        thread_source: None,
+        session_id: session_id.as_deref(),
+        thread_id: None,
+        turn_id: input.get("turn_id").and_then(Value::as_str),
+    });
 }
 
 /// Memory enhancement for Codex requests (spec codex-permission-remember, D24): a fallible
@@ -887,6 +923,87 @@ mod tests {
         assert_eq!(
             decoded["hookSpecificOutput"]["decision"]["message"],
             "The user denied this permission request via AskHuman. Reason: line 1\n\"line 2\""
+        );
+    }
+
+    #[test]
+    fn delegated_codex_requests_are_silenced_with_the_probe_reason() {
+        let seen = std::cell::RefCell::new(Vec::new());
+        let silenced = |id: &str, input: Option<&Value>| {
+            seen.borrow_mut().push((
+                id.to_string(),
+                input.is_some_and(|value| value.get("cwd").is_some()),
+            ));
+            Some("codex_delegated_exec_process".to_string())
+        };
+        assert_eq!(
+            delegated_silence(Agent::Codex, &input(Agent::Codex), &silenced).as_deref(),
+            Some("codex_delegated_exec_process")
+        );
+        assert_eq!(seen.borrow().as_slice(), &[("s1".to_string(), true)]);
+    }
+
+    #[test]
+    fn claude_requests_never_consult_the_delegated_probe() {
+        let consulted = std::cell::Cell::new(false);
+        let silenced = |_: &str, _: Option<&Value>| {
+            consulted.set(true);
+            Some("codex_delegated_exec_process".to_string())
+        };
+        assert!(delegated_silence(Agent::Claude, &input(Agent::Claude), &silenced).is_none());
+        assert!(!consulted.get());
+    }
+
+    #[test]
+    fn interactive_codex_requests_keep_the_popup_flow() {
+        let interactive = |_: &str, _: Option<&Value>| None;
+        assert!(delegated_silence(Agent::Codex, &input(Agent::Codex), &interactive).is_none());
+        // And the request itself still parses into a popup.
+        assert!(parse_popup(Agent::Codex, &input(Agent::Codex)).is_some());
+    }
+
+    #[test]
+    fn a_codex_request_without_a_session_id_still_reaches_the_probe_with_an_empty_id() {
+        let mut value = input(Agent::Codex);
+        value.as_object_mut().unwrap().remove("session_id");
+        let ids = std::cell::RefCell::new(Vec::new());
+        let silenced = |id: &str, _: Option<&Value>| {
+            ids.borrow_mut().push(id.to_string());
+            None
+        };
+        assert!(delegated_silence(Agent::Codex, &value, &silenced).is_none());
+        assert_eq!(ids.borrow().as_slice(), &[String::new()]);
+    }
+
+    #[test]
+    fn a_null_transcript_path_silences_a_codex_request_through_the_real_classifier() {
+        // Exercises `delegated::silenced_with` end to end with hermetic probes: the permission hook
+        // adds nothing on top of it.
+        struct Never;
+        impl crate::agents::delegated::Probes for Never {
+            fn allowed(&self) -> bool {
+                false
+            }
+            fn marker(&self, _: &str) -> Option<crate::agents::delegated::Signal> {
+                None
+            }
+            fn write_marker(&self, _: &str, _: crate::agents::delegated::Signal) {}
+            fn clear_marker(&self, _: &str) {}
+            fn exec_process(&self) -> bool {
+                false
+            }
+            fn rollout_signal(&self, _: &str) -> Option<crate::agents::delegated::Signal> {
+                None
+            }
+        }
+        let mut value = input(Agent::Codex);
+        value["transcript_path"] = Value::Null;
+        let silenced = |id: &str, input: Option<&Value>| {
+            crate::agents::delegated::silenced_with(&Never, id, input)
+        };
+        assert_eq!(
+            delegated_silence(Agent::Codex, &value, &silenced).as_deref(),
+            Some("codex_transcript_path_null")
         );
     }
 }

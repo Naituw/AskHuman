@@ -68,14 +68,14 @@ fn run_inner(args: &[String]) -> Option<Value> {
         }
         return None;
     }
-    if let Some(reason) = confirmation_suppression_reason(kind, &input) {
+    if let Some(reason) = confirmation_suppression_reason(kind, &session_id, &input) {
         crate::daemon::lifecycle::log_guard_audit(crate::daemon::lifecycle::GuardAudit {
             component: "stop_confirmation",
             action: "suppressed",
-            reason,
+            reason: &reason,
             tool: None,
             agent: Some(kind.as_str()),
-            thread_source: codex_thread_source(&input),
+            thread_source: None,
             session_id: Some(&session_id),
             thread_id: input
                 .get("thread_id")
@@ -167,27 +167,42 @@ fn is_natural_stop(kind: AgentKind, input: &Value) -> bool {
     }
 }
 
-fn codex_thread_source(input: &Value) -> Option<&str> {
-    input
-        .get("thread_source")
-        .or_else(|| input.get("threadSource"))
-        .and_then(Value::as_str)
+/// Why a Codex Stop must not ask the human (`None` = ask as usual).
+///
+/// Codex's Stop hook input carries no `thread_source` (the `StopCommandInput` fields are identical
+/// from 0.144.1 through 0.163.0), so unattended threads are recognized by what the input does
+/// carry plus the delegated-run signals (spec `codex-delegated-run-silence`):
+///
+/// 1. `transcript_path: null` means a thread without a rollout (ambient / system / ephemeral).
+///    This holds even when the user allows delegated runs to use AskHuman, because nobody can
+///    answer such a thread.
+/// 2. A delegated run (`codex exec` / `review`, plugin-driven app-server thread) stays silent,
+///    as if AskHuman were not integrated, unless that preference allows it.
+fn confirmation_suppression_reason(
+    kind: AgentKind,
+    session_id: &str,
+    input: &Value,
+) -> Option<String> {
+    confirmation_suppression_reason_with(kind, session_id, input, &super::delegated::silenced)
 }
 
-fn confirmation_suppression_reason(kind: AgentKind, input: &Value) -> Option<&'static str> {
+fn confirmation_suppression_reason_with(
+    kind: AgentKind,
+    session_id: &str,
+    input: &Value,
+    delegated_silence: &dyn Fn(&str, Option<&Value>) -> Option<String>,
+) -> Option<String> {
     if kind != AgentKind::Codex {
         return None;
     }
-    if codex_thread_source(input)
-        .is_some_and(|source| crate::mcp::ask::CODEX_BLOCKED_THREAD_SOURCES.contains(&source))
-    {
-        return Some("codex_blocked_thread_source");
+    if super::delegated::transcript_path_is_null(input) {
+        return Some(
+            super::delegated::Signal::TranscriptNull
+                .reason()
+                .to_string(),
+        );
     }
-    input
-        .get("transcript_path")
-        .or_else(|| input.get("transcriptPath"))
-        .is_some_and(Value::is_null)
-        .then_some("codex_transcript_path_null")
+    delegated_silence(session_id, Some(input))
 }
 
 fn last_assistant_message(kind: AgentKind, input: &Value) -> LastAssistantMessage {
@@ -457,42 +472,81 @@ mod tests {
         ));
     }
 
+    fn never_delegated(_: &str, _: Option<&Value>) -> Option<String> {
+        None
+    }
+
     #[test]
-    fn codex_system_and_ephemeral_stops_suppress_confirmation() {
+    fn codex_ephemeral_stops_suppress_confirmation_even_when_delegated_runs_are_allowed() {
+        // `never_delegated` models the "allow delegated runs" preference being on.
         for input in [
-            json!({"thread_source":"system", "transcript_path":"/tmp/rollout.jsonl"}),
-            json!({"threadSource":"system", "transcriptPath":"/tmp/rollout.jsonl"}),
-            json!({"thread_source":"ambient_suggestions", "transcript_path":"/tmp/rollout.jsonl"}),
-            json!({"threadSource":"ambient_suggestions", "transcriptPath":"/tmp/rollout.jsonl"}),
+            json!({"transcript_path":null}),
+            json!({"transcriptPath":null}),
         ] {
             assert_eq!(
-                confirmation_suppression_reason(AgentKind::Codex, &input),
-                Some("codex_blocked_thread_source"),
+                confirmation_suppression_reason_with(
+                    AgentKind::Codex,
+                    "session",
+                    &input,
+                    &never_delegated
+                )
+                .as_deref(),
+                Some("codex_transcript_path_null"),
                 "{input:?}"
             );
         }
+    }
+
+    #[test]
+    fn codex_delegated_stops_suppress_confirmation_with_the_delegated_reason() {
+        let delegated = |session: &str, input: Option<&Value>| {
+            assert_eq!(session, "session");
+            assert!(input.is_some());
+            Some("codex_delegated_exec_process".to_string())
+        };
         assert_eq!(
-            confirmation_suppression_reason(AgentKind::Codex, &json!({"transcript_path":null})),
-            Some("codex_transcript_path_null")
+            confirmation_suppression_reason_with(
+                AgentKind::Codex,
+                "session",
+                &json!({"transcript_path":"/tmp/rollout.jsonl"}),
+                &delegated
+            )
+            .as_deref(),
+            Some("codex_delegated_exec_process")
         );
+        // The ephemeral reason keeps priority, so existing audit queries still match.
         assert_eq!(
-            confirmation_suppression_reason(AgentKind::Codex, &json!({"transcriptPath":null})),
+            confirmation_suppression_reason_with(
+                AgentKind::Codex,
+                "session",
+                &json!({"transcript_path":null}),
+                &delegated
+            )
+            .as_deref(),
             Some("codex_transcript_path_null")
         );
     }
 
     #[test]
     fn ordinary_and_non_codex_stops_keep_confirmation() {
+        // Codex Stop input has no `thread_source`; a stray one must not change the decision.
         for input in [
             json!({"thread_source":"user", "transcript_path":"/tmp/rollout.jsonl"}),
+            json!({"thread_source":"system", "transcript_path":"/tmp/rollout.jsonl"}),
             json!({"transcript_path":"/tmp/rollout.jsonl"}),
             json!({}),
         ] {
             assert_eq!(
-                confirmation_suppression_reason(AgentKind::Codex, &input),
+                confirmation_suppression_reason_with(
+                    AgentKind::Codex,
+                    "session",
+                    &input,
+                    &never_delegated
+                ),
                 None
             );
         }
+        let always_delegated = |_: &str, _: Option<&Value>| Some("delegated".to_string());
         for kind in [
             AgentKind::Claude,
             AgentKind::Cursor,
@@ -500,9 +554,11 @@ mod tests {
             AgentKind::Pi,
         ] {
             assert_eq!(
-                confirmation_suppression_reason(
+                confirmation_suppression_reason_with(
                     kind,
-                    &json!({"thread_source":"system", "transcript_path":null})
+                    "session",
+                    &json!({"transcript_path":null}),
+                    &always_delegated
                 ),
                 None
             );

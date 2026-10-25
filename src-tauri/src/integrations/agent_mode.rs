@@ -6,6 +6,12 @@
 //! - **Mcp** 模式绑定：MCP 版 Rule + Guard + MCP 配置（用户级全局）。
 //! - 一键切换（[`set`]）：先卸掉「非目标模式」的全部产物，再装目标模式产物；天然幂等。
 //!
+//! For Codex the "Rule" is no longer a managed `AGENTS.md` block: the interaction protocol is
+//! delivered by the mode-owned SessionStart hook (see `codex_protocol`), so delegated runs such as
+//! `codex exec` receive no injection at all. A legacy managed block is migrated only by explicit
+//! user actions (`set`, `update`, `update_artifact`, `agents update`, the Rules "update" button),
+//! never automatically after an upgrade.
+//!
 //! Lifecycle tracking is an optional capability owned by an active automatic integration. New
 //! integrations adopt the default-on preference; explicit opt-out survives mode updates. None
 //! mode always removes the on-disk lifecycle artifact.
@@ -13,7 +19,7 @@
 use crate::integrations::agent_rules::{self, AgentTarget, Variant};
 use crate::integrations::{
     agent_ask_question, agent_context_recovery, agent_lifecycle, agent_permission, agent_stop,
-    agent_subagent_guard, claude_hook, cursor_hook, mcp_config, mutation_lock,
+    agent_subagent_guard, claude_hook, codex_protocol, cursor_hook, mcp_config, mutation_lock,
 };
 use anyhow::Result;
 
@@ -127,6 +133,12 @@ pub fn timeout_hook_open(target: AgentTarget) {
 /// 旧正文就会失配并被错判成 CLI（曾导致「装了 MCP、改版后却显示 CLI 且提示需更新」的 bug）。
 pub fn current(target: AgentTarget) -> Mode {
     let mcp = mcp_config::is_installed(target);
+    if target == AgentTarget::Codex {
+        // Codex has no timeout hook, and its protocol carrier (the SessionStart hook) is identical
+        // in both modes, so the generic artifact rule below cannot be used: MCP config → Mcp, a
+        // legacy AGENTS.md block → its variant, a lone protocol hook → Cli.
+        return codex_protocol::current_mode(mcp);
+    }
     let hook = timeout_hook_is_installed(target);
     current_from_artifacts(mcp, hook, agent_rules::installed_variant(target))
 }
@@ -203,7 +215,14 @@ pub fn artifact_updates(target: AgentTarget) -> ArtifactUpdates {
             timeout_installed: timeout_hook_is_installed(target),
             timeout_outdated: timeout_hook_needs_update(target),
             permission_outdated: permission_needs_reconcile(target, mode),
-            recovery_outdated: agent_context_recovery::needs_update(target, mode),
+            // Codex's SessionStart hook is its protocol carrier: its drift is reported through the
+            // Rules flag (`rule_outdated`, via `codex_protocol::needs_update`), where the update
+            // button performs the migration. Only leftover cleanup in None mode stays a hook flag.
+            recovery_outdated: if target == AgentTarget::Codex && mode != Mode::None {
+                false
+            } else {
+                agent_context_recovery::needs_update(target, mode)
+            },
             mcp_installed: mcp_config::is_installed(target),
             mcp_outdated: mcp_config::needs_update(target),
         },
@@ -291,6 +310,7 @@ pub(crate) fn set_with_env(
     if target == AgentTarget::Pi && mode == Mode::Mcp {
         return Err(anyhow::anyhow!("Pi only supports None | Cli (no MCP mode)"));
     }
+    ensure_protocol_deliverable(target, mode)?;
     let lock = mutation_lock::IntegrationMutationLock::acquire()?;
     set_unlocked_with_env(target, mode, env)?;
     drop(lock);
@@ -340,6 +360,17 @@ fn set_unlocked_with_env(
     }
 }
 
+/// Codex receives its protocol from a SessionStart hook and there is no static fallback (spec
+/// `codex-delegated-run-silence` D11), so below the version floor nothing may be (re)installed:
+/// failing up front keeps a mode switch from leaving a half-applied integration. Removal
+/// (`Mode::None`) is always allowed.
+fn ensure_protocol_deliverable(target: AgentTarget, mode: Mode) -> Result<()> {
+    if target == AgentTarget::Codex && mode != Mode::None {
+        codex_protocol::ensure_supported()?;
+    }
+    Ok(())
+}
+
 /// 更新当前模式的全部产物到最新（不切换模式）。None 有残留时清理，clean None 幂等 no-op。
 pub fn update(target: AgentTarget) -> Result<()> {
     set(target, current(target))
@@ -350,6 +381,7 @@ pub fn update(target: AgentTarget) -> Result<()> {
 pub fn update_artifact(target: AgentTarget, artifact: Artifact) -> Result<()> {
     let _lock = mutation_lock::IntegrationMutationLock::acquire()?;
     let mode = current(target);
+    ensure_protocol_deliverable(target, mode)?;
     match (mode, artifact) {
         (Mode::Cli, Artifact::Rule) => {
             agent_rules::install_variant(target, Variant::Cli)?;

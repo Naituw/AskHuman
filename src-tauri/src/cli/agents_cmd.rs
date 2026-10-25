@@ -6,9 +6,10 @@ use super::cfgio;
 use crate::agents::AgentKind;
 use crate::i18n::{err_prefix, Lang};
 use crate::integrations::agent_rules::AgentTarget;
+use crate::integrations::codex_protocol::{self, Delivery};
 use crate::integrations::{
-    agent_lifecycle, agent_mode, agent_permission, agent_rules, agent_stop, claude_hook,
-    cursor_hook, mcp_config,
+    agent_delegated, agent_lifecycle, agent_mode, agent_permission, agent_rules, agent_stop,
+    claude_hook, cursor_hook, mcp_config,
 };
 use serde_json::Value;
 use std::process::exit;
@@ -25,6 +26,7 @@ pub fn dispatch(args: &[String], lang: Lang) {
         "update" => update_cmd(rest, lang),
         "permission" => permission_cmd(rest, lang),
         "stop" => stop_cmd(rest, lang),
+        "delegated" => delegated_cmd(rest, lang),
         "lifecycle" => lifecycle_cmd(rest, lang),
         "cleanup" => cleanup_cmd(rest, lang),
         "install" | "uninstall" => Err(legacy_write_error(sub, lang)),
@@ -389,6 +391,92 @@ fn stop_cmd(args: &[String], lang: Lang) -> Result<(), String> {
     Ok(())
 }
 
+/// `agents delegated codex [on|off]`: whether delegated (non-interactive) runs may use AskHuman.
+/// `on` = allow; the default (`off`) keeps them silent, as if AskHuman were not integrated.
+fn delegated_cmd(args: &[String], lang: Lang) -> Result<(), String> {
+    let agent = args.first().ok_or_else(|| {
+        cfgio::t(
+            lang,
+            "usage: agents delegated codex [on|off]",
+            "用法: agents delegated codex [on|off]",
+        )
+    })?;
+    if args.len() > 2 {
+        return Err(cfgio::t(lang, "too many arguments", "参数过多"));
+    }
+    let kind =
+        AgentKind::parse(agent).ok_or_else(|| cfgio::t(lang, "unknown agent", "未知 agent"))?;
+    if !agent_delegated::supported(kind) {
+        return Err(cfgio::t(
+            lang,
+            "delegated-run handling is supported only for codex",
+            "委派运行开关仅支持 codex",
+        ));
+    }
+    if let Some(value) = args.get(1) {
+        let allowed = match value.as_str() {
+            "on" => true,
+            "off" => false,
+            _ => return Err(cfgio::t(lang, "expected on or off", "应为 on 或 off")),
+        };
+        agent_delegated::set_allowed(kind, allowed).map_err(|error| error.to_string())?;
+        print_line(&cfgio::t(
+            lang,
+            "This affects runs that start afterwards only; runs already in progress keep their behavior.",
+            "此设置只影响之后新启动的运行；已在进行的运行保持原有行为。",
+        ));
+    }
+    let status = agent_delegated::status(kind);
+    print_line(&format!(
+        "[{agent}] {} — {}",
+        if status.enabled { "on" } else { "off" },
+        delegated_label(status.enabled, lang)
+    ));
+    Ok(())
+}
+
+/// Plain-language state of the delegated-run preference (shared with `agents show` / `doctor`).
+pub(super) fn delegated_label(allowed: bool, lang: Lang) -> String {
+    if allowed {
+        cfgio::t(
+            lang,
+            "delegated runs may use AskHuman",
+            "委派运行可使用 AskHuman",
+        )
+    } else {
+        cfgio::t(
+            lang,
+            "delegated runs stay silent, as if AskHuman were not integrated (default)",
+            "委派运行保持静默，与未集成 AskHuman 一致（默认）",
+        )
+    }
+}
+
+/// How the Codex protocol is delivered, in words (shared with `doctor`'s warning lines).
+pub(super) fn protocol_delivery_label(delivery: Delivery, lang: Lang) -> String {
+    match delivery {
+        Delivery::NotInstalled => cfgio::t(lang, "not installed", "未安装"),
+        Delivery::Trusted => cfgio::t(lang, "trusted", "已信任"),
+        Delivery::Untrusted => cfgio::t(
+            lang,
+            "not trusted (Codex skips the hook, so sessions get no protocol)",
+            "未信任（Codex 会跳过该 hook，会话收不到协议）",
+        ),
+        Delivery::NeedsUpdate => cfgio::t(lang, "needs update", "需更新"),
+        Delivery::UnsupportedVersion => cfgio::t(
+            lang,
+            &format!(
+                "unsupported Codex version (protocol injection needs >= {})",
+                codex_protocol::MINIMUM_VERSION
+            ),
+            &format!(
+                "该版本不支持协议注入（需要 Codex {} 或更高）",
+                codex_protocol::MINIMUM_VERSION
+            ),
+        ),
+    }
+}
+
 fn lifecycle_cmd(args: &[String], lang: Lang) -> Result<(), String> {
     let agent = args.first().ok_or_else(|| {
         cfgio::t(
@@ -513,8 +601,11 @@ fn show(args: &[String], lang: Lang) -> Result<(), String> {
             mode_label(agent_mode::current(target), lang)
         ));
 
-        // Rules
-        let rules = if agent_rules::is_installed(target) {
+        // Rules. Codex's protocol travels through its SessionStart hook, so report how delivery
+        // stands (trusted / not trusted / needs update / unsupported version) rather than a block.
+        let rules = if target == AgentTarget::Codex {
+            protocol_delivery_label(codex_protocol::delivery(), lang)
+        } else if agent_rules::is_installed(target) {
             format!(
                 "{yes}{}",
                 if agent_rules::needs_update(target) {
@@ -527,10 +618,14 @@ fn show(args: &[String], lang: Lang) -> Result<(), String> {
             no.clone()
         };
         // Grok 的指令载体是 skill（非 rules 文件），标签相应改为 skill。
-        let rules_label = if matches!(target, AgentTarget::Grok) {
-            cfgio::t(lang, "skill", "skill")
-        } else {
-            cfgio::t(lang, "rules", "规则")
+        let rules_label = match target {
+            AgentTarget::Grok => cfgio::t(lang, "skill", "skill"),
+            AgentTarget::Codex => cfgio::t(
+                lang,
+                "protocol (SessionStart hook)",
+                "协议（SessionStart Hook）",
+            ),
+            _ => cfgio::t(lang, "rules", "规则"),
         };
         print_line(&format!(
             "  {}: {} — {}",
@@ -538,6 +633,19 @@ fn show(args: &[String], lang: Lang) -> Result<(), String> {
             rules,
             agent_rules::display_path(target)
         ));
+        if target == AgentTarget::Codex {
+            // The automatic integration needs no paste; a manual one still pastes into AGENTS.md.
+            print_line(&format!(
+                "  {}: {}",
+                cfgio::t(lang, "manual paste target", "手动粘贴位置"),
+                agent_rules::manual_paste_path(target)
+            ));
+            print_line(&format!(
+                "  {}: {}",
+                cfgio::t(lang, "delegated runs", "委派运行"),
+                delegated_label(agent_delegated::status(kind).enabled, lang)
+            ));
+        }
 
         // Hook
         let hook = match target {
@@ -680,6 +788,7 @@ fn help(lang: Lang) -> String {
   agents update [<agent>]            Refresh each current mode's complete managed bundle\n\
   agents permission <claude|codex> [on|off]  Query or set permission approval\n\
   agents stop <claude|codex|cursor|pi> [on|off]  Query or set Stop confirmation\n\
+  agents delegated codex [on|off]    Query or set whether delegated Codex runs (codex exec, review, plugins) may use AskHuman (on = allow; default off = silent)\n\
   agents lifecycle <agent> [on|off]  Query or set lifecycle tracking inside an active integration\n\
   agents cleanup                     Remove every AskHuman-managed Agent artifact\n\
   agents show [<agent>]              Manual-integration prompt + paste paths + install status\n\
@@ -687,6 +796,7 @@ fn help(lang: Lang) -> String {
   Modes: cli = rules + runtime + default-on lifecycle; mcp = rules/skill + MCP + default-on lifecycle; none = remove.\n\
   Grok only supports none | mcp (skill + MCP config); it has no CLI mode and no timeout hook.\n\
   Pi only supports none | cli; its runtime artifact is a managed Extension and Stop defaults on.\n\
+  Codex receives its protocol from a SessionStart hook (no AGENTS.md block); delegated runs such as `codex exec` stay silent unless `agents delegated codex on`.\n\
   Legacy install/uninstall and per-artifact write flags have been removed.",
         "AskHuman agents —— agent 状态 + 集成（cursor | claude | codex | grok | pi）\n\
 \n\
@@ -696,6 +806,7 @@ fn help(lang: Lang) -> String {
   agents update [<agent>]            更新当前模式的完整托管产物包\n\
   agents permission <claude|codex> [on|off]  查询或设置权限审批\n\
   agents stop <claude|codex|cursor|pi> [on|off]  查询或设置结束确认\n\
+  agents delegated codex [on|off]    查询或设置被委派的 Codex 运行（codex exec、review、插件等）是否可使用 AskHuman（on = 允许；默认 off = 静默）\n\
   agents lifecycle <agent> [on|off]  查询或设置已启用集成内的生命周期追踪\n\
   agents cleanup                     移除全部由 AskHuman 托管的 Agent 产物\n\
   agents show [<agent>]              手动集成提示词 + 粘贴位置 + 安装状态\n\
@@ -703,6 +814,7 @@ fn help(lang: Lang) -> String {
   模式: cli = 规则 + runtime + 默认开启的生命周期；mcp = 规则/skill + MCP + 默认开启的生命周期；none = 移除。\n\
   Grok 仅支持 none | mcp（skill + MCP 配置）；无 CLI 模式、无超时 hook。\n\
   Pi 仅支持 none | cli；运行时产物为托管 Extension，Stop 默认开启。\n\
+  Codex 通过 SessionStart hook 注入协议（不再写 AGENTS.md 区块）；委派运行（如 codex exec）默认静默，可用 `agents delegated codex on` 放行。\n\
   旧 install/uninstall 与逐产物写 flags 已移除。",
     )
 }

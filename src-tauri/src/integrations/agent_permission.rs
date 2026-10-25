@@ -404,13 +404,29 @@ fn trust_entries(path: &Path, text: &str) -> Result<Vec<TrustEntry>> {
                     .unwrap_or(600)
                     .max(1);
                 let status_message = handler.get("statusMessage").and_then(Value::as_str);
+                // Codex only honors (and hashes) the limit on events that can emit
+                // `additionalContext`; elsewhere it is ignored with a warning.
+                let additional_context_limit = event_supports_context_limit(event)
+                    .then(|| {
+                        handler
+                            .get("additionalContextLimit")
+                            .and_then(Value::as_u64)
+                    })
+                    .flatten();
                 let key = format!(
                     "{}:{label}:{group_index}:{handler_index}",
                     path.to_string_lossy()
                 );
                 entries.push(TrustEntry {
                     key,
-                    hash: trusted_hash(label, matcher, command, timeout, status_message),
+                    hash: trusted_hash(
+                        label,
+                        matcher,
+                        command,
+                        timeout,
+                        status_message,
+                        additional_context_limit,
+                    ),
                     command: marker_command.to_string(),
                 });
             }
@@ -419,12 +435,25 @@ fn trust_entries(path: &Path, text: &str) -> Result<Vec<TrustEntry>> {
     Ok(entries)
 }
 
+/// Events whose handlers may set `additionalContextLimit` (Codex `discovery.rs`).
+fn event_supports_context_limit(event: &str) -> bool {
+    matches!(
+        event,
+        "PreToolUse" | "PostToolUse" | "SessionStart" | "UserPromptSubmit" | "SubagentStart"
+    )
+}
+
+/// Codex's default `additionalContext` spill threshold; an explicit default is normalized away
+/// before hashing, so only other values change the trust identity.
+const DEFAULT_ADDITIONAL_CONTEXT_LIMIT: u64 = 2_500;
+
 fn trusted_hash(
     label: &str,
     matcher: Option<&str>,
     command: &str,
     timeout: u64,
     status_message: Option<&str>,
+    additional_context_limit: Option<u64>,
 ) -> String {
     let mut handler = serde_json::Map::new();
     handler.insert("type".to_string(), Value::String("command".to_string()));
@@ -435,6 +464,14 @@ fn trusted_hash(
         handler.insert(
             "statusMessage".to_string(),
             Value::String(status_message.to_string()),
+        );
+    }
+    if let Some(limit) =
+        additional_context_limit.filter(|limit| *limit != DEFAULT_ADDITIONAL_CONTEXT_LIMIT)
+    {
+        handler.insert(
+            "additionalContextLimit".to_string(),
+            Value::Number(limit.into()),
         );
     }
     let mut identity = serde_json::Map::new();
@@ -487,9 +524,26 @@ pub(crate) fn reconcile_codex_trust(
     new_hooks: &str,
     trust_markers: &[&str],
 ) -> Result<()> {
+    reconcile_codex_trust_at(
+        &crate::paths::codex_hooks_json(),
+        &crate::paths::codex_config_toml(),
+        old_hooks,
+        new_hooks,
+        trust_markers,
+    )
+}
+
+/// [`reconcile_codex_trust`] against explicit file locations.
+pub(crate) fn reconcile_codex_trust_at(
+    hooks_path: &Path,
+    config_path: &Path,
+    old_hooks: &str,
+    new_hooks: &str,
+    trust_markers: &[&str],
+) -> Result<()> {
     use toml_edit::{DocumentMut, Item, Table};
-    let hooks_path = crate::paths::codex_hooks_json();
-    let config_path = crate::paths::codex_config_toml();
+    let hooks_path = hooks_path.to_path_buf();
+    let config_path = config_path.to_path_buf();
     let existing = std::fs::read_to_string(&config_path).unwrap_or_default();
     let mut document = existing
         .parse::<DocumentMut>()
@@ -553,6 +607,15 @@ pub(crate) fn reconcile_codex_trust(
 }
 
 pub(crate) fn codex_marker_trusted(path: &Path, marker: &str) -> Result<bool> {
+    codex_marker_trusted_at(path, &crate::paths::codex_config_toml(), marker)
+}
+
+/// [`codex_marker_trusted`] against an explicit `config.toml`.
+pub(crate) fn codex_marker_trusted_at(
+    path: &Path,
+    config_path: &Path,
+    marker: &str,
+) -> Result<bool> {
     let hooks = std::fs::read_to_string(path)?;
     let entries: Vec<TrustEntry> = trust_entries(path, &hooks)?
         .into_iter()
@@ -561,7 +624,7 @@ pub(crate) fn codex_marker_trusted(path: &Path, marker: &str) -> Result<bool> {
     if entries.is_empty() {
         return Ok(false);
     }
-    let config = std::fs::read_to_string(crate::paths::codex_config_toml()).unwrap_or_default();
+    let config = std::fs::read_to_string(config_path).unwrap_or_default();
     let document = config.parse::<toml_edit::DocumentMut>()?;
     Ok(entries.iter().all(|entry| {
         document
@@ -608,7 +671,7 @@ mod tests {
     #[test]
     fn trusted_hash_matches_lifecycle_reference_shape() {
         assert!(
-            trusted_hash("permission_request", None, "cmd", TIMEOUT_SECS, None)
+            trusted_hash("permission_request", None, "cmd", TIMEOUT_SECS, None, None)
                 .starts_with("sha256:")
         );
     }
@@ -621,6 +684,7 @@ mod tests {
             "\"/Users/wutian/.local/bin/AskHuman\" __permission-hook codex",
             TIMEOUT_SECS,
             Some(STATUS_MESSAGE),
+            None,
         );
         assert_eq!(
             hash,
@@ -631,8 +695,90 @@ mod tests {
     #[test]
     fn trusted_hash_includes_effective_matcher() {
         assert_ne!(
-            trusted_hash("pre_tool_use", Some("Bash"), "cmd", 600, None),
-            trusted_hash("pre_tool_use", None, "cmd", 600, None)
+            trusted_hash("pre_tool_use", Some("Bash"), "cmd", 600, None, None),
+            trusted_hash("pre_tool_use", None, "cmd", 600, None, None)
+        );
+    }
+
+    #[test]
+    fn trusted_hash_covers_additional_context_limit_like_codex() {
+        let base = trusted_hash("session_start", None, "cmd", 30, None, None);
+        // Codex normalizes an explicit default away before hashing.
+        assert_eq!(
+            base,
+            trusted_hash("session_start", None, "cmd", 30, None, Some(2_500))
+        );
+        // `0` (unlimited) and any other value are part of the trust identity.
+        let unlimited = trusted_hash("session_start", None, "cmd", 30, None, Some(0));
+        let custom = trusted_hash("session_start", None, "cmd", 30, None, Some(4_096));
+        assert_ne!(base, unlimited);
+        assert_ne!(base, custom);
+        assert_ne!(unlimited, custom);
+    }
+
+    /// Reference vectors: `currentHash` values reported by a real Codex 0.163.0 `app-server`
+    /// `hooks/list` (isolated HOME / CODEX_HOME, no model call) for the handlers AskHuman installed.
+    /// Codex reported all of them `trusted` with AskHuman's hashes, so the hash must stay equal.
+    #[test]
+    fn trusted_hash_matches_real_codex_for_the_session_start_handlers() {
+        let exe = "\"/Users/wutian/Developer/HumanInLoop/src-tauri/target/debug/AskHuman\"";
+        // Protocol hook: `additionalContextLimit: 0`, no matcher.
+        assert_eq!(
+            trusted_hash(
+                "session_start",
+                None,
+                &format!("{exe} __context-recovery-hook codex session-start"),
+                30,
+                None,
+                Some(0),
+            ),
+            "sha256:9202196705b26b5efb3373d668a83e91bb22fdef37f1fd6d8942c52769b11aaa"
+        );
+        // Lifecycle SessionStart handler: no limit field at all.
+        assert_eq!(
+            trusted_hash(
+                "session_start",
+                None,
+                &format!("{exe} __agent-hook codex session-start"),
+                600,
+                None,
+                None,
+            ),
+            "sha256:3b47259fef106edb7f5fca45a3cb5d795b77fada16fdf92772c3b3a034531b2e"
+        );
+    }
+
+    #[test]
+    fn trust_entries_read_the_limit_only_on_events_that_can_emit_context() {
+        let path = Path::new("/home/u/.codex/hooks.json");
+        let text = r#"{"hooks":{
+          "SessionStart":[{"hooks":[{"type":"command","command":"a __context-recovery-hook codex session-start","timeout":30,"additionalContextLimit":0}]}],
+          "Stop":[{"hooks":[{"type":"command","command":"b __stop-hook codex","timeout":30,"additionalContextLimit":0}]}]
+        }}"#;
+        let entries = trust_entries(path, text).unwrap();
+        let session_start = entries
+            .iter()
+            .find(|entry| entry.command.contains("__context-recovery-hook"))
+            .unwrap();
+        let stop = entries
+            .iter()
+            .find(|entry| entry.command.contains("__stop-hook"))
+            .unwrap();
+        assert_eq!(
+            session_start.hash,
+            trusted_hash(
+                "session_start",
+                None,
+                "a __context-recovery-hook codex session-start",
+                30,
+                None,
+                Some(0)
+            )
+        );
+        // Stop cannot emit additionalContext, so Codex ignores the field and so must the hash.
+        assert_eq!(
+            stop.hash,
+            trusted_hash("stop", None, "b __stop-hook codex", 30, None, None)
         );
     }
 }

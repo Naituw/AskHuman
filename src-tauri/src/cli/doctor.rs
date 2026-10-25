@@ -7,9 +7,10 @@ use super::install_check;
 use crate::config::AppConfig;
 use crate::i18n::Lang;
 use crate::integrations::agent_rules::AgentTarget;
+use crate::integrations::codex_protocol::{self, Delivery};
 use crate::integrations::{
-    agent_lifecycle, agent_mode, agent_permission, agent_rules, agent_subagent_guard, claude_hook,
-    cursor_hook, mcp_config,
+    agent_delegated, agent_lifecycle, agent_mode, agent_permission, agent_rules,
+    agent_subagent_guard, claude_hook, cursor_hook, mcp_config,
 };
 
 const AGENTS: [&str; 5] = ["cursor", "claude", "codex", "grok", "pi"];
@@ -132,11 +133,23 @@ fn render_text(
     for &name in &AGENTS {
         let target = AgentTarget::parse(name).unwrap();
         let kind = crate::agents::AgentKind::parse(name).unwrap();
-        let rules = state_label(
-            agent_rules::is_installed(target),
-            agent_rules::needs_update(target),
-            lang,
-        );
+        // Codex's protocol travels through its SessionStart hook, so report whether it actually
+        // reaches sessions (a hook Codex does not trust is skipped silently).
+        let delivery = (target == AgentTarget::Codex).then(codex_protocol::delivery);
+        let (rules_key, rules) = match delivery {
+            Some(delivery) => (
+                cfgio::t(lang, "protocol", "协议"),
+                delivery_state_label(delivery, lang),
+            ),
+            None => (
+                cfgio::t(lang, "rules", "规则"),
+                state_label(
+                    agent_rules::is_installed(target),
+                    agent_rules::needs_update(target),
+                    lang,
+                ),
+            ),
+        };
         let hook = match target {
             AgentTarget::Cursor => state_label(
                 cursor_hook::is_installed(),
@@ -201,12 +214,12 @@ fn render_text(
                 state_label(lc.installed, lc.needs_update, lang)
             )
         };
-        out.push_str(&format!(
-            "  {:<8} {}={} {}={} {}={} {}={} {}={} {}={} {}={}\n",
+        let mut line = format!(
+            "  {:<8} {}={} {}={} {}={} {}={} {}={} {}={} {}={}",
             name,
             cfgio::t(lang, "mode", "模式"),
             mode_label(agent_mode::current(target), lang),
-            cfgio::t(lang, "rules", "规则"),
+            rules_key,
             rules,
             cfgio::t(lang, "hook", "hook"),
             hook,
@@ -218,7 +231,42 @@ fn render_text(
             lifecycle,
             cfgio::t(lang, "permission", "权限审批"),
             permission_label,
-        ));
+        );
+        if let Some(delivery) = delivery {
+            line.push_str(&format!(
+                " {}={}",
+                cfgio::t(lang, "delegated", "委派运行"),
+                if agent_delegated::allowed(kind) {
+                    cfgio::t(lang, "allowed", "允许")
+                } else {
+                    cfgio::t(lang, "silent", "静默")
+                }
+            ));
+            out.push_str(&line);
+            out.push('\n');
+            // A protocol that does not arrive is a silent failure, so say it out loud.
+            if agent_mode::current(target) != agent_mode::Mode::None
+                && matches!(delivery, Delivery::Untrusted | Delivery::UnsupportedVersion)
+            {
+                out.push_str(&format!(
+                    "  ! codex {}: {}{}\n",
+                    cfgio::t(lang, "protocol", "协议"),
+                    super::agents_cmd::protocol_delivery_label(delivery, lang),
+                    if delivery == Delivery::Untrusted {
+                        cfgio::t(
+                            lang,
+                            " — fix: AskHuman agents update codex",
+                            " —— 修复：AskHuman agents update codex",
+                        )
+                    } else {
+                        String::new()
+                    }
+                ));
+            }
+        } else {
+            out.push_str(&line);
+            out.push('\n');
+        }
     }
 
     out.push_str(&cfgio::t(lang, "\nIM Agent tasks\n", "\nIM Agent 任务\n"));
@@ -265,6 +313,17 @@ fn state_label(installed: bool, needs_update: bool, lang: Lang) -> String {
         cfgio::t(lang, "stale", "需更新")
     } else {
         cfgio::t(lang, "ok", "正常")
+    }
+}
+
+/// Compact `doctor` wording for Codex protocol delivery (mirrors [`state_label`]'s vocabulary).
+fn delivery_state_label(delivery: Delivery, lang: Lang) -> String {
+    match delivery {
+        Delivery::NotInstalled => cfgio::t(lang, "off", "未装"),
+        Delivery::Trusted => cfgio::t(lang, "ok", "正常"),
+        Delivery::Untrusted => cfgio::t(lang, "untrusted", "未信任"),
+        Delivery::NeedsUpdate => cfgio::t(lang, "stale", "需更新"),
+        Delivery::UnsupportedVersion => cfgio::t(lang, "unsupported", "版本不支持"),
     }
 }
 
@@ -324,6 +383,13 @@ fn render_json(
                 "name": name,
                 "mode": agent_mode::current(target).as_str(),
                 "rules": { "installed": agent_rules::is_installed(target), "needsUpdate": agent_rules::needs_update(target) },
+                // Codex only: how the protocol reaches sessions (SessionStart hook) and whether
+                // delegated runs may use AskHuman.
+                "protocol": (target == AgentTarget::Codex).then(|| serde_json::json!({
+                    "delivery": codex_protocol::delivery().as_str(),
+                    "minimumVersion": codex_protocol::MINIMUM_VERSION,
+                })),
+                "delegated": agent_delegated::supported(kind).then(|| agent_delegated::status(kind)),
                 "hook": hook.map(|(i, u)| serde_json::json!({ "installed": i, "needsUpdate": u })),
                 "subagentGuard": if agent_subagent_guard::supported(target) {
                     Some(serde_json::json!({
