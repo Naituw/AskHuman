@@ -201,6 +201,34 @@ final class E2ETests: E2ECase {
         again.terminate()
     }
 
+    func testThePhoneRestartingKeepsItsPairingAndFindsThePendingRequestAgain() async throws {
+        try await pair()
+        let ask = try mac.ask(["-q", "Survive the app being killed?", "-o", "Yes", "-o", "No"])
+        await eventually("the request") { await self.phone.state().inbox.count == 1 }
+        let before = try unwrap(await phone.state().inbox.first)
+
+        // The app is killed: its engine is gone, the keychain and the files stay. (The old object
+        // stays alive until the end, or its deinit would delete the files the new one reads.)
+        let old = try XCTUnwrap(phone)
+        await old.engine.setForeground(false)
+        await eventually("the phone to leave") {
+            let phones = (try? await self.mac.jsonArray(["channel", "ios", "devices", "--json"])) ?? []
+            return phones.first?["online"] as? Bool == false
+        }
+        phone = E2EPhone(secrets: old.secrets, root: old.root)
+        await phone.engine.start()
+        await phone.engine.setForeground(true)
+
+        await eventually("the pairing to be back online") { await self.phone.state().macs.first?.link == .online }
+        await eventually("the pending request to come back") { await self.phone.state().inbox.map(\.requestId) == [before.requestId] }
+        _ = try await phone.engine.submitAnswer(
+            macId: before.macId, requestId: before.requestId, action: "send", answers: [AnswerItem(q: 0, sel: [1])]
+        )
+        await assertFinishes(ask)
+        XCTAssertTrue(ask.stdout.contains("No"), ask.stdout)
+        withExtendedLifetime(old) {}
+    }
+
     func testUnpairingFromTheMacRemovesThePhonesSide() async throws {
         try await pair()
         let devices = try await mac.jsonArray(["channel", "ios", "devices", "--json"])
