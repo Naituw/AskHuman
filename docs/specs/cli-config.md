@@ -46,8 +46,13 @@ Windows named-pipe daemon 已在平台对齐项目落地；本命令面在 macOS
 - `agents lifecycle <agent> [on|off]` —— 查询或设置 active 自动集成内的生命周期追踪 capability；
   None 下 `on` 拒绝，`off` 可记录偏好并清理残留。
 - `agents stop <claude|codex|cursor|pi> [on|off]` —— 查询或设置自然 Stop 时的结束确认；Pi 默认开，Grok 不支持。
+- `agents delegated codex [on|off]` —— 查询或设置「允许被委派的 Codex 运行（`codex exec` / `e` / `review`、插件与脚本经 app-server
+  启动的线程）使用 AskHuman」。**默认 `off`（静默，与未集成一致）**；`on` = 允许。纯偏好（`delegated-preferences.json`），
+  不改任何 hook，只影响之后新启动的运行；设置后打印一行提示。仅 codex 支持，其它 agent 报用法错误。规则见
+  `docs/specs/codex-delegated-run-silence.md`。
 - `agents show [<agent>]` —— **手动集成**：打印参考提示词 + 粘贴位置 + mode/rules/timeout/
-  permission/MCP/lifecycle/stop 状态。
+  permission/MCP/lifecycle/stop 状态。Codex 的协议行显示 SessionStart hook 的交付状态（已信任 / 未信任 / 需更新 /
+  该版本不支持 / 未安装），并多一行「委派运行」（静默 / 允许）。
 - agent ∈ cursor | claude | codex | grok | pi（grok 仅 none|mcp，pi 仅 none|cli 且最低 0.82.0）。旧 `install/uninstall` 和逐产物写 flags
   已移除：不得部分执行，非零退出并给 mode/update/permission/lifecycle 迁移提示。
 
@@ -61,6 +66,9 @@ Windows named-pipe daemon 已在平台对齐项目落地；本命令面在 macOS
 
 ### `AskHuman doctor [--json]` —— 一屏体检
 daemon 是否在跑 / 各渠道（启用·配置齐全·连接）/ 各 agent 集成（Rules·Hook·生命周期 装没装·是否需更新）。
+Codex 一行改用 `protocol=`（SessionStart hook 的交付状态：`ok` / `untrusted` / `stale` / `unsupported` / `off`）并附
+`delegated=silent|allowed`；mode 非 None 且协议为 `untrusted` / `unsupported` 时另给一行警告（`untrusted` 附修复命令
+`AskHuman agents update codex`）。`--json` 里 Codex 条目多 `protocol {delivery, minimumVersion}` 与 `delegated`。
 另有「安装」小节：本机 PATH 上有几份 AskHuman、哪份生效、Daemon 来自哪份、近期的换新记录。`AskHuman doctor install [--warn-only] [--json]`
 可单独运行它（`install.sh` 装完后以 `--warn-only` 调用），规则见 `docs/specs/daemon-graceful-drain.md` D12。
 

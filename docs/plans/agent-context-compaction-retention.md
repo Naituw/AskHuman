@@ -79,11 +79,18 @@ AskHuman MCP 调用和结果不属于“真实 user message”，只能期待摘
 它保留远程压缩结果中的有效 user message、hook prompt、assistant/agent message 和 compaction
 item，但这不等于保留压缩前的原始工具交互。
 
-`codex-rs/core/src/compact_remote_v2.rs` 更直接：输入历史中只挑选 user/developer/system
-message 作为额外 retained messages，再由上述过滤器清理并按预算截断，最后追加服务端返回的
-compaction output。原始 MCP tool call/result 不在 retained 形态中。
+`codex-rs/core/src/compact_remote_v2.rs` 更直接：输入历史中只保留真实 user message、`HookPrompt`，
+以及带 `client_authored` 标记的 developer message（app-server 客户端经 `inject_items` / 输入队列注入，
+且需特性 `RetainClientDeveloperMessages`；见 `is_retained_for_remote_compaction_v2`），再由上述过滤器清理并
+按预算截断，最后追加服务端返回的 compaction output。原始 MCP tool call/result 不在 retained 形态中。
 
 所以无论走本地还是当前远程 V2 压缩，都不能把 AskHuman 工具结果视为稳定保留项。
+
+> **更正（2026-10-25）**：此前对远程 V2 的概括（“挑选 user/developer/system message”）容易被读成“压缩会保留 hook
+> 注入的 developer 上下文”，这是错的。hook 的 `additionalContext` 不带 `client_authored` 标记，**不被保留**；三条压缩路径
+> 一致，压缩后都由排队的 `SessionStart(source=compact)` 重新注入。依据：`rust-v0.163.0` 源码，本机 17 个会话 38 次压缩
+> 无一例外，以及用真实 Codex 0.163.0 + 本地 mock Responses 端点对 `thread/compact/start` 的复现（旧协议条目被丢弃、
+> hook 重新注入后请求里恰好一条协议）。见 `docs/specs/codex-delegated-run-silence.md` F23。
 
 ### 压缩后的注入点与会话 ID
 
@@ -375,9 +382,13 @@ AskHuman __context-recovery-hook <agent> <event>
 | Agent | CLI 模式 | MCP 模式 |
 | --- | --- | --- |
 | Claude Code | `SessionStart`：仅 compact 时提示 CLI 恢复 | `SessionStart`：仅 compact 时提示 MCP 恢复；`PreToolUse`：token 绑定 |
-| Codex | `SessionStart`：仅 compact 时提示 CLI 恢复 | `SessionStart`：仅 compact 时提示 MCP 恢复；session 直接用 `_meta.threadId` |
+| Codex | `SessionStart`（无 matcher）：交互协议注入，compact 时再附 CLI 恢复句 | `SessionStart`（无 matcher）：交互协议注入，compact 时再附 MCP 恢复句；session 直接用 `_meta.threadId` |
 | Cursor | 无恢复 Hook，依靠 CLI Rule | `preToolUse`：token 绑定；compact 仍依靠 MCP Rule |
 | Grok | 不支持 CLI 模式 | `PreToolUse`：安全旁路 pending 上报；compact 仍依靠 MCP skill |
+
+> Codex 的 SessionStart hook 自 2026-10-25 起同时是协议载体（`docs/specs/codex-delegated-run-silence.md` D8）：此前“仅 compact 时提示”
+> 的 matcher `compact` 身份已废止（旧 hook 显示「需更新」，迁移时换成无 matcher + `additionalContextLimit: 0` 的新身份并重新信任）；
+> 委派运行无输出。
 
 `agent_mode::set/update` 负责按目标模式幂等 reconcile；切换模式时先写目标 Rule/Skill 和对应
 MCP/CLI 产物，再把恢复 Hook reconcile 到目标矩阵，`None` 则只删除恢复 marker。恢复 Hook 的

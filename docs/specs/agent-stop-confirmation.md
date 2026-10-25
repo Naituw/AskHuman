@@ -60,13 +60,15 @@
   preference 恢复。Lifecycle 自身是自动集成拥有的可选 capability，不允许脱离 active mode 安装。
 - Grok 显示不支持或不展示开关，不安装 Stop 确认 Hook。
 - 仅自然完成触发；错误、API failure、用户主动取消不发卡。
-- Codex 的内部 thread 不触发结束确认。新版 Hook 输入优先按
-  `thread_source ∈ {"system", "ambient_suggestions"}` 精确识别（拦截集合与 MCP guard 共用，见
-  `mcp.md`；后者为 ChatGPT.app 26.721+ 对 ambient 线程的新标签）；在尚未提供该字段的旧版 Codex 中，
-  `transcript_path` 字段明确为 `null` 表示未创建 rollout 的 ephemeral thread，同样静默放行。
-  字段缺失不按 ephemeral 处理，Claude / Cursor 的行为不受影响。命中后向
-  `~/.askhuman/daemon.log` 写一条结构化审计，`reason` 分别为 `codex_blocked_thread_source`（附
-  `threadSource` 观测原值）或 `codex_transcript_path_null`。
+- Codex 的内部 thread 与**委派运行**不触发结束确认。Codex 的 Stop hook 输入里没有 `thread_source`
+  （`StopCommandInput` 在 0.144.1–0.163.0 字段一致，见 `codex-delegated-run-silence.md` F14），所以
+  Stop 静默只看两类信号：`transcript_path` 字段明确为 `null`（未创建 rollout 的 ephemeral thread；字段缺失
+  不按 ephemeral 处理，Claude / Cursor 不受影响），以及委派判定——SessionStart hook 写下的标记，标记缺失时
+  再做一次有界祖先探测（`codex exec` / `e` / `review`，命中则补写标记，让 exec 的静默不依赖 SessionStart hook 是否已迁移 /
+  已信任）。「允许被委派的 Codex 运行使用 AskHuman」开关打开后，委派判定不介入（null transcript 仍静默）。
+  `track` 路径照常上报 `TurnEnd`。命中后向 `~/.askhuman/daemon.log` 写一条结构化审计，`reason` 为
+  `codex_transcript_path_null`、`codex_delegated_marker:<signal>` 或 `codex_delegated_exec_process`。
+  `thread_source` 拦截集合仍由 MCP guard 使用，见 `mcp.md`。
 
 ### 3.2 确认卡
 

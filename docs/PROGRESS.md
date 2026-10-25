@@ -3,6 +3,19 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 进行中：委派 Codex 静默（已实现，待真实环境验证）
+
+2026-10-25 的事故（外部 Agent 用 `codex exec` 委派评审，子 Codex 经 MCP `ask` 打扰了人，结束时还弹了 Stop 确认）已按
+[`docs/specs/codex-delegated-run-silence.md`](specs/codex-delegated-run-silence.md)（计划 [`docs/plans/codex-delegated-run-silence.md`](plans/codex-delegated-run-silence.md)）
+实现：Codex 的交互协议从 `~/.codex/AGENTS.md` 区块改为 SessionStart hook 动态注入，委派运行零注入、exec 里 MCP 不暴露工具、Stop 与权限审批不介入；
+集成页有默认关的开关；存量用户在集成页点一次「需更新」做原子迁移。单元测试与隔离集成验证（真实 Codex 0.163.0 + 本地 mock Responses，不计费）已完成，
+结果与偏差见 spec §9。
+
+待做（都必须先经用户批准）：① 真实 `~/.codex` 迁移（V3；本机仍是旧恢复 hook + AGENTS.md 区块，新二进制显示「需更新」）；
+② 计费的真实 Agent 验证（V4：TUI / 桌面新会话对 developer 协议的遵从度、真实 `codex exec` 无 AskHuman 工具与 Stop 弹窗、开关开时等同交互、真实压缩后协议仍在）；
+③ 用户裁定 spec §9.3 的两项（D9 扫描比文字更严格、`codex/tool-catalog-cache` 声明去留）。上游诉求（请 Codex 在 MCP `_meta` 里提供 originator / ephemeral）见 AskHuman 项目 todo #6。
+全部完成后删除本节。
+
 ## 待观察：拖入文件失败（`daemon.log` 的 `askhuman_drop` 行）
 
 2026-10-17 用户在日常版（v0.14.5）遇到几次「拖图片进窗口没加附件」（来源访达的下载 / 桌面 / 文稿，第二次拖就可以）。已加每种情形的可见提示和不含路径的诊断日志，
