@@ -276,7 +276,7 @@ fn help(lang: Lang) -> String {
   Keys: general.* / channels.<name>.* / channels.autoActivation / experimental.enabled\n\
   Secret keys: channels.dingding.clientSecret, channels.feishu.appSecret,\n\
                channels.telegram.botToken, channels.slack.botToken, channels.slack.appToken,\n\
-               channels.ios.brokerPassword",
+               channels.ios.password",
         "AskHuman config —— 对 ~/.askhuman/config.json 的通用键值（兜底；渠道配置优先用 'channel'）\n\
 \n\
   config show [--json]            打印生效配置（密钥显示为 ●●●）\n\
@@ -289,7 +289,7 @@ fn help(lang: Lang) -> String {
   键：general.* / channels.<渠道>.* / channels.autoActivation / experimental.enabled\n\
   密钥键：channels.dingding.clientSecret、channels.feishu.appSecret、\n\
           channels.telegram.botToken、channels.slack.botToken、channels.slack.appToken、\n\
-          channels.ios.brokerPassword",
+          channels.ios.password",
     )
 }
 

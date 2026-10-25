@@ -23,7 +23,9 @@ pub const ACCOUNT_TELEGRAM_TOKEN: &str = "channels.telegram.botToken";
 pub const ACCOUNT_SLACK_BOT_TOKEN: &str = "channels.slack.botToken";
 pub const ACCOUNT_SLACK_APP_TOKEN: &str = "channels.slack.appToken";
 /// Shared MQTT broker password of the iOS channel (pairing keys use `ios.pairing.<phoneId>`).
-pub const ACCOUNT_IOS_BROKER_PASSWORD: &str = "channels.ios.brokerPassword";
+/// Like every channel secret, the account is the dotted JSON path of the config field
+/// (`channels.ios.password`), which the CLI relies on to redact and look up plaintext fallbacks.
+pub const ACCOUNT_IOS_BROKER_PASSWORD: &str = "channels.ios.password";
 /// Keychain account of one phone pairing's direction keys (`ios::store`).
 pub fn ios_pairing_account(phone_id: &str) -> String {
     format!("ios.pairing.{phone_id}")

@@ -812,6 +812,27 @@ mod tests {
     }
 
     #[test]
+    fn every_secret_account_is_the_json_path_of_its_field() {
+        // The CLI redacts `config show` output and finds plaintext fallbacks by resolving the
+        // account as a dotted JSON path, so the two must never drift apart.
+        for spec in SECRET_SPECS.iter() {
+            let mut cfg = AppConfig::default();
+            *(spec.field)(&mut cfg) = "marker".into();
+            let json = serde_json::to_value(&cfg).unwrap();
+            let found = spec
+                .account
+                .split('.')
+                .try_fold(&json, |node, segment| node.get(segment));
+            assert_eq!(
+                found.and_then(|value| value.as_str()),
+                Some("marker"),
+                "{} does not lead to its config field",
+                spec.account
+            );
+        }
+    }
+
+    #[test]
     fn broker_password_is_a_keychain_secret() {
         assert!(SECRET_SPECS
             .iter()

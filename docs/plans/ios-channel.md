@@ -239,7 +239,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 
 ### 4.1 配置、密钥与存储
 
-- `config.rs`：`ChannelsConfig` 增 `ios: IosChannelConfig { enabled, host, port(8883), wsPort(8084), username, password, relayUrl, macName }`（camelCase、`#[serde(default)]`、旧配置缺字段可加载）；`password` 加入 `SECRET_SPECS`（数组长度 5 → 6，账号 `channels.ios.brokerPassword`，`secrets.rs` 增常量，命名与现有 `channels.<渠道>.<字段>` 一致）；`ChannelsConfig.default()` 与单测补齐。传输自动选择：先 TLS，TCP 5 秒内不通改 WSS，并记住最近成功的方式（存 `state.json`）。
+- `config.rs`：`ChannelsConfig` 增 `ios: IosChannelConfig { enabled, host, port(8883), wsPort(8084), username, password, relayUrl, macName }`（camelCase、`#[serde(default)]`、旧配置缺字段可加载）；`password` 加入 `SECRET_SPECS`（数组长度 5 → 6，账号 `channels.ios.password`，`secrets.rs` 增常量，命名与现有 `channels.<渠道>.<字段>` 一致；账号必须等于配置字段的点号 JSON 路径，CLI 的脱敏与明文回退都按这个路径查，由 `every_secret_account_is_the_json_path_of_its_field` 守住）；`ChannelsConfig.default()` 与单测补齐。传输自动选择：先 TLS，TCP 5 秒内不通改 WSS，并记住最近成功的方式（存 `state.json`）。
 - `~/.askhuman/ios/state.json`（0600，原子写）：`macId`、配对列表 `{phoneId, name, aliasName?, createdAt, lastSeenAt, state(pendingConfirm/active), followSet[agentKey], push{handle, env, expiresAt, status}}`、流量月累计、最近传输方式。`journal.json`：幂等日志（§3.5）。
 - 配对密钥 `{kid, m2p, p2m}`：钥匙串账号 `ios.pairing.<phoneId>`（经 `secrets.rs`）。钥匙串不可用（Linux 无 Secret Service、`ASKHUMAN_NO_KEYCHAIN`、Dev Instance 模式）时回退到 `~/.askhuman/ios/keys.json`（0600，明文），并在设置页明确标注「配对密钥以明文保存」。
 - 不在日志里输出任何 token、句柄、密钥、消息明文；只记计数、类型、大小与错误码。
