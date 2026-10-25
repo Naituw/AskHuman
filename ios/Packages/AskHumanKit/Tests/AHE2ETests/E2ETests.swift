@@ -32,6 +32,59 @@ final class E2ETests: E2ECase {
         XCTAssertEqual(history.first?.outcome, .answered)
     }
 
+    // MARK: secrets
+
+    /// The broker password, the pairing code and both direction keys must not show up in the daemon
+    /// log or in anything the commands print (apart from the pairing code that `ios pair` shows on
+    /// purpose), neither during pairing nor while a question is asked and answered.
+    func testSecretsNeverReachTheLogsOrTheCommandOutput() async throws {
+        let code = try await mac.startPairing()
+        try await phone.pair(with: mac, code: code)
+
+        let ask = try mac.ask(["-q", "Pick one", "-o", "Alpha", "-o", "Beta"])
+        await eventually("the request on the phone") { await self.phone.state().inbox.count == 1 }
+        let item = try unwrap(await phone.state().inbox.first)
+        _ = try await phone.engine.submitAnswer(macId: item.macId, requestId: item.requestId, action: "send", answers: [AnswerItem(q: 0, sel: [0])])
+        await assertFinishes(ask)
+
+        let status = try await mac.cli(["channel", "ios", "status", "--json"])
+        let devices = try await mac.cli(["channel", "ios", "devices", "--json"])
+        let list = try await mac.cli(["channel", "list"])
+        let test = try await mac.cli(["channel", "test", "ios"])
+        // A wrong password makes the broker refuse the connection: the error text must not repeat it.
+        let wrong = try await mac.cli(["channel", "set", "ios", "--password-stdin"], stdin: "wrong-password-0123456789")
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+
+        let keys = try XCTUnwrap(phone.vault.pairings().first)
+        var secrets: [String: String] = ["the broker password": broker.password, "the pairing code": code]
+        for (name, key) in [("the Mac-to-phone key", keys.m2p), ("the phone-to-Mac key", keys.p2m)] {
+            secrets[name + " (base64)"] = key.base64EncodedString()
+            secrets[name + " (base64url)"] = key.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+            secrets[name + " (hex)"] = key.map { String(format: "%02x", $0) }.joined()
+        }
+        secrets["the replaced password"] = "wrong-password-0123456789"
+
+        var haystacks: [String: String] = [
+            "ask stdout": ask.stdout, "ask stderr": ask.stderr, "status": status.stdout + status.stderr,
+            "devices": devices.stdout + devices.stderr, "channel list": list.stdout + list.stderr,
+            "channel test": test.stdout + test.stderr, "channel set": wrong.stdout + wrong.stderr,
+        ]
+        let files = FileManager.default.enumerator(at: mac.configDir, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        let logs = files.filter { $0.pathExtension == "log" }
+        XCTAssertFalse(logs.isEmpty, "the daemon writes a log")
+        for log in logs { haystacks[log.lastPathComponent] = (try? String(contentsOf: log, encoding: .utf8)) ?? "" }
+        XCTAssertTrue(haystacks["daemon.log"]?.contains("ios") == true, "the log has content about the channel, so the scan means something")
+
+        for (name, secret) in secrets {
+            for (place, text) in haystacks where text.contains(secret) {
+                XCTFail("\(name) leaked into \(place)")
+            }
+        }
+        // The password lives in the secret store, not in the plain config file.
+        let config = try String(contentsOf: mac.configDir.appendingPathComponent("config.json"), encoding: .utf8)
+        XCTAssertFalse(config.contains(broker.password), "config.json holds no broker password")
+    }
+
     // MARK: question shapes
 
     func testMultipleQuestionsWithFreeTextAndTheModeFlags() async throws {
