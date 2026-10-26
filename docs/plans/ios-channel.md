@@ -518,8 +518,8 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 
 - **iOS 本地存储不用 SwiftData**：`AHStore` 用文件型 JSON（每个键一个文件，`completeFileProtectionUntilFirstUserAuthentication`；`JSONFile` / `JSONDirectory`）。它能在 macOS 上作为纯 SwiftPM 包测试，通知扩展也无需模型容器。§6.2 / §11 里与 SwiftData 相关的表述以此为准。
 - **通知扩展链接 `AHProtocol` + `AHStore`**（原计划只链接前者）：`PushDecryptor` 与钥匙串 `Vault` 在 `AHStore`；扩展仍不链接 MQTT、Markdown，也不联网。
-- **任务启动抽取成共享模块** `daemon/runtime/task_launch.rs`（`task_gate` / 启动记录 / 失败映射），IM `/new` 与 iOS 共用。popup-only 的 Dev Instance 不能操作 IM，所以 `/new` 的真实回归留给合并前的人工检查。
-- **`failed` 标志**：`AgentEvent.failed` 与 Watch 帧的 `failed` 字段按计划实现；Pi 的扩展需要在设置里重新保存 / 刷新后才会上报失败的回合。
+- **任务启动抽取成共享模块** `daemon/runtime/task_launch.rs`（`task_gate` / 启动记录 / 失败映射），IM `/new` 与 iOS 共用。popup-only 的 Dev Instance 不能操作 IM，机器上也没有测试机器人预设（仓库规则不许把生产机器人凭据放进 Dev Instance），所以 `/new` 的真实回归在合并前做了一次（2026-10-26）：临时用 `./scripts/install.sh --global` 把分支装成生产版（daemon 换新后协议 4、四个 IM 全部重连、无在途提问），在真实飞书上走完 `/new` → 工作目录 → Agent（Codex）→ 权限（Agent 默认行为）→ 直接输入新任务 → 启动；回执、新 Terminal 窗口、watch 卡都符合预期，`daemon.log` 无错误；随后从主工作区装回 main，核对 daemon 回到协议 3、四个 IM 重连。这一轮只覆盖终端路径；TODO 出队、终端打不开时的清理、Codex App 路径只靠对照新旧实现读代码确认（`start_task` 本身没有自动化测试）。换版时发现分支版 daemon 启动会改写磁盘上的 Pi 扩展（见下一条），装回 main 时被同一套迁移改回。
+- **`failed` 标志**：`AgentEvent.failed` 与 Watch 帧的 `failed` 字段按计划实现；Pi 的扩展模板多带了 `stop_reason`，磁盘上的旧扩展要换新才会上报失败的回合：Stop 确认开着时 daemon 启动会自动迁移（`agent_stop::migrate_outdated`，按渲染后的整段文本比较，所以装回旧版本时同样会被改回；2026-10-26 在真实环境两个方向都观察到），只开了生命周期跟踪的用户仍要在设置里重新保存 / 刷新；已在运行的 Pi 会话要重启后才加载新扩展。
 - **推送点击路由**：`follow.*` 推送的 `rid` 是 Agent key，点击打开 Agent 页，其余打开请求；App 在前台且已显示对应内容时不再弹系统横幅（`AppStore.openNotification` / `coversNotification`）。
 - **流量预警**（P7）：本机统计的流量按「发布 + 投递各计一次」折算成 EMQX 额度（1 GiB / 月）的占比，80% 起黄色提示、100% 起红色，Mac 设置页与手机「Mac」页 / 收件箱都有；拒绝连接的提示里点明「免费额度可能用完」。
 - **`insecureLocal` 只对回环地址生效**（`ios/transport.rs::first_via`）：此前只有判断函数没有强制。

@@ -47,13 +47,13 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
   - 本机默认的 `cargo` 是 Homebrew 的 1.94.1，比 CI 的 `stable`（现为 1.99.0）旧，clippy 的结论会不同（新 clippy 对 `async_trait` 生成的方法报了 `double_must_use`，已在三个 trait 上 `allow`）。
     提交前要对齐 CI 时：`PATH=~/.rustup/toolchains/1.99.0-aarch64-apple-darwin/bin:$PATH CARGO_TARGET_DIR=/tmp/<独立目录> cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
     （在持久 shell 里用 `export` 会把工具链环境泄漏给后面的命令，写成行内前缀）
-  - IM `/new` 已改用共享 `daemon/runtime/task_launch.rs`，popup-only 的 Dev Instance 无法操作 IM，需在真实飞书 / Slack 上回归一次 `/new`
   - 决定是否公开该渠道（README 链接、去掉提交的 `Release-Note: skip`）；是否在 CI 增加 `relay` 的 `node --test` 与 `swift test`（建议只加这两项，不加 `xcodebuild`）
   - 分支已于 2026-10-26 推送到公开仓库 `origin/feat/ios-channel`；推送前从历史里清掉了真实 EMQX 实例 ID 与 APNs Key ID（提交哈希因此改写过一次，文档里改用提交标题指代）。
     此后若要再改写这条分支的历史，需要 force-push，先问用户；**不要 rebase 这条已推送的分支**，同步 main 用合并（2026-10-26 已合过一次：`chore(ios): merge main into feat/ios-channel`，合并时解了 `agents/stop.rs` 的冲突）
 
 已知延期（不阻塞原型）：
-- Codex 桌面 App 的会话暂不支持手机插话（返回 `unsupported`）；Pi 的扩展需要在设置里重新保存 / 刷新后才会上报失败的回合。
+- Codex 桌面 App 的会话暂不支持手机插话（返回 `unsupported`）；Pi 的扩展只有在 Stop 确认开着时才会随 daemon 启动自动迁移（2026-10-26 实测：日志出现 `migrated outdated Stop confirmation hooks: pi`），只开了生命周期跟踪的用户仍要在设置里重新保存 / 刷新才会上报失败的回合；已在运行的 Pi 会话要重启后才加载新扩展。
+- IM `/new` 与 iOS 新任务共用的启动流水线 `daemon/runtime/task_launch.rs::start_task` 没有自动化测试（该文件只有门槛顺序的 1 个测试）。2026-10-26 在真实飞书上走通过一轮 Codex 终端路径；TODO 出队、终端打不开时的清理、Codex App 路径只靠对照新旧实现读代码确认。要补自动测试，得先把 `open_terminal` / `todos` 等副作用抽成可注入的接缝。
 - 提问正文里的本地图片尚未改写为 `ahasset://`，列表项的墓碑展示也未做；撤回插话只取回文字、不取回附件。
 - 发行给朋友之前：EMQX 自动开户与额度共享、TestFlight 外部测试说明、隐私政策网址与联系邮箱。
 
