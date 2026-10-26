@@ -58,8 +58,9 @@ CLI/MCP 表示调用 AskHuman 的方式；运行偏好表示新任务的执行�
 ```text
 验证目录、任务、权限、附件及操作 UUID
   → App 内置 codex app-server --listen stdio://
-  → initialize / initialized → thread/start(ephemeral=false)
-  → 立即记录 thread ID / created → thread/name/set → thread/read(includeTurns=true)
+  → initialize / initialized → config/read(cwd) → 按需 model/list
+  → thread/start(ephemeral=false，显式模型与思考强度)
+  → 立即记录 thread ID / 模型设置 / created → thread/name/set → thread/read(includeTurns=true)
   → 关闭 stdin，等待辅助进程退出
   → codex://threads/<id> 打开 App → 等待 owner 接管
   → 原生 start-turn 提交首条任务 → 记录 accepted → 待办出队
@@ -69,12 +70,32 @@ CLI/MCP 表示调用 AskHuman 的方式；运行偏好表示新任务的执行�
 目录配置，省略 approvalPolicy 和 sandbox；YOLO 明确设置 approvalPolicy=never、
 sandbox=danger-full-access。App 接管空线程可能按默认权限恢复，因此 YOLO 创建的首轮
 私有 start-turn 还须显式携带 approvalPolicy=never、sandboxPolicy.type=dangerFullAccess；
-此覆盖作用于本轮及后续轮次。默认创建和后续普通发送继承 App 当前线程设置。
-若 YOLO 创建在提交首条任务前发现线程已有活动轮次，保留已创建 ID 并提示检查，不将任务
-作为 steer 发送进未知权限的轮次。thread/start 使用 SandboxMode；turn/start.sandboxPolicy
+此覆盖作用于本轮及后续轮次。默认创建的权限和后续普通发送继承 App 当前线程设置。
+若创建在提交首条任务前发现线程已有活动轮次，保留已创建 ID 并提示检查，不将任务
+作为 steer 发送进未知模型或权限的轮次。thread/start 使用 SandboxMode；turn/start.sandboxPolicy
 的 SandboxPolicy 类型使用 camelCase，不能全局替换拼写。
 App 打开失败保留已创建 ID；传输结果未知保留任务和附件，提示检查原聊天，不回退终端。
 深链接可能切换桌面当前聊天。发送中附件以绝对路径引用，图片同时使用 localImage 输入。
+
+## 新建模型与思考强度
+
+2026-10-25 确认：新任务跟随目标目录下 Codex 的有效默认配置，不增加模型选择 UI，也不固定模型或强度。
+由创建辅助进程调用 `config/read`（`cwd` 为任务目录、`includeLayers=false`），使用返回的
+`config.model` 与 `config.model_reasoning_effort`。配置层叠与项目信任由 Codex 解析，
+AskHuman 不自行读写 TOML。配置未指定模型时从 `model/list` 选择 `isDefault`，未指定强度时取
+所选模型的 `defaultReasoningEffort`；目录分页读取，找不到所选模型或无法解析默认值时明确报错，
+不静默换模型。两项都已配置时不读取模型目录。
+
+`thread/start` 显式传 `model` 和 `config.model_reasoning_effort`；成功取得线程 ID 后，将模型与
+强度的快照作为 `modelSettings` 和 ID 一起落台账。已有 ID 的失败重试复用此快照；尚未创建线程
+的明确失败可在重试时重新解析配置。旧版已创建、尚未提交首轮且没有快照的记录，在首次续接时
+解析并保存当前有效配置，仍复用原线程。accepted / unknown 的既有幂等规则不变。
+
+App 接管空线程可能建立 `reasoning_effort=null` 的协作模式，单靠 `inheritThreadSettings=true`
+不能保留用户配置的强度。因此创建首轮同时显式传 `model` / `effort` 和
+`collaborationMode={mode:"default",settings:{model,reasoning_effort,developer_instructions:null}}`。
+协作模式优先于顶层模型 / 强度，必须保持两处一致；`developer_instructions:null` 使用 Codex
+该模式的内置指令。后续普通发送不带这些覆盖，继续沿用用户在现有聊天里的设置。
 
 ## 验证与参考
 
@@ -101,3 +122,12 @@ App 打开失败保留已创建 ID；传输结果未知保留任务和附件，�
 独立测试线程的 turn_context 为 never / danger-full-access，permission_profile=disabled；
 默认路径仍受限，同 UUID 返回原回执且未重复发送。证据见
 `docs/plans/codex-task-launch-contract-fix.md` §7。
+
+2026-10-25 模型 / 思考强度继承修复通过 Codex Desktop 相关 Rust 测试 32 项、全目标 Clippy
+和 `scripts/install.sh`。本机 ChatGPT.app `26.1021.31345`、内置 Codex
+`0.164.0-alpha.11.1` 的 `config/read` 在另一个工作项目目录和 HumanInLoop 目录均返回
+`gpt-6-astra` / `max`，来源为用户配置；`model/list` 中该模型的内置强度为 `medium`。
+安装版真实创建验证线程 `01a170e3-2bdb-7731-83a8-a6094aeba534` 的首轮 `turn_context` 为
+`model=gpt-6-astra`、`effort=max`、`collaboration_mode.settings.reasoning_effort=max`，
+YOLO 仍为 `never` / `danger-full-access`。同操作 UUID 重提返回原 ID 与模型快照；验证线程已
+停止并归档。默认权限创建、未配置时的模型目录回退、跨页解析、旧台账补齐和失败续接由自动测试覆盖。

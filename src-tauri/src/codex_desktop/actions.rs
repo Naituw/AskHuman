@@ -36,6 +36,16 @@ impl Action {
         self.value["sessionId"].as_str()
     }
 
+    pub fn model_settings(&self) -> Result<Option<runtime::ModelSettings>, String> {
+        self.value
+            .get("modelSettings")
+            .map(|value| {
+                serde_json::from_value(value.clone())
+                    .map_err(|e| format!("Invalid saved Codex model settings: {e}"))
+            })
+            .transpose()
+    }
+
     pub fn persist(&self) -> Result<(), String> {
         save(&self.path, &self.value)
     }
@@ -80,8 +90,10 @@ impl Action {
         title: &str,
         yolo: bool,
     ) -> Result<String, String> {
-        self.ensure_thread_with(|existing, on_created| match existing {
-            Some(id) => runtime::finish_creation(installation, cwd, title, id),
+        self.ensure_thread_with(|existing, settings, on_created| match existing {
+            Some(id) => {
+                runtime::finish_creation(installation, cwd, title, id, settings, on_created)
+            }
             None => runtime::create(installation, cwd, title, yolo, on_created),
         })
     }
@@ -90,11 +102,13 @@ impl Action {
         &mut self,
         run: impl FnOnce(
             Option<&str>,
-            &mut dyn FnMut(&str) -> Result<(), String>,
+            Option<&runtime::ModelSettings>,
+            &mut dyn FnMut(&str, &runtime::ModelSettings) -> Result<(), String>,
         ) -> Result<String, runtime::CreationError>,
     ) -> Result<String, String> {
         let existing = self.session_id().map(str::to_owned);
-        if self.value["runtimeReady"] == true {
+        let settings = self.model_settings()?;
+        if self.value["runtimeReady"] == true && settings.is_some() {
             if let Some(id) = existing {
                 return Ok(id);
             }
@@ -104,12 +118,17 @@ impl Action {
             self.value["stage"] = json!("creating");
             self.persist()?;
         }
-        let result = run(existing.as_deref(), &mut |id| {
-            self.value["sessionId"] = json!(id);
-            self.value["status"] = json!("created");
-            self.value["stage"] = json!("prepare-thread");
-            self.persist()
-        });
+        let result = run(
+            existing.as_deref(),
+            settings.as_ref(),
+            &mut |id, settings| {
+                self.value["sessionId"] = json!(id);
+                self.value["modelSettings"] = json!(settings);
+                self.value["status"] = json!("created");
+                self.value["stage"] = json!("prepare-thread");
+                self.persist()
+            },
+        );
         match result {
             Ok(id) => {
                 self.value["sessionId"] = json!(id);
@@ -181,6 +200,12 @@ mod tests {
     fn input() -> Value {
         json!({"op":"create","id":"operation","text":"task"})
     }
+    fn settings() -> runtime::ModelSettings {
+        runtime::ModelSettings {
+            model: "configured-model".into(),
+            reasoning_effort: "max".into(),
+        }
+    }
     fn error(outcome: CreationOutcome, id: Option<&str>) -> CreationError {
         CreationError {
             message: "injected error".into(),
@@ -199,7 +224,7 @@ mod tests {
         let mut action = Action::load(path.clone(), input()).unwrap();
         let mut starts = 0;
         action
-            .ensure_thread_with(|id, _| {
+            .ensure_thread_with(|id, _, _| {
                 assert!(id.is_none());
                 starts += 1;
                 Err(error(CreationOutcome::Rejected, None))
@@ -209,25 +234,28 @@ mod tests {
         let mut action = Action::load(path.clone(), input()).unwrap();
         assert!(action.receipt().unwrap().is_none());
         action
-            .ensure_thread_with(|id, created| {
+            .ensure_thread_with(|id, _, created| {
                 assert!(id.is_none());
                 starts += 1;
-                created("thread").unwrap();
+                created("thread", &settings()).unwrap();
                 Err(error(CreationOutcome::Created, Some("thread")))
             })
             .unwrap_err();
         let mut action = Action::load(path.clone(), input()).unwrap();
         assert_eq!(action.value["status"], "created");
         action
-            .ensure_thread_with(|id, _| {
+            .ensure_thread_with(|id, saved, _| {
                 assert_eq!(id, Some("thread"));
+                assert_eq!(saved, Some(&settings()));
                 Ok("thread".into())
             })
             .unwrap();
         action.fail_before_submit("activate", "App not ready");
         let mut action = Action::load(path.clone(), input()).unwrap();
         action
-            .ensure_thread_with(|_, _| panic!("runtime must not run again after activation failed"))
+            .ensure_thread_with(|_, _, _| {
+                panic!("runtime must not run again after activation failed")
+            })
             .unwrap();
         action
             .submitting("thread", "thread-follower-start-turn")
@@ -264,13 +292,38 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         let mut action = Action::load(path.clone(), input()).unwrap();
         action
-            .ensure_thread_with(|_, created| {
-                created("thread").unwrap();
+            .ensure_thread_with(|_, _, created| {
+                created("thread", &settings()).unwrap();
                 Err(error(CreationOutcome::Unknown, Some("thread")))
             })
             .unwrap_err();
         assert_eq!(action.value["failure"]["sessionId"], "thread");
         assert!(Action::load(path, input()).unwrap().receipt().is_err());
+    }
+
+    #[test]
+    fn legacy_created_receipts_resolve_settings_once_without_recreating_the_thread() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("op.json");
+        save(
+            &path,
+            &json!({"input":input(),"status":"created","sessionId":"thread","runtimeReady":true}),
+        )
+        .unwrap();
+        let mut action = Action::load(path.clone(), input()).unwrap();
+        action
+            .ensure_thread_with(|id, saved, created| {
+                assert_eq!(id, Some("thread"));
+                assert!(saved.is_none());
+                created("thread", &settings()).unwrap();
+                Ok("thread".into())
+            })
+            .unwrap();
+        let mut retry = Action::load(path, input()).unwrap();
+        assert_eq!(retry.model_settings().unwrap(), Some(settings()));
+        retry
+            .ensure_thread_with(|_, _, _| panic!("resolved settings must be reused"))
+            .unwrap();
     }
 
     #[tokio::test]
