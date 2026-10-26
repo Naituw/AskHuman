@@ -1,0 +1,24 @@
+# Configuration for `cargo audit`. CI runs `cargo audit --file src-tauri/Cargo.lock` from the
+# repository root, which is where this file is looked up.
+
+[advisories]
+# rumqttc 0.25.1, the MQTT client of the iOS channel (also its newest release), depends on
+# rustls-webpki 0.102.x. Every fix below is on the incompatible 0.103.x line, so the dependency
+# cannot be upgraded from here.
+#
+# The old crate is not reachable at run time:
+# - rumqttc only uses it for the `Error` type in its TLS error enum
+#   (`WebPki(#[from] webpki::Error)` in rumqttc/src/tls.rs); it never verifies a certificate with it.
+# - src-tauri/src/ios/transport.rs builds the `rustls::ClientConfig` itself (rustls 0.23 with the
+#   system-independent webpki-roots store) and hands it to rumqttc, so every certificate is
+#   verified by rustls 0.23's verifier on rustls-webpki 0.103.x, the patched line.
+#
+# Remove all five entries once rumqttc moves to rustls-webpki 0.103 or the client is replaced,
+# and re-check with `cargo audit --file src-tauri/Cargo.lock`.
+ignore = [
+    "RUSTSEC-2026-0049", # CRLs not considered authoritative by Distribution Point due to faulty matching logic
+    "RUSTSEC-2026-0098", # Name constraints for URI names were incorrectly accepted
+    "RUSTSEC-2026-0099", # Name constraints were accepted for certificates asserting a wildcard name
+    "RUSTSEC-2026-0104", # Reachable panic in certificate revocation list parsing
+    "RUSTSEC-2026-0382", # Certificate verification may accept distrusted intermediates
+]
