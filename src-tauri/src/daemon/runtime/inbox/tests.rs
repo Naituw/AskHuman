@@ -61,7 +61,7 @@ async fn popup_reaper_logs_failure_and_reaps_before_descendant_stderr_closes() {
     let mut logs = Vec::new();
     tokio::time::timeout(
         Duration::from_secs(1),
-        reap_popup_host(child, |message| logs.push(message)),
+        reap_popup_host(child, pid, |message| logs.push(message)),
     )
     .await
     .expect("direct child cleanup must not wait for descendant-held stderr");
@@ -80,6 +80,7 @@ async fn popup_reaper_logs_failure_and_reaps_before_descendant_stderr_closes() {
         Some(libc::ECHILD)
     );
     assert_eq!(logs.len(), 1);
+    assert!(logs[0].contains(&format!("pid={pid} exited with")));
     assert!(logs[0].contains("failure marker\\n"));
     assert!(logs[0].contains("exit status: 7"));
     assert!(!logs[0].contains('\n'));
@@ -98,10 +99,67 @@ async fn popup_reaper_drains_large_stderr_and_keeps_successful_exit_silent() {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
+    let pid = child.id().unwrap();
     let mut logs = Vec::new();
     tokio::time::timeout(
         Duration::from_secs(3),
-        reap_popup_host(child, |message| logs.push(message)),
+        reap_popup_host(child, pid, |message| logs.push(message)),
+    )
+    .await
+    .expect("over-limit stderr must still be drained");
+    assert!(
+        logs.is_empty(),
+        "successful hosts must not emit captured noise"
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn popup_reaper_logs_windows_failure_with_pid_and_escaped_stderr() {
+    let child = tokio::process::Command::new("cmd")
+        .args([
+            "/C",
+            "echo failure marker 1>&2 & echo second line 1>&2 & exit /b 7",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let mut logs = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        reap_popup_host(child, pid, |message| logs.push(message)),
+    )
+    .await
+    .expect("a failed host must be reaped");
+    assert_eq!(logs.len(), 1);
+    assert!(logs[0].contains(&format!("popup host pid={pid} exited with")));
+    assert!(logs[0].contains("exit code: 7"));
+    assert!(logs[0].contains("failure marker"));
+    assert!(logs[0].contains("second line"));
+    assert!(
+        !logs[0].contains('\n'),
+        "control characters in stderr must stay escaped"
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn popup_reaper_drains_windows_stderr_and_keeps_successful_exit_silent() {
+    let child = tokio::process::Command::new("cmd")
+        .args(["/C", "for /L %i in (1,1,2048) do @echo xxxxxxxxxx 1>&2"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let mut logs = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        reap_popup_host(child, pid, |message| logs.push(message)),
     )
     .await
     .expect("over-limit stderr must still be drained");

@@ -24,8 +24,7 @@ async fn capture_popup_stderr(
     }
 }
 
-async fn reap_popup_host(mut child: tokio::process::Child, report: impl FnOnce(String)) {
-    let pid = child.id();
+async fn reap_popup_host(mut child: tokio::process::Child, pid: u32, report: impl FnOnce(String)) {
     let stderr = child.stderr.take();
     let mut captured = Vec::new();
     let status = {
@@ -51,11 +50,11 @@ async fn reap_popup_host(mut child: tokio::process::Child, report: impl FnOnce(S
         Ok(status) => {
             let text = String::from_utf8_lossy(&captured);
             report(format!(
-                "popup host pid={pid:?} exited with {status}: {:?}",
+                "popup host pid={pid} exited with {status}: {:?}",
                 text.trim_end()
             ));
         }
-        Err(error) => report(format!("popup host pid={pid:?} wait failed: {error}")),
+        Err(error) => report(format!("popup host pid={pid} wait failed: {error}")),
     }
 }
 
@@ -211,7 +210,8 @@ fn fail_surface(entry: &InteractionEntry) {
 fn spawn_inbox_process(exe: &std::path::Path, token: &str) -> std::io::Result<u32> {
     use std::process::{Command, Stdio};
     // Capture the host's stderr so a failed startup is visible in daemon.log, while routine
-    // GTK warnings from successful hosts never reach the log.
+    // toolkit noise from successful hosts never reaches the log. Applies to every platform:
+    // Unix hosts skip the /dev/null redirect, Windows never had one.
     let runtime = tokio::runtime::Handle::try_current().map_err(std::io::Error::other)?;
     let mut command = Command::new(exe);
     command
@@ -226,7 +226,7 @@ fn spawn_inbox_process(exe: &std::path::Path, token: &str) -> std::io::Result<u3
     let pid = child
         .id()
         .ok_or_else(|| std::io::Error::other("spawned popup host has no pid"))?;
-    runtime.spawn(reap_popup_host(child, |message| log(&message)));
+    runtime.spawn(reap_popup_host(child, pid, |message| log(&message)));
     Ok(pid)
 }
 

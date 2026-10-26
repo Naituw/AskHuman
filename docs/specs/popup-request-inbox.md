@@ -552,5 +552,36 @@ Daemon 持续排空 Popup Host 的 stderr，最多保留前 8 KiB。宿主正常
 失败，避免继承 stderr 的终端或文件打开器延迟宿主回收和日志。
 
 合并 Popup Host 在 GUI 事件循环内保留原生 stderr，由 daemon 统一处理，便于观察
-GDK 等原生库直接退出而未产生 Rust 错误的情形。其他 GUI 角色沿用原有静默规则。
+GTK/GDK、AppKit 等原生库直接退出而未产生 Rust 错误的情形。其他 GUI 角色沿用原有静默规则。
 该日志不改变 EOF 恢复预算、渠道失败与请求终态语义，也不主动记录提问或答案。
+
+### 21.1 捕获范围
+
+只有 daemon 以 `--popup-host` 启动、承载 `View::PopupInbox` 的合并宿主进入上述范围。
+独立或预热弹窗（`View::Popup`）、GUI Host、设置、历史、待办等角色仍在事件循环前调用
+`stderr_redirect::silence()`，行为不变。捕获对象是宿主进程的原生 stderr，不含提问或答案内容。
+
+| 平台 | 合并宿主 stderr | 其他 GUI 角色 | 管道与回收 |
+| --- | --- | --- | --- |
+| Linux | 跳过 `/dev/null` 重定向，原生致命消息进入 daemon | 重定向到 `/dev/null` | 全平台 |
+| macOS | 同上（AppKit/CoreText/TSM 等原生消息） | 重定向到 `/dev/null` | 全平台 |
+| Windows | `silence()` 原本为空实现，可见性不变 | 不变 | 全平台；后台启动使用 `CREATE_NO_WINDOW` |
+
+因此在 Windows 上，本次变更不改变 stderr 可见性，只增加有界捕获与失败日志，并把原先
+不等待的宿主改为立即回收；在 Unix 上则确实把原生致命消息从静默改为仅失败时记录。
+选择全平台而非 `cfg(target_os = "linux")` 的原因：管道、收尾排空与直接子进程回收代码
+与平台无关，按平台分叉会产生两条 spawn 路径；成功宿主不产生日志，失败日志有界且已转义。
+
+### 21.2 平台证据
+
+- 平台无关：`popup_stderr_capture_drains_beyond_the_retained_limit`（排空超过 8 KiB 并截断）
+  与 `popup_stderr_capture_retries_interrupted_reads`。
+- Unix（Linux 与 macOS）：`popup_reaper_logs_failure_and_reaps_before_descendant_stderr_closes`
+  覆盖失败日志的 PID、退出状态、转义、直接子进程回收与子孙占用 stderr；
+  `popup_reaper_drains_large_stderr_and_keeps_successful_exit_silent` 覆盖 256 KiB 排空与成功静默。
+- Windows：`popup_reaper_logs_windows_failure_with_pid_and_escaped_stderr` 与
+  `popup_reaper_drains_windows_stderr_and_keeps_successful_exit_silent` 覆盖同样的失败/静默契约。
+- CI（`.github/workflows/build.yml`）在 ubuntu-22.04、windows-latest 与 macos-26
+  `aarch64-apple-darwin` 上运行 `cargo test`，上述测试随 PR 在三个平台执行。本地仅在
+  Linux 执行；macOS/Windows 的真实 GUI 启动、退出与取消尚无实机记录，以 CI 结果为准，
+  PR 描述必须标注这一边界。
