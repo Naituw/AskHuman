@@ -32,7 +32,7 @@ EOF
       exit 0
       ;;
     *)
-      echo "错误: 未知参数 $arg（可用 --global、--release 或 --help）" >&2
+      echo "错误: 未知参数 ${arg}（可用 --global、--release 或 --help）" >&2
       exit 1
       ;;
   esac
@@ -136,6 +136,61 @@ if ! command -v cargo >/dev/null 2>&1; then
   echo "错误: 需要 Rust 工具链（https://rustup.rs）" >&2
   exit 1
 fi
+
+# --- target/ cache log and environment guard ---
+
+# Cache-affecting events (budget cleanups, sweeps, toolchain changes, a stray RUSTC_BOOTSTRAP) go
+# into a small log so an unexpected cold rebuild can be traced afterwards. It sits at the top level
+# of target/: profile cleanups keep it, a full `cargo clean` removes it. Keep the newest 200 lines.
+# Logging must never fail an install.
+CACHE_LOG="src-tauri/target/askhuman-cache.log"
+CACHE_LOG_KEEP=200
+_cache_log() {
+  local lines
+  mkdir -p "$(dirname "$CACHE_LOG")" 2>/dev/null || return 0
+  printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$CACHE_LOG" 2>/dev/null || return 0
+  lines="$(wc -l < "$CACHE_LOG" 2>/dev/null | tr -d ' ' || true)"
+  if [ "${lines:-0}" -gt "$CACHE_LOG_KEEP" ]; then
+    if tail -n "$CACHE_LOG_KEEP" "$CACHE_LOG" > "$CACHE_LOG.tmp.$$" 2>/dev/null; then
+      mv -f "$CACHE_LOG.tmp.$$" "$CACHE_LOG" 2>/dev/null || rm -f "$CACHE_LOG.tmp.$$" 2>/dev/null
+    else
+      rm -f "$CACHE_LOG.tmp.$$" 2>/dev/null
+    fi
+  fi
+  return 0
+}
+
+# A new rustc or SDK invalidates every artifact, a common reason for a sudden full rebuild. Log the
+# toolchain identity whenever it differs from the last recorded one.
+_toolchain_id() {
+  local rustc_v sdk=""
+  rustc_v="$(rustc -V 2>/dev/null || true)"
+  if [ "$(uname)" = "Darwin" ] && command -v xcrun >/dev/null 2>&1; then
+    sdk="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)"
+  fi
+  printf '%s | macosx-sdk %s' "${rustc_v:-rustc unknown}" "${sdk:-n/a}"
+}
+_log_toolchain_if_changed() {
+  local now last
+  now="$(_toolchain_id)"
+  # `|| true`: with pipefail a missing log file (first install) must not abort the install.
+  last="$(sed -n 's/^[^ ]* toolchain: //p' "$CACHE_LOG" 2>/dev/null | tail -n 1 || true)"
+  if [ "$now" != "$last" ]; then
+    _cache_log "toolchain: $now"
+  fi
+  return 0
+}
+
+# RUSTC_BOOTSTRAP is tracked by the build scripts of proc-macro2, anyhow and thiserror
+# (`rerun-if-env-changed`): one cargo run that sees it marks most of the dependency graph dirty,
+# and the next run without it does so again. A stray export in the calling shell must not decide
+# whether an install recompiles the whole Tauri stack.
+if [ -n "${RUSTC_BOOTSTRAP+x}" ]; then
+  echo "警告: 环境里设置了 RUSTC_BOOTSTRAP=${RUSTC_BOOTSTRAP}；它会让依赖树的大半被整体重编（取消设置后还会再来一次）。本次安装已忽略它。" >&2
+  _cache_log "env: RUSTC_BOOTSTRAP=${RUSTC_BOOTSTRAP} was set; unset for this build"
+  unset RUSTC_BOOTSTRAP
+fi
+_log_toolchain_if_changed
 
 # 在途请求提示：daemon 正服务中的提问不会被安装打断——换新会在它们完结后自动发生（graceful drain），
 # 期间新提问会等待。此处只提示，不强杀。
@@ -282,10 +337,51 @@ fi
 # cargo-sweep 回收长期未使用的依赖 hash；profile 预算（下方）不依赖它存在。
 if command -v cargo-sweep >/dev/null 2>&1; then
   echo "==> 清理 7 天未使用的 target 依赖残留"
-  if ! ( cd src-tauri && cargo sweep --time 7 ); then
+  if SWEEP_OUT="$( cd src-tauri && cargo sweep --time 7 2>&1 )"; then
+    printf '%s\n' "$SWEEP_OUT"
+    # cargo-sweep reports `Cleaned nothing from "<target>"` or `Cleaned <amount> from "<target>"`.
+    SWEEP_CLEANED="$(printf '%s\n' "$SWEEP_OUT" | sed -n 's/^\[INFO\] Cleaned \(.*\) from .*/\1/p' | head -n 1)"
+    if [ -n "$SWEEP_CLEANED" ] && [ "$SWEEP_CLEANED" != "nothing" ]; then
+      _cache_log "sweep: cargo sweep --time 7 cleaned $SWEEP_CLEANED"
+    fi
+  else
+    printf '%s\n' "$SWEEP_OUT" >&2
     echo "警告: cargo-sweep 清理失败，继续执行 profile 预算检查" >&2
+    _cache_log "sweep: cargo sweep --time 7 failed"
   fi
 fi
+
+# A linked worktree (`git worktree add`) is a parallel checkout with its own target/, usually
+# short-lived, so it gets tighter budgets than the main checkout. Anything that is not a git
+# checkout (a source tarball) counts as the main checkout.
+_is_linked_worktree() {
+  local git_dir common_dir
+  git_dir="$(git rev-parse --git-dir 2>/dev/null)" || return 1
+  common_dir="$(git rev-parse --git-common-dir 2>/dev/null)" || return 1
+  git_dir="$(cd "$git_dir" 2>/dev/null && pwd -P)" || return 1
+  common_dir="$(cd "$common_dir" 2>/dev/null && pwd -P)" || return 1
+  [ "$git_dir" != "$common_dir" ]
+}
+
+# Budgets are per profile, in MiB of logical size (`du`). An APFS clone made by
+# scripts/seed-worktree-target.sh counts in full although its blocks are shared, so keep these above
+# the steady-state size of a seeded profile (about 2.4 GiB local-install, 4.4 GiB debug).
+if _is_linked_worktree; then
+  CACHE_SCOPE="linked worktree"
+  BUDGET_LOCAL_INSTALL_MB=3072
+  BUDGET_DEV_MB=5120
+  BUDGET_FULL_DEBUG_MB=5120
+  BUDGET_RELEASE_MB=3072
+else
+  CACHE_SCOPE="main checkout"
+  BUDGET_LOCAL_INSTALL_MB=4096
+  BUDGET_DEV_MB=6144
+  BUDGET_FULL_DEBUG_MB=6144
+  BUDGET_RELEASE_MB=4096
+fi
+# The Swift/Clang module cache is shared by all profiles (see build.rs) and holds one ~240 MiB set
+# of modules per compiler/SDK combination. Old sets only accumulate after Xcode updates.
+SWIFT_CACHE_BUDGET_MB=768
 
 # Cargo 自己执行 package/profile 清理并持有 target lock，避免裸 rm 与并发构建竞争。
 # 先只移除本项目产物、保留三方依赖；仍超预算才清整个 profile。
@@ -296,13 +392,14 @@ _profile_size_mb() {
 }
 
 _enforce_profile_budget() {
-  local profile="$1" dir="$2" limit_mb="$3" size_mb after_mb
+  local profile="$1" dir="$2" limit_mb="$3" size_mb after_mb action="package clean"
   size_mb="$(_profile_size_mb "$dir")"
   [ "$size_mb" -le "$limit_mb" ] && return 0
 
-  echo "==> $profile 缓存 ${size_mb}MB 超过预算 ${limit_mb}MB；清理本项目产物"
+  echo "==> $profile 缓存 ${size_mb}MB 超过预算 ${limit_mb}MB（${CACHE_SCOPE}）；清理本项目产物"
   if ! cargo clean --manifest-path src-tauri/Cargo.toml -p humaninloop --profile "$profile"; then
     echo "警告: 无法清理 $profile 本项目缓存" >&2
+    _cache_log "budget: $profile ${size_mb}MB > ${limit_mb}MB (${CACHE_SCOPE}); package clean failed"
     return 0
   fi
   after_mb="$(_profile_size_mb "$dir")"
@@ -310,17 +407,50 @@ _enforce_profile_budget() {
     echo "==> $profile 三方依赖缓存仍有 ${after_mb}MB；执行 profile 级清理"
     if ! cargo clean --manifest-path src-tauri/Cargo.toml --profile "$profile"; then
       echo "警告: 无法完成 $profile profile 级清理" >&2
+      _cache_log "budget: $profile ${size_mb}MB > ${limit_mb}MB (${CACHE_SCOPE}); profile clean failed after package clean (${after_mb}MB left)"
       return 0
     fi
     after_mb="$(_profile_size_mb "$dir")"
+    action="profile clean"
   fi
   echo "   $profile 缓存: ${size_mb}MB → ${after_mb}MB"
+  _cache_log "budget: $profile ${size_mb}MB > ${limit_mb}MB (${CACHE_SCOPE}); $action -> ${after_mb}MB"
 }
 
-_enforce_profile_budget "local-install" "src-tauri/target/local-install" 4096
-_enforce_profile_budget "dev" "src-tauri/target/debug" 6144
-_enforce_profile_budget "full-debug" "src-tauri/target/full-debug" 6144
-_enforce_profile_budget "release" "src-tauri/target/release" 4096
+# Before the module cache moved to target/swift-module-cache, every build-script output directory
+# kept its own copy (about 240 MiB each). Nothing reads those any more; drop them.
+_remove_legacy_swift_module_caches() {
+  local dir removed=0
+  for dir in src-tauri/target/*/build/humaninloop-*/out/swift-module-cache \
+             src-tauri/target/*/*/build/humaninloop-*/out/swift-module-cache; do
+    [ -d "$dir" ] || continue
+    rm -rf "$dir" && removed=$((removed + 1))
+  done
+  if [ "$removed" -gt 0 ]; then
+    echo "==> 已移除 $removed 份旧位置的 Swift 模块缓存（现统一在 src-tauri/target/swift-module-cache）"
+    _cache_log "migrate: removed $removed per-build Swift module cache(s); shared cache is target/swift-module-cache"
+  fi
+  return 0
+}
+
+_enforce_swift_cache_budget() {
+  local dir="src-tauri/target/swift-module-cache" size_mb
+  size_mb="$(_profile_size_mb "$dir")"
+  [ "$size_mb" -le "$SWIFT_CACHE_BUDGET_MB" ] && return 0
+
+  echo "==> Swift 模块缓存 ${size_mb}MB 超过 ${SWIFT_CACHE_BUDGET_MB}MB（多为旧 Xcode/SDK 留下的条目）；整体删除，下次构建会重建（约 25 秒）"
+  if rm -rf "$dir"; then
+    _cache_log "budget: swift-module-cache ${size_mb}MB > ${SWIFT_CACHE_BUDGET_MB}MB; removed, rebuilt by the next build"
+  fi
+  return 0
+}
+
+_remove_legacy_swift_module_caches
+_enforce_profile_budget "local-install" "src-tauri/target/local-install" "$BUDGET_LOCAL_INSTALL_MB"
+_enforce_profile_budget "dev" "src-tauri/target/debug" "$BUDGET_DEV_MB"
+_enforce_profile_budget "full-debug" "src-tauri/target/full-debug" "$BUDGET_FULL_DEBUG_MB"
+_enforce_profile_budget "release" "src-tauri/target/release" "$BUDGET_RELEASE_MB"
+_enforce_swift_cache_budget
 
 echo "==> 完成：$INSTALL_DIR/AskHuman"
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then

@@ -75,6 +75,7 @@ AskHuman/
 
   src-tauri/                 Rust 后端
     Cargo.toml               Rust 依赖与 feature
+    vendor/drag/             drag 2.1.1 的本地补丁副本（[patch.crates-io]，只改 objc2 特性声明；原因见 docs/development.md）
     tauri.conf.json          Tauri 构建和窗口配置
     capabilities/default.json 窗口能力权限
     src/
@@ -200,6 +201,8 @@ AskHuman/
         agent_rules.rs       Agent 全局 Rules 管理
         agent_subagent_guard.rs  Claude/Codex SubagentStart 提示 Hook
         agent_context_recovery.rs  集成 mode 托管的压缩恢复/会话绑定 Hook
+        codex_protocol.rs    Codex 协议载体（SessionStart Hook）的状态、版本门槛与旧 AGENTS.md 区块迁移
+        agent_delegated.rs   「允许被委派的 Codex 运行使用 AskHuman」偏好（delegated-preferences.json）
         grok_skill.rs        Grok interaction-protocol skill 管理
         mcp_config.rs        四家 MCP server 配置管理
         pi_extension.rs      Pi CLI/生命周期/插话/Stop 共用 Extension 管理
@@ -244,7 +247,8 @@ AskHuman/
         mod.rs               Agent 类型、事件与模块入口
         detect.rs            Agent 家族、会话和进程探测
         report.rs            生命周期 Hook 上报与去重
-        context_recovery.rs  压缩后提示、MCP token 注入与 Grok pending 上报
+        context_recovery.rs  压缩后提示、MCP token 注入与 Grok pending 上报；Codex 协议注入决策
+        delegated.rs         Codex 委派运行判定（信号、有界探测、会话标记）与静默策略
         title.rs             五家会话标题解析
         session_info.rs      原生工作区 / 模型 / 上下文与 Hook 私有快照
         activity.rs          transcript 尾部活动解析
@@ -445,6 +449,12 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
   Pi 仅 None/CLI、不提供 MCP 或内置权限模式，最低支持版本为 0.82.0。
 - 上下文恢复 Hook 由当前 mode 独立托管，不依赖可关闭的 lifecycle tracking；CLI/MCP
   提示严格只指向用户当前选中的入口，缺失/过期并入当前 Hook 或 MCP 产物的更新状态。
+  Codex 的这条 SessionStart Hook 同时是交互协议的**唯一载体**（`~/.codex/AGENTS.md` 不再写 AskHuman
+  区块）：每个会话启动先判定是否为委派运行（`codex exec` / `e` / `review`、ephemeral app-server 线程、
+  `Claude Code` 等 originator），委派运行零注入并写 `state/codex-delegated/<session>.json` 标记，
+  其余运行注入协议（首行 `askhuman-protocol:<mode>:<hash8>`，`compact` 附恢复句，`resume` / `fork` 按 rollout 标记去重）。
+  存量 AGENTS.md 区块显示「需更新」，由用户一键原子迁移，升级后不自动迁移。规格
+  `docs/specs/codex-delegated-run-silence.md`。
 - 全局交互协议把 Sub Agent 作为唯一例外并禁止其使用 AskHuman；Claude/Codex mode 另带 `SubagentStart` 提示 Hook，Cursor/Grok/Pi 只依赖协议文本。
 - `agents update [<agent>]` 按当前 mode 重新 reconcile 单家或全部托管产物；重复设置相同 mode 也会完整更新，但不改独立保存的 capability 偏好。
 - `config` 是通用键值兜底，`doctor` 汇总 Daemon、已装二进制、渠道和集成；两者复用同一配置与集成模块，不维护第二套逻辑。`doctor install` 单独检查已装二进制（`install.sh` 装完后调用）。
@@ -462,6 +472,9 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
   六个工具共用每调用绑定；无可信 session 时才回退到当前 MCP instance + project。详见
   `docs/plans/agent-context-compaction-retention.md`。
 - Codex 配置把 `mcp__askhuman` 加入 Code Mode direct-only namespace，确保 ask 顶层阻塞；最小编辑与所有权记录避免卸载用户原有配置。
+- Codex 委派运行（偏好「允许被委派的 Codex 运行使用 AskHuman」，默认关，`agents delegated codex [on|off]`）与未集成表现一致：
+  `codex exec` / `review` 里 MCP 工具不出现（`AskHuman mcp` 启动时一次有界祖先探测，`tools/list` 为空），其余委派线程的
+  MCP 调用、Stop 确认与权限审批按 SessionStart 写下的标记静默；CLI 不拦、会话登记不变。
 
 ## Agent 原生权限审批（Claude Code / Codex）
 

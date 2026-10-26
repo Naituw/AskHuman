@@ -29,6 +29,7 @@ const {
   togglePermission,
   toggleLifecycle,
   toggleStop,
+  toggleDelegated,
   toggleAskQuestion,
   permissionBlockedText,
   updateArtifact,
@@ -355,12 +356,26 @@ const {
         }}
       </p>
 
-      <!-- Rules / Skill（CLI / MCP 共有；Grok 为 skill） -->
+      <p
+        v-if="a.id === 'codex' && !modes[a.id].versionSupported"
+        class="result err"
+      >
+        {{
+          t("settings.integration.codexVersionUnsupported", {
+            version: modes[a.id].agentVersion ?? "",
+            minimum: modes[a.id].minimumVersion ?? "",
+          })
+        }}
+      </p>
+
+      <!-- Rules / Skill / SessionStart hook（CLI / MCP 共有；Grok 为 skill，Codex 为协议 hook） -->
       <div class="row agent-row">
         <span class="label">{{
           a.instructionKind === "skill"
             ? t("settings.integration.skillLabel")
-            : t("settings.integration.rulesLabel")
+            : a.instructionKind === "hook"
+              ? t("settings.integration.protocolLabel")
+              : t("settings.integration.rulesLabel")
         }}</span>
         <span class="badge">
           <span
@@ -419,6 +434,35 @@ const {
       <p v-if="a.id === 'grok'" class="card-desc agent-hint">
         {{ t("settings.integration.grokSkillHint") }}
       </p>
+      <p v-if="a.id === 'codex'" class="card-desc agent-hint">
+        {{ t("settings.integration.codexProtocolHint") }}
+      </p>
+
+      <!-- Delegated (non-interactive) runs: a pure preference, default off = silent -->
+      <template v-if="modes[a.id].delegated.supported">
+        <hr class="divider" />
+        <div class="row agent-row">
+          <span class="label">{{ t("settings.integration.delegatedTitle") }}</span>
+          <span class="spacer"></span>
+          <label class="switch">
+            <input
+              type="checkbox"
+              :checked="modes[a.id].delegated.enabled"
+              :disabled="modeBusy[a.id]"
+              @change="
+                toggleDelegated(
+                  a.id,
+                  ($event.target as HTMLInputElement).checked
+                )
+              "
+            />
+            <span class="track"></span>
+          </label>
+        </div>
+        <p class="card-desc agent-hint">
+          {{ t("settings.integration.delegatedHint") }}
+        </p>
+      </template>
 
       <!-- CLI 模式：超时 Hook（Codex 无 Hook 给提示） -->
       <template v-if="modes[a.id].mode === 'cli'">
@@ -492,38 +536,10 @@ const {
             {{ t("settings.integration.hookUnsupported") }}
           </p>
         </template>
-        <template v-else>
-          <div class="row agent-row">
-            <span class="label">{{
-              t("settings.integration.contextRecoveryHookLabel")
-            }}</span>
-            <span class="badge">
-              <span
-                class="dot"
-                :class="modes[a.id].recoveryHookInstalled ? 'on' : 'off'"
-              ></span>
-              {{
-                modes[a.id].recoveryHookInstalled
-                  ? t("settings.integration.installed")
-                  : t("settings.integration.notInstalled")
-              }}
-            </span>
-            <span class="spacer"></span>
-            <button
-              v-if="modes[a.id].hookNeedsUpdate && !modes[a.id].lifecycle.needsUpdate"
-              class="btn btn-update"
-              type="button"
-              :disabled="modeBusy[a.id]"
-              @click="updateArtifact(a.id, 'hook')"
-            >
-              <span class="dot-update"></span
-              >{{ t("settings.integration.update") }}
-            </button>
-          </div>
-          <p class="card-desc agent-hint">
-            {{ t("settings.integration.codexRecoveryHookHint") }}
-          </p>
-        </template>
+        <!-- Codex has no timeout hook; the protocol row above already is its SessionStart hook. -->
+        <p v-else class="card-desc agent-hint">
+          {{ t("settings.integration.codexCliHint") }}
+        </p>
       </template>
 
       <!-- MCP 模式：MCP 配置 -->

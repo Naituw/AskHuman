@@ -156,10 +156,23 @@ keyring = { version = "3", default-features = false, features = ["sync-secret-se
 # Store channel secrets in the OS keychain (login keychain via Security.framework).
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSURL", "NSGeometry", "NSData", "NSError", "NSLocale", "NSDictionary"] }
-objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSEvent", "NSApplication", "NSImage", "NSDockTile"] }
+# objc2 framework crates generate one binding per header and enable all of them by default (about
+# 300 for AppKit). Keep the defaults off and list only what this crate uses: unused bindings cost
+# cold-build time and target size in every profile. `std` is the one non-binding feature that the
+# default set also provided. A missing binding fails to compile, so add it here when needed.
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray", "NSURL", "NSGeometry", "NSData", "NSError", "NSLocale", "NSDictionary"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSEvent", "NSApplication", "NSImage", "NSDockTile"] }
 # 语音输入回调桥（block2 创建 @convention(block) 闭包供 Swift SpeechAnalyzer 回调）。
 block2 = "0.6"
+
+# Cargo unifies features across the whole dependency graph, so one dependency that leaves the objc2
+# defaults on re-enables every binding for everybody. tauri-plugin-drag -> drag 2.1.1 does exactly
+# that: its published manifest omits `default-features = false`. vendor/drag is drag 2.1.1 with the
+# defaults turned off and the two bindings it only got implicitly (NSPasteboardItem,
+# NSGraphicsContext) declared; see the header of vendor/drag/Cargo.toml. Remove this patch (and
+# vendor/drag) once an upstream release (crabnebula-dev/drag-rs) fixes its manifest.
+[patch.crates-io]
+drag = { path = "vendor/drag" }
 
 # 较快的 release 配置（不启用 LTO，避免原 Rust 版的慢链接）。
 # 编译性能将在功能完成后专门评测（见 docs/plans/rust-tauri.md §21）。

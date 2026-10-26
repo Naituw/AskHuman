@@ -15,12 +15,16 @@ describe("settings tab loads", () => {
     expect(mountLoads("general", true).some((load) => load.type === "pi-version")).toBe(
       false,
     );
+    expect(
+      mountLoads("general", true).some((load) => load.type === "codex-version"),
+    ).toBe(false);
   });
 
-  it("probes only Pi version when the integration tab is shown", () => {
+  it("probes only the Pi and Codex versions when the integration tab is shown", () => {
     expect(tabLoads("integration", true)).toEqual([
       { type: "integration-status" },
       { type: "pi-version" },
+      { type: "codex-version" },
     ]);
   });
 

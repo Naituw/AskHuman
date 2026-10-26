@@ -493,11 +493,21 @@ impl Bridge {
             Some(session) => session,
             None => return Err(action.fail_before_submit("activate", "Session disappeared")),
         };
+        let model_settings = if matches!(op, Operation::Create { .. }) {
+            Some(
+                action
+                    .model_settings()?
+                    .ok_or("Missing Codex launch model settings")?,
+            )
+        } else {
+            None
+        };
         let intent = match &op {
             Operation::Stop { .. } => ControlIntent::Stop,
-            Operation::Create { permission, .. } if permission == "yolo" => {
-                ControlIntent::YoloCreate
-            }
+            Operation::Create { permission, .. } => ControlIntent::Create {
+                yolo: permission == "yolo",
+                model_settings: model_settings.as_ref().unwrap(),
+            },
             _ => ControlIntent::Inherit,
         };
         let (method, params) = control_request(&s, &session_id, id, text, files, intent)
@@ -511,9 +521,12 @@ impl Bridge {
 }
 
 #[derive(Clone, Copy)]
-enum ControlIntent {
+enum ControlIntent<'a> {
     Inherit,
-    YoloCreate,
+    Create {
+        yolo: bool,
+        model_settings: &'a runtime::ModelSettings,
+    },
     Stop,
 }
 
@@ -523,7 +536,7 @@ fn control_request(
     id: &str,
     text: &str,
     files: &[String],
-    intent: ControlIntent,
+    intent: ControlIntent<'_>,
 ) -> Result<(&'static str, Value), String> {
     Ok(if matches!(intent, ControlIntent::Stop) {
         let turn = protocol::turns(&session.state)
@@ -536,8 +549,11 @@ fn control_request(
             json!({"mode":"user-stop","expectedTurnId":turn["turnId"]}),
         )
     } else {
-        if matches!(intent, ControlIntent::YoloCreate) && session.active() {
-            return Err("Created thread already has an active turn. Inspect it before retrying the YOLO task.".into());
+        if matches!(intent, ControlIntent::Create { .. }) && session.active() {
+            return Err(
+                "Created thread already has an active turn. Inspect it before retrying the task."
+                    .into(),
+            );
         }
         let mut input_text = text.to_string();
         if !files.is_empty() {
@@ -563,11 +579,28 @@ fn control_request(
             }
         }
         let mut request = json!({"threadId":session_id,"input":input,"clientUserMessageId":id});
-        if matches!(intent, ControlIntent::YoloCreate) {
-            // The App can resume an empty thread with its default permissions. Carry
-            // the launch choice into turn/start, where SandboxPolicy is camelCase.
-            request["approvalPolicy"] = json!("never");
-            request["sandboxPolicy"] = json!({"type":"dangerFullAccess"});
+        if let ControlIntent::Create {
+            yolo,
+            model_settings,
+        } = intent
+        {
+            request["model"] = json!(model_settings.model);
+            request["effort"] = json!(model_settings.reasoning_effort);
+            // A resumed empty thread can carry null effort in its collaboration mode,
+            // which takes precedence over top-level effort when the App starts a turn.
+            request["collaborationMode"] = json!({
+                "mode":"default",
+                "settings":{
+                    "model":model_settings.model,
+                    "reasoning_effort":model_settings.reasoning_effort,
+                    "developer_instructions":null
+                }
+            });
+            if yolo {
+                // App handoff can also replace the empty thread's launch permissions.
+                request["approvalPolicy"] = json!("never");
+                request["sandboxPolicy"] = json!({"type":"dangerFullAccess"});
+            }
         }
         let context = json!({"inheritThreadSettings":true,"attachments":[],"commentAttachments":[],"fileAttachments":files.iter().map(|p|json!({"path":p,"label":std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy()})).collect::<Vec<_>>()});
         if session.active() {
@@ -693,6 +726,10 @@ mod tests {
 
     #[test]
     fn yolo_first_turn_overrides_app_resumed_workspace_permissions() {
+        let model_settings = runtime::ModelSettings {
+            model: "configured-model".into(),
+            reasoning_effort: "max".into(),
+        };
         let mut session = Session {
             connected: true,
             state: Arc::new(json!({
@@ -711,7 +748,10 @@ mod tests {
             "operation",
             "task",
             &[],
-            ControlIntent::YoloCreate,
+            ControlIntent::Create {
+                yolo: true,
+                model_settings: &model_settings,
+            },
         )
         .unwrap();
         assert_eq!(method, "thread-follower-start-turn");
@@ -753,6 +793,9 @@ mod tests {
             assert!(inherited.get("approvalPolicy").is_none());
             assert!(inherited.get("sandboxPolicy").is_none());
             assert!(inherited.get("permissions").is_none());
+            assert!(inherited.get("model").is_none());
+            assert!(inherited.get("effort").is_none());
+            assert!(inherited.get("collaborationMode").is_none());
         }
         session.state = Arc::new(json!({"threadRuntimeStatus":{"type":"active"}}));
         assert!(control_request(
@@ -761,7 +804,78 @@ mod tests {
             "operation",
             "task",
             &[],
-            ControlIntent::YoloCreate,
+            ControlIntent::Create {
+                yolo: true,
+                model_settings: &model_settings
+            },
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn first_turn_carries_launch_defaults_over_the_apps_empty_collaboration_mode() {
+        let settings = runtime::ModelSettings {
+            model: "configured-model".into(),
+            reasoning_effort: "max".into(),
+        };
+        let mut session = Session {
+            connected: true,
+            state: Arc::new(json!({
+                "threadRuntimeStatus":{"type":"idle"},
+                "latestCollaborationMode":{"mode":"default","settings":{"model":"configured-model","reasoning_effort":null}}
+            })),
+            ..Session::default()
+        };
+        let schema: Value =
+            serde_json::from_str(include_str!("fixtures/model-settings-contract.json")).unwrap();
+        for yolo in [false, true] {
+            let (_, params) = control_request(
+                &session,
+                "created",
+                "operation",
+                "task",
+                &[],
+                ControlIntent::Create {
+                    yolo,
+                    model_settings: &settings,
+                },
+            )
+            .unwrap();
+            let request = &params["turnStart"]["request"];
+            for field in ["model", "effort", "collaborationMode"] {
+                assert!(schema["turnStartProperties"].get(field).is_some());
+            }
+            let mode = &request["collaborationMode"];
+            assert!(schema["definitions"]["ModeKind"]["enum"]
+                .as_array()
+                .unwrap()
+                .contains(&mode["mode"]));
+            for field in mode["settings"].as_object().unwrap().keys() {
+                assert!(schema["definitions"]["Settings"]["properties"]
+                    .get(field)
+                    .is_some());
+            }
+            assert_eq!(request["model"], "configured-model");
+            assert_eq!(request["effort"], "max");
+            assert_eq!(mode["settings"]["model"], request["model"]);
+            assert_eq!(mode["settings"]["reasoning_effort"], request["effort"]);
+            assert_eq!(mode["settings"]["developer_instructions"], Value::Null);
+            if !yolo {
+                assert!(request.get("approvalPolicy").is_none());
+                assert!(request.get("sandboxPolicy").is_none());
+            }
+        }
+        session.state = Arc::new(json!({"threadRuntimeStatus":{"type":"active"}}));
+        assert!(control_request(
+            &session,
+            "created",
+            "operation",
+            "task",
+            &[],
+            ControlIntent::Create {
+                yolo: false,
+                model_settings: &settings
+            }
         )
         .is_err());
     }

@@ -1,0 +1,108 @@
+{
+  "source": "Codex 0.164.0-alpha.11.1 app-server generate-json-schema --experimental; selected fields and definitions, unmodified",
+  "threadStartProperties": {
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "config": {
+      "additionalProperties": true,
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "turnStartProperties": {
+    "model": {
+      "description": "Override the model for this turn and subsequent turns.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "effort": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ReasoningEffort"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Override the reasoning effort for this turn and subsequent turns."
+    },
+    "collaborationMode": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/CollaborationMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "EXPERIMENTAL - Set a pre-set collaboration mode. Takes precedence over model, reasoning_effort, and developer instructions if set.\n\nFor `collaboration_mode.settings.developer_instructions`, `null` means \"use the built-in instructions for the selected mode\"."
+    }
+  },
+  "definitions": {
+    "CollaborationMode": {
+      "description": "Collaboration mode for a Codex session.",
+      "properties": {
+        "mode": {
+          "$ref": "#/definitions/ModeKind"
+        },
+        "settings": {
+          "$ref": "#/definitions/Settings"
+        }
+      },
+      "required": [
+        "mode",
+        "settings"
+      ],
+      "type": "object"
+    },
+    "Settings": {
+      "description": "Settings for a collaboration mode.",
+      "properties": {
+        "developer_instructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
+    },
+    "ModeKind": {
+      "description": "Initial collaboration mode to use when the TUI starts.",
+      "enum": [
+        "plan",
+        "default"
+      ],
+      "type": "string"
+    },
+    "ReasoningEffort": {
+      "description": "A non-empty reasoning effort value advertised by the model.",
+      "minLength": 1,
+      "type": "string"
+    }
+  }
+}

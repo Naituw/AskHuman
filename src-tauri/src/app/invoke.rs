@@ -199,6 +199,7 @@ fn integration(invoke: Invoke<Wry>) -> bool {
         crate::commands::agent_mode_update_artifact,
         crate::commands::agent_permission_set,
         crate::commands::agent_stop_set,
+        crate::commands::agent_delegated_set,
         crate::commands::agent_ask_question_set,
         crate::commands::mcp_config_reveal,
         crate::commands::mcp_config_open,

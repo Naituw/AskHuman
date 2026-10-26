@@ -59,8 +59,14 @@ AskHuman 从同一模板生成 Cursor、Claude Code、Codex 的全局 rules，�
 generator。为让后台线程实际尝试 AskHuman、并能直接验证运行时 guard，Rules 不再为该角色增加文案
 例外；Codex 与 Claude、Cursor、Grok 一样只保留上面的 subagent 例外。安全边界由运行时提供：
 Codex MCP 从可信 turn metadata 精确拦截 `thread_source ∈ {system, ambient_suggestions}`
-（见 `mcp.md`），Stop Hook 对这两种来源 / ephemeral thread 静默放行并留下审计日志
+（见 `mcp.md`），Stop Hook 对 ephemeral thread 静默放行并留下审计日志
 （见 `agent-stop-confirmation.md`）。
+
+2026-10-25 补充：Codex 的协议载体改为 SessionStart hook（`codex-delegated-run-silence.md` D8），
+`~/.codex/AGENTS.md` 不再写 AskHuman 区块。上面“共享提示词 + Hook 双保险”里的**共享提示词**对 Codex 变成
+SessionStart hook 注入的 developer 条目：同一份模板（含两条 subagent 加粗规则）、首行带 `askhuman-protocol:<mode>:<hash8>`
+标记；委派运行（`codex exec` 等）零注入；全新 subagent 不触发 SessionStart，只走 `SubagentStart` Guard。
+`SubagentStart` Guard 不变。手动集成的用户仍自己把提示词贴进 AGENTS.md。
 
 ### D2：Grok skill 的常驻 description 同步角色边界
 

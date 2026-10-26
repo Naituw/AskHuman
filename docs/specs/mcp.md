@@ -38,6 +38,12 @@
 > **实现期补充（2026-10-15）**：六个工具统一使用每调用的可信原生会话绑定。三个 Todo 工具也复用
 > schema 隐藏的 Hook token 与 Grok 指纹旁路，以稳定会话工作区归项目；无绑定时保留 server cwd 回退。
 > 附件相对路径仍按真实 MCP server cwd 解析，不迁移旧待办 / 历史。详见 `popup-session-info.md`。
+>
+> **实现期补充（2026-10-25）**：Codex 的**委派运行**（`codex exec` / `e` / `review`、ephemeral app-server
+> 线程、`originator` 为 `Claude Code` 的官方插件线程）与「未集成 AskHuman」表现一致，规则与取证见
+> `docs/specs/codex-delegated-run-silence.md`。MCP 侧：exec / review 进程里 `AskHuman mcp` 启动时做**一次**有界祖先探测，
+> 命中则 `tools/list` 为空、`initialize` 不带 `instructions`、不向 daemon 登记实例；其余委派线程在 `tools/call`
+> 时按 SessionStart hook 写下的标记本地拒绝。集成页 / `AskHuman agents delegated codex on` 的开关打开后全部按交互处理。
 
 ## 1. 背景与动机
 
@@ -164,6 +170,37 @@ popup、IM 或项目 todo。
 `codex_turn_metadata_unreadable`（metadata 无法解析）之一——宿主未来再改 ambient 标签时，新值直接
 出现在放行日志里而不是无声 fail-open。非 Codex 客户端（`_meta` 无该命名空间）既不拦截也不写审计。
 
+### Codex 委派运行边界
+
+委派运行没有人在交互，AskHuman 的表现要与未集成一致（`docs/specs/codex-delegated-run-silence.md` D1）。偏好
+「允许被委派的 Codex 运行使用 AskHuman」默认关；打开后下面两层都不介入。
+
+1. **启动期隐藏（exec / review）**：`AskServer::new()` 只在偏好为关时，沿父进程链（最多 6 跳，每跳一次 `ps`）找最近的
+   Agent 祖先，且它是 Codex 的 `exec` / `e` / `review` 子命令（取自精确 argv，`codex "review the diff"`
+   这种带提示词的交互会话不算）才隐藏：工具路由为空，`tools/list` 返回 `[]`（含只读的 `todo_list`），
+   `initialize` 不带 `instructions`，不调用 `register_instance`。判定在进程启动时算一次，之后改开关只影响新启动的
+   进程；探测失败按「不隐藏」处理。Codex 在连接建立后固定工具目录（`tools/list_changed` 不刷新）。
+2. **不声明缓存能力**：`initialize` 不带任何 `experimental` 能力，Codex 自带的工具目录缓存（进程内、按服务器身份）保持开启。
+   `exec` 每次都是新进程，缓存本来是空的；app-server 里各会话的目录相同，委派静默靠下面的调用期拦截。
+   不用 `codex/tool-catalog-cache` 的 `cacheable=false`：Codex 把它标成仅供开发与测试，且它会让长驻进程里第二个及以后的
+   线程首步失去缓存兜底（`docs/specs/codex-delegated-run-silence.md` §9.3）。
+3. **调用期拦截（app-server 系）**：ephemeral 线程与 `Claude Code` 等 originator 的线程无法在启动时识别（MCP 子进程没有
+   `CODEX_*`，`_meta` 也没有 originator / ephemeral），工具照常出现。`ask`、`whats_next`、`show_last`、`todo_add`、
+   `todo_update` 在现有 `thread_source` 判断之后再用 `x-codex-turn-metadata.session_id`（缺失时用 `_meta.threadId`）查
+   SessionStart hook 写下的标记；命中且偏好为关则返回 `isError: true` 与固定文本：
+
+   ```text
+   AskHuman is not used in this non-interactive Codex run. No human is attending it.
+   Do not retry or contact the human; continue the task and return the result directly.
+   ```
+
+   `todo_list` 只读，不走这层。拦截写 `component="mcp_tool"`、`action="suppressed"`、
+   `reason="codex_delegated_marker:<signal>"` 的审计（`<signal>` ∈ `transcript_null`、`exec_process`、`rollout_source`、
+   `rollout_originator`，保留原始信号名）。
+4. **环境**：Codex 只给 MCP 子进程一份白名单环境（`HOME`、`PATH`、`USER` 等，没有 `ASKHUMAN_HOME`），偏好与标记按
+   `paths::config_dir()` 读取。在隔离的 `ASKHUMAN_HOME` 里做测试时，要在 `[mcp_servers.askhuman]` 里加
+   `env = { ASKHUMAN_HOME = "…" }`，否则 MCP 进程会读到默认目录的偏好。
+
 ## 5. `ask` 工具 Schema（草案）
 
 入参（JSON Schema，camelCase）：
@@ -258,6 +295,9 @@ argv 映射：`message`→首个位置参数（或经 `-q` 拆分）；每个 qu
     terminal error 且无副作用；同时写入含工具名、`codex_blocked_thread_source` 原因与 `threadSource`
     原值的结构化审计；`user`、`automation`、缺失和异常 metadata 不命中拦截，但写 `action="passed"`
     放行审计。
+13. 委派运行（偏好为关）：`codex exec` / `review` 下 `tools/list` 为空、`initialize` 无 `instructions`，模型请求里没有
+    AskHuman 工具；ephemeral / `Claude Code` originator 线程里五个交互 / 副作用工具返回固定的非交互文本且无副作用，
+    `todo_list` 不受影响；偏好打开后以上都不介入；交互会话（`codex-tui` 等）零回归。
 
 ## 10. 待实现期复核 / 开放细节
 

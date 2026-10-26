@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use base64::Engine;
-use jsonc_parser::cst::{CstNode, CstRootNode};
+use jsonc_parser::cst::{CstInputValue, CstNode, CstRootNode};
 use jsonc_parser::json;
 use jsonc_parser::ParseOptions;
 use serde_json::Value;
@@ -160,17 +160,35 @@ pub fn upsert_nested_group_matched(
     command: &str,
     timeout: u64,
 ) -> Result<String> {
-    upsert_nested_group_matched_with_windows(text, event, marker, matcher, command, None, timeout)
+    upsert_nested_group_matched_with_extras(
+        text,
+        event,
+        marker,
+        matcher,
+        command,
+        timeout,
+        HandlerExtras::default(),
+    )
 }
 
-pub fn upsert_nested_group_matched_with_windows(
+/// Optional command-handler fields beyond the always-present `type`, `command`, and `timeout`.
+#[derive(Clone, Copy, Default)]
+pub struct HandlerExtras<'a> {
+    /// Windows-specific command override (`commandWindows`).
+    pub command_windows: Option<&'a str>,
+    /// Codex `additionalContextLimit`: approximate token threshold above which a hook's
+    /// `additionalContext` is spilled to disk and replaced by a preview. `0` disables spilling.
+    pub additional_context_limit: Option<u64>,
+}
+
+pub fn upsert_nested_group_matched_with_extras(
     text: &str,
     event: &str,
     marker: &str,
     matcher: Option<&str>,
     command: &str,
-    command_windows: Option<&str>,
     timeout: u64,
+    extras: HandlerExtras<'_>,
 ) -> Result<String> {
     let source = if text.trim().is_empty() { "{}" } else { text };
     let root = CstRootNode::parse(source, &ParseOptions::default())
@@ -184,15 +202,18 @@ pub fn upsert_nested_group_matched_with_windows(
     let groups = hooks
         .array_value_or_create(event)
         .ok_or_else(|| anyhow!("hook event '{event}' is not an array"))?;
-    let handler = match command_windows {
-        Some(command_windows) => json!({
-            "type": "command",
-            "command": command,
-            "commandWindows": command_windows,
-            "timeout": timeout
-        }),
-        None => json!({ "type": "command", "command": command, "timeout": timeout }),
-    };
+    let mut handler_fields = vec![
+        ("type".to_string(), json!("command")),
+        ("command".to_string(), json!(command)),
+    ];
+    if let Some(command_windows) = extras.command_windows {
+        handler_fields.push(("commandWindows".to_string(), json!(command_windows)));
+    }
+    handler_fields.push(("timeout".to_string(), json!(timeout)));
+    if let Some(limit) = extras.additional_context_limit {
+        handler_fields.push(("additionalContextLimit".to_string(), json!(limit)));
+    }
+    let handler = CstInputValue::Object(handler_fields);
     let replacement = match matcher {
         Some(matcher) => json!({ "matcher": matcher, "hooks": [handler] }),
         None => json!({ "hooks": [handler] }),
@@ -509,6 +530,57 @@ mod tests {
         assert!(removed.contains("user-hook"));
         assert!(removed.contains("__agent-hook codex session-start"));
         assert!(!removed.contains("__context-recovery-hook"));
+    }
+
+    #[test]
+    fn matched_group_upsert_writes_optional_handler_fields_in_a_stable_order() {
+        let output = upsert_nested_group_matched_with_extras(
+            "{}",
+            "SessionStart",
+            "__context-recovery-hook",
+            None,
+            "AskHuman __context-recovery-hook codex session-start",
+            30,
+            HandlerExtras {
+                command_windows: Some("powershell.exe -EncodedCommand AAAA"),
+                additional_context_limit: Some(0),
+            },
+        )
+        .unwrap();
+        let groups = nested_groups(&output, "SessionStart").unwrap();
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].get("matcher").is_none());
+        let handler = &groups[0]["hooks"][0];
+        assert_eq!(handler["type"], "command");
+        assert_eq!(
+            handler["command"],
+            "AskHuman __context-recovery-hook codex session-start"
+        );
+        assert_eq!(
+            handler["commandWindows"],
+            "powershell.exe -EncodedCommand AAAA"
+        );
+        assert_eq!(handler["timeout"], 30);
+        assert_eq!(handler["additionalContextLimit"], 0);
+        assert!(output.find("\"command\"").unwrap() < output.find("\"timeout\"").unwrap());
+        assert!(
+            output.find("\"timeout\"").unwrap()
+                < output.find("\"additionalContextLimit\"").unwrap()
+        );
+
+        // Re-upserting without the extras removes them: the group is fully owned by the marker.
+        let plain = upsert_nested_group_matched(
+            &output,
+            "SessionStart",
+            "__context-recovery-hook",
+            Some("compact"),
+            "AskHuman __context-recovery-hook codex session-start",
+            30,
+        )
+        .unwrap();
+        let handler = &nested_groups(&plain, "SessionStart").unwrap()[0]["hooks"][0];
+        assert!(handler.get("additionalContextLimit").is_none());
+        assert!(handler.get("commandWindows").is_none());
     }
 
     #[test]

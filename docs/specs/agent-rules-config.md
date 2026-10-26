@@ -48,6 +48,14 @@
 | D14 | 布局 | 三组配置卡片**紧凑**，压缩留白 |
 | D15 | 跨平台 | Cursor/Claude/Codex 的 **Rules 与 Hook 文件读写为跨平台**（Windows 用 `%USERPROFILE%`）；「定位」复用现有 reveal 思路（mac `open -R` / linux 打开所在目录 / win `explorer /select`），「打开」用系统默认程序。Windows Hook 命令使用原生绝对路径与 PowerShell 5 兼容脚本。 |
 
+> **更新（2026-10-25，`docs/specs/codex-delegated-run-silence.md` D8–D11）**：Codex 的**自动集成**不再往 `~/.codex/AGENTS.md`
+> 写 AskHuman 区块，协议改由 SessionStart hook 动态注入（委派运行零注入）。因此上表 D7 / D10 与验收 4 对 Codex 的
+> 自动集成不再适用：Rules 行改名「协议（SessionStart Hook）」，路径显示 `~/.codex/hooks.json`；「已安装」= 协议 hook 已安装且已信任
+> （`codex_marker_trusted`），hook 未信任 / 被改动 / 版本低于 `0.144.1` 时分别显示「未信任」/「需更新」/「该版本不支持协议注入」。
+> 存量的 AGENTS.md 区块被识别为遗留状态，显示「需更新」；用户点一次（集成页「更新」、`agents update codex`、`agents mode codex <mode>`）
+> 执行原子迁移：先装好并信任 hook，再删区块，任一步失败回滚；升级后不自动迁移，改协作风格也不会隐式迁移（只刷新遗留区块文本）。
+> **手动集成**不受影响：`agents show codex` 与设置页仍给出提示词全文和粘贴位置 `~/.codex/AGENTS.md`，AskHuman 管不到用户自己粘贴的内容。
+
 ## 4. 约束与既有规则（不可破坏）
 
 - **不破坏用户内容**：对共享文件（CLAUDE.md / AGENTS.md）只在自有 `begin/end` 区块内增删；对独占文件只在带本应用标记时才删除。

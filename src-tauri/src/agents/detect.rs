@@ -177,6 +177,22 @@ const CODEX_VALUE_OPTS: &[&str] = &[
     "-p",
     "--profile",
     "--cdn-base-url",
+    // The remaining value-taking global options of `codex --help` (0.163.0). Without them a
+    // leading `-s read-only exec …` would put `read-only` in the subcommand slot.
+    "-s",
+    "--sandbox",
+    "-a",
+    "--ask-for-approval",
+    "-C",
+    "--cd",
+    "-i",
+    "--image",
+    "--add-dir",
+    "--enable",
+    "--disable",
+    "--remote",
+    "--remote-auth-token-env",
+    "--local-provider",
 ];
 
 /// 从 `codex` 之后的参数里取出**第一个非选项 token**（即子命令位）；全是选项则 `None`。
@@ -282,6 +298,236 @@ pub fn walk_any_agent(start_pid: u32) -> Option<(AgentKind, u32)> {
 /// 从当前进程向上 walk 定位最近的任意家族 Agent 祖先（kind + pid）。
 pub fn walk_any_agent_from_self() -> Option<(AgentKind, u32)> {
     walk_any_agent(std::process::id())
+}
+
+/// Codex subcommands that run a task without a human attending it (`codex exec`, its alias `e`,
+/// and `codex review`, which the CLI dispatches to the same non-interactive runner).
+pub const DELEGATED_CODEX_SUBCOMMANDS: [&str; 3] = ["exec", "e", "review"];
+
+/// Families searched by [`nearest_agent_invocation`], in the same order as [`walk_any_agent`].
+const AGENT_KINDS: [AgentKind; 5] = [
+    AgentKind::Pi,
+    AgentKind::Grok,
+    AgentKind::Codex,
+    AgentKind::Claude,
+    AgentKind::Cursor,
+];
+
+/// How the nearest Agent ancestor of a process was started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentInvocation {
+    pub kind: AgentKind,
+    pub pid: u32,
+    /// Codex only: the first non-option argument after the executable (`exec`, `app-server`,
+    /// `resume`, …), taken from the exact argument vector. `None` when it is a plain interactive
+    /// launch or when the OS refuses to disclose the arguments.
+    pub codex_subcommand: Option<String>,
+}
+
+impl AgentInvocation {
+    /// True for a Codex process started as `codex exec` / `codex e` / `codex review`.
+    pub fn is_delegated_codex_command(&self) -> bool {
+        self.kind == AgentKind::Codex
+            && self
+                .codex_subcommand
+                .as_deref()
+                .is_some_and(|sub| DELEGATED_CODEX_SUBCOMMANDS.contains(&sub))
+    }
+}
+
+/// Find the nearest Agent ancestor of `start_pid` within `max_hops` process-table hops.
+///
+/// Unlike [`walk_any_agent`] (two `ps` calls per hop, all the way to the root), this issues one
+/// cheap query per hop and stops at the first Agent, so it is affordable in once-per-session or
+/// once-per-process paths (SessionStart hook, MCP startup, Stop / permission fallback). It is
+/// **not** meant for per-tool-call hooks. The Codex subcommand comes from the exact argument
+/// vector, not from `ps` output (which flattens argv): `codex "review the diff"` is an interactive
+/// session with a prompt, and only a real `review` argument counts as the subcommand.
+pub fn nearest_agent_invocation(start_pid: u32, max_hops: usize) -> Option<AgentInvocation> {
+    nearest_in_chain(&process_chain_bounded(start_pid, max_hops), &exact_argv)
+}
+
+fn nearest_in_chain(
+    chain: &[ProcEntry],
+    argv_of: &dyn Fn(&ProcEntry) -> Option<Vec<String>>,
+) -> Option<AgentInvocation> {
+    let (entry, kind) = chain
+        .iter()
+        .filter(|entry| !is_self(entry))
+        .find_map(|entry| {
+            AGENT_KINDS
+                .iter()
+                .copied()
+                .find(|&kind| matches_agent(entry, kind))
+                .map(|kind| (entry, kind))
+        })?;
+    let codex_subcommand = (kind == AgentKind::Codex)
+        .then(|| argv_of(entry).and_then(|argv| codex_subcommand_from_argv(&argv)))
+        .flatten();
+    Some(AgentInvocation {
+        kind,
+        pid: entry.pid,
+        codex_subcommand,
+    })
+}
+
+/// Subcommand slot of a Codex argument vector whose element 0 is the executable.
+fn codex_subcommand_from_argv(argv: &[String]) -> Option<String> {
+    let rest: Vec<&str> = argv.iter().skip(1).map(String::as_str).collect();
+    codex_subcommand(&rest).map(str::to_string)
+}
+
+#[cfg(windows)]
+fn exact_argv(entry: &ProcEntry) -> Option<Vec<String>> {
+    // The Windows command line keeps the original quoting, so it can be split faithfully.
+    Some(split_windows_command_line(&entry.command))
+}
+
+#[cfg(not(windows))]
+fn exact_argv(entry: &ProcEntry) -> Option<Vec<String>> {
+    process_argv(entry.pid)
+}
+
+/// Split a Windows command line following the `CommandLineToArgvW` quoting rules.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn split_windows_command_line(line: &str) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut has_token = false;
+    let mut index = 0;
+    while index < chars.len() {
+        match chars[index] {
+            '\\' => {
+                let mut backslashes = 0;
+                while index < chars.len() && chars[index] == '\\' {
+                    backslashes += 1;
+                    index += 1;
+                }
+                has_token = true;
+                if index < chars.len() && chars[index] == '"' {
+                    current.push_str(&"\\".repeat(backslashes / 2));
+                    if backslashes % 2 == 1 {
+                        // An odd run escapes the quote; an even run leaves it as a delimiter.
+                        current.push('"');
+                        index += 1;
+                    }
+                } else {
+                    current.push_str(&"\\".repeat(backslashes));
+                }
+                continue;
+            }
+            '"' => {
+                in_quotes = !in_quotes;
+                has_token = true;
+            }
+            ch if ch.is_whitespace() && !in_quotes => {
+                if has_token {
+                    args.push(std::mem::take(&mut current));
+                    has_token = false;
+                }
+            }
+            ch => {
+                current.push(ch);
+                has_token = true;
+            }
+        }
+        index += 1;
+    }
+    if has_token {
+        args.push(current);
+    }
+    args
+}
+
+/// Exact `argv` of a process on macOS (`KERN_PROCARGS2`), without spawning `ps`.
+#[cfg(target_os = "macos")]
+fn process_argv(pid: u32) -> Option<Vec<String>> {
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as libc::c_int];
+    let mut size: libc::size_t = 0;
+    // SAFETY: `mib` has three valid entries; a null buffer asks the kernel for the needed size.
+    let status = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if status != 0 || size == 0 {
+        return None;
+    }
+    let mut buffer = vec![0u8; size];
+    // SAFETY: `buffer` is writable for `size` bytes and `size` is updated to the bytes written.
+    let status = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            buffer.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if status != 0 {
+        return None;
+    }
+    buffer.truncate(size);
+    parse_procargs2(&buffer)
+}
+
+/// Layout of `KERN_PROCARGS2`: native-endian `argc`, the executable path, NUL padding, then `argc`
+/// NUL-terminated arguments followed by the environment.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn parse_procargs2(buffer: &[u8]) -> Option<Vec<String>> {
+    let argc = i32::from_ne_bytes(buffer.get(..4)?.try_into().ok()?);
+    let argc = usize::try_from(argc).ok()?;
+    let mut position = 4;
+    while *buffer.get(position)? != 0 {
+        position += 1;
+    }
+    while buffer.get(position) == Some(&0) {
+        position += 1;
+    }
+    let mut args = Vec::with_capacity(argc);
+    for _ in 0..argc {
+        let start = position;
+        while *buffer.get(position)? != 0 {
+            position += 1;
+        }
+        args.push(String::from_utf8_lossy(&buffer[start..position]).into_owned());
+        position += 1;
+    }
+    Some(args)
+}
+
+/// Exact `argv` of a process on Linux (`/proc/<pid>/cmdline`, NUL separated).
+#[cfg(target_os = "linux")]
+fn process_argv(pid: u32) -> Option<Vec<String>> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    split_nul_separated(&raw)
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn split_nul_separated(raw: &[u8]) -> Option<Vec<String>> {
+    if raw.is_empty() {
+        return None;
+    }
+    let body = raw.strip_suffix(&[0]).unwrap_or(raw);
+    Some(
+        body.split(|byte| *byte == 0)
+            .map(|part| String::from_utf8_lossy(part).into_owned())
+            .collect(),
+    )
+}
+
+/// Other platforms cannot disclose argv exactly; callers then treat the launch as interactive.
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+fn process_argv(_pid: u32) -> Option<Vec<String>> {
+    None
 }
 
 /// Return the direct parent process id using the platform process snapshot.
@@ -435,8 +681,50 @@ fn process_chain(start_pid: u32) -> Vec<ProcEntry> {
     chain
 }
 
+/// Ancestors of `start_pid` (itself first), at most `max_hops` entries, with one `ps` query per
+/// hop. `comm` is the executable name from argv0, which keeps directory names such as
+/// `/work/codex/bin/node` from matching an Agent family.
+#[cfg(unix)]
+fn process_chain_bounded(start_pid: u32, max_hops: usize) -> Vec<ProcEntry> {
+    let mut chain = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut pid = start_pid;
+    while pid > 1 && chain.len() < max_hops && seen.insert(pid) {
+        let Some((ppid, command)) = ps_ppid_command(pid) else {
+            break;
+        };
+        let argv0 = command.split_whitespace().next().unwrap_or_default();
+        chain.push(ProcEntry {
+            pid,
+            ppid,
+            comm: basename(argv0),
+            command,
+        });
+        if ppid == 0 {
+            break;
+        }
+        pid = ppid;
+    }
+    chain
+}
+
+#[cfg(windows)]
+fn process_chain_bounded(start_pid: u32, max_hops: usize) -> Vec<ProcEntry> {
+    process_chain_windows(start_pid, max_hops)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn process_chain_bounded(_start_pid: u32, _max_hops: usize) -> Vec<ProcEntry> {
+    Vec::new()
+}
+
 #[cfg(windows)]
 fn process_chain(start_pid: u32) -> Vec<ProcEntry> {
+    process_chain_windows(start_pid, usize::MAX)
+}
+
+#[cfg(windows)]
+fn process_chain_windows(start_pid: u32, max_hops: usize) -> Vec<ProcEntry> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -470,7 +758,7 @@ fn process_chain(start_pid: u32) -> Vec<ProcEntry> {
     let mut chain = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut pid = start_pid;
-    while pid > 0 && seen.insert(pid) {
+    while pid > 0 && chain.len() < max_hops && seen.insert(pid) {
         let Some((ppid, name)) = table.get(&pid).cloned() else {
             break;
         };
@@ -662,6 +950,23 @@ fn ps_ppid_comm(pid: u32) -> Option<(u32, String)> {
 #[cfg(unix)]
 fn ps_command(pid: u32) -> Option<String> {
     run_ps(&["-o", "command=", "-p", &pid.to_string()]).map(|s| s.trim().to_string())
+}
+
+/// `ps -o ppid=,command= -p <pid>` → (ppid, flattened command line) in a single query.
+#[cfg(unix)]
+fn ps_ppid_command(pid: u32) -> Option<(u32, String)> {
+    let out = run_ps(&["-o", "ppid=,command=", "-p", &pid.to_string()])?;
+    let (ppid, command) = parse_ppid_command(&out)?;
+    Some((ppid, command))
+}
+
+#[cfg_attr(not(unix), allow(dead_code))]
+fn parse_ppid_command(output: &str) -> Option<(u32, String)> {
+    let trimmed = output.trim();
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let ppid = parts.next()?.trim().parse::<u32>().ok()?;
+    let command = parts.next().unwrap_or("").trim().to_string();
+    (!command.is_empty()).then_some((ppid, command))
 }
 
 #[cfg(unix)]
@@ -896,6 +1201,259 @@ mod tests {
             command: "node my-app-server app-server".to_string(),
         };
         assert!(!is_shared_app_server(&e));
+    }
+
+    fn entry(pid: u32, ppid: u32, command: &str) -> ProcEntry {
+        let argv0 = command.split_whitespace().next().unwrap_or_default();
+        ProcEntry {
+            pid,
+            ppid,
+            comm: basename(argv0),
+            command: command.to_string(),
+        }
+    }
+
+    fn argv(parts: &[&str]) -> Option<Vec<String>> {
+        Some(parts.iter().map(|part| part.to_string()).collect())
+    }
+
+    #[test]
+    fn codex_subcommand_covers_every_value_taking_global_option() {
+        for args in [
+            &["-s", "read-only", "exec", "task"][..],
+            &["--sandbox", "read-only", "exec", "task"][..],
+            &["-a", "never", "exec", "task"][..],
+            &["-C", "/repo", "exec", "task"][..],
+            &["--cd", "/repo", "exec", "task"][..],
+            &["--add-dir", "/tmp", "exec", "task"][..],
+            &["--enable", "hooks", "exec", "task"][..],
+            &["--disable", "hooks", "exec", "task"][..],
+            &["-c", "a=b", "-m", "gpt", "-p", "work", "exec", "task"][..],
+        ] {
+            assert_eq!(codex_subcommand(args), Some("exec"), "{args:?}");
+        }
+        // Boolean flags do not swallow the subcommand.
+        assert_eq!(
+            codex_subcommand(&["--oss", "--search", "review"]),
+            Some("review")
+        );
+    }
+
+    #[test]
+    fn nearest_invocation_is_the_first_agent_ancestor_and_skips_askhuman() {
+        let chain = vec![
+            entry(
+                10,
+                9,
+                "/Users/u/.local/bin/AskHuman __context-recovery-hook codex session-start",
+            ),
+            entry(
+                9,
+                8,
+                "sh -c /Users/u/.local/bin/AskHuman __context-recovery-hook codex session-start",
+            ),
+            entry(
+                8,
+                7,
+                "/opt/homebrew/lib/node_modules/@openai/codex/vendor/codex/codex exec review",
+            ),
+            entry(7, 1, "claude --dangerously-skip-permissions"),
+        ];
+        let found = nearest_in_chain(&chain, &|_| {
+            argv(&[
+                "/opt/homebrew/bin/codex",
+                "-s",
+                "read-only",
+                "exec",
+                "review",
+            ])
+        })
+        .unwrap();
+        assert_eq!(found.kind, AgentKind::Codex);
+        assert_eq!(found.pid, 8);
+        assert_eq!(found.codex_subcommand.as_deref(), Some("exec"));
+        assert!(found.is_delegated_codex_command());
+    }
+
+    #[test]
+    fn delegated_commands_are_exactly_exec_e_and_review() {
+        for (sub, delegated) in [
+            ("exec", true),
+            ("e", true),
+            ("review", true),
+            ("app-server", false),
+            ("resume", false),
+            ("fork", false),
+            ("cloud", false),
+            ("mcp", false),
+        ] {
+            let invocation = AgentInvocation {
+                kind: AgentKind::Codex,
+                pid: 1,
+                codex_subcommand: Some(sub.to_string()),
+            };
+            assert_eq!(invocation.is_delegated_codex_command(), delegated, "{sub}");
+        }
+        let interactive = AgentInvocation {
+            kind: AgentKind::Codex,
+            pid: 1,
+            codex_subcommand: None,
+        };
+        assert!(!interactive.is_delegated_codex_command());
+        let claude = AgentInvocation {
+            kind: AgentKind::Claude,
+            pid: 1,
+            codex_subcommand: Some("exec".into()),
+        };
+        assert!(!claude.is_delegated_codex_command());
+    }
+
+    #[test]
+    fn a_prompt_that_starts_with_a_subcommand_word_is_not_a_subcommand() {
+        // `ps` flattens `codex "review the diff"` to `codex review the diff`; the exact argv keeps
+        // the prompt as one element, so the session stays interactive.
+        let chain = vec![entry(8, 1, "/usr/local/bin/codex review the diff")];
+        let found = nearest_in_chain(&chain, &|_| {
+            argv(&["/usr/local/bin/codex", "review the diff"])
+        })
+        .unwrap();
+        assert_eq!(found.codex_subcommand.as_deref(), Some("review the diff"));
+        assert!(!found.is_delegated_codex_command());
+    }
+
+    #[test]
+    fn undisclosed_arguments_fail_open() {
+        let chain = vec![entry(8, 1, "/usr/local/bin/codex exec task")];
+        let found = nearest_in_chain(&chain, &|_| None).unwrap();
+        assert_eq!(found.codex_subcommand, None);
+        assert!(!found.is_delegated_codex_command());
+    }
+
+    #[test]
+    fn shared_app_server_is_the_nearest_agent_not_a_skipped_hop() {
+        let chain = vec![
+            entry(10, 9, "/Users/u/.local/bin/AskHuman mcp"),
+            entry(
+                9,
+                1,
+                "/Applications/ChatGPT.app/Contents/Resources/codex -c features.x=true app-server",
+            ),
+        ];
+        let found = nearest_in_chain(&chain, &|_| {
+            argv(&[
+                "/Applications/ChatGPT.app/Contents/Resources/codex",
+                "-c",
+                "features.x=true",
+                "app-server",
+            ])
+        })
+        .unwrap();
+        assert_eq!(found.codex_subcommand.as_deref(), Some("app-server"));
+        assert!(!found.is_delegated_codex_command());
+    }
+
+    #[test]
+    fn directory_names_do_not_make_a_process_an_agent() {
+        let chain = vec![entry(8, 1, "/work/codex/bin/node server.js")];
+        assert!(nearest_in_chain(&chain, &|_| None).is_none());
+    }
+
+    #[test]
+    fn ppid_command_line_parsing() {
+        assert_eq!(
+            parse_ppid_command("  4321 /opt/bin/codex exec \"x y\"\n"),
+            Some((4321, "/opt/bin/codex exec \"x y\"".to_string()))
+        );
+        assert_eq!(parse_ppid_command("  1 \n"), None);
+        assert_eq!(parse_ppid_command("not-a-pid command"), None);
+        assert_eq!(parse_ppid_command(""), None);
+    }
+
+    #[test]
+    fn procargs2_layout_is_decoded_into_exact_arguments() {
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&3i32.to_ne_bytes());
+        buffer.extend_from_slice(b"/usr/local/bin/codex\0\0\0");
+        buffer.extend_from_slice(b"codex\0review the diff\0\0");
+        buffer.extend_from_slice(b"HOME=/Users/u\0PATH=/bin\0");
+        assert_eq!(
+            parse_procargs2(&buffer),
+            Some(vec![
+                "codex".to_string(),
+                "review the diff".to_string(),
+                String::new()
+            ])
+        );
+        assert_eq!(parse_procargs2(&[1, 0]), None);
+        // Fewer arguments than argc → malformed, not partially trusted.
+        let mut truncated = Vec::new();
+        truncated.extend_from_slice(&5i32.to_ne_bytes());
+        truncated.extend_from_slice(b"/bin/codex\0\0codex\0exec\0");
+        assert_eq!(parse_procargs2(&truncated), None);
+    }
+
+    #[test]
+    fn proc_cmdline_split_keeps_empty_and_spaced_arguments() {
+        assert_eq!(
+            split_nul_separated(b"codex\0exec\0two words\0\0"),
+            Some(vec![
+                "codex".to_string(),
+                "exec".to_string(),
+                "two words".to_string(),
+                String::new()
+            ])
+        );
+        assert_eq!(split_nul_separated(b""), None);
+    }
+
+    #[test]
+    fn windows_command_lines_split_like_commandlinetoargvw() {
+        assert_eq!(
+            split_windows_command_line(
+                r#""C:\Program Files\codex\codex.exe" "review this PR" -c a=b"#
+            ),
+            vec![
+                r"C:\Program Files\codex\codex.exe".to_string(),
+                "review this PR".to_string(),
+                "-c".to_string(),
+                "a=b".to_string()
+            ]
+        );
+        assert_eq!(
+            split_windows_command_line(r#"codex.exe exec "say \"hi\"" "" tail"#),
+            vec![
+                "codex.exe".to_string(),
+                "exec".to_string(),
+                r#"say "hi""#.to_string(),
+                String::new(),
+                "tail".to_string()
+            ]
+        );
+        assert_eq!(
+            split_windows_command_line(r#"x "C:\dir\\" y"#),
+            vec!["x".to_string(), r"C:\dir\".to_string(), "y".to_string()]
+        );
+        assert!(split_windows_command_line("   ").is_empty());
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn exact_argv_of_the_running_process_matches_std_env_args() {
+        let expected: Vec<String> = std::env::args().collect();
+        let actual = process_argv(std::process::id()).expect("own argv is readable");
+        assert_eq!(actual.len(), expected.len());
+        assert_eq!(actual.last(), expected.last());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_chain_stops_at_the_hop_limit() {
+        let chain = process_chain_bounded(std::process::id(), 2);
+        assert!(chain.len() <= 2);
+        assert_eq!(
+            chain.first().map(|entry| entry.pid),
+            Some(std::process::id())
+        );
     }
 
     #[test]

@@ -881,6 +881,10 @@ export interface AgentTaskReadiness {
   integrationMode: string;
   ready: boolean;
   diagnostics: string[];
+  /** Codex only: oldest version that can receive the protocol through its SessionStart hook. */
+  protocolMinimumVersion?: string | null;
+  /** `false` only for a Codex older than `protocolMinimumVersion`; informational. */
+  protocolSupported?: boolean;
 }
 
 export interface AppConfig {
@@ -1136,6 +1140,7 @@ export interface AgentModeStatus {
   permission: PermissionStatus;
   permissionNeedsUpdate: boolean;
   stop: StopStatus;
+  delegated: DelegatedStatus;
   lifecycle: LifecycleStatus;
   askQuestion: AskQuestionStatus;
   mcpSupported: boolean;
@@ -1161,6 +1166,12 @@ export interface StopStatus {
   installed: boolean;
   outdated: boolean;
   otherHandlersDetected: boolean;
+}
+
+/** "Allow delegated runs (e.g. `codex exec`) to use AskHuman" preference. `enabled` = allowed. */
+export interface DelegatedStatus {
+  supported: boolean;
+  enabled: boolean;
 }
 
 export interface PermissionStatus {

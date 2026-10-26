@@ -195,7 +195,11 @@ session 子菜单；每个项目的子菜单包含：
 - 无会话信息。
 
 具体 session 按 `lastMs` 倒序并显示 count。当前项目可通过 hover / 键盘 focus 打开对应子菜单，点击右侧
-项目 + session 组合才提交筛选。同一真实 Agent session 在“全部项目”范围内合并展示；MCP 分组始终包含
+项目 + session 组合才提交筛选。hover 切换项目带指针意图保护：指针从当前项目行朝 session 列斜向移动
+（落在“出发点 → session 列近边”的三角形内）时，途经的其他项目行暂不切换，停留片刻、折返或偏离该
+方向才切换，键盘 focus 与点击仍立即切换；session 列顶部固定显示其所属项目名（实现与参数见
+`src/views/history/scopeMenuIntent.ts`）。
+同一真实 Agent session 在“全部项目”范围内合并展示；MCP 分组始终包含
 project 维度。切换范围只改变客户端列表，不发起新的历史读取；标题返回后只更新选项与搜索 haystack，
 不改变 token 或当前选择。
 

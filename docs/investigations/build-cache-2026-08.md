@@ -13,7 +13,8 @@ The implemented development path now:
 - builds local installs with the `local-install` profile (`opt-level=0`, 64 codegen units);
 - keeps the production `release` profile unchanged (`opt-level="z"`, 16 codegen units);
 - skips copy/sign when both the built source binary and installed binary match saved hashes;
-- keeps Swift/Clang module caches inside Cargo's `OUT_DIR`;
+- keeps one Swift/Clang module cache in `target/swift-module-cache`, shared by every profile (until
+  2026-10 each build kept its own inside Cargo's `OUT_DIR`; see the 2026-10 follow-up);
 - uses Cargo-coordinated per-profile budgets instead of deleting incremental directories directly;
 - uses line-table debug information by default, with `full-debug` available explicitly.
 
@@ -87,12 +88,12 @@ copy, formal local signing, and cache checks.
 
 After every successful copy, the installer checks actual profile directory sizes:
 
-| Profile | Budget |
-| --- | ---: |
-| `local-install` | 4 GiB |
-| `dev` / `test` (`target/debug`) | 6 GiB |
-| `full-debug` | 6 GiB |
-| production `release` | 4 GiB |
+| Profile | Main checkout | Linked worktree (since 2026-10) |
+| --- | ---: | ---: |
+| `local-install` | 4 GiB | 3 GiB |
+| `dev` / `test` (`target/debug`) | 6 GiB | 5 GiB |
+| `full-debug` | 6 GiB | 5 GiB |
+| production `release` | 4 GiB | 3 GiB |
 
 When a profile exceeds its budget, `cargo clean -p humaninloop --profile <name>` removes only this
 workspace package first, retaining third-party dependencies. If the remaining dependencies alone
@@ -106,6 +107,57 @@ debug/test profile and running the full test suite, target remained around 11 Gi
 debug, local-install, and legacy release caches. A one-time package-only cleanup of the superseded
 release install artifacts then reclaimed another 1.9 GiB while retaining release dependencies,
 leaving `target` at 8.9 GiB and the whole repository at about 10 GiB.
+
+## 2026-10 follow-up: dependency features, shared Swift cache, worktree budgets
+
+Trigger: `target/` again reached many GiB per checkout and builds felt slow for a small project.
+Everything below was measured on 2026-10-25 (Apple Silicon, rustc 1.94.1) in single runs; wall time
+moves by about ±25% with machine load, so user CPU is the steadier number.
+
+**Feature unification kept ~300 AppKit bindings alive.** The `objc2-*` framework crates have one
+feature per header and enable all of them by default (about 300 for `objc2-app-kit`). Cargo unifies
+features across the graph, so one dependency that leaves the defaults on undoes everyone else's
+trimming, and `drag`'s published manifest did exactly that. `src-tauri/Cargo.toml` now turns the
+defaults off and lists the bindings it uses, and `drag` is vendored in `src-tauri/vendor/drag`
+(`[patch.crates-io]`) with the defaults off plus the two bindings its sources use. Unit features
+afterwards: app-kit 49, foundation 49, core-foundation 24, web-kit 29, core-graphics 4. The unit count
+barely moves (375 → 369); what shrinks is the generated binding code each objc2 unit compiles. A cold
+`local-install` build went from 205.6 s to 143.5 s wall and from 418 s to 378 s user CPU on a quiet
+machine, and `target/local-install` from 2.24 to 1.95 GiB. (A later cold run under load took 182 s
+wall, 392 s user CPU.)
+
+**One Swift module cache instead of one per build.** `build.rs` kept the Clang/Swift module cache in
+each build script's `OUT_DIR`: about 243 MiB each, two under `debug` and one under `local-install` per
+checkout, each rebuilt cold (about 25 s). It now lives once in `target/swift-module-cache`, shared by
+every profile. The first real install after the change removed three legacy copies and `debug`
+shrank by 487 MB. The cache embeds its absolute path, so it cannot be moved or cloned with a `target/`;
+it is capped at 768 MiB and rebuilt when it outgrows that.
+
+**`RUSTC_BOOTSTRAP` silently invalidates the tree.** The build scripts of `proc-macro2`, `anyhow` and
+`thiserror` emit `rerun-if-env-changed=RUSTC_BOOTSTRAP`. Exporting it in a shell (it is needed for
+`-Z unstable-options --unit-graph` diagnostics) dirties about 116 units — the tauri/wry stack and this
+crate — and unsetting it does so again. The mechanism is reproducible and a plausible cause of an
+unattributed cold rebuild on 2026-10-23 (a `cargo sweep --time 7` dry run showed the cleanup was not
+responsible), but no log existed to prove it; that gap is why `install.sh` now unsets the variable
+for its own build, warns, and logs cache-affecting events.
+
+**Worktrees multiply all of the above.** Each linked worktree has its own `target/`. Their budgets are
+now 3 / 5 / 5 / 3 GiB (main checkout unchanged at 4 / 6 / 6 / 4), and `install.sh` records budget
+cleanups, sweeps, compiler/SDK changes and the `RUSTC_BOOTSTRAP` guard in
+`target/askhuman-cache.log` (newest 200 lines), so a cold build can be explained afterwards. The
+optional `scripts/seed-worktree-target.sh` seeds a new worktree with APFS clones of the main
+checkout's `local-install` and `debug` profiles: 6 s plus a 1 m 20 s first build (77 s user CPU)
+against 3 m 02 s (392 s user CPU) from an empty `target/`, with no measurable physical disk use for
+the clone. It must clean every path package afterwards (mtime freshness would otherwise reuse the
+source checkout's artifacts), skips the non-relocatable Swift cache, and refuses to run across
+volumes because `cp -c` silently degrades to a full copy there.
+
+Verified on the real tree: the first install after these changes compiled the affected crates in
+1 m 38 s; a second install reused everything (0.88 s build, copy and signing skipped) and, with
+`debug` at 6,818 MB against its 6,144 MB budget, cleaned only this package's artifacts (to 3,237 MB).
+
+Considered but not part of this round: splitting the crate into a workspace, and reclaiming other
+checkouts' stale build directories (`.build`, `demo/*/target`, an older worktree's `target/debug`).
 
 ## When to revisit architecture
 

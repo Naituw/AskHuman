@@ -545,9 +545,16 @@ export default {
       recommendedTag: "推荐",
       codexNoHook:
         "Codex 无法延长 CLI 工具的超时，长时间等待可能被取消；如需可靠的长等待请改用 MCP 模式。",
-      contextRecoveryHookLabel: "上下文恢复 Hook",
-      codexRecoveryHookHint:
-        "用于压缩后恢复最近一次 AskHuman 精确问答。Codex 仍无法延长 CLI 工具超时，长时间等待依然推荐 MCP 模式。",
+      protocolLabel: "协议（SessionStart Hook）",
+      codexProtocolHint:
+        "Codex 的 AskHuman 协议由 SessionStart Hook 在每个交互会话开始时注入（压缩后自动重新注入，并恢复最近一次 AskHuman 问答），不再写入 ~/.codex/AGENTS.md。由其它 Agent、脚本或插件启动的非交互运行默认不会收到协议，见下方开关。",
+      codexVersionUnsupported:
+        "当前 Codex 版本 {version} 不支持通过 Hook 注入协议；AskHuman 要求 Codex {minimum} 或更高版本。已有的 AGENTS.md 区块不会被改动。",
+      codexCliHint:
+        "Codex 无法延长 CLI 工具超时，长时间等待依然推荐 MCP 模式。",
+      delegatedTitle: "允许被委派的 Codex 运行使用 AskHuman",
+      delegatedHint:
+        "关（默认）：由其它 Agent、脚本或插件启动的非交互运行（codex exec、/codex:review 等）与未集成 AskHuman 时一致，不注入协议、不弹窗、不提问；只影响之后新启动的运行。",
       mcpModeHint:
         "以 MCP server 方式运行 AskHuman 并设置较长的工具超时，让 Agent 能可靠地等待你的回复。",
       mcpExampleHint:

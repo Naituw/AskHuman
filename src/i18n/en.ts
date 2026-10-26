@@ -558,9 +558,16 @@ export default {
       recommendedTag: "Rec",
       codexNoHook:
         "Codex can't extend a CLI tool's timeout, so long waits may be cancelled. Use MCP mode for reliable long waits.",
-      contextRecoveryHookLabel: "Context recovery hook",
-      codexRecoveryHookHint:
-        "Restores the exact last AskHuman exchange after compaction. Codex still cannot extend a CLI tool timeout, so MCP remains recommended for long waits.",
+      protocolLabel: "Protocol (SessionStart hook)",
+      codexProtocolHint:
+        "Codex receives the AskHuman protocol from a SessionStart hook when an interactive session starts (re-injected after compaction together with the last AskHuman exchange). It is no longer written to ~/.codex/AGENTS.md. Non-interactive runs started by another agent, script, or plugin do not receive it by default; see the switch below.",
+      codexVersionUnsupported:
+        "Codex {version} cannot receive the protocol through a hook. AskHuman requires Codex {minimum} or newer; an existing AGENTS.md block is left untouched.",
+      codexCliHint:
+        "Codex cannot extend a CLI tool timeout, so MCP remains recommended for long waits.",
+      delegatedTitle: "Let delegated Codex runs use AskHuman",
+      delegatedHint:
+        "Off (default): non-interactive runs started by another agent, script, or plugin (codex exec, /codex:review, ...) behave as if AskHuman were not integrated: no protocol, no popups, no questions. Only runs that start afterwards are affected.",
       mcpModeHint:
         "Runs AskHuman as an MCP server with a long tool timeout, so the agent reliably waits for your reply.",
       mcpExampleHint:

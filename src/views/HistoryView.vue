@@ -38,6 +38,7 @@ import { LIST_COLLAPSE_BELOW, provideHistoryPreview, useHistoryPreview } from ".
 import AttachmentChips from "./history/AttachmentChips.vue";
 import AttachmentFilter from "./history/AttachmentFilter.vue";
 import { useAttachmentFilter } from "./history/useAttachmentFilter";
+import { createScopeIntent } from "./history/scopeMenuIntent";
 import { attachmentCountOf } from "../lib/historyAttachments";
 // The panel and its divider are styled by the popup stylesheet (the same panel as in the popup).
 import "./popup/popup.css";
@@ -73,6 +74,10 @@ const deleteNotice = ref("");
 const menuOpen = ref(false);
 const scopeMenuOpen = ref(false);
 const scopeMenuProject = ref(ALL);
+// The session column's element: where the pointer is heading while it crosses project rows.
+const scopeSessionPane = ref<HTMLElement | null>(null);
+// True while a project switch is deferred because the pointer is on its way to the session column.
+const scopeMenuGuarding = ref(false);
 const pendingDeleteScopeKind = ref<null | "search" | "session" | "project">(null);
 let queuedOpenRequest: HistoryOpenRequest | null = null;
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -251,6 +256,10 @@ const scopeMenuAllSessionsLabel = computed(() =>
   scopeMenuProject.value === ALL
     ? t("history.allProjectsAllSessions")
     : t("history.thisProjectAllSessions")
+);
+// Names the project the session column belongs to; clicking a session commits this project.
+const scopeMenuProjectOption = computed(() =>
+  projectOptions.value.find((option) => option.token === scopeMenuProject.value)
 );
 
 const selectedProjectOption = computed(
@@ -540,6 +549,30 @@ async function reload() {
   }
 }
 
+// Hovering a project row shows its sessions, but the path from that row to a session crosses other
+// project rows. The guard keeps the shown project while the pointer is heading for the session column.
+const scopeIntent = createScopeIntent({
+  target: () => scopeSessionPane.value?.getBoundingClientRect() ?? null,
+  active: () => scopeMenuProject.value,
+  activate: (token) => {
+    scopeMenuProject.value = token;
+  },
+  onGuardChange: (guarding) => {
+    scopeMenuGuarding.value = guarding;
+  },
+});
+
+function onScopeProjectPointer(token: string, event: PointerEvent) {
+  scopeIntent.pointer(token, {
+    x: event.clientX,
+    y: event.clientY,
+    pointerType: event.pointerType,
+  });
+}
+
+// Opening or closing the menu starts from a clean slate: no deferred switch, no departure point.
+watch(scopeMenuOpen, () => scopeIntent.settle());
+
 function toggleScopeMenu() {
   menuOpen.value = false;
   scopeMenuProject.value = selected.value;
@@ -767,6 +800,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("pointerdown", onWindowPointerDown);
   window.removeEventListener("blur", onWindowBlur);
+  scopeIntent.dispose();
   unlistenUpdated?.();
   unlistenSettings?.();
   unlistenOpenTarget?.();
@@ -796,7 +830,13 @@ onBeforeUnmount(() => {
               <span class="scope-btn-label">{{ scopeButtonLabel }}</span>
               <svg class="scope-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
             </button>
-            <div v-if="scopeMenuOpen" class="scope-menu" role="menu">
+            <div
+              v-if="scopeMenuOpen"
+              class="scope-menu"
+              :class="{ guarding: scopeMenuGuarding }"
+              role="menu"
+              @pointerleave="scopeIntent.settle()"
+            >
               <div class="scope-project-menu" :aria-label="t('history.projectFilter')">
                 <button
                   v-for="o in projectOptions"
@@ -808,15 +848,30 @@ onBeforeUnmount(() => {
                     selected: selected === o.token,
                   }"
                   :title="o.title"
-                  @pointerenter="scopeMenuProject = o.token"
-                  @focus="scopeMenuProject = o.token"
-                  @click="scopeMenuProject = o.token"
+                  @pointerenter="onScopeProjectPointer(o.token, $event)"
+                  @pointermove="onScopeProjectPointer(o.token, $event)"
+                  @pointerleave="scopeIntent.leave(o.token)"
+                  @focus="scopeIntent.choose(o.token)"
+                  @click="scopeIntent.choose(o.token)"
                 >
                   <span class="scope-project-label">{{ o.label }}</span>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>
                 </button>
               </div>
-              <div class="scope-session-menu" :aria-label="t('history.sessionFilter')">
+              <div
+                ref="scopeSessionPane"
+                class="scope-session-menu"
+                :aria-label="t('history.sessionFilter')"
+                @pointerenter="scopeIntent.settle()"
+              >
+                <div
+                  class="scope-session-title"
+                  aria-hidden="true"
+                  :title="scopeMenuProjectOption?.title"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" /></svg>
+                  <span class="scope-session-title-text">{{ scopeMenuProjectOption?.compactLabel }}</span>
+                </div>
                 <button
                   type="button"
                   role="menuitemradio"
@@ -1174,6 +1229,9 @@ onBeforeUnmount(() => {
   right: 0;
   display: grid;
   grid-template-columns: minmax(170px, 0.8fr) minmax(260px, 1.35fr);
+  /* A row clamped to the menu height (instead of one sized to its content) lets each column scroll
+     under max-height rather than being cut off by it. */
+  grid-template-rows: minmax(0, 1fr);
   width: min(560px, calc(var(--history-main-width, 100vw) - 28px));
   max-height: min(420px, calc(100vh - 100px));
   overflow: hidden;
@@ -1191,6 +1249,10 @@ onBeforeUnmount(() => {
 .scope-project-menu {
   border-right: var(--hairline) solid var(--border);
   background: color-mix(in srgb, var(--text-primary) 3%, var(--surface-overlay));
+}
+/* The sticky project title sits flush with the top edge of the session column. */
+.scope-session-menu {
+  padding-top: 0;
 }
 .scope-project-menu button,
 .scope-session-menu button {
@@ -1211,6 +1273,11 @@ onBeforeUnmount(() => {
 .scope-project-menu button:hover,
 .scope-session-menu button:hover {
   background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+/* While a switch is deferred (the pointer is heading for the session column), only the project
+   whose sessions are shown stays highlighted; rows the pointer merely crosses must not look chosen. */
+.scope-menu.guarding .scope-project-menu button:hover:not(.active) {
+  background: transparent;
 }
 .scope-project-menu button.selected {
   font-weight: 600;
@@ -1245,6 +1312,32 @@ onBeforeUnmount(() => {
   height: var(--hairline);
   margin: 4px 6px;
   background: var(--border);
+}
+/* Names the project this session list belongs to; it stays in view while the sessions scroll. */
+.scope-session-title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 8px 4px;
+  background: var(--surface-overlay);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.scope-session-title svg {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+}
+.scope-session-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .clear-wrap {
   position: relative;

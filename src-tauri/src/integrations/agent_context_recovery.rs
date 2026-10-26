@@ -22,31 +22,48 @@ struct EventSpec {
     runtime_event: &'static str,
     matcher: Option<&'static str>,
     flat: bool,
+    /// Codex `additionalContextLimit` expected on the handler (`None` = field absent).
+    context_limit: Option<u64>,
 }
 
+/// Claude Code: only the post-compaction recovery sentence, so only `compact` sessions matter.
 const SESSION_START: EventSpec = EventSpec {
     event: "SessionStart",
     runtime_event: "session-start",
     matcher: Some("compact"),
     flat: false,
+    context_limit: None,
+};
+/// Codex: the SessionStart hook is the sole carrier of the interaction protocol (spec
+/// `codex-delegated-run-silence` D8), so it must run for every session source (no matcher) and
+/// must not be spilled to a preview when a long custom collaboration style makes the protocol
+/// large (`additionalContextLimit: 0` = unlimited).
+const CODEX_SESSION_START: EventSpec = EventSpec {
+    event: "SessionStart",
+    runtime_event: "session-start",
+    matcher: None,
+    flat: false,
+    context_limit: Some(0),
 };
 const PRE_TOOL_NESTED: EventSpec = EventSpec {
     event: "PreToolUse",
     runtime_event: "pre-tool-use",
     matcher: None,
     flat: false,
+    context_limit: None,
 };
 const PRE_TOOL_CURSOR: EventSpec = EventSpec {
     event: "preToolUse",
     runtime_event: "pre-tool-use",
     matcher: None,
     flat: true,
+    context_limit: None,
 };
 
 fn all_specs(target: AgentTarget) -> &'static [EventSpec] {
     match target {
         AgentTarget::ClaudeCode => &[SESSION_START, PRE_TOOL_NESTED],
-        AgentTarget::Codex => &[SESSION_START],
+        AgentTarget::Codex => &[CODEX_SESSION_START],
         AgentTarget::Cursor => &[PRE_TOOL_CURSOR],
         AgentTarget::Grok => &[PRE_TOOL_NESTED],
         AgentTarget::Pi => &[],
@@ -73,15 +90,46 @@ pub fn supported() -> bool {
     true
 }
 
+/// On-disk locations of Codex's user-level hook configuration. Injectable so migration logic can
+/// be tested against temporary files without redirecting `HOME`.
+#[derive(Clone, Debug)]
+pub(crate) struct CodexFiles {
+    pub hooks_json: PathBuf,
+    pub config_toml: PathBuf,
+}
+
+impl CodexFiles {
+    pub(crate) fn real() -> Self {
+        Self {
+            hooks_json: crate::paths::codex_hooks_json(),
+            config_toml: crate::paths::codex_config_toml(),
+        }
+    }
+}
+
 pub fn status(target: AgentTarget, mode: Mode) -> RecoveryStatus {
+    status_at(target, mode, &CodexFiles::real())
+}
+
+/// A managed hook entry exists for `target`: no freshness, mode, or trust check.
+pub(crate) fn hook_installed_at(target: AgentTarget, codex: &CodexFiles) -> bool {
+    if !supported() || target == AgentTarget::Pi {
+        return false;
+    }
+    let text = std::fs::read_to_string(hook_path_at(target, codex)).unwrap_or_else(|_| "{}".into());
+    status_from_text(target, Mode::Cli, &text, true).installed
+}
+
+pub(crate) fn status_at(target: AgentTarget, mode: Mode, codex: &CodexFiles) -> RecoveryStatus {
     if !supported() || target == AgentTarget::Pi {
         return RecoveryStatus::default();
     }
-    let text = std::fs::read_to_string(hook_path(target)).unwrap_or_else(|_| "{}".into());
+    let path = hook_path_at(target, codex);
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".into());
     let mut result = status_from_text(target, mode, &text, true);
     if target == AgentTarget::Codex
         && result.installed
-        && !super::agent_permission::codex_marker_trusted(&hook_path(target), MARKER)
+        && !super::agent_permission::codex_marker_trusted_at(&path, &codex.config_toml, MARKER)
             .unwrap_or(false)
     {
         result.outdated = true;
@@ -115,11 +163,12 @@ fn status_from_text(target: AgentTarget, mode: Mode, text: &str, trust_ok: bool)
             .cloned()
             .unwrap_or_default();
         for entry in entries {
-            let (command, command_windows, timeout, matcher) = if spec.flat {
+            let (command, command_windows, timeout, matcher, context_limit) = if spec.flat {
                 (
                     entry.get("command").and_then(Value::as_str),
                     None,
                     entry.get("timeout").and_then(Value::as_u64),
+                    None,
                     None,
                 )
             } else {
@@ -138,6 +187,9 @@ fn status_from_text(target: AgentTarget, mode: Mode, text: &str, trust_ok: bool)
                         .and_then(|handler| handler.get("timeout"))
                         .and_then(Value::as_u64),
                     entry.get("matcher").and_then(Value::as_str),
+                    handler
+                        .and_then(|handler| handler.get("additionalContextLimit"))
+                        .and_then(Value::as_u64),
                 )
             };
             if !command.is_some_and(|command| command.contains(MARKER)) {
@@ -157,6 +209,7 @@ fn status_from_text(target: AgentTarget, mode: Mode, text: &str, trust_ok: bool)
                     && windows_override_ok
                     && timeout == Some(TIMEOUT_SECS)
                     && matcher == spec.matcher
+                    && context_limit == spec.context_limit
                 {
                     exact_count += 1;
                 }
@@ -181,13 +234,17 @@ pub fn needs_update(target: AgentTarget, mode: Mode) -> bool {
 }
 
 pub(crate) fn reconcile_unlocked(target: AgentTarget, mode: Mode) -> Result<()> {
+    reconcile_at(target, mode, &CodexFiles::real())
+}
+
+pub(crate) fn reconcile_at(target: AgentTarget, mode: Mode, codex: &CodexFiles) -> Result<()> {
     if !supported() || target == AgentTarget::Pi {
         return Ok(());
     }
-    let path = hook_path(target);
+    let path = hook_path_at(target, codex);
     let original_hooks = std::fs::read(&path).ok();
     let original_config = (target == AgentTarget::Codex)
-        .then(|| std::fs::read(crate::paths::codex_config_toml()).ok())
+        .then(|| std::fs::read(&codex.config_toml).ok())
         .flatten();
     let original_text = existing_hook_text(original_hooks.as_deref())?;
     let updated = reconcile_text(target, mode, original_text)?;
@@ -200,16 +257,17 @@ pub(crate) fn reconcile_unlocked(target: AgentTarget, mode: Mode) -> Result<()> 
     }
     if target == AgentTarget::Codex {
         let trust_markers: &[&str] = if mode == Mode::None { &[] } else { &[MARKER] };
-        if let Err(error) =
-            super::agent_permission::reconcile_codex_trust(original_text, &updated, trust_markers)
-        {
+        if let Err(error) = super::agent_permission::reconcile_codex_trust_at(
+            &path,
+            &codex.config_toml,
+            original_text,
+            &updated,
+            trust_markers,
+        ) {
             if hooks_changed {
                 restore(&path, original_hooks.as_deref());
             }
-            restore(
-                &crate::paths::codex_config_toml(),
-                original_config.as_deref(),
-            );
+            restore(&codex.config_toml, original_config.as_deref());
             return Err(error);
         }
     }
@@ -244,14 +302,17 @@ fn reconcile_text(target: AgentTarget, mode: Mode, text: &str) -> Result<String>
                     false,
                 )?
             } else {
-                hook_edit::upsert_nested_group_matched_with_windows(
+                hook_edit::upsert_nested_group_matched_with_extras(
                     &updated,
                     spec.event,
                     MARKER,
                     spec.matcher,
                     &command,
-                    command_windows.as_deref(),
                     TIMEOUT_SECS,
+                    hook_edit::HandlerExtras {
+                        command_windows: command_windows.as_deref(),
+                        additional_context_limit: spec.context_limit,
+                    },
                 )?
             };
         } else {
@@ -263,6 +324,13 @@ fn reconcile_text(target: AgentTarget, mode: Mode, text: &str) -> Result<String>
         }
     }
     Ok(updated)
+}
+
+fn hook_path_at(target: AgentTarget, codex: &CodexFiles) -> PathBuf {
+    match target {
+        AgentTarget::Codex => codex.hooks_json.clone(),
+        other => hook_path(other),
+    }
 }
 
 fn hook_path(target: AgentTarget) -> PathBuf {
@@ -416,29 +484,101 @@ mod tests {
         );
         let stale = exact.replace(&format!("\"timeout\": {TIMEOUT_SECS}"), "\"timeout\": 1");
         assert!(status_from_text(AgentTarget::Codex, Mode::Mcp, &stale, true).outdated);
-        let command = hook_command(AgentTarget::Codex, "session-start").unwrap();
-        let duplicate = serde_json::json!({
-            "hooks": {
-                "SessionStart": [
-                    {
-                        "matcher": "compact",
-                        "hooks": [{"type":"command", "command": command, "timeout": TIMEOUT_SECS}]
-                    },
-                    {
-                        "matcher": "compact",
-                        "hooks": [{
-                            "type":"command",
-                            "command": format!("duplicate {MARKER}"),
-                            "timeout": TIMEOUT_SECS
-                        }]
-                    }
-                ]
-            }
-        })
-        .to_string();
-        assert!(status_from_text(AgentTarget::Codex, Mode::Mcp, &duplicate, true).outdated);
+        assert!(!status_from_text(AgentTarget::Codex, Mode::Mcp, &exact, true).outdated);
+        let mut duplicated: Value = serde_json::from_str(&exact).unwrap();
+        let mut second = duplicated["hooks"]["SessionStart"][0].clone();
+        second["hooks"][0]["command"] = Value::String(format!("duplicate {MARKER}"));
+        duplicated["hooks"]["SessionStart"]
+            .as_array_mut()
+            .unwrap()
+            .push(second);
+        assert!(
+            status_from_text(AgentTarget::Codex, Mode::Mcp, &duplicated.to_string(), true).outdated
+        );
         assert!(status_from_text(AgentTarget::Cursor, Mode::Mcp, "not json", true).outdated);
         assert!(status_from_text(AgentTarget::Cursor, Mode::None, "[]", true).outdated);
+    }
+
+    #[test]
+    fn codex_protocol_hook_runs_for_every_source_without_a_spill_limit() {
+        for mode in [Mode::Cli, Mode::Mcp] {
+            let text = reconcile_text(AgentTarget::Codex, mode, "{}").unwrap();
+            let groups = hook_edit::nested_groups(&text, "SessionStart").unwrap();
+            assert_eq!(groups.len(), 1, "{text}");
+            assert!(
+                groups[0].get("matcher").is_none(),
+                "no matcher = every SessionStart source: {text}"
+            );
+            let handler = &groups[0]["hooks"][0];
+            assert_eq!(handler["additionalContextLimit"], 0, "{text}");
+            assert_eq!(handler["timeout"], TIMEOUT_SECS);
+            assert!(handler["commandWindows"].as_str().is_some());
+        }
+        // Claude keeps the compact-only recovery hook and no extra handler field.
+        let claude = reconcile_text(AgentTarget::ClaudeCode, Mode::Cli, "{}").unwrap();
+        let groups = hook_edit::nested_groups(&claude, "SessionStart").unwrap();
+        assert_eq!(groups[0]["matcher"], "compact");
+        assert!(groups[0]["hooks"][0]
+            .get("additionalContextLimit")
+            .is_none());
+    }
+
+    #[test]
+    fn legacy_compact_only_codex_identity_needs_an_update() {
+        let command = hook_command(AgentTarget::Codex, "session-start").unwrap();
+        let command_windows = windows_hook_command(AgentTarget::Codex, "session-start").unwrap();
+        let handler = |extra: Value| {
+            let mut handler = serde_json::json!({
+                "type": "command",
+                "command": command,
+                "commandWindows": command_windows,
+                "timeout": TIMEOUT_SECS,
+            });
+            for (key, value) in extra.as_object().unwrap() {
+                handler[key] = value.clone();
+            }
+            handler
+        };
+        let build =
+            |group: Value| serde_json::json!({"hooks": {"SessionStart": [group]}}).to_string();
+        let exact = build(serde_json::json!({
+            "hooks": [handler(serde_json::json!({"additionalContextLimit": 0}))]
+        }));
+        assert!(!status_from_text(AgentTarget::Codex, Mode::Cli, &exact, true).outdated);
+
+        for stale in [
+            // Pre-migration identity: compact-only matcher, no limit.
+            serde_json::json!({
+                "matcher": "compact",
+                "hooks": [handler(serde_json::json!({}))]
+            }),
+            // Right matcher, but the default 2,500-token spill limit would still apply.
+            serde_json::json!({"hooks": [handler(serde_json::json!({}))]}),
+            // Wrong limit.
+            serde_json::json!({
+                "hooks": [handler(serde_json::json!({"additionalContextLimit": 4096}))]
+            }),
+            // Right limit, stray matcher.
+            serde_json::json!({
+                "matcher": "startup",
+                "hooks": [handler(serde_json::json!({"additionalContextLimit": 0}))]
+            }),
+        ] {
+            let text = build(stale);
+            let status = status_from_text(AgentTarget::Codex, Mode::Cli, &text, true);
+            assert_eq!(
+                status,
+                RecoveryStatus {
+                    installed: true,
+                    outdated: true
+                },
+                "{text}"
+            );
+            // Reconciling rewrites it to the exact identity.
+            let fixed = reconcile_text(AgentTarget::Codex, Mode::Cli, &text).unwrap();
+            assert!(!status_from_text(AgentTarget::Codex, Mode::Cli, &fixed, true).outdated);
+            assert_eq!(fixed.matches(MARKER).count(), 1);
+        }
     }
 
     #[test]

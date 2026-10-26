@@ -205,28 +205,64 @@ fn codex_guard_action_reason(meta: &Meta) -> Option<(&'static str, &'static str)
     })
 }
 
+/// Result returned to a delegated (non-interactive) Codex run that calls an AskHuman tool anyway.
+/// Phrased for the model: there is no human to wait for, so it must not retry or escalate.
+const CODEX_DELEGATED_MESSAGE: &str =
+    "AskHuman is not used in this non-interactive Codex run. No human is attending it. \
+Do not retry or contact the human; continue the task and return the result directly.";
+
+/// Codex session id of this tool call: the turn metadata carries it; the plain `_meta` keys are
+/// the fallback. It is the same id the SessionStart hook sees, so it keys the delegated marker.
+fn codex_session_id<'a>(meta: &'a Meta, metadata: Option<&'a Value>) -> Option<&'a str> {
+    metadata
+        .and_then(|metadata| metadata_id(metadata, "session_id", "sessionId"))
+        .or_else(|| meta.0.get("sessionId").and_then(Value::as_str))
+        .or_else(|| meta.0.get("threadId").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+}
+
 /// Runtime guard for Codex-originated calls, evaluated before any side effect (popup, IM push,
-/// todo write). Blocked thread sources get an error result plus a "suppressed" audit line; every
+/// todo write). Blocked thread sources and delegated runs (a marker written by the SessionStart
+/// hook, see `crate::agents::delegated`) get an error result plus a "suppressed" audit line; every
 /// other Codex call proceeds but leaves a "passed" audit line carrying the observed
 /// `thread_source`, so a future host-side label rename shows up in `daemon.log` instead of
 /// failing open invisibly.
+///
+/// `todo_list` does not call this: it only reads, and a delegated run listing todos changes nothing.
 fn codex_thread_guard(meta: &Meta, tool: &str) -> Option<CallToolResult> {
+    codex_thread_guard_with(meta, tool, &crate::agents::delegated::marker_silenced)
+}
+
+fn codex_thread_guard_with(
+    meta: &Meta,
+    tool: &str,
+    delegated_marker: &dyn Fn(&str) -> Option<String>,
+) -> Option<CallToolResult> {
     let (action, reason) = codex_guard_action_reason(meta)?;
     let metadata = codex_turn_metadata(meta);
     let metadata = metadata.as_ref();
+    let session_id = codex_session_id(meta, metadata);
+    // The thread-source verdict wins; only calls it lets through are checked for a delegated run.
+    let delegated_reason = (action == "passed")
+        .then(|| session_id.and_then(delegated_marker))
+        .flatten();
+    let (action, reason, message) = match delegated_reason {
+        Some(reason) => ("suppressed", reason, CODEX_DELEGATED_MESSAGE),
+        None => (action, reason.to_string(), CODEX_BLOCKED_THREAD_MESSAGE),
+    };
     crate::daemon::lifecycle::log_guard_audit(crate::daemon::lifecycle::GuardAudit {
         component: "mcp_tool",
         action,
-        reason,
+        reason: &reason,
         tool: Some(tool),
         agent: Some("codex"),
         thread_source: metadata.and_then(|metadata| codex_thread_source(metadata)),
-        session_id: metadata.and_then(|metadata| metadata_id(metadata, "session_id", "sessionId")),
+        session_id,
         thread_id: metadata.and_then(|metadata| metadata_id(metadata, "thread_id", "threadId")),
         turn_id: metadata.and_then(|metadata| metadata_id(metadata, "turn_id", "turnId")),
     });
-    (action == "suppressed")
-        .then(|| CallToolResult::error(vec![ContentBlock::text(CODEX_BLOCKED_THREAD_MESSAGE)]))
+    (action == "suppressed").then(|| CallToolResult::error(vec![ContentBlock::text(message)]))
 }
 
 // `ask` 工具的入参（MCP 入参 schema 由 schemars 从本结构派生）。结构体级注释用 `//` 以免泄漏进对外
@@ -354,6 +390,10 @@ pub struct AskOption {
 #[derive(Clone)]
 pub struct AskServer {
     tool_router: ToolRouter<Self>,
+    /// Delegated Codex run (`codex exec` / `review`): the catalog is empty and the instance is not
+    /// registered, so AskHuman looks exactly like an integration that is not installed. Decided
+    /// once at process start; Codex fixes a server's tool catalog after the connection is made.
+    hidden: bool,
     mcp_instance_id: String,
     project: String,
     // Resolve once before updates unlink the running image. On Linux, current_exe()
@@ -361,11 +401,51 @@ pub struct AskServer {
     executable: Result<PathBuf, String>,
 }
 
+/// Hop budget for the ancestor probe that decides [`AskServer::hidden`]: AskHuman → codex, with a
+/// little room for wrappers.
+const DELEGATED_PROBE_HOPS: usize = 6;
+
+/// Whether this MCP process belongs to a delegated Codex run whose AskHuman tools must stay
+/// hidden. `codex exec` / `review` is recognized by the nearest Agent ancestor's subcommand; app-
+/// server based delegated runs cannot be recognized from here (no `CODEX_*` in the environment, no
+/// originator in `_meta`) and are handled per call by the marker guard.
+fn delegated_run_hides_tools(
+    allowed: bool,
+    nearest: Option<crate::agents::detect::AgentInvocation>,
+) -> bool {
+    !allowed && nearest.is_some_and(|invocation| invocation.is_delegated_codex_command())
+}
+
+fn this_process_is_delegated_exec() -> bool {
+    // Unit tests run wherever the developer runs them (possibly inside `codex exec` itself), so the
+    // real process tree must never decide whether the test server has tools.
+    if cfg!(test) {
+        return false;
+    }
+    let allowed = crate::integrations::agent_delegated::allowed(crate::agents::AgentKind::Codex);
+    if allowed {
+        return false;
+    }
+    delegated_run_hides_tools(
+        allowed,
+        crate::agents::detect::nearest_agent_invocation(std::process::id(), DELEGATED_PROBE_HOPS),
+    )
+}
+
 #[tool_router(router = tool_router)]
 impl AskServer {
     pub fn new() -> Self {
+        Self::with_visibility(this_process_is_delegated_exec())
+    }
+
+    fn with_visibility(hidden: bool) -> Self {
         Self {
-            tool_router: Self::tool_router(),
+            tool_router: if hidden {
+                ToolRouter::new()
+            } else {
+                Self::tool_router()
+            },
+            hidden,
             mcp_instance_id: uuid::Uuid::new_v4().to_string(),
             project: std::env::current_dir()
                 .ok()
@@ -376,6 +456,9 @@ impl AskServer {
     }
 
     pub async fn register_instance(&self) {
+        if self.hidden {
+            return;
+        }
         register_mcp_instance(
             self.mcp_instance_id.clone(),
             self.project.clone(),
@@ -1149,15 +1232,21 @@ async fn capture_output(
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for AskServer {
     fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_instructions(
+        // No experimental capabilities on purpose: Codex's own tool-catalog cache (in-process, one
+        // entry per server identity) is left on. A delegated `codex exec` is a fresh process, so
+        // its empty catalog is never shadowed by a catalog cached for an interactive thread.
+        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+        // A hidden server advertises no tools, so it must not tell the model to call any.
+        if !self.hidden {
+            info = info.with_instructions(
             "AskHuman bridges the agent and a human operator. Call the `ask` tool whenever you \
 need the human to decide, clarify, review, or approve something; it blocks until they reply. \
 Call the `whats_next` tool after completing the current task and before ending your turn to ask \
 the human what to do next. Call `show_last` after context summarization when exact prior AskHuman \
 details may be missing. Call the `todo_add` tool when the human asks to record a deferred project \
 todo.",
-        );
+            );
+        }
         // `from_build_env()` 的名字/版本来自 rmcp crate 自身，改成本应用的品牌名与版本。
         let mut implementation = Implementation::from_build_env();
         implementation.name = "AskHuman".to_string();
@@ -1591,6 +1680,203 @@ mod tests {
         drop(reader);
         server_task.await??;
         Ok(())
+    }
+
+    /// Run `initialize` + `tools/list` against a server and return both results.
+    async fn initialize_and_list_tools(server: AskServer) -> anyhow::Result<(Value, Value)> {
+        let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
+        let server_task = tokio::spawn(async move {
+            server.serve(server_transport).await?.waiting().await?;
+            anyhow::Ok(())
+        });
+        let (read, mut write) = tokio::io::split(client_transport);
+        let mut reader = BufReader::new(read);
+        send_json(
+            &mut write,
+            json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05", "capabilities": {},
+                    "clientInfo": { "name": "codex-mcp-client", "version": "0" }
+                }
+            }),
+        )
+        .await;
+        let initialized = read_response(&mut reader, 1).await;
+        send_json(
+            &mut write,
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        )
+        .await;
+        send_json(
+            &mut write,
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
+        )
+        .await;
+        let listed = read_response(&mut reader, 2).await;
+        drop(write);
+        drop(reader);
+        server_task.await??;
+        Ok((initialized, listed))
+    }
+
+    #[tokio::test]
+    async fn delegated_exec_server_advertises_no_tools_and_no_instructions() -> anyhow::Result<()> {
+        let (initialized, listed) =
+            initialize_and_list_tools(AskServer::with_visibility(true)).await?;
+        assert_eq!(
+            listed.pointer("/result/tools"),
+            Some(&json!([])),
+            "{listed}"
+        );
+        // Nothing may tell the model to call a tool it cannot see.
+        assert_eq!(
+            initialized.pointer("/result/instructions"),
+            None,
+            "{initialized}"
+        );
+        assert_eq!(
+            initialized.pointer("/result/capabilities/experimental"),
+            None,
+            "the server must not opt out of Codex's tool-catalog cache: {initialized}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn interactive_server_keeps_every_tool_and_its_instructions() -> anyhow::Result<()> {
+        let (initialized, listed) =
+            initialize_and_list_tools(AskServer::with_visibility(false)).await?;
+        let names: Vec<&str> = listed["result"]["tools"]
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        for expected in [
+            "ask",
+            "whats_next",
+            "show_last",
+            "todo_add",
+            "todo_list",
+            "todo_update",
+        ] {
+            assert!(
+                names.contains(&expected),
+                "{expected} missing from {names:?}"
+            );
+        }
+        assert!(initialized
+            .pointer("/result/instructions")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.contains("`ask`")));
+        assert_eq!(
+            initialized.pointer("/result/capabilities/experimental"),
+            None,
+            "{initialized}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tools_are_hidden_only_for_a_delegated_codex_command_that_is_not_allowed() {
+        use crate::agents::detect::AgentInvocation;
+        use crate::agents::AgentKind;
+        let codex = |subcommand: Option<&str>| {
+            Some(AgentInvocation {
+                kind: AgentKind::Codex,
+                pid: 7,
+                codex_subcommand: subcommand.map(str::to_string),
+            })
+        };
+        for sub in ["exec", "e", "review"] {
+            assert!(delegated_run_hides_tools(false, codex(Some(sub))), "{sub}");
+            assert!(
+                !delegated_run_hides_tools(true, codex(Some(sub))),
+                "the allow preference restores the tools: {sub}"
+            );
+        }
+        for not_delegated in [
+            codex(None),
+            codex(Some("app-server")),
+            codex(Some("resume")),
+            Some(AgentInvocation {
+                kind: AgentKind::Claude,
+                pid: 7,
+                codex_subcommand: Some("exec".into()),
+            }),
+            None,
+        ] {
+            assert!(
+                !delegated_run_hides_tools(false, not_delegated.clone()),
+                "{not_delegated:?}"
+            );
+        }
+    }
+
+    fn marker_for(session: &'static str) -> impl Fn(&str) -> Option<String> {
+        move |id| (id == session).then(|| "codex_delegated_marker:exec_process".to_string())
+    }
+
+    fn result_text(result: &CallToolResult) -> String {
+        serde_json::to_value(result).unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn delegated_marker_blocks_calls_that_the_thread_source_lets_through() {
+        let delegated = codex_meta(json!({ "thread_source": "user", "session_id": "sess-1" }));
+        let blocked = codex_thread_guard_with(&delegated, "ask", &marker_for("sess-1"))
+            .expect("a delegated run is blocked");
+        assert_eq!(blocked.is_error, Some(true));
+        assert_eq!(result_text(&blocked), CODEX_DELEGATED_MESSAGE);
+        assert!(CODEX_DELEGATED_MESSAGE.contains("non-interactive"));
+
+        // A different session, a session without a marker, and a missing `thread_source` pass.
+        for passed in [
+            codex_meta(json!({ "thread_source": "user", "session_id": "sess-2" })),
+            codex_meta(json!({ "session_id": "sess-2" })),
+            codex_meta(json!({ "thread_source": "user" })),
+        ] {
+            assert!(
+                codex_thread_guard_with(&passed, "ask", &marker_for("sess-1")).is_none(),
+                "{passed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn delegated_marker_uses_the_plain_meta_ids_when_turn_metadata_lacks_a_session() {
+        let mut fallback = codex_meta(json!({ "thread_source": "user" }));
+        fallback.0.insert("sessionId".into(), json!("sess-1"));
+        assert!(codex_thread_guard_with(&fallback, "whats_next", &marker_for("sess-1")).is_some());
+        let mut thread_only = codex_meta(json!({ "thread_source": "user" }));
+        thread_only.0.insert("threadId".into(), json!("sess-1"));
+        assert!(
+            codex_thread_guard_with(&thread_only, "show_last", &marker_for("sess-1")).is_some()
+        );
+    }
+
+    #[test]
+    fn blocked_thread_source_keeps_its_own_message_even_with_a_marker() {
+        let both = codex_meta(json!({ "thread_source": "system", "session_id": "sess-1" }));
+        let blocked = codex_thread_guard_with(&both, "ask", &marker_for("sess-1")).unwrap();
+        assert_eq!(result_text(&blocked), CODEX_BLOCKED_THREAD_MESSAGE);
+    }
+
+    #[test]
+    fn non_codex_clients_are_never_checked_for_a_delegated_run() {
+        let consulted = std::cell::Cell::new(false);
+        let probe = |_: &str| {
+            consulted.set(true);
+            Some("codex_delegated_marker:exec_process".to_string())
+        };
+        // No Codex `_meta` namespace at all.
+        let other_client = meta(json!({ "sessionId": "sess-1" }));
+        assert!(codex_thread_guard_with(&other_client, "ask", &probe).is_none());
+        assert!(!consulted.get());
     }
 
     #[cfg(unix)]

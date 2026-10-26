@@ -17,6 +17,7 @@ const {
   imTipDismiss,
   submitting,
   requestCancel,
+  cancelKeyHint,
   canGoPrev,
   goPrev,
   goNext,
@@ -61,7 +62,7 @@ const {
   <!-- 多问题底部：取消(左) + 上一个/下一个/提交(右) -->
   <div v-if="!isConfirm && isMulti" class="footer" data-tauri-drag-region>
     <button class="btn" type="button" :disabled="submitting" @click="requestCancel">
-      {{ t("common.cancel") }} <kbd class="sc">{{ cancelShortcut }}</kbd>
+      {{ t("common.cancel") }} <kbd v-if="cancelKeyHint" class="sc">{{ cancelShortcut }}</kbd>
     </button>
     <PopupLaterButton />
     <span class="spacer"></span>
@@ -101,7 +102,7 @@ const {
   <!-- 单问题底部：取消(左) + 发送(右) -->
   <div v-else-if="!isConfirm" class="footer" data-tauri-drag-region>
     <button class="btn" type="button" :disabled="submitting" @click="requestCancel">
-      {{ t("common.cancel") }} <kbd class="sc">{{ cancelShortcut }}</kbd>
+      {{ t("common.cancel") }} <kbd v-if="cancelKeyHint" class="sc">{{ cancelShortcut }}</kbd>
     </button>
     <PopupLaterButton />
     <span class="spacer"></span>
@@ -117,7 +118,7 @@ const {
 
   <div v-else class="footer" data-tauri-drag-region>
     <button class="btn" type="button" :disabled="submitting" @click="requestConfirmClose">
-      {{ t("common.cancel") }} <kbd class="sc">{{ cancelShortcut }}</kbd>
+      {{ t("common.cancel") }} <kbd v-if="cancelKeyHint" class="sc">{{ cancelShortcut }}</kbd>
     </button>
     <PopupLaterButton />
     <span class="spacer"></span>

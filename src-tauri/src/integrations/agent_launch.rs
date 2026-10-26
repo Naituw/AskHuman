@@ -121,12 +121,19 @@ pub struct AgentReadiness {
     pub integration_mode: String,
     pub ready: bool,
     pub diagnostics: Vec<String>,
+    /// Codex only: the oldest version that can receive the interaction protocol through its
+    /// SessionStart hook (spec `codex-delegated-run-silence` D11). Informational: it never affects
+    /// `binary_ready` / `ready`.
+    pub protocol_minimum_version: Option<String>,
+    /// `false` only when this is a Codex whose detected version is below the protocol floor.
+    pub protocol_supported: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BinaryProbe {
     executable: Option<String>,
     pi_version: Option<(u64, u64, u64)>,
+    codex_version: Option<(u64, u64, u64)>,
 }
 
 struct ProbeCache {
@@ -182,6 +189,9 @@ fn readiness_with(kind: AgentKind, force: bool) -> AgentReadiness {
     let pi_version = (kind == AgentKind::Pi)
         .then_some(probe.pi_version)
         .flatten();
+    let codex_version = (kind == AgentKind::Codex)
+        .then_some(probe.codex_version)
+        .flatten();
     let version_ready = kind != AgentKind::Pi || pi_version.is_some_and(pi_version_supported);
     let binary_ready = executable.is_some() && version_ready;
     let lifecycle_ready =
@@ -223,14 +233,27 @@ fn readiness_with(kind: AgentKind, force: bool) -> AgentReadiness {
         label: kind.label().to_string(),
         command,
         executable,
-        version: pi_version.map(|(major, minor, patch)| format!("{major}.{minor}.{patch}")),
+        version: pi_version
+            .or(codex_version)
+            .map(|(major, minor, patch)| format!("{major}.{minor}.{patch}")),
         binary_ready,
         lifecycle_ready,
         integration_ready,
         integration_mode: mode.as_str().to_string(),
         ready: binary_ready && lifecycle_ready && integration_ready,
         diagnostics,
+        protocol_minimum_version: (kind == AgentKind::Codex)
+            .then(|| super::codex_protocol::MINIMUM_VERSION.to_string()),
+        protocol_supported: kind != AgentKind::Codex
+            || super::codex_protocol::version_supported(codex_version),
     }
+}
+
+/// Installed Codex version from the cached binary probe (a login-shell lookup on first use).
+/// `None` when Codex is not installed or its version cannot be read; callers treat that as
+/// "supported" so a probing failure never blocks the integration.
+pub fn codex_version() -> Option<(u64, u64, u64)> {
+    binary_probe(AgentKind::Codex, false).codex_version
 }
 
 fn binary_probe(kind: AgentKind, force: bool) -> BinaryProbe {
@@ -286,11 +309,15 @@ fn binary_probe_uncached(kind: AgentKind) -> BinaryProbe {
     }
     let executable = resolve_login_shell_executable(command_name(kind));
     let pi_version = (kind == AgentKind::Pi)
-        .then(|| executable.as_deref().and_then(detect_pi_version))
+        .then(|| executable.as_deref().and_then(detect_version))
+        .flatten();
+    let codex_version = (kind == AgentKind::Codex)
+        .then(|| executable.as_deref().and_then(detect_version))
         .flatten();
     BinaryProbe {
         executable,
         pi_version,
+        codex_version,
     }
 }
 
@@ -1189,7 +1216,9 @@ fn yolo_flag(kind: AgentKind) -> &'static str {
     }
 }
 
-fn detect_pi_version(executable: &str) -> Option<(u64, u64, u64)> {
+/// `<executable> --version` parsed as `major.minor[.patch]` (Pi prints `pi 0.82.0`, Codex
+/// `codex-cli 0.163.0`).
+fn detect_version(executable: &str) -> Option<(u64, u64, u64)> {
     let output = probe_help(executable, &["--version"])?;
     parse_pi_version(&output)
 }
@@ -1397,6 +1426,7 @@ mod tests {
             set_binary_probe_test_override(BinaryProbe {
                 executable: Some("/tmp/pi-test".into()),
                 pi_version: Some((0, 82, 0)),
+                codex_version: None,
             });
             let first = binary_probe(AgentKind::Pi, false);
             let second = binary_probe(AgentKind::Pi, false);
@@ -1413,6 +1443,7 @@ mod tests {
             set_binary_probe_test_override(BinaryProbe {
                 executable: Some("/tmp/grok-test".into()),
                 pi_version: None,
+                codex_version: None,
             });
             std::thread::scope(|scope| {
                 let first = scope.spawn(|| {

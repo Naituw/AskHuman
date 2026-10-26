@@ -203,6 +203,79 @@ pub struct CreationError {
     pub outcome: CreationOutcome,
 }
 
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSettings {
+    pub model: String,
+    pub reasoning_effort: String,
+}
+
+fn resolve_model_settings<E>(
+    config: &Value,
+    mut list_models: impl FnMut(Option<String>) -> Result<Value, E>,
+    invalid: impl Fn(String) -> E,
+) -> Result<ModelSettings, E> {
+    let config = config["config"]
+        .as_object()
+        .ok_or_else(|| invalid("Codex did not return an effective configuration".into()))?;
+    let configured = |key: &str| -> Result<Option<String>, E> {
+        match config.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.clone())),
+            _ => Err(invalid(format!("Invalid Codex configuration field: {key}"))),
+        }
+    };
+    let model = configured("model")?;
+    let effort = configured("model_reasoning_effort")?;
+    if let (Some(model), Some(reasoning_effort)) = (&model, &effort) {
+        return Ok(ModelSettings {
+            model: model.clone(),
+            reasoning_effort: reasoning_effort.clone(),
+        });
+    }
+    let mut cursor = None;
+    let mut seen = std::collections::HashSet::new();
+    loop {
+        let page = list_models(cursor)?;
+        let models = page["data"]
+            .as_array()
+            .ok_or_else(|| invalid("Codex did not return a model catalog".into()))?;
+        let selected = models.iter().find(|entry| match &model {
+            Some(model) => entry["model"] == *model || entry["id"] == *model,
+            None => entry["isDefault"] == true,
+        });
+        if let Some(selected) = selected {
+            let model = model
+                .or_else(|| selected["model"].as_str().map(str::to_owned))
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| invalid("Codex did not identify its default model".into()))?;
+            let reasoning_effort = effort
+                .or_else(|| {
+                    selected["defaultReasoningEffort"]
+                        .as_str()
+                        .map(str::to_owned)
+                })
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    invalid("Codex did not identify the model's default effort".into())
+                })?;
+            return Ok(ModelSettings {
+                model,
+                reasoning_effort,
+            });
+        }
+        cursor = page["nextCursor"].as_str().map(str::to_owned);
+        if cursor
+            .as_ref()
+            .is_none_or(|value| !seen.insert(value.clone()))
+        {
+            return Err(invalid(
+                "Codex's model catalog could not resolve the launch defaults".into(),
+            ));
+        }
+    }
+}
+
 // ThreadStartParams uses SandboxMode (kebab-case), not turn/start's SandboxPolicy.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -215,16 +288,20 @@ enum ThreadSandboxMode {
 struct ThreadStartParams<'a> {
     cwd: &'a str,
     ephemeral: bool,
+    model: &'a str,
+    config: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     approval_policy: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sandbox: Option<ThreadSandboxMode>,
 }
 
-fn thread_start_params(cwd: &str, yolo: bool) -> Value {
+fn thread_start_params(cwd: &str, yolo: bool, settings: &ModelSettings) -> Value {
     serde_json::to_value(ThreadStartParams {
         cwd,
         ephemeral: false,
+        model: &settings.model,
+        config: json!({"model_reasoning_effort":settings.reasoning_effort}),
         approval_policy: yolo.then_some("never"),
         sandbox: yolo.then_some(ThreadSandboxMode::DangerFullAccess),
     })
@@ -236,13 +313,14 @@ pub fn create(
     cwd: &str,
     title: &str,
     yolo: bool,
-    on_created: impl FnOnce(&str) -> Result<(), String>,
+    on_created: impl FnOnce(&str, &ModelSettings) -> Result<(), String>,
 ) -> Result<String, CreationError> {
     create_or_finish(
         installation,
         cwd,
         title,
         yolo,
+        None,
         None,
         on_created,
         Duration::from_secs(30),
@@ -254,6 +332,8 @@ pub fn finish_creation(
     cwd: &str,
     title: &str,
     id: &str,
+    model_settings: Option<&ModelSettings>,
+    on_created: impl FnOnce(&str, &ModelSettings) -> Result<(), String>,
 ) -> Result<String, CreationError> {
     create_or_finish(
         installation,
@@ -261,7 +341,8 @@ pub fn finish_creation(
         title,
         false,
         Some(id),
-        |_| Ok(()),
+        model_settings,
+        on_created,
         Duration::from_secs(30),
     )
 }
@@ -273,7 +354,8 @@ fn create_or_finish(
     title: &str,
     yolo: bool,
     existing: Option<&str>,
-    on_created: impl FnOnce(&str) -> Result<(), String>,
+    model_settings: Option<&ModelSettings>,
+    on_created: impl FnOnce(&str, &ModelSettings) -> Result<(), String>,
     response_timeout: Duration,
 ) -> Result<String, CreationError> {
     let mut session_id = existing.map(str::to_owned);
@@ -406,8 +488,33 @@ fn create_or_finish(
             json!({"clientInfo":{"name":"askhuman","title":"AskHuman","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}),
             &session_id,
         )?;
+        let settings = match model_settings {
+            Some(settings) => settings.clone(),
+            None => {
+                let config = request(
+                    "config/read",
+                    json!({"cwd":cwd,"includeLayers":false}),
+                    &session_id,
+                )?;
+                resolve_model_settings(
+                    &config,
+                    |cursor| {
+                        request(
+                            "model/list",
+                            json!({"includeHidden":true,"limit":100,"cursor":cursor}),
+                            &session_id,
+                        )
+                    },
+                    |message| failure(message, "model-settings", None, None, &session_id, false),
+                )?
+            }
+        };
         if existing.is_none() {
-            let result = request("thread/start", thread_start_params(cwd, yolo), &session_id)?;
+            let result = request(
+                "thread/start",
+                thread_start_params(cwd, yolo, &settings),
+                &session_id,
+            )?;
             let id = result["thread"]["id"]
                 .as_str()
                 .filter(|id| uuid::Uuid::parse_str(id).is_ok())
@@ -423,13 +530,16 @@ fn create_or_finish(
                 })?
                 .to_string();
             session_id = Some(id.clone());
-            on_created(&id).map_err(|e| {
+        }
+        let id = session_id.clone().expect("created or existing thread ID");
+        if existing.is_none() || model_settings.is_none() {
+            // Persist the model snapshot together with the ID before App handoff.
+            on_created(&id, &settings).map_err(|e| {
                 let mut error = failure(e, "persist-thread", None, None, &session_id, true);
                 error.outcome = CreationOutcome::Unknown;
                 error
             })?;
         }
-        let id = session_id.clone().expect("created or existing thread ID");
         request(
             "thread/name/set",
             json!({"threadId":id,"name":title}),
@@ -475,16 +585,29 @@ fn create_or_finish(
 mod tests {
     use super::*;
 
+    fn settings() -> ModelSettings {
+        ModelSettings {
+            model: "configured-model".into(),
+            reasoning_effort: "max".into(),
+        }
+    }
+
     #[test]
     fn thread_start_matches_the_bundled_runtime_schema() {
         let schema: Value =
             serde_json::from_str(include_str!("fixtures/thread-start-contract.json")).unwrap();
-        let default = thread_start_params("/project", false);
-        assert_eq!(default, json!({"cwd":"/project","ephemeral":false}));
-        let yolo = thread_start_params("/project", true);
+        let model_schema: Value =
+            serde_json::from_str(include_str!("fixtures/model-settings-contract.json")).unwrap();
+        let default = thread_start_params("/project", false, &settings());
+        assert_eq!(
+            default,
+            json!({"cwd":"/project","ephemeral":false,"model":"configured-model","config":{"model_reasoning_effort":"max"}})
+        );
+        let yolo = thread_start_params("/project", true, &settings());
         for field in yolo.as_object().unwrap().keys() {
             assert!(
-                schema["properties"].get(field).is_some(),
+                schema["properties"].get(field).is_some()
+                    || model_schema["threadStartProperties"].get(field).is_some(),
                 "unknown field: {field}"
             );
         }
@@ -496,6 +619,72 @@ mod tests {
             .as_array()
             .unwrap()
             .contains(&yolo["approvalPolicy"]));
+    }
+
+    #[test]
+    fn configured_model_and_effort_take_priority_over_model_catalog_defaults() {
+        let resolved = resolve_model_settings(
+            &json!({"config":{"model":"configured-model","model_reasoning_effort":"max"}}),
+            |_| -> Result<Value, String> {
+                panic!("explicit defaults do not need the model catalog")
+            },
+            |message| message,
+        )
+        .unwrap();
+        assert_eq!(resolved, settings());
+    }
+
+    #[test]
+    fn unset_defaults_resolve_the_selected_model_across_catalog_pages() {
+        for (model, effort, expected) in [
+            (Some("configured-model"), None, "medium"),
+            (None, Some("high"), "high"),
+            (None, None, "medium"),
+        ] {
+            let mut cursors = Vec::new();
+            let resolved = resolve_model_settings(
+                &json!({"config":{"model":model,"model_reasoning_effort":effort}}),
+                |cursor| -> Result<Value, String> {
+                    cursors.push(cursor.clone());
+                    Ok(if cursor.is_none() {
+                        json!({"data":[{"model":"other-model","isDefault":false,"defaultReasoningEffort":"low"}],"nextCursor":"page-2"})
+                    } else {
+                        json!({"data":[{"model":"configured-model","isDefault":true,"defaultReasoningEffort":"medium"}],"nextCursor":null})
+                    })
+                },
+                |message| message,
+            ).unwrap();
+            assert_eq!(resolved.model, "configured-model");
+            assert_eq!(resolved.reasoning_effort, expected);
+            assert_eq!(cursors, [None, Some("page-2".into())]);
+        }
+    }
+
+    #[test]
+    fn missing_or_malformed_launch_defaults_fail_without_silently_changing_models() {
+        for config in [
+            json!({}),
+            json!({"config":{"model":12}}),
+            json!({"config":{"model":"missing-model"}}),
+        ] {
+            assert!(resolve_model_settings(
+                &config,
+                |_| Ok(json!({"data":[],"nextCursor":null})),
+                |message| message
+            )
+            .is_err());
+        }
+        let mut calls = 0;
+        assert!(resolve_model_settings(
+            &json!({"config":{}}),
+            |_| {
+                calls += 1;
+                Ok(json!({"data":[],"nextCursor":"same-page"}))
+            },
+            |message| message
+        )
+        .is_err());
+        assert_eq!(calls, 2);
     }
 
     #[cfg(unix)]
@@ -521,9 +710,11 @@ for line in sys.stdin:
         sys.exit(0)
     if method == 'thread/start' and FAULT == 'start-timeout':
         continue
-    rejected = (method == 'initialize' and FAULT == 'initialize-reject') or (method == 'thread/start' and FAULT in ['start-reject', 'start-other']) or (method == 'thread/name/set' and FAULT == 'name-reject') or (method == 'thread/read' and FAULT == 'read-reject')
+    rejected = (method == 'initialize' and FAULT == 'initialize-reject') or (method == 'config/read' and FAULT == 'config-reject') or (method == 'thread/start' and FAULT in ['start-reject', 'start-other']) or (method == 'thread/name/set' and FAULT == 'name-reject') or (method == 'thread/read' and FAULT == 'read-reject')
     if rejected:
         resp = {'id':req['id'], 'error':{'code':-32000 if FAULT == 'start-other' else -32602, 'message':'injected rejection'}}
+    elif method == 'config/read':
+        resp = {'id': req['id'], 'result': {'config': {'model': 'configured-model', 'model_reasoning_effort': 'max'}}}
     else:
         resp = {'id':req['id'], 'result':{'thread':{'id':'10000000-0000-4000-8000-000000000001'}}}
     print(json.dumps(resp), flush=True)
@@ -559,13 +750,13 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 dir.path().to_str().unwrap(),
                 "title",
                 yolo,
-                |id| {
-                    persisted = Some(id.to_string());
+                |id, settings| {
+                    persisted = Some((id.to_string(), settings.clone()));
                     Ok(())
                 },
             )
             .unwrap();
-            assert_eq!(persisted.as_deref(), Some(id.as_str()));
+            assert_eq!(persisted, Some((id.clone(), settings())));
             let calls = trace(&dir);
             let methods: Vec<_> = calls
                 .iter()
@@ -576,6 +767,7 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 [
                     "initialize",
                     "initialized",
+                    "config/read",
                     "thread/start",
                     "thread/name/set",
                     "thread/read"
@@ -583,9 +775,21 @@ sys.exit(1 if FAULT == 'exit' else 0)
             );
             assert_eq!(
                 calls[2]["params"],
-                thread_start_params(dir.path().to_str().unwrap(), yolo)
+                json!({"cwd":dir.path().to_str().unwrap(),"includeLayers":false})
             );
-            finish_creation(&installation, dir.path().to_str().unwrap(), "title", &id).unwrap();
+            assert_eq!(
+                calls[3]["params"],
+                thread_start_params(dir.path().to_str().unwrap(), yolo, &settings())
+            );
+            finish_creation(
+                &installation,
+                dir.path().to_str().unwrap(),
+                "title",
+                &id,
+                Some(&settings()),
+                |_, _| panic!("saved settings must be reused"),
+            )
+            .unwrap();
             assert_eq!(
                 trace(&dir)
                     .iter()
@@ -601,6 +805,13 @@ sys.exit(1 if FAULT == 'exit' else 0)
     #[cfg(unix)]
     fn helper_failure_classification_retains_rpc_method_code_and_created_id() {
         for (fault, outcome, method, code, has_id) in [
+            (
+                "config-reject",
+                CreationOutcome::Rejected,
+                Some("config/read"),
+                Some(-32602),
+                false,
+            ),
             (
                 "initialize-reject",
                 CreationOutcome::Rejected,
@@ -659,7 +870,8 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 "title",
                 true,
                 None,
-                |_| Ok(()),
+                None,
+                |_, _| Ok(()),
                 // Process startup competes with the full parallel suite. Allow margin
                 // while still exercising a bounded wait for the injected timeout.
                 Duration::from_secs(5),
@@ -677,20 +889,20 @@ sys.exit(1 if FAULT == 'exit' else 0)
             dir.path().to_str().unwrap(),
             "title",
             true,
-            |_| Err("disk failure".into()),
+            |_, _| Err("disk failure".into()),
         )
         .unwrap_err();
         assert_eq!(err.outcome, CreationOutcome::Unknown);
         assert_eq!(err.stage, "persist-thread");
         assert!(err.session_id.is_some());
-        assert_eq!(trace(&dir).len(), 3);
+        assert_eq!(trace(&dir).len(), 4);
         installation.executable = dir.path().join("missing-runtime");
         let err = create(
             &installation,
             dir.path().to_str().unwrap(),
             "title",
             true,
-            |_| Ok(()),
+            |_, _| Ok(()),
         )
         .unwrap_err();
         assert_eq!(err.outcome, CreationOutcome::Rejected);
@@ -702,6 +914,7 @@ sys.exit(1 if FAULT == 'exit' else 0)
     fn process_faults_drive_durable_receipts_and_resume_without_duplicate_creation() {
         use super::super::actions::Action;
         for fault in [
+            "config-reject",
             "start-reject",
             "start-drop",
             "name-reject",
@@ -728,9 +941,16 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 continue;
             }
             assert!(retry.receipt().unwrap().is_none());
+            if retry.session_id().is_some() {
+                assert_eq!(retry.model_settings().unwrap(), Some(settings()));
+            }
             let script = std::fs::read_to_string(&installation.executable)
                 .unwrap()
-                .replace(&format!("FAULT={fault:?}"), "FAULT=\"success\"");
+                .replace(&format!("FAULT={fault:?}"), "FAULT=\"success\"")
+                .replace(
+                    "'model_reasoning_effort': 'max'",
+                    "'model_reasoning_effort': 'high'",
+                );
             std::fs::write(&installation.executable, script).unwrap();
             retry
                 .ensure_thread(&installation, dir.path().to_str().unwrap(), "title", true)
@@ -742,6 +962,16 @@ sys.exit(1 if FAULT == 'exit' else 0)
             assert_eq!(
                 starts,
                 if fault == "start-reject" { 2 } else { 1 },
+                "{fault}"
+            );
+            let expected_effort = if matches!(fault, "config-reject" | "start-reject") {
+                "high"
+            } else {
+                "max"
+            };
+            assert_eq!(
+                retry.model_settings().unwrap().unwrap().reasoning_effort,
+                expected_effort,
                 "{fault}"
             );
         }

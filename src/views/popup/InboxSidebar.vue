@@ -64,7 +64,7 @@ function projectName(path: string) { return path.split(/[\\/]/).filter(Boolean).
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /></svg>
         </button>
       </header>
-      <nav class="inbox-navigation" @pointerdown.capture="emit('remember')">
+      <nav class="inbox-navigation" data-tauri-drag-region @pointerdown.capture="emit('remember')">
         <section v-for="group in groups" :key="group.path" class="inbox-group" :class="{ 'inbox-group-collapse': collapsingGroup === group.path }" :style="motion?.group === group.path ? { '--completion-group-height': `${motion.groupHeight}px` } : undefined">
           <h2 :title="group.path">{{ projectName(group.path) }} <span>{{ group.requests.length }}</span></h2>
           <div v-for="request in group.requests" :key="request.requestId" class="inbox-entry" :class="{ 'inbox-entry-collapse': motion?.from === request.requestId && motion.phase !== 'waiting' && !motion.reduced }" :style="motion?.from === request.requestId ? { '--completion-row-height': `${motion.rowHeight}px` } : undefined">

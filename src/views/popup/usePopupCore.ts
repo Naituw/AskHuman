@@ -2025,8 +2025,9 @@ export function usePopupCore(scope?: PopupScope) {
     }
   }
 
+  // The close / Cancel action of this request alone. In the merged window it must never reach the window's own
+  // confirmation, which offers to cancel every pending request (see requestWindowClose).
   function requestConfirmClose() {
-    if (scope) { scope.close(); return; }
     if (!submitting.value) showConfirmCloseWarning.value = true;
   }
 
@@ -2044,9 +2045,8 @@ export function usePopupCore(scope?: PopupScope) {
     await submitConfirm();
   }
 
-  // 取消入口：有回答时二次确认，否则直接取消。
+  // 取消入口：有回答时二次确认，否则直接取消。只作用于本请求；合并窗口里同样如此。
   function requestCancel() {
-    if (scope) { scope.close(); return; }
     if (submitting.value) return;
     if (hasAnyAnswer.value) {
       showCancelConfirm.value = true;
@@ -2070,6 +2070,15 @@ export function usePopupCore(scope?: PopupScope) {
 
   function dismissCancelConfirm() {
     showCancelConfirm.value = false;
+  }
+
+  // ⌘/Ctrl+W closes the window. A standalone popup holds a single request, so that is the request's own cancel /
+  // close. The merged window holds many: its page asks which of them to cancel (spec D10), whereas the Cancel button
+  // only ever cancels the request it sits under.
+  function requestWindowClose() {
+    if (scope) { scope.close(); return; }
+    if (isConfirm.value) requestConfirmClose();
+    else requestCancel();
   }
 
   // 仅「纯」⌘/Ctrl（未叠加 Shift/Option）才算命中快捷键修饰键：例如 Cmd+Shift（截屏）下
@@ -2141,7 +2150,7 @@ export function usePopupCore(scope?: PopupScope) {
       }
       if (mod && (e.key === "w" || e.key === "W")) {
         e.preventDefault();
-        if (Date.now() >= appearGuardUntil) requestConfirmClose();
+        if (Date.now() >= appearGuardUntil) requestWindowClose();
         return;
       }
       if (mod && e.key >= "1" && e.key <= "9") {
@@ -2209,7 +2218,7 @@ export function usePopupCore(scope?: PopupScope) {
       e.preventDefault();
       // 出现动画期内吞掉 ⌘W：防止用户为关闭其它窗口按下的 ⌘W 恰好误关刚弹出的弹窗（仍 preventDefault 拦住原生关窗）。
       if (Date.now() < appearGuardUntil) return;
-      requestCancel();
+      requestWindowClose();
       return;
     }
     // 语音输入快捷键（可在设置中自定义；空串=关闭）。
@@ -2826,6 +2835,8 @@ export function usePopupCore(scope?: PopupScope) {
     doCancel,
     showCancelConfirm,
     dismissCancelConfirm,
+    // ⌘/Ctrl+W 只在独立窗口里等于「取消」按钮；合并窗口里它关闭整个窗口，故按钮上不标注它。
+    cancelKeyHint: !scope,
     // 确认弹窗（agent 权限确认）
     confirmChoiceIndex,
     confirmComment,

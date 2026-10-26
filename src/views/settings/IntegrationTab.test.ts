@@ -52,6 +52,7 @@ function modeStatus(
       outdated: false,
       otherHandlersDetected: false,
     },
+    delegated: { supported: false, enabled: false },
     askQuestion: {
       supported: false,
       enabled: false,
@@ -76,7 +77,7 @@ function agentDefinition(id: AgentId, hasTimeoutHook: boolean) {
     hasTimeoutHook,
     hasCli: id !== "grok",
     hasMcp: id !== "pi",
-    instructionKind: id === "grok" ? "skill" : "rule",
+    instructionKind: id === "grok" ? "skill" : id === "codex" ? "hook" : "rule",
     recommended: id === "cursor" || id === "claude" || id === "pi" ? "cli" : "mcp",
   };
 }
@@ -106,6 +107,7 @@ function settingsContext(
     togglePermission: vi.fn(),
     toggleLifecycle: vi.fn(),
     toggleStop: vi.fn(),
+    toggleDelegated: vi.fn(),
     toggleAskQuestion: vi.fn(),
     permissionBlockedText: vi.fn(() => ""),
     updateArtifact: vi.fn(),
@@ -343,34 +345,140 @@ describe("IntegrationTab", () => {
   });
 
   it.each([false, true])(
-    "shows Codex CLI recovery hook readiness when installed=%s",
+    "presents the Codex protocol as its SessionStart hook when installed=%s",
     (installed) => {
       const { wrapper } = mountAgent(
         agentDefinition("codex", false),
         modeStatus({
           mode: "cli",
+          rulePath: "~/.codex/hooks.json",
+          ruleInstalled: installed,
           timeoutHookSupported: false,
           timeoutHookInstalled: false,
-          recoveryHookInstalled: installed,
         }),
       );
-      const hookRow = rowByLabel(
+      const protocolRow = rowByLabel(
         wrapper,
         "codex",
-        "settings.integration.contextRecoveryHookLabel",
+        "settings.integration.protocolLabel",
       );
-      expect(hookRow.find(".badge").text()).toBe(
+      expect(protocolRow.find(".badge").text()).toBe(
         i18n.global.t(
           installed
             ? "settings.integration.installed"
             : "settings.integration.notInstalled",
         ),
       );
-      expect(hookRow.find(".badge .dot").classes()).toContain(
+      expect(protocolRow.find(".badge .dot").classes()).toContain(
         installed ? "on" : "off",
       );
+      const card = wrapper.get("#integration-codex");
+      expect(card.text()).toContain("~/.codex/hooks.json");
+      expect(card.text()).toContain(
+        i18n.global.t("settings.integration.codexProtocolHint"),
+      );
+      // The protocol row is the hook: there is no separate Codex recovery / timeout hook row.
+      const labels = card.findAll(".agent-row .label").map((label) => label.text());
+      expect(labels).not.toContain(i18n.global.t("settings.integration.rulesLabel"));
+      expect(labels).not.toContain(i18n.global.t("settings.integration.hookLabel"));
     },
   );
+
+  it("routes a Codex protocol update through the rule artifact", async () => {
+    const { wrapper, context } = mountAgent(
+      agentDefinition("codex", false),
+      modeStatus({
+        mode: "mcp",
+        ruleInstalled: true,
+        ruleNeedsUpdate: true,
+        needsUpdate: true,
+      }),
+    );
+    const row = rowByLabel(
+      wrapper,
+      "codex",
+      "settings.integration.protocolLabel",
+    );
+    await row.get(".btn-update").trigger("click");
+    expect(context.updateArtifact).toHaveBeenCalledWith("codex", "rule");
+  });
+
+  it.each([false, true])(
+    "binds the delegated-run switch to the preference (enabled=%s)",
+    async (enabled) => {
+      const { wrapper, context } = mountAgent(
+        agentDefinition("codex", false),
+        modeStatus({
+          mode: "mcp",
+          delegated: { supported: true, enabled },
+        }),
+      );
+      const row = rowByLabel(
+        wrapper,
+        "codex",
+        "settings.integration.delegatedTitle",
+      );
+      const input = row.get("input");
+      expect(input.element.checked).toBe(enabled);
+      expect(wrapper.get("#integration-codex").text()).toContain(
+        i18n.global.t("settings.integration.delegatedHint"),
+      );
+      await input.setValue(!enabled);
+      expect(context.toggleDelegated).toHaveBeenCalledWith("codex", !enabled);
+    },
+  );
+
+  it("hides the delegated-run switch where it does not apply", () => {
+    const unsupported = mountAgent(
+      agentDefinition("claude", true),
+      modeStatus({ delegated: { supported: false, enabled: false } }),
+    );
+    expect(unsupported.wrapper.text()).not.toContain(
+      i18n.global.t("settings.integration.delegatedTitle"),
+    );
+    unsupported.wrapper.unmount();
+    const none = mountAgent(
+      agentDefinition("codex", false),
+      modeStatus({
+        mode: "none",
+        delegated: { supported: true, enabled: false },
+      }),
+    );
+    expect(none.wrapper.text()).not.toContain(
+      i18n.global.t("settings.integration.delegatedTitle"),
+    );
+  });
+
+  it("reports a Codex too old to receive the protocol through a hook", () => {
+    const old = mountAgent(
+      agentDefinition("codex", false),
+      modeStatus({
+        mode: "mcp",
+        agentVersion: "0.140.0",
+        minimumVersion: "0.144.1",
+        versionSupported: false,
+      }),
+    );
+    const text = old.wrapper.get("#integration-codex").text();
+    expect(text).toContain("0.140.0");
+    expect(text).toContain("0.144.1");
+    old.wrapper.unmount();
+    const fine = mountAgent(
+      agentDefinition("codex", false),
+      modeStatus({
+        mode: "mcp",
+        agentVersion: "0.150.0",
+        minimumVersion: "0.144.1",
+        versionSupported: true,
+      }),
+    );
+    expect(fine.wrapper.get("#integration-codex").text()).not.toContain(
+      i18n.global.t("settings.integration.codexVersionUnsupported", {
+        version: "0.150.0",
+        minimum: "0.144.1",
+      }),
+    );
+  });
 
   it("uses the aggregate CLI hook update action without changing timeout readiness", async () => {
     const { wrapper, context } = mountAgent(

@@ -12,6 +12,7 @@
 pub mod activity;
 pub mod context_recovery;
 pub mod cursor_vscdb;
+pub mod delegated;
 pub mod detect;
 pub mod interject;
 pub mod registry;
