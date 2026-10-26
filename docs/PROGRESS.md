@@ -158,6 +158,24 @@ fail-closed 机制会自动降级为基础弹窗，届时按 D35 修订的证据
 `~/.cursor/skills/askhuman/SKILL.md`，旧安装显示“需更新”，迁移时先写新 Skill、再清理旧托管 MDC。
 Grok 默认会扫描 Cursor Skills，候选 frontmatter 已设计为对 Cursor 常驻、对 Grok 不可调用。
 
+## 待办：Cursor 等待期保活（避免“无进展”规则中止长等待，待讨论）
+
+调查与候选设计见 `docs/investigations/cursor-idle-wait-keepalive.md`。AskHuman 长时间阻塞时回合内没有新
+checkpoint；网络中途断开后，Cursor 连续两次“流已建立却无 checkpoint”的自动续跑会被它自己中止
+（`Agent stopped retrying …`），实测 5 个长回合里 4 个因此终止。候选：① 规则层改为后台 AskHuman + `AwaitShell`
+分段等待；② 程序层让 AskHuman 每 N 分钟返回“仍在等待，请重跑”，daemon 保持问题挂起。2026-10-26 用户决定先记录、
+后续讨论；尚未修改任何规则 / 代码，也未做需计费的真实验证（需先经用户批准）。
+
+下一步：与用户确认方案取向和周期 N；`transportCap=10` 仍是硬上限，要延长还需降低断线频率；方案 ② 可与
+“daemon 即时换新与在途提问恢复”共用请求身份 / 重连基础设施。已登记 AskHuman 项目 todo #8。
+
+断线来源（本机链路 vs Cursor 服务端）仍未定：2026-10-26 的统计显示失败率随流的年龄上升、不同流不成簇
+（见调查文档 §2.3）。待用户有空时，在另一台机器上用同一份只读统计做对照分析（交接包在用户手里，不在仓库内）。
+
+计费口径待核对：Dashboard 事件对应“带模型调用的请求流”，10-19 有 2 次只有心跳的续跑没有事件，所以“空等中的续跑
+不计费”是个待验证的假设；若成立，保活会把免费的空等续跑变成计费请求（调查文档 §2.4）。零成本验证：重新导出
+Dashboard CSV（覆盖 10-26 00:47 之后）再对账。
+
 ## 待办：daemon 二进制变化检测 —— 轮询 vs filewatch（后续评估，优先级低）
 
 二进制变化检测目前是 **15s 轮询** `current_exe()` 指纹（稳态≈1 次 `stat`，靠 `binhash.json` 内容哈希缓存避免重哈希）。
