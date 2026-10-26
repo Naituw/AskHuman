@@ -228,13 +228,16 @@ final class AppStoreTests: XCTestCase {
         XCTAssertEqual(store.inboxPath, [select.id])
         XCTAssertEqual(store.tab, .inbox)
 
-        // Another phone/Mac answers; the mock models it as our own submission finishing.
-        let composer = try XCTUnwrap(store.composer(for: select))
-        composer.toggle(question: 0, option: 1)
-        try await store.send(composer, item: select)
+        // Another phone answers it while the page is open. Not our own submission: that makes the app
+        // move on and forget the notice, depending on whether the state update or the event comes first.
+        await backend.simulateFinishedElsewhere(requestId: select.requestId, macId: select.macId, by: "Another phone")
         await eventually("finish noted") { self.store.finished[select.id] != nil }
         XCTAssertEqual(store.finished[select.id]?.outcome, .answered)
+        XCTAssertEqual(store.finished[select.id]?.by, "Another phone")
+        XCTAssertEqual(store.inboxPath, [select.id], "the page is not closed under the reader")
 
+        // The state update and the event are separate streams: wait for the request to be gone as well.
+        await eventually("request left the inbox") { self.store.item(id: select.id) == nil }
         store.closed(id: select.id)
         XCTAssertNil(store.finished[select.id], "closing the page forgets the notice")
     }
@@ -267,12 +270,10 @@ final class AppStoreTests: XCTestCase {
         await make()
         let select = try item("req-select")
         store.open(macId: select.macId, requestId: select.requestId)
-        store.autoAdvance = false
-        // Not our own submission: the mock cannot model that, so end it by cancelling from elsewhere.
-        let composer = try XCTUnwrap(store.composer(for: select))
-        composer.toggle(question: 0, option: 0)
-        try await store.send(composer, item: select)
-        await eventually { self.store.item(id: select.id) == nil }
+        // Not our own submission (that makes the app move on): another phone answers it.
+        await backend.simulateFinishedElsewhere(requestId: select.requestId, macId: select.macId)
+        await eventually("request left the inbox") { self.store.item(id: select.id) == nil }
+        await eventually("finish noted") { self.store.finished[select.id] != nil }
         XCTAssertEqual(store.displayItem(id: select.id)?.requestId, "req-select", "the page still has its request")
     }
 
@@ -357,7 +358,8 @@ final class AppStoreTests: XCTestCase {
         await store.unpair(office)
         await eventually { self.store.macs.count == 1 }
         XCTAssertEqual(store.state.inbox.count, 3)
-        XCTAssertEqual(store.banner?.kind, .warning)
+        // The banner comes from the event that follows the state update.
+        await eventually("warning banner") { self.store.banner?.kind == .warning }
     }
 
     func testRenamingAMacShowsTheAliasInTheInbox() async throws {

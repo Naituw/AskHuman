@@ -278,7 +278,10 @@ public actor MockBackend: RemoteBackend {
         return clientMsgId
     }
 
-    private func finish(_ id: String, outcome: HistoryOutcome, answers: [AnswerItem], choice: String?, input: String?) {
+    /// `by` names the other phone that finished the request; it is `nil` when our own submission did.
+    private func finish(
+        _ id: String, outcome: HistoryOutcome, answers: [AnswerItem], choice: String?, input: String?, by: String? = nil
+    ) {
         guard let index = state.inbox.firstIndex(where: { $0.id == id }), let view = state.inbox[index].view else { return }
         let item = state.inbox.remove(at: index)
         entries.insert(
@@ -291,7 +294,7 @@ public actor MockBackend: RemoteBackend {
         state.historyRevision += 1
         refreshCounts()
         publish()
-        eventOut.yield(.requestFinished(macId: item.macId, requestId: item.requestId, outcome: outcome, by: nil))
+        eventOut.yield(.requestFinished(macId: item.macId, requestId: item.requestId, outcome: outcome, by: by))
     }
 
     public func retrySubmission(clientMsgId: String) async throws {
@@ -367,6 +370,14 @@ public actor MockBackend: RemoteBackend {
     }
 
     // MARK: demo controls
+
+    /// Ends a request as if another phone had answered it: it leaves the inbox and the finish event
+    /// names who did it. `submitAnswer` cannot model this, because the end of our own submission
+    /// carries no name and makes the app move on to the next request.
+    public func simulateFinishedElsewhere(requestId: String, macId: String = MockData.homeMacId, by: String = "Another phone") {
+        guard let item = state.inbox.first(where: { $0.macId == macId && $0.requestId == requestId }) else { return }
+        finish(item.id, outcome: .answered, answers: [], choice: nil, input: nil, by: by)
+    }
 
     /// Delivers a new request, as if the Agent on `macId` had just asked.
     public func simulateArrival(macId: String = MockData.homeMacId) {
