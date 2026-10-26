@@ -86,6 +86,6 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 - **推送信封没有 `v`**：中继转给 APNs 的 `ah` 只有 `{f,k,n,c}`（Mac 封装时的 `v` 不转发），`PushDecryptor` 缺 `v` 时按本协议处理、带了别的版本则拒绝。改推送载荷或中继的白名单时，同步改 `PushDecryptorTests` 里「中继的形状」，否则单元测试与真实推送会各说各话。
 - **通知代理方法必须在主 actor 上**：`AppDelegate` 的 `UNUserNotificationCenterDelegate` 方法是 `@MainActor`（一致性标 `@preconcurrency`）；写成 `nonisolated async` 时系统的完成回调落在协作线程池，iOS 27 上点推送横幅会崩溃。
 - **每次握手都把推送句柄再给 Mac**：`PhoneEngine` 在每次 `hello.ack` 清空 `pushSent` 并重发，发送失败要回滚标记，token 在 ack 与首个快照之间到达也立即发；Mac 只会回 `push.state` 的 `ok` / `gone`，不会反过来索要句柄。
-- **离开 / 返回前台的竞态**：`setForeground(false)` 在 `goodbye()` 处挂起，goodbye 之后若应在前台必须重连（`ConnectionTests.testComingBackWhileTheGoodbyeIsOnItsWayStillReconnects`）。`scenePhase == .inactive`（系统弹窗、通知中心）目前同样算离开前台，会让连接抖动一次——已知，未改。
+- **离开 / 返回前台的竞态**：`setForeground(false)` 在 `goodbye()` 处挂起，goodbye 之后若应在前台必须重连（`ConnectionTests.testComingBackWhileTheGoodbyeIsOnItsWayStillReconnects`）。`scenePhase == .inactive`（控制中心、通知中心、多任务界面、系统弹窗——App 仍在屏幕上）**不算离开**：`PhoneEngine.setInactive()` 给 `inactiveGrace`（10 s）的宽限期，超过才告别，期间回到前台则取消计时、保留连接；`.background`（锁屏、回主屏）仍立即告别；`AskHumanApp` 只做 `scenePhase` → `setInactive` / `setForeground` 的映射（`ConnectionTests` 里 5 个 inactive 用例，每处保护去掉都会变红）。强退没有任何 `scenePhase` 回调，靠 Last Will 兜底。真机上只验证了「停留超过 10 s 时离线窗口远短于停留」，短停留不离线、锁屏 / 回主屏与强退后 Mac 多快看到离线都**没在真机上验证**（见 P0 记录 §3.8）。
 - **成本红线**：EMQX 消费上限保持 0（额度用尽即停，不自动付费）；不创建管理 API Key；Mac 与手机本机统计流量，80% 免费额度时预警。
 - **保密**：broker 密码、配对码、方向密钥不得出现在日志、命令输出、文档与提交里；`E2ETests.testSecretsNeverReachTheLogsOrTheCommandOutput` 守着这条。

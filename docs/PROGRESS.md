@@ -22,22 +22,35 @@ Watch / Follow / 插话 / 新任务），实现地图见 [`docs/overview-ios.md`
 **模拟器上的真 App 对真实服务的完整场景已通过**（配对 + 校验码、通知权限 → token → 中继登记 → Mac 持有句柄、前台单题 / 多题、权限确认允许 / 带理由拒绝、
 Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任务关闭时的表单提示、真 APNs 沙盒推送 → 通知扩展解密 → 点击打开请求、被关注 Agent 的 `follow.done` 推送、历史、解除配对；
 基础场景连续三次、完整场景两次，[P0 记录 §3.7](investigations/ios-channel-p0.md)），并找出四个真实缺陷已修复（点击横幅崩溃、扩展解不开中继的信封、快速 inactive → active 后永久断线、推送句柄没可靠送到 Mac，计划 §13）；
-**模拟器上能做的都做完了，剩下的只有真机**：真机推送与手机侧测量尚未做。
+**真机（iPhone Air，2026-10-26，手工，单样本）**：前台提问、锁屏真 APNs 推送（横幅带解密后的问题文字，点横幅直达详情页）、强退后真 APNs 推送（冷启动并直达该问题）各通过一次，答案逐字一致；
+真机上又找到第五个缺陷并修复：`inactive` 也告别——控制中心 / 通知中心 / 多任务界面盖在 App 上会让 Mac 看到手机离线 5.9–6.9 秒（现在 `inactive` 超过 10 秒才告别，提交 `fix(ios): keep the connection while the app is only inactive`，
+[P0 记录 §3.8](investigations/ios-channel-p0.md)）。**剩下的是真机矩阵的其余项与手机侧测量。**
 
 约束沿用交接：两个 EMQX 实例的消费上限保持 0，不创建管理 API Key，不泄露任何密钥或本地私有配置；不得把模拟器 /
 演示 Agent 验证当作完整渠道验收；真实 Agent 的启动 / 发 prompt 测试必须先经用户批准；密码 / `.p8` 只由用户自己输入，Agent 不读取。
 
 下一步（需要用户账号 / 真机，一次一步经 AskHuman 引导）：
 - [ ] P0 门禁剩余项（记在 `docs/investigations/ios-channel-p0.md`）：手机在 Wi-Fi / 蜂窝（关闭代理）上调 `/v1/health` 100 次、手机到 EMQX 的 TLS 与 WSS 往返各 100 次、
-  真机 APNs（≥ 30 次送达耗时分布、加密预览、扩展解密、点击回到 App、空闲 ≥ 30 分钟后第一条推送的耗时；Mac 侧空闲 3 小时后的 `/v1/health` 首次请求已量：1305 ms）、
-  公司网络端口（用户在那个网络运行 `ios/Tools/broker-probe/probe.cjs`）；任一项不达标先停下问用户，不自行换方案
+  真机 APNs（≥ 30 次送达耗时分布、空闲 ≥ 30 分钟后第一条推送的耗时；加密预览、扩展解密、点击回到 App 已在真机各看过一次；Mac 侧空闲 3 小时后的 `/v1/health` 首次请求已量：1305 ms）、
+  公司网络端口（用户在那个网络运行 `ios/Tools/broker-probe/probe.cjs`）；任一项不达标先停下问用户，不自行换方案。
+  **测量方式**（独立探针 App，还是产品 App 内只在 DEBUG 构建里存在的诊断与时间线）须先经 AskHuman 与用户确认；倾向后者——量的就是产品实际走的 TLS / WSS / 中继客户端与通知扩展，不需要另一个 Bundle ID 与签名，Release 构建不含
+  （DEBUG 里记录 `scenePhase` 与连接事件的手机侧时间线，也能补上下面 `inactive` 三项的精确核对）
 - [ ] 中继的函数 URL 被腾讯云标为「仅供测试使用」（限速 / 下线条件未公开）：原型期不阻塞，给朋友长期用之前建议绑自定义域名（香港地域不需要备案），由用户决定
-- [ ] 待用户决定：`scenePhase == .inactive`（系统弹窗、通知中心）现在会让 App 发 `goodbye` 并重连，每次系统弹窗一次连接抖动；是否把 `.inactive` 视为仍在前台（或加去抖）属于设计变更，没有擅自改（计划 §13）
-- [ ] 真机安装（模拟器上的验收已完成）：真 APNs 的前台 / 后台 / 锁屏 / 强退送达差异、Wi-Fi / 蜂窝 / 切网、通知权限被拒、token 刷新、跨渠道同时回答、Mac 睡眠恢复、设备撤销、重装遗留配对（计划 §9 手工矩阵）
+- [ ] 真机矩阵其余项（计划 §9 手工矩阵；前台 / 锁屏 / 强退后的真 APNs 推送已各做过一次）：Wi-Fi / 蜂窝 / 切网、通知权限被拒、token 刷新、跨渠道同时回答、Mac 睡眠恢复、设备撤销、重装遗留配对。
+  **做法**：用户 2026-10-26 明确反馈「已经测了很多遍，再测很浪费时间」——一次设计好、合并成尽量少的几轮，能用 `devicectl` 自己做的自己做，只有必须用手的动作才叫用户（备忘见 P0 记录末尾「真机手测备忘」）
+- [ ] `inactive` 修复在真机上**未验证**的三项（用户决定不再手测，只在文档里记为未验证）：停留短于 10 秒不离线；锁屏 / 回主屏后 Mac 多快看到离线（告别从 `inactive` 挪到 `background`，估计晚 0.1–0.3 秒；最坏有「3 秒无确认补发推送」兜底）；
+  强退后 Mac 多久看到离线（靠 Last Will）。有手机侧时间线（见上面 P0 门禁的测量方式）或做真机矩阵其余项时顺带量，不单独叫用户测
 - [ ] 性能口径（需求 D10 四条）与流量预算（典型场景 ≤ 300 MB / 月）分段实测，报告原始分布与全部超时
-- [ ] 合并前：IM `/new` 已改用共享 `daemon/runtime/task_launch.rs`，popup-only 的 Dev Instance 无法操作 IM，需在真实飞书 / Slack 上回归一次 `/new`；
-  与主工作区里这几份文档的旧副本（`docs/PROGRESS.md`、`docs/specs/ios-channel.md`、`docs/plans/ios-channel.md`）对齐；
-  决定是否公开该渠道（README 链接、去掉提交的 `Release-Note: skip`）；是否在 CI 增加 `relay` 的 `node --test` 与 `swift test`（建议只加这两项，不加 `xcodebuild`）
+- [ ] 合并前：
+  - **与 main 有一处合并冲突**（2026-10-26 用 `git merge-tree` 对 main 的 `f82a628` 试合并，其余文件都能自动合并），在 `src-tauri/src/agents/stop.rs`：
+    main 的 `58501a4`（Codex 委托运行静默）把按 `thread_source` 判断改成了 3 参数的 `confirmation_suppression_reason(kind, session_id, input)`，记录里写 `thread_source: None`；
+    分支在同一位置新增了 `turn_failed`（iOS 的「上一轮失败」标记）及测试 `turn_failed_matrix`。冲突有两块（函数定义、测试名），都是相邻新增。
+    解法：取 main 一侧的 `confirmation_suppression_reason*` 与它的测试，**加上**分支的 `turn_failed` 与 `turn_failed_matrix`，**丢掉** `codex_thread_source`（main 已不再读它，留着会被 `-D warnings` 报死代码）；
+    合并后 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 要全过
+  - IM `/new` 已改用共享 `daemon/runtime/task_launch.rs`，popup-only 的 Dev Instance 无法操作 IM，需在真实飞书 / Slack 上回归一次 `/new`
+  - 决定是否公开该渠道（README 链接、去掉提交的 `Release-Note: skip`）；是否在 CI 增加 `relay` 的 `node --test` 与 `swift test`（建议只加这两项，不加 `xcodebuild`）
+  - 分支已于 2026-10-26 推送到公开仓库 `origin/feat/ios-channel`；推送前从历史里清掉了真实 EMQX 实例 ID 与 APNs Key ID（提交哈希因此改写过一次，文档里改用提交标题指代）。
+    此后若要再改写这条分支的历史，需要 force-push，先问用户
 
 已知延期（不阻塞原型）：
 - Codex 桌面 App 的会话暂不支持手机插话（返回 `unsupported`）；Pi 的扩展需要在设置里重新保存 / 刷新后才会上报失败的回合。

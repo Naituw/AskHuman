@@ -514,7 +514,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 
 ## 13. 实施记录（与计划的差异）
 
-截至 2026-10-25：P1、P3、P4、P5、P6 的代码与自动化验证已完成（Rust / Swift / 中继 / 前端测试、模拟器 UI 测试 en + zh-Hans、「真实 daemon + 本地 broker」端到端 30 项，另对真实 EMQX + 中继跑同一套并加 3 项只在真实服务上的检查，共 33 项全过；再加「模拟器上的真 App 对真实 EMQX + 中继 + 真 APNs 沙盒」的完整场景，基础场景连续三次、含 Agents / 权限确认 / 关注推送的完整场景又两次全过），P0 的账号侧门禁（EMQX、APNs 密钥、中继、计费）已通过（见 `docs/investigations/ios-channel-p0.md`），**P0 的手机侧门禁、P7 的真机 / 真网络部分与 P8 的发布事项尚未进行**（见 `docs/PROGRESS.md`）。实现与上文不同或超出上文的地方：
+截至 2026-10-26：P1、P3、P4、P5、P6 的代码与自动化验证已完成（Rust / Swift / 中继 / 前端测试、模拟器 UI 测试 en + zh-Hans、「真实 daemon + 本地 broker」端到端 30 项，另对真实 EMQX + 中继跑同一套并加 3 项只在真实服务上的检查，共 33 项全过；再加「模拟器上的真 App 对真实 EMQX + 中继 + 真 APNs 沙盒」的完整场景，基础场景连续三次、含 Agents / 权限确认 / 关注推送的完整场景又两次全过），P0 的账号侧门禁（EMQX、APNs 密钥、中继、计费）已通过（见 `docs/investigations/ios-channel-p0.md`），**P0 的手机侧测量、P7 的真机 / 真网络矩阵（下面「真机阶段」记的三个场景除外）与 P8 的发布事项尚未进行**（见 `docs/PROGRESS.md`）。实现与上文不同或超出上文的地方：
 
 - **iOS 本地存储不用 SwiftData**：`AHStore` 用文件型 JSON（每个键一个文件，`completeFileProtectionUntilFirstUserAuthentication`；`JSONFile` / `JSONDirectory`）。它能在 macOS 上作为纯 SwiftPM 包测试，通知扩展也无需模型容器。§6.2 / §11 里与 SwiftData 相关的表述以此为准。
 - **通知扩展链接 `AHProtocol` + `AHStore`**（原计划只链接前者）：`PushDecryptor` 与钥匙串 `Vault` 在 `AHStore`；扩展仍不链接 MQTT、Markdown，也不联网。
@@ -537,5 +537,6 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
   2. 通知扩展解不开真实推送（一律 `malformed`，退回通用文案）：中继转给 APNs 的是 `ah = {f,k,n,c}`（§3.4 / §5.3），没有 Mac 封装时带的 `v`。`PushDecryptor` 缺 `v` 时按本协议版本处理，带了别的版本仍拒绝；单元测试改用中继的形状（此前用 Mac 的形状，所以没发现）。教训：跨语言 / 跨进程契约的测试夹具要取自真实下游收到的形状。
   3. 快速 inactive → active 之后永久断线：`setForeground(false)` 在 `goodbye()` 处挂起，其间返回前台的那次调用看到「连接还起着」什么都不做，随后 goodbye 把连接断了。现在 goodbye 之后若应在前台就重连。
   4. 推送句柄没有可靠送到 Mac：`pushSent` 在发送前置位且不随会话重置、握手完成但尚未同步（`.acked`）的 Mac 被跳过、发送失败不回滚。现在每次握手清空并重发，失败回滚，token 在 ack 与首个快照之间到达也立即发送。
-- **保留的取舍（没改，待用户决定）**：`scenePhase == .inactive`（系统弹窗、通知中心、控制中心）会触发 `goodbye` 并重连，每次系统弹窗都有一次连接抖动；把 `.inactive` 视为仍在前台（或加去抖）属于设计变更。另外 Mac 只会发 `push.state` 的 `ok` / `gone`，不发 §3.4 里写的 `missing` / `error`；由手机在每次握手重发句柄覆盖。一处外观小瑕疵也没改：请求到达的应用内横幅会停满约 5 秒，即使用户已经点开了那个请求（横幅盖在请求页上方）。
+- **真机阶段的第五个缺陷：`inactive` 也告别**（用户 2026-10-26 03:25 条件授权「装完如果的确是 bug 就要改」；真机证据见 `docs/investigations/ios-channel-p0.md` §3.8）：控制中心、通知中心、多任务界面、系统弹窗盖在 App 上时 `scenePhase` 只是 `.inactive`，旧构建一变成 `.inactive` 就告别，Mac 看到手机离线 5.9–6.9 s，这期间到达的请求被当成「不在前台」去推送。现在 `.inactive` 持续超过 `PhoneEngine.inactiveGrace`（10 s）才告别，`.background`（锁屏、回主屏）仍立即告别，回到前台取消计时、保留连接；规格不变（仍是「退到后台即断开」），只是不再把「App 还在屏幕上」当成离开。新增 5 个测试，每处保护去掉后都有测试变红（提交 `fix(ios): keep the connection while the app is only inactive`）。真机上手工做了前台提问、锁屏真 APNs 推送、强退后真 APNs 推送各一次（单样本，数字与限制见 §3.8）；**停留短于 10 s 不离线、锁屏 / 回主屏后 Mac 多快看到离线、强退后 Mac 多久看到离线，这三项没在真机上验证**（用户决定不再手测）。
+- **保留的取舍（没改）**：Mac 只会发 `push.state` 的 `ok` / `gone`，不发 §3.4 里写的 `missing` / `error`；由手机在每次握手重发句柄覆盖。一处外观小瑕疵也没改：请求到达的应用内横幅会停满约 5 秒，即使用户已经点开了那个请求（横幅盖在请求页上方）。
 
