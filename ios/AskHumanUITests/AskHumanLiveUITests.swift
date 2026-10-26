@@ -104,7 +104,7 @@ final class AskHumanLiveUITests: XCTestCase {
             row.tap()
             tapElement("option-0-1")
             shot("single-answer")
-            requireElement("send-button").tap()
+            sendForm()
             let sentAt = nowMs()
             XCTAssertTrue(rowGone("inbox-row-", timeout: 90), "the request stayed in the inbox")
             let leftAt = nowMs()
@@ -122,7 +122,7 @@ final class AskHumanLiveUITests: XCTestCase {
             note.typeText("because")
             tapElement("option-1-1")
             shot("multi-answer")
-            requireElement("send-button").tap()
+            sendForm()
             XCTAssertTrue(rowGone("inbox-row-", timeout: 90), "the request stayed in the inbox")
             _ = rendezvous("ask-multi-answered")
         }
@@ -225,7 +225,7 @@ final class AskHumanLiveUITests: XCTestCase {
             _ = rendezvous("pushed", "seen=\(push.seen) text=\(push.text)")
             requireElement("option-0-0").tap()
             shot("push-opened-request")
-            requireElement("send-button").tap()
+            sendForm()
             XCTAssertTrue(rowGone("inbox-row-", timeout: 90), "the request stayed in the inbox")
             _ = rendezvous("pushed-answered")
         }
@@ -329,6 +329,21 @@ final class AskHumanLiveUITests: XCTestCase {
     private func tapElement(_ id: String) {
         reveal(id)
         requireElement(id).tap()
+    }
+
+    /// Sends the form. With several questions the bar offers "Next" until the last one has been on
+    /// screen (as the Mac's popup does): this walks down with it, then presses "Send".
+    private func sendForm() {
+        var taps = 0
+        while !element("send-button").exists, taps < 10 {
+            let next = element("next-button")
+            guard next.waitForExistence(timeout: 5) else { break }
+            next.tap()
+            taps += 1
+            // The scroll to the next question animates, and the bar changes once that question is seen.
+            Thread.sleep(forTimeInterval: 0.8)
+        }
+        requireElement("send-button").tap()
     }
 
     /// Waits until the element's accessibility label equals `label`.

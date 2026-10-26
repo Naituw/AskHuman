@@ -31,6 +31,37 @@ public struct FinishedRequest: Equatable, Sendable {
     public var at: Date
 }
 
+/// A request of ours that the Mac has just accepted. Its page shows the receipt for a moment before
+/// the app moves on, so that the end of one request and the start of the next cannot be mistaken
+/// for each other.
+public struct SentReceipt: Equatable, Sendable {
+    public var id = UUID()
+    /// The request that was sent (`macId/requestId`).
+    public var from: String
+    public var outcome: HistoryOutcome
+}
+
+/// The pill over the request the app moved on to: what was sent and how many requests wait.
+public struct SentNote: Identifiable, Equatable, Sendable {
+    public var id = UUID()
+    /// Requests still waiting, the one on screen included.
+    public var remaining: Int
+}
+
+/// How long the steps of moving on last; tests shorten them.
+public struct AdvanceTiming: Equatable, Sendable {
+    /// The receipt stays on the sent page this long before the next request is pushed.
+    public var hold: Duration
+    /// The finished page is dropped from under the next one once the system's push has come to rest:
+    /// dropping it any sooner shows the old page for a frame (the push is not over for UIKit yet).
+    public var settle: Duration
+    /// The pill over the next request stays this long.
+    public var note: Duration
+
+    public static let standard = AdvanceTiming(hold: .milliseconds(700), settle: .milliseconds(1500), note: .milliseconds(2500))
+    public static let immediate = AdvanceTiming(hold: .zero, settle: .zero, note: .milliseconds(200))
+}
+
 /// A short message over the app: a new request, a failure, a notice.
 public struct Banner: Identifiable, Equatable, Sendable {
     public enum Kind: Sendable, Equatable {
@@ -66,6 +97,12 @@ public final class AppStore {
     public private(set) var finished: [String: FinishedRequest] = [:]
     /// Bumps for every request that arrives while the app is in the foreground (the UI plays a haptic).
     public internal(set) var arrivalTick = 0
+    /// Bumps when the Mac accepted a submission of ours (the UI plays a haptic).
+    public private(set) var sentTick = 0
+    /// Set while the page of a request we just sent shows its receipt.
+    public private(set) var receipt: SentReceipt?
+    /// Set for a moment over the request the app moved on to.
+    public private(set) var sentNote: SentNote?
     public private(set) var started = false
 
     public var tab: AppTab = .inbox
@@ -109,6 +146,9 @@ public final class AppStore {
     /// the page keeps showing it (with a notice) instead of going blank.
     @ObservationIgnored private var retained: [String: (item: InboxItem, at: Date)] = [:]
     @ObservationIgnored private var bannerTask: Task<Void, Never>?
+    @ObservationIgnored private var advanceTask: Task<Void, Never>?
+    @ObservationIgnored private var noteTask: Task<Void, Never>?
+    @ObservationIgnored public var advanceTiming = AdvanceTiming.standard
     /// Arrivals whose request is not in the published state yet (events and states travel apart).
     @ObservationIgnored private var pendingArrivals: [String: (macId: String, requestId: String)] = [:]
     /// Every Agent seen on the Agents tab, kept while its page may still be open.
@@ -149,8 +189,16 @@ public final class AppStore {
         await backend.setInactive()
     }
 
+    /// Pull to refresh. The spinner stays up while the lists catch up, and for a moment at least:
+    /// it would vanish before it was seen otherwise, as if the pull had been ignored.
     public func refresh() async {
+        let began = Date()
         await backend.refresh()
+        while !Task.isCancelled {
+            let elapsed = Date().timeIntervalSince(began)
+            if elapsed >= 8 || (elapsed >= 0.6 && syncStatus != .updating) { break }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     private func apply(_ next: EngineState) async {
@@ -215,7 +263,7 @@ public final class AppStore {
                 // Our own submission went through: move on.
                 if by == nil, outcome == .answered || outcome == .cancelled || outcome == .dismissed,
                    let sent = retained[key]?.item, case .sending = sent.state {
-                    advance(from: key)
+                    advance(from: key, outcome: outcome)
                 }
             }
             if case .request(let bannerMac, let bannerId)? = banner?.kind, bannerMac == macId, bannerId == requestId {
@@ -254,6 +302,9 @@ public final class AppStore {
 
     public var macs: [MacState] { state.macs }
     public var hasPairedMacs: Bool { !state.macs.isEmpty }
+    public var syncStatus: SyncStatus { state.syncStatus }
+    /// Whether an empty inbox or Agents list can be trusted (see `ListReadiness`).
+    public var listReadiness: ListReadiness { state.listReadiness }
 
     /// Pending requests that satisfy the filter, newest first.
     public func inboxItems(filter: InboxFilter? = nil) -> [InboxItem] {
@@ -306,13 +357,60 @@ public final class AppStore {
         state.macs.first { $0.id == macId }?.link == .online
     }
 
-    /// After a submission went through: show the next pending request, or return to the list.
-    public func advance(from id: String) {
+    /// After a submission went through: the page shows its receipt for a moment, then the app moves on
+    /// to the next pending request or back to the list.
+    ///
+    /// The next request is pushed on top of the finished one, which gives the system's own slide
+    /// (the sent page is pushed away to the left); the finished page is then dropped from under it.
+    /// Replacing the path in one step would swap the pages without any motion.
+    public func advance(from id: String, outcome: HistoryOutcome = .answered) {
         guard inboxPath.last == id else { return }
+        let receipt = SentReceipt(from: id, outcome: outcome)
+        self.receipt = receipt
+        sentTick += 1
+        let timing = advanceTiming
+        // Nobody watches while the app is in the background: skip the show.
+        let watched = state.foreground
+        advanceTask?.cancel()
+        advanceTask = Task { [weak self] in
+            if watched { try? await Task.sleep(for: timing.hold) }
+            guard !Task.isCancelled, let self, self.receipt == receipt else { return }
+            await self.moveOn(from: id, receipt: receipt, watched: watched)
+        }
+    }
+
+    private func moveOn(from id: String, receipt: SentReceipt, watched: Bool) async {
+        let timing = advanceTiming
+        // The reader left the page meanwhile (a tab switch, a banner, the back button): nothing to move.
+        guard inboxPath.last == id else {
+            if self.receipt == receipt { self.receipt = nil }
+            return
+        }
         if autoAdvance, let next = nextPending(after: id) {
+            inboxPath.append(next.id)
+            showSentNote(remaining: pendingCount)
+            if watched { try? await Task.sleep(for: timing.settle) }
+            guard !Task.isCancelled, inboxPath == [id, next.id] else {
+                if self.receipt == receipt { self.receipt = nil }
+                return
+            }
             inboxPath = [next.id]
         } else {
             inboxPath = []
+            if watched { try? await Task.sleep(for: timing.settle) }
+        }
+        if self.receipt == receipt { self.receipt = nil }
+    }
+
+    private func showSentNote(remaining: Int) {
+        let note = SentNote(remaining: remaining)
+        sentNote = note
+        noteTask?.cancel()
+        let duration = advanceTiming.note
+        noteTask = Task { [weak self] in
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled, self?.sentNote?.id == note.id else { return }
+            self?.sentNote = nil
         }
     }
 
@@ -337,7 +435,16 @@ public final class AppStore {
         tab = .inbox
         let key = CachedRequest.key(macId, requestId)
         guard inboxPath.last != key else { return }
+        // Going elsewhere on purpose ends the show of a request just sent.
+        cancelAdvance()
         inboxPath = [key]
+    }
+
+    private func cancelAdvance() {
+        advanceTask?.cancel()
+        noteTask?.cancel()
+        receipt = nil
+        sentNote = nil
     }
 
     public func opened(_ item: InboxItem) async {
@@ -446,6 +553,7 @@ public final class AppStore {
     public func unpair(_ mac: MacState) async { await backend.unpair(macId: mac.id) }
     public func rename(_ mac: MacState, to alias: String?) async { await backend.renameMac(macId: mac.id, alias: alias) }
     public func forgetAll() async {
+        cancelAdvance()
         inboxPath = []
         agentPath = []
         taskComposer = nil

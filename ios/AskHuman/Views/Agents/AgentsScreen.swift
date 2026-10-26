@@ -23,6 +23,10 @@ struct AgentsScreen: View {
                 AgentDetailScreen(id: id)
             }
             .toolbar {
+                if store.hasPairedMacs {
+                    ToolbarItem(placement: .principal) { SyncTitle(title: "Agents") }
+                    ToolbarItem(placement: .topBarLeading) { AgentFilterMenu() }
+                }
                 if !store.taskMacs.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
@@ -44,12 +48,21 @@ struct AgentsScreen: View {
 
 private struct AgentsList: View {
     @Environment(AppStore.self) private var store
+    @State private var brokerTrouble = false
+    @State private var loadingTooLong = false
 
     var body: some View {
         let sections = store.agentSections()
         let tasks = store.openTasks
+        let readiness = store.listReadiness
         List {
-            OfflineMacNotices()
+            if store.agentFilter != .all {
+                FilterNote(name: filterName) { store.agentFilter = .all }
+            }
+            ConnectionNotices(scope: .agents, brokerTrouble: brokerTrouble)
+            if sections.isEmpty, tasks.isEmpty, readiness == .loading, !loadingTooLong {
+                SkeletonRows()
+            }
             if !tasks.isEmpty {
                 Section {
                     ForEach(tasks) { task in
@@ -76,12 +89,26 @@ private struct AgentsList: View {
         }
         .listStyle(.insetGrouped)
         .overlay {
-            if sections.isEmpty, tasks.isEmpty { EmptyAgents(filtered: store.agentFilter != .all) }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if !store.state.agents.isEmpty || store.agentFilter != .all { AgentFilterBar() }
+            // An empty list only means "no sessions" once the Macs have answered.
+            if sections.isEmpty, tasks.isEmpty {
+                switch readiness {
+                case .ready: EmptyAgents(filtered: store.agentFilter != .all)
+                case .unreachable: UnreachableAgents()
+                case .loading: if loadingTooLong { SlowAgents() }
+                }
+            }
         }
         .refreshable { await store.refresh() }
+        .raised($brokerTrouble, after: 10, while: store.syncStatus == .reconnecting)
+        .raised($loadingTooLong, after: 15, while: readiness == .loading)
+    }
+
+    private var filterName: String {
+        switch store.agentFilter {
+        case .all: ""
+        case .followed: String(localized: "Following")
+        case .mac(let id): store.macs.first { $0.id == id }?.name ?? ""
+        }
     }
 }
 
@@ -166,8 +193,6 @@ private struct EmptyAgents: View {
     var body: some View {
         if filtered {
             ContentUnavailableView("No matching sessions", systemImage: "line.3.horizontal.decrease.circle", description: Text("Change the filter to see the others."))
-        } else if store.macs.allSatisfy({ $0.link != .online }) {
-            ContentUnavailableView("Your Macs are not reachable", systemImage: "desktopcomputer.trianglebadge.exclamationmark", description: Text("Agent sessions show up here while a Mac is connected."))
         } else {
             ContentUnavailableView {
                 Label("No Agent sessions", systemImage: "person.2.wave.2")
@@ -183,63 +208,51 @@ private struct EmptyAgents: View {
     }
 }
 
-// MARK: filter
-
-private struct AgentFilterBar: View {
-    @Environment(AppStore.self) private var store
-
+/// No Mac can be reached, so no sessions can be listed.
+private struct UnreachableAgents: View {
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                chip(Text("All"), filter: .all, id: "all")
-                chip(Text("Following"), filter: .followed, id: "followed")
-                if store.macs.count > 1 {
-                    ForEach(store.macs) { mac in
-                        chip(Text(mac.name), filter: .mac(mac.id), id: "mac-" + mac.id)
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
-        .background(.bar)
-    }
-
-    private func chip(_ label: Text, filter: AgentFilter, id: String) -> some View {
-        let selected = store.agentFilter == filter
-        return Button {
-            store.agentFilter = filter
-        } label: {
-            label
-                .font(.subheadline.weight(.medium))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .foregroundStyle(selected ? Color.white : Color.primary)
-                .background(selected ? Color.accentColor : Color(.tertiarySystemFill), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityIdentifier("agent-filter-" + id)
+        ContentUnavailableView(
+            "Your Macs are not reachable", systemImage: "desktopcomputer.trianglebadge.exclamationmark",
+            description: Text("Agent sessions show up here while a Mac is connected.")
+        )
     }
 }
 
-/// Macs whose sessions are missing from the list because they cannot be reached.
-private struct OfflineMacNotices: View {
+/// A Mac that stays silent for long: say so instead of showing grey bars for ever.
+private struct SlowAgents: View {
+    var body: some View {
+        ContentUnavailableView(
+            "Waiting for your Mac", systemImage: "hourglass",
+            description: Text("It has not answered yet. Pull down to try again.")
+        )
+    }
+}
+
+// MARK: filter
+
+private struct AgentFilterMenu: View {
     @Environment(AppStore.self) private var store
 
     var body: some View {
-        let offline = store.macs.filter { $0.link != .online }
-        if !offline.isEmpty, offline.count < store.macs.count || !store.state.agents.isEmpty {
-            Section {
-                ForEach(offline) { mac in
-                    Label {
-                        Text("\(mac.name) is not reachable. Its sessions are hidden until it is back.").font(.footnote)
-                    } icon: {
-                        Image(systemName: "desktopcomputer.trianglebadge.exclamationmark").foregroundStyle(.gray)
-                    }
-                    .listRowBackground(Color.gray.opacity(0.1))
-                }
+        @Bindable var store = store
+        Menu {
+            Picker("Show", selection: $store.agentFilter) {
+                Label("All", systemImage: "person.2.wave.2").tag(AgentFilter.all)
+                Label("Following", systemImage: "star").tag(AgentFilter.followed)
             }
+            .pickerStyle(.inline)
+            if store.macs.count > 1 {
+                Picker("Mac", selection: $store.agentFilter) {
+                    ForEach(store.macs) { mac in
+                        Label(mac.name, systemImage: "desktopcomputer").tag(AgentFilter.mac(mac.id))
+                    }
+                }
+                .pickerStyle(.inline)
+            }
+        } label: {
+            FilterIcon(active: store.agentFilter != .all)
         }
+        .accessibilityLabel("Filter")
+        .accessibilityIdentifier("filter-menu")
     }
 }

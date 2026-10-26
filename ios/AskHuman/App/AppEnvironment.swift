@@ -24,6 +24,14 @@ struct LaunchOptions {
     var followEvent: String?
     /// Forces "open the next request after sending" on or off (UI tests need a fixed value).
     var autoAdvance: Bool?
+    /// Seconds (real time) after which the `syncing` scenario turns into the demo; unset keeps it syncing.
+    var syncDelay: Double?
+    /// The `syncing` scenario starts with the requests the phone kept from the last run.
+    var cachedInbox = false
+    /// Seconds the receipt of a sent request stays up, and the next page takes to settle (UI tests
+    /// stretch them to have time to look; the app's own values are made for the eye).
+    var advanceHold: Double?
+    var advanceSettle: Double?
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
@@ -38,6 +46,10 @@ struct LaunchOptions {
         holdInterjects = defaults.bool(forKey: "AHHoldInterjects")
         followEvent = defaults.string(forKey: "AHFollowEvent")
         if defaults.object(forKey: "AHAutoAdvance") != nil { autoAdvance = defaults.bool(forKey: "AHAutoAdvance") }
+        if defaults.object(forKey: "AHSyncDelay") != nil { syncDelay = defaults.double(forKey: "AHSyncDelay") }
+        cachedInbox = defaults.bool(forKey: "AHCached")
+        if defaults.object(forKey: "AHAdvanceHold") != nil { advanceHold = defaults.double(forKey: "AHAdvanceHold") }
+        if defaults.object(forKey: "AHAdvanceSettle") != nil { advanceSettle = defaults.double(forKey: "AHAdvanceSettle") }
     }
 }
 
@@ -59,7 +71,9 @@ final class AppEnvironment {
         let defaults = UserDefaults.standard
         let drafts: DraftStore
         if launch.mock {
-            let backend = MockBackend(scenario: launch.scenario, latency: launch.latency)
+            let backend = MockBackend(
+                scenario: launch.scenario, latency: launch.latency, syncDelay: launch.syncDelay, cachedInbox: launch.cachedInbox
+            )
             mock = backend
             if launch.holdInterjects { Task { await backend.setInterjectConsumeDelay(nil) } }
             if let kind = launch.followEvent {
@@ -74,6 +88,8 @@ final class AppEnvironment {
             suite.removePersistentDomain(forName: "ah.mock")
             if let autoAdvance = launch.autoAdvance { suite.set(autoAdvance, forKey: "ah.autoAdvance") }
             store = AppStore(backend: backend, drafts: drafts, defaults: suite)
+            if let hold = launch.advanceHold { store.advanceTiming.hold = .seconds(hold) }
+            if let settle = launch.advanceSettle { store.advanceTiming.settle = .seconds(settle) }
             leftoverPairings = 0
         } else {
             let group = Bundle.main.object(forInfoDictionaryKey: "AHKeychainGroup") as? String

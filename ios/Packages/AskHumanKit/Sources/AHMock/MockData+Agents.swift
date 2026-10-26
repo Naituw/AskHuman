@@ -55,7 +55,9 @@ extension MockData {
             )),
             AgentItem(macId: office.id, macName: office.name, view: view(
                 officeAgentKey, title: "Migrate the users table", project: billing, state: "working", startedAgo: 540, activeAgo: 12,
-                elapsed: 480, steps: 6, tool: "Bash", interject: running, followed: true, now: now
+                // The Mac sends "Tool: object" clipped to 80 characters: far wider than a row.
+                elapsed: 480, steps: 6, tool: "Shell: cargo test --manifest-path src-tauri/Cargo.toml ios::gateway -- --nocapture…",
+                interject: running, followed: true, now: now
             )),
             AgentItem(macId: office.id, macName: office.name, view: view(
                 unsupportedAgentKey, title: "Investigate daemon memory growth", project: billing, state: "idle", startedAgo: 7_200,

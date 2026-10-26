@@ -571,6 +571,16 @@
         }
       }
     },
+    "Can't reach the broker, so this may be out of date. Pull down to try again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连不上 Broker，这里的内容可能已过期。下拉可重试。"
+          }
+        }
+      }
+    },
     "Cancel" : {
       "localizations" : {
         "zh-Hans" : {
@@ -691,6 +701,16 @@
         }
       }
     },
+    "Clear" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除"
+          }
+        }
+      }
+    },
     "Clear history" : {
       "localizations" : {
         "zh-Hans" : {
@@ -767,16 +787,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已连接"
-          }
-        }
-      }
-    },
-    "Connecting to the broker… Pull down to retry." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在连接 Broker… 下拉可重试。"
           }
         }
       }
@@ -1091,6 +1101,26 @@
         }
       }
     },
+    "Filter" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "筛选"
+          }
+        }
+      }
+    },
+    "Filtered: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已筛选：%@"
+          }
+        }
+      }
+    },
     "Finished" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1237,6 +1267,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "它在你离开期间已结束。"
+          }
+        }
+      }
+    },
+    "It has not answered yet. Pull down to try again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "它还没有响应。下拉可重试。"
           }
         }
       }
@@ -1391,6 +1431,16 @@
         }
       }
     },
+    "Loading…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载…"
+          }
+        }
+      }
+    },
     "Mac" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1467,6 +1517,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "新任务"
+          }
+        }
+      }
+    },
+    "Next" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一题"
+          }
+        }
+      }
+    },
+    "Next question" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一个问题"
           }
         }
       }
@@ -2203,6 +2273,16 @@
         }
       }
     },
+    "Requests show up here as soon as a Mac is connected." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 一连上，请求就会显示在这里。"
+          }
+        }
+      }
+    },
     "Requests you answer or cancel are listed here. They stay on this phone only." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2343,12 +2423,32 @@
         }
       }
     },
+    "Sent · %lld left" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已发送 · 还剩 %lld 条"
+          }
+        }
+      }
+    },
     "Session not found" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "找不到会话"
+          }
+        }
+      }
+    },
+    "Show" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示"
           }
         }
       }
@@ -3317,6 +3417,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "解除与这台 Mac 的配对"
+          }
+        }
+      }
+    },
+    "Updating…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在更新…"
           }
         }
       }

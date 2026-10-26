@@ -24,11 +24,13 @@ final class AskHumanUITests: XCTestCase {
     // MARK: helpers
 
     @discardableResult
-    private func launch(_ scenario: String = "demo", latency: Double = 0.05, extra: [String] = []) -> XCUIApplication {
+    private func launch(
+        _ scenario: String = "demo", latency: Double = 0.05, autoAdvance: Bool = false, extra: [String] = []
+    ) -> XCUIApplication {
         let app = XCUIApplication()
         let locale = language == "en" ? "en_US" : "zh_CN"
         app.launchArguments = [
-            "-AHMock", "YES", "-AHScenario", scenario, "-AHLatency", "\(latency)", "-AHAutoAdvance", "NO",
+            "-AHMock", "YES", "-AHScenario", scenario, "-AHLatency", "\(latency)", "-AHAutoAdvance", autoAdvance ? "YES" : "NO",
             "-AppleLanguages", "(\(language))", "-AppleLocale", locale,
         ] + extra
         app.launch()
@@ -93,10 +95,13 @@ final class AskHumanUITests: XCTestCase {
         }
     }
 
-    /// Pans the horizontal filter chips by dragging from one of them.
-    private func dragChips(from id: String, byDX dx: CGFloat) {
-        let start = requireElement(id).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: dx, dy: 0)))
+    /// Opens the filter menu of the tab and picks the entry with this title. Menu entries are found by
+    /// their title, as the system gives them no identifiers.
+    private func chooseFilter(_ title: String) {
+        requireElement("filter-menu").tap()
+        let entry = app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 5), "the filter menu has no entry \(title)")
+        entry.tap()
     }
 
     private func tapOption(_ id: String) {
@@ -137,24 +142,37 @@ final class AskHumanUITests: XCTestCase {
         for id in ["req-permission", "req-migration", "req-select", "req-next", "req-stop"] {
             _ = requireElement("inbox-row-\(id)")
         }
+        XCTAssertFalse(element("filter-note").exists, "an unfiltered list gives the filter no room")
         shot("01-inbox")
 
-        // The Macs fill the chip row, so the kind filters sit beyond the right edge.
-        dragChips(from: "filter-mac-\(officeMac)", byDX: -260)
-        requireElement("filter-confirms").tap()
+        chooseFilter(localized("Confirmations", "确认"))
         XCTAssertTrue(gone("inbox-row-req-migration"))
         XCTAssertTrue(element("inbox-row-req-permission").exists)
         XCTAssertTrue(element("inbox-row-req-stop").exists)
+        _ = requireElement("filter-note")
+        shot("02-inbox-filtered")
 
-        dragChips(from: "filter-confirms", byDX: 260)
-        requireElement("filter-mac-\(officeMac)").tap()
+        chooseFilter("Office iMac")
         XCTAssertTrue(gone("inbox-row-req-permission"))
         XCTAssertTrue(element("inbox-row-req-stop").exists)
         XCTAssertTrue(element("inbox-row-req-select").exists)
-        shot("02-inbox-filtered")
 
-        requireElement("filter-all").tap()
+        requireElement("filter-clear").tap()
         _ = requireElement("inbox-row-req-migration")
+        XCTAssertTrue(gone("filter-note"), "clearing the filter gives its room back")
+    }
+
+    func testTheHeaderOfTheListsIsAnOrdinaryNavigationBar() {
+        launch()
+        _ = requireElement("inbox-row-req-migration")
+        // The title bar of iOS 26 is 54 pt high; the old pinned filter strip made it three times that.
+        let bar = app.navigationBars.firstMatch
+        XCTAssertLessThan(bar.frame.height, 70, "bar is \(bar.frame)")
+        let first = requireElement("inbox-row-req-permission")
+        XCTAssertLessThan(first.frame.minY, bar.frame.maxY + 60, "the list starts right under the bar")
+        tab(1)
+        _ = requireElement("agent-row-\(workingAgent)")
+        XCTAssertLessThan(app.navigationBars.firstMatch.frame.height, 70)
     }
 
     // MARK: questions
@@ -162,9 +180,10 @@ final class AskHumanUITests: XCTestCase {
     func testAnsweringAMultiQuestionRequestSendsItAndLeavesTheInbox() {
         launch()
         openRequest("req-migration")
-        let send = requireElement("send-button")
+        // Several questions: the bar leads through them first; Send comes with the last one.
+        _ = requireElement("next-button")
+        XCTAssertFalse(element("send-button").exists, "nothing was read, nothing can be sent")
         XCTAssertTrue(answeredCount().contains("0/3"))
-        XCTAssertTrue(send.isEnabled, "a request that is not select-only may be sent as it is")
         shot("10-answer-top")
 
         tapOption("option-0-0")
@@ -176,10 +195,50 @@ final class AskHumanUITests: XCTestCase {
         XCTAssertTrue(answeredCount().contains("3/3"))
         shot("11-answer-filled")
 
+        let send = requireElement("send-button")
+        XCTAssertTrue(send.isEnabled, "a request that is not select-only may be sent as it is")
         send.tap()
         XCTAssertTrue(gone("inbox-row-req-migration", timeout: 15), "the answered request should leave the inbox")
         _ = requireElement("inbox-row-req-select")
         shot("12-after-send")
+    }
+
+    func testSendingWaitsUntilTheLastQuestionWasSeen() {
+        launch()
+        openRequest("req-migration")
+        var taps = 0
+        // Nothing is answered: only looking at the questions brings Send up.
+        while !element("send-button").exists, taps < 5 {
+            let next = requireElement("next-button")
+            XCTAssertTrue(next.isHittable)
+            if taps == 0 { shot("16-next") }
+            next.tap()
+            taps += 1
+            Thread.sleep(forTimeInterval: 0.7)
+        }
+        XCTAssertTrue(element("send-button").waitForExistence(timeout: 5), "Send should show once the last question was seen")
+        XCTAssertTrue((2...3).contains(taps), "three questions need two or three taps, took \(taps)")
+        XCTAssertFalse(element("next-button").exists)
+        shot("17-send-after-next")
+        XCTAssertTrue(requireElement("send-button").isEnabled)
+        XCTAssertTrue(answeredCount().contains("0/3"), "looking is not answering")
+    }
+
+    func testScrollingToTheLastQuestionBringsSendUp() {
+        launch()
+        openRequest("req-migration")
+        _ = requireElement("next-button")
+        reveal("answer-text-2")
+        XCTAssertTrue(element("send-button").waitForExistence(timeout: 5), "Send should show once the last question is on screen")
+        XCTAssertFalse(element("next-button").exists)
+    }
+
+    func testAnAnsweredLastQuestionBringsSendUpAtOnce() {
+        launch()
+        openRequest("req-migration")
+        _ = requireElement("next-button")
+        type("Straight to the last one.", into: "answer-text-2")
+        XCTAssertTrue(element("send-button").waitForExistence(timeout: 5))
     }
 
     func testChoosingNothingElseIsEnoughForASelectOnlyQuestion() {
@@ -363,6 +422,90 @@ final class AskHumanUITests: XCTestCase {
         shot("63-inbox-quota")
     }
 
+    /// How long the mocked first sync takes in the tests below. The title only says "Updating…" while
+    /// it lasts, and every query of the UI test costs about a second after a launch that takes several
+    /// more: six seconds were gone before the test looked once the machine was a little slow.
+    private static let syncDelay = "12"
+
+    func testTheInboxWaitsForTheMacsInsteadOfClaimingToBeEmpty() {
+        launch("syncing", extra: ["-AHSyncDelay", Self.syncDelay])
+        _ = requireElement("loading-placeholder")
+        shot("64-inbox-loading")
+        XCTAssertFalse(app.staticTexts[localized("All caught up", "已全部处理")].exists, "nothing is known yet, so nothing is 'caught up'")
+        XCTAssertFalse(element("inbox-row-req-select").exists)
+        // The title says so, but only after a short delay.
+        _ = requireElement("sync-status")
+        // The rows replace the placeholders once the Macs answered, and the title is itself again.
+        _ = requireElement("inbox-row-req-select", timeout: 20)
+        XCTAssertTrue(gone("loading-placeholder"))
+        XCTAssertTrue(gone("sync-status"))
+        shot("65-inbox-synced")
+    }
+
+    func testRequestsKeptFromTheLastRunShowWhileTheTitleSaysUpdating() {
+        launch("syncing", extra: ["-AHCached", "YES", "-AHSyncDelay", Self.syncDelay])
+        _ = requireElement("inbox-row-req-select")
+        XCTAssertFalse(element("loading-placeholder").exists, "there is something to show, so no placeholders")
+        _ = requireElement("sync-status")
+        shot("66-inbox-updating")
+        XCTAssertTrue(gone("sync-status", timeout: 20))
+        XCTAssertTrue(element("inbox-row-req-select").exists, "the rows stay as they are")
+    }
+
+    func testAnUnreachableBrokerIsQuietAtFirstAndSaysSoLater() {
+        launch("offline")
+        // Asked first: the notice only follows after about ten seconds of reconnecting.
+        XCTAssertFalse(element("notice-broker").exists, "nothing pops in while it is only reconnecting")
+        _ = requireElement("inbox-row-req-select")
+        _ = requireElement("sync-status")
+        shot("67-inbox-reconnecting")
+        let notice = requireElement("notice-broker", timeout: 25)
+        XCTAssertTrue(notice.exists)
+        shot("68-inbox-broker-notice")
+    }
+
+    func testTheAgentsTabWaitsForTheMacsToo() {
+        launch("syncing", extra: ["-AHTab", "agents", "-AHSyncDelay", Self.syncDelay])
+        _ = requireElement("loading-placeholder")
+        shot("85-agents-loading")
+        XCTAssertFalse(app.staticTexts[localized("No Agent sessions", "没有 Agent 会话")].exists)
+        XCTAssertFalse(app.staticTexts[localized("Your Macs are not reachable", "连不上你的 Mac")].exists, "still connecting is not unreachable")
+        _ = requireElement("agent-row-\(workingAgent)", timeout: 20)
+        XCTAssertTrue(gone("loading-placeholder"))
+    }
+
+    // MARK: moving on after sending
+
+    func testAfterSendingThePageShowsAReceiptThenTheNextRequestSlidesIn() {
+        launch(autoAdvance: true, extra: ["-AHAdvanceHold", "2", "-AHAdvanceSettle", "1.2"])
+        openRequest("req-select")
+        requireElement("option-0-0").tap()
+        requireElement("send-button").tap()
+        _ = requireElement("sent-receipt", timeout: 10)
+        shot("18-sent-receipt")
+        XCTAssertFalse(element("send-button").isHittable, "the receipt takes the form's place")
+        // The next request is pushed over the sent one, with a pill saying how many are left.
+        _ = requireElement("sent-pill", timeout: 10)
+        shot("19-sent-pill")
+        _ = requireElement("submit-button", timeout: 10)
+        XCTAssertTrue(gone("sent-receipt", timeout: 10))
+        // Back leads to the list, not to the page that was sent.
+        app.navigationBars.buttons.firstMatch.tap()
+        _ = requireElement("inbox-row-req-migration")
+        XCTAssertFalse(element("inbox-row-req-select").exists)
+    }
+
+    func testWithoutAutoAdvanceTheReceiptLeadsBackToTheList() {
+        launch(extra: ["-AHAdvanceHold", "1.5"])
+        openRequest("req-select")
+        requireElement("option-0-0").tap()
+        requireElement("send-button").tap()
+        _ = requireElement("sent-receipt", timeout: 10)
+        XCTAssertTrue(gone("sent-receipt", timeout: 10))
+        _ = requireElement("inbox-row-req-migration")
+        XCTAssertFalse(element("sent-pill").exists, "there is no next request to point at")
+    }
+
     // MARK: agents
 
     func testAgentsTabListsSessionsByStateAndFilters() {
@@ -371,21 +514,33 @@ final class AskHumanUITests: XCTestCase {
             _ = requireElement("agent-row-\(key)")
         }
         _ = requireElement("new-task")
+        XCTAssertFalse(element("filter-note").exists)
         shot("70-agents")
 
-        requireElement("agent-filter-followed").tap()
+        chooseFilter(localized("Following", "已关注"))
         XCTAssertTrue(gone("agent-row-\(waitingAgent)"))
         XCTAssertTrue(element("agent-row-\(workingAgent)").exists)
         XCTAssertTrue(element("agent-row-\(officeAgent)").exists)
+        _ = requireElement("filter-note")
         shot("71-agents-following")
 
-        requireElement("agent-filter-mac-\(officeMac)").tap()
+        chooseFilter("Office iMac")
         XCTAssertTrue(gone("agent-row-\(workingAgent)"))
         XCTAssertTrue(element("agent-row-\(officeAgent)").exists)
         XCTAssertTrue(element("agent-row-\(unsupportedAgent)").exists)
 
-        requireElement("agent-filter-all").tap()
+        requireElement("filter-clear").tap()
         _ = requireElement("agent-row-\(waitingAgent)")
+    }
+
+    func testALongCurrentToolDoesNotWidenTheAgentRow() {
+        launch(extra: ["-AHTab", "agents"])
+        // The office Agent is running "Shell: cargo test --manifest-path …", far wider than a phone.
+        let row = requireElement("agent-row-\(officeAgent)")
+        let screen = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(row.frame.minX, 0)
+        XCTAssertLessThanOrEqual(row.frame.maxX, screen.maxX + 0.5, "the row grew past the screen: \(row.frame)")
+        shot("84-agent-long-tool")
     }
 
     func testAWorkingAgentShowsALiveViewAndCanBeUnfollowed() {
@@ -453,7 +608,7 @@ final class AskHumanUITests: XCTestCase {
         launch(extra: ["-AHTab", "agents", "-AHOpenAgent", waitingAgent])
         shot("77-agent-waiting")
         requireElement("answer-waiting").tap()
-        _ = requireElement("send-button")
+        _ = requireElement("answered-count")
     }
 
     func testAFollowedAgentFinishingShowsABannerThatOpensIt() {

@@ -396,7 +396,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 ### 6.3 界面实现要点（行为见需求 §6）
 
 - 导航：`TabView`（收件箱 / Agents / 历史 / Mac），Agents 页的「＋」打开新任务流程。
-- 作答页：`ScrollView` 纵向长表单 + 底部固定发送条；推荐徽标不预选；草稿按请求 id 存 SwiftData，输入变化后 300 ms 去抖落盘；提交走发件箱，收到 `answer.ack` 前显示进度。
+- 作答页：`ScrollView` 纵向长表单 + 底部固定操作条（多题时先「下一题」，最后一题进入屏幕后才变「发送」）；推荐徽标不预选；草稿按请求 id 存 SwiftData，输入变化后 300 ms 去抖落盘；提交走发件箱，收到 `answer.ack` 前显示进度。
 - Markdown：`swift-markdown` 解析 → 自绘 SwiftUI 视图（标题、列表、引用、代码块横向滚动、表格、链接用 `SFSafariViewController` 并先显示域名、本地图片按 `ahasset://<assetId>` 懒加载）；Mermaid 先显示为代码块。
 - 附件预览：图片（`ImageIO` 解码，缩放 / 平移）、文本 / 代码（等宽）、Markdown、diff（+/- 着色）、其它类型走 `QuickLook`；分块拉取显示进度、可取消 / 重试。
 - 回复附件：`PhotosPicker`、相机、`fileImporter`；图片转 JPEG 并按限额缩放；分块上传带校验与进度。

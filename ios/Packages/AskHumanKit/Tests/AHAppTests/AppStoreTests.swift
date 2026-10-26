@@ -10,10 +10,13 @@ final class AppStoreTests: XCTestCase {
     private var store: AppStore!
     private var defaults: UserDefaults!
 
-    private func make(_ scenario: MockBackend.Scenario = .demo, latency: Double = 0) async {
-        backend = MockBackend(scenario: scenario, latency: latency)
+    private func make(
+        _ scenario: MockBackend.Scenario = .demo, latency: Double = 0, syncDelay: Double? = nil, cachedInbox: Bool = false
+    ) async {
+        backend = MockBackend(scenario: scenario, latency: latency, syncDelay: syncDelay, cachedInbox: cachedInbox)
         defaults = UserDefaults(suiteName: "ah-test-" + UUID().uuidString)!
         store = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults)
+        store.advanceTiming = .immediate
         await store.start()
         await eventually("first state") { self.store.state.foreground }
     }
@@ -210,6 +213,89 @@ final class AppStoreTests: XCTestCase {
         XCTAssertNil(store.confirmComposer(for: try item("req-migration")))
     }
 
+    // MARK: sync status
+
+    private func engineState(_ phase: ConnectionPhase, _ links: [MacLink]) -> EngineState {
+        var macs = Array(MockData.macs().prefix(links.count))
+        for index in macs.indices { macs[index].link = links[index] }
+        return EngineState(phase: phase, foreground: true, macs: macs)
+    }
+
+    func testSyncStatusFollowsTheBrokerAndTheMacs() {
+        let connected = ConnectionPhase.connected(via: "tcp")
+        XCTAssertEqual(engineState(connected, [.online, .online]).syncStatus, .upToDate)
+        XCTAssertEqual(engineState(connected, [.online, .connecting]).syncStatus, .updating)
+        XCTAssertEqual(engineState(connected, [.online, .macOffline]).syncStatus, .upToDate, "an offline Mac is an answer")
+        XCTAssertEqual(engineState(.connecting(via: "tcp"), [.connecting]).syncStatus, .updating)
+        XCTAssertEqual(engineState(.idle, [.connecting]).syncStatus, .updating)
+        XCTAssertEqual(engineState(.backoff(retryAt: Date(), reason: "network"), [.brokerDown]).syncStatus, .reconnecting)
+        XCTAssertEqual(engineState(.refused("no"), [.brokerDown]).syncStatus, .refused)
+        XCTAssertEqual(engineState(.idle, []).syncStatus, .upToDate, "nothing paired, nothing to wait for")
+    }
+
+    func testAnEmptyListIsOnlyTrustedOnceTheMacsAnswered() {
+        let connected = ConnectionPhase.connected(via: "tcp")
+        XCTAssertEqual(engineState(connected, [.online]).listReadiness, .ready)
+        XCTAssertEqual(engineState(connected, [.online, .connecting]).listReadiness, .loading, "one Mac is still on its way")
+        XCTAssertEqual(engineState(connected, [.online, .macOffline]).listReadiness, .ready)
+        XCTAssertEqual(engineState(connected, [.macOffline, .macOffline]).listReadiness, .unreachable)
+        XCTAssertEqual(engineState(.backoff(retryAt: Date(), reason: "network"), [.brokerDown, .brokerDown]).listReadiness, .unreachable)
+        XCTAssertEqual(engineState(.connecting(via: "tcp"), [.connecting]).listReadiness, .loading)
+        XCTAssertEqual(engineState(.idle, []).listReadiness, .ready)
+    }
+
+    func testAConnectedDemoIsUpToDate() async {
+        await make()
+        XCTAssertEqual(store.syncStatus, .upToDate)
+        XCTAssertEqual(store.listReadiness, .ready)
+    }
+
+    func testFreshlyOpenedListsAreLoadingNotEmpty() async {
+        await make(.syncing)
+        XCTAssertTrue(store.state.inbox.isEmpty)
+        XCTAssertTrue(store.state.agents.isEmpty)
+        XCTAssertEqual(store.syncStatus, .updating)
+        XCTAssertEqual(store.listReadiness, .loading, "an empty list that has not heard from the Macs says nothing")
+        await backend.finishSync()
+        await eventually("synced") { self.store.syncStatus == .upToDate }
+        XCTAssertEqual(store.listReadiness, .ready)
+        XCTAssertEqual(store.state.inbox.count, 5)
+    }
+
+    func testRequestsKeptFromTheLastRunShowWhileTheMacsAreStillAnswering() async {
+        await make(.syncing, cachedInbox: true)
+        XCTAssertEqual(store.state.inbox.count, 5)
+        XCTAssertEqual(store.syncStatus, .updating)
+        XCTAssertEqual(store.listReadiness, .loading)
+    }
+
+    func testADeadBrokerIsAnAnswerNotALoad() async {
+        await make(.offline)
+        XCTAssertEqual(store.syncStatus, .reconnecting)
+        XCTAssertEqual(store.listReadiness, .unreachable)
+    }
+
+    func testNothingPairedHasNothingToWaitFor() async {
+        await make(.empty)
+        XCTAssertEqual(store.syncStatus, .upToDate)
+        XCTAssertEqual(store.listReadiness, .ready)
+    }
+
+    func testPullToRefreshStaysUpWhileTheListsCatchUp() async {
+        await make(.syncing, syncDelay: 1.5)
+        let began = Date()
+        await store.refresh()
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(began), 1.2, "the spinner waits for the Macs")
+        XCTAssertEqual(store.syncStatus, .upToDate)
+    }
+
+    func testPullToRefreshNeverVanishesBeforeItWasSeen() async {
+        await make()
+        let began = Date()
+        await store.refresh()
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(began), 0.55)
+    }
+
     // MARK: data allowance
 
     func testTheDemoIsFarFromTheFreeAllowanceAndTheQuotaScenarioIsNearIt() async {
@@ -253,6 +339,51 @@ final class AppStoreTests: XCTestCase {
         let next = try XCTUnwrap(store.inboxPath.last)
         XCTAssertNotEqual(next, select.id)
         XCTAssertEqual(store.item(id: next)?.state, .pending)
+    }
+
+    func testTheNextRequestIsPushedOnTopOfTheSentOneBeforeThatIsDropped() async throws {
+        await make()
+        // Slow enough to look at each step.
+        store.advanceTiming = AdvanceTiming(hold: .milliseconds(150), settle: .milliseconds(150), note: .milliseconds(400))
+        let select = try item("req-select")
+        store.open(macId: select.macId, requestId: select.requestId)
+        let composer = try XCTUnwrap(store.composer(for: select))
+        composer.toggle(question: 0, option: 0)
+        let ticks = store.sentTick
+        try await store.send(composer, item: select)
+
+        await eventually("receipt") { self.store.receipt?.from == select.id }
+        XCTAssertEqual(store.receipt?.outcome, .answered)
+        XCTAssertEqual(store.sentTick, ticks + 1, "the haptic comes with the receipt, not with the tap")
+        XCTAssertEqual(store.inboxPath, [select.id], "the sent page stays up while its receipt shows")
+
+        await eventually("pushed") { self.store.inboxPath.count == 2 }
+        XCTAssertEqual(store.inboxPath.first, select.id, "the next page slides in over the sent one")
+        let next = try XCTUnwrap(store.inboxPath.last)
+        XCTAssertEqual(store.sentNote?.remaining, store.pendingCount)
+        XCTAssertNotNil(store.receipt, "the sent page still shows its receipt while it slides away")
+
+        await eventually("dropped") { self.store.inboxPath == [next] }
+        await eventually("receipt gone") { self.store.receipt == nil }
+        await eventually("note gone") { self.store.sentNote == nil }
+    }
+
+    func testLeavingThePageDuringTheReceiptCancelsTheMove() async throws {
+        await make()
+        store.advanceTiming = AdvanceTiming(hold: .milliseconds(200), settle: .milliseconds(50), note: .milliseconds(50))
+        let select = try item("req-select")
+        store.open(macId: select.macId, requestId: select.requestId)
+        let composer = try XCTUnwrap(store.composer(for: select))
+        composer.toggle(question: 0, option: 0)
+        try await store.send(composer, item: select)
+        await eventually("receipt") { self.store.receipt != nil }
+
+        let other = try item("req-migration")
+        store.open(macId: other.macId, requestId: other.requestId)
+        XCTAssertNil(store.receipt, "going elsewhere on purpose ends the show")
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(store.inboxPath, [other.id], "the pending move must not drag the reader away again")
+        XCTAssertNil(store.sentNote)
     }
 
     func testWithAutoAdvanceOffTheListComesBack() async throws {

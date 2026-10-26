@@ -3,37 +3,54 @@ import AHCore
 import AHProtocol
 import AHStore
 
-/// The long form for a question request: message, one card per question, a fixed send bar.
+/// The long form for a question request: message, one card per question, a fixed bottom bar.
+///
+/// With several questions the bar offers "Next" until the last question has been on screen, and
+/// only then "Send", as the Mac popup does: a stray tap cannot send answers that were never read.
 struct AnswerScreen: View {
     let item: InboxItem
     @Environment(AppStore.self) private var store
     @State private var confirmCancel = false
     @State private var problem: String?
-    @State private var sentTick = 0
+    @State private var tracker = ReadingTracker()
+
+    fileprivate static let space = "answer-scroll"
 
     var body: some View {
         if let ask = item.view?.ask, let composer = store.composer(for: item) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let finished = store.finished[item.id] { FinishedNotice(finished: finished) }
-                    if case .failed = item.state { FailedSubmissionNotice(item: item) }
-                    RequestHeader(item: item)
-                    MessageCard(ask: ask, macId: item.macId)
-                    ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
-                        QuestionCard(index: index, count: ask.questions.count, ask: ask, question: question, composer: composer)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if let finished = store.finished[item.id], store.receipt?.from != item.id { FinishedNotice(finished: finished) }
+                        if case .failed = item.state { FailedSubmissionNotice(item: item) }
+                        RequestHeader(item: item)
+                        MessageCard(ask: ask, macId: item.macId)
+                        VStack(spacing: 0) {
+                            ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
+                                QuestionCard(index: index, count: ask.questions.count, ask: ask, question: question, composer: composer)
+                                    .background(FrameReader(.card(index)))
+                                    // The gap belongs to what "Next" scrolls to, so that a card does not end flush with the bar.
+                                    .padding(.bottom, 16)
+                                    .id(Self.cardID(index))
+                            }
+                        }
                     }
+                    .padding([.horizontal, .top])
+                    .padding(.bottom, 8)
                 }
-                .padding()
-                .padding(.bottom, 8)
-            }
-            .background(Color(.systemGroupedBackground))
-            .scrollDismissesKeyboard(.interactively)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                SendBar(
-                    item: item, composer: composer, ended: store.finished[item.id] != nil, online: store.isOnline(macId: item.macId)
-                ) {
-                    send(composer)
+                .background(Color(.systemGroupedBackground))
+                .background(FrameReader(.safeTop))
+                .scrollDismissesKeyboard(.interactively)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    SendBar(
+                        item: item, composer: composer, ended: store.finished[item.id] != nil,
+                        online: store.isOnline(macId: item.macId), onSend: { send(composer) }, onNext: { next(composer, proxy: proxy) }
+                    )
+                    .background(FrameReader(.barTop))
                 }
+                .coordinateSpace(name: Self.space)
+                .onPreferenceChange(ReadingKey.self) { tracker.update($0, composer: composer) }
+                .task(id: item.id) { await tracker.begin(composer) }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -61,18 +78,118 @@ struct AnswerScreen: View {
             } message: {
                 Text(problem ?? "")
             }
-            .sensoryFeedback(.success, trigger: sentTick)
         }
     }
+
+    fileprivate static func cardID(_ index: Int) -> String { "question-\(index)" }
 
     private func send(_ composer: AnswerComposer) {
         Task {
             do {
                 try await store.send(composer, item: item)
-                sentTick += 1
             } catch {
                 problem = error.userMessage
             }
+        }
+    }
+
+    /// Scrolls the first question that was not read yet into view: all of it when it fits on the
+    /// screen (as the popup's "next" does), else its top.
+    private func next(_ composer: AnswerComposer, proxy: ScrollViewProxy) {
+        guard let target = composer.nextUnread else { return }
+        let fits = tracker.fits(target)
+        withAnimation(.easeInOut(duration: 0.4)) {
+            proxy.scrollTo(Self.cardID(target), anchor: fits ? .bottom : .top)
+        }
+    }
+}
+
+// MARK: reading progress
+
+/// What the form measured of its own layout, in the coordinate space of the scrolling screen.
+private struct Reading: Equatable {
+    /// The frame of every question card.
+    var cards: [Int: CGRect] = [:]
+    /// Where the bottom bar starts: what is above it is on screen.
+    var barTop: CGFloat?
+    /// Where the navigation bar ends.
+    var safeTop: CGFloat?
+}
+
+private struct ReadingKey: PreferenceKey {
+    static var defaultValue = Reading()
+
+    static func reduce(value: inout Reading, nextValue: () -> Reading) {
+        let next = nextValue()
+        value.cards.merge(next.cards) { $1 }
+        if let barTop = next.barTop { value.barTop = barTop }
+        if let safeTop = next.safeTop { value.safeTop = safeTop }
+    }
+}
+
+private struct FrameReader: View {
+    enum Part {
+        case card(Int)
+        case barTop
+        case safeTop
+    }
+
+    let part: Part
+
+    init(_ part: Part) { self.part = part }
+
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(key: ReadingKey.self, value: reading(proxy))
+        }
+    }
+
+    private func reading(_ proxy: GeometryProxy) -> Reading {
+        switch part {
+        case .card(let index):
+            return Reading(cards: [index: proxy.frame(in: .named(AnswerScreen.space))])
+        case .barTop:
+            return Reading(barTop: proxy.frame(in: .named(AnswerScreen.space)).minY)
+        case .safeTop:
+            return Reading(safeTop: proxy.safeAreaInsets.top)
+        }
+    }
+}
+
+/// Marks the questions that were on screen. A plain object on purpose: its numbers change on every
+/// frame of a scroll and must not make the screen render again; only a newly seen question does.
+@MainActor
+private final class ReadingTracker {
+    private var latest = Reading()
+    private var live = false
+
+    /// The first layout passes are not trusted (the bars may not have their final size yet): the
+    /// questions on screen are counted a moment after the form appeared.
+    func begin(_ composer: AnswerComposer) async {
+        live = false
+        try? await Task.sleep(for: .milliseconds(150))
+        guard !Task.isCancelled else { return }
+        live = true
+        markSeen(composer)
+    }
+
+    func update(_ reading: Reading, composer: AnswerComposer) {
+        latest = reading
+        if live { markSeen(composer) }
+    }
+
+    /// Whether a whole question fits between the bars.
+    func fits(_ question: Int) -> Bool {
+        guard let barTop = latest.barTop, let frame = latest.cards[question] else { return true }
+        return frame.height <= barTop - (latest.safeTop ?? 0) - 16
+    }
+
+    /// A question counts as seen once its bottom is above the bottom bar, whether it is still on
+    /// screen or already scrolled past (spec `multi-question-vertical.md` V1).
+    private func markSeen(_ composer: AnswerComposer) {
+        guard let barTop = latest.barTop else { return }
+        for (index, frame) in latest.cards where frame.maxY <= barTop + 1 {
+            composer.markSeen(index)
         }
     }
 }
@@ -213,6 +330,7 @@ private struct SendBar: View {
     let ended: Bool
     let online: Bool
     let onSend: () -> Void
+    let onNext: () -> Void
 
     var body: some View {
         VStack(spacing: 8) {
@@ -229,24 +347,49 @@ private struct SendBar: View {
                     }
                 }
                 Spacer(minLength: 8)
-                Button(action: onSend) {
-                    HStack(spacing: 6) {
-                        if busy { ProgressView().controlSize(.small).tint(.white) }
-                        Text(busy ? "Sending…" : "Send")
-                            .font(.headline)
-                    }
-                    .frame(minWidth: 84)
+                // Sending waits until the last question was on screen; until then the button leads there.
+                if composer.hasReachedEnd {
+                    sendButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
+                } else {
+                    nextButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(!enabled)
-                .accessibilityIdentifier("send-button")
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
+        .animation(.snappy(duration: 0.25), value: composer.hasReachedEnd)
+    }
+
+    private var sendButton: some View {
+        Button(action: onSend) {
+            HStack(spacing: 6) {
+                if busy { ProgressView().controlSize(.small).tint(.white) }
+                Text(busy ? "Sending…" : "Send")
+                    .font(.headline)
+            }
+            .frame(minWidth: 84)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .disabled(!enabled)
+        .accessibilityIdentifier("send-button")
+    }
+
+    private var nextButton: some View {
+        Button(action: onNext) {
+            HStack(spacing: 6) {
+                Text("Next").font(.headline)
+                Image(systemName: "chevron.down").font(.footnote.weight(.bold))
+            }
+            .frame(minWidth: 84)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .disabled(ended || sendingState)
+        .accessibilityLabel("Next question")
+        .accessibilityIdentifier("next-button")
     }
 
     private var sendingState: Bool {
@@ -264,7 +407,7 @@ private struct SendBar: View {
         if ended { return ("This request has ended.", .secondary) }
         if !online { return ("The Mac is offline. Your draft is kept.", .orange) }
         if sendingState { return ("Waiting for your Mac to confirm…", .secondary) }
-        if composer.blockedReason == .needsSelection { return ("Choose an option for every question.", .secondary) }
+        if composer.hasReachedEnd, composer.blockedReason == .needsSelection { return ("Choose an option for every question.", .secondary) }
         return nil
     }
 }

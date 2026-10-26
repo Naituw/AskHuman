@@ -184,4 +184,59 @@ final class AnswerComposerTests: XCTestCase {
         form.flush()
         XCTAssertNil(drafts.draft(key: "mac/req"))
     }
+
+    // MARK: reading progress (spec multi-question-vertical V1/V2)
+
+    func testASingleQuestionIsReadFromTheStart() {
+        let form = composer(ask([question("q", "a")]))
+        XCTAssertTrue(form.hasReachedEnd, "nothing to scroll to, so nothing to hold Send back")
+        XCTAssertNil(form.nextUnread, "a single question has no 'next'")
+    }
+
+    func testSeveralQuestionsCannotBeSentBeforeTheLastWasSeen() {
+        let form = composer(ask([question("1", "a"), question("2", "b"), question("3", "c")]))
+        XCTAssertFalse(form.hasReachedEnd)
+        XCTAssertEqual(form.nextUnread, 0)
+        form.markSeen(0)
+        XCTAssertEqual(form.nextUnread, 1, "Next leads to the first question not read yet")
+        XCTAssertFalse(form.hasReachedEnd, "seeing the first ones is not enough")
+        form.markSeen(2)
+        XCTAssertTrue(form.hasReachedEnd, "the last question was seen: Send appears, as in the popup")
+        XCTAssertEqual(form.nextUnread, 1, "the one skipped on the way is still pointed at")
+    }
+
+    func testAnAnsweredQuestionCountsAsRead() {
+        let form = composer(ask([question("1", "a"), question("2", "b")]))
+        form.toggle(question: 1, option: 0)
+        XCTAssertTrue(form.hasReachedEnd, "an answer takes a look at the question")
+        XCTAssertEqual(form.nextUnread, 0)
+        XCTAssertFalse(form.seen.contains(1), "reading is only inferred, never recorded by answering")
+    }
+
+    func testAnAnswerFromADraftCountsAsReadToo() {
+        let view = ask([question("1", "a"), question("2", "b")])
+        let first = composer(view, debounce: .seconds(60))
+        first.toggle(question: 1, option: 0)
+        first.flush()
+        XCTAssertTrue(composer(view).hasReachedEnd)
+    }
+
+    func testMarkingIsIgnoredOutsideTheQuestionsAndForASingleQuestion() {
+        let form = composer(ask([question("1", "a"), question("2", "b")]))
+        form.markSeen(-1)
+        form.markSeen(2)
+        XCTAssertTrue(form.seen.isEmpty)
+        let single = composer(ask([question("1", "a")]), key: "mac/single")
+        single.markSeen(0)
+        XCTAssertTrue(single.seen.isEmpty)
+    }
+
+    func testReadingDoesNotChangeWhatMaySendByContent() {
+        // Content rules and reading rules are separate: select-only still needs every selection.
+        let form = composer(ask([question("1", "a"), question("2", "b")], selectOnly: true))
+        form.markSeen(1)
+        XCTAssertTrue(form.hasReachedEnd)
+        XCTAssertFalse(form.canSend)
+        XCTAssertEqual(form.blockedReason, .needsSelection)
+    }
 }

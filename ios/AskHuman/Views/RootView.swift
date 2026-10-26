@@ -34,7 +34,12 @@ struct RootView: View {
                 .tag(AppTab.macs)
         }
         .environment(links)
-        .overlay(alignment: .top) { InAppBanner() }
+        .overlay(alignment: .top) {
+            VStack(spacing: 8) {
+                SentPillHost()
+                InAppBanner()
+            }
+        }
         .sheet(isPresented: $showPairing) { PairingSheet() }
         .confirmationDialog(
             "Open this link?", isPresented: Binding(get: { links.pending != nil }, set: { if !$0 { links.pending = nil } }),
@@ -53,11 +58,49 @@ struct RootView: View {
             Text("This phone still holds \(leftoverPairings) pairing(s) from before AskHuman was reinstalled. Keep using them, or start fresh?")
         }
         .sensoryFeedback(.impact(weight: .light), trigger: store.arrivalTick)
+        // The Mac took our reply: a success for an answer, a lighter tap for a cancellation.
+        .sensoryFeedback(trigger: store.sentTick) { _, _ in
+            store.receipt?.outcome == .answered ? .success : .impact(weight: .light)
+        }
         .onChange(of: store.pendingCount) { _, count in push.updateBadge(count) }
         .onChange(of: store.state.pairing?.stage) { _, stage in
             // A pairing started from a notification-less state (a deep link in the future) opens the sheet.
             if stage != nil, !showPairing { showPairing = true }
         }
+    }
+}
+
+/// The pill that drops in over the request the app moved on to, after one was sent.
+struct SentPillHost: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            if let note = store.sentNote {
+                SentPill(note: note)
+                    .padding(.top, 4)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(duration: 0.45, bounce: 0.3), value: store.sentNote)
+    }
+}
+
+private struct SentPill: View {
+    let note: SentNote
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            Text("Sent · \(note.remaining) left").font(.subheadline.weight(.semibold))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.15), radius: 10, y: 3)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sent-pill")
+        .allowsHitTesting(false)
     }
 }
 

@@ -70,6 +70,36 @@ public final class AnswerComposer {
 
     public enum BlockedReason: Equatable, Sendable { case needsSelection }
 
+    // MARK: reading progress
+
+    /// Questions whose card bottom has been on screen. As in the Mac popup (spec
+    /// `multi-question-vertical.md` V1/V2) the form of several questions cannot be sent before the
+    /// last question was seen, so that a stray tap cannot send what was never read.
+    public private(set) var seen: Set<Int> = []
+
+    public func markSeen(_ question: Int) {
+        // Observation notifies on every write, even of a value already there: scrolling must not.
+        guard questionCount > 1, (0..<questionCount).contains(question), !seen.contains(question) else { return }
+        seen.insert(question)
+    }
+
+    /// A question counts as read once it was seen, or answered (which takes a look at it).
+    public func hasRead(_ question: Int) -> Bool {
+        seen.contains(question) || isAnswered(question)
+    }
+
+    /// Where the "Next" button leads: the first question not read yet.
+    public var nextUnread: Int? {
+        guard questionCount > 1 else { return nil }
+        return (0..<questionCount).first { !hasRead($0) }
+    }
+
+    /// Whether the last question was read, which is what lets a form of several questions be sent.
+    /// A single question is read the moment the form opens.
+    public var hasReachedEnd: Bool {
+        questionCount <= 1 || hasRead(questionCount - 1)
+    }
+
     public var hasContent: Bool { answers.contains { !$0.isEmpty } }
 
     /// Attachments of the whole form; the Mac accepts a handful per request.
