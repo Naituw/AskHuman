@@ -469,7 +469,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 
 ### P8 收尾
 
-- `docs/wiki/ios-setup.md`（+ 英文）；`docs/overview.md`（仓库地图增 `ios/` 与 `relay/`、渠道清单、协议号历史）与本规格状态更新；`docs/PROGRESS.md` 清理 iOS 延期项；是否在 CI 增加 `relay` 的 `node --test` 与 `swift test` 作业（实施前经 AskHuman 询问，推荐只加这两项、不加 `xcodebuild`）；TestFlight 外部测试说明；最终验收报告。
+- `docs/wiki/ios-setup.md`（+ 英文）；`docs/overview.md`（仓库地图增 `ios/` 与 `relay/`、渠道清单、协议号历史）与本规格状态更新；`docs/PROGRESS.md` 清理 iOS 延期项；CI 增加 `relay` 的 `node --test` 与 `swift test` 两个作业（2026-10-26 经用户确认，只加这两项、不加 `xcodebuild`；已完成）；TestFlight 外部测试说明；最终验收报告。
 
 ## 9. 测试矩阵
 
