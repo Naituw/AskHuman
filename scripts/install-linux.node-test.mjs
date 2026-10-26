@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { before, after, test } from 'node:test';
-import { mkdtemp, mkdir, copyFile, readFile, writeFile, readdir, stat, symlink, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, copyFile, readFile, writeFile, readdir, stat, symlink, rm, realpath, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -8,8 +8,10 @@ import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 
 const available = process.platform === 'linux' && spawnSync('rustc', ['--version']).status === 0;
-let root, publisher, oldImage, newImage, exchangeFailure;
-const run = (source, directory) => spawnSync(publisher, [source, directory], { encoding: 'utf8' });
+let root, publisher, oldImage, newImage, newerImage, exchangeFailure;
+const run = (source, directory, env = {}) => spawnSync(publisher, [source, directory], {
+  encoding: 'utf8', env: { ...process.env, ...env },
+});
 const digest = async path => createHash('sha256').update(await readFile(path)).digest('hex');
 const cases = [];
 async function fixture() {
@@ -24,7 +26,7 @@ before(async () => {
   publisher = join(root, 'publisher');
   let build = spawnSync('rustc', ['--edition=2021', '-Dwarnings', 'scripts/install-linux.rs', '-o', publisher], { encoding: 'utf8' });
   assert.equal(build.status, 0, build.stderr);
-  for (const version of ['old', 'new']) {
+  for (const version of ['old', 'new', 'newer']) {
     const source = join(root, `${version}.rs`);
     await writeFile(source, `#[path=${JSON.stringify(resolve('src-tauri/src/executable.rs'))}] mod executable;
 use std::io::{self, BufRead, Write};
@@ -44,7 +46,7 @@ fn main() {
     build = spawnSync('rustc', ['--edition=2021', source, '-o', join(root, version)], { encoding: 'utf8' });
     assert.equal(build.status, 0, build.stderr);
   }
-  oldImage = join(root, 'old'); newImage = join(root, 'new');
+  oldImage = join(root, 'old'); newImage = join(root, 'new'); newerImage = join(root, 'newer');
   exchangeFailure = join(root, 'exchange-failure.so');
   const failureSource = join(root, 'exchange-failure.rs');
   await writeFile(failureSource, `unsafe extern "C" { fn __errno_location() -> *mut i32; }
@@ -79,7 +81,7 @@ linuxTest('running ELF survives exchange and cached launch path starts the new i
     assert.equal(await new Promise(resolve => child.exitCode !== null ? resolve(child.exitCode) : child.once('exit', resolve)), 0);
   } finally { if (child.exitCode === null) { child.kill(); } }
 });
-linuxTest('unchanged install preserves inode; repeated upgrades retain unique executable paths', async () => {
+linuxTest('unchanged install preserves inode; repeated upgrades keep only the newest retained executable', async () => {
   const directory = await fixture();
   assert.equal(run(oldImage, directory).status, 0);
   const first = await stat(join(directory, 'AskHuman'));
@@ -89,8 +91,8 @@ linuxTest('unchanged install preserves inode; repeated upgrades retain unique ex
   assert.equal(run(newImage, directory).status, 0);
   assert.equal(run(oldImage, directory).status, 0);
   const backups = await retained(directory);
-  assert.equal(backups.length, 2);
-  assert.deepEqual(new Set(await Promise.all(backups.map(name => digest(join(directory, name, 'AskHuman'))))), new Set([await digest(oldImage), await digest(newImage)]));
+  assert.equal(backups.length, 1);
+  assert.equal(await digest(join(directory, backups[0], 'AskHuman')), await digest(newImage));
 });
 linuxTest('reject symlink and directory targets before changing either target or install state', async () => {
   for (const kind of ['symlink', 'directory']) {
@@ -122,6 +124,7 @@ linuxTest('state failure reports successful executable publication and preserves
   assert.equal(await digest(join(directory, backups[0], 'AskHuman')), await digest(oldImage));
   await rm(join(directory, '.askhuman-install-state'), { recursive: true });
   assert.equal(run(newImage, directory).status, 0);
+  assert.equal((await retained(directory)).length, 1);
 });
 linuxTest('concurrent installers serialize executable and matching state publication', async () => {
   const directory = await fixture();
@@ -133,6 +136,7 @@ linuxTest('concurrent installers serialize executable and matching state publica
   for (const result of results) { assert.equal(result.code, 0, result.error); }
   const installed = await digest(join(directory, 'AskHuman'));
   assert.equal(await readFile(join(directory, '.askhuman-install-state'), 'utf8'), `source=${installed}\ninstalled=${installed}\n`);
+  assert.ok((await retained(directory)).length <= 1);
 });
 
 linuxTest('unsupported atomic exchange fails closed and removes only unpublished staging files', async () => {
@@ -145,4 +149,126 @@ linuxTest('unsupported atomic exchange fails closed and removes only unpublished
   assert.equal(await digest(join(directory, 'AskHuman')), await digest(oldImage));
   assert.equal(await readFile(join(directory, '.askhuman-install-state'), 'utf8'), state);
   assert.equal((await retained(directory)).length, 0);
+});
+
+linuxTest('keeps an image while a live process executes it and reclaims it afterwards', async () => {
+  const directory = await fixture();
+  assert.equal(run(oldImage, directory).status, 0);
+  const child = spawn(join(directory, 'AskHuman'), [], { cwd: '/', stdio: ['pipe', 'pipe', 'pipe'] });
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  try {
+    assert.equal((await lines.next()).value, 'READY');
+    assert.equal(run(newImage, directory).status, 0);
+    const inUse = run(oldImage, directory);
+    assert.equal(inUse.status, 0, inUse.stderr);
+    assert.match(inUse.stdout, new RegExp(`in use by pid ${child.pid}`));
+    assert.equal((await retained(directory)).length, 2);
+    child.stdin.end('continue\n');
+    await new Promise(resolve => child.exitCode !== null ? resolve() : child.once('exit', resolve));
+    const reclaimed = run(newImage, directory);
+    assert.equal(reclaimed.status, 0, reclaimed.stderr);
+    assert.match(reclaimed.stdout, /removed unreferenced retained executable/);
+    assert.equal((await retained(directory)).length, 1);
+  } finally { if (child.exitCode === null) { child.kill(); } }
+});
+
+linuxTest('pruning needs a complete process scan and later reclaims the held image', async () => {
+  const directory = await fixture();
+  assert.equal(run(oldImage, directory).status, 0);
+  assert.equal(run(newImage, directory).status, 0);
+  const [oldName] = await retained(directory);
+  const oldRetained = join(directory, oldName);
+
+  const fake = join(root, 'proc-with-reference');
+  await mkdir(join(fake, '4242'), { recursive: true });
+  await symlink(join(oldRetained, 'AskHuman'), join(fake, '4242', 'exe'));
+  const referenced = run(newerImage, directory, { ASKHUMAN_INSTALL_PROC_ROOT: fake });
+  assert.equal(referenced.status, 0, referenced.stderr);
+  assert.match(referenced.stdout, /in use by pid 4242/);
+  assert.equal((await retained(directory)).length, 2);
+
+  const incomplete = run(oldImage, directory, { ASKHUMAN_INSTALL_PROC_ROOT: join(root, 'proc-missing') });
+  assert.equal(incomplete.status, 0, incomplete.stderr);
+  assert.match(incomplete.stderr, /retained executable pruning skipped: cannot inspect/);
+  assert.match(incomplete.stdout, /cannot verify process references/);
+  assert.equal((await retained(directory)).length, 3);
+
+  const empty = join(root, 'proc-empty');
+  await mkdir(empty);
+  const reclaimed = run(newImage, directory, { ASKHUMAN_INSTALL_PROC_ROOT: empty });
+  assert.equal(reclaimed.status, 0, reclaimed.stderr);
+  assert.match(reclaimed.stdout, /removed unreferenced retained executable/);
+  const left = await retained(directory);
+  assert.equal(left.length, 1);
+  assert.equal(await digest(join(directory, left[0], 'AskHuman')), await digest(oldImage));
+});
+
+linuxTest('an unchanged install also reclaims unreferenced images', async () => {
+  const directory = await fixture();
+  assert.equal(run(oldImage, directory).status, 0);
+  assert.equal(run(newImage, directory).status, 0);
+  const [oldName] = await retained(directory);
+  const fake = join(root, 'proc-hold-unchanged');
+  await mkdir(join(fake, '4343'), { recursive: true });
+  await symlink(join(directory, oldName, 'AskHuman'), join(fake, '4343', 'exe'));
+  assert.equal(run(newerImage, directory, { ASKHUMAN_INSTALL_PROC_ROOT: fake }).status, 0);
+  assert.equal((await retained(directory)).length, 2);
+
+  const unchanged = run(newerImage, directory);
+  assert.equal(unchanged.status, 0, unchanged.stderr);
+  assert.match(unchanged.stdout, /installed executable unchanged/);
+  assert.match(unchanged.stdout, /removed unreferenced retained executable/);
+  assert.equal((await retained(directory)).length, 1);
+});
+
+linuxTest('an unreadable exe blocks pruning only when the process could be AskHuman', async () => {
+  const directory = await fixture();
+  assert.equal(run(oldImage, directory).status, 0);
+  assert.equal(run(newImage, directory).status, 0);
+  const [oldName] = await retained(directory);
+  const held = join(root, 'proc-hold-exe');
+  await mkdir(join(held, '4444'), { recursive: true });
+  await symlink(join(directory, oldName, 'AskHuman'), join(held, '4444', 'exe'));
+  assert.equal(run(newerImage, directory, { ASKHUMAN_INSTALL_PROC_ROOT: held }).status, 0);
+  assert.equal((await retained(directory)).length, 2);
+
+  const askhuman = join(root, 'proc-loop-askhuman');
+  await mkdir(join(askhuman, '5151'), { recursive: true });
+  await symlink('exe', join(askhuman, '5151', 'exe'));
+  await writeFile(join(askhuman, '5151', 'comm'), 'AskHuman\n');
+  const blocked = run(oldImage, directory, { ASKHUMAN_INSTALL_PROC_ROOT: askhuman });
+  assert.equal(blocked.status, 0, blocked.stderr);
+  assert.match(blocked.stderr, /process is named AskHuman/);
+  assert.equal((await retained(directory)).length, 3);
+
+  const other = join(root, 'proc-loop-other');
+  await mkdir(join(other, '5252'), { recursive: true });
+  await symlink('exe', join(other, '5252', 'exe'));
+  await writeFile(join(other, '5252', 'comm'), 'bash\n');
+  const reclaimed = run(newImage, directory, { ASKHUMAN_INSTALL_PROC_ROOT: other });
+  assert.equal(reclaimed.status, 0, reclaimed.stderr);
+  assert.match(reclaimed.stdout, /removed unreferenced retained executable/);
+  const left = await retained(directory);
+  assert.equal(left.length, 1);
+  assert.equal(await digest(join(directory, left[0], 'AskHuman')), await digest(oldImage));
+});
+
+const nonRootLinuxTest = (name, fn) => test(name, {
+  skip: !available ? 'requires Linux and the Rust toolchain'
+    : process.getuid?.() === 0 ? 'requires a non-root user' : false,
+}, fn);
+
+nonRootLinuxTest('a failed reclamation keeps the image and reports a diagnostic', async () => {
+  const directory = await fixture();
+  assert.equal(run(oldImage, directory).status, 0);
+  assert.equal(run(newImage, directory).status, 0);
+  const [oldName] = await retained(directory);
+  const oldDirectory = join(directory, oldName);
+  await chmod(oldDirectory, 0o555);
+  try {
+    const result = run(newerImage, directory);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /cannot remove: Permission denied/);
+    assert.ok((await retained(directory)).includes(oldName));
+  } finally { await chmod(oldDirectory, 0o755); }
 });

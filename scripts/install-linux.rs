@@ -1,10 +1,11 @@
 //! Standalone Linux publisher, built by install.sh with the existing Rust toolchain.
 //! Retained executables must not be removed while a process may still need them.
+use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, CString, OsStr};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::{ffi::OsStrExt, fs::OpenOptionsExt, fs::PermissionsExt};
+use std::os::unix::{ffi::OsStrExt, fs::MetadataExt, fs::OpenOptionsExt, fs::PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -56,6 +57,288 @@ fn rename(source: &Path, target: &Path, flags: u32) -> io::Result<()> {
     Ok(())
 }
 
+const RETAINED_PREFIX: &str = ".askhuman-install-";
+const EXECUTABLE_NAME: &str = "AskHuman";
+
+/// Device and inode identify a file across mount namespaces and path aliases.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct FileId {
+    dev: u64,
+    ino: u64,
+}
+
+impl FileId {
+    fn of(path: &Path) -> io::Result<Self> {
+        let meta = fs::metadata(path)?;
+        Ok(Self {
+            dev: meta.dev(),
+            ino: meta.ino(),
+        })
+    }
+}
+
+struct Retained {
+    directory: PathBuf,
+    binary: PathBuf,
+    state: Option<PathBuf>,
+    nonce: u128,
+}
+
+/// A directory this publisher left behind: `<prefix><pid>-<nonce>/{AskHuman,state?}`.
+/// Anything unexpected is ignored here and reported, never deleted.
+fn retained_entries(directory: &Path) -> io::Result<Vec<Retained>> {
+    let mut retained = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(rest) = name.strip_prefix(RETAINED_PREFIX) else {
+            continue;
+        };
+        let Some((pid, nonce)) = rest.split_once('-') else {
+            continue;
+        };
+        if pid.is_empty()
+            || nonce.is_empty()
+            || !pid.bytes().all(|b| b.is_ascii_digit())
+            || !nonce.bytes().all(|b| b.is_ascii_digit())
+        {
+            continue;
+        }
+        let Ok(nonce) = nonce.parse::<u128>() else {
+            continue;
+        };
+        let path = entry.path();
+        if !fs::symlink_metadata(&path)?.file_type().is_dir() {
+            continue;
+        }
+        let binary = path.join("AskHuman");
+        let state = path.join("state");
+        let mut has_binary = false;
+        let mut has_state = false;
+        let mut unknown = false;
+        let items = match fs::read_dir(&path) {
+            Ok(items) => items,
+            Err(error) => {
+                eprintln!(
+                    "kept retained executable: {} (cannot inspect directory: {error})",
+                    binary.display()
+                );
+                continue;
+            }
+        };
+        for item in items {
+            let item = item?;
+            let name = item.file_name();
+            let name = name.to_string_lossy();
+            let meta = fs::symlink_metadata(item.path())?;
+            match name.as_ref() {
+                "AskHuman" if meta.file_type().is_file() => has_binary = true,
+                "state" if meta.file_type().is_file() => has_state = true,
+                _ => unknown = true,
+            }
+        }
+        if !has_binary || unknown {
+            eprintln!(
+                "kept retained executable: {} (unexpected contents; inspect manually)",
+                path.display()
+            );
+            continue;
+        }
+        retained.push(Retained {
+            directory: path,
+            binary,
+            state: has_state.then_some(state),
+            nonce,
+        });
+    }
+    Ok(retained)
+}
+
+fn proc_root() -> PathBuf {
+    std::env::var_os("ASKHUMAN_INSTALL_PROC_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/proc"))
+}
+
+struct References {
+    pids: HashMap<FileId, u32>,
+    complete: bool,
+}
+
+/// Find processes executing any candidate image. A scan is complete only when every visible
+/// process could be inspected: a single unreadable `/proc/<pid>/exe` makes deletion unsafe.
+fn live_references(ids: &HashSet<FileId>) -> References {
+    let mut references = References {
+        pids: HashMap::new(),
+        complete: true,
+    };
+    if ids.is_empty() {
+        return references;
+    }
+    let proc_root = proc_root();
+    let entries = match fs::read_dir(&proc_root) {
+        Ok(entries) => entries,
+        Err(error) => {
+            references.complete = false;
+            eprintln!(
+                "retained executable pruning skipped: cannot inspect {}: {error}",
+                proc_root.display()
+            );
+            return references;
+        }
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                references.complete = false;
+                eprintln!(
+                    "retained executable pruning skipped: cannot inspect {}: {error}",
+                    proc_root.display()
+                );
+                continue;
+            }
+        };
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        let exe = entry.path().join("exe");
+        match fs::metadata(&exe) {
+            Ok(meta) => {
+                let id = FileId {
+                    dev: meta.dev(),
+                    ino: meta.ino(),
+                };
+                if ids.contains(&id) {
+                    references.pids.entry(id).or_insert(pid);
+                }
+            }
+            // The process exited or became a zombie; it can no longer spawn the image.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                // Hardened or sandboxed systems can deny stat on another process's exe even
+                // for the same uid. The kernel names every process after the executable it
+                // is running, so a different name is a safe negative signal; only a process
+                // that could be this binary blocks pruning.
+                let comm = entry.path().join("comm");
+                match fs::read_to_string(&comm) {
+                    Ok(name) if name.trim_end() != EXECUTABLE_NAME => {}
+                    Ok(_) => {
+                        references.complete = false;
+                        eprintln!(
+                            "retained executable pruning skipped: cannot inspect {} (process is named {EXECUTABLE_NAME}): {error}",
+                            exe.display()
+                        );
+                    }
+                    Err(comm_error) => {
+                        references.complete = false;
+                        eprintln!(
+                            "retained executable pruning skipped: cannot inspect {}: {error}; cannot read {}: {comm_error}",
+                            exe.display(),
+                            comm.display()
+                        );
+                    }
+                }
+            }
+        }
+    }
+    references
+}
+
+fn remove_retained(entry: &Retained) -> io::Result<()> {
+    if let Some(state) = &entry.state {
+        fs::remove_file(state)?;
+    }
+    fs::remove_file(&entry.binary)?;
+    fs::remove_dir(&entry.directory)
+}
+
+/// Reclaim old images only when the newest one is kept and no live process executes them.
+/// `just_retained` is the image this install just swapped out; it is always kept so a process
+/// that received its path but has not exec'd yet cannot lose it.
+fn prune_retained(directory: &Path, just_retained: Option<&Path>) -> io::Result<()> {
+    let mut entries = retained_entries(directory)?;
+    if entries.len() < 2 && just_retained.is_none() {
+        return Ok(());
+    }
+    entries.sort_by(|left, right| right.nonce.cmp(&left.nonce));
+    let newest_nonce = entries.first().map(|entry| entry.nonce);
+    let mut protected: HashSet<PathBuf> = entries
+        .iter()
+        .filter(|entry| Some(entry.nonce) == newest_nonce)
+        .map(|entry| entry.directory.clone())
+        .collect();
+    if let Some(path) = just_retained {
+        protected.insert(path.to_path_buf());
+    }
+    let candidates: Vec<&Retained> = entries
+        .iter()
+        .filter(|entry| !protected.contains(&entry.directory))
+        .collect();
+    if candidates.is_empty() {
+        return Ok(());
+    }
+
+    let mut ids = HashSet::new();
+    let mut identified = Vec::new();
+    for entry in &candidates {
+        match FileId::of(&entry.binary) {
+            Ok(id) => {
+                ids.insert(id);
+                identified.push((*entry, id));
+            }
+            Err(error) => eprintln!(
+                "kept retained executable: {} (cannot identify: {error})",
+                entry.binary.display()
+            ),
+        }
+    }
+    let references = live_references(&ids);
+    let mut removed = false;
+    for (entry, id) in identified {
+        if let Some(pid) = references.pids.get(&id) {
+            println!(
+                "kept retained executable: {} (in use by pid {pid})",
+                entry.binary.display()
+            );
+            continue;
+        }
+        if !references.complete {
+            println!(
+                "kept retained executable: {} (cannot verify process references)",
+                entry.binary.display()
+            );
+            continue;
+        }
+        match remove_retained(entry) {
+            Ok(()) => {
+                removed = true;
+                println!(
+                    "removed unreferenced retained executable: {}",
+                    entry.binary.display()
+                );
+            }
+            Err(error) => eprintln!(
+                "kept retained executable: {} (cannot remove: {error})",
+                entry.binary.display()
+            ),
+        }
+    }
+    if removed {
+        if let Err(error) = File::open(directory).and_then(|dir| dir.sync_all()) {
+            eprintln!(
+                "retained executable pruning could not sync {}: {error}",
+                directory.display()
+            );
+        }
+    }
+    Ok(())
+}
+
 struct Stage(PathBuf);
 impl Drop for Stage {
     fn drop(&mut self) {
@@ -90,6 +373,9 @@ fn install(source: &Path, directory: &Path) -> io::Result<()> {
         let expected = format!("source={source_hash}\ninstalled={installed_hash}\n");
         if fs::read_to_string(&state_path).ok().as_deref() == Some(&expected) {
             println!("    installed executable unchanged; skipping publication");
+            if let Err(error) = prune_retained(directory, None) {
+                eprintln!("retained executable pruning skipped: {error}");
+            }
             return Ok(());
         }
     }
@@ -146,6 +432,9 @@ fn install(source: &Path, directory: &Path) -> io::Result<()> {
     finish().map_err(|e| io::Error::other(format!(
         "executable and state installed, but final directory synchronization/cleanup failed: {e}; inspect installation before retrying"
     )))?;
+    if let Err(error) = prune_retained(directory, exists.then_some(retained.as_path())) {
+        eprintln!("retained executable pruning skipped: {error}");
+    }
     Ok(())
 }
 
