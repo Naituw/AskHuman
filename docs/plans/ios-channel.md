@@ -509,7 +509,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 - 代码注释用英文；本计划与需求文档用中文。
 - 改 `ipc/mod.rs` 前再读一遍 overview 的「IPC 协议号」；协议号 +1 时同步 overview 历史与 drain 文档。
 - 每阶段完成后检查 `docs/overview.md`、本需求与计划是否已不准确，只改对应文档；P8 统一更新 overview。
-- 不改动用户其它进行中的未提交工作（当前工作区里的 `codex_desktop`、`popup` 相关修改与 `docs/investigations/native-ios-channel-handoff.md` 等）。
+- 不改动用户其它进行中的未提交工作（实施期间主工作区里的 `codex_desktop`、`popup` 相关修改与 `docs/investigations/native-ios-channel-handoff.md` 等；这些已于 2026-10-26 在主工作区提交并推送到 main，不在本分支里，合并时随 main 一并带入）。
 - 开发开始后，计划与需求不得擅自变更；需要调整先经 AskHuman 确认，并把结论追加到需求文档「反馈意见」。
 
 ## 13. 实施记录（与计划的差异）

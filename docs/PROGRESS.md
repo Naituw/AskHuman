@@ -42,7 +42,7 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
   强退后 Mac 多久看到离线（靠 Last Will）。有手机侧时间线（见上面 P0 门禁的测量方式）或做真机矩阵其余项时顺带量，不单独叫用户测
 - [ ] 性能口径（需求 D10 四条）与流量预算（典型场景 ≤ 300 MB / 月）分段实测，报告原始分布与全部超时
 - [ ] 合并前：
-  - **与 main 有一处合并冲突**（2026-10-26 用 `git merge-tree` 对 main 的 `f82a628` 试合并，其余文件都能自动合并），在 `src-tauri/src/agents/stop.rs`：
+  - **与 main 有一处合并冲突**（2026-10-26 用 `git merge-tree` 对 main 的 `1c54003` 试合并，其余文件都能自动合并），在 `src-tauri/src/agents/stop.rs`：
     main 的 `58501a4`（Codex 委托运行静默）把按 `thread_source` 判断改成了 3 参数的 `confirmation_suppression_reason(kind, session_id, input)`，记录里写 `thread_source: None`；
     分支在同一位置新增了 `turn_failed`（iOS 的「上一轮失败」标记）及测试 `turn_failed_matrix`。冲突有两块（函数定义、测试名），都是相邻新增。
     解法：取 main 一侧的 `confirmation_suppression_reason*` 与它的测试，**加上**分支的 `turn_failed` 与 `turn_failed_matrix`，**丢掉** `codex_thread_source`（main 已不再读它，留着会被 `-D warnings` 报死代码）；
