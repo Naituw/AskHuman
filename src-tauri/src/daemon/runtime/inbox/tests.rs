@@ -4,6 +4,113 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 
+#[tokio::test]
+async fn popup_stderr_capture_drains_beyond_the_retained_limit() {
+    let input = vec![b'x'; POPUP_HOST_STDERR_LIMIT * 32];
+    let mut stream = std::io::Cursor::new(&input);
+    let mut captured = Vec::new();
+    capture_popup_stderr(&mut stream, &mut captured).await;
+    assert_eq!(captured.len(), POPUP_HOST_STDERR_LIMIT);
+    assert_eq!(stream.position(), input.len() as u64);
+}
+
+#[tokio::test]
+async fn popup_stderr_capture_retries_interrupted_reads() {
+    struct Interrupted {
+        first: bool,
+        rest: std::io::Cursor<Vec<u8>>,
+    }
+    impl tokio::io::AsyncRead for Interrupted {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buffer: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            if self.first {
+                self.first = false;
+                return Poll::Ready(Err(std::io::Error::from(std::io::ErrorKind::Interrupted)));
+            }
+            Pin::new(&mut self.rest).poll_read(cx, buffer)
+        }
+    }
+    let stream = Interrupted {
+        first: true,
+        rest: std::io::Cursor::new(b"Gdk-Message: fatal protocol error\n".to_vec()),
+    };
+    let mut captured = Vec::new();
+    capture_popup_stderr(stream, &mut captured).await;
+    assert_eq!(captured, b"Gdk-Message: fatal protocol error\n");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn popup_reaper_logs_failure_and_reaps_before_descendant_stderr_closes() {
+    let directory = tempfile::tempdir().unwrap();
+    let descendant_file = directory.path().join("descendant.pid");
+    let child = tokio::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("sleep 2 & printf '%s' \"$!\" > \"$1\"; printf 'failure marker\\nend\\n' >&2; exit 7")
+        .arg("popup-host-fixture")
+        .arg(&descendant_file)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let mut logs = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        reap_popup_host(child, |message| logs.push(message)),
+    )
+    .await
+    .expect("direct child cleanup must not wait for descendant-held stderr");
+    let descendant: libc::pid_t = std::fs::read_to_string(descendant_file)
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(unsafe { libc::kill(descendant, 0) }, 0);
+    let mut status = 0;
+    assert_eq!(
+        unsafe { libc::waitpid(pid as libc::pid_t, &mut status, libc::WNOHANG) },
+        -1
+    );
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ECHILD)
+    );
+    assert_eq!(logs.len(), 1);
+    assert!(logs[0].contains("failure marker\\n"));
+    assert!(logs[0].contains("exit status: 7"));
+    assert!(!logs[0].contains('\n'));
+    // The fixture descendant exits by itself; leave no long-lived test process behind.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn popup_reaper_drains_large_stderr_and_keeps_successful_exit_silent() {
+    let child = tokio::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("head -c 262144 /dev/zero >&2")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut logs = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        reap_popup_host(child, |message| logs.push(message)),
+    )
+    .await
+    .expect("over-limit stderr must still be drained");
+    assert!(
+        logs.is_empty(),
+        "successful hosts must not emit captured noise"
+    );
+}
+
 fn state() -> Arc<ServerState> {
     let mut config = AppConfig::default();
     config.general.popup_prewarm = false;

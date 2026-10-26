@@ -163,14 +163,16 @@ pub async fn front(window: &WebviewWindow) -> Result<FrontProbe, String> {
                                 window: *mut std::ffi::c_void,
                                 focus: i32,
                             );
-                            fn gtk_widget_show(widget: *mut std::ffi::c_void);
+                            fn gtk_widget_show_all(widget: *mut std::ffi::c_void);
                             fn gtk_window_deiconify(window: *mut std::ffi::c_void);
                         }
                         let gtk = w.gtk_window().map_err(|e| e.to_string())?;
                         unsafe {
                             let pointer = gtk.as_ptr() as *mut std::ffi::c_void;
                             gtk_window_set_focus_on_map(pointer, 0);
-                            gtk_widget_show(pointer);
+                            // A cold hidden host also has hidden WebKit/GTK children.
+                            // Show the full widget tree while preserving focus-on-map policy.
+                            gtk_widget_show_all(pointer);
                             gtk_window_deiconify(pointer);
                         }
                         use raw_window_handle::{
