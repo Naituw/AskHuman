@@ -366,7 +366,7 @@ pub async fn apply(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (old_left, source);
-        instant::apply(window, allocation)
+        instant::apply(window, allocation, popup_scale(window))
     }
 }
 /// Change the window form (small window <-> expanded layout). Windows and Linux have no pinned
@@ -384,14 +384,42 @@ pub async fn animate(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (source, animation);
-        instant::animate(window, allocation, transition)
+        instant::animate(window, allocation, transition, popup_scale(window))
     }
 }
 pub async fn resume(window: &WebviewWindow, allocation: &Allocation) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     return mac::resume(window, allocation).await;
     #[cfg(not(target_os = "macos"))]
-    instant::resume(window, allocation)
+    instant::resume(window, allocation, popup_scale(window))
+}
+
+#[cfg(target_os = "linux")]
+fn popup_scale(window: &WebviewWindow) -> f64 {
+    super::linux_dpi::page_scale(window).get()
+}
+
+#[cfg(target_os = "windows")]
+fn popup_scale(_: &WebviewWindow) -> f64 {
+    1.0
+}
+
+pub(super) fn platform_logical_size(
+    size: (f64, f64),
+    page_scale: f64,
+    uses_page_scale: bool,
+) -> Option<(f64, f64)> {
+    if !size.0.is_finite() || !size.1.is_finite() || size.0 <= 0.0 || size.1 <= 0.0 {
+        return None;
+    }
+    super::popup_size::platform_window_size(size, page_scale, uses_page_scale)
+}
+
+fn platform_logical_position(position: (f64, f64)) -> Option<(f64, f64)> {
+    if !position.0.is_finite() || !position.1.is_finite() {
+        return None;
+    }
+    (position.0.abs() <= i32::MAX as f64 && position.1.abs() <= i32::MAX as f64).then_some(position)
 }
 
 /// The window changes of the platforms without a pinned viewport (Windows, Linux): the page's viewport is the
@@ -400,9 +428,14 @@ pub async fn resume(window: &WebviewWindow, allocation: &Allocation) -> Result<(
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 mod instant {
     use super::*;
+    use tauri::{LogicalPosition, LogicalSize};
 
-    pub fn apply(window: &WebviewWindow, allocation: &Allocation) -> Result<Frame, String> {
-        apply_frame(window, allocation.frame)?;
+    pub fn apply(
+        window: &WebviewWindow,
+        allocation: &Allocation,
+        page_scale: f64,
+    ) -> Result<Frame, String> {
+        apply_frame(window, allocation.frame, page_scale)?;
         Ok(allocation.frame)
     }
 
@@ -412,6 +445,7 @@ mod instant {
         window: &WebviewWindow,
         allocation: &Allocation,
         transition: Transition,
+        page_scale: f64,
     ) -> Result<Frame, String> {
         let expand = transition == Transition::Expand;
         if expand {
@@ -421,28 +455,46 @@ mod instant {
                 .set_min_size(Some(tauri::LogicalSize::new(1.0, 1.0)))
                 .map_err(|e| e.to_string())?;
         }
-        apply_frame(window, allocation.frame)?;
+        apply_frame(window, allocation.frame, page_scale)?;
         if !expand {
             window.set_resizable(false).map_err(|e| e.to_string())?;
         }
         Ok(allocation.frame)
     }
 
-    pub fn resume(window: &WebviewWindow, allocation: &Allocation) -> Result<(), String> {
-        window
-            .set_min_size(Some(tauri::LogicalSize::new(
+    pub fn resume(
+        window: &WebviewWindow,
+        allocation: &Allocation,
+        page_scale: f64,
+    ) -> Result<(), String> {
+        let minimum = platform_logical_size(
+            (
                 allocation.minimum_width(),
                 super::super::popup_size::MIN_HEIGHT.min(allocation.frame.height),
-            )))
+            ),
+            page_scale,
+            cfg!(target_os = "linux"),
+        )
+        .ok_or("Popup window has an invalid page scale")?;
+        window
+            .set_min_size(Some(LogicalSize::new(minimum.0, minimum.1)))
             .map_err(|e| e.to_string())
     }
 
-    fn apply_frame(window: &WebviewWindow, plan: Frame) -> Result<(), String> {
+    fn apply_frame(window: &WebviewWindow, plan: Frame, page_scale: f64) -> Result<(), String> {
+        let (width, height) = platform_logical_size(
+            (plan.width, plan.height),
+            page_scale,
+            cfg!(target_os = "linux"),
+        )
+        .ok_or("Popup window has an invalid page scale")?;
         window
-            .set_size(tauri::LogicalSize::new(plan.width, plan.height))
+            .set_size(LogicalSize::new(width, height))
             .map_err(|e| e.to_string())?;
+        let (x, y) = platform_logical_position((plan.x, plan.y))
+            .ok_or("Popup window has an invalid position")?;
         let positioned = window
-            .set_position(tauri::LogicalPosition::new(plan.x, plan.y))
+            .set_position(LogicalPosition::new(x, y))
             .map_err(|e| e.to_string());
         // A Wayland compositor places windows itself, so a refused position is not an error there.
         if cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some() {
@@ -509,5 +561,42 @@ mod tests {
         assert_eq!(result.x + 246.0, current.x);
         assert_eq!(result.y, current.y);
         assert_eq!((result.width, result.height), (806.0, 620.0));
+    }
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn css_frame_and_minimum_convert_to_tao_logical_size() {
+        for page_scale in [1.25, 1.5] {
+            let frame = Frame {
+                x: -1280.0,
+                y: 200.0,
+                width: 806.0,
+                height: 620.0,
+            };
+            assert_eq!(
+                platform_logical_size((frame.width, frame.height), page_scale, true),
+                Some((806.0 * page_scale, 620.0 * page_scale))
+            );
+            assert_eq!(
+                platform_logical_size((1132.0, 480.0), page_scale, true),
+                Some((1132.0 * page_scale, 480.0 * page_scale))
+            );
+            assert_eq!(
+                platform_logical_position((frame.x, frame.y)),
+                Some((frame.x, frame.y))
+            );
+            let round_trip = platform_logical_position((frame.x, frame.y)).unwrap();
+            assert_eq!(round_trip, (frame.x, frame.y));
+            assert_eq!(
+                platform_logical_size((frame.width, frame.height), page_scale, false),
+                Some((frame.width, frame.height))
+            );
+            assert_eq!(
+                platform_logical_position((frame.x, frame.y)),
+                Some((frame.x, frame.y))
+            );
+        }
+        for invalid in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(platform_logical_size((806.0, 620.0), invalid, true), None);
+        }
     }
 }

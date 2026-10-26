@@ -137,10 +137,23 @@ pub struct Request {
 /// The window as the OS reports it when a transaction is planned.
 #[derive(Clone, Copy, Debug)]
 struct Native {
+    /// CSS content extents and their screen origin. The origin is native logical.
     frame: Frame,
-    scale: f64,
+    native_scale: f64,
+    page_scale: f64,
+    /// Work area in native logical units.
     work: Option<Rect>,
     special: bool,
+}
+
+impl Native {
+    fn work_css(self) -> Option<Rect> {
+        self.work.map(|work| Rect {
+            width: work.width / self.page_scale,
+            height: work.height / self.page_scale,
+            ..work
+        })
+    }
 }
 
 /// Saved or default dimensions, used the first time they are needed.
@@ -192,7 +205,8 @@ pub struct Geometry {
     published: Option<Allocation>,
     normal: Option<Frame>,
     special: bool,
-    scale: Option<f64>,
+    native_scale: Option<f64>,
+    page_scale: Option<f64>,
     work: Option<Rect>,
     reconcile_queued: bool,
     /// How far the body anchor has moved only because window-anchored changes (collapse / expand)
@@ -253,10 +267,12 @@ impl Geometry {
         }
         let Native {
             frame,
-            scale,
+            native_scale,
+            page_scale,
             work,
             special,
         } = native;
+        let work_css = native.work_css();
         let was_collapsed = self.is_collapsed();
         let mini = match request.form {
             Form::Expanded => None,
@@ -339,7 +355,7 @@ impl Geometry {
         let available = if special {
             frame.width
         } else {
-            work.map_or(main.0 + left + right + 2.0 * GAP, |w| w.width)
+            work_css.map_or(main.0 + left + right + 2.0 * GAP, |w| w.width)
         };
         let (mut main_width, sidebar_width, preview_width) =
             allocate(main.0, left, right, available);
@@ -358,56 +374,46 @@ impl Geometry {
             + if self.sidebar { GAP } else { 0.0 }
             + if self.preview { GAP } else { 0.0 };
         let left_span_new = sidebar_width + if self.sidebar { GAP } else { 0.0 };
+        let left_span_new_native = left_span_new * page_scale;
         let (anchor_x, anchor_y) = match mode {
             Anchor::Body => anchor,
-            Anchor::Window => (frame.x + left_span_new, frame.y),
+            Anchor::Window => (frame.x + left_span_new_native, frame.y),
             Anchor::Home => (anchor.0 - self.drift, anchor.1),
         };
-        let mut target = Frame {
-            x: anchor_x - left_span_new,
+        let target = Frame {
+            x: anchor_x - left_span_new_native,
             y: anchor_y,
             width,
             height: main.1,
         };
-        if let Some(work) = work {
-            target.x = target.x.clamp(work.x, (work.right() - width).max(work.x));
-            target.height = target.height.min(work.height);
-            target.y = target
-                .y
-                .clamp(work.y, (work.bottom() - target.height).max(work.y));
-        }
-        if special {
-            target = frame;
-        }
+        let target = if special {
+            // The OS owns the extent and position of maximized and full-screen windows. Keep the
+            // sampled frame so allocation dimensions match the viewport the page actually has.
+            frame
+        } else {
+            frame_from_css(target, page_scale, work)?
+        };
         // The page keeps the expanded layout (and its pinned viewport) while the window is small.
         let mut window_frame = target;
         if let Some(mini) = mini {
-            window_frame = Frame {
+            let mini_css = Frame {
                 x: frame.x,
                 y: frame.y,
                 width: mini.width,
                 height: mini.height,
             };
-            if let Some(work) = work {
-                window_frame.width = window_frame.width.min(work.width);
-                window_frame.height = window_frame.height.min(work.height);
-                window_frame.x = window_frame
-                    .x
-                    .clamp(work.x, (work.right() - window_frame.width).max(work.x));
-                window_frame.y = window_frame
-                    .y
-                    .clamp(work.y, (work.bottom() - window_frame.height).max(work.y));
-            }
+            window_frame = frame_from_css(mini_css, page_scale, work)?;
         }
         let left_span_old = self.published.as_ref().map_or(0.0, Allocation::left_span);
         self.revision += 1;
         self.pending = true;
         self.special = special;
-        self.scale = Some(scale);
+        self.native_scale = Some(native_scale);
+        self.page_scale = Some(page_scale);
         self.work = work;
         self.canvas_right = self
             .canvas_right
-            .max(work.map_or(0.0, |w| w.width))
+            .max(work_css.map_or(0.0, |w| w.width))
             .max(self.preferred_preview.unwrap() + GAP);
         let previous_left = self
             .published
@@ -455,7 +461,7 @@ impl Geometry {
             left_span_old
         };
         self.drift_step = if mode == Anchor::Window {
-            left_span_new - left_span_old
+            left_span_new_native - left_span_old * page_scale
         } else {
             0.0
         };
@@ -470,8 +476,9 @@ impl Geometry {
     /// The window now has `allocation.frame`: the body anchor follows it and a window-anchored
     /// change books how far it moved the body.
     fn committed(&mut self, allocation: &Allocation) {
+        let page_scale = self.page_scale.unwrap_or(1.0);
         self.anchor = Some((
-            allocation.frame.x + allocation.left_span(),
+            allocation.frame.x + allocation.left_span() * page_scale,
             allocation.frame.y,
         ));
         self.drift += self.drift_step;
@@ -502,7 +509,8 @@ impl Geometry {
             return false;
         }
         if let Some(layout) = self.published.as_ref() {
-            self.anchor = Some((frame.x + layout.left_span(), frame.y));
+            let page_scale = self.page_scale.unwrap_or(1.0);
+            self.anchor = Some((frame.x + layout.left_span() * page_scale, frame.y));
         }
         let changed = match (self.work, work) {
             (Some(old), Some(new)) => old != new,
@@ -518,8 +526,42 @@ impl Geometry {
     }
 }
 
+fn frame_from_css(css: Frame, page_scale: f64, work: Option<Rect>) -> Result<Frame, PlanError> {
+    if !css.x.is_finite()
+        || !css.y.is_finite()
+        || !css.width.is_finite()
+        || !css.height.is_finite()
+        || css.width <= 0.0
+        || css.height <= 0.0
+    {
+        return Err(PlanError::Invalid("Window geometry is invalid"));
+    }
+    let Some(work) = work else {
+        return Ok(css);
+    };
+    // Allocation extents are CSS pixels; origins and work areas are native logical units.
+    let native_width = (css.width * page_scale).min(work.width);
+    let native_height = (css.height * page_scale).min(work.height);
+    Ok(Frame {
+        x: css.x.clamp(work.x, work.right() - native_width),
+        y: css.y.clamp(work.y, work.bottom() - native_height),
+        width: native_width / page_scale,
+        height: native_height / page_scale,
+    })
+}
+
+fn frame_size_changed(previous: Frame, current: Frame, native_scale: f64, page_scale: f64) -> bool {
+    let tolerance = 1.0 / (native_scale * page_scale);
+    (current.width - previous.width).abs() > tolerance
+        || (current.height - previous.height).abs() > tolerance
+}
+
 fn native(window: &Window) -> Result<(Frame, f64, Option<Rect>, bool), String> {
-    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let native_scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let page_scale = super::popup_preview::page_scale(window);
+    if !page_scale.is_finite() || page_scale <= 0.0 {
+        return Err("Popup window has an invalid page scale".into());
+    }
     // In macOS single-WebView windows Tauri reads inner_size from WKWebView. Our fixed
     // viewport is deliberately larger than the visible window. Full-size content windows
     // include the titlebar, so the actual NSWindow outer extent is the visible content size.
@@ -527,16 +569,18 @@ fn native(window: &Window) -> Result<(Frame, f64, Option<Rect>, bool), String> {
     let size = window.outer_size();
     #[cfg(not(target_os = "macos"))]
     let size = window.inner_size();
-    let size = size.map_err(|e| e.to_string())?.to_logical::<f64>(scale);
+    let size = size
+        .map_err(|e| e.to_string())?
+        .to_logical::<f64>(native_scale);
     let pos = window
         .outer_position()
         .ok()
-        .map(|p| p.to_logical::<f64>(scale));
+        .map(|p| p.to_logical::<f64>(native_scale));
     let frame = Frame {
         x: pos.map_or(0.0, |p| p.x),
         y: pos.map_or(0.0, |p| p.y),
-        width: size.width,
-        height: size.height,
+        width: size.width / page_scale,
+        height: size.height / page_scale,
     };
     let work = window
         .available_monitors()
@@ -548,7 +592,7 @@ fn native(window: &Window) -> Result<(Frame, f64, Option<Rect>, bool), String> {
             #[cfg(target_os = "macos")]
             let divisor = m.scale_factor();
             #[cfg(not(target_os = "macos"))]
-            let divisor = scale;
+            let divisor = native_scale;
             Rect {
                 x: work.position.x as f64 / divisor,
                 y: work.position.y as f64 / divisor,
@@ -557,25 +601,18 @@ fn native(window: &Window) -> Result<(Frame, f64, Option<Rect>, bool), String> {
             }
         })
         .max_by(|a, b| {
-            Rect {
+            let frame_work = Rect {
                 x: frame.x,
                 y: frame.y,
-                width: frame.width,
-                height: frame.height,
-            }
-            .intersection(*a)
-            .total_cmp(
-                &Rect {
-                    x: frame.x,
-                    y: frame.y,
-                    width: frame.width,
-                    height: frame.height,
-                }
-                .intersection(*b),
-            )
+                width: frame.width * page_scale,
+                height: frame.height * page_scale,
+            };
+            Rect { ..frame_work }
+                .intersection(*a)
+                .total_cmp(&frame_work.intersection(*b))
         });
     let special = window.is_maximized().unwrap_or(true) || window.is_fullscreen().unwrap_or(true);
-    Ok((frame, scale, work, special))
+    Ok((frame, page_scale, work, special))
 }
 fn state(window: &Window) -> tauri::State<'_, Mutex<Controller>> {
     window.app_handle().state::<Mutex<Controller>>()
@@ -610,7 +647,8 @@ pub async fn prepare(window: &Window, request: Request) -> Result<Allocation, St
     if !request.dragging {
         wait_for_pointer(window).await;
     }
-    let (frame, scale, work, special) = native(window)?;
+    let (frame, page_scale, work, special) = native(window)?;
+    let native_scale = window.scale_factor().map_err(|e| e.to_string())?;
     let config = crate::config::AppConfig::load_without_secrets()
         .channels
         .popup;
@@ -621,7 +659,8 @@ pub async fn prepare(window: &Window, request: Request) -> Result<Allocation, St
     };
     let native = Native {
         frame,
-        scale,
+        native_scale,
+        page_scale,
         work,
         special,
     };
@@ -832,7 +871,8 @@ pub async fn resize_sidebar(
     finished: bool,
 ) -> Result<Allocation, String> {
     wait_idle(window).await?;
-    let (frame, scale, work, special) = native(window)?;
+    let (frame, page_scale, work, special) = native(window)?;
+    let native_scale = window.scale_factor().map_err(|e| e.to_string())?;
     let view = webview(window)?;
     let (allocation, remember_main) = {
         let state = state(window);
@@ -874,8 +914,9 @@ pub async fn resize_sidebar(
             c.preferred_main = Some((allocation.main_width, allocation.main_height));
             c.normal = Some(frame);
         }
-        c.anchor = Some((frame.x + allocation.left_span(), frame.y));
-        c.scale = Some(scale);
+        c.anchor = Some((frame.x + allocation.left_span() * page_scale, frame.y));
+        c.native_scale = Some(native_scale);
+        c.page_scale = Some(page_scale);
         c.work = work;
         c.special = special;
     }
@@ -929,7 +970,8 @@ pub async fn resize_preview(
 ) -> Result<Allocation, String> {
     wait_idle(window).await?;
     super::popup_preview::request(window, request_id)?;
-    let (frame, scale, work, special) = native(window)?;
+    let (frame, page_scale, work, special) = native(window)?;
+    let native_scale = window.scale_factor().map_err(|e| e.to_string())?;
     let view = webview(window)?;
     let (allocation, durable) = {
         let state = state(window);
@@ -966,8 +1008,9 @@ pub async fn resize_preview(
             c.preferred_preview = Some(allocation.preview_width);
             c.normal = Some(frame);
         }
-        c.anchor = Some((frame.x + allocation.left_span(), frame.y));
-        c.scale = Some(scale);
+        c.anchor = Some((frame.x + allocation.left_span() * page_scale, frame.y));
+        c.native_scale = Some(native_scale);
+        c.page_scale = Some(page_scale);
         c.work = work;
         c.special = special;
     }
@@ -1010,7 +1053,13 @@ pub fn preview_bounds(window: &Window) -> Option<(f64, f64, f64)> {
     ))
 }
 pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjection> {
-    let (frame, scale, work, special) = native(window).ok()?;
+    let (frame, page_scale, work, special) = native(window).ok()?;
+    let native_scale = window.scale_factor().ok()?;
+    let work_css = work.map(|work| Rect {
+        width: work.width / page_scale,
+        height: work.height / page_scale,
+        ..work
+    });
     // AppKit sends intermediate resize events while zooming/restoring, before isZoomed
     // reflects the destination. Only a real edge drag may update durable dimensions.
     #[cfg(target_os = "macos")]
@@ -1037,15 +1086,17 @@ pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjecti
     }
     let previous = c.published.clone()?;
     let restoring = c.special && !special;
-    let dpi_changed = c.scale.is_some_and(|old| (old - scale).abs() > 0.001);
+    let dpi_changed = c
+        .native_scale
+        .is_some_and(|old| (old - native_scale).abs() > 0.001)
+        || c.page_scale
+            .is_some_and(|old| (old - page_scale).abs() > 0.001);
     let transient = special || restoring || dpi_changed || !user_resize;
-    if (frame.width - previous.frame.width).abs() <= 1.0 / scale
-        && (frame.height - previous.frame.height).abs() <= 1.0 / scale
-    {
+    if !frame_size_changed(previous.frame, frame, native_scale, page_scale) {
         return None;
     }
     let main = c.preferred_main?;
-    let constrained = work.is_some_and(|work| {
+    let constrained = work_css.is_some_and(|work| {
         frame.width >= work.width - 2.0
             && main.0
                 + if c.sidebar {
@@ -1058,7 +1109,7 @@ pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjecti
                 } else {
                     0.0
                 }
-                > work.width + 2.0
+                > work.width + 2.0 / page_scale
     });
     let (main_width, left, right) = resize_regions(&previous, frame.width);
     let mut preview_memory = None;
@@ -1076,7 +1127,8 @@ pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjecti
         }
     }
     c.special = special;
-    c.scale = Some(scale);
+    c.native_scale = Some(native_scale);
+    c.page_scale = Some(page_scale);
     c.work = work;
     c.revision += 1;
     let canvas_left = previous.canvas.as_ref().map_or(606.0, |canvas| canvas.left);
@@ -1098,7 +1150,10 @@ pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjecti
         limited: main_width < c.preferred_main?.0 - 0.5,
         collapsed: false,
     };
-    c.anchor = Some((frame.x + left + if c.sidebar { GAP } else { 0.0 }, frame.y));
+    c.anchor = Some((
+        frame.x + (left + if c.sidebar { GAP } else { 0.0 }) * page_scale,
+        frame.y,
+    ));
     if !transient {
         c.normal = Some(frame);
     }
@@ -1116,8 +1171,8 @@ pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjecti
     }
     Some(SizeProjection {
         main: (
-            (normal.0 * scale).round() as u32,
-            (normal.1 * scale).round() as u32,
+            (normal.0 * page_scale * native_scale).round() as u32,
+            (normal.1 * page_scale * native_scale).round() as u32,
         ),
         preview: preview_memory,
     })
@@ -1186,6 +1241,52 @@ pub async fn reset(window: &Window) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Resampled {
+        written: Frame,
+        resampled: Frame,
+        physical: (u32, u32),
+    }
+
+    fn apply_and_resample(frame: &Frame, page_scale: f64, native_scale: f64) -> Resampled {
+        let (width, height) = super::super::popup_canvas::platform_logical_size(
+            (frame.width, frame.height),
+            page_scale,
+            true,
+        )
+        .unwrap();
+        let written = Frame {
+            width,
+            height,
+            ..*frame
+        };
+        let physical = (
+            (width * native_scale).round() as u32,
+            (height * native_scale).round() as u32,
+        );
+        Resampled {
+            written,
+            resampled: Frame {
+                width: physical.0 as f64 / native_scale / page_scale,
+                height: physical.1 as f64 / native_scale / page_scale,
+                ..*frame
+            },
+            physical,
+        }
+    }
+
+    fn assert_native_containment(frame: Frame, work: Rect) {
+        assert!(frame.x >= work.x);
+        assert!(frame.y >= work.y);
+        assert!(frame.x + frame.width <= work.right() + 0.001);
+        assert!(frame.y + frame.height <= work.bottom() + 0.001);
+    }
+
+    fn assert_css_extents_resampled(expected: &Frame, actual: Frame, page_scale: f64) {
+        assert!((actual.width - expected.width).abs() <= 0.001 / page_scale);
+        assert!((actual.height - expected.height).abs() <= 0.001 / page_scale);
+    }
+
     fn layout(preview: f64) -> Allocation {
         Allocation {
             revision: 1,
@@ -1346,6 +1447,193 @@ mod tests {
         assert_eq!(allocate(560.0, 240.0, 700.0, 900.0), (388.0, 180.0, 320.0));
         assert_eq!(allocate(560.0, 0.0, 0.0, 900.0), (560.0, 0.0, 0.0));
     }
+    #[test]
+    fn css_page_scale_keeps_inbox_and_preview_layouts_inside_the_viewport() {
+        for page_scale in [1.25, 1.5] {
+            let css_width = 1200.0 / page_scale;
+            let (main, sidebar, preview) = allocate(560.0, 240.0, 700.0, css_width);
+            assert!(main + sidebar + preview + 2.0 * GAP <= css_width + 0.001);
+            assert_eq!(sidebar, 180.0);
+            assert!(preview >= 320.0);
+        }
+    }
+    #[test]
+    fn inbox_narrow_viewport_degrades_inside_without_dropping_sidebar() {
+        for page_scale in [1.25, 1.5] {
+            let css_width = 900.0 / page_scale;
+            let (main, sidebar, preview) = allocate(560.0, 240.0, 700.0, css_width);
+            assert!(main > 0.0);
+            assert!(sidebar > 0.0);
+            assert!(preview > 0.0);
+            assert!(main + sidebar + preview + 2.0 * GAP <= css_width + 0.001);
+        }
+    }
+    #[test]
+    fn native_work_area_and_screen_origin_stay_logical_while_css_extents_scale() {
+        for page_scale in [1.25, 1.5] {
+            for native_scale in [1.0, 2.0] {
+                let native_origin = (-1280.0, 72.0);
+                let native_size = (1800.0, 1350.0);
+                let css_frame = Frame {
+                    x: native_origin.0,
+                    y: native_origin.1,
+                    width: native_size.0 / page_scale,
+                    height: native_size.1 / page_scale,
+                };
+                let native_work = Rect {
+                    x: native_origin.0,
+                    y: native_origin.1,
+                    width: 2400.0,
+                    height: 1800.0,
+                };
+                let mut geometry = Geometry::default();
+                let allocation = geometry
+                    .plan(
+                        Native {
+                            frame: css_frame,
+                            native_scale,
+                            page_scale,
+                            work: Some(native_work),
+                            special: false,
+                        },
+                        &Request {
+                            sidebar: Some(true),
+                            preview: Some(true),
+                            form: Form::Expanded,
+                            ..Request::default()
+                        },
+                        &Defaults {
+                            main: (560.0, 620.0),
+                            preview: 700.0,
+                            sidebar: 240.0,
+                        },
+                    )
+                    .unwrap()
+                    .allocation;
+                let native = apply_and_resample(&allocation.frame, page_scale, native_scale);
+                assert_eq!(
+                    (allocation.frame.x, allocation.frame.y),
+                    native_origin,
+                    "{page_scale}/{native_scale}"
+                );
+                assert_native_containment(native.written, native_work);
+                assert_css_extents_resampled(&allocation.frame, native.resampled, page_scale);
+            }
+        }
+    }
+
+    #[test]
+    fn production_native_work_area_bounds_fractional_css_layouts() {
+        for page_scale in [1.25, 1.5] {
+            for native_scale in [1.0, 2.0] {
+                let native_work = Rect {
+                    x: -1280.0,
+                    y: 72.0,
+                    width: 1800.0,
+                    height: 1800.0,
+                };
+                let mut geometry = Geometry::default();
+                let allocation = geometry
+                    .plan(
+                        Native {
+                            frame: Frame {
+                                x: -600.0,
+                                y: 100.0,
+                                width: 1000.0 / page_scale,
+                                height: 750.0 / page_scale,
+                            },
+                            native_scale,
+                            page_scale,
+                            work: Some(native_work),
+                            special: false,
+                        },
+                        &Request {
+                            sidebar: Some(true),
+                            preview: Some(true),
+                            form: Form::Expanded,
+                            ..Request::default()
+                        },
+                        &Defaults {
+                            main: (560.0, 620.0),
+                            preview: 700.0,
+                            sidebar: 240.0,
+                        },
+                    )
+                    .unwrap()
+                    .allocation;
+                let native = apply_and_resample(&allocation.frame, page_scale, native_scale);
+                assert_native_containment(native.written, native_work);
+                assert_css_extents_resampled(&allocation.frame, native.resampled, page_scale);
+                assert_eq!(
+                    allocation.sidebar_width
+                        + allocation.main_width
+                        + allocation.preview_width
+                        + 2.0 * GAP,
+                    native_work.width / page_scale,
+                    "{page_scale}/{native_scale}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn collapsed_window_converts_css_extent_and_keeps_native_work_bounds() {
+        for page_scale in [1.25, 1.5] {
+            for native_scale in [1.0, 2.0] {
+                let work = Rect {
+                    x: 100.0,
+                    y: 50.0,
+                    width: 1200.0,
+                    height: 900.0,
+                };
+                let mut geometry = Geometry::default();
+                let allocation = geometry
+                    .plan(
+                        Native {
+                            frame: Frame {
+                                x: 100.0,
+                                y: 70.0,
+                                width: 1200.0 / page_scale,
+                                height: 900.0 / page_scale,
+                            },
+                            native_scale,
+                            page_scale,
+                            work: Some(work),
+                            special: false,
+                        },
+                        &Request {
+                            form: Form::Collapsed(Mini {
+                                width: 260.0,
+                                height: 180.0,
+                            }),
+                            ..Request::default()
+                        },
+                        &Defaults {
+                            main: (560.0, 620.0),
+                            preview: 700.0,
+                            sidebar: 240.0,
+                        },
+                    )
+                    .unwrap()
+                    .allocation;
+                assert_eq!(
+                    (allocation.frame.width, allocation.frame.height),
+                    (260.0, 180.0),
+                    "{page_scale}/{native_scale}"
+                );
+                let native = apply_and_resample(&allocation.frame, page_scale, native_scale);
+                assert_native_containment(native.written, work);
+                assert_css_extents_resampled(&allocation.frame, native.resampled, page_scale);
+                let mut memory = super::super::popup_size::SizeMemory::default();
+                memory.restoring((560.0, 620.0));
+                assert_eq!(
+                    memory.observe(native.physical, native_scale * page_scale, true,),
+                    None,
+                    "collapsed dimensions must not replace preferences"
+                );
+            }
+        }
+    }
 
     // ---- The small window (docs/specs/popup-inbox-collapse.md) --------------------------------
 
@@ -1364,10 +1652,16 @@ mod tests {
         frame: Frame,
         work: Rect,
         special: bool,
+        native_scale: f64,
+        page_scale: f64,
     }
 
     impl Sim {
         fn new() -> Self {
+            Self::with_scale(1.0, 1.0)
+        }
+
+        fn with_scale(native_scale: f64, page_scale: f64) -> Self {
             Sim {
                 geometry: Geometry::default(),
                 frame: Frame {
@@ -1383,13 +1677,16 @@ mod tests {
                     height: 1000.0,
                 },
                 special: false,
+                native_scale,
+                page_scale,
             }
         }
 
         fn native(&self) -> Native {
             Native {
                 frame: self.frame,
-                scale: 2.0,
+                native_scale: self.native_scale,
+                page_scale: self.page_scale,
                 work: Some(self.work),
                 special: self.special,
             }
@@ -1411,6 +1708,22 @@ mod tests {
         /// Prepare, move the window, finish: what `prepare`, `commit_frame` and `finish` do.
         fn run(&mut self, request: Request) -> Allocation {
             let Planned { mut allocation, .. } = self.try_prepare(request).unwrap();
+            self.frame = allocation.frame;
+            self.geometry.committed(&allocation);
+            if !allocation.collapsed {
+                allocation.responsive();
+            }
+            let revision = allocation.revision;
+            self.geometry.finished(revision, &allocation);
+            allocation
+        }
+
+        /// Run one transaction through the native physical-pixel round trip so the next round
+        /// starts from the extents the OS would report.
+        fn run_resampled(&mut self, request: Request) -> Allocation {
+            let Planned { mut allocation, .. } = self.try_prepare(request).unwrap();
+            allocation.frame =
+                apply_and_resample(&allocation.frame, self.page_scale, self.native_scale).resampled;
             self.frame = allocation.frame;
             self.geometry.committed(&allocation);
             if !allocation.collapsed {
@@ -1569,6 +1882,137 @@ mod tests {
         });
         assert!(kept.collapsed);
         assert_eq!((kept.frame.width, kept.frame.height), (260.0, 180.0));
+    }
+
+    #[test]
+    fn fractional_keep_collapsed_size_is_stable_without_false_resize() {
+        for page_scale in [1.25, 1.5] {
+            for native_scale in [1.0, 2.0] {
+                let mut sim = Sim::with_scale(native_scale, page_scale);
+                sim.run_resampled(ask(false, Form::Expanded));
+                sim.run_resampled(ask(false, Form::Collapsed(MINI)));
+                for _ in 0..4 {
+                    let kept = sim.run_resampled(Request {
+                        preview: Some(false),
+                        ..Request::default()
+                    });
+                    assert_eq!(
+                        (kept.frame.width, kept.frame.height),
+                        (260.0, 180.0),
+                        "{page_scale}/{native_scale}"
+                    );
+                    let native = apply_and_resample(&kept.frame, page_scale, native_scale);
+                    assert_css_extents_resampled(&kept.frame, native.resampled, page_scale);
+                    assert!(!frame_size_changed(
+                        kept.frame,
+                        native.resampled,
+                        native_scale,
+                        page_scale
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fractional_expanded_resampling_does_not_persist_a_false_resize() {
+        for page_scale in [1.25, 1.5] {
+            for native_scale in [1.0, 2.0] {
+                let mut sim = Sim::with_scale(native_scale, page_scale);
+                let expanded = sim.run_resampled(Request {
+                    sidebar: Some(true),
+                    preview: Some(true),
+                    form: Form::Expanded,
+                    ..Request::default()
+                });
+                let mut memory = super::super::popup_size::SizeMemory::default();
+                memory.restoring((expanded.frame.width, expanded.frame.height));
+                for _ in 0..4 {
+                    let kept = sim.run_resampled(Request::default());
+                    assert!(!kept.collapsed);
+                    assert_eq!(sim.geometry.page_scale, Some(page_scale));
+                    assert_eq!(sim.geometry.native_scale, Some(native_scale));
+                    let native = apply_and_resample(&kept.frame, page_scale, native_scale);
+                    assert_css_extents_resampled(&kept.frame, native.resampled, page_scale);
+                    assert!(!frame_size_changed(
+                        expanded.frame,
+                        native.resampled,
+                        native_scale,
+                        page_scale
+                    ));
+                    assert_eq!(
+                        memory.observe(native.physical, native_scale * page_scale, true),
+                        None,
+                        "{page_scale}/{native_scale}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn special_window_keeps_the_sampled_frame_during_sidebar_and_preview_changes() {
+        for page_scale in [1.0, 1.25, 1.5] {
+            for native_scale in [1.0, 2.0] {
+                let sampled = Frame {
+                    x: 100.0,
+                    y: 70.0,
+                    width: 1200.0,
+                    height: 900.0,
+                };
+                let mut geometry = Geometry::default();
+                for (sidebar, preview) in [(true, false), (false, true), (true, true)] {
+                    let allocation = geometry
+                        .plan(
+                            Native {
+                                frame: sampled,
+                                native_scale,
+                                page_scale,
+                                work: Some(Rect {
+                                    x: 0.0,
+                                    y: 25.0,
+                                    width: 1728.0,
+                                    height: 1000.0,
+                                }),
+                                special: true,
+                            },
+                            &Request {
+                                sidebar: Some(sidebar),
+                                preview: Some(preview),
+                                form: Form::Expanded,
+                                ..Request::default()
+                            },
+                            &Sim::defaults(),
+                        )
+                        .unwrap()
+                        .allocation;
+                    assert_eq!(
+                        (
+                            allocation.frame.x,
+                            allocation.frame.y,
+                            allocation.frame.width,
+                            allocation.frame.height,
+                        ),
+                        (sampled.x, sampled.y, sampled.width, sampled.height),
+                        "{page_scale}/{native_scale}: sidebar={sidebar}, preview={preview}"
+                    );
+                    assert_eq!(allocation.main_height, sampled.height);
+                    if let Some(canvas) = &allocation.canvas {
+                        assert_eq!(canvas.height, sampled.height);
+                    }
+                    assert_eq!(
+                        allocation.sidebar_width
+                            + allocation.main_width
+                            + allocation.preview_width
+                            + if sidebar { GAP } else { 0.0 }
+                            + if preview { GAP } else { 0.0 },
+                        sampled.width
+                    );
+                    let revision = allocation.revision;
+                    geometry.finished(revision, &allocation);
+                }
+            }
+        }
     }
 
     #[test]
@@ -1804,6 +2248,33 @@ mod tests {
             assert_eq!(sim.geometry.drift, LEFT);
             sim.end_round();
         });
+    }
+
+    #[test]
+    fn fractional_collapse_arrival_and_home_rounds_keep_the_same_origin() {
+        for page_scale in [1.25, 1.5] {
+            for native_scale in [1.0, 2.0] {
+                let mut sim = Sim::with_scale(native_scale, page_scale);
+                sim.work.width = 3000.0;
+                for round in 0..6 {
+                    assert_eq!(
+                        sim.frame.x, HOME_X,
+                        "{page_scale}/{native_scale}: round {round} did not start at home"
+                    );
+                    first_window(&mut sim);
+                    let small = sim.run(ask(false, Form::Collapsed(MINI)));
+                    assert_eq!(small.frame.x, HOME_X);
+                    let arrived = sim.run(ask(true, Form::Expanded));
+                    assert_eq!(arrived.frame.x, HOME_X);
+                    assert_eq!(sim.geometry.drift, LEFT * page_scale);
+                    sim.end_round();
+                    assert_eq!(
+                        sim.frame.x, HOME_X,
+                        "{page_scale}/{native_scale}: round {round} did not return home"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

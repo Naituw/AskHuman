@@ -355,11 +355,17 @@ pub(crate) fn finalize_popup_show(
     // Recover invalid shared preferences before restoring either a cold or warm popup.
     let config = AppConfig::load_without_secrets();
     let (width, height) = popup_size::restored_size(&config.channels.popup);
+    let restore = popup_size::platform_window_size(
+        (width, height),
+        page_scale_for(app),
+        cfg!(target_os = "linux"),
+    )
+    .unwrap_or((width, height));
     app.state::<std::sync::Mutex<popup_size::SizeMemory>>()
         .lock()
         .unwrap()
         .restoring((width, height));
-    let _ = win.set_size(tauri::LogicalSize::new(width, height));
+    let _ = win.set_size(tauri::LogicalSize::new(restore.0, restore.1));
     let _ = win.set_always_on_top(config.general.always_on_top);
     // Apply the latest native appearance in case the theme changed while prewarmed.
     crate::commands::apply_theme_to_windows(app, &crate::commands::theme_str(config.general.theme));
@@ -850,7 +856,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
     let prevent_autoexit = matches!(view, View::Popup | View::PopupInbox | View::GuiHost);
 
     crate::perf::mark_env("gui.build_start");
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .register_asynchronous_uri_scheme_protocol(
             crate::local_image::SCHEME,
             crate::local_image::serve,
@@ -865,7 +871,10 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
         .manage(crate::attachment_preview::ReadGeneration::default())
         .manage(crate::attachment_preview::NativeGeneration::default())
         .manage(crate::attachment_preview::NativePermits::default())
-        .manage(crate::local_image::Registry::default())
+        .manage(crate::local_image::Registry::default());
+    #[cfg(target_os = "linux")]
+    let builder = builder.manage(linux_dpi::PageScaleState::default());
+    let app = builder
         .invoke_handler(invoke::handle)
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::Destroyed) {
@@ -996,7 +1005,25 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             match view {
                 View::Popup | View::PopupInbox => {
                     #[cfg(target_os = "linux")]
-                    linux_dpi::ensure_valid_resolution()?;
+                    let initial_scale = linux_dpi::initialize_page_scale(app)?.get();
+                    #[cfg(not(target_os = "linux"))]
+                    let initial_scale = 1.0;
+                    let initial_size = popup_size::platform_window_size(
+                        (popup_w, popup_h),
+                        initial_scale,
+                        cfg!(target_os = "linux"),
+                    )
+                    .ok_or_else(|| {
+                        tauri::Error::InvalidWebviewUrl("popup initial size is invalid")
+                    })?;
+                    let minimum = popup_size::platform_window_size(
+                        (popup_size::MIN_WIDTH, popup_size::MIN_HEIGHT),
+                        initial_scale,
+                        cfg!(target_os = "linux"),
+                    )
+                    .ok_or_else(|| {
+                        tauri::Error::InvalidWebviewUrl("popup minimum size is invalid")
+                    })?;
                     {
                         let mut url = String::from(if matches!(view, View::PopupInbox) {
                             "index.html?view=popup-inbox"
@@ -1014,8 +1041,8 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                             WebviewWindowBuilder::new(app, "popup", WebviewUrl::App(url.into()))
                                 .initialization_script(include_str!("popup_navigation.js"))
                                 .title(i18n::tr(lang, "title.popup"))
-                                .inner_size(popup_w, popup_h)
-                                .min_inner_size(popup_size::MIN_WIDTH, popup_size::MIN_HEIGHT)
+                                .inner_size(initial_size.0, initial_size.1)
+                                .min_inner_size(minimum.0, minimum.1)
                                 .center()
                                 // 先隐藏构建，设好原生出现动画后再显示，触发 macOS 窗口出现动画。
                                 .visible(false)
@@ -1240,6 +1267,8 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                 View::History { all } => {
                     // History window only needs general (theme); skip keychain.
                     let config = AppConfig::load_without_secrets();
+                    #[cfg(target_os = "linux")]
+                    linux_dpi::initialize_page_scale(app)?;
                     // 进程内默认项目（AppState.project = CLI 探测的当前项目）→ 传 None 沿用。
                     create_history_window(app, &config, all, None, None, popup_pin(app, &config))?;
                 }
@@ -1252,6 +1281,8 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                 }
                 View::GuiHost => {
                     let config = AppConfig::load_without_secrets();
+                    #[cfg(target_os = "linux")]
+                    linux_dpi::initialize_page_scale(app)?;
                     gui_host::setup(app, &config)?;
                 }
                 View::Agents => {
@@ -1957,11 +1988,21 @@ where
     }
     let window_effect = config.general.window_effect;
     let effective_window_effect = effective_window_effect(window_effect);
+    #[cfg(target_os = "linux")]
+    let page_scale = linux_dpi::page_scale(manager).get();
+    #[cfg(not(target_os = "linux"))]
+    let page_scale = 1.0;
+    let initial =
+        popup_size::platform_window_size((820.0, 600.0), page_scale, cfg!(target_os = "linux"))
+            .ok_or_else(|| tauri::Error::InvalidWebviewUrl("history initial size is invalid"))?;
+    let minimum =
+        popup_size::platform_window_size((600.0, 440.0), page_scale, cfg!(target_os = "linux"))
+            .ok_or_else(|| tauri::Error::InvalidWebviewUrl("history minimum size is invalid"))?;
     append_window_effect_query(&mut url, effective_window_effect);
     let builder = WebviewWindowBuilder::new(manager, "history", WebviewUrl::App(url.into()))
         .title(i18n::tr(lang, "title.history"))
-        .inner_size(820.0, 600.0)
-        .min_inner_size(600.0, 440.0)
+        .inner_size(initial.0, initial.1)
+        .min_inner_size(minimum.0, minimum.1)
         .center()
         .always_on_top(pin_above_popup)
         .theme(theme);
@@ -2480,6 +2521,39 @@ fn window_theme(config: &AppConfig) -> Option<tauri::Theme> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn page_scale_for<R: tauri::Runtime, M: Manager<R>>(manager: &M) -> f64 {
+    linux_dpi::page_scale(manager).get()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn page_scale_for<R: tauri::Runtime, M: Manager<R>>(_: &M) -> f64 {
+    1.0
+}
+
+#[cfg(test)]
+mod popup_scale_tests {
+    use super::*;
+
+    #[test]
+    fn configured_css_size_round_trips_without_platform_compounding() {
+        for page_scale in [1.25, 1.5] {
+            let configured = (560.0, 620.0);
+            let native = popup_size::platform_window_size(configured, page_scale, true).unwrap();
+            let restored_css = (native.0 / page_scale, native.1 / page_scale);
+            assert_eq!(restored_css, configured);
+            assert_eq!(
+                popup_size::platform_window_size(configured, page_scale, false),
+                Some(configured)
+            );
+        }
+        assert_eq!(
+            popup_size::platform_window_size((560.0, 620.0), 1.0, true),
+            Some((560.0, 620.0))
+        );
+    }
+}
+
 /// Persist normal, visible popup geometry; lifecycle events must not poison shared preferences.
 fn persist_popup_size(window: &tauri::Window, event_size: tauri::PhysicalSize<u32>) {
     let app = window.app_handle();
@@ -2497,7 +2571,14 @@ fn persist_popup_size(window: &tauri::Window, event_size: tauri::PhysicalSize<u3
     {
         return;
     }
-    if let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
+    if let (Ok(size), Ok(native_scale)) = (window.inner_size(), window.scale_factor()) {
+        let Some(scale) = popup_size::persistence_scale(
+            native_scale,
+            page_scale_for(app),
+            cfg!(target_os = "linux"),
+        ) else {
+            return;
+        };
         let Some(projected) = popup_preview::resized(window, event_size) else {
             return;
         };

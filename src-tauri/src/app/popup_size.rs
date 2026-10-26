@@ -44,6 +44,51 @@ pub(super) fn restored_size(config: &PopupChannelConfig) -> (f64, f64) {
     )
 }
 
+pub(super) fn platform_window_size(
+    css: (f64, f64),
+    page_scale: f64,
+    uses_page_scale: bool,
+) -> Option<(f64, f64)> {
+    let scale = if uses_page_scale {
+        if !page_scale.is_finite() || page_scale <= 0.0 {
+            return None;
+        }
+        page_scale
+    } else {
+        1.0
+    };
+    let width = css.0 * scale;
+    let height = css.1 * scale;
+    (css.0.is_finite()
+        && css.1.is_finite()
+        && css.0 > 0.0
+        && css.1 > 0.0
+        && width.is_finite()
+        && height.is_finite()
+        && width <= i32::MAX as f64
+        && height <= i32::MAX as f64)
+        .then_some((width, height))
+}
+
+pub(super) fn persistence_scale(
+    native_scale: f64,
+    page_scale: f64,
+    uses_page_scale: bool,
+) -> Option<f64> {
+    if !native_scale.is_finite() || native_scale <= 0.0 {
+        return None;
+    }
+    let scale = if uses_page_scale {
+        if !page_scale.is_finite() || page_scale <= 0.0 {
+            return None;
+        }
+        native_scale * page_scale
+    } else {
+        native_scale
+    };
+    (scale.is_finite() && scale > 0.0).then_some(scale)
+}
+
 #[derive(Default)]
 pub(super) struct SizeMemory {
     last_size: Option<(f64, f64)>,
@@ -189,5 +234,40 @@ mod tests {
         memory.restoring((560.0, 620.0));
         assert_eq!(memory.observe((561, 620), 1.0, true), None);
         assert_eq!(memory.observe((562, 620), 1.0, true), Some((562.0, 620.0)));
+    }
+    #[test]
+    fn fractional_page_scale_saves_css_sizes_without_compounding() {
+        for page_scale in [1.25_f64, 1.5] {
+            let mut memory = SizeMemory::default();
+            memory.restoring((560.0, 620.0));
+            let physical = (
+                (560.0 * page_scale * 2.0).round() as u32,
+                (620.0 * page_scale * 2.0).round() as u32,
+            );
+            assert_eq!(memory.observe(physical, page_scale * 2.0, true), None);
+            let resized = (
+                (700.0 * page_scale * 2.0).round() as u32,
+                (800.0 * page_scale * 2.0).round() as u32,
+            );
+            assert_eq!(
+                memory.observe(resized, page_scale * 2.0, true),
+                Some((700.0, 800.0))
+            );
+            assert_eq!(memory.observe(resized, page_scale * 2.0, true), None);
+        }
+    }
+
+    #[test]
+    fn non_linux_window_and_persistence_sizes_remain_native() {
+        assert_eq!(
+            platform_window_size((560.0, 620.0), 1.5, false),
+            Some((560.0, 620.0))
+        );
+        assert_eq!(
+            platform_window_size((560.0, 620.0), 1.5, true),
+            Some((840.0, 930.0))
+        );
+        assert_eq!(persistence_scale(2.0, 1.5, false), Some(2.0));
+        assert_eq!(persistence_scale(2.0, 1.5, true), Some(3.0));
     }
 }
