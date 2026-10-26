@@ -10,7 +10,7 @@ Mac / iOS 交互原型、双向消息与进程重启补发已验证）。2026-10
 [`docs/specs/ios-channel.md`](specs/ios-channel.md)，计划 [`docs/plans/ios-channel.md`](plans/ios-channel.md)
 （作为新渠道 `ios`；EMQX 杭州 + 腾讯云云函数推送中继 + 端到端加密；多 Mac 配对同一部手机；回答 / 确认 / 附件 /
 Watch / Follow / 插话 / 新任务），实现地图见 [`docs/overview-ios.md`](overview-ios.md)，用户说明见
-[`docs/wiki/ios-setup.md`](wiki/ios-setup.md)。实现在 worktree `HumanInLoop-ios`（分支 `feat/ios-channel`）。
+[`docs/wiki/ios-setup.md`](wiki/ios-setup.md)。实现在 worktree `HumanInLoop-ios`（分支 `feat/ios-channel`），2026-10-26 已快进合并进 `main`（渠道默认关闭：受 `experimental.enabled` 隐藏，`channels.ios.enabled` 默认 `false`；所有 `feat` / `fix` 提交都带 `Release-Note: skip`，不进发布说明）。
 
 **状态（2026-10-25）**：Mac Gateway / IPC 3→4 / 设置页 / CLI、推送中继 `relay/`、iOS App（收件箱 · 作答 · 确认 ·
 附件 · Agents · 关注 · 实时观察 · 插话 · 新任务 · 历史 · 配对 · 通知扩展）全部实现，通过 Rust / Swift / 中继 / 前端测试、
@@ -41,15 +41,15 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 - [ ] `inactive` 修复在真机上**未验证**的三项（用户决定不再手测，只在文档里记为未验证）：停留短于 10 秒不离线；锁屏 / 回主屏后 Mac 多快看到离线（告别从 `inactive` 挪到 `background`，估计晚 0.1–0.3 秒；最坏有「3 秒无确认补发推送」兜底）；
   强退后 Mac 多久看到离线（靠 Last Will）。有手机侧时间线（见上面 P0 门禁的测量方式）或做真机矩阵其余项时顺带量，不单独叫用户测
 - [ ] 性能口径（需求 D10 四条）与流量预算（典型场景 ≤ 300 MB / 月）分段实测，报告原始分布与全部超时
-- [ ] 合并前：
+- [ ] 合并进 main 之后仍待处理：
   - `.cargo/audit.toml` 里忽略了 5 条 `rustls-webpki 0.102.8` 的公告（`rumqttc 0.25.1` 带入；它只用这个 crate 的错误类型，证书校验走已修复的 0.103.16，理由与删除条件写在文件注释里）。
-    `rumqttc` 换到用 webpki 0.103 的版本、或换掉该客户端后，**删掉这 5 条**并重跑 `cargo audit --file src-tauri/Cargo.lock`。分支比 main 多一条 `unmaintained` 警告：`rustls-pemfile 2.2.0`（RUSTSEC-2025-0134，同样由 `rumqttc` 带入），只是警告，不影响 CI
+    `rumqttc` 换到用 webpki 0.103 的版本、或换掉该客户端后，**删掉这 5 条**并重跑 `cargo audit --file src-tauri/Cargo.lock`。合并后 `cargo audit` 比之前多一条 `unmaintained` 警告：`rustls-pemfile 2.2.0`（RUSTSEC-2025-0134，同样由 `rumqttc` 带入），只是警告，不影响 CI
   - 本机默认的 `cargo` 是 Homebrew 的 1.94.1，比 CI 的 `stable`（现为 1.99.0）旧，clippy 的结论会不同（新 clippy 对 `async_trait` 生成的方法报了 `double_must_use`，已在三个 trait 上 `allow`）。
     提交前要对齐 CI 时：`PATH=~/.rustup/toolchains/1.99.0-aarch64-apple-darwin/bin:$PATH CARGO_TARGET_DIR=/tmp/<独立目录> cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
     （在持久 shell 里用 `export` 会把工具链环境泄漏给后面的命令，写成行内前缀）
   - 决定是否公开该渠道（README 链接、去掉提交的 `Release-Note: skip`）；是否在 CI 增加 `relay` 的 `node --test` 与 `swift test`（建议只加这两项，不加 `xcodebuild`）
-  - 分支已于 2026-10-26 推送到公开仓库 `origin/feat/ios-channel`；推送前从历史里清掉了真实 EMQX 实例 ID 与 APNs Key ID（提交哈希因此改写过一次，文档里改用提交标题指代）。
-    此后若要再改写这条分支的历史，需要 force-push，先问用户；**不要 rebase 这条已推送的分支**，同步 main 用合并（2026-10-26 已合过一次：`chore(ios): merge main into feat/ios-channel`，合并时解了 `agents/stop.rs` 的冲突）
+  - 这条分支的历史已在公开仓库（`origin/feat/ios-channel` 与 `origin/main`）：推送前从历史里清掉了真实 EMQX 实例 ID 与 APNs Key ID（提交哈希因此改写过一次，文档里改用提交标题指代）。
+    **不得再改写**（不要 rebase，也不要 force-push）；分支继续开发时同步 main 用合并（2026-10-26 合过一次：`chore(ios): merge main into feat/ios-channel`，合并时解了 `agents/stop.rs` 的冲突）
 
 已知延期（不阻塞原型）：
 - Codex 桌面 App 的会话暂不支持手机插话（返回 `unsupported`）；Pi 的扩展只有在 Stop 确认开着时才会随 daemon 启动自动迁移（2026-10-26 实测：日志出现 `migrated outdated Stop confirmation hooks: pi`），只开了生命周期跟踪的用户仍要在设置里重新保存 / 刷新才会上报失败的回合；已在运行的 Pi 会话要重启后才加载新扩展。
