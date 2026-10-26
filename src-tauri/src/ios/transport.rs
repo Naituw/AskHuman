@@ -41,6 +41,9 @@ pub struct Will {
     pub retain: bool,
 }
 
+// clippy 1.99 reports `double_must_use` on the methods `async_trait` generates; nothing in this
+// trait carries `#[must_use]` itself.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait BrokerTransport: Send + Sync {
     /// QoS 1 publish.

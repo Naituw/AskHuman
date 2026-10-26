@@ -61,6 +61,9 @@ use support::{Dedup, Outbox};
 /// What the gateway needs to know about the daemon around it. Everything beyond the first four
 /// methods has a conservative default (nothing to show, nothing allowed), so a host only
 /// implements what it supports.
+// clippy 1.99 reports `double_must_use` on the methods `async_trait` generates; nothing in this
+// trait carries `#[must_use]` itself.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait Host: Send + Sync + 'static {
     /// Unix milliseconds. Tests substitute a virtual clock.

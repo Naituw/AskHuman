@@ -18,6 +18,9 @@ pub enum PushOutcome {
     Failed(String),
 }
 
+// clippy 1.99 reports `double_must_use` on the methods `async_trait` generates; nothing in this
+// trait carries `#[must_use]` itself.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait PushClient: Send + Sync {
     async fn send(&self, relay_url: &str, push: &RelayPush) -> PushOutcome;
