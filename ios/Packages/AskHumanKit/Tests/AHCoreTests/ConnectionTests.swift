@@ -67,6 +67,97 @@ final class ConnectionTests: XCTestCase {
         await eventually("fg again") { h.presence(of: h.phoneId)?.fg == 1 }
     }
 
+    /// Found on a real phone: Control Center, the notification center and the app switcher make the app
+    /// inactive while it stays on screen, and each of them made the Mac see the phone leave for the
+    /// five seconds or so they stayed open (a request arriving then was pushed to a phone in the user's hand).
+    func testBeingInactiveForAShortWhileKeepsTheConnection() async throws {
+        let h = Harness()
+        await h.pair()
+        await eventually("fg") { h.presence(of: h.phoneId)?.fg == 1 }
+
+        await h.engine.setInactive()
+        await h.pass(seconds: Int(PhoneEngine.inactiveGrace) - 1)
+        XCTAssertTrue(h.phone.isConnected, "still within the grace period")
+        XCTAssertEqual(h.presence(of: h.phoneId)?.fg, 1, "the Mac still sees the phone on screen")
+
+        await h.engine.setForeground(true)
+        await h.pass(seconds: Int(PhoneEngine.inactiveGrace) * 2)
+        XCTAssertTrue(h.phone.isConnected, "coming back cancels the goodbye")
+        XCTAssertEqual(h.presence(of: h.phoneId)?.fg, 1)
+        XCTAssertEqual(h.mac.count(Wire.T.hello), 1, "no reconnect, so no second hello")
+    }
+
+    func testEveryInactiveStayGetsItsOwnGracePeriod() async throws {
+        let h = Harness()
+        await h.pair()
+        await eventually("fg") { h.presence(of: h.phoneId)?.fg == 1 }
+
+        let almost = Int(PhoneEngine.inactiveGrace) - 2
+        await h.engine.setInactive()
+        await h.pass(seconds: almost)
+        await h.engine.setForeground(true)
+        await h.engine.setInactive()
+        await h.pass(seconds: almost)
+        XCTAssertTrue(h.phone.isConnected, "the first stay's time does not count against the second")
+        XCTAssertEqual(h.presence(of: h.phoneId)?.fg, 1)
+    }
+
+    func testStayingInactiveForLongSaysGoodbyeAndComingBackReconnects() async throws {
+        let h = Harness()
+        await h.pair()
+        await eventually("fg") { h.presence(of: h.phoneId)?.fg == 1 }
+
+        let started = h.clock.now()
+        await h.engine.setInactive()
+        await h.advance(until: { h.presence(of: h.phoneId)?.o == 0 }, step: 1, limit: PhoneEngine.inactiveGrace + 5, "goodbye")
+        XCTAssertGreaterThanOrEqual(h.clock.now().timeIntervalSince(started), PhoneEngine.inactiveGrace - 0.5)
+        XCTAssertEqual(h.presence(of: h.phoneId)?.fg, 0)
+        XCTAssertFalse(h.phone.isConnected)
+
+        await h.engine.setForeground(true)
+        await eventually("second hello") { h.mac.count(Wire.T.hello) == 2 }
+        await eventually("fg again") { h.presence(of: h.phoneId)?.fg == 1 }
+    }
+
+    func testLeavingTheScreenWhileInactiveSaysGoodbyeAtOnce() async throws {
+        let h = Harness()
+        await h.pair()
+        await eventually("fg") { h.presence(of: h.phoneId)?.fg == 1 }
+
+        // Locking the phone: inactive for a moment, then in the background.
+        await h.engine.setInactive()
+        await h.engine.setForeground(false)
+        XCTAssertEqual(h.presence(of: h.phoneId)?.o, 0, "no waiting for the grace period")
+        XCTAssertFalse(h.phone.isConnected)
+
+        await h.pass(seconds: Int(PhoneEngine.inactiveGrace) * 2)
+        XCTAssertFalse(h.phone.isConnected, "the abandoned grace period does not bring the phone back")
+        XCTAssertEqual(h.mac.count(Wire.T.hello), 1)
+    }
+
+    func testAnInactiveMomentAfterLeavingDoesNotSayGoodbyeLaterInTheForeground() async throws {
+        let h = Harness()
+        await h.pair()
+        await eventually("fg") { h.presence(of: h.phoneId)?.fg == 1 }
+
+        await h.engine.setForeground(false)
+        // A stay that follows a departure has nothing to cut short: no timer may be started for it. (The
+        // pairing flow also turns the foreground on without `setForeground`, so a stale timer would
+        // otherwise end whatever stay in the foreground comes next.)
+        let timersBefore = h.clock.sleeperCount
+        await h.engine.setInactive()
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(h.clock.sleeperCount, timersBefore, "nothing to time after a departure")
+
+        await h.engine.setForeground(true)
+        await eventually("second hello") { h.mac.count(Wire.T.hello) == 2 }
+        await eventually("fg again") { h.presence(of: h.phoneId)?.fg == 1 }
+
+        await h.pass(seconds: Int(PhoneEngine.inactiveGrace) * 2)
+        XCTAssertTrue(h.phone.isConnected, "a stale grace period must not end a stay in the foreground")
+        XCTAssertEqual(h.presence(of: h.phoneId)?.fg, 1)
+    }
+
     func testALostConnectionIsRetriedWithBackoffAndResynced() async throws {
         let h = Harness()
         await h.pair()

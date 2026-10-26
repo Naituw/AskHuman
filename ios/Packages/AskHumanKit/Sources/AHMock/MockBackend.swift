@@ -122,6 +122,9 @@ public actor MockBackend: RemoteBackend {
         publish()
     }
 
+    /// The mock has no connection to keep: being inactive changes nothing.
+    public func setInactive() async {}
+
     public func refresh() async {
         await pause(0.6)
         publish()

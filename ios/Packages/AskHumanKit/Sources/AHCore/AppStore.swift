@@ -145,6 +145,10 @@ public final class AppStore {
         await backend.setForeground(foreground)
     }
 
+    public func setInactive() async {
+        await backend.setInactive()
+    }
+
     public func refresh() async {
         await backend.refresh()
     }

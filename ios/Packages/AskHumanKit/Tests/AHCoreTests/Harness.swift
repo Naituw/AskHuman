@@ -81,6 +81,15 @@ final class Harness: @unchecked Sendable {
 
     var phoneId: String { vault.phoneId() }
 
+    /// Lets `seconds` of the manual clock pass in one-second steps, the way `advance(until:)` does, for
+    /// tests that assert that nothing happens in that time.
+    func pass(seconds: Int) async {
+        for _ in 0..<seconds {
+            await clock.advance(by: 1)
+            try? await Task.sleep(nanoseconds: 3_000_000)
+        }
+    }
+
     /// Moves the manual clock forward in steps until `condition` holds. The engine registers its
     /// timers from tasks of its own, so a single big jump could pass them by.
     func advance(

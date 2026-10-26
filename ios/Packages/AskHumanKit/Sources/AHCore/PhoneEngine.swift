@@ -156,7 +156,27 @@ public actor PhoneEngine: RemoteBackend {
         publish()
     }
 
+    /// How long the app may stay inactive (on screen, but not receiving events) before it says goodbye.
+    /// Control Center, the notification center, the app switcher and system alerts all do that, and the
+    /// user is still looking at the app: they are not a departure, and the Mac should not see one.
+    public static let inactiveGrace: TimeInterval = 10
+
+    /// The app is on screen but not receiving events. The connection stays; a stay that outlasts
+    /// `inactiveGrace` says goodbye as if the app had left. Leaving (`setForeground(false)`, which a
+    /// locked phone or the home screen leads to within moments) says goodbye at once, and coming back
+    /// (`setForeground(true)`) keeps the connection.
+    public func setInactive() async {
+        // After a departure there is nothing to cut short, and a timer started now would end the next
+        // stay in the foreground.
+        guard foreground else { return }
+        // Already counting: the stay began with the first call.
+        guard timers["inactive"] == nil else { return }
+        after("inactive", Self.inactiveGrace) { engine in await engine.setForeground(false) }
+    }
+
     public func setForeground(_ value: Bool) async {
+        // Either way the grace period is over: the app is active again, or it leaves right now.
+        cancelTimer("inactive")
         guard foreground != value else { return }
         foreground = value
         if value {

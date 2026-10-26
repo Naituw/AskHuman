@@ -14,6 +14,11 @@ public protocol RemoteBackend: AnyObject, Sendable {
     func start() async
     /// `true` connects to the broker; `false` says goodbye and disconnects.
     func setForeground(_ foreground: Bool) async
+    /// The app is on screen but not receiving events (Control Center, the notification center, the app
+    /// switcher, a system alert): not a departure. The connection stays for a grace period and only a
+    /// stay that outlasts it says goodbye, as `setForeground(false)` does at once. `setForeground(true)`
+    /// in the meantime keeps the connection.
+    func setInactive() async
     /// Pull to refresh: reconnects when the link is down and asks every reachable Mac for an
     /// authoritative inbox snapshot.
     func refresh() async

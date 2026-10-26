@@ -15,8 +15,18 @@ struct AskHumanApp: App {
                 .environment(\.launchOptions, environment.launch)
                 .task { await environment.start() }
                 .task(id: scenePhase) {
-                    await environment.store.setForeground(scenePhase == .active)
-                    if scenePhase == .active { await environment.push.refreshAuthorization() }
+                    switch scenePhase {
+                    case .active:
+                        await environment.store.setForeground(true)
+                        await environment.push.refreshAuthorization()
+                    case .inactive:
+                        // Control Center, the notification center, the app switcher and system alerts
+                        // leave the app on screen: the connection stays for a grace period.
+                        await environment.store.setInactive()
+                    default:
+                        // Background (the home screen, a locked phone): the Mac hears goodbye at once.
+                        await environment.store.setForeground(false)
+                    }
                 }
         }
     }
