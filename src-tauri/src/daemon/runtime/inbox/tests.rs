@@ -149,7 +149,7 @@ async fn popup_reaper_logs_windows_failure_with_pid_and_escaped_stderr() {
 #[tokio::test]
 async fn popup_reaper_drains_windows_stderr_and_keeps_successful_exit_silent() {
     let child = tokio::process::Command::new("cmd")
-        .args(["/C", "for /L %i in (1,1,2048) do @echo xxxxxxxxxx 1>&2"])
+        .args(["/C", "for /L %i in (1,1,32768) do @echo xxxxxxxxxx 1>&2"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -167,6 +167,157 @@ async fn popup_reaper_drains_windows_stderr_and_keeps_successful_exit_silent() {
         logs.is_empty(),
         "successful hosts must not emit captured noise"
     );
+}
+
+// Run fixtures in a separate test process so native stderr handles and exit codes are real.
+const STDERR_FIXTURE_TEST: &str = "daemon::server_impl::inbox::tests::popup_stderr_process_fixture";
+
+fn stderr_fixture_command(mode: &str, ready: &std::path::Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", STDERR_FIXTURE_TEST, "--ignored", "--nocapture"])
+        .env("ASKHUMAN_STDERR_FIXTURE", mode)
+        .env("ASKHUMAN_STDERR_READY", ready)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    command
+}
+
+#[test]
+#[ignore = "subprocess fixture, invoked by stderr regression tests"]
+fn popup_stderr_process_fixture() {
+    use std::io::{Read, Write};
+    let mode = std::env::var("ASKHUMAN_STDERR_FIXTURE").unwrap();
+    let ready = std::env::var_os("ASKHUMAN_STDERR_READY").unwrap();
+    match mode.as_str() {
+        "hold" => {
+            std::fs::write(ready, "ready").unwrap();
+            // The descendant is bounded even if its parent test fails.
+            std::thread::sleep(Duration::from_secs(3));
+        }
+        "descendant" => {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", STDERR_FIXTURE_TEST, "--ignored", "--nocapture"])
+                .env("ASKHUMAN_STDERR_FIXTURE", "hold")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::inherit());
+            let mut child = command.spawn().unwrap();
+            // Wait until the descendant owns the inherited pipe before exiting the direct child.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !std::path::Path::new(&ready).exists() {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("descendant did not become ready");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::io::stderr().write_all(b"descendant marker\n").unwrap();
+            std::process::exit(7);
+        }
+        "overflow" => {
+            let mut stderr = std::io::stderr().lock();
+            stderr.write_all(b"overflow marker\n").unwrap();
+            stderr.write_all(&vec![b'x'; 256 * 1024]).unwrap();
+            stderr.flush().unwrap();
+            std::process::exit(7);
+        }
+        "closed" => {
+            #[cfg(unix)]
+            assert_eq!(unsafe { libc::close(libc::STDERR_FILENO) }, 0);
+            #[cfg(windows)]
+            unsafe {
+                use windows_sys::Win32::Foundation::CloseHandle;
+                use windows_sys::Win32::System::Console::{
+                    GetStdHandle, SetStdHandle, STD_ERROR_HANDLE,
+                };
+                assert_ne!(CloseHandle(GetStdHandle(STD_ERROR_HANDLE)), 0);
+                assert_ne!(SetStdHandle(STD_ERROR_HANDLE, std::ptr::null_mut()), 0);
+            }
+            std::fs::write(ready, "ready").unwrap();
+            let mut byte = [0];
+            std::io::stdin().read_exact(&mut byte).unwrap();
+        }
+        _ => panic!("unknown stderr fixture"),
+    }
+}
+
+#[tokio::test]
+async fn popup_reaper_bounds_failed_stderr_after_overflow() {
+    let directory = tempfile::tempdir().unwrap();
+    let child = stderr_fixture_command("overflow", &directory.path().join("ready"))
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let mut logs = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        reap_popup_host(child, pid, |message| logs.push(message)),
+    )
+    .await
+    .expect("failed over-limit stderr must be drained");
+    assert_eq!(logs.len(), 1);
+    assert!(logs[0].contains("overflow marker\\n"));
+    assert!(logs[0].contains(&format!("pid={pid} exited with")));
+    assert!(!logs[0].contains('\n'));
+    assert!(logs[0].len() < POPUP_HOST_STDERR_LIMIT + 256);
+    assert!(logs[0].matches('x').count() > POPUP_HOST_STDERR_LIMIT / 2);
+}
+
+#[tokio::test]
+async fn popup_reaper_does_not_wait_for_inherited_stderr_on_any_platform() {
+    let directory = tempfile::tempdir().unwrap();
+    let child = stderr_fixture_command("descendant", &directory.path().join("ready"))
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let mut logs = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        reap_popup_host(child, pid, |message| logs.push(message)),
+    )
+    .await
+    .expect("the direct child must finish before its three-second descendant");
+    assert_eq!(logs.len(), 1);
+    assert!(logs[0].contains("descendant marker"));
+    // Allow the bounded descendant to exit before removing its temporary directory.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+}
+
+#[tokio::test]
+async fn popup_reaper_waits_for_exit_after_stderr_closes() {
+    let directory = tempfile::tempdir().unwrap();
+    let ready = directory.path().join("ready");
+    let mut child = stderr_fixture_command("closed", &ready).spawn().unwrap();
+    let pid = child.id().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !ready.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("fixture must close stderr and signal readiness");
+    let mut logs = Vec::new();
+    {
+        let reaper = reap_popup_host(child, pid, |message| logs.push(message));
+        tokio::pin!(reaper);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(150), &mut reaper)
+                .await
+                .is_err()
+        );
+        stdin.write_all(b"x").await.unwrap();
+        drop(stdin);
+        tokio::time::timeout(Duration::from_secs(5), &mut reaper)
+            .await
+            .expect("reaper must finish once the child exits");
+    }
+    assert!(logs.is_empty());
 }
 
 fn state() -> Arc<ServerState> {

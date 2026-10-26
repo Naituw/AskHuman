@@ -579,6 +579,10 @@ GTK/GDK、AppKit 等原生库直接退出而未产生 Rust 错误的情形。其
 - Unix（Linux 与 macOS）：`popup_reaper_logs_failure_and_reaps_before_descendant_stderr_closes`
   覆盖失败日志的 PID、退出状态、转义、直接子进程回收与子孙占用 stderr；
   `popup_reaper_drains_large_stderr_and_keeps_successful_exit_silent` 覆盖 256 KiB 排空与成功静默。
+- 跨平台真实测试子进程：`popup_reaper_bounds_failed_stderr_after_overflow` 覆盖超限失败日志；
+  `popup_reaper_does_not_wait_for_inherited_stderr_on_any_platform` 覆盖子孙继承管道；
+  `popup_reaper_waits_for_exit_after_stderr_closes` 覆盖 stderr 关闭后仍等待真实退出。
+  fixture 仅由父测试显式启动，后代进程有界退出；Windows 分支需原生 CI 验证。
 - Windows：`popup_reaper_logs_windows_failure_with_pid_and_escaped_stderr` 与
   `popup_reaper_drains_windows_stderr_and_keeps_successful_exit_silent` 覆盖同样的失败/静默契约。
 - CI（`.github/workflows/build.yml`）在 ubuntu-22.04、windows-latest 与 macos-26
