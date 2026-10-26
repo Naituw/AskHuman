@@ -329,7 +329,7 @@ Codex 的 hook 输入里没有 `thread_source`（F14），`agents/stop.rs` 读�
     `AGENTS.md` 整个文件原本只有 AskHuman 区块，迁移后是 0 字节空文件（§9.3 第 8 项）。
   - 真实 CLI 0.163.0 与桌面端自带 0.164.0-alpha.11.1 的 `hooks/list`：8 条 AskHuman hook 全部 `trusted`，新 hook 的 `currentHash` 与写入的 `trusted_hash` 一致，两个版本算出同一个哈希。
     `doctor`：协议 需更新 → 正常，委派运行 = 静默；开关保持默认关。对真实 hook 的 dry-run：交互 `startup` 注入 3130 字符，`transcript_path=null` 输出 0 字节。
-- **V4**（真实账号，用户批准，计费；模型 `gpt-6-astra`；`~/.askhuman` 的临时偏好已还原；约 4 次真实模型调用）：
+- **V4**（真实账号，用户批准，计费；模型 `gpt-6-astra`；`~/.askhuman` 的临时偏好已还原；共 3 次 `codex exec`、1 个 app-server 线程的 2 个回合与 1 次真实压缩）：
   - ① 真实 `codex exec`（0.163.0，reasoning=low）、开关关：模型回答 `NONE`（看不到任何 AskHuman 工具）；rollout 首行 `source=exec / originator=codex_exec`，3 条 developer 消息里没有协议标记；
     审计 `protocol_hook suppressed codex_delegated_exec_process`、`stop_confirmation suppressed codex_delegated_marker:exec_process`；无弹窗，18 s 退出。
   - ② 同一命令、开关临时打开：模型列出 `mcp__askhuman` 下全部 6 个工具；rollout 里 3130 字符协议在初始上下文之后、用户输入之前；模型按协议在收尾调用 `whats_next`（弹窗，用户选「结束本轮」），
@@ -338,7 +338,7 @@ Codex 的 hook 输入里没有 `thread_source`（F14），`agents/stop.rs` 读�
     模型遵守协议，先 `ask` 再 `whats_next`，最后 `[user_confirmed_end_turn]`。
   - ④ 同一线程里 `thread/compact/start`（真实远程压缩）：`replacement_history` 的 8 条里没有协议标记（压缩丢弃 hook 注入，F23 在真实服务上成立）；随后 `SessionStart(compact)` 恰好重新注入一次
     （3274 字符 = 3130 + 恢复句）；模型按恢复句先调 `show_last`，再 `ask`、`whats_next`，仍遵守协议。
-  - 测试痕迹：两个 exec 会话与一个 app-server 线程（`01a17582-d38c-70f3-bdd5-25a4cd56db7d`）留在 Codex 历史里；`~/.askhuman/state/codex-delegated/` 里有 ① 的一个标记文件。
+  - 测试痕迹已于 2026-10-26 清理：3 个 exec 会话（含装入最终构建后的一次开关关回归，同样得到 `NONE`）与 1 个 app-server 线程经 `thread/archive` 归档到 `~/.codex/archived_sessions/`（可恢复），标记文件与偏好文件已删除，迁移备份与临时目录已删除。
 
 ### 9.3 与文档 / 计划的偏差及实现期发现
 
