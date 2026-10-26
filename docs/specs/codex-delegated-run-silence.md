@@ -1,13 +1,13 @@
 # Codex 委派运行静默（Delegated Run Silence）
 
-> 状态：**已实现，隔离验证通过**（2026-10-25）：D1–D13 全部定案并落地，源码调研（§5）已完成；V1 单元测试与 V2 隔离集成验证
-> （真实 Codex 0.163.0 + 本地 mock Responses 端点，不计费）已完成，结果与偏差见 §9。**真实 `~/.codex` 的迁移（V3）与计费的真实 Agent
-> 验证（V4）尚未做，需用户批准。**
+> 状态：**已实现并验证**（2026-10-25 实现，2026-10-26 真实环境验证）：D1–D13 全部定案并落地，源码调研（§5）已完成；V1 单元测试、V2 隔离集成验证
+> （真实 Codex 0.163.0 + 本地 mock Responses 端点，不计费）、V3 真实 `~/.codex` 迁移与 V4 真实 Agent 验证（用户批准，计费）均已完成，结果与偏差见 §9。
 > 关联计划：`docs/plans/codex-delegated-run-silence.md`。
 > 调研方式：本机一次真实事故的 rollout / `daemon.log` / 历史记录取证、`codex debug prompt-input` 渲染（只渲染，不调模型）、
 > Codex CLI 0.163.0 帮助与配置命令、官方 hooks 文档、`openai/codex-plugin-cc` 默认分支源码，以及对准本机版本的
 > `openai/codex` tag `rust-v0.163.0`（commit `83086188ae06`）稀疏检出后的全文源码阅读（F12–F24）。
 > 调研与实现期间未启动任何会计费的真实 Agent；V2 的真实 Codex 只连本地 mock 端点，使用隔离的 `HOME` / `CODEX_HOME` / `ASKHUMAN_HOME`（F25–F31）。
+> V3 / V4 经用户批准后于 2026-10-26 用真实 `~/.codex` 与真实账号进行（§9.2）。
 
 ## 1. 背景与事故取证
 
@@ -168,8 +168,11 @@ hook 在同一处完成「委派判定 → 注入或不注入 → 写标记」�
 所以下面的规则成立：
 
 - `startup` / `clear` / `compact`：总是注入（compact 后旧注入一定已不在历史里）。
-- `resume` / `fork`：读取 `transcript_path` 指向的 rollout，从**最后一条 `compacted` 记录**起到文件末尾（含该记录的 `replacement_history` 与其后的
-  `response_item`）搜索本协议标记；没有 `compacted` 记录则搜全文件。找到则不注入；找不到、读取失败、文件不可读、存储已压缩，一律**注入**（宁可重复，不可缺失）。
+- `resume` / `fork`：读取 `transcript_path` 指向的 rollout，从文件末尾**向前**逐行扫描：某一行是 developer 角色消息且含本协议标记 → 已注入，不再注入；
+  遇到 `compacted` 记录即停止并判定“未注入”（压缩已丢弃之前的注入，该记录自身 `replacement_history` 里出现的标记**不算**证据）；没有 `compacted` 记录则扫到文件头。
+  找不到、读取失败、文件不可读、超出预算（64 MiB 或 300 ms），一律**注入**（宁可重复，不可缺失）。
+  - 2026-10-26 用户裁定：保持实现，D9 文字改成现状。与原文字的差别只在“压缩记录自身带着标记”这一种情形（远程压缩 V2 会保留 app-server 客户端的 `client_authored`
+    developer 消息）：按现状多注入一次，不会漏注入；真实压缩路径不受影响（F23：38 次压缩 0 次保留）。
 - 标记 = 协议文本里固定的一行 ASCII（含模式与文本哈希，如 `askhuman-protocol:<mode>:<hash8>`）；模式、风格、自定义文本、版本任一变化都会改变哈希，旧注入不再算“已有”。
 - 该扫描只在 `resume` / `fork` 且已判定为交互会话时进行，不进入任何每次工具调用的 hook。
 
@@ -205,7 +208,7 @@ Codex 的 hook 输入里没有 `thread_source`（F14），`agents/stop.rs` 读�
 ### 5.1 调研清单结论
 
 - **O1 规则交付**：Codex 没有“按运行模式有条件加载 AGENTS.md”的机制（F1、F13）；`--ignore-user-config` **不会**跳过 `$CODEX_HOME/AGENTS.md`，只清空用户层 `config.toml`，MCP 服务器与 hook 信任哈希随之消失（F13、F18）——调用方用官方手段隔离用户配置后，静态规则仍在上下文里，工具与 hook 却没了。SessionStart `additionalContext` 是 developer 角色条目，位于初始上下文之后、用户首条输入之前，写入 rollout（F16、F17）；压缩**不保留**旧注入，压缩后 `SessionStart(compact)` 会重新触发（F23，源码三条压缩路径 + 本机 38 次压缩实证）；resume / fork 会重放历史并再次触发 SessionStart，需要去重（D9）；回滚不会删掉首条用户输入之前的注入（F24）；全新 subagent 不触发 SessionStart（F16）。**没有比 hook 更合适的外部注入 / 排除机制**（线程级指令提供方是 Codex 内部扩展点，外部不可用）。
-- **O2 MCP**：服务器按**会话**启动，主会话 Eager，早于 SessionStart（F16、F19）。`tools/list` 为空只是空工具集，主路径无报错 / 重试 / 失败标记；目录在连接建立后固定（`list_changed` 只记日志），所以“隐藏工具”只能在 MCP 进程启动时决定，**D4 成立**；工具目录缓存是进程内的，`exec` 是新进程，不会让旧目录覆盖动态结果（F19）。建议 AskHuman 声明 `codex/tool-catalog-cache` 的 `cacheable=false`，避免长驻 app-server 里子 Agent 会话复用别处缓存的目录。MCP 子进程环境里没有 `CODEX_*`，`_meta` 里没有来源 / originator / ephemeral（F20、F21），所以 exec 仍只能靠父进程命令行（D4）。
+- **O2 MCP**：服务器按**会话**启动，主会话 Eager，早于 SessionStart（F16、F19）。`tools/list` 为空只是空工具集，主路径无报错 / 重试 / 失败标记；目录在连接建立后固定（`list_changed` 只记日志），所以“隐藏工具”只能在 MCP 进程启动时决定，**D4 成立**；工具目录缓存是进程内的，`exec` 是新进程，不会让旧目录覆盖动态结果（F19）。最初设想过声明 `codex/tool-catalog-cache` 的 `cacheable=false`，最终**不声明**（2026-10-26 用户裁定，见 §9.3 第 2 项）。MCP 子进程环境里没有 `CODEX_*`，`_meta` 里没有来源 / originator / ephemeral（F20、F21），所以 exec 仍只能靠父进程命令行（D4）。
 - **O3 hook 输入**：没有文档未列出的来源字段；所有 hook 输入都没有 `thread_source`（F14）。**顺带发现**：`src-tauri/src/agents/stop.rs` 读取的 Stop 输入 `thread_source` 在 Codex 里不存在（0.144.1–0.163.0 一致），该分支从不触发，Stop 静默实际只靠 `transcript_path == null`；委派判定不能依赖它。hook 子进程仍沿用现有 `hint_pid` 探测路径，本次未改。
 - **O4 线程来源**：`exec` 的显式标记是 rollout `session_meta.source == "exec"` 与 `originator == "codex_exec"`，hook 里可读（hook 运行前 rollout 已落盘，F16），MCP 里读不到（F21）；`codex exec resume` 恢复旧线程时首行是否更新**未核实**，所以仍以父进程命令行的 `exec` 子命令为主判据，rollout 信号为补充（与 §7 一致）。`ThreadSource` 没有“非交互”取值（F15）。
 - **O5 ephemeral**：ephemeral 线程的 hook 输入 `transcript_path = null`，SessionStart 照常触发；非 ephemeral 线程在 hook 运行前 rollout 已落盘（F16）。MCP 侧“查不到 rollout”不是可靠信号，仍用 SessionStart 落标记文件（D6 不变）。
@@ -319,19 +322,44 @@ Codex 的 hook 输入里没有 `thread_source`（F14），`agents/stop.rs` 读�
   - app-server：ephemeral 线程与持久化的 `Claude Code` originator 线程都被判为委派，`ask` 在调用期被拒绝并返回委派文案、没有弹窗；交互型控制客户端不受影响。
   - 压缩：见 F30，协议在压缩后恰好重新注入一次。
   - `hooks/list` 的 `currentHash` 与 AskHuman 计算的信任哈希一致（F31）。
-- **V3**（真实 `~/.codex`）与 **V4**（计费的真实 Agent）**未做**，需用户批准后才能做：本机真实 `~/.codex` 仍是迁移前状态（旧恢复 hook + AGENTS.md 区块），新二进制对它显示「需更新」。
+- **V3**（真实 `~/.codex`，用户批准，2026-10-26）：`AskHuman agents update codex` 一次完成原子迁移（0.5 s；迁移前已备份 hooks.json / config.toml / AGENTS.md）。
+  - `hooks.json` 语义上只有 `SessionStart[1]`（原压缩恢复 hook）变了：去掉 `matcher: "compact"`、新增 `additionalContextLimit: 0`，`timeout` 仍为 30；用户自己的 hook 原样保留。
+    文本差异大，是因为 AskHuman 自管的条目被按其格式重写、`Stop` 挪到了末尾，纯格式。
+  - `config.toml` 只有该 hook 的 `trusted_hash` 变化（`post_tool_use:1:0` 那段只是挪了位置；另有一行 `default_tools_approval_mode`，来自既有的 MCP 配置写入逻辑，与本任务无关）。
+    `AGENTS.md` 整个文件原本只有 AskHuman 区块，迁移后是 0 字节空文件（§9.3 第 8 项）。
+  - 真实 CLI 0.163.0 与桌面端自带 0.164.0-alpha.11.1 的 `hooks/list`：8 条 AskHuman hook 全部 `trusted`，新 hook 的 `currentHash` 与写入的 `trusted_hash` 一致，两个版本算出同一个哈希。
+    `doctor`：协议 需更新 → 正常，委派运行 = 静默；开关保持默认关。对真实 hook 的 dry-run：交互 `startup` 注入 3130 字符，`transcript_path=null` 输出 0 字节。
+- **V4**（真实账号，用户批准，计费；模型 `gpt-6-astra`；`~/.askhuman` 的临时偏好已还原；约 4 次真实模型调用）：
+  - ① 真实 `codex exec`（0.163.0，reasoning=low）、开关关：模型回答 `NONE`（看不到任何 AskHuman 工具）；rollout 首行 `source=exec / originator=codex_exec`，3 条 developer 消息里没有协议标记；
+    审计 `protocol_hook suppressed codex_delegated_exec_process`、`stop_confirmation suppressed codex_delegated_marker:exec_process`；无弹窗，18 s 退出。
+  - ② 同一命令、开关临时打开：模型列出 `mcp__askhuman` 下全部 6 个工具；rollout 里 3130 字符协议在初始上下文之后、用户输入之前；模型按协议在收尾调用 `whats_next`（弹窗，用户选「结束本轮」），
+    行为等同交互会话；测完开关关回。
+  - ③ 桌面端自带 0.164.0-alpha.11.1 的 app-server、交互客户端（`originator=askhuman-v4-test`，reasoning=medium）新线程：`startup` 注入协议（rollout 里的 developer 条目）；
+    模型遵守协议，先 `ask` 再 `whats_next`，最后 `[user_confirmed_end_turn]`。
+  - ④ 同一线程里 `thread/compact/start`（真实远程压缩）：`replacement_history` 的 8 条里没有协议标记（压缩丢弃 hook 注入，F23 在真实服务上成立）；随后 `SessionStart(compact)` 恰好重新注入一次
+    （3274 字符 = 3130 + 恢复句）；模型按恢复句先调 `show_last`，再 `ask`、`whats_next`，仍遵守协议。
+  - 测试痕迹：两个 exec 会话与一个 app-server 线程（`01a17582-d38c-70f3-bdd5-25a4cd56db7d`）留在 Codex 历史里；`~/.askhuman/state/codex-delegated/` 里有 ① 的一个标记文件。
 
 ### 9.3 与文档 / 计划的偏差及实现期发现
 
-1. **D9 扫描比文字更严格（待用户裁定）**：实现只统计最后一条 `compacted` 记录**之后**的 developer 条目，不把 `compacted` 记录自身 `replacement_history` 里出现的标记当作“已注入”
-   （D9 文字把该记录的 `replacement_history` 也算进去）。方向是“宁可重复注入”，对真实压缩没有影响（F23：38 次压缩 0 次保留），只在远程压缩 V2 保留了 app-server 客户端的 `client_authored`
-   developer 消息时多注入一次。D9 文字在裁定前保持不变。
-2. **`codex/tool-catalog-cache` 能力**：MCP `initialize` 里声明 `cacheable: false`，但 Codex 源码把它标成“仅供开发与测试，生产服务器不应使用”（`codex-mcp/src/rmcp_client.rs`），
-   且在 exec 里没有可观察效果（缓存是进程内的，exec 是新进程）。保留声明但不依赖它生效；是否去掉待用户裁定。
+1. **D9 扫描比原文字更严格（已裁定，2026-10-26）**：实现只统计最后一条 `compacted` 记录**之后**的 developer 条目，不把 `compacted` 记录自身 `replacement_history` 里出现的标记当作“已注入”
+   （原 D9 文字把该记录的 `replacement_history` 也算进去）。方向是“宁可重复注入”，对真实压缩没有影响（F23：38 次压缩 0 次保留），只在远程压缩 V2 保留了 app-server 客户端的 `client_authored`
+   developer 消息时多注入一次。用户裁定保持实现，D9 文字与计划 §6.4 已改成现状。
+2. **`codex/tool-catalog-cache` 能力（已裁定，2026-10-26：不声明）**：实现里曾在 MCP `initialize` 声明 `cacheable: false`，现已删除（`mcp/ask.rs` 的 `get_info` 恢复为只开 tools 能力，
+   两个服务器测试改为断言没有 `experimental` 能力）。依据 Codex 源码（`codex-mcp/src/tool_catalog_cache.rs`、`connection_manager/tool_catalog.rs`、`rmcp_client.rs`）：
+   缓存是进程内 LRU（32 项 / 30 分钟、不落盘、不缓存空目录），按连接身份（传输 / 命令 / 环境等，不含二进制 mtime）取键，每次新建 MCP 连接都会用该连接首次 `tools/list` 的结果刷新；
+   只有“可选服务器在首个请求前还没启动好”时才拿缓存给首步用。所以去掉声明**不会让新版本更慢生效**：新线程的实际目录来自新启动的 `AskHuman mcp` 进程，最坏只是升级后长驻 Codex 里
+   新线程**首步**还带着上一版的工具描述，下一步就是新版；真正决定新版本何时生效的是已运行的 `AskHuman mcp` 进程的寿命。声明在最终设计里没有用处（exec 是新进程、缓存本来就空；
+   app-server 里各会话目录相同，委派静默靠调用期拦截），反而放弃了缓存对 F27 首请求竞态的兜底，还依赖上游标成“仅供开发与测试，生产服务器不应使用”的开关。
 3. **低于版本地板的 Codex**：安装 / 更新路径直接返回可读错误（不并存静态区块，D11），集成页与 `doctor` 显示“该版本不支持协议注入”；读不到版本按支持处理。
 4. **`AgentReadiness` 多两个信息性字段**（`protocolMinimumVersion`、`protocolSupported`，只给 GUI 用，不影响 `ready`）；前端 Codex 行原来的“上下文恢复 Hook”条目并入“协议（SessionStart Hook）”条目。
 5. **MCP 环境白名单（F25）**：开发实例 / 隔离环境里要在 `[mcp_servers.askhuman].env` 显式带 `ASKHUMAN_HOME`，否则 `AskHuman mcp` 读到的是默认配置目录；这是 Codex 的行为，不是新引入的问题，但会让“隔离环境里的 MCP 看起来像委派运行”。
 6. **Codex 首请求竞态（F27）**：交互会话在 MCP 服务器就绪前就发出首个模型请求时，本来就拿不到 AskHuman 工具；与委派静默无关，只是做 A/B 验证时要先等 MCP 就绪。
 7. **信任 key 路径未规范化（F32）**：既有限制，本任务未改。
-8. **迁移后可能留下空的 `~/.codex/AGENTS.md`**：区块是文件里唯一内容时，沿用既有 `remove_block` 约定保留空文件。
+8. **迁移后可能留下空的 `~/.codex/AGENTS.md`**：区块是文件里唯一内容时，沿用既有 `remove_block` 约定保留空文件（V3 实测：用户的文件迁移后是 0 字节）。
 9. **hook 开销（F10）**：交互会话的 `startup` / `resume` / `compact` 约 42–46 ms（p95 约 52 ms），接近 60 ms 目标上限；若后续需要压低，优先做免进程的 ppid 查询。
+10. **迁移时已打开的 Codex 会话会在下一步失去旧协议（V3 前读源码发现）**：Codex 每个采样步骤都会重读 AGENTS.md，变化以 diff 追加（“The previously provided AGENTS.md instructions no longer apply.”）；
+    hook 只在 `startup` / `clear` / `compact` / `resume` / `fork` 注入，不会给已打开的会话补发。这些会话需要 `/clear`、压缩、resume 或新开才恢复协议。迁移由用户显式触发（D10），所以不做自动补救，
+    但迁移前后要提醒用户。
+11. **`agents update` 顺带刷新 `[mcp_servers.askhuman]`（V3 发现，与本任务无关）**：既有写入逻辑补上了 `default_tools_approval_mode`；旧版 AskHuman 写下的 `approval_mode` 旧键没有被清理，
+    Codex 0.163 对它（以及用户配置里的 `type`）报“忽略未识别配置”，exec 的 JSON 流里会多两条 error 项。已记为项目待办 #7。

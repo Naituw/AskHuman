@@ -1,7 +1,6 @@
 # Codex 委派运行静默与协议动态注入计划
 
-> 状态：**已实现，V1 / V2 完成**（2026-10-25）；§15 的 5 项细节均按建议确认（spec D13）。V3（真实 `~/.codex` 迁移）与 V4（计费的真实 Agent 验证）
-> 仍待用户批准；结果、偏差与待裁定项见 spec §9。
+> 状态：**已实现，V1–V4 全部完成**（2026-10-25 实现，2026-10-26 真实环境验证）；§15 的 5 项细节均按建议确认（spec D13）。结果、偏差与裁定见 spec §9。
 > 需求与决策真值：`docs/specs/codex-delegated-run-silence.md`（决策 D1–D13、事实 F1–F32）；本文只写实现方案。
 > 范围：Codex 自动集成的**协议交付载体**（`~/.codex/AGENTS.md` 区块 → SessionStart hook）；委派运行（`codex exec` / `review` / `e`、
 > app-server 系的 ephemeral 线程与官方插件线程）里的 MCP 工具、Stop 确认、PermissionRequest 的静默；集成页开关与命令行；存量迁移；诊断与文档。
@@ -45,7 +44,7 @@
 | 环节 | 进程 | 时机 | 行为 |
 | --- | --- | --- | --- |
 | 协议 hook | `AskHuman __context-recovery-hook codex session-start` | 每个会话的 turn 开始前（`startup` / `resume` / `clear` / `compact` / `fork`） | 判定委派 → 写 / 清标记 → 委派则无输出；否则按 mode 注入协议（首行带标记，resume / fork 去重，compact 附恢复句） |
-| MCP server | `AskHuman mcp` | 随 Codex 会话启动一次；每次工具调用 | 启动时有界祖先探测 exec → 空 `tools/list`；声明 `cacheable=false`；调用时按标记拦截 |
+| MCP server | `AskHuman mcp` | 随 Codex 会话启动一次；每次工具调用 | 启动时有界祖先探测 exec → 空 `tools/list`；调用时按标记拦截（不声明缓存能力） |
 | Stop hook | `AskHuman __stop-hook codex …` | 每次自然结束 | 委派则不弹确认（`track` 仍上报 TurnEnd） |
 | PermissionRequest hook | `AskHuman __permission-hook codex` | 每次审批 | 委派则无输出，回落 Codex 原生审批 |
 | 开关 | 集成页 Codex 卡片 / `AskHuman agents delegated codex [on\|off]` | 用户操作 | 偏好文件；打开后上述四处全部按交互处理 |
@@ -62,7 +61,7 @@
 | `integrations/agent_mode.rs` | `current()` 对 Codex 改用协议 hook 作为 CLI 模式信号；`artifact_updates` 的 rule 语义；迁移入口 |
 | `integrations/agent_permission.rs` | `trust_entries` / `trusted_hash` 支持 `additionalContextLimit` |
 | `integrations/agent_delegated.rs`（新） | 偏好读写、状态、`allowed()`（照 `agent_stop.rs` 的偏好模式） |
-| `mcp/ask.rs` | 启动期隐藏工具、`cacheable=false`、调用期委派拦截与文案 |
+| `mcp/ask.rs` | 启动期隐藏工具、调用期委派拦截与文案 |
 | `agents/stop.rs`、`permissions.rs` | 接入 `delegated::silenced`；Stop 删除 `thread_source` 死分支 |
 | `prompts.rs` | Codex 协议注入文本构造（标记行、哈希、compact 恢复句） |
 | `commands.rs`、`app/invoke.rs`、`cli/agents_cmd.rs`、`cli/doctor.rs`、前端集成页、i18n | 开关、状态、诊断、文案 |
@@ -154,7 +153,7 @@ codex_session_start(mode, input, env):
 ### 6.4 resume / fork 去重
 
 - 仅在 `resume` / `fork` 且 `transcript_path` 非空时执行；`startup` / `clear` / `compact` 一律注入（compact 后旧注入一定已不在历史里）。
-- 从文件末尾**向前**分块读取（块 64 KiB），逐行：行内含当前标记 → 判定已注入、跳过注入；行内含 `"type":"compacted"` → 先检查该行本身是否含标记，然后停止、判定未注入；读到文件头都没遇到 → 未注入。
+- 从文件末尾**向前**分块读取（块 64 KiB），逐行：developer 角色消息且含当前标记 → 判定已注入、跳过注入；行内含 `"type":"compacted"` → 立即停止、判定未注入（该行自身带标记也不算，用户 2026-10-26 裁定保持此现状）；读到文件头都没遇到 → 未注入。
 - 预算：最多回读 64 MiB 或 300 ms，超出、读失败、文件不可读一律**注入**（宁可重复，不可缺失）。标记只含 ASCII 的 `:` `-` 与字母数字，JSON 转义不会改变它。
 - 效果：同模式同文案的 resume 不重复；改了模式 / 风格 / 文案后的 resume 会注入新版（旧版留在历史里但哈希不同，新版在后）。
 
@@ -182,7 +181,7 @@ SessionStart 现在每个会话都会跑，而不只是 compact。预算：进�
 ### 7.1 MCP（`mcp/ask.rs`）
 
 1. **启动期隐藏（exec）**：`AskServer::new()` 先算 `hidden = !allowed(Codex) && nearest_agent_invocation(parent) 是 Codex 且子命令 ∈ 委派集合`。`hidden` 时用空 `ToolRouter::new()`，`tools/list` 为空（含只读的 `todo_list`，整体等同未集成，D4），并跳过 `register_instance()`（避免向 daemon 登记一个没有工具的实例）。判定只算一次、随进程结束；之后改开关只影响新启动的进程。
-2. **缓存声明**：无论是否 `hidden`，`ServerCapabilities` 都加 `experimental["codex/tool-catalog-cache"] = {"cacheable": false}`（rmcp 2.2.0 的 `ServerCapabilities::builder()` 提供 `enable_experimental*`），避免长驻 app-server 里别的会话复用缓存的工具目录。
+2. **不声明缓存能力**：`ServerCapabilities` 只开 tools，不带 `experimental["codex/tool-catalog-cache"]`。原计划声明 `cacheable=false`，实现后用户裁定去掉（2026-10-26，依据见 spec §9.3 第 2 项）：exec 是新进程、缓存本来就空，app-server 里各会话目录相同，保留 Codex 缓存还能兜住 F27 的首请求竞态。
 3. **调用期拦截（app-server 系）**：`codex_thread_guard` 在现有 `thread_source` 判断之后增加一步：用 `_meta` 里的 session id（`x-codex-turn-metadata.session_id`，缺失时用 `_meta.threadId`）查标记；命中且开关为关 → 返回 `isError` 结果与 `suppressed` 审计行。覆盖 `ask` / `whats_next` / `show_last` / `todo_add` / `todo_update`，`todo_list` 不走该守卫。现有 `system` / `ambient_suggestions` 守卫不动。
 4. **文案**：现有常量写的是“system-generated background thread”，不适合委派语境。新增一条：`AskHuman is not used in this non-interactive Codex run. No human is attending it. Do not retry or contact the human; continue the task and return the result directly.`
 5. MCP 子进程里没有 `CODEX_*`、没有 originator（F20 / F21），所以 exec 只能靠祖先探测，app-server 系只能靠 SessionStart 写下的标记——SessionStart 总是早于首次采样，因此首次工具调用时标记已就位。
@@ -249,7 +248,7 @@ SessionStart 现在每个会话都会跑，而不只是 compact。预算：进�
 | 失败从显式变静默 | hook 未信任 / 哈希漂移 / `features.hooks=false` / `allow_managed_hooks_only` 会让交互会话也失去协议 | 信任同步沿用；集成页与 doctor 显示“协议交付”状态；hook 执行失败在 Codex UI 里可见，只有“未信任”是静默的 |
 | 误判交互线程为委派 | 无 rollout 的线程不一定都是后台（远程控制 / 非本地存储的会话也会 `transcript_path=null`）；originator 名单是启发式 | 开关可整体放行；审计行含信号名；fail-open；rollout 信号只用于 `startup` / `clear` |
 | 漏判委派 | app-server 系的持久化线程且 originator 不在名单；SessionStart hook 未生效时 app-server 系 MCP 无标记 | 名单可扩展；上游诉求已记项目待办 #6；文档写明为尽力识别 |
-| 模型对 developer 角色协议的遵从度未经真实验证 | developer 通常优先级更高，但没有实测 | 实现后做经你批准的小规模真实验证（§13 V4）；不通过则回到本计划重新决策 |
+| 模型对 developer 角色协议的遵从度未经真实验证 | developer 通常优先级更高，但没有实测 | 实现后做经你批准的小规模真实验证（§13 V4）；不通过则回到本计划重新决策。**已验证（2026-10-26）**：模型遵守协议，压缩后仍遵守 |
 | 协议 hook 增加会话启动开销 | 现在每会话都跑 | §6.7 预算与实测 |
 | resume / fork 重复注入 | 历史重放带着旧 developer 条目 | §6.4 标记去重；读失败倾向注入 |
 | 压缩后协议缺失 | 压缩不保留旧注入 | `compact` 总是重新注入并附恢复句（F23 实证 38/38） |
@@ -263,7 +262,7 @@ SessionStart 现在每个会话都会跑，而不只是 compact。预算：进�
 实现完成后同步（只改不准确的地方）：
 
 - `docs/specs/codex-delegated-run-silence.md`：确认 §15 细化项后更新 D5 / D6；状态改为已实现；F10 补实测数字。
-- `docs/specs/mcp.md`：exec 空 `tools/list`、`cacheable=false`、调用期委派拦截与新文案、`todo_list` 的例外。
+- `docs/specs/mcp.md`：exec 空 `tools/list`、不声明缓存能力、调用期委派拦截与新文案、`todo_list` 的例外。
 - `docs/specs/agent-stop-confirmation.md`：删除 `thread_source` 描述，新增委派静默与审计 reason。
 - `docs/specs/agent-rules-config.md`：D7 / D10 的 Codex 落点与“已安装”判定改为协议 hook，遗留区块的识别与迁移。
 - `docs/specs/main-agent-only-interaction-protocol.md`：Codex 的交付载体与 subagent 例外的传递方式。
@@ -282,7 +281,7 @@ SessionStart 现在每个会话都会跑，而不只是 compact。预算：进�
 - `agent_context_recovery`：Codex 新身份 exact；旧 `compact` matcher、缺 `additionalContextLimit` → outdated；Windows 变体。
 - 信任哈希：`additionalContextLimit` 的向量（来自真实 Codex `hooks/list`）。
 - `agent_mode`：Codex 的 `current()` 映射（Mcp / Cli / None / 遗留区块）、`artifact_updates` 的 rule 语义；迁移与回滚的故障注入（写 hooks 失败 / 写 config 失败 / 删区块失败 → 三个文件与迁移前逐字节一致）；`collaboration_style_apply_integrations` 不触发迁移。
-- MCP：`hidden` 时 `tools/list` 为空且不登记实例；`cacheable=false` 声明；调用期拦截（标记命中、开关开、非 Codex 客户端、`todo_list` 不受影响）；既有 `thread_source` 守卫不回归。
+- MCP：`hidden` 时 `tools/list` 为空且不登记实例；`initialize` 不带 `experimental` 能力；调用期拦截（标记命中、开关开、非 Codex 客户端、`todo_list` 不受影响）；既有 `thread_source` 守卫不回归。
 - Stop / 权限：静默与审计 reason；`track` 仍上报；权限自动放行也被静默。
 - 死分支清理后的 Stop 用例。
 
@@ -300,13 +299,15 @@ SessionStart 现在每个会话都会跑，而不只是 compact。预算：进�
 
 **V3 安装验证（仓库规则）**：`./scripts/install.sh` 后，用新装的 `AskHuman` 验证开关、`agents delegated`、`agents show codex`、`doctor`、迁移按钮。对**真实 `~/.codex`** 做迁移前先问你，因为它会删除你 AGENTS.md 里的区块、改写 hooks.json 与信任。
 
-> **V3 现状**：新二进制已装（`~/.local/bin/AskHuman`），只读检查确认它对真实 `~/.codex` 显示「需更新」（旧恢复 hook + AGENTS.md 区块），未改动任何真实文件；迁移、开关写偏好、迁移按钮都等你批准后再做。
+> **V3 结果（2026-10-26）**：用户批准后在真实 `~/.codex` 上执行 `AskHuman agents update codex`，原子迁移成功；CLI 0.163.0 与桌面端自带 0.164.0-alpha.11.1 的 `hooks/list` 均显示新 hook 已信任且哈希一致。详见 spec §9.2。
 
-**V4 计费的真实 Agent 验证（需你明确批准后才做）**：① 交互的 TUI / 桌面端新会话收到协议并按规则使用 AskHuman（developer 角色遵从度）；② 真实 `codex exec`（开关关）没有 AskHuman 工具、没有 Stop 弹窗；③ 开关开时行为等同交互；④ 实际触发一次压缩后协议仍在。
+**V4 计费的真实 Agent 验证（用户批准）**：① 交互的 TUI / 桌面端新会话收到协议并按规则使用 AskHuman（developer 角色遵从度）；② 真实 `codex exec`（开关关）没有 AskHuman 工具、没有 Stop 弹窗；③ 开关开时行为等同交互；④ 实际触发一次压缩后协议仍在。
+
+> **V4 结果（2026-10-26）**：四项全部通过（真实 `codex exec` 开关关 / 开，桌面端自带 0.164.0-alpha.11.1 的 app-server 新线程与真实压缩）；developer 角色协议被遵守，压缩后协议由 `SessionStart(compact)` 恰好重新注入一次。详见 spec §9.2。
 
 ## 14. 完成条件
 
-- D1–D12 的行为全部落地，V1 全绿，V2 按可行性完成并如实记录，V3 完成；V4 经你批准后完成或明确记为待办。
+- D1–D12 的行为全部落地，V1 全绿，V2 按可行性完成并如实记录，V3 与 V4 经用户批准后完成（2026-10-26）。
 - 存量迁移原子且可回滚；改协作风格不会隐式迁移；`doctor` 与集成页能显示协议交付状态。
 - 文档按 §12 同步，`docs/PROGRESS.md` 本任务一节删除。
 - 提交遵循 Conventional Commits（拟 `feat(codex): …` 分若干提交：判定与标记 / 协议 hook 与迁移 / MCP 与 Stop 与权限静默 / 开关与界面 / 文档）。
