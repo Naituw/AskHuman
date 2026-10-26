@@ -180,9 +180,10 @@ popup、IM 或项目 todo。
    这种带提示词的交互会话不算）才隐藏：工具路由为空，`tools/list` 返回 `[]`（含只读的 `todo_list`），
    `initialize` 不带 `instructions`，不调用 `register_instance`。判定在进程启动时算一次，之后改开关只影响新启动的
    进程；探测失败按「不隐藏」处理。Codex 在连接建立后固定工具目录（`tools/list_changed` 不刷新）。
-2. **缓存声明**：无论是否隐藏，`initialize` 能力里都带 `experimental["codex/tool-catalog-cache"] = {"cacheable": false}`，
-   让长驻 app-server 里别的会话不复用这条连接的目录。该键是 Codex 的实验能力，不认识它的客户端会忽略；真实
-   Codex 0.163.0 的 `exec` 每次都是新进程，所以该声明在 `exec` 下没有可观察的效果。
+2. **不声明缓存能力**：`initialize` 不带任何 `experimental` 能力，Codex 自带的工具目录缓存（进程内、按服务器身份）保持开启。
+   `exec` 每次都是新进程，缓存本来是空的；app-server 里各会话的目录相同，委派静默靠下面的调用期拦截。
+   不用 `codex/tool-catalog-cache` 的 `cacheable=false`：Codex 把它标成仅供开发与测试，且它会让长驻进程里第二个及以后的
+   线程首步失去缓存兜底（`docs/specs/codex-delegated-run-silence.md` §9.3）。
 3. **调用期拦截（app-server 系）**：ephemeral 线程与 `Claude Code` 等 originator 的线程无法在启动时识别（MCP 子进程没有
    `CODEX_*`，`_meta` 也没有 originator / ephemeral），工具照常出现。`ask`、`whats_next`、`show_last`、`todo_add`、
    `todo_update` 在现有 `thread_source` 判断之后再用 `x-codex-turn-metadata.session_id`（缺失时用 `_meta.threadId`）查

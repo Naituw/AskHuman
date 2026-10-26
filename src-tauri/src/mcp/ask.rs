@@ -1229,24 +1229,13 @@ async fn capture_output(
     }
 }
 
-/// Codex-specific MCP server capability. `cacheable: false` stops Codex from reusing a tool catalog
-/// fetched on another connection, so one connection's catalog never stands in for this one's
-/// (a delegated run's catalog is empty by design). Codex documents the key as experimental; a
-/// client that does not know it ignores it.
-fn tool_catalog_cache_capability() -> rmcp::model::ExperimentalCapabilities {
-    let mut capability = serde_json::Map::new();
-    capability.insert("cacheable".to_string(), Value::Bool(false));
-    std::collections::BTreeMap::from([("codex/tool-catalog-cache".to_string(), capability)])
-}
-
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for AskServer {
     fn get_info(&self) -> ServerInfo {
-        let capabilities = ServerCapabilities::builder()
-            .enable_tools()
-            .enable_experimental_with(tool_catalog_cache_capability())
-            .build();
-        let mut info = ServerInfo::new(capabilities);
+        // No experimental capabilities on purpose: Codex's own tool-catalog cache (in-process, one
+        // entry per server identity) is left on. A delegated `codex exec` is a fresh process, so
+        // its empty catalog is never shadowed by a catalog cached for an interactive thread.
+        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
         // A hidden server advertises no tools, so it must not tell the model to call any.
         if !self.hidden {
             info = info.with_instructions(
@@ -1747,17 +1736,15 @@ mod tests {
             "{initialized}"
         );
         assert_eq!(
-            initialized
-                .pointer("/result/capabilities/experimental/codex~1tool-catalog-cache/cacheable"),
-            Some(&json!(false)),
-            "{initialized}"
+            initialized.pointer("/result/capabilities/experimental"),
+            None,
+            "the server must not opt out of Codex's tool-catalog cache: {initialized}"
         );
         Ok(())
     }
 
     #[tokio::test]
-    async fn interactive_server_keeps_every_tool_and_still_opts_out_of_catalog_sharing(
-    ) -> anyhow::Result<()> {
+    async fn interactive_server_keeps_every_tool_and_its_instructions() -> anyhow::Result<()> {
         let (initialized, listed) =
             initialize_and_list_tools(AskServer::with_visibility(false)).await?;
         let names: Vec<&str> = listed["result"]["tools"]
@@ -1784,9 +1771,9 @@ mod tests {
             .and_then(Value::as_str)
             .is_some_and(|text| text.contains("`ask`")));
         assert_eq!(
-            initialized
-                .pointer("/result/capabilities/experimental/codex~1tool-catalog-cache/cacheable"),
-            Some(&json!(false))
+            initialized.pointer("/result/capabilities/experimental"),
+            None,
+            "{initialized}"
         );
         Ok(())
     }
