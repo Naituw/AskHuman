@@ -42,23 +42,15 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
   强退后 Mac 多久看到离线（靠 Last Will）。有手机侧时间线（见上面 P0 门禁的测量方式）或做真机矩阵其余项时顺带量，不单独叫用户测
 - [ ] 性能口径（需求 D10 四条）与流量预算（典型场景 ≤ 300 MB / 月）分段实测，报告原始分布与全部超时
 - [ ] 合并前：
-  - **与 main 有一处合并冲突**（2026-10-26 用 `git merge-tree` 对 main 的 `1c54003` 试合并，其余文件都能自动合并），在 `src-tauri/src/agents/stop.rs`：
-    main 的 `58501a4`（Codex 委托运行静默）把按 `thread_source` 判断改成了 3 参数的 `confirmation_suppression_reason(kind, session_id, input)`，记录里写 `thread_source: None`；
-    分支在同一位置新增了 `turn_failed`（iOS 的「上一轮失败」标记）及测试 `turn_failed_matrix`。冲突有两块（函数定义、测试名），都是相邻新增。
-    解法：取 main 一侧的 `confirmation_suppression_reason*` 与它的测试，**加上**分支的 `turn_failed` 与 `turn_failed_matrix`，**丢掉** `codex_thread_source`（main 已不再读它，留着会被 `-D warnings` 报死代码）；
-    合并后 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 要全过
-  - **CI 的 `cargo audit` 在本分支上是红的（main 上是绿的），这是唯一红的检查**：2026-10-26 手动对分支触发 `build.yml`（`workflow_dispatch`，不用开 PR），`fabdbd3` 上 macOS ×2、Linux、Windows 的构建 / clippy / 测试全绿，只有 audit 红。原因：`rumqttc 0.25.1`（MQTT 客户端，也是 crates.io 上的最新版）直接依赖 `rustls-webpki 0.102.8`，
-    命中 5 条公告（RUSTSEC-2026-0049 / 0098 / 0099 / 0104 / 0382）；修复版本在另一条不兼容的 `0.103.x` 线上，升级不了。**运行时不可达**：`rumqttc` 只在 `tls.rs` 里拿它的 `Error` 当错误枚举的一个变体
-    （`WebPki(#[from] webpki::Error)`），真正的证书校验走 `rustls 0.23.46` → 已修复的 `rustls-webpki 0.103.16`（main 的锁文件里也是这一个）。其余 `unmaintained` 警告在 main 上同样存在，不阻塞。
-    **待用户决定**（这是放宽安全门禁，所以没有擅自改）：(A，建议) 在仓库根加 `.cargo/audit.toml`，用 `[advisories] ignore` 逐条忽略这 5 条，注释写明上面的理由与「`rumqttc` 换到用 webpki 0.103 的版本后删除」；
-    (B) `[patch.crates-io]` 指向把该依赖改成 0.103 的 `rumqttc` 分叉 / 上游未发布提交（要维护）；(C) 换 MQTT 客户端或自己接 `tokio-rustls`（改动大，要重做真机验证）
+  - `.cargo/audit.toml` 里忽略了 5 条 `rustls-webpki 0.102.8` 的公告（`rumqttc 0.25.1` 带入；它只用这个 crate 的错误类型，证书校验走已修复的 0.103.16，理由与删除条件写在文件注释里）。
+    `rumqttc` 换到用 webpki 0.103 的版本、或换掉该客户端后，**删掉这 5 条**并重跑 `cargo audit --file src-tauri/Cargo.lock`。分支比 main 多一条 `unmaintained` 警告：`rustls-pemfile 2.2.0`（RUSTSEC-2025-0134，同样由 `rumqttc` 带入），只是警告，不影响 CI
   - 本机默认的 `cargo` 是 Homebrew 的 1.94.1，比 CI 的 `stable`（现为 1.99.0）旧，clippy 的结论会不同（新 clippy 对 `async_trait` 生成的方法报了 `double_must_use`，已在三个 trait 上 `allow`）。
     提交前要对齐 CI 时：`PATH=~/.rustup/toolchains/1.99.0-aarch64-apple-darwin/bin:$PATH CARGO_TARGET_DIR=/tmp/<独立目录> cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
     （在持久 shell 里用 `export` 会把工具链环境泄漏给后面的命令，写成行内前缀）
   - IM `/new` 已改用共享 `daemon/runtime/task_launch.rs`，popup-only 的 Dev Instance 无法操作 IM，需在真实飞书 / Slack 上回归一次 `/new`
   - 决定是否公开该渠道（README 链接、去掉提交的 `Release-Note: skip`）；是否在 CI 增加 `relay` 的 `node --test` 与 `swift test`（建议只加这两项，不加 `xcodebuild`）
   - 分支已于 2026-10-26 推送到公开仓库 `origin/feat/ios-channel`；推送前从历史里清掉了真实 EMQX 实例 ID 与 APNs Key ID（提交哈希因此改写过一次，文档里改用提交标题指代）。
-    此后若要再改写这条分支的历史，需要 force-push，先问用户
+    此后若要再改写这条分支的历史，需要 force-push，先问用户；**不要 rebase 这条已推送的分支**，同步 main 用合并（2026-10-26 已合过一次：`chore(ios): merge main into feat/ios-channel`，合并时解了 `agents/stop.rs` 的冲突）
 
 已知延期（不阻塞原型）：
 - Codex 桌面 App 的会话暂不支持手机插话（返回 `unsupported`）；Pi 的扩展需要在设置里重新保存 / 刷新后才会上报失败的回合。
