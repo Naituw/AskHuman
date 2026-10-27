@@ -137,21 +137,25 @@ impl Host for DaemonHost {
 
     fn slot(&self) -> SlotInfo {
         let Some(state) = self.state.upgrade() else {
-            return SlotInfo {
-                active: false,
-                auto_activation: false,
-            };
+            return slot_info(false);
         };
         let active = state.active_channel.lock().unwrap().as_deref() == Some("ios");
-        let auto_activation = state.config.lock().unwrap().channels.auto_activation;
-        SlotInfo {
-            active,
-            auto_activation,
-        }
+        slot_info(active)
     }
 
     fn mac_idle_secs(&self) -> Option<u64> {
         crate::idle::secs_since_last_input()
+    }
+}
+
+/// What the phone is told about the slot. Questions reach iOS whichever channel is active
+/// (`docs/specs/ios-alert-timing.md` D1), so the phone is always told that nothing needs taking
+/// over (`auto_activation: false`: it shows "every question is sent to this phone" and no
+/// take-over button); `active` only says which channel last answered.
+fn slot_info(active: bool) -> SlotInfo {
+    SlotInfo {
+        active,
+        auto_activation: false,
     }
 }
 
@@ -351,4 +355,28 @@ pub(super) fn ios_channel_for(state: &ServerState, request_id: &str) -> Option<A
     Some(Arc::new(crate::channels::ios::IosChannel::new(
         gateway, request_id,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_phone_is_never_asked_to_take_over() {
+        // Whatever channel answered last, iOS gets every question: no take-over to offer.
+        assert_eq!(
+            slot_info(true),
+            SlotInfo {
+                active: true,
+                auto_activation: false
+            }
+        );
+        assert_eq!(
+            slot_info(false),
+            SlotInfo {
+                active: false,
+                auto_activation: false
+            }
+        );
+    }
 }
