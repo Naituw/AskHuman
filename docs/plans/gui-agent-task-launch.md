@@ -74,7 +74,8 @@ macOS 且 `terminal_available()` 时显示。
 
 ### 2.3 Agent 就绪 — 复用现有 `agent_task_readiness`
 
-不新增命令；窗口直接调用（内部 `spawn_blocking(all_readiness)`，login shell 探测 ≤2s）。
+不新增命令；窗口直接调用（内部 `spawn_blocking(all_readiness)`，login shell 探测初版 ≤2s，现为查找 ≤6s，见
+`specs/im-agent-task-launch.md` §4.2）。
 
 ### 2.4 待办列表 — 复用现有 `todos_list(project)`
 

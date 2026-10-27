@@ -19,7 +19,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(test)]
 use std::thread::ThreadId;
@@ -27,8 +28,34 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const RECORD_TTL_SECS: u64 = 5 * 60;
 const MAX_TASK_CHARS: usize = 3000;
-const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the user's interactive login shell may take to answer one `command -v`. It sources the
+/// whole rc (nvm, conda, completions, endpoint-security scans), which on a cold or busy machine
+/// routinely takes more than two seconds; a short limit turned those slow starts into a false
+/// "not installed". The phone waits 15 s for the new-task options and the version probe below runs
+/// after this one, so the two together stay well inside that.
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(6);
+/// Limit for `<agent> --version` / `--help`, which go through the login shell as well.
+const HELP_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long an answer is reused: an executable that was found, or a shell that ran to completion
+/// and found nothing.
 const PROBE_CACHE_TTL: Duration = Duration::from_secs(60);
+/// How long an answer is reused when the lookup itself did not complete (timeout, shell that would
+/// not start). The next caller asks again soon instead of living with a guess for a minute.
+const INCOMPLETE_PROBE_TTL: Duration = Duration::from_secs(5);
+/// Every line the lookup script prints starts with this; whatever else the rc writes to stdout is
+/// dropped as it is read.
+#[cfg(unix)]
+const MARKER_PREFIX: &str = "__ASKHUMAN_";
+#[cfg(unix)]
+const BIN_MARKER: &str = "__ASKHUMAN_BIN__";
+#[cfg(unix)]
+const PATH_MARKER: &str = "__ASKHUMAN_PATH__";
+/// Longest stdout line read in one piece; a longer one is split, which only ever matters for noise.
+#[cfg(unix)]
+const MAX_LINE_BYTES: u64 = 64 * 1024;
+/// Marker lines kept from one run.
+#[cfg(unix)]
+const MAX_MARKER_LINES: usize = 16;
 pub const LAUNCH_ID_ENV: &str = "ASKHUMAN_AGENT_TASK_LAUNCH_ID";
 pub const PI_MINIMUM_VERSION: &str = "0.82.0";
 const PI_MINIMUM: (u64, u64, u64) = (0, 82, 0);
@@ -129,15 +156,45 @@ pub struct AgentReadiness {
     pub protocol_supported: bool,
 }
 
+/// What the login shell answered when asked where an Agent command lives.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Lookup {
+    /// An absolute, canonical path of an executable file.
+    Found(String),
+    /// The shell ran to completion without handing back a usable executable. `detail` says what it
+    /// answered instead when that is known (a shell alias or function, a path that is not an
+    /// executable file, ...); `None` is a plain "no such command".
+    NotFound { detail: Option<String> },
+    /// The lookup did not complete: the shell timed out, would not start, or died. This says
+    /// nothing about whether the Agent is installed.
+    Failed(String),
+}
+
+impl Lookup {
+    fn executable(&self) -> Option<&str> {
+        match self {
+            Lookup::Found(path) => Some(path),
+            _ => None,
+        }
+    }
+
+    fn not_found() -> Self {
+        Lookup::NotFound { detail: None }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BinaryProbe {
-    executable: Option<String>,
+    lookup: Lookup,
     pi_version: Option<(u64, u64, u64)>,
     codex_version: Option<(u64, u64, u64)>,
 }
 
 struct ProbeCache {
     values: HashMap<AgentKind, (Instant, BinaryProbe)>,
+    /// The latest probe per Agent that produced a usable executable. It outlives `values` so a
+    /// later lookup that does not complete can fall back to it (see `recover`).
+    last_good: HashMap<AgentKind, BinaryProbe>,
     inflight: HashMap<AgentKind, Arc<Mutex<()>>>,
 }
 
@@ -146,6 +203,7 @@ fn probe_cache() -> &'static Mutex<ProbeCache> {
     CACHE.get_or_init(|| {
         Mutex::new(ProbeCache {
             values: HashMap::new(),
+            last_good: HashMap::new(),
             inflight: HashMap::new(),
         })
     })
@@ -181,7 +239,7 @@ pub fn readiness_fresh(kind: AgentKind) -> AgentReadiness {
 fn readiness_with(kind: AgentKind, force: bool) -> AgentReadiness {
     let command = command_name(kind).to_string();
     let probe = binary_probe(kind, force);
-    let executable = probe.executable.clone();
+    let executable = probe.lookup.executable().map(str::to_string);
     let lifecycle = agent_lifecycle::status(kind);
     let target = target(kind);
     let mode = agent_mode::current(target);
@@ -198,23 +256,7 @@ fn readiness_with(kind: AgentKind, force: bool) -> AgentReadiness {
         lifecycle.supported && lifecycle.enabled && lifecycle.installed && !lifecycle.outdated;
     let mut diagnostics = Vec::new();
     if !binary_ready {
-        if executable.is_none() {
-            diagnostics.push(format!(
-                "{} CLI was not found in the login shell",
-                kind.label()
-            ));
-        } else if kind == AgentKind::Pi {
-            diagnostics.push(match pi_version {
-                Some((major, minor, patch)) => format!(
-                    "Pi {major}.{minor}.{patch} is unsupported; AskHuman requires Pi >= {PI_MINIMUM_VERSION}"
-                ),
-                None => {
-                    format!(
-                        "Pi version could not be detected; AskHuman requires Pi >= {PI_MINIMUM_VERSION}"
-                    )
-                }
-            });
-        }
+        diagnostics.extend(binary_diagnostic(kind, &probe.lookup, pi_version));
     }
     if !lifecycle_ready {
         diagnostics.push(format!(
@@ -249,6 +291,38 @@ fn readiness_with(kind: AgentKind, force: bool) -> AgentReadiness {
     }
 }
 
+/// Why the Agent's CLI itself is not usable, or `None` when the binary side is fine. A lookup that
+/// did not complete says so rather than claiming the CLI is missing: the phone shows this line, and
+/// "not found" sends people off to reinstall something that is there.
+fn binary_diagnostic(
+    kind: AgentKind,
+    lookup: &Lookup,
+    pi_version: Option<(u64, u64, u64)>,
+) -> Option<String> {
+    let label = kind.label();
+    match lookup {
+        Lookup::Failed(reason) => Some(format!("{label} CLI lookup did not complete: {reason}")),
+        Lookup::NotFound { detail: None } => {
+            Some(format!("{label} CLI was not found in the login shell"))
+        }
+        Lookup::NotFound {
+            detail: Some(detail),
+        } => Some(format!(
+            "{label} CLI was not found in the login shell ({detail})"
+        )),
+        Lookup::Found(_) if kind == AgentKind::Pi => match pi_version {
+            Some(version) if pi_version_supported(version) => None,
+            Some((major, minor, patch)) => Some(format!(
+                "Pi {major}.{minor}.{patch} is unsupported; AskHuman requires Pi >= {PI_MINIMUM_VERSION}"
+            )),
+            None => Some(format!(
+                "Pi version could not be detected; AskHuman requires Pi >= {PI_MINIMUM_VERSION}"
+            )),
+        },
+        Lookup::Found(_) => None,
+    }
+}
+
 /// Installed Codex version from the cached binary probe (a login-shell lookup on first use).
 /// `None` when Codex is not installed or its version cannot be read; callers treat that as
 /// "supported" so a probing failure never blocks the integration.
@@ -276,7 +350,7 @@ fn binary_probe(kind: AgentKind, force: bool) -> BinaryProbe {
             return hit;
         }
     }
-    let value = binary_probe_uncached(kind);
+    let value = recover(kind, binary_probe_uncached(kind));
     probe_cache()
         .lock()
         .unwrap()
@@ -288,7 +362,63 @@ fn binary_probe(kind: AgentKind, force: bool) -> BinaryProbe {
 fn cached_probe(kind: AgentKind) -> Option<BinaryProbe> {
     let cache = probe_cache().lock().unwrap();
     let (at, value) = cache.values.get(&kind)?;
-    (at.elapsed() < PROBE_CACHE_TTL).then(|| value.clone())
+    (at.elapsed() < probe_ttl(kind, value)).then(|| value.clone())
+}
+
+/// How long `probe` may be reused. An answer that does not settle anything (the lookup did not
+/// complete, or Pi was found but its version could not be read) is asked again soon.
+fn probe_ttl(kind: AgentKind, probe: &BinaryProbe) -> Duration {
+    let unsettled = matches!(probe.lookup, Lookup::Failed(_))
+        || (kind == AgentKind::Pi
+            && probe.lookup.executable().is_some()
+            && probe.pi_version.is_none());
+    if unsettled {
+        INCOMPLETE_PROBE_TTL
+    } else {
+        PROBE_CACHE_TTL
+    }
+}
+
+/// Keeps one slow or broken moment from turning an installed Agent into a missing one.
+///
+/// - A lookup that did not complete falls back to the executable found earlier, as long as that
+///   file is still there: the CLI is evidently installed, the shell was just late.
+/// - A version probe that did not complete falls back to the version read earlier from the very
+///   same executable.
+/// - A shell that ran to completion and found nothing is the answer: the earlier path is forgotten.
+fn recover(kind: AgentKind, fresh: BinaryProbe) -> BinaryProbe {
+    let mut cache = probe_cache().lock().unwrap();
+    match &fresh.lookup {
+        Lookup::Failed(_) => {
+            let earlier = cache.last_good.get(&kind).filter(|previous| {
+                previous
+                    .lookup
+                    .executable()
+                    .is_some_and(|path| is_executable(Path::new(path)))
+            });
+            match earlier {
+                Some(previous) => previous.clone(),
+                None => fresh,
+            }
+        }
+        Lookup::NotFound { .. } => {
+            cache.last_good.remove(&kind);
+            fresh
+        }
+        Lookup::Found(_) => {
+            let mut probe = fresh;
+            if let Some(previous) = cache.last_good.get(&kind) {
+                if previous.lookup == probe.lookup {
+                    probe.pi_version = probe.pi_version.or(previous.pi_version);
+                    probe.codex_version = probe.codex_version.or(previous.codex_version);
+                }
+            }
+            if kind != AgentKind::Pi || probe.pi_version.is_some() {
+                cache.last_good.insert(kind, probe.clone());
+            }
+            probe
+        }
+    }
 }
 
 fn binary_probe_uncached(kind: AgentKind) -> BinaryProbe {
@@ -307,15 +437,15 @@ fn binary_probe_uncached(kind: AgentKind) -> BinaryProbe {
             }
         }
     }
-    let executable = resolve_login_shell_executable(command_name(kind));
+    let lookup = lookup_executable(command_name(kind));
     let pi_version = (kind == AgentKind::Pi)
-        .then(|| executable.as_deref().and_then(detect_version))
+        .then(|| lookup.executable().and_then(detect_version))
         .flatten();
     let codex_version = (kind == AgentKind::Codex)
-        .then(|| executable.as_deref().and_then(detect_version))
+        .then(|| lookup.executable().and_then(detect_version))
         .flatten();
     BinaryProbe {
-        executable,
+        lookup,
         pi_version,
         codex_version,
     }
@@ -329,6 +459,7 @@ fn reset_binary_probe_test_state() {
     harness.hits.store(0, Ordering::SeqCst);
     let mut cache = probe_cache().lock().unwrap();
     cache.values.clear();
+    cache.last_good.clear();
     cache.inflight.clear();
 }
 
@@ -1010,16 +1141,12 @@ fn probe_help(executable: &str, args: &[&str]) -> Option<String> {
     // enter this shell; source session ids and user prompts never use this path.
     #[cfg(unix)]
     let mut child = {
-        let shell = std::env::var("SHELL")
-            .ok()
-            .filter(|value| Path::new(value).is_absolute())
-            .unwrap_or_else(|| "/bin/zsh".to_string());
         let command = std::iter::once(executable)
             .chain(args.iter().copied())
             .map(shell_quote)
             .collect::<Vec<_>>()
             .join(" ");
-        Command::new(shell)
+        Command::new(login_shell())
             .args(["-lc", &command])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -1049,7 +1176,7 @@ fn probe_help(executable: &str, args: &[&str]) -> Option<String> {
                 bytes.extend(output.stderr);
                 return String::from_utf8(bytes).ok();
             }
-            Ok(None) if started.elapsed() < RESOLVE_TIMEOUT => {
+            Ok(None) if started.elapsed() < HELP_TIMEOUT => {
                 std::thread::sleep(Duration::from_millis(20));
             }
             _ => {
@@ -1090,60 +1217,281 @@ pub fn task_with_attachments(task: &str, files: &[String], warnings: &[String]) 
     output
 }
 
-fn resolve_login_shell_executable(name: &str) -> Option<String> {
+/// Where the user's own shell says the Agent command lives. Unix asks the interactive login shell
+/// (so the rc runs exactly as in a Terminal window); Windows resolves it from the system PATH.
+fn lookup_executable(name: &str) -> Lookup {
     #[cfg(windows)]
     {
-        resolve_windows_executable(name)
+        match resolve_windows_executable(name) {
+            Some(path) => Lookup::Found(path),
+            None => Lookup::not_found(),
+        }
     }
     #[cfg(unix)]
     {
-        let shell = std::env::var("SHELL")
-            .ok()
-            .filter(|v| Path::new(v).is_absolute())
-            .unwrap_or_else(|| "/bin/zsh".to_string());
-        let mut child = Command::new(shell)
-            .args([
-                "-lic",
-                &format!("p=$(command -v {name}) && printf '\\n__ASKHUMAN_BIN__%s\\n' \"$p\""),
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let started = std::time::Instant::now();
+        lookup_in_login_shell(&login_shell(), name, RESOLVE_TIMEOUT)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = name;
+        Lookup::not_found()
+    }
+}
+
+/// `$SHELL` when it is an absolute path, else zsh (macOS's default).
+#[cfg(unix)]
+fn login_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|value| Path::new(value).is_absolute())
+        .unwrap_or_else(|| "/bin/zsh".to_string())
+}
+
+/// What one run of the login shell produced.
+#[cfg(unix)]
+struct ShellRun {
+    /// `None`: the shell was still running at the deadline and was killed.
+    status: Option<std::process::ExitStatus>,
+    /// The lines of stdout that start with [`MARKER_PREFIX`], in order.
+    markers: Vec<String>,
+    elapsed: Duration,
+}
+
+/// Runs `shell -lic script` with a deadline and keeps the marker lines it prints.
+#[cfg(unix)]
+fn run_login_shell(shell: &str, script: &str, timeout: Duration) -> std::io::Result<ShellRun> {
+    use std::io::{BufRead, BufReader, Read};
+    use std::sync::mpsc;
+
+    let started = Instant::now();
+    let mut child = Command::new(shell)
+        .args(["-lic", script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let pipe = child.stdout.take().expect("stdout is piped");
+    let (lines, received) = mpsc::channel::<String>();
+    // Drained while the shell runs so a chatty rc cannot fill the pipe and stall it. Never joined:
+    // a background process the rc started (an agent, a daemon) may keep the pipe open long after
+    // the shell itself is gone.
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(pipe);
+        let mut line = Vec::new();
+        let mut sent = 0;
         loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    if !status.success() {
-                        return None;
-                    }
-                    let output = child.wait_with_output().ok()?;
-                    return output
-                        .stdout
-                        .split(|b| *b == b'\n')
-                        .filter_map(|line| std::str::from_utf8(line).ok())
-                        .map(str::trim)
-                        .filter_map(|line| line.strip_prefix("__ASKHUMAN_BIN__"))
-                        .filter(|line| Path::new(line).is_absolute())
-                        .map(PathBuf::from)
-                        .find_map(|path| fs::canonicalize(path).ok())
-                        .filter(|path| is_executable(path))
-                        .map(|path| path.to_string_lossy().to_string());
-                }
-                Ok(None) if started.elapsed() < RESOLVE_TIMEOUT => {
-                    std::thread::sleep(Duration::from_millis(20))
-                }
-                _ => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
+            line.clear();
+            match (&mut reader)
+                .take(MAX_LINE_BYTES)
+                .read_until(b'\n', &mut line)
+            {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let text = String::from_utf8_lossy(&line);
+            let text = text.trim();
+            if text.starts_with(MARKER_PREFIX) && sent < MAX_MARKER_LINES {
+                sent += 1;
+                if lines.send(text.to_string()).is_err() {
+                    break;
                 }
             }
         }
+    });
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if started.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        }
+    };
+    // Whatever the shell printed is already in the pipe. The short grace lets the reader hand it
+    // over without waiting for a pipe that some other process still holds open (or keeps writing to).
+    let mut markers = Vec::new();
+    let drain_deadline = Instant::now() + Duration::from_millis(300);
+    while let Some(left) = drain_deadline.checked_duration_since(Instant::now()) {
+        let Ok(line) = received.recv_timeout(left.min(Duration::from_millis(100))) else {
+            break;
+        };
+        markers.push(line);
     }
-    #[cfg(not(any(unix, windows)))]
-    None
+    Ok(ShellRun {
+        status,
+        markers,
+        elapsed: started.elapsed(),
+    })
+}
+
+/// Asks `shell` (an interactive login shell) where the command `name` lives.
+///
+/// The script also prints the PATH the shell came up with, for diagnosis only: when a Terminal
+/// window finds an Agent and this process does not, that PATH is where the difference shows.
+#[cfg(unix)]
+fn lookup_in_login_shell(shell: &str, name: &str, timeout: Duration) -> Lookup {
+    let (lookup, login_path, elapsed) = match run_login_shell(shell, &lookup_script(name), timeout)
+    {
+        Ok(run) => (
+            interpret_lookup(shell, timeout, &run),
+            marked_line(&run.markers, PATH_MARKER).unwrap_or_default(),
+            Some(run.elapsed),
+        ),
+        Err(error) => (
+            Lookup::Failed(format!("could not start the login shell {shell}: {error}")),
+            String::new(),
+            None,
+        ),
+    };
+    if lookup.executable().is_none() {
+        note_lookup_miss(name, shell, &lookup, &login_path, elapsed);
+    }
+    lookup
+}
+
+/// The command line the login shell runs: print the PATH it came up with, then ask where `name`
+/// lives. `name` is one of the fixed command names of [`command_name`], never user input.
+#[cfg(unix)]
+fn lookup_script(name: &str) -> String {
+    format!(
+        "printf '\\n{PATH_MARKER}%s\\n' \"$PATH\"; p=$(command -v {name}) && printf '\\n{BIN_MARKER}%s\\n' \"$p\""
+    )
+}
+
+/// The text after `marker` on the first marker line that starts with it.
+#[cfg(unix)]
+fn marked_line(markers: &[String], marker: &str) -> Option<String> {
+    markers
+        .iter()
+        .find_map(|line| line.strip_prefix(marker).map(str::to_string))
+}
+
+/// Turns one finished (or killed) login-shell run into a [`Lookup`].
+#[cfg(unix)]
+fn interpret_lookup(shell: &str, timeout: Duration, run: &ShellRun) -> Lookup {
+    let shell_name = Path::new(shell).file_name().map_or_else(
+        || shell.to_string(),
+        |name| name.to_string_lossy().to_string(),
+    );
+    // A marker means `command -v` ran and succeeded, whatever the rc did to the exit status after.
+    if let Some(printed) = marked_line(&run.markers, BIN_MARKER) {
+        return classify_printed(&printed);
+    }
+    let Some(status) = run.status else {
+        return Lookup::Failed(format!(
+            "the login shell ({shell_name}) did not answer within {}",
+            describe_wait(timeout)
+        ));
+    };
+    match status.code() {
+        // `command -v` found nothing.
+        Some(1) => Lookup::not_found(),
+        // The shell ended cleanly without ever running the lookup: the rc left (`exit`, `exec`).
+        Some(0) => Lookup::NotFound {
+            detail: Some(format!(
+                "the login shell ({shell_name}) ended before running the lookup"
+            )),
+        },
+        Some(code) => Lookup::Failed(format!(
+            "the login shell ({shell_name}) exited with status {code}"
+        )),
+        None => Lookup::Failed(format!(
+            "the login shell ({shell_name}) was killed by a signal"
+        )),
+    }
+}
+
+/// What `command -v` printed: a path to an executable file, or something the Agent cannot be
+/// launched through (an alias, a function, a path that does not lead to an executable).
+#[cfg(unix)]
+fn classify_printed(printed: &str) -> Lookup {
+    let printed = printed.trim();
+    if printed.is_empty() {
+        return Lookup::not_found();
+    }
+    let path = Path::new(printed);
+    if !path.is_absolute() {
+        // Aliases print their definition, functions and builtins print their bare name.
+        let what = if printed.starts_with("alias ") {
+            "a shell alias"
+        } else {
+            "a shell function or builtin"
+        };
+        return Lookup::NotFound {
+            detail: Some(format!(
+                "the login shell resolves it to {what}, not to an executable file"
+            )),
+        };
+    }
+    match fs::canonicalize(path) {
+        Ok(real) if is_executable(&real) => Lookup::Found(real.to_string_lossy().to_string()),
+        Ok(_) => Lookup::NotFound {
+            detail: Some("the path it resolves to is not an executable file".to_string()),
+        },
+        Err(error) => Lookup::NotFound {
+            detail: Some(format!("the path it resolves to cannot be opened: {error}")),
+        },
+    }
+}
+
+/// `6 s`, `0.3 s`.
+#[cfg(unix)]
+fn describe_wait(timeout: Duration) -> String {
+    if timeout.subsec_millis() == 0 {
+        format!("{} s", timeout.as_secs())
+    } else {
+        format!("{:.1} s", timeout.as_secs_f32())
+    }
+}
+
+/// Whether a lookup that found nothing leaves a line in the process log. The daemon switches this
+/// on: it is the process whose environment differs from a Terminal window's, and the phone only
+/// shows the one-line reason.
+static LOG_LOOKUP_MISSES: AtomicBool = AtomicBool::new(false);
+
+pub fn log_lookup_misses(enabled: bool) {
+    LOG_LOOKUP_MISSES.store(enabled, Ordering::Relaxed);
+}
+
+/// One line per lookup that did not find the Agent: what the shell said, how long it took, and
+/// the PATH the login shell ended up with next to the PATH this process inherited. Lookups are
+/// cached, so this stays at a few lines per minute at most.
+#[cfg(unix)]
+fn note_lookup_miss(
+    name: &str,
+    shell: &str,
+    lookup: &Lookup,
+    login_path: &str,
+    elapsed: Option<Duration>,
+) {
+    if !LOG_LOOKUP_MISSES.load(Ordering::Relaxed) {
+        return;
+    }
+    let outcome = match lookup {
+        Lookup::Found(_) => return,
+        Lookup::NotFound { detail: None } => "not found".to_string(),
+        Lookup::NotFound {
+            detail: Some(detail),
+        } => format!("not found ({detail})"),
+        Lookup::Failed(reason) => format!("lookup did not complete ({reason})"),
+    };
+    let took = elapsed.map_or_else(
+        || "-".to_string(),
+        |elapsed| elapsed.as_millis().to_string(),
+    );
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    eprintln!(
+        "[agent-lookup] {name}: {outcome}; shell={shell}; took={took}ms; login-shell PATH={login_path}; inherited PATH={inherited}"
+    );
 }
 
 #[cfg(windows)]
@@ -1424,7 +1772,7 @@ mod tests {
         with_binary_probe_test_state(|| {
             participate_in_binary_probe_test();
             set_binary_probe_test_override(BinaryProbe {
-                executable: Some("/tmp/pi-test".into()),
+                lookup: Lookup::Found("/tmp/pi-test".into()),
                 pi_version: Some((0, 82, 0)),
                 codex_version: None,
             });
@@ -1441,7 +1789,7 @@ mod tests {
     fn binary_probe_single_flight_shares_one_uncached_call() {
         with_binary_probe_test_state(|| {
             set_binary_probe_test_override(BinaryProbe {
-                executable: Some("/tmp/grok-test".into()),
+                lookup: Lookup::Found("/tmp/grok-test".into()),
                 pi_version: None,
                 codex_version: None,
             });
@@ -1459,6 +1807,377 @@ mod tests {
             });
             assert_eq!(binary_probe_test_count(), 1);
         });
+    }
+
+    fn probe(lookup: Lookup) -> BinaryProbe {
+        BinaryProbe {
+            lookup,
+            pi_version: None,
+            codex_version: None,
+        }
+    }
+
+    #[test]
+    fn only_unsettled_answers_are_asked_again_soon() {
+        let found = probe(Lookup::Found("/x/claude".into()));
+        assert_eq!(probe_ttl(AgentKind::Claude, &found), PROBE_CACHE_TTL);
+        assert_eq!(
+            probe_ttl(AgentKind::Claude, &probe(Lookup::not_found())),
+            PROBE_CACHE_TTL
+        );
+        assert_eq!(
+            probe_ttl(AgentKind::Claude, &probe(Lookup::Failed("late".into()))),
+            INCOMPLETE_PROBE_TTL
+        );
+        // Pi is only usable with a readable version, so "found, version unknown" is unsettled too.
+        assert_eq!(probe_ttl(AgentKind::Pi, &found), INCOMPLETE_PROBE_TTL);
+        let pi = BinaryProbe {
+            pi_version: Some((0, 82, 0)),
+            ..found
+        };
+        assert_eq!(probe_ttl(AgentKind::Pi, &pi), PROBE_CACHE_TTL);
+    }
+
+    #[test]
+    fn diagnostics_say_what_the_lookup_actually_found_out() {
+        let label = AgentKind::Claude.label();
+        assert_eq!(
+            binary_diagnostic(AgentKind::Claude, &Lookup::not_found(), None),
+            Some(format!("{label} CLI was not found in the login shell"))
+        );
+        assert_eq!(
+            binary_diagnostic(
+                AgentKind::Claude,
+                &Lookup::NotFound {
+                    detail: Some("the login shell resolves it to a shell alias".into())
+                },
+                None
+            ),
+            Some(format!(
+                "{label} CLI was not found in the login shell (the login shell resolves it to a shell alias)"
+            ))
+        );
+        // A lookup that never finished must not claim the CLI is missing.
+        assert_eq!(
+            binary_diagnostic(
+                AgentKind::Claude,
+                &Lookup::Failed("the login shell (zsh) did not answer within 6 s".into()),
+                None
+            ),
+            Some(format!(
+                "{label} CLI lookup did not complete: the login shell (zsh) did not answer within 6 s"
+            ))
+        );
+        let found = Lookup::Found("/x/claude".into());
+        assert_eq!(binary_diagnostic(AgentKind::Claude, &found, None), None);
+        let pi = Lookup::Found("/x/pi".into());
+        assert_eq!(
+            binary_diagnostic(AgentKind::Pi, &pi, Some((0, 82, 0))),
+            None
+        );
+        assert!(binary_diagnostic(AgentKind::Pi, &pi, Some((0, 81, 0)))
+            .is_some_and(|text| text.contains("0.81.0 is unsupported")));
+        assert!(binary_diagnostic(AgentKind::Pi, &pi, None)
+            .is_some_and(|text| text.contains("could not be detected")));
+    }
+
+    #[cfg(unix)]
+    fn executable_file(dir: &Path, name: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        fs::write(&path, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_incomplete_lookup_keeps_the_executable_found_earlier() {
+        with_binary_probe_test_state(|| {
+            participate_in_binary_probe_test();
+            let dir = tempfile::tempdir().unwrap();
+            let path = executable_file(dir.path(), "cursor-agent");
+            let found = probe(Lookup::Found(path.to_string_lossy().to_string()));
+
+            set_binary_probe_test_override(found.clone());
+            assert_eq!(binary_probe(AgentKind::Cursor, true), found);
+
+            // The shell is late next time: the CLI is evidently still installed.
+            set_binary_probe_test_override(probe(Lookup::Failed("late".into())));
+            assert_eq!(binary_probe(AgentKind::Cursor, true), found);
+
+            // A shell that ran to completion and found nothing is the answer, and the earlier
+            // path is forgotten with it.
+            set_binary_probe_test_override(probe(Lookup::not_found()));
+            assert_eq!(
+                binary_probe(AgentKind::Cursor, true).lookup,
+                Lookup::not_found()
+            );
+            set_binary_probe_test_override(probe(Lookup::Failed("late".into())));
+            assert_eq!(
+                binary_probe(AgentKind::Cursor, true).lookup,
+                Lookup::Failed("late".into())
+            );
+        });
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_earlier_executable_that_is_gone_is_not_resurrected() {
+        with_binary_probe_test_state(|| {
+            participate_in_binary_probe_test();
+            let dir = tempfile::tempdir().unwrap();
+            let path = executable_file(dir.path(), "cursor-agent");
+
+            set_binary_probe_test_override(probe(Lookup::Found(
+                path.to_string_lossy().to_string(),
+            )));
+            binary_probe(AgentKind::Cursor, true);
+            fs::remove_file(&path).unwrap();
+
+            set_binary_probe_test_override(probe(Lookup::Failed("late".into())));
+            assert_eq!(
+                binary_probe(AgentKind::Cursor, true).lookup,
+                Lookup::Failed("late".into())
+            );
+        });
+    }
+
+    #[test]
+    fn a_version_probe_that_did_not_complete_keeps_the_version_read_earlier() {
+        with_binary_probe_test_state(|| {
+            participate_in_binary_probe_test();
+            let with_version = BinaryProbe {
+                pi_version: Some((0, 82, 0)),
+                ..probe(Lookup::Found("/x/pi".into()))
+            };
+            set_binary_probe_test_override(with_version.clone());
+            assert_eq!(binary_probe(AgentKind::Pi, true), with_version);
+
+            // `pi --version` timed out this time, for the same executable.
+            set_binary_probe_test_override(probe(Lookup::Found("/x/pi".into())));
+            assert_eq!(binary_probe(AgentKind::Pi, true), with_version);
+
+            // A different executable has not been read yet, so nothing is carried over.
+            set_binary_probe_test_override(probe(Lookup::Found("/y/pi".into())));
+            assert_eq!(binary_probe(AgentKind::Pi, true).pi_version, None);
+        });
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn waits_are_described_in_seconds() {
+        assert_eq!(describe_wait(Duration::from_secs(6)), "6 s");
+        assert_eq!(describe_wait(Duration::from_millis(300)), "0.3 s");
+        assert_eq!(describe_wait(Duration::from_millis(2500)), "2.5 s");
+    }
+
+    /// A stand-in for the login shell. The script only runs for `-lic`, so the warm-up exec below
+    /// returns at once.
+    #[cfg(unix)]
+    fn fake_login_shell(dir: &Path, name: &str, body: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        fs::write(
+            &path,
+            format!("#!/bin/sh\n[ \"$1\" = \"-lic\" ] || exit 0\n{body}\n"),
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        // A fork in another test can briefly hold the write handle, which fails the first exec
+        // with ETXTBSY. Get past that here rather than inside the code under test.
+        for _ in 0..50 {
+            let status = Command::new(&path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            match status {
+                Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                _ => break,
+            }
+        }
+        path.to_string_lossy().to_string()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn the_lookup_script_prints_the_path_and_the_command_it_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let pi = executable_file(dir.path(), "pi");
+        let search = format!("{}:/usr/bin:/bin", dir.path().display());
+        let run = |name: &str| {
+            Command::new("/bin/sh")
+                .args(["-c", &lookup_script(name)])
+                .env("PATH", &search)
+                .output()
+                .unwrap()
+        };
+
+        let found = run("pi");
+        let printed = String::from_utf8_lossy(&found.stdout).to_string();
+        assert!(found.status.success());
+        assert!(
+            printed.contains(&format!("{PATH_MARKER}{search}")),
+            "{printed}"
+        );
+        assert!(
+            printed.contains(&format!("{BIN_MARKER}{}", pi.display())),
+            "{printed}"
+        );
+
+        // A command that does not exist ends with status 1 and no answer line, but the PATH line
+        // is still there for diagnosis.
+        let missing = run("askhuman-no-such-command");
+        let printed = String::from_utf8_lossy(&missing.stdout).to_string();
+        assert_eq!(missing.status.code(), Some(1));
+        assert!(printed.contains(PATH_MARKER), "{printed}");
+        assert!(!printed.contains(BIN_MARKER), "{printed}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn login_shell_lookup_returns_the_canonical_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = executable_file(dir.path(), "claude-2.1.0");
+        let link = dir.path().join("claude");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let shell = fake_login_shell(
+            dir.path(),
+            "found-shell",
+            &format!(
+                "echo '{PATH_MARKER}/usr/bin'\necho '{BIN_MARKER}{}'",
+                link.display()
+            ),
+        );
+        assert_eq!(
+            lookup_in_login_shell(&shell, "claude", Duration::from_secs(10)),
+            Lookup::Found(
+                fs::canonicalize(&real)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn login_shell_lookup_reports_a_command_that_is_not_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = fake_login_shell(
+            dir.path(),
+            "empty-shell",
+            &format!("echo '{PATH_MARKER}/usr/bin'\nexit 1"),
+        );
+        assert_eq!(
+            lookup_in_login_shell(&shell, "pi", Duration::from_secs(10)),
+            Lookup::not_found()
+        );
+        // An rc that ends the shell before the lookup ran says nothing about the command.
+        let left_early = fake_login_shell(dir.path(), "left-early-shell", "exit 0");
+        let lookup = lookup_in_login_shell(&left_early, "pi", Duration::from_secs(10));
+        assert!(
+            matches!(&lookup, Lookup::NotFound { detail: Some(detail) } if detail.contains("ended before running the lookup")),
+            "{lookup:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn login_shell_lookup_explains_answers_that_are_not_executable_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("plain-file");
+        fs::write(&plain, "not a program").unwrap();
+        let cases = [
+            (
+                "alias claude=/opt/claude/bin/claude".to_string(),
+                "a shell alias",
+            ),
+            ("claude".to_string(), "a shell function or builtin"),
+            (plain.display().to_string(), "is not an executable file"),
+            (
+                dir.path().join("missing").display().to_string(),
+                "cannot be opened",
+            ),
+        ];
+        for (index, (printed, expected)) in cases.into_iter().enumerate() {
+            let shell = fake_login_shell(
+                dir.path(),
+                &format!("answer-shell-{index}"),
+                &format!("echo '{BIN_MARKER}{printed}'"),
+            );
+            let lookup = lookup_in_login_shell(&shell, "claude", Duration::from_secs(10));
+            assert!(
+                matches!(&lookup, Lookup::NotFound { detail: Some(detail) } if detail.contains(expected)),
+                "{printed}: {lookup:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn login_shell_lookup_gives_up_on_a_shell_that_does_not_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = fake_login_shell(dir.path(), "slow-shell", "sleep 5");
+        let started = Instant::now();
+        let lookup = lookup_in_login_shell(&shell, "claude", Duration::from_millis(300));
+        assert_eq!(
+            lookup,
+            Lookup::Failed("the login shell (slow-shell) did not answer within 0.3 s".to_string())
+        );
+        // The orphaned `sleep` keeps the pipe open for five seconds; the lookup must not wait.
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn login_shell_lookup_reports_a_shell_that_cannot_run_or_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = fake_login_shell(dir.path(), "broken-shell", "exit 127");
+        assert_eq!(
+            lookup_in_login_shell(&shell, "claude", Duration::from_secs(10)),
+            Lookup::Failed("the login shell (broken-shell) exited with status 127".to_string())
+        );
+        let lookup = lookup_in_login_shell(
+            "/nonexistent/askhuman-shell",
+            "claude",
+            Duration::from_secs(10),
+        );
+        assert!(
+            matches!(&lookup, Lookup::Failed(reason) if reason.starts_with("could not start the login shell /nonexistent/askhuman-shell")),
+            "{lookup:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn login_shell_lookup_survives_a_noisy_rc_and_lingering_children() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = executable_file(dir.path(), "claude");
+        // 4000 lines is well past a pipe buffer; the background `sleep` keeps the pipe open after
+        // the shell has exited; the answer comes with an odd exit status.
+        let shell = fake_login_shell(
+            dir.path(),
+            "noisy-shell",
+            &format!(
+                "(sleep 3 &)\ni=0\nwhile [ $i -lt 4000 ]; do echo 'rc noise rc noise rc noise rc noise rc noise rc noise'; i=$((i+1)); done\necho '{PATH_MARKER}/usr/bin'\necho '{BIN_MARKER}{}'\nexit 3",
+                real.display()
+            ),
+        );
+        let started = Instant::now();
+        assert_eq!(
+            lookup_in_login_shell(&shell, "claude", Duration::from_secs(10)),
+            Lookup::Found(
+                fs::canonicalize(&real)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            )
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
@@ -1642,7 +2361,10 @@ mod tests {
     #[test]
     #[ignore]
     fn real_codex_fork_help_when_available() {
-        let executable = resolve_login_shell_executable("codex").expect("Codex is not installed");
+        let executable = lookup_executable("codex")
+            .executable()
+            .expect("Codex is not installed")
+            .to_string();
         let help =
             probe_help(&executable, &["fork", "--help"]).expect("Codex fork help probe failed");
         assert!(help.contains("SESSION_ID"), "{help}");

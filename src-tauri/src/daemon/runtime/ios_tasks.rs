@@ -76,21 +76,18 @@ pub(super) async fn choices(state: &Arc<ServerState>) -> TaskChoices {
     if let Err(block) = task_gate_now(&config) {
         return TaskChoices::blocked(mode, block_reason(block));
     }
-    let (workspaces, readiness, codex) = tokio::task::spawn_blocking(|| {
-        (
-            crate::agents::workspaces::refresh(),
+    // The workspace scan and the Agent probes (login-shell lookups that can take seconds on a slow
+    // shell) are independent; run side by side so the phone's 15 s wait is spent once, not twice.
+    let (workspaces, probes) = tokio::join!(
+        tokio::task::spawn_blocking(crate::agents::workspaces::refresh),
+        tokio::task::spawn_blocking(|| (
             agent_launch::all_readiness(),
             crate::codex_desktop::launch_status(false),
-        )
-    })
-    .await
-    .unwrap_or_else(|_| {
-        (
-            Vec::new(),
-            Vec::new(),
-            crate::codex_desktop::launch_status(false),
-        )
-    });
+        )),
+    );
+    let workspaces = workspaces.unwrap_or_default();
+    let (readiness, codex) =
+        probes.unwrap_or_else(|_| (Vec::new(), crate::codex_desktop::launch_status(false)));
     if workspaces.is_empty() {
         return TaskChoices::blocked(mode, "noWorkspace");
     }

@@ -185,6 +185,9 @@ fn run_cmd(background: bool) -> i32 {
             return 1;
         }
     };
+    // The daemon's environment is not a Terminal window's, and the phone only shows a one-line
+    // reason when an Agent's CLI is not found: leave the details in daemon.log.
+    crate::integrations::agent_launch::log_lookup_misses(true);
     // 复用 tauri 的全局（多线程）tokio 运行时，使各 Channel 的 `tauri::async_runtime::spawn`
     // 与 Daemon 自身的任务跑在同一运行时上（不初始化任何 GUI / AppKit）。
     tauri::async_runtime::block_on(serve(lock))
