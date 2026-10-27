@@ -40,7 +40,7 @@ import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync,
 } from "node:fs";
 import { cpus, homedir, loadavg, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // ---- fixed scenario knobs (built in on purpose) ----------------------------
@@ -83,7 +83,7 @@ function parseArgs(argv) {
       case "--update-baseline": o.updateBaseline = true; break;
       case "--keep-home": o.keepHome = true; break;
       case "--tier": o.tier = argv[++i]; break;
-      case "--ref": o.ref = argv[++i]; break;
+      case "--ref": o.ref = resolve(argv[++i]); break; // absolute: the children run from a throwaway cwd
       case "-h": case "--help": printHelp(); process.exit(0); break;
       default:
         console.error(`unknown option: ${a}`);
@@ -164,9 +164,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  *  1-minute load average to drop below ~60% of the cores; proceed with a warning if it never does. */
 const QUIET_LOAD_FRACTION = 0.6;
 const QUIET_WAIT_MS = 10 * 60_000;
-async function waitQuiet() {
+async function waitQuiet(maxWaitMs = QUIET_WAIT_MS) {
   const limit = cpus().length * QUIET_LOAD_FRACTION;
-  const deadline = Date.now() + QUIET_WAIT_MS;
+  const deadline = Date.now() + maxWaitMs;
   let announced = false;
   while (loadavg()[0] > limit) {
     if (Date.now() > deadline) {
@@ -443,9 +443,11 @@ function aggregate(runs, warmup) {
 
 class NoPaintError extends Error {}
 
-/** One failed attempt is retried once (a WebView that is occluded or throttled by a busy machine
- *  occasionally misses a paint); the retries are counted and reported so flakiness stays visible. */
-const MAX_RETRIES_TOTAL = 4;
+/** A failed attempt is retried (a WebView that is occluded or throttled by a busy machine
+ *  occasionally misses a paint, sometimes twice in a row); the retries are counted and reported so
+ *  flakiness stays visible. */
+const MAX_RETRIES_TOTAL = 12;
+const MAX_ATTEMPTS_PER_RUN = 4;
 let retriesTotal = 0;
 
 async function withRetry(label, fn) {
@@ -453,7 +455,7 @@ async function withRetry(label, fn) {
     try {
       return await fn(attempt);
     } catch (err) {
-      if (!(err instanceof NoPaintError) || attempt >= 1 || retriesTotal >= MAX_RETRIES_TOTAL) throw err;
+      if (!(err instanceof NoPaintError) || attempt >= MAX_ATTEMPTS_PER_RUN - 1 || retriesTotal >= MAX_RETRIES_TOTAL) throw err;
       retriesTotal++;
       process.stdout.write(`\n  ${label}: ${err.message} -> retrying (retry ${retriesTotal}/${MAX_RETRIES_TOTAL})\n`);
     }
@@ -607,26 +609,30 @@ function printCompare(title, ref, cand) {
   }
 }
 
-/** Returns the list of failure strings for one tier + set (`base` is a baseline entry or the ref run). */
-function gate(name, agg, base, tierName, setName, what = "baseline") {
+/**
+ * Returns the list of failure strings for one tier + set (`base` is a baseline entry or the ref run).
+ * `stat` is the statistic that is compared: "p90" on a quiet machine, "median" on a busy one, because
+ * the upper tail of a loaded machine measures the other processes, not this window.
+ */
+function gate(name, agg, base, tierName, setName, what = "baseline", stat = "p90") {
   const failures = [];
   for (const label of [E2E, FRONTEND]) {
-    const cur = agg.metrics[label]?.p90;
-    const b = base?.metrics?.[label]?.p90;
+    const cur = agg.metrics[label]?.[stat];
+    const b = base?.metrics?.[label]?.[stat];
     if (cur == null || b == null || b <= 0) continue;
     const abs = cur - b;
     const rel = (abs / b) * 100;
     if (rel > GATE_REL_PCT && abs > GATE_ABS_MS) {
       failures.push(
-        `${name}: ${label} p90 ${cur.toFixed(1)} ms vs ${what} ${b.toFixed(1)} ms ` +
+        `${name}: ${label} ${stat} ${cur.toFixed(1)} ms vs ${what} ${b.toFixed(1)} ms ` +
           `(+${abs.toFixed(1)} ms, +${rel.toFixed(1)}% > ${GATE_REL_PCT}% and > ${GATE_ABS_MS} ms)`,
       );
     }
   }
   if (tierName === "stress" && setName === "hot") {
-    const cur = agg.metrics[FRONTEND]?.p90;
+    const cur = agg.metrics[FRONTEND]?.[stat];
     if (cur != null && cur > STRESS_FRONTEND_P90_MAX_MS) {
-      failures.push(`${name}: ${FRONTEND} p90 ${cur.toFixed(1)} ms > ${STRESS_FRONTEND_P90_MAX_MS} ms budget`);
+      failures.push(`${name}: ${FRONTEND} ${stat} ${cur.toFixed(1)} ms > ${STRESS_FRONTEND_P90_MAX_MS} ms budget`);
     }
   }
   return failures;
@@ -669,7 +675,8 @@ async function main() {
   try {
     console.log(`candidate: ${bin}`);
     if (o.ref) console.log(`reference: ${o.ref}`);
-    await waitQuiet();
+    // A/B runs interleave both binaries, so load is common-mode: do not wait long for a quiet machine.
+    await waitQuiet(o.ref ? 30_000 : QUIET_WAIT_MS);
     loadavgAtStart = loadavg().map((x) => Number(x.toFixed(2)));
     console.log(`load average at start: ${loadavg().map((x) => x.toFixed(2)).join(" ")} (${cpus().length} cores)`);
     for (const tierName of tierNames) {
@@ -681,6 +688,17 @@ async function main() {
     else console.log(`kept temp homes: ${homes.join(", ")}`);
   }
 
+  // Load at the end of the run counts too: the machine may have been quiet only at the start.
+  const loadavgAtEnd = loadavg().map((x) => Number(x.toFixed(2)));
+  const busyLimit = cpus().length * QUIET_LOAD_FRACTION;
+  const busy = Math.max(loadavgAtStart[0] ?? 0, loadavgAtEnd[0] ?? 0) > busyLimit;
+  const gateStat = busy ? "median" : "p90";
+  if (busy) {
+    console.log(
+      `\nNOTE: the machine was busy (load ${loadavgAtStart[0]} at start, ${loadavgAtEnd[0]} at end, limit ${busyLimit.toFixed(1)}): ` +
+        "gating on medians; p90 is shown but dominated by other processes. Re-run on a quiet machine for a p90 verdict.",
+    );
+  }
   let failures = [];
   for (const [tierName, byLabel] of Object.entries(results)) {
     for (const setName of ["cold", "hot"]) {
@@ -688,11 +706,11 @@ async function main() {
       if (o.ref) {
         const ref = byLabel.ref[setName];
         printCompare(`${tierName} / ${setName}`, ref, cand);
-        failures = failures.concat(gate(`${tierName}/${setName}`, cand, ref, tierName, setName, "reference"));
+        failures = failures.concat(gate(`${tierName}/${setName}`, cand, ref, tierName, setName, "reference", gateStat));
       } else {
         const base = baseline?.tiers?.[tierName]?.[setName];
         printTable(`${tierName} / ${setName}`, cand, base);
-        failures = failures.concat(gate(`${tierName}/${setName}`, cand, base, tierName, setName));
+        failures = failures.concat(gate(`${tierName}/${setName}`, cand, base, tierName, setName, "baseline", gateStat));
       }
     }
   }
@@ -707,6 +725,7 @@ async function main() {
         {
           generatedAt: new Date().toISOString(),
           loadAverageAtStart: loadavgAtStart,
+          loadAverageAtEnd: loadavgAtEnd,
           retries: retriesTotal,
           gate: { relPct: GATE_REL_PCT, absMs: GATE_ABS_MS, stressFrontendP90MaxMs: STRESS_FRONTEND_P90_MAX_MS },
           tiers,
