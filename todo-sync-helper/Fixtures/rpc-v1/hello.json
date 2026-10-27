@@ -1,0 +1,17 @@
+{
+  "name": "handshake with a signed-in account",
+  "request": {
+    "id": 1,
+    "op": "hello"
+  },
+  "response": {
+    "id": 1,
+    "ok": true,
+    "protocol": 1,
+    "helperVersion": "0.1.0",
+    "environment": "production",
+    "container": "iCloud.com.naituw.humaninloop.todosync",
+    "accountStatus": "available",
+    "accountHash": "0123456789abcdef"
+  }
+}

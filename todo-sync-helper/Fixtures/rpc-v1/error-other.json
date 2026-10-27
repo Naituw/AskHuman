@@ -1,0 +1,15 @@
+{
+  "name": "anything else",
+  "request": {
+    "id": 8,
+    "op": "ensure"
+  },
+  "response": {
+    "id": 8,
+    "ok": false,
+    "error": {
+      "code": "other",
+      "message": "serverRejectedRequest"
+    }
+  }
+}

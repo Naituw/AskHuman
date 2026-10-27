@@ -1,0 +1,11 @@
+{
+  "name": "clear iCloud data",
+  "request": {
+    "id": 5,
+    "op": "deleteZone"
+  },
+  "response": {
+    "id": 5,
+    "ok": true
+  }
+}

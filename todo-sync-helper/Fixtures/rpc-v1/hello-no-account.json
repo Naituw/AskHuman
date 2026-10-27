@@ -1,0 +1,16 @@
+{
+  "name": "handshake without an iCloud account",
+  "request": {
+    "id": 1,
+    "op": "hello"
+  },
+  "response": {
+    "id": 1,
+    "ok": true,
+    "protocol": 1,
+    "helperVersion": "0.1.0",
+    "environment": "production",
+    "container": "iCloud.com.naituw.humaninloop.todosync",
+    "accountStatus": "noAccount"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "unknown operation",
+  "request": {
+    "id": 9,
+    "op": "nope"
+  },
+  "response": {
+    "id": 9,
+    "ok": false,
+    "error": {
+      "code": "badRequest",
+      "message": "unknown op nope"
+    }
+  }
+}

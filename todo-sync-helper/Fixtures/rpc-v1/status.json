@@ -1,0 +1,27 @@
+{
+  "name": "status adds push and tick bookkeeping",
+  "request": {
+    "id": 6,
+    "op": "status"
+  },
+  "response": {
+    "id": 6,
+    "ok": true,
+    "protocol": 1,
+    "helperVersion": "0.1.0",
+    "environment": "production",
+    "container": "iCloud.com.naituw.humaninloop.todosync",
+    "accountStatus": "available",
+    "accountHash": "0123456789abcdef",
+    "apns": "registered",
+    "lastPushMs": 1700000000500,
+    "lastTickMs": 1700000001000,
+    "lastTickReason": "push",
+    "lastTickExit": 0,
+    "ticksRun": 12,
+    "enabled": true,
+    "pollMinutes": 10,
+    "pid": 4242,
+    "uptimeMs": 360000
+  }
+}

@@ -1,0 +1,82 @@
+name: AskHumanTodoSync
+
+# The CloudKit helper of the cross-Mac todo sync (docs/plans/todo-sync.md P3): a faceless, non-sandboxed
+# app that talks to iCloud for the AskHuman core over a unix socket and wakes it up (push, poll, wake,
+# network, file edits). Kit/ is also built by Package.swift for `swift test`; App/ is AppKit only.
+
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    DEVELOPMENT_TEAM: DMJXDB9H6Q
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    # One plain Mach-O (no Debug stub + .debug.dylib split): launchd and CloudKit want a normal executable.
+    ENABLE_DEBUG_DYLIB: NO
+    ENABLE_PREVIEWS: NO
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Fixed product identities (plan §2). The container and bundle id cannot be renamed once created.
+    HELPER_BUNDLE_ID: com.naituw.humaninloop.todosync
+    HELPER_CONTAINER_ID: iCloud.com.naituw.humaninloop.todosync
+
+targets:
+  AskHumanTodoSync:
+    type: application
+    platform: macOS
+    sources:
+      - path: Kit
+      - path: App
+    info:
+      path: Config/Info.plist
+      properties:
+        CFBundleDisplayName: AskHuman Todo Sync
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSUIElement: true
+        LSMinimumSystemVersion: "14.0"
+        NSPrincipalClass: NSApplication
+        HelperContainerID: $(HELPER_CONTAINER_ID)
+    entitlements:
+      path: Config/AskHumanTodoSync.entitlements
+      properties:
+        com.apple.developer.icloud-container-identifiers:
+          - $(HELPER_CONTAINER_ID)
+        com.apple.developer.icloud-services:
+          - CloudKit
+        # Xcode swaps this for the value in the provisioning profile when it signs for Developer ID.
+        com.apple.developer.aps-environment: development
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(HELPER_BUNDLE_ID)
+        PRODUCT_NAME: AskHumanTodoSync
+        GENERATE_INFOPLIST_FILE: NO
+    postBuildScripts:
+      - name: Embed LaunchAgent plist for SMAppService
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          dir="${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/Library/LaunchAgents"
+          mkdir -p "$dir"
+          cat > "$dir/${PRODUCT_BUNDLE_IDENTIFIER}.agent.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>Label</key><string>${PRODUCT_BUNDLE_IDENTIFIER}.agent</string>
+            <key>BundleProgram</key><string>Contents/MacOS/${EXECUTABLE_NAME}</string>
+            <key>ProgramArguments</key><array><string>${EXECUTABLE_NAME}</string></array>
+            <key>AssociatedBundleIdentifiers</key><array><string>${PRODUCT_BUNDLE_IDENTIFIER}</string></array>
+            <key>RunAtLoad</key><true/>
+            <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+            <key>ThrottleInterval</key><integer>30</integer>
+            <key>StandardOutPath</key><string>/dev/null</string>
+            <key>StandardErrorPath</key><string>/dev/null</string>
+          </dict></plist>
+          EOF

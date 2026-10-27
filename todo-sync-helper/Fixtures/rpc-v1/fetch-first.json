@@ -1,0 +1,28 @@
+{
+  "name": "first fetch has no token and may be paged",
+  "request": {
+    "id": 2,
+    "op": "fetch"
+  },
+  "response": {
+    "id": 2,
+    "ok": true,
+    "changes": [
+      {
+        "recordName": "todo-1",
+        "recordType": "Todo",
+        "payload": "eyJ2IjoxLCJwIjoiZ2l0aHViLmNvbS9uYWl0dXcvaHVtYW5pbmxvb3AiLCJ0ZXh0Ijp7InYiOiJ3cml0ZSB0aGUgcGxhbiIsImgiOiIwMDAxNzAwMDAwMDAwMDAwLTAwMDAtYWFhYWFhYWEifX0=",
+        "changeTag": "tag-a1"
+      },
+      {
+        "recordName": "device-1",
+        "recordType": "Device",
+        "payload": "eyJ2IjoxLCJuYW1lIjoiTWFjIFN0dWRpbyIsImxhc3RTeW5jTXMiOjE3MDAwMDAwMDAwMDAsInByb2plY3RzIjpbImdpdGh1Yi5jb20vbmFpdHV3L2h1bWFuaW5sb29wIl19",
+        "changeTag": "tag-d1"
+      }
+    ],
+    "deletions": [],
+    "token": "em9uZS10b2tlbi0x",
+    "moreComing": true
+  }
+}

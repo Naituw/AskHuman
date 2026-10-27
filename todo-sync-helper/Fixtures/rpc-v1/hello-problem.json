@@ -1,0 +1,17 @@
+{
+  "name": "handshake from a build that cannot reach CloudKit",
+  "request": {
+    "id": 1,
+    "op": "hello"
+  },
+  "response": {
+    "id": 1,
+    "ok": true,
+    "protocol": 1,
+    "helperVersion": "0.1.0",
+    "environment": "development",
+    "container": "iCloud.com.naituw.humaninloop.todosync",
+    "accountStatus": "unknown",
+    "problem": "missingEntitlement"
+  }
+}

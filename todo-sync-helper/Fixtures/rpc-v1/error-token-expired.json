@@ -1,0 +1,16 @@
+{
+  "name": "token too old",
+  "request": {
+    "id": 8,
+    "op": "fetch",
+    "token": "em9uZS10b2tlbi0x"
+  },
+  "response": {
+    "id": 8,
+    "ok": false,
+    "error": {
+      "code": "tokenExpired",
+      "message": "changeTokenExpired"
+    }
+  }
+}

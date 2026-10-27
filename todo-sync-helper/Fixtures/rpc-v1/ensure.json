@@ -1,0 +1,11 @@
+{
+  "name": "create the zone and its subscription",
+  "request": {
+    "id": 4,
+    "op": "ensure"
+  },
+  "response": {
+    "id": 4,
+    "ok": true
+  }
+}

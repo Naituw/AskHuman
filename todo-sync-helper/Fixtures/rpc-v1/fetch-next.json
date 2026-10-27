@@ -1,0 +1,21 @@
+{
+  "name": "continue from a token; deletions carry the record type",
+  "request": {
+    "id": 3,
+    "op": "fetch",
+    "token": "em9uZS10b2tlbi0x"
+  },
+  "response": {
+    "id": 3,
+    "ok": true,
+    "changes": [],
+    "deletions": [
+      {
+        "recordName": "todo-9",
+        "recordType": "Todo"
+      }
+    ],
+    "token": "em9uZS10b2tlbi0y",
+    "moreComing": false
+  }
+}

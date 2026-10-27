@@ -35,3 +35,7 @@ demo/tray-menu-close/swift/test_fix
 
 # Dev Instance（每 worktree 本地隔离：bin / home / 标记，见 docs/specs/dev-instance-parallel.md）
 .askhuman-dev/
+
+# CloudKit helper of the todo sync: xcodegen output and build products
+todo-sync-helper/build/
+todo-sync-helper/Config/
