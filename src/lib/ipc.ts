@@ -54,6 +54,7 @@ import type {
   ImageAttachment,
   TodoDoneEntry,
   TodoEntry,
+  TodoGroup,
   TodoProjectInfo,
   TodosInit,
   TranscriptPage,
@@ -599,6 +600,9 @@ export const todosProjects = () =>
 /** 在本地列表上合并活跃 agent 项目；前端首屏后后台调用。 */
 export const todosProjectsEnriched = () =>
   invoke<TodoProjectInfo[]>("todos_projects_enriched");
+
+/** Pending todos of every project in one read (the "All todos" view). */
+export const todosAllPending = () => invoke<TodoGroup[]>("todos_all_pending");
 
 /** 打开（或聚焦）项目待办窗口（经统一宿主路由，全局单窗）；`dir` 为预选项目定位目录。 */
 export const openTodos = (dir: string | null) =>

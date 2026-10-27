@@ -1,0 +1,177 @@
+import { mount } from "@vue/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { i18n } from "../../i18n";
+import type { TodoProjectInfo } from "../../lib/types";
+import TodosSidebar from "./TodosSidebar.vue";
+import { ALL_KEY, buildSidebarModel } from "./todoProjects";
+
+const projects: TodoProjectInfo[] = [
+  { key: "/w/a/app", name: "app", count: 4, section: "withTodos" },
+  { key: "/w/b/app", name: "app", count: 2, section: "withTodos" },
+  { key: "/w/blog", name: "blog", count: 0, section: "recent" },
+];
+
+function mountSidebar(props: { selectedKey?: string; query?: string; slots?: Record<string, string> } = {}) {
+  const query = props.query ?? "";
+  return mount(TodosSidebar, {
+    attachTo: document.body,
+    props: {
+      model: buildSidebarModel(projects, query),
+      selectedKey: props.selectedKey ?? "/w/a/app",
+      query,
+    },
+    slots: props.slots,
+    global: { plugins: [i18n] },
+  });
+}
+
+describe("TodosSidebar", () => {
+  beforeEach(() => {
+    i18n.global.locale.value = "zh";
+    // jsdom has no layout, hence no scrollIntoView.
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("renders the aggregate row, the sections, counts and disambiguation hints", () => {
+    const wrapper = mountSidebar();
+    const options = wrapper.findAll("[role=option]");
+    expect(options.map((o) => o.attributes("data-key"))).toEqual([
+      ALL_KEY,
+      "/w/a/app",
+      "/w/b/app",
+      "/w/blog",
+    ]);
+    expect(options[0].text()).toContain("全部待办");
+    expect(options[0].text()).toContain("6");
+    expect(options[1].text()).toContain("app · a");
+    expect(options[1].text()).toContain("4");
+    expect(options[2].text()).toContain("app · b");
+    // No badge for a project without todos.
+    expect(options[3].find(".td-side-count").exists()).toBe(false);
+    expect(wrapper.findAll(".td-side-section-title").map((t) => t.text())).toEqual([
+      "有待办",
+      "最近项目",
+    ]);
+  });
+
+  it("marks the selected row and keeps a single tab stop on it", () => {
+    const wrapper = mountSidebar({ selectedKey: "/w/b/app" });
+    const selected = wrapper.findAll("[role=option]").filter((o) => o.attributes("aria-selected") === "true");
+    expect(selected).toHaveLength(1);
+    expect(selected[0].attributes("data-key")).toBe("/w/b/app");
+    const stops = wrapper.findAll("[role=option]").filter((o) => o.attributes("tabindex") === "0");
+    expect(stops.map((o) => o.attributes("data-key"))).toEqual(["/w/b/app"]);
+  });
+
+  it("falls back to the first row as the tab stop when the selection is filtered out", () => {
+    const wrapper = mountSidebar({ selectedKey: "/w/a/app", query: "blog" });
+    const stops = wrapper.findAll("[role=option]").filter((o) => o.attributes("tabindex") === "0");
+    expect(stops.map((o) => o.attributes("data-key"))).toEqual([ALL_KEY]);
+  });
+
+  it("emits select when a row is clicked", async () => {
+    const wrapper = mountSidebar();
+    await wrapper.get('[data-key="/w/blog"]').trigger("click");
+    await wrapper.get(`[data-key="${ALL_KEY}"]`).trigger("click");
+    expect(wrapper.emitted("select")).toEqual([["/w/blog"], [ALL_KEY]]);
+  });
+
+  it("steps the selection with the arrow keys, clamps at the ends and keeps the keys to itself", async () => {
+    const wrapper = mountSidebar({ selectedKey: "/w/a/app" });
+    const list = wrapper.get("[role=listbox]");
+    const reached: boolean[] = [];
+    document.body.addEventListener("keydown", () => reached.push(true));
+
+    await wrapper.get('[data-key="/w/a/app"]').trigger("keydown", { key: "ArrowDown" });
+    expect(wrapper.emitted("select")?.[0]).toEqual(["/w/b/app"]);
+    await wrapper.get('[data-key="/w/a/app"]').trigger("keydown", { key: "ArrowUp" });
+    expect(wrapper.emitted("select")?.[1]).toEqual([ALL_KEY]);
+    await list.trigger("keydown", { key: "End" });
+    expect(wrapper.emitted("select")?.[2]).toEqual(["/w/blog"]);
+    await list.trigger("keydown", { key: "Home" });
+    expect(wrapper.emitted("select")?.[3]).toEqual([ALL_KEY]);
+    // The window-level todo navigation must not see the arrows.
+    expect(reached).toEqual([]);
+  });
+
+  it("does not re-emit when the arrow key lands on the already selected row", async () => {
+    const wrapper = mountSidebar({ selectedKey: "/w/blog" });
+    await wrapper.get('[data-key="/w/blog"]').trigger("keydown", { key: "ArrowDown" });
+    expect(wrapper.emitted("select")).toBeUndefined();
+  });
+
+  it("moves focus along with the arrow keys", async () => {
+    const wrapper = mountSidebar({ selectedKey: "/w/a/app" });
+    await wrapper.get('[data-key="/w/a/app"]').trigger("keydown", { key: "ArrowDown" });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect((document.activeElement as HTMLElement | null)?.dataset.key).toBe("/w/b/app");
+  });
+
+  it("reports typing in the search box and clears it with Escape", async () => {
+    const wrapper = mountSidebar({ query: "bl" });
+    const input = wrapper.get<HTMLInputElement>(".td-side-input");
+    await input.setValue("blo");
+    expect(wrapper.emitted("update:query")?.[0]).toEqual(["blo"]);
+    await input.trigger("keydown", { key: "Escape" });
+    expect(wrapper.emitted("update:query")?.[1]).toEqual([""]);
+  });
+
+  it("selects the first match on Enter and moves into the list on ArrowDown", async () => {
+    const wrapper = mountSidebar({ query: "app" });
+    const input = wrapper.get(".td-side-input");
+    await input.trigger("keydown", { key: "Enter" });
+    expect(wrapper.emitted("select")?.[0]).toEqual(["/w/a/app"]);
+    await input.trigger("keydown", { key: "ArrowDown" });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect((document.activeElement as HTMLElement | null)?.dataset.key).toBe("/w/a/app");
+  });
+
+  it("ignores Enter while an IME composition is active", async () => {
+    const wrapper = mountSidebar({ query: "app" });
+    await wrapper.get(".td-side-input").trigger("keydown", { key: "Enter", isComposing: true });
+    expect(wrapper.emitted("select")).toBeUndefined();
+  });
+
+  it("says so when nothing matches", () => {
+    const wrapper = mountSidebar({ query: "zzz" });
+    expect(wrapper.find(".td-side-empty").text()).toBe("没有匹配的项目");
+  });
+
+  it("renders the footer strip only when a footer is provided", () => {
+    expect(mountSidebar().find(".td-side-foot").exists()).toBe(false);
+    const wrapper = mountSidebar({ slots: { footer: "<span>已同步</span>" } });
+    expect(wrapper.get(".td-side-foot").text()).toBe("已同步");
+  });
+
+  it("scrolls the selected row into view once, after the rows arrive", async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    // Mounted before the data: nothing to reveal yet.
+    const wrapper = mount(TodosSidebar, {
+      attachTo: document.body,
+      props: { model: buildSidebarModel([], ""), selectedKey: "/w/b/app", query: "" },
+      global: { plugins: [i18n] },
+    });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(scroll).not.toHaveBeenCalled();
+
+    await wrapper.setProps({ model: buildSidebarModel(projects, "") });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect((scroll.mock.contexts[0] as HTMLElement).dataset.key).toBe("/w/b/app");
+
+    // Later selection changes are the user's own doing and are not scrolled to again.
+    await wrapper.setProps({ selectedKey: "/w/blog" });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes focusSearch", () => {
+    const wrapper = mountSidebar();
+    (wrapper.vm as unknown as { focusSearch: () => void }).focusSearch();
+    expect(document.activeElement).toBe(wrapper.get(".td-side-input").element);
+  });
+});

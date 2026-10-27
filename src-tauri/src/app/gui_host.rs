@@ -1553,6 +1553,10 @@ pub(crate) fn open_window(
     todo: Option<String>,
     history_target: Option<crate::gui_host::HistoryOpenTarget>,
 ) {
+    if matches!(kind, WindowKind::Todos) {
+        // Perf harness only (`ASKHUMAN_PERF_ID` in the host's env); no-op otherwise.
+        crate::perf::mark_env("todos.host.open");
+    }
     let cfg = AppConfig::load_without_secrets();
     // 弹窗在「另一个进程」（daemon 拉起的助手），宿主无 popup 窗口可探测；改据 daemon 在途请求数
     // 判定：置顶开启且有在途请求（即有弹窗在屏）→ 让辅助窗口与弹窗同级，浮于其上。
