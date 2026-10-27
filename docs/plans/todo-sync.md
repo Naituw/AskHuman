@@ -324,3 +324,10 @@ tick(reason, budget):
   - 新增 `tick::resume`（配额暂停后用户点「重试」）；未启用时 `full` / `restart_from_local` / `clear_cloud` / `resume` 也不创建旁路目录（零影响，有测试）。
   - 一个执行完又被「历史上限」裁掉、而 diff 没有机会先看到它的条目（一次性执行超过上限条）会被当作删除，而不是「已完成但本机不显示」：无害，不处理。
   - 测试在 `todo_sync/sim.rs`：顺序模型（每步操作后全体同步，逐步与「一份共享列表」模型比对，含顺序与历史）、随机并发（离线 / 丢确认 / 重复投递 / 令牌过期 / 时钟偏差 / 随机崩溃注入）、崩溃点全枚举（含二次崩溃）、各暂停原因。`TODO_SYNC_SOAK=<n>` 把种子数调大做浸泡。
+- **P1 侧栏重构完成**（`feat(todos): replace the project dropdown with a sidebar`），与计划的差异：
+  - 「全部待办」聚合视图直接内联在 `TodosView.vue`（共用现有行样式），没有单独拆组件；分组排序、标签、折叠（每次 50 行，「显示更多」再加 50 行）都在纯函数 `todoProjects.ts` 里并有 vitest。
+  - `todos_all_pending` 只返回「按 key 排序的非空分组」，顺序由前端按侧栏顺序排（后端不知道活跃 Agent 的排名）；聚合行可直接勾选完成（沿用 1 秒撤回），点行 / 「打开项目 ›」切到该项目并选中该待办。
+  - `todos_init` 多返回 `home`，用来把路径显示成 `~/...`；项目头 `⋯` 菜单（复制路径、在访达中显示）是本机模式下的最小版本，iCloud 模式的项（复制仓库地址、从 iCloud 移除）留给 P5。
+  - ⌘/Ctrl+F 聚焦侧栏搜索（窄窗同时展开抽屉），Esc 收起抽屉 / 菜单；侧栏里的 ↑/↓/Home/End 自己处理，窗口级的待办行 ↑/↓ 导航对侧栏事件让路。
+  - 新增浏览器预览页 `src/prototype/todos-window.html`（`mockIPC` 驱动真实 `TodosView`；`?data=real|stress|empty|dups&theme=&platform=`），看布局、深浅色、窄窗抽屉、大数据时用，P5 的 iCloud 视图也复用它。
+  - 本机 shell 的 `HOME` 被指到 `/tmp/ph` 时，`pnpm install` 会因 store 路径不同要求清空重装 `node_modules`（交互提示会让 `install.sh` 卡住）：需要 `export npm_config_store_dir=<真实 HOME>/Library/pnpm/store/v10`。
