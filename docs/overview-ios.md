@@ -14,6 +14,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 - **端到端加密**：每个配对一对方向密钥（ChaCha20-Poly1305），broker 只见密文；配对用一次性票据 + 6 位校验码，由 Mac 用户在设置页或 CLI 上放行。推送预览同样加密，由手机上的通知扩展解密。
 - **Mac 不持有 APNs 密钥**：Mac 把加密后的信封和手机的不透明句柄交给中继，中继按固定白名单拼出提醒并转给 APNs。
 - 手机能做的事：回答问题 / 确认（含多题、推荐、附件）、看 Agent 列表、关注（Follow，≤5）、实时观察（Watch，≤2 路、仅前台）、给 Agent 插话、新建 Agent 任务（Face ID 确认）。
+- **投递与通知分开**（`docs/specs/ios-alert-timing.md`）：iOS 不参与 IM 的活跃槽，`attach_im_channels` / `confirm_im_candidates` 在选完 IM 候选后用 `with_ios` 把它并进来，每个提问 / 确认都挂给所有已配对手机，手机一连上就从 hello 快照（`request.get`）拉到。手机在看（在线 + 前台 + 已 hello）时经 MQTT 实时送达、不推送；不在看时只有系统推送能打扰人，而它要等 Mac 键盘 / 鼠标空闲满 `channels.ios.alertAfterSecs`（默认 900 秒，`0` = 立即）才发，每题每手机最多一条，没有提醒。
 
 ## Mac 端（`src-tauri/src/`）
 
@@ -25,14 +26,15 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 | `ios/views.rs` | 把请求投影成手机渲染的视图（选项原文、TODO、确认变体） |
 | `ios/connstr.rs` · `qr.rs` | `ahconn1.` 连接串（含 broker 密码，只在显式请求时产出）、配对二维码 SVG |
 | `ios/push.rs` | 中继客户端（`/v1/push`），只传信封与句柄；`check_health`（`/v1/health`，设置页 / `channel test ios` 的中继检查） |
-| `ios/gateway/` | Gateway actor：`mod.rs`（事件循环、在线状态、hello 快照）· `pairing.rs`（配对状态机）· `requests.rs`（问答 / 确认闭环、答案校验、通知触发）· `agents.rs`（Agent 列表、Follow、`AgentEvent` 三类通知）· `watch.rs`（实时帧）· `tasks.rs`（新任务、状态机 accepted→launching→launched→watching…）· `assets.rs`（附件双向分块）· `hostapi.rs`（Gateway 向 Daemon 提问的 `Host` trait）；`testkit.rs` + `tests*.rs` 是进程内的完整测试台 |
-| `daemon/runtime/ios.rs` · `ios_agents.rs` · `ios_tasks.rs` | `Host` 的实现：配置变化时重启 Gateway、读 registry / Watch / 插话、启动任务 |
+| `ios/gateway/` | Gateway actor：`mod.rs`（事件循环、在线状态、hello 快照）· `pairing.rs`（配对状态机）· `requests.rs`（问答 / 确认闭环、答案校验、按 Mac 空闲时长触发推送）· `agents.rs`（Agent 列表、Follow、`AgentEvent` 三类通知）· `watch.rs`（实时帧）· `tasks.rs`（新任务、状态机 accepted→launching→launched→watching…）· `assets.rs`（附件双向分块）· `hostapi.rs`（Gateway 向 Daemon 提问的 `Host` trait）；`testkit.rs` + `tests*.rs` 是进程内的完整测试台 |
+| `daemon/runtime/ios.rs` · `ios_agents.rs` · `ios_tasks.rs` | `Host` 的实现：配置变化时重启 Gateway、读 registry / Watch / 插话、启动任务；`mac_idle_secs()` 与 `alert_after_secs()` 把空闲时长与配置接给推送判断 |
+| `idle.rs` | `secs_since_last_input()`：macOS 用 CoreGraphics `CGEventSourceSecondsSinceLastEventType`（合并会话状态、任意输入事件，无需任何权限）；其它平台返回 `None`（Gateway 把「读不到」当作「够久了」，照旧立即推） |
 | `daemon/runtime/task_launch.rs` | IM `/new` 与 iOS 共用的任务启动（门槛、冲突、终端 / Codex App 路径） |
 | `channels/ios.rs` | `Channel` 实现：请求交给 Gateway，首个终态获胜后撤销手机上的请求 |
 | `cli/ios_cmd.rs` | `AskHuman channel ios status / pair / allow / devices / revoke …` 与 `channel set ios …`（密码经 stdin / 文件 / 环境变量，从不进 argv） |
 | `commands.rs` | 设置页用的 Tauri 命令：`ios_op`（经 IPC 的 `ClientMsg::Ios`）、`ios_test`、`ios_pair_qr`、`ios_connection_import` / `export` |
 
-前端：`src/views/settings/IosChannelCard.vue` + `useIosChannel.ts`（状态轮询、配对流程）、`iosTraffic.ts`（本月流量与免费额度预警）。
+前端：`src/views/settings/IosChannelCard.vue` + `useIosChannel.ts`（状态轮询、配对流程）、`iosTraffic.ts`（本月流量与免费额度预警）、`iosAlertTiming.ts`（「推送时机」下拉的预设与时长显示）。
 
 ## 推送中继（`relay/`）
 
@@ -85,6 +87,7 @@ CI（`.github/workflows/build.yml`）只跑上表的「Swift 包」与「中继�
 - **线协议**：`ios/wire.rs` 与 `AHProtocol` 的限额常量（信封 ≤ 900,000 B、分块 192 KB、附件 ≤ 10 MB、每次回复 ≤ 5 个附件、令牌桶 6/s 突发 10、Follow ≤ 5、任务正文 ≤ 3000 字、插话 ≤ 20,000 字、Watch 间隔 ≥ 2 s 且每手机 ≤ 2 路）两边必须一致；改任何一边先改夹具。
 - **幂等**：状态变更消息（回答、插话、`task.create` 等）按 `msgId` 进幂等日志，重放返回同一结果、同 ID 不同内容被拒绝。
 - **「活着」的手机**：Gateway 只向「在线 + 前台 + 已 hello」的手机实时投递。App 在首次同步之后才发布前台状态，所以 hello 与前台状态之间的变化（新请求、Agent、Follow）不会被实时发出；`Actor::on_presence` 在手机由此变为「活着」时补发四个快照。改动这一段先看 `tests_requests` / `tests_agents` 里 `…between_hello_and_the_foreground_presence…` 两个用例。
+- **「待通知」是推导出来的，不存标志位**：一道题对某部手机是否还在等推送 = `!seen && !pushed && !(is_live && connected) && can_push`，由 `flush_due_notifications`（`deliver()` 末尾与每 250 ms 的 `tick_requests`）判断；手机上下线、broker 抖动、`request.seen` 都不必逐个维护状态，推过一次 `pushed` 置位后条件不再成立，所以天然没有提醒。3 秒补推（前台手机没确认）不受等待时长约束；读不到空闲时长按「够久了」处理；`alert_after_secs` 不在 `ConnKey` 里，改设置不重连网关。改这一段先看 `tests_requests.rs` 的「push timing」一节。
 - **推送信封没有 `v`**：中继转给 APNs 的 `ah` 只有 `{f,k,n,c}`（Mac 封装时的 `v` 不转发），`PushDecryptor` 缺 `v` 时按本协议处理、带了别的版本则拒绝。改推送载荷或中继的白名单时，同步改 `PushDecryptorTests` 里「中继的形状」，否则单元测试与真实推送会各说各话。
 - **通知代理方法必须在主 actor 上**：`AppDelegate` 的 `UNUserNotificationCenterDelegate` 方法是 `@MainActor`（一致性标 `@preconcurrency`）；写成 `nonisolated async` 时系统的完成回调落在协作线程池，iOS 27 上点推送横幅会崩溃。
 - **每次握手都把推送句柄再给 Mac**：`PhoneEngine` 在每次 `hello.ack` 清空 `pushSent` 并重发，发送失败要回滚标记，token 在 ack 与首个快照之间到达也立即发；Mac 只会回 `push.state` 的 `ok` / `gone`，不会反过来索要句柄。

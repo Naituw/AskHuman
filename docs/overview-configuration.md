@@ -26,7 +26,7 @@
 - `channels.dingding`：`enabled`、`clientId`、`clientSecret`、`userId`、普通提问/确认/权限卡片模板 ID，以及文本附件内联/转 docx 开关；Agent 任务输入复用普通提问模板
 - `channels.feishu`：`enabled`、`appId`、`appSecret`、`openId`、`baseUrl`
 - `channels.slack`：`enabled`、`botToken`、`appToken`、`userId`
-- `channels.ios`（实验，设置「实验」Tab 的 iOS 渠道卡）：`enabled`、`host`、`port`（TLS，默认 8883）、`wsPort`（WSS，默认 8084）、`username`（只含字母数字，同时是话题命名空间 `ah/{username}/`）、`password`（进钥匙串）、`relayUrl`、`macName`（留空取电脑名）；隐藏的 `insecureLocal` 只给回环测试 broker 用（对非回环地址无效）。手机配对、关注集、推送句柄与流量计数不在 `AppConfig`，存于 `~/.askhuman/ios/`
+- `channels.ios`（实验，设置「实验」Tab 的 iOS 渠道卡）：`enabled`、`host`、`port`（TLS，默认 8883）、`wsPort`（WSS，默认 8084）、`username`（只含字母数字，同时是话题命名空间 `ah/{username}/`）、`password`（进钥匙串）、`relayUrl`、`macName`（留空取电脑名）、`alertAfterSecs`（手机没在看某个提问时，Mac 键盘 / 鼠标空闲满多少秒才推送通知，默认 900，`0` = 立即，上限 86400；改它不会重连 broker）；隐藏的 `insecureLocal` 只给回环测试 broker 用（对非回环地址无效）。手机配对、关注集、推送句柄与流量计数不在 `AppConfig`，存于 `~/.askhuman/ios/`
 - `channels.autoActivation`：IM 渠道按需发送，默认 `false`
 - `channels.autoEndWatch`：切离活跃 IM 后自动结束该渠道 watch，默认 `true`，仅在 `autoActivation` 开启时生效
 - `agentTasks.enabled`：从 IM 创建电脑端 Agent 任务，默认 `false`；开启会强制 `daemonLifecycle=keepalive` 并同步 daemon 登录项。入口在设置「高级」Tab（2026-07-25 从「实验」转正）
