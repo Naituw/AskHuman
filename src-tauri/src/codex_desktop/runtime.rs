@@ -1,5 +1,6 @@
 //! Local app discovery, read-only metadata, and short-lived thread creation.
 use super::{Config, SessionMeta, UnavailableReason};
+use crate::agents::model_catalog::ModelChoice;
 use serde_json::{json, Value};
 use std::{
     io::{BufRead, BufReader, Write},
@@ -210,8 +211,17 @@ pub struct ModelSettings {
     pub reasoning_effort: String,
 }
 
+/// The model and effort a new thread starts with: what the user picked, else what Codex's own
+/// configuration says, else what its model catalog calls the default. Pages through `model/list`
+/// whenever something has to be looked up.
+///
+/// With a default `choice` this is exactly what Codex would do on its own. A picked model must
+/// be in the catalog; a picked effort must be one that model offers; and an effort left to the
+/// configuration is only kept for a picked model that offers it, otherwise that model's own
+/// default is used (the configured one would make the thread fail to start).
 fn resolve_model_settings<E>(
     config: &Value,
+    choice: &ModelChoice,
     mut list_models: impl FnMut(Option<String>) -> Result<Value, E>,
     invalid: impl Fn(String) -> E,
 ) -> Result<ModelSettings, E> {
@@ -225,14 +235,77 @@ fn resolve_model_settings<E>(
             _ => Err(invalid(format!("Invalid Codex configuration field: {key}"))),
         }
     };
-    let model = configured("model")?;
-    let effort = configured("model_reasoning_effort")?;
-    if let (Some(model), Some(reasoning_effort)) = (&model, &effort) {
-        return Ok(ModelSettings {
-            model: model.clone(),
-            reasoning_effort: reasoning_effort.clone(),
-        });
+    let configured_model = configured("model")?;
+    let configured_effort = configured("model_reasoning_effort")?;
+    if choice.is_default() {
+        if let (Some(model), Some(reasoning_effort)) = (&configured_model, &configured_effort) {
+            return Ok(ModelSettings {
+                model: model.clone(),
+                reasoning_effort: reasoning_effort.clone(),
+            });
+        }
     }
+    let wanted = choice.model.clone().or(configured_model);
+    let selected = find_catalog_entry(&mut list_models, &invalid, |entry| match &wanted {
+        Some(model) => entry["model"] == *model || entry["id"] == *model,
+        None => entry["isDefault"] == true,
+    })?
+    .ok_or_else(|| {
+        invalid(if choice.model.is_some() {
+            "Codex does not offer the selected model".into()
+        } else {
+            "Codex's model catalog could not resolve the launch defaults".into()
+        })
+    })?;
+    let model = wanted
+        .or_else(|| selected["model"].as_str().map(str::to_owned))
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| invalid("Codex did not identify its default model".into()))?;
+    let offered: Vec<&str> = selected["supportedReasoningEfforts"]
+        .as_array()
+        .map(|options| {
+            options
+                .iter()
+                .filter_map(|option| option["reasoningEffort"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    let reasoning_effort = match (choice.effort.clone(), configured_effort) {
+        (Some(effort), _) => {
+            // A catalog entry that lists no efforts says nothing either way.
+            if !offered.is_empty() && !offered.contains(&effort.as_str()) {
+                return Err(invalid(
+                    "The selected reasoning effort is not offered by the model".into(),
+                ));
+            }
+            effort
+        }
+        (None, Some(effort))
+            if choice.model.is_none()
+                || offered.is_empty()
+                || offered.contains(&effort.as_str()) =>
+        {
+            effort
+        }
+        (None, _) => selected["defaultReasoningEffort"]
+            .as_str()
+            .map(str::to_owned)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| invalid("Codex did not identify the model's default effort".into()))?,
+    };
+    Ok(ModelSettings {
+        model,
+        reasoning_effort,
+    })
+}
+
+/// The first catalog entry `matches` accepts, paging through `model/list`; `None` when the
+/// catalog ends (or starts repeating itself) without one.
+fn find_catalog_entry<E>(
+    list_models: &mut impl FnMut(Option<String>) -> Result<Value, E>,
+    invalid: &impl Fn(String) -> E,
+    matches: impl Fn(&Value) -> bool,
+) -> Result<Option<Value>, E> {
     let mut cursor = None;
     let mut seen = std::collections::HashSet::new();
     loop {
@@ -240,38 +313,15 @@ fn resolve_model_settings<E>(
         let models = page["data"]
             .as_array()
             .ok_or_else(|| invalid("Codex did not return a model catalog".into()))?;
-        let selected = models.iter().find(|entry| match &model {
-            Some(model) => entry["model"] == *model || entry["id"] == *model,
-            None => entry["isDefault"] == true,
-        });
-        if let Some(selected) = selected {
-            let model = model
-                .or_else(|| selected["model"].as_str().map(str::to_owned))
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| invalid("Codex did not identify its default model".into()))?;
-            let reasoning_effort = effort
-                .or_else(|| {
-                    selected["defaultReasoningEffort"]
-                        .as_str()
-                        .map(str::to_owned)
-                })
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| {
-                    invalid("Codex did not identify the model's default effort".into())
-                })?;
-            return Ok(ModelSettings {
-                model,
-                reasoning_effort,
-            });
+        if let Some(selected) = models.iter().find(|entry| matches(entry)) {
+            return Ok(Some(selected.clone()));
         }
         cursor = page["nextCursor"].as_str().map(str::to_owned);
         if cursor
             .as_ref()
             .is_none_or(|value| !seen.insert(value.clone()))
         {
-            return Err(invalid(
-                "Codex's model catalog could not resolve the launch defaults".into(),
-            ));
+            return Ok(None);
         }
     }
 }
@@ -313,6 +363,7 @@ pub fn create(
     cwd: &str,
     title: &str,
     yolo: bool,
+    choice: &ModelChoice,
     on_created: impl FnOnce(&str, &ModelSettings) -> Result<(), String>,
 ) -> Result<String, CreationError> {
     create_or_finish(
@@ -320,6 +371,7 @@ pub fn create(
         cwd,
         title,
         yolo,
+        choice,
         None,
         None,
         on_created,
@@ -332,6 +384,7 @@ pub fn finish_creation(
     cwd: &str,
     title: &str,
     id: &str,
+    choice: &ModelChoice,
     model_settings: Option<&ModelSettings>,
     on_created: impl FnOnce(&str, &ModelSettings) -> Result<(), String>,
 ) -> Result<String, CreationError> {
@@ -340,6 +393,7 @@ pub fn finish_creation(
         cwd,
         title,
         false,
+        choice,
         Some(id),
         model_settings,
         on_created,
@@ -353,6 +407,7 @@ fn create_or_finish(
     cwd: &str,
     title: &str,
     yolo: bool,
+    choice: &ModelChoice,
     existing: Option<&str>,
     model_settings: Option<&ModelSettings>,
     on_created: impl FnOnce(&str, &ModelSettings) -> Result<(), String>,
@@ -498,6 +553,7 @@ fn create_or_finish(
                 )?;
                 resolve_model_settings(
                     &config,
+                    choice,
                     |cursor| {
                         request(
                             "model/list",
@@ -625,6 +681,7 @@ mod tests {
     fn configured_model_and_effort_take_priority_over_model_catalog_defaults() {
         let resolved = resolve_model_settings(
             &json!({"config":{"model":"configured-model","model_reasoning_effort":"max"}}),
+            &ModelChoice::default(),
             |_| -> Result<Value, String> {
                 panic!("explicit defaults do not need the model catalog")
             },
@@ -644,6 +701,7 @@ mod tests {
             let mut cursors = Vec::new();
             let resolved = resolve_model_settings(
                 &json!({"config":{"model":model,"model_reasoning_effort":effort}}),
+                &ModelChoice::default(),
                 |cursor| -> Result<Value, String> {
                     cursors.push(cursor.clone());
                     Ok(if cursor.is_none() {
@@ -669,6 +727,7 @@ mod tests {
         ] {
             assert!(resolve_model_settings(
                 &config,
+                &ModelChoice::default(),
                 |_| Ok(json!({"data":[],"nextCursor":null})),
                 |message| message
             )
@@ -677,9 +736,146 @@ mod tests {
         let mut calls = 0;
         assert!(resolve_model_settings(
             &json!({"config":{}}),
+            &ModelChoice::default(),
             |_| {
                 calls += 1;
                 Ok(json!({"data":[],"nextCursor":"same-page"}))
+            },
+            |message| message
+        )
+        .is_err());
+        assert_eq!(calls, 2);
+    }
+
+    /// `model/list` entries shaped like the app-server schema; `efforts` are the offered ones.
+    fn entry(model: &str, is_default: bool, efforts: &[&str], default_effort: &str) -> Value {
+        json!({
+            "id": format!("id-of-{model}"),
+            "model": model,
+            "isDefault": is_default,
+            "defaultReasoningEffort": default_effort,
+            "supportedReasoningEfforts": efforts
+                .iter()
+                .map(|effort| json!({"reasoningEffort": effort, "description": ""}))
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    fn pick(model: Option<&str>, effort: Option<&str>) -> ModelChoice {
+        ModelChoice::new(model.map(str::to_string), effort.map(str::to_string))
+    }
+
+    /// Resolves against a two-page catalog and returns the outcome with the cursors asked for.
+    fn resolve_in_catalog(
+        config: Value,
+        choice: &ModelChoice,
+    ) -> (Result<ModelSettings, String>, Vec<Option<String>>) {
+        let mut cursors = Vec::new();
+        let resolved = resolve_model_settings(
+            &config,
+            choice,
+            |cursor| -> Result<Value, String> {
+                cursors.push(cursor.clone());
+                Ok(if cursor.is_none() {
+                    json!({"data":[
+                        entry("model-a", true, &["low", "medium", "high"], "medium"),
+                    ],"nextCursor":"page-2"})
+                } else {
+                    json!({"data":[
+                        entry("model-b", false, &["medium", "high", "xhigh"], "high"),
+                        entry("model-c", false, &[], "low"),
+                    ],"nextCursor":null})
+                })
+            },
+            |message| message,
+        );
+        (resolved, cursors)
+    }
+
+    fn settings_of(model: &str, effort: &str) -> ModelSettings {
+        ModelSettings {
+            model: model.into(),
+            reasoning_effort: effort.into(),
+        }
+    }
+
+    #[test]
+    fn a_picked_model_is_looked_up_and_takes_the_configured_effort_only_when_it_offers_it() {
+        let configured = |effort: Option<&str>| json!({"config":{"model":"model-a","model_reasoning_effort":effort}});
+
+        // The model on page 2 offers the configured effort: keep it.
+        let (resolved, cursors) =
+            resolve_in_catalog(configured(Some("high")), &pick(Some("model-b"), None));
+        assert_eq!(resolved.unwrap(), settings_of("model-b", "high"));
+        assert_eq!(cursors, [None, Some("page-2".into())]);
+
+        // It does not offer it: that model's own default instead of a thread that cannot start.
+        let (resolved, _) =
+            resolve_in_catalog(configured(Some("low")), &pick(Some("model-b"), None));
+        assert_eq!(resolved.unwrap(), settings_of("model-b", "high"));
+
+        // Nothing configured: the model's default.
+        let (resolved, _) = resolve_in_catalog(configured(None), &pick(Some("model-a"), None));
+        assert_eq!(resolved.unwrap(), settings_of("model-a", "medium"));
+
+        // A model that lists no efforts leaves the configured one alone.
+        let (resolved, _) =
+            resolve_in_catalog(configured(Some("max")), &pick(Some("model-c"), None));
+        assert_eq!(resolved.unwrap(), settings_of("model-c", "max"));
+
+        // Matched by `id` as well as by `model`; the thread gets the model name.
+        let (resolved, _) =
+            resolve_in_catalog(configured(Some("high")), &pick(Some("id-of-model-b"), None));
+        assert_eq!(resolved.unwrap(), settings_of("id-of-model-b", "high"));
+
+        // No model configured at all: the picked one still resolves.
+        let (resolved, _) = resolve_in_catalog(json!({"config":{}}), &pick(Some("model-b"), None));
+        assert_eq!(resolved.unwrap(), settings_of("model-b", "high"));
+    }
+
+    #[test]
+    fn a_picked_effort_must_be_offered_by_the_model_it_goes_with() {
+        let config = || json!({"config":{"model":"model-a","model_reasoning_effort":"low"}});
+
+        // Both picked.
+        let (resolved, _) = resolve_in_catalog(config(), &pick(Some("model-b"), Some("xhigh")));
+        assert_eq!(resolved.unwrap(), settings_of("model-b", "xhigh"));
+        let (resolved, _) = resolve_in_catalog(config(), &pick(Some("model-b"), Some("low")));
+        assert!(resolved.unwrap_err().contains("not offered"));
+
+        // Only the effort: it goes with the configured model, even when both are configured.
+        let (resolved, cursors) = resolve_in_catalog(config(), &pick(None, Some("high")));
+        assert_eq!(resolved.unwrap(), settings_of("model-a", "high"));
+        assert_eq!(cursors, [None]);
+        let (resolved, _) = resolve_in_catalog(config(), &pick(None, Some("xhigh")));
+        assert!(resolved.unwrap_err().contains("not offered"));
+
+        // Only the effort, with the model left to Codex's default.
+        let (resolved, _) = resolve_in_catalog(json!({"config":{}}), &pick(None, Some("high")));
+        assert_eq!(resolved.unwrap(), settings_of("model-a", "high"));
+
+        // A model without declared efforts accepts the pick as it is.
+        let (resolved, _) = resolve_in_catalog(config(), &pick(Some("model-c"), Some("anything")));
+        assert_eq!(resolved.unwrap(), settings_of("model-c", "anything"));
+    }
+
+    #[test]
+    fn a_model_the_catalog_does_not_offer_is_an_error_not_a_silent_fallback() {
+        let (resolved, cursors) = resolve_in_catalog(
+            json!({"config":{"model":"model-a","model_reasoning_effort":"low"}}),
+            &pick(Some("gone"), Some("low")),
+        );
+        assert!(resolved.unwrap_err().contains("selected model"));
+        assert_eq!(cursors, [None, Some("page-2".into())]);
+
+        // A catalog that repeats a cursor ends the search instead of looping.
+        let mut calls = 0;
+        assert!(resolve_model_settings(
+            &json!({"config":{}}),
+            &pick(Some("gone"), None),
+            |_| {
+                calls += 1;
+                Ok::<_, String>(json!({"data":[],"nextCursor":"same-page"}))
             },
             |message| message
         )
@@ -715,6 +911,8 @@ for line in sys.stdin:
         resp = {'id':req['id'], 'error':{'code':-32000 if FAULT == 'start-other' else -32602, 'message':'injected rejection'}}
     elif method == 'config/read':
         resp = {'id': req['id'], 'result': {'config': {'model': 'configured-model', 'model_reasoning_effort': 'max'}}}
+    elif method == 'model/list':
+        resp = {'id': req['id'], 'result': {'data': [{'id': 'model-x', 'model': 'model-x', 'isDefault': False, 'defaultReasoningEffort': 'medium', 'supportedReasoningEfforts': [{'reasoningEffort': 'low', 'description': ''}, {'reasoningEffort': 'medium', 'description': ''}]}], 'nextCursor': None}}
     else:
         resp = {'id':req['id'], 'result':{'thread':{'id':'10000000-0000-4000-8000-000000000001'}}}
     print(json.dumps(resp), flush=True)
@@ -750,6 +948,7 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 dir.path().to_str().unwrap(),
                 "title",
                 yolo,
+                &ModelChoice::default(),
                 |id, settings| {
                     persisted = Some((id.to_string(), settings.clone()));
                     Ok(())
@@ -786,6 +985,7 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 dir.path().to_str().unwrap(),
                 "title",
                 &id,
+                &ModelChoice::default(),
                 Some(&settings()),
                 |_, _| panic!("saved settings must be reused"),
             )
@@ -799,6 +999,67 @@ sys.exit(1 if FAULT == 'exit' else 0)
             );
             assert!(!trace(&dir).iter().any(|r| r["method"] == "turn/start"));
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_picked_model_and_effort_reach_thread_start_and_an_unknown_model_starts_nothing() {
+        let (dir, installation) = fake_runtime("success");
+        let cwd = dir.path().to_str().unwrap();
+        let mut persisted = None;
+        let id = create(
+            &installation,
+            cwd,
+            "title",
+            false,
+            &pick(Some("model-x"), Some("low")),
+            |id, settings| {
+                persisted = Some((id.to_string(), settings.clone()));
+                Ok(())
+            },
+        )
+        .unwrap();
+        // The thread and the saved snapshot (which the first turn reuses) carry the same pair.
+        let picked = settings_of("model-x", "low");
+        assert_eq!(persisted, Some((id, picked.clone())));
+        let calls = trace(&dir);
+        let methods: Vec<_> = calls
+            .iter()
+            .map(|v| v["method"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            methods,
+            [
+                "initialize",
+                "initialized",
+                "config/read",
+                "model/list",
+                "thread/start",
+                "thread/name/set",
+                "thread/read"
+            ]
+        );
+        assert_eq!(
+            calls[3]["params"],
+            json!({"includeHidden":true,"limit":100,"cursor":null})
+        );
+        assert_eq!(calls[4]["params"], thread_start_params(cwd, false, &picked));
+
+        // A model Codex does not list: rejected before `thread/start`, nothing created.
+        let (dir, installation) = fake_runtime("success");
+        let err = create(
+            &installation,
+            dir.path().to_str().unwrap(),
+            "title",
+            false,
+            &pick(Some("gone"), None),
+            |_, _| panic!("no thread may be recorded"),
+        )
+        .unwrap_err();
+        assert_eq!(err.outcome, CreationOutcome::Rejected);
+        assert_eq!(err.stage, "model-settings");
+        assert!(err.session_id.is_none());
+        assert!(!trace(&dir).iter().any(|r| r["method"] == "thread/start"));
     }
 
     #[test]
@@ -869,6 +1130,7 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 dir.path().to_str().unwrap(),
                 "title",
                 true,
+                &ModelChoice::default(),
                 None,
                 None,
                 |_, _| Ok(()),
@@ -889,6 +1151,7 @@ sys.exit(1 if FAULT == 'exit' else 0)
             dir.path().to_str().unwrap(),
             "title",
             true,
+            &ModelChoice::default(),
             |_, _| Err("disk failure".into()),
         )
         .unwrap_err();
@@ -902,6 +1165,7 @@ sys.exit(1 if FAULT == 'exit' else 0)
             dir.path().to_str().unwrap(),
             "title",
             true,
+            &ModelChoice::default(),
             |_, _| Ok(()),
         )
         .unwrap_err();
@@ -926,7 +1190,13 @@ sys.exit(1 if FAULT == 'exit' else 0)
             let input = json!({"op":"create","id":"operation","text":"task"});
             let mut action = Action::load(path.clone(), input.clone()).unwrap();
             action
-                .ensure_thread(&installation, dir.path().to_str().unwrap(), "title", true)
+                .ensure_thread(
+                    &installation,
+                    dir.path().to_str().unwrap(),
+                    "title",
+                    true,
+                    &ModelChoice::default(),
+                )
                 .unwrap_err();
             let mut retry = Action::load(path, input).unwrap();
             if fault == "start-drop" {
@@ -953,7 +1223,13 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 );
             std::fs::write(&installation.executable, script).unwrap();
             retry
-                .ensure_thread(&installation, dir.path().to_str().unwrap(), "title", true)
+                .ensure_thread(
+                    &installation,
+                    dir.path().to_str().unwrap(),
+                    "title",
+                    true,
+                    &ModelChoice::default(),
+                )
                 .unwrap();
             let starts = trace(&dir)
                 .iter()

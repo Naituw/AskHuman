@@ -20,7 +20,7 @@ extension Error {
         }
     }
 
-    /// The short codes a Mac gives when it refuses a message to an Agent or a follow.
+    /// The short codes a Mac gives when it refuses a message to an Agent.
     private static func rejectionMessage(_ reason: String) -> String {
         switch reason {
         case "notWorking": String(localized: "The Agent is not working right now. Messages can only be sent while it works.")
@@ -30,7 +30,6 @@ extension Error {
         case "empty": String(localized: "There is nothing to send.")
         case "tooLong": String(localized: "That message is too long.")
         case "attachment": String(localized: "An attachment could not be used. Remove it and try again.")
-        case "limit": String(localized: "This Mac already follows as many Agents as it allows.")
         case "conflict", "interrupted": String(localized: "The Mac could not tell whether this was sent. Write it again.")
         default: String(localized: "The Mac refused it (\(reason)).")
         }

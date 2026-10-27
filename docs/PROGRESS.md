@@ -79,9 +79,25 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 - [ ] 设置页（设置 → 实验 → iOS App 渠道 → 推送时机）的实际外观：下拉、说明、「Mac 已空闲 N 分钟」。组件测试只覆盖结构与文案，没有看过截图（这台机器没给命令行 / Computer Use 屏幕录制权限，没法自己截）。
 - [ ] 规格「已知局限」9 里没验证的：远程桌面 / 屏幕共享的输入是否计入空闲；daemon 由 SSH 等非图形会话拉起时读到的空闲值是否可靠。有结果后写回规格，全部验完删掉本节。
 
-后续（本期不做，细节在规格「后续」一节）：
-- [ ] Follow 的去留：被关注的 Agent 的提问是否绕过等待、立即推（目前不绕过；「等你」推送在每道题都挂在手机后已不会触发）
+后续（本期不做，细节在规格「后续」一节；Follow 的去留已另立一节，见下）：
 - [ ] IM 统一（每个渠道各自的「提醒时机」）；保底封顶；有待答题时保持唤醒；D 到点时合并成一条「N 个提问在等你」；Time Sensitive、通知扩展送达回执、划掉追踪、手机上展示「Mac 在用」
+
+## 待验收：iOS「做完 / 出错」通知收窄（Mac 端与 App 端都已实现，真机一轮未做）
+
+2026-10-27 用户决定：App 里去掉手动「关注」星标（Agents 页本来就能看到所有 Agent 的状态），只保留「从手机创建的任务做完 / 出错」的自动通知，
+并且和提问一致——Mac 键鼠空闲满 D（默认 15 分钟）才推，你在电脑前不打扰；你回到 Mac 前没推出去的通知作废；任务第一次出结果后就不再通知该会话（一次性）；
+App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-follow-narrowing.md`](specs/ios-follow-narrowing.md)、计划 [`docs/plans/ios-follow-narrowing.md`](plans/ios-follow-narrowing.md)，
+同日全部批准。
+
+已完成：Mac 端（P1–P2，已 `./scripts/install.sh` 装机）、App 端（P3，提交 `feat(ios): drop the follow star and mark notified Agents with a bell`）、文档回写（P4）。
+自动化全绿：Rust 全量与 clippy / fmt、Swift 包全量、对真实 daemon + 本地 broker 的端到端、模拟器 UI 测试（en + zh-Hans）、
+模拟器上真 App 对真实 EMQX + 中继 + APNs 沙盒的完整场景（含被通知的 Agent 第一次结果的推送，之后铃铛消失）。线协议、中继、配置项都没改；
+旧版 App 的星标连新版 Mac 照常能加，同样一次性、同样遵守 D。**新版 App 没有装到用户的真机上，Mac 端的新规则也没有在真机上验证过。**
+
+下一步：
+- [ ] （可选，需要用户在场）真机一轮：把新版 App 装到手机（Xcode / `devicectl`），`alertAfterSecs` 临时设成 60 秒，从手机「新任务」发一个很快做完的任务
+  （Face ID；真实 Agent 的启动要用户批准）——列表行出现铃铛、详情页有一行说明；Mac 在用时做完应**不**推；停手满 60 秒才来一条；
+  做完之前回到 Mac 敲键盘则不应补推；做完后铃铛消失（`state.json` 的 `followSet` 为空）。配置用后还原；不要用 `AskHuman help` 之类的词试命令。
 
 ## 进行中：跨设备待办同步（多台 Mac，iCloud）——P0–P5 已提交（未上真机），P6 等用户的手动步骤
 
@@ -107,6 +123,21 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] S0 收尾（用户 2026-10-27 那题没答复，**什么都没删、没动 B**）：停掉的 spike helper 仍装在两台 Mac 上；测试待办还在 CloudKit 容器里；想收尾时再问
 - [ ] 分发给别人前：用另一个大陆 iCloud 账号复测（容器 / 用户层初始化）；helper 打进 `AskHuman.app` 的 `Contents/Library/LoginItems`、公证、自更新下发；附件同步、iOS App 读写待办等另行评审
 - 构建小贴士（shell 的 HOME 被指向 `/tmp/ph`）：`export CARGO_HOME=/Users/wutian/.cargo CARGO_INCREMENTAL=0 GIT_CONFIG_GLOBAL=/Users/wutian/.gitconfig npm_config_store_dir=/Users/wutian/Library/pnpm/store`，否则 cargo 会重新下载依赖、`./scripts/install.sh` 会卡在 pnpm 的交互提示
+
+## 进行中：iOS 新建任务时选模型与强度——需求与计划已批准，按计划 P1 → P4 实施
+
+2026-10-27 用户提出「iOS 版创建任务时可以选择模型」，经 6 题问答定下范围：模型 + 强度一起做；清单以动态发现为主（Claude 用固定别名）；每次都从「默认」开始、不记忆；
+详情页显示实际模型、进度页显示所选；先只做 iOS，启动管线放共享层。用户同时强调**严禁触发计费**，并且**Cursor 严禁实测**。同日做了只读探测（没有起任何 Agent、没有发提示词、
+没有带真实凭据调模型），写成需求 [`docs/specs/ios-task-model.md`](specs/ios-task-model.md) 与计划 [`docs/plans/ios-task-model.md`](plans/ios-task-model.md)，用户评审批准，
+并对六条待确认点作了选择（Grok 用 `grok models`、Codex 一律走 `app-server` 的 `model/list`、Pi 三档强度、做 M10、实现完做一轮真实验证但每次要批准）。
+
+已完成：P1（Mac 启动管线：`ModelChoice` 贯穿 `TaskSpec` → `LaunchRecord` → argv 与 Codex 桌面应用；没选时对外行为与以前逐字节相同，`cargo test` / clippy 1.94 与 1.99 / fmt 全绿，未装机）。
+
+下一步：
+- [ ] P2（清单 + 线协议 + 网关 + 详情页实际模型，装机）→ P3（iOS App，`git status ios/` 若仍有另一会话的未提交改动就在 `/tmp` 隔离副本里做）→ P4（文档回写）。
+- [ ] P2 开头要**先问用户**两件事：（1）批准在沙盒（空 HOME + 独立 leader socket、无凭据）里跑一次 `grok models` 抓样本；（2）Cursor 清单的运行时获取（手机打开新任务时 daemon 调一次
+  `cursor-agent --list-models`）是否保留。本机验证里**不再调用 `cursor-agent` 的任何命令**。
+- [ ] （实现完做，**每次执行前**经用户批准，会产生模型费用；永远不含 Cursor）真机一轮：见计划 P4。
 
 ## 待观察：拖入文件失败（`daemon.log` 的 `askhuman_drop` 行）
 

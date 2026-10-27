@@ -365,11 +365,34 @@ pub(super) async fn handle_ios_op(
 /// The surface to attach to a request. Only used for delivery candidates, which exist only while
 /// the gateway runs, so this never has to (re)start it: that keeps the async call graph acyclic
 /// (`ensure_ios_gateway` re-delivers in-flight requests through the attach functions).
-pub(super) fn ios_channel_for(state: &ServerState, request_id: &str) -> Option<Arc<dyn Channel>> {
+///
+/// `session` is the Agent session that asks, for the title the phone shows.
+pub(super) fn ios_channel_for(
+    state: &ServerState,
+    request_id: &str,
+    session: Option<crate::channels::ios::SessionRef>,
+) -> Option<Arc<dyn Channel>> {
     let gateway = ios_gateway(state)?;
-    Some(Arc::new(crate::channels::ios::IosChannel::new(
-        gateway, request_id,
-    )))
+    Some(Arc::new(
+        crate::channels::ios::IosChannel::new(gateway, request_id).with_session(session),
+    ))
+}
+
+/// Where to find the title of the Agent session a request comes from; `None` when the caller is
+/// no known Agent or did not say which session it is.
+pub(super) fn ios_session_ref(
+    state: &ServerState,
+    kind: Option<AgentKind>,
+    session_id: Option<&str>,
+) -> Option<crate::channels::ios::SessionRef> {
+    let kind = kind?;
+    let session_id = session_id.map(str::trim).filter(|id| !id.is_empty())?;
+    Some(crate::channels::ios::SessionRef {
+        kind,
+        session_id: session_id.to_string(),
+        cached_title: state.agents.cached_session_title(kind, session_id),
+        codex: state.config.lock().unwrap().codex_desktop.clone(),
+    })
 }
 
 #[cfg(test)]

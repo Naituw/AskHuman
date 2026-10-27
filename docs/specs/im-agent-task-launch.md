@@ -185,9 +185,23 @@ Telegram 在最后一步先发任务来源选择卡。选择「输入新任务�
 - Terminal / keepalive 不可用：停止并给设置修复入口；
 - 不通过启动 Agent 来测试认证；首次启动若需要登录，登录界面留在 Terminal 中。
 
-probe 使用固定命令名，不接受 IM 输入；Unix 在用户 login shell 里执行有界 `command -v`，Windows
+probe 使用固定命令名，不接受 IM 输入；Unix 在用户交互式 login shell（`$SHELL -lic`，与 Terminal 窗口一样跑完整 rc）
+里执行有界 `command -v`（查找 6 秒；`--version` / `--help` 另计 3 秒），Windows
 使用系统 PATH 与已知 npm native package 路径解析，只接受实际可执行
 文件，结果短时缓存。helper 运行于 Terminal login shell，使用同一 PATH 语义。
+
+查找结果分三种，对用户的措辞不同：
+
+- **找到**：绝对路径、可 canonicalize 的可执行文件；缓存 60 秒。
+- **没找到**：shell 跑完了但没有可用的可执行文件（`command -v` 无结果；或解析到 alias / function /
+  不可执行的路径，此时原因里写明）；缓存 60 秒。文案 `<Agent> CLI was not found in the login shell`。
+- **没查完**：超时、shell 起不来或异常退出。这**不说明没装**，文案 `<Agent> CLI lookup did not
+  complete: …`（含 shell 名与等待时长）；只缓存 5 秒，下一次调用重新查。
+
+没查完时，若本进程此前找到过该 Agent 且那个文件仍在，沿用之前的路径与版本（一次慢启动不会把已安装的
+Agent 判成缺失）；shell 明确答「没找到」则忘掉之前的路径。Pi 找到但版本读不出时同样按「没查完」只缓存 5 秒。
+daemon 里每次「没找到 / 没查完」会在 `daemon.log` 记一行 `[agent-lookup] …`（shell、耗时、login shell
+得到的 PATH 与进程继承的 PATH），因为 daemon 的环境不同于 Terminal，手机上只显示一行原因。
 
 ### 4.3 flow 并发与过期
 
@@ -374,7 +388,7 @@ workspace 动态状态放 `agent-workspaces.json`，launch record 放短时私�
 |---|---|
 | 厂商 session 格式变化 | scanner 分家、best-effort；失败不影响 lifecycle 增量与手动添加 |
 | Cursor encoded path 歧义 | 只接受现存唯一解，绝不猜 |
-| login shell rc 慢 / 输出噪音 | probe 有短 timeout，只接受绝对 executable，结果缓存 |
+| login shell rc 慢 / 输出噪音 | probe 有 timeout（查找 6 秒），超时按「没查完」而不是「没找到」报告且只缓存几秒，并沿用此前找到的路径；只接受绝对 executable；rc 的输出边读边丢（只保留带标记的行），不会撑满管道 |
 | lifecycle enabled 但 CLI 未登录 | 不通过启动 Agent 预检；认证 UI 留在新 Terminal，launch 回执注明 |
 | task shell injection | task 不入 shell；私有 token + argv exec |
 | YOLO 高风险 | 每次询问默认、不预选；权限选择卡与持久 YOLO 设置显示警告，任务输入卡只显示当前模式元数据 |
@@ -443,3 +457,8 @@ workspace 动态状态放 `agent-workspaces.json`，launch record 放短时私�
   `experimental.enabled` 隐蔽开关控制，配置键与开关状态不变。readiness 的进入刷新随之改挂「高级」。
 - **2026-08-19**：Lifecycle readiness 链接改到「Agents」Tab 对应 Agent 卡内的 lifecycle 行；
   readiness 继续分别显示 CLI / Lifecycle / Integration，显式关闭 lifecycle 会使该 Agent 不可选。
+- **2026-10-27**：公司 Mac 上手机「新建任务」把多个 Agent 报成 `CLI was not found in the login shell`，
+  而该机设置页都是 ready。原因之一是旧实现把 2 秒超时也当成「没找到」并缓存 60 秒；冷启动的交互式 login
+  shell（安全软件扫描、nvm / conda 等）在本机负载高时 5 个并发探测实测 1.6–2.2 秒。现在查找限时放宽到 6
+  秒，结果区分「没找到 / 没查完」，没查完只缓存 5 秒并沿用此前找到的路径（见 §4.2 末），daemon 在日志里留下
+  失败详情；手机端 `choices()` 把工作区扫描与 Agent 探测并行，最坏耗时仍在手机 15 秒等待之内。

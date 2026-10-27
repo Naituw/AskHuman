@@ -125,8 +125,47 @@ final class AgentE2ETests: E2ECase {
             }
         }
 
-        try await phone.engine.setFollow(macId: item.macId, agentKey: item.agentKey, on: false)
-        await eventually("the mark to go") { await self.agent("e2e-follow")?.view.followed == false }
+        // A follow is for one result: the Mac takes the Agent out of the list itself once it was told.
+        await eventually("the mark to go by itself") { await self.agent("e2e-follow")?.view.followed == false }
+
+        // The next turn is not announced.
+        let announced = followEvents(of: item)
+        try await hook("turn-start", session: "e2e-follow")
+        try await hook("turn-end", session: "e2e-follow")
+        // The Mac waits three seconds for a turn that is really over before it says so.
+        try await Task.sleep(nanoseconds: 4_500_000_000)
+        XCTAssertEqual(followEvents(of: item), announced, "the second turn was announced")
+    }
+
+    /// A result the Mac cannot tell the phone about (it is away, and no push registration exists on a
+    /// local broker) does not use up the follow: the next one still counts.
+    func testAResultThatReachedNobodyLeavesTheFollowInPlace() async throws {
+        try await pair()
+        let item = try await startWorking("e2e-away")
+        try await phone.engine.setFollow(macId: item.macId, agentKey: item.agentKey, on: true)
+        await eventually("the follow mark") { await self.agent("e2e-away")?.view.followed == true }
+
+        await phone.engine.setForeground(false)
+        await eventually("the phone to leave") {
+            let phones = (try? await self.mac.jsonArray(["channel", "ios", "devices", "--json"])) ?? []
+            return phones.first?["online"] as? Bool == false
+        }
+        try await hook("turn-end", session: "e2e-away")
+        try await Task.sleep(nanoseconds: 4_500_000_000)
+
+        await phone.engine.setForeground(true)
+        await eventually("the phone back") { await self.phone.state().macs.first?.link == .online }
+        await eventually("the list again") { await self.agent("e2e-away") != nil }
+        let followed = await agent("e2e-away")?.view.followed
+        XCTAssertEqual(followed, true, "nothing was sent, so the follow is still there")
+        XCTAssertEqual(followEvents(of: item), 0, "the phone was not looking: there is nothing to show it")
+    }
+
+    private func followEvents(of item: AgentItem) -> Int {
+        phone.events.filter {
+            if case .followEvent(_, let event) = $0 { return event.agentKey == item.agentKey }
+            return false
+        }.count
     }
 
     func testFollowingStopsAtTheLimit() async throws {

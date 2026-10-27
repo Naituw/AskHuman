@@ -16,11 +16,12 @@ struct AgentRow: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 8)
-                    if item.view.followed {
-                        Image(systemName: "star.fill")
+                    // Read only: the Mac tells the phone about this Agent's first result.
+                    if item.view.followed, !item.isEnded {
+                        Image(systemName: "bell.fill")
                             .imageScale(.small)
-                            .foregroundStyle(.yellow)
-                            .accessibilityLabel("Following")
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Will notify you")
                     }
                     RelativeTimeText(date: item.lastActivity)
                         .font(.caption)

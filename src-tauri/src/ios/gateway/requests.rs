@@ -18,7 +18,7 @@ use crate::ios::views::AssetSource;
 use crate::ios::wire::{
     self, t, AnswerAck, AnswerSubmit, ConfirmAck, ConfirmDecide, PushPlain, RelayPush,
     RequestSummary, RequestView, INLINE_REQUEST_BYTES, MAX_PLAIN_BYTES, PUSH_FALLBACK_SECS,
-    PUSH_PREVIEW_MAX_CHARS,
+    PUSH_PREVIEW_MAX_CHARS, PUSH_SESSION_MAX_CHARS,
 };
 use crate::models::{AskRequest, ChannelAction, ChannelResult, ImageAttachment, QuestionAnswer};
 use base64::Engine;
@@ -214,6 +214,14 @@ fn truncate_chars(text: &str, max: usize) -> String {
     format!("{cut}…")
 }
 
+/// The session title as a notification carries it: shorter than in the app, one line is all a
+/// lock screen gives it.
+fn push_session(view: &RequestView) -> Option<String> {
+    view.session_title
+        .as_deref()
+        .map(|title| truncate_chars(title, PUSH_SESSION_MAX_CHARS))
+}
+
 /// First non-empty line, shortened for notifications and list rows.
 pub(crate) fn preview_of(view: &RequestView) -> String {
     let source = match (&view.ask, &view.confirm) {
@@ -321,6 +329,7 @@ fn summarize(view: &RequestView, size: u64) -> RequestSummary {
         kind: view.kind.clone(),
         project: view.project.clone(),
         agent: view.agent.clone(),
+        session_title: view.session_title.clone(),
         created_at: view.created_at,
         preview: preview_of(view),
         content_hash: view.content_hash.clone(),
@@ -452,7 +461,7 @@ impl Actor {
 
     /// Whether the phone is looking at the app: connected, in the foreground and past its hello.
     /// Such a phone gets the question live (and its inbox snapshot), never a push.
-    fn is_looking(&self, phone_id: &str) -> bool {
+    pub(super) fn is_looking(&self, phone_id: &str) -> bool {
         self.is_live(phone_id) && self.connected
     }
 
@@ -505,6 +514,7 @@ impl Actor {
             mac: self.mac_name(),
             agent: view.agent.label.clone(),
             project: view.project.name.clone(),
+            session: push_session(view),
             text: preview_of(view),
             ts: now,
         };
@@ -530,6 +540,8 @@ impl Actor {
             mac: self.mac_name(),
             agent: view.agent.label.clone(),
             project: view.project.name.clone(),
+            // The notification it replaces carried the title: keep the same lines above the text.
+            session: push_session(view),
             text: how.to_string(),
             ts: now,
         };

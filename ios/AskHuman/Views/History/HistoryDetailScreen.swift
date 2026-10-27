@@ -29,19 +29,27 @@ struct HistoryDetailScreen: View {
             HStack(spacing: 12) {
                 AgentBadge(agent: entry.request.agent, size: 44)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.request.agent.label).font(.headline)
-                    HStack(spacing: 5) {
-                        if !entry.request.project.name.isEmpty {
-                            Image(systemName: "folder.fill").imageScale(.small)
-                            Text(entry.request.project.name)
-                            Text("·")
+                    if let title = entry.sessionTitle {
+                        Text(verbatim: title).font(.headline).lineLimit(2).accessibilityIdentifier("history-title")
+                        Text(verbatim: [entry.request.agent.label, entry.request.project.name, entry.macName].filter { !$0.isEmpty }.joined(separator: " · "))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        Text(entry.request.agent.label).font(.headline)
+                        HStack(spacing: 5) {
+                            if !entry.request.project.name.isEmpty {
+                                Image(systemName: "folder.fill").imageScale(.small)
+                                Text(entry.request.project.name)
+                                Text("·")
+                            }
+                            Image(systemName: "desktopcomputer").imageScale(.small)
+                            Text(entry.macName)
                         }
-                        Image(systemName: "desktopcomputer").imageScale(.small)
-                        Text(entry.macName)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                     }
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
                 }
             }
             Label(entry.outcome.title(by: entry.by), systemImage: entry.outcome.symbol)

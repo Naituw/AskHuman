@@ -424,8 +424,10 @@ final class AskHumanUITests: XCTestCase {
 
     /// How long the mocked first sync takes in the tests below. The title only says "Updating…" while
     /// it lasts, and every query of the UI test costs about a second after a launch that takes several
-    /// more: six seconds were gone before the test looked once the machine was a little slow.
-    private static let syncDelay = "12"
+    /// more: half a minute was gone before a test looked once the machine was busy with a build, so the
+    /// waits for the end of the sync outlast it by a good margin.
+    private static let syncDelay = "20"
+    private static let syncWait: TimeInterval = 35
 
     func testTheInboxWaitsForTheMacsInsteadOfClaimingToBeEmpty() {
         launch("syncing", extra: ["-AHSyncDelay", Self.syncDelay])
@@ -436,7 +438,7 @@ final class AskHumanUITests: XCTestCase {
         // The title says so, but only after a short delay.
         _ = requireElement("sync-status")
         // The rows replace the placeholders once the Macs answered, and the title is itself again.
-        _ = requireElement("inbox-row-req-select", timeout: 20)
+        _ = requireElement("inbox-row-req-select", timeout: Self.syncWait)
         XCTAssertTrue(gone("loading-placeholder"))
         XCTAssertTrue(gone("sync-status"))
         shot("65-inbox-synced")
@@ -448,7 +450,7 @@ final class AskHumanUITests: XCTestCase {
         XCTAssertFalse(element("loading-placeholder").exists, "there is something to show, so no placeholders")
         _ = requireElement("sync-status")
         shot("66-inbox-updating")
-        XCTAssertTrue(gone("sync-status", timeout: 20))
+        XCTAssertTrue(gone("sync-status", timeout: Self.syncWait))
         XCTAssertTrue(element("inbox-row-req-select").exists, "the rows stay as they are")
     }
 
@@ -470,8 +472,114 @@ final class AskHumanUITests: XCTestCase {
         shot("85-agents-loading")
         XCTAssertFalse(app.staticTexts[localized("No Agent sessions", "没有 Agent 会话")].exists)
         XCTAssertFalse(app.staticTexts[localized("Your Macs are not reachable", "连不上你的 Mac")].exists, "still connecting is not unreachable")
-        _ = requireElement("agent-row-\(workingAgent)", timeout: 20)
+        _ = requireElement("agent-row-\(workingAgent)", timeout: Self.syncWait)
         XCTAssertTrue(gone("loading-placeholder"))
+    }
+
+    // MARK: a tapped notification
+
+    private var unavailableTitle: String { localized("Request unavailable", "请求不可用") }
+
+    func testATappedNotificationShowsItsTextWhileTheRequestIsOnItsWay() {
+        launch("syncing", extra: ["-AHSyncDelay", Self.syncDelay, "-AHNotify", "req-migration"])
+        // The page opens at once from what the notification said; the request itself is not here yet.
+        let hint = requireElement("request-placeholder-hint")
+        // The made-up notification has the layout of one from a session with a title.
+        XCTAssertTrue(hint.label.contains("Plan the users table migration"), hint.label)
+        XCTAssertTrue(hint.label.contains("Cursor · HumanInLoop · Home MacBook Pro"), hint.label)
+        XCTAssertTrue(hint.label.contains("Which database should the migration target?"), hint.label)
+        XCTAssertFalse(app.staticTexts[unavailableTitle].exists, "it is on its way, not unavailable")
+        shot("90-request-on-its-way")
+        // The form takes its place once the Macs have answered.
+        _ = requireElement("next-button", timeout: Self.syncWait)
+        XCTAssertTrue(gone("request-placeholder"))
+        shot("91-request-arrived")
+    }
+
+    func testARequestTheMacDoesNotHaveIsUnavailableOnlyOnceTheMacHasAnswered() {
+        launch("syncing", extra: ["-AHSyncDelay", Self.syncDelay, "-AHNotify", "req-answered-elsewhere"])
+        _ = requireElement("request-placeholder")
+        XCTAssertFalse(app.staticTexts[unavailableTitle].exists, "the Macs have not answered yet")
+        XCTAssertTrue(app.staticTexts[unavailableTitle].waitForExistence(timeout: Self.syncWait))
+        XCTAssertTrue(gone("request-placeholder"))
+        shot("92-request-gone")
+    }
+
+    func testARequestOfAMacOutOfReachSaysSoInsteadOfBeingUnavailable() {
+        launch("offline", extra: ["-AHNotify", "req-late"])
+        _ = requireElement("request-placeholder-hint")
+        XCTAssertTrue(app.staticTexts[localized("Your Mac is not reachable", "连不上你的 Mac")].exists)
+        XCTAssertFalse(app.staticTexts[unavailableTitle].exists)
+        shot("93-request-unreachable")
+    }
+
+    // MARK: the title of the session
+
+    private let migrationTitle = "Plan the users table migration"
+
+    func testTheInboxNamesARequestByItsSessionAndFallsBackToTheAgent() {
+        launch()
+        let titled = requireElement("inbox-row-req-migration")
+        XCTAssertTrue(titled.label.contains(migrationTitle), titled.label)
+        XCTAssertTrue(titled.label.contains("Cursor"), "the title took the Agent's place on the screen, VoiceOver still names it: \(titled.label)")
+        let plain = requireElement("inbox-row-req-select")
+        XCTAssertTrue(plain.label.contains("Claude Code"), plain.label)
+        XCTAssertFalse(plain.label.contains(migrationTitle))
+        shot("94-inbox-session-titles")
+    }
+
+    func testARequestPageLeadsWithTheTitleOfItsSession() {
+        launch(extra: ["-AHOpen", "req-migration"])
+        XCTAssertEqual(requireElement("request-title").label, migrationTitle)
+        XCTAssertEqual(requireElement("request-origin").label, "Cursor · HumanInLoop · Home MacBook Pro")
+        shot("95-request-session-title")
+    }
+
+    func testARequestPageWithoutATitleKeepsItsAgentHeader() {
+        launch(extra: ["-AHOpen", "req-select"])
+        _ = requireElement("option-0-0")
+        XCTAssertFalse(element("request-title").exists)
+        XCTAssertTrue(app.staticTexts["Claude Code"].exists)
+        shot("96-request-no-session-title")
+    }
+
+    func testHistoryNamesFinishedRequestsBySessionAndSearchesTheTitles() {
+        launch(extra: ["-AHTab", "history"])
+        let titled = requireElement("history-row-req-old-1")
+        XCTAssertTrue(titled.label.contains("Cache the APNs token"), titled.label)
+        XCTAssertTrue(titled.label.contains("Claude Code"), "VoiceOver still names the Agent: \(titled.label)")
+        let plain = requireElement("history-row-req-old-2")
+        XCTAssertTrue(plain.label.contains("Cursor"), plain.label)
+        shot("97-history-session-titles")
+
+        // The title is one of the things the search looks through ("Cache" is in no other row).
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("Cache")
+        XCTAssertTrue(gone("history-row-req-old-2"))
+        XCTAssertTrue(element("history-row-req-old-1").exists)
+    }
+
+    func testAFinishedRequestOpensWithItsSessionTitle() {
+        launch(extra: ["-AHTab", "history"])
+        requireElement("history-row-req-old-1").tap()
+        XCTAssertEqual(requireElement("history-title").label, "Cache the APNs token")
+        shot("98-history-detail-session-title")
+    }
+
+    func testTheBannerOfANewRequestNamesItsSession() {
+        launch(extra: ["-AHArrival", "Review the release notes"])
+        let banner = requireElement("banner", timeout: 15)
+        XCTAssertTrue(banner.label.contains("Review the release notes"), banner.label)
+        XCTAssertFalse(banner.label.contains("Cursor · HumanInLoop"), "the title replaces the Agent and project: \(banner.label)")
+        shot("99-banner-session-title")
+    }
+
+    func testTheBannerOfARequestWithoutATitleNamesTheAgentAndProject() {
+        launch(extra: ["-AHArrival", "none"])
+        let banner = requireElement("banner", timeout: 15)
+        XCTAssertTrue(banner.label.contains("Cursor · HumanInLoop"), banner.label)
     }
 
     // MARK: moving on after sending
@@ -517,13 +625,6 @@ final class AskHumanUITests: XCTestCase {
         XCTAssertFalse(element("filter-note").exists)
         shot("70-agents")
 
-        chooseFilter(localized("Following", "已关注"))
-        XCTAssertTrue(gone("agent-row-\(waitingAgent)"))
-        XCTAssertTrue(element("agent-row-\(workingAgent)").exists)
-        XCTAssertTrue(element("agent-row-\(officeAgent)").exists)
-        _ = requireElement("filter-note")
-        shot("71-agents-following")
-
         chooseFilter("Office iMac")
         XCTAssertTrue(gone("agent-row-\(workingAgent)"))
         XCTAssertTrue(element("agent-row-\(officeAgent)").exists)
@@ -531,6 +632,41 @@ final class AskHumanUITests: XCTestCase {
 
         requireElement("filter-clear").tap()
         _ = requireElement("agent-row-\(waitingAgent)")
+    }
+
+    func testThereIsNoWayToFollowAnAgentButTheOnesTheMacNotifiesAboutAreMarked() {
+        launch(extra: ["-AHTab", "agents"])
+        let notifies = localized("Will notify you", "会通知你")
+        // The demo Macs follow the working, the idle and the office Agent; the one that waits is not followed.
+        for key in [workingAgent, idleAgent, officeAgent] {
+            XCTAssertTrue(requireElement("agent-row-\(key)").label.contains(notifies), "\(key) is not marked as notifying")
+        }
+        for key in [waitingAgent, endedAgent, unsupportedAgent] {
+            XCTAssertFalse(requireElement("agent-row-\(key)").label.contains(notifies), "\(key) is marked as notifying")
+        }
+        shot("71-agents-notifying")
+        // The filter only offers the Macs: nothing is left of "Following".
+        requireElement("filter-menu").tap()
+        XCTAssertTrue(app.buttons["Office iMac"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons[localized("Following", "已关注")].exists)
+        app.buttons["Office iMac"].tap()
+        requireElement("filter-clear").tap()
+
+        // The page of a followed Agent says so in a line; there is no button to follow or unfollow.
+        requireElement("agent-row-\(workingAgent)").tap()
+        _ = requireElement("watch-card")
+        let note = requireElement("follow-note")
+        XCTAssertTrue(note.label.contains(localized("finishes or fails", "完成或出错")), note.label)
+        XCTAssertFalse(element("follow-button").exists)
+        shot("72-agent-notifying")
+    }
+
+    func testTheNotificationLineIsOnlyOnTheAgentsTheMacNotifiesAbout() {
+        launch(extra: ["-AHTab", "agents", "-AHOpenAgent", waitingAgent])
+        _ = requireElement("watch-card")
+        XCTAssertFalse(element("follow-note").exists, "that Agent is not followed")
+        XCTAssertFalse(element("follow-button").exists)
+        shot("85-agent-not-notifying")
     }
 
     func testALongCurrentToolDoesNotWidenTheAgentRow() {
@@ -543,18 +679,12 @@ final class AskHumanUITests: XCTestCase {
         shot("84-agent-long-tool")
     }
 
-    func testAWorkingAgentShowsALiveViewAndCanBeUnfollowed() {
+    func testAWorkingAgentShowsALiveView() {
         launch(extra: ["-AHTab", "agents"])
         requireElement("agent-row-\(workingAgent)").tap()
         _ = requireElement("watch-card")
         _ = requireElement("watch-live")
         shot("72-agent-working")
-
-        XCTAssertTrue(waitForLabel("follow-button", localized("Following", "已关注")))
-        requireElement("follow-button").tap()
-        XCTAssertTrue(waitForLabel("follow-button", localized("Follow", "关注")), "the Mac took the follow back")
-        requireElement("follow-button").tap()
-        XCTAssertTrue(waitForLabel("follow-button", localized("Following", "已关注")))
     }
 
     func testAMessageToAWorkingAgentIsQueuedAndCanBeWithdrawn() {
@@ -635,8 +765,14 @@ final class AskHumanUITests: XCTestCase {
         start.tap()
         _ = requireElement("task-progress")
         shot("81-task-progress")
-        requireElement("task-open-agent", timeout: 30).tap()
+        let open = requireElement("task-open-agent", timeout: 30)
+        // The new Agent is one the Mac notifies about: the page says what to expect.
+        let promise = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", localized("when it finishes or fails", "完成或出错时"))).firstMatch
+        XCTAssertTrue(promise.waitForExistence(timeout: 5), "the progress page does not say that the Agent will notify")
+        shot("82-task-notifying")
+        open.tap()
         _ = requireElement("watch-card")
+        _ = requireElement("follow-note")
     }
 
     func testLeavingAFilledTaskFormAsksBeforeDiscarding() {

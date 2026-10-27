@@ -330,7 +330,8 @@ async fn nothing_is_announced_for_agents_nobody_follows() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn waiting_is_announced_once_for_a_question_that_is_not_on_ios() {
+async fn an_agent_that_waits_for_an_answer_is_not_announced() {
+    // The question is what notifies (the inbox and its push); the Agent waiting for it adds nothing.
     let (fx, mut phone) = with_agent().await;
     phone.send(&follow("claude:s1", true)).await;
     phone.recv(t::FOLLOW_STATE).await;
@@ -339,46 +340,10 @@ async fn waiting_is_announced_once_for_a_question_that_is_not_on_ios() {
         a.waiting_preview = Some("Delete the build folder?".into());
         a.state = "waiting".into();
     });
-    assert!(!phone.gets(t::FOLLOW_EVENT, SECOND).await, "not at once");
-    let seen: wire::FollowEvent = phone.recv_body(t::FOLLOW_EVENT).await;
-    assert_eq!(seen.kind, "waiting");
-    assert_eq!(seen.preview, "Delete the build folder?");
-    assert!(
-        !phone.gets(t::FOLLOW_EVENT, 6 * SECOND).await,
-        "once per question"
-    );
-
-    // A new question is announced again.
-    fx.host.update_agent("claude:s1", |a| {
-        a.waiting_request_id = Some("req-popup-2".into());
-    });
-    let seen: wire::FollowEvent = phone.recv_body(t::FOLLOW_EVENT).await;
-    assert_eq!(seen.kind, "waiting");
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_question_that_reached_the_phone_is_not_announced_twice() {
-    use super::requests::{DeliverRequest, Resolution, Sink};
-
-    let (fx, mut phone) = with_agent().await;
-    phone.send(&follow("claude:s1", true)).await;
-    phone.recv(t::FOLLOW_STATE).await;
-    let (ask, view) = sample_ask("req-here");
-    fx.gateway.deliver(DeliverRequest {
-        view,
-        sink: Sink::Ask(FakeAsk::new()),
-        ask: Some(ask),
-        deadline_ms: None,
-        assets: Vec::new(),
-    });
-    phone.recv(t::REQUEST_NEW).await;
-    fx.host.update_agent("claude:s1", |a| {
-        a.waiting_request_id = Some("req-here".into());
-        a.state = "waiting".into();
-    });
     assert!(!phone.gets(t::FOLLOW_EVENT, 6 * SECOND).await);
-    fx.gateway
-        .resolve("req-here", Resolution::Cancelled("popup".into()));
+    phone.set_presence(true, false).await;
+    tokio::time::sleep(6 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 0);
 }
 
 #[tokio::test(start_paused = true)]
@@ -413,6 +378,282 @@ async fn a_background_phone_gets_a_push_instead_of_a_live_event() {
     assert_eq!(plain.rid.as_deref(), Some("claude:s1"));
     assert_eq!(plain.project, "proj");
     assert_eq!(plain.text, "Refactor finished, 12 files changed.");
+}
+
+// A result (done / failed) of a followed Agent reaches a phone that is not looking only after
+// the Mac has been idle for `alert_after_secs`, the way a question does, and ends the follow:
+// the follow was for that one result (docs/specs/ios-follow-narrowing.md).
+
+const MINUTE: Duration = Duration::from_secs(60);
+
+/// A phone that follows `claude:s1` and then leaves the app, so its results are pushed once due.
+async fn away_follower() -> (Fixture, TestPhone) {
+    let (fx, mut phone) = with_agent().await;
+    phone.send(&follow("claude:s1", true)).await;
+    phone.recv(t::FOLLOW_STATE).await;
+    phone.set_presence(true, false).await;
+    phone.clear_queue();
+    (fx, phone)
+}
+
+fn turn_end(failed: bool) -> AgentEventInfo {
+    event("claude:s1", AgentEventKind::TurnEnd, failed)
+}
+
+/// Whether the follow set the Mac reports on hello is empty.
+async fn follows_nothing(phone: &mut TestPhone) -> bool {
+    phone.clear_queue();
+    phone.hello().await;
+    let state: wire::FollowState = phone.recv_body(t::FOLLOW_STATE).await;
+    state.keys.is_empty()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_result_is_pushed_once_the_mac_has_been_idle_long_enough() {
+    let (fx, mut phone) = away_follower().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input();
+    fx.gateway.agent_event(turn_end(false));
+
+    tokio::time::sleep(10 * MINUTE).await;
+    assert_eq!(
+        fx.pusher.count(),
+        0,
+        "the Mac has been idle for ten minutes only"
+    );
+    tokio::time::sleep(6 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 1, "idle for sixteen minutes by now");
+    let push = fx.pusher.last().unwrap();
+    assert_eq!(
+        (
+            push.kind.as_str(),
+            push.loc_key.as_str(),
+            push.collapse_id.as_str()
+        ),
+        ("alert", "PUSH_FOLLOW_DONE", "fw-claude:s1")
+    );
+
+    // That was the result the phone asked for: the Agent left the follow set.
+    let state: wire::FollowState = phone.recv_body(t::FOLLOW_STATE).await;
+    assert!(state.keys.is_empty());
+
+    // Later turns do not notify again, however long the Mac idles.
+    fx.gateway
+        .agent_event(event("claude:s1", AgentEventKind::TurnStart, false));
+    fx.gateway.agent_event(turn_end(false));
+    tokio::time::sleep(60 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 1, "once");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_result_is_pushed_at_once_when_the_mac_is_already_idle() {
+    let (fx, _phone) = away_follower().await;
+    fx.host.set_alert_after(900);
+    fx.host.idle_for(20 * 60);
+    fx.gateway.agent_event(turn_end(false));
+    tokio::time::sleep(5 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 1, "the 3 s quiet period and a tick");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_zero_wait_pushes_a_result_at_once() {
+    let (fx, _phone) = away_follower().await;
+    fx.host.set_alert_after(0);
+    fx.host.touch_input();
+    fx.gateway.agent_event(turn_end(true));
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(
+        fx.pusher.count(),
+        1,
+        "a failure is not delayed by the quiet period"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unknown_idle_time_pushes_a_result_at_once() {
+    let (fx, _phone) = away_follower().await;
+    fx.host.set_alert_after(900); // the test host knows no idle time until told
+    fx.gateway.agent_event(turn_end(false));
+    tokio::time::sleep(5 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failure_waits_like_a_finished_turn() {
+    let (fx, phone) = away_follower().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input();
+    fx.gateway.agent_event(turn_end(true));
+
+    tokio::time::sleep(5 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0, "the Mac is in use");
+    tokio::time::sleep(11 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 1);
+    let push = fx.pusher.last().unwrap();
+    assert_eq!(push.loc_key, "PUSH_FOLLOW_FAILED");
+    let keys = phone.keys.clone().unwrap();
+    let plain = envelope::open(&keys.m2p, Scope::Push, &push.ah).expect("push opens");
+    let plain: PushPlain = serde_json::from_slice(&plain).unwrap();
+    assert_eq!(plain.k, "follow.failed");
+    assert_eq!(plain.rid.as_deref(), Some("claude:s1"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn input_on_the_mac_after_a_result_voids_it() {
+    let (fx, mut phone) = away_follower().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input();
+    fx.gateway.agent_event(turn_end(false));
+    tokio::time::sleep(5 * MINUTE).await;
+
+    fx.host.touch_input(); // back at the keyboard: the result has been seen there
+    tokio::time::sleep(40 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0, "no push for what you have seen");
+    assert!(
+        follows_nothing(&mut phone).await,
+        "and nothing left to notify"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn input_just_before_a_result_does_not_void_it() {
+    let (fx, _phone) = away_follower().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input(); // the last thing the user did before the Agent finished
+    tokio::time::sleep(2 * SECOND).await;
+    fx.gateway.agent_event(turn_end(false));
+    tokio::time::sleep(5 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0);
+    tokio::time::sleep(11 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_agent_that_works_again_voids_the_result_but_stays_followed() {
+    let (fx, mut phone) = away_follower().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input();
+    fx.gateway.agent_event(turn_end(false));
+    tokio::time::sleep(5 * MINUTE).await;
+
+    fx.gateway
+        .agent_event(event("claude:s1", AgentEventKind::TurnStart, false));
+    tokio::time::sleep(40 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0, "it was no result after all");
+    assert!(!follows_nothing(&mut phone).await, "it is still followed");
+
+    // The real result finds the Mac idle already.
+    fx.gateway.agent_event(turn_end(false));
+    tokio::time::sleep(5 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_session_that_ends_voids_the_result() {
+    let (fx, _phone) = away_follower().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input();
+    fx.gateway.agent_event(turn_end(false));
+    tokio::time::sleep(10 * SECOND).await;
+    fx.gateway
+        .agent_event(event("claude:s1", AgentEventKind::SessionEnd, false));
+    tokio::time::sleep(40 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_phone_that_looks_before_the_wait_is_over_gets_no_push() {
+    let (fx, mut phone) = away_follower().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input();
+    fx.gateway.agent_event(turn_end(false));
+    tokio::time::sleep(5 * MINUTE).await;
+
+    phone.set_presence(true, true).await;
+    phone.hello().await;
+    tokio::time::sleep(40 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0, "it can see the Agent in the list");
+    assert!(follows_nothing(&mut phone).await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_live_phone_gets_the_banner_and_the_follow_ends() {
+    let (fx, mut phone) = with_agent().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input();
+    phone.send(&follow("claude:s1", true)).await;
+    phone.recv(t::FOLLOW_STATE).await;
+
+    fx.gateway.agent_event(turn_end(true));
+    let seen: wire::FollowEvent = phone.recv_body(t::FOLLOW_EVENT).await;
+    assert_eq!(seen.kind, "failed");
+    let state: wire::FollowState = phone.recv_body(t::FOLLOW_STATE).await;
+    assert!(state.keys.is_empty());
+    tokio::time::sleep(30 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn each_follower_is_judged_on_its_own() {
+    let fx = Fixture::new().await;
+    fx.host
+        .set_agents(vec![sample_agent("claude:s1", "working")]);
+    fx.host.set_alert_after(900);
+    fx.host.idle_for(20 * 60);
+    let mut looking = fx.live_phone().await;
+    snapshot(&mut looking).await;
+    let mut away = fx.pair_phone().await;
+    for phone in [&mut looking, &mut away] {
+        phone.send(&follow("claude:s1", true)).await;
+        phone.recv(t::FOLLOW_STATE).await;
+    }
+    away.set_presence(true, false).await;
+
+    fx.gateway.agent_event(turn_end(false));
+    let seen: wire::FollowEvent = looking.recv_body(t::FOLLOW_EVENT).await;
+    assert_eq!(seen.kind, "done");
+    tokio::time::sleep(5 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 1, "only the phone that is away");
+    let push = fx.pusher.last().unwrap();
+    let keys = away.keys.clone().unwrap();
+    assert!(envelope::open(&keys.m2p, Scope::Push, &push.ah).is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_newer_result_replaces_one_that_was_not_pushed_yet() {
+    let (fx, _phone) = away_follower().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input();
+    fx.gateway.agent_event(turn_end(true));
+    tokio::time::sleep(SECOND).await;
+    fx.gateway.agent_event(turn_end(false));
+
+    tokio::time::sleep(20 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 1, "one notification, not two");
+    assert_eq!(fx.pusher.last().unwrap().loc_key, "PUSH_FOLLOW_DONE");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_phone_that_cannot_be_pushed_to_keeps_following() {
+    let fx = Fixture::new().await;
+    fx.host
+        .set_agents(vec![sample_agent("claude:s1", "working")]);
+    fx.host.set_alert_after(0);
+    let mut phone = fx.pair_phone_without_push().await;
+    phone.set_presence(true, true).await;
+    phone.hello().await;
+    snapshot(&mut phone).await;
+    phone.send(&follow("claude:s1", true)).await;
+    phone.recv(t::FOLLOW_STATE).await;
+    phone.set_presence(true, false).await;
+
+    fx.gateway.agent_event(turn_end(true));
+    tokio::time::sleep(30 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 0, "there is nowhere to push to");
+    assert!(
+        !follows_nothing(&mut phone).await,
+        "nothing reached the phone, so the result is still owed"
+    );
 }
 
 // ---------------------------------------------------------------- watch

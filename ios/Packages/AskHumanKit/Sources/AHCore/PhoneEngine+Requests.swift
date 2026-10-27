@@ -164,8 +164,8 @@ extension PhoneEngine {
 
     func summarize(_ view: RequestView, size: UInt64 = 0) -> RequestSummary {
         RequestSummary(
-            id: view.id, kind: view.kind, project: view.project, agent: view.agent, createdAt: view.createdAt,
-            preview: Self.preview(of: view), contentHash: view.contentHash, size: size
+            id: view.id, kind: view.kind, project: view.project, agent: view.agent, sessionTitle: view.sessionTitle,
+            createdAt: view.createdAt, preview: Self.preview(of: view), contentHash: view.contentHash, size: size
         )
     }
 
@@ -215,7 +215,7 @@ extension PhoneEngine {
     static func placeholderView(for summary: RequestSummary) -> RequestView {
         RequestView(
             id: summary.id, kind: summary.kind, createdAt: summary.createdAt, agent: summary.agent, project: summary.project,
-            source: "", contentHash: summary.contentHash,
+            sessionTitle: summary.sessionTitle, source: "", contentHash: summary.contentHash,
             ask: summary.kind == "ask"
                 ? AskView(isMarkdown: false, message: MessageView(text: summary.preview, files: []), questions: [], selectOnly: false, single: false)
                 : nil

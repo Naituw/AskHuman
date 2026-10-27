@@ -24,9 +24,11 @@ struct RequestScreen: View {
                     LoadingRequest(item: item)
                 }
             } else {
-                ContentUnavailableView("Request unavailable", systemImage: "tray", description: Text("It was answered or cancelled."))
+                MissingRequestPage(id: id)
             }
         }
+        // The form takes the placeholder's place when the request arrives.
+        .animation(.easeOut(duration: 0.2), value: store.displayItem(id: id) != nil)
         // The receipt takes the form's place for the moment between "the Mac took it" and the next page.
         .accessibilityHidden(receipt != nil)
         .overlay {
@@ -100,6 +102,74 @@ private struct SentReceiptPage: View {
     }
 }
 
+/// The page of a request the phone does not have: on its way (a tapped notification is ahead of the
+/// request itself), out of reach, or gone. Only the last says "unavailable".
+private struct MissingRequestPage: View {
+    let id: String
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        let missing = store.missingRequest(id: id)
+        if missing == .gone {
+            ContentUnavailableView("Request unavailable", systemImage: "tray", description: Text("It was answered or cancelled."))
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let hint = store.hint(for: id) { HintCard(hint: hint) }
+                    status(missing)
+                }
+                .padding()
+            }
+            .background(Color(.systemGroupedBackground))
+            .accessibilityIdentifier("request-placeholder")
+        }
+    }
+
+    @ViewBuilder
+    private func status(_ missing: MissingRequest) -> some View {
+        if missing == .unreachable {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Your Mac is not reachable").font(.subheadline.weight(.semibold))
+                    Text("The request shows up here when it is back, if it is still waiting.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: "wifi.exclamationmark").foregroundStyle(.orange)
+            }
+            .card()
+        } else {
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("Loading the full request…").foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// What the notification said: who asks, from which Mac, and the start of the question.
+private struct HintCard: View {
+    let hint: NotificationHint
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(verbatim: hint.title).font(.headline)
+            if !hint.subtitle.isEmpty {
+                Text(verbatim: hint.subtitle).font(.footnote).foregroundStyle(.secondary)
+            }
+            if !hint.body.isEmpty {
+                Text(verbatim: hint.body).font(.body).padding(.top, 6)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("request-placeholder-hint")
+    }
+}
+
 private struct LoadingRequest: View {
     let item: InboxItem
 
@@ -127,19 +197,32 @@ struct RequestHeader: View {
         HStack(spacing: 12) {
             AgentBadge(agent: item.summary.agent, size: 44)
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.summary.agent.label).font(.headline)
-                HStack(spacing: 5) {
-                    if !item.summary.project.name.isEmpty {
-                        Image(systemName: "folder.fill").imageScale(.small)
-                        Text(item.summary.project.name)
-                        Text("·")
+                if let title = item.sessionTitle {
+                    // The session's title leads; who asks and where from moves into a small line beneath it.
+                    Text(verbatim: title)
+                        .font(.headline)
+                        .lineLimit(2)
+                        .accessibilityIdentifier("request-title")
+                    Text(verbatim: [item.summary.agent.label, item.summary.project.name, item.macName].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("request-origin")
+                } else {
+                    Text(item.summary.agent.label).font(.headline)
+                    HStack(spacing: 5) {
+                        if !item.summary.project.name.isEmpty {
+                            Image(systemName: "folder.fill").imageScale(.small)
+                            Text(item.summary.project.name)
+                            Text("·")
+                        }
+                        Image(systemName: "desktopcomputer").imageScale(.small)
+                        Text(item.macName)
                     }
-                    Image(systemName: "desktopcomputer").imageScale(.small)
-                    Text(item.macName)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
                 Text(Date(timeIntervalSince1970: TimeInterval(item.summary.createdAt) / 1000), format: .dateTime.month().day().hour().minute())
                     .font(.caption)
                     .foregroundStyle(.tertiary)

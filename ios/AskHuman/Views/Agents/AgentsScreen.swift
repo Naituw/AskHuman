@@ -25,6 +25,9 @@ struct AgentsScreen: View {
             .toolbar {
                 if store.hasPairedMacs {
                     ToolbarItem(placement: .principal) { SyncTitle(title: "Agents") }
+                }
+                // The only thing to filter by is the Mac.
+                if store.macs.count > 1 {
                     ToolbarItem(placement: .topBarLeading) { AgentFilterMenu() }
                 }
                 if !store.taskMacs.isEmpty {
@@ -106,7 +109,6 @@ private struct AgentsList: View {
     private var filterName: String {
         switch store.agentFilter {
         case .all: ""
-        case .followed: String(localized: "Following")
         case .mac(let id): store.macs.first { $0.id == id }?.name ?? ""
         }
     }
@@ -238,17 +240,14 @@ private struct AgentFilterMenu: View {
         Menu {
             Picker("Show", selection: $store.agentFilter) {
                 Label("All", systemImage: "person.2.wave.2").tag(AgentFilter.all)
-                Label("Following", systemImage: "star").tag(AgentFilter.followed)
             }
             .pickerStyle(.inline)
-            if store.macs.count > 1 {
-                Picker("Mac", selection: $store.agentFilter) {
-                    ForEach(store.macs) { mac in
-                        Label(mac.name, systemImage: "desktopcomputer").tag(AgentFilter.mac(mac.id))
-                    }
+            Picker("Mac", selection: $store.agentFilter) {
+                ForEach(store.macs) { mac in
+                    Label(mac.name, systemImage: "desktopcomputer").tag(AgentFilter.mac(mac.id))
                 }
-                .pickerStyle(.inline)
             }
+            .pickerStyle(.inline)
         } label: {
             FilterIcon(active: store.agentFilter != .all)
         }

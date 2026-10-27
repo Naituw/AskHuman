@@ -128,6 +128,12 @@ public struct InboxItem: Identifiable, Sendable, Equatable {
     public var unread: Bool
     public var state: RequestState
 
+    /// Title of the Agent session that asks, when the Mac told one.
+    public var sessionTitle: String? { SessionTitle.clean(view?.sessionTitle ?? summary.sessionTitle) }
+
+    /// What names the request in lists and banners: its session's title, else the Agent.
+    public var displayTitle: String { sessionTitle ?? summary.agent.label }
+
     public init(
         macId: String, macName: String, requestId: String, summary: RequestSummary, view: RequestView?,
         receivedAt: Date, unread: Bool, state: RequestState
@@ -258,7 +264,8 @@ public enum EngineEvent: Sendable, Equatable {
     case requestFinished(macId: String, requestId: String, outcome: HistoryOutcome, by: String?)
     case macUnpaired(macId: String, macName: String)
     case pairingFinished(macId: String)
-    /// A followed Agent finished, failed or is waiting for an answer somewhere else.
+    /// A followed Agent finished or failed (a Mac older than `docs/specs/ios-follow-narrowing.md` also
+    /// reports one that waits for an answer somewhere else).
     case followEvent(macId: String, event: FollowEvent)
     /// The Mac refused to follow one more Agent (the limit is reached).
     case followRefused(macId: String, agentKey: String)

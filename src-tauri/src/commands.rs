@@ -2874,6 +2874,9 @@ pub async fn new_task_launch(
             files: delivery.files,
             permission,
             id,
+            // The window offers no model choice yet; Codex's own configuration decides.
+            model: None,
+            effort: None,
         })
         .await?;
         if let (Some(project), Some(todo)) = (todo_project.as_deref(), todo_id.as_deref()) {

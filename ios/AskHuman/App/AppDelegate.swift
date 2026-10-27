@@ -1,5 +1,6 @@
 import UIKit
 import UserNotifications
+import AHCore
 
 /// UIKit entry points SwiftUI has no equivalent for: the APNs token callbacks and the notification
 /// center delegate (taps, and foreground presentation).
@@ -36,11 +37,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUser
         return known ? [] : [.banner, .list, .sound]
     }
 
-    /// The user tapped a notification: open the request or the Agent it is about.
+    /// The user tapped a notification: open the request or the Agent it is about. A request is often
+    /// not on the phone yet at that moment, so its page starts from what the notification said.
     @MainActor
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        let info = response.notification.request.content.userInfo
+        let content = response.notification.request.content
+        let info = content.userInfo
         guard let rid = info["rid"] as? String, let mac = info["mac"] as? String else { return }
-        AppEnvironment.current?.store.openNotification(macId: mac, rid: rid, kind: info["kind"] as? String)
+        let kind = info["kind"] as? String
+        // A question's text is worth showing in its place; the news that a request was handled is not.
+        let hint = kind != "resolved" && !content.title.isEmpty
+            ? NotificationHint(title: content.title, subtitle: content.subtitle, body: content.body)
+            : nil
+        AppEnvironment.current?.store.openNotification(macId: mac, rid: rid, kind: kind, hint: hint)
     }
 }

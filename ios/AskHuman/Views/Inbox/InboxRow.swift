@@ -15,10 +15,12 @@ struct InboxRow: View {
                 .padding(.top, 14)
                 .opacity(item.unread ? 1 : 0)
                 .accessibilityHidden(true)
-            AgentBadge(agent: item.summary.agent)
+            AgentBadge(agent: item.summary.agent, spoken: item.sessionTitle != nil)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(item.summary.agent.label)
+                    // The session's title names the request; the Agent is told by its logo. Without a title the
+                    // Agent's name leads, as before.
+                    Text(verbatim: item.displayTitle)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 8)

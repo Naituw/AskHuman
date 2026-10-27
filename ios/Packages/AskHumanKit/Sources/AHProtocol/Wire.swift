@@ -166,17 +166,35 @@ public struct PushPlain: Codable, Equatable, Sendable {
     public var mac: String
     public var agent: String
     public var project: String
+    /// Title of the Agent session behind a request (cut short by the Mac); `nil` for other pushes and
+    /// older Macs.
+    public var session: String?
     /// Preview text (≤ 120 characters).
     public var text: String
     public var ts: Int64
 
-    public init(k: String, rid: String? = nil, mac: String, agent: String, project: String, text: String, ts: Int64) {
+    public init(
+        k: String, rid: String? = nil, mac: String, agent: String, project: String, session: String? = nil, text: String,
+        ts: Int64
+    ) {
         self.k = k
         self.rid = rid
         self.mac = mac
         self.agent = agent
         self.project = project
+        self.session = session
         self.text = text
         self.ts = ts
+    }
+
+    /// The two lines above the body of a notification. A request with a session title leads with the
+    /// title and puts who asks and from which Mac beneath it, the Mac last because that is what a narrow
+    /// line cuts first; without one the Agent and project lead and the Mac follows.
+    public var headerLines: (title: String, subtitle: String) {
+        let who = [agent, project].filter { !$0.isEmpty }.joined(separator: " · ")
+        if let title = SessionTitle.clean(session) {
+            return (title, [who, mac].filter { !$0.isEmpty }.joined(separator: " · "))
+        }
+        return (who.isEmpty ? mac : who, who.isEmpty ? "" : mac)
     }
 }

@@ -3,6 +3,7 @@
 //! terminal path, says what to remember about the launch before the window opens.
 
 use super::*;
+use crate::agents::model_catalog::ModelChoice;
 use crate::codex_desktop::LaunchTarget;
 use crate::integrations::agent_launch::{self, LaunchPermission, LaunchRecord, LaunchSource};
 use crate::todos::TodoEntry;
@@ -91,6 +92,9 @@ pub(super) struct TaskSpec {
     pub task: String,
     /// `(project key, entry)` of the TODO the task comes from; taken off the list once started.
     pub todo: Option<(String, TodoEntry)>,
+    /// The model and effort picked for the task; the default leaves both to the Agent. Callers
+    /// pass values already matched against the Agent's catalog.
+    pub choice: ModelChoice,
 }
 
 /// Where the task went.
@@ -125,6 +129,7 @@ pub(super) async fn start_task(
         target,
         task,
         todo,
+        choice,
     } = spec;
     let source = LaunchSource {
         channel,
@@ -165,6 +170,8 @@ pub(super) async fn start_task(
                 }
                 .into(),
                 id: delivery_request_id.clone(),
+                model: choice.model,
+                effort: choice.effort,
             })
             .await
             .map_err(StartError::Message)?;
@@ -181,7 +188,7 @@ pub(super) async fn start_task(
         return Ok(Started::Desktop(answer));
     }
 
-    let record = match agent_launch::create_record_with_files(
+    let record = match agent_launch::create_record_with_choice(
         source,
         std::path::Path::new(&workspace),
         kind,
@@ -189,6 +196,7 @@ pub(super) async fn start_task(
         &task,
         &delivery.files,
         &delivery.warnings,
+        &choice,
     ) {
         Ok(record) => record,
         Err(error) => {

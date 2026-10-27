@@ -33,10 +33,9 @@ final class AgentStoreTests: XCTestCase {
     func testFiltersNarrowTheAgents() async {
         await make()
         XCTAssertEqual(store.agentItems(filter: .all).count, 6)
-        XCTAssertEqual(store.agentItems(filter: .followed).count, 3)
         XCTAssertEqual(store.agentItems(filter: .mac(MockData.officeMacId)).map(\.agentKey).sorted(), [MockData.officeAgentKey, MockData.unsupportedAgentKey].sorted())
-        store.agentFilter = .followed
-        XCTAssertEqual(store.agentItems().count, 3)
+        store.agentFilter = .mac(MockData.officeMacId)
+        XCTAssertEqual(store.agentItems().count, 2)
         XCTAssertEqual(store.agentSections().map(\.id), ["working", "idle"])
     }
 
@@ -49,18 +48,18 @@ final class AgentStoreTests: XCTestCase {
         let followed = await store.setFollow(waiting, on: true)
         XCTAssertTrue(followed)
         await eventually { self.store.agent(id: waiting.id)?.view.followed == true }
-        XCTAssertEqual(store.followedCount, 4)
+        XCTAssertEqual(store.state.agents.filter(\.view.followed).count, 4)
         await store.setFollow(waiting, on: false)
         await eventually { self.store.agent(id: waiting.id)?.view.followed == false }
     }
 
-    func testTheFollowLimitShowsABannerAndKeepsTheList() async {
+    func testTheFollowLimitRefusesQuietlyAndKeepsTheList() async {
         await make()
         await backend.setFollowLimit(2)
         let waiting = store.agent(id: AgentItem.key(MockData.homeMacId, MockData.waitingAgentKey))!
         let followed = await store.setFollow(waiting, on: true)
         XCTAssertFalse(followed, "the home Mac already follows two Agents")
-        XCTAssertEqual(store.banner?.kind, .followLimit)
+        XCTAssertNil(store.banner, "nobody asked for a follow on the screen: nothing to tell")
         XCTAssertEqual(store.agent(id: waiting.id)?.view.followed, false)
     }
 

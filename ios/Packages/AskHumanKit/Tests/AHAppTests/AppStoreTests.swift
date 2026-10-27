@@ -296,6 +296,51 @@ final class AppStoreTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(began), 0.55)
     }
 
+    // MARK: a request that is not here (yet)
+
+    func testARequestThatIsNotHereYetIsLoadingNotUnavailable() async {
+        await make(.syncing)
+        let id = CachedRequest.key(MockData.homeMacId, "req-migration")
+        XCTAssertNil(store.displayItem(id: id))
+        XCTAssertEqual(store.missingRequest(id: id), .loading, "the Macs have not answered: it may be on its way")
+        await backend.finishSync()
+        await eventually("synced") { self.store.syncStatus == .upToDate }
+        XCTAssertNotNil(store.displayItem(id: id), "and there it is")
+        XCTAssertEqual(
+            store.missingRequest(id: CachedRequest.key(MockData.homeMacId, "req-nope")), .gone,
+            "the Mac has answered and does not have it"
+        )
+    }
+
+    func testNothingIsSaidAboutARequestBeforeTheFirstState() {
+        let idle = AppStore(
+            backend: MockBackend(), drafts: MemoryDraftStore(), defaults: UserDefaults(suiteName: "ah-test-" + UUID().uuidString)!
+        )
+        XCTAssertFalse(idle.hasState)
+        XCTAssertEqual(idle.missingRequest(id: CachedRequest.key(MockData.homeMacId, "req-migration")), .loading)
+    }
+
+    func testARequestOfAMacThatCannotBeReachedIsNeitherLoadingNorGone() async {
+        await make(.offline)
+        XCTAssertEqual(store.missingRequest(id: CachedRequest.key(MockData.homeMacId, "req-late")), .unreachable)
+    }
+
+    func testARequestOfAMacThatIsNotPairedIsGone() async {
+        await make()
+        XCTAssertEqual(store.missingRequest(id: CachedRequest.key("unknown-mac", "req-x")), .gone)
+    }
+
+    func testATappedNotificationKeepsWhatItSaidUntilItsPageCloses() async {
+        await make(.syncing)
+        let hint = NotificationHint(title: "Claude Code · relay", subtitle: "Office iMac", body: "Pin the matrix?")
+        store.openNotification(macId: MockData.officeMacId, rid: "req-select", kind: "ask", hint: hint)
+        let id = CachedRequest.key(MockData.officeMacId, "req-select")
+        XCTAssertEqual(store.inboxPath, [id], "the page opens at once, request or not")
+        XCTAssertEqual(store.hint(for: id), hint)
+        store.closed(id: id)
+        XCTAssertNil(store.hint(for: id))
+    }
+
     // MARK: data allowance
 
     func testTheDemoIsFarFromTheFreeAllowanceAndTheQuotaScenarioIsNearIt() async {
@@ -442,6 +487,27 @@ final class AppStoreTests: XCTestCase {
         guard case .request(let macId, _)? = store.banner?.kind else { return XCTFail("expected a request banner") }
         XCTAssertEqual(macId, MockData.homeMacId)
         XCTAssertEqual(store.banner?.title, "Cursor · HumanInLoop")
+    }
+
+    func testTheBannerOfARequestNamesItsSession() async throws {
+        await make()
+        let before = store.arrivalTick
+        await backend.simulateArrival(sessionTitle: "Review the release notes")
+        await eventually("tick") { self.store.arrivalTick == before + 1 }
+        XCTAssertEqual(store.banner?.title, "Review the release notes", "the title replaces the Agent and project")
+        XCTAssertEqual(store.banner?.subtitle, "测试已通过，需要我提交这些改动吗？")
+    }
+
+    func testTheInboxNamesARequestBySessionTitleElseByAgent() async throws {
+        await make()
+        let titled = try item("req-migration")
+        XCTAssertEqual(titled.sessionTitle, "Plan the users table migration")
+        XCTAssertEqual(titled.displayTitle, "Plan the users table migration")
+        let plain = try item("req-select")
+        XCTAssertNil(plain.sessionTitle)
+        XCTAssertEqual(plain.displayTitle, "Claude Code")
+        // What the engine keeps for the list wins nothing over the full view: they say the same.
+        XCTAssertEqual(titled.summary.sessionTitle, titled.view?.sessionTitle)
     }
 
     func testNoBannerWhileTheAppIsInTheBackground() async throws {

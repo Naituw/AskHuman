@@ -84,7 +84,11 @@ final class RealBroker: E2EBroker, @unchecked Sendable {
         password = try Self.password(inConnection: text)
     }
 
-    func settings() -> BrokerSettings { BrokerSettings(arguments: ["--connection-stdin"], stdin: connection) }
+    /// A push waits for the Mac to be idle unless told otherwise, and whether this machine is idle is up to its
+    /// owner: the throwaway Macs push at once, so that a run does not depend on it.
+    func settings() -> BrokerSettings {
+        BrokerSettings(arguments: ["--connection-stdin"], stdin: connection, seed: ["alertAfterSecs": 0])
+    }
 
     func stop() {}
 

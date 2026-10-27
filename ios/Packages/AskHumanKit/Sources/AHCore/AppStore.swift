@@ -62,14 +62,38 @@ public struct AdvanceTiming: Equatable, Sendable {
     public static let immediate = AdvanceTiming(hold: .zero, settle: .zero, note: .milliseconds(200))
 }
 
+/// What a tapped notification said about its request. The page shows it while the request itself is
+/// still on its way: a request that came by push is not on the phone until the Macs have answered.
+public struct NotificationHint: Equatable, Sendable {
+    public var title: String
+    public var subtitle: String
+    public var body: String
+
+    public init(title: String, subtitle: String = "", body: String = "") {
+        self.title = title
+        self.subtitle = subtitle
+        self.body = body
+    }
+}
+
+/// What a page can say about a request it has no content for.
+public enum MissingRequest: Equatable, Sendable {
+    /// Nothing is known yet: the app is still starting, or the request's Mac has not answered. The
+    /// request may be on its way.
+    case loading
+    /// The Mac cannot be reached, so nothing can be said about the request either way.
+    case unreachable
+    /// The Mac answered and does not have it: it was answered or cancelled elsewhere.
+    case gone
+}
+
 /// A short message over the app: a new request, a failure, a notice.
 public struct Banner: Identifiable, Equatable, Sendable {
     public enum Kind: Sendable, Equatable {
         case request(macId: String, requestId: String)
-        /// A followed Agent finished (`done`), failed (`failed`) or asks something (`waiting`).
+        /// A followed Agent finished (`done`) or failed (`failed`); a Mac older than
+        /// `docs/specs/ios-follow-narrowing.md` also reports `waiting` (it asks something).
         case agent(macId: String, agentKey: String, event: String)
-        /// The Mac already follows as many Agents as it allows.
-        case followLimit
         case info
         case warning
     }
@@ -104,6 +128,8 @@ public final class AppStore {
     /// Set for a moment over the request the app moved on to.
     public private(set) var sentNote: SentNote?
     public private(set) var started = false
+    /// Whether the engine has published a state yet: before that, `state` is the empty placeholder.
+    public private(set) var hasState = false
 
     public var tab: AppTab = .inbox
     public var filter: InboxFilter = .all
@@ -145,6 +171,8 @@ public final class AppStore {
     /// Every request seen in the inbox, kept while its page may still be open: when the request ends
     /// the page keeps showing it (with a notice) instead of going blank.
     @ObservationIgnored private var retained: [String: (item: InboxItem, at: Date)] = [:]
+    /// What the notification that opened a page said, by inbox item id (set before the page is pushed).
+    @ObservationIgnored var hints: [String: NotificationHint] = [:]
     @ObservationIgnored private var bannerTask: Task<Void, Never>?
     @ObservationIgnored private var advanceTask: Task<Void, Never>?
     @ObservationIgnored private var noteTask: Task<Void, Never>?
@@ -203,6 +231,7 @@ public final class AppStore {
 
     private func apply(_ next: EngineState) async {
         state = next
+        hasState = true
         let now = Date()
         for item in next.inbox { retained[item.id] = (item, now) }
         for (key, entry) in retained where now.timeIntervalSince(entry.at) > 600 && !inboxPath.contains(key) {
@@ -240,9 +269,11 @@ public final class AppStore {
             if newest == nil || item.receivedAt > newest!.receivedAt { newest = item }
         }
         guard let item = newest else { return }
+        // The session's title names the request; without one, the Agent and project do.
+        let who = [item.summary.agent.label, item.summary.project.name].filter { !$0.isEmpty }.joined(separator: " · ")
         show(Banner(
             kind: .request(macId: item.macId, requestId: item.requestId),
-            title: item.summary.agent.label + " · " + item.summary.project.name,
+            title: item.sessionTitle ?? who,
             subtitle: item.summary.preview
         ))
     }
@@ -277,7 +308,8 @@ public final class AppStore {
         case .followEvent(let macId, let event):
             presentFollowEvent(macId: macId, event: event)
         case .followRefused:
-            show(Banner(kind: .followLimit, title: ""))
+            // The app does not ask for follows by itself any more: nothing to tell the user.
+            break
         case .interjectConsumed(let macId, let agentKey):
             consumed[AgentItem.key(macId, agentKey)] = Date()
         }
@@ -358,6 +390,26 @@ public final class AppStore {
     /// keep looking as it did ("Waiting for your Mac to confirm…"), not announce that the request ended.
     public func endedNotice(for id: String) -> FinishedRequest? {
         receipt?.from == id ? nil : finished[id]
+    }
+
+    /// Why a page has no request to show. "Gone" is only said once the request's Mac has answered
+    /// and does not have it: a request that came by push is not on the phone until the Macs have
+    /// answered, and that wait must not read as "unavailable".
+    public func missingRequest(id: String) -> MissingRequest {
+        guard hasState else { return .loading }
+        let macId = id.split(separator: "/", maxSplits: 1).first.map(String.init)
+        // A Mac that is not (or no longer) paired has no requests to wait for.
+        guard let mac = state.macs.first(where: { $0.id == macId }) else { return .gone }
+        switch mac.link {
+        case .connecting: return .loading
+        case .online: return .gone
+        case .macOffline, .brokerDown: return .unreachable
+        }
+    }
+
+    /// What the notification that opened this page said, for the time the request is not here yet.
+    public func hint(for id: String) -> NotificationHint? {
+        hints[id]
     }
 
     public func isOnline(macId: String) -> Bool {
@@ -476,6 +528,7 @@ public final class AppStore {
 
     /// The form left the screen: save, and forget the in-memory state of finished requests.
     public func closed(id: String) {
+        hints[id] = nil
         composers[id]?.flush()
         if item(id: id) == nil {
             composers[id]?.discard()

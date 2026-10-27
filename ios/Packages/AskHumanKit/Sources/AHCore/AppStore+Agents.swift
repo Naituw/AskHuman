@@ -1,10 +1,10 @@
 import Foundation
 import AHProtocol
+import AHStore
 
 /// Which Agents the Agents tab lists.
 public enum AgentFilter: Hashable, Sendable {
     case all
-    case followed
     case mac(String)
 }
 
@@ -23,7 +23,6 @@ extension AppStore {
         return state.agents.filter { item in
             switch active {
             case .all: return true
-            case .followed: return item.view.followed
             case .mac(let id): return item.macId == id
             }
         }
@@ -53,8 +52,6 @@ extension AppStore {
         state.watches[id]
     }
 
-    public var followedCount: Int { state.agents.filter { $0.view.followed }.count }
-
     public var waitingAgentCount: Int { state.agents.filter { $0.view.state == "waiting" }.count }
 
     /// Macs a task can be started on (online and told the phone may).
@@ -72,11 +69,13 @@ extension AppStore {
     }
 
     /// Opens what a tapped notification is about: the Agent of a follow notification (`follow.*`,
-    /// whose `rid` is the Agent key), else the request.
-    public func openNotification(macId: String, rid: String, kind: String?) {
+    /// whose `rid` is the Agent key), else the request. `hint` is what the notification said; the
+    /// request page shows it until the request itself has reached the phone.
+    public func openNotification(macId: String, rid: String, kind: String?, hint: NotificationHint? = nil) {
         if kind?.hasPrefix("follow.") == true {
             openAgent(macId: macId, agentKey: rid)
         } else {
+            if let hint { hints[CachedRequest.key(macId, rid)] = hint }
             open(macId: macId, requestId: rid)
         }
     }
@@ -113,14 +112,16 @@ extension AppStore {
 
     // MARK: actions
 
-    /// Follows or unfollows an Agent. Returns `false` when the Mac refused or could not be reached.
+    /// Follows or unfollows an Agent: the Mac tells the phone about its first result (`done` or `failed`).
+    /// The app has no button for it (the Macs follow the tasks the phone starts); UI test runs ask for
+    /// a follow at launch. Returns `false` when the Mac refused or could not be reached.
     @discardableResult
     public func setFollow(_ item: AgentItem, on: Bool) async -> Bool {
         do {
             try await backend.setFollow(macId: item.macId, agentKey: item.agentKey, on: on)
             return true
         } catch BackendError.rejected(let reason) where reason == "limit" {
-            show(Banner(kind: .followLimit, title: ""))
+            // The Mac's follow list is full: no one is waiting for an answer, the caller gets `false`.
         } catch {
             show(Banner(kind: .warning, title: item.macName, subtitle: error.localizedDescription))
         }
