@@ -55,6 +55,8 @@ import type {
   TodoDoneEntry,
   TodoEntry,
   TodoGroup,
+  TodoSyncProject,
+  TodoSyncProjectDetails,
   TodoSyncRepair,
   TodoSyncStatus,
   TodoProjectInfo,
@@ -622,6 +624,15 @@ export const todoSyncOpenLoginItems = () => invoke<void>("todo_sync_open_login_i
 /** Finished todos of the project in the cloud (what "clear history" erases everywhere); null = not synced. */
 export const todoSyncHistoryCount = (project: string) =>
   invoke<number | null>("todo_sync_history_count", { project });
+
+/** Synced projects with this Mac's directories and the Macs working on them; `[]` while sync is off. */
+export const todoSyncProjects = () => invoke<TodoSyncProject[]>("todo_sync_projects");
+/** Origins of the todos of `project` (created / finished on which Mac, attachments elsewhere). */
+export const todoSyncProjectDetails = (project: string) =>
+  invoke<TodoSyncProjectDetails>("todo_sync_project_details", { project });
+/** "Remove from iCloud": deletes the project's todos and history on every Mac; returns how many. */
+export const todoSyncRemoveProject = (project: string) =>
+  invoke<number>("todo_sync_remove_project", { project });
 
 /** 打开（或聚焦）项目待办窗口（经统一宿主路由，全局单窗）；`dir` 为预选项目定位目录。 */
 export const openTodos = (dir: string | null) =>

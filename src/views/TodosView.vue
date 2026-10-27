@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -21,10 +21,11 @@ import type { SyncAction } from "./todos/syncState";
 import {
   ALL_KEY,
   ALL_ROW_LIMIT,
+  abbreviateHome,
   baseName,
   buildAllModel,
   buildSidebarModel,
-  labelProjects,
+  isCloudKey,
   limitRows,
 } from "./todos/todoProjects";
 import { useLocalImageUrls } from "../lib/localImageUrls";
@@ -37,6 +38,9 @@ import {
   openPath,
   openSettings,
   todoSyncHistoryCount,
+  todoSyncProjectDetails,
+  todoSyncProjects,
+  todoSyncRemoveProject,
   todoSyncResume,
   todosAdd,
   todosAllPending,
@@ -65,6 +69,8 @@ import type {
   TodoEntry,
   TodoGroup,
   TodoProjectInfo,
+  TodoSyncProject,
+  TodoSyncProjectDetails,
 } from "../lib/types";
 
 const { t, locale } = useI18n();
@@ -131,21 +137,53 @@ const sidebarQuery = ref("");
 /** Narrow windows hide the sidebar in a drawer. */
 const drawerOpen = ref(false);
 const projectMenuOpen = ref(false);
+/** Outline of a cloud and of a laptop, 16×16 (the same drawings the sidebar uses). */
+const CLOUD_PATH =
+  "M4.6 12.4h6.3a2.7 2.7 0 0 0 .5-5.35A3.7 3.7 0 0 0 4.3 6.2 3.1 3.1 0 0 0 4.6 12.4z";
+const LAPTOP_PATH = "M3.4 4.2h9.2v6.1H3.4zM1.8 12.2h12.4";
 const sidebarRef = ref<InstanceType<typeof TodosSidebar> | null>(null);
 
+// ===== iCloud mode (spec todo-sync §9): the synced projects merge directories of one repository =====
+/** `todo_sync_projects`; empty while sync is off, which keeps the local mode's sidebar and lists. */
+const syncProjects = ref<TodoSyncProject[]>([]);
+/** The "projects without todos" section is unfolded (it starts folded). */
+const emptyOpen = ref(false);
+/** Where the selected project's todos came from; arrives after the list, never blocks it. */
+const details = ref<TodoSyncProjectDetails | null>(null);
+
+const syncByKey = computed(() => {
+  const map = new Map<string, TodoSyncProject>();
+  for (const project of syncProjects.value) {
+    for (const key of project.keys) map.set(key, project);
+    if (project.cloudKey) map.set(project.cloudKey, project);
+  }
+  return map;
+});
+/** The synced project of the selected directory, if it is one. */
+const selectedSync = computed(() => syncByKey.value.get(selected.value) ?? null);
+/** The selected project has no directory on this Mac: only its iCloud copy exists here. */
+const selectedCloudOnly = computed(() => isCloudKey(selected.value));
+
 const sidebarModel = computed(() =>
-  buildSidebarModel(projects.value, sidebarQuery.value, home.value)
+  buildSidebarModel(projects.value, sidebarQuery.value, home.value, {
+    sync: syncProjects.value,
+    emptyOpen: emptyOpen.value,
+  })
 );
-const sidebarSelectedKey = computed(() => (showAll.value ? ALL_KEY : selected.value));
+const sidebarSelectedKey = computed(() =>
+  showAll.value ? ALL_KEY : (sidebarModel.value.rowKeyOf.get(selected.value) ?? selected.value)
+);
 const selectedLabel = computed(
   () =>
-    labelProjects(projects.value, home.value).get(selected.value) ?? {
+    sidebarModel.value.labelOf.get(selected.value) ?? {
       name: baseName(selected.value),
       hint: "",
       path: selected.value,
     }
 );
-const allModel = computed(() => buildAllModel(allGroups.value, projects.value, home.value));
+const allModel = computed(() =>
+  buildAllModel(allGroups.value, projects.value, home.value, syncProjects.value)
+);
 const allView = computed(() => limitRows(allModel.value.groups, allRowLimit.value));
 // 首次加载完成前显示 Loading（避免空态闪现误导）。
 const loaded = ref(false);
@@ -202,7 +240,7 @@ const attachmentError = ref("");
 const operationError = ref("");
 // 清空确认改为模态 alert（第 18 轮定案：危险操作需要光标移动后再确认，且提示无法恢复）；
 // 'todos'＝清空待办队列，'history'＝清空执行历史。
-const confirmKind = ref<"todos" | "history" | null>(null);
+const confirmKind = ref<"todos" | "history" | "removeProject" | null>(null);
 /** With iCloud sync on: finished todos of this project in the cloud, quoted by the clear-history
  * confirmation (clearing is global, spec todo-sync T16). `null` = not synced, the local count is it. */
 const cloudHistoryCount = ref<number | null>(null);
@@ -265,10 +303,28 @@ function applyProjects(list: TodoProjectInfo[]): void {
   }
 }
 
-/** Local fast path: todos.json + workspaces only (no daemon). */
+/**
+ * Local fast path: todos.json + workspaces only (no daemon). The synced projects come from the sync
+ * sidecar, a small local file (`[]` after one `stat` while sync is off); they are fetched together
+ * with the list so the first paint already has the right grouping.
+ */
 async function reloadProjectsLocal(): Promise<void> {
-  const list = await todosProjects();
+  const [list, sync] = await Promise.all([
+    todosProjects(),
+    todoSyncProjects().catch(() => [] as TodoSyncProject[]),
+  ]);
+  syncProjects.value = Array.isArray(sync) ? sync : [];
   applyProjects(list);
+}
+
+/** Refresh just the synced projects (a pull can bring a new Mac or repository without a todo change). */
+async function reloadSyncProjects(): Promise<void> {
+  try {
+    const sync = await todoSyncProjects();
+    if (Array.isArray(sync)) syncProjects.value = sync;
+  } catch (err) {
+    console.warn("todo sync projects failed", err);
+  }
 }
 
 /**
@@ -290,6 +346,83 @@ async function enrichProjectsInBackground(): Promise<void> {
   }
 }
 
+// A selected project that sits in the folded "without todos" section must stay visible: unfold the
+// section once when the selection lands there (folding it again afterwards is the user's call).
+const selectedInEmptySection = computed(() => {
+  if (showAll.value) return false;
+  const section = sidebarModel.value.sections.find((s) => s.id === "empty");
+  return !!section && section.keys.includes(sidebarSelectedKey.value);
+});
+watch(
+  selectedInEmptySection,
+  (inside) => {
+    if (inside) emptyOpen.value = true;
+  },
+  { immediate: true }
+);
+
+// A completed pull can bring a Mac or a repository without touching todos.json.
+watch(
+  () => syncStatus.value?.lastPullOkMs ?? 0,
+  () => {
+    if (syncStatus.value?.enabled || syncProjects.value.length) void reloadSyncProjects();
+  }
+);
+
+// ----- what iCloud mode adds to the rows (all of it optional, all of it arrives late) -----
+/** Name of the Mac a todo was created on, `null` for todos created here. */
+function createdOn(id: string): string | null {
+  const name = details.value?.createdOn[id];
+  if (name === undefined) return null;
+  return name || t("todosWin.otherMac");
+}
+
+/** Where a finished todo was finished: "this Mac" or the other Mac's name. */
+function doneOn(id: string): string | null {
+  const origin = details.value?.doneOn[id];
+  if (!origin) return null;
+  return origin.thisMac ? t("todosWin.thisMac") : origin.device || t("todosWin.otherMac");
+}
+
+/** "2 attachments · on MacBook Pro": the cloud knows files this Mac does not have. */
+function attachmentHint(e: TodoEntry): string | null {
+  const hint = details.value?.attachments[e.id];
+  if (!hint || (e.attachments?.length ?? 0) > 0) return null;
+  return t(
+    "todosWin.attachmentsElsewhere",
+    { n: hint.count, device: hint.device || t("todosWin.otherMac") },
+    hint.count
+  );
+}
+
+/** Hover lists of the header tags: this Mac's directories, and the Macs with last-sync times. */
+const dirsTitle = computed(() =>
+  (selectedSync.value?.keys ?? []).map((key) => abbreviateHome(key, home.value)).join("\n")
+);
+const macsTitle = computed(() =>
+  (selectedSync.value?.macs ?? [])
+    .map((mac) => {
+      const name = (mac.name || t("todosWin.otherMac")) + (mac.thisMac ? ` · ${t("todosWin.thisMac")}` : "");
+      return mac.lastSyncMs ? `${name} · ${relativeTime(mac.lastSyncMs)}` : name;
+    })
+    .join("\n")
+);
+
+/** Origins of the selected project's todos; keeps the previous answer until the new one arrives. */
+async function reloadDetails(): Promise<void> {
+  const key = selected.value;
+  if (!key || !syncByKey.value.has(key)) {
+    details.value = null;
+    return;
+  }
+  try {
+    const next = await todoSyncProjectDetails(key);
+    if (selected.value === key && next) details.value = next;
+  } catch (err) {
+    console.warn("todo sync details failed", err);
+  }
+}
+
 async function reloadEntries(): Promise<void> {
   if (!selected.value) {
     entries.value = [];
@@ -300,6 +433,7 @@ async function reloadEntries(): Promise<void> {
     todosList(selected.value),
     todosHistory(selected.value),
   ]);
+  void reloadDetails();
   if (
     selectedTodoId.value &&
     !entries.value.some((entry) => entry.id === selectedTodoId.value)
@@ -365,6 +499,7 @@ function resetViewState(): void {
   projectMenuOpen.value = false;
   cancelEdit();
   histOpen.value = false;
+  details.value = null;
   clearAllPendingComplete();
 }
 
@@ -401,19 +536,36 @@ async function openProject(key: string, todoId?: string): Promise<void> {
   if (todoId) selectTodo(todoId, true);
 }
 
+/** A synced project's directory on this Mac: the selected one, or the first if it has none. */
+const selectedDirectory = computed(() =>
+  selectedCloudOnly.value ? "" : selected.value
+);
+
 async function copyProjectPath(): Promise<void> {
   projectMenuOpen.value = false;
   try {
-    await navigator.clipboard.writeText(selected.value);
+    await navigator.clipboard.writeText(selectedDirectory.value);
   } catch (err) {
     console.warn("copy project path failed", err);
   }
 }
 
+async function copyRepoAddress(): Promise<void> {
+  projectMenuOpen.value = false;
+  const identity = selectedSync.value?.identity;
+  if (!identity) return;
+  try {
+    await navigator.clipboard.writeText(identity);
+  } catch (err) {
+    console.warn("copy repository address failed", err);
+  }
+}
+
 async function revealProject(): Promise<void> {
   projectMenuOpen.value = false;
+  if (!selectedDirectory.value) return;
   try {
-    await openPath(selected.value);
+    await openPath(selectedDirectory.value);
   } catch (err) {
     console.warn("reveal project failed", err);
   }
@@ -450,7 +602,7 @@ async function addEntry(): Promise<void> {
     await todosAdd(
       selected.value,
       text,
-      newAuto.value,
+      newAuto.value && !selectedCloudOnly.value,
       newFiles.value,
       newPastedImages.value.map((draft) => draft.image)
     );
@@ -936,8 +1088,8 @@ async function removeEntry(id: string): Promise<void> {
   await reloadAll();
 }
 
-/** Clearing asks first; with sync on, the cloud's side of it is part of the question. */
-async function askClear(kind: "todos" | "history"): Promise<void> {
+/** With sync on, the cloud's side of a clearing is part of the question it asks. */
+async function loadCloudHistoryCount(): Promise<void> {
   cloudHistoryCount.value = null;
   if (syncStatus.value?.enabled && selected.value) {
     try {
@@ -946,18 +1098,34 @@ async function askClear(kind: "todos" | "history"): Promise<void> {
       /* fall back to the local wording */
     }
   }
+}
+
+/** Clearing asks first. */
+async function askClear(kind: "todos" | "history"): Promise<void> {
+  await loadCloudHistoryCount();
   confirmKind.value = kind;
+}
+
+/** "Remove from iCloud": the whole project goes, everywhere, so the question carries both counts. */
+async function askRemoveProject(): Promise<void> {
+  projectMenuOpen.value = false;
+  await loadCloudHistoryCount();
+  confirmKind.value = "removeProject";
 }
 
 async function doConfirmedClear(): Promise<void> {
   const kind = confirmKind.value;
   if (!selected.value || !kind) return;
-  if (kind === "todos") clearAllPendingComplete();
+  if (kind !== "history") clearAllPendingComplete();
   try {
     if (kind === "todos") {
       await todosClear(selected.value);
-    } else {
+    } else if (kind === "history") {
       await todosHistoryClear(selected.value);
+    } else {
+      await todoSyncRemoveProject(selected.value);
+      // The project is gone: forget the selection, or `applyProjects` would keep it as a ghost row.
+      selected.value = "";
     }
     operationError.value = "";
     confirmKind.value = null;
@@ -966,6 +1134,10 @@ async function doConfirmedClear(): Promise<void> {
     operationError.value = t("todosWin.operationFailed", { e: String(err) });
   }
   await reloadAll();
+  if (kind === "removeProject" && confirmKind.value === null) {
+    // Land on the aggregate, not on whichever project the reload happened to pick.
+    await selectKey(ALL_KEY);
+  }
 }
 
 // ===== 勾选完成：乐观 UI + 1s 可撤回，超时 take 进 history =====
@@ -1318,6 +1490,7 @@ onBeforeUnmount(() => {
       :selected-key="sidebarSelectedKey"
       v-model:query="sidebarQuery"
       @select="selectKey"
+      @toggle-empty="emptyOpen = !emptyOpen"
     >
       <template v-if="syncLine" #footer>
         <SyncFooter :line="syncLine" @action="onSyncAction" />
@@ -1344,14 +1517,47 @@ onBeforeUnmount(() => {
         <template v-if="showAll && loaded">
           <h1 class="td-project" data-tauri-drag-region>{{ t("todosWin.allTodos") }}</h1>
           <p class="td-path" data-tauri-drag-region>
-            {{ t("todosWin.allSummary", { projects: allModel.projectCount, items: allModel.total }) }}
+            {{
+              allModel.localOnlyCount
+                ? t("todosWin.allSummaryLocalOnly", {
+                    projects: allModel.projectCount,
+                    items: allModel.total,
+                    n: allModel.localOnlyCount,
+                  })
+                : t("todosWin.allSummary", {
+                    projects: allModel.projectCount,
+                    items: allModel.total,
+                  })
+            }}
           </p>
         </template>
         <template v-else-if="selected">
           <h1 class="td-project" data-tauri-drag-region>
             {{ selectedLabel.name }}<span v-if="selectedLabel.hint" class="td-hint"> · {{ selectedLabel.hint }}</span>
           </h1>
-          <p class="td-path" data-tauri-drag-region :title="selected">{{ selectedLabel.path }}</p>
+          <div class="td-path-row" data-tauri-drag-region>
+            <p
+              class="td-path"
+              data-tauri-drag-region
+              :title="selectedSync ? selectedSync.identity : selected"
+            >
+              {{ selectedSync ? selectedSync.identity : selectedLabel.path }}
+            </p>
+            <template v-if="selectedSync">
+              <span v-if="selectedCloudOnly" class="td-tag td-tag-cloud">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path :d="CLOUD_PATH" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-dasharray="2 1.6" /></svg>
+                {{ t("todosWin.cloudOnlyTag") }}
+              </span>
+              <span v-else-if="selectedSync.keys.length" class="td-tag" :title="dirsTitle">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path :d="LAPTOP_PATH" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg>
+                {{ t("todosWin.dirsTag", { n: selectedSync.keys.length }, selectedSync.keys.length) }}
+              </span>
+              <span v-if="selectedSync.macs.length" class="td-tag td-tag-sync" :title="macsTitle">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path :d="CLOUD_PATH" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg>
+                {{ t("todosWin.macsTag", { n: selectedSync.macs.length }, selectedSync.macs.length) }}
+              </span>
+            </template>
+          </div>
         </template>
         <h1 v-else class="td-project" data-tauri-drag-region>{{ t("todosWin.title") }}</h1>
       </div>
@@ -1372,12 +1578,45 @@ onBeforeUnmount(() => {
           </svg>
         </button>
         <div v-if="projectMenuOpen" class="td-menu" role="menu" @click.stop>
-          <button type="button" class="td-menu-item" role="menuitem" @click="copyProjectPath">
+          <button
+            v-if="selectedSync"
+            type="button"
+            class="td-menu-item"
+            role="menuitem"
+            @click="copyRepoAddress"
+          >
+            {{ t("todosWin.menu.copyRepo") }}
+          </button>
+          <button
+            v-if="!selectedCloudOnly"
+            type="button"
+            class="td-menu-item"
+            role="menuitem"
+            @click="copyProjectPath"
+          >
             {{ t("todosWin.menu.copyPath") }}
           </button>
-          <button type="button" class="td-menu-item" role="menuitem" @click="revealProject">
-            {{ t(`todosWin.menu.reveal.${desktopPlatform}`) }}
+          <button
+            type="button"
+            class="td-menu-item"
+            role="menuitem"
+            :disabled="selectedCloudOnly"
+            @click="revealProject"
+          >
+            {{ t(`todosWin.menu.reveal.${desktopPlatform}`)
+            }}<template v-if="selectedCloudOnly">{{ t("todosWin.menu.noLocalRepo") }}</template>
           </button>
+          <template v-if="selectedSync">
+            <div class="td-menu-sep" role="separator" />
+            <button
+              type="button"
+              class="td-menu-item td-menu-danger"
+              role="menuitem"
+              @click="askRemoveProject"
+            >
+              {{ t("todosWin.menu.removeFromCloud") }}
+            </button>
+          </template>
         </div>
       </div>
     </header>
@@ -1404,8 +1643,16 @@ onBeforeUnmount(() => {
                 {{ g.name }}<span v-if="g.hint" class="td-hint"> · {{ g.hint }}</span>
               </span>
               <span class="td-all-count">{{ t("todosWin.itemCount", { n: g.count }) }}</span>
+              <span v-if="g.scope === 'cloudOnly'" class="td-tag td-tag-cloud">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path :d="CLOUD_PATH" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-dasharray="2 1.6" /></svg>
+                {{ t("todosWin.allCloudOnlyTag") }}
+              </span>
+              <span v-else-if="g.scope === 'localOnly'" class="td-tag">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path :d="LAPTOP_PATH" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg>
+                {{ t("todosWin.localOnlyTag") }}
+              </span>
               <button type="button" class="td-all-open" @click.stop="openProject(g.key)">
-                {{ t("todosWin.openProject") }} ›
+                {{ g.scope === "cloudOnly" ? t("todosWin.viewProject") : t("todosWin.openProject") }} ›
               </button>
             </div>
             <ul class="td-list">
@@ -1458,6 +1705,13 @@ onBeforeUnmount(() => {
       </template>
 
       <template v-else>
+      <p v-if="selectedCloudOnly" class="td-note" role="note">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.3" />
+          <path d="M8 7.2v3.6M8 5.1v.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+        </svg>
+        <span>{{ t("todosWin.cloudOnlyNote", { name: selectedLabel.name }) }}</span>
+      </p>
       <div v-if="!entries.length" class="empty" :class="{ compact: history.length }">
         <p class="empty-title">{{ t("todosWin.empty") }}</p>
         <p class="empty-hint">{{ t("todosWin.emptyHint") }}</p>
@@ -1617,7 +1871,18 @@ onBeforeUnmount(() => {
               <span v-if="agentLabel(e.agentKind)" class="td-source">
                 · {{ agentLabel(e.agentKind) }}
               </span>
+              <span
+                v-if="createdOn(e.id) !== null"
+                class="td-origin"
+                :title="t('todosWin.createdOn', { device: createdOn(e.id) })"
+              >
+                ·
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path :d="LAPTOP_PATH" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg>
+                {{ createdOn(e.id) }}
+              </span>
+              <span v-if="attachmentHint(e)" class="td-att-hint">{{ attachmentHint(e) }}</span>
               <button
+                v-if="!selectedCloudOnly"
                 type="button"
                 class="td-auto"
                 :class="{ on: e.auto }"
@@ -1748,7 +2013,7 @@ onBeforeUnmount(() => {
               </button>
               <!-- 创建 Agent 任务（spec gui-agent-task-launch G12）：带该项目 + 该待办打开新建任务窗口。 -->
               <button
-                v-if="newTaskSupported"
+                v-if="newTaskSupported && !selectedCloudOnly"
                 type="button"
                 class="td-newtask"
                 :title="t('todosWin.newTask')"
@@ -1798,14 +2063,20 @@ onBeforeUnmount(() => {
             <span>{{ t("todosWin.historyTitle") }}</span>
             <span class="td-hist-count">{{ history.length }}</span>
           </button>
-          <button
-            v-if="histOpen"
-            type="button"
-            class="td-clear"
-            @click="askClear('history')"
-          >
-            {{ t("todosWin.clearHist") }}
-          </button>
+          <div class="td-hist-side">
+            <span v-if="selectedSync" class="td-hist-shared">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path :d="CLOUD_PATH" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg>
+              {{ t("todosWin.historyShared") }}
+            </span>
+            <button
+              v-if="histOpen"
+              type="button"
+              class="td-clear"
+              @click="askClear('history')"
+            >
+              {{ t("todosWin.clearHist") }}
+            </button>
+          </div>
         </div>
         <ul v-if="histOpen" class="td-list td-hist-list">
           <li v-for="h in history" :key="h.id" class="td-row td-hist-row">
@@ -1870,6 +2141,11 @@ onBeforeUnmount(() => {
                 </span>
                 <span v-if="agentLabel(h.agentKind)" class="td-source">
                   · {{ agentLabel(h.agentKind) }}
+                </span>
+                <span v-if="doneOn(h.id) !== null" class="td-origin">
+                  ·
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path :d="LAPTOP_PATH" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg>
+                  {{ doneOn(h.id) }}
                 </span>
                 <button
                   type="button"
@@ -1982,6 +2258,7 @@ onBeforeUnmount(() => {
             <span>{{ t("todosWin.attachment") }}</span>
           </button>
           <div
+            v-if="!selectedCloudOnly"
             class="td-auto-hint-anchor"
             @mouseenter="newAutoHintHovered = true"
             @mouseleave="newAutoHintHovered = false"
@@ -2053,15 +2330,26 @@ onBeforeUnmount(() => {
     >
       <div class="td-dialog" role="alertdialog">
         <h3>
-          {{ confirmKind === "todos" ? t("todosWin.clearTitle") : t("todosWin.clearHistTitle") }}
+          {{
+            confirmKind === "removeProject"
+              ? t("todosWin.removeProjectTitle", { name: selectedLabel.name })
+              : confirmKind === "todos"
+                ? t("todosWin.clearTitle")
+                : t("todosWin.clearHistTitle")
+          }}
         </h3>
         <p>
           {{
-            confirmKind === "todos"
-              ? t("todosWin.clearDesc", { n: entries.length })
-              : cloudHistoryCount !== null
-                ? t("todosWin.clearHistDescCloud", { n: cloudHistoryCount })
-                : t("todosWin.clearHistDesc", { n: history.length })
+            confirmKind === "removeProject"
+              ? t("todosWin.removeProjectDesc", {
+                  todos: entries.length,
+                  history: cloudHistoryCount ?? history.length,
+                })
+              : confirmKind === "todos"
+                ? t("todosWin.clearDesc", { n: entries.length })
+                : cloudHistoryCount !== null
+                  ? t("todosWin.clearHistDescCloud", { n: cloudHistoryCount })
+                  : t("todosWin.clearHistDesc", { n: history.length })
           }}
         </p>
         <p v-if="confirmKind === 'todos' && cloudHistoryCount !== null">
@@ -2079,7 +2367,7 @@ onBeforeUnmount(() => {
             {{ t("todosWin.confirmCancel") }}
           </button>
           <button type="button" class="td-btn td-btn-danger" @click="doConfirmedClear">
-            {{ t("todosWin.clearOk") }}
+            {{ confirmKind === "removeProject" ? t("todosWin.removeProjectOk") : t("todosWin.clearOk") }}
           </button>
         </div>
       </div>
@@ -2138,6 +2426,44 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Repository address and the tags after it; the tags never shrink, the address gives way. */
+.td-path-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  min-width: 0;
+}
+.td-path-row .td-path {
+  margin: 0;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.td-tag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.td-tag svg {
+  width: 11px;
+  height: 11px;
+}
+.td-tag-sync {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.td-tag-cloud {
+  background: color-mix(in srgb, #d98a1a 16%, transparent);
+  color: #b36b00;
+}
 .td-icon-btn {
   flex: 0 0 auto;
   display: inline-flex;
@@ -2174,6 +2500,8 @@ onBeforeUnmount(() => {
   right: 0;
   z-index: 20;
   min-width: 168px;
+  width: max-content;
+  max-width: 320px;
   padding: 4px;
   border: var(--hairline) solid var(--border);
   border-radius: 8px;
@@ -2197,6 +2525,39 @@ onBeforeUnmount(() => {
 .td-menu-item:focus-visible {
   outline: none;
   background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.td-menu-item:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+  background: transparent;
+}
+.td-menu-sep {
+  height: var(--hairline);
+  margin: 4px 6px;
+  background: var(--border);
+}
+.td-menu-danger {
+  color: var(--danger, #d92d20);
+}
+/* Cloud-only projects: say once why there is no ⚡ and no folder. */
+.td-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 2px 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.td-note svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  color: var(--accent);
 }
 /* Sidebar drawer for narrow windows (spec todo-sync §9.2): same component, overlay presentation. */
 .td-side-toggle {
@@ -2604,6 +2965,23 @@ onBeforeUnmount(() => {
 .td-source {
   color: var(--text-muted, #8e8e93);
 }
+/* Which Mac a todo came from / was finished on (iCloud mode). */
+.td-origin {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-muted, #8e8e93);
+}
+.td-origin svg {
+  width: 11px;
+  height: 11px;
+}
+.td-att-hint {
+  padding: 0 6px;
+  border: var(--hairline) dashed var(--text-tertiary);
+  border-radius: 5px;
+  color: var(--text-secondary);
+}
 
 /* 自动执行 ⚡：跟在 meta 文字后；off 时随行 hover 淡入，on 时常显琥珀色。 */
 .td-auto {
@@ -2981,6 +3359,22 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+.td-hist-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.td-hist-shared {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.td-hist-shared svg {
+  width: 11px;
+  height: 11px;
 }
 .td-hist-toggle {
   display: inline-flex;

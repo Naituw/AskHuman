@@ -917,6 +917,45 @@ export interface TodoSyncStatus {
   newerState: boolean;
 }
 
+/** One Mac in a synced project's list (mirror of Rust `DeviceRow`). */
+export interface TodoSyncMac {
+  name: string;
+  lastSyncMs: number;
+  thisMac: boolean;
+}
+
+/**
+ * One synced project, merged across this Mac's directories (mirror of Rust `service::SyncProject`;
+ * spec todo-sync §5.2, §9.4).
+ */
+export interface TodoSyncProject {
+  /** Normalized git remote, e.g. `github.com/acme/app`. */
+  identity: string;
+  /** This Mac's directories of the project (project keys); empty = only the iCloud replica exists here. */
+  keys: string[];
+  /** The key the todos live under while no directory exists (`icloud:<identity>`). */
+  cloudKey: string | null;
+  /** Macs that have a directory for the project, this one first. */
+  macs: TodoSyncMac[];
+}
+
+/** Where a todo came from / was finished (mirror of Rust `service::Origin`). */
+export interface TodoSyncOrigin {
+  /** The Mac's name; empty while its record has not arrived yet. */
+  device: string;
+  thisMac: boolean;
+}
+
+/** What `todo_sync_project_details` returns, all keyed by todo id (mirror of Rust `ProjectDetails`). */
+export interface TodoSyncProjectDetails {
+  /** Pending todos created on another Mac → that Mac's name. */
+  createdOn: Record<string, string>;
+  /** Finished todos → where they were finished. */
+  doneOn: Record<string, TodoSyncOrigin>;
+  /** Pending todos whose attachments live on another Mac. */
+  attachments: Record<string, { count: number; device: string }>;
+}
+
 /** Outcome of the helper's login-item registration. */
 export interface TodoSyncRepair {
   ok: boolean;

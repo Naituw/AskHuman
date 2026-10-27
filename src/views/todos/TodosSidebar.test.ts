@@ -1,7 +1,7 @@
 import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n";
-import type { TodoProjectInfo } from "../../lib/types";
+import type { TodoProjectInfo, TodoSyncProject } from "../../lib/types";
 import TodosSidebar from "./TodosSidebar.vue";
 import { ALL_KEY, buildSidebarModel } from "./todoProjects";
 
@@ -175,3 +175,88 @@ describe("TodosSidebar", () => {
     expect(document.activeElement).toBe(wrapper.get(".td-side-input").element);
   });
 });
+
+describe("TodosSidebar in iCloud mode", () => {
+  const cloudKey = "icloud:github.com/acme/dotfiles";
+  const world: TodoProjectInfo[] = [
+    { key: "/w/app-wt", name: "app-wt", count: 3, section: "withTodos" },
+    { key: "/w/app", name: "app", count: 3, section: "withTodos" },
+    { key: cloudKey, name: "dotfiles", count: 2, section: "withTodos" },
+    { key: "/w/notes", name: "notes", count: 1, section: "withTodos" },
+    { key: "/w/blog", name: "blog", count: 0, section: "recent" },
+  ];
+  const sync: TodoSyncProject[] = [
+    { identity: "github.com/acme/app", keys: ["/w/app", "/w/app-wt"], cloudKey: null, macs: [] },
+    { identity: "github.com/acme/dotfiles", keys: [], cloudKey, macs: [] },
+    { identity: "github.com/acme/blog", keys: ["/w/blog"], cloudKey: null, macs: [] },
+  ];
+
+  function mountSynced(opts: { emptyOpen?: boolean; query?: string; selectedKey?: string } = {}) {
+    const query = opts.query ?? "";
+    return mount(TodosSidebar, {
+      attachTo: document.body,
+      props: {
+        model: buildSidebarModel(world, query, "/Users/me", { sync, emptyOpen: opts.emptyOpen }),
+        selectedKey: opts.selectedKey ?? "/w/app-wt",
+        query,
+      },
+      global: { plugins: [i18n] },
+    });
+  }
+
+  beforeEach(() => {
+    i18n.global.locale.value = "zh";
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("titles the sections and folds the projects without todos into one row", () => {
+    const wrapper = mountSynced();
+    expect(wrapper.findAll(".td-side-section-title").map((t) => t.text())).toEqual([
+      "iCloud 同步的项目",
+      "仅本机（不同步）",
+    ]);
+    const fold = wrapper.get(".td-side-fold");
+    expect(fold.text()).toContain("无待办的项目（1）");
+    expect(fold.attributes("aria-expanded")).toBe("false");
+    // The fold row is a button but not an option: it takes no part in selection or arrow keys.
+    expect(fold.attributes("role")).toBeUndefined();
+    expect(wrapper.findAll("[role=option]").map((o) => o.attributes("data-key"))).toEqual([
+      ALL_KEY,
+      "/w/app-wt",
+      cloudKey,
+      "/w/notes",
+    ]);
+  });
+
+  it("marks projects that only exist in iCloud, or only here", () => {
+    const wrapper = mountSynced();
+    const row = (key: string) => wrapper.get(`[data-key="${key}"]`);
+    expect(row(cloudKey).find(".td-side-scope").attributes("aria-label")).toBe("仅云端");
+    expect(row("/w/notes").find(".td-side-scope").attributes("aria-label")).toBe("仅本机");
+    expect(row("/w/app-wt").find(".td-side-scope").exists()).toBe(false);
+    // One row for the two directories of the repository, named by its address.
+    expect(row("/w/app-wt").text()).toContain("app");
+    expect(wrapper.find('[data-key="/w/app"]').exists()).toBe(false);
+  });
+
+  it("asks the parent to toggle the fold and lists the rows once it is open", async () => {
+    const wrapper = mountSynced();
+    await wrapper.get(".td-side-fold").trigger("click");
+    expect(wrapper.emitted("toggle-empty")).toHaveLength(1);
+
+    const open = mountSynced({ emptyOpen: true });
+    expect(open.get(".td-side-fold").attributes("aria-expanded")).toBe("true");
+    expect(open.get('[data-key="/w/blog"]').classes()).toContain("nested");
+    expect(open.findAll("[role=option]").map((o) => o.attributes("data-key"))).toContain("/w/blog");
+  });
+
+  it("highlights the row that merges the selected directory", () => {
+    const wrapper = mountSynced({ selectedKey: "/w/app-wt" });
+    const selected = wrapper.findAll("[role=option]").filter((o) => o.attributes("aria-selected") === "true");
+    expect(selected.map((o) => o.attributes("data-key"))).toEqual(["/w/app-wt"]);
+  });
+});
+

@@ -3,7 +3,9 @@
 // `mockIPC`, so the sidebar, header, lists and dialogs are the product components. Used to look at
 // layouts the unit tests cannot judge (spacing, narrow drawer, dark mode, large data sets).
 //
-//   ?data=real|stress|empty|dups   data set (default real)
+//   ?data=real|stress|empty|dups|icloud
+//                                  data set (default real); icloud = iCloud mode: merged
+//                                  directories, a project without a directory here, origins
 //   ?theme=light|dark              (default light)
 //   ?platform=mac|win              title-bar spacing (default mac)
 //   ?project=<key>                 preselect, like the tray / agent-card entries
@@ -16,11 +18,13 @@ import type {
   TodoEntry,
   TodoGroup,
   TodoProjectInfo,
+  TodoSyncProject,
+  TodoSyncProjectDetails,
   TodoSyncStatus,
   TodosInit,
 } from "../lib/types";
 
-export type DataSet = "real" | "stress" | "empty" | "dups";
+export type DataSet = "real" | "stress" | "empty" | "dups" | "icloud";
 export type SyncMock =
   | "none"
   | "off"
@@ -51,10 +55,18 @@ export function readParams(search: string = location.search): PreviewParams {
   const platform = q.get("platform") === "win" ? "win" : "mac";
   const sync = q.get("sync") as SyncMock | null;
   return {
-    data: data === "stress" || data === "empty" || data === "dups" ? data : "real",
+    data: data === "stress" || data === "empty" || data === "dups" || data === "icloud" ? data : "real",
     theme: q.get("theme") === "dark" ? "dark" : "light",
     platform,
-    sync: sync && SYNC_MOCKS.includes(sync) ? sync : platform === "mac" ? "off" : "none",
+    // The iCloud data set is about iCloud mode: sync is on unless the URL says otherwise.
+    sync:
+      sync && SYNC_MOCKS.includes(sync)
+        ? sync
+        : data === "icloud"
+          ? "ok"
+          : platform === "mac"
+            ? "off"
+            : "none",
   };
 }
 
@@ -214,7 +226,91 @@ function stressStore(): Store {
   return { todos, history, recent: Array.from({ length: 50 }, (_, i) => `${HOME}/Recent/recent-${i}`) };
 }
 
+const HIL_IDENTITY = "github.com/naituw/HumanInLoop";
+const DOTS_IDENTITY = "github.com/naituw/dotfiles";
+const DOTS_KEY = `icloud:${DOTS_IDENTITY}`;
+
+/** The mock-up scenario of the design: three directories of one repository, a cloud-only project. */
+function icloudStore(): Store {
+  const store = realStore();
+  const dots = store.todos.get(`${HOME}/dotfiles`) ?? [];
+  store.todos.delete(`${HOME}/dotfiles`);
+  store.todos.set(DOTS_KEY, [
+    ...dots,
+    todo("d2", "把 Brewfile 拆成 base / work 两份", 60 * 24 * 3, "claude"),
+  ]);
+  store.history.set(`${HOME}/Developer/HumanInLoop`, [
+    done("x1", "为 todos.json 增加同步元数据（sidecar）", 60 * 24),
+    done("x2", "重构设置页的 iOS 通道卡片", 60 * 24 * 3),
+    done("x3", "给设置页加上 iCloud 卡片", 60 * 24 * 5),
+  ]);
+  store.recent = [
+    `${HOME}/Developer/HumanInLoop-feature-a`,
+    `${HOME}/Developer/HumanInLoop-wt`,
+    `${HOME}/Developer/blog`,
+    `${HOME}/Developer/side-project-x`,
+    `${HOME}/Developer/tauri-playground`,
+    `${HOME}/Developer/swift-lab`,
+    `${HOME}/Developer/zine`,
+  ];
+  return store;
+}
+
+/** `todo_sync_projects` for the icloud data set; the other data sets are not synced. */
+function syncProjectsOf(store: Store): TodoSyncProject[] {
+  const now = Date.now();
+  const dir = (name: string) => `${HOME}/Developer/${name}`;
+  const projects: TodoSyncProject[] = [
+    {
+      identity: HIL_IDENTITY,
+      keys: [dir("HumanInLoop"), dir("HumanInLoop-feature-a"), dir("HumanInLoop-wt")],
+      cloudKey: null,
+      macs: [
+        { name: "Mac Studio", lastSyncMs: now - 40_000, thisMac: true },
+        { name: "MacBook Pro", lastSyncMs: now - 6 * MINUTE, thisMac: false },
+      ],
+    },
+    {
+      identity: "github.com/naituw/AskHuman-iOS",
+      keys: [dir("AskHuman-iOS")],
+      cloudKey: null,
+      macs: [{ name: "Mac Studio", lastSyncMs: now - 40_000, thisMac: true }],
+    },
+    {
+      identity: DOTS_IDENTITY,
+      keys: [],
+      cloudKey: DOTS_KEY,
+      macs: [{ name: "MacBook Pro", lastSyncMs: now - 6 * MINUTE, thisMac: false }],
+    },
+  ];
+  for (const name of ["blog", "side-project-x", "tauri-playground", "swift-lab", "zine"]) {
+    projects.push({
+      identity: `github.com/naituw/${name}`,
+      keys: [dir(name)],
+      cloudKey: null,
+      macs: [{ name: "Mac Studio", lastSyncMs: now - 40_000, thisMac: true }],
+    });
+  }
+  const gone = (p: TodoSyncProject) =>
+    !p.keys.concat(p.cloudKey ? [p.cloudKey] : []).some((k) => store.todos.has(k) || store.history.has(k)) &&
+    p.keys.length === 0;
+  return projects.filter((p) => !gone(p));
+}
+
+/** Origins for the icloud data set: a few todos come from the other Mac. */
+function detailsOf(project: string): TodoSyncProjectDetails {
+  if (project === DOTS_KEY) {
+    return { createdOn: { d1: "MacBook Pro", d2: "MacBook Pro" }, doneOn: {}, attachments: {} };
+  }
+  return {
+    createdOn: { h2: "MacBook Pro", h3: "MacBook Pro" },
+    doneOn: { x1: { device: "MacBook Pro", thisMac: false }, x2: { device: "", thisMac: true }, x3: { device: "MacBook Pro", thisMac: false } },
+    attachments: { h3: { count: 2, device: "MacBook Pro" } },
+  };
+}
+
 function makeStore(data: DataSet): Store {
+  if (data === "icloud") return icloudStore();
   if (data === "stress") return stressStore();
   if (data === "dups") return dupsStore();
   if (data === "empty") return { todos: new Map(), history: new Map(), recent: [] };
@@ -262,6 +358,17 @@ export function installMock(params: PreviewParams): void {
           return params.sync === "none" || params.sync === "off"
             ? null
             : (store.history.get(project)?.length ?? 0) + 12;
+        case "todo_sync_projects":
+          return params.data === "icloud" ? syncProjectsOf(store) : [];
+        case "todo_sync_project_details":
+          return params.data === "icloud" ? detailsOf(project) : { createdOn: {}, doneOn: {}, attachments: {} };
+        case "todo_sync_remove_project": {
+          const removed = list(project).length + (store.history.get(project)?.length ?? 0);
+          store.todos.delete(project);
+          store.history.delete(project);
+          changed();
+          return removed;
+        }
         case "todos_projects":
         case "todos_projects_enriched":
           return projectsOf(store);
