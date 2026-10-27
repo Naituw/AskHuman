@@ -1,6 +1,6 @@
 # 实现计划：iOS 通知时机（活跃槽解耦 + Mac 空闲后推送）
 
-> 状态：**P1–P5 已完成，P6 的自动化部分已通过；真机一轮待做**（2026-10-26 批准并实现，待验项见 `docs/PROGRESS.md`）。需求与决策见 `docs/specs/ios-alert-timing.md`（D1–D11）。
+> 状态：**P1–P5 已完成，P6 的自动化部分已通过；真机一轮（2026-10-27）验证了一部分**（2026-10-26 批准并实现，待验项见 `docs/PROGRESS.md`）。需求与决策见 `docs/specs/ios-alert-timing.md`（D1–D11）。
 > 地图：`docs/overview-ios.md`（Gateway 在 `src-tauri/src/ios/gateway/`，daemon 侧接线在 `src-tauri/src/daemon/runtime/ios.rs`）。
 
 核心只有三处改动：**iOS 不再进活跃槽的候选筛选**、**Gateway 的推送从「立即」改成「待通知 → Mac 空闲到点再推」**、
