@@ -113,6 +113,19 @@ whats-next 前「过期才拉」（> 20 秒，最多等 1.5 秒）；待办窗�
 下一步：
 - [ ] 按计划 §5 推进 P0 → P6；当前进度见计划 §10
 - [ ] **需要用户**（计划 §7，agent 不做）：开发者后台新建 App ID / 容器 / Developer ID 描述文件；helper 首次真机跑通后在 CloudKit Dashboard 把 schema 部署到 Production；在 Mac A 上用 Xcode 构建签名 helper 并拷到 Mac B。这些完成前，P3 之后的真机验收（计划 §5 P3 / P4 / P6）做不了
+## 进行中：iOS 新建任务时选模型与强度——需求与计划已批准，按计划 P1 → P4 实施
+
+2026-10-27 用户提出「iOS 版创建任务时可以选择模型」，经 6 题问答定下范围：模型 + 强度一起做；清单以动态发现为主（Claude 用固定别名）；每次都从「默认」开始、不记忆；
+详情页显示实际模型、进度页显示所选；先只做 iOS，启动管线放共享层。用户同时强调**严禁触发计费**，并且**Cursor 严禁实测**。同日做了只读探测（没有起任何 Agent、没有发提示词、
+没有带真实凭据调模型），写成需求 [`docs/specs/ios-task-model.md`](specs/ios-task-model.md) 与计划 [`docs/plans/ios-task-model.md`](plans/ios-task-model.md)，用户评审批准，
+并对六条待确认点作了选择（Grok 用 `grok models`、Codex 一律走 `app-server` 的 `model/list`、Pi 三档强度、做 M10、实现完做一轮真实验证但每次要批准）。
+
+下一步：
+- [ ] P1（Mac 启动管线）→ P2（清单 + 线协议 + 网关 + 详情页实际模型，装机）→ P3（iOS App，`git status ios/` 若仍有另一会话的未提交改动就在 `/tmp` 隔离副本里做）→ P4（文档回写）。
+- [ ] P2 开头要**先问用户**两件事：（1）批准在沙盒（空 HOME + 独立 leader socket、无凭据）里跑一次 `grok models` 抓样本；（2）Cursor 清单的运行时获取（手机打开新任务时 daemon 调一次
+  `cursor-agent --list-models`）是否保留。本机验证里**不再调用 `cursor-agent` 的任何命令**。
+- [ ] （实现完做，**每次执行前**经用户批准，会产生模型费用；永远不含 Cursor）真机一轮：见计划 P4。
+
 - [ ] 双机验收要 SSH 到 Mac B：需用户当次同意（S0 的授权只覆盖 spike）
 - [ ] S0 收尾（用户 2026-10-27 那题没答复，**什么都没删、没动 B**）：停掉的 spike helper 仍装在两台 Mac 上；测试待办还在 CloudKit 容器里；想收尾时再问
 - [ ] 分发给别人前：用另一个大陆 iCloud 账号复测（容器 / 用户层初始化）；公证与发布另行评审
