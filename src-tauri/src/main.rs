@@ -37,6 +37,7 @@ mod gui_host;
 mod history;
 mod hooks;
 mod i18n;
+mod idle;
 mod image_resource;
 mod integrations;
 mod ios;
