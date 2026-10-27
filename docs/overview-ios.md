@@ -13,7 +13,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 - iOS 是 Daemon 里的又一个渠道（`channels/ios.rs`），受 `experimental.enabled` 隐藏；一个 Mac 一份 broker 凭据，多台 Mac 共用同一份（连接串可导入导出），手机经二维码配对。
 - **端到端加密**：每个配对一对方向密钥（ChaCha20-Poly1305），broker 只见密文；配对用一次性票据 + 6 位校验码，由 Mac 用户在设置页或 CLI 上放行。推送预览同样加密，由手机上的通知扩展解密。
 - **Mac 不持有 APNs 密钥**：Mac 把加密后的信封和手机的不透明句柄交给中继，中继按固定白名单拼出提醒并转给 APNs。
-- 手机能做的事：回答问题 / 确认（含多题、推荐、附件）、看 Agent 列表、关注（Follow，≤5）、实时观察（Watch，≤2 路、仅前台）、给 Agent 插话、新建 Agent 任务（Face ID 确认）。
+- 手机能做的事：回答问题 / 确认（含多题、推荐、附件）、看 Agent 列表（App 里没有手动关注：从手机新建的任务做完 / 出错时 Mac 会通知，列表行与详情页只读地标出）、实时观察（Watch，≤2 路、仅前台）、给 Agent 插话、新建 Agent 任务（Face ID 确认）。
 - **投递与通知分开**（`docs/specs/ios-alert-timing.md`）：iOS 不参与 IM 的活跃槽，`attach_im_channels` / `confirm_im_candidates` 在选完 IM 候选后用 `with_ios` 把它并进来，每个提问 / 确认都挂给所有已配对手机，手机一连上就从 hello 快照（`request.get`）拉到。手机在看（在线 + 前台 + 已 hello）时经 MQTT 实时送达、不推送；不在看时只有系统推送能打扰人，而它要等 Mac 键盘 / 鼠标空闲满 `channels.ios.alertAfterSecs`（默认 900 秒，`0` = 立即）才发，每题每手机最多一条，没有提醒。
 
 ## Mac 端（`src-tauri/src/`）
@@ -26,7 +26,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 | `ios/views.rs` | 把请求投影成手机渲染的视图（选项原文、TODO、确认变体） |
 | `ios/connstr.rs` · `qr.rs` | `ahconn1.` 连接串（含 broker 密码，只在显式请求时产出）、配对二维码 SVG |
 | `ios/push.rs` | 中继客户端（`/v1/push`），只传信封与句柄；`check_health`（`/v1/health`，设置页 / `channel test ios` 的中继检查） |
-| `ios/gateway/` | Gateway actor：`mod.rs`（事件循环、在线状态、hello 快照）· `pairing.rs`（配对状态机）· `requests.rs`（问答 / 确认闭环、答案校验、按 Mac 空闲时长触发推送）· `agents.rs`（Agent 列表、Follow；被关注 Agent 第一次「做完 / 出错」时：手机在看发应用内横幅，否则排队等 Mac 空闲满 D 才推，你回到 Mac 就作废，出结果后移出关注集）· `watch.rs`（实时帧）· `tasks.rs`（新任务、状态机 accepted→launching→launched→watching…）· `assets.rs`（附件双向分块）· `hostapi.rs`（Gateway 向 Daemon 提问的 `Host` trait）；`testkit.rs` + `tests*.rs` 是进程内的完整测试台 |
+| `ios/gateway/` | Gateway actor：`mod.rs`（事件循环、在线状态、hello 快照）· `pairing.rs`（配对状态机）· `requests.rs`（问答 / 确认闭环、答案校验、按 Mac 空闲时长触发推送）· `agents.rs`（Agent 列表、Follow = 通知集：App 里没有手动入口，只有从手机新建的任务会进来；通知集里的 Agent 第一次「做完 / 出错」时：手机在看发应用内横幅，否则排队等 Mac 空闲满 D 才推，你回到 Mac 就作废，出结果后移出通知集）· `watch.rs`（实时帧）· `tasks.rs`（新任务、状态机 accepted→launching→launched→watching…）· `assets.rs`（附件双向分块）· `hostapi.rs`（Gateway 向 Daemon 提问的 `Host` trait）；`testkit.rs` + `tests*.rs` 是进程内的完整测试台 |
 | `daemon/runtime/ios.rs` · `ios_agents.rs` · `ios_tasks.rs` | `Host` 的实现：配置变化时重启 Gateway、读 registry / Watch / 插话、启动任务；`mac_idle_secs()` 与 `alert_after_secs()` 把空闲时长与配置接给推送判断 |
 | `idle.rs` | `secs_since_last_input()`：macOS 用 CoreGraphics `CGEventSourceSecondsSinceLastEventType`（合并会话状态、任意输入事件，无需任何权限）；其它平台返回 `None`（Gateway 把「读不到」当作「够久了」，照旧立即推） |
 | `daemon/runtime/task_launch.rs` | IM `/new` 与 iOS 共用的任务启动（门槛、冲突、终端 / Codex App 路径） |
@@ -56,7 +56,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 
 - 通知扩展 `AskHumanNotification` 只解密预览（`NotificationText`），不连网络。点击通知经 `AppStore.openNotification` 路由：提问类打开请求（请求还没到手机时页面用通知原文占位、转圈等待，只有 Mac 已答复且没有它才说「不可用」），`follow.*` 打开 Agent 页。
 - 本地化：`Localizable.xcstrings`（en + zh-Hans）由 `ios/Tools/make-catalog.py` 从编译器产出的 `.stringsdata` 生成——先 `xcodebuild build -derivedDataPath build/DerivedData …`，再跑脚本；缺中文翻译会让脚本失败。
-- Mock 模式启动参数：`-AHMock YES -AHScenario demo|empty|offline|quota|syncing -AHLatency <x> -AHTab inbox|agents|history|macs -AHOpen <id> -AHAutoAdvance YES|NO -AHOpenAgent <key> -AHNewTask YES -AHHoldInterjects YES -AHFollowEvent done|failed|waiting`；`syncing` 场景让首次同步迟迟不完成，配 `-AHSyncDelay <秒>`（多久后完成）与 `-AHCached YES`（同步前就带着上次缓存的请求）；`-AHAdvanceHold <秒>` / `-AHAdvanceSettle <秒>` 拉长回执与换页的时间，方便截图 / 录屏；`-AHNotify <请求 id>` 模拟点开该请求的推送（页面立刻打开，不等同步，带一段虚构的通知文字）；`-AHArrival <会话标题|none>` 启动约 2 秒后来一条新提问（应用内横幅），`none` 表示该会话没有标题。
+- Mock 模式启动参数：`-AHMock YES -AHScenario demo|empty|offline|quota|syncing -AHLatency <x> -AHTab inbox|agents|history|macs -AHOpen <id> -AHAutoAdvance YES|NO -AHOpenAgent <key> -AHNewTask YES -AHHoldInterjects YES -AHFollowEvent done|failed|waiting -AHFollowAgent <agentKey 或会话 id>`；`-AHFollowAgent` 只在真实后端下生效（给模拟器真服务场景用）：等该会话出现在列表里就经引擎 `setFollow` 关注它——App 里已没有手动入口，场景又需要一个「会通知你」的 Agent；`syncing` 场景让首次同步迟迟不完成，配 `-AHSyncDelay <秒>`（多久后完成）与 `-AHCached YES`（同步前就带着上次缓存的请求）；`-AHAdvanceHold <秒>` / `-AHAdvanceSettle <秒>` 拉长回执与换页的时间，方便截图 / 录屏；`-AHNotify <请求 id>` 模拟点开该请求的推送（页面立刻打开，不等同步，带一段虚构的通知文字）；`-AHArrival <会话标题|none>` 启动约 2 秒后来一条新提问（应用内横幅），`none` 表示该会话没有标题。
 - XCUITest 经验：容器 view 上的 `accessibilityIdentifier` 需要 `.accessibilityElement(children: .contain/.combine)` 才找得到子元素；Form / List 的懒加载行需要滚动到附近才存在；浮动 TabBar 会挡住详情页底部，详情页用 `.toolbar(.hidden, for: .tabBar)`。挂在容器上的 `accessibilityIdentifier` 会盖住子元素自己的标识，要查子元素就把标识挂在叶子视图上；判断「被盖住」用 `isHittable`（被 `.accessibilityHidden` 的元素仍然 `exists`）。推送横幅是 springboard 里的 `BannerNotification`（标识 `NotificationShortLookView`），权限弹窗按钮是 `springboard.alerts.buttons["Allow"]`；合并后的 `push-status` 行标签形如 `Notifications, On`，判断用 `hasSuffix`。
 
 ## 验证
@@ -78,7 +78,7 @@ CI（`.github/workflows/build.yml`）只跑上表的「Swift 包」与「中继�
 
 真实服务模式不起本地 broker：一次性 Mac 用 `channel ios export` 取出实例的连接串（只在测试进程的内存里，经 stdin 交给 `channel set ios --connection-stdin`，不显示、不落盘），手机侧是 macOS 上真正的 `PhoneEngine` + `MQTTBrokerClient`。每个用例的 Mac / 手机 ID 都是新生成的，话题互不重叠（共用同一个 EMQX 账号），但会消耗真实 EMQX 的流量与中继调用。`AH_E2E_REPORT=<json>` 写入延迟统计，`AH_E2E_KEEP_LOGS=<目录>` 让失败的用例留下 Mac 的 daemon 日志与手机侧摘要（都不含秘密）。
 
-模拟器场景（`SimulatorLiveTests` + `AskHumanLiveUITests`）把一次性 Mac 留在宿主进程里，手机侧是 `xcodebuild test-without-building` 启动的 XCUITest，两边用 `ui/` `host/` 目录里的「会合点」文件互相等待。它走完：配对与校验码 → 通知权限 → token → 中继登记 → Mac 持有句柄 → 前台单题 / 多题 → 权限确认（允许；带理由拒绝）→ 一个 `__agent-hook` 会话：列表、实时观看、关注、插话与读取回执、应用内「Agent 已完成」横幅 → 任务被关闭时新任务表单的提示 → App 离开前台 → 一次真 APNs 沙盒推送（模拟器收得到，扩展会运行；`simctl push` 不会运行扩展）→ 点击横幅 → 被关注的 Agent 结束回合的推送 → 点击打开 Agent 页 → 历史 → 解除配对。配对码含 broker 密码，只经命名管道从宿主交给 UI 测试（不落文件、不进环境变量 / 剪贴板，码在屏幕上时不截图），`xcresult` 结束时删除，并在日志与模拟器键盘日志里扫描配对码。模拟器默认只卸载 App + `simctl keychain reset` + 等 CPU 静下来；`AH_E2E_SIM_ERASE=1` 才抹掉设备（首次开机要占满一个核好几分钟）。`AH_E2E_SHOTS=<目录>` 保留截图。
+模拟器场景（`SimulatorLiveTests` + `AskHumanLiveUITests`）把一次性 Mac 留在宿主进程里，手机侧是 `xcodebuild test-without-building` 启动的 XCUITest，两边用 `ui/` `host/` 目录里的「会合点」文件互相等待。它走完：配对与校验码 → 通知权限 → token → 中继登记 → Mac 持有句柄 → 前台单题 / 多题 → 权限确认（允许；带理由拒绝）→ 一个 `__agent-hook` 会话（App 以 `-AHFollowAgent` 启动，所以这个会话「会通知你」）：列表、实时观看、详情页的那行说明与列表行上的铃铛（没有关注按钮）、插话与读取回执 → 任务被关闭时新任务表单的提示 → App 离开前台 → 一次真 APNs 沙盒推送（模拟器收得到，扩展会运行；`simctl push` 不会运行扩展）→ 点击横幅 → 该 Agent 第一次结束回合的推送（一次性：之后会话移出通知集）→ 点击打开 Agent 页 → 历史 → 解除配对。一次性 Mac 的 `alertAfterSecs` 播种为 `0`（真实服务模式的 `RealBroker.settings()`），推送不依赖这台机器此刻是否空闲。配对码含 broker 密码，只经命名管道从宿主交给 UI 测试（不落文件、不进环境变量 / 剪贴板，码在屏幕上时不截图），`xcresult` 结束时删除，并在日志与模拟器键盘日志里扫描配对码。模拟器默认只卸载 App + `simctl keychain reset` + 等 CPU 静下来；`AH_E2E_SIM_ERASE=1` 才抹掉设备（首次开机要占满一个核好几分钟）。`AH_E2E_SHOTS=<目录>` 保留截图。
 
 ## 不变量与注意点
 
@@ -89,6 +89,7 @@ CI（`.github/workflows/build.yml`）只跑上表的「Swift 包」与「中继�
 - **「活着」的手机**：Gateway 只向「在线 + 前台 + 已 hello」的手机实时投递。App 在首次同步之后才发布前台状态，所以 hello 与前台状态之间的变化（新请求、Agent、Follow）不会被实时发出；`Actor::on_presence` 在手机由此变为「活着」时补发四个快照。改动这一段先看 `tests_requests` / `tests_agents` 里 `…between_hello_and_the_foreground_presence…` 两个用例。
 - **「待通知」是推导出来的，不存标志位**：一道题对某部手机是否还在等推送 = `!seen && !pushed && !(is_live && connected) && can_push`，由 `flush_due_notifications`（`deliver()` 末尾与每 250 ms 的 `tick_requests`）判断；手机上下线、broker 抖动、`request.seen` 都不必逐个维护状态，推过一次 `pushed` 置位后条件不再成立，所以天然没有提醒。3 秒补推（前台手机没确认）不受等待时长约束；读不到空闲时长按「够久了」处理；`alert_after_secs` 不在 `ConnKey` 里，改设置不重连网关。改这一段先看 `tests_requests.rs` 的「push timing」一节。
 - **Follow 的「做完 / 出错」走同一条等待规则，但是显式排队**（`docs/specs/ios-follow-narrowing.md`）：结果没有长期存在的对象可推导，所以 `announce` 把它排进 `Live.follow_notices`（内存，每部手机每个 Agent 至多一条），由 `flush_follow_notices`（`announce` 末尾与每 250 ms 的 `tick`）判断：Agent 又开始工作 / 会话结束 → 作废并继续关注；手机变成在看、或结果之后 Mac 有了新输入 → 作废；空闲满 D（或 `D = 0`、读不到空闲）→ 推一次。除「Agent 又开始工作」外，推出或作废都会把该 Agent 移出关注集（一次性），所以重启 daemon 会丢掉还没推出的通知。改这一段先看 `tests_agents.rs` 里 “A result (done / failed)” 那一节。
+- **App 没有关注入口，但 `setFollow` / `FollowSet` / `FollowState` / `FollowEvent` / `Wire.maxFollow` 都留着**：旧版 Mac 与旧版 App 还在用它们（旧版 App 的星标连新版 Mac 照常能加，只是同样一次性、同样遵守 D），`-AHFollowAgent` 也靠 `setFollow`。把它们当死代码清掉之前，先看 `docs/specs/ios-follow-narrowing.md` 的「兼容」。App 只读地展示 `AgentView.followed`：列表行铃铛、详情页 `follow-note`；Mac 拒绝（名额满）时静默，不弹提示。
 - **推送信封没有 `v`**：中继转给 APNs 的 `ah` 只有 `{f,k,n,c}`（Mac 封装时的 `v` 不转发），`PushDecryptor` 缺 `v` 时按本协议处理、带了别的版本则拒绝。改推送载荷或中继的白名单时，同步改 `PushDecryptorTests` 里「中继的形状」，否则单元测试与真实推送会各说各话。
 - **通知代理方法必须在主 actor 上**：`AppDelegate` 的 `UNUserNotificationCenterDelegate` 方法是 `@MainActor`（一致性标 `@preconcurrency`）；写成 `nonisolated async` 时系统的完成回调落在协作线程池，iOS 27 上点推送横幅会崩溃。
 - **每次握手都把推送句柄再给 Mac**：`PhoneEngine` 在每次 `hello.ack` 清空 `pushSent` 并重发，发送失败要回滚标记，token 在 ack 与首个快照之间到达也立即发；Mac 只会回 `push.state` 的 `ok` / `gone`，不会反过来索要句柄。

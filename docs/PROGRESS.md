@@ -82,22 +82,22 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 后续（本期不做，细节在规格「后续」一节；Follow 的去留已另立一节，见下）：
 - [ ] IM 统一（每个渠道各自的「提醒时机」）；保底封顶；有待答题时保持唤醒；D 到点时合并成一条「N 个提问在等你」；Time Sensitive、通知扩展送达回执、划掉追踪、手机上展示「Mac 在用」
 
-## 进行中：iOS「做完 / 出错」通知收窄（去掉手动关注）——Mac 端已实现并装机，App 端（P3）之后再开工
+## 待验收：iOS「做完 / 出错」通知收窄（Mac 端与 App 端都已实现，真机一轮未做）
 
 2026-10-27 用户决定：App 里去掉手动「关注」星标（Agents 页本来就能看到所有 Agent 的状态），只保留「从手机创建的任务做完 / 出错」的自动通知，
 并且和提问一致——Mac 键鼠空闲满 D（默认 15 分钟）才推，你在电脑前不打扰；你回到 Mac 前没推出去的通知作废；任务第一次出结果后就不再通知该会话（一次性）；
 App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-follow-narrowing.md`](specs/ios-follow-narrowing.md)、计划 [`docs/plans/ios-follow-narrowing.md`](plans/ios-follow-narrowing.md)，
-同日全部批准；实施顺序（用户定）：先 Mac 端并装机，App 去星标之后再单独开工。
+同日全部批准。
 
-已完成（P1–P2，已 `./scripts/install.sh` 装机，daemon 已换新）：待通知队列 + D 规则 + 一次性移出，删「在等你」推送与 `tick_waiting` 死代码；
-自动化（Rust 全量 1759 项、clippy 1.94 / 1.99、fmt）全绿。线协议、中继、配置项、App 都没改；旧版 App 的星标照常能加，但同样一次性、同样遵守 D。
-**没有真机验证过。**
+已完成：Mac 端（P1–P2，已 `./scripts/install.sh` 装机）、App 端（P3，提交 `feat(ios): drop the follow star and mark notified Agents with a bell`）、文档回写（P4）。
+自动化全绿：Rust 全量与 clippy / fmt、Swift 包全量、对真实 daemon + 本地 broker 的端到端、模拟器 UI 测试（en + zh-Hans）、
+模拟器上真 App 对真实 EMQX + 中继 + APNs 沙盒的完整场景（含被通知的 Agent 第一次结果的推送，之后铃铛消失）。线协议、中继、配置项都没改；
+旧版 App 的星标连新版 Mac 照常能加，同样一次性、同样遵守 D。**新版 App 没有装到用户的真机上，Mac 端的新规则也没有在真机上验证过。**
 
 下一步：
-- [ ] （可选）真机补验 Mac 端：用旧版 App 的星标关注一个 Agent，`alertAfterSecs` 临时设成 60 秒——Mac 在用时让它做完应**不**推；停手满 60 秒才来一条；
-  做完后星标自动消失；做完之前回到 Mac 敲键盘则不应补推。配置用后还原；不要用 `AskHuman help` 之类的词试命令。
-- [ ] P3 iOS App 去星标 / 过滤 / 名额条，加只读铃铛（开工前先确认另一个 iOS 会话没有未提交的并行改动；`AskHumanUITests` / `AskHumanLiveUITests` 里点 `follow-button` 的步骤要改）
-- [ ] P4 文档回写（wiki 的 Agents 页那句、`ios-channel.md` 里手动关注入口的说法）+ 真机一轮（真实 Agent 的启动要用户批准，新任务要 Face ID）
+- [ ] （可选，需要用户在场）真机一轮：把新版 App 装到手机（Xcode / `devicectl`），`alertAfterSecs` 临时设成 60 秒，从手机「新任务」发一个很快做完的任务
+  （Face ID；真实 Agent 的启动要用户批准）——列表行出现铃铛、详情页有一行说明；Mac 在用时做完应**不**推；停手满 60 秒才来一条；
+  做完之前回到 Mac 敲键盘则不应补推；做完后铃铛消失（`state.json` 的 `followSet` 为空）。配置用后还原；不要用 `AskHuman help` 之类的词试命令。
 
 ## 进行中：跨设备待办同步（多台 Mac，iCloud）——评审已通过，开工中（P0 起）
 

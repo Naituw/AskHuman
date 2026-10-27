@@ -1,7 +1,12 @@
 # 计划：去掉手动关注，「做完 / 出错」通知并入「Mac 空闲才推」
 
-> 状态：**已批准；P1–P2（Mac 端）已实现并装机**（2026-10-27，Rust 全量 1759 项、clippy 1.94 / 1.99、fmt 全绿；新增 14 个网关测试，另把 2 个「在等你」用例换成 1 个反向用例；
-> 并对「回到 Mac 作废 / Agent 又开始工作作废 / 会话结束作废 / 一次性 / 手机在看」几条规则做过变异检查——破坏规则后对应测试确实失败）；P3（App）之后再单独开工，P4 待做。
+> 状态：**已批准；P1–P3 已实现，P4 文档已回写，只剩可选的真机一轮**（2026-10-27）。
+> P1–P2（Mac 端）已装机：Rust 全量 1759 项、clippy 1.94 / 1.99、fmt 全绿；新增 14 个网关测试，另把 2 个「在等你」用例换成 1 个反向用例；
+> 并对「回到 Mac 作废 / Agent 又开始工作作废 / 会话结束作废 / 一次性 / 手机在看」几条规则做过变异检查——破坏规则后对应测试确实失败。
+> P3（App）：Swift 包单元与进程内集成全量（`swift test`，AHCore 107 / AHApp 113，含 `AHAppTests`）；对已装机真实 daemon + 本地 broker 的端到端先全量跑过一遍（33 / 34，
+> 1 个与本需求无关的陈旧断言已修），这次改过的几条（含新增一条）改完后重跑通过；模拟器 UI 测试：合并后的树 en 50 / 50，zh-Hans 在合并前全量跑过（改动涉及的 3 条改完预期文案后 en / zh 都通过）；
+> 模拟器上真 App 对真实 EMQX + 中继 + APNs 沙盒的完整场景全过（214 秒）；`Localizable.xcstrings` 重新生成后无缺译、无多余键、再生成无差异。
+> 做法上的偏差：P3 在 `/tmp` 里的隔离副本中开发和验证（另一个 iOS 会话当时有未提交的并行改动，也在占用模拟器），验证完再作为补丁合进主树。
 > 需求与决策：`docs/specs/ios-follow-narrowing.md`。
 > 地图：`docs/overview-ios.md`。前置：`docs/plans/ios-alert-timing.md`（已实现，本计划复用它的 `is_looking` / `can_push` /
 > `alert_after_secs` / `mac_idle_secs` 与测试台）。
@@ -75,7 +80,7 @@
 | `Views/RootView.swift`、`AHCore/AppStore.swift` | 删 `.followLimit` 横幅；「Agent 做完 / 出错」应用内横幅保留 |
 | `Views/Agents/TaskProgressScreen.swift` | 「你已关注它」改成「Agent 已经在运行，做完或出错时会通知你（Mac 空闲一阵后）」；名额满的句子改成不提「关注」 |
 | `Localizable.xcstrings` | 经 `ios/Tools/make-catalog.py`（构建后）重新生成，补中文，删除不再使用的键 |
-| 测试 | `AgentTests`、`AgentStoreTests`、`AgentE2ETests` 里走引擎 `setFollow` 的用例保留；`AskHumanUITests` / `AskHumanLiveUITests` 里点 `follow-button` 的步骤改为由宿主侧经引擎 API 种下关注（UI 里不再有入口），并增加对铃铛的断言 |
+| 测试 | `AgentTests`、`AgentStoreTests`、`AgentE2ETests` 里走引擎 `setFollow` 的用例保留；`AskHumanUITests` / `AskHumanLiveUITests` 里点 `follow-button` 的步骤去掉：mock 场景直接断言铃铛与说明行，真服务场景改由 App 启动参数 `-AHFollowAgent` 经引擎 `setFollow` 种下关注（UI 里不再有入口） |
 
 不改：`Wire.maxFollow`、`FollowSet` / `FollowState` / `FollowEvent`、`PhoneEngine.setFollow`、`MockBackend` 的 follow 场景（`-AHFollowEvent` 参数仍用来截横幅）。
 
