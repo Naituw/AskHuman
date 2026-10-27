@@ -443,6 +443,21 @@ pub fn run_tick_with(
             ..TickReport::default()
         });
     }
+    // The opt-in marker without its state file (deleted or lost): as far as the user can tell sync is
+    // on, so build the state again instead of idling. A corrupt state file gets the same treatment
+    // inside the tick; the cloud still has the todos and entities are adopted by id.
+    let healed;
+    let env = if store::exists(&env.dir) {
+        env
+    } else {
+        let mut named = env.clone();
+        if named.device_name.is_empty() {
+            named.device_name = computer_name();
+        }
+        tick::enable(&named, now_ms())?;
+        healed = named;
+        &healed
+    };
     let mut client = HelperClient::new(helper_client::socket_path(&env.dir));
     let result = tick::full(
         env,
@@ -1065,6 +1080,29 @@ mod tests {
 
         enable_with(&env, 10, &spy).unwrap();
         assert_eq!(tick::peek(&env).unwrap().unwrap().device_id, first);
+        cleanup(&env);
+    }
+
+    #[test]
+    fn a_missing_state_file_behind_the_marker_is_rebuilt_by_the_next_tick() {
+        let env = temp_env("heal");
+        let spy = Spy::default();
+        enable_with(&env, 10, &spy).unwrap();
+        let first = tick::peek(&env).unwrap().unwrap().device_id;
+        std::fs::remove_file(store::state_file(&env.dir)).unwrap();
+        assert!(status_with(&env, true).enabled, "the marker still says on");
+
+        let report = run_tick_with(&env, "poll", &spy).unwrap();
+        assert!(!report.disabled, "sync is on: the tick must not idle");
+        let state = tick::peek(&env).unwrap().expect("the state is back");
+        assert_ne!(state.device_id, first, "a rebuilt state is a new device");
+        assert_eq!(state.device_name, "Test Mac");
+
+        // Without the marker nothing is created, whatever else is missing.
+        disable_with(&env, 10).unwrap();
+        std::fs::remove_file(store::state_file(&env.dir)).unwrap();
+        assert!(run_tick_with(&env, "poll", &spy).unwrap().disabled);
+        assert!(!store::exists(&env.dir));
         cleanup(&env);
     }
 
