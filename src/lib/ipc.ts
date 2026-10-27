@@ -55,6 +55,8 @@ import type {
   TodoDoneEntry,
   TodoEntry,
   TodoGroup,
+  TodoSyncRepair,
+  TodoSyncStatus,
   TodoProjectInfo,
   TodosInit,
   TranscriptPage,
@@ -603,6 +605,23 @@ export const todosProjectsEnriched = () =>
 
 /** Pending todos of every project in one read (the "All todos" view). */
 export const todosAllPending = () => invoke<TodoGroup[]>("todos_all_pending");
+
+// ---- iCloud todo sync (spec todo-sync) ----------------------------------------------------
+
+export const todoSyncStatus = () => invoke<TodoSyncStatus>("todo_sync_status");
+export const todoSyncEnable = () => invoke<TodoSyncStatus>("todo_sync_enable");
+export const todoSyncDisable = () => invoke<TodoSyncStatus>("todo_sync_disable");
+export const todoSyncNow = () => invoke<TodoSyncStatus>("todo_sync_now");
+/** The window opened or got focus: the backend pulls if the last pull is stale. Returns at once. */
+export const todoSyncTouch = () => invoke<void>("todo_sync_touch");
+export const todoSyncClearCloud = () => invoke<TodoSyncStatus>("todo_sync_clear_cloud");
+export const todoSyncRestartFromLocal = () => invoke<TodoSyncStatus>("todo_sync_restart_from_local");
+export const todoSyncResume = () => invoke<TodoSyncStatus>("todo_sync_resume");
+export const todoSyncRepair = () => invoke<TodoSyncRepair>("todo_sync_repair");
+export const todoSyncOpenLoginItems = () => invoke<void>("todo_sync_open_login_items");
+/** Finished todos of the project in the cloud (what "clear history" erases everywhere); null = not synced. */
+export const todoSyncHistoryCount = (project: string) =>
+  invoke<number | null>("todo_sync_history_count", { project });
 
 /** 打开（或聚焦）项目待办窗口（经统一宿主路由，全局单窗）；`dir` 为预选项目定位目录。 */
 export const openTodos = (dir: string | null) =>

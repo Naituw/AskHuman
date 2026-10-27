@@ -863,6 +863,67 @@ export interface ExperimentalConfig {
   verticalQuestions: boolean;
 }
 
+/** iCloud todo sync settings (the on/off switch is a marker file, not config; spec todo-sync §8). */
+export interface TodoSyncConfig {
+  /** This Mac's name in the synced device list; empty = the computer name. */
+  deviceName: string;
+  /** Poll interval of the sync helper in minutes (not shown in the UI). */
+  pollMinutes: number;
+}
+
+/** What `todo_sync_status` returns (mirror of Rust `todo_sync::service::Status`). */
+export interface TodoSyncStatus {
+  /** macOS, outside a Dev Instance. */
+  supported: boolean;
+  enabled: boolean;
+  /** A tick is running right now. */
+  syncing: boolean;
+  deviceName: string;
+  /** Why this Mac stopped syncing and waits for the user. */
+  paused: "accountChanged" | "zoneMissing" | "notSignedIn" | "quota" | null;
+  lastPullOkMs: number;
+  lastPushOkMs: number;
+  /** Entities with local changes the cloud has not acknowledged. */
+  unsynced: number;
+  todos: number;
+  history: number;
+  devices: { name: string; lastSyncMs: number; thisMac: boolean }[];
+  helper: {
+    state: "running" | "notRunning" | "incompatible" | "unsupported";
+    version: string | null;
+    environment: string | null;
+    problem: string | null;
+    installed: boolean;
+  };
+  lastTick: {
+    atMs: number;
+    reason: string;
+    outcome:
+      | "ok"
+      | "fresh"
+      | "offline"
+      | "timedOut"
+      | "unavailable"
+      | "paused"
+      | "busy"
+      | "disabled"
+      | "error";
+    message?: string;
+    fetched: number;
+    merged: number;
+    pushed: number;
+  } | null;
+  /** `state.json` belongs to a newer build. */
+  newerState: boolean;
+}
+
+/** Outcome of the helper's login-item registration. */
+export interface TodoSyncRepair {
+  ok: boolean;
+  needsApproval: boolean;
+  message: string;
+}
+
 /** 权限确认相关全局设置（spec codex-permission-remember）。 */
 export interface PermissionsConfig {
   /** Codex shell 宽松模式全局开关（D52）：非危险且可解析的 shell 命令自动放行。 */
@@ -911,6 +972,7 @@ export interface AppConfig {
   agentTasks: AgentTasksConfig;
   permissions: PermissionsConfig;
   experimental: ExperimentalConfig;
+  todoSync?: TodoSyncConfig;
 }
 
 /** Whether each channel secret is currently stored (drives the "Saved" placeholder). */

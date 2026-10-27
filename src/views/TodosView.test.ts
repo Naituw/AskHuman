@@ -13,6 +13,11 @@ const ipc = vi.hoisted(() => ({
   localImagePrepare: vi.fn(async (_scope: string, path: string) => ({ token: path, width: 10, height: 10 })),
   localImageReleaseAsset: vi.fn(async () => {}),
   localImageReleaseScope: vi.fn(async () => {}),
+  openSettings: vi.fn(async (_tab?: string) => {}),
+  todoSyncStatus: vi.fn(async (): Promise<Record<string, unknown>> => ({ supported: false, enabled: false })),
+  todoSyncTouch: vi.fn(async () => {}),
+  todoSyncHistoryCount: vi.fn(async (_project?: string): Promise<number | null> => null),
+  todoSyncResume: vi.fn(async () => ({})),
   todosAdd: vi.fn(async () => ({ id: "created" })),
   todosClear: vi.fn(async () => {}),
   todosAllPending: vi.fn(async (): Promise<unknown[]> => []),
@@ -514,3 +519,144 @@ describe("TodosView sidebar", () => {
   });
 });
 
+
+// ===== iCloud sync line and the global clear-history confirmation (spec todo-sync §9.6, §9.7, T16) =====
+
+function syncStatus(patch: Record<string, unknown> = {}): Record<string, unknown> {
+  const now = Date.now();
+  return {
+    supported: true,
+    enabled: true,
+    syncing: false,
+    deviceName: "Studio",
+    paused: null,
+    lastPullOkMs: now - 40_000,
+    lastPushOkMs: now - 100_000,
+    unsynced: 0,
+    todos: 3,
+    history: 2,
+    devices: [],
+    helper: { state: "running", version: "1", environment: "production", problem: null, installed: true },
+    lastTick: null,
+    newerState: false,
+    ...patch,
+  };
+}
+
+describe("TodosView iCloud sync", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tauriEvents.listeners.clear();
+    i18n.global.locale.value = "zh";
+    Element.prototype.scrollIntoView = vi.fn();
+    useWorkspace();
+    ipc.todosHistory.mockImplementation(async () => [
+      { id: "h1", text: "done one", createdAtMs: 1, agentKind: null, doneAtMs: 2 },
+      { id: "h2", text: "done two", createdAtMs: 1, agentKind: null, doneAtMs: 3 },
+    ]);
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  /** Mount and wait past the two animation frames after which the status is requested. */
+  async function open() {
+    const wrapper = mount(TodosView, { attachTo: document.body, global: { plugins: [i18n] } });
+    await flushPromises();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await flushPromises();
+    return wrapper;
+  }
+
+  it("shows no sync line where iCloud sync does not exist", async () => {
+    const wrapper = await open();
+    expect(ipc.todoSyncStatus).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('[data-testid="sync-footer"]').exists()).toBe(false);
+    expect(wrapper.find(".td-side-foot").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("offers iCloud sync while the todos are local only, and opens its card in Settings", async () => {
+    ipc.todoSyncStatus.mockResolvedValue(syncStatus({ enabled: false }));
+    const wrapper = await open();
+    const footer = wrapper.get('[data-testid="sync-footer"]');
+    expect(footer.text()).toContain("仅本机");
+    await footer.get(".td-sync-action").trigger("click");
+    expect(ipc.openSettings).toHaveBeenCalledWith("experimental#todo-sync-card");
+    wrapper.unmount();
+  });
+
+  it("says how long ago it synced, and nothing about it before the first frame", async () => {
+    ipc.todoSyncStatus.mockResolvedValue(syncStatus());
+    const wrapper = mount(TodosView, { attachTo: document.body, global: { plugins: [i18n] } });
+    await flushPromises();
+    // The data is on screen; the status has not been asked for yet (it waits for the first frame).
+    expect(ipc.todosList).toHaveBeenCalled();
+    expect(wrapper.find('[data-testid="sync-footer"]').exists()).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await flushPromises();
+    expect(wrapper.get('[data-testid="sync-footer"]').text()).toContain("已同步 · 40 秒前");
+    wrapper.unmount();
+  });
+
+  it("retries a full iCloud from the line itself", async () => {
+    ipc.todoSyncStatus.mockResolvedValue(syncStatus({ paused: "quota" }));
+    const wrapper = await open();
+    const footer = wrapper.get('[data-testid="sync-footer"]');
+    expect(footer.text()).toContain("iCloud 空间不足");
+    await footer.get(".td-sync-action").trigger("click");
+    await flushPromises();
+    expect(ipc.todoSyncResume).toHaveBeenCalledTimes(1);
+    expect(ipc.openSettings).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  async function openHistoryDialog(wrapper: Awaited<ReturnType<typeof open>>) {
+    await wrapper.get(".td-hist-toggle").trigger("click");
+    await wrapper.get(".td-hist-head .td-clear").trigger("click");
+    await flushPromises();
+  }
+
+  it("says clearing the history clears it on every Mac, with the cloud's count", async () => {
+    ipc.todoSyncStatus.mockResolvedValue(syncStatus());
+    ipc.todoSyncHistoryCount.mockResolvedValue(14);
+    const wrapper = await open();
+    await openHistoryDialog(wrapper);
+    expect(ipc.todoSyncHistoryCount).toHaveBeenCalledWith(A);
+    const dialog = wrapper.get(".td-dialog");
+    expect(dialog.text()).toContain("所有 Mac 与 iCloud");
+    expect(dialog.text()).toContain("共 14 条");
+    await dialog.get(".td-btn-danger").trigger("click");
+    await flushPromises();
+    expect(ipc.todosHistoryClear).toHaveBeenCalledWith(A);
+    wrapper.unmount();
+  });
+
+  it("keeps the local wording for a project that does not sync, or while sync is off", async () => {
+    ipc.todoSyncStatus.mockResolvedValue(syncStatus());
+    ipc.todoSyncHistoryCount.mockResolvedValue(null);
+    let wrapper = await open();
+    await openHistoryDialog(wrapper);
+    expect(wrapper.get(".td-dialog").text()).toContain("将删除本项目的 2 条历史记录");
+    wrapper.unmount();
+
+    ipc.todoSyncStatus.mockResolvedValue(syncStatus({ enabled: false }));
+    ipc.todoSyncHistoryCount.mockClear();
+    wrapper = await open();
+    await openHistoryDialog(wrapper);
+    expect(ipc.todoSyncHistoryCount).not.toHaveBeenCalled();
+    expect(wrapper.get(".td-dialog").text()).toContain("将删除本项目的 2 条历史记录");
+    wrapper.unmount();
+  });
+
+  it("warns that clearing the todos of a synced project deletes them on the other Macs too", async () => {
+    ipc.todoSyncStatus.mockResolvedValue(syncStatus());
+    ipc.todoSyncHistoryCount.mockResolvedValue(5);
+    const wrapper = await open();
+    await wrapper.get(".td-clear-row .td-clear").trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".td-dialog").text()).toContain("也会从其他 Mac 上删除");
+    wrapper.unmount();
+  });
+});

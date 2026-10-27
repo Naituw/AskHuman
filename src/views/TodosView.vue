@@ -14,7 +14,10 @@ import {
 import { applyLanguage } from "../i18n";
 import ComposerAttachments from "../components/ComposerAttachments.vue";
 import TodoAttachmentList from "./todos/TodoAttachmentList.vue";
+import SyncFooter from "./todos/SyncFooter.vue";
 import TodosSidebar from "./todos/TodosSidebar.vue";
+import { useSyncStatus } from "./todos/useSyncStatus";
+import type { SyncAction } from "./todos/syncState";
 import {
   ALL_KEY,
   ALL_ROW_LIMIT,
@@ -32,6 +35,9 @@ import {
 import {
   openNewTask,
   openPath,
+  openSettings,
+  todoSyncHistoryCount,
+  todoSyncResume,
   todosAdd,
   todosAllPending,
   todosClear,
@@ -62,6 +68,24 @@ import type {
 } from "../lib/types";
 
 const { t, locale } = useI18n();
+
+const { status: syncStatus, line: syncLine, start: startSyncStatus, refresh: refreshSyncStatus } =
+  useSyncStatus();
+
+/** What the sidebar's sync line offers: set it up in Settings, or retry right here. */
+async function onSyncAction(action: SyncAction): Promise<void> {
+  if (action === "resume") {
+    try {
+      await todoSyncResume();
+    } catch (err) {
+      console.warn("todo sync resume failed", err);
+    }
+    await refreshSyncStatus();
+    return;
+  }
+  // enable / repair / view: the card in Settings → Experimental has the whole story.
+  void openSettings("experimental#todo-sync-card").catch(() => {});
+}
 
 /** Same setting as the popup submit shortcut (`settings.popupBehavior.submitKey`). */
 const popupSubmitKey = ref<PopupSubmitKey>("cmdEnter");
@@ -179,6 +203,9 @@ const operationError = ref("");
 // 清空确认改为模态 alert（第 18 轮定案：危险操作需要光标移动后再确认，且提示无法恢复）；
 // 'todos'＝清空待办队列，'history'＝清空执行历史。
 const confirmKind = ref<"todos" | "history" | null>(null);
+/** With iCloud sync on: finished todos of this project in the cloud, quoted by the clear-history
+ * confirmation (clearing is global, spec todo-sync T16). `null` = not synced, the local count is it. */
+const cloudHistoryCount = ref<number | null>(null);
 // 防连点重复新增（Enter 连击）。
 const adding = ref(false);
 const addInputRef = ref<HTMLTextAreaElement | null>(null);
@@ -909,6 +936,19 @@ async function removeEntry(id: string): Promise<void> {
   await reloadAll();
 }
 
+/** Clearing asks first; with sync on, the cloud's side of it is part of the question. */
+async function askClear(kind: "todos" | "history"): Promise<void> {
+  cloudHistoryCount.value = null;
+  if (syncStatus.value?.enabled && selected.value) {
+    try {
+      cloudHistoryCount.value = await todoSyncHistoryCount(selected.value);
+    } catch {
+      /* fall back to the local wording */
+    }
+  }
+  confirmKind.value = kind;
+}
+
 async function doConfirmedClear(): Promise<void> {
   const kind = confirmKind.value;
   if (!selected.value || !kind) return;
@@ -1242,6 +1282,8 @@ onMounted(async () => {
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
       perfMark("todos.fe.firstPaint");
+      // iCloud sync state arrives after the first frame and only updates the sidebar's last line.
+      startSyncStatus();
     })
   );
   if (preselect) await focusAddInput();
@@ -1276,7 +1318,11 @@ onBeforeUnmount(() => {
       :selected-key="sidebarSelectedKey"
       v-model:query="sidebarQuery"
       @select="selectKey"
-    />
+    >
+      <template v-if="syncLine" #footer>
+        <SyncFooter :line="syncLine" @action="onSyncAction" />
+      </template>
+    </TodosSidebar>
     <div v-if="drawerOpen" class="td-scrim" aria-hidden="true" @click.stop="drawerOpen = false" />
 
     <section class="td-pane">
@@ -1739,7 +1785,7 @@ onBeforeUnmount(() => {
       <!-- 清空（第 18 轮定案：列表区末尾、历史区上方，紧邻其作用对象、远离新增行；
            点击弹模态确认，需要移动光标二次确认）。 -->
       <div v-if="entries.length" class="td-clear-row">
-        <button type="button" class="td-clear" @click="confirmKind = 'todos'">
+        <button type="button" class="td-clear" @click="askClear('todos')">
           {{ t("todosWin.clear") }}
         </button>
       </div>
@@ -1756,7 +1802,7 @@ onBeforeUnmount(() => {
             v-if="histOpen"
             type="button"
             class="td-clear"
-            @click="confirmKind = 'history'"
+            @click="askClear('history')"
           >
             {{ t("todosWin.clearHist") }}
           </button>
@@ -2013,8 +2059,13 @@ onBeforeUnmount(() => {
           {{
             confirmKind === "todos"
               ? t("todosWin.clearDesc", { n: entries.length })
-              : t("todosWin.clearHistDesc", { n: history.length })
+              : cloudHistoryCount !== null
+                ? t("todosWin.clearHistDescCloud", { n: cloudHistoryCount })
+                : t("todosWin.clearHistDesc", { n: history.length })
           }}
+        </p>
+        <p v-if="confirmKind === 'todos' && cloudHistoryCount !== null">
+          {{ t("todosWin.clearDescSynced") }}
         </p>
         <p v-if="operationError" class="td-attachment-error" role="alert">
           {{ operationError }}

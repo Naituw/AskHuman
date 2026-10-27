@@ -184,7 +184,7 @@ function gotoTabTarget(raw: string) {
         {{ t("settings.tabs.advanced") }}
       </button>
       <button
-        v-if="config.experimental.enabled"
+        v-if="config.experimental.enabled || activeTab === 'experimental'"
         :data-tauri-drag-region="tabDrag"
         :class="{ active: activeTab === 'experimental' }"
         @mousedown="onTabDown"
