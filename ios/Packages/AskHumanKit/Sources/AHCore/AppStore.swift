@@ -353,6 +353,13 @@ public final class AppStore {
         item(id: id) ?? retained[id]?.item
     }
 
+    /// What a page says when its request ended while it was open. Nothing for a request we have just
+    /// sent ourselves: that page shows its receipt, and the form fading out under the receipt has to
+    /// keep looking as it did ("Waiting for your Mac to confirm…"), not announce that the request ended.
+    public func endedNotice(for id: String) -> FinishedRequest? {
+        receipt?.from == id ? nil : finished[id]
+    }
+
     public func isOnline(macId: String) -> Bool {
         state.macs.first { $0.id == macId }?.link == .online
     }

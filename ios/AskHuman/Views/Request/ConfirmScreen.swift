@@ -13,7 +13,7 @@ struct ConfirmScreen: View {
         if let confirm = item.view?.confirm, let composer = store.confirmComposer(for: item) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if let finished = store.finished[item.id], store.receipt?.from != item.id { FinishedNotice(finished: finished) }
+                    if let finished = store.endedNotice(for: item.id) { FinishedNotice(finished: finished) }
                     if case .failed = item.state { FailedSubmissionNotice(item: item) }
                     RequestHeader(item: item)
                     DetailCard(confirm: confirm)
@@ -69,7 +69,7 @@ struct ConfirmScreen: View {
 
     private func bar(composer: ConfirmComposer, confirm: ConfirmView) -> some View {
         let sending: Bool = { if case .sending = item.state { return true } else { return false } }()
-        let ended = store.finished[item.id] != nil
+        let ended = store.endedNotice(for: item.id) != nil
         let online = store.isOnline(macId: item.macId)
         return VStack(spacing: 6) {
             if ended {

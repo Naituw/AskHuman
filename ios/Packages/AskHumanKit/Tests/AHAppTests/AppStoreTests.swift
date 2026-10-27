@@ -320,6 +320,7 @@ final class AppStoreTests: XCTestCase {
         await eventually("finish noted") { self.store.finished[select.id] != nil }
         XCTAssertEqual(store.finished[select.id]?.outcome, .answered)
         XCTAssertEqual(store.finished[select.id]?.by, "Another phone")
+        XCTAssertEqual(store.endedNotice(for: select.id)?.by, "Another phone", "its page says so")
         XCTAssertEqual(store.inboxPath, [select.id], "the page is not closed under the reader")
 
         // The state update and the event are separate streams: wait for the request to be gone as well.
@@ -366,6 +367,22 @@ final class AppStoreTests: XCTestCase {
         await eventually("dropped") { self.store.inboxPath == [next] }
         await eventually("receipt gone") { self.store.receipt == nil }
         await eventually("note gone") { self.store.sentNote == nil }
+    }
+
+    func testTheFormUnderOurOwnReceiptDoesNotSayTheRequestEnded() async throws {
+        await make()
+        store.advanceTiming = AdvanceTiming(hold: .milliseconds(300), settle: .milliseconds(100), note: .milliseconds(100))
+        let select = try item("req-select")
+        store.open(macId: select.macId, requestId: select.requestId)
+        let composer = try XCTUnwrap(store.composer(for: select))
+        composer.toggle(question: 0, option: 0)
+        try await store.send(composer, item: select)
+
+        // The request has finished, but the page answers with its receipt. While that fades in over the
+        // form, the form must keep saying "waiting for your Mac", not flip to "This request has ended."
+        await eventually("receipt") { self.store.receipt?.from == select.id }
+        XCTAssertNotNil(store.finished[select.id], "the request did finish")
+        XCTAssertNil(store.endedNotice(for: select.id), "but our own submission is not an ended page")
     }
 
     func testLeavingThePageDuringTheReceiptCancelsTheMove() async throws {

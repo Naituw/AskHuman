@@ -21,7 +21,7 @@ struct AnswerScreen: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        if let finished = store.finished[item.id], store.receipt?.from != item.id { FinishedNotice(finished: finished) }
+                        if let finished = store.endedNotice(for: item.id) { FinishedNotice(finished: finished) }
                         if case .failed = item.state { FailedSubmissionNotice(item: item) }
                         RequestHeader(item: item)
                         MessageCard(ask: ask, macId: item.macId)
@@ -43,7 +43,7 @@ struct AnswerScreen: View {
                 .scrollDismissesKeyboard(.interactively)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     SendBar(
-                        item: item, composer: composer, ended: store.finished[item.id] != nil,
+                        item: item, composer: composer, ended: store.endedNotice(for: item.id) != nil,
                         online: store.isOnline(macId: item.macId), onSend: { send(composer) }, onNext: { next(composer, proxy: proxy) }
                     )
                     .background(FrameReader(.barTop))
