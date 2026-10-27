@@ -331,3 +331,20 @@ tick(reason, budget):
   - ⌘/Ctrl+F 聚焦侧栏搜索（窄窗同时展开抽屉），Esc 收起抽屉 / 菜单；侧栏里的 ↑/↓/Home/End 自己处理，窗口级的待办行 ↑/↓ 导航对侧栏事件让路。
   - 新增浏览器预览页 `src/prototype/todos-window.html`（`mockIPC` 驱动真实 `TodosView`；`?data=real|stress|empty|dups&theme=&platform=`），看布局、深浅色、窄窗抽屉、大数据时用，P5 的 iCloud 视图也复用它。
   - 本机 shell 的 `HOME` 被指到 `/tmp/ph` 时，`pnpm install` 会因 store 路径不同要求清空重装 `node_modules`（交互提示会让 `install.sh` 卡住）：需要 `export npm_config_store_dir=<真实 HOME>/Library/pnpm/store/v10`。
+- **P3 CloudKit helper（`todo-sync-helper/`）完成（未上真机）**，与计划的差异：
+  - 纯 Swift 的 `Kit/`（线编解码、分发、tick 调度、错误映射、套接字服务、CloudKit 后端）与 XcodeGen 生成的 `App/` 分开，`swift test` 不需要签名即可跑（43 个测试，含与 Rust 共用的 `Fixtures/rpc-v1`）。
+  - 未签名的构建能启动、开套接字，并对 `hello` 回 `problem=missingEntitlement`；`build.sh dev|devid` 会联系 Apple，没有 `HELPER_ALLOW_CLOUD_CHANGES=1` 拒绝运行。账号状态、建区、增量拉取、保存与冲突的调用沿用 S0 spike 已验证的写法，但**没有对真实 iCloud 跑过**，P3 的验收项（RPC 往返、订阅推送、唤醒 / 联网 / 轮询触发、被杀自恢复、空闲资源）都被 §7 的手动步骤挡住，登记在 `docs/PROGRESS.md`。
+- **P4 集成完成（Rust 与窗口 / 设置卡，未上真机）**，与计划的差异：
+  - 开关是标记文件 `state/todo-sync/enabled`，不是配置里的 `enabled`：读路径关闭时只多一次 `stat`，Dev Instance 与非 macOS 由 `service::supported()` 恒关闭；配置 `todoSync` 只放设备名与轮询间隔。
+  - 新增 `service.rs`（文件位置、启用 / 停用 / 清除 / 恢复 / 从本地重来、状态、`last-tick.json`、给 helper 的 `helper.json`、helper 拉起节流）、`helper_client.rs`（生产 `Transport`）、`commands.rs`（`todo_sync_*` 命令组）与隐藏的 `cli/todo_sync_cmd.rs`；`NetError` 增加 `TimedOut` / `Unavailable`，helper 缺失 / 未签名 / 太旧 / 太慢都是软结果（tick 仍做完本地阶段）；`Opts.fresh_within_ms` 用来在近期拉过时跳过网络。
+  - 读取钩子的位置：`before_read` 接入 CLI `todo`、Stop 卡、MCP 待办列表、IM `/todo` 与 `/new`（含管理卡的 `send_todo_manage`）；`todos_list` 不调用它，窗口只在 `todos_init` / `todo_sync_touch` 里后台触发 `refresh_if_stale`，靠 `todos.json` 的文件监听拿结果，打开路径零网络。
+  - 设置 → 实验 →「待办存储」卡片；侧栏底部的同步状态在首帧之后才请求，只在同步开启时轮询；从侧栏跳到卡片时即使实验功能关着也显示实验页。
+  - 清空「某个已同步项目的待办」时也会提示其他 Mac 同样会丢失（计划只要求清空历史的全局提示）。
+- **P5 iCloud 模式界面完成（未上真机）**，与计划 / 需求的差异：
+  - **仅云端项目不读写「旁路实体」，而是以虚拟键 `icloud:<身份>` 住在 `todos.json` 里**（`cloudkeys.rs`；需求 §9.4 / §9.8 已改写）。这样窗口、IM、CLI 的读写路径都不用为它写特例，diff / 物化 / 推送也不用；代价是虚拟键要有生命周期（`ensure` → diff → `prune`，真实目录出现时接管且不丢未同步的编辑）并被排除在「新建任务」候选与 IM `/todo` 的项目选择之外。「从 iCloud 移除」给该身份的所有存活实体打墓碑，不是封禁。
+  - 窗口新增三个命令：`todo_sync_projects`（读旁路缓存，不读 git、不联网，同步关闭时 `stat` 一次返回空）、`todo_sync_project_details`（来源 Mac / 附件提示 / 完成所在 Mac，异步补充）、`todo_sync_remove_project`。`todo_sync_projects` 与 `todos_projects` 并行取，首屏分组一次到位。
+  - 同一仓库的多个目录合并成一行（行键取最近使用的目录）；同步行以仓库身份命名（最后一段，重名时加 owner 提示），**仅本机行以目录名为准**（界面稿里写的是整条路径，侧栏不放路径）；搜索同时匹配目录。「无待办的项目」折叠区收纳所有零待办项目（含仅本机的），搜索或选中项在其中时自动展开。「全部待办」里同一仓库的副本去重，顺序同侧栏（有 remote 的在前，仅本机的在后）。
+  - 性能（优化构建，压力数据 200 项目 / 4000 实体，`todos.json` 797 KiB、`state.json` 1.95 MiB）：本地阶段（空闲）中位数 21.5 ms（目标 ≤ 100 ms），`todo_sync_projects` 5.8 ms，单独读 `todos.json` 0.8 ms；前端视图模型在 640 个项目行上不到 0.5 ms。真实 Dev Instance 上无法开启同步（`supported()`），iCloud 模式的首屏数字待真机补。
+  - 与界面稿 `docs/assets/todo-sync-ui/` 的对照是用浏览器预览（`data=icloud`，浅色 / 深色）目测完成的，不是像素级。
+- **提交与发布说明**：P3、P4、P5 的提交都带 `Release-Note: skip`，因为 helper 暂不随正式版发布（计划后置项）。合并并决定随版本发布时，需要补一条带用户可见说明的 `feat(todo-sync)` 提交（或在合并提交里写）。
+- **文档**：除计划里列的 `overview.md` 之外，新增专题概览 `docs/overview-todo-sync.md`（模块地图、钩子、虚拟键、验证命令）；`docs/wiki/todo-sync.md`（含英文版）与 `docs/specs/todo-whats-next.md` D9 仍按 P6 补。
