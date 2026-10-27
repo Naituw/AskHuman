@@ -313,6 +313,18 @@ export default {
         importDone: "Connection settings filled in.",
         exportButton: "Copy connection string",
         exportDone: "Connection string copied (it contains the broker password: share it only with your own devices).",
+        alertTimingTitle: "Push timing",
+        alertAfterLabel: "Push once the Mac has been idle for",
+        alertAfterNow: "Immediately",
+        alertAfterCustom: "{value} (custom)",
+        alertAfterHint:
+          "A question reaches the phone app as soon as it is asked, so you can open and answer it there at any time. The phone is only notified once the Mac's keyboard and mouse have been idle for this long: no interruptions while you are still working on the Mac. At most one notification per question, no reminders. \"Immediately\" notifies as soon as a question is asked.",
+        macIdle: "The Mac has been idle for {time}",
+        duration: {
+          seconds: "{n} s",
+          minutes: "{n} min",
+          hours: "{n} h",
+        },
         statusConnected: "Broker connected ({via})",
         statusDisconnected: "Broker not connected",
         statusNotRunning: "Not running yet: fill in the connection settings and enable the channel.",

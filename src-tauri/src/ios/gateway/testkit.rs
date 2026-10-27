@@ -504,6 +504,7 @@ pub fn test_config() -> IosChannelConfig {
         relay_url: "https://relay.test".into(),
         mac_name: String::new(),
         insecure_local: false,
+        alert_after_secs: 0,
     }
 }
 

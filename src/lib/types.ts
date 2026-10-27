@@ -825,6 +825,11 @@ export interface IosChannelConfig {
   relayUrl: string;
   /** 本机在手机上的显示名；留空取主机名。 */
   macName: string;
+  /**
+   * 手机没在看某个问题时，Mac 键盘/鼠标空闲满这么多秒才推送通知（`0` = 问题一到就推）。
+   * 问题本身随时可在手机 App 里看到，与此无关（docs/specs/ios-alert-timing.md）。
+   */
+  alertAfterSecs: number;
 }
 
 export interface ChannelsConfig {
@@ -1046,6 +1051,8 @@ export interface IosGatewayState {
   pairing?: IosPairing;
   traffic?: IosTraffic;
   pendingRequests: number;
+  /** Seconds since the last keyboard / mouse input on this Mac; absent when it cannot tell. */
+  macIdleSecs?: number;
 }
 
 export type IosOp =

@@ -120,6 +120,12 @@ pub trait Host: Send + Sync + 'static {
     }
     /// Makes iOS the active channel (the phone's "take over questions" button).
     async fn take_slot(&self) {}
+
+    /// Seconds since the last keyboard / mouse input on this Mac; `None` when unknown. The
+    /// settings and `channel ios status` show it, so it is visible whether idle detection works.
+    fn mac_idle_secs(&self) -> Option<u64> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------- views for IPC and settings
@@ -175,6 +181,10 @@ pub struct GatewayState {
     pub pairing: Option<PairingView>,
     pub traffic: Traffic,
     pub pending_requests: usize,
+    /// Seconds since the last keyboard / mouse input on this Mac (`None` when unknown): shown in
+    /// the settings so it is visible whether the idle detection behind the push timing works.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mac_idle_secs: Option<u64>,
 }
 
 // ---------------------------------------------------------------- handle
@@ -730,6 +740,7 @@ impl Actor {
             pairing: self.pairing_view(),
             traffic: self.store.state.traffic.clone(),
             pending_requests: self.requests.pending_count(),
+            mac_idle_secs: self.host.mac_idle_secs(),
         }
     }
 

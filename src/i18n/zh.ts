@@ -303,6 +303,18 @@ export default {
         importDone: "已填入连接设置。",
         exportButton: "复制连接串",
         exportDone: "连接串已复制（含 Broker 密码，只在自己的设备间传递）。",
+        alertTimingTitle: "推送时机",
+        alertAfterLabel: "Mac 空闲多久后推送",
+        alertAfterNow: "立即",
+        alertAfterCustom: "{value}（自定义）",
+        alertAfterHint:
+          "问题一出现就会同步到手机 App，随时可以打开查看、回答。手机通知只在 Mac 的键盘和鼠标空闲满这个时长后才发送，你还在用 Mac 时不会打扰你；每个问题最多通知一次，不会重复提醒。选「立即」则问题一出现就通知。",
+        macIdle: "Mac 已空闲 {time}",
+        duration: {
+          seconds: "{n} 秒",
+          minutes: "{n} 分钟",
+          hours: "{n} 小时",
+        },
         statusConnected: "Broker 已连接（{via}）",
         statusDisconnected: "Broker 未连接",
         statusNotRunning: "尚未运行：请填好连接设置并启用。",

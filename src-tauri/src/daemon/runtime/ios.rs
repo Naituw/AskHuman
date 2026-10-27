@@ -149,6 +149,10 @@ impl Host for DaemonHost {
             auto_activation,
         }
     }
+
+    fn mac_idle_secs(&self) -> Option<u64> {
+        crate::idle::secs_since_last_input()
+    }
 }
 
 /// Name this computer goes by in the Finder / Settings, for the phone's device list.

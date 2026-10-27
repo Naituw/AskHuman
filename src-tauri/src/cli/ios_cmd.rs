@@ -138,6 +138,13 @@ fn status(args: &[String], lang: Lang) -> Result<(), String> {
             state.pending_requests
         ),
     ));
+    if let Some(idle) = state.mac_idle_secs {
+        print_line(&cfgio::t(
+            lang,
+            &format!("Mac idle for: {}", idle_text(idle, Lang::En)),
+            &format!("Mac 已空闲：{}", idle_text(idle, Lang::Zh)),
+        ));
+    }
     if let Some(pairing) = &state.pairing {
         print_line(&cfgio::t(
             lang,
@@ -146,6 +153,19 @@ fn status(args: &[String], lang: Lang) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// `45 s` / `12 min` (or the Chinese forms): the idle time shown by `status`.
+fn idle_text(secs: u64, lang: Lang) -> String {
+    let (value, unit_en, unit_zh) = if secs < 60 {
+        (secs, "s", "秒")
+    } else {
+        (secs / 60, "min", "分钟")
+    };
+    match lang {
+        Lang::En => format!("{value} {unit_en}"),
+        Lang::Zh => format!("{value} {unit_zh}"),
+    }
 }
 
 fn devices(args: &[String], lang: Lang) -> Result<(), String> {
@@ -550,6 +570,7 @@ mod tests {
             pairing: None,
             traffic: Traffic::default(),
             pending_requests: 0,
+            mac_idle_secs: None,
         }
     }
 
