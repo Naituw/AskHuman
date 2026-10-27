@@ -146,6 +146,21 @@ impl Host for DaemonHost {
     fn mac_idle_secs(&self) -> Option<u64> {
         crate::idle::secs_since_last_input()
     }
+
+    fn alert_after_secs(&self) -> u64 {
+        self.state
+            .upgrade()
+            .map(|state| {
+                state
+                    .config
+                    .lock()
+                    .unwrap()
+                    .channels
+                    .ios
+                    .effective_alert_after_secs()
+            })
+            .unwrap_or(0)
+    }
 }
 
 /// What the phone is told about the slot. Questions reach iOS whichever channel is active

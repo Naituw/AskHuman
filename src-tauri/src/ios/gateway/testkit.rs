@@ -57,6 +57,10 @@ pub struct TestHost {
     pub task_delay_ms: AtomicU64,
     pub launches: Mutex<Vec<TaskLaunch>>,
     pub slot_taken: AtomicUsize,
+    /// Virtual time of the Mac's last keyboard / mouse input; `None` = the idle time is unknown.
+    pub last_input_ms: Mutex<Option<i64>>,
+    /// What `alert_after_secs` answers; `0` pushes at once (the default keeps older tests simple).
+    pub alert_after: AtomicU64,
 }
 
 impl TestHost {
@@ -80,7 +84,24 @@ impl TestHost {
             task_delay_ms: AtomicU64::new(0),
             launches: Mutex::new(Vec::new()),
             slot_taken: AtomicUsize::new(0),
+            last_input_ms: Mutex::new(None),
+            alert_after: AtomicU64::new(0),
         })
+    }
+
+    /// How long the Mac must be idle before a request the phone has not looked at is pushed.
+    pub fn set_alert_after(&self, secs: u64) {
+        self.alert_after.store(secs, Ordering::SeqCst);
+    }
+
+    /// The user touches the keyboard right now.
+    pub fn touch_input(&self) {
+        *self.last_input_ms.lock().unwrap() = Some(self.now_ms());
+    }
+
+    /// The user last touched the keyboard `secs` seconds ago.
+    pub fn idle_for(&self, secs: u64) {
+        *self.last_input_ms.lock().unwrap() = Some(self.now_ms() - secs as i64 * 1000);
     }
 
     /// Replaces the Agent list.
@@ -134,6 +155,15 @@ impl Host for TestHost {
 
     fn slot(&self) -> SlotInfo {
         self.slot.lock().unwrap().clone()
+    }
+
+    fn mac_idle_secs(&self) -> Option<u64> {
+        let last = (*self.last_input_ms.lock().unwrap())?;
+        Some((self.now_ms() - last).max(0) as u64 / 1000)
+    }
+
+    fn alert_after_secs(&self) -> u64 {
+        self.alert_after.load(Ordering::SeqCst)
     }
 
     fn agents(&self) -> Vec<AgentView> {
@@ -504,6 +534,7 @@ pub fn test_config() -> IosChannelConfig {
         relay_url: "https://relay.test".into(),
         mac_name: String::new(),
         insecure_local: false,
+        // The gateway reads the push timing from the host (`TestHost::set_alert_after`), not here.
         alert_after_secs: 0,
     }
 }

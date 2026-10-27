@@ -591,6 +591,334 @@ async fn a_dead_push_registration_is_marked_and_the_phone_is_told() {
     assert_eq!(fx.pusher.count(), 1);
 }
 
+// ---------------------------------------------------------------- push timing
+//
+// A question the phone is not looking at waits in its inbox; the push follows once the Mac has
+// been idle for `alert_after_secs` (docs/specs/ios-alert-timing.md).
+
+const MINUTE: Duration = Duration::from_secs(60);
+
+#[tokio::test(start_paused = true)]
+async fn a_background_phone_is_not_pushed_while_the_mac_is_in_use() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    let mut phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    fx.host.touch_input();
+    deliver_ask(&fx, "req1");
+    tokio::time::sleep(10 * MINUTE).await;
+    assert_eq!(
+        fx.pusher.count(),
+        0,
+        "the Mac has been idle for ten minutes only"
+    );
+
+    // Nothing is lost: the question is in the inbox the moment the phone looks.
+    phone.clear_queue();
+    phone.set_presence(true, true).await;
+    phone.hello().await;
+    let inbox: wire::InboxSnapshot = phone.recv_body(t::INBOX_SNAPSHOT).await;
+    assert_eq!(inbox.items.len(), 1);
+    assert_eq!(inbox.items[0].id, "req1");
+    assert_eq!(fx.pusher.count(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_push_goes_out_once_the_mac_has_been_idle_long_enough_and_never_repeats() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    let phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    fx.host.touch_input();
+    deliver_ask(&fx, "req1");
+
+    tokio::time::sleep(14 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0);
+    tokio::time::sleep(2 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 1, "idle for sixteen minutes by now");
+    let push = fx.pusher.last().unwrap();
+    assert_eq!(
+        (
+            push.kind.as_str(),
+            push.loc_key.as_str(),
+            push.collapse_id.as_str()
+        ),
+        ("alert", "PUSH_ASK", "rq-req1")
+    );
+
+    tokio::time::sleep(60 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 1, "no reminders");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_question_that_arrives_after_a_long_idle_is_pushed_at_once() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    let phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    fx.host.idle_for(20 * 60);
+    deliver_ask(&fx, "req1");
+    fx.settle().await;
+    assert_eq!(fx.pusher.count(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn input_on_the_mac_restarts_the_wait() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(600);
+    let phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    fx.host.touch_input();
+    deliver_ask(&fx, "req1");
+
+    tokio::time::sleep(9 * MINUTE).await;
+    fx.host.touch_input(); // back at the keyboard for a moment
+    tokio::time::sleep(9 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0, "nine minutes of idle, not eighteen");
+    tokio::time::sleep(2 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_zero_wait_pushes_at_once() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(0);
+    let phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    fx.host.touch_input();
+    deliver_ask(&fx, "req1");
+    fx.settle().await;
+    assert_eq!(
+        fx.pusher.count(),
+        1,
+        "the Mac is in use, but nobody asked to wait"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unknown_idle_time_pushes_at_once() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900); // the test host knows no idle time until told
+    let phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    deliver_ask(&fx, "req1");
+    fx.settle().await;
+    assert_eq!(
+        fx.pusher.count(),
+        1,
+        "a Mac that cannot tell still notifies"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_phone_that_looks_before_the_wait_is_over_is_never_pushed() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    let mut phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    fx.host.touch_input();
+    deliver_ask(&fx, "req1");
+    tokio::time::sleep(5 * MINUTE).await;
+
+    phone.set_presence(true, true).await;
+    phone.hello().await;
+    phone.recv(t::INBOX_SNAPSHOT).await;
+    tokio::time::sleep(30 * MINUTE).await;
+    assert_eq!(
+        fx.pusher.count(),
+        0,
+        "a phone that is looking needs no push, however long the Mac idles"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_live_phone_is_never_pushed_however_long_the_mac_idles() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    fx.host.idle_for(2 * 3600);
+    let mut phone = fx.live_phone().await;
+    deliver_ask(&fx, "req1");
+    phone.recv(t::REQUEST_NEW).await;
+    phone
+        .send(&wire::RequestAck {
+            request_id: "req1".into(),
+        })
+        .await;
+    tokio::time::sleep(30 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_request_the_phone_opened_is_not_pushed_later() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input();
+    let mut phone = fx.live_phone().await;
+    deliver_ask(&fx, "req1");
+    phone.recv(t::REQUEST_NEW).await;
+    phone
+        .send(&wire::RequestSeen {
+            request_id: "req1".into(),
+        })
+        .await;
+    phone.set_presence(true, false).await;
+
+    tokio::time::sleep(20 * MINUTE).await;
+    assert_eq!(
+        fx.pusher.count(),
+        0,
+        "the phone opened it; the Mac idling changes nothing"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_phone_that_leaves_without_opening_the_question_is_pushed_once_the_mac_is_idle() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input();
+    let mut phone = fx.live_phone().await;
+    deliver_ask(&fx, "req1");
+    phone.recv(t::REQUEST_NEW).await;
+    phone
+        .send(&wire::RequestAck {
+            request_id: "req1".into(),
+        })
+        .await;
+    phone.set_presence(true, false).await;
+
+    tokio::time::sleep(14 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0);
+    tokio::time::sleep(2 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 1);
+    tokio::time::sleep(30 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 1, "once");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_question_answered_before_the_push_sends_nothing_at_all() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    let phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    fx.host.touch_input();
+    deliver_ask(&fx, "req1");
+    tokio::time::sleep(5 * MINUTE).await;
+
+    fx.gateway
+        .resolve_and_wait("req1", Resolution::AnsweredElsewhere("Popup".into()))
+        .await;
+    fx.settle().await;
+    tokio::time::sleep(30 * MINUTE).await;
+    assert_eq!(
+        fx.pusher.count(),
+        0,
+        "never pushed, so there is no notification to replace either"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_question_answered_after_the_push_replaces_the_notification() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    let phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    fx.host.idle_for(20 * 60);
+    deliver_ask(&fx, "req1");
+    fx.settle().await;
+    assert_eq!(fx.pusher.count(), 1);
+
+    fx.gateway
+        .resolve_and_wait("req1", Resolution::AnsweredElsewhere("Popup".into()))
+        .await;
+    fx.settle().await;
+    assert_eq!(fx.pusher.count(), 2);
+    assert_eq!(fx.pusher.last().unwrap().kind, "replace");
+}
+
+#[tokio::test(start_paused = true)]
+async fn each_phone_is_judged_on_its_own() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    fx.host.idle_for(20 * 60);
+    let mut looking = fx.live_phone().await;
+    let away = fx.pair_phone().await;
+    away.set_presence(true, false).await;
+
+    deliver_ask(&fx, "req1");
+    looking.recv(t::REQUEST_NEW).await;
+    looking
+        .send(&wire::RequestAck {
+            request_id: "req1".into(),
+        })
+        .await;
+    fx.settle().await;
+
+    assert_eq!(fx.pusher.count(), 1, "only the phone that is away");
+    let push = fx.pusher.last().unwrap();
+    let keys = away.keys.clone().unwrap();
+    assert!(
+        envelope::open(&keys.m2p, Scope::Push, &push.ah).is_ok(),
+        "the push is sealed for the phone that is away"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn confirmations_follow_the_same_rule() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    let phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    fx.host.touch_input();
+    deliver_confirm(&fx, "c1", 24 * 3_600_000);
+
+    tokio::time::sleep(10 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0);
+    tokio::time::sleep(6 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 1);
+    assert_eq!(fx.pusher.last().unwrap().loc_key, "PUSH_CONFIRM");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_phone_without_a_push_registration_is_never_pushed() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    fx.host.idle_for(2 * 3600);
+    let phone = fx.pair_phone_without_push().await;
+    phone.set_presence(true, false).await;
+    deliver_ask(&fx, "req1");
+    tokio::time::sleep(30 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0, "there is nowhere to push to");
+    assert_eq!(
+        fx.gateway.state().await.unwrap().pending_requests,
+        1,
+        "the question still waits in the inbox"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_push_fallback_ignores_the_wait_when_the_foreground_phone_does_not_acknowledge() {
+    // The phone was in the foreground but never confirmed receiving the question: it must be
+    // told another way now, whatever the Mac is doing.
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input();
+    let mut phone = fx.live_phone().await;
+    deliver_ask(&fx, "req1");
+    phone.recv(t::REQUEST_NEW).await;
+
+    tokio::time::sleep(Duration::from_millis(4_000)).await;
+    assert_eq!(fx.pusher.count(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_state_shows_how_long_the_mac_has_been_idle() {
+    let fx = Fixture::new().await;
+    assert_eq!(fx.gateway.state().await.unwrap().mac_idle_secs, None);
+    fx.host.idle_for(125);
+    let idle = fx.gateway.state().await.unwrap().mac_idle_secs;
+    assert!(matches!(idle, Some(125..=126)), "{idle:?}");
+}
+
 // ---------------------------------------------------------------- unreachable phones
 
 #[tokio::test(start_paused = true)]

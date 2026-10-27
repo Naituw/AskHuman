@@ -121,10 +121,16 @@ pub trait Host: Send + Sync + 'static {
     /// Makes iOS the active channel (the phone's "take over questions" button).
     async fn take_slot(&self) {}
 
-    /// Seconds since the last keyboard / mouse input on this Mac; `None` when unknown. The
-    /// settings and `channel ios status` show it, so it is visible whether idle detection works.
+    /// Seconds since the last keyboard / mouse input on this Mac; `None` when unknown. A question
+    /// the phone has not looked at is pushed only once the Mac has been idle for
+    /// [`Host::alert_after_secs`], and at once when this is unknown.
     fn mac_idle_secs(&self) -> Option<u64> {
         None
+    }
+    /// How long the Mac must have been idle before such a push goes out; `0` = at once. Read on
+    /// every use, so a changed setting applies without restarting the gateway.
+    fn alert_after_secs(&self) -> u64 {
+        0
     }
 }
 
