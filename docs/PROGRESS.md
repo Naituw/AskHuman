@@ -83,6 +83,24 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 - [ ] Follow 的去留：被关注的 Agent 的提问是否绕过等待、立即推（目前不绕过；「等你」推送在每道题都挂在手机后已不会触发）
 - [ ] IM 统一（每个渠道各自的「提醒时机」）；保底封顶；有待答题时保持唤醒；D 到点时合并成一条「N 个提问在等你」；Time Sensitive、通知扩展送达回执、划掉追踪、手机上展示「Mac 在用」
 
+## 进行中：跨设备待办同步（多台 Mac，iCloud）——评审已通过，开工中（P0 起）
+
+需求 `docs/specs/todo-sync.md`、计划 `docs/plans/todo-sync.md`（实施记录在其 §10）、界面稿 `docs/assets/todo-sync-ui/`。
+2026-10-27 用户评审通过并说「你自己全部搞定，我要上班了」；分支 `feat/todo-sync`，worktree `../HumanInLoop-todosync`（Dev Instance，popup-only）。
+S0 可行性 spike 的结果摘要在需求附录 A；spike 工程在仓库外：`~/Developer/AskHuman-TodoSync-Spike/`（复现方法见其中的 `RUNBOOK.txt`）。
+
+已定（用户 AskHuman 八轮，详见需求 §3、§17）：同一 Apple ID 的自己的多台 Mac；按 git remote 自动合并，每个目录 / worktree 是同一份待办的副本；无 remote 不同步；⚡ 不跨机；
+v1 不同步附件、同步执行历史；**清空历史是全局的**（清空时提示）；iCloud 模式下可见所有项目；架构 = Rust 同步核心 + 薄 CloudKit 适配器（不用 `CKSyncEngine`，推送只当提示）；
+whats-next 前「过期才拉」（> 20 秒，最多等 1.5 秒）；待办窗口统一改侧栏且打开不得卡顿；先自用，之后另行评审随正式版发布。
+容器 / bundle id：`iCloud.com.naituw.humaninloop.todosync` / `com.naituw.humaninloop.todosync`。
+
+下一步：
+- [ ] 按计划 §5 推进 P0 → P6；当前进度见计划 §10
+- [ ] **需要用户**（计划 §7，agent 不做）：开发者后台新建 App ID / 容器 / Developer ID 描述文件；helper 首次真机跑通后在 CloudKit Dashboard 把 schema 部署到 Production；在 Mac A 上用 Xcode 构建签名 helper 并拷到 Mac B。这些完成前，P3 之后的真机验收（计划 §5 P3 / P4 / P6）做不了
+- [ ] 双机验收要 SSH 到 Mac B：需用户当次同意（S0 的授权只覆盖 spike）
+- [ ] S0 收尾（用户 2026-10-27 那题没答复，**什么都没删、没动 B**）：停掉的 spike helper 仍装在两台 Mac 上；测试待办还在 CloudKit 容器里；想收尾时再问
+- [ ] 分发给别人前：用另一个大陆 iCloud 账号复测（容器 / 用户层初始化）；公证与发布另行评审
+
 ## 待观察：拖入文件失败（`daemon.log` 的 `askhuman_drop` 行）
 
 2026-10-17 用户在日常版（v0.14.5）遇到几次「拖图片进窗口没加附件」（来源访达的下载 / 桌面 / 文稿，第二次拖就可以）。已加每种情形的可见提示和不含路径的诊断日志，
