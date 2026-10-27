@@ -3,14 +3,15 @@ import UserNotifications
 import AHProtocol
 import AHStore
 
-/// What a decrypted push looks like on the lock screen: the Agent and project as the title, the Mac
-/// as the subtitle, the question (or what happened to it) as the body.
+/// What a decrypted push looks like on the lock screen: the session's title (else the Agent and project)
+/// as the title, who asks and the Mac as the subtitle (see `PushPlain.headerLines`), the question (or
+/// what happened to it) as the body.
 enum NotificationText {
     static func apply(_ push: DecryptedPush, to content: UNMutableNotificationContent) {
         let plain = push.plain
-        let who = [plain.agent, plain.project].filter { !$0.isEmpty }.joined(separator: " · ")
-        content.title = who.isEmpty ? plain.mac : who
-        content.subtitle = who.isEmpty ? "" : plain.mac
+        let lines = plain.headerLines
+        content.title = lines.title
+        content.subtitle = lines.subtitle
         content.body = body(of: push)
         // Group by Mac, and carry what the app needs to open the right request on a tap.
         content.threadIdentifier = push.macId

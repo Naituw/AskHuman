@@ -61,7 +61,8 @@ public enum MockData {
         """
         return RequestView(
             id: "req-migration", kind: "ask", createdAt: ms(now.addingTimeInterval(-95)), agent: cursor,
-            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), source: "cursor", contentHash: hash("migration"),
+            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: "Plan the users table migration",
+            source: "cursor", contentHash: hash("migration"),
             ask: AskView(
                 isMarkdown: true,
                 message: MessageView(text: message, files: [
@@ -108,7 +109,8 @@ public enum MockData {
     public static func whatsNextAsk(now: Date = Date()) -> RequestView {
         RequestView(
             id: "req-next", kind: "ask", createdAt: ms(now.addingTimeInterval(-3_000)), agent: codex,
-            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), source: "codex", contentHash: hash("next"),
+            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: "收尾 iOS 通知与分组的细节",
+            source: "codex", contentHash: hash("next"),
             ask: AskView(
                 isMarkdown: true,
                 message: MessageView(text: "已完成：配对流程的单元测试与端到端测试。", files: []),
@@ -127,7 +129,8 @@ public enum MockData {
     public static func permissionConfirm(now: Date = Date()) -> RequestView {
         RequestView(
             id: "req-permission", kind: "confirm", createdAt: ms(now.addingTimeInterval(-40)), agent: claude,
-            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), source: "claude", contentHash: hash("permission"),
+            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: "Fix the flaky login test",
+            source: "claude", contentHash: hash("permission"),
             confirm: ConfirmView(
                 title: "允许运行这条命令吗？",
                 context: [
@@ -188,8 +191,8 @@ public enum MockData {
             InboxItem(
                 macId: macId, macName: macName, requestId: view.id,
                 summary: RequestSummary(
-                    id: view.id, kind: view.kind, project: view.project, agent: view.agent, createdAt: view.createdAt,
-                    preview: preview(of: view), contentHash: view.contentHash, size: 2_048
+                    id: view.id, kind: view.kind, project: view.project, agent: view.agent, sessionTitle: view.sessionTitle,
+                    createdAt: view.createdAt, preview: preview(of: view), contentHash: view.contentHash, size: 2_048
                 ),
                 view: view, receivedAt: now.addingTimeInterval(offset), unread: unread, state: .pending
             )
@@ -207,7 +210,8 @@ public enum MockData {
     public static func history(now: Date = Date()) -> [HistoryEntry] {
         let earlier = RequestView(
             id: "req-old-1", kind: "ask", createdAt: ms(now.addingTimeInterval(-90_000)), agent: claude,
-            project: ProjectRef(key: "proj-relay", name: "relay"), source: "claude", contentHash: hash("old1"),
+            project: ProjectRef(key: "proj-relay", name: "relay"), sessionTitle: "Cache the APNs token",
+            source: "claude", contentHash: hash("old1"),
             ask: AskView(
                 isMarkdown: true,
                 message: MessageView(text: "要不要把 APNs 令牌缓存 50 分钟？", files: []),

@@ -22,6 +22,9 @@ struct LaunchOptions {
     var holdInterjects = false
     /// A followed Agent reports `done`, `failed` or `waiting` a moment after launch (the follow banner).
     var followEvent: String?
+    /// A request arrives a moment after launch (the request banner), from a session with this title;
+    /// `none` for one without a title.
+    var arrival: String?
     /// Forces "open the next request after sending" on or off (UI tests need a fixed value).
     var autoAdvance: Bool?
     /// Seconds (real time) after which the `syncing` scenario turns into the demo; unset keeps it syncing.
@@ -48,6 +51,7 @@ struct LaunchOptions {
         newTask = defaults.bool(forKey: "AHNewTask")
         holdInterjects = defaults.bool(forKey: "AHHoldInterjects")
         followEvent = defaults.string(forKey: "AHFollowEvent")
+        arrival = defaults.string(forKey: "AHArrival")
         if defaults.object(forKey: "AHAutoAdvance") != nil { autoAdvance = defaults.bool(forKey: "AHAutoAdvance") }
         if defaults.object(forKey: "AHSyncDelay") != nil { syncDelay = defaults.double(forKey: "AHSyncDelay") }
         cachedInbox = defaults.bool(forKey: "AHCached")
@@ -84,6 +88,12 @@ final class AppEnvironment {
                 Task {
                     try? await Task.sleep(for: .seconds(2))
                     await backend.simulateFollowEvent(kind: kind)
+                }
+            }
+            if let title = launch.arrival {
+                Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    await backend.simulateArrival(sessionTitle: title == "none" ? nil : title)
                 }
             }
             drafts = MemoryDraftStore()
@@ -135,9 +145,13 @@ final class AppEnvironment {
         await store.start()
         await push.refreshAuthorization()
         if let request = launch.notifyRequest {
-            let hint = NotificationHint(
-                title: "Claude Code · HumanInLoop", subtitle: "Home MacBook Pro", body: "Which database should the migration target?"
+            // What the notification extension would have made of this push, lines and all.
+            let plain = PushPlain(
+                k: "ask", rid: request, mac: "Home MacBook Pro", agent: "Cursor", project: "HumanInLoop",
+                session: "Plan the users table migration", text: "Which database should the migration target?", ts: 0
             )
+            let lines = plain.headerLines
+            let hint = NotificationHint(title: lines.title, subtitle: lines.subtitle, body: plain.text)
             store.openNotification(macId: MockData.homeMacId, rid: request, kind: "ask", hint: hint)
         }
         if let request = launch.openRequest {

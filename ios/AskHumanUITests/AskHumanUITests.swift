@@ -483,9 +483,11 @@ final class AskHumanUITests: XCTestCase {
     func testATappedNotificationShowsItsTextWhileTheRequestIsOnItsWay() {
         launch("syncing", extra: ["-AHSyncDelay", Self.syncDelay, "-AHNotify", "req-migration"])
         // The page opens at once from what the notification said; the request itself is not here yet.
-        _ = requireElement("request-placeholder-hint")
-        XCTAssertTrue(app.staticTexts["Claude Code · HumanInLoop"].exists)
-        XCTAssertTrue(app.staticTexts["Which database should the migration target?"].exists)
+        let hint = requireElement("request-placeholder-hint")
+        // The made-up notification has the layout of one from a session with a title.
+        XCTAssertTrue(hint.label.contains("Plan the users table migration"), hint.label)
+        XCTAssertTrue(hint.label.contains("Cursor · HumanInLoop · Home MacBook Pro"), hint.label)
+        XCTAssertTrue(hint.label.contains("Which database should the migration target?"), hint.label)
         XCTAssertFalse(app.staticTexts[unavailableTitle].exists, "it is on its way, not unavailable")
         shot("90-request-on-its-way")
         // The form takes its place once the Macs have answered.
@@ -509,6 +511,75 @@ final class AskHumanUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts[localized("Your Mac is not reachable", "连不上你的 Mac")].exists)
         XCTAssertFalse(app.staticTexts[unavailableTitle].exists)
         shot("93-request-unreachable")
+    }
+
+    // MARK: the title of the session
+
+    private let migrationTitle = "Plan the users table migration"
+
+    func testTheInboxNamesARequestByItsSessionAndFallsBackToTheAgent() {
+        launch()
+        let titled = requireElement("inbox-row-req-migration")
+        XCTAssertTrue(titled.label.contains(migrationTitle), titled.label)
+        XCTAssertTrue(titled.label.contains("Cursor"), "the title took the Agent's place on the screen, VoiceOver still names it: \(titled.label)")
+        let plain = requireElement("inbox-row-req-select")
+        XCTAssertTrue(plain.label.contains("Claude Code"), plain.label)
+        XCTAssertFalse(plain.label.contains(migrationTitle))
+        shot("94-inbox-session-titles")
+    }
+
+    func testARequestPageLeadsWithTheTitleOfItsSession() {
+        launch(extra: ["-AHOpen", "req-migration"])
+        XCTAssertEqual(requireElement("request-title").label, migrationTitle)
+        XCTAssertEqual(requireElement("request-origin").label, "Cursor · HumanInLoop · Home MacBook Pro")
+        shot("95-request-session-title")
+    }
+
+    func testARequestPageWithoutATitleKeepsItsAgentHeader() {
+        launch(extra: ["-AHOpen", "req-select"])
+        _ = requireElement("option-0-0")
+        XCTAssertFalse(element("request-title").exists)
+        XCTAssertTrue(app.staticTexts["Claude Code"].exists)
+        shot("96-request-no-session-title")
+    }
+
+    func testHistoryNamesFinishedRequestsBySessionAndSearchesTheTitles() {
+        launch(extra: ["-AHTab", "history"])
+        let titled = requireElement("history-row-req-old-1")
+        XCTAssertTrue(titled.label.contains("Cache the APNs token"), titled.label)
+        XCTAssertTrue(titled.label.contains("Claude Code"), "VoiceOver still names the Agent: \(titled.label)")
+        let plain = requireElement("history-row-req-old-2")
+        XCTAssertTrue(plain.label.contains("Cursor"), plain.label)
+        shot("97-history-session-titles")
+
+        // The title is one of the things the search looks through ("Cache" is in no other row).
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("Cache")
+        XCTAssertTrue(gone("history-row-req-old-2"))
+        XCTAssertTrue(element("history-row-req-old-1").exists)
+    }
+
+    func testAFinishedRequestOpensWithItsSessionTitle() {
+        launch(extra: ["-AHTab", "history"])
+        requireElement("history-row-req-old-1").tap()
+        XCTAssertEqual(requireElement("history-title").label, "Cache the APNs token")
+        shot("98-history-detail-session-title")
+    }
+
+    func testTheBannerOfANewRequestNamesItsSession() {
+        launch(extra: ["-AHArrival", "Review the release notes"])
+        let banner = requireElement("banner", timeout: 15)
+        XCTAssertTrue(banner.label.contains("Review the release notes"), banner.label)
+        XCTAssertFalse(banner.label.contains("Cursor · HumanInLoop"), "the title replaces the Agent and project: \(banner.label)")
+        shot("99-banner-session-title")
+    }
+
+    func testTheBannerOfARequestWithoutATitleNamesTheAgentAndProject() {
+        launch(extra: ["-AHArrival", "none"])
+        let banner = requireElement("banner", timeout: 15)
+        XCTAssertTrue(banner.label.contains("Cursor · HumanInLoop"), banner.label)
     }
 
     // MARK: moving on after sending

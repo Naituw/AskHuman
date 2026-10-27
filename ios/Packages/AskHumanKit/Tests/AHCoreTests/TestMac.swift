@@ -368,8 +368,8 @@ final class TestMac: @unchecked Sendable {
         lock.lock()
         let items = inbox.map { view in
             RequestSummary(
-                id: view.id, kind: view.kind, project: view.project, agent: view.agent, createdAt: view.createdAt,
-                preview: PhoneEngine.preview(of: view), contentHash: view.contentHash, size: 100
+                id: view.id, kind: view.kind, project: view.project, agent: view.agent, sessionTitle: view.sessionTitle,
+                createdAt: view.createdAt, preview: PhoneEngine.preview(of: view), contentHash: view.contentHash, size: 100
             )
         }
         let current = rev
@@ -421,10 +421,14 @@ final class TestMac: @unchecked Sendable {
 
 // MARK: - helpers
 
-func sampleAsk(id: String = Bytes.newId(), text: String = "Which database should we use?", options: [String] = ["PostgreSQL", "SQLite"]) -> RequestView {
+func sampleAsk(
+    id: String = Bytes.newId(), text: String = "Which database should we use?", options: [String] = ["PostgreSQL", "SQLite"],
+    sessionTitle: String? = nil
+) -> RequestView {
     RequestView(
         id: id, kind: "ask", createdAt: 1_800_000_000_000, agent: AgentRef(kind: "codex", label: "Codex"),
-        project: ProjectRef(key: "proj", name: "HumanInLoop"), source: "cli", contentHash: "h-\(id.prefix(6))",
+        project: ProjectRef(key: "proj", name: "HumanInLoop"), sessionTitle: sessionTitle, source: "cli",
+        contentHash: "h-\(id.prefix(6))",
         ask: AskView(
             isMarkdown: true, message: MessageView(text: text, files: []),
             questions: [QuestionView(text: "Pick one", options: options.map { OptionView(text: $0, recommended: false) })],

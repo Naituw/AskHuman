@@ -489,6 +489,27 @@ final class AppStoreTests: XCTestCase {
         XCTAssertEqual(store.banner?.title, "Cursor · HumanInLoop")
     }
 
+    func testTheBannerOfARequestNamesItsSession() async throws {
+        await make()
+        let before = store.arrivalTick
+        await backend.simulateArrival(sessionTitle: "Review the release notes")
+        await eventually("tick") { self.store.arrivalTick == before + 1 }
+        XCTAssertEqual(store.banner?.title, "Review the release notes", "the title replaces the Agent and project")
+        XCTAssertEqual(store.banner?.subtitle, "测试已通过，需要我提交这些改动吗？")
+    }
+
+    func testTheInboxNamesARequestBySessionTitleElseByAgent() async throws {
+        await make()
+        let titled = try item("req-migration")
+        XCTAssertEqual(titled.sessionTitle, "Plan the users table migration")
+        XCTAssertEqual(titled.displayTitle, "Plan the users table migration")
+        let plain = try item("req-select")
+        XCTAssertNil(plain.sessionTitle)
+        XCTAssertEqual(plain.displayTitle, "Claude Code")
+        // What the engine keeps for the list wins nothing over the full view: they say the same.
+        XCTAssertEqual(titled.summary.sessionTitle, titled.view?.sessionTitle)
+    }
+
     func testNoBannerWhileTheAppIsInTheBackground() async throws {
         await make()
         await store.setForeground(false)

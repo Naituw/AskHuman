@@ -415,14 +415,16 @@ public actor MockBackend: RemoteBackend {
         finish(item.id, outcome: .answered, answers: [], choice: nil, input: nil, by: by)
     }
 
-    /// Delivers a new request, as if the Agent on `macId` had just asked.
-    public func simulateArrival(macId: String = MockData.homeMacId) {
+    /// Delivers a new request, as if the Agent on `macId` had just asked (from a session called
+    /// `sessionTitle`, when given).
+    public func simulateArrival(macId: String = MockData.homeMacId, sessionTitle: String? = nil) {
         counter += 1
         let date = now()
         let id = "req-live-\(counter)"
         let view = RequestView(
             id: id, kind: "ask", createdAt: MockData.ms(date), agent: AgentRef(kind: "cursor", label: "Cursor"),
-            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), source: "cursor", contentHash: "h-" + id,
+            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: sessionTitle,
+            source: "cursor", contentHash: "h-" + id,
             ask: AskView(
                 isMarkdown: true,
                 message: MessageView(text: "测试已通过，需要我提交这些改动吗？", files: []),
@@ -437,8 +439,8 @@ public actor MockBackend: RemoteBackend {
             InboxItem(
                 macId: macId, macName: name, requestId: id,
                 summary: RequestSummary(
-                    id: id, kind: "ask", project: view.project, agent: view.agent, createdAt: view.createdAt,
-                    preview: MockData.preview(of: view), contentHash: view.contentHash, size: 1_024
+                    id: id, kind: "ask", project: view.project, agent: view.agent, sessionTitle: sessionTitle,
+                    createdAt: view.createdAt, preview: MockData.preview(of: view), contentHash: view.contentHash, size: 1_024
                 ),
                 view: view, receivedAt: date, unread: true, state: .pending
             ),

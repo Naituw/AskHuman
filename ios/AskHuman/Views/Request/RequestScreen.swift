@@ -197,19 +197,32 @@ struct RequestHeader: View {
         HStack(spacing: 12) {
             AgentBadge(agent: item.summary.agent, size: 44)
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.summary.agent.label).font(.headline)
-                HStack(spacing: 5) {
-                    if !item.summary.project.name.isEmpty {
-                        Image(systemName: "folder.fill").imageScale(.small)
-                        Text(item.summary.project.name)
-                        Text("·")
+                if let title = item.sessionTitle {
+                    // The session's title leads; who asks and where from moves into a small line beneath it.
+                    Text(verbatim: title)
+                        .font(.headline)
+                        .lineLimit(2)
+                        .accessibilityIdentifier("request-title")
+                    Text(verbatim: [item.summary.agent.label, item.summary.project.name, item.macName].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("request-origin")
+                } else {
+                    Text(item.summary.agent.label).font(.headline)
+                    HStack(spacing: 5) {
+                        if !item.summary.project.name.isEmpty {
+                            Image(systemName: "folder.fill").imageScale(.small)
+                            Text(item.summary.project.name)
+                            Text("·")
+                        }
+                        Image(systemName: "desktopcomputer").imageScale(.small)
+                        Text(item.macName)
                     }
-                    Image(systemName: "desktopcomputer").imageScale(.small)
-                    Text(item.macName)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
                 Text(Date(timeIntervalSince1970: TimeInterval(item.summary.createdAt) / 1000), format: .dateTime.month().day().hour().minute())
                     .font(.caption)
                     .foregroundStyle(.tertiary)

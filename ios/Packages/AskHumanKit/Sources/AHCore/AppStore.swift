@@ -270,9 +270,11 @@ public final class AppStore {
             if newest == nil || item.receivedAt > newest!.receivedAt { newest = item }
         }
         guard let item = newest else { return }
+        // The session's title names the request; without one, the Agent and project do.
+        let who = [item.summary.agent.label, item.summary.project.name].filter { !$0.isEmpty }.joined(separator: " · ")
         show(Banner(
             kind: .request(macId: item.macId, requestId: item.requestId),
-            title: item.summary.agent.label + " · " + item.summary.project.name,
+            title: item.sessionTitle ?? who,
             subtitle: item.summary.preview
         ))
     }

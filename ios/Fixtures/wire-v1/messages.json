@@ -23,11 +23,12 @@
     {"type": "push.state", "body": {"status": "ok"}},
 
     {"type": "inbox.snapshot", "body": {"epoch": "0123456789abcdef", "rev": 7, "items": [
-      {"id": "req1", "kind": "ask", "project": {"key": "p1", "name": "HumanInLoop"}, "agent": {"kind": "claude", "label": "Claude Code"}, "createdAt": 1792900000000, "preview": "Which approach do you prefer?", "contentHash": "sha256-abc", "size": 2048}
+      {"id": "req1", "kind": "ask", "project": {"key": "p1", "name": "HumanInLoop"}, "agent": {"kind": "claude", "label": "Claude Code"}, "sessionTitle": "Refactor the gateway \u91cd\u6784\u7f51\u5173", "createdAt": 1792900000000, "preview": "Which approach do you prefer?", "contentHash": "sha256-abc", "size": 2048}
     ]}},
     {"type": "request.new", "name": "ask", "body": {"rev": 8, "full": true, "request": {
       "id": "req1", "kind": "ask", "createdAt": 1792900000000,
       "agent": {"kind": "claude", "label": "Claude Code"}, "project": {"key": "p1", "name": "HumanInLoop"},
+      "sessionTitle": "Refactor the gateway \u91cd\u6784\u7f51\u5173",
       "source": "mcp", "contentHash": "sha256-abc",
       "ask": {
         "isMarkdown": true,

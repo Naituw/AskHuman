@@ -145,6 +145,54 @@ final class SessionTests: XCTestCase {
         await eventually("ack after the full view") { h.mac.count(RequestAck.type) == 1 }
     }
 
+    func testTheSessionTitleOfARequestReachesTheInboxAndStaysInTheHistory() async throws {
+        let h = Harness()
+        await h.pair()
+        let request = sampleAsk(sessionTitle: "Refactor the gateway")
+        await h.mac.deliver(request)
+        await eventually("inbox") { await h.state().inbox.count == 1 }
+        var item = try unwrap(await h.state().firstInbox)
+        XCTAssertEqual(item.summary.sessionTitle, "Refactor the gateway")
+        XCTAssertEqual(item.sessionTitle, "Refactor the gateway")
+        XCTAssertEqual(item.displayTitle, "Refactor the gateway", "the title names the request, not the Agent")
+
+        await h.mac.resolve(request.id, how: "answeredElsewhere", by: "Telegram")
+        await eventually("gone") { await h.state().inbox.isEmpty }
+        let entry = try unwrap(await h.engine.history().first)
+        XCTAssertEqual(entry.request.sessionTitle, "Refactor the gateway", "the history keeps it")
+
+        // A request without one is named by its Agent.
+        await h.mac.deliver(sampleAsk())
+        await eventually("second request") { await h.state().inbox.count == 1 }
+        item = try unwrap(await h.state().firstInbox)
+        XCTAssertNil(item.sessionTitle)
+        XCTAssertEqual(item.displayTitle, "Codex")
+    }
+
+    func testABlankSessionTitleCountsAsNone() async throws {
+        let h = Harness()
+        await h.pair()
+        await h.mac.deliver(sampleAsk(sessionTitle: " \n "))
+        await eventually("inbox") { await h.state().inbox.count == 1 }
+        let item = try unwrap(await h.state().firstInbox)
+        XCTAssertNil(item.sessionTitle)
+        XCTAssertEqual(item.displayTitle, "Codex")
+    }
+
+    func testARequestThatCameWithTheSnapshotKnowsItsSessionTitleBeforeItsFullViewIsHere() async throws {
+        let h = Harness()
+        await h.pair()
+        await h.mac.deliver(sampleAsk())
+        await eventually("first") { await h.state().inbox.count == 1 }
+        // The second request's delta is lost: it reaches the phone only as a line of the inbox snapshot.
+        h.mac.skipRevision()
+        await h.mac.deliver(sampleAsk(sessionTitle: "Fix the flaky login test"))
+        await eventually("snapshot brought the second request") { await h.state().inbox.count == 2 }
+        let titled = try unwrap(await h.state().inbox.first { $0.sessionTitle != nil })
+        XCTAssertEqual(titled.summary.sessionTitle, "Fix the flaky login test")
+        XCTAssertEqual(titled.sessionTitle, "Fix the flaky login test")
+    }
+
     func testDuplicateAndOldDeltasAreIgnoredAndGapsResync() async throws {
         let h = Harness()
         await h.pair()

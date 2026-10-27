@@ -5,6 +5,9 @@ import AHProtocol
 struct AgentBadge: View {
     let agent: AgentRef
     var size: CGFloat = 36
+    /// Say the Agent's name to VoiceOver. Beside a text that already names the Agent the badge stays
+    /// silent; where a session's title took the name's place, the badge is the only one left to tell.
+    var spoken = false
 
     var body: some View {
         let style = AgentStyle(kind: agent.kind)
@@ -17,7 +20,8 @@ struct AgentBadge: View {
             mark(style)
         }
         .frame(width: size, height: size)
-        .accessibilityHidden(true)
+        .accessibilityHidden(!spoken)
+        .accessibilityLabel(spoken ? agent.label : "")
     }
 
     @ViewBuilder

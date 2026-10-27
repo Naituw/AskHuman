@@ -413,6 +413,7 @@ impl Actor {
             mac: self.mac_name(),
             agent: label,
             project: project.clone(),
+            session: None,
             text: if preview.is_empty() {
                 clip(&title, PUSH_PREVIEW_MAX_CHARS)
             } else {

@@ -3482,10 +3482,9 @@ fn select_im_delivery_candidates(
     }
 }
 
-fn im_conversation_origin(
-    entry: &RequestEntry,
-    resolved_hint: Option<AgentKind>,
-) -> crate::channels::ConversationOrigin {
+/// The Agent that asks, as far as it is known: the hint of the caller, else what the daemon
+/// resolved from the process tree, else what the caller reported.
+fn entry_agent_kind(entry: &RequestEntry, resolved_hint: Option<AgentKind>) -> Option<AgentKind> {
     let resolved = entry
         .resolved_agent
         .lock()
@@ -3493,7 +3492,14 @@ fn im_conversation_origin(
         .and_then(|slot| slot.as_ref().and_then(|agent| agent.kind.clone()))
         .and_then(|kind| AgentKind::parse(&kind));
     let initial = entry.show.agent_kind.as_deref().and_then(AgentKind::parse);
-    let kind = resolved_hint.or(resolved).or(initial);
+    resolved_hint.or(resolved).or(initial)
+}
+
+fn im_conversation_origin(
+    entry: &RequestEntry,
+    resolved_hint: Option<AgentKind>,
+) -> crate::channels::ConversationOrigin {
+    let kind = entry_agent_kind(entry, resolved_hint);
     crate::channels::ConversationOrigin::new(
         &entry.show.source,
         kind.map(AgentKind::as_str),
@@ -3659,7 +3665,12 @@ async fn attach_im_channels(
     }
 
     if candidates.contains(&"ios") {
-        match ios_channel_for(state, &request.id) {
+        let session = ios_session_ref(
+            state,
+            entry_agent_kind(entry, agent_kind),
+            entry.agent_session_id.as_deref(),
+        );
+        match ios_channel_for(state, &request.id, session) {
             Some(ch) => {
                 let origin = im_conversation_origin(entry, agent_kind);
                 attached |= attach_channel(entry, ch, &request, &origin, &sink);
@@ -3800,7 +3811,14 @@ async fn attach_confirm_im_channels(
                 }
             },
             "ios" => match ios_gateway(state) {
-                Some(gateway) => crate::channels::confirm::start_ios(entry.clone(), gateway),
+                Some(gateway) => {
+                    let session = ios_session_ref(
+                        state,
+                        AgentKind::parse(&entry.agent_kind),
+                        Some(&entry.agent_session_id),
+                    );
+                    crate::channels::confirm::start_ios(entry.clone(), gateway, session)
+                }
                 None => {
                     if entry.mark_failed("ios", "iOS gateway unavailable") {
                         entry

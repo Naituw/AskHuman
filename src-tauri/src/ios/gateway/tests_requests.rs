@@ -418,6 +418,144 @@ async fn large_requests_arrive_as_a_summary_first_and_huge_ones_are_truncated() 
     assert!(full.request.ask.unwrap().message.text.len() < 500 * 1024);
 }
 
+// ---------------------------------------------------------------- session title
+
+fn deliver_titled_ask(fx: &Fixture, id: &str, title: &str) -> Arc<FakeAsk> {
+    let (ask, mut view) = sample_ask(id);
+    view.session_title = Some(title.to_string());
+    let sink = FakeAsk::new();
+    fx.gateway.deliver(DeliverRequest {
+        view,
+        sink: Sink::Ask(sink.clone()),
+        ask: Some(ask),
+        deadline_ms: None,
+        assets: Vec::new(),
+    });
+    sink
+}
+
+/// What the phone reads out of a push with its pairing key.
+fn open_push(phone: &TestPhone, push: &wire::RelayPush) -> serde_json::Value {
+    let keys = phone.keys.clone().unwrap();
+    let plain = envelope::open(&keys.m2p, Scope::Push, &push.ah).unwrap();
+    serde_json::from_slice(&plain).unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_session_title_goes_with_the_request_to_a_live_phone() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    phone.clear_queue();
+
+    deliver_titled_ask(&fx, "req1", "Refactor the gateway");
+    let new: wire::RequestNew = phone.recv_body(t::REQUEST_NEW).await;
+    assert_eq!(
+        new.request.session_title.as_deref(),
+        Some("Refactor the gateway")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_inbox_lists_a_request_with_its_session_title_and_the_full_view_agrees() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.pair_phone().await;
+    deliver_titled_ask(&fx, "req1", "Refactor the gateway");
+    deliver_ask(&fx, "req2");
+    phone.set_presence(true, true).await;
+    phone.hello().await;
+
+    let inbox: wire::InboxSnapshot = phone.recv_body(t::INBOX_SNAPSHOT).await;
+    let titled = inbox.items.iter().find(|item| item.id == "req1").unwrap();
+    let plain = inbox.items.iter().find(|item| item.id == "req2").unwrap();
+    assert_eq!(
+        titled.session_title.as_deref(),
+        Some("Refactor the gateway")
+    );
+    assert_eq!(plain.session_title, None);
+
+    phone
+        .send(&wire::RequestGet {
+            request_id: "req1".into(),
+        })
+        .await;
+    let full: wire::RequestFull = phone.recv_body(t::REQUEST_FULL).await;
+    assert_eq!(
+        full.request.session_title.as_deref(),
+        Some("Refactor the gateway")
+    );
+    assert_eq!(
+        full.request.content_hash, titled.content_hash,
+        "the summary describes this very view"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_pushed_question_carries_the_session_title_cut_short() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    phone.clear_queue();
+
+    deliver_titled_ask(&fx, "req1", "Refactor the gateway");
+    fx.settle().await;
+    let push = fx.pusher.last().unwrap();
+    let plain = open_push(&phone, &push);
+    assert_eq!(plain["session"], "Refactor the gateway");
+    assert_eq!(plain["text"], "Pick a deployment strategy");
+    let on_the_wire = serde_json::to_string(&push).unwrap();
+    assert!(
+        !on_the_wire.contains("Refactor"),
+        "the relay sees ciphertext only"
+    );
+
+    // A title longer than a notification has room for is cut.
+    let long = "word ".repeat(40);
+    let long = long.trim();
+    deliver_titled_ask(&fx, "req2", long);
+    fx.settle().await;
+    let plain = open_push(&phone, &fx.pusher.last().unwrap());
+    let session = plain["session"].as_str().unwrap();
+    assert_eq!(session.chars().count(), wire::PUSH_SESSION_MAX_CHARS + 1);
+    assert!(session.ends_with('…'));
+    assert!(long.starts_with(session.trim_end_matches('…')));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_notification_that_replaces_a_pushed_question_keeps_its_title() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    phone.clear_queue();
+
+    deliver_titled_ask(&fx, "req1", "Refactor the gateway");
+    fx.settle().await;
+    assert_eq!(fx.pusher.count(), 1);
+    // Another channel answers: the notification on the phone is replaced in place.
+    fx.gateway
+        .resolve_and_wait("req1", Resolution::AnsweredElsewhere("Popup".into()))
+        .await;
+    fx.settle().await;
+    assert_eq!(fx.pusher.count(), 2);
+    let push = fx.pusher.last().unwrap();
+    assert_eq!(push.kind, "replace");
+    let plain = open_push(&phone, &push);
+    assert_eq!(plain["k"], "resolved");
+    assert_eq!(plain["session"], "Refactor the gateway");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_question_without_a_session_title_says_nothing_of_one() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    phone.clear_queue();
+
+    deliver_ask(&fx, "req1");
+    fx.settle().await;
+    let plain = open_push(&phone, &fx.pusher.last().unwrap());
+    assert!(plain.get("session").is_none(), "{plain}");
+}
+
 // ---------------------------------------------------------------- push
 
 #[tokio::test(start_paused = true)]
