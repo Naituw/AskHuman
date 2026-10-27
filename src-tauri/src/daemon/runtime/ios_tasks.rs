@@ -161,6 +161,7 @@ pub(super) async fn choices(state: &Arc<ServerState>) -> TaskChoices {
 /// The TODOs of the project a workspace belongs to, as IM `/new` offers them.
 pub(super) fn todos(workspace: &str) -> TodoChoices {
     let project = crate::project::detect_from(Path::new(workspace));
+    crate::todo_sync::service::before_read(&project);
     let mut todos = crate::todos::list(&project);
     let overflow = todos.len().saturating_sub(crate::todos::MAX_OPTION_TODOS) as u64;
     todos.truncate(crate::todos::MAX_OPTION_TODOS);

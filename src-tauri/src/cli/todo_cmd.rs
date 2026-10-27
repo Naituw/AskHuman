@@ -16,6 +16,8 @@ pub fn dispatch(args: &[String], lang: Lang) -> ! {
         eprintln!("{}cannot determine project", i18n::err_prefix(lang));
         exit(1);
     }
+    // iCloud todo sync: a new worktree gets its todos before any of the commands below look.
+    crate::todo_sync::service::before_read(&project);
     match args.first().map(String::as_str) {
         Some("add") => add(&project, &args[1..], lang),
         // 无子命令时默认 list（顺手查看）。

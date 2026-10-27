@@ -1099,6 +1099,7 @@ pub(super) async fn start_task_input(
     lang: Lang,
 ) {
     let project = crate::project::detect_from(std::path::Path::new(&payload.workspace));
+    crate::todo_sync::service::before_read(&project);
     let mut todos = crate::todos::list(&project);
     let overflow_note = crate::todos::overflow_note(todos.len(), lang);
     todos.truncate(crate::todos::MAX_OPTION_TODOS);

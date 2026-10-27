@@ -9,7 +9,9 @@ use super::links::testing::MapResolver;
 use super::model::{PauseReason, St, State};
 use super::tick::{self, Env, Failpoints, Opts, TickError, TickReport};
 use super::transport::mem::{Cloud, Faults, MemTransport};
-use super::transport::AccountStatus;
+use super::transport::{
+    AccountInfo, AccountStatus, FetchPage, NetError, OutRecord, SaveResult, Transport,
+};
 use crate::todos::{self, TodoFile};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -1598,4 +1600,177 @@ fn the_local_phase_is_cheap_on_stress_data() {
         median(local),
         median(baseline)
     );
+}
+
+// ---- hooks and the production helper -----------------------------------------------------------
+
+/// What the real client does when the helper app cannot be used: the account step fails, softly.
+struct Failing(NetError);
+
+impl Transport for Failing {
+    fn account(&mut self) -> Result<AccountInfo, NetError> {
+        Err(self.0.clone())
+    }
+    fn ensure(&mut self) -> Result<(), NetError> {
+        unreachable!("the account step already failed")
+    }
+    fn fetch(&mut self, _token: Option<&str>) -> Result<FetchPage, NetError> {
+        unreachable!("the account step already failed")
+    }
+    fn save(&mut self, _records: &[OutRecord]) -> Result<Vec<SaveResult>, NetError> {
+        unreachable!("the account step already failed")
+    }
+    fn delete_zone(&mut self) -> Result<(), NetError> {
+        unreachable!("the account step already failed")
+    }
+}
+
+impl Device {
+    /// One tick through a transport of the test's choosing, `after_ms` later than the last one.
+    fn tick_via<T: Transport>(
+        &mut self,
+        transport: &mut T,
+        opts: &Opts,
+        after_ms: u64,
+    ) -> TickReport {
+        self.now += after_ms;
+        tick::full(
+            &self.env,
+            &self.resolver,
+            transport,
+            &self.keys,
+            self.now,
+            &Failpoints::off(),
+            opts,
+        )
+        .expect("tick")
+    }
+}
+
+#[test]
+fn a_helper_that_is_gone_is_soft_and_everything_local_still_happens() {
+    let cloud = Cloud::shared(10);
+    let mut a = Device::new("A", &cloud, &[("/a", Some(P1))]);
+    a.enable();
+    a.add("/a", "one");
+    a.tick();
+
+    a.add("/a", "two");
+    let mut gone = Failing(NetError::Unavailable(
+        "the sync helper is not running".into(),
+    ));
+    let r = a.tick_via(&mut gone, &Opts::default(), 1_000);
+    assert_eq!(
+        r.unavailable.as_deref(),
+        Some("the sync helper is not running")
+    );
+    assert!(!r.offline && !r.timed_out && r.paused.is_none(), "{r:?}");
+    // The edit became an entity that waits for the cloud; nothing was lost.
+    assert_eq!(a.state().entities.values().filter(|e| e.dirty).count(), 1);
+    assert_eq!(a.texts("/a"), ["one", "two"]);
+
+    // The helper is back: the waiting entity goes out.
+    let r = a.tick();
+    assert_eq!(r.pushed, 1, "{r:?}");
+    assert_eq!(a.state().entities.values().filter(|e| e.dirty).count(), 0);
+}
+
+#[test]
+fn a_call_that_ran_out_of_time_is_not_an_outage() {
+    let cloud = Cloud::shared(11);
+    let mut a = Device::new("A", &cloud, &[("/a", Some(P1))]);
+    a.enable();
+    a.add("/a", "one");
+    a.tick();
+
+    let mut slow = Failing(NetError::TimedOut);
+    let r = a.tick_via(&mut slow, &Opts::default(), 1_000);
+    assert!(
+        r.timed_out && !r.offline && r.unavailable.is_none(),
+        "{r:?}"
+    );
+    assert!(a.state().paused.is_none());
+}
+
+#[test]
+fn a_recent_pull_lets_whats_next_skip_the_network_but_not_the_local_phase() {
+    let cloud = Cloud::shared(12);
+    let mut a = Device::new("A", &cloud, &[("/a", Some(P1)), ("/a2", Some(P1))]);
+    let mut b = Device::new("B", &cloud, &[("/b", Some(P1))]);
+    a.enable();
+    b.enable();
+    b.add("/b", "from b");
+    b.tick();
+    a.tick();
+    assert_eq!(a.texts("/a2"), ["from b"]);
+
+    let fresh = Opts {
+        deadline: None,
+        fresh_within_ms: Some(20_000),
+    };
+    // 5 s after the pull: nothing is fetched, yet this Mac's own edit is already an entity.
+    a.add("/a", "local edit");
+    let fetches = cloud.borrow().fetches;
+    let mut mem = MemTransport::new(&cloud);
+    let r = a.tick_via(&mut mem, &fresh, 5_000);
+    assert!(r.fresh && !r.pulled && r.pushed == 0, "{r:?}");
+    assert_eq!(cloud.borrow().fetches, fetches);
+    assert_eq!(a.state().entities.values().filter(|e| e.dirty).count(), 1);
+
+    // 30 s after: stale, so it pulls (and, being allowed to, pushes).
+    let r = a.tick_via(&mut mem, &fresh, 25_000);
+    assert!(r.pulled && !r.fresh && r.pushed == 1, "{r:?}");
+
+    // A device that never completed a pull is never "fresh".
+    let c_cloud = Cloud::shared(13);
+    let mut c = Device::new("C", &c_cloud, &[("/c", Some(P1))]);
+    c.enable();
+    let mut mem = MemTransport::new(&c_cloud);
+    let r = c.tick_via(&mut mem, &fresh, 0);
+    assert!(r.pulled && !r.fresh, "{r:?}");
+}
+
+#[test]
+fn a_tick_with_a_deadline_does_not_queue_behind_a_running_one() {
+    let cloud = Cloud::shared(14);
+    let mut a = Device::new("A", &cloud, &[("/a", Some(P1))]);
+    a.enable();
+    a.tick();
+
+    let _running = super::store::lock_blocking(&a.env.dir).unwrap();
+    let started = std::time::Instant::now();
+    let opts = Opts {
+        deadline: Some(started + Duration::from_millis(150)),
+        fresh_within_ms: None,
+    };
+    let mut mem = MemTransport::new(&cloud);
+    let r = a.tick_via(&mut mem, &opts, 1_000);
+    assert!(r.busy && !r.pulled, "{r:?}");
+    assert!(started.elapsed() < Duration::from_secs(3));
+}
+
+#[test]
+fn renaming_a_mac_reaches_the_other_macs() {
+    let cloud = Cloud::shared(15);
+    let mut a = Device::new("Studio", &cloud, &[("/a", Some(P1))]);
+    let mut b = Device::new("Air", &cloud, &[("/b", Some(P1))]);
+    a.enable();
+    b.enable();
+    a.tick();
+    b.tick();
+
+    a.env.device_name = "Office Studio".to_string();
+    a.tick();
+    b.tick();
+    assert_eq!(a.state().device_name, "Office Studio");
+    let names: BTreeSet<String> = b.state().devices.values().map(|d| d.name.clone()).collect();
+    assert!(
+        names.contains("Office Studio") && !names.contains("Studio"),
+        "{names:?}"
+    );
+
+    // An empty configured name keeps the stored one.
+    a.env.device_name = String::new();
+    a.tick();
+    assert_eq!(a.state().device_name, "Office Studio");
 }

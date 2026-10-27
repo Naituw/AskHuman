@@ -20,12 +20,20 @@ pub enum NetError {
     /// The change token is too old to continue from; start over from nothing.
     TokenExpired,
     Quota,
+    /// The call did not finish in the time it was given (a deadline or the per-call limit). The
+    /// request may still complete on the other side; the next tick simply fetches again.
+    TimedOut,
+    /// The helper app cannot be used at all (not running, speaks another protocol, has no CloudKit
+    /// access): nothing is wrong with the network or the account.
+    Unavailable(String),
     Other(String),
 }
 
 impl fmt::Display for NetError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            NetError::TimedOut => write!(f, "timed out"),
+            NetError::Unavailable(m) => write!(f, "sync helper unavailable: {m}"),
             NetError::Offline => write!(f, "offline"),
             NetError::RateLimited { retry_after_ms } => {
                 write!(f, "rate limited (retry after {retry_after_ms} ms)")

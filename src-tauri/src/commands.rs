@@ -1038,6 +1038,11 @@ pub struct TodosInit {
 
 #[tauri::command]
 pub fn todos_init() -> TodosInit {
+    // iCloud todo sync: opening the window pulls if the last pull is stale; the file watcher
+    // refreshes the lists when the result lands. Nothing waits for it.
+    if crate::todo_sync::service::is_enabled() {
+        std::thread::spawn(crate::todo_sync::service::refresh_if_stale);
+    }
     // 现读配置而非 `AppState.config`：GUI Host 常驻，进程级快照会滞后于设置变更，
     // 重开窗口时会拿到旧主题/语言（原生窗口底色已切、内容却停在旧主题）。
     let config = AppConfig::load_without_secrets();

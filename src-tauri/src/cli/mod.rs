@@ -13,6 +13,7 @@ pub mod install_check;
 pub mod ios_cmd;
 pub mod output;
 pub mod todo_cmd;
+pub mod todo_sync_cmd;
 pub mod update_cmd;
 
 use crate::i18n::{self, Lang};
@@ -379,6 +380,10 @@ pub fn dispatch() {
         "todo" => {
             todo_cmd::dispatch(&argv[2..], lang);
         }
+        // 隐藏：跨 Mac 待办同步的排障与 helper 触发入口（spec todo-sync §8）；不进 help。
+        "todo-sync" => {
+            todo_sync_cmd::dispatch(&argv[2..], lang);
+        }
         // 隐藏调试子命令组（不进 help）：如钉钉 watch PoC 探针 `debug dd-watch-poc`。
         "debug" => {
             debug_cmd::dispatch(&argv[2..], lang);
@@ -425,6 +430,11 @@ pub fn dispatch() {
                 let message = crate::models::MessagePrompt::new(parsed.message_text, files);
                 // 项目 key（git 根，回退 cwd）：whats-next 取待办 + TaskRequest 归属共用。
                 let project = crate::project::detect();
+                // 跨 Mac 待办同步（spec todo-sync §6.3）：构建待办选项（含 ⚡ 自动路径）之前，
+                // 本地阶段 + 「过期才拉」（≤1.5 秒，永不阻塞或失败）。未启用时一次 stat。
+                if parsed.whats_next {
+                    crate::todo_sync::service::before_whats_next(&project);
+                }
                 // 自动执行待办（第 17 轮定案）：whats-next 且存在自动待办 → 不发卡提问，直接
                 // 出队最靠前的一条并打印其原文（agent 把它当作下一个任务）；完成报告照常落回复
                 // 历史。被并发拿走（竞态）→ 回落正常提问。Stop 卡不走此路径。

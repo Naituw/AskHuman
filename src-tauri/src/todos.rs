@@ -121,11 +121,11 @@ impl TodoFile {
     }
 }
 
-fn todos_file() -> PathBuf {
+pub(crate) fn todos_file() -> PathBuf {
     crate::paths::state_dir().join("todos.json")
 }
 
-fn todos_lock() -> PathBuf {
+pub(crate) fn todos_lock() -> PathBuf {
     crate::paths::state_dir().join("todos.lock")
 }
 

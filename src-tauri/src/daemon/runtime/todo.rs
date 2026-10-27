@@ -555,6 +555,8 @@ pub(super) async fn send_todo_manage(
     project: &str,
     lang: Lang,
 ) {
+    // iCloud todo sync: show what the other Macs added (local phase only; never the network).
+    crate::todo_sync::service::before_read(project);
     let prefix = crate::autochannel::cmd_prefix(channel_id);
     match channel_id {
         "feishu" => {

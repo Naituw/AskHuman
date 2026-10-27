@@ -134,6 +134,10 @@ pub struct TickReport {
     pub file_changed: bool,
     pub paused: Option<PauseReason>,
     pub offline: bool,
+    /// The helper app cannot be used (why); everything local was still done.
+    pub unavailable: Option<String>,
+    /// The last complete pull was recent enough (`Opts::fresh_within_ms`): the network was not used.
+    pub fresh: bool,
     pub retry_after_ms: Option<u64>,
     /// The deadline passed before the tick finished (state is consistent; the next tick continues).
     pub timed_out: bool,
@@ -143,8 +147,12 @@ pub struct TickReport {
 
 #[derive(Debug, Clone, Default)]
 pub struct Opts {
-    /// Stop starting new network steps after this instant.
+    /// Stop starting new network steps after this instant; also bounds the wait for the tick lock
+    /// (a tick that cannot get it in time reports `busy` and leaves the running one to finish).
     pub deadline: Option<Instant>,
+    /// Skip the network phases when the last complete pull is at most this many milliseconds old
+    /// (whats-next: "pull only if stale"). The local phase always runs.
+    pub fresh_within_ms: Option<u64>,
 }
 
 /// What the pull and push steps need besides the transport and the state.
@@ -351,6 +359,14 @@ fn net_failure(
     match e {
         NetError::Offline => {
             report.offline = true;
+            Ok(())
+        }
+        NetError::TimedOut => {
+            report.timed_out = true;
+            Ok(())
+        }
+        NetError::Unavailable(why) => {
+            report.unavailable = Some(why);
             Ok(())
         }
         NetError::RateLimited { retry_after_ms } => {
@@ -677,11 +693,32 @@ pub fn full<T: Transport>(
         fp,
         opts,
     };
-    let _lock = store::lock_blocking(&env.dir).map_err(|e| io_err("todo-sync.lock", e))?;
+    // With a deadline the wait for a running tick is bounded by it; without one this tick is the
+    // one that must happen (a helper or window trigger), so it waits its turn.
+    let _lock = match opts.deadline {
+        Some(deadline) => {
+            match store::lock_timeout(&env.dir, deadline.saturating_duration_since(Instant::now()))
+                .map_err(|e| io_err("todo-sync.lock", e))?
+            {
+                Some(lock) => lock,
+                None => {
+                    report.busy = true;
+                    return Ok(report);
+                }
+            }
+        }
+        None => store::lock_blocking(&env.dir).map_err(|e| io_err("todo-sync.lock", e))?,
+    };
     let Some(mut state) = load_for_tick(env, now_ms, &mut report)? else {
         report.disabled = true;
         return Ok(report);
     };
+    // The user renamed this Mac: the next device push publishes the new name.
+    if !env.device_name.is_empty() && state.device_name != env.device_name {
+        state.device_name = env.device_name.clone();
+        state.last_device_push_ms = 0;
+        persist(env, &state)?;
+    }
 
     // The very first sync pulls before the first local phase (see `local_only`); later ticks put
     // local edits first so they are never delayed by the network.
@@ -692,6 +729,13 @@ pub fn full<T: Transport>(
     if let Some(p) = &state.paused {
         if p.reason != PauseReason::NotSignedIn {
             report.paused = Some(p.reason);
+            return Ok(report);
+        }
+    }
+    // The tick we waited for may have pulled just now: nothing to add over the network.
+    if let Some(limit) = opts.fresh_within_ms {
+        if state.last_pull_ok_ms != 0 && now_ms.saturating_sub(state.last_pull_ok_ms) <= limit {
+            report.fresh = true;
             return Ok(report);
         }
     }

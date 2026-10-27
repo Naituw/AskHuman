@@ -138,6 +138,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
     let mut todos = if project.is_empty() {
         Vec::new()
     } else {
+        crate::todo_sync::service::before_read(&project);
         crate::todos::list(&project)
     };
     let total_todos = todos.len();
