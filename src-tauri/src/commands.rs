@@ -1032,6 +1032,8 @@ pub struct TodosInit {
     /// Perf instrumentation is on for this process (`ASKHUMAN_PERF_ID` present); the frontend
     /// reports its milestones only then.
     perf: bool,
+    /// The user's home directory, so the project header can abbreviate paths to `~/...`.
+    home: String,
 }
 
 #[tauri::command]
@@ -1047,7 +1049,41 @@ pub fn todos_init() -> TodosInit {
         popup_submit_key: config.general.popup_submit_key.as_str().to_string(),
         new_task_supported: crate::integrations::agent_launch::terminal_available(),
         perf: !crate::perf::effective_id().is_empty(),
+        home: crate::paths::home().to_string_lossy().to_string(),
     }
+}
+
+/// One project's pending todos in the sidebar's "All todos" view.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoGroupView {
+    /// Project key.
+    key: String,
+    entries: Vec<TodoEntryView>,
+}
+
+/// Groups with at least one pending todo, in key order (the frontend orders them like the
+/// sidebar, which knows about activity and recency).
+fn pending_groups(
+    all: std::collections::HashMap<String, Vec<crate::todos::TodoEntry>>,
+) -> Vec<TodoGroupView> {
+    let mut groups: Vec<TodoGroupView> = all
+        .into_iter()
+        .filter(|(_, entries)| !entries.is_empty())
+        .map(|(key, entries)| TodoGroupView {
+            key,
+            entries: entries.into_iter().map(TodoEntryView::from).collect(),
+        })
+        .collect();
+    groups.sort_by(|a, b| a.key.cmp(&b.key));
+    groups
+}
+
+/// Pending todos of every project in a single read: the "All todos" view of the todos window.
+/// Local file only, like `todos_list`; called on demand when that view is opened.
+#[tauri::command]
+pub fn todos_all_pending() -> Vec<TodoGroupView> {
+    pending_groups(crate::todos::all())
 }
 
 /// 待办窗口项目选择器候选（spec todo-whats-next D9）。
@@ -4997,6 +5033,29 @@ mod tests {
             pinned,
             hidden,
         }
+    }
+
+    #[test]
+    fn pending_groups_skip_empty_queues_and_sort_by_key() {
+        let entry = |id: &str| crate::todos::TodoEntry {
+            id: id.to_string(),
+            text: format!("todo {id}"),
+            created_at_ms: 1,
+            agent_kind: None,
+            auto: false,
+            attachments: Vec::new(),
+        };
+        let mut all = std::collections::HashMap::new();
+        all.insert("/b".to_string(), vec![entry("b1"), entry("b2")]);
+        all.insert("/empty".to_string(), Vec::new());
+        all.insert("/a".to_string(), vec![entry("a1")]);
+
+        let groups = pending_groups(all);
+
+        let keys: Vec<&str> = groups.iter().map(|g| g.key.as_str()).collect();
+        assert_eq!(keys, ["/a", "/b"]);
+        assert_eq!(groups[1].entries.len(), 2);
+        assert_eq!(groups[1].entries[0].id, "b1");
     }
 
     #[test]

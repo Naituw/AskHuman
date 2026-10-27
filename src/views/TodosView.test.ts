@@ -2,10 +2,12 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n";
 import TodosView from "./TodosView.vue";
+import { ALL_KEY } from "./todos/todoProjects";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 const ipc = vi.hoisted(() => ({
   openNewTask: vi.fn(async () => {}),
+  openPath: vi.fn(async (_path?: string) => {}),
   readImageDataUrl: vi.fn(async () => "data:image/png;base64,cGF0aA=="),
   localImageCreateScope: vi.fn(async () => "todo-scope"),
   localImagePrepare: vi.fn(async (_scope: string, path: string) => ({ token: path, width: 10, height: 10 })),
@@ -13,20 +15,21 @@ const ipc = vi.hoisted(() => ({
   localImageReleaseScope: vi.fn(async () => {}),
   todosAdd: vi.fn(async () => ({ id: "created" })),
   todosClear: vi.fn(async () => {}),
-  todosComplete: vi.fn(async () => {}),
-  todosHistory: vi.fn(async () => []),
+  todosAllPending: vi.fn(async (): Promise<unknown[]> => []),
+  todosComplete: vi.fn(async (_project?: string, _id?: string) => {}),
+  todosHistory: vi.fn(async (_project?: string): Promise<unknown[]> => []),
   todosHistoryClear: vi.fn(async () => {}),
-  todosInit: vi.fn(async () => ({
+  todosInit: vi.fn(async (): Promise<Record<string, unknown>> => ({
     theme: "system",
     lang: "zh",
     popupSubmitKey: "cmdEnter",
     newTaskSupported: false,
   })),
-  todosList: vi.fn(async (): Promise<unknown[]> => []),
-  todosProjects: vi.fn(async () => [
+  todosList: vi.fn(async (_project?: string): Promise<unknown[]> => []),
+  todosProjects: vi.fn(async (): Promise<unknown[]> => [
     { key: "/project", name: "project", count: 0, section: "recent" },
   ]),
-  todosProjectsEnriched: vi.fn(async () => [
+  todosProjectsEnriched: vi.fn(async (): Promise<unknown[]> => [
     { key: "/project", name: "project", count: 0, section: "recent" },
   ]),
   todosRemove: vi.fn(async () => {}),
@@ -37,7 +40,6 @@ const ipc = vi.hoisted(() => ({
   todosUpdate: vi.fn(async () => ({ id: "updated" })),
   todosUpdateAttachments: vi.fn(async () => ({ id: "updated" })),
   fileIconDataUrl: vi.fn(async () => null),
-  openPath: vi.fn(async () => {}),
   previewAttachments: vi.fn(async () => {}),
   showAttachmentMenu: vi.fn(async () => {}),
   todoAttachmentThumbnail: vi.fn(async () => null),
@@ -252,3 +254,263 @@ describe("TodosView new-todo clipboard attachments", () => {
     wrapper.unmount();
   });
 });
+
+// ===== Sidebar navigation and the "All todos" view (spec todo-sync §9) =====
+
+const A = "/Users/me/a";
+const B = "/Users/me/b";
+const C = "/Users/me/c";
+
+function todo(id: string, text: string) {
+  return { id, text, createdAtMs: Date.now() - 60_000 };
+}
+
+/** Two projects with todos (a: 2, b: 1) and one recent project; the home directory is /Users/me. */
+function useWorkspace(): void {
+  const projects = [
+    { key: A, name: "a", count: 2, section: "withTodos" },
+    { key: B, name: "b", count: 1, section: "withTodos" },
+    { key: C, name: "c", count: 0, section: "recent" },
+  ];
+  ipc.todosProjects.mockImplementation(async () => projects);
+  ipc.todosProjectsEnriched.mockImplementation(async () => projects);
+  ipc.todosList.mockImplementation(async (project?: string) =>
+    project === A
+      ? [todo("a1", "alpha one"), todo("a2", "alpha two")]
+      : project === B
+        ? [todo("b1", "bravo one")]
+        : []
+  );
+  // Deliberately not in sidebar order: the view must order the groups like the sidebar.
+  ipc.todosAllPending.mockImplementation(async () => [
+    { key: B, entries: [todo("b1", "bravo one")] },
+    { key: A, entries: [todo("a1", "alpha one"), todo("a2", "alpha two")] },
+  ]);
+  ipc.todosInit.mockImplementation(async () => ({
+    theme: "system",
+    lang: "zh",
+    popupSubmitKey: "cmdEnter",
+    newTaskSupported: false,
+    home: "/Users/me",
+  }));
+}
+
+describe("TodosView sidebar", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tauriEvents.listeners.clear();
+    i18n.global.locale.value = "zh";
+    // jsdom has no layout, hence no scrollIntoView.
+    Element.prototype.scrollIntoView = vi.fn();
+    useWorkspace();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    document.body.innerHTML = "";
+  });
+
+  async function open() {
+    const wrapper = mount(TodosView, { attachTo: document.body, global: { plugins: [i18n] } });
+    await flushPromises();
+    return wrapper;
+  }
+
+  const rowTexts = (wrapper: Awaited<ReturnType<typeof open>>) =>
+    wrapper.findAll(".td-row .td-text").map((node) => node.text());
+
+  it("lists the projects in the sidebar and describes the selected one in the header", async () => {
+    const wrapper = await open();
+    expect(
+      wrapper.findAll("[role=option]").map((node) => node.attributes("data-key"))
+    ).toEqual([ALL_KEY, A, B, C]);
+    expect(wrapper.get(".td-project").text()).toBe("a");
+    expect(wrapper.get(".td-path").text()).toBe("~/a");
+    expect(rowTexts(wrapper)).toEqual(["alpha one", "alpha two"]);
+    expect(wrapper.find("select").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("switches the todo list when another project is picked", async () => {
+    const wrapper = await open();
+    await wrapper.get(`[data-key="${B}"]`).trigger("click");
+    await flushPromises();
+    expect(ipc.todosList).toHaveBeenCalledWith(B);
+    expect(wrapper.get(".td-project").text()).toBe("b");
+    expect(rowTexts(wrapper)).toEqual(["bravo one"]);
+    expect(wrapper.get(`[data-key="${B}"]`).attributes("aria-selected")).toBe("true");
+    wrapper.unmount();
+  });
+
+  it("narrows the sidebar with the search box", async () => {
+    const wrapper = await open();
+    await wrapper.get(".td-side-input").setValue("b");
+    expect(
+      wrapper.findAll("[role=option]").map((node) => node.attributes("data-key"))
+    ).toEqual([ALL_KEY, B]);
+    wrapper.unmount();
+  });
+
+  it("preselects the project of the todos-goto-project event", async () => {
+    const wrapper = await open();
+    tauriEvents.listeners.get("todos-goto-project")?.({ payload: C });
+    await flushPromises();
+    expect(wrapper.get(".td-project").text()).toBe("c");
+    expect(wrapper.get(`[data-key="${C}"]`).attributes("aria-selected")).toBe("true");
+    wrapper.unmount();
+  });
+
+  it("shows every project's pending todos in All, ordered like the sidebar", async () => {
+    const wrapper = await open();
+    await wrapper.get(`[data-key="${ALL_KEY}"]`).trigger("click");
+    await flushPromises();
+    expect(ipc.todosAllPending).toHaveBeenCalledTimes(1);
+    expect(wrapper.get(".td-project").text()).toBe("全部待办");
+    expect(wrapper.get(".td-path").text()).toBe("2 个项目 · 3 项");
+    expect(wrapper.findAll(".td-all-name").map((node) => node.text())).toEqual(["a", "b"]);
+    expect(rowTexts(wrapper)).toEqual(["alpha one", "alpha two", "bravo one"]);
+    // The aggregate has no add box and no project menu.
+    expect(wrapper.find(".td-footer").exists()).toBe(false);
+    expect(wrapper.find(".td-menu-wrap").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("reloads All when the todos change", async () => {
+    const wrapper = await open();
+    await wrapper.get(`[data-key="${ALL_KEY}"]`).trigger("click");
+    await flushPromises();
+    tauriEvents.listeners.get("todos-updated")?.({ payload: null });
+    await flushPromises();
+    expect(ipc.todosAllPending).toHaveBeenCalledTimes(2);
+    wrapper.unmount();
+  });
+
+  it("completes a todo of another project from All after the undo window", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const wrapper = await open();
+    await wrapper.get(`[data-key="${ALL_KEY}"]`).trigger("click");
+    await flushPromises();
+    await wrapper.findAll(".td-all-row .td-check")[2].trigger("click");
+    expect(wrapper.findAll(".td-all-row")[2].classes()).toContain("completing");
+    expect(ipc.todosComplete).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1000);
+    await flushPromises();
+    expect(ipc.todosComplete).toHaveBeenCalledWith(B, "b1");
+    wrapper.unmount();
+  });
+
+  it("cancels a pending complete when it is unchecked within the undo window", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const wrapper = await open();
+    await wrapper.get(`[data-key="${ALL_KEY}"]`).trigger("click");
+    await flushPromises();
+    const check = wrapper.findAll(".td-all-row .td-check")[0];
+    await check.trigger("click");
+    await check.trigger("click");
+    vi.advanceTimersByTime(2000);
+    await flushPromises();
+    expect(ipc.todosComplete).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("opens a project from All with the clicked todo selected", async () => {
+    const wrapper = await open();
+    await wrapper.get(`[data-key="${ALL_KEY}"]`).trigger("click");
+    await flushPromises();
+    await wrapper.findAll(".td-all-row")[1].trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".td-project").text()).toBe("a");
+    expect(wrapper.find(".td-all").exists()).toBe(false);
+    expect(wrapper.get(".td-row.selected .td-text").text()).toBe("alpha two");
+    wrapper.unmount();
+  });
+
+  it("opens a project from its group header in All", async () => {
+    const wrapper = await open();
+    await wrapper.get(`[data-key="${ALL_KEY}"]`).trigger("click");
+    await flushPromises();
+    await wrapper.findAll(".td-all-open")[1].trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".td-project").text()).toBe("b");
+    expect(rowTexts(wrapper)).toEqual(["bravo one"]);
+    wrapper.unmount();
+  });
+
+  it("collapses long aggregates behind a show-more button", async () => {
+    ipc.todosAllPending.mockImplementation(async () => [
+      {
+        key: A,
+        entries: Array.from({ length: 120 }, (_, i) => todo(`t${i}`, `item ${i}`)),
+      },
+    ]);
+    const wrapper = await open();
+    await wrapper.get(`[data-key="${ALL_KEY}"]`).trigger("click");
+    await flushPromises();
+    expect(wrapper.findAll(".td-all-row")).toHaveLength(50);
+    expect(wrapper.get(".td-all-count").text()).toBe("120 项");
+    expect(wrapper.get(".td-all-more").text()).toBe("显示更多（70）");
+    await wrapper.get(".td-all-more").trigger("click");
+    expect(wrapper.findAll(".td-all-row")).toHaveLength(100);
+    await wrapper.get(".td-all-more").trigger("click");
+    expect(wrapper.findAll(".td-all-row")).toHaveLength(120);
+    expect(wrapper.find(".td-all-more").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("says so when no project has a todo", async () => {
+    ipc.todosAllPending.mockImplementation(async () => []);
+    const wrapper = await open();
+    await wrapper.get(`[data-key="${ALL_KEY}"]`).trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".empty-title").text()).toBe("还没有待办");
+    wrapper.unmount();
+  });
+
+  it("shows the sidebar as a drawer in narrow windows and closes it on pick", async () => {
+    const wrapper = await open();
+    const root = wrapper.get(".todos-win");
+    expect(root.classes()).not.toContain("drawer-open");
+    await wrapper.get(".td-side-toggle").trigger("click");
+    expect(root.classes()).toContain("drawer-open");
+    expect(wrapper.find(".td-scrim").exists()).toBe(true);
+    await wrapper.get(".td-scrim").trigger("click");
+    expect(root.classes()).not.toContain("drawer-open");
+    await wrapper.get(".td-side-toggle").trigger("click");
+    await wrapper.get(`[data-key="${B}"]`).trigger("click");
+    await flushPromises();
+    expect(root.classes()).not.toContain("drawer-open");
+    wrapper.unmount();
+  });
+
+  it("jumps to the project search on the find shortcut", async () => {
+    const wrapper = await open();
+    window.dispatchEvent(
+      // jsdom is never a Mac, so the primary modifier is Ctrl.
+      new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true })
+    );
+    await flushPromises();
+    expect(document.activeElement).toBe(wrapper.get(".td-side-input").element);
+    wrapper.unmount();
+  });
+
+  it("copies the project path and reveals the folder from the project menu", async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const wrapper = await open();
+    expect(wrapper.find(".td-menu").exists()).toBe(false);
+    await wrapper.get(".td-menu-wrap .td-icon-btn").trigger("click");
+    const items = wrapper.findAll(".td-menu-item");
+    expect(items).toHaveLength(2);
+    await items[0].trigger("click");
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith(A);
+    expect(wrapper.find(".td-menu").exists()).toBe(false);
+
+    await wrapper.get(".td-menu-wrap .td-icon-btn").trigger("click");
+    await wrapper.findAll(".td-menu-item")[1].trigger("click");
+    await flushPromises();
+    expect(ipc.openPath).toHaveBeenCalledWith(A);
+    wrapper.unmount();
+  });
+});
+

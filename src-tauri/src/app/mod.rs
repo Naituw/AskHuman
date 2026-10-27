@@ -2126,8 +2126,10 @@ where
     crate::perf::mark_env("todos.win.create");
     let builder = WebviewWindowBuilder::new(manager, "todos", WebviewUrl::App(url.into()))
         .title(i18n::tr(lang, "title.todos"))
-        .inner_size(520.0, 560.0)
-        .min_inner_size(400.0, 320.0)
+        // Sidebar (about 220 px) + the todo column; below ~640 px wide the sidebar becomes a
+        // drawer (spec todo-sync §9.2).
+        .inner_size(760.0, 580.0)
+        .min_inner_size(560.0, 360.0)
         .center()
         .always_on_top(pin_above_popup)
         .theme(theme);

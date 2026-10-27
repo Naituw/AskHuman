@@ -6,6 +6,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { applyTheme, fileToDataUrl } from "../lib/theme";
 import {
+  desktopPlatform,
   isWindows,
   primaryModifierPressed,
   primaryShortcutLabel,
@@ -13,6 +14,16 @@ import {
 import { applyLanguage } from "../i18n";
 import ComposerAttachments from "../components/ComposerAttachments.vue";
 import TodoAttachmentList from "./todos/TodoAttachmentList.vue";
+import TodosSidebar from "./todos/TodosSidebar.vue";
+import {
+  ALL_KEY,
+  ALL_ROW_LIMIT,
+  baseName,
+  buildAllModel,
+  buildSidebarModel,
+  labelProjects,
+  limitRows,
+} from "./todos/todoProjects";
 import { useLocalImageUrls } from "../lib/localImageUrls";
 import {
   clipboardImageFiles,
@@ -20,7 +31,9 @@ import {
 } from "./todos/todoInteraction";
 import {
   openNewTask,
+  openPath,
   todosAdd,
+  todosAllPending,
   todosClear,
   todosComplete,
   todosHistory,
@@ -44,6 +57,7 @@ import type {
   ImageAttachment,
   TodoDoneEntry,
   TodoEntry,
+  TodoGroup,
   TodoProjectInfo,
 } from "../lib/types";
 
@@ -80,14 +94,35 @@ const selected = ref<string>("");
 const entries = ref<TodoEntry[]>([]);
 const selectedTodoId = ref<string | null>(null);
 
-/** Selector section: projects that currently have pending todos. */
-const projectsWithTodos = computed(() =>
-  projects.value.filter((p) => p.section === "withTodos")
+
+// ===== Sidebar + "All todos" (spec todo-sync §9) =====
+/** The user's home directory, to show project paths as `~/...`. */
+const home = ref("");
+/** The "All todos" aggregate is showing instead of one project (`selected` keeps the last project). */
+const showAll = ref(false);
+const allGroups = ref<TodoGroup[]>([]);
+/** How many rows of the aggregate are rendered; "show more" raises it. */
+const allRowLimit = ref(ALL_ROW_LIMIT);
+const sidebarQuery = ref("");
+/** Narrow windows hide the sidebar in a drawer. */
+const drawerOpen = ref(false);
+const projectMenuOpen = ref(false);
+const sidebarRef = ref<InstanceType<typeof TodosSidebar> | null>(null);
+
+const sidebarModel = computed(() =>
+  buildSidebarModel(projects.value, sidebarQuery.value, home.value)
 );
-/** Selector section: recent workspaces / live agents (keys already in withTodos excluded). */
-const projectsRecent = computed(() =>
-  projects.value.filter((p) => p.section === "recent")
+const sidebarSelectedKey = computed(() => (showAll.value ? ALL_KEY : selected.value));
+const selectedLabel = computed(
+  () =>
+    labelProjects(projects.value, home.value).get(selected.value) ?? {
+      name: baseName(selected.value),
+      hint: "",
+      path: selected.value,
+    }
 );
+const allModel = computed(() => buildAllModel(allGroups.value, projects.value, home.value));
+const allView = computed(() => limitRows(allModel.value.groups, allRowLimit.value));
 // 首次加载完成前显示 Loading（避免空态闪现误导）。
 const loaded = ref(false);
 const newText = ref("");
@@ -179,11 +214,6 @@ function syncAddInputHeight(): void {
   syncTextareaHeight(addInputRef.value, ADD_INPUT_MIN_PX, ADD_INPUT_MAX_PX);
 }
 
-function basename(key: string): string {
-  const parts = key.replace(/\/+$/, "").split("/");
-  return parts[parts.length - 1] || key;
-}
-
 function agentLabel(kind?: string | null): string {
   if (!kind) return "";
   const key = `agents.kind.${kind}`;
@@ -197,7 +227,7 @@ function applyProjects(list: TodoProjectInfo[]): void {
   if (selected.value && !list.some((p) => p.key === selected.value)) {
     list = list.concat({
       key: selected.value,
-      name: basename(selected.value),
+      name: baseName(selected.value),
       count: 0,
       section: "recent",
     });
@@ -273,11 +303,21 @@ async function reloadEntries(): Promise<void> {
   }
 }
 
+async function reloadAllGroups(): Promise<void> {
+  allGroups.value = await todosAllPending();
+  // Drop optimistic complete state for ids that no longer exist in any queue.
+  const live = new Set(allGroups.value.flatMap((group) => group.entries.map((e) => e.id)));
+  for (const id of [...pendingCompleteTimers.keys()]) {
+    if (!live.has(id)) clearPendingComplete(id);
+  }
+}
+
 async function reloadAll(): Promise<void> {
   try {
-    // Phase 1: local lists only so the window / dropdown is interactive immediately.
+    // Phase 1: local lists only so the window / sidebar is interactive immediately.
     await reloadProjectsLocal();
-    await reloadEntries();
+    if (showAll.value) await reloadAllGroups();
+    else await reloadEntries();
   } catch (err) {
     console.warn("todos reload failed", err);
   } finally {
@@ -288,16 +328,68 @@ async function reloadAll(): Promise<void> {
   void enrichProjectsInBackground();
 }
 
-async function onSelect(): Promise<void> {
+/** Drops everything tied to the view that is being left (dialogs, drafts of edits, optimistic completes). */
+function resetViewState(): void {
   confirmKind.value = null;
   confirmDeleteId.value = null;
   operationError.value = "";
   selectedTodoId.value = null;
   confirmAttachmentRemoval.value = null;
+  projectMenuOpen.value = false;
   cancelEdit();
   histOpen.value = false;
   clearAllPendingComplete();
+}
+
+async function onSelect(): Promise<void> {
+  resetViewState();
   await reloadEntries();
+}
+
+/** Sidebar selection: a project key or `ALL_KEY` for the aggregate. */
+async function selectKey(key: string): Promise<void> {
+  drawerOpen.value = false;
+  try {
+    if (key === ALL_KEY) {
+      if (showAll.value) return;
+      resetViewState();
+      allRowLimit.value = ALL_ROW_LIMIT;
+      // Load first, then switch, so the aggregate never flashes empty.
+      await reloadAllGroups();
+      showAll.value = true;
+      return;
+    }
+    if (!showAll.value && key === selected.value) return;
+    showAll.value = false;
+    selected.value = key;
+    await onSelect();
+  } catch (err) {
+    console.warn("todos select failed", err);
+  }
+}
+
+/** "Open project" in the aggregate: switch to the project, optionally with one todo selected. */
+async function openProject(key: string, todoId?: string): Promise<void> {
+  await selectKey(key);
+  if (todoId) selectTodo(todoId, true);
+}
+
+async function copyProjectPath(): Promise<void> {
+  projectMenuOpen.value = false;
+  try {
+    await navigator.clipboard.writeText(selected.value);
+  } catch (err) {
+    console.warn("copy project path failed", err);
+  }
+}
+
+async function revealProject(): Promise<void> {
+  projectMenuOpen.value = false;
+  try {
+    await openPath(selected.value);
+  } catch (err) {
+    console.warn("reveal project failed", err);
+  }
 }
 
 // 添加行「自动执行」开关（第 17 轮定案）：勾选后新增的待办在 whats-next 时直接派发。
@@ -641,7 +733,9 @@ function onTodoNavigation(event: KeyboardEvent): void {
   const target = event.target;
   if (
     target instanceof HTMLElement &&
-    target.closest("textarea, input, select, [contenteditable='true'], .todo-attachments-list")
+    target.closest(
+      "textarea, input, select, [contenteditable='true'], .todo-attachments-list, .td-sidebar"
+    )
   ) {
     return;
   }
@@ -655,6 +749,28 @@ function onTodoNavigation(event: KeyboardEvent): void {
   if (!id) return;
   selectedTodoId.value = id;
   void nextTick(() => focusTodoRow(id));
+}
+
+/** ⌘/Ctrl+F jumps to the project search; Esc closes the drawer or the project menu. */
+function onWindowKeydown(event: KeyboardEvent): void {
+  if (
+    primaryModifierPressed(event) &&
+    !event.shiftKey &&
+    !event.altKey &&
+    event.key.toLowerCase() === "f"
+  ) {
+    event.preventDefault();
+    drawerOpen.value = true;
+    void nextTick(() => sidebarRef.value?.focusSearch());
+    return;
+  }
+  if (event.key === "Escape") {
+    if (projectMenuOpen.value) {
+      projectMenuOpen.value = false;
+    } else if (drawerOpen.value) {
+      drawerOpen.value = false;
+    }
+  }
 }
 
 async function onTodoPaste(event: ClipboardEvent): Promise<void> {
@@ -769,6 +885,7 @@ const confirmDeleteId = ref<string | null>(null);
 function onRootClick(): void {
   confirmDeleteId.value = null;
   confirmAttachmentRemoval.value = null;
+  projectMenuOpen.value = false;
 }
 
 async function removeEntry(id: string): Promise<void> {
@@ -815,6 +932,8 @@ async function doConfirmedClear(): Promise<void> {
 const COMPLETE_DELAY_MS = 1000;
 /** id → timer handle for optimistic complete. */
 const pendingCompleteTimers = new Map<string, number>();
+/** id → project key for completes started in the "All todos" view (absent = the selected project). */
+const pendingCompleteProject = new Map<string, string>();
 /** Reactive set of ids currently in the completing (checked / strikethrough) state. */
 const completingIds = ref<Set<string>>(new Set());
 
@@ -823,6 +942,7 @@ function isCompleting(id: string): boolean {
 }
 
 function clearPendingComplete(id: string): void {
+  pendingCompleteProject.delete(id);
   const timer = pendingCompleteTimers.get(id);
   if (timer !== undefined) {
     window.clearTimeout(timer);
@@ -840,11 +960,12 @@ function clearAllPendingComplete(): void {
     window.clearTimeout(timer);
   }
   pendingCompleteTimers.clear();
+  pendingCompleteProject.clear();
   completingIds.value = new Set();
 }
 
-function onPendingCheck(id: string): void {
-  if (!selected.value) return;
+function onPendingCheck(id: string, project: string = selected.value): void {
+  if (!project) return;
   if (isCompleting(id)) {
     // Uncheck within the grace window → cancel.
     clearPendingComplete(id);
@@ -853,6 +974,7 @@ function onPendingCheck(id: string): void {
   const next = new Set(completingIds.value);
   next.add(id);
   completingIds.value = next;
+  pendingCompleteProject.set(id, project);
   const timer = window.setTimeout(() => {
     pendingCompleteTimers.delete(id);
     void commitComplete(id);
@@ -861,12 +983,14 @@ function onPendingCheck(id: string): void {
 }
 
 async function commitComplete(id: string): Promise<void> {
-  if (!selected.value) {
+  const project = pendingCompleteProject.get(id) ?? selected.value;
+  pendingCompleteProject.delete(id);
+  if (!project) {
     clearPendingComplete(id);
     return;
   }
   try {
-    await todosComplete(selected.value, id);
+    await todosComplete(project, id);
   } catch (err) {
     console.warn("todo complete failed", err);
     clearPendingComplete(id);
@@ -1035,6 +1159,7 @@ onMounted(async () => {
   window.addEventListener("pointercancel", onSortPointerEnd);
   window.addEventListener("blur", onSortPointerEnd);
   window.addEventListener("keydown", onTodoNavigation);
+  window.addEventListener("keydown", onWindowKeydown);
   window.addEventListener("paste", onTodoPaste);
   document.addEventListener("mouseleave", onSortPointerEnd);
   try {
@@ -1046,6 +1171,7 @@ onMounted(async () => {
     applyLanguage(init.lang);
     applyPopupSubmitKey(init.popupSubmitKey);
     newTaskSupported.value = init.newTaskSupported === true;
+    home.value = init.home ?? "";
   } catch {
     /* 读取失败：保持兜底外观 */
   }
@@ -1069,12 +1195,9 @@ onMounted(async () => {
   unlistenGoto = await listen<string>("todos-goto-project", async (e) => {
     if (typeof e.payload === "string" && e.payload) {
       selected.value = e.payload;
-      selectedTodoId.value = null;
-      confirmAttachmentRemoval.value = null;
-      confirmKind.value = null;
-      confirmDeleteId.value = null;
-      histOpen.value = false;
-      clearAllPendingComplete();
+      showAll.value = false;
+      drawerOpen.value = false;
+      resetViewState();
       await reloadAll();
       await focusAddInput();
     }
@@ -1117,7 +1240,9 @@ onMounted(async () => {
   // Two animation frames after the data landed in the DOM = the first frame that shows it.
   await nextTick();
   requestAnimationFrame(() =>
-    requestAnimationFrame(() => perfMark("todos.fe.firstPaint"))
+    requestAnimationFrame(() => {
+      perfMark("todos.fe.firstPaint");
+    })
   );
   if (preselect) await focusAddInput();
 });
@@ -1130,6 +1255,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("pointercancel", onSortPointerEnd);
   window.removeEventListener("blur", onSortPointerEnd);
   window.removeEventListener("keydown", onTodoNavigation);
+  window.removeEventListener("keydown", onWindowKeydown);
   window.removeEventListener("paste", onTodoPaste);
   document.removeEventListener("mouseleave", onSortPointerEnd);
   unlistenUpdated?.();
@@ -1142,43 +1268,72 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="todos-win" @click="onRootClick">
+  <div class="todos-win" :class="{ 'drawer-open': drawerOpen }" @click="onRootClick">
+    <TodosSidebar
+      ref="sidebarRef"
+      class="td-side"
+      :model="sidebarModel"
+      :selected-key="sidebarSelectedKey"
+      v-model:query="sidebarQuery"
+      @select="selectKey"
+    />
+    <div v-if="drawerOpen" class="td-scrim" aria-hidden="true" @click.stop="drawerOpen = false" />
+
+    <section class="td-pane">
     <header class="td-header" data-tauri-drag-region>
-      <span class="td-title" data-tauri-drag-region>{{ t("todosWin.title") }}</span>
-      <select
-        v-if="projects.length"
-        v-model="selected"
-        class="td-select"
-        :aria-label="t('todosWin.projectLabel')"
-        @change="onSelect"
+      <button
+        type="button"
+        class="td-icon-btn td-side-toggle"
+        :title="drawerOpen ? t('todosWin.hideSidebar') : t('todosWin.showSidebar')"
+        :aria-label="drawerOpen ? t('todosWin.hideSidebar') : t('todosWin.showSidebar')"
+        :aria-expanded="drawerOpen"
+        @click.stop="drawerOpen = !drawerOpen"
       >
-        <optgroup
-          v-if="projectsWithTodos.length"
-          :label="t('todosWin.sectionWithTodos')"
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="2" y="3" width="12" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.3" />
+          <path d="M6 3v10" fill="none" stroke="currentColor" stroke-width="1.3" />
+        </svg>
+      </button>
+      <div class="td-heading" data-tauri-drag-region>
+        <template v-if="showAll && loaded">
+          <h1 class="td-project" data-tauri-drag-region>{{ t("todosWin.allTodos") }}</h1>
+          <p class="td-path" data-tauri-drag-region>
+            {{ t("todosWin.allSummary", { projects: allModel.projectCount, items: allModel.total }) }}
+          </p>
+        </template>
+        <template v-else-if="selected">
+          <h1 class="td-project" data-tauri-drag-region>
+            {{ selectedLabel.name }}<span v-if="selectedLabel.hint" class="td-hint"> · {{ selectedLabel.hint }}</span>
+          </h1>
+          <p class="td-path" data-tauri-drag-region :title="selected">{{ selectedLabel.path }}</p>
+        </template>
+        <h1 v-else class="td-project" data-tauri-drag-region>{{ t("todosWin.title") }}</h1>
+      </div>
+      <div v-if="!showAll && selected" class="td-menu-wrap">
+        <button
+          type="button"
+          class="td-icon-btn"
+          :title="t('todosWin.projectActions')"
+          :aria-label="t('todosWin.projectActions')"
+          aria-haspopup="menu"
+          :aria-expanded="projectMenuOpen"
+          @click.stop="projectMenuOpen = !projectMenuOpen"
         >
-          <option
-            v-for="p in projectsWithTodos"
-            :key="p.key"
-            :value="p.key"
-            :title="p.key"
-          >
-            {{ p.name }}{{ p.count ? ` (${p.count})` : "" }}
-          </option>
-        </optgroup>
-        <optgroup
-          v-if="projectsRecent.length"
-          :label="t('todosWin.sectionRecent')"
-        >
-          <option
-            v-for="p in projectsRecent"
-            :key="p.key"
-            :value="p.key"
-            :title="p.key"
-          >
-            {{ p.name }}
-          </option>
-        </optgroup>
-      </select>
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="3.5" cy="8" r="1.2" fill="currentColor" />
+            <circle cx="8" cy="8" r="1.2" fill="currentColor" />
+            <circle cx="12.5" cy="8" r="1.2" fill="currentColor" />
+          </svg>
+        </button>
+        <div v-if="projectMenuOpen" class="td-menu" role="menu" @click.stop>
+          <button type="button" class="td-menu-item" role="menuitem" @click="copyProjectPath">
+            {{ t("todosWin.menu.copyPath") }}
+          </button>
+          <button type="button" class="td-menu-item" role="menuitem" @click="revealProject">
+            {{ t(`todosWin.menu.reveal.${desktopPlatform}`) }}
+          </button>
+        </div>
+      </div>
     </header>
 
     <div class="td-body">
@@ -1190,6 +1345,71 @@ onBeforeUnmount(() => {
         <p class="empty-title">{{ t("todosWin.noProjects") }}</p>
         <p class="empty-hint">{{ t("todosWin.noProjectsHint") }}</p>
       </div>
+
+      <template v-else-if="showAll">
+        <div v-if="!allModel.total" class="empty">
+          <p class="empty-title">{{ t("todosWin.allEmpty") }}</p>
+          <p class="empty-hint">{{ t("todosWin.emptyHint") }}</p>
+        </div>
+        <div v-else class="td-all">
+          <section v-for="g in allView.groups" :key="g.key" class="td-all-group">
+            <div class="td-all-head">
+              <span class="td-all-name" :title="g.path">
+                {{ g.name }}<span v-if="g.hint" class="td-hint"> · {{ g.hint }}</span>
+              </span>
+              <span class="td-all-count">{{ t("todosWin.itemCount", { n: g.count }) }}</span>
+              <button type="button" class="td-all-open" @click.stop="openProject(g.key)">
+                {{ t("todosWin.openProject") }} ›
+              </button>
+            </div>
+            <ul class="td-list">
+              <li
+                v-for="e in g.entries"
+                :key="e.id"
+                class="td-row td-all-row"
+                :class="{ completing: isCompleting(e.id) }"
+                @click="openProject(g.key, e.id)"
+              >
+                <button
+                  type="button"
+                  class="td-check"
+                  :class="{ checked: isCompleting(e.id) }"
+                  :aria-label="
+                    isCompleting(e.id) ? t('todosWin.undoComplete') : t('todosWin.complete')
+                  "
+                  :aria-pressed="isCompleting(e.id)"
+                  @click.stop="onPendingCheck(e.id, g.key)"
+                >
+                  <svg v-if="isCompleting(e.id)" viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="8" cy="8" r="7" fill="currentColor" />
+                    <path
+                      d="M5 8.2 L7.1 10.3 L11.2 5.8"
+                      fill="none"
+                      stroke="#fff"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                  <svg v-else viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4" />
+                  </svg>
+                </button>
+                <span class="td-text td-all-text">{{ e.text }}</span>
+                <span class="td-all-time">{{ relativeTime(e.createdAtMs) }}</span>
+              </li>
+            </ul>
+          </section>
+          <button
+            v-if="allView.hidden"
+            type="button"
+            class="td-all-more"
+            @click.stop="allRowLimit += ALL_ROW_LIMIT"
+          >
+            {{ t("todosWin.showMore", { n: allView.hidden }) }}
+          </button>
+        </div>
+      </template>
 
       <template v-else>
       <div v-if="!entries.length" class="empty" :class="{ compact: history.length }">
@@ -1660,7 +1880,7 @@ onBeforeUnmount(() => {
     </div>
 
     <footer
-      v-if="projects.length"
+      v-if="projects.length && !showAll"
       class="td-footer"
       @pointerdown="selectedTodoId = null"
     >
@@ -1777,6 +1997,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </footer>
+    </section>
 
     <!-- 清空确认（模态 alert）：清空不可恢复，强制光标移动后再确认。 -->
     <div
@@ -1817,40 +2038,147 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .todos-win {
+  position: relative;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100%;
   color: var(--text-primary);
+}
+.td-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 .td-header {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: 8px;
+  padding: 12px 16px 10px;
   border-bottom: var(--hairline) solid var(--border);
 }
 .macos .td-header {
   padding-top: 30px;
 }
-.td-title {
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.td-select {
-  flex: 0 1 auto;
+.td-heading {
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: 60%;
-  appearance: auto;
-  border: var(--hairline) solid var(--border);
-  border-radius: 7px;
-  background: var(--control-bg);
+}
+.td-project {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.td-hint {
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+.td-path {
+  margin: 2px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.td-icon-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.td-icon-btn:hover {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   color: var(--text-primary);
-  font-size: 12px;
-  padding: 3px 8px;
-  box-shadow: var(--clickable-shadow);
+}
+.td-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.td-icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.td-menu-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+.td-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 168px;
+  padding: 4px;
+  border: var(--hairline) solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-overlay, var(--bg));
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
+}
+.td-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.td-menu-item:hover,
+.td-menu-item:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+/* Sidebar drawer for narrow windows (spec todo-sync §9.2): same component, overlay presentation. */
+.td-side-toggle {
+  display: none;
+}
+.td-scrim {
+  display: none;
+}
+@media (max-width: 639px) {
+  .td-side-toggle {
+    display: inline-flex;
+  }
+  .todos-win .td-side {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 30;
+    background: var(--surface-overlay, var(--bg));
+    transform: translateX(-100%);
+    transition: transform 0.16s ease;
+  }
+  .todos-win.drawer-open .td-side {
+    transform: translateX(0);
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.2);
+  }
+  .td-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 25;
+    background: rgba(0, 0, 0, 0.18);
+  }
 }
 .td-body {
   flex: 1 1 auto;
@@ -2516,6 +2844,84 @@ onBeforeUnmount(() => {
   padding: 28px 0 20px;
 }
 /* ===== 执行历史折叠区 ===== */
+/* "All todos" aggregate: compact read-and-complete rows grouped by project. */
+.td-all {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.td-all-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 2px 6px;
+}
+.td-all-name {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.td-all-count {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+.td-all-open {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.td-all-open:hover {
+  text-decoration: underline;
+}
+.td-all-row {
+  align-items: center;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.td-all-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-elevated));
+}
+.td-all-row .td-check {
+  margin-top: 0;
+}
+.td-all-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.td-all-time {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.td-all-more {
+  align-self: center;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.td-all-more:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
 .td-hist {
   margin-top: 14px;
 }
