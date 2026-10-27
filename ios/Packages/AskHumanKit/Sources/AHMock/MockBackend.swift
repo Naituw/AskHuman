@@ -67,6 +67,10 @@ public actor MockBackend: RemoteBackend {
     public internal(set) var createdTasks: [TaskDraft] = []
     /// Makes the next new task fail with this reason (a one-shot).
     public var failNextTask: String?
+    /// Whether the Macs list models for the new task form; `false` is a Mac that is too old to.
+    public var offersModels = true
+    /// The forms behind the Agents the mock started for new tasks (`macId|agentKey`).
+    var launchedDrafts: [String: TaskDraft] = [:]
     /// How many Agents one Mac may follow (the real limit unless a test lowers it).
     public var followLimit = Wire.maxFollow
     /// The Agent picks queued messages up after this many seconds (scaled by the latency);

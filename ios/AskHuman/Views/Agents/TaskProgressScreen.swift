@@ -51,6 +51,13 @@ struct TaskProgressScreen: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(verbatim: task.agentLabel + " · " + task.workspace)
                 .font(.subheadline.weight(.semibold))
+            // What was picked in the form, not what the Agent reports: the page does not wait for it.
+            if task.hasModelPick {
+                Text(verbatim: TaskTexts.pick(modelLabel: task.modelLabel, effort: task.effort))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("task-model-line")
+            }
             Text(verbatim: task.text)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)

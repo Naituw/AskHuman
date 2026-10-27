@@ -774,6 +774,40 @@ public struct WorkspaceOption: Codable, Equatable, Hashable, Sendable, Identifia
     }
 }
 
+/// One model an Agent offers for a new task (`docs/specs/ios-task-model.md`).
+public struct ModelOption: Codable, Equatable, Hashable, Sendable, Identifiable {
+    /// What `task.create` sends back as `model`.
+    public var id: String
+    public var label: String
+    public var note: String?
+    /// The reasoning efforts this model runs with; absent = this model has no effort row.
+    public var efforts: [String]?
+    /// The effort the model runs with when none is chosen.
+    public var defaultEffort: String?
+
+    public init(id: String, label: String, note: String? = nil, efforts: [String]? = nil, defaultEffort: String? = nil) {
+        self.id = id
+        self.label = label
+        self.note = note
+        self.efforts = efforts
+        self.defaultEffort = defaultEffort
+    }
+}
+
+/// What "Default" stands for: the model an Agent uses when `task.create` names none. Only shown.
+public struct DefaultModel: Codable, Equatable, Hashable, Sendable {
+    public var label: String?
+    /// The efforts that model runs with; absent = "Default" has no effort row.
+    public var efforts: [String]?
+    public var defaultEffort: String?
+
+    public init(label: String? = nil, efforts: [String]? = nil, defaultEffort: String? = nil) {
+        self.label = label
+        self.efforts = efforts
+        self.defaultEffort = defaultEffort
+    }
+}
+
 public struct AgentOption: Codable, Equatable, Hashable, Sendable {
     public var kind: String
     public var label: String
@@ -781,14 +815,45 @@ public struct AgentOption: Codable, Equatable, Hashable, Sendable {
     public var subtitle: String
     public var permissionSelectable: Bool
     public var reason: String?
+    /// The models the phone may pick besides "Default"; absent when the Mac knows none (or is older).
+    public var models: [ModelOption]?
+    public var defaultModel: DefaultModel?
 
-    public init(kind: String, label: String, ready: Bool, subtitle: String, permissionSelectable: Bool, reason: String? = nil) {
+    public init(
+        kind: String, label: String, ready: Bool, subtitle: String, permissionSelectable: Bool, reason: String? = nil,
+        models: [ModelOption]? = nil, defaultModel: DefaultModel? = nil
+    ) {
         self.kind = kind
         self.label = label
         self.ready = ready
         self.subtitle = subtitle
         self.permissionSelectable = permissionSelectable
         self.reason = reason
+        self.models = models
+        self.defaultModel = defaultModel
+    }
+
+    /// A model entry that does not decode is skipped instead of failing the whole `task.options`:
+    /// a glitch in the list must not take the form down, the rest of it still works.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(String.self, forKey: .kind)
+        label = try c.decode(String.self, forKey: .label)
+        ready = try c.decode(Bool.self, forKey: .ready)
+        subtitle = try c.decode(String.self, forKey: .subtitle)
+        permissionSelectable = try c.decode(Bool.self, forKey: .permissionSelectable)
+        reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        models = try? c.decodeIfPresent([Lossy<ModelOption>].self, forKey: .models)?.compactMap(\.value)
+        defaultModel = try? c.decodeIfPresent(DefaultModel.self, forKey: .defaultModel)
+    }
+}
+
+/// Decodes to `nil` instead of throwing, so that one bad element leaves the rest of an array alone.
+private struct Lossy<Value: Decodable>: Decodable {
+    let value: Value?
+
+    init(from decoder: Decoder) throws {
+        value = try? decoder.singleValueContainer().decode(Value.self)
     }
 }
 
@@ -847,14 +912,23 @@ public struct TaskCreate: WireMessage {
     public var permission: String
     public var todoId: String?
     public var text: String
+    /// A model id from `task.options`; absent = the Agent's own default.
+    public var model: String?
+    /// An effort offered for that model (or for "Default"); absent = the Agent's own.
+    public var effort: String?
 
-    public init(clientMsgId: String, workspaceId: String, agentKind: String, permission: String, todoId: String? = nil, text: String) {
+    public init(
+        clientMsgId: String, workspaceId: String, agentKind: String, permission: String, todoId: String? = nil,
+        model: String? = nil, effort: String? = nil, text: String
+    ) {
         self.clientMsgId = clientMsgId
         self.workspaceId = workspaceId
         self.agentKind = agentKind
         self.permission = permission
         self.todoId = todoId
         self.text = text
+        self.model = model
+        self.effort = effort
     }
 }
 

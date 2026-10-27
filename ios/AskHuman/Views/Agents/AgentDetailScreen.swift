@@ -29,6 +29,7 @@ private struct AgentDetailContent: View {
     var body: some View {
         let online = store.isOnline(macId: item.macId)
         let live = online && !gone
+        let watch = store.watchState(id: item.id)
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if !online {
@@ -36,7 +37,7 @@ private struct AgentDetailContent: View {
                 } else if gone {
                     Notice(symbol: "tray", text: "The Mac no longer lists this session.", tint: .gray)
                 }
-                AgentHeader(item: item)
+                AgentHeader(item: item, model: watch?.frame?.model, reasoning: watch?.frame?.reasoning)
                 if item.view.state == "waiting", let requestId = item.view.waitingRequestId {
                     WaitingCard(item: item) { store.open(macId: item.macId, requestId: requestId) }
                 }
@@ -47,7 +48,7 @@ private struct AgentDetailContent: View {
                         composer.text = composer.trimmedText.isEmpty ? recalled : recalled + "\n\n" + composer.text
                     } onProblem: { problem = $0 }
                 }
-                WatchCard(item: item, watch: store.watchState(id: item.id), live: live)
+                WatchCard(item: item, watch: watch, live: live)
             }
             .padding()
             .padding(.bottom, 8)
@@ -139,6 +140,9 @@ private struct Notice: View {
 
 private struct AgentHeader: View {
     let item: AgentItem
+    /// What the session runs with, as the Mac reported it in the live view (the page shows what it has).
+    let model: String?
+    let reasoning: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -156,6 +160,17 @@ private struct AgentHeader: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
+            }
+            if let line = TaskTexts.running(model: model, reasoning: reasoning) {
+                Label {
+                    Text(verbatim: line)
+                } icon: {
+                    Image(systemName: "cpu")
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("agent-model")
             }
             // Only a task started from the phone is followed (the Agents tab lists every session anyway).
             // The Mac drops the follow once the first result was dealt with, and the line goes with it.

@@ -61,7 +61,7 @@ extension MockBackend {
             return
         }
         state.watches[id] = WatchState(
-            macId: macId, agentKey: agentKey, seq: 1, frame: MockData.watchFrame(of: item.view, tick: 0, now: now()), receivedAt: now()
+            macId: macId, agentKey: agentKey, seq: 1, frame: frame(of: item, tick: 0), receivedAt: now()
         )
         publish()
         guard item.view.state == "working" else { return }
@@ -75,10 +75,21 @@ extension MockBackend {
         }
     }
 
+    /// The frame of an Agent. One that was started from the phone runs with what was picked there
+    /// (and with nothing the Mac knows of when the pick was "Default").
+    private func frame(of item: AgentItem, tick: Int) -> WatchFrameData {
+        var frame = MockData.watchFrame(of: item.view, tick: tick, now: now())
+        if let draft = launchedDrafts[item.id] {
+            frame.model = draft.modelLabel
+            frame.reasoning = draft.effort
+        }
+        return frame
+    }
+
     func advanceWatch(_ id: String, tick: Int) {
         guard var watch = state.watches[id], let item = state.agents.first(where: { $0.id == id }) else { return }
         watch.seq += 1
-        watch.frame = MockData.watchFrame(of: item.view, tick: tick, now: now())
+        watch.frame = frame(of: item, tick: tick)
         watch.receivedAt = now()
         state.watches[id] = watch
         publish()
@@ -158,7 +169,7 @@ extension MockBackend {
         state.taskOptions[macId] = .loading
         publish()
         await pause(0.5)
-        state.taskOptions[macId] = .ready(MockData.taskOptions(macId: macId))
+        state.taskOptions[macId] = .ready(MockData.taskOptions(macId: macId, models: offersModels))
         publish()
     }
 
@@ -177,7 +188,7 @@ extension MockBackend {
         state.tasks.insert(
             TaskProgress(
                 id: id, macId: macId, workspace: draft.workspaceName, agentLabel: draft.agentLabel, text: draft.text,
-                stage: "sending", createdAt: now()
+                stage: "sending", createdAt: now(), modelLabel: draft.modelLabel, effort: draft.effort
             ),
             at: 0
         )
@@ -230,7 +241,9 @@ extension MockBackend {
             followed: true
         )
         let mac = state.macs.first { $0.id == task.macId }
-        state.agents.insert(AgentItem(macId: task.macId, macName: mac?.name ?? "Mac", view: view), at: 0)
+        let item = AgentItem(macId: task.macId, macName: mac?.name ?? "Mac", view: view)
+        launchedDrafts[item.id] = draft
+        state.agents.insert(item, at: 0)
         state.tasks[index].stage = "watching"
         state.tasks[index].agentKey = key
         publish()
@@ -282,6 +295,11 @@ extension MockBackend {
 
     public func setFailNextTask(_ reason: String?) {
         failNextTask = reason
+    }
+
+    /// Makes the Macs list no models, like an older Mac (the form then has no model or effort row).
+    public func setOffersModels(_ offers: Bool) {
+        offersModels = offers
     }
 
     public func setInterjectConsumeDelay(_ seconds: Double?) {

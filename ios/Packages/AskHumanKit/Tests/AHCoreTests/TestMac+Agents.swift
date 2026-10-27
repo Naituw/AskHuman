@@ -40,8 +40,10 @@ extension TestMac {
         for phone in pairedPhones { await sendDown(event, to: phone) }
     }
 
-    func sendWatchFrame(agentKey: String, seq: UInt64, text: String, phase: String = "working") async {
-        let frame: JSONValue = .object([
+    func sendWatchFrame(
+        agentKey: String, seq: UInt64, text: String, phase: String = "working", model: String? = nil, reasoning: String? = nil
+    ) async {
+        var frame: JSONValue = .object([
             "type": .string("watchFrame"), "seq": .int(Int64(seq)), "phase": .string(phase), "title": .string("Fix it"),
             "project": .string("HumanInLoop"), "text": .string(text),
             "steps": .array([.object(["kind": .string("run"), "name": .null, "object": .string("pnpm test"), "state": .string("running")])]),
@@ -49,6 +51,11 @@ extension TestMac {
             "todos": .array([.object(["content": .string("Fix the test"), "state": .string("inProgress")])]),
             "activeElapsedSecs": .int(61), "at": .int(1_800_000_000),
         ])
+        if case .object(var fields) = frame {
+            if let model { fields["model"] = .string(model) }
+            if let reasoning { fields["reasoning"] = .string(reasoning) }
+            frame = .object(fields)
+        }
         for phone in pairedPhones { await sendDown(WatchFrame(agentKey: agentKey, seq: seq, frame: frame), to: phone) }
     }
 

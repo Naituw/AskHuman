@@ -113,7 +113,7 @@ whats-next 前「过期才拉」（> 20 秒，最多等 1.5 秒）；待办窗�
 下一步：
 - [ ] 按计划 §5 推进 P0 → P6；当前进度见计划 §10
 - [ ] **需要用户**（计划 §7，agent 不做）：开发者后台新建 App ID / 容器 / Developer ID 描述文件；helper 首次真机跑通后在 CloudKit Dashboard 把 schema 部署到 Production；在 Mac A 上用 Xcode 构建签名 helper 并拷到 Mac B。这些完成前，P3 之后的真机验收（计划 §5 P3 / P4 / P6）做不了
-## 进行中：iOS 新建任务时选模型与强度——Mac 端（P1、P2）已完成并装机，下一步 P3（iOS App）
+## 进行中：iOS 新建任务时选模型与强度——Mac 端与 iOS App（P1–P3）已完成，下一步 P4（文档回写与真机一轮）
 
 2026-10-27 用户提出「iOS 版创建任务时可以选择模型」，经 6 题问答定下范围：模型 + 强度一起做；清单以动态发现为主（Claude 用固定别名）；每次都从「默认」开始、不记忆；
 详情页显示实际模型、进度页显示所选；先只做 iOS，启动管线放共享层。用户同时强调**严禁触发计费**，并且**Cursor 严禁实测**。同日做了只读探测（没有起任何 Agent、没有发提示词、
@@ -124,13 +124,18 @@ whats-next 前「过期才拉」（> 20 秒，最多等 1.5 秒）；待办窗�
 - P1（Mac 启动管线：`ModelChoice` 贯穿 `TaskSpec` → `LaunchRecord` → argv 与 Codex 桌面应用；没选时对外行为与以前逐字节相同）。
 - P2（Mac 清单 + 线协议 + 网关 + 详情页实际模型，已装机）：`task.options` 多了可选的 `models` / `defaultModel`，`task.create` 多了可选的 `model` / `effort`，
   `watch.frame` 多了可选的 `model` / `reasoning`；旧版 App 连新 Mac 与以前完全一样。实施记录与偏差见计划「P2 实施记录」。
+- P3（iOS App，在 `/tmp` 隔离副本里做、对着新 HEAD 重新验证后合入）：新建任务表单在 Agent 与权限之间多了「模型」行（进选择页，超过 12 项有搜索）与「强度」行（菜单），
+  都从「默认」开始、不记忆，Mac 没给 `models`（旧 Mac / 没拿到清单）时两行都不出现；进度页有一行所选，Agent 详情页有一行它实际用的模型 / 强度；中文文案齐全；共享夹具有了新用例。
+  实施记录、验证结果与已知局限见计划「P3 实施记录」。**App 还没装到真机**（P4 的真机一轮会用到）。
 
 下一步：
-- [ ] P3（iOS App：模型 / 强度两行、选择页、进度页与详情页显示；`git status ios/` 若仍有另一会话的未提交改动就在 `/tmp` 隔离副本里做）→ P4（文档回写）。
-  P2 **没有**往共享夹具 `ios/Fixtures/wire-v1/messages.json` 加新用例（Swift 的往返测试会因 App 还不认识新字段而变红），要在 P3 与 Swift 类型一起加。
+- [ ] P4：文档回写（`docs/specs/ios-channel.md` §6.8 与「不能选模型」的局限、`docs/overview-ios.md` 的线消息 / 模块 / 启动参数 `-AHNoModels` `-AHFailTask`、`docs/wiki/ios-setup.md` 与 `.en.md`、
+  `docs/overview.md` 的 `agents/` 清单行）；Mac 端已装机，App 的新界面要装到真机才看得到。
 - [ ] （实现完做，**每次执行前**经用户批准，会产生模型费用；永远不含 Cursor）真机一轮：见计划 P4。同时验证两件我在本机看不到的事：已登录账号下 `grok models` 的输出
   是否带逐模型档位（带了才补 Grok 的强度行与 M10）、带真实凭据的 `codex app-server` 的 `model/list`。
 - [ ] `ios_tasks::create()` 里「读就绪 → 取清单来源 → `resolve_pick` → `TaskSpec.choice`」这段胶水没有单测（`create()` 会真的起任务）；各部件各有测试，整条由上面那一轮覆盖。
+- [ ] （可选，等用户决定）强度行的「默认（中）」提示：手机上取的是所选模型自己的默认档位；但 Mac 配置里固定了强度、且该模型支持它时（目前只会出现在 Codex），Agent 实际用的是配置的档位（M10），
+  两者可能不同。要精确得让 Mac 在 `task.options` 里按模型各算一个「默认时实际用的档位」。本期按需求原样实现。
 
 - [ ] 双机验收要 SSH 到 Mac B：需用户当次同意（S0 的授权只覆盖 spike）
 - [ ] S0 收尾（用户 2026-10-27 那题没答复，**什么都没删、没动 B**）：停掉的 spike helper 仍装在两台 Mac 上；测试待办还在 CloudKit 容器里；想收尾时再问

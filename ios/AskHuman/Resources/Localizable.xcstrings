@@ -351,6 +351,16 @@
         }
       }
     },
+    "Agent's own setting" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 自己的设置"
+          }
+        }
+      }
+    },
     "Agents" : {
       "localizations" : {
         "zh-Hans" : {
@@ -861,6 +871,26 @@
         }
       }
     },
+    "Default" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认"
+          }
+        }
+      }
+    },
+    "Default (%@)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认（%@）"
+          }
+        }
+      }
+    },
     "Delete" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1001,6 +1031,26 @@
         }
       }
     },
+    "Effort" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "强度"
+          }
+        }
+      }
+    },
+    "Effort: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "强度：%@"
+          }
+        }
+      }
+    },
     "Ended" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1077,6 +1127,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@后过期"
+          }
+        }
+      }
+    },
+    "Extra high" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "超高"
           }
         }
       }
@@ -1177,6 +1237,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "尚未报到"
+          }
+        }
+      }
+    },
+    "High" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高"
           }
         }
       }
@@ -1391,6 +1461,16 @@
         }
       }
     },
+    "Low" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "低"
+          }
+        }
+      }
+    },
     "Mac" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1431,6 +1511,26 @@
         }
       }
     },
+    "Max" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最高"
+          }
+        }
+      }
+    },
+    "Medium" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中"
+          }
+        }
+      }
+    },
     "Message to the Agent" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1447,6 +1547,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "消息"
+          }
+        }
+      }
+    },
+    "Minimal" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "极低"
+          }
+        }
+      }
+    },
+    "Model" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型"
+          }
+        }
+      }
+    },
+    "Model: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型：%@"
           }
         }
       }
@@ -1567,6 +1697,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未配置推送中继"
+          }
+        }
+      }
+    },
+    "None" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无"
           }
         }
       }
@@ -2303,6 +2443,16 @@
         }
       }
     },
+    "Search models" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索模型"
+          }
+        }
+      }
+    },
     "Send" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2543,6 +2693,16 @@
         }
       }
     },
+    "That effort is not available for the chosen model. Open the form again and choose another." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所选模型不支持这个强度。请重新打开表单并另选一个。"
+          }
+        }
+      }
+    },
     "That file is too large (limit 10 MB)." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2669,6 +2829,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "会告知 Agent 你已取消。"
+          }
+        }
+      }
+    },
+    "The Agent on the Mac no longer offers that model. Open the form again and choose another." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 上的 Agent 已不再提供这个模型。请重新打开表单并另选一个。"
           }
         }
       }

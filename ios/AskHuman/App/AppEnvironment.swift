@@ -23,6 +23,10 @@ struct LaunchOptions {
     var newTask = false
     /// The mock Agents never pick up the messages sent to them (UI tests that withdraw one).
     var holdInterjects = false
+    /// The mock Macs list no models, like an older Mac: the new task form has no model or effort row.
+    var noModels = false
+    /// The next new task of the mock fails with this reason (the texts of the progress page).
+    var failTask: String?
     /// A followed Agent reports `done`, `failed` or `waiting` a moment after launch (the follow banner).
     var followEvent: String?
     /// A request arrives a moment after launch (the request banner), from a session with this title;
@@ -54,6 +58,8 @@ struct LaunchOptions {
         followAgent = defaults.string(forKey: "AHFollowAgent")
         newTask = defaults.bool(forKey: "AHNewTask")
         holdInterjects = defaults.bool(forKey: "AHHoldInterjects")
+        noModels = defaults.bool(forKey: "AHNoModels")
+        failTask = defaults.string(forKey: "AHFailTask")
         followEvent = defaults.string(forKey: "AHFollowEvent")
         arrival = defaults.string(forKey: "AHArrival")
         if defaults.object(forKey: "AHAutoAdvance") != nil { autoAdvance = defaults.bool(forKey: "AHAutoAdvance") }
@@ -146,6 +152,11 @@ final class AppEnvironment {
     }
 
     func start() async {
+        // These two are in place before anything can ask the mock for a list or start a task.
+        if let backend = mock {
+            if launch.noModels { await backend.setOffersModels(false) }
+            if let reason = launch.failTask { await backend.setFailNextTask(reason) }
+        }
         await store.start()
         await push.refreshAuthorization()
         if let request = launch.notifyRequest {

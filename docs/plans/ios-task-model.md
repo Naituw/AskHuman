@@ -1,6 +1,6 @@
 # 计划：iOS 新建任务时选择模型与强度
 
-> 状态：**已批准，开工中**——P1 已提交（`4dc4c69`），P2 已提交并装机（见「P2 实施记录」），P3、P4 待做。
+> 状态：**已批准，开工中**——P1 已提交（`4dc4c69`），P2 已提交并装机（`57adf5a`，见「P2 实施记录」），P3 已完成并提交（见「P3 实施记录」；App 尚未装到真机），P4 待做。
 > 2026-10-27 起草；同日用户经 AskHuman 批准，并对六条待确认点作了选择，结论已回写进需求 M14–M19 与本计划；P2 开工前又回答了三件事（M20–M22）。
 > 需求与决策：`docs/specs/ios-task-model.md`（M1–M22）。
 > 地图：`docs/overview-ios.md`。前置：`docs/plans/ios-follow-narrowing.md`（已实现；本计划沿用它的做法——先 Mac 后 App、App 在 `/tmp` 隔离副本里开发）。
@@ -190,6 +190,47 @@
 | `AskHumanUITests`（mock，en + zh-Hans） | 选模型 + 强度并提交；搜索 Cursor 长表；切 Agent 复位；强度随模型变化；旧 Mac 场景两行隐藏；进度页显示所选；详情页显示模型 |
 
 完成标准：`swift test`（AHCore / AHApp / AHProtocol）、真实 daemon 端到端既有用例不退化、模拟器 UI 测试 en 与 zh-Hans 全量。
+
+### P3 实施记录（2026-10-28）
+
+已做完、已提交（本地，未推送）。与上面计划文字不同的地方，**以代码为准**：
+
+- **表单与选择页**：模型行是 `NavigationLink`，右边是所选的名字，没选时副标题写「默认」所指的名字（`defaultModel.label`，没有就写「Agent 自己的设置」）；强度行是菜单 `Picker`，
+  第一项是「默认」，Mac 说得出它指哪一档时写成「默认（高）」（没选模型取 `defaultModel.defaultEffort`，选了模型取该模型自己的 `defaultEffort`，且必须属于档位）。
+  两行都要求这个 Agent 的 `models` 非空（旧 Mac / 没拿到清单：都不出现，表单与以前一样）；强度行还要求有档位（Cursor、Grok、不带 `efforts` 的 Pi 模型没有）。
+  选择页超过 12 项才有搜索框（按名字或 id 过滤，没有结果时显示系统的「无结果」）。
+- **`TaskComposer`**：`modelId` 只能经 `selectModel(_:in:)` 改；读取一律经 `model(in:)` / `effort(in:)`（对着**当前**的清单校验），`applyDefaults` 与 `selectModel` 末尾的 `dropStalePicks`
+  把已不被提供的选择清掉——所以界面上显示的与 `draft` 发出去的永远一致。`switchMac` 与（换了 Agent 才算的）`selectAgent` 复位两者；`applyDefaults` 从不恢复模型 / 强度（M3）。
+  计划里的 `modelChoices(in:)` 实现为 `models(in:)`，`effortChoices(in:)` 返回 `EffortChoices { levels, defaultLevel }?`。
+- **数据**：`TaskDraft` 带 `model` / `effort` / `modelLabel`（**没有** `effortLabel`：强度的名字在显示时由 `TaskTexts.effort` 本地化，不认识的档位显示成首字母大写的 id）；
+  `TaskProgress` 带 `modelLabel` / `effort`（`hasModelPick`），所以进度页显示的是**所选**，不等 Agent；重试沿用同一个 `clientMsgId` 与同一份选择。
+  `WatchFrameData` 多了 `model` / `reasoning`（空串或非字符串当没有）。
+- **宽松解码**（计划里没写）：`AgentOption.models` 逐项宽松解码——坏条目丢掉，不拖垮整份 `task.options`；`models` / `defaultModel` 形状不对时当没有。必填字段缺了照旧报错。
+- **Mock**：演示数据里 Codex 改成可用（否则看不到它逐模型的档位与「默认（高）」），Grok 仍是未安装；新启动参数 `-AHNoModels YES`（旧 Mac）与 `-AHFailTask <reason>`（下一个任务以该原因失败，
+  用来看进度页的文案）。两者在 `AppEnvironment.start()` 里、`store.start()` 之前 `await` 设好——放在 `init` 的 `Task {}` 里会与表单加载清单赛跑（第一轮 UI 测试在重负载下因此红过一次）。
+  从手机起的 Agent 在 mock 里回报所选的模型 / 强度，演示会话各自回报自己的。
+- **UI 测试**放进新文件 `AskHumanUITests/AskHumanModelUITests.swift`（15 个），没有往 `AskHumanUITests.swift` 里加（另一个会话在改它）；截图编号从 110 起，避开旧套件的 90–99。
+- **共享夹具** `messages.json` 新增：`task.options`（`models`：四个 Agent 的合成清单，含一条带 `→` 的备注）、`task.create`（`model`、`effortOnly`；老格式 `full` / `min` 原样保留）、
+  `task.status`（`modelUnavailable`）、`watch.frame`（`model`）。Rust 的 `ios::fixtures` 与 Swift 的 `MessageFixtureTests` 往返都过（P2 把这件事留到了这里）。
+- **真实 daemon 端到端**多一个用例（`testAPickedModelChangesNothingWhileTheMacHasTasksSwitchedOff`）：带 `model` / `effort` 的 `task.create` 发给真实 daemon（任务开关保持关、工作区不存在），
+  收到不可重试的拒绝、所选留在进度记录上、没有任何 Agent 被启动。注意网关**先**查工作区、**后**查 `model` / `effort` 的形状、再由主机查开关，所以这个用例**不**证明模型与强度被校验过——
+  那由 Rust 的网关与 `ios_tasks` 测试覆盖。
+- **合并**：开工时主树里另一个会话的 iOS 未提交改动，在 P3 做完前已作为 `c520b71` 提交；补丁先对着新 HEAD（`6c744d8`）重做了一份干净副本，在副本里重新跑完验证，再 `git apply` 进主树，
+  主树里这 23 个文件与验证过的副本逐字节相同。没有碰别人的文件。
+
+**验证（2026-10-28）**：
+- `swift test`（整个包，新 HEAD + 补丁的干净副本）320 个通过 / 0 失败，其中新增 38 个（`TaskComposerModelTests` 16、`AgentModelTests` 8、`TaskModelWireTests` 8、`AgentStoreModelTests` 6）。
+- 真实 daemon 端到端（已装机的二进制 + 本地 broker，`AHE2ETests`）：27 个通过，4 个按设计跳过（真实服务与模拟器联调）；任务开关保持关，没起终端也没起 Agent。
+- 模拟器 UI（iOS 27.0 的 iPhone 18 Pro）：补丁合并前的副本上 en 全量 65 / 65（旧 50 + 新 15）；合并后的副本上 zh-Hans 全量 66 / 66（旧 51 + 新 15），en 的新 15 个再过一遍。截图人工看过（表单、选择页、搜索与无结果、进度页、拒绝文案、旧 Mac 表单、详情页）。
+- Rust：`cargo test ios::fixtures` 4 个通过（含 `messages_fixture_round_trips_through_the_typed_models`）。
+- 字符串目录：构建后 `make-catalog.py` 重新生成共 371 条，无缺译、无多余键，再生成无差异。
+- 变异检查：在验证用的副本里故意破坏 9 处——切 Agent 不复位模型、切 Mac 不复位模型与强度、`draft` 发原始的模型 id（不对着清单校验）、强度不校验、切模型后不丢陈旧强度、
+  一个坏条目拖垮整份 `models`、引擎丢掉 `model`、引擎丢掉 `effort`、mock 里从手机起的 Agent 不回报所选——每一处都有测试失败，没有存活；文件逐字节还原。
+  UI 层（视图与文案）没有做变异，靠 UI 测试与截图。
+
+**已知局限（按需求原样实现，留待用户决定）**：强度行里「默认（中）」的提示，对**明确选了模型**的情况取的是该模型自己的默认档位（`ModelOption.defaultEffort`）。
+但 Mac 配置里固定了强度、且所选模型支持它时（目前只会出现在 Codex），Agent 实际用的是配置的档位（M10 只在配置的档位**不被**该模型支持时才改传模型自己的默认），两者可能不一样。
+要精确，得让 Mac 在 `task.options` 里按模型各算一个「默认时实际用的档位」——属于 Mac 侧小改动，需要用户先决定做不做（见 `docs/PROGRESS.md`）。没选模型时（「默认」模型）显示的是 `defaultModel.defaultEffort`，已经把配置的档位算进去了，是准的。
 
 ## P4
 

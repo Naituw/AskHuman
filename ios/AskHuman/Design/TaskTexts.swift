@@ -24,10 +24,49 @@ enum TaskTexts {
         case "agentNotReady": String(localized: "The Agent is not ready on the Mac.")
         case "permissionChanged": String(localized: "The permission setting on the Mac changed. Open the form again.")
         case "todoGone": String(localized: "That TODO is gone from the Mac.")
+        case "modelUnavailable": String(localized: "The Agent on the Mac no longer offers that model. Open the form again and choose another.")
+        case "effortUnavailable": String(localized: "That effort is not available for the chosen model. Open the form again and choose another.")
         case "terminalFailed": String(localized: "The Mac could not open a terminal for the Agent.")
         case "invalid": String(localized: "The Mac did not accept this task.")
         case .some(let text) where !text.isEmpty: text
         default: String(localized: "The Agent could not be started.")
         }
+    }
+
+    // MARK: model and effort
+
+    /// The name of a reasoning effort: the levels the Agents document, else the code as the Mac gave it.
+    static func effort(_ id: String) -> String {
+        switch id {
+        case "none": String(localized: "None")
+        case "minimal": String(localized: "Minimal")
+        case "low": String(localized: "Low")
+        case "medium": String(localized: "Medium")
+        case "high": String(localized: "High")
+        case "xhigh": String(localized: "Extra high")
+        case "max": String(localized: "Max")
+        default: id.prefix(1).uppercased() + id.dropFirst()
+        }
+    }
+
+    /// What the new task form calls "Default" for the effort: with the level it stands for, when known.
+    static func defaultEffort(_ level: String?) -> String {
+        guard let level else { return String(localized: "Default") }
+        return String(localized: "Default (\(effort(level)))")
+    }
+
+    /// "Model: Opus · Effort: High" for what was picked in the form; "Default" stands for what was left alone.
+    static func pick(modelLabel: String?, effort id: String?) -> String {
+        var parts = [String(localized: "Model: \(modelLabel ?? String(localized: "Default"))")]
+        if let id { parts.append(String(localized: "Effort: \(effort(id))")) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "Model: x · Effort: y" for what an Agent session runs with; `nil` when the Mac told neither.
+    static func running(model: String?, reasoning: String?) -> String? {
+        var parts: [String] = []
+        if let model { parts.append(String(localized: "Model: \(model)")) }
+        if let reasoning { parts.append(String(localized: "Effort: \(effort(reasoning))")) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }

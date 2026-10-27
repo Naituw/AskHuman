@@ -10,6 +10,19 @@ public enum PermissionChoice: String, Sendable {
     case yolo
 }
 
+/// The reasoning efforts the form offers for the model chosen so far.
+public struct EffortChoices: Equatable, Sendable {
+    /// The levels, in the order the Mac gave them.
+    public var levels: [String]
+    /// The level "Default" stands for, when the Mac says (always one of `levels`).
+    public var defaultLevel: String?
+
+    public init(levels: [String], defaultLevel: String? = nil) {
+        self.levels = levels
+        self.defaultLevel = defaultLevel.flatMap { levels.contains($0) ? $0 : nil }
+    }
+}
+
 /// The new task form: which Mac, workspace and Agent, how it may act, and what it should do.
 @MainActor
 @Observable
@@ -22,6 +35,11 @@ public final class TaskComposer {
     public var agentKind: String?
     /// What the user chose when the Mac lets the phone choose: nothing is preselected.
     public var permissionChoice: PermissionChoice?
+    /// The model the user picked (`nil` = "Default"). Never remembered between forms, and only meaningful
+    /// for the Agent it was picked for: read it through `model(in:)`, which checks it is still offered.
+    public private(set) var modelId: String?
+    /// The reasoning effort the user picked (`nil` = "Default"); read it through `effort(in:)`.
+    public var effortId: String?
     public var todoId: String?
     public var text = ""
 
@@ -32,7 +50,8 @@ public final class TaskComposer {
     // MARK: choices
 
     /// Picks what the form starts with once a Mac's choices are known: the workspace and Agent used
-    /// last time when they are still offered, else the first sensible ones.
+    /// last time when they are still offered, else the first sensible ones. The model and the effort
+    /// always start from "Default" (a pick that is no longer offered goes back to it).
     public func applyDefaults(options: TaskOptions, defaults: UserDefaults) {
         if workspaceId == nil || !options.workspaces.contains(where: { $0.id == workspaceId }) {
             let last = defaults.string(forKey: Self.workspaceKey(macId))
@@ -46,6 +65,7 @@ public final class TaskComposer {
                 ?? options.agents.first(where: \.ready)?.kind
                 ?? options.agents.first?.kind
         }
+        dropStalePicks(in: options)
     }
 
     /// Forgets the choices of the previous Mac.
@@ -56,13 +76,24 @@ public final class TaskComposer {
         agentKind = nil
         todoId = nil
         permissionChoice = nil
+        modelId = nil
+        effortId = nil
     }
 
-    /// Picks the Agent. The permission choice is made again for another Agent.
+    /// Picks the Agent. The permission, the model and the effort are chosen again for another Agent.
     public func selectAgent(_ kind: String) {
         guard kind != agentKind else { return }
         agentKind = kind
         permissionChoice = nil
+        modelId = nil
+        effortId = nil
+    }
+
+    /// Picks the model (`nil` = "Default"). The effort stays when the new choice offers it, else it is
+    /// "Default" again.
+    public func selectModel(_ id: String?, in options: TaskOptions) {
+        modelId = id
+        dropStalePicks(in: options)
     }
 
     public func remember(defaults: UserDefaults) {
@@ -72,6 +103,13 @@ public final class TaskComposer {
 
     private static func workspaceKey(_ macId: String) -> String { "ah.task.workspace." + macId }
     private static func agentKey(_ macId: String) -> String { "ah.task.agent." + macId }
+
+    /// A model or an effort the choices no longer offer is forgotten: what the form shows and what it
+    /// sends always agree.
+    private func dropStalePicks(in options: TaskOptions) {
+        if modelId != nil, model(in: options) == nil { modelId = nil }
+        if effortId != nil, effort(in: options) == nil { effortId = nil }
+    }
 
     // MARK: derived
 
@@ -97,6 +135,50 @@ public final class TaskComposer {
         }
     }
 
+    // MARK: model and effort
+
+    /// The models of the picked Agent, in the Mac's order; empty when it gave none (an older Mac, or one
+    /// that could not list them): then the form has neither a model row nor an effort row.
+    public func models(in options: TaskOptions) -> [ModelOption] {
+        agent(in: options)?.models ?? []
+    }
+
+    public func offersModelChoice(in options: TaskOptions) -> Bool {
+        !models(in: options).isEmpty
+    }
+
+    /// The model picked, or `nil` for "Default".
+    public func model(in options: TaskOptions) -> ModelOption? {
+        guard let modelId else { return nil }
+        return models(in: options).first { $0.id == modelId }
+    }
+
+    /// What "Default" stands for on the picked Agent, as far as the Mac told.
+    public func defaultModel(in options: TaskOptions) -> DefaultModel? {
+        agent(in: options)?.defaultModel
+    }
+
+    /// The efforts the form offers, or `nil` while it cannot tell: the picked model names them, or,
+    /// with "Default", the model "Default" stands for does.
+    public func effortChoices(in options: TaskOptions) -> EffortChoices? {
+        guard offersModelChoice(in: options) else { return nil }
+        let source: (efforts: [String]?, defaultEffort: String?)
+        if let model = model(in: options) {
+            source = (model.efforts, model.defaultEffort)
+        } else {
+            let standing = defaultModel(in: options)
+            source = (standing?.efforts, standing?.defaultEffort)
+        }
+        guard let levels = source.efforts, !levels.isEmpty else { return nil }
+        return EffortChoices(levels: levels, defaultLevel: source.defaultEffort)
+    }
+
+    /// The effort picked, or `nil` for "Default".
+    public func effort(in options: TaskOptions) -> String? {
+        guard let effortId, effortChoices(in: options)?.levels.contains(effortId) == true else { return nil }
+        return effortId
+    }
+
     public var trimmedText: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
     public var charCount: Int { trimmedText.count }
     public var overLimit: Bool { charCount > Self.maxChars }
@@ -111,9 +193,11 @@ public final class TaskComposer {
     /// What to send, or `nil` while the form is incomplete.
     public func draft(options: TaskOptions) -> TaskDraft? {
         guard canSubmit(options: options), let workspace = workspace(in: options), let agent = agent(in: options) else { return nil }
+        let model = model(in: options)
         return TaskDraft(
             workspaceId: workspace.id, workspaceName: workspace.label, agentKind: agent.kind, agentLabel: agent.label,
-            permission: permission(in: options), todoId: todoId, text: trimmedText
+            permission: permission(in: options), todoId: todoId, model: model?.id, effort: effort(in: options),
+            modelLabel: model?.label, text: trimmedText
         )
     }
 }

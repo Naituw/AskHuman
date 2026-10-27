@@ -142,6 +142,8 @@ private struct NewTaskForm: View {
             Text("Agent")
         }
 
+        modelSection(options)
+
         permissionSection(options)
 
         Section {
@@ -169,6 +171,41 @@ private struct NewTaskForm: View {
                     .monospacedDigit()
             } else {
                 Text("The Agent starts in a new terminal window on your Mac.")
+            }
+        }
+    }
+
+    /// The model and the effort: only when the Mac listed models for this Agent. Both start from "Default",
+    /// which sends nothing and leaves the choice to the Agent's own settings.
+    @ViewBuilder
+    private func modelSection(_ options: TaskOptions) -> some View {
+        if composer.offersModelChoice(in: options) {
+            Section {
+                let picked = composer.model(in: options)
+                NavigationLink {
+                    ModelPickerScreen(composer: composer)
+                } label: {
+                    ModelRow(
+                        value: picked?.label ?? String(localized: "Default"),
+                        detail: picked == nil
+                            ? (composer.defaultModel(in: options)?.label ?? String(localized: "Agent's own setting"))
+                            : nil
+                    )
+                }
+                .accessibilityIdentifier("task-model")
+                if let choices = composer.effortChoices(in: options) {
+                    Picker(
+                        "Effort",
+                        selection: Binding(get: { composer.effort(in: options) }, set: { composer.effortId = $0 })
+                    ) {
+                        Text(verbatim: TaskTexts.defaultEffort(choices.defaultLevel)).tag(String?.none)
+                        ForEach(choices.levels, id: \.self) { level in
+                            Text(verbatim: TaskTexts.effort(level)).tag(String?.some(level))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .accessibilityIdentifier("task-effort")
+                }
             }
         }
     }
@@ -243,6 +280,30 @@ private struct NewTaskForm: View {
 }
 
 // MARK: rows
+
+/// The model row: what is picked on the right, what "Default" stands for underneath while nothing is.
+private struct ModelRow: View {
+    let value: String
+    let detail: String?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Model")
+                if let detail {
+                    Text(verbatim: detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            Text(verbatim: value)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+}
 
 private struct AgentChoiceRow: View {
     let agent: AgentOption
