@@ -1,0 +1,15 @@
+{
+  "model": "opus",
+  "theme": "dark",
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "sk-synthetic-secret-do-not-leak",
+    "ANTHROPIC_BASE_URL": "https://gateway.example.invalid",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gateway-large",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Gateway Large",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gateway-medium",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gateway-small",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "gateway-next",
+    "DISABLE_TELEMETRY": "1"
+  },
+  "hooks": {}
+}

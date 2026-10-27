@@ -1,0 +1,7 @@
+Welcome to the shell
+provider  model             context  max-out  thinking  images
+alpha     model-a           200K     64K      yes       yes   
+alpha     model-b-mini      128K     16K      no        no    
+alpha     broken-row        200K     yes
+beta      Model-C:latest    32K      8K       yes       no    
+beta      model-d           1M       128K     yes       no    

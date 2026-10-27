@@ -1,11 +1,13 @@
 # 计划：iOS 新建任务时选择模型与强度
 
-> 状态：**已批准，开工中**（2026-10-27 起草；同日用户经 AskHuman 批准，并对六条待确认点作了选择，结论已回写进需求 M14–M19 与本计划）。
-> 需求与决策：`docs/specs/ios-task-model.md`（M1–M19）。
+> 状态：**已批准，开工中**——P1 已提交（`4dc4c69`），P2 已提交并装机（见「P2 实施记录」），P3、P4 待做。
+> 2026-10-27 起草；同日用户经 AskHuman 批准，并对六条待确认点作了选择，结论已回写进需求 M14–M19 与本计划；P2 开工前又回答了三件事（M20–M22）。
+> 需求与决策：`docs/specs/ios-task-model.md`（M1–M22）。
 > 地图：`docs/overview-ios.md`。前置：`docs/plans/ios-follow-narrowing.md`（已实现；本计划沿用它的做法——先 Mac 后 App、App 在 `/tmp` 隔离副本里开发）。
 > **硬约束（用户 2026-10-27）：严禁触发计费；Cursor 严禁实测**。所有阶段的验证都**不启动真实 Agent、不发提示词、不用真实凭据调模型**，
-> **也不再调用 `cursor-agent` 的任何命令**（含 `--list-models`，Cursor 只靠合成夹具）。允许的只有：本地只读（读配置、`--help`）、`pi --list-models`（纯本地）、
-> 以及**经用户批准**的 `grok models` 样本抓取（P2 开头，沙盒内、无凭据）。真实 Agent 的一轮每次执行前都要用户批准，且永远不含 Cursor（P4，可选）。
+> **也不启动任何 Cursor 任务 / 会话 / 提示词**。P2 开工前用户把边界说清楚了（M20–M22）：`grok models` 只在沙盒里跑过一次（已完成，样本已合成夹具）；
+> `cursor-agent --list-models`（只列清单、不起会话）可以实测；本机只读冒烟只含本地配置文件、`pi --list-models` 与各 Agent 的 `--help`，
+> **不含** Cursor、`grok models`、带凭据的 `app-server`。真实 Agent 的一轮每次执行前都要用户批准，且永远不含 Cursor（P4，可选）。
 
 ## 阶段
 
@@ -72,10 +74,9 @@
 
 ## P2 细节
 
-0. **前置（动手写 Grok 解析器之前）：抓 `grok models` 的样本——要先问用户**（需求 M15 / 「仍待确认」1）。做法：经 AskHuman 说明命令、环境与清理步骤，用户批准后，
-   在**空的临时 `HOME`（没有 Grok 配置与凭据）+ 独立的 `--leader-socket`、超时 10 秒**下执行一次，拿到 stdout / stderr 后杀掉可能拉起的 leader、删掉临时目录；
-   再据此写**合成**夹具（仓库公开）。如果没有凭据时它只给出报错而没有清单格式，就把「真实格式」留给用户手机上的那一轮，Grok 解析器先按 `--help` 与常见表格 / JSON 两种做保守实现并标记
-   `PROGRESS` 待验。与此同时问「仍待确认」2（Cursor 清单的运行时获取是否保留）。
+0. **前置（已完成，2026-10-27）**：经 AskHuman 取得三个答复——（1）批准在沙盒（空的临时 `HOME` + 独立的 `--leader-socket`、无凭据）里跑一次 `grok models`（M20，已跑；
+   样本里只有 `Default model:` 与项目符号行，没有每个模型的档位，所以 **Grok 本期没有强度行**，解析器按「标题 + 项目符号行、其余忽略」写）；（2）Cursor 清单的运行时获取保留，
+   列清单可以实测、启动任务仍然严禁（M21）；（3）批准本机只读冒烟，范围见 M22 与下面第 7 点。夹具据此**合成**（仓库公开）。
 1. **清单模块**（`agents/model_catalog.rs`）：
    - 类型：`ModelEntry { id, label, note, efforts, default_effort }`；`AgentCatalog { models（可见项）, all（含隐藏，只用来查「默认所指」的档位）, default: Option<DefaultInfo> }`。
    - **纯解析器**（输入字符串 / JSON，便于夹具测试）：`parse_cursor_list`（找 `Available models` 标题，行格式 `<id> - <名>`，去零宽字符与 `(default)`，忽略不符合格式的行，
@@ -127,6 +128,42 @@
    P2 完成标准：`cargo test` 全量、clippy（1.94 与最新稳定版）、`cargo fmt --check` 全绿；变异检查（破坏哈希兼容、M10、净化、校验后，对应测试确实失败）；
    `./scripts/install.sh` 装机，`AskHuman channel ios status` 看 daemon 正常；此时旧版 App 连新 Mac 与今天完全一样。
 
+### P2 实施记录（2026-10-27）
+
+已做完、已提交并装机。与上面计划文字不同的地方，**以代码为准**：
+
+- **文件布局**：`agents/model_catalog.rs` 放类型、校验与 `resolve_choice`；`model_catalog/` 下是解析器 `parse.rs`（纯函数）、来源 `source.rs`（经 `Probes` 接口问系统：真机实现是 `System`，
+  测试用脚本，所以「问谁、跑什么命令」不起任何进程就能断言）、缓存 `cache.rs`、本机冒烟 `smoke.rs`（`#[ignore]`）与合成夹具 `fixtures/`。
+  Codex 的 `list_models` 在新文件 `codex_desktop/models.rs`（与创建路径同一套握手，只发 `initialize` 与分页 `model/list`，不动 `create_or_finish`）。
+- **`AgentCatalog` 的形状**：`{ models, default: DefaultInfo, listed_default }`——没有 `all`，也没有 `Option`。隐藏模型在解析 Codex 时直接丢掉（`model/list` 也只要不带隐藏项的，`includeHidden: false`；
+  需求 M16 原写 `true`，已按实现更正），所以「默认所指」只在可见项里找：配置把默认指到一个隐藏模型时，手机上只显示它的 id、没有强度行（已知局限，罕见）。
+  `listed_default` 是清单自己标的默认模型 id，用来在配置变化后重算「默认」。
+- **「默认所指」每次被问到都重读设置文件**（需求 M12，机制略有不同）：清单缓存 30 分钟，但 `source::refresh_default` 在每次 `task.options` / `task.create` 时重读
+  Claude / Codex / Cursor / Pi 的设置文件并重算 `default`（Claude 的别名备注也一起重算），**不**重新列清单。需求原写「按修改时间判断是否重读」；文件只有几 KB，直接读比记 mtime 更省事、效果一样，
+  需求 M12 已改成这个说法。`task.create` 的检查（含 M10）也用重读后的「默认」。
+- **`run_listing`**（`integrations/agent_launch.rs`）：返回 stdout 加 stderr（没有只取 stdout）、上限 1 MB（不是 512 KB）、不看退出码——没登录的 CLI 也可能把清单打在 stderr，
+  解析器只认格式正确的行，噪声无害。登录 shell 的拼装抽成 `login_shell_command`，与 `probe_help` 共用。
+- **缓存**（`CatalogCache`）：每个来源一格，30 分钟；过期先给旧值、后台刷新（同一来源同时只有一次在跑）；读失败保留旧值并 60 秒后再试，没有旧值就给 60 秒的空清单。
+  `task.options` 最多等 4 秒；`task.create` 用 `get_enough`：缓存里没有手机选的那一项就同步刷新一次，最多 6 秒，失败沿用旧清单。所有 Agent 的 `models` 合计不超过 240 KB。
+- **网关**：`task.create` 的 `model` / `effort` 先在网关按形状拒绝（`invalid`），再由主机对清单校验（`modelUnavailable` / `effortUnavailable`）；
+  `task_identity` 抽成纯函数，有「老格式请求的哈希不变」的固定值测试（哈希值是在代码之外用旧算法算出来的）。
+- **共享夹具 `ios/Fixtures/wire-v1/messages.json` 的新用例没在 P2 加**：Swift 的 `MessageFixtureTests` 逐条「解码再编码」比对，App 还不认识 `models` / `model` / `effort`，现在加会让它变红
+  （主树里另一个会话也在跑 iOS 测试）。改到 P3 与 Swift 类型一起加（P3 测试表本来就列了这一条）；P2 的线格式由 `wire.rs` 与 `tests_tasks.rs` 里的内联 JSON 测试覆盖。
+
+**验证（2026-10-27）**：
+- `cargo test` 全量 1913 通过 / 0 失败（另有 8 个 `#[ignore]`）；clippy `-D warnings --all-targets` 在 1.94 与 1.99 都干净；`cargo fmt --check` 干净。
+- 变异检查：两轮共 22 处故意破坏（旧请求哈希、网关透传与形状校验、M10、净化、强度校验、字节预算、「只给能启动的 Agent 要清单」、详情页模型净化与缓存、
+  五家「默认」随设置变化、`create` 的检查用重读后的「默认」……）每一处都有测试失败，没有存活；源文件逐字节还原。
+  唯一没有测试的是 `fetch_catalogs` 里把重读接到清单上的那一行胶水（它读真实的本机设置文件，单测里不碰）。
+- 本机只读冒烟（M22 范围，只打印条目数；没碰 Cursor、`grok models`、带凭据的 `app-server`）：Claude 3 个别名各带 5 档强度、「默认」行有名字（本机的 `claude --help` 没提 `fable`）；
+  Codex 设置里读得到模型与强度；Claude / Codex / Grok 的 `--help` 都写了启动要传的开关（`--model` 加 `--effort` / `--config` / `--reasoning-effort`）；
+  Pi 的 `--list-models` 是 1 行表头加 34 行、`thinking` 列全是 `yes`，解析出 34 个。冒烟最后一次重跑时机器负载极高（登录 shell 要 10 秒左右），Pi 因超时没有输出——按设计只是降级成「没有清单」。
+- 装机：`./scripts/install.sh` 成功；daemon 换成新版本（指纹 `7441f86f`），0 个在途请求；`AskHuman channel ios status` 显示 Broker 已连接、设备 1 台。
+
+**留给后面的**：
+- `create()` 里「读就绪 → 取清单来源 → `resolve_pick` → `TaskSpec.choice`」这段胶水没有单测（`create()` 会真的起任务）；`resolve_pick`、校验与下游启动管线各自有测试，整条由 P4 的真机一轮覆盖。
+- 已登录账号下 `grok models` 的输出、带真实凭据的 `app-server model/list`：我在本机看不到，留给用户手机上的那一轮（见 `docs/PROGRESS.md`）。
+
 ## P3 细节（iOS App）
 
 | 文件 | 改动 |
@@ -161,7 +198,7 @@
 - `./scripts/install.sh` 装机；更新 `docs/PROGRESS.md`，已完成项删除。
 - **真机一轮（M19：实现完做，但每次执行前经用户批准；会产生模型费用；Cursor 永远不在其中）**：手机新建任务，Claude / Codex / Grok / Pi 各选最便宜的模型、一句话任务；
   核对终端里 Agent 的启动参数（`ps` 看 argv）与详情页显示的模型 / 强度一致；每家再试一次「默认」确认参数与以前相同。
-  手机打开新任务表单时，daemon 会对 Cursor 调一次 `cursor-agent --list-models`（只读、不起会话；是否保留见需求「仍待确认」2），这是功能本身，不算对 Cursor 的实测。
+  手机打开新任务表单时，daemon 会对 Cursor 调一次 `cursor-agent --list-models`（只读、不起会话；保留，见 M21），这是功能本身，不算对 Cursor 的实测。
   同时借这一轮验证 `app-server model/list` 与 `grok models` 在真实账号下的输出（用户自己的设备、自己的凭据，我不在本机替他跑）。
 
 ## 风险与缓解
@@ -169,14 +206,14 @@
 | 风险 | 缓解 |
 |---|---|
 | Cursor / Pi / Grok 的列表输出与 Codex `app-server` 接口是私有格式，升级会变 | 解析容错 + 合成夹具测试 + 失败降级为只有「默认」；`#[ignore]` 冒烟测试能在本机快速发现 |
-| `grok models` 还没有样本，可能拉起 Grok 的 leader 进程 | P2-0 先问用户；沙盒 HOME + 独立 leader socket + 无凭据；跑完杀进程删目录；样本不够就保守实现并在 PROGRESS 标待验 |
+| `grok models` 可能拉起 Grok 的 leader 进程；已登录账号的输出我没见过 | 已缓解：样本在沙盒里（空 HOME、独立 leader socket、无凭据）抓过一次并清理（M20）；解析器只认标题 + 项目符号行、其余忽略；已登录时是否带档位留给用户手机上的那一轮（PROGRESS） |
 | `app-server` 是实验性接口，起进程有成本 | 30 分钟缓存 + 后台刷新；只发 `initialize` 与 `model/list`、不建线程；超时 kill；失败降级 |
 | Cursor 首次获取约 2 秒；登录 shell 的 rc 慢或有噪声 | 并行、单来源 4 秒超时、后台继续填缓存；解析器只认符合行格式的行 |
 | 本地配置文件里有密钥（Claude `ANTHROPIC_AUTH_TOKEN`、Cursor `authInfo`） | 只按键名取字段、不遍历 `env`、不 `Debug` 整个对象；合成夹具带假密钥并断言不泄漏；Grok / Codex 的缓存文件不读 |
 | 夹具 / 文档泄漏内部网关或供应商名（仓库公开） | 全部合成；提交前 `rg` 检查新增文件 |
 | 手机选了 Agent 当前不接受的模型 / 强度 | Mac 在 `task.create` 重新校验，拒绝并回失败码；Codex（及 Grok，若 `grok models` 带逐模型档位）的强度不兼容由 M10 兜底 |
 | 另一个 iOS 会话改同一批 View 文件 | P3 在 `/tmp` 隔离副本里做，验证后作为补丁合入；开工前再看一次 `git status ios/` |
-| 误触发计费 | 验证只用存根 Agent、夹具与只读命令；本机不再调用 `cursor-agent`；`grok models` 与真实一轮每次执行前必须经用户批准，真实一轮永远不含 Cursor |
+| 误触发计费 | 验证只用存根 Agent、夹具与只读命令；`cursor-agent` 至多跑 `--list-models`（M21），绝不启动任务；再跑 `grok models` 与真实一轮每次执行前必须经用户批准，真实一轮永远不含 Cursor |
 
 ## 不做
 

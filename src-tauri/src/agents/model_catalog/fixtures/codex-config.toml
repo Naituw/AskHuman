@@ -1,0 +1,7 @@
+model = "model-c"
+model_reasoning_effort = "xhigh"
+approval_policy = "never"
+
+[projects."/tmp/example"]
+trust_level = "trusted"
+model = "ignored-nested-key"

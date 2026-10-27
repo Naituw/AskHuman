@@ -1,0 +1,9 @@
+You are not authenticated.
+
+Default model: model-a
+
+Available models:
+  * model-a (default)
+  - model-b
+  - model-c
+  - --not-a-model

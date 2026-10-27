@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "authInfo": {
+    "email": "someone@example.invalid",
+    "accessToken": "synthetic-token-do-not-leak"
+  },
+  "model": {
+    "modelId": "model-a",
+    "displayName": "Model A",
+    "displayNameShort": "A",
+    "maxMode": false
+  },
+  "approvalMode": "allowlist"
+}

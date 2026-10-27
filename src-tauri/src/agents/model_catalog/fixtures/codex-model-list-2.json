@@ -1,0 +1,25 @@
+{
+  "data": [
+    {
+      "id": "model-b",
+      "model": "model-b",
+      "hidden": false,
+      "isDefault": false,
+      "supportedReasoningEfforts": []
+    },
+    {
+      "id": "model-c",
+      "model": "model-c",
+      "displayName": "Model C",
+      "description": "",
+      "hidden": false,
+      "isDefault": false,
+      "defaultReasoningEffort": "high",
+      "supportedReasoningEfforts": [
+        {"reasoningEffort": "low", "description": "Fast"},
+        {"reasoningEffort": "high", "description": "Thorough"}
+      ]
+    }
+  ],
+  "nextCursor": null
+}

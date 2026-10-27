@@ -5,9 +5,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     fs,
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
 };
 
 const LIMIT: u64 = 1024 * 1024;
@@ -211,6 +214,49 @@ pub fn resolve(kind: AgentKind, sid: &str) -> SessionInfo {
     }
     info
 }
+
+/// How long [`resolve_cached`] reuses an answer, and how many sessions it keeps.
+const RESOLVE_TTL: Duration = Duration::from_secs(10);
+const RESOLVE_CACHE_MAX: usize = 128;
+
+type ResolveCache = HashMap<(AgentKind, String), (Instant, SessionInfo)>;
+
+/// [`resolve`], except that a session read less than ten seconds ago is not read again: a live
+/// view asks every couple of seconds, and the model it shows changes far more slowly than that.
+pub fn resolve_cached(kind: AgentKind, sid: &str) -> SessionInfo {
+    static CACHE: OnceLock<Mutex<ResolveCache>> = OnceLock::new();
+    resolve_cached_in(
+        CACHE.get_or_init(Default::default),
+        kind,
+        sid,
+        Instant::now(),
+        resolve,
+    )
+}
+
+fn resolve_cached_in(
+    cache: &Mutex<ResolveCache>,
+    kind: AgentKind,
+    sid: &str,
+    now: Instant,
+    read: impl FnOnce(AgentKind, &str) -> SessionInfo,
+) -> SessionInfo {
+    let key = (kind, sid.to_string());
+    if let Some((at, value)) = cache.lock().unwrap().get(&key) {
+        if now.saturating_duration_since(*at) < RESOLVE_TTL {
+            return value.clone();
+        }
+    }
+    // The files are read without the lock: another session's answer must not wait for them.
+    let value = read(kind, sid);
+    let mut cache = cache.lock().unwrap();
+    if cache.len() >= RESOLVE_CACHE_MAX {
+        cache.clear();
+    }
+    cache.insert(key, (now, value.clone()));
+    value
+}
+
 fn native(kind: AgentKind, sid: &str) -> SessionInfo {
     let mut info = SessionInfo::default();
     if kind == AgentKind::Cursor {
@@ -513,5 +559,77 @@ mod tests {
         assert!(!valid_sid("C:\\private"));
         assert!(!valid_sid("bad\nidentity"));
         assert!(valid_sid("session-a_1"));
+    }
+
+    fn info(model: &str) -> SessionInfo {
+        SessionInfo {
+            model: Some(model.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_session_read_a_moment_ago_is_not_read_again() {
+        let cache = Mutex::new(ResolveCache::new());
+        let start = Instant::now();
+        let reads = std::cell::Cell::new(0);
+        let read = |_: AgentKind, _: &str| {
+            reads.set(reads.get() + 1);
+            info(&format!("model-{}", reads.get()))
+        };
+        let first = resolve_cached_in(&cache, AgentKind::Pi, "s", start, read);
+        let again = resolve_cached_in(
+            &cache,
+            AgentKind::Pi,
+            "s",
+            start + Duration::from_secs(9),
+            read,
+        );
+        assert_eq!(first.model.as_deref(), Some("model-1"));
+        assert_eq!(again.model.as_deref(), Some("model-1"));
+        assert_eq!(reads.get(), 1);
+        // Past the ten seconds it is read again, and the new answer is the one kept.
+        let later = resolve_cached_in(
+            &cache,
+            AgentKind::Pi,
+            "s",
+            start + Duration::from_secs(10),
+            read,
+        );
+        assert_eq!(later.model.as_deref(), Some("model-2"));
+        let kept = resolve_cached_in(
+            &cache,
+            AgentKind::Pi,
+            "s",
+            start + Duration::from_secs(11),
+            read,
+        );
+        assert_eq!(kept.model.as_deref(), Some("model-2"));
+        assert_eq!(reads.get(), 2);
+    }
+
+    #[test]
+    fn cached_answers_are_kept_apart_per_family_and_session() {
+        let cache = Mutex::new(ResolveCache::new());
+        let now = Instant::now();
+        let read = |kind: AgentKind, sid: &str| info(&format!("{}-{sid}", kind.as_str()));
+        let a = resolve_cached_in(&cache, AgentKind::Pi, "s1", now, read);
+        let b = resolve_cached_in(&cache, AgentKind::Pi, "s2", now, read);
+        let c = resolve_cached_in(&cache, AgentKind::Grok, "s1", now, read);
+        assert_eq!(a.model.as_deref(), Some("pi-s1"));
+        assert_eq!(b.model.as_deref(), Some("pi-s2"));
+        assert_eq!(c.model.as_deref(), Some("grok-s1"));
+    }
+
+    #[test]
+    fn the_answer_cache_does_not_grow_without_bound() {
+        let cache = Mutex::new(ResolveCache::new());
+        let now = Instant::now();
+        for i in 0..(RESOLVE_CACHE_MAX * 3) {
+            resolve_cached_in(&cache, AgentKind::Pi, &format!("s{i}"), now, |_, _| {
+                info("m")
+            });
+            assert!(cache.lock().unwrap().len() <= RESOLVE_CACHE_MAX);
+        }
     }
 }

@@ -3,8 +3,11 @@
 mod actions;
 mod launch;
 pub use launch::{
-    available, integration_enabled, launch_status, resolve_launch, LaunchStatus, UnavailableReason,
+    available, catalog_runtime, integration_enabled, launch_status, resolve_launch, LaunchStatus,
+    UnavailableReason,
 };
+mod models;
+pub use models::list_models;
 pub mod protocol;
 pub mod requests;
 mod runtime;

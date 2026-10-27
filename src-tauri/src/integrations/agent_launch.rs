@@ -1300,6 +1300,118 @@ fn probe_help(executable: &str, args: &[&str]) -> Option<String> {
     }
 }
 
+/// The most output of a listing command that is kept.
+const LISTING_MAX_BYTES: usize = 1024 * 1024;
+
+/// A command that runs `executable args...` the way [`probe_help`] runs an Agent: in the user's
+/// login shell on Unix (GUI hosts have a sparse PATH, and Agent entrypoints may be scripts that
+/// need the PATH the login shell builds), directly on Windows. `exec` makes the Agent the process
+/// that is waited for and killed, not a shell around it. The caller sets up the pipes.
+///
+/// Only a previously resolved executable and fixed arguments may be passed in: both are quoted,
+/// but they are meant to be known words, never user input.
+pub(crate) fn login_shell_command(executable: &str, args: &[&str]) -> Command {
+    #[cfg(unix)]
+    {
+        let script = ["exec".to_string(), shell_quote(executable)]
+            .into_iter()
+            .chain(args.iter().map(|arg| shell_quote(arg)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut command = Command::new(login_shell());
+        command.args(["-lc", &script]);
+        command
+    }
+    #[cfg(not(unix))]
+    {
+        let mut command = Command::new(executable);
+        command.args(args);
+        command
+    }
+}
+
+/// What `executable args...` prints (stdout, then stderr), for the model catalogs.
+///
+/// Run like [`probe_help`] runs an Agent, in the user's login shell, but for output that can be
+/// long: both pipes are drained while the command runs (a long list must not fill a pipe and
+/// stall it), at most [`LISTING_MAX_BYTES`] are kept, and the exit status is ignored, because a
+/// CLI that is not signed in may still print a usable list while the parsers accept only
+/// well-formed lines. `None`: the command could not be started, was not done within `timeout`
+/// (it is killed) or printed nothing.
+///
+/// Only the previously resolved executable and fixed listing arguments reach the shell. `exec`
+/// makes the Agent the process that is waited for and killed, not a shell around it.
+pub fn run_listing(executable: &str, args: &[&str], timeout: Duration) -> Option<String> {
+    use std::io::Read;
+    use std::sync::mpsc;
+
+    /// What one pipe has delivered so far, and a signal for "the pipe is closed".
+    struct Drained {
+        kept: Arc<Mutex<Vec<u8>>>,
+        closed: mpsc::Receiver<()>,
+    }
+
+    impl Drained {
+        fn start(mut pipe: impl Read + Send + 'static) -> Self {
+            let kept = Arc::new(Mutex::new(Vec::new()));
+            let (closed_tx, closed) = mpsc::channel();
+            let sink = kept.clone();
+            std::thread::spawn(move || {
+                let mut chunk = [0u8; 8192];
+                loop {
+                    match pipe.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => {
+                            // Keep reading past the cap: a full pipe would stall the command.
+                            let mut kept = sink.lock().unwrap();
+                            let room = LISTING_MAX_BYTES.saturating_sub(kept.len());
+                            kept.extend_from_slice(&chunk[..read.min(room)]);
+                        }
+                    }
+                }
+                let _ = closed_tx.send(());
+            });
+            Self { kept, closed }
+        }
+
+        /// Whatever arrived, after giving the pipe `grace` to close.
+        fn collect(self, grace: Duration) -> Vec<u8> {
+            let _ = self.closed.recv_timeout(grace);
+            std::mem::take(&mut *self.kept.lock().unwrap())
+        }
+    }
+
+    let mut child = login_shell_command(executable, args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    let stdout = Drained::start(child.stdout.take()?);
+    let stderr = Drained::start(child.stderr.take()?);
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    // A background process the command left behind may hold a pipe open: wait a moment for the
+    // pipes to close, then take what has arrived.
+    let grace = Duration::from_millis(500);
+    let mut bytes = stdout.collect(grace);
+    bytes.extend(stderr.collect(grace));
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    (!text.trim().is_empty()).then_some(text)
+}
+
 pub fn task_with_attachments(task: &str, files: &[String], warnings: &[String]) -> String {
     let mut output = task.to_string();
     let available: Vec<&String> = files
@@ -1761,6 +1873,9 @@ fn harden(path: &Path, mode: u32) {
 
 #[cfg(not(unix))]
 fn harden(_path: &Path, _mode: u32) {}
+
+#[cfg(all(test, unix))]
+mod listing_tests;
 
 #[cfg(test)]
 mod tests {

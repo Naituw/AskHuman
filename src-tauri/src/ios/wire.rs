@@ -828,6 +828,35 @@ pub struct WorkspaceOption {
     pub last_used_at: i64,
 }
 
+/// One model an Agent offers for a new task (docs/specs/ios-task-model.md).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelOption {
+    /// What `task.create` sends back as `model`.
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Reasoning efforts this model can run with; absent = no effort row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub efforts: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+}
+
+/// What "Default" stands for: the model the Agent uses when `task.create` names none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DefaultModel {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Efforts the default model can run with; absent = no effort row for "Default".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub efforts: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentOption {
@@ -838,6 +867,11 @@ pub struct AgentOption {
     pub permission_selectable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// The models the phone may pick besides "Default"; absent when none is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<ModelOption>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<DefaultModel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -888,6 +922,12 @@ pub struct TaskCreate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub todo_id: Option<String>,
     pub text: String,
+    /// A model id from `task.options`; absent = the Agent's own default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// A reasoning effort offered for that model (or for "Default"); absent = the Agent's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 msg!(TaskCreate, t::TASK_CREATE);
 

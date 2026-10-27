@@ -297,6 +297,8 @@ fn create(id: &str, text: &str) -> wire::TaskCreate {
         permission: "default".into(),
         todo_id: None,
         text: text.into(),
+        model: None,
+        effort: None,
     }
 }
 
@@ -498,6 +500,162 @@ async fn a_todo_can_stand_in_for_the_text() {
     let launches = fx.host.launches.lock().unwrap();
     assert_eq!(launches[0].todo_id.as_deref(), Some("t1"));
     assert!(launches[0].text.is_empty());
+}
+
+// ---------------------------------------------------------------- model and effort
+
+fn with_model(mut task: wire::TaskCreate, model: &str, effort: Option<&str>) -> wire::TaskCreate {
+    task.model = Some(model.into());
+    task.effort = effort.map(str::to_string);
+    task
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_models_an_agent_offers_reach_the_phone_with_the_options() {
+    let (fx, mut phone) = with_agent().await;
+    let models = vec![
+        wire::ModelOption {
+            id: "model-a".into(),
+            label: "Model A".into(),
+            note: Some("flagship".into()),
+            efforts: Some(vec!["low".into(), "high".into()]),
+            default_effort: Some("high".into()),
+        },
+        wire::ModelOption {
+            id: "model-b".into(),
+            label: "Model B".into(),
+            note: None,
+            efforts: None,
+            default_effort: None,
+        },
+    ];
+    let default_model = wire::DefaultModel {
+        label: Some("Model A".into()),
+        efforts: Some(vec!["low".into(), "high".into()]),
+        default_effort: Some("high".into()),
+    };
+    {
+        let mut choices = fx.host.choices.lock().unwrap();
+        choices.options.agents[0].models = Some(models.clone());
+        choices.options.agents[0].default_model = Some(default_model.clone());
+    }
+    let options = load_options(&mut phone).await;
+    assert_eq!(options.agents[0].models, Some(models));
+    assert_eq!(options.agents[0].default_model, Some(default_model));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_picked_model_and_effort_reach_the_host_and_none_means_none() {
+    let (fx, mut phone) = with_agent().await;
+    load_options(&mut phone).await;
+    phone
+        .send(&with_model(
+            create("n1", "build it"),
+            "model-a",
+            Some("high"),
+        ))
+        .await;
+    assert_eq!(status(&mut phone).await.stage, "accepted");
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    phone.send(&create("n2", "build it too")).await;
+    assert_eq!(status(&mut phone).await.stage, "accepted");
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    phone
+        .send(&with_model(create("n3", "model only"), "model-b", None))
+        .await;
+    assert_eq!(status(&mut phone).await.stage, "accepted");
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    let launches = fx.host.launches.lock().unwrap();
+    assert_eq!(launches.len(), 3);
+    assert_eq!(launches[0].model.as_deref(), Some("model-a"));
+    assert_eq!(launches[0].effort.as_deref(), Some("high"));
+    assert_eq!(
+        (launches[1].model.as_deref(), launches[1].effort.as_deref()),
+        (None, None)
+    );
+    assert_eq!(launches[2].model.as_deref(), Some("model-b"));
+    assert_eq!(launches[2].effort, None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_task_that_names_a_model_is_not_the_same_task_as_one_that_does_not() {
+    let (fx, mut phone) = with_agent().await;
+    load_options(&mut phone).await;
+    let plain = create("n1", "build it");
+    phone.send(&plain).await;
+    assert_eq!(status(&mut phone).await.stage, "accepted");
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    // Sent again as it was: answered from the journal, nothing starts.
+    phone.send(&plain).await;
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    // The same id with a model is a different message.
+    phone
+        .send(&with_model(plain.clone(), "model-a", None))
+        .await;
+    let conflict = status(&mut phone).await;
+    assert_eq!(conflict.stage, "failed");
+    assert_eq!(conflict.reason.as_deref(), Some("conflict"));
+    assert_eq!(fx.host.launches.lock().unwrap().len(), 1);
+
+    // And the other way round: a task that carries a model replays as itself, and another
+    // model or effort under the same id is a conflict.
+    let picked = with_model(create("n2", "build it"), "model-a", Some("high"));
+    phone.send(&picked).await;
+    assert_eq!(status(&mut phone).await.stage, "accepted");
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    phone.send(&picked).await;
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    for other in [
+        with_model(create("n2", "build it"), "model-b", Some("high")),
+        with_model(create("n2", "build it"), "model-a", Some("low")),
+        with_model(create("n2", "build it"), "model-a", None),
+    ] {
+        phone.send(&other).await;
+        let conflict = status(&mut phone).await;
+        assert_eq!(conflict.reason.as_deref(), Some("conflict"), "{other:?}");
+    }
+    assert_eq!(fx.host.launches.lock().unwrap().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn values_that_cannot_be_a_model_or_an_effort_are_refused_before_anything_starts() {
+    let (fx, mut phone) = with_agent().await;
+    load_options(&mut phone).await;
+    let long = "a".repeat(129);
+    let bad_models = [
+        "--yolo",
+        "-m",
+        "a b",
+        "a:high",
+        "",
+        " ",
+        "a\nb",
+        long.as_str(),
+    ];
+    for (i, model) in bad_models.iter().enumerate() {
+        phone
+            .send(&with_model(create(&format!("m{i}"), "text"), model, None))
+            .await;
+        let failed = status(&mut phone).await;
+        assert_eq!(failed.reason.as_deref(), Some("invalid"), "{model:?}");
+    }
+    for (i, effort) in ["High", "-x", "", "a b", "1x"].iter().enumerate() {
+        phone
+            .send(&with_model(
+                create(&format!("e{i}"), "text"),
+                "model-a",
+                Some(effort),
+            ))
+            .await;
+        let failed = status(&mut phone).await;
+        assert_eq!(failed.reason.as_deref(), Some("invalid"), "{effort:?}");
+    }
+    // An effort alone (for "Default") is a fine shape; only a bad one is refused.
+    let mut effort_only = create("e-only", "text");
+    effort_only.effort = Some("--bad".into());
+    phone.send(&effort_only).await;
+    assert_eq!(status(&mut phone).await.reason.as_deref(), Some("invalid"));
+    assert!(fx.host.launches.lock().unwrap().is_empty());
 }
 
 #[tokio::test(start_paused = true)]
