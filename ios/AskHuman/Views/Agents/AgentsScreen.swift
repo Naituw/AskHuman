@@ -91,7 +91,7 @@ private struct AgentsList: View {
             }
         }
         .listStyle(.insetGrouped)
-        .overlay {
+        .emptyState {
             // An empty list only means "no sessions" once the Macs have answered.
             if sections.isEmpty, tasks.isEmpty {
                 switch readiness {
