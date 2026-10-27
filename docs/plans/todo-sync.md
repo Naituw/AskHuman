@@ -347,4 +347,4 @@ tick(reason, budget):
   - 性能（优化构建，压力数据 200 项目 / 4000 实体，`todos.json` 797 KiB、`state.json` 1.95 MiB）：本地阶段（空闲）中位数 21.5 ms（目标 ≤ 100 ms），`todo_sync_projects` 5.8 ms，单独读 `todos.json` 0.8 ms；前端视图模型在 640 个项目行上不到 0.5 ms。真实 Dev Instance 上无法开启同步（`supported()`），iCloud 模式的首屏数字待真机补。
   - 与界面稿 `docs/assets/todo-sync-ui/` 的对照是用浏览器预览（`data=icloud`，浅色 / 深色）目测完成的，不是像素级。
 - **提交与发布说明**：P3、P4、P5 的提交都带 `Release-Note: skip`，因为 helper 暂不随正式版发布（计划后置项）。合并并决定随版本发布时，需要补一条带用户可见说明的 `feat(todo-sync)` 提交（或在合并提交里写）。
-- **文档**：除计划里列的 `overview.md` 之外，新增专题概览 `docs/overview-todo-sync.md`（模块地图、钩子、虚拟键、验证命令）；`docs/wiki/todo-sync.md`（含英文版）与 `docs/specs/todo-whats-next.md` D9 仍按 P6 补。
+- **文档**：除计划里列的 `overview.md` 之外，新增专题概览 `docs/overview-todo-sync.md`（模块地图、钩子、虚拟键、验证命令）；`docs/specs/todo-whats-next.md` D9 已补一句 iCloud 模式；面向用户的 `docs/wiki/todo-sync.md`（含英文版）等功能能让普通用户启用（helper 随版本发布）时再写，避免文档先于功能。

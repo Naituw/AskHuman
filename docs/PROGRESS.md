@@ -102,8 +102,8 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] **需要用户**（计划 §7，agent 不做）：开发者后台新建 App ID / 容器 / Developer ID 描述文件；helper 首次真机跑通后在 CloudKit Dashboard 把 schema 部署到 Production；在 Mac A 上用 Xcode 构建签名 helper 并拷到 Mac B。这些完成前，P3 之后的真机验收（计划 §5 P3 / P4 / P6、§6 的 E1–E12）做不了
 - [ ] 双机验收要 SSH 到 Mac B：需用户当次同意（S0 的授权只覆盖 spike）；不改 B 的网络 / 代理设置
 - [ ] **合并**：P1（`feat/todos-sidebar`）先合并，再把 `feat/todo-sync` rebase；主目录里有别的 agent 未提交的改动（`docs/PROGRESS.md`、`src/i18n/*`、`src/lib/types.ts`、`src-tauri/src/config.rs`、`daemon/runtime/ios.rs`…），合并时会有文本冲突。P3–P5 的提交带 `Release-Note: skip`（helper 暂不随版本发布）；决定随版本发布时补一条带用户可见说明的 `feat(todo-sync)` 提交
-- [ ] P0 的绝对基线 `docs/perf/todos-window-baseline.json` 还没生成（机器常被别的任务占满，负载 5–230，计时不可信）；P1 的性能门用 `--ref <P0 参考二进制>` A/B（参考二进制在 worktree 的 `.askhuman-dev/perf-ref/AskHuman-p0`，被 gitignore）。安静时跑 `scripts/perf-todos-window.mjs` 出基线，并按它校准需求 §9.9 的目标；iCloud 模式的首屏数字要真机开了同步后补（Dev Instance 开不了）
-- [ ] P6 文档：`docs/wiki/todo-sync.md`（含英文版）、`docs/specs/todo-whats-next.md` D9；浸泡（24 小时）、`kill -9` 循环、断网 / 睡眠唤醒、账号变化（调试开关）都要真机
+- [ ] P0 的绝对基线 `docs/perf/todos-window-baseline.json` 还没生成（机器常被别的任务占满，负载 5–230，计时不可信）；P1 的性能门用 `--ref <P0 参考二进制>` A/B（参考二进制在 worktree 的 `.askhuman-dev/perf-ref/AskHuman-p0`，被 gitignore）。安静且屏幕亮着时（窗口得真的绘制，否则脚本报「the window never painted」）跑 `scripts/perf-todos-window.mjs` 出基线，并按它校准需求 §9.9 的目标；iCloud 模式的首屏数字要真机开了同步后补（Dev Instance 开不了）
+- [ ] P6：浸泡（24 小时）、`kill -9` 循环、断网 / 睡眠唤醒、账号变化（调试开关）都要真机；用户文档 `docs/wiki/todo-sync.md`（含英文版）等 helper 能随版本发布时再写
 - [ ] S0 收尾（用户 2026-10-27 那题没答复，**什么都没删、没动 B**）：停掉的 spike helper 仍装在两台 Mac 上；测试待办还在 CloudKit 容器里；想收尾时再问
 - [ ] 分发给别人前：用另一个大陆 iCloud 账号复测（容器 / 用户层初始化）；helper 打进 `AskHuman.app` 的 `Contents/Library/LoginItems`、公证、自更新下发；附件同步、iOS App 读写待办等另行评审
 - 构建小贴士（shell 的 HOME 被指向 `/tmp/ph`）：`export CARGO_HOME=/Users/wutian/.cargo CARGO_INCREMENTAL=0 GIT_CONFIG_GLOBAL=/Users/wutian/.gitconfig npm_config_store_dir=/Users/wutian/Library/pnpm/store`，否则 cargo 会重新下载依赖、`./scripts/install.sh` 会卡在 pnpm 的交互提示
