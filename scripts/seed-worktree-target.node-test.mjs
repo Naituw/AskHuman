@@ -25,7 +25,7 @@ function put(file, contents) {
 }
 
 function git(cwd, ...args) {
-  const result = spawnSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args],
+  const result = spawnSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args],
     { cwd, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 }
@@ -83,13 +83,13 @@ function fixture(t, { os = "Darwin", stubs: extraStubs = {} } = {}) {
     cacheLog: path.join(worktreeTarget, "askhuman-cache.log"),
     cargoCalls: () => (existsSync(cargoLog) ? readFileSync(cargoLog, "utf8").trim().split("\n") : []),
     run(args = [], { checkout = worktree, env = {} } = {}) {
-      return spawnSync("/bin/bash", [path.join(checkout, "scripts/seed-worktree-target.sh"), ...args], {
+      return spawnSync("bash", [path.join(checkout, "scripts/seed-worktree-target.sh"), ...args], {
         cwd: checkout,
         encoding: "utf8",
         timeout: 30_000,
         env: {
           ...process.env,
-          PATH: `${stubs}:/usr/bin:/bin:/usr/sbin:/sbin`,
+          PATH: [stubs, process.env.PATH].join(path.delimiter),
           TEST_OS: os,
           TEST_CARGO_LOG: cargoLog,
           ...env,
