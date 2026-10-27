@@ -658,6 +658,9 @@ pub struct TestPhone {
     pair_topic: Option<String>,
     queue: VecDeque<Plain>,
     pair_queue: VecDeque<Plain>,
+    /// The host's virtual clock, so that what the phone sends is stamped with the time the Mac
+    /// sees (the Mac drops messages more than `CLOCK_SKEW_MS` off).
+    clock_start: tokio::time::Instant,
 }
 
 impl TestPhone {
@@ -696,7 +699,13 @@ impl TestPhone {
             pair_topic: None,
             queue: VecDeque::new(),
             pair_queue: VecDeque::new(),
+            clock_start: fx.host.start,
         }
+    }
+
+    /// The phone's clock: the host's virtual time.
+    fn now_ms(&self) -> i64 {
+        BASE_MS + self.clock_start.elapsed().as_millis() as i64
     }
 
     pub async fn set_presence(&self, online: bool, foreground: bool) {
@@ -800,7 +809,7 @@ impl TestPhone {
     // ------------------------------------------------------------ messaging
 
     pub async fn send<M: Msg>(&mut self, body: &M) -> String {
-        let plain = Plain::new(M::TYPE, body.to_value(), BASE_MS);
+        let plain = Plain::new(M::TYPE, body.to_value(), self.now_ms());
         let id = plain.i.clone();
         self.send_plain(plain).await;
         id

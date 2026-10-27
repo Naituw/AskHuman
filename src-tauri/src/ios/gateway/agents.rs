@@ -3,6 +3,11 @@
 //! Every phone has its own `agents` stream (revision and last-sent state per phone) because
 //! `followed` differs between phones. The agent list itself comes from the host about once a
 //! second, only while somebody could look at it or follows an Agent.
+//!
+//! A followed Agent is one the phone wants the first result of (`done` or `failed`) from. A phone
+//! that is not looking gets that result as a push only once the Mac has been idle for the
+//! configured time, like a question (`docs/specs/ios-follow-narrowing.md`); once the result was
+//! dealt with the Agent leaves the follow set.
 
 use std::collections::{HashMap, HashSet};
 
@@ -20,11 +25,21 @@ use crate::ios::wire::{
 const AGENTS_POLL_MS: i64 = 1_000;
 /// A finished turn is announced after this quiet period (a new turn or activity cancels it).
 const DONE_DEBOUNCE_MS: i64 = 3_000;
-/// A question nobody on iOS can answer is announced once it has been open this long.
-const WAITING_DELAY_MS: i64 = 2_000;
 /// Sessions the phones can see at most: the active ones first, then the latest ended ones.
 const MAX_AGENTS: usize = 60;
 const MAX_ENDED_AGENTS: usize = 10;
+
+/// A result (`done` or `failed`) of a followed Agent for a phone that was not looking when it
+/// happened: a push that waits until the Mac has been idle for the configured time. Memory only.
+pub(crate) struct FollowNotice {
+    pub phone_id: String,
+    pub agent_key: String,
+    pub loc_key: &'static str,
+    /// What the notification says, fixed when the result happened.
+    pub plain: PushPlain,
+    /// When the result happened.
+    pub at: i64,
+}
 
 /// What the gateway remembers about Agents between ticks.
 #[derive(Default)]
@@ -36,10 +51,8 @@ pub(crate) struct Live {
     pub failed: HashSet<String>,
     /// Session → when "done" is announced.
     pub done_at: HashMap<String, i64>,
-    /// Session → (request id, first seen) of a question that is not on iOS.
-    pub waiting_since: HashMap<String, (String, i64)>,
-    /// Session → request id that was announced already.
-    pub waiting_notified: HashMap<String, String>,
+    /// Results waiting for the Mac to be idle long enough; at most one per phone and Agent.
+    pub follow_notices: Vec<FollowNotice>,
     /// New tasks waiting for their Agent session to show up.
     pub task_waits: Vec<TaskWait>,
     /// `task.create` messages whose terminal is still being started.
@@ -191,7 +204,6 @@ impl Actor {
         }
         self.refresh_agents(now);
         self.prune_follows();
-        self.tick_waiting(now);
         for phone_id in live {
             self.send_agents_delta(&phone_id);
         }
@@ -299,18 +311,20 @@ impl Actor {
         let now = self.now();
         let key = info.agent_key;
         match info.event {
+            // The Agent works again: the result that was about to be announced is no result.
             AgentEventKind::TurnStart => {
                 self.live.done_at.remove(&key);
                 self.live.failed.remove(&key);
+                self.drop_notices(&key);
             }
             AgentEventKind::Activity => {
                 self.live.done_at.remove(&key);
+                self.drop_notices(&key);
             }
             AgentEventKind::SessionEnd => {
                 self.live.done_at.remove(&key);
                 self.live.failed.remove(&key);
-                self.live.waiting_since.remove(&key);
-                self.live.waiting_notified.remove(&key);
+                self.drop_notices(&key);
             }
             AgentEventKind::TurnEnd => {
                 self.live.done_at.remove(&key);
@@ -341,47 +355,17 @@ impl Actor {
         }
     }
 
-    /// A followed Agent waits for an answer that was not offered to the phones as a question.
-    fn tick_waiting(&mut self, now: i64) {
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut fresh: Vec<(String, String)> = Vec::new();
-        let mut fire: Vec<(String, String)> = Vec::new();
-        for agent in &self.live.agents {
-            let Some(rid) = agent.waiting_request_id.clone() else {
-                continue;
-            };
-            if agent.state == "ended"
-                || self.requests.find(&rid).is_some()
-                || self.followers(&agent.key).is_empty()
-            {
-                continue;
-            }
-            seen.insert(agent.key.clone());
-            match self.live.waiting_since.get(&agent.key) {
-                Some((known, first)) if *known == rid => {
-                    let announced = self.live.waiting_notified.get(&agent.key) == Some(&rid);
-                    if !announced && now - first >= WAITING_DELAY_MS {
-                        fire.push((agent.key.clone(), rid));
-                    }
-                }
-                _ => fresh.push((agent.key.clone(), rid)),
-            }
-        }
-        self.live.waiting_since.retain(|key, _| seen.contains(key));
+    /// Forgets the results of an Agent that works again or is gone, before they were pushed.
+    fn drop_notices(&mut self, agent_key: &str) {
         self.live
-            .waiting_notified
-            .retain(|key, _| seen.contains(key));
-        for (key, rid) in fresh {
-            self.live.waiting_since.insert(key, (rid, now));
-        }
-        for (key, rid) in fire {
-            self.live.waiting_notified.insert(key.clone(), rid);
-            self.announce(&key, "waiting", now);
-        }
+            .follow_notices
+            .retain(|notice| notice.agent_key != agent_key);
     }
 
-    /// Tells every phone that follows `agent_key`: over the live link when the app is open,
-    /// otherwise as a push.
+    /// Tells every phone that follows `agent_key` about a result (`done` or `failed`): over the
+    /// live link when the app is open. Otherwise the push is queued until the Mac has been idle
+    /// for the configured time (`flush_follow_notices`). Whatever reaches the phone, or no longer
+    /// needs to, ends the follow: it was for this one result.
     fn announce(&mut self, agent_key: &str, kind: &str, now: i64) {
         let followers = self.followers(agent_key);
         if followers.is_empty() {
@@ -407,28 +391,37 @@ impl Actor {
             .as_ref()
             .map(|a| a.kind_label.clone())
             .unwrap_or_default();
-        let preview = if kind == "waiting" {
-            agent.as_ref().and_then(|a| a.waiting_preview.clone())
-        } else {
-            None
-        }
-        .or_else(|| {
-            self.host.watch_frame(agent_key).and_then(|data| {
+        let preview = self
+            .host
+            .watch_frame(agent_key)
+            .and_then(|data| {
                 data.frame
                     .get("text")
                     .and_then(Value::as_str)
                     .map(str::to_string)
             })
-        })
-        .map(|text| clip(&text, PUSH_PREVIEW_MAX_CHARS))
-        .unwrap_or_default();
-        let loc_key = match kind {
-            "done" => "PUSH_FOLLOW_DONE",
-            "waiting" => "PUSH_FOLLOW_WAITING",
-            _ => "PUSH_FOLLOW_FAILED",
+            .map(|text| clip(&text, PUSH_PREVIEW_MAX_CHARS))
+            .unwrap_or_default();
+        let loc_key = if kind == "done" {
+            "PUSH_FOLLOW_DONE"
+        } else {
+            "PUSH_FOLLOW_FAILED"
+        };
+        let plain = PushPlain {
+            k: format!("follow.{kind}"),
+            rid: Some(agent_key.to_string()),
+            mac: self.mac_name(),
+            agent: label,
+            project: project.clone(),
+            text: if preview.is_empty() {
+                clip(&title, PUSH_PREVIEW_MAX_CHARS)
+            } else {
+                preview.clone()
+            },
+            ts: now,
         };
         for phone_id in followers {
-            if self.is_live(&phone_id) {
+            if self.is_looking(&phone_id) {
                 self.send(
                     &phone_id,
                     &FollowEvent {
@@ -439,29 +432,114 @@ impl Actor {
                         preview: preview.clone(),
                     },
                 );
-            } else {
-                let plain = PushPlain {
-                    k: format!("follow.{kind}"),
-                    rid: Some(agent_key.to_string()),
-                    mac: self.mac_name(),
-                    agent: label.clone(),
-                    project: project.clone(),
-                    text: if preview.is_empty() {
-                        clip(&title, PUSH_PREVIEW_MAX_CHARS)
-                    } else {
-                        preview.clone()
-                    },
-                    ts: now,
-                };
-                self.spawn_push(
-                    &phone_id,
-                    "alert",
+                self.deliver_follow(&phone_id, agent_key);
+            } else if self.can_push(&phone_id, now) {
+                // A newer result replaces an older one that was not pushed yet.
+                self.live.follow_notices.retain(|notice| {
+                    !(notice.phone_id == phone_id && notice.agent_key == agent_key)
+                });
+                self.live.follow_notices.push(FollowNotice {
+                    phone_id,
+                    agent_key: agent_key.to_string(),
                     loc_key,
-                    &format!("fw-{agent_key}"),
-                    &plain,
-                    now,
-                );
+                    plain: plain.clone(),
+                    at: now,
+                });
             }
+            // A phone that cannot be pushed to stays a follower: nothing could reach it.
+        }
+        // With the Mac already idle for long enough (or no waiting configured) the push goes
+        // out right here.
+        self.flush_follow_notices(now);
+    }
+
+    /// The result of `agent_key` reached the phone, or does not need to any more: the follow was
+    /// for that one result, so the Agent leaves the phone's follow set.
+    fn deliver_follow(&mut self, phone_id: &str, agent_key: &str) {
+        let Some(phone) = self.store.state.phone_mut(phone_id) else {
+            return;
+        };
+        let before = phone.follow_set.len();
+        phone.follow_set.retain(|key| key != agent_key);
+        if phone.follow_set.len() == before {
+            return;
+        }
+        self.store.save_state();
+        self.revs.follow += 1;
+        self.send_follow_state(phone_id, None);
+        if self.is_live(phone_id) {
+            // The `followed` flag of the Agent changed.
+            self.send_agents_delta(phone_id);
+        }
+    }
+
+    /// Pushes the results a phone has not looked at once the Mac has been idle for the configured
+    /// time (`docs/specs/ios-follow-narrowing.md`), the way questions are
+    /// (`flush_due_notifications`). A result is dropped, and its follow ended, when the phone
+    /// looks at the app first or when the Mac saw input after the result: its owner is back and
+    /// has seen it. An unknown idle time counts as long enough. Cheap while nothing waits: the
+    /// system clock is read only for a waiting result.
+    pub(super) fn flush_follow_notices(&mut self, now: i64) {
+        if self.live.follow_notices.is_empty() {
+            return;
+        }
+        let after = self.host.alert_after_secs();
+        let idle = if after > 0 {
+            self.host.mac_idle_secs()
+        } else {
+            None
+        };
+        let mut waiting = Vec::new();
+        let mut dealt = Vec::new();
+        for notice in std::mem::take(&mut self.live.follow_notices) {
+            let following = self
+                .store
+                .state
+                .phone(&notice.phone_id)
+                .is_some_and(|phone| phone.follow_set.contains(&notice.agent_key));
+            if !following {
+                // The phone is gone, or the session ended and left the follow set.
+                continue;
+            }
+            let target = (notice.phone_id.clone(), notice.agent_key.clone());
+            if self.is_looking(&notice.phone_id) {
+                // It can see the Agent in the list.
+                dealt.push(target);
+                continue;
+            }
+            if let Some(idle) = idle {
+                // The idle time is whole seconds rounded down: leave a second of margin before
+                // concluding that there was input after the result.
+                if idle.saturating_mul(1000).saturating_add(1000) <= (now - notice.at).max(0) as u64
+                {
+                    dealt.push(target);
+                    continue;
+                }
+                if idle < after {
+                    waiting.push(notice);
+                    continue;
+                }
+            }
+            if !self.can_push(&notice.phone_id, now) {
+                // The push registration vanished while the result waited: nothing can reach the
+                // phone, so it stays a follower.
+                continue;
+            }
+            let mut plain = notice.plain.clone();
+            plain.ts = now;
+            self.spawn_push(
+                &notice.phone_id,
+                "alert",
+                notice.loc_key,
+                &format!("fw-{}", notice.agent_key),
+                &plain,
+                now,
+            );
+            dealt.push(target);
+        }
+        self.live.follow_notices.extend(waiting);
+        for (phone_id, agent_key) in dealt {
+            self.deliver_follow(&phone_id, &agent_key);
         }
     }
 }

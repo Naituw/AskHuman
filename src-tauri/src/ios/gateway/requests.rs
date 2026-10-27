@@ -452,7 +452,7 @@ impl Actor {
 
     /// Whether the phone is looking at the app: connected, in the foreground and past its hello.
     /// Such a phone gets the question live (and its inbox snapshot), never a push.
-    fn is_looking(&self, phone_id: &str) -> bool {
+    pub(super) fn is_looking(&self, phone_id: &str) -> bool {
         self.is_live(phone_id) && self.connected
     }
 

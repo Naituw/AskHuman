@@ -703,7 +703,7 @@ msg!(FollowState, t::FOLLOW_STATE);
 #[serde(rename_all = "camelCase")]
 pub struct FollowEvent {
     pub agent_key: String,
-    /// `done`, `waiting` or `failed`.
+    /// `done` or `failed` (Macs before `docs/specs/ios-follow-narrowing.md` also sent `waiting`).
     pub kind: String,
     pub title: String,
     pub project: String,
@@ -1082,7 +1082,8 @@ registry!(
 /// Plaintext carried (encrypted) inside an APNs push; the notification extension decrypts it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushPlain {
-    /// `ask`, `confirm`, `follow.done`, `follow.waiting`, `follow.failed` or `resolved`.
+    /// `ask`, `confirm`, `follow.done`, `follow.failed` or `resolved` (older Macs also sent
+    /// `follow.waiting`).
     pub k: String,
     /// Request id (or agent key for follow events).
     #[serde(default, skip_serializing_if = "Option::is_none")]

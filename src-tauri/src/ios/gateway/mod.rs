@@ -1216,6 +1216,9 @@ impl Actor {
     pub(crate) fn remove_phone(&mut self, phone_id: &str) -> bool {
         self.requests.forget_phone(phone_id);
         self.drop_phone_uploads(phone_id);
+        self.live
+            .follow_notices
+            .retain(|notice| notice.phone_id != phone_id);
         self.rt.remove(phone_id);
         let removed = self.store.remove_phone(phone_id);
         self.refresh_status();
@@ -1242,6 +1245,7 @@ impl Actor {
         self.tick_slot();
         self.tick_agents(now);
         self.tick_follow(now);
+        self.flush_follow_notices(now);
         self.tick_watch(now);
         self.tick_tasks(now);
         if let Some(at) = self.sync_at {
