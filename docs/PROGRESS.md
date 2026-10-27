@@ -120,8 +120,10 @@ whats-next 前「过期才拉」（> 20 秒，最多等 1.5 秒）；待办窗�
 没有带真实凭据调模型），写成需求 [`docs/specs/ios-task-model.md`](specs/ios-task-model.md) 与计划 [`docs/plans/ios-task-model.md`](plans/ios-task-model.md)，用户评审批准，
 并对六条待确认点作了选择（Grok 用 `grok models`、Codex 一律走 `app-server` 的 `model/list`、Pi 三档强度、做 M10、实现完做一轮真实验证但每次要批准）。
 
+已完成：P1（Mac 启动管线：`ModelChoice` 贯穿 `TaskSpec` → `LaunchRecord` → argv 与 Codex 桌面应用；没选时对外行为与以前逐字节相同，`cargo test` / clippy 1.94 与 1.99 / fmt 全绿，未装机）。
+
 下一步：
-- [ ] P1（Mac 启动管线）→ P2（清单 + 线协议 + 网关 + 详情页实际模型，装机）→ P3（iOS App，`git status ios/` 若仍有另一会话的未提交改动就在 `/tmp` 隔离副本里做）→ P4（文档回写）。
+- [ ] P2（清单 + 线协议 + 网关 + 详情页实际模型，装机）→ P3（iOS App，`git status ios/` 若仍有另一会话的未提交改动就在 `/tmp` 隔离副本里做）→ P4（文档回写）。
 - [ ] P2 开头要**先问用户**两件事：（1）批准在沙盒（空 HOME + 独立 leader socket、无凭据）里跑一次 `grok models` 抓样本；（2）Cursor 清单的运行时获取（手机打开新任务时 daemon 调一次
   `cursor-agent --list-models`）是否保留。本机验证里**不再调用 `cursor-agent` 的任何命令**。
 - [ ] （实现完做，**每次执行前**经用户批准，会产生模型费用；永远不含 Cursor）真机一轮：见计划 P4。

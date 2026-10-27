@@ -274,6 +274,7 @@ pub(super) async fn create(state: &Arc<ServerState>, launch: TaskLaunch) -> Resu
         target: None,
         task,
         todo: todo.map(|todo| (project, todo)),
+        choice: crate::agents::model_catalog::ModelChoice::default(),
     };
     let result = start_task(state, spec, |record| {
         register_pending(state, record, &phone_id, &client_msg_id)

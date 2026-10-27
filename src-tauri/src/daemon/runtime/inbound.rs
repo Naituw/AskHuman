@@ -1469,6 +1469,8 @@ async fn start_task_input_form(
             target: payload.target,
             task,
             todo: todo.map(|todo| (todo_project, todo)),
+            // IM `/new` has no model choice yet.
+            choice: crate::agents::model_catalog::ModelChoice::default(),
         };
         let started = start_task(&state, spec, |record| {
             register_pending_launch_watch(&state, record, &channel, &config, lang)

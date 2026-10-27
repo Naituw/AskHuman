@@ -40,11 +40,16 @@
    `claude --model X --effort Y` ／ `codex --model X -c model_reasoning_effort="Y"` ／ `cursor-agent --model X` ／ `grok --model X --reasoning-effort Y` ／ `pi --model X --thinking Y`
    （五家都用长选项，本机 `--help` 已逐一核对过拼写）。
    `choice` 为默认时输出与现在逐字节相同（表驱动测试逐个 Agent × 权限 × 选择组合断言）。
-   为了能不 `exec` 就断言最终命令：把 `run_helper` 里「认领 → 校验 → 组装 `Command`」抽成 `prepare_helper(args) -> Result<Command>`，`run_helper` 只剩平台相关的 `exec` / `status`。
+   为了能不 `exec` 就断言最终命令：把 `run_helper` 里「组装 `Command`」抽成 `assemble_command(&LaunchRecord) -> Command`（纯函数，不碰文件系统与环境），
+   `run_helper` 保留认领 / 校验 / 切目录与平台相关的 `exec` / `status`。**不**为了测试去改 `ASKHUMAN_HOME`：它是进程全局的，会与并行跑的其它测试互相踩；
+   测试直接构造 `LaunchRecord`（临时目录 + 一个从不被执行的存根可执行文件），走 `validate_claim` → `assemble_command`。
 4. **`TaskSpec.choice`**（`daemon/runtime/task_launch.rs`）：`start_task` 把它传给 `create_record_with_choice` 与桌面分支的 `Operation::Create { model, effort }`。
    IM `/new` 与 GUI 构造 `TaskSpec` 时用默认值（本期不改它们的行为）。
-5. **Codex 桌面应用**（`codex_desktop/mod.rs`、`runtime.rs`）：`Operation::Create` 与 `ControlIntent::Create` 增加可选 `model` / `effort`（`#[serde(default)]`）。
-   `resolve_model_settings` 增加覆盖参数：
+5. **Codex 桌面应用**（`codex_desktop/{mod,actions,runtime}.rs`）：`Operation::Create` 增加可选 `model` / `effort`（`#[serde(default, skip_serializing_if = "Option::is_none")]`，
+   所以默认任务落盘的 `input` 与以前逐字节相同，旧回执照常认）；`execute` 先用 `ModelChoice::check_for` 校验形状，再经 `Action::ensure_thread` →
+   `runtime::create` / `finish_creation` → `create_or_finish` 一路传 `&ModelChoice`；`ControlIntent::Create` **不用改**——它读的是创建时存进回执的 `modelSettings`，
+   `thread/start` 与首个 turn 本来就共用这一对。GUI（`commands.rs`）构造 `Operation::Create` 时传 `None`。
+   `resolve_model_settings` 增加覆盖参数（分页查找抽成 `find_catalog_entry`）：
    - 覆盖了模型 → 不能再走「配置齐全就直接返回」的捷径，要分页查 `model/list` 找到该模型（已有的 `seen` 防环逻辑保留）；找不到 → 报错。
    - 强度：覆盖值必须在该模型的 `supportedReasoningEfforts` 里（条目有声明时），否则报错；没有覆盖值时，配置的强度被该模型支持就用，不支持用 `defaultReasoningEffort`（M10）。
    - 只覆盖强度、不覆盖模型 → 模型沿用配置 / 默认，强度同样校验。
@@ -59,7 +64,8 @@
 | Cursor 带强度、非法 id（以 `-` 开头、含空白 / 控制字符 / 超长 / `:`） | 创建记录失败，没有写出任何文件 |
 | 篡改记录里的 `model` / `effort` 后认领 | `validate_claim` 报哈希不匹配 |
 | 没有 `model` / `effort` 字段的旧记录 JSON | 能反序列化、能通过校验 |
-| helper 路径：临时 `ASKHUMAN_HOME`（沿用 `paths.rs` 测试里的 `ENV_LOCK` 做法）+ 一个只存在、**从不被执行**的存根可执行文件；写记录 → 认领 → 校验 → 组装 `Command` | `Command` 的程序与参数符合预期；**不 `exec`、不启动任何真实 Agent** |
+| helper 路径：构造 `LaunchRecord`（临时目录 + 一个只存在、**从不被执行**的存根可执行文件，哈希按创建时的算法算）→ `validate_claim` → `assemble_command` | `Command` 的程序、参数与环境变量符合预期；**不 `exec`、不启动任何真实 Agent**；`ASKHUMAN_HOME` 不动 |
+| 记录被改 / 哈希仍匹配但选择非法 / 旧哈希配上新增的 `model` / 续接记录带选择 | `validate_claim` 全部拒绝（哈希不匹配 / 选择非法） |
 | 桌面解析：覆盖模型 + 配置强度被支持 / 不被支持 / 覆盖强度非法 / 模型不在清单 / 清单分页 / 无覆盖 | 分别得到：沿用配置强度 / 模型默认强度（M10）/ 报错 / 报错 / 翻页后找到 / 与现状一致 |
 
    P1 完成标准：`cargo test`、clippy（本机 1.94 与最新稳定版）、`cargo fmt --check` 全绿；不装机（P1 只是铺管线，对外行为没变）。

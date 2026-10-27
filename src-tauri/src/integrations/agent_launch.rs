@@ -3,6 +3,7 @@
 //! IM data is stored in a private one-time record. AppleScript and the login shell only receive
 //! the absolute AskHuman executable plus an opaque UUID token.
 
+use crate::agents::model_catalog::ModelChoice;
 use crate::agents::AgentKind;
 use crate::config::AgentTaskPermission;
 use crate::integrations::agent_rules::{self, AgentTarget};
@@ -124,6 +125,20 @@ pub struct LaunchRecord {
     pub askhuman_executable: String,
     #[serde(default)]
     pub launch_mode: LaunchMode,
+    /// The model picked for this task. `None` (and absent in records from older versions) leaves
+    /// the choice to the Agent. Covered by `payload_sha256` whenever it is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// The reasoning effort picked for this task; same rules as `model`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+}
+
+impl LaunchRecord {
+    /// The model and effort this record carries.
+    pub fn choice(&self) -> ModelChoice {
+        ModelChoice::new(self.model.clone(), self.effort.clone())
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -742,6 +757,31 @@ pub fn create_record_with_files(
     files: &[String],
     warnings: &[String],
 ) -> Result<LaunchRecord> {
+    create_record_with_choice(
+        source,
+        cwd,
+        kind,
+        permission,
+        task,
+        files,
+        warnings,
+        &ModelChoice::default(),
+    )
+}
+
+/// [`create_record_with_files`] for a task that also picks the model and/or reasoning effort. A
+/// default `choice` is the same as not passing one: the Agent is started with no such flag.
+#[allow(clippy::too_many_arguments)]
+pub fn create_record_with_choice(
+    source: LaunchSource,
+    cwd: &Path,
+    kind: AgentKind,
+    permission: LaunchPermission,
+    task: &str,
+    files: &[String],
+    warnings: &[String],
+    choice: &ModelChoice,
+) -> Result<LaunchRecord> {
     create_record_internal(
         source,
         cwd,
@@ -751,6 +791,7 @@ pub fn create_record_with_files(
         files,
         warnings,
         LaunchMode::New,
+        choice,
     )
 }
 
@@ -777,6 +818,8 @@ pub fn create_fork_record(
         LaunchMode::Fork {
             source_session_id: source_session_id.to_string(),
         },
+        // A fork keeps the model of the session it continues.
+        &ModelChoice::default(),
     )
 }
 
@@ -790,11 +833,17 @@ fn create_record_internal(
     files: &[String],
     warnings: &[String],
     launch_mode: LaunchMode,
+    choice: &ModelChoice,
 ) -> Result<LaunchRecord> {
     if kind == AgentKind::Pi && permission != LaunchPermission::AgentDefault {
         return Err(anyhow!(
             "Pi does not expose a built-in permission mode; use AgentDefault"
         ));
+    }
+    // Checked before any readiness probe or file write, like the task boundaries below.
+    choice.check_for(kind).map_err(|error| anyhow!(error))?;
+    if matches!(launch_mode, LaunchMode::Fork { .. }) && !choice.is_default() {
+        return Err(anyhow!("a forked session keeps its own model"));
     }
     let task = task.trim();
     if task.is_empty() {
@@ -846,13 +895,15 @@ fn create_record_internal(
         task_sha256: sha256(task.as_bytes()),
         files: files.to_vec(),
         warnings: warnings.to_vec(),
-        payload_sha256: payload_sha256(task, files, warnings, &launch_mode),
+        payload_sha256: payload_sha256(task, files, warnings, &launch_mode, choice),
         cwd: cwd.to_string_lossy().to_string(),
         kind,
         permission,
         executable,
         askhuman_executable,
         launch_mode,
+        model: choice.model.clone(),
+        effort: choice.effort.clone(),
     };
     write_private_record(&record)?;
     Ok(record)
@@ -956,14 +1007,7 @@ pub fn run_helper(args: &[String]) -> Result<()> {
         crate::daemon::lifecycle::log_runtime_event("windows_terminal", action, None);
     }
     std::env::set_current_dir(&record.cwd).context("failed to enter workspace")?;
-    let mut command = Command::new(&record.executable);
-    command.env(LAUNCH_ID_ENV, &record.id);
-    command.args(agent_args(
-        record.kind,
-        record.permission,
-        &record.launch_mode,
-        &task_with_attachments(&record.task, &record.files, &record.warnings),
-    ));
+    let mut command = assemble_command(&record);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -1011,19 +1055,32 @@ fn validate_claim(record: &LaunchRecord, token: &str) -> Result<()> {
     if sha256(record.task.as_bytes()) != record.task_sha256 {
         return Err(anyhow!("launch record task hash mismatch"));
     }
+    let choice = record.choice();
     if !record.payload_sha256.is_empty() {
         let expected = payload_sha256(
             &record.task,
             &record.files,
             &record.warnings,
             &record.launch_mode,
+            &choice,
         );
         let legacy = legacy_payload_sha256(&record.task, &record.files, &record.warnings);
+        // The pre-launch-mode hash only ever described a plain new task; it must not vouch for a
+        // record that also names a model.
         if record.payload_sha256 != expected
-            && !(record.launch_mode == LaunchMode::New && record.payload_sha256 == legacy)
+            && !(record.launch_mode == LaunchMode::New
+                && choice.is_default()
+                && record.payload_sha256 == legacy)
         {
             return Err(anyhow!("launch record payload hash mismatch"));
         }
+    }
+    // The values below reach an argv; refuse anything creation would not have written.
+    choice
+        .check_for(record.kind)
+        .map_err(|_| anyhow!("launch record carries an invalid model choice"))?;
+    if record.launch_mode != LaunchMode::New && !choice.is_default() {
+        return Err(anyhow!("launch record carries an invalid model choice"));
     }
     if let LaunchMode::Fork { source_session_id } = &record.launch_mode {
         validate_source_session_id(source_session_id)?;
@@ -1064,9 +1121,23 @@ fn payload_sha256(
     files: &[String],
     warnings: &[String],
     launch_mode: &LaunchMode,
+    choice: &ModelChoice,
 ) -> String {
-    let payload = serde_json::to_vec(&(task, files, warnings, launch_mode)).unwrap_or_default();
-    sha256(&payload)
+    // A record without a model or effort hashes exactly as it did before they existed, so one
+    // written by an older build still claims and nothing changes for tasks that pick nothing.
+    let payload = if choice.is_default() {
+        serde_json::to_vec(&(task, files, warnings, launch_mode))
+    } else {
+        serde_json::to_vec(&(
+            task,
+            files,
+            warnings,
+            launch_mode,
+            &choice.model,
+            &choice.effort,
+        ))
+    };
+    sha256(&payload.unwrap_or_default())
 }
 
 fn legacy_payload_sha256(task: &str, files: &[String], warnings: &[String]) -> String {
@@ -1086,10 +1157,50 @@ fn validate_source_session_id(session_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// The command the helper replaces itself with. The record is already validated, so nothing here
+/// can fail; nothing is started.
+fn assemble_command(record: &LaunchRecord) -> Command {
+    let mut command = Command::new(&record.executable);
+    command.env(LAUNCH_ID_ENV, &record.id);
+    command.args(agent_args(
+        record.kind,
+        record.permission,
+        &record.launch_mode,
+        &record.choice(),
+        &task_with_attachments(&record.task, &record.files, &record.warnings),
+    ));
+    command
+}
+
+/// The flags that select a model and reasoning effort for a new task (none for a default
+/// choice). The values were checked by `ModelChoice::check_for`; they are passed as separate
+/// argv elements, never through a shell.
+fn model_flags(kind: AgentKind, choice: &ModelChoice) -> Vec<String> {
+    let mut flags = Vec::new();
+    if let Some(model) = &choice.model {
+        flags.extend(["--model".to_string(), model.clone()]);
+    }
+    if let Some(effort) = &choice.effort {
+        match kind {
+            AgentKind::Claude => flags.extend(["--effort".to_string(), effort.clone()]),
+            AgentKind::Codex => flags.extend([
+                "-c".to_string(),
+                format!("model_reasoning_effort=\"{effort}\""),
+            ]),
+            AgentKind::Grok => flags.extend(["--reasoning-effort".to_string(), effort.clone()]),
+            AgentKind::Pi => flags.extend(["--thinking".to_string(), effort.clone()]),
+            // Folded into the model id; `check_for` rejects the combination before this point.
+            AgentKind::Cursor => {}
+        }
+    }
+    flags
+}
+
 fn agent_args(
     kind: AgentKind,
     permission: LaunchPermission,
     mode: &LaunchMode,
+    choice: &ModelChoice,
     prompt: &str,
 ) -> Vec<String> {
     let mut args = Vec::new();
@@ -1098,6 +1209,7 @@ fn agent_args(
             if permission == LaunchPermission::Yolo {
                 args.push(yolo_flag(kind).into());
             }
+            args.extend(model_flags(kind, choice));
             if kind == AgentKind::Codex {
                 args.push("--".into());
             }
@@ -1667,6 +1779,7 @@ mod tests {
                     AgentKind::Codex,
                     LaunchPermission::AgentDefault,
                     &LaunchMode::New,
+                    &ModelChoice::default(),
                     prompt
                 ),
                 vec!["--", prompt]
@@ -1676,6 +1789,7 @@ mod tests {
                     AgentKind::Codex,
                     LaunchPermission::Yolo,
                     &LaunchMode::New,
+                    &ModelChoice::default(),
                     prompt
                 ),
                 vec!["--dangerously-bypass-approvals-and-sandbox", "--", prompt]
@@ -1685,11 +1799,148 @@ mod tests {
                     AgentKind::Claude,
                     LaunchPermission::AgentDefault,
                     &LaunchMode::New,
+                    &ModelChoice::default(),
                     prompt
                 ),
                 vec![prompt]
             );
         }
+    }
+
+    fn choice(model: Option<&str>, effort: Option<&str>) -> ModelChoice {
+        ModelChoice::new(model.map(str::to_string), effort.map(str::to_string))
+    }
+
+    #[test]
+    fn a_default_choice_leaves_every_agent_argv_as_it_was() {
+        let prompt = "task";
+        let default = ModelChoice::default();
+        let argv =
+            |kind, permission| agent_args(kind, permission, &LaunchMode::New, &default, prompt);
+        for kind in AgentKind::ALL {
+            let plain = if kind == AgentKind::Codex {
+                vec!["--", prompt]
+            } else {
+                vec![prompt]
+            };
+            assert_eq!(
+                argv(kind, LaunchPermission::AgentDefault),
+                plain,
+                "{kind:?}"
+            );
+            if kind != AgentKind::Pi {
+                let mut yolo = vec![yolo_flag(kind)];
+                yolo.extend(plain);
+                assert_eq!(argv(kind, LaunchPermission::Yolo), yolo, "{kind:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn model_and_effort_become_fixed_flags_ahead_of_the_prompt() {
+        let prompt = "--model\nnot a flag $(touch /tmp/never)";
+        let new = |kind, permission, choice: &ModelChoice| {
+            agent_args(kind, permission, &LaunchMode::New, choice, prompt)
+        };
+        let both = choice(Some("model-a"), Some("high"));
+
+        assert_eq!(
+            new(AgentKind::Claude, LaunchPermission::AgentDefault, &both),
+            vec!["--model", "model-a", "--effort", "high", prompt]
+        );
+        assert_eq!(
+            new(AgentKind::Codex, LaunchPermission::AgentDefault, &both),
+            vec![
+                "--model",
+                "model-a",
+                "-c",
+                "model_reasoning_effort=\"high\"",
+                "--",
+                prompt
+            ]
+        );
+        assert_eq!(
+            new(AgentKind::Grok, LaunchPermission::AgentDefault, &both),
+            vec!["--model", "model-a", "--reasoning-effort", "high", prompt]
+        );
+        assert_eq!(
+            new(AgentKind::Pi, LaunchPermission::AgentDefault, &both),
+            vec!["--model", "model-a", "--thinking", "high", prompt]
+        );
+        // Cursor has no effort switch: only the model id is passed.
+        assert_eq!(
+            new(
+                AgentKind::Cursor,
+                LaunchPermission::AgentDefault,
+                &choice(Some("model-a"), None)
+            ),
+            vec!["--model", "model-a", prompt]
+        );
+
+        // Either half on its own, and after the permission flag.
+        assert_eq!(
+            new(
+                AgentKind::Claude,
+                LaunchPermission::AgentDefault,
+                &choice(Some("opus"), None)
+            ),
+            vec!["--model", "opus", prompt]
+        );
+        assert_eq!(
+            new(
+                AgentKind::Claude,
+                LaunchPermission::AgentDefault,
+                &choice(None, Some("max"))
+            ),
+            vec!["--effort", "max", prompt]
+        );
+        assert_eq!(
+            new(AgentKind::Codex, LaunchPermission::Yolo, &both),
+            vec![
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--model",
+                "model-a",
+                "-c",
+                "model_reasoning_effort=\"high\"",
+                "--",
+                prompt
+            ]
+        );
+        assert_eq!(
+            new(AgentKind::Grok, LaunchPermission::Yolo, &both),
+            vec![
+                "--always-approve",
+                "--model",
+                "model-a",
+                "--reasoning-effort",
+                "high",
+                prompt
+            ]
+        );
+    }
+
+    #[test]
+    fn a_fork_never_takes_a_model_flag() {
+        let fork = LaunchMode::Fork {
+            source_session_id: "source-123".into(),
+        };
+        // Creation refuses the combination; the argv builder ignores a choice in this mode too.
+        assert_eq!(
+            agent_args(
+                AgentKind::Claude,
+                LaunchPermission::AgentDefault,
+                &fork,
+                &choice(Some("model-a"), Some("high")),
+                "go"
+            ),
+            agent_args(
+                AgentKind::Claude,
+                LaunchPermission::AgentDefault,
+                &fork,
+                &ModelChoice::default(),
+                "go"
+            )
+        );
     }
 
     #[test]
@@ -1713,17 +1964,25 @@ mod tests {
         let fork = LaunchMode::Fork {
             source_session_id: "source-123".into(),
         };
+        let default = ModelChoice::default();
         assert_eq!(
             agent_args(
                 AgentKind::Claude,
                 LaunchPermission::AgentDefault,
                 &fork,
+                &default,
                 prompt
             ),
             vec!["--resume", "source-123", "--fork-session", "--", prompt]
         );
         assert_eq!(
-            agent_args(AgentKind::Codex, LaunchPermission::Yolo, &fork, prompt),
+            agent_args(
+                AgentKind::Codex,
+                LaunchPermission::Yolo,
+                &fork,
+                &default,
+                prompt
+            ),
             vec![
                 "fork",
                 "--dangerously-bypass-approvals-and-sandbox",
@@ -1733,7 +1992,13 @@ mod tests {
             ]
         );
         assert_eq!(
-            agent_args(AgentKind::Grok, LaunchPermission::Yolo, &fork, prompt),
+            agent_args(
+                AgentKind::Grok,
+                LaunchPermission::Yolo,
+                &fork,
+                &default,
+                prompt
+            ),
             vec![
                 "--always-approve",
                 "--resume",
@@ -1747,11 +2012,18 @@ mod tests {
             AgentKind::Cursor,
             LaunchPermission::AgentDefault,
             &fork,
+            &default,
             prompt
         )
         .is_empty());
         assert_eq!(
-            agent_args(AgentKind::Pi, LaunchPermission::AgentDefault, &fork, prompt),
+            agent_args(
+                AgentKind::Pi,
+                LaunchPermission::AgentDefault,
+                &fork,
+                &default,
+                prompt
+            ),
             vec!["--fork", "source-123", prompt]
         );
     }
@@ -2286,6 +2558,214 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("built-in permission mode"));
+    }
+
+    #[test]
+    fn a_bad_model_choice_is_rejected_before_any_side_effect() {
+        let attempt = |kind, choice: &ModelChoice| {
+            create_record_with_choice(
+                LaunchSource {
+                    channel: "test".into(),
+                    target: String::new(),
+                },
+                Path::new("/nonexistent-askhuman-test-dir"),
+                kind,
+                LaunchPermission::AgentDefault,
+                "task",
+                &[],
+                &[],
+                choice,
+            )
+            .unwrap_err()
+            .to_string()
+        };
+        assert!(
+            attempt(AgentKind::Claude, &choice(Some("--yolo"), None)).contains("invalid model id")
+        );
+        assert!(attempt(AgentKind::Codex, &choice(Some("a b"), None)).contains("invalid model id"));
+        assert!(attempt(AgentKind::Claude, &choice(None, Some("HIGH")))
+            .contains("invalid reasoning effort"));
+        assert!(attempt(AgentKind::Cursor, &choice(None, Some("high")))
+            .contains("no separate reasoning effort"));
+        // A well-formed choice gets as far as the next check: the workspace does not exist.
+        assert!(
+            attempt(AgentKind::Claude, &choice(Some("opus"), Some("high"))).contains("workspace")
+        );
+        assert!(attempt(AgentKind::Cursor, &choice(Some("auto"), None)).contains("workspace"));
+    }
+
+    #[test]
+    fn the_payload_hash_covers_a_choice_only_when_there_is_one() {
+        let files = vec!["/tmp/a b.md".to_string()];
+        let warnings = vec!["warning".to_string()];
+        let hash = |mode: &LaunchMode, choice: &ModelChoice| {
+            payload_sha256("task", &files, &warnings, mode, choice)
+        };
+
+        // No choice: byte-for-byte what it was before model and effort existed.
+        let before =
+            sha256(&serde_json::to_vec(&("task", &files, &warnings, &LaunchMode::New)).unwrap());
+        assert_eq!(hash(&LaunchMode::New, &ModelChoice::default()), before);
+
+        let model = hash(&LaunchMode::New, &choice(Some("a"), None));
+        let effort = hash(&LaunchMode::New, &choice(None, Some("a")));
+        let both = hash(&LaunchMode::New, &choice(Some("a"), Some("high")));
+        let other = hash(&LaunchMode::New, &choice(Some("b"), Some("high")));
+        let all = [&before, &model, &effort, &both, &other];
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+    }
+
+    /// A claimable record for `kind` in `dir` whose executable is a file nobody ever runs.
+    #[cfg(unix)]
+    fn stub_record(dir: &Path, kind: AgentKind, choice: &ModelChoice) -> LaunchRecord {
+        use std::os::unix::fs::PermissionsExt;
+        let executable = dir.join("never-run-agent");
+        fs::write(&executable, b"#!/bin/sh\nexit 1\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let task = "write a haiku";
+        let created_at = epoch_secs();
+        LaunchRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            created_at,
+            expires_at: created_at + RECORD_TTL_SECS,
+            source: LaunchSource {
+                channel: "test".into(),
+                target: String::new(),
+            },
+            task: task.into(),
+            task_sha256: sha256(task.as_bytes()),
+            files: Vec::new(),
+            warnings: Vec::new(),
+            payload_sha256: payload_sha256(task, &[], &[], &LaunchMode::New, choice),
+            cwd: fs::canonicalize(dir).unwrap().to_string_lossy().into(),
+            kind,
+            permission: LaunchPermission::AgentDefault,
+            executable: fs::canonicalize(&executable)
+                .unwrap()
+                .to_string_lossy()
+                .into(),
+            askhuman_executable: std::env::current_exe().unwrap().to_string_lossy().into(),
+            launch_mode: LaunchMode::New,
+            model: choice.model.clone(),
+            effort: choice.effort.clone(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_helper_builds_the_command_for_the_recorded_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = stub_record(
+            dir.path(),
+            AgentKind::Codex,
+            &choice(Some("model-a"), Some("high")),
+        );
+        validate_claim(&record, &record.id).unwrap();
+
+        let command = assemble_command(&record);
+        assert_eq!(command.get_program(), record.executable.as_str());
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(
+            args,
+            [
+                "--model",
+                "model-a",
+                "-c",
+                "model_reasoning_effort=\"high\"",
+                "--",
+                "write a haiku"
+            ]
+        );
+        assert!(command.get_envs().any(|(key, value)| {
+            key == LAUNCH_ID_ENV && value == Some(std::ffi::OsStr::new(&record.id))
+        }));
+
+        // Without a choice the command is the plain one.
+        let plain = stub_record(dir.path(), AgentKind::Claude, &ModelChoice::default());
+        validate_claim(&plain, &plain.id).unwrap();
+        assert_eq!(
+            assemble_command(&plain).get_args().collect::<Vec<_>>(),
+            ["write a haiku"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_record_that_no_longer_matches_its_hash_or_names_a_bad_choice_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let claim = |record: &LaunchRecord| validate_claim(record, &record.id);
+        let chosen = choice(Some("model-a"), Some("high"));
+
+        // Edited after the hash was taken.
+        let mut edited = stub_record(dir.path(), AgentKind::Claude, &chosen);
+        edited.model = Some("model-b".into());
+        assert!(claim(&edited).unwrap_err().to_string().contains("hash"));
+        let mut stripped = stub_record(dir.path(), AgentKind::Claude, &chosen);
+        stripped.effort = None;
+        assert!(claim(&stripped).unwrap_err().to_string().contains("hash"));
+
+        // The pre-launch-mode hash vouches for a plain task only.
+        let mut legacy = stub_record(dir.path(), AgentKind::Claude, &ModelChoice::default());
+        legacy.payload_sha256 =
+            legacy_payload_sha256(&legacy.task, &legacy.files, &legacy.warnings);
+        claim(&legacy).unwrap();
+        legacy.model = Some("model-a".into());
+        assert!(claim(&legacy).unwrap_err().to_string().contains("hash"));
+
+        // A hash that matches does not make a malformed choice acceptable.
+        for (kind, bad) in [
+            (AgentKind::Claude, choice(Some("--yolo"), None)),
+            (AgentKind::Codex, choice(Some("a b"), None)),
+            (AgentKind::Grok, choice(None, Some("-x"))),
+            (AgentKind::Cursor, choice(None, Some("high"))),
+        ] {
+            let record = stub_record(dir.path(), kind, &bad);
+            assert!(
+                claim(&record)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("invalid model choice"),
+                "{kind:?} {bad:?}"
+            );
+        }
+
+        // A continued session keeps its own model, whatever the record says.
+        let mut fork = stub_record(dir.path(), AgentKind::Claude, &chosen);
+        fork.launch_mode = LaunchMode::Fork {
+            source_session_id: "source-123".into(),
+        };
+        fork.payload_sha256 = payload_sha256(&fork.task, &[], &[], &fork.launch_mode, &chosen);
+        assert!(claim(&fork)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid model choice"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launch_records_with_and_without_a_choice_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = stub_record(dir.path(), AgentKind::Claude, &ModelChoice::default());
+        let mut value = serde_json::to_value(&plain).unwrap();
+        // The fields are absent when unused, so a record is what an older build wrote.
+        assert!(value.get("model").is_none() && value.get("effort").is_none());
+        let back: LaunchRecord = serde_json::from_value(value.clone()).unwrap();
+        assert!(back.choice().is_default());
+
+        let chosen = stub_record(
+            dir.path(),
+            AgentKind::Claude,
+            &choice(Some("model-a"), Some("high")),
+        );
+        value = serde_json::to_value(&chosen).unwrap();
+        assert_eq!(value["model"], "model-a");
+        assert_eq!(value["effort"], "high");
+        let back: LaunchRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(back.choice(), choice(Some("model-a"), Some("high")));
     }
 
     #[test]
