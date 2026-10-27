@@ -148,6 +148,27 @@ impl Device {
             .collect()
     }
 
+    /// The user starts working in a new directory (a fresh clone, a new worktree).
+    fn give_directory(&mut self, key: &str, identity: &str) {
+        self.dirs
+            .push((key.to_string(), Some(identity.to_string())));
+        self.keys.push(key.to_string());
+        self.resolver.set(key, Some(identity));
+    }
+
+    fn remove_project(&mut self, identity: &str) -> usize {
+        self.now += 1_000;
+        tick::remove_project(
+            &self.env,
+            &self.resolver,
+            &self.keys,
+            identity,
+            self.now,
+            &Failpoints::off(),
+        )
+        .expect("remove_project")
+    }
+
     // ---- what the user sees ----
 
     fn queue(&self, key: &str) -> Vec<(String, String)> {
@@ -1773,4 +1794,459 @@ fn renaming_a_mac_reaches_the_other_macs() {
     a.env.device_name = String::new();
     a.tick();
     assert_eq!(a.state().device_name, "Office Studio");
+}
+
+// ---- projects without a directory here (virtual keys) ---------------------------------------------
+
+fn virtual_key(identity: &str) -> String {
+    super::cloudkeys::key_of(identity)
+}
+
+#[test]
+fn a_project_without_a_directory_here_shows_up_under_a_virtual_key_and_can_be_edited() {
+    let cloud = Cloud::shared(31);
+    let mut a = Device::new("Studio", &cloud, &[("/a", Some(P1))]);
+    let mut b = Device::new("Air", &cloud, &[]);
+    a.enable();
+    b.enable();
+    for t in ["one", "two", "three"] {
+        a.add("/a", t);
+    }
+    a.tick();
+
+    let r = b.tick();
+    assert!(r.pulled && r.file_changed, "{r:?}");
+    let vk = virtual_key(P1);
+    assert_eq!(b.texts(&vk), ["one", "two", "three"]);
+    assert!(
+        b.state().links.contains_key(&vk),
+        "the replica is linked like a directory"
+    );
+
+    // Everything the window offers works on it: add, edit, complete, reorder, delete.
+    b.add(&vk, "four");
+    let one = b.id_of(&vk, "one");
+    b.edit(&vk, &one, "one!");
+    let two = b.id_of(&vk, "two");
+    b.take(&vk, std::slice::from_ref(&two));
+    let four = b.id_of(&vk, "four");
+    let three = b.id_of(&vk, "three");
+    b.reorder(&vk, &[four.clone(), one.clone(), three.clone()]);
+    b.tick();
+    a.tick();
+    assert_eq!(a.texts("/a"), ["four", "one!", "three"]);
+    assert_eq!(
+        a.done_texts("/a"),
+        ["two".to_string()].into(),
+        "completed on the other Mac"
+    );
+
+    // …and back again.
+    let three_on_a = a.id_of("/a", "three");
+    a.remove("/a", &three_on_a);
+    a.tick();
+    b.tick();
+    assert_eq!(b.texts(&vk), ["four", "one!"]);
+    assert_eq!(b.done_texts(&vk), ["two".to_string()].into());
+
+    // A Mac with a virtual replica is not counted as having the project.
+    let b_id = b.state().device_id;
+    let a_state = a.state();
+    assert!(
+        a_state.devices[&b_id].projects.is_empty(),
+        "{:?}",
+        a_state.devices[&b_id]
+    );
+    let a_id = a_state.device_id.clone();
+    assert_eq!(a_state.devices[&a_id].projects, [P1.to_string()]);
+    assert_idle(&mut [a, b]);
+}
+
+/// Nothing left to do anywhere (every device's next tick is a no-op).
+fn assert_idle(devs: &mut [Device]) {
+    for _ in 0..2 {
+        for d in devs.iter_mut() {
+            d.tick();
+        }
+    }
+    for d in devs.iter_mut() {
+        let r = d.tick();
+        assert!(
+            !r.file_changed && r.pushed == 0 && r.merged == 0 && r.conflicts == 0 && r.unacked == 0,
+            "{} was not idle: {r:?}",
+            d.name
+        );
+    }
+}
+
+#[test]
+fn a_project_that_is_all_done_keeps_its_history_under_the_virtual_key() {
+    let cloud = Cloud::shared(32);
+    let mut a = Device::new("A", &cloud, &[("/a", Some(P1))]);
+    let mut b = Device::new("B", &cloud, &[]);
+    a.enable();
+    b.enable();
+    let id = a.add("/a", "ship it");
+    a.take("/a", &[id]);
+    a.tick();
+    b.tick();
+    let vk = virtual_key(P1);
+    assert!(b.texts(&vk).is_empty());
+    assert_eq!(b.done_texts(&vk), ["ship it".to_string()].into());
+
+    // Restoring it from the history there brings it back everywhere.
+    let id = b.id_of(&vk, "ship it");
+    assert!(b.restore(&vk, &id));
+    b.tick();
+    a.tick();
+    assert_eq!(a.texts("/a"), ["ship it"]);
+}
+
+#[test]
+fn a_directory_that_appears_takes_the_replica_over_without_losing_a_pending_edit() {
+    let cloud = Cloud::shared(33);
+    let mut a = Device::new("A", &cloud, &[("/a", Some(P1))]);
+    let mut b = Device::new("B", &cloud, &[]);
+    a.enable();
+    b.enable();
+    for t in ["one", "two"] {
+        a.add("/a", t);
+    }
+    a.tick();
+    b.tick();
+    let vk = virtual_key(P1);
+    assert_eq!(b.texts(&vk), ["one", "two"]);
+
+    // An edit that has not been through a tick yet, then the repository is cloned on B.
+    b.add(&vk, "mine");
+    b.give_directory("/b", P1);
+    let r = b.tick();
+    assert!(r.file_changed, "{r:?}");
+
+    assert_eq!(b.texts("/b"), ["one", "two", "mine"]);
+    let file = b.file();
+    assert!(
+        !file.projects.contains_key(&vk) && !file.history.contains_key(&vk),
+        "the replica is gone: {:?}",
+        file.projects.keys().collect::<Vec<_>>()
+    );
+    let s = b.state();
+    assert!(!s.links.contains_key(&vk) && !s.snapshot.contains_key(&vk));
+    assert_eq!(s.links["/b"].p.as_deref(), Some(P1));
+
+    a.tick();
+    assert_eq!(a.texts("/a"), ["one", "two", "mine"]);
+    let entities = a
+        .state()
+        .entities
+        .values()
+        .filter(|r| r.e.p == P1 && r.e.st.v == St::Pending)
+        .count();
+    assert_eq!(entities, 3, "adopting the replica created no duplicates");
+    assert_idle(&mut [a, b]);
+}
+
+#[test]
+fn removing_a_project_from_icloud_empties_every_mac_and_nothing_else() {
+    let cloud = Cloud::shared(34);
+    let mut a = Device::new("A", &cloud, &[("/a", Some(P1)), ("/a2", Some(P2))]);
+    let mut b = Device::new("B", &cloud, &[("/b2", Some(P2))]);
+    let mut c = Device::new("C", &cloud, &[("/c", Some(P1))]);
+    for d in [&a, &b, &c] {
+        d.enable();
+    }
+    a.add("/a", "keep me not");
+    let done = a.add("/a", "finished");
+    a.take("/a", &[done]);
+    a.add("/a2", "tools");
+    a.tick();
+    b.tick();
+    c.tick();
+    let vk = virtual_key(P1);
+    assert_eq!(b.texts(&vk), ["keep me not"]);
+
+    assert_eq!(a.remove_project(P1), 2, "the todo and the finished one");
+    assert!(
+        a.texts("/a").is_empty() && a.done("/a").is_empty(),
+        "at once"
+    );
+    assert_eq!(a.texts("/a2"), ["tools"], "other projects are untouched");
+    a.tick();
+    b.tick();
+    c.tick();
+
+    assert!(b.texts(&vk).is_empty() && b.done(&vk).is_empty());
+    assert!(!b.file().projects.contains_key(&vk), "the replica is gone");
+    assert!(c.texts("/c").is_empty() && c.done("/c").is_empty());
+    assert_eq!(b.texts("/b2"), ["tools"]);
+    assert_eq!(
+        c.state()
+            .entities
+            .values()
+            .filter(|r| r.e.st.v == St::Deleted)
+            .count(),
+        2
+    );
+
+    // Removing is not a ban: a todo added afterwards starts the project again.
+    c.add("/c", "fresh start");
+    c.tick();
+    a.tick();
+    b.tick();
+    assert_eq!(a.texts("/a"), ["fresh start"]);
+    assert_eq!(b.texts(&vk), ["fresh start"]);
+    assert_eq!(a.remove_project("github.com/acme/unknown"), 0);
+}
+
+#[test]
+fn clearing_the_history_of_a_virtual_project_clears_it_everywhere() {
+    let cloud = Cloud::shared(35);
+    let mut a = Device::new("A", &cloud, &[("/a", Some(P1))]);
+    let mut b = Device::new("B", &cloud, &[]);
+    a.enable();
+    b.enable();
+    for t in ["x", "y"] {
+        let id = a.add("/a", t);
+        a.take("/a", &[id]);
+    }
+    a.add("/a", "open");
+    a.tick();
+    b.tick();
+    let vk = virtual_key(P1);
+    assert_eq!(b.done_texts(&vk).len(), 2);
+
+    assert_eq!(b.clear_history(&vk), 2);
+    b.tick();
+    a.tick();
+    assert!(a.done("/a").is_empty(), "T16: clearing is global");
+    assert_eq!(a.texts("/a"), ["open"]);
+}
+
+/// The hand-over, crashed at every failpoint (and twice): B edits its replica, then gets a directory.
+fn handover_scenario(crashes: &[u32]) -> (Outcome, u64) {
+    let cloud = Cloud::shared(36);
+    cloud.borrow_mut().page = 4;
+    let mut a = Device::new("A", &cloud, &[("/a", Some(P1))]);
+    let mut b = Device::new("B", &cloud, &[]);
+    a.enable();
+    b.enable();
+    for t in ["one", "two", "three"] {
+        a.add("/a", t);
+    }
+    a.tick();
+    b.tick();
+    let vk = virtual_key(P1);
+    b.add(&vk, "four");
+    let two = b.id_of(&vk, "two");
+    b.take(&vk, &[two]);
+    let one = b.id_of(&vk, "one");
+    b.edit(&vk, &one, "one!");
+    b.give_directory("/b", P1);
+
+    let mut devs = vec![a, b];
+    let mut seen = 0;
+    for (i, &at) in crashes.iter().enumerate() {
+        let fp = Failpoints::crash_at(at);
+        let r = devs[1].tick_with(&fp);
+        if i == 0 {
+            seen = fp.seen();
+        }
+        match r {
+            Ok(_) | Err(TickError::Crash(_)) => {}
+            Err(e) => panic!("crash at {crashes:?}: unexpected error {e}"),
+        }
+    }
+    if crashes.is_empty() {
+        let fp = Failpoints::off();
+        devs[1].tick_with(&fp).unwrap();
+        seen = fp.seen();
+    }
+    let ctx = format!("hand-over, crashes {crashes:?}");
+    settle(&mut devs, &cloud, &ctx);
+    assert_converged(&devs, &[P1], &ctx);
+    assert!(
+        !devs[1].file().projects.contains_key(&vk) && !devs[1].state().links.contains_key(&vk),
+        "{ctx}: the replica must be gone"
+    );
+    let todo_records = cloud
+        .borrow()
+        .records
+        .values()
+        .filter(|r| r.rtype == "Todo")
+        .count();
+    let out = Outcome {
+        a_queue: devs[0].texts("/a"),
+        a_done: devs[0].done_texts("/a"),
+        b_queue: devs[1].texts("/b"),
+        b_done: devs[1].done_texts("/b"),
+        todo_records,
+    };
+    (out, seen)
+}
+
+#[test]
+fn a_crash_while_a_directory_takes_over_a_replica_converges_to_the_same_result() {
+    let (expected, points) = handover_scenario(&[]);
+    assert_eq!(expected.a_queue, ["one!", "three", "four"], "{expected:?}");
+    assert_eq!(expected.a_done, ["two".to_string()].into(), "{expected:?}");
+    assert_eq!(expected.a_queue, expected.b_queue);
+    assert_eq!(expected.a_done, expected.b_done);
+    assert!(points >= 6, "saw only {points} failpoints");
+    for first in 0..points as u32 + 2 {
+        let (got, _) = handover_scenario(&[first]);
+        assert_eq!(got, expected, "crash at failpoint {first}");
+        for second in [0u32, 1, 3, 6, 10] {
+            let (got, _) = handover_scenario(&[first, second]);
+            assert_eq!(got, expected, "crashes at {first} then {second}");
+        }
+    }
+}
+
+// ---- what the window asks the service ------------------------------------------------------------
+
+#[derive(Default)]
+struct SpyEffects(RefCell<Vec<String>>);
+
+impl super::service::Effects for SpyEffects {
+    fn launch_helper(&self) {}
+    fn spawn_tick(&self, reason: &str) {
+        self.0.borrow_mut().push(reason.to_string());
+    }
+}
+
+#[test]
+fn the_window_can_list_projects_with_their_macs_and_where_todos_came_from() {
+    use super::model::Att;
+    use super::service::{self, AttachmentHint, ProjectDetails};
+
+    let cloud = Cloud::shared(37);
+    let mut a = Device::new(
+        "Studio",
+        &cloud,
+        &[("/a", Some(P1)), ("/a-wt", Some(P1)), ("/a2", Some(P2))],
+    );
+    let mut b = Device::new("Air", &cloud, &[]);
+    let mut c = Device::new("Mini", &cloud, &[("/c", Some(P1))]);
+    for d in [&a, &b, &c] {
+        d.enable();
+    }
+    let one = a.add("/a", "from studio");
+    let two = a.add("/a", "finish me");
+    a.take("/a", std::slice::from_ref(&two));
+    a.add("/a2", "tools");
+    // Two rounds, so the device records reach everybody.
+    for _ in 0..2 {
+        a.tick();
+        b.tick();
+        c.tick();
+    }
+    let vk = virtual_key(P1);
+
+    // Air has no directory of the project: it is the replica, and the others are where to work on it.
+    let list = service::projects_with(&b.env);
+    assert_eq!(list.len(), 2, "{list:?}");
+    let p1 = list.iter().find(|p| p.identity == P1).unwrap();
+    assert!(p1.keys.is_empty());
+    assert_eq!(p1.cloud_key.as_deref(), Some(vk.as_str()));
+    let macs: Vec<_> = p1
+        .macs
+        .iter()
+        .map(|m| (m.name.as_str(), m.this_mac))
+        .collect();
+    assert_eq!(macs, [("Mini", false), ("Studio", false)]);
+
+    // Studio has two directories of it, and they are one project.
+    let list = service::projects_with(&a.env);
+    let p1 = list.iter().find(|p| p.identity == P1).unwrap();
+    assert_eq!(p1.keys, ["/a", "/a-wt"]);
+    assert_eq!(p1.cloud_key, None);
+    let macs: Vec<_> = p1
+        .macs
+        .iter()
+        .map(|m| (m.name.as_str(), m.this_mac))
+        .collect();
+    assert_eq!(macs, [("Studio", true), ("Mini", false)]);
+    let p2 = list.iter().find(|p| p.identity == P2).unwrap();
+    assert_eq!(p2.keys, ["/a2"]);
+    assert_eq!(p2.macs.len(), 1);
+
+    // Where todos came from, seen from Air and from Studio.
+    let d = service::project_details_with(&b.env, &vk);
+    assert_eq!(d.created_on.get(&one).map(String::as_str), Some("Studio"));
+    assert_eq!(d.created_on.len(), 1, "only pending todos carry an origin");
+    assert_eq!(d.done_on.len(), 1);
+    assert_eq!(
+        d.done_on[&two],
+        service::Origin {
+            device: "Studio".into(),
+            this_mac: false
+        }
+    );
+    assert!(d.attachments.is_empty());
+    let d = service::project_details_with(&a.env, "/a-wt");
+    assert!(d.created_on.is_empty(), "everything here began here");
+    assert!(d.done_on[&two].this_mac);
+    assert_eq!(
+        service::project_details_with(&a.env, "/nowhere"),
+        ProjectDetails::default()
+    );
+
+    // An attachment hint from another Mac shows as "N files on Studio"; one's own is not a hint.
+    let a_id = a.state().device_id;
+    let mut s = b.state();
+    let h = s.stamp(b.now);
+    s.entities.get_mut(&one).unwrap().e.att = Some(Att {
+        n: 2,
+        names: vec!["shot.png".into()],
+        dev: a_id,
+        h,
+    });
+    super::store::save(&b.env.dir, &s).unwrap();
+    let d = service::project_details_with(&b.env, &vk);
+    assert_eq!(
+        d.attachments[&one],
+        AttachmentHint {
+            count: 2,
+            device: "Studio".into()
+        }
+    );
+}
+
+#[test]
+fn removing_a_project_from_the_window_goes_through_the_service() {
+    use super::service;
+
+    let cloud = Cloud::shared(38);
+    let mut a = Device::new("A", &cloud, &[("/a", Some(P1))]);
+    let mut b = Device::new("B", &cloud, &[]);
+    a.enable();
+    b.enable();
+    a.add("/a", "one");
+    a.add("/a", "two");
+    a.tick();
+    b.tick();
+    let vk = virtual_key(P1);
+    let spy = SpyEffects::default();
+
+    // Asked by the key of the replica, as the window does for a project this Mac has no directory of.
+    assert_eq!(service::remove_project_with(&b.env, &vk, &spy).unwrap(), 2);
+    assert_eq!(
+        *spy.0.borrow(),
+        ["remove"],
+        "the push is not left to the poll"
+    );
+    assert!(!b.file().projects.contains_key(&vk));
+    assert!(!b.state().links.contains_key(&vk));
+    b.tick();
+    a.tick();
+    assert!(a.texts("/a").is_empty());
+
+    // Unknown keys and projects that are already empty change nothing and start nothing.
+    spy.0.borrow_mut().clear();
+    assert_eq!(
+        service::remove_project_with(&b.env, "/nowhere", &spy).unwrap(),
+        0
+    );
+    assert_eq!(service::remove_project_with(&a.env, "/a", &spy).unwrap(), 0);
+    assert!(spy.0.borrow().is_empty());
 }

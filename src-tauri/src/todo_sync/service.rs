@@ -5,6 +5,7 @@
 //! directory and every entry point here returns after a single `stat`. `todos.json` is never touched
 //! by anything in this module except through the core's own local phase.
 
+use super::cloudkeys;
 use super::helper_client::{self, HelperClient, Reach};
 use super::identity::FsResolver;
 use super::model::{PauseReason, St};
@@ -12,6 +13,7 @@ use super::store;
 use super::tick::{self, Env, Failpoints, Opts, TickError, TickReport};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -748,6 +750,219 @@ pub fn cloud_history_count_with(env: &Env, project: &str) -> Option<usize> {
             .filter(|r| r.e.p == *identity && r.e.st.v == St::Done)
             .count(),
     )
+}
+
+// ---- projects (what the iCloud mode of the todos window shows) ---------------------------------
+
+/// One synced project, merged across this Mac's directories: a repository cloned twice, or checked
+/// out in several worktrees, is one project (spec todo-sync §5.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncProject {
+    /// Normalized git remote, e.g. `github.com/acme/app`.
+    pub identity: String,
+    /// Project keys of this Mac's directories that belong to it, sorted. Empty when this Mac only
+    /// carries the iCloud replica.
+    pub keys: Vec<String>,
+    /// The key the project's todos live under while none of this Mac's directories has it
+    /// (`icloud:<identity>`); `None` as soon as a directory exists.
+    pub cloud_key: Option<String>,
+    /// The Macs that have a directory for the project, this one first. A Mac that only carries the
+    /// replica is not listed: the list answers "where can I work on it".
+    pub macs: Vec<DeviceRow>,
+}
+
+/// The synced projects of this Mac, ordered by identity. Empty while sync is off. Reads the sidecar
+/// only (no todo text, no network).
+pub fn projects() -> Vec<SyncProject> {
+    if !is_enabled() {
+        return Vec::new();
+    }
+    projects_with(&production_env())
+}
+
+pub fn projects_with(env: &Env) -> Vec<SyncProject> {
+    let Ok(Some(state)) = tick::peek(env) else {
+        return Vec::new();
+    };
+    let mut by_identity: BTreeMap<String, SyncProject> = BTreeMap::new();
+    for (key, link) in &state.links {
+        let Some(identity) = link.p.as_deref() else {
+            continue;
+        };
+        let project = by_identity
+            .entry(identity.to_string())
+            .or_insert_with(|| SyncProject {
+                identity: identity.to_string(),
+                keys: Vec::new(),
+                cloud_key: None,
+                macs: Vec::new(),
+            });
+        if cloudkeys::is_virtual(key) {
+            project.cloud_key = Some(key.clone());
+        } else {
+            project.keys.push(key.clone());
+        }
+    }
+    let this_name = if state.device_name.is_empty() {
+        env.device_name.clone()
+    } else {
+        state.device_name.clone()
+    };
+    let this_last_sync = state.last_pull_ok_ms.max(state.last_push_ok_ms);
+    for project in by_identity.values_mut() {
+        project.keys.sort();
+        if !project.keys.is_empty() {
+            project.macs.push(DeviceRow {
+                name: this_name.clone(),
+                last_sync_ms: this_last_sync,
+                this_mac: true,
+            });
+        }
+        let mut others: Vec<DeviceRow> = state
+            .devices
+            .iter()
+            .filter(|(id, d)| **id != state.device_id && d.projects.contains(&project.identity))
+            .map(|(_, d)| DeviceRow {
+                name: d.name.clone(),
+                last_sync_ms: d.last_sync_ms,
+                this_mac: false,
+            })
+            .collect();
+        others.sort_by(|a, b| a.name.cmp(&b.name));
+        project.macs.extend(others);
+    }
+    by_identity.into_values().collect()
+}
+
+/// Which Mac a todo came from or was finished on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Origin {
+    /// The Mac's name; empty while its record has not arrived yet.
+    pub device: String,
+    pub this_mac: bool,
+}
+
+/// "N attachments, on that Mac": attachments never sync, only this hint does (spec T6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentHint {
+    pub count: u32,
+    pub device: String,
+}
+
+/// What the window shows next to a project's todos in iCloud mode, keyed by todo id.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDetails {
+    /// Todos created on another Mac (todos created here are the default and not listed).
+    pub created_on: BTreeMap<String, String>,
+    /// Finished todos and where they were finished.
+    pub done_on: BTreeMap<String, Origin>,
+    /// Pending todos whose attachments live on another Mac.
+    pub attachments: BTreeMap<String, AttachmentHint>,
+}
+
+/// Origins for the todos of `project` (any key of it, including the virtual one). Empty when sync is
+/// off or the project is not synced.
+pub fn project_details(project: &str) -> ProjectDetails {
+    if !is_enabled() {
+        return ProjectDetails::default();
+    }
+    project_details_with(&production_env(), project)
+}
+
+pub fn project_details_with(env: &Env, project: &str) -> ProjectDetails {
+    let mut out = ProjectDetails::default();
+    let Ok(Some(state)) = tick::peek(env) else {
+        return out;
+    };
+    let Some(identity) = state.project_of(project) else {
+        return out;
+    };
+    let name_of = |device: &str| -> String {
+        state
+            .devices
+            .get(device)
+            .map(|d| d.name.clone())
+            .unwrap_or_default()
+    };
+    let me = state.device_id.as_str();
+    for (id, rec) in &state.entities {
+        if rec.e.p != identity {
+            continue;
+        }
+        match rec.e.st.v {
+            St::Pending => {
+                if rec.e.c.dev != me {
+                    out.created_on.insert(id.clone(), name_of(&rec.e.c.dev));
+                }
+                if let Some(att) = rec.e.att.as_ref().filter(|a| a.dev != me) {
+                    out.attachments.insert(
+                        id.clone(),
+                        AttachmentHint {
+                            count: att.n,
+                            device: name_of(&att.dev),
+                        },
+                    );
+                }
+            }
+            St::Done => {
+                if let Some(done) = &rec.e.dn {
+                    out.done_on.insert(
+                        id.clone(),
+                        Origin {
+                            device: name_of(&done.dev),
+                            this_mac: done.dev == me,
+                        },
+                    );
+                }
+            }
+            St::Deleted => {}
+        }
+    }
+    out
+}
+
+/// "Remove this project from iCloud": every todo and finished todo of the project disappears from
+/// every Mac (the project's directories and git itself are untouched). `project` is any key of it,
+/// including the virtual one. Returns how many entries were removed; later todos start the project
+/// again, removing is not a ban.
+pub fn remove_project(project: &str) -> Result<usize, ControlError> {
+    if !supported() {
+        return Err(ControlError::Unsupported);
+    }
+    if !is_enabled() {
+        return Ok(0);
+    }
+    remove_project_with(&production_env(), project, &RealEffects)
+}
+
+pub fn remove_project_with(
+    env: &Env,
+    project: &str,
+    effects: &dyn Effects,
+) -> Result<usize, ControlError> {
+    let Some(state) = tick::peek(env)? else {
+        return Ok(0);
+    };
+    let Some(identity) = state.project_of(project).map(str::to_string) else {
+        return Ok(0);
+    };
+    let removed = tick::remove_project(
+        env,
+        &FsResolver,
+        &known_keys(Some(project)),
+        &identity,
+        now_ms(),
+        &Failpoints::off(),
+    )?;
+    if removed > 0 {
+        // Carry the deletions to the other Macs right away instead of at the next poll.
+        effects.spawn_tick("remove");
+    }
+    Ok(removed)
 }
 
 #[cfg(test)]

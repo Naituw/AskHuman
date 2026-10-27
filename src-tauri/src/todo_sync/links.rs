@@ -3,8 +3,9 @@
 //! The table is a cache the window path can read without touching git. Refreshing it only `stat`s each
 //! directory's git config; the config is re-read when its modification time moved.
 
+use super::cloudkeys;
 use super::identity::IdentityResolver;
-use super::model::State;
+use super::model::{Link, State};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Refreshed {
@@ -28,6 +29,22 @@ pub fn refresh<'a>(
 ) -> Refreshed {
     let mut out = Refreshed::default();
     for key in keys {
+        if let Some(identity) = cloudkeys::identity_of(key) {
+            // A virtual key (a project without a directory here) stands for its identity: there is
+            // nothing on disk to look at.
+            if state.links.get(key).and_then(|l| l.p.as_deref()) != Some(identity) {
+                state.links.insert(
+                    key.to_string(),
+                    Link {
+                        p: Some(identity.to_string()),
+                        cfg_mtime_ms: 0,
+                        checked_ms: now_ms,
+                    },
+                );
+                out.touched = true;
+            }
+            continue;
+        }
         let prev = state.links.get(key);
         let next = resolver.resolve(key, prev, now_ms);
         match prev {

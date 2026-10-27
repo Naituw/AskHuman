@@ -16,7 +16,7 @@
 use super::identity::IdentityResolver;
 use super::model::*;
 use super::transport::*;
-use super::{apply, diff, links, merge, store};
+use super::{apply, cloudkeys, diff, links, merge, store};
 use crate::todos;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -253,10 +253,15 @@ pub fn reconcile(
     keys.extend(file.history.keys().cloned());
     keys.extend(extra_keys.iter().cloned());
     keys.extend(state.links.keys().cloned());
-    let linked = links::refresh(state, keys.iter().map(String::as_str), resolver, now_ms);
+    let mut linked = links::refresh(state, keys.iter().map(String::as_str), resolver, now_ms);
+    // Projects that live in iCloud but have no directory here get a virtual key; it is linked before
+    // the diff (so it is materialized in this very pass) and pruned after it (so an edit made in a
+    // replica that is about to be replaced still reaches the entity table).
+    linked.touched |= cloudkeys::ensure(state, now_ms);
 
     let before = file.clone().pruned();
     let report = diff::diff(&mut file, state, now_ms);
+    linked.touched |= cloudkeys::prune(state, &mut file);
     let m = apply::materialize(&file, state, env.history_limit);
 
     let file_changed = m.file != before;
@@ -621,10 +626,12 @@ fn push_device<T: Transport>(
     {
         return Ok(());
     }
+    // Projects this Mac has a directory for; a virtual replica is not "having" the project.
     let projects: Vec<String> = state
         .links
-        .values()
-        .filter_map(|l| l.p.clone())
+        .iter()
+        .filter(|(key, _)| !cloudkeys::is_virtual(key))
+        .filter_map(|(_, l)| l.p.clone())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
@@ -851,6 +858,43 @@ pub fn resume(env: &Env) -> Result<bool, TickError> {
         }
         _ => Ok(false),
     }
+}
+
+/// "Remove this project from iCloud": every live entity of `identity` (todos and history) becomes a
+/// tombstone. The local phase empties this Mac's replicas at once; the next push carries the
+/// deletions to the other Macs. Edits made since the last tick are folded in first, so nothing the
+/// user did a moment ago is silently dropped by the tombstones' materialization. Returns how many
+/// entities were removed.
+pub fn remove_project(
+    env: &Env,
+    resolver: &dyn IdentityResolver,
+    extra_keys: &[String],
+    identity: &str,
+    now_ms: u64,
+    fp: &Failpoints,
+) -> Result<usize, TickError> {
+    if !store::exists(&env.dir) {
+        return Ok(0);
+    }
+    let _lock = store::lock_blocking(&env.dir).map_err(|e| io_err("todo-sync.lock", e))?;
+    let mut report = TickReport::default();
+    let Some(mut state) = load_for_tick(env, now_ms, &mut report)? else {
+        return Ok(0);
+    };
+    // Before the first pull the local entries are not entities yet (see `local_only`).
+    let live = state.last_pull_ok_ms != 0;
+    if live {
+        reconcile(env, resolver, extra_keys, &mut state, now_ms, fp)?;
+    }
+    let removed = cloudkeys::remove_project(&mut state, identity, now_ms);
+    if removed == 0 {
+        return Ok(0);
+    }
+    persist(env, &state)?;
+    if live {
+        reconcile(env, resolver, extra_keys, &mut state, now_ms, fp)?;
+    }
+    Ok(removed)
 }
 
 /// "Clear iCloud data": delete the zone. This device pauses too; the user then chooses between

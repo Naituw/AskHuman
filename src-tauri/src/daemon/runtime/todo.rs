@@ -389,7 +389,10 @@ async fn load_todo_project_options(
         } else {
             crate::agents::workspaces::list()
         };
-        (workspaces, crate::todos::all())
+        // Projects of iCloud sync that have no directory here cannot be worked on from IM.
+        let mut todos = crate::todos::all();
+        todos.retain(|key, _| !crate::todo_sync::cloudkeys::is_virtual(key));
+        (workspaces, todos)
     })
     .await
     .unwrap_or_default();

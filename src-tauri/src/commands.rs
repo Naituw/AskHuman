@@ -2791,11 +2791,14 @@ fn build_new_task_projects(
     out
 }
 
-/// 当前有待办的项目 key（git 根）。
+/// 当前有待办的项目 key（git 根）。iCloud 同步的「本机没有目录」项目（虚拟 key）不是可启动任务的
+/// 目录，不列入。
 fn todo_project_keys() -> Vec<String> {
     crate::todos::all()
         .into_iter()
-        .filter(|(_, entries)| !entries.is_empty())
+        .filter(|(key, entries)| {
+            !entries.is_empty() && !crate::todo_sync::cloudkeys::is_virtual(key)
+        })
         .map(|(key, _)| key)
         .collect()
 }

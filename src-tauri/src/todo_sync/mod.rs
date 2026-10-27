@@ -14,6 +14,7 @@
 //!
 //! Sync is opt-in per Mac; until it is enabled every entry point returns after one `stat`.
 pub mod apply;
+pub mod cloudkeys;
 pub mod commands;
 pub mod diff;
 pub mod helper_client;

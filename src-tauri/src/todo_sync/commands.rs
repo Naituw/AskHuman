@@ -4,7 +4,7 @@
 //! another process and a tick can take seconds. The window never waits for the network; it asks for
 //! the status, shows what it has, and asks again after an action.
 
-use super::service::{self, Status};
+use super::service::{self, ProjectDetails, Status, SyncProject};
 use serde::Serialize;
 
 async fn blocking<T, F>(f: F) -> Result<T, String>
@@ -28,6 +28,28 @@ pub async fn todo_sync_status() -> Result<Status, String> {
 #[tauri::command]
 pub async fn todo_sync_history_count(project: String) -> Result<Option<usize>, String> {
     blocking(move || Ok(service::cloud_history_count(&project))).await
+}
+
+/// The synced projects with their directories on this Mac and the Macs that work on them: what the
+/// sidebar needs to merge directories of one repository and to list projects this Mac has no
+/// directory for. Empty while sync is off.
+#[tauri::command]
+pub async fn todo_sync_projects() -> Result<Vec<SyncProject>, String> {
+    blocking(|| Ok(service::projects())).await
+}
+
+/// Where the todos of `project` came from (and finished todos were finished), and which attachments
+/// live on another Mac. Everything arrives after first paint; nothing here is needed to render.
+#[tauri::command]
+pub async fn todo_sync_project_details(project: String) -> Result<ProjectDetails, String> {
+    blocking(move || Ok(service::project_details(&project))).await
+}
+
+/// "Remove from iCloud": delete every todo and finished todo of the project on every Mac. Returns
+/// how many were removed.
+#[tauri::command]
+pub async fn todo_sync_remove_project(project: String) -> Result<usize, String> {
+    blocking(move || service::remove_project(&project).map_err(|e| e.to_string())).await
 }
 
 /// Turn sync on for this Mac (the first sync runs in the background).
