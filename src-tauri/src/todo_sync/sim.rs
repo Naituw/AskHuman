@@ -1621,6 +1621,23 @@ fn the_local_phase_is_cheap_on_stress_data() {
         median(local),
         median(baseline)
     );
+
+    // What the iCloud mode of the todos window reads on open: the sidecar, grouped by project.
+    let state_size = std::fs::metadata(a.env.dir.join("state.json"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let mut listing = Vec::new();
+    for _ in 0..30 {
+        let t = Instant::now();
+        let projects = super::service::projects_with(&a.env);
+        listing.push(t.elapsed().as_secs_f64() * 1000.0);
+        assert_eq!(projects.len(), 200);
+    }
+    println!(
+        "state.json {} KiB; todo_sync_projects: median {:.1} ms",
+        state_size / 1024,
+        median(listing)
+    );
 }
 
 // ---- hooks and the production helper -----------------------------------------------------------
