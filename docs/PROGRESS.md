@@ -99,7 +99,7 @@ App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-foll
   （Face ID；真实 Agent 的启动要用户批准）——列表行出现铃铛、详情页有一行说明；Mac 在用时做完应**不**推；停手满 60 秒才来一条；
   做完之前回到 Mac 敲键盘则不应补推；做完后铃铛消失（`state.json` 的 `followSet` 为空）。配置用后还原；不要用 `AskHuman help` 之类的词试命令。
 
-## 进行中：跨设备待办同步（多台 Mac，iCloud）——P0–P5 已提交，单机双副本的真实 iCloud（Development）验证通过，等用户的手动步骤与两台真机验收
+## 进行中：跨设备待办同步（多台 Mac，iCloud）——P0–P6 已提交，单机双副本（Development）与两台真 Mac（Production）验证通过，等用户在场才能做的真机项与合并决定
 
 需求 `docs/specs/todo-sync.md`、计划 `docs/plans/todo-sync.md`（实施记录在其 §10）、实现地图 `docs/overview-todo-sync.md`、界面稿 `docs/assets/todo-sync-ui/`。
 2026-10-27 用户评审通过并说「你自己全部搞定，我要上班了」；分支 `feat/todo-sync`，worktree `../HumanInLoop-todosync`（Dev Instance，popup-only）。
@@ -112,15 +112,15 @@ whats-next 前「过期才拉」（> 20 秒，最多等 1.5 秒）；待办窗�
 
 进度（分支 `feat/todo-sync`，提交即进度）：P0 性能埋点与脚本 ✓；P1 侧栏 ✓（**已合并进 main：`abdfa3b`，未推送**；分支 `feat/todos-sidebar` 只含 P0 + P1，已无用，可删）；P2 同步核心 ✓（模拟与崩溃枚举全过）；
 P3 CloudKit helper ✓（`swift test` 过；Xcode 自动签名的 Development 构建对真实 iCloud 跑通）；P4 集成 ✓（读取钩子、`AskHuman todo-sync`、设置卡、侧栏底部状态；Dev Instance 恒关闭所以只能用模拟验证）；
-P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端 / 仅本机、移除；与界面稿的对照用浏览器预览目测）。P6 双机验收未做。各阶段与计划的差异见计划 §10。
+P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端 / 仅本机、移除；与界面稿的对照用浏览器预览目测）；P6 双机验收 ✓（下面两段；睡眠唤醒、联网恢复、登录项形态、24 小时浸泡除外）。各阶段与计划的差异见计划 §10。
 `feat/todo-sync` 已合并 main（`4e5e49a`）：Rust 1930 通过、vue-tsc 通过、vitest 全过（机器负载 60~480 时有弹窗 / 历史窗口的组件测试 5 秒超时，用 `--testTimeout=180000` 重跑 6 个文件全过，与同步无关）。
 同步部分按用户 2026-10-27 22:05 的决定**留在分支，真机验收后再合并进 main**。
 **真实 iCloud（Development）验证 ✓**（用户 2026-10-27 22:05 授权，Xcode 自动签名创建 App ID / 容器 / 开发描述文件）：两份假 HOME 模拟两台 Mac、共用一个 helper，`scripts/todo-sync-e2e.py` 13 组用例 59 项断言全过（互传 / 并发 / 全局清空历史 / 虚拟键与接管 / worktree / helper 缺席 / 账号变化 / 重建 / 清云与恢复 / 轮询追平 / `kill -9` 循环 / 空闲资源）；真实延迟：`fetch` 中位 0.48 s、`save` 0.70 s、无改动 tick 中位 0.45 s（冷连接 2.45 s），whats-next 的 1.5 s 预算够用；helper 空闲 0.0 % CPU / 9 MiB。验收中发现并修了一个真实缺陷（只剩 `enabled` 标记、`state.json` 丢了时 tick 空转而设置显示已开启，现在自愈重建）。结果与限制见计划 §10，用法见 `docs/overview-todo-sync.md`。
 新容器在大陆 iCloud 账号上首次访问会被拒（CKError 15），用户已在 CloudKit Dashboard 打开过 Development 环境；测试数据已用 `clear-cloud` 清掉，假 HOME 与临时文件已删，helper 已停。
+**两台真 Mac 对 Production ✓**（用户 2026-10-28 授权 Developer ID 构建 + SSH 到 Mac B，只用假 HOME 与测试数据；Production 的 schema 由用户部署；不含公证）：`scripts/todo-sync-e2e-twomac.py` 8 组用例 22 项断言全过（双向互传、设备列表、并发新增 4.7 秒一致、删除 / 清空互传、B 的 helper 被杀后启动 3.4 秒追平、空闲 10 分钟后再传）。**推送路径是通的，延迟与 S0 同量级**：两台都无人操作时一台保存到另一台收到推送 142 / 107 / 273 秒（10 分钟轮询封顶），刚有往来时 12 / 8.5 秒；helper 空闲 0.0 % CPU、5–34 MiB。需求 §16 第 1 条「两台活跃时 5 秒内」要有人在用的机器才能判定，这次无人值守没有结论。测试区已用 `clear-cloud` 从 Production 删除，两台的 helper 已停、假 HOME 与日志已删，没碰任何一台的真实 `~/.askhuman`、B 的网络与代理。结果与发现（含 `open` 会把 `ASKHUMAN_HOME` 传给 helper 与 tick 的坑）见计划 §10，用法见 `docs/overview-todo-sync.md`。
 
 下一步：
-- [ ] **需要用户**（计划 §7，agent 不做）：在 CloudKit Dashboard 把 Development 的 schema 部署到 Production（S0 的经验：部署后 Production 无需别的动作）；Developer ID 构建（`HELPER_ALLOW_CLOUD_CHANGES=1 todo-sync-helper/scripts/build.sh devid`，会改 Apple 账号资源，需另行授权）；公证；把签名 helper 拷到 Mac B。
-- [ ] **两台真 Mac 的验收**（计划 §5 P6、§6 的 E1 / E2 / E8）：单机模拟做不到的部分——真实推送路径与延迟（一台 Mac 上 CloudKit 只看到一台设备，B 的保存不会推给 A 的 helper）、睡眠唤醒与联网触发、登录项安装形态（`scripts/todo-sync-install-helper.sh` 会改真实的登录项）、helper 缺失 / 过期时的安装体验、24 小时浸泡。要 SSH 到 Mac B：需用户当次同意（2026-10-27 22:05 的同意只覆盖 S0 清理，已用完）；不改 B 的网络 / 代理设置。
+- [ ] **需要用户在场的真机项**（计划 §5 P6、§6 的 E8 / E9，远程与无人值守做不了）：睡眠唤醒与联网恢复触发；登录项安装形态（`scripts/todo-sync-install-helper.sh` 会改真实的登录项）与 helper 缺失 / 过期时的安装体验；两台都有人在用时的推送延迟（需求 §16 第 1 条的 5 秒）；24 小时浸泡；公证（`scripts/notarize.sh`，需用户授权）。SSH 到 Mac B 的同意只覆盖了这次的双机验收（已用完），再用要重新同意；不改 B 的网络 / 代理设置。
 - [ ] **合并**：`feat/todo-sync` 已含 main，真机验收后再合并进 main；P3–P5 的提交带 `Release-Note: skip`（helper 暂不随版本发布）；决定随版本发布时补一条带用户可见说明的 `feat(todo-sync)` 提交
 - [ ] P0 的绝对基线 `docs/perf/todos-window-baseline.json` 还没生成（机器常被别的任务占满，负载 5–230，计时不可信）；P1 的性能门用 `--ref <P0 参考二进制>` A/B（参考二进制在 worktree 的 `.askhuman-dev/perf-ref/AskHuman-p0`，被 gitignore）。安静且屏幕亮着时（窗口得真的绘制，否则脚本报「the window never painted」）跑 `scripts/perf-todos-window.mjs` 出基线，并按它校准需求 §9.9 的目标；iCloud 模式的首屏数字要真机开了同步后补（Dev Instance 开不了）
 - [ ] 用户文档 `docs/wiki/todo-sync.md`（含英文版）等 helper 能随版本发布时再写

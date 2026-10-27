@@ -80,12 +80,14 @@ todos.json ◄── 读写 ──► CLI / 弹窗 / 待办窗口 / IM / MCP    
 - Swift：`cd todo-sync-helper && swift test`。
 - 前端：`npx vitest run src/views`（`todoProjects` / 侧栏 / `TodosView` / 设置卡）。
 - 窗口打开性能：`scripts/perf-todos-window.mjs`（`--ref <旧二进制>` 做 A/B，门限 +10% 且 +30 ms）。
-- **真实 iCloud（Development 环境）**：`HELPER_ALLOW_CLOUD_CHANGES=1 todo-sync-helper/scripts/build.sh dev` 做 Xcode 自动签名构建（会联系 Apple，要账号所有者同意），再 `python3 scripts/todo-sync-e2e.py setup | reset | run [用例…] | teardown`：在一台 Mac 上用两份假 HOME（A、B）模拟两台设备，一个 helper 通过 `ASKHUMAN_TODO_SYNC_DIR` 服务 A，B 的 `helper.sock` 软链到 A 的；用例覆盖增 / 改 / 排序 / 完成 / 恢复 / 删除互传、并发编辑、全局清空历史、虚拟键与接管、worktree、helper 缺席、账号变化、重建、清云与暂停恢复、轮询追平、`kill -9` 循环、空闲资源。CloudKit 只看到一台设备，所以**推送延迟与跨机睡眠唤醒仍要两台真 Mac**。新容器在大陆 iCloud 账号上首次 `ensure` 会被拒（CKError 15 `serverRejectedRequest`），需要账号所有者在 CloudKit Dashboard 里把该容器的 Development 环境打开一次（不用建区）。
+- **真实 iCloud（Development 环境）**：`HELPER_ALLOW_CLOUD_CHANGES=1 todo-sync-helper/scripts/build.sh dev` 做 Xcode 自动签名构建（会联系 Apple，要账号所有者同意），再 `python3 scripts/todo-sync-e2e.py setup | reset | run [用例…] | teardown`：在一台 Mac 上用两份假 HOME（A、B）模拟两台设备，一个 helper 通过 `ASKHUMAN_TODO_SYNC_DIR` 服务 A，B 的 `helper.sock` 软链到 A 的；用例覆盖增 / 改 / 排序 / 完成 / 恢复 / 删除互传、并发编辑、全局清空历史、虚拟键与接管、worktree、helper 缺席、账号变化、重建、清云与暂停恢复、轮询追平、`kill -9` 循环、空闲资源。CloudKit 只看到一台设备，所以**推送延迟与跨机睡眠唤醒要两台真 Mac**。新容器在大陆 iCloud 账号上首次 `ensure` 会被拒（CKError 15 `serverRejectedRequest`），需要账号所有者在 CloudKit Dashboard 里把该容器的 Development 环境打开一次（不用建区）。
+- **两台真 Mac 对 Production**：先由账号所有者把 schema 部署到 Production，再 `HELPER_ALLOW_CLOUD_CHANGES=1 todo-sync-helper/scripts/build.sh devid` 构建（未公证也能 `open` 启动，拷贝时别带隔离属性），然后 `TODO_SYNC_E2E2_REMOTE=<B 的 ssh 目标> python3 scripts/todo-sync-e2e-twomac.py setup | reset | run [用例…] | teardown`：本机（A）与 B（SSH）各用一份假 HOME 和自己的 helper，只碰 Production 里的一个测试区；用例（`run`，默认全跑，约 16 分钟，含 10 分钟空闲）验证环境、双向互传、设备列表、并发新增、删除 / 清空、helper 被杀后自行追平、空闲后互传，并从两台 helper 日志里算出「保存 → 推送到达 → 拉取」的时间线。`teardown` 清掉测试区、停 helper、收走日志、删假 HOME；需要免密 SSH 与 B 上的图形会话（helper 用 `open` 启动，与产品一致）。推送延迟的实测数字见计划 §10。睡眠唤醒、联网恢复与登录项形态远程做不了。
 
 ## 不变量与注意点
 
 - 未启用时 `todos.json` 的字节输出与改造前一致，且不创建旁路目录（有测试）；打开待办窗口的路径上没有网络、helper、git 子进程与 daemon 往返，同步派生的信息异步补充，`todo_sync_projects` 在同步关闭时只 `stat` 一次就返回空。
 - **清空历史是全局的**：iCloud 模式下清空一个项目的执行历史会清掉所有 Mac 与 iCloud 里该项目的历史（确认框写明条数）；按上限裁剪和 `todo_history_limit = 0` 不产生同步事件。
 - 附件不同步，只同步「N 个附件，在 X 上」的提示；⚡ 自动执行标记不跨机。
+- `open` 会把调用者的环境变量传给被启动的 helper，helper 再传给它拉起的每个 tick：从 Dev Instance 的 shell 里启动 helper 时必须先去掉 `ASKHUMAN_HOME`，否则所有 tick 都因 `supported()` 为假而静默空转（日志里是 `tick_done exit=0 ms=50`，`last-tick.json` 不更新）。真实使用时 helper 由登录项或 `AskHuman` 拉起，不受影响。
 - 改 helper RPC 先改 `todo-sync-helper/Fixtures/rpc-v1`，Rust 与 Swift 两边测试必须同时通过；`state.json` 的 schema 只增不改，旧构建读到新 schema 时不改写文件。
 - 容器 `iCloud.com.naituw.humaninloop.todosync`、helper bundle id `com.naituw.humaninloop.todosync`；创建 App ID / 容器 / 描述文件、部署 CloudKit schema 到 Production、公证与签名发布都需要维护者手动完成（计划 §7）。
