@@ -91,10 +91,9 @@ public enum MissingRequest: Equatable, Sendable {
 public struct Banner: Identifiable, Equatable, Sendable {
     public enum Kind: Sendable, Equatable {
         case request(macId: String, requestId: String)
-        /// A followed Agent finished (`done`), failed (`failed`) or asks something (`waiting`).
+        /// A followed Agent finished (`done`) or failed (`failed`); a Mac older than
+        /// `docs/specs/ios-follow-narrowing.md` also reports `waiting` (it asks something).
         case agent(macId: String, agentKey: String, event: String)
-        /// The Mac already follows as many Agents as it allows.
-        case followLimit
         case info
         case warning
     }
@@ -309,7 +308,8 @@ public final class AppStore {
         case .followEvent(let macId, let event):
             presentFollowEvent(macId: macId, event: event)
         case .followRefused:
-            show(Banner(kind: .followLimit, title: ""))
+            // The app does not ask for follows by itself any more: nothing to tell the user.
+            break
         case .interjectConsumed(let macId, let agentKey):
             consumed[AgentItem.key(macId, agentKey)] = Date()
         }

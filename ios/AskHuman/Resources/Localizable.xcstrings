@@ -231,16 +231,6 @@
         }
       }
     },
-    "A Mac follows up to %lld Agents. Unfollow one first." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "每台 Mac 最多关注 %lld 个 Agent。请先取消关注一个。"
-          }
-        }
-      }
-    },
     "A new task I write" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1141,36 +1131,6 @@
         }
       }
     },
-    "Follow" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "关注"
-          }
-        }
-      }
-    },
-    "Follow limit reached" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已达到关注上限"
-          }
-        }
-      }
-    },
-    "Following" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已关注"
-          }
-        }
-      }
-    },
     "Forget all pairings" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1277,16 +1237,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "它还没有响应。下拉可重试。"
-          }
-        }
-      }
-    },
-    "It is not followed because this Mac already follows as many Agents as it allows." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "这台 Mac 已关注到上限，所以没有关注它。"
           }
         }
       }
@@ -2703,16 +2653,6 @@
         }
       }
     },
-    "The Agent is running and you follow it." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Agent 正在运行，你已关注它。"
-          }
-        }
-      }
-    },
     "The Agent is running." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3109,16 +3049,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这个 Agent 使用它自己的权限设置。"
-          }
-        }
-      }
-    },
-    "This Mac already follows as many Agents as it allows." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "这台 Mac 已关注到上限。"
           }
         }
       }
@@ -3541,6 +3471,16 @@
         }
       }
     },
+    "Will notify you" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会通知你"
+          }
+        }
+      }
+    },
     "Withdraw" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3591,12 +3531,32 @@
         }
       }
     },
-    "You get a notification when this Agent finishes, fails or needs you." : {
+    "You get a notification when it finishes or fails, once your Mac has been idle for a while." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这个 Agent 完成、出错或需要你时，你会收到通知。"
+            "value" : "它完成或出错时，等你的 Mac 空闲一段时间后，你会收到通知。"
+          }
+        }
+      }
+    },
+    "You get a notification when this Agent finishes or fails, once your Mac has been idle for a while." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个 Agent 完成或出错时，等你的 Mac 空闲一段时间后，你会收到通知。"
+          }
+        }
+      }
+    },
+    "You will not be notified about this one: this Mac already has as many Agents to tell you about as it allows." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个任务不会通知你：这台 Mac 要通知你的 Agent 已经到上限了。"
           }
         }
       }

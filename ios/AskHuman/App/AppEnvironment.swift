@@ -16,6 +16,9 @@ struct LaunchOptions {
     var openRequest: String?
     /// An Agent (its key, or `macId|key`) whose page opens first.
     var openAgent: String?
+    /// An Agent (its key, or `macId|key`) to follow as soon as a Mac lists it, in a run on the real engine:
+    /// the app has no follow button (the Macs follow the tasks the phone starts), the live UI test asks.
+    var followAgent: String?
     /// Opens the new task sheet first.
     var newTask = false
     /// The mock Agents never pick up the messages sent to them (UI tests that withdraw one).
@@ -48,6 +51,7 @@ struct LaunchOptions {
         tab = defaults.string(forKey: "AHTab").flatMap(AppTab.init(rawValue:))
         openRequest = defaults.string(forKey: "AHOpen")
         openAgent = defaults.string(forKey: "AHOpenAgent")
+        followAgent = defaults.string(forKey: "AHFollowAgent")
         newTask = defaults.bool(forKey: "AHNewTask")
         holdInterjects = defaults.bool(forKey: "AHHoldInterjects")
         followEvent = defaults.string(forKey: "AHFollowEvent")
@@ -165,6 +169,18 @@ final class AppEnvironment {
             for _ in 0..<50 where store.state.agents.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
             if let item = store.state.agents.first(where: { $0.agentKey == agent || $0.id == agent }) {
                 store.openAgent(macId: item.macId, agentKey: item.agentKey)
+            }
+        }
+        if let agent = launch.followAgent, !launch.mock {
+            Task { @MainActor [store] in
+                // The session may not exist yet (the run pairs and answers questions first): wait up to 20 minutes.
+                for _ in 0..<6000 {
+                    if let item = store.state.agents.first(where: { $0.agentKey == agent || $0.id == agent }) {
+                        await store.setFollow(item, on: true)
+                        return
+                    }
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
             }
         }
         if launch.newTask {

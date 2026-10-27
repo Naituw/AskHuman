@@ -264,7 +264,8 @@ public enum EngineEvent: Sendable, Equatable {
     case requestFinished(macId: String, requestId: String, outcome: HistoryOutcome, by: String?)
     case macUnpaired(macId: String, macName: String)
     case pairingFinished(macId: String)
-    /// A followed Agent finished, failed or is waiting for an answer somewhere else.
+    /// A followed Agent finished or failed (a Mac older than `docs/specs/ios-follow-narrowing.md` also
+    /// reports one that waits for an answer somewhere else).
     case followEvent(macId: String, event: FollowEvent)
     /// The Mac refused to follow one more Agent (the limit is reached).
     case followRefused(macId: String, agentKey: String)

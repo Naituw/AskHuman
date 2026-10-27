@@ -625,13 +625,6 @@ final class AskHumanUITests: XCTestCase {
         XCTAssertFalse(element("filter-note").exists)
         shot("70-agents")
 
-        chooseFilter(localized("Following", "已关注"))
-        XCTAssertTrue(gone("agent-row-\(waitingAgent)"))
-        XCTAssertTrue(element("agent-row-\(workingAgent)").exists)
-        XCTAssertTrue(element("agent-row-\(officeAgent)").exists)
-        _ = requireElement("filter-note")
-        shot("71-agents-following")
-
         chooseFilter("Office iMac")
         XCTAssertTrue(gone("agent-row-\(workingAgent)"))
         XCTAssertTrue(element("agent-row-\(officeAgent)").exists)
@@ -639,6 +632,41 @@ final class AskHumanUITests: XCTestCase {
 
         requireElement("filter-clear").tap()
         _ = requireElement("agent-row-\(waitingAgent)")
+    }
+
+    func testThereIsNoWayToFollowAnAgentButTheOnesTheMacNotifiesAboutAreMarked() {
+        launch(extra: ["-AHTab", "agents"])
+        let notifies = localized("Will notify you", "会通知你")
+        // The demo Macs follow the working, the idle and the office Agent; the one that waits is not followed.
+        for key in [workingAgent, idleAgent, officeAgent] {
+            XCTAssertTrue(requireElement("agent-row-\(key)").label.contains(notifies), "\(key) is not marked as notifying")
+        }
+        for key in [waitingAgent, endedAgent, unsupportedAgent] {
+            XCTAssertFalse(requireElement("agent-row-\(key)").label.contains(notifies), "\(key) is marked as notifying")
+        }
+        shot("71-agents-notifying")
+        // The filter only offers the Macs: nothing is left of "Following".
+        requireElement("filter-menu").tap()
+        XCTAssertTrue(app.buttons["Office iMac"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons[localized("Following", "已关注")].exists)
+        app.buttons["Office iMac"].tap()
+        requireElement("filter-clear").tap()
+
+        // The page of a followed Agent says so in a line; there is no button to follow or unfollow.
+        requireElement("agent-row-\(workingAgent)").tap()
+        _ = requireElement("watch-card")
+        let note = requireElement("follow-note")
+        XCTAssertTrue(note.label.contains(localized("finishes or fails", "完成或出错")), note.label)
+        XCTAssertFalse(element("follow-button").exists)
+        shot("72-agent-notifying")
+    }
+
+    func testTheNotificationLineIsOnlyOnTheAgentsTheMacNotifiesAbout() {
+        launch(extra: ["-AHTab", "agents", "-AHOpenAgent", waitingAgent])
+        _ = requireElement("watch-card")
+        XCTAssertFalse(element("follow-note").exists, "that Agent is not followed")
+        XCTAssertFalse(element("follow-button").exists)
+        shot("85-agent-not-notifying")
     }
 
     func testALongCurrentToolDoesNotWidenTheAgentRow() {
@@ -651,18 +679,12 @@ final class AskHumanUITests: XCTestCase {
         shot("84-agent-long-tool")
     }
 
-    func testAWorkingAgentShowsALiveViewAndCanBeUnfollowed() {
+    func testAWorkingAgentShowsALiveView() {
         launch(extra: ["-AHTab", "agents"])
         requireElement("agent-row-\(workingAgent)").tap()
         _ = requireElement("watch-card")
         _ = requireElement("watch-live")
         shot("72-agent-working")
-
-        XCTAssertTrue(waitForLabel("follow-button", localized("Following", "已关注")))
-        requireElement("follow-button").tap()
-        XCTAssertTrue(waitForLabel("follow-button", localized("Follow", "关注")), "the Mac took the follow back")
-        requireElement("follow-button").tap()
-        XCTAssertTrue(waitForLabel("follow-button", localized("Following", "已关注")))
     }
 
     func testAMessageToAWorkingAgentIsQueuedAndCanBeWithdrawn() {
@@ -743,8 +765,14 @@ final class AskHumanUITests: XCTestCase {
         start.tap()
         _ = requireElement("task-progress")
         shot("81-task-progress")
-        requireElement("task-open-agent", timeout: 30).tap()
+        let open = requireElement("task-open-agent", timeout: 30)
+        // The new Agent is one the Mac notifies about: the page says what to expect.
+        let promise = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", localized("when it finishes or fails", "完成或出错时"))).firstMatch
+        XCTAssertTrue(promise.waitForExistence(timeout: 5), "the progress page does not say that the Agent will notify")
+        shot("82-task-notifying")
+        open.tap()
         _ = requireElement("watch-card")
+        _ = requireElement("follow-note")
     }
 
     func testLeavingAFilledTaskFormAsksBeforeDiscarding() {

@@ -119,7 +119,7 @@ struct InAppBanner: View {
                         switch banner.kind {
                         case .request(let macId, let requestId): store.open(macId: macId, requestId: requestId)
                         case .agent(let macId, let agentKey, _): store.openAgent(macId: macId, agentKey: agentKey)
-                        case .followLimit, .info, .warning: break
+                        case .info, .warning: break
                         }
                         store.dismissBanner()
                     }
@@ -167,7 +167,6 @@ private struct BannerCard: View {
             case "waiting": "questionmark.bubble.fill"
             default: "checkmark.circle.fill"
             }
-        case .followLimit: "star.slash.fill"
         case .info: "info.circle.fill"
         case .warning: "exclamationmark.triangle.fill"
         }
@@ -182,7 +181,6 @@ private struct BannerCard: View {
             case "waiting": .orange
             default: .green
             }
-        case .followLimit: .orange
         case .info: .blue
         case .warning: .orange
         }
@@ -199,12 +197,10 @@ private struct BannerCard: View {
     }
 
     private var titleText: Text {
-        if case .followLimit = banner.kind { return Text("Follow limit reached") }
-        return Text(banner.title)
+        Text(banner.title)
     }
 
     private var subtitle: String? {
-        if case .followLimit = banner.kind { return String(localized: "A Mac follows up to \(Wire.maxFollow) Agents. Unfollow one first.") }
-        return banner.subtitle
+        banner.subtitle
     }
 }
