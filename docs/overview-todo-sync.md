@@ -38,7 +38,7 @@ todos.json ◄── 读写 ──► CLI / 弹窗 / 待办窗口 / IM / MCP    
 
 `src-tauri/src/cli/todo_sync_cmd.rs`：隐藏（不进 help）的 `AskHuman todo-sync status | tick | enable | disable | resume | restart-from-local | clear-cloud | repair`；`tick --reason` 就是 helper 拉起的那条命令。
 
-旁路目录 `~/.askhuman/state/todo-sync/`：`state.json`、`todo-sync.lock`、`enabled`（开关）、`helper.json`（交给 helper 的配置）、`helper-launch`（拉起节流）、`last-tick.json`（最近一次 tick 的结果，状态展示用）、`helper.sock`（套接字，路径长度受 104 字节限制）。
+旁路目录 `~/.askhuman/state/todo-sync/`：`state.json`、`todo-sync.lock`、`enabled`（开关）、`helper.json`（交给 helper 的配置）、`helper-launch`（拉起节流）、`last-tick.json`（最近一次 tick 的结果，状态展示用）、`helper.sock`（套接字，路径长度受 104 字节限制）。标记在而 `state.json` 缺失或损坏时，下一次 tick 自行重建状态（新设备 id，云端实体按 id 认领，不重复也不丢）；没有标记就什么都不建。
 
 ## 读取钩子
 
@@ -80,6 +80,7 @@ todos.json ◄── 读写 ──► CLI / 弹窗 / 待办窗口 / IM / MCP    
 - Swift：`cd todo-sync-helper && swift test`。
 - 前端：`npx vitest run src/views`（`todoProjects` / 侧栏 / `TodosView` / 设置卡）。
 - 窗口打开性能：`scripts/perf-todos-window.mjs`（`--ref <旧二进制>` 做 A/B，门限 +10% 且 +30 ms）。
+- **真实 iCloud（Development 环境）**：`HELPER_ALLOW_CLOUD_CHANGES=1 todo-sync-helper/scripts/build.sh dev` 做 Xcode 自动签名构建（会联系 Apple，要账号所有者同意），再 `python3 scripts/todo-sync-e2e.py setup | reset | run [用例…] | teardown`：在一台 Mac 上用两份假 HOME（A、B）模拟两台设备，一个 helper 通过 `ASKHUMAN_TODO_SYNC_DIR` 服务 A，B 的 `helper.sock` 软链到 A 的；用例覆盖增 / 改 / 排序 / 完成 / 恢复 / 删除互传、并发编辑、全局清空历史、虚拟键与接管、worktree、helper 缺席、账号变化、重建、清云与暂停恢复、轮询追平、`kill -9` 循环、空闲资源。CloudKit 只看到一台设备，所以**推送延迟与跨机睡眠唤醒仍要两台真 Mac**。新容器在大陆 iCloud 账号上首次 `ensure` 会被拒（CKError 15 `serverRejectedRequest`），需要账号所有者在 CloudKit Dashboard 里把该容器的 Development 环境打开一次（不用建区）。
 
 ## 不变量与注意点
 

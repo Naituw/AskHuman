@@ -346,5 +346,13 @@ tick(reason, budget):
   - 同一仓库的多个目录合并成一行（行键取最近使用的目录）；同步行以仓库身份命名（最后一段，重名时加 owner 提示），**仅本机行以目录名为准**（界面稿里写的是整条路径，侧栏不放路径）；搜索同时匹配目录。「无待办的项目」折叠区收纳所有零待办项目（含仅本机的），搜索或选中项在其中时自动展开。「全部待办」里同一仓库的副本去重，顺序同侧栏（有 remote 的在前，仅本机的在后）。
   - 性能（优化构建，压力数据 200 项目 / 4000 实体，`todos.json` 797 KiB、`state.json` 1.95 MiB）：本地阶段（空闲）中位数 21.5 ms（目标 ≤ 100 ms），`todo_sync_projects` 5.8 ms，单独读 `todos.json` 0.8 ms；前端视图模型在 640 个项目行上不到 0.5 ms。真实 Dev Instance 上无法开启同步（`supported()`），iCloud 模式的首屏数字待真机补。
   - 与界面稿 `docs/assets/todo-sync-ui/` 的对照是用浏览器预览（`data=icloud`，浅色 / 深色）目测完成的，不是像素级。
+- **真实 iCloud（Development 环境）验证完成**（用户 2026-10-27 22:05 授权：Xcode 自动签名创建 App ID / 容器 / 开发描述文件，只在 Development 环境、在本机用两份独立状态模拟两台设备）。与计划的差异与发现：
+  - **一台 Mac 只能模拟「两个副本」，不能模拟「两台设备」**：两份假 HOME（A、B）各有自己的 `todos.json` 与旁路状态，共用一个 helper（B 的 `helper.sock` 软链到 A 的），所以 CloudKit 只看到一台设备，B 的保存不会给 A 的 helper 发推送（`apns=registered` 但没收到）。因此推送路径与延迟（E1 / E2）、睡眠唤醒与联网触发（E8）、登录项安装形态仍要两台真 Mac；T7 改成「轮询追平 + 报告」（1 分钟轮询加 30 秒 leeway，实测 14–98 秒追平，中位约 70 秒）。
+  - 验收脚本是 `scripts/todo-sync-e2e.py`（`setup | reset | run [用例…] | teardown`，用法见 `docs/overview-todo-sync.md`）。13 组用例共 59 项断言全过（最终版脚本 + 最终版二进制，`reset` 后从空白开始一次跑完）：互传（增 / 改 / 排序 / 完成 / 恢复 / 删除）、并发编辑、历史与全局清空、虚拟键与接管、worktree、helper 缺席、账号变化、重建、清云 / 暂停 / 恢复、轮询追平、`kill -9` 循环、空闲资源。
+  - **新容器在大陆 iCloud 账号上，首次访问私有库会被拒**（CKError 15 `serverRejectedRequest`，helper 映射成 `rpc_failed code=other`）：与 S0 一样，要账号所有者在 CloudKit Dashboard 里把该容器的 Development 环境打开一次（不用建区）后才正常。这是开发者侧的一次性初始化，不是产品缺陷；Production 同理要在 Dashboard 里部署 schema（§7）。
+  - **验收中发现并修了一个真实缺陷**：旁路目录里只剩 `enabled` 标记、`state.json` 丢了（手动清理、半损坏）时，tick 以为「同步关闭」直接空转，设置里却显示已开启。`service::run_tick_with` 现在在「有标记、无状态」时重建状态（新设备 id，实体按 id 从云端认领，不重复）；`state.json` 内容损坏的情形本来就由 `load_for_tick` 重建。有单元测试，E12 也加了这一步（先只删 `state.json`，再删整个旁路目录两种路径）。
+  - **真实延迟（本机负载很高时测的）**：`fetch` 中位 0.48 s（p90 0.83 s）、`save` 0.70 s、`ensure`（建区 + 订阅）中位约 2 s（1.3–4.8 s）、首次全量同步约 13 s；无改动的 `AskHuman todo-sync tick` 中位 0.45 s（冷连接的第一次 2.45 s）。whats-next 的 1.5 s 拉取预算够用，冷连接时会超时并走「用本地 + 后台补拉」的软路径（有测试）。
+  - helper 空闲 5 分钟（触发器开着）：0.0 % CPU、常驻内存 9 MiB、累计 CPU 0.02 s；第二个 helper 对同一状态目录会记 `already_running` 并在 1.5 s 内退出。`kill -9` 循环（B 的 tick 在随机时刻被杀，helper 每 7 轮被杀并重启）：默认 14 轮之外又各跑了 60 轮（种子 11 与 23，各杀 8 次 helper），两副本都收敛，无重复、无丢失。
+  - 清理已做：用 `todo-sync clear-cloud --yes` 删掉 Development 区（之后 `fetch` 返回 `zoneNotFound`），helper 已停，假 HOME 与临时文件已删；容器、App ID 与开发描述文件按计划保留。
 - **提交与发布说明**：P3、P4、P5 的提交都带 `Release-Note: skip`，因为 helper 暂不随正式版发布（计划后置项）。合并并决定随版本发布时，需要补一条带用户可见说明的 `feat(todo-sync)` 提交（或在合并提交里写）。
 - **文档**：除计划里列的 `overview.md` 之外，新增专题概览 `docs/overview-todo-sync.md`（模块地图、钩子、虚拟键、验证命令）；`docs/specs/todo-whats-next.md` D9 已补一句 iCloud 模式；面向用户的 `docs/wiki/todo-sync.md`（含英文版）等功能能让普通用户启用（helper 随版本发布）时再写，避免文档先于功能。
