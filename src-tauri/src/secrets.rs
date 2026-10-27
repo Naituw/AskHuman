@@ -1,7 +1,7 @@
 //! OS keychain wrapper for channel secrets.
 //!
-//! Channel secrets (DingTalk/Feishu AppSecret, Telegram bot token, Slack bot + app tokens; see
-//! the `ACCOUNT_*` constants below for the authoritative list) are stored in the platform secret
+//! Channel secrets (DingTalk/Feishu AppSecret, Telegram bot token, Slack bot + app tokens, the iOS
+//! broker password; see the `ACCOUNT_*` constants below for the authoritative list) are stored in the platform secret
 //! store — macOS login keychain / Windows Credential Manager / Linux Secret Service — instead of
 //! plaintext in `config.json`. Each secret is a generic password keyed by a fixed service +
 //! account.
@@ -22,6 +22,14 @@ pub const ACCOUNT_TELEGRAM_TOKEN: &str = "channels.telegram.botToken";
 /// Slack Bot Token (`xoxb-…`, Web API) and App-Level Token (`xapp-…`, Socket Mode).
 pub const ACCOUNT_SLACK_BOT_TOKEN: &str = "channels.slack.botToken";
 pub const ACCOUNT_SLACK_APP_TOKEN: &str = "channels.slack.appToken";
+/// Shared MQTT broker password of the iOS channel (pairing keys use `ios.pairing.<phoneId>`).
+/// Like every channel secret, the account is the dotted JSON path of the config field
+/// (`channels.ios.password`), which the CLI relies on to redact and look up plaintext fallbacks.
+pub const ACCOUNT_IOS_BROKER_PASSWORD: &str = "channels.ios.password";
+/// Keychain account of one phone pairing's direction keys (`ios::store`).
+pub fn ios_pairing_account(phone_id: &str) -> String {
+    format!("ios.pairing.{phone_id}")
+}
 
 /// The secret store could not be reached (e.g. no Secret Service on a headless Linux box).
 /// Callers treat this as "use the plaintext config fallback".

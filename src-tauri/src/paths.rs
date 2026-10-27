@@ -146,6 +146,12 @@ pub fn agents_file() -> PathBuf {
     config_dir().join("agents.json")
 }
 
+/// iOS channel state `~/.askhuman/ios` (pairings, idempotency journal, staged uploads).
+/// Dev Instances get their own through `ASKHUMAN_HOME`.
+pub fn ios_dir() -> PathBuf {
+    config_dir().join("ios")
+}
+
 /// 杂项运行时状态目录 `~/.askhuman/state`（daemon 跨重启保留的小状态）。
 pub fn state_dir() -> PathBuf {
     config_dir().join("state")

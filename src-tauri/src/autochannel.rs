@@ -12,7 +12,7 @@ use serde_json::Value;
 /// 持久化的活跃槽。
 #[derive(Default, Serialize, Deserialize)]
 struct Persisted {
-    /// 当前活跃渠道 id（"feishu" / "dingding" / "telegram" / "slack" / "popup"）；
+    /// 当前活跃渠道 id（"feishu" / "dingding" / "telegram" / "slack" / "ios" / "popup"）；
     /// None / "popup" = 不向任何 IM 发卡片（只弹窗）。在哪个渠道作答 / 说话就更新为哪个。
     #[serde(default)]
     channel: Option<String>,
@@ -804,6 +804,7 @@ pub fn channel_label(id: &str, lang: Lang) -> String {
         "dingding" => "channel.sourceDingTalk",
         "feishu" => "channel.sourceFeishu",
         "slack" => "channel.sourceSlack",
+        "ios" => "channel.sourceIos",
         other => return other.to_string(),
     };
     i18n::tr(lang, key).to_string()

@@ -22,7 +22,7 @@
 **进程职责（同一二进制按角色切换，本地 IPC 通信）**：
 
 - **AskHuman CLI**（多、短命）：解析 argv（`-f` 在此解析为绝对路径、缺失即退 1）→ 提交 `AskRequest` 给 Daemon → 流式取回结果打到 stdout → 按终态映射退出码 0/1/3。
-- **AskHuman Daemon**（macOS/Linux/Windows 每用户 1 个、常驻、**无 GUI**）：独占四种 IM 的 Router/长连接，承载每请求的 Coordinator/Preemption，集中落盘，监听配置变更，并管理空闲退出、二进制换新和排空。
+- **AskHuman Daemon**（macOS/Linux/Windows 每用户 1 个、常驻、**无 GUI**）：独占四种 IM 的 Router/长连接和实验性 iOS 渠道的 Gateway（一条 MQTT 连接，端到端加密，见 `docs/overview-ios.md`），承载每请求的 Coordinator/Preemption，集中落盘，监听配置变更，并管理空闲退出、二进制换新和排空。
 - **Codex App 适配器**（macOS）：由 Daemon 独占原生 IPC，将桌面会话状态、控制与新建任务接入现有 registry / Watch / 问答协调；随 Codex 整体集成启停，新任务默认优先 App、可改为优先 CLI。详见 `docs/specs/codex-desktop-session-integration.md`。
 - **Popup Host**（默认合并模式，每 Daemon / Dev Instance 至多 1 个）：独立 Tauri 进程，通过一次认证连接承载统一作答窗口；普通提问、权限和 Stop 按请求 ID 路由。答完本轮隐藏，按 popupPrewarm 决定保留空闲宿主或退出；故障由 Daemon 有界重建。见 `docs/specs/popup-request-inbox.md`、`docs/specs/popup-prewarm.md`。
 - **独立 Popup Helper**（可选 `channels.popup.windowMode=independent`）：每请求一个窗口，沿用旧冷热池及焦点仲裁；模式切换只影响新请求，保留在途窗口和草稿。
@@ -34,7 +34,7 @@
 
 **重复提问收敛**（`docs/specs/duplicate-ask-coalescing.md`）：agent 那一轮被中断后常原样重发同一个提问，而被中断的 CLI 进程不会被杀。Daemon 因此在建请求前先按「会话键 + 提问指纹」判重——同一提问仍在等人回答就合流到那张卡（多等待者共享一个终态，全部离场才取消），5 分钟内已答过则直接重放上次答案并在 `status` 说明。历史、待办出队与 `ask-received` 仍只发生一次。
 
-**Dev Instance（并行 / WorkTree 开发）**：每个已 `dev enable` 的 git 工作树可有独立 `ASKHUMAN_HOME`（`.askhuman-dev/home`）+ 实例 bin + 默认 popup-only 渠道，与主环境 daemon/生产 bot 隔离；入口按 cwd 标记 re-exec。`ASKHUMAN_HOME` 只隔离配置 / socket / daemon 标签，不隔离 `$HOME` 下的 Agent hook 文件与用户级登录项：实例进程对它们的**自动**写入（登录项同步、启动时的 hook 迁移）一律跳过，显式 `agents …` 命令除外。详见 `docs/specs/dev-instance-parallel.md`、`docs/agent-worktree-setup.md`。
+**Dev Instance（并行 / WorkTree 开发）**：每个已 `dev enable` 的 git 工作树可有独立 `ASKHUMAN_HOME`（`.askhuman-dev/home`）+ 实例 bin + 默认 popup-only 渠道，与主环境 daemon/生产 bot 隔离；入口按 cwd 标记 re-exec。`ASKHUMAN_HOME` 只隔离配置 / socket / daemon 标签（配置目录不是账户自己的 `~/.askhuman` 时，如只换 `$HOME` 的沙箱，daemon 标签同样独立），不隔离 `$HOME` 下的 Agent hook 文件与用户级登录项：实例进程对它们的**自动**写入（登录项同步、启动时的 hook 迁移）一律跳过，显式 `agents …` 命令除外。详见 `docs/specs/dev-instance-parallel.md`、`docs/agent-worktree-setup.md`。
 
 ## 目录结构
 
@@ -44,6 +44,8 @@ AskHuman/
   scripts/                   安装、发布、版本与性能脚本
   docs/wiki/                 用户文档（中英双语）；specs/plans 为开发文档
   .github/workflows/         三平台构建与发布
+  ios/                       iOS App（XcodeGen 工程 + 本地 Swift Package AskHumanKit + 通知扩展 + UI 测试）与跨语言线协议夹具
+  relay/                     推送中继（零依赖 Node.js，腾讯云云函数）
 
   src/                       Vue 前端（Vite 根目录）
     index.html               前端入口、首帧关键样式与平台探测
@@ -91,6 +93,7 @@ AskHuman/
         cfgio.rs             CLI 配置读写、密钥输入与本地化工具
         config_cmd.rs        config 子命令
         channel_cmd.rs       channel 配置、测试与识别子命令
+        ios_cmd.rs           channel ios 子命令（status / pair / allow / devices / revoke）与连接串导入
         agents_cmd.rs        agents 模式、状态与 capability 子命令
         doctor.rs            daemon、已装二进制、渠道和 Agent 集成体检
         install_check.rs     已装 AskHuman 二进制 / PATH 遮蔽 / Daemon 互顶检查（doctor install）
@@ -156,6 +159,7 @@ AskHuman/
         dingding.rs          钉钉 Channel 适配
         feishu.rs            飞书 Channel 适配
         slack.rs             Slack Channel 适配
+        ios.rs               iOS Channel 适配（把请求交给 Gateway）
         confirm.rs           Confirm 的四种 IM adapter
 
       telegram/
@@ -185,6 +189,7 @@ AskHuman/
         markdown.rs          Markdown 到 Slack mrkdwn
         router.rs            Slack 单长连接与会话路由
 
+      ios/                   iOS 渠道（实验）：线协议与密码学、MQTT 传输、持久状态、Gateway actor（`gateway/`）；专题见 overview-ios.md
       integrations/
         hook_edit.rs         JSONC Hook 的最小编辑
         mutation_lock.rs     集成配置写入的跨进程锁
@@ -225,6 +230,8 @@ AskHuman/
           todo.rs            IM /todo·/todo-rm·/todo-auto 命令与待办管理卡
           subs.rs            GUI/托盘/Agent 订阅广播与 Interject 连接
           detect.rs          渠道自动识别流程
+          ios.rs · ios_agents.rs · ios_tasks.rs  iOS Gateway 的 Host 实现（启停、Agent / Watch / 插话、新任务）
+          task_launch.rs     IM /new 与 iOS 共用的 Agent 任务启动
         lifecycle.rs         单实例、指纹与空闲生命周期
         restart_guard.rs     换新原因记录，以及两份二进制互相顶替时拒绝再让位（hold）
         spawn.rs             Daemon 脱离启动
@@ -280,7 +287,7 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 
 +1 的代价是每个跨号的客户端与 Daemon 互相让位、旧客户端无法与新 Daemon 共存，所以能用「加可选字段」解决的不要 +1。+1 时：改常量，在下面的历史补一行（日期、提交、变更点），并在 `daemon-graceful-drain.md` 记下升级过渡期的影响。
 
-**历史**（当前为 3）：1 = Daemon 骨架（`9660532`，2026-06-07）；2 = 结构化确认（`2c76c44`，2026-07-11）；3 = 共享作答窗口，新增 `PopupHostHello` / `PopupHostIdle` / `PopupHostAccepted` / `PopupSubmissionAck` / `PopupRequestKind` 等（`799334f`，2026-10-06）。对应发布版：0.4.3–0.8.2 为 1，0.9.1–0.13.2 为 2，0.14.2 起为 3。排空相关的增量（`HelloStatus::Draining`、`ServerMsg::Draining`、`Stop.force`、`StatusInfo.draining`）和 `StatusInfo` 的二进制信息字段都没有 +1。
+**历史**（当前为 4）：1 = Daemon 骨架（`9660532`，2026-06-07）；2 = 结构化确认（`2c76c44`，2026-07-11）；3 = 共享作答窗口，新增 `PopupHostHello` / `PopupHostIdle` / `PopupHostAccepted` / `PopupSubmissionAck` / `PopupRequestKind` 等（`799334f`，2026-10-06）；4 = iOS 渠道管理，新增 `ClientMsg::Ios` / `ServerMsg::Ios`（`IosOp` / `IosResult`）（`128bffd`，2026-10-25）。对应发布版：0.4.3–0.8.2 为 1，0.9.1–0.13.2 为 2，0.14.2–0.15.1 为 3，0.16.0 起为 4。排空相关的增量（`HelloStatus::Draining`、`ServerMsg::Draining`、`Stop.force`、`StatusInfo.draining`）和 `StatusInfo` 的二进制信息字段都没有 +1。
 
 ## 前端 ↔ 后端命令（`commands.rs` ↔ `lib/ipc.ts`）
 
@@ -294,6 +301,7 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 - Agent Rules：`agent_rule_status` / `install` / `update` / `uninstall` / `reveal` / `open`
 - Agent 模式与配置文件：`agent_mode_status` / `set` / `update`、`mcp_config_reveal` / `open`、`agent_hook_reveal` / `open`、`mcp_command_path`（`agent_mode_status` 只聚合本地集成产物；Agent CLI 是否在 PATH / Pi 版本由 `agent_task_readiness` 负责）
 - 渠道测试与识别：`telegram_test`；钉钉、飞书、Slack 各自的 `*_test` / `*_detect_prepare` / `*_detect_wait`；共用 `detect_cancel`
+- iOS 渠道（设置页「实验」Tab）：`ios_op`（状态 / 配对 / 撤销 / 重命名，经 IPC 的 `ClientMsg::Ios`）、`ios_test`、`ios_pair_qr`、`ios_connection_export` / `ios_connection_import`
 - 版本自更新：`get_app_version`、`update_check`、`update_get_notes`、`update_apply`、`update_dismiss`、`popup_update_state`、`restart_settings`
 - Agent 生命周期：`agents_init`、`agent_force_idle`；自动集成卡内的 capability 通过
   `agent_mode_status` 聚合，并由 `agent_lifecycle_status` / `install` / `uninstall` 查询或切换
@@ -306,6 +314,15 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 - 来源名优先级为自定义环境变量 > 发起 Agent > 默认「the Loop」；头部同时展示 Agent、workspace 和提问时间。
 - 多问题默认纵向平铺全部问题（`experimental.verticalQuestions` 默认开，设置可关回一次一题），设计见 `docs/specs/multi-question-vertical.md`。
 - 推荐选项不自动预选，提交值始终为原文，规格见 `docs/specs/recommended-option.md`。
+
+## iOS 渠道（实验）
+
+Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / 关注 / 观察 / 插话 Agent、创建 Agent 任务。专题实现地图见 `docs/overview-ios.md`，需求与计划见 `docs/specs/ios-channel.md`、`docs/plans/ios-channel.md`，用户说明见 `docs/wiki/ios-setup.md`。
+
+- **形态**：Mac Gateway ↔ 自备 EMQX（MQTT TLS / WSS）↔ iOS App；推送经 `relay/` 的无状态云函数到 APNs。Mac 不持有任何 APNs 密钥，中继不存任何状态。
+- **不变量**：端到端加密（每配对一对方向密钥，broker 与中继只见密文）；一份 broker 凭据多台 Mac 共用；状态变更消息按 `msgId` 幂等；渠道藏在 `experimental.enabled` 后，`channel list` 与帮助默认不列出；EMQX 消费上限保持 0，不自动付费。
+- **跨语言**：Rust `ios/{crypto,envelope,wire}.rs` 与 Swift `AHProtocol` 共用 `ios/Fixtures/wire-v1/`，限额常量两边一致；改线协议先改夹具。
+- **验证**：Rust Gateway 测试台、Swift 包测试、真实 daemon 端到端（一次性 Mac + 本地 broker）、模拟器 UI 测试与中继 `node --test`，命令见 `docs/overview-ios.md`。
 
 ## UI / 主题
 

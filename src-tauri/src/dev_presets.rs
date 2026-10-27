@@ -469,9 +469,15 @@ pub fn release_leases_for_worktree(worktree_root: &Path) -> Result<Vec<String>, 
 pub fn redact_channels(channels: &ChannelsConfig) -> serde_json::Value {
     let mut v = serde_json::to_value(channels).unwrap_or(serde_json::json!({}));
     if let Some(obj) = v.as_object_mut() {
-        for key in ["telegram", "dingding", "feishu", "slack"] {
+        for key in ["telegram", "dingding", "feishu", "slack", "ios"] {
             if let Some(ch) = obj.get_mut(key).and_then(|x| x.as_object_mut()) {
-                for secret_key in ["botToken", "clientSecret", "appSecret", "appToken"] {
+                for secret_key in [
+                    "botToken",
+                    "clientSecret",
+                    "appSecret",
+                    "appToken",
+                    "password",
+                ] {
                     if let Some(val) = ch.get(secret_key).and_then(|x| x.as_str()) {
                         if !val.is_empty() {
                             ch.insert(secret_key.to_string(), serde_json::json!("***"));
@@ -508,5 +514,18 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(configured_channel_ids(&ch), vec!["feishu"]);
+    }
+
+    #[test]
+    fn ios_is_never_carried_by_presets_and_its_password_is_redacted() {
+        let mut ch = ChannelsConfig::default();
+        ch.ios.enabled = true;
+        ch.ios.host = "broker.example".into();
+        ch.ios.password = "secret".into();
+        // A dev instance pairs its own phones; the shared broker config is not preset material.
+        assert!(configured_channel_ids(&ch).is_empty());
+        let redacted = redact_channels(&ch);
+        assert_eq!(redacted["ios"]["password"], "***");
+        assert_eq!(redacted["ios"]["host"], "broker.example");
     }
 }

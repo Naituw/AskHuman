@@ -23,6 +23,9 @@ import type {
   HookStatus,
   InterjectInit,
   InterjectPending,
+  IosConnectionFields,
+  IosOp,
+  IosResult,
   LifecycleStatus,
   NewTaskInit,
   NewTaskProject,
@@ -136,6 +139,22 @@ export const getSettings = () => invoke<SettingsPayload>("get_settings");
 /** Codex 权限授权管理面板（spec codex-permission-remember §6.3）：全部操作经 daemon 完成。 */
 export const permissionRulesPanel = (op: PermissionRulesOp) =>
   invoke<PermissionRulesResult>("permission_rules_panel", { op });
+
+/** iOS 渠道管理（实验功能）：配对 / 设备列表 / 撤销 / 改名，全部经 daemon 的网关完成。 */
+export const iosOp = (op: IosOp) => invoke<IosResult>("ios_op", { op });
+export const iosTest = (args: {
+  host: string;
+  port: number;
+  wsPort: number;
+  username: string;
+  password: string;
+  /** Push relay address; when set, its health is checked too. */
+  relayUrl?: string;
+}) => invoke<string>("ios_test", { args });
+export const iosConnectionExport = () => invoke<string>("ios_connection_export");
+export const iosConnectionImport = (text: string) =>
+  invoke<IosConnectionFields>("ios_connection_import", { text });
+export const iosPairQr = (text: string) => invoke<string>("ios_pair_qr", { text });
 
 export const saveSettings = (config: AppConfig, secretActions: SecretActions) =>
   invoke<void>("save_settings", { config, secretActions });

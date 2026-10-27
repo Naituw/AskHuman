@@ -1,0 +1,13 @@
+{
+  "name": "askhuman-local-broker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A local MQTT broker for exercising the iOS channel without a cloud account (tests and demos only).",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node broker.js"
+  },
+  "dependencies": {
+    "aedes": "1.2.0"
+  }
+}

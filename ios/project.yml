@@ -1,0 +1,137 @@
+name: AskHuman
+
+options:
+  bundleIdPrefix: com.naituw.humaninloop
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+  groupSortPosition: top
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    DEVELOPMENT_TEAM: DMJXDB9H6Q
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_EMIT_LOC_STRINGS: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+packages:
+  AskHumanKit:
+    path: Packages/AskHumanKit
+
+targets:
+  AskHuman:
+    type: application
+    platform: iOS
+    sources:
+      - path: AskHuman
+    dependencies:
+      - package: AskHumanKit
+        product: AHProtocol
+      - package: AskHumanKit
+        product: AHStore
+      - package: AskHumanKit
+        product: AHTransport
+      - package: AskHumanKit
+        product: AHCore
+      - package: AskHumanKit
+        product: AHMarkdown
+      - package: AskHumanKit
+        product: AHMock
+      - target: AskHumanNotification
+        embed: true
+    entitlements:
+      path: AskHuman/AskHuman.entitlements
+      properties:
+        aps-environment: development
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.naituw.humaninloop.ios.shared
+    info:
+      path: AskHuman/Info.plist
+      properties:
+        CFBundleDisplayName: AskHuman
+        CFBundleLocalizations: [en, zh-Hans]
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        NSCameraUsageDescription: Scan the pairing QR code shown by AskHuman on your Mac, or take a photo to attach to a reply.
+        NSFaceIDUsageDescription: Confirm that it is you before a new Agent task is started on your Mac.
+        AHKeychainGroup: $(AppIdentifierPrefix)com.naituw.humaninloop.ios.shared
+        AHPushEnvironment: $(AH_PUSH_ENV)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.naituw.humaninloop.ios
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        GENERATE_INFOPLIST_FILE: NO
+      configs:
+        Debug:
+          AH_PUSH_ENV: dev
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+        Release:
+          AH_PUSH_ENV: prod
+
+  AskHumanNotification:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: AskHumanNotification
+    dependencies:
+      - package: AskHumanKit
+        product: AHProtocol
+      - package: AskHumanKit
+        product: AHStore
+    entitlements:
+      path: AskHumanNotification/AskHumanNotification.entitlements
+      properties:
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.naituw.humaninloop.ios.shared
+    info:
+      path: AskHumanNotification/Info.plist
+      properties:
+        CFBundleDisplayName: AskHuman
+        CFBundleLocalizations: [en, zh-Hans]
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+        AHKeychainGroup: $(AppIdentifierPrefix)com.naituw.humaninloop.ios.shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.naituw.humaninloop.ios.notification
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+
+  AskHumanUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: AskHumanUITests
+    dependencies:
+      - target: AskHuman
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.naituw.humaninloop.ios.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: AskHuman
+
+schemes:
+  AskHuman:
+    build:
+      targets:
+        AskHuman: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - AskHumanUITests
+    archive:
+      config: Release

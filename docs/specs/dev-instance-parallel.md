@@ -177,6 +177,9 @@ PowerShell 5.1 兼容脚本）。两者共享以下语义：
   `com.naituw.humaninloop.guihost`）按用户全局唯一，与 `HOME` 无关。只换 `HOME`、不设非空 `ASKHUMAN_HOME`
   的 daemon / GUI Host 属于**生产上下文**，会 `bootout` 并替换真实登录项。沙箱验证必须同时设非空
   `ASKHUMAN_HOME`，收尾时核对真实登录项（launchd pid 与 plist）未变。
+  2026-10-25 起 daemon 自己的 label 多了一道兜底：配置目录不是账户自己的 `~/.askhuman`（账户 home 取自
+  用户数据库而非 `$HOME`）时同样派生独立 label，所以只换 `HOME` 的 daemon 不再 `bootout` 真实 daemon
+  （`daemon/spawn.rs::needs_isolated_label`）。这**不**覆盖 GUI Host 登录项与 Agent hook 文件，规则不变。
 
 ### 7.2 机器级渠道预设（跨 WorkTree 复用模板 + 独占租约）
 
@@ -234,7 +237,7 @@ AskHuman dev enable --preset feishu-test
 |---|---|
 | graceful drain | **实例内**仍生效（本树 install 换 bin → 本树 daemon drain）；**跨实例不互等** |
 | 空闲退出 | 每实例独立 |
-| macOS launchd | 每实例按 `ASKHUMAN_HOME` 派生独立 daemon label；与主实例、其它工作树互不 bootout；登出时随当前 GUI domain 退出 |
+| macOS launchd | 每实例按 `ASKHUMAN_HOME` 派生独立 daemon label（配置目录不是账户自己的 `~/.askhuman` 的进程同理）；与主实例、其它工作树互不 bootout；登出时随当前 GUI domain 退出 |
 | Windows process spawn | detached daemon 禁止继承调用者 handles；PowerShell/CI 捕获 `daemon start` 输出可正常收到 EOF |
 | GUI host | 每实例独立 socket/named-pipe 与 lock（避免与主 tray 抢）；disable 同时关闭本实例 host |
 | Agent lifecycle hooks | 用户级全局 hook 仍可能触发；事件打到**实际 exec 到的**那个 daemon（cwd 正确则进实例）。不在一期改 hook 安装布局。实例 daemon 启动时**不**自动迁移（改写）这些全局 hook，见 §7.1 |

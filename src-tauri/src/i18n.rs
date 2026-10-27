@@ -315,6 +315,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "channel.sourceDingTalk" => pick(lang, "DingTalk", "钉钉"),
         "channel.sourceFeishu" => pick(lang, "Feishu", "飞书"),
         "channel.sourceSlack" => pick(lang, "Slack", "Slack"),
+        "channel.sourceIos" => pick(lang, "iOS", "iOS"),
         // Cancel source: the caller (CLI/terminal cancelled the request).
         "channel.sourceCaller" => pick(lang, "Caller", "调用方"),
         // Every delivery surface went away before anyone answered (popup helper died, IM
@@ -1224,6 +1225,43 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             lang,
             "Test message sent! Your Telegram Bot is configured correctly.",
             "测试消息发送成功！Telegram Bot 配置正确。",
+        ),
+
+        // —— iOS channel (commands.ios_*) ——
+        "cmd.iosFillBroker" => pick(
+            lang,
+            "Fill in the broker host and username first",
+            "请先填写 Broker 主机和用户名",
+        ),
+        "cmd.iosBadUser" => pick(
+            lang,
+            "The username may only contain letters and digits",
+            "用户名只能包含字母和数字",
+        ),
+        "cmd.iosTestOk" => pick(
+            lang,
+            "Connected via {via} ({ms} ms). The broker accepted the credentials and routed a test message.",
+            "已通过 {via} 连通（{ms} ms）。Broker 已接受凭据并成功转发测试消息。",
+        ),
+        "cmd.iosRelayOk" => pick(
+            lang,
+            "The relay answered in {ms} ms and can send pushes.",
+            "中继在 {ms} ms 内响应，可以发送推送。",
+        ),
+        "cmd.iosRelayNone" => pick(
+            lang,
+            "No relay address is set, so the phone gets no push notifications while the app is closed.",
+            "未填写中继地址，App 不在前台时手机收不到推送通知。",
+        ),
+        "cmd.iosRelayNoApns" => pick(
+            lang,
+            "The broker works and the relay answered in {ms} ms, but the relay has no APNs key configured, so it cannot send pushes.",
+            "Broker 正常，中继也在 {ms} ms 内响应，但中继没有配置 APNs 密钥，无法发送推送。",
+        ),
+        "cmd.iosRelayFailed" => pick(
+            lang,
+            "The broker works, but the relay check failed: {error}",
+            "Broker 正常，但中继检查失败：{error}",
         ),
 
         // —— 钉钉测试连接 / 自动识别（commands.dingtalk_test / dingtalk_detect_*）——

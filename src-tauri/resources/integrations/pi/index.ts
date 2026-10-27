@@ -261,7 +261,9 @@ export default function askHumanExtension(pi: ExtensionAPI) {
     await reportNative(pi, ctx);
     const run = lastRun;
     if (!CONFIG.stop || !run || run.generation !== generation || run.stopReason !== "stop") {
-      if (CONFIG.lifecycle) report(ctx, "turn-end");
+      // Tell AskHuman why the turn ended so a failed run is not announced as finished.
+      const reason = run && run.generation === generation ? run.stopReason : undefined;
+      if (CONFIG.lifecycle) report(ctx, "turn-end", reason ? { stop_reason: reason } : {});
       return;
     }
 

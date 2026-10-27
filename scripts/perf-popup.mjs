@@ -12,8 +12,9 @@
 // all built in) so the numbers are comparable across time and machines.
 //
 // The canonical scenario, per run:
-//   * Throwaway $HOME -> its own daemon/socket/perf.log; never touches the user's real daemon, and
-//     ASKHUMAN_NO_KEYCHAIN keeps it from reading/clobbering the real OS keychain secrets.
+//   * Throwaway $HOME + ASKHUMAN_HOME -> its own daemon/socket/perf.log/launchd label; never touches
+//     the user's real daemon, and ASKHUMAN_NO_KEYCHAIN keeps it from reading/clobbering the real
+//     OS keychain secrets.
 //   * Local mock IM (scripts/perf-mock-im.mjs) with all four channels enabled (DingTalk/Feishu/
 //     Telegram/Slack) pointed at it via config + ASKHUMAN_{DINGTALK,SLACK}_API_BASE. The mock adds
 //     ~150ms to every connect/send so an "IM blocks the popup" regression shows up in e2e.
@@ -134,11 +135,14 @@ function startCaffeinate() {
 
 // ---- canonical isolated environment ----------------------------------------
 
-/** Base env shared by every spawned process: isolated HOME, no keychain, IM base URLs -> mock. */
+/** Base env shared by every spawned process: isolated HOME, no keychain, IM base URLs -> mock.
+ *  ASKHUMAN_HOME makes it an instance (own launchd label, no writes to the user's login items or
+ *  agent hook files); overriding HOME alone is not enough to keep the real daemon out of reach. */
 function childEnv(home, urls) {
   return {
     ...process.env,
     HOME: home,
+    ASKHUMAN_HOME: join(home, ".askhuman"),
     ASKHUMAN_NO_KEYCHAIN: "1",
     ASKHUMAN_DINGTALK_API_BASE: urls.dingtalk,
     ASKHUMAN_SLACK_API_BASE: urls.slack,

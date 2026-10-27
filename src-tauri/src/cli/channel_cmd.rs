@@ -3,6 +3,7 @@
 //! 复用 `commands.rs` 的 *_test / *_detect_* 与 `config.rs` 的 load/save（密钥经 save 入钥匙串）。
 
 use super::cfgio::{self, SecretSource};
+use super::ios_cmd;
 use crate::config::AppConfig;
 use crate::i18n::{err_prefix, Lang};
 use std::collections::HashMap;
@@ -20,6 +21,9 @@ pub fn dispatch(args: &[String], lang: Lang) {
         "disable" => toggle(rest, false, lang),
         "test" => test(rest, lang),
         "detect" => detect(rest, lang),
+        // The iOS channel is experimental: its management commands exist only while the hidden
+        // switch is on (otherwise they look like any other unknown subcommand).
+        "ios" if ios_cmd::available() => ios_cmd::dispatch(rest, lang),
         "help" | "-h" | "--help" => {
             print_line(&help(lang));
             Ok(())
@@ -48,8 +52,22 @@ fn list(args: &[String], lang: Lang) -> Result<(), String> {
         .unwrap_or_default();
     let daemon_up = status.is_some();
 
+    let ios = ios_cmd::available().then(|| {
+        // Only ask the daemon when it is already up: `list` must not start it.
+        let state = if daemon_up {
+            ios_cmd::fetch_state().ok().flatten()
+        } else {
+            None
+        };
+        (
+            cfg.channels.ios.enabled,
+            is_configured(&cfg, "ios"),
+            daemon_up.then(|| state.map(|s| s.connected).unwrap_or(false)),
+        )
+    });
+
     if json {
-        let arr: Vec<serde_json::Value> = CHANNELS
+        let mut arr: Vec<serde_json::Value> = CHANNELS
             .iter()
             .map(|&name| {
                 // daemon 未运行时连接状态未知 → null（区别于「确定未连接」）。
@@ -66,6 +84,14 @@ fn list(args: &[String], lang: Lang) -> Result<(), String> {
                 })
             })
             .collect();
+        if let Some((enabled, configured, connected)) = ios {
+            arr.push(serde_json::json!({
+                "name": "ios",
+                "enabled": enabled,
+                "configured": configured,
+                "connected": connected,
+            }));
+        }
         print_line(&serde_json::to_string_pretty(&serde_json::json!(arr)).unwrap_or_default());
         return Ok(());
     }
@@ -90,6 +116,17 @@ fn list(args: &[String], lang: Lang) -> Result<(), String> {
             yn(is_enabled(&cfg, name)),
             yn(is_configured(&cfg, name)),
             connected
+        ));
+    }
+    if let Some((enabled, configured, connected)) = ios {
+        print_line(&format!(
+            "{:<10} {:<8} {:<11} {}",
+            "ios",
+            yn(enabled),
+            yn(configured),
+            connected
+                .map(yn)
+                .unwrap_or_else(|| cfgio::t(lang, "n/a", "—"))
         ));
     }
     if !daemon_up {
@@ -198,6 +235,21 @@ fn needs_value(lang: Lang, flag: &str) -> String {
     )
 }
 
+fn parse_port(value: &str, lang: Lang) -> Result<u16, String> {
+    value
+        .trim()
+        .parse::<u16>()
+        .ok()
+        .filter(|p| *p > 0)
+        .ok_or_else(|| {
+            cfgio::t(
+                lang,
+                &format!("not a valid port: {value}"),
+                &format!("端口无效: {value}"),
+            )
+        })
+}
+
 fn apply_flags(name: &str, mut pf: ParsedFlags, lang: Lang) -> Result<(), String> {
     let mut cfg = AppConfig::load_without_secrets();
     match name {
@@ -271,6 +323,38 @@ fn apply_flags(name: &str, mut pf: ParsedFlags, lang: Lang) -> Result<(), String
             }
             if let Some(src) = pf.secrets.remove("app-token") {
                 c.app_token = cfgio::read_secret(&src, lang)?;
+            }
+        }
+        "ios" => {
+            // A connection string is applied first, so explicit flags still override its parts.
+            if let Some(src) = pf.secrets.remove("connection") {
+                let text = cfgio::read_secret(&src, lang)?;
+                ios_cmd::apply_connection(&mut cfg, &text)?;
+            }
+            let c = &mut cfg.channels.ios;
+            if let Some(e) = pf.enabled {
+                c.enabled = e;
+            }
+            if let Some(v) = pf.values.remove("host") {
+                c.host = v;
+            }
+            if let Some(v) = pf.values.remove("port") {
+                c.port = parse_port(&v, lang)?;
+            }
+            if let Some(v) = pf.values.remove("ws-port") {
+                c.ws_port = parse_port(&v, lang)?;
+            }
+            if let Some(v) = pf.values.remove("username") {
+                c.username = v;
+            }
+            if let Some(v) = pf.values.remove("relay-url") {
+                c.relay_url = v;
+            }
+            if let Some(v) = pf.values.remove("mac-name") {
+                c.mac_name = v;
+            }
+            if let Some(src) = pf.secrets.remove("password") {
+                c.password = cfgio::read_secret(&src, lang)?;
             }
         }
         _ => unreachable!(),
@@ -365,6 +449,18 @@ fn test(args: &[String], lang: Lang) -> Result<(), String> {
                 })
                 .await
             }
+            "ios" => {
+                crate::commands::ios_test(crate::commands::IosTestArgs {
+                    host: cfg.channels.ios.host.clone(),
+                    port: cfg.channels.ios.port,
+                    ws_port: cfg.channels.ios.ws_port,
+                    username: cfg.channels.ios.username.clone(),
+                    password: String::new(),
+                    insecure_local: cfg.channels.ios.insecure_local,
+                    relay_url: cfg.channels.ios.relay_url.clone(),
+                })
+                .await
+            }
             _ => unreachable!(),
         }
     });
@@ -389,6 +485,13 @@ fn detect(args: &[String], lang: Lang) -> Result<(), String> {
     })?;
     let canonical = canon(name, lang)?;
     let save = args.iter().any(|a| a == "--save");
+    if canonical == "ios" {
+        return Err(cfgio::t(
+            lang,
+            "ios has no detect: pair devices with 'channel ios pair'",
+            "ios 无需识别：用 'channel ios pair' 配对设备",
+        ));
+    }
     if canonical == "telegram" {
         return Err(cfgio::t(
             lang,
@@ -558,6 +661,20 @@ fn wizard(name: &str, lang: Lang) -> Result<(), String> {
             prompt_secret_into(&mut c.bot_token, "botToken", lang)?;
             prompt_secret_into(&mut c.app_token, "appToken", lang)?;
         }
+        "ios" => {
+            let c = &mut cfg.channels.ios;
+            c.enabled = yes_no(
+                &cfgio::t(lang, "Enable this channel?", "启用该渠道?"),
+                c.enabled,
+            )?;
+            c.host = cfgio::prompt_line("host", &c.host)?;
+            c.port = parse_port(&cfgio::prompt_line("port", &c.port.to_string())?, lang)?;
+            c.ws_port = parse_port(&cfgio::prompt_line("wsPort", &c.ws_port.to_string())?, lang)?;
+            c.username = cfgio::prompt_line("username", &c.username)?;
+            prompt_secret_into(&mut c.password, "password", lang)?;
+            c.relay_url = cfgio::prompt_line("relayUrl", &c.relay_url)?;
+            c.mac_name = cfgio::prompt_line("macName", &c.mac_name)?;
+        }
         _ => unreachable!(),
     }
 
@@ -610,6 +727,7 @@ fn canon(name: &str, lang: Lang) -> Result<&'static str, String> {
         "dingding" | "dingtalk" | "ding" => Ok("dingding"),
         "feishu" | "lark" => Ok("feishu"),
         "slack" => Ok("slack"),
+        "ios" if ios_cmd::available() => Ok("ios"),
         other => Err(cfgio::t(
             lang,
             &format!("unknown channel: {other} (expected telegram|dingding|feishu|slack)"),
@@ -625,6 +743,7 @@ pub(crate) fn conn_name(name: &str) -> &'static str {
         "feishu" => "feishu",
         "telegram" => "telegram",
         "slack" => "slack",
+        // The gateway reports through `channel ios status`, not the IM connection list.
         _ => "",
     }
 }
@@ -635,6 +754,7 @@ pub(crate) fn is_enabled(cfg: &AppConfig, name: &str) -> bool {
         "dingding" => cfg.channels.dingding.enabled,
         "feishu" => cfg.channels.feishu.enabled,
         "slack" => cfg.channels.slack.enabled,
+        "ios" => cfg.channels.ios.enabled,
         _ => false,
     }
 }
@@ -645,6 +765,7 @@ fn set_enabled(cfg: &mut AppConfig, name: &str, on: bool) {
         "dingding" => cfg.channels.dingding.enabled = on,
         "feishu" => cfg.channels.feishu.enabled = on,
         "slack" => cfg.channels.slack.enabled = on,
+        "ios" => cfg.channels.ios.enabled = on,
         _ => {}
     }
 }
@@ -672,11 +793,26 @@ pub(crate) fn is_configured(cfg: &AppConfig, name: &str) -> bool {
                 && cfgio::secret_is_set(ACCOUNT_SLACK_BOT_TOKEN)
                 && cfgio::secret_is_set(ACCOUNT_SLACK_APP_TOKEN)
         }
+        "ios" => {
+            !cfg.channels.ios.host.trim().is_empty()
+                && !cfg.channels.ios.username.trim().is_empty()
+                && !cfg.channels.ios.relay_url.trim().is_empty()
+                && cfgio::secret_is_set(ACCOUNT_IOS_BROKER_PASSWORD)
+        }
         _ => false,
     }
 }
 
 fn help(lang: Lang) -> String {
+    let base = base_help(lang);
+    if ios_cmd::available() {
+        format!("{base}\n\n{}", ios_cmd::help(lang))
+    } else {
+        base
+    }
+}
+
+fn base_help(lang: Lang) -> String {
     cfgio::t(
         lang,
         "AskHuman channel — configure IM channels (telegram | dingding | feishu | slack)\n\

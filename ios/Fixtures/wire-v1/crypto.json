@@ -1,0 +1,116 @@
+{
+  "base32": [
+    {
+      "hex": "",
+      "text": ""
+    },
+    {
+      "hex": "66",
+      "text": "my"
+    },
+    {
+      "hex": "666f6f626172",
+      "text": "mzxw6ytboi"
+    },
+    {
+      "hex": "ffffffffffffffffffffffffffffffff",
+      "text": "77777777777777777777777774"
+    }
+  ],
+  "base64url": [
+    {
+      "hex": "",
+      "text": ""
+    },
+    {
+      "hex": "00",
+      "text": "AA"
+    },
+    {
+      "hex": "000102",
+      "text": "AAEC"
+    },
+    {
+      "hex": "fbfffe",
+      "text": "-__-"
+    },
+    {
+      "hex": "0102030405",
+      "text": "AQIDBAU"
+    }
+  ],
+  "envelopes": [
+    {
+      "envelope": "{\"v\":1,\"f\":\"mfx2c3rhs6kq7tw4dnb5vypa2e\",\"k\":1,\"n\":\"AQIDBAUGBwgJCgsM\",\"c\":\"PLnNy5dF0sqcS6TD7qUGVGH0B66zjjhcNDw5D11ZQxnMP55GjQa1vbP0XVN6gn3Io2ImL1ZxhITi3f4hRYIqBwft7VMc-IU3t5N94p9fJ_ALf7p6jWrTSH8fF6gWWgIbqVKc7JBhmavInM-dHEwUXuK_zAvwTS051A10YNMEWNKgLmNp3pMxw20P\"}",
+      "from": "mfx2c3rhs6kq7tw4dnb5vypa2e",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "kid": 1,
+      "name": "mac to phone message",
+      "nonce": "0102030405060708090a0b0c",
+      "plaintext": "{\"i\":\"AwMDAwMDAwMDAwMDAwMDAw\",\"t\":\"request.new\",\"ts\":1792900000000,\"b\":{\"full\":true,\"note\":\"unicode 你好 😀\",\"rev\":8}}",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "envelope": "{\"v\":1,\"f\":\"3qjxfkln6hdpmcvbtzaswe4r5y\",\"k\":1,\"n\":\"AgMEBQYHCAkKCwwN\",\"c\":\"R_Yzop8O54kfD3dneZ9joioGrKAAIVaeGYGJILjO73a_EV5g9agkrixs4o89CPVhD0Fzk9Iond1D0FJ0-qm_cClUKHJW1o3gebaPKkjFgJBypIjBfHXHGzQ4jUkaMlzt4VVY0wBIS4Zu7vv8QME3-iJ51Q\"}",
+      "from": "3qjxfkln6hdpmcvbtzaswe4r5y",
+      "key": "ea5263c27a84baf8d3994fbc3e7e1a07d2638b0e025d85f882e4a6706c4b6c6a",
+      "kid": 1,
+      "name": "phone to mac message",
+      "nonce": "02030405060708090a0b0c0d",
+      "plaintext": "{\"i\":\"BAQEBAQEBAQEBAQEBAQEBA\",\"t\":\"hello\",\"ts\":1792900000500,\"b\":{\"nonce\":\"q3ZkL1m0Xw4\",\"proto\":1}}",
+      "scope": "topic",
+      "topic": "ah/askhuman01/u/mfx2c3rhs6kq7tw4dnb5vypa2e"
+    },
+    {
+      "envelope": "{\"v\":1,\"f\":\"3qjxfkln6hdpmcvbtzaswe4r5y\",\"k\":0,\"n\":\"AwQFBgcICQoLDA0O\",\"c\":\"-sHenx6OiLGXxnbnWxHPi3BD85VkZKLEd5zrfulANS5U6k8Gn3XZiuZec2PTofvgSDZE--UoG4G8K6yE7ZQAttdwIBCyuVVXaEd8OGP6d4SeT4JzGU5NrWcYxrMub_iTpW3yQ7mDvu6n7kiYxyLH9Hh0EG2_I6JdLL_eU_har5_5SfVP9So4_4GSkg\"}",
+      "from": "3qjxfkln6hdpmcvbtzaswe4r5y",
+      "key": "bc5ad8f90c7387c8d36ed56cbee353a031b68e31b81ee6fbad9a4be4a9d04e57",
+      "kid": 0,
+      "name": "pairing channel message",
+      "nonce": "030405060708090a0b0c0d0e",
+      "plaintext": "{\"i\":\"BQUFBQUFBQUFBQUFBQUFBQ\",\"t\":\"pair.request\",\"ts\":1792899999000,\"b\":{\"phoneId\":\"3qjxfkln6hdpmcvbtzaswe4r5y\",\"proto\":1}}",
+      "scope": "topic",
+      "topic": "ah/askhuman01/p/ticketx2c3rhs6kq7tw4dnb5vy"
+    },
+    {
+      "envelope": "{\"v\":1,\"f\":\"mfx2c3rhs6kq7tw4dnb5vypa2e\",\"k\":1,\"n\":\"BAUGBwgJCgsMDQ4P\",\"c\":\"CR9b0yPy6cDpxVGo510BeN0Que3AmI__p4xYMxYxQvoOsSdQgfvNoRrlG2_J60T28xTUtGhDIBRZ-xdZ3BALnLYrIKX_5Krh6Ch_pqDAzzFycqRVR52b1fJemu3tPAgl6fbjFk3rvXrTTxNjz1OhSm9f1NsDaCWeZ7MW9h2-DujA2MR9cms\"}",
+      "from": "mfx2c3rhs6kq7tw4dnb5vypa2e",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "kid": 1,
+      "name": "push payload",
+      "nonce": "0405060708090a0b0c0d0e0f",
+      "plaintext": "{\"i\":\"BgYGBgYGBgYGBgYGBgYGBg\",\"t\":\"push\",\"ts\":1792900001000,\"b\":{\"k\":\"ask\",\"mac\":\"Home Mac\",\"text\":\"Which approach?\"}}",
+      "scope": "push",
+      "topic": null
+    }
+  ],
+  "pair": {
+    "keys": {
+      "m2p": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "p2m": "ea5263c27a84baf8d3994fbc3e7e1a07d2638b0e025d85f882e4a6706c4b6c6a",
+      "sas": "c9ea7ba8fea2d1bbd1dac0fd3ab0f0ba01e94b1453b3b6d0c0075eac12ca3fa3"
+    },
+    "macId": "mfx2c3rhs6kq7tw4dnb5vypa2e",
+    "macPublic": "8b16515cdd141160d0048430a16bb0db25eef15e6b9cf60599288d61b6e14969",
+    "phoneId": "3qjxfkln6hdpmcvbtzaswe4r5y",
+    "phonePublic": "287380ad4da441fac63cbd2fee5027a44fae1703b7460569975e4d8740ccb107",
+    "sasCode": "781852",
+    "shared": "bde8325d6c07dd440e7edcfd194edf8a0ea7e2c003e1880e9825ae89b16fc72c",
+    "ticketId": "ticketx2c3rhs6kq7tw4dnb5vy",
+    "ticketSecret": "b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91"
+  },
+  "ticket": {
+    "key": "bc5ad8f90c7387c8d36ed56cbee353a031b68e31b81ee6fbad9a4be4a9d04e57",
+    "ticketId": "ticketx2c3rhs6kq7tw4dnb5vy",
+    "ticketSecret": "b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91"
+  },
+  "version": 1,
+  "x25519": {
+    "macPrivate": "888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61",
+    "macPublic": "8b16515cdd141160d0048430a16bb0db25eef15e6b9cf60599288d61b6e14969",
+    "phonePrivate": "10171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9",
+    "phonePublic": "287380ad4da441fac63cbd2fee5027a44fae1703b7460569975e4d8740ccb107",
+    "shared": "bde8325d6c07dd440e7edcfd194edf8a0ea7e2c003e1880e9825ae89b16fc72c"
+  }
+}

@@ -1,5 +1,8 @@
 //! IM inbound listeners, message extraction, shared commands, and replies.
 
+use super::task_launch::{
+    resolve_task_input, start_task, task_gate_now, StartError, Started, TaskBlock, TaskSpec,
+};
 use super::*;
 
 // ===== IM 入站消费（命令 /here、/status…）/ 活跃槽 / 补推在途 =====
@@ -515,6 +518,17 @@ pub(super) fn spawn_read_receipts(
             crate::i18n::tr(lang, "autoChannel.msgReadReceipt").replace("{id}", &seq.to_string());
         let config = state.config_snapshot();
         for ch in channels {
+            // A phone is told through its gateway; it words the receipt itself.
+            if let Some(phone_id) = super::ios_agents::receipt_phone(&ch) {
+                let key = find_agent_by_session(&snapshot, &session_id)
+                    .and_then(|rec| rec.get("kind").and_then(|v| v.as_str()))
+                    .and_then(AgentKind::parse)
+                    .map(|kind| super::ios_agents::agent_key(kind, &session_id));
+                if let (Some(key), Some(gateway)) = (key, ios_gateway(&state)) {
+                    gateway.interject_consumed(phone_id, &key);
+                }
+                continue;
+            }
             let _ = reply_channel_text(&ch, &config, &text).await;
         }
     });
@@ -666,31 +680,22 @@ pub(super) async fn start_new_task_flow(
 ) {
     // `/new` always makes its source IM the active slot, independently of auto-activation.
     let _ = set_active_channel(state, channel_id).await;
-    if !config.agent_tasks.enabled {
-        let text = match lang {
-            Lang::Zh => "尚未开启「从 IM 创建 Agent 任务」。请先在设置中开启。",
-            Lang::En => "IM Agent task creation is disabled. Enable it in Settings first.",
-        };
-        let _ = reply_channel_text(channel_id, config, text).await;
-        return;
-    }
-    if config.general.daemon_lifecycle != crate::config::DaemonLifecycleMode::KeepAlive
-        || !crate::integrations::login_item::daemon_is_installed()
-        || crate::integrations::login_item::daemon_needs_update()
-    {
-        let text = match lang {
-            Lang::Zh => "功能尚未就绪：请在设置中重新保存此功能，以启用 Daemon 保活与登录项。",
-            Lang::En => "This feature is not ready. Save it again in Settings to enable daemon keepalive and its login item.",
-        };
-        let _ = reply_channel_text(channel_id, config, text).await;
-        return;
-    }
-    if !crate::integrations::agent_launch::terminal_available()
-        && !crate::codex_desktop::available(&config.codex_desktop)
-    {
-        let text = match lang {
-            Lang::Zh => "没有找到受支持的系统终端（macOS Terminal.app 或 Windows Terminal）。",
-            Lang::En => {
+    if let Err(block) = task_gate_now(config) {
+        let text = match (block, lang) {
+            (TaskBlock::Disabled, Lang::Zh) => "尚未开启「从 IM 创建 Agent 任务」。请先在设置中开启。",
+            (TaskBlock::Disabled, Lang::En) => {
+                "IM Agent task creation is disabled. Enable it in Settings first."
+            }
+            (TaskBlock::NotReady, Lang::Zh) => {
+                "功能尚未就绪：请在设置中重新保存此功能，以启用 Daemon 保活与登录项。"
+            }
+            (TaskBlock::NotReady, Lang::En) => {
+                "This feature is not ready. Save it again in Settings to enable daemon keepalive and its login item."
+            }
+            (TaskBlock::NoTerminal, Lang::Zh) => {
+                "没有找到受支持的系统终端（macOS Terminal.app 或 Windows Terminal）。"
+            }
+            (TaskBlock::NoTerminal, Lang::En) => {
                 "No supported system terminal was found (macOS Terminal.app or Windows Terminal)."
             }
         };
@@ -1455,152 +1460,42 @@ async fn start_task_input_form(
                 return;
             }
         };
-        let source = crate::integrations::agent_launch::LaunchSource {
+        let spec = TaskSpec {
             channel: channel.clone(),
-            target: task_source_target(&config, &channel),
-        };
-        let delivery_request_id = uuid::Uuid::new_v4().to_string();
-        let delivery = if let Some(todo) = todo.as_ref() {
-            let expected: Vec<_> = todo.attachments.iter().map(|a| a.snapshot()).collect();
-            crate::todos::prepare_delivery_consistent(
-                &todo_project,
-                &todo.id,
-                &expected,
-                &delivery_request_id,
-            )
-        } else {
-            crate::todo_attachments::TodoDelivery::default()
-        };
-        let target = match crate::codex_desktop::resolve_launch(
-            kind,
-            Some(&delivery_request_id),
-            payload.target,
-        ) {
-            Ok(target) => target,
-            Err(error) => {
-                let _ = reply_channel_text(&channel, &config, &error).await;
-                return;
-            }
-        };
-        if target == crate::codex_desktop::LaunchTarget::Desktop {
-            if !delivery.warnings.is_empty() {
-                let _ = reply_channel_text(&channel, &config, &delivery.warnings.join("\n")).await;
-                return;
-            }
-            let result = crate::codex_desktop::shared()
-                .execute(crate::codex_desktop::Operation::Create {
-                    cwd: payload.workspace,
-                    text: task,
-                    files: delivery.files,
-                    permission: match permission {
-                        crate::integrations::agent_launch::LaunchPermission::AgentDefault => {
-                            "agent-default"
-                        }
-                        crate::integrations::agent_launch::LaunchPermission::Yolo => "yolo",
-                    }
-                    .into(),
-                    id: delivery_request_id.clone(),
-                })
-                .await;
-            let text = match result {
-                Ok(value) => {
-                    if let Some(sid) = value["sessionId"].as_str() {
-                        if let Some(session) = crate::codex_desktop::shared().session(sid) {
-                            if let Some(meta) = session.meta {
-                                state
-                                    .agents
-                                    .update_desktop(sid, &meta.title, &meta.cwd, true);
-                            }
-                        }
-                        let snapshot = state.agents.snapshot();
-                        if let Some(seq) =
-                            find_agent_by_session(&snapshot, sid).and_then(|r| r["seq"].as_u64())
-                        {
-                            handle_watch_cmd(&state, &channel, Some(seq), &config, lang).await;
-                        }
-                    }
-                    if let Some(todo) = todo.as_ref() {
-                        let _ = crate::todos::take(&todo_project, std::slice::from_ref(&todo.id));
-                    }
-                    format!(
-                        "Codex App accepted the task. Session: {}",
-                        value["sessionId"].as_str().unwrap_or_default()
-                    )
-                }
-                Err(error) => error,
-            };
-            let _ = reply_channel_text(&channel, &config, &text).await;
-            state.watch.notify.notify_one();
-            return;
-        }
-        let launch = match crate::integrations::agent_launch::create_record_with_files(
-            source,
-            std::path::Path::new(&payload.workspace),
+            source_target: task_source_target(&config, &channel),
+            workspace: payload.workspace,
             kind,
             permission,
-            &task,
-            &delivery.files,
-            &delivery.warnings,
-        ) {
-            Ok(record) => {
-                register_pending_launch_watch(&state, &record, &channel, &config, lang);
-                match crate::integrations::agent_launch::open_terminal(&record) {
-                    Ok(()) => {
-                        if let Some(todo) = todo.as_ref() {
-                            let _ =
-                                crate::todos::take(&todo_project, std::slice::from_ref(&todo.id));
-                        }
-                        Ok(record)
-                    }
-                    Err(error) => {
-                        crate::todo_attachments::cleanup_delivery(&delivery_request_id);
-                        state
-                            .pending_launches
-                            .lock()
-                            .unwrap()
-                            .retain(|item| item.id != record.id);
-                        Err(error)
-                    }
-                }
-            }
-            Err(error) => {
-                crate::todo_attachments::cleanup_delivery(&delivery_request_id);
-                Err(error)
-            }
+            target: payload.target,
+            task,
+            todo: todo.map(|todo| (todo_project, todo)),
         };
-        let text = match launch {
-            Ok(_) => match lang {
+        let started = start_task(&state, spec, |record| {
+            register_pending_launch_watch(&state, record, &channel, &config, lang)
+        })
+        .await;
+        let text = match started {
+            Ok(Started::Desktop(value)) => {
+                let session_id = value["sessionId"].as_str().unwrap_or_default();
+                let snapshot = state.agents.snapshot();
+                if let Some(seq) =
+                    find_agent_by_session(&snapshot, session_id).and_then(|r| r["seq"].as_u64())
+                {
+                    handle_watch_cmd(&state, &channel, Some(seq), &config, lang).await;
+                }
+                format!("Codex App accepted the task. Session: {session_id}")
+            }
+            Ok(Started::Terminal) => match lang {
                 Lang::Zh => "已在电脑上打开新的系统终端窗口并启动任务。",
                 Lang::En => "Opened a new system terminal window and started the task.",
             }
             .to_string(),
-            Err(error) => format!("Failed to launch task: {error:#}"),
+            Err(StartError::Message(message)) => message,
+            Err(StartError::Terminal(error)) => format!("Failed to launch task: {error:#}"),
         };
         let _ = reply_channel_text(&channel, &config, &text).await;
         state.watch.notify.notify_one();
     });
-}
-
-fn resolve_task_input(
-    todo: Option<&crate::todos::TodoEntry>,
-    input: Option<&str>,
-) -> Result<String, String> {
-    let input = input.unwrap_or_default().trim();
-    let task = match todo {
-        Some(todo) if input.is_empty() => todo.text.trim().to_string(),
-        Some(todo) => format!("{}\n\n{input}", todo.text.trim()),
-        None => input.to_string(),
-    };
-    if task.is_empty() {
-        return Err("Task must not be empty".into());
-    }
-    if task.contains('\0') {
-        return Err("Task must not contain NUL characters".into());
-    }
-    if task.chars().count() > 3000 {
-        return Err("Task exceeds 3000 characters".into());
-    }
-    Ok(task)
 }
 
 pub(super) fn task_source_target(config: &AppConfig, channel_id: &str) -> String {
@@ -2000,7 +1895,7 @@ pub(super) async fn backfill_inflight(
         if entry.coordinator.is_finalizing() || entry.coordinator.has_channel(channel_id) {
             continue;
         }
-        if let Some(ch) = build_im_channel(channel_id, config, state).await {
+        if let Some(ch) = build_im_channel(channel_id, &entry.request().id, config, state).await {
             entry.coordinator.register(ch.clone());
             let origin = super::im_conversation_origin(&entry, None);
             ch.start(entry.request(), &origin, entry.coordinator.clone());
@@ -2026,6 +1921,7 @@ pub(super) async fn backfill_inflight(
 /// 为补推构造一个挂共享 Router 的渠道实例（各渠道仅此处差异：取对应 Router + 构造对应 Channel）。
 pub(super) async fn build_im_channel(
     channel_id: &str,
+    request_id: &str,
     config: &AppConfig,
     state: &Arc<ServerState>,
 ) -> Option<Arc<dyn Channel>> {
@@ -2053,6 +1949,12 @@ pub(super) async fn build_im_channel(
                 config.channels.telegram.clone(),
                 router,
             ))
+        }
+        "ios" => {
+            if !ios_can_deliver(state, config) {
+                return None;
+            }
+            ios_channel_for(state, request_id)?
         }
         _ => return None,
     };

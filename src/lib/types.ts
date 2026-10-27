@@ -813,12 +813,27 @@ export interface SlackChannelConfig {
   userId: string;
 }
 
+/** iOS 渠道（实验功能，docs/specs/ios-channel.md）：自备 MQTT broker + 推送中继。 */
+export interface IosChannelConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  wsPort: number;
+  username: string;
+  /** 只在输入时存在；已保存的值不回传（见 `SecretsPresent.iosBrokerPassword`）。 */
+  password: string;
+  relayUrl: string;
+  /** 本机在手机上的显示名；留空取主机名。 */
+  macName: string;
+}
+
 export interface ChannelsConfig {
   popup: PopupChannelConfig;
   telegram: TelegramChannelConfig;
   dingding: DingTalkChannelConfig;
   feishu: FeishuChannelConfig;
   slack: SlackChannelConfig;
+  ios: IosChannelConfig;
   /** 「IM 渠道按需发送」开关（默认关；显式配置的用户设置保持原值）。 */
   autoActivation: boolean;
   /** 「自动结束 watch」——「按需发送」子开关（默认开，仅 autoActivation 开时生效）。 */
@@ -889,6 +904,7 @@ export interface SecretsPresent {
   telegramToken: boolean;
   slackBotToken: boolean;
   slackAppToken: boolean;
+  iosBrokerPassword: boolean;
 }
 
 /** Settings payload: config with secrets blanked + per-secret presence flags. */
@@ -976,6 +992,83 @@ export interface SecretActions {
   telegramToken: SecretAction;
   slackBotToken: SecretAction;
   slackAppToken: SecretAction;
+  iosBrokerPassword: SecretAction;
+}
+
+/** 已配对的手机（镜像 Rust `ios::gateway::PhoneView`）。 */
+export interface IosPhone {
+  phoneId: string;
+  name: string;
+  aliasName?: string;
+  /** `pendingConfirm` | `active` */
+  state: string;
+  online: boolean;
+  foreground: boolean;
+  createdAt: number;
+  lastSeenAt: number;
+  /** 推送登记状态：`ok` | `gone` | `error`；无登记时缺省。 */
+  push?: string;
+  /** `keychain` | `file` */
+  keyBackend?: string;
+}
+
+/** 进行中的配对会话（镜像 Rust `PairingView`）。 */
+export interface IosPairing {
+  ticketId: string;
+  /** 配对码（含 broker 密码）：只用于生成二维码 / 供用户复制。 */
+  code: string;
+  expiresAtMs: number;
+  /** `waiting` | `pending`（手机已扫码，等待本机决定）| `accepted` */
+  stage: string;
+  phoneName?: string;
+  /** 6 位确认码，仅 `pending` 阶段有。 */
+  sas?: string;
+}
+
+/** Broker traffic of one month, counted on this Mac. */
+export interface IosTraffic {
+  /** `YYYY-MM` the counters belong to. */
+  month: string;
+  bytesIn: number;
+  bytesOut: number;
+  msgsIn: number;
+  msgsOut: number;
+}
+
+export interface IosGatewayState {
+  connected: boolean;
+  /** `tls` | `wss` | `tcp` */
+  via?: string;
+  lastError?: string;
+  macId: string;
+  macName: string;
+  phones: IosPhone[];
+  pairing?: IosPairing;
+  traffic?: IosTraffic;
+  pendingRequests: number;
+}
+
+export type IosOp =
+  | { op: "state" }
+  | { op: "pairStart" }
+  | { op: "pairCancel" }
+  | { op: "pairDecision"; ticketId: string; allow: boolean }
+  | { op: "revoke"; phoneId: string }
+  | { op: "rename"; phoneId: string; name: string };
+
+export type IosResult =
+  | { kind: "state"; state: IosGatewayState | null }
+  | { kind: "pairing"; ticketId: string; code: string; expiresAtMs: number }
+  | { kind: "done"; found: boolean };
+
+/** 粘贴 `ahconn1.` 连接串解析出的表单字段。 */
+export interface IosConnectionFields {
+  host: string;
+  port: number;
+  wsPort: number;
+  username: string;
+  password: string;
+  relayUrl: string;
 }
 
 export interface HookStatus {

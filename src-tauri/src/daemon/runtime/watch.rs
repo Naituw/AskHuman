@@ -350,7 +350,10 @@ fn gui_focus_tick(state: &Arc<ServerState>) {
 /// Watch 帧 → 控制台 detail JSON（tagged，spec gui-agent-console R5）。工具类别以结构化
 /// kind 下发（run/read/write/other），本地化由前端 i18n 完成；步/待办状态用与前端约定的
 /// 字符串枚举。
-fn frame_detail_json(session_id: &str, f: &crate::watch::WatchFrame) -> serde_json::Value {
+pub(super) fn frame_detail_json(
+    session_id: &str,
+    f: &crate::watch::WatchFrame,
+) -> serde_json::Value {
     use crate::agents::activity::{StepState, TodoState, ToolLabel};
     use crate::watch::WatchPhase;
     let steps: Vec<serde_json::Value> = f
@@ -1401,6 +1404,7 @@ pub(super) fn register_pending_launch_watch(
         .push(PendingLaunchWatch {
             id: record.id.clone(),
             channel: Some(channel_id.to_string()),
+            ios: None,
             kind: record.kind,
             cwd: record.cwd.clone(),
             task_sha256: record.task_sha256.clone(),
@@ -1458,6 +1462,17 @@ pub(super) async fn match_pending_launch_watch(
         position.map(|index| pending.remove(index))
     };
     let Some(matched) = matched else { return };
+    if let Some((phone_id, client_msg_id)) = matched.ios.as_ref() {
+        // A task asked for from the phone: only that phone's gateway is told.
+        if let Some(gateway) = ios_gateway(state) {
+            gateway.task_matched(
+                phone_id,
+                client_msg_id,
+                &super::ios_agents::agent_key(kind, session_id),
+            );
+        }
+        return;
+    }
     if let Some(parent) = matched.source_session_id.as_deref() {
         if state.agents.set_fork_parent(session_id, parent) {
             state.agents.persist();

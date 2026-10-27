@@ -137,6 +137,39 @@ pub async fn request_status() -> Option<StatusInfo> {
     }
 }
 
+/// iOS channel management operation (settings window / CLI): runs in the daemon, which owns the
+/// gateway. Starts the daemon when it is not running.
+pub async fn ios_op(op: crate::ipc::IosOp) -> Result<crate::ipc::IosResult, String> {
+    ensure_running().await.map_err(|e| e.to_string())?;
+    let (mut reader, mut writer) = connect_split().await.map_err(|e| e.to_string())?;
+    ipc::write_msg(&mut writer, &ClientMsg::Hello(hello()))
+        .await
+        .map_err(|e| e.to_string())?;
+    loop {
+        match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
+            Ok(Some(ServerMsg::HelloAck(ack))) => {
+                if ack.status == HelloStatus::Ok {
+                    break;
+                }
+                return Err("daemon is restarting".to_string());
+            }
+            Ok(Some(_)) => continue,
+            _ => return Err("daemon connection lost".to_string()),
+        }
+    }
+    ipc::write_msg(&mut writer, &ClientMsg::Ios { op })
+        .await
+        .map_err(|e| e.to_string())?;
+    loop {
+        match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
+            Ok(Some(ServerMsg::Ios { result })) => return Ok(result),
+            Ok(Some(ServerMsg::Error { message })) => return Err(message),
+            Ok(Some(_)) => continue,
+            _ => return Err("daemon connection lost".to_string()),
+        }
+    }
+}
+
 /// 权限授权管理面板操作（设置进程 → daemon，spec codex-permission-remember §6.3）。
 /// 面板打开时才调用；daemon 未运行则拉起（store 的读写都必须经 daemon）。
 pub async fn permission_rules_op(

@@ -156,7 +156,9 @@ AskHuman daemon status    # endpoint 应按本树 .askhuman-dev/home/ 独立派�
   `ASKHUMAN_HOME` 不隔离 `~/.cursor/hooks.json`、`~/.codex/…`、`~/.claude/settings.json` 等，这些写入会落到**真实**用户配置。
   实例 daemon 启动时的自动迁移已被跳过，但显式命令不受限（见 spec §7.1）。
 - **不要**为了验证只换 `HOME` 起 daemon / GUI Host：沙箱必须同时设**非空 `ASKHUMAN_HOME`**（实例上下文）。
-  launchd label（GUI Host 登录项）按用户全局唯一，与 `HOME` 无关，生产上下文的进程会 `bootout` 并替换真实登录项。
+  launchd label 在 `gui/<uid>` 域内按用户全局生效：daemon 的 label 现在随配置目录区分（配置目录不是账户自己的
+  `~/.askhuman` 就用独立 label），所以只换 `HOME` 不会再 `bootout` 真实 daemon；但登录项、Agent hook 文件等
+  用户级全局状态的自动写入只在实例上下文里才被跳过，只换 `HOME` 仍不隔离它们。
   需要验证 Agent 集成写入时，用一次性假 `HOME` + 非空 `ASKHUMAN_HOME`，收尾核对真实 hook 文件与登录项未变。
 
 ## 结束 worktree 时（可选）

@@ -182,7 +182,66 @@ fn spawn_plain_detached() -> std::io::Result<()> {
 #[cfg(target_os = "macos")]
 const DAEMON_LAUNCHD_LABEL: &str = "com.naituw.humaninloop.daemon";
 
-/// Production 沿用登录项的固定 label；Dev Instance 按配置目录生成稳定后缀，避免多个工作树以及
+/// The account's home directory from the user database. Unlike `$HOME` it cannot be overridden
+/// by a caller that wants a throwaway profile.
+#[cfg(target_os = "macos")]
+fn account_home() -> Option<std::path::PathBuf> {
+    use std::ffi::CStr;
+
+    let mut buffer = vec![0 as libc::c_char; 4096];
+    // SAFETY: `passwd` is plain data; `getpwuid_r` fills it and `buffer` (which outlives every
+    // use of the pointers inside it) with the entry of the calling user.
+    unsafe {
+        let mut entry: libc::passwd = std::mem::zeroed();
+        let mut found: *mut libc::passwd = std::ptr::null_mut();
+        let status = libc::getpwuid_r(
+            libc::getuid(),
+            &mut entry,
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut found,
+        );
+        if status != 0 || found.is_null() || entry.pw_dir.is_null() {
+            return None;
+        }
+        let dir = CStr::from_ptr(entry.pw_dir).to_str().ok()?;
+        (!dir.is_empty()).then(|| std::path::PathBuf::from(dir))
+    }
+}
+
+/// Whether two directories are the same place, looking through symlinks when both exist.
+#[cfg(target_os = "macos")]
+fn same_dir(a: &std::path::Path, b: &std::path::Path) -> bool {
+    a == b
+        || matches!(
+            (std::fs::canonicalize(a), std::fs::canonicalize(b)),
+            (Ok(a), Ok(b)) if a == b
+        )
+}
+
+/// Whether the daemon of `config_dir` must not use the production launchd label.
+///
+/// That is every instance (`ASKHUMAN_HOME`), and also any process whose config directory is not
+/// the account's own `~/.askhuman`, e.g. a sandbox that only overrides `$HOME`. The label is
+/// global to the `gui/<uid>` domain, so sharing it would let such a daemon `bootout` the user's
+/// real one. When the account's home is unknown the instance flag alone decides, as before.
+#[cfg(target_os = "macos")]
+fn needs_isolated_label(
+    dev_instance: bool,
+    config_dir: &std::path::Path,
+    account_home: Option<&std::path::Path>,
+) -> bool {
+    if dev_instance {
+        return true;
+    }
+    match account_home {
+        Some(home) => !same_dir(config_dir, &home.join(".askhuman")),
+        None => false,
+    }
+}
+
+/// Production 沿用登录项的固定 label；Dev Instance 以及配置目录不是账户自己的 `~/.askhuman`
+/// 的进程（例如只覆盖了 `$HOME` 的沙箱）按配置目录生成稳定后缀，避免多个工作树、沙箱以及
 /// production daemon 在同一个 `gui/<uid>` domain 内互相 bootout。
 #[cfg(target_os = "macos")]
 fn launchd_label(config_dir: &std::path::Path, isolated: bool) -> String {
@@ -219,7 +278,12 @@ fn spawn_via_gui_launchd(policy: SpawnPolicy) -> std::io::Result<()> {
     let uid = unsafe { libc::getuid() };
     let domain = format!("gui/{uid}");
     let config_dir = crate::paths::config_dir();
-    let label = launchd_label(&config_dir, crate::dev_instance::is_dev_instance());
+    let isolated = needs_isolated_label(
+        crate::dev_instance::is_dev_instance(),
+        &config_dir,
+        account_home().as_deref(),
+    );
+    let label = launchd_label(&config_dir, isolated);
     let plist_path = config_dir.join("daemon-launchd.plist");
 
     // `bootout` below is a SIGTERM (then SIGKILL after the job's 5s exit timeout) for a job whose
@@ -384,6 +448,73 @@ mod tests {
         assert_ne!(dev_a, production);
         assert_ne!(dev_a, dev_b);
         assert!(dev_a.starts_with(&format!("{DAEMON_LAUNCHD_LABEL}.instance.")));
+    }
+
+    #[test]
+    fn the_account_own_config_dir_keeps_the_production_label() {
+        let home = Path::new("/Users/test");
+        let config = home.join(".askhuman");
+        assert!(!needs_isolated_label(false, &config, Some(home)));
+        // A trailing slash or a `.` segment is the same place.
+        assert!(!needs_isolated_label(
+            false,
+            Path::new("/Users/test/./.askhuman/"),
+            Some(home)
+        ));
+    }
+
+    #[test]
+    fn a_home_only_sandbox_gets_its_own_label() {
+        // `HOME=/tmp/sandbox` moves the config dir without setting `ASKHUMAN_HOME`.
+        let account = Path::new("/Users/test");
+        let sandbox = Path::new("/tmp/sandbox/.askhuman");
+        assert!(needs_isolated_label(false, sandbox, Some(account)));
+        let production = launchd_label(&account.join(".askhuman"), false);
+        let isolated = launchd_label(sandbox, true);
+        assert_ne!(isolated, production);
+        assert_ne!(
+            isolated,
+            launchd_label(Path::new("/tmp/other/.askhuman"), true)
+        );
+    }
+
+    #[test]
+    fn an_instance_is_isolated_even_in_the_default_directory() {
+        let home = Path::new("/Users/test");
+        assert!(needs_isolated_label(
+            true,
+            &home.join(".askhuman"),
+            Some(home)
+        ));
+    }
+
+    #[test]
+    fn an_unknown_account_home_falls_back_to_the_instance_flag() {
+        let config = Path::new("/tmp/sandbox/.askhuman");
+        assert!(!needs_isolated_label(false, config, None));
+        assert!(needs_isolated_label(true, config, None));
+    }
+
+    #[test]
+    fn symlinked_spellings_of_the_default_dir_are_the_same_place() {
+        let root = std::env::temp_dir().join(format!("ah-label-{}", uuid::Uuid::new_v4()));
+        let real = root.join("real-home");
+        std::fs::create_dir_all(real.join(".askhuman")).unwrap();
+        let link = root.join("link-home");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(!needs_isolated_label(
+            false,
+            &link.join(".askhuman"),
+            Some(&real)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_account_home_is_read_from_the_user_database() {
+        let home = account_home().expect("the test user has a passwd entry");
+        assert!(home.is_absolute());
+        assert!(home.is_dir());
     }
 
     #[test]

@@ -17,13 +17,14 @@ pub fn t(lang: Lang, en: &str, zh: &str) -> String {
     }
 }
 
-/// 5 个密钥键（点号 camelCase，与 `secrets` 账户常量一致）。
-pub const SECRET_KEYS: [&str; 5] = [
+/// 6 个密钥键（点号 camelCase，与 `secrets` 账户常量一致）。
+pub const SECRET_KEYS: [&str; 6] = [
     secrets::ACCOUNT_DINGTALK_SECRET,
     secrets::ACCOUNT_FEISHU_SECRET,
     secrets::ACCOUNT_TELEGRAM_TOKEN,
     secrets::ACCOUNT_SLACK_BOT_TOKEN,
     secrets::ACCOUNT_SLACK_APP_TOKEN,
+    secrets::ACCOUNT_IOS_BROKER_PASSWORD,
 ];
 
 /// 该点号键是否为密钥键（值只进钥匙串、不落 config.json、不进 argv）。
@@ -113,10 +114,16 @@ pub fn parse_bool(s: &str) -> Result<bool, String> {
 
 /// 取「不含密钥真值」的配置 `Value`，并把各密钥键替换为 `●●●`（已设）/ 空串（未设）。
 pub fn redacted_value() -> Value {
-    let cfg = AppConfig::load_without_secrets();
-    let mut v = serde_json::to_value(&cfg).unwrap_or(Value::Null);
+    redact(&AppConfig::load_without_secrets(), secret_is_set)
+}
+
+/// `cfg` as JSON with every secret key replaced by the marker. A key that is not a real config
+/// path would leave a plaintext fallback value untouched, so `secret_keys_are_real_config_paths`
+/// guards the list.
+fn redact(cfg: &AppConfig, is_set: impl Fn(&str) -> bool) -> Value {
+    let mut v = serde_json::to_value(cfg).unwrap_or(Value::Null);
     for key in SECRET_KEYS {
-        let mark = if secret_is_set(key) { "●●●" } else { "" };
+        let mark = if is_set(key) { "●●●" } else { "" };
         let _ = set_path(&mut v, key, Value::String(mark.to_string()));
     }
     v
@@ -124,12 +131,12 @@ pub fn redacted_value() -> Value {
 
 /// 密钥是否已设置（钥匙串有，或旧明文回退仍在磁盘配置里）。
 pub fn secret_is_set(account: &str) -> bool {
-    if secrets::has(account) {
-        return true;
-    }
-    // 回退：钥匙串不可用时密钥以明文存于 config.json。
-    let cfg = AppConfig::load_without_secrets();
-    let v = serde_json::to_value(&cfg).unwrap_or(Value::Null);
+    secrets::has(account) || plaintext_secret_is_set(&AppConfig::load_without_secrets(), account)
+}
+
+/// 回退：钥匙串不可用时密钥以明文存于 config.json，按账号（即点号路径）取出来看是否非空。
+fn plaintext_secret_is_set(cfg: &AppConfig, account: &str) -> bool {
+    let v = serde_json::to_value(cfg).unwrap_or(Value::Null);
     get_path(&v, account)
         .and_then(|x| x.as_str())
         .map(|s| !s.is_empty())
@@ -419,7 +426,68 @@ mod tests {
     fn secret_keys_match_accounts() {
         assert!(is_secret_key("channels.telegram.botToken"));
         assert!(is_secret_key("channels.slack.appToken"));
+        assert!(is_secret_key("channels.ios.password"));
         assert!(!is_secret_key("channels.telegram.chatId"));
+    }
+
+    #[test]
+    fn secret_keys_are_real_config_paths() {
+        // `config show/get` and the plaintext fallback look a secret up by its account as a dotted
+        // path; a key that names no field would be skipped without any error.
+        let v = serde_json::to_value(AppConfig::default()).unwrap();
+        for key in SECRET_KEYS {
+            assert!(
+                get_path(&v, key).is_some_and(Value::is_string),
+                "{key} is not a string field of the config"
+            );
+        }
+    }
+
+    #[test]
+    fn redaction_hides_every_plaintext_fallback_secret() {
+        // Without a keychain the secrets sit in config.json in plaintext; `config show` must not
+        // print them.
+        let mut cfg = AppConfig::default();
+        cfg.channels.dingding.client_secret = "plain-dingding".into();
+        cfg.channels.feishu.app_secret = "plain-feishu".into();
+        cfg.channels.telegram.bot_token = "plain-telegram".into();
+        cfg.channels.slack.bot_token = "plain-slack-bot".into();
+        cfg.channels.slack.app_token = "plain-slack-app".into();
+        cfg.channels.ios.password = "plain-ios".into();
+        for is_set in [true, false] {
+            let shown = redact(&cfg, |_| is_set);
+            let text = serde_json::to_string(&shown).unwrap();
+            assert!(
+                !text.contains("plain-"),
+                "a secret reached the output: {text}"
+            );
+            for key in SECRET_KEYS {
+                let want = if is_set { "●●●" } else { "" };
+                assert_eq!(
+                    get_path(&shown, key).and_then(Value::as_str),
+                    Some(want),
+                    "{key}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn plaintext_fallback_is_found_by_account() {
+        let mut cfg = AppConfig::default();
+        assert!(!plaintext_secret_is_set(
+            &cfg,
+            secrets::ACCOUNT_IOS_BROKER_PASSWORD
+        ));
+        cfg.channels.ios.password = "pw".into();
+        assert!(plaintext_secret_is_set(
+            &cfg,
+            secrets::ACCOUNT_IOS_BROKER_PASSWORD
+        ));
+        assert!(!plaintext_secret_is_set(
+            &cfg,
+            secrets::ACCOUNT_TELEGRAM_TOKEN
+        ));
     }
 
     #[test]

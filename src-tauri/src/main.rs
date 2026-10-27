@@ -42,6 +42,7 @@ mod hooks;
 mod i18n;
 mod image_resource;
 mod integrations;
+mod ios;
 mod ipc;
 #[cfg(target_os = "linux")]
 mod linux_runtime;

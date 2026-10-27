@@ -68,6 +68,7 @@ fn group_for(command: &str) -> Group {
     {
         Group::History
     } else if command.ends_with("_test")
+        || command.starts_with("ios_")
         || command.contains("_detect_")
         || matches!(command, "detect_cancel" | "channel_health")
     {
@@ -218,6 +219,11 @@ fn integration(invoke: Invoke<Wry>) -> bool {
 fn channel(invoke: Invoke<Wry>) -> bool {
     let handler: fn(Invoke<Wry>) -> bool = tauri::generate_handler![
         crate::commands::telegram_test,
+        crate::commands::ios_op,
+        crate::commands::ios_test,
+        crate::commands::ios_connection_export,
+        crate::commands::ios_connection_import,
+        crate::commands::ios_pair_qr,
         crate::commands::dingtalk_test,
         crate::commands::dingtalk_detect_prepare,
         crate::commands::dingtalk_detect_wait,

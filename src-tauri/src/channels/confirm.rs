@@ -27,6 +27,7 @@ fn source_name(channel: &str, lang: Lang) -> String {
         "dingding" => i18n::tr(lang, "channel.sourceDingTalk"),
         "telegram" => i18n::tr(lang, "channel.sourceTelegram"),
         "slack" => i18n::tr(lang, "channel.sourceSlack"),
+        "ios" => i18n::tr(lang, "channel.sourceIos"),
         other => other,
     }
     .to_string()
@@ -714,6 +715,84 @@ pub fn start_slack(
             events, client, dm, message_id, target, title, blocks, deadline,
         )
         .await;
+    });
+}
+
+/// The confirmation seen from the iOS gateway: decisions go to the coordinator, a lost surface
+/// fails the delivery so the request can fall back to another channel.
+struct IosConfirmSink {
+    entry: Arc<ConfirmEntry>,
+}
+
+impl crate::ios::gateway::requests::ConfirmSink for IosConfirmSink {
+    fn decide(&self, wire_index: usize, comment: Option<String>) -> Result<bool, String> {
+        self.entry
+            .coordinator
+            .submit_wire(wire_index, comment, "ios")
+    }
+
+    fn winner(&self) -> Option<String> {
+        self.entry.coordinator.winner_channel_id()
+    }
+
+    fn surface_lost(&self, reason: &str) {
+        fail(&self.entry, "ios", reason);
+    }
+}
+
+/// Delivers a confirmation to the paired iPhones and keeps them informed until it ends. The phone
+/// itself shows the final state, so unlike the IM cards there is nothing to update in place.
+pub fn start_ios(entry: Arc<ConfirmEntry>, gateway: Arc<crate::ios::gateway::IosGateway>) {
+    use crate::ios::gateway::requests::{DeliverRequest, Resolution, Sink};
+    tokio::spawn(async move {
+        let channel = "ios";
+        let origin = crate::channels::ConversationOrigin::new(
+            &entry.source,
+            Some(&entry.agent_kind),
+            &entry.project,
+        );
+        let view = crate::ios::views::confirm_view(&entry.request, &origin);
+        if !entry.mark_ready(channel, entry.request_id.clone()) {
+            return;
+        }
+        gateway.deliver(DeliverRequest {
+            view,
+            sink: Sink::Confirm(Arc::new(IosConfirmSink {
+                entry: entry.clone(),
+            })),
+            ask: None,
+            deadline_ms: Some(entry.request.expires_at_ms as i64),
+            assets: Vec::new(),
+        });
+        // `notify_waiters` only wakes tasks that are already waiting, so also poll the gate.
+        loop {
+            tokio::select! {
+                _ = entry.cancel.notified() => break,
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                    if entry.coordinator.is_terminal() {
+                        break;
+                    }
+                }
+            }
+        }
+        let lang = Lang::resolve(&entry.lang);
+        let resolution = match entry.coordinator.terminal_kind() {
+            Some(ConfirmTerminalKind::Decision(result)) if result.source_channel_id == channel => {
+                Resolution::Answered
+            }
+            Some(ConfirmTerminalKind::Decision(result)) => {
+                Resolution::AnsweredElsewhere(source_name(&result.source_channel_id, lang))
+            }
+            Some(ConfirmTerminalKind::Fallback(ConfirmFallbackReason::Expired)) => {
+                Resolution::Expired
+            }
+            Some(ConfirmTerminalKind::Fallback(_))
+            | Some(ConfirmTerminalKind::Cancelled)
+            | None => Resolution::Cancelled(String::new()),
+        };
+        gateway
+            .resolve_and_wait(&entry.request_id, resolution)
+            .await;
     });
 }
 

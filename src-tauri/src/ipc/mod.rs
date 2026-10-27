@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// 改本文件的消息类型前先读 `docs/overview.md` 的「IPC 协议号」：什么改动要 +1、什么不要，
 /// 以及 +1 时要同步更新的文档。
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 fn default_true() -> bool {
     true
@@ -326,6 +326,54 @@ pub enum PermissionRulesResult {
     },
 }
 
+/// iOS channel operations (settings process / CLI → Daemon). The daemon owns the gateway, its
+/// pairings and the broker connection; callers never touch `~/.askhuman/ios` directly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum IosOp {
+    /// Gateway state: broker connection, paired phones, pairing in progress.
+    State,
+    /// Starts a pairing ticket (replaces one in progress) and returns the pairing code.
+    PairStart,
+    PairCancel,
+    /// The user compared the check codes on the Mac and decided.
+    PairDecision {
+        ticket_id: String,
+        allow: bool,
+    },
+    Revoke {
+        phone_id: String,
+    },
+    Rename {
+        phone_id: String,
+        name: String,
+    },
+}
+
+/// `IosOp` reply.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum IosResult {
+    /// `None` while the gateway is not running (channel disabled or not configured).
+    State {
+        state: Option<Box<crate::ios::gateway::GatewayState>>,
+    },
+    Pairing {
+        ticket_id: String,
+        code: String,
+        expires_at_ms: i64,
+    },
+    /// The operation was applied (or there was nothing to do).
+    Done {
+        #[serde(default = "default_true")]
+        found: bool,
+    },
+}
+
 /// 自动识别 userId/open_id 请求（设置进程 → Daemon，Q6）：用表单当前凭据，
 /// 等用户私聊机器人发送识别码后返回其 id。Daemon 若已有同 `app_key` 的活动长连接则**观察现有连接**
 /// （零冲突），否则自行临时开一条连接完成识别。
@@ -576,6 +624,11 @@ pub enum ClientMsg {
         /// hook 侧 300ms 超时放行（fail-open）；旧 report 不带 → false（保持即发即走）。
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         interject_poll: bool,
+        /// A `turn-end` that ended in an error (API failure, aborted by a crash) rather than a
+        /// normal finish. Drives the iOS "task failed" notification; nothing else reads it. An
+        /// old hook never sets it and an old daemon ignores it, so it needs no protocol bump.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        failed: bool,
     },
     /// Register one long-lived AskHuman MCP server process for Grok's best-effort session binding.
     McpInstanceRegister {
@@ -651,6 +704,8 @@ pub enum ClientMsg {
     InterjectQuery { session_id: String },
     /// 权限授权管理面板操作（设置进程，§6.3）。回一帧 `PermissionRules`。
     PermissionRules { op: PermissionRulesOp },
+    /// iOS channel management (settings process / CLI). Replies with one `Ios` frame.
+    Ios { op: IosOp },
     /// GUI 启动新任务后把活跃槽切到 popup（spec gui-agent-task-launch G11）：人在电脑旁，
     /// 新 Agent 的提问默认弹窗。即发即走，无回包；旧 daemon 解析失败断连无副作用。
     ActivatePopupSlot,
@@ -882,6 +937,10 @@ pub enum ServerMsg {
     /// 权限授权管理面板回帧（D→设置进程，§6.3）。
     PermissionRules {
         result: PermissionRulesResult,
+    },
+    /// iOS channel management reply (`ClientMsg::Ios`).
+    Ios {
+        result: IosResult,
     },
 }
 
@@ -1356,9 +1415,11 @@ mod tests {
             ts: 0,
             tool: None,
             interject_poll: false,
+            failed: false,
         })
         .unwrap();
         assert!(!out.contains("interject_poll"));
+        assert!(!out.contains("failed"));
         // true 时带字段。
         let out = serde_json::to_string(&ClientMsg::AgentEvent {
             agent: "claude".into(),
@@ -1373,9 +1434,43 @@ mod tests {
             ts: 0,
             tool: None,
             interject_poll: true,
+            failed: false,
         })
         .unwrap();
         assert!(out.contains(r#""interject_poll":true"#));
+    }
+
+    /// `failed` is optional both ways: a report without it means "not failed", and an event that
+    /// did not fail serializes exactly as before.
+    #[test]
+    fn agent_event_failed_defaults_false_and_is_sent_only_when_set() {
+        let old = r#"{"type":"agentEvent","agent":"claude","event":"turn-end","session_id":"s1"}"#;
+        match serde_json::from_str::<ClientMsg>(old).unwrap() {
+            ClientMsg::AgentEvent { failed, .. } => assert!(!failed),
+            other => panic!("unexpected: {:?}", other),
+        }
+        let new = r#"{"type":"agentEvent","agent":"claude","event":"turn-end","session_id":"s1","failed":true}"#;
+        match serde_json::from_str::<ClientMsg>(new).unwrap() {
+            ClientMsg::AgentEvent { failed, .. } => assert!(failed),
+            other => panic!("unexpected: {:?}", other),
+        }
+        let out = serde_json::to_string(&ClientMsg::AgentEvent {
+            agent: "claude".into(),
+            event: "turn-end".into(),
+            session_id: "s1".into(),
+            pid: None,
+            hint_pid: None,
+            cwd: None,
+            transcript_path: None,
+            launch_id: None,
+            prompt_sha256: None,
+            ts: 0,
+            tool: None,
+            interject_poll: false,
+            failed: true,
+        })
+        .unwrap();
+        assert!(out.contains(r#""failed":true"#));
     }
 
     /// 插话裁决帧序列化往返（action 小写；text 缺省为空串）。

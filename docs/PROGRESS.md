@@ -3,6 +3,60 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 进行中：iOS 原生渠道（原型已完成，待真实服务与真机验收）
+
+2026-10-24 用户要求整理交接（[移动渠道交接](investigations/native-ios-channel-handoff.md)：杭州 EMQX 传输验证包、
+Mac / iOS 交互原型、双向消息与进程重启补发已验证）。2026-10-25 经多轮问答定稿设计：需求
+[`docs/specs/ios-channel.md`](specs/ios-channel.md)，计划 [`docs/plans/ios-channel.md`](plans/ios-channel.md)
+（作为新渠道 `ios`；EMQX 杭州 + 腾讯云云函数推送中继 + 端到端加密；多 Mac 配对同一部手机；回答 / 确认 / 附件 /
+Watch / Follow / 插话 / 新任务），实现地图见 [`docs/overview-ios.md`](overview-ios.md)，用户说明见
+[`docs/wiki/ios-setup.md`](wiki/ios-setup.md)。实现在 worktree `HumanInLoop-ios`（分支 `feat/ios-channel`），2026-10-26 已快进合并进 `main`（渠道默认关闭：受 `experimental.enabled` 隐藏，`channels.ios.enabled` 默认 `false`；所有 `feat` / `fix` 提交都带 `Release-Note: skip`，不进发布说明）。代码已随 v0.16.0 发出，发布说明未提及该渠道。
+
+**状态（2026-10-25）**：Mac Gateway / IPC 3→4 / 设置页 / CLI、推送中继 `relay/`、iOS App（收件箱 · 作答 · 确认 ·
+附件 · Agents · 关注 · 实时观察 · 插话 · 新任务 · 历史 · 配对 · 通知扩展）全部实现，通过 Rust / Swift / 中继 / 前端测试、
+模拟器 UI 测试（en + zh-Hans）和「真实 daemon + 本地 broker」端到端测试。真实服务接入进度（见 [P0 记录](investigations/ios-channel-p0.md)）：
+**EMQX 国区实例已接通并验证**（Mac 连得上、账号互相隔离、延迟已量），**APNs 密钥已创建**，**腾讯云中继已部署并验证**（香港 Web 函数；
+`/v1/health` 从 Mac 量 100 / 100 成功、p95 1.4 s，沙盒与生产的 APNs 凭据都被接受；函数 URL 只存在 Mac 的本机配置里，不入库），
+腾讯云计费已由用户接受（第 0.5 项完成），真机签名构建已通过；同一套端到端对真实 EMQX + 中继跑了一遍，33 项全过（前台延迟：回答 → Mac 确认 p95 195 ms、AskHuman 调用 → 手机显示 p95 254 ms，达标），
+顺带修了一个 Mac 端竞态（先 hello、后上报前台的手机漏收中间的变化，计划 §13）。
+**模拟器上的真 App 对真实服务的完整场景已通过**（配对 + 校验码、通知权限 → token → 中继登记 → Mac 持有句柄、前台单题 / 多题、权限确认允许 / 带理由拒绝、
+Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任务关闭时的表单提示、真 APNs 沙盒推送 → 通知扩展解密 → 点击打开请求、被关注 Agent 的 `follow.done` 推送、历史、解除配对；
+基础场景连续三次、完整场景两次，[P0 记录 §3.7](investigations/ios-channel-p0.md)），并找出四个真实缺陷已修复（点击横幅崩溃、扩展解不开中继的信封、快速 inactive → active 后永久断线、推送句柄没可靠送到 Mac，计划 §13）；
+**真机（iPhone Air，2026-10-26，手工，单样本）**：前台提问、锁屏真 APNs 推送（横幅带解密后的问题文字，点横幅直达详情页）、强退后真 APNs 推送（冷启动并直达该问题）各通过一次，答案逐字一致；
+真机上又找到第五个缺陷并修复：`inactive` 也告别——控制中心 / 通知中心 / 多任务界面盖在 App 上会让 Mac 看到手机离线 5.9–6.9 秒（现在 `inactive` 超过 10 秒才告别，提交 `fix(ios): keep the connection while the app is only inactive`，
+[P0 记录 §3.8](investigations/ios-channel-p0.md)）。**剩下的是真机矩阵的其余项与手机侧测量。**
+
+约束沿用交接：两个 EMQX 实例的消费上限保持 0，不创建管理 API Key，不泄露任何密钥或本地私有配置；不得把模拟器 /
+演示 Agent 验证当作完整渠道验收；真实 Agent 的启动 / 发 prompt 测试必须先经用户批准；密码 / `.p8` 只由用户自己输入，Agent 不读取。
+
+下一步（需要用户账号 / 真机，一次一步经 AskHuman 引导）：
+- [ ] P0 门禁剩余项（记在 `docs/investigations/ios-channel-p0.md`）：手机在 Wi-Fi / 蜂窝（关闭代理）上调 `/v1/health` 100 次、手机到 EMQX 的 TLS 与 WSS 往返各 100 次、
+  真机 APNs（≥ 30 次送达耗时分布、空闲 ≥ 30 分钟后第一条推送的耗时；加密预览、扩展解密、点击回到 App 已在真机各看过一次；Mac 侧空闲 3 小时后的 `/v1/health` 首次请求已量：1305 ms）、
+  公司网络端口（用户在那个网络运行 `ios/Tools/broker-probe/probe.cjs`）；任一项不达标先停下问用户，不自行换方案。
+  **测量方式**（独立探针 App，还是产品 App 内只在 DEBUG 构建里存在的诊断与时间线）须先经 AskHuman 与用户确认；倾向后者——量的就是产品实际走的 TLS / WSS / 中继客户端与通知扩展，不需要另一个 Bundle ID 与签名，Release 构建不含
+  （DEBUG 里记录 `scenePhase` 与连接事件的手机侧时间线，也能补上下面 `inactive` 三项的精确核对）
+- [ ] 中继的函数 URL 被腾讯云标为「仅供测试使用」（限速 / 下线条件未公开）：原型期不阻塞，给朋友长期用之前建议绑自定义域名（香港地域不需要备案），由用户决定
+- [ ] 真机矩阵其余项（计划 §9 手工矩阵；前台 / 锁屏 / 强退后的真 APNs 推送已各做过一次）：Wi-Fi / 蜂窝 / 切网、通知权限被拒、token 刷新、跨渠道同时回答、Mac 睡眠恢复、设备撤销、重装遗留配对。
+  **做法**：用户 2026-10-26 明确反馈「已经测了很多遍，再测很浪费时间」——一次设计好、合并成尽量少的几轮，能用 `devicectl` 自己做的自己做，只有必须用手的动作才叫用户（备忘见 P0 记录末尾「真机手测备忘」）
+- [ ] `inactive` 修复在真机上**未验证**的三项（用户决定不再手测，只在文档里记为未验证）：停留短于 10 秒不离线；锁屏 / 回主屏后 Mac 多快看到离线（告别从 `inactive` 挪到 `background`，估计晚 0.1–0.3 秒；最坏有「3 秒无确认补发推送」兜底）；
+  强退后 Mac 多久看到离线（靠 Last Will）。有手机侧时间线（见上面 P0 门禁的测量方式）或做真机矩阵其余项时顺带量，不单独叫用户测
+- [ ] 性能口径（需求 D10 四条）与流量预算（典型场景 ≤ 300 MB / 月）分段实测，报告原始分布与全部超时
+- [ ] 合并进 main 之后仍待处理：
+  - `.cargo/audit.toml` 里忽略了 5 条 `rustls-webpki 0.102.8` 的公告（`rumqttc 0.25.1` 带入；它只用这个 crate 的错误类型，证书校验走已修复的 0.103.16，理由与删除条件写在文件注释里）。
+    `rumqttc` 换到用 webpki 0.103 的版本、或换掉该客户端后，**删掉这 5 条**并重跑 `cargo audit --file src-tauri/Cargo.lock`。合并后 `cargo audit` 比之前多一条 `unmaintained` 警告：`rustls-pemfile 2.2.0`（RUSTSEC-2025-0134，同样由 `rumqttc` 带入），只是警告，不影响 CI
+  - 本机默认的 `cargo` 是 Homebrew 的 1.94.1，比 CI 的 `stable`（现为 1.99.0）旧，clippy 的结论会不同（新 clippy 对 `async_trait` 生成的方法报了 `double_must_use`，已在三个 trait 上 `allow`）。
+    提交前要对齐 CI 时：`PATH=~/.rustup/toolchains/1.99.0-aarch64-apple-darwin/bin:$PATH CARGO_TARGET_DIR=/tmp/<独立目录> cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
+    （在持久 shell 里用 `export` 会把工具链环境泄漏给后面的命令，写成行内前缀）
+  - 决定是否公开该渠道（README 链接、去掉提交的 `Release-Note: skip`）
+  - 这条分支的历史已在公开仓库（`origin/feat/ios-channel` 与 `origin/main`）：推送前从历史里清掉了真实 EMQX 实例 ID 与 APNs Key ID（提交哈希因此改写过一次，文档里改用提交标题指代）。
+    **不得再改写**（不要 rebase，也不要 force-push）；分支继续开发时同步 main 用合并（2026-10-26 合过一次：`chore(ios): merge main into feat/ios-channel`，合并时解了 `agents/stop.rs` 的冲突）
+
+已知延期（不阻塞原型）：
+- Codex 桌面 App 的会话暂不支持手机插话（返回 `unsupported`）；Pi 的扩展只有在 Stop 确认开着时才会随 daemon 启动自动迁移（2026-10-26 实测：日志出现 `migrated outdated Stop confirmation hooks: pi`），只开了生命周期跟踪的用户仍要在设置里重新保存 / 刷新才会上报失败的回合；已在运行的 Pi 会话要重启后才加载新扩展。
+- IM `/new` 与 iOS 新任务共用的启动流水线 `daemon/runtime/task_launch.rs::start_task` 没有自动化测试（该文件只有门槛顺序的 1 个测试）。2026-10-26 在真实飞书上走通过一轮 Codex 终端路径；TODO 出队、终端打不开时的清理、Codex App 路径只靠对照新旧实现读代码确认。要补自动测试，得先把 `open_terminal` / `todos` 等副作用抽成可注入的接缝。
+- 提问正文里的本地图片尚未改写为 `ahasset://`，列表项的墓碑展示也未做；撤回插话只取回文字、不取回附件。
+- 发行给朋友之前：EMQX 自动开户与额度共享、TestFlight 外部测试说明、隐私政策网址与联系邮箱。
+
 ## 待观察：拖入文件失败（`daemon.log` 的 `askhuman_drop` 行）
 
 2026-10-17 用户在日常版（v0.14.5）遇到几次「拖图片进窗口没加附件」（来源访达的下载 / 桌面 / 文稿，第二次拖就可以）。已加每种情形的可见提示和不含路径的诊断日志，

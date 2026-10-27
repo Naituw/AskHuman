@@ -1,0 +1,1058 @@
+{
+  "host": "<instance-id>.ala.cn-hangzhou.emqxsl.cn",
+  "when": "2026-10-25T13:40:41.340Z",
+  "reports": [
+    {
+      "label": "tls <instance-id>.ala.cn-hangzhou.emqxsl.cn:8883",
+      "attempts": 100,
+      "succeeded": 100,
+      "samples": [
+        {
+          "total": 145,
+          "handshake": 105,
+          "connack": 41
+        },
+        {
+          "total": 123,
+          "handshake": 86,
+          "connack": 36
+        },
+        {
+          "total": 140,
+          "handshake": 97,
+          "connack": 44
+        },
+        {
+          "total": 120,
+          "handshake": 82,
+          "connack": 38
+        },
+        {
+          "total": 145,
+          "handshake": 108,
+          "connack": 37
+        },
+        {
+          "total": 115,
+          "handshake": 80,
+          "connack": 36
+        },
+        {
+          "total": 121,
+          "handshake": 85,
+          "connack": 36
+        },
+        {
+          "total": 122,
+          "handshake": 85,
+          "connack": 37
+        },
+        {
+          "total": 133,
+          "handshake": 90,
+          "connack": 43
+        },
+        {
+          "total": 114,
+          "handshake": 78,
+          "connack": 36
+        },
+        {
+          "total": 132,
+          "handshake": 94,
+          "connack": 38
+        },
+        {
+          "total": 128,
+          "handshake": 90,
+          "connack": 38
+        },
+        {
+          "total": 117,
+          "handshake": 82,
+          "connack": 34
+        },
+        {
+          "total": 119,
+          "handshake": 82,
+          "connack": 37
+        },
+        {
+          "total": 122,
+          "handshake": 86,
+          "connack": 37
+        },
+        {
+          "total": 144,
+          "handshake": 101,
+          "connack": 43
+        },
+        {
+          "total": 124,
+          "handshake": 85,
+          "connack": 38
+        },
+        {
+          "total": 126,
+          "handshake": 86,
+          "connack": 39
+        },
+        {
+          "total": 133,
+          "handshake": 94,
+          "connack": 40
+        },
+        {
+          "total": 175,
+          "handshake": 119,
+          "connack": 56
+        },
+        {
+          "total": 146,
+          "handshake": 101,
+          "connack": 45
+        },
+        {
+          "total": 119,
+          "handshake": 83,
+          "connack": 36
+        },
+        {
+          "total": 125,
+          "handshake": 85,
+          "connack": 40
+        },
+        {
+          "total": 154,
+          "handshake": 115,
+          "connack": 39
+        },
+        {
+          "total": 123,
+          "handshake": 87,
+          "connack": 36
+        },
+        {
+          "total": 124,
+          "handshake": 86,
+          "connack": 37
+        },
+        {
+          "total": 126,
+          "handshake": 86,
+          "connack": 39
+        },
+        {
+          "total": 122,
+          "handshake": 84,
+          "connack": 38
+        },
+        {
+          "total": 129,
+          "handshake": 89,
+          "connack": 41
+        },
+        {
+          "total": 122,
+          "handshake": 83,
+          "connack": 39
+        },
+        {
+          "total": 126,
+          "handshake": 88,
+          "connack": 39
+        },
+        {
+          "total": 117,
+          "handshake": 80,
+          "connack": 37
+        },
+        {
+          "total": 127,
+          "handshake": 88,
+          "connack": 39
+        },
+        {
+          "total": 124,
+          "handshake": 87,
+          "connack": 37
+        },
+        {
+          "total": 120,
+          "handshake": 84,
+          "connack": 36
+        },
+        {
+          "total": 126,
+          "handshake": 87,
+          "connack": 39
+        },
+        {
+          "total": 134,
+          "handshake": 90,
+          "connack": 44
+        },
+        {
+          "total": 132,
+          "handshake": 93,
+          "connack": 38
+        },
+        {
+          "total": 128,
+          "handshake": 90,
+          "connack": 37
+        },
+        {
+          "total": 138,
+          "handshake": 95,
+          "connack": 42
+        },
+        {
+          "total": 113,
+          "handshake": 78,
+          "connack": 35
+        },
+        {
+          "total": 131,
+          "handshake": 91,
+          "connack": 40
+        },
+        {
+          "total": 111,
+          "handshake": 77,
+          "connack": 34
+        },
+        {
+          "total": 125,
+          "handshake": 86,
+          "connack": 39
+        },
+        {
+          "total": 121,
+          "handshake": 85,
+          "connack": 36
+        },
+        {
+          "total": 142,
+          "handshake": 95,
+          "connack": 47
+        },
+        {
+          "total": 119,
+          "handshake": 82,
+          "connack": 37
+        },
+        {
+          "total": 119,
+          "handshake": 83,
+          "connack": 36
+        },
+        {
+          "total": 136,
+          "handshake": 94,
+          "connack": 42
+        },
+        {
+          "total": 130,
+          "handshake": 89,
+          "connack": 41
+        },
+        {
+          "total": 122,
+          "handshake": 84,
+          "connack": 37
+        },
+        {
+          "total": 125,
+          "handshake": 84,
+          "connack": 40
+        },
+        {
+          "total": 109,
+          "handshake": 75,
+          "connack": 34
+        },
+        {
+          "total": 136,
+          "handshake": 94,
+          "connack": 42
+        },
+        {
+          "total": 139,
+          "handshake": 93,
+          "connack": 46
+        },
+        {
+          "total": 121,
+          "handshake": 83,
+          "connack": 38
+        },
+        {
+          "total": 138,
+          "handshake": 103,
+          "connack": 36
+        },
+        {
+          "total": 124,
+          "handshake": 88,
+          "connack": 36
+        },
+        {
+          "total": 127,
+          "handshake": 91,
+          "connack": 36
+        },
+        {
+          "total": 137,
+          "handshake": 95,
+          "connack": 42
+        },
+        {
+          "total": 117,
+          "handshake": 83,
+          "connack": 34
+        },
+        {
+          "total": 137,
+          "handshake": 96,
+          "connack": 41
+        },
+        {
+          "total": 121,
+          "handshake": 84,
+          "connack": 37
+        },
+        {
+          "total": 126,
+          "handshake": 86,
+          "connack": 40
+        },
+        {
+          "total": 126,
+          "handshake": 89,
+          "connack": 37
+        },
+        {
+          "total": 125,
+          "handshake": 87,
+          "connack": 37
+        },
+        {
+          "total": 119,
+          "handshake": 82,
+          "connack": 36
+        },
+        {
+          "total": 146,
+          "handshake": 101,
+          "connack": 44
+        },
+        {
+          "total": 112,
+          "handshake": 78,
+          "connack": 34
+        },
+        {
+          "total": 129,
+          "handshake": 91,
+          "connack": 38
+        },
+        {
+          "total": 119,
+          "handshake": 84,
+          "connack": 36
+        },
+        {
+          "total": 158,
+          "handshake": 117,
+          "connack": 42
+        },
+        {
+          "total": 120,
+          "handshake": 83,
+          "connack": 36
+        },
+        {
+          "total": 120,
+          "handshake": 85,
+          "connack": 36
+        },
+        {
+          "total": 118,
+          "handshake": 82,
+          "connack": 36
+        },
+        {
+          "total": 120,
+          "handshake": 81,
+          "connack": 39
+        },
+        {
+          "total": 129,
+          "handshake": 89,
+          "connack": 39
+        },
+        {
+          "total": 130,
+          "handshake": 89,
+          "connack": 41
+        },
+        {
+          "total": 130,
+          "handshake": 89,
+          "connack": 41
+        },
+        {
+          "total": 127,
+          "handshake": 87,
+          "connack": 41
+        },
+        {
+          "total": 116,
+          "handshake": 81,
+          "connack": 35
+        },
+        {
+          "total": 145,
+          "handshake": 101,
+          "connack": 44
+        },
+        {
+          "total": 119,
+          "handshake": 84,
+          "connack": 35
+        },
+        {
+          "total": 123,
+          "handshake": 84,
+          "connack": 39
+        },
+        {
+          "total": 123,
+          "handshake": 88,
+          "connack": 36
+        },
+        {
+          "total": 131,
+          "handshake": 90,
+          "connack": 41
+        },
+        {
+          "total": 125,
+          "handshake": 86,
+          "connack": 38
+        },
+        {
+          "total": 163,
+          "handshake": 91,
+          "connack": 72
+        },
+        {
+          "total": 157,
+          "handshake": 115,
+          "connack": 41
+        },
+        {
+          "total": 142,
+          "handshake": 106,
+          "connack": 36
+        },
+        {
+          "total": 136,
+          "handshake": 94,
+          "connack": 42
+        },
+        {
+          "total": 124,
+          "handshake": 89,
+          "connack": 36
+        },
+        {
+          "total": 124,
+          "handshake": 85,
+          "connack": 38
+        },
+        {
+          "total": 119,
+          "handshake": 83,
+          "connack": 35
+        },
+        {
+          "total": 125,
+          "handshake": 85,
+          "connack": 40
+        },
+        {
+          "total": 137,
+          "handshake": 98,
+          "connack": 40
+        },
+        {
+          "total": 124,
+          "handshake": 87,
+          "connack": 37
+        },
+        {
+          "total": 141,
+          "handshake": 98,
+          "connack": 42
+        },
+        {
+          "total": 128,
+          "handshake": 89,
+          "connack": 39
+        },
+        {
+          "total": 124,
+          "handshake": 86,
+          "connack": 38
+        }
+      ],
+      "total": {
+        "p50": 125,
+        "p95": 146,
+        "max": 175
+      },
+      "handshake": {
+        "p50": 87,
+        "p95": 106,
+        "max": 119
+      },
+      "connack": {
+        "p50": 38,
+        "p95": 44,
+        "max": 72
+      },
+      "answers": [
+        "bad user name or password"
+      ],
+      "errors": {}
+    },
+    {
+      "label": "wss <instance-id>.ala.cn-hangzhou.emqxsl.cn:8084",
+      "attempts": 100,
+      "succeeded": 100,
+      "samples": [
+        {
+          "total": 208,
+          "handshake": 164,
+          "connack": 44
+        },
+        {
+          "total": 161,
+          "handshake": 121,
+          "connack": 40
+        },
+        {
+          "total": 169,
+          "handshake": 130,
+          "connack": 39
+        },
+        {
+          "total": 215,
+          "handshake": 174,
+          "connack": 42
+        },
+        {
+          "total": 153,
+          "handshake": 117,
+          "connack": 36
+        },
+        {
+          "total": 175,
+          "handshake": 136,
+          "connack": 39
+        },
+        {
+          "total": 164,
+          "handshake": 125,
+          "connack": 39
+        },
+        {
+          "total": 157,
+          "handshake": 120,
+          "connack": 37
+        },
+        {
+          "total": 167,
+          "handshake": 129,
+          "connack": 38
+        },
+        {
+          "total": 215,
+          "handshake": 173,
+          "connack": 43
+        },
+        {
+          "total": 191,
+          "handshake": 147,
+          "connack": 44
+        },
+        {
+          "total": 158,
+          "handshake": 123,
+          "connack": 35
+        },
+        {
+          "total": 203,
+          "handshake": 168,
+          "connack": 36
+        },
+        {
+          "total": 186,
+          "handshake": 139,
+          "connack": 47
+        },
+        {
+          "total": 156,
+          "handshake": 118,
+          "connack": 38
+        },
+        {
+          "total": 171,
+          "handshake": 130,
+          "connack": 41
+        },
+        {
+          "total": 258,
+          "handshake": 221,
+          "connack": 37
+        },
+        {
+          "total": 157,
+          "handshake": 121,
+          "connack": 36
+        },
+        {
+          "total": 187,
+          "handshake": 143,
+          "connack": 43
+        },
+        {
+          "total": 203,
+          "handshake": 166,
+          "connack": 37
+        },
+        {
+          "total": 176,
+          "handshake": 137,
+          "connack": 39
+        },
+        {
+          "total": 164,
+          "handshake": 130,
+          "connack": 34
+        },
+        {
+          "total": 164,
+          "handshake": 129,
+          "connack": 35
+        },
+        {
+          "total": 268,
+          "handshake": 230,
+          "connack": 38
+        },
+        {
+          "total": 172,
+          "handshake": 130,
+          "connack": 42
+        },
+        {
+          "total": 152,
+          "handshake": 114,
+          "connack": 39
+        },
+        {
+          "total": 148,
+          "handshake": 113,
+          "connack": 34
+        },
+        {
+          "total": 168,
+          "handshake": 130,
+          "connack": 38
+        },
+        {
+          "total": 214,
+          "handshake": 175,
+          "connack": 39
+        },
+        {
+          "total": 166,
+          "handshake": 126,
+          "connack": 40
+        },
+        {
+          "total": 184,
+          "handshake": 141,
+          "connack": 44
+        },
+        {
+          "total": 154,
+          "handshake": 117,
+          "connack": 36
+        },
+        {
+          "total": 180,
+          "handshake": 137,
+          "connack": 43
+        },
+        {
+          "total": 156,
+          "handshake": 120,
+          "connack": 35
+        },
+        {
+          "total": 160,
+          "handshake": 122,
+          "connack": 37
+        },
+        {
+          "total": 152,
+          "handshake": 117,
+          "connack": 35
+        },
+        {
+          "total": 154,
+          "handshake": 119,
+          "connack": 36
+        },
+        {
+          "total": 180,
+          "handshake": 146,
+          "connack": 33
+        },
+        {
+          "total": 176,
+          "handshake": 138,
+          "connack": 39
+        },
+        {
+          "total": 163,
+          "handshake": 123,
+          "connack": 40
+        },
+        {
+          "total": 172,
+          "handshake": 133,
+          "connack": 39
+        },
+        {
+          "total": 145,
+          "handshake": 110,
+          "connack": 35
+        },
+        {
+          "total": 143,
+          "handshake": 109,
+          "connack": 34
+        },
+        {
+          "total": 166,
+          "handshake": 126,
+          "connack": 39
+        },
+        {
+          "total": 155,
+          "handshake": 119,
+          "connack": 36
+        },
+        {
+          "total": 164,
+          "handshake": 125,
+          "connack": 38
+        },
+        {
+          "total": 183,
+          "handshake": 119,
+          "connack": 63
+        },
+        {
+          "total": 162,
+          "handshake": 124,
+          "connack": 38
+        },
+        {
+          "total": 176,
+          "handshake": 141,
+          "connack": 35
+        },
+        {
+          "total": 165,
+          "handshake": 125,
+          "connack": 39
+        },
+        {
+          "total": 144,
+          "handshake": 112,
+          "connack": 32
+        },
+        {
+          "total": 177,
+          "handshake": 134,
+          "connack": 43
+        },
+        {
+          "total": 157,
+          "handshake": 120,
+          "connack": 38
+        },
+        {
+          "total": 164,
+          "handshake": 129,
+          "connack": 35
+        },
+        {
+          "total": 154,
+          "handshake": 120,
+          "connack": 34
+        },
+        {
+          "total": 154,
+          "handshake": 118,
+          "connack": 36
+        },
+        {
+          "total": 156,
+          "handshake": 120,
+          "connack": 36
+        },
+        {
+          "total": 207,
+          "handshake": 165,
+          "connack": 41
+        },
+        {
+          "total": 154,
+          "handshake": 116,
+          "connack": 38
+        },
+        {
+          "total": 198,
+          "handshake": 154,
+          "connack": 44
+        },
+        {
+          "total": 167,
+          "handshake": 128,
+          "connack": 39
+        },
+        {
+          "total": 171,
+          "handshake": 130,
+          "connack": 41
+        },
+        {
+          "total": 153,
+          "handshake": 119,
+          "connack": 34
+        },
+        {
+          "total": 185,
+          "handshake": 138,
+          "connack": 47
+        },
+        {
+          "total": 190,
+          "handshake": 146,
+          "connack": 45
+        },
+        {
+          "total": 178,
+          "handshake": 138,
+          "connack": 39
+        },
+        {
+          "total": 204,
+          "handshake": 165,
+          "connack": 39
+        },
+        {
+          "total": 159,
+          "handshake": 124,
+          "connack": 35
+        },
+        {
+          "total": 174,
+          "handshake": 134,
+          "connack": 40
+        },
+        {
+          "total": 156,
+          "handshake": 120,
+          "connack": 36
+        },
+        {
+          "total": 160,
+          "handshake": 124,
+          "connack": 36
+        },
+        {
+          "total": 151,
+          "handshake": 116,
+          "connack": 35
+        },
+        {
+          "total": 192,
+          "handshake": 148,
+          "connack": 43
+        },
+        {
+          "total": 171,
+          "handshake": 130,
+          "connack": 41
+        },
+        {
+          "total": 151,
+          "handshake": 116,
+          "connack": 36
+        },
+        {
+          "total": 181,
+          "handshake": 143,
+          "connack": 37
+        },
+        {
+          "total": 156,
+          "handshake": 120,
+          "connack": 36
+        },
+        {
+          "total": 187,
+          "handshake": 151,
+          "connack": 36
+        },
+        {
+          "total": 170,
+          "handshake": 129,
+          "connack": 40
+        },
+        {
+          "total": 155,
+          "handshake": 119,
+          "connack": 36
+        },
+        {
+          "total": 152,
+          "handshake": 118,
+          "connack": 34
+        },
+        {
+          "total": 159,
+          "handshake": 124,
+          "connack": 35
+        },
+        {
+          "total": 163,
+          "handshake": 128,
+          "connack": 34
+        },
+        {
+          "total": 150,
+          "handshake": 117,
+          "connack": 33
+        },
+        {
+          "total": 152,
+          "handshake": 117,
+          "connack": 35
+        },
+        {
+          "total": 177,
+          "handshake": 133,
+          "connack": 44
+        },
+        {
+          "total": 195,
+          "handshake": 157,
+          "connack": 38
+        },
+        {
+          "total": 151,
+          "handshake": 115,
+          "connack": 35
+        },
+        {
+          "total": 217,
+          "handshake": 174,
+          "connack": 43
+        },
+        {
+          "total": 184,
+          "handshake": 140,
+          "connack": 43
+        },
+        {
+          "total": 169,
+          "handshake": 129,
+          "connack": 40
+        },
+        {
+          "total": 158,
+          "handshake": 120,
+          "connack": 37
+        },
+        {
+          "total": 160,
+          "handshake": 121,
+          "connack": 39
+        },
+        {
+          "total": 170,
+          "handshake": 130,
+          "connack": 40
+        },
+        {
+          "total": 142,
+          "handshake": 109,
+          "connack": 32
+        },
+        {
+          "total": 208,
+          "handshake": 132,
+          "connack": 76
+        },
+        {
+          "total": 170,
+          "handshake": 129,
+          "connack": 42
+        },
+        {
+          "total": 186,
+          "handshake": 145,
+          "connack": 40
+        },
+        {
+          "total": 170,
+          "handshake": 130,
+          "connack": 40
+        },
+        {
+          "total": 156,
+          "handshake": 120,
+          "connack": 36
+        }
+      ],
+      "total": {
+        "p50": 166,
+        "p95": 214,
+        "max": 268
+      },
+      "handshake": {
+        "p50": 129,
+        "p95": 173,
+        "max": 230
+      },
+      "connack": {
+        "p50": 38,
+        "p95": 44,
+        "max": 76
+      },
+      "answers": [
+        "bad user name or password"
+      ],
+      "errors": {}
+    }
+  ]
+}
