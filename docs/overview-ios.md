@@ -54,9 +54,9 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
   | `AHMarkdown` | 请求正文的 Markdown 块解析 |
   | `AHMock` | `MockBackend`：演示数据与可编程故障，UI 测试和截图都跑在它上面 |
 
-- 通知扩展 `AskHumanNotification` 只解密预览（`NotificationText`），不连网络。点击通知经 `AppStore.openNotification` 路由：提问类打开请求，`follow.*` 打开 Agent 页。
+- 通知扩展 `AskHumanNotification` 只解密预览（`NotificationText`），不连网络。点击通知经 `AppStore.openNotification` 路由：提问类打开请求（请求还没到手机时页面用通知原文占位、转圈等待，只有 Mac 已答复且没有它才说「不可用」），`follow.*` 打开 Agent 页。
 - 本地化：`Localizable.xcstrings`（en + zh-Hans）由 `ios/Tools/make-catalog.py` 从编译器产出的 `.stringsdata` 生成——先 `xcodebuild build -derivedDataPath build/DerivedData …`，再跑脚本；缺中文翻译会让脚本失败。
-- Mock 模式启动参数：`-AHMock YES -AHScenario demo|empty|offline|quota|syncing -AHLatency <x> -AHTab inbox|agents|history|macs -AHOpen <id> -AHAutoAdvance YES|NO -AHOpenAgent <key> -AHNewTask YES -AHHoldInterjects YES -AHFollowEvent done|failed|waiting`；`syncing` 场景让首次同步迟迟不完成，配 `-AHSyncDelay <秒>`（多久后完成）与 `-AHCached YES`（同步前就带着上次缓存的请求）；`-AHAdvanceHold <秒>` / `-AHAdvanceSettle <秒>` 拉长回执与换页的时间，方便截图 / 录屏。
+- Mock 模式启动参数：`-AHMock YES -AHScenario demo|empty|offline|quota|syncing -AHLatency <x> -AHTab inbox|agents|history|macs -AHOpen <id> -AHAutoAdvance YES|NO -AHOpenAgent <key> -AHNewTask YES -AHHoldInterjects YES -AHFollowEvent done|failed|waiting`；`syncing` 场景让首次同步迟迟不完成，配 `-AHSyncDelay <秒>`（多久后完成）与 `-AHCached YES`（同步前就带着上次缓存的请求）；`-AHAdvanceHold <秒>` / `-AHAdvanceSettle <秒>` 拉长回执与换页的时间，方便截图 / 录屏；`-AHNotify <请求 id>` 模拟点开该请求的推送（页面立刻打开，不等同步，带一段虚构的通知文字）。
 - XCUITest 经验：容器 view 上的 `accessibilityIdentifier` 需要 `.accessibilityElement(children: .contain/.combine)` 才找得到子元素；Form / List 的懒加载行需要滚动到附近才存在；浮动 TabBar 会挡住详情页底部，详情页用 `.toolbar(.hidden, for: .tabBar)`。挂在容器上的 `accessibilityIdentifier` 会盖住子元素自己的标识，要查子元素就把标识挂在叶子视图上；判断「被盖住」用 `isHittable`（被 `.accessibilityHidden` 的元素仍然 `exists`）。推送横幅是 springboard 里的 `BannerNotification`（标识 `NotificationShortLookView`），权限弹窗按钮是 `springboard.alerts.buttons["Allow"]`；合并后的 `push-status` 行标签形如 `Notifications, On`，判断用 `hasSuffix`。
 
 ## 验证

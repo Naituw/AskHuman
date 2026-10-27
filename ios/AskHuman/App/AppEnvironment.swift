@@ -32,6 +32,9 @@ struct LaunchOptions {
     /// stretch them to have time to look; the app's own values are made for the eye).
     var advanceHold: Double?
     var advanceSettle: Double?
+    /// A request (on the first Mac) whose notification was tapped: its page opens at once, whether or
+    /// not the Macs have answered yet, with a made-up notification text.
+    var notifyRequest: String?
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
@@ -50,6 +53,7 @@ struct LaunchOptions {
         cachedInbox = defaults.bool(forKey: "AHCached")
         if defaults.object(forKey: "AHAdvanceHold") != nil { advanceHold = defaults.double(forKey: "AHAdvanceHold") }
         if defaults.object(forKey: "AHAdvanceSettle") != nil { advanceSettle = defaults.double(forKey: "AHAdvanceSettle") }
+        notifyRequest = defaults.string(forKey: "AHNotify")
     }
 }
 
@@ -130,6 +134,12 @@ final class AppEnvironment {
     func start() async {
         await store.start()
         await push.refreshAuthorization()
+        if let request = launch.notifyRequest {
+            let hint = NotificationHint(
+                title: "Claude Code · HumanInLoop", subtitle: "Home MacBook Pro", body: "Which database should the migration target?"
+            )
+            store.openNotification(macId: MockData.homeMacId, rid: request, kind: "ask", hint: hint)
+        }
         if let request = launch.openRequest {
             // Wait for the first state, then open the request.
             for _ in 0..<50 where store.state.inbox.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }

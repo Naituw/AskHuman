@@ -296,6 +296,51 @@ final class AppStoreTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(began), 0.55)
     }
 
+    // MARK: a request that is not here (yet)
+
+    func testARequestThatIsNotHereYetIsLoadingNotUnavailable() async {
+        await make(.syncing)
+        let id = CachedRequest.key(MockData.homeMacId, "req-migration")
+        XCTAssertNil(store.displayItem(id: id))
+        XCTAssertEqual(store.missingRequest(id: id), .loading, "the Macs have not answered: it may be on its way")
+        await backend.finishSync()
+        await eventually("synced") { self.store.syncStatus == .upToDate }
+        XCTAssertNotNil(store.displayItem(id: id), "and there it is")
+        XCTAssertEqual(
+            store.missingRequest(id: CachedRequest.key(MockData.homeMacId, "req-nope")), .gone,
+            "the Mac has answered and does not have it"
+        )
+    }
+
+    func testNothingIsSaidAboutARequestBeforeTheFirstState() {
+        let idle = AppStore(
+            backend: MockBackend(), drafts: MemoryDraftStore(), defaults: UserDefaults(suiteName: "ah-test-" + UUID().uuidString)!
+        )
+        XCTAssertFalse(idle.hasState)
+        XCTAssertEqual(idle.missingRequest(id: CachedRequest.key(MockData.homeMacId, "req-migration")), .loading)
+    }
+
+    func testARequestOfAMacThatCannotBeReachedIsNeitherLoadingNorGone() async {
+        await make(.offline)
+        XCTAssertEqual(store.missingRequest(id: CachedRequest.key(MockData.homeMacId, "req-late")), .unreachable)
+    }
+
+    func testARequestOfAMacThatIsNotPairedIsGone() async {
+        await make()
+        XCTAssertEqual(store.missingRequest(id: CachedRequest.key("unknown-mac", "req-x")), .gone)
+    }
+
+    func testATappedNotificationKeepsWhatItSaidUntilItsPageCloses() async {
+        await make(.syncing)
+        let hint = NotificationHint(title: "Claude Code · relay", subtitle: "Office iMac", body: "Pin the matrix?")
+        store.openNotification(macId: MockData.officeMacId, rid: "req-select", kind: "ask", hint: hint)
+        let id = CachedRequest.key(MockData.officeMacId, "req-select")
+        XCTAssertEqual(store.inboxPath, [id], "the page opens at once, request or not")
+        XCTAssertEqual(store.hint(for: id), hint)
+        store.closed(id: id)
+        XCTAssertNil(store.hint(for: id))
+    }
+
     // MARK: data allowance
 
     func testTheDemoIsFarFromTheFreeAllowanceAndTheQuotaScenarioIsNearIt() async {

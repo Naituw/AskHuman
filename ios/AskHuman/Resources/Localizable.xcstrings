@@ -3033,6 +3033,16 @@
         }
       }
     },
+    "The request shows up here when it is back, if it is still waiting." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 恢复连接后，如果它还在等你，请求会显示在这里。"
+          }
+        }
+      }
+    },
     "The session has ended." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3587,6 +3597,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这个 Agent 完成、出错或需要你时，你会收到通知。"
+          }
+        }
+      }
+    },
+    "Your Mac is not reachable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连不上你的 Mac"
           }
         }
       }

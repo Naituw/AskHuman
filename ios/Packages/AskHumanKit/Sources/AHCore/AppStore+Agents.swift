@@ -1,5 +1,6 @@
 import Foundation
 import AHProtocol
+import AHStore
 
 /// Which Agents the Agents tab lists.
 public enum AgentFilter: Hashable, Sendable {
@@ -72,11 +73,13 @@ extension AppStore {
     }
 
     /// Opens what a tapped notification is about: the Agent of a follow notification (`follow.*`,
-    /// whose `rid` is the Agent key), else the request.
-    public func openNotification(macId: String, rid: String, kind: String?) {
+    /// whose `rid` is the Agent key), else the request. `hint` is what the notification said; the
+    /// request page shows it until the request itself has reached the phone.
+    public func openNotification(macId: String, rid: String, kind: String?, hint: NotificationHint? = nil) {
         if kind?.hasPrefix("follow.") == true {
             openAgent(macId: macId, agentKey: rid)
         } else {
+            if let hint { hints[CachedRequest.key(macId, rid)] = hint }
             open(macId: macId, requestId: rid)
         }
     }

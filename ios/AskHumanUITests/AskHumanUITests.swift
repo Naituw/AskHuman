@@ -424,8 +424,10 @@ final class AskHumanUITests: XCTestCase {
 
     /// How long the mocked first sync takes in the tests below. The title only says "Updating…" while
     /// it lasts, and every query of the UI test costs about a second after a launch that takes several
-    /// more: six seconds were gone before the test looked once the machine was a little slow.
-    private static let syncDelay = "12"
+    /// more: half a minute was gone before a test looked once the machine was busy with a build, so the
+    /// waits for the end of the sync outlast it by a good margin.
+    private static let syncDelay = "20"
+    private static let syncWait: TimeInterval = 35
 
     func testTheInboxWaitsForTheMacsInsteadOfClaimingToBeEmpty() {
         launch("syncing", extra: ["-AHSyncDelay", Self.syncDelay])
@@ -436,7 +438,7 @@ final class AskHumanUITests: XCTestCase {
         // The title says so, but only after a short delay.
         _ = requireElement("sync-status")
         // The rows replace the placeholders once the Macs answered, and the title is itself again.
-        _ = requireElement("inbox-row-req-select", timeout: 20)
+        _ = requireElement("inbox-row-req-select", timeout: Self.syncWait)
         XCTAssertTrue(gone("loading-placeholder"))
         XCTAssertTrue(gone("sync-status"))
         shot("65-inbox-synced")
@@ -448,7 +450,7 @@ final class AskHumanUITests: XCTestCase {
         XCTAssertFalse(element("loading-placeholder").exists, "there is something to show, so no placeholders")
         _ = requireElement("sync-status")
         shot("66-inbox-updating")
-        XCTAssertTrue(gone("sync-status", timeout: 20))
+        XCTAssertTrue(gone("sync-status", timeout: Self.syncWait))
         XCTAssertTrue(element("inbox-row-req-select").exists, "the rows stay as they are")
     }
 
@@ -470,8 +472,43 @@ final class AskHumanUITests: XCTestCase {
         shot("85-agents-loading")
         XCTAssertFalse(app.staticTexts[localized("No Agent sessions", "没有 Agent 会话")].exists)
         XCTAssertFalse(app.staticTexts[localized("Your Macs are not reachable", "连不上你的 Mac")].exists, "still connecting is not unreachable")
-        _ = requireElement("agent-row-\(workingAgent)", timeout: 20)
+        _ = requireElement("agent-row-\(workingAgent)", timeout: Self.syncWait)
         XCTAssertTrue(gone("loading-placeholder"))
+    }
+
+    // MARK: a tapped notification
+
+    private var unavailableTitle: String { localized("Request unavailable", "请求不可用") }
+
+    func testATappedNotificationShowsItsTextWhileTheRequestIsOnItsWay() {
+        launch("syncing", extra: ["-AHSyncDelay", Self.syncDelay, "-AHNotify", "req-migration"])
+        // The page opens at once from what the notification said; the request itself is not here yet.
+        _ = requireElement("request-placeholder-hint")
+        XCTAssertTrue(app.staticTexts["Claude Code · HumanInLoop"].exists)
+        XCTAssertTrue(app.staticTexts["Which database should the migration target?"].exists)
+        XCTAssertFalse(app.staticTexts[unavailableTitle].exists, "it is on its way, not unavailable")
+        shot("90-request-on-its-way")
+        // The form takes its place once the Macs have answered.
+        _ = requireElement("next-button", timeout: Self.syncWait)
+        XCTAssertTrue(gone("request-placeholder"))
+        shot("91-request-arrived")
+    }
+
+    func testARequestTheMacDoesNotHaveIsUnavailableOnlyOnceTheMacHasAnswered() {
+        launch("syncing", extra: ["-AHSyncDelay", Self.syncDelay, "-AHNotify", "req-answered-elsewhere"])
+        _ = requireElement("request-placeholder")
+        XCTAssertFalse(app.staticTexts[unavailableTitle].exists, "the Macs have not answered yet")
+        XCTAssertTrue(app.staticTexts[unavailableTitle].waitForExistence(timeout: Self.syncWait))
+        XCTAssertTrue(gone("request-placeholder"))
+        shot("92-request-gone")
+    }
+
+    func testARequestOfAMacOutOfReachSaysSoInsteadOfBeingUnavailable() {
+        launch("offline", extra: ["-AHNotify", "req-late"])
+        _ = requireElement("request-placeholder-hint")
+        XCTAssertTrue(app.staticTexts[localized("Your Mac is not reachable", "连不上你的 Mac")].exists)
+        XCTAssertFalse(app.staticTexts[unavailableTitle].exists)
+        shot("93-request-unreachable")
     }
 
     // MARK: moving on after sending
