@@ -575,11 +575,18 @@ pub fn popup_show_window(app: AppHandle, request_id: Option<String>) {
 /// `ts` 为前端 `Date.now()`（epoch ms），使时间反映页面而非 IPC 往返；省略则用当前时间。
 /// 埋点关闭（无关联 id）时为 no-op。
 #[tauri::command]
-pub fn perf_mark(stage: String, ts: Option<f64>) {
+pub fn perf_mark(app: AppHandle, stage: String, ts: Option<f64>) {
     let id = crate::perf::effective_id();
     match ts {
         Some(t) => crate::perf::mark_at(&id, &stage, t as u128),
         None => crate::perf::mark(&id, &stage),
+    }
+    // Todos-window harness (`scripts/perf-todos-window.mjs`): close the window once the first
+    // paint is on record so the next run opens a fresh one.
+    if stage == "todos.fe.firstPaint" && !id.is_empty() && crate::perf::autodismiss() {
+        if let Some(window) = app.get_webview_window("todos") {
+            let _ = window.close();
+        }
     }
 }
 
@@ -1022,6 +1029,9 @@ pub struct TodosInit {
     popup_submit_key: String,
     /// Whether a supported platform terminal is available for creating Agent tasks.
     new_task_supported: bool,
+    /// Perf instrumentation is on for this process (`ASKHUMAN_PERF_ID` present); the frontend
+    /// reports its milestones only then.
+    perf: bool,
 }
 
 #[tauri::command]
@@ -1036,6 +1046,7 @@ pub fn todos_init() -> TodosInit {
             .to_string(),
         popup_submit_key: config.general.popup_submit_key.as_str().to_string(),
         new_task_supported: crate::integrations::agent_launch::terminal_available(),
+        perf: !crate::perf::effective_id().is_empty(),
     }
 }
 

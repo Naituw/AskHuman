@@ -37,6 +37,7 @@ import {
   todosUpdate,
   todosUpdateAttachments,
 } from "../lib/ipc";
+import { enable as perfEnable, mark as perfMark } from "../lib/perf";
 import type {
   PopupSubmitKey,
   ThemeMode,
@@ -220,6 +221,7 @@ async function reloadProjectsLocal(): Promise<void> {
 async function enrichProjectsInBackground(): Promise<void> {
   try {
     const list = await todosProjectsEnriched();
+    perfMark("todos.fe.enriched");
     const prev = selected.value;
     applyProjects(list);
     // Prefer keeping the user's selection when the enriched list still has it.
@@ -1037,6 +1039,9 @@ onMounted(async () => {
   document.addEventListener("mouseleave", onSortPointerEnd);
   try {
     const init = await todosInit();
+    // Perf harness only: report the buffered `fe.bootstrap` / `fe.mounted` marks and the ones below.
+    if (init.perf) perfEnable();
+    perfMark("todos.fe.init");
     applyTheme(init.theme);
     applyLanguage(init.lang);
     applyPopupSubmitKey(init.popupSubmitKey);
@@ -1108,6 +1113,12 @@ onMounted(async () => {
     }
   });
   await reloadAll();
+  perfMark("todos.fe.dataReady");
+  // Two animation frames after the data landed in the DOM = the first frame that shows it.
+  await nextTick();
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => perfMark("todos.fe.firstPaint"))
+  );
   if (preselect) await focusAddInput();
 });
 

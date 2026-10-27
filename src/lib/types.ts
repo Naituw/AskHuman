@@ -264,6 +264,8 @@ export interface TodosInit {
   popupSubmitKey: PopupSubmitKey;
   /** Whether a supported platform terminal is available for creating Agent tasks. */
   newTaskSupported: boolean;
+  /** 性能埋点是否开启（宿主进程带 `ASKHUMAN_PERF_ID`）；前端据此决定是否上报 perf 标记。 */
+  perf?: boolean;
 }
 
 /** 新建任务窗口 init 负载（spec gui-agent-task-launch）。 */

@@ -2123,6 +2123,7 @@ where
     let window_effect = config.general.window_effect;
     let effective_window_effect = effective_window_effect(window_effect);
     append_window_effect_query(&mut url, effective_window_effect);
+    crate::perf::mark_env("todos.win.create");
     let builder = WebviewWindowBuilder::new(manager, "todos", WebviewUrl::App(url.into()))
         .title(i18n::tr(lang, "title.todos"))
         .inner_size(520.0, 560.0)
@@ -2132,6 +2133,7 @@ where
         .theme(theme);
     #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     let win = apply_surface(builder, window_bg, effective_window_effect).build()?;
+    crate::perf::mark_env("todos.win.built");
     #[cfg(target_os = "macos")]
     set_runtime_window_effect_with_bg(&win, window_effect, window_bg);
     watch_todos_file(win);
