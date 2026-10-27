@@ -83,7 +83,7 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 - [ ] Follow 的去留：被关注的 Agent 的提问是否绕过等待、立即推（目前不绕过；「等你」推送在每道题都挂在手机后已不会触发）
 - [ ] IM 统一（每个渠道各自的「提醒时机」）；保底封顶；有待答题时保持唤醒；D 到点时合并成一条「N 个提问在等你」；Time Sensitive、通知扩展送达回执、划掉追踪、手机上展示「Mac 在用」
 
-## 进行中：跨设备待办同步（多台 Mac，iCloud）——评审已通过，开工中（P0 起）
+## 进行中：跨设备待办同步（多台 Mac，iCloud）——评审已通过，P2 同步核心已提交，P1 侧栏进行中
 
 需求 `docs/specs/todo-sync.md`、计划 `docs/plans/todo-sync.md`（实施记录在其 §10）、界面稿 `docs/assets/todo-sync-ui/`。
 2026-10-27 用户评审通过并说「你自己全部搞定，我要上班了」；分支 `feat/todo-sync`，worktree `../HumanInLoop-todosync`（Dev Instance，popup-only）。
@@ -94,8 +94,13 @@ v1 不同步附件、同步执行历史；**清空历史是全局的**（清空�
 whats-next 前「过期才拉」（> 20 秒，最多等 1.5 秒）；待办窗口统一改侧栏且打开不得卡顿；先自用，之后另行评审随正式版发布。
 容器 / bundle id：`iCloud.com.naituw.humaninloop.todosync` / `com.naituw.humaninloop.todosync`。
 
+进度（分支 `feat/todo-sync`，提交即进度）：P0 性能埋点 + 脚本 `scripts/perf-todos-window.mjs`（含 `--ref` A/B 模式）已提交 ✓；P2 同步核心 `src-tauri/src/todo_sync/` 已提交 ✓（80 个测试 + 60 种子浸泡全过）；
+P1 侧栏、P3 helper、P4 集成、P5 iCloud 界面、P6 验收未做。**P1 要单独先合并**：从 P0 提交拉分支 `feat/todos-sidebar` 做，合并后 `feat/todo-sync` 再 rebase。
+
 下一步：
-- [ ] 按计划 §5 推进 P0 → P6；当前进度见计划 §10
+- [ ] 按计划 §5 推进 P1 → P6；当前进度与差异见计划 §10
+- [ ] P0 的绝对基线 `docs/perf/todos-window-baseline.json` 还没生成（机器被别的任务占满，负载 12–230）；P1 的性能门改用 `--ref <P0 参考二进制>` A/B（参考二进制在 worktree 的 `.askhuman-dev/perf-ref/AskHuman-p0`，被 gitignore）
+- [ ] 机器磁盘几乎满（数据卷仅剩约 4 GB，别的项目占了大头）：构建请用 `CARGO_INCREMENTAL=0`，且 `CARGO_HOME=/Users/wutian/.cargo`（shell 的 HOME 被指向 /tmp/ph，别再让 cargo 在那里重复下载 1.2 GB 的依赖）
 - [ ] **需要用户**（计划 §7，agent 不做）：开发者后台新建 App ID / 容器 / Developer ID 描述文件；helper 首次真机跑通后在 CloudKit Dashboard 把 schema 部署到 Production；在 Mac A 上用 Xcode 构建签名 helper 并拷到 Mac B。这些完成前，P3 之后的真机验收（计划 §5 P3 / P4 / P6）做不了
 - [ ] 双机验收要 SSH 到 Mac B：需用户当次同意（S0 的授权只覆盖 spike）
 - [ ] S0 收尾（用户 2026-10-27 那题没答复，**什么都没删、没动 B**）：停掉的 spike helper 仍装在两台 Mac 上；测试待办还在 CloudKit 容器里；想收尾时再问
