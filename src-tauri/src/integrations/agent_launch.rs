@@ -1584,10 +1584,14 @@ fn lookup_in_login_shell(shell: &str, name: &str, timeout: Duration) -> Lookup {
 
 /// The command line the login shell runs: print the PATH it came up with, then ask where `name`
 /// lives. `name` is one of the fixed command names of [`command_name`], never user input.
+///
+/// A command that is not there ends the shell with status 1 whichever shell it is. Left to
+/// itself, `command -v` fails with 1 in bash and zsh but with 127 in dash, and [`interpret_lookup`]
+/// reads 127 as a broken shell rather than as a missing command.
 #[cfg(unix)]
 fn lookup_script(name: &str) -> String {
     format!(
-        "printf '\\n{PATH_MARKER}%s\\n' \"$PATH\"; p=$(command -v {name}) && printf '\\n{BIN_MARKER}%s\\n' \"$p\""
+        "printf '\\n{PATH_MARKER}%s\\n' \"$PATH\"; p=$(command -v {name}) || exit 1; printf '\\n{BIN_MARKER}%s\\n' \"$p\""
     )
 }
 
@@ -2395,33 +2399,44 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let pi = executable_file(dir.path(), "pi");
         let search = format!("{}:/usr/bin:/bin", dir.path().display());
-        let run = |name: &str| {
-            Command::new("/bin/sh")
-                .args(["-c", &lookup_script(name)])
-                .env("PATH", &search)
-                .output()
-                .unwrap()
-        };
+        // Every one of these that is installed: dash fails a missing `command -v` with 127 where
+        // bash says 1, and a Linux runner's /bin/sh is dash while a Mac's is bash. (zsh is left
+        // out: it reads ~/.zshenv even for `-c`, which can change the PATH the test compares.)
+        let shells: Vec<&str> = ["/bin/sh", "/bin/bash", "/bin/dash"]
+            .into_iter()
+            .filter(|shell| Path::new(shell).exists())
+            .collect();
+        assert!(!shells.is_empty());
 
-        let found = run("pi");
-        let printed = String::from_utf8_lossy(&found.stdout).to_string();
-        assert!(found.status.success());
-        assert!(
-            printed.contains(&format!("{PATH_MARKER}{search}")),
-            "{printed}"
-        );
-        assert!(
-            printed.contains(&format!("{BIN_MARKER}{}", pi.display())),
-            "{printed}"
-        );
+        for shell in shells {
+            let run = |name: &str| {
+                Command::new(shell)
+                    .args(["-c", &lookup_script(name)])
+                    .env("PATH", &search)
+                    .output()
+                    .unwrap()
+            };
 
-        // A command that does not exist ends with status 1 and no answer line, but the PATH line
-        // is still there for diagnosis.
-        let missing = run("askhuman-no-such-command");
-        let printed = String::from_utf8_lossy(&missing.stdout).to_string();
-        assert_eq!(missing.status.code(), Some(1));
-        assert!(printed.contains(PATH_MARKER), "{printed}");
-        assert!(!printed.contains(BIN_MARKER), "{printed}");
+            let found = run("pi");
+            let printed = String::from_utf8_lossy(&found.stdout).to_string();
+            assert!(found.status.success(), "{shell}: {printed}");
+            assert!(
+                printed.contains(&format!("{PATH_MARKER}{search}")),
+                "{shell}: {printed}"
+            );
+            assert!(
+                printed.contains(&format!("{BIN_MARKER}{}", pi.display())),
+                "{shell}: {printed}"
+            );
+
+            // A command that does not exist ends with status 1 and no answer line, but the PATH
+            // line is still there for diagnosis.
+            let missing = run("askhuman-no-such-command");
+            let printed = String::from_utf8_lossy(&missing.stdout).to_string();
+            assert_eq!(missing.status.code(), Some(1), "{shell}");
+            assert!(printed.contains(PATH_MARKER), "{shell}: {printed}");
+            assert!(!printed.contains(BIN_MARKER), "{shell}: {printed}");
+        }
     }
 
     #[test]
