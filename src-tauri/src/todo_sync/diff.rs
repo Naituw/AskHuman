@@ -63,6 +63,17 @@ fn att_names(attachments: &[TodoAttachment]) -> Vec<String> {
         .collect()
 }
 
+/// The attachment hint of todo `id` as seen across every directory of `file`: the replica with the most
+/// attachments wins (ties by names, so the answer never depends on the iteration order).
+fn richest_attachments(file: &TodoFile, id: &str) -> Option<(u32, Vec<String>)> {
+    file.projects
+        .values()
+        .flatten()
+        .filter(|t| t.id == id)
+        .map(|t| (t.attachments.len() as u32, att_names(&t.attachments)))
+        .max()
+}
+
 fn att_hint(attachments: &[TodoAttachment], dev: &str, h: &str) -> Option<Att> {
     (!attachments.is_empty()).then(|| Att {
         n: attachments.len() as u32,
@@ -376,17 +387,29 @@ fn process_key(
 
         // Attachment hint. Take over only an absent / empty hint or our own, otherwise two Macs that
         // both hold attachments for one todo would overwrite each other's hint forever.
-        let n = t.attachments.len() as u32;
-        let names = att_names(&t.attachments);
-        let Some(rec) = state.entities.get(&t.id) else {
-            continue;
-        };
-        let want = match &rec.e.att {
+        let mut n = t.attachments.len() as u32;
+        let mut names = att_names(&t.attachments);
+        let wants = |rec: &Rec, n: u32, names: &[String]| match &rec.e.att {
             Some(a) if a.dev == me => a.n != n || a.names != names,
             Some(a) if a.n == 0 => n > 0,
             Some(_) => false,
             None => n > 0,
         };
+        let Some(rec) = state.entities.get(&t.id) else {
+            continue;
+        };
+        let mut want = wants(rec, n, &names);
+        if want {
+            // The same todo can sit in several directories of this Mac (replicas of one repository),
+            // but its attachment files exist only where it was created. Judged per directory, the
+            // replicas would overwrite the hint with each other's value on every tick (one new
+            // record pushed per tick, forever), so the hint follows the replica holding the most.
+            if let Some((best_n, best_names)) = richest_attachments(file, &t.id) {
+                n = best_n;
+                names = best_names;
+            }
+            want = wants(rec, n, &names);
+        }
         if want {
             let h = state.stamp(now_ms);
             if let Some(rec) = state.entities.get_mut(&t.id) {
@@ -974,6 +997,44 @@ mod tests {
         let r = sync(&mut f, &mut s, 500, 50);
         assert_eq!(r.touched, 0);
         assert_eq!(s.entities["t1"].e.att, Some(other));
+    }
+
+    #[test]
+    fn replicas_with_different_attachments_share_one_stable_hint() {
+        // The same todo in two directories of this Mac; only /a has the attachment files.
+        let mut s = linked(&["/a", "/b"]);
+        let mut f = file_with("/a", vec![entry("t1", "one", 1)], vec![]);
+        f.projects.insert("/b".into(), vec![entry("t1", "one", 1)]);
+        sync(&mut f, &mut s, 100, 50);
+        assert!(s.entities["t1"].e.att.is_none());
+
+        f.projects.get_mut("/a").unwrap()[0].attachments =
+            vec![attachment("a1", "shot.png"), attachment("a2", "log.txt")];
+        sync(&mut f, &mut s, 200, 50);
+        let hint = s.entities["t1"].e.att.clone().unwrap();
+        assert_eq!(
+            (hint.n, hint.names.clone()),
+            (2, vec!["shot.png".to_string(), "log.txt".to_string()]),
+            "the hint follows the replica that has the attachments, not the last one visited"
+        );
+
+        // Nothing changed since: no new stamp and nothing to push, however often the tick runs.
+        s.entities.get_mut("t1").unwrap().dirty = false;
+        for now in [300, 400, 500] {
+            let r = sync(&mut f, &mut s, now, 50);
+            assert_eq!(r.touched, 0, "tick at {now} must be a no-op");
+            assert!(!s.entities["t1"].dirty);
+            assert_eq!(s.entities["t1"].e.att.as_ref(), Some(&hint));
+        }
+
+        // Removing the files where they are clears the hint, and it stays quiet afterwards.
+        f.projects.get_mut("/a").unwrap()[0].attachments.clear();
+        sync(&mut f, &mut s, 600, 50);
+        assert_eq!(s.entities["t1"].e.att.as_ref().unwrap().n, 0);
+        s.entities.get_mut("t1").unwrap().dirty = false;
+        let r = sync(&mut f, &mut s, 700, 50);
+        assert_eq!(r.touched, 0);
+        assert!(!s.entities["t1"].dirty);
     }
 
     #[test]
