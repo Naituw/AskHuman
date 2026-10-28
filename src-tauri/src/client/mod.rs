@@ -4,6 +4,7 @@
 //! 任务提交（submit）将在 Phase 1 接入。
 
 pub mod composer;
+pub mod diagnostics;
 
 use crate::daemon::lifecycle;
 use crate::daemon::spawn;
@@ -127,13 +128,38 @@ async fn acquire_spawn_lock() -> Option<crate::file_lock::FileLock> {
     }
 }
 
-/// 请求运行状态（未运行返回 None）。
+/// Best-effort status API retained for callers that treat every failure as unavailable.
 pub async fn request_status() -> Option<StatusInfo> {
-    let (mut reader, mut writer) = connect_split().await.ok()?;
-    ipc::write_msg(&mut writer, &ClientMsg::Status).await.ok()?;
-    match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
-        Ok(Some(ServerMsg::Status(info))) => Some(info),
-        _ => None,
+    request_status_result().await.ok().flatten()
+}
+
+/// Query without starting the daemon. Only an absent/refused endpoint returns `Ok(None)`;
+/// connection permission errors, failed exchanges and invalid responses retain their cause.
+pub async fn request_status_result() -> std::io::Result<Option<StatusInfo>> {
+    let (mut reader, mut writer) = match connect_split().await {
+        Ok(connection) => connection,
+        Err(error) if diagnostics::is_not_running(&error) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    ipc::write_msg(&mut writer, &ClientMsg::Status).await?;
+    read_status_response(&mut reader).await.map(Some)
+}
+
+async fn read_status_response<R>(reader: &mut R) -> std::io::Result<StatusInfo>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    match ipc::read_msg::<_, ServerMsg>(reader).await? {
+        Some(ServerMsg::Status(info)) => Ok(info),
+        Some(ServerMsg::Error { message }) => Err(Error::other(message)),
+        Some(_) => Err(Error::new(
+            ErrorKind::InvalidData,
+            "unexpected daemon status response",
+        )),
+        None => Err(Error::new(
+            ErrorKind::UnexpectedEof,
+            "daemon status response lost",
+        )),
     }
 }
 
@@ -744,6 +770,10 @@ fn client_error(verbose: bool, message: &str) -> AskFinal {
     }
 }
 
+fn daemon_start_error(verbose: bool, error: &Error) -> AskFinal {
+    client_error(verbose, &diagnostics::start_failed(error))
+}
+
 async fn run_ask_async(task: crate::ipc::TaskRequest) -> i32 {
     let result = run_ask_final_async(task, true).await;
     if !result.stdout.is_empty() {
@@ -766,8 +796,8 @@ async fn run_ask_final_async(task: crate::ipc::TaskRequest, verbose: bool) -> As
                     wait_for_drain().await;
                     continue 'outer;
                 }
-                Err(_) => {
-                    return client_error(verbose, "askhuman: failed to start daemon");
+                Err(error) => {
+                    return daemon_start_error(verbose, &error);
                 }
             }
             let Ok((mut reader, mut writer)) = connect_split().await else {
@@ -861,6 +891,41 @@ mod tests {
     use super::*;
     use crate::ipc::InterjectAction;
     use tokio::io::BufReader;
+
+    #[test]
+    fn daemon_start_failure_preserves_empty_stdout_and_exit_code_three() {
+        let error = Error::new(ErrorKind::PermissionDenied, "cannot open daemon.log");
+        let result = daemon_start_error(false, &error);
+        assert!(result.stdout.is_empty());
+        assert_eq!(result.exit_code, 3);
+    }
+
+    #[tokio::test]
+    async fn status_response_errors_remain_errors() {
+        for (frames, kind) in [
+            (vec![], ErrorKind::UnexpectedEof),
+            (vec![ServerMsg::Stopping], ErrorKind::InvalidData),
+            (
+                vec![ServerMsg::Error {
+                    message: "status rejected".into(),
+                }],
+                ErrorKind::Other,
+            ),
+        ] {
+            let (mut tx, rx) = tokio::io::duplex(4096);
+            for frame in frames {
+                ipc::write_msg(&mut tx, &frame).await.unwrap();
+            }
+            drop(tx);
+            let error = read_status_response(&mut BufReader::new(rx))
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind(), kind);
+            if kind == ErrorKind::Other {
+                assert_eq!(error.to_string(), "status rejected");
+            }
+        }
+    }
 
     async fn confirm_frames(frames: Vec<ServerMsg>) -> Option<crate::models::ConfirmResult> {
         let (mut tx, rx) = tokio::io::duplex(4096);

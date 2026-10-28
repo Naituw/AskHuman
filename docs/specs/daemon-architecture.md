@@ -14,6 +14,27 @@
 > 使用按当前用户 SID、会话与配置目录隔离的 byte-mode named pipe；pipe DACL 仅允许当前用户和
 > LocalSystem，并拒绝远程客户端。后台启动、HKCU Run 登录项、进程识别与文件锁由平台适配器承接。
 
+## 本地 IPC 受限时的诊断
+
+Unix 上 CLI 必须能够创建并连接 Unix domain socket；目录可读并不代表 IPC 可用。Linux 的 Claude Code Bash sandbox 可以在 seccomp 层拒绝 `socket(AF_UNIX, …)`，返回 `EPERM`。此时 daemon 可能仍在宿主环境运行，不能仅凭连接失败或沙箱内看不到宿主进程判定它已停止。
+
+`daemon status` 与 `doctor` 应把权限拒绝报告为状态未知，并保留底层错误及“可能受沙箱限制”的提示；普通 socket 不存在或连接被拒绝仍表示未运行。提问自动启动失败必须在 stderr 保留底层 `io::Error`，stdout 与退出码契约保持不变。`doctor --json` 的 daemon 状态不可查询时使用 `running: null`，并提供 `error`，区别于已确认未运行的 `running: false`。
+
+对于明确选择允许 AskHuman 在 Linux Claude Code sandbox 内运行的用户，可在用户级 `~/.claude/settings.json` 合并：
+
+```json
+{
+  "sandbox": {
+    "filesystem": { "allowWrite": ["~/.askhuman"] },
+    "network": { "allowAllUnixSockets": true }
+  }
+}
+```
+
+保留已有数组和配置；使用自定义 `ASKHUMAN_HOME` 时相应调整目录。Linux/WSL2 不支持按路径放行 Unix socket，`allowUnixSockets` 仅 macOS 生效。`allowAllUnixSockets` 会允许访问所有可达 Unix socket，用户应自行评估其权限范围。连接已运行 daemon 与沙箱内启动新 daemon 是不同验收项；后者还受图形会话、进程生命周期和可写目录限制。
+
+此环境限制及既有诊断缺陷在上游代码中已存在，并非未合并的 Linux runtime 或 Antigravity PR 引入。配置文件修改时间不等于配置生效时间，不用于推断问题的首次发生时间。
+
 ## 1. 背景与动机
 
 迁移前 `AskHuman` 是**单进程**模型：每次 CLI 调用都是一个独立进程，进程内按配置并行启动各 Channel（本地弹窗 popup / Telegram / 钉钉 / 飞书），首个终态结果生效（抢答），输出后退出。
