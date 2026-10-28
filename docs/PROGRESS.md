@@ -145,15 +145,15 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 
 ## 待验收：iOS App 管理待办（实现与自测完成，决策全部是 agent 在用户睡觉时代定的，等用户审阅）
 
-需求 `docs/specs/ios-todos.md`（决策 I1–I16 在 §3，可整条否决）、计划 `docs/plans/ios-todos.md`；分支 `feat/ios-todos`，worktree `../HumanInLoop-todosync`（还没合并进 main，更没推送）。
+需求 `docs/specs/ios-todos.md`（决策 I1–I16 在 §3，可整条否决）、计划 `docs/plans/ios-todos.md`；分支 `feat/ios-todos`，worktree `../HumanInLoop-todosync`（还没合并进 main，更没推送；已把 main 合进分支并在合并后的树上复测过）。
 用户 2026-10-29 夜里说「手机 App 想支持待办：能选设备、能选 iCloud 模式、还有项目来源的问题——你都设计，实现验证，我明天早上验收」，所以没有经过 AskHuman 问答。
 做法：手机经已有的 iOS 网关（MQTT + 端到端加密）读写 Mac 的 `todos.json`，新增 `todo.*` 线消息；「iCloud」是一个**来源**，由开着同步且在线的 Mac 代答、掉线自动换，手机不直连 CloudKit（那要给 iOS App ID 开 iCloud 容器，是 Apple 账号上的改动，要用户授权）；项目列表由 Mac 按桌面侧栏同一算法算好，手机只看到不透明 id 与同名后缀，不暴露路径；手机不落盘待办。
 
-自测（2026-10-29，都在这台机器上、没碰真实的 `~/.askhuman`）：Rust `cargo test ios::` 252 条 + `ios_todos` 25 条，clippy / fmt 无告警；Swift 包全套 414 条（协议 27、存储 21、传输 14、Markdown 8、核心 144、应用 159、端到端 41，其中 4 条要真实服务、已跳过）无失败；模拟器 UI 测试 `AskHumanTodosUITests` 7 条，英文与中文各跑一遍并看过截图；真实 daemon 端到端（本地 broker）5 条；另把真实 `todos.json` 的一份拷贝放进一次性 Mac 对账（15 行与文件逐项一致，最大一份整表 17 KB，拷贝已删）。UI 测试里发现并修复了一个缺陷：待办页先于 Mac 列表上屏时，旧 Mac 会让页面一直转圈（需求 §13 第 7 条）。**老 Mac 要先装带这个功能的版本**，否则手机上会显示「这台 Mac 需要更新」。
+自测（2026-10-29，都在这台机器上、没碰真实的 `~/.askhuman`）：Rust `cargo test ios::` 252 条 + `ios_todos` 25 条，clippy / fmt 无告警；Swift 包全套（合并 main 之后的树上）431 条（协议 27、存储 21、传输 14、Markdown 10、核心 144、应用 174、端到端 41，其中 4 条要真实服务、已跳过）无失败；模拟器 UI 测试 `AskHumanTodosUITests` 7 条，英文与中文各跑一遍并看过截图；合并后整个 `AskHumanUITests` 目标 90 条（待办 7、模型 15、主体 56、网页 11）全过，只有要真实服务的 `AskHumanLiveUITests` 1 条跳过；真实 daemon 端到端（本地 broker）5 条；另把真实 `todos.json` 的一份拷贝放进一次性 Mac 对账（15 行与文件逐项一致，最大一份整表 17 KB，拷贝已删）。UI 测试里发现并修复了两个缺陷：待办页先于 Mac 列表上屏时，旧 Mac 会让页面一直转圈（需求 §13 第 7 条）；合并 main 后，字符串目录脚本里「Copy」被本分支的「拷贝」盖过了 main 的「复制」，main 的网页渲染 UI 测试因此失败，已删掉重复项，脚本现在遇到同一个键两种译法会直接报错。**老 Mac 要先装带这个功能的版本**，否则手机上会显示「这台 Mac 需要更新」。
 
 下一步：
 - [ ] **用户验收**：看 `docs/specs/ios-todos.md` §3 的 16 条决策（尤其 I2 不直连 CloudKit、I4 设备模式不列仅云端项目、I5 手机不能新建项目、I13 手机不落盘），不同意的整条否决；真机上装一遍（`ios/` 里 `xcodegen generate`，配对后进「待办」标签）；多台 Mac、iCloud 来源自动换机、Mac 离线时的表现要真机才看得全。
-- [ ] 合并进 main 时注意：主检出里另一方有未提交的 iOS 作答流程改动（`AnswerScreen` / `AnswerComposer` 等）和 `docs/PROGRESS.md`；`Localizable.xcstrings` 由 `ios/Tools/make-catalog.py` 生成，冲突时重新生成而不是手工合并。
+- [ ] 合并进 main：分支已经把当时的 main（`6eb30f1`，网页渲染 Markdown 与作答流程的提交）合进来了（合并提交 `32463a7`，冲突只有 mock 场景枚举、overview 的启动参数行和字符串目录，目录用 `make-catalog.py` 重新生成），所以对那个 main 是快进。但**主检出的工作区里另一方有未提交的文档改动**（`docs/overview-ios.md`、`docs/specs/ios-channel.md`、`docs/PROGRESS.md` 等），与本分支改的是同几个文件，`git merge` 会拒绝；要先让那一方提交或暂存。之后 main 若又有新提交，再 `git merge main` 一次即可；`Localizable.xcstrings` 冲突时重新生成而不是手工合并。老 Mac 要先装带这个功能的版本（合并后 `./scripts/install.sh`），手机上才不会显示「这台 Mac 需要更新」。
 - [ ] 后置（需求 §11）：手机直连 CloudKit（Mac 都不在线也能用，需用户授权开 iCloud 容器 + Swift 重实现同步核心）、附件的查看与添加、「全部待办」聚合页、清空历史、从 iCloud 移除项目、待办推送、离线编辑队列。
 - [ ] 已知局限（需求 §10）：Mac 都不在线时手机看不到待办；线协议里 `helper` 没有「未安装」状态，手机上「没装」与「没在跑」显示成同一句；单条超大待办（桌面端 / CLI 不限长度，手机端限 4000 字）可能让那个项目的 `todo.list` 装不进一条消息而超时。
 

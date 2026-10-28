@@ -422,7 +422,6 @@ ZH = {
     "Auto": "自动",
     "Auto-run": "自动执行",
     "Auto-run needs a folder on a Mac, and this project has none.": "自动执行需要 Mac 上的文件夹，而这个项目没有。",
-    "Copy": "拷贝",
     "Could not load todos": "无法载入待办",
     "Delete this todo?": "删除这条待办？",
     "Delete todo": "删除待办",
@@ -534,9 +533,30 @@ def dump(obj):
     return json.dumps(obj, indent=2, ensure_ascii=False, sort_keys=True, separators=(",", " : ")) + "\n"
 
 
+def conflicting_translations():
+    """Keys listed twice in one dict literal with different words.
+
+    Python keeps the later entry without a word, which is how two branches that translate the same key
+    differently merge into a catalog that quietly changes the other branch's wording."""
+    import ast
+
+    clashes = []
+    for node in ast.walk(ast.parse(open(__file__).read())):
+        if not isinstance(node, ast.Dict):
+            continue
+        seen = {}
+        for key, value in zip(node.keys, node.values):
+            if not (isinstance(key, ast.Constant) and isinstance(value, ast.Constant)):
+                continue
+            if key.value in seen and seen[key.value] != value.value:
+                clashes.append("translated twice, differently: %r (%r vs %r)" % (key.value, seen[key.value], value.value))
+            seen[key.value] = value.value
+    return clashes
+
+
 def main():
     keys = extracted_keys()
-    problems = []
+    problems = conflicting_translations()
     strings = {}
     for key in sorted(keys):
         if key in NO_TRANSLATE:
