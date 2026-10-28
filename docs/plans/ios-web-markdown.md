@@ -41,7 +41,7 @@
 ### 1.6 收尾
 - [x] `make-catalog.py` 补中文并重生成 `Localizable.xcstrings`。
 - [x] 文档：`docs/overview-ios.md`（模块表、Markdown 管线、Mock 启动参数 `-AHWebMarkdown`、场景 `markdown`、资源同步命令）、`docs/specs/ios-channel.md`（§6.3 Mermaid 不再是代码块、§6.5 Markdown 预览说明、2026-10-28 反馈记录）。
-- [ ] 真机冒烟：装到 iPhone Air，开 Markdown 场景（Mock 构建）或真实请求，看渲染、选字、链接、Mermaid、深色。（2026-10-29 凌晨 iPhone Air 没有连着，`devicectl list devices` 里没有它，所以这一项没做；手机连上后用 `ios/` 下的 `xcodebuild … -destination 'platform=iOS,id=00008150-00043D6A2E12401C'` 构建并 `devicectl device install app` 即可。）
+- [ ] 真机冒烟：装到 iPhone Air，开 Markdown 场景（Mock 构建）或真实请求，看渲染、选字、链接、Mermaid、深色。（2026-10-29 凌晨：先是 iPhone Air 没有连着；03:40 前后它以无线方式出现在 `devicectl list devices` 里，Debug 构建已用 `xcodebuild … -destination 'platform=iOS,id=00008150-00043D6A2E12401C'` + `devicectl device install app` 装上（签名有效，`WebMarkdown` 资源在包里）。但 `devicectl device process launch` 连不上远程服务（CoreDevice 4000，手机应是锁屏），没能启动；没有去点亮用户的手机，所以没看到真机上的渲染。）
 - [x] 本地提交（Conventional Commits，不 push）：`feat(ios): draw request bodies with a web page`、`fix(ios): keep line breaks and mark inline code in native markdown`。
 
 ## 2. 验证命令
