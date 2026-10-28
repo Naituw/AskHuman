@@ -19,6 +19,7 @@ struct AnswerScreen: View {
     @State private var landing = Landing()
     /// The question whose text field has the keyboard.
     @FocusState private var focused: Int?
+    @Environment(\.launchOptions) private var launch
 
     fileprivate static let space = "answer-scroll"
 
@@ -30,7 +31,7 @@ struct AnswerScreen: View {
                         if let finished = store.endedNotice(for: item.id) { FinishedNotice(finished: finished) }
                         if case .failed = item.state { FailedSubmissionNotice(item: item) }
                         RequestHeader(item: item)
-                        MessageCard(ask: ask, macId: item.macId)
+                        MessageCard(ask: ask, macId: item.macId, onSettled: { tracker.messageSettled() })
                         VStack(spacing: 0) {
                             ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
                                 QuestionCard(
@@ -62,7 +63,13 @@ struct AnswerScreen: View {
                 }
                 .coordinateSpace(name: Self.space)
                 .onPreferenceChange(ReadingKey.self) { tracker.update($0, composer: composer) }
-                .task(id: item.id) { await tracker.begin(composer) }
+                .task(id: item.id) {
+                    await tracker.begin(
+                        composer, awaitingMessage: MessageCard.drawnByWebPage(ask, launch: launch),
+                        // The page's own watchdog gives up on it after this long (and the native renderer settles).
+                        patience: .seconds(launch.webTimeout + 1)
+                    )
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -221,17 +228,33 @@ private final class ReadingTracker {
 
     @ObservationIgnored private var latest = Reading()
     @ObservationIgnored private var live = false
+    @ObservationIgnored private var messageIsLaidOut = false
     @ObservationIgnored private var questionCount = 0
 
     /// The first layout passes are not trusted (the bars may not have their final size yet): the
-    /// questions on screen are counted a moment after the form appeared.
-    func begin(_ composer: AnswerComposer) async {
+    /// questions on screen are counted a moment after the form appeared. A message drawn by a web page
+    /// has no height until the page reports it, and the cards below it would look like they are on screen
+    /// while it is one line tall: nothing is counted before it was laid out (but a page that never says
+    /// anything is not waited for for ever).
+    func begin(_ composer: AnswerComposer, awaitingMessage: Bool, patience: Duration = .seconds(3)) async {
         live = false
+        messageIsLaidOut = !awaitingMessage
         try? await Task.sleep(for: .milliseconds(150))
+        let deadline = ContinuousClock.now + patience
+        while !messageIsLaidOut, ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        if awaitingMessage {
+            // The new height reaches the cards' frames a frame or two later.
+            try? await Task.sleep(for: .milliseconds(150))
+        }
         guard !Task.isCancelled else { return }
         live = true
         markSeen(composer)
     }
+
+    /// The message's page reported its first layout (or the native renderer took over).
+    func messageSettled() { messageIsLaidOut = true }
 
     func update(_ reading: Reading, composer: AnswerComposer) {
         latest = reading
@@ -262,14 +285,26 @@ private final class ReadingTracker {
 private struct MessageCard: View {
     let ask: AskView
     let macId: String
+    /// The message has been laid out (see `WebMarkdownView`); said at once when it needs no page.
+    var onSettled: () -> Void = {}
+
+    /// What the card shows of the message: its text, trimmed.
+    private static func text(of ask: AskView) -> String {
+        ask.message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Whether a web page draws the message, whose height is then known only once the page said so.
+    static func drawnByWebPage(_ ask: AskView, launch: LaunchOptions) -> Bool {
+        launch.webMarkdown && ask.isMarkdown && !text(of: ask).isEmpty
+    }
 
     var body: some View {
-        let text = ask.message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = Self.text(of: ask)
         if !text.isEmpty || !ask.message.files.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 if !text.isEmpty {
                     if ask.isMarkdown {
-                        MarkdownView(text: text)
+                        WebMarkdownView(text: text, onSettled: onSettled)
                     } else {
                         Text(verbatim: text).font(.body).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                     }

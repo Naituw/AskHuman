@@ -282,7 +282,16 @@ ZH = {
     "Forget all pairings?": "忘记所有配对？",
     "This removes every Mac and the broker account from this phone. Your Macs are told, and you can pair again at any time.": "这会从这部手机移除所有 Mac 和 Broker 账号。你的 Mac 会收到通知，你随时可以重新配对。",
     # Markdown
+    "Copy": "复制",
     "Copy code": "复制代码",
+    # Web Markdown (the words the page shows, same as the Mac popup's diagram notes)
+    "Show Mermaid source": "查看 Mermaid 源码",
+    "Show diagram": "查看图表",
+    "Rendering diagram…": "正在渲染图表…",
+    "Diagram limit reached; showing source": "图表数量已达上限，已显示源码",
+    "Diagram exceeds the safety limit; showing source": "图表超出安全上限，已显示源码",
+    "Diagram could not be rendered; showing source": "图表无法渲染，已显示源码",
+    "Diagrams cannot be drawn here; showing source": "这里无法绘制图表，已显示源码",
     "Image": "图片",
     # Messages
     "The Mac is offline. Your draft is kept; try again when it is back.": "Mac 已离线，草稿已保留，请在它恢复后重试。",

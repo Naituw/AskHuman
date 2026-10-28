@@ -45,6 +45,17 @@ struct LaunchOptions {
     /// A request (on the first Mac) whose notification was tapped: its page opens at once, whether or
     /// not the Macs have answered yet, with a made-up notification text.
     var notifyRequest: String?
+    /// `-AHWebMarkdown NO` draws every Markdown body with the native renderer, as the app does when its web
+    /// page cannot be used (UI tests take that road on purpose).
+    var webMarkdown = true
+    /// Seconds a Markdown page may take to draw before the native renderer takes over: 5 on a phone. The
+    /// simulator needs seconds to start web content the first time (more than 10 on a busy Mac), and
+    /// falling back there would hide the page from whoever is looking at it, so it waits longer.
+    #if targetEnvironment(simulator)
+    var webTimeout = 30.0
+    #else
+    var webTimeout = 5.0
+    #endif
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
@@ -68,6 +79,8 @@ struct LaunchOptions {
         if defaults.object(forKey: "AHAdvanceHold") != nil { advanceHold = defaults.double(forKey: "AHAdvanceHold") }
         if defaults.object(forKey: "AHAdvanceSettle") != nil { advanceSettle = defaults.double(forKey: "AHAdvanceSettle") }
         notifyRequest = defaults.string(forKey: "AHNotify")
+        if defaults.object(forKey: "AHWebMarkdown") != nil { webMarkdown = defaults.bool(forKey: "AHWebMarkdown") }
+        if defaults.object(forKey: "AHWebTimeout") != nil { webTimeout = defaults.double(forKey: "AHWebTimeout") }
     }
 }
 

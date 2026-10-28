@@ -1,0 +1,3 @@
+markdown-it 14.3.0 (MIT)  node_modules/markdown-it/dist/markdown-it.min.js
+mermaid 11.16.1 (MIT)  node_modules/mermaid/dist/mermaid.min.js
+Written by ios/Tools/web-markdown/sync.sh; do not edit by hand.

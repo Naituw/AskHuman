@@ -1,0 +1,181 @@
+/* The Markdown body of the phone. The rules follow the Mac popup's `.markdown-body` (src/styles/controls.css),
+   with the iOS system colors and Dynamic Type. */
+:root {
+  color-scheme: light dark;
+  --fg: #000;
+  --fg2: rgba(60, 60, 67, 0.6);
+  --link: #007aff;
+  --code-bg: rgba(120, 120, 128, 0.14);
+  --border: rgba(60, 60, 67, 0.29);
+  --thead-bg: rgba(120, 120, 128, 0.12);
+  --quote-border: rgba(60, 60, 67, 0.3);
+  --btn-bg: rgba(255, 255, 255, 0.85);
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #fff;
+    --fg2: rgba(235, 235, 245, 0.6);
+    --link: #0a84ff;
+    --code-bg: rgba(120, 120, 128, 0.28);
+    --border: rgba(84, 84, 88, 0.65);
+    --thead-bg: rgba(120, 120, 128, 0.24);
+    --quote-border: rgba(235, 235, 245, 0.3);
+    --btn-bg: rgba(60, 60, 67, 0.85);
+  }
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--fg);
+  /* The system's body size: it follows Dynamic Type like the native text next to it. */
+  font: -apple-system-body;
+  line-height: 1.32;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+#content > :first-child { margin-top: 0; }
+#content > :last-child { margin-bottom: 0; }
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 14px 0 6px;
+}
+h1 { font-size: 1.3em; }
+h2 { font-size: 1.17em; }
+h3 { font-size: 1.06em; }
+h4, h5, h6 { font-size: 1em; }
+
+p { margin: 0 0 10px; }
+ul, ol { margin: 0 0 10px; padding-left: 1.5em; }
+li { margin: 3px 0; }
+li > p { margin: 0 0 4px; }
+li > ul, li > ol { margin: 3px 0 0; }
+
+blockquote {
+  margin: 0 0 10px;
+  padding: 0 0 0 12px;
+  border-left: 3px solid var(--quote-border);
+  color: var(--fg2);
+}
+hr {
+  border: none;
+  border-top: 0.5px solid var(--border);
+  margin: 14px 0;
+}
+a { color: var(--link); text-decoration: none; }
+del { color: var(--fg2); }
+img { max-width: 100%; border-radius: 6px; }
+.md-image-missing {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--code-bg);
+  color: var(--fg2);
+  font-size: 0.85em;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  padding: 1.5px 5px;
+  border-radius: 4px;
+  background: var(--code-bg);
+}
+.code-block {
+  position: relative;
+  margin: 10px 0;
+}
+pre {
+  margin: 0;
+  background: var(--code-bg);
+  padding: 12px;
+  border-radius: 10px;
+  overflow-x: auto;
+}
+pre code {
+  padding: 0;
+  background: none;
+  font-size: 0.8em;
+  white-space: pre;
+}
+.code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: var(--btn-bg);
+  color: var(--fg2);
+}
+.code-copy .cc-ico { width: 14px; height: 14px; }
+.code-copy .cc-check { display: none; }
+.code-copy.copied { color: var(--link); }
+.code-copy.copied .cc-copy { display: none; }
+.code-copy.copied .cc-check { display: block; }
+
+/* A wide table scrolls sideways inside its own box instead of squeezing the columns. */
+.table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 10px 0;
+}
+table {
+  border-collapse: collapse;
+  /* As wide as the content, up to a cap: long cells wrap there, and the box scrolls sideways. */
+  width: max-content;
+  max-width: 34em;
+}
+th, td {
+  border: 0.5px solid var(--border);
+  padding: 5px 10px;
+  text-align: left;
+  /* Without a floor the auto layout squeezes the short columns of a phone-wide table to one character. */
+  min-width: 4.5em;
+}
+thead th { background: var(--thead-bg); }
+
+/* Mermaid */
+.mermaid-block.mermaid-rendered > pre { display: none; }
+.mermaid-block.mermaid-rendered.show-source > pre { display: block; }
+.mermaid-block.mermaid-rendered.show-source > .mermaid-canvas { display: none; }
+.mermaid-block.mermaid-rendered > .code-copy { display: none; }
+.mermaid-block.mermaid-rendered.show-source > .code-copy { display: inline-flex; }
+.mermaid-canvas {
+  overflow-x: auto;
+  padding: 8px;
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+}
+.mermaid-canvas svg {
+  display: block;
+  height: auto;
+  margin: 0 auto;
+}
+.mermaid-status {
+  color: var(--fg2);
+  font-size: 0.8em;
+  padding: 6px 2px 0;
+}
+.mermaid-source-toggle {
+  margin-top: 6px;
+  padding: 3px 10px;
+  border: 0.5px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--link);
+  font: -apple-system-footnote;
+}

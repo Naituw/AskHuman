@@ -125,7 +125,7 @@ private struct DetailCard: View {
             let body = confirm.detail.bodyMd.trimmingCharacters(in: .whitespacesAndNewlines)
             if !body.isEmpty {
                 Divider()
-                MarkdownView(text: body)
+                WebMarkdownView(text: body)
             } else if !confirm.detail.summary.isEmpty {
                 Divider()
                 Text(verbatim: confirm.detail.summary).font(.body).textSelection(.enabled)

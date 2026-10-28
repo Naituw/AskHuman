@@ -801,6 +801,16 @@
         }
       }
     },
+    "Copy" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制"
+          }
+        }
+      }
+    },
     "Copy code" : {
       "localizations" : {
         "zh-Hans" : {
@@ -917,6 +927,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "描述任务"
+          }
+        }
+      }
+    },
+    "Diagram could not be rendered; showing source" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图表无法渲染，已显示源码"
+          }
+        }
+      }
+    },
+    "Diagram exceeds the safety limit; showing source" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图表超出安全上限，已显示源码"
+          }
+        }
+      }
+    },
+    "Diagram limit reached; showing source" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图表数量已达上限，已显示源码"
+          }
+        }
+      }
+    },
+    "Diagrams cannot be drawn here; showing source" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这里无法绘制图表，已显示源码"
           }
         }
       }
@@ -2353,6 +2403,16 @@
         }
       }
     },
+    "Rendering diagram…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在渲染图表…"
+          }
+        }
+      }
+    },
     "Request unavailable" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2549,6 +2609,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "显示"
+          }
+        }
+      }
+    },
+    "Show Mermaid source" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看 Mermaid 源码"
+          }
+        }
+      }
+    },
+    "Show diagram" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看图表"
           }
         }
       }
