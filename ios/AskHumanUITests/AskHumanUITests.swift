@@ -272,10 +272,11 @@ final class AskHumanUITests: XCTestCase {
 
     /// Taps "Next" until the last question is on screen, and says in which order the questions came
     /// between the bars (by their text fields): a question that was skipped is missing from the order.
-    private func questionsReachedByNext(limit: Int = 4) -> [Int] {
+    private func questionsReachedByNext(limit: Int = 4, shotPrefix: String? = nil) -> [Int] {
         var order: [Int] = []
-        for _ in 0..<limit {
+        for tap in 1...limit {
             tapNext()
+            if let shotPrefix { shot("\(shotPrefix)-\(tap)") }
             for index in 0..<3 where isBetweenTheBars("answer-text-\(index)") && !order.contains(index) {
                 order.append(index)
             }
@@ -301,7 +302,8 @@ final class AskHumanUITests: XCTestCase {
         XCTAssertTrue(answeredCount().contains("0/3"))
 
         scrollToTop()
-        let order = questionsReachedByNext()
+        shot("26-scrolled-back")
+        let order = questionsReachedByNext(shotPrefix: "27-next-after-scrolling-back")
         XCTAssertEqual(order, [0, 1, 2], "from the top, Next leads on one question at a time, none is jumped over")
     }
 
