@@ -1038,6 +1038,11 @@ pub struct TodosInit {
 
 #[tauri::command]
 pub fn todos_init() -> TodosInit {
+    // iCloud todo sync: opening the window pulls if the last pull is stale; the file watcher
+    // refreshes the lists when the result lands. Nothing waits for it.
+    if crate::todo_sync::service::is_enabled() {
+        std::thread::spawn(crate::todo_sync::service::refresh_if_stale);
+    }
     // 现读配置而非 `AppState.config`：GUI Host 常驻，进程级快照会滞后于设置变更，
     // 重开窗口时会拿到旧主题/语言（原生窗口底色已切、内容却停在旧主题）。
     let config = AppConfig::load_without_secrets();
@@ -2786,11 +2791,14 @@ fn build_new_task_projects(
     out
 }
 
-/// 当前有待办的项目 key（git 根）。
+/// 当前有待办的项目 key（git 根）。iCloud 同步的「本机没有目录」项目（虚拟 key）不是可启动任务的
+/// 目录，不列入。
 fn todo_project_keys() -> Vec<String> {
     crate::todos::all()
         .into_iter()
-        .filter(|(_, entries)| !entries.is_empty())
+        .filter(|(key, entries)| {
+            !entries.is_empty() && !crate::todo_sync::cloudkeys::is_virtual(key)
+        })
         .map(|(key, _)| key)
         .collect()
 }

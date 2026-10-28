@@ -1,0 +1,59 @@
+{
+  "name": "a batch with a new record, an update, a conflict and a failure",
+  "request": {
+    "id": 7,
+    "op": "save",
+    "records": [
+      {
+        "recordName": "todo-2",
+        "recordType": "Todo",
+        "payload": "eyJ2IjoxLCJwIjoiZ2l0aHViLmNvbS9uYWl0dXcvaHVtYW5pbmxvb3AiLCJ0ZXh0Ijp7InYiOiJyZXZpZXcgdGhlIHNwZWMiLCJoIjoiMDAwMTcwMDAwMDAwMDEwMC0wMDAwLWJiYmJiYmJiIn19"
+      },
+      {
+        "recordName": "todo-1",
+        "recordType": "Todo",
+        "payload": "eyJ2IjoxLCJwIjoiZ2l0aHViLmNvbS9uYWl0dXcvaHVtYW5pbmxvb3AiLCJ0ZXh0Ijp7InYiOiJ3cml0ZSB0aGUgcGxhbiIsImgiOiIwMDAxNzAwMDAwMDAwMDAwLTAwMDAtYWFhYWFhYWEifX0=",
+        "changeTag": "tag-a1"
+      },
+      {
+        "recordName": "todo-3",
+        "recordType": "Todo",
+        "payload": "eyJ2IjoxLCJwIjoiZ2l0aHViLmNvbS9uYWl0dXcvaHVtYW5pbmxvb3AiLCJ0ZXh0Ijp7InYiOiJyZXZpZXcgdGhlIHNwZWMiLCJoIjoiMDAwMTcwMDAwMDAwMDEwMC0wMDAwLWJiYmJiYmJiIn19",
+        "changeTag": "tag-old"
+      },
+      {
+        "recordName": "device-1",
+        "recordType": "Device",
+        "payload": "eyJ2IjoxLCJuYW1lIjoiTWFjIFN0dWRpbyIsImxhc3RTeW5jTXMiOjE3MDAwMDAwMDAwMDAsInByb2plY3RzIjpbImdpdGh1Yi5jb20vbmFpdHV3L2h1bWFuaW5sb29wIl19",
+        "changeTag": "tag-d1"
+      }
+    ]
+  },
+  "response": {
+    "id": 7,
+    "ok": true,
+    "results": [
+      {
+        "recordName": "todo-2",
+        "status": "saved",
+        "changeTag": "tag-b1"
+      },
+      {
+        "recordName": "todo-1",
+        "status": "saved",
+        "changeTag": "tag-a2"
+      },
+      {
+        "recordName": "todo-3",
+        "status": "conflict",
+        "serverPayload": "eyJ2IjoxLCJwIjoiZ2l0aHViLmNvbS9uYWl0dXcvaHVtYW5pbmxvb3AiLCJ0ZXh0Ijp7InYiOiJyZXZpZXcgdGhlIHNwZWMgKGVkaXRlZCBlbHNld2hlcmUpIiwiaCI6IjAwMDE3MDAwMDAwMDA5MDAtMDAwMC1jY2NjY2NjYyJ9fQ==",
+        "serverChangeTag": "tag-c9"
+      },
+      {
+        "recordName": "device-1",
+        "status": "error",
+        "code": "quotaExceeded"
+      }
+    ]
+  }
+}

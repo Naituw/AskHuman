@@ -4,7 +4,7 @@
 // selection; this component only renders it, reports clicks / keys and manages focus.
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ALL_KEY, stepSelection, type SidebarModel } from "./todoProjects";
+import { ALL_KEY, stepSelection, type SidebarModel, type SidebarSection } from "./todoProjects";
 
 const props = defineProps<{
   model: SidebarModel;
@@ -16,6 +16,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [key: string];
   "update:query": [value: string];
+  /** The folded "projects without todos" section was clicked. */
+  "toggle-empty": [];
 }>();
 
 defineSlots<{
@@ -25,6 +27,11 @@ defineSlots<{
 
 const { t } = useI18n();
 
+/** Outline of a cloud and of a laptop, 16×16, drawn as strokes like the other icons here. */
+const CLOUD_PATH =
+  "M4.6 12.4h6.3a2.7 2.7 0 0 0 .5-5.35A3.7 3.7 0 0 0 4.3 6.2 3.1 3.1 0 0 0 4.6 12.4z";
+const LAPTOP_PATH = "M3.4 4.2h9.2v6.1H3.4zM1.8 12.2h12.4";
+
 const listRef = ref<HTMLElement | null>(null);
 const searchRef = ref<HTMLInputElement | null>(null);
 
@@ -33,8 +40,19 @@ const tabStop = computed(() =>
   props.model.navKeys.includes(props.selectedKey) ? props.selectedKey : (props.model.navKeys[0] ?? "")
 );
 
-function sectionLabel(id: "withTodos" | "recent"): string {
-  return t(id === "withTodos" ? "todosWin.sectionWithTodos" : "todosWin.sectionRecent");
+function sectionLabel(section: SidebarSection): string {
+  switch (section.id) {
+    case "withTodos":
+      return t("todosWin.sectionWithTodos");
+    case "recent":
+      return t("todosWin.sectionRecent");
+    case "synced":
+      return t("todosWin.sectionSynced");
+    case "empty":
+      return t("todosWin.sectionEmpty", { n: section.total });
+    default:
+      return t("todosWin.sectionLocalOnly");
+  }
 }
 
 function rows(): HTMLElement[] {
@@ -198,16 +216,60 @@ defineExpose({
         v-for="section in model.sections"
         :key="section.id"
         class="td-side-section"
+        :class="`td-side-section-${section.id}`"
         role="group"
-        :aria-label="sectionLabel(section.id)"
+        :aria-label="sectionLabel(section)"
       >
-        <div class="td-side-section-title" aria-hidden="true">{{ sectionLabel(section.id) }}</div>
+        <!-- The projects without todos fold into one row; it is not a project and not in the key order. -->
+        <button
+          v-if="section.id === 'empty'"
+          type="button"
+          class="td-side-row td-side-fold"
+          :aria-expanded="!section.collapsed"
+          @click="emit('toggle-empty')"
+        >
+          <svg class="td-side-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              d="M1.8 4.6c0-.8.6-1.4 1.4-1.4h2.9l1.5 1.6h5.2c.8 0 1.4.6 1.4 1.4v5.6c0 .8-.6 1.4-1.4 1.4H3.2c-.8 0-1.4-.6-1.4-1.4z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.3"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span class="td-side-name">{{ sectionLabel(section) }}</span>
+          <svg
+            class="td-side-chevron"
+            :class="{ open: !section.collapsed }"
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+          >
+            <path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <div v-else class="td-side-section-title" aria-hidden="true">
+          <svg
+            v-if="section.id === 'synced'"
+            class="td-side-title-icon"
+            viewBox="0 0 16 16"
+          >
+            <path :d="CLOUD_PATH" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+          </svg>
+          <svg
+            v-else-if="section.id === 'localOnly'"
+            class="td-side-title-icon"
+            viewBox="0 0 16 16"
+          >
+            <path :d="LAPTOP_PATH" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+          </svg>
+          {{ sectionLabel(section) }}
+        </div>
         <button
           v-for="row in section.rows"
           :key="row.key"
           type="button"
           class="td-side-row"
-          :class="{ selected: selectedKey === row.key }"
+          :class="{ selected: selectedKey === row.key, nested: section.id === 'empty' }"
           role="option"
           :aria-selected="selectedKey === row.key"
           :tabindex="tabStop === row.key ? 0 : -1"
@@ -227,6 +289,27 @@ defineExpose({
           <span class="td-side-name">
             {{ row.name }}<span v-if="row.hint" class="td-side-hint"> · {{ row.hint }}</span>
           </span>
+          <!-- Where a project is not simply "a folder here": only in iCloud, or never in iCloud. -->
+          <svg
+            v-if="row.scope === 'cloudOnly'"
+            class="td-side-scope"
+            viewBox="0 0 16 16"
+            role="img"
+            :aria-label="t('todosWin.cloudOnlyTag')"
+          >
+            <title>{{ t("todosWin.cloudOnlyTag") }}</title>
+            <path :d="CLOUD_PATH" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-dasharray="2 1.6" />
+          </svg>
+          <svg
+            v-else-if="row.scope === 'localOnly'"
+            class="td-side-scope"
+            viewBox="0 0 16 16"
+            role="img"
+            :aria-label="t('todosWin.localOnlyTag')"
+          >
+            <title>{{ t("todosWin.localOnlyTag") }}</title>
+            <path :d="LAPTOP_PATH" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+          </svg>
           <span v-if="row.count" class="td-side-count">{{ row.count }}</span>
         </button>
       </div>
@@ -348,6 +431,41 @@ defineExpose({
   white-space: nowrap;
 }
 .td-side-hint {
+  color: var(--text-tertiary);
+}
+.td-side-section-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.td-side-title-icon {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+}
+/* The folded "projects without todos" row: dimmer than the projects it hides. */
+.td-side-fold {
+  margin-top: 4px;
+  color: var(--text-secondary);
+}
+.td-side-chevron {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  color: var(--text-tertiary);
+  transition: transform 0.12s ease;
+}
+.td-side-chevron.open {
+  transform: rotate(90deg);
+}
+.td-side-row.nested {
+  padding-left: 18px;
+  color: var(--text-secondary);
+}
+.td-side-scope {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
   color: var(--text-tertiary);
 }
 .td-side-count {

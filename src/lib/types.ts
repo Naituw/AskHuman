@@ -863,6 +863,106 @@ export interface ExperimentalConfig {
   verticalQuestions: boolean;
 }
 
+/** iCloud todo sync settings (the on/off switch is a marker file, not config; spec todo-sync §8). */
+export interface TodoSyncConfig {
+  /** This Mac's name in the synced device list; empty = the computer name. */
+  deviceName: string;
+  /** Poll interval of the sync helper in minutes (not shown in the UI). */
+  pollMinutes: number;
+}
+
+/** What `todo_sync_status` returns (mirror of Rust `todo_sync::service::Status`). */
+export interface TodoSyncStatus {
+  /** macOS, outside a Dev Instance. */
+  supported: boolean;
+  enabled: boolean;
+  /** A tick is running right now. */
+  syncing: boolean;
+  deviceName: string;
+  /** Why this Mac stopped syncing and waits for the user. */
+  paused: "accountChanged" | "zoneMissing" | "notSignedIn" | "quota" | null;
+  lastPullOkMs: number;
+  lastPushOkMs: number;
+  /** Entities with local changes the cloud has not acknowledged. */
+  unsynced: number;
+  todos: number;
+  history: number;
+  devices: { name: string; lastSyncMs: number; thisMac: boolean }[];
+  helper: {
+    state: "running" | "notRunning" | "incompatible" | "unsupported";
+    version: string | null;
+    environment: string | null;
+    problem: string | null;
+    installed: boolean;
+  };
+  lastTick: {
+    atMs: number;
+    reason: string;
+    outcome:
+      | "ok"
+      | "fresh"
+      | "offline"
+      | "timedOut"
+      | "unavailable"
+      | "paused"
+      | "busy"
+      | "disabled"
+      | "error";
+    message?: string;
+    fetched: number;
+    merged: number;
+    pushed: number;
+  } | null;
+  /** `state.json` belongs to a newer build. */
+  newerState: boolean;
+}
+
+/** One Mac in a synced project's list (mirror of Rust `DeviceRow`). */
+export interface TodoSyncMac {
+  name: string;
+  lastSyncMs: number;
+  thisMac: boolean;
+}
+
+/**
+ * One synced project, merged across this Mac's directories (mirror of Rust `service::SyncProject`;
+ * spec todo-sync §5.2, §9.4).
+ */
+export interface TodoSyncProject {
+  /** Normalized git remote, e.g. `github.com/acme/app`. */
+  identity: string;
+  /** This Mac's directories of the project (project keys); empty = only the iCloud replica exists here. */
+  keys: string[];
+  /** The key the todos live under while no directory exists (`icloud:<identity>`). */
+  cloudKey: string | null;
+  /** Macs that have a directory for the project, this one first. */
+  macs: TodoSyncMac[];
+}
+
+/** Where a todo came from / was finished (mirror of Rust `service::Origin`). */
+export interface TodoSyncOrigin {
+  /** The Mac's name; empty while its record has not arrived yet. */
+  device: string;
+  thisMac: boolean;
+}
+
+/** What `todo_sync_project_details` returns, all keyed by todo id (mirror of Rust `ProjectDetails`). */
+export interface TodoSyncProjectDetails {
+  /** Pending todos created on another Mac → that Mac's name. */
+  createdOn: Record<string, string>;
+  /** Finished todos → where they were finished. */
+  doneOn: Record<string, TodoSyncOrigin>;
+  /** Pending todos whose attachments live on another Mac. */
+  attachments: Record<string, { count: number; device: string }>;
+}
+
+/** Outcome of the helper's login-item registration. */
+export interface TodoSyncRepair {
+  ok: boolean;
+  needsApproval: boolean;
+  message: string;
+}
+
 /** 权限确认相关全局设置（spec codex-permission-remember）。 */
 export interface PermissionsConfig {
   /** Codex shell 宽松模式全局开关（D52）：非危险且可解析的 shell 命令自动放行。 */
@@ -911,6 +1011,7 @@ export interface AppConfig {
   agentTasks: AgentTasksConfig;
   permissions: PermissionsConfig;
   experimental: ExperimentalConfig;
+  todoSync?: TodoSyncConfig;
 }
 
 /** Whether each channel secret is currently stored (drives the "Saved" placeholder). */

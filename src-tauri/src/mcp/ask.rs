@@ -820,11 +820,14 @@ these IDs before calling `todo_update`.",
                 &todo_arguments_value(&params),
             )
             .await;
-        let entries = tokio::task::spawn_blocking(move || crate::todos::list(&project))
-            .await
-            .map_err(|error| {
-                McpError::internal_error(format!("todo_list task failed: {error}"), None)
-            })?;
+        let entries = tokio::task::spawn_blocking(move || {
+            crate::todo_sync::service::before_read(&project);
+            crate::todos::list(&project)
+        })
+        .await
+        .map_err(|error| {
+            McpError::internal_error(format!("todo_list task failed: {error}"), None)
+        })?;
         let output = format_todo_list(&entries);
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
     }

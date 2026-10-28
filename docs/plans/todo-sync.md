@@ -316,3 +316,52 @@ tick(reason, budget):
 
 - 2026-10-27：评审通过，用户上班不在线，原话「你自己全部搞定」。渠道预设问题没有再问，取最保守的 popup-only（不挂任何 IM 预设）。分支 `feat/todo-sync`，worktree `../HumanInLoop-todosync`。
 - 授权边界不变：开发者后台新建 App ID / 容器 / 描述文件、Dashboard 部署 schema、公证上传、注册设备都只有用户能做（§7）；这些步骤之前的阶段能做多少做多少，被挡住的验收项会写在 `docs/PROGRESS.md`。SSH 到 Mac B 需要用户当次同意。
+- **P2 同步核心（`src-tauri/src/todo_sync/`）完成**，与计划的差异：
+  - 旁路状态里实体是嵌套的 `Rec{e, dirty, tag}`（§3.1 画成平铺），另有 `deviceRecTag`（本机 `Device` 记录的服务器标签）。
+  - 首次同步**先拉后做本地阶段**：`lastPullOkMs == 0` 时 `local_only` 是空操作，`full` 先 fetch 再 diff，首次合并的排序键才能参照云端已有实体（需求 §5.6）。
+  - 项目身份变了（remote 被改）：该目录的快照丢弃（等于「首次见到」），属于旧项目的 id 重新生成（带附件的条目留在本机、不同步，因为附件目录以 id 命名）。
+  - 附件提示只接管缺失 / 空 / 自己写的提示（`diff.rs`）。
+  - 新增 `tick::resume`（配额暂停后用户点「重试」）；未启用时 `full` / `restart_from_local` / `clear_cloud` / `resume` 也不创建旁路目录（零影响，有测试）。
+  - 一个执行完又被「历史上限」裁掉、而 diff 没有机会先看到它的条目（一次性执行超过上限条）会被当作删除，而不是「已完成但本机不显示」：无害，不处理。
+  - 测试在 `todo_sync/sim.rs`：顺序模型（每步操作后全体同步，逐步与「一份共享列表」模型比对，含顺序与历史）、随机并发（离线 / 丢确认 / 重复投递 / 令牌过期 / 时钟偏差 / 随机崩溃注入）、崩溃点全枚举（含二次崩溃）、各暂停原因。`TODO_SYNC_SOAK=<n>` 把种子数调大做浸泡。
+- **P1 侧栏重构完成**（`feat(todos): replace the project dropdown with a sidebar`），与计划的差异：
+  - 「全部待办」聚合视图直接内联在 `TodosView.vue`（共用现有行样式），没有单独拆组件；分组排序、标签、折叠（每次 50 行，「显示更多」再加 50 行）都在纯函数 `todoProjects.ts` 里并有 vitest。
+  - `todos_all_pending` 只返回「按 key 排序的非空分组」，顺序由前端按侧栏顺序排（后端不知道活跃 Agent 的排名）；聚合行可直接勾选完成（沿用 1 秒撤回），点行 / 「打开项目 ›」切到该项目并选中该待办。
+  - `todos_init` 多返回 `home`，用来把路径显示成 `~/...`；项目头 `⋯` 菜单（复制路径、在访达中显示）是本机模式下的最小版本，iCloud 模式的项（复制仓库地址、从 iCloud 移除）留给 P5。
+  - ⌘/Ctrl+F 聚焦侧栏搜索（窄窗同时展开抽屉），Esc 收起抽屉 / 菜单；侧栏里的 ↑/↓/Home/End 自己处理，窗口级的待办行 ↑/↓ 导航对侧栏事件让路。
+  - 新增浏览器预览页 `src/prototype/todos-window.html`（`mockIPC` 驱动真实 `TodosView`；`?data=real|stress|empty|dups&theme=&platform=`），看布局、深浅色、窄窗抽屉、大数据时用，P5 的 iCloud 视图也复用它。
+  - 本机 shell 的 `HOME` 被指到 `/tmp/ph` 时，`pnpm install` 会因 store 路径不同要求清空重装 `node_modules`（交互提示会让 `install.sh` 卡住）：需要 `export npm_config_store_dir=<真实 HOME>/Library/pnpm/store/v10`。
+- **P3 CloudKit helper（`todo-sync-helper/`）完成（未上真机）**，与计划的差异：
+  - 纯 Swift 的 `Kit/`（线编解码、分发、tick 调度、错误映射、套接字服务、CloudKit 后端）与 XcodeGen 生成的 `App/` 分开，`swift test` 不需要签名即可跑（43 个测试，含与 Rust 共用的 `Fixtures/rpc-v1`）。
+  - 未签名的构建能启动、开套接字，并对 `hello` 回 `problem=missingEntitlement`；`build.sh dev|devid` 会联系 Apple，没有 `HELPER_ALLOW_CLOUD_CHANGES=1` 拒绝运行。账号状态、建区、增量拉取、保存与冲突的调用沿用 S0 spike 已验证的写法，但**没有对真实 iCloud 跑过**，P3 的验收项（RPC 往返、订阅推送、唤醒 / 联网 / 轮询触发、被杀自恢复、空闲资源）都被 §7 的手动步骤挡住，登记在 `docs/PROGRESS.md`。
+- **P4 集成完成（Rust 与窗口 / 设置卡，未上真机）**，与计划的差异：
+  - 开关是标记文件 `state/todo-sync/enabled`，不是配置里的 `enabled`：读路径关闭时只多一次 `stat`，Dev Instance 与非 macOS 由 `service::supported()` 恒关闭；配置 `todoSync` 只放设备名与轮询间隔。
+  - 新增 `service.rs`（文件位置、启用 / 停用 / 清除 / 恢复 / 从本地重来、状态、`last-tick.json`、给 helper 的 `helper.json`、helper 拉起节流）、`helper_client.rs`（生产 `Transport`）、`commands.rs`（`todo_sync_*` 命令组）与隐藏的 `cli/todo_sync_cmd.rs`；`NetError` 增加 `TimedOut` / `Unavailable`，helper 缺失 / 未签名 / 太旧 / 太慢都是软结果（tick 仍做完本地阶段）；`Opts.fresh_within_ms` 用来在近期拉过时跳过网络。
+  - 读取钩子的位置：`before_read` 接入 CLI `todo`、Stop 卡、MCP 待办列表、IM `/todo` 与 `/new`（含管理卡的 `send_todo_manage`）；`todos_list` 不调用它，窗口只在 `todos_init` / `todo_sync_touch` 里后台触发 `refresh_if_stale`，靠 `todos.json` 的文件监听拿结果，打开路径零网络。
+  - 设置 → 实验 →「待办存储」卡片；侧栏底部的同步状态在首帧之后才请求，只在同步开启时轮询；从侧栏跳到卡片时即使实验功能关着也显示实验页。
+  - 清空「某个已同步项目的待办」时也会提示其他 Mac 同样会丢失（计划只要求清空历史的全局提示）。
+- **P5 iCloud 模式界面完成（未上真机）**，与计划 / 需求的差异：
+  - **仅云端项目不读写「旁路实体」，而是以虚拟键 `icloud:<身份>` 住在 `todos.json` 里**（`cloudkeys.rs`；需求 §9.4 / §9.8 已改写）。这样窗口、IM、CLI 的读写路径都不用为它写特例，diff / 物化 / 推送也不用；代价是虚拟键要有生命周期（`ensure` → diff → `prune`，真实目录出现时接管且不丢未同步的编辑）并被排除在「新建任务」候选与 IM `/todo` 的项目选择之外。「从 iCloud 移除」给该身份的所有存活实体打墓碑，不是封禁。
+  - 窗口新增三个命令：`todo_sync_projects`（读旁路缓存，不读 git、不联网，同步关闭时 `stat` 一次返回空）、`todo_sync_project_details`（来源 Mac / 附件提示 / 完成所在 Mac，异步补充）、`todo_sync_remove_project`。`todo_sync_projects` 与 `todos_projects` 并行取，首屏分组一次到位。
+  - 同一仓库的多个目录合并成一行（行键取最近使用的目录）；同步行以仓库身份命名（最后一段，重名时加 owner 提示），**仅本机行以目录名为准**（界面稿里写的是整条路径，侧栏不放路径）；搜索同时匹配目录。「无待办的项目」折叠区收纳所有零待办项目（含仅本机的），搜索或选中项在其中时自动展开。「全部待办」里同一仓库的副本去重，顺序同侧栏（有 remote 的在前，仅本机的在后）。
+  - 性能（优化构建，压力数据 200 项目 / 4000 实体，`todos.json` 797 KiB、`state.json` 1.95 MiB）：本地阶段（空闲）中位数 21.5 ms（目标 ≤ 100 ms），`todo_sync_projects` 5.8 ms，单独读 `todos.json` 0.8 ms；前端视图模型在 640 个项目行上不到 0.5 ms。真实 Dev Instance 上无法开启同步（`supported()`），iCloud 模式的首屏数字待真机补。
+  - 与界面稿 `docs/assets/todo-sync-ui/` 的对照是用浏览器预览（`data=icloud`，浅色 / 深色）目测完成的，不是像素级。
+- **真实 iCloud（Development 环境）验证完成**（用户 2026-10-27 22:05 授权：Xcode 自动签名创建 App ID / 容器 / 开发描述文件，只在 Development 环境、在本机用两份独立状态模拟两台设备）。与计划的差异与发现：
+  - **一台 Mac 只能模拟「两个副本」，不能模拟「两台设备」**：两份假 HOME（A、B）各有自己的 `todos.json` 与旁路状态，共用一个 helper（B 的 `helper.sock` 软链到 A 的），所以 CloudKit 只看到一台设备，B 的保存不会给 A 的 helper 发推送（`apns=registered` 但没收到）。因此推送路径与延迟（E1 / E2）、睡眠唤醒与联网触发（E8）、登录项安装形态仍要两台真 Mac；T7 改成「轮询追平 + 报告」（1 分钟轮询加 30 秒 leeway，实测 14–98 秒追平，中位约 70 秒）。
+  - 验收脚本是 `scripts/todo-sync-e2e.py`（`setup | reset | run [用例…] | teardown`，用法见 `docs/overview-todo-sync.md`）。13 组用例共 59 项断言全过（最终版脚本 + 最终版二进制，`reset` 后从空白开始一次跑完）：互传（增 / 改 / 排序 / 完成 / 恢复 / 删除）、并发编辑、历史与全局清空、虚拟键与接管、worktree、helper 缺席、账号变化、重建、清云 / 暂停 / 恢复、轮询追平、`kill -9` 循环、空闲资源。
+  - **新容器在大陆 iCloud 账号上，首次访问私有库会被拒**（CKError 15 `serverRejectedRequest`，helper 映射成 `rpc_failed code=other`）：与 S0 一样，要账号所有者在 CloudKit Dashboard 里把该容器的 Development 环境打开一次（不用建区）后才正常。这是开发者侧的一次性初始化，不是产品缺陷；Production 同理要在 Dashboard 里部署 schema（§7）。
+  - **验收中发现并修了一个真实缺陷**：旁路目录里只剩 `enabled` 标记、`state.json` 丢了（手动清理、半损坏）时，tick 以为「同步关闭」直接空转，设置里却显示已开启。`service::run_tick_with` 现在在「有标记、无状态」时重建状态（新设备 id，实体按 id 从云端认领，不重复）；`state.json` 内容损坏的情形本来就由 `load_for_tick` 重建。有单元测试，E12 也加了这一步（先只删 `state.json`，再删整个旁路目录两种路径）。
+  - **真实延迟（本机负载很高时测的）**：`fetch` 中位 0.48 s（p90 0.83 s）、`save` 0.70 s、`ensure`（建区 + 订阅）中位约 2 s（1.3–4.8 s）、首次全量同步约 13 s；无改动的 `AskHuman todo-sync tick` 中位 0.45 s（冷连接的第一次 2.45 s）。whats-next 的 1.5 s 拉取预算够用，冷连接时会超时并走「用本地 + 后台补拉」的软路径（有测试）。
+  - helper 空闲 5 分钟（触发器开着）：0.0 % CPU、常驻内存 9 MiB、累计 CPU 0.02 s；第二个 helper 对同一状态目录会记 `already_running` 并在 1.5 s 内退出。`kill -9` 循环（B 的 tick 在随机时刻被杀，helper 每 7 轮被杀并重启）：默认 14 轮之外又各跑了 60 轮（种子 11 与 23，各杀 8 次 helper），两副本都收敛，无重复、无丢失。
+  - 清理已做：用 `todo-sync clear-cloud --yes` 删掉 Development 区（之后 `fetch` 返回 `zoneNotFound`），helper 已停，假 HOME 与临时文件已删；容器、App ID 与开发描述文件按计划保留。
+- **两台真 Mac 对 Production 容器的验收完成**（用户 2026-10-28 授权：Developer ID 构建 + SSH 到 Mac B 做双机验收，只用假 HOME 与测试数据，验收后清理；Production 的 schema 由用户在 Dashboard 部署，Todo / Device 两个记录类型）。不含公证。与计划的差异与发现：
+  - Developer ID helper 用 `HELPER_ALLOW_CLOUD_CHANGES=1 todo-sync-helper/scripts/build.sh devid` 构建（`xcodebuild archive` + `export`，自动签名）；已核对签名与权限（`aps-environment=production`、`icloud-container-environment=Production`、容器 id、CloudKit）。未公证的 `.app` 用 `scp` / `ditto` 拷到另一台（不带隔离属性）后，`open` 可以直接启动。两台的 `hello` 都回 `environment=production`，账号哈希一致。
+  - 验收脚本是 `scripts/todo-sync-e2e-twomac.py`（`setup | reset | run [用例…] | teardown`，用法见 `docs/overview-todo-sync.md`）：A（本机）与 B（SSH）各有一份假 HOME 与自己的 helper（`open -g -n -a … --env HOME=…`），CloudKit 看到的是两台设备，推送路径是真的。8 组用例共 22 项断言全过：环境、A→B、B→A、互相列为设备、双方同时新增（4.7 秒一致、无重复）、一台删除 / 另一台清空互传、B 的 helper 被杀后重启自行追平（启动后 3.4 秒）、两台空闲 10 分钟后再传。
+  - **推送路径通了，延迟与 S0 同量级**（取自两台 helper 日志里 `rpc_save` 到 `push` 的间隔）。两台 Mac 都无人在用（B 是 Mac Studio，A 是笔记本，没人操作）时，一台保存后另一台收到推送要 **142 秒**（首次）、**107 秒**、**273 秒**（两台空闲 10 分钟之后；这次数据其实在 25 秒后由 B 的 10 分钟轮询先带到）；刚有过往来的「热」状态下 **12.1 秒与 8.5 秒**（删除、清空各一次；并发新增那组靠两台各自的 tick 互相拉到，4.7 秒一致，不算推送）。推送到达后 helper 拉起 `todo-sync tick --reason push`，拉取 + 合并 + 物化 0.5–2.7 秒。空闲时最长 4.6 分钟，被 10 分钟轮询封顶，在需求 §16 第 1 条的「轮询周期 + 2 分钟」之内；但该条的「两台活跃时 5 秒内」要有人在用的机器才能判定，这次是无人值守，没有得出结论。
+  - 每台 Mac 也会收到自己那次保存引发的推送（`push ours=1`），拉回自己的记录再合并，幂等，只多一次不到 1 秒的拉取，没有处理。
+  - helper 空闲资源（Production、Developer ID 构建，带十几次 tick 的 12–17 分钟里）：A 累计 CPU 0.75 秒、常驻 5.5 MiB，B 0.15 秒、34 MiB，空闲时 0.0 %。
+  - **测试脚本里的一个坑，不是产品缺陷**：`open` 会把调用者的环境变量传给被启动的 App，helper 又传给它拉起的每个 tick。我的 shell 带着 `ASKHUMAN_HOME`（Dev Instance 的变量），于是 A 的 helper 拉起的所有 tick 都被 `supported()` 判为不可用而静默空转（`tick_done exit=0 ms=50`，`last-tick.json` 不更新）。脚本现在启动 helper 前剔除该变量；真实使用时 helper 由登录项或 `AskHuman` 拉起，不带它。
+  - 没有做（超出授权，或远程做不了）：睡眠唤醒与联网恢复触发（E8）、登录项安装形态（`scripts/todo-sync-install-helper.sh` 会改真实的登录项）、helper 缺失 / 过期时的安装体验、24 小时浸泡、公证与分发、另一个大陆账号、有人在用时的推送延迟。
+  - 清理：`clear-cloud` 删掉了 Production 里的测试区（两台都随即报 `zoneMissing`），两台的 helper 已停，A 的 `/tmp` 与 B 的 `~/AskHumanTodoSync-E2E`、两台 `~/Library/Logs/AskHumanTodoSync` 里的 helper 日志都已删，没有碰任何一台的真实 `~/.askhuman`，也没动 B 的网络与代理。Production 的 schema、App ID、容器与描述文件保留。`~/Library/Caches/CloudKit/com.naituw.humaninloop.todosync`：B 上已删，A 上被系统保护删不掉（空缓存目录）。
+- **提交与发布说明**：P3、P4、P5 的提交都带 `Release-Note: skip`，因为 helper 暂不随正式版发布（计划后置项）。合并并决定随版本发布时，需要补一条带用户可见说明的 `feat(todo-sync)` 提交（或在合并提交里写）。
+- **文档**：除计划里列的 `overview.md` 之外，新增专题概览 `docs/overview-todo-sync.md`（模块地图、钩子、虚拟键、验证命令）；`docs/specs/todo-whats-next.md` D9 已补一句 iCloud 模式；面向用户的 `docs/wiki/todo-sync.md`（含英文版）等功能能让普通用户启用（helper 随版本发布）时再写，避免文档先于功能。

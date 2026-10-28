@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { TodoEntry, TodoGroup, TodoProjectInfo } from "../../lib/types";
+import type { TodoEntry, TodoGroup, TodoProjectInfo, TodoSyncProject } from "../../lib/types";
 import {
   ALL_KEY,
   abbreviateHome,
   baseName,
   buildAllModel,
   buildSidebarModel,
+  isCloudKey,
   labelProjects,
   limitRows,
   matchesQuery,
@@ -228,5 +229,187 @@ describe("limitRows", () => {
     const cut = limitRows(model.groups, 0);
     expect(cut.groups).toEqual([]);
     expect(cut.hidden).toBe(5);
+  });
+});
+
+// ---- iCloud mode (spec todo-sync §9.2–§9.4) ----------------------------------------------------
+
+function synced(identity: string, keys: string[], cloudKey: string | null = null): TodoSyncProject {
+  return {
+    identity,
+    keys,
+    cloudKey,
+    macs: keys.length ? [{ name: "Studio", lastSyncMs: 1, thisMac: true }] : [],
+  };
+}
+
+const HOME = "/Users/me";
+const APP = "github.com/acme/app";
+const DOTS = "github.com/acme/dotfiles";
+const CLOUD_DOTS = "icloud:github.com/acme/dotfiles";
+
+/** Two directories of one repository, a cloud-only project, an empty one and a project without remote. */
+function iCloudWorld() {
+  const projects = [
+    project("/Users/me/dev/app-wt", 3),
+    project("/Users/me/dev/app", 3),
+    project(CLOUD_DOTS, 2),
+    project("/Users/me/Scratch/notes", 2),
+    project("/Users/me/dev/blog", 0),
+    project("/Users/me/dev/lonely", 0),
+  ];
+  const sync = [
+    synced(APP, ["/Users/me/dev/app", "/Users/me/dev/app-wt"]),
+    synced(DOTS, [], CLOUD_DOTS),
+    synced("github.com/acme/blog", ["/Users/me/dev/blog"]),
+  ];
+  return { projects, sync };
+}
+
+describe("isCloudKey", () => {
+  it("recognizes the replica keys of projects without a directory", () => {
+    expect(isCloudKey(CLOUD_DOTS)).toBe(true);
+    expect(isCloudKey("icloud:")).toBe(false);
+    expect(isCloudKey("/Users/me/icloud:dev")).toBe(false);
+  });
+});
+
+describe("buildSidebarModel in iCloud mode", () => {
+  it("merges directories of one repository into the row of the most recently used one", () => {
+    const { projects, sync } = iCloudWorld();
+    const model = buildSidebarModel(projects, "", HOME, { sync });
+    const syncedRows = model.sections.find((s) => s.id === "synced")?.rows ?? [];
+    expect(syncedRows.map((r) => [r.name, r.key, r.count, r.scope])).toEqual([
+      ["app", "/Users/me/dev/app-wt", 3, "synced"],
+      ["dotfiles", CLOUD_DOTS, 2, "cloudOnly"],
+    ]);
+    expect(syncedRows[0].path).toBe(APP);
+    // The merged row stands for every directory of the project.
+    expect(model.rowKeyOf.get("/Users/me/dev/app")).toBe("/Users/me/dev/app-wt");
+    expect(model.rowKeyOf.get(CLOUD_DOTS)).toBe(CLOUD_DOTS);
+    expect(model.labelOf.get("/Users/me/dev/app")?.name).toBe("app");
+  });
+
+  it("counts each project once, however many directories it has", () => {
+    const { projects, sync } = iCloudWorld();
+    expect(buildSidebarModel(projects, "", HOME, { sync }).allCount).toBe(3 + 2 + 2);
+  });
+
+  it("folds the projects without todos and counts them, unfolding on request or search", () => {
+    const { projects, sync } = iCloudWorld();
+    const folded = buildSidebarModel(projects, "", HOME, { sync });
+    const empty = folded.sections.find((s) => s.id === "empty");
+    expect(empty?.collapsed).toBe(true);
+    expect(empty?.total).toBe(2);
+    expect(empty?.rows).toEqual([]);
+    expect(empty?.keys).toEqual(["/Users/me/dev/blog", "/Users/me/dev/lonely"]);
+    expect(folded.navKeys).not.toContain("/Users/me/dev/blog");
+
+    const open = buildSidebarModel(projects, "", HOME, { sync, emptyOpen: true });
+    const unfolded = open.sections.find((s) => s.id === "empty");
+    expect(unfolded?.collapsed).toBe(false);
+    expect(unfolded?.rows.map((r) => r.name)).toEqual(["blog", "lonely"]);
+    expect(open.navKeys).toContain("/Users/me/dev/blog");
+
+    // A search looks into the folded rows too.
+    const found = buildSidebarModel(projects, "blog", HOME, { sync });
+    expect(found.sections.map((s) => s.id)).toEqual(["empty"]);
+    expect(found.sections[0].rows.map((r) => r.name)).toEqual(["blog"]);
+    expect(found.navKeys).toEqual([ALL_KEY, "/Users/me/dev/blog"]);
+  });
+
+  it("lists projects without a remote last, labelled by directory", () => {
+    const { projects, sync } = iCloudWorld();
+    const model = buildSidebarModel(projects, "", HOME, { sync });
+    expect(model.sections.map((s) => s.id)).toEqual(["synced", "empty", "localOnly"]);
+    const local = model.sections[2].rows;
+    expect(local.map((r) => [r.name, r.path, r.scope])).toEqual([
+      ["notes", "~/Scratch/notes", "localOnly"],
+    ]);
+  });
+
+  it("finds a project by the directories it has on this Mac", () => {
+    const { projects, sync } = iCloudWorld();
+    const model = buildSidebarModel(projects, "app-wt", HOME, { sync });
+    expect(model.sections[0].rows.map((r) => r.name)).toEqual(["app"]);
+    // …and by its repository address.
+    expect(buildSidebarModel(projects, "acme/dot", HOME, { sync }).rowCount).toBe(1);
+  });
+
+  it("tells same-named repositories apart by owner", () => {
+    const projects = [project("/x/app", 1), project("/y/app", 2)];
+    const sync = [synced("github.com/acme/app", ["/x/app"]), synced("github.com/other/app", ["/y/app"])];
+    const rows = buildSidebarModel(projects, "", undefined, { sync }).sections[0].rows;
+    expect(rows.map((r) => r.hint)).toEqual(["acme", "other"]);
+  });
+
+  it("shows synced projects the list does not mention (all finished: only history)", () => {
+    const projects = [project("/Users/me/dev/app", 1)];
+    const sync = [synced(APP, ["/Users/me/dev/app"]), synced(DOTS, [], CLOUD_DOTS)];
+    const model = buildSidebarModel(projects, "", HOME, { sync, emptyOpen: true });
+    const empty = model.sections.find((s) => s.id === "empty");
+    expect(empty?.rows.map((r) => [r.key, r.scope, r.count])).toEqual([[CLOUD_DOTS, "cloudOnly", 0]]);
+  });
+
+  it("is the local mode when there is nothing synced", () => {
+    const { projects } = iCloudWorld();
+    const local = buildSidebarModel(projects, "", HOME);
+    expect(buildSidebarModel(projects, "", HOME, { sync: [] })).toEqual(local);
+    expect(local.sections.map((s) => s.id)).toEqual(["withTodos", "recent"]);
+    expect(local.sections.every((s) => !s.collapsed && s.total === s.rows.length)).toBe(true);
+  });
+});
+
+describe("buildAllModel in iCloud mode", () => {
+  it("shows one group per project and marks cloud-only and local-only ones", () => {
+    const { projects, sync } = iCloudWorld();
+    const groups = [
+      group("/Users/me/dev/app", "a1", "a2", "a3"),
+      group("/Users/me/dev/app-wt", "a1", "a2", "a3"),
+      group(CLOUD_DOTS, "d1", "d2"),
+      group("/Users/me/Scratch/notes", "n1", "n2"),
+    ];
+    const model = buildAllModel(groups, projects, HOME, sync);
+    expect(model.groups.map((g) => [g.name, g.scope, g.count])).toEqual([
+      ["app", "synced", 3],
+      ["dotfiles", "cloudOnly", 2],
+      ["notes", "localOnly", 2],
+    ]);
+    expect(model.total).toBe(7);
+    expect(model.projectCount).toBe(3);
+    expect(model.localOnlyCount).toBe(1);
+    // The group opens the directory that has the entries, preferring the row's own.
+    expect(model.groups[0].key).toBe("/Users/me/dev/app-wt");
+  });
+
+  it("lists projects without a remote after the synced ones, like the sidebar", () => {
+    const projects = [project("/n/notes", 5), project("/n/app", 3), project(CLOUD_DOTS, 2)];
+    const sync = [synced(APP, ["/n/app"]), synced(DOTS, [], CLOUD_DOTS)];
+    const groups = [group("/n/notes", "n1"), group("/n/app", "a1"), group(CLOUD_DOTS, "d1")];
+    const model = buildAllModel(groups, projects, undefined, sync);
+    expect(model.groups.map((g) => g.name)).toEqual(["app", "dotfiles", "notes"]);
+  });
+
+  it("falls back to another replica when the row's own key has no group", () => {
+    const { projects, sync } = iCloudWorld();
+    const model = buildAllModel([group("/Users/me/dev/app", "a1")], projects, HOME, sync);
+    expect(model.groups.map((g) => g.key)).toEqual(["/Users/me/dev/app"]);
+  });
+
+  it("puts groups of unknown projects last as local-only", () => {
+    const { projects, sync } = iCloudWorld();
+    const model = buildAllModel([group("/elsewhere/zeta", "z1"), group(CLOUD_DOTS, "d1")], projects, HOME, sync);
+    expect(model.groups.map((g) => [g.name, g.scope])).toEqual([
+      ["dotfiles", "cloudOnly"],
+      ["zeta", "localOnly"],
+    ]);
+    expect(model.localOnlyCount).toBe(1);
+  });
+
+  it("is the local aggregate when nothing is synced", () => {
+    const { projects } = iCloudWorld();
+    const groups = [group("/Users/me/dev/app", "a1")];
+    expect(buildAllModel(groups, projects, HOME, [])).toEqual(buildAllModel(groups, projects, HOME));
+    expect(buildAllModel(groups, projects, HOME).groups[0].scope).toBeUndefined();
   });
 });

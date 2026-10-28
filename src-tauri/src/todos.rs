@@ -104,19 +104,28 @@ pub fn option_label(lang: crate::i18n::Lang, entry: &TodoEntry) -> String {
 
 /// On-disk shape: project key (git root path) → FIFO entries, plus per-project execution
 /// history (round 16; capped by the `todo_history_limit` setting at record time).
-#[derive(Default, Serialize, Deserialize)]
-struct TodoFile {
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TodoFile {
     #[serde(default)]
-    projects: HashMap<String, Vec<TodoEntry>>,
+    pub(crate) projects: HashMap<String, Vec<TodoEntry>>,
     #[serde(default)]
-    history: HashMap<String, Vec<DoneTodoEntry>>,
+    pub(crate) history: HashMap<String, Vec<DoneTodoEntry>>,
 }
 
-fn todos_file() -> PathBuf {
+impl TodoFile {
+    /// Drop empty queues / histories, exactly like [`store_at`] does on write.
+    pub(crate) fn pruned(mut self) -> TodoFile {
+        self.projects.retain(|_, entries| !entries.is_empty());
+        self.history.retain(|_, entries| !entries.is_empty());
+        self
+    }
+}
+
+pub(crate) fn todos_file() -> PathBuf {
     crate::paths::state_dir().join("todos.json")
 }
 
-fn todos_lock() -> PathBuf {
+pub(crate) fn todos_lock() -> PathBuf {
     crate::paths::state_dir().join("todos.lock")
 }
 
@@ -165,6 +174,69 @@ fn store_at(path: &Path, mut data: TodoFile) -> bool {
 
 fn lock_at(path: &Path) -> Option<crate::file_lock::FileLock> {
     crate::file_lock::FileLock::exclusive(path).ok()
+}
+
+// ===== Whole-file access for the iCloud sync core (docs/specs/todo-sync.md) =====
+//
+// The sync core diffs and rewrites several projects in one read-modify-write, which none of the
+// per-project mutators above can express. It goes through a [`Session`]: the same advisory lock the
+// mutators take, held for the session's lifetime, plus a *checked* read — a corrupt file must never be
+// mistaken for "the user deleted everything" (that would tombstone every todo in the cloud). The
+// existing mutators are untouched.
+
+/// Why [`Session::read`] could not produce a trustworthy view of `todos.json`.
+#[derive(Debug)]
+pub(crate) enum ReadError {
+    Unreadable(std::io::Error),
+    Corrupt(String),
+}
+
+impl std::fmt::Display for ReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReadError::Unreadable(e) => write!(f, "todos.json is unreadable: {e}"),
+            ReadError::Corrupt(e) => write!(f, "todos.json is corrupt: {e}"),
+        }
+    }
+}
+
+/// A missing or blank file is an empty store; anything else that does not parse is an error.
+fn load_checked_at(path: &Path) -> Result<TodoFile, ReadError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) if text.trim().is_empty() => Ok(TodoFile::default()),
+        Ok(text) => serde_json::from_str(&text).map_err(|e| ReadError::Corrupt(e.to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(TodoFile::default()),
+        Err(e) => Err(ReadError::Unreadable(e)),
+    }
+}
+
+/// `todos.lock` held for as long as the session lives (best effort, like every mutator).
+pub(crate) struct Session {
+    path: PathBuf,
+    _guard: Option<crate::file_lock::FileLock>,
+}
+
+impl Session {
+    pub(crate) fn open(path: &Path, lock: &Path) -> Session {
+        Session {
+            path: path.to_path_buf(),
+            _guard: lock_at(lock),
+        }
+    }
+
+    pub(crate) fn read(&self) -> Result<TodoFile, ReadError> {
+        load_checked_at(&self.path)
+    }
+
+    /// Atomic replace; `false` when the file could not be fully written.
+    pub(crate) fn write(&self, data: TodoFile) -> bool {
+        store_at(&self.path, data)
+    }
+}
+
+/// Unlocked, checked read for display paths.
+pub(crate) fn read_checked_at(path: &Path) -> Result<TodoFile, ReadError> {
+    load_checked_at(path)
 }
 
 /// Normalize a project key/text pair for storage; `None` when unusable.

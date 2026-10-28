@@ -1,0 +1,16 @@
+{
+  "name": "throttled with a retry hint",
+  "request": {
+    "id": 8,
+    "op": "fetch"
+  },
+  "response": {
+    "id": 8,
+    "ok": false,
+    "error": {
+      "code": "rateLimited",
+      "message": "requestRateLimited",
+      "retryAfterMs": 30000
+    }
+  }
+}

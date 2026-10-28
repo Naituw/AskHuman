@@ -1,0 +1,22 @@
+{
+  "name": "iCloud storage full",
+  "request": {
+    "id": 8,
+    "op": "save",
+    "records": [
+      {
+        "recordName": "todo-2",
+        "recordType": "Todo",
+        "payload": "eyJ2IjoxLCJwIjoiZ2l0aHViLmNvbS9uYWl0dXcvaHVtYW5pbmxvb3AiLCJ0ZXh0Ijp7InYiOiJyZXZpZXcgdGhlIHNwZWMiLCJoIjoiMDAwMTcwMDAwMDAwMDEwMC0wMDAwLWJiYmJiYmJiIn19"
+      }
+    ]
+  },
+  "response": {
+    "id": 8,
+    "ok": false,
+    "error": {
+      "code": "quota",
+      "message": "quotaExceeded"
+    }
+  }
+}

@@ -389,7 +389,10 @@ async fn load_todo_project_options(
         } else {
             crate::agents::workspaces::list()
         };
-        (workspaces, crate::todos::all())
+        // Projects of iCloud sync that have no directory here cannot be worked on from IM.
+        let mut todos = crate::todos::all();
+        todos.retain(|key, _| !crate::todo_sync::cloudkeys::is_virtual(key));
+        (workspaces, todos)
     })
     .await
     .unwrap_or_default();
@@ -555,6 +558,8 @@ pub(super) async fn send_todo_manage(
     project: &str,
     lang: Lang,
 ) {
+    // iCloud todo sync: show what the other Macs added (local phase only; never the network).
+    crate::todo_sync::service::before_read(project);
     let prefix = crate::autochannel::cmd_prefix(channel_id);
     match channel_id {
         "feishu" => {

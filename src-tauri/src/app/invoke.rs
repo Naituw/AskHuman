@@ -32,6 +32,7 @@ pub(super) fn handle(invoke: Invoke<Wry>) -> bool {
 
 fn group_for(command: &str) -> Group {
     if command.starts_with("todos_")
+        || command.starts_with("todo_sync_")
         || matches!(command, "todo_attachment_thumbnail" | "open_todos")
     {
         Group::Todo
@@ -292,6 +293,20 @@ fn todo(invoke: Invoke<Wry>) -> bool {
         crate::commands::todos_projects,
         crate::commands::todos_projects_enriched,
         crate::commands::todos_all_pending,
+        crate::todo_sync::commands::todo_sync_status,
+        crate::todo_sync::commands::todo_sync_history_count,
+        crate::todo_sync::commands::todo_sync_projects,
+        crate::todo_sync::commands::todo_sync_project_details,
+        crate::todo_sync::commands::todo_sync_remove_project,
+        crate::todo_sync::commands::todo_sync_enable,
+        crate::todo_sync::commands::todo_sync_disable,
+        crate::todo_sync::commands::todo_sync_now,
+        crate::todo_sync::commands::todo_sync_touch,
+        crate::todo_sync::commands::todo_sync_clear_cloud,
+        crate::todo_sync::commands::todo_sync_restart_from_local,
+        crate::todo_sync::commands::todo_sync_resume,
+        crate::todo_sync::commands::todo_sync_repair,
+        crate::todo_sync::commands::todo_sync_open_login_items,
         crate::commands::open_todos,
     ];
     handler(invoke)
@@ -341,6 +356,7 @@ mod tests {
         assert_eq!(group_for("feishu_detect_wait"), Group::Channel);
         assert_eq!(group_for("todos_projects_enriched"), Group::Todo);
         assert_eq!(group_for("todos_all_pending"), Group::Todo);
+        assert_eq!(group_for("todo_sync_status"), Group::Todo);
         assert_eq!(group_for("new_task_projects_refreshed"), Group::Task);
         assert_eq!(group_for("agent_task_workspaces"), Group::Integration);
         assert_eq!(group_for("cursor_desktop_status"), Group::Integration);

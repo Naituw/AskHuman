@@ -46,6 +46,7 @@ AskHuman/
   .github/workflows/         三平台构建与发布
   ios/                       iOS App（XcodeGen 工程 + 本地 Swift Package AskHumanKit + 通知扩展 + UI 测试）与跨语言线协议夹具
   relay/                     推送中继（零依赖 Node.js，腾讯云云函数）
+  todo-sync-helper/          iCloud 待办同步的 CloudKit helper（XcodeGen 工程 + Swift 包 Kit + RPC 夹具；专题见 overview-todo-sync.md）
 
   src/                       Vue 前端（Vite 根目录）
     index.html               前端入口、首帧关键样式与平台探测
@@ -56,7 +57,8 @@ AskHuman/
     views/AgentsView.vue     Agent 控制台（双栏：边栏+详情；spec gui-agent-console）
     views/console/           控制台子组件（边栏/指示器/Watch 帧/完整会话/diff 条/交互区/内嵌任务）
     views/InterjectView.vue  Agent 插话编辑器
-    views/TodosView.vue      项目待办窗口（项目选择 + 增删清空）
+    views/TodosView.vue      项目待办窗口（侧栏切项目 + 全部待办 + 增删清空；iCloud 模式见 overview-todo-sync.md）
+    views/todos/             待办窗口子组件（侧栏、同步状态槽）与纯函数（侧栏视图模型、交互、同步状态映射）
     views/NewTaskView.vue    新建 Agent 任务窗口壳（表单主体在 views/newtask/NewTaskForm.vue，与控制台内嵌版共用）
     views/ForkTaskView.vue   原生会话 Fork 独立窗口（固定源会话 + 权限 + 分支指令）
     views/newtask/LaunchPermission.vue  新建/Fork 共用权限控件
@@ -99,6 +101,7 @@ AskHuman/
         install_check.rs     已装 AskHuman 二进制 / PATH 遮蔽 / Daemon 互顶检查（doctor install）
         debug_cmd.rs         不进入 help 的调试子命令
         todo_cmd.rs          todo add/list/attach/detach/rm/clear 子命令
+        todo_sync_cmd.rs     隐藏的 todo-sync 子命令（排障与 helper 拉起 tick 的入口）
         file_attachment.rs   -f 路径解析与校验
         output.rs            文本/JSON 结果格式化
         image_writer.rs      回复图片落盘
@@ -115,6 +118,7 @@ AskHuman/
       context_binding.rs     MCP 会话的一次性 token 与 Grok 安全旁路绑定
       todos.rs               项目级待办队列（todos.json 直读直写 + 文件锁）
       todo_attachments.rs    Todo 附件托管、缩略图、生命周期与执行交付副本
+      todo_sync/             跨 Mac 待办同步核心（实验，仅 macOS；专题见 overview-todo-sync.md）
       autochannel.rs         IM 命令分类、活跃槽与共享文案
       perf.rs                跨进程性能埋点
       prompts.rs             CLI/MCP Agent 参考提示词
@@ -303,6 +307,7 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 - Agent 模式与配置文件：`agent_mode_status` / `set` / `update`、`mcp_config_reveal` / `open`、`agent_hook_reveal` / `open`、`mcp_command_path`（`agent_mode_status` 只聚合本地集成产物；Agent CLI 是否在 PATH / Pi 版本由 `agent_task_readiness` 负责）
 - 渠道测试与识别：`telegram_test`；钉钉、飞书、Slack 各自的 `*_test` / `*_detect_prepare` / `*_detect_wait`；共用 `detect_cancel`
 - iOS 渠道（设置页「实验」Tab）：`ios_op`（状态 / 配对 / 撤销 / 重命名，经 IPC 的 `ClientMsg::Ios`）、`ios_test`、`ios_pair_qr`、`ios_connection_export` / `ios_connection_import`
+- iCloud 待办同步（设置页「实验」Tab 与待办窗口侧栏）：`todo_sync_*`（状态 / 启用 / 停用 / 立即同步 / 清除 / 修复，以及 iCloud 模式窗口用的项目列表、详情与移除；全部在阻塞线程上跑），见 `docs/overview-todo-sync.md`
 - 版本自更新：`get_app_version`、`update_check`、`update_get_notes`、`update_apply`、`update_dismiss`、`popup_update_state`、`restart_settings`
 - Agent 生命周期：`agents_init`、`agent_force_idle`；自动集成卡内的 capability 通过
   `agent_mode_status` 聚合，并由 `agent_lifecycle_status` / `install` / `uninstall` 查询或切换
@@ -426,6 +431,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 - 送达面：whats-next / 普通提问 Popup 折叠待办区 / Stop 确认卡（兜底）都以选项形式呈现待办；GUI / IM 新建 Agent 任务也可直接执行待办。所有出口在执行前按卡片附件快照与最新 Todo 求交集，托管文件建立请求级交付副本，失效项转为 warning，选项只显示 `【N 个附件】`（支持富文本颜色时为灰色）而不向 IM 上传本地文件。输入面：CLI `todo` 子命令、Popup 内新增、GUI 待办窗口（托盘/AgentsView 入口）、IM `/todo`；IM 创建/管理首版仍只支持文字。
 - IM `/todo`（管理卡：飞书代码卡自带输入表单，钉钉复用提问卡模板 `allow_input`，TG/Slack 文本 + 命令提示）、`/todo-rm`（复用单选卡逐条删除、就地刷新）与 `/todo-auto`（切换自动执行标记）由跨平台 daemon 承载，实现在共享 server core 的 `daemon/runtime/todo.rs`。
 - macOS 与 Windows 上，待办窗口每条待办另有「创建任务」按钮：预选项目与该待办打开新建任务窗口，Terminal.app 或 Windows Terminal 启动成功后按快照出队（spec `docs/specs/gui-agent-task-launch.md`）。
+- **跨 Mac 同步（实验，仅 macOS，每台 Mac 单独开启）**：同一 Apple ID 的多台 Mac 经 iCloud（CloudKit）共享待办与执行历史，规格 `docs/specs/todo-sync.md`，实现地图 `docs/overview-todo-sync.md`。不变量：`todos.json` 仍是本机唯一数据源且 `todos.rs` 的写函数不变，同步核心 `todo_sync/` 经旁路状态 `state/todo-sync/` 做字段级合并（项目身份 = git remote，同仓库的多个目录是副本，无 remote 的目录不同步），云端访问全部经 CloudKit helper `.app`（Rust 侧只有 `Transport` 抽象）；开关是标记文件，关闭时各入口只多一次 `stat`，Dev Instance 恒关闭；读取钩子只做本地阶段，唯有 whats-next 在上次拉取超过 20 秒时最多等 1.5 秒；待办窗口的打开路径不得联网、拉起 helper 或 git。本机没有目录的云端项目以虚拟键 `icloud:<身份>` 住在 `todos.json` 里。
 
 ## 菜单栏 / 托盘图标 + 统一 GUI Host（macOS / Linux / Windows 桌面）
 

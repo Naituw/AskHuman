@@ -543,6 +543,27 @@ pub struct PermissionsConfig {
     pub codex_relaxed_shell: bool,
 }
 
+/// Cross-Mac todo sync settings (docs/specs/todo-sync.md §8). Whether sync is *on* is not kept
+/// here: the settings window writes the whole config back, which would race with `AskHuman
+/// todo-sync enable|disable`; the `enabled` marker in the sync sidecar directory is the truth.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TodoSyncConfig {
+    /// How this Mac is named in the list of synced Macs; empty = the system's computer name.
+    pub device_name: String,
+    /// Fallback poll of the sync helper while the system is awake (not shown in the UI).
+    pub poll_minutes: u32,
+}
+
+impl Default for TodoSyncConfig {
+    fn default() -> Self {
+        Self {
+            device_name: String::new(),
+            poll_minutes: crate::todo_sync::service::DEFAULT_POLL_MINUTES,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppConfig {
@@ -555,6 +576,8 @@ pub struct AppConfig {
     pub permissions: PermissionsConfig,
     /// 实验性功能开关区（spec D15）。
     pub experimental: ExperimentalConfig,
+    /// 跨 Mac 待办同步（iCloud，实验）。
+    pub todo_sync: TodoSyncConfig,
 }
 
 impl AppConfig {
