@@ -158,6 +158,30 @@ final class AskHumanTodosUITests: XCTestCase {
         XCTAssertTrue(text("(edited)").waitForExistence(timeout: 10))
     }
 
+    func testDraggingATodoUpChangesTheOrder() {
+        launch()
+        requireElement("todo-project-" + askHuman).tap()
+        _ = requireElement("todo-row-todo-ah-1")
+        _ = requireElement("todo-row-todo-ah-4")
+        XCTAssertLessThan(element("todo-row-todo-ah-1").frame.minY, element("todo-row-todo-ah-4").frame.minY)
+
+        // Edit mode shows a handle on every row; the last todo is dragged above the first.
+        requireElement("todo-reorder").tap()
+        // The handle's label is "Reorder <row>" in English and "对<row>重新排序" in Chinese.
+        let handles = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", localized("Reorder", "重新排序")))
+        XCTAssertTrue(handles.firstMatch.waitForExistence(timeout: 10), "edit mode offers handles; \(app.debugDescription)")
+        let last = handles.element(boundBy: handles.count - 1)
+        let start = last.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let first = element("todo-row-todo-ah-1").coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.05))
+        // A table only starts to move a row once it has been held and then dragged slowly.
+        start.press(forDuration: 1.0, thenDragTo: first, withVelocity: .slow, thenHoldForDuration: 1.0)
+        shot("todos-reordered")
+
+        requireElement("todo-reorder").tap()
+        let moved = element("todo-row-todo-ah-4").frame.minY < element("todo-row-todo-ah-1").frame.minY
+        XCTAssertTrue(moved, "the dragged todo is now above the first one")
+    }
+
     func testDeletingATodoAsksFirst() {
         launch()
         requireElement("todo-project-" + askHuman).tap()
@@ -168,6 +192,27 @@ final class AskHumanTodosUITests: XCTestCase {
         shot("todos-delete-confirm")
         app.buttons[localized("Delete", "删除")].firstMatch.tap()
         XCTAssertTrue(gone("todo-row-todo-ah-3"))
+    }
+
+    func testAMacThatPredatesTodosAsksForAnUpdate() {
+        launch(scenario: "outdated")
+        XCTAssertTrue(
+            text(localized("This Mac needs an update", "这台 Mac 需要更新")).waitForExistence(timeout: 20),
+            "the page says why there is nothing to show"
+        )
+        XCTAssertTrue(
+            text(localized("Update AskHuman on Home MacBook Pro", "请先更新 Home MacBook Pro 上的 AskHuman")).exists,
+            "and names the Mac to update"
+        )
+        XCTAssertFalse(element("todo-project-" + askHuman).exists, "nothing is asked of a Mac that does not know todos")
+        shot("todos-needs-update")
+
+        // The menu lists the Macs, none of which can be chosen.
+        requireElement("todo-source-menu").tap()
+        let office = requireElement("todo-source-mac:mockofficemacmacmacmacmac")
+        XCTAssertFalse(office.isEnabled, "an outdated Mac cannot be chosen")
+        XCTAssertTrue(text(localized("Needs an update", "需要更新")).exists, "the menu says what is wrong with it")
+        shot("todos-needs-update-menu")
     }
 
     func testAMacThatCannotBeReachedSaysSo() {
