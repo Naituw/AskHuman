@@ -68,6 +68,11 @@ public enum TodoLoadState: Equatable, Sendable {
     case loading
     case loaded
     case failed(TodoFailure)
+
+    public var isFailed: Bool {
+        if case .failed = self { return true }
+        return false
+    }
 }
 
 // MARK: sources

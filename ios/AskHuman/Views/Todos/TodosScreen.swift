@@ -77,6 +77,21 @@ private struct TodoSourceMenu: View {
 
 // MARK: projects
 
+/// The search field, except where there is nothing to search: a Mac that cannot be reached or needs an
+/// update leaves an explanation on the page, and a search field above it only gets in the way.
+private struct ProjectSearch: ViewModifier {
+    @Binding var text: String
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.searchable(text: $text, prompt: "Search projects")
+        } else {
+            content
+        }
+    }
+}
+
 private struct TodosList: View {
     @Environment(AppStore.self) private var store
 
@@ -111,7 +126,7 @@ private struct TodosList: View {
             }
         }
         .listStyle(.insetGrouped)
-        .searchable(text: $todos.query, prompt: "Search projects")
+        .modifier(ProjectSearch(text: $todos.query, enabled: todos.projects != nil || !todos.projectsState.isFailed))
         .emptyState { TodosEmptyState() }
         .refreshable { await todos.refresh() }
         .accessibilityIdentifier("todo-projects")
