@@ -75,6 +75,9 @@ public final class AnswerComposer {
     /// Questions whose card bottom has been on screen. As in the Mac popup (spec
     /// `multi-question-vertical.md` V1/V2) the form of several questions cannot be sent before the
     /// last question was seen, so that a stray tap cannot send what was never read.
+    ///
+    /// This only guards "Send". Where "Next" leads does not depend on it: that follows the position
+    /// on screen (`QuestionNavigator`), so a question that was seen but not answered is not skipped.
     public private(set) var seen: Set<Int> = []
 
     public func markSeen(_ question: Int) {
@@ -88,16 +91,18 @@ public final class AnswerComposer {
         seen.contains(question) || isAnswered(question)
     }
 
-    /// Where the "Next" button leads: the first question not read yet.
-    public var nextUnread: Int? {
-        guard questionCount > 1 else { return nil }
-        return (0..<questionCount).first { !hasRead($0) }
-    }
-
     /// Whether the last question was read, which is what lets a form of several questions be sent.
-    /// A single question is read the moment the form opens.
+    /// A single question is read the moment the form opens. Once true it stays true, also when the
+    /// person scrolls back up.
     public var hasReachedEnd: Bool {
         questionCount <= 1 || hasRead(questionCount - 1)
+    }
+
+    /// In a select-only form, the first question that still has no selection: what "Send" is waiting
+    /// for. `nil` when the form is complete or takes free text.
+    public var firstWithoutSelection: Int? {
+        guard selectOnly else { return nil }
+        return answers.indices.first { answers[$0].selected.isEmpty }
     }
 
     public var hasContent: Bool { answers.contains { !$0.isEmpty } }

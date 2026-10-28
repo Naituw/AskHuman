@@ -31,6 +31,12 @@ targets:
     platform: iOS
     sources:
       - path: AskHuman
+        excludes:
+          # The web page that draws Markdown goes into the app as a folder (a folder reference) so that its
+          # files keep their names and places; as ordinary sources they would be flattened into the bundle root.
+          - Resources/WebMarkdown
+      - path: AskHuman/Resources/WebMarkdown
+        type: folder
     dependencies:
       - package: AskHumanKit
         product: AHProtocol

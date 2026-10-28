@@ -190,27 +190,47 @@ final class AnswerComposerTests: XCTestCase {
     func testASingleQuestionIsReadFromTheStart() {
         let form = composer(ask([question("q", "a")]))
         XCTAssertTrue(form.hasReachedEnd, "nothing to scroll to, so nothing to hold Send back")
-        XCTAssertNil(form.nextUnread, "a single question has no 'next'")
     }
 
     func testSeveralQuestionsCannotBeSentBeforeTheLastWasSeen() {
         let form = composer(ask([question("1", "a"), question("2", "b"), question("3", "c")]))
         XCTAssertFalse(form.hasReachedEnd)
-        XCTAssertEqual(form.nextUnread, 0)
         form.markSeen(0)
-        XCTAssertEqual(form.nextUnread, 1, "Next leads to the first question not read yet")
         XCTAssertFalse(form.hasReachedEnd, "seeing the first ones is not enough")
         form.markSeen(2)
         XCTAssertTrue(form.hasReachedEnd, "the last question was seen: Send appears, as in the popup")
-        XCTAssertEqual(form.nextUnread, 1, "the one skipped on the way is still pointed at")
+        XCTAssertFalse(form.hasRead(1), "the one in between was not seen, and nothing skips it")
+    }
+
+    func testTheEndStaysReachedOnceItWasSeen() {
+        let form = composer(ask([question("1", "a"), question("2", "b")]))
+        form.markSeen(1)
+        XCTAssertTrue(form.hasReachedEnd)
+        // Scrolling back up does not take Send away: only what was seen is recorded, never what is on screen.
+        XCTAssertTrue(form.hasReachedEnd)
+        XCTAssertEqual(form.seen, [1])
     }
 
     func testAnAnsweredQuestionCountsAsRead() {
         let form = composer(ask([question("1", "a"), question("2", "b")]))
         form.toggle(question: 1, option: 0)
         XCTAssertTrue(form.hasReachedEnd, "an answer takes a look at the question")
-        XCTAssertEqual(form.nextUnread, 0)
         XCTAssertFalse(form.seen.contains(1), "reading is only inferred, never recorded by answering")
+    }
+
+    func testASelectOnlyFormPointsAtTheFirstQuestionWithoutASelection() {
+        let form = composer(ask([question("1", "a", "b"), question("2", "c", "d"), question("3", "e", "f")], selectOnly: true))
+        XCTAssertEqual(form.firstWithoutSelection, 0)
+        form.toggle(question: 0, option: 1)
+        form.toggle(question: 2, option: 0)
+        XCTAssertEqual(form.firstWithoutSelection, 1, "the gap in the middle, not the end")
+        form.toggle(question: 1, option: 0)
+        XCTAssertNil(form.firstWithoutSelection, "nothing is missing any more")
+    }
+
+    func testAFormThatTakesTextHasNoQuestionToPointAt() {
+        let form = composer(ask([question("1", "a"), question("2", "b")]))
+        XCTAssertNil(form.firstWithoutSelection, "an unanswered question does not hold such a form back")
     }
 
     func testAnAnswerFromADraftCountsAsReadToo() {

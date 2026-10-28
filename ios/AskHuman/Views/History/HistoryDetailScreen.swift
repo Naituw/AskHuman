@@ -68,7 +68,7 @@ struct HistoryDetailScreen: View {
         if !message.isEmpty || !ask.message.files.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 if !message.isEmpty {
-                    if ask.isMarkdown { MarkdownView(text: message) } else { Text(verbatim: message) }
+                    if ask.isMarkdown { WebMarkdownView(text: message) } else { Text(verbatim: message).textSelection(.enabled) }
                 }
                 ForEach(ask.message.files, id: \.assetId) { file in FileRow(asset: file).allowsHitTesting(false) }
                 if !ask.message.files.isEmpty {
@@ -118,7 +118,7 @@ struct HistoryDetailScreen: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(confirm.title).font(.title3.weight(.semibold))
             let body = confirm.detail.bodyMd.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !body.isEmpty { MarkdownView(text: body) } else if !confirm.detail.summary.isEmpty { Text(verbatim: confirm.detail.summary) }
+            if !body.isEmpty { WebMarkdownView(text: body) } else if !confirm.detail.summary.isEmpty { Text(verbatim: confirm.detail.summary).textSelection(.enabled) }
         }
         .card()
         if let choice = entry.confirmChoice {

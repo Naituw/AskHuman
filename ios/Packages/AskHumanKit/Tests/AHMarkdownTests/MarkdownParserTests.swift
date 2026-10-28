@@ -46,7 +46,7 @@ final class MarkdownParserTests: XCTestCase {
     func testBlockQuotesCodeBlocksAndRules() {
         let blocks = MarkdownParser.parse("> quoted\n> text\n\n```swift\nlet x = 1\nprint(x)\n```\n\n---\n\nafter")
         guard case .quote(let inner) = blocks[0] else { return XCTFail("quote") }
-        XCTAssertEqual(inner.map(text), ["quoted text"])
+        XCTAssertEqual(inner.map(text), ["quoted\ntext"])
         XCTAssertEqual(blocks[1], .code(language: "swift", text: "let x = 1\nprint(x)"))
         XCTAssertEqual(blocks[2], .rule)
         XCTAssertEqual(text(blocks[3]), "after")
@@ -67,6 +67,18 @@ final class MarkdownParserTests: XCTestCase {
         XCTAssertEqual(text(blocks[0]).trimmingCharacters(in: .whitespaces), "Before")
         XCTAssertEqual(blocks[1], .image(source: "ahasset://abc123", alt: "diagram"))
         XCTAssertEqual(text(blocks[2]).trimmingCharacters(in: .whitespaces), "after")
+    }
+
+    func testALineBreakInsideAParagraphStaysALineBreak() {
+        let blocks = MarkdownParser.parse("first line\nsecond line\n\nnext paragraph\\\nhard break  \nend")
+        XCTAssertEqual(blocks.map(text), ["first line\nsecond line", "next paragraph\nhard break\nend"])
+        let list = MarkdownParser.parse("- item\n  continued")
+        guard case .list(_, _, let items) = list.first else { return XCTFail("list") }
+        XCTAssertEqual(items.first?.blocks.map(text), ["item\ncontinued"])
+    }
+
+    func testPlainTextStillReadsAsOneLine() {
+        XCTAssertEqual(MarkdownParser.plainText("first\nsecond\n\nthird"), "first second third")
     }
 
     func testEmptyAndPlainInput() {

@@ -7,12 +7,19 @@ import AHStore
 ///
 /// With several questions the bar offers "Next" until the last question has been on screen, and
 /// only then "Send", as the Mac popup does: a stray tap cannot send answers that were never read.
+/// "Next" itself follows where the screen is (`QuestionNavigator`), never what was looked at before,
+/// so that a question that was seen but not answered is not jumped over.
 struct AnswerScreen: View {
     let item: InboxItem
     @Environment(AppStore.self) private var store
     @State private var confirmCancel = false
     @State private var problem: String?
     @State private var tracker = ReadingTracker()
+    /// The question "Next" last led to, which flashes once it has arrived.
+    @State private var landing = Landing()
+    /// The question whose text field has the keyboard.
+    @FocusState private var focused: Int?
+    @Environment(\.launchOptions) private var launch
 
     fileprivate static let space = "answer-scroll"
 
@@ -24,10 +31,13 @@ struct AnswerScreen: View {
                         if let finished = store.endedNotice(for: item.id) { FinishedNotice(finished: finished) }
                         if case .failed = item.state { FailedSubmissionNotice(item: item) }
                         RequestHeader(item: item)
-                        MessageCard(ask: ask, macId: item.macId)
+                        MessageCard(ask: ask, macId: item.macId, onSettled: { tracker.messageSettled() })
                         VStack(spacing: 0) {
                             ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
-                                QuestionCard(index: index, count: ask.questions.count, ask: ask, question: question, composer: composer)
+                                QuestionCard(
+                                    index: index, count: ask.questions.count, ask: ask, question: question, composer: composer,
+                                    landing: landing, focus: $focused
+                                )
                                     .background(FrameReader(.card(index)))
                                     // The gap belongs to what "Next" scrolls to, so that a card does not end flush with the bar.
                                     .padding(.bottom, 16)
@@ -43,14 +53,23 @@ struct AnswerScreen: View {
                 .scrollDismissesKeyboard(.interactively)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     SendBar(
-                        item: item, composer: composer, ended: store.endedNotice(for: item.id) != nil,
-                        online: store.isOnline(macId: item.macId), onSend: { send(composer) }, onNext: { next(composer, proxy: proxy) }
+                        item: item, composer: composer, moreBelow: tracker.moreBelow, ended: store.endedNotice(for: item.id) != nil,
+                        online: store.isOnline(macId: item.macId),
+                        onSend: { send(composer) },
+                        onNext: { next(composer, proxy: proxy) },
+                        onJump: { jumpToMissing(composer, proxy: proxy) }
                     )
                     .background(FrameReader(.barTop))
                 }
                 .coordinateSpace(name: Self.space)
                 .onPreferenceChange(ReadingKey.self) { tracker.update($0, composer: composer) }
-                .task(id: item.id) { await tracker.begin(composer) }
+                .task(id: item.id) {
+                    await tracker.begin(
+                        composer, awaitingMessage: MessageCard.drawnByWebPage(ask, launch: launch),
+                        // The page's own watchdog gives up on it after this long (and the native renderer settles).
+                        patience: .seconds(launch.webTimeout + 1)
+                    )
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -93,14 +112,56 @@ struct AnswerScreen: View {
         }
     }
 
-    /// Scrolls the first question that was not read yet into view: all of it when it fits on the
-    /// screen (as the popup's "next" does), else its top.
+    /// Leads to the first question whose bottom is not on screen yet: all of it when it fits (as the
+    /// popup's "next" does), else its top, and on the next press its bottom. Nothing that was seen
+    /// or answered before matters, only where the screen is now.
     private func next(_ composer: AnswerComposer, proxy: ScrollViewProxy) {
-        guard let target = composer.nextUnread else { return }
-        let fits = tracker.fits(target)
-        withAnimation(.easeInOut(duration: 0.4)) {
-            proxy.scrollTo(Self.cardID(target), anchor: fits ? .bottom : .top)
+        Task {
+            await putTheKeyboardAway()
+            guard let viewport = tracker.viewport(),
+                  let target = QuestionNavigator.next(in: viewport, count: composer.questionCount) else { return }
+            go(to: target, proxy: proxy)
         }
+    }
+
+    /// Leads to the first question of a select-only form that still has no selection (what "Send"
+    /// is waiting for).
+    private func jumpToMissing(_ composer: AnswerComposer, proxy: ScrollViewProxy) {
+        Task {
+            await putTheKeyboardAway()
+            guard let question = composer.firstWithoutSelection else { return }
+            if let viewport = tracker.viewport(), let target = QuestionNavigator.reveal(question, in: viewport) {
+                go(to: target, proxy: proxy)
+            } else {
+                landing.flash(question)
+            }
+        }
+    }
+
+    private func go(to target: QuestionNavigator.Target, proxy: ScrollViewProxy) {
+        withAnimation(.easeInOut(duration: 0.4)) {
+            proxy.scrollTo(Self.cardID(target.question), anchor: target.anchor == .bottom ? .bottom : .top)
+        }
+        landing.flash(target.question)
+    }
+
+    /// The keyboard covers the question that is being led to, and its coming down changes the room
+    /// there is: let it go first, and the scroll is worked out for the screen that is left.
+    private func putTheKeyboardAway() async {
+        guard focused != nil else { return }
+        focused = nil
+        try? await Task.sleep(for: .milliseconds(320))
+    }
+}
+
+/// The question the last "Next" led to. The card flashes when it is told again (`token` counts).
+struct Landing: Equatable {
+    private(set) var question: Int?
+    private(set) var token = 0
+
+    mutating func flash(_ question: Int) {
+        self.question = question
+        token += 1
     }
 }
 
@@ -156,32 +217,57 @@ private struct FrameReader: View {
     }
 }
 
-/// Marks the questions that were on screen. A plain object on purpose: its numbers change on every
-/// frame of a scroll and must not make the screen render again; only a newly seen question does.
+/// Marks the questions that were on screen, and knows where the screen is. Almost all of it is kept
+/// out of observation on purpose: its numbers change on every frame of a scroll and must not make the
+/// screen render again. Only what the bar shows is observed, and it is only written when it changes.
 @MainActor
+@Observable
 private final class ReadingTracker {
-    private var latest = Reading()
-    private var live = false
+    /// Whether a question is left below the screen, which is when the bar offers "Next" beside "Send".
+    private(set) var moreBelow = false
+
+    @ObservationIgnored private var latest = Reading()
+    @ObservationIgnored private var live = false
+    @ObservationIgnored private var messageIsLaidOut = false
+    @ObservationIgnored private var questionCount = 0
 
     /// The first layout passes are not trusted (the bars may not have their final size yet): the
-    /// questions on screen are counted a moment after the form appeared.
-    func begin(_ composer: AnswerComposer) async {
+    /// questions on screen are counted a moment after the form appeared. A message drawn by a web page
+    /// has no height until the page reports it, and the cards below it would look like they are on screen
+    /// while it is one line tall: nothing is counted before it was laid out (but a page that never says
+    /// anything is not waited for for ever).
+    func begin(_ composer: AnswerComposer, awaitingMessage: Bool, patience: Duration = .seconds(3)) async {
         live = false
+        messageIsLaidOut = !awaitingMessage
         try? await Task.sleep(for: .milliseconds(150))
+        let deadline = ContinuousClock.now + patience
+        while !messageIsLaidOut, ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        if awaitingMessage {
+            // The new height reaches the cards' frames a frame or two later.
+            try? await Task.sleep(for: .milliseconds(150))
+        }
         guard !Task.isCancelled else { return }
         live = true
         markSeen(composer)
     }
 
+    /// The message's page reported its first layout (or the native renderer took over).
+    func messageSettled() { messageIsLaidOut = true }
+
     func update(_ reading: Reading, composer: AnswerComposer) {
         latest = reading
+        questionCount = composer.questionCount
         if live { markSeen(composer) }
+        let more = viewport().flatMap { QuestionNavigator.next(in: $0, count: questionCount) } != nil
+        if more != moreBelow { moreBelow = more }
     }
 
-    /// Whether a whole question fits between the bars.
-    func fits(_ question: Int) -> Bool {
-        guard let barTop = latest.barTop, let frame = latest.cards[question] else { return true }
-        return frame.height <= barTop - (latest.safeTop ?? 0) - 16
+    /// What the screen shows of the questions right now; `nil` before anything was measured.
+    func viewport() -> QuestionNavigator.Viewport? {
+        guard let barTop = latest.barTop else { return nil }
+        return QuestionNavigator.Viewport(cards: latest.cards, top: latest.safeTop ?? 0, bottom: barTop)
     }
 
     /// A question counts as seen once its bottom is above the bottom bar, whether it is still on
@@ -199,14 +285,26 @@ private final class ReadingTracker {
 private struct MessageCard: View {
     let ask: AskView
     let macId: String
+    /// The message has been laid out (see `WebMarkdownView`); said at once when it needs no page.
+    var onSettled: () -> Void = {}
+
+    /// What the card shows of the message: its text, trimmed.
+    private static func text(of ask: AskView) -> String {
+        ask.message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Whether a web page draws the message, whose height is then known only once the page said so.
+    static func drawnByWebPage(_ ask: AskView, launch: LaunchOptions) -> Bool {
+        launch.webMarkdown && ask.isMarkdown && !text(of: ask).isEmpty
+    }
 
     var body: some View {
-        let text = ask.message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = Self.text(of: ask)
         if !text.isEmpty || !ask.message.files.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 if !text.isEmpty {
                     if ask.isMarkdown {
-                        MarkdownView(text: text)
+                        WebMarkdownView(text: text, onSettled: onSettled)
                     } else {
                         Text(verbatim: text).font(.body).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -228,6 +326,8 @@ private struct QuestionCard: View {
     let ask: AskView
     let question: QuestionView
     let composer: AnswerComposer
+    let landing: Landing
+    var focus: FocusState<Int?>.Binding
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -269,6 +369,7 @@ private struct QuestionCard: View {
                     axis: .vertical
                 )
                 .lineLimit(1...10)
+                .focused(focus, equals: index)
                 .padding(10)
                 .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .accessibilityIdentifier("answer-text-\(index)")
@@ -276,21 +377,60 @@ private struct QuestionCard: View {
             }
         }
         .card()
+        .overlay { LandingFlash(token: landing.question == index ? landing.token : nil) }
     }
 }
 
+/// The flash of a card that "Next" has led to (the popup's `flashCard`): an accent wash that fades.
+private struct LandingFlash: View {
+    /// Changes every time the card is to flash; `nil` for a card that is not the one led to.
+    let token: Int?
+    @State private var strength = 0.0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(Color.accentColor.opacity(0.14))
+            .opacity(strength)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .task(id: token) {
+                guard token != nil, !reduceMotion else { return }
+                // Lights up as the scroll arrives, then fades.
+                try? await Task.sleep(for: .milliseconds(180))
+                guard !Task.isCancelled else { return }
+                withTransaction(Transaction(animation: nil)) { strength = 1 }
+                try? await Task.sleep(for: .milliseconds(40))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeOut(duration: 0.9)) { strength = 0 }
+            }
+    }
+}
+
+// MARK: options
+
+/// One option of a question: a target the width of the card that turns on or off in a single frame.
+/// Choosing should feel firm. The press shows at once (darker, a touch smaller, nothing fades), the
+/// new state replaces the old one with no cross-fade, and a tick of haptic confirms it. (It used to be
+/// a plain button whose choice faded in over about a third of a second, which felt soft.)
 private struct OptionRow: View {
     let option: OptionView
     let single: Bool
     let selected: Bool
     let action: () -> Void
 
+    /// Counts the presses, so that a tick is felt once per press: a single-choice form changes two
+    /// rows when the choice moves, and each of them reacting to its own change would tick twice.
+    @State private var presses = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: symbol)
-                    .font(.title3)
-                    .foregroundStyle(selected ? Color.accentColor : Color(.tertiaryLabel))
+        Button {
+            presses += 1
+            action()
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                OptionMark(single: single, selected: selected, pops: !reduceMotion)
                 Text(verbatim: option.text)
                     .font(.body)
                     .foregroundStyle(.primary)
@@ -302,23 +442,86 @@ private struct OptionRow: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(selected ? Color.accentColor.opacity(0.12) : Color(.tertiarySystemFill))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(selected ? Color.accentColor : .clear, lineWidth: 1.5)
-            )
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OptionRowStyle(selected: selected))
+        .sensoryFeedback(.selection, trigger: presses)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
+}
 
-    private var symbol: String {
-        if single { return selected ? "largecircle.fill.circle" : "circle" }
-        return selected ? "checkmark.square.fill" : "square"
+/// The look of an option row, chosen or not, pressed or not.
+private struct OptionRowStyle: ButtonStyle {
+    let selected: Bool
+
+    private let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed
+        configuration.label
+            .background(shape.fill(fill(pressed: pressed)))
+            .overlay(shape.strokeBorder(selected ? Color.accentColor : Color.clear, lineWidth: 2))
+            .scaleEffect(pressed ? 0.985 : 1)
+            // Only the press is animated, and quickly. The outer `transaction` clears whatever animation
+            // an update brings along, so that choosing (or clearing) is one frame; this `animation`
+            // sits inside it and sets the press's own.
+            .animation(.easeOut(duration: 0.08), value: pressed)
+            .transaction { $0.animation = nil }
+    }
+
+    private func fill(pressed: Bool) -> Color {
+        if selected { return Color.accentColor.opacity(pressed ? 0.24 : 0.14) }
+        return Color(pressed ? .secondarySystemFill : .tertiarySystemFill)
+    }
+}
+
+/// The radio circle or the check box in front of an option. Drawn, not an SF Symbol swapped for
+/// another, so that nothing cross-fades; the filled part pops in with a short spring.
+private struct OptionMark: View {
+    let single: Bool
+    let selected: Bool
+    let pops: Bool
+
+    @ScaledMetric(relativeTo: .body) private var size: CGFloat = 22
+
+    var body: some View {
+        ZStack {
+            if single {
+                Circle()
+                    .strokeBorder(selected ? Color.accentColor : Color(.tertiaryLabel), lineWidth: 1.5)
+                Circle()
+                    .fill(Color.accentColor)
+                    .padding(size * 0.25)
+                    .modifier(Pop(on: selected, animated: pops))
+            } else {
+                RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                    .strokeBorder(selected ? Color.accentColor : Color(.tertiaryLabel), lineWidth: 1.5)
+                RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                    .fill(Color.accentColor)
+                    .modifier(Pop(on: selected, animated: pops))
+                Image(systemName: "checkmark")
+                    .font(.system(size: size * 0.52, weight: .heavy))
+                    .foregroundStyle(.white)
+                    .modifier(Pop(on: selected, animated: pops))
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Shows its content the moment `on` turns true (growing to size with a short spring) and hides it the
+/// moment it turns false. The opacity is not animated.
+private struct Pop: ViewModifier {
+    let on: Bool
+    let animated: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(on ? 1 : 0.5)
+            .animation(animated ? .spring(response: 0.22, dampingFraction: 0.6) : nil, value: on)
+            .opacity(on ? 1 : 0)
     }
 }
 
@@ -327,31 +530,48 @@ private struct OptionRow: View {
 private struct SendBar: View {
     let item: InboxItem
     let composer: AnswerComposer
+    /// A question is left below the screen.
+    let moreBelow: Bool
     let ended: Bool
     let online: Bool
     let onSend: () -> Void
     let onNext: () -> Void
+    let onJump: () -> Void
+
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    /// At the accessibility text sizes the buttons go under the text: side by side they would leave
+    /// the words a few letters of width.
+    private var stacked: Bool { typeSize.isAccessibilitySize }
 
     var body: some View {
         VStack(spacing: 8) {
             if let progress = composer.uploadProgress {
                 ProgressView(value: progress).progressViewStyle(.linear)
             }
-            HStack(spacing: 12) {
+            let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 12))
+            layout {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Answered \(composer.answeredCount)/\(composer.questionCount)")
                         .font(.subheadline.weight(.medium))
                         .accessibilityIdentifier("answered-count")
                     if let hint {
-                        Text(hint.text).font(.caption).foregroundStyle(hint.color)
+                        hintView(hint)
                     }
                 }
-                Spacer(minLength: 8)
-                // Sending waits until the last question was on screen; until then the button leads there.
-                if composer.hasReachedEnd {
-                    sendButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
-                } else {
-                    nextButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
+                if !stacked { Spacer(minLength: 8) }
+                HStack(spacing: 12) {
+                    // Sending waits until the last question was on screen; until then the button leads
+                    // there. After that "Send" takes the main place, and "Next" stays beside it while there
+                    // are questions below the screen, as the popup's "Next" does until it reaches the last.
+                    if composer.hasReachedEnd {
+                        if moreBelow {
+                            nextIconButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
+                        }
+                        sendButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    } else {
+                        nextButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    }
                 }
             }
         }
@@ -360,6 +580,7 @@ private struct SendBar: View {
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
         .animation(.snappy(duration: 0.25), value: composer.hasReachedEnd)
+        .animation(.snappy(duration: 0.25), value: moreBelow)
     }
 
     private var sendButton: some View {
@@ -368,8 +589,9 @@ private struct SendBar: View {
                 if busy { ProgressView().controlSize(.small).tint(.white) }
                 Text(busy ? "Sending…" : "Send")
                     .font(.headline)
+                    .lineLimit(1)
             }
-            .frame(minWidth: 84)
+            .frame(minWidth: 84, maxWidth: stacked ? .infinity : nil)
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
@@ -377,15 +599,30 @@ private struct SendBar: View {
         .accessibilityIdentifier("send-button")
     }
 
+    /// The main button until the last question was reached.
     private var nextButton: some View {
         Button(action: onNext) {
             HStack(spacing: 6) {
-                Text("Next").font(.headline)
+                Text("Next").font(.headline).lineLimit(1)
                 Image(systemName: "chevron.down").font(.footnote.weight(.bold))
             }
-            .frame(minWidth: 84)
+            .frame(minWidth: 84, maxWidth: stacked ? .infinity : nil)
         }
         .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .disabled(ended || sendingState)
+        .accessibilityLabel("Next question")
+        .accessibilityIdentifier("next-button")
+    }
+
+    /// Beside "Send", while there is more below.
+    private var nextIconButton: some View {
+        Button(action: onNext) {
+            Image(systemName: "chevron.down")
+                .font(.body.weight(.semibold))
+                .frame(minWidth: 22)
+        }
+        .buttonStyle(.bordered)
         .controlSize(.large)
         .disabled(ended || sendingState)
         .accessibilityLabel("Next question")
@@ -403,11 +640,32 @@ private struct SendBar: View {
         composer.canSend && !ended && online && !sendingState
     }
 
-    private var hint: (text: LocalizedStringKey, color: Color)? {
-        if ended { return ("This request has ended.", .secondary) }
-        if !online { return ("The Mac is offline. Your draft is kept.", .orange) }
-        if sendingState { return ("Waiting for your Mac to confirm…", .secondary) }
-        if composer.hasReachedEnd, composer.blockedReason == .needsSelection { return ("Choose an option for every question.", .secondary) }
+    /// A line under the count. One that says what "Send" is waiting for also leads to it.
+    private var hint: (text: LocalizedStringKey, color: Color, leads: Bool)? {
+        if ended { return ("This request has ended.", .secondary, false) }
+        if !online { return ("The Mac is offline. Your draft is kept.", .orange, false) }
+        if sendingState { return ("Waiting for your Mac to confirm…", .secondary, false) }
+        if composer.hasReachedEnd, composer.blockedReason == .needsSelection {
+            return ("Choose an option for every question.", .secondary, composer.firstWithoutSelection != nil)
+        }
         return nil
+    }
+
+    @ViewBuilder
+    private func hintView(_ hint: (text: LocalizedStringKey, color: Color, leads: Bool)) -> some View {
+        if hint.leads {
+            Button(action: onJump) {
+                HStack(spacing: 3) {
+                    Text(hint.text).multilineTextAlignment(.leading)
+                    Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                }
+                .font(.caption)
+                .foregroundStyle(hint.color)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("hint-jump")
+        } else {
+            Text(hint.text).font(.caption).foregroundStyle(hint.color)
+        }
     }
 }

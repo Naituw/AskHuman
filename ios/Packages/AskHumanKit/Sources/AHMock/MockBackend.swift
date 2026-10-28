@@ -20,6 +20,12 @@ public actor MockBackend: RemoteBackend {
         /// The demo with two long questions left: the second must start at its top whatever the first
         /// was scrolled to.
         case longs
+        /// The demo with one request left: the Markdown showcase (soft breaks, a table, a diagram, code).
+        case markdown
+        /// The demo with one request left: a select-only form of three questions that needs a scroll.
+        case strict
+        /// The demo with one request left: the Markdown showcase's tall message over two short questions.
+        case tall
         /// The demo, with both Macs on an AskHuman that predates the todos (`caps.todos == false`).
         case outdated
         /// Paired Macs that have not answered yet, as right after the app opened: the lists are
@@ -121,11 +127,14 @@ public actor MockBackend: RemoteBackend {
         let date = now()
         var initial: EngineState
         switch scenario {
-        case .demo, .quota, .single, .longs, .outdated:
+        case .demo, .quota, .single, .longs, .markdown, .strict, .tall, .outdated:
             let inbox: [InboxItem]
             switch scenario {
             case .single: inbox = MockData.inbox(now: date).filter { $0.requestId == "req-select" }
             case .longs: inbox = MockData.longPair(now: date)
+            case .markdown: inbox = MockData.markdownOnly(now: date)
+            case .strict: inbox = MockData.strictOnly(now: date)
+            case .tall: inbox = MockData.tallMessageOnly(now: date)
             default: inbox = MockData.inbox(now: date)
             }
             let traffic = scenario == .quota

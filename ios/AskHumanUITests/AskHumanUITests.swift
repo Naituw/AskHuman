@@ -31,6 +31,10 @@ final class AskHumanUITests: XCTestCase {
         let locale = language == "en" ? "en_US" : "zh_CN"
         app.launchArguments = [
             "-AHMock", "YES", "-AHScenario", scenario, "-AHLatency", "\(latency)", "-AHAutoAdvance", autoAdvance ? "YES" : "NO",
+            // These tests are about the flows, which need a layout that stays put: the native renderer draws
+            // Markdown at once, while a web page takes its time (seconds on a cold simulator) and then moves
+            // everything below it. The page has its own tests (`AskHumanWebUITests`).
+            "-AHWebMarkdown", "NO",
             "-AppleLanguages", "(\(language))", "-AppleLocale", locale,
         ] + extra
         app.launch()
@@ -239,6 +243,135 @@ final class AskHumanUITests: XCTestCase {
         _ = requireElement("next-button")
         type("Straight to the last one.", into: "answer-text-2")
         XCTAssertTrue(element("send-button").waitForExistence(timeout: 5))
+    }
+
+    // MARK: "Next" follows the position, "Send" waits for the end
+
+    /// Whether the element lies between the navigation bar and the bottom bar, all of it.
+    private func isBetweenTheBars(_ id: String) -> Bool {
+        let target = element(id)
+        guard target.exists else { return false }
+        let barTop = requireElement("answered-count").frame.minY - 10
+        let navigationBottom = app.navigationBars.firstMatch.frame.maxY
+        let frame = target.frame
+        return frame.minY >= navigationBottom - 1 && frame.maxY <= barTop + 1
+    }
+
+    private func scrollToTop() {
+        for _ in 0..<10 { app.swipeDown(velocity: .fast) }
+        Thread.sleep(forTimeInterval: 0.5)
+    }
+
+    /// Taps "Next" and waits for the scroll and the flash to be over.
+    private func tapNext() {
+        let next = requireElement("next-button")
+        XCTAssertTrue(next.isHittable)
+        next.tap()
+        Thread.sleep(forTimeInterval: 1.0)
+    }
+
+    /// Taps "Next" until the last question is on screen, and says in which order the questions came
+    /// between the bars (by their text fields): a question that was skipped is missing from the order.
+    private func questionsReachedByNext(limit: Int = 4) -> [Int] {
+        var order: [Int] = []
+        for _ in 0..<limit {
+            tapNext()
+            for index in 0..<3 where isBetweenTheBars("answer-text-\(index)") && !order.contains(index) {
+                order.append(index)
+            }
+            if order.contains(2) { break }
+        }
+        return order
+    }
+
+    /// The form the person scrolled back over: the first two questions were on screen but not answered, and
+    /// "Next" used to jump to the first one not seen yet (the third), skipping them.
+    func testNextDoesNotSkipQuestionsThatWereOnlySeenAfterScrollingBack() {
+        launch()
+        openRequest("req-migration")
+        _ = requireElement("next-button")
+        // Walk to the second question with "Next": the first two were on screen, nothing was answered.
+        var taps = 0
+        while !isBetweenTheBars("answer-text-1"), taps < 3 {
+            tapNext()
+            taps += 1
+        }
+        XCTAssertTrue(isBetweenTheBars("answer-text-1"), "the second question is on screen")
+        XCTAssertFalse(element("send-button").exists, "the last question was not reached")
+        XCTAssertTrue(answeredCount().contains("0/3"))
+
+        scrollToTop()
+        let order = questionsReachedByNext()
+        XCTAssertEqual(order, [0, 1, 2], "from the top, Next leads on one question at a time, none is jumped over")
+    }
+
+    func testNextStaysBesideSendWhileQuestionsAreLeftBelow() {
+        launch()
+        openRequest("req-migration")
+        _ = requireElement("next-button")
+        reveal("answer-text-2")
+        XCTAssertTrue(element("send-button").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("next-button").exists, "nothing is left below")
+
+        scrollToTop()
+        XCTAssertTrue(element("send-button").exists, "Send does not go away once the end was reached")
+        _ = requireElement("next-button")
+        shot("24-send-and-next")
+        XCTAssertEqual(questionsReachedByNext(), [0, 1, 2])
+        XCTAssertTrue(gone("next-button"), "the last question is on screen: only Send is left")
+        XCTAssertTrue(element("send-button").exists)
+    }
+
+    func testTheHintOfAnIncompleteSelectOnlyFormLeadsToTheFirstOpenQuestion() {
+        launch("strict")
+        openRequest("req-strict")
+        _ = requireElement("next-button")
+        // Answering the last question counts as having read it: Send is there, held back by the other two.
+        tapOption("option-2-0")
+        let send = requireElement("send-button")
+        XCTAssertFalse(send.isEnabled)
+        let hint = requireElement("hint-jump")
+        shot("25-select-only-hint")
+        hint.tap()
+        Thread.sleep(forTimeInterval: 1.0)
+        XCTAssertTrue(isBetweenTheBars("option-0-0"), "the hint leads to the first question without a choice")
+        requireElement("option-0-0").tap()
+        requireElement("hint-jump").tap()
+        Thread.sleep(forTimeInterval: 1.0)
+        XCTAssertTrue(isBetweenTheBars("option-1-0"), "then to the next one that is open")
+        requireElement("option-1-0").tap()
+        XCTAssertTrue(gone("hint-jump"), "nothing is open any more")
+        XCTAssertTrue(send.isEnabled)
+    }
+
+    func testAnOptionTurnsOnAtOnceAndAChoiceOfOneMovesWithTheTap() {
+        launch()
+        openRequest("req-select")
+        let first = requireElement("option-0-0")
+        let second = requireElement("option-0-1")
+        XCTAssertFalse(first.isSelected)
+        shot("26-options-before")
+        first.tap()
+        XCTAssertTrue(first.isSelected, "the tap chose it")
+        XCTAssertFalse(second.isSelected)
+        shot("27-option-chosen")
+        second.tap()
+        XCTAssertTrue(second.isSelected)
+        XCTAssertFalse(first.isSelected, "a single choice moves")
+        second.tap()
+        XCTAssertFalse(second.isSelected, "tapping the chosen one clears it")
+        XCTAssertFalse(first.isSelected)
+    }
+
+    func testSeveralChoicesCanBeOnTogether() {
+        launch()
+        openRequest("req-migration")
+        tapOption("option-1-0")
+        tapOption("option-1-2")
+        XCTAssertTrue(element("option-1-0").isSelected)
+        XCTAssertFalse(element("option-1-1").isSelected)
+        XCTAssertTrue(element("option-1-2").isSelected)
+        shot("28-multiple-chosen")
     }
 
     func testChoosingNothingElseIsEnoughForASelectOnlyQuestion() {
