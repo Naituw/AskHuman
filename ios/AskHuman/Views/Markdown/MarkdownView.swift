@@ -10,8 +10,21 @@ struct MarkdownView: View {
 
     var body: some View {
         MarkdownBlocks(blocks: MarkdownCache.blocks(for: text), baseFont: baseFont)
+            .textSelection(.enabled)
             .environment(\.openURL, OpenURLAction { url in links.request(url) })
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private extension AttributedString {
+    /// Inline code gets the light background it has in the Mac popup (the monospaced font is the system's).
+    var withCodeBackground: AttributedString {
+        // (Looked up by attribute type: the key-path form of these lookups warns under strict concurrency.)
+        var copy = self
+        for run in runs where run[AttributeScopes.FoundationAttributes.InlinePresentationIntentAttribute.self]?.contains(.code) == true {
+            copy[run.range][AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute.self] = Color(.tertiarySystemFill)
+        }
+        return copy
     }
 }
 
@@ -58,13 +71,13 @@ private struct MarkdownBlockView: View {
     var body: some View {
         switch block {
         case .heading(let level, let text):
-            Text(text)
+            Text(text.withCodeBackground)
                 .font(Self.headingFont(level))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, level <= 2 ? 4 : 0)
                 .accessibilityAddTraits(.isHeader)
         case .paragraph(let text):
-            Text(text)
+            Text(text.withCodeBackground)
                 .font(baseFont)
                 .fixedSize(horizontal: false, vertical: true)
         case .list(let ordered, let start, let items):
@@ -187,7 +200,7 @@ private struct MarkdownTableView: View {
 
     private func cellView(_ cell: AttributedString, column: Int, header: Bool) -> some View {
         let alignment = table.alignments.indices.contains(column) ? table.alignments[column] : .leading
-        return Text(cell)
+        return Text(cell.withCodeBackground)
             .font(header ? .subheadline.weight(.semibold) : .subheadline)
             .multilineTextAlignment(alignment == .trailing ? .trailing : alignment == .center ? .center : .leading)
             .padding(.horizontal, 10)

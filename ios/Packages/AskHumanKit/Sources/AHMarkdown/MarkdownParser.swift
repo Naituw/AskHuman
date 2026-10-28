@@ -65,6 +65,11 @@ private struct Builder {
         for run in source.runs {
             var content = AttributedString(source[run.range])
             content.presentationIntent = nil
+            if run.inlinePresentationIntent?.contains(.softBreak) == true {
+                // A line break inside a paragraph stays a line break, as on the Mac (markdown-it's
+                // `breaks: true`); Foundation turns it into a space.
+                content = AttributedString("\n")
+            }
             let components = run.presentationIntent?.components.reversed() ?? []
             insert(content, under: Array(components), into: root)
         }
