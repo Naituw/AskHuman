@@ -77,10 +77,14 @@ public struct WatchFrameData: Sendable, Equatable {
     public var activeElapsedSecs: UInt64?
     /// Unix seconds of the last activity.
     public var at: Int64?
+    /// The model the session runs with and its reasoning effort, when the Mac knows them.
+    public var model: String?
+    public var reasoning: String?
 
     public init(
         phase: String, title: String? = nil, project: String? = nil, text: String? = nil, steps: [WatchStep] = [],
-        stepsOmitted: Int = 0, todos: [WatchTodo] = [], activeElapsedSecs: UInt64? = nil, at: Int64? = nil
+        stepsOmitted: Int = 0, todos: [WatchTodo] = [], activeElapsedSecs: UInt64? = nil, at: Int64? = nil,
+        model: String? = nil, reasoning: String? = nil
     ) {
         self.phase = phase
         self.title = title
@@ -91,6 +95,8 @@ public struct WatchFrameData: Sendable, Equatable {
         self.todos = todos
         self.activeElapsedSecs = activeElapsedSecs
         self.at = at
+        self.model = model
+        self.reasoning = reasoning
     }
 
     /// `nil` when the value is not a frame object.
@@ -113,7 +119,8 @@ public struct WatchFrameData: Sendable, Equatable {
         self.init(
             phase: json["phase"]?.stringValue ?? "working", title: string("title"), project: string("project"),
             text: string("text"), steps: steps, stepsOmitted: Int(json["stepsOmitted"]?.intValue ?? 0), todos: todos,
-            activeElapsedSecs: json["activeElapsedSecs"]?.intValue.map { UInt64(max(0, $0)) }, at: json["at"]?.intValue
+            activeElapsedSecs: json["activeElapsedSecs"]?.intValue.map { UInt64(max(0, $0)) }, at: json["at"]?.intValue,
+            model: string("model"), reasoning: string("reasoning")
         )
     }
 }
@@ -187,10 +194,13 @@ public struct TaskProgress: Identifiable, Sendable, Equatable {
     public var reason: String?
     public var agentKey: String?
     public var createdAt: Date
+    /// The model the user picked (its display name; `nil` = "Default") and the effort (its id; `nil` = "Default").
+    public var modelLabel: String?
+    public var effort: String?
 
     public init(
         id: String, macId: String, workspace: String, agentLabel: String, text: String, stage: String, reason: String? = nil,
-        agentKey: String? = nil, createdAt: Date
+        agentKey: String? = nil, createdAt: Date, modelLabel: String? = nil, effort: String? = nil
     ) {
         self.id = id
         self.macId = macId
@@ -201,7 +211,12 @@ public struct TaskProgress: Identifiable, Sendable, Equatable {
         self.reason = reason
         self.agentKey = agentKey
         self.createdAt = createdAt
+        self.modelLabel = modelLabel
+        self.effort = effort
     }
+
+    /// The user picked a model or an effort (rather than leaving both to the Agent).
+    public var hasModelPick: Bool { modelLabel != nil || effort != nil }
 
     /// Nothing more will change: the Agent was found (followed or not), or the task is lost.
     public var isFinal: Bool {
@@ -232,8 +247,16 @@ public struct TaskDraft: Sendable, Equatable {
     public var permission: String
     public var todoId: String?
     public var text: String
+    /// The model id and effort the user picked; `nil` = "Default", which sends nothing.
+    public var model: String?
+    public var effort: String?
+    /// The display name of the picked model (the progress page shows it).
+    public var modelLabel: String?
 
-    public init(workspaceId: String, workspaceName: String, agentKind: String, agentLabel: String, permission: String, todoId: String? = nil, text: String) {
+    public init(
+        workspaceId: String, workspaceName: String, agentKind: String, agentLabel: String, permission: String, todoId: String? = nil,
+        model: String? = nil, effort: String? = nil, modelLabel: String? = nil, text: String
+    ) {
         self.workspaceId = workspaceId
         self.workspaceName = workspaceName
         self.agentKind = agentKind
@@ -241,6 +264,9 @@ public struct TaskDraft: Sendable, Equatable {
         self.permission = permission
         self.todoId = todoId
         self.text = text
+        self.model = model
+        self.effort = effort
+        self.modelLabel = modelLabel
     }
 }
 

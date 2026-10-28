@@ -284,6 +284,8 @@ pub fn sample_choices() -> TaskChoices {
                 subtitle: "hooks".into(),
                 permission_selectable: true,
                 reason: None,
+                models: None,
+                default_model: None,
             }],
         },
         workspaces: HashMap::from([("ws1".to_string(), "/tmp/proj".to_string())]),

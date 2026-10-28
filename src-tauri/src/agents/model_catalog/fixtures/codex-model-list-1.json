@@ -1,0 +1,30 @@
+{
+  "data": [
+    {
+      "id": "model-a",
+      "model": "model-a",
+      "displayName": "Model A",
+      "description": "The flagship model.",
+      "hidden": false,
+      "isDefault": true,
+      "defaultReasoningEffort": "medium",
+      "supportedReasoningEfforts": [
+        {"reasoningEffort": "low", "description": "Fast"},
+        {"reasoningEffort": "medium", "description": "Balanced"},
+        {"reasoningEffort": "high", "description": "Thorough"},
+        {"reasoningEffort": "xhigh", "description": "Slowest"}
+      ]
+    },
+    {
+      "id": "model-hidden",
+      "model": "model-hidden",
+      "displayName": "Hidden",
+      "description": "Not for the picker.",
+      "hidden": true,
+      "isDefault": false,
+      "defaultReasoningEffort": "low",
+      "supportedReasoningEfforts": [{"reasoningEffort": "low", "description": "Fast"}]
+    }
+  ],
+  "nextCursor": "page-2"
+}

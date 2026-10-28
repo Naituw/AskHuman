@@ -68,7 +68,7 @@ pub fn inspect(config: &Config) -> Result<Installation, UnavailableReason> {
     })
 }
 
-fn data_home(config: &Config) -> PathBuf {
+pub(super) fn data_home(config: &Config) -> PathBuf {
     if config.codex_home.trim().is_empty() {
         std::env::var_os("CODEX_HOME")
             .map(PathBuf::from)

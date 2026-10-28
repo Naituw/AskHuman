@@ -59,13 +59,13 @@ extension PhoneEngine {
         let id = Bytes.newMsgId()
         let body = TaskCreate(
             clientMsgId: id, workspaceId: draft.workspaceId, agentKind: draft.agentKind, permission: draft.permission,
-            todoId: draft.todoId, text: draft.text
+            todoId: draft.todoId, model: draft.model, effort: draft.effort, text: draft.text
         )
         taskBodies[id] = body
         tasks.insert(
             TaskProgress(
                 id: id, macId: macId, workspace: draft.workspaceName, agentLabel: draft.agentLabel, text: draft.text,
-                stage: "sending", createdAt: clock.now()
+                stage: "sending", createdAt: clock.now(), modelLabel: draft.modelLabel, effort: draft.effort
             ),
             at: 0
         )

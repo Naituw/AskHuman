@@ -1,5 +1,6 @@
 use super::{runtime, Config, LaunchTarget};
 use crate::i18n::Lang;
+use std::path::PathBuf;
 
 pub fn integration_enabled() -> bool {
     cfg!(target_os = "macos")
@@ -74,6 +75,26 @@ pub fn launch_status(force: bool) -> LaunchStatus {
         desktop_reason,
         terminal_reason,
         integrated,
+    }
+}
+
+/// The Codex a task started on `target` runs on, as far as its model catalog is concerned: the
+/// executable and the data directory to read the catalog with. The Desktop App brings its own
+/// runtime; the terminal route runs the user's `codex` (`terminal_executable`, as the login shell
+/// resolves it) against the same data directory. `None` when that route cannot be used.
+pub fn catalog_runtime(
+    target: LaunchTarget,
+    terminal_executable: Option<&str>,
+) -> Option<(PathBuf, PathBuf)> {
+    let config = crate::config::AppConfig::load_without_secrets().codex_desktop;
+    match target {
+        LaunchTarget::Desktop => runtime::inspect(&config)
+            .ok()
+            .map(|installation| (installation.executable, installation.home)),
+        LaunchTarget::Terminal => {
+            let executable = PathBuf::from(terminal_executable?);
+            Some((executable, runtime::data_home(&config)))
+        }
     }
 }
 

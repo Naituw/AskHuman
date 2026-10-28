@@ -1,7 +1,7 @@
 # 需求：iOS 新建任务时可以选择模型与强度
 
 > 状态：**已批准，开工中**（2026-10-27 起草；同日用户经 AskHuman 批准）。M1–M6 是用户先前选定的；M7–M13 是我据代码与只读探测提出、评审时一并批准的；
-> M14–M19 是评审时用户对六条待确认点的结论（见「决策记录」），其中 Grok 清单、Cursor 清单还各留一条要在动手前再问用户（末尾「仍待确认」）。
+> M14–M19 是评审时用户对六条待确认点的结论（见「决策记录」）；M20–M22 是开工 P2 前用户对 Grok 样本、Cursor 清单与本机冒烟三件事的回答。
 > 实施顺序（同 `ios-follow-narrowing`）：先做 Mac 端并装机，App 之后再单独开工。**范围只含 iOS。**
 >
 > 痛点：手机上新建任务只能选「工作区 / Agent / 权限 / 待办 / 文字」，模型与强度一律用 Agent 自己的默认；想换个模型只能回 Mac。
@@ -43,9 +43,26 @@
 - **跑过**：`cursor-agent --list-models` 与 `cursor-agent models`（拉模型清单，约 1.7–2.3 秒，联网，输出完全相同）；Codex `app-server` 的 `model/list`
   （在**空的临时 `CODEX_HOME`、没有任何凭据**下，约 0.4 秒，只返回内置清单；临时目录与进程已清理）；`pi --list-models`（约 0.8 秒，纯本地）；
   读本机 Codex / Grok 的模型缓存（只看键名与结构）；各 Agent 的 `--help`；各 Agent 配置里的「默认模型」键名。
-- **没有跑**：`grok models`（`grok models --help` 只说「List available models and exit」，并提供 `--leader-socket <PATH>`——默认会用 `~/.grok/leader.sock` 的本机 leader 进程，
-  我无法保证它不触发模型调用）、任何 Agent 会话 / 提示词、带真实凭据的 Codex 调用。评审时用户选了用 `grok models` 做 Grok 清单（M15），
-  所以它的输出格式**还没有样本**，第一次执行要再经用户批准（见「仍待确认」）。
+- **没有跑**：任何 Agent 会话 / 提示词、带真实凭据的 Codex 调用。`grok models` 一开始也没跑（`grok models --help` 只说「List available models and exit」，并提供
+  `--leader-socket <PATH>`——默认会用 `~/.grok/leader.sock` 的本机 leader 进程，我无法保证它不触发模型调用）；评审时用户选了用它做 Grok 清单（M15），
+  P2 开头经用户批准后在沙盒里跑了**一次**（见下一条）。
+- **`grok models` 沙盒样本（2026-10-27，用户批准，M20）**：`env -i HOME=<空临时目录> PATH=/usr/bin:/bin:/usr/sbin:/sbin TMPDIR=<同> grok models --leader-socket <临时目录里的 .sock>`，
+  10 秒超时；用解析后的真实二进制路径，不继承任何环境变量。结果：0.2 秒内退出码 0、stdout 107 字节、stderr 空、**没有拉起 leader 进程**（跑前跑后 `ps` 对比只有用户原有的两个 `grok`，未触碰）；
+  临时目录（里面是 Grok 自己初始化出的 `.grok/`）随后整个删除。没有凭据，所以输出只有未登录时的样子：
+
+  ```
+  You are not authenticated.
+
+  Default model: <id>
+
+  Available models:
+    * <id> (default)
+    - <id>
+  ```
+
+  事实：有 `Default model:` 一行；`Available models:` 标题下每行 `*`（默认）或 `-` 开头、后跟 id（默认项带 `(default)`）；**没有显示名，没有每个模型的强度档位**。
+  已登录时的输出可能更多（更多模型、更多字段），所以解析器只认「标题 + 项目符号行」，其余一律忽略。
+  `grok --help` 对 `--reasoning-effort <EFFORT>` 只写「Reasoning effort for reasoning models」，**没有合法值列表**。
 - **得到的事实**：
   - Cursor 输出：标题行 `Available models`，随后每行 `<id> - <显示名>`，`auto - Auto (default)` 带 `(default)` 标记，显示名里混有零宽空格，
     个别带 `(NO ZDR)` 之类后缀，末尾一行 `Tip: …`。**强度与 Fast 已体现在 id 里**（如 `…-low`、`…-high-fast`），所以 Cursor 没有「强度」这个独立维度。
@@ -80,27 +97,36 @@
 - **M8 Cursor 不出强度行**：它的强度 / Fast 已折在 id 里，手机上就是在一长串模型里选（带搜索）。
 - **M9 Mac 在 `task.create` 时重新校验**：`model` 必须出现在该 Agent 当前清单里，`effort` 必须是该模型（或「默认」所指模型）的档位；不满足则**不启动任何东西**，
   回 `failed`，原因 `modelUnavailable` / `effortUnavailable`。手机传来的 id 只是「选了清单里的哪一项」，绝不当作命令行片段。
-- **M10 配置的强度与所选模型不兼容时，显式传该模型自己的默认强度**：只对声明了每个模型档位的 Agent——Codex 一定有，Grok 取决于 `grok models` 的输出（M15）。
+- **M10 配置的强度与所选模型不兼容时，显式传该模型自己的默认强度**：只对声明了每个模型档位的 Agent——目前只有 Codex（Grok 的 `grok models` 不带档位，见 M20）。
   例：配置里 `model_reasoning_effort = max`，手机选了不支持 `max` 的模型、强度留「默认」——不这样做，Agent 会拿着不支持的档位启动。Claude / Pi 没有声明，不处理。
 - **M11 不加 Mac 端开关 / 配置项**：清单为空或拿不到时行就不出现，不需要设置页入口。
 - **M12 清单缓存**：清单来源（Cursor、Pi、Grok 的命令，Codex 的 `app-server`）进程内缓存 30 分钟，过期后「先用旧的、后台刷新」；daemon 重启后重新获取，不落盘。
-  只用于「默认所指」的本地配置（Claude / Codex / Cursor / Grok / Pi 的设置文件）每次按文件修改时间判断是否重读，成本是一次 `stat`。
+  只用于「默认所指」的本地配置（Claude / Codex / Cursor / Pi 的设置文件；Grok 的默认出自清单本身）**每次被问到都重读**——都是几 KB 的小文件（超过 1 MB 的不读），
+  读一次比查修改时间再记账更省事——所以改了设置马上反映在手机上，清单本身不会因此重新获取（Claude 的别名备注也出自同一份设置，一并重算）。
 - **M13 Claude 固定别名 + 固定五档强度**：别名 `opus` / `sonnet` / `haiku`（`fable` 见 M14）；强度用 `--help` 里写明的五档，不按模型过滤（验证需要真实调用，做不到）。
 
 评审结论（2026-10-27，用户经 AskHuman 批准整份需求与计划，并对我给出的六条待确认点作了选择）：
 
 - **M14 Claude 别名**：`opus` / `sonnet` / `haiku` 固定；本机 `claude --help` 里出现 `fable` 字样时自动加入（采纳我的建议）。
 - **M15 Grok 清单用 `grok models`**（**没有**采纳我的「读缓存文件」建议）：官方输出更干净，也不用碰带 `api_key` 的缓存文件。
-  代价：它的输出格式目前没有样本，**第一次执行要再经用户批准**；我建议在「空的临时 HOME + 独立 `--leader-socket`、没有任何凭据」下跑，让它连模型都调不了，
-  跑完杀掉可能拉起的 leader 并删掉临时目录。解析器与夹具等拿到样本后才写。运行时由 daemon 调用，缓存 30 分钟（M12）。
-- **M16 Codex 清单一律走 `codex app-server` 的 `model/list`**（**没有**采纳我的「优先读缓存文件」建议）：`includeHidden: true`、翻页，与现有创建路径同一套握手；
+  代价：它的输出格式原本没有样本，**第一次执行要再经用户批准**（已批准并执行，见 M20）。运行时由 daemon 调用，缓存 30 分钟（M12）。
+- **M16 Codex 清单一律走 `codex app-server` 的 `model/list`**（**没有**采纳我的「优先读缓存文件」建议）：不带隐藏项（`includeHidden: false`；隐藏模型本来就不给手机选）、翻页，与现有创建路径同一套握手；
   不读 `models_cache.json`。可执行文件跟随启动目标：桌面应用路径用应用内置的 `codex`，终端路径用 `codex`（就绪探测已解析的那个）。
   这意味着 daemon 在手机打开新任务时（缓存过期后）会起一个很短命的 `app-server` 进程；它只发 `initialize` 与 `model/list`，不建线程、不发 turn。
 - **M17 Pi 强度只给 `low / medium / high` 三档**（采纳建议）。
 - **M18 做 M10**（采纳建议）。
 - **M19 真实 Agent 一轮：实现完做，但每次执行前都要用户批准；Cursor 永不实测**：用最便宜的模型 + 一句话任务，只覆盖 Claude / Codex / Grok / Pi。
-  用户原话：「但是 cursor 严禁实测」——我按最严的理解执行：**不启动任何 Cursor 任务，本机验证里也不再调用 `cursor-agent` 的任何命令（含 `--list-models`）**，
-  Cursor 的解析与流程只靠合成夹具与断言；唯一例外是 daemon 在你手机打开新任务时对 Cursor 清单的运行时获取（见「仍待确认」2）。
+  用户原话：「但是 cursor 严禁实测」——我最初按最严的理解执行（连 `cursor-agent --list-models` 都不跑）；P2 开工前用户把边界说清楚了，见 M21：**列清单可以实测，启动任务仍然严禁**。
+
+P2 开工前（2026-10-27，用户经 AskHuman 回答）：
+
+- **M20 批准在沙盒里跑一次 `grok models`**：做法与结果见「探测记录」。因为样本里没有每个模型的档位、`--help` 也没有合法值列表，**Grok 本期不出强度行**
+  （只有模型行）；M10 对 Grok 不适用。等用户在自己的环境里（已登录）看到带档位的输出，再补解析与强度行——记在 `docs/PROGRESS.md`。
+- **M21 Cursor 清单保留，并且允许实测列清单**：用户原话「这个你可以实测，只要不启动任务就行」。含义：手机打开新任务时 daemon 取 Cursor 清单（`cursor-agent --list-models`）保留；
+  我在本机验证时**可以**运行 `cursor-agent --list-models`（只读、不起会话、约 2 秒）来核对解析器与真实输出；**任何会启动 Cursor 任务 / 会话 / 提示词的调用仍然严禁**
+  （M19 里「Cursor 不在真实一轮里」不变）。
+- **M22 批准做「本机只读冒烟」**：`#[ignore]` 测试，只读本机配置文件 + `pi --list-models` + 各 Agent 的 `--help`，只打印条目数；用户批准的范围**不含** Cursor、`grok models`、
+  带凭据的 `app-server`（Cursor 列清单另按 M21 单独跑）。
 
 ## 术语
 
@@ -159,7 +185,7 @@
 | Claude Code | 固定别名 `opus` / `sonnet` / `haiku`，本机 `claude --help` 提到 `fable` 时再加入（M14）；`~/.claude/settings.json` 的 `env` 里若配了 `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`（网关把别名映射到别的模型），副标题写映射结果 | 固定五档（M13） | `settings.json` 的 `model` |
 | Codex | `codex app-server` 的 `model/list`（M16）：`includeHidden: true`、翻页；可见项进清单，隐藏项只留着查「默认所指」的档位 | 每个模型自己的 `supportedReasoningEfforts`，默认档位 `defaultReasoningEffort` | `config.toml` 顶层 `model`（在含隐藏项的完整清单里查它的档位）与 `model_reasoning_effort`；配置里没写模型时取 `isDefault` 那一项 |
 | Cursor | `cursor-agent --list-models`（已解析的可执行文件 + 固定参数，走现有的登录 shell 探测通道，超时放宽到 8 秒）；去掉零宽字符与 `(default)` 标记 | 无（M8） | `cli-config.json` 的 `model.displayName`（只作副标题） |
-| Grok | `grok models`（M15，同 Cursor 的通道；格式待首次获批执行后再定） | 待样本：若输出带每个模型的档位就用，否则只给 Agent 级的固定档位或不显示强度行（拿到样本后在计划里定） | `config.toml` 的 `[models] default` 与 `default_reasoning_effort` |
+| Grok | `grok models`（M15，同 Cursor 的通道）：`Available models:` 标题下的 `*` / `-` 项目符号行，id 即显示名；`Default model:` 一行给出「默认所指」 | **本期没有强度行**（M20）：样本不带档位，CLI 也不公布合法值，猜一个固定集合会把 Agent 不认的档位传下去；之后拿到带档位的输出再加 | `Default model:` 一行，其次 `config.toml` 的 `[models] default` |
 | Pi | `pi --list-models`（同 Cursor 的通道）；模型 id 取 `provider/model` | 仅 `thinking = yes` 的模型有：`low / medium / high`（M17） | `settings.json` 的 `defaultProvider` + `defaultModel` |
 
 通用规则：
@@ -229,8 +255,8 @@
    （Grok 与 Codex 的模型缓存文件分别带 `api_key` / `identity`，本期不读。）解析一律**按键名取需要的字段**（Claude 只取 `model`、`env.ANTHROPIC_MODEL`、
    `env.ANTHROPIC_DEFAULT_*_MODEL(_NAME)`；Cursor 只取 `model.displayName`），其余在反序列化时即丢弃；**不**遍历 `env`、**不**对整个对象做 `Debug` / 日志输出。
    夹具里的密钥是合成的，并有测试断言它们不会出现在任何输出里。
-4. **Cursor**：我不会在本机再调用 `cursor-agent` 的任何命令（M19）；它的列表解析器只靠合成夹具。运行时（用户手机打开新任务、缓存过期）daemon 会调一次
-   `cursor-agent --list-models`：只读、约 2 秒、不起会话——这是功能本身，不是我的测试；是否保留见「仍待确认」2。
+4. **Cursor**：**不启动任何 Cursor 任务 / 会话 / 提示词**（M19、M21）；解析器靠合成夹具，必要时可以运行 `cursor-agent --list-models` 核对真实输出（M21，只读、约 2 秒）。
+   运行时（用户手机打开新任务、缓存过期）daemon 也只调这一个命令。
 5. **argv 注入防护**：手机传来的 `model` / `effort` 必须与 Mac 清单里的某一项**完全相等**才放行，且清单条目本身已按白名单正则净化（M9）；
    `LaunchRecord` 的哈希覆盖它们，helper 认领时再校验一次。
 6. **日志**只记 Agent 种类、所选模型 id 与强度档位；不记任务正文、不记任何命令输出原文。
@@ -241,6 +267,7 @@
 2. **Cursor 的强度 / Fast / 上下文折在模型 id 里**，手机上是一长串（带搜索，不分组）；本期不使用 `--model 'id[context=…,effort=…]'` 的参数化写法，
    所以 `cli-config.json` 里那种参数化默认也只用于显示。
 3. **「默认所指」尽力而为**：配置读不到或格式变了，副标题退回「Agent 自己的设置」，强度行在无法确定档位时不出现（Claude 除外）。它不影响启动。
+   Codex 的隐藏模型不进清单，所以配置把默认指到一个隐藏模型时，副标题只有它的 id、没有强度行。
 4. **清单是 Agent 当时给的**：个别条目可能因账号权限在启动后才被拒绝，此时 Agent 自己报错；手机上看不到价格 / 倍率，也不提示「这个更贵」。
 5. **私有格式会变**：Cursor / Pi / Grok 的列表输出与 Codex `app-server` 的接口都不是公开契约；升级后解析不出就降级成只有「默认」，靠夹具测试发现并修。
 6. **Codex 的桌面应用与终端两条路径用各自的 `codex` 可执行文件**（应用内置的与终端里的），版本可能不同，清单取启动目标对应的那个；`app-server` 是实验性接口。
@@ -257,7 +284,7 @@
 6. 伪造或过期的模型 / 强度 → `failed` + `modelUnavailable` / `effortUnavailable`，不开任何终端。
 7. 详情页显示该会话实际的模型（和强度）；进度页显示所选。
 8. 自动化覆盖：Rust 单测（解析夹具、校验、argv、哈希兼容、桌面覆盖）与网关测试；Swift 单测与真实 daemon 端到端（不起真实 Agent）；模拟器 UI 测试（en + zh-Hans）。
-   **没有任何一步启动真实 Agent，也没有任何一步调用 `cursor-agent`。**
+   **没有任何一步启动真实 Agent 或 Cursor 任务**；`cursor-agent --list-models` 只在 M21 允许的范围内运行。
 9. （可选，M19）真实一轮：Claude / Codex / Grok / Pi 各挑最便宜的模型、一句话任务，每次执行前经用户批准；核对终端里 Agent 的启动参数、详情页显示的模型与所选一致，
    再各试一次「默认」确认与以前相同。Cursor 不在其中。
 
@@ -267,11 +294,9 @@
 - Cursor 的参数化写法 → 把强度 / Fast / 上下文拆成独立选项。
 - 记住上次选择；常用 / 最近置顶；价格 / 倍率提示。
 
-## 仍待确认（动手到那一步之前再问用户）
+## 仍待确认
 
-评审时的六条待确认点已全部有结论（M14–M19）。因为那些结论，又多出两件要在动到对应代码前问用户：
+无阻塞项。已知的后续观察点：
 
-1. **`grok models` 的第一次执行**（M15）：我要拿一份真实输出当解析夹具的依据。建议的做法：空的临时 `HOME`（没有 Grok 配置与凭据）+ 独立的 `--leader-socket`，
-   超时 10 秒，跑完杀掉可能拉起的 leader、删临时目录——没有凭据就调不了模型。需要用户批准后才执行（P2 开头）。
-2. **Cursor 清单的运行时获取**：手机打开新任务（缓存过期）时 daemon 会调一次 `cursor-agent --list-models`。用户说「cursor 严禁实测」，我把它理解为不要在测试里
-   启动 Cursor；这个调用是功能本身（M2 的动态发现），所以默认**保留**。如果用户连这个都不想要，Cursor 就只有「默认」，不出模型行（改动很小，P2 里让 Cursor 来源返回空即可）。
+- **Grok 已登录时的 `grok models` 输出**：我在沙盒里只能看到未登录的样子（M20）。若真实输出带每个模型的强度档位，要补解析与强度行；解析器已按「标题 + 项目符号行、其余忽略」写，
+  遇到更多字段不会出错，只是看不到档位。需要用户在自己的环境运行一次 `grok models` 贴出（或在 P4 真机一轮里顺便看手机上的表现）。

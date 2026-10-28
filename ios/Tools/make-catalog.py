@@ -385,6 +385,24 @@ ZH = {
     "Keep them": "保留",
     "Remove them": "移除",
     "This phone still holds %lld pairing(s) from before AskHuman was reinstalled. Keep using them, or start fresh?": "这部手机上还保留着 AskHuman 重装前的 %lld 个配对。继续使用它们，还是重新开始？",
+    # New task: model and effort
+    "Model": "模型",
+    "Effort": "强度",
+    "Default": "默认",
+    "Default (%@)": "默认（%@）",
+    "Agent's own setting": "Agent 自己的设置",
+    "Search models": "搜索模型",
+    "Model: %@": "模型：%@",
+    "Effort: %@": "强度：%@",
+    "None": "无",
+    "Minimal": "极低",
+    "Low": "低",
+    "Medium": "中",
+    "High": "高",
+    "Extra high": "超高",
+    "Max": "最高",
+    "The Agent on the Mac no longer offers that model. Open the form again and choose another.": "Mac 上的 Agent 已不再提供这个模型。请重新打开表单并另选一个。",
+    "That effort is not available for the chosen model. Open the form again and choose another.": "所选模型不支持这个强度。请重新打开表单并另选一个。",
 }
 
 # Shown by iOS itself when a push cannot be decrypted by the notification extension.

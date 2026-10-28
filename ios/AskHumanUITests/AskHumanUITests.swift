@@ -591,8 +591,10 @@ final class AskHumanUITests: XCTestCase {
         requireElement("send-button").tap()
         _ = requireElement("sent-receipt", timeout: 10)
         shot("18-sent-receipt")
-        XCTAssertFalse(element("send-button").isHittable, "the receipt takes the form's place")
-        // The next request is pushed over the sent one, with a pill saying how many are left.
+        // (The form is hidden from accessibility while the receipt is up: asking the hittability of a
+        // button in the middle of that hiding can fail outright on a busy machine.)
+        XCTAssertTrue(gone("send-button", timeout: 10), "the receipt takes the form's place")
+        // The next request slides in over the receipt, with a pill saying how many are left.
         _ = requireElement("sent-pill", timeout: 10)
         shot("19-sent-pill")
         _ = requireElement("submit-button", timeout: 10)
@@ -601,6 +603,34 @@ final class AskHumanUITests: XCTestCase {
         app.navigationBars.buttons.firstMatch.tap()
         _ = requireElement("inbox-row-req-migration")
         XCTAssertFalse(element("inbox-row-req-select").exists)
+    }
+
+    /// The page that follows a long form read to its end is a page of its own: it starts at its top and
+    /// has not been read, however far the one before it went. (It used to take over the scroll position
+    /// and the reading state of the page it replaced: it showed its end, with "Send" at the bottom.)
+    func testTheNextRequestStartsAtItsTopAndIsNotReadYet() {
+        launch("longs", autoAdvance: true, extra: ["-AHAdvanceHold", "2"])
+        openRequest("req-migration")
+        tapOption("option-0-0")
+        tapOption("option-1-0")
+        reveal("answer-text-2")
+        XCTAssertTrue(answeredCount().contains("2/3"))
+        requireElement("send-button").tap()
+        _ = requireElement("sent-receipt", timeout: 10)
+        XCTAssertTrue(gone("sent-receipt", timeout: 20))
+
+        XCTAssertTrue(answeredCount().contains("0/3"), "it is the other request, nothing is answered yet")
+        let title = requireElement("request-title")
+        let navigationBar = app.navigationBars.firstMatch
+        XCTAssertGreaterThanOrEqual(title.frame.minY, navigationBar.frame.maxY, "the page starts at its top: \(title.frame)")
+        _ = requireElement("next-button")
+        XCTAssertFalse(element("send-button").exists, "the end of this form has not been seen")
+        shot("20-next-request-at-top")
+
+        // The page of a request that was sent is not kept below it.
+        app.navigationBars.buttons.firstMatch.tap()
+        _ = requireElement("inbox-row-req-migration-2")
+        XCTAssertFalse(element("inbox-row-req-migration").exists)
     }
 
     func testWithoutAutoAdvanceTheReceiptLeadsBackToTheList() {

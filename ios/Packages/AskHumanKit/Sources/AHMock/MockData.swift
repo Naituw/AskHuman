@@ -180,14 +180,29 @@ public enum MockData {
     }
 
     public static func inbox(now: Date = Date()) -> [InboxItem] {
-        let entries: [(String, String, RequestView, Bool, TimeInterval)] = [
+        items([
             (homeMacId, "Home MacBook Pro", permissionConfirm(now: now), true, -40),
             (homeMacId, "Home MacBook Pro", migrationAsk(now: now), true, -95),
             (officeMacId, "Office iMac", selectOnlyAsk(now: now), false, -600),
             (homeMacId, "Home MacBook Pro", whatsNextAsk(now: now), false, -3_000),
             (officeMacId, "Office iMac", stopConfirm(now: now), false, -7_200),
-        ]
-        return entries.map { macId, macName, view, unread, offset in
+        ], now: now)
+    }
+
+    /// Two long questions, both unread: the migration plan and a copy of it for another table.
+    public static func longPair(now: Date = Date()) -> [InboxItem] {
+        var second = migrationAsk(now: now)
+        second.id = "req-migration-2"
+        second.sessionTitle = "Plan the orders table migration"
+        second.contentHash = hash("migration-2")
+        return items([
+            (homeMacId, "Home MacBook Pro", migrationAsk(now: now), true, -95),
+            (homeMacId, "Home MacBook Pro", second, true, -120),
+        ], now: now)
+    }
+
+    private static func items(_ entries: [(String, String, RequestView, Bool, TimeInterval)], now: Date) -> [InboxItem] {
+        entries.map { macId, macName, view, unread, offset in
             InboxItem(
                 macId: macId, macName: macName, requestId: view.id,
                 summary: RequestSummary(

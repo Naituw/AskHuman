@@ -108,6 +108,7 @@
     {"type": "watch.open", "body": {"agentKey": "claude:s1"}},
     {"type": "watch.close", "body": {"agentKey": "claude:s1"}},
     {"type": "watch.frame", "body": {"agentKey": "claude:s1", "seq": 5, "frame": {"kind": "tool", "text": "Edit src/main.rs"}}},
+    {"type": "watch.frame", "name": "model", "body": {"agentKey": "claude:s1", "seq": 6, "frame": {"phase": "working", "title": "Refactor gateway", "model": "model-b", "reasoning": "high"}}},
     {"type": "watch.closed", "body": {"agentKey": "claude:s1", "reason": "ended"}},
     {"type": "interject.send", "body": {"clientMsgId": "c6", "agentKey": "claude:s1", "text": "Also add tests", "files": ["u3"]}},
     {"type": "interject.ack", "name": "min", "body": {"clientMsgId": "c6", "agentKey": "claude:s1", "status": "queued", "pending": 1}},
@@ -125,11 +126,35 @@
         {"kind": "claude", "label": "Claude Code", "ready": true, "subtitle": "claude", "permissionSelectable": true},
         {"kind": "codex", "label": "Codex", "ready": false, "subtitle": "codex", "permissionSelectable": false, "reason": "not installed"}
       ]}},
+    {"type": "task.options", "name": "models", "body": {"enabled": true, "permissionMode": "ask",
+      "workspaces": [{"id": "w1", "label": "HumanInLoop", "subtitle": "~/Developer/HumanInLoop", "pinned": true, "lastUsedAt": 1792900000000}],
+      "agents": [
+        {"kind": "claude", "label": "Claude Code", "ready": true, "subtitle": "claude", "permissionSelectable": true,
+         "models": [
+           {"id": "opus", "label": "Opus", "note": "\u2192 model-b", "efforts": ["low", "medium", "high", "xhigh", "max"]},
+           {"id": "haiku", "label": "Haiku", "efforts": ["low", "medium", "high", "xhigh", "max"]}
+         ],
+         "defaultModel": {"label": "opus", "efforts": ["low", "medium", "high", "xhigh", "max"]}},
+        {"kind": "codex", "label": "Codex", "ready": true, "subtitle": "codex", "permissionSelectable": true,
+         "models": [
+           {"id": "model-a", "label": "Model A", "note": "A synthetic model", "efforts": ["low", "medium", "high"], "defaultEffort": "medium"},
+           {"id": "model-b", "label": "Model B"}
+         ],
+         "defaultModel": {"label": "Model A", "efforts": ["low", "medium", "high"], "defaultEffort": "high"}},
+        {"kind": "cursor", "label": "Cursor", "ready": true, "subtitle": "cursor-agent", "permissionSelectable": false,
+         "models": [{"id": "model-c", "label": "Model C"}, {"id": "model-d-fast", "label": "Model D Fast"}],
+         "defaultModel": {"label": "Auto"}},
+        {"kind": "grok", "label": "Grok", "ready": true, "subtitle": "grok", "permissionSelectable": true,
+         "models": [{"id": "model-e", "label": "model-e"}]}
+      ]}},
     {"type": "task.options", "name": "blocked", "body": {"enabled": false, "blocked": "disabled", "permissionMode": "yolo", "workspaces": [], "agents": []}},
     {"type": "task.todos.get", "body": {"workspaceId": "w1"}},
     {"type": "task.todos", "body": {"workspaceId": "w1", "todos": [{"id": "t1", "text": "Write docs", "auto": false, "attachments": 2}], "overflow": 3}},
     {"type": "task.create", "name": "full", "body": {"clientMsgId": "c8", "workspaceId": "w1", "agentKind": "claude", "permission": "yolo", "todoId": "t1", "text": "Do the thing"}},
     {"type": "task.create", "name": "min", "body": {"clientMsgId": "c9", "workspaceId": "w1", "agentKind": "codex", "permission": "default", "text": "Do the thing"}},
+    {"type": "task.create", "name": "model", "body": {"clientMsgId": "c11", "workspaceId": "w1", "agentKind": "codex", "permission": "default", "model": "model-a", "effort": "high", "text": "Do the thing"}},
+    {"type": "task.create", "name": "effortOnly", "body": {"clientMsgId": "c12", "workspaceId": "w1", "agentKind": "claude", "permission": "yolo", "effort": "max", "text": "Do the thing"}},
+    {"type": "task.status", "name": "modelUnavailable", "body": {"clientMsgId": "c11", "stage": "failed", "reason": "modelUnavailable"}},
     {"type": "task.status", "name": "min", "body": {"clientMsgId": "c8", "stage": "launching"}},
     {"type": "task.status", "name": "full", "body": {"clientMsgId": "c8", "stage": "watching", "reason": "matched", "agentKey": "claude:s9"}},
     {"type": "slot.take", "body": {"clientMsgId": "c10"}},

@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 
 use super::hostapi::{InterjectResult, StagedFile, TaskLaunch};
 use super::{Actor, Cmd};
+use crate::agents::model_catalog::{valid_effort, valid_model_id};
 use crate::ios::store::JournalLookup;
 use crate::ios::wire::{self, t};
 
@@ -37,6 +38,27 @@ pub(crate) struct TaskWait {
 fn body_hash(value: &serde_json::Value) -> String {
     let digest = Sha256::digest(serde_json::to_vec(value).unwrap_or_default());
     digest[..16].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// What makes two `task.create` messages the same task: the journal replays the answer to a
+/// repeat and calls anything else under the same id a conflict. A model and an effort count only
+/// when one was picked, so a task that names neither keeps the identity it always had (a phone
+/// that retries across a Mac update must not be told it conflicts with itself).
+fn task_identity(create: &wire::TaskCreate) -> serde_json::Value {
+    let mut identity = json!({
+        "workspaceId": create.workspace_id,
+        "agentKind": create.agent_kind,
+        "permission": create.permission,
+        "todoId": create.todo_id,
+        "text": create.text,
+    });
+    if let Some(model) = &create.model {
+        identity["model"] = json!(model);
+    }
+    if let Some(effort) = &create.effort {
+        identity["effort"] = json!(effort);
+    }
+    identity
 }
 
 impl Actor {
@@ -278,13 +300,7 @@ impl Actor {
 
     pub(super) fn on_task_create(&mut self, phone_id: &str, create: wire::TaskCreate) {
         let id = create.client_msg_id.clone();
-        let hash = body_hash(&json!({
-            "workspaceId": create.workspace_id,
-            "agentKind": create.agent_kind,
-            "permission": create.permission,
-            "todoId": create.todo_id,
-            "text": create.text,
-        }));
+        let hash = body_hash(&task_identity(&create));
         if let Some(lookup) = self.replay_or_start(phone_id, &id, t::TASK_CREATE, &hash) {
             match lookup {
                 JournalLookup::Replay(Some(result)) => {
@@ -308,6 +324,10 @@ impl Actor {
         };
         if create.agent_kind.trim().is_empty()
             || !matches!(create.permission.as_str(), "default" | "yolo")
+            // Whether they name something the Agent offers is the host's call; a value that
+            // could not be one is refused here, before anything else looks at it.
+            || create.model.as_deref().is_some_and(|m| !valid_model_id(m))
+            || create.effort.as_deref().is_some_and(|e| !valid_effort(e))
         {
             return self.task_failed(phone_id, &id, "invalid");
         }
@@ -328,6 +348,8 @@ impl Actor {
             permission: create.permission,
             todo_id: create.todo_id,
             text,
+            model: create.model,
+            effort: create.effort,
         };
         let host = self.host.clone();
         let phone = phone_id.to_string();
@@ -406,5 +428,70 @@ impl Actor {
         self.spawn_then(async move { host.take_slot().await }, move |actor, ()| {
             actor.send_stream_snapshot(&phone, "slot");
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plain() -> wire::TaskCreate {
+        wire::TaskCreate {
+            client_msg_id: "n1".into(),
+            workspace_id: "w1".into(),
+            agent_kind: "claude".into(),
+            permission: "default".into(),
+            todo_id: None,
+            text: "build it".into(),
+            model: None,
+            effort: None,
+        }
+    }
+
+    #[test]
+    fn a_task_that_names_no_model_keeps_the_identity_it_had_before_models_existed() {
+        // Computed from the old five-field identity, outside this code: a journal written by an
+        // older Mac must still recognise the phone's retry.
+        assert_eq!(
+            body_hash(&task_identity(&plain())),
+            "6f8f72b4ab3e6cabc3b99ad75b7a3b89"
+        );
+        let todo = wire::TaskCreate {
+            todo_id: Some("t1".into()),
+            text: String::new(),
+            ..plain()
+        };
+        assert_eq!(
+            body_hash(&task_identity(&todo)),
+            "d3ff0bf473a4f6a884bc7aeda12c83ad"
+        );
+        // The message id is not part of what a task is.
+        let again = wire::TaskCreate {
+            client_msg_id: "n2".into(),
+            ..plain()
+        };
+        assert_eq!(task_identity(&again), task_identity(&plain()));
+    }
+
+    #[test]
+    fn a_picked_model_or_effort_makes_a_different_task() {
+        let with = |model: Option<&str>, effort: Option<&str>| {
+            body_hash(&task_identity(&wire::TaskCreate {
+                model: model.map(str::to_string),
+                effort: effort.map(str::to_string),
+                ..plain()
+            }))
+        };
+        let all = [
+            with(None, None),
+            with(Some("model-a"), None),
+            with(Some("model-b"), None),
+            with(None, Some("high")),
+            with(Some("model-a"), Some("high")),
+            with(Some("model-a"), Some("low")),
+        ];
+        let distinct: std::collections::HashSet<_> = all.iter().collect();
+        assert_eq!(distinct.len(), all.len(), "{all:?}");
+        assert_eq!(all[0], body_hash(&task_identity(&plain())));
     }
 }

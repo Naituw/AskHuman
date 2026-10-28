@@ -292,6 +292,29 @@ final class AgentE2ETests: E2ECase {
         await eventually("the task to go") { await self.phone.state().tasks.isEmpty }
     }
 
+    /// The model and the effort ride along on `task.create`: the real daemon takes the message with them in
+    /// and answers with a refusal. The test Mac keeps tasks switched off and knows no such workspace, so
+    /// nothing is ever started: no terminal, no Agent and no model is touched.
+    func testAPickedModelChangesNothingWhileTheMacHasTasksSwitchedOff() async throws {
+        try await pair()
+        let macId = try await macId()
+        let draft = TaskDraft(
+            workspaceId: "deadbeefdeadbeef", workspaceName: "Nowhere", agentKind: "claude", agentLabel: "Claude Code",
+            permission: "default", model: "opus", effort: "high", modelLabel: "Opus", text: "Do something"
+        )
+        let id = try await phone.engine.createTask(macId: macId, draft: draft)
+        await eventually("the task to fail") { await self.phone.state().tasks.first { $0.id == id }?.stage == "failed" }
+        let task = try unwrap(await phone.state().tasks.first { $0.id == id })
+        XCTAssertNotNil(task.reason, "the Mac says why")
+        XCTAssertFalse(task.canRetry, "a refusal is not a lost connection")
+        XCTAssertEqual(task.modelLabel, "Opus")
+        XCTAssertEqual(task.effort, "high")
+        let started = await phone.state().agents
+        XCTAssertTrue(started.isEmpty, "nothing was started")
+        await phone.engine.dismissTask(id: id)
+        await eventually("the task to go") { await self.phone.state().tasks.isEmpty }
+    }
+
     // MARK: question slot
 
     func testThePhoneCanTakeTheQuestionSlot() async throws {

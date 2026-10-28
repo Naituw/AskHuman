@@ -26,6 +26,44 @@ extension View {
     }
 }
 
+extension View {
+    /// Puts what a list says when it has nothing to list in its middle, and keeps it there.
+    ///
+    /// The middle of a list moves when the tab bar comes and goes. A request page hides the bar, and
+    /// the bar only returns (and takes its room from the list) a moment after the page was popped, so a
+    /// message that simply sat in the middle jumped up by half the bar's height right after the list
+    /// had come back. Here the middle is the one with the bar up, whether the bar is there yet or not.
+    func emptyState<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        overlay { SteadyCenter(content: content()) }
+    }
+}
+
+private struct SteadyCenter<Content: View>: View {
+    let content: Content
+    /// The most room the bars at the bottom took at this width: the room with the tab bar up.
+    @State private var seen = Room(width: 0, inset: 0)
+
+    private struct Room: Equatable {
+        var width: CGFloat
+        var inset: CGFloat
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let room = Room(width: proxy.size.width, inset: proxy.safeAreaInsets.bottom)
+            // What the bar has not taken (yet) is kept free all the same.
+            let steady = seen.width == room.width ? max(seen.inset, room.inset) : room.inset
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.bottom, steady - room.inset)
+                .onChange(of: room, initial: true) { _, room in
+                    // A turn of the device changes the room for good: start over.
+                    if room.width != seen.width { seen = room } else if room.inset > seen.inset { seen.inset = room.inset }
+                }
+        }
+    }
+}
+
 extension SyncStatus {
     /// The phone is working on it, as opposed to done or stuck.
     var isBusy: Bool { self == .updating || self == .reconnecting }

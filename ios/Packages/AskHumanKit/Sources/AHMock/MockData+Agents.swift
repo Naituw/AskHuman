@@ -96,14 +96,17 @@ extension MockData {
                     WatchTodo(content: "修复 store 的读取时机", state: tick >= 2 ? "completed" : "inProgress"),
                     WatchTodo(content: "连续三遍通过后提交", state: tick >= 2 ? "inProgress" : "pending"),
                 ],
-                activeElapsedSecs: (agent.activeElapsedSecs) + UInt64(tick) * 2, at: at
+                activeElapsedSecs: (agent.activeElapsedSecs) + UInt64(tick) * 2, at: at,
+                model: "claude-opus-4-1", reasoning: "high"
             )
         case "waiting":
             return WatchFrameData(
                 phase: "waiting", title: agent.title, project: agent.project.name,
                 text: "我检查了 `users` 表的现状，有两条路可以走。需要你选择迁移方式后我再继续。",
                 steps: [WatchStep(kind: "read", name: nil, object: "migrations/0042_users.sql", state: "done")], stepsOmitted: 6,
-                todos: [], activeElapsedSecs: agent.activeElapsedSecs, at: at - 95
+                todos: [], activeElapsedSecs: agent.activeElapsedSecs, at: at - 95,
+                // Cursor has no reasoning effort: the page shows the model alone.
+                model: "composer-1"
             )
         case "ended":
             return WatchFrameData(
@@ -115,16 +118,50 @@ extension MockData {
             return WatchFrameData(
                 phase: "idle", title: agent.title, project: agent.project.name,
                 text: "发布说明已经写好：\n\n- 新增 iOS 渠道（实验）\n- 修复弹窗在多显示器下的位置问题\n\n需要我继续整理英文版吗？",
-                steps: [], todos: [], activeElapsedSecs: agent.activeElapsedSecs, at: at - 720
+                steps: [], todos: [], activeElapsedSecs: agent.activeElapsedSecs, at: at - 720,
+                model: "gpt-5.1-codex-max", reasoning: "xhigh"
             )
         }
     }
 
     // MARK: new tasks
 
-    public static func taskOptions(macId: String) -> TaskOptions {
+    /// What a Mac offers for a new task. `models: false` is a Mac that is too old to list any: the
+    /// Agents have no `models` or `defaultModel`, and the form has no model or effort row.
+    public static func taskOptions(macId: String, models: Bool = true) -> TaskOptions {
         if macId == officeMacId {
             return TaskOptions(enabled: false, blocked: "noTerminal", permissionMode: "ask", workspaces: [], agents: [])
+        }
+        let agents = [
+            AgentOption(
+                kind: "claude", label: "Claude Code", ready: true, subtitle: "Terminal · Ghostty", permissionSelectable: true,
+                models: claudeModels, defaultModel: DefaultModel(label: "opus", efforts: claudeEfforts)
+            ),
+            // A long list without efforts: the model page has a search field.
+            AgentOption(
+                kind: "cursor", label: "Cursor", ready: true, subtitle: "Terminal · Ghostty", permissionSelectable: false,
+                models: cursorModels, defaultModel: DefaultModel(label: "Auto")
+            ),
+            // Every model names its own efforts and the one it runs with.
+            AgentOption(
+                kind: "codex", label: "Codex", ready: true, subtitle: "Codex App", permissionSelectable: true,
+                models: codexModels, defaultModel: DefaultModel(label: "GPT-5.1-Codex-Max", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high")
+            ),
+            // Some models think, some do not: the effort row comes and goes with the model.
+            AgentOption(
+                kind: "pi", label: "Pi", ready: true, subtitle: "Terminal · Ghostty", permissionSelectable: false,
+                models: piModels, defaultModel: DefaultModel(label: "anthropic/claude-sonnet-4-5", efforts: ["low", "medium", "high"])
+            ),
+            AgentOption(
+                kind: "grok", label: "Grok", ready: false, subtitle: "Terminal · Ghostty", permissionSelectable: true,
+                reason: "Grok is not installed on this Mac."
+            ),
+        ].map { agent -> AgentOption in
+            guard !models else { return agent }
+            var plain = agent
+            plain.models = nil
+            plain.defaultModel = nil
+            return plain
         }
         return TaskOptions(
             enabled: true, permissionMode: "ask",
@@ -133,16 +170,46 @@ extension MockData {
                 WorkspaceOption(id: "ws-site", label: "askhuman-site", subtitle: "~/Developer/askhuman-site", pinned: false, lastUsedAt: ms(Date()) - 3_600_000),
                 WorkspaceOption(id: "ws-dotfiles", label: "dotfiles", subtitle: "~/.dotfiles", pinned: false, lastUsedAt: ms(Date()) - 86_400_000),
             ],
-            agents: [
-                AgentOption(kind: "claude", label: "Claude Code", ready: true, subtitle: "Terminal · Ghostty", permissionSelectable: true),
-                AgentOption(kind: "cursor", label: "Cursor", ready: true, subtitle: "Terminal · Ghostty", permissionSelectable: false),
-                AgentOption(
-                    kind: "codex", label: "Codex", ready: false, subtitle: "Codex App", permissionSelectable: true,
-                    reason: "Open the Codex App on the Mac first."
-                ),
-            ]
+            agents: agents
         )
     }
+
+    private static let claudeEfforts = ["low", "medium", "high", "xhigh", "max"]
+
+    private static let claudeModels = [
+        ModelOption(id: "opus", label: "Opus", note: "\u{2192} claude-opus-4-1", efforts: claudeEfforts),
+        ModelOption(id: "sonnet", label: "Sonnet", efforts: claudeEfforts),
+        ModelOption(id: "haiku", label: "Haiku", efforts: claudeEfforts),
+    ]
+
+    private static let codexModels = [
+        ModelOption(
+            id: "gpt-5.1-codex-max", label: "GPT-5.1-Codex-Max", note: "The most capable model for long, agentic coding work.",
+            efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "medium"
+        ),
+        ModelOption(
+            id: "gpt-5.1-codex-mini", label: "GPT-5.1-Codex-Mini", note: "Smaller and cheaper, for quicker tasks.",
+            efforts: ["medium", "high"], defaultEffort: "medium"
+        ),
+        ModelOption(id: "gpt-5.1", label: "GPT-5.1", efforts: ["low", "medium", "high"], defaultEffort: "medium"),
+    ]
+
+    private static let piModels = [
+        ModelOption(id: "anthropic/claude-sonnet-4-5", label: "anthropic/claude-sonnet-4-5", efforts: ["low", "medium", "high"]),
+        ModelOption(id: "openai/gpt-5", label: "openai/gpt-5", efforts: ["low", "medium", "high"]),
+        ModelOption(id: "ollama/llama3.2", label: "ollama/llama3.2"),
+    ]
+
+    /// More than a dozen, as `cursor-agent --list-models` gives.
+    private static let cursorModels: [ModelOption] = [
+        ("auto", "Auto"), ("composer-1", "Composer 1"), ("gpt-5", "GPT-5"), ("gpt-5-high", "GPT-5 High"),
+        ("gpt-5-codex", "GPT-5 Codex"), ("gpt-5-codex-high", "GPT-5 Codex High"), ("gpt-5.1-codex-max", "GPT-5.1 Codex Max"),
+        ("gpt-5.1-codex-max-high", "GPT-5.1 Codex Max High"), ("sonnet-4.5", "Sonnet 4.5"),
+        ("sonnet-4.5-thinking", "Sonnet 4.5 Thinking"), ("opus-4.1", "Opus 4.1"), ("opus-4.5", "Opus 4.5"),
+        ("opus-4.5-thinking", "Opus 4.5 Thinking"), ("haiku-4.5", "Haiku 4.5"), ("gemini-2.5-pro", "Gemini 2.5 Pro"),
+        ("gemini-3-pro", "Gemini 3 Pro"), ("grok-4", "Grok 4"), ("grok-code-fast-1", "Grok Code Fast 1"),
+        ("kimi-k2", "Kimi K2"), ("qwen3-coder", "Qwen3 Coder"),
+    ].map { ModelOption(id: $0.0, label: $0.1) }
 
     public static func todos(workspaceId: String) -> [TodoOption] {
         guard workspaceId == "ws-humaninloop" else { return [] }

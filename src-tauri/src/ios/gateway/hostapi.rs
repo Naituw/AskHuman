@@ -86,6 +86,11 @@ pub struct TaskLaunch {
     pub permission: String,
     pub todo_id: Option<String>,
     pub text: String,
+    /// A model id the phone picked; `None` leaves it to the Agent. Well-formed, but not yet
+    /// matched against the Agent's catalog: the host does that.
+    pub model: Option<String>,
+    /// A reasoning effort the phone picked; `None` leaves it to the Agent. Same status as `model`.
+    pub effort: Option<String>,
 }
 
 /// Todos offered for a workspace.

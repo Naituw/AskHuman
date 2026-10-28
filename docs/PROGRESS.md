@@ -127,20 +127,29 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] 分发给别人前：用另一个大陆 iCloud 账号复测（容器 / 用户层初始化）；helper 打进 `AskHuman.app` 的 `Contents/Library/LoginItems`、公证、自更新下发；附件同步、iOS App 读写待办等另行评审
 - 构建小贴士（shell 的 HOME 被指向 `/tmp/ph`）：`export CARGO_HOME=/Users/wutian/.cargo CARGO_INCREMENTAL=0 GIT_CONFIG_GLOBAL=/Users/wutian/.gitconfig npm_config_store_dir=/Users/wutian/Library/pnpm/store`，否则 cargo 会重新下载依赖、`./scripts/install.sh` 会卡在 pnpm 的交互提示
 
-## 进行中：iOS 新建任务时选模型与强度——需求与计划已批准，按计划 P1 → P4 实施
+## 进行中：iOS 新建任务时选模型与强度——Mac 端与 iOS App（P1–P3）已完成，下一步 P4（文档回写与真机一轮）
 
 2026-10-27 用户提出「iOS 版创建任务时可以选择模型」，经 6 题问答定下范围：模型 + 强度一起做；清单以动态发现为主（Claude 用固定别名）；每次都从「默认」开始、不记忆；
 详情页显示实际模型、进度页显示所选；先只做 iOS，启动管线放共享层。用户同时强调**严禁触发计费**，并且**Cursor 严禁实测**。同日做了只读探测（没有起任何 Agent、没有发提示词、
 没有带真实凭据调模型），写成需求 [`docs/specs/ios-task-model.md`](specs/ios-task-model.md) 与计划 [`docs/plans/ios-task-model.md`](plans/ios-task-model.md)，用户评审批准，
 并对六条待确认点作了选择（Grok 用 `grok models`、Codex 一律走 `app-server` 的 `model/list`、Pi 三档强度、做 M10、实现完做一轮真实验证但每次要批准）。
 
-已完成：P1（Mac 启动管线：`ModelChoice` 贯穿 `TaskSpec` → `LaunchRecord` → argv 与 Codex 桌面应用；没选时对外行为与以前逐字节相同，`cargo test` / clippy 1.94 与 1.99 / fmt 全绿，未装机）。
+已完成：
+- P1（Mac 启动管线：`ModelChoice` 贯穿 `TaskSpec` → `LaunchRecord` → argv 与 Codex 桌面应用；没选时对外行为与以前逐字节相同）。
+- P2（Mac 清单 + 线协议 + 网关 + 详情页实际模型，已装机）：`task.options` 多了可选的 `models` / `defaultModel`，`task.create` 多了可选的 `model` / `effort`，
+  `watch.frame` 多了可选的 `model` / `reasoning`；旧版 App 连新 Mac 与以前完全一样。实施记录与偏差见计划「P2 实施记录」。
+- P3（iOS App，在 `/tmp` 隔离副本里做、对着新 HEAD 重新验证后合入）：新建任务表单在 Agent 与权限之间多了「模型」行（进选择页，超过 12 项有搜索）与「强度」行（菜单），
+  都从「默认」开始、不记忆，Mac 没给 `models`（旧 Mac / 没拿到清单）时两行都不出现；进度页有一行所选，Agent 详情页有一行它实际用的模型 / 强度；中文文案齐全；共享夹具有了新用例。
+  实施记录、验证结果与已知局限见计划「P3 实施记录」。**App 还没装到真机**（P4 的真机一轮会用到）。
 
 下一步：
-- [ ] P2（清单 + 线协议 + 网关 + 详情页实际模型，装机）→ P3（iOS App，`git status ios/` 若仍有另一会话的未提交改动就在 `/tmp` 隔离副本里做）→ P4（文档回写）。
-- [ ] P2 开头要**先问用户**两件事：（1）批准在沙盒（空 HOME + 独立 leader socket、无凭据）里跑一次 `grok models` 抓样本；（2）Cursor 清单的运行时获取（手机打开新任务时 daemon 调一次
-  `cursor-agent --list-models`）是否保留。本机验证里**不再调用 `cursor-agent` 的任何命令**。
-- [ ] （实现完做，**每次执行前**经用户批准，会产生模型费用；永远不含 Cursor）真机一轮：见计划 P4。
+- [ ] P4：文档回写（`docs/specs/ios-channel.md` §6.8 与「不能选模型」的局限、`docs/overview-ios.md` 的线消息 / 模块 / 启动参数 `-AHNoModels` `-AHFailTask`、`docs/wiki/ios-setup.md` 与 `.en.md`、
+  `docs/overview.md` 的 `agents/` 清单行）；Mac 端已装机，App 的新界面要装到真机才看得到。
+- [ ] （实现完做，**每次执行前**经用户批准，会产生模型费用；永远不含 Cursor）真机一轮：见计划 P4。同时验证两件我在本机看不到的事：已登录账号下 `grok models` 的输出
+  是否带逐模型档位（带了才补 Grok 的强度行与 M10）、带真实凭据的 `codex app-server` 的 `model/list`。
+- [ ] `ios_tasks::create()` 里「读就绪 → 取清单来源 → `resolve_pick` → `TaskSpec.choice`」这段胶水没有单测（`create()` 会真的起任务）；各部件各有测试，整条由上面那一轮覆盖。
+- [ ] （可选，等用户决定）强度行的「默认（中）」提示：手机上取的是所选模型自己的默认档位；但 Mac 配置里固定了强度、且该模型支持它时（目前只会出现在 Codex），Agent 实际用的是配置的档位（M10），
+  两者可能不同。要精确得让 Mac 在 `task.options` 里按模型各算一个「默认时实际用的档位」。本期按需求原样实现。
 
 ## 待观察：拖入文件失败（`daemon.log` 的 `askhuman_drop` 行）
 

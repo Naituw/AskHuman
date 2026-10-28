@@ -1,0 +1,18 @@
+Last login: Mon Oct 27 09:00:00 on ttys000
+nvm - loaded from the shell rc, ahead of the command
+Available models
+
+auto - Auto (default)
+model-a-low - Model A Low
+model-a-low-fast - Model A  Low Fast
+model-a - Model A
+model-a-high - Model A High
+model-b-thinking-high - Model B 1M{ZWSP} Thinking (NO ZDR)
+model-c - Model{ZWSP} C
+-bad-id - Leading dash
+bad id - Space in the id
+too:colon - Colon in the id
+model-a - A duplicate of Model A
+a line without the separator
+
+Tip: use --model <id> (or /model <id> in interactive mode) to switch. Parameterized models also accept quoted overrides, e.g. --model 'model-a[context=1m,effort=high,fast=false]'.

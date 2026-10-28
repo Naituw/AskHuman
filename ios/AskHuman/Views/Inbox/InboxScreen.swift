@@ -5,8 +5,6 @@ import AHProtocol
 struct InboxScreen: View {
     @Environment(AppStore.self) private var store
     @Binding var showPairing: Bool
-    /// The stack as of the last update: tells dropping the pages under the top one from any other change.
-    @State private var shownPath: [String] = []
 
     var body: some View {
         @Bindable var store = store
@@ -32,17 +30,6 @@ struct InboxScreen: View {
                 RequestScreen(id: id)
             }
         }
-        // After a request was sent, the finished page is dropped from under the next one. The page on top
-        // stays the same, so this must not animate: the system would pop it to show an identical copy.
-        .transaction(value: store.inboxPath) { transaction in
-            if Self.dropsPagesBelow(from: shownPath, to: store.inboxPath) { transaction.disablesAnimations = true }
-        }
-        .onChange(of: store.inboxPath) { _, path in shownPath = path }
-    }
-
-    /// Whether the stack lost pages below its top page while the top page stayed the same.
-    static func dropsPagesBelow(from old: [String], to new: [String]) -> Bool {
-        !new.isEmpty && new.count < old.count && new.last == old.last
     }
 }
 
@@ -76,7 +63,7 @@ private struct InboxList: View {
             }
         }
         .listStyle(.insetGrouped)
-        .overlay {
+        .emptyState {
             // An empty list only means "nothing waiting" once the Macs have answered.
             if sections.isEmpty {
                 switch readiness {

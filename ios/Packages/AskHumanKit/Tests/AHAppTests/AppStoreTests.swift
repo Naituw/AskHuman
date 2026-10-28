@@ -387,10 +387,10 @@ final class AppStoreTests: XCTestCase {
         XCTAssertEqual(store.item(id: next)?.state, .pending)
     }
 
-    func testTheNextRequestIsPushedOnTopOfTheSentOneBeforeThatIsDropped() async throws {
+    func testTheNextRequestTakesTheSentOnesPlaceAndTheReceiptOutlivesTheMove() async throws {
         await make()
         // Slow enough to look at each step.
-        store.advanceTiming = AdvanceTiming(hold: .milliseconds(150), settle: .milliseconds(150), note: .milliseconds(400))
+        store.advanceTiming = AdvanceTiming(hold: .milliseconds(150), settle: .milliseconds(250), note: .milliseconds(500))
         let select = try item("req-select")
         store.open(macId: select.macId, requestId: select.requestId)
         let composer = try XCTUnwrap(store.composer(for: select))
@@ -403,15 +403,24 @@ final class AppStoreTests: XCTestCase {
         XCTAssertEqual(store.sentTick, ticks + 1, "the haptic comes with the receipt, not with the tap")
         XCTAssertEqual(store.inboxPath, [select.id], "the sent page stays up while its receipt shows")
 
-        await eventually("pushed") { self.store.inboxPath.count == 2 }
-        XCTAssertEqual(store.inboxPath.first, select.id, "the next page slides in over the sent one")
+        // The stack never holds the sent page and the next one together: a page dropped from under the
+        // visible one shows its last frame again and hands its scroll position to the next request.
+        var deepest = 1
+        await eventually("moved on") {
+            deepest = max(deepest, self.store.inboxPath.count)
+            return self.store.inboxPath.last != select.id
+        }
         let next = try XCTUnwrap(store.inboxPath.last)
+        XCTAssertEqual(store.inboxPath, [next], "the next request takes the sent one's place")
         XCTAssertEqual(store.sentNote?.remaining, store.pendingCount)
-        XCTAssertNotNil(store.receipt, "the sent page still shows its receipt while it slides away")
+        XCTAssertEqual(store.receipt?.from, select.id, "the receipt is still there for the page that takes over to slide in over")
+        XCTAssertEqual(store.receipt?.next, next, "and says that page is the one")
+        XCTAssertEqual(store.receipt?.summary?.id, select.requestId, "and it knows who asked, now that the request is closed")
 
-        await eventually("dropped") { self.store.inboxPath == [next] }
-        await eventually("receipt gone") { self.store.receipt == nil }
+        await eventually("receipt gone") { deepest = max(deepest, self.store.inboxPath.count); return self.store.receipt == nil }
         await eventually("note gone") { self.store.sentNote == nil }
+        XCTAssertEqual(store.inboxPath, [next])
+        XCTAssertEqual(deepest, 1, "one page for as long as the requests last")
     }
 
     func testTheFormUnderOurOwnReceiptDoesNotSayTheRequestEnded() async throws {

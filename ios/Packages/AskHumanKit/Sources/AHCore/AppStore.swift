@@ -39,6 +39,13 @@ public struct SentReceipt: Equatable, Sendable {
     /// The request that was sent (`macId/requestId`).
     public var from: String
     public var outcome: HistoryOutcome
+    /// Who asked, as it was when the request was sent. The receipt outlives the request (it is shown
+    /// again on the next page as that one slides in, when the request is closed and its details are
+    /// forgotten), so it has to bring its own copy.
+    public var summary: RequestSummary?
+    /// The request the app moved on to, once it has: that page slides in over the receipt. A page that
+    /// is opened any other way (a tap on the list, a notification) has nothing to do with it.
+    public var next: String?
 }
 
 /// The pill over the request the app moved on to: what was sent and how many requests wait.
@@ -50,15 +57,16 @@ public struct SentNote: Identifiable, Equatable, Sendable {
 
 /// How long the steps of moving on last; tests shorten them.
 public struct AdvanceTiming: Equatable, Sendable {
-    /// The receipt stays on the sent page this long before the next request is pushed.
+    /// The receipt stays on the sent page this long before the next request slides in.
     public var hold: Duration
-    /// The finished page is dropped from under the next one once the system's push has come to rest:
-    /// dropping it any sooner shows the old page for a frame (the push is not over for UIKit yet).
+    /// The receipt stays set this long after the move. The next page takes it over (it slides in over a
+    /// copy of it) and a page that goes back to the list is being popped with it on: neither may find it
+    /// gone before the movement has come to rest.
     public var settle: Duration
     /// The pill over the next request stays this long.
     public var note: Duration
 
-    public static let standard = AdvanceTiming(hold: .milliseconds(700), settle: .milliseconds(1500), note: .milliseconds(2500))
+    public static let standard = AdvanceTiming(hold: .milliseconds(700), settle: .milliseconds(800), note: .milliseconds(2500))
     public static let immediate = AdvanceTiming(hold: .zero, settle: .zero, note: .milliseconds(200))
 }
 
@@ -419,12 +427,14 @@ public final class AppStore {
     /// After a submission went through: the page shows its receipt for a moment, then the app moves on
     /// to the next pending request or back to the list.
     ///
-    /// The next request is pushed on top of the finished one, which gives the system's own slide
-    /// (the sent page is pushed away to the left); the finished page is then dropped from under it.
-    /// Replacing the path in one step would swap the pages without any motion.
+    /// The next request takes the sent one's place on the stack (the path goes from `[sent]` to `[next]`
+    /// in one step) and the page slides it in, which keeps the stack to one page for as long as the
+    /// requests last: the system's own push would need the sent page kept underneath and dropped later,
+    /// and dropping a page from under the visible one makes SwiftUI show the dropped page's last frame
+    /// again and carries its scroll position over to the next request.
     public func advance(from id: String, outcome: HistoryOutcome = .answered) {
         guard inboxPath.last == id else { return }
-        let receipt = SentReceipt(from: id, outcome: outcome)
+        let receipt = SentReceipt(from: id, outcome: outcome, summary: displayItem(id: id)?.summary)
         self.receipt = receipt
         sentTick += 1
         let timing = advanceTiming
@@ -433,7 +443,7 @@ public final class AppStore {
         advanceTask?.cancel()
         advanceTask = Task { [weak self] in
             if watched { try? await Task.sleep(for: timing.hold) }
-            guard !Task.isCancelled, let self, self.receipt == receipt else { return }
+            guard !Task.isCancelled, let self, self.receipt?.id == receipt.id else { return }
             await self.moveOn(from: id, receipt: receipt, watched: watched)
         }
     }
@@ -442,23 +452,20 @@ public final class AppStore {
         let timing = advanceTiming
         // The reader left the page meanwhile (a tab switch, a banner, the back button): nothing to move.
         guard inboxPath.last == id else {
-            if self.receipt == receipt { self.receipt = nil }
+            if self.receipt?.id == receipt.id { self.receipt = nil }
             return
         }
         if autoAdvance, let next = nextPending(after: id) {
-            inboxPath.append(next.id)
-            showSentNote(remaining: pendingCount)
-            if watched { try? await Task.sleep(for: timing.settle) }
-            guard !Task.isCancelled, inboxPath == [id, next.id] else {
-                if self.receipt == receipt { self.receipt = nil }
-                return
-            }
+            // Said before the path changes: the next page is made with it.
+            self.receipt?.next = next.id
             inboxPath = [next.id]
+            showSentNote(remaining: pendingCount)
         } else {
             inboxPath = []
-            if watched { try? await Task.sleep(for: timing.settle) }
         }
-        if self.receipt == receipt { self.receipt = nil }
+        // The receipt goes only now: until then it is what the next page slides in over (or what pops away).
+        if watched { try? await Task.sleep(for: timing.settle) }
+        if self.receipt?.id == receipt.id { self.receipt = nil }
     }
 
     private func showSentNote(remaining: Int) {
