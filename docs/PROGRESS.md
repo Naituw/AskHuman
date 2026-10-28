@@ -144,9 +144,9 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] 分发给别人前：用另一个大陆 iCloud 账号复测（容器 / 用户层初始化）；helper 打进 `AskHuman.app` 的 `Contents/Library/LoginItems`、公证、自更新下发；附件同步、手机直连 CloudKit 等另行评审（iOS App 读写待办已经由 Mac 网关代答做了，见下一节）
 - 构建小贴士（shell 的 HOME 被指向 `/tmp/ph`）：`export CARGO_HOME=/Users/wutian/.cargo CARGO_INCREMENTAL=0 GIT_CONFIG_GLOBAL=/Users/wutian/.gitconfig npm_config_store_dir=/Users/wutian/Library/pnpm/store`，否则 cargo 会重新下载依赖、`./scripts/install.sh` 会卡在 pnpm 的交互提示
 
-## 待验收：iOS App 管理待办（实现与自测完成，决策全部是 agent 在用户睡觉时代定的，等用户审阅）
+## 待验收：iOS App 管理待办（已合并进 main 并装到这台 Mac，决策全部是 agent 在用户睡觉时代定的，等用户审阅与真机验收）
 
-需求 `docs/specs/ios-todos.md`（决策 I1–I16 在 §3，可整条否决）、计划 `docs/plans/ios-todos.md`；分支 `feat/ios-todos`，worktree `../HumanInLoop-todosync`（还没合并进 main，更没推送；已把 main 合进分支并在合并后的树上复测过）。
+需求 `docs/specs/ios-todos.md`（决策 I1–I16 在 §3，可整条否决）、计划 `docs/plans/ios-todos.md`；分支 `feat/ios-todos`（worktree `../HumanInLoop-todosync`）已于 2026-10-29 早上经用户同意快进合并进 main（本地，**未推送**），并用 `./scripts/install.sh` 装到了这台 Mac（装机后一次真实同步 tick 正常）；合并前已把 main 合进分支并在合并后的树上复测过。
 用户 2026-10-29 夜里说「手机 App 想支持待办：能选设备、能选 iCloud 模式、还有项目来源的问题——你都设计，实现验证，我明天早上验收」，所以没有经过 AskHuman 问答。
 做法：手机经已有的 iOS 网关（MQTT + 端到端加密）读写 Mac 的 `todos.json`，新增 `todo.*` 线消息；「iCloud」是一个**来源**，由开着同步且在线的 Mac 代答、掉线自动换，手机不直连 CloudKit（那要给 iOS App ID 开 iCloud 容器，是 Apple 账号上的改动，要用户授权）；项目列表由 Mac 按桌面侧栏同一算法算好，手机只看到不透明 id 与同名后缀，不暴露路径；手机不落盘待办。
 
@@ -154,7 +154,7 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 
 下一步：
 - [ ] **用户验收**：看 `docs/specs/ios-todos.md` §3 的 16 条决策（尤其 I2 不直连 CloudKit、I4 设备模式不列仅云端项目、I5 手机不能新建项目、I13 手机不落盘），不同意的整条否决；真机上装一遍（`ios/` 里 `xcodegen generate`，配对后进「待办」标签）；多台 Mac、iCloud 来源自动换机、Mac 离线时的表现要真机才看得全。
-- [ ] 合并进 main：分支已经把 main（当前 `1935502`）合进来了（最近一次合并提交 `18f67d9`），所以对现在的 main 是快进。但**主检出的工作区里 `docs/PROGRESS.md` 有别人未提交的改动**，本分支也改了它，`git merge` 会拒绝；要先让那一方提交或暂存。之后 main 若又有新提交，再 `git merge main` 一次即可（上两次只在 mock 场景枚举、`docs/overview-ios.md` 的表格行和字符串目录冲突过）；`Localizable.xcstrings` 冲突时用 `ios/Tools/make-catalog.py` 重新生成而不是手工合并，脚本现在遇到同一个键的两种译法会直接报错。老 Mac 要先装带这个功能的版本（合并后 `./scripts/install.sh`），手机上才不会显示「这台 Mac 需要更新」。
+- [ ] 另一台 Mac（B）装带这个功能的版本（在那边跑 `./scripts/install.sh`；SSH 到 B 要用户当次同意）：没装的 Mac 在手机上会显示「这台 Mac 需要更新」。分支 `feat/ios-todos` 与 worktree `../HumanInLoop-todosync` 已经无用，可以删（worktree 里的 `src-tauri/target` 约 6.9 GB，磁盘只剩十几 GB 时可先删它）。
 - [ ] 后置（需求 §11）：手机直连 CloudKit（Mac 都不在线也能用，需用户授权开 iCloud 容器 + Swift 重实现同步核心）、附件的查看与添加、「全部待办」聚合页、清空历史、从 iCloud 移除项目、待办推送、离线编辑队列。
 - [ ] 已知局限（需求 §10）：Mac 都不在线时手机看不到待办；线协议里 `helper` 没有「未安装」状态，手机上「没装」与「没在跑」显示成同一句；单条超大待办（桌面端 / CLI 不限长度，手机端限 4000 字）可能让那个项目的 `todo.list` 装不进一条消息而超时。
 
