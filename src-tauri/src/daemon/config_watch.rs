@@ -9,11 +9,25 @@
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
+/// 该 watcher 事件是否代表 config.json 在磁盘上**确实变了**。
+///
+/// notify 的 inotify 后端把 `IN_OPEN` / `IN_CLOSE_NOWRITE` 也映射成 `EventKind::Access`
+/// （`Access(Open)` / `Access(Close(Read))`）。若把这类事件当成变更，任何一次读取——包括
+/// daemon 自身的周期性 `load_without_secrets()` 和重载过程里再读一次配置——都会触发下一轮
+/// 重载，形成读取自激。因此只接受非 `Access` 的事件（`Modify` / `Create` / `Remove`）。
+pub(crate) fn is_config_change(event: &notify::Event) -> bool {
+    let touches_config = event
+        .paths
+        .iter()
+        .any(|p| p.file_name().map(|n| n == "config.json").unwrap_or(false));
+    touches_config && !matches!(event.kind, notify::EventKind::Access(_))
+}
+
 /// 启动监听，返回「去抖后的变更脉冲」接收端。
 pub fn spawn() -> UnboundedReceiver<()> {
     let (raw_tx, mut raw_rx) = unbounded_channel::<()>();
 
-    // notify 的 watcher 跑在专用线程；回调里按文件名过滤，仅 config.json 触发。
+    // notify 的 watcher 跑在专用线程；回调里只放行 config.json 的真实写入（读取不算变更）。
     std::thread::spawn(move || {
         use notify::{RecursiveMode, Watcher};
         let dir = crate::paths::config_dir();
@@ -21,11 +35,7 @@ pub fn spawn() -> UnboundedReceiver<()> {
         let mut watcher =
             match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 if let Ok(ev) = res {
-                    let hit = ev
-                        .paths
-                        .iter()
-                        .any(|p| p.file_name().map(|n| n == "config.json").unwrap_or(false));
-                    if hit {
+                    if is_config_change(&ev) {
                         let _ = raw_tx.send(());
                     }
                 }
@@ -63,4 +73,64 @@ pub fn spawn() -> UnboundedReceiver<()> {
     });
 
     out_rx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_config_change;
+    use notify::event::{
+        AccessKind, AccessMode, CreateKind, DataChange, Event, EventKind, ModifyKind, RemoveKind,
+        RenameMode,
+    };
+    use std::path::PathBuf;
+
+    fn event(kind: EventKind, name: &str) -> Event {
+        Event::new(kind).add_path(PathBuf::from("/tmp/askhuman").join(name))
+    }
+
+    #[test]
+    fn reads_are_not_config_changes() {
+        // inotify 后端把 IN_OPEN / IN_CLOSE_NOWRITE 也报成 Access；它们只说明有人读了配置。
+        assert!(!is_config_change(&event(
+            EventKind::Access(AccessKind::Open(AccessMode::Any)),
+            "config.json"
+        )));
+        assert!(!is_config_change(&event(
+            EventKind::Access(AccessKind::Close(AccessMode::Read)),
+            "config.json"
+        )));
+    }
+
+    #[test]
+    fn writes_to_config_are_changes() {
+        assert!(is_config_change(&event(
+            EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+            "config.json"
+        )));
+        // 原子落盘是「写临时文件 + rename」：目录监听看到的是 rename 的 To 事件。
+        assert!(is_config_change(&event(
+            EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+            "config.json"
+        )));
+        assert!(is_config_change(&event(
+            EventKind::Create(CreateKind::File),
+            "config.json"
+        )));
+        assert!(is_config_change(&event(
+            EventKind::Remove(RemoveKind::File),
+            "config.json"
+        )));
+    }
+
+    #[test]
+    fn other_files_are_ignored() {
+        assert!(!is_config_change(&event(
+            EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+            "daemon.log"
+        )));
+        assert!(!is_config_change(&event(
+            EventKind::Access(AccessKind::Open(AccessMode::Any)),
+            "agents.json"
+        )));
+    }
 }
