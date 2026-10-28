@@ -559,7 +559,10 @@ GTK/GDK、AppKit 等原生库直接退出而未产生 Rust 错误的情形。其
 
 只有 daemon 以 `--popup-host` 启动、承载 `View::PopupInbox` 的合并宿主进入上述范围。
 独立或预热弹窗（`View::Popup`）、GUI Host、设置、历史、待办等角色仍在事件循环前调用
-`stderr_redirect::silence()`，行为不变。捕获对象是宿主进程的原生 stderr，不含提问或答案内容。
+`stderr_redirect::silence()`，行为不变。捕获对象是宿主进程的原生 stderr；AskHuman 不主动写入
+提问或答案，但宿主加载的原生库以及继承同一 stderr 的子进程（如终端、文件打开器、`gdbus`）
+可能输出文件路径、项目名等用户数据，宿主失败退出时这些内容可能进入 `daemon.log`。
+日志因此不保证不含用户内容；需要严格隐私时应在这些子进程上单独重定向 stderr。
 
 | 平台 | 合并宿主 stderr | 其他 GUI 角色 | 管道与回收 |
 | --- | --- | --- | --- |
