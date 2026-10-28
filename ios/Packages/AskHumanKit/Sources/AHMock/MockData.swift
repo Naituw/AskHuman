@@ -88,6 +88,162 @@ public enum MockData {
         )
     }
 
+    // MARK: Markdown showcase
+
+    /// The Markdown showcase's message: soft line breaks, inline styles, a picture, a table with long
+    /// cells, a Mermaid diagram, code, a quote and nested lists.
+    private static var showcaseMessage: String {
+        #"""
+        ## 迁移评估报告
+
+        **背景**
+        我检查了 `orders` 表的现状，并比较了两种迁移方案。
+        这一行本来是同一段里的下一行，Mac 弹窗会换行显示。
+        第三行也一样。
+
+        行内样式：**粗体**、*斜体*、~~删除线~~、`inline_code()`，链接 https://example.com/docs ，以及 [带文字的链接](https://example.com/guide)。
+
+        ![架构示意（内联图片）](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAABICAIAAABHru/dAAABM0lEQVR42u3SMQ3AIBRAQZbaqArGTrVQTWwIQQSy2FhqooHk95Kn4OXSeVUpTMkCBQR9l7G43J4tzX5saf3hv30GGmigjQYaaKCBBhpon4EGGmiggQbaaKCBBhpooIH2GWiggTYaaKCNBhpooH0GGmifgQYaaKOBBtpooIEG2meggfYZaKCBNhpooI0GGmigfQYaaJ+BBhpoo4EG2miggQbaZ6CB9hlooIE2GmigjQYaaKB9Bhpon4EGGmijgQbaaKCBBtpnoIEGGmiggTYaaKCBBhpooH0GGmiggQYaaKOBBhpon4EG2meggQbaaKCBNhpooIH2GWigfQYaaKCNBhpoo4EGGmifgQbaZ6CBBtpooIE2GmiggfYZaKB9BhpooI0GGmijgQYaaJ+/Ay3FCGiF6gUrYUkUUaJdygAAAABJRU5ErkJggg==)
+
+        ### 方案对比
+
+        | 方案 | 停机 | 风险 | 说明 |
+        |:--|--:|:--|:--|
+        | 在线双写 | 0 分钟 | 回滚复杂 | 先双写新旧两张表，校验一致后再切读流量；期间需要额外的监控与对账任务，回滚时要处理已写入新表的增量数据 |
+        | 停机迁移 | 约 8 分钟 | 低 | 维护窗口内一次完成，过程简单可控，但需要提前公告并暂停写入 |
+
+        ### 流程
+
+        ```mermaid
+        flowchart TD
+          A[收到变更请求] --> B{是否需要停机?}
+          B -- 是 --> C[公告维护窗口]
+          B -- 否 --> D[开启双写]
+          C --> E[执行迁移]
+          D --> E
+          E --> F[校验数据一致]
+          F --> G((完成))
+        ```
+
+        ### 命令
+
+        ```bash
+        ./scripts/migrate.sh --table orders --batch 5000 --dry-run
+        ```
+
+        > 生产库约 **2.1 亿**行，上一次类似迁移用了 7 分 40 秒。
+
+        1. 先在影子库演练
+        2. 观察复制延迟（超过 30 秒就暂停）
+           - 指标：`replica_lag_seconds`
+           - 告警：值班群
+        3. 切换读流量
+        """#
+    }
+
+    /// A request that shows the Markdown rendering: soft line breaks, inline styles, a picture, a table
+    /// with long cells, a Mermaid diagram, code, a quote and nested lists.
+    public static func markdownAsk(now: Date = Date()) -> RequestView {
+        let message = showcaseMessage
+        return RequestView(
+            id: "req-markdown", kind: "ask", createdAt: ms(now.addingTimeInterval(-30)), agent: cursor,
+            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: "Plan the orders table migration",
+            source: "cursor", contentHash: hash("markdown"),
+            ask: AskView(
+                isMarkdown: true,
+                message: MessageView(text: message, files: []),
+                questions: [
+                    QuestionView(text: "选择哪种迁移方式？可以参考上面的**对比表**和流程图。", options: [
+                        OptionView(text: "在线双写", recommended: true),
+                        OptionView(text: "停机迁移", recommended: false),
+                    ]),
+                    QuestionView(text: "回填历史数据时批大小怎么定？\n建议先用 `5000`，观察复制延迟后再调整；超过 **30 秒**就暂停。", options: [
+                        OptionView(text: "5000", recommended: true),
+                        OptionView(text: "20000", recommended: false),
+                    ]),
+                    QuestionView(text: "还有什么需要我注意的？", options: []),
+                ],
+                selectOnly: false, single: false
+            )
+        )
+    }
+
+    public static func markdownOnly(now: Date = Date()) -> [InboxItem] {
+        items([(homeMacId, "Home MacBook Pro", markdownAsk(now: now), true, -30)], now: now)
+    }
+
+    /// The showcase's tall message over two short select-only questions. The questions fit on the screen
+    /// while the message is still a one-line placeholder (a message drawn by a web page has no height
+    /// until the page says so): they must not count as read just because they looked close.
+    public static func tallMessageAsk(now: Date = Date()) -> RequestView {
+        RequestView(
+            id: "req-tall", kind: "ask", createdAt: ms(now.addingTimeInterval(-30)), agent: cursor,
+            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: "Plan the orders table migration",
+            source: "cursor", contentHash: hash("tall"),
+            ask: AskView(
+                isMarkdown: true,
+                message: MessageView(text: showcaseMessage, files: []),
+                questions: [
+                    QuestionView(text: "Which way?", options: [
+                        OptionView(text: "Online", recommended: true),
+                        OptionView(text: "Offline", recommended: false),
+                    ]),
+                    QuestionView(text: "Batch size?", options: [
+                        OptionView(text: "5000", recommended: true),
+                        OptionView(text: "20000", recommended: false),
+                    ]),
+                ],
+                selectOnly: true, single: true
+            )
+        )
+    }
+
+    public static func tallMessageOnly(now: Date = Date()) -> [InboxItem] {
+        items([(homeMacId, "Home MacBook Pro", tallMessageAsk(now: now), true, -30)], now: now)
+    }
+
+    /// A select-only form of three questions that does not fit on one screen: "Send" waits for a
+    /// choice in each of them, and the hint under the count leads to the first one still open.
+    public static func strictAsk(now: Date = Date()) -> RequestView {
+        RequestView(
+            id: "req-strict", kind: "ask", createdAt: ms(now.addingTimeInterval(-60)), agent: claude,
+            project: ProjectRef(key: "proj-relay", name: "relay"), sessionTitle: "Choose the release settings",
+            source: "claude", contentHash: hash("strict"),
+            ask: AskView(
+                isMarkdown: true,
+                message: MessageView(text: "发布前需要确认三项设置。", files: []),
+                questions: [
+                    QuestionView(text: "发布到哪个渠道？", options: [
+                        OptionView(text: "Stable", recommended: true),
+                        OptionView(text: "Beta", recommended: false),
+                        OptionView(text: "Nightly", recommended: false),
+                        OptionView(text: "仅内部测试", recommended: false),
+                        OptionView(text: "暂不发布", recommended: false),
+                    ]),
+                    QuestionView(text: "是否同时发布更新日志？", options: [
+                        OptionView(text: "发布，并通知订阅者", recommended: true),
+                        OptionView(text: "只发布，不通知", recommended: false),
+                        OptionView(text: "不发布", recommended: false),
+                        OptionView(text: "稍后再说", recommended: false),
+                        OptionView(text: "先给我看草稿", recommended: false),
+                    ]),
+                    QuestionView(text: "发布后要在哪里通知团队？", options: [
+                        OptionView(text: "Slack #releases", recommended: true),
+                        OptionView(text: "邮件列表", recommended: false),
+                        OptionView(text: "两者都要", recommended: false),
+                        OptionView(text: "不用通知", recommended: false),
+                        OptionView(text: "我自己来", recommended: false),
+                    ]),
+                ],
+                selectOnly: true, single: true
+            )
+        )
+    }
+
+    public static func strictOnly(now: Date = Date()) -> [InboxItem] {
+        items([(homeMacId, "Home MacBook Pro", strictAsk(now: now), true, -60)], now: now)
+    }
+
     public static func selectOnlyAsk(now: Date = Date()) -> RequestView {
         RequestView(
             id: "req-select", kind: "ask", createdAt: ms(now.addingTimeInterval(-600)), agent: claude,
