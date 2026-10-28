@@ -469,7 +469,7 @@ final class AskHumanUITests: XCTestCase {
         requireElement("option-0-0").tap()
         requireElement("send-button").tap()
         XCTAssertTrue(gone("inbox-row-req-select", timeout: 15))
-        tab(2)
+        tab(3)  // Inbox, Agents, Todos, History, Macs
         _ = requireElement("history-row-req-select")
     }
 
