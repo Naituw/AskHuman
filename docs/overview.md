@@ -131,6 +131,7 @@ AskHuman/
       agents/workspaces.rs       IM 新任务的最近工作目录索引与五家冷扫描
       dingtalk/confirm.rs    钉钉双动作确认卡
       sound.rs               跨平台弹窗提示音
+      idle.rs                Mac 键盘 / 鼠标空闲时长（macOS 读 CoreGraphics，其它平台未知）；目前只供 iOS 网关决定何时推送
       commands.rs            前端调用的 Tauri command 集合
       popup_drop.rs          Popup 拖入文件：失败带原因与位置类别的图片读取，以及不含路径的拖拽诊断日志
       codex_desktop/               可选 macOS Codex App 原生会话与创建适配器
@@ -321,6 +322,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 
 - **形态**：Mac Gateway ↔ 自备 EMQX（MQTT TLS / WSS）↔ iOS App；推送经 `relay/` 的无状态云函数到 APNs。Mac 不持有任何 APNs 密钥，中继不存任何状态。
 - **不变量**：端到端加密（每配对一对方向密钥，broker 与中继只见密文）；一份 broker 凭据多台 Mac 共用；状态变更消息按 `msgId` 幂等；渠道藏在 `experimental.enabled` 后，`channel list` 与帮助默认不列出；EMQX 消费上限保持 0，不自动付费。
+- **投递与通知分开**：iOS 不参与 IM 的活跃槽 / `channels.autoActivation`——每个提问和确认都挂给所有已配对手机，手机一打开就能拉到；手机没在看时的系统推送只在 Mac 键盘 / 鼠标空闲满 `channels.ios.alertAfterSecs`（默认 15 分钟，`0` = 立即）后才发，每题每手机最多一条，不重复提醒。规格见 `docs/specs/ios-alert-timing.md`。
 - **跨语言**：Rust `ios/{crypto,envelope,wire}.rs` 与 Swift `AHProtocol` 共用 `ios/Fixtures/wire-v1/`，限额常量两边一致；改线协议先改夹具。
 - **验证**：Rust Gateway 测试台、Swift 包测试、真实 daemon 端到端（一次性 Mac + 本地 broker）、模拟器 UI 测试与中继 `node --test`，命令见 `docs/overview-ios.md`。
 

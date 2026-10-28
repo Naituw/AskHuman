@@ -1,42 +1,90 @@
 import SwiftUI
 import AHProtocol
 
-/// Colored badge for an Agent: a symbol on a rounded square.
+/// The mark of an Agent on a rounded tile in its brand color; an unknown kind gets a plain terminal tile.
 struct AgentBadge: View {
     let agent: AgentRef
     var size: CGFloat = 36
+    /// Say the Agent's name to VoiceOver. Beside a text that already names the Agent the badge stays
+    /// silent; where a session's title took the name's place, the badge is the only one left to tell.
+    var spoken = false
 
     var body: some View {
         let style = AgentStyle(kind: agent.kind)
         ZStack {
             RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
-                .fill(style.color.gradient)
-            Image(systemName: style.symbol)
+                .fill(style.tile)
+            // A hairline keeps the dark tiles apart from a dark background.
+            RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: max(0.5, size / 72))
+            mark(style)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(!spoken)
+        .accessibilityLabel(spoken ? agent.label : "")
+    }
+
+    @ViewBuilder
+    private func mark(_ style: AgentStyle) -> some View {
+        if let logo = style.logo {
+            Image(logo)
+                .resizable()
+                .renderingMode(style.tintsLogo ? .template : .original)
+                .scaledToFit()
+                .foregroundStyle(.white)
+                .frame(width: size * style.markScale, height: size * style.markScale)
+        } else {
+            Image(systemName: "terminal.fill")
                 .font(.system(size: size * 0.46, weight: .semibold))
                 .foregroundStyle(.white)
         }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }
 
+/// How an Agent kind looks: the logo in the asset catalog (`AgentLogos`, see `ios/Tools/agent-logos`)
+/// and the tile behind it.
 struct AgentStyle {
-    let symbol: String
-    let color: Color
+    /// Asset name of the logo; `nil` for a kind without one.
+    let logo: String?
+    let tile: AnyShapeStyle
+    /// The logo is a one-color shape painted white; otherwise it keeps its own colors.
+    let tintsLogo: Bool
+    /// Width of the logo relative to the tile.
+    let markScale: CGFloat
+
+    private static let night = LinearGradient(
+        colors: [Color(red: 0.23, green: 0.23, blue: 0.25), Color(red: 0.09, green: 0.09, blue: 0.10)],
+        startPoint: .top, endPoint: .bottom
+    )
 
     init(kind: String) {
         switch kind {
-        case "claude": self = .init(symbol: "sparkle", color: Color(red: 0.85, green: 0.47, blue: 0.34))
-        case "cursor": self = .init(symbol: "cursorarrow.rays", color: Color(red: 0.22, green: 0.22, blue: 0.26))
-        case "codex": self = .init(symbol: "chevron.left.forwardslash.chevron.right", color: Color(red: 0.06, green: 0.64, blue: 0.5))
-        case "grok": self = .init(symbol: "bolt.fill", color: Color(red: 0.3, green: 0.3, blue: 0.34))
-        case "pi": self = .init(symbol: "function", color: Color(red: 0.45, green: 0.35, blue: 0.85))
-        default: self = .init(symbol: "terminal.fill", color: .gray)
+        case "claude":
+            self.init(logo: "agent-claude", tile: Color(red: 0.85, green: 0.47, blue: 0.34).gradient, markScale: 0.56)
+        case "cursor":
+            self.init(logo: "agent-cursor", tile: Self.night, markScale: 0.52)
+        case "codex":
+            self.init(
+                logo: "agent-codex",
+                tile: LinearGradient(
+                    colors: [Color(red: 0.56, green: 0.66, blue: 1), Color(red: 0.22, green: 0.25, blue: 1)],
+                    startPoint: .top, endPoint: .bottom
+                ),
+                markScale: 0.58
+            )
+        case "grok":
+            self.init(logo: "agent-grok", tile: Color(red: 0.03, green: 0.03, blue: 0.03).gradient, markScale: 0.52)
+        case "pi":
+            self.init(logo: "agent-pi", tile: Self.night, tintsLogo: false, markScale: 0.48)
+        default:
+            self.init(logo: nil, tile: Color.gray.gradient, markScale: 0.5)
         }
     }
 
-    private init(symbol: String, color: Color) {
-        self.symbol = symbol
-        self.color = color
+    private init<S: ShapeStyle>(logo: String?, tile: S, tintsLogo: Bool = true, markScale: CGFloat) {
+        self.logo = logo
+        self.tile = AnyShapeStyle(tile)
+        self.tintsLogo = tintsLogo
+        self.markScale = markScale
     }
 }

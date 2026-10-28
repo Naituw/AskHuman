@@ -10,10 +10,13 @@ final class AppStoreTests: XCTestCase {
     private var store: AppStore!
     private var defaults: UserDefaults!
 
-    private func make(_ scenario: MockBackend.Scenario = .demo, latency: Double = 0) async {
-        backend = MockBackend(scenario: scenario, latency: latency)
+    private func make(
+        _ scenario: MockBackend.Scenario = .demo, latency: Double = 0, syncDelay: Double? = nil, cachedInbox: Bool = false
+    ) async {
+        backend = MockBackend(scenario: scenario, latency: latency, syncDelay: syncDelay, cachedInbox: cachedInbox)
         defaults = UserDefaults(suiteName: "ah-test-" + UUID().uuidString)!
         store = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults)
+        store.advanceTiming = .immediate
         await store.start()
         await eventually("first state") { self.store.state.foreground }
     }
@@ -210,6 +213,134 @@ final class AppStoreTests: XCTestCase {
         XCTAssertNil(store.confirmComposer(for: try item("req-migration")))
     }
 
+    // MARK: sync status
+
+    private func engineState(_ phase: ConnectionPhase, _ links: [MacLink]) -> EngineState {
+        var macs = Array(MockData.macs().prefix(links.count))
+        for index in macs.indices { macs[index].link = links[index] }
+        return EngineState(phase: phase, foreground: true, macs: macs)
+    }
+
+    func testSyncStatusFollowsTheBrokerAndTheMacs() {
+        let connected = ConnectionPhase.connected(via: "tcp")
+        XCTAssertEqual(engineState(connected, [.online, .online]).syncStatus, .upToDate)
+        XCTAssertEqual(engineState(connected, [.online, .connecting]).syncStatus, .updating)
+        XCTAssertEqual(engineState(connected, [.online, .macOffline]).syncStatus, .upToDate, "an offline Mac is an answer")
+        XCTAssertEqual(engineState(.connecting(via: "tcp"), [.connecting]).syncStatus, .updating)
+        XCTAssertEqual(engineState(.idle, [.connecting]).syncStatus, .updating)
+        XCTAssertEqual(engineState(.backoff(retryAt: Date(), reason: "network"), [.brokerDown]).syncStatus, .reconnecting)
+        XCTAssertEqual(engineState(.refused("no"), [.brokerDown]).syncStatus, .refused)
+        XCTAssertEqual(engineState(.idle, []).syncStatus, .upToDate, "nothing paired, nothing to wait for")
+    }
+
+    func testAnEmptyListIsOnlyTrustedOnceTheMacsAnswered() {
+        let connected = ConnectionPhase.connected(via: "tcp")
+        XCTAssertEqual(engineState(connected, [.online]).listReadiness, .ready)
+        XCTAssertEqual(engineState(connected, [.online, .connecting]).listReadiness, .loading, "one Mac is still on its way")
+        XCTAssertEqual(engineState(connected, [.online, .macOffline]).listReadiness, .ready)
+        XCTAssertEqual(engineState(connected, [.macOffline, .macOffline]).listReadiness, .unreachable)
+        XCTAssertEqual(engineState(.backoff(retryAt: Date(), reason: "network"), [.brokerDown, .brokerDown]).listReadiness, .unreachable)
+        XCTAssertEqual(engineState(.connecting(via: "tcp"), [.connecting]).listReadiness, .loading)
+        XCTAssertEqual(engineState(.idle, []).listReadiness, .ready)
+    }
+
+    func testAConnectedDemoIsUpToDate() async {
+        await make()
+        XCTAssertEqual(store.syncStatus, .upToDate)
+        XCTAssertEqual(store.listReadiness, .ready)
+    }
+
+    func testFreshlyOpenedListsAreLoadingNotEmpty() async {
+        await make(.syncing)
+        XCTAssertTrue(store.state.inbox.isEmpty)
+        XCTAssertTrue(store.state.agents.isEmpty)
+        XCTAssertEqual(store.syncStatus, .updating)
+        XCTAssertEqual(store.listReadiness, .loading, "an empty list that has not heard from the Macs says nothing")
+        await backend.finishSync()
+        await eventually("synced") { self.store.syncStatus == .upToDate }
+        XCTAssertEqual(store.listReadiness, .ready)
+        XCTAssertEqual(store.state.inbox.count, 5)
+    }
+
+    func testRequestsKeptFromTheLastRunShowWhileTheMacsAreStillAnswering() async {
+        await make(.syncing, cachedInbox: true)
+        XCTAssertEqual(store.state.inbox.count, 5)
+        XCTAssertEqual(store.syncStatus, .updating)
+        XCTAssertEqual(store.listReadiness, .loading)
+    }
+
+    func testADeadBrokerIsAnAnswerNotALoad() async {
+        await make(.offline)
+        XCTAssertEqual(store.syncStatus, .reconnecting)
+        XCTAssertEqual(store.listReadiness, .unreachable)
+    }
+
+    func testNothingPairedHasNothingToWaitFor() async {
+        await make(.empty)
+        XCTAssertEqual(store.syncStatus, .upToDate)
+        XCTAssertEqual(store.listReadiness, .ready)
+    }
+
+    func testPullToRefreshStaysUpWhileTheListsCatchUp() async {
+        await make(.syncing, syncDelay: 1.5)
+        let began = Date()
+        await store.refresh()
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(began), 1.2, "the spinner waits for the Macs")
+        XCTAssertEqual(store.syncStatus, .upToDate)
+    }
+
+    func testPullToRefreshNeverVanishesBeforeItWasSeen() async {
+        await make()
+        let began = Date()
+        await store.refresh()
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(began), 0.55)
+    }
+
+    // MARK: a request that is not here (yet)
+
+    func testARequestThatIsNotHereYetIsLoadingNotUnavailable() async {
+        await make(.syncing)
+        let id = CachedRequest.key(MockData.homeMacId, "req-migration")
+        XCTAssertNil(store.displayItem(id: id))
+        XCTAssertEqual(store.missingRequest(id: id), .loading, "the Macs have not answered: it may be on its way")
+        await backend.finishSync()
+        await eventually("synced") { self.store.syncStatus == .upToDate }
+        XCTAssertNotNil(store.displayItem(id: id), "and there it is")
+        XCTAssertEqual(
+            store.missingRequest(id: CachedRequest.key(MockData.homeMacId, "req-nope")), .gone,
+            "the Mac has answered and does not have it"
+        )
+    }
+
+    func testNothingIsSaidAboutARequestBeforeTheFirstState() {
+        let idle = AppStore(
+            backend: MockBackend(), drafts: MemoryDraftStore(), defaults: UserDefaults(suiteName: "ah-test-" + UUID().uuidString)!
+        )
+        XCTAssertFalse(idle.hasState)
+        XCTAssertEqual(idle.missingRequest(id: CachedRequest.key(MockData.homeMacId, "req-migration")), .loading)
+    }
+
+    func testARequestOfAMacThatCannotBeReachedIsNeitherLoadingNorGone() async {
+        await make(.offline)
+        XCTAssertEqual(store.missingRequest(id: CachedRequest.key(MockData.homeMacId, "req-late")), .unreachable)
+    }
+
+    func testARequestOfAMacThatIsNotPairedIsGone() async {
+        await make()
+        XCTAssertEqual(store.missingRequest(id: CachedRequest.key("unknown-mac", "req-x")), .gone)
+    }
+
+    func testATappedNotificationKeepsWhatItSaidUntilItsPageCloses() async {
+        await make(.syncing)
+        let hint = NotificationHint(title: "Claude Code · relay", subtitle: "Office iMac", body: "Pin the matrix?")
+        store.openNotification(macId: MockData.officeMacId, rid: "req-select", kind: "ask", hint: hint)
+        let id = CachedRequest.key(MockData.officeMacId, "req-select")
+        XCTAssertEqual(store.inboxPath, [id], "the page opens at once, request or not")
+        XCTAssertEqual(store.hint(for: id), hint)
+        store.closed(id: id)
+        XCTAssertNil(store.hint(for: id))
+    }
+
     // MARK: data allowance
 
     func testTheDemoIsFarFromTheFreeAllowanceAndTheQuotaScenarioIsNearIt() async {
@@ -234,6 +365,7 @@ final class AppStoreTests: XCTestCase {
         await eventually("finish noted") { self.store.finished[select.id] != nil }
         XCTAssertEqual(store.finished[select.id]?.outcome, .answered)
         XCTAssertEqual(store.finished[select.id]?.by, "Another phone")
+        XCTAssertEqual(store.endedNotice(for: select.id)?.by, "Another phone", "its page says so")
         XCTAssertEqual(store.inboxPath, [select.id], "the page is not closed under the reader")
 
         // The state update and the event are separate streams: wait for the request to be gone as well.
@@ -253,6 +385,76 @@ final class AppStoreTests: XCTestCase {
         let next = try XCTUnwrap(store.inboxPath.last)
         XCTAssertNotEqual(next, select.id)
         XCTAssertEqual(store.item(id: next)?.state, .pending)
+    }
+
+    func testTheNextRequestTakesTheSentOnesPlaceAndTheReceiptOutlivesTheMove() async throws {
+        await make()
+        // Slow enough to look at each step.
+        store.advanceTiming = AdvanceTiming(hold: .milliseconds(150), settle: .milliseconds(250), note: .milliseconds(500))
+        let select = try item("req-select")
+        store.open(macId: select.macId, requestId: select.requestId)
+        let composer = try XCTUnwrap(store.composer(for: select))
+        composer.toggle(question: 0, option: 0)
+        let ticks = store.sentTick
+        try await store.send(composer, item: select)
+
+        await eventually("receipt") { self.store.receipt?.from == select.id }
+        XCTAssertEqual(store.receipt?.outcome, .answered)
+        XCTAssertEqual(store.sentTick, ticks + 1, "the haptic comes with the receipt, not with the tap")
+        XCTAssertEqual(store.inboxPath, [select.id], "the sent page stays up while its receipt shows")
+
+        // The stack never holds the sent page and the next one together: a page dropped from under the
+        // visible one shows its last frame again and hands its scroll position to the next request.
+        var deepest = 1
+        await eventually("moved on") {
+            deepest = max(deepest, self.store.inboxPath.count)
+            return self.store.inboxPath.last != select.id
+        }
+        let next = try XCTUnwrap(store.inboxPath.last)
+        XCTAssertEqual(store.inboxPath, [next], "the next request takes the sent one's place")
+        XCTAssertEqual(store.sentNote?.remaining, store.pendingCount)
+        XCTAssertEqual(store.receipt?.from, select.id, "the receipt is still there for the page that takes over to slide in over")
+        XCTAssertEqual(store.receipt?.next, next, "and says that page is the one")
+        XCTAssertEqual(store.receipt?.summary?.id, select.requestId, "and it knows who asked, now that the request is closed")
+
+        await eventually("receipt gone") { deepest = max(deepest, self.store.inboxPath.count); return self.store.receipt == nil }
+        await eventually("note gone") { self.store.sentNote == nil }
+        XCTAssertEqual(store.inboxPath, [next])
+        XCTAssertEqual(deepest, 1, "one page for as long as the requests last")
+    }
+
+    func testTheFormUnderOurOwnReceiptDoesNotSayTheRequestEnded() async throws {
+        await make()
+        store.advanceTiming = AdvanceTiming(hold: .milliseconds(300), settle: .milliseconds(100), note: .milliseconds(100))
+        let select = try item("req-select")
+        store.open(macId: select.macId, requestId: select.requestId)
+        let composer = try XCTUnwrap(store.composer(for: select))
+        composer.toggle(question: 0, option: 0)
+        try await store.send(composer, item: select)
+
+        // The request has finished, but the page answers with its receipt. While that fades in over the
+        // form, the form must keep saying "waiting for your Mac", not flip to "This request has ended."
+        await eventually("receipt") { self.store.receipt?.from == select.id }
+        XCTAssertNotNil(store.finished[select.id], "the request did finish")
+        XCTAssertNil(store.endedNotice(for: select.id), "but our own submission is not an ended page")
+    }
+
+    func testLeavingThePageDuringTheReceiptCancelsTheMove() async throws {
+        await make()
+        store.advanceTiming = AdvanceTiming(hold: .milliseconds(200), settle: .milliseconds(50), note: .milliseconds(50))
+        let select = try item("req-select")
+        store.open(macId: select.macId, requestId: select.requestId)
+        let composer = try XCTUnwrap(store.composer(for: select))
+        composer.toggle(question: 0, option: 0)
+        try await store.send(composer, item: select)
+        await eventually("receipt") { self.store.receipt != nil }
+
+        let other = try item("req-migration")
+        store.open(macId: other.macId, requestId: other.requestId)
+        XCTAssertNil(store.receipt, "going elsewhere on purpose ends the show")
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(store.inboxPath, [other.id], "the pending move must not drag the reader away again")
+        XCTAssertNil(store.sentNote)
     }
 
     func testWithAutoAdvanceOffTheListComesBack() async throws {
@@ -294,6 +496,27 @@ final class AppStoreTests: XCTestCase {
         guard case .request(let macId, _)? = store.banner?.kind else { return XCTFail("expected a request banner") }
         XCTAssertEqual(macId, MockData.homeMacId)
         XCTAssertEqual(store.banner?.title, "Cursor · HumanInLoop")
+    }
+
+    func testTheBannerOfARequestNamesItsSession() async throws {
+        await make()
+        let before = store.arrivalTick
+        await backend.simulateArrival(sessionTitle: "Review the release notes")
+        await eventually("tick") { self.store.arrivalTick == before + 1 }
+        XCTAssertEqual(store.banner?.title, "Review the release notes", "the title replaces the Agent and project")
+        XCTAssertEqual(store.banner?.subtitle, "测试已通过，需要我提交这些改动吗？")
+    }
+
+    func testTheInboxNamesARequestBySessionTitleElseByAgent() async throws {
+        await make()
+        let titled = try item("req-migration")
+        XCTAssertEqual(titled.sessionTitle, "Plan the users table migration")
+        XCTAssertEqual(titled.displayTitle, "Plan the users table migration")
+        let plain = try item("req-select")
+        XCTAssertNil(plain.sessionTitle)
+        XCTAssertEqual(plain.displayTitle, "Claude Code")
+        // What the engine keeps for the list wins nothing over the full view: they say the same.
+        XCTAssertEqual(titled.summary.sessionTitle, titled.view?.sessionTitle)
     }
 
     func testNoBannerWhileTheAppIsInTheBackground() async throws {

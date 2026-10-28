@@ -71,7 +71,7 @@ final class E2ETests: E2ECase {
         let logs = files.filter { $0.pathExtension == "log" }
         XCTAssertFalse(logs.isEmpty, "the daemon writes a log")
         for log in logs { haystacks[log.lastPathComponent] = (try? String(contentsOf: log, encoding: .utf8)) ?? "" }
-        XCTAssertTrue(haystacks["daemon.log"]?.contains("ios") == true, "the log has content about the channel, so the scan means something")
+        XCTAssertTrue(haystacks["daemon.log"]?.lowercased().contains("ios") == true, "the log has content about the channel, so the scan means something")
 
         for (name, secret) in secrets {
             for (place, text) in haystacks where text.contains(secret) {

@@ -15,6 +15,14 @@ public actor MockBackend: RemoteBackend {
         case offline
         /// The demo, with this month's traffic close to the broker's free quota.
         case quota
+        /// The demo with one short question left: sending it empties the inbox.
+        case single
+        /// The demo with two long questions left: the second must start at its top whatever the first
+        /// was scrolled to.
+        case longs
+        /// Paired Macs that have not answered yet, as right after the app opened: the lists are
+        /// still loading. They stay so unless a sync delay is given, after which the demo appears.
+        case syncing
     }
 
     /// A submission as the mock received it (for tests).
@@ -44,6 +52,8 @@ public actor MockBackend: RemoteBackend {
     var state: EngineState
     private var entries: [HistoryEntry]
     let latency: Double
+    /// Real seconds until the `syncing` scenario turns into the demo; `nil` keeps it syncing.
+    let syncDelay: Double?
     let now: @Sendable () -> Date
     private var pairingTask: Task<Void, Never>?
     var counter = 0
@@ -71,7 +81,12 @@ public actor MockBackend: RemoteBackend {
     /// Makes the next submission fail the way an unanswered one does.
     public var failNextSubmission = false
 
-    public init(scenario: Scenario = .demo, latency: Double = 1, now: @escaping @Sendable () -> Date = { Date() }) {
+    /// `syncDelay` (real seconds) ends the `syncing` scenario that long after the start; `cachedInbox`
+    /// lets that scenario begin with the requests the phone kept from the last run.
+    public init(
+        scenario: Scenario = .demo, latency: Double = 1, syncDelay: Double? = nil, cachedInbox: Bool = false,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
         let (stateStream, stateContinuation) = AsyncStream<EngineState>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let (eventStream, eventContinuation) = AsyncStream<EngineEvent>.makeStream()
         states = stateStream
@@ -79,16 +94,23 @@ public actor MockBackend: RemoteBackend {
         stateOut = stateContinuation
         eventOut = eventContinuation
         self.latency = latency
+        self.syncDelay = scenario == .syncing ? syncDelay : nil
         self.now = now
         let date = now()
         var initial: EngineState
         switch scenario {
-        case .demo, .quota:
+        case .demo, .quota, .single, .longs:
+            let inbox: [InboxItem]
+            switch scenario {
+            case .single: inbox = MockData.inbox(now: date).filter { $0.requestId == "req-select" }
+            case .longs: inbox = MockData.longPair(now: date)
+            default: inbox = MockData.inbox(now: date)
+            }
             let traffic = scenario == .quota
                 ? TrafficStats(month: "2026-10", sentBytes: 230_000_000, receivedBytes: 240_000_000, sentMessages: 41_000, receivedMessages: 77_000)
                 : TrafficStats(month: "2026-10", sentBytes: 18_432, receivedBytes: 96_210, sentMessages: 41, receivedMessages: 77)
             initial = EngineState(
-                phase: .connected(via: "tcp"), foreground: true, macs: MockData.macs(now: date), inbox: MockData.inbox(now: date),
+                phase: .connected(via: "tcp"), foreground: true, macs: MockData.macs(now: date), inbox: inbox,
                 push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1,
                 traffic: traffic,
                 brokerHost: "broker.example.com", agents: MockData.agents(now: date)
@@ -104,6 +126,13 @@ public actor MockBackend: RemoteBackend {
                 push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1, brokerHost: "broker.example.com"
             )
             entries = MockData.history(now: date)
+        case .syncing:
+            initial = EngineState(
+                phase: .connecting(via: "tcp"), foreground: true,
+                macs: MockData.macs(now: date, link: .connecting), inbox: cachedInbox ? MockData.inbox(now: date) : [],
+                push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1, brokerHost: "broker.example.com"
+            )
+            entries = MockData.history(now: date)
         }
         for index in initial.macs.indices {
             initial.macs[index].pendingCount = initial.inbox.filter { $0.macId == initial.macs[index].id }.count
@@ -114,6 +143,24 @@ public actor MockBackend: RemoteBackend {
     // MARK: lifecycle
 
     public func start() async {
+        publish()
+        if let syncDelay {
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(syncDelay))
+                await self?.finishSync()
+            }
+        }
+    }
+
+    /// Ends the `syncing` scenario: the broker link is up, the Macs answered and the lists fill in.
+    public func finishSync() {
+        let date = now()
+        state.phase = .connected(via: "tcp")
+        state.macs = MockData.macs(now: date)
+        if state.inbox.isEmpty { state.inbox = MockData.inbox(now: date) }
+        state.agents = MockData.agents(now: date)
+        state.traffic = TrafficStats(month: "2026-10", sentBytes: 18_432, receivedBytes: 96_210, sentMessages: 41, receivedMessages: 77)
+        refreshCounts()
         publish()
     }
 
@@ -379,14 +426,16 @@ public actor MockBackend: RemoteBackend {
         finish(item.id, outcome: .answered, answers: [], choice: nil, input: nil, by: by)
     }
 
-    /// Delivers a new request, as if the Agent on `macId` had just asked.
-    public func simulateArrival(macId: String = MockData.homeMacId) {
+    /// Delivers a new request, as if the Agent on `macId` had just asked (from a session called
+    /// `sessionTitle`, when given).
+    public func simulateArrival(macId: String = MockData.homeMacId, sessionTitle: String? = nil) {
         counter += 1
         let date = now()
         let id = "req-live-\(counter)"
         let view = RequestView(
             id: id, kind: "ask", createdAt: MockData.ms(date), agent: AgentRef(kind: "cursor", label: "Cursor"),
-            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), source: "cursor", contentHash: "h-" + id,
+            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: sessionTitle,
+            source: "cursor", contentHash: "h-" + id,
             ask: AskView(
                 isMarkdown: true,
                 message: MessageView(text: "测试已通过，需要我提交这些改动吗？", files: []),
@@ -401,8 +450,8 @@ public actor MockBackend: RemoteBackend {
             InboxItem(
                 macId: macId, macName: name, requestId: id,
                 summary: RequestSummary(
-                    id: id, kind: "ask", project: view.project, agent: view.agent, createdAt: view.createdAt,
-                    preview: MockData.preview(of: view), contentHash: view.contentHash, size: 1_024
+                    id: id, kind: "ask", project: view.project, agent: view.agent, sessionTitle: sessionTitle,
+                    createdAt: view.createdAt, preview: MockData.preview(of: view), contentHash: view.contentHash, size: 1_024
                 ),
                 view: view, receivedAt: date, unread: true, state: .pending
             ),

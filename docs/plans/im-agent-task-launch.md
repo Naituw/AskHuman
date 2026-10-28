@@ -137,7 +137,7 @@ AgentLaunchAdapter {
 
 1. binary probe：
    - 用用户 `$SHELL` 启 login shell，对固定 command 执行有界 `command -v`；
-   - IM 无法影响 command string；2s timeout；过滤 shell rc 噪音，只接受 absolute executable file；
+   - IM 无法影响 command string；timeout（初版 2s，现为查找 6s、超时单独报告，见 spec §4.2）；过滤 shell rc 噪音，只接受 absolute executable file；
    - executable owner 不作硬门控，但必须当前用户可执行；结果缓存 5min；
    - `$SHELL` 无效时回退 daemon PATH + 已知用户 bin 目录的固定文件检查。
 2. lifecycle probe：`agent_lifecycle::status(kind)` 必须 supported + installed + !outdated。

@@ -137,17 +137,40 @@ impl Host for DaemonHost {
 
     fn slot(&self) -> SlotInfo {
         let Some(state) = self.state.upgrade() else {
-            return SlotInfo {
-                active: false,
-                auto_activation: false,
-            };
+            return slot_info(false);
         };
         let active = state.active_channel.lock().unwrap().as_deref() == Some("ios");
-        let auto_activation = state.config.lock().unwrap().channels.auto_activation;
-        SlotInfo {
-            active,
-            auto_activation,
-        }
+        slot_info(active)
+    }
+
+    fn mac_idle_secs(&self) -> Option<u64> {
+        crate::idle::secs_since_last_input()
+    }
+
+    fn alert_after_secs(&self) -> u64 {
+        self.state
+            .upgrade()
+            .map(|state| {
+                state
+                    .config
+                    .lock()
+                    .unwrap()
+                    .channels
+                    .ios
+                    .effective_alert_after_secs()
+            })
+            .unwrap_or(0)
+    }
+}
+
+/// What the phone is told about the slot. Questions reach iOS whichever channel is active
+/// (`docs/specs/ios-alert-timing.md` D1), so the phone is always told that nothing needs taking
+/// over (`auto_activation: false`: it shows "every question is sent to this phone" and no
+/// take-over button); `active` only says which channel last answered.
+fn slot_info(active: bool) -> SlotInfo {
+    SlotInfo {
+        active,
+        auto_activation: false,
     }
 }
 
@@ -342,9 +365,56 @@ pub(super) async fn handle_ios_op(
 /// The surface to attach to a request. Only used for delivery candidates, which exist only while
 /// the gateway runs, so this never has to (re)start it: that keeps the async call graph acyclic
 /// (`ensure_ios_gateway` re-delivers in-flight requests through the attach functions).
-pub(super) fn ios_channel_for(state: &ServerState, request_id: &str) -> Option<Arc<dyn Channel>> {
+///
+/// `session` is the Agent session that asks, for the title the phone shows.
+pub(super) fn ios_channel_for(
+    state: &ServerState,
+    request_id: &str,
+    session: Option<crate::channels::ios::SessionRef>,
+) -> Option<Arc<dyn Channel>> {
     let gateway = ios_gateway(state)?;
-    Some(Arc::new(crate::channels::ios::IosChannel::new(
-        gateway, request_id,
-    )))
+    Some(Arc::new(
+        crate::channels::ios::IosChannel::new(gateway, request_id).with_session(session),
+    ))
+}
+
+/// Where to find the title of the Agent session a request comes from; `None` when the caller is
+/// no known Agent or did not say which session it is.
+pub(super) fn ios_session_ref(
+    state: &ServerState,
+    kind: Option<AgentKind>,
+    session_id: Option<&str>,
+) -> Option<crate::channels::ios::SessionRef> {
+    let kind = kind?;
+    let session_id = session_id.map(str::trim).filter(|id| !id.is_empty())?;
+    Some(crate::channels::ios::SessionRef {
+        kind,
+        session_id: session_id.to_string(),
+        cached_title: state.agents.cached_session_title(kind, session_id),
+        codex: state.config.lock().unwrap().codex_desktop.clone(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_phone_is_never_asked_to_take_over() {
+        // Whatever channel answered last, iOS gets every question: no take-over to offer.
+        assert_eq!(
+            slot_info(true),
+            SlotInfo {
+                active: true,
+                auto_activation: false
+            }
+        );
+        assert_eq!(
+            slot_info(false),
+            SlotInfo {
+                active: false,
+                auto_activation: false
+            }
+        );
+    }
 }

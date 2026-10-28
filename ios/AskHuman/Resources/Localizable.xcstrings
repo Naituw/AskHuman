@@ -231,16 +231,6 @@
         }
       }
     },
-    "A Mac follows up to %lld Agents. Unfollow one first." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "每台 Mac 最多关注 %lld 个 Agent。请先取消关注一个。"
-          }
-        }
-      }
-    },
     "A new task I write" : {
       "localizations" : {
         "zh-Hans" : {
@@ -571,6 +561,16 @@
         }
       }
     },
+    "Can't reach the broker, so this may be out of date. Pull down to try again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连不上 Broker，这里的内容可能已过期。下拉可重试。"
+          }
+        }
+      }
+    },
     "Cancel" : {
       "localizations" : {
         "zh-Hans" : {
@@ -691,6 +691,16 @@
         }
       }
     },
+    "Clear" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除"
+          }
+        }
+      }
+    },
     "Clear history" : {
       "localizations" : {
         "zh-Hans" : {
@@ -767,16 +777,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已连接"
-          }
-        }
-      }
-    },
-    "Connecting to the broker… Pull down to retry." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在连接 Broker… 下拉可重试。"
           }
         }
       }
@@ -1091,6 +1091,26 @@
         }
       }
     },
+    "Filter" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "筛选"
+          }
+        }
+      }
+    },
+    "Filtered: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已筛选：%@"
+          }
+        }
+      }
+    },
     "Finished" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1107,36 +1127,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "即将完成"
-          }
-        }
-      }
-    },
-    "Follow" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "关注"
-          }
-        }
-      }
-    },
-    "Follow limit reached" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已达到关注上限"
-          }
-        }
-      }
-    },
-    "Following" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已关注"
           }
         }
       }
@@ -1241,12 +1231,12 @@
         }
       }
     },
-    "It is not followed because this Mac already follows as many Agents as it allows." : {
+    "It has not answered yet. Pull down to try again." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这台 Mac 已关注到上限，所以没有关注它。"
+            "value" : "它还没有响应。下拉可重试。"
           }
         }
       }
@@ -1391,6 +1381,16 @@
         }
       }
     },
+    "Loading…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载…"
+          }
+        }
+      }
+    },
     "Mac" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1467,6 +1467,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "新任务"
+          }
+        }
+      }
+    },
+    "Next" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一题"
+          }
+        }
+      }
+    },
+    "Next question" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一个问题"
           }
         }
       }
@@ -2203,6 +2223,16 @@
         }
       }
     },
+    "Requests show up here as soon as a Mac is connected." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 一连上，请求就会显示在这里。"
+          }
+        }
+      }
+    },
     "Requests you answer or cancel are listed here. They stay on this phone only." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2343,12 +2373,32 @@
         }
       }
     },
+    "Sent · %lld left" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已发送 · 还剩 %lld 条"
+          }
+        }
+      }
+    },
     "Session not found" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "找不到会话"
+          }
+        }
+      }
+    },
+    "Show" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示"
           }
         }
       }
@@ -2599,16 +2649,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Agent 现在没有在工作。只有它工作时才能发消息。"
-          }
-        }
-      }
-    },
-    "The Agent is running and you follow it." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Agent 正在运行，你已关注它。"
           }
         }
       }
@@ -2933,6 +2973,16 @@
         }
       }
     },
+    "The request shows up here when it is back, if it is still waiting." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 恢复连接后，如果它还在等你，请求会显示在这里。"
+          }
+        }
+      }
+    },
     "The session has ended." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2999,16 +3049,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这个 Agent 使用它自己的权限设置。"
-          }
-        }
-      }
-    },
-    "This Mac already follows as many Agents as it allows." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "这台 Mac 已关注到上限。"
           }
         }
       }
@@ -3321,6 +3361,16 @@
         }
       }
     },
+    "Updating…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在更新…"
+          }
+        }
+      }
+    },
     "Uploading attachments" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3421,6 +3471,16 @@
         }
       }
     },
+    "Will notify you" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会通知你"
+          }
+        }
+      }
+    },
     "Withdraw" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3471,12 +3531,42 @@
         }
       }
     },
-    "You get a notification when this Agent finishes, fails or needs you." : {
+    "You get a notification when it finishes or fails, once your Mac has been idle for a while." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这个 Agent 完成、出错或需要你时，你会收到通知。"
+            "value" : "它完成或出错时，等你的 Mac 空闲一段时间后，你会收到通知。"
+          }
+        }
+      }
+    },
+    "You get a notification when this Agent finishes or fails, once your Mac has been idle for a while." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个 Agent 完成或出错时，等你的 Mac 空闲一段时间后，你会收到通知。"
+          }
+        }
+      }
+    },
+    "You will not be notified about this one: this Mac already has as many Agents to tell you about as it allows." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个任务不会通知你：这台 Mac 要通知你的 Agent 已经到上限了。"
+          }
+        }
+      }
+    },
+    "Your Mac is not reachable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连不上你的 Mac"
           }
         }
       }

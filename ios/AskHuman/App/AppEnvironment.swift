@@ -16,14 +16,31 @@ struct LaunchOptions {
     var openRequest: String?
     /// An Agent (its key, or `macId|key`) whose page opens first.
     var openAgent: String?
+    /// An Agent (its key, or `macId|key`) to follow as soon as a Mac lists it, in a run on the real engine:
+    /// the app has no follow button (the Macs follow the tasks the phone starts), the live UI test asks.
+    var followAgent: String?
     /// Opens the new task sheet first.
     var newTask = false
     /// The mock Agents never pick up the messages sent to them (UI tests that withdraw one).
     var holdInterjects = false
     /// A followed Agent reports `done`, `failed` or `waiting` a moment after launch (the follow banner).
     var followEvent: String?
+    /// A request arrives a moment after launch (the request banner), from a session with this title;
+    /// `none` for one without a title.
+    var arrival: String?
     /// Forces "open the next request after sending" on or off (UI tests need a fixed value).
     var autoAdvance: Bool?
+    /// Seconds (real time) after which the `syncing` scenario turns into the demo; unset keeps it syncing.
+    var syncDelay: Double?
+    /// The `syncing` scenario starts with the requests the phone kept from the last run.
+    var cachedInbox = false
+    /// Seconds the receipt of a sent request stays up, and the next page takes to settle (UI tests
+    /// stretch them to have time to look; the app's own values are made for the eye).
+    var advanceHold: Double?
+    var advanceSettle: Double?
+    /// A request (on the first Mac) whose notification was tapped: its page opens at once, whether or
+    /// not the Macs have answered yet, with a made-up notification text.
+    var notifyRequest: String?
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
@@ -34,10 +51,17 @@ struct LaunchOptions {
         tab = defaults.string(forKey: "AHTab").flatMap(AppTab.init(rawValue:))
         openRequest = defaults.string(forKey: "AHOpen")
         openAgent = defaults.string(forKey: "AHOpenAgent")
+        followAgent = defaults.string(forKey: "AHFollowAgent")
         newTask = defaults.bool(forKey: "AHNewTask")
         holdInterjects = defaults.bool(forKey: "AHHoldInterjects")
         followEvent = defaults.string(forKey: "AHFollowEvent")
+        arrival = defaults.string(forKey: "AHArrival")
         if defaults.object(forKey: "AHAutoAdvance") != nil { autoAdvance = defaults.bool(forKey: "AHAutoAdvance") }
+        if defaults.object(forKey: "AHSyncDelay") != nil { syncDelay = defaults.double(forKey: "AHSyncDelay") }
+        cachedInbox = defaults.bool(forKey: "AHCached")
+        if defaults.object(forKey: "AHAdvanceHold") != nil { advanceHold = defaults.double(forKey: "AHAdvanceHold") }
+        if defaults.object(forKey: "AHAdvanceSettle") != nil { advanceSettle = defaults.double(forKey: "AHAdvanceSettle") }
+        notifyRequest = defaults.string(forKey: "AHNotify")
     }
 }
 
@@ -59,7 +83,9 @@ final class AppEnvironment {
         let defaults = UserDefaults.standard
         let drafts: DraftStore
         if launch.mock {
-            let backend = MockBackend(scenario: launch.scenario, latency: launch.latency)
+            let backend = MockBackend(
+                scenario: launch.scenario, latency: launch.latency, syncDelay: launch.syncDelay, cachedInbox: launch.cachedInbox
+            )
             mock = backend
             if launch.holdInterjects { Task { await backend.setInterjectConsumeDelay(nil) } }
             if let kind = launch.followEvent {
@@ -68,12 +94,20 @@ final class AppEnvironment {
                     await backend.simulateFollowEvent(kind: kind)
                 }
             }
+            if let title = launch.arrival {
+                Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    await backend.simulateArrival(sessionTitle: title == "none" ? nil : title)
+                }
+            }
             drafts = MemoryDraftStore()
             // Every mock run starts from the same preferences, whatever an earlier run left behind.
             let suite = UserDefaults(suiteName: "ah.mock") ?? defaults
             suite.removePersistentDomain(forName: "ah.mock")
             if let autoAdvance = launch.autoAdvance { suite.set(autoAdvance, forKey: "ah.autoAdvance") }
             store = AppStore(backend: backend, drafts: drafts, defaults: suite)
+            if let hold = launch.advanceHold { store.advanceTiming.hold = .seconds(hold) }
+            if let settle = launch.advanceSettle { store.advanceTiming.settle = .seconds(settle) }
             leftoverPairings = 0
         } else {
             let group = Bundle.main.object(forInfoDictionaryKey: "AHKeychainGroup") as? String
@@ -114,6 +148,16 @@ final class AppEnvironment {
     func start() async {
         await store.start()
         await push.refreshAuthorization()
+        if let request = launch.notifyRequest {
+            // What the notification extension would have made of this push, lines and all.
+            let plain = PushPlain(
+                k: "ask", rid: request, mac: "Home MacBook Pro", agent: "Cursor", project: "HumanInLoop",
+                session: "Plan the users table migration", text: "Which database should the migration target?", ts: 0
+            )
+            let lines = plain.headerLines
+            let hint = NotificationHint(title: lines.title, subtitle: lines.subtitle, body: plain.text)
+            store.openNotification(macId: MockData.homeMacId, rid: request, kind: "ask", hint: hint)
+        }
         if let request = launch.openRequest {
             // Wait for the first state, then open the request.
             for _ in 0..<50 where store.state.inbox.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
@@ -125,6 +169,18 @@ final class AppEnvironment {
             for _ in 0..<50 where store.state.agents.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
             if let item = store.state.agents.first(where: { $0.agentKey == agent || $0.id == agent }) {
                 store.openAgent(macId: item.macId, agentKey: item.agentKey)
+            }
+        }
+        if let agent = launch.followAgent, !launch.mock {
+            Task { @MainActor [store] in
+                // The session may not exist yet (the run pairs and answers questions first): wait up to 20 minutes.
+                for _ in 0..<6000 {
+                    if let item = store.state.agents.first(where: { $0.agentKey == agent || $0.id == agent }) {
+                        await store.setFollow(item, on: true)
+                        return
+                    }
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
             }
         }
         if launch.newTask {

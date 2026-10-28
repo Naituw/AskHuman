@@ -185,6 +185,9 @@ fn run_cmd(background: bool) -> i32 {
             return 1;
         }
     };
+    // The daemon's environment is not a Terminal window's, and the phone only shows a one-line
+    // reason when an Agent's CLI is not found: leave the details in daemon.log.
+    crate::integrations::agent_launch::log_lookup_misses(true);
     // 复用 tauri 的全局（多线程）tokio 运行时，使各 Channel 的 `tauri::async_runtime::spawn`
     // 与 Daemon 自身的任务跑在同一运行时上（不初始化任何 GUI / AppKit）。
     tauri::async_runtime::block_on(serve(lock))
@@ -3427,8 +3430,11 @@ fn any_im_enabled(config: &AppConfig) -> bool {
         || ch.ios.enabled
 }
 
-/// 当前配置完整、可实际投递的 IM 渠道，顺序与既有投递顺序一致。
-fn available_im_channels(state: &ServerState, config: &AppConfig) -> Vec<&'static str> {
+/// IM channels whose configuration is complete and that can really deliver, in the established
+/// delivery order. Does **not** include iOS: it is exempt from the active slot and joins the
+/// candidates through [`with_ios`] once the IM candidates are chosen
+/// (`docs/specs/ios-alert-timing.md` D1).
+fn available_im_channels(config: &AppConfig) -> Vec<&'static str> {
     let mut available = Vec::new();
     if crate::app::is_dingding_active(config) {
         available.push("dingding");
@@ -3442,10 +3448,17 @@ fn available_im_channels(state: &ServerState, config: &AppConfig) -> Vec<&'stati
     if crate::app::is_slack_active(config) {
         available.push("slack");
     }
-    if ios_can_deliver(state, config) {
-        available.push("ios");
-    }
     available
+}
+
+/// iOS takes no part in the active-slot selection of on-demand sending: whenever it can deliver
+/// (enabled, with a paired phone) every request is attached to it, whatever the IM candidates
+/// are. Whether and when a push goes out is the iOS gateway's call, from the Mac's idle time.
+fn with_ios(mut candidates: Vec<&'static str>, ios_deliverable: bool) -> Vec<&'static str> {
+    if ios_deliverable && !candidates.contains(&"ios") {
+        candidates.push("ios");
+    }
+    candidates
 }
 
 /// 按需发送的统一候选规则：优先活跃槽 ∪ watch；若 Popup 不可用且交集为空，
@@ -3472,10 +3485,9 @@ fn select_im_delivery_candidates(
     }
 }
 
-fn im_conversation_origin(
-    entry: &RequestEntry,
-    resolved_hint: Option<AgentKind>,
-) -> crate::channels::ConversationOrigin {
+/// The Agent that asks, as far as it is known: the hint of the caller, else what the daemon
+/// resolved from the process tree, else what the caller reported.
+fn entry_agent_kind(entry: &RequestEntry, resolved_hint: Option<AgentKind>) -> Option<AgentKind> {
     let resolved = entry
         .resolved_agent
         .lock()
@@ -3483,7 +3495,14 @@ fn im_conversation_origin(
         .and_then(|slot| slot.as_ref().and_then(|agent| agent.kind.clone()))
         .and_then(|kind| AgentKind::parse(&kind));
     let initial = entry.show.agent_kind.as_deref().and_then(AgentKind::parse);
-    let kind = resolved_hint.or(resolved).or(initial);
+    resolved_hint.or(resolved).or(initial)
+}
+
+fn im_conversation_origin(
+    entry: &RequestEntry,
+    resolved_hint: Option<AgentKind>,
+) -> crate::channels::ConversationOrigin {
+    let kind = entry_agent_kind(entry, resolved_hint);
     crate::channels::ConversationOrigin::new(
         &entry.show.source,
         kind.map(AgentKind::as_str),
@@ -3515,6 +3534,8 @@ async fn attach_im_channels(
     // 「IM 会话期自动激活」：开关开时，投放渠道 = 当前有效活跃槽 ∪ 正在 watch 本次调用方
     // agent 的渠道。若 Popup 不可用且候选为空，则全发可用 IM 作为可达性兜底。其余情况下，
     // 非候选 IM 由入站监听器保持连接、只监听 here，不发卡片。开关关时维持旧「全发」行为。
+    // iOS is exempt from this selection: whenever it can deliver, every request goes to it too
+    // (`with_ios`).
     let active = state.active_channel.lock().unwrap().clone();
     let watching: Vec<String> = match entry.agent_session_id.as_ref() {
         Some(sid) => state
@@ -3528,13 +3549,16 @@ async fn attach_im_channels(
             .collect(),
         None => Vec::new(),
     };
-    let available = available_im_channels(state, &config);
-    let candidates = select_im_delivery_candidates(
-        config.channels.auto_activation,
-        &available,
-        active.as_deref(),
-        &watching,
-        popup_available,
+    let available = available_im_channels(&config);
+    let candidates = with_ios(
+        select_im_delivery_candidates(
+            config.channels.auto_activation,
+            &available,
+            active.as_deref(),
+            &watching,
+            popup_available,
+        ),
+        ios_can_deliver(state, &config),
     );
     if candidates.is_empty() {
         return false;
@@ -3644,7 +3668,12 @@ async fn attach_im_channels(
     }
 
     if candidates.contains(&"ios") {
-        match ios_channel_for(state, &request.id) {
+        let session = ios_session_ref(
+            state,
+            entry_agent_kind(entry, agent_kind),
+            entry.agent_session_id.as_deref(),
+        );
+        match ios_channel_for(state, &request.id, session) {
             Some(ch) => {
                 let origin = im_conversation_origin(entry, agent_kind);
                 attached |= attach_channel(entry, ch, &request, &origin, &sink);
@@ -3701,13 +3730,16 @@ fn confirm_im_candidates(
         .filter(|watch| watch.session_id == entry.agent_session_id && !watch.rewatchable)
         .map(|watch| watch.channel.clone())
         .collect();
-    let available = available_im_channels(state, config);
-    select_im_delivery_candidates(
-        config.channels.auto_activation,
-        &available,
-        active.as_deref(),
-        &watching,
-        popup_available,
+    let available = available_im_channels(config);
+    with_ios(
+        select_im_delivery_candidates(
+            config.channels.auto_activation,
+            &available,
+            active.as_deref(),
+            &watching,
+            popup_available,
+        ),
+        ios_can_deliver(state, config),
     )
 }
 
@@ -3782,7 +3814,14 @@ async fn attach_confirm_im_channels(
                 }
             },
             "ios" => match ios_gateway(state) {
-                Some(gateway) => crate::channels::confirm::start_ios(entry.clone(), gateway),
+                Some(gateway) => {
+                    let session = ios_session_ref(
+                        state,
+                        AgentKind::parse(&entry.agent_kind),
+                        Some(&entry.agent_session_id),
+                    );
+                    crate::channels::confirm::start_ios(entry.clone(), gateway, session)
+                }
                 None => {
                     if entry.mark_failed("ios", "iOS gateway unavailable") {
                         entry
@@ -4566,7 +4605,8 @@ fn print_status(info: &StatusInfo) {
 mod tests {
     use super::{
         agent_kind_for_im, pending_launch_matches, popup_prewarm_requested, popup_should_dispatch,
-        select_im_delivery_candidates, task_workspace_options, InboundRegistry, PendingLaunchWatch,
+        select_im_delivery_candidates, task_workspace_options, with_ios, InboundRegistry,
+        PendingLaunchWatch,
     };
     use crate::agents::AgentKind;
     use crate::config::AppConfig;
@@ -4650,6 +4690,41 @@ mod tests {
             ),
             vec!["feishu", "slack"]
         );
+    }
+
+    #[test]
+    fn ios_is_a_candidate_whenever_it_can_deliver_whatever_the_slot_says() {
+        let available = ["dingding", "feishu"];
+        // On-demand sending on, the slot on the local popup: IMs are excluded, iOS is not.
+        let none = select_im_delivery_candidates(true, &available, Some("popup"), &[], true);
+        assert!(none.is_empty());
+        assert_eq!(with_ios(none, true), vec!["ios"]);
+        // The slot on an IM, or on-demand sending off: iOS comes after the IM candidates.
+        assert_eq!(
+            with_ios(
+                select_im_delivery_candidates(true, &available, Some("feishu"), &[], true),
+                true
+            ),
+            vec!["feishu", "ios"]
+        );
+        assert_eq!(
+            with_ios(
+                select_im_delivery_candidates(false, &available, Some("popup"), &[], true),
+                true
+            ),
+            vec!["dingding", "feishu", "ios"]
+        );
+        // The "Popup unavailable" fallback still only widens the IM choice.
+        assert_eq!(
+            with_ios(
+                select_im_delivery_candidates(true, &available, Some("popup"), &[], false),
+                true
+            ),
+            vec!["dingding", "feishu", "ios"]
+        );
+        // No phone to deliver to (or the channel is off): no iOS candidate; no duplicates either.
+        assert!(with_ios(Vec::new(), false).is_empty());
+        assert_eq!(with_ios(vec!["ios"], true), vec!["ios"]);
     }
 
     #[tokio::test]

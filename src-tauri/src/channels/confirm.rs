@@ -742,7 +742,12 @@ impl crate::ios::gateway::requests::ConfirmSink for IosConfirmSink {
 
 /// Delivers a confirmation to the paired iPhones and keeps them informed until it ends. The phone
 /// itself shows the final state, so unlike the IM cards there is nothing to update in place.
-pub fn start_ios(entry: Arc<ConfirmEntry>, gateway: Arc<crate::ios::gateway::IosGateway>) {
+/// `session` is the Agent session that asks, for the title the phone shows.
+pub fn start_ios(
+    entry: Arc<ConfirmEntry>,
+    gateway: Arc<crate::ios::gateway::IosGateway>,
+    session: Option<crate::channels::ios::SessionRef>,
+) {
     use crate::ios::gateway::requests::{DeliverRequest, Resolution, Sink};
     tokio::spawn(async move {
         let channel = "ios";
@@ -751,7 +756,10 @@ pub fn start_ios(entry: Arc<ConfirmEntry>, gateway: Arc<crate::ios::gateway::Ios
             Some(&entry.agent_kind),
             &entry.project,
         );
-        let view = crate::ios::views::confirm_view(&entry.request, &origin);
+        let mut view = crate::ios::views::confirm_view(&entry.request, &origin);
+        if let Some(session) = &session {
+            view.session_title = session.title(crate::channels::ios::TITLE_WAIT).await;
+        }
         if !entry.mark_ready(channel, entry.request_id.clone()) {
             return;
         }

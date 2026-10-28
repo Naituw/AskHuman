@@ -13,6 +13,7 @@ use serde_json::Value;
 use super::inbound::find_agent_by_session;
 use super::watch::frame_detail_json;
 use super::*;
+use crate::agents::session_info::SessionInfo;
 use crate::agents::LifecycleEvent;
 use crate::ios::gateway::{AgentEventKind, FrameData, InterjectResult, StagedFile};
 use crate::ios::wire::{AgentView, CanInterject, ProjectRef};
@@ -197,7 +198,7 @@ pub(super) fn agent_views(state: &Arc<ServerState>, projects: &ProjectCache) -> 
 
 /// The live frame of one session, or `None` when the registry no longer knows it.
 pub(super) fn watch_frame(state: &Arc<ServerState>, key: &str) -> Option<FrameData> {
-    let (_, session_id) = split_key(key)?;
+    let (kind, session_id) = split_key(key)?;
     let snapshot = state.agents.snapshot();
     let rec = find_agent_by_session(&snapshot, session_id)?;
     // The session id alone is enough to find the record: make sure it is the same family.
@@ -211,11 +212,38 @@ pub(super) fn watch_frame(state: &Arc<ServerState>, key: &str) -> Option<FrameDa
         .iter()
         .any(|id| id == session_id);
     let frame = crate::watch::build_frame(seq, Some(rec), waiting);
+    // The model is read from the session's own files (not from the registry), at most every ten
+    // seconds. It is left out of the signature on purpose: a change shows up with the next frame
+    // that goes out for any other reason.
+    let session = crate::agents::session_info::resolve_cached(kind, session_id);
     Some(FrameData {
         sig: crate::watch::signature(&frame),
         ended: frame.phase == crate::watch::WatchPhase::Ended,
-        frame: frame_detail_json(session_id, &frame),
+        frame: with_session_model(frame_detail_json(session_id, &frame), &session),
     })
+}
+
+/// Longest model name / reasoning level that goes to the phone.
+const SESSION_MODEL_MAX_CHARS: usize = 80;
+const SESSION_REASONING_MAX_CHARS: usize = 32;
+
+/// Adds `model` and `reasoning` to a frame, each only when the session reported one. The frame is
+/// the one the Mac's own console shows; these two keys exist for the phone alone.
+fn with_session_model(mut frame: Value, session: &SessionInfo) -> Value {
+    use crate::agents::model_catalog::clean_text;
+    if let Some(object) = frame.as_object_mut() {
+        let fields = [
+            ("model", &session.model, SESSION_MODEL_MAX_CHARS),
+            ("reasoning", &session.reasoning, SESSION_REASONING_MAX_CHARS),
+        ];
+        for (name, value, max) in fields {
+            let cleaned = value.as_deref().map(|v| clean_text(v, max));
+            if let Some(cleaned) = cleaned.filter(|v| !v.is_empty()) {
+                object.insert(name.to_string(), Value::String(cleaned));
+            }
+        }
+    }
+    frame
 }
 
 /// Queues text (and files) for a working session, or hands it to a hook that is waiting right
@@ -416,6 +444,51 @@ mod tests {
         let caption = view.current_tool.unwrap();
         assert_eq!(caption.chars().count(), TOOL_CAPTION_MAX_CHARS);
         assert!(caption.ends_with('…'));
+    }
+
+    fn reported(model: Option<&str>, reasoning: Option<&str>) -> SessionInfo {
+        SessionInfo {
+            model: model.map(str::to_string),
+            reasoning: reasoning.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_frame_carries_the_model_a_session_reported() {
+        let frame = json!({"type": "watchFrame", "seq": 4});
+        let both = with_session_model(frame.clone(), &reported(Some("model-a"), Some("high")));
+        assert_eq!(both["model"], "model-a");
+        assert_eq!(both["reasoning"], "high");
+        // Everything else in the frame stays as the Mac's console has it.
+        assert_eq!(both["type"], "watchFrame");
+        assert_eq!(both["seq"], 4);
+        let only_model = with_session_model(frame.clone(), &reported(Some("model-a"), None));
+        assert_eq!(only_model["model"], "model-a");
+        assert!(only_model.get("reasoning").is_none());
+        // Nothing reported: the keys are absent, not empty.
+        for session in [
+            reported(None, None),
+            reported(Some(""), Some("  ")),
+            reported(Some("\u{200b}"), None),
+        ] {
+            let bare = with_session_model(frame.clone(), &session);
+            assert_eq!(bare, frame);
+        }
+    }
+
+    #[test]
+    fn what_a_session_reports_is_cleaned_and_clipped_before_it_goes_out() {
+        let long = format!("  model\u{200b}-{}  ", "x".repeat(300));
+        let frame = with_session_model(json!({}), &reported(Some(&long), Some(&long)));
+        let model = frame["model"].as_str().unwrap();
+        assert_eq!(model.chars().count(), SESSION_MODEL_MAX_CHARS);
+        assert!(model.starts_with("model-x") && model.ends_with('…'));
+        let reasoning = frame["reasoning"].as_str().unwrap();
+        assert_eq!(reasoning.chars().count(), SESSION_REASONING_MAX_CHARS);
+        // A frame that is not an object is passed through untouched.
+        let odd = with_session_model(json!([1]), &reported(Some("model-a"), None));
+        assert_eq!(odd, json!([1]));
     }
 
     #[test]

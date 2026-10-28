@@ -120,6 +120,18 @@ pub trait Host: Send + Sync + 'static {
     }
     /// Makes iOS the active channel (the phone's "take over questions" button).
     async fn take_slot(&self) {}
+
+    /// Seconds since the last keyboard / mouse input on this Mac; `None` when unknown. A question
+    /// the phone has not looked at is pushed only once the Mac has been idle for
+    /// [`Host::alert_after_secs`], and at once when this is unknown.
+    fn mac_idle_secs(&self) -> Option<u64> {
+        None
+    }
+    /// How long the Mac must have been idle before such a push goes out; `0` = at once. Read on
+    /// every use, so a changed setting applies without restarting the gateway.
+    fn alert_after_secs(&self) -> u64 {
+        0
+    }
 }
 
 // ---------------------------------------------------------------- views for IPC and settings
@@ -175,6 +187,10 @@ pub struct GatewayState {
     pub pairing: Option<PairingView>,
     pub traffic: Traffic,
     pub pending_requests: usize,
+    /// Seconds since the last keyboard / mouse input on this Mac (`None` when unknown): shown in
+    /// the settings so it is visible whether the idle detection behind the push timing works.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mac_idle_secs: Option<u64>,
 }
 
 // ---------------------------------------------------------------- handle
@@ -730,6 +746,7 @@ impl Actor {
             pairing: self.pairing_view(),
             traffic: self.store.state.traffic.clone(),
             pending_requests: self.requests.pending_count(),
+            mac_idle_secs: self.host.mac_idle_secs(),
         }
     }
 
@@ -1199,6 +1216,9 @@ impl Actor {
     pub(crate) fn remove_phone(&mut self, phone_id: &str) -> bool {
         self.requests.forget_phone(phone_id);
         self.drop_phone_uploads(phone_id);
+        self.live
+            .follow_notices
+            .retain(|notice| notice.phone_id != phone_id);
         self.rt.remove(phone_id);
         let removed = self.store.remove_phone(phone_id);
         self.refresh_status();
@@ -1225,6 +1245,7 @@ impl Actor {
         self.tick_slot();
         self.tick_agents(now);
         self.tick_follow(now);
+        self.flush_follow_notices(now);
         self.tick_watch(now);
         self.tick_tasks(now);
         if let Some(at) = self.sync_at {

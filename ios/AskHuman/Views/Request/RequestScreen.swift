@@ -3,10 +3,102 @@ import AHCore
 import AHMarkdown
 import AHProtocol
 
-/// One request page: the question form, the confirmation page, or what is known while the rest loads.
+/// One request page of the inbox stack.
+///
+/// After a send the next request takes this page's place (`AppStore.advance`): the stack keeps its one
+/// page, what it shows changes with `id`, and the new request slides in over the receipt of the old one.
+/// The system's own push is not used for that. It needs the sent page kept underneath until the push is
+/// over and dropped then, and SwiftUI answers the drop by showing that page's last frame again (the
+/// receipt flashes by) and by giving the next request the scroll position of the one before it. Here
+/// every request gets a page of its own.
 struct RequestScreen: View {
     let id: String
     @Environment(AppStore.self) private var store
+
+    var body: some View {
+        // The receipt of the request this page takes over from, if it does: the store says so when it
+        // moves on. (A page opened any other way has no business with a receipt.)
+        let handedOver = store.receipt.flatMap { $0.next == id ? $0 : nil }
+        Arrival(from: handedOver) {
+            RequestPage(id: id)
+        }
+        // A page of its own for every request: nothing of the last one (its scroll position, what was
+        // read of it) is left on this one.
+        .id(id)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
+        .task(id: id) {
+            if let item = store.item(id: id) { await store.opened(item) }
+        }
+    }
+}
+
+/// A request page that takes over from the page that was just sent: the receipt of that page stays
+/// where it is, and the new page slides in over it while the receipt gives way a little to the left,
+/// as in the system's push.
+///
+/// This is not a view transition: the old page (it was replaced, and its request is closed) is not
+/// kept around to slide away. A transition would keep the old page's whole view tree alive and keep it
+/// up to date, and it ran the receipt's own transitions along: the receipt faded out (or was gone at
+/// once) and the closed form behind it showed through. The receipt is shown again here, standing by
+/// itself, and moved with the page.
+private struct Arrival<Content: View>: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The receipt still on screen, until the new page has come to rest.
+    @State private var leaving: SentReceipt?
+    @State private var arrived: Bool
+    private let content: Content
+
+    /// The page keeps the receipt it started with: it is a page of its own for every request (`.id`).
+    init(from: SentReceipt?, @ViewBuilder content: () -> Content) {
+        _leaving = State(initialValue: from)
+        _arrived = State(initialValue: from == nil)
+        self.content = content()
+    }
+
+    var body: some View {
+        ZStack {
+            if let leaving {
+                SentReceiptPage(receipt: leaving, settled: true)
+                    .visualEffect { view, proxy in view.offset(x: !reduceMotion && arrived ? -proxy.size.width * 0.3 : 0) }
+                    .opacity(reduceMotion && arrived ? 0 : 1)
+            }
+            content
+                .visualEffect { view, proxy in view.offset(x: !reduceMotion && !arrived ? proxy.size.width : 0) }
+                .opacity(reduceMotion && !arrived ? 0 : 1)
+        }
+        .task {
+            guard leaving != nil, !arrived else { return }
+            // The page lays itself out for the first time right after it was added, and for a long form
+            // that takes a good part of the slide: an animation that started before it would be seen
+            // from the middle, or not at all. Whatever else is waiting for the main thread is done by
+            // the time this resumes.
+            do { try await Task.sleep(for: .milliseconds(60)) } catch { return }
+            // A curve with a duration of its own, not a spring, so that the end is known. It starts
+            // slowly and comes to rest softly, much like the spring the system's push is made of.
+            let curve: Animation = reduceMotion ? .easeOut(duration: 0.2) : .timingCurve(0.3, 0, 0.2, 1, duration: 0.45)
+            withAnimation(curve) {
+                arrived = true
+            } completion: {
+                leaving = nil
+            }
+            // The receipt must not outlive the slide if the completion does not come.
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            leaving = nil
+        }
+    }
+}
+
+/// What one request page shows: the form, or what is known of the request while the rest loads, and
+/// over it the receipt of the request that was just sent.
+private struct RequestPage: View {
+    let id: String
+    @Environment(AppStore.self) private var store
+
+    /// The receipt of this page, while it shows one.
+    private var receipt: SentReceipt? {
+        store.receipt?.from == id ? store.receipt : nil
+    }
 
     var body: some View {
         Group {
@@ -19,14 +111,147 @@ struct RequestScreen: View {
                     LoadingRequest(item: item)
                 }
             } else {
-                ContentUnavailableView("Request unavailable", systemImage: "tray", description: Text("It was answered or cancelled."))
+                MissingRequestPage(id: id)
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
-        .task(id: id) {
-            if let item = store.item(id: id) { await store.opened(item) }
+        // The form takes the placeholder's place when the request arrives.
+        .animation(.easeOut(duration: 0.2), value: store.displayItem(id: id) != nil)
+        // The receipt takes the form's place for the moment between "the Mac took it" and the next page.
+        .accessibilityHidden(receipt != nil)
+        .overlay {
+            if let receipt { SentReceiptPage(receipt: receipt) }
         }
+    }
+}
+
+/// What a page shows once the Mac took the reply: a plain page of its own, so that what follows
+/// (the next request sliding in) reads as a new page and not as the same form changing.
+private struct SentReceiptPage: View {
+    let receipt: SentReceipt
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The page itself fades in over the form it replaces, and the symbol and the text come after it.
+    @State private var visible: Bool
+    @State private var shown: Bool
+
+    /// `settled` shows the page as it is when it has been up for a while (the copy that slides away).
+    init(receipt: SentReceipt, settled: Bool = false) {
+        self.receipt = receipt
+        _visible = State(initialValue: settled)
+        _shown = State(initialValue: settled)
+    }
+
+    var body: some View {
+        ZStack {
+            Color(.systemGroupedBackground).ignoresSafeArea()
+            VStack(spacing: 16) {
+                Image(systemName: receipt.outcome.symbol)
+                    .font(.system(size: 72))
+                    .foregroundStyle(receipt.outcome.color)
+                    .symbolEffect(.bounce, options: .nonRepeating, value: shown)
+                    .scaleEffect(shown || reduceMotion ? 1 : 0.5)
+                    .opacity(shown || reduceMotion ? 1 : 0)
+                VStack(spacing: 6) {
+                    title.font(.title2.weight(.semibold))
+                    if let summary = receipt.summary {
+                        HStack(spacing: 8) {
+                            AgentBadge(agent: summary.agent, size: 22)
+                            Text(verbatim: summary.agent.label + (summary.project.name.isEmpty ? "" : " · " + summary.project.name))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .opacity(shown || reduceMotion ? 1 : 0)
+                .offset(y: shown || reduceMotion ? 0 : 8)
+            }
+            .padding(.horizontal, 32)
+        }
+        .opacity(visible ? 1 : 0)
+        .onAppear {
+            guard !visible else { return }
+            withAnimation(.easeOut(duration: 0.2)) { visible = true }
+            withAnimation(reduceMotion ? nil : .spring(duration: 0.5, bounce: 0.35)) { shown = true }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sent-receipt")
+    }
+
+    private var title: Text {
+        switch receipt.outcome {
+        case .answered: Text("Sent")
+        case .cancelled: Text("Cancelled")
+        case .dismissed: Text("Dismissed")
+        default: Text(receipt.outcome.title(by: nil))
+        }
+    }
+}
+
+/// The page of a request the phone does not have: on its way (a tapped notification is ahead of the
+/// request itself), out of reach, or gone. Only the last says "unavailable".
+private struct MissingRequestPage: View {
+    let id: String
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        let missing = store.missingRequest(id: id)
+        if missing == .gone {
+            ContentUnavailableView("Request unavailable", systemImage: "tray", description: Text("It was answered or cancelled."))
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let hint = store.hint(for: id) { HintCard(hint: hint) }
+                    status(missing)
+                }
+                .padding()
+            }
+            .background(Color(.systemGroupedBackground))
+            .accessibilityIdentifier("request-placeholder")
+        }
+    }
+
+    @ViewBuilder
+    private func status(_ missing: MissingRequest) -> some View {
+        if missing == .unreachable {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Your Mac is not reachable").font(.subheadline.weight(.semibold))
+                    Text("The request shows up here when it is back, if it is still waiting.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: "wifi.exclamationmark").foregroundStyle(.orange)
+            }
+            .card()
+        } else {
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("Loading the full request…").foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// What the notification said: who asks, from which Mac, and the start of the question.
+private struct HintCard: View {
+    let hint: NotificationHint
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(verbatim: hint.title).font(.headline)
+            if !hint.subtitle.isEmpty {
+                Text(verbatim: hint.subtitle).font(.footnote).foregroundStyle(.secondary)
+            }
+            if !hint.body.isEmpty {
+                Text(verbatim: hint.body).font(.body).padding(.top, 6)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("request-placeholder-hint")
     }
 }
 
@@ -57,19 +282,32 @@ struct RequestHeader: View {
         HStack(spacing: 12) {
             AgentBadge(agent: item.summary.agent, size: 44)
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.summary.agent.label).font(.headline)
-                HStack(spacing: 5) {
-                    if !item.summary.project.name.isEmpty {
-                        Image(systemName: "folder.fill").imageScale(.small)
-                        Text(item.summary.project.name)
-                        Text("·")
+                if let title = item.sessionTitle {
+                    // The session's title leads; who asks and where from moves into a small line beneath it.
+                    Text(verbatim: title)
+                        .font(.headline)
+                        .lineLimit(2)
+                        .accessibilityIdentifier("request-title")
+                    Text(verbatim: [item.summary.agent.label, item.summary.project.name, item.macName].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("request-origin")
+                } else {
+                    Text(item.summary.agent.label).font(.headline)
+                    HStack(spacing: 5) {
+                        if !item.summary.project.name.isEmpty {
+                            Image(systemName: "folder.fill").imageScale(.small)
+                            Text(item.summary.project.name)
+                            Text("·")
+                        }
+                        Image(systemName: "desktopcomputer").imageScale(.small)
+                        Text(item.macName)
                     }
-                    Image(systemName: "desktopcomputer").imageScale(.small)
-                    Text(item.macName)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
                 Text(Date(timeIntervalSince1970: TimeInterval(item.summary.createdAt) / 1000), format: .dateTime.month().day().hour().minute())
                     .font(.caption)
                     .foregroundStyle(.tertiary)

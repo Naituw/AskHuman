@@ -3,12 +3,16 @@
 mod actions;
 mod launch;
 pub use launch::{
-    available, integration_enabled, launch_status, resolve_launch, LaunchStatus, UnavailableReason,
+    available, catalog_runtime, integration_enabled, launch_status, resolve_launch, LaunchStatus,
+    UnavailableReason,
 };
+mod models;
+pub use models::list_models;
 pub mod protocol;
 pub mod requests;
 mod runtime;
 
+use crate::agents::model_catalog::ModelChoice;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -55,6 +59,12 @@ pub enum Operation {
         files: Vec<String>,
         permission: String,
         id: String,
+        /// The model to start the thread with; absent leaves it to Codex's configuration.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        /// The reasoning effort to start the thread with; absent likewise.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
     },
 }
 
@@ -431,7 +441,11 @@ impl Bridge {
                 }
             }
             if let Operation::Create {
-                cwd, permission, ..
+                cwd,
+                permission,
+                model,
+                effort,
+                ..
             } = &op
             {
                 if !std::path::Path::new(cwd).is_absolute() || !std::path::Path::new(cwd).is_dir() {
@@ -440,6 +454,8 @@ impl Bridge {
                 if !matches!(permission.as_str(), "agent-default" | "yolo") {
                     return Err("Choose task permissions".into());
                 }
+                ModelChoice::new(model.clone(), effort.clone())
+                    .check_for(crate::agents::AgentKind::Codex)?;
             }
             runtime::detect(&crate::config::AppConfig::load_without_secrets().codex_desktop)
         })();
@@ -451,13 +467,18 @@ impl Bridge {
             .await;
         let session_id = match &op {
             Operation::Create {
-                cwd, permission, ..
+                cwd,
+                permission,
+                model,
+                effort,
+                ..
             } => {
                 let cwd = cwd.clone();
                 let title: String = text.chars().take(80).collect();
                 let yolo = permission == "yolo";
+                let choice = ModelChoice::new(model.clone(), effort.clone());
                 let (updated, result) = tokio::task::spawn_blocking(move || {
-                    let result = action.ensure_thread(&installation, &cwd, &title, yolo);
+                    let result = action.ensure_thread(&installation, &cwd, &title, yolo, &choice);
                     (action, result)
                 })
                 .await
@@ -914,6 +935,50 @@ mod tests {
             value
         );
     }
+    #[test]
+    fn create_operations_carry_a_model_choice_only_when_there_is_one() {
+        let create = |model: Option<&str>, effort: Option<&str>| Operation::Create {
+            cwd: "/project".into(),
+            text: "task".into(),
+            files: Vec::new(),
+            permission: "agent-default".into(),
+            id: "operation".into(),
+            model: model.map(str::to_string),
+            effort: effort.map(str::to_string),
+        };
+        // Without a choice the operation (and so the durable receipt's input) is exactly what it
+        // was before the fields existed.
+        let plain = json!({
+            "op":"create","cwd":"/project","text":"task","files":[],
+            "permission":"agent-default","id":"operation"
+        });
+        assert_eq!(serde_json::to_value(create(None, None)).unwrap(), plain);
+        // A sender that predates the fields still parses.
+        assert!(matches!(
+            serde_json::from_value::<Operation>(plain.clone()).unwrap(),
+            Operation::Create {
+                model: None,
+                effort: None,
+                ..
+            }
+        ));
+
+        let mut chosen = plain;
+        chosen["model"] = json!("model-a");
+        chosen["effort"] = json!("high");
+        assert_eq!(
+            serde_json::to_value(create(Some("model-a"), Some("high"))).unwrap(),
+            chosen
+        );
+        match serde_json::from_value::<Operation>(chosen).unwrap() {
+            Operation::Create { model, effort, .. } => {
+                assert_eq!(model.as_deref(), Some("model-a"));
+                assert_eq!(effort.as_deref(), Some("high"));
+            }
+            _ => panic!("expected a create operation"),
+        }
+    }
+
     #[test]
     fn owner_revision_and_protocol_must_match_before_control() {
         let b = bridge();

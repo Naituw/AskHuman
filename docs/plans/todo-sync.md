@@ -1,0 +1,318 @@
+# 开发计划：跨设备待办同步（多台 Mac，iCloud）
+
+> 状态：2026-10-27 起草，同日**评审通过并开工**（第 8 轮：用户把整个实施交给 agent 独立完成；与评审意见相关的改动见需求 §14，实施中的差异见本文 §10）。
+> 对应需求：`docs/specs/todo-sync.md`（决策编号 T1–T16 指该文 §3；章节号指该文）
+> 开工条件：本计划与需求评审通过 → 读 `docs/agent-worktree-setup.md` → 经 AskHuman 问清是否给 worktree 挂渠道预设 → 再动手。
+> 范围：自用阶段（T1 第一步）。「随正式版发布」另行评审，不在本计划内。
+
+## 0. 方案总览
+
+三块可独立推进、最后拼起来的东西：
+
+1. **Rust 同步核心**（`src-tauri/src/todo_sync/`）：本地变更检测、字段级合并、物化、顺序、元数据、tick。与传输无关，全部逻辑可用内存传输做属性测试，**不需要 iCloud 就能测完大部分**。
+2. **CloudKit helper**（`todo-sync-helper/`，Swift，独立 `.app`）：无状态 RPC（`hello / status / ensure / fetch / save / deleteZone`）＋触发器（推送、轮询、唤醒、联网恢复、监听 `todos.json`）。
+3. **待办窗口侧栏**（`src/views/todos/`）：先做**纯重构、不含同步**的统一侧栏（P1，可单独先合并），再叠加 iCloud 模式的内容（P5）。
+
+```
+P0 基线与预备 ─┬─ P1 侧栏重构（本机模式，可单独合并）──────────────┐
+               └─ P2 同步核心（Rust，内存传输）─ P3 CloudKit helper ─ P4 集成 ─ P5 iCloud 界面 ─ P6 双机验收与加固
+```
+
+为什么这样切：
+- P1 是风险最高的「用户可见回归」（既有窗口的拖拽、附件拖入、实时刷新），而且与同步无关，所以单独先做、先合并、先过性能门（T9）。
+- P2 全是纯逻辑，属性测试能把「收敛 / 崩溃安全 / 离线」这些最难的正确性问题在没有网络的情况下钉死（验收 3–6、8、12）。
+- P3 才需要真实 iCloud 与用户的手动步骤（§7），所以排在后面；它的接口（RPC）在 P2 就由 `MemTransport` 与夹具固定，两边并行也不会漂移。
+
+## 1. 交付物与代码落点
+
+| 路径 | 内容 |
+|---|---|
+| `src-tauri/src/todo_sync/mod.rs` | 对外 API：`before_read(project)`、`before_whats_next(project)`、`tick(reason, budget)`、`status()`、`enable()`、`disable()`；未启用时恒为空操作 |
+| `…/hlc.rs`、`…/order_key.rs` | HLC 与分数索引顺序键（纯函数，属性测试） |
+| `…/identity.rs` | 项目身份：远程地址解析 / 规范化 / 选择；读取 `.git/config`（含 worktree 的 `gitdir:` / `commondir`，不 fork `git`） |
+| `…/model.rs` | 实体、字段、`payload` 的 serde；未知字段保留（前向兼容） |
+| `…/store.rs` | `state/todo-sync/state.json` 的读写（原子写、`todo-sync.lock`） |
+| `…/diff.rs` | 本地变更检测（需求 §5.5 的表） |
+| `…/merge.rs` | 字段级合并（取 HLC 较大者的纯函数；交换律 / 结合律 / 幂等） |
+| `…/apply.rs` | 物化到 `todos.json`：多目录副本、保留 `auto` 与附件、历史上限、`todo_history_limit = 0` |
+| `…/links.rs` | 本机项目 key → 项目身份的链接表与缓存 |
+| `…/transport.rs` | `trait Transport`（`fetch` / `save` / `ensure`）与测试用 `MemTransport`（延迟、丢包、重复、乱序、冲突、令牌过期） |
+| `…/helper_client.rs` | 对 helper 的 unix 套接字 JSON 行 RPC 客户端（仅 macOS，其他平台编译为空桩） |
+| `…/tick.rs` | 一轮 tick 的编排（§4.1） |
+| `src-tauri/src/cli/todo_sync_cmd.rs` | 隐藏子命令 `AskHuman todo-sync`：`status`、`tick`、`enable`、`disable` |
+| `src-tauri/src/config.rs` | `todoSync { enabled, deviceName, pollMinutes }` |
+| `src-tauri/src/commands.rs` | `todo_sync_status`、`todo_sync_enable`、`todo_sync_disable`、`todo_sync_now`、`todo_sync_projects`（云端感知的项目行）、`todos_all_pending`（全部待办聚合）；`create_todos_window` 的默认尺寸 |
+| `todo-sync-helper/` | XcodeGen 工程：`project.yml`、`Sources/`（`App.swift`、`Rpc.swift`、`Cloud.swift`、`Triggers.swift`、`Config.swift`、`Log.swift`）、`Entitlements`、`Fixtures/rpc-v1/`、`scripts/{build,install-self,launch}.sh`。**不放进 `src-tauri/swift/`**（那里的源文件会被 `build.rs` 编进主二进制） |
+| `src/views/todos/todoProjects.ts` | 项目视图模型：分组、排序、同名区分、云端 / 本机行合并（纯函数，vitest） |
+| `src/views/todos/TodosSidebar.vue` | 侧栏组件（搜索、分组、键盘导航、抽屉形态、底部状态槽） |
+| `src/views/TodosView.vue` | 去掉头部 `<select>`，接入侧栏；iCloud 模式的项目头 / 行内标记（P5） |
+| `src/views/settings/TodoSyncCard.vue`、`useTodoSync.ts` | 设置 → 实验 里的「iCloud 待办同步」卡片 |
+| `src/i18n/{zh,en}.ts`、`src/lib/types.ts` | 文案与类型 |
+| `scripts/perf-todos-window.mjs`、`docs/perf/todos-window-baseline.json` | 待办窗口打开耗时的度量脚本与基线（沿用 `docs/perf/baseline.json` 的做法与阈值思路） |
+| `scripts/todo-sync-install-helper.sh` | 自用阶段：把本机构建好的 helper 装到 `~/Applications` 并拉起（另一台手动拷贝后同一脚本安装） |
+| 文档 | 落地后更新：`docs/overview.md`（模块地图 + 「todos.json 仍是事实来源、同步走旁路」这条不变量）、`docs/specs/todo-whats-next.md` D9 加一行指向需求、`docs/wiki/todo-sync(.en).md`（自用安装与排障）；`docs/PROGRESS.md` |
+
+## 2. 标识与常量
+
+| 项 | 值 |
+|---|---|
+| CloudKit 容器 | `iCloud.com.naituw.humaninloop.todosync`（建议；待用户确认，需求 §14 第 1 点） |
+| helper bundle id | `com.naituw.humaninloop.todosync` |
+| 区 / 记录类型 / 字段 | 区 `Todos`；记录类型 `Todo`、`Device`；唯一字段 `payload`（`encryptedValues`） |
+| 订阅 | 区订阅（静默推送），id `todos-zone` |
+| 旁路目录 | `~/.askhuman/state/todo-sync/`：`state.json`、`helper.json`（核心 → helper 的握手：`AskHuman` 路径、state 目录、轮询分钟数、协议号）、`helper.sock`（0600） |
+| 锁 | `todo-sync.lock`（tick 互斥）；`todos.lock`（沿用，只在本地阶段与物化时短暂持有） |
+| RPC 协议号 | `1`（`hello` 握手；不一致则本机仅做本地阶段并提示升级 helper） |
+| 时间常量 | `STALE_MS = 20_000`、`PULL_BUDGET_MS = 1_500`、`POLL_MINUTES = 10`、`LOCAL_DEBOUNCE_MS = 1_000`、`WAKE_DEBOUNCE_MS = 2_000`、`HLC_CLAMP_MS = 24h`、`BACKOFF_CAP = 30min`、`SAVE_RETRIES = 5` |
+| 大小常量 | `ORDER_KEY_MAX = 32`、`TEXT_MAX = 256 KiB`、「全部待办」折叠阈值 50 行 |
+
+## 3. 数据与协议
+
+### 3.1 旁路状态 `state.json`
+
+```jsonc
+{
+  "schema": 1,
+  "deviceId": "uuid", "deviceName": "Mac Studio",
+  "accountHash": "…", "enabledAtMs": 0,
+  "zoneToken": "base64（helper 给的不透明值）",
+  "lastPullOkMs": 0, "lastPushOkMs": 0,
+  "paused": null,                       // 或 {"reason": "accountChanged|zoneMissing|notSignedIn|quota", "sinceMs": 0}
+  "hlc": {"wallMs": 0, "counter": 0},
+  "entities": { "<todoId>": {
+      "p": "github.com/naituw/humaninloop",
+      "text": {"v": "…", "h": "<hlc>"},
+      "ord":  {"k": "a5", "h": "<hlc>"},
+      "st":   {"v": "pending|done|deleted", "h": "<hlc>"},
+      "c":    {"ms": 0, "dev": "<deviceId>", "ak": "cursor"},
+      "dn":   {"ms": 0, "dev": "<deviceId>"},          // state=done 时
+      "att":  {"n": 2, "names": ["a.png"], "dev": "<deviceId>", "h": "<hlc>"},
+      "dirty": true, "tag": "<服务端 changeTag>" } },
+  "snapshot": { "<localKey>": {"pending": ["id"], "history": ["id"], "hash": {"<id>": "<文本与顺序的哈希>"}} },
+  "links":    { "<localKey>": {"p": "<项目身份>|null", "cfgMtimeMs": 0, "checkedMs": 0} },
+  "devices":  { "<deviceId>": {"name": "…", "lastSyncMs": 0, "projects": ["…"]} }
+}
+```
+
+全部放一个文件：体量只有几十 KB，一次原子写比多文件更不容易不一致。`todos.json` 完全不动。
+
+### 3.2 云端 `payload`
+
+等于上面 `entities[id]` 去掉本机专属字段（`dirty`、`tag`）再加 `"v": 1`。`Device` 记录的 `payload`：`{v, name, lastSyncMs, projects[]}`。解析时**忽略未知字段**，保留并原样回写（前向兼容）。
+
+### 3.3 helper RPC（本机 unix 套接字，每行一个 JSON）
+
+```jsonc
+→ {"id":1,"op":"hello"}
+← {"id":1,"ok":true,"protocol":1,"helperVersion":"0.1.0","environment":"production",
+   "container":"iCloud.com.naituw.humaninloop.todosync","accountStatus":"available","accountHash":"…"}
+
+→ {"id":2,"op":"fetch","token":"base64?"}
+← {"id":2,"ok":true,"changes":[{"recordName":"…","recordType":"Todo","payload":"base64","changeTag":"…"}],
+   "deletions":[{"recordName":"…","recordType":"Todo"}],"token":"base64","moreComing":false}
+
+→ {"id":3,"op":"save","records":[{"recordName":"…","recordType":"Todo","payload":"base64","changeTag":"…?"}]}
+← {"id":3,"ok":true,"results":[{"recordName":"…","status":"saved","changeTag":"…"},
+   {"recordName":"…","status":"conflict","serverPayload":"base64","serverChangeTag":"…"},
+   {"recordName":"…","status":"error","code":"…"}]}
+
+→ {"id":4,"op":"ensure"}      // 建区 + 订阅，幂等
+→ {"id":5,"op":"deleteZone"}  // 「清除 iCloud 数据」
+→ {"id":6,"op":"status"}
+// 失败： {"id":n,"ok":false,"error":{"code":"offline|rateLimited|notAuthenticated|zoneNotFound|quota|…","retryAfterMs":0,"message":"…"}}
+```
+
+- 令牌、`changeTag` 对核心都是不透明字符串。
+- `fetch` 的 `deletions`：云端记录被真删（只会发生在「清除 iCloud 数据」之后重建、或手工在 Dashboard 删）时才出现；核心把它们当作「实体丢失」，保留本机副本并标记为脏重新上传，不据此删本机待办。
+- 夹具：`todo-sync-helper/Fixtures/rpc-v1/*.json` 由 Rust 与 Swift 两边的测试共用；改协议先改夹具（与 `ios/Fixtures/wire-v1` 同一做法）。
+
+### 3.4 HLC
+
+字符串编码 `{wallMs 13 位十进制}-{counter 4 位十六进制}-{设备 id 前 8 位}`，**字典序即时间序**。本机事件：`wall = max(now, last.wall)`；`counter` 在同毫秒内递增。收到远端 HLC：`wall = max(now, local.wall, min(remote.wall, now + HLC_CLAMP_MS))`。
+
+### 3.5 顺序键
+
+分数索引字符串（base-62，字典序），`between(a, b)` 在两键之间生成新键，`a`/`b` 可为空表示队首 / 队尾；排序键为 `(顺序键, HLC, id)`。键长超过 `ORDER_KEY_MAX` 时由发起方对该项目全部条目一次性重排并各自给新 HLC。
+
+## 4. 核心算法
+
+### 4.1 tick（`tick.rs`）
+
+```
+tick(reason, budget):
+  lock(todo-sync.lock)            # 无预算的触发源（helper / 窗口）：拿不到就合并为一次，直接返回「已在进行」
+                                  # whats-next 内联调用：最多等持锁者 budget；等到后若它刚拉成功（陈旧度 ≤ STALE_MS）则不再重复拉
+  state = store.load()
+  # —— 本地阶段（不碰网络）——
+  with lock(todos.lock):
+      todos = read(todos.json)
+      links.refresh(known_keys(todos, workspaces, agents, current_key))     # 只读 .git/config，按 mtime 缓存
+      events = diff(todos, state.snapshot, state.links)                     # §5.5
+      state.apply_local(events)                                             # 分配 HLC / 顺序键，标脏
+      apply.materialize(todos, state)                                       # 链接目录间趋同；保留 auto 与附件
+      write(todos.json) if changed; state.snapshot = snapshot_of(todos)
+  store.save(state)
+  if disabled or paused or helper unreachable or budget==local_only: return
+  # —— 网络阶段（不持 todos.lock）——
+  loop:
+      r = helper.fetch(state.zoneToken)                                     # 失败 → 退避并返回
+      state.merge_remote(r.changes)                                         # 纯函数：取每个字段 HLC 较大者
+      with lock(todos.lock): materialize & write; snapshot 更新
+      state.zoneToken = r.token; store.save(state)                          # 先写文件、后推进令牌（幂等）
+      if not r.moreComing: break
+  dirty = state.dirty_entities()
+  results = helper.save(dirty)                                              # 冲突 → merge(serverPayload) → 重试（≤ SAVE_RETRIES）
+  state.mark_pushed(results); store.save(state)
+  state.lastPullOkMs = now
+```
+
+不变量：
+1. `todos.lock` 只在本地阶段与物化时持有，每次毫秒级；网络调用期间不持有。
+2. 合并是纯函数且幂等：同一批变更应用两次结果不变；崩溃后重跑即可。
+3. 物化后立即更新 `snapshot`，使「远端写进来的变化」不会被下一轮 diff 当成本机编辑。
+4. 令牌只在对应变更已写进 `todos.json` 与 `state.json` 之后推进。
+5. tick 记录自己最后一次写 `todos.json` 的修改时间 / 哈希；helper 的文件监听事件若匹配则忽略（防反馈环）。
+
+### 4.2 合并（`merge.rs`）
+
+- `join(local: Entity, remote: Entity) -> Entity`：`text`、`ord`、`st`、`att` 各取 HLC 较大者；`c`（创建信息）取非空者；`dn` 随 `st` 一起走。
+- `st == deleted` 的实体忽略后续对 `text`/`ord` 的更新（保留其 HLC 以便审计）。
+- 性质（属性测试）：交换律、结合律、幂等；对任意操作序列与任意投递顺序，各副本最终相等。
+
+### 4.3 物化（`apply.rs`）
+
+- 对每个链接到项目身份 P 的本机目录 K：按 `(顺序键, HLC, id)` 排出 P 的待办，替换 K 的队列里同 id 条目的 `text`，缺的插入（`auto = false`，无附件），K 里已不是待办状态的移出；已执行的实体进 K 的历史（按 `doneAtMs` 正序，裁到 `todo_history_limit`；上限为 0 则不物化）。
+- K 里本机独有的条目（还没有实体）不动，由 diff 在下一轮建实体。
+- 只有项目身份为 null 的目录（仅本机）完全不碰。
+
+### 4.4 读取钩子
+
+- `before_read(project)`：未启用 → 立即返回；否则只做 tick 的**本地阶段**（链接当前目录并物化）。被 CLI `todo`、Stop 卡、弹窗待办区、IM `/todo` 调用。
+- `before_whats_next(project)`：`before_read` + 陈旧度判断 + 带 `PULL_BUDGET_MS` 的网络阶段（需求 §6.3）；超时的拉取通过拉起脱离的 `AskHuman todo-sync tick --reason late` 在后台继续。调用点：`cli/mod.rs` 进入 whats-next 分支之后、`try_whats_next_auto` **之前**。
+
+## 5. 阶段与验收
+
+### P0 基线与预备（不写产品功能）
+
+- 读 `docs/agent-worktree-setup.md`，经 AskHuman 问是否挂渠道预设；建 worktree 与分支 `feat/todo-sync`。
+- 度量基线：加 `ASKHUMAN_PERF` 门控的待办窗口里程碑（`todos.win.created` / `todos.win.firstPaint`），写 `scripts/perf-todos-window.mjs`（冷 / 热各 N 次，真实数据与压力数据两档：200 项目 / 2000 待办 / 2000 历史），把现状基线落到 `docs/perf/todos-window-baseline.json`。
+- 用户手动步骤（§7）启动：标识命名确认、开发者后台新建（可与 P1、P2 并行，P3 之前完成即可）。
+- **验收**：基线数字入库；需求 §9.9 的度量目标按基线校准并回填需求。
+
+### P1 侧栏重构（纯 UI，不含同步；T9）
+
+- `todoProjects.ts`：从现有 `todos_projects` / `todos_projects_enriched` 的行生成分组（全部待办 / 有待办 / 最近项目），同名目录用路径后缀区分；纯函数 + vitest。
+- `TodosSidebar.vue`：搜索、分组、选中态、↑/↓ 键盘导航、`listbox` 语义、窄窗抽屉形态、底部状态槽（P1 为空）。
+- `TodosView.vue`：删掉头部 `<select>` 与相关逻辑，接入侧栏；新增「全部待办」聚合视图（新命令 `todos_all_pending`，只读一次 `todos::all()`）；预选项目（`todos-goto-project`、URL 参数、弹窗 / 托盘 / Agent 卡入口）行为不变；`create_todos_window` 默认尺寸约 760×580、最小约 560×360。
+- 沿用「两段式加载」：首屏只用本地快路径，活跃 Agent 等补充在后台到达，侧栏行高固定不重排。
+- **验收**：①本机模式下所有现有能力不回归（增删改、勾选完成 / 撤回、恢复、拖拽排序、附件拖入 / 粘贴 / 预览、⚡、复制、新建任务、清空、实时刷新、预选项目、两种语言、深浅色）；②性能门：真实数据 p95 ≤ 基线 +10% 且绝对增量 ≤ 30 ms，压力数据首屏 ≤ 300 ms；③既有 `TodosView.test.ts` 通过，新增 `todoProjects` 与侧栏组件测试；④`./scripts/install.sh` 装机后手动走一遍。
+- **提交**：`feat(todos): replace the project dropdown with a sidebar`（用户可见）；`refactor` / `test` 按需拆开。可单独合并，不等同步。
+
+### P2 同步核心（Rust，内存传输）
+
+按顺序，每步都带测试：
+1. `hlc`、`order_key`：属性测试（单调、全序、`between` 严格夹在中间、键长上限与重排）。
+2. `identity`：夹具表（需求 §5.1 的全部例子 + scp 式 / ssh 端口 / `file://` / 本地路径 / 多个远程的选择顺序 / worktree 的 `.git` 文件与 `commondir` / 裸仓库 / 缺失配置）；不依赖 `git` 可执行文件。
+3. `model` / `store`：serde 往返、未知字段保留、原子写、损坏文件降级（备份并重建）、`todo-sync.lock` 互斥。
+4. `diff`：需求 §5.5 表里的每一行一个用例；多目录副本矛盾变化的采纳顺序；`auto` 与附件变化不产生事件；**清空历史（T16）**：历史由非空变空且消失的 id 不在队列 → 该项目云端全部 `done` 实体标墓碑（含本机早已裁掉的），而按上限裁剪（历史仍非空）、`todo_history_limit = 0` 下既有历史保留都不产生事件；部分恢复后清空（恢复的 id 在队列里）也算清空。
+5. `merge`：交换律 / 结合律 / 幂等；墓碑与并发编辑；HLC 钳制。
+6. `apply`：多目录趋同、保留 `auto` 与附件、历史上限与 `0`、新目录物化、仅本机目录不碰。
+7. `transport` + `MemTransport` + `tick`：N 个副本 × 随机操作 × 随机投递（乱序、重复、丢失、延迟、`serverRecordChanged`、令牌过期）的收敛模拟；在 tick 的每个步骤注入「崩溃」后重跑，验证无丢失无重复。
+8. 零影响：未启用时 `todos.json` 的字节输出与改造前一致，且不创建旁路目录。
+- **验收**：需求 §16 的 3、4、5、6、8、12（逻辑层）；`cargo test` 全绿；覆盖率关键路径（diff / merge / apply / tick）无未测分支。
+- **提交**：`feat(todo-sync): add the transport-agnostic sync core`，带页脚 `Release-Note: skip`（此阶段对用户不可见；用户可见的说明由 P4、P5 的提交承担）。
+
+### P3 CloudKit helper（Swift）
+
+- 工程：XcodeGen；Developer ID + 描述文件签名；非沙盒；Hardened Runtime；`LSUIElement`；登录项注册（`SMAppService`）。沿用 S0 的 `scripts/build.sh devid` 做法与 spike 里已验证的 CloudKit 调用（账号状态、建区、`recordZoneChanges`、保存与冲突）。
+- RPC 服务（§3.3）+ 夹具；触发器：区订阅推送、轮询定时器（只在系统清醒时）、`NSWorkspace` 唤醒与解锁、`NWPathMonitor` 联网恢复、`todos.json` 的 FSEvents（去抖 1 秒，忽略 tick 自身写入）；事件统一翻译成拉起 `AskHuman todo-sync tick --reason …`。
+- 单实例、崩溃自恢复、`hello` 版本握手、日志（轮转，不写待办内容，只写条数与耗时）。
+- **验收**（手动 + 脚本，在用户两台 Mac 上）：RPC 往返、`fetch` 增量与全量、`save` 冲突返回、订阅推送触发 tick、唤醒 / 联网 / 轮询各触发一次、helper 被杀后自动重启、空闲资源（需求 §16 第 11 项）。
+- 依赖用户手动步骤 §7.1–§7.3。**提交**：`feat(todo-sync): add the CloudKit helper app`，带页脚 `Release-Note: skip`。
+
+### P4 集成
+
+- `helper_client.rs`；读取钩子接入各入口：`cli/mod.rs`（whats-next，含 ⚡ 路径）、`cli/todo_cmd.rs`、`agents/stop.rs`、`mcp/ask.rs`、`daemon/runtime/{inbound,todo,ios_tasks}.rs`；**`todos.rs` 的写函数不动**。
+- 配置 `todoSync`；Tauri 命令；设置 → 实验 →「iCloud 待办同步」卡片（需求 §8，含 Mac 列表与最后同步）；启用 / 停止 / 清除流程；账号与区被清除的暂停与提示；Dev Instance 恒关闭；helper 缺失时的「修复」入口。
+- 窗口打开 / 获得焦点异步触发 tick（不阻塞渲染）；侧栏底部状态槽接入（本机模式显示「仅本机 · 启用 iCloud 同步…」，仅 macOS）。
+- **验收**：需求 §16 的 1、2、9（Dev Instance）、10、12，在两台真机上用 CLI 级场景跑通（A 上 `AskHuman todo add` → B 上 whats-next 卡片出现）；Windows / Linux 构建与既有测试不受影响。
+- **提交**：`feat(todo-sync): sync project todos across Macs via iCloud (experimental)`。
+
+### P5 iCloud 模式界面
+
+- 视图模型：云端项目行（`todo_sync_projects`：来自旁路缓存，不读 git、不联网）与本机行按链接合并；仅云端、仅本机、无待办的项目分组；全部待办聚合含云端项目。
+- 项目头（仓库地址 / 目录数 / Mac 数 / 菜单）、行内设备名与附件提示、历史的设备标注与「所有 Mac 共享」、仅云端说明条、「从 iCloud 移除此项目」、侧栏底部状态（需求 §9.7 的全部状态）。
+- 「清空历史」的确认框（T16）：iCloud 模式下写明会清空所有 Mac 与 iCloud 中该项目的执行历史及条数；本机模式文案不变。
+- 仅云端项目的读写走旁路实体（核心 API），合并项目的写落最近使用目录的副本。
+- **验收**：与 `docs/assets/todo-sync-ui/` 的界面稿一致；§9.9 性能门（iCloud 模式数据同样适用）；zh / en；深浅色；键盘与读屏。
+- **提交**：`feat(todos): show every project's todos in iCloud mode`。
+
+### P6 双机验收与加固
+
+- 真机场景 E1–E12（§6）；至少一次 24 小时浸泡（脚本在两台 Mac 上随机增删改，周期性比较两边 `todos.json` 的摘要）；`kill -9` 循环（helper 与 tick 各数百次）；断网 / 恢复；睡眠唤醒；账号 / 区被清除（用调试开关模拟账号哈希变化，因为没有第二个账号）。
+- 文档：`docs/overview.md`、`docs/specs/todo-whats-next.md` D9、`docs/wiki/todo-sync.md`（含英文版）；`docs/PROGRESS.md` 删除本条并登记「随正式版发布评审」「大陆账号复测」「附件同步」等后置项。
+- **验收**：需求 §16 全部。
+
+### 后置（不在本计划，另行评审）
+
+随正式版发布（公证、helper 打进 `AskHuman.app` 的 `Contents/Library/LoginItems`、自更新下发、第二个大陆 iCloud 账号复测）；附件同步（含同机多目录）；iOS App 读写待办；其他传输（MQTT / 同步文件夹）；手动指定同步名与项目合并 / 改名工具。
+
+## 6. 测试矩阵
+
+| 层 | 内容 | 方式 |
+|---|---|---|
+| Rust 单测 | hlc / order_key / identity / model / store / diff / merge / apply | `cargo test`，含 `proptest` 属性测试 |
+| Rust 收敛模拟 | N 副本 × 随机操作 × 随机投递 × 崩溃注入 | `MemTransport`，固定种子可复现，失败时打印种子 |
+| 零影响 | 未启用时 `todos.json` 字节一致、无旁路目录、无网络 | 单测 |
+| 协议夹具 | `Fixtures/rpc-v1`、`payload` 样例 | Rust 与 Swift 两边测试共用 |
+| Vue | `todoProjects` 视图模型、侧栏组件、`TodosView` 回归 | vitest |
+| 性能 | 窗口打开基线 / 压力 / 读取钩子本地阶段耗时 | `scripts/perf-todos-window.mjs` + 钩子的基准测试 |
+| 真机 E1 | A 增 → B 的 `todos.json`（两边活跃） | 手动 + 脚本计时 |
+| 真机 E2 | A 增 → B 空闲 → B 上 whats-next | 手动：卡片含新待办且额外等待 ≤ 1.5 秒 |
+| 真机 E3 | 编辑 / 排序 / 完成 / 恢复 / 删除的双向传播 | 手动 + 摘要比较 |
+| 真机 E4 | 并发编辑同一条的不同字段 → 字段级合并 | 手动（两机同时改） |
+| 真机 E5 | 两机离线各自编辑后恢复 | 手动（断网） |
+| 真机 E6 | 同机多 worktree 趋同；新建 worktree 首次 whats-next | 手动 |
+| 真机 E7 | 仅云端项目：B 没有仓库时的查看 / 编辑 | 手动 |
+| 真机 E8 | 睡眠唤醒、联网恢复后的追平 | 手动 |
+| 真机 E9 | helper 被杀 / 升级 / 缺失 | 手动 |
+| 真机 E10 | 清除 iCloud 数据后另一台的暂停与恢复 | 手动 |
+| 真机 E11 | 账号变化（调试开关模拟） | 手动 |
+| 真机 E12 | 删除旁路元数据后重建 | 手动 |
+| 平台 | Windows / Linux 构建、既有测试、侧栏界面 | CI / 手动 |
+
+## 7. 用户手动步骤（我不接触任何密钥、密码与 `.p8`）
+
+1. **标识**（P0 并行，P3 前完成）：在 Apple Developer 后台新建 App ID `com.naituw.humaninloop.todosync`（开启 iCloud / CloudKit 与 Push Notifications）、容器 `iCloud.com.naituw.humaninloop.todosync`、Developer ID 描述文件（同 S0 的做法，见 spike 的 `RUNBOOK.txt`）。**容器与 bundle id 一经创建不能改名**，命名先在评审里确认。
+2. **schema 部署**（P3 首次真机跑通后）：helper 先在 Development 环境建出记录类型 `Todo`、`Device`（字段 `payload`），你在 CloudKit Dashboard 里把 schema **部署到 Production**（只增不减）。
+3. **构建与安装**：在 Mac A 上用 Xcode 构建并签名 helper（`scripts/todo-sync-install-helper.sh` 辅助）；把 `.app` 拷贝到 Mac B 的 `~/Applications` 后运行同一安装脚本；首次启动按系统提示批准「登录项」。
+4. 两台 Mac 登录**同一个 iCloud 账号**；不要求开启 iCloud Drive。
+5. **授权边界**：公证上传、注册设备、其他 Apple 账号变更都需要你另行授权；SSH 到 Mac B 仅在你当次同意后用于本功能的验收。
+
+## 8. 风险与开放验证项
+
+| 编号 | 风险 / 未验证 | 处理 |
+|---|---|---|
+| V1 | 稳定版 macOS 上普通 CloudKit 调用与推送行为 | P6 在可用时复测；不依赖 `CKSyncEngine` 已降低风险 |
+| V2 | 另一个大陆 iCloud 账号（容器 / 用户层初始化） | 发布前必测（后置） |
+| V3 | 断网离线编辑后的重试与合并 | P2 模拟 + P6 真机 E5 |
+| V4 | 关闭 Surge 后空闲 Mac 的推送延迟 | 不影响设计（推送只是提示）；有机会再量 |
+| V5 | 登录项在系统升级 / 用户手动关闭后的表现 | P6 E9；状态栏「同步程序未运行 · 修复」 |
+| V6 | 侧栏重构的回归面（拖拽、附件拖入、实时刷新） | P1 单独先合并 + 既有测试 + 手动清单 |
+| V7 | tick 写 `todos.json` 与文件监听的反馈环 | §4.1 不变量 5；P3 里专门测空转 |
+| V8 | 读取钩子对 CLI 延迟的影响 | 本地阶段目标 ≤ 20 ms（压力 ≤ 100 ms），P2 基准测试 |
+| V9 | helper 常驻资源 | 验收项（需求 §16 第 11 项）；超标则改成按需拉起 + 登录项仅负责推送 |
+| V10 | 时钟错乱 | HLC 钳制；P2 属性测试覆盖 |
+
+## 9. 提交与文档规范
+
+- 提交遵循 Conventional Commits（见 `AGENTS.md`）：用户可见的变化用 `feat` / `fix`，其余用 `refactor` / `test` / `docs` / `build` / `chore`；scope 用 `todos`（窗口）、`todo-sync`（同步）、`settings`。release notes 里只应出现：侧栏、iCloud 待办同步（实验）。
+- 分支 `feat/todo-sync`（worktree，Dev Instance，按 `docs/agent-worktree-setup.md`）；P1 可从主线单独分支先合并。
+- 每个阶段结束：`./scripts/install.sh` 装机验证；`docs/PROGRESS.md` 更新当前阶段与下一步；完成的条目删除，历史留在 git。
+- 改 `ipc/mod.rs` 的消息类型（若 P4 需要新增 daemon IPC）前先读 `docs/overview.md`「IPC 协议号」：本计划目前**不需要**新增 daemon IPC（tick 与 helper 通信走独立套接字）。
+- 代码注释用英文。
+
+## 10. 实施记录（与计划的差异）
+
+- 2026-10-27：评审通过，用户上班不在线，原话「你自己全部搞定」。渠道预设问题没有再问，取最保守的 popup-only（不挂任何 IM 预设）。分支 `feat/todo-sync`，worktree `../HumanInLoop-todosync`。
+- 授权边界不变：开发者后台新建 App ID / 容器 / 描述文件、Dashboard 部署 schema、公证上传、注册设备都只有用户能做（§7）；这些步骤之前的阶段能做多少做多少，被挡住的验收项会写在 `docs/PROGRESS.md`。SSH 到 Mac B 需要用户当次同意。

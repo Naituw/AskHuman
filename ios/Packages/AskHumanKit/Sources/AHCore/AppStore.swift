@@ -31,14 +31,77 @@ public struct FinishedRequest: Equatable, Sendable {
     public var at: Date
 }
 
+/// A request of ours that the Mac has just accepted. Its page shows the receipt for a moment before
+/// the app moves on, so that the end of one request and the start of the next cannot be mistaken
+/// for each other.
+public struct SentReceipt: Equatable, Sendable {
+    public var id = UUID()
+    /// The request that was sent (`macId/requestId`).
+    public var from: String
+    public var outcome: HistoryOutcome
+    /// Who asked, as it was when the request was sent. The receipt outlives the request (it is shown
+    /// again on the next page as that one slides in, when the request is closed and its details are
+    /// forgotten), so it has to bring its own copy.
+    public var summary: RequestSummary?
+    /// The request the app moved on to, once it has: that page slides in over the receipt. A page that
+    /// is opened any other way (a tap on the list, a notification) has nothing to do with it.
+    public var next: String?
+}
+
+/// The pill over the request the app moved on to: what was sent and how many requests wait.
+public struct SentNote: Identifiable, Equatable, Sendable {
+    public var id = UUID()
+    /// Requests still waiting, the one on screen included.
+    public var remaining: Int
+}
+
+/// How long the steps of moving on last; tests shorten them.
+public struct AdvanceTiming: Equatable, Sendable {
+    /// The receipt stays on the sent page this long before the next request slides in.
+    public var hold: Duration
+    /// The receipt stays set this long after the move. The next page takes it over (it slides in over a
+    /// copy of it) and a page that goes back to the list is being popped with it on: neither may find it
+    /// gone before the movement has come to rest.
+    public var settle: Duration
+    /// The pill over the next request stays this long.
+    public var note: Duration
+
+    public static let standard = AdvanceTiming(hold: .milliseconds(700), settle: .milliseconds(800), note: .milliseconds(2500))
+    public static let immediate = AdvanceTiming(hold: .zero, settle: .zero, note: .milliseconds(200))
+}
+
+/// What a tapped notification said about its request. The page shows it while the request itself is
+/// still on its way: a request that came by push is not on the phone until the Macs have answered.
+public struct NotificationHint: Equatable, Sendable {
+    public var title: String
+    public var subtitle: String
+    public var body: String
+
+    public init(title: String, subtitle: String = "", body: String = "") {
+        self.title = title
+        self.subtitle = subtitle
+        self.body = body
+    }
+}
+
+/// What a page can say about a request it has no content for.
+public enum MissingRequest: Equatable, Sendable {
+    /// Nothing is known yet: the app is still starting, or the request's Mac has not answered. The
+    /// request may be on its way.
+    case loading
+    /// The Mac cannot be reached, so nothing can be said about the request either way.
+    case unreachable
+    /// The Mac answered and does not have it: it was answered or cancelled elsewhere.
+    case gone
+}
+
 /// A short message over the app: a new request, a failure, a notice.
 public struct Banner: Identifiable, Equatable, Sendable {
     public enum Kind: Sendable, Equatable {
         case request(macId: String, requestId: String)
-        /// A followed Agent finished (`done`), failed (`failed`) or asks something (`waiting`).
+        /// A followed Agent finished (`done`) or failed (`failed`); a Mac older than
+        /// `docs/specs/ios-follow-narrowing.md` also reports `waiting` (it asks something).
         case agent(macId: String, agentKey: String, event: String)
-        /// The Mac already follows as many Agents as it allows.
-        case followLimit
         case info
         case warning
     }
@@ -66,7 +129,15 @@ public final class AppStore {
     public private(set) var finished: [String: FinishedRequest] = [:]
     /// Bumps for every request that arrives while the app is in the foreground (the UI plays a haptic).
     public internal(set) var arrivalTick = 0
+    /// Bumps when the Mac accepted a submission of ours (the UI plays a haptic).
+    public private(set) var sentTick = 0
+    /// Set while the page of a request we just sent shows its receipt.
+    public private(set) var receipt: SentReceipt?
+    /// Set for a moment over the request the app moved on to.
+    public private(set) var sentNote: SentNote?
     public private(set) var started = false
+    /// Whether the engine has published a state yet: before that, `state` is the empty placeholder.
+    public private(set) var hasState = false
 
     public var tab: AppTab = .inbox
     public var filter: InboxFilter = .all
@@ -108,7 +179,12 @@ public final class AppStore {
     /// Every request seen in the inbox, kept while its page may still be open: when the request ends
     /// the page keeps showing it (with a notice) instead of going blank.
     @ObservationIgnored private var retained: [String: (item: InboxItem, at: Date)] = [:]
+    /// What the notification that opened a page said, by inbox item id (set before the page is pushed).
+    @ObservationIgnored var hints: [String: NotificationHint] = [:]
     @ObservationIgnored private var bannerTask: Task<Void, Never>?
+    @ObservationIgnored private var advanceTask: Task<Void, Never>?
+    @ObservationIgnored private var noteTask: Task<Void, Never>?
+    @ObservationIgnored public var advanceTiming = AdvanceTiming.standard
     /// Arrivals whose request is not in the published state yet (events and states travel apart).
     @ObservationIgnored private var pendingArrivals: [String: (macId: String, requestId: String)] = [:]
     /// Every Agent seen on the Agents tab, kept while its page may still be open.
@@ -149,12 +225,21 @@ public final class AppStore {
         await backend.setInactive()
     }
 
+    /// Pull to refresh. The spinner stays up while the lists catch up, and for a moment at least:
+    /// it would vanish before it was seen otherwise, as if the pull had been ignored.
     public func refresh() async {
+        let began = Date()
         await backend.refresh()
+        while !Task.isCancelled {
+            let elapsed = Date().timeIntervalSince(began)
+            if elapsed >= 8 || (elapsed >= 0.6 && syncStatus != .updating) { break }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     private func apply(_ next: EngineState) async {
         state = next
+        hasState = true
         let now = Date()
         for item in next.inbox { retained[item.id] = (item, now) }
         for (key, entry) in retained where now.timeIntervalSince(entry.at) > 600 && !inboxPath.contains(key) {
@@ -192,9 +277,11 @@ public final class AppStore {
             if newest == nil || item.receivedAt > newest!.receivedAt { newest = item }
         }
         guard let item = newest else { return }
+        // The session's title names the request; without one, the Agent and project do.
+        let who = [item.summary.agent.label, item.summary.project.name].filter { !$0.isEmpty }.joined(separator: " · ")
         show(Banner(
             kind: .request(macId: item.macId, requestId: item.requestId),
-            title: item.summary.agent.label + " · " + item.summary.project.name,
+            title: item.sessionTitle ?? who,
             subtitle: item.summary.preview
         ))
     }
@@ -215,7 +302,7 @@ public final class AppStore {
                 // Our own submission went through: move on.
                 if by == nil, outcome == .answered || outcome == .cancelled || outcome == .dismissed,
                    let sent = retained[key]?.item, case .sending = sent.state {
-                    advance(from: key)
+                    advance(from: key, outcome: outcome)
                 }
             }
             if case .request(let bannerMac, let bannerId)? = banner?.kind, bannerMac == macId, bannerId == requestId {
@@ -229,7 +316,8 @@ public final class AppStore {
         case .followEvent(let macId, let event):
             presentFollowEvent(macId: macId, event: event)
         case .followRefused:
-            show(Banner(kind: .followLimit, title: ""))
+            // The app does not ask for follows by itself any more: nothing to tell the user.
+            break
         case .interjectConsumed(let macId, let agentKey):
             consumed[AgentItem.key(macId, agentKey)] = Date()
         }
@@ -254,6 +342,9 @@ public final class AppStore {
 
     public var macs: [MacState] { state.macs }
     public var hasPairedMacs: Bool { !state.macs.isEmpty }
+    public var syncStatus: SyncStatus { state.syncStatus }
+    /// Whether an empty inbox or Agents list can be trusted (see `ListReadiness`).
+    public var listReadiness: ListReadiness { state.listReadiness }
 
     /// Pending requests that satisfy the filter, newest first.
     public func inboxItems(filter: InboxFilter? = nil) -> [InboxItem] {
@@ -302,17 +393,90 @@ public final class AppStore {
         item(id: id) ?? retained[id]?.item
     }
 
+    /// What a page says when its request ended while it was open. Nothing for a request we have just
+    /// sent ourselves: that page shows its receipt, and the form fading out under the receipt has to
+    /// keep looking as it did ("Waiting for your Mac to confirm…"), not announce that the request ended.
+    public func endedNotice(for id: String) -> FinishedRequest? {
+        receipt?.from == id ? nil : finished[id]
+    }
+
+    /// Why a page has no request to show. "Gone" is only said once the request's Mac has answered
+    /// and does not have it: a request that came by push is not on the phone until the Macs have
+    /// answered, and that wait must not read as "unavailable".
+    public func missingRequest(id: String) -> MissingRequest {
+        guard hasState else { return .loading }
+        let macId = id.split(separator: "/", maxSplits: 1).first.map(String.init)
+        // A Mac that is not (or no longer) paired has no requests to wait for.
+        guard let mac = state.macs.first(where: { $0.id == macId }) else { return .gone }
+        switch mac.link {
+        case .connecting: return .loading
+        case .online: return .gone
+        case .macOffline, .brokerDown: return .unreachable
+        }
+    }
+
+    /// What the notification that opened this page said, for the time the request is not here yet.
+    public func hint(for id: String) -> NotificationHint? {
+        hints[id]
+    }
+
     public func isOnline(macId: String) -> Bool {
         state.macs.first { $0.id == macId }?.link == .online
     }
 
-    /// After a submission went through: show the next pending request, or return to the list.
-    public func advance(from id: String) {
+    /// After a submission went through: the page shows its receipt for a moment, then the app moves on
+    /// to the next pending request or back to the list.
+    ///
+    /// The next request takes the sent one's place on the stack (the path goes from `[sent]` to `[next]`
+    /// in one step) and the page slides it in, which keeps the stack to one page for as long as the
+    /// requests last: the system's own push would need the sent page kept underneath and dropped later,
+    /// and dropping a page from under the visible one makes SwiftUI show the dropped page's last frame
+    /// again and carries its scroll position over to the next request.
+    public func advance(from id: String, outcome: HistoryOutcome = .answered) {
         guard inboxPath.last == id else { return }
+        let receipt = SentReceipt(from: id, outcome: outcome, summary: displayItem(id: id)?.summary)
+        self.receipt = receipt
+        sentTick += 1
+        let timing = advanceTiming
+        // Nobody watches while the app is in the background: skip the show.
+        let watched = state.foreground
+        advanceTask?.cancel()
+        advanceTask = Task { [weak self] in
+            if watched { try? await Task.sleep(for: timing.hold) }
+            guard !Task.isCancelled, let self, self.receipt?.id == receipt.id else { return }
+            await self.moveOn(from: id, receipt: receipt, watched: watched)
+        }
+    }
+
+    private func moveOn(from id: String, receipt: SentReceipt, watched: Bool) async {
+        let timing = advanceTiming
+        // The reader left the page meanwhile (a tab switch, a banner, the back button): nothing to move.
+        guard inboxPath.last == id else {
+            if self.receipt?.id == receipt.id { self.receipt = nil }
+            return
+        }
         if autoAdvance, let next = nextPending(after: id) {
+            // Said before the path changes: the next page is made with it.
+            self.receipt?.next = next.id
             inboxPath = [next.id]
+            showSentNote(remaining: pendingCount)
         } else {
             inboxPath = []
+        }
+        // The receipt goes only now: until then it is what the next page slides in over (or what pops away).
+        if watched { try? await Task.sleep(for: timing.settle) }
+        if self.receipt?.id == receipt.id { self.receipt = nil }
+    }
+
+    private func showSentNote(remaining: Int) {
+        let note = SentNote(remaining: remaining)
+        sentNote = note
+        noteTask?.cancel()
+        let duration = advanceTiming.note
+        noteTask = Task { [weak self] in
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled, self?.sentNote?.id == note.id else { return }
+            self?.sentNote = nil
         }
     }
 
@@ -337,7 +501,16 @@ public final class AppStore {
         tab = .inbox
         let key = CachedRequest.key(macId, requestId)
         guard inboxPath.last != key else { return }
+        // Going elsewhere on purpose ends the show of a request just sent.
+        cancelAdvance()
         inboxPath = [key]
+    }
+
+    private func cancelAdvance() {
+        advanceTask?.cancel()
+        noteTask?.cancel()
+        receipt = nil
+        sentNote = nil
     }
 
     public func opened(_ item: InboxItem) async {
@@ -362,6 +535,7 @@ public final class AppStore {
 
     /// The form left the screen: save, and forget the in-memory state of finished requests.
     public func closed(id: String) {
+        hints[id] = nil
         composers[id]?.flush()
         if item(id: id) == nil {
             composers[id]?.discard()
@@ -446,6 +620,7 @@ public final class AppStore {
     public func unpair(_ mac: MacState) async { await backend.unpair(macId: mac.id) }
     public func rename(_ mac: MacState, to alias: String?) async { await backend.renameMac(macId: mac.id, alias: alias) }
     public func forgetAll() async {
+        cancelAdvance()
         inboxPath = []
         agentPath = []
         taskComposer = nil

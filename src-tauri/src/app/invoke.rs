@@ -291,6 +291,7 @@ fn todo(invoke: Invoke<Wry>) -> bool {
         crate::commands::todos_init,
         crate::commands::todos_projects,
         crate::commands::todos_projects_enriched,
+        crate::commands::todos_all_pending,
         crate::commands::open_todos,
     ];
     handler(invoke)
@@ -339,6 +340,7 @@ mod tests {
         assert_eq!(group_for("feishu_detect_prepare"), Group::Channel);
         assert_eq!(group_for("feishu_detect_wait"), Group::Channel);
         assert_eq!(group_for("todos_projects_enriched"), Group::Todo);
+        assert_eq!(group_for("todos_all_pending"), Group::Todo);
         assert_eq!(group_for("new_task_projects_refreshed"), Group::Task);
         assert_eq!(group_for("agent_task_workspaces"), Group::Integration);
         assert_eq!(group_for("cursor_desktop_status"), Group::Integration);

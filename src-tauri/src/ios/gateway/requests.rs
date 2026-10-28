@@ -1,6 +1,7 @@
 //! Questions and confirmations on their way to the phones: delivery (MQTT while the app is in
-//! the foreground, push otherwise), answers coming back, and the resolved/expired bookkeeping
-//! (plan §4.4–§4.6).
+//! the foreground; otherwise the question waits in the phone's inbox and a push follows once the
+//! Mac has been idle long enough, see `docs/specs/ios-alert-timing.md`), answers coming back, and
+//! the resolved/expired bookkeeping (plan §4.4–§4.6).
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -17,7 +18,7 @@ use crate::ios::views::AssetSource;
 use crate::ios::wire::{
     self, t, AnswerAck, AnswerSubmit, ConfirmAck, ConfirmDecide, PushPlain, RelayPush,
     RequestSummary, RequestView, INLINE_REQUEST_BYTES, MAX_PLAIN_BYTES, PUSH_FALLBACK_SECS,
-    PUSH_PREVIEW_MAX_CHARS,
+    PUSH_PREVIEW_MAX_CHARS, PUSH_SESSION_MAX_CHARS,
 };
 use crate::models::{AskRequest, ChannelAction, ChannelResult, ImageAttachment, QuestionAnswer};
 use base64::Engine;
@@ -213,6 +214,14 @@ fn truncate_chars(text: &str, max: usize) -> String {
     format!("{cut}…")
 }
 
+/// The session title as a notification carries it: shorter than in the app, one line is all a
+/// lock screen gives it.
+fn push_session(view: &RequestView) -> Option<String> {
+    view.session_title
+        .as_deref()
+        .map(|title| truncate_chars(title, PUSH_SESSION_MAX_CHARS))
+}
+
 /// First non-empty line, shortened for notifications and list rows.
 pub(crate) fn preview_of(view: &RequestView) -> String {
     let source = match (&view.ask, &view.confirm) {
@@ -320,6 +329,7 @@ fn summarize(view: &RequestView, size: u64) -> RequestSummary {
         kind: view.kind.clone(),
         project: view.project.clone(),
         agent: view.agent.clone(),
+        session_title: view.session_title.clone(),
         created_at: view.created_at,
         preview: preview_of(view),
         content_hash: view.content_hash.clone(),
@@ -431,8 +441,9 @@ impl Actor {
                     delivery.mqtt_sent_ms = Some(now);
                     reached = true;
                 }
-            } else if self.push_request(phone_id, &pending.view, now) {
-                delivery.pushed = true;
+            } else if self.can_push(phone_id, now) {
+                // Not looking at the app: the question waits in the phone's inbox, and the push
+                // follows once the Mac has been idle long enough (`flush_due_notifications`).
                 reached = true;
             }
             pending.phones.insert(phone_id.clone(), delivery);
@@ -443,6 +454,56 @@ impl Actor {
             pending.unreachable_since = Some(now);
         }
         self.requests.pending.push(pending);
+        // With the Mac already idle for long enough (or no waiting configured) the push goes
+        // out right here.
+        self.flush_due_notifications(now);
+    }
+
+    /// Whether the phone is looking at the app: connected, in the foreground and past its hello.
+    /// Such a phone gets the question live (and its inbox snapshot), never a push.
+    pub(super) fn is_looking(&self, phone_id: &str) -> bool {
+        self.is_live(phone_id) && self.connected
+    }
+
+    /// Pushes every question a phone has not looked at, once the Mac has been idle for the
+    /// configured time (`docs/specs/ios-alert-timing.md`): the phone is not looking, has not
+    /// opened the request and was not pushed for it yet. At most one push per request and phone;
+    /// nothing is repeated. An unknown idle time counts as long enough, so a Mac that cannot tell
+    /// still notifies. Cheap while nothing waits: the system clock is read only for a waiting
+    /// request.
+    pub(super) fn flush_due_notifications(&mut self, now: i64) {
+        let mut waiting: Vec<(String, String)> = Vec::new();
+        for pending in &self.requests.pending {
+            for (phone_id, delivery) in &pending.phones {
+                if !delivery.seen
+                    && !delivery.pushed
+                    && !self.is_looking(phone_id)
+                    && self.can_push(phone_id, now)
+                {
+                    waiting.push((phone_id.clone(), pending.view.id.clone()));
+                }
+            }
+        }
+        if waiting.is_empty() {
+            return;
+        }
+        let after = self.host.alert_after_secs();
+        if after > 0 && self.host.mac_idle_secs().is_some_and(|idle| idle < after) {
+            return;
+        }
+        for (phone_id, request_id) in waiting {
+            let Some(view) = self.requests.find(&request_id).map(|p| p.view.clone()) else {
+                continue;
+            };
+            self.push_request(&phone_id, &view, now);
+            if let Some(delivery) = self
+                .requests
+                .find_mut(&request_id)
+                .and_then(|p| p.phones.get_mut(&phone_id))
+            {
+                delivery.pushed = true;
+            }
+        }
     }
 
     /// Sends the push for a request. `false` when the phone has no usable push registration.
@@ -453,6 +514,7 @@ impl Actor {
             mac: self.mac_name(),
             agent: view.agent.label.clone(),
             project: view.project.name.clone(),
+            session: push_session(view),
             text: preview_of(view),
             ts: now,
         };
@@ -478,6 +540,8 @@ impl Actor {
             mac: self.mac_name(),
             agent: view.agent.label.clone(),
             project: view.project.name.clone(),
+            // The notification it replaces carried the title: keep the same lines above the text.
+            session: push_session(view),
             text: how.to_string(),
             ts: now,
         };
@@ -491,6 +555,23 @@ impl Actor {
         );
     }
 
+    /// Whether a push to this phone could go out at all: it registered a push handle that is
+    /// neither gone nor expired, the relay is configured and the push keys exist.
+    pub(super) fn can_push(&self, phone_id: &str, now: i64) -> bool {
+        let Some(reg) = self
+            .store
+            .state
+            .phone(phone_id)
+            .and_then(|phone| phone.push.as_ref())
+        else {
+            return false;
+        };
+        reg.status != "gone"
+            && reg.expires_at * 1000 > now
+            && !self.cfg.relay_url.trim().is_empty()
+            && self.store.keys(phone_id).is_some()
+    }
+
     /// Seals `plain` for the push domain and posts it to the relay in the background.
     pub(crate) fn spawn_push(
         &mut self,
@@ -501,18 +582,17 @@ impl Actor {
         plain: &PushPlain,
         now: i64,
     ) -> bool {
-        let Some(phone) = self.store.state.phone(phone_id) else {
-            return false;
-        };
-        let Some(reg) = phone.push.clone() else {
-            return false;
-        };
-        if reg.status == "gone"
-            || reg.expires_at * 1000 <= now
-            || self.cfg.relay_url.trim().is_empty()
-        {
+        if !self.can_push(phone_id, now) {
             return false;
         }
+        let Some(reg) = self
+            .store
+            .state
+            .phone(phone_id)
+            .and_then(|phone| phone.push.clone())
+        else {
+            return false;
+        };
         let Some(keys) = self.store.keys(phone_id).cloned() else {
             return false;
         };
@@ -1117,5 +1197,8 @@ impl Actor {
                 delivery.pushed = true;
             }
         }
+
+        // Questions a phone is not looking at: pushed once the Mac has been idle long enough.
+        self.flush_due_notifications(now);
     }
 }

@@ -365,6 +365,9 @@ public struct RequestView: Codable, Equatable, Hashable, Sendable {
     public var createdAt: Int64
     public var agent: AgentRef
     public var project: ProjectRef
+    /// Title of the Agent session that asks, as the Mac knew it when it delivered the request (one line);
+    /// `nil` when it knew none. Older Macs never send it.
+    public var sessionTitle: String?
     public var source: String
     public var contentHash: String
     @OmitFalse public var truncated: Bool
@@ -372,14 +375,15 @@ public struct RequestView: Codable, Equatable, Hashable, Sendable {
     public var confirm: ConfirmView?
 
     public init(
-        id: String, kind: String, createdAt: Int64, agent: AgentRef, project: ProjectRef, source: String,
-        contentHash: String, truncated: Bool = false, ask: AskView? = nil, confirm: ConfirmView? = nil
+        id: String, kind: String, createdAt: Int64, agent: AgentRef, project: ProjectRef, sessionTitle: String? = nil,
+        source: String, contentHash: String, truncated: Bool = false, ask: AskView? = nil, confirm: ConfirmView? = nil
     ) {
         self.id = id
         self.kind = kind
         self.createdAt = createdAt
         self.agent = agent
         self.project = project
+        self.sessionTitle = sessionTitle
         self.source = source
         self.contentHash = contentHash
         self.truncated = truncated
@@ -393,23 +397,34 @@ public struct RequestSummary: Codable, Equatable, Hashable, Sendable {
     public var kind: String
     public var project: ProjectRef
     public var agent: AgentRef
+    /// The same title as `RequestView.sessionTitle`.
+    public var sessionTitle: String?
     public var createdAt: Int64
     public var preview: String
     public var contentHash: String
     public var size: UInt64
 
     public init(
-        id: String, kind: String, project: ProjectRef, agent: AgentRef, createdAt: Int64, preview: String,
-        contentHash: String, size: UInt64
+        id: String, kind: String, project: ProjectRef, agent: AgentRef, sessionTitle: String? = nil, createdAt: Int64,
+        preview: String, contentHash: String, size: UInt64
     ) {
         self.id = id
         self.kind = kind
         self.project = project
         self.agent = agent
+        self.sessionTitle = sessionTitle
         self.createdAt = createdAt
         self.preview = preview
         self.contentHash = contentHash
         self.size = size
+    }
+}
+
+/// How a session title is shown: trimmed, and blank counts as none.
+public enum SessionTitle {
+    public static func clean(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 }
 

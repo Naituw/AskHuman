@@ -69,6 +69,7 @@ extension HistoryEntry {
     /// Everything a search should look through.
     var searchText: String {
         var parts = [request.agent.label, request.project.name, macName]
+        if let sessionTitle { parts.append(sessionTitle) }
         if let ask {
             parts.append(ask.message.text)
             for question in ask.questions {
@@ -88,6 +89,9 @@ extension HistoryEntry {
 
     var ask: AskView? { request.ask }
 
+    /// Title of the Agent session that asked, when the Mac told one.
+    var sessionTitle: String? { SessionTitle.clean(request.sessionTitle) }
+
     var headline: String {
         if let ask {
             let message = ask.message.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -103,12 +107,17 @@ private struct HistoryRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            AgentBadge(agent: entry.request.agent, size: 34)
+            AgentBadge(agent: entry.request.agent, size: 34, spoken: entry.sessionTitle != nil)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(entry.request.agent.label).font(.subheadline.weight(.semibold))
-                    if !entry.request.project.name.isEmpty {
-                        Text("· " + entry.request.project.name).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    if let title = entry.sessionTitle {
+                        // As in the inbox: the session's title leads, the logo tells the Agent.
+                        Text(verbatim: title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    } else {
+                        Text(entry.request.agent.label).font(.subheadline.weight(.semibold))
+                        if !entry.request.project.name.isEmpty {
+                            Text("· " + entry.request.project.name).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                        }
                     }
                     Spacer(minLength: 6)
                     Text(entry.finishedAt, format: .dateTime.month().day().hour().minute())
@@ -116,9 +125,15 @@ private struct HistoryRow: View {
                         .foregroundStyle(.secondary)
                 }
                 Text(entry.headline).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
-                Label(entry.outcome.title(by: entry.by), systemImage: entry.outcome.symbol)
-                    .font(.caption)
-                    .foregroundStyle(entry.outcome.color)
+                HStack(spacing: 4) {
+                    Label(entry.outcome.title(by: entry.by), systemImage: entry.outcome.symbol)
+                        .foregroundStyle(entry.outcome.color)
+                    // The project is on the first line unless the title took its place.
+                    if entry.sessionTitle != nil, !entry.request.project.name.isEmpty {
+                        Text(verbatim: "· " + entry.request.project.name).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                .font(.caption)
             }
         }
         .padding(.vertical, 4)

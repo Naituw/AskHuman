@@ -58,6 +58,7 @@ describe("IosChannelCard", () => {
           password: "",
           relayUrl: "https://relay.example.com",
           macName: "",
+          alertAfterSecs: 900,
         }),
       },
     });
@@ -148,6 +149,81 @@ describe("IosChannelCard", () => {
     await flushPromises();
     expect(wrapper.find(".ios-traffic").exists()).toBe(false);
     wrapper.unmount();
+  });
+
+  describe("push timing", () => {
+    const optionTexts = (wrapper: ReturnType<typeof mountCard>) =>
+      wrapper.findAll(".ios-alert-after option").map((o) => o.text());
+
+    it("offers the waits, with the configured one selected", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(optionTexts(wrapper)).toEqual(["Immediately", "5 min", "15 min", "30 min", "1 h"]);
+      expect((wrapper.get(".ios-alert-after select").element as HTMLSelectElement).value).toBe("900");
+      wrapper.unmount();
+    });
+
+    it("saves the wait that was chosen", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+      const wrapper = mountCard();
+      await flushPromises();
+      await wrapper.get(".ios-alert-after select").setValue("1800");
+      expect(config.value.channels.ios.alertAfterSecs).toBe(1800);
+      expect(persist).toHaveBeenCalled();
+
+      await wrapper.get(".ios-alert-after select").setValue("0");
+      expect(config.value.channels.ios.alertAfterSecs).toBe(0);
+      wrapper.unmount();
+    });
+
+    it("keeps a hand-edited wait in the list instead of silently replacing it", async () => {
+      config.value.channels.ios.alertAfterSecs = 600;
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(optionTexts(wrapper)).toEqual([
+        "Immediately",
+        "5 min",
+        "10 min (custom)",
+        "15 min",
+        "30 min",
+        "1 h",
+      ]);
+      expect((wrapper.get(".ios-alert-after select").element as HTMLSelectElement).value).toBe("600");
+      expect(persist).not.toHaveBeenCalled();
+      wrapper.unmount();
+    });
+
+    it("shows how long the Mac has been idle, when it can tell", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway({ macIdleSecs: 125 }) });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(wrapper.get(".ios-idle").text()).toBe("The Mac has been idle for 2 min");
+      wrapper.unmount();
+
+      iosOp.mockResolvedValue({ kind: "state", state: gateway({ macIdleSecs: 7 }) });
+      const fresh = mountCard();
+      await flushPromises();
+      expect(fresh.get(".ios-idle").text()).toBe("The Mac has been idle for 7 s");
+      fresh.unmount();
+
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+      const unknown = mountCard();
+      await flushPromises();
+      expect(unknown.find(".ios-idle").exists()).toBe(false);
+      unknown.unmount();
+    });
+
+    it("speaks Chinese when the interface is Chinese", async () => {
+      i18n.global.locale.value = "zh";
+      iosOp.mockResolvedValue({ kind: "state", state: gateway({ macIdleSecs: 600 }) });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(optionTexts(wrapper)).toEqual(["立即", "5 分钟", "15 分钟", "30 分钟", "1 小时"]);
+      expect(wrapper.get(".ios-idle").text()).toBe("Mac 已空闲 10 分钟");
+      wrapper.unmount();
+    });
   });
 
   it("says so when the gateway is not running", async () => {

@@ -27,6 +27,8 @@ pub const MAX_REPLY_ATTACHMENTS: usize = 5;
 pub const MAX_IMAGE_EDGE: u32 = 2048;
 pub const MAX_ASSET_CHUNKS_PER_GET: usize = 8;
 pub const MAX_REQUEST_IMAGES: usize = 20;
+/// Longest session title a request carries (characters). The push copy is cut shorter.
+pub const SESSION_TITLE_MAX_CHARS: usize = 120;
 
 pub const PUBLISH_RATE_PER_SEC: f64 = 6.0;
 pub const PUBLISH_BURST: f64 = 10.0;
@@ -46,6 +48,8 @@ pub const DEDUP_WINDOW_SECS: i64 = 600;
 pub const JOURNAL_MAX_ENTRIES: usize = 5000;
 pub const JOURNAL_MAX_AGE_DAYS: i64 = 30;
 pub const PUSH_PREVIEW_MAX_CHARS: usize = 120;
+/// The session title in a push is cut shorter than in the app: a notification title is one line.
+pub const PUSH_SESSION_MAX_CHARS: usize = 60;
 
 // ---------------------------------------------------------------- topics
 
@@ -474,6 +478,11 @@ pub struct RequestView {
     pub created_at: i64,
     pub agent: AgentRef,
     pub project: ProjectRef,
+    /// Title of the Agent session that asks (its saved name, else its first message), as the Mac
+    /// knew it at delivery; later renames are not followed. A single line of at most
+    /// `SESSION_TITLE_MAX_CHARS` characters. Additive: older phones ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_title: Option<String>,
     pub source: String,
     pub content_hash: String,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -491,6 +500,9 @@ pub struct RequestSummary {
     pub kind: String,
     pub project: ProjectRef,
     pub agent: AgentRef,
+    /// The same title as `RequestView::session_title`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_title: Option<String>,
     pub created_at: i64,
     pub preview: String,
     pub content_hash: String,
@@ -703,7 +715,7 @@ msg!(FollowState, t::FOLLOW_STATE);
 #[serde(rename_all = "camelCase")]
 pub struct FollowEvent {
     pub agent_key: String,
-    /// `done`, `waiting` or `failed`.
+    /// `done` or `failed` (Macs before `docs/specs/ios-follow-narrowing.md` also sent `waiting`).
     pub kind: String,
     pub title: String,
     pub project: String,
@@ -816,6 +828,35 @@ pub struct WorkspaceOption {
     pub last_used_at: i64,
 }
 
+/// One model an Agent offers for a new task (docs/specs/ios-task-model.md).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelOption {
+    /// What `task.create` sends back as `model`.
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Reasoning efforts this model can run with; absent = no effort row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub efforts: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+}
+
+/// What "Default" stands for: the model the Agent uses when `task.create` names none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DefaultModel {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Efforts the default model can run with; absent = no effort row for "Default".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub efforts: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentOption {
@@ -826,6 +867,11 @@ pub struct AgentOption {
     pub permission_selectable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// The models the phone may pick besides "Default"; absent when none is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<ModelOption>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<DefaultModel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -876,6 +922,12 @@ pub struct TaskCreate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub todo_id: Option<String>,
     pub text: String,
+    /// A model id from `task.options`; absent = the Agent's own default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// A reasoning effort offered for that model (or for "Default"); absent = the Agent's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 msg!(TaskCreate, t::TASK_CREATE);
 
@@ -1082,7 +1134,8 @@ registry!(
 /// Plaintext carried (encrypted) inside an APNs push; the notification extension decrypts it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushPlain {
-    /// `ask`, `confirm`, `follow.done`, `follow.waiting`, `follow.failed` or `resolved`.
+    /// `ask`, `confirm`, `follow.done`, `follow.failed` or `resolved` (older Macs also sent
+    /// `follow.waiting`).
     pub k: String,
     /// Request id (or agent key for follow events).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1091,6 +1144,9 @@ pub struct PushPlain {
     pub mac: String,
     pub agent: String,
     pub project: String,
+    /// Title of the Agent session behind a request (cut short for a notification).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
     /// Preview text (<= 120 characters).
     pub text: String,
     pub ts: i64,
@@ -1218,5 +1274,44 @@ mod tests {
             serde_json::json!({"clientMsgId": "c", "requestId": "r", "status": "accepted"})
         );
         assert_eq!(AnswerAck::TYPE, "answer.ack");
+    }
+
+    #[test]
+    fn the_session_title_is_optional_in_both_directions() {
+        let plain = |session: Option<&str>| PushPlain {
+            k: "ask".into(),
+            rid: Some("r".into()),
+            mac: "Home".into(),
+            agent: "Claude Code".into(),
+            project: "relay".into(),
+            session: session.map(str::to_string),
+            text: "Pick one".into(),
+            ts: 1,
+        };
+        // Absent when there is none: a phone or Mac that predates the field sees what it always saw.
+        let without = serde_json::to_value(plain(None)).unwrap();
+        assert!(without.get("session").is_none(), "{without}");
+        let with = serde_json::to_value(plain(Some("Fix the flaky test"))).unwrap();
+        assert_eq!(with["session"], "Fix the flaky test");
+
+        // And a message from a peer that predates it still reads.
+        let old: PushPlain = serde_json::from_value(serde_json::json!({
+            "k": "ask", "mac": "Home", "agent": "A", "project": "p", "text": "t", "ts": 1
+        }))
+        .unwrap();
+        assert_eq!(old.session, None);
+        let old: RequestSummary = serde_json::from_value(serde_json::json!({
+            "id": "r", "kind": "ask", "project": {"key": "k", "name": "p"},
+            "agent": {"kind": "claude", "label": "Claude Code"}, "createdAt": 1, "preview": "t",
+            "contentHash": "h", "size": 1
+        }))
+        .unwrap();
+        assert_eq!(old.session_title, None);
+        let summary = serde_json::to_value(RequestSummary {
+            session_title: Some("Fix it".into()),
+            ..old
+        })
+        .unwrap();
+        assert_eq!(summary["sessionTitle"], "Fix it");
     }
 }

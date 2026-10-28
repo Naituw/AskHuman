@@ -134,8 +134,9 @@ final class SimulatorLiveTests: E2ECase {
             XCTAssertTrue(refused.stdout.contains("Run the tests first."), "the reason did not reach the Agent: \(refused.stdout)")
             try live.release("permission-deny-done")
 
-            // An Agent session on the Mac, as the Agent's own hooks report it: the phone lists it, watches it
-            // live, follows it and queues a message that the Agent's next step has to carry.
+            // An Agent session on the Mac, as the Agent's own hooks report it: the phone lists it, follows it
+            // (the app asks for that itself), watches it live and queues a message that the Agent's next step
+            // has to carry.
             _ = try await live.arrive("agent-start")
             try await hook("session-start")
             try await hook("turn-start")
@@ -151,12 +152,6 @@ final class SimulatorLiveTests: E2ECase {
             }
             XCTAssertTrue(carried.contains(Self.message), "the Agent's step did not carry the message: \(carried)")
             try live.release("agent-message")
-            // The turn ends while the phone shows the list of Agents: a followed Agent finishing is announced.
-            _ = try await live.arrive("agent-finish", timeout: 300)
-            try await hook("turn-end")
-            try live.release("agent-finish")
-            _ = try await live.arrive("agent-finished", timeout: 300)
-            try live.release("agent-finished")
 
             // The app is away: the question reaches the phone as a push (real relay, real APNs sandbox).
             // First, how long the Mac takes to notice that the phone left (Home pressed → "foreground: false").
@@ -179,8 +174,9 @@ final class SimulatorLiveTests: E2ECase {
             XCTAssertTrue(pushed.stdout.contains("Yes"), "answer: \(pushed.stdout)")
             try live.release("pushed-answered")
 
-            // A followed Agent that finishes a turn while the phone is away comes as a push, too: a different
-            // kind of notification (it opens the Agent, not a request).
+            // A followed Agent whose first turn ends while the phone is away comes as a push, too: a different
+            // kind of notification (it opens the Agent, not a request). The Mac pushes at once (the throwaway
+            // Mac is set to), whatever its owner is doing.
             _ = try await live.arrive("leaving-again", timeout: 300)
             let leftAgain = await poll(timeout: 30) { (await self.devices().first?["foreground"] as? Bool) == false }
             XCTAssertTrue(leftAgain, "the Mac never saw the phone leave the foreground the second time")

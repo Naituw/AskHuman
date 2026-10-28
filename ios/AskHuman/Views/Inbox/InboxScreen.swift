@@ -18,6 +18,14 @@ struct InboxScreen: View {
             }
             .navigationTitle("Inbox")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                // The filter lives in the bar, not in a strip under it: on iOS 26 the bar's edge
+                // effect blurs whatever is pinned there, which made the header tall and murky.
+                if store.hasPairedMacs {
+                    ToolbarItem(placement: .principal) { SyncTitle(title: "Inbox") }
+                    ToolbarItem(placement: .topBarLeading) { InboxFilterMenu() }
+                }
+            }
             .navigationDestination(for: String.self) { id in
                 RequestScreen(id: id)
             }
@@ -27,11 +35,20 @@ struct InboxScreen: View {
 
 private struct InboxList: View {
     @Environment(AppStore.self) private var store
+    @State private var brokerTrouble = false
+    @State private var loadingTooLong = false
 
     var body: some View {
         let sections = store.inboxSections()
+        let readiness = store.listReadiness
         List {
-            ConnectionNotices()
+            if store.filter != .all {
+                FilterNote(name: filterName) { store.filter = .all }
+            }
+            ConnectionNotices(scope: .inbox, brokerTrouble: brokerTrouble)
+            if sections.isEmpty, readiness == .loading, !loadingTooLong {
+                SkeletonRows()
+            }
             ForEach(sections) { section in
                 Section {
                     ForEach(section.items) { item in
@@ -46,13 +63,28 @@ private struct InboxList: View {
             }
         }
         .listStyle(.insetGrouped)
-        .overlay {
-            if sections.isEmpty { EmptyInbox(filtered: store.filter != .all) }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if store.state.inbox.count > 0 || store.filter != .all { FilterBar() }
+        .emptyState {
+            // An empty list only means "nothing waiting" once the Macs have answered.
+            if sections.isEmpty {
+                switch readiness {
+                case .ready: EmptyInbox(filtered: store.filter != .all)
+                case .unreachable: UnreachableInbox()
+                case .loading: if loadingTooLong { SlowInbox() }
+                }
+            }
         }
         .refreshable { await store.refresh() }
+        .raised($brokerTrouble, after: 10, while: store.syncStatus == .reconnecting)
+        .raised($loadingTooLong, after: 15, while: readiness == .loading)
+    }
+
+    private var filterName: String {
+        switch store.filter {
+        case .all: ""
+        case .mac(let id): store.macs.first { $0.id == id }?.name ?? ""
+        case .asks: String(localized: "Questions")
+        case .confirms: String(localized: "Confirmations")
+        }
     }
 }
 
@@ -86,104 +118,52 @@ private struct EmptyInbox: View {
     }
 }
 
-// MARK: filter
-
-private struct FilterBar: View {
-    @Environment(AppStore.self) private var store
-
+/// No Mac can be reached, so there is nothing to list: that is not the same as nothing waiting.
+private struct UnreachableInbox: View {
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                chip(Text("All"), filter: .all, id: "all")
-                if store.macs.count > 1 {
-                    ForEach(store.macs) { mac in
-                        chip(Text(mac.name), filter: .mac(mac.id), id: "mac-" + mac.id)
-                    }
-                }
-                chip(Text("Questions"), filter: .asks, id: "asks")
-                chip(Text("Confirmations"), filter: .confirms, id: "confirms")
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
-        .background(.bar)
-    }
-
-    private func chip(_ label: Text, filter: InboxFilter, id: String) -> some View {
-        let selected = store.filter == filter
-        return Button {
-            store.filter = filter
-        } label: {
-            label
-                .font(.subheadline.weight(.medium))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .foregroundStyle(selected ? Color.white : Color.primary)
-                .background(selected ? Color.accentColor : Color(.tertiarySystemFill), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityIdentifier("filter-" + id)
+        ContentUnavailableView(
+            "Your Macs are not reachable", systemImage: "desktopcomputer.trianglebadge.exclamationmark",
+            description: Text("Requests show up here as soon as a Mac is connected.")
+        )
     }
 }
 
-// MARK: notices
+/// A Mac that stays silent for long: say so instead of showing grey bars for ever.
+private struct SlowInbox: View {
+    var body: some View {
+        ContentUnavailableView(
+            "Waiting for your Mac", systemImage: "hourglass",
+            description: Text("It has not answered yet. Pull down to try again.")
+        )
+    }
+}
 
-/// Reasons the inbox may be stale or unanswerable, shown above the list.
-private struct ConnectionNotices: View {
+// MARK: filter
+
+private struct InboxFilterMenu: View {
     @Environment(AppStore.self) private var store
 
     var body: some View {
-        let notices = notices()
-        if !notices.isEmpty {
-            Section {
-                ForEach(notices, id: \.id) { notice in
-                    Label {
-                        Text(notice.text).font(.footnote)
-                    } icon: {
-                        Image(systemName: notice.symbol).foregroundStyle(notice.color)
+        @Bindable var store = store
+        Menu {
+            Picker("Show", selection: $store.filter) {
+                Label("All", systemImage: "tray.full").tag(InboxFilter.all)
+                Label("Questions", systemImage: "questionmark.bubble").tag(InboxFilter.asks)
+                Label("Confirmations", systemImage: "checkmark.shield").tag(InboxFilter.confirms)
+            }
+            .pickerStyle(.inline)
+            if store.macs.count > 1 {
+                Picker("Mac", selection: $store.filter) {
+                    ForEach(store.macs) { mac in
+                        Label(mac.name, systemImage: "desktopcomputer").tag(InboxFilter.mac(mac.id))
                     }
-                    .listRowBackground(notice.color.opacity(0.1))
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("notice-" + notice.id)
                 }
+                .pickerStyle(.inline)
             }
+        } label: {
+            FilterIcon(active: store.filter != .all)
         }
-    }
-
-    private struct Notice {
-        var id: String
-        var text: LocalizedStringKey
-        var symbol: String
-        var color: Color
-    }
-
-    private func notices() -> [Notice] {
-        var result: [Notice] = []
-        switch store.state.phase {
-        case .refused:
-            result.append(Notice(id: "refused", text: "The broker refused the connection. Its settings may have changed, or this month's free data allowance may be used up. Check on your Mac, then pair again.", symbol: "exclamationmark.octagon.fill", color: .red))
-        case .backoff, .connecting:
-            if store.hasPairedMacs, store.state.foreground {
-                result.append(Notice(id: "broker", text: "Connecting to the broker… Pull down to retry.", symbol: "wifi.exclamationmark", color: .orange))
-            }
-        default: break
-        }
-        if store.hasPairedMacs, let traffic = store.state.traffic {
-            switch traffic.level {
-            case .ok: break
-            case .warning:
-                result.append(Notice(id: "traffic", text: "This month's data use is close to the broker's free allowance. The service pauses when it runs out.", symbol: "gauge.with.dots.needle.67percent", color: .orange))
-            case .exhausted:
-                result.append(Notice(id: "traffic", text: "This month's free data allowance may be used up, so the broker may refuse connections.", symbol: "gauge.with.dots.needle.100percent", color: .red))
-            }
-        }
-        if store.state.clockSkew {
-            result.append(Notice(id: "clock", text: "This phone's clock differs too much from a Mac's, so some messages are ignored. Check Date & Time in Settings.", symbol: "clock.badge.exclamationmark.fill", color: .orange))
-        }
-        for mac in store.macs where mac.link == .macOffline && store.state.inbox.contains(where: { $0.macId == mac.id }) {
-            result.append(Notice(id: "offline-" + mac.id, text: "\(mac.name) is offline. Its requests cannot be answered until it is back.", symbol: "desktopcomputer.trianglebadge.exclamationmark", color: .gray))
-        }
-        return result
+        .accessibilityLabel("Filter")
+        .accessibilityIdentifier("filter-menu")
     }
 }

@@ -16,11 +16,12 @@ struct AgentRow: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 8)
-                    if item.view.followed {
-                        Image(systemName: "star.fill")
+                    // Read only: the Mac tells the phone about this Agent's first result.
+                    if item.view.followed, !item.isEnded {
+                        Image(systemName: "bell.fill")
                             .imageScale(.small)
-                            .foregroundStyle(.yellow)
-                            .accessibilityLabel("Following")
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Will notify you")
                     }
                     RelativeTimeText(date: item.lastActivity)
                         .font(.caption)
@@ -39,7 +40,8 @@ struct AgentRow: View {
                     Chip(text: item.stateTitle, tint: item.stateColor)
                     if item.view.state == "working" {
                         if let tool = item.view.currentTool, !tool.isEmpty {
-                            Chip(text: LocalizedStringKey(tool), systemImage: "wrench.and.screwdriver")
+                            // The tool may carry a whole command: the chip shortens it to the row.
+                            Chip(verbatim: tool, systemImage: "wrench.and.screwdriver")
                         }
                         if item.view.turnSteps > 0 {
                             Chip(text: "\(item.view.turnSteps) steps", systemImage: "list.bullet")

@@ -264,6 +264,17 @@ export interface TodosInit {
   popupSubmitKey: PopupSubmitKey;
   /** Whether a supported platform terminal is available for creating Agent tasks. */
   newTaskSupported: boolean;
+  /** 性能埋点是否开启（宿主进程带 `ASKHUMAN_PERF_ID`）；前端据此决定是否上报 perf 标记。 */
+  perf?: boolean;
+  /** The user's home directory, for the `~/...` path abbreviation in the project header. */
+  home?: string;
+}
+
+/** One project's pending todos in the "All todos" view of the todos window. */
+export interface TodoGroup {
+  /** Project key. */
+  key: string;
+  entries: TodoEntry[];
 }
 
 /** 新建任务窗口 init 负载（spec gui-agent-task-launch）。 */
@@ -825,6 +836,11 @@ export interface IosChannelConfig {
   relayUrl: string;
   /** 本机在手机上的显示名；留空取主机名。 */
   macName: string;
+  /**
+   * 手机没在看某个问题时，Mac 键盘/鼠标空闲满这么多秒才推送通知（`0` = 问题一到就推）。
+   * 问题本身随时可在手机 App 里看到，与此无关（docs/specs/ios-alert-timing.md）。
+   */
+  alertAfterSecs: number;
 }
 
 export interface ChannelsConfig {
@@ -1046,6 +1062,8 @@ export interface IosGatewayState {
   pairing?: IosPairing;
   traffic?: IosTraffic;
   pendingRequests: number;
+  /** Seconds since the last keyboard / mouse input on this Mac; absent when it cannot tell. */
+  macIdleSecs?: number;
 }
 
 export type IosOp =

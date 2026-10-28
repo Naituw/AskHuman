@@ -6,6 +6,13 @@ import { useI18n } from "vue-i18n";
 import { useSettingsContext } from "./context";
 import { useIosChannel } from "./useIosChannel";
 import type { IosPhone } from "../../lib/types";
+import {
+  ALERT_AFTER_PRESETS,
+  alertAfterChoices,
+  idleDuration,
+  splitDuration,
+  type SplitDuration,
+} from "./iosAlertTiming";
 import { formatBytes, quotaShare, trafficLevel } from "./iosTraffic";
 
 const { t } = useI18n();
@@ -73,6 +80,30 @@ const trafficWarning = computed(() => {
   if (trafficLevelNow.value === "full") return t("settings.experimental.ios.trafficFull");
   if (trafficLevelNow.value === "warn") return t("settings.experimental.ios.trafficWarn");
   return "";
+});
+
+// Push timing (docs/specs/ios-alert-timing.md): the wait before an unseen question is pushed.
+function durationText(d: SplitDuration): string {
+  return t(`settings.experimental.ios.duration.${d.unit}`, { n: d.n });
+}
+
+const alertAfterOptions = computed(() =>
+  alertAfterChoices(ios.value.alertAfterSecs).map((secs) => {
+    if (secs === 0) return { secs, label: t("settings.experimental.ios.alertAfterNow") };
+    const text = durationText(splitDuration(secs));
+    return {
+      secs,
+      label: ALERT_AFTER_PRESETS.includes(secs)
+        ? text
+        : t("settings.experimental.ios.alertAfterCustom", { value: text }),
+    };
+  }),
+);
+
+const macIdleText = computed(() => {
+  const secs = state.value?.macIdleSecs;
+  if (secs === undefined || secs === null) return "";
+  return t("settings.experimental.ios.macIdle", { time: durationText(idleDuration(secs)) });
 });
 
 const pairNoticeText = computed(() => {
@@ -212,6 +243,20 @@ function pushWarning(phone: IosPhone): string {
       <p v-if="connectionMessage" class="result" :class="connectionError ? 'err' : 'ok'">
         {{ connectionMessage }}
       </p>
+
+      <hr class="divider" />
+      <p class="ios-section-title">{{ t("settings.experimental.ios.alertTimingTitle") }}</p>
+      <div class="row ios-alert-after">
+        <span class="label">{{ t("settings.experimental.ios.alertAfterLabel") }}</span>
+        <span class="spacer"></span>
+        <select class="select" v-model.number="ios.alertAfterSecs" @change="persist">
+          <option v-for="option in alertAfterOptions" :key="option.secs" :value="option.secs">
+            {{ option.label }}
+          </option>
+        </select>
+      </div>
+      <p class="card-desc">{{ t("settings.experimental.ios.alertAfterHint") }}</p>
+      <p v-if="macIdleText" class="card-desc ios-idle">{{ macIdleText }}</p>
 
       <hr class="divider" />
       <div class="row">

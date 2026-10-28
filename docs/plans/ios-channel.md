@@ -155,7 +155,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 
 | 类型 | 方向 | body 要点 |
 |---|---|---|
-| `inbox.snapshot` | Mac→手机 | `epoch, rev, items[RequestSummary]`（id、kind、项目、Agent、创建时间、预览、`contentHash`、大小） |
+| `inbox.snapshot` | Mac→手机 | `epoch, rev, items[RequestSummary]`（id、kind、项目、Agent、`sessionTitle?`、创建时间、预览、`contentHash`、大小） |
 | `request.new` | Mac→手机 | `rev, request: RequestView, full`；`full=false` 时只含摘要 |
 | `request.get` / `request.full` | 手机→Mac / Mac→手机 | 拉取完整 `RequestView` |
 | `request.ack` | 手机→Mac | 手机已持久保存该请求（取消推送回退） |
@@ -165,7 +165,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 | `answer.ack` | Mac→手机 | `clientMsgId, requestId, status(accepted/lost/expired/invalid), reason?` |
 | `confirm.decide` | 手机→Mac | `clientMsgId, requestId, wireIndex 或 dismiss=true, input?` |
 
-`RequestView`：`id, kind, createdAt, agent{kind,label}, project{key,name}, source, contentHash, truncated`；
+`RequestView`：`id, kind, createdAt, agent{kind,label}, project{key,name}, sessionTitle?, source, contentHash, truncated`（`sessionTitle` 是请求送达时 Mac 所知的 Agent 会话标题，单行 ≤ 120 字符，不知道就不带）；
 - 提问：`markdown, message{text, files[AssetRef]}, questions[{text, options[{text, recommended, todo?}]}], selectOnly, single, whatsNext`；
 - 确认：`title, context[{id,label,value,kind}], detail{summary, bodyMd}, choices[{wireIndex,label,description,role,recommended}]`（只下发推荐变体）、`defaultIndex?, input?{id,label,placeholder,maxChars,visibility}, dismissIndex, expiresAt`；
 - `AssetRef = {assetId, name, size, mime, isImage, thumb?, tooLarge?}`。
@@ -314,7 +314,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 ### 4.8 推送客户端 `ios/push.rs`
 
 - 每部手机一份句柄；`push.register` 更新句柄；有效期到期前 30 天、`push.state=gone` 时手机会刷新。
-- 构造推送明文 `{"k":"ask|confirm|follow.done|follow.waiting|follow.failed|resolved","rid":…,"mac":…,"agent":…,"project":…,"text":…(≤120 字符),"ts":…}`，用 `k_m2p`（AAD `ah1|push|<macId>|<kid>`）加密成 `ah = {f,k,n,c}`（≤ 3 KB），POST 中继 `/v1/push`。
+- 构造推送明文 `{"k":"ask|confirm|follow.done|follow.waiting|follow.failed|resolved","rid":…,"mac":…,"agent":…,"project":…,"session":…(会话标题，可选，≤ 60 字符),"text":…(≤120 字符),"ts":…}`，用 `k_m2p`（AAD `ah1|push|<macId>|<kid>`）加密成 `ah = {f,k,n,c}`（≤ 3 KB），POST 中继 `/v1/push`。
 - 超时 5 秒；5xx / 网络错误重试 1 次（带抖动）；4xx 不重试；`410 gone` → 标记该手机推送失效，经下一次 MQTT 连接通知手机，并在设置页显示「推送不可用」。同一折叠标识的待发推送合并。
 
 ### 4.9 IPC、命令、CLI、设置页
@@ -396,7 +396,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 ### 6.3 界面实现要点（行为见需求 §6）
 
 - 导航：`TabView`（收件箱 / Agents / 历史 / Mac），Agents 页的「＋」打开新任务流程。
-- 作答页：`ScrollView` 纵向长表单 + 底部固定发送条；推荐徽标不预选；草稿按请求 id 存 SwiftData，输入变化后 300 ms 去抖落盘；提交走发件箱，收到 `answer.ack` 前显示进度。
+- 作答页：`ScrollView` 纵向长表单 + 底部固定操作条（多题时先「下一题」，最后一题进入屏幕后才变「发送」）；推荐徽标不预选；草稿按请求 id 存 SwiftData，输入变化后 300 ms 去抖落盘；提交走发件箱，收到 `answer.ack` 前显示进度。
 - Markdown：`swift-markdown` 解析 → 自绘 SwiftUI 视图（标题、列表、引用、代码块横向滚动、表格、链接用 `SFSafariViewController` 并先显示域名、本地图片按 `ahasset://<assetId>` 懒加载）；Mermaid 先显示为代码块。
 - 附件预览：图片（`ImageIO` 解码，缩放 / 平移）、文本 / 代码（等宽）、Markdown、diff（+/- 着色）、其它类型走 `QuickLook`；分块拉取显示进度、可取消 / 重试。
 - 回复附件：`PhotosPicker`、相机、`fileImporter`；图片转 JPEG 并按限额缩放；分块上传带校验与进度。

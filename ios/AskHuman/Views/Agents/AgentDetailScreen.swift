@@ -2,7 +2,7 @@ import SwiftUI
 import AHCore
 import AHProtocol
 
-/// One Agent session: live view, follow switch, the question it waits on, and a way to talk to it.
+/// One Agent session: live view, the question it waits on, and a way to talk to it.
 struct AgentDetailScreen: View {
     let id: String
     @Environment(AppStore.self) private var store
@@ -25,8 +25,6 @@ private struct AgentDetailContent: View {
     @State private var problem: String?
     @State private var notice: String?
     @State private var sentTick = 0
-    @State private var followTick = 0
-    @State private var busy = false
 
     var body: some View {
         let online = store.isOnline(macId: item.macId)
@@ -38,7 +36,7 @@ private struct AgentDetailContent: View {
                 } else if gone {
                     Notice(symbol: "tray", text: "The Mac no longer lists this session.", tint: .gray)
                 }
-                AgentHeader(item: item, busy: busy) { toggleFollow() }
+                AgentHeader(item: item)
                 if item.view.state == "waiting", let requestId = item.view.waitingRequestId {
                     WaitingCard(item: item) { store.open(macId: item.macId, requestId: requestId) }
                 }
@@ -85,7 +83,6 @@ private struct AgentDetailContent: View {
             Text(problem ?? "")
         }
         .sensoryFeedback(.success, trigger: sentTick)
-        .sensoryFeedback(.selection, trigger: followTick)
     }
 
     @ViewBuilder
@@ -108,16 +105,6 @@ private struct AgentDetailContent: View {
                 .padding(.vertical, 12)
                 .background(.bar)
                 .accessibilityIdentifier("interject-unavailable")
-        }
-    }
-
-    private func toggleFollow() {
-        guard !busy else { return }
-        busy = true
-        let on = !item.view.followed
-        Task {
-            if await store.setFollow(item, on: on) { followTick += 1 }
-            busy = false
         }
     }
 
@@ -152,8 +139,6 @@ private struct Notice: View {
 
 private struct AgentHeader: View {
     let item: AgentItem
-    let busy: Bool
-    var toggleFollow: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -172,37 +157,21 @@ private struct AgentHeader: View {
                 }
                 Spacer(minLength: 0)
             }
-            if !item.isEnded || item.view.followed {
-                followButton
-            }
-            if item.view.followed {
-                Text("You get a notification when this Agent finishes, fails or needs you.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            // Only a task started from the phone is followed (the Agents tab lists every session anyway).
+            // The Mac drops the follow once the first result was dealt with, and the line goes with it.
+            if item.view.followed, !item.isEnded {
+                Label {
+                    Text("You get a notification when this Agent finishes or fails, once your Mac has been idle for a while.")
+                } icon: {
+                    Image(systemName: "bell.fill")
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("follow-note")
             }
         }
         .card()
-    }
-
-    private var followButton: some View {
-        Button(action: toggleFollow) {
-            HStack(spacing: 6) {
-                if busy {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: item.view.followed ? "star.fill" : "star")
-                }
-                Text(item.view.followed ? "Following" : "Follow")
-            }
-            .font(.subheadline.weight(.semibold))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-        }
-        .buttonStyle(.bordered)
-        .tint(item.view.followed ? .yellow : .accentColor)
-        .disabled(busy)
-        .accessibilityLabel(item.view.followed ? LocalizedStringKey("Following") : LocalizedStringKey("Follow"))
-        .accessibilityIdentifier("follow-button")
     }
 
     private var subtitle: String {

@@ -53,8 +53,9 @@ public protocol RemoteBackend: AnyObject, Sendable {
     func download(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL
 
     // agents
-    /// Follows an Agent (the Mac pushes when it finishes, fails or asks something); at most
-    /// `Wire.maxFollow` per Mac. Throws `.rejected("limit")` when the list is full.
+    /// Follows an Agent (the Mac tells the phone the first time it finishes or fails, and then drops the
+    /// follow); at most `Wire.maxFollow` per Mac. Throws `.rejected("limit")` when the list is full. The
+    /// app does not use it for a button any more: the Macs follow the tasks the phone starts.
     func setFollow(macId: String, agentKey: String, on: Bool) async throws
     /// Opens or closes the live frames of one Agent. A watch the user keeps open is asked for again
     /// after a reconnect.

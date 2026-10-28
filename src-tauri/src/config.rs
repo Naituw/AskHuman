@@ -411,6 +411,24 @@ pub struct IosChannelConfig {
     /// 测试用：用明文 TCP 直连 `host:port`（仅允许回环地址，Debug 联调用）。
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub insecure_local: bool,
+    /// Push timing D in seconds: when the phone is not looking at a question and has not opened
+    /// it, the push waits until the Mac's keyboard and mouse have been idle this long; `0` pushes
+    /// at once. Not a connection setting: changing it never reconnects the gateway.
+    /// See `docs/specs/ios-alert-timing.md`.
+    pub alert_after_secs: u64,
+}
+
+/// Default of `alert_after_secs`: 15 minutes.
+pub const IOS_ALERT_AFTER_SECS_DEFAULT: u64 = 900;
+/// Upper bound of `alert_after_secs`: 24 hours.
+pub const IOS_ALERT_AFTER_SECS_MAX: u64 = 86_400;
+
+impl IosChannelConfig {
+    /// The push timing D in effect, clamped to `0..=IOS_ALERT_AFTER_SECS_MAX`; the file keeps
+    /// whatever was written.
+    pub fn effective_alert_after_secs(&self) -> u64 {
+        self.alert_after_secs.min(IOS_ALERT_AFTER_SECS_MAX)
+    }
 }
 
 impl Default for IosChannelConfig {
@@ -425,6 +443,7 @@ impl Default for IosChannelConfig {
             relay_url: String::new(),
             mac_name: String::new(),
             insecure_local: false,
+            alert_after_secs: IOS_ALERT_AFTER_SECS_DEFAULT,
         }
     }
 }
@@ -809,6 +828,29 @@ mod tests {
         let json = serde_json::to_value(&partial).unwrap();
         assert!(json["channels"]["ios"].get("insecureLocal").is_none());
         assert_eq!(json["channels"]["ios"]["relayUrl"], "");
+    }
+
+    #[test]
+    fn ios_alert_timing_defaults_to_fifteen_minutes_and_is_clamped() {
+        // Old configs (and partial iOS sections) have no `alertAfterSecs`: they get the default.
+        let old: AppConfig =
+            serde_json::from_str(r#"{"channels":{"ios":{"enabled":true}}}"#).unwrap();
+        assert_eq!(old.channels.ios.alert_after_secs, 900);
+        assert_eq!(old.channels.ios.effective_alert_after_secs(), 900);
+        assert_eq!(IosChannelConfig::default().alert_after_secs, 900);
+
+        // `0` means "push at once" and must survive a round trip as written.
+        let immediate: AppConfig =
+            serde_json::from_str(r#"{"channels":{"ios":{"alertAfterSecs":0}}}"#).unwrap();
+        assert_eq!(immediate.channels.ios.effective_alert_after_secs(), 0);
+        let json = serde_json::to_value(&immediate).unwrap();
+        assert_eq!(json["channels"]["ios"]["alertAfterSecs"], 0);
+
+        // An out-of-range value is kept in the file but never acted on.
+        let wild: AppConfig =
+            serde_json::from_str(r#"{"channels":{"ios":{"alertAfterSecs":999999999}}}"#).unwrap();
+        assert_eq!(wild.channels.ios.alert_after_secs, 999_999_999);
+        assert_eq!(wild.channels.ios.effective_alert_after_secs(), 86_400);
     }
 
     #[test]

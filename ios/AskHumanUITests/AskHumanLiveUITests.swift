@@ -104,7 +104,7 @@ final class AskHumanLiveUITests: XCTestCase {
             row.tap()
             tapElement("option-0-1")
             shot("single-answer")
-            requireElement("send-button").tap()
+            sendForm()
             let sentAt = nowMs()
             XCTAssertTrue(rowGone("inbox-row-", timeout: 90), "the request stayed in the inbox")
             let leftAt = nowMs()
@@ -122,7 +122,7 @@ final class AskHumanLiveUITests: XCTestCase {
             note.typeText("because")
             tapElement("option-1-1")
             shot("multi-answer")
-            requireElement("send-button").tap()
+            sendForm()
             XCTAssertTrue(rowGone("inbox-row-", timeout: 90), "the request stayed in the inbox")
             _ = rendezvous("ask-multi-answered")
         }
@@ -156,8 +156,9 @@ final class AskHumanLiveUITests: XCTestCase {
             _ = rendezvous("permission-deny-done")
         }
 
-        try step("watch, follow and message an Agent") {
-            // The host reports a working session the way an Agent's own hooks do.
+        try step("watch and message an Agent that the Mac notifies about") {
+            // The host reports a working session the way an Agent's own hooks do. The app has no follow
+            // button: the launch option follows that session as soon as the Mac lists it.
             _ = rendezvous("agent-start")
             app.tabBars.buttons["Agents"].tap()
             let row = requireElement("agent-row-claude:live-agent", timeout: 60)
@@ -168,9 +169,10 @@ final class AskHumanLiveUITests: XCTestCase {
             _ = requireElement("watch-live", timeout: 60)
             shot("agent-watch")
 
-            XCTAssertTrue(waitForLabel("follow-button", "Follow"), "the Agent was followed before the phone asked")
-            requireElement("follow-button").tap()
-            XCTAssertTrue(waitForLabel("follow-button", "Following", timeout: 60), "the Mac did not confirm the follow")
+            // The line only shows once the Mac has confirmed the follow.
+            let note = requireElement("follow-note", timeout: 90)
+            XCTAssertTrue(note.label.contains("finishes or fails"), "the page says: \(note.label)")
+            XCTAssertFalse(element("follow-button").exists, "the app has no follow button any more")
             shot("agent-followed")
 
             // A message to the working Agent is queued until its next step.
@@ -190,21 +192,12 @@ final class AskHumanLiveUITests: XCTestCase {
             app.navigationBars.buttons.firstMatch.tap()
             let tool = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'cargo test'")).firstMatch
             XCTAssertTrue(tool.waitForExistence(timeout: 60), "the list never showed the Agent's tool call")
+            // A Mac the phone follows an Agent on marks it with the bell.
+            XCTAssertTrue(requireElement("agent-row-claude:live-agent").label.contains("Will notify you"), "the list does not mark the Agent")
             shot("agents-list-working")
-
-            // The turn ends while the list is open: a followed Agent finishing is announced in the app.
-            _ = rendezvous("agent-finish")
-            let banner = requireElement("banner", timeout: 60)
-            shot("follow-banner")
-            XCTAssertTrue(banner.label.contains("Agent finished"), "banner: \(banner.label)")
-            banner.tap()
-            _ = requireElement("watch-card")
-            _ = rendezvous("agent-finished")
         }
 
         try step("see what a Mac that has Agent tasks switched off says") {
-            // The page of the Agent covers the tab bar: go back to the list first.
-            app.navigationBars.buttons.firstMatch.tap()
             requireElement("new-task").tap()
             let why = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Agent tasks are turned off'")).firstMatch
             XCTAssertTrue(why.waitForExistence(timeout: 60), "the form did not say that tasks are switched off")
@@ -225,11 +218,12 @@ final class AskHumanLiveUITests: XCTestCase {
             _ = rendezvous("pushed", "seen=\(push.seen) text=\(push.text)")
             requireElement("option-0-0").tap()
             shot("push-opened-request")
-            requireElement("send-button").tap()
+            sendForm()
             XCTAssertTrue(rowGone("inbox-row-", timeout: 90), "the request stayed in the inbox")
             _ = rendezvous("pushed-answered")
         }
 
+        // The Agent is still followed: nothing has finished yet (the first result is the one that counts).
         try step("get a push when a followed Agent finishes while the app is away") {
             let asked = leaveForTheHomeScreen(announcing: "leaving-again", rendezvousAt: "away-again")
             guard let push = openPushBanner(askedAt: asked) else {
@@ -268,7 +262,8 @@ final class AskHumanLiveUITests: XCTestCase {
 
     private func launch() {
         let app = XCUIApplication()
-        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        // The app follows the host's made-up Agent session as soon as it is listed (see `followAgent` in the app).
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-AHFollowAgent", "claude:live-agent"]
         app.launch()
         self.app = app
     }
@@ -329,6 +324,21 @@ final class AskHumanLiveUITests: XCTestCase {
     private func tapElement(_ id: String) {
         reveal(id)
         requireElement(id).tap()
+    }
+
+    /// Sends the form. With several questions the bar offers "Next" until the last one has been on
+    /// screen (as the Mac's popup does): this walks down with it, then presses "Send".
+    private func sendForm() {
+        var taps = 0
+        while !element("send-button").exists, taps < 10 {
+            let next = element("next-button")
+            guard next.waitForExistence(timeout: 5) else { break }
+            next.tap()
+            taps += 1
+            // The scroll to the next question animates, and the bar changes once that question is seen.
+            Thread.sleep(forTimeInterval: 0.8)
+        }
+        requireElement("send-button").tap()
     }
 
     /// Waits until the element's accessibility label equals `label`.

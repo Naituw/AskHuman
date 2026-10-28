@@ -1,5 +1,6 @@
 //! Durable operation receipts. Only a caller's explicit resubmission can resume creation.
 use super::{runtime, save};
+use crate::agents::model_catalog::ModelChoice;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
@@ -83,18 +84,21 @@ impl Action {
         }
     }
 
+    /// `choice` is part of the operation's input, so a retry of the same operation ID always
+    /// brings the same one.
     pub fn ensure_thread(
         &mut self,
         installation: &runtime::Installation,
         cwd: &str,
         title: &str,
         yolo: bool,
+        choice: &ModelChoice,
     ) -> Result<String, String> {
         self.ensure_thread_with(|existing, settings, on_created| match existing {
             Some(id) => {
-                runtime::finish_creation(installation, cwd, title, id, settings, on_created)
+                runtime::finish_creation(installation, cwd, title, id, choice, settings, on_created)
             }
-            None => runtime::create(installation, cwd, title, yolo, on_created),
+            None => runtime::create(installation, cwd, title, yolo, choice, on_created),
         })
     }
 
@@ -274,6 +278,21 @@ mod tests {
         assert_eq!(duplicate["sessionId"], "thread");
         assert_eq!(starts, 2);
         assert!(Action::load(path, json!({"different":"content"})).is_err());
+    }
+
+    #[test]
+    fn a_retry_cannot_change_the_model_picked_for_an_operation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("op.json");
+        let picked =
+            |model: &str| json!({"op":"create","id":"operation","text":"task","model":model});
+        Action::load(path.clone(), picked("model-a"))
+            .unwrap()
+            .persist()
+            .unwrap();
+        assert!(Action::load(path.clone(), picked("model-b")).is_err());
+        assert!(Action::load(path.clone(), input()).is_err());
+        assert!(Action::load(path, picked("model-a")).is_ok());
     }
 
     #[test]

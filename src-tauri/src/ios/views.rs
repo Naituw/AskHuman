@@ -12,7 +12,7 @@ use super::crypto;
 use super::wire::{
     AgentRef, AskView, AssetRef, ConfirmChoiceView, ConfirmDetailView, ConfirmFieldView,
     ConfirmInputView, ConfirmView, MessageView, OptionView, ProjectRef, QuestionView, RequestView,
-    MAX_ASSET_BYTES, MAX_REQUEST_IMAGES, THUMB_MAX_BYTES,
+    MAX_ASSET_BYTES, MAX_REQUEST_IMAGES, SESSION_TITLE_MAX_CHARS, THUMB_MAX_BYTES,
 };
 
 /// A file the phone may fetch with `asset.get` while the request is pending.
@@ -99,6 +99,20 @@ pub fn thumbnail(path: &std::path::Path) -> Option<Vec<u8>> {
     None
 }
 
+/// A session title as a request carries it: one line (whitespace runs collapse into one space) of
+/// at most `SESSION_TITLE_MAX_CHARS` characters, `None` when nothing is left.
+pub fn clean_session_title(raw: &str) -> Option<String> {
+    let one_line = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.is_empty() {
+        return None;
+    }
+    if one_line.chars().count() <= SESSION_TITLE_MAX_CHARS {
+        return Some(one_line);
+    }
+    let cut: String = one_line.chars().take(SESSION_TITLE_MAX_CHARS).collect();
+    Some(format!("{}…", cut.trim_end()))
+}
+
 fn asset_for(file: &FileAttachment, with_thumb: bool) -> (AssetRef, Option<AssetSource>) {
     let asset_id = crypto::new_id();
     let mime = mime_for(&file.name).to_string();
@@ -167,6 +181,7 @@ pub fn ask_view(
         created_at: created_at_ms,
         agent: agent_ref(origin),
         project: project_ref(origin),
+        session_title: None,
         source: source_label(origin),
         content_hash: String::new(),
         truncated: false,
@@ -251,6 +266,7 @@ pub fn confirm_view(request: &ConfirmRequest, origin: &ConversationOrigin) -> Re
         created_at: request.created_at_ms as i64,
         agent: agent_ref(origin),
         project: project_ref(origin),
+        session_title: None,
         source: source_label(origin),
         content_hash: String::new(),
         truncated: false,
@@ -330,6 +346,36 @@ mod tests {
         assert_eq!(view.agent.kind, "other");
         assert_eq!(view.agent.label, DEFAULT_SOURCE_NAME);
         assert_eq!(view.source, "");
+    }
+
+    #[test]
+    fn a_session_title_is_one_short_line_or_nothing() {
+        assert_eq!(clean_session_title(""), None);
+        assert_eq!(clean_session_title(" \n\t "), None);
+        assert_eq!(
+            clean_session_title("  Fix the\n flaky   test\t"),
+            Some("Fix the flaky test".into()),
+            "whitespace runs collapse into one space"
+        );
+        let exact = "字".repeat(SESSION_TITLE_MAX_CHARS);
+        assert_eq!(clean_session_title(&exact), Some(exact.clone()));
+        let long = format!("{exact}尾巴");
+        let cut = clean_session_title(&long).unwrap();
+        assert_eq!(cut.chars().count(), SESSION_TITLE_MAX_CHARS + 1);
+        assert!(cut.ends_with('…'));
+        // A cut never leaves a space in front of the ellipsis.
+        let spaced = format!(
+            "{} {}",
+            "a".repeat(SESSION_TITLE_MAX_CHARS - 1),
+            "b".repeat(30)
+        );
+        assert!(!clean_session_title(&spaced).unwrap().ends_with(" …"));
+    }
+
+    #[test]
+    fn views_start_without_a_session_title() {
+        let request = AskRequest::new(MessagePrompt::default(), vec![], false);
+        assert_eq!(ask_view(&request, &origin(), 0).view.session_title, None);
     }
 
     #[test]

@@ -57,6 +57,85 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 - 提问正文里的本地图片尚未改写为 `ahasset://`，列表项的墓碑展示也未做；撤回插话只取回文字、不取回附件。
 - 发行给朋友之前：EMQX 自动开户与额度共享、TestFlight 外部测试说明、隐私政策网址与联系邮箱。
 
+## 待验收：iOS 通知时机（已实现并装机，真机一轮只验了一部分）
+
+2026-10-26 实现完成：iOS 不再受活跃槽 / `channels.autoActivation` 约束（每个提问和确认都挂到手机收件箱），手机没在看时的推送要等 Mac 键盘 / 鼠标空闲满
+`channels.ios.alertAfterSecs`（默认 900 秒，`0` = 立即）才发，每题每手机最多一条、不重复提醒。规格 [`docs/specs/ios-alert-timing.md`](specs/ios-alert-timing.md)，
+计划 [`docs/plans/ios-alert-timing.md`](plans/ios-alert-timing.md)。自动化（Rust 全量、前端、`vue-tsc`、clippy 1.99 `-D warnings`、fmt）全绿，已 `./scripts/install.sh` 装机；
+在用户的 Mac 上确认过：活跃槽为 `popup`、`autoActivation` 开时，提问也会挂到手机（`AskHuman channel ios status` 的「待回答请求」≥ 1）；daemon 读到的「Mac 已空闲」与独立读数一致，
+并随着停手而增长（0 → 5 秒）。iOS App、线协议、中继都没改。
+
+2026-10-27 真机一轮（`alertAfterSecs` 临时设为 60 秒；Mac「在用」用 `CGEventPost` 的 mouse-moved 事件模拟；两个测试提问用 `AskHuman -q … &` 发出、`kill` 取消；
+期间另有两个 Agent 会话的真实提问按同一规则被推送；配置已逐字节还原）：
+- 已验证：Mac 空闲越过 60 秒的时刻前后，手机收到两条通知（测试提问一 + 另一个会话的真实提问）；取消提问一后，已送达的那条被改写成「已取消 / 已处理」类文字 ——
+  **第一次真机证据：`collapse-id` 替换可用**。daemon 读到的空闲值无人操作时正常增长（到近 5 分钟），合成输入会把它清零。
+- 没观察到（用户没盯着看或没回答）：Mac 在用期间手机**没有**通知；推送之后**不重复**；提问到达时 Mac 已空闲则**几秒内**推。这三条目前只有自动化测试（虚拟时钟）覆盖。
+
+下一步：
+- [ ] （可选）补测上面三条没观察到的：这次要盯着手机，只看这三点，约 3 分钟。做法：把配置里的 `channels.ios.alertAfterSecs` 临时改成 60（设置页会显示成「1 分钟（自定义）」）；
+  「Mac 在用」用 `CGEventPost` 发 mouse-moved 事件模拟（实测会把空闲清零，不需要额外权限）；用 `AskHuman -q … &` 在后台发测试提问、`kill` 取消。时间线：Mac 在用时发一个提问（手机**不应**有通知）→
+  停止输入，空闲满 60 秒时来**一条**且不重复 → 再发一个（此时 Mac 已空闲，应几秒内就推）。手机要关专注模式、App 在后台，Mac 上别有别的待答提问（否则它也会被推）。
+  做完删掉配置里的键（原文件逐字节还原，可用 `shasum` 核对）。**不要用 `AskHuman help` 之类的词试命令**——它会被当成提问弹窗。
+- [ ] 设置页（设置 → 实验 → iOS App 渠道 → 推送时机）的实际外观：下拉、说明、「Mac 已空闲 N 分钟」。组件测试只覆盖结构与文案，没有看过截图（这台机器没给命令行 / Computer Use 屏幕录制权限，没法自己截）。
+- [ ] 规格「已知局限」9 里没验证的：远程桌面 / 屏幕共享的输入是否计入空闲；daemon 由 SSH 等非图形会话拉起时读到的空闲值是否可靠。有结果后写回规格，全部验完删掉本节。
+
+后续（本期不做，细节在规格「后续」一节；Follow 的去留已另立一节，见下）：
+- [ ] IM 统一（每个渠道各自的「提醒时机」）；保底封顶；有待答题时保持唤醒；D 到点时合并成一条「N 个提问在等你」；Time Sensitive、通知扩展送达回执、划掉追踪、手机上展示「Mac 在用」
+
+## 待验收：iOS「做完 / 出错」通知收窄（Mac 端与 App 端都已实现，真机一轮未做）
+
+2026-10-27 用户决定：App 里去掉手动「关注」星标（Agents 页本来就能看到所有 Agent 的状态），只保留「从手机创建的任务做完 / 出错」的自动通知，
+并且和提问一致——Mac 键鼠空闲满 D（默认 15 分钟）才推，你在电脑前不打扰；你回到 Mac 前没推出去的通知作废；任务第一次出结果后就不再通知该会话（一次性）；
+App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-follow-narrowing.md`](specs/ios-follow-narrowing.md)、计划 [`docs/plans/ios-follow-narrowing.md`](plans/ios-follow-narrowing.md)，
+同日全部批准。
+
+已完成：Mac 端（P1–P2，已 `./scripts/install.sh` 装机）、App 端（P3，提交 `feat(ios): drop the follow star and mark notified Agents with a bell`）、文档回写（P4）。
+自动化全绿：Rust 全量与 clippy / fmt、Swift 包全量、对真实 daemon + 本地 broker 的端到端、模拟器 UI 测试（en + zh-Hans）、
+模拟器上真 App 对真实 EMQX + 中继 + APNs 沙盒的完整场景（含被通知的 Agent 第一次结果的推送，之后铃铛消失）。线协议、中继、配置项都没改；
+旧版 App 的星标连新版 Mac 照常能加，同样一次性、同样遵守 D。**新版 App 没有装到用户的真机上，Mac 端的新规则也没有在真机上验证过。**
+
+下一步：
+- [ ] （可选，需要用户在场）真机一轮：把新版 App 装到手机（Xcode / `devicectl`），`alertAfterSecs` 临时设成 60 秒，从手机「新任务」发一个很快做完的任务
+  （Face ID；真实 Agent 的启动要用户批准）——列表行出现铃铛、详情页有一行说明；Mac 在用时做完应**不**推；停手满 60 秒才来一条；
+  做完之前回到 Mac 敲键盘则不应补推；做完后铃铛消失（`state.json` 的 `followSet` 为空）。配置用后还原；不要用 `AskHuman help` 之类的词试命令。
+
+## 进行中：跨设备待办同步（多台 Mac，iCloud）——评审已通过，开工中（P0 起）
+
+需求 `docs/specs/todo-sync.md`、计划 `docs/plans/todo-sync.md`（实施记录在其 §10）、界面稿 `docs/assets/todo-sync-ui/`。
+2026-10-27 用户评审通过并说「你自己全部搞定，我要上班了」；分支 `feat/todo-sync`，worktree `../HumanInLoop-todosync`（Dev Instance，popup-only）。
+S0 可行性 spike 的结果摘要在需求附录 A；spike 工程在仓库外：`~/Developer/AskHuman-TodoSync-Spike/`（复现方法见其中的 `RUNBOOK.txt`）。
+
+已定（用户 AskHuman 八轮，详见需求 §3、§17）：同一 Apple ID 的自己的多台 Mac；按 git remote 自动合并，每个目录 / worktree 是同一份待办的副本；无 remote 不同步；⚡ 不跨机；
+v1 不同步附件、同步执行历史；**清空历史是全局的**（清空时提示）；iCloud 模式下可见所有项目；架构 = Rust 同步核心 + 薄 CloudKit 适配器（不用 `CKSyncEngine`，推送只当提示）；
+whats-next 前「过期才拉」（> 20 秒，最多等 1.5 秒）；待办窗口统一改侧栏且打开不得卡顿；先自用，之后另行评审随正式版发布。
+容器 / bundle id：`iCloud.com.naituw.humaninloop.todosync` / `com.naituw.humaninloop.todosync`。
+
+下一步：
+- [ ] 按计划 §5 推进 P0 → P6；当前进度见计划 §10
+- [ ] **需要用户**（计划 §7，agent 不做）：开发者后台新建 App ID / 容器 / Developer ID 描述文件；helper 首次真机跑通后在 CloudKit Dashboard 把 schema 部署到 Production；在 Mac A 上用 Xcode 构建签名 helper 并拷到 Mac B。这些完成前，P3 之后的真机验收（计划 §5 P3 / P4 / P6）做不了
+## 进行中：iOS 新建任务时选模型与强度——Mac 端（P1、P2）已完成并装机，下一步 P3（iOS App）
+
+2026-10-27 用户提出「iOS 版创建任务时可以选择模型」，经 6 题问答定下范围：模型 + 强度一起做；清单以动态发现为主（Claude 用固定别名）；每次都从「默认」开始、不记忆；
+详情页显示实际模型、进度页显示所选；先只做 iOS，启动管线放共享层。用户同时强调**严禁触发计费**，并且**Cursor 严禁实测**。同日做了只读探测（没有起任何 Agent、没有发提示词、
+没有带真实凭据调模型），写成需求 [`docs/specs/ios-task-model.md`](specs/ios-task-model.md) 与计划 [`docs/plans/ios-task-model.md`](plans/ios-task-model.md)，用户评审批准，
+并对六条待确认点作了选择（Grok 用 `grok models`、Codex 一律走 `app-server` 的 `model/list`、Pi 三档强度、做 M10、实现完做一轮真实验证但每次要批准）。
+
+已完成：
+- P1（Mac 启动管线：`ModelChoice` 贯穿 `TaskSpec` → `LaunchRecord` → argv 与 Codex 桌面应用；没选时对外行为与以前逐字节相同）。
+- P2（Mac 清单 + 线协议 + 网关 + 详情页实际模型，已装机）：`task.options` 多了可选的 `models` / `defaultModel`，`task.create` 多了可选的 `model` / `effort`，
+  `watch.frame` 多了可选的 `model` / `reasoning`；旧版 App 连新 Mac 与以前完全一样。实施记录与偏差见计划「P2 实施记录」。
+
+下一步：
+- [ ] P3（iOS App：模型 / 强度两行、选择页、进度页与详情页显示；`git status ios/` 若仍有另一会话的未提交改动就在 `/tmp` 隔离副本里做）→ P4（文档回写）。
+  P2 **没有**往共享夹具 `ios/Fixtures/wire-v1/messages.json` 加新用例（Swift 的往返测试会因 App 还不认识新字段而变红），要在 P3 与 Swift 类型一起加。
+- [ ] （实现完做，**每次执行前**经用户批准，会产生模型费用；永远不含 Cursor）真机一轮：见计划 P4。同时验证两件我在本机看不到的事：已登录账号下 `grok models` 的输出
+  是否带逐模型档位（带了才补 Grok 的强度行与 M10）、带真实凭据的 `codex app-server` 的 `model/list`。
+- [ ] `ios_tasks::create()` 里「读就绪 → 取清单来源 → `resolve_pick` → `TaskSpec.choice`」这段胶水没有单测（`create()` 会真的起任务）；各部件各有测试，整条由上面那一轮覆盖。
+
+- [ ] 双机验收要 SSH 到 Mac B：需用户当次同意（S0 的授权只覆盖 spike）
+- [ ] S0 收尾（用户 2026-10-27 那题没答复，**什么都没删、没动 B**）：停掉的 spike helper 仍装在两台 Mac 上；测试待办还在 CloudKit 容器里；想收尾时再问
+- [ ] 分发给别人前：用另一个大陆 iCloud 账号复测（容器 / 用户层初始化）；公证与发布另行评审
+
 ## 待观察：拖入文件失败（`daemon.log` 的 `askhuman_drop` 行）
 
 2026-10-17 用户在日常版（v0.14.5）遇到几次「拖图片进窗口没加附件」（来源访达的下载 / 桌面 / 文稿，第二次拖就可以）。已加每种情形的可见提示和不含路径的诊断日志，

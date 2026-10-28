@@ -8,13 +8,12 @@ struct ConfirmScreen: View {
     @Environment(AppStore.self) private var store
     @State private var confirmDismiss = false
     @State private var problem: String?
-    @State private var sentTick = 0
 
     var body: some View {
         if let confirm = item.view?.confirm, let composer = store.confirmComposer(for: item) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if let finished = store.finished[item.id] { FinishedNotice(finished: finished) }
+                    if let finished = store.endedNotice(for: item.id) { FinishedNotice(finished: finished) }
                     if case .failed = item.state { FailedSubmissionNotice(item: item) }
                     RequestHeader(item: item)
                     DetailCard(confirm: confirm)
@@ -65,13 +64,12 @@ struct ConfirmScreen: View {
             } message: {
                 Text(problem ?? "")
             }
-            .sensoryFeedback(.success, trigger: sentTick)
         }
     }
 
     private func bar(composer: ConfirmComposer, confirm: ConfirmView) -> some View {
         let sending: Bool = { if case .sending = item.state { return true } else { return false } }()
-        let ended = store.finished[item.id] != nil
+        let ended = store.endedNotice(for: item.id) != nil
         let online = store.isOnline(macId: item.macId)
         return VStack(spacing: 6) {
             if ended {
@@ -85,7 +83,6 @@ struct ConfirmScreen: View {
                 Task {
                     do {
                         try await store.decide(composer, item: item)
-                        sentTick += 1
                     } catch {
                         problem = error.userMessage
                     }

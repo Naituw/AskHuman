@@ -60,6 +60,52 @@ public struct MacState: Identifiable, Sendable, Equatable {
     }
 }
 
+// MARK: freshness
+
+/// What the phone is doing to bring its lists up to date: the UI shows a calm "Updating…" in the
+/// title while it lasts, never a banner that pops in and out.
+public enum SyncStatus: Sendable, Equatable {
+    /// Every Mac that can be reached has answered: the lists are current.
+    case upToDate
+    /// The broker or a Mac has not answered yet, so what is shown may be a cached copy.
+    case updating
+    /// The broker cannot be reached; the app keeps trying.
+    case reconnecting
+    /// The broker refused the connection; waiting does not help.
+    case refused
+}
+
+/// Whether an empty list can be trusted to be empty.
+public enum ListReadiness: Sendable, Equatable {
+    /// At least one Mac answered and none is still on its way.
+    case ready
+    /// A Mac has not answered yet: an empty list says nothing.
+    case loading
+    /// No Mac can be reached (the broker is down, or every Mac is offline).
+    case unreachable
+}
+
+extension EngineState {
+    public var syncStatus: SyncStatus {
+        guard !macs.isEmpty else { return .upToDate }
+        switch phase {
+        case .refused: return .refused
+        case .backoff: return .reconnecting
+        case .idle, .connecting: return .updating
+        case .connected: return macs.contains { $0.link == .connecting } ? .updating : .upToDate
+        }
+    }
+
+    /// Mac by Mac, `.connecting` is the only state that says "not known yet": an offline Mac or a
+    /// dead broker is an answer, and an empty list is then empty because nothing can be seen.
+    public var listReadiness: ListReadiness {
+        guard !macs.isEmpty else { return .ready }
+        if macs.contains(where: { $0.link == .connecting }) { return .loading }
+        if macs.contains(where: { $0.link == .online }) { return .ready }
+        return .unreachable
+    }
+}
+
 // MARK: requests
 
 public enum RequestState: Sendable, Equatable {
@@ -81,6 +127,12 @@ public struct InboxItem: Identifiable, Sendable, Equatable {
     public var receivedAt: Date
     public var unread: Bool
     public var state: RequestState
+
+    /// Title of the Agent session that asks, when the Mac told one.
+    public var sessionTitle: String? { SessionTitle.clean(view?.sessionTitle ?? summary.sessionTitle) }
+
+    /// What names the request in lists and banners: its session's title, else the Agent.
+    public var displayTitle: String { sessionTitle ?? summary.agent.label }
 
     public init(
         macId: String, macName: String, requestId: String, summary: RequestSummary, view: RequestView?,
@@ -212,7 +264,8 @@ public enum EngineEvent: Sendable, Equatable {
     case requestFinished(macId: String, requestId: String, outcome: HistoryOutcome, by: String?)
     case macUnpaired(macId: String, macName: String)
     case pairingFinished(macId: String)
-    /// A followed Agent finished, failed or is waiting for an answer somewhere else.
+    /// A followed Agent finished or failed (a Mac older than `docs/specs/ios-follow-narrowing.md` also
+    /// reports one that waits for an answer somewhere else).
     case followEvent(macId: String, event: FollowEvent)
     /// The Mac refused to follow one more Agent (the limit is reached).
     case followRefused(macId: String, agentKey: String)

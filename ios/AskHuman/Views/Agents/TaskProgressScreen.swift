@@ -63,14 +63,16 @@ struct TaskProgressScreen: View {
     private func outcome(_ task: TaskProgress) -> some View {
         if task.foundAgent, let agentKey = task.agentKey {
             VStack(alignment: .leading, spacing: 10) {
-                Label(task.stage == "watching" ? "The Agent is running and you follow it." : "The Agent is running.", systemImage: "checkmark.circle.fill")
+                Label("The Agent is running.", systemImage: "checkmark.circle.fill")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.green)
-                if task.stage != "watching" {
-                    Text("It is not followed because this Mac already follows as many Agents as it allows.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                // The Mac followed the Agent (`watching`) unless it already had as many as it allows.
+                let note: LocalizedStringKey = task.stage == "watching"
+                    ? "You get a notification when it finishes or fails, once your Mac has been idle for a while."
+                    : "You will not be notified about this one: this Mac already has as many Agents to tell you about as it allows."
+                Text(note)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 Button {
                     store.openAgent(macId: task.macId, agentKey: agentKey)
                     store.dismissNewTask()
