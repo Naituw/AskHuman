@@ -99,6 +99,10 @@ public actor PhoneEngine: RemoteBackend {
     var followRequests: [String: String] = [:]
     var interjectBoxes: [String: ReplyMailbox<InterjectAck>] = [:]
     var interjectStateBoxes: [String: ReplyMailbox<InterjectState>] = [:]
+    /// Todo requests waiting for their answer (`PhoneEngine+Todos.swift`), and the Macs whose todo
+    /// changes the screen wants to hear about.
+    var todoBoxes: [String: ReplyMailbox<TodoReply>] = [:]
+    var wantedTodoWatches: Set<String> = []
     var taskOptions: [String: TaskOptionsState] = [:]
     var taskTodos: [String: [TodoOption]] = [:]
     var tasks: [TaskProgress] = []
@@ -239,6 +243,7 @@ public actor PhoneEngine: RemoteBackend {
         }
         failTransfers(with: .macOffline)
         failInterjects(for: nil, with: .macOffline)
+        failTodos(for: nil, with: .macOffline)
         watches = [:]
         interruptTasks()
     }
@@ -487,6 +492,7 @@ public actor PhoneEngine: RemoteBackend {
             if wasOnline {
                 failTransfers(for: device, with: .macOffline)
                 failInterjects(for: device, with: .macOffline)
+                failTodos(for: device, with: .macOffline)
                 dropWatches(of: device)
                 interruptTasks(of: device)
             }
@@ -551,6 +557,10 @@ public actor PhoneEngine: RemoteBackend {
             case TaskOptions.type: onTaskOptions(macId, try plain.body(as: TaskOptions.self))
             case TaskTodos.type: onTaskTodos(macId, try plain.body(as: TaskTodos.self))
             case TaskStatus.type: onTaskStatus(macId, try plain.body(as: TaskStatus.self))
+            case TodoProjects.type: onTodoProjects(macId, try plain.body(as: TodoProjects.self))
+            case ProjectTodos.type: onTodoList(macId, try plain.body(as: ProjectTodos.self))
+            case TodoAck.type: onTodoAck(macId, try plain.body(as: TodoAck.self))
+            case TodoChanged.type: onTodoChanged(macId, try plain.body(as: TodoChanged.self))
             case AssetChunk.type: await onAssetChunk(macId, try plain.body(as: AssetChunk.self))
             case AssetError.type: onAssetError(macId, try plain.body(as: AssetError.self))
             case UploadAck.type: onUploadAck(macId, try plain.body(as: UploadAck.self))

@@ -271,6 +271,8 @@ public enum EngineEvent: Sendable, Equatable {
     case followRefused(macId: String, agentKey: String)
     /// The Agent picked up the messages queued for it.
     case interjectConsumed(macId: String, agentKey: String)
+    /// The todos of a Mac changed (`todo.changed`); `rev` is the signature of its todo store.
+    case todoChanged(macId: String, rev: UInt64)
 }
 
 public enum BackendError: Error, Sendable, Equatable, LocalizedError {

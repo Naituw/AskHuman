@@ -4,7 +4,7 @@ import AHProtocol
 import AHStore
 
 public enum AppTab: String, Hashable, Sendable, CaseIterable {
-    case inbox, agents, history, macs
+    case inbox, agents, todos, history, macs
 }
 
 public enum InboxFilter: Hashable, Sendable {
@@ -169,6 +169,9 @@ public final class AppStore {
         didSet { defaults.set(autoAdvance, forKey: Self.autoAdvanceKey) }
     }
 
+    /// The Todos tab: the todos of the Macs, shown and edited from here.
+    public let todos: TodosStore
+
     @ObservationIgnored public let backend: RemoteBackend
     @ObservationIgnored public let drafts: DraftStore
     @ObservationIgnored let defaults: UserDefaults
@@ -197,6 +200,7 @@ public final class AppStore {
         self.backend = backend
         self.drafts = drafts
         self.defaults = defaults
+        todos = TodosStore(backend: backend, defaults: defaults)
         autoAdvance = defaults.object(forKey: Self.autoAdvanceKey) as? Bool ?? true
     }
 
@@ -240,6 +244,7 @@ public final class AppStore {
     private func apply(_ next: EngineState) async {
         state = next
         hasState = true
+        todos.update(macs: next.macs, foreground: next.foreground)
         let now = Date()
         for item in next.inbox { retained[item.id] = (item, now) }
         for (key, entry) in retained where now.timeIntervalSince(entry.at) > 600 && !inboxPath.contains(key) {
@@ -320,6 +325,8 @@ public final class AppStore {
             break
         case .interjectConsumed(let macId, let agentKey):
             consumed[AgentItem.key(macId, agentKey)] = Date()
+        case .todoChanged(let macId, let rev):
+            todos.changed(macId: macId, rev: rev)
         }
     }
 

@@ -19,12 +19,12 @@ public enum MockData {
         [
             MacState(
                 id: homeMacId, name: "Home MacBook Pro", macName: "Home MacBook Pro", alias: nil, link: link,
-                caps: Caps(newTask: true, interject: true, watch: true), slot: SlotInfo(active: false, autoActivation: true),
+                caps: Caps(newTask: true, interject: true, watch: true, todos: true), slot: SlotInfo(active: false, autoActivation: true),
                 pairedAt: now.addingTimeInterval(-86_400 * 12), lastSeenAt: now, pendingCount: 0, pushStatus: "ok"
             ),
             MacState(
                 id: officeMacId, name: "Office iMac", macName: "wutian's iMac", alias: "Office iMac", link: link,
-                caps: Caps(newTask: true, interject: true, watch: true), slot: SlotInfo(active: true, autoActivation: false),
+                caps: Caps(newTask: true, interject: true, watch: true, todos: true), slot: SlotInfo(active: true, autoActivation: false),
                 pairedAt: now.addingTimeInterval(-86_400 * 3), lastSeenAt: now.addingTimeInterval(link == .online ? 0 : -3_600),
                 pendingCount: 0, pushStatus: "ok"
             ),

@@ -70,6 +70,8 @@ extension PhoneEngine {
         // going down, or dropped on the way, is otherwise lost for good, and nothing tells the phone.
         pushSent[macId] = nil
         await sendPushHandle(to: macId)
+        // The Mac forgets who watches its todos with the connection.
+        await reopenTodoWatch(macId)
     }
 
     func onMacInfo(_ macId: String, _ info: MacInfo) {
@@ -115,6 +117,8 @@ extension PhoneEngine {
     func removeMac(_ macId: String) {
         failTransfers(for: macId, with: .unknownMac)
         failInterjects(for: macId, with: .unknownMac)
+        failTodos(for: macId, with: .unknownMac)
+        wantedTodoWatches.remove(macId)
         dropWatches(of: macId, forget: true)
         interruptTasks(of: macId, forget: true)
         taskOptions[macId] = nil

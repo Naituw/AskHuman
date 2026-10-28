@@ -83,6 +83,17 @@ public protocol RemoteBackend: AnyObject, Sendable {
     /// Makes this phone the one that receives the Mac's questions now.
     func takeSlot(macId: String) async throws
 
+    // todos
+    /// The projects a Mac lists for its todos (`mode`, sync facts, rows).
+    func todoProjects(macId: String) async throws -> TodoProjects
+    /// The todos of one project.
+    func todoList(macId: String, projectId: String) async throws -> ProjectTodos
+    /// Applies a write. A refusal comes back as an acknowledgement (with the project's current list); only
+    /// the lack of an answer throws, and then the same `operation` can be sent again safely.
+    func todoApply(macId: String, operation: TodoOperation) async throws -> TodoAck
+    /// Subscribes to (or leaves) the Mac's `todo.changed` nudges; the wish survives reconnects.
+    func todoWatch(macId: String, on: Bool) async
+
     // history
     func history() async -> [HistoryEntry]
     func deleteHistory(id: String) async

@@ -67,6 +67,16 @@ final class TestMac: @unchecked Sendable {
     var watchOpens: [String] = []
     var watchCloses: [String] = []
 
+    // Todos: see `TestMac+Todos.swift`.
+    var todoProjectsReply = TodoProjects(rev: 1, mode: "local", projects: [])
+    var todoLists: [String: ProjectTodos] = [:]
+    var todoOps: [TodoOperation] = []
+    /// What the Mac answers to `todo.op` (nil = no answer at all).
+    var todoAnswer: ((TodoOperation) -> TodoAck?)?
+    var ignoreTodoReads = false
+    /// The `todo.watch` messages received, in order (`true` = on).
+    var todoWatches: [Bool] = []
+
     init(broker: LoopbackBroker, user: String, clock: ManualClock, macId: String = Bytes.newId(), macName: String = "Home Mac") {
         self.user = user
         self.macId = macId

@@ -133,7 +133,7 @@ extension TestMac {
             }
             await sendDown(SlotState(rev: slotRev, active: true, autoActivation: false), to: phoneId)
         default:
-            break
+            await handleTodos(plain, from: phoneId)
         }
     }
 }

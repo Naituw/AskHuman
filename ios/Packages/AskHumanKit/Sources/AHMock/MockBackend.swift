@@ -77,6 +77,22 @@ public actor MockBackend: RemoteBackend {
     /// `nil` keeps them queued until `consumeInterjects` is called.
     public var interjectConsumeDelay: Double? = 4
 
+    // Todos (`MockBackend+Todos.swift`).
+    var todoRows: [String: [TodoProjectRow]] = [:]
+    /// The todos of each project, by `macId|projectId`.
+    var todoLists: [String: ProjectTodos] = [:]
+    var todoRev: UInt64 = 1
+    var todoWatchers: Set<String> = []
+    /// Answers already given, by `clientMsgId`: a repeated write gets the first answer again.
+    var todoAcks: [String: TodoAck] = [:]
+    public internal(set) var todoOps: [TodoOperation] = []
+    /// Makes the next todo write fail the way a Mac that could not store it does (a one-shot).
+    public var failNextTodoWrite: String?
+    /// What the Home MacBook Pro's sync line says is wrong (`notSignedIn`, `quota`, …); `nil` when nothing is.
+    public var todoSyncProblem: String?
+    /// The Macs that sync their todos through iCloud (`mode: icloud`); the others keep their own.
+    var syncingTodoMacs: Set<String> = [MockData.homeMacId]
+
     public private(set) var submissions: [Submission] = []
     public private(set) var uploads: [UploadSource] = []
     public private(set) var seen: [String] = []
@@ -142,6 +158,9 @@ public actor MockBackend: RemoteBackend {
             initial.macs[index].pendingCount = initial.inbox.filter { $0.macId == initial.macs[index].id }.count
         }
         state = initial
+        let sample = MockData.todoSample(now: date)
+        todoRows = sample.rows
+        todoLists = sample.lists
     }
 
     // MARK: lifecycle
