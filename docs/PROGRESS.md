@@ -154,7 +154,7 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 
 下一步：
 - [ ] **用户验收**：看 `docs/specs/ios-todos.md` §3 的 16 条决策（尤其 I2 不直连 CloudKit、I4 设备模式不列仅云端项目、I5 手机不能新建项目、I13 手机不落盘），不同意的整条否决；真机上装一遍（`ios/` 里 `xcodegen generate`，配对后进「待办」标签）；多台 Mac、iCloud 来源自动换机、Mac 离线时的表现要真机才看得全。
-- [ ] 合并进 main：分支已经把当时的 main（`6eb30f1`，网页渲染 Markdown 与作答流程的提交）合进来了（合并提交 `32463a7`，冲突只有 mock 场景枚举、overview 的启动参数行和字符串目录，目录用 `make-catalog.py` 重新生成），所以对那个 main 是快进。但**主检出的工作区里另一方有未提交的文档改动**（`docs/overview-ios.md`、`docs/specs/ios-channel.md`、`docs/PROGRESS.md` 等），与本分支改的是同几个文件，`git merge` 会拒绝；要先让那一方提交或暂存。之后 main 若又有新提交，再 `git merge main` 一次即可；`Localizable.xcstrings` 冲突时重新生成而不是手工合并。老 Mac 要先装带这个功能的版本（合并后 `./scripts/install.sh`），手机上才不会显示「这台 Mac 需要更新」。
+- [ ] 合并进 main：分支已经把 main（当前 `1935502`）合进来了（最近一次合并提交 `18f67d9`），所以对现在的 main 是快进。但**主检出的工作区里 `docs/PROGRESS.md` 有别人未提交的改动**，本分支也改了它，`git merge` 会拒绝；要先让那一方提交或暂存。之后 main 若又有新提交，再 `git merge main` 一次即可（上两次只在 mock 场景枚举、`docs/overview-ios.md` 的表格行和字符串目录冲突过）；`Localizable.xcstrings` 冲突时用 `ios/Tools/make-catalog.py` 重新生成而不是手工合并，脚本现在遇到同一个键的两种译法会直接报错。老 Mac 要先装带这个功能的版本（合并后 `./scripts/install.sh`），手机上才不会显示「这台 Mac 需要更新」。
 - [ ] 后置（需求 §11）：手机直连 CloudKit（Mac 都不在线也能用，需用户授权开 iCloud 容器 + Swift 重实现同步核心）、附件的查看与添加、「全部待办」聚合页、清空历史、从 iCloud 移除项目、待办推送、离线编辑队列。
 - [ ] 已知局限（需求 §10）：Mac 都不在线时手机看不到待办；线协议里 `helper` 没有「未安装」状态，手机上「没装」与「没在跑」显示成同一句；单条超大待办（桌面端 / CLI 不限长度，手机端限 4000 字）可能让那个项目的 `todo.list` 装不进一条消息而超时。
 
