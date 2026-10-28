@@ -16,8 +16,8 @@ final class TodosStoreTests: XCTestCase {
     private let home = MockData.homeMacId
     private let office = MockData.officeMacId
 
-    private func make() async {
-        backend = MockBackend(scenario: .demo, latency: 0)
+    private func make(_ scenario: MockBackend.Scenario = .demo) async {
+        backend = MockBackend(scenario: scenario, latency: 0)
         defaults = UserDefaults(suiteName: "ah-todos-test-" + UUID().uuidString)!
         app = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults)
         await app.start()
@@ -63,6 +63,27 @@ final class TodosStoreTests: XCTestCase {
         XCTAssertEqual(todos.choices[0].availability, .available, "a Mac that syncs makes iCloud choosable")
         XCTAssertTrue(todos.choices[1].syncs)
         XCTAssertFalse(todos.choices[2].syncs)
+    }
+
+    func testMacsThatPredateTodosAreNotAskedAndSayTheyNeedAnUpdate() async {
+        await make(.outdated)
+        todos.setVisible(true)
+        await eventually("the verdict") { self.todos.projectsState == .failed(.needsUpdate) }
+        XCTAssertEqual(todos.source, .mac(home), "the first Mac is shown even if it cannot be")
+        XCTAssertNil(todos.projects)
+        XCTAssertNil(todos.accessMacId, "nothing is subscribed to")
+        XCTAssertEqual(todos.choices.map(\.availability), [.noSync, .needsUpdate, .needsUpdate])
+    }
+
+    func testAnOutdatedMacIsExplainedEvenWhenTheTabIsOnScreenBeforeTheMacsAreKnown() async {
+        backend = MockBackend(scenario: .outdated, latency: 0)
+        defaults = UserDefaults(suiteName: "ah-todos-test-" + UUID().uuidString)!
+        app = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults)
+        todos.setVisible(true)
+        XCTAssertEqual(todos.projectsState, .failed(.noMacs), "nothing is paired as far as the store knows")
+        await app.start()
+        await eventually("the verdict") { self.todos.projectsState == .failed(.needsUpdate) }
+        XCTAssertEqual(todos.source, .mac(home))
     }
 
     func testICloudShowsWhatSyncsAndAMacShowsWhatIsOnIt() async {

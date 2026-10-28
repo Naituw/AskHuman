@@ -20,6 +20,8 @@ public actor MockBackend: RemoteBackend {
         /// The demo with two long questions left: the second must start at its top whatever the first
         /// was scrolled to.
         case longs
+        /// The demo, with both Macs on an AskHuman that predates the todos (`caps.todos == false`).
+        case outdated
         /// Paired Macs that have not answered yet, as right after the app opened: the lists are
         /// still loading. They stay so unless a sync delay is given, after which the demo appears.
         case syncing
@@ -119,7 +121,7 @@ public actor MockBackend: RemoteBackend {
         let date = now()
         var initial: EngineState
         switch scenario {
-        case .demo, .quota, .single, .longs:
+        case .demo, .quota, .single, .longs, .outdated:
             let inbox: [InboxItem]
             switch scenario {
             case .single: inbox = MockData.inbox(now: date).filter { $0.requestId == "req-select" }
@@ -130,7 +132,8 @@ public actor MockBackend: RemoteBackend {
                 ? TrafficStats(month: "2026-10", sentBytes: 230_000_000, receivedBytes: 240_000_000, sentMessages: 41_000, receivedMessages: 77_000)
                 : TrafficStats(month: "2026-10", sentBytes: 18_432, receivedBytes: 96_210, sentMessages: 41, receivedMessages: 77)
             initial = EngineState(
-                phase: .connected(via: "tcp"), foreground: true, macs: MockData.macs(now: date), inbox: inbox,
+                phase: .connected(via: "tcp"), foreground: true,
+                macs: MockData.macs(now: date, knowTodos: scenario != .outdated), inbox: inbox,
                 push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1,
                 traffic: traffic,
                 brokerHost: "broker.example.com", agents: MockData.agents(now: date)

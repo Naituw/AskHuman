@@ -176,6 +176,7 @@ public final class TodosStore {
             syncWatch()
             return
         }
+        let chosen = source
         ensureSource()
         func usable(_ list: [MacState]) -> Set<String> {
             Set(list.filter { $0.link == .online && $0.caps.todos }.map(\.id))
@@ -186,14 +187,16 @@ public final class TodosStore {
         let came = usable(next).subtracting(usable(before))
         let went = usable(before).subtracting(usable(next))
         if visible {
-            var reload = false
+            // A source picked only now (the tab was on screen before the Macs were known) has nothing loaded
+            // yet, even if its Mac cannot answer: an outdated or unreachable Mac is explained, not left loading.
+            var reload = source != chosen
             switch source {
             case .mac(let id)?:
-                reload = came.contains(id)
+                reload = reload || came.contains(id)
                 if down(next).contains(id) { projectsState = .failed(.offline) }
             case .icloud?:
                 // Something that can serve iCloud came up, or the one serving it left.
-                reload = !came.isEmpty || (accessMacId.map { went.contains($0) } ?? false)
+                reload = reload || !came.isEmpty || (accessMacId.map { went.contains($0) } ?? false)
             case nil:
                 break
             }
