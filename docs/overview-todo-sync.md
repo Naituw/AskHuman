@@ -74,6 +74,8 @@ todos.json ◄── 读写 ──► CLI / 弹窗 / 待办窗口 / IM / MCP    
 
 `Kit/`（线编解码、分发、tick 调度、错误映射、套接字服务、CloudKit 后端）是纯 Swift 包，`swift test` 即可；`App/`（`AppDelegate`、`HelperRuntime`、登录项注册、触发器、拉起 tick）由 XcodeGen 的工程 `project.yml` 生成。`todo-sync-helper/scripts/build.sh unsigned|dev|devid` 构建；`dev` / `devid` 需要维护者的 Apple 账号，没有 `HELPER_ALLOW_CLOUD_CHANGES=1` 会拒绝运行。`scripts/todo-sync-install-helper.sh` 把构建好的 `.app` 装进 `~/Applications`、注册登录项并打招呼。helper 暂不随正式版发布（后置项见 `docs/PROGRESS.md`）。
 
+**装到另一台 Mac**：`ditto -c -k --keepParent` 打成 zip，`scp` 过去后 `ditto -x -k` 解开（不带隔离属性），在那台上跑 `scripts/todo-sync-install-helper.sh <解开的 .app>`（SSH 里也能注册登录项）；两台 `hello` 回的 `accountHash` 前 8 位应一致。AskHuman 本体要用**那台 Mac 自己的** Developer ID 签名：钥匙串按指定要求（含团队 ID）信任二进制，把另一个团队签的二进制直接拷过去会让后台 daemon 读不到 IM 密钥（见 `scripts/install.sh` 的签名注释）。SSH 会话拿不到签名私钥（`codesign` 报 `errSecInternalComponent`），要像 `install.sh` 的 `sign_via_gui_launchd` 那样用 `launchctl bootstrap gui/<uid>` 起一次性任务在 GUI 会话里签；最省事的是在那台上直接 `./scripts/install.sh`。`~/.local/bin/AskHuman` 若是指向 npm 包的符号链接，要替换的是链接指向的文件。装完用 `AskHuman doctor` 看 daemon 已换成新指纹。
+
 ## 验证
 
 - Rust：`cd src-tauri && cargo test --bin AskHuman todo_sync`（核心 + `sim.rs` 收敛模拟；`TODO_SYNC_SOAK=<n>` 加大随机种子数浸泡）；`cargo test --release --bin AskHuman todo_sync::sim::the_local_phase -- --ignored --nocapture` 量本地阶段与项目列表在压力数据（200 项目 / 4000 实体）上的耗时。
