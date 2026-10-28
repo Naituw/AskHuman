@@ -79,6 +79,7 @@ todos.json ◄── 读写 ──► CLI / 弹窗 / 待办窗口 / IM / MCP    
 ## 验证
 
 - Rust：`cd src-tauri && cargo test --bin AskHuman todo_sync`（核心 + `sim.rs` 收敛模拟；`TODO_SYNC_SOAK=<n>` 加大随机种子数浸泡）；`cargo test --release --bin AskHuman todo_sync::sim::the_local_phase -- --ignored --nocapture` 量本地阶段与项目列表在压力数据（200 项目 / 4000 实体）上的耗时。
+- **两台真 Mac 的传播延迟（真实区，会写探针待办）**：在 A 的主检出里（不能在 Dev Instance 的 worktree 里）跑 `python3 scripts/todo-sync-latency-probe.py run --peer <B 的 ssh 目标> --peer-dir '~/Developer/<B 上同一仓库的检出>' --local-dir <A 上的主检出>`。两台各起一个 20 毫秒轮询 `todos.json` 的观察者，来回 ping 校时，在两台之间交替加 / 删一条带 `AH-PROBE-` 标记的待办，量对端 `todos.json` 里出现 / 消失的时间，再用两台 helper 日志把每个样本拆成「改动 → 保存完成 → 推送到达 → 拉取完成 → 落地」；`natural` 阶段不干预，`active` 阶段两台各开 `caffeinate -u`。每条探针待办会留一个永不清理的墓碑（几百字节）；删除按序号只能「先查序号再删」，脚本会核对删掉的文本、删错就补回。`selftest` 子命令只跑纯函数部分。
 - Swift：`cd todo-sync-helper && swift test`。
 - 前端：`npx vitest run src/views`（`todoProjects` / 侧栏 / `TodosView` / 设置卡）。
 - 窗口打开性能：`scripts/perf-todos-window.mjs`（`--ref <旧二进制>` 做 A/B，门限 +10% 且 +30 ms）。
