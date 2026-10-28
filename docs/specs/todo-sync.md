@@ -328,7 +328,7 @@ whats-next 的待办卡片由 **CLI 进程自己**读 `todos.json` 现场构建�
 | CLI `AskHuman todo …` | 读取前做本地阶段；写入路径不变 |
 | Stop 卡待办派发、弹窗折叠待办区 | 读取前做本地阶段；弹窗已监听 `todos.json`，后台同步写文件时自动刷新 |
 | IM `/todo`、`/todo-rm`、`/todo-auto` | 读取前做本地阶段 |
-| iOS 网关的待办视图 | 不变（读本机 `todos.json`） |
+| iOS 网关的待办视图 | 读写本机 `todos.json`（`docs/specs/ios-todos.md`）：读取前做本地阶段；订阅时（开着同步）后台做一次「过期才拉」；手机的写入走与 GUI / CLI 同一套 `todos.rs` 函数，同步靠 helper 对文件的监听，网关不另行处理。「iCloud」只是手机上的一个来源（由开着同步且在线的 Mac 代答），不是第三个副本 |
 | GUI 待办窗口 | 侧栏重构（§9）；已监听 `todos.json`，后台同步写文件时自动刷新 |
 | 托盘、Agent 状态窗口里的「添加待办」入口 | 不变（预选项目照旧传 key） |
 
@@ -344,7 +344,7 @@ whats-next 的待办卡片由 **CLI 进程自己**读 `todos.json` 现场构建�
 
 - **附件同步**（含同机多目录之间）：后置（T6）。
 - **不同 Apple ID / 共享给别人**：不做（T1）。
-- **iOS App 读写待办**：后置；同一容器日后可复用。
+- **iOS App 读写待办**：已通过 iOS 渠道的网关做了（`docs/specs/ios-todos.md`，手机经开着同步的 Mac 代答，Mac 都不在线时看不到）；**手机直连 CloudKit**（作为第三个副本，Mac 不在线也能用）仍后置：要用户为 iOS App ID 开 iCloud 容器权限，并在 Swift 里重实现同步核心，见该 spec §11。
 - **⚡ 跨机**、**跨 Mac 互斥取走**：不做（T5、§6.5）。
 - **Windows / Linux 同步**：不做；界面侧栏共用。
 - **空闲 Mac 的秒级推送**：做不到（附录 A），靠轮询 / 唤醒 / whats-next 前拉取兜底。

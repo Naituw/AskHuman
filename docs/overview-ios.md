@@ -13,7 +13,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 - iOS 是 Daemon 里的又一个渠道（`channels/ios.rs`），受 `experimental.enabled` 隐藏；一个 Mac 一份 broker 凭据，多台 Mac 共用同一份（连接串可导入导出），手机经二维码配对。
 - **端到端加密**：每个配对一对方向密钥（ChaCha20-Poly1305），broker 只见密文；配对用一次性票据 + 6 位校验码，由 Mac 用户在设置页或 CLI 上放行。推送预览同样加密，由手机上的通知扩展解密。
 - **Mac 不持有 APNs 密钥**：Mac 把加密后的信封和手机的不透明句柄交给中继，中继按固定白名单拼出提醒并转给 APNs。
-- 手机能做的事：回答问题 / 确认（含多题、推荐、附件）、看 Agent 列表（App 里没有手动关注：从手机新建的任务做完 / 出错时 Mac 会通知，列表行与详情页只读地标出）、实时观察（Watch，≤2 路、仅前台）、给 Agent 插话、新建 Agent 任务（Face ID 确认）。
+- 手机能做的事：回答问题 / 确认（含多题、推荐、附件）、看 Agent 列表（App 里没有手动关注：从手机新建的任务做完 / 出错时 Mac 会通知，列表行与详情页只读地标出）、实时观察（Watch，≤2 路、仅前台）、给 Agent 插话、新建 Agent 任务（Face ID 确认）、管理待办（「待办」标签：来源是某台 Mac 或「iCloud」，浏览项目、增 / 改 / 勾 / 删 / 排序、⚡ 自动执行、看执行历史；`docs/specs/ios-todos.md`）。
 - **投递与通知分开**（`docs/specs/ios-alert-timing.md`）：iOS 不参与 IM 的活跃槽，`attach_im_channels` / `confirm_im_candidates` 在选完 IM 候选后用 `with_ios` 把它并进来，每个提问 / 确认都挂给所有已配对手机，手机一连上就从 hello 快照（`request.get`）拉到。手机在看（在线 + 前台 + 已 hello）时经 MQTT 实时送达、不推送；不在看时只有系统推送能打扰人，而它要等 Mac 键盘 / 鼠标空闲满 `channels.ios.alertAfterSecs`（默认 900 秒，`0` = 立即）才发，每题每手机最多一条，没有提醒。
 
 ## Mac 端（`src-tauri/src/`）
@@ -24,10 +24,11 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 | `ios/transport.rs` | `rumqttc` 传输（TLS 优先、WSS 备用、退避重连）、`LoopbackTransport`（测试：丢包 / 乱序 / 断线注入）、`probe`（设置页「测试连接」）。明文 TCP 只对回环地址生效（`first_via`） |
 | `ios/store.rs` | `~/.askhuman/ios/` 下的 `state.json`（手机、关注集、推送句柄、本月流量）与 `journal.json`（状态变更消息的幂等日志）；配对密钥在系统钥匙串，缺钥匙串时回退 `keys.json` 并在设置页提示 |
 | `ios/views.rs` | 把请求投影成手机渲染的视图（选项原文、TODO、确认变体） |
+| `ios/todos_view.rs` | 待办「项目列表」的纯函数：候选 + 同步元数据 → 带不透明 id、同名后缀、分段的行（与桌面端侧栏的 `mergeProjects` / `labelProjects` 同一算法，两边各有镜像用例）；只有哈希 id 与最少的上层目录名上线，路径不出 Mac |
 | `ios/connstr.rs` · `qr.rs` | `ahconn1.` 连接串（含 broker 密码，只在显式请求时产出）、配对二维码 SVG |
 | `ios/push.rs` | 中继客户端（`/v1/push`），只传信封与句柄；`check_health`（`/v1/health`，设置页 / `channel test ios` 的中继检查） |
-| `ios/gateway/` | Gateway actor：`mod.rs`（事件循环、在线状态、hello 快照）· `pairing.rs`（配对状态机）· `requests.rs`（问答 / 确认闭环、答案校验、按 Mac 空闲时长触发推送）· `agents.rs`（Agent 列表、Follow = 通知集：App 里没有手动入口，只有从手机新建的任务会进来；通知集里的 Agent 第一次「做完 / 出错」时：手机在看发应用内横幅，否则排队等 Mac 空闲满 D 才推，你回到 Mac 就作废，出结果后移出通知集）· `watch.rs`（实时帧）· `tasks.rs`（新任务、状态机 accepted→launching→launched→watching…）· `assets.rs`（附件双向分块）· `hostapi.rs`（Gateway 向 Daemon 提问的 `Host` trait）；`testkit.rs` + `tests*.rs` 是进程内的完整测试台 |
-| `daemon/runtime/ios.rs` · `ios_agents.rs` · `ios_tasks.rs` | `Host` 的实现：配置变化时重启 Gateway、读 registry / Watch / 插话、启动任务；`mac_idle_secs()` 与 `alert_after_secs()` 把空闲时长与配置接给推送判断 |
+| `ios/gateway/` | Gateway actor：`mod.rs`（事件循环、在线状态、hello 快照）· `pairing.rs`（配对状态机）· `requests.rs`（问答 / 确认闭环、答案校验、按 Mac 空闲时长触发推送）· `agents.rs`（Agent 列表、Follow = 通知集：App 里没有手动入口，只有从手机新建的任务会进来；通知集里的 Agent 第一次「做完 / 出错」时：手机在看发应用内横幅，否则排队等 Mac 空闲满 D 才推，你回到 Mac 就作废，出结果后移出通知集）· `watch.rs`（实时帧）· `tasks.rs`（新任务、状态机 accepted→launching→launched→watching…）· `assets.rs`（附件双向分块）· `todos.rs`（待办：项目列表 / 单个项目 / 七种写入 / 订阅与变更通知，`docs/specs/ios-todos.md`）· `hostapi.rs`（Gateway 向 Daemon 提问的 `Host` trait）；`testkit.rs` + `tests*.rs` 是进程内的完整测试台 |
+| `daemon/runtime/ios.rs` · `ios_agents.rs` · `ios_tasks.rs` · `ios_todos.rs` | `Host` 的实现：配置变化时重启 Gateway、读 registry / Watch / 插话、启动任务、读写 `todos.json`（`ios_todos.rs`：与待办窗口 / CLI 同一把锁、同一套 `todos.rs` 函数）；`mac_idle_secs()` 与 `alert_after_secs()` 把空闲时长与配置接给推送判断 |
 | `idle.rs` | `secs_since_last_input()`：macOS 用 CoreGraphics `CGEventSourceSecondsSinceLastEventType`（合并会话状态、任意输入事件，无需任何权限）；其它平台返回 `None`（Gateway 把「读不到」当作「够久了」，照旧立即推） |
 | `daemon/runtime/task_launch.rs` | IM `/new` 与 iOS 共用的任务启动（门槛、冲突、终端 / Codex App 路径） |
 | `channels/ios.rs` | `Channel` 实现：请求交给 Gateway，首个终态获胜后撤销手机上的请求 |
@@ -50,13 +51,13 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
   | `AHProtocol` | 与 Rust 对应的线协议、加解密、信封（通知扩展也链接它，所以保持极小） |
   | `AHStore` | 文件型 JSON 存储（历史、草稿、发件箱、流量）、钥匙串 `Vault`、`PushDecryptor`（通知扩展用） |
   | `AHTransport` | `BrokerClient` 抽象、`MQTTBrokerClient`（CocoaMQTT）、进程内 `LoopbackBroker` |
-  | `AHCore` | `PhoneEngine`（actor：连接、配对、同步、发件箱重试、推送登记、Agents / Watch / 插话 / 任务）与 `AppStore`（`@MainActor @Observable`，UI 的唯一入口）及各 Composer |
+  | `AHCore` | `PhoneEngine`（actor：连接、配对、同步、发件箱重试、推送登记、Agents / Watch / 插话 / 任务 / 待办请求）、`TodosStore`（待办标签的状态：来源与 iCloud 接入 Mac、「Mac 最后的回答 + 用户未被应答的写入」叠加出屏幕上的列表、写入队列）与 `AppStore`（`@MainActor @Observable`，UI 的唯一入口）及各 Composer |
   | `AHMarkdown` | 请求正文的 Markdown 块解析 |
   | `AHMock` | `MockBackend`：演示数据与可编程故障，UI 测试和截图都跑在它上面 |
 
 - 通知扩展 `AskHumanNotification` 只解密预览（`NotificationText`），不连网络。点击通知经 `AppStore.openNotification` 路由：提问类打开请求（请求还没到手机时页面用通知原文占位、转圈等待，只有 Mac 已答复且没有它才说「不可用」），`follow.*` 打开 Agent 页。
 - 本地化：`Localizable.xcstrings`（en + zh-Hans）由 `ios/Tools/make-catalog.py` 从编译器产出的 `.stringsdata` 生成——先 `xcodebuild build -derivedDataPath build/DerivedData …`，再跑脚本；缺中文翻译会让脚本失败。
-- Mock 模式启动参数：`-AHMock YES -AHScenario demo|empty|offline|quota|syncing|single|longs -AHLatency <x> -AHTab inbox|agents|history|macs -AHOpen <id> -AHAutoAdvance YES|NO -AHOpenAgent <key> -AHNewTask YES -AHHoldInterjects YES -AHFollowEvent done|failed|waiting -AHFollowAgent <agentKey 或会话 id>`；`-AHFollowAgent` 只在真实后端下生效（给模拟器真服务场景用）：等该会话出现在列表里就经引擎 `setFollow` 关注它——App 里已没有手动入口，场景又需要一个「会通知你」的 Agent；`syncing` 场景让首次同步迟迟不完成，配 `-AHSyncDelay <秒>`（多久后完成）与 `-AHCached YES`（同步前就带着上次缓存的请求）；`single` 只剩一条短提问（答完回到空收件箱），`longs` 是两条长表单（测换页后新页从顶部开始）；`-AHAdvanceHold <秒>` / `-AHAdvanceSettle <秒>` 拉长回执与换页的时间，方便截图 / 录屏；`-AHNotify <请求 id>` 模拟点开该请求的推送（页面立刻打开，不等同步，带一段虚构的通知文字）；`-AHArrival <会话标题|none>` 启动约 2 秒后来一条新提问（应用内横幅），`none` 表示该会话没有标题。
+- Mock 模式启动参数：`-AHMock YES -AHScenario demo|empty|offline|quota|syncing|single|longs|outdated -AHLatency <x> -AHTab inbox|agents|todos|history|macs -AHOpen <id> -AHAutoAdvance YES|NO -AHOpenAgent <key> -AHNewTask YES -AHHoldInterjects YES -AHFollowEvent done|failed|waiting -AHFollowAgent <agentKey 或会话 id>`；`-AHFollowAgent` 只在真实后端下生效（给模拟器真服务场景用）：等该会话出现在列表里就经引擎 `setFollow` 关注它——App 里已没有手动入口，场景又需要一个「会通知你」的 Agent；`syncing` 场景让首次同步迟迟不完成，配 `-AHSyncDelay <秒>`（多久后完成）与 `-AHCached YES`（同步前就带着上次缓存的请求）；`single` 只剩一条短提问（答完回到空收件箱），`longs` 是两条长表单（测换页后新页从顶部开始）；`-AHAdvanceHold <秒>` / `-AHAdvanceSettle <秒>` 拉长回执与换页的时间，方便截图 / 录屏；`-AHNotify <请求 id>` 模拟点开该请求的推送（页面立刻打开，不等同步，带一段虚构的通知文字）；`-AHArrival <会话标题|none>` 启动约 2 秒后来一条新提问（应用内横幅），`none` 表示该会话没有标题。
 - XCUITest 经验：容器 view 上的 `accessibilityIdentifier` 需要 `.accessibilityElement(children: .contain/.combine)` 才找得到子元素；Form / List 的懒加载行需要滚动到附近才存在；浮动 TabBar 会挡住详情页底部，详情页用 `.toolbar(.hidden, for: .tabBar)`。挂在容器上的 `accessibilityIdentifier` 会盖住子元素自己的标识，要查子元素就把标识挂在叶子视图上；判断「被盖住」用 `isHittable`（被 `.accessibilityHidden` 的元素仍然 `exists`）。推送横幅是 springboard 里的 `BannerNotification`（标识 `NotificationShortLookView`），权限弹窗按钮是 `springboard.alerts.buttons["Allow"]`；合并后的 `push-status` 行标签形如 `Notifications, On`，判断用 `hasSuffix`。
 
 ## 验证
@@ -100,5 +101,6 @@ CI（`.github/workflows/build.yml`）只跑上表的「Swift 包」与「中继�
 - **多题表单的「发送」要等看过最后一题**：`AnswerComposer` 记录每题是否「看过」（题卡底部进入过可视区，已作答的算看过），多题时 `hasReachedEnd` 之前底部按钮是「下一题」，之后才是「发送」；与弹窗的 V1 / V2（`docs/specs/multi-question-vertical.md`）一致，改一边要同步改另一边。
 - **提交后的换页是一个小状态机**（`AppStore.advance` → `moveOn`）：收到 Mac 的确认后先设 `receipt`（`RequestScreen` 盖上全页「已发送」回执；它带着 `summary`——请求一关闭页面就没有详情了，回执自己记着是谁问的）；`AdvanceTiming.hold` 之后栈**一步**从 `[a]` 换成 `[b]`（栈里始终只有一页），回执记下 `next = b`，并出「已发送 · 还剩 N 条」提示条；位移由页面自己做（`RequestScreen.swift` 里的 `Arrival`，只有 `next` 指向它的页面才接手回执：回执的一份副本留在原地并略向左让，新页从右边滑进来盖住它，约 0.45 秒；新页的版面第一次排好后才开始动，否则长表单首次排版的卡顿会吃掉动画；「减少动态效果」下改成淡入）；`receipt` 一直留到 `settle`（0.8 秒）之后才清，回到列表时被弹出的那页也还在用它。**不用系统的推入**：它要把已发送页留在栈里、推完再拿掉，而 `NavigationStack` 按位置认页面，拿掉一页等于把第 0 位那页「改成」下一条——那页最后一帧（回执）会再闪两帧，它的滚动位置与 `@State`（阅读进度，决定底栏写「下一题」还是「发送」）也被沿用；而原地替换栈顶（`[a] → [b]`）在 iOS 27.0 上只有交叉淡入、在 18.5 上没有动画，两边都没有位移，所以位移放在页面里，并且每条请求一个独立页面（`RequestScreen` 上 `.id(id)`）。回执期间用户自己离开页面则 `cancelAdvance()`。UI 测试用 `AdvanceTiming.immediate` / `-AHAdvanceHold`；看这个动画要用不带 XCUITest 的 `simctl io recordVideo`（XCUITest 的无障碍快照会让过渡画面出现重影，长表单上一次查询要几秒，期间应用主线程被占住、动画被吞掉；录屏也是变帧率，只有帧的先后顺序可信）；模拟器场景 `single`（只剩一条）与 `longs`（两条长表单）就是为这条流程准备的。
 - **空状态要按「TabBar 总在」居中**：请求页与 Agent 详情页隐藏 TabBar，返回时列表先出来、TabBar 约 0.5 秒后才回来，底部安全区增高约 48 pt，居中的空状态会上跳约 24 pt。列表页的空状态 / 骨架提示一律经 `.emptyState { … }`（`Views/Common/ListChrome.swift`，记住这个宽度下见过的最大底部边距）摆放，不要直接 `.overlay { ContentUnavailableView }`。
+- **待办只是 Mac 的遥控与展示**（`docs/specs/ios-todos.md`）：权威状态仍是 Mac 的 `todos.json`；线上项目只有不透明 id（key 的 SHA-256 前 8 字节十六进制）与最少的上层目录名，没有路径；手机不把待办内容落盘（只在内存里缓存），也不进推送；写操作按待办 id 定位、带 `clientMsgId` 进幂等日志，应答附带该项目最新的整表，所以手机屏幕上的列表 = Mac 最后一次的回答 + 用户还没被应答的写入。「iCloud」只是一个**来源**（由一台开着同步且在线的 Mac 代答，掉线自动换），手机不直连 CloudKit（那要用户为 iOS App ID 开 iCloud 容器，见该 spec §11）。项目列表的合并 / 分段 / 同名后缀在 Rust（`ios/todos_view.rs`）里有一份镜像桌面端 TS 的实现，改一边先看另一边的镜像用例；`todo.watch on` 会立刻回一条 `todo.changed` 作为基线。
 - **成本红线**：EMQX 消费上限保持 0（额度用尽即停，不自动付费）；不创建管理 API Key；Mac 与手机本机统计流量，80% 免费额度时预警。
 - **保密**：broker 密码、配对码、方向密钥不得出现在日志、命令输出、文档与提交里；`E2ETests.testSecretsNeverReachTheLogsOrTheCommandOutput` 守着这条。

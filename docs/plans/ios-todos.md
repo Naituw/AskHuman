@@ -1,7 +1,7 @@
 # 计划：iOS App 管理待办
 
-> 需求：`docs/specs/ios-todos.md`（决策编号 I1–I16 均指其 §3）。状态：2026-10-29 起草并开工；用户睡觉期间自主推进，次日验收。
-> 分支：`feat/ios-todos`（在 `HumanInLoop-todosync` 工作树里从 main 切出；主检出里另一方有未提交的 iOS 作答流程改动，互不碰）。
+> 需求：`docs/specs/ios-todos.md`（决策编号 I1–I16 均指其 §3）。状态：2026-10-29 起草并开工；用户睡觉期间自主推进，**P0–P8 已全部完成并自测通过，等用户次日验收**（实施记录见文末）。
+> 分支：`feat/ios-todos`（在 `HumanInLoop-todosync` 工作树里从 main 切出；主检出里另一方有未提交的 iOS 作答流程改动，互不碰）。下文各阶段的文件名是起草时的设想，**实际文件名以文末「实施记录」为准**。
 
 ## 阶段
 
@@ -56,15 +56,15 @@
 
 ## P6 细节（App）
 
-- `Views/Todos/`：`TodosScreen`（项目列表）、`TodoSourceMenu`、`TodoProjectScreen`、`TodoRow`、`TodoEditSheet`、`TodoAddBar`、`TodoSyncLineView`。
+- `Views/Todos/`：`TodosScreen.swift`（`TodosScreen`、`TodoSourceMenu`、`TodosList`、`TodoSectionHeader`、`TodoProjectRowView`、`TodoSyncLineRow`、`TodoStaleNotice`、`TodosEmptyState`）、`TodoProjectScreen.swift`（待办队列、历史、`TodoAddBar`、提示胶囊）、`TodoEditSheet.swift`；文案推导放在 `Design/TodoTexts.swift`。
 - `RootView`：新标签 `AppTab.todos`；`AppStore.tab`、`-AHTab todos`。
 - 本地化：`ios/Tools/make-catalog.py` 流程（先 `xcodebuild build -derivedDataPath build/DerivedData`，再跑脚本；缺中文会失败）。
-- UI 测试：`AskHumanUITests/TodosUITests.swift`，跑在 `MockBackend` 上（`-AHMock YES -AHTab todos -AHScenario demo`）；en 与 zh-Hans 各跑一遍。
+- UI 测试：`AskHumanUITests/AskHumanTodosUITests.swift`，跑在 `MockBackend` 上（`-AHMock YES -AHTab todos -AHScenario demo`）；en 与 zh-Hans 各跑一遍。
 
 ## P7 细节
 
-- `AHE2ETests/TodoE2ETests.swift`：沿用 `E2ECase` 的一次性 Mac（独立 `ASKHUMAN_HOME` / `HOME`），向真实 daemon 发 `todo.*`；一次性 Mac 的 `todos.json` 在它的 `ASKHUMAN_HOME/state/` 下，测试直接读写它来验证。**不碰用户真实的 `~/.askhuman`。**
-- 装机：`./scripts/install.sh`（工作树里装到 `.askhuman-dev/bin`，不覆盖 `~/.local/bin`）。
+- `AHE2ETests/TodoE2ETests.swift`：沿用 `E2ECase` 的一次性 Mac（独立 `ASKHUMAN_HOME` / `HOME`），向真实 daemon 发 `todo.*`；一次性 Mac 的 `todos.json` 在它的 `ASKHUMAN_HOME/state/` 下，测试直接读写它来验证（用 `AskHuman todo …` CLI 在一次性 Mac 的假 git 仓库里造数据与对账）。**不碰用户真实的 `~/.askhuman`。**
+- 装机：`./scripts/install.sh`（工作树里装到 `.askhuman-dev/bin`，不覆盖 `~/.local/bin`）。工作树的 Dev Instance 没有用户的真实待办，所以「装机自查」改成**真实数据形状自查**：把真实 `todos.json` 的一份**拷贝**放进一次性 Mac 的 `state/`，让手机引擎对账（只打印条数、字节数，不打印名字、路径、正文），跑完删除拷贝与测试代码（结果见实施记录）。
 
 ## 风险
 
@@ -77,3 +77,20 @@
 ## 不做
 
 见需求 §1 非目标与 §11。
+
+## 实施记录（2026-10-29，P0–P8 全部完成）
+
+| 阶段 | 提交 | 结果 |
+|---|---|---|
+| P0 | `d29699a` 需求与计划 | — |
+| P1–P3（Mac 端） | `41734c0` | 线协议与夹具、`ios/todos_view.rs`、网关 `gateway/todos.rs`、daemon 的 `daemon/runtime/ios_todos.rs`；`cargo test ios::` 252 条、`ios_todos` 25 条全绿，clippy `-D warnings`、`fmt --check` 无告警 |
+| P4–P5（Swift 引擎与状态） | `85e929d` | `PhoneEngine+Todos.swift`、`TodoModels.swift`（纯函数）、`TodosStore.swift`、`MockBackend+Todos.swift` / `MockData+Todos.swift`、`TestMac+Todos.swift`；对应测试 `TodoEngineTests`、`TodoModelsTests`、`TodosStoreTests` |
+| P6–P7（界面与端到端） | `71c58a5` 与其后的修复 | `Views/Todos/`、`Design/TodoTexts.swift`、`AskHumanTodosUITests.swift`（7 条，en + zh-Hans 都跑过）、`TodoE2ETests.swift`（5 条，真实 daemon + 本地 broker）；真实数据形状自查见需求 §12.5 |
+| P8（文档） | 随上两项 | `overview-ios.md`、`todo-sync.md` 两处、`ios-channel.md` §6.1、`wiki/ios-setup*.md`、`PROGRESS.md` |
+
+与计划不同的地方：
+- 视图文件名与计划不同（见 P6 细节里已改正的名字）；UI 测试文件是 `AskHumanTodosUITests.swift`。
+- `MockBackend` 多了一个场景 `outdated`（两台 Mac 都不认识待办），用来在 UI 与 `TodosStoreTests` 里验证「需要更新」的说明。
+- 「装机自查」改成真实数据形状自查（P7 细节）。
+- 验证中找到并修了一个缺陷（需求 §13 第 7 条）：待办页先于 Mac 列表上屏时，旧 Mac 会让页面一直转圈。
+- 需求的偏差汇总见 `docs/specs/ios-todos.md` §13。

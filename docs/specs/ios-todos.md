@@ -1,6 +1,6 @@
 # 需求：iOS App 管理待办（选 Mac / iCloud 视角、项目来源）
 
-> 状态：**2026-10-29 起草并开工；全部决策由我（agent）在用户睡觉期间代为做出，待用户次日验收时审阅，可整条否决**（用户当晚留言：「我想给我们的 iOS 客户端添加待办功能的支持，我还没有考虑清楚。比如说是不是可以选择不同设备，然后管理上面的待办，也可以选择 iCloud 同步模式，然后可能还有项目来源的问题。这些你都帮我设计，然后实现验证，全部都能自己搞定。」）。没有经过 AskHuman 问答；所有选择都写在 §3，并给出理由与否决后的代价。
+> 状态：**2026-10-29 起草并实现；全部决策由我（agent）在用户睡觉期间代为做出，待用户次日验收时审阅，可整条否决**（用户当晚留言：「我想给我们的 iOS 客户端添加待办功能的支持，我还没有考虑清楚。比如说是不是可以选择不同设备，然后管理上面的待办，也可以选择 iCloud 同步模式，然后可能还有项目来源的问题。这些你都帮我设计，然后实现验证，全部都能自己搞定。」）。没有经过 AskHuman 问答；所有选择都写在 §3，并给出理由与否决后的代价。实现过程中补充的细节（与起草时的差异）集中写在各节里，并在 §13 汇总。
 > 关联计划：`docs/plans/ios-todos.md`。落地后同步修订：`docs/overview-ios.md`、`docs/specs/todo-sync.md`（§10 「iOS 网关的待办视图」、§12 「iOS App 读写待办」）、`docs/specs/ios-channel.md`（§6 手机端功能）、`docs/wiki/ios-setup.md`（用户说明）。
 > 前置资料：`docs/specs/ios-channel.md`（Gateway、线协议、端到端加密）、`docs/specs/todo-sync.md`（项目身份、副本、仅云端项目、虚拟键 `icloud:<项目身份>`、§9 侧栏模型）、`docs/specs/todo-whats-next.md`（待办的本机语义）。
 > 平台：Mac 端沿用现有 Daemon（macOS 验证；`todos.json` 的读写本身跨平台）；手机端 iPhone，iOS 17+，中 / 英双语。
@@ -67,7 +67,7 @@
 - 底部或顶部一行同步状态（仅 iCloud）：已同步 · 刚刚 / 正在同步… / 离线 · N 项待上传 / 未登录 iCloud / 同步程序未运行 / Apple ID 已更换。出错才变色。
 
 **项目页**：
-- 标题：项目名；副标题：仓库地址（若有）或「仅本机」；iCloud 模式下显示「在 N 台 Mac 上有目录」。
+- 标题：项目名；顶部的信息卡：仓库地址（同步项目）或「仅在这台 Mac，未同步」「仅在 iCloud：没有 Mac 上有对应的文件夹」，以及「位于 Home MacBook Pro, Office iMac」（哪几台 Mac 有这个项目的目录，只列名字，不列路径）。
 - 待办列表：每行正文（最多 4 行）、回形针 + 数量（附件在 Mac 上，手机不查看）、「来自 X」（别的 Mac 创建的）、⚡ 标记。点按 → 编辑页（改正文、开关 ⚡、删除）；向右滑 → 完成；向左滑 → 删除（需二次确认）；右上「编辑」进入拖拽排序。
 - 底部输入条：输入框 +（有本机目录时）⚡ 开关 + 发送。发送后立刻出现在末尾，Mac 确认前行尾有转圈。
 - 「执行历史」折叠区（最近 100 条）：每行正文、完成时间、「在 X 上完成」；向右滑 → 恢复到队尾。没有「清空」。
@@ -98,7 +98,24 @@
 
 **限额**（`ios/wire.rs` 与 Swift `Wire` 必须一致）：`TODO_MAX_PENDING = 300`、`TODO_MAX_HISTORY = 100`、`TODO_MAX_PROJECTS = 200`、`TODO_TEXT_MAX_CHARS = 4000`。`reorder` 的 `order` 最多 `TODO_MAX_PENDING` 个 id。
 
-**错误码（`todo.ack.reason`）**：`empty`、`tooLong`、`unknownProject`、`notFound`、`cloudOnly`（对仅云端项目开 ⚡）、`persist`（写盘失败）、`unsupported`（未知 `op`）。
+**状态与错误码（`todo.ack`）**：
+
+| `status` | `reason` | 含义 |
+|---|---|---|
+| `ok` | — | 已写入；`todoId` 是 `add` 新建的条目 |
+| `notFound` | `unknownProject` | 项目 id 反查不到（被移除，或不属于这台 Mac） |
+| `notFound` | `notFound` | 项目在，但那条待办已不在（别处已删 / 已做）——`list` 里是最新的 |
+| `rejected` | `empty` / `tooLong` | 正文为空 / 超过 4000 字符 |
+| `rejected` | `cloudOnly` | 对仅云端项目开 ⚡（它没有目录，没有 Agent 能在那里跑） |
+| `rejected` | `invalid` | 缺字段或字段互相矛盾（如 `add` 没有正文、`reorder` 没有 `order`） |
+| `rejected` | `unsupported` | 未知的 `op` |
+| `rejected` | `conflict` | 同一个 `clientMsgId` 带着不同的内容又来了 |
+| `failed` | `persist` | 写盘失败 |
+| `failed` | `interrupted` | 日志里有这个 `clientMsgId`，但上次写入没有留下结果（daemon 在写的过程中重启）；手机提示「Mac 没能保存」并刷新列表，由用户看过后决定是否重做，**不会**自动重发同一个 id |
+
+**`todo.list` 的 `found`**：`false` 表示项目 id 反查不到，其余字段为空；手机的项目页显示「无法载入待办」并保留返回路径（不自动关闭页面）。
+
+**订阅的第一个回包**：`todo.watch {on: true}` 之后 Mac **立刻**回一条 `todo.changed {rev: 当前}`，手机以此作为「已知版本」的基线（其后与基线相同的 `todo.changed` 是自己写入引起的回声，不重拉）。
 
 **幂等**：`todo.op` 的 `clientMsgId` 进 `journal.json`；内容哈希 = 去掉 `clientMsgId` 的其余字段。重放返回第一次的 `status` / `reason` / `todoId`，**`list` 总是现取最新的**（不进日志）。
 
@@ -108,7 +125,7 @@
 
 输入全是本地数据，不联网、不 fork `git`：`todos.json`（待办与历史条数）、最近 workspace 索引、活跃 Agent 快照（working / idle）、同步旁路元数据（`todo_sync::service::projects()` / `status()`）。
 
-1. **候选**：与待办窗口、IM `/todo` 同一套（`todo_project_candidates`：workspace ∪ 有待办的 key ∪ 活跃 Agent 的目录；活跃度 → 置顶 → 有 workspace → 最近使用 → 名字排序）。无待办、也无 workspace / 活跃 Agent 的孤儿 key 不列（有历史的除外：历史不空就保留，让人能恢复）。
+1. **候选**：与待办窗口、IM `/todo` 同一套（`todo_project_candidates`，排序抽成共用的 `commands.rs::rank_todo_projects`：workspace ∪ 有待办的 key ∪ 活跃 Agent 的目录；活跃度 → 置顶 → 有 workspace → 最近使用 → 名字排序）。无待办、也无 workspace / 活跃 Agent 的孤儿 key 不列——**哪怕它有历史**（与待办窗口一致；那个目录再有 workspace 记录时历史条数会跟着回来）。例外在同步模式：同步项目的目录键 / 虚拟键不在候选里（比如待办都做完了）、但 `todos.json` 里还有它的历史时，补一行（`pending = 0`，历史条数取自那里），行上仍写着做完了多少条。
 2. **未开同步**（`mode = local`）：每个候选一行；`section` = 有待办 → `withTodos`，否则 `recent`；`scope = local`。
 3. **开着同步**（`mode = icloud`，且同步元数据里有项目）：与前端 `mergeProjects` 同一算法——按链接表把同一仓库的多个目录折成一行（行 key = 候选里排最前的目录，计数取最大值）；同步项目里候选没提到的补一行（没有待办但有历史的项目）；没有链接的目录是 `localOnly`；没有本机目录的是 `cloudOnly`（行 key = `icloud:<项目身份>`）。分段：有待办的同步项目 → `synced`，条数为 0 → `empty`，有待办的无 remote 项目 → `localOnly`。同步元数据为空时退回未开同步的算法（与前端一致），但 `mode` 仍是 `icloud`。
 4. **同名区分**（`hint`）：与前端 `labelProjects` 相同——同名的项目取最少的几级上层目录名让标签两两不同；同步项目按仓库地址的 owner 区分，无 remote 的按目录。**不含完整路径**。
@@ -142,16 +159,26 @@
 
 找不到条目 → `notFound`。写盘失败 → `persist`（`failed`）。写入之后同步靠 helper 对 `todos.json` 的文件监听触发 tick，网关不另行处理。
 
+**串行**：网关是单个 actor，写操作在 actor 里**就地等待**（写盘很快，且天然保证同一部手机的两次写按到达顺序生效）；只读的 `todo.projects.get` / `todo.list.get` 走 `spawn_then`，不阻塞 tick。
+
 ### 6.5 订阅与变更通知
 
-`todo.watch on`：登记手机；`mode = icloud` 时后台 `refresh_if_stale`。网关每个 tick（250 ms）里每秒一次比较 `todos.json` 的签名（没有订阅者时不查）；变了 → 给每个**在线 + 前台 + 已 hello** 的订阅者发 `todo.changed {rev}`。手机离线、退后台、退订或被撤销配对时移出订阅。重启 daemon 丢订阅，手机在重新 hello 后重新订阅。
+`todo.watch on`：登记手机，**立刻**回一条 `todo.changed {rev: 当前}`（手机的基线）；`mode = icloud` 时后台 `refresh_if_stale`。网关每个 tick（250 ms）里每秒一次比较 `todos.json` 的签名（没有订阅者时不查）；变了 → 给每个**在线 + 前台 + 已 hello** 的订阅者发 `todo.changed {rev}`。手机离线、退后台、退订或被撤销配对时移出订阅。重启 daemon 丢订阅，手机在重新 hello 后重新订阅。
 
 ## 7. 手机端行为
 
-- `PhoneEngine`：`todoProjects(macId:)`、`todoList(macId:projectId:)`（请求 / 应答，超时 10 秒）、`todoApply(macId:projectId:op:)`（等 `todo.ack`，超时 20 秒；离线立即抛 `.macOffline`）、`todoWatch(macId:on:)`；Mac 变为离线时让等待中的请求立刻失败；握手后为已订阅的 Mac 重新订阅。`todo.changed` 以 `EngineEvent.todoChanged(macId:)` 交给 UI。
-- `TodosStore`（`@MainActor @Observable`）：来源与接入 Mac 的解析、项目列表与各项目列表的内存缓存、乐观更新与回滚（I9）、同步状态推导、搜索。**iCloud 接入 Mac 的选择**是纯函数（可单测）：候选 = 在线且 `caps.todos` 的 Mac；优先上次用过且已知开着同步的，其次已知开着同步的，最后「模式未知」的（逐台探测，探到 `mode = local` 的跳过）。
-- 页面可见 → `todoWatch(on)`；不可见 / 退后台 → `off`。收到 `todo.changed` → 重拉。
+- `PhoneEngine`（`PhoneEngine+Todos.swift`）：`todoProjects(macId:)`、`todoList(macId:projectId:)`（请求 / 应答，超时 10 秒）、`todoApply(macId:operation:)`（等 `todo.ack`，超时 20 秒；离线立即抛 `.macOffline`）、`todoWatch(macId:on:)`；Mac 变为离线时让等待中的请求立刻失败；握手后为已订阅的 Mac 重新订阅（`reopenTodoWatch`）。`todo.changed` 以 `EngineEvent.todoChanged(macId:rev:)` 交给 UI。引擎对同一个等待键的并发请求回 `.unavailable("busy")`，所以 `TodosStore` 每种请求同时只发一个。
+- `TodosStore`（`@MainActor @Observable`，`AHCore`；见类注释里的两条规则）：
+  - **屏幕上的列表 = Mac 最后一次说的（`confirmed`）+ 用户还没被应答的写入（`overlay`，用 `TodoMutation.apply` 叠上去）**。被拒绝或丢失的写入自己消失，期间到达的整表不会让界面抖回旧值（I9 的实现方式；比「回滚」更简单也更不容易出错）。
+  - **写入串行**：所有写入进一个队列（`queue` / `drainer`），一条应答之后才发下一条；超时时用**同一个 `clientMsgId` 重试一次**（幂等日志保证不会写两次）；再超时则提示「Mac 没有确认」并刷新；发现 Mac 离线则丢弃队列里这台 Mac 的后续写入并提示。队列空了之后再拉一次整表。
+  - **一种请求同时只一个**：`kick(projects:list:)` + 脏标记，后来的需求只是让它再跑一轮。
+  - 订阅只在「待办页可见 ∧ 前台 ∧ 有接入 Mac」时开（`syncWatch`）；`knownRev` 吃掉自己写入引起的 `todo.changed` 回声。
+  - **iCloud 接入 Mac 的选择**是纯函数（`TodoSources`，可单测）：候选 = 在线、`caps.todos`、没有被判定为 `mode = local`、没有失败过的 Mac；顺序：上次用过且已知开着同步的 → 已知开着同步的 → 上次用过的 → 模式未知的（逐台探测，探到 `mode = local` 的跳过）。接入 Mac 变化时清掉已打开的项目（它的 id 在另一台上不一定存在）。
+  - 来源（`ah.todos.source`）与上次的 iCloud 接入 Mac（`ah.todos.icloudMac`）存 `UserDefaults`；待办内容不落盘（I13）。`initial()`：已存的来源是 iCloud 时保持，除非所有 Mac 都已知是 `local`；否则只有一台 Mac → 它，多台 → 上次选择或第一台在线的。
+  - 选中的 Mac 离线时，保留上次的行并标成「失败（离线）」，页面顶部给一行提示，输入条禁用（不排队）。
+- 页面可见 → `todoWatch(on)`；不可见 / 退后台 → `off`。收到 `todo.changed`（版本与已知的不同）→ 重拉。
 - 旧 Mac（`caps.todos == false`）：来源菜单里显示「需要更新」，选中后页面给出说明，不发任何 `todo.*`。
+- 界面（`ios/AskHuman/Views/Todos/`、`Design/TodoTexts.swift`）：`TodosScreen`（来源菜单 + 项目列表 + 同步状态行）、`TodoProjectScreen`（待办队列、历史、底部输入条）、`TodoEditSheet`。同步状态行的文字、`helper` 的三种问题与桌面端设置页用同一套措辞；线协议里的 `helper` 只有 `running / notRunning / incompatible / unsupported`，没有桌面端区分的「未安装」（`installed`），所以「没装」与「没在跑」在手机上都显示「同步程序未运行」；`incompatible` 显示「同步程序无法使用 iCloud」，`unsupported`（这个平台没有同步程序，实际上同步行不会出现）显示「未安装同步程序」。
 
 ## 8. 兼容
 
@@ -175,6 +202,7 @@
 4. iCloud 的传播延迟照旧（`docs/specs/todo-sync.md` 附录 A 与计划 §10 的实测：推送中位约 16 秒，轮询 10 分钟兜底）：手机写入 → Mac `todos.json` 是 1 秒量级，但「手机写入 → 另一台 Mac 看到」仍是同步的延迟。
 5. 「订阅」靠 Mac 每秒比较文件签名；同一秒内的两次改动合并成一条 `todo.changed`（手机重拉后看到最终状态）。
 6. 项目列表里的活跃 Agent 绿点来自 Mac 的 Agent 快照，只在拉取时更新一次，不实时。
+7. **单条超长正文**：手机自己写入的正文限 4000 字符，但桌面与 CLI 的待办没有长度限制。Mac 在整表装不进一条消息时先裁历史、再裁队尾（每次减半），所以几百条各 12 KB 的待办没问题；但**一条**正文超过约 600 KB 时，那个项目的 `todo.list` 发不出去（`send` 对超限消息是静默丢弃），手机上表现为这个项目载入超时（页面显示「Mac 没有响应」，下拉重试也一样），其他项目不受影响。真实使用里不会出现（最大的一份真实数据里单个项目的整表也只有 17 KB），不为它加截断（截断后手机编辑再写回会丢数据）。
 
 ## 11. 后置（本期不做）
 
@@ -186,9 +214,24 @@
 
 ## 12. 验收标准
 
-1. Rust：网关测试台里（虚拟时钟 + 内存待办存储）：项目列表 / 列表 / 七种写操作 / 幂等重放与冲突 / 限额与截断 / 订阅与变更通知（含退订、手机离线、撤销配对）/ `caps.todos` 全部有用例；`todos_view` 的项目合并、分段、同名区分有用例；真实 Host（临时 `ASKHUMAN_HOME`）对 `todos.json` 的读写有用例；跨语言夹具里每个新消息都有样本。
-2. Swift：协议夹具通过；引擎对脚本化的 Mac 的请求 / 应答 / 超时 / 离线 / 重订阅用例；`TodosStore` 的来源解析、iCloud 自动换机、乐观更新与回滚、同步状态推导用例。
-3. 模拟器 UI 测试（mock 后端，en + zh-Hans）：打开标签、切来源、进项目、新增、完成、恢复、编辑、删除（含确认）、排序、历史折叠、Mac 离线提示、需要更新提示。
-4. 真实 daemon 端到端（本地 broker）：手机经真实网关新增 / 完成 / 恢复 / 删除一条待办，`todos.json` 随之变化，Mac 侧直接改文件时手机收到 `todo.changed` 并刷新。
-5. 装机后真实 daemon 的 `AskHuman todo list` 与手机看到的一致（只核对条数与 id 前缀，不打印内容）。
-6. 不改 `ipc/mod.rs`；`./scripts/install.sh` 通过；`cargo clippy -D warnings`、`cargo fmt --check`、`swift test`、`xcodebuild test` 全绿。
+> 状态（2026-10-29）：6 项都已自测通过；数字取自当天最后一次完整运行，机器上的运行记录不入库。
+
+1. ✅ **Rust**：网关测试台（虚拟时钟 + 内存待办存储）、`todos_view`、真实 Host（临时 `ASKHUMAN_HOME`）与跨语言夹具的用例见 `src-tauri/src/ios/gateway/tests_todos.rs`、`ios/todos_view.rs`、`daemon/runtime/ios_todos.rs` 的 `#[cfg(test)]`：项目列表 / 列表 / 七种写操作 / 幂等重放与冲突 / 限额与裁剪 / 订阅与变更通知（含退订、手机离线、撤销配对）/ `caps.todos`；项目合并、分段、同名区分逐条镜像前端用例。结果：`cargo test ios::` 252 条、`ios_todos`（daemon 的真实 Host）25 条全绿。
+2. ✅ **Swift 包**（`swift test`）：协议夹具、引擎（请求 / 应答 / 超时 / 离线 / 重订阅，`TodoEngineTests`）、纯函数（`TodoModelsTests`：来源、接入 Mac 选择、同步状态行、变更叠加）、`TodosStore`（`TodosStoreTests`：来源解析、iCloud 自动换机、写入叠加与撤销、串行与重试、离线不排队、订阅随页面可见性开关、旧 Mac 的说明）。结果：整包 414 条无失败（协议 27、存储 21、传输 14、Markdown 8、核心 144、应用 159、端到端 41，其中 4 条要真实服务、已跳过）；待办相关的 `TodoEngineTests` 12、`TodoModelsTests` 17、`TodosStoreTests` 24。
+3. ✅ **模拟器 UI 测试**（mock 后端，en 与 zh-Hans 各跑一遍，截图自查）：打开标签与同步状态行、切来源（iCloud ⇄ Mac，含同名项目的区分）、进项目、新增、完成、恢复、编辑、删除（含确认）、**拖拽排序**、历史折叠、Mac 离线提示、**旧 Mac 的「需要更新」说明与灰显的菜单项**。结果：`AskHumanTodosUITests` 7 条，英文与中文各跑一遍全部通过。
+4. ✅ **真实 daemon 端到端**（本地 broker，`TodoE2ETests`）：手机经真实网关新增 / 编辑 / ⚡ / 排序 / 完成 / 恢复 / 删除，`AskHuman todo list`（CLI）与 `todos.json` 随之变化；同一 `clientMsgId` 重放只生效一次，拒绝与冲突都有应答；Mac 侧改文件时手机收到 `todo.changed`，退订后不再收到；项目列表里没有任何绝对路径。5 条用例，约 30 秒。
+5. ✅ **真实数据形状自查**：工作树的 Dev Instance 里没有用户的真实待办，所以拿真实 `todos.json` 的**一份拷贝**放进一次性 Mac（同步关闭），让手机引擎对账，只打印条数与字节数：15 个项目键（含 2 个 `icloud:` 虚拟键）、10 个历史键；手机看到 15 行，每一行的待办数、历史数都与文件逐项一致，每个项目的 `todo.list` 总数与行一致，最大一份整表 17 KB（上限 900 KB），最多 14 条待办、55 条历史。拷贝与临时测试跑完即删。这次没有覆盖「开着同步」的 iCloud 视图（那需要真实的 CloudKit 与 helper），它由 §12.1 的用例按桌面端算法覆盖。
+6. ✅ 没有改 `ipc/mod.rs`；`./scripts/install.sh` 通过（工作树里装到 `.askhuman-dev/bin`）；`cargo clippy --all-targets -D warnings`、`cargo fmt --check` 无告警。
+
+## 13. 与起草时的差异（实现中的变更）
+
+起草（`d29699a`）之后实现与验证中改过的地方，都已回写进上面各节，这里汇总，方便审阅：
+
+1. **乐观更新的做法**（I9）：起草写的是「先改本地、失败回滚、写入期间忽略整表」。实现为「屏幕上的列表 = Mac 最后一次的答复 + 还没被应答的写入」（§7）：被拒绝或丢失的写入自己消失，不需要显式回滚，也就不会出现回滚与新整表互相覆盖。写入进一个串行队列，超时用同一个 `clientMsgId` 重试一次。
+2. **订阅的基线**（I10）：`todo.watch on` 之后 Mac 立刻回一条 `todo.changed {rev}`，手机据此知道「已知版本」，之后与它相同的 `todo.changed` 当作自己写入的回声（§5、§6.5）。起草时没有写这一步。
+3. **应答的状态码**（§5）与 `todo.list` 的 `found: false`（「无法载入待办」，页面不自动关闭）是实现时定的。
+4. **旧 Mac 在来源菜单里是灰显的、不可选**（起草写的是「选中后页面给出说明」）。只有它恰好是默认来源（比如只配对了一台 Mac）时，页面才显示「这台 Mac 需要更新」。验证时发现这条路径之前会一直转圈（见下）。
+5. **同步状态行**的措辞与桌面端设置页一致；线协议里的 `helper` 没有桌面端区分的「未安装」，所以「没装」与「没在跑」在手机上都显示「同步程序未运行」（§7）。
+6. **项目页的信息卡**显示仓库地址与「位于 <Mac 名…>」，而不是「在 N 台 Mac 上有目录」（§4）。
+7. **验证中发现并修复的缺陷**：「待办」页在 Mac 列表到达之前就已经在屏幕上（例如启动后直接落在这一页）时，来源是 Mac 列表到达之后才选中的；而只有「某台 Mac 变得可用」才会触发加载，于是一台**不认识待办的旧 Mac**（永远不会「变得可用」）会让页面停在骨架屏上，看不到任何说明。现在「刚选中的来源」本身就会触发一次加载，旧 Mac 由此得到「需要更新」的说明；用 `TodosStoreTests.testAnOutdatedMacIsExplainedEvenWhenTheTabIsOnScreenBeforeTheMacsAreKnown` 和 UI 测试 `testAMacThatPredatesTodosAsksForAnUpdate` 钉住。
+8. 已知局限补了一条（§10 第 7 条）：单条超长正文。「搜索项目」输入框在「Mac 连不上 / 需要更新」这类页面上不显示（那里没有东西可搜），有项目可显示时才出现。
