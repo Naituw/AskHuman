@@ -21,6 +21,12 @@ public enum Wire {
     public static let maxAssetChunksPerGet = 8
     public static let maxRequestImages = 20
 
+    /// Todo limits (docs/specs/ios-todos.md §5); mirror `TODO_MAX_*` in `ios/wire.rs`.
+    public static let todoMaxPending = 300
+    public static let todoMaxHistory = 100
+    public static let todoMaxProjects = 200
+    public static let todoTextMaxChars = 4000
+
     public static let publishRatePerSec = 6.0
     public static let publishBurst = 10.0
     public static let watchMinIntervalMs = 2_000

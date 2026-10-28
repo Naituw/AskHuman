@@ -10,11 +10,23 @@ public struct Caps: Codable, Equatable, Sendable {
     public var newTask: Bool
     public var interject: Bool
     public var watch: Bool
+    /// The Mac serves the todo screen (`todo.*`). Macs from before it, and pairings stored before it,
+    /// have none.
+    public var todos: Bool
 
-    public init(newTask: Bool, interject: Bool, watch: Bool) {
+    public init(newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false) {
         self.newTask = newTask
         self.interject = interject
         self.watch = watch
+        self.todos = todos
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        newTask = try c.decode(Bool.self, forKey: .newTask)
+        interject = try c.decode(Bool.self, forKey: .interject)
+        watch = try c.decode(Bool.self, forKey: .watch)
+        todos = try c.decodeIfPresent(Bool.self, forKey: .todos) ?? false
     }
 }
 
@@ -955,6 +967,270 @@ public struct SlotState: WireMessage {
     public var autoActivation: Bool
 }
 
+// MARK: todos (docs/specs/ios-todos.md §5)
+
+public struct TodoProjectsGet: WireMessage {
+    public static let type = "todo.projects.get"
+    public init() {}
+}
+
+/// One project of the Mac's todo view. The phone never sees a path: `id` is a hash of the project key
+/// and `hint` tells same-named projects apart.
+public struct TodoProjectRow: Codable, Equatable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var hint: String?
+    /// Normalized git remote of a synced project, e.g. `github.com/acme/app`.
+    public var repo: String?
+    public var pending: UInt64
+    public var history: UInt64
+    /// `local` (sync is off), `synced`, `cloudOnly` or `localOnly`.
+    public var scope: String
+    /// `withTodos`, `recent`, `synced`, `empty` or `localOnly`.
+    public var section: String
+    /// `working` or `idle`: an Agent is live in the project.
+    public var agent: String?
+    /// Names of the Macs that have a directory for a synced project.
+    @OmitEmpty public var macs: [String]
+
+    public init(
+        id: String, name: String, hint: String? = nil, repo: String? = nil, pending: UInt64 = 0, history: UInt64 = 0,
+        scope: String = "local", section: String = "withTodos", agent: String? = nil, macs: [String] = []
+    ) {
+        self.id = id
+        self.name = name
+        self.hint = hint
+        self.repo = repo
+        self.pending = pending
+        self.history = history
+        self.scope = scope
+        self.section = section
+        self.agent = agent
+        self.macs = macs
+    }
+}
+
+public struct TodoSyncDevice: Codable, Equatable, Hashable, Sendable {
+    public var name: String
+    public var lastSyncMs: UInt64
+    public var thisMac: Bool
+
+    public init(name: String, lastSyncMs: UInt64, thisMac: Bool) {
+        self.name = name
+        self.lastSyncMs = lastSyncMs
+        self.thisMac = thisMac
+    }
+}
+
+/// Facts about iCloud todo sync on the Mac; the phone derives its status line from them.
+public struct TodoSyncInfo: Codable, Equatable, Hashable, Sendable {
+    public var syncing: Bool
+    /// `accountChanged`, `zoneMissing`, `notSignedIn` or `quota`.
+    public var paused: String?
+    /// `running`, `notRunning`, `incompatible` or `unsupported`.
+    public var helper: String
+    public var unsynced: UInt64
+    public var lastPullMs: UInt64
+    public var lastPushMs: UInt64
+    public var devices: [TodoSyncDevice]
+
+    public init(
+        syncing: Bool = false, paused: String? = nil, helper: String = "running", unsynced: UInt64 = 0, lastPullMs: UInt64 = 0,
+        lastPushMs: UInt64 = 0, devices: [TodoSyncDevice] = []
+    ) {
+        self.syncing = syncing
+        self.paused = paused
+        self.helper = helper
+        self.unsynced = unsynced
+        self.lastPullMs = lastPullMs
+        self.lastPushMs = lastPushMs
+        self.devices = devices
+    }
+}
+
+public struct TodoProjects: WireMessage {
+    public static let type = "todo.projects"
+    public var rev: UInt64
+    /// `local`, or `icloud` when this Mac syncs its todos.
+    public var mode: String
+    public var sync: TodoSyncInfo?
+    public var projects: [TodoProjectRow]
+    /// More projects existed than the wire carries.
+    @OmitFalse public var truncated: Bool
+
+    public init(rev: UInt64, mode: String, sync: TodoSyncInfo? = nil, projects: [TodoProjectRow], truncated: Bool = false) {
+        self.rev = rev
+        self.mode = mode
+        self.sync = sync
+        self.projects = projects
+        self.truncated = truncated
+    }
+}
+
+public struct TodoListGet: WireMessage {
+    public static let type = "todo.list.get"
+    public var id: String
+
+    public init(id: String) { self.id = id }
+}
+
+/// "N attachments, on that Mac": attachments never sync, only this hint does.
+public struct TodoAttachmentHint: Codable, Equatable, Hashable, Sendable {
+    public var n: UInt64
+    public var dev: String
+
+    public init(n: UInt64, dev: String) {
+        self.n = n
+        self.dev = dev
+    }
+}
+
+public struct TodoItem: Codable, Equatable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var text: String
+    public var createdAtMs: UInt64
+    public var agent: String?
+    @OmitFalse public var auto: Bool
+    /// Attachments the answering Mac holds for the todo (the phone only shows the count).
+    @OmitZero public var att: UInt64
+    /// Name of the Mac that created the todo, when it is not the one answering.
+    public var by: String?
+    public var attOn: TodoAttachmentHint?
+
+    public init(
+        id: String, text: String, createdAtMs: UInt64 = 0, agent: String? = nil, auto: Bool = false, att: UInt64 = 0,
+        by: String? = nil, attOn: TodoAttachmentHint? = nil
+    ) {
+        self.id = id
+        self.text = text
+        self.createdAtMs = createdAtMs
+        self.agent = agent
+        self.auto = auto
+        self.att = att
+        self.by = by
+        self.attOn = attOn
+    }
+}
+
+public struct TodoDoneItem: Codable, Equatable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var text: String
+    public var createdAtMs: UInt64
+    public var doneAtMs: UInt64
+    public var agent: String?
+    @OmitZero public var att: UInt64
+    /// Name of the Mac that finished the todo, when it is not the one answering.
+    public var doneOn: String?
+
+    public init(
+        id: String, text: String, createdAtMs: UInt64 = 0, doneAtMs: UInt64 = 0, agent: String? = nil, att: UInt64 = 0,
+        doneOn: String? = nil
+    ) {
+        self.id = id
+        self.text = text
+        self.createdAtMs = createdAtMs
+        self.doneAtMs = doneAtMs
+        self.agent = agent
+        self.att = att
+        self.doneOn = doneOn
+    }
+}
+
+/// The todos of one project (`todo.list`). Also carried inside `todo.ack`.
+public struct ProjectTodos: WireMessage {
+    public static let type = "todo.list"
+    public var id: String
+    /// The project id still names a project of the Mac (everything below is empty when not).
+    public var found: Bool
+    public var rev: UInt64
+    public var name: String
+    /// Whether the auto-run flag means anything here (false for a project without a directory on the Mac).
+    public var canAuto: Bool
+    /// Newest last, like the queue.
+    public var pending: [TodoItem]
+    public var pendingTotal: UInt64
+    /// Newest first.
+    public var history: [TodoDoneItem]
+    public var historyTotal: UInt64
+
+    public init(
+        id: String, found: Bool = true, rev: UInt64 = 0, name: String, canAuto: Bool = true, pending: [TodoItem] = [],
+        pendingTotal: UInt64? = nil, history: [TodoDoneItem] = [], historyTotal: UInt64? = nil
+    ) {
+        self.id = id
+        self.found = found
+        self.rev = rev
+        self.name = name
+        self.canAuto = canAuto
+        self.pending = pending
+        self.pendingTotal = pendingTotal ?? UInt64(pending.count)
+        self.history = history
+        self.historyTotal = historyTotal ?? UInt64(history.count)
+    }
+}
+
+/// A todo write (`todo.op`).
+public struct TodoOperation: WireMessage {
+    public static let type = "todo.op"
+    public var clientMsgId: String
+    /// Project id.
+    public var id: String
+    /// `add`, `edit`, `complete`, `restore`, `remove`, `reorder` or `auto`.
+    public var op: String
+    public var todoId: String?
+    public var text: String?
+    public var auto: Bool?
+    /// The pending ids in their new order (`reorder`).
+    public var order: [String]?
+
+    public init(
+        clientMsgId: String, id: String, op: String, todoId: String? = nil, text: String? = nil, auto: Bool? = nil,
+        order: [String]? = nil
+    ) {
+        self.clientMsgId = clientMsgId
+        self.id = id
+        self.op = op
+        self.todoId = todoId
+        self.text = text
+        self.auto = auto
+        self.order = order
+    }
+}
+
+public struct TodoAck: WireMessage {
+    public static let type = "todo.ack"
+    public var clientMsgId: String
+    /// `ok`, `notFound`, `rejected` or `failed`.
+    public var status: String
+    public var reason: String?
+    /// The id of the todo `add` created.
+    public var todoId: String?
+    /// The project as it is after the write (also after a refusal, so the phone catches up).
+    public var list: ProjectTodos?
+
+    public init(clientMsgId: String, status: String, reason: String? = nil, todoId: String? = nil, list: ProjectTodos? = nil) {
+        self.clientMsgId = clientMsgId
+        self.status = status
+        self.reason = reason
+        self.todoId = todoId
+        self.list = list
+    }
+}
+
+public struct TodoWatch: WireMessage {
+    public static let type = "todo.watch"
+    public var on: Bool
+
+    public init(on: Bool) { self.on = on }
+}
+
+public struct TodoChanged: WireMessage {
+    public static let type = "todo.changed"
+    public var rev: UInt64
+
+    public init(rev: UInt64) { self.rev = rev }
+}
+
 // MARK: assets and uploads
 
 public struct AssetGet: WireMessage {
@@ -1067,6 +1343,8 @@ public enum MessageRegistry {
         InterjectAck.self, InterjectClear.self, InterjectQuery.self, InterjectState.self,
         InterjectConsumed.self, TaskOptionsGet.self, TaskOptions.self, TaskTodosGet.self,
         TaskTodos.self, TaskCreate.self, TaskStatus.self, SlotTake.self, SlotState.self,
+        TodoProjectsGet.self, TodoProjects.self, TodoListGet.self, ProjectTodos.self, TodoOperation.self,
+        TodoAck.self, TodoWatch.self, TodoChanged.self,
         AssetGet.self, AssetChunk.self, AssetError.self, UploadBegin.self, UploadChunk.self,
         UploadAck.self, UploadCancel.self,
     ]

@@ -10,6 +10,7 @@ pub mod gateway;
 pub mod push;
 pub mod qr;
 pub mod store;
+pub mod todos_view;
 pub mod transport;
 pub mod views;
 pub mod wire;

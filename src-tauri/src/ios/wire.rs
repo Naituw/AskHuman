@@ -36,6 +36,12 @@ pub const WATCH_MIN_INTERVAL_MS: u64 = 2_000;
 pub const WATCH_FRAME_MAX_BYTES: usize = 8 * 1024;
 pub const MAX_LIVE_WATCH_PER_PHONE: usize = 2;
 pub const MAX_FOLLOW: usize = 5;
+/// Todos (docs/specs/ios-todos.md §5): the most pending / finished todos one `todo.list` carries,
+/// the most project rows one `todo.projects` carries, and the longest todo text a phone may send.
+pub const TODO_MAX_PENDING: usize = 300;
+pub const TODO_MAX_HISTORY: usize = 100;
+pub const TODO_MAX_PROJECTS: usize = 200;
+pub const TODO_TEXT_MAX_CHARS: usize = 4000;
 pub const KEEPALIVE_SECS: u64 = 30;
 pub const PUSH_FALLBACK_SECS: u64 = 3;
 pub const HANDLE_REFRESH_DAYS: i64 = 90;
@@ -158,6 +164,15 @@ pub mod t {
     pub const SLOT_TAKE: &str = "slot.take";
     pub const SLOT_STATE: &str = "slot.state";
 
+    pub const TODO_PROJECTS_GET: &str = "todo.projects.get";
+    pub const TODO_PROJECTS: &str = "todo.projects";
+    pub const TODO_LIST_GET: &str = "todo.list.get";
+    pub const TODO_LIST: &str = "todo.list";
+    pub const TODO_OP: &str = "todo.op";
+    pub const TODO_ACK: &str = "todo.ack";
+    pub const TODO_WATCH: &str = "todo.watch";
+    pub const TODO_CHANGED: &str = "todo.changed";
+
     pub const ASSET_GET: &str = "asset.get";
     pub const ASSET_CHUNK: &str = "asset.chunk";
     pub const ASSET_ERROR: &str = "asset.error";
@@ -200,6 +215,9 @@ pub struct Caps {
     pub new_task: bool,
     pub interject: bool,
     pub watch: bool,
+    /// The Mac serves `todo.*` (docs/specs/ios-todos.md I7). Older Macs do not send it.
+    #[serde(default)]
+    pub todos: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -960,6 +978,239 @@ pub struct SlotState {
 }
 msg!(SlotState, t::SLOT_STATE);
 
+// ---------------------------------------------------------------- todos (docs/specs/ios-todos.md §5)
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TodoProjectsGet {}
+msg!(TodoProjectsGet, t::TODO_PROJECTS_GET);
+
+/// One project of the Mac's todo view. The phone never sees a path: `id` is a hash of the
+/// project key and `hint` tells same-named projects apart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoProjectRow {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    /// Normalized git remote of a synced project, e.g. `github.com/acme/app`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    pub pending: u64,
+    pub history: u64,
+    /// `local` (sync is off), `synced`, `cloudOnly` or `localOnly`.
+    pub scope: String,
+    /// `withTodos`, `recent`, `synced`, `empty` or `localOnly`.
+    pub section: String,
+    /// `working` or `idle`: an Agent is live in the project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// Names of the Macs that have a directory for a synced project.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub macs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoSyncDevice {
+    pub name: String,
+    pub last_sync_ms: u64,
+    pub this_mac: bool,
+}
+
+/// Facts about iCloud todo sync on the Mac; the phone derives its status line from them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoSyncInfo {
+    pub syncing: bool,
+    /// `accountChanged`, `zoneMissing`, `notSignedIn` or `quota`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused: Option<String>,
+    /// `running`, `notRunning`, `incompatible` or `unsupported`.
+    pub helper: String,
+    pub unsynced: u64,
+    pub last_pull_ms: u64,
+    pub last_push_ms: u64,
+    pub devices: Vec<TodoSyncDevice>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoProjects {
+    pub rev: u64,
+    /// `local`, or `icloud` when this Mac syncs its todos.
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync: Option<TodoSyncInfo>,
+    pub projects: Vec<TodoProjectRow>,
+    /// More projects existed than [`TODO_MAX_PROJECTS`].
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub truncated: bool,
+}
+msg!(TodoProjects, t::TODO_PROJECTS);
+
+impl TodoProjects {
+    /// No projects, sync off.
+    pub fn empty() -> Self {
+        Self {
+            rev: 0,
+            mode: "local".to_string(),
+            sync: None,
+            projects: Vec::new(),
+            truncated: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TodoListGet {
+    pub id: String,
+}
+msg!(TodoListGet, t::TODO_LIST_GET);
+
+/// "N attachments, on that Mac": attachments never sync (todo-sync T6), only this hint does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TodoAttHint {
+    pub n: u64,
+    pub dev: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoItem {
+    pub id: String,
+    pub text: String,
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub auto: bool,
+    /// Attachments this Mac holds for the todo (the phone only shows the count).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub att: u64,
+    /// Name of the Mac that created the todo, when it is not the one answering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub att_on: Option<TodoAttHint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoDone {
+    pub id: String,
+    pub text: String,
+    pub created_at_ms: u64,
+    pub done_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub att: u64,
+    /// Name of the Mac that finished the todo, when it is not the one answering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_on: Option<String>,
+}
+
+/// The todos of one project. Sent in answer to `todo.list.get` and inside `todo.ack`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoList {
+    pub id: String,
+    /// The project id still names a project of this Mac (everything below is empty when not).
+    pub found: bool,
+    pub rev: u64,
+    pub name: String,
+    /// Whether the ⚡ flag means anything here (false for a project without a directory on the Mac).
+    pub can_auto: bool,
+    /// Newest last, like the queue; at most [`TODO_MAX_PENDING`].
+    pub pending: Vec<TodoItem>,
+    pub pending_total: u64,
+    /// Newest first; at most [`TODO_MAX_HISTORY`].
+    pub history: Vec<TodoDone>,
+    pub history_total: u64,
+}
+msg!(TodoList, t::TODO_LIST);
+
+impl TodoList {
+    /// The answer for an id that names no project of this Mac.
+    pub fn missing(id: &str, rev: u64) -> Self {
+        Self {
+            id: id.to_string(),
+            found: false,
+            rev,
+            name: String::new(),
+            can_auto: false,
+            pending: Vec::new(),
+            pending_total: 0,
+            history: Vec::new(),
+            history_total: 0,
+        }
+    }
+
+    /// Drops what does not fit: the history first, then the tail of the queue (the todos the
+    /// Agent takes last), halving each time. Returns `false` when nothing is left to drop.
+    pub fn shrink(&mut self) -> bool {
+        if !self.history.is_empty() {
+            self.history.truncate(self.history.len() / 2);
+            true
+        } else if self.pending.len() > 1 {
+            self.pending.truncate(self.pending.len() / 2);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoOp {
+    pub client_msg_id: String,
+    /// Project id.
+    pub id: String,
+    /// `add`, `edit`, `complete`, `restore`, `remove`, `reorder` or `auto`.
+    pub op: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub todo_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto: Option<bool>,
+    /// The pending ids in their new order (`reorder`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<Vec<String>>,
+}
+msg!(TodoOp, t::TODO_OP);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoAck {
+    pub client_msg_id: String,
+    /// `ok`, `notFound`, `rejected` or `failed`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The id of the todo `add` created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub todo_id: Option<String>,
+    /// The project as it is after the operation (also after a refusal, so the phone catches up).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<TodoList>,
+}
+msg!(TodoAck, t::TODO_ACK);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TodoWatch {
+    pub on: bool,
+}
+msg!(TodoWatch, t::TODO_WATCH);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TodoChanged {
+    pub rev: u64,
+}
+msg!(TodoChanged, t::TODO_CHANGED);
+
 // ---------------------------------------------------------------- assets and uploads
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1120,6 +1371,14 @@ registry!(
     TaskStatus,
     SlotTake,
     SlotState,
+    TodoProjectsGet,
+    TodoProjects,
+    TodoListGet,
+    TodoList,
+    TodoOp,
+    TodoAck,
+    TodoWatch,
+    TodoChanged,
     AssetGet,
     AssetChunk,
     AssetError,

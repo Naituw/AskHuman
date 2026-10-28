@@ -13,7 +13,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use super::requests::{AskSink, ConfirmSink};
 use super::{
     FrameData, GatewayDeps, Host, InterjectResult, IosGateway, StagedFile, TaskChoices, TaskLaunch,
-    TodoChoices,
+    TodoApplied, TodoChoices,
 };
 use crate::config::IosChannelConfig;
 use crate::ios::crypto::{self, KeyPair, PairContext};
@@ -52,6 +52,16 @@ pub struct TestHost {
     pub cleared: Mutex<Vec<String>>,
     pub choices: Mutex<TaskChoices>,
     pub todos: Mutex<TodoChoices>,
+    /// The scripted todo screen: what `todo_projects` and `todo_list` answer, and what
+    /// `todo_apply` does (`None` = succeeds with the scripted list of the project).
+    pub todo_projects_reply: Mutex<wire::TodoProjects>,
+    pub todo_lists: Mutex<HashMap<String, wire::TodoList>>,
+    pub todo_apply_result: Mutex<Option<TodoApplied>>,
+    /// Every write that reached the host.
+    pub todo_ops: Mutex<Vec<wire::TodoOp>>,
+    /// What `todo_rev` answers; a test bumps it to simulate a write by someone else.
+    pub todo_store_rev: AtomicU64,
+    pub todo_refreshes: AtomicUsize,
     pub task_result: Mutex<Result<(), String>>,
     /// Virtual time `task_create` takes.
     pub task_delay_ms: AtomicU64,
@@ -80,6 +90,12 @@ impl TestHost {
             cleared: Mutex::new(Vec::new()),
             choices: Mutex::new(sample_choices()),
             todos: Mutex::new(TodoChoices::default()),
+            todo_projects_reply: Mutex::new(wire::TodoProjects::empty()),
+            todo_lists: Mutex::new(HashMap::new()),
+            todo_apply_result: Mutex::new(None),
+            todo_ops: Mutex::new(Vec::new()),
+            todo_store_rev: AtomicU64::new(1),
+            todo_refreshes: AtomicUsize::new(0),
             task_result: Mutex::new(Ok(())),
             task_delay_ms: AtomicU64::new(0),
             launches: Mutex::new(Vec::new()),
@@ -150,6 +166,7 @@ impl Host for TestHost {
             new_task: true,
             interject: true,
             watch: true,
+            todos: true,
         }
     }
 
@@ -229,6 +246,39 @@ impl Host for TestHost {
     async fn take_slot(&self) {
         self.slot_taken.fetch_add(1, Ordering::SeqCst);
         self.slot.lock().unwrap().active = true;
+    }
+
+    async fn todo_projects(&self) -> wire::TodoProjects {
+        self.todo_projects_reply.lock().unwrap().clone()
+    }
+
+    async fn todo_list(&self, project_id: &str) -> wire::TodoList {
+        self.todo_lists
+            .lock()
+            .unwrap()
+            .get(project_id)
+            .cloned()
+            .unwrap_or_else(|| wire::TodoList::missing(project_id, self.todo_rev()))
+    }
+
+    async fn todo_apply(&self, op: &wire::TodoOp) -> TodoApplied {
+        self.todo_ops.lock().unwrap().push(op.clone());
+        let list = self.todo_lists.lock().unwrap().get(&op.id).cloned();
+        match self.todo_apply_result.lock().unwrap().clone() {
+            Some(mut result) => {
+                result.list = result.list.or(list);
+                result
+            }
+            None => TodoApplied::ok(None, list),
+        }
+    }
+
+    fn todo_rev(&self) -> u64 {
+        self.todo_store_rev.load(Ordering::SeqCst)
+    }
+
+    fn todo_refresh(&self) {
+        self.todo_refreshes.fetch_add(1, Ordering::SeqCst);
     }
 }
 

@@ -930,7 +930,7 @@ pub fn remove_at(path: &Path, lock: &Path, project: &str, id: &str) -> bool {
     remove_checked_at(path, lock, project, id).unwrap_or(false)
 }
 
-fn remove_checked_at(
+pub fn remove_checked_at(
     path: &Path,
     lock: &Path,
     project: &str,

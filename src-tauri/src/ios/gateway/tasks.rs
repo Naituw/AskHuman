@@ -35,7 +35,7 @@ pub(crate) struct TaskWait {
     pub until: i64,
 }
 
-fn body_hash(value: &serde_json::Value) -> String {
+pub(super) fn body_hash(value: &serde_json::Value) -> String {
     let digest = Sha256::digest(serde_json::to_vec(value).unwrap_or_default());
     digest[..16].iter().map(|b| format!("{b:02x}")).collect()
 }

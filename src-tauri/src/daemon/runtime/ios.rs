@@ -9,7 +9,7 @@ use super::*;
 use crate::config::IosChannelConfig;
 use crate::ios::gateway::{
     FrameData, GatewayDeps, Host, InterjectResult, IosGateway, StagedFile, TaskChoices, TaskLaunch,
-    TodoChoices,
+    TodoApplied, TodoChoices,
 };
 use crate::ios::push::HttpPushClient;
 use crate::ios::store::Store;
@@ -68,6 +68,7 @@ impl Host for DaemonHost {
             new_task: true,
             interject: true,
             watch: true,
+            todos: true,
         }
     }
 
@@ -133,6 +134,35 @@ impl Host for DaemonHost {
         if let Some(state) = self.state.upgrade() {
             let _ = set_active_channel(&state, "ios").await;
         }
+    }
+
+    async fn todo_projects(&self) -> wire::TodoProjects {
+        match self.state.upgrade() {
+            Some(state) => ios_todos::projects(&state).await,
+            None => wire::TodoProjects::empty(),
+        }
+    }
+
+    async fn todo_list(&self, project_id: &str) -> wire::TodoList {
+        match self.state.upgrade() {
+            Some(state) => ios_todos::list(&state, project_id).await,
+            None => wire::TodoList::missing(project_id, 0),
+        }
+    }
+
+    async fn todo_apply(&self, op: &wire::TodoOp) -> TodoApplied {
+        match self.state.upgrade() {
+            Some(state) => ios_todos::apply(&state, op).await,
+            None => TodoApplied::refused("failed", "unavailable", None),
+        }
+    }
+
+    fn todo_rev(&self) -> u64 {
+        ios_todos::rev()
+    }
+
+    fn todo_refresh(&self) {
+        ios_todos::refresh();
     }
 
     fn slot(&self) -> SlotInfo {

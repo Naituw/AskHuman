@@ -24,6 +24,9 @@ mod tests_assets;
 mod tests_requests;
 #[cfg(test)]
 mod tests_tasks;
+#[cfg(test)]
+mod tests_todos;
+mod todos;
 mod watch;
 
 use std::collections::HashMap;
@@ -50,7 +53,7 @@ use crate::config::IosChannelConfig;
 use assets::Uploads;
 pub use hostapi::{
     AgentEventInfo, AgentEventKind, FrameData, InterjectResult, StagedFile, TaskChoices,
-    TaskLaunch, TodoChoices,
+    TaskLaunch, TodoApplied, TodoChoices,
 };
 pub use pairing::PairInfo;
 use requests::{DeliverRequest, Resolution};
@@ -120,6 +123,26 @@ pub trait Host: Send + Sync + 'static {
     }
     /// Makes iOS the active channel (the phone's "take over questions" button).
     async fn take_slot(&self) {}
+
+    /// The projects the todo screen lists (docs/specs/ios-todos.md §6.1).
+    async fn todo_projects(&self) -> wire::TodoProjects {
+        wire::TodoProjects::empty()
+    }
+    /// The todos of one project, by the id [`Host::todo_projects`] gave it.
+    async fn todo_list(&self, project_id: &str) -> wire::TodoList {
+        wire::TodoList::missing(project_id, 0)
+    }
+    /// Applies a validated todo write (text trimmed, shapes checked) and says what became of it.
+    async fn todo_apply(&self, _op: &wire::TodoOp) -> TodoApplied {
+        TodoApplied::rejected("unsupported")
+    }
+    /// A cheap signature of the todo store: changes whenever something wrote to it. Polled about
+    /// once a second while a phone watches.
+    fn todo_rev(&self) -> u64 {
+        0
+    }
+    /// A phone looks at the todos: fetch what other devices changed, if that is due.
+    fn todo_refresh(&self) {}
 
     /// Seconds since the last keyboard / mouse input on this Mac; `None` when unknown. A question
     /// the phone has not looked at is pushed only once the Mac has been idle for
@@ -508,6 +531,8 @@ pub(crate) struct Actor {
     pub uploads: Uploads,
     /// Agent list cache, Follow bookkeeping and tasks waiting for their session.
     pub live: agents::Live,
+    /// Phones watching the todos.
+    pub todos: todos::TodoLive,
     /// Last slot state announced to the phones (`None` until the first tick).
     pub last_slot: Option<SlotInfo>,
 
@@ -574,6 +599,7 @@ impl Actor {
             requests: requests::Requests::default(),
             uploads: Uploads::default(),
             live: agents::Live::default(),
+            todos: todos::TodoLive::default(),
             last_slot: None,
             dirty: false,
             last_flush_ms: now,
@@ -1051,6 +1077,19 @@ impl Actor {
                 let take = body!(wire::SlotTake);
                 self.on_slot_take(phone_id, &take.client_msg_id);
             }
+            t::TODO_PROJECTS_GET => self.on_todo_projects_get(phone_id),
+            t::TODO_LIST_GET => {
+                let get = body!(wire::TodoListGet);
+                self.on_todo_list_get(phone_id, &get.id);
+            }
+            t::TODO_OP => {
+                let op = body!(wire::TodoOp);
+                self.on_todo_op(phone_id, op).await;
+            }
+            t::TODO_WATCH => {
+                let watch = body!(wire::TodoWatch);
+                self.on_todo_watch(phone_id, watch.on);
+            }
             _ => self.send_error(phone_id, &plain.i, "unknown_type", None),
         }
     }
@@ -1215,6 +1254,7 @@ impl Actor {
     /// Drops a pairing for good (the phone asked for it, or the user revoked it).
     pub(crate) fn remove_phone(&mut self, phone_id: &str) -> bool {
         self.requests.forget_phone(phone_id);
+        self.todos.watchers.remove(phone_id);
         self.drop_phone_uploads(phone_id);
         self.live
             .follow_notices
@@ -1248,6 +1288,7 @@ impl Actor {
         self.flush_follow_notices(now);
         self.tick_watch(now);
         self.tick_tasks(now);
+        self.tick_todos(now);
         if let Some(at) = self.sync_at {
             if now >= at {
                 self.sync_at = None;

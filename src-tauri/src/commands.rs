@@ -1134,16 +1134,44 @@ fn gui_todo_project_sort(
         .then_with(|| a.key.cmp(&b.key))
 }
 
+/// One project of the picker, in the window's order. The iOS channel lists the same projects
+/// (`daemon/runtime/ios_todos.rs`), so both go through [`rank_todo_projects`].
+pub(crate) struct RankedTodoProject {
+    pub key: String,
+    pub count: usize,
+    /// 0 = an Agent works in the project, 1 = an idle one, 2 = none.
+    pub activity_rank: u8,
+    /// `withTodos` or `recent`.
+    pub section: &'static str,
+}
+
 fn build_todo_project_list(agents: Option<&serde_json::Value>) -> Vec<TodoProjectInfo> {
-    let todos = crate::todos::all();
+    rank_todo_projects(
+        &crate::todos::all(),
+        crate::agents::workspaces::list(),
+        agents,
+    )
+    .into_iter()
+    .map(|project| TodoProjectInfo {
+        name: crate::project::display_name(&project.key),
+        count: project.count,
+        key: project.key,
+        section: project.section.into(),
+    })
+    .collect()
+}
+
+/// 候选项目排序（待办窗口与 iOS 共用）：有待办的在前，其后是最近用过 / 有活跃 Agent 的。
+pub(crate) fn rank_todo_projects(
+    todos: &std::collections::HashMap<String, Vec<crate::todos::TodoEntry>>,
+    workspaces: Vec<crate::agents::workspaces::Workspace>,
+    agents: Option<&serde_json::Value>,
+) -> Vec<RankedTodoProject> {
     let mut by_key: std::collections::HashMap<String, GuiTodoProjectCandidate> =
         std::collections::HashMap::new();
 
     // 最近 workspace 索引（隐藏项不列）——本地文件，瞬时。
-    for workspace in crate::agents::workspaces::list()
-        .into_iter()
-        .filter(|workspace| !workspace.hidden)
-    {
+    for workspace in workspaces.into_iter().filter(|workspace| !workspace.hidden) {
         let key = crate::project::detect_from(std::path::Path::new(&workspace.path));
         if key.is_empty() {
             continue;
@@ -1163,7 +1191,7 @@ fn build_todo_project_list(agents: Option<&serde_json::Value>) -> Vec<TodoProjec
         entry.has_workspace = true;
     }
 
-    for (key, entries) in &todos {
+    for (key, entries) in todos {
         let entry = by_key
             .entry(key.clone())
             .or_insert_with(|| GuiTodoProjectCandidate {
@@ -1223,21 +1251,15 @@ fn build_todo_project_list(agents: Option<&serde_json::Value>) -> Vec<TodoProjec
     recent.sort_by(gui_todo_project_sort);
 
     let mut out = Vec::with_capacity(with_todos.len() + recent.len());
-    for candidate in with_todos {
-        out.push(TodoProjectInfo {
-            name: crate::project::display_name(&candidate.key),
-            count: candidate.todo_count,
-            key: candidate.key,
-            section: "withTodos".into(),
-        });
-    }
-    for candidate in recent {
-        out.push(TodoProjectInfo {
-            name: crate::project::display_name(&candidate.key),
-            count: candidate.todo_count,
-            key: candidate.key,
-            section: "recent".into(),
-        });
+    for (section, candidates) in [("withTodos", with_todos), ("recent", recent)] {
+        for candidate in candidates {
+            out.push(RankedTodoProject {
+                key: candidate.key,
+                count: candidate.todo_count,
+                activity_rank: candidate.activity_rank,
+                section,
+            });
+        }
     }
     out
 }

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::ios::wire::{TaskOptions, TodoOption};
+use crate::ios::wire::{TaskOptions, TodoList, TodoOption};
 
 /// One Watch frame as the daemon computes it.
 #[derive(Debug, Clone)]
@@ -98,6 +98,43 @@ pub struct TaskLaunch {
 pub struct TodoChoices {
     pub todos: Vec<TodoOption>,
     pub overflow: u64,
+}
+
+/// What the daemon did with a todo write (docs/specs/ios-todos.md §6.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoApplied {
+    /// `ok`, `notFound` (the project or the todo is gone), `rejected` or `failed`.
+    pub status: &'static str,
+    /// `unknownProject`, `notFound`, `cloudOnly`, `persist`, `unsupported`, …
+    pub reason: Option<String>,
+    /// The id `add` created.
+    pub todo_id: Option<String>,
+    /// The project as it is after the write; `None` when it is unknown.
+    pub list: Option<TodoList>,
+}
+
+impl TodoApplied {
+    pub fn ok(todo_id: Option<String>, list: Option<TodoList>) -> Self {
+        Self {
+            status: "ok",
+            reason: None,
+            todo_id,
+            list,
+        }
+    }
+
+    pub fn refused(status: &'static str, reason: &str, list: Option<TodoList>) -> Self {
+        Self {
+            status,
+            reason: Some(reason.to_string()),
+            todo_id: None,
+            list,
+        }
+    }
+
+    pub fn rejected(reason: &str) -> Self {
+        Self::refused("rejected", reason, None)
+    }
 }
 
 /// Lifecycle events the daemon reports about an Agent session (the subset Follow needs).
