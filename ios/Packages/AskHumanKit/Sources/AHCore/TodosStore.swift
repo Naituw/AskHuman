@@ -3,7 +3,7 @@ import Observation
 import AHProtocol
 
 /// The project a screen has opened.
-public struct OpenedTodoProject: Equatable, Sendable {
+public struct OpenedTodoProject: Hashable, Sendable {
     /// The Mac that serves it (for the iCloud source: the one that answers for iCloud right now).
     public var macId: String
     public var id: String
@@ -113,6 +113,11 @@ public final class TodosStore {
     public var accessName: String? {
         guard case .icloud? = source, let id = accessMacId else { return nil }
         return macs.first { $0.id == id }?.name
+    }
+
+    /// The Mac that answers for the screen, whatever the source.
+    public var accessMacName: String? {
+        accessMacId.flatMap { id in macs.first { $0.id == id }?.name }
     }
 
     public var sourceTitle: String? {

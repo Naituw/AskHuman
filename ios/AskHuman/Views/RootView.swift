@@ -26,6 +26,9 @@ struct RootView: View {
             AgentsScreen(showPairing: $showPairing)
                 .tabItem { Label("Agents", systemImage: "person.2.wave.2") }
                 .tag(AppTab.agents)
+            TodosScreen(showPairing: $showPairing)
+                .tabItem { Label("Todos", systemImage: "checklist") }
+                .tag(AppTab.todos)
             HistoryScreen()
                 .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
                 .tag(AppTab.history)

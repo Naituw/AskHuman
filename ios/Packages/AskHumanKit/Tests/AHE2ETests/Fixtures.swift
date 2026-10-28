@@ -191,9 +191,10 @@ final class MacInstance: @unchecked Sendable {
         try await waitForBroker()
     }
 
+    /// Runs `AskHuman` with `args` in `cwd` (the instance's home by default).
     @discardableResult
-    func cli(_ args: [String], stdin: String? = nil, timeout: TimeInterval = 60) async throws -> CmdResult {
-        try await run(environment.askHumanBinary, args, env: env, cwd: home, stdin: stdin, timeout: timeout)
+    func cli(_ args: [String], stdin: String? = nil, cwd: URL? = nil, timeout: TimeInterval = 60) async throws -> CmdResult {
+        try await run(environment.askHumanBinary, args, env: env, cwd: cwd ?? home, stdin: stdin, timeout: timeout)
     }
 
     func json(_ args: [String]) async throws -> [String: Any] {

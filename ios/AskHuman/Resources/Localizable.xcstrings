@@ -21,6 +21,16 @@
         }
       }
     },
+    "%@ is not reachable. Its todos show up here when it is back." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 暂时连不上，恢复后它的待办会显示在这里。"
+          }
+        }
+      }
+    },
     "%@ is not reachable. This is the last state it reported." : {
       "localizations" : {
         "zh-Hans" : {
@@ -193,6 +203,9 @@
     "%lld/%lld" : {
       "shouldTranslate" : false
     },
+    "%llu" : {
+      "shouldTranslate" : false
+    },
     "%llu queued" : {
       "localizations" : {
         "zh-Hans" : {
@@ -287,6 +300,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加附件"
+          }
+        }
+      }
+    },
+    "Add todo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加待办"
           }
         }
       }
@@ -391,12 +414,42 @@
         }
       }
     },
+    "All your synced todos" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你所有同步的待办"
+          }
+        }
+      }
+    },
     "Allow notifications so a new question reaches you even when AskHuman is closed. Notification text is end-to-end encrypted and only readable on this phone." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "允许通知后，即使 AskHuman 已关闭，新提问也能送达你。通知内容经过端到端加密，只有这部手机能读取。"
+          }
+        }
+      }
+    },
+    "An Agent is idle here" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有 Agent 在这里待命"
+          }
+        }
+      }
+    },
+    "An Agent is working here" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有 Agent 正在这里工作"
           }
         }
       }
@@ -491,6 +544,16 @@
         }
       }
     },
+    "Apple ID changed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple ID 已更换"
+          }
+        }
+      }
+    },
     "Ask before acting" : {
       "localizations" : {
         "zh-Hans" : {
@@ -537,6 +600,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在联系 Mac…"
+          }
+        }
+      }
+    },
+    "Auto" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动"
+          }
+        }
+      }
+    },
+    "Auto-run" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动执行"
+          }
+        }
+      }
+    },
+    "Auto-run needs a folder on a Mac, and this project has none." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动执行需要 Mac 上的文件夹，而这个项目没有。"
           }
         }
       }
@@ -801,6 +894,16 @@
         }
       }
     },
+    "Copy" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拷贝"
+          }
+        }
+      }
+    },
     "Copy code" : {
       "localizations" : {
         "zh-Hans" : {
@@ -827,6 +930,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法完成"
+          }
+        }
+      }
+    },
+    "Could not load todos" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法载入待办"
           }
         }
       }
@@ -897,6 +1010,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "删除"
+          }
+        }
+      }
+    },
+    "Delete this todo?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除这条待办？"
+          }
+        }
+      }
+    },
+    "Delete todo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除待办"
           }
         }
       }
@@ -1017,6 +1150,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "修改任务"
+          }
+        }
+      }
+    },
+    "Edit todo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑待办"
           }
         }
       }
@@ -1481,6 +1624,16 @@
         }
       }
     },
+    "Mac not reachable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 暂时连不上"
+          }
+        }
+      }
+    },
     "Mac offline" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1591,12 +1744,32 @@
         }
       }
     },
+    "Needs an update" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要更新"
+          }
+        }
+      }
+    },
     "New task" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "新任务"
+          }
+        }
+      }
+    },
+    "New todo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新待办"
           }
         }
       }
@@ -1641,12 +1814,32 @@
         }
       }
     },
+    "No Mac has iCloud sync on" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有 Mac 开启了 iCloud 同步"
+          }
+        }
+      }
+    },
     "No Mac is paired yet." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "还没有配对的 Mac。"
+          }
+        }
+      }
+    },
+    "No Mac paired" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有配对 Mac"
           }
         }
       }
@@ -1691,6 +1884,16 @@
         }
       }
     },
+    "No projects yet" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有项目"
+          }
+        }
+      }
+    },
     "No push relay configured" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1707,6 +1910,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无"
+          }
+        }
+      }
+    },
+    "None of your Macs that are online syncs its todos through iCloud. Turn it on in AskHuman's settings on a Mac, or choose a Mac above." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在线的 Mac 都没有通过 iCloud 同步待办。请在某台 Mac 的 AskHuman 设置里开启，或在上方选择一台 Mac。"
           }
         }
       }
@@ -1751,6 +1964,16 @@
         }
       }
     },
+    "Not signed in to iCloud" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未登录 iCloud"
+          }
+        }
+      }
+    },
     "Not started" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1777,6 +2000,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有等你回答的请求。"
+          }
+        }
+      }
+    },
+    "Nothing to do here." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这里没有待办。"
           }
         }
       }
@@ -1831,12 +2064,52 @@
         }
       }
     },
+    "Off" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已关闭"
+          }
+        }
+      }
+    },
+    "Offline" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "离线"
+          }
+        }
+      }
+    },
+    "Offline · %lld waiting to upload" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "离线 · %lld 项待上传"
+          }
+        }
+      }
+    },
     "On" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "已开启"
+          }
+        }
+      }
+    },
+    "On %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "位于 %@"
           }
         }
       }
@@ -1861,6 +2134,26 @@
         }
       }
     },
+    "Online" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在线"
+          }
+        }
+      }
+    },
+    "Online · iCloud sync on" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在线 · 已开启 iCloud 同步"
+          }
+        }
+      }
+    },
     "Only a few sessions can be watched live at once. Close another one to watch this." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1871,12 +2164,62 @@
         }
       }
     },
+    "Only in iCloud" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅在 iCloud"
+          }
+        }
+      }
+    },
+    "Only in iCloud: no Mac has a folder for it" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅在 iCloud：没有 Mac 上有对应的文件夹"
+          }
+        }
+      }
+    },
+    "Only on %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅在 %@"
+          }
+        }
+      }
+    },
+    "Only on this Mac, not synced" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅在这台 Mac，未同步"
+          }
+        }
+      }
+    },
     "Only the file names are kept on this phone." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "手机上只保留文件名。"
+          }
+        }
+      }
+    },
+    "Only the most recent projects are listed." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只列出最近的项目。"
           }
         }
       }
@@ -2063,6 +2406,16 @@
         }
       }
     },
+    "Pair a Mac to see its todos here." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对一台 Mac 后，它的待办会显示在这里。"
+          }
+        }
+      }
+    },
     "Pair this phone with AskHuman on your Mac. Questions and confirmations from your coding Agents then arrive here, wherever you are." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2159,6 +2512,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "计划"
+          }
+        }
+      }
+    },
+    "Projects show up here once an Agent has worked in them on a Mac." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 在 Mac 上处理过的项目会显示在这里。"
+          }
+        }
+      }
+    },
+    "Pull down to try again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下拉即可重试。"
           }
         }
       }
@@ -2269,6 +2642,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已接收"
+          }
+        }
+      }
+    },
+    "Recent projects" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最近的项目"
           }
         }
       }
@@ -2393,6 +2776,26 @@
         }
       }
     },
+    "Restore" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复"
+          }
+        }
+      }
+    },
+    "Run automatically" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动执行"
+          }
+        }
+      }
+    },
     "Save" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2453,6 +2856,16 @@
         }
       }
     },
+    "Search projects" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索项目"
+          }
+        }
+      }
+    },
     "Send" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2489,6 +2902,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "把提问发到这部手机"
+          }
+        }
+      }
+    },
+    "Sending" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送中"
           }
         }
       }
@@ -2553,6 +2976,16 @@
         }
       }
     },
+    "Showing %lld of %llu." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示 %lld / %llu 条。"
+          }
+        }
+      }
+    },
     "Showing the first 1 MB only." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2569,6 +3002,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "跳过权限确认"
+          }
+        }
+      }
+    },
+    "Source" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来源"
           }
         }
       }
@@ -2663,6 +3106,66 @@
         }
       }
     },
+    "Sync helper cannot use iCloud" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同步程序无法使用 iCloud"
+          }
+        }
+      }
+    },
+    "Sync helper is not running" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同步程序未运行"
+          }
+        }
+      }
+    },
+    "Sync helper not installed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未安装同步程序"
+          }
+        }
+      }
+    },
+    "Synced with iCloud" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud 同步的项目"
+          }
+        }
+      }
+    },
+    "Synced ·" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已同步 ·"
+          }
+        }
+      }
+    },
+    "Syncing…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在同步…"
+          }
+        }
+      }
+    },
     "Take Photo" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2739,6 +3242,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "消息太长了。"
+          }
+        }
+      }
+    },
+    "That todo is too long." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这条待办太长了。"
+          }
+        }
+      }
+    },
+    "That todo was already handled elsewhere. The list is up to date now." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这条待办已在别处处理，列表已更新。"
           }
         }
       }
@@ -2893,12 +3416,32 @@
         }
       }
     },
+    "The Mac" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac"
+          }
+        }
+      }
+    },
     "The Mac could not open a terminal for the Agent." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mac 无法为 Agent 打开终端。"
+          }
+        }
+      }
+    },
+    "The Mac could not save that." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 没能保存这次修改。"
           }
         }
       }
@@ -2923,6 +3466,16 @@
         }
       }
     },
+    "The Mac did not answer" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 没有响应"
+          }
+        }
+      }
+    },
     "The Mac did not answer in time." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2943,12 +3496,32 @@
         }
       }
     },
+    "The Mac did not answer. This is the last state it reported." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 没有响应，以下是它最后一次报告的状态。"
+          }
+        }
+      }
+    },
     "The Mac did not confirm it. You can send it again or discard it and edit your answer." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mac 没有确认收到。你可以重新发送，或放弃后修改回答。"
+          }
+        }
+      }
+    },
+    "The Mac did not confirm that. The list shows what it has now." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 没有确认这次修改，列表显示的是它现在的内容。"
           }
         }
       }
@@ -3193,6 +3766,16 @@
         }
       }
     },
+    "There is nothing to add." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可添加的内容。"
+          }
+        }
+      }
+    },
     "There is nothing to send." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3269,6 +3852,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这台 Mac 已不再配对。"
+          }
+        }
+      }
+    },
+    "This Mac needs an update" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 Mac 需要更新"
           }
         }
       }
@@ -3381,6 +3974,16 @@
         }
       }
     },
+    "This project is no longer there." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个项目已经不存在了。"
+          }
+        }
+      }
+    },
     "This removes every Mac and the broker account from this phone. Your Macs are told, and you can pair again at any time." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3437,6 +4040,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这个任务已不存在"
+          }
+        }
+      }
+    },
+    "To do" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待办"
+          }
+        }
+      }
+    },
+    "Todo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待办内容"
+          }
+        }
+      }
+    },
+    "Todos" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待办"
+          }
+        }
+      }
+    },
+    "Todos can be added when the Mac is reachable." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 可连接时才能添加待办。"
           }
         }
       }
@@ -3531,6 +4174,16 @@
         }
       }
     },
+    "Update AskHuman on %@ to manage its todos from your phone." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先更新 %@ 上的 AskHuman，才能在手机上管理它的待办。"
+          }
+        }
+      }
+    },
     "Updating…" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3567,6 +4220,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "等待 Apple"
+          }
+        }
+      }
+    },
+    "Waiting for the first sync" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待首次同步"
           }
         }
       }
@@ -3641,12 +4304,32 @@
         }
       }
     },
+    "When on, the Agent runs this todo by itself after it finishes the task before it." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开启后，Agent 在完成前序任务后，将自动执行该待办。"
+          }
+        }
+      }
+    },
     "Will notify you" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "会通知你"
+          }
+        }
+      }
+    },
+    "With todos" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有待办"
           }
         }
       }
@@ -3667,6 +4350,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有通知的话，只有在 App 打开时才能看到新提问。"
+          }
+        }
+      }
+    },
+    "Without todos" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有待办"
           }
         }
       }
@@ -3727,6 +4420,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这个任务不会通知你：这台 Mac 要通知你的 Agent 已经到上限了。"
+          }
+        }
+      }
+    },
+    "Your Mac" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的 Mac"
           }
         }
       }
@@ -3804,12 +4507,82 @@
     "ahpair1.…" : {
       "shouldTranslate" : false
     },
+    "iCloud" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud"
+          }
+        }
+      }
+    },
+    "iCloud data was cleared" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud 数据已被清除"
+          }
+        }
+      }
+    },
+    "iCloud storage is full" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud 空间不足"
+          }
+        }
+      }
+    },
+    "iCloud sync is off" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud 同步未开启"
+          }
+        }
+      }
+    },
+    "iCloud todos are served by a Mac that has sync on. Bring one online, or choose a Mac above." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud 待办由开启了同步的 Mac 提供。请让其中一台上线，或在上方选择一台 Mac。"
+          }
+        }
+      }
+    },
     "now" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "现在"
+          }
+        }
+      }
+    },
+    "this Mac" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 Mac"
+          }
+        }
+      }
+    },
+    "via %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "经由 %@"
           }
         }
       }
@@ -3823,6 +4596,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "· %@前在线"
+          }
+        }
+      }
+    },
+    "· on %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "· 在 %@ 上"
           }
         }
       }
