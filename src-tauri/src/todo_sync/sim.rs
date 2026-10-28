@@ -259,6 +259,31 @@ impl Device {
         }
         assert!(session.write(file));
     }
+
+    /// Give the todo `id` in directory `key` attachments called `names` (the files themselves do not matter).
+    fn set_attachments(&self, key: &str, id: &str, names: &[&str]) {
+        let session = todos::Session::open(&self.env.todos_path, &self.env.todos_lock);
+        let mut file = session.read().expect("read");
+        for e in file.projects.get_mut(key).into_iter().flatten() {
+            if e.id == id {
+                e.attachments = names
+                    .iter()
+                    .map(|name| crate::todo_attachments::TodoAttachment {
+                        id: format!("att-{name}"),
+                        name: (*name).into(),
+                        size: 1,
+                        is_image: false,
+                        source_path: String::new(),
+                        path: String::new(),
+                        storage: crate::todo_attachments::TodoAttachmentStorage::Managed,
+                        thumbnail_path: None,
+                        source_modified_ms: None,
+                    })
+                    .collect();
+            }
+        }
+        assert!(session.write(file));
+    }
 }
 
 /// Faults off, then ticks until nothing moves any more.
@@ -700,6 +725,39 @@ fn a_new_directory_of_a_known_project_gets_its_replica_without_the_network() {
     cloud.borrow_mut().faults = Faults::default();
     a.tick();
     assert_eq!(a.texts("/a"), ["one", "two", "three"]);
+}
+
+#[test]
+fn replicas_that_differ_only_in_attachment_files_still_settle() {
+    // Found on real data: a todo that sits in two directories of one Mac, with attachment files in only
+    // one of them, made every tick re-stamp the hint and upload a record, forever.
+    let cloud = Cloud::shared(11);
+    let mut a = Device::new("A", &cloud, &[("/a", Some(P1))]);
+    let b = Device::new("B", &cloud, &[("/b", Some(P1))]);
+    a.enable();
+    b.enable();
+    let id = a.add("/a", "one");
+    a.tick();
+    a.give_directory("/a-wt", P1);
+    a.set_attachments("/a", &id, &["shot.png", "log.txt"]);
+
+    let mut devs = vec![a, b];
+    // `sync_all` ends with a round in which nothing may move: no upload, no merge, no file change.
+    sync_all(&mut devs, "attachments in one replica");
+    settle(&mut devs, &cloud, "attachments in one replica");
+    for _ in 0..3 {
+        for d in devs.iter_mut() {
+            let r = d.tick();
+            assert_eq!(r.pushed, 0, "{}: still uploading every tick: {r:?}", d.name);
+        }
+    }
+
+    // The other Mac sees the real hint (the files live on A), and the replica never got files.
+    let hint = devs[1].state().entities[&id].e.att.clone().expect("hint");
+    assert_eq!(hint.n, 2);
+    assert_eq!(hint.names, ["shot.png", "log.txt"]);
+    assert_eq!(devs[0].state().device_id, hint.dev);
+    assert!(devs[0].file().projects["/a-wt"][0].attachments.is_empty());
 }
 
 #[test]
