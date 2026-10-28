@@ -52,7 +52,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
   | `AHStore` | 文件型 JSON 存储（历史、草稿、发件箱、流量）、钥匙串 `Vault`、`PushDecryptor`（通知扩展用） |
   | `AHTransport` | `BrokerClient` 抽象、`MQTTBrokerClient`（CocoaMQTT）、进程内 `LoopbackBroker` |
   | `AHCore` | `PhoneEngine`（actor：连接、配对、同步、发件箱重试、推送登记、Agents / Watch / 插话 / 任务 / 待办请求）、`TodosStore`（待办标签的状态：来源与 iCloud 接入 Mac、「Mac 最后的回答 + 用户未被应答的写入」叠加出屏幕上的列表、写入队列）与 `AppStore`（`@MainActor @Observable`，UI 的唯一入口）及各 Composer |
-  | `AHMarkdown` | 请求正文的 Markdown 块解析 |
+  | `AHMarkdown` | Markdown 块解析，供原生渲染（题干、列表摘要、Watch 卡片、附件预览，以及网页渲染不可用时的回落）；请求正文平时由网页渲染（见下） |
   | `AHMock` | `MockBackend`：演示数据与可编程故障，UI 测试和截图都跑在它上面 |
 
 - 通知扩展 `AskHumanNotification` 只解密预览（`NotificationText`），不连网络。点击通知经 `AppStore.openNotification` 路由：提问类打开请求（请求还没到手机时页面用通知原文占位、转圈等待，只有 Mac 已答复且没有它才说「不可用」），`follow.*` 打开 Agent 页。

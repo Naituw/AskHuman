@@ -89,6 +89,9 @@ final class AskHumanWebUITests: XCTestCase {
         XCTAssertTrue(labelled("在线双写").exists, "so is the table")
         XCTAssertFalse(app.buttons["Copy code"].exists, "none of it is drawn by the native renderer")
         shot("30-web-top")
+        app.swipeUp(velocity: .slow)
+        Thread.sleep(forTimeInterval: 0.8)
+        shot("30b-web-diagram")
     }
 
     func testTheNativeRendererDrawsTheMessageWhenThePageIsSwitchedOff() {
