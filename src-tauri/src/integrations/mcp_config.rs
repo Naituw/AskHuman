@@ -849,11 +849,19 @@ fn apply_install_toml_outcome_env(
     entry.insert("args", value(args));
     entry.insert("startup_timeout_sec", value(startup));
     entry.insert("tool_timeout_sec", value(tool));
-    // Codex: skip per-call approval for our own ask tools. Written only when the key is
-    // absent — a user-edited value is their call and is never touched or flagged as
-    // outdated (`toml_entry_matches` deliberately ignores this key).
-    if target == AgentTarget::Codex && !entry.contains_key("default_tools_approval_mode") {
-        entry.insert("default_tools_approval_mode", value("approve"));
+    if target == AgentTarget::Codex {
+        // AskHuman before v0.15 wrote `approval_mode` straight under the server table. Codex
+        // only reads `default_tools_approval_mode` there (`approval_mode` is a per-tool key
+        // under `tools.<name>`), so it ignores the old key and warns about it at every start.
+        // The key was ours, so drop it; the tool tables and other servers keep theirs. Its
+        // presence alone is not flagged as outdated either: `needs_update` gates task readiness.
+        entry.remove("approval_mode");
+        // Skip per-call approval for our own ask tools. Written only when the key is absent —
+        // a user-edited value is their call and is never touched or flagged as outdated
+        // (`toml_entry_matches` deliberately ignores this key).
+        if !entry.contains_key("default_tools_approval_mode") {
+            entry.insert("default_tools_approval_mode", value("approve"));
+        }
     }
     // Grok：per-tool 超时 `tool_timeouts = { ask = 86400 }`（内联表，对 Composer 更精准）。
     match ask {
@@ -1572,6 +1580,106 @@ mod tests {
             .unwrap()
             .get("default_tools_approval_mode")
             .is_none());
+    }
+
+    /// What AskHuman before v0.15 left in a Codex config: today's entry with the approval key
+    /// under its old name.
+    fn legacy_codex_config() -> String {
+        let current = apply_install_toml(CODEX, "", EXE).unwrap();
+        let legacy = current.replace("default_tools_approval_mode", "approval_mode");
+        assert_ne!(legacy, current);
+        legacy
+    }
+
+    #[test]
+    fn codex_install_drops_the_legacy_server_level_approval_mode() {
+        let legacy = legacy_codex_config();
+        // The old key alone does not flag "needs update": that would block task readiness.
+        assert!(toml_entry_matches(CODEX, &legacy, EXE));
+
+        let out = apply_install_toml(CODEX, &legacy, EXE).unwrap();
+        let doc = out.parse::<toml_edit::DocumentMut>().unwrap();
+        let entry = toml_entry(&doc).unwrap();
+        assert!(entry.get("approval_mode").is_none());
+        assert_eq!(
+            entry
+                .get("default_tools_approval_mode")
+                .and_then(|i| i.as_str()),
+            Some("approve")
+        );
+        // The migrated file is what a fresh install writes, and it stays put.
+        assert_eq!(out, apply_install_toml(CODEX, "", EXE).unwrap());
+        assert_eq!(apply_install_toml(CODEX, &out, EXE).unwrap(), out);
+    }
+
+    #[test]
+    fn codex_install_drops_the_legacy_key_whatever_its_value() {
+        // Codex ignored the key whatever it said, so an edited value carried no behavior.
+        let edited = legacy_codex_config()
+            .replace("approval_mode = \"approve\"", "approval_mode = \"prompt\"");
+        let out = apply_install_toml(CODEX, &edited, EXE).unwrap();
+        let doc = out.parse::<toml_edit::DocumentMut>().unwrap();
+        let entry = toml_entry(&doc).unwrap();
+        assert!(entry.get("approval_mode").is_none());
+        assert_eq!(
+            entry
+                .get("default_tools_approval_mode")
+                .and_then(|i| i.as_str()),
+            Some("approve")
+        );
+
+        // With the current key present too, the user's value survives and only the old key goes.
+        let both = edited.replace(
+            "approval_mode = \"prompt\"",
+            "approval_mode = \"prompt\"\ndefault_tools_approval_mode = \"writes\"",
+        );
+        let out = apply_install_toml(CODEX, &both, EXE).unwrap();
+        let doc = out.parse::<toml_edit::DocumentMut>().unwrap();
+        let entry = toml_entry(&doc).unwrap();
+        assert!(entry.get("approval_mode").is_none());
+        assert_eq!(
+            entry
+                .get("default_tools_approval_mode")
+                .and_then(|i| i.as_str()),
+            Some("writes")
+        );
+    }
+
+    #[test]
+    fn codex_install_keeps_every_other_approval_mode() {
+        // `approval_mode` is a valid per-tool key (the permission memory writes it), and another
+        // server's config is not ours to edit.
+        let text = format!(
+            "{}\n[mcp_servers.askhuman.tools.ask]\napproval_mode = \"approve\"\n\n\
+             [mcp_servers.github]\ncommand = \"gh-mcp\"\napproval_mode = \"prompt\"\n",
+            legacy_codex_config()
+        );
+        let out = apply_install_toml(CODEX, &text, EXE).unwrap();
+        let doc = out.parse::<toml_edit::DocumentMut>().unwrap();
+        assert!(toml_entry(&doc).unwrap().get("approval_mode").is_none());
+        assert_eq!(
+            doc["mcp_servers"]["askhuman"]["tools"]["ask"]["approval_mode"].as_str(),
+            Some("approve")
+        );
+        assert_eq!(
+            doc["mcp_servers"]["github"]["approval_mode"].as_str(),
+            Some("prompt")
+        );
+    }
+
+    #[test]
+    fn grok_install_does_not_touch_an_approval_mode_key() {
+        // AskHuman never wrote it for Grok, so any such key is the user's.
+        let text = "[mcp_servers.askhuman]\ncommand = \"x\"\napproval_mode = \"approve\"\n";
+        let out = apply_install_toml(GROK, text, EXE).unwrap();
+        let doc = out.parse::<toml_edit::DocumentMut>().unwrap();
+        assert_eq!(
+            toml_entry(&doc)
+                .unwrap()
+                .get("approval_mode")
+                .and_then(|i| i.as_str()),
+            Some("approve")
+        );
     }
 
     #[test]

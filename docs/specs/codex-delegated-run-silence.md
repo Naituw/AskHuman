@@ -361,5 +361,5 @@ Codex 的 hook 输入里没有 `thread_source`（F14），`agents/stop.rs` 读�
 10. **迁移时已打开的 Codex 会话会在下一步失去旧协议（V3 前读源码发现）**：Codex 每个采样步骤都会重读 AGENTS.md，变化以 diff 追加（“The previously provided AGENTS.md instructions no longer apply.”）；
     hook 只在 `startup` / `clear` / `compact` / `resume` / `fork` 注入，不会给已打开的会话补发。这些会话需要 `/clear`、压缩、resume 或新开才恢复协议。迁移由用户显式触发（D10），所以不做自动补救，
     但迁移前后要提醒用户。
-11. **`agents update` 顺带刷新 `[mcp_servers.askhuman]`（V3 发现，与本任务无关）**：既有写入逻辑补上了 `default_tools_approval_mode`；旧版 AskHuman 写下的 `approval_mode` 旧键没有被清理，
-    Codex 0.163 对它（以及用户配置里的 `type`）报“忽略未识别配置”，exec 的 JSON 流里会多两条 error 项。已记为项目待办 #7。
+11. **`agents update` 顺带刷新 `[mcp_servers.askhuman]`（V3 发现，与本任务无关）**：既有写入逻辑补上了 `default_tools_approval_mode`；旧版 AskHuman 写下的 `approval_mode` 旧键当时没有被清理，
+    Codex 0.163 对它（以及用户配置里的 `type`）报“忽略未识别配置”，exec 的 JSON 流里会多两条 error 项。现已处理：安装 / 更新写入该条目时顺手移除这个旧键（见 `codex-permission-remember.md` D49）。
