@@ -82,7 +82,7 @@ prost = "0.13"
 sys-locale = "0.3.2"
 # Markdown 解析（文本附件转 docx + macOS QuickLook 渲染预览）。禁用 simd 等默认特性以控体积，
 # 仅保留 `html`（QuickLook 预览把 .md 渲染成 HTML 走原生面板，见 macos_quicklook.rs）。
-pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
+pulldown-cmark = { version = "0.13.5", default-features = false, features = ["html"] }
 # Package DOCX with the patched ZIP writer; enable only the existing zlib-rs deflate backend.
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 roxmltree = "0.20"
