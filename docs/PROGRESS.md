@@ -117,7 +117,7 @@ App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-foll
 ## 进行中：跨设备待办同步（多台 Mac，iCloud）——已合并进 main（本地，未推送），两台 Mac 已装机并对真实数据启用，剩下的真机项要用户在场
 
 需求 `docs/specs/todo-sync.md`、计划 `docs/plans/todo-sync.md`（实施记录在其 §10）、实现地图 `docs/overview-todo-sync.md`、界面稿 `docs/assets/todo-sync-ui/`。
-2026-10-27 用户评审通过并说「你自己全部搞定，我要上班了」；分支 `feat/todo-sync`，worktree `../HumanInLoop-todosync`（Dev Instance，popup-only）。
+2026-10-27 用户评审通过并说「你自己全部搞定，我要上班了」；分支 `feat/todo-sync`，worktree `../HumanInLoop-todosync`（Dev Instance，popup-only）；两者 2026-10-29 已清理（提交都在 main 里）。
 S0 可行性 spike 的结果摘要在需求附录 A；spike 工程在仓库外：`~/Developer/AskHuman-TodoSync-Spike/`（复现方法见其中的 `RUNBOOK.txt`）。
 
 已定（用户 AskHuman 八轮，详见需求 §3、§17）：同一 Apple ID 的自己的多台 Mac；按 git remote 自动合并，每个目录 / worktree 是同一份待办的副本；无 remote 不同步；⚡ 不跨机；
@@ -125,7 +125,7 @@ v1 不同步附件、同步执行历史；**清空历史是全局的**（清空�
 whats-next 前「过期才拉」（> 20 秒，最多等 1.5 秒）；待办窗口统一改侧栏且打开不得卡顿；先自用，之后另行评审随正式版发布。
 容器 / bundle id：`iCloud.com.naituw.humaninloop.todosync` / `com.naituw.humaninloop.todosync`。
 
-进度（分支 `feat/todo-sync`，提交即进度）：P0 性能埋点与脚本 ✓；P1 侧栏 ✓（**已合并进 main：`abdfa3b`，未推送**；分支 `feat/todos-sidebar` 只含 P0 + P1，已无用，可删）；P2 同步核心 ✓（模拟与崩溃枚举全过）；
+进度（分支 `feat/todo-sync`，提交即进度）：P0 性能埋点与脚本 ✓；P1 侧栏 ✓（**已合并进 main：`abdfa3b`，未推送**）；P2 同步核心 ✓（模拟与崩溃枚举全过）；
 P3 CloudKit helper ✓（`swift test` 过；Xcode 自动签名的 Development 构建对真实 iCloud 跑通）；P4 集成 ✓（读取钩子、`AskHuman todo-sync`、设置卡、侧栏底部状态；Dev Instance 恒关闭所以只能用模拟验证）；
 P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端 / 仅本机、移除；与界面稿的对照用浏览器预览目测）；P6 双机验收 ✓（下面两段；睡眠唤醒、联网恢复、登录项形态、24 小时浸泡除外）。各阶段与计划的差异见计划 §10。
 **已合并进 main（本地，未推送）**：用户 2026-10-28 看了两台真机验收的报告后选了「现在就合并」（功能默认关、helper 不随版本发布，回来直接用 main 的构建装机验收），推翻了 2026-10-27 22:05「真机验收后再合并」的决定。合并前先把 main（含 iOS 选模型的 4 个提交）合进分支，只有 `docs/PROGRESS.md` 一处冲突；合并后全量测试：Rust 2040 通过、0 失败（10 忽略）；vue-tsc 与 vitest 未重跑（main 这 4 个提交没动 `src/`）。
@@ -146,7 +146,7 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 
 ## 待验收：iOS App 管理待办（已合并进 main，两台 Mac 与 iPhone Air 都已换上新版，决策全部是 agent 在用户睡觉时代定的，等用户审阅与真机验收）
 
-需求 `docs/specs/ios-todos.md`（决策 I1–I16 在 §3，可整条否决）、计划 `docs/plans/ios-todos.md`；分支 `feat/ios-todos`（worktree `../HumanInLoop-todosync`）已于 2026-10-29 早上经用户同意快进合并进 main（本地，**未推送**），并用 `./scripts/install.sh` 装到了这台 Mac（装机后一次真实同步 tick 正常）；合并前已把 main 合进分支并在合并后的树上复测过。同日早上又应用户要求装到了 Mac B 与 iPhone Air：B 的二进制在 B 上用 B 自己的 Developer ID 重签后换入（指定要求与旧版逐字相同，旧版备份在 B 的 `~/.askhuman/backups/pre-ios-todos-install-20261029-080650/`），手机上是 Debug 构建（开发签名，用现成的描述文件，没有改 Apple 账号；没启动、没点亮手机，直接打开 App 就是新版，配对与数据不变）。用户在手机上打开待办页后发现状态行一直停在「正在同步…」：它取自 Mac 回答那一刻的快照，而打开页面时的订阅会让 Mac 立刻拉一次 iCloud（约 1 秒），第一份回答恰好撞上，同步结束后又没有任何通知；已修（`3e52cbb`，分支 `fix/ios-todos-sync-line`，已快进合并进 main，未推送）：手机见到 `syncing` 为真就静默复查，约 35 秒，见规格 §7；手机已换成修复后的构建（在干净 worktree 里构建）。又按用户的选择改了 iCloud 来源的失败表现（`56948da`，分支 `fix/ios-todos-icloud-failure`，已快进合并进 main，未推送）：一次请求没得到回答时不再清空列表，保留上次的行、打开着的项目和同步状态行，只在页面顶部提示一句；手机也已换成这个构建（同样没启动手机）。随后又按用户的选择改了决策 I3 的代价一栏（`8955ce8`，分支 `fix/ios-todos-icloud-offline`，已快进合并进 main，未推送）：iCloud 接入的 Mac 离线、又没有别的 Mac 能代答时，已加载的行与打开着的项目也保留（只读，页面顶部说它暂时连不上），与选某台 Mac 做来源时一致；同步被关掉或那台 Mac 被取消配对时仍然清空；这些行只在这次启动的内存里（I13），重启后没有行可留；手机已换成这个构建（同样没启动手机）。
+需求 `docs/specs/ios-todos.md`（决策 I1–I16 在 §3，可整条否决）、计划 `docs/plans/ios-todos.md`；分支 `feat/ios-todos`（worktree `../HumanInLoop-todosync`，两者 2026-10-29 已清理）已于 2026-10-29 早上经用户同意快进合并进 main（本地，**未推送**），并用 `./scripts/install.sh` 装到了这台 Mac（装机后一次真实同步 tick 正常）；合并前已把 main 合进分支并在合并后的树上复测过。同日早上又应用户要求装到了 Mac B 与 iPhone Air：B 的二进制在 B 上用 B 自己的 Developer ID 重签后换入（指定要求与旧版逐字相同，旧版备份在 B 的 `~/.askhuman/backups/pre-ios-todos-install-20261029-080650/`），手机上是 Debug 构建（开发签名，用现成的描述文件，没有改 Apple 账号；没启动、没点亮手机，直接打开 App 就是新版，配对与数据不变）。用户在手机上打开待办页后发现状态行一直停在「正在同步…」：它取自 Mac 回答那一刻的快照，而打开页面时的订阅会让 Mac 立刻拉一次 iCloud（约 1 秒），第一份回答恰好撞上，同步结束后又没有任何通知；已修（`3e52cbb`，分支 `fix/ios-todos-sync-line`，已快进合并进 main，未推送）：手机见到 `syncing` 为真就静默复查，约 35 秒，见规格 §7；手机已换成修复后的构建（在干净 worktree 里构建）。又按用户的选择改了 iCloud 来源的失败表现（`56948da`，分支 `fix/ios-todos-icloud-failure`，已快进合并进 main，未推送）：一次请求没得到回答时不再清空列表，保留上次的行、打开着的项目和同步状态行，只在页面顶部提示一句；手机也已换成这个构建（同样没启动手机）。随后又按用户的选择改了决策 I3 的代价一栏（`8955ce8`，分支 `fix/ios-todos-icloud-offline`，已快进合并进 main，未推送）：iCloud 接入的 Mac 离线、又没有别的 Mac 能代答时，已加载的行与打开着的项目也保留（只读，页面顶部说它暂时连不上），与选某台 Mac 做来源时一致；同步被关掉或那台 Mac 被取消配对时仍然清空；这些行只在这次启动的内存里（I13），重启后没有行可留；手机已换成这个构建（同样没启动手机）。
 用户 2026-10-29 夜里说「手机 App 想支持待办：能选设备、能选 iCloud 模式、还有项目来源的问题——你都设计，实现验证，我明天早上验收」，所以没有经过 AskHuman 问答。
 做法：手机经已有的 iOS 网关（MQTT + 端到端加密）读写 Mac 的 `todos.json`，新增 `todo.*` 线消息；「iCloud」是一个**来源**，由开着同步且在线的 Mac 代答、掉线自动换，手机不直连 CloudKit（那要给 iOS App ID 开 iCloud 容器，是 Apple 账号上的改动，要用户授权）；项目列表由 Mac 按桌面侧栏同一算法算好，手机只看到不透明 id 与同名后缀，不暴露路径；手机不落盘待办。
 
@@ -154,7 +154,6 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 
 下一步：
 - [ ] **用户验收**：看 `docs/specs/ios-todos.md` §3 的 16 条决策（尤其 I2 不直连 CloudKit、I4 设备模式不列仅云端项目、I5 手机不能新建项目、I13 手机不落盘），不同意的整条否决；真机上装一遍（`ios/` 里 `xcodegen generate`，配对后进「待办」标签）；多台 Mac、iCloud 来源自动换机、Mac 离线时的表现要真机才看得全；打开待办页后状态行应当在几秒内从「正在同步…」变成「已同步 · 刚刚」，请确认上面的修复有效。
-- [ ] 分支 `feat/ios-todos`、`fix/ios-todos-sync-line`、`fix/ios-todos-icloud-failure`、`fix/ios-todos-icloud-offline` 与 worktree `../HumanInLoop-todosync` 已经无用，可以删（worktree 里的 `src-tauri/target` 约 6.9 GB，磁盘只剩十几 GB 时可先删它）。
 - [ ] 后置（需求 §11）：手机直连 CloudKit（Mac 都不在线也能用，需用户授权开 iCloud 容器 + Swift 重实现同步核心）、附件的查看与添加、「全部待办」聚合页、清空历史、从 iCloud 移除项目、待办推送、离线编辑队列。
 - [ ] 已知局限（需求 §10）：Mac 都不在线时手机看不到待办；线协议里 `helper` 没有「未安装」状态，手机上「没装」与「没在跑」显示成同一句；单条超大待办（桌面端 / CLI 不限长度，手机端限 4000 字）可能让那个项目的 `todo.list` 装不进一条消息而超时。
 
