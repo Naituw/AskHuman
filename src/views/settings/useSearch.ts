@@ -140,6 +140,7 @@ export function useSettingsSearch(deps: {
       lit("integration", "Codex", ["Agent"]),
       lit("integration", "Cursor", ["Agent"]),
       lit("integration", "Grok", ["Agent"]),
+      lit("integration", "Antigravity", ["Agent"]),
       lit("integration", "Pi", ["Agent"]),
       e("integration", "settings.integration.lifecycleTitle", [
         "settings.integration.lifecycleHint",

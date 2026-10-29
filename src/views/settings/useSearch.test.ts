@@ -75,4 +75,30 @@ describe("useSettingsSearch", () => {
     });
     wrapper.unmount();
   });
+  it("indexes the Antigravity integration card", async () => {
+    i18n.global.locale.value = "en";
+    let search!: ReturnType<typeof useSettingsSearch>;
+    const wrapper = mount(
+      defineComponent({
+        setup() {
+          search = useSettingsSearch({
+            config: ref<AppConfig | null>(null),
+            activeTab: ref<Tab>("general"),
+          });
+          return () => null;
+        },
+      }),
+      { global: { plugins: [i18n] } },
+    );
+
+    search.searchQuery.value = "antigravity";
+    await nextTick();
+
+    expect(search.searchResults.value).toContainEqual({
+      tab: "integration",
+      title: "Antigravity",
+      extra: ["Agent"],
+    });
+    wrapper.unmount();
+  });
 });
