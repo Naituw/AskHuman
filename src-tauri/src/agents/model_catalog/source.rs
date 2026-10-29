@@ -99,6 +99,7 @@ pub fn load_with(probes: &dyn Probes, source: &CatalogSource) -> Result<AgentCat
         }
     };
     match source.kind {
+        AgentKind::Antigravity => Err("Antigravity does not support model discovery".to_string()),
         AgentKind::Claude => {
             // Claude Code has no list command: the aliases are fixed, `--help` only tells whether
             // the newest one exists in this version.
@@ -176,6 +177,7 @@ pub fn refresh_default_with(
         ),
         // Its default comes from the listing alone.
         AgentKind::Grok => return catalog.clone(),
+        AgentKind::Antigravity => return catalog.clone(),
     };
     AgentCatalog {
         models: catalog.models.clone(),
@@ -306,6 +308,14 @@ mod tests {
 
     fn ids(catalog: &AgentCatalog) -> Vec<&str> {
         catalog.models.iter().map(|m| m.id.as_str()).collect()
+    }
+
+    #[test]
+    fn antigravity_does_not_probe_for_models() {
+        let probes = Scripted::default();
+        let error = load_with(&probes, &source(AgentKind::Antigravity)).unwrap_err();
+        assert!(error.contains("does not support model discovery"));
+        assert!(probes.asked.borrow().is_empty());
     }
 
     #[test]

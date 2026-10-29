@@ -356,6 +356,16 @@ pub fn pi_sessions_dir() -> PathBuf {
     pi_agent_dir().join("sessions")
 }
 
+/// Shared rules for local Antigravity clients; agy availability is a separate host diagnostic.
+pub fn antigravity_rule_file() -> PathBuf {
+    home().join(".gemini/config/rules/askhuman-antigravity.md")
+}
+
+/// Global MCP configuration for Google Antigravity.
+pub fn antigravity_mcp_config_json() -> PathBuf {
+    home().join(".gemini/config/mcp_config.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

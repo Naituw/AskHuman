@@ -78,7 +78,7 @@ function agentDefinition(id: AgentId, hasTimeoutHook: boolean) {
     hasCli: id !== "grok",
     hasMcp: id !== "pi",
     instructionKind: id === "grok" ? "skill" : id === "codex" ? "hook" : "rule",
-    recommended: id === "cursor" || id === "claude" || id === "pi" ? "cli" : "mcp",
+    recommended: id === "cursor" || id === "claude" || id === "pi" || id === "antigravity" ? "cli" : "mcp",
   };
 }
 
@@ -101,7 +101,7 @@ function settingsContext(
     integrationLoading: ref(false),
     piVersionLoading: ref(false),
     modeBusy: ref({ [agent.id]: false }),
-    modeMessage: ref({ [agent.id]: null }),
+    modeMessage: ref<Record<string, string | null>>({ [agent.id]: null }),
     modeError: ref({ [agent.id]: false }),
     setMode: vi.fn(),
     togglePermission: vi.fn(),
@@ -593,4 +593,38 @@ describe("IntegrationTab", () => {
       }),
     );
   });
+  it("explains unsupported Antigravity capabilities without a lifecycle switch", () => {
+    const { wrapper } = mountAgent(agentDefinition("antigravity", false), modeStatus({
+      mode: "cli", mcpSupported: false, timeoutHookSupported: false,
+      lifecycle: { supported: false, enabled: false, installed: false, needsUpdate: false, preferenceConfigured: false, outdated: false, cleanupRequired: false },
+    }));
+    const card = wrapper.get("#integration-antigravity");
+    expect(card.text()).toContain(i18n.global.t("settings.integration.antigravityRecoveryUnsupported"));
+    expect(card.text()).toContain(i18n.global.t("settings.integration.antigravityLifecycleUnsupported"));
+    expect(card.text()).not.toContain(i18n.global.t("settings.integration.codexProtocolHint"));
+    expect(card.find("#lifecycle-antigravity input").exists()).toBe(false);
+  });
+
+  it("offers family CLI and MCP without requiring an agy binary", () => {
+    const { wrapper } = mountAgent(agentDefinition("antigravity", false), modeStatus({
+      mode: "none", mcpSupported: true, agentVersion: null, versionSupported: false,
+    }));
+    const buttons = wrapper.findAll("#integration-antigravity .seg").map((button) => button.text());
+    expect(buttons.some((text) => text.includes(i18n.global.t("settings.integration.modeCli")))).toBe(true);
+    expect(buttons.some((text) => text.includes(i18n.global.t("settings.integration.modeMcp")))).toBe(true);
+    expect(wrapper.text()).toContain(i18n.global.t("settings.integration.antigravityScope"));
+  });
+
+  it("does not report unreadable integration state as an uninstalled mode", () => {
+    const context = settingsContext(agentDefinition("antigravity", false), modeStatus({ mode: "none" }));
+    Object.assign(context, { modeReadError: ref({ antigravity: true }), refreshMode: vi.fn() });
+    context.modeMessage.value.antigravity = "state unreadable";
+    context.modeError.value.antigravity = true;
+    useSettingsContext.mockReturnValue(context);
+    const wrapper = mount(IntegrationTab, { global: { plugins: [i18n] } });
+    expect(wrapper.find("#integration-antigravity .segmented").exists()).toBe(false);
+    expect(wrapper.text()).toContain("state unreadable");
+    expect(wrapper.text()).toContain(i18n.global.t("settings.integration.retryStatus"));
+  });
+
 });

@@ -175,6 +175,7 @@ fn target_for_kind(kind: AgentKind) -> super::agent_rules::AgentTarget {
         AgentKind::Cursor => super::agent_rules::AgentTarget::Cursor,
         AgentKind::Grok => super::agent_rules::AgentTarget::Grok,
         AgentKind::Pi => super::agent_rules::AgentTarget::Pi,
+        AgentKind::Antigravity => super::agent_rules::AgentTarget::Antigravity,
     }
 }
 

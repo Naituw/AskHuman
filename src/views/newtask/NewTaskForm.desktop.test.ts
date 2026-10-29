@@ -5,7 +5,10 @@ import { i18n } from "../../i18n";
 const api = vi.hoisted(() => ({launch:vi.fn(),status:vi.fn()}));
 vi.mock("@tauri-apps/api/event", () => ({listen: vi.fn(async () => vi.fn())}));
 vi.mock("../../lib/ipc", () => ({
-  agentTaskReadiness: vi.fn(async () => [{kind:"codex",label:"Codex",ready:false,binaryReady:false,integrationReady:true,lifecycleReady:false,integrationMode:"mcp"}]),
+  agentTaskReadiness: vi.fn(async () => [
+    {kind:"codex",label:"Codex",ready:false,binaryReady:false,integrationReady:true,lifecycleReady:false,integrationMode:"mcp",launchSupported:true},
+    {kind:"antigravity",label:"Antigravity",ready:false,binaryReady:false,integrationReady:true,lifecycleReady:false,integrationMode:"cli",launchSupported:false},
+  ]),
   codexLaunchStatus: api.status,
   newTaskInit: vi.fn(async () => ({popupSubmitKey:"cmdEnter",permissionPrompt:"agent-default"})),
   newTaskLaunch: api.launch,
@@ -24,6 +27,13 @@ async function form() {
   wrapper = mount(NewTaskForm,{props:{lockProject:"/project"},global:{plugins:[i18n]}});
   await flushPromises(); await wrapper.get(".nt-agent").trigger("click"); await wrapper.get("textarea").setValue("Task");
 }
+it("hides launch-unsupported families without hiding supported ones", async () => {
+  await form();
+  const agents = wrapper.findAll(".nt-agent");
+  expect(agents).toHaveLength(1);
+  expect(agents[0].text()).toContain("Codex");
+  expect(wrapper.text()).not.toContain("Antigravity");
+});
 it("allows an App-only installation without a runtime selection step", async () => {
   await form();
   expect(wrapper.get(".nt-agent").classes()).not.toContain("disabled");

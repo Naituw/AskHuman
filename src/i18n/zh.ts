@@ -524,6 +524,8 @@ export default {
       manualTitle: "手动集成",
       manualLifecycleHint:
         "手动提示词和 MCP 示例不会安装生命周期追踪；Agent 状态、插话与任务启动需要使用下方自动集成并开启追踪。",
+      antigravityScope: "家族共享规则；CLI 指 AskHuman 调用方式。各客户端能力需分别验收。",
+      retryStatus: "重新读取状态",
       autoTitle: "自动集成",
       promptTitle: "参考提示词",
       copy: "复制",
@@ -600,6 +602,10 @@ export default {
       recommendedTag: "推荐",
       codexNoHook:
         "Codex 无法延长 CLI 工具的超时，长时间等待可能被取消；如需可靠的长等待请改用 MCP 模式。",
+      capabilityUnsupported: "当前不支持",
+      antigravityRecoveryUnsupported: "Antigravity 当前未接入上下文恢复 Hook；CLI 集成不会安装此 Hook。",
+      antigravityLifecycleUnsupported: "Antigravity 当前未接入生命周期追踪，无法在此启用。",
+      contextRecoveryHookLabel: "上下文恢复 Hook",
       protocolLabel: "协议（SessionStart Hook）",
       codexProtocolHint:
         "Codex 的 AskHuman 协议由 SessionStart Hook 在每个交互会话开始时注入（压缩后自动重新注入，并恢复最近一次 AskHuman 问答），不再写入 ~/.codex/AGENTS.md。由其它 Agent、脚本或插件启动的非交互运行默认不会收到协议，见下方开关。",
@@ -923,6 +929,7 @@ export default {
       cursor: "Cursor",
       grok: "Grok",
       pi: "Pi",
+      antigravity: "Antigravity",
     },
     field: {
       session: "会话",
@@ -966,6 +973,7 @@ export default {
     pendingCount: "待送达 {n} 条",
     pendingAttachments: "{n} 个附件",
     revoke: "撤回",
+    antigravityHint: "Antigravity 插话和生命周期跟踪尚未开放",
     grokHint: "Grok 不支持发送消息",
     idleHint: "会话已空闲，请回到原始 Agent 界面发送消息",
     endedHint: "会话已结束",

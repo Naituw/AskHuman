@@ -14,11 +14,53 @@ use crate::integrations::{
     agent_subagent_guard, claude_hook, cursor_hook, mcp_config,
 };
 
-const AGENTS: [&str; 5] = ["cursor", "claude", "codex", "grok", "pi"];
-
 fn daemon_login_ready() -> bool {
     crate::integrations::login_item::daemon_is_installed()
         && !crate::integrations::login_item::daemon_needs_update()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct IntegrationReady {
+    mode: agent_mode::Mode,
+    rule_installed: bool,
+    rule_outdated: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct IntegrationResult {
+    name: &'static str,
+    status: Result<IntegrationReady, String>,
+}
+
+fn collect_integration_status(target: AgentTarget) -> Result<IntegrationReady, String> {
+    if target == AgentTarget::Antigravity {
+        let (mode, updates, rule_installed) =
+            agent_mode::antigravity_status().map_err(|error| error.to_string())?;
+        Ok(IntegrationReady {
+            mode,
+            rule_installed,
+            rule_outdated: updates.rule,
+        })
+    } else {
+        Ok(IntegrationReady {
+            mode: agent_mode::current(target),
+            rule_installed: agent_rules::is_installed(target),
+            rule_outdated: agent_rules::needs_update(target),
+        })
+    }
+}
+
+fn collect_integration_results(
+    names: impl IntoIterator<Item = &'static str>,
+    mut collect: impl FnMut(AgentTarget) -> Result<IntegrationReady, String>,
+) -> Vec<IntegrationResult> {
+    names
+        .into_iter()
+        .map(|name| IntegrationResult {
+            name,
+            status: collect(AgentTarget::parse(name).unwrap()),
+        })
+        .collect()
 }
 
 pub fn dispatch(args: &[String], lang: Lang) {
@@ -44,10 +86,22 @@ pub fn dispatch(args: &[String], lang: Lang) {
     let status = cfgio::daemon_status_result();
     let install = install_check::collect(status.as_ref().ok().and_then(Option::as_ref));
 
-    if json {
-        super::print_line(&render_json(&cfg, &status, &install, lang));
+    let output = if json {
+        render_json(&cfg, &status, &install, lang)
     } else {
-        super::print_line(&render_text(&cfg, &status, &install, lang));
+        render_text(&cfg, &status, &install, lang)
+    };
+    match output {
+        Ok((output, had_errors)) => {
+            super::print_line(&output);
+            if had_errors {
+                std::process::exit(1);
+            }
+        }
+        Err(error) => {
+            eprintln!("Cannot render doctor report: {error}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -56,7 +110,7 @@ fn render_text(
     status: &std::io::Result<Option<crate::ipc::StatusInfo>>,
     install: &install_check::Report,
     lang: Lang,
-) -> String {
+) -> Result<(String, bool), String> {
     let yes = cfgio::t(lang, "yes", "是");
     let no = cfgio::t(lang, "no", "否");
     let yn = |b: bool| if b { yes.clone() } else { no.clone() };
@@ -109,9 +163,30 @@ fn render_text(
 
     // Integrations
     out.push_str(&cfgio::t(lang, "\nIntegrations\n", "\n集成\n"));
-    for &name in &AGENTS {
+    let mut had_errors = false;
+    for IntegrationResult { name, status } in collect_integration_results(
+        super::agents_cmd::aggregate_agents(),
+        collect_integration_status,
+    ) {
         let target = AgentTarget::parse(name).unwrap();
         let kind = crate::agents::AgentKind::parse(name).unwrap();
+        let IntegrationReady {
+            mode,
+            rule_installed,
+            rule_outdated,
+        } = match status {
+            Ok(status) => status,
+            Err(error) => {
+                had_errors = true;
+                out.push_str(&format!(
+                    "  {:<8} {}={}\n",
+                    name,
+                    cfgio::t(lang, "error", "错误"),
+                    error
+                ));
+                continue;
+            }
+        };
         // Codex's protocol travels through its SessionStart hook, so report whether it actually
         // reaches sessions (a hook Codex does not trust is skipped silently).
         let delivery = (target == AgentTarget::Codex).then(codex_protocol::delivery);
@@ -122,11 +197,7 @@ fn render_text(
             ),
             None => (
                 cfgio::t(lang, "rules", "规则"),
-                state_label(
-                    agent_rules::is_installed(target),
-                    agent_rules::needs_update(target),
-                    lang,
-                ),
+                state_label(rule_installed, rule_outdated, lang),
             ),
         };
         let hook = match target {
@@ -140,7 +211,9 @@ fn render_text(
                 claude_hook::needs_update(),
                 lang,
             ),
-            AgentTarget::Codex | AgentTarget::Grok => cfgio::t(lang, "n/a", "—"),
+            AgentTarget::Codex | AgentTarget::Grok | AgentTarget::Antigravity => {
+                cfgio::t(lang, "n/a", "—")
+            }
             AgentTarget::Pi => state_label(
                 agent_mode::timeout_hook_is_installed(target),
                 agent_mode::timeout_hook_needs_update(target),
@@ -197,7 +270,7 @@ fn render_text(
             "  {:<8} {}={} {}={} {}={} {}={} {}={} {}={} {}={}",
             name,
             cfgio::t(lang, "mode", "模式"),
-            mode_label(agent_mode::current(target), lang),
+            mode_label(mode, lang),
             rules_key,
             rules,
             cfgio::t(lang, "hook", "hook"),
@@ -282,7 +355,7 @@ fn render_text(
     if let Some(error) = cursor.error {
         out.push_str(&format!("  {error}\n"));
     }
-    out.trim_end().to_string()
+    Ok((out.trim_end().to_string(), had_errors))
 }
 
 fn render_daemon_text(
@@ -371,12 +444,16 @@ fn mode_label(m: agent_mode::Mode, lang: Lang) -> String {
     }
 }
 
+fn integration_error_row(name: &str, error: &str) -> serde_json::Value {
+    serde_json::json!({ "name": name, "error": error })
+}
+
 fn render_json(
     cfg: &AppConfig,
     status: &std::io::Result<Option<crate::ipc::StatusInfo>>,
     install: &install_check::Report,
     lang: Lang,
-) -> String {
+) -> Result<(String, bool), String> {
     let observed = status.as_ref().ok().and_then(Option::as_ref);
     let conns = observed
         .map(|s| s.im_connections.clone())
@@ -398,15 +475,30 @@ fn render_json(
             })
         })
         .collect();
-    let integrations: Vec<serde_json::Value> = AGENTS
-        .iter()
-        .map(|&name| {
+    let mut had_errors = false;
+    let integrations: Vec<serde_json::Value> = collect_integration_results(
+        super::agents_cmd::aggregate_agents(),
+        collect_integration_status,
+    )
+        .into_iter()
+        .map(|IntegrationResult { name, status }| {
             let target = AgentTarget::parse(name).unwrap();
             let kind = crate::agents::AgentKind::parse(name).unwrap();
+            let IntegrationReady {
+                mode,
+                rule_installed,
+                rule_outdated,
+            } = match status {
+                Ok(status) => status,
+                Err(error) => {
+                    had_errors = true;
+                    return integration_error_row(name, &error);
+                }
+            };
             let hook = match target {
                 AgentTarget::Cursor => Some((cursor_hook::is_installed(), cursor_hook::needs_update())),
                 AgentTarget::ClaudeCode => Some((claude_hook::is_installed(), claude_hook::needs_update())),
-                AgentTarget::Codex | AgentTarget::Grok => None,
+                AgentTarget::Codex | AgentTarget::Grok | AgentTarget::Antigravity => None,
                 AgentTarget::Pi => Some((
                     agent_mode::timeout_hook_is_installed(target),
                     agent_mode::timeout_hook_needs_update(target),
@@ -417,8 +509,8 @@ fn render_json(
             let guard = agent_subagent_guard::status(target);
             serde_json::json!({
                 "name": name,
-                "mode": agent_mode::current(target).as_str(),
-                "rules": { "installed": agent_rules::is_installed(target), "needsUpdate": agent_rules::needs_update(target) },
+                "mode": mode.as_str(),
+                "rules": { "installed": rule_installed, "needsUpdate": rule_outdated },
                 // Codex only: how the protocol reaches sessions (SessionStart hook) and whether
                 // delegated runs may use AskHuman.
                 "protocol": (target == AgentTarget::Codex).then(|| serde_json::json!({
@@ -454,7 +546,7 @@ fn render_json(
         .into_iter()
         .filter(|workspace| !workspace.hidden && std::path::Path::new(&workspace.path).is_dir())
         .count();
-    serde_json::to_string_pretty(&serde_json::json!({
+    let output = serde_json::to_string_pretty(&serde_json::json!({
         "daemon": daemon,
         "install": install_check::render_json_value(install, lang),
         "channels": channels,
@@ -469,11 +561,74 @@ fn render_json(
             "agents": task_readiness,
         },
     }))
-    .unwrap_or_default()
+    .map_err(|e| e.to_string())?;
+    Ok((output, had_errors))
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn integration_collection_continues_after_one_status_error() {
+        let results =
+            collect_integration_results(
+                ["cursor", "antigravity", "codex"],
+                |target| match target {
+                    AgentTarget::Antigravity => Err("Antigravity state unavailable".into()),
+                    AgentTarget::Cursor => Ok(IntegrationReady {
+                        mode: agent_mode::Mode::Cli,
+                        rule_installed: true,
+                        rule_outdated: false,
+                    }),
+                    AgentTarget::Codex => Ok(IntegrationReady {
+                        mode: agent_mode::Mode::None,
+                        rule_installed: false,
+                        rule_outdated: false,
+                    }),
+                    _ => unreachable!(),
+                },
+            );
+        assert_eq!(
+            results,
+            [
+                IntegrationResult {
+                    name: "cursor",
+                    status: Ok(IntegrationReady {
+                        mode: agent_mode::Mode::Cli,
+                        rule_installed: true,
+                        rule_outdated: false,
+                    }),
+                },
+                IntegrationResult {
+                    name: "antigravity",
+                    status: Err("Antigravity state unavailable".into()),
+                },
+                IntegrationResult {
+                    name: "codex",
+                    status: Ok(IntegrationReady {
+                        mode: agent_mode::Mode::None,
+                        rule_installed: false,
+                        rule_outdated: false,
+                    }),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn integration_error_is_machine_readable_without_fake_artifact_state() {
+        let row = integration_error_row("antigravity", "Antigravity state unavailable");
+        assert_eq!(row["name"], "antigravity");
+        assert_eq!(row["error"], "Antigravity state unavailable");
+        assert!(row.get("mode").is_none());
+        assert!(row.get("rules").is_none());
+        assert!(row.get("mcp").is_none());
+    }
+}
+
+#[cfg(test)]
+mod daemon_tests {
     use super::*;
 
     fn running_status() -> crate::ipc::StatusInfo {

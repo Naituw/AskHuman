@@ -78,4 +78,17 @@ describe("InteractSlot composer", () => {
     expect(wrapper.emitted("send")).toEqual([["", ["/tmp/a.png"], []]]);
     wrapper.unmount();
   });
+  it.each(["working", "idle", "ended"] as const)(
+    "does not offer messaging for the unvalidated Antigravity adapter in state %s",
+    (state) => {
+      const wrapper = mount(InteractSlot, {
+        props: { record: { ...record, kind: "antigravity", state }, submitBareEnter: false,
+          pendingText: "", pendingCount: 0, pendingAttachmentCount: 0, newTaskSupported: false },
+        global: { plugins: [i18n] },
+      });
+      expect(wrapper.find("textarea").exists()).toBe(false);
+      expect(wrapper.text()).toContain(i18n.global.t("console.antigravityHint"));
+      wrapper.unmount();
+    },
+  );
 });

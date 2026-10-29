@@ -47,6 +47,227 @@ pub const GROK_TOOL_TIMEOUT_SEC: i64 = 86400;
 /// Grok 针对 `ask` 工具的 per-tool 超时（秒），24h：`tool_timeouts = { ask = 86400 }`。
 /// 对默认模型 Composer 的 per-tool 语义更精准（spec D6 / 调研结论）。
 pub const GROK_ASK_TOOL_TIMEOUT_SEC: i64 = 86400;
+/// Antigravity MCP timeout budget in seconds: 24 hours.
+/// Write the native timeoutSeconds field to allow extended human waits.
+pub const ANTIGRAVITY_TOOL_TIMEOUT_SEC: i64 = 86400;
+
+/// A bounded config edit used while the Antigravity rule transaction is reconciled.
+/// Comparisons protect ordinary external edits, not an atomic compare-and-swap against writers.
+pub(crate) struct PreparedAntigravityConfig {
+    path: PathBuf,
+    before: Option<String>,
+    after: Option<String>,
+}
+
+fn read_optional_config(path: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("cannot read MCP config {}", path.display()))
+        }
+    }
+}
+
+fn validate_antigravity_json(text: &str) -> Result<Value> {
+    // An empty file has historically been treated as an empty configuration.
+    let value = if text.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        jsonc_parser::parse_to_serde_value::<Value>(text, &ParseOptions::default())
+            .context("cannot parse Antigravity MCP config; original file preserved")?
+    };
+    if !value.is_object()
+        || value
+            .get("mcpServers")
+            .is_some_and(|servers| !servers.is_object())
+    {
+        return Err(anyhow!(
+            "Antigravity MCP config and mcpServers must be JSON objects"
+        ));
+    }
+    Ok(value)
+}
+
+impl PreparedAntigravityConfig {
+    pub(crate) fn prepare(path: PathBuf, install: bool, command: &str) -> Result<Self> {
+        let before = read_optional_config(&path)?;
+        validate_antigravity_json(before.as_deref().unwrap_or_default())
+            .with_context(|| format!("MCP config: {}", path.display()))?;
+        let after = if install {
+            Some(apply_install_json(
+                before.as_deref().unwrap_or_default(),
+                command,
+                JsonTimeout::TimeoutSeconds(ANTIGRAVITY_TOOL_TIMEOUT_SEC),
+            )?)
+        } else {
+            before.as_deref().map(apply_uninstall_json).transpose()?
+        };
+        Ok(Self {
+            path,
+            before,
+            after,
+        })
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn replace_if_unchanged(
+        &self,
+        expected: &Option<String>,
+        desired: &Option<String>,
+    ) -> Result<()> {
+        if read_optional_config(&self.path)? != *expected {
+            return Err(anyhow!(
+                "MCP config changed outside this operation; preserving {}",
+                self.path.display()
+            ));
+        }
+        if expected == desired {
+            return Ok(());
+        }
+        match desired {
+            Some(text) => write_antigravity_text(&self.path, text, expected),
+            None => std::fs::remove_file(&self.path).map_err(Into::into),
+        }
+    }
+
+    pub(crate) fn apply(&self) -> Result<()> {
+        self.replace_if_unchanged(&self.before, &self.after)
+    }
+
+    pub(crate) fn restore(&self) -> Result<()> {
+        self.replace_if_unchanged(&self.after, &self.before)
+    }
+}
+
+#[cfg(unix)]
+fn write_antigravity_text(path: &Path, text: &str, expected: &Option<String>) -> Result<()> {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let identity = |meta: &std::fs::Metadata| {
+        (
+            meta.dev(),
+            meta.ino(),
+            meta.uid(),
+            meta.gid(),
+            meta.mode(),
+            meta.nlink(),
+        )
+    };
+    let before = match std::fs::symlink_metadata(path) {
+        Ok(meta) => {
+            // Preserve link semantics: automatic publication never replaces a linked config.
+            if meta.file_type().is_symlink() {
+                return Err(anyhow!(
+                    "refusing to modify symlinked MCP config {}; link and target preserved; edit mcpServers.askhuman in your configuration manager's source (stow/chezmoi), or declare it in Home Manager and rebuild for Nix store targets; required fields: command=<absolute AskHuman path>, args=[\"mcp\"], timeoutSeconds=86400",
+                    path.display()
+                ));
+            }
+            if !meta.is_file() {
+                return Err(anyhow!(
+                    "MCP config {} is not a regular file; provide a user-owned regular configuration file",
+                    path.display()
+                ));
+            }
+            if meta.uid() != unsafe { libc::geteuid() } {
+                return Err(anyhow!(
+                    "MCP config {} is not owned by the current user; ask its owner to manage mcpServers.askhuman or provide a user-owned regular file; do not run AskHuman with sudo",
+                    path.display()
+                ));
+            }
+            if meta.nlink() != 1 {
+                return Err(anyhow!(
+                    "refusing to replace hard-linked MCP config {}; all links preserved; manage mcpServers.askhuman manually or provide a separate user-owned regular file with a single link",
+                    path.display()
+                ));
+            }
+            Some(meta)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("MCP config has no parent directory"))?;
+    std::fs::create_dir_all(parent)?;
+    // NamedTempFile creates a private 0600 file; explicitly set it before writing any secret bytes.
+    let mut staged = tempfile::Builder::new()
+        .prefix(".askhuman-mcp-")
+        .tempfile_in(parent)?;
+    staged
+        .as_file()
+        .set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    if let Some(meta) = &before {
+        // Preserve the validated owner/group; failure leaves the original file in place.
+        if unsafe { libc::fchown(staged.as_file().as_raw_fd(), meta.uid(), meta.gid()) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        // Preserve stricter owner permissions and never grant group/other access.
+        staged
+            .as_file()
+            .set_permissions(std::fs::Permissions::from_mode(meta.mode() & 0o600))?;
+    }
+    staged.write_all(text.as_bytes())?;
+    staged.as_file().sync_all()?;
+    let current = match std::fs::symlink_metadata(path) {
+        Ok(meta) => Some(meta),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    if current.as_ref().map(identity) != before.as_ref().map(identity)
+        || read_optional_config(path)? != *expected
+    {
+        return Err(anyhow!(
+            "MCP config changed before publication; preserving {}",
+            path.display()
+        ));
+    }
+    staged
+        .persist(path)
+        .with_context(|| format!("cannot publish private MCP config {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_antigravity_text(_: &Path, _: &str, _: &Option<String>) -> Result<()> {
+    Err(anyhow!(
+        "Antigravity MCP config mutation is unsupported on this platform"
+    ))
+}
+
+pub(crate) fn prepare_antigravity_config(install: bool) -> Result<PreparedAntigravityConfig> {
+    let path = paths::antigravity_mcp_config_json();
+    PreparedAntigravityConfig::prepare(path.clone(), install, &current_exe_string()?).map_err(
+        |error| {
+            anyhow!(
+                "cannot prepare Antigravity MCP config {}: {error:#}",
+                path.display()
+            )
+        },
+    )
+}
+
+/// Unlike compatibility bool helpers, public Antigravity status must not hide malformed files.
+pub(crate) fn antigravity_config_status() -> Result<(bool, bool)> {
+    let path = paths::antigravity_mcp_config_json();
+    let text = read_optional_config(&path)
+        .map_err(|error| anyhow!("cannot read Antigravity MCP config: {error:#}"))?;
+    let value = validate_antigravity_json(text.as_deref().unwrap_or_default())
+        .map_err(|error| anyhow!("MCP config {}: {error:#}", path.display()))?;
+    let installed = json_entry(&value).is_some();
+    let outdated = installed
+        && !json_entry_matches(
+            &value,
+            &current_exe_string()?,
+            json_timeout(AgentTarget::Antigravity),
+        );
+    Ok((installed, outdated))
+}
 
 /// AskHuman 自有的自动集成产物所有权账本。
 ///
@@ -86,11 +307,19 @@ fn toml_profile(target: AgentTarget) -> (i64, i64, Option<i64>) {
     }
 }
 
-/// 该目标 JSON 条目是否需要写入 `timeout`（毫秒）。仅 Claude Code 支持并需要；Cursor 不认该字段。
-fn json_timeout_ms(target: AgentTarget) -> Option<i64> {
+/// Timeout field and units for each JSON client.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum JsonTimeout {
+    None,
+    TimeoutMs(i64),
+    TimeoutSeconds(i64),
+}
+
+fn json_timeout(target: AgentTarget) -> JsonTimeout {
     match target {
-        AgentTarget::ClaudeCode => Some(CLAUDE_TOOL_TIMEOUT_MS),
-        _ => None,
+        AgentTarget::ClaudeCode => JsonTimeout::TimeoutMs(CLAUDE_TOOL_TIMEOUT_MS),
+        AgentTarget::Antigravity => JsonTimeout::TimeoutSeconds(ANTIGRAVITY_TOOL_TIMEOUT_SEC),
+        _ => JsonTimeout::None,
     }
 }
 
@@ -104,7 +333,7 @@ enum Format {
 fn format_of(target: AgentTarget) -> Format {
     match target {
         AgentTarget::Codex | AgentTarget::Grok => Format::Toml,
-        AgentTarget::Cursor | AgentTarget::ClaudeCode => Format::Json,
+        AgentTarget::Cursor | AgentTarget::ClaudeCode | AgentTarget::Antigravity => Format::Json,
         AgentTarget::Pi => Format::Json,
     }
 }
@@ -117,12 +346,13 @@ fn config_path(target: AgentTarget) -> PathBuf {
         AgentTarget::Codex => paths::codex_config_toml(),
         AgentTarget::Grok => paths::grok_config_toml(),
         AgentTarget::Pi => paths::config_dir().join("unsupported-pi-mcp.json"),
+        AgentTarget::Antigravity => paths::antigravity_mcp_config_json(),
     }
 }
 
-/// 当前平台是否支持（三家配置读写均跨平台）。
+/// Whether MCP integration is available for this target (Pi has no MCP mode).
 pub fn supported(target: AgentTarget) -> bool {
-    target != AgentTarget::Pi
+    !matches!(target, AgentTarget::Pi)
 }
 
 /// 配置展示路径（home 前缀折叠为 `~`）。
@@ -161,7 +391,7 @@ pub fn needs_update(target: AgentTarget) -> bool {
     let path = config_path(target);
     match format_of(target) {
         Format::Json => read_json_value(&path)
-            .map(|v| !json_entry_matches(&v, &exe, json_timeout_ms(target)))
+            .map(|v| !json_entry_matches(&v, &exe, json_timeout(target)))
             .unwrap_or(false),
         Format::Toml => std::fs::read_to_string(&path)
             .map(|t| !toml_entry_matches(target, &t, &exe))
@@ -206,6 +436,12 @@ pub fn uninstall(target: AgentTarget) -> Result<String> {
         );
     }
     let path = config_path(target);
+    if target == AgentTarget::Antigravity {
+        prepare_antigravity_config(false)?.apply()?;
+        return Ok(
+            crate::i18n::tr(crate::i18n::Lang::current(), "cmd.mcpConfigRemoved").to_string(),
+        );
+    }
     if target == AgentTarget::Codex && matches!(path.try_exists(), Ok(false)) {
         clear_codex_ownership_without_config(&paths::integration_state_file())?;
     }
@@ -230,13 +466,16 @@ fn write_entry(
     target: AgentTarget,
     env: &std::collections::BTreeMap<String, String>,
 ) -> Result<()> {
+    if target == AgentTarget::Antigravity {
+        return prepare_antigravity_config(true)?.apply();
+    }
     let exe = current_exe_string()?;
     let path = config_path(target);
     let original = std::fs::read_to_string(&path);
     let original_exists = original.is_ok();
     let text = original.unwrap_or_default();
     let updated = match format_of(target) {
-        Format::Json => apply_install_json(&text, &exe, json_timeout_ms(target))?,
+        Format::Json => apply_install_json(&text, &exe, json_timeout(target))?,
         Format::Toml if target == AgentTarget::Codex => {
             if env.is_empty() {
                 install_codex_toml(&path, &text, original_exists, &exe)?;
@@ -395,12 +634,12 @@ pub fn open(target: AgentTarget) {
     }
 }
 
-// MARK: - JSON（Cursor / Claude）：CST 保留格式最小化编辑
+// MARK: - JSON (Cursor / Claude / Antigravity): minimal format-preserving CST edits
 
 /// upsert `mcpServers.askhuman = { command, args:["mcp"], timeout? }`；仅触碰本条目，其余字节保留。
-/// `timeout_ms`（毫秒）仅 Claude 传入（覆盖其 60s 默认）；Cursor 传 `None`、不写该字段。
+/// Claude uses timeout in milliseconds, Antigravity uses timeoutSeconds, and Cursor uses None.
 /// 解析失败返回 Err（调用方据此中止、绝不整写覆盖）。
-fn apply_install_json(text: &str, command: &str, timeout_ms: Option<i64>) -> Result<String> {
+fn apply_install_json(text: &str, command: &str, timeout: JsonTimeout) -> Result<String> {
     let source = if text.trim().is_empty() { "{}" } else { text };
     let root = CstRootNode::parse(source, &ParseOptions::default())
         .map_err(|e| anyhow!("解析 MCP 配置 JSON 失败，已中止（不覆盖原文件）：{e}"))?;
@@ -411,13 +650,18 @@ fn apply_install_json(text: &str, command: &str, timeout_ms: Option<i64>) -> Res
         .object_value_or_create("mcpServers")
         .ok_or_else(|| anyhow!("MCP 配置的 `mcpServers` 不是对象，已中止"))?;
 
-    let mut entry = match timeout_ms {
-        Some(ms) => json!({
+    let mut entry = match timeout {
+        JsonTimeout::TimeoutMs(ms) => json!({
             "command": command,
             "args": [ARG_MCP],
             "timeout": ms,
         }),
-        None => json!({
+        JsonTimeout::TimeoutSeconds(sec) => json!({
+            "command": command,
+            "args": [ARG_MCP],
+            "timeoutSeconds": sec,
+        }),
+        JsonTimeout::None => json!({
             "command": command,
             "args": [ARG_MCP],
         }),
@@ -497,7 +741,7 @@ fn json_entry(value: &Value) -> Option<&Value> {
     value.get("mcpServers")?.get(SERVER_NAME)
 }
 
-fn json_entry_matches(value: &Value, command: &str, timeout_ms: Option<i64>) -> bool {
+fn json_entry_matches(value: &Value, command: &str, timeout: JsonTimeout) -> bool {
     let Some(entry) = json_entry(value) else {
         return false;
     };
@@ -507,10 +751,15 @@ fn json_entry_matches(value: &Value, command: &str, timeout_ms: Option<i64>) -> 
         .and_then(|v| v.as_array())
         .map(|a| a.len() == 1 && a[0].as_str() == Some(ARG_MCP))
         .unwrap_or(false);
-    // Claude 需精确匹配 timeout（旧条目无 timeout → 视为需更新）；Cursor 不该有该字段。
-    let timeout_ok = match timeout_ms {
-        Some(ms) => entry.get("timeout").and_then(|v| v.as_i64()) == Some(ms),
-        None => entry.get("timeout").is_none(),
+    // Require the client's exact timeout field and units; Cursor must omit timeout fields.
+    let timeout_ok = match timeout {
+        JsonTimeout::TimeoutMs(ms) => entry.get("timeout").and_then(|v| v.as_i64()) == Some(ms),
+        JsonTimeout::TimeoutSeconds(sec) => {
+            entry.get("timeoutSeconds").and_then(|v| v.as_i64()) == Some(sec)
+        }
+        JsonTimeout::None => {
+            entry.get("timeout").is_none() && entry.get("timeoutSeconds").is_none()
+        }
     };
     cmd_ok && args_ok && timeout_ok
 }
@@ -918,49 +1167,209 @@ mod tests {
 
     const EXE: &str = "/Users/u/.local/bin/AskHuman";
 
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_config_publication_preserves_private_permissions() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        for mode in [None, Some(0o600), Some(0o640), Some(0o644), Some(0o400)] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mcp_config.json");
+            if let Some(mode) = mode {
+                std::fs::write(
+                    &path,
+                    r#"{"mcpServers":{"other":{"env":{"KEY":"secret"}}}}"#,
+                )
+                .unwrap();
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            }
+            let before = std::fs::metadata(&path).ok();
+            let plan = PreparedAntigravityConfig::prepare(path.clone(), true, EXE).unwrap();
+            plan.apply().unwrap();
+            let after = std::fs::metadata(&path).unwrap();
+            assert_eq!(after.mode() & 0o777, mode.unwrap_or(0o600) & 0o600);
+            if let Some(before) = before {
+                assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
+                assert!(std::fs::read_to_string(&path).unwrap().contains("secret"));
+            }
+            plan.restore().unwrap();
+            if let Some(mode) = mode {
+                assert_eq!(
+                    std::fs::metadata(&path).unwrap().mode() & 0o777,
+                    mode & 0o600
+                );
+            } else {
+                assert!(!path.exists());
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_config_publication_rejects_links_without_changing_secrets() {
+        use std::os::unix::fs::symlink;
+        for hard_link in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let original = dir.path().join("secrets.json");
+            let path = dir.path().join("mcp_config.json");
+            let contents = r#"{"mcpServers":{"other":{"env":{"KEY":"secret"}}}}"#;
+            std::fs::write(&original, contents).unwrap();
+            if hard_link {
+                std::fs::hard_link(&original, &path).unwrap();
+            } else {
+                symlink(&original, &path).unwrap();
+            }
+            let plan = PreparedAntigravityConfig::prepare(path.clone(), true, EXE).unwrap();
+            let error = plan.apply().unwrap_err().to_string();
+            if hard_link {
+                assert!(error.contains("hard-linked MCP config"));
+                assert!(error.contains("single link"));
+                use std::os::unix::fs::MetadataExt;
+                assert_eq!(std::fs::metadata(&original).unwrap().nlink(), 2);
+            } else {
+                assert!(error.contains("symlinked MCP config"));
+                assert!(error.contains("Home Manager"));
+                assert!(error.contains("timeoutSeconds=86400"));
+                assert_eq!(std::fs::read_link(&path).unwrap(), original);
+            }
+            assert!(!error.contains("KEY"));
+            assert!(!error.contains("secret\""));
+            assert_eq!(std::fs::read_to_string(&original).unwrap(), contents);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_read_only_symlink_target_is_preserved_with_actionable_error() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("declarative.json");
+        let path = dir.path().join("mcp_config.json");
+        std::fs::write(&original, "{}").unwrap();
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o444)).unwrap();
+        symlink(&original, &path).unwrap();
+        let plan = PreparedAntigravityConfig::prepare(path.clone(), true, EXE).unwrap();
+        let error = plan.apply().unwrap_err().to_string();
+        assert!(error.contains("Home Manager and rebuild"));
+        assert_eq!(std::fs::read_link(&path).unwrap(), original);
+        assert_eq!(std::fs::read_to_string(&original).unwrap(), "{}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_matching_symlink_config_remains_an_idempotent_noop() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("managed.json");
+        let path = dir.path().join("mcp_config.json");
+        let contents = apply_install_json("{}", EXE, JsonTimeout::TimeoutSeconds(86400)).unwrap();
+        std::fs::write(&original, &contents).unwrap();
+        symlink(&original, &path).unwrap();
+        PreparedAntigravityConfig::prepare(path.clone(), true, EXE)
+            .unwrap()
+            .apply()
+            .unwrap();
+        assert_eq!(std::fs::read_link(&path).unwrap(), original);
+        assert_eq!(std::fs::read_to_string(&original).unwrap(), contents);
+    }
+
     fn to_value(text: &str) -> Value {
         jsonc_parser::parse_to_serde_value::<Value>(text, &ParseOptions::default()).unwrap()
+    }
+
+    #[test]
+    fn antigravity_mcp_properties() {
+        assert!(supported(AgentTarget::Antigravity));
+        assert_eq!(format_of(AgentTarget::Antigravity), Format::Json);
+        assert_eq!(
+            config_path(AgentTarget::Antigravity),
+            paths::antigravity_mcp_config_json()
+        );
+        assert_eq!(
+            json_timeout(AgentTarget::Antigravity),
+            JsonTimeout::TimeoutSeconds(ANTIGRAVITY_TOOL_TIMEOUT_SEC)
+        );
     }
 
     // ── JSON ──
 
     #[test]
     fn json_install_into_empty_creates_entry() {
-        let out = apply_install_json("", EXE, None).unwrap();
+        let out = apply_install_json("", EXE, JsonTimeout::None).unwrap();
         let v = to_value(&out);
         assert_eq!(v["mcpServers"][SERVER_NAME]["command"], EXE);
         assert_eq!(v["mcpServers"][SERVER_NAME]["args"][0], ARG_MCP);
         // Cursor 风格（无 timeout）不写该字段。
         assert!(v["mcpServers"][SERVER_NAME].get("timeout").is_none());
-        assert!(json_entry_matches(&v, EXE, None));
+        assert!(v["mcpServers"][SERVER_NAME].get("timeoutSeconds").is_none());
+        assert!(json_entry_matches(&v, EXE, JsonTimeout::None));
     }
 
     #[test]
     fn json_install_claude_writes_timeout() {
-        let out = apply_install_json("", EXE, Some(CLAUDE_TOOL_TIMEOUT_MS)).unwrap();
+        let out =
+            apply_install_json("", EXE, JsonTimeout::TimeoutMs(CLAUDE_TOOL_TIMEOUT_MS)).unwrap();
         let v = to_value(&out);
         assert_eq!(
             v["mcpServers"][SERVER_NAME]["timeout"].as_i64(),
             Some(CLAUDE_TOOL_TIMEOUT_MS)
         );
-        assert!(json_entry_matches(&v, EXE, Some(CLAUDE_TOOL_TIMEOUT_MS)));
+        assert!(json_entry_matches(
+            &v,
+            EXE,
+            JsonTimeout::TimeoutMs(CLAUDE_TOOL_TIMEOUT_MS)
+        ));
         // 缺 timeout 的预期（Cursor）与之不匹配。
-        assert!(!json_entry_matches(&v, EXE, None));
+        assert!(!json_entry_matches(&v, EXE, JsonTimeout::None));
+    }
+
+    #[test]
+    fn json_install_antigravity_writes_timeout_seconds() {
+        let out = apply_install_json(
+            "",
+            EXE,
+            JsonTimeout::TimeoutSeconds(ANTIGRAVITY_TOOL_TIMEOUT_SEC),
+        )
+        .unwrap();
+        let v = to_value(&out);
+        assert_eq!(
+            v["mcpServers"][SERVER_NAME]["timeoutSeconds"].as_i64(),
+            Some(ANTIGRAVITY_TOOL_TIMEOUT_SEC)
+        );
+        assert!(json_entry_matches(
+            &v,
+            EXE,
+            JsonTimeout::TimeoutSeconds(ANTIGRAVITY_TOOL_TIMEOUT_SEC)
+        ));
+        // A profile without timeoutSeconds must not match this entry.
+        assert!(!json_entry_matches(&v, EXE, JsonTimeout::None));
+        assert!(!json_entry_matches(
+            &v,
+            EXE,
+            JsonTimeout::TimeoutMs(CLAUDE_TOOL_TIMEOUT_MS)
+        ));
     }
 
     #[test]
     fn json_claude_old_entry_without_timeout_needs_update() {
         // 模拟旧版（无 timeout）安装后，按 Claude 预期校验应判定需更新。
-        let old = apply_install_json("{}", EXE, None).unwrap();
+        let old = apply_install_json("{}", EXE, JsonTimeout::None).unwrap();
         let v = to_value(&old);
-        assert!(!json_entry_matches(&v, EXE, Some(CLAUDE_TOOL_TIMEOUT_MS)));
+        assert!(!json_entry_matches(
+            &v,
+            EXE,
+            JsonTimeout::TimeoutMs(CLAUDE_TOOL_TIMEOUT_MS)
+        ));
     }
 
     #[test]
     fn json_install_is_idempotent_fixpoint() {
-        let a = apply_install_json("{}", EXE, Some(CLAUDE_TOOL_TIMEOUT_MS)).unwrap();
-        let b = apply_install_json(&a, EXE, Some(CLAUDE_TOOL_TIMEOUT_MS)).unwrap();
-        let c = apply_install_json(&b, EXE, Some(CLAUDE_TOOL_TIMEOUT_MS)).unwrap();
+        let a =
+            apply_install_json("{}", EXE, JsonTimeout::TimeoutMs(CLAUDE_TOOL_TIMEOUT_MS)).unwrap();
+        let b =
+            apply_install_json(&a, EXE, JsonTimeout::TimeoutMs(CLAUDE_TOOL_TIMEOUT_MS)).unwrap();
+        let c =
+            apply_install_json(&b, EXE, JsonTimeout::TimeoutMs(CLAUDE_TOOL_TIMEOUT_MS)).unwrap();
         assert_eq!(b, c, "已安装态再安装应为稳定不动点");
         let v = to_value(&c);
         assert_eq!(
@@ -973,7 +1382,7 @@ mod tests {
     #[test]
     fn json_install_preserves_other_servers_and_comments() {
         let input = "{\n  // 用户注释，勿动\n  \"mcpServers\": {\n    \"other\": { \"command\": \"x\", \"args\": [] }\n  }\n}";
-        let out = apply_install_json(input, EXE, None).unwrap();
+        let out = apply_install_json(input, EXE, JsonTimeout::None).unwrap();
         assert!(out.contains("// 用户注释，勿动"), "注释应原样保留");
         let v = to_value(&out);
         assert_eq!(v["mcpServers"]["other"]["command"], "x");
@@ -982,22 +1391,22 @@ mod tests {
 
     #[test]
     fn json_install_updates_command_in_place() {
-        let old = apply_install_json("{}", "/old/AskHuman", None).unwrap();
-        let new = apply_install_json(&old, EXE, None).unwrap();
+        let old = apply_install_json("{}", "/old/AskHuman", JsonTimeout::None).unwrap();
+        let new = apply_install_json(&old, EXE, JsonTimeout::None).unwrap();
         let v = to_value(&new);
         assert_eq!(v["mcpServers"][SERVER_NAME]["command"], EXE);
-        assert!(json_entry_matches(&v, EXE, None));
-        assert!(!json_entry_matches(&v, "/old/AskHuman", None));
+        assert!(json_entry_matches(&v, EXE, JsonTimeout::None));
+        assert!(!json_entry_matches(&v, "/old/AskHuman", JsonTimeout::None));
     }
 
     #[test]
     fn json_install_aborts_on_non_object_root() {
-        assert!(apply_install_json("[]", EXE, None).is_err());
+        assert!(apply_install_json("[]", EXE, JsonTimeout::None).is_err());
     }
 
     #[test]
     fn json_install_aborts_on_parse_error() {
-        assert!(apply_install_json("{ \"mcpServers\": ", EXE, None).is_err());
+        assert!(apply_install_json("{ \"mcpServers\": ", EXE, JsonTimeout::None).is_err());
     }
 
     #[test]
@@ -1011,7 +1420,7 @@ mod tests {
 
     #[test]
     fn json_uninstall_drops_empty_servers_key() {
-        let only = apply_install_json("{}", EXE, None).unwrap();
+        let only = apply_install_json("{}", EXE, JsonTimeout::None).unwrap();
         let out = apply_uninstall_json(&only).unwrap();
         let v = to_value(&out);
         assert!(v.get("mcpServers").is_none(), "空 mcpServers 应删除该键");
@@ -1468,7 +1877,11 @@ mod env_tests {
             )
             .is_err());
         }
-        for timeout in [None, Some(86400000)] {
+        for timeout in [
+            JsonTimeout::None,
+            JsonTimeout::TimeoutMs(86400000),
+            JsonTimeout::TimeoutSeconds(86400),
+        ] {
             assert!(apply_install_json(
                 r#"{"mcpServers":{"askhuman":{"env":{"DISPLAY":42}}}}"#,
                 "AskHuman",
@@ -1482,7 +1895,11 @@ mod env_tests {
     fn json_env_survives_both_timeout_profiles_only() {
         let source =
             r#"{"mcpServers":{"askhuman":{"env":{"DISPLAY":":1","EMPTY":""},"custom":"discard"}}}"#;
-        for timeout in [None, Some(86400000)] {
+        for timeout in [
+            JsonTimeout::None,
+            JsonTimeout::TimeoutMs(86400000),
+            JsonTimeout::TimeoutSeconds(86400),
+        ] {
             let updated = apply_install_json(source, "AskHuman", timeout).unwrap();
             let value: Value = serde_json::from_str(&updated).unwrap();
             assert_eq!(value["mcpServers"]["askhuman"]["env"]["DISPLAY"], ":1");

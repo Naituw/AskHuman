@@ -242,6 +242,13 @@ pub(super) fn interject_submit(
     text: &str,
     attachments: Vec<crate::models::FileAttachment>,
 ) {
+    if state
+        .agents
+        .focus_identity(session_id)
+        .is_some_and(|(kind, _, _)| kind == crate::agents::AgentKind::Antigravity)
+    {
+        return;
+    }
     state.interject.submit(session_id, text, attachments);
     state.interject.persist();
     broadcast_agents_state(state);
@@ -254,6 +261,13 @@ pub(super) fn interject_append(
     text: &str,
     attachments: Vec<crate::models::FileAttachment>,
 ) {
+    if state
+        .agents
+        .focus_identity(session_id)
+        .is_some_and(|(kind, _, _)| kind == crate::agents::AgentKind::Antigravity)
+    {
+        return;
+    }
     state.interject.append(session_id, text, attachments, None);
     state.interject.persist();
     broadcast_agents_state(state);

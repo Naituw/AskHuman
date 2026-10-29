@@ -561,7 +561,7 @@ export interface AgentsInit {
   newTaskSupported: boolean;
 }
 
-export type AgentKind = "claude" | "codex" | "cursor" | "grok" | "pi";
+export type AgentKind = "claude" | "codex" | "cursor" | "grok" | "pi" | "antigravity";
 
 /** Lifecycle preference and artifact state inside an Agent integration. */
 export interface LifecycleStatus {
@@ -996,6 +996,8 @@ export interface AgentTaskReadiness {
   integrationReady: boolean;
   integrationMode: string;
   ready: boolean;
+  /** Whether New Task / Fork can start this family; Settings and doctor still show all families. */
+  launchSupported: boolean;
   diagnostics: string[];
   /** Codex only: oldest version that can receive the protocol through its SessionStart hook. */
   protocolMinimumVersion?: string | null;
@@ -1204,7 +1206,7 @@ export interface ClaudeHookStatus {
   supported: boolean;
 }
 
-export type AgentId = "cursor" | "claude" | "codex" | "grok" | "pi";
+export type AgentId = "cursor" | "claude" | "codex" | "grok" | "pi" | "antigravity";
 
 export interface UpdateInfo {
   available: boolean;

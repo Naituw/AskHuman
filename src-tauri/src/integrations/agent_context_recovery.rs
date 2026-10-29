@@ -66,7 +66,7 @@ fn all_specs(target: AgentTarget) -> &'static [EventSpec] {
         AgentTarget::Codex => &[CODEX_SESSION_START],
         AgentTarget::Cursor => &[PRE_TOOL_CURSOR],
         AgentTarget::Grok => &[PRE_TOOL_NESTED],
-        AgentTarget::Pi => &[],
+        AgentTarget::Pi | AgentTarget::Antigravity => &[],
     }
 }
 
@@ -81,7 +81,7 @@ fn desired(target: AgentTarget, mode: Mode, spec: EventSpec) -> bool {
             AgentTarget::ClaudeCode => true,
             AgentTarget::Codex => spec.runtime_event == "session-start",
             AgentTarget::Cursor | AgentTarget::Grok => spec.runtime_event == "pre-tool-use",
-            AgentTarget::Pi => false,
+            AgentTarget::Pi | AgentTarget::Antigravity => false,
         },
     }
 }
@@ -113,7 +113,7 @@ pub fn status(target: AgentTarget, mode: Mode) -> RecoveryStatus {
 
 /// A managed hook entry exists for `target`: no freshness, mode, or trust check.
 pub(crate) fn hook_installed_at(target: AgentTarget, codex: &CodexFiles) -> bool {
-    if !supported() || target == AgentTarget::Pi {
+    if !supported() || matches!(target, AgentTarget::Pi | AgentTarget::Antigravity) {
         return false;
     }
     let text = std::fs::read_to_string(hook_path_at(target, codex)).unwrap_or_else(|_| "{}".into());
@@ -121,7 +121,7 @@ pub(crate) fn hook_installed_at(target: AgentTarget, codex: &CodexFiles) -> bool
 }
 
 pub(crate) fn status_at(target: AgentTarget, mode: Mode, codex: &CodexFiles) -> RecoveryStatus {
-    if !supported() || target == AgentTarget::Pi {
+    if !supported() || matches!(target, AgentTarget::Pi | AgentTarget::Antigravity) {
         return RecoveryStatus::default();
     }
     let path = hook_path_at(target, codex);
@@ -227,7 +227,7 @@ fn status_from_text(target: AgentTarget, mode: Mode, text: &str, trust_ok: bool)
 }
 
 pub fn needs_update(target: AgentTarget, mode: Mode) -> bool {
-    if !supported() || target == AgentTarget::Pi {
+    if !supported() || matches!(target, AgentTarget::Pi | AgentTarget::Antigravity) {
         return false;
     }
     status(target, mode).outdated
@@ -238,7 +238,7 @@ pub(crate) fn reconcile_unlocked(target: AgentTarget, mode: Mode) -> Result<()> 
 }
 
 pub(crate) fn reconcile_at(target: AgentTarget, mode: Mode, codex: &CodexFiles) -> Result<()> {
-    if !supported() || target == AgentTarget::Pi {
+    if !supported() || matches!(target, AgentTarget::Pi | AgentTarget::Antigravity) {
         return Ok(());
     }
     let path = hook_path_at(target, codex);
@@ -340,6 +340,9 @@ fn hook_path(target: AgentTarget) -> PathBuf {
         AgentTarget::Cursor => crate::paths::cursor_hooks_json(),
         AgentTarget::Grok => crate::paths::grok_hooks_json(),
         AgentTarget::Pi => crate::paths::pi_extension_file(),
+        AgentTarget::Antigravity => {
+            crate::paths::config_dir().join("unsupported-antigravity-hooks.json")
+        }
     }
 }
 
@@ -351,6 +354,11 @@ fn hook_command(target: AgentTarget, event: &str) -> Result<String> {
         AgentTarget::Cursor => "cursor",
         AgentTarget::Grok => "grok",
         AgentTarget::Pi => "pi",
+        AgentTarget::Antigravity => {
+            return Err(anyhow::anyhow!(
+                "Antigravity recovery hooks are unsupported"
+            ))
+        }
     };
     Ok(format!(
         "\"{}\" {MARKER} {agent} {event}",
@@ -366,6 +374,11 @@ fn windows_hook_command(target: AgentTarget, event: &str) -> Result<String> {
         AgentTarget::Cursor => "cursor",
         AgentTarget::Grok => "grok",
         AgentTarget::Pi => "pi",
+        AgentTarget::Antigravity => {
+            return Err(anyhow::anyhow!(
+                "Antigravity recovery hooks are unsupported"
+            ))
+        }
     };
     Ok(hook_edit::powershell_command(
         &executable.to_string_lossy(),
@@ -422,6 +435,31 @@ mod tests {
                 expected,
                 "{target:?} {mode:?}"
             );
+        }
+    }
+
+    #[test]
+    fn antigravity_never_reads_or_reconciles_codex_hook_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let codex = CodexFiles {
+            hooks_json: directory.path().join("hooks.json"),
+            config_toml: directory.path().join("config.toml"),
+        };
+        let hooks = b"foreign hook configuration";
+        let config = b"foreign trust configuration";
+        std::fs::write(&codex.hooks_json, hooks).unwrap();
+        std::fs::write(&codex.config_toml, config).unwrap();
+
+        for mode in [Mode::None, Mode::Cli, Mode::Mcp] {
+            assert!(desired_events(AgentTarget::Antigravity, mode).is_empty());
+            assert_eq!(
+                status_at(AgentTarget::Antigravity, mode, &codex),
+                RecoveryStatus::default()
+            );
+            assert!(!hook_installed_at(AgentTarget::Antigravity, &codex));
+            reconcile_at(AgentTarget::Antigravity, mode, &codex).unwrap();
+            assert_eq!(std::fs::read(&codex.hooks_json).unwrap(), hooks);
+            assert_eq!(std::fs::read(&codex.config_toml).unwrap(), config);
         }
     }
 

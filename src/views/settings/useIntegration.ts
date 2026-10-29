@@ -85,6 +85,7 @@ export function useIntegration(
     { id: "claude", title: "Claude Code", hasTimeoutHook: true, hasCli: true, hasMcp: true, instructionKind: "rule", recommended: "cli" },
     { id: "codex", title: "Codex", hasTimeoutHook: false, hasCli: true, hasMcp: true, instructionKind: "hook", recommended: "mcp" },
     { id: "grok", title: "Grok", hasTimeoutHook: false, hasCli: false, hasMcp: true, instructionKind: "skill", recommended: "mcp" },
+    { id: "antigravity", title: "Antigravity", hasTimeoutHook: false, hasCli: true, hasMcp: true, instructionKind: "rule", recommended: "cli" },
     { id: "pi", title: "Pi", hasTimeoutHook: true, hasCli: true, hasMcp: false, instructionKind: "rule", recommended: "cli" },
   ];
 
@@ -148,6 +149,7 @@ export function useIntegration(
     codex: emptyMode(),
     grok: emptyMode(),
     pi: emptyMode(),
+    antigravity: { ...emptyMode(), lifecycle: { ...emptyMode().lifecycle, supported: false } },
   });
   const modeBusy = ref<Record<AgentId, boolean>>({
     cursor: false,
@@ -155,6 +157,7 @@ export function useIntegration(
     codex: false,
     grok: false,
     pi: false,
+    antigravity: false,
   });
   const modeMessage = ref<Record<AgentId, string | null>>({
     cursor: null,
@@ -162,6 +165,7 @@ export function useIntegration(
     codex: null,
     grok: null,
     pi: null,
+    antigravity: null,
   });
   const modeError = ref<Record<AgentId, boolean>>({
     cursor: false,
@@ -169,7 +173,10 @@ export function useIntegration(
     codex: false,
     grok: false,
     pi: false,
+    antigravity: false,
   });
+
+  const modeReadError = ref<Partial<Record<AgentId, boolean>>>({});
 
   function overlayPiVersion(item: AgentTaskReadiness) {
     modes.value.pi = {
@@ -202,9 +209,16 @@ export function useIntegration(
   }
 
   async function refreshMode(agent: AgentId) {
-    modes.value[agent] = await agentModeStatus(agent);
-    if (agent === "pi") overlayPiVersionIfKnown();
-    if (agent === "codex") overlayCodexVersionIfKnown();
+    try {
+      modes.value[agent] = await agentModeStatus(agent);
+      modeReadError.value[agent] = false;
+      if (agent === "pi") { overlayPiVersionIfKnown(); }
+      if (agent === "codex") { overlayCodexVersionIfKnown(); }
+    } catch (error) {
+      modeReadError.value[agent] = true;
+      modeMessage.value[agent] = String(error);
+      modeError.value[agent] = true;
+    }
   }
 
   const integrationLoading = ref(true);
@@ -601,6 +615,7 @@ tool_timeout_sec = 86400`,
     ensureCodexVersion,
     modeBusy,
     modeMessage,
+    modeReadError,
     modeError,
     refreshMode,
     setMode,

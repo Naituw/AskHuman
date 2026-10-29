@@ -535,6 +535,8 @@ export default {
       manualTitle: "Manual integration",
       manualLifecycleHint:
         "Manual prompts and MCP examples do not install lifecycle tracking. Agent status, interject, and task launch require Automatic integration with tracking enabled below.",
+      antigravityScope: "Shared family rules; CLI is the AskHuman transport. Client capabilities require separate validation.",
+      retryStatus: "Retry reading status",
       autoTitle: "Automatic integration",
       promptTitle: "Reference prompt",
       copy: "Copy",
@@ -613,6 +615,10 @@ export default {
       recommendedTag: "Rec",
       codexNoHook:
         "Codex can't extend a CLI tool's timeout, so long waits may be cancelled. Use MCP mode for reliable long waits.",
+      capabilityUnsupported: "Currently unsupported",
+      antigravityRecoveryUnsupported: "Antigravity context recovery hooks are not implemented; CLI integration does not install this hook.",
+      antigravityLifecycleUnsupported: "Antigravity lifecycle tracking is not implemented and cannot be enabled here.",
+      contextRecoveryHookLabel: "Context recovery hook",
       protocolLabel: "Protocol (SessionStart hook)",
       codexProtocolHint:
         "Codex receives the AskHuman protocol from a SessionStart hook when an interactive session starts (re-injected after compaction together with the last AskHuman exchange). It is no longer written to ~/.codex/AGENTS.md. Non-interactive runs started by another agent, script, or plugin do not receive it by default; see the switch below.",
@@ -944,6 +950,7 @@ export default {
       cursor: "Cursor",
       grok: "Grok",
       pi: "Pi",
+      antigravity: "Antigravity",
     },
     field: {
       session: "Session",
@@ -987,6 +994,7 @@ export default {
     pendingCount: "{n} queued",
     pendingAttachments: "{n} attachment(s)",
     revoke: "Revoke",
+    antigravityHint: "Antigravity messaging and lifecycle tracking are not available yet",
     grokHint: "Grok does not support messaging",
     idleHint: "Session is idle — send the message from the Agent's own interface",
     endedHint: "Session has ended",

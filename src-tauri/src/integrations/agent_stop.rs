@@ -45,7 +45,7 @@ struct Preferences {
 }
 
 pub fn supported(kind: AgentKind) -> bool {
-    kind != AgentKind::Grok
+    !matches!(kind, AgentKind::Grok | AgentKind::Antigravity)
 }
 
 pub fn enabled(kind: AgentKind) -> bool {
@@ -57,7 +57,7 @@ pub fn enabled(kind: AgentKind) -> bool {
         AgentKind::Claude => preferences.claude.unwrap_or(false),
         AgentKind::Codex => preferences.codex.unwrap_or(false),
         AgentKind::Cursor => preferences.cursor.unwrap_or(false),
-        AgentKind::Grok => false,
+        AgentKind::Grok | AgentKind::Antigravity => false,
         AgentKind::Pi => preferences.pi.unwrap_or(true),
     }
 }
@@ -73,7 +73,7 @@ pub fn set_enabled(kind: AgentKind, value: bool) -> Result<()> {
         AgentKind::Claude => preferences.claude = Some(value),
         AgentKind::Codex => preferences.codex = Some(value),
         AgentKind::Cursor => preferences.cursor = Some(value),
-        AgentKind::Grok => unreachable!(),
+        AgentKind::Grok | AgentKind::Antigravity => unreachable!(),
         AgentKind::Pi => preferences.pi = Some(value),
     }
     save_preferences(&preferences)?;
@@ -247,6 +247,7 @@ fn target_for_kind(kind: AgentKind) -> super::agent_rules::AgentTarget {
         AgentKind::Cursor => super::agent_rules::AgentTarget::Cursor,
         AgentKind::Grok => super::agent_rules::AgentTarget::Grok,
         AgentKind::Pi => super::agent_rules::AgentTarget::Pi,
+        AgentKind::Antigravity => super::agent_rules::AgentTarget::Antigravity,
     }
 }
 
@@ -395,7 +396,9 @@ fn hook_path(kind: AgentKind) -> std::path::PathBuf {
         AgentKind::Claude => crate::paths::claude_settings_json(),
         AgentKind::Codex => crate::paths::codex_hooks_json(),
         AgentKind::Cursor => crate::paths::cursor_hooks_json(),
-        AgentKind::Grok => crate::paths::config_dir().join("unsupported-stop-hooks.json"),
+        AgentKind::Grok | AgentKind::Antigravity => {
+            crate::paths::config_dir().join("unsupported-stop-hooks.json")
+        }
         AgentKind::Pi => crate::paths::pi_extension_file(),
     }
 }

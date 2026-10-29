@@ -36,6 +36,7 @@ pub enum AgentKind {
     Cursor,
     Grok,
     Pi,
+    Antigravity,
 }
 
 impl AgentKind {
@@ -47,6 +48,7 @@ impl AgentKind {
             AgentKind::Cursor => "cursor",
             AgentKind::Grok => "grok",
             AgentKind::Pi => "pi",
+            AgentKind::Antigravity => "antigravity",
         }
     }
 
@@ -58,6 +60,7 @@ impl AgentKind {
             AgentKind::Cursor => "Cursor",
             AgentKind::Grok => "Grok",
             AgentKind::Pi => "Pi",
+            AgentKind::Antigravity => "Antigravity",
         }
     }
 
@@ -68,17 +71,19 @@ impl AgentKind {
             "cursor" => Some(AgentKind::Cursor),
             "grok" => Some(AgentKind::Grok),
             "pi" => Some(AgentKind::Pi),
+            "antigravity" => Some(AgentKind::Antigravity),
             _ => None,
         }
     }
 
     /// All supported agent families (for iteration).
-    pub const ALL: [AgentKind; 5] = [
+    pub const ALL: [AgentKind; 6] = [
         AgentKind::Claude,
         AgentKind::Codex,
         AgentKind::Cursor,
         AgentKind::Grok,
         AgentKind::Pi,
+        AgentKind::Antigravity,
     ];
 }
 
