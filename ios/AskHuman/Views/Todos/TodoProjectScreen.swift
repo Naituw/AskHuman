@@ -10,7 +10,6 @@ struct TodoProjectScreen: View {
     @Environment(AppStore.self) private var store
     @Environment(\.editMode) private var editMode
     @State private var editing: TodoItem?
-    @State private var removing: TodoItem?
     @State private var historyOpen = false
     /// The user has just added a todo: the list follows it to the end of the queue.
     @State private var revealEnd = false
@@ -72,14 +71,6 @@ struct TodoProjectScreen: View {
         .sheet(item: $editing) { item in
             TodoEditSheet(item: item, canAuto: list?.canAuto ?? false)
         }
-        .confirmationDialog(
-            "Delete this todo?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
-            titleVisibility: .visible, presenting: removing
-        ) { item in
-            Button("Delete", role: .destructive) { todos.remove(item.id) }
-        } message: { item in
-            Text(verbatim: item.text)
-        }
     }
 
     // MARK: queue
@@ -108,9 +99,11 @@ struct TodoProjectScreen: View {
                             .tint(.green)
                     }
                 }
+                // Swiping the row open and tapping Delete is the confirmation, so there is no dialog after it; a swipe
+                // all the way across does not delete (`allowsFullSwipe: false`).
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     if !sending, todos.canWrite {
-                        Button(role: .destructive) { removing = item } label: { Label("Delete", systemImage: "trash") }
+                        Button(role: .destructive) { todos.remove(item.id) } label: { Label("Delete", systemImage: "trash") }
                     }
                 }
                 .contextMenu {

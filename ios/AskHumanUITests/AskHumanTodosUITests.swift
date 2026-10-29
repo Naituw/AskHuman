@@ -79,6 +79,14 @@ final class AskHumanTodosUITests: XCTestCase {
         from.press(forDuration: 0.05, thenDragTo: to)
     }
 
+    /// The mirror of `swipeRight`: opens the row's trailing actions.
+    private func swipeLeft(_ id: String) {
+        let row = requireElement(id)
+        let from = row.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5))
+        let to = row.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5))
+        from.press(forDuration: 0.05, thenDragTo: to)
+    }
+
     /// The list hands the keyboard back when it is dragged down.
     private func dismissKeyboard() {
         guard app.keyboards.count > 0 else { return }
@@ -216,16 +224,20 @@ final class AskHumanTodosUITests: XCTestCase {
         XCTAssertTrue(moved, "the dragged todo is now above the first one")
     }
 
-    func testDeletingATodoAsksFirst() {
+    /// Swiping the row open and tapping Delete is the whole gesture: no dialog asks again.
+    func testDeletingATodoTakesTheSwipeAndTheTapOnly() {
         launch()
         requireElement("todo-project-" + askHuman).tap()
         _ = requireElement("todo-row-todo-ah-3")
-        element("todo-row-todo-ah-3").swipeLeft()
-        app.buttons[localized("Delete", "删除")].firstMatch.tap()
-        // The confirmation names the todo.
-        shot("todos-delete-confirm")
-        app.buttons[localized("Delete", "删除")].firstMatch.tap()
-        XCTAssertTrue(gone("todo-row-todo-ah-3"))
+        swipeLeft("todo-row-todo-ah-3")
+        let delete = app.buttons[localized("Delete", "删除")].firstMatch
+        XCTAssertTrue(delete.waitForExistence(timeout: 10), "swiping the row left reveals Delete")
+        shot("todos-delete-swiped")
+        delete.tap()
+        XCTAssertTrue(gone("todo-row-todo-ah-3"), "the todo is gone after that one tap")
+        XCTAssertFalse(text(localized("Delete this todo?", "删除这条待办？")).exists, "nothing asks for a second confirmation")
+        _ = requireElement("todo-row-todo-ah-4")
+        shot("todos-deleted")
     }
 
     func testAMacThatPredatesTodosAsksForAnUpdate() {
