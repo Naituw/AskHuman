@@ -705,7 +705,8 @@ pub(super) async fn start_new_task_flow(
     let (workspaces, readiness) = tokio::task::spawn_blocking(|| {
         (
             crate::agents::workspaces::refresh(),
-            crate::integrations::agent_launch::all_readiness(),
+            // Only families `/new` can start: the diagnostics below are shown to the user.
+            crate::integrations::agent_launch::launchable_readiness(),
         )
     })
     .await
@@ -915,7 +916,7 @@ pub(super) async fn continue_task_picker(
             }
             payload.workspace = selected_id.to_string();
             let codex_status = crate::codex_desktop::launch_status(false);
-            let options = crate::integrations::agent_launch::all_readiness()
+            let options = crate::integrations::agent_launch::launchable_readiness()
                 .into_iter()
                 .filter(|item| {
                     if item.kind == AgentKind::Codex {

@@ -96,7 +96,9 @@ struct AgentProbes {
 }
 
 fn probe_agents() -> AgentProbes {
-    let readiness = agent_launch::all_readiness();
+    // Families that cannot launch at all (Antigravity) never appear on the phone, not even as a
+    // card that stays "not ready" with a reason the user cannot act on.
+    let readiness = agent_launch::launchable_readiness();
     let codex = crate::codex_desktop::launch_status(false);
     let terminal_codex = readiness
         .iter()

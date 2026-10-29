@@ -561,6 +561,26 @@ pub fn collect_readiness(kind: Option<AgentKind>, force: bool) -> Vec<AgentReadi
     let kinds: Vec<AgentKind> = kind
         .map(|kind| vec![kind])
         .unwrap_or_else(|| AgentKind::ALL.to_vec());
+    readiness_of(kinds, force)
+}
+
+/// The families New Task / Fork can start. [`all_readiness`] also reports the ones that cannot so
+/// Settings and doctor can explain them, but pickers (phone, IM `/new`) must neither offer them
+/// nor list their diagnostics: the user cannot fix an unsupported family.
+fn launchable_kinds() -> Vec<AgentKind> {
+    AgentKind::ALL
+        .into_iter()
+        .filter(|kind| launch_supported(*kind))
+        .collect()
+}
+
+/// Readiness of [`launchable_kinds`] only; see there for why pickers use this instead of
+/// [`all_readiness`].
+pub fn launchable_readiness() -> Vec<AgentReadiness> {
+    readiness_of(launchable_kinds(), false)
+}
+
+fn readiness_of(kinds: Vec<AgentKind>, force: bool) -> Vec<AgentReadiness> {
     std::thread::scope(|scope| {
         let handles: Vec<_> = kinds
             .into_iter()
@@ -2095,6 +2115,10 @@ mod tests {
                 "{kind:?}"
             );
         }
+        // Phone and IM pickers probe, offer and explain only the families that can launch.
+        let launchable = launchable_kinds();
+        assert!(!launchable.contains(&AgentKind::Antigravity));
+        assert_eq!(launchable.len(), AgentKind::ALL.len() - 1);
     }
 
     #[test]
