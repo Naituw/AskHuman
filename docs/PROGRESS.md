@@ -182,10 +182,14 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 没有带真实凭据调模型），写成需求 [`docs/specs/ios-task-model.md`](specs/ios-task-model.md) 与计划 [`docs/plans/ios-task-model.md`](plans/ios-task-model.md)，用户评审批准，
 并对六条待确认点作了选择（Grok 用 `grok models`、Codex 一律走 `app-server` 的 `model/list`、Pi 三档强度、做 M10、实现完做一轮真实验证但每次要批准）。
 
+2026-10-29 晚用户又反馈「待办里的状态比较混乱，如果我的 Mac 都开了 iCloud 存储，手机默认还是会选中一台 Mac，另一台 Mac 上的 Agent 就不会标绿点了」，经两轮 AskHuman 定了做法（规格 I17–I19、§13 第 11 条）：配对了多台 Mac 时，开着同步的 Mac 并进「iCloud」一个来源、不再单独出现，默认来源就是 iCloud（没手动选过时先用第一台在线的 Mac 起步，它说自己开着同步就换成 iCloud 并记住）；各 Mac 的「仅本机」项目在 iCloud 视图里按 Mac 分段列出（点进去在那台 Mac 上读写）；项目行的点复用 Agents 页的状态（橙 = 等你、绿 = 工作、灰 = 空闲），按仓库地址（Agent 项目信息里新增的可选 `repo`，Mac 开着同步时才带）或同机目录对到行。已实现并过自动化（Rust、Swift 包、模拟器 UI 测试），Mac A（这台）已装新版；**没有碰 Mac B，真机也没验**。
+
 已完成：
 - P1（Mac 启动管线：`ModelChoice` 贯穿 `TaskSpec` → `LaunchRecord` → argv 与 Codex 桌面应用；没选时对外行为与以前逐字节相同）。
 - P2（Mac 清单 + 线协议 + 网关 + 详情页实际模型，已装机）：`task.options` 多了可选的 `models` / `defaultModel`，`task.create` 多了可选的 `model` / `effort`，
   `watch.frame` 多了可选的 `model` / `reasoning`；旧版 App 连新 Mac 与以前完全一样。实施记录与偏差见计划「P2 实施记录」。
+- [ ] **Mac B 装上新版**，跨 Mac 的 Agent 点才完整：B 上的 Agent 要由 B 带上 `project.repo`，没装的话 B 上的 Agent 在 iCloud 视图里没有点（与改动前一样）。SSH 到 B 需要用户当场同意；装法同上面（B 上用 B 自己的 Developer ID 重签）。装完后在真机上看：两台 Mac 都开着同步时来源菜单只有「iCloud」、副标题列出两台、各 Mac 的「仅在 X」分段、两台上的 Agent 都在对应的行上标点。
+- [ ] 决定：默认来源记着「iCloud」之后，若所有 Mac 都关了同步，页面现在会说「iCloud 同步没开」、菜单里 Mac 重新出现，需要手动选一台（规格 §10 第 8 条）；要不要改成自动退回某台 Mac，等用户定。
 - P3（iOS App，在 `/tmp` 隔离副本里做、对着新 HEAD 重新验证后合入）：新建任务表单在 Agent 与权限之间多了「模型」行（进选择页，超过 12 项有搜索）与「强度」行（菜单），
   都从「默认」开始、不记忆，Mac 没给 `models`（旧 Mac / 没拿到清单）时两行都不出现；进度页有一行所选，Agent 详情页有一行它实际用的模型 / 强度；中文文案齐全；共享夹具有了新用例。
   实施记录、验证结果与已知局限见计划「P3 实施记录」。**App 还没装到真机**（P4 的真机一轮会用到）。
