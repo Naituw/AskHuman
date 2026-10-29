@@ -149,6 +149,56 @@ final class TodosStoreTests: XCTestCase {
         XCTAssertNil(todos.opened, "a project of the Mac that went away cannot stay open")
     }
 
+    func testICloudKeepsItsRowsWhenTheMacDoesNotAnswer() async {
+        await make()
+        await show()
+        await select(.icloud)
+        let rows = todos.sections.flatMap(\.rows).map(\.id)
+        XCTAssertFalse(rows.isEmpty)
+        await openAskHuman()
+
+        // Still online as far as the phone knows, but the answer does not come.
+        await backend.setUnreachable([home])
+        await todos.refresh()
+        XCTAssertEqual(todos.projectsState, .failed(.offline), "the page's note has its reason")
+        XCTAssertEqual(todos.sections.flatMap(\.rows).map(\.id), rows, "what the Mac last said stays")
+        XCTAssertEqual(todos.accessMacId, home)
+        XCTAssertNotNil(todos.syncLine)
+        XCTAssertNotNil(todos.opened, "the project that is open stays open")
+
+        await backend.setUnreachable([])
+        await todos.refresh()
+        XCTAssertEqual(todos.projectsState, .loaded)
+        XCTAssertEqual(todos.sections.flatMap(\.rows).map(\.id), rows)
+    }
+
+    func testICloudWithNothingToShowSaysTheMacDidNotAnswerNotThatSyncIsOff() async {
+        await make()
+        await backend.setUnreachable([home])
+        todos.setVisible(true)
+        await eventually("the Mac that was chosen first does not answer") { self.todos.projectsState == .failed(.offline) }
+
+        todos.select(.icloud)
+        await eventually("iCloud's failure") { self.todos.source == .icloud && self.todos.projectsState.isFailed }
+        XCTAssertEqual(todos.projectsState, .failed(.offline), "a Mac was asked and said nothing; that is not \"no Mac syncs\"")
+        XCTAssertNil(todos.projects)
+        XCTAssertNil(todos.accessMacId)
+    }
+
+    func testICloudStillEmptiesWhenNoMacIsThereToServeIt() async {
+        await make()
+        await show()
+        await select(.icloud)
+        XCTAssertFalse(todos.sections.isEmpty)
+
+        // The Macs' own presence says the one serving iCloud is gone and the other does not sync: nothing to ask.
+        await backend.setLink(.macOffline, for: home)
+        await eventually("iCloud has nobody") { self.todos.projectsState == .failed(.noSyncMac(anyOnline: true)) }
+        XCTAssertNil(todos.projects)
+        XCTAssertTrue(todos.sections.isEmpty)
+        XCTAssertNil(todos.accessMacId)
+    }
+
     func testAMacThatGoesAwayLeavesItsRowsOnScreenWithTheFailure() async {
         await make()
         await show()

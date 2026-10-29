@@ -341,9 +341,15 @@ public final class TodosStore {
                 return kick(projects: true)
             }
             var failed: Set<String> = []
+            // Why the Macs that were asked did not serve it, when the asking is what failed (a Mac that is not
+            // there to ask is a different matter).
+            var lastFailure: TodoFailure?
             while true {
                 let candidates = TodoSources.icloudCandidates(macs: macs, modes: modes, lastUsed: lastIcloudMac, failed: failed)
                 guard let id = candidates.first else {
+                    // The Macs were there but did not answer: the rows on screen stay as what one of them last said, with
+                    // the page's note, and a slow Mac is not called "not syncing". With no rows to keep, the page says why.
+                    if let lastFailure { return fail(lastFailure, for: source) }
                     // Nothing serves iCloud now: rows of the Mac that did cannot be opened any more.
                     accessMacId = nil
                     projects = nil
@@ -363,6 +369,7 @@ public final class TodosStore {
                 } catch {
                     guard self.source == source else { return }
                     failed.insert(id)
+                    lastFailure = TodoFailure.of(error)
                 }
             }
         }
