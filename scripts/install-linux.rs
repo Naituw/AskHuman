@@ -437,7 +437,7 @@ fn publish(
         }
     }
 
-    let mut state_name = OsString::from(".");
+    let mut state_name = OsString::new();
     state_name.push(
         state_path
             .file_name()

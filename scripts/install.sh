@@ -258,7 +258,8 @@ INSTALLED_BIN="$INSTALL_DIR/AskHuman"
 INSTALL_STATE="$INSTALL_DIR/.askhuman-install-state"
 SOURCE_HASH="$(_file_sha256 "$BIN_PATH" 2>/dev/null || true)"
 SKIP_COPY=0
-if [ -n "$SOURCE_HASH" ] && [ -f "$INSTALLED_BIN" ] && [ -f "$INSTALL_STATE" ]; then
+# Linux checks unchanged installs under the publisher lock so retained images are still pruned.
+if [ "$(uname)" != "Linux" ] && [ -n "$SOURCE_HASH" ] && [ -f "$INSTALLED_BIN" ] && [ -f "$INSTALL_STATE" ]; then
   STATE_SOURCE="$(sed -n 's/^source=//p' "$INSTALL_STATE" | head -n1)"
   STATE_INSTALLED="$(sed -n 's/^installed=//p' "$INSTALL_STATE" | head -n1)"
   INSTALLED_HASH="$(_file_sha256 "$INSTALLED_BIN" 2>/dev/null || true)"
