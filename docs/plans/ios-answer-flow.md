@@ -59,6 +59,17 @@
 - [x] 本地提交（不 push）：`fix(ios): make the answer bar's count chip and buttons one height`。
 - [ ] 真机：iPhone Air 当时 `unavailable`，没装、没看。
 
+### 1.7 输入栏改成 Liquid Glass（需求 §3.4 G11，2026-10-29）
+- [x] 看现状：iOS 26.2 与 27.0 各截 Agent 页与待办页的底栏作「之前」。
+- [x] `Views/Common/BottomBar.swift`：`BottomBar.rowHeight`（44）与 `roundGlyphBox`、`classicBarBacking(hairline:)`、`barPanel()`（附件与上传进度的玻璃面板）、`barFieldBox(focus:)`（玻璃输入框，整框可点）、`barRoundButton()` / `barRoundGlyph()`（玻璃圆钮）、`BarSendButton`（着色玻璃的发送钮）。
+- [x] `InterjectBar` 与 `TodoAddBar` 用这些件重排；`AgentDetailScreen` / `TodoProjectScreen` 改用 `.actionBar`；「不能发」「Mac 不可用」提示条改成 `barStatusChip(compact: true)`；`AttachmentMenu` 紧凑样式的玻璃圆钮。经典栏仍走原来的样式。
+- [x] 量高度（无障碍帧）：第一版圆钮 52 pt、输入框 44 pt → 改 `.regular` 控件尺寸 + 30 pt 的图标框后，圆钮与输入框的最小高度都是 44 pt（26.2 与 27.0）。
+- [x] 量点按区域：点输入框的上、左空白处键盘不弹（`keyboard=false`）→ 浮动栏上整框挂点按手势去设 `@FocusState`，重量后都弹（Agent 页、待办页，26.2 与 27.0）；经典栏不动。
+- [x] 截图：26.2 与 27.0 ×（顶部、键盘弹起、折行、附件与上传进度、字数计数、自动执行打开、「不能发」与只读提示、发送中、深色、最大字号）；18.5（经典栏）17 个状态与改动前逐像素比对（栏所在的底部 700 px）：14 个完全一致，3 个只差会动的菊花与 Home 指示条的色调。试验用的启动参数与临时 UI 测试（`ScratchBars2`）不进仓库。
+- [x] UI 测试（最终代码，Agent 页相关的 6 条 + 整个 `AskHumanTodosUITests` 的 9 条，三个系统各一遍）：27.0 全过；18.5 与 26.2 各有几条第一次没过——`testAMacThatPredatesTodosAsksForAnUpdate` 在 26.2 与 18.5 上改动前也失败，`testAddingFinishing…` / `testDraggingATodoUp…` 是满载时的偶发、再跑通过，`testAnAgentWaitingForAnAnswerLinksToItsQuestion` 在 26.2 上会丢点按（改动前的代码上也出现过，但我的代码上更常见，原因没查清）。逐条数字见 `docs/specs/ios-channel.md` §15 该节的验证一行。
+- [x] 本地提交（不 push）：`feat(ios): float the agent message bar and todo add bar as Liquid Glass`。
+- [ ] 真机：iPhone Air `unavailable`，没装、没看。
+
 ## 2. 验证命令
 
 同 `docs/plans/ios-web-markdown.md` §2；包测试 `cd ios/Packages/AskHumanKit && swift test`；UI 测试按用例名过滤。

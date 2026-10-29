@@ -438,3 +438,29 @@ Mac 未开启「Agent 任务」或终端不可用时，入口置灰并说明如�
   - **截图**（看过）：iOS 26.2 与 27.0 ×（顶部、可发送、滚到底带提示、键盘弹起、确认页、离线、发送中、深色——用 `simctl ui appearance dark` 切的——、最大字号上下排）；26.2 另有上传进度中的块（用临时挂钩造出进度，之后已删，已确认不在代码里）。iOS 18.5（经典栏）：8 张场景截图（顶部、滚到底、确认页、键盘弹起、最大字号的顶部与底部等）与改动前同场景的截图比对栏所在的底部 620 px，4 张逐像素一致，另外 4 张只差 Home 指示条、滚动条这类会动的东西（最大字号顶部那张还差一点滚动位置），所以经典栏没有变；这批截图里叫 `dark` 的几张，深色在 18.5 上没有生效（启动参数 `-AppleInterfaceStyle Dark` 没起作用，拍到的是浅色），所以 18.5 的深色这次没有看过。
   - **UI 测试**（会碰到作答栏与确认栏的 20 条，最终代码）：iOS 26.2 全部通过；iOS 27.0 19 条通过，第 20 条 `testAfterSendingThePageShowsAReceiptThenTheNextRequestSlidesIn`（那一轮的第一条，机器负载 12–50）报「`sent-pill` 没出现」，单独重跑三次都通过（35.6 / 32.4 / 29.0 秒），当作超时、没有当作缺陷，但没查到原因；iOS 18.5 那 20 条是在改提示小块的写法之前跑的（18 条一次通过，另 2 条在机器满载时超时、单独重跑通过），改的只是 iOS 26 起才走的分支，之后在 18.5 上只重跑了提示那一条，通过。没有重跑整套 `AskHumanUITests`、`AskHumanWebUITests`，也没重跑 Swift 包测试（这次没碰包）。
 - **没验证**：真机（iPhone Air 在 `devicectl` 里是 unavailable）；辅助字号下上下排不求同高（F11，是设计）；VoiceOver 的实际朗读；「降低透明度」「减少动态效果」打开时的样子；iOS 26.2 与 27.0 之外的 26.x。
+
+### 2026-10-29 Agent 页的插话栏与待办页的添加栏改成 Liquid Glass
+
+用户看过上两节的底栏后，从 `--whats-next` 给的下一步里选了「Agent 页的插话栏、待办页的底栏也改成同样的浮动玻璃栏」。就这一句，我没有再向他提问；下面的取舍（需求 `ios-answer-flow.md` §3.4 新增 G11）都是我定的、用户还没看过，可否决：
+
+- **范围**：Agent 详情页底部的插话栏（`InterjectBar`，连同「该 Agent 不能收消息」的提示条）与待办项目页底部的添加栏（`TodoAddBar`，连同「Mac 不可用」的提示条）。提示用的 toast 胶囊（`interject-notice`，`.thinMaterial`、距底 90 pt）**没动**。
+- **做法**：同 G2。iOS 26 起栏没有底板、没有分隔线，用 `.actionBar` 浮在内容上（柔和的滚动边缘效果 + `safeAreaBar`）；输入框是一块 44 pt 高的玻璃胶囊（折行时变高，圆角随高度收成圆角矩形，最多 5 行），附件与自动执行是 44 pt 的普通玻璃圆钮，发送是着色玻璃圆钮（`arrow.up`），圆钮与输入框底对齐；附件缩略图与上传进度合进一块玻璃面板，字数计数与「不能发」的提示是行上方的小玻璃条（同 G3 / G10 的 `barStatusChip(compact: true)`）。iOS 17–25 仍是原来的经典栏（`.bar` 材质底板，本来就没有分隔线；输入框、发送钮、自动执行的样子都没变）。
+- **我选了、可否决的**：
+  1. 发送是着色玻璃圆钮，附件与自动执行是普通玻璃圆钮（与作答栏「主按钮着色、次要按钮普通」一致）。
+  2. 输入框与圆钮同为 44 pt 高（原来输入框约 38 pt、圆钮 32–34 pt）——前一节用户嫌「左右不一样高」，这里一开始就按同高做。
+  3. 浮动栏上，自动执行的图标由「圆圈里的闪电」（`bolt.circle`）改成单独的闪电——圆圈已经是玻璃圆钮本身：开是橙色实心 `bolt.fill`，关是灰色空心 `bolt`。经典栏仍是原来的圆圈闪电。
+  4. 整个输入框（含上下空白）都能点着弹出键盘（见下面的坑）。
+  5. Toast 没跟着改成玻璃（没被提到）。
+- **实现时踩到的坑**：
+  - **圆钮比输入框高**：第一版圆钮 52 pt、输入框 44 pt，又是「左右不一样高」。量过系统玻璃圆钮的几何：直径 = 标签尺寸 + 系统内边距，`.regular` 每边 7 pt、`.large` 每边 15 pt（22 pt 的图标 → 36 / 52 pt）。所以现在圆钮用 `.regular`，图标放在 30×30 的框里（`barRoundGlyph()`）= 44 pt，与输入框的最小高度（`BottomBar.rowHeight`）相等。
+  - **点输入框的空白处不弹键盘**：玻璃输入框比里面的文字行（22 pt）高，而 `TextField` 只有文字那一行接受点按；量到点在框的上边距或左边距里，键盘不弹（`keyboard=false`）。浮动栏上整个框挂一个点按手势去设 `@FocusState`（`barFieldBox(focus:)`），重量后上、左两处点下去都弹键盘（Agent 页与待办页，26.2 与 27.0）。经典栏上本来就有这块死区（改动前后一样，`keyboard=false`），没有顺手去修。
+  - **iOS 26.2 上系统玻璃按钮比 27.0 多约 5 pt 的横向余量**：26.2 的圆钮落在 x=21 而不是 16（`Menu` 的无障碍帧 54 pt 宽），27.0 没有。没有去抵消它，所以 26.2 上附件钮离左边缘比 27.0 上多一点。
+- **验证**（这一轮机器大半时间满载，别的会话同时在编译、跑测试，负载一度五六百，所以下面不少是「第一次失败、再跑通过」，逐条写在后面）：
+  - **量过高度与点按区域**（临时 UI 测试读无障碍帧，不进仓库）：iOS 26.2 与 27.0 上，附件钮、发送钮都是 44×44 pt，输入框一行时框高 44 pt（里面的文字行 22 pt），圆钮与框的顶边在同一个 y；折行后圆钮贴着框的底边。点输入框上边距、左边距的空白处，键盘弹出（Agent 页与待办页）。
+  - **截图**（看过）：iOS 26.2 与 27.0 ×（Agent 页：顶部、键盘弹起、折行、附件与上传进度、字数计数、发送中、「不能发」与只读的提示、「Agent 已读取你的消息」的提示胶囊；待办页：顶部、键盘弹起、自动执行打开、字数计数；深色与最大字号各一组）。那条提示胶囊在新栏上方留有空隙、不相叠（「已排队」那一条没拍到）。iOS 18.5（经典栏）17 个场景与改动前同场景的截图逐像素比对栏所在的底部 700 px：14 个完全一致，3 个只差发送中的转圈与 Home 指示条的色调，所以经典栏没有变。
+  - **UI 测试**（最终代码；Agent 页相关的 6 条：`testAWorkingAgentShowsALiveView`、`testAMessageToAWorkingAgentIsQueuedAndCanBeWithdrawn`、`testEditingQueuedMessagesPutsTheirTextBack`、`testTheAgentPickingUpAMessageIsAnnounced`、`testAnAgentThatCannotReceiveMessagesSaysWhy`、`testAnAgentWaitingForAnAnswerLinksToItsQuestion`，加整个 `AskHumanTodosUITests` 的 9 条）：**iOS 27.0** 15 条一次全过；**iOS 18.5** Agent 页 6 条一次全过，待办 7/9；**iOS 26.2** Agent 页 5/6、待办 6/9。没一次通过的几条：
+    1. `testAMacThatPredatesTodosAsksForAnUpdate`（源菜单里要有「需要更新」）：26.2 与 18.5 上失败，**改动之前的代码上同一断言同样失败**，27.0 通过；与输入栏无关，没去查，已记入 `docs/PROGRESS.md`。
+    2. `testAddingFinishingEditingAndRestoringATodo`、`testDraggingATodoUpChangesTheOrder`：26.2 上第一次失败（满载时找不到「恢复」按钮、拖动没生效），同一份代码上再跑都通过（84 / 31 秒）。`testAddingFinishingEditingAndRestoringATodo` 在 18.5 上第一次也失败（用了 915 秒，`todo-edit-field` 没出现），再跑通过，但用了 1262 秒：在我那台专用的 18.5 模拟器上，键盘被拖动收起之后，XCUI 每一步都要等满 60 秒也等不到 App 空闲（`App animations complete notification not received`）。改动之前的代码在同一台模拟器上也是这样，在另一台新建的 18.5 模拟器上它 125 秒就过了，所以是那台模拟器的状态，不是这次的改动。
+    3. `testAnAgentWaitingForAnAnswerLinksToItsQuestion`（Agent 页点「Answer」跳到那道题）：**iOS 26.2 上不稳，原因没查清**。失败时是点完 6 秒后页面仍停在 Agent 页、`answered-count` 没出现。我的代码上跑了 24 次失败 5 次（其中有几次带了临时调试代码），改动之前的代码上跑了 20 次失败 1 次（用 8 个空转进程把机器压满时，在第 13 次失败；我这边同样压满时是第 5 次就失败，两次都是）。临时加日志看过：失败的那一次「Answer」按钮的动作根本没触发，也就是点按在到达按钮之前就丢了，而不是点到了却没切标签页。所以这条用例在 26.2 上本来就会丢点按（改动前也失败过），但**不能排除新栏让它更容易丢**（栏里有玻璃，渲染更重）；27.0 与 18.5 上各跑一遍都通过。真机上请点一下 Agent 页的「Answer」。
+  - 没重跑：整套 `AskHumanUITests` 的其余用例与 `AskHumanWebUITests`（这次只碰了 Agent 页与待办页的栏，答题页用的 `AttachmentMenu` 走的是没改的非紧凑样式）、Swift 包测试（没碰包）。
+- **没验证**：真机（iPhone Air 在 `devicectl` 里是 unavailable，没装、没看；Liquid Glass 在真机上与模拟器的观感可能略有差别）；要真实服务的 `AskHumanLiveUITests`；VoiceOver 的实际朗读；「降低透明度」「减少动态效果」打开时的样子；iOS 26.2 与 27.0 之外的 26.x；输入框被禁用（正在发送）时点框不设焦点的守卫（`isEnabled`，只在代码里有、没测过）；发送中的转圈是禁用的着色玻璃圆钮上默认的灰色圈，26.2 上看得清，27.0 上对比度偏低，没改；26.2 上附件钮离左边缘比 27.0 多约 5 pt（系统玻璃按钮的布局余量，没去抵消）。
