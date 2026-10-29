@@ -46,13 +46,17 @@
 
 ### 1.6 底栏改成 Liquid Glass（需求 §3.4，2026-10-29）
 - [x] 看现状：iOS 26.2（新建的 iPhone Air 模拟器）与 27.0 各截一张作「之前」。
-- [x] `Views/Common/BottomBar.swift`：`.actionBar`（`#available(iOS 26)`：`scrollEdgeEffectStyle(.soft)` + `safeAreaBar`，否则 `safeAreaInset`）、`classicBarBacking()`、`barStatusChip()`、`barPrimaryButton()` / `barSecondaryButton()`、`GlassGroup`。
-- [x] `AnswerScreen.SendBar`：计数 / 提示 / 上传进度进玻璃小块；「下一题 → 发送」合成一个按钮（G5）；辅助字号仍上下排（F11）。`ConfirmScreen`：状态行进小块，提交按钮玻璃。
+- [x] `Views/Common/BottomBar.swift`：`.actionBar`（`#available(iOS 26)`：`scrollEdgeEffectStyle(.soft)` + `safeAreaBar`，否则 `safeAreaInset`）、`classicBarBacking()`、`barStatusChip(compact:fillsHeight:)`、`barPrimaryButton()` / `barSecondaryButton()`、`GlassGroup`。
+- [x] `AnswerScreen.SendBar`：计数 / 上传进度进行内的玻璃块，提示是行上方的小条（G3、G10）；「下一题 → 发送」合成一个按钮（G5）；辅助字号仍上下排（F11）。`ConfirmScreen`：状态行进小块，提交按钮玻璃。
 - [x] 变体比较（在模拟器上各截图）：渐隐样式 soft / hard / hidden；纯文字与小块；确定「soft + 小块」。试验用的启动参数与临时 UI 测试（`ScratchBarShots`）不进仓库。
 - [x] 逐帧看「下一题 → 发送」的录屏（`simctl io recordVideo` + 抽帧）：两个按钮互换时会闪空胶囊 → 合并成一个按钮后胶囊不变、只有文字交叉淡入。
 - [x] 截图：iOS 26.2 与 27.0 ×（顶部、滚到底、可发送、键盘弹起、确认页、深色、最大字号含深色、离线、发送中）；26.2 另有上传进度（用一个临时启动参数造出进度，之后删掉）；iOS 18.5（经典栏）×（顶部、滚到底、可发送、键盘弹起、确认页、深色、最大字号）。
 - [x] UI 测试：iOS 27.0 整套 `AskHumanUITests` 60 条与 `AskHumanWebUITests` 11 条通过；26.2 整套 59/60（余下一条新建任务页的用例在改动前也失败）；18.5 只跑了碰到作答栏与确认栏的 20 条，通过（机器满载时有几条超时，单独重跑通过）。细节见 `docs/specs/ios-channel.md` §15 该节的验证一行。
 - [x] 本地提交（不 push）：`feat(ios): float the answer and confirm bars as Liquid Glass`。
+- [x] 反馈修正（用户：「你左边那块和右边高度不一样，有点难看呀」，需求 G10）：行内计数块与按钮同高——行 `fixedSize(horizontal: false, vertical: true)`，块与各按钮的标签 `maxHeight: .infinity`（仅浮动栏、非上下排）；提示不再进计数块，改成行上方的一小条（`barStatusChip(compact: true)`）。同款用于确认页的状态行。
+- [x] 修正时踩到的坑：可点的提示小块把玻璃放进按钮的标签里，iOS 26.2 上点它没有反应（`testTheHintOfAnIncompleteSelectOnlyFormLeadsToTheFirstOpenQuestion` 稳定失败，27.0 与 18.5 上通过）；改为玻璃包在按钮外面、内边距与点按区域留在标签里（`barChipButtonLabel()` + `barChipButtonGlass()`）。
+- [x] 重新验证：用无障碍帧量了高度，截图 26.2 / 27.0 / 18.5；与作答栏、确认栏有关的 20 条 UI 测试按系统各跑一遍。数字与没通过的情况见 `docs/specs/ios-channel.md` 该节的验证一行。
+- [x] 本地提交（不 push）：`fix(ios): make the answer bar's count chip and buttons one height`。
 - [ ] 真机：iPhone Air 当时 `unavailable`，没装、没看。
 
 ## 2. 验证命令
