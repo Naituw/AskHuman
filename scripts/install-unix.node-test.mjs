@@ -8,7 +8,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import test from "node:test";
+import test, { after, before } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const installer = fileURLToPath(new URL("./install.sh", import.meta.url));
@@ -19,6 +19,10 @@ const unixOnly = { skip: process.platform === "win32" };
 function executable(file, source) {
   writeFileSync(file, source);
   chmodSync(file, 0o755);
+}
+
+function shellQuote(value) {
+  return "'" + value.replaceAll("'", "'\\''") + "'";
 }
 
 function git(cwd, ...args) {
@@ -81,6 +85,30 @@ const inheritedEnv = (() => {
   return env;
 })();
 
+// install.sh compiles install-linux.rs on every Linux run. Compile it once per test file and let
+// the fixture's rustc stub copy the result, so the timed install path does not depend on rustc
+// compile speed under load.
+const rustcAvailable = process.platform === "linux" && spawnSync("rustc", ["--version"]).status === 0;
+const realRustc = rustcAvailable
+  ? (spawnSync("sh", ["-c", "command -v rustc"], { encoding: "utf8" }).stdout || "").trim()
+  : "";
+let publisherDir;
+let prebuiltPublisher;
+before(() => {
+  if (!rustcAvailable) return;
+  publisherDir = mkdtempSync(path.join(tmpdir(), "askhuman-install-publisher-"));
+  prebuiltPublisher = path.join(publisherDir, "install-linux");
+  const build = spawnSync("rustc", [
+    "--edition=2021",
+    fileURLToPath(new URL("./install-linux.rs", import.meta.url)),
+    "-o", prebuiltPublisher,
+  ], { encoding: "utf8", env: inheritedEnv });
+  assert.equal(build.status, 0, build.stderr);
+});
+after(() => {
+  if (publisherDir) rmSync(publisherDir, { recursive: true, force: true });
+});
+
 function fixture(t, { linked = false, fresh = false, os = "Darwin", checkout = "none", stubs: extraStubs = {} } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "askhuman-install-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -115,6 +143,35 @@ function fixture(t, { linked = false, fresh = false, os = "Darwin", checkout = "
   for (const name of ["pnpm", "cargo", "cargo-sweep", "xattr"]) {
     executable(path.join(stubs, name), "#!/bin/sh\nexit 0\n");
   }
+  if (rustcAvailable) {
+    executable(path.join(stubs, "rustc"), `#!/bin/sh
+set -eu
+case "\${1:-}" in
+  -V|--version)
+    if [ -n ${shellQuote(realRustc)} ]; then exec ${shellQuote(realRustc)} "$@"; fi
+    printf '%s\\n' "rustc unknown (test stub)"
+    exit 0
+    ;;
+esac
+out=""; src=""; prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-o" ]; then
+    out="$arg"
+  else
+    case "$arg" in
+      --edition=2021|-o) ;;
+      */install-linux.rs|install-linux.rs) src="$arg" ;;
+      *) echo "unexpected rustc argument: $arg" >&2; exit 2 ;;
+    esac
+  fi
+  prev="$arg"
+done
+[ -n "$out" ] && [ -n "$src" ] || { echo "unexpected rustc invocation: $*" >&2; exit 2; }
+printf '%s\\n' "$*" >> "\${TEST_RUSTC_LOG:-/dev/null}"
+cp ${shellQuote(prebuiltPublisher)} "$out"
+chmod 0755 "$out"
+`);
+  }
   symlinkSync(process.execPath, path.join(stubs, "node"));
   for (const [name, source] of Object.entries(extraStubs)) executable(path.join(stubs, name), source);
   executable(path.join(stubs, "uname"), '#!/bin/sh\nprintf "%s\\n" "$TEST_OS"\n');
@@ -136,11 +193,13 @@ fi
 `);
   const cacheLog = path.join(repo, "src-tauri/target/askhuman-cache.log");
   const cargoLog = path.join(root, "cargo.log");
+  const rustcLog = path.join(root, "rustc.log");
   const cargoBuildEnv = path.join(root, "cargo-build-env");
   return {
     bin, target, targetDir, entry, state, repo, cacheLog,
     cargoCalls: () => (existsSync(cargoLog) ? readFileSync(cargoLog, "utf8").trim().split("\n") : []),
     cargoBuildEnv: () => readFileSync(cargoBuildEnv, "utf8").trim(),
+    rustcCalls: () => (existsSync(rustcLog) ? readFileSync(rustcLog, "utf8").trim().split("\n").filter(Boolean) : []),
     cacheLines: () => (existsSync(cacheLog) ? readFileSync(cacheLog, "utf8").trim().split("\n") : []),
     run(extraEnv = {}) {
       return spawnSync("bash", [path.join(repo, "scripts/install.sh")], {
@@ -159,6 +218,7 @@ fi
           TEST_DU_STATE: path.join(root, "du-state"),
           TEST_CARGO_LOG: cargoLog,
           TEST_CARGO_BUILD_ENV: cargoBuildEnv,
+          TEST_RUSTC_LOG: rustcLog,
           ...extraEnv,
         },
       });
@@ -179,7 +239,9 @@ for (const os of ["Darwin", "Linux"]) {
   // The publisher uses Linux syscalls; Darwin's signing branch can be simulated on any Unix host.
   const nativePublisher = os === "Linux" && process.platform !== "linux";
   test(`${os}: publishing preserves the old open inode and unchanged installs skip replacement`,
-    { skip: process.platform === "win32" || (nativePublisher && "requires the native Linux publisher") }, t => {
+    { skip: process.platform === "win32"
+      || (nativePublisher && "requires the native Linux publisher")
+      || (os === "Linux" && !rustcAvailable && "requires the Rust toolchain") }, t => {
     const f = fixture(t, { os });
     const fd = openSync(f.target, "r");
     try {
@@ -206,6 +268,34 @@ for (const os of ["Darwin", "Linux"]) {
     }
   });
 }
+
+// The fixture's rustc stub copies a prebuilt publisher, so these two tests keep the compile
+// invocation and its failure path covered without recompiling on every install.
+test("Linux: install.sh compiles the publisher with the expected invocation",
+  { skip: process.platform !== "linux" ? "requires Linux" : (!rustcAvailable && "requires the Rust toolchain") }, t => {
+  const f = fixture(t, { os: "Linux" });
+  assertSuccess(f.run());
+  const calls = f.rustcCalls();
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /^--edition=2021 /);
+  assert.ok(calls[0].includes(` ${path.join(f.repo, "scripts/install-linux.rs")} -o `), calls[0]);
+  assert.match(calls[0], / -o .*\/install-linux$/);
+});
+
+test("Linux: a publisher compile failure leaves the install untouched", { skip: process.platform !== "linux" }, t => {
+  const f = fixture(t, {
+    os: "Linux",
+    stubs: { rustc: '#!/bin/sh\nif [ "${1:-}" = "-V" ]; then exit 0; fi\nexit 1\n' },
+  });
+  const oldInode = statSync(f.target).ino;
+  const result = f.run();
+  assert.equal(result.error, undefined);
+  assert.notEqual(result.status, 0);
+  assert.equal(statSync(f.target).ino, oldInode);
+  assert.equal(readFileSync(f.target, "utf8"), oldBinary);
+  assert.equal(readFileSync(f.state, "utf8"), "source=previous\ninstalled=previous\n");
+  assertNoStage(f);
+});
 
 test("preserves a relative/absolute symlink chain and replaces its final target", unixOnly, t => {
   const f = fixture(t, { linked: true });
