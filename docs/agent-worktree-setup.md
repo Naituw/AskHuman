@@ -112,7 +112,8 @@ AskHuman dev preset save <name> --from-instance
 Linux/Nix 构建应使用提供 GTK/WebKit 依赖及 `GSETTINGS_SCHEMAS_PATH` 的 Nix 环境。
 构建脚本会把这份 schema 数据根目录编入 ELF，进程启动时补充自身的 `XDG_DATA_DIRS`，
 所以安装后退出构建 shell 仍可打开附件选择器；不需要改登录环境或给实例 bin 套包装器。
-未提供元数据时保持普通构建行为；显式提供的路径无效则构建失败。Nix store 依赖仍须保留，
+未提供元数据时保持普通构建行为；显式提供的路径无效时构建警告并放弃嵌入，沿用运行环境的
+schema 查找路径。回退不保证缺少运行时 schema 的 Nix 环境仍可打开附件选择器。Nix store 依赖仍须保留，
 不要把本机编译产物视为跨机器可移植包。旧 daemon 的环境不会原地改变，验证时应在无活动
 请求后正常切换到新 daemon，不能沿用手工补过路径的旧进程作为通过证据。
 

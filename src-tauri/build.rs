@@ -6,7 +6,12 @@ fn main() {
     println!("cargo:rerun-if-env-changed=GSETTINGS_SCHEMAS_PATH");
     let schema_dirs = if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         gsettings_schema::schema_data_dirs(std::env::var_os("GSETTINGS_SCHEMAS_PATH"))
-            .unwrap_or_else(|error| panic!("invalid GSETTINGS_SCHEMAS_PATH: {error}"))
+            .unwrap_or_else(|error| {
+                println!(
+                    "cargo:warning=invalid GSETTINGS_SCHEMAS_PATH: {error}; using default schema lookup"
+                );
+                String::new()
+            })
     } else {
         String::new()
     };

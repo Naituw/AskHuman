@@ -1024,7 +1024,10 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                         cfg!(target_os = "linux"),
                     )
                     .ok_or_else(|| {
-                        tauri::Error::InvalidWebviewUrl("popup initial size is invalid")
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "popup initial size is invalid",
+                        )
                     })?;
                     let minimum = popup_size::platform_window_size(
                         (popup_size::MIN_WIDTH, popup_size::MIN_HEIGHT),
@@ -1032,7 +1035,10 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                         cfg!(target_os = "linux"),
                     )
                     .ok_or_else(|| {
-                        tauri::Error::InvalidWebviewUrl("popup minimum size is invalid")
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "popup minimum size is invalid",
+                        )
                     })?;
                     {
                         let mut url = String::from(if matches!(view, View::PopupInbox) {
@@ -2004,10 +2010,20 @@ where
     let page_scale = 1.0;
     let initial =
         popup_size::platform_window_size((820.0, 600.0), page_scale, cfg!(target_os = "linux"))
-            .ok_or_else(|| tauri::Error::InvalidWebviewUrl("history initial size is invalid"))?;
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "history initial size is invalid",
+                )
+            })?;
     let minimum =
         popup_size::platform_window_size((600.0, 440.0), page_scale, cfg!(target_os = "linux"))
-            .ok_or_else(|| tauri::Error::InvalidWebviewUrl("history minimum size is invalid"))?;
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "history minimum size is invalid",
+                )
+            })?;
     append_window_effect_query(&mut url, effective_window_effect);
     let builder = WebviewWindowBuilder::new(manager, "history", WebviewUrl::App(url.into()))
         .title(i18n::tr(lang, "title.history"))
