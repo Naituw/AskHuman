@@ -1464,6 +1464,16 @@
         }
       }
     },
+    "Image %lld of %lld" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 %lld 张，共 %lld 张"
+          }
+        }
+      }
+    },
     "Inbox" : {
       "localizations" : {
         "zh-Hans" : {

@@ -3,11 +3,25 @@ import UIKit
 import AHCore
 import AHProtocol
 
-/// The files that came with a request: image thumbnails as a grid, other files as rows.
+/// The files that came with a request: the pictures as a grid of squares, the other files as rows.
+/// A picture opens in a viewer that pages through all the pictures; a file opens on its own.
 struct AssetList: View {
     let macId: String
     let assets: [AssetRef]
-    @State private var shown: AssetRef?
+    @State private var shown: Shown?
+
+    /// What the sheet holds.
+    private enum Shown: Identifiable {
+        case pictures(from: String)
+        case file(AssetRef)
+
+        var id: String {
+            switch self {
+            case .pictures(let start): "pictures-\(start)"
+            case .file(let asset): "file-\(asset.assetId)"
+            }
+        }
+    }
 
     var body: some View {
         let images = assets.filter { $0.kind == .image }
@@ -16,19 +30,23 @@ struct AssetList: View {
             if !images.isEmpty {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 96, maximum: 140), spacing: 8)], alignment: .leading, spacing: 8) {
                     ForEach(images, id: \.assetId) { asset in
-                        Button { shown = asset } label: { ImageThumbnail(asset: asset) }
+                        Button { shown = .pictures(from: asset.assetId) } label: { ImageThumbnail(asset: asset) }
                             .buttonStyle(.plain)
                             .accessibilityLabel(asset.name)
+                            .accessibilityIdentifier("asset-picture-\(asset.assetId)")
                     }
                 }
             }
             ForEach(files, id: \.assetId) { asset in
-                Button { shown = asset } label: { FileRow(asset: asset) }
+                Button { shown = .file(asset) } label: { FileRow(asset: asset) }
                     .buttonStyle(.plain)
             }
         }
-        .sheet(item: $shown) { asset in
-            AssetViewer(macId: macId, asset: asset)
+        .sheet(item: $shown) { shown in
+            switch shown {
+            case .pictures(let start): ImageGalleryViewer(macId: macId, images: images, start: start)
+            case .file(let asset): AssetViewer(macId: macId, asset: asset)
+            }
         }
     }
 }
@@ -37,28 +55,30 @@ extension AssetRef: @retroactive Identifiable {
     public var id: String { assetId }
 }
 
+/// A square cell with the picture cropped to fill it. The square alone sets the size: a picture that is
+/// wide or tall only fills it and is clipped, so it can neither spill out of its cell nor cover the next.
 private struct ImageThumbnail: View {
     let asset: AssetRef
 
     var body: some View {
-        ZStack {
-            if let data = asset.thumbnailData, let image = UIImage(data: data) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Rectangle().fill(Color(.tertiarySystemFill))
-                Image(systemName: "photo").foregroundStyle(.secondary)
+        Color(.tertiarySystemFill)
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                if let data = asset.thumbnailData, let image = UIImage(data: data) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: "photo").foregroundStyle(.secondary)
+                }
             }
-        }
-        .frame(height: 96)
-        .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(alignment: .bottomLeading) {
-            if asset.tooLarge {
-                Chip(text: "Too large", systemImage: "exclamationmark.triangle.fill", tint: .orange).padding(4)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(alignment: .bottomLeading) {
+                if asset.tooLarge {
+                    Chip(text: "Too large", systemImage: "exclamationmark.triangle.fill", tint: .orange).padding(4)
+                }
             }
-        }
     }
 }
 
@@ -92,13 +112,41 @@ extension Int {
 
 // MARK: viewer
 
-/// Downloads an attachment from the Mac when opened and previews it by type.
+/// One file of any kind in a sheet of its own.
 struct AssetViewer: View {
     let macId: String
     let asset: AssetRef
 
-    @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    /// The file once it is on the phone, for sharing.
+    @State private var ready: URL?
+
+    var body: some View {
+        NavigationStack {
+            AssetPage(macId: macId, asset: asset) { ready = $0 }
+                .navigationTitle(asset.name)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+                    if let ready {
+                        ToolbarItem(placement: .primaryAction) { ShareLink(item: ready) }
+                    }
+                }
+        }
+    }
+}
+
+/// What a viewer shows of one attachment: it is downloaded from the Mac once it is on screen, then
+/// previewed by type. `onReady` says where the file is when it has arrived.
+struct AssetPage: View {
+    let macId: String
+    let asset: AssetRef
+    /// Whether the page is on show or beside the one that is. Only such a page is fetched and drawn; a
+    /// page further off is a placeholder (and lets go of its picture), as a gallery may hold many.
+    var near = true
+    var onReady: (URL) -> Void = { _ in }
+
+    @Environment(AppStore.self) private var store
     @State private var phase: Phase = .loading(0)
     @State private var attempt = 0
 
@@ -108,41 +156,48 @@ struct AssetViewer: View {
         case failed(String)
     }
 
+    /// What starts a download: the first time the page is near, and every "Try again".
+    private struct Fetch: Equatable {
+        var attempt: Int
+        var near: Bool
+    }
+
     var body: some View {
-        NavigationStack {
-            Group {
-                switch phase {
-                case .loading(let fraction):
-                    VStack(spacing: 14) {
-                        if let data = asset.thumbnailData, let image = UIImage(data: data) {
-                            Image(uiImage: image).resizable().scaledToFit().frame(maxHeight: 160).clipShape(RoundedRectangle(cornerRadius: 12))
-                        }
-                        ProgressView(value: fraction).frame(maxWidth: 220)
-                        Text("Downloading from your Mac…").font(.footnote).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                case .ready(let url):
-                    AssetContent(url: url, asset: asset)
-                case .failed(let message):
-                    ContentUnavailableView {
-                        Label("Could not open the file", systemImage: "exclamationmark.triangle")
-                    } description: {
-                        Text(message)
-                    } actions: {
-                        Button("Try again") { attempt += 1 }.buttonStyle(.borderedProminent)
-                    }
-                }
-            }
-            .navigationTitle(asset.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
-                if case .ready(let url) = phase {
-                    ToolbarItem(placement: .primaryAction) { ShareLink(item: url) }
+        Group {
+            switch phase {
+            case .loading(let fraction):
+                waiting(fraction)
+            case .ready(let url):
+                if near { AssetContent(url: url, asset: asset) } else { waiting(nil) }
+            case .failed(let message):
+                ContentUnavailableView {
+                    Label("Could not open the file", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(message)
+                } actions: {
+                    Button("Try again") { attempt += 1 }.buttonStyle(.borderedProminent)
                 }
             }
         }
-        .task(id: attempt) { await load() }
+        .task(id: Fetch(attempt: attempt, near: near)) {
+            guard near else { return }
+            if case .ready = phase { return }
+            await load()
+        }
+    }
+
+    /// The thumbnail, and how far the download is (when it is going on).
+    private func waiting(_ fraction: Double?) -> some View {
+        VStack(spacing: 14) {
+            if let data = asset.thumbnailData, let image = UIImage(data: data) {
+                Image(uiImage: image).resizable().scaledToFit().frame(maxHeight: 160).clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            if let fraction {
+                ProgressView(value: fraction).frame(maxWidth: 220)
+                Text("Downloading from your Mac…").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func load() async {
@@ -153,8 +208,13 @@ struct AssetViewer: View {
                     if case .loading = phase { phase = .loading(fraction) }
                 }
             }
-            phase = .ready(try Self.named(cached, as: asset))
+            let url = try Self.named(cached, as: asset)
+            phase = .ready(url)
+            onReady(url)
         } catch is CancellationError {
+            return
+        } catch BackendError.cancelled {
+            // The engine reports a cancelled download this way (a page that is no longer near).
             return
         } catch {
             phase = .failed(error.userMessage)
@@ -183,11 +243,7 @@ private struct AssetContent: View {
     var body: some View {
         switch asset.kind {
         case .image:
-            if let image = UIImage(contentsOfFile: url.path) {
-                ZoomableImage(image: image).ignoresSafeArea(edges: .bottom)
-            } else {
-                ContentUnavailableView("Not a readable image", systemImage: "photo.badge.exclamationmark")
-            }
+            PictureContent(url: url)
         case .markdown:
             TextFile(url: url) { text in
                 ScrollView { MarkdownView(text: text).padding() }
@@ -205,6 +261,24 @@ private struct AssetContent: View {
             }
         case .other:
             QuickLookPreview(url: url).ignoresSafeArea(edges: .bottom)
+        }
+    }
+}
+
+/// A picture that has arrived. It is opened once and then kept, so a gallery that re-evaluates its pages
+/// while it scrolls does not hand the image view a new (and so newly decoded) image each time.
+private struct PictureContent: View {
+    @State private var picture: UIImage?
+
+    init(url: URL) {
+        _picture = State(initialValue: UIImage(contentsOfFile: url.path))
+    }
+
+    var body: some View {
+        if let picture {
+            ZoomableImage(image: picture).ignoresSafeArea(edges: .bottom)
+        } else {
+            ContentUnavailableView("Not a readable image", systemImage: "photo.badge.exclamationmark")
         }
     }
 }

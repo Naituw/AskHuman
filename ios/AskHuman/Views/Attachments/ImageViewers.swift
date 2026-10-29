@@ -30,7 +30,10 @@ struct ZoomableImage: UIViewRepresentable {
     }
 
     func updateUIView(_ scroll: UIScrollView, context: Context) {
-        context.coordinator.imageView?.image = image
+        // Leave the image view alone unless the image itself changed.
+        if let imageView = context.coordinator.imageView, imageView.image !== image {
+            imageView.image = image
+        }
     }
 
     final class Coordinator: NSObject, UIScrollViewDelegate {

@@ -164,6 +164,7 @@ ZH = {
     # Assets
     "Downloading from your Mac…": "正在从 Mac 下载…",
     "Could not open the file": "无法打开文件",
+    "Image %lld of %lld": "第 %lld 张，共 %lld 张",
     "Try again": "重试",
     "Close": "关闭",
     "Not a readable image": "无法读取该图片",
