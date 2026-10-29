@@ -51,7 +51,7 @@ struct AnswerScreen: View {
                 .background(Color(.systemGroupedBackground))
                 .background(FrameReader(.safeTop))
                 .scrollDismissesKeyboard(.interactively)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
+                .actionBar {
                     SendBar(
                         item: item, composer: composer, moreBelow: tracker.moreBelow, ended: store.endedNotice(for: item.id) != nil,
                         online: store.isOnline(macId: item.macId),
@@ -546,73 +546,82 @@ private struct SendBar: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if let progress = composer.uploadProgress {
+            // The floating bar shows the upload inside the status chip, with the text it belongs to.
+            if !BottomBar.floats, let progress = composer.uploadProgress {
                 ProgressView(value: progress).progressViewStyle(.linear)
             }
-            let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 12))
-            layout {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Answered \(composer.answeredCount)/\(composer.questionCount)")
-                        .font(.subheadline.weight(.medium))
-                        .accessibilityIdentifier("answered-count")
-                    if let hint {
-                        hintView(hint)
-                    }
-                }
-                if !stacked { Spacer(minLength: 8) }
-                HStack(spacing: 12) {
-                    // Sending waits until the last question was on screen; until then the button leads
-                    // there. After that "Send" takes the main place, and "Next" stays beside it while there
-                    // are questions below the screen, as the popup's "Next" does until it reaches the last.
-                    if composer.hasReachedEnd {
-                        if moreBelow {
+            GlassGroup(spacing: 8) {
+                let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 12))
+                layout {
+                    statusBlock
+                    if !stacked { Spacer(minLength: 8) }
+                    HStack(spacing: 12) {
+                        // Sending waits until the last question was on screen; until then the button leads
+                        // there. After that "Send" takes the main place, and "Next" stays beside it while there
+                        // are questions below the screen, as the popup's "Next" does until it reaches the last.
+                        if composer.hasReachedEnd, moreBelow {
                             nextIconButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
                         }
-                        sendButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
-                    } else {
-                        nextButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
+                        primaryButton
                     }
                 }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
+        .classicBarBacking()
         .animation(.snappy(duration: 0.25), value: composer.hasReachedEnd)
         .animation(.snappy(duration: 0.25), value: moreBelow)
     }
 
-    private var sendButton: some View {
-        Button(action: onSend) {
-            HStack(spacing: 6) {
-                if busy { ProgressView().controlSize(.small).tint(.white) }
-                Text(busy ? "Sending…" : "Send")
-                    .font(.headline)
-                    .lineLimit(1)
+    private var statusBlock: some View {
+        let uploading = BottomBar.floats ? composer.uploadProgress : nil
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("Answered \(composer.answeredCount)/\(composer.questionCount)")
+                .font(.subheadline.weight(.medium))
+                .accessibilityIdentifier("answered-count")
+            if let hint {
+                hintView(hint)
             }
-            .frame(minWidth: 84, maxWidth: stacked ? .infinity : nil)
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        .disabled(!enabled)
-        .accessibilityIdentifier("send-button")
+        // The progress line is drawn over the bottom of the text, in room kept for it, so that it takes
+        // the width of the text and does not widen the chip.
+        .padding(.bottom, uploading == nil ? 0 : 10)
+        .overlay(alignment: .bottom) {
+            if let uploading { ProgressView(value: uploading).progressViewStyle(.linear) }
+        }
+        .frame(maxWidth: stacked ? .infinity : nil, alignment: .leading)
+        .barStatusChip()
     }
 
-    /// The main button until the last question was reached.
-    private var nextButton: some View {
-        Button(action: onNext) {
-            HStack(spacing: 6) {
-                Text("Next").font(.headline).lineLimit(1)
-                Image(systemName: "chevron.down").font(.footnote.weight(.bold))
+    /// "Next" until the last question was reached, then "Send" in the same place. It is one button, so
+    /// that on the glass bar the capsule stays and only the words change, rather than one capsule
+    /// going and another coming.
+    private var primaryButton: some View {
+        let reached = composer.hasReachedEnd
+        let label: LocalizedStringKey = reached ? (busy ? "Sending…" : "Send") : "Next question"
+        return Button(action: reached ? onSend : onNext) {
+            ZStack {
+                if reached {
+                    HStack(spacing: 6) {
+                        if busy { ProgressView().controlSize(.small).tint(.white) }
+                        Text(busy ? "Sending…" : "Send")
+                            .font(.headline)
+                            .lineLimit(1)
+                    }
+                } else {
+                    HStack(spacing: 6) {
+                        Text("Next").font(.headline).lineLimit(1)
+                        Image(systemName: "chevron.down").font(.footnote.weight(.bold))
+                    }
+                }
             }
             .frame(minWidth: 84, maxWidth: stacked ? .infinity : nil)
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        .disabled(ended || sendingState)
-        .accessibilityLabel("Next question")
-        .accessibilityIdentifier("next-button")
+        .barPrimaryButton()
+        .disabled(reached ? !enabled : (ended || sendingState))
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(reached ? "send-button" : "next-button")
     }
 
     /// Beside "Send", while there is more below.
@@ -622,8 +631,7 @@ private struct SendBar: View {
                 .font(.body.weight(.semibold))
                 .frame(minWidth: 22)
         }
-        .buttonStyle(.bordered)
-        .controlSize(.large)
+        .barSecondaryButton()
         .disabled(ended || sendingState)
         .accessibilityLabel("Next question")
         .accessibilityIdentifier("next-button")

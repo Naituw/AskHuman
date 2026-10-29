@@ -34,7 +34,7 @@ struct ConfirmScreen: View {
             }
             .background(Color(.systemGroupedBackground))
             .scrollDismissesKeyboard(.interactively)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+            .actionBar {
                 bar(composer: composer, confirm: confirm)
             }
             .toolbar {
@@ -71,38 +71,38 @@ struct ConfirmScreen: View {
         let sending: Bool = { if case .sending = item.state { return true } else { return false } }()
         let ended = store.endedNotice(for: item.id) != nil
         let online = store.isOnline(macId: item.macId)
-        return VStack(spacing: 6) {
-            if ended {
-                Text("This request has ended.").font(.caption).foregroundStyle(.secondary)
-            } else if !online {
-                Text("The Mac is offline. Try again when it is back.").font(.caption).foregroundStyle(.orange)
-            } else if sending {
-                Text("Waiting for your Mac to confirm…").font(.caption).foregroundStyle(.secondary)
-            }
-            Button {
-                Task {
-                    do {
-                        try await store.decide(composer, item: item)
-                    } catch {
-                        problem = error.userMessage
+        return GlassGroup(spacing: 4) {
+            VStack(spacing: BottomBar.floats ? 8 : 6) {
+                if ended {
+                    Text("This request has ended.").font(.caption).foregroundStyle(.secondary).barStatusChip()
+                } else if !online {
+                    Text("The Mac is offline. Try again when it is back.").font(.caption).foregroundStyle(.orange).barStatusChip()
+                } else if sending {
+                    Text("Waiting for your Mac to confirm…").font(.caption).foregroundStyle(.secondary).barStatusChip()
+                }
+                Button {
+                    Task {
+                        do {
+                            try await store.decide(composer, item: item)
+                        } catch {
+                            problem = error.userMessage
+                        }
                     }
+                } label: {
+                    HStack(spacing: 6) {
+                        if composer.isSending || sending { ProgressView().controlSize(.small).tint(.white) }
+                        Text(confirm.submitLabel.isEmpty ? String(localized: "Submit") : confirm.submitLabel).font(.headline)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-            } label: {
-                HStack(spacing: 6) {
-                    if composer.isSending || sending { ProgressView().controlSize(.small).tint(.white) }
-                    Text(confirm.submitLabel.isEmpty ? String(localized: "Submit") : confirm.submitLabel).font(.headline)
-                }
-                .frame(maxWidth: .infinity)
+                .barPrimaryButton()
+                .disabled(!composer.canSubmit || ended || !online || sending)
+                .accessibilityIdentifier("submit-button")
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(!composer.canSubmit || ended || !online || sending)
-            .accessibilityIdentifier("submit-button")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
+        .classicBarBacking()
     }
 }
 
