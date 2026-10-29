@@ -68,7 +68,8 @@
 - [x] 截图：26.2 与 27.0 ×（顶部、键盘弹起、折行、附件与上传进度、字数计数、自动执行打开、「不能发」与只读提示、发送中、深色、最大字号）；18.5（经典栏）17 个状态与改动前逐像素比对（栏所在的底部 700 px）：14 个完全一致，3 个只差会动的菊花与 Home 指示条的色调。试验用的启动参数与临时 UI 测试（`ScratchBars2`）不进仓库。
 - [x] UI 测试（最终代码，Agent 页相关的 6 条 + 整个 `AskHumanTodosUITests` 的 9 条，三个系统各一遍）：27.0 全过；18.5 与 26.2 各有几条第一次没过——`testAMacThatPredatesTodosAsksForAnUpdate` 在 26.2 与 18.5 上改动前也失败，`testAddingFinishing…` / `testDraggingATodoUp…` 是满载时的偶发、再跑通过，`testAnAgentWaitingForAnAnswerLinksToItsQuestion` 在 26.2 上会丢点按（改动前的代码上也出现过，但我的代码上更常见，原因没查清）。逐条数字见 `docs/specs/ios-channel.md` §15 该节的验证一行。
 - [x] 本地提交（不 push）：`feat(ios): float the agent message bar and todo add bar as Liquid Glass`。
-- [ ] 真机：iPhone Air `unavailable`，没装、没看。
+- [x] 真机点按：2026-10-30 凌晨装到 iPhone Air（`77697b7` 的 Debug 构建，Mock 数据），用户手点 Agent 页的「Answer」若干次，没有丢点按（模拟器 26.2 上那条用例偶尔丢点按，见 `docs/specs/ios-channel.md` §15 该节）。
+- [ ] 真机外观：输入框与圆钮同高是否顺眼、点输入框空白处弹不弹键盘、栏下的渐隐、发送中的灰圈——用户没有反馈，未确认。
 
 ## 2. 验证命令
 
