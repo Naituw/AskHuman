@@ -108,6 +108,7 @@
    - `persist` 配置  
    - 对所有 `mode != none` 的 Agent 跑现有「更新集成」路径（写 rules/skill）  
    - 失败按现有 modeError 展示  
+   - Antigravity 的严格状态读取失败（符号链接、不可读路径）时，跳过它并向 stderr 记一条告警，不让整次应用失败；状态错误仍由 Antigravity 卡片自己显示  
    - 手动区 `prompt` 计算属性依赖风格，立即变  
 3. 描述文案示例（人读）：  
    - 对齐：需求与方案多确认，理解一致后再大规模改动。  

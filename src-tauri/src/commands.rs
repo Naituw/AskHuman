@@ -3205,9 +3205,18 @@ pub fn collaboration_style_apply_integrations() -> Result<(), String> {
             continue;
         }
         let mode = if target == AgentTarget::Antigravity {
-            agent_mode::antigravity_status()
-                .map_err(|e| e.to_string())?
-                .0
+            match agent_mode::antigravity_status() {
+                Ok(status) => status.0,
+                Err(error) => {
+                    // The strict status read refuses linked or unreadable paths. That must not
+                    // fail a style change that already reached the other agents, nor one made by
+                    // a user who never enabled Antigravity; its settings card shows the error.
+                    eprintln!(
+                        "[askhuman] collaboration style: skipped Antigravity, status unreadable: {error:#}"
+                    );
+                    continue;
+                }
+            }
         } else {
             agent_mode::current(target)
         };
@@ -5124,6 +5133,45 @@ mod tests {
             assert_eq!(mode, agent_mode::Mode::Mcp);
             assert!(installed);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collaboration_style_apply_skips_antigravity_when_its_status_is_unreadable() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        const CHILD: &str = "ASKHUMAN_TEST_STYLE_APPLY_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            // Keep the child HOME free of temporary-root aliases such as macOS /var.
+            let root_path = root.path().canonicalize().unwrap();
+            let state = root_path.join("state");
+            std::fs::create_dir(&state).unwrap();
+            std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+            // A linked `~/.gemini` is refused by the strict Antigravity status read.
+            std::fs::create_dir(root_path.join("elsewhere")).unwrap();
+            symlink(root_path.join("elsewhere"), root_path.join(".gemini")).unwrap();
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "commands::tests::collaboration_style_apply_skips_antigravity_when_its_status_is_unreadable",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("HOME", &root_path)
+                .env("ASKHUMAN_HOME", state)
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                result.status.success(),
+                "stdout: {}\nstderr: {stderr}",
+                String::from_utf8_lossy(&result.stdout)
+            );
+            assert!(stderr.contains("skipped Antigravity"), "stderr: {stderr}");
+            return;
+        }
+        assert!(agent_mode::antigravity_status().is_err());
+        collaboration_style_apply_integrations().unwrap();
     }
 
     #[test]
