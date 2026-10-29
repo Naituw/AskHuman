@@ -77,7 +77,7 @@ pub fn detect_running_agent_from(env: &HashMap<String, String>) -> Option<AgentK
 
 /// 读取本进程 env 判定真实 Agent。
 pub fn detect_running_agent() -> Option<AgentKind> {
-    detect_running_agent_from(&current_env())
+    detect_running_agent_from(&env_snapshot())
 }
 
 /// Identify the Agent that directly invoked a short-lived CLI command. Environment markers are
@@ -112,11 +112,15 @@ pub fn session_id_from_env_map(kind: AgentKind, env: &HashMap<String, String>) -
 
 /// 读取本进程 env 取会话 ID。
 pub fn session_id_from_env(kind: AgentKind) -> Option<String> {
-    session_id_from_env_map(kind, &current_env())
+    session_id_from_env_map(kind, &env_snapshot())
 }
 
-fn current_env() -> HashMap<String, String> {
-    std::env::vars().collect()
+/// A copy of this process's environment. Entries that are not valid Unicode are skipped:
+/// `std::env::vars()` panics on them, and release builds abort on panic.
+pub(crate) fn env_snapshot() -> HashMap<String, String> {
+    std::env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .collect()
 }
 
 /// 识别一个进程节点是否「属于」指定家族的 Agent 进程。
@@ -1477,6 +1481,39 @@ mod tests {
         };
         assert!(!is_self(&e));
         assert!(matches_agent(&e, AgentKind::Codex));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn env_snapshot_skips_entries_that_are_not_unicode() {
+        use std::os::unix::ffi::OsStrExt;
+        const CHILD: &str = "ASKHUMAN_TEST_ENV_SNAPSHOT_CHILD";
+        const NOT_UNICODE: &str = "ASKHUMAN_TEST_NOT_UNICODE";
+        if std::env::var_os(CHILD).is_none() {
+            // `std::env::vars()` panics on such an entry and mutating this process's environment
+            // would race other tests, so observe a child process that inherits the entry.
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "agents::detect::tests::env_snapshot_skips_entries_that_are_not_unicode",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env(NOT_UNICODE, std::ffi::OsStr::from_bytes(b"caf\xff"))
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("env snapshot child ok"),
+                "stdout: {stdout}\nstderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let env = env_snapshot();
+        assert!(!env.contains_key(NOT_UNICODE));
+        assert_eq!(env.get(CHILD).map(String::as_str), Some("1"));
+        println!("env snapshot child ok");
     }
 }
 

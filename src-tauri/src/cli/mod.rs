@@ -65,7 +65,14 @@ pub fn dispatch() {
     crate::dev_instance::maybe_enter_dev_instance();
 
     let raw_argv: Vec<String> = std::env::args().collect();
-    let (argv, hint) = match parse_caller_hint(&raw_argv, &std::env::vars().collect()) {
+    // The hint is a prefix flag and its conflict check is the only reader of the environment here,
+    // so every other invocation (hooks, daemon, GUI) skips the snapshot entirely.
+    let hint_env = if raw_argv.get(1).map(String::as_str) == Some("--caller-agent") {
+        crate::agents::detect::env_snapshot()
+    } else {
+        HashMap::new()
+    };
+    let (argv, hint) = match parse_caller_hint(&raw_argv, &hint_env) {
         Ok(parsed) => parsed,
         Err(error) => {
             eprintln!("AskHuman: {error}");
@@ -765,7 +772,7 @@ pub(crate) fn whats_next_question_from_entries(
 /// available to daemon-backed Unix and Windows builds.
 pub(crate) fn caller_context() -> CallerContext {
     caller_context_with_hint(
-        &std::env::vars().collect(),
+        &crate::agents::detect::env_snapshot(),
         CALLER_AGENT_HINT.get().copied(),
     )
 }
