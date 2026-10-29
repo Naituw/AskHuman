@@ -168,10 +168,13 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 用户 2026-10-29 夜里说「手机 App 想支持待办：能选设备、能选 iCloud 模式、还有项目来源的问题——你都设计，实现验证，我明天早上验收」，所以没有经过 AskHuman 问答。
 做法：手机经已有的 iOS 网关（MQTT + 端到端加密）读写 Mac 的 `todos.json`，新增 `todo.*` 线消息；「iCloud」是一个**来源**，由开着同步且在线的 Mac 代答、掉线自动换，手机不直连 CloudKit（那要给 iOS App ID 开 iCloud 容器，是 Apple 账号上的改动，要用户授权）；项目列表由 Mac 按桌面侧栏同一算法算好，手机只看到不透明 id 与同名后缀，不暴露路径；手机不落盘待办。
 
+2026-10-29 晚用户又反馈「待办里的状态比较混乱，如果我的 Mac 都开了 iCloud 存储，手机默认还是会选中一台 Mac，另一台 Mac 上的 Agent 就不会标绿点了」，经两轮 AskHuman 定了做法（规格 I17–I19、§13 第 11 条）：配对了多台 Mac 时，开着同步的 Mac 并进「iCloud」一个来源、不再单独出现，默认来源就是 iCloud（没手动选过时先用第一台在线的 Mac 起步，它说自己开着同步就换成 iCloud 并记住）；各 Mac 的「仅本机」项目在 iCloud 视图里按 Mac 分段列出（点进去在那台 Mac 上读写）；项目行的点复用 Agents 页的状态（橙 = 等你、绿 = 工作、灰 = 空闲），按仓库地址（Agent 项目信息里新增的可选 `repo`，Mac 开着同步时才带）或同机目录对到行。已实现并过自动化（Rust、Swift 包、模拟器 UI 测试），当晚装到了 Mac A（这台）、Mac B 与 iPhone Air：B 上用 B 自己的 Developer ID 重签后换入（指定要求与旧版逐字相同，旧版备份在 B 的 `~/.askhuman/backups/pre-todos-merge-install-20261029-233412/`），B 的旧 daemon 在换二进制后空闲退出，经用户同意用一次 `daemon start` 拉起新版（新 daemon 启动时按产品自带的迁移升级了 B 上 Codex 与 Cursor 的旧版 Stop 确认钩子）；手机是干净 HEAD 快照的 Debug 构建，没启动、没点亮手机。用户在真机上看过：来源菜单只有「iCloud」、副标题写着两台 Mac，提问挂着时这个仓库那一行有橙点，B 上 Agent 所在的行有点、颜色与 Agents 页一致。
+
 自测（2026-10-29，都在这台机器上、没碰真实的 `~/.askhuman`）：Rust `cargo test ios::` 252 条 + `ios_todos` 25 条，clippy / fmt 无告警；Swift 包全套（合并 main 之后的树上）431 条（协议 27、存储 21、传输 14、Markdown 10、核心 144、应用 174、端到端 41，其中 4 条要真实服务、已跳过）无失败；模拟器 UI 测试 `AskHumanTodosUITests` 7 条，英文与中文各跑一遍并看过截图；合并后整个 `AskHumanUITests` 目标 90 条（待办 7、模型 15、主体 56、网页 11）全过，只有要真实服务的 `AskHumanLiveUITests` 1 条跳过；真实 daemon 端到端（本地 broker）5 条；另把真实 `todos.json` 的一份拷贝放进一次性 Mac 对账（15 行与文件逐项一致，最大一份整表 17 KB，拷贝已删）。UI 测试里发现并修复了两个缺陷：待办页先于 Mac 列表上屏时，旧 Mac 会让页面一直转圈（需求 §13 第 7 条）；合并 main 后，字符串目录脚本里「Copy」被本分支的「拷贝」盖过了 main 的「复制」，main 的网页渲染 UI 测试因此失败，已删掉重复项，脚本现在遇到同一个键两种译法会直接报错。**老 Mac 要先装带这个功能的版本**，否则手机上会显示「这台 Mac 需要更新」。
 
 下一步：
-- [ ] **用户验收**：看 `docs/specs/ios-todos.md` §3 的 16 条决策（尤其 I2 不直连 CloudKit、I4 设备模式不列仅云端项目、I5 手机不能新建项目、I13 手机不落盘），不同意的整条否决；真机上装一遍（`ios/` 里 `xcodegen generate`，配对后进「待办」标签）；多台 Mac、iCloud 来源自动换机、Mac 离线时的表现要真机才看得全；打开待办页后状态行应当在几秒内从「正在同步…」变成「已同步 · 刚刚」，请确认上面的修复有效。
+- [ ] **用户验收**：看 `docs/specs/ios-todos.md` §3 的 16 条决策（尤其 I2 不直连 CloudKit、I4 设备模式不列仅云端项目、I5 手机不能新建项目、I13 手机不落盘），不同意的整条否决；真机上装一遍（`ios/` 里 `xcodegen generate`，配对后进「待办」标签）；多台 Mac 并成「iCloud」与行上的 Agent 点已在真机上看过（2026-10-29 夜），「仅在 X」分段、iCloud 来源自动换机、Mac 离线时的表现还要真机才看得全；打开待办页后状态行应当在几秒内从「正在同步…」变成「已同步 · 刚刚」，请确认上面的修复有效。
+- [ ] 决定：默认来源记着「iCloud」之后，若所有 Mac 都关了同步，页面现在会说「iCloud 同步没开」、菜单里 Mac 重新出现，需要手动选一台（规格 §10 第 8 条）；要不要改成自动退回某台 Mac，等用户定。
 - [ ] 后置（需求 §11）：手机直连 CloudKit（Mac 都不在线也能用，需用户授权开 iCloud 容器 + Swift 重实现同步核心）、附件的查看与添加、「全部待办」聚合页、清空历史、从 iCloud 移除项目、待办推送、离线编辑队列。
 - [ ] 已知局限（需求 §10）：Mac 都不在线时手机看不到待办；线协议里 `helper` 没有「未安装」状态，手机上「没装」与「没在跑」显示成同一句；单条超大待办（桌面端 / CLI 不限长度，手机端限 4000 字）可能让那个项目的 `todo.list` 装不进一条消息而超时。
 
@@ -182,14 +185,10 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 没有带真实凭据调模型），写成需求 [`docs/specs/ios-task-model.md`](specs/ios-task-model.md) 与计划 [`docs/plans/ios-task-model.md`](plans/ios-task-model.md)，用户评审批准，
 并对六条待确认点作了选择（Grok 用 `grok models`、Codex 一律走 `app-server` 的 `model/list`、Pi 三档强度、做 M10、实现完做一轮真实验证但每次要批准）。
 
-2026-10-29 晚用户又反馈「待办里的状态比较混乱，如果我的 Mac 都开了 iCloud 存储，手机默认还是会选中一台 Mac，另一台 Mac 上的 Agent 就不会标绿点了」，经两轮 AskHuman 定了做法（规格 I17–I19、§13 第 11 条）：配对了多台 Mac 时，开着同步的 Mac 并进「iCloud」一个来源、不再单独出现，默认来源就是 iCloud（没手动选过时先用第一台在线的 Mac 起步，它说自己开着同步就换成 iCloud 并记住）；各 Mac 的「仅本机」项目在 iCloud 视图里按 Mac 分段列出（点进去在那台 Mac 上读写）；项目行的点复用 Agents 页的状态（橙 = 等你、绿 = 工作、灰 = 空闲），按仓库地址（Agent 项目信息里新增的可选 `repo`，Mac 开着同步时才带）或同机目录对到行。已实现并过自动化（Rust、Swift 包、模拟器 UI 测试），Mac A（这台）已装新版；**没有碰 Mac B，真机也没验**。
-
 已完成：
 - P1（Mac 启动管线：`ModelChoice` 贯穿 `TaskSpec` → `LaunchRecord` → argv 与 Codex 桌面应用；没选时对外行为与以前逐字节相同）。
 - P2（Mac 清单 + 线协议 + 网关 + 详情页实际模型，已装机）：`task.options` 多了可选的 `models` / `defaultModel`，`task.create` 多了可选的 `model` / `effort`，
   `watch.frame` 多了可选的 `model` / `reasoning`；旧版 App 连新 Mac 与以前完全一样。实施记录与偏差见计划「P2 实施记录」。
-- [ ] **Mac B 装上新版**，跨 Mac 的 Agent 点才完整：B 上的 Agent 要由 B 带上 `project.repo`，没装的话 B 上的 Agent 在 iCloud 视图里没有点（与改动前一样）。SSH 到 B 需要用户当场同意；装法同上面（B 上用 B 自己的 Developer ID 重签）。装完后在真机上看：两台 Mac 都开着同步时来源菜单只有「iCloud」、副标题列出两台、各 Mac 的「仅在 X」分段、两台上的 Agent 都在对应的行上标点。
-- [ ] 决定：默认来源记着「iCloud」之后，若所有 Mac 都关了同步，页面现在会说「iCloud 同步没开」、菜单里 Mac 重新出现，需要手动选一台（规格 §10 第 8 条）；要不要改成自动退回某台 Mac，等用户定。
 - P3（iOS App，在 `/tmp` 隔离副本里做、对着新 HEAD 重新验证后合入）：新建任务表单在 Agent 与权限之间多了「模型」行（进选择页，超过 12 项有搜索）与「强度」行（菜单），
   都从「默认」开始、不记忆，Mac 没给 `models`（旧 Mac / 没拿到清单）时两行都不出现；进度页有一行所选，Agent 详情页有一行它实际用的模型 / 强度；中文文案齐全；共享夹具有了新用例。
   实施记录、验证结果与已知局限见计划「P3 实施记录」。**App 还没装到真机**（P4 的真机一轮会用到）。
