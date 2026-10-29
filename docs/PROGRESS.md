@@ -99,7 +99,7 @@ App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-foll
   （Face ID；真实 Agent 的启动要用户批准）——列表行出现铃铛、详情页有一行说明；Mac 在用时做完应**不**推；停手满 60 秒才来一条；
   做完之前回到 Mac 敲键盘则不应补推；做完后铃铛消失（`state.json` 的 `followSet` 为空）。配置用后还原；不要用 `AskHuman help` 之类的词试命令。
 
-## 待验收：iOS 请求正文网页渲染、选项手感与「下一题」逻辑（已实现并过模拟器测试，真机一轮待用户看）
+## 待验收：iOS 请求正文网页渲染、选项手感、「下一题」逻辑与图片查看（已实现并过模拟器测试，真机一轮待用户看）
 
 2026-10-28 用户在真机上提了三点（提问页 Markdown 渲染不如 Mac 弹窗且流程图画不出来、不能选字；选项选中是渐变的、手感软；「下一题」会跳过看过没答的题），
 选定「正式实现 WebView」后去休息，实现与取舍由我自行决定，记在需求 [`docs/specs/ios-web-markdown.md`](specs/ios-web-markdown.md)（W1–W17）、
@@ -110,6 +110,9 @@ App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-foll
 - [ ] 用户在真机上验收：Message 的渲染（表格、流程图、选字、链接）、选项点按手感、「下一题」往回滑后不跳题、辅助字号下的底栏；有意见记进 `ios-channel.md` §15
 - [ ] 真机冒烟：新版已装在 iPhone Air 上（凌晨 03:40 前后装的 Debug 构建），**没启动验证**；解锁后直接打开 App 就是新版。想在真机上看 Markdown 展示页（Mock，不碰真实数据）：
   `xcrun devicectl device process launch --device 00008150-00043D6A2E12401C --terminate-existing com.naituw.humaninloop.ios -- -AHMock YES -AHScenario markdown -AHOpen req-markdown`，从主屏再打开 App 就回到真实模式（见 `docs/plans/ios-web-markdown.md` §1.6）
+- [ ] 图片缩略图与查看器（2026-10-29 用户在真机上反馈：图片缩略图不是 1:1、溢出格子，多张会叠在一起；查看图片时不能横滑到下一张）：已改成 1:1 方块缩略图与左右滑动的图片查看器（`ios-channel.md` §15 的 2026-10-29 一节），只过了模拟器测试（iOS 27.0 / 18.5），**真机上没滑过**。
+  **这一版还没装到 iPhone Air**：装机时手机连不上（`devicectl list devices` 里是 unavailable，安装报 CoreDevice 4016；应是睡着了或不在同一网络，我没去唤醒它），Debug 构建物已备好（`ios/build/DerivedDataDevice/Build/Products/Debug-iphoneos/AskHuman.app`，本地、被忽略；若之后又改了代码，先 `xcodebuild build -destination 'generic/platform=iOS' -derivedDataPath build/DerivedDataDevice -allowProvisioningUpdates` 重新构建）；手机回来后 `xcrun devicectl device install app --device 00008150-00043D6A2E12401C <上面的路径>`。
+  想看 Mock（四张不同比例的图 + 一份说明）：`xcrun devicectl device process launch --device 00008150-00043D6A2E12401C --terminate-existing com.naituw.humaninloop.ios -- -AHMock YES -AHScenario gallery -AHOpen req-gallery`。已知没做：放大后拖到边缘不会接着翻页（要先缩回原大小）；用户自己回复时附的图片仍不能点开查看
 - [ ] 若真机上首屏仍觉得跳（页面报出第一个高度前是占位，真机约 0.1–0.2 秒）：做预渲染（请求到达时在后台先算好高度），见需求 §4
 - [ ] 后置（需求 §4）：Mermaid 对齐 Mac 的 `sandbox`、`ahasset://` 本地图片、Markdown 附件预览改网页渲染、页内查找
 - [ ] 仓库外的原型目录 `/Users/wutian/Developer/HumanInLoop-ios-web-md-proto/`（约 399 MB，正式实现已从中移植）可以删除，删之前请用户确认
