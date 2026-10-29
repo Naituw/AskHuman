@@ -1052,8 +1052,8 @@ mod platform {
             )
         };
         let mut target_after = current.clone();
-        if !same(current.as_ref(), j.old_target.as_ref())
-            && !(j.recovery_target.is_some() && same(current.as_ref(), j.recovery_target.as_ref()))
+        if !(same(current.as_ref(), j.old_target.as_ref())
+            || (j.recovery_target.is_some() && same(current.as_ref(), j.recovery_target.as_ref())))
         {
             if let Some(bytes) = old_bytes.as_ref() {
                 let dir = target
