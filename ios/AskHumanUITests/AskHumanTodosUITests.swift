@@ -87,6 +87,12 @@ final class AskHumanTodosUITests: XCTestCase {
             .press(forDuration: 0.05, thenDragTo: list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1.0)))
     }
 
+    /// A text field with nothing in it reports its placeholder as its value.
+    private func isEmpty(_ field: XCUIElement) -> Bool {
+        let value = field.value as? String ?? ""
+        return value.isEmpty || value == field.placeholderValue
+    }
+
     /// Opens the project list's menu and picks a source.
     private func choose(source id: String) {
         requireElement("todo-source-menu").tap()
@@ -156,6 +162,34 @@ final class AskHumanTodosUITests: XCTestCase {
         shot("todos-edit")
         requireElement("todo-edit-save").tap()
         XCTAssertTrue(text("(edited)").waitForExistence(timeout: 10))
+    }
+
+    func testTheAddFieldIsEmptyAgainAfterSending() {
+        launch()
+        requireElement("todo-project-" + askHuman).tap()
+        _ = requireElement("todo-row-todo-ah-1")
+
+        let field = requireElement("todo-add-field")
+        field.tap()
+        field.typeText("Call the plumber")
+        requireElement("todo-add-send").tap()
+        XCTAssertTrue(text("Call the plumber").waitForExistence(timeout: 10), "the todo was added")
+        shot("todos-add-field-after-send")
+        XCTAssertTrue(isEmpty(field), "the field is empty again, not \(String(describing: field.value))")
+    }
+
+    /// A tap on Send that lands in the same update as the last keystroke used to leave the typed text in the field
+    /// now and then, while the page already said it was empty. The app types and sends in the same turn, again and
+    /// again (`-AHTodoAddStress`), and counts the fields that kept their text, which is a good share of them when
+    /// the field is cleared through its binding only.
+    func testSendingRightAfterTypingAlwaysEmptiesTheField() {
+        launch(extra: ["-AHTodoAddStress", "YES"])
+        requireElement("todo-project-" + askHuman).tap()
+        _ = requireElement("todo-row-todo-ah-1")
+        requireElement("todo-add-field").tap()
+        let report = requireElement("todo-add-stress-result", timeout: 90)
+        XCTAssertTrue(report.label.hasPrefix("kept 0 of "), "the field kept its text: \(report.label)")
+        shot("todos-add-stress")
     }
 
     func testDraggingATodoUpChangesTheOrder() {

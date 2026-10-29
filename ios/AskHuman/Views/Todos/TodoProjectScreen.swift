@@ -360,11 +360,22 @@ private struct TodoAddBar: View {
     @State private var auto = false
     @State private var problem: TodoTextError?
     @FocusState private var focused: Bool
+    #if DEBUG
+    @State private var stressReport: String?
+    #endif
 
     var body: some View {
         let todos = store.todos
         if todos.canWrite {
             VStack(spacing: 6) {
+                #if DEBUG
+                if let stressReport {
+                    Color.clear.frame(width: 1, height: 1)
+                        .accessibilityElement()
+                        .accessibilityLabel(stressReport)
+                        .accessibilityIdentifier("todo-add-stress-result")
+                }
+                #endif
                 HStack(alignment: .bottom, spacing: 8) {
                     if canAuto {
                         Button {
@@ -405,6 +416,9 @@ private struct TodoAddBar: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(.bar)
+            #if DEBUG
+            .task(id: focused) { await stressWhenAsked() }
+            #endif
         } else {
             Text("Todos can be added when the Mac is reachable.")
                 .font(.footnote)
@@ -426,8 +440,87 @@ private struct TodoAddBar: View {
 
     private func send() {
         guard store.todos.add(text, auto: canAuto && auto) == nil else { return }
+        // This bar's field is the only text input on the page, so it is the one that has the keyboard.
+        FocusedTextInput.clear()
         text = ""
         auto = false
         onAdded()
     }
+
+    #if DEBUG
+    /// UI-test hook (`-AHTodoAddStress YES`): once the field has the keyboard, types into it and sends in the same
+    /// turn, again and again, and reports how many times the field kept what was typed.
+    private func stressWhenAsked() async {
+        guard focused, stressReport == nil, UserDefaults.standard.bool(forKey: "AHTodoAddStress") else { return }
+        let rounds = 30
+        var kept = 0
+        for round in 0..<rounds {
+            guard FocusedTextInput.type("todo \(round)", marked: round % 2 == 1) else {
+                stressReport = "no input after \(round) of \(rounds)"
+                return
+            }
+            send()
+            try? await Task.sleep(for: .milliseconds(450))
+            if !(FocusedTextInput.text ?? "").isEmpty { kept += 1 }
+        }
+        stressReport = "kept \(kept) of \(rounds)"
+    }
+    #endif
+}
+
+/// The text input that has the keyboard, reached through the responder chain.
+///
+/// Emptying a `TextField` by setting its binding is not reliable when that happens in the same update as the
+/// last keystroke: SwiftUI pushes a binding into the field only when it differs from what SwiftUI last saw there,
+/// and a tap on Send that follows the typing closely enough sets the binding back to exactly that, so the field
+/// keeps what was typed while the state says it is empty. The field's own text is not subject to that comparison.
+/// Clearing it makes UIKit report the change to SwiftUI, and the keyboard keeps its focus.
+@MainActor
+enum FocusedTextInput {
+    private static var captured: UIResponder?
+
+    /// Ends any composition in progress and removes all the text. `false` when no text input has the keyboard.
+    @discardableResult
+    static func clear() -> Bool {
+        guard let input = current() else { return false }
+        input.unmarkText()
+        if let all = input.textRange(from: input.beginningOfDocument, to: input.endOfDocument) {
+            input.replace(all, withText: "")
+        }
+        return true
+    }
+
+    static func capture(_ responder: UIResponder) { captured = responder }
+
+    private static func current() -> UITextInput? {
+        captured = nil
+        // Sent to the first responder, whatever it is; it records itself in `capture`.
+        UIApplication.shared.sendAction(#selector(UIResponder.ahCaptureAsFocusedTextInput), to: nil, from: nil, for: nil)
+        defer { captured = nil }
+        return captured as? UITextInput
+    }
+
+    #if DEBUG
+    /// What the input holds right now, composition included. `nil` when none has the keyboard.
+    static var text: String? {
+        guard let input = current(), let all = input.textRange(from: input.beginningOfDocument, to: input.endOfDocument) else { return nil }
+        return input.text(in: all)
+    }
+
+    /// Types into the input the way the keyboard does: as a composition (`marked`) or as committed text.
+    @discardableResult
+    static func type(_ string: String, marked: Bool) -> Bool {
+        guard let input = current() else { return false }
+        if marked {
+            input.setMarkedText(string, selectedRange: NSRange(location: string.utf16.count, length: 0))
+        } else {
+            input.insertText(string)
+        }
+        return true
+    }
+    #endif
+}
+
+extension UIResponder {
+    @MainActor @objc fileprivate func ahCaptureAsFocusedTextInput() { FocusedTextInput.capture(self) }
 }
