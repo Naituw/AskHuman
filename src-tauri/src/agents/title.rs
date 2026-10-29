@@ -73,6 +73,18 @@ pub(crate) fn resolve_popup_title(
         .filter(|title| !title.is_empty())
 }
 
+/// The title the registry keeps for the lists built from it (status window, tray, IM and phone
+/// lists): the same native-name-first rule as [`resolve_popup_title`], clipped like
+/// [`resolve_title`] so those surfaces keep their bounded titles.
+pub(crate) fn resolve_list_title(
+    kind: AgentKind,
+    session_id: &str,
+    cached: Option<String>,
+    codex_config: &crate::codex_desktop::Config,
+) -> Option<String> {
+    resolve_popup_title(kind, session_id, cached, codex_config).map(|title| clean_title(&title))
+}
+
 fn clean_title(s: &str) -> String {
     let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() > MAX_TITLE_CHARS {
@@ -985,6 +997,53 @@ mod tests {
             )
             .as_deref(),
             Some("first prompt")
+        );
+    }
+
+    #[test]
+    fn list_titles_are_clipped_like_resolved_titles_while_popup_titles_are_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pi-long.jsonl");
+        let long = "Long Pi session name ".repeat(10).trim().to_string();
+        let lines = [
+            serde_json::json!({"type":"session","version":3,"id":"pi-long-title-test","cwd":dir.path()}),
+            serde_json::json!({"type":"session_info","name":long}),
+        ];
+        std::fs::write(
+            &path,
+            lines
+                .iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        super::super::session_paths::register_pi(
+            "pi-long-title-test",
+            &path.to_string_lossy(),
+            Some(&dir.path().to_string_lossy()),
+        )
+        .unwrap();
+        let config = Default::default();
+        assert_eq!(
+            resolve_popup_title(AgentKind::Pi, "pi-long-title-test", None, &config).as_deref(),
+            Some(long.as_str())
+        );
+        let listed =
+            resolve_list_title(AgentKind::Pi, "pi-long-title-test", None, &config).unwrap();
+        assert_eq!(listed, clean_title(&long));
+        assert!(listed.chars().count() <= MAX_TITLE_CHARS + 1);
+        assert!(listed.ends_with('…'));
+        // A title the registry already holds stays when no native name exists, tidied up.
+        assert_eq!(
+            resolve_list_title(
+                AgentKind::Antigravity,
+                "no-native-name",
+                Some("  Held   name ".into()),
+                &config
+            )
+            .as_deref(),
+            Some("Held name")
         );
     }
 }

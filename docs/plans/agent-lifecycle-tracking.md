@@ -211,6 +211,32 @@ agent 调 AskHuman 提问 → client 顺带上报身份 → 刷新最近活动 +
 - `cargo test`（新增 detect 单测 + 既有全绿）。
 - `./scripts/install.sh` 编译进环境；按 AGENTS.md 用新 `AskHuman`：真机对一个 app-server 模式的 Codex 会话触发一次工具/提问，核对 `agents.json` 里该会话 `pid=null`、状态随 hook（Stop→空闲）与兜底超时正确流转、不再出现并发会话互相轮换误杀。
 
+## 补丁（2026-10-29）：标题按 TTL 重读原生名（spec D30）
+
+> 现象（用户实证）：在 Cursor 里给会话改名后，Agents 状态窗口等位置仍显示旧标题。根因：Phase 0 / 1.2 把标题做成「为空才解析、解析后永久缓存」，除 Codex Desktop 的 `update_desktop` 外没有任何路径再读原生名；弹窗与手机提问卡早已在展示时直接读（`resolve_popup_title`），只有注册表这一支停在旧值。实测：Cursor 数据库里 `composerData.name` 已是新名，注册表仍是旧名；3 个 Grok 会话停在首条用户消息，而 Grok 的 `generated_title` 早已生成。
+
+### P-1 `agents/title.rs`
+
+- 新增 `resolve_list_title`：与 `resolve_popup_title` 同一套「原生名优先 → 已有标题 → transcript 回退」，再按 `resolve_title` 的口径截断到 80 字符（弹窗保留完整名供悬浮提示，列表类界面不能）。
+
+### P-2 `agents/registry.rs`
+
+- `Inner.title_checks`（内存，不落盘）记录每个 `(kind, session_id)` 上次读取时刻。`refresh_titles` 在 `snapshot()` / `tray_agent_infos()` / `session_display()` 构建列表前调用：到期的记录（已有标题 10 秒；还没有标题 3 秒，因为 agent 常在几秒内才生成名字）重读，取代原来各处「标题为空才就地解析」。
+- 读文件全在注册表锁外；写回时只覆盖仍等于读取前标题的记录（期间被 `update_desktop` / `set_transcript_path` 改过的不动）；读不到保留旧标题；已不在册的会话顺手清掉节流项。
+- Codex App 记录（`terminal == "codex-app"`）跳过：其标题由桌面桥每 2 秒推送，两边写会来回跳。
+- 不新增定时器 / 监听：谁构建列表谁顺带重读；状态窗口 / 菜单栏开着时，daemon 既有的 15 秒推送（`has_agent_subs` / `has_tray_subs`）即会触发。
+
+### P-3 测试
+
+- `registry.rs`：TTL 内不重读、到期后拿到改名（读取方拿到的是记录当前持有的标题）；读不到保留旧标题；无标题记录 3 秒重试、有标题后恢复 10 秒；已结束记录同样刷新而 Codex App 记录不动；清掉已丢弃会话的节流项；读取期间注册表锁是空的、且读取期间被别处写入的标题不被覆盖；Pi 走真实读取器端到端（首条消息 → 改名 → 清空名称回退首条消息）；三个列表入口对新记录都能解析出原生名。
+- `title.rs`：`resolve_list_title` 按 80 字符截断而弹窗标题不截断，且在没有原生名时保留已有标题并规整空白。
+
+### P-4 验证
+
+- 全量 `cargo test`（2230 项通过）、`cargo fmt`、`./scripts/install.sh`。
+- 新二进制起隔离 daemon（`ASKHUMAN_HOME` 临时目录、关菜单栏图标与弹窗预热），载入主实例 `agents.json` 的 22 条旧记录（只读拷贝）：首次快照后 3 个 Grok 会话由首条消息改为 Grok 生成的标题，本会话的 Cursor 记录由 `PR review feedback` 变为用户改名后的 `askhuman-title-probe-1029`，其余 Cursor / Codex 记录不变；整份快照耗时约 20 毫秒。
+- 再用合成的 Claude 会话（`HOME` 也隔离）实测节流窗口：追加 `custom-title` 后，快照在 10 秒内一直是旧名，10.7 秒时出现新名。临时 daemon 与文件已清理，没有改动主实例与用户的 Agent 配置。
+
 ## 关键风险与对策（汇总）
 
 | 风险 | 对策 |

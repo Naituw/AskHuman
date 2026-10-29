@@ -11,17 +11,23 @@
 //! 不做存活轮询**，纯由 D12 TTL + `working_backstop_sweep` 治理——与 Claude 被 PID-scrub 时**同一
 //! 条路径**。打断 / 关窗（Codex 无对应 hook，同 Claude）靠 `working_backstop_sweep` 超时兜底降级。
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::detect::pid_alive;
-use super::title::resolve_title;
+use super::title::resolve_list_title;
 use super::{AgentKind, LifecycleEvent};
 use crate::paths;
+
+/// How long a read of a session's native name is reused before the next snapshot reads it again.
+const TITLE_REFRESH_TTL: Duration = Duration::from_secs(10);
+/// The same for a session that has no title yet: agents usually name a new session within seconds,
+/// so this is checked sooner.
+const TITLE_MISSING_TTL: Duration = Duration::from_secs(3);
 
 /// 「已结束」记录的全局保留上限（spec D11）。
 const MAX_ENDED: usize = 10;
@@ -124,6 +130,9 @@ struct Inner {
     ended: VecDeque<AgentRecord>,
     /// 下一个待分配的稳定编号（`seq`）。单调递增、不复用；`Default` 起始 0，`alloc_seq` 兜底从 1 起。
     next_seq: u64,
+    /// When each session's native name was last read. Transient (never persisted): after a daemon
+    /// restart every record is read again by its first snapshot.
+    title_checks: HashMap<(AgentKind, String), Instant>,
 }
 
 impl Inner {
@@ -877,6 +886,98 @@ impl AgentRegistry {
             .filter(|title| !title.trim().is_empty())
     }
 
+    /// Re-reads the native name of every session whose last read is older than
+    /// [`TITLE_REFRESH_TTL`] ([`TITLE_MISSING_TTL`] while it has no title), so a rename — or a name
+    /// the agent only generated after the first read — reaches the status window, tray, IM and
+    /// phone lists built from this registry. Nothing runs on a timer: this is called when such a
+    /// list is built, and the throttle keeps frequent callers (watch ticks) from re-reading files.
+    fn refresh_titles(&self) {
+        let codex_config = std::cell::OnceCell::new();
+        self.refresh_titles_with(Instant::now(), |kind, session_id, cached| {
+            let config = codex_config.get_or_init(|| {
+                crate::codex_desktop::shared()
+                    .config
+                    .lock()
+                    .unwrap()
+                    .clone()
+            });
+            resolve_list_title(kind, session_id, cached, config)
+        });
+    }
+
+    /// [`Self::refresh_titles`] with the clock and the reader injected. `read` gets the title the
+    /// record holds now and returns the one it should hold; the files are read outside the lock.
+    fn refresh_titles_with(
+        &self,
+        now: Instant,
+        read: impl Fn(AgentKind, &str, Option<String>) -> Option<String>,
+    ) {
+        let stale = {
+            let mut guard = self.inner.lock().unwrap();
+            let Inner {
+                active,
+                ended,
+                title_checks,
+                ..
+            } = &mut *guard;
+            let mut stale = Vec::new();
+            for record in active.iter().chain(ended.iter()) {
+                // The Codex desktop bridge pushes these titles itself (`update_desktop`).
+                if record.terminal.as_deref() == Some("codex-app") {
+                    continue;
+                }
+                let ttl = if record.title.is_some() {
+                    TITLE_REFRESH_TTL
+                } else {
+                    TITLE_MISSING_TTL
+                };
+                let key = (record.kind, record.session_id.clone());
+                if title_checks
+                    .get(&key)
+                    .is_some_and(|at| now.saturating_duration_since(*at) < ttl)
+                {
+                    continue;
+                }
+                stale.push((record.kind, record.session_id.clone(), record.title.clone()));
+            }
+            if !stale.is_empty() {
+                // Marked before reading, so a concurrent snapshot does not read the same files.
+                for (kind, session_id, _) in &stale {
+                    title_checks.insert((*kind, session_id.clone()), now);
+                }
+                title_checks.retain(|(kind, session_id), _| {
+                    active
+                        .iter()
+                        .chain(ended.iter())
+                        .any(|r| r.kind == *kind && &r.session_id == session_id)
+                });
+            }
+            stale
+        };
+        if stale.is_empty() {
+            return;
+        }
+        let read_titles: Vec<_> = stale
+            .into_iter()
+            .map(|(kind, session_id, held)| {
+                let found = read(kind, &session_id, held.clone());
+                (kind, session_id, held, found)
+            })
+            .collect();
+        let mut guard = self.inner.lock().unwrap();
+        let inner = &mut *guard;
+        for (kind, session_id, held, found) in read_titles {
+            let Some(found) = found else { continue };
+            for record in inner.active.iter_mut().chain(inner.ended.iter_mut()) {
+                // A record whose title changed while the files were read (a desktop push, a new
+                // transcript path) keeps what it got.
+                if record.kind == kind && record.session_id == session_id && record.title == held {
+                    record.title = Some(found.clone());
+                }
+            }
+        }
+    }
+
     /// Resolve only daemon-registered focus fields for a live session.
     pub fn focus_identity(
         &self,
@@ -891,19 +992,16 @@ impl AgentRegistry {
     }
 
     /// 权限授权管理面板的分组增强（spec codex-permission-remember §6.3）：按 session_id 在
-    /// 活动与已结束记录中查标题 / 项目名（标题惰性解析并缓存）。不在册返回 None，面板回退
-    /// 显示缩短的 session id。
+    /// 活动与已结束记录中查标题 / 项目名（标题按 TTL 重读原生名，见 `refresh_titles`）。
+    /// 不在册返回 None，面板回退显示缩短的 session id。
     pub fn session_display(&self, session_id: &str) -> Option<(String, String)> {
-        let mut inner = self.inner.lock().unwrap();
-        let inner = &mut *inner;
+        self.refresh_titles();
+        let inner = self.inner.lock().unwrap();
         let record = inner
             .active
-            .iter_mut()
-            .chain(inner.ended.iter_mut())
+            .iter()
+            .chain(inner.ended.iter())
             .find(|r| r.session_id == session_id)?;
-        if record.title.is_none() {
-            record.title = resolve_title(record.kind, &record.session_id);
-        }
         let project = record
             .cwd
             .as_deref()
@@ -915,12 +1013,11 @@ impl AgentRegistry {
     /// 托盘「Agent 状态」子菜单摘要（spec agent-interject D7）：仅活动会话，**工作中在前**、
     /// 组内按最近活动倒序；ended 不含。`pending_interject` 恒 false，由 daemon 按插话队列注入。
     pub fn tray_agent_infos(&self) -> Vec<crate::ipc::TrayAgentInfo> {
+        // 标题按 TTL 重读原生名（与 snapshot 同口径）：标题用于条目文案。
+        self.refresh_titles();
         let mut inner = self.inner.lock().unwrap();
-        // 标题 / 终端类型惰性补齐（与 snapshot 同口径）：标题用于条目文案、终端决定「聚焦终端」显隐。
+        // 终端类型惰性补齐（与 snapshot 同口径）：终端决定「聚焦终端」显隐。
         for r in inner.active.iter_mut() {
-            if r.title.is_none() {
-                r.title = resolve_title(r.kind, &r.session_id);
-            }
             if r.terminal.is_none() {
                 if let Some(pid) = r.pid {
                     r.terminal = Some(
@@ -1026,12 +1123,11 @@ impl AgentRegistry {
     }
 
     pub fn snapshot(&self) -> Value {
+        // 标题按 TTL 重读原生名：改名、或 agent 稍后才生成的名字都会在下一次快照里出现；
+        // ended 记录的会话文件依然在盘上，同样处理。
+        self.refresh_titles();
         let mut inner = self.inner.lock().unwrap();
-        // 惰性补齐标题（已解析的不再重复）；ended 记录的会话文件依然在盘上，同样补齐。
         for r in inner.active.iter_mut() {
-            if r.title.is_none() {
-                r.title = resolve_title(r.kind, &r.session_id);
-            }
             // 惰性识别终端类型（活动记录、有 pid 时）；找不到记 "other"，避免每次快照重算。
             if r.terminal.is_none() {
                 if let Some(pid) = r.pid {
@@ -1041,11 +1137,6 @@ impl AgentRegistry {
                             .to_string(),
                     );
                 }
-            }
-        }
-        for r in inner.ended.iter_mut() {
-            if r.title.is_none() {
-                r.title = resolve_title(r.kind, &r.session_id);
             }
         }
         let mut list: Vec<AgentRecord> = inner.active.clone();
@@ -2040,5 +2131,305 @@ mod tests {
         let json = serde_json::to_string(&data).unwrap();
         assert!(!json.contains("currentTool"));
         assert!(!json.contains("current_tool"));
+    }
+
+    // ── Title refresh: the native session name is re-read on a TTL ──
+
+    /// A name source the test can change, counting how often it is asked and what the registry
+    /// held at that moment.
+    struct FakeNames {
+        name: std::cell::RefCell<Option<String>>,
+        reads: std::cell::Cell<usize>,
+        held: std::cell::RefCell<Vec<Option<String>>>,
+    }
+
+    impl FakeNames {
+        fn new(name: Option<&str>) -> Self {
+            Self {
+                name: std::cell::RefCell::new(name.map(str::to_string)),
+                reads: std::cell::Cell::new(0),
+                held: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+
+        fn set(&self, name: Option<&str>) {
+            *self.name.borrow_mut() = name.map(str::to_string);
+        }
+
+        fn read(&self, _: AgentKind, _: &str, held: Option<String>) -> Option<String> {
+            self.reads.set(self.reads.get() + 1);
+            self.held.borrow_mut().push(held);
+            self.name.borrow().clone()
+        }
+    }
+
+    fn start(r: &AgentRegistry, kind: AgentKind, session_id: &str) {
+        r.apply_event(
+            kind,
+            LifecycleEvent::SessionStart,
+            session_id,
+            Some(111),
+            None,
+            100,
+        );
+    }
+
+    fn secs(base: Instant, n: u64) -> Instant {
+        base + Duration::from_secs(n)
+    }
+
+    fn title_of(r: &AgentRegistry, kind: AgentKind, session_id: &str) -> Option<String> {
+        r.cached_session_title(kind, session_id)
+    }
+
+    #[test]
+    fn title_refresh_reads_the_native_name_again_only_after_the_ttl() {
+        let r = reg();
+        start(&r, AgentKind::Grok, "g1");
+        let names = FakeNames::new(Some("first prompt"));
+        let read = |kind, id: &str, held| names.read(kind, id, held);
+        let t0 = Instant::now();
+        r.refresh_titles_with(t0, read);
+        assert_eq!(
+            title_of(&r, AgentKind::Grok, "g1").as_deref(),
+            Some("first prompt")
+        );
+        assert_eq!(names.reads.get(), 1);
+
+        // A name the agent generated (or the user typed) later is picked up once the throttle
+        // has expired, and not before.
+        names.set(Some("Generated name"));
+        r.refresh_titles_with(secs(t0, 9), read);
+        assert_eq!(names.reads.get(), 1);
+        assert_eq!(
+            title_of(&r, AgentKind::Grok, "g1").as_deref(),
+            Some("first prompt")
+        );
+        r.refresh_titles_with(secs(t0, 10), read);
+        assert_eq!(names.reads.get(), 2);
+        assert_eq!(
+            title_of(&r, AgentKind::Grok, "g1").as_deref(),
+            Some("Generated name")
+        );
+        // The reader is told which title the record holds.
+        assert_eq!(
+            names.held.borrow().as_slice(),
+            [None, Some("first prompt".to_string())]
+        );
+    }
+
+    #[test]
+    fn title_refresh_keeps_the_held_title_when_the_read_finds_nothing() {
+        let r = reg();
+        start(&r, AgentKind::Claude, "c1");
+        let names = FakeNames::new(Some("Held name"));
+        let read = |kind, id: &str, held| names.read(kind, id, held);
+        let t0 = Instant::now();
+        r.refresh_titles_with(t0, read);
+        names.set(None);
+        r.refresh_titles_with(secs(t0, 10), read);
+        assert_eq!(names.reads.get(), 2);
+        assert_eq!(
+            title_of(&r, AgentKind::Claude, "c1").as_deref(),
+            Some("Held name")
+        );
+    }
+
+    #[test]
+    fn title_refresh_looks_for_a_missing_title_sooner() {
+        let r = reg();
+        start(&r, AgentKind::Cursor, "u1");
+        let names = FakeNames::new(None);
+        let read = |kind, id: &str, held| names.read(kind, id, held);
+        let t0 = Instant::now();
+        r.refresh_titles_with(t0, read);
+        assert_eq!(names.reads.get(), 1);
+        assert!(title_of(&r, AgentKind::Cursor, "u1").is_none());
+
+        // An untitled session is not re-read on every snapshot either.
+        r.refresh_titles_with(secs(t0, 2), read);
+        assert_eq!(names.reads.get(), 1);
+        names.set(Some("Late name"));
+        r.refresh_titles_with(secs(t0, 3), read);
+        assert_eq!(names.reads.get(), 2);
+        assert_eq!(
+            title_of(&r, AgentKind::Cursor, "u1").as_deref(),
+            Some("Late name")
+        );
+
+        // Once it has a title the longer throttle applies.
+        r.refresh_titles_with(secs(t0, 12), read);
+        assert_eq!(names.reads.get(), 2);
+        r.refresh_titles_with(secs(t0, 13), read);
+        assert_eq!(names.reads.get(), 3);
+    }
+
+    #[test]
+    fn title_refresh_covers_ended_records_and_leaves_codex_app_titles_alone() {
+        let r = reg();
+        start(&r, AgentKind::Claude, "done");
+        r.apply_event(
+            AgentKind::Claude,
+            LifecycleEvent::SessionEnd,
+            "done",
+            Some(111),
+            None,
+            110,
+        );
+        r.update_desktop("desktop", "Name from Codex App", "/repo", true);
+        let names = FakeNames::new(Some("Name on disk"));
+        r.refresh_titles_with(Instant::now(), |kind, id, held| names.read(kind, id, held));
+        // The finished session is still on disk, so it follows renames too; the desktop bridge
+        // owns the title of a Codex App session.
+        assert_eq!(names.reads.get(), 1);
+        assert_eq!(
+            title_of(&r, AgentKind::Claude, "done").as_deref(),
+            Some("Name on disk")
+        );
+        assert_eq!(
+            title_of(&r, AgentKind::Codex, "desktop").as_deref(),
+            Some("Name from Codex App")
+        );
+    }
+
+    #[test]
+    fn title_refresh_forgets_sessions_the_registry_dropped() {
+        let r = reg();
+        let names = FakeNames::new(Some("name"));
+        let read = |kind, id: &str, held| names.read(kind, id, held);
+        let t0 = Instant::now();
+        start(&r, AgentKind::Claude, "gone");
+        r.refresh_titles_with(t0, read);
+        r.inner.lock().unwrap().active.clear();
+        start(&r, AgentKind::Claude, "kept");
+        r.refresh_titles_with(secs(t0, 1), read);
+        let checked: Vec<_> = r
+            .inner
+            .lock()
+            .unwrap()
+            .title_checks
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(checked, [(AgentKind::Claude, "kept".to_string())]);
+    }
+
+    #[test]
+    fn title_refresh_reads_outside_the_lock_and_yields_to_a_newer_title() {
+        let r = reg();
+        start(&r, AgentKind::Cursor, "u1");
+        r.refresh_titles_with(Instant::now(), |_, _, _| {
+            // Another thread can take the registry while the files are read; what it stores
+            // meanwhile (a desktop push, a new transcript path) is not overwritten.
+            let mut inner = r
+                .inner
+                .try_lock()
+                .expect("the registry lock must be free while the names are read");
+            inner.active[0].title = Some("Stored meanwhile".into());
+            Some("Read from disk".into())
+        });
+        assert_eq!(
+            title_of(&r, AgentKind::Cursor, "u1").as_deref(),
+            Some("Stored meanwhile")
+        );
+    }
+
+    /// Writes a Pi session file whose name can be changed afterwards, registered like Pi's hook.
+    fn pi_session(dir: &std::path::Path, session_id: &str) -> std::path::PathBuf {
+        let path = dir.join(format!("{session_id}.jsonl"));
+        let lines = [
+            serde_json::json!({"type":"session","version":3,"id":session_id,"cwd":dir}),
+            serde_json::json!({"type":"message","message":{"role":"user","content":[{"type":"text","text":"first prompt"}]}}),
+        ];
+        std::fs::write(
+            &path,
+            lines
+                .iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        crate::agents::session_paths::register_pi(
+            session_id,
+            &path.to_string_lossy(),
+            Some(&dir.to_string_lossy()),
+        )
+        .unwrap();
+        path
+    }
+
+    fn name_pi_session(path: &std::path::Path, name: &str) {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        writeln!(
+            file,
+            "\n{}",
+            serde_json::json!({"type":"session_info","name":name})
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn title_refresh_follows_a_renamed_session_through_the_real_reader() {
+        let dir = tempfile::tempdir().unwrap();
+        let sid = "registry-title-refresh-pi";
+        let path = pi_session(dir.path(), sid);
+        let r = reg();
+        start(&r, AgentKind::Pi, sid);
+        let read =
+            |kind, id: &str, held| super::resolve_list_title(kind, id, held, &Default::default());
+        let t0 = Instant::now();
+        r.refresh_titles_with(t0, read);
+        assert_eq!(
+            title_of(&r, AgentKind::Pi, sid).as_deref(),
+            Some("first prompt")
+        );
+
+        name_pi_session(&path, "Renamed Pi session");
+        r.refresh_titles_with(secs(t0, 10), read);
+        assert_eq!(
+            title_of(&r, AgentKind::Pi, sid).as_deref(),
+            Some("Renamed Pi session")
+        );
+
+        // Clearing the name drops it again instead of keeping the stale one.
+        name_pi_session(&path, "");
+        r.refresh_titles_with(secs(t0, 20), read);
+        assert_eq!(
+            title_of(&r, AgentKind::Pi, sid).as_deref(),
+            Some("first prompt")
+        );
+    }
+
+    #[test]
+    fn every_list_builder_resolves_the_title_of_a_new_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let sid = "registry-title-refresh-lists";
+        let path = pi_session(dir.path(), sid);
+        name_pi_session(&path, "Named Pi session");
+        let r = reg();
+        start(&r, AgentKind::Pi, sid);
+        assert_eq!(
+            r.session_display(sid).map(|(title, _)| title).as_deref(),
+            Some("Named Pi session")
+        );
+
+        let r = reg();
+        start(&r, AgentKind::Pi, sid);
+        let snap = r.snapshot();
+        let entry = snap
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["sessionId"] == sid)
+            .unwrap();
+        assert_eq!(entry["title"], "Named Pi session");
+
+        let r = reg();
+        start(&r, AgentKind::Pi, sid);
+        let tray = r.tray_agent_infos();
+        assert_eq!(tray.len(), 1);
+        assert_eq!(tray[0].title, "Named Pi session");
     }
 }
