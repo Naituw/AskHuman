@@ -347,6 +347,13 @@ public final class TodosStore {
             while true {
                 let candidates = TodoSources.icloudCandidates(macs: macs, modes: modes, lastUsed: lastIcloudMac, failed: failed)
                 guard let id = candidates.first else {
+                    // The Mac whose rows are on screen is still paired but out of reach, and no other Mac can take over:
+                    // its rows (and the project that is open) stay as it last said them, read-only and with the page's note,
+                    // the way they do when that Mac is the source itself. An unpaired Mac leaves nothing behind.
+                    if projects != nil, let serving = accessMacId,
+                        let mac = macs.first(where: { $0.id == serving }), mac.link != .online {
+                        return fail(.offline, for: source)
+                    }
                     // The Macs were there but did not answer: the rows on screen stay as what one of them last said, with
                     // the page's note, and a slow Mac is not called "not syncing". With no rows to keep, the page says why.
                     if let lastFailure { return fail(lastFailure, for: source) }
