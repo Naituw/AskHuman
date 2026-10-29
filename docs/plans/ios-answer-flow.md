@@ -44,6 +44,17 @@
   `docs/specs/ios-channel.md` §6.3 底部操作条一段 + 2026-10-28 反馈记录；`docs/specs/multi-question-vertical.md` §6 追加一行「iOS 端的对应实现见 `ios-answer-flow.md`」。
 - [x] 本地提交（Conventional Commits，不 push）：`feat(ios): make next follow the screen and options select at once`。
 
+### 1.6 底栏改成 Liquid Glass（需求 §3.4，2026-10-29）
+- [x] 看现状：iOS 26.2（新建的 iPhone Air 模拟器）与 27.0 各截一张作「之前」。
+- [x] `Views/Common/BottomBar.swift`：`.actionBar`（`#available(iOS 26)`：`scrollEdgeEffectStyle(.soft)` + `safeAreaBar`，否则 `safeAreaInset`）、`classicBarBacking()`、`barStatusChip()`、`barPrimaryButton()` / `barSecondaryButton()`、`GlassGroup`。
+- [x] `AnswerScreen.SendBar`：计数 / 提示 / 上传进度进玻璃小块；「下一题 → 发送」合成一个按钮（G5）；辅助字号仍上下排（F11）。`ConfirmScreen`：状态行进小块，提交按钮玻璃。
+- [x] 变体比较（在模拟器上各截图）：渐隐样式 soft / hard / hidden；纯文字与小块；确定「soft + 小块」。试验用的启动参数与临时 UI 测试（`ScratchBarShots`）不进仓库。
+- [x] 逐帧看「下一题 → 发送」的录屏（`simctl io recordVideo` + 抽帧）：两个按钮互换时会闪空胶囊 → 合并成一个按钮后胶囊不变、只有文字交叉淡入。
+- [x] 截图：iOS 26.2 与 27.0 ×（顶部、滚到底、可发送、键盘弹起、确认页、深色、最大字号含深色、离线、发送中）；26.2 另有上传进度（用一个临时启动参数造出进度，之后删掉）；iOS 18.5（经典栏）×（顶部、滚到底、可发送、键盘弹起、确认页、深色、最大字号）。
+- [x] UI 测试：iOS 27.0 整套 `AskHumanUITests` 60 条与 `AskHumanWebUITests` 11 条通过；26.2 整套 59/60（余下一条新建任务页的用例在改动前也失败）；18.5 只跑了碰到作答栏与确认栏的 20 条，通过（机器满载时有几条超时，单独重跑通过）。细节见 `docs/specs/ios-channel.md` §15 该节的验证一行。
+- [x] 本地提交（不 push）：`feat(ios): float the answer and confirm bars as Liquid Glass`。
+- [ ] 真机：iPhone Air 当时 `unavailable`，没装、没看。
+
 ## 2. 验证命令
 
 同 `docs/plans/ios-web-markdown.md` §2；包测试 `cd ios/Packages/AskHumanKit && swift test`；UI 测试按用例名过滤。
