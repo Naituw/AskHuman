@@ -154,7 +154,7 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 
 下一步：
 - [ ] **用户验收**：看 `docs/specs/ios-todos.md` §3 的 16 条决策（尤其 I2 不直连 CloudKit、I4 设备模式不列仅云端项目、I5 手机不能新建项目、I13 手机不落盘），不同意的整条否决；真机上装一遍（`ios/` 里 `xcodegen generate`，配对后进「待办」标签）；多台 Mac、iCloud 来源自动换机、Mac 离线时的表现要真机才看得全；打开待办页后状态行应当在几秒内从「正在同步…」变成「已同步 · 刚刚」，请确认上面的修复有效。
-- [ ] **Mac B 的 daemon 还在排空旧版**：新二进制已换上，但 B 上有 1 个在途提问（`AskHuman daemon status` 里 `requests 1 active (draining)`），要在 B 上或飞书里回答后新 daemon 才会接手（之后指纹不再是 `b680e14d`），手机上 B 才不再显示「这台 Mac 需要更新」；没有用 `--force`，那会打断那条提问。分支 `feat/ios-todos`、`fix/ios-todos-sync-line` 与 worktree `../HumanInLoop-todosync` 已经无用，可以删（worktree 里的 `src-tauri/target` 约 6.9 GB，磁盘只剩十几 GB 时可先删它）。
+- [ ] 分支 `feat/ios-todos`、`fix/ios-todos-sync-line` 与 worktree `../HumanInLoop-todosync` 已经无用，可以删（worktree 里的 `src-tauri/target` 约 6.9 GB，磁盘只剩十几 GB 时可先删它）。
 - [ ] 后置（需求 §11）：手机直连 CloudKit（Mac 都不在线也能用，需用户授权开 iCloud 容器 + Swift 重实现同步核心）、附件的查看与添加、「全部待办」聚合页、清空历史、从 iCloud 移除项目、待办推送、离线编辑队列。
 - [ ] 已知局限（需求 §10）：Mac 都不在线时手机看不到待办；线协议里 `helper` 没有「未安装」状态，手机上「没装」与「没在跑」显示成同一句；单条超大待办（桌面端 / CLI 不限长度，手机端限 4000 字）可能让那个项目的 `todo.list` 装不进一条消息而超时。
 
