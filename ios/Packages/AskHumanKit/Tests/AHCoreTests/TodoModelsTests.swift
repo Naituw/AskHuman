@@ -35,10 +35,36 @@ final class TodoModelsTests: XCTestCase {
         XCTAssertEqual(choices[2].availability, .offline)
         XCTAssertEqual(choices[3].availability, .needsUpdate)
 
+        // With several Macs paired, a Mac that syncs is part of iCloud and has no entry of its own.
         choices = TodoSources.choices(macs: macs, modes: ["a": .icloud, "b": .local])
+        XCTAssertEqual(choices.map(\.id), ["icloud", "mac:b", "mac:c"])
         XCTAssertEqual(choices[0].availability, .available)
-        XCTAssertTrue(choices[1].syncs)
-        XCTAssertFalse(choices[2].syncs)
+        XCTAssertEqual(choices[0].members, [TodoSourceChoice.Member(name: "Mac a", online: true)])
+        XCTAssertFalse(choices[1].syncs)
+    }
+
+    func testTheMacsBehindICloudAreNamedUnderItAndOfflineOnesSaySo() {
+        let macs = [mac("a"), mac("b", link: .macOffline), mac("c")]
+        let choices = TodoSources.choices(macs: macs, modes: ["a": .icloud, "b": .icloud, "c": .local])
+        XCTAssertEqual(choices.map(\.id), ["icloud", "mac:c"])
+        XCTAssertEqual(
+            choices[0].members,
+            [TodoSourceChoice.Member(name: "Mac a", online: true), TodoSourceChoice.Member(name: "Mac b", online: false)]
+        )
+        // Every Mac behind iCloud: the menu is iCloud alone.
+        let all = TodoSources.choices(macs: macs, modes: ["a": .icloud, "b": .icloud, "c": .icloud])
+        XCTAssertEqual(all.map(\.id), ["icloud"])
+    }
+
+    func testAloneAMacThatSyncsIsStillItsOwnSourceNextToICloud() {
+        let alone = TodoSources.choices(macs: [mac("a")], modes: ["a": .icloud])
+        XCTAssertEqual(alone.map(\.id), ["icloud", "mac:a"])
+        XCTAssertTrue(alone[1].syncs)
+        XCTAssertTrue(alone[0].members.isEmpty, "iCloud is not named after its only Mac")
+        XCTAssertFalse(TodoSources.isAbsorbed("a", macs: [mac("a")], modes: ["a": .icloud]))
+        XCTAssertTrue(TodoSources.isAbsorbed("a", macs: [mac("a"), mac("b")], modes: ["a": .icloud]))
+        XCTAssertFalse(TodoSources.isAbsorbed("b", macs: [mac("a"), mac("b")], modes: ["a": .icloud]), "b does not sync")
+        XCTAssertFalse(TodoSources.isAbsorbed("gone", macs: [mac("a"), mac("b")], modes: ["gone": .icloud]), "not paired")
     }
 
     func testTheFirstSourceIsTheLastChoiceThenTheOnlyMacThenTheFirstOnline() {
@@ -51,6 +77,22 @@ final class TodoModelsTests: XCTestCase {
         XCTAssertEqual(TodoSources.initial(stored: .icloud, macs: two, modes: [:]), .icloud, "kept until a Mac says it does not sync")
         XCTAssertEqual(TodoSources.initial(stored: .icloud, macs: two, modes: ["a": .local, "b": .local]), .mac("b"))
         XCTAssertEqual(TodoSources.initial(stored: .icloud, macs: [mac("a", todos: false)], modes: [:]), .mac("a"))
+    }
+
+    func testICloudIsTheFirstSourceOnceAMacIsKnownToSyncAndTheUsersOwnChoiceOfAMacThatDoesNotIsKept() {
+        let two = [mac("a"), mac("b")]
+        XCTAssertEqual(TodoSources.initial(stored: nil, macs: two, modes: ["b": .icloud]), .icloud, "what the Macs said last time is enough")
+        XCTAssertEqual(TodoSources.initial(stored: nil, macs: two, modes: ["a": .local, "b": .local]), .mac("a"))
+        XCTAssertEqual(TodoSources.initial(stored: .mac("b"), macs: two, modes: ["b": .icloud]), .icloud, "a Mac that syncs is part of iCloud")
+        XCTAssertEqual(TodoSources.initial(stored: .mac("a"), macs: two, modes: ["b": .icloud]), .mac("a"), "a Mac that does not sync stays")
+        XCTAssertEqual(TodoSources.initial(stored: .icloud, macs: two, modes: ["b": .icloud]), .icloud)
+        // One Mac alone: nothing changes.
+        XCTAssertEqual(TodoSources.initial(stored: nil, macs: [mac("a")], modes: ["a": .icloud]), .mac("a"))
+        XCTAssertEqual(TodoSources.initial(stored: .mac("a"), macs: [mac("a")], modes: ["a": .icloud]), .mac("a"))
+        // A Mac that is too old to say anything does not count.
+        XCTAssertEqual(
+            TodoSources.initial(stored: nil, macs: [mac("a", todos: false), mac("b")], modes: ["a": .icloud]), .mac("b")
+        )
     }
 
     func testICloudIsServedByTheBestMacOnline() {
@@ -114,6 +156,44 @@ final class TodoModelsTests: XCTestCase {
         XCTAssertEqual(ids("home macbook"), ["3"], "so do the Macs that have the project")
         XCTAssertEqual(ids("nothing like it"), [])
         XCTAssertEqual(ids("  "), ["1", "2"], "blank is no search")
+    }
+
+    func testTheProjectsOnlyOneMacHasAreASectionPerMacAndTheSameIdOfTwoMacsStaysTwoRows() {
+        func listed(_ macId: String, _ rows: [TodoProjectRow]) -> [TodoListedProject] {
+            rows.map { TodoListedProject(macId: macId, macName: "Mac " + macId, row: $0) }
+        }
+        let a = listed("a", [
+            row("1", name: "Synced", section: "synced", scope: "synced"),
+            row("9", name: "scratch", section: "localOnly", scope: "localOnly"),
+        ])
+        // The Mac b has a project at the same path as a's scratch: same id, another project.
+        let b = listed("b", [
+            row("9", name: "scratch", section: "localOnly", scope: "localOnly"),
+            row("8", name: "intranet", section: "localOnly", scope: "localOnly"),
+            row("7", name: "sandbox", section: "empty", scope: "localOnly"),
+        ])
+        let sections = TodoRows.sections(listed: a + b, source: .icloud, query: "", emptyExpanded: true)
+        XCTAssertEqual(sections.map(\.kind), [.synced, .empty, .localOnly, .localOnly])
+        XCTAssertEqual(sections.map(\.macId), [nil, nil, "a", "b"])
+        XCTAssertEqual(Set(sections.map(\.id)).count, 4, "every section has an identity of its own")
+        XCTAssertEqual(sections[2].rows.map(\.id), ["9"])
+        XCTAssertEqual(sections[3].rows.map(\.id), ["9", "8"])
+        let keys = sections.flatMap(\.rows).map(\.key)
+        XCTAssertEqual(Set(keys).count, keys.count, "told apart by the Mac that sent them")
+        XCTAssertEqual(sections[1].rows.map(\.macName), ["Mac b"], "an empty project knows which Mac it is on")
+    }
+
+    func testSearchFindsAProjectByTheMacItIsOnlyOn() {
+        let studio = TodoListedProject(
+            macId: "s", macName: "Mac Studio", row: row("1", name: "intranet", section: "localOnly", scope: "localOnly")
+        )
+        let shared = TodoListedProject(macId: "s", macName: "Mac Studio", row: row("2", name: "blog", section: "synced", scope: "synced"))
+        func names(_ query: String) -> [String] {
+            TodoRows.sections(listed: [studio, shared], source: .icloud, query: query, emptyExpanded: false).flatMap(\.rows).map(\.name)
+        }
+        XCTAssertEqual(names("studio"), ["intranet"], "a project on one Mac answers to its name; a shared one does not")
+        XCTAssertEqual(names("studio intra"), ["intranet"])
+        XCTAssertEqual(names("studio blog"), [])
     }
 
     // MARK: sync line

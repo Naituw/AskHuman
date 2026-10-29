@@ -106,14 +106,15 @@ private struct TodosList: View {
             }
             ForEach(sections) { section in
                 Section {
-                    ForEach(section.rows) { row in
+                    // Two Macs can send the same row id (it is a hash of a path): rows are told apart by Mac too.
+                    ForEach(section.rows, id: \.key) { project in
                         Button {
-                            todos.open(row)
+                            todos.open(project)
                         } label: {
-                            TodoProjectRowView(row: row)
+                            TodoProjectRowView(project: project, kind: section.kind)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityIdentifier("todo-project-" + row.id)
+                        .accessibilityIdentifier("todo-project-" + project.id)
                     }
                 } header: {
                     TodoSectionHeader(section: section)
@@ -171,13 +172,17 @@ private struct TodoSectionHeader: View {
         case .synced: Text("Synced with iCloud")
         case .recent: Text("Recent projects")
         case .empty: Text("Without todos")
-        case .localOnly: Text("Only on \(store.todos.accessMacName ?? String(localized: "this Mac"))")
+        case .localOnly: Text("Only on \(store.todos.macName(section.macId) ?? String(localized: "this Mac"))")
         }
     }
 }
 
 private struct TodoProjectRowView: View {
-    let row: TodoProjectRow
+    @Environment(AppStore.self) private var store
+    let project: TodoListedProject
+    let kind: TodoSection.Kind
+
+    private var row: TodoProjectRow { project.row }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -197,9 +202,9 @@ private struct TodoProjectRowView: View {
                 }
             }
             Spacer(minLength: 8)
-            if let agent = row.agent {
-                StatusDot(color: agent == "working" ? .green : .gray)
-                    .accessibilityLabel(agent == "working" ? Text("An Agent is working here") : Text("An Agent is idle here"))
+            // The states of the Agents tab, laid over the project: the Mac that has the Agent does not matter.
+            if let activity = store.todos.activity(of: project) {
+                StatusDot(color: activity.color).accessibilityLabel(activity.label)
             }
             if row.pending > 0 {
                 Text("\(row.pending)")
@@ -226,6 +231,10 @@ private struct TodoProjectRowView: View {
     private var subtitle: Text? {
         if let repo = row.repo { return Text(verbatim: repo) }
         if row.scope == "cloudOnly" { return Text("Only in iCloud") }
+        // The projects without todos of every Mac share one group: each says which Mac it is on.
+        if kind == .empty, store.todos.source == .icloud, project.isOnlyOnItsMac, !project.macName.isEmpty {
+            return Text("Only on \(project.macName)")
+        }
         return nil
     }
 }

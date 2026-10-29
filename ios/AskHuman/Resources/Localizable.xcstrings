@@ -1,6 +1,16 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ (offline)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@（离线）"
+          }
+        }
+      }
+    },
     "%@ ago" : {
       "localizations" : {
         "zh-Hans" : {
@@ -440,6 +450,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "有 Agent 在这里待命"
+          }
+        }
+      }
+    },
+    "An Agent is waiting for you here" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有 Agent 正在这里等你回复"
           }
         }
       }
@@ -2240,6 +2260,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "仅在 %@"
+          }
+        }
+      }
+    },
+    "Only on %@, not synced" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅在 %@，未同步"
           }
         }
       }

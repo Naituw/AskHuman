@@ -31,6 +31,8 @@ public actor MockBackend: RemoteBackend {
         case gallery
         /// The demo, with both Macs on an AskHuman that predates the todos (`caps.todos == false`).
         case outdated
+        /// The demo, with both Macs syncing their todos through iCloud (the Office iMac has a project of its own).
+        case bothSync
         /// Paired Macs that have not answered yet, as right after the app opened: the lists are
         /// still loading. They stay so unless a sync delay is given, after which the demo appears.
         case syncing
@@ -90,6 +92,8 @@ public actor MockBackend: RemoteBackend {
 
     // Todos (`MockBackend+Todos.swift`).
     var todoRows: [String: [TodoProjectRow]] = [:]
+    /// What a Mac sends instead of `todoRows` while it syncs, when it has to say something else.
+    var todoSyncedRows: [String: [TodoProjectRow]] = [:]
     /// The todos of each project, by `macId|projectId`.
     var todoLists: [String: ProjectTodos] = [:]
     var todoRev: UInt64 = 1
@@ -130,7 +134,7 @@ public actor MockBackend: RemoteBackend {
         let date = now()
         var initial: EngineState
         switch scenario {
-        case .demo, .quota, .single, .longs, .markdown, .strict, .tall, .gallery, .outdated:
+        case .demo, .quota, .single, .longs, .markdown, .strict, .tall, .gallery, .outdated, .bothSync:
             let inbox: [InboxItem]
             switch scenario {
             case .single: inbox = MockData.inbox(now: date).filter { $0.requestId == "req-select" }
@@ -176,7 +180,9 @@ public actor MockBackend: RemoteBackend {
         state = initial
         let sample = MockData.todoSample(now: date)
         todoRows = sample.rows
+        todoSyncedRows = sample.syncedRows
         todoLists = sample.lists
+        if scenario == .bothSync { syncingTodoMacs = [MockData.homeMacId, MockData.officeMacId] }
     }
 
     // MARK: lifecycle

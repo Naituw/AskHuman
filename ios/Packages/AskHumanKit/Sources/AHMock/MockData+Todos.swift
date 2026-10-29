@@ -14,26 +14,36 @@ extension MockData {
     public static let todoOfficeWorkProject = "b1b2c3d4e5f60001"
     public static let todoOfficePlayProject = "b1b2c3d4e5f60002"
     public static let todoOfficeSandboxProject = "b1b2c3d4e5f60003"
+    /// A project only the Office iMac has once it syncs too (no repository, so nothing of it syncs).
+    public static let todoOfficeIntranetProject = "b1b2c3d4e5f60004"
 
     /// What the sample Macs say about their todos: the projects (rows) and the todos of each.
     public struct TodoSample {
         public var rows: [String: [TodoProjectRow]]
+        /// The rows a Mac sends instead of `rows` once it syncs through iCloud (`mode: icloud`).
+        public var syncedRows: [String: [TodoProjectRow]]
         public var lists: [String: ProjectTodos]
     }
 
     public static func todoSample(now: Date = Date()) -> TodoSample {
         func at(_ ago: TimeInterval) -> UInt64 { UInt64(max(0, now.addingTimeInterval(-ago).timeIntervalSince1970 * 1000)) }
         var rows: [String: [TodoProjectRow]] = [:]
+        var syncedRows: [String: [TodoProjectRow]] = [:]
         var lists: [String: ProjectTodos] = [:]
 
-        func add(_ mac: String, _ row: TodoProjectRow, pending: [TodoItem] = [], history: [TodoDoneItem] = [], canAuto: Bool = true) {
+        @discardableResult
+        func list(_ mac: String, _ row: TodoProjectRow, pending: [TodoItem] = [], history: [TodoDoneItem] = [], canAuto: Bool = true) -> TodoProjectRow {
             var row = row
             row.pending = UInt64(pending.count)
             row.history = UInt64(history.count)
-            rows[mac, default: []].append(row)
             lists[mac + "|" + row.id] = ProjectTodos(
                 id: row.id, rev: 1, name: row.name, canAuto: canAuto, pending: pending, history: history
             )
+            return row
+        }
+
+        func add(_ mac: String, _ row: TodoProjectRow, pending: [TodoItem] = [], history: [TodoDoneItem] = [], canAuto: Bool = true) {
+            rows[mac, default: []].append(list(mac, row, pending: pending, history: history, canAuto: canAuto))
         }
 
         // Home MacBook Pro: iCloud sync is on.
@@ -126,7 +136,22 @@ extension MockData {
             TodoProjectRow(id: todoOfficeSandboxProject, name: "sandbox", scope: "local", section: "recent"),
             canAuto: true
         )
-        return TodoSample(rows: rows, lists: lists)
+
+        // Office iMac once it syncs too: the shared repository is the one Home has (the phone takes iCloud's
+        // projects from the Mac that serves it and only adds what no other Mac has), plus what only it has.
+        syncedRows[officeMacId] = [
+            TodoProjectRow(
+                id: todoOfficeWorkProject, name: "AskHuman", repo: "github.com/naituw/askhuman", pending: 2, history: 1,
+                scope: "synced", section: "synced", macs: ["Home MacBook Pro", "Office iMac"]
+            ),
+            list(
+                officeMacId,
+                TodoProjectRow(id: todoOfficeIntranetProject, name: "intranet", scope: "localOnly", section: "localOnly"),
+                pending: [TodoItem(id: "todo-in-1", text: "Move the wiki off the old server", createdAtMs: at(50_000))]
+            ),
+            TodoProjectRow(id: todoOfficeSandboxProject, name: "sandbox", scope: "localOnly", section: "empty"),
+        ]
+        return TodoSample(rows: rows, syncedRows: syncedRows, lists: lists)
     }
 
     /// The `problem` that stands for a pull running right now (`syncing: true`) rather than for a pause reason.

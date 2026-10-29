@@ -32,7 +32,7 @@ extension MockBackend {
         try requireTodoMac(macId)
         await pause(0.15)
         try requireTodoMac(macId)
-        var rows = todoRows[macId] ?? []
+        var rows = (syncingTodoMacs.contains(macId) ? todoSyncedRows[macId] : nil) ?? todoRows[macId] ?? []
         for index in rows.indices {
             if let list = todoLists[todoKey(macId, rows[index].id)] {
                 rows[index].pending = list.pendingTotal

@@ -135,6 +135,46 @@ final class AskHumanTodosUITests: XCTestCase {
         shot("todos-office")
     }
 
+    /// Both Macs sync through iCloud: they are one entry of the menu (named after them), the projects only the Office iMac
+    /// has are listed under it, and the Agents of both Macs put their dots on the projects of the repositories they work in.
+    func testMacsThatBothSyncAreOneICloudSourceWithTheirOwnProjectsAndTheAgentsDots() {
+        launch(scenario: "bothSync")
+        let billing = "a1b2c3d4e5f60002"
+        let intranet = "b1b2c3d4e5f60004"
+        _ = requireElement("todo-project-" + askHuman)
+        _ = requireElement("todo-project-" + intranet)
+        shot("todos-both-sync")
+
+        // The Office iMac's Agent works on the repository of Billing Service, which the Home MacBook Pro lists.
+        XCTAssertTrue(
+            element("todo-project-" + billing).label.contains(localized("An Agent is working here", "有 Agent 正在这里工作")),
+            "the dot of the Agent that works on the other Mac: \(element("todo-project-" + billing).label)"
+        )
+        XCTAssertTrue(
+            element("todo-project-" + askHuman).label.contains(localized("An Agent is waiting for you here", "有 Agent 正在这里等你回复")),
+            "an Agent that waits for you wins over the one that works: \(element("todo-project-" + askHuman).label)"
+        )
+
+        // What only the Office iMac has is listed under a header of its own, and opens on that Mac.
+        XCTAssertTrue(text(localized("Only on Office iMac", "仅在 Office iMac")).exists)
+        requireElement("todo-source-menu").tap()
+        let icloud = requireElement("todo-source-icloud")
+        XCTAssertTrue(icloud.label.contains("Home MacBook Pro") && icloud.label.contains("Office iMac"), "iCloud names its Macs: \(icloud.label)")
+        XCTAssertFalse(element("todo-source-mac:mockhomemacmacmacmacmacmac").exists, "a Mac that syncs has no entry of its own")
+        XCTAssertFalse(element("todo-source-mac:mockofficemacmacmacmacmac").exists)
+        shot("todos-both-sync-menu")
+        icloud.tap()
+
+        element("todo-project-" + intranet).tap()
+        _ = requireElement("todo-row-todo-in-1")
+        XCTAssertTrue(
+            text(localized("Only on Office iMac, not synced", "仅在 Office iMac，未同步")).waitForExistence(timeout: 10),
+            "the page says which Mac the project is on"
+        )
+        _ = requireElement("todo-add-field")
+        shot("todos-both-sync-project")
+    }
+
     func testAddingFinishingEditingAndRestoringATodo() {
         launch()
         requireElement("todo-project-" + askHuman).tap()

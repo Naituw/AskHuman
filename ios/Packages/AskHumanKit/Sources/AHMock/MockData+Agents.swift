@@ -11,9 +11,11 @@ extension MockData {
     public static let officeAgentKey = "claude:cc-users"
     public static let unsupportedAgentKey = "codex:cdx-leak"
 
-    private static let humanInLoop = ProjectRef(key: "proj-humaninloop", name: "HumanInLoop")
+    // The repositories are the ones of the sample todo projects (`MockData+Todos`): the Todos tab shows a dot
+    // on a project when an Agent of any Mac works in its repository.
+    private static let humanInLoop = ProjectRef(key: "proj-humaninloop", name: "HumanInLoop", repo: "github.com/naituw/askhuman")
     private static let site = ProjectRef(key: "proj-site", name: "askhuman-site")
-    private static let billing = ProjectRef(key: "proj-billing", name: "Billing Service")
+    private static let billing = ProjectRef(key: "proj-billing", name: "Billing Service", repo: "github.com/acme/billing")
 
     private static func view(
         _ key: String, title: String, project: ProjectRef, state: String, startedAgo: TimeInterval, activeAgo: TimeInterval,

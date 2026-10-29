@@ -33,12 +33,12 @@ struct TodoProjectScreen: View {
                 Section {
                     NoticeRow(
                         id: "todo-offline",
-                        text: "\(todos.accessMacName ?? String(localized: "The Mac")) is not reachable. This is the last state it reported.",
+                        text: "\(todos.openedMacName ?? todos.accessMacName ?? String(localized: "The Mac")) is not reachable. This is the last state it reported.",
                         symbol: "desktopcomputer.trianglebadge.exclamationmark", tint: .secondary
                     )
                 }
             }
-            TodoProjectHeader(row: target.row)
+            TodoProjectHeader(row: target.row, mac: todos.macs.count > 1 ? todos.openedMacName : nil)
             if let list {
                 queue(list)
                 history(list)
@@ -182,6 +182,8 @@ struct TodoProjectScreen: View {
 /// Where the project lives: its repository, the Macs that have a folder for it.
 private struct TodoProjectHeader: View {
     let row: TodoProjectRow
+    /// The Mac that has the project, named when more than one Mac is paired.
+    var mac: String?
 
     var body: some View {
         let lines = self.lines
@@ -211,7 +213,8 @@ private struct TodoProjectHeader: View {
         case "cloudOnly":
             out.append(Line(symbol: "icloud", text: Text("Only in iCloud: no Mac has a folder for it")))
         case "localOnly":
-            out.append(Line(symbol: "desktopcomputer", text: Text("Only on this Mac, not synced")))
+            let text = mac.map { Text("Only on \($0), not synced") } ?? Text("Only on this Mac, not synced")
+            out.append(Line(symbol: "desktopcomputer", text: text))
         default:
             if !row.macs.isEmpty {
                 out.append(Line(symbol: "desktopcomputer", text: Text("On \(row.macs.joined(separator: ", "))")))
@@ -299,7 +302,7 @@ private struct TodoListFailure: View {
     @Environment(AppStore.self) private var store
 
     var body: some View {
-        let texts = TodoFailureTexts(failure, name: store.todos.accessMacName)
+        let texts = TodoFailureTexts(failure, name: store.todos.openedMacName ?? store.todos.accessMacName)
         VStack(spacing: 8) {
             Image(systemName: texts.symbol).font(.title2).foregroundStyle(.secondary)
             Text(texts.title).font(.headline)

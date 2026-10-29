@@ -88,24 +88,41 @@ public struct TodoSourceChoice: Identifiable, Equatable, Sendable {
         case noSync
     }
 
+    /// A Mac behind iCloud, as the menu names it under that entry.
+    public struct Member: Equatable, Sendable {
+        public var name: String
+        public var online: Bool
+    }
+
     public var source: TodoSource
     /// The Mac's name; `nil` for iCloud.
     public var title: String?
     public var availability: Availability
     /// A Mac that is known to sync (it shows a cloud).
     public var syncs: Bool
+    /// iCloud: the Macs known to sync. With several Macs paired they have no entries of their own; they are
+    /// what iCloud is made of. Empty when one Mac is paired (iCloud and the Mac are then both listed).
+    public var members: [Member] = []
 
     public var id: String { source.stored }
 }
 
 public enum TodoSources {
-    /// The menu: iCloud first, then every paired Mac.
+    /// With several Macs paired, a Mac that syncs through iCloud has no source of its own: iCloud is its
+    /// view (docs/specs/ios-todos.md I17). A single Mac is both, as before.
+    public static func isAbsorbed(_ macId: String, macs: [MacState], modes: [String: TodoMode]) -> Bool {
+        macs.count > 1 && modes[macId] == .icloud && macs.contains { $0.id == macId }
+    }
+
+    /// The menu: iCloud first, then the Macs that are not part of it.
     public static func choices(macs: [MacState], modes: [String: TodoMode]) -> [TodoSourceChoice] {
-        let known = macs.contains { modes[$0.id] == .icloud }
-        var out = [
-            TodoSourceChoice(source: .icloud, title: nil, availability: known ? .available : .noSync, syncs: true)
-        ]
-        for mac in macs {
+        let behind = macs.filter { modes[$0.id] == .icloud }
+        var icloud = TodoSourceChoice(source: .icloud, title: nil, availability: behind.isEmpty ? .noSync : .available, syncs: true)
+        if macs.count > 1 {
+            icloud.members = behind.map { TodoSourceChoice.Member(name: $0.name, online: $0.link == .online) }
+        }
+        var out = [icloud]
+        for mac in macs where !isAbsorbed(mac.id, macs: macs, modes: modes) {
             let availability: TodoSourceChoice.Availability =
                 !mac.caps.todos ? .needsUpdate : (mac.link == .online ? .available : .offline)
             out.append(
@@ -115,8 +132,9 @@ public enum TodoSources {
         return out
     }
 
-    /// The source to start with: the user's last choice when it is still valid, else the only Mac, else the
-    /// first Mac that is online (or simply the first).
+    /// The source to start with: the user's last choice when it is still valid, else iCloud once a Mac is
+    /// known to sync, else the only Mac, else the first Mac that is online (or simply the first). A Mac that
+    /// syncs is part of iCloud, so a last choice of it means iCloud.
     public static func initial(stored: TodoSource?, macs: [MacState], modes: [String: TodoMode]) -> TodoSource? {
         guard !macs.isEmpty else { return nil }
         switch stored {
@@ -124,11 +142,13 @@ public enum TodoSources {
             // Kept until a Mac says otherwise: the modes are only learned once the screen has loaded.
             if macs.contains(where: { $0.caps.todos && modes[$0.id] != .local }) { return .icloud }
         case .mac(let id)?:
-            if macs.contains(where: { $0.id == id }) { return .mac(id) }
+            if macs.contains(where: { $0.id == id }) { return isAbsorbed(id, macs: macs, modes: modes) ? .icloud : .mac(id) }
         case nil:
             break
         }
         if macs.count == 1 { return .mac(macs[0].id) }
+        // What the Macs said before (the modes are kept between launches) is enough to start on iCloud.
+        if macs.contains(where: { $0.caps.todos && modes[$0.id] == .icloud }) { return .icloud }
         let online = macs.first { $0.link == .online && $0.caps.todos }
         return .mac((online ?? macs[0]).id)
     }
@@ -157,6 +177,33 @@ public enum TodoSources {
 
 // MARK: project rows
 
+/// A project row together with the Mac that told it. The iCloud view lists rows of several Macs, and a row
+/// id is a hash of a path, so two Macs can send the same id for different projects.
+public struct TodoListedProject: Identifiable, Equatable, Hashable, Sendable {
+    public var macId: String
+    public var macName: String
+    public var row: TodoProjectRow
+
+    public init(macId: String, macName: String = "", row: TodoProjectRow) {
+        self.macId = macId
+        self.macName = macName
+        self.row = row
+    }
+
+    /// The row's id on the wire.
+    public var id: String { row.id }
+    /// Unique across Macs: what a list keys its rows by.
+    public var key: String { TodosStore.key(macId, row.id) }
+    public var name: String { row.name }
+    public var hint: String? { row.hint }
+    public var repo: String? { row.repo }
+    public var pending: UInt64 { row.pending }
+    public var scope: String { row.scope }
+
+    /// The project has a directory on that Mac only: nothing of it syncs, nobody else can open it.
+    public var isOnlyOnItsMac: Bool { row.scope == "localOnly" || row.scope == "local" }
+}
+
 /// A group of project rows.
 public struct TodoSection: Identifiable, Equatable, Sendable {
     public enum Kind: String, Sendable {
@@ -164,41 +211,77 @@ public struct TodoSection: Identifiable, Equatable, Sendable {
     }
 
     public var kind: Kind
-    public var rows: [TodoProjectRow]
+    /// `localOnly`: the Mac the projects are on. The iCloud view has one such section per Mac.
+    public var macId: String?
+    public var rows: [TodoListedProject]
     /// How many rows the section has before the search narrows them.
     public var total: Int
     /// The rows are hidden until the user opens the section (projects without todos; a search opens it).
     public var collapsed: Bool
 
-    public var id: String { kind.rawValue }
+    public init(kind: Kind, macId: String? = nil, rows: [TodoListedProject], total: Int, collapsed: Bool) {
+        self.kind = kind
+        self.macId = macId
+        self.rows = rows
+        self.total = total
+        self.collapsed = collapsed
+    }
+
+    public var id: String { macId.map { kind.rawValue + "|" + $0 } ?? kind.rawValue }
 }
 
 public enum TodoRows {
     /// Rows that match every word of `query` in their name, hint, repository or Mac names.
     public static func matches(_ row: TodoProjectRow, query: String) -> Bool {
+        matches(TodoListedProject(macId: "", row: row), query: query)
+    }
+
+    /// The Mac a project is only on counts as one of its words.
+    public static func matches(_ project: TodoListedProject, query: String) -> Bool {
         let words = query.lowercased().split(whereSeparator: \.isWhitespace)
         if words.isEmpty { return true }
-        let haystack = ([row.name, row.hint ?? "", row.repo ?? ""] + row.macs).joined(separator: "\n").lowercased()
+        let row = project.row
+        var parts = [row.name, row.hint ?? "", row.repo ?? ""] + row.macs
+        if project.isOnlyOnItsMac { parts.append(project.macName) }
+        let haystack = parts.joined(separator: "\n").lowercased()
         return words.allSatisfy { haystack.contains($0) }
     }
 
-    /// Groups the rows a source shows. A Mac's own view leaves out the projects that exist only in iCloud
-    /// (they have no directory there).
+    /// Groups the rows of one Mac.
     public static func sections(
         rows: [TodoProjectRow], source: TodoSource, query: String, emptyExpanded: Bool
     ) -> [TodoSection] {
-        let visible = rows.filter { row in
-            if case .mac = source, row.scope == "cloudOnly" { return false }
+        sections(
+            listed: rows.map { TodoListedProject(macId: "", row: $0) }, source: source, query: query, emptyExpanded: emptyExpanded
+        )
+    }
+
+    /// Groups the rows a source shows. A Mac's own view leaves out the projects that exist only in iCloud
+    /// (they have no directory there). The projects that exist on one Mac only are a section per Mac, in the
+    /// order the Macs first appear.
+    public static func sections(
+        listed: [TodoListedProject], source: TodoSource, query: String, emptyExpanded: Bool
+    ) -> [TodoSection] {
+        let visible = listed.filter { item in
+            if case .mac = source, item.row.scope == "cloudOnly" { return false }
             return true
         }
         let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
         var out: [TodoSection] = []
-        for kind in [TodoSection.Kind.withTodos, .synced, .recent, .empty, .localOnly] {
-            let inKind = visible.filter { $0.section == kind.rawValue }
+        func add(_ kind: TodoSection.Kind, macId: String? = nil, from inKind: [TodoListedProject]) {
             let matched = searching ? inKind.filter { matches($0, query: query) } : inKind
-            guard !matched.isEmpty else { continue }
+            guard !matched.isEmpty else { return }
             let collapsed = kind == .empty && !emptyExpanded && !searching
-            out.append(TodoSection(kind: kind, rows: collapsed ? [] : matched, total: inKind.count, collapsed: collapsed))
+            out.append(TodoSection(kind: kind, macId: macId, rows: collapsed ? [] : matched, total: inKind.count, collapsed: collapsed))
+        }
+        for kind in [TodoSection.Kind.withTodos, .synced, .recent, .empty] {
+            add(kind, from: visible.filter { $0.row.section == kind.rawValue })
+        }
+        let local = visible.filter { $0.row.section == TodoSection.Kind.localOnly.rawValue }
+        var macIds: [String] = []
+        for item in local where !macIds.contains(item.macId) { macIds.append(item.macId) }
+        for macId in macIds {
+            add(.localOnly, macId: macId, from: local.filter { $0.macId == macId })
         }
         return out
     }

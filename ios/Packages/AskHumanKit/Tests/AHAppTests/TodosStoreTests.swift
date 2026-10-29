@@ -34,9 +34,10 @@ final class TodosStoreTests: XCTestCase {
         await eventually("the projects of \(source)") { self.todos.source == source && self.todos.projectsState == .loaded }
     }
 
-    private func watching(_ expected: Bool, _ message: String) async {
+    private func watching(_ expected: Bool, _ message: String, mac: String? = nil) async {
+        let id = mac ?? home
         for _ in 0..<300 {
-            if await backend.isWatchingTodos(macId: home) == expected { return }
+            if await backend.isWatchingTodos(macId: id) == expected { return }
             try? await Task.sleep(for: .milliseconds(10))
         }
         XCTFail(message)
@@ -50,19 +51,62 @@ final class TodosStoreTests: XCTestCase {
         await eventually("the list") { self.todos.list != nil }
     }
 
+    /// Both Macs sync: shown, with the projects only the Office iMac has asked for.
+    private func showBothSyncing() async {
+        await make(.bothSync)
+        await show()
+        await eventually("the other Mac's projects") { self.todos.others[self.office] != nil }
+    }
+
+    private func row(named name: String) -> TodoListedProject? {
+        todos.sections.flatMap(\.rows).first { $0.name == name }
+    }
+
     // MARK: sources
 
-    func testItStartsOnTheFirstMacOnlineAndLearnsWhatTheOthersDo() async {
+    func testItStartsOnTheFirstMacOnlineAndSettlesOnICloudOnceThatMacSaysItSyncs() async {
         await make()
         await show()
-        XCTAssertEqual(todos.source, .mac(home))
+        XCTAssertEqual(todos.source, .icloud, "a Mac that syncs is part of iCloud, not a source of its own")
         XCTAssertEqual(todos.accessMacId, home)
         XCTAssertEqual(todos.modes[home], .icloud)
         await eventually("the other Mac's mode") { self.todos.modes[self.office] == .local }
-        XCTAssertEqual(todos.choices.map(\.id), ["icloud", "mac:\(home)", "mac:\(office)"])
+        XCTAssertEqual(todos.choices.map(\.id), ["icloud", "mac:\(office)"])
         XCTAssertEqual(todos.choices[0].availability, .available, "a Mac that syncs makes iCloud choosable")
-        XCTAssertTrue(todos.choices[1].syncs)
-        XCTAssertFalse(todos.choices[2].syncs)
+        XCTAssertEqual(todos.choices[0].members, [TodoSourceChoice.Member(name: "Home MacBook Pro", online: true)])
+        XCTAssertFalse(todos.choices[1].syncs)
+    }
+
+    func testWhatTheMacsSaidIsKeptSoTheNextLaunchStartsOnICloud() async {
+        await make()
+        await show()
+        let again = TodosStore(backend: backend, defaults: defaults)
+        again.update(macs: app.state.macs, foreground: true)
+        again.setVisible(true)
+        XCTAssertEqual(again.source, .icloud, "no need to ask the Mac first")
+        XCTAssertEqual(again.modes[home], .icloud)
+    }
+
+    func testAnEarlierChoiceOfAMacThatSyncsBecomesICloudAndOneOfAMacThatDoesNotStays() async {
+        await make()
+        await show()
+        func launch(_ stored: TodoSource) -> TodosStore {
+            defaults.set(stored.stored, forKey: "ah.todos.source")
+            let store = TodosStore(backend: backend, defaults: defaults)
+            store.update(macs: app.state.macs, foreground: true)
+            store.setVisible(true)
+            return store
+        }
+        XCTAssertEqual(launch(.mac(home)).source, .icloud)
+        XCTAssertEqual(launch(.mac(office)).source, .mac(office), "the user's own choice is not touched")
+    }
+
+    func testAMacBehindICloudCannotBeSelectedOnItsOwn() async {
+        await make()
+        await show()
+        todos.select(.mac(home))
+        XCTAssertEqual(todos.source, .icloud)
+        XCTAssertEqual(todos.projectsState, .loaded)
     }
 
     func testMacsThatPredateTodosAreNotAskedAndSayTheyNeedAnUpdate() async {
@@ -97,13 +141,158 @@ final class TodosStoreTests: XCTestCase {
         XCTAssertTrue(todos.sections[1].collapsed)
         XCTAssertNotNil(todos.syncLine)
 
-        await select(.mac(home))
-        XCTAssertEqual(todos.sections[0].rows.map(\.name), ["AskHuman", "Billing Service", "blog"], "no directory here for a cloud-only project")
-
         await select(.mac(office))
         XCTAssertEqual(todos.sections.map(\.kind), [.withTodos, .recent])
         XCTAssertEqual(todos.sections[0].rows.compactMap(\.hint), ["work", "playground"], "same names are told apart")
         XCTAssertNil(todos.syncLine, "this Mac does not sync")
+    }
+
+    func testAMacThatSyncsAloneIsAlsoASourceOfItsOwnThatLeavesOutWhatOnlyICloudHas() async {
+        await make()
+        await backend.unpair(macId: office)
+        await eventually("one Mac is left") { self.app.state.macs.count == 1 }
+        await show()
+        XCTAssertEqual(todos.source, .mac(home), "with one Mac there is nothing to merge")
+        XCTAssertEqual(todos.choices.map(\.id), ["icloud", "mac:\(home)"])
+        XCTAssertTrue(todos.choices[1].syncs)
+        XCTAssertTrue(todos.choices[0].members.isEmpty)
+        XCTAssertEqual(todos.sections[0].rows.map(\.name), ["AskHuman", "Billing Service", "blog"], "no directory here for a cloud-only project")
+
+        await select(.icloud)
+        XCTAssertEqual(todos.sections[0].rows.map(\.name), ["AskHuman", "Billing Service", "blog", "notes"])
+    }
+
+    // MARK: several Macs behind iCloud
+
+    func testSeveralMacsThatSyncAreOneViewThatListsWhatEachHasAlone() async {
+        await showBothSyncing()
+        XCTAssertEqual(todos.source, .icloud)
+        XCTAssertEqual(todos.choices.map(\.id), ["icloud"], "the Macs are what iCloud is made of")
+        XCTAssertEqual(todos.choices[0].members.map(\.name), ["Home MacBook Pro", "Office iMac"])
+        XCTAssertEqual(todos.accessMacId, home)
+
+        XCTAssertEqual(todos.sections.map(\.kind), [.synced, .empty, .localOnly, .localOnly])
+        XCTAssertEqual(todos.sections.map(\.macId), [nil, nil, home, office])
+        let alone = todos.sections[3]
+        XCTAssertEqual(alone.rows.map(\.name), ["intranet"])
+        XCTAssertEqual(alone.rows.first?.macId, office)
+        XCTAssertEqual(alone.rows.first?.macName, "Office iMac")
+        XCTAssertEqual(todos.sections[1].total, 2, "the projects without todos of both Macs")
+
+        todos.emptyExpanded = true
+        let names = todos.sections.flatMap(\.rows).map(\.name)
+        XCTAssertEqual(names.filter { $0 == "AskHuman" }.count, 1, "a synced project is told once, though both Macs have it")
+        XCTAssertTrue(names.contains("sandbox"), "a project of the Office iMac that nothing else has")
+        XCTAssertTrue(names.contains("scratch"))
+    }
+
+    func testAProjectOnlyTheOtherMacHasIsOpenedAndWrittenOnThatMac() async {
+        await showBothSyncing()
+        guard let intranet = row(named: "intranet") else { return XCTFail("no intranet row") }
+        todos.open(intranet)
+        await eventually("the list") { self.todos.list != nil }
+        XCTAssertEqual(todos.opened?.macId, office)
+        XCTAssertEqual(todos.openedMacName, "Office iMac")
+        XCTAssertEqual(todos.list?.pending.map(\.text), ["Move the wiki off the old server"])
+        XCTAssertTrue(todos.canWrite)
+        await watching(true, "the Mac that has the project is watched", mac: office)
+        await watching(true, "and so is the one serving the list", mac: home)
+
+        XCTAssertNil(todos.add("Ask the admins", auto: false))
+        await eventually("answered") { self.todos.writing == 0 }
+        XCTAssertEqual(todos.list?.pending.map(\.text), ["Move the wiki off the old server", "Ask the admins"])
+        XCTAssertEqual(row(named: "intranet")?.pending, 2, "the count in the list follows")
+
+        await backend.simulateTodo(macId: office, projectId: MockData.todoOfficeIntranetProject, text: "From the office")
+        await eventually("a change made there") { self.todos.list?.pending.contains { $0.text == "From the office" } ?? false }
+
+        todos.close()
+        await watching(false, "closing the project lets go of the other Mac", mac: office)
+        await watching(true, "the list is still shown", mac: home)
+    }
+
+    func testAProjectThatMovesBetweenSectionsWithItsWriteDoesSoOnTheOtherMacsRow() async {
+        await showBothSyncing()
+        todos.emptyExpanded = true
+        guard let sandbox = row(named: "sandbox") else { return XCTFail("no sandbox row") }
+        XCTAssertEqual(todos.sections.first { $0.rows.contains { $0.key == sandbox.key } }?.kind, .empty)
+        todos.open(sandbox)
+        await eventually("the list") { self.todos.list != nil }
+        XCTAssertNil(todos.add("Reset the sandbox", auto: false))
+        await eventually("answered") { self.todos.writing == 0 }
+        let moved = todos.sections.first { $0.rows.contains { $0.key == sandbox.key } }
+        XCTAssertEqual(moved?.kind, .localOnly)
+        XCTAssertEqual(moved?.macId, office)
+    }
+
+    func testWhenTheMacServingICloudGoesAwayTheOtherOneTakesOverAndWhatOnlyTheFirstHadStaysListed() async {
+        await showBothSyncing()
+        await backend.setLink(.macOffline, for: home)
+        await eventually("the other Mac serves") { self.todos.accessMacId == self.office && self.todos.projectsState == .loaded }
+        XCTAssertEqual(todos.source, .icloud)
+        XCTAssertEqual(todos.choices[0].members.map(\.online), [false, true])
+        XCTAssertEqual(todos.accessName, "Office iMac")
+
+        guard let scratch = row(named: "scratch") else { return XCTFail("the first Mac's own project is gone") }
+        XCTAssertEqual(scratch.macId, home)
+        todos.open(scratch)
+        XCTAssertEqual(todos.openedMacName, "Home MacBook Pro", "the page names the Mac that is not there")
+        await eventually("the list says why") { self.todos.listState == .failed(.offline) }
+        XCTAssertFalse(todos.canWrite)
+        XCTAssertNil(todos.list, "there is nothing to show of it until the Mac is back")
+    }
+
+    func testAMacThatStopsSyncingComesBackInTheMenuAndItsOwnProjectsLeaveICloud() async {
+        await showBothSyncing()
+        await backend.setTodoSyncing([home])
+        await todos.refresh()
+        XCTAssertEqual(todos.modes[office], .local)
+        XCTAssertNil(todos.others[office])
+        XCTAssertEqual(todos.choices.map(\.id), ["icloud", "mac:\(office)"])
+        XCTAssertEqual(todos.sections.map(\.kind), [.synced, .empty, .localOnly])
+        XCTAssertEqual(todos.source, .icloud)
+    }
+
+    func testPullingDownLearnsThatAMacStartedToSync() async {
+        await make()
+        await show()
+        await eventually("the other Mac's mode") { self.todos.modes[self.office] == .local }
+        XCTAssertEqual(todos.choices.map(\.id), ["icloud", "mac:\(office)"])
+
+        await backend.setTodoSyncing([home, office])
+        await todos.refresh()
+        XCTAssertEqual(todos.modes[office], .icloud)
+        XCTAssertNotNil(todos.others[office])
+        XCTAssertEqual(todos.choices.map(\.id), ["icloud"])
+    }
+
+    // MARK: the dots
+
+    func testTheAgentsOfEveryMacMarkTheProjectsTheyWorkIn() async {
+        await showBothSyncing()
+        await eventually("the Agents") { !self.app.state.agents.isEmpty }
+        XCTAssertEqual(row(named: "AskHuman").flatMap(todos.activity(of:)), .waiting, "Home's Agent that asks wins over the one that works")
+        XCTAssertEqual(
+            row(named: "Billing Service").flatMap(todos.activity(of:)), .working,
+            "the Agent is on the Office iMac, which does not serve the list"
+        )
+        XCTAssertNil(row(named: "blog").flatMap(todos.activity(of:)), "no Agent there")
+    }
+
+    func testADotFollowsTheAgentsStateAndGoesWhenTheSessionEnds() async {
+        await showBothSyncing()
+        await eventually("the Agents") { !self.app.state.agents.isEmpty }
+        func billing() -> TodoActivity? { row(named: "Billing Service").flatMap(todos.activity(of:)) }
+        XCTAssertEqual(billing(), .working)
+
+        await backend.setAgentState(macId: office, agentKey: MockData.officeAgentKey, to: "waiting")
+        await eventually("waiting") { billing() == .waiting }
+
+        await backend.setAgentState(macId: office, agentKey: MockData.officeAgentKey, to: "ended")
+        await eventually("only the idle one is left") { billing() == .idle }
+
+        await backend.setAgentState(macId: office, agentKey: MockData.unsupportedAgentKey, to: "ended")
+        await eventually("no dot") { billing() == nil }
     }
 
     func testAnEarlierSourceComesBackAtOnce() async {

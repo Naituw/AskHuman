@@ -72,12 +72,17 @@ extension TodoSourceChoice {
     var subtitleText: Text? {
         switch (source, availability) {
         case (.icloud, .noSync): Text("No Mac has iCloud sync on")
-        case (.icloud, _): Text("All your synced todos")
+        case (.icloud, _): members.isEmpty ? Text("All your synced todos") : Text(verbatim: membersLine)
         case (.mac, .offline): Text("Offline")
         case (.mac, .needsUpdate): Text("Needs an update")
         case (.mac, .available): syncs ? Text("Online · iCloud sync on") : Text("Online")
         case (.mac, .noSync): nil
         }
+    }
+
+    /// The Macs iCloud is made of, which have no entries of their own: "MacBook Pro · Mac Studio (offline)".
+    private var membersLine: String {
+        members.map { $0.online ? $0.name : String(localized: "\($0.name) (offline)") }.joined(separator: " · ")
     }
 
     var symbol: String {
@@ -92,6 +97,26 @@ extension TodoSourceChoice {
         switch availability {
         case .available, .offline: true
         case .needsUpdate, .noSync: false
+        }
+    }
+}
+
+extension TodoActivity {
+    /// The colors of the Agents tab: orange waits for you, green is at work, gray is idle.
+    var color: Color {
+        switch self {
+        case .waiting: .orange
+        case .working: .green
+        case .idle: .gray
+        }
+    }
+
+    /// What a screen reader says about the dot.
+    var label: Text {
+        switch self {
+        case .waiting: Text("An Agent is waiting for you here")
+        case .working: Text("An Agent is working here")
+        case .idle: Text("An Agent is idle here")
         }
     }
 }

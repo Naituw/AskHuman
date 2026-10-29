@@ -245,6 +245,7 @@ public final class AppStore {
         state = next
         hasState = true
         todos.update(macs: next.macs, foreground: next.foreground)
+        todos.update(agents: next.agents)
         let now = Date()
         for item in next.inbox { retained[item.id] = (item, now) }
         for (key, entry) in retained where now.timeIntervalSince(entry.at) > 600 && !inboxPath.contains(key) {
