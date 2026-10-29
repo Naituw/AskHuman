@@ -46,7 +46,8 @@ pub fn place_right(main: Rect, work: Rect, scale: f64, preview_width: f64) -> (S
     (
         side,
         Rect {
-            x: main.x.clamp(work.x, work.right() - width),
+            // `f64::clamp` panics when min > max, and `(x + width) - width` can round below `x`.
+            x: main.x.clamp(work.x, (work.right() - width).max(work.x)),
             width,
             ..main
         },
@@ -141,5 +142,25 @@ mod tests {
         assert_eq!(frame.x, -2532.0);
         assert_eq!(frame.width, 2532.0);
         assert_eq!(frame.y, 80.0);
+    }
+    #[test]
+    fn full_width_frame_survives_float_rounding_of_the_work_origin() {
+        let main = Rect {
+            x: 100.0,
+            y: 80.0,
+            width: 560.0,
+            height: 652.0,
+        };
+        // `(0.1 + 4.0) - 4.0` rounds below 0.1, which used to make `f64::clamp` panic.
+        let work = Rect {
+            x: 0.1,
+            y: 25.0,
+            width: 4.0,
+            height: 850.0,
+        };
+        assert!(work.right() - work.width < work.x);
+        let (side, frame) = place_right(main, work, 1.0, 700.0);
+        assert_eq!(side, Side::Inside);
+        assert_eq!((frame.x, frame.width), (work.x, work.width));
     }
 }

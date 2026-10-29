@@ -542,9 +542,15 @@ fn frame_from_css(css: Frame, page_scale: f64, work: Option<Rect>) -> Result<Fra
     // Allocation extents are CSS pixels; origins and work areas are native logical units.
     let native_width = (css.width * page_scale).min(work.width);
     let native_height = (css.height * page_scale).min(work.height);
+    // `f64::clamp` panics when min > max. A window as large as the work area gives
+    // `(origin + extent) - extent`, which fractional logical units can round below `origin`.
     Ok(Frame {
-        x: css.x.clamp(work.x, work.right() - native_width),
-        y: css.y.clamp(work.y, work.bottom() - native_height),
+        x: css
+            .x
+            .clamp(work.x, (work.right() - native_width).max(work.x)),
+        y: css
+            .y
+            .clamp(work.y, (work.bottom() - native_height).max(work.y)),
         width: native_width / page_scale,
         height: native_height / page_scale,
     })
@@ -1285,6 +1291,32 @@ mod tests {
     fn assert_css_extents_resampled(expected: &Frame, actual: Frame, page_scale: f64) {
         assert!((actual.width - expected.width).abs() <= 0.001 / page_scale);
         assert!((actual.height - expected.height).abs() <= 0.001 / page_scale);
+    }
+
+    #[test]
+    fn window_as_large_as_the_work_area_survives_float_rounding() {
+        // For these fractional work areas `(origin + extent) - extent` rounds below `origin`, which
+        // made `f64::clamp` panic (and abort the Popup Host) once the window filled the work area.
+        let work = Rect {
+            x: 0.1,
+            y: 24.0,
+            width: 4.0,
+            height: 488.8,
+        };
+        assert!(work.right() - work.width < work.x);
+        assert!(work.bottom() - work.height < work.y);
+        for page_scale in [1.0, 1.25, 1.5] {
+            let css = Frame {
+                x: work.x - 50.0,
+                y: work.y - 50.0,
+                width: work.width / page_scale + 100.0,
+                height: work.height / page_scale + 100.0,
+            };
+            let frame = frame_from_css(css, page_scale, Some(work)).unwrap();
+            assert_eq!((frame.x, frame.y), (work.x, work.y), "{page_scale}");
+            assert!((frame.width * page_scale - work.width).abs() <= 1e-9);
+            assert!((frame.height * page_scale - work.height).abs() <= 1e-9);
+        }
     }
 
     fn layout(preview: f64) -> Allocation {
