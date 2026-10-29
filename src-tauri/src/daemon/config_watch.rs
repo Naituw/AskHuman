@@ -9,12 +9,14 @@
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
-/// 该 watcher 事件是否代表 config.json 在磁盘上**确实变了**。
+/// Whether a watcher event means config.json **really changed** on disk.
 ///
-/// notify 的 inotify 后端把 `IN_OPEN` / `IN_CLOSE_NOWRITE` 也映射成 `EventKind::Access`
-/// （`Access(Open)` / `Access(Close(Read))`）。若把这类事件当成变更，任何一次读取——包括
-/// daemon 自身的周期性 `load_without_secrets()` 和重载过程里再读一次配置——都会触发下一轮
-/// 重载，形成读取自激。因此只接受非 `Access` 的事件（`Modify` / `Create` / `Remove`）。
+/// notify's inotify backend subscribes to `IN_OPEN` and `IN_CLOSE_WRITE` and reports them as
+/// `EventKind::Access` (`Access(Open)` / `Access(Close(Write))`). Counting those as changes would
+/// let every read of the file — the daemon's own periodic `load_without_secrets()` as well as the
+/// re-read inside a reload — trigger the next reload, a read-triggered feedback loop. A real change
+/// always comes with a non-`Access` event (`Modify`, `Create`, `Remove` or a rename), so only those
+/// count.
 pub(crate) fn is_config_change(event: &notify::Event) -> bool {
     let touches_config = event
         .paths
@@ -27,7 +29,8 @@ pub(crate) fn is_config_change(event: &notify::Event) -> bool {
 pub fn spawn() -> UnboundedReceiver<()> {
     let (raw_tx, mut raw_rx) = unbounded_channel::<()>();
 
-    // notify 的 watcher 跑在专用线程；回调里只放行 config.json 的真实写入（读取不算变更）。
+    // The notify watcher runs on a dedicated thread; its callback lets only real writes to
+    // config.json through (reads are not changes).
     std::thread::spawn(move || {
         use notify::{RecursiveMode, Watcher};
         let dir = crate::paths::config_dir();
@@ -90,7 +93,8 @@ mod tests {
 
     #[test]
     fn reads_are_not_config_changes() {
-        // inotify 后端把 IN_OPEN / IN_CLOSE_NOWRITE 也报成 Access；它们只说明有人读了配置。
+        // inotify reports IN_OPEN as an Access event; an Access event only says that someone read
+        // or closed the file.
         assert!(!is_config_change(&event(
             EventKind::Access(AccessKind::Open(AccessMode::Any)),
             "config.json"
@@ -107,7 +111,8 @@ mod tests {
             EventKind::Modify(ModifyKind::Data(DataChange::Any)),
             "config.json"
         )));
-        // 原子落盘是「写临时文件 + rename」：目录监听看到的是 rename 的 To 事件。
+        // An atomic save writes a temp file and renames it over config.json; a directory watch
+        // sees the rename's `To` event.
         assert!(is_config_change(&event(
             EventKind::Modify(ModifyKind::Name(RenameMode::To)),
             "config.json"

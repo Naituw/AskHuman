@@ -2002,7 +2002,8 @@ fn start_config_watch(app: AppHandle) {
         let mut watcher =
             match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 if let Ok(ev) = res {
-                    // 只认真实写入：读取（Access）也会被 inotify 报上来，不能当成配置变更。
+                    // Only real writes count: inotify also reports reads (as `Access` events),
+                    // which are not config changes.
                     if crate::daemon::config_watch::is_config_change(&ev) {
                         let _ = tx.send(());
                     }
