@@ -3197,8 +3197,20 @@ pub fn collaboration_style_apply_integrations() -> Result<(), String> {
         AgentTarget::Codex,
         AgentTarget::Grok,
         AgentTarget::Pi,
+        AgentTarget::Antigravity,
     ] {
-        let mode = agent_mode::current(target);
+        // An unavailable platform adapter must not break updates to existing integrations.
+        // Dedicated Antigravity status/mutations still return the explicit unsupported error.
+        if target == AgentTarget::Antigravity && !cfg!(unix) {
+            continue;
+        }
+        let mode = if target == AgentTarget::Antigravity {
+            agent_mode::antigravity_status()
+                .map_err(|e| e.to_string())?
+                .0
+        } else {
+            agent_mode::current(target)
+        };
         if mode == Mode::None {
             continue;
         }
@@ -3518,6 +3530,16 @@ fn parse_agent(agent: &str) -> Result<AgentTarget, String> {
 #[tauri::command]
 pub fn agent_rule_status(agent: String) -> Result<RuleStatus, String> {
     let a = parse_agent(&agent)?;
+    if a == agent_rules::AgentTarget::Antigravity {
+        let (_, updates, installed) =
+            agent_mode::antigravity_status().map_err(|e| e.to_string())?;
+        return Ok(RuleStatus {
+            installed,
+            outdated: updates.rule,
+            path: agent_rules::display_path(a),
+            supported: true,
+        });
+    }
     Ok(RuleStatus {
         installed: agent_rules::is_installed(a),
         outdated: agent_rules::needs_update(a),
@@ -3618,8 +3640,15 @@ pub async fn agent_mode_status(agent: String) -> Result<AgentModeStatus, String>
 fn agent_mode_status_sync(agent: &str) -> Result<AgentModeStatus, String> {
     let a = parse_agent(agent)?;
     let stop_kind = parse_agent_kind(agent)?;
-    let updates = agent_mode::artifact_updates(a);
-    let mode = agent_mode::current(a);
+    let (mode, updates, rule_installed) = if a == agent_rules::AgentTarget::Antigravity {
+        agent_mode::antigravity_status().map_err(|e| e.to_string())?
+    } else {
+        (
+            agent_mode::current(a),
+            agent_mode::artifact_updates(a),
+            agent_rules::is_installed(a),
+        )
+    };
     let lifecycle = agent_lifecycle::status_for_mode(stop_kind, mode);
     let permission = agent_permission::status(a);
     let recovery = agent_context_recovery::status(a, mode);
@@ -3632,7 +3661,7 @@ fn agent_mode_status_sync(agent: &str) -> Result<AgentModeStatus, String> {
         hook_needs_update: updates.hook,
         mcp_needs_update: updates.mcp,
         rule_path: agent_rules::display_path(a),
-        rule_installed: agent_rules::is_installed(a),
+        rule_installed,
         timeout_hook_supported: agent_mode::timeout_hook_supported(a),
         timeout_hook_installed: agent_mode::timeout_hook_is_installed(a),
         timeout_hook_needs_update: agent_mode::timeout_hook_supported(a)
@@ -5025,6 +5054,77 @@ pub fn restart_settings(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_rule_update_rejects_antigravity_generic_writer() {
+        let error = agent_rule_update("antigravity".to_string()).unwrap_err();
+        assert!(error.contains("AskHuman agents update antigravity"));
+        for variant in [agent_rules::Variant::Cli, agent_rules::Variant::Mcp] {
+            assert!(
+                agent_rules::update_variant(agent_rules::AgentTarget::Antigravity, variant)
+                    .is_err()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn public_rule_commands_preserve_antigravity_mcp_bundle() {
+        use std::os::unix::fs::PermissionsExt;
+        const CHILD: &str = "ASKHUMAN_TEST_RULE_COMMAND_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            // Keep the child HOME free of temporary-root aliases such as macOS /var.
+            let root_path = root.path().canonicalize().unwrap();
+            let state = root_path.join("state");
+            std::fs::create_dir(&state).unwrap();
+            std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "commands::tests::public_rule_commands_preserve_antigravity_mcp_bundle",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("HOME", &root_path)
+                .env("ASKHUMAN_HOME", state)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "stdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            return;
+        }
+        let target = agent_rules::AgentTarget::Antigravity;
+        agent_mode::set(target, agent_mode::Mode::Mcp).unwrap();
+        let files = [
+            crate::paths::antigravity_rule_file(),
+            crate::paths::antigravity_mcp_config_json(),
+            crate::paths::integration_state_file(),
+        ];
+        let before = files.each_ref().map(|path| std::fs::read(path).unwrap());
+        for variant in [agent_rules::Variant::Cli, agent_rules::Variant::Mcp] {
+            assert!(agent_rules::install_variant(target, variant).is_err());
+            assert!(agent_rules::update_variant(target, variant).is_err());
+            assert_eq!(
+                files.each_ref().map(|path| std::fs::read(path).unwrap()),
+                before
+            );
+        }
+        for command in [agent_rule_install, agent_rule_update, agent_rule_uninstall] {
+            assert!(command("antigravity".to_string()).is_err());
+            assert_eq!(
+                files.each_ref().map(|path| std::fs::read(path).unwrap()),
+                before
+            );
+            let (mode, _, installed) = agent_mode::antigravity_status().unwrap();
+            assert_eq!(mode, agent_mode::Mode::Mcp);
+            assert!(installed);
+        }
+    }
 
     #[test]
     fn fork_source_rejects_desktop_origin_at_selection_and_submission() {

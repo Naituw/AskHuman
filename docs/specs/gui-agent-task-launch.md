@@ -30,7 +30,7 @@ IM `/new` 已支持从四种 IM 选择 workspace / Agent / 权限并在 macOS �
 | G2 | 流程形态 | 通用流程 + **独立窗口**（便于复用未来更多入口）；**单页表单**，不做分步向导 |
 | G3 | 面板统一 | 待办入口与菜单入口共用同一面板；待办入口＝预选了项目与该条待办；菜单入口可自由选待办或直接输入 |
 | G4 | Agent 判定 | 与 IM `/new` 相同：login shell 可解析 CLI 二进制 + lifecycle installed/current + AskHuman 集成 CLI/MCP 通道产物可用（`agent_launch::readiness`，一字不改地复用） |
-| G5 | Agent 展示 | 五家全部列出：就绪可选；未就绪灰显并标注原因（binary / lifecycle / integration），原因可点：binary→官方安装文档、lifecycle→设置「Agents」tab 对应卡内 capability、integration→同一 Agent 卡，并滚动定位 + 短暂高亮对应行。Pi 额外要求版本 >=0.82.0 |
+| G5 | Agent 展示 | 只列出可启动的 family（当前排除不支持 New Task/Fork 的 Antigravity）；就绪可选；未就绪灰显并标注原因（binary / lifecycle / integration），原因可点：binary→官方安装文档、lifecycle→设置「Agents」tab 对应卡内 capability、integration→同一 Agent 卡，并滚动定位 + 短暂高亮对应行。Pi 额外要求版本 >=0.82.0。设置与 doctor 仍使用全量 readiness，以便配置不支持启动的 family |
 | G6 | 权限 | 跟随全局 `agentTasks.permissionPrompt`：`ask` 时表单内显示「Agent 默认 / YOLO（危险）」单选（不预选）；`agent-default` / `yolo` 时不显示选择，仅以元数据展示最终模式。Pi 没有内置权限模式，选中后隐藏选择、说明安全边界并固定 `AgentDefault` |
 | G7 | 待办语义 | 与 IM D29–D31 一致：待办原文只读展示 + 可选补充输入；最终任务 = 原文 + 空行 + 补充；**Terminal 成功打开后**才按快照 best-effort 出队（`todos::take`），失败保留 |
 | G8 | 项目预选 | 待办入口预选该项目但**仍可改**；改选其它项目时清除待办预选，任务来源回到「直接输入」 |
@@ -101,7 +101,7 @@ IM `/new` 已支持从四种 IM 选择 workspace / Agent / 权限并在 macOS �
    只给出明确安装提示。
 2. 未开启 `agentTasks.enabled` 时功能完整可用。
 3. 待办行进入：项目与该待办已预选；改选其它项目后待办预选清除。
-4. Agent 列表五家全列；就绪状态与同机 IM `/new` 的可选集一致；未就绪原因可点且跳转定位正确。
+4. Agent 列表只列出可启动的 family（当前排除 Antigravity）；就绪状态与同机 IM `/new` 的可选集一致；未就绪原因可点且跳转定位正确。
 5. permissionPrompt 三态表现正确：ask 显示单选且不预选；另两态直接以元数据显示。
 6. 启动成功：新 Terminal 窗口内 Agent TUI 运行、cwd 正确、YOLO flag 映射与 IM 相同；
    所选待办进入执行历史；窗口关闭；活跃槽变为 popup（daemon 在跑时含旧渠道反激活回执）。

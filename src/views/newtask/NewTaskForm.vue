@@ -157,7 +157,11 @@ const operationId = ref(crypto.randomUUID());
 function agentAvailable(item: AgentTaskReadiness): boolean {
   return item.kind === "codex" ? !!desktop.value?.target : item.ready;
 }
-const targetReady = computed(() => !!readiness.value?.find(r => r.kind === selectedKind.value && agentAvailable(r)));
+/** Readiness still lists launch-unsupported families for Settings/doctor, never for this picker. */
+const launchableReadiness = computed(
+  () => readiness.value?.filter((item) => item.launchSupported) ?? null,
+);
+const targetReady = computed(() => !!launchableReadiness.value?.find(r => r.kind === selectedKind.value && agentAvailable(r)));
 
 async function loadReadiness(): Promise<void> {
   try {
@@ -167,7 +171,7 @@ async function loadReadiness(): Promise<void> {
     // 已选 Agent 不再就绪（重查后）→ 取消选择。
     if (
       selectedKind.value &&
-      !list.some((r) => r.kind === selectedKind.value && agentAvailable(r))
+      !list.some((r) => r.launchSupported && r.kind === selectedKind.value && agentAvailable(r))
     ) {
       selectedKind.value = null;
     }
@@ -178,7 +182,7 @@ async function loadReadiness(): Promise<void> {
 }
 
 function selectAgent(item: AgentTaskReadiness): void {
-  if (!agentAvailable(item)) return;
+  if (!item.launchSupported || !agentAvailable(item)) return;
   selectedKind.value = item.kind;
 }
 
@@ -537,7 +541,7 @@ onBeforeUnmount(() => {
           </p>
         </section>
 
-        <!-- Agent：五家全列（G5 + Pi） -->
+        <!-- Agent：仅列出可启动的 family（readiness 仍为设置/doctor 提供全量） -->
         <section class="nt-section">
           <span class="nt-label">{{ t("newTask.agentLabel") }}</span>
           <div v-if="readiness === null" class="nt-agent-loading">
@@ -546,7 +550,7 @@ onBeforeUnmount(() => {
           </div>
           <div v-else class="nt-agents">
             <button
-              v-for="item in readiness"
+              v-for="item in (launchableReadiness ?? [])"
               :key="item.kind"
               type="button"
               class="nt-agent"

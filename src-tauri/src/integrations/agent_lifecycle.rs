@@ -72,6 +72,7 @@ impl LifecyclePreferences {
             AgentKind::Cursor => self.cursor,
             AgentKind::Grok => self.grok,
             AgentKind::Pi => self.pi,
+            AgentKind::Antigravity => None,
         }
     }
 
@@ -82,6 +83,7 @@ impl LifecyclePreferences {
             AgentKind::Cursor => &mut self.cursor,
             AgentKind::Grok => &mut self.grok,
             AgentKind::Pi => &mut self.pi,
+            AgentKind::Antigravity => return,
         };
         *slot = Some(value);
     }
@@ -132,7 +134,7 @@ fn events(kind: AgentKind) -> &'static [(&'static str, &'static str)] {
             ("SessionEnd", "session-end"),
         ],
         // Pi emits lifecycle events from the managed TypeScript extension, not JSON hooks.
-        AgentKind::Pi => &[],
+        AgentKind::Pi | AgentKind::Antigravity => &[],
     }
 }
 
@@ -192,6 +194,7 @@ pub(crate) fn target_for_kind(kind: AgentKind) -> super::agent_rules::AgentTarge
         AgentKind::Cursor => super::agent_rules::AgentTarget::Cursor,
         AgentKind::Grok => super::agent_rules::AgentTarget::Grok,
         AgentKind::Pi => super::agent_rules::AgentTarget::Pi,
+        AgentKind::Antigravity => super::agent_rules::AgentTarget::Antigravity,
     }
 }
 
@@ -200,7 +203,8 @@ fn aggregate_status(
     preference: Option<bool>,
     disk: DiskLifecycleStatus,
 ) -> LifecycleStatus {
-    let enabled = mode != super::agent_mode::Mode::None && preference.unwrap_or(true);
+    let enabled =
+        disk.supported && mode != super::agent_mode::Mode::None && preference.unwrap_or(true);
     let cleanup_required = disk.supported && !enabled && disk.installed;
     let needs_update = disk.supported
         && if enabled {
@@ -255,6 +259,7 @@ pub(crate) fn tracking_installed(kind: AgentKind) -> bool {
         AgentKind::Cursor => (paths::cursor_hooks_json(), Shape::Flat),
         AgentKind::Grok => (paths::grok_hooks_json(), Shape::Nested),
         AgentKind::Pi => unreachable!(),
+        AgentKind::Antigravity => return false,
     };
     let Some(root) = read_value(&path) else {
         return false;
@@ -318,6 +323,13 @@ pub fn status(kind: AgentKind) -> LifecycleStatus {
 }
 
 fn disk_status(kind: AgentKind) -> DiskLifecycleStatus {
+    if kind == AgentKind::Antigravity {
+        return DiskLifecycleStatus {
+            installed: false,
+            outdated: false,
+            supported: false,
+        };
+    }
     if !supported() {
         return DiskLifecycleStatus {
             installed: false,
@@ -331,6 +343,11 @@ fn disk_status(kind: AgentKind) -> DiskLifecycleStatus {
         AgentKind::Codex => codex_status(),
         // Grok：全局 hooks 恒受信任，纯 JSON 状态即可（无 Codex 那种信任哈希校验）。
         AgentKind::Grok => json_status(kind, &paths::grok_hooks_json(), Shape::Nested),
+        AgentKind::Antigravity => DiskLifecycleStatus {
+            installed: false,
+            outdated: false,
+            supported: false,
+        },
         AgentKind::Pi => {
             let extension = super::pi_extension::status();
             DiskLifecycleStatus {
@@ -346,6 +363,9 @@ fn disk_status(kind: AgentKind) -> DiskLifecycleStatus {
 /// off in None mode is accepted as an idempotent cleanup; turning it on would create the invalid
 /// `None + lifecycle` state and is rejected.
 pub fn set_enabled(kind: AgentKind, value: bool) -> Result<String> {
+    if kind == AgentKind::Antigravity {
+        return Err(anyhow!("Antigravity lifecycle tracking is unsupported"));
+    }
     let _lock = super::mutation_lock::IntegrationMutationLock::acquire()?;
     let mode = super::agent_mode::current(target_for_kind(kind));
     if value && mode == super::agent_mode::Mode::None {
@@ -384,6 +404,9 @@ pub(crate) fn install_unlocked(kind: AgentKind) -> Result<String> {
         AgentKind::Codex => codex_install(&exe)?,
         AgentKind::Grok => json_install(kind, &exe, &paths::grok_hooks_json(), Shape::Nested)?,
         AgentKind::Pi => super::pi_extension::set_lifecycle_enabled(true)?,
+        AgentKind::Antigravity => {
+            return Err(anyhow!("Antigravity lifecycle tracking is unsupported"))
+        }
     }
     Ok(message("cmd.lifecycleInstalled"))
 }
@@ -400,6 +423,9 @@ pub(crate) fn reconcile_unlocked(
     mode: super::agent_mode::Mode,
     adopt_default: bool,
 ) -> Result<()> {
+    if kind == AgentKind::Antigravity {
+        return Ok(());
+    }
     let original = load_preferences();
     let mut preferences = original.clone();
     let mut changed = false;
@@ -438,6 +464,7 @@ pub(crate) fn uninstall_unlocked(kind: AgentKind) -> Result<String> {
         AgentKind::Codex => codex_uninstall()?,
         AgentKind::Grok => json_uninstall(kind, &paths::grok_hooks_json(), Shape::Nested)?,
         AgentKind::Pi => super::pi_extension::set_lifecycle_enabled(false)?,
+        AgentKind::Antigravity => return Ok("Antigravity lifecycle tracking is unsupported".into()),
     }
     super::agent_stop::reconcile_current_mode_unlocked(kind)?;
     Ok(message("cmd.lifecycleRemoved"))

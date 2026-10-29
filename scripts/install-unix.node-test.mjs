@@ -22,7 +22,7 @@ function executable(file, source) {
 }
 
 function git(cwd, ...args) {
-  const result = spawnSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args],
+  const result = spawnSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args],
     { cwd, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 }

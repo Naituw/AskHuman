@@ -1609,9 +1609,10 @@ async fn control_loop(
                 interject_poll,
                 failed,
             } => {
-                if let (Some(kind), Some(ev)) =
-                    (AgentKind::parse(&agent), LifecycleEvent::parse(&event))
-                {
+                if let (Some(kind), Some(ev)) = (
+                    AgentKind::parse(&agent).filter(|kind| *kind != AgentKind::Antigravity),
+                    LifecycleEvent::parse(&event),
+                ) {
                     // PreToolUse：先回 interject 再做后续（hook 在等，优先解除阻塞）。
                     if interject_poll {
                         use crate::agents::interject::PollOutcome;

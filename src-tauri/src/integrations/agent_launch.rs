@@ -162,6 +162,9 @@ pub struct AgentReadiness {
     pub integration_ready: bool,
     pub integration_mode: String,
     pub ready: bool,
+    /// Whether this family can be started by New Task / Fork. Readiness still reports every
+    /// family so Settings and doctor can explain unsupported integrations.
+    pub launch_supported: bool,
     pub diagnostics: Vec<String>,
     /// Codex only: the oldest version that can receive the interaction protocol through its
     /// SessionStart hook (spec `codex-delegated-run-silence` D11). Informational: it never affects
@@ -247,6 +250,11 @@ pub fn readiness(kind: AgentKind) -> AgentReadiness {
     readiness_with(kind, false)
 }
 
+/// Antigravity has no supported New Task or Fork path; every other family does.
+pub fn launch_supported(kind: AgentKind) -> bool {
+    !matches!(kind, AgentKind::Antigravity)
+}
+
 pub fn readiness_fresh(kind: AgentKind) -> AgentReadiness {
     readiness_with(kind, true)
 }
@@ -298,6 +306,7 @@ fn readiness_with(kind: AgentKind, force: bool) -> AgentReadiness {
         integration_ready,
         integration_mode: mode.as_str().to_string(),
         ready: binary_ready && lifecycle_ready && integration_ready,
+        launch_supported: launch_supported(kind),
         diagnostics,
         protocol_minimum_version: (kind == AgentKind::Codex)
             .then(|| super::codex_protocol::MINIMUM_VERSION.to_string()),
@@ -586,6 +595,13 @@ pub fn fork_readiness(kind: AgentKind) -> ForkReadiness {
 }
 
 fn fork_readiness_uncached(kind: AgentKind) -> ForkReadiness {
+    if kind == AgentKind::Antigravity {
+        return ForkReadiness {
+            kind,
+            ready: false,
+            diagnostics: vec!["Antigravity launch/fork is unsupported".into()],
+        };
+    }
     if kind == AgentKind::Cursor {
         return ForkReadiness {
             kind,
@@ -615,7 +631,7 @@ fn fork_readiness_uncached(kind: AgentKind) -> ForkReadiness {
         AgentKind::Codex => probe_help(&executable, &["fork", "--help"]).is_some_and(|text| {
             text.contains("SESSION_ID") && text.to_ascii_lowercase().contains("fork")
         }),
-        AgentKind::Cursor => false,
+        AgentKind::Cursor | AgentKind::Antigravity => false,
         AgentKind::Pi => {
             probe_help(&executable, &["--help"]).is_some_and(|text| text.contains("--fork"))
         }
@@ -835,6 +851,9 @@ fn create_record_internal(
     launch_mode: LaunchMode,
     choice: &ModelChoice,
 ) -> Result<LaunchRecord> {
+    if kind == AgentKind::Antigravity {
+        return Err(anyhow!("Antigravity launch/fork is unsupported"));
+    }
     if kind == AgentKind::Pi && permission != LaunchPermission::AgentDefault {
         return Err(anyhow!(
             "Pi does not expose a built-in permission mode; use AgentDefault"
@@ -1191,6 +1210,8 @@ fn model_flags(kind: AgentKind, choice: &ModelChoice) -> Vec<String> {
             AgentKind::Pi => flags.extend(["--thinking".to_string(), effort.clone()]),
             // Folded into the model id; `check_for` rejects the combination before this point.
             AgentKind::Cursor => {}
+            // Antigravity launches are rejected by readiness before command assembly.
+            AgentKind::Antigravity => {}
         }
     }
     flags
@@ -1216,6 +1237,7 @@ fn agent_args(
             args.push(prompt.into());
         }
         LaunchMode::Fork { source_session_id } => match kind {
+            AgentKind::Antigravity => return Vec::new(),
             AgentKind::Claude | AgentKind::Grok => {
                 if permission == LaunchPermission::Yolo {
                     args.push(yolo_flag(kind).into());
@@ -1769,6 +1791,7 @@ fn target(kind: AgentKind) -> AgentTarget {
         AgentKind::Cursor => AgentTarget::Cursor,
         AgentKind::Grok => AgentTarget::Grok,
         AgentKind::Pi => AgentTarget::Pi,
+        AgentKind::Antigravity => AgentTarget::Antigravity,
     }
 }
 
@@ -1779,6 +1802,7 @@ fn command_name(kind: AgentKind) -> &'static str {
         AgentKind::Cursor => "cursor-agent",
         AgentKind::Grok => "grok",
         AgentKind::Pi => "pi",
+        AgentKind::Antigravity => "agy",
     }
 }
 
@@ -1788,7 +1812,7 @@ fn yolo_flag(kind: AgentKind) -> &'static str {
         AgentKind::Codex => "--dangerously-bypass-approvals-and-sandbox",
         AgentKind::Cursor => "--yolo",
         AgentKind::Grok => "--always-approve",
-        AgentKind::Pi => "",
+        AgentKind::Pi | AgentKind::Antigravity => "",
     }
 }
 
@@ -2060,6 +2084,17 @@ mod tests {
                 "go"
             )
         );
+    }
+
+    #[test]
+    fn launch_support_excludes_only_antigravity() {
+        for kind in AgentKind::ALL {
+            assert_eq!(
+                launch_supported(kind),
+                kind != AgentKind::Antigravity,
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]

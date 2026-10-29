@@ -57,7 +57,9 @@ watch(
 );
 
 function canSend(): boolean {
-  return !!props.record.desktop || (props.record.state === "working" && props.record.kind !== "grok");
+  return props.record.kind !== "antigravity" && (
+    !!props.record.desktop || (props.record.state === "working" && props.record.kind !== "grok")
+  );
 }
 
 async function send(): Promise<void> {
@@ -223,6 +225,7 @@ onBeforeUnmount(() => unlistenDrop?.());
     <p v-else-if="record.state === 'working' && record.kind === 'grok'" class="interact-hint">
       {{ t("console.grokHint") }}
     </p>
+    <p v-else-if="record.kind === 'antigravity'" class="interact-hint">{{ t("console.antigravityHint") }}</p>
     <p v-else-if="record.state === 'idle'" class="interact-hint">
       {{ t("console.idleHint") }}
       <template v-if="newTaskSupported && record.cwd">

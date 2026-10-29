@@ -15,6 +15,7 @@ fn readiness(kind: AgentKind, ready: bool, executable: Option<&str>) -> AgentRea
         executable: executable.map(str::to_string),
         version: None,
         binary_ready: executable.is_some(),
+        launch_supported: agent_launch::launch_supported(kind),
         lifecycle_ready: true,
         integration_ready: true,
         integration_mode: "hooks".to_string(),
