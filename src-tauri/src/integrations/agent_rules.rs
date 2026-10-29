@@ -607,6 +607,40 @@ fn installed_antigravity_variant() -> Variant {
     }
 }
 
+/// Resolve a trusted root of the strict Antigravity writer to its physical path.
+///
+/// The writer refuses links at every component it walks. `HOME` and the AskHuman config directory
+/// are the user's environment rather than managed content, and they may sit behind links
+/// (`/home -> /var/home`, `/tmp -> /private/tmp`, a relocated or automounted home, a
+/// dotfiles-managed `~/.askhuman`). Only the root is resolved here: `.gemini/config/rules` below
+/// it stays strict, so a link planted inside the managed tree is still refused.
+fn physical_root(path: PathBuf) -> PathBuf {
+    #[cfg(unix)]
+    {
+        // An unresolved `HOME` (".") must keep failing validation instead of anchoring in the cwd.
+        if path.is_absolute() {
+            // Resolve the deepest existing ancestor and re-attach the part that does not exist yet.
+            // A dangling link is not an existing ancestor: it is kept so the strict walk refuses it.
+            let mut tail = Vec::new();
+            let mut base = path.as_path();
+            loop {
+                if let Ok(mut resolved) = std::fs::canonicalize(base) {
+                    resolved.extend(tail.iter().rev());
+                    return resolved;
+                }
+                match (base.parent(), base.file_name()) {
+                    (Some(parent), Some(name)) => {
+                        tail.push(name);
+                        base = parent;
+                    }
+                    _ => break,
+                }
+            }
+        }
+    }
+    path
+}
+
 /// Frozen context for the exclusive Antigravity writer. Production never accepts arbitrary paths.
 pub(crate) fn antigravity_context() -> super::antigravity_rule::RuleContext {
     antigravity_context_for_variant(installed_antigravity_variant())
@@ -621,8 +655,10 @@ pub(crate) fn antigravity_context_for_variant(
         Variant::Mcp => "mcp",
     };
     super::antigravity_rule::RuleContext {
-        target_path: paths::antigravity_rule_file(),
-        integration_state_file: paths::integration_state_file(),
+        target_path: paths::antigravity_rule_file_in(&physical_root(paths::home())),
+        integration_state_file: paths::integration_state_file_in(&physical_root(
+            paths::config_dir(),
+        )),
         generation_version: "1".into(),
         variant: variant_str.into(),
         rendered_bytes: format!(
@@ -843,5 +879,105 @@ mod tests {
         );
         assert_eq!(strip_frontmatter("---\nk: v\n---\nbody").trim(), "body");
         assert_eq!(strip_frontmatter("no fm").trim(), "no fm");
+    }
+
+    #[cfg(unix)]
+    mod antigravity_roots {
+        use super::super::*;
+        use crate::integrations::antigravity_rule::{
+            install_unlocked, probe, uninstall_unlocked, RuleContext, RuleState,
+        };
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        /// A canonical temp root (macOS temp roots sit behind system links) with a physical home
+        /// and a private state directory, plus `home-link` and `state-link` pointing at them.
+        struct Roots {
+            _temp: tempfile::TempDir,
+            home: PathBuf,
+            state: PathBuf,
+            home_link: PathBuf,
+            state_link: PathBuf,
+        }
+
+        fn roots() -> Roots {
+            let temp = tempfile::tempdir().unwrap();
+            let base = temp.path().canonicalize().unwrap();
+            let (home, state) = (base.join("home"), base.join("state"));
+            std::fs::create_dir(&home).unwrap();
+            std::fs::create_dir(&state).unwrap();
+            std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let (home_link, state_link) = (base.join("home-link"), base.join("state-link"));
+            symlink(&home, &home_link).unwrap();
+            symlink(&state, &state_link).unwrap();
+            Roots {
+                _temp: temp,
+                home,
+                state,
+                home_link,
+                state_link,
+            }
+        }
+
+        fn context(home: &Path, state: &Path) -> RuleContext {
+            let mut ctx = antigravity_context_for_variant(Variant::Cli);
+            ctx.target_path = paths::antigravity_rule_file_in(home);
+            ctx.integration_state_file = paths::integration_state_file_in(state);
+            ctx
+        }
+
+        #[test]
+        fn physical_root_resolves_links_and_keeps_a_missing_tail() {
+            let r = roots();
+            assert_eq!(physical_root(r.home_link.clone()), r.home);
+            assert_eq!(
+                physical_root(r.home_link.join("not/created/yet")),
+                r.home.join("not/created/yet")
+            );
+            // A dangling link is not repaired: the strict walk must still see and refuse it.
+            let dangling = r.home.join("dangling");
+            symlink(r.home.join("nowhere"), &dangling).unwrap();
+            assert_eq!(physical_root(dangling.clone()), dangling);
+        }
+
+        #[test]
+        fn physical_root_leaves_relative_paths_to_validation() {
+            for relative in [".", "relative/dir"] {
+                assert_eq!(
+                    physical_root(PathBuf::from(relative)),
+                    PathBuf::from(relative)
+                );
+            }
+        }
+
+        #[test]
+        fn strict_writer_accepts_linked_roots_but_not_links_inside_them() {
+            let r = roots();
+            // Unresolved, a link in the HOME or config path is refused outright.
+            assert!(probe(&context(&r.home_link, &r.state)).is_err());
+            assert!(probe(&context(&r.home, &r.state_link)).is_err());
+
+            // Resolved at the root, the same locations work end to end.
+            let ctx = context(
+                &physical_root(r.home_link.clone()),
+                &physical_root(r.state_link.clone()),
+            );
+            assert_eq!(probe(&ctx).unwrap().state, RuleState::Missing);
+            assert_eq!(
+                install_unlocked(&ctx).unwrap().state,
+                RuleState::OwnedCurrent
+            );
+            assert!(r
+                .home
+                .join(".gemini/config/rules/askhuman-antigravity.md")
+                .is_file());
+            uninstall_unlocked(&ctx).unwrap();
+            assert_eq!(probe(&ctx).unwrap().state, RuleState::Missing);
+
+            // Strictness below the root is unchanged.
+            let _ = std::fs::remove_dir_all(r.home.join(".gemini"));
+            symlink(&r.state, r.home.join(".gemini")).unwrap();
+            assert!(probe(&ctx).is_err());
+            assert!(install_unlocked(&ctx).is_err());
+        }
     }
 }

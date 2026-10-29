@@ -1,6 +1,6 @@
 //! 跨平台路径：配置目录、临时目录、Cursor 相关路径。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// 用户主目录（解析失败时回退到当前目录，保证不 panic）。
 pub fn home() -> PathBuf {
@@ -100,7 +100,12 @@ pub fn update_state_lock() -> PathBuf {
 /// 它与用户设置 `config.json` 分离，只用于区分“用户预存配置”和“AskHuman 实际追加配置”，
 /// 从而在卸载时只删除本应用拥有的增量。
 pub fn integration_state_file() -> PathBuf {
-    config_dir().join("integration-state.json")
+    integration_state_file_in(&config_dir())
+}
+
+/// The ownership ledger below an explicit configuration directory.
+pub fn integration_state_file_in(dir: &Path) -> PathBuf {
+    dir.join("integration-state.json")
 }
 
 /// Cross-process lock for all integration artifact mutations.
@@ -358,7 +363,12 @@ pub fn pi_sessions_dir() -> PathBuf {
 
 /// Shared rules for local Antigravity clients; agy availability is a separate host diagnostic.
 pub fn antigravity_rule_file() -> PathBuf {
-    home().join(".gemini/config/rules/askhuman-antigravity.md")
+    antigravity_rule_file_in(&home())
+}
+
+/// The shared Antigravity rule below an explicit home directory.
+pub fn antigravity_rule_file_in(home_dir: &Path) -> PathBuf {
+    home_dir.join(".gemini/config/rules/askhuman-antigravity.md")
 }
 
 /// Global MCP configuration for Google Antigravity.

@@ -232,6 +232,18 @@ mod platform {
         }
         Ok(fd)
     }
+    /// Name the directory that broke the walk. A bare `Not a directory (os error 20)` does not say
+    /// which link was refused, and `doctor` and settings show the error as is. The error kind is
+    /// preserved because callers treat `NotFound` as "absent".
+    fn open_error(path: &Path, error: std::io::Error) -> anyhow::Error {
+        let hint = match error.raw_os_error() {
+            Some(libc::ENOTDIR | libc::ELOOP) => {
+                "; links and non-directories are not accepted here"
+            }
+            _ => "",
+        };
+        std::io::Error::new(error.kind(), format!("{}: {error}{hint}", path.display())).into()
+    }
     impl Dir {
         fn root() -> Result<Self> {
             let fd = unsafe {
@@ -254,9 +266,15 @@ mod platform {
                     libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
                 )
             };
+            // Read errno before anything else can touch it.
+            let failure = (fd < 0).then(std::io::Error::last_os_error);
+            let path = self.path.join(component);
+            if let Some(error) = failure {
+                return Err(open_error(&path, error));
+            }
             Ok(Self {
-                path: self.path.join(component),
-                file: unsafe { File::from_raw_fd(cvt(fd)?) },
+                path,
+                file: unsafe { File::from_raw_fd(fd) },
             })
         }
         fn open(path: &Path) -> Result<Self> {
@@ -1549,6 +1567,24 @@ mod platform {
             symlink(home.path(), home.path().join(".gemini")).unwrap();
             assert!(super::super::install_unlocked(&ctx).is_err());
             assert!(!ctx.integration_state_file.exists());
+        }
+        #[test]
+        fn link_rejection_names_the_directory_and_keeps_absent_distinct() {
+            let (home, ctx) = context();
+            symlink(home.path(), home.path().join(".gemini")).unwrap();
+            let linked = format!("{:#}", super::super::probe(&ctx).unwrap_err());
+            assert!(linked.contains(".gemini"), "{linked}");
+            assert!(linked.contains("links and non-directories"), "{linked}");
+
+            // A missing directory keeps its `NotFound` kind: callers read it as "absent".
+            let (_other, absent) = context();
+            let missing = Dir::open(absent.target_path.parent().unwrap()).unwrap_err();
+            assert_eq!(
+                missing
+                    .downcast_ref::<std::io::Error>()
+                    .map(std::io::Error::kind),
+                Some(std::io::ErrorKind::NotFound)
+            );
         }
         #[test]
         fn interrupted_updates_and_uninstalls_restore_bytes_and_identity() {
