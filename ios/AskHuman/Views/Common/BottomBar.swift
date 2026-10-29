@@ -30,8 +30,26 @@ extension View {
 
     /// Text on the bar that is not a control: a glass chip from iOS 26, where it would otherwise sit
     /// straight on the content that scrolls by underneath; as it is before.
-    func barStatusChip() -> some View {
-        modifier(BarStatusChip())
+    ///
+    /// `compact` is a line of caption text on a chip of its own above the controls. Otherwise the chip is
+    /// a block in the row of the controls, as tall as a button; with `fillsHeight` it takes the height
+    /// of that row (lay the row out with `fixedSize(horizontal: false, vertical: true)`), so that the
+    /// chip and the buttons beside it are one height.
+    func barStatusChip(compact: Bool = false, fillsHeight: Bool = false) -> some View {
+        modifier(BarStatusChip(compact: compact, fillsHeight: fillsHeight))
+    }
+
+    /// A compact chip that is also a button: `barStatusChip(compact: true)` in two halves. The label gets
+    /// the padding, so that all of the chip is what is tapped, and the button gets the glass. Do not put
+    /// the glass inside the label: a tap on such a button did nothing on iOS 26.2 (the page did not scroll
+    /// where the hint leads), while it worked on 27.0.
+    func barChipButtonLabel() -> some View {
+        modifier(BarChipButtonLabel())
+    }
+
+    /// The glass of a chip that is a button, around the button (see `barChipButtonLabel()`).
+    func barChipButtonGlass() -> some View {
+        modifier(BarChipButtonGlass())
     }
 
     /// The bar's main button: tinted glass from iOS 26, a filled capsule before.
@@ -89,12 +107,47 @@ private struct ClassicBarBacking: ViewModifier {
 }
 
 private struct BarStatusChip: ViewModifier {
+    let compact: Bool
+    let fillsHeight: Bool
+
+    // The radii make a capsule at the usual heights (a large button, a line of caption text) and stay
+    // round without clipping the text when the chip grows with the text size.
+    static let compactInsets = EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+    static let compactRadius: CGFloat = 16
+
     func body(content: Content) -> some View {
         if #available(iOS 26, *) {
+            if compact {
+                content
+                    .padding(Self.compactInsets)
+                    .glassEffect(.regular, in: .rect(cornerRadius: Self.compactRadius))
+            } else {
+                content
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .frame(maxHeight: fillsHeight ? .infinity : nil)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 25))
+            }
+        } else {
             content
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        }
+    }
+}
+
+private struct BarChipButtonLabel: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.padding(BarStatusChip.compactInsets).contentShape(.rect)
+        } else {
+            content
+        }
+    }
+}
+
+private struct BarChipButtonGlass: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.glassEffect(.regular, in: .rect(cornerRadius: BarStatusChip.compactRadius))
         } else {
             content
         }

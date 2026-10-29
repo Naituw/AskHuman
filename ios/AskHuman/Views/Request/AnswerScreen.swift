@@ -546,24 +546,17 @@ private struct SendBar: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            // The floating bar shows the upload inside the status chip, with the text it belongs to.
+            // The floating bar shows the upload inside the count chip, with the text it belongs to.
             if !BottomBar.floats, let progress = composer.uploadProgress {
                 ProgressView(value: progress).progressViewStyle(.linear)
             }
             GlassGroup(spacing: 8) {
-                let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 12))
-                layout {
-                    statusBlock
-                    if !stacked { Spacer(minLength: 8) }
-                    HStack(spacing: 12) {
-                        // Sending waits until the last question was on screen; until then the button leads
-                        // there. After that "Send" takes the main place, and "Next" stays beside it while there
-                        // are questions below the screen, as the popup's "Next" does until it reaches the last.
-                        if composer.hasReachedEnd, moreBelow {
-                            nextIconButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
-                        }
-                        primaryButton
-                    }
+                VStack(alignment: .leading, spacing: 10) {
+                    // On the floating bar the hint is a chip of its own above the row. In the row it would
+                    // make the count chip two or three lines tall, and the buttons beside it a different
+                    // height from it; this way the row keeps one height whatever the hint says.
+                    if BottomBar.floats, let hint { hintView(hint, chip: true) }
+                    controls
                 }
             }
         }
@@ -574,24 +567,58 @@ private struct SendBar: View {
         .animation(.snappy(duration: 0.25), value: moreBelow)
     }
 
-    private var statusBlock: some View {
-        let uploading = BottomBar.floats ? composer.uploadProgress : nil
-        return VStack(alignment: .leading, spacing: 2) {
-            Text("Answered \(composer.answeredCount)/\(composer.questionCount)")
-                .font(.subheadline.weight(.medium))
-                .accessibilityIdentifier("answered-count")
-            if let hint {
-                hintView(hint)
+    /// The count and the buttons. On the floating bar they are laid out at the height of the tallest of
+    /// them and each takes all of it, so that the chip and the capsules beside it are one height.
+    private var controls: some View {
+        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
+            statusBlock
+            if !stacked { Spacer(minLength: 8) }
+            HStack(spacing: 12) {
+                // Sending waits until the last question was on screen; until then the button leads
+                // there. After that "Send" takes the main place, and "Next" stays beside it while there
+                // are questions below the screen, as the popup's "Next" does until it reaches the last.
+                if composer.hasReachedEnd, moreBelow {
+                    nextIconButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
+                }
+                primaryButton
             }
         }
-        // The progress line is drawn over the bottom of the text, in room kept for it, so that it takes
-        // the width of the text and does not widen the chip.
-        .padding(.bottom, uploading == nil ? 0 : 10)
-        .overlay(alignment: .bottom) {
-            if let uploading { ProgressView(value: uploading).progressViewStyle(.linear) }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Set on what sits in the row beside the buttons, to be as tall as the row.
+    private var rowFill: CGFloat? { BottomBar.floats && !stacked ? .infinity : nil }
+
+    @ViewBuilder
+    private var statusBlock: some View {
+        if BottomBar.floats {
+            countChip
+        } else {
+            VStack(alignment: .leading, spacing: 2) {
+                count
+                if let hint { hintView(hint, chip: false) }
+            }
         }
-        .frame(maxWidth: stacked ? .infinity : nil, alignment: .leading)
-        .barStatusChip()
+    }
+
+    private var count: some View {
+        Text("Answered \(composer.answeredCount)/\(composer.questionCount)")
+            .font(.subheadline.weight(.medium))
+            .accessibilityIdentifier("answered-count")
+    }
+
+    private var countChip: some View {
+        let uploading = composer.uploadProgress
+        return count
+            // The progress line is drawn over the bottom of the text, in room kept for it, so that it takes
+            // the width of the text and does not widen the chip.
+            .padding(.bottom, uploading == nil ? 0 : 10)
+            .overlay(alignment: .bottom) {
+                if let uploading { ProgressView(value: uploading).progressViewStyle(.linear) }
+            }
+            .frame(maxWidth: stacked ? .infinity : nil, alignment: .leading)
+            .barStatusChip(fillsHeight: !stacked)
     }
 
     /// "Next" until the last question was reached, then "Send" in the same place. It is one button, so
@@ -616,7 +643,7 @@ private struct SendBar: View {
                     }
                 }
             }
-            .frame(minWidth: 84, maxWidth: stacked ? .infinity : nil)
+            .frame(minWidth: 84, maxWidth: stacked ? .infinity : nil, maxHeight: rowFill)
         }
         .barPrimaryButton()
         .disabled(reached ? !enabled : (ended || sendingState))
@@ -629,7 +656,7 @@ private struct SendBar: View {
         Button(action: onNext) {
             Image(systemName: "chevron.down")
                 .font(.body.weight(.semibold))
-                .frame(minWidth: 22)
+                .frame(minWidth: 22, maxHeight: rowFill)
         }
         .barSecondaryButton()
         .disabled(ended || sendingState)
@@ -659,21 +686,32 @@ private struct SendBar: View {
         return nil
     }
 
+    /// The hint, as a chip of its own on the floating bar. A hint that leads somewhere is a button, and the
+    /// whole chip is what is tapped (its glass is around the button, not in the label: see
+    /// `barChipButtonLabel()`).
     @ViewBuilder
-    private func hintView(_ hint: (text: LocalizedStringKey, color: Color, leads: Bool)) -> some View {
+    private func hintView(_ hint: (text: LocalizedStringKey, color: Color, leads: Bool), chip: Bool) -> some View {
+        let label = HStack(spacing: 3) {
+            Text(hint.text).multilineTextAlignment(.leading)
+            if hint.leads { Image(systemName: "chevron.right").font(.caption2.weight(.bold)) }
+        }
+        .font(.caption)
+        .foregroundStyle(hint.color)
         if hint.leads {
-            Button(action: onJump) {
-                HStack(spacing: 3) {
-                    Text(hint.text).multilineTextAlignment(.leading)
-                    Image(systemName: "chevron.right").font(.caption2.weight(.bold))
-                }
-                .font(.caption)
-                .foregroundStyle(hint.color)
+            if chip {
+                Button(action: onJump) { label.barChipButtonLabel() }
+                    .buttonStyle(.plain)
+                    .barChipButtonGlass()
+                    .accessibilityIdentifier("hint-jump")
+            } else {
+                Button(action: onJump) { label }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("hint-jump")
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("hint-jump")
+        } else if chip {
+            label.barStatusChip(compact: true)
         } else {
-            Text(hint.text).font(.caption).foregroundStyle(hint.color)
+            label
         }
     }
 }

@@ -74,11 +74,11 @@ struct ConfirmScreen: View {
         return GlassGroup(spacing: 4) {
             VStack(spacing: BottomBar.floats ? 8 : 6) {
                 if ended {
-                    Text("This request has ended.").font(.caption).foregroundStyle(.secondary).barStatusChip()
+                    Text("This request has ended.").font(.caption).foregroundStyle(.secondary).barStatusChip(compact: true)
                 } else if !online {
-                    Text("The Mac is offline. Try again when it is back.").font(.caption).foregroundStyle(.orange).barStatusChip()
+                    Text("The Mac is offline. Try again when it is back.").font(.caption).foregroundStyle(.orange).barStatusChip(compact: true)
                 } else if sending {
-                    Text("Waiting for your Mac to confirm…").font(.caption).foregroundStyle(.secondary).barStatusChip()
+                    Text("Waiting for your Mac to confirm…").font(.caption).foregroundStyle(.secondary).barStatusChip(compact: true)
                 }
                 Button {
                     Task {
