@@ -88,6 +88,7 @@ public final class LoopbackClient: BrokerClient, @unchecked Sendable {
     /// Endpoint kinds the test broker refuses (to exercise the TLS → WSS fallback).
     public var refusedKinds: Set<BrokerEndpoint.Kind> = []
     private var publishesFail = false
+    private var inboundDead = false
     private var publishHook: (@Sendable (String) async -> Void)?
     private var attemptLog: [BrokerEndpoint.Kind] = []
 
@@ -96,6 +97,14 @@ public final class LoopbackClient: BrokerClient, @unchecked Sendable {
     public var failsPublishes: Bool {
         get { lock.lock(); defer { lock.unlock() }; return publishesFail }
         set { lock.lock(); publishesFail = newValue; lock.unlock() }
+    }
+
+    /// A link that brings nothing in: publishes go out and are acknowledged, but nothing is delivered
+    /// to this client, as on a connection that died on the way in without anyone noticing. A new
+    /// connection is a healthy one again.
+    public var dropsInbound: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return inboundDead }
+        set { lock.lock(); inboundDead = newValue; lock.unlock() }
     }
 
     /// Awaited with the topic before every publish: a test can hold a message on its way with it.
@@ -139,6 +148,7 @@ public final class LoopbackClient: BrokerClient, @unchecked Sendable {
         will = params.will
         filters = []
         connected = true
+        inboundDead = false
         via = endpoint.kind
         lock.unlock()
         broker.register(self)
@@ -213,7 +223,7 @@ public final class LoopbackClient: BrokerClient, @unchecked Sendable {
 
     fileprivate func deliver(topic: String, payload: Data, retained: Bool) {
         lock.lock()
-        let wanted = connected && filters.contains { LoopbackBroker.matches(filter: $0, topic: topic) }
+        let wanted = connected && !inboundDead && filters.contains { LoopbackBroker.matches(filter: $0, topic: topic) }
         lock.unlock()
         if wanted { continuation.yield(.message(topic: topic, payload: payload, retained: retained)) }
     }

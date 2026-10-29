@@ -18,14 +18,14 @@ final class E2EPhone: @unchecked Sendable {
 
     init(
         deviceName: String = "E2E iPhone", bundleId: String = "com.example.e2e", secrets: MemorySecretStore = MemorySecretStore(),
-        root: URL? = nil
+        root: URL? = nil, broker: BrokerClient = MQTTBrokerClient()
     ) {
         self.root = root ?? FileManager.default.temporaryDirectory.appendingPathComponent("ah-e2e-phone-\(UUID().uuidString.prefix(8))")
         self.secrets = secrets
         vault = Vault(secrets: secrets)
         store = LocalStore(root: self.root.appendingPathComponent("store"))
         engine = PhoneEngine(
-            vault: vault, store: store, broker: MQTTBrokerClient(),
+            vault: vault, store: store, broker: broker,
             config: EngineConfig(
                 deviceName: deviceName, appVersion: "e2e", bundleId: bundleId, pushEnv: "dev", allowPlainLoopback: true,
                 assetDirectory: self.root.appendingPathComponent("assets")

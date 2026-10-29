@@ -216,6 +216,14 @@ public actor MockBackend: RemoteBackend {
         publish()
     }
 
+    /// Mac ids the app asked to look into the link of (a notification arrived for a request the inbox lacks).
+    public private(set) var linkChecks: [String] = []
+
+    /// The mock has no link to repair: it only keeps the Mac ids for tests to see.
+    public func checkLink(macId: String) async {
+        linkChecks.append(macId)
+    }
+
     public private(set) var deviceName = "iPhone"
 
     public func setDeviceName(_ name: String) async {

@@ -31,8 +31,9 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(link, .online)
     }
 
-    func testHelloIsRetriedThenGivenUp() async throws {
-        let h = Harness()
+    /// Pairs with a Mac that does not answer `hello` until the test lets it; returns once the first
+    /// hello is out.
+    private func pairWithASilentMac(_ h: Harness) async {
         await h.mac.start(password: "pw")
         h.mac.autoHello = false
         await h.engine.start()
@@ -40,11 +41,134 @@ final class SessionTests: XCTestCase {
         await eventually("knock") { h.mac.sas != nil }
         await h.mac.allow()
         await eventually("first hello") { h.mac.count(Wire.T.hello) == 1 }
+    }
+
+    /// The nonce of the n-th hello the Mac received (counting from 0).
+    private func helloNonce(_ h: Harness, _ index: Int) throws -> String {
+        try h.mac.received(Wire.T.hello)[index].body(as: Hello.self).nonce
+    }
+
+    func testHelloIsRetriedInRoundsThatGetSlower() async throws {
+        let h = Harness()
+        await pairWithASilentMac(h)
         await h.advance(until: { h.mac.count(Wire.T.hello) == 2 }, "second hello")
         await h.advance(until: { h.mac.count(Wire.T.hello) == 3 }, "third hello")
-        await h.clock.advance(by: 60)
+
+        // The first round is over after 15 seconds and the next one starts 30 seconds later.
+        await h.pass(seconds: 20)
+        XCTAssertEqual(h.mac.count(Wire.T.hello), 3, "between the rounds the phone leaves the Mac alone")
+        await h.advance(until: { h.mac.count(Wire.T.hello) == 4 }, limit: 40, "the second round")
+        await h.advance(until: { h.mac.count(Wire.T.hello) == 6 }, "the end of the second round")
+
+        // A round that failed again is followed by a longer wait: a minute.
+        await h.pass(seconds: 50)
+        XCTAssertEqual(h.mac.count(Wire.T.hello), 6)
+        await h.advance(until: { h.mac.count(Wire.T.hello) == 7 }, limit: 30, "the third round")
+        let state = await h.state()
+        XCTAssertNotEqual(state.macs.first?.link, .online)
+    }
+
+    func testTheSlowRetriesEndWithTheFirstAnswer() async throws {
+        let h = Harness()
+        await pairWithASilentMac(h)
+        await h.advance(until: { h.mac.count(Wire.T.hello) == 3 }, "third hello")
+        await h.pass(seconds: 20)
+        await h.advance(until: { h.mac.count(Wire.T.hello) == 4 }, limit: 40, "the second round")
+
+        h.mac.autoHello = true
+        await h.advance(until: { await h.state().macs.first?.link == .online }, "an answer to the next hello")
+        let hellos = h.mac.count(Wire.T.hello)
+        await h.pass(seconds: 300)
+        XCTAssertEqual(h.mac.count(Wire.T.hello), hellos, "once it answered, nothing asks again")
+    }
+
+    func testAnAnswerToAnEarlierHelloStillCompletesTheHandshake() async throws {
+        let h = Harness()
+        await pairWithASilentMac(h)
+        await h.advance(until: { h.mac.count(Wire.T.hello) == 2 }, "second hello")
+
+        // A slow Mac: its answer to the first hello arrives after the phone has sent the second.
+        await h.mac.sendHelloSync(to: h.mac.pairedPhones[0], nonce: try helloNonce(h, 0))
+        await eventually("online") { await h.state().macs.first?.link == .online }
+
+        // The answer to the second one comes later still. The handshake is done, so it changes nothing:
+        // with the epoch it carries here it would break the session if it counted.
+        let late = HelloAck(
+            nonce: try helloNonce(h, 1), epoch: "bogus", macName: "Home Mac", caps: h.mac.caps,
+            slot: SlotInfo(active: true, autoActivation: false)
+        )
+        await h.mac.sendDown(late, to: h.mac.pairedPhones[0])
+        await h.mac.deliver(sampleAsk())
+        await eventually("a request that still arrives live") { await h.state().inbox.count == 1 }
+    }
+
+    func testAnAnswerThatComesAfterTheRoundWasGivenUpIsAccepted() async throws {
+        let h = Harness()
+        await pairWithASilentMac(h)
+        await h.advance(until: { h.mac.count(Wire.T.hello) == 3 }, "third hello")
+        await h.pass(seconds: 8)
+        var state = await h.state()
+        XCTAssertNotEqual(state.macs.first?.link, .online)
+
+        await h.mac.sendHelloSync(to: h.mac.pairedPhones[0], nonce: try helloNonce(h, 2))
+        await eventually("online") { await h.state().macs.first?.link == .online }
+        state = await h.state()
+        XCTAssertEqual(state.macs.first?.link, .online)
+        // The slow retry that was waiting is gone.
+        await h.pass(seconds: 100)
+        XCTAssertEqual(h.mac.count(Wire.T.hello), 3)
+    }
+
+    func testAnAnswerToAHelloOfAnEarlierSessionIsIgnored() async throws {
+        let h = Harness()
+        await pairWithASilentMac(h)
+        let old = try helloNonce(h, 0)
+
+        // The Mac goes away and comes back: a new session, in which the old nonce means nothing.
+        await h.mac.publishPresence(online: false)
+        await eventually("offline") { await h.state().macs.first?.link == .macOffline }
+        await h.mac.publishPresence(online: true)
+        await eventually("a hello of the new session") { h.mac.count(Wire.T.hello) == 2 }
+        await h.mac.sendHelloSync(to: h.mac.pairedPhones[0], nonce: old)
         try await Task.sleep(nanoseconds: 50_000_000)
-        XCTAssertEqual(h.mac.count(Wire.T.hello), 3, "three attempts, then it waits for the Mac's presence to change")
+        let state = await h.state()
+        XCTAssertNotEqual(state.macs.first?.link, .online)
+    }
+
+    func testPullToRefreshStartsAHandshakeThatNeverFinishedOver() async throws {
+        let h = Harness()
+        await pairWithASilentMac(h)
+        await h.advance(until: { h.mac.count(Wire.T.hello) == 3 }, "third hello")
+        await h.pass(seconds: 8)
+        var state = await h.state()
+        XCTAssertNotEqual(state.macs.first?.link, .online)
+
+        // The Mac is reachable again; the user pulls the list down. No waiting for the next round.
+        h.mac.autoHello = true
+        await h.engine.refresh()
+        await eventually("online without advancing the clock") { await h.state().macs.first?.link == .online }
+        state = await h.state()
+        XCTAssertEqual(state.macs.first?.link, .online)
+        XCTAssertEqual(h.mac.count(Wire.T.hello), 4)
+    }
+
+    func testALinkCheckStartsAHandshakeThatNeverFinishedOverWithoutReconnecting() async throws {
+        let h = Harness()
+        await pairWithASilentMac(h)
+        await h.advance(until: { h.mac.count(Wire.T.hello) == 3 }, "third hello")
+        await h.pass(seconds: 8)
+        let connections = h.phone.attempts.count
+
+        // A request notification reaches the open app, and the phone's inbox is empty.
+        h.mac.autoHello = true
+        await h.engine.checkLink(macId: h.mac.macId)
+        await eventually("online without advancing the clock") { await h.state().macs.first?.link == .online }
+        XCTAssertEqual(h.mac.count(Wire.T.hello), 4)
+        // The probe came back: the connection was fine all along and is not replaced.
+        await h.pass(seconds: Int(PhoneEngine.probeTimeout) + 2)
+        XCTAssertEqual(h.phone.attempts.count, connections)
+        let state = await h.state()
+        XCTAssertEqual(state.macs.first?.link, .online)
     }
 
     func testRefreshAsksEveryReachableMacForAFreshInboxSnapshot() async throws {

@@ -90,6 +90,19 @@ extension AppStore {
         return item(id: macId + "/" + rid) != nil
     }
 
+    /// A notification arrived while the app is open for a request the phone does not hold. A Mac pushes
+    /// a request only when the phone did not acknowledge it in time, so the phone's link or session to
+    /// that Mac is broken: have the engine look into it now (`RemoteBackend.checkLink`) rather than
+    /// leave the inbox empty until the user pulls it down. Not for the news that a request was handled
+    /// (`resolved`), nor for an Agent's (`follow.*`): neither says anything about the inbox.
+    public func noteUnknownRequest(macId: String, rid: String, kind: String?) {
+        guard state.foreground, let kind, kind != "resolved", !kind.hasPrefix("follow.") else { return }
+        // A request that was here a moment ago (it ended, or was answered on this phone) is not missing.
+        guard displayItem(id: CachedRequest.key(macId, rid)) == nil else { return }
+        let backend = backend
+        Task { await backend.checkLink(macId: macId) }
+    }
+
     /// Opens or closes the live frames of the Agent a page shows.
     func setWatch(_ id: String, open: Bool) {
         guard let (macId, agentKey) = AgentItem.split(id) else { return }

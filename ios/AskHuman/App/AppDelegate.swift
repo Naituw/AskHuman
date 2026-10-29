@@ -24,7 +24,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUser
     // the app (an assertion in `UIApplication`, seen on the iOS 27 simulator).
 
     /// A notification arrives while the app is open: the in-app banner already covers new requests,
-    /// so only show the system one for something the inbox does not know.
+    /// so only show the system one for something the inbox does not know. A request the inbox does
+    /// not know here means the phone missed it, so the link to its Mac is looked into as well.
     @MainActor
     func userNotificationCenter(
         _ center: UNUserNotificationCenter, willPresent notification: UNNotification
@@ -33,7 +34,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUser
         guard let store = AppEnvironment.current?.store, let rid = info["rid"] as? String, let mac = info["mac"] as? String else {
             return [.banner, .list, .sound]
         }
-        let known = store.coversNotification(macId: mac, rid: rid, kind: info["kind"] as? String)
+        let kind = info["kind"] as? String
+        let known = store.coversNotification(macId: mac, rid: rid, kind: kind)
+        if !known { store.noteUnknownRequest(macId: mac, rid: rid, kind: kind) }
         return known ? [] : [.banner, .list, .sound]
     }
 

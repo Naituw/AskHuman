@@ -239,6 +239,105 @@ final class ConnectionTests: XCTestCase {
         await h.advance(until: { h.mac.count(Wire.T.ping) == 25 }, step: 0.5, limit: 20, "all pings")
         await sender.value
     }
+
+    // MARK: link check (a notification for a request the inbox does not hold)
+
+    private func inboxResyncs(_ h: Harness) -> Int {
+        h.mac.received(Wire.T.resync).filter { (try? $0.body(as: Resync.self).stream) == "inbox" }.count
+    }
+
+    func testALinkCheckOnAHealthyLinkAsksForTheInboxAndKeepsTheConnection() async throws {
+        let h = Harness()
+        await h.pair()
+        let connections = h.phone.attempts.count
+        let before = inboxResyncs(h)
+        // The Mac holds a request the phone never heard of: its live message went astray.
+        await h.mac.deliver(sampleAsk(), to: "nobody")
+        let empty = await h.state().inbox.isEmpty
+        XCTAssertTrue(empty)
+
+        await h.engine.checkLink(macId: h.mac.macId)
+        await eventually("the request, from a fresh snapshot") { await h.state().inbox.count == 1 }
+        XCTAssertEqual(inboxResyncs(h), before + 1)
+        // The probe came back through the broker, so the connection stays as it is.
+        await h.pass(seconds: Int(PhoneEngine.probeTimeout) + 2)
+        XCTAssertEqual(h.phone.attempts.count, connections)
+        XCTAssertTrue(h.phone.isConnected)
+    }
+
+    func testALinkThatBringsNothingInIsReplacedWhenTheProbeDoesNotComeBack() async throws {
+        let h = Harness()
+        await h.pair()
+        let connections = h.phone.attempts.count
+        h.phone.dropsInbound = true
+        // The Mac's live message is lost on the way in, and nothing tells the phone.
+        await h.mac.deliver(sampleAsk())
+        try await Task.sleep(nanoseconds: 30_000_000)
+        let empty = await h.state().inbox.isEmpty
+        XCTAssertTrue(empty)
+
+        await h.engine.checkLink(macId: h.mac.macId)
+        // The probe is given its time: the connection is replaced only when it ran out.
+        await h.pass(seconds: Int(PhoneEngine.probeTimeout) - 1)
+        XCTAssertEqual(h.phone.attempts.count, connections)
+        await h.advance(until: { h.phone.attempts.count == connections + 1 }, limit: 10, "a new connection")
+        await eventually("online again") { await h.state().macs.first?.link == .online }
+        await eventually("the request, from the new session's snapshot") { await h.state().inbox.count == 1 }
+    }
+
+    func testALinkThatRefusesPublishesIsReplacedAtOnce() async throws {
+        let h = Harness()
+        await h.pair()
+        let connections = h.phone.attempts.count
+        h.phone.failsPublishes = true
+        await h.engine.checkLink(macId: h.mac.macId)
+        // No waiting for the probe's time limit: the failed publish already says it all.
+        await eventually("a new connection without the clock moving") { h.phone.attempts.count == connections + 1 }
+        h.phone.failsPublishes = false
+        await h.advance(until: { await h.state().macs.first?.link == .online }, "the new session")
+    }
+
+    func testALinkCheckDoesNotWaitOutABackoff() async throws {
+        let h = Harness()
+        await h.pair()
+        h.phone.refusedKinds = [.tls, .wss]
+        h.phone.drop()
+        await eventually("broker down") { await h.state().macs.first?.link == .brokerDown }
+        await h.advance(until: {
+            if case .backoff = await h.state().phase { return true }
+            return false
+        }, "a backoff after the failed reconnect")
+
+        h.phone.refusedKinds = []
+        await h.engine.checkLink(macId: h.mac.macId)
+        await eventually("online again without advancing the clock") { await h.state().macs.first?.link == .online }
+    }
+
+    func testNotificationsDoNotMakeTheEngineRepairOverAndOver() async throws {
+        let h = Harness()
+        await h.pair()
+        let before = inboxResyncs(h)
+        await h.engine.checkLink(macId: h.mac.macId)
+        await h.engine.checkLink(macId: h.mac.macId)
+        await eventually("one resync") { self.inboxResyncs(h) == before + 1 }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(inboxResyncs(h), before + 1, "a burst of notifications is one repair")
+
+        await h.pass(seconds: Int(PhoneEngine.repairCooldown) + 1)
+        await h.engine.checkLink(macId: h.mac.macId)
+        await eventually("another resync once the cooldown is over") { self.inboxResyncs(h) == before + 2 }
+    }
+
+    func testALinkCheckInTheBackgroundDoesNothing() async throws {
+        let h = Harness()
+        await h.pair()
+        await h.engine.setForeground(false)
+        let before = inboxResyncs(h)
+        await h.engine.checkLink(macId: h.mac.macId)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(inboxResyncs(h), before)
+        XCTAssertFalse(h.phone.isConnected, "a notification must not bring a backgrounded app online")
+    }
 }
 
 /// Holds a caller until the test lets it go.

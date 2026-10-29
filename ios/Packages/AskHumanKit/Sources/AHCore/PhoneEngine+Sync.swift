@@ -7,7 +7,16 @@ import AHStore
 
 extension PhoneEngine {
     static let helloTimeout: TimeInterval = 5
+    /// Hellos in one round: one every `helloTimeout` seconds until the Mac answers.
     static let helloAttempts = 3
+    /// When a whole round went unanswered, the next one starts after the first of these delays;
+    /// each further failed round waits for the next, the last one repeating. A Mac that was only
+    /// busy, or a link that was only bad for a while, gets another chance without the phone
+    /// pestering one that never answers.
+    static let helloRetryDelays: [TimeInterval] = [30, 60, 120]
+    /// How many of the latest hellos still count when their ack arrives: a slow Mac's answer to an
+    /// earlier attempt completes the handshake just as well as the newest one's.
+    static let helloNoncesKept = 8
 
     /// Sends `hello` when the connection is subscribed, the Mac is online and no handshake is
     /// running or done for the Mac's current epoch.
@@ -24,11 +33,26 @@ extension PhoneEngine {
         }
     }
 
+    /// Starts the handshake over for a Mac that is online but never completed it, without waiting
+    /// for the next scheduled attempt: the user pulled to refresh, or a notification showed that
+    /// the phone and the Mac are out of step. Does nothing for a Mac that answered already.
+    func restartHello(_ macId: String) async {
+        guard subscribed, case .connected = phase, let mac = macs[macId], mac.online, !mac.sync.isHandshaken else { return }
+        macs[macId]?.helloRounds = 0
+        await sendHello(macId, attempt: 1)
+    }
+
     func sendHello(_ macId: String, attempt: Int) async {
         guard var mac = macs[macId] else { return }
         let nonce = Bytes.newMsgId()
         mac.sync = .helloSent(nonce: nonce, attempt: attempt)
+        mac.helloNonces.append(nonce)
+        if mac.helloNonces.count > Self.helloNoncesKept {
+            mac.helloNonces.removeFirst(mac.helloNonces.count - Self.helloNoncesKept)
+        }
         macs[macId] = mac
+        // A slow retry that was waiting is replaced by this attempt.
+        cancelTimer("hello.retry." + macId)
         let hello = Hello(nonce: nonce, appVer: config.appVersion, deviceName: config.deviceName)
         await send(hello, to: macId)
         after("hello." + macId, Self.helloTimeout) { engine in await engine.helloTimedOut(macId, nonce: nonce) }
@@ -39,15 +63,31 @@ extension PhoneEngine {
         if attempt < Self.helloAttempts {
             await sendHello(macId, attempt: attempt + 1)
         } else {
-            // Give up until the Mac's presence changes or the connection is renewed.
+            // The Mac did not answer this round. Its presence changing or the connection being renewed
+            // starts the handshake again at once; failing that, a slower round follows by itself, and
+            // an answer to any hello of the earlier rounds is still accepted when it arrives.
             macs[macId]?.sync = .none
+            scheduleHelloRetry(macId)
         }
         publish()
     }
 
+    /// Plans the next round of hellos after one went unanswered.
+    func scheduleHelloRetry(_ macId: String) {
+        guard var mac = macs[macId] else { return }
+        let delays = Self.helloRetryDelays
+        let delay = delays[min(mac.helloRounds, delays.count - 1)]
+        mac.helloRounds += 1
+        macs[macId] = mac
+        after("hello.retry." + macId, delay) { engine in await engine.evaluateHello(macId) }
+    }
+
     func onHelloAck(_ macId: String, _ ack: HelloAck) async {
-        guard var mac = macs[macId], case .helloSent(let nonce, _) = mac.sync, nonce == ack.nonce else { return }
+        guard var mac = macs[macId], mac.awaitsHelloAck(nonce: ack.nonce) else { return }
         cancelTimer("hello." + macId)
+        cancelTimer("hello.retry." + macId)
+        mac.helloNonces = []
+        mac.helloRounds = 0
         mac.sync = .acked
         mac.epoch = ack.epoch
         mac.caps = ack.caps
@@ -125,6 +165,8 @@ extension PhoneEngine {
         taskTodos = taskTodos.filter { !$0.key.hasPrefix(macId + "|") }
         followRequests[macId] = nil
         cancelTimer("hello." + macId)
+        cancelTimer("hello.retry." + macId)
+        lastRepairAt[macId] = nil
         vault.removePairing(macId: macId)
         store.forget(macId: macId)
         for key in requests.keys where requests[key]?.cached.macId == macId {

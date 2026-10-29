@@ -20,8 +20,13 @@ public protocol RemoteBackend: AnyObject, Sendable {
     /// in the meantime keeps the connection.
     func setInactive() async
     /// Pull to refresh: reconnects when the link is down and asks every reachable Mac for an
-    /// authoritative inbox snapshot.
+    /// authoritative inbox snapshot (or, for a Mac whose handshake never finished, starts it over).
     func refresh() async
+    /// A notification about a request this phone does not hold reached the open app. A Mac pushes
+    /// only when it got no acknowledgement for the request it sent live, so the link or the session
+    /// to that Mac is not what both sides think it is. Probes the broker connection (a dead one is
+    /// replaced at once), then starts the Mac's handshake over or asks for its inbox again.
+    func checkLink(macId: String) async
 
     /// The name the Macs show for this phone (used by pairings made and sessions opened from now on).
     func setDeviceName(_ name: String) async

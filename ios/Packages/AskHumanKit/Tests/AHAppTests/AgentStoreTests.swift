@@ -109,6 +109,50 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertFalse(store.coversNotification(macId: MockData.homeMacId, rid: "claude:unknown", kind: "follow.done"))
     }
 
+    /// The Macs the app asked the backend to check the link of, once the asynchronous call went through.
+    private func linkChecks() async -> [String] {
+        try? await Task.sleep(for: .milliseconds(80))
+        return await backend.linkChecks
+    }
+
+    func testANotificationForARequestTheInboxLacksHasTheLinkChecked() async {
+        await make()
+        let request = store.state.inbox.first!
+        // What the inbox holds, news that a request was handled and an Agent's news say nothing
+        // about a request the phone missed.
+        store.noteUnknownRequest(macId: request.macId, rid: request.requestId, kind: "ask")
+        store.noteUnknownRequest(macId: MockData.homeMacId, rid: "unknown", kind: "resolved")
+        store.noteUnknownRequest(macId: MockData.homeMacId, rid: "claude:unknown", kind: "follow.done")
+        store.noteUnknownRequest(macId: MockData.homeMacId, rid: "unknown", kind: nil)
+        let none = await linkChecks()
+        XCTAssertTrue(none.isEmpty)
+
+        store.noteUnknownRequest(macId: MockData.homeMacId, rid: "unknown", kind: "ask")
+        let checked = await linkChecks()
+        XCTAssertEqual(checked, [MockData.homeMacId])
+    }
+
+    func testARequestThatLeftTheInboxJustNowIsNotAMissingOne() async {
+        await make()
+        let request = store.state.inbox.first!
+        // It ended a moment ago: the inbox lost it, but the app still knows it (its page stays open).
+        await backend.simulateFinishedElsewhere(requestId: request.requestId)
+        await eventually { self.store.item(id: request.id) == nil }
+        XCTAssertNotNil(store.displayItem(id: request.id))
+        store.noteUnknownRequest(macId: request.macId, rid: request.requestId, kind: "ask")
+        let checks = await linkChecks()
+        XCTAssertTrue(checks.isEmpty)
+    }
+
+    func testNoLinkIsCheckedForANotificationWhileTheAppIsInTheBackground() async {
+        await make()
+        await store.setForeground(false)
+        await eventually { !self.store.state.foreground }
+        store.noteUnknownRequest(macId: MockData.homeMacId, rid: "unknown", kind: "ask")
+        let checks = await linkChecks()
+        XCTAssertTrue(checks.isEmpty)
+    }
+
     // MARK: watch
 
     func testTheLiveFramesFollowThePageOnTheStack() async {

@@ -65,6 +65,11 @@ public actor PhoneEngine: RemoteBackend {
     var presenceSettled = false
     var foregroundPublished = false
     var clockSkew = false
+    /// The token of the link probe in flight until it comes back (`PhoneEngine+Repair.swift`).
+    var probeToken: Data?
+    /// When a notification last made the engine look into each Mac's session: a burst of
+    /// notifications must not become a burst of repairs.
+    var lastRepairAt: [String: Date] = [:]
     var timers: [String: Task<Void, Never>] = [:]
     var timerSerial = 0
     var bucket: TokenBucket
@@ -209,7 +214,13 @@ public actor PhoneEngine: RemoteBackend {
             break
         }
         for (id, mac) in macs where mac.online {
-            await requestResync(id, stream: "inbox")
+            if mac.sync.isHandshaken {
+                await requestResync(id, stream: "inbox")
+            } else {
+                // The handshake never finished: a snapshot would be ignored without an epoch, so
+                // start it over (the user is looking at a list that cannot fill up otherwise).
+                await restartHello(id)
+            }
         }
         publish()
     }
@@ -237,9 +248,12 @@ public actor PhoneEngine: RemoteBackend {
         foregroundPublished = false
         pendingSubscriptions = []
         presenceCache = [:]
+        probeToken = nil
         cancelTimer("settle")
+        cancelTimer("probe")
         for id in macs.keys {
             macs[id]?.resetSession()
+            cancelTimer("hello.retry." + id)
         }
         failTransfers(with: .macOffline)
         failInterjects(for: nil, with: .macOffline)
@@ -475,6 +489,12 @@ public actor PhoneEngine: RemoteBackend {
             return
         }
         if topic == Wire.topicDown(user: active.username, phoneId: vault.phoneId()) {
+            // The link probe publishes to this very topic: when it comes back, the connection works.
+            if let token = probeToken, payload == token {
+                probeToken = nil
+                cancelTimer("probe")
+                return
+            }
             await onDown(topic: topic, payload: payload)
             return
         }
@@ -497,6 +517,7 @@ public actor PhoneEngine: RemoteBackend {
                 interruptTasks(of: device)
             }
             mac.resetSession()
+            cancelTimer("hello.retry." + device)
         }
         mac.presence = presence
         if presence.o == 1 {
@@ -687,6 +708,10 @@ struct MacRuntime {
     var record: PairingRecord
     var presence: Presence?
     var sync: SyncPhase = .none
+    /// The latest hellos that went unanswered so far, oldest first: an ack for any of them counts.
+    var helloNonces: [String] = []
+    /// Rounds of hellos that went unanswered since the last ack, to pace the slow retries.
+    var helloRounds = 0
     var epoch: String?
     var caps: Caps?
     var slot: SlotInfo?
@@ -708,10 +733,22 @@ struct MacRuntime {
 
     var online: Bool { presence?.o == 1 }
 
+    /// Whether `nonce` answers a hello that is still waiting for its ack. Several count, not only the
+    /// latest: the Mac answers every hello it receives, and when it is slow the answer to an earlier
+    /// attempt is the first to arrive. Once the handshake is done, the rest are void.
+    func awaitsHelloAck(nonce: String) -> Bool {
+        switch sync {
+        case .none, .helloSent: return helloNonces.contains(nonce)
+        case .acked, .synced: return false
+        }
+    }
+
     /// The broker link or the Mac went away: everything learned in the session is void.
     mutating func resetSession() {
         presence = nil
         sync = .none
+        helloNonces = []
+        helloRounds = 0
         epoch = nil
         slot = nil
         slotRev = nil
