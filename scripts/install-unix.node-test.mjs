@@ -45,6 +45,9 @@ function initCheckout(root, repo, kind) {
 // size once, then `after` (what Cargo's cleanup is expected to leave behind). Other paths use the
 // real du so unrelated directories behave normally.
 function duStub(rules) {
+  const resolved = spawnSync("sh", ["-c", "command -v du"], { encoding: "utf8" });
+  assert.equal(resolved.status, 0, resolved.stderr);
+  const realDu = "'" + resolved.stdout.trim().replaceAll("'", "'\\''") + "'";
   const cases = rules.map(({ match, first, after }, i) => `*${match}*)
     n=$(cat "$TEST_DU_STATE.${i}" 2>/dev/null || echo 0)
     echo $((n + 1)) > "$TEST_DU_STATE.${i}"
@@ -56,7 +59,7 @@ dir="$2"
 case "$dir" in
 ${cases}
 esac
-exec /usr/bin/du "$@"
+exec ${realDu} "$@"
 `;
 }
 
@@ -91,6 +94,7 @@ function fixture(t, { linked = false, fresh = false, os = "Darwin", checkout = "
     mkdirSync(dir, { recursive: true });
   }
   copyFileSync(installer, path.join(repo, "scripts/install.sh"));
+  copyFileSync(new URL("./install-linux.rs", import.meta.url), path.join(repo, "scripts/install-linux.rs"));
   writeFileSync(path.join(repo, "scripts/build-frontend-if-needed.mjs"), "");
   executable(path.join(repo, "src-tauri/target/local-install/AskHuman"), newBinary);
   const target = path.join(targetDir, "AskHuman");
@@ -139,14 +143,14 @@ fi
     cargoBuildEnv: () => readFileSync(cargoBuildEnv, "utf8").trim(),
     cacheLines: () => (existsSync(cacheLog) ? readFileSync(cacheLog, "utf8").trim().split("\n") : []),
     run(extraEnv = {}) {
-      return spawnSync("/bin/bash", [path.join(repo, "scripts/install.sh")], {
+      return spawnSync("bash", [path.join(repo, "scripts/install.sh")], {
         cwd: repo,
         encoding: "utf8",
         // The suite runs on busy developer machines where the installer alone can take seconds.
         timeout: 30_000,
         env: {
           ...inheritedEnv,
-          PATH: `${stubs}:${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+          PATH: [stubs, bin, inheritedEnv.PATH].join(path.delimiter),
           INSTALL_DIR: bin,
           CODESIGN_IDENTITY: "-",
           TEST_OS: os,
@@ -172,7 +176,10 @@ function assertNoStage(f) {
 }
 
 for (const os of ["Darwin", "Linux"]) {
-  test(`${os}: publishing preserves the old open inode and unchanged installs skip replacement`, unixOnly, t => {
+  // The publisher uses Linux syscalls; Darwin's signing branch can be simulated on any Unix host.
+  const nativePublisher = os === "Linux" && process.platform !== "linux";
+  test(`${os}: publishing preserves the old open inode and unchanged installs skip replacement`,
+    { skip: process.platform === "win32" || (nativePublisher && "requires the native Linux publisher") }, t => {
     const f = fixture(t, { os });
     const fd = openSync(f.target, "r");
     try {
@@ -190,7 +197,9 @@ for (const os of ["Darwin", "Linux"]) {
       const installedInode = statSync(f.target).ino;
       const second = f.run({ TEST_FAIL_SIGN: "1" });
       assertSuccess(second);
-      assert.match(second.stdout, /跳过复制与签名/);
+      assert.match(second.stdout, os === "Linux"
+        ? /installed executable unchanged; skipping publication/
+        : /跳过复制与签名/);
       assert.equal(statSync(f.target).ino, installedInode);
     } finally {
       closeSync(fd);

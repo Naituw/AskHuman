@@ -451,7 +451,7 @@ impl AskServer {
                 .ok()
                 .map(|cwd| crate::project::detect_from(&cwd))
                 .unwrap_or_default(),
-            executable: std::env::current_exe().map_err(|error| error.to_string()),
+            executable: crate::executable::launch_path().map_err(|error| error.to_string()),
         }
     }
 

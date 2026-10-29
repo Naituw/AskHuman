@@ -134,7 +134,10 @@ pub struct Controller {
 struct Native {
     outer: Rect,
     inner: (f64, f64),
-    scale: f64,
+    /// Native logical units used by Tao positions and monitor work areas.
+    native_scale: f64,
+    /// WebKit CSS pixels per native logical unit. These differ for fractional Linux DPI.
+    page_scale: f64,
     positioning: bool,
     special: bool,
 }
@@ -142,7 +145,8 @@ struct Native {
 struct Target {
     outer: Rect,
     inner: (f64, f64),
-    scale: f64,
+    native_scale: f64,
+    page_scale: f64,
     positioning: bool,
 }
 struct Preparation {
@@ -155,49 +159,83 @@ impl Target {
     fn from_native(n: &Native) -> Self {
         Self {
             outer: n.outer,
-            inner: (n.inner.0 * n.scale, n.inner.1 * n.scale),
-            scale: n.scale,
+            inner: (
+                n.inner.0 * n.page_scale * n.native_scale,
+                n.inner.1 * n.page_scale * n.native_scale,
+            ),
+            native_scale: n.native_scale,
+            page_scale: n.page_scale,
             positioning: n.positioning,
         }
     }
-    fn factor(self, scale: f64) -> f64 {
+    fn factor(self, native_scale: f64, page_scale: f64) -> f64 {
         #[cfg(target_os = "macos")]
         {
-            scale / self.scale
+            let _ = page_scale;
+            native_scale / self.native_scale
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = scale;
+            let _ = (native_scale, page_scale);
             1.0
         }
     }
     fn position_matches(self, actual: &Native) -> bool {
-        let factor = self.factor(actual.scale);
+        let factor = self.factor(actual.native_scale, actual.page_scale);
         !self.positioning
             || ((actual.outer.x - self.outer.x * factor).abs() <= 2.0
                 && (actual.outer.y - self.outer.y * factor).abs() <= 2.0)
     }
     fn matches(self, actual: &Native) -> bool {
-        let factor = self.factor(actual.scale);
+        let factor = self.factor(actual.native_scale, actual.page_scale);
         self.position_matches(actual)
-            && (actual.inner.0 * actual.scale - self.inner.0 * factor).abs() <= 2.0
-            && (actual.inner.1 * actual.scale - self.inner.1 * factor).abs() <= 2.0
+            && (actual.inner.0 * actual.page_scale * actual.native_scale - self.inner.0 * factor)
+                .abs()
+                <= 2.0
+            && (actual.inner.1 * actual.page_scale * actual.native_scale - self.inner.1 * factor)
+                .abs()
+                <= 2.0
     }
     fn apply(self, window: &Window) -> Result<(), String> {
-        let factor = self.factor(window.scale_factor().map_err(|e| e.to_string())?);
-        window
-            .set_size(PhysicalSize::new(
-                (self.inner.0 * factor).round().max(1.0) as u32,
-                (self.inner.1 * factor).round().max(1.0) as u32,
-            ))
-            .map_err(|e| e.to_string())?;
-        if self.positioning {
+        let native_scale = window.scale_factor().map_err(|e| e.to_string())?;
+        let page_scale = page_scale(window);
+        let factor = self.factor(native_scale, page_scale);
+        let width = self.inner.0 * factor / native_scale;
+        let height = self.inner.1 * factor / native_scale;
+        if !valid_css_size(width, height) {
+            return Err("preview geometry has an invalid page scale".into());
+        }
+        #[cfg(target_os = "macos")]
+        {
             window
-                .set_position(PhysicalPosition::new(
-                    (self.outer.x * factor).round() as i32,
-                    (self.outer.y * factor).round() as i32,
+                .set_size(PhysicalSize::new(
+                    (self.inner.0 * factor).round().max(1.0) as u32,
+                    (self.inner.1 * factor).round().max(1.0) as u32,
                 ))
                 .map_err(|e| e.to_string())?;
+            if self.positioning {
+                window
+                    .set_position(PhysicalPosition::new(
+                        (self.outer.x * factor).round() as i32,
+                        (self.outer.y * factor).round() as i32,
+                    ))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (factor, page_scale);
+            window
+                .set_size(tauri::LogicalSize::new(width, height))
+                .map_err(|e| e.to_string())?;
+            if self.positioning {
+                window
+                    .set_position(PhysicalPosition::new(
+                        self.outer.x.round() as i32,
+                        self.outer.y.round() as i32,
+                    ))
+                    .map_err(|e| e.to_string())?;
+            }
         }
         Ok(())
     }
@@ -254,7 +292,14 @@ fn sample(window: &Window) -> Result<Native, String> {
     let inner = window.inner_size().map_err(|e| e.to_string())?;
     let outer = window.outer_size().map_err(|e| e.to_string())?;
     let position = window.outer_position().ok();
-    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let native_scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let page_scale = page_scale(window);
+    if !valid_css_size(inner.width as f64, inner.height as f64)
+        || !page_scale.is_finite()
+        || page_scale <= 0.0
+    {
+        return Err("Popup window has an invalid page scale".into());
+    }
     Ok(Native {
         outer: Rect {
             x: position.map_or(0.0, |p| p.x as f64),
@@ -262,11 +307,31 @@ fn sample(window: &Window) -> Result<Native, String> {
             width: outer.width as f64,
             height: outer.height as f64,
         },
-        inner: (inner.width as f64 / scale, inner.height as f64 / scale),
-        scale,
+        inner: (
+            inner.width as f64 / native_scale / page_scale,
+            inner.height as f64 / native_scale / page_scale,
+        ),
+        native_scale,
+        page_scale,
         positioning: position.is_some() && can_position(window),
         special: window.is_maximized().unwrap_or(true) || window.is_fullscreen().unwrap_or(true),
     })
+}
+#[cfg(target_os = "linux")]
+pub(super) fn page_scale(window: &Window) -> f64 {
+    super::linux_dpi::page_scale(window).get()
+}
+#[cfg(not(target_os = "linux"))]
+pub(super) fn page_scale(_: &Window) -> f64 {
+    1.0
+}
+fn valid_css_size(width: f64, height: f64) -> bool {
+    width.is_finite()
+        && height.is_finite()
+        && width > 0.0
+        && height > 0.0
+        && width <= u32::MAX as f64
+        && height <= u32::MAX as f64
 }
 #[cfg(not(target_os = "linux"))]
 fn can_position(_: &Window) -> bool {
@@ -279,7 +344,9 @@ fn can_position(window: &Window) -> bool {
         .window_handle()
         .is_ok_and(|h| !matches!(h.as_raw(), RawWindowHandle::Wayland(_)))
 }
-fn work_for(window: &Window, main: Rect, scale: f64) -> Option<Rect> {
+fn work_for(window: &Window, main: Rect, page_scale: f64) -> Option<Rect> {
+    #[cfg(target_os = "macos")]
+    let native_scale = window.scale_factor().ok()?;
     window
         .available_monitors()
         .ok()?
@@ -287,10 +354,13 @@ fn work_for(window: &Window, main: Rect, scale: f64) -> Option<Rect> {
         .map(|m| {
             let work = m.work_area();
             #[cfg(target_os = "macos")]
-            let factor = scale / m.scale_factor();
+            let factor = {
+                let _ = page_scale;
+                native_scale / m.scale_factor()
+            };
             #[cfg(not(target_os = "macos"))]
             let factor = {
-                let _ = scale;
+                let _ = (page_scale, m.scale_factor());
                 1.0
             };
             Rect {
@@ -355,7 +425,8 @@ impl Controller {
         }
         self.main.1 = n.inner.1;
         self.special_width = None;
-        self.native_width_changed = (n.inner.0 - self.main.0).abs() > 1.0 / n.scale;
+        self.native_width_changed =
+            (n.inner.0 - self.main.0).abs() > 1.0 / (n.page_scale * n.native_scale);
         if n.inner.0 < self.main.0 + MIN_PANE || !n.positioning {
             self.side = Side::Inside;
         } else if self.inside_fraction.is_none() {
@@ -376,8 +447,9 @@ impl Controller {
             || self.side != Side::Right
             || n.special
             || work_constrained
-            || (previous.scale - n.scale).abs() > f64::EPSILON
-            || (previous.inner.0 / previous.scale - n.inner.0).abs() <= 1.0 / n.scale
+            || (previous.native_scale - n.native_scale).abs() > f64::EPSILON
+            || (previous.page_scale - n.page_scale).abs() > f64::EPSILON
+            || (previous.inner.0 - n.inner.0 * n.page_scale * n.native_scale).abs() <= 2.0
         {
             return None;
         }
@@ -390,12 +462,15 @@ impl Controller {
     }
     fn close_target(&self, n: &Native) -> Target {
         let mut target = Target::from_native(n);
-        target.inner = (self.main.0 * n.scale, self.main.1 * n.scale);
-        target.outer.width += target.inner.0 - n.inner.0 * n.scale;
-        target.outer.height += target.inner.1 - n.inner.1 * n.scale;
+        target.inner = (
+            self.main.0 * n.page_scale * n.native_scale,
+            self.main.1 * n.page_scale * n.native_scale,
+        );
+        target.outer.width += target.inner.0 - n.inner.0 * n.page_scale * n.native_scale;
+        target.outer.height += target.inner.1 - n.inner.1 * n.page_scale * n.native_scale;
         if !self.user_moved {
             if let Some(origin) = self.origin {
-                let factor = origin.factor(n.scale);
+                let factor = origin.factor(n.native_scale, n.page_scale);
                 target.outer.x = origin.outer.x * factor;
                 target.outer.y = origin.outer.y * factor;
             }
@@ -510,7 +585,12 @@ fn change_impl(
         }
         c.main = if n.special {
             c.normal
-                .map(|frame| (frame.inner.0 / frame.scale, frame.inner.1 / frame.scale))
+                .map(|frame| {
+                    (
+                        frame.inner.0 / frame.native_scale / frame.page_scale,
+                        frame.inner.1 / frame.native_scale / frame.page_scale,
+                    )
+                })
                 .unwrap_or_else(|| {
                     if rules.persists {
                         super::popup_size::restored_size(&config)
@@ -555,8 +635,12 @@ fn change_impl(
             c.restore_on_normal = c.normal.map(|frame| {
                 let normal = Native {
                     outer: frame.outer,
-                    inner: (frame.inner.0 / frame.scale, frame.inner.1 / frame.scale),
-                    scale: frame.scale,
+                    inner: (
+                        frame.inner.0 / frame.native_scale / frame.page_scale,
+                        frame.inner.1 / frame.native_scale / frame.page_scale,
+                    ),
+                    native_scale: frame.native_scale,
+                    page_scale: frame.page_scale,
                     positioning: frame.positioning,
                     special: false,
                 };
@@ -574,23 +658,29 @@ fn change_impl(
     };
     let target = if open && n.positioning {
         let decoration = (
-            n.outer.width - n.inner.0 * n.scale,
-            n.outer.height - n.inner.1 * n.scale,
+            n.outer.width - n.inner.0 * n.page_scale * n.native_scale,
+            n.outer.height - n.inner.1 * n.page_scale * n.native_scale,
         );
         let main = Rect {
-            width: c.main.0 * n.scale + decoration.0,
-            height: c.main.1 * n.scale + decoration.1,
+            width: c.main.0 * n.page_scale * n.native_scale + decoration.0,
+            height: c.main.1 * n.page_scale * n.native_scale + decoration.1,
             ..n.outer
         };
-        let (side, outer) = work_for(window, main, n.scale)
-            .map_or((Side::Inside, n.outer), |work| {
-                geometry::place_right(main, work, n.scale, c.preferred_preview.unwrap_or(700.0))
+        let (side, outer) =
+            work_for(window, main, n.page_scale).map_or((Side::Inside, n.outer), |work| {
+                geometry::place_right(
+                    main,
+                    work,
+                    n.page_scale * n.native_scale,
+                    c.preferred_preview.unwrap_or(700.0),
+                )
             });
         c.side = side;
         Target {
             outer,
             inner: (outer.width - decoration.0, outer.height - decoration.1),
-            scale: n.scale,
+            native_scale: n.native_scale,
+            page_scale: n.page_scale,
             positioning: true,
         }
     } else {
@@ -754,10 +844,12 @@ pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjecti
     }
     c.project(&n);
     // A monitor/work-area restriction is temporary, just like an opening transaction.
-    let constrained = work_for(window, n.outer, n.scale).is_some_and(|work| {
-        let decoration = n.outer.width - n.inner.0 * n.scale;
-        let wanted =
-            (c.main.0 + c.preferred_preview.unwrap_or(700.0) + DIVIDER) * n.scale + decoration;
+    let constrained = work_for(window, n.outer, n.page_scale).is_some_and(|work| {
+        let decoration = n.outer.width - n.inner.0 * n.page_scale * n.native_scale;
+        let wanted = (c.main.0 + c.preferred_preview.unwrap_or(700.0) + DIVIDER)
+            * n.page_scale
+            * n.native_scale
+            + decoration;
         wanted > work.width + 2.0 && n.outer.width >= work.width - 2.0
     });
     let preview = c.remember_preview(&n, constrained);
@@ -766,8 +858,8 @@ pub fn resized(window: &Window, event: PhysicalSize<u32>) -> Option<SizeProjecti
     c.preview_baseline = Some(Target::from_native(&n));
     c.publish(window, &n);
     let projected = (
-        (c.main.0 * n.scale).round() as u32,
-        (c.main.1 * n.scale).round() as u32,
+        (c.main.0 * n.page_scale * n.native_scale).round() as u32,
+        (c.main.1 * n.page_scale * n.native_scale).round() as u32,
     );
     Some(SizeProjection {
         main: projected,
@@ -853,7 +945,8 @@ mod tests {
                 height: 652.0,
             },
             inner: (width, 620.0),
-            scale: 1.0,
+            native_scale: 1.0,
+            page_scale: 1.0,
             positioning: true,
             special: false,
         }
@@ -904,7 +997,7 @@ mod tests {
         c.pending = false;
         assert_eq!(c.remember_preview(&native(1000.0), true), None);
         let mut scaled = native(1466.0);
-        scaled.scale = 2.0;
+        scaled.native_scale = 2.0;
         assert_eq!(c.remember_preview(&scaled, false), None);
         assert_eq!(c.preferred_preview, Some(700.0));
         c.normal = Some(Target::from_native(&native(1466.0)));
@@ -977,5 +1070,69 @@ mod tests {
         assert_eq!(c.layout(&native(900.0)).main_width, 574.0);
         c.project(&native(1200.0));
         assert_eq!(c.layout(&native(1200.0)).main_width, 820.0);
+    }
+    #[test]
+    fn linux_page_scale_converts_css_geometry_without_changing_native_scale() {
+        for page_scale in [1.25, 1.5] {
+            for native_scale in [1.0, 2.0] {
+                let mut n = native(0.0);
+                n.native_scale = native_scale;
+                n.page_scale = page_scale;
+                n.inner = (1200.0 / page_scale, 900.0 / page_scale);
+                n.outer = Rect {
+                    x: 100.0,
+                    y: 100.0,
+                    width: 1200.0,
+                    height: 930.0,
+                };
+                let target = Target::from_native(&n);
+                assert_eq!(target.native_scale, native_scale);
+                assert_eq!(target.inner.0, 1200.0 * native_scale);
+                assert_eq!((target.outer.x, target.outer.y), (100.0, 100.0));
+                let restored = target.inner.0 / native_scale / page_scale;
+                assert!((restored - 1200.0 / page_scale).abs() < 0.001);
+                let physical = target.inner.0.round() as u32;
+                let resampled = physical as f64 / native_scale / page_scale;
+                assert!((resampled - n.inner.0).abs() <= 1.0 / (native_scale * page_scale));
+            }
+        }
+    }
+    #[test]
+    fn preview_and_history_share_css_scale_but_keep_independent_layouts() {
+        for (page_scale, rules, expected_main) in [
+            (1.25, &POPUP_POLICY, 420.0),
+            (1.5, &POPUP_POLICY, 420.0),
+            (1.25, &HISTORY_POLICY, 600.0),
+            (1.5, &HISTORY_POLICY, 600.0),
+        ] {
+            let width = rules.min_main + MIN_PANE;
+            let mut n = native(0.0);
+            n.inner = (width, 620.0);
+            n.page_scale = page_scale;
+            let mut c = Controller {
+                side: Side::Right,
+                main: (rules.min_main, 600.0),
+                ..Default::default()
+            };
+            c.project(&n);
+            assert_eq!(c.side, Side::Right);
+            assert_eq!(c.layout(&n).main_width, expected_main);
+        }
+    }
+    #[test]
+    fn narrow_css_viewport_degrades_inside_without_overflow() {
+        for page_scale in [1.25, 1.5] {
+            let mut n = native(700.0);
+            n.page_scale = page_scale;
+            let mut c = Controller {
+                side: Side::Right,
+                main: (560.0, 620.0),
+                ..Default::default()
+            };
+            c.project(&n);
+            assert_eq!(c.side, Side::Inside);
+            assert!(c.layout(&n).main_width < n.inner.0);
+            assert!(n.inner.0 - DIVIDER - c.layout(&n).main_width > 0.0);
+        }
     }
 }

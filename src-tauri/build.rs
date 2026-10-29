@@ -1,4 +1,22 @@
+#[path = "src/gsettings_schema.rs"]
+mod gsettings_schema;
+
 fn main() {
+    println!("cargo:rerun-if-changed=src/gsettings_schema.rs");
+    println!("cargo:rerun-if-env-changed=GSETTINGS_SCHEMAS_PATH");
+    let schema_dirs = if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        gsettings_schema::schema_data_dirs(std::env::var_os("GSETTINGS_SCHEMAS_PATH"))
+            .unwrap_or_else(|error| {
+                println!(
+                    "cargo:warning=invalid GSETTINGS_SCHEMAS_PATH: {error}; using default schema lookup"
+                );
+                String::new()
+            })
+    } else {
+        String::new()
+    };
+    println!("cargo:rustc-env=ASKHUMAN_COMPILED_GSETTINGS_DATA_DIRS={schema_dirs}");
+
     // WebView2 invokes commands while a deep native callback stack is active. Reserve enough
     // virtual stack for the Windows UI thread so a future large command cannot regress into a
     // process-wide stack overflow. Pages are committed on demand, not eagerly allocated.

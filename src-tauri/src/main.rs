@@ -29,10 +29,13 @@ mod daemon;
 mod dev_instance;
 mod dev_presets;
 mod dingtalk;
+mod executable;
 mod export;
 mod feishu;
 mod file_lock;
 mod gitutil;
+#[cfg(target_os = "linux")]
+mod gsettings_schema;
 mod gui_host;
 mod history;
 mod hooks;
@@ -42,6 +45,8 @@ mod image_resource;
 mod integrations;
 mod ios;
 mod ipc;
+#[cfg(target_os = "linux")]
+mod linux_runtime;
 mod local_image;
 mod local_time;
 #[cfg(target_os = "macos")]
@@ -91,5 +96,9 @@ mod watch;
 fn main() {
     // Capture process birth ASAP so the `cli.start` perf milestone is accurate.
     perf::record_start();
+    #[cfg(target_os = "linux")]
+    executable::capture_launch_path();
+    #[cfg(target_os = "linux")]
+    linux_runtime::configure_gsettings();
     cli::dispatch();
 }

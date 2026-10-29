@@ -542,3 +542,56 @@ Review 和原生证据见 [原生几何复核](../investigations/popup-native-ge
 也不能使合并模式退回无请求 ID 的独立视图。Popup 主文档从初始化阶段就捕获取消普通
 及中键链接的默认导航，作为正文处理器之外的兜底；保留 Vue 事件路由及 Mermaid sandbox
 子帧。合并与独立模式都遵守此约定，不通过放宽共享宿主请求 ID 校验来掩盖错误跳转。
+
+## 21. 宿主失败诊断
+
+Daemon 持续排空 Popup Host 的 stderr，最多保留前 8 KiB。宿主正常退出时丢弃，
+失败退出时将 PID、退出状态和有界 stderr 写入实例 `daemon.log`；换行等控制字符转义，
+不把子进程输出当作新的日志行。超过上限仍继续排空，避免 stderr pipe 写满阻塞宿主。
+直接子进程的等待与 stderr 排空并行；宿主退出后最多再等待 100 ms 确定有界日志快照，
+随后及时报告失败。仍未 EOF 的读取端交给独立任务持续排空并丢弃后续输出，直到 EOF 或读取
+失败才关闭，避免继承 stderr 的终端或文件打开器延迟宿主回收，也避免提前关闭导致后代写入
+遇到 SIGPIPE/EPIPE。后台排空任务随 daemon 退出而结束，不保证跨 daemon 退出保留管道。
+
+合并 Popup Host 在 GUI 事件循环内保留原生 stderr，由 daemon 统一处理，便于观察
+GTK/GDK、AppKit 等原生库直接退出而未产生 Rust 错误的情形。其他 GUI 角色沿用原有静默规则。
+该日志不改变 EOF 恢复预算、渠道失败与请求终态语义，也不主动记录提问或答案。
+
+### 21.1 捕获范围
+
+只有 daemon 以 `--popup-host` 启动、承载 `View::PopupInbox` 的合并宿主进入上述范围。
+独立或预热弹窗（`View::Popup`）、GUI Host、设置、历史、待办等角色仍在事件循环前调用
+`stderr_redirect::silence()`，行为不变。捕获对象是宿主进程的原生 stderr；AskHuman 不主动写入
+提问或答案，但宿主加载的原生库以及继承同一 stderr 的子进程（如终端、文件打开器、`gdbus`）
+可能输出文件路径、项目名等用户数据，宿主失败退出时这些内容可能进入 `daemon.log`。
+日志因此不保证不含用户内容；需要严格隐私时应在这些子进程上单独重定向 stderr。
+
+| 平台 | 合并宿主 stderr | 其他 GUI 角色 | 管道与回收 |
+| --- | --- | --- | --- |
+| Linux | 跳过 `/dev/null` 重定向，原生致命消息进入 daemon | 重定向到 `/dev/null` | 全平台 |
+| macOS | 同上（AppKit/CoreText/TSM 等原生消息） | 重定向到 `/dev/null` | 全平台 |
+| Windows | `silence()` 原本为空实现，可见性不变 | 不变 | 全平台；后台启动使用 `CREATE_NO_WINDOW` |
+
+因此在 Windows 上，本次变更不改变 stderr 可见性，只增加有界捕获与失败日志，并把原先
+不等待的宿主改为立即回收；在 Unix 上则确实把原生致命消息从静默改为仅失败时记录。
+选择全平台而非 `cfg(target_os = "linux")` 的原因：管道、收尾排空与直接子进程回收代码
+与平台无关，按平台分叉会产生两条 spawn 路径；成功宿主不产生日志，失败日志有界且已转义。
+
+### 21.2 平台证据
+
+- 平台无关：`popup_stderr_capture_drains_beyond_the_retained_limit`（排空超过 8 KiB 并截断）
+  与 `popup_stderr_capture_retries_interrupted_reads`。
+- Unix（Linux 与 macOS）：`popup_reaper_logs_failure_and_reaps_before_descendant_stderr_closes`
+  覆盖失败日志的 PID、退出状态、转义、直接子进程回收与子孙占用 stderr；
+  `popup_reaper_drains_large_stderr_and_keeps_successful_exit_silent` 覆盖 256 KiB 排空与成功静默。
+- 跨平台真实测试子进程：`popup_reaper_bounds_failed_stderr_after_overflow` 覆盖超限失败日志；
+  `popup_reaper_does_not_wait_for_inherited_stderr_on_any_platform` 覆盖及时回收，以及后代延迟
+  3 秒后向继承管道写入 256 KiB 仍成功（无 SIGPIPE/EPIPE 或写满阻塞）；
+  `popup_reaper_waits_for_exit_after_stderr_closes` 覆盖 stderr 关闭后仍等待真实退出。
+  fixture 仅由父测试显式启动，后代进程有界退出；Windows 分支需原生 CI 验证。
+- Windows：`popup_reaper_logs_windows_failure_with_pid_and_escaped_stderr` 与
+  `popup_reaper_drains_windows_stderr_and_keeps_successful_exit_silent` 覆盖同样的失败/静默契约。
+- CI（`.github/workflows/build.yml`）在 ubuntu-22.04、windows-latest 与 macos-26
+  `aarch64-apple-darwin` 上运行 `cargo test`，上述测试随 PR 在三个平台执行。本地仅在
+  Linux 执行；macOS/Windows 的真实 GUI 启动、退出与取消尚无实机记录，以 CI 结果为准，
+  PR 描述必须标注这一边界。

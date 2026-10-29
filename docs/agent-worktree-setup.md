@@ -109,6 +109,14 @@ AskHuman dev preset save <name> --from-instance
 
 在已 enable 的树内会装到 `.askhuman-dev/bin/`，**不会**覆盖 `~/.local/bin`（除非 `./scripts/install.sh --global`）。
 
+Linux/Nix 构建应使用提供 GTK/WebKit 依赖及 `GSETTINGS_SCHEMAS_PATH` 的 Nix 环境。
+构建脚本会把这份 schema 数据根目录编入 ELF，进程启动时补充自身的 `XDG_DATA_DIRS`，
+所以安装后退出构建 shell 仍可打开附件选择器；不需要改登录环境或给实例 bin 套包装器。
+未提供元数据时保持普通构建行为；显式提供的路径无效时构建警告并放弃嵌入，沿用运行环境的
+schema 查找路径。回退不保证缺少运行时 schema 的 Nix 环境仍可打开附件选择器。Nix store 依赖仍须保留，
+不要把本机编译产物视为跨机器可移植包。旧 daemon 的环境不会原地改变，验证时应在无活动
+请求后正常切换到新 daemon，不能沿用手工补过路径的旧进程作为通过证据。
+
 Windows PowerShell / cmd：
 
 ```powershell
@@ -118,6 +126,20 @@ Windows PowerShell / cmd：
 
 Windows 默认安装同样只写 `.askhuman-dev\bin\AskHuman.exe`，不会修改生产 EXE、用户 PATH 或受管
 `WindowsApps\AskHuman.cmd` launcher。
+
+Linux 安装使用同目录暂存与原子交换，允许旧 ELF 仍在运行。旧文件保留在安装目录下
+`.askhuman-install-<pid>-<nonce>/AskHuman`，供存活 MCP、daemon 及其子进程继续使用。
+每次成功安装（包括内容未变化的安装）会回收不再被引用的旧映像：本次安装刚替换下来的映像和
+nonce 最新的一份无条件保留；更旧的映像只有在没有进程正在执行它（按 `/proc/<pid>/exe` 的
+dev+inode 判断；无法读取 exe 时按进程名保守判断）时才删除。无法枚举 `/proc`、无法确认某个
+可能是 AskHuman 的进程、目录含未知条目或删除无权限时，保留并输出诊断，安装本身仍然成功。
+旧进程退出后，再运行一次安装即可回收；对进程改名、hidepid、容器 PID namespace 等无法看到
+或确认的场景，请在确认无进程使用后手工清理。
+最终 `AskHuman` 若为符号链接或目录则拒绝安装；文件系统不支持原子交换时保留原安装并报错。
+新实现启动时记住安装入口，后续 MCP 提问与独立 daemon/GUI Host 启动使用该入口，daemon
+也在该入口检测更新；运行中版本的身份与其 Popup 子进程仍使用原映像。
+已在修复前启动的进程无法补获入口缓存，需在适当时机普通重启客户端才能获得这部分行为。
+macOS 沿用原有复制和签名流程，本条 Linux 替换保证不适用于 macOS/Windows。
 
 ### 5. 自检（可选）
 
