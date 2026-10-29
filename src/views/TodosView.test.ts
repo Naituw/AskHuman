@@ -812,7 +812,7 @@ describe("TodosView iCloud projects", () => {
     await flushPromises();
     await wrapper.get(".td-menu-wrap .td-icon-btn").trigger("click");
     const items = wrapper.findAll(".td-menu-item");
-    expect(items.map((i) => i.text().replace(/^在(访达|资源管理器)中显示/, "在X中显示"))).toEqual([
+    expect(items.map((i) => i.text().replace(/^在(访达|资源管理器|文件管理器)中显示/, "在X中显示"))).toEqual([
       "复制仓库地址",
       "在X中显示（本机没有该仓库）",
       "从 iCloud 移除此项目…",
@@ -827,7 +827,7 @@ describe("TodosView iCloud projects", () => {
     const wrapper = await open();
     await wrapper.get(".td-menu-wrap .td-icon-btn").trigger("click");
     expect(
-      wrapper.findAll(".td-menu-item").map((i) => i.text().replace(/^在(访达|资源管理器)中显示$/, "在X中显示"))
+      wrapper.findAll(".td-menu-item").map((i) => i.text().replace(/^在(访达|资源管理器|文件管理器)中显示$/, "在X中显示"))
     ).toEqual(["复制仓库地址", "复制路径", "在X中显示", "从 iCloud 移除此项目…"]);
     expect(wrapper.findAll(".td-menu-item")[2].attributes("disabled")).toBeUndefined();
     wrapper.unmount();
