@@ -58,7 +58,7 @@ private struct AgentDetailContent: View {
         .navigationTitle(item.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .actionBar {
             bottomBar(live: live)
         }
         .overlay(alignment: .bottom) {
@@ -101,10 +101,11 @@ private struct AgentDetailContent: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .barStatusChip(compact: true)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.bar)
+                .padding(.vertical, BottomBar.floats ? 8 : 12)
+                .classicBarBacking(hairline: false)
                 .accessibilityIdentifier("interject-unavailable")
         }
     }

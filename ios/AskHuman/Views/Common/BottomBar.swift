@@ -13,6 +13,14 @@ enum BottomBar {
         if #available(iOS 26, *) { return true }
         return false
     }
+
+    /// The height of a compose bar's row of controls on the floating bar: the field is at least this tall,
+    /// and the round buttons beside it are this wide and tall.
+    static let rowHeight: CGFloat = 44
+
+    /// The box for the glyph of one of those round buttons. A glass button adds 7 pt around its label on each
+    /// side, so with this box the circle comes out `rowHeight` across.
+    static let roundGlyphBox: CGFloat = rowHeight - 14
 }
 
 extension View {
@@ -22,10 +30,11 @@ extension View {
         modifier(ActionBarPin(bar: bar()))
     }
 
-    /// The classic bar's backing: a material with a hairline on top. Nothing from iOS 26, where the
-    /// controls float and a backing would be exactly what Liquid Glass leaves out.
-    func classicBarBacking() -> some View {
-        modifier(ClassicBarBacking())
+    /// The classic bar's backing: a material with a hairline on top (the compose bars never had the hairline,
+    /// so they leave it out). Nothing from iOS 26, where the controls float and a backing would be exactly
+    /// what Liquid Glass leaves out.
+    func classicBarBacking(hairline: Bool = true) -> some View {
+        modifier(ClassicBarBacking(hairline: hairline))
     }
 
     /// Text on the bar that is not a control: a glass chip from iOS 26, where it would otherwise sit
@@ -50,6 +59,33 @@ extension View {
     /// The glass of a chip that is a button, around the button (see `barChipButtonLabel()`).
     func barChipButtonGlass() -> some View {
         modifier(BarChipButtonGlass())
+    }
+
+    /// More than a line of text on the bar and not a control (the files waiting to be sent): a glass panel
+    /// from iOS 26, where it would otherwise sit straight on the content that scrolls by underneath; as it
+    /// is before.
+    func barPanel() -> some View {
+        modifier(BarPanel())
+    }
+
+    /// The box around the text field of a compose bar: glass from iOS 26 (a capsule while the text is on one
+    /// line, a rounded rectangle once it wraps), the grouped background before. From iOS 26 a tap anywhere
+    /// on the box gives the field the focus (`focus`), not just a tap on its line of text: the box is taller.
+    func barFieldBox(focus: FocusState<Bool>.Binding) -> some View {
+        modifier(BarFieldBox(focus: focus))
+    }
+
+    /// A round button beside the field of a compose bar (attach, auto-run): a glass circle from iOS 26, as it
+    /// was before. `active` is off for a button that is not one of those (a menu that is also used in a card).
+    func barRoundButton(_ active: Bool = true) -> some View {
+        modifier(BarRoundButton(active: active))
+    }
+
+    /// The glyph on a round button of the floating bar, at a size of its own (the circle does not follow the
+    /// text size, so the glyph does not either), in the box that makes the circle `BottomBar.rowHeight` across.
+    func barRoundGlyph(weight: Font.Weight = .semibold) -> some View {
+        font(.system(size: 17, weight: weight))
+            .frame(width: BottomBar.roundGlyphBox, height: BottomBar.roundGlyphBox)
     }
 
     /// The bar's main button: tinted glass from iOS 26, a filled capsule before.
@@ -95,13 +131,15 @@ private struct ActionBarPin<Bar: View>: ViewModifier {
 }
 
 private struct ClassicBarBacking: ViewModifier {
+    let hairline: Bool
+
     func body(content: Content) -> some View {
         if #available(iOS 26, *) {
             content
         } else {
             content
                 .background(.bar)
-                .overlay(alignment: .top) { Divider() }
+                .overlay(alignment: .top) { if hairline { Divider() } }
         }
     }
 }
@@ -148,6 +186,92 @@ private struct BarChipButtonGlass: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26, *) {
             content.glassEffect(.regular, in: .rect(cornerRadius: BarStatusChip.compactRadius))
+        } else {
+            content
+        }
+    }
+}
+
+private struct BarPanel: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content
+                .padding(8)
+                .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        } else {
+            content
+        }
+    }
+}
+
+private struct BarFieldBox: ViewModifier {
+    let focus: FocusState<Bool>.Binding
+    /// False while the field is disabled (a message is on its way): a tap must not leave a focus behind
+    /// that the keyboard would pick up when the field is enabled again.
+    @Environment(\.isEnabled) private var isEnabled
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .frame(minHeight: BottomBar.rowHeight)
+                .contentShape(.rect)
+                .onTapGesture { if isEnabled { focus.wrappedValue = true } }
+                .glassEffect(.regular, in: .rect(cornerRadius: BottomBar.rowHeight / 2))
+        } else {
+            content
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+    }
+}
+
+private struct BarRoundButton: ViewModifier {
+    let active: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *), active {
+            content.buttonStyle(.glass).buttonBorderShape(.circle).controlSize(.regular)
+        } else {
+            content
+        }
+    }
+}
+
+/// The send button at the end of a compose bar's row: an up arrow (a spinner while it sends) on a tinted
+/// glass circle from iOS 26, a filled arrow before. The caller disables it.
+struct BarSendButton: View {
+    let label: LocalizedStringKey
+    let identifier: String
+    var sending = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            if #available(iOS 26, *) {
+                Group {
+                    if sending { ProgressView() } else { Image(systemName: "arrow.up") }
+                }
+                .barRoundGlyph(weight: .bold)
+            } else {
+                Group {
+                    if sending { ProgressView() } else { Image(systemName: "arrow.up.circle.fill").font(.system(size: 32)) }
+                }
+                .frame(width: 34, height: 34)
+            }
+        }
+        .modifier(BarSendStyle())
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+private struct BarSendStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.buttonStyle(.glassProminent).buttonBorderShape(.circle).controlSize(.regular)
         } else {
             content
         }

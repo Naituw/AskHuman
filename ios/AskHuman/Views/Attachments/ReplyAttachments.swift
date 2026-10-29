@@ -53,11 +53,16 @@ struct AttachmentMenu: View {
             Button { showFiles = true } label: { Label("Choose File", systemImage: "doc") }
         } label: {
             if compact {
-                Group {
+                // The compact menu is the attach button of a compose bar, a glass circle on the floating bar
+                // (`barRoundButton`), which sizes itself around the glyph.
+                let glyph = Group {
                     if working { ProgressView().controlSize(.small) } else { Image(systemName: "paperclip") }
                 }
-                .font(.title3)
-                .frame(width: 32, height: 32)
+                if BottomBar.floats {
+                    glyph.barRoundGlyph()
+                } else {
+                    glyph.font(.title3).frame(width: 32, height: 32)
+                }
             } else {
                 HStack(spacing: 6) {
                     if working { ProgressView().controlSize(.small) } else { Image(systemName: "paperclip") }
@@ -66,6 +71,7 @@ struct AttachmentMenu: View {
                 .font(.subheadline)
             }
         }
+        .barRoundButton(compact)
         .disabled(working)
         .accessibilityLabel("Add attachment")
         .accessibilityIdentifier(identifier)

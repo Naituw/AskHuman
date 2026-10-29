@@ -63,7 +63,7 @@ struct TodoProjectScreen: View {
                 ToolbarItem(placement: .topBarTrailing) { EditButton().accessibilityIdentifier("todo-reorder") }
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .actionBar {
             TodoAddBar(canAuto: list?.canAuto ?? false) { revealEnd = true }
         }
         .refreshable { await todos.refresh() }
@@ -363,55 +363,48 @@ private struct TodoAddBar: View {
     var body: some View {
         let todos = store.todos
         if todos.canWrite {
-            VStack(spacing: 6) {
-                #if DEBUG
-                if let stressReport {
-                    Color.clear.frame(width: 1, height: 1)
-                        .accessibilityElement()
-                        .accessibilityLabel(stressReport)
-                        .accessibilityIdentifier("todo-add-stress-result")
-                }
-                #endif
-                HStack(alignment: .bottom, spacing: 8) {
-                    if canAuto {
-                        Button {
-                            auto.toggle()
-                        } label: {
-                            Image(systemName: auto ? "bolt.circle.fill" : "bolt.circle")
-                                .font(.system(size: 30))
-                                .foregroundStyle(auto ? Color.orange : Color.secondary)
-                                .frame(width: 34, height: 34)
+            GlassGroup(spacing: 4) {
+                VStack(spacing: 6) {
+                    #if DEBUG
+                    if let stressReport {
+                        Color.clear.frame(width: 1, height: 1)
+                            .accessibilityElement()
+                            .accessibilityLabel(stressReport)
+                            .accessibilityIdentifier("todo-add-stress-result")
+                    }
+                    #endif
+                    HStack(alignment: .bottom, spacing: 8) {
+                        if canAuto {
+                            Button {
+                                auto.toggle()
+                            } label: {
+                                autoLabel
+                            }
+                            .barRoundButton()
+                            .accessibilityLabel("Auto-run")
+                            .accessibilityValue(auto ? Text("On") : Text("Off"))
+                            .accessibilityIdentifier("todo-add-auto")
                         }
-                        .accessibilityLabel("Auto-run")
-                        .accessibilityValue(auto ? Text("On") : Text("Off"))
-                        .accessibilityIdentifier("todo-add-auto")
+                        TextField("New todo", text: $text, axis: .vertical)
+                            .lineLimit(1...5)
+                            .focused($focused)
+                            .accessibilityIdentifier("todo-add-field")
+                            .barFieldBox(focus: $focused)
+                        BarSendButton(label: "Add todo", identifier: "todo-add-send", action: send)
+                            .disabled(!valid)
                     }
-                    TextField("New todo", text: $text, axis: .vertical)
-                        .lineLimit(1...5)
-                        .focused($focused)
-                        .accessibilityIdentifier("todo-add-field")
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    Button(action: send) {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 32))
-                            .frame(width: 34, height: 34)
+                    if trimmedCount > Wire.todoTextMaxChars - 500 {
+                        Text("\(trimmedCount) / \(Wire.todoTextMaxChars)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(trimmedCount > Wire.todoTextMaxChars ? Color.red : Color.secondary)
+                            .barStatusChip(compact: true)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                     }
-                    .disabled(!valid)
-                    .accessibilityLabel("Add todo")
-                    .accessibilityIdentifier("todo-add-send")
-                }
-                if trimmedCount > Wire.todoTextMaxChars - 500 {
-                    Text("\(trimmedCount) / \(Wire.todoTextMaxChars)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(trimmedCount > Wire.todoTextMaxChars ? Color.red : Color.secondary)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, BottomBar.floats ? 16 : 12)
             .padding(.vertical, 8)
-            .background(.bar)
+            .classicBarBacking(hairline: false)
             #if DEBUG
             .task(id: focused) { await stressWhenAsked() }
             #endif
@@ -419,11 +412,29 @@ private struct TodoAddBar: View {
             Text("Todos can be added when the Mac is reachable.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(BottomBar.floats ? .center : .leading)
+                .barStatusChip(compact: true)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.bar)
+                .padding(.vertical, BottomBar.floats ? 8 : 12)
+                .classicBarBacking(hairline: false)
                 .accessibilityIdentifier("todo-add-unavailable")
+        }
+    }
+
+    /// The auto-run toggle: a bolt on a glass circle from iOS 26, the bolt in a circle before. Orange while it
+    /// is on, as it always was.
+    @ViewBuilder
+    private var autoLabel: some View {
+        if BottomBar.floats {
+            Image(systemName: auto ? "bolt.fill" : "bolt")
+                .barRoundGlyph()
+                .foregroundStyle(auto ? Color.orange : Color.secondary)
+        } else {
+            Image(systemName: auto ? "bolt.circle.fill" : "bolt.circle")
+                .font(.system(size: 30))
+                .foregroundStyle(auto ? Color.orange : Color.secondary)
+                .frame(width: 34, height: 34)
         }
     }
 

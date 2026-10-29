@@ -14,57 +14,69 @@ struct InterjectBar: View {
 
     var body: some View {
         @Bindable var composer = composer
-        VStack(spacing: 8) {
-            if !composer.attachments.isEmpty {
-                VStack(spacing: 6) {
-                    ForEach(composer.attachments) { attachment in
-                        ReplyAttachmentRow(attachment: attachment, url: composer.url(of: attachment)) {
-                            composer.removeAttachment(id: attachment.id)
+        GlassGroup(spacing: 4) {
+            VStack(spacing: 8) {
+                if BottomBar.floats {
+                    // The files and their upload are one panel of glass: on their own they would sit straight on
+                    // the content that scrolls by underneath.
+                    if !composer.attachments.isEmpty || composer.uploadProgress != nil {
+                        VStack(spacing: 8) {
+                            attachmentRows
+                            uploadProgress
                         }
+                        .barPanel()
                     }
+                } else {
+                    attachmentRows
+                    uploadProgress
                 }
-            }
-            if let progress = composer.uploadProgress {
-                ProgressView(value: progress)
-                    .accessibilityLabel("Uploading attachments")
-            }
-            HStack(alignment: .bottom, spacing: 6) {
-                AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachments.count, identifier: "interject-attach", compact: true) { name, mime, data, isImage in
-                    try composer.addAttachment(name: name, mime: mime, data: data, isImage: isImage)
-                }
-                .disabled(!composer.canAttachMore || composer.isSending)
-                TextField("Message to the Agent", text: $composer.text, axis: .vertical)
-                    .lineLimit(1...5)
-                    .focused($focused)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .disabled(composer.isSending)
-                    .accessibilityIdentifier("interject-field")
-                Button(action: send) {
-                    Group {
-                        if composer.isSending {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))
-                        }
+                HStack(alignment: .bottom, spacing: BottomBar.floats ? 8 : 6) {
+                    AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachments.count, identifier: "interject-attach", compact: true) { name, mime, data, isImage in
+                        try composer.addAttachment(name: name, mime: mime, data: data, isImage: isImage)
                     }
-                    .frame(width: 34, height: 34)
+                    .disabled(!composer.canAttachMore || composer.isSending)
+                    TextField("Message to the Agent", text: $composer.text, axis: .vertical)
+                        .lineLimit(1...5)
+                        .focused($focused)
+                        .barFieldBox(focus: $focused)
+                        .disabled(composer.isSending)
+                        .accessibilityIdentifier("interject-field")
+                    BarSendButton(label: "Send message", identifier: "interject-send", sending: composer.isSending, action: send)
+                        .disabled(!composer.canSend)
                 }
-                .disabled(!composer.canSend)
-                .accessibilityLabel("Send message")
-                .accessibilityIdentifier("interject-send")
-            }
-            if composer.trimmedText.count > InterjectComposer.maxChars - 1_000 {
-                Text("\(composer.trimmedText.count) / \(InterjectComposer.maxChars)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(composer.overLimit ? Color.red : Color.secondary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                if composer.trimmedText.count > InterjectComposer.maxChars - 1_000 {
+                    Text("\(composer.trimmedText.count) / \(InterjectComposer.maxChars)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(composer.overLimit ? Color.red : Color.secondary)
+                        .barStatusChip(compact: true)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, BottomBar.floats ? 16 : 12)
         .padding(.vertical, 8)
-        .background(.bar)
+        .classicBarBacking(hairline: false)
+    }
+
+    @ViewBuilder
+    private var attachmentRows: some View {
+        if !composer.attachments.isEmpty {
+            VStack(spacing: 6) {
+                ForEach(composer.attachments) { attachment in
+                    ReplyAttachmentRow(attachment: attachment, url: composer.url(of: attachment)) {
+                        composer.removeAttachment(id: attachment.id)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var uploadProgress: some View {
+        if let progress = composer.uploadProgress {
+            ProgressView(value: progress)
+                .accessibilityLabel("Uploading attachments")
+        }
     }
 
     private func send() {
