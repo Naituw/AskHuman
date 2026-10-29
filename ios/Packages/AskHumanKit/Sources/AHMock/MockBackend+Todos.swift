@@ -158,6 +158,9 @@ extension MockBackend {
 
     public func setTodoSyncProblem(_ problem: String?) { todoSyncProblem = problem }
 
+    /// The Home MacBook Pro is in the middle of a pull: every answer says so until it is called with `false`.
+    public func setTodoSyncRunning(_ running: Bool) { todoSyncProblem = running ? MockData.todoSyncRunning : nil }
+
     /// Which Macs sync their todos through iCloud.
     public func setTodoSyncing(_ macIds: Set<String>) { syncingTodoMacs = macIds }
 

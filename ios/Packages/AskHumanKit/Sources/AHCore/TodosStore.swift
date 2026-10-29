@@ -79,20 +79,36 @@ public final class TodosStore {
     /// it says nothing new (it is the echo of our own write, or of what was just loaded).
     @ObservationIgnored private var knownRev: UInt64?
     @ObservationIgnored private var projectsDirty = false
+    /// The pending load of the projects is a quiet look (see `armSyncRecheck`); a load anybody else asks for is not.
+    @ObservationIgnored private var projectsQuiet = false
     @ObservationIgnored private var listDirty = false
     @ObservationIgnored private var runner: Task<Void, Never>?
     @ObservationIgnored private var queue: [QueuedWrite] = []
     @ObservationIgnored private var drainer: Task<Void, Never>?
     @ObservationIgnored private var watching: String?
     @ObservationIgnored private var noticeSerial = 0
+    @ObservationIgnored private let recheckDelays: [Duration]
+    @ObservationIgnored private var recheckTask: Task<Void, Never>?
+    /// How many quiet looks the Mac's "syncing" has cost since it last said otherwise (or since the user asked again).
+    @ObservationIgnored private(set) var rechecks = 0
 
     private static let sourceKey = "ah.todos.source"
     private static let icloudMacKey = "ah.todos.icloudMac"
 
-    public init(backend: RemoteBackend, defaults: UserDefaults = .standard, now: @escaping @Sendable () -> Date = { Date() }) {
+    /// How long the phone waits before it asks again while the Mac says it is syncing: about 35 seconds in
+    /// all. A pull that takes longer than that is left alone; pulling down asks again.
+    public static let syncRecheckDelays: [Duration] = [
+        .milliseconds(1500), .seconds(2), .seconds(3), .seconds(4), .seconds(5), .seconds(5), .seconds(5), .seconds(5), .seconds(5),
+    ]
+
+    public init(
+        backend: RemoteBackend, defaults: UserDefaults = .standard, now: @escaping @Sendable () -> Date = { Date() },
+        syncRecheckDelays: [Duration] = TodosStore.syncRecheckDelays
+    ) {
         self.backend = backend
         self.defaults = defaults
         self.now = now
+        self.recheckDelays = syncRecheckDelays
         lastIcloudMac = defaults.string(forKey: Self.icloudMacKey)
     }
 
@@ -159,6 +175,7 @@ public final class TodosStore {
     public func setVisible(_ visible: Bool) {
         guard self.visible != visible else { return }
         self.visible = visible
+        cancelSyncRecheck()
         if visible {
             ensureSource()
             kick(projects: true, list: opened != nil)
@@ -171,6 +188,7 @@ public final class TodosStore {
         let before = macs
         let foregroundChanged = self.foreground != foreground
         self.foreground = foreground
+        if foregroundChanged { cancelSyncRecheck() }
         if next != before { macs = next }
         guard started || visible else {
             syncWatch()
@@ -224,6 +242,7 @@ public final class TodosStore {
     private func setSource(_ new: TodoSource?) {
         source = new
         started = true
+        cancelSyncRecheck()
         opened = nil
         query = ""
         emptyExpanded = false
@@ -258,12 +277,17 @@ public final class TodosStore {
 
     /// Pull to refresh: loads again and returns when the answers are in.
     public func refresh() async {
+        // The user asked again: the Mac's "syncing" gets its looks back.
+        rechecks = 0
         kick(projects: true, list: opened != nil)
         await runner?.value
     }
 
-    private func kick(projects: Bool = false, list: Bool = false) {
-        if projects { projectsDirty = true }
+    private func kick(projects: Bool = false, list: Bool = false, quiet: Bool = false) {
+        if projects {
+            projectsQuiet = projectsDirty ? (projectsQuiet && quiet) : quiet
+            projectsDirty = true
+        }
         if list { listDirty = true }
         guard runner == nil, visible || started else { return }
         runner = Task { [weak self] in await self?.run() }
@@ -273,7 +297,9 @@ public final class TodosStore {
         while projectsDirty || listDirty {
             if projectsDirty {
                 projectsDirty = false
-                await loadProjects()
+                let quiet = projectsQuiet
+                projectsQuiet = false
+                await loadProjects(quiet: quiet)
             }
             if listDirty {
                 listDirty = false
@@ -284,7 +310,8 @@ public final class TodosStore {
         runner = nil
     }
 
-    private func loadProjects() async {
+    /// A quiet load is a look the user did not ask for: when it gets no answer, nothing on screen changes.
+    private func loadProjects(quiet: Bool = false) async {
         guard let source else { return }
         if projects == nil { projectsState = .loading }
         switch source {
@@ -298,9 +325,21 @@ public final class TodosStore {
                 adopt(reply, from: id, for: source)
             } catch {
                 guard self.source == source else { return }
-                fail(TodoFailure.of(error), for: source)
+                if quiet { armSyncRecheck() } else { fail(TodoFailure.of(error), for: source) }
             }
         case .icloud:
+            if quiet, let id = accessMacId {
+                // Only the Mac that answered is asked, once; the usual search for another Mac is for loads the user wants.
+                let answer = try? await backend.todoProjects(macId: id)
+                guard self.source == source, accessMacId == id else { return }
+                // No answer changes nothing on screen; the next look is already due.
+                guard let reply = answer else { return armSyncRecheck() }
+                let mode = TodoMode(rawValue: reply.mode) ?? .local
+                modes[id] = mode
+                if mode == .icloud { return adopt(reply, from: id, for: source) }
+                // It stopped syncing: iCloud may have to move to another Mac, which the usual load works out.
+                return kick(projects: true)
+            }
             var failed: Set<String> = []
             while true {
                 let candidates = TodoSources.icloudCandidates(macs: macs, modes: modes, lastUsed: lastIcloudMac, failed: failed)
@@ -347,6 +386,39 @@ public final class TodosStore {
         knownRev = reply.rev
         cache[source] = (macId, reply)
         syncWatch()
+        armSyncRecheck()
+    }
+
+    // MARK: the sync line
+
+    /// The Mac's `syncing` is a snapshot of the instant it answered. Opening the tab starts a pull on the Mac
+    /// (the subscription refreshes a stale replica), so the first answer usually catches it, and nothing tells
+    /// the phone when the pull ends: the todo file often does not change, so no `todo.changed` follows. The
+    /// phone therefore looks again, quietly and a few times, until the line stops saying "Syncing…".
+    private func armSyncRecheck() {
+        recheckTask?.cancel()
+        recheckTask = nil
+        guard visible, foreground, source != nil, projects?.sync?.syncing == true else {
+            rechecks = 0
+            return
+        }
+        guard rechecks < recheckDelays.count else { return }
+        let delay = recheckDelays[rechecks]
+        rechecks += 1
+        recheckTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            self.recheckTask = nil
+            guard self.visible, self.foreground else { return }
+            self.kick(projects: true, quiet: true)
+        }
+    }
+
+    /// The tab went away, the app left the foreground or the source changed: the next load starts afresh.
+    private func cancelSyncRecheck() {
+        recheckTask?.cancel()
+        recheckTask = nil
+        rechecks = 0
     }
 
     private func loadList() async {

@@ -173,6 +173,7 @@
   - **写入串行**：所有写入进一个队列（`queue` / `drainer`），一条应答之后才发下一条；超时时用**同一个 `clientMsgId` 重试一次**（幂等日志保证不会写两次）；再超时则提示「Mac 没有确认」并刷新；发现 Mac 离线则丢弃队列里这台 Mac 的后续写入并提示。队列空了之后再拉一次整表。
   - **一种请求同时只一个**：`kick(projects:list:)` + 脏标记，后来的需求只是让它再跑一轮。
   - 订阅只在「待办页可见 ∧ 前台 ∧ 有接入 Mac」时开（`syncWatch`）；`knownRev` 吃掉自己写入引起的 `todo.changed` 回声。
+  - **同步状态行会自己复查**：回答里的 `sync.syncing` 只是 Mac 回答那一刻的快照，而打开页面时的订阅会让 Mac 立刻做一次「过期才拉」的同步（约 0.5–1.3 秒，见 §6.5），第一份回答常常正好撞上它；同步结束后待办文件不一定有变化，也就不会有 `todo.changed`，状态行会一直停在「正在同步…」。所以手机看到 `syncing` 为真时，隔 1.5 / 2 / 3 / 4 / 5 / 5 / 5 / 5 / 5 秒（共约 35 秒）静默重拉一次项目列表（`kick(projects:quiet:)`，`armSyncRecheck`），直到它不再为真。重拉没有得到回答时屏幕保持原样、继续下一次；不会为它去换 iCloud 接入 Mac，只有那台 Mac 说自己不再同步了才走一次平常的加载。收起页面、退后台、换来源时清零；下拉刷新给一份新的次数。次数用完仍在同步（比如网络很慢）就停下，状态行保持 Mac 最后说的。
   - **iCloud 接入 Mac 的选择**是纯函数（`TodoSources`，可单测）：候选 = 在线、`caps.todos`、没有被判定为 `mode = local`、没有失败过的 Mac；顺序：上次用过且已知开着同步的 → 已知开着同步的 → 上次用过的 → 模式未知的（逐台探测，探到 `mode = local` 的跳过）。接入 Mac 变化时清掉已打开的项目（它的 id 在另一台上不一定存在）。
   - 来源（`ah.todos.source`）与上次的 iCloud 接入 Mac（`ah.todos.icloudMac`）存 `UserDefaults`；待办内容不落盘（I13）。`initial()`：已存的来源是 iCloud 时保持，除非所有 Mac 都已知是 `local`；否则只有一台 Mac → 它，多台 → 上次选择或第一台在线的。
   - 选中的 Mac 离线时，保留上次的行并标成「失败（离线）」，页面顶部给一行提示，输入条禁用（不排队）。
@@ -217,7 +218,7 @@
 > 状态（2026-10-29）：6 项都已自测通过；数字取自当天最后一次完整运行，机器上的运行记录不入库。
 
 1. ✅ **Rust**：网关测试台（虚拟时钟 + 内存待办存储）、`todos_view`、真实 Host（临时 `ASKHUMAN_HOME`）与跨语言夹具的用例见 `src-tauri/src/ios/gateway/tests_todos.rs`、`ios/todos_view.rs`、`daemon/runtime/ios_todos.rs` 的 `#[cfg(test)]`：项目列表 / 列表 / 七种写操作 / 幂等重放与冲突 / 限额与裁剪 / 订阅与变更通知（含退订、手机离线、撤销配对）/ `caps.todos`；项目合并、分段、同名区分逐条镜像前端用例。结果：`cargo test ios::` 252 条、`ios_todos`（daemon 的真实 Host）25 条全绿。
-2. ✅ **Swift 包**（`swift test`）：协议夹具、引擎（请求 / 应答 / 超时 / 离线 / 重订阅，`TodoEngineTests`）、纯函数（`TodoModelsTests`：来源、接入 Mac 选择、同步状态行、变更叠加）、`TodosStore`（`TodosStoreTests`：来源解析、iCloud 自动换机、写入叠加与撤销、串行与重试、离线不排队、订阅随页面可见性开关、旧 Mac 的说明）。结果：整包 414 条无失败（协议 27、存储 21、传输 14、Markdown 8、核心 144、应用 159、端到端 41，其中 4 条要真实服务、已跳过）；待办相关的 `TodoEngineTests` 12、`TodoModelsTests` 17、`TodosStoreTests` 24。
+2. ✅ **Swift 包**（`swift test`）：协议夹具、引擎（请求 / 应答 / 超时 / 离线 / 重订阅，`TodoEngineTests`）、纯函数（`TodoModelsTests`：来源、接入 Mac 选择、同步状态行、变更叠加）、`TodosStore`（`TodosStoreTests`：来源解析、iCloud 自动换机、写入叠加与撤销、串行与重试、离线不排队、订阅随页面可见性开关、旧 Mac 的说明、「正在同步…」的复查与收手）。结果：整包 414 条无失败（协议 27、存储 21、传输 14、Markdown 8、核心 144、应用 159、端到端 41，其中 4 条要真实服务、已跳过）；待办相关的 `TodoEngineTests` 12、`TodoModelsTests` 17、`TodosStoreTests` 24。之后又加了状态行复查的 5 条（`TodosStoreTests` 共 29；不带端到端环境变量的整包运行：协议 27、存储 21、传输 14、Markdown 10、核心 144、应用 179 全绿，端到端 41 条按缺环境变量跳过）。
 3. ✅ **模拟器 UI 测试**（mock 后端，en 与 zh-Hans 各跑一遍，截图自查）：打开标签与同步状态行、切来源（iCloud ⇄ Mac，含同名项目的区分）、进项目、新增、完成、恢复、编辑、删除（含确认）、**拖拽排序**、历史折叠、Mac 离线提示、**旧 Mac 的「需要更新」说明与灰显的菜单项**。结果：`AskHumanTodosUITests` 7 条，英文与中文各跑一遍全部通过。
 4. ✅ **真实 daemon 端到端**（本地 broker，`TodoE2ETests`）：手机经真实网关新增 / 编辑 / ⚡ / 排序 / 完成 / 恢复 / 删除，`AskHuman todo list`（CLI）与 `todos.json` 随之变化；同一 `clientMsgId` 重放只生效一次，拒绝与冲突都有应答；Mac 侧改文件时手机收到 `todo.changed`，退订后不再收到；项目列表里没有任何绝对路径。5 条用例，约 30 秒。
 5. ✅ **真实数据形状自查**：工作树的 Dev Instance 里没有用户的真实待办，所以拿真实 `todos.json` 的**一份拷贝**放进一次性 Mac（同步关闭），让手机引擎对账，只打印条数与字节数：15 个项目键（含 2 个 `icloud:` 虚拟键）、10 个历史键；手机看到 15 行，每一行的待办数、历史数都与文件逐项一致，每个项目的 `todo.list` 总数与行一致，最大一份整表 17 KB（上限 900 KB），最多 14 条待办、55 条历史。拷贝与临时测试跑完即删。这次没有覆盖「开着同步」的 iCloud 视图（那需要真实的 CloudKit 与 helper），它由 §12.1 的用例按桌面端算法覆盖。

@@ -129,10 +129,14 @@ extension MockData {
         return TodoSample(rows: rows, lists: lists)
     }
 
+    /// The `problem` that stands for a pull running right now (`syncing: true`) rather than for a pause reason.
+    public static let todoSyncRunning = "running"
+
     /// What the Home MacBook Pro says about its iCloud sync.
     public static func todoSync(now: Date = Date(), problem: String? = nil) -> TodoSyncInfo {
-        TodoSyncInfo(
-            syncing: false, paused: problem, helper: "running", unsynced: 0,
+        let running = problem == todoSyncRunning
+        return TodoSyncInfo(
+            syncing: running, paused: running ? nil : problem, helper: "running", unsynced: 0,
             lastPullMs: UInt64(now.addingTimeInterval(-40).timeIntervalSince1970 * 1000),
             lastPushMs: UInt64(now.addingTimeInterval(-90).timeIntervalSince1970 * 1000),
             devices: [

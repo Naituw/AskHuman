@@ -367,4 +367,92 @@ final class TodosStoreTests: XCTestCase {
         await show()
         XCTAssertEqual(todos.syncLine, .notSignedIn)
     }
+
+    // MARK: the sync line while a pull runs
+
+    /// A store that looks again fast enough for a test: `delays` are the waits between the looks.
+    private func quickStore(_ delays: [Duration] = Array(repeating: .milliseconds(20), count: 40)) -> TodosStore {
+        let store = TodosStore(backend: backend, defaults: defaults, syncRecheckDelays: delays)
+        store.update(macs: app.state.macs, foreground: true)
+        return store
+    }
+
+    private func isSynced(_ line: TodoSyncLine?) -> Bool {
+        if case .synced? = line { return true }
+        return false
+    }
+
+    func testTheSyncLineStopsSayingSyncingOnceTheMacIsDone() async {
+        await make()
+        await backend.setTodoSyncRunning(true)
+        let store = quickStore()
+        store.setVisible(true)
+        await eventually("the first answer") { store.projectsState == .loaded }
+        XCTAssertEqual(store.syncLine, .syncing, "the Mac was in the middle of its pull when it answered")
+
+        await backend.setTodoSyncRunning(false)
+        await eventually("the line catches up without being asked to") { self.isSynced(store.syncLine) }
+        XCTAssertEqual(store.rechecks, 0, "nothing is left to look at")
+    }
+
+    func testItGivesUpAfterItsLooksAndPullingDownAsksAgain() async {
+        await make()
+        await backend.setTodoSyncRunning(true)
+        let store = quickStore([.milliseconds(10), .milliseconds(10), .milliseconds(10)])
+        store.setVisible(true)
+        await eventually("every look is used") { store.rechecks == 3 }
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(store.rechecks, 3, "no fourth look")
+        XCTAssertEqual(store.syncLine, .syncing, "the line says what the Mac last said")
+
+        await backend.setTodoSyncRunning(false)
+        await store.refresh()
+        XCTAssertTrue(isSynced(store.syncLine))
+    }
+
+    func testALookThatGetsNoAnswerLeavesTheScreenAlone() async {
+        await make()
+        await backend.setTodoSyncRunning(true)
+        let store = quickStore(Array(repeating: .milliseconds(40), count: 30))
+        store.setVisible(true)
+        await eventually("the first answer") { store.projectsState == .loaded }
+        store.select(.icloud)
+        await eventually("iCloud") { store.source == .icloud && store.projectsState == .loaded && store.accessMacId == self.home }
+
+        await backend.setUnreachable([home])
+        let looked = store.rechecks
+        await eventually("the looks go on, each one lost") { store.rechecks >= looked + 3 }
+        XCTAssertEqual(store.projectsState, .loaded, "a lost look is not a failure")
+        XCTAssertFalse(store.sections.isEmpty, "the rows stay")
+        XCTAssertEqual(store.accessMacId, home)
+        XCTAssertEqual(store.syncLine, .syncing, "and so does the line")
+    }
+
+    func testLeavingTheTabOrTheAppStopsTheLooks() async {
+        await make()
+        await backend.setTodoSyncRunning(true)
+        let store = quickStore(Array(repeating: .milliseconds(30), count: 40))
+        store.setVisible(true)
+        await eventually("the first look") { store.rechecks >= 1 }
+
+        store.setVisible(false)
+        XCTAssertEqual(store.rechecks, 0)
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(store.rechecks, 0, "a hidden tab asks for nothing")
+
+        store.setVisible(true)
+        await eventually("looking again") { store.rechecks >= 1 }
+        store.update(macs: app.state.macs, foreground: false)
+        XCTAssertEqual(store.rechecks, 0)
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(store.rechecks, 0, "a backgrounded app asks for nothing")
+    }
+
+    func testTheLooksAreFewAndTheyEndWithinHalfAMinuteOrSo() {
+        let delays = TodosStore.syncRecheckDelays
+        XCTAssertLessThanOrEqual(delays.first ?? .seconds(99), .seconds(2), "the first look comes soon")
+        let total = delays.reduce(Duration.zero, +)
+        XCTAssertGreaterThanOrEqual(total, .seconds(30))
+        XCTAssertLessThanOrEqual(total, .seconds(40))
+    }
 }
