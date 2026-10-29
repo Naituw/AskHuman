@@ -294,6 +294,7 @@ pub fn sample_agent(key: &str, state: &str) -> AgentView {
         project: ProjectRef {
             key: "/tmp/proj".into(),
             name: "proj".into(),
+            repo: None,
         },
         state: state.to_string(),
         started_at: BASE_MS - 60_000,
@@ -489,6 +490,7 @@ pub fn sample_ask(id: &str) -> (Arc<AskRequest>, RequestView) {
         project: ProjectRef {
             key: "/tmp/proj".into(),
             name: "proj".into(),
+            repo: None,
         },
         session_title: None,
         source: "Codex".into(),
@@ -537,6 +539,7 @@ pub fn sample_confirm(id: &str, expires_at: i64) -> RequestView {
         project: ProjectRef {
             key: "/tmp/proj".into(),
             name: "proj".into(),
+            repo: None,
         },
         session_title: None,
         source: "Claude Code".into(),

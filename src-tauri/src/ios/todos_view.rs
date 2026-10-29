@@ -39,7 +39,9 @@ pub struct SyncedProject {
     pub macs: Vec<String>,
 }
 
-/// Stable id of a project on the wire: the phone never sees (or sends) a path.
+/// Stable id of a project on the wire: the phone never sees (or sends) a path. The phone computes the same
+/// id from the project key an Agent reports (`TodoProjectId.of(key:)`), to find the Agents of a row that
+/// has no repository to be joined by.
 pub fn project_id(key: &str) -> String {
     Sha256::digest(key.as_bytes())
         .iter()
@@ -391,6 +393,14 @@ mod tests {
         assert_eq!(id, project_id("/Users/me/dev/app"));
         assert_ne!(id, project_id("/Users/me/dev/app2"));
         assert!(!id.contains("app"));
+    }
+
+    /// The phone derives the same ids from the paths of its Agents (`TodoProjectId` in the Swift package);
+    /// the two pin the same values.
+    #[test]
+    fn project_ids_match_the_ones_the_phone_computes() {
+        assert_eq!(project_id("/tmp/proj"), "29ccbcbce9441d72");
+        assert_eq!(project_id("/Users/me/askhuman"), "b044499166be822c");
     }
 
     #[test]

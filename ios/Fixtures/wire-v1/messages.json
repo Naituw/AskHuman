@@ -96,6 +96,11 @@
        "project": {"key": "p2", "name": "Other"}, "state": "idle", "startedAt": 1792890000000, "lastActivityAt": 1792899000000,
        "activeElapsedSecs": 0, "turnSteps": 0, "canInterject": {"ok": true}, "followed": false}
     ]}},
+    {"type": "agents.snapshot", "name": "repo", "body": {"epoch": "0123456789abcdef", "rev": 5, "agents": [
+      {"key": "claude:s3", "kind": "claude", "kindLabel": "Claude Code", "sessionId": "s3", "title": "Fix billing",
+       "project": {"key": "/Users/me/billing", "name": "billing", "repo": "github.com/acme/billing"}, "state": "idle", "startedAt": 1792890000000, "lastActivityAt": 1792900000000,
+       "activeElapsedSecs": 0, "turnSteps": 0, "canInterject": {"ok": true}, "followed": false}
+    ]}},
     {"type": "agents.delta", "body": {"rev": 4, "upsert": [
       {"key": "codex:s2", "kind": "codex", "kindLabel": "Codex", "sessionId": "s2", "title": "Write tests",
        "project": {"key": "p2", "name": "Other"}, "state": "ended", "startedAt": 1792890000000, "lastActivityAt": 1792899500000,

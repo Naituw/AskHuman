@@ -53,10 +53,15 @@ public struct AgentRef: Codable, Equatable, Hashable, Sendable {
 public struct ProjectRef: Codable, Equatable, Hashable, Sendable {
     public var key: String
     public var name: String
+    /// The project's repository as todo sync names it (`github.com/acme/app`, the same value as
+    /// `TodoProjectRow.repo`). Only the Agent list carries it, and only while the Mac syncs todos:
+    /// it is what ties an Agent to the project rows of the Todos tab. Older Macs never send it.
+    public var repo: String?
 
-    public init(key: String, name: String) {
+    public init(key: String, name: String, repo: String? = nil) {
         self.key = key
         self.name = name
+        self.repo = repo
     }
 }
 

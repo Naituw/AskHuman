@@ -237,6 +237,12 @@ pub struct AgentRef {
 pub struct ProjectRef {
     pub key: String,
     pub name: String,
+    /// The project's repository as todo sync names it (normalized git remote, e.g. `github.com/acme/app`;
+    /// the same value as `TodoProjectRow::repo`). Only the Agent list carries it, and only while todo sync is
+    /// on: it is how the phone tells which Agents work in a project it lists in the Todos tab, whichever
+    /// Mac and whichever worktree they are in (docs/specs/ios-todos.md I18).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
 }
 
 // ---------------------------------------------------------------- pairing (plan §3.3)

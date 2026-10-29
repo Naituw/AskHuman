@@ -44,6 +44,7 @@ fn project_ref(origin: &ConversationOrigin) -> ProjectRef {
     ProjectRef {
         key: origin.project_key().to_string(),
         name: origin.project_name().unwrap_or_default().to_string(),
+        repo: None,
     }
 }
 

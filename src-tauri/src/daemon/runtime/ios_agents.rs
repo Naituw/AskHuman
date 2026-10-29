@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -18,6 +19,7 @@ use crate::agents::LifecycleEvent;
 use crate::ios::gateway::{AgentEventKind, FrameData, InterjectResult, StagedFile};
 use crate::ios::wire::{AgentView, CanInterject, ProjectRef};
 use crate::models::FileAttachment;
+use crate::todo_sync::identity::{FsResolver, IdentityResolver};
 
 /// Longest "current tool" caption sent to the phone.
 const TOOL_CAPTION_MAX_CHARS: usize = 80;
@@ -44,11 +46,15 @@ pub(super) fn event_kind(event: LifecycleEvent) -> AgentEventKind {
     }
 }
 
+/// How long a resolved project is trusted. The list is rebuilt every second, but a repository's remote can
+/// change under a running Agent and todo sync can be switched on or off, so the answer expires.
+const PROJECT_TTL: Duration = Duration::from_secs(60);
+
 /// Resolved project of a working directory, remembered because the list is rebuilt every second
 /// and walking up to the git root touches the disk.
 #[derive(Default)]
 pub(super) struct ProjectCache {
-    by_cwd: Mutex<HashMap<String, ProjectRef>>,
+    by_cwd: Mutex<HashMap<String, (ProjectRef, Instant)>>,
 }
 
 impl ProjectCache {
@@ -57,21 +63,37 @@ impl ProjectCache {
             return ProjectRef {
                 key: String::new(),
                 name: String::new(),
+                repo: None,
             };
         }
         let mut map = self.by_cwd.lock().unwrap();
         if map.len() > 256 {
             map.clear();
         }
-        map.entry(cwd.to_string())
-            .or_insert_with(|| {
-                let key = crate::project::detect_from(Path::new(cwd));
-                ProjectRef {
-                    name: crate::project::display_name(&key),
-                    key,
-                }
-            })
-            .clone()
+        if let Some((project, at)) = map.get(cwd) {
+            if at.elapsed() < PROJECT_TTL {
+                return project.clone();
+            }
+        }
+        let project = resolve_project(cwd, crate::todo_sync::service::is_enabled());
+        map.insert(cwd.to_string(), (project.clone(), Instant::now()));
+        project
+    }
+}
+
+/// The project a working directory belongs to. `with_repo` (todo sync is on) adds the repository the
+/// Todos tab joins on; without sync no phone can use it, and nothing is read for it.
+fn resolve_project(cwd: &str, with_repo: bool) -> ProjectRef {
+    let key = crate::project::detect_from(Path::new(cwd));
+    let repo = if with_repo {
+        FsResolver.resolve(&key, None, 0).p
+    } else {
+        None
+    };
+    ProjectRef {
+        name: crate::project::display_name(&key),
+        key,
+        repo,
     }
 }
 
@@ -496,6 +518,95 @@ mod tests {
         assert_eq!(receipt_phone("ios:abc123"), Some("abc123"));
         assert_eq!(receipt_phone("ios:"), None);
         assert_eq!(receipt_phone("feishu"), None);
+    }
+
+    fn repo_with_remote(root: &Path, url: &str) {
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(
+            root.join(".git/config"),
+            format!("[remote \"origin\"]\n\turl = {url}\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_project_names_its_repository_while_todo_sync_is_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("app");
+        repo_with_remote(&root, "git@github.com:Acme/App.git");
+        let inner = root.join("src/deep");
+        std::fs::create_dir_all(&inner).unwrap();
+
+        let project = resolve_project(inner.to_str().unwrap(), true);
+        assert_eq!(
+            project.key,
+            std::fs::canonicalize(&root).unwrap().to_string_lossy()
+        );
+        assert_eq!(project.name, "app");
+        assert_eq!(project.repo.as_deref(), Some("github.com/acme/app"));
+
+        // Nothing is read for a phone that cannot use it.
+        assert_eq!(resolve_project(inner.to_str().unwrap(), false).repo, None);
+    }
+
+    #[test]
+    fn a_worktree_names_the_repository_of_its_main_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("app");
+        repo_with_remote(&main, "https://github.com/acme/app");
+        let git_dir = main.join(".git/worktrees/feature");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::write(git_dir.join("commondir"), "../..\n").unwrap();
+        let tree = dir.path().join("app-feature");
+        std::fs::create_dir_all(&tree).unwrap();
+        std::fs::write(
+            tree.join(".git"),
+            format!("gitdir: {}\n", git_dir.to_string_lossy()),
+        )
+        .unwrap();
+
+        let project = resolve_project(tree.to_str().unwrap(), true);
+        assert_eq!(
+            project.name, "app-feature",
+            "the worktree is its own project here"
+        );
+        assert_eq!(project.repo.as_deref(), Some("github.com/acme/app"));
+    }
+
+    #[test]
+    fn a_directory_without_a_remote_has_no_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("scratch");
+        std::fs::create_dir_all(&plain).unwrap();
+        assert_eq!(resolve_project(plain.to_str().unwrap(), true).repo, None);
+
+        let local = dir.path().join("local");
+        repo_with_remote(&local, "/srv/git/local.git");
+        assert_eq!(resolve_project(local.to_str().unwrap(), true).repo, None);
+    }
+
+    #[test]
+    fn a_repository_is_left_out_of_the_wire_when_there_is_none() {
+        let bare = ProjectRef {
+            key: "/p".into(),
+            name: "p".into(),
+            repo: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&bare).unwrap(),
+            json!({"key": "/p", "name": "p"})
+        );
+        // Older Macs never send it.
+        let parsed: ProjectRef = serde_json::from_value(json!({"key": "/p", "name": "p"})).unwrap();
+        assert_eq!(parsed, bare);
+        let named = ProjectRef {
+            repo: Some("github.com/acme/app".into()),
+            ..bare
+        };
+        assert_eq!(
+            serde_json::to_value(&named).unwrap(),
+            json!({"key": "/p", "name": "p", "repo": "github.com/acme/app"})
+        );
     }
 
     #[test]
