@@ -483,7 +483,7 @@ pub fn capture_hook(
     }
 }
 pub fn report_cli(kind: AgentKind) {
-    let env = std::env::vars().collect();
+    let env = super::detect::env_snapshot();
     if super::report::should_skip(kind, &env) {
         return;
     }

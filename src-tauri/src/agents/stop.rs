@@ -1,7 +1,6 @@
 //! Stop confirmation hook. It reuses the ordinary single-select Ask flow and emits each agent's
 //! native continuation JSON from the human's decision.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -42,7 +41,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
     }
     let track = args.get(1).is_some_and(|value| value == "track");
     let confirm = args.iter().skip(1).any(|value| value == "confirm");
-    let env: HashMap<String, String> = std::env::vars().collect();
+    let env = super::detect::env_snapshot();
     if super::report::should_skip(kind, &env) {
         return None;
     }

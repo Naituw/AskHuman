@@ -37,7 +37,7 @@ pub fn run(args: &[String]) {
         return;
     };
 
-    let env: HashMap<String, String> = std::env::vars().collect();
+    let env = detect::env_snapshot();
 
     // 去重：跳过「兼容加载他家 hook」造成的误触发。
     if should_skip(intended, &env) {

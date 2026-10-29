@@ -23,7 +23,7 @@ pub fn run(args: &[String]) {
     let Some(event) = args.get(1).map(String::as_str) else {
         return;
     };
-    let env: HashMap<String, String> = std::env::vars().collect();
+    let env = super::detect::env_snapshot();
     if super::report::should_skip(kind, &env) {
         return;
     }

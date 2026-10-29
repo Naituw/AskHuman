@@ -301,11 +301,7 @@ fn spawn_via_gui_launchd(policy: SpawnPolicy) -> std::io::Result<()> {
             env_xml.push_str(&plist_env_entry(key, &v));
         }
     }
-    for (k, v) in std::env::vars() {
-        if k.starts_with("ASKHUMAN_") {
-            env_xml.push_str(&plist_env_entry(&k, &v));
-        }
-    }
+    env_xml.push_str(&askhuman_env_xml(std::env::vars_os()));
 
     let plist = launchd_plist_contents(
         &exe.display().to_string(),
@@ -372,6 +368,25 @@ fn launchd_plist_contents(exe: &str, log: &str, label: &str, env_xml: &str) -> S
         exe = xml_escape(exe),
         log = xml_escape(log),
     )
+}
+
+/// Every `ASKHUMAN_*` entry of `vars` as plist entries, in the given order. Non-Unicode entries
+/// are skipped: `std::env::vars()` would panic on one (release builds abort), whichever variable
+/// it belongs to, and a plist string cannot carry it.
+#[cfg(target_os = "macos")]
+fn askhuman_env_xml(
+    vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> String {
+    let mut xml = String::new();
+    for (key, value) in vars {
+        let (Some(key), Some(value)) = (key.to_str(), value.to_str()) else {
+            continue;
+        };
+        if key.starts_with("ASKHUMAN_") {
+            xml.push_str(&plist_env_entry(key, value));
+        }
+    }
+    xml
 }
 
 /// 生成一条 plist `EnvironmentVariables` 子项（key/value 均做 XML 转义）。
@@ -475,6 +490,38 @@ mod tests {
         assert_ne!(
             isolated,
             launchd_label(Path::new("/tmp/other/.askhuman"), true)
+        );
+    }
+
+    #[test]
+    fn forwarded_askhuman_env_skips_non_unicode_entries() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        let vars = vec![
+            (OsString::from("ASKHUMAN_HOME"), OsString::from("/tmp/a&b")),
+            (OsString::from("UNRELATED"), OsString::from("x")),
+            // A non-Unicode entry makes `std::env::vars()` panic, whichever variable holds it.
+            (
+                OsString::from("OTHER"),
+                OsString::from_vec(b"caf\xff".to_vec()),
+            ),
+            (
+                OsString::from("ASKHUMAN_BAD"),
+                OsString::from_vec(b"caf\xff".to_vec()),
+            ),
+            (
+                OsString::from_vec(b"ASKHUMAN_\xff".to_vec()),
+                OsString::from("v"),
+            ),
+            (OsString::from("ASKHUMAN_MOCK"), OsString::from("1")),
+        ];
+        assert_eq!(
+            askhuman_env_xml(vars.into_iter()),
+            format!(
+                "{}{}",
+                plist_env_entry("ASKHUMAN_HOME", "/tmp/a&b"),
+                plist_env_entry("ASKHUMAN_MOCK", "1")
+            )
         );
     }
 
