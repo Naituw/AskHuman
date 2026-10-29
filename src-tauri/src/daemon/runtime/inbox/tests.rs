@@ -295,7 +295,8 @@ async fn popup_reaper_does_not_wait_for_inherited_stderr_on_any_platform() {
     // Late output exceeds the pipe capacity and must still be drained after the reaper returns.
     let written = directory.path().join("ready").with_extension("written");
     tokio::time::timeout(Duration::from_secs(10), async {
-        while !written.exists() {
+        // `fs::write` creates the file before it fills it: wait for the content, not the name.
+        while !std::fs::read_to_string(&written).is_ok_and(|text| !text.is_empty()) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
