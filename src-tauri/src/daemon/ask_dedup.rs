@@ -41,7 +41,37 @@ pub fn session_key(task: &TaskRequest) -> Option<String> {
 /// 提问指纹（spec D2）：共享 message、附件、每题文本与选项、全局模式位全部逐字一致才相同。
 /// 只做首尾空白归一化，不做相似度匹配——两次 whats-next 的固定问题相同而报告不同，
 /// 宽松匹配会把它们错误合流。
+///
+/// This strict form is what the replay cache compares (D5): an answer that was already
+/// handed to the agent is only replayed for a byte-identical ask.
 pub fn fingerprint(task: &TaskRequest) -> String {
+    fingerprint_of(task, false)
+}
+
+/// Fingerprint used to attach a repeated call to a card that is still waiting for the human
+/// (spec D2 "todo-composed asks" / D3).
+///
+/// It equals [`fingerprint`] for every ordinary ask. For the cards AskHuman composes itself from
+/// the live todo queue (whats-next and Stop confirmation), it leaves out what the queue decides:
+/// the question text (a fixed sentence plus the "N more not listed" note) and the todo chips
+/// (options carrying a todo id). Everything the caller supplied (the report, attachments, `-o`
+/// suggestions, the built-in options and the mode bits) is still compared verbatim, so two
+/// handoffs with different reports stay two cards.
+///
+/// Why: when the agent's turn is interrupted and the same command is re-sent, the queue may have
+/// changed in between (a todo was added, finished or reordered), and the strict fingerprint would
+/// then show a second card for what is the same question.
+pub fn coalesce_fingerprint(task: &TaskRequest) -> String {
+    fingerprint_of(task, true)
+}
+
+/// True for the asks whose question text and todo chips AskHuman builds from the todo queue.
+fn composes_todo_question(task: &TaskRequest) -> bool {
+    task.whats_next || task.popup_kind() == crate::ipc::PopupRequestKind::Stop
+}
+
+fn fingerprint_of(task: &TaskRequest, ignore_todo_queue: bool) -> String {
+    let relaxed = ignore_todo_queue && composes_todo_question(task);
     let mut hasher = Sha256::new();
     let mut feed = |value: &str| {
         hasher.update(value.trim().as_bytes());
@@ -58,8 +88,13 @@ pub fn fingerprint(task: &TaskRequest) -> String {
     }
     feed("questions");
     for question in &task.questions {
-        feed(&question.message);
+        if !relaxed {
+            feed(&question.message);
+        }
         for option in &question.predefined_options {
+            if relaxed && option.todo_id.is_some() {
+                continue;
+            }
             feed(&option.text);
             feed(if option.recommended { "1" } else { "0" });
             feed(option.todo_id.as_deref().unwrap_or(""));
@@ -374,6 +409,132 @@ mod tests {
         merged.message.text = "a".into();
         merged.questions[0].message = "bc".into();
         assert_ne!(fingerprint(&split), fingerprint(&merged));
+    }
+
+    fn todo_chip(id: &str) -> OptionItem {
+        OptionItem {
+            text: format!("Run todo: {id}"),
+            recommended: false,
+            todo_id: Some(id.into()),
+            todo_text: Some(id.into()),
+            todo_attachments: Vec::new(),
+        }
+    }
+
+    fn plain_option(text: &str) -> OptionItem {
+        OptionItem {
+            text: text.into(),
+            recommended: false,
+            todo_id: None,
+            todo_text: None,
+            todo_attachments: Vec::new(),
+        }
+    }
+
+    /// A card whose question and chips AskHuman builds from the todo queue: the caller's report
+    /// and suggestion, then the queue's chips, then the built-in end option.
+    fn todo_composed(
+        kind: &str,
+        report: &str,
+        suggestion: &str,
+        chips: &[&str],
+        note: &str,
+    ) -> TaskRequest {
+        let mut t = task();
+        match kind {
+            "whats-next" => t.whats_next = true,
+            "stop" => t.stop_confirmation = true,
+            _ => unreachable!(),
+        }
+        t.message.text = report.into();
+        let mut options = vec![plain_option(suggestion)];
+        options.extend(chips.iter().map(|id| todo_chip(id)));
+        options.push(plain_option("End"));
+        t.questions[0].message = format!("What next?{note}");
+        t.questions[0].predefined_options = options;
+        t
+    }
+
+    #[test]
+    fn coalesce_fingerprint_is_the_strict_fingerprint_for_ordinary_asks() {
+        let base = task();
+        assert_eq!(coalesce_fingerprint(&base), fingerprint(&base));
+
+        // An ordinary ask never gets the todo-queue exemption, whatever its options carry.
+        let mut with_chip = task();
+        with_chip.questions[0]
+            .predefined_options
+            .push(todo_chip("t-1"));
+        assert_ne!(
+            coalesce_fingerprint(&with_chip),
+            coalesce_fingerprint(&base)
+        );
+        let mut reworded = task();
+        reworded.questions[0].message = "go on??".into();
+        assert_ne!(coalesce_fingerprint(&reworded), coalesce_fingerprint(&base));
+    }
+
+    #[test]
+    fn coalesce_fingerprint_ignores_the_todo_queue_on_whats_next_and_stop_cards() {
+        for kind in ["whats-next", "stop"] {
+            let first = todo_composed(kind, "done A", "Write docs", &["t-1", "t-2", "t-3"], "");
+            // Same command re-sent after the queue changed: other chips and an overflow note.
+            let resent = todo_composed(
+                kind,
+                "done A",
+                "Write docs",
+                &["t-2", "t-9"],
+                "\n\n... 4 more not listed",
+            );
+            assert_eq!(
+                coalesce_fingerprint(&first),
+                coalesce_fingerprint(&resent),
+                "{kind}: the queue must not make a re-sent ask look different"
+            );
+            // The replay cache keeps comparing the strict form.
+            assert_ne!(fingerprint(&first), fingerprint(&resent), "{kind}");
+
+            // What the caller supplied still separates two asks.
+            for other in [
+                todo_composed(kind, "done B", "Write docs", &["t-1"], ""),
+                todo_composed(kind, "done A", "Write tests", &["t-1"], ""),
+            ] {
+                assert_ne!(
+                    coalesce_fingerprint(&first),
+                    coalesce_fingerprint(&other),
+                    "{kind}"
+                );
+            }
+            let mut select_only = first.clone();
+            select_only.select_only = true;
+            assert_ne!(
+                coalesce_fingerprint(&first),
+                coalesce_fingerprint(&select_only),
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn coalesce_fingerprint_keeps_whats_next_and_stop_apart() {
+        let whats_next = todo_composed("whats-next", "done", "Go", &["t-1"], "");
+        let stop = todo_composed("stop", "done", "Go", &["t-1"], "");
+        assert_ne!(
+            coalesce_fingerprint(&whats_next),
+            coalesce_fingerprint(&stop)
+        );
+    }
+
+    #[test]
+    fn legacy_stop_requests_get_the_same_exemption() {
+        // Older clients mark a Stop card with `record_history = false` instead.
+        let mut a = todo_composed("stop", "done", "Go", &["t-1"], "");
+        let mut b = todo_composed("stop", "done", "Go", &["t-2"], "\n\nmore");
+        for t in [&mut a, &mut b] {
+            t.stop_confirmation = false;
+            t.record_history = false;
+        }
+        assert_eq!(coalesce_fingerprint(&a), coalesce_fingerprint(&b));
     }
 
     fn entry(fp: &str, text: &str, finished_at: Instant) -> ReplayEntry {

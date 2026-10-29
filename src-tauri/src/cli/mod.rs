@@ -728,7 +728,7 @@ fn whats_next_question(
     whats_next_question_from_entries(suggestions, crate::todos::list(project), lang)
 }
 
-fn whats_next_question_from_entries(
+pub(crate) fn whats_next_question_from_entries(
     suggestions: &[args::OptArg],
     entries: Vec<crate::todos::TodoEntry>,
     lang: Lang,

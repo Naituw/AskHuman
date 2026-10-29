@@ -44,9 +44,14 @@ pub struct RequestEntry {
     /// （Codex 共享 app-server / Claude 被 scrub），使其等待人类回答期间不被「工作中兜底超时」降级。
     pub agent_session_id: Option<String>,
     /// 重复提问收敛用的会话键与提问指纹（spec duplicate-ask-coalescing D1/D2）：
-    /// 同键同指纹的后续调用合流到本请求，不再弹第二张卡。会话键为 None 时不参与收敛。
+    /// 同键同合流指纹的后续调用合流到本请求，不再弹第二张卡。会话键为 None 时不参与收敛。
     pub session_key: Option<String>,
+    /// Strict fingerprint of the original ask; the replay cache stores and compares this one (D5).
     pub fingerprint: String,
+    /// Fingerprint a repeated call must match to attach to this card while it is still waiting
+    /// (D3). Equal to `fingerprint` except for whats-next / Stop cards, which leave out the
+    /// todo-queue-driven parts (see `ask_dedup::coalesce_fingerprint`).
+    pub coalesce_fingerprint: String,
     /// 等待本请求结果的调用方个数（原始 CLI + 各 follower）。归零才允许取消整个请求。
     waiters: AtomicUsize,
     /// 等待者归零时唤醒提交连接去做取消收尾（最后离场的可能是 follower）。
@@ -419,6 +424,7 @@ impl RequestRegistry {
         // 收敛键一并算好存下，后续合流查找不必重算（spec duplicate-ask-coalescing D1/D2）。
         let session_key = super::ask_dedup::session_key(&task);
         let fingerprint = super::ask_dedup::fingerprint(&task);
+        let coalesce_fingerprint = super::ask_dedup::coalesce_fingerprint(&task);
         let popup_kind = task.popup_kind();
 
         // Daemon 分配权威 request_id（用于临时目录）。
@@ -484,6 +490,7 @@ impl RequestRegistry {
             agent_session_id,
             session_key,
             fingerprint,
+            coalesce_fingerprint,
             waiters: AtomicUsize::new(1),
             waiters_gone: Arc::new(Notify::new()),
             followers: Mutex::new(Vec::new()),
@@ -502,20 +509,21 @@ impl RequestRegistry {
     }
 
     /// Build a validated structured confirmation with daemon-owned identity and 24h deadline.
-    /// 合流查找（spec duplicate-ask-coalescing D3/D9）：同会话键 + 同指纹且**仍在等人回答**的
-    /// 在途请求存在时，把调用方登记为 follower，返回其结果接收端。
+    /// 合流查找（spec duplicate-ask-coalescing D3/D9）：同会话键 + 同合流指纹
+    /// （`ask_dedup::coalesce_fingerprint`）且**仍在等人回答**的在途请求存在时，
+    /// 把调用方登记为 follower，返回其结果接收端。
     ///
     /// 查找、收尾判定与登记必须在同一把锁内完成：已进入收尾（终态已产生）的请求视为不在途，
     /// 否则 follower 会挂在一个永远不再投递的请求上。在途请求是个位数，直接遍历即可，不建索引。
     pub fn try_attach(
         &self,
         session_key: &str,
-        fingerprint: &str,
+        coalesce_fingerprint: &str,
     ) -> Option<(Arc<RequestEntry>, UnboundedReceiver<RenderOutcome>)> {
         let inner = self.inner.lock().unwrap();
         let entry = inner.by_id.values().find(|entry| {
             entry.session_key.as_deref() == Some(session_key)
-                && entry.fingerprint == fingerprint
+                && entry.coalesce_fingerprint == coalesce_fingerprint
                 && !entry.coordinator.is_finalizing()
         })?;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1073,14 +1081,14 @@ mod tests {
 
         // 不同会话 / 不同指纹都不合流。
         assert!(registry
-            .try_attach("sid:other", &entry.fingerprint)
+            .try_attach("sid:other", &entry.coalesce_fingerprint)
             .is_none());
         let different =
-            super::super::ask_dedup::fingerprint(&ask_task(Some("s1"), "something else"));
+            super::super::ask_dedup::coalesce_fingerprint(&ask_task(Some("s1"), "something else"));
         assert!(registry.try_attach(&key, &different).is_none());
 
         let (same, mut rx) = registry
-            .try_attach(&key, &entry.fingerprint)
+            .try_attach(&key, &entry.coalesce_fingerprint)
             .expect("identical ask coalesces");
         assert_eq!(same.request_id, entry.request_id);
         assert_eq!(entry.waiter_count(), 2);
@@ -1102,7 +1110,9 @@ mod tests {
         let registry = RequestRegistry::new();
         let (entry, _rx) = registry.create(ask_task(None, "continue?"), None);
         assert!(entry.session_key.is_none());
-        assert!(registry.try_attach("sid:s1", &entry.fingerprint).is_none());
+        assert!(registry
+            .try_attach("sid:s1", &entry.coalesce_fingerprint)
+            .is_none());
     }
 
     #[tokio::test]
@@ -1114,7 +1124,124 @@ mod tests {
             .coordinator
             .submit(crate::models::ChannelResult::cancel("popup"));
         // 终态已产生：再挂上去就永远等不到结果了（spec duplicate-ask-coalescing D9）。
-        assert!(registry.try_attach(&key, &entry.fingerprint).is_none());
+        assert!(registry
+            .try_attach(&key, &entry.coalesce_fingerprint)
+            .is_none());
+    }
+
+    fn queue_entry(index: usize) -> crate::todos::TodoEntry {
+        crate::todos::TodoEntry {
+            id: format!("todo-{index}"),
+            text: format!("todo {index}"),
+            created_at_ms: index as u64,
+            agent_kind: None,
+            auto: false,
+            attachments: Vec::new(),
+        }
+    }
+
+    /// A whats-next ask the way the CLI composes it: suggestions, the live queue's chips, the
+    /// built-in end option, and the overflow note once the queue is longer than the card holds.
+    fn whats_next_task(
+        session: &str,
+        report: &str,
+        suggestions: &[&str],
+        queue: &[usize],
+    ) -> TaskRequest {
+        let mut task = ask_task(Some(session), "placeholder");
+        task.message.text = report.into();
+        task.whats_next = true;
+        let suggestions: Vec<crate::cli::args::OptArg> = suggestions
+            .iter()
+            .map(|text| crate::cli::args::OptArg {
+                text: (*text).into(),
+                recommended: false,
+            })
+            .collect();
+        let entries = queue.iter().map(|&i| queue_entry(i)).collect();
+        task.questions = vec![crate::cli::whats_next_question_from_entries(
+            &suggestions,
+            entries,
+            Lang::En,
+        )];
+        task
+    }
+
+    #[test]
+    fn repeated_whats_next_attaches_to_the_live_card_when_the_todo_queue_changed() {
+        let registry = RequestRegistry::new();
+        let original = whats_next_task("s1", "done A", &["Write docs"], &[1, 2, 3]);
+        let (entry, _rx) = registry.create(original, None);
+        let key = entry.session_key.clone().unwrap();
+
+        // The same command re-sent after the queue changed: other chips, and a queue long enough
+        // to add the "N more not listed" note to the question text.
+        let resent = whats_next_task(
+            "s1",
+            "done A",
+            &["Write docs"],
+            &(2..=15).collect::<Vec<_>>(),
+        );
+        assert_ne!(
+            super::super::ask_dedup::fingerprint(&resent),
+            entry.fingerprint,
+            "the strict fingerprint (replay cache) still sees a different ask"
+        );
+        let (same, _follower) = registry
+            .try_attach(
+                &key,
+                &super::super::ask_dedup::coalesce_fingerprint(&resent),
+            )
+            .expect("same whats-next coalesces onto the card still waiting");
+        assert_eq!(same.request_id, entry.request_id);
+        assert_eq!(entry.waiter_count(), 2);
+
+        // What the agent supplied stays part of the identity.
+        for other in [
+            whats_next_task("s1", "done B", &["Write docs"], &[1, 2, 3]),
+            whats_next_task("s1", "done A", &["Write tests"], &[1, 2, 3]),
+            whats_next_task("s1", "done A", &[], &[1, 2, 3]),
+        ] {
+            assert!(registry
+                .try_attach(&key, &super::super::ask_dedup::coalesce_fingerprint(&other))
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn repeated_stop_card_attaches_to_the_live_card_when_the_todo_queue_changed() {
+        use crate::agents::AgentKind;
+        let stop = |last: &str, queue: &[usize], total: usize| {
+            let entries: Vec<_> = queue.iter().map(|&i| queue_entry(i)).collect();
+            crate::agents::stop::build_task(
+                AgentKind::Cursor,
+                "s1",
+                "/tmp/project",
+                &entries,
+                total,
+                Some(last),
+                Lang::En,
+            )
+        };
+        let registry = RequestRegistry::new();
+        let (entry, _rx) = registry.create(stop("all done", &[1, 2], 2), None);
+        let key = entry.session_key.clone().unwrap();
+
+        let resent = stop("all done", &[2, 3, 4], 14);
+        assert!(registry
+            .try_attach(
+                &key,
+                &super::super::ask_dedup::coalesce_fingerprint(&resent)
+            )
+            .is_some());
+
+        let other_turn = stop("something else", &[1, 2], 2);
+        assert!(registry
+            .try_attach(
+                &key,
+                &super::super::ask_dedup::coalesce_fingerprint(&other_turn)
+            )
+            .is_none());
     }
 
     #[test]

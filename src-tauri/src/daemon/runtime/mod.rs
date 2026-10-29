@@ -2323,11 +2323,18 @@ async fn handle_submit(
     // 提问，而旧的 CLI 进程不会被杀，旧卡片仍然有效。这里在建新请求之前先看两件事——
     // 同一个提问是不是还挂在人面前（合流），或者刚刚已经被回答过（重放）。
     if let Some(session_key) = ask_dedup::session_key(&task) {
-        let fingerprint = ask_dedup::fingerprint(&task);
-        if let Some((entry, follower_rx)) = state.registry.try_attach(&session_key, &fingerprint) {
+        // A card still waiting for the human is matched with the coalescing fingerprint, which
+        // ignores what the todo queue decides on whats-next / Stop cards (spec D2/D3). An answer
+        // that was already handed out is replayed only for the strict fingerprint (D5).
+        let coalesce_fingerprint = ask_dedup::coalesce_fingerprint(&task);
+        if let Some((entry, follower_rx)) = state
+            .registry
+            .try_attach(&session_key, &coalesce_fingerprint)
+        {
             handle_coalesced(entry, follower_rx, reader, w).await;
             return;
         }
+        let fingerprint = ask_dedup::fingerprint(&task);
         let hit =
             state
                 .replay

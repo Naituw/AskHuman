@@ -329,7 +329,7 @@ fn truncate_preserving_layout(text: &str, max_chars: usize) -> String {
     }
 }
 
-fn build_task(
+pub(crate) fn build_task(
     kind: AgentKind,
     session_id: &str,
     project: &str,
