@@ -46,6 +46,11 @@ pub fn daemon_status() -> Option<crate::ipc::StatusInfo> {
     block_on(crate::client::request_status())
 }
 
+/// Preserve errors for diagnostics while retaining the best-effort API for other callers.
+pub fn daemon_status_result() -> std::io::Result<Option<crate::ipc::StatusInfo>> {
+    block_on(crate::client::request_status_result())
+}
+
 // ——— 点号路径读写（基于 serde_json::Value，camelCase）———
 
 /// 取点号路径的引用（任一段缺失返回 None）。

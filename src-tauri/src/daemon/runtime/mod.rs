@@ -4542,13 +4542,20 @@ async fn wait_stopped(force: bool) {
 
 fn status_cmd() -> i32 {
     block_on(async {
-        match client::request_status().await {
-            Some(info) => {
+        match client::request_status_result().await {
+            Ok(Some(info)) => {
                 print_status(&info);
                 0
             }
-            None => {
+            Ok(None) => {
                 println!("askhuman daemon: not running");
+                1
+            }
+            Err(error) => {
+                eprintln!(
+                    "askhuman: {}",
+                    client::diagnostics::status_unavailable(&error, Lang::En)
+                );
                 1
             }
         }

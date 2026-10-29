@@ -208,3 +208,22 @@ GUI Host 负责设置、历史、Agent、Interject 窗口与托盘，不进入�
 - 跨平台：Windows 后台角色使用 `CREATE_NO_WINDOW` / 新进程组；named pipe 必须维持用户 SID、会话、配置目录隔离与远程拒绝，Unix socket 维持用户私有文件权限。
 - config watch：去抖、原子写触发 rename 事件、跨平台由 `notify` 兜。
 - 副作用记录：`ASKHUMAN_FEISHU_DEBUG` 等环境调试开关，daemon 化后看 **Daemon 进程**的环境（飞书连接住在 Daemon 里）。
+
+## 本地 IPC 受限时的诊断
+
+Unix 上 CLI 必须能够创建并连接 Unix domain socket；目录可读并不代表 IPC 可用。Linux 的 Claude Code Bash sandbox 可以在 seccomp 层拒绝 `socket(AF_UNIX, …)`，返回 `EPERM`。此时 daemon 可能仍在宿主环境运行，不能仅凭连接失败或沙箱内看不到宿主进程判定它已停止。
+
+`daemon status` 与 `doctor` 应把权限拒绝报告为状态未知，并保留底层错误及“可能受沙箱限制”的提示；普通 socket 不存在或连接被拒绝仍表示未运行。提问自动启动失败必须在 stderr 保留底层 `io::Error`，stdout 与退出码契约保持不变。`doctor --json` 的 daemon 状态不可查询时使用 `running: null`，并提供 `error`，区别于已确认未运行的 `running: false`。
+
+对于明确选择允许 AskHuman 在 Linux Claude Code sandbox 内运行的用户，可在用户级 `~/.claude/settings.json` 合并：
+
+```json
+{
+  "sandbox": {
+    "filesystem": { "allowWrite": ["~/.askhuman"] },
+    "network": { "allowAllUnixSockets": true }
+  }
+}
+```
+
+保留已有数组和配置；使用自定义 `ASKHUMAN_HOME` 时相应调整目录。Linux/WSL2 不支持按路径放行 Unix socket，`allowUnixSockets` 仅 macOS 生效。`allowAllUnixSockets` 会允许访问所有可达 Unix socket，用户应自行评估其权限范围。连接已运行 daemon 与沙箱内启动新 daemon 是不同验收项；后者还受图形会话、进程生命周期和可写目录限制。

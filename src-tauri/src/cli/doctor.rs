@@ -1,9 +1,10 @@
 //! `AskHuman doctor [--json]` —— 一屏体检：daemon / 渠道 / agent 集成 健康状态。
-//! 复用 `client::request_status`、`channel_cmd` 的判定、`integrations::*` 的状态查询。
+//! Reuses the error-preserving client status query, channel checks and integration status APIs.
 
 use super::cfgio;
 use super::channel_cmd;
 use super::install_check;
+use crate::client::diagnostics;
 use crate::config::AppConfig;
 use crate::i18n::Lang;
 use crate::integrations::agent_rules::AgentTarget;
@@ -40,8 +41,8 @@ pub fn dispatch(args: &[String], lang: Lang) {
     }
 
     let cfg = AppConfig::load_without_secrets();
-    let status = cfgio::daemon_status();
-    let install = install_check::collect(status.as_ref());
+    let status = cfgio::daemon_status_result();
+    let install = install_check::collect(status.as_ref().ok().and_then(Option::as_ref));
 
     if json {
         super::print_line(&render_json(&cfg, &status, &install, lang));
@@ -52,7 +53,7 @@ pub fn dispatch(args: &[String], lang: Lang) {
 
 fn render_text(
     cfg: &AppConfig,
-    status: &Option<crate::ipc::StatusInfo>,
+    status: &std::io::Result<Option<crate::ipc::StatusInfo>>,
     install: &install_check::Report,
     lang: Lang,
 ) -> String {
@@ -62,30 +63,8 @@ fn render_text(
     let mut out = String::new();
 
     // Daemon
-    out.push_str(&cfgio::t(lang, "Daemon\n", "Daemon\n"));
-    match status {
-        Some(s) => {
-            out.push_str(&format!(
-                "  {}: {}  v{}  {}: {}  {}: {}\n",
-                cfgio::t(lang, "running", "运行中"),
-                yes,
-                s.version,
-                cfgio::t(lang, "in-flight", "在途请求"),
-                s.active_requests,
-                cfgio::t(lang, "IM connections", "IM 连接"),
-                if s.im_connections.is_empty() {
-                    cfgio::t(lang, "none", "无")
-                } else {
-                    s.im_connections.join(", ")
-                },
-            ));
-        }
-        None => out.push_str(&format!(
-            "  {}: {}\n",
-            cfgio::t(lang, "running", "运行中"),
-            no
-        )),
-    }
+    out.push_str(&render_daemon_text(status, lang));
+    let status = status.as_ref().ok().and_then(Option::as_ref);
 
     if let Some(s) = status.as_ref().filter(|s| !s.exe_path.is_empty()) {
         out.push_str(&format!(
@@ -306,6 +285,63 @@ fn render_text(
     out.trim_end().to_string()
 }
 
+fn render_daemon_text(
+    status: &std::io::Result<Option<crate::ipc::StatusInfo>>,
+    lang: Lang,
+) -> String {
+    let mut out = String::from("Daemon\n");
+    match status {
+        Ok(Some(s)) => out.push_str(&format!(
+            "  {}: {}  v{}  {}: {}  {}: {}\n",
+            cfgio::t(lang, "running", "运行中"),
+            cfgio::t(lang, "yes", "是"),
+            s.version,
+            cfgio::t(lang, "in-flight", "在途请求"),
+            s.active_requests,
+            cfgio::t(lang, "IM connections", "IM 连接"),
+            if s.im_connections.is_empty() {
+                cfgio::t(lang, "none", "无")
+            } else {
+                s.im_connections.join(", ")
+            },
+        )),
+        Ok(None) => out.push_str(&format!(
+            "  {}: {}\n",
+            cfgio::t(lang, "running", "运行中"),
+            cfgio::t(lang, "no", "否")
+        )),
+        Err(error) => out.push_str(&format!(
+            "  {}: {}\n  {}\n",
+            cfgio::t(lang, "running", "运行中"),
+            cfgio::t(lang, "unknown", "未知"),
+            diagnostics::status_unavailable(error, lang),
+        )),
+    }
+    out
+}
+
+fn render_daemon_json(
+    status: &std::io::Result<Option<crate::ipc::StatusInfo>>,
+    lang: Lang,
+) -> serde_json::Value {
+    match status {
+        Ok(Some(s)) => serde_json::json!({
+            "running": true,
+            "version": s.version,
+            "activeRequests": s.active_requests,
+            "imConnections": s.im_connections,
+            "exePath": s.exe_path,
+            "fingerprint": s.fingerprint.map(|fp| fp.short()),
+            "binaryConflict": s.binary_conflict,
+        }),
+        Ok(None) => serde_json::json!({ "running": false }),
+        Err(error) => serde_json::json!({
+            "running": null,
+            "error": diagnostics::status_unavailable(error, lang),
+        }),
+    }
+}
+
 fn state_label(installed: bool, needs_update: bool, lang: Lang) -> String {
     if !installed {
         cfgio::t(lang, "off", "未装")
@@ -337,15 +373,15 @@ fn mode_label(m: agent_mode::Mode, lang: Lang) -> String {
 
 fn render_json(
     cfg: &AppConfig,
-    status: &Option<crate::ipc::StatusInfo>,
+    status: &std::io::Result<Option<crate::ipc::StatusInfo>>,
     install: &install_check::Report,
     lang: Lang,
 ) -> String {
-    let conns = status
-        .as_ref()
+    let observed = status.as_ref().ok().and_then(Option::as_ref);
+    let conns = observed
         .map(|s| s.im_connections.clone())
         .unwrap_or_default();
-    let daemon_up = status.is_some();
+    let daemon_up = observed.is_some();
     let channels: Vec<serde_json::Value> = channel_cmd::CHANNELS
         .iter()
         .map(|&name| {
@@ -412,18 +448,7 @@ fn render_json(
             })
         })
         .collect();
-    let daemon = match status {
-        Some(s) => serde_json::json!({
-            "running": true,
-            "version": s.version,
-            "activeRequests": s.active_requests,
-            "imConnections": s.im_connections,
-            "exePath": s.exe_path,
-            "fingerprint": s.fingerprint.map(|fp| fp.short()),
-            "binaryConflict": s.binary_conflict,
-        }),
-        None => serde_json::json!({ "running": false }),
-    };
+    let daemon = render_daemon_json(status, lang);
     let task_readiness = crate::integrations::agent_launch::all_readiness();
     let task_workspaces = crate::agents::workspaces::list()
         .into_iter()
@@ -445,4 +470,100 @@ fn render_json(
         },
     }))
     .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn running_status() -> crate::ipc::StatusInfo {
+        serde_json::from_value(serde_json::json!({
+            "pid": 42,
+            "version": "0.16.0",
+            "protocolVersion": 4,
+            "uptimeSecs": 5,
+            "socket": "/tmp/askhuman-test.sock",
+            "activeRequests": 2,
+            "imConnections": ["telegram"],
+            "exePath": "/test/AskHuman",
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn running_daemon_keeps_existing_text_and_json_fields() {
+        let status = Ok(Some(running_status()));
+        assert_eq!(
+            render_daemon_text(&status, Lang::En),
+            "Daemon\n  running: yes  v0.16.0  in-flight: 2  IM connections: telegram\n"
+        );
+        assert_eq!(
+            render_daemon_json(&status, Lang::En),
+            serde_json::json!({
+                "running": true,
+                "version": "0.16.0",
+                "activeRequests": 2,
+                "imConnections": ["telegram"],
+                "exePath": "/test/AskHuman",
+                "fingerprint": null,
+                "binaryConflict": null,
+            })
+        );
+    }
+
+    #[test]
+    fn absent_daemon_remains_not_running_without_error() {
+        let status = Ok(None);
+        assert_eq!(
+            render_daemon_json(&status, Lang::En),
+            serde_json::json!({"running": false})
+        );
+        assert_eq!(
+            render_daemon_text(&status, Lang::En),
+            "Daemon\n  running: no\n"
+        );
+        assert_eq!(
+            render_daemon_text(&status, Lang::Zh),
+            "Daemon\n  运行中: 否\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn denied_daemon_status_reports_unknown_with_original_error_in_both_formats() {
+        for errno in [libc::EPERM, libc::EACCES] {
+            let error = std::io::Error::from_raw_os_error(errno);
+            let reason = error.to_string();
+            let status = Err(error);
+            for (lang, unknown, hint) in [
+                (Lang::En, "running: unknown", "may be blocked by a sandbox"),
+                (Lang::Zh, "运行中: 未知", "可能被沙箱"),
+            ] {
+                let daemon = render_daemon_json(&status, lang);
+                assert!(daemon["running"].is_null());
+                assert!(daemon["error"].as_str().unwrap().contains(&reason));
+                assert!(daemon["error"].as_str().unwrap().contains(hint));
+                let text = render_daemon_text(&status, lang);
+                assert!(text.contains(unknown));
+                assert!(text.contains(&reason));
+                assert!(text.contains(hint));
+                assert!(!text.contains("running: no\n"));
+            }
+        }
+    }
+
+    #[test]
+    fn failed_status_exchange_does_not_claim_daemon_is_stopped() {
+        let status = Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "daemon status response lost",
+        ));
+        let daemon = render_daemon_json(&status, Lang::En);
+        assert!(daemon["running"].is_null());
+        assert!(daemon["error"]
+            .as_str()
+            .unwrap()
+            .contains("daemon status response lost"));
+        assert!(!daemon["error"].as_str().unwrap().contains("sandbox"));
+    }
 }
