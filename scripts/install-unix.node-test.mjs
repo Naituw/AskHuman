@@ -259,9 +259,7 @@ for (const os of ["Darwin", "Linux"]) {
       const installedInode = statSync(f.target).ino;
       const second = f.run({ TEST_FAIL_SIGN: "1" });
       assertSuccess(second);
-      assert.match(second.stdout, os === "Linux"
-        ? /installed executable unchanged; skipping publication/
-        : /跳过复制与签名/);
+      assert.match(second.stdout, /已安装二进制内容未变化，跳过复制与签名/);
       assert.equal(statSync(f.target).ino, installedInode);
     } finally {
       closeSync(fd);
@@ -297,16 +295,34 @@ test("Linux: a publisher compile failure leaves the install untouched", { skip: 
   assertNoStage(f);
 });
 
-test("preserves a relative/absolute symlink chain and replaces its final target", unixOnly, t => {
-  const f = fixture(t, { linked: true });
-  const oldInode = statSync(f.target).ino;
-  assertSuccess(f.run());
-  assert.equal(lstatSync(f.entry).isSymbolicLink(), true);
-  assert.equal(readlinkSync(f.entry), "../links/current");
-  assert.notEqual(statSync(f.target).ino, oldInode);
-  assert.equal(readFileSync(f.entry, "utf8"), newBinary + "# signed\n");
-  assertNoStage(f);
-});
+for (const os of ["Darwin", "Linux"]) {
+  const nativePublisher = os === "Linux" && process.platform !== "linux";
+  test(`${os}: preserves a relative/absolute symlink chain and replaces its final target`,
+    { skip: process.platform === "win32"
+      || (nativePublisher && "requires the native Linux publisher")
+      || (os === "Linux" && !rustcAvailable && "requires the Rust toolchain") }, t => {
+    const f = fixture(t, { linked: true, os });
+    const oldInode = statSync(f.target).ino;
+    assertSuccess(f.run());
+    assert.equal(lstatSync(f.entry).isSymbolicLink(), true);
+    assert.equal(readlinkSync(f.entry), "../links/current");
+    assert.notEqual(statSync(f.target).ino, oldInode);
+    assert.equal(readFileSync(f.entry, "utf8"), newBinary + (os === "Darwin" ? "# signed\n" : ""));
+    assert.match(readFileSync(f.state, "utf8"),
+      new RegExp(`installed=${createHash("sha256").update(readFileSync(f.target)).digest("hex")}`));
+    assertNoStage(f);
+    if (os === "Linux") {
+      assert.equal(readdirSync(f.targetDir).filter(name => /^\.askhuman-install-\d+-\d+$/.test(name)).length, 1);
+      assert.deepEqual(readdirSync(f.bin).filter(name => /^\.askhuman-install-\d+-\d+$/.test(name)), []);
+    }
+
+    const installedInode = statSync(f.target).ino;
+    assertSuccess(f.run());
+    assert.equal(lstatSync(f.entry).isSymbolicLink(), true);
+    assert.equal(statSync(f.target).ino, installedInode);
+    assertNoStage(f);
+  });
+}
 
 for (const failure of ["TEST_FAIL_SIGN", "TEST_FAIL_VERIFY"]) {
   test(`${failure}: retains the installed binary and state, and removes staging`, unixOnly, t => {

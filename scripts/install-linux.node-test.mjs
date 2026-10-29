@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, after, test } from 'node:test';
 import { mkdtemp, mkdir, copyFile, readFile, writeFile, readdir, stat, symlink, rm, realpath, chmod } from 'node:fs/promises';
+import { chmodSync, copyFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -9,9 +10,24 @@ import { createInterface } from 'node:readline';
 
 const available = process.platform === 'linux' && spawnSync('rustc', ['--version']).status === 0;
 let root, publisher, oldImage, newImage, newerImage, exchangeFailure;
-const run = (source, directory, env = {}) => spawnSync(publisher, [source, directory], {
-  encoding: 'utf8', env: { ...process.env, ...env },
-});
+let stageCounter = 0;
+function stage(source, directory) {
+  const staged = join(directory, `AskHuman.new.${process.pid}.${stageCounter++}`);
+  copyFileSync(source, staged);
+  chmodSync(staged, 0o755);
+  const hash = createHash('sha256').update(readFileSync(staged)).digest('hex');
+  return { staged, hash };
+}
+const run = (source, directory, env = {}) => {
+  const { staged, hash } = stage(source, directory);
+  try {
+    return spawnSync(publisher, [
+      'publish', staged, join(directory, 'AskHuman'), join(directory, '.askhuman-install-state'), hash, hash,
+    ], { encoding: 'utf8', env: { ...process.env, ...env } });
+  } finally {
+    rmSync(staged, { force: true });
+  }
+};
 const digest = async path => createHash('sha256').update(await readFile(path)).digest('hex');
 const cases = [];
 async function fixture() {
@@ -107,12 +123,32 @@ linuxTest('reject symlink and directory targets before changing either target or
     assert.equal(await digest(oldImage), await digest(join(root, 'old')));
   }
 });
-linuxTest('failed source hashing leaves installed executable and state unchanged', async () => {
+linuxTest('failed staged artifact hashing leaves installed executable and state unchanged', async () => {
   const directory = await fixture(); assert.equal(run(oldImage, directory).status, 0);
   const state = await readFile(join(directory, '.askhuman-install-state'), 'utf8');
-  assert.equal(run(join(root, 'missing'), directory).status, 1);
+  const missing = join(directory, 'missing-stage');
+  const result = spawnSync(publisher, [
+    'publish', missing, join(directory, 'AskHuman'), join(directory, '.askhuman-install-state'),
+    '0'.repeat(64), '0'.repeat(64),
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
   assert.equal(await digest(join(directory, 'AskHuman')), await digest(oldImage));
   assert.equal(await readFile(join(directory, '.askhuman-install-state'), 'utf8'), state);
+});
+linuxTest('a staged artifact with a different build hash fails before publication', async () => {
+  const directory = await fixture(); assert.equal(run(oldImage, directory).status, 0);
+  const state = await readFile(join(directory, '.askhuman-install-state'), 'utf8');
+  const { staged, hash } = stage(newImage, directory);
+  const result = spawnSync(publisher, [
+    'publish', staged, join(directory, 'AskHuman'), join(directory, '.askhuman-install-state'),
+    '0'.repeat(64), hash,
+  ], { encoding: 'utf8' });
+  rmSync(staged, { force: true });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /build artifact changed while staging/);
+  assert.equal(await digest(join(directory, 'AskHuman')), await digest(oldImage));
+  assert.equal(await readFile(join(directory, '.askhuman-install-state'), 'utf8'), state);
+  assert.equal((await retained(directory)).length, 0);
 });
 linuxTest('state failure reports successful executable publication and preserves the old image', async () => {
   const directory = await fixture(); await copyFile(oldImage, join(directory, 'AskHuman'));
@@ -128,23 +164,34 @@ linuxTest('state failure reports successful executable publication and preserves
 });
 linuxTest('concurrent installers serialize executable and matching state publication', async () => {
   const directory = await fixture();
-  const results = await Promise.all(Array.from({ length: 8 }, (_, index) => new Promise(resolve => {
-    const child = spawn(publisher, [index % 2 ? oldImage : newImage, directory]);
-    let error = ''; child.stderr.on('data', data => { error += data; });
-    child.once('exit', code => resolve({ code, error }));
-  })));
-  for (const result of results) { assert.equal(result.code, 0, result.error); }
-  const installed = await digest(join(directory, 'AskHuman'));
-  assert.equal(await readFile(join(directory, '.askhuman-install-state'), 'utf8'), `source=${installed}\ninstalled=${installed}\n`);
-  assert.ok((await retained(directory)).length <= 1);
+  const stagedFiles = Array.from({ length: 8 }, (_, index) => stage(index % 2 ? oldImage : newImage, directory));
+  try {
+    const results = await Promise.all(stagedFiles.map(({ staged, hash }) => new Promise(resolve => {
+      const child = spawn(publisher, [
+        'publish', staged, join(directory, 'AskHuman'), join(directory, '.askhuman-install-state'), hash, hash,
+      ]);
+      let error = ''; child.stderr.on('data', data => { error += data; });
+      child.once('exit', code => resolve({ code, error }));
+    })));
+    for (const result of results) { assert.equal(result.code, 0, result.error); }
+    const installed = await digest(join(directory, 'AskHuman'));
+    assert.equal(await readFile(join(directory, '.askhuman-install-state'), 'utf8'), `source=${installed}\ninstalled=${installed}\n`);
+    assert.ok((await retained(directory)).length <= 1);
+  } finally {
+    for (const { staged } of stagedFiles) { rmSync(staged, { force: true }); }
+  }
 });
 
 linuxTest('unsupported atomic exchange fails closed and removes only unpublished staging files', async () => {
   const directory = await fixture(); assert.equal(run(oldImage, directory).status, 0);
   const state = await readFile(join(directory, '.askhuman-install-state'), 'utf8');
-  const result = spawnSync(publisher, [newImage, directory], {
+  const { staged, hash } = stage(newImage, directory);
+  const result = spawnSync(publisher, [
+    'publish', staged, join(directory, 'AskHuman'), join(directory, '.askhuman-install-state'), hash, hash,
+  ], {
     encoding: 'utf8', env: { ...process.env, LD_PRELOAD: exchangeFailure },
   });
+  rmSync(staged, { force: true });
   assert.equal(result.status, 1); assert.match(result.stderr, /not implemented/);
   assert.equal(await digest(join(directory, 'AskHuman')), await digest(oldImage));
   assert.equal(await readFile(join(directory, '.askhuman-install-state'), 'utf8'), state);

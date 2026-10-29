@@ -258,15 +258,7 @@ INSTALLED_BIN="$INSTALL_DIR/AskHuman"
 INSTALL_STATE="$INSTALL_DIR/.askhuman-install-state"
 SOURCE_HASH="$(_file_sha256 "$BIN_PATH" 2>/dev/null || true)"
 SKIP_COPY=0
-if [ "$(uname)" = "Linux" ]; then
-  # Build a host helper with the existing Rust toolchain; no extra runtime package.
-  PUBLISHER_DIR="$(mktemp -d "${TMPDIR:-/tmp}/askhuman-publisher.XXXXXX")"
-  trap 'rm -f "$PUBLISHER_DIR/install-linux"; rmdir "$PUBLISHER_DIR"' EXIT
-  rustc --edition=2021 "$SCRIPT_DIR/install-linux.rs" -o "$PUBLISHER_DIR/install-linux"
-  "$PUBLISHER_DIR/install-linux" "$BIN_PATH" "$INSTALL_DIR"
-  SKIP_COPY=1
-fi
-if [ "$SKIP_COPY" -eq 0 ] && [ -n "$SOURCE_HASH" ] && [ -f "$INSTALLED_BIN" ] && [ -f "$INSTALL_STATE" ]; then
+if [ -n "$SOURCE_HASH" ] && [ -f "$INSTALLED_BIN" ] && [ -f "$INSTALL_STATE" ]; then
   STATE_SOURCE="$(sed -n 's/^source=//p' "$INSTALL_STATE" | head -n1)"
   STATE_INSTALLED="$(sed -n 's/^installed=//p' "$INSTALL_STATE" | head -n1)"
   INSTALLED_HASH="$(_file_sha256 "$INSTALLED_BIN" 2>/dev/null || true)"
@@ -279,7 +271,17 @@ fi
 if [ "$SKIP_COPY" -eq 0 ]; then
   INSTALL_TARGET="$(resolve_install_target "$INSTALLED_BIN")"
   STAGED_BIN="$(mktemp "${INSTALL_TARGET}.new.XXXXXX")"
-  trap 'rm -f "$STAGED_BIN"' EXIT
+  PUBLISHER_DIR=""
+  STATE_TMP=""
+  cleanup_install_staging() {
+    [ -n "${STAGED_BIN:-}" ] && rm -f "$STAGED_BIN" 2>/dev/null || true
+    [ -n "${STATE_TMP:-}" ] && rm -f "$STATE_TMP" 2>/dev/null || true
+    if [ -n "${PUBLISHER_DIR:-}" ]; then
+      rm -f "$PUBLISHER_DIR/install-linux" 2>/dev/null || true
+      rmdir "$PUBLISHER_DIR" 2>/dev/null || true
+    fi
+  }
+  trap cleanup_install_staging EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   cp "$BIN_PATH" "$STAGED_BIN"
@@ -322,22 +324,40 @@ if [ "$SKIP_COPY" -eq 0 ]; then
     codesign --verify --strict "$STAGED_BIN"
   fi
 
-  # Never modify an inode still mapped by MCP/daemon/GUI processes. Publish only
-  # after signing and verification succeed, leaving the old install intact on failure.
-  mv -f "$STAGED_BIN" "$INSTALL_TARGET"
-  trap - EXIT INT TERM
+  # Hash the unpublished artifact after signing, then let both platforms publish the
+  # same staged file. Linux's publisher only performs exchange, retention and pruning.
+  INSTALLED_HASH="$(_file_sha256 "$STAGED_BIN" 2>/dev/null || true)"
 
-  if [ -n "$SOURCE_HASH" ]; then
-    INSTALLED_HASH="$(_file_sha256 "$INSTALLED_BIN" 2>/dev/null || true)"
-    if [ -n "$INSTALLED_HASH" ]; then
+  if [ "$(uname)" = "Linux" ]; then
+    if [ -z "$SOURCE_HASH" ] || [ -z "$INSTALLED_HASH" ]; then
+      echo "错误: 无法计算安装二进制的 SHA-256，Linux 原子发布需要哈希状态" >&2
+      exit 1
+    fi
+    # Build a host helper with the existing Rust toolchain; no extra runtime package.
+    PUBLISHER_DIR="$(mktemp -d "${TMPDIR:-/tmp}/askhuman-publisher.XXXXXX")"
+    rustc --edition=2021 "$SCRIPT_DIR/install-linux.rs" -o "$PUBLISHER_DIR/install-linux"
+    "$PUBLISHER_DIR/install-linux" publish "$STAGED_BIN" "$INSTALL_TARGET" "$INSTALL_STATE" "$SOURCE_HASH" "$INSTALLED_HASH"
+    rm -f "$STAGED_BIN" 2>/dev/null || true
+    STAGED_BIN=""
+    rm -f "$PUBLISHER_DIR/install-linux" 2>/dev/null || true
+    rmdir "$PUBLISHER_DIR" 2>/dev/null || true
+    PUBLISHER_DIR=""
+  else
+    # Never modify an inode still mapped by MCP/daemon/GUI processes. Publish only
+    # after signing and verification succeed, leaving the old install intact on failure.
+    mv -f "$STAGED_BIN" "$INSTALL_TARGET"
+    STAGED_BIN=""
+    if [ -n "$SOURCE_HASH" ] && [ -n "$INSTALLED_HASH" ]; then
       STATE_TMP="$INSTALL_STATE.tmp.$$"
       {
         printf 'source=%s\n' "$SOURCE_HASH"
         printf 'installed=%s\n' "$INSTALLED_HASH"
       } > "$STATE_TMP"
       mv "$STATE_TMP" "$INSTALL_STATE"
+      STATE_TMP=""
     fi
   fi
+  trap - EXIT INT TERM
 fi
 
 # --- target/ 缓存清理 ---

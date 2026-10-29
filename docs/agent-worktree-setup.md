@@ -127,7 +127,9 @@ Windows PowerShell / cmd：
 Windows 默认安装同样只写 `.askhuman-dev\bin\AskHuman.exe`，不会修改生产 EXE、用户 PATH 或受管
 `WindowsApps\AskHuman.cmd` launcher。
 
-Linux 安装使用同目录暂存与原子交换，允许旧 ELF 仍在运行。旧文件保留在安装目录下
+Linux 安装先按 `install.sh` 的链接解析规则找到 `AskHuman` 的最终目标，在目标所在目录暂存并完成哈希；
+符号链接入口本身保持不动，替换的是它指向的文件。发布使用同目录原子交换，允许旧 ELF 仍在运行。
+旧文件保留在解析后的目标目录下
 `.askhuman-install-<pid>-<nonce>/AskHuman`，供存活 MCP、daemon 及其子进程继续使用。
 每次成功安装（包括内容未变化的安装）会回收不再被引用的旧映像：本次安装刚替换下来的映像和
 nonce 最新的一份无条件保留；更旧的映像只有在没有进程正在执行它（按 `/proc/<pid>/exe` 的
@@ -135,11 +137,13 @@ dev+inode 判断；无法读取 exe 时按进程名保守判断）时才删除�
 可能是 AskHuman 的进程、目录含未知条目或删除无权限时，保留并输出诊断，安装本身仍然成功。
 旧进程退出后，再运行一次安装即可回收；对进程改名、hidepid、容器 PID namespace 等无法看到
 或确认的场景，请在确认无进程使用后手工清理。
-最终 `AskHuman` 若为符号链接或目录则拒绝安装；文件系统不支持原子交换时保留原安装并报错。
+最终目标若为目录、链接层数过多或解析后仍不是普通文件则拒绝安装；文件系统不支持原子交换时
+保留原安装并报错。
 新实现启动时记住安装入口，后续 MCP 提问与独立 daemon/GUI Host 启动使用该入口，daemon
 也在该入口检测更新；运行中版本的身份与其 Popup 子进程仍使用原映像。
 已在修复前启动的进程无法补获入口缓存，需在适当时机普通重启客户端才能获得这部分行为。
-macOS 沿用原有复制和签名流程，本条 Linux 替换保证不适用于 macOS/Windows。
+macOS 沿用原有复制和签名流程，不使用 Linux 的 retained 目录与原子交换；Windows 仍使用单独的
+可执行文件锁处理，本条 Linux 替换保证不适用于 Windows。
 
 ### 5. 自检（可选）
 

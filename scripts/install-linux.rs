@@ -1,11 +1,11 @@
 //! Standalone Linux publisher, built by install.sh with the existing Rust toolchain.
 //! Retained executables must not be removed while a process may still need them.
 use std::collections::{HashMap, HashSet};
-use std::ffi::{c_char, CString, OsStr};
+use std::ffi::{c_char, CString, OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::{ffi::OsStrExt, fs::MetadataExt, fs::OpenOptionsExt, fs::PermissionsExt};
+use std::os::unix::{ffi::OsStrExt, fs::MetadataExt, fs::OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -349,8 +349,37 @@ impl Drop for Stage {
     }
 }
 
-fn install(source: &Path, directory: &Path) -> io::Result<()> {
-    fs::create_dir_all(directory)?;
+struct TempState(PathBuf);
+impl Drop for TempState {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn valid_hash(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn publish(
+    staged: &Path,
+    destination: &Path,
+    state_path: &Path,
+    source_hash: &str,
+    installed_hash: &str,
+) -> io::Result<()> {
+    if !valid_hash(source_hash) || !valid_hash(installed_hash) {
+        return Err(io::Error::other(
+            "invalid expected SHA-256 for installation",
+        ));
+    }
+    let directory = destination.parent().ok_or_else(|| {
+        io::Error::other(format!(
+            "install target has no parent directory: {}",
+            destination.display()
+        ))
+    })?;
+    // install.sh resolves the entry link and stages beside the resolved target, so the
+    // publication lock must live in that directory rather than in the entry directory.
     // Never remove the lock file: another installer may already be waiting on its inode.
     let lock = OpenOptions::new()
         .read(true)
@@ -364,75 +393,117 @@ fn install(source: &Path, directory: &Path) -> io::Result<()> {
         // LOCK_EX
         return Err(io::Error::last_os_error());
     }
-    let destination = directory.join("AskHuman");
-    let exists = regular_destination(&destination)?;
-    let state_path = directory.join(".askhuman-install-state");
-    let source_hash = hash(source)?;
+    let exists = regular_destination(destination)?;
+    match fs::symlink_metadata(staged) {
+        Ok(meta) if meta.file_type().is_file() => {}
+        Ok(_) => {
+            return Err(io::Error::other(format!(
+                "refusing non-regular staged install artifact: {}",
+                staged.display()
+            )));
+        }
+        Err(error) => return Err(error),
+    }
+    // install.sh copied the staged artifact; make its contents durable before hashing and exchange.
+    File::open(staged)?.sync_all()?;
+    let staged_hash = hash(staged)?;
+    if staged_hash != installed_hash {
+        return Err(io::Error::other(
+            "staged install artifact changed after hashing; retry installation",
+        ));
+    }
+    if source_hash != installed_hash {
+        return Err(io::Error::other(
+            "build artifact changed while staging; retry installation",
+        ));
+    }
+    let expected = format!("source={source_hash}\ninstalled={installed_hash}\n");
     if exists {
-        let installed_hash = hash(&destination)?;
-        let expected = format!("source={source_hash}\ninstalled={installed_hash}\n");
-        if fs::read_to_string(&state_path).ok().as_deref() == Some(&expected) {
+        let destination_hash = hash(destination)?;
+        if destination_hash == installed_hash
+            && fs::read_to_string(state_path).ok().as_deref() == Some(&expected)
+        {
             println!("    installed executable unchanged; skipping publication");
+            if let Err(error) = fs::remove_file(staged) {
+                eprintln!(
+                    "could not remove staged install artifact {}: {error}",
+                    staged.display()
+                );
+            }
             if let Err(error) = prune_retained(directory, None) {
                 eprintln!("retained executable pruning skipped: {error}");
             }
             return Ok(());
         }
     }
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(io::Error::other)?
-        .as_nanos();
-    let stage_path = directory.join(format!(".askhuman-install-{}-{nonce}", std::process::id()));
-    fs::create_dir(&stage_path)?;
-    let stage = Stage(stage_path);
-    let staged_binary = stage.0.join("AskHuman");
-    fs::copy(source, &staged_binary)?;
-    fs::set_permissions(&staged_binary, fs::Permissions::from_mode(0o755))?;
-    File::open(&staged_binary)?.sync_all()?;
-    let installed_hash = hash(&staged_binary)?;
-    if source_hash != installed_hash {
-        return Err(io::Error::other(
-            "build artifact changed while staging; retry installation",
-        ));
-    }
-    let mut state = File::create(stage.0.join("state"))?;
-    write!(state, "source={source_hash}\ninstalled={installed_hash}\n")?;
+
+    let mut state_name = OsString::from(".");
+    state_name.push(
+        state_path
+            .file_name()
+            .unwrap_or_else(|| OsStr::new("state")),
+    );
+    state_name.push(format!(".tmp.{}", std::process::id()));
+    let state_tmp = state_path.with_file_name(state_name);
+    let mut state = File::create(&state_tmp)?;
+    let state_guard = TempState(state_tmp.clone());
+    write!(state, "{expected}")?;
     state.sync_all()?;
     drop(state);
-    // Validate again immediately before publication; concurrent cooperating installers hold flock.
-    if regular_destination(&destination)? != exists {
-        return Err(io::Error::other(
-            "install target changed while staging; retry installation",
-        ));
-    }
-    rename(&staged_binary, &destination, if exists { 2 } else { 1 })?;
-    // From here on, never remove the old executable, even if writing state fails.
-    let retained = stage.0.clone();
-    std::mem::forget(stage);
-    if exists {
+
+    let retained = if exists {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(io::Error::other)?
+            .as_nanos();
+        let stage_path =
+            directory.join(format!(".askhuman-install-{}-{nonce}", std::process::id()));
+        fs::create_dir(&stage_path)?;
+        let stage = Stage(stage_path);
+        let staged_binary = stage.0.join("AskHuman");
+        // The staged file is already a verified copy beside the target; move it into the
+        // retained directory so exchange leaves the old executable at a stable path.
+        fs::rename(staged, &staged_binary)?;
+        // Validate again immediately before publication; concurrent cooperating installers hold flock.
+        if regular_destination(destination)? != exists {
+            return Err(io::Error::other(
+                "install target changed while staging; retry installation",
+            ));
+        }
+        rename(&staged_binary, destination, 2)?;
+        // From here on, never remove the old executable, even if writing state fails.
+        let retained = stage.0.clone();
+        std::mem::forget(stage);
         println!(
             "    retained previous executable: {}",
             staged_binary.display()
         );
-    }
-    if let Err(e) = fs::rename(retained.join("state"), &state_path) {
+        Some(retained)
+    } else {
+        // Validate again immediately before publication; concurrent cooperating installers hold flock.
+        if regular_destination(destination)? != exists {
+            return Err(io::Error::other(
+                "install target changed while staging; retry installation",
+            ));
+        }
+        rename(staged, destination, 1)?;
+        None
+    };
+
+    if let Err(error) = fs::rename(&state_tmp, state_path) {
         return Err(io::Error::other(format!(
-            "executable installed, but install-state publication failed: {e}; retry installation; retained directory: {}", retained.display()
+            "executable installed, but install-state publication failed: {error}; retry installation; retained directory: {}",
+            retained
+                .as_ref()
+                .map_or_else(|| "none".to_owned(), |path| path.display().to_string())
         )));
     }
-    let finish = || -> io::Result<()> {
-        if exists {
-            File::open(&retained)?.sync_all()?;
-        } else {
-            fs::remove_dir(&retained)?;
-        }
-        File::open(directory)?.sync_all()
-    };
-    finish().map_err(|e| io::Error::other(format!(
-        "executable and state installed, but final directory synchronization/cleanup failed: {e}; inspect installation before retrying"
-    )))?;
-    if let Err(error) = prune_retained(directory, exists.then_some(retained.as_path())) {
+    std::mem::forget(state_guard);
+    if let Some(retained) = &retained {
+        File::open(retained)?.sync_all()?;
+    }
+    File::open(directory)?.sync_all()?;
+    if let Err(error) = prune_retained(directory, retained.as_deref()) {
         eprintln!("retained executable pruning skipped: {error}");
     }
     Ok(())
@@ -440,11 +511,25 @@ fn install(source: &Path, directory: &Path) -> io::Result<()> {
 
 fn main() {
     let args: Vec<_> = std::env::args_os().collect();
-    if args.len() != 3 || args[1] == OsStr::new("") || args[2] == OsStr::new("") {
-        eprintln!("usage: install-linux SOURCE INSTALL_DIR");
+    if args.len() != 7 || args[1] != OsStr::new("publish") {
+        eprintln!("usage: install-linux publish STAGED TARGET STATE SOURCE_HASH INSTALLED_HASH");
         std::process::exit(2);
     }
-    if let Err(e) = install(Path::new(&args[1]), Path::new(&args[2])) {
+    let Some(source_hash) = args[5].to_str() else {
+        eprintln!("source hash is not valid UTF-8");
+        std::process::exit(2);
+    };
+    let Some(installed_hash) = args[6].to_str() else {
+        eprintln!("installed hash is not valid UTF-8");
+        std::process::exit(2);
+    };
+    if let Err(e) = publish(
+        Path::new(&args[2]),
+        Path::new(&args[3]),
+        Path::new(&args[4]),
+        source_hash,
+        installed_hash,
+    ) {
         eprintln!("Linux executable installation failed: {e}");
         std::process::exit(1);
     }
