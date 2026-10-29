@@ -18,10 +18,8 @@ describe("resizeTextareaToContent", () => {
       width: 320,
       height: 64,
     } as DOMRect);
-    Object.defineProperty(textarea, "scrollHeight", {
-      configurable: true,
-      value: 96,
-    });
+    vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockReturnValue(96);
     const mutations: MutationRecord[] = [];
     const observer = new MutationObserver((records) => mutations.push(...records));
     observer.observe(textarea, { attributes: true, attributeFilter: ["style"] });
@@ -44,10 +42,8 @@ describe("resizeTextareaToContent", () => {
       width: 320,
       height: 96,
     } as DOMRect);
-    Object.defineProperty(textarea, "scrollHeight", {
-      configurable: true,
-      value: 96,
-    });
+    vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockReturnValue(96);
     const mutations: MutationRecord[] = [];
     const observer = new MutationObserver((records) => mutations.push(...records));
     observer.observe(textarea, { attributes: true, attributeFilter: ["style"] });
@@ -58,6 +54,65 @@ describe("resizeTextareaToContent", () => {
     expect(textarea.style.height).toBe("96px");
     expect(mutations).toHaveLength(0);
     observer.disconnect();
+    textarea.remove();
+  });
+
+  it.each([false, true])("does not feed live geometry errors back into height (allowShrink=%s)", (allowShrink) => {
+    const textarea = document.createElement("textarea");
+    textarea.style.cssText = "height:70px;box-sizing:border-box;border:1px solid";
+    textarea.value = "short text";
+    document.body.appendChild(textarea);
+    vi.spyOn(textarea, "getBoundingClientRect").mockImplementation(() => ({
+      width: 320,
+      height: Number.parseFloat(textarea.style.height),
+    } as DOMRect));
+    vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockImplementation(function (this: HTMLTextAreaElement) {
+        return this === textarea ? Number.parseFloat(textarea.style.height) - 1 : 68;
+      });
+
+    for (let i = 0; i < 20; i++) {
+      resizeTextareaToContent(textarea, true, allowShrink);
+    }
+
+    expect(textarea.style.height).toBe("70px");
+    expect(document.body.querySelectorAll('textarea[aria-hidden="true"]')).toHaveLength(0);
+    textarea.remove();
+  });
+
+  it("keeps the insertion path from shrinking an already taller editor", () => {
+    const textarea = document.createElement("textarea");
+    textarea.style.cssText = "height:120px;box-sizing:border-box;border:1px solid";
+    document.body.appendChild(textarea);
+    vi.spyOn(textarea, "getBoundingClientRect").mockReturnValue({
+      width: 320, height: 120,
+    } as DOMRect);
+    vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockImplementation(function (this: HTMLTextAreaElement) {
+        return this === textarea ? 119 : 68;
+      });
+
+    resizeTextareaToContent(textarea, true, false);
+
+    expect(textarea.style.height).toBe("120px");
+    textarea.remove();
+  });
+
+  it("remeasures deletion even when the live control incorrectly suggests growth", () => {
+    const textarea = document.createElement("textarea");
+    textarea.style.cssText = "height:120px;box-sizing:border-box;border:1px solid";
+    document.body.appendChild(textarea);
+    vi.spyOn(textarea, "getBoundingClientRect").mockReturnValue({
+      width: 320, height: 120,
+    } as DOMRect);
+    vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockImplementation(function (this: HTMLTextAreaElement) {
+        return this === textarea ? 119 : 68;
+      });
+
+    resizeTextareaToContent(textarea, true, true);
+
+    expect(textarea.style.height).toBe("70px");
     textarea.remove();
   });
 
