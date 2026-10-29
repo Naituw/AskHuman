@@ -1106,6 +1106,9 @@ mod tests {
         cleanup(&env);
     }
 
+    // Needs the Unix-socket helper client. The non-unix fallback client reports "only available on
+    // macOS" rather than "not running", so no launch is ever attempted there.
+    #[cfg(unix)]
     #[test]
     fn a_missing_helper_is_soft_and_gets_started_at_most_once_a_minute() {
         let env = temp_env("missing");
