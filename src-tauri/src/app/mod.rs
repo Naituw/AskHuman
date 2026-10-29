@@ -2055,11 +2055,9 @@ fn watch_history_file<R: tauri::Runtime>(window: tauri::WebviewWindow<R>) {
         let mut watcher =
             match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 if let Ok(ev) = res {
-                    let hit = ev
-                        .paths
-                        .iter()
-                        .any(|p| p.file_name().map(|n| n == "history.jsonl").unwrap_or(false));
-                    if hit {
+                    // A read is not a change: the reload reads the file again, so counting reads
+                    // would make it re-trigger itself.
+                    if crate::daemon::config_watch::is_file_change(&ev, "history.jsonl") {
                         let _ = tx.send(());
                     }
                 }
@@ -2221,11 +2219,9 @@ fn watch_todos_file<R: tauri::Runtime>(window: tauri::WebviewWindow<R>) {
         let mut watcher =
             match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 if let Ok(ev) = res {
-                    let hit = ev
-                        .paths
-                        .iter()
-                        .any(|p| p.file_name().map(|n| n == "todos.json").unwrap_or(false));
-                    if hit {
+                    // A read is not a change: the reload reads the file again, so counting reads
+                    // would make it re-trigger itself.
+                    if crate::daemon::config_watch::is_file_change(&ev, "todos.json") {
                         let _ = tx.send(());
                     }
                 }

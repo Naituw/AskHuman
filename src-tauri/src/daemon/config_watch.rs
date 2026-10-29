@@ -6,23 +6,30 @@
 //! 监听的是**配置目录**（非单个文件）：配置用「写临时文件 + rename」原子落盘，rename 会替换 inode，
 //! 直接 watch 文件在首次替换后即失效；watch 目录再按文件名过滤最稳。daemon.log 等同目录写入被过滤掉。
 
+use std::ffi::OsStr;
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
-/// Whether a watcher event means config.json **really changed** on disk.
+/// Whether a watcher event means the file called `name` **really changed** on disk.
 ///
 /// notify's inotify backend subscribes to `IN_OPEN` and `IN_CLOSE_WRITE` and reports them as
 /// `EventKind::Access` (`Access(Open)` / `Access(Close(Write))`). Counting those as changes would
-/// let every read of the file — the daemon's own periodic `load_without_secrets()` as well as the
-/// re-read inside a reload — trigger the next reload, a read-triggered feedback loop. A real change
-/// always comes with a non-`Access` event (`Modify`, `Create`, `Remove` or a rename), so only those
-/// count.
+/// let every read of the file trigger the next reload, and the reload reads the file again: a
+/// read-triggered feedback loop. For config.json the daemon's own periodic `load_without_secrets()`
+/// starts it; `todos.json` and `history.jsonl` are read by the very window that reloads on the
+/// event, so there it would sustain itself. A real change always comes with a non-`Access` event
+/// (`Modify`, `Create`, `Remove` or a rename), so only those count.
+///
+/// Every watcher that watches a directory and filters its events by file name goes through this.
+pub(crate) fn is_file_change(event: &notify::Event, name: impl AsRef<OsStr>) -> bool {
+    let name = name.as_ref();
+    let touches_file = event.paths.iter().any(|p| p.file_name() == Some(name));
+    touches_file && !matches!(event.kind, notify::EventKind::Access(_))
+}
+
+/// [`is_file_change`] for config.json.
 pub(crate) fn is_config_change(event: &notify::Event) -> bool {
-    let touches_config = event
-        .paths
-        .iter()
-        .any(|p| p.file_name().map(|n| n == "config.json").unwrap_or(false));
-    touches_config && !matches!(event.kind, notify::EventKind::Access(_))
+    is_file_change(event, "config.json")
 }
 
 /// 启动监听，返回「去抖后的变更脉冲」接收端。
@@ -80,7 +87,7 @@ pub fn spawn() -> UnboundedReceiver<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_config_change;
+    use super::{is_config_change, is_file_change};
     use notify::event::{
         AccessKind, AccessMode, CreateKind, DataChange, Event, EventKind, ModifyKind, RemoveKind,
         RenameMode,
@@ -137,5 +144,54 @@ mod tests {
             EventKind::Access(AccessKind::Open(AccessMode::Any)),
             "agents.json"
         )));
+    }
+
+    /// The other files watched by name: each is re-read by the code that reacts to its events.
+    const WATCHED: [&str; 3] = ["todos.json", "history.jsonl", "daemon.json"];
+
+    #[test]
+    fn reads_and_closes_of_the_other_watched_files_are_not_changes() {
+        for name in WATCHED {
+            for kind in [
+                EventKind::Access(AccessKind::Open(AccessMode::Any)),
+                EventKind::Access(AccessKind::Close(AccessMode::Read)),
+                // A close after writing follows the write's own Modify event.
+                EventKind::Access(AccessKind::Close(AccessMode::Write)),
+            ] {
+                assert!(!is_file_change(&event(kind, name), name), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn writes_to_the_other_watched_files_are_changes() {
+        for name in WATCHED {
+            for kind in [
+                EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+                EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+                EventKind::Create(CreateKind::File),
+                EventKind::Remove(RemoveKind::File),
+            ] {
+                assert!(is_file_change(&event(kind, name), name), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_file_is_only_matched_by_its_own_name() {
+        let write = EventKind::Modify(ModifyKind::Data(DataChange::Any));
+        assert!(!is_file_change(
+            &event(write, "todos.json"),
+            "history.jsonl"
+        ));
+        // The temp file of an atomic save sits next to the target with a longer name.
+        assert!(!is_file_change(
+            &event(EventKind::Create(CreateKind::File), "todos.json.tmp-0b9d"),
+            "todos.json"
+        ));
+        assert!(!is_file_change(
+            &event(write, "old-todos.json"),
+            "todos.json"
+        ));
     }
 }

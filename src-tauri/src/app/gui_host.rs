@@ -1938,11 +1938,8 @@ fn spawn_daemon_state_watch(event: Arc<Notify>) {
         let mut watcher =
             match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 if let Ok(ev) = res {
-                    if ev
-                        .paths
-                        .iter()
-                        .any(|p| p.file_name() == Some(name.as_os_str()))
-                    {
+                    // Reading daemon.json (inotify `Access` events) says nothing about the daemon.
+                    if crate::daemon::config_watch::is_file_change(&ev, &name) {
                         let _ = tx.send(());
                     }
                 }
