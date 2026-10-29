@@ -414,6 +414,104 @@ final class AskHumanUITests: XCTestCase {
         XCTAssertTrue(gone("inbox-row-req-select", timeout: 15))
     }
 
+    // MARK: pictures that came with a request
+
+    /// The pictures of the mock's `gallery` request, in order: wide, tall, square and panoramic.
+    private let pictures = ["wide-1.png", "tall-2.png", "square-3.png", "panorama-4.png"]
+
+    private func thumbnail(_ name: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label == %@", name)).firstMatch
+    }
+
+    private func assertSquare(_ name: String, file: StaticString = #filePath, line: UInt = #line) {
+        let button = thumbnail(name)
+        XCTAssertTrue(button.waitForExistence(timeout: 10), "\(name) has a thumbnail", file: file, line: line)
+        let frame = button.frame
+        XCTAssertEqual(frame.width, frame.height, accuracy: 1, "the thumbnail of \(name) is a square", file: file, line: line)
+        XCTAssertTrue((90...145).contains(frame.width), "\(name) has a thumbnail of the size of a grid cell, not \(frame.width)", file: file, line: line)
+    }
+
+    /// Wide, tall, square and panoramic pictures all come as squares that stay in their own cell.
+    func testPictureThumbnailsAreSquaresThatStayInTheirCells() {
+        launch("gallery")
+        openRequest("req-gallery")
+        _ = requireElement("request-title")
+        for name in pictures { assertSquare(name) }
+        shot("40-thumbnails")
+        let frames = pictures.map { thumbnail($0).frame }
+        for first in frames.indices {
+            for second in frames.indices where second > first {
+                XCTAssertFalse(frames[first].intersects(frames[second]), "\(pictures[first]) and \(pictures[second]) overlap")
+            }
+        }
+        let screenWidth = app.windows.firstMatch.frame.width
+        for (name, frame) in zip(pictures, frames) {
+            XCTAssertGreaterThanOrEqual(frame.minX, 16, "\(name) stays inside the padding of the screen")
+            XCTAssertLessThanOrEqual(frame.maxX, screenWidth - 16, "\(name) stays inside the padding of the screen")
+        }
+    }
+
+    /// The one wide picture of the demo, as it came with the first reports of the overflow.
+    func testASingleWidePictureIsASquareToo() {
+        launch()
+        openRequest("req-migration")
+        assertSquare("latency.png")
+        thumbnail("latency.png").tap()
+        XCTAssertTrue(requireElement("gallery-name").exists)
+        XCTAssertEqual(requireElement("gallery-name").label, "latency.png")
+        XCTAssertFalse(element("gallery-position").exists, "there is no other picture to count")
+    }
+
+    /// The viewer holds all the pictures of the message: a swipe leads to the next one, and the heading
+    /// says which one is on show. It does not wrap around at either end.
+    func testThePictureViewerPagesFromOnePictureToTheNext() {
+        launch("gallery")
+        openRequest("req-gallery")
+        let tall = thumbnail("tall-2.png")
+        XCTAssertTrue(tall.waitForExistence(timeout: 10))
+        tall.tap()
+        _ = requireElement("image-gallery")
+        XCTAssertTrue(waitForLabel("gallery-position", "Image 2 of 4"), "it opens on the picture that was tapped")
+        XCTAssertEqual(requireElement("gallery-name").label, "tall-2.png")
+        shot("41-viewer-tall")
+
+        let page = app.windows.firstMatch
+        page.swipeLeft()
+        XCTAssertTrue(waitForLabel("gallery-position", "Image 3 of 4"), "a swipe to the left leads on")
+        XCTAssertEqual(requireElement("gallery-name").label, "square-3.png")
+        page.swipeLeft()
+        XCTAssertTrue(waitForLabel("gallery-position", "Image 4 of 4"))
+        XCTAssertEqual(requireElement("gallery-name").label, "panorama-4.png")
+        shot("42-viewer-panorama")
+        page.swipeLeft()
+        XCTAssertTrue(waitForLabel("gallery-position", "Image 4 of 4"), "the last picture has none after it")
+
+        for expected in stride(from: 3, through: 1, by: -1) {
+            page.swipeRight()
+            XCTAssertTrue(waitForLabel("gallery-position", "Image \(expected) of 4"), "a swipe to the right leads back")
+        }
+        XCTAssertEqual(requireElement("gallery-name").label, "wide-1.png")
+        page.swipeRight()
+        XCTAssertTrue(waitForLabel("gallery-position", "Image 1 of 4"), "the first picture has none before it")
+
+        app.buttons["Close"].tap()
+        XCTAssertTrue(gone("image-gallery"), "the viewer closes")
+        thumbnail("square-3.png").tap()
+        XCTAssertTrue(waitForLabel("gallery-position", "Image 3 of 4"), "and opens on whichever picture is tapped next")
+    }
+
+    /// A file that is not a picture opens on its own, as before: no counter, no paging.
+    func testAFileOpensOnItsOwnNextToThePictures() {
+        launch("gallery")
+        openRequest("req-gallery")
+        let note = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "migration-plan.md")).firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 10))
+        note.tap()
+        XCTAssertTrue(app.navigationBars["migration-plan.md"].waitForExistence(timeout: 10), "the file is named in the title")
+        XCTAssertFalse(element("gallery-position").exists)
+        XCTAssertFalse(element("image-gallery").exists)
+    }
+
     // MARK: confirmations
 
     func testAllowingAConfirmationNeedsAChoiceFirst() {

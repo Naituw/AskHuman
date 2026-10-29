@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import CoreText
 import ImageIO
 import UniformTypeIdentifiers
 import AHProtocol
@@ -203,6 +204,54 @@ public enum MockData {
 
     public static func tallMessageOnly(now: Date = Date()) -> [InboxItem] {
         items([(homeMacId, "Home MacBook Pro", tallMessageAsk(now: now), true, -30)], now: now)
+    }
+
+    // MARK: Pictures of every shape
+
+    /// The pictures of the gallery request: what a Mac sends of a wide, a tall, a square and a
+    /// panoramic one. The thumbnail keeps the shape of the original (as the Mac's does).
+    private static let galleryPictures: [(id: String, name: String, width: Int, height: Int, hue: CGFloat)] = [
+        ("asset-pic-wide", "wide-1.png", 1600, 900, 0.58),
+        ("asset-pic-tall", "tall-2.png", 900, 1600, 0.08),
+        ("asset-pic-square", "square-3.png", 1000, 1000, 0.33),
+        ("asset-pic-panorama", "panorama-4.png", 2400, 600, 0.80),
+    ]
+
+    /// A message with four pictures that are not alike and a note: their thumbnails must all be squares
+    /// that stay in their cells, and the viewer pages from one picture to the next.
+    public static func galleryAsk(now: Date = Date()) -> RequestView {
+        var files: [AssetRef] = galleryPictures.enumerated().map { index, shape in
+            let edge = 192.0 / Double(max(shape.width, shape.height))
+            let thumb = picture(
+                number: index + 1, width: Int(Double(shape.width) * edge), height: Int(Double(shape.height) * edge),
+                hue: shape.hue, type: .jpeg
+            )
+            return AssetRef(
+                assetId: shape.id, name: shape.name, size: UInt64(120_000 + index * 40_000), mime: "image/png", isImage: true,
+                thumb: thumb.map(Bytes.b64u)
+            )
+        }
+        files.append(AssetRef(assetId: "asset-plan", name: "migration-plan.md", size: 4_812, mime: "text/markdown", isImage: false))
+        return RequestView(
+            id: "req-gallery", kind: "ask", createdAt: ms(now.addingTimeInterval(-30)), agent: cursor,
+            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: "Review the new screens",
+            source: "cursor", contentHash: hash("gallery"),
+            ask: AskView(
+                isMarkdown: true,
+                message: MessageView(text: "四张截图：宽的、高的、方的和全景的，再加一份说明。", files: files),
+                questions: [
+                    QuestionView(text: "Do these look right?", options: [
+                        OptionView(text: "Yes", recommended: true),
+                        OptionView(text: "No", recommended: false),
+                    ]),
+                ],
+                selectOnly: true, single: true
+            )
+        )
+    }
+
+    public static func galleryOnly(now: Date = Date()) -> [InboxItem] {
+        items([(homeMacId, "Home MacBook Pro", galleryAsk(now: now), true, -30)], now: now)
     }
 
     /// A select-only form of three questions that does not fit on one screen: "Send" waits for a
@@ -418,6 +467,10 @@ public enum MockData {
 
     /// Bytes for a mock attachment: a chart for images, text for the rest.
     public static func contents(of asset: AssetRef) -> Data {
+        if let index = galleryPictures.firstIndex(where: { $0.id == asset.assetId }) {
+            let shape = galleryPictures[index]
+            return picture(number: index + 1, width: shape.width, height: shape.height, hue: shape.hue, type: .png) ?? Data()
+        }
         if asset.isImage { return chartPNG() ?? Data() }
         switch asset.name {
         case "schema.diff":
@@ -473,6 +526,59 @@ public enum MockData {
             context.fill(CGRect(x: (40 + CGFloat(index) * 85) * scale, y: 30 * scale, width: 60 * scale, height: value * 280 * scale))
         }
         guard let image = context.makeImage() else { return nil }
+        return encoded(image, as: type)
+    }
+
+    /// A picture of one hue with a frame and its number in the middle: its shape shows how a
+    /// thumbnail crops it, its number which picture a viewer page holds.
+    private static func picture(number: Int, width: Int, height: Int, hue: CGFloat, type: UTType) -> Data? {
+        guard width > 0, height > 0, let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        let size = CGFloat(min(width, height))
+        context.setFillColor(color(hue: hue, saturation: 0.18, brightness: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        // The frame: its edges are what the square crop of a wide or a tall picture cuts off.
+        let ink = color(hue: hue, saturation: 0.7, brightness: 0.75)
+        let inset = size * 0.04
+        context.setStrokeColor(ink)
+        context.setLineWidth(size * 0.025)
+        context.stroke(CGRect(x: inset, y: inset, width: CGFloat(width) - 2 * inset, height: CGFloat(height) - 2 * inset))
+        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, size * 0.5, nil)
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
+        ]
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: String(number), attributes: attributes))
+        let box = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+        context.setFillColor(ink)
+        context.textPosition = CGPoint(x: (CGFloat(width) - box.width) / 2 - box.minX, y: (CGFloat(height) - box.height) / 2 - box.minY)
+        CTLineDraw(line, context)
+        guard let image = context.makeImage() else { return nil }
+        return encoded(image, as: type)
+    }
+
+    private static func color(hue: CGFloat, saturation: CGFloat, brightness: CGFloat) -> CGColor {
+        let sector = (hue - hue.rounded(.down)) * 6
+        let index = Int(sector)
+        let fraction = sector - CGFloat(index)
+        let low = brightness * (1 - saturation)
+        let falling = brightness * (1 - saturation * fraction)
+        let rising = brightness * (1 - saturation * (1 - fraction))
+        let (red, green, blue): (CGFloat, CGFloat, CGFloat)
+        switch index % 6 {
+        case 0: (red, green, blue) = (brightness, rising, low)
+        case 1: (red, green, blue) = (falling, brightness, low)
+        case 2: (red, green, blue) = (low, brightness, rising)
+        case 3: (red, green, blue) = (low, falling, brightness)
+        case 4: (red, green, blue) = (rising, low, brightness)
+        default: (red, green, blue) = (brightness, low, falling)
+        }
+        return CGColor(red: red, green: green, blue: blue, alpha: 1)
+    }
+
+    private static func encoded(_ image: CGImage, as type: UTType) -> Data? {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(data, type.identifier as CFString, 1, nil) else { return nil }
         CGImageDestinationAddImage(destination, image, nil)
