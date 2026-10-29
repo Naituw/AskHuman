@@ -193,9 +193,17 @@ fn popup_stderr_process_fixture() {
     let ready = std::env::var_os("ASKHUMAN_STDERR_READY").unwrap();
     match mode.as_str() {
         "hold" => {
-            std::fs::write(ready, "ready").unwrap();
+            std::fs::write(&ready, "ready").unwrap();
             // The descendant is bounded even if its parent test fails.
             std::thread::sleep(Duration::from_secs(3));
+            let result = std::io::stderr()
+                .write_all(&vec![b'x'; 256 * 1024])
+                .and_then(|()| std::io::stderr().flush());
+            std::fs::write(
+                std::path::Path::new(&ready).with_extension("written"),
+                if result.is_ok() { "ok" } else { "error" },
+            )
+            .unwrap();
         }
         "descendant" => {
             let mut command = std::process::Command::new(std::env::current_exe().unwrap());
@@ -284,8 +292,16 @@ async fn popup_reaper_does_not_wait_for_inherited_stderr_on_any_platform() {
     .expect("the direct child must finish before its three-second descendant");
     assert_eq!(logs.len(), 1);
     assert!(logs[0].contains("descendant marker"));
-    // Allow the bounded descendant to exit before removing its temporary directory.
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // Late output exceeds the pipe capacity and must still be drained after the reaper returns.
+    let written = directory.path().join("ready").with_extension("written");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !written.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the descendant must finish writing after the host exits");
+    assert_eq!(std::fs::read_to_string(written).unwrap(), "ok");
 }
 
 #[tokio::test]

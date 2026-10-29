@@ -548,8 +548,10 @@ Review 和原生证据见 [原生几何复核](../investigations/popup-native-ge
 Daemon 持续排空 Popup Host 的 stderr，最多保留前 8 KiB。宿主正常退出时丢弃，
 失败退出时将 PID、退出状态和有界 stderr 写入实例 `daemon.log`；换行等控制字符转义，
 不把子进程输出当作新的日志行。超过上限仍继续排空，避免 stderr pipe 写满阻塞宿主。
-直接子进程的等待与 stderr 排空并行；宿主退出后最多再排空 100 ms，即关闭读取端并记录
-失败，避免继承 stderr 的终端或文件打开器延迟宿主回收和日志。
+直接子进程的等待与 stderr 排空并行；宿主退出后最多再等待 100 ms 确定有界日志快照，
+随后及时报告失败。仍未 EOF 的读取端交给独立任务持续排空并丢弃后续输出，直到 EOF 或读取
+失败才关闭，避免继承 stderr 的终端或文件打开器延迟宿主回收，也避免提前关闭导致后代写入
+遇到 SIGPIPE/EPIPE。后台排空任务随 daemon 退出而结束，不保证跨 daemon 退出保留管道。
 
 合并 Popup Host 在 GUI 事件循环内保留原生 stderr，由 daemon 统一处理，便于观察
 GTK/GDK、AppKit 等原生库直接退出而未产生 Rust 错误的情形。其他 GUI 角色沿用原有静默规则。
@@ -583,7 +585,8 @@ GTK/GDK、AppKit 等原生库直接退出而未产生 Rust 错误的情形。其
   覆盖失败日志的 PID、退出状态、转义、直接子进程回收与子孙占用 stderr；
   `popup_reaper_drains_large_stderr_and_keeps_successful_exit_silent` 覆盖 256 KiB 排空与成功静默。
 - 跨平台真实测试子进程：`popup_reaper_bounds_failed_stderr_after_overflow` 覆盖超限失败日志；
-  `popup_reaper_does_not_wait_for_inherited_stderr_on_any_platform` 覆盖子孙继承管道；
+  `popup_reaper_does_not_wait_for_inherited_stderr_on_any_platform` 覆盖及时回收，以及后代延迟
+  3 秒后向继承管道写入 256 KiB 仍成功（无 SIGPIPE/EPIPE 或写满阻塞）；
   `popup_reaper_waits_for_exit_after_stderr_closes` 覆盖 stderr 关闭后仍等待真实退出。
   fixture 仅由父测试显式启动，后代进程有界退出；Windows 分支需原生 CI 验证。
 - Windows：`popup_reaper_logs_windows_failure_with_pid_and_escaped_stderr` 与

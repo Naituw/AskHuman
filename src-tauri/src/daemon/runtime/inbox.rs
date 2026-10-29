@@ -25,11 +25,12 @@ async fn capture_popup_stderr(
 }
 
 async fn reap_popup_host(mut child: tokio::process::Child, pid: u32, report: impl FnOnce(String)) {
-    let stderr = child.stderr.take();
+    let mut stderr = child.stderr.take();
     let mut captured = Vec::new();
+    let drain_finished;
     let status = {
         let drain = async {
-            if let Some(stderr) = stderr {
+            if let Some(stderr) = stderr.as_mut() {
                 capture_popup_stderr(stderr, &mut captured).await;
             }
         };
@@ -38,13 +39,26 @@ async fn reap_popup_host(mut child: tokio::process::Child, pid: u32, report: imp
             biased;
             status = child.wait() => {
                 // A terminal/opener descendant may retain stderr after the host exits.
-                // Reap the direct child immediately and bound final draining, then close the pipe.
-                let _ = tokio::time::timeout(Duration::from_millis(100), &mut drain).await;
+                // Bound the diagnostic snapshot without closing a descendant's inherited pipe.
+                drain_finished = tokio::time::timeout(Duration::from_millis(100), &mut drain)
+                    .await
+                    .is_ok();
                 status
             }
-            _ = &mut drain => child.wait().await,
+            _ = &mut drain => {
+                drain_finished = true;
+                child.wait().await
+            },
         }
     };
+    if !drain_finished {
+        if let Some(mut stderr) = stderr {
+            tokio::spawn(async move {
+                // Discard late output until EOF so writers do not receive SIGPIPE/EPIPE.
+                let _ = tokio::io::copy(&mut stderr, &mut tokio::io::sink()).await;
+            });
+        }
+    }
     match status {
         Ok(status) if status.success() => {}
         Ok(status) => {
