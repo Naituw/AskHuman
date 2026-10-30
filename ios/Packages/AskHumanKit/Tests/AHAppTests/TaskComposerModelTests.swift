@@ -173,27 +173,149 @@ final class TaskComposerModelTests: XCTestCase {
         XCTAssertNil(composer.effortId)
     }
 
-    // MARK: never remembered, never stale
+    // MARK: remembered preferences and stale choices
 
-    func testThePickIsNotRememberedForTheNextForm() throws {
+    func testTheSubmittedPickSurvivesANewDefaultsInstanceAndAnotherMac() throws {
         let choices = options()
-        let store = defaults()
+        let suite = "ah-test-" + UUID().uuidString
+        let store = UserDefaults(suiteName: suite)!
+        defer { store.removePersistentDomain(forName: suite) }
         let first = TaskComposer(macId: "mac")
         first.applyDefaults(options: choices, defaults: store)
         first.selectAgent("codex")
         first.selectModel("big", in: choices)
         first.effortId = "xhigh"
-        first.remember(defaults: store)
+        first.remember(options: choices, defaults: store)
 
-        let second = TaskComposer(macId: "mac")
-        second.applyDefaults(options: choices, defaults: store)
-        XCTAssertEqual(second.agentKind, "codex", "the Agent is remembered as before")
-        XCTAssertNil(second.modelId, "the model is not")
-        XCTAssertNil(second.effortId)
+        let second = TaskComposer(macId: "other-mac")
+        second.applyDefaults(options: choices, defaults: UserDefaults(suiteName: suite)!)
+        second.selectAgent("codex")
+        second.applyDefaults(options: choices, defaults: UserDefaults(suiteName: suite)!)
+        XCTAssertEqual(second.modelId, "big", "this phone shares the Agent's preference across Macs")
+        XCTAssertEqual(second.effortId, "xhigh")
         second.text = "Go"
         let draft = try XCTUnwrap(second.draft(options: choices))
-        XCTAssertNil(draft.model)
-        XCTAssertNil(draft.effort)
+        XCTAssertEqual(draft.model, "big")
+        XCTAssertEqual(draft.effort, "xhigh")
+    }
+
+    func testEachAgentHasItsOwnPreferenceAndReturningRestoresTheSubmittedPick() {
+        let choices = options()
+        let store = defaults()
+        let composer = TaskComposer(macId: "mac")
+        composer.applyDefaults(options: choices, defaults: store)
+        composer.selectModel("haiku", in: choices)
+        composer.effortId = "max"
+        composer.remember(options: choices, defaults: store)
+
+        composer.selectAgent("codex")
+        composer.applyDefaults(options: choices, defaults: store)
+        XCTAssertNil(composer.modelId, "Claude's model does not carry over")
+        composer.selectModel("small", in: choices)
+        composer.effortId = "high"
+        composer.remember(options: choices, defaults: store)
+        composer.selectModel("big", in: choices)
+
+        composer.selectAgent("claude")
+        composer.applyDefaults(options: choices, defaults: store)
+        XCTAssertEqual(composer.modelId, "haiku")
+        XCTAssertEqual(composer.effortId, "max")
+        composer.selectAgent("codex")
+        composer.applyDefaults(options: choices, defaults: store)
+        XCTAssertEqual(composer.modelId, "small", "an unsubmitted edit did not replace the preference")
+        XCTAssertEqual(composer.effortId, "high")
+    }
+
+    func testRefreshingOptionsDoesNotOverwriteEditsOrAnExplicitDefault() {
+        let choices = options()
+        let store = defaults()
+        let composer = makeComposer(on: "codex")
+        composer.selectModel("big", in: choices)
+        composer.effortId = "xhigh"
+        composer.remember(options: choices, defaults: store)
+
+        let next = TaskComposer(macId: "mac")
+        next.applyDefaults(options: choices, defaults: store)
+        next.selectModel(nil, in: choices)
+        next.effortId = nil
+        next.applyDefaults(options: choices, defaults: store)
+        XCTAssertNil(next.modelId)
+        XCTAssertNil(next.effortId)
+        next.remember(options: choices, defaults: store)
+
+        let reopened = TaskComposer(macId: "mac")
+        reopened.applyDefaults(options: choices, defaults: store)
+        XCTAssertNil(reopened.modelId, "submitting Default clears the saved model")
+        XCTAssertNil(reopened.effortId)
+    }
+
+    func testAnUnavailableSavedModelFallsBackWithoutErasingThePreference() {
+        let choices = options()
+        let store = defaults()
+        let first = makeComposer(on: "codex")
+        first.selectModel("big", in: choices)
+        first.effortId = "high"
+        first.remember(options: choices, defaults: store)
+
+        var limited = choices
+        limited.agents[1].models?.removeAll { $0.id == "big" }
+        let other = TaskComposer(macId: "other-mac")
+        other.selectAgent("codex")
+        other.applyDefaults(options: limited, defaults: store)
+        other.text = "Go"
+        XCTAssertNil(other.draft(options: limited)?.model)
+        XCTAssertNil(other.effortId, "the effort of the missing model also falls back")
+        other.remember(options: limited, defaults: store)
+
+        other.switchMac(to: "mac")
+        other.applyDefaults(options: choices, defaults: store)
+        XCTAssertEqual(other.modelId, "big", "the original Mac still offers this phone's preference")
+        XCTAssertEqual(other.effortId, "high")
+
+        other.switchMac(to: "other-mac")
+        other.selectAgent("codex")
+        other.applyDefaults(options: limited, defaults: store)
+        other.selectModel(nil, in: limited)
+        other.remember(options: limited, defaults: store)
+        let next = TaskComposer(macId: "mac")
+        next.applyDefaults(options: choices, defaults: store)
+        XCTAssertNil(next.modelId, "explicitly choosing Default replaces even an unavailable preference")
+    }
+
+    func testAnOlderMacDoesNotEraseTheSavedModelOrEffort() {
+        let choices = options()
+        let store = defaults()
+        let first = makeComposer(on: "codex")
+        first.selectModel("small", in: choices)
+        first.effortId = "high"
+        first.remember(options: choices, defaults: store)
+        var old = choices
+        old.agents[1].models = nil
+        old.agents[1].defaultModel = nil
+        let other = TaskComposer(macId: "old-mac")
+        other.selectAgent("codex")
+        other.applyDefaults(options: old, defaults: store)
+        other.remember(options: old, defaults: store)
+
+        let next = TaskComposer(macId: "mac")
+        next.applyDefaults(options: choices, defaults: store)
+        XCTAssertEqual(next.modelId, "small")
+        XCTAssertEqual(next.effortId, "high")
+    }
+
+    func testAnUnavailableSavedEffortKeepsTheModelAndUsesDefaultEffort() {
+        let choices = options()
+        let store = defaults()
+        let first = makeComposer(on: "codex")
+        first.selectModel("big", in: choices)
+        first.effortId = "xhigh"
+        first.remember(options: choices, defaults: store)
+        var changed = choices
+        changed.agents[1].models?[0].efforts = ["medium", "high"]
+        let next = TaskComposer(macId: "mac")
+        next.applyDefaults(options: changed, defaults: store)
+        XCTAssertEqual(next.modelId, "big")
+        XCTAssertNil(next.effortId)
     }
 
     func testAPickThatTheMacNoLongerOffersGoesBackToDefault() {

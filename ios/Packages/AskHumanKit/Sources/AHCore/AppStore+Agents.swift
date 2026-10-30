@@ -238,6 +238,12 @@ extension AppStore {
         Task { await backend.loadTaskOptions(macId: macId) }
     }
 
+    /// Picks an Agent and restores this phone's submitted model and effort preference for it.
+    public func selectTaskAgent(_ kind: String) {
+        taskComposer?.selectAgent(kind)
+        taskOptionsArrived()
+    }
+
     /// Chooses a workspace; its TODOs are asked for.
     public func selectTaskWorkspace(_ workspaceId: String) {
         guard let composer = taskComposer else { return }
@@ -265,7 +271,7 @@ extension AppStore {
         guard let composer = taskComposer, case .ready(let options)? = state.taskOptions[composer.macId],
               let draft = composer.draft(options: options)
         else { return nil }
-        composer.remember(defaults: defaults)
+        composer.remember(options: options, defaults: defaults)
         return try await backend.createTask(macId: composer.macId, draft: draft)
     }
 

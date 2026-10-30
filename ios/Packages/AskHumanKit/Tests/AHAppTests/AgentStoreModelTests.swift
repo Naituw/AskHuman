@@ -82,6 +82,64 @@ final class AgentStoreModelTests: XCTestCase {
         XCTAssertEqual(task.effort, "high")
     }
 
+    func testSubmittedChoicesReturnWhenReopeningSwitchingAgentsAndSwitchingMacs() async throws {
+        await make()
+        let (composer, options) = try await openForm()
+        store.selectTaskAgent("codex")
+        composer.selectModel("gpt-5.1-codex-mini", in: options)
+        composer.effortId = "high"
+        composer.text = "Tidy the docs"
+        composer.permissionChoice = .standard
+        let id = try await store.createTask()
+        XCTAssertNotNil(id)
+        store.dismissNewTask()
+
+        let (reopened, _) = try await openForm()
+        XCTAssertEqual(reopened.agentKind, "codex")
+        XCTAssertEqual(reopened.modelId, "gpt-5.1-codex-mini")
+        XCTAssertEqual(reopened.effortId, "high")
+        XCTAssertNil(reopened.permissionChoice, "permission still requires a fresh choice")
+        store.selectTaskAgent("claude")
+        XCTAssertNil(reopened.modelId, "preferences are per Agent")
+        store.selectTaskAgent("codex")
+        XCTAssertEqual(reopened.modelId, "gpt-5.1-codex-mini")
+
+        store.selectTaskMac(MockData.officeMacId)
+        await eventually("office Mac choices") {
+            if case .ready? = self.store.state.taskOptions[MockData.officeMacId] { return true }
+            return false
+        }
+        XCTAssertNil(reopened.modelId, "the demo office Mac cannot start tasks")
+        store.selectTaskMac(MockData.homeMacId)
+        await eventually("home Mac choices") { reopened.workspaceId != nil }
+        XCTAssertEqual(reopened.modelId, "gpt-5.1-codex-mini", "switching Macs restores the saved choice")
+        XCTAssertEqual(reopened.effortId, "high")
+    }
+
+    func testCancellingAnEditKeepsTheSubmittedPreferenceAndAFailedStartStillSaves() async throws {
+        await make()
+        await backend.setFailNextTask("modelUnavailable")
+        let (composer, options) = try await openForm()
+        composer.selectModel("sonnet", in: options)
+        composer.effortId = "max"
+        composer.text = "Fix the build"
+        composer.permissionChoice = .standard
+        let created = try await store.createTask()
+        let id = try XCTUnwrap(created)
+        await eventually("failed start") { self.store.task(id: id)?.stage == "failed" }
+        store.dismissNewTask()
+
+        let (editing, current) = try await openForm()
+        XCTAssertEqual(editing.modelId, "sonnet", "even a failed start records the choice")
+        XCTAssertEqual(editing.effortId, "max")
+        editing.selectModel("haiku", in: current)
+        editing.effortId = "low"
+        store.dismissNewTask()
+        let (reopened, _) = try await openForm()
+        XCTAssertEqual(reopened.modelId, "sonnet", "cancelling does not update the preference")
+        XCTAssertEqual(reopened.effortId, "max")
+    }
+
     func testTheNewAgentRunsWithWhatWasPicked() async throws {
         await make()
         let (composer, options) = try await openForm()

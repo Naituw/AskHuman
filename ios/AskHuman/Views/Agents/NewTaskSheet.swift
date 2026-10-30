@@ -135,7 +135,7 @@ private struct NewTaskForm: View {
         Section {
             ForEach(options.agents, id: \.kind) { agent in
                 AgentChoiceRow(agent: agent, selected: composer.agentKind == agent.kind) {
-                    composer.selectAgent(agent.kind)
+                    store.selectTaskAgent(agent.kind)
                 }
             }
         } header: {
@@ -175,8 +175,8 @@ private struct NewTaskForm: View {
         }
     }
 
-    /// The model and the effort: only when the Mac listed models for this Agent. Both start from "Default",
-    /// which sends nothing and leaves the choice to the Agent's own settings.
+    /// The model and the effort: only when the Mac listed models for this Agent. The phone restores its
+    /// last submitted choice; "Default" leaves the choice to the Agent's own settings.
     @ViewBuilder
     private func modelSection(_ options: TaskOptions) -> some View {
         if composer.offersModelChoice(in: options) {

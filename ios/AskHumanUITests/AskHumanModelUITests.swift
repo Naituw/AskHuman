@@ -223,6 +223,22 @@ final class AskHumanModelUITests: XCTestCase {
         shot("117-model-reset")
     }
 
+    func testStartingATaskRemembersTheModelAndEffortForTheNextForm() {
+        openForm()
+        pickModel("sonnet", shownAs: "Sonnet")
+        pickEffort(localized("High", "高"))
+        fillAndStart()
+        requireElement("task-close").tap()
+        requireElement("new-task").tap()
+        XCTAssertTrue(waitForLabel("task-model", containing: "Sonnet"))
+        XCTAssertTrue(waitForLabel("task-effort", containing: localized("High", "高")))
+        requireElement("task-agent-cursor").tap()
+        XCTAssertTrue(waitForLabel("task-model", containing: localized("Default", "默认")))
+        requireElement("task-agent-claude").tap()
+        XCTAssertTrue(waitForLabel("task-model", containing: "Sonnet"))
+        XCTAssertTrue(waitForLabel("task-effort", containing: localized("High", "高")))
+    }
+
     func testTheEffortRowFollowsTheModelThatIsPicked() {
         openForm()
         requireElement("task-agent-pi").tap()

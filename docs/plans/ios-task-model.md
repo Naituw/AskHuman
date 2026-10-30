@@ -259,4 +259,19 @@
 ## 不做
 
 - 不改 iOS 线协议版本、`PROTOCOL_VERSION`、中继、`AppConfig`、Mac IPC；不改 IM `/new` 与 Mac GUI 新任务窗口。
-- 不用 Cursor 的参数化写法；不记住上次选择；不做价格 / 倍率提示；续聊 / 分叉不带模型。
+- 不用 Cursor 的参数化写法；不做价格 / 倍率提示；续聊 / 分叉不带模型。
+
+## 2026-10-30 修订：手机记住上次使用的模型与强度
+
+用户将 M3 改为手机本地偏好：按 Agent 保存、所有 Mac / 工作区共用，点击「开始」时记录（失败也记录），取消不保存。
+前文 P3 的「不记忆 / 切换 Agent 复位」为当时的实施记录，现由本节和需求 M3 替代。
+
+- `TaskComposer` 使用按 Agent 命名的 `UserDefaults` 模型 / 强度键；每次表单选定 Agent 时恢复一次，清单刷新不覆盖用户编辑。
+- `AppStore.selectTaskAgent` 统一完成切换与恢复；`createTask` 在发送前记录，与原工作区 / Agent 记忆的时机一致。
+- 缺少已保存模型时两项临时回默认，开始任务不清除原偏好；手动改选并开始才覆盖。旧 Mac 不给清单时也保留偏好。
+  只有强度失效则保留模型、强度回默认。手动提交「默认」可清掉显式选择。
+- 权限选择、Mac 侧清单 / 启动管线与线协议均沿用现有规则。验证只用 Swift / Mock 后端与模拟器，不启动真实 Agent。
+
+验证（2026-10-30）：`swift test` 448 项通过、43 项需外部环境的端到端测试跳过；模型界面 XCUITest 英文 16 项通过，
+中文新增的「开始后重开表单恢复模型与强度」1 项通过；Debug 真机签名构建与 Release 归档通过；`./scripts/install.sh` 通过。
+用户在外旅行，交付方式改为 TestFlight 内部测试；App Store Connect 记录为 AskHuman Mobile（Bundle ID 保持不变）。

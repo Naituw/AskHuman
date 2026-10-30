@@ -35,11 +35,20 @@ public final class TaskComposer {
     public var agentKind: String?
     /// What the user chose when the Mac lets the phone choose: nothing is preselected.
     public var permissionChoice: PermissionChoice?
-    /// The model the user picked (`nil` = "Default"). Never remembered between forms, and only meaningful
-    /// for the Agent it was picked for: read it through `model(in:)`, which checks it is still offered.
+    /// The model the user picked (`nil` = "Default"). Read it through `model(in:)`, which checks it is
+    /// still offered. Submitted choices are remembered per Agent across all Macs on this phone.
     public private(set) var modelId: String?
     /// The reasoning effort the user picked (`nil` = "Default"); read it through `effort(in:)`.
-    public var effortId: String?
+    public var effortId: String? {
+        get { pickedEffortId }
+        set {
+            pickedEffortId = newValue
+            preserveUnavailablePreference = false
+        }
+    }
+    private var pickedEffortId: String?
+    @ObservationIgnored private var restoredAgentKind: String?
+    @ObservationIgnored private var preserveUnavailablePreference = false
     public var todoId: String?
     public var text = ""
 
@@ -50,8 +59,8 @@ public final class TaskComposer {
     // MARK: choices
 
     /// Picks what the form starts with once a Mac's choices are known: the workspace and Agent used
-    /// last time when they are still offered, else the first sensible ones. The model and the effort
-    /// always start from "Default" (a pick that is no longer offered goes back to it).
+    /// last time when they are still offered, else the first sensible ones. Restore this phone's model
+    /// and effort preference once per Agent selection; later refreshes only discard stale picks.
     public func applyDefaults(options: TaskOptions, defaults: UserDefaults) {
         if workspaceId == nil || !options.workspaces.contains(where: { $0.id == workspaceId }) {
             let last = defaults.string(forKey: Self.workspaceKey(macId))
@@ -61,9 +70,16 @@ public final class TaskComposer {
         }
         if agentKind == nil || !options.agents.contains(where: { $0.kind == agentKind }) {
             let last = defaults.string(forKey: Self.agentKey(macId))
-            agentKind = options.agents.first { $0.kind == last && $0.ready }?.kind
+            let kind = options.agents.first { $0.kind == last && $0.ready }?.kind
                 ?? options.agents.first(where: \.ready)?.kind
                 ?? options.agents.first?.kind
+            if let kind { selectAgent(kind) }
+        }
+        if let agentKind, restoredAgentKind != agentKind {
+            modelId = defaults.string(forKey: Self.modelKey(agentKind))
+            pickedEffortId = defaults.string(forKey: Self.effortKey(agentKind))
+            restoredAgentKind = agentKind
+            preserveUnavailablePreference = false
         }
         dropStalePicks(in: options)
     }
@@ -77,38 +93,56 @@ public final class TaskComposer {
         todoId = nil
         permissionChoice = nil
         modelId = nil
-        effortId = nil
+        pickedEffortId = nil
+        restoredAgentKind = nil
+        preserveUnavailablePreference = false
     }
 
-    /// Picks the Agent. The permission, the model and the effort are chosen again for another Agent.
+    /// Picks the Agent. Its saved model preference is restored by the next `applyDefaults` call.
     public func selectAgent(_ kind: String) {
         guard kind != agentKind else { return }
         agentKind = kind
         permissionChoice = nil
         modelId = nil
-        effortId = nil
+        pickedEffortId = nil
+        restoredAgentKind = nil
+        preserveUnavailablePreference = false
     }
 
     /// Picks the model (`nil` = "Default"). The effort stays when the new choice offers it, else it is
     /// "Default" again.
     public func selectModel(_ id: String?, in options: TaskOptions) {
         modelId = id
+        restoredAgentKind = agentKind
+        preserveUnavailablePreference = false
         dropStalePicks(in: options)
     }
 
-    public func remember(defaults: UserDefaults) {
+    /// Called when Start is pressed, before the send, so a failed start still remembers the choice.
+    public func remember(options: TaskOptions, defaults: UserDefaults) {
         if let workspaceId { defaults.set(workspaceId, forKey: Self.workspaceKey(macId)) }
         if let agentKind { defaults.set(agentKind, forKey: Self.agentKey(macId)) }
+        guard let agentKind, offersModelChoice(in: options), !preserveUnavailablePreference,
+              modelId == nil || model(in: options) != nil else { return }
+        defaults.set(model(in: options)?.id, forKey: Self.modelKey(agentKind))
+        defaults.set(effort(in: options), forKey: Self.effortKey(agentKind))
     }
 
     private static func workspaceKey(_ macId: String) -> String { "ah.task.workspace." + macId }
     private static func agentKey(_ macId: String) -> String { "ah.task.agent." + macId }
+    private static func modelKey(_ kind: String) -> String { "ah.task.model." + kind }
+    private static func effortKey(_ kind: String) -> String { "ah.task.effort." + kind }
 
     /// A model or an effort the choices no longer offer is forgotten: what the form shows and what it
     /// sends always agree.
     private func dropStalePicks(in options: TaskOptions) {
-        if modelId != nil, model(in: options) == nil { modelId = nil }
-        if effortId != nil, effort(in: options) == nil { effortId = nil }
+        if modelId != nil, model(in: options) == nil {
+            modelId = nil
+            pickedEffortId = nil
+            // A different Mac may still offer the saved model. A fallback is not a new preference.
+            preserveUnavailablePreference = true
+        }
+        if effortId != nil, effort(in: options) == nil { pickedEffortId = nil }
     }
 
     // MARK: derived

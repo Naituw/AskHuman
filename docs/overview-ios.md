@@ -55,6 +55,8 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
   | `AHMarkdown` | Markdown 块解析，供原生渲染（题干、列表摘要、Watch 卡片、附件预览，以及网页渲染不可用时的回落）；请求正文平时由网页渲染（见下） |
   | `AHMock` | `MockBackend`：演示数据与可编程故障，UI 测试和截图都跑在它上面 |
 
+- 新建任务的 `TaskComposer` 在点击「开始」时，将模型 / 强度按 Agent 存为这部手机的本地偏好，所有 Mac / 工作区共用；取消不更新。
+  打开表单或切换 Mac / Agent 时恢复，缺少已保存模型的 Mac 临时回默认并保留原偏好。完整约定见 `docs/specs/ios-task-model.md` M3。
 - 通知扩展 `AskHumanNotification` 只解密预览（`NotificationText`），不连网络。点击通知经 `AppStore.openNotification` 路由：提问类打开请求（请求还没到手机时页面用通知原文占位、转圈等待，只有 Mac 已答复且没有它才说「不可用」），`follow.*` 打开 Agent 页。
 - **请求正文由网页渲染，其余 Markdown 仍是原生**：提问页的 Message、确认页 / 历史详情的正文用 `WebMarkdownView`（`Views/Markdown/`）——一个 `WKWebView` 加载随 App 打包的 `Resources/WebMarkdown`（`project.yml` 里 `type: folder` 的文件夹引用；与 Mac 弹窗同一套 markdown-it + Mermaid，版本以根 `package.json` 为准，升级后跑 `ios/Tools/web-markdown/sync.sh` 重新拷贝并写 `VERSIONS.txt`）。一页至多一个（每个 `WKWebView` 各占一个 WebContent 进程）；页面无特权、禁网（CSP）、锁死导航，只有 `ready / height / rendered / copy / failed` 五个消息能回到 App，链接交给 `LinkPresenter.tapped`（http(s) 先确认域名，`mailto` / `tel` 交系统，其余忽略）。题干、列表卡片、Watch 卡片、附件预览仍走 `AHMarkdown` 解析 + `MarkdownView` 原生渲染（软换行换行、行内代码有底、可选字）。页面进程被回收超过 2 次 / 加载失败 / 5 秒（`-AHWebTimeout`；模拟器默认 30）没有高度会自动回落原生；Message 排好版之前多题表单不统计「看过」（`ReadingTracker.begin(awaitingMessage:patience:)` 等 `onSettled`，最多等看门狗时间 + 1 秒）。设计、限额与取舍见 `docs/specs/ios-web-markdown.md`。
 - 本地化：`Localizable.xcstrings`（en + zh-Hans）由 `ios/Tools/make-catalog.py` 从编译器产出的 `.stringsdata` 生成——先 `xcodebuild build -derivedDataPath build/DerivedData …`，再跑脚本；缺中文翻译会让脚本失败。

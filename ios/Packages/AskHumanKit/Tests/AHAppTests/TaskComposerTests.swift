@@ -31,7 +31,7 @@ final class TaskComposerTests: XCTestCase {
         let first = TaskComposer(macId: "mac")
         first.applyDefaults(options: options(), defaults: store)
         first.workspaceId = "ws0"
-        first.remember(defaults: store)
+        first.remember(options: options(), defaults: store)
 
         let second = TaskComposer(macId: "mac")
         second.applyDefaults(options: options(), defaults: store)
