@@ -3,6 +3,13 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 待验收：开发测试页与 Dev 卡片的本机界面
+
+[PR #27](https://github.com/Naituw/AskHuman/pull/27) 已实现开发验收与迁移流程，自动验证记录见
+[实施计划](plans/dev-verification-routing.md)。Mac 锁定，用户明确选择本次先完成代码和 CI，
+本机界面另记待办。解锁后检查开发测试页、窄窗口标签、Dev 构建／工作树标识，并打开和取消
+自动测试卡片；真实 Agent 启动／模型请求另需用户授权。已通过 AskHuman 登记待办。
+
 ## 进行中：iOS 原生渠道（原型已完成，待真实服务与真机验收）
 
 2026-10-24 用户要求整理交接（[移动渠道交接](investigations/native-ios-channel-handoff.md)：杭州 EMQX 传输验证包、
