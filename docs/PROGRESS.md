@@ -392,7 +392,7 @@ Dashboard CSV（覆盖 10-26 00:47 之后）再对账。
 
 ## 待办：daemon 二进制变化检测 —— 轮询 vs filewatch（后续评估，优先级低）
 
-二进制变化检测目前是 **15s 轮询** `current_exe()` 指纹（稳态≈1 次 `stat`，靠 `binhash.json` 内容哈希缓存避免重哈希）。
+二进制变化检测目前是 **15s 轮询**缓存的安装入口指纹（稳态≈1 次 `stat`，靠 `binhash.json` 内容哈希缓存避免重哈希；Linux 保留旧 ELF 时不检查旧映像）。
 是否改 **filewatch** 待权衡——难点：二进制走原子替换（rename 换 inode，需盯父目录 + 按文件名过滤 + 每次替换后重挂，
 参考 `config_watch.rs`）、装在任意目录（`~/.local/bin`/brew/npm 前缀/`.app` bundle…）、且 watcher 仍要 stat/hash 才能确认
 内容**真**变（指纹是内容哈希而非 mtime）。延迟要求松（~15s 够）+ Hello 路径兜底，故暂保持轮询。
@@ -422,3 +422,13 @@ Dashboard CSV（覆盖 10-26 00:47 之后）再对账。
   `\\?\` 前缀）与 `--version` 探测没在 Windows 实机验过。
 - 扫描各 Agent 的 hooks / MCP 配置里写死的 AskHuman 路径，与 Daemon 实际运行的二进制对比。
   现有补救是装完用 `AskHuman agents update` 重写。
+
+## 待办：Linux 运行中切换字体 DPI 的比例与窗口几何
+
+2026-10-30 复查 PR #19 时发现：`app/linux_dpi.rs` 仅在初始化时缓存页面比例，运行中修改字体 DPI 后，
+WebKit 可刷新页面缩放，但 Popup / 历史窗口的几何仍沿用旧值。用户决定单独设计并在 Linux 实机验证，
+不纳入本轮六项 PR 回归修复；已登记 AskHuman 待办 `94898352-1092-46e4-93ac-cd5510b9568f`。
+
+下一步：按 WebView 观测有效页面比例（保留初始化估算），处理 GTK DPI / 原生 scale 变化和过期回调；
+复用现有几何队列完成合并窗口、独立弹窗与历史预览的瞬态重排，避免把比例切换存成用户尺寸。
+覆盖折叠 / 展开、预览开关、约束 / 最大化、在途几何事务和多屏；自动测试与 Linux 原生运行都通过后删除本节。
