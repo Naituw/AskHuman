@@ -43,7 +43,7 @@ Do not silently create replacement keys, revoke certificates, or raise privilege
 3. The signed helper must be installed before storing credentials. For an explicitly authorized initial migration, the legacy metadata can temporarily name `privateKeyPath` and a private `signing-keychain-password` bootstrap file; `helper.py migrate` stores both in the login Keychain with helper-specific access and verifies readback. It refuses to overwrite a different existing credential. A later rotation needs an explicit implementation/review, not an automatic overwrite.
 4. Set `credentialBackend=keychain` and remove `privateKeyPath`, then verify status and local signing through the helper. Only after verification, remove the supplied local `.p8`, signing-password, raw certificate-private-key, P12, and transfer copies that the user authorized cleaning. The user's original iCloud download was not accessible to this migration; ask them to remove it on their phone if they want no original download retained.
 
-The current setup no longer has persistent plaintext copies of those local credentials. Do not restore the old file-based uploader from git history to bypass a Keychain error.
+The controlled credential directory and AskHuman transfer copy no longer retain plaintext credentials. The user explicitly chose to keep the original iCloud download as a backup; ordinary agents must use Keychain instead of reading that backup. Do not restore the old file-based uploader from git history to bypass a Keychain error.
 
 ## Distribution certificate and provisioning repair
 
