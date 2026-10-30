@@ -554,17 +554,7 @@ App Store Connect 记录为 [AskHuman Mobile](https://appstoreconnect.apple.com/
 - XcodeGen 默认 Info.plist 的版本号是常量；现在主 App 与扩展显式引用 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`，归档可正确指定构建号。
 - 加密使用系统 CryptoKit，Info.plist 声明 `ITSAppUsesNonExemptEncryption=false`；主 App 的 `PrivacyInfo.xcprivacy` 声明本 App 的 UserDefaults（`CA92.1`）和容器内文件元数据（`C617.1`）用途。
 
-本机复用方式（在仓库根目录执行；凭据不是仓库文件）：
-
-```sh
-cd ios && xcodegen generate && cd ..
-xcodebuild archive -project ios/AskHuman.xcodeproj -scheme AskHuman \
-  -configuration Release -destination 'generic/platform=iOS' \
-  -derivedDataPath ios/build/DerivedDataDevice \
-  -archivePath ios/build/AskHuman-TestFlight.xcarchive CURRENT_PROJECT_VERSION=2
-python3 "$HOME/.config/askhuman-release/upload-testflight.py" ios/build/AskHuman-TestFlight.xcarchive
-```
-
+日常构建与上传步骤由项目 skill `.agents/skills/ios-testflight/SKILL.md` 维护，`AGENTS.md` 已增加发现入口。
 后续构建使用递增的 `CURRENT_PROJECT_VERSION`（首次为 `0.1.0 (2)`）。本机上传配置与独立签名钥匙串在 `~/.config/askhuman-release/`：
 目录权限 `0700`、API 私钥 `0600`，不读取既有 APNs 私钥，不把密钥写入日志或仓库；上传期间临时加入签名钥匙串，结束后恢复搜索列表。
 签名证书有效期至 2027-10-30。Archive 的 `AHPushEnvironment=prod`，App 已有按推送环境变化更新句柄的逻辑，沿用配对身份与钥匙串组。
@@ -572,4 +562,7 @@ python3 "$HOME/.config/askhuman-release/upload-testflight.py" ios/build/AskHuman
 验证：首次有效构建 `0.1.0 (2)` 已于 2026-10-30 上传，Apple `processingState=VALID`，已自动加入内部测试组，测试员状态为 `INVITED`。
 归档中核实 `UIDeviceFamily=[1]`、版本号、生产推送环境与隐私清单；修改构建配置后，模型记忆的模拟器界面用例再次通过。
 模型功能的完整单元 / 界面验证见 `docs/plans/ios-task-model.md` 的 2026-10-30 修订记录；这次未启动真实 Agent。
+用户随后确认已在手机安装且原有 Mac 连接正常，Apple 状态显示 `INSTALLED`。后续交付使用项目 skill
+[`ios-testflight`](../../.agents/skills/ios-testflight/SKILL.md)：脚本提供归档预检、显式上传与只读状态查询，复用现有凭据。
+Skill 已通过结构校验；脚本在真实归档上完成只读预检，并查询到 Apple 的 `VALID` / `INSTALLED` 状态；隔离夹具验证了默认不上传、失败 / 中断时恢复钥匙串搜索列表且保留并行改动，不产生额外上传。
 

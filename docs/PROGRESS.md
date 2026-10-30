@@ -206,11 +206,11 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
   `watch.frame` 多了可选的 `model` / `reasoning`；旧版 App 连新 Mac 与以前完全一样。实施记录与偏差见计划「P2 实施记录」。
 - P3（iOS App，在 `/tmp` 隔离副本里做、对着新 HEAD 重新验证后合入）：新建任务表单在 Agent 与权限之间多了「模型」行（进选择页，超过 12 项有搜索）与「强度」行（菜单），
   按 2026-10-30 修订恢复这部手机为该 Agent 保存的模型与强度，Mac 没给 `models`（旧 Mac / 没拿到清单）时两行都不出现且保留偏好；进度页有一行所选，Agent 详情页有一行它实际用的模型 / 强度；中文文案齐全；共享夹具有了新用例。
-  实施记录、验证结果与已知局限见计划「P3 实施记录」。**App 还没装到真机**（P4 的真机一轮会用到）。
+  实施记录、验证结果与已知局限见计划「P3 实施记录」。**2026-10-30 用户已通过 TestFlight 安装 `0.1.0 (2)`，确认原有 Mac 连接正常**；真实 Agent 矩阵仍待验证。
 
 下一步：
 - [ ] P4：文档回写（`docs/specs/ios-channel.md` §6.8 与「不能选模型」的局限、`docs/overview-ios.md` 的线消息 / 模块 / 启动参数 `-AHNoModels` `-AHFailTask`、`docs/wiki/ios-setup.md` 与 `.en.md`、
-  `docs/overview.md` 的 `agents/` 清单行）；Mac 端已装机，App 的新界面要装到真机才看得到。
+  `docs/overview.md` 的 `agents/` 清单行）；Mac 与手机均已装机，后续分发复用项目 skill `.agents/skills/ios-testflight/SKILL.md`。
 - [ ] （实现完做，**每次执行前**经用户批准，会产生模型费用；永远不含 Cursor）真机一轮：见计划 P4。同时验证两件我在本机看不到的事：已登录账号下 `grok models` 的输出
   是否带逐模型档位（带了才补 Grok 的强度行与 M10）、带真实凭据的 `codex app-server` 的 `model/list`。
 - [ ] `ios_tasks::create()` 里「读就绪 → 取清单来源 → `resolve_pick` → `TaskSpec.choice`」这段胶水没有单测（`create()` 会真的起任务）；各部件各有测试，整条由上面那一轮覆盖。

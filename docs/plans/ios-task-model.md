@@ -1,6 +1,6 @@
 # 计划：iOS 新建任务时选择模型与强度
 
-> 状态：**已批准，开工中**——P1 已提交（`4dc4c69`），P2 已提交并装机（`57adf5a`，见「P2 实施记录」），P3 已完成并提交（见「P3 实施记录」；App 尚未装到真机），P4 待做。
+> 状态：P1 已提交（`4dc4c69`），P2 已提交并装机（`57adf5a`），P3 已完成；2026-10-30 用户通过 TestFlight 安装 `0.1.0 (2)` 并确认原有 Mac 连接正常。P4 的文档回写与真实 Agent 矩阵仍待完成。
 > 2026-10-27 起草；同日用户经 AskHuman 批准，并对六条待确认点作了选择，结论已回写进需求 M14–M19 与本计划；P2 开工前又回答了三件事（M20–M22）。
 > 需求与决策：`docs/specs/ios-task-model.md`（M1–M22）。
 > 地图：`docs/overview-ios.md`。前置：`docs/plans/ios-follow-narrowing.md`（已实现；本计划沿用它的做法——先 Mac 后 App、App 在 `/tmp` 隔离副本里开发）。
@@ -275,3 +275,4 @@
 验证（2026-10-30）：`swift test` 448 项通过、43 项需外部环境的端到端测试跳过；模型界面 XCUITest 英文 16 项通过，
 中文新增的「开始后重开表单恢复模型与强度」1 项通过；Debug 真机签名构建与 Release 归档通过；`./scripts/install.sh` 通过。
 用户在外旅行，交付方式改为 TestFlight 内部测试；App Store Connect 记录为 AskHuman Mobile（Bundle ID 保持不变）。
+用户已安装 `0.1.0 (2)` 并确认原有 Mac 连接正常；Apple 测试员状态为 `INSTALLED`。此安装确认不替代 M19 的真实 Agent 验证。
