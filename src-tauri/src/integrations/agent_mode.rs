@@ -479,8 +479,22 @@ fn ensure_protocol_deliverable(target: AgentTarget, mode: Mode) -> Result<()> {
 
 /// 更新当前模式的全部产物到最新（不切换模式）。None 有残留时清理，clean None 幂等 no-op。
 pub fn update(target: AgentTarget) -> Result<()> {
+    if target == AgentTarget::Antigravity {
+        let _lock = mutation_lock::IntegrationMutationLock::acquire()?;
+        let mode = mode_for_update(target)?;
+        return set_unlocked_with_env(target, mode, &std::collections::BTreeMap::new());
+    }
     agent_rules::validate_status(target)?;
     set(target, current(target))
+}
+
+fn mode_for_update(target: AgentTarget) -> Result<Mode> {
+    if target == AgentTarget::Antigravity {
+        // Preserve ledger-backed missing-rule recovery and every strict status error.
+        antigravity_status().map(|(mode, _, _)| mode)
+    } else {
+        Ok(current(target))
+    }
 }
 
 /// 把当前模式下的**单个产物**刷新到最新（不切换模式、不动其它产物）。各底层 install 均幂等，
@@ -488,7 +502,7 @@ pub fn update(target: AgentTarget) -> Result<()> {
 pub fn update_artifact(target: AgentTarget, artifact: Artifact) -> Result<()> {
     let _lock = mutation_lock::IntegrationMutationLock::acquire()?;
     agent_rules::validate_status(target)?;
-    let mode = current(target);
+    let mode = mode_for_update(target)?;
     ensure_protocol_deliverable(target, mode)?;
     match (mode, artifact) {
         (Mode::Cli, Artifact::Rule) => {
@@ -581,12 +595,12 @@ fn antigravity_status_from_snapshot(
     let updates = match mode {
         Mode::None => ArtifactUpdates::default(),
         Mode::Cli => ArtifactUpdates {
-            rule: !rule_installed || rule_outdated,
+            rule: !rule_installed || rule_outdated || rule_variant != Some(Variant::Cli),
             hook: false,
             mcp: false,
         },
         Mode::Mcp => ArtifactUpdates {
-            rule: !rule_installed || rule_outdated,
+            rule: !rule_installed || rule_outdated || rule_variant != Some(Variant::Mcp),
             hook: false,
             mcp: !mcp_installed || mcp_outdated,
         },
@@ -631,6 +645,28 @@ mod tests {
         assert!(!rule_installed);
         assert!(updates.rule);
         assert!(!updates.mcp);
+    }
+
+    #[test]
+    fn antigravity_mcp_status_marks_a_current_cli_rule_for_update() {
+        let snapshot = super::super::antigravity_rule::RuleSnapshot {
+            state: super::super::antigravity_rule::RuleState::OwnedCurrent,
+            ownership: Some(super::super::antigravity_rule::RuleOwnership {
+                path: std::path::PathBuf::from(
+                    "/home/test/.gemini/config/rules/askhuman-antigravity.md",
+                ),
+                generation_version: "1".into(),
+                variant: "cli".into(),
+                sha256: "owned-digest".into(),
+                owner: Some(1),
+                legacy_file_identity: None,
+            }),
+            reason: None,
+        };
+        let (mode, updates, installed) = antigravity_status_from_snapshot(snapshot, true, false);
+        assert_eq!(mode, Mode::Mcp);
+        assert!(installed && updates.rule);
+        assert!(!updates.mcp && !updates.hook);
     }
 
     #[test]
@@ -960,6 +996,102 @@ mod antigravity_transition_tests {
             antigravity_rule::set_test_failures(None, None);
             BEFORE_ANTIGRAVITY_CONFIG_RESTORE.with(|slot| slot.borrow_mut().take());
         }
+    }
+
+    #[test]
+    fn updates_restore_missing_cli_rules_and_preserve_strict_errors() {
+        const CHILD: &str = "ASKHUMAN_TEST_ANTIGRAVITY_UPDATE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            let home = root.path().canonicalize().unwrap();
+            let state = home.join("state");
+            std::fs::create_dir(&state).unwrap();
+            std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "integrations::agent_mode::antigravity_transition_tests::updates_restore_missing_cli_rules_and_preserve_strict_errors", "--nocapture"])
+                .env(CHILD, "1").env("HOME", &home).env("ASKHUMAN_HOME", &state)
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "stdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let target = AgentTarget::Antigravity;
+        let rule = crate::paths::antigravity_rule_file();
+        let config = crate::paths::antigravity_mcp_config_json();
+        let ledger = crate::paths::integration_state_file();
+        let files = [&rule, &config, &ledger];
+        let bytes = || files.map(|path| std::fs::read(path).ok());
+        for artifact_only in [true, false] {
+            set(target, Mode::Cli).unwrap();
+            std::fs::remove_file(&rule).unwrap();
+            let (mode, updates, installed) = antigravity_status().unwrap();
+            assert_eq!(mode, Mode::Cli);
+            assert!(updates.rule && !installed);
+            if artifact_only {
+                update_artifact(target, Artifact::Rule).unwrap();
+            } else {
+                update(target).unwrap();
+            }
+            let (mode, updates, installed) = antigravity_status().unwrap();
+            assert_eq!(mode, Mode::Cli);
+            assert!(installed && !updates.rule);
+        }
+
+        let managed_rule = std::fs::read(&rule).unwrap();
+        for invalid_config in [b"{".as_slice(), b"[]", b"{\"mcpServers\":[]}"] {
+            std::fs::write(&config, invalid_config).unwrap();
+            let before = bytes();
+            assert!(update(target).is_err());
+            assert!(update_artifact(target, Artifact::Rule).is_err());
+            assert_eq!(bytes(), before);
+        }
+        std::fs::write(&config, "{}").unwrap();
+        std::fs::write(&rule, b"user-edited rule").unwrap();
+        let before = bytes();
+        assert!(update(target).is_err());
+        assert!(update_artifact(target, Artifact::Rule).is_err());
+        assert_eq!(bytes(), before);
+        std::fs::write(&rule, managed_rule).unwrap();
+
+        let context = agent_rules::antigravity_context_for_variant(Variant::Mcp);
+        let failure = Failure::at("prepared", None);
+        assert!(antigravity_rule::install_unlocked(&context).is_err());
+        drop(failure);
+        let journal = ledger
+            .parent()
+            .unwrap()
+            .join(".antigravity-rule-state/.antigravity-rule.pending.json");
+        let before = bytes();
+        let pending = std::fs::read(&journal).unwrap();
+        assert!(update(target).is_err());
+        assert!(update_artifact(target, Artifact::Rule).is_err());
+        assert_eq!(bytes(), before);
+        assert_eq!(std::fs::read(journal).unwrap(), pending);
+        set(target, Mode::Cli).unwrap();
+    }
+
+    #[test]
+    fn declared_mcp_configuration_exposes_and_repairs_cli_rule_drift() {
+        let fixture = Fixture::new();
+        fixture.set(Mode::Cli).unwrap();
+        fixture.prepare(Mode::Mcp).unwrap().apply().unwrap();
+        let snapshot = antigravity_rule::probe(&fixture.context(Mode::Cli)).unwrap();
+        assert_eq!(snapshot.state, RuleState::OwnedCurrent);
+        let (mode, updates, installed) = antigravity_status_from_snapshot(snapshot, true, false);
+        assert_eq!(mode, Mode::Mcp);
+        assert!(installed && updates.rule);
+        fixture.set(mode).unwrap();
+        fixture.assert_mode(Mode::Mcp);
+        let (_, updates, _) = antigravity_status_from_snapshot(
+            antigravity_rule::probe(&fixture.context(Mode::Mcp)).unwrap(),
+            true,
+            false,
+        );
+        assert!(!updates.rule);
     }
 
     #[test]
