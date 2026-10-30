@@ -11,6 +11,7 @@ struct InterjectBar: View {
 
     @Environment(AppStore.self) private var store
     @FocusState private var focused: Bool
+    @State private var preparation: AttachmentPreparation?
 
     var body: some View {
         @Bindable var composer = composer
@@ -19,19 +20,25 @@ struct InterjectBar: View {
                 if BottomBar.floats {
                     // The files and their upload are one panel of glass: on their own they would sit straight on
                     // the content that scrolls by underneath.
-                    if !composer.attachments.isEmpty || composer.uploadProgress != nil {
+                    if !composer.attachments.isEmpty || composer.uploadProgress != nil || preparation != nil {
                         VStack(spacing: 8) {
                             attachmentRows
                             uploadProgress
+                            preparationProgress
                         }
                         .barPanel()
                     }
                 } else {
                     attachmentRows
                     uploadProgress
+                    preparationProgress
                 }
                 HStack(alignment: .bottom, spacing: BottomBar.floats ? 8 : 6) {
-                    AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachments.count, identifier: "interject-attach", compact: true) { name, mime, data, isImage in
+                    AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachments.count, identifier: "interject-attach", compact: true, preparationChanged: { id, active in
+                        composer.setAttachmentPreparation(id, active: active)
+                    }, progressChanged: {
+                        preparation = $0
+                    }) { name, mime, data, isImage in
                         try composer.addAttachment(name: name, mime: mime, data: data, isImage: isImage)
                     }
                     .disabled(!composer.canAttachMore || composer.isSending)
@@ -69,6 +76,11 @@ struct InterjectBar: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var preparationProgress: some View {
+        if let preparation { AttachmentPreparationView(preparation: preparation) }
     }
 
     @ViewBuilder

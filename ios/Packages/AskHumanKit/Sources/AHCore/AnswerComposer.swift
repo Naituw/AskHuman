@@ -15,6 +15,12 @@ public final class AnswerComposer {
     /// Upload progress while sending (0…1), `nil` otherwise.
     public var uploadProgress: Double?
     public var isSending = false
+    private var attachmentPreparations: Set<UUID> = []
+    public var isPreparingAttachments: Bool { !attachmentPreparations.isEmpty }
+
+    public func setAttachmentPreparation(_ id: UUID, active: Bool) {
+        if active { attachmentPreparations.insert(id) } else { attachmentPreparations.remove(id) }
+    }
 
     @ObservationIgnored private let drafts: DraftStore
     @ObservationIgnored private var saveTask: Task<Void, Never>?
@@ -57,7 +63,7 @@ public final class AnswerComposer {
 
     /// Select-only requests need a selection for every question; others may be sent as they are.
     public var canSend: Bool {
-        if isSending { return false }
+        if isSending || isPreparingAttachments { return false }
         if selectOnly { return answers.allSatisfy { !$0.selected.isEmpty } }
         return true
     }

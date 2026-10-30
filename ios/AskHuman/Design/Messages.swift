@@ -6,6 +6,13 @@ import AHStore
 extension Error {
     /// A sentence for the user (the engine's errors are English constants for logs and tests).
     var userMessage: String {
+        if let video = self as? VideoAttachmentError {
+            switch video {
+            case .unreadable: return String(localized: "This video could not be read or prepared. Choose another video.")
+            case .cannotFit: return String(localized: "This video may exceed 10 MB after compression. Trim it before attaching.")
+            case .compressionFailed: return String(localized: "The video could not be compressed. Try a shorter video.")
+            }
+        }
         guard let error = self as? BackendError else { return localizedDescription }
         switch error {
         case .macOffline: return String(localized: "The Mac is offline. Your draft is kept; try again when it is back.")

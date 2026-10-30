@@ -704,6 +704,16 @@
         }
       }
     },
+    "Cancel adding attachments" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消添加附件"
+          }
+        }
+      }
+    },
     "Cancel request" : {
       "localizations" : {
         "zh-Hans" : {
@@ -760,6 +770,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "核对这个数字"
+          }
+        }
+      }
+    },
+    "Checking video size…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在检查视频大小…"
           }
         }
       }
@@ -860,6 +880,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "快用完 Broker 每月 1 GB 的免费额度了。用完后服务会暂停，不会产生扣费。"
+          }
+        }
+      }
+    },
+    "Compressing video…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在压缩视频…"
           }
         }
       }
@@ -1640,6 +1670,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "实时"
+          }
+        }
+      }
+    },
+    "Loading attachment…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在读取附件…"
           }
         }
       }
@@ -3116,6 +3156,16 @@
         }
       }
     },
+    "Some files were not added because the attachment limit was reached." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已达到附件数量上限，部分文件未添加。"
+          }
+        }
+      }
+    },
     "Source" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3866,6 +3916,16 @@
         }
       }
     },
+    "The video could not be compressed. Try a shorter video." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法压缩这个视频，请尝试较短的视频。"
+          }
+        }
+      }
+    },
     "The workspace folder no longer exists on the Mac." : {
       "localizations" : {
         "zh-Hans" : {
@@ -4150,6 +4210,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这个任务已不存在"
+          }
+        }
+      }
+    },
+    "This video could not be read or prepared. Choose another video." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取或处理这个视频，请选择其他视频。"
+          }
+        }
+      }
+    },
+    "This video may exceed 10 MB after compression. Trim it before attaching." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个视频压缩后可能仍超过 10 MB，请先裁短再添加。"
           }
         }
       }

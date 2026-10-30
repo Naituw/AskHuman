@@ -15,6 +15,12 @@ public final class InterjectComposer {
     public var text = ""
     public private(set) var attachments: [DraftAttachment] = []
     public var isSending = false
+    private var attachmentPreparations: Set<UUID> = []
+    public var isPreparingAttachments: Bool { !attachmentPreparations.isEmpty }
+
+    public func setAttachmentPreparation(_ id: UUID, active: Bool) {
+        if active { attachmentPreparations.insert(id) } else { attachmentPreparations.remove(id) }
+    }
     public var uploadProgress: Double?
     /// Set while a send may or may not have reached the Mac: sending again reuses it so the Mac
     /// does not deliver the message twice.
@@ -36,7 +42,7 @@ public final class InterjectComposer {
     public var trimmedText: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
     public var overLimit: Bool { trimmedText.count > Self.maxChars }
     public var hasContent: Bool { !trimmedText.isEmpty || !attachments.isEmpty }
-    public var canSend: Bool { hasContent && !overLimit && !isSending }
+    public var canSend: Bool { hasContent && !overLimit && !isSending && !isPreparingAttachments }
     public var canAttachMore: Bool { attachments.count < Wire.maxReplyAttachments }
 
     // MARK: attachments

@@ -57,6 +57,9 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 
 - 新建任务的 `TaskComposer` 在点击「开始」时，将模型 / 强度按 Agent 存为这部手机的本地偏好，所有 Mac / 工作区共用；取消不更新。
   打开表单或切换 Mac / Agent 时恢复，缺少已保存模型的 Mac 临时回默认并保留原偏好。完整约定见 `docs/specs/ios-task-model.md` M3。
+- 回复与插话共用 `Views/Attachments/ReplyAttachments.swift` 的附件菜单：相册允许照片 / 视频混选，视频通过文件型 `Transferable` 读取。
+  `AHCore/VideoAttachmentPreparer.swift` 保留限额内原视频，超限时先预估可用压缩档位，只有预估 ≤8 MB 才尝试；编码一次后核对实际体积与完整时长。回答区与插话栏直接显示压缩进度及取消按钮，由用户决定是否继续等待。
+  导出器的状态与取消约束在 MainActor，原文件 / 导出临时目录按生命周期清理；两个 Composer 用准备任务的 token 集合阻止处理期间发送。验证办法见 `docs/plans/ios-video-attachments.md`。
 - 通知扩展 `AskHumanNotification` 只解密预览（`NotificationText`），不连网络。点击通知经 `AppStore.openNotification` 路由：提问类打开请求（请求还没到手机时页面用通知原文占位、转圈等待，只有 Mac 已答复且没有它才说「不可用」），`follow.*` 打开 Agent 页。
 - **请求正文由网页渲染，其余 Markdown 仍是原生**：提问页的 Message、确认页 / 历史详情的正文用 `WebMarkdownView`（`Views/Markdown/`）——一个 `WKWebView` 加载随 App 打包的 `Resources/WebMarkdown`（`project.yml` 里 `type: folder` 的文件夹引用；与 Mac 弹窗同一套 markdown-it + Mermaid，版本以根 `package.json` 为准，升级后跑 `ios/Tools/web-markdown/sync.sh` 重新拷贝并写 `VERSIONS.txt`）。一页至多一个（每个 `WKWebView` 各占一个 WebContent 进程）；页面无特权、禁网（CSP）、锁死导航，只有 `ready / height / rendered / copy / failed` 五个消息能回到 App，链接交给 `LinkPresenter.tapped`（http(s) 先确认域名，`mailto` / `tel` 交系统，其余忽略）。题干、列表卡片、Watch 卡片、附件预览仍走 `AHMarkdown` 解析 + `MarkdownView` 原生渲染（软换行换行、行内代码有底、可选字）。页面进程被回收超过 2 次 / 加载失败 / 5 秒（`-AHWebTimeout`；模拟器默认 30）没有高度会自动回落原生；Message 排好版之前多题表单不统计「看过」（`ReadingTracker.begin(awaitingMessage:patience:)` 等 `onSettled`，最多等看门狗时间 + 1 秒）。设计、限额与取舍见 `docs/specs/ios-web-markdown.md`。
 - 本地化：`Localizable.xcstrings`（en + zh-Hans）由 `ios/Tools/make-catalog.py` 从编译器产出的 `.stringsdata` 生成——先 `xcodebuild build -derivedDataPath build/DerivedData …`，再跑脚本；缺中文翻译会让脚本失败。

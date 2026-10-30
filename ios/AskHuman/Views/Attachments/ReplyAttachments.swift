@@ -2,11 +2,12 @@ import SwiftUI
 import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
+import CoreTransferable
 import AHCore
 import AHProtocol
 import AHStore
 
-/// Adding photos and files to the reply of one question.
+/// Adding photos, videos and files to the reply of one question.
 struct ReplyAttachmentBar: View {
     let composer: AnswerComposer
     let question: Int
@@ -20,7 +21,9 @@ struct ReplyAttachmentBar: View {
                 }
             }
             if composer.canAttachMore {
-                AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachmentCount, identifier: "add-attachment-\(question)") { name, mime, data, isImage in
+                AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachmentCount, identifier: "add-attachment-\(question)", preparationChanged: { id, active in
+                    composer.setAttachmentPreparation(id, active: active)
+                }) { name, mime, data, isImage in
                     try composer.addAttachment(name: name, mime: mime, data: data, isImage: isImage, question: question)
                 }
             }
@@ -35,6 +38,8 @@ struct AttachmentMenu: View {
     let remaining: Int
     let identifier: String
     var compact = false
+    var preparationChanged: (UUID, Bool) -> Void = { _, _ in }
+    var progressChanged: (AttachmentPreparation?) -> Void = { _ in }
     let add: (_ name: String, _ mime: String, _ data: Data, _ isImage: Bool) throws -> Void
 
     @State private var photoItems: [PhotosPickerItem] = []
@@ -43,14 +48,35 @@ struct AttachmentMenu: View {
     @State private var showFiles = false
     @State private var problem: String?
     @State private var working = false
+    @State private var status = ""
+    @State private var fraction: Double?
+    @State private var operation: Task<Void, Never>?
 
     var body: some View {
-        Menu {
-            Button { showPhotos = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                Button { showCamera = true } label: { Label("Take Photo", systemImage: "camera") }
+        VStack(alignment: .leading, spacing: 8) {
+            pickerMenu
+            if working && !compact {
+                AttachmentPreparationView(preparation: preparation)
             }
-            Button { showFiles = true } label: { Label("Choose File", systemImage: "doc") }
+        }
+    }
+
+    private var preparation: AttachmentPreparation {
+        AttachmentPreparation(status: status, fraction: fraction, cancel: { operation?.cancel() })
+    }
+
+    private var pickerMenu: some View {
+        Menu {
+            if working {
+                Text(status)
+                Button("Cancel adding attachments", role: .destructive) { operation?.cancel() }
+            } else {
+                Button { showPhotos = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    Button { showCamera = true } label: { Label("Take Photo", systemImage: "camera") }
+                }
+                Button { showFiles = true } label: { Label("Choose File", systemImage: "doc") }
+            }
         } label: {
             if compact {
                 // The compact menu is the attach button of a compose bar, a glass circle on the floating bar
@@ -72,14 +98,14 @@ struct AttachmentMenu: View {
             }
         }
         .barRoundButton(compact)
-        .disabled(working)
         .accessibilityLabel("Add attachment")
+        .accessibilityValue(working ? status : "")
         .accessibilityIdentifier(identifier)
-        .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: max(1, remaining), matching: .images)
+        .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: max(1, remaining), matching: .any(of: [.images, .videos]), preferredItemEncoding: .current)
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
             photoItems = []
-            Task { await addPhotos(items) }
+            start { await addMedia(items) }
         }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker { image in
@@ -89,8 +115,9 @@ struct AttachmentMenu: View {
         }
         .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
-            Task { await addFiles(urls) }
+            start { await addFiles(urls) }
         }
+        .onDisappear { operation?.cancel() }
         .alert("Could not attach", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -100,15 +127,78 @@ struct AttachmentMenu: View {
 
     // MARK: adding
 
-    private func addPhotos(_ items: [PhotosPickerItem]) async {
+    private func start(_ action: @escaping @MainActor () async -> Void) {
+        guard !working else { return }
+        let id = UUID()
         working = true
-        defer { working = false }
-        for (index, item) in items.enumerated() {
-            guard let data = try? await item.loadTransferable(type: Data.self) else {
-                problem = String(localized: "A photo could not be read.")
-                continue
+        updateStatus(String(localized: "Loading attachment…"))
+        preparationChanged(id, true)
+        operation = Task {
+            defer {
+                working = false
+                operation = nil
+                preparationChanged(id, false)
+                progressChanged(nil)
             }
-            addImage(data, name: items.count > 1 ? "Photo-\(index + 1).jpg" : "Photo.jpg")
+            await action()
+        }
+    }
+
+    private func updateStatus(_ status: String, fraction: Double? = nil) {
+        self.status = status
+        self.fraction = fraction
+        progressChanged(preparation)
+    }
+
+    private func addMedia(_ items: [PhotosPickerItem]) async {
+        for (index, item) in items.prefix(remaining).enumerated() {
+            do {
+                try Task.checkCancellation()
+                updateStatus(String(localized: "Loading attachment…"))
+                let types = item.supportedContentTypes
+                if !types.contains(where: { $0.conforms(to: .image) }),
+                   types.contains(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) }) {
+                    guard let movie = try await load(item, type: PickedMovie.self) else { throw VideoAttachmentError.unreadable }
+                    defer { movie.file.remove() }
+                    try await addVideo(movie.file.url)
+                } else {
+                    guard let data = try await load(item, type: Data.self) else {
+                        problem = String(localized: "A photo could not be read.")
+                        continue
+                    }
+                    try Task.checkCancellation()
+                    addImage(data, name: items.count > 1 ? "Photo-\(index + 1).jpg" : "Photo.jpg")
+                }
+            } catch {
+                if Task.isCancelled || error is CancellationError { break }
+                problem = error.userMessage
+            }
+        }
+    }
+
+    private func addVideo(_ url: URL) async throws {
+        let output = try await VideoAttachmentPreparer.prepare(url: url) { stage in
+            switch stage {
+            case .inspecting: updateStatus(String(localized: "Checking video size…"))
+            case .compressing(let value):
+                updateStatus(String(localized: "Compressing video…"), fraction: min(1, max(0, value)))
+            }
+        }
+        try Task.checkCancellation()
+        try add(output.name, output.mime, output.data, false)
+    }
+
+    private func load<T: Transferable>(_ item: PhotosPickerItem, type: T.Type) async throws -> T? {
+        let cancellation = PickerTransferCancellation()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                cancellation.register(item.loadTransferable(type: type) { result in
+                    continuation.resume(with: result)
+                })
+            }
+        } onCancel: {
+            cancellation.cancel()
         }
     }
 
@@ -121,25 +211,38 @@ struct AttachmentMenu: View {
     }
 
     private func addFiles(_ urls: [URL]) async {
-        working = true
-        defer { working = false }
-        for url in urls {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            guard size <= Wire.maxAssetBytes else {
-                problem = BackendError.tooLarge.userMessage
-                continue
-            }
-            guard let data = try? Data(contentsOf: url) else {
-                problem = String(localized: "The file could not be read.")
-                continue
-            }
-            let type = UTType(filenameExtension: url.pathExtension)
-            if type?.conforms(to: .image) == true {
-                addImage(data, name: url.deletingPathExtension().lastPathComponent + ".jpg")
-            } else {
-                store(name: url.lastPathComponent, mime: type?.preferredMIMEType ?? "application/octet-stream", data: data, isImage: false)
+        if urls.count > remaining {
+            problem = String(localized: "Some files were not added because the attachment limit was reached.")
+        }
+        for url in urls.prefix(remaining) {
+            do {
+                try Task.checkCancellation()
+                updateStatus(String(localized: "Loading attachment…"))
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                let type = UTType(filenameExtension: url.pathExtension)
+                if type?.conforms(to: .movie) == true || type?.conforms(to: .video) == true {
+                    try await addVideo(url)
+                    continue
+                }
+                let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                guard size <= Wire.maxAssetBytes else {
+                    problem = BackendError.tooLarge.userMessage
+                    continue
+                }
+                guard let data = try? Data(contentsOf: url) else {
+                    problem = String(localized: "The file could not be read.")
+                    continue
+                }
+                try Task.checkCancellation()
+                if type?.conforms(to: .image) == true {
+                    addImage(data, name: url.deletingPathExtension().lastPathComponent + ".jpg")
+                } else {
+                    store(name: url.lastPathComponent, mime: type?.preferredMIMEType ?? "application/octet-stream", data: data, isImage: false)
+                }
+            } catch {
+                if Task.isCancelled || error is CancellationError { break }
+                problem = error.userMessage
             }
         }
     }
@@ -149,6 +252,46 @@ struct AttachmentMenu: View {
             try add(name, mime, data, isImage)
         } catch {
             problem = error.userMessage
+        }
+    }
+}
+
+struct AttachmentPreparation {
+    let status: String
+    let fraction: Double?
+    let cancel: () -> Void
+}
+
+/// Always-visible progress and cancellation, including above the compact interjection bar.
+struct AttachmentPreparationView: View {
+    let preparation: AttachmentPreparation
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    if preparation.fraction == nil { ProgressView().controlSize(.small) }
+                    Text(preparation.status)
+                        .accessibilityIdentifier("attachment-preparation-status")
+                    Spacer(minLength: 4)
+                    if let fraction = preparation.fraction {
+                        Text(fraction.formatted(.percent.precision(.fractionLength(0))))
+                            .monospacedDigit()
+                    }
+                }
+                if let fraction = preparation.fraction {
+                    ProgressView(value: fraction)
+                        .accessibilityLabel(preparation.status)
+                        .accessibilityIdentifier("attachment-compression-progress")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            Button("Cancel", action: preparation.cancel)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityLabel("Cancel adding attachments")
+                .accessibilityIdentifier("cancel-attachment-preparation")
         }
     }
 }
@@ -165,7 +308,7 @@ struct ReplyAttachmentRow: View {
                 if let thumbnail {
                     Image(uiImage: thumbnail).resizable().scaledToFill()
                 } else {
-                    Image(systemName: attachment.isImage ? "photo" : "doc").foregroundStyle(.secondary)
+                    Image(systemName: attachment.isImage ? "photo" : (attachment.mime.hasPrefix("video/") ? "film" : "doc")).foregroundStyle(.secondary)
                 }
             }
             .frame(width: 40, height: 40)
@@ -200,6 +343,57 @@ struct ReplyAttachmentRow: View {
         ]
         guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
         return UIImage(cgImage: cg)
+    }
+}
+
+/// Photos only guarantees the received URL during import. Own a copy until preparation finishes,
+/// including cancellation or a failed transfer whose value is discarded by the provider.
+private final class PickedMovieFile: Sendable {
+    let url: URL
+    private let directory: URL
+    init(copying source: URL) throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("ah-picked-video-\(UUID().uuidString)")
+        url = directory.appendingPathComponent(source.lastPathComponent)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.copyItem(at: source, to: url)
+            try Task.checkCancellation()
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+    }
+    func remove() { try? FileManager.default.removeItem(at: directory) }
+    deinit { remove() }
+}
+
+private struct PickedMovie: Transferable {
+    let file: PickedMovieFile
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(importedContentType: .movie) { received in
+            try Task.checkCancellation()
+            return PickedMovie(file: try PickedMovieFile(copying: received.file))
+        }
+    }
+}
+
+private final class PickerTransferCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var progress: Progress?
+    private var cancelled = false
+    func register(_ progress: Progress) {
+        lock.lock()
+        self.progress = progress
+        let shouldCancel = cancelled
+        lock.unlock()
+        if shouldCancel { progress.cancel() }
+    }
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let progress = progress
+        lock.unlock()
+        progress?.cancel()
     }
 }
 
