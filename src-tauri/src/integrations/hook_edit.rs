@@ -27,9 +27,9 @@ pub fn powershell_command(executable: &str, args: &[&str]) -> String {
     }
 
     let mut script = format!("& {}", literal(executable));
-    for arg in args {
+    for arg in crate::development::routing::integration_args(args) {
         script.push(' ');
-        script.push_str(&literal(arg));
+        script.push_str(&literal(&arg));
     }
     let utf16le: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(utf16le);
@@ -369,6 +369,7 @@ pub fn group_has_marker(group: &Value, marker: &str) -> bool {
 }
 
 pub fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    crate::development::migration::before_write(path, Some(bytes))?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -381,6 +382,7 @@ pub fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
 /// Atomically write sensitive runtime state without ever exposing a world-readable temporary
 /// file. The leaf directory and final file are restricted to the current user on Unix.
 pub fn atomic_write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    crate::development::migration::before_write(path, Some(bytes))?;
     use std::io::Write;
 
     let parent = path
@@ -415,7 +417,7 @@ pub fn atomic_write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> 
         Ok(())
     })();
     if write_result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
+        let _ = crate::development::migration::remove_file(&temporary);
     }
     write_result.map_err(Into::into)
 }

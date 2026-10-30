@@ -214,7 +214,8 @@ pub fn gui_host_lock() -> PathBuf {
 
 /// Cursor 目录 `~/.cursor`。
 pub fn cursor_dir() -> PathBuf {
-    home().join(".cursor")
+    crate::development::session::directory_for(crate::agents::AgentKind::Cursor)
+        .unwrap_or_else(|| home().join(".cursor"))
 }
 
 /// `~/.cursor/hooks.json`。
@@ -253,7 +254,8 @@ pub fn cursor_mcp_json() -> PathBuf {
 
 /// Claude Code 配置目录 `~/.claude`。
 pub fn claude_dir() -> PathBuf {
-    home().join(".claude")
+    crate::development::session::directory_for(crate::agents::AgentKind::Claude)
+        .unwrap_or_else(|| home().join(".claude"))
 }
 
 /// Claude Code 全局 memory 文件 `~/.claude/CLAUDE.md`（用户级，跨项目）。
@@ -269,7 +271,9 @@ pub fn claude_settings_json() -> PathBuf {
 /// Claude Code 用户级主配置文件 `~/.claude.json`（top-level `mcpServers` 写于此；
 /// 文件通常很大、含大量项目历史，必须最小化编辑、绝不整写）。
 pub fn claude_json() -> PathBuf {
-    home().join(".claude.json")
+    crate::development::session::directory_for(crate::agents::AgentKind::Claude)
+        .map(|path| path.join(".claude.json"))
+        .unwrap_or_else(|| home().join(".claude.json"))
 }
 
 /// AskHuman-owned Claude Code timeout hook (`.sh` on Unix, `.ps1` on Windows).
@@ -283,7 +287,8 @@ pub fn claude_hook_script() -> PathBuf {
 
 /// Codex 配置目录 `~/.codex`。
 pub fn codex_dir() -> PathBuf {
-    home().join(".codex")
+    crate::development::session::directory_for(crate::agents::AgentKind::Codex)
+        .unwrap_or_else(|| home().join(".codex"))
 }
 
 /// Codex 全局指令文件 `~/.codex/AGENTS.md`（用户级，跨项目）。
@@ -303,7 +308,8 @@ pub fn codex_hooks_json() -> PathBuf {
 
 /// Grok 配置目录 `~/.grok`。
 pub fn grok_dir() -> PathBuf {
-    home().join(".grok")
+    crate::development::session::directory_for(crate::agents::AgentKind::Grok)
+        .unwrap_or_else(|| home().join(".grok"))
 }
 
 /// Grok 用户级配置文件 `~/.grok/config.toml`（`[mcp_servers.askhuman]` 写于此）。
@@ -338,7 +344,8 @@ pub fn grok_sessions_dir() -> PathBuf {
 
 /// Pi coding-agent user directory `~/.pi/agent`.
 pub fn pi_agent_dir() -> PathBuf {
-    home().join(".pi").join("agent")
+    crate::development::session::directory_for(crate::agents::AgentKind::Pi)
+        .unwrap_or_else(|| home().join(".pi").join("agent"))
 }
 
 /// Pi global instructions file `~/.pi/agent/AGENTS.md`.

@@ -158,6 +158,10 @@ jobs:
       - name: cargo build (release)
         run: cargo build --release --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --features custom-protocol
 
+      - name: development routing process regression (native Unix)
+        if: startsWith(matrix.os, 'ubuntu') || matrix.target == 'aarch64-apple-darwin'
+        run: node scripts/dev-routing-smoke.mjs src-tauri/target/${{ matrix.target }}/release/AskHuman
+
       - uses: actions/upload-artifact@v6
         with:
           name: ci-binary-${{ matrix.target }}

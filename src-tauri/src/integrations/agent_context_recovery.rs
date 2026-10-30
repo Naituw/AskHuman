@@ -347,7 +347,8 @@ fn hook_path(target: AgentTarget) -> PathBuf {
 }
 
 fn hook_command(target: AgentTarget, event: &str) -> Result<String> {
-    let executable = std::env::current_exe().context("failed to resolve current executable")?;
+    let executable =
+        crate::executable::launch_path().context("failed to resolve current executable")?;
     let agent = match target {
         AgentTarget::ClaudeCode => "claude",
         AgentTarget::Codex => "codex",
@@ -361,13 +362,14 @@ fn hook_command(target: AgentTarget, event: &str) -> Result<String> {
         }
     };
     Ok(format!(
-        "\"{}\" {MARKER} {agent} {event}",
-        executable.to_string_lossy()
+        "{} {MARKER} {agent} {event}",
+        crate::development::routing::integration_prefix(&executable.to_string_lossy())
     ))
 }
 
 fn windows_hook_command(target: AgentTarget, event: &str) -> Result<String> {
-    let executable = std::env::current_exe().context("failed to resolve current executable")?;
+    let executable =
+        crate::executable::launch_path().context("failed to resolve current executable")?;
     let agent = match target {
         AgentTarget::ClaudeCode => "claude",
         AgentTarget::Codex => "codex",

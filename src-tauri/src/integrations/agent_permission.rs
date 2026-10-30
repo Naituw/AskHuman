@@ -226,20 +226,22 @@ fn hook_path(target: AgentTarget) -> std::path::PathBuf {
 }
 
 fn hook_command(target: AgentTarget) -> Result<String> {
-    let executable = std::env::current_exe().context("failed to resolve current executable")?;
+    let executable =
+        crate::executable::launch_path().context("failed to resolve current executable")?;
     let agent = match target {
         AgentTarget::ClaudeCode => "claude",
         AgentTarget::Codex => "codex",
         _ => return Err(anyhow!("unsupported permission target")),
     };
     Ok(format!(
-        "\"{}\" {MARKER} {agent}",
-        executable.to_string_lossy()
+        "{} {MARKER} {agent}",
+        crate::development::routing::integration_prefix(&executable.to_string_lossy())
     ))
 }
 
 fn windows_hook_command(target: AgentTarget) -> Result<String> {
-    let executable = std::env::current_exe().context("failed to resolve current executable")?;
+    let executable =
+        crate::executable::launch_path().context("failed to resolve current executable")?;
     let agent = match target {
         AgentTarget::ClaudeCode => "claude",
         AgentTarget::Codex => "codex",

@@ -84,7 +84,11 @@ pub fn cli_reference_for(agent: AgentKind) -> String {
 
 fn cli_reference_with_agent(agent: Option<AgentKind>) -> String {
     let antigravity = agent == Some(AgentKind::Antigravity);
-    let executable = crate::cli::help::program_name();
+    let executable = if crate::development::routing::system_bindings() {
+        format!("{} --instance system", crate::cli::help::program_name())
+    } else {
+        crate::cli::help::program_name()
+    };
     let program = if antigravity {
         format!("{executable} --caller-agent antigravity")
     } else {
@@ -118,6 +122,7 @@ fn cli_reference_with_agent(agent: Option<AgentKind>) -> String {
 - You MUST ask me questions by invoking the `{program}` command through {tool}. DO NOT ask questions in direct output, and DO NOT ask by ending the turn.
 {wait_rule}
 - Before asking, run `{program} --agent-help` to learn its usage.
+- For an explicit development verification after installing an enabled worktree, use `AskHuman dev ask --worktree <absolute-path> -- <question>` and wait for its result. This exception runs the tested Dev build; ordinary discussion and the end-of-task handoff still use the normal entry. Never pass daily native session credentials to Dev.
 - If you were just summarized, or if you are unsure of the exact details of the last question you asked me through AskHuman and my answer, run `{program} --show-last` before continuing.
 
 - When asking through `{program}`, provide predefined options whenever applicable, mark your recommended option(s) with `-o!`, and briefly explain your rationale.
@@ -160,6 +165,7 @@ fn mcp_reference_with_agent(_agent: Option<AgentKind>) -> String {
 **They MUST be followed exactly and completely under all circumstances.**
 
 - You MUST ask me questions by calling the `ask` tool provided by the AskHuman MCP server (referred to below as the AskHuman `ask` tool). DO NOT ask questions in direct output, and DO NOT ask by ending the turn.
+- For an explicit development verification after installing an enabled worktree, use the AskHuman MCP `dev_ask` tool with its absolute worktree path. This exception runs the tested Dev build and returns its answer here; ordinary discussion and the end-of-task handoff still use the normal tools. Never pass daily native session credentials to Dev.
 - The AskHuman `ask` tool blocks until I reply, which may take a long time; always wait for its result instead of giving up or proceeding on assumptions.
 - If you were just summarized, or if you are unsure of the exact details of the last question you asked me through AskHuman and my answer, call the AskHuman MCP `show_last` tool before continuing.
 

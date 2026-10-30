@@ -19,8 +19,8 @@ import { isMac, isWindows, supportsAgentTasks } from "../../lib/platform";
 
 export { isMac, isWindows, supportsAgentTasks };
 
-export type Tab = "general" | "integration" | "channel" | "advanced" | "experimental";
-export const TABS: readonly Tab[] = ["general", "integration", "channel", "advanced", "experimental"];
+export type Tab = "general" | "integration" | "channel" | "advanced" | "experimental" | "development";
+export const TABS: readonly Tab[] = ["general", "integration", "channel", "advanced", "experimental", "development"];
 
 function parseInitialTab(): Tab {
   // 初始定位 tab 经窗口 URL 传入（如托盘「渠道异常」行 → ?tab=channel），无监听时序问题。

@@ -15,6 +15,163 @@ pub fn dispatch(args: &[String], _lang: Lang) {
         exit(1);
     }
     match args[0].as_str() {
+        "migrate" => {
+            let result = match args.get(1).map(String::as_str) {
+                Some("plan") => crate::development::migration::plan().map(Some),
+                Some("status") => crate::development::migration::latest(),
+                Some("apply") => args
+                    .get(2)
+                    .ok_or_else(|| "missing migration ID".to_string())
+                    .and_then(|id| crate::development::migration::apply(id))
+                    .map(Some),
+                Some("rollback") => args
+                    .get(2)
+                    .ok_or_else(|| "missing migration ID".to_string())
+                    .and_then(|id| crate::development::migration::rollback(id))
+                    .map(Some),
+                _ => Err("use dev migrate plan|status|apply <id>|rollback <id>".into()),
+            };
+            match result {
+                Ok(value) => println!("{}", serde_json::to_string_pretty(&value).unwrap()),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    exit(1)
+                }
+            }
+            exit(0);
+        }
+        "migrate-worker" => {
+            let result = match (args.get(1), args.get(2)) {
+                (Some(agent), Some(mode)) => crate::development::migration::worker(agent, mode),
+                _ => Err("missing migration worker action".into()),
+            };
+            if let Err(e) = result {
+                eprintln!("error: {e}");
+                exit(1)
+            }
+            exit(0);
+        }
+        "session" => {
+            match crate::development::session::run_cli(&args[1..]) {
+                Ok(receipt) => println!("{receipt}"),
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    exit(1);
+                }
+            }
+            exit(0);
+        }
+        "session-launch" => {
+            let result = match (args.get(1), args.get(2)) {
+                (Some(id), Some(token)) => crate::development::session::launch_active(
+                    id,
+                    token,
+                    args.get(3).is_some_and(|arg| arg == "--stdio"),
+                ),
+                _ => Err("session-launch requires a profile and launch token".into()),
+            };
+            match result {
+                Ok(receipt) => println!("{receipt}"),
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    exit(1);
+                }
+            }
+            exit(0);
+        }
+        "session-configure" => {
+            let result = args
+                .get(1)
+                .ok_or_else(|| "missing development profile ID".to_string())
+                .and_then(|id| crate::development::session::configure_active(id));
+            if let Err(error) = result {
+                eprintln!("error: {error}");
+                exit(1);
+            }
+            exit(0);
+        }
+        "ask" => {
+            if let Err(error) = crate::development::verification::run_cli(&args[1..]) {
+                eprintln!("error: {error}");
+                exit(1);
+            }
+            exit(0);
+        }
+        "target" => {
+            let result = crate::development::routing::diagnostic().map(Some);
+            match result {
+                Ok(target) => println!("{}", serde_json::to_string_pretty(&target).unwrap()),
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    exit(1);
+                }
+            }
+            exit(0);
+        }
+        "register-system" => {
+            let Some(binary) = args.get(1) else {
+                eprintln!("error: register-system requires a binary path");
+                exit(1);
+            };
+            let result = std::env::current_dir()
+                .map_err(|e| e.to_string())
+                .map(|cwd| {
+                    let path = PathBuf::from(binary);
+                    if path.is_absolute() {
+                        path
+                    } else {
+                        cwd.join(path)
+                    }
+                })
+                .and_then(|binary| {
+                    let canonical = binary.canonicalize().map_err(|e| e.to_string())?;
+                    if canonical
+                        .components()
+                        .any(|part| part.as_os_str() == crate::dev_instance::DEV_DIR)
+                    {
+                        return Err("system entry cannot point into a Dev Instance".into());
+                    }
+                    crate::development::routing::check_capability(&binary)?;
+                    crate::development::state::update(|state| {
+                        if state.version == 0 && args.iter().any(|arg| arg == "--new-install") {
+                            state.mode = crate::development::state::RoutingMode::Explicit;
+                        }
+                        state.system_binary = Some(binary);
+                        Ok(())
+                    })
+                    .map(|_| ())
+                });
+            if let Err(error) = result {
+                eprintln!("error: {error}");
+                exit(1);
+            }
+            exit(0);
+        }
+        "register-worktree" => {
+            let Some(root) = args.get(1) else {
+                eprintln!("error: register-worktree requires a path");
+                exit(1);
+            };
+            if let Err(error) = crate::development::state::register_worktree(Path::new(root)) {
+                eprintln!("error: {error}");
+                exit(1);
+            }
+            exit(0);
+        }
+        "build-verify" => {
+            let root = args
+                .get(1)
+                .map(PathBuf::from)
+                .unwrap_or_else(require_git_root);
+            match crate::development::build::verify(&root) {
+                Ok(info) => println!("{}", serde_json::to_string_pretty(&info).unwrap()),
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    exit(1);
+                }
+            }
+            exit(0);
+        }
         "enable" => cmd_enable(&args[1..]),
         "disable" => cmd_disable(&args[1..]),
         "status" => cmd_status(),
@@ -37,6 +194,11 @@ fn print_usage() {
   AskHuman dev enable [--preset <name>]... [--force]
   AskHuman dev disable [--purge]
   AskHuman dev status
+  AskHuman dev ask [--worktree <path>] [--delivery local|remote|channels] -- <question>
+  AskHuman dev ask --worktree <path> --resume <verification-id>
+  AskHuman dev session <agent> [--worktree <path>] [--task <text>] [--prepare-only|--stdio]
+  AskHuman --instance system dev migrate plan|status|apply <id>|rollback <id>
+  AskHuman --instance system dev target
   AskHuman dev preset save <name> [--from-instance]
   AskHuman dev preset list
   AskHuman dev preset show <name>
@@ -92,16 +254,39 @@ fn seed_config_if_missing(home: &Path) -> Result<(), String> {
 
 fn ensure_layout(root: &Path) -> Result<(PathBuf, PathBuf), String> {
     let dev = root.join(DEV_DIR);
+    std::fs::create_dir_all(&dev).map_err(|e| e.to_string())?;
+    let private = dev.canonicalize().map_err(|e| e.to_string())?;
+    if !private.starts_with(root.canonicalize().map_err(|e| e.to_string())?) {
+        return Err("Dev directory escapes the selected worktree".into());
+    }
     let bin = dev.join("bin");
     let home = dev.join("home");
     std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
+    if !bin
+        .canonicalize()
+        .map_err(|e| e.to_string())?
+        .starts_with(&private)
+        || !home
+            .canonicalize()
+            .map_err(|e| e.to_string())?
+            .starts_with(&private)
+    {
+        return Err("Dev bin or home escapes the selected private worktree directory".into());
+    }
     let marker = dev.join(ENABLED_MARKER);
     if !marker.exists() {
         std::fs::write(&marker, b"").map_err(|e| e.to_string())?;
     }
     seed_config_if_missing(&home)?;
     Ok((bin, home))
+}
+
+fn pin_instance_management(root: &Path) {
+    if let Err(error) = crate::development::routing::pin_management(root) {
+        eprintln!("error: {error}");
+        exit(1);
+    }
 }
 
 fn parse_enable_args(args: &[String]) -> (Vec<String>, bool) {
@@ -145,8 +330,7 @@ fn cmd_enable(args: &[String]) {
     };
 
     // Pin env so subsequent logic in this process uses instance home (also for preset materialise).
-    std::env::set_var(dev_instance::ASKHUMAN_HOME_ENV, &home);
-    std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
+    pin_instance_management(&root);
 
     if !presets.is_empty() {
         match dev_presets::apply_presets_to_instance(&root, &home, &presets, force) {
@@ -156,6 +340,11 @@ fn cmd_enable(args: &[String]) {
                 exit(1);
             }
         }
+    }
+
+    if let Err(error) = crate::development::state::register_worktree(&root) {
+        eprintln!("error: cannot register Dev worktree: {error}");
+        exit(1);
     }
 
     println!("Dev Instance enabled");
@@ -177,7 +366,15 @@ fn cmd_enable(args: &[String]) {
     {
         println!("  next       run ./scripts/install.sh  (installs into this instance bin)");
     } else {
-        println!("  next       AskHuman … / MCP ask  (auto-routed to this instance)");
+        if crate::development::state::read()
+            .is_ok_and(|state| state.mode == crate::development::state::RoutingMode::Explicit)
+        {
+            println!("  next       AskHuman dev ask … / MCP dev_ask  (explicit Dev verification)");
+        } else {
+            println!(
+                "  next       AskHuman … / MCP ask  (legacy automatic routing; see dev migrate)"
+            );
+        }
     }
     exit(0);
 }
@@ -203,9 +400,13 @@ fn cmd_disable(args: &[String]) {
         exit(1);
     };
 
-    let home = dev_instance::instance_home(&root);
-    std::env::set_var(dev_instance::ASKHUMAN_HOME_ENV, &home);
-    std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
+    pin_instance_management(&root);
+    if purge {
+        if let Err(e) = crate::development::session::cleanup_workspaces(&root) {
+            eprintln!("error: {e}");
+            exit(1)
+        }
+    }
 
     // Best-effort stop the daemon in this instance partition before removing its marker/data.
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -366,8 +567,7 @@ fn cmd_status() {
         Some(root) => {
             let home = dev_instance::instance_home(&root);
             let bin = dev_instance::instance_bin(&root);
-            std::env::set_var(dev_instance::ASKHUMAN_HOME_ENV, &home);
-            std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
+            pin_instance_management(&root);
 
             println!("dev instance: enabled");
             println!("  worktree   {}", root.display());
@@ -516,9 +716,7 @@ fn preset_save(args: &[String]) {
         eprintln!("error: cwd is not a Dev Instance (run `dev enable` first)");
         exit(1);
     };
-    let home = dev_instance::instance_home(&root);
-    std::env::set_var(dev_instance::ASKHUMAN_HOME_ENV, &home);
-    std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
+    pin_instance_management(&root);
 
     let cfg = AppConfig::load();
     let channels = match dev_presets::extract_configured_channels(&cfg) {

@@ -8,7 +8,7 @@ When the task is complete, check whether the change made any overview or referen
 
 ## Git worktree / parallel development
 
-If the task needs a **new or existing git worktree** for parallel feature work on this repo (so install/AskHuman do not share the main daemon or overwrite another agent’s binary), read [`docs/agent-worktree-setup.md`](docs/agent-worktree-setup.md) first and follow it—including asking the human via AskHuman whether to attach a channel preset—before coding. After `dev enable`, verification is still `./scripts/install.sh` then `AskHuman` (auto-routed into that worktree’s Dev Instance).
+If the task needs a **new or existing git worktree** for parallel feature work on this repo (so install/AskHuman do not share the main daemon or overwrite another agent’s binary), read [`docs/agent-worktree-setup.md`](docs/agent-worktree-setup.md) first and follow it—including asking the human via AskHuman whether to attach a channel preset—before coding. After `dev enable`, run `./scripts/install.sh` (Windows: `./scripts/install-windows.cmd`), then explicitly verify that worktree with MCP `dev_ask` or `AskHuman dev ask --worktree <absolute-path> -- …`. Ordinary discussion and the end-of-task handoff use the normal AskHuman entry. Existing installations retain automatic cwd routing until explicitly migrated; do not change global routing or Agent integrations just to run a test.
 
 ## Tracking unfinished work in docs/PROGRESS.md
 

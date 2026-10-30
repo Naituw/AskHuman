@@ -9,6 +9,7 @@ use tauri::Wry;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Group {
+    Development,
     Core,
     Integration,
     Channel,
@@ -20,6 +21,7 @@ enum Group {
 
 pub(super) fn handle(invoke: Invoke<Wry>) -> bool {
     match group_for(invoke.message.command()) {
+        Group::Development => development(invoke),
         Group::Core => core(invoke),
         Group::Integration => integration(invoke),
         Group::Channel => channel(invoke),
@@ -31,7 +33,9 @@ pub(super) fn handle(invoke: Invoke<Wry>) -> bool {
 }
 
 fn group_for(command: &str) -> Group {
-    if command.starts_with("todos_")
+    if command.starts_with("development_") {
+        Group::Development
+    } else if command.starts_with("todos_")
         || command.starts_with("todo_sync_")
         || matches!(command, "todo_attachment_thumbnail" | "open_todos")
     {
@@ -91,6 +95,21 @@ fn group_for(command: &str) -> Group {
     } else {
         Group::Core
     }
+}
+
+#[inline(never)]
+fn development(invoke: Invoke<Wry>) -> bool {
+    let handler: fn(Invoke<Wry>) -> bool = tauri::generate_handler![
+        crate::development::workbench::development_status,
+        crate::development::workbench::development_migration,
+        crate::development::workbench::development_register,
+        crate::development::workbench::development_set_delivery,
+        crate::development::workbench::development_prepare_profile,
+        crate::development::workbench::development_start_session,
+        crate::development::workbench::development_open_window,
+        crate::development::workbench::development_open_system_settings,
+    ];
+    handler(invoke)
 }
 
 #[inline(never)]

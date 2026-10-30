@@ -32,6 +32,21 @@ $InstallDir = if ($ExplicitInstallDir) {
 }
 $UsesDefaultInstallDir = -not $ExplicitInstallDir -and -not $IsDevInstall
 $InstalledBin = Join-Path $InstallDir "AskHuman.exe"
+function Invoke-InstalledAskHuman {
+  param([string[]]$Arguments)
+  $ContextKeys = @("ASKHUMAN_RESOLVED_TARGET_V1", "ASKHUMAN_DEV_TEST_PROFILE", "ASKHUMAN_DEV_VERIFICATION_ID", "ASKHUMAN_DEV_TEST_WINDOW", "ASKHUMAN_DEV_MIGRATION_ID", "ASKHUMAN_WRITE_SYSTEM_BINDINGS", "ASKHUMAN_HOME")
+  $SavedContext = @{}
+  foreach ($Key in $ContextKeys) { $SavedContext[$Key] = [Environment]::GetEnvironmentVariable($Key, "Process"); [Environment]::SetEnvironmentVariable($Key, $null, "Process") }
+  try { & $InstalledBin @Arguments }
+  finally { foreach ($Key in $ContextKeys) { [Environment]::SetEnvironmentVariable($Key, $SavedContext[$Key], "Process") } }
+}
+
+$NewSystemInstall = -not $IsDevInstall -and -not (Test-Path -LiteralPath $InstalledBin) -and -not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".askhuman\config.json"))
+$DevSourceSnapshot = $null
+if ($IsDevInstall) {
+  $DevSourceSnapshot = (& node (Join-Path $ScriptDir "dev-build-record.mjs") snapshot $RepoRoot | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
 $BuildProfile = if ($Release) { "release" } else { "local-install" }
 Set-Location $RepoRoot
 . (Join-Path $ScriptDir "windows-user-path.ps1")
@@ -40,6 +55,8 @@ if ($IsDevInstall) {
   $InstanceHome = Join-Path $DevRoot ".askhuman-dev\home"
   New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
   New-Item -ItemType Directory -Force -Path $InstanceHome | Out-Null
+  & node (Join-Path $ScriptDir "dev-build-record.mjs") assert-target $DevRoot $InstalledBin
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   $env:ASKHUMAN_HOME = $InstanceHome
   $env:ASKHUMAN_NO_KEYCHAIN = "1"
   Write-Host "==> Dev Instance 检测到: $DevRoot"
@@ -143,6 +160,17 @@ if (-not $SkipCopy) {
   Move-Item -LiteralPath $StateTemp -Destination $InstallState -Force
 }
 
+if ($IsDevInstall) {
+  & node (Join-Path $ScriptDir "dev-build-record.mjs") record $DevRoot $InstalledBin $DevSourceSnapshot
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  Invoke-InstalledAskHuman -Arguments @("dev", "register-worktree", $DevRoot)
+} elseif ($NewSystemInstall) {
+  Invoke-InstalledAskHuman -Arguments @("dev", "register-system", $InstalledBin, "--new-install")
+} else {
+  Invoke-InstalledAskHuman -Arguments @("dev", "register-system", $InstalledBin)
+}
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 if (Get-Command cargo-sweep -ErrorAction SilentlyContinue) {
   Write-Host "==> 清理 7 天未使用的 target 依赖残留"
   Push-Location src-tauri
@@ -195,7 +223,7 @@ if ($UsesDefaultInstallDir) {
 }
 Write-Host "==> 完成：$InstallDir\AskHuman.exe"
 if ($IsDevInstall) {
-  Write-Host "==> Dev Instance 已安装；在本 worktree 内运行 AskHuman 会自动改道到此二进制。"
+  Write-Host "==> Dev 验收：AskHuman dev ask --worktree $DevRoot …"
 } else {
   Write-Host "==> AskHuman 命令已就绪；可直接运行 AskHuman --version。"
 }

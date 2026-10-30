@@ -180,8 +180,57 @@ export type InteractionRequest =
   | { type: "confirm"; request: ConfirmRequest };
 
 export interface MessagePrompt {
+  development?: DevVerificationInfo | null;
   text: string;
   files: FileAttachment[];
+}
+
+export interface DevBuildInfo {
+  version: number;
+  worktree: string;
+  binary: string;
+  sourceFingerprint: string;
+  binaryFingerprint: string;
+  gitCommit: string | null;
+  createdAtMs: number;
+}
+
+export interface DevVerificationInfo {
+  diagnostics?: { home: string; endpoint: string; reason: string } | null;
+  id: string;
+  worktree: string;
+  build: DevBuildInfo;
+  delivery: "local" | "remote" | "channels";
+  relay: boolean;
+  testProfile?: string | null;
+}
+
+export interface DevWorkbenchStatus {
+  mode: "legacy" | "explicit";
+  systemBinary: string | null;
+  worktrees: DevWorktreeInfo[];
+  agents: DevAgentSupport[];
+  instanceTarget: { kind: "system" | "dev" | "isolated"; home: string; binary: string } | null;
+}
+
+export interface DevWorktreeInfo {
+  root: string;
+  name: string;
+  binary: string;
+  home: string;
+  enabled: boolean;
+  build: DevBuildInfo | null;
+  error: string | null;
+  preferences: { delivery: "local" | "remote" | "channels" };
+}
+
+export interface DevAgentSupport {
+  terminalAvailable?: boolean;
+  launchReason?: string | null;
+  kind: string;
+  supported: boolean;
+  executable: string | null;
+  reason: string | null;
 }
 
 /** 单个预定义选项：文本 + 是否为提问方（AI）的推荐答案。 */
@@ -1028,6 +1077,7 @@ export interface SecretsPresent {
 
 /** Settings payload: config with secrets blanked + per-secret presence flags. */
 export interface SettingsPayload {
+  everydayIntegrationsReadOnly?: boolean;
   config: AppConfig;
   secretsPresent: SecretsPresent;
 }
@@ -1379,4 +1429,14 @@ export interface PopupProjectInfo {
   detached: boolean;
   worktree?: string | null;
   changes?: { total: number; staged: number; unstaged: number; untracked: number } | null;
+}
+
+export interface DevMigration {
+  id: string;
+  phase: "planned" | "partial" | "complete" | "rollingBack" | "rolledBack";
+  systemBinary: string;
+  actions: Array<{ agent: string; mode: string; status: string; error: string | null }>;
+  artifacts: Array<{ path: string }>;
+  conflicts: string[];
+  error: string | null;
 }

@@ -21,20 +21,26 @@ pub fn socket_path() -> PathBuf {
 /// Human-readable endpoint for one local IPC role.
 pub fn endpoint_path(role: &str) -> PathBuf {
     #[cfg(unix)]
+    if role == "gui-host" {
+        return crate::paths::gui_host_sock();
+    }
+    endpoint_path_for(&crate::paths::config_dir(), role)
+}
+
+/// Resolve diagnostics for an explicit instance without changing process environment.
+pub fn endpoint_path_for(home: &std::path::Path, role: &str) -> PathBuf {
+    #[cfg(unix)]
     {
-        if role == "gui-host" {
-            crate::paths::gui_host_sock()
-        } else {
-            crate::paths::config_dir().join(format!("{role}.sock"))
-        }
+        home.join(format!("{role}.sock"))
     }
     #[cfg(windows)]
     {
-        PathBuf::from(windows_endpoint(role))
+        PathBuf::from(windows_endpoint_in(role, home))
     }
     #[cfg(not(any(unix, windows)))]
     {
-        crate::paths::config_dir().join("daemon.unsupported")
+        let _ = role;
+        home.join("daemon.unsupported")
     }
 }
 
@@ -402,6 +408,11 @@ fn current_user_sid() -> io::Result<String> {
 
 #[cfg(windows)]
 pub(crate) fn windows_endpoint(role: &str) -> String {
+    windows_endpoint_in(role, &crate::paths::config_dir())
+}
+
+#[cfg(windows)]
+fn windows_endpoint_in(role: &str, home: &std::path::Path) -> String {
     use sha2::{Digest, Sha256};
     use std::fmt::Write as _;
     use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
@@ -420,7 +431,7 @@ pub(crate) fn windows_endpoint(role: &str) -> String {
                 std::env::var("USERNAME").unwrap_or_default()
             )
         }),
-        crate::paths::config_dir().to_string_lossy()
+        home.to_string_lossy()
     );
     let digest = Sha256::digest(identity.as_bytes());
     let mut suffix = String::with_capacity(24);

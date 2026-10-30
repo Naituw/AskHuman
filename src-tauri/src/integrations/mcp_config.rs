@@ -139,7 +139,7 @@ impl PreparedAntigravityConfig {
         }
         match desired {
             Some(text) => write_antigravity_text(&self.path, text, expected),
-            None => std::fs::remove_file(&self.path).map_err(Into::into),
+            None => crate::development::migration::remove_file(&self.path).map_err(Into::into),
         }
     }
 
@@ -236,6 +236,7 @@ fn write_antigravity_text(path: &Path, text: &str, expected: &Option<String>) ->
             path.display()
         ));
     }
+    crate::development::migration::before_write(path, Some(text.as_bytes()))?;
     staged
         .persist(path)
         .with_context(|| format!("cannot publish private MCP config {}", path.display()))?;
@@ -675,6 +676,18 @@ fn apply_install_json(text: &str, command: &str, timeout: JsonTimeout) -> Result
             "args": [ARG_MCP],
         }),
     };
+    if let jsonc_parser::cst::CstInputValue::Object(ref mut properties) = entry {
+        let args = properties
+            .iter_mut()
+            .find(|(name, _)| name == "args")
+            .unwrap();
+        args.1 = jsonc_parser::cst::CstInputValue::Array(
+            crate::development::routing::integration_args(&[ARG_MCP])
+                .into_iter()
+                .map(jsonc_parser::cst::CstInputValue::String)
+                .collect(),
+        );
+    }
     let parsed: Value = jsonc_parser::parse_to_serde_value(source, &ParseOptions::default())?;
     if let Some(obj) = json_entry_env(&parsed)? {
         if let jsonc_parser::cst::CstInputValue::Object(ref mut properties) = entry {
@@ -765,7 +778,13 @@ fn json_entry_matches(value: &Value, command: &str, timeout: JsonTimeout) -> boo
     let args_ok = entry
         .get("args")
         .and_then(|v| v.as_array())
-        .map(|a| a.len() == 1 && a[0].as_str() == Some(ARG_MCP))
+        .map(|a| {
+            let expected = crate::development::routing::integration_args(&[ARG_MCP]);
+            a.len() == expected.len()
+                && a.iter()
+                    .zip(expected.iter())
+                    .all(|(actual, expected)| actual.as_str() == Some(expected.as_str()))
+        })
         .unwrap_or(false);
     // Require the client's exact timeout field and units; Cursor must omit timeout fields.
     let timeout_ok = match timeout {
@@ -861,7 +880,9 @@ fn apply_install_toml_outcome_env(
     }
     entry.insert("command", value(command));
     let mut args = Array::new();
-    args.push(ARG_MCP);
+    for arg in crate::development::routing::integration_args(&[ARG_MCP]) {
+        args.push(arg);
+    }
     entry.insert("args", value(args));
     entry.insert("startup_timeout_sec", value(startup));
     entry.insert("tool_timeout_sec", value(tool));
@@ -1063,7 +1084,13 @@ fn toml_entry_matches(target: AgentTarget, text: &str, command: &str) -> bool {
     let args_ok = entry
         .get("args")
         .and_then(|i| i.as_array())
-        .map(|a| a.len() == 1 && a.get(0).and_then(|x| x.as_str()) == Some(ARG_MCP))
+        .map(|a| {
+            let expected = crate::development::routing::integration_args(&[ARG_MCP]);
+            a.len() == expected.len()
+                && a.iter()
+                    .zip(expected.iter())
+                    .all(|(actual, expected)| actual.as_str() == Some(expected.as_str()))
+        })
         .unwrap_or(false);
     let startup_ok = entry.get("startup_timeout_sec").and_then(toml_int) == Some(startup);
     let tool_ok = entry.get("tool_timeout_sec").and_then(toml_int) == Some(tool);
@@ -1100,6 +1127,7 @@ fn load_integration_state(path: &Path) -> Result<IntegrationState> {
 
 fn save_integration_state(path: &Path, state: &IntegrationState) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(state).context("序列化集成所有权账本失败")?;
+    crate::development::migration::before_write(path, Some(&bytes))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
         harden_dir(dir);
@@ -1130,7 +1158,7 @@ fn rollback_text(
     if original_exists {
         write_text(path, original)
     } else {
-        std::fs::remove_file(path)
+        crate::development::migration::remove_file(path)
             .with_context(|| format!("删除事务中新建的配置失败：{}", path.display()))
     }
 }
@@ -1154,7 +1182,7 @@ fn harden_file(path: &Path) {
 fn harden_file(_path: &Path) {}
 
 fn current_exe_string() -> Result<String> {
-    let p = std::env::current_exe().context("failed to resolve current exe path")?;
+    let p = crate::executable::launch_path().context("failed to resolve current exe path")?;
     Ok(p.to_string_lossy().to_string())
 }
 
@@ -1166,6 +1194,7 @@ fn write_text(path: &Path, text: &str) -> Result<()> {
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    crate::development::migration::before_write(path, Some(bytes))?;
     let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)?;

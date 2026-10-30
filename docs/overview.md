@@ -34,7 +34,11 @@
 
 **重复提问收敛**（`docs/specs/duplicate-ask-coalescing.md`）：agent 那一轮被中断后常原样重发同一个提问，而被中断的 CLI 进程不会被杀。Daemon 因此在建请求前先按「会话键 + 提问指纹」判重——同一提问仍在等人回答就合流到那张卡（多等待者共享一个终态，全部离场才取消），5 分钟内已答过则直接重放上次答案并在 `status` 说明。历史、待办出队与 `ask-received` 仍只发生一次。
 
-**Dev Instance（并行 / WorkTree 开发）**：每个已 `dev enable` 的 git 工作树可有独立 `ASKHUMAN_HOME`（`.askhuman-dev/home`）+ 实例 bin + 默认 popup-only 渠道，与主环境 daemon/生产 bot 隔离；入口按 cwd 标记 re-exec。`ASKHUMAN_HOME` 只隔离配置 / socket / daemon 标签（配置目录不是账户自己的 `~/.askhuman` 时，如只换 `$HOME` 的沙箱，daemon 标签同样独立），不隔离 `$HOME` 下的 Agent hook 文件与用户级登录项：实例进程对它们的**自动**写入（登录项同步、启动时的 hook 迁移）一律跳过，显式 `agents …` 命令除外。详见 `docs/specs/dev-instance-parallel.md`、`docs/agent-worktree-setup.md`。
+**Dev Instance（并行 / WorkTree 开发）**：每个已 `dev enable` 的 git 工作树有独立程序、home、daemon 和测试渠道。
+新安装及完成明确迁移的用户，普通 CLI／MCP 和受管 Hook 固定正式版；安装后通过 `dev ask`／MCP `dev_ask` 验收本树实际构建，完整集成使用独立 Agent 测试 profile。已有安装在迁移前保留 cwd 自动路由。
+入口先解析并固定程序、home 和内部继承上下文；Dev 失败不回退正式版，单次验收不取得日常原生会话控制权限。
+`ASKHUMAN_HOME` 仍不隔离用户级 Agent 文件；新流程的 Dev 不能改日常集成，测试 profile 写自己的文件。
+架构与边界见 [开发验收实现地图](overview-development.md)，操作见 [工作树准备流程](agent-worktree-setup.md)，需求见 [日常沟通与开发验收隔离](specs/dev-verification-routing.md)。
 
 ## 目录结构
 
@@ -486,7 +490,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
   `docs/specs/antigravity.md`。
 - MCP 没有通用的 Agent session 字段：Codex 使用每调用 `_meta.threadId`，Claude/Cursor
   使用 schema 隐藏的短命一次性 token，Grok 只在进程+项目分区内参数指纹候选唯一时认领；
-  六个工具共用每调用绑定；无可信 session 时才回退到当前 MCP instance + project。详见
+  日常工具共用每调用绑定；`dev_ask` 使用单独的验收关联标识；无可信 session 时才回退到当前 MCP instance + project。详见
   `docs/plans/agent-context-compaction-retention.md`。
 - Codex 配置把 `mcp__askhuman` 加入 Code Mode direct-only namespace，确保 ask 顶层阻塞；最小编辑与所有权记录避免卸载用户原有配置。
 - Codex 委派运行（偏好「允许被委派的 Codex 运行使用 AskHuman」，默认关，`agents delegated codex [on|off]`）与未集成表现一致：

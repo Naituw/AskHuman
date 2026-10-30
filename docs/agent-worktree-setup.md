@@ -16,14 +16,18 @@
 
 ## 目标体验
 
-准备完成后，agent **提示词仍只需**：
+安装与验收使用明确的工作树入口：
 
 ```bash
 ./scripts/install.sh
-AskHuman "…"   # 或 MCP ask
+AskHuman dev ask --worktree /absolute/path/to/worktree -- "请验收这次修改"
+# MCP: dev_ask({ worktree: "/absolute/path/to/worktree", message: "请验收这次修改" })
 ```
 
-不必在提示词里分支 env / PATH；cwd 在已 enable 的树内会自动改道到该树的 bin + daemon。
+普通需求讨论、权限确认和结束交接使用普通 AskHuman。新安装或明确迁移后，cwd 的 enabled 标记
+只决定安装目标，不改变日常调用。既有安装在迁移前保留自动路由；不要替用户静默迁移。
+设置的「开发测试」页可以检查构建、选择投递方式和启动独立 Agent 测试会话。
+完整 MCP／Hook／Stop／权限测试使用独立测试会话；一次 Dev 验收只测试问答，不控制日常会话。
 
 Windows 对应安装命令是 `.\scripts\install-windows.cmd`；其余 `AskHuman dev …` 命令相同。
 
@@ -62,7 +66,8 @@ AskHuman dev enable --preset <name>
 
 ```bash
 AskHuman dev enable
-AskHuman --settings          # 在 GUI 里只配【测试】bot，勿用生产凭据
+AskHuman --instance dev --worktree /absolute/path/to/worktree --settings
+# 也可从正式设置 → 开发测试 → 选工作树 → Dev 设置；只配测试 bot
 # 或：AskHuman channel set …
 AskHuman dev preset save <name> --from-instance
 ```
@@ -152,17 +157,18 @@ macOS 沿用原有复制和签名流程，不使用 Linux 的 retained 目录与
 
 ```bash
 AskHuman dev status
-AskHuman daemon status    # endpoint 应按本树 .askhuman-dev/home/ 独立派生
+AskHuman --instance dev --worktree /absolute/path/to/worktree daemon status
+# endpoint 应按本树 .askhuman-dev/home/ 独立派生
 ```
 
 ## 禁止事项
 
 - **不要**把生产 bot 凭据写进 dev 实例，也不要指望从主配置一键导入（产品不提供）。  
 - **不要**在两棵树上同时 `enable --preset` 同一预设（平台长连接互斥）；需要并行真 IM 时准备**两套**测试 bot / 两个预设。  
-- **不要**为了「走 dev」去改 agent 全局提示词分支；靠目录标记自动改道。
+- **不要**为了验收改写日常 Agent 配置；使用 `dev ask`／`dev_ask`，完整集成用独立测试 profile。
 - **不要**在实例里运行会改 Agent 集成的显式命令（`AskHuman agents …`、设置页的 Agent 集成开关）来「试一试」：
   `ASKHUMAN_HOME` 不隔离 `~/.cursor/hooks.json`、`~/.codex/…`、`~/.claude/settings.json` 等，这些写入会落到**真实**用户配置。
-  实例 daemon 启动时的自动迁移已被跳过，但显式命令不受限（见 spec §7.1）。
+  迁移后的 Dev 和独立测试窗口会拒绝这种全局修改；旧兼容流程仍需遵守此约束。
 - **不要**为了验证只换 `HOME` 起 daemon / GUI Host：沙箱必须同时设**非空 `ASKHUMAN_HOME`**（实例上下文）。
   launchd label 在 `gui/<uid>` 域内按用户全局生效：daemon 的 label 现在随配置目录区分（配置目录不是账户自己的
   `~/.askhuman` 就用独立 label），所以只换 `HOME` 不会再 `bootout` 真实 daemon；但登录项、Agent hook 文件等

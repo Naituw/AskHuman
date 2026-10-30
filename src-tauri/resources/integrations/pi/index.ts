@@ -51,7 +51,7 @@ function spawnJson(
   ctx: ExtensionContext,
   timeoutMs: number,
 ): RunningCommand {
-  const child = spawn(CONFIG.executable, args, {
+  const child = spawn(CONFIG.executable, (CONFIG as JsonObject).instance === "system" ? ["--instance", "system", ...args] : args, {
     cwd: ctx.cwd,
     env: commandEnv(ctx),
     stdio: ["pipe", "pipe", "pipe"],

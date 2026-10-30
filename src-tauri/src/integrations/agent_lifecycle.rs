@@ -279,7 +279,7 @@ pub(crate) fn tracking_installed(kind: AgentKind) -> bool {
 
 /// 当前可执行文件绝对路径（hook 命令调用它）。
 fn exe_path() -> Result<String> {
-    let p = std::env::current_exe().context("failed to resolve current exe path")?;
+    let p = crate::executable::launch_path().context("failed to resolve current exe path")?;
     Ok(p.to_string_lossy().to_string())
 }
 
@@ -294,7 +294,13 @@ fn hook_command(
     if is_stop_event(kind, event_key) {
         return super::agent_stop::hook_command_for(exe, kind, true, stop_confirm);
     }
-    format!("\"{}\" {} {} {}", exe, MARKER, kind.as_str(), lc_event)
+    format!(
+        "{} {} {} {}",
+        crate::development::routing::integration_prefix(exe),
+        MARKER,
+        kind.as_str(),
+        lc_event
+    )
 }
 
 fn windows_hook_command(
@@ -1131,6 +1137,7 @@ fn write_toml(path: &std::path::Path, text: &str) -> Result<()> {
 }
 
 fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    crate::development::migration::before_write(path, Some(bytes))?;
     let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)?;

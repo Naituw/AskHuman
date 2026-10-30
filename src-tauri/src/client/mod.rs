@@ -703,7 +703,8 @@ pub fn run_ask(task: crate::ipc::TaskRequest) -> ! {
 
 /// Run an internal Ask request and capture its rendered JSON instead of printing/exiting.
 /// Used by the Stop hook; timeout/disconnect/non-success all fail open as `None`.
-pub fn run_ask_capture(task: crate::ipc::TaskRequest, timeout: Duration) -> Option<String> {
+pub fn run_ask_capture(mut task: crate::ipc::TaskRequest, timeout: Duration) -> Option<String> {
+    crate::development::verification::decorate_task(&mut task).ok()?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -775,7 +776,25 @@ fn daemon_start_error(verbose: bool, error: &Error) -> AskFinal {
 }
 
 async fn run_ask_async(task: crate::ipc::TaskRequest) -> i32 {
-    let result = run_ask_final_async(task, true).await;
+    let verification = task.message.development.clone();
+    let result = if let Some(info) = verification.as_ref() {
+        tokio::select! {
+            result = run_ask_final_async(task, true) => result,
+            _ = crate::development::verification::wait_for_executor_exit(info) => {
+                let _ = crate::development::verification::interrupted(&info.worktree, &info.id);
+                client_error(true, "Dev verification executor exited; no human answer was received")
+            }
+        }
+    } else {
+        run_ask_final_async(task, true).await
+    };
+    if let Some(info) = verification.filter(|info| !info.relay && info.test_profile.is_none()) {
+        if let Err(error) =
+            crate::development::verification::complete(&info, &result.stdout, result.exit_code)
+        {
+            eprintln!("AskHuman: cannot retain Dev verification result: {error}");
+        }
+    }
     if !result.stdout.is_empty() {
         println!("{}", result.stdout);
     }
@@ -798,6 +817,17 @@ async fn run_ask_final_async(task: crate::ipc::TaskRequest, verbose: bool) -> As
                 }
                 Err(error) => {
                     return daemon_start_error(verbose, &error);
+                }
+            }
+            if task.message.development.is_some() {
+                let status = request_status_result().await.ok().flatten();
+                if status.as_ref().is_none_or(|status| {
+                    status.development_verification_version
+                        != crate::development::CAPABILITY_VERSION
+                        || status.fingerprint
+                            != Some(crate::daemon::lifecycle::current_fingerprint())
+                }) {
+                    return client_error(verbose, "Dev verification requires a compatible daemon running this exact build; restart the selected instance before verification");
                 }
             }
             let Ok((mut reader, mut writer)) = connect_split().await else {

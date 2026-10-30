@@ -1,10 +1,10 @@
 # 日常沟通与开发验收隔离
 
-> 状态：方案已确认，尚未实现。
-> 用户体验与范围于 2026-10-30 确认；本文中的新命令、MCP 工具和设置均为待实现接口。
+> 状态：两阶段接口与实现已接入，验证记录见 [实施计划](../plans/dev-verification-routing.md)。
+> 用户体验与范围于 2026-10-30 确认。既有安装在明确迁移前保留旧自动路由。
 > 关联讨论：[GitHub issue #23](https://github.com/Naituw/AskHuman/issues/23)。
-> 当前实现：[Dev Instance 并行开发隔离](dev-instance-parallel.md)；当前操作仍以
-> [工作树准备流程](../agent-worktree-setup.md)为准。
+> 实现地图：[开发验收](../overview-development.md)；每树数据与渠道模型见
+> [Dev Instance](dev-instance-parallel.md)，操作见 [工作树准备流程](../agent-worktree-setup.md)。
 
 开发 AskHuman 时，日常需求讨论始终使用正式版；验收刚修改的代码时，由 Agent 明确发起一次
 Dev 验收，回答返回原来的 Agent。验收不会切换日常会话的实例归属，结束后也无需切回。
@@ -53,8 +53,8 @@ Dev 验收，回答返回原来的 Agent。验收不会切换日常会话的实�
 | V9 | 不提供日常模式与会话策略的组合矩阵；旧自动行为通过明确迁移保留兼容路径 |
 | V10 | 选中的 Dev 缺失、不可执行、构建不匹配或不兼容时明确失败，不回退正式版 |
 
-本需求调整现行规格 D5、D8 的后续目标行为，不改变它们作为当前实现说明的含义。
-上述行为须随实现和迁移一同生效，不能仅修改 Agent 提示词就宣称完成。
+本需求调整 Dev Instance 规格 D5、D8 的日常入口。它们描述的旧行为保留在兼容模式；
+新行为通过实际目标解析与受管集成迁移生效。
 
 ## 3 调用入口
 
@@ -249,8 +249,9 @@ Windows worker 和终端启动链路。自动化覆盖解析和跨进程不变�
 
 ## 10 文档生效边界
 
-本文记录已确认的后续需求。实现前，`dev-instance-parallel.md`、`agent-worktree-setup.md`、
-`AGENTS.md` 和主 overview 中的现行自动 Dev 流程继续有效。
+新安装直接使用显式流程；既有安装通过开发测试页检查并明确迁移后生效。未迁移时仍遵循原有 cwd
+自动路由，不由升级或 enabled marker 代替用户同意。`AGENTS.md` 与工作树文档使用显式 Dev 验收入口，
+普通讨论始终按安装当前生效的路由执行。
 
-实现时按对应阶段更新这些操作与架构说明，以及 MCP、Agent 集成和相关渠道规格。
-具体模块改动与执行步骤放入 `docs/plans/`，避免把需求文档写成当前实现清单。
+模块与数据位置见 [实现地图](../overview-development.md)，平台实测和未验证的原生场景见
+[实施计划](../plans/dev-verification-routing.md)。实现能力与原生平台验收分别记录。

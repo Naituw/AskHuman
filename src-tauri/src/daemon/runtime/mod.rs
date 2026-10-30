@@ -1549,6 +1549,7 @@ async fn control_loop(
             }
             ClientMsg::Status => {
                 let info = StatusInfo {
+                    development_verification_version: crate::development::CAPABILITY_VERSION,
                     pid: std::process::id(),
                     version: version(),
                     protocol_version: ipc::PROTOCOL_VERSION,
@@ -2254,6 +2255,18 @@ async fn handle_submit(
     mut w: OwnedWriteHalf,
     state: &Arc<ServerState>,
 ) {
+    if let Err(error) = crate::development::verification::validate_task(&mut task) {
+        let _ = ipc::write_msg(&mut w, &ServerMsg::Warn { text: error }).await;
+        let _ = ipc::write_msg(
+            &mut w,
+            &ServerMsg::Final {
+                stdout: String::new(),
+                exit_code: 1,
+            },
+        )
+        .await;
+        return;
+    }
     // 性能埋点关联 id（CLI 透传；空=关闭）。daemon 自身启动时无 ASKHUMAN_PERF env，
     // 故各阶段标记一律以本字段非空为开关（见 perf 模块说明）。
     let project = crate::project::for_session(
@@ -2261,7 +2274,7 @@ async fn handle_submit(
         task.agent_session_id.as_deref(),
         std::path::Path::new(task.caller_cwd.as_deref().unwrap_or(&task.project)),
     );
-    if !project.is_empty() {
+    if !project.is_empty() && task.message.development.is_none() {
         task.project = project;
     }
     let perf_id = task.perf_id.clone();
@@ -2375,12 +2388,20 @@ async fn handle_submit(
     log(&format!("request {} accepted", request_id));
 
     // Fire `ask-received` once per accepted request, independent of popup state.
-    crate::hooks::fire_ask_received(
-        &request_id,
-        &entry.show.source,
-        &entry.show.project,
-        entry.request(),
-    );
+    if !entry
+        .request()
+        .message
+        .development
+        .as_ref()
+        .is_some_and(|info| info.relay)
+    {
+        crate::hooks::fire_ask_received(
+            &request_id,
+            &entry.show.source,
+            &entry.show.project,
+            entry.request(),
+        );
+    }
 
     if ipc::write_msg(
         &mut w,
@@ -2402,7 +2423,19 @@ async fn handle_submit(
 
     // 按接收请求时的 Daemon 配置快照决定是否投放 Popup。配置禁用或无显示
     // 环境时必须完全跳过 Helper，让 IM 成为唯一作答渠道。
-    let popup_enabled = popup_should_dispatch(&state.config_snapshot(), has_display());
+    let development = entry.request().message.development.as_ref();
+    let popup_enabled = match development {
+        Some(info)
+            if info.relay
+                || info.delivery == crate::development::verification::Delivery::Remote =>
+        {
+            false
+        }
+        Some(info) if info.delivery == crate::development::verification::Delivery::Local => {
+            has_display()
+        }
+        _ => popup_should_dispatch(&state.config_snapshot(), has_display()),
+    };
     // 方案3（spec §6.1）：尽早 spawn GUI Helper（独立短命进程，带一次性 token），让其 WebView
     // 初始化与下面的「入站监听 + IM 建连」并行——token 在 `registry.create()` 即登记，helper 可
     // 立即连上，不存在「helper 先连、entry 未注册」竞态。冷启动下这把 IM 建连（数百 ms）整段移出
@@ -2449,17 +2482,41 @@ async fn handle_submit(
     ensure_inbound_listeners(state).await;
     // 挂接可用的 IM 渠道（钉钉/…）到本请求的协调器，与弹窗并行抢答。哪些面真正活着由协调器
     // 的渠道表跟踪（会话打不开 / 送达失败会自行退出），这里的返回值只用于埋点。
-    let im_attached = attach_im_channels(
-        &entry,
-        state,
-        &mut w,
-        lang,
-        popup_enabled,
-        kind_env,
-        from_mcp,
-        agent_resolution,
-    )
-    .await;
+    let im_attached = match entry.request().message.development.as_ref() {
+        Some(info)
+            if !info.relay
+                && info.delivery == crate::development::verification::Delivery::Remote =>
+        {
+            let channel: Arc<dyn Channel> = crate::development::relay::RelayChannel::new();
+            let origin = im_conversation_origin(&entry, None);
+            attach_channel(
+                &entry,
+                channel,
+                entry.request(),
+                &origin,
+                &entry.coordinator,
+            )
+        }
+        Some(info)
+            if !info.relay
+                && info.delivery == crate::development::verification::Delivery::Local =>
+        {
+            false
+        }
+        _ => {
+            attach_im_channels(
+                &entry,
+                state,
+                &mut w,
+                lang,
+                popup_enabled,
+                kind_env,
+                from_mcp,
+                agent_resolution,
+            )
+            .await
+        }
+    };
     crate::perf::mark(&perf_id, "dmn.im_done");
     if !popup_ok && !im_attached {
         log(&format!(

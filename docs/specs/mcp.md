@@ -35,7 +35,7 @@
 > 恢复输出采用纯 CLI 区块，只保留非空 Message/附件、问题与人类实际答案；未选候选项和
 > recommended 标记仍保留在历史记录中，但不重新注入压缩后的模型上下文。
 
-> **实现期补充（2026-10-15）**：六个工具统一使用每调用的可信原生会话绑定。三个 Todo 工具也复用
+> **实现期补充（2026-10-15）**：六个日常工具统一使用每调用的可信原生会话绑定。三个 Todo 工具也复用
 > schema 隐藏的 Hook token 与 Grok 指纹旁路，以稳定会话工作区归项目；无绑定时保留 server cwd 回退。
 > 附件相对路径仍按真实 MCP server cwd 解析，不迁移旧待办 / 历史。详见 `popup-session-info.md`。
 >
@@ -44,6 +44,12 @@
 > `docs/specs/codex-delegated-run-silence.md`。MCP 侧：exec / review 进程里 `AskHuman mcp` 启动时做**一次**有界祖先探测，
 > 命中则 `tools/list` 为空、`initialize` 不带 `instructions`、不向 daemon 登记实例；其余委派线程在 `tools/call`
 > 时按 SessionStart hook 写下的标记本地拒绝。集成页 / `AskHuman agents delegated codex on` 的开关打开后全部按交互处理。
+
+> **开发验收**：新增 `dev_ask`，携带绝对工作树路径、普通提问参数，可指定投递方式或按验收 ID
+> 重取结果。它委托目标 Dev 并返回独立构建元数据，不使用日常原生 session token、不改变当前
+> MCP server 的进程内工具或后续普通请求归属。取消终止对应 Dev 子进程链路；重取不会重发问题。
+> 新增工具后按客户端要求重启连接／刷新工具目录。迁移、构建校验与客户端限制见
+> [开发验收规格](dev-verification-routing.md) 与 [实现地图](../overview-development.md)。
 
 ## 1. 背景与动机
 
@@ -94,7 +100,7 @@ MCP 模式当前覆盖 Codex、Claude Code、Cursor、Grok 与 Unix 上的 Antig
 ```
 客户端(Codex/Claude/Cursor)
   └─ 按配置 spawn: <AskHuman 绝对路径> mcp        （STDIO，session 期常驻）
-       └─ rmcp STDIO server，暴露 `ask` / `whats_next` / `show_last` / `todo_add` / `todo_list` / `todo_update`
+       └─ rmcp STDIO server，暴露 `ask` / `dev_ask` / `whats_next` / `show_last` / `todo_add` / `todo_list` / `todo_update`
             └─ 收到 ask 调用：
                  0. 检查 Codex turn metadata；拦截来源 thread 直接返回 terminal error
                  1. 入参 Schema → argv（message / -q / -o / -o! / -f；默认文本输出）

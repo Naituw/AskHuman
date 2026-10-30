@@ -61,10 +61,21 @@ fn print_line(text: &str) {
 
 /// 入口分发：在创建任何窗口前按 argv 分流。
 pub fn dispatch() {
-    // Dev Instance: pin ASKHUMAN_HOME / re-exec worktree bin before any config or GUI load.
-    crate::dev_instance::maybe_enter_dev_instance();
-
-    let raw_argv: Vec<String> = std::env::args().collect();
+    let raw_argv = match crate::development::routing::prepare(std::env::args().collect()) {
+        Ok(argv) => argv,
+        Err(error) => {
+            eprintln!("AskHuman: {error}");
+            exit(1);
+        }
+    };
+    if raw_argv.get(1).is_some_and(|s| s == "__dev-capabilities") {
+        print_line(&crate::development::capabilities().to_string());
+        exit(0);
+    }
+    if let Err(error) = crate::development::session::active() {
+        eprintln!("AskHuman: {error}");
+        exit(1);
+    }
     // The hint is a prefix flag and its conflict check is the only reader of the environment here,
     // so every other invocation (hooks, daemon, GUI) skips the snapshot entirely.
     let hint_env = if raw_argv.get(1).map(String::as_str) == Some("--caller-agent") {
@@ -106,6 +117,28 @@ pub fn dispatch() {
     }
 
     match argv[1].as_str() {
+        "__dev-window" => {
+            if let Err(error) = crate::development::workbench::run_window(
+                argv.get(2).map(String::as_str).unwrap_or("settings"),
+            ) {
+                eprintln!("AskHuman: {error}");
+                exit(1);
+            }
+            exit(0);
+        }
+        "__dev-relay" => {
+            let result = match (argv.get(2), argv.get(3)) {
+                (Some(root), Some(id)) => {
+                    crate::development::relay::run_cli(std::path::Path::new(root), id)
+                }
+                _ => Err("development relay requires a worktree and verification ID".into()),
+            };
+            if let Err(error) = result {
+                eprintln!("AskHuman: {error}");
+                exit(1);
+            }
+            exit(0);
+        }
         "__session-info" => {
             if let Some(kind) = argv.get(2).and_then(|s| crate::agents::AgentKind::parse(s)) {
                 crate::agents::session_info::report_cli(kind);
@@ -197,10 +230,24 @@ pub fn dispatch() {
         // Route every desktop platform through the unified GUI Host (global single windows).
         // 失败（极端：宿主起不来）兜底本进程直接建窗，保证窗口至少能打开。
         "--settings" => {
+            let tab = argv
+                .get(2)
+                .filter(|tab| {
+                    matches!(
+                        tab.as_str(),
+                        "general"
+                            | "integration"
+                            | "channel"
+                            | "advanced"
+                            | "experimental"
+                            | "development"
+                    )
+                })
+                .cloned();
             if crate::gui_host::host_open(
                 crate::gui_host::WindowKind::Settings,
                 false,
-                None,
+                tab,
                 None,
                 None,
             )
@@ -533,7 +580,7 @@ pub fn dispatch() {
                     .agent_kind
                     .as_deref()
                     .and_then(crate::agents::AgentKind::parse);
-                let task = crate::ipc::TaskRequest {
+                let mut task = crate::ipc::TaskRequest {
                     caller_cwd: std::env::current_dir()
                         .ok()
                         .map(|p| p.to_string_lossy().into_owned()),
@@ -565,6 +612,10 @@ pub fn dispatch() {
                     perf_autodismiss: crate::perf::autodismiss(),
                     whats_next: parsed.whats_next,
                 };
+                if let Err(error) = crate::development::verification::decorate_task(&mut task) {
+                    eprintln!("AskHuman: {error}");
+                    exit(1);
+                }
                 crate::client::run_ask(task);
             }
             Err(e) => {

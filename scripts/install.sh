@@ -52,6 +52,7 @@ find_dev_enabled_root() {
 }
 
 DEFAULT_INSTALL_DIR="${HOME}/.local/bin"
+DEV_ROOT=""
 if [ -n "${INSTALL_DIR:-}" ]; then
   : # explicit env wins
 elif [ "$FORCE_GLOBAL" -eq 1 ]; then
@@ -64,6 +65,22 @@ elif DEV_ROOT="$(find_dev_enabled_root)"; then
 else
   INSTALL_DIR="$DEFAULT_INSTALL_DIR"
 fi
+
+DEV_SOURCE_SNAPSHOT=""
+NEW_SYSTEM_INSTALL=0
+if [ -n "$DEV_ROOT" ]; then
+  node "$SCRIPT_DIR/dev-build-record.mjs" assert-target "$DEV_ROOT" "$INSTALL_DIR/AskHuman"
+  DEV_SOURCE_SNAPSHOT="$(node "$SCRIPT_DIR/dev-build-record.mjs" snapshot "$REPO_ROOT")"
+elif [ ! -f "$INSTALL_DIR/AskHuman" ] && [ ! -f "$HOME/.askhuman/config.json" ]; then
+  NEW_SYSTEM_INSTALL=1
+fi
+
+# Installation registration belongs to the installed entry, independent of the calling Agent.
+run_installed() (
+  unset ASKHUMAN_RESOLVED_TARGET_V1 ASKHUMAN_DEV_TEST_PROFILE ASKHUMAN_DEV_VERIFICATION_ID
+  unset ASKHUMAN_DEV_TEST_WINDOW ASKHUMAN_DEV_MIGRATION_ID ASKHUMAN_WRITE_SYSTEM_BINDINGS ASKHUMAN_HOME
+  "$INSTALL_DIR/AskHuman" "$@"
+)
 
 sign_via_gui_launchd() {
   local identity="$1"
@@ -361,6 +378,18 @@ if [ "$SKIP_COPY" -eq 0 ]; then
   trap - EXIT INT TERM
 fi
 
+if [ -n "$DEV_ROOT" ]; then
+  node "$SCRIPT_DIR/dev-build-record.mjs" record "$DEV_ROOT" "$INSTALL_DIR/AskHuman" "$DEV_SOURCE_SNAPSHOT"
+  run_installed dev register-worktree "$DEV_ROOT"
+  echo "    Dev 验收: AskHuman dev ask --worktree $DEV_ROOT …"
+else
+  if [ "$NEW_SYSTEM_INSTALL" -eq 1 ]; then
+    run_installed dev register-system "$INSTALL_DIR/AskHuman" --new-install
+  else
+    run_installed dev register-system "$INSTALL_DIR/AskHuman"
+  fi
+fi
+
 # --- target/ 缓存清理 ---
 
 # cargo-sweep 回收长期未使用的依赖 hash；profile 预算（下方）不依赖它存在。
@@ -489,4 +518,4 @@ fi
 # 多份安装 / PATH 遮蔽检查：内容不同的 AskHuman 并存时会轮流把对方的 daemon 顶掉
 # （docs/specs/daemon-graceful-drain.md §6）。只在发现冲突时输出；检查失败不影响安装结果。
 # Dev Instance 安装有独立 daemon，检查会自行跳过。
-"$INSTALLED_BIN" doctor install --warn-only || true
+run_installed doctor install --warn-only || true

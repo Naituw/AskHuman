@@ -2,7 +2,7 @@
 
 > 状态：已实现；操作与 Agent 约束见 `docs/agent-worktree-setup.md`。
 > 影响面：路径解析（`paths`）、CLI 入口改道、daemon 生命周期与配置/密钥加载、`install.sh`、可选 `dev` 子命令；**不改**主环境默认「每用户单 Daemon + 生产渠道」契约。
-> 后续已确认需求：[日常沟通与开发验收隔离](dev-verification-routing.md)；尚未实现，本文的自动路由与操作约束继续有效。
+> 路由与验收的新行为见 [日常沟通与开发验收隔离](dev-verification-routing.md)。本文 D5／D8／D18 的 cwd 自动行为仅适用于尚未迁移的既有安装；每树程序、home、渠道和预设模型继续有效。
 
 ## 1. 背景
 
@@ -14,7 +14,7 @@
 
 已有 graceful drain（`docs/specs/daemon-graceful-drain.md`）解决「换新打断在途」，但**不能**解决并行开发下的串行等待与二进制互踩。perf harness 用临时 `HOME` + `ASKHUMAN_NO_KEYCHAIN` 证明了整树隔离可行，但不是产品化开发流程。
 
-## 2. 目标
+## 2. 原有目标与兼容行为
 
 - **主环境不变**：未进入 Dev Instance 时，行为与今天完全一致（单 Daemon、生产 config/钥匙串、生产 bot）。
 - **每个 Git WorkTree（含主工作树，若 enable）可有一套独立 Dev Instance**：独立二进制、独立 Daemon、独立 config/home；彼此与主环境互不 drain、互不覆盖 bin。

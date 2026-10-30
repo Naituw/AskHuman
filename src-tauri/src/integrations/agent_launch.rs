@@ -840,6 +840,16 @@ pub fn create_fork_record(
     task: &str,
 ) -> Result<LaunchRecord> {
     validate_source_session_id(source_session_id)?;
+    if let Some(profile) = crate::development::session::for_native(kind, source_session_id) {
+        return create_development_record(
+            &profile,
+            permission,
+            task,
+            LaunchMode::Fork {
+                source_session_id: source_session_id.to_string(),
+            },
+        );
+    }
     if crate::agents::transcript_full::transcript_mtime(kind, source_session_id).is_none() {
         return Err(anyhow!("source session transcript is unavailable"));
     }
@@ -871,6 +881,31 @@ fn create_record_internal(
     launch_mode: LaunchMode,
     choice: &ModelChoice,
 ) -> Result<LaunchRecord> {
+    let source =
+        if let Some(profile) = crate::development::session::active().map_err(anyhow::Error::msg)? {
+            if profile.kind != kind {
+                return Err(anyhow!(
+                    "a development child task must keep its isolated client profile"
+                ));
+            }
+            LaunchSource {
+                channel: crate::development::session::SOURCE_CHANNEL.into(),
+                target: profile.id,
+            }
+        } else {
+            if crate::dev_instance::is_dev_instance_context()
+                && crate::development::state::read()
+                    .map_err(anyhow::Error::msg)?
+                    .mode
+                    == crate::development::state::RoutingMode::Explicit
+                && source.channel != crate::development::session::SOURCE_CHANNEL
+            {
+                return Err(anyhow!(
+                    "start an isolated Dev test profile before creating native child tasks"
+                ));
+            }
+            source
+        };
     if kind == AgentKind::Antigravity {
         return Err(anyhow!("Antigravity launch/fork is unsupported"));
     }
@@ -920,11 +955,15 @@ fn create_record_internal(
             return Err(anyhow!(fork.diagnostics.join("; ")));
         }
     }
-    let askhuman_executable = std::env::current_exe()
+    let askhuman_executable = crate::executable::launch_path()
         .context("failed to resolve AskHuman executable")?
         .to_string_lossy()
         .to_string();
     let created_at = epoch_secs();
+    let payload_hash = bind_development_hash(
+        payload_sha256(task, files, warnings, &launch_mode, choice),
+        &source,
+    );
     let record = LaunchRecord {
         id: uuid::Uuid::new_v4().to_string(),
         created_at,
@@ -934,7 +973,7 @@ fn create_record_internal(
         task_sha256: sha256(task.as_bytes()),
         files: files.to_vec(),
         warnings: warnings.to_vec(),
-        payload_sha256: payload_sha256(task, files, warnings, &launch_mode, choice),
+        payload_sha256: payload_hash,
         cwd: cwd.to_string_lossy().to_string(),
         kind,
         permission,
@@ -943,6 +982,62 @@ fn create_record_internal(
         launch_mode,
         model: choice.model.clone(),
         effort: choice.effort.clone(),
+    };
+    write_private_record(&record)?;
+    Ok(record)
+}
+
+fn bind_development_hash(hash: String, source: &LaunchSource) -> String {
+    if source.channel == crate::development::session::SOURCE_CHANNEL {
+        sha256(format!("askhuman-dev-launch-v1\0{}\0{hash}", source.target).as_bytes())
+    } else {
+        hash
+    }
+}
+
+pub(crate) fn create_development_record(
+    profile: &crate::development::session::Profile,
+    permission: LaunchPermission,
+    task: &str,
+    mode: LaunchMode,
+) -> Result<LaunchRecord> {
+    if task.trim().is_empty() || task.chars().count() > MAX_TASK_CHARS {
+        return Err(anyhow!(
+            "development task must contain 1..={MAX_TASK_CHARS} characters"
+        ));
+    }
+    if profile.kind == AgentKind::Pi && permission != LaunchPermission::AgentDefault {
+        return Err(anyhow!("Pi does not expose a built-in permission mode"));
+    }
+    let source = LaunchSource {
+        channel: crate::development::session::SOURCE_CHANNEL.into(),
+        target: profile.id.clone(),
+    };
+    let payload_hash = bind_development_hash(
+        payload_sha256(task, &[], &[], &mode, &ModelChoice::default()),
+        &source,
+    );
+    let now = epoch_secs();
+    let record = LaunchRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        created_at: now,
+        expires_at: now + RECORD_TTL_SECS,
+        source,
+        task: task.into(),
+        task_sha256: sha256(task.as_bytes()),
+        files: Vec::new(),
+        warnings: Vec::new(),
+        payload_sha256: payload_hash,
+        cwd: profile.worktree.to_string_lossy().to_string(),
+        kind: profile.kind,
+        permission,
+        executable: profile.executable.clone(),
+        askhuman_executable: crate::executable::launch_path()?
+            .to_string_lossy()
+            .to_string(),
+        launch_mode: mode,
+        model: None,
+        effort: None,
     };
     write_private_record(&record)?;
     Ok(record)
@@ -960,6 +1055,7 @@ pub fn open_terminal(record: &LaunchRecord) -> Result<()> {
     let script = r#"on run argv
 tell application "Terminal"
   set launchTab to do script ""
+  if (count of argv) > 1 then set custom title of launchTab to (item 2 of argv)
   repeat while busy of launchTab
     delay 0.05
   end repeat
@@ -967,8 +1063,13 @@ tell application "Terminal"
   do script (item 1 of argv) in launchTab
 end tell
 end run"#;
+    let title = if record.source.channel == crate::development::session::SOURCE_CHANNEL {
+        "Dev · AskHuman"
+    } else {
+        "AskHuman"
+    };
     let status = Command::new("/usr/bin/osascript")
-        .args(["-e", script, &command])
+        .args(["-e", script, &command, title])
         .status()
         .context("failed to ask Terminal.app to open a window")?;
     if !status.success() {
@@ -1027,6 +1128,70 @@ pub fn open_terminal(_record: &LaunchRecord) -> Result<()> {
     Err(anyhow!("IM Agent launch is unsupported on this platform"))
 }
 
+pub(crate) fn development_terminal_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        [
+            "x-terminal-emulator",
+            "gnome-terminal",
+            "konsole",
+            "xfce4-terminal",
+            "xterm",
+        ]
+        .into_iter()
+        .any(|name| {
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+                .any(|dir| is_executable(&dir.join(name)))
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        terminal_available()
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn open_development_terminal(record: &LaunchRecord) -> Result<()> {
+    open_terminal(record)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn open_development_terminal(record: &LaunchRecord) -> Result<()> {
+    let candidates = [
+        "x-terminal-emulator",
+        "gnome-terminal",
+        "konsole",
+        "xfce4-terminal",
+        "xterm",
+    ];
+    for candidate in candidates {
+        let executable = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|directory| directory.join(candidate))
+            .find(|path| is_executable(path));
+        let Some(executable) = executable else {
+            continue;
+        };
+        let mut command = Command::new(executable);
+        command.arg(match candidate {
+            "gnome-terminal" => "--",
+            "xfce4-terminal" => "-x",
+            _ => "-e",
+        });
+        command
+            .arg(&record.askhuman_executable)
+            .arg("__agent-launch")
+            .arg(&record.id)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        crate::daemon::spawn::spawn_and_reap(&mut command)?;
+        return Ok(());
+    }
+    Err(anyhow!(
+        "no supported terminal is installed; use AskHuman dev session --stdio"
+    ))
+}
+
 /// Hidden helper entry point. Returns only on validation failure; success replaces this process
 /// with the selected Agent so it inherits the terminal's real TTY.
 pub fn run_helper(args: &[String]) -> Result<()> {
@@ -1034,6 +1199,14 @@ pub fn run_helper(args: &[String]) -> Result<()> {
         .first()
         .ok_or_else(|| anyhow!("missing launch token"))?;
     let record = claim_record(token)?;
+    let development = if record.source.channel == crate::development::session::SOURCE_CHANNEL {
+        Some(
+            crate::development::session::restore_for_launch(&record.source.target)
+                .map_err(anyhow::Error::msg)?,
+        )
+    } else {
+        None
+    };
     validate_claim(&record, token)?;
     #[cfg(windows)]
     {
@@ -1047,6 +1220,16 @@ pub fn run_helper(args: &[String]) -> Result<()> {
     }
     std::env::set_current_dir(&record.cwd).context("failed to enter workspace")?;
     let mut command = assemble_command(&record);
+    if let Some(profile) = development {
+        if profile.kind != record.kind || profile.executable != record.executable {
+            return Err(anyhow!(
+                "development launch does not match its client profile"
+            ));
+        }
+        crate::development::session::configure_agent_command(&mut command, &profile)
+            .map_err(anyhow::Error::msg)?;
+        command.env(LAUNCH_ID_ENV, &record.id);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -1096,18 +1279,22 @@ fn validate_claim(record: &LaunchRecord, token: &str) -> Result<()> {
     }
     let choice = record.choice();
     if !record.payload_sha256.is_empty() {
-        let expected = payload_sha256(
-            &record.task,
-            &record.files,
-            &record.warnings,
-            &record.launch_mode,
-            &choice,
+        let expected = bind_development_hash(
+            payload_sha256(
+                &record.task,
+                &record.files,
+                &record.warnings,
+                &record.launch_mode,
+                &choice,
+            ),
+            &record.source,
         );
         let legacy = legacy_payload_sha256(&record.task, &record.files, &record.warnings);
         // The pre-launch-mode hash only ever described a plain new task; it must not vouch for a
         // record that also names a model.
         if record.payload_sha256 != expected
             && !(record.launch_mode == LaunchMode::New
+                && record.source.channel != crate::development::session::SOURCE_CHANNEL
                 && choice.is_default()
                 && record.payload_sha256 == legacy)
         {
@@ -1146,7 +1333,7 @@ fn validate_claim(record: &LaunchRecord, token: &str) -> Result<()> {
             "Agent executable changed after launch was requested"
         ));
     }
-    let current = std::env::current_exe()?;
+    let current = crate::executable::launch_path()?;
     if !crate::path_identity::equivalent(&current.to_string_lossy(), &record.askhuman_executable) {
         return Err(anyhow!(
             "AskHuman executable changed after launch was requested"
@@ -1200,6 +1387,9 @@ fn validate_source_session_id(session_id: &str) -> Result<()> {
 /// can fail; nothing is started.
 fn assemble_command(record: &LaunchRecord) -> Command {
     let mut command = Command::new(&record.executable);
+    command
+        .env_remove(crate::development::routing::TARGET_ENV)
+        .env_remove(crate::development::routing::SYSTEM_BINDINGS_ENV);
     command.env(LAUNCH_ID_ENV, &record.id);
     command.args(agent_args(
         record.kind,

@@ -315,7 +315,9 @@ pub(crate) fn set_with_env(
     let lock = mutation_lock::IntegrationMutationLock::acquire()?;
     set_unlocked_with_env(target, mode, env)?;
     drop(lock);
-    if target == AgentTarget::Cursor {
+    if target == AgentTarget::Cursor
+        && std::env::var_os(crate::development::migration::JOURNAL_ENV).is_none()
+    {
         crate::cursor_desktop::integration_changed()?;
     }
     Ok(())

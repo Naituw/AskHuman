@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 设置页编排层：tabbar（含 R9 搜索态）+ 各 tab 子组件 + 根级弹层。
 // 共享状态与各域逻辑在 ./settings/*（createSettingsContext provide，子组件 inject）。
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { applyLanguage } from "../i18n";
@@ -21,12 +21,19 @@ import AdvancedTab from "./settings/AdvancedTab.vue";
 import ExperimentalTab from "./settings/ExperimentalTab.vue";
 import IntegrationTab from "./settings/IntegrationTab.vue";
 import ChannelsTab from "./settings/ChannelsTab.vue";
+import DevelopmentTab from "./settings/DevelopmentTab.vue";
 import SettingsOverlays from "./settings/SettingsOverlays.vue";
 import "./settings/settings.css";
 
 const { t } = useI18n();
 
 const ctx = createSettingsContext();
+const everydayIntegrationsReadOnly = ref(false);
+const tabStrip = ref<HTMLElement | null>(null);
+watch(() => ctx.activeTab.value, async () => {
+  await nextTick();
+  tabStrip.value?.querySelector<HTMLElement>("button.active")?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+});
 const {
   config,
   activeTab,
@@ -94,6 +101,7 @@ onBeforeUnmount(() => {
 
 onMounted(async () => {
   const payload = await getSettings();
+  everydayIntegrationsReadOnly.value = !!payload.everydayIntegrationsReadOnly;
   config.value = payload.config;
   secretsPresent.value = payload.secretsPresent;
   applyTheme(payload.config.general.theme);
@@ -146,6 +154,7 @@ function gotoTabTarget(raw: string) {
   <div v-if="config" class="settings">
     <nav class="tabbar" data-tauri-drag-region>
       <template v-if="!searchActive">
+      <div ref="tabStrip" class="settings-tabs" :class="{ mac: isMac }" data-tauri-drag-region>
       <button
         :data-tauri-drag-region="tabDrag"
         :class="{ active: activeTab === 'general' }"
@@ -193,6 +202,8 @@ function gotoTabTarget(raw: string) {
         {{ t("settings.tabs.experimental") }}
       </button>
       <!-- 设置搜索入口（R9）：右上角放大镜，点击进入搜索态（隐藏 tab、显示输入框） -->
+      <button :data-tauri-drag-region="tabDrag" :class="{ active: activeTab === 'development' }" @mousedown="onTabDown" @click="onTabClick('development', $event)">{{ t("settings.tabs.development") }}</button>
+      </div>
       <button
         class="tab-search-toggle"
         type="button"
@@ -263,7 +274,11 @@ function gotoTabTarget(raw: string) {
       <GeneralTab v-if="activeTab === 'general'" />
       <AdvancedTab v-else-if="activeTab === 'advanced'" />
       <ExperimentalTab v-else-if="activeTab === 'experimental'" />
-      <IntegrationTab v-else-if="activeTab === 'integration'" />
+      <template v-else-if="activeTab === 'integration'">
+        <div v-if="everydayIntegrationsReadOnly" class="card"><p class="card-title">{{ t("development.testSession") }}</p><p class="card-desc">{{ t("development.systemSettingsHint") }}</p><button type="button" @click="activeTab = 'development'">{{ t("development.title") }}</button></div>
+        <IntegrationTab v-else />
+      </template>
+      <DevelopmentTab v-else-if="activeTab === 'development'" />
       <ChannelsTab v-else />
     </div>
 

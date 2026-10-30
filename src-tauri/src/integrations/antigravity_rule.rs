@@ -414,6 +414,12 @@ mod platform {
             })
         }
         fn remove(&self, component: &str, expected: &Blob) -> Result<()> {
+            if matches!(
+                component,
+                "askhuman-antigravity.md" | "integration-state.json"
+            ) {
+                crate::development::migration::before_write(&self.path.join(component), None)?;
+            }
             self.verify()?;
             require_same(
                 self.read(component)?.as_ref(),
@@ -436,6 +442,12 @@ mod platform {
             self.verify()?;
             require_same(self.read(target)?.as_ref(), expected, "replace destination")?;
             require_same(self.read(stage)?.as_ref(), Some(staged), "replace stage")?;
+            if matches!(target, "askhuman-antigravity.md" | "integration-state.json") {
+                crate::development::migration::before_write(
+                    &self.path.join(target),
+                    Some(&staged.bytes),
+                )?;
+            }
             let a = name(stage.as_ref())?;
             let b = name(target.as_ref())?;
             let result = if expected.is_none() {

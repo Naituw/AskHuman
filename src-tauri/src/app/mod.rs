@@ -1056,7 +1056,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                         let builder =
                             WebviewWindowBuilder::new(app, "popup", WebviewUrl::App(url.into()))
                                 .initialization_script(include_str!("popup_navigation.js"))
-                                .title(i18n::tr(lang, "title.popup"))
+                                .title(crate::development::window_title(i18n::tr(lang, "title.popup")))
                                 .inner_size(initial_size.0, initial_size.1)
                                 .min_inner_size(minimum.0, minimum.1)
                                 .center()
@@ -1410,7 +1410,22 @@ pub(crate) fn render_result(
             // 逐题落盘图片（按题分子目录避免文件名冲突），再聚合输出。
             let mut image_paths_per_q: Vec<Vec<String>> = Vec::with_capacity(result.answers.len());
             for (i, answer) in result.answers.iter().enumerate() {
-                match image_writer::save(&answer.images, &request.id, i, lang) {
+                let saved = if let Some(info) = request
+                    .message
+                    .development
+                    .as_deref()
+                    .filter(|info| crate::development::verification::retains_attachments(info))
+                {
+                    crate::development::verification::save_reply_images(
+                        info,
+                        &answer.images,
+                        i,
+                        lang,
+                    )
+                } else {
+                    image_writer::save(&answer.images, &request.id, i, lang)
+                };
+                match saved {
                     Ok(paths) => image_paths_per_q.push(paths),
                     Err(e) => {
                         return (
@@ -1937,7 +1952,10 @@ where
     let effective_window_effect = effective_window_effect(window_effect);
     append_window_effect_query(&mut url, effective_window_effect);
     let builder = WebviewWindowBuilder::new(manager, "settings", WebviewUrl::App(url.into()))
-        .title(i18n::tr(lang, "title.settings"))
+        .title(crate::development::window_title(i18n::tr(
+            lang,
+            "title.settings",
+        )))
         .inner_size(560.0, 640.0)
         // 最小宽度：保证标题栏内居中的 tab 不会与左上角红绿灯重叠。
         .min_inner_size(480.0, 520.0)
@@ -2026,7 +2044,10 @@ where
             })?;
     append_window_effect_query(&mut url, effective_window_effect);
     let builder = WebviewWindowBuilder::new(manager, "history", WebviewUrl::App(url.into()))
-        .title(i18n::tr(lang, "title.history"))
+        .title(crate::development::window_title(i18n::tr(
+            lang,
+            "title.history",
+        )))
         .inner_size(initial.0, initial.1)
         .min_inner_size(minimum.0, minimum.1)
         .center()
@@ -2138,7 +2159,10 @@ where
     }
     append_window_effect_query(&mut url, effective_window_effect);
     let builder = WebviewWindowBuilder::new(manager, "agents", WebviewUrl::App(url.into()))
-        .title(i18n::tr(lang, "title.agents"))
+        .title(crate::development::window_title(i18n::tr(
+            lang,
+            "title.agents",
+        )))
         // 双栏控制台（spec gui-agent-console C1）：边栏 + 详情区需要更宽的默认尺寸。
         .inner_size(980.0, 640.0)
         .min_inner_size(760.0, 480.0)
@@ -2187,7 +2211,10 @@ where
     append_window_effect_query(&mut url, effective_window_effect);
     crate::perf::mark_env("todos.win.create");
     let builder = WebviewWindowBuilder::new(manager, "todos", WebviewUrl::App(url.into()))
-        .title(i18n::tr(lang, "title.todos"))
+        .title(crate::development::window_title(i18n::tr(
+            lang,
+            "title.todos",
+        )))
         // Sidebar (about 220 px) + the todo column; below ~640 px wide the sidebar becomes a
         // drawer (spec todo-sync §9.2).
         .inner_size(760.0, 580.0)
@@ -2298,7 +2325,10 @@ where
     let effective_window_effect = effective_window_effect(window_effect);
     append_window_effect_query(&mut url, effective_window_effect);
     let builder = WebviewWindowBuilder::new(manager, "newtask", WebviewUrl::App(url.into()))
-        .title(i18n::tr(lang, "title.newTask"))
+        .title(crate::development::window_title(i18n::tr(
+            lang,
+            "title.newTask",
+        )))
         .inner_size(520.0, 640.0)
         .min_inner_size(440.0, 520.0)
         .center()
@@ -2342,7 +2372,10 @@ where
     append_window_effect_query(&mut url, effective_window_effect);
     let lang = Lang::resolve(&config.general.language);
     let builder = WebviewWindowBuilder::new(manager, "fork-task", WebviewUrl::App(url.into()))
-        .title(i18n::tr(lang, "title.forkTask"))
+        .title(crate::development::window_title(i18n::tr(
+            lang,
+            "title.forkTask",
+        )))
         .inner_size(520.0, 560.0)
         .min_inner_size(440.0, 480.0)
         .center()
@@ -2392,7 +2425,10 @@ where
     let effective_window_effect = effective_window_effect(window_effect);
     append_window_effect_query(&mut url, effective_window_effect);
     let builder = WebviewWindowBuilder::new(manager, &label, WebviewUrl::App(url.into()))
-        .title(i18n::tr(lang, "title.interject"))
+        .title(crate::development::window_title(i18n::tr(
+            lang,
+            "title.interject",
+        )))
         .inner_size(520.0, 340.0)
         .min_inner_size(420.0, 260.0)
         .center()
