@@ -2,6 +2,7 @@
 
 > 状态：已实现；操作与 Agent 约束见 `docs/agent-worktree-setup.md`。
 > 影响面：路径解析（`paths`）、CLI 入口改道、daemon 生命周期与配置/密钥加载、`install.sh`、可选 `dev` 子命令；**不改**主环境默认「每用户单 Daemon + 生产渠道」契约。
+> 后续已确认需求：[日常沟通与开发验收隔离](dev-verification-routing.md)；尚未实现，本文的自动路由与操作约束继续有效。
 
 ## 1. 背景
 
