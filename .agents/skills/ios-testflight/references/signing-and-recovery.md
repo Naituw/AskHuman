@@ -1,50 +1,71 @@
-# Signing and recovery
+# Signing, Keychain authorization, and recovery
 
-Use this only when the established update path fails or must be configured on a different Mac. The initial setup was completed and used successfully on 2026-10-30; routine updates should reuse it.
+Routine updates reuse the existing setup. Initial TestFlight delivery and Keychain migration were verified on 2026-10-30. Read this reference when the helper, credentials, or signing identity need repair.
 
-## Local inputs
+## Credential boundary
 
-`~/.config/askhuman-release/app-store-connect.json` contains `keyId`, `issuerId`, and an absolute `privateKeyPath`. Export options in the same directory contain:
+The login Keychain holds two generic-password items under service `com.naituw.askhuman.testflight`:
 
-- `method=app-store-connect`, `destination=upload`, `signingStyle=manual`, `teamID=DMJXDB9H6Q`;
-- `testFlightInternalTestingOnly=true`, `manageAppVersionAndBuildNumber=true`, `uploadSymbols=true`;
-- a signing certificate selector and `provisioningProfiles` entries for the main app and `.notification` extension.
+- `app-store-connect.api-private-key`: the API signing key.
+- `signing-keychain.password`: the password of the dedicated distribution keychain.
 
-The directory also holds the dedicated signing keychain and its password file. Private certificate material stays here. The original host's reusable uploader is `upload-testflight.py`; the project's `scripts/upload.py` is the maintained, inspectable equivalent.
+Their access rules trust the Developer ID-signed executable with identifier `com.naituw.askhuman.testflight-helper`, team `DMJXDB9H6Q`. The helper exposes fixed status, local export, upload, and one-time migration operations; it has no credential-dump command. Status requests sign JWTs in memory and use an ephemeral HTTP session. The upload operation is restricted to the existing AskHuman bundle/team and internal-only export options.
 
-Never print the JSON key file or secret file contents to diagnose authentication. Read only the needed metadata in memory. The API key is ES256; read-only `scripts/status.mjs` tests authentication without uploading. Certificate and profile expirations are independent from the API key.
+Project Python/Node scripts invoke this executable through a one-shot job in the user's GUI launchd domain. That security session is necessary for background agents to access the login Keychain reliably. No foreground app or screen unlock is required when the login Keychain itself remains unlocked. The helper disables credential UI: if access is denied or the login Keychain is locked, it returns an error instead of waiting for an invisible dialog. Ask the user to restore access; do not retrieve their Mac login password or search for plaintext substitutes.
 
-## Authentication
+The user authorized unattended use of this specific helper. Publishing still requires a task that requests delivery; permission to inspect code does not request an upload. This protects against accidental credential exposure and broad CLI access; it is not a sandbox against a hostile process running as the same macOS user with code-signing capabilities.
 
-- The API key has App Manager access. Apple team API keys apply to all apps in the account; they cannot be restricted to AskHuman alone. Explain that scope before asking a user to create a replacement.
-- New/replacement keys are created by the user under App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys. The user handles account login, any terms, and the one-time private-key download. Never ask them to paste the key body into chat.
-- A locked Mac prevented native Xcode login, and Terminal was denied access to iCloud Drive. The user transferred the downloaded `.p8` through an AskHuman attachment. If access is denied again, request an accessible file rather than attempting to bypass macOS permissions.
-- The App record already exists as AskHuman Mobile. An empty result when querying its ID/bundle usually needs an account/team/access diagnosis; do not create a second app or change the bundle ID as a workaround.
+## Local state and helper updates
 
-## Distribution signing
+`~/.config/askhuman-release/` is owner-only (`0700`) and contains:
 
-Cloud signing returned “You haven't been given access to cloud-managed distribution certificates” with this key. The user chose to keep App Manager privileges and use a local Apple Distribution certificate. That worked through the same API:
+- `app-store-connect.json`: non-secret `keyId`, `issuerId`, `credentialBackend=keychain`; no private-key path or value.
+- `testflight-export-options.plist`: manual signing for team `DMJXDB9H6Q`, app-store-connect upload, internal-only testing, and both provisioning-profile mappings.
+- `testflight-signing.keychain-db`: the encrypted local distribution identity.
+- `testflight-helper`: the signed operation helper.
 
-1. Generate a new RSA private key and CSR locally only when renewal/setup is actually needed and authorized. Keep the private key owner-only; send only the CSR to Apple.
-2. Use `POST /v1/certificates` with `certificateType=DISTRIBUTION` and `csrContent`. Do not create another certificate merely because an upload failed; check the current certificate, matching private key, and expiration first.
-3. Use `POST /v1/profiles` with `profileType=IOS_APP_STORE`, the relevant bundle ID relationship, and the distribution certificate relationship, separately for the app and notification extension. Resolve resource IDs from Apple; do not assume another machine's IDs.
-4. Install profiles under `~/Library/Developer/Xcode/UserData/Provisioning Profiles/<uuid>.mobileprovision` and import the local signing identity into a dedicated keychain. Configure its code-signing access with `apple-tool:,apple:,codesign:` using that keychain's own password. Preserve existing keychains and identities.
-5. Use manual export with both profile mappings. The uploader serializes uploads per credential directory, temporarily exposes this keychain to the signing search list, and removes only its own addition afterward.
+After a reviewed helper source change, run `python3 .agents/skills/ios-testflight/scripts/helper.py install`. The installer compiles the source and requires the established Developer ID identity; it verifies the identifier and team before replacing the binary. Stable signing requirements let a rebuilt helper use its existing Keychain authorization. Do not use an ad-hoc signature or another team's certificate as a workaround.
 
-The first local distribution certificate expires on 2027-10-30; inspect actual certificate/profile state when renewing. If creation hits permissions or a quota, report it and ask for the specific repair. Do not revoke another certificate or replace the API key with an Admin key automatically.
+`python3 .agents/skills/ios-testflight/scripts/upload.py <archive> --check-signing` exercises Keychain reads, dedicated-keychain unlock, temporary-file handling, and local IPA signing **without uploading**. Use it when repairing credentials or changing the helper; routine updates need not sign twice.
 
-## Packaging failures already encountered
+## Temporary material and cancellation
 
-- **iPad multitasking/orientations error:** XcodeGen's target-level `TARGETED_DEVICE_FAMILY=1,2` overrode the project-level `1`. The main app and extension now explicitly set target-level `1`, matching the project's iPhone-only scope. Regenerate before building; inspect `UIDeviceFamily` in the archive.
-- **Wrong version/build:** XcodeGen's default Info.plist values were literals. `ios/project.yml` now references `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` for both bundles. Verify the archive rather than trusting command-line overrides alone.
-- **Privacy/export declarations:** The app uses the operating system's CryptoKit; the current build declares `ITSAppUsesNonExemptEncryption=false`. Its privacy manifest declares app-owned UserDefaults (`CA92.1`) and app-container file metadata (`C617.1`). Reassess declarations if actual encryption or API usage changes.
-- **Unknown upload outcome:** An uploader error after transfer can precede Apple processing. Check the exact build in App Store Connect before retrying; a second upload of the same number is not a recovery strategy.
-- **VALID but unavailable to the user:** Check internal group membership and tester state. First-time testers need Apple's invitation email; subsequent updates appear in TestFlight. Adding new testers is a separate audience decision.
+Xcode's upload API requires `-authenticationKeyPath`. Only export/upload materializes that key, under `~/.config/askhuman-release/temporary-keys/upload-<uuid>/` (`0700` directory, `0600` file, excluded from normal system backup). The signing-keychain password stays in memory and is passed to Security.framework, not a command line or environment variable.
 
-## Sources
+The helper serializes exports, starts Xcode in its own process group, and restores its keychain-search-list addition and deletes temporary files on success, failure, SIGTERM/SIGINT, or timeout. A force kill cannot execute cleanup; the next exclusive export removes stale directories in this dedicated namespace. Do not broaden cleanup to unrelated paths. The default keychain and existing identities are preserved.
+
+## Missing credentials or a new Mac
+
+Do not silently create replacement keys, revoke certificates, or raise privileges. Establish the specific repair with the user. Account login, legal terms, and one-time downloads remain user steps.
+
+1. An App Store Connect team API key with App Manager role is sufficient for the established local-signing path. Team keys cover all apps in that account and cannot be restricted to AskHuman alone; explain that scope before requesting a new one.
+2. The user supplies any required bootstrap private material through a secure file transfer outside the repository. Never paste private-key bodies into chat or public links. macOS denied Terminal access to iCloud Drive during initial setup; an AskHuman attachment was used instead, then its local copy was deleted after migration.
+3. The signed helper must be installed before storing credentials. For an explicitly authorized initial migration, the legacy metadata can temporarily name `privateKeyPath` and a private `signing-keychain-password` bootstrap file; `helper.py migrate` stores both in the login Keychain with helper-specific access and verifies readback. It refuses to overwrite a different existing credential. A later rotation needs an explicit implementation/review, not an automatic overwrite.
+4. Set `credentialBackend=keychain` and remove `privateKeyPath`, then verify status and local signing through the helper. Only after verification, remove the supplied local `.p8`, signing-password, raw certificate-private-key, P12, and transfer copies that the user authorized cleaning. The user's original iCloud download was not accessible to this migration; ask them to remove it on their phone if they want no original download retained.
+
+The current setup no longer has persistent plaintext copies of those local credentials. Do not restore the old file-based uploader from git history to bypass a Keychain error.
+
+## Distribution certificate and provisioning repair
+
+Cloud signing rejected the App Manager key, so the user chose a local Apple Distribution certificate. Its first certificate expires on 2027-10-30. Certificate/profile expiration is independent from the API key.
+
+- A renewal/setup request may need a fresh RSA key and CSR. Only the CSR goes to `POST /v1/certificates` with `certificateType=DISTRIBUTION`; private material stays local and is imported into the dedicated signing keychain.
+- `POST /v1/profiles` uses `profileType=IOS_APP_STORE`, the matching bundle ID, and that certificate, separately for the app and `.notification` extension. Resolve resource IDs from Apple.
+- Install profiles in `~/Library/Developer/Xcode/UserData/Provisioning Profiles/<uuid>.mobileprovision`, maintain both manual export mappings, and use the dedicated keychain's code-signing partition access (`apple-tool:,apple:,codesign:`). Do not change ACLs on unrelated keychains or grant generic-password access to all applications.
+- If permissions or certificate quotas block renewal, report the exact failure and ask for a specific repair. Existing unrelated certificates must remain intact.
+
+## Packaging and delivery failures
+
+- **iPad orientations error:** XcodeGen's target default overrode the project-level iPhone setting. Both targets now set device family `1`; regenerate before building and inspect the archive.
+- **Wrong version/build:** Both Info.plists reference `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`; check archive values rather than trusting command-line overrides alone.
+- **Privacy/export declarations:** Current encryption uses system CryptoKit. The app declares its exemption and app-owned UserDefaults/container metadata uses. Reassess if actual encryption/API usage changes.
+- **Unknown upload result:** Check the exact build's Apple state before retrying. Transfer completion alone is not delivery.
+- **VALID but unavailable:** Check the internal group and tester invitation state. New testers accept Apple's email; later builds appear in TestFlight. A new audience requires a request covering those people.
+
+## Sources and project context
 
 - [Apple: upload builds](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds/)
-- [Apple: App Store Connect API keys and scope](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-api/)
+- [Apple: API keys and scope](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-api/)
 - [Apple: internal testers](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers/)
-- [Apple: required-reason API declarations](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype)
-- Project record: `docs/plans/ios-channel.md`, “2026-10-30：TestFlight 内部分发”.
+- Project `docs/specs/secret-storage-keychain.md` explains stable signing requirements, GUI security sessions, and screen lock versus Keychain lock.
+- `docs/plans/ios-channel.md`, “2026-10-30：TestFlight 内部分发”, records this app's verified setup.

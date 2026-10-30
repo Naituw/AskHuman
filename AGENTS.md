@@ -30,7 +30,7 @@ After making any change to this project's functionality or logic, verify the res
 
 For remote iPhone installation or a new internal TestFlight build, use the project skill
 [`ios-testflight`](.agents/skills/ios-testflight/SKILL.md). It documents the existing app,
-local signing setup, build/upload helpers, and phone-side verification. Reuse that setup
+Keychain-backed signing helper, build/upload commands, and phone-side verification. Reuse that setup
 for routine updates; credentials stay outside the repository.
 
 ## Changing IPC messages

@@ -556,7 +556,9 @@ App Store Connect 记录为 [AskHuman Mobile](https://appstoreconnect.apple.com/
 
 日常构建与上传步骤由项目 skill `.agents/skills/ios-testflight/SKILL.md` 维护，`AGENTS.md` 已增加发现入口。
 后续构建使用递增的 `CURRENT_PROJECT_VERSION`（首次为 `0.1.0 (2)`）。本机上传配置与独立签名钥匙串在 `~/.config/askhuman-release/`：
-目录权限 `0700`、API 私钥 `0600`，不读取既有 APNs 私钥，不把密钥写入日志或仓库；上传期间临时加入签名钥匙串，结束后恢复搜索列表。
+目录权限 `0700`。持久 API 私钥与专用签名钥匙串密码已迁入登录 Keychain，只授权固定 Developer ID 签名的 helper 使用；签名私钥保存在独立签名钥匙串。
+状态查询在内存中签名；Xcode 导出 / 上传期间才产生临时 `0600` API 私钥文件，正常结束、失败与中断后清理，并恢复签名钥匙串搜索列表。
+未读取既有 APNs 私钥，也未把密钥内容写入日志或仓库。
 签名证书有效期至 2027-10-30。Archive 的 `AHPushEnvironment=prod`，App 已有按推送环境变化更新句柄的逻辑，沿用配对身份与钥匙串组。
 
 验证：首次有效构建 `0.1.0 (2)` 已于 2026-10-30 上传，Apple `processingState=VALID`，已自动加入内部测试组，测试员状态为 `INVITED`。
@@ -565,4 +567,13 @@ App Store Connect 记录为 [AskHuman Mobile](https://appstoreconnect.apple.com/
 用户随后确认已在手机安装且原有 Mac 连接正常，Apple 状态显示 `INSTALLED`。后续交付使用项目 skill
 [`ios-testflight`](../../.agents/skills/ios-testflight/SKILL.md)：脚本提供归档预检、显式上传与只读状态查询，复用现有凭据。
 Skill 已通过结构校验；脚本在真实归档上完成只读预检，并查询到 Apple 的 `VALID` / `INSTALLED` 状态；隔离夹具验证了默认不上传、失败 / 中断时恢复钥匙串搜索列表且保留并行改动，不产生额外上传。
+
+**同日用户要求 Keychain 化并明确授权**：信任专用签名 helper，日常后台使用免弹窗；是否发布仍以具体安装请求为准。迁移验证成功后清理本机明文副本。
+实现位于项目 skill 的 `TestFlightHelper.swift` 与启动脚本：固定标识 `com.naituw.askhuman.testflight-helper`，通过 GUI launchd 安全会话调用，Keychain ACL 绑定稳定签名；
+不开放读出密钥的命令，Python / Node 只发起受限操作。登录钥匙串锁住 / 授权失效时不弹隐藏对话框、不回退明文，交给用户恢复。
+这不构成同一 macOS 用户下对恶意进程的沙箱隔离。
+
+迁移验证：已保存条目在 helper 重编译后仍可静默使用；Apple 状态查询成功；锁住专用签名钥匙串后可用 Keychain 内密码完成本地签名导出（未上传新构建）；
+同团队但不同 identifier 的调用者被 Keychain 拒绝（`-25293`）；并发导出被互斥锁拒绝；SIGTERM 验证了停止 Xcode、删除临时私钥和恢复搜索列表。
+本机受控目录的 API `.p8`、RSA 私钥、P12、签名密码文件及 AskHuman 接收的密钥上传副本已清理，清理后再次本地导出通过；iCloud 原始下载文件因系统权限阻挡未访问。
 

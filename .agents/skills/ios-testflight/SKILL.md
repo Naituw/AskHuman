@@ -12,7 +12,8 @@ Deliver the requested iOS revision to the user's phone through the existing inte
 - App Store Connect: **AskHuman Mobile**, App ID **6828712684**.
 - Installed display name: **AskHuman**; bundle ID **com.naituw.humaninloop.ios**; team **DMJXDB9H6Q**.
 - Internal group: **AskHuman Internal**, automatically receiving subsequent builds. Uploads are internal-only; no external review or App Store submission is needed.
-- Local configuration: `~/.config/askhuman-release/app-store-connect.json`, `testflight-export-options.plist`, `testflight-signing.keychain-db`, and `signing-keychain-password`.
+- Local non-secret configuration: `~/.config/askhuman-release/app-store-connect.json` (`keyId`, `issuerId`, `credentialBackend=keychain`) and `testflight-export-options.plist`.
+- Credentials live in the login Keychain under service `com.naituw.askhuman.testflight`. The fixed, Developer ID-signed `testflight-helper` is authorized to use them. The distribution signing key stays in `testflight-signing.keychain-db`; its unlock password also lives in the login Keychain.
 - The API key has **App Manager** access. This setup uses a local Apple Distribution certificate because cloud signing rejected that role. It already works; no new key or certificate is needed for routine updates.
 
 Read the repository's `AGENTS.md` and the relevant iOS guidance in `docs/overview-ios.md`. Historical implementation details are in `docs/plans/ios-channel.md`, “2026-10-30：TestFlight 内部分发”.
@@ -41,20 +42,23 @@ Paths below are relative to the repository root. Set `SKILL_DIR=.agents/skills/i
    python3 "$SKILL_DIR/scripts/upload.py" ios/build/AskHuman-TestFlight.xcarchive
    ```
 
-   The helper checks the bundle ID, build/version, iPhone device family, production push environment, privacy manifest, internal-only export options, and local credential permissions. Fix an unexpected value in source configuration, regenerate, and rebuild; do not edit a signed archive.
+   Preflight checks both bundle IDs and versions, iPhone device family, production push environment, privacy manifest, internal-only export options, and the installed helper's signature. It does not read credentials. Fix an unexpected value in source configuration, regenerate, and rebuild; do not edit a signed archive.
 5. For an authorized delivery, upload that archive once:
 
    ```sh
    python3 "$SKILL_DIR/scripts/upload.py" ios/build/AskHuman-TestFlight.xcarchive --upload
    ```
 
-   The helper permits one upload at a time per signing configuration. It temporarily adds the dedicated signing keychain and removes its addition on completion, failure, or interruption. It does not change the default keychain. Require `EXPORT SUCCEEDED`; preserve the output log when diagnosing failures.
+   The signed helper reads Keychain items in the user's GUI security session, unlocks the dedicated signing keychain in memory, and permits one export at a time. Xcode requires a key-file path: the helper creates a transient `0600` file outside the project and removes it on completion, failure, or interruption. It also restores its signing-keychain search-list addition. Require `EXPORT SUCCEEDED`; preserve the output log when diagnosing failures.
 6. Check `status.mjs` after upload. Allow Apple time to process; check again after 30–60 seconds initially and back off if unchanged. Completion requires the build to be **VALID**, present in the internal group, and the intended tester invited/accepted/installed. Upload progress at 100% alone is insufficient. If Apple reports INVALID/FAILED or the state does not advance, report the concrete state and investigate it before another upload.
 7. Tell the user the exact version/build. Existing testers can update in TestFlight; a first-time tester must accept Apple's invitation email. Ask them to install and open AskHuman once, confirming their existing Mac connection remains available. This also lets the app refresh its production push registration. Do not uninstall the app as an update step.
 
 ## Boundaries and recovery
 
-- Keep credential contents out of replies, logs, source files, and git. The helpers read only the configured key file. The directory is private (`0700`); API and signing secrets are owner-only (`0600`).
+- Keychain access is granted to the stable signed helper, not to Python, Node, or a general credential-reading CLI. Its public operations return status or perform an export/upload; no operation returns private-key contents. Scripts never read a persistent `.p8` or password file, nor pass a password in argv/environment.
+- When the login Keychain is unlocked, the approved helper can work while the screen is locked. A locked login Keychain, missing item, or changed authorization must fail promptly and be resolved through the user. Do not enable access for all applications, use ad-hoc signing, or fall back to plaintext files.
+- Rebuilding the helper with its established identifier and Developer ID preserves Keychain authorization. Use `python3 "$SKILL_DIR/scripts/helper.py" install` when a reviewed helper update is needed; ordinary uploads reuse the installed binary. For credential repair, read the recovery reference first.
+- A force-killed process cannot run cleanup; the next exclusive export removes stale helper-owned temporary directories. Keep the credential directory `0700` and temporary key files `0600`. The helper never writes temporary credentials into the project.
 - Preserve the existing bundle ID, team, and shared keychain group so an update retains pairing identity. Do not create an external/public group or add other testers without a request covering that audience.
 - For missing/expired credentials, certificate/profile failures, or initial setup on another Mac, read [references/signing-and-recovery.md](references/signing-and-recovery.md). Do not revoke unrelated certificates or increase API privileges to get past a failure.
 - Release builds use production APNs. A successful foreground connection is useful evidence, but does not replace the separate real-device push/network matrix tracked in `docs/PROGRESS.md`.
