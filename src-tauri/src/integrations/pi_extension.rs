@@ -67,7 +67,7 @@ pub fn status() -> ExtensionStatus {
             ..ExtensionStatus::default()
         };
     };
-    let expected = crate::executable::launch_path()
+    let expected = crate::development::routing::program_path()
         .ok()
         .and_then(|executable| {
             render(&refreshed_config(
@@ -120,7 +120,7 @@ pub fn open() {
 }
 
 fn update(change: impl FnOnce(&mut ExtensionConfig)) -> Result<()> {
-    let executable = crate::executable::launch_path()
+    let executable = crate::development::routing::program_path()
         .context("failed to resolve current executable")?
         .to_string_lossy()
         .to_string();

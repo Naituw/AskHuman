@@ -348,6 +348,13 @@ pub fn configure_active(id: &str) -> Result<(), String> {
     if matches!(profile.kind, AgentKind::Claude | AgentKind::Codex) {
         agent_permission::set_enabled(target, true).map_err(|e| e.to_string())?;
     }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    runtime
+        .block_on(crate::client::ensure_running())
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

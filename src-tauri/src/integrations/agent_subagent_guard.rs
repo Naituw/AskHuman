@@ -157,8 +157,8 @@ fn hook_path(target: AgentTarget) -> PathBuf {
 }
 
 fn hook_command(target: AgentTarget) -> Result<String> {
-    let executable =
-        crate::executable::launch_path().context("failed to resolve current executable")?;
+    let executable = crate::development::routing::program_path()
+        .context("failed to resolve current executable")?;
     let agent = match target {
         AgentTarget::ClaudeCode => "claude",
         AgentTarget::Codex => "codex",
@@ -171,8 +171,8 @@ fn hook_command(target: AgentTarget) -> Result<String> {
 }
 
 fn windows_hook_command(target: AgentTarget) -> Result<String> {
-    let executable =
-        crate::executable::launch_path().context("failed to resolve current executable")?;
+    let executable = crate::development::routing::program_path()
+        .context("failed to resolve current executable")?;
     let agent = match target {
         AgentTarget::ClaudeCode => "claude",
         AgentTarget::Codex => "codex",

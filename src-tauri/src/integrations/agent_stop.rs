@@ -132,7 +132,7 @@ pub fn status(kind: AgentKind) -> StopStatus {
     let expected = hook_command(kind, track, confirm).unwrap_or_default();
     let expected_windows = (kind == AgentKind::Codex)
         .then(|| {
-            crate::executable::launch_path().map(|executable| {
+            crate::development::routing::program_path().map(|executable| {
                 windows_hook_command_for(&executable.to_string_lossy(), kind, track, confirm)
             })
         })
@@ -252,8 +252,8 @@ fn target_for_kind(kind: AgentKind) -> super::agent_rules::AgentTarget {
 }
 
 pub(crate) fn hook_command(kind: AgentKind, track: bool, confirm: bool) -> Result<String> {
-    let executable =
-        crate::executable::launch_path().context("failed to resolve current executable")?;
+    let executable = crate::development::routing::program_path()
+        .context("failed to resolve current executable")?;
     Ok(hook_command_for(
         &executable.to_string_lossy(),
         kind,
@@ -300,8 +300,8 @@ fn install_handler(kind: AgentKind, track: bool, confirm: bool) -> Result<()> {
         .as_deref()
         .and_then(|bytes| std::str::from_utf8(bytes).ok())
         .unwrap_or("{}");
-    let executable =
-        crate::executable::launch_path().context("failed to resolve current executable")?;
+    let executable = crate::development::routing::program_path()
+        .context("failed to resolve current executable")?;
     let updated = apply_handler_state(
         kind,
         original,

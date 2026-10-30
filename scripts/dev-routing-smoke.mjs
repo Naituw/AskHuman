@@ -1,11 +1,11 @@
-// Real-process isolation regression. No daemon, GUI, channel credentials or model calls.
+// Real-process isolation regression with private daemons. No GUI, channel credentials or model calls.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { sourceFingerprint, recordBuild } from './dev-build-record.mjs';
 
 if (process.platform === 'win32') {
@@ -14,7 +14,7 @@ if (process.platform === 'win32') {
 }
 const original = path.resolve(process.argv[2] ?? 'src-tauri/target/local-install/AskHuman');
 assert.ok(fs.statSync(original).isFile(), 'pass a freshly built AskHuman executable');
-const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'askhuman-dev-routing-')));
+const temp = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'darwin' ? '/tmp' : os.tmpdir(), 'ahdr-')));
 const home = path.join(temp, 'user');
 fs.mkdirSync(home);
 const system = path.join(temp, 'system/AskHuman');
@@ -26,6 +26,7 @@ for (const name of Object.keys(env)) if (name.startsWith('ASKHUMAN_') && name !=
 let server;
 const workspaces = [];
 let donorProfile;
+const homes = [path.join(home, ".askhuman")];
 function run(args, cwd = temp, extra = {}, ok = true) {
   const output = spawnSync(system, args, { cwd, env: { ...env, ...extra }, encoding: 'utf8', timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
   if (ok) assert.equal(output.status, 0, `${args.join(' ')}: ${output.stderr}`);
@@ -38,6 +39,12 @@ function worktree(name) {
   fs.mkdirSync(root);
   assert.equal(spawnSync('git', ['init', '--quiet', root]).status, 0);
   run(['dev', 'enable'], root);
+  const instanceHome = path.join(root, '.askhuman-dev/home');
+  homes.push(instanceHome);
+  const config = JSON.parse(fs.readFileSync(path.join(instanceHome, 'config.json')));
+  config.general.popupPrewarm = false; config.general.menuBarIcon = 'off';
+  config.channels.popup.enabled = false;
+  fs.writeFileSync(path.join(instanceHome, 'config.json'), JSON.stringify(config));
   const binary = path.join(root, '.askhuman-dev/bin/AskHuman');
   fs.copyFileSync(original, binary, fs.constants.COPYFILE_FICLONE);
   fs.chmodSync(binary, 0o700);
@@ -46,6 +53,8 @@ function worktree(name) {
 }
 
 try {
+  fs.mkdirSync(path.join(home, '.askhuman'));
+  fs.writeFileSync(path.join(home, '.askhuman/config.json'), JSON.stringify({ general: {popupPrewarm:false, menuBarIcon:'off'}, channels: {popup:{enabled:false}} }));
   run(['dev', 'register-system', system]);
   const a = worktree('tree-a'), b = worktree('tree-b');
   fs.renameSync(system, `${system}.image`);
@@ -74,8 +83,10 @@ try {
   server = spawn(system, ['--instance', 'system', 'mcp'], { cwd: a.root, env, stdio: ['pipe', 'pipe', 'pipe'] });
   server.stderr.resume();
   const awaiting = new Map();
-  const lines = createInterface({ input: server.stdout });
-  lines.on('line', line => { const response = JSON.parse(line); if (response.id != null) { awaiting.get(response.id)?.(response); awaiting.delete(response.id); } });
+  function attachReplies(child) {
+    createInterface({ input: child.stdout }).on('line', line => { const response = JSON.parse(line); if (response.id != null) { awaiting.get(response.id)?.(response); awaiting.delete(response.id); } });
+  }
+  attachReplies(server);
   let id = 0;
   const call = (method, params) => new Promise((resolve, reject) => {
     const requestId = ++id;
@@ -147,11 +158,23 @@ try {
     }, false);
     assert.doesNotMatch(rejected.stderr, /profile|test-profiles/);
     assert.match(rejected.stderr, /invalid-routing-smoke-option/);
+    server = spawn(system, ['--instance', 'dev', '--worktree', a.root, 'mcp'], {
+      cwd: donorProfile.neutralWorkspace, env: { ...env, ASKHUMAN_RESOLVED_TARGET_V1: JSON.stringify(target), ASKHUMAN_HOME: target.home, ASKHUMAN_DEV_TEST_PROFILE: donorProfile.id }, stdio: ['pipe','pipe','pipe'],
+    });
+    server.stderr.resume(); attachReplies(server);
+    await call('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name:'private-profile-smoke',version:'1' } });
+    server.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
+    assert.match(JSON.stringify(await todos()), /dev-sentinel/);
+    assert.doesNotMatch(JSON.stringify(await todos()), /formal-sentinel/);
+    server.stdin.end();server.kill();server=null;
+
   }
   for (const [file, bytes] of globalBefore) assert.deepEqual(fs.existsSync(path.join(home, file)) ? fs.readFileSync(path.join(home, file)) : null, bytes);
 
   // Seed genuine legacy bundles, then migrate every adapter without touching a real home.
   routing.mode = 'legacy'; fs.writeFileSync(routingFile, JSON.stringify(routing));
+  run(['agents', 'mode', 'claude', 'mcp']);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, '.claude.json'))).mcpServers.askhuman.command, system);
   for (const [agent, mode] of [['claude', 'mcp'], ['codex', 'mcp'], ['cursor', 'mcp'], ['grok', 'mcp'], ['pi', 'cli'], ['antigravity', 'mcp']]) {
     run(['--instance', 'system', 'agents', 'mode', agent, mode]);
   }
@@ -191,6 +214,13 @@ try {
   console.log('PASS: two worktrees; system/Dev/system; fixed MCP across marker changes; Dev resume and stale build rejection; six legacy bundles and CLI variants migrated; partial failure retried; external edit preserved; exact rollback');
 } finally {
   server?.kill();
+  for (const instanceHome of homes) {
+    spawnSync(system, ['daemon','stop','--force'], {cwd:temp,env:{...env,ASKHUMAN_HOME:instanceHome},encoding:'utf8',timeout:10000});
+    if (process.platform === 'darwin') {
+      const suffix = createHash('sha256').update(instanceHome).digest('hex').slice(0, 16);
+      spawnSync('launchctl', ['bootout', `gui/${process.getuid()}/com.naituw.humaninloop.daemon.instance.${suffix}`], {stdio:'ignore',timeout:10000});
+    }
+  }
   for (const workspace of workspaces) {
     const owner = JSON.parse(fs.readFileSync(path.join(workspace, "askhuman-owner.json")));
     if (owner.worktree.startsWith(temp + path.sep)) fs.rmSync(workspace, { recursive: true, force: true });

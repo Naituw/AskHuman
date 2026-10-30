@@ -112,7 +112,7 @@ const { beginDivider } = usePreviewDivider({ mainWidth: () => previewLayout.valu
         <QuestionCards v-if="verticalMode" />
         <SequentialPane v-else />
         <!-- 待办下拉区：跟在最后一个问题后面（sequential 多题时仅最后一题面板显示） -->
-        <TodoSection v-if="!request?.message.development" />
+        <TodoSection v-if="!request?.message.development || !!request?.message.development?.testProfile" />
       </template>
     </div>
 

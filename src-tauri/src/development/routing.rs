@@ -39,6 +39,15 @@ pub fn integration_args(args: &[&str]) -> Vec<String> {
     result
 }
 
+/// Integration artifacts must retain the selected installation entry, even when the running
+/// image is reached through a symlink or retained by the Linux publisher.
+pub fn program_path() -> std::io::Result<PathBuf> {
+    match inherited().map_err(std::io::Error::other)? {
+        Some(target) => Ok(target.binary),
+        None => crate::executable::launch_path(),
+    }
+}
+
 fn registered_system_binary(fallback: &Path) -> Result<PathBuf, String> {
     let binary = state::read()?
         .system_binary
@@ -50,6 +59,19 @@ fn registered_system_binary(fallback: &Path) -> Result<PathBuf, String> {
         return Err("registered system entry is missing; reinstall the system AskHuman".into());
     }
     Ok(binary)
+}
+
+fn system_entry(current: &Path, configured: &state::State) -> Result<PathBuf, String> {
+    if configured.mode == RoutingMode::Explicit {
+        return registered_system_binary(current);
+    }
+    // Preserve legacy binary choice while retaining a registered alias for the same image.
+    Ok(configured
+        .system_binary
+        .as_ref()
+        .filter(|entry| state::same_path(entry, current))
+        .cloned()
+        .unwrap_or_else(|| current.to_path_buf()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -352,7 +374,7 @@ pub fn diagnostic() -> Result<Target, String> {
     Ok(Target {
         version: 1,
         kind: TargetKind::System,
-        binary: registered_system_binary(&current)?,
+        binary: system_entry(&current, &state::read()?)?,
         home: state::system_home(),
         worktree: None,
         reason: "everyday system entry".into(),
@@ -498,11 +520,7 @@ pub fn prepare(argv: Vec<String>) -> Result<Vec<String>, String> {
                 return Ok(parsed.argv);
             }
         }
-        let binary = if state::read()?.mode == RoutingMode::Explicit {
-            registered_system_binary(&current)?
-        } else {
-            current.clone()
-        };
+        let binary = system_entry(&current, &state::read()?)?;
         Target {
             version: 1,
             kind: TargetKind::System,

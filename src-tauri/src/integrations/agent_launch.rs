@@ -955,7 +955,7 @@ fn create_record_internal(
             return Err(anyhow!(fork.diagnostics.join("; ")));
         }
     }
-    let askhuman_executable = crate::executable::launch_path()
+    let askhuman_executable = crate::development::routing::program_path()
         .context("failed to resolve AskHuman executable")?
         .to_string_lossy()
         .to_string();
@@ -1032,7 +1032,7 @@ pub(crate) fn create_development_record(
         kind: profile.kind,
         permission,
         executable: profile.executable.clone(),
-        askhuman_executable: crate::executable::launch_path()?
+        askhuman_executable: crate::development::routing::program_path()?
             .to_string_lossy()
             .to_string(),
         launch_mode: mode,
@@ -1333,7 +1333,7 @@ fn validate_claim(record: &LaunchRecord, token: &str) -> Result<()> {
             "Agent executable changed after launch was requested"
         ));
     }
-    let current = crate::executable::launch_path()?;
+    let current = crate::development::routing::program_path()?;
     if !crate::path_identity::equivalent(&current.to_string_lossy(), &record.askhuman_executable) {
         return Err(anyhow!(
             "AskHuman executable changed after launch was requested"

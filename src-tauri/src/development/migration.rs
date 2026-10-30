@@ -244,19 +244,27 @@ fn check_mcp(path: &Path, toml: bool) -> Result<(), String> {
                         path.display()
                     )
                 })?;
-        doc.get("mcpServers")
-            .and_then(|s| s.get("askhuman"))
-            .cloned()
+        let entry = doc.get("mcpServers").and_then(|s| s.get("askhuman"));
+        if entry.and_then(|e| e.as_object()).is_some_and(|e| {
+            e.keys().any(|key| {
+                !matches!(
+                    key.as_str(),
+                    "command" | "args" | "env" | "timeout" | "timeoutSeconds"
+                )
+            })
+        }) {
+            return Err(format!(
+                "custom MCP fields require manual review: {}",
+                path.display()
+            ));
+        }
+        entry.cloned()
     };
     let Some(entry) = entry else { return Ok(()) };
     let command = entry
         .get("command")
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("custom AskHuman MCP transport: {}", path.display()))?;
-    let name = Path::new(command)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy();
     let args = entry.get("args").and_then(|v| v.as_array());
     let owned_args = args.is_some_and(|args| {
         args == &vec![serde_json::json!("mcp")]
@@ -267,9 +275,7 @@ fn check_mcp(path: &Path, toml: bool) -> Result<(), String> {
                     serde_json::json!("mcp"),
                 ]
     });
-    if !name.eq_ignore_ascii_case("AskHuman") && !name.eq_ignore_ascii_case("AskHuman.exe")
-        || !owned_args
-    {
+    if !owned_args {
         return Err(format!(
             "custom AskHuman MCP command requires manual review: {}",
             path.display()
@@ -751,5 +757,16 @@ mod tests {
         assert_eq!(read_file(&p).unwrap().unwrap(), b"token = 'private'\n");
         #[cfg(unix)]
         assert_eq!(permissions(&p), Some(0o600));
+    }
+    #[test]
+    fn migration_preserves_custom_json_server_controls_instead_of_reinstalling_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().canonicalize().unwrap().join("mcp.json");
+        let bytes=br#"{"mcpServers":{"askhuman":{"command":"/tools/AskHuman","args":["mcp"],"disabled":true}}}"#;
+        std::fs::write(&path, bytes).unwrap();
+        assert!(check_mcp(&path, false)
+            .unwrap_err()
+            .contains("custom MCP fields"));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
 }

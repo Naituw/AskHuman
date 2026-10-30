@@ -53,6 +53,47 @@ async fn hello_status() -> Option<HelloStatus> {
 
 /// 确保 Daemon 在运行且为当前二进制版本；必要时自启 / 等旧实例换新。
 pub async fn ensure_running() -> std::io::Result<()> {
+    ensure_running_inner().await?;
+    if crate::development::routing::inherited()
+        .map_err(Error::other)?
+        .is_some_and(|target| target.kind == crate::development::routing::TargetKind::Dev)
+    {
+        require_development_peer().await?;
+    }
+    Ok(())
+}
+
+fn development_peer_matches(
+    status: &StatusInfo,
+    expected: crate::daemon::lifecycle::Fingerprint,
+) -> bool {
+    status.development_verification_version == crate::development::CAPABILITY_VERSION
+        && status.fingerprint == Some(expected)
+}
+
+async fn require_development_peer() -> std::io::Result<()> {
+    let status = request_status_result()
+        .await?
+        .ok_or_else(|| Error::other("selected development daemon is unavailable"))?;
+    if !development_peer_matches(&status, crate::daemon::lifecycle::current_fingerprint()) {
+        return Err(Error::other("Dev verification requires a compatible daemon running this exact build; restart the selected instance before verification"));
+    }
+    Ok(())
+}
+
+async fn background_peer_ready() -> bool {
+    if ensure_running().await.is_ok() {
+        return true;
+    }
+    let dev = crate::development::routing::inherited()
+        .ok()
+        .flatten()
+        .is_some_and(|t| t.kind == crate::development::routing::TargetKind::Dev);
+    // Lifecycle reports may still reach a draining peer, provided it is the verified Dev build.
+    !dev || require_development_peer().await.is_ok()
+}
+
+async fn ensure_running_inner() -> std::io::Result<()> {
     // 1. 已在运行且 Ok → 直接用。
     match hello_status().await {
         Some(HelloStatus::Ok) => return Ok(()),
@@ -436,7 +477,9 @@ pub fn report_agent_event(msg: ClientMsg) {
     rt.block_on(async {
         // 即便 daemon 在排空（WouldBlock）也继续尝试直连：control_loop 不依赖 Hello 即可处理 AgentEvent，
         // 排空中的 daemon 退出前会持久化、由新 daemon 重载。
-        let _ = ensure_running().await;
+        if !background_peer_ready().await {
+            return;
+        }
         if let Ok((_, mut writer)) = connect_split().await {
             let _ = ipc::write_msg(&mut writer, &msg).await;
         }
@@ -455,7 +498,9 @@ pub async fn register_mcp_instance(
     server_pid: u32,
     parent_pid_hint: Option<u32>,
 ) {
-    let _ = ensure_running().await;
+    if !background_peer_ready().await {
+        return;
+    }
     if let Ok((_, mut writer)) = connect_split().await {
         let _ = ipc::write_msg(
             &mut writer,
@@ -541,7 +586,9 @@ pub fn report_agent_event_with_poll(msg: ClientMsg) -> InterjectPollOutcome {
         return InterjectPollOutcome::Allow;
     };
     rt.block_on(async {
-        let _ = ensure_running().await;
+        if !background_peer_ready().await {
+            return InterjectPollOutcome::Allow;
+        }
         let Ok((mut reader, mut writer)) = connect_split().await else {
             return InterjectPollOutcome::Allow;
         };
@@ -819,15 +866,14 @@ async fn run_ask_final_async(task: crate::ipc::TaskRequest, verbose: bool) -> As
                     return daemon_start_error(verbose, &error);
                 }
             }
-            if task.message.development.is_some() {
-                let status = request_status_result().await.ok().flatten();
-                if status.as_ref().is_none_or(|status| {
-                    status.development_verification_version
-                        != crate::development::CAPABILITY_VERSION
-                        || status.fingerprint
-                            != Some(crate::daemon::lifecycle::current_fingerprint())
-                }) {
-                    return client_error(verbose, "Dev verification requires a compatible daemon running this exact build; restart the selected instance before verification");
+            if task
+                .message
+                .development
+                .as_ref()
+                .is_some_and(|info| info.relay)
+            {
+                if let Err(error) = require_development_peer().await {
+                    return client_error(verbose, &error.to_string());
                 }
             }
             let Ok((mut reader, mut writer)) = connect_split().await else {
@@ -921,6 +967,21 @@ mod tests {
     use super::*;
     use crate::ipc::InterjectAction;
     use tokio::io::BufReader;
+
+    #[test]
+    fn development_clients_require_both_capability_and_exact_daemon_identity() {
+        let mut status:StatusInfo=serde_json::from_value(serde_json::json!({"pid":1,"version":"old","protocolVersion":4,"uptimeSecs":0,"socket":"local","activeRequests":0})).unwrap();
+        let expected = crate::daemon::lifecycle::Fingerprint { size: 1, hash: 2 };
+        assert!(!development_peer_matches(&status, expected));
+        status.fingerprint = Some(expected);
+        assert!(!development_peer_matches(&status, expected));
+        status.development_verification_version = crate::development::CAPABILITY_VERSION;
+        assert!(development_peer_matches(&status, expected));
+        assert!(!development_peer_matches(
+            &status,
+            crate::daemon::lifecycle::Fingerprint { size: 1, hash: 3 }
+        ));
+    }
 
     #[test]
     fn daemon_start_failure_preserves_empty_stdout_and_exit_code_three() {

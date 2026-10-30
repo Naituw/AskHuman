@@ -462,9 +462,15 @@ impl AskServer {
             },
             hidden,
             mcp_instance_id: uuid::Uuid::new_v4().to_string(),
-            project: std::env::current_dir()
+            project: crate::development::session::active()
                 .ok()
-                .map(|cwd| crate::project::detect_from(&cwd))
+                .flatten()
+                .map(|profile| crate::project::detect_from(&profile.worktree))
+                .or_else(|| {
+                    std::env::current_dir()
+                        .ok()
+                        .map(|cwd| crate::project::detect_from(&cwd))
+                })
                 .unwrap_or_default(),
             executable: crate::executable::launch_path().map_err(|error| error.to_string()),
         }

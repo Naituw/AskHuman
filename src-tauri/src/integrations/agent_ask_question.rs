@@ -180,8 +180,8 @@ fn target_for_kind(kind: AgentKind) -> super::agent_rules::AgentTarget {
 }
 
 pub(crate) fn hook_command() -> Result<String> {
-    let executable =
-        crate::executable::launch_path().context("failed to resolve current executable")?;
+    let executable = crate::development::routing::program_path()
+        .context("failed to resolve current executable")?;
     Ok(hook_command_for(&executable.to_string_lossy()))
 }
 
@@ -196,8 +196,8 @@ pub(crate) fn hook_command_for(exe: &str) -> String {
 fn install(kind: AgentKind) -> Result<()> {
     let path = hook_path(kind);
     let original = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".into());
-    let executable =
-        crate::executable::launch_path().context("failed to resolve current executable")?;
+    let executable = crate::development::routing::program_path()
+        .context("failed to resolve current executable")?;
     let updated = apply_state(&original, Some(&executable.to_string_lossy()))?;
     hook_edit::atomic_write(&path, updated.as_bytes())
 }
