@@ -261,13 +261,48 @@ for (const os of ["Darwin", "Linux"]) {
       assertSuccess(second);
       assert.match(second.stdout, os === "Linux"
         ? /installed executable unchanged; skipping publication/
-        : /跳过复制与签名/);
+        : /已安装二进制内容未变化，跳过复制与签名/);
       assert.equal(statSync(f.target).ino, installedInode);
     } finally {
       closeSync(fd);
     }
   });
 }
+
+test("Linux: unchanged install.sh runs reclaim images after process references disappear",
+  { skip: process.platform !== "linux" ? "requires Linux" : (!rustcAvailable && "requires the Rust toolchain") }, t => {
+  const f = fixture(t, { os: "Linux", linked: true });
+  const retained = () => readdirSync(f.targetDir).filter(name => /^\.askhuman-install-\d+-\d+$/.test(name));
+  assertSuccess(f.run());
+  const [oldName] = retained();
+  const proc = path.join(f.repo, "fake-proc");
+  const processDir = path.join(proc, "4242");
+  mkdirSync(processDir, { recursive: true });
+  symlinkSync(path.join(f.targetDir, oldName, "AskHuman"), path.join(processDir, "exe"));
+
+  executable(path.join(f.repo, "src-tauri/target/local-install/AskHuman"), newBinary + "# next build\n");
+  assertSuccess(f.run({ ASKHUMAN_INSTALL_PROC_ROOT: proc }));
+  assert.equal(retained().length, 2);
+  const inode = statSync(f.target).ino;
+  const state = readFileSync(f.state, "utf8");
+  const held = f.run({ ASKHUMAN_INSTALL_PROC_ROOT: proc });
+  assertSuccess(held);
+  assert.match(held.stdout, /installed executable unchanged/);
+  assert.match(held.stdout, /in use by pid 4242/);
+  assert.equal(retained().length, 2);
+
+  rmSync(processDir, { recursive: true });
+  const reclaimed = f.run({ ASKHUMAN_INSTALL_PROC_ROOT: proc });
+  assertSuccess(reclaimed);
+  assert.match(reclaimed.stdout, /installed executable unchanged/);
+  assert.match(reclaimed.stdout, /removed unreferenced retained executable/);
+  assert.equal(retained().length, 1);
+  assert.ok(!retained().includes(oldName));
+  assert.equal(statSync(f.target).ino, inode);
+  assert.equal(readFileSync(f.state, "utf8"), state);
+  assert.equal(lstatSync(f.entry).isSymbolicLink(), true);
+  assertNoStage(f);
+});
 
 // The fixture's rustc stub copies a prebuilt publisher, so these two tests keep the compile
 // invocation and its failure path covered without recompiling on every install.
@@ -297,16 +332,34 @@ test("Linux: a publisher compile failure leaves the install untouched", { skip: 
   assertNoStage(f);
 });
 
-test("preserves a relative/absolute symlink chain and replaces its final target", unixOnly, t => {
-  const f = fixture(t, { linked: true });
-  const oldInode = statSync(f.target).ino;
-  assertSuccess(f.run());
-  assert.equal(lstatSync(f.entry).isSymbolicLink(), true);
-  assert.equal(readlinkSync(f.entry), "../links/current");
-  assert.notEqual(statSync(f.target).ino, oldInode);
-  assert.equal(readFileSync(f.entry, "utf8"), newBinary + "# signed\n");
-  assertNoStage(f);
-});
+for (const os of ["Darwin", "Linux"]) {
+  const nativePublisher = os === "Linux" && process.platform !== "linux";
+  test(`${os}: preserves a relative/absolute symlink chain and replaces its final target`,
+    { skip: process.platform === "win32"
+      || (nativePublisher && "requires the native Linux publisher")
+      || (os === "Linux" && !rustcAvailable && "requires the Rust toolchain") }, t => {
+    const f = fixture(t, { linked: true, os });
+    const oldInode = statSync(f.target).ino;
+    assertSuccess(f.run());
+    assert.equal(lstatSync(f.entry).isSymbolicLink(), true);
+    assert.equal(readlinkSync(f.entry), "../links/current");
+    assert.notEqual(statSync(f.target).ino, oldInode);
+    assert.equal(readFileSync(f.entry, "utf8"), newBinary + (os === "Darwin" ? "# signed\n" : ""));
+    assert.match(readFileSync(f.state, "utf8"),
+      new RegExp(`installed=${createHash("sha256").update(readFileSync(f.target)).digest("hex")}`));
+    assertNoStage(f);
+    if (os === "Linux") {
+      assert.equal(readdirSync(f.targetDir).filter(name => /^\.askhuman-install-\d+-\d+$/.test(name)).length, 1);
+      assert.deepEqual(readdirSync(f.bin).filter(name => /^\.askhuman-install-\d+-\d+$/.test(name)), []);
+    }
+
+    const installedInode = statSync(f.target).ino;
+    assertSuccess(f.run());
+    assert.equal(lstatSync(f.entry).isSymbolicLink(), true);
+    assert.equal(statSync(f.target).ino, installedInode);
+    assertNoStage(f);
+  });
+}
 
 for (const failure of ["TEST_FAIL_SIGN", "TEST_FAIL_VERIFY"]) {
   test(`${failure}: retains the installed binary and state, and removes staging`, unixOnly, t => {
