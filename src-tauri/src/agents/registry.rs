@@ -811,6 +811,9 @@ impl AgentRegistry {
     /// 弹窗 → Agent 状态窗口的严格寻址门控：只有家族与会话 ID 同时命中活动记录才算匹配。
     /// 不按 pid / cwd / 家族单独猜测，避免并发会话时把快捷入口指向错误 Agent。
     pub fn has_active_session(&self, kind: AgentKind, session_id: &str) -> bool {
+        if !crate::development::session::native_binding_allowed(kind, session_id) {
+            return false;
+        }
         if session_id.is_empty() {
             return false;
         }
@@ -988,6 +991,9 @@ impl AgentRegistry {
             .active
             .iter()
             .find(|record| record.session_id == session_id)?;
+        if !crate::development::session::native_binding_allowed(record.kind, session_id) {
+            return None;
+        }
         Some((record.kind, record.pid, record.launch_id.clone()))
     }
 
@@ -1149,6 +1155,7 @@ impl AgentRegistry {
         let now = now_secs();
         let arr: Vec<Value> = list
             .iter()
+            .filter(|record|crate::development::session::native_binding_allowed(record.kind,&record.session_id))
             .map(|r| {
                 let mut v = serde_json::to_value(r).unwrap_or(Value::Null);
                 if let Some(obj) = v.as_object_mut() {

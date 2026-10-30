@@ -39,6 +39,8 @@ IPC 协议号不变。构建信息单独返回，不写进人类回答正文。
 `session.rs` 为每工作树、每 Agent 保存独立 profile，位于 `.askhuman-dev/clients/<agent>`。
 原生 session 需经该 profile 的生命周期 Hook 建立绑定，转录文件查找也受该绑定约束。
 完整测试的子任务与 Fork 使用原 profile 与 Dev 目标；无法确认归属的原生启动会失败。
+迁移后，直接 Dev 提问必须走 `dev ask` 或测试 profile；未绑定 profile 的原生事件、权限确认和会话控制会被拒绝，
+旧记录不会凭一个原生 session ID 重新取得控制能力。
 
 | 客户端 | 配置隔离与启动 |
 | --- | --- |

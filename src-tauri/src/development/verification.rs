@@ -272,6 +272,9 @@ pub fn clear_native_context(command: &mut Command) {
 
 pub fn validate_task(task: &mut crate::ipc::TaskRequest) -> Result<(), String> {
     let Some(info) = task.message.development.as_ref() else {
+        if super::session::requires_test_profile() {
+            return Err("Dev questions require dev ask or an isolated test profile".into());
+        }
         return Ok(());
     };
     if info.relay {

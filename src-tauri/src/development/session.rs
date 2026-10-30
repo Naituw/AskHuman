@@ -43,6 +43,21 @@ struct Binding {
     transcript: Option<PathBuf>,
 }
 
+/// Migrated Dev instances only accept native authority owned by a prepared test profile.
+pub fn requires_test_profile() -> bool {
+    routing::inherited()
+        .ok()
+        .flatten()
+        .is_some_and(|target| target.kind == routing::TargetKind::Dev)
+        && state::read()
+            .map(|s| s.mode == state::RoutingMode::Explicit)
+            .unwrap_or(true)
+}
+
+pub fn native_binding_allowed(kind: AgentKind, session_id: &str) -> bool {
+    !requires_test_profile() || for_native(kind, session_id).is_some_and(|profile| profile.prepared)
+}
+
 fn profile_path(root: &Path, id: &str) -> Result<PathBuf, String> {
     if uuid::Uuid::parse_str(id).is_err() {
         return Err("invalid development profile ID".into());

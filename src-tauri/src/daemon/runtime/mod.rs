@@ -1614,6 +1614,9 @@ async fn control_loop(
                     AgentKind::parse(&agent).filter(|kind| *kind != AgentKind::Antigravity),
                     LifecycleEvent::parse(&event),
                 ) {
+                    if !crate::development::session::native_binding_allowed(kind, &session_id) {
+                        return Control::Closed;
+                    }
                     // PreToolUse：先回 interject 再做后续（hook 在等，优先解除阻塞）。
                     if interject_poll {
                         use crate::agents::interject::PollOutcome;
@@ -1999,6 +2002,27 @@ async fn handle_submit_confirm(
     mut w: OwnedWriteHalf,
     state: &Arc<ServerState>,
 ) {
+    if crate::development::session::requires_test_profile()
+        && !AgentKind::parse(&task.agent_kind).is_some_and(|kind| {
+            crate::development::session::native_binding_allowed(kind, &task.agent_session_id)
+        })
+    {
+        let _ = ipc::write_msg(
+            &mut w,
+            &ServerMsg::Warn {
+                text: "Dev native confirmation requires an isolated test session binding".into(),
+            },
+        )
+        .await;
+        let _ = ipc::write_msg(
+            &mut w,
+            &ServerMsg::ConfirmFallback {
+                reason: ConfirmFallbackReason::InvalidRequest,
+            },
+        )
+        .await;
+        return;
+    }
     let project = crate::project::for_session(
         Some(&task.agent_kind),
         Some(&task.agent_session_id),

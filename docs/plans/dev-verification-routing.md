@@ -26,6 +26,7 @@ macOS 本机已运行安装脚本，新安装程序能力探针返回 developmen
 - `scripts/dev-routing-smoke.mjs` 用实际新程序和临时 HOME 验证两工作树、正式／Dev／正式、稳定注册入口、
   冲突 home、继承目标冲突、MCP 生命周期内 marker 变化、Dev 重取与错构建拒绝、缺失／不可执行／旧程序、源码未重建。
   独立 profile 从中性工作区调用实际 MCP 时仍使用 Dev 工作树的待办；内部临时 daemon 关闭预热和 GUI，结束时清理。
+  迁移后的裸 Dev 提问被明确拒绝；未绑定原生 session 的权限 RPC 返回无决定，生命周期事件不进入 registry。
 - 同一跨进程用例准备 Claude／Codex／Grok／Pi 私有配置，无模型调用，日常文件逐字不变；再迁移六种真实受管配置，
   检查新正式入口与 Codex 信任；MCP／CLI 两组模式均通过。注入目录不可写后呈现部分完成并可重试；
   外部编辑会阻止回退，消除冲突后按原字节与权限恢复。

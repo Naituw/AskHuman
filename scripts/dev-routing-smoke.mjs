@@ -5,6 +5,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { createConnection } from 'node:net';
 import { createHash, randomUUID } from 'node:crypto';
 import { sourceFingerprint, recordBuild } from './dev-build-record.mjs';
 
@@ -73,6 +74,29 @@ try {
   }
   assert.equal(json(['dev', 'target'], b.root).kind, 'system');
   run(['--instance', 'system', 'dev', 'target'], a.root, { ASKHUMAN_HOME: path.join(a.root, '.askhuman-dev/home') }, false);
+  assert.match(run(['--instance','dev','--worktree',b.root,'--output','text','must not ask the human'],temp,{},false).stderr, /dev ask/);
+  const frames = await new Promise((resolve,reject)=>{
+    const socket=createConnection(path.join(b.root,'.askhuman-dev/home/daemon.sock'));
+    const rows=[];const timer=setTimeout(()=>{socket.destroy();reject(new Error('confirmation boundary timed out'));},5000);
+    socket.on('error',reject);
+    createInterface({input:socket}).on('line',line=>{
+      const frame=JSON.parse(line);rows.push(frame);
+      if (frame.type==='confirmFallback') {clearTimeout(timer);socket.destroy();resolve(rows);}
+    });
+    socket.once('connect',()=>socket.write(JSON.stringify({type:'submitConfirm',spec:{title:'automated isolation test',detail:{summary:'must not display'},choices:[{id:'allow',label:'Allow',role:'primary'},{id:'deny',label:'Deny',role:'destructive'}],presentation:{type:'singleSelectSubmit',submit_label:'Submit'},dismissActionId:'deny'},source:'fixture',lang:'en',project:b.root,agentKind:'codex',agentSessionId:'unbound-daily-session',callerPid:0})+'\n'));
+  });
+  assert.ok(frames.some(frame=>frame.type==='warn' && /isolated test session binding/.test(frame.text)));
+  assert.ok(frames.some(frame=>frame.type==='confirmFallback' && frame.reason==='invalidRequest'));
+  assert.ok(!frames.some(frame=>frame.type==='confirmAccepted'));
+  await new Promise((resolve,reject)=>{
+    const socket=createConnection(path.join(b.root,'.askhuman-dev/home/daemon.sock'));
+    const timer=setTimeout(()=>{socket.destroy();reject(new Error('native event boundary timed out'));},5000);
+    socket.on('error',reject);socket.once('close',()=>{clearTimeout(timer);resolve();});
+    socket.once('connect',()=>socket.end(JSON.stringify({type:'agentEvent',agent:'codex',event:'session-start',session_id:'unbound-daily-session',pid:process.pid,cwd:b.root,ts:0})+'\n'));
+  });
+  const agentsFile=path.join(b.root,'.askhuman-dev/home/agents.json');
+  assert.doesNotMatch(fs.existsSync(agentsFile)?fs.readFileSync(agentsFile,'utf8'):'',/unbound-daily-session/);
+
   const pinned = json(['--instance', 'system', 'dev', 'target'], a.root);
   const inherited = { ASKHUMAN_RESOLVED_TARGET_V1: JSON.stringify(pinned) };
   assert.equal(json(['dev', 'target'], b.root, inherited).kind, 'system');
@@ -129,10 +153,14 @@ try {
   fs.writeFileSync(path.join(b.root, 'src/changed.rs'), '// unbuilt source');
   assert.match(run(['dev', 'ask', '--worktree', b.root, '--', 'must not show a question'], temp, {}, false).stderr, /source|rebuild/);
   fs.rmSync(path.join(b.root, 'src'), {recursive:true});
-  fs.writeFileSync(b.binary, '#!/bin/sh\nprintf old-client\n');
+  const stub = `${b.binary}.old-fixture`;
+  fs.writeFileSync(stub, '#!/bin/sh\nprintf old-client\n', {mode:0o700});
+  fs.renameSync(stub,b.binary);
   recordBuild(b.root, b.binary, sourceFingerprint(b.root));
   assert.match(run(['dev', 'ask', '--worktree', b.root, '--', 'must not show a question'], temp, {}, false).stderr, /does not support/);
-  fs.copyFileSync(original, b.binary);fs.chmodSync(b.binary,0o700);
+  const replacement = `${b.binary}.new-fixture`;
+  fs.copyFileSync(original,replacement,fs.constants.COPYFILE_FICLONE);fs.chmodSync(replacement,0o700);
+  fs.renameSync(replacement,b.binary);
   recordBuild(b.root,b.binary,sourceFingerprint(b.root));
 
   // Preparing native profiles must only write private files; no Agent/model session is started.
