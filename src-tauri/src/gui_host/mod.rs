@@ -164,6 +164,7 @@ mod platform_impl {
         use std::process::{Command, Stdio};
 
         let mut cmd = Command::new(exe);
+        crate::executable::set_launch_entry(&mut cmd, exe);
         cmd.arg("--gui-host")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -309,6 +310,37 @@ mod platform_impl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_gui_launch_hands_off_the_selected_entry() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("gui host");
+        let capture = directory.path().join("gui host.capture");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" \"${ASKHUMAN_INTERNAL_LAUNCH_ENTRY-}\" > \"$0.capture\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        spawn_detached_from(&executable).unwrap();
+        #[cfg(target_os = "linux")]
+        let expected = format!("--gui-host\n{}\n", executable.display());
+        #[cfg(not(target_os = "linux"))]
+        let expected = "--gui-host\n\n".to_owned();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if std::fs::read_to_string(&capture).ok().as_deref() == Some(expected.as_str()) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "GUI launch did not capture the expected entry"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
 
     #[test]
     fn history_target_roundtrips_and_old_open_window_defaults_none() {
