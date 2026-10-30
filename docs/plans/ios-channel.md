@@ -381,7 +381,9 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 - XcodeGen：`App`（`com.naituw.humaninloop.ios`）、`NotificationService`（`…ios.notification`）、本地包 `AskHumanKit`；iOS 17.0+，仅 iPhone；Swift 5 语言模式 + 完整并发检查（先作警告）；Team `DMJXDB9H6Q`，自动签名。
 - Capabilities：Push Notifications；Keychain 共享组 `$(AppIdentifierPrefix)com.naituw.humaninloop.ios.shared`（App 与扩展共用，存配对密钥）。Info.plist：`NSCameraUsageDescription`、`NSFaceIDUsageDescription`；出口合规键按 App Store Connect 问卷结论设置。
 - 本地化：`Localizable.xcstrings`（zh-Hans + en），含推送的 `loc-key`：`PUSH_ASK`、`PUSH_CONFIRM`、`PUSH_FOLLOW_DONE`、`PUSH_FOLLOW_WAITING`、`PUSH_FOLLOW_FAILED`、`PUSH_RESOLVED`。
-- 分发：Xcode Archive → Organizer 上传 TestFlight，不使用 App Store Connect API 密钥。
+- 分发：Release Archive → TestFlight 内部测试。2026-10-30 用户为旅途中远程更新修订原先「不使用 API 密钥」的约定：
+  使用专用 App Store Connect 团队 API 密钥（App Manager）上传，本机 Apple Distribution 证书签名；密钥、证书私钥与专用签名钥匙串保存在仓库外。
+  App Store Connect 名称已采用 AskHuman Mobile（App ID `6828712684`）；手机显示名与 Bundle ID 保持 AskHuman / `com.naituw.humaninloop.ios`。
 - 本地验证用**新建的专用模拟器**（不复用原型或其它 Agent 正在使用的模拟器）；真机用于配对 / 推送 / 网络验证。
 
 ### 6.2 分层
@@ -539,4 +541,35 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
   4. 推送句柄没有可靠送到 Mac：`pushSent` 在发送前置位且不随会话重置、握手完成但尚未同步（`.acked`）的 Mac 被跳过、发送失败不回滚。现在每次握手清空并重发，失败回滚，token 在 ack 与首个快照之间到达也立即发送。
 - **真机阶段的第五个缺陷：`inactive` 也告别**（用户 2026-10-26 03:25 条件授权「装完如果的确是 bug 就要改」；真机证据见 `docs/investigations/ios-channel-p0.md` §3.8）：控制中心、通知中心、多任务界面、系统弹窗盖在 App 上时 `scenePhase` 只是 `.inactive`，旧构建一变成 `.inactive` 就告别，Mac 看到手机离线 5.9–6.9 s，这期间到达的请求被当成「不在前台」去推送。现在 `.inactive` 持续超过 `PhoneEngine.inactiveGrace`（10 s）才告别，`.background`（锁屏、回主屏）仍立即告别，回到前台取消计时、保留连接；规格不变（仍是「退到后台即断开」），只是不再把「App 还在屏幕上」当成离开。新增 5 个测试，每处保护去掉后都有测试变红（提交 `fix(ios): keep the connection while the app is only inactive`）。真机上手工做了前台提问、锁屏真 APNs 推送、强退后真 APNs 推送各一次（单样本，数字与限制见 §3.8）；**停留短于 10 s 不离线、锁屏 / 回主屏后 Mac 多快看到离线、强退后 Mac 多久看到离线，这三项没在真机上验证**（用户决定不再手测）。
 - **保留的取舍（没改）**：Mac 只会发 `push.state` 的 `ok` / `gone`，不发 §3.4 里写的 `missing` / `error`；由手机在每次握手重发句柄覆盖。一处外观小瑕疵也没改：请求到达的应用内横幅会停满约 5 秒，即使用户已经点开了那个请求（横幅盖在请求页上方）。
+
+## 2026-10-30：TestFlight 内部分发
+
+用户旅行期间要求远程安装最新版，并选定以后也使用 TestFlight；另行批准使用团队 API 密钥，并在云端签名权限不足时保持 App Manager 角色、改用本机签名证书。
+App Store Connect 记录为 [AskHuman Mobile](https://appstoreconnect.apple.com/apps/6828712684/testflight)，内部组 `AskHuman Internal` 自动接收后续构建。
+证书与主 App / 通知扩展的 `IOS_APP_STORE` 描述文件均已创建。上传使用 `testFlightInternalTestingOnly=true`，不提交外部测试或 App Store 审核。
+
+首次上传校验暴露并修复：
+
+- XcodeGen 在 target 层默认写入 `TARGETED_DEVICE_FAMILY=1,2`，覆盖 project 层的「仅 iPhone」。现在主 App 与通知扩展都在 target 层明确设为 `1`，与原范围一致。
+- XcodeGen 默认 Info.plist 的版本号是常量；现在主 App 与扩展显式引用 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`，归档可正确指定构建号。
+- 加密使用系统 CryptoKit，Info.plist 声明 `ITSAppUsesNonExemptEncryption=false`；主 App 的 `PrivacyInfo.xcprivacy` 声明本 App 的 UserDefaults（`CA92.1`）和容器内文件元数据（`C617.1`）用途。
+
+本机复用方式（在仓库根目录执行；凭据不是仓库文件）：
+
+```sh
+cd ios && xcodegen generate && cd ..
+xcodebuild archive -project ios/AskHuman.xcodeproj -scheme AskHuman \
+  -configuration Release -destination 'generic/platform=iOS' \
+  -derivedDataPath ios/build/DerivedDataDevice \
+  -archivePath ios/build/AskHuman-TestFlight.xcarchive CURRENT_PROJECT_VERSION=2
+python3 "$HOME/.config/askhuman-release/upload-testflight.py" ios/build/AskHuman-TestFlight.xcarchive
+```
+
+后续构建使用递增的 `CURRENT_PROJECT_VERSION`（首次为 `0.1.0 (2)`）。本机上传配置与独立签名钥匙串在 `~/.config/askhuman-release/`：
+目录权限 `0700`、API 私钥 `0600`，不读取既有 APNs 私钥，不把密钥写入日志或仓库；上传期间临时加入签名钥匙串，结束后恢复搜索列表。
+签名证书有效期至 2027-10-30。Archive 的 `AHPushEnvironment=prod`，App 已有按推送环境变化更新句柄的逻辑，沿用配对身份与钥匙串组。
+
+验证：首次有效构建 `0.1.0 (2)` 已于 2026-10-30 上传，Apple `processingState=VALID`，已自动加入内部测试组，测试员状态为 `INVITED`。
+归档中核实 `UIDeviceFamily=[1]`、版本号、生产推送环境与隐私清单；修改构建配置后，模型记忆的模拟器界面用例再次通过。
+模型功能的完整单元 / 界面验证见 `docs/plans/ios-task-model.md` 的 2026-10-30 修订记录；这次未启动真实 Agent。
 
