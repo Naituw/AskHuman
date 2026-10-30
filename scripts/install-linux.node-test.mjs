@@ -48,11 +48,40 @@ before(async () => {
 use std::io::{self, BufRead, Write};
 fn main() {
  executable::capture_launch_path();
- if std::env::args().nth(1).as_deref()==Some("child") { println!("${version}"); return; }
+ let mode=std::env::args().nth(1).unwrap_or_default();
+ if mode=="child" { println!("${version}"); return; }
+ if ["--popup", "--popup-host", "--gui-host"].contains(&mode.as_str()) {
+  println!("${version}"); println!("launch={}",executable::launch_path().unwrap().display());
+  println!("context-cleared={}",std::env::var_os(executable::INTERNAL_LAUNCH_ENTRY_ENV).is_none());
+  let mut command=if mode=="--gui-host" {
+   let entry=executable::launch_path().unwrap();
+   let mut command=std::process::Command::new(&entry);
+   executable::set_launch_entry(&mut command,&entry); command.arg("child"); command
+  } else {
+   let entry=executable::launch_path().unwrap();
+   let mut command=std::process::Command::new(&entry);
+   command.arg("--gui-host"); executable::set_launch_entry(&mut command,&entry); command
+  };
+  let result=command.output().unwrap(); assert!(result.status.success());
+  print!("{}",String::from_utf8(result.stdout).unwrap()); return;
+ }
+ let initial=std::fs::read(std::env::current_exe().unwrap()).unwrap();
  println!("READY"); io::stdout().flush().unwrap();
  io::stdin().lock().lines().next().unwrap().unwrap();
  let running=std::env::current_exe().unwrap();
  let launch=executable::launch_path().unwrap();
+ if mode=="retained-chain" {
+  println!("disk-changed={}",std::fs::read(&launch).unwrap()!=initial);
+  println!("identity-unchanged={}",std::fs::read(&running).unwrap()==initial);
+  for args in [vec!["--popup-host"],vec!["--popup"],vec!["--popup","--warm"]] {
+   println!("role={}",args.join(" "));
+   let mut command=std::process::Command::new(&running); command.args(args);
+   executable::inherit_launch_entry(&mut command).unwrap();
+   let result=command.output().unwrap(); assert!(result.status.success());
+   print!("{}",String::from_utf8(result.stdout).unwrap());
+  }
+  return;
+ }
  println!("{}", running.display()); println!("{}",launch.display());
  for path in [running,launch] {
   let result=std::process::Command::new(path).arg("child").output().unwrap();
@@ -94,6 +123,35 @@ linuxTest('running ELF survives exchange and cached launch path starts the new i
     const output = [];
     for await (const line of { [Symbol.asyncIterator]: () => lines }) { output.push(line); }
     assert.deepEqual(output, [oldPath, canonical, 'old', 'new']);
+    assert.equal(await new Promise(resolve => child.exitCode !== null ? resolve(child.exitCode) : child.once('exit', resolve)), 0);
+  } finally { if (child.exitCode === null) { child.kill(); } }
+});
+linuxTest('retained popup, warm and GUI descendants preserve the entry across repeated upgrades', async () => {
+  const directory = await fixture();
+  assert.equal(run(oldImage, directory).status, 0);
+  const canonical = join(directory, 'AskHuman');
+  const child = spawn(canonical, ['retained-chain'], { cwd: '/', stdio: ['pipe', 'pipe', 'pipe'] });
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  try {
+    assert.equal((await lines.next()).value, 'READY');
+    for (const image of [newImage, newerImage]) {
+      const result = run(image, directory);
+      assert.equal(result.status, 0, result.stderr);
+    }
+    const running = await realpath(`/proc/${child.pid}/exe`);
+    assert.notEqual(running, canonical);
+    assert.equal(await digest(running), await digest(oldImage));
+    child.stdin.end('continue\n');
+    const output = [];
+    for await (const line of { [Symbol.asyncIterator]: () => lines }) { output.push(line); }
+    const popup = ['old', `launch=${canonical}`, 'context-cleared=true'];
+    const independentGui = ['newer', `launch=${canonical}`, 'context-cleared=true'];
+    assert.deepEqual(output, [
+      'disk-changed=true', 'identity-unchanged=true',
+      ...['--popup-host', '--popup', '--popup --warm'].flatMap(role => [
+        `role=${role}`, ...popup, ...independentGui, 'newer',
+      ]),
+    ]);
     assert.equal(await new Promise(resolve => child.exitCode !== null ? resolve(child.exitCode) : child.once('exit', resolve)), 0);
   } finally { if (child.exitCode === null) { child.kill(); } }
 });

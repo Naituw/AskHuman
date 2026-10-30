@@ -794,7 +794,7 @@ fn broadcast_popup_state(state: &Arc<ServerState>, message: ServerMsg) {
 
 /// 检测盘上二进制是否已被换新（应用内更新或外部 npm 更新）。变化则标记 pending + 广播。
 fn check_pending_update(state: &Arc<ServerState>) {
-    let now_fp = lifecycle::current_fingerprint();
+    let now_fp = lifecycle::launch_fingerprint();
     if now_fp == state.startup_fp {
         return;
     }
@@ -1432,7 +1432,7 @@ async fn control_loop(
                     let _ = ipc::write_msg(w, &ServerMsg::HelloAck(ack)).await;
                     continue;
                 }
-                let now_fp = lifecycle::current_fingerprint();
+                let now_fp = lifecycle::launch_fingerprint();
                 // 指纹按「内容哈希」比对（与路径/mtime 无关）：
                 // 自身盘上二进制内容被换 / 客户端二进制内容不一致 / 协议不一致 → 过时，让位换新。
                 let own_changed = now_fp != state.startup_fp;
@@ -4103,6 +4103,7 @@ fn spawn_gui_helper(token: &str, perf_id: &str, perf_autodismiss: bool) -> std::
     use std::process::{Command, Stdio};
     let exe = std::env::current_exe()?;
     let mut cmd = Command::new(exe);
+    crate::executable::inherit_launch_entry(&mut cmd)?;
     cmd.arg("--popup")
         .arg("--endpoint")
         .arg(transport::socket_path())
@@ -4128,6 +4129,7 @@ fn spawn_warm_helper() -> std::io::Result<()> {
     use std::process::{Command, Stdio};
     let exe = std::env::current_exe()?;
     let mut cmd = Command::new(exe);
+    crate::executable::inherit_launch_entry(&mut cmd)?;
     cmd.arg("--popup")
         .arg("--warm")
         .arg("--endpoint")

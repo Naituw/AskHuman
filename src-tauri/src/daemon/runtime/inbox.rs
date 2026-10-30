@@ -228,6 +228,7 @@ fn spawn_inbox_process(exe: &std::path::Path, token: &str) -> std::io::Result<u3
     // Unix hosts skip the /dev/null redirect, Windows never had one.
     let runtime = tokio::runtime::Handle::try_current().map_err(std::io::Error::other)?;
     let mut command = Command::new(exe);
+    crate::executable::inherit_launch_entry(&mut command)?;
     command
         .arg("--popup-host")
         .arg("--token")
@@ -577,7 +578,7 @@ mod spawn_tests {
         let exe = dir.path().join("popup-host");
         std::fs::write(
             &exe,
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nexec /bin/sleep 0.1\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nprintf '%s' \"${ASKHUMAN_INTERNAL_LAUNCH_ENTRY-}\" > \"$0.entry\"\nexec /bin/sleep 0.1\n",
         )
         .unwrap();
         std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -602,6 +603,14 @@ mod spawn_tests {
             std::fs::read_to_string(dir.path().join("popup-host.args")).unwrap(),
             "--popup-host\n--token\ntoken with spaces\n"
         );
+        let entry = std::fs::read_to_string(dir.path().join("popup-host.entry")).unwrap();
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            entry,
+            crate::executable::launch_path().unwrap().to_str().unwrap()
+        );
+        #[cfg(not(target_os = "linux"))]
+        assert!(entry.is_empty());
     }
 
     #[tokio::test]

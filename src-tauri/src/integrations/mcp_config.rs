@@ -92,14 +92,23 @@ fn validate_antigravity_json(text: &str) -> Result<Value> {
 impl PreparedAntigravityConfig {
     pub(crate) fn prepare(path: PathBuf, install: bool, command: &str) -> Result<Self> {
         let before = read_optional_config(&path)?;
-        validate_antigravity_json(before.as_deref().unwrap_or_default())
+        let value = validate_antigravity_json(before.as_deref().unwrap_or_default())
             .with_context(|| format!("MCP config: {}", path.display()))?;
         let after = if install {
-            Some(apply_install_json(
-                before.as_deref().unwrap_or_default(),
-                command,
-                JsonTimeout::TimeoutSeconds(ANTIGRAVITY_TOOL_TIMEOUT_SEC),
-            )?)
+            json_entry_env(&value)?;
+            let timeout = JsonTimeout::TimeoutSeconds(ANTIGRAVITY_TOOL_TIMEOUT_SEC);
+            // A matching declarative config needs no publication, regardless of formatting.
+            if json_entry_matches(&value, command, timeout) {
+                before.clone()
+            } else {
+                Some(apply_install_json(
+                    before.as_deref().unwrap_or_default(),
+                    command,
+                    timeout,
+                )?)
+            }
+        } else if json_entry(&value).is_none() {
+            before.clone()
         } else {
             before.as_deref().map(apply_uninstall_json).transpose()?
         };
@@ -667,17 +676,7 @@ fn apply_install_json(text: &str, command: &str, timeout: JsonTimeout) -> Result
         }),
     };
     let parsed: Value = jsonc_parser::parse_to_serde_value(source, &ParseOptions::default())?;
-    if let Some(env) = json_entry(&parsed).and_then(|entry| entry.get("env")) {
-        let obj = env
-            .as_object()
-            .ok_or_else(|| anyhow!("MCP env must be an object"))?;
-        for (name, value) in obj {
-            if !valid_env_name(name) || value.as_str().is_none_or(|v| v.contains('\0')) {
-                return Err(anyhow!(
-                    "MCP env must contain valid names and string values without NUL"
-                ));
-            }
-        }
+    if let Some(obj) = json_entry_env(&parsed)? {
         if let jsonc_parser::cst::CstInputValue::Object(ref mut properties) = entry {
             properties.push((
                 "env".into(),
@@ -739,6 +738,23 @@ fn read_json_value(path: &Path) -> Option<Value> {
 
 fn json_entry(value: &Value) -> Option<&Value> {
     value.get("mcpServers")?.get(SERVER_NAME)
+}
+
+fn json_entry_env(value: &Value) -> Result<Option<&serde_json::Map<String, Value>>> {
+    let Some(env) = json_entry(value).and_then(|entry| entry.get("env")) else {
+        return Ok(None);
+    };
+    let object = env
+        .as_object()
+        .ok_or_else(|| anyhow!("MCP env must be an object"))?;
+    for (name, value) in object {
+        if !valid_env_name(name) || value.as_str().is_none_or(|v| v.contains('\0')) {
+            return Err(anyhow!(
+                "MCP env must contain valid names and string values without NUL"
+            ));
+        }
+    }
+    Ok(Some(object))
 }
 
 fn json_entry_matches(value: &Value, command: &str, timeout: JsonTimeout) -> bool {
@@ -1279,6 +1295,64 @@ mod tests {
             .unwrap();
         assert_eq!(std::fs::read_link(&path).unwrap(), original);
         assert_eq!(std::fs::read_to_string(&original).unwrap(), contents);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_semantic_noops_preserve_declarative_bytes_and_links() {
+        use std::os::unix::fs::{symlink, MetadataExt};
+        let matching = format!(
+            "{{\n // keep root comment\n \"mcpServers\": {{\"askhuman\": {{\n\
+             \"args\": [\"mcp\"], // keep entry comment\n\
+             \"timeoutSeconds\": 86400, \"command\": \"{EXE}\",\n\
+             \"env\": {{\"DISPLAY\": \":1\"}} }} }}, \"unrelated\": true\n}}\n"
+        );
+        for (install, contents) in [
+            (true, matching.as_str()),
+            (false, "{\"mcpServers\": { /* retain empty servers */ }}\n"),
+        ] {
+            for link in ["regular", "symbolic", "hard"] {
+                let root = tempfile::tempdir().unwrap();
+                let source = root.path().join("source.json");
+                let path = root.path().join("mcp_config.json");
+                std::fs::write(&source, contents).unwrap();
+                match link {
+                    "symbolic" => symlink(&source, &path).unwrap(),
+                    "hard" => std::fs::hard_link(&source, &path).unwrap(),
+                    _ => std::fs::write(&path, contents).unwrap(),
+                }
+                let before = std::fs::symlink_metadata(&path).unwrap();
+                let plan = PreparedAntigravityConfig::prepare(path.clone(), install, EXE).unwrap();
+                assert_eq!(plan.before, plan.after, "{link}, install={install}");
+                plan.apply().unwrap();
+                plan.restore().unwrap();
+                let after = std::fs::symlink_metadata(&path).unwrap();
+                assert_eq!((before.ino(), before.nlink()), (after.ino(), after.nlink()));
+                assert_eq!(before.file_type(), after.file_type());
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+                assert_eq!(std::fs::read_to_string(&source).unwrap(), contents);
+            }
+        }
+    }
+
+    #[test]
+    fn antigravity_semantic_noop_still_validates_environment() {
+        for env in [
+            serde_json::json!([]),
+            serde_json::json!({"KEY": 1}),
+            serde_json::json!({"BAD=KEY": "value"}),
+            serde_json::json!({"KEY": "a\0b"}),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("mcp_config.json");
+            let contents = serde_json::json!({"mcpServers": {"askhuman": {
+                "command": EXE, "args": ["mcp"], "timeoutSeconds": 86400, "env": env
+            }}})
+            .to_string();
+            std::fs::write(&path, &contents).unwrap();
+            assert!(PreparedAntigravityConfig::prepare(path.clone(), true, EXE).is_err());
+            assert_eq!(std::fs::read_to_string(path).unwrap(), contents);
+        }
     }
 
     fn to_value(text: &str) -> Value {

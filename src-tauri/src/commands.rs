@@ -3243,7 +3243,7 @@ pub fn collaboration_style_apply_integrations() -> Result<(), String> {
 pub fn open_test_popup() -> Result<(), String> {
     use std::process::{Command, Stdio};
     let lang = crate::i18n::Lang::current();
-    let exe = std::env::current_exe()
+    let exe = crate::executable::launch_path()
         .map_err(|e| crate::i18n::tr(lang, "cmd.locateExeFailed").replace("{e}", &e.to_string()))?;
     Command::new(exe)
         .args([
@@ -5049,7 +5049,7 @@ pub fn update_dismiss(version: String) {
 pub fn restart_settings(app: AppHandle) -> Result<(), String> {
     use std::process::{Command, Stdio};
     let lang = crate::i18n::Lang::current();
-    let exe = std::env::current_exe()
+    let exe = crate::executable::launch_path()
         .map_err(|e| crate::i18n::tr(lang, "cmd.locateExeFailed").replace("{e}", &e.to_string()))?;
     Command::new(exe)
         .arg("--settings")

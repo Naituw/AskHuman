@@ -362,6 +362,14 @@ mod platform {
             }))
         }
         fn create(&self, component: &str, bytes: &[u8]) -> Result<Blob> {
+            self.create_with_role(component, bytes, None)
+        }
+        fn create_with_role(
+            &self,
+            component: &str,
+            bytes: &[u8],
+            role: Option<StageRole>,
+        ) -> Result<Blob> {
             self.verify()?;
             let n = name(component.as_ref())?;
             let fd = unsafe {
@@ -377,7 +385,22 @@ mod platform {
                 )
             };
             let mut file = unsafe { File::from_raw_fd(cvt(fd)?) };
-            file.write_all(bytes)?;
+            if let Some(role) = role {
+                stage_checkpoint(role, "scratch-opened")?;
+            }
+            #[cfg(test)]
+            let written = if let Some(role) = role {
+                let count = bytes.len() / 2;
+                file.write_all(&bytes[..count])?;
+                file.sync_all()?;
+                stage_checkpoint(role, "scratch-partial")?;
+                count
+            } else {
+                0
+            };
+            #[cfg(not(test))]
+            let written = 0;
+            file.write_all(&bytes[written..])?;
             file.sync_all()?;
             let id = identity(&file.metadata()?);
             if id.mode & 0o777 != 0o600 {
@@ -464,6 +487,15 @@ mod platform {
             require_same(self.read(target)?.as_ref(), Some(staged), "replace result")
         }
         fn remove_empty(&self, component: &std::ffi::OsStr, expected: &FileIdentity) -> Result<()> {
+            self.remove_directory(component, expected, false)
+                .map(|_| ())
+        }
+        fn remove_directory(
+            &self,
+            component: &std::ffi::OsStr,
+            expected: &FileIdentity,
+            retain_nonempty: bool,
+        ) -> Result<bool> {
             self.verify()?;
             let child = self.child(component)?;
             if !same_directory_identity(&identity(&child.file.metadata()?), expected) {
@@ -472,9 +504,16 @@ mod platform {
             let n = name(component)?;
             if unsafe { libc::unlinkat(self.file.as_raw_fd(), n.as_ptr(), libc::AT_REMOVEDIR) } != 0
             {
-                return Err(std::io::Error::last_os_error().into());
+                let error = std::io::Error::last_os_error();
+                if retain_nonempty
+                    && matches!(error.raw_os_error(), Some(libc::ENOTEMPTY | libc::EEXIST))
+                {
+                    return Ok(false);
+                }
+                return Err(error.into());
             }
-            self.sync()
+            self.sync()?;
+            Ok(true)
         }
     }
 
@@ -681,6 +720,87 @@ mod platform {
         recovery_target_stage: String,
         recovery_ledger_stage: String,
         created_dirs: Vec<CreatedDir>,
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum StageRole {
+        Target,
+        Ledger,
+        RestoreTarget,
+        RestoreLedger,
+    }
+    impl StageRole {
+        fn name(self) -> &'static str {
+            match self {
+                Self::Target => "target",
+                Self::Ledger => "ledger",
+                Self::RestoreTarget => "restore-target",
+                Self::RestoreLedger => "restore-ledger",
+            }
+        }
+        fn stage(self, journal: &Journal) -> &str {
+            match self {
+                Self::Target => &journal.target_stage,
+                Self::Ledger => &journal.ledger_stage,
+                Self::RestoreTarget => &journal.recovery_target_stage,
+                Self::RestoreLedger => &journal.recovery_ledger_stage,
+            }
+        }
+        fn record(self, journal: &mut Journal, blob: Blob) {
+            match self {
+                Self::Target => journal.new_target = Some(blob),
+                Self::Ledger => journal.new_ledger = Some(blob),
+                Self::RestoreTarget => journal.recovery_target = Some(blob),
+                Self::RestoreLedger => journal.recovery_ledger = Some(blob),
+            }
+            if matches!(self, Self::RestoreTarget | Self::RestoreLedger) {
+                journal.phase = "recovering".into();
+            }
+        }
+    }
+
+    fn stage_checkpoint(role: StageRole, point: &str) -> Result<()> {
+        #[cfg(test)]
+        checkpoint(&format!("{}-{point}", role.name()))?;
+        let _ = (role, point);
+        Ok(())
+    }
+
+    fn prepare_stage(
+        state: &Dir,
+        dir: &Dir,
+        journal: &mut Journal,
+        role: StageRole,
+        bytes: &[u8],
+    ) -> Result<Blob> {
+        // An interrupted write must never occupy a fixed recovery name without a durable Blob.
+        // Unreferenced random scratches are preserved; their names alone do not prove ownership.
+        let scratch = format!(
+            ".antigravity-build-{}-{}-{}",
+            role.name(),
+            journal.transaction_id,
+            uuid::Uuid::new_v4()
+        );
+        let blob = dir
+            .create_with_role(&scratch, bytes, Some(role))
+            .with_context(|| {
+                format!(
+                    "unpublished scratch preserved at {}",
+                    dir.path.join(&scratch).display()
+                )
+            })?;
+        require_same(
+            dir.read(&scratch)?.as_ref(),
+            Some(&blob),
+            "scratch contents",
+        )?;
+        stage_checkpoint(role, "scratch-complete-before-record")?;
+        role.record(journal, blob.clone());
+        save_journal(state, journal)?;
+        stage_checkpoint(role, "recorded-before-promotion")?;
+        dir.replace(&scratch, role.stage(journal), None, &blob)?;
+        stage_checkpoint(role, "stage-promoted")?;
+        Ok(blob)
     }
     fn journal_dir(state: &Dir, create: bool) -> Result<Option<Dir>> {
         let directory = match state.child(PRIVATE_STATE.as_ref()) {
@@ -913,19 +1033,9 @@ mod platform {
                 )?;
         }
         if rollback {
-            for d in j.created_dirs.iter().rev() {
-                match optional_dir(&d.path)? {
-                    None => {}
-                    Some(_) => {
-                        Dir::open(d.path.parent().context("created directory parent")?)?
-                            .remove_empty(
-                                d.path.file_name().context("created directory name")?,
-                                &d.identity,
-                            )?;
-                    }
-                }
-            }
+            cleanup_created_dirs(j)?;
         }
+        verify_finished(state, j)?;
         let private_state =
             journal_dir(state, false)?.context("missing private transaction state")?;
         let blob = private_state
@@ -936,6 +1046,57 @@ mod platform {
             bail!("foreign journal during cleanup");
         }
         private_state.remove(JOURNAL, &blob)
+    }
+
+    fn cleanup_created_dirs(j: &Journal) -> Result<()> {
+        for d in j.created_dirs.iter().rev() {
+            if optional_dir(&d.path)?.is_some() {
+                let removed = Dir::open(d.path.parent().context("created directory parent")?)?
+                    .remove_directory(
+                        d.path.file_name().context("created directory name")?,
+                        &d.identity,
+                        true,
+                    )?;
+                if !removed {
+                    // A child mkdir or scratch write can precede its journal record. Never claim
+                    // or delete those entries, and do not let them block logical rollback.
+                    eprintln!(
+                        "AskHuman: retaining nonempty Antigravity directory after rollback: {}",
+                        d.path.display()
+                    );
+                    checkpoint("created-dir-retained")?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_finished(state: &Dir, j: &Journal) -> Result<()> {
+        let (expected_target, expected_ledger) = match j.phase.as_str() {
+            "committed" => (j.new_target.as_ref(), j.new_ledger.as_ref()),
+            "recovered" => (
+                j.recovery_target.as_ref().or(j.old_target.as_ref()),
+                j.recovery_ledger.as_ref(),
+            ),
+            _ => bail!("cannot clean up an unfinished Antigravity transaction"),
+        };
+        state.verify()?;
+        let target = optional_dir(j.target.parent().context("rule parent")?)?;
+        let current = target
+            .as_ref()
+            .map(|dir| dir.read("askhuman-antigravity.md"))
+            .transpose()?
+            .flatten();
+        require_same(
+            current.as_ref(),
+            expected_target,
+            "finished transaction target",
+        )?;
+        require_same(
+            state.read("integration-state.json")?.as_ref(),
+            expected_ledger,
+            "finished transaction ledger",
+        )
     }
     fn accepted(actual: Option<&Blob>, candidates: &[Option<&Blob>]) -> bool {
         candidates.iter().any(|c| same(actual, *c))
@@ -996,15 +1157,9 @@ mod platform {
             }
             // Transaction directory may already be gone, but only final journal removal remains.
             if j.phase == "recovered" {
-                for d in j.created_dirs.iter().rev() {
-                    if optional_dir(&d.path)?.is_some() {
-                        Dir::open(d.path.parent().context("created parent")?)?.remove_empty(
-                            d.path.file_name().context("created name")?,
-                            &d.identity,
-                        )?;
-                    }
-                }
+                cleanup_created_dirs(&j)?;
             }
+            verify_finished(state, &j)?;
             return journal_dir(state, false)?
                 .context("missing private transaction state")?
                 .remove(JOURNAL, &saved);
@@ -1064,7 +1219,7 @@ mod platform {
                         require_same(Some(&b), j.recovery_target.as_ref(), "restore stage")?;
                         b
                     }
-                    None => dir.create(&j.recovery_target_stage, bytes)?,
+                    None => prepare_stage(state, dir, &mut j, StageRole::RestoreTarget, bytes)?,
                 };
                 j.recovery_target = Some(staged.clone());
                 j.phase = "recovering".into();
@@ -1101,7 +1256,7 @@ mod platform {
                         require_same(Some(&b), j.recovery_ledger.as_ref(), "restore ledger stage")?;
                         b
                     }
-                    None => state.create(&j.recovery_ledger_stage, &bytes)?,
+                    None => prepare_stage(state, state, &mut j, StageRole::RestoreLedger, &bytes)?,
                 };
                 j.recovery_ledger = Some(staged.clone());
                 j.phase = "recovering".into();
@@ -1145,6 +1300,8 @@ mod platform {
                         .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
                 {
                     let child = dir.create_dir(component.as_ref())?;
+                    #[cfg(test)]
+                    checkpoint(&format!("mkdir-{component}-before-record"))?;
                     j.created_dirs.push(CreatedDir {
                         path: child.path.clone(),
                         identity: identity(&child.file.metadata()?),
@@ -1167,9 +1324,11 @@ mod platform {
         FAIL_AT.with(|value| value.set(first));
         FAIL_ALSO.with(|value| value.set(second));
     }
-    fn checkpoint(point: &'static str) -> Result<()> {
+    fn checkpoint(point: &str) -> Result<()> {
         #[cfg(test)]
-        if FAIL_AT.with(|v| v.get() == Some(point)) || FAIL_ALSO.with(|v| v.get() == Some(point)) {
+        if FAIL_AT.with(|v| v.get().is_some_and(|failure| failure == point))
+            || FAIL_ALSO.with(|v| v.get().is_some_and(|failure| failure == point))
+        {
             bail!("injected failure at {point}");
         }
         let _ = point;
@@ -1254,13 +1413,19 @@ mod platform {
         };
         if !uninstall {
             let dir = target.as_ref().context("target parent missing")?;
-            let staged = dir.create(&j.target_stage, &ctx.rendered_bytes)?;
-            j.new_target = Some(staged.clone());
+            let staged =
+                prepare_stage(&state, dir, &mut j, StageRole::Target, &ctx.rendered_bytes)?;
             set_ownership(&mut value, Some(&record(ctx, &staged)))?;
         } else {
             set_ownership(&mut value, None)?;
         }
-        j.new_ledger = Some(state.create(&j.ledger_stage, &serde_json::to_vec_pretty(&value)?)?);
+        prepare_stage(
+            &state,
+            &state,
+            &mut j,
+            StageRole::Ledger,
+            &serde_json::to_vec_pretty(&value)?,
+        )?;
         save_journal(&state, &j)?;
         checkpoint("staged")?;
         if let Some(dir) = target.as_ref() {
@@ -1374,6 +1539,271 @@ mod platform {
         }
         fn clear() {
             FAIL_AT.with(|v| v.set(None));
+        }
+
+        fn scratches(root: &Path) -> Vec<(PathBuf, Vec<u8>, FileIdentity)> {
+            let mut found = Vec::new();
+            for entry in std::fs::read_dir(root).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_dir() {
+                    found.extend(scratches(&entry.path()));
+                } else if entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".antigravity-build-")
+                {
+                    found.push((
+                        entry.path(),
+                        std::fs::read(entry.path()).unwrap(),
+                        super::identity(&entry.metadata().unwrap()),
+                    ));
+                }
+            }
+            found.sort_by(|a, b| a.0.cmp(&b.0));
+            found
+        }
+
+        const FORWARD_STAGE_POINTS: [&str; 10] = [
+            "target-scratch-opened",
+            "target-scratch-partial",
+            "target-scratch-complete-before-record",
+            "target-recorded-before-promotion",
+            "target-stage-promoted",
+            "ledger-scratch-opened",
+            "ledger-scratch-partial",
+            "ledger-scratch-complete-before-record",
+            "ledger-recorded-before-promotion",
+            "ledger-stage-promoted",
+        ];
+        const RECOVERY_STAGE_POINTS: [&str; 10] = [
+            "restore-target-scratch-opened",
+            "restore-target-scratch-partial",
+            "restore-target-scratch-complete-before-record",
+            "restore-target-recorded-before-promotion",
+            "restore-target-stage-promoted",
+            "restore-ledger-scratch-opened",
+            "restore-ledger-scratch-partial",
+            "restore-ledger-scratch-complete-before-record",
+            "restore-ledger-recorded-before-promotion",
+            "restore-ledger-stage-promoted",
+        ];
+
+        #[test]
+        fn scratch_interruptions_recover_without_claiming_unpublished_files() {
+            for existing_rule in [false, true] {
+                for point in FORWARD_STAGE_POINTS {
+                    let (home, mut ctx) = context();
+                    put_ledger(&ctx);
+                    if existing_rule {
+                        super::super::install_unlocked(&ctx).unwrap();
+                    }
+                    let old_target = std::fs::read(&ctx.target_path).ok();
+                    let old_ledger = std::fs::read(&ctx.integration_state_file).unwrap();
+                    ctx.generation_version = "2".into();
+                    ctx.rendered_bytes = body("replacement");
+                    fail(point);
+                    assert!(mutate(&ctx, false).is_err(), "{point}");
+                    clear();
+                    let abandoned = scratches(home.path());
+                    let state = Dir::open(ctx.integration_state_file.parent().unwrap()).unwrap();
+                    recover(&ctx, &state)
+                        .unwrap_or_else(|e| panic!("{existing_rule} {point}: {e:#}"));
+                    recover(&ctx, &state).unwrap();
+                    assert_eq!(std::fs::read(&ctx.target_path).ok(), old_target, "{point}");
+                    assert_eq!(
+                        std::fs::read(&ctx.integration_state_file).unwrap(),
+                        old_ledger,
+                        "{point}"
+                    );
+                    assert_eq!(scratches(home.path()), abandoned, "{point}");
+                    assert!(read_journal(&state).unwrap().is_none());
+                    super::super::install_unlocked(&ctx).unwrap();
+                    assert_eq!(probe(&ctx).unwrap().state, RuleState::OwnedCurrent);
+                }
+            }
+        }
+
+        #[test]
+        fn recovery_scratch_interruptions_work_with_both_journal_formats() {
+            for legacy in [false, true] {
+                for point in RECOVERY_STAGE_POINTS {
+                    let (home, mut ctx) = context();
+                    put_ledger(&ctx);
+                    super::super::install_unlocked(&ctx).unwrap();
+                    let old_target = std::fs::read(&ctx.target_path).unwrap();
+                    let old_ledger = std::fs::read(&ctx.integration_state_file).unwrap();
+                    ctx.generation_version = "2".into();
+                    ctx.rendered_bytes = body("replacement");
+                    fail("ledger-applied");
+                    assert!(mutate(&ctx, false).is_err());
+                    clear();
+                    let state = Dir::open(ctx.integration_state_file.parent().unwrap()).unwrap();
+                    if legacy {
+                        legacy_journal(&state);
+                    }
+                    fail(point);
+                    assert!(recover(&ctx, &state).is_err(), "{legacy} {point}");
+                    clear();
+                    let abandoned = scratches(home.path());
+                    recover(&ctx, &state).unwrap_or_else(|e| panic!("{legacy} {point}: {e:#}"));
+                    recover(&ctx, &state).unwrap();
+                    assert_eq!(std::fs::read(&ctx.target_path).unwrap(), old_target);
+                    assert_eq!(
+                        std::fs::read(&ctx.integration_state_file).unwrap(),
+                        old_ledger
+                    );
+                    assert_eq!(scratches(home.path()), abandoned);
+                    assert!(read_journal(&state).unwrap().is_none());
+                    super::super::install_unlocked(&ctx).unwrap();
+                    assert_eq!(probe(&ctx).unwrap().state, RuleState::OwnedCurrent);
+                }
+            }
+        }
+
+        #[test]
+        fn unrecorded_child_directories_do_not_block_logical_rollback() {
+            for (point, relative) in [
+                ("mkdir-.gemini-before-record", ".gemini"),
+                ("mkdir-config-before-record", ".gemini/config"),
+                ("mkdir-rules-before-record", ".gemini/config/rules"),
+            ] {
+                let (home, ctx) = context();
+                put_ledger(&ctx);
+                let old_ledger = std::fs::read(&ctx.integration_state_file).unwrap();
+                fail(point);
+                assert!(mutate(&ctx, false).is_err());
+                clear();
+                let state = Dir::open(ctx.integration_state_file.parent().unwrap()).unwrap();
+                if relative != ".gemini" {
+                    fail("created-dir-retained");
+                    assert!(recover(&ctx, &state).is_err());
+                    clear();
+                }
+                recover(&ctx, &state).unwrap();
+                recover(&ctx, &state).unwrap();
+                assert!(home.path().join(relative).is_dir());
+                assert!(!ctx.target_path.exists());
+                assert_eq!(
+                    std::fs::read(&ctx.integration_state_file).unwrap(),
+                    old_ledger
+                );
+                assert!(read_journal(&state).unwrap().is_none());
+                super::super::install_unlocked(&ctx).unwrap();
+            }
+        }
+
+        #[test]
+        fn nonempty_created_directory_identity_drift_still_requires_repair() {
+            let (home, ctx) = context();
+            fail("mkdir-config-before-record");
+            assert!(mutate(&ctx, false).is_err());
+            clear();
+            let gemini = home.path().join(".gemini");
+            let saved = home.path().join("saved-gemini");
+            std::fs::rename(&gemini, &saved).unwrap();
+            std::fs::create_dir_all(gemini.join("foreign")).unwrap();
+            std::fs::set_permissions(&gemini, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let state = Dir::open(ctx.integration_state_file.parent().unwrap()).unwrap();
+            let error = recover(&ctx, &state).unwrap_err();
+            assert!(
+                error.to_string().contains("directory identity drift"),
+                "{error:#}"
+            );
+            assert!(gemini.join("foreign").is_dir());
+            assert!(saved.join("config").is_dir());
+            assert!(read_journal(&state).unwrap().is_some());
+        }
+
+        #[test]
+        fn unrecorded_fixed_stages_in_existing_journals_are_never_adopted() {
+            for legacy in [false, true] {
+                for role in [
+                    StageRole::Target,
+                    StageRole::Ledger,
+                    StageRole::RestoreTarget,
+                    StageRole::RestoreLedger,
+                ] {
+                    let complete = body("replacement");
+                    for bytes in [b"".as_slice(), b"partial", complete.as_slice()] {
+                        let (_home, mut ctx) = context();
+                        super::super::install_unlocked(&ctx).unwrap();
+                        ctx.rendered_bytes = body("replacement");
+                        fail(if matches!(role, StageRole::Target | StageRole::Ledger) {
+                            "prepared"
+                        } else {
+                            "file-applied"
+                        });
+                        assert!(mutate(&ctx, false).is_err());
+                        clear();
+                        let state =
+                            Dir::open(ctx.integration_state_file.parent().unwrap()).unwrap();
+                        let journal = if legacy {
+                            legacy_journal(&state)
+                        } else {
+                            serde_json::from_slice(&read_journal(&state).unwrap().unwrap().bytes)
+                                .unwrap()
+                        };
+                        let target = Dir::open(ctx.target_path.parent().unwrap()).unwrap();
+                        let dir = if matches!(role, StageRole::Target | StageRole::RestoreTarget) {
+                            &target
+                        } else {
+                            &state
+                        };
+                        let blob = dir.create(role.stage(&journal), bytes).unwrap();
+                        assert!(recover(&ctx, &state).is_err(), "{legacy} {role:?}");
+                        require_same(
+                            dir.read(role.stage(&journal)).unwrap().as_ref(),
+                            Some(&blob),
+                            "unrecorded stage preserved",
+                        )
+                        .unwrap();
+                        assert!(read_journal(&state).unwrap().is_some());
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn recorded_fixed_stage_drift_preserves_the_stage_and_pending_journal() {
+            for drift in ["content", "identity", "symlink", "hardlink"] {
+                let (home, mut ctx) = context();
+                super::super::install_unlocked(&ctx).unwrap();
+                ctx.rendered_bytes = body("replacement");
+                fail("target-stage-promoted");
+                assert!(mutate(&ctx, false).is_err());
+                clear();
+                let state = Dir::open(ctx.integration_state_file.parent().unwrap()).unwrap();
+                let journal: Journal =
+                    serde_json::from_slice(&read_journal(&state).unwrap().unwrap().bytes).unwrap();
+                let stage = ctx
+                    .target_path
+                    .parent()
+                    .unwrap()
+                    .join(&journal.target_stage);
+                let other = home.path().join("other-stage");
+                match drift {
+                    "content" => std::fs::write(&stage, b"user-edited stage").unwrap(),
+                    "identity" => {
+                        std::fs::rename(&stage, &other).unwrap();
+                        std::fs::write(&stage, &ctx.rendered_bytes).unwrap();
+                    }
+                    "symlink" => {
+                        std::fs::write(&other, b"external file").unwrap();
+                        std::fs::remove_file(&stage).unwrap();
+                        symlink(&other, &stage).unwrap();
+                    }
+                    _ => std::fs::hard_link(&stage, &other).unwrap(),
+                }
+                let identity_before = super::identity(&std::fs::symlink_metadata(&stage).unwrap());
+                let bytes_before = std::fs::read(&stage).unwrap();
+                assert!(recover(&ctx, &state).is_err(), "{drift}");
+                assert_eq!(
+                    super::identity(&std::fs::symlink_metadata(&stage).unwrap()),
+                    identity_before
+                );
+                assert_eq!(std::fs::read(&stage).unwrap(), bytes_before);
+                assert!(read_journal(&state).unwrap().is_some());
+            }
         }
         fn identity(device: u64) -> FileIdentity {
             FileIdentity {

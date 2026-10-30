@@ -189,7 +189,9 @@ fn reexec_into(bin: &Path, home: &Path, argv: &[String]) -> ! {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        let err = std::process::Command::new(bin)
+        let mut command = std::process::Command::new(bin);
+        crate::executable::clear_launch_context(&mut command);
+        let err = command
             .args(&args)
             .env(ASKHUMAN_HOME_ENV, home)
             .env("ASKHUMAN_NO_KEYCHAIN", "1")
@@ -202,7 +204,9 @@ fn reexec_into(bin: &Path, home: &Path, argv: &[String]) -> ! {
     }
     #[cfg(not(unix))]
     {
-        let status = std::process::Command::new(bin)
+        let mut command = std::process::Command::new(bin);
+        crate::executable::clear_launch_context(&mut command);
+        let status = command
             .args(&args)
             .env(ASKHUMAN_HOME_ENV, home)
             .env("ASKHUMAN_NO_KEYCHAIN", "1")

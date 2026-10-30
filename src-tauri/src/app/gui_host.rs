@@ -283,12 +283,9 @@ fn tray_supported() -> bool {
 pub fn setup(app: &mut tauri::App, config: &AppConfig) -> tauri::Result<()> {
     let lang = Lang::resolve(&config.general.language);
     let mode = config.general.menu_bar_icon;
-    let executable_path = std::env::current_exe().unwrap_or_default();
-    let startup_fp = if executable_path.as_os_str().is_empty() {
-        lifecycle::current_fingerprint()
-    } else {
-        lifecycle::fingerprint_at(&executable_path)
-    };
+    let executable_path = crate::executable::launch_path().unwrap_or_default();
+    // The entry may already contain a newer build; startup identity is always the mapped image.
+    let startup_fp = lifecycle::current_fingerprint();
 
     app.manage(HostState {
         mode: Mutex::new(mode),
@@ -2142,7 +2139,7 @@ fn maybe_refresh_binary(app: &AppHandle) {
 
 fn host_disk_fingerprint(state: &HostState) -> Fingerprint {
     if state.executable_path.as_os_str().is_empty() {
-        lifecycle::current_fingerprint()
+        lifecycle::launch_fingerprint()
     } else {
         lifecycle::fingerprint_at(&state.executable_path)
     }

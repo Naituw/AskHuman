@@ -75,3 +75,20 @@
 **hold 之后**：同号客户端共用当前 Daemon，各自的二进制不再触发换新。代价是客户端与 Daemon 的实现版本可能不同，所以 `PROTOCOL_VERSION` 的纪律成为硬约束（D11）。hold 在 30 分钟内没有内容不同的 Hello 后自行结束；Daemon 自己退出时内存状态消失，但 10 分钟窗口内新起的 Daemon 会按历史立刻重新 hold；`daemon stop` / `restart` 是人为重置，会清掉历史。
 
 **不在范围内**：hooks / MCP 配置里写死的 AskHuman 路径与 Daemon 实际二进制的比对；托盘 / 菜单栏警告；Windows 安装脚本。
+
+## 7. Linux 保留映像与安装入口（2026-10-30 补充）
+
+Linux 安装以原子交换保留仍在运行的 ELF 后，`current_exe()` 会指向
+`.askhuman-install-<pid>-<nonce>/AskHuman`。运行版本的启动指纹、Hello 身份和与 daemon
+配套的 Popup 子进程继续使用此映像；daemon 的 15s 轮询及 Hello 中的 `own_changed` 则读取
+进程启动时缓存的安装入口（`executable::launch_path()`），不能再用保留映像判断盘上是否更新。
+因此保留旧 ELF 不会掩盖升级，也不会把本机安装升级误分类成可 hold 的多份二进制互顶。
+
+合并 Popup、独立冷 Popup 和独立预热 Helper 都由原生启动代码显式传递一次性的安装入口上下文。
+子进程在 `main` 的线程初始化前取走并清除它；只接受内部 GUI 角色，以及与当前映像相同或与
+保留目录同属一个安装目录的绝对入口。该上下文不是用户配置，也不代替既有 IPC token 认证。
+普通 CLI/MCP、外部命令不会继承有效覆盖；Dev re-exec 另行清除上下文，使用目标工作树的入口。
+
+独立 daemon、GUI Host、MCP 提问子 CLI、设置内测试提问和重启设置都从安装入口启动。
+GUI Host 的盘上监听与重启同样使用安装入口，启动身份则仍取实际运行映像；两者可以是不同构建。
+这些调整不改变 IPC 消息或协议号，也不修改排空、在途草稿与首答胜出的语义。

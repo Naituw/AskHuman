@@ -38,6 +38,14 @@ pub fn current_fingerprint() -> Fingerprint {
     fingerprint_at(&path)
 }
 
+/// Detect replacement at the installation entry while retaining current_fingerprint as the
+/// identity of the running image. Linux keeps that image at a different path after an exchange.
+pub fn launch_fingerprint() -> Fingerprint {
+    crate::executable::launch_path()
+        .map(|path| fingerprint_at(&path))
+        .unwrap_or(Fingerprint { size: 0, hash: 0 })
+}
+
 /// Compute the content fingerprint at a stable executable path.
 ///
 /// GUI Host caches its launch path before an in-place update. On Linux, `current_exe()` may resolve
@@ -515,6 +523,27 @@ mod tests {
         let new = fingerprint_at(&path);
         assert_ne!(old, new);
         assert_eq!(new.size, 31);
+    }
+
+    #[test]
+    fn retained_image_identity_does_not_hide_an_installation_upgrade() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().join("AskHuman");
+        std::fs::write(&entry, b"running old image").unwrap();
+        let startup = fingerprint_uncached(&entry);
+        let retained = dir.path().join(".askhuman-install-12-345").join("AskHuman");
+        std::fs::create_dir(retained.parent().unwrap()).unwrap();
+        std::fs::rename(&entry, &retained).unwrap();
+        for bytes in [
+            b"first replacement".as_slice(),
+            b"second replacement".as_slice(),
+        ] {
+            std::fs::write(&entry, bytes).unwrap();
+            assert_eq!(fingerprint_uncached(&retained), startup);
+            let own_changed = fingerprint_uncached(&entry) != startup;
+            assert!(own_changed);
+            assert!(!crate::daemon::restart_guard::holdable(own_changed, false));
+        }
     }
 
     #[test]
