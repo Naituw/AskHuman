@@ -175,6 +175,8 @@ block2 = "0.6"
 # vendor/drag) once an upstream release (crabnebula-dev/drag-rs) fixes its manifest.
 [patch.crates-io]
 drag = { path = "vendor/drag" }
+# Keep the original macOS mouse-down event across WebView IPC; see vendor/tao/ASKHUMAN-PATCH.md.
+tao = { path = "vendor/tao" }
 
 # 较快的 release 配置（不启用 LTO，避免原 Rust 版的慢链接）。
 # 编译性能将在功能完成后专门评测（见 docs/plans/rust-tauri.md §21）。

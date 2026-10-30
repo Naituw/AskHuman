@@ -24,6 +24,11 @@ Popup 提问附件和回复图片采用同窗右侧预览，具体决策见 `doc
 
 ## 多请求统一作答窗口
 
+macOS 标题栏拖动由本地 `vendor/tao` 补丁在原生 `sendEvent:` 中保留当前窗口的原始左键按下事件，
+之后的 Tauri 拖动请求只能消费一次，松键或关闭后清除。它不再依赖异步 IPC 到达时的
+`NSApp.currentEvent`，也不合成混用屏幕 / 窗口坐标的事件；双屏跳动的证据及回归见
+[`investigations/popup-titlebar-monitor-jump.md`](investigations/popup-titlebar-monitor-jump.md)。
+
 默认合并模式的 Daemon 派发使用 `daemon/popup_inbox.rs` / `daemon/runtime/inbox.rs` 的单一宿主，
 以一次性 token 和 generation 认证共享连接；普通题、权限和 Stop 共用 `--popup-host`。
 请求账本及终态仍属于 Daemon，IPC submission ACK 按 ID 区分合法提交、渠道抢答和失败。

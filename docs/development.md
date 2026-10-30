@@ -158,6 +158,14 @@ can do the same: its published manifest omits `default-features = false`. Drop t
 `[patch.crates-io]` entry and the vendored copy once upstream releases a fixed manifest; the
 comments in `Cargo.toml` and in the vendored manifest say exactly what differs.
 
+`src-tauri/vendor/tao` pins Tao 0.35.3 with a macOS window-drag patch. It retains the original
+native mouse-down event across WebView IPC instead of relying on `NSApp.currentEvent` or
+synthesizing a window-associated event from screen coordinates. This prevents a title-bar click
+on a secondary display from producing a drag offset relative to the global origin. Patch scope,
+regression command and removal condition are in `vendor/tao/ASKHUMAN-PATCH.md`; the native evidence
+and verification limits are in `investigations/popup-titlebar-monitor-jump.md`. Vendoring exposes
+the release's existing compiler warnings, which crates.io dependency lint capping normally hides.
+
 On macOS/Linux, installation stages the binary next to the destination, sets permissions, and
 finishes macOS signing and verification before atomically replacing the destination. Running MCP,
 daemon, and GUI processes keep their original executable inode; overwriting or re-signing that
