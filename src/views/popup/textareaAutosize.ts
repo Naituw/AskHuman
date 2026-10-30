@@ -95,22 +95,19 @@ export function resizeTextareaToContent(
     maxHeight
   );
 
-  // Insertions can only keep or increase the required height. Reading scrollHeight does not
-  // mutate layout, so grow directly in one step and leave an unchanged textarea untouched.
-  if (growthHeight > currentHeight + 0.5) {
-    const nextHeight = `${growthHeight}px`;
-    if (textarea.style.height !== nextHeight) textarea.style.height = nextHeight;
-    return;
-  }
-  if (!allowShrink) return;
+  // Keep same-line insertions cheap, but never write a height based only on the live control.
+  // WebKitGTK on Wayland can report scrollHeight + computed borders above its actual height,
+  // feeding a small geometry mismatch back into another increase on every input.
+  if (!allowShrink && growthHeight <= currentHeight + 0.5) return;
 
-  // A live textarea's scrollHeight cannot reveal content shrinkage while its explicit height is
-  // larger than the content. Measure a fixed-position mirror instead of temporarily collapsing
-  // the focused textarea through height:auto, which makes WebKit re-anchor the content scroller.
+  // Measure the content independently of the live height, for both growth and shrinkage.
+  // Use a fixed-position mirror instead of temporarily collapsing the focused textarea through
+  // height:auto, which makes WebKit re-anchor the content scroller.
   const measuredHeight = Math.min(
     measureTextareaContentHeight(textarea, style),
     maxHeight
   );
+  if (!allowShrink && measuredHeight <= currentHeight + 0.5) return;
   const nextHeight = `${measuredHeight}px`;
   if (
     Math.abs(measuredHeight - currentHeight) > 0.5 &&
