@@ -112,8 +112,13 @@ Mac 图形、真实渠道和各客户端登录后的完整会话分别记录证�
   随后退出，未选择登录。该项只证明实际启动参数及终端输入输出，不证明登录后模型、权限或 Stop 流程。
 - **收尾与全局边界**。本轮临时 Dev daemon 在 0 个活动请求时停止，临时仓库的 Dev 已解除启用，
   保留构建与验收记录。共享主目录保持未启用，AGENTS 与用户批准的版本逐字一致。
-  相对较早的全局快照，15 处文件内容／权限不变；原生 CLI 运行后，用户 `~/.codex/config.toml` 的内容与权限发生变化，
-  因未保存其原文，不能精确归因，也未覆盖恢复。当前日常默认模型仍为 `gpt-6-astra`，普通 MCP 仍指向正式程序，
+  相对较早的全局快照，15 处文件内容／权限不变。后续专门排查已恢复用户 `~/.codex/config.toml` 的旧原文：
+  从现文件移除两处新增 TUI 状态后，SHA-256 与旧快照 `a05530a38900a37efb03d804a28a1008b32e7106ca9a07b88313d4fafad96358` 完全一致。
+  文本仅新增 `tui.screen_reader_detection_done=true` 和 `tui.model_availability_nux."gpt-6.1-sol"=2`；权限从 `0644` 变为 `0600`。
+  独立空白、未登录、无 MCP／Hook 的 Codex 0.163.0 仅启动到登录菜单，便复现前一标记与权限收紧，未提交 prompt 或调用模型。
+  原生二进制同时具有 `startup_prompts::select_model_availability_nux` 与 `ConfigEditsBuilder::set_model_availability_nux_count` 符号；
+  该计数属于原生 TUI 的新模型提示状态，不是日常模型选择。其余配置全文逐字一致，包括模型、MCP、Hook、项目与权限设置。
+  没有覆盖恢复用户配置；调查前后其内容／权限均未再变。当前日常默认模型仍为 `gpt-6-astra`，普通 MCP 仍指向正式程序，
   没有用户级 `askhuman-dev` 或本次临时项目信任项；独立 profile 测试前后该用户配置字节相同。
 
 本轮证明项目开发工具与正式 iOS 出口的真实转送；没有替换正式 daemon，也不替代专用 bot／配对的渠道实现验收。
