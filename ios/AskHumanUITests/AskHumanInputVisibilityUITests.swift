@@ -67,6 +67,91 @@ final class AskHumanInputVisibilityUITests: XCTestCase {
         attachScreenshot("answer-multiline")
     }
 
+    private func assertAttachmentVisible(_ question: Int, file: StaticString = #filePath, line: UInt = #line) {
+        let button = app.buttons["add-attachment-\(question)"]
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+            let measured = geometry("answer-text-\(question)")
+            guard let top = measured["visibleTop"], let bottom = measured["visibleBottom"] else { return false }
+            return button.exists && button.isHittable && button.frame.minY >= top
+                && button.frame.maxY + 8 <= min(bottom, app.keyboards.firstMatch.frame.minY) + 1
+        }, object: app)
+        XCTAssertEqual(XCTWaiter().wait(for: [expectation], timeout: 20), .completed,
+                       "attachment: \(button.frame), hittable: \(button.isHittable), keyboard: \(app.keyboards.firstMatch.frame), input: \(geometry("answer-text-\(question)"))", file: file, line: line)
+    }
+
+    func testFocusingAnEmptyAnswerRevealsTheAttachmentMenu() {
+        launch(["-AHOpen", "req-next"])
+        field("answer-text-0").tap()
+        assertCaretVisible("answer-text-0")
+        assertAttachmentVisible(0)
+        attachScreenshot("answer-empty-attachment")
+        app.buttons["add-attachment-0"].tap()
+        XCTAssertTrue(app.buttons["Choose File"].waitForExistence(timeout: 5))
+    }
+
+    func testShortAnswerKeepsTheAttachmentMenuVisibleAcrossNewlines() {
+        launch(["-AHOpen", "req-next"])
+        let editor = field("answer-text-0")
+        editor.tap()
+        editor.typeText("A short answer\nOne more line\n")
+        assertCaretVisible("answer-text-0")
+        assertAttachmentVisible(0)
+        attachScreenshot("answer-short-attachment")
+    }
+
+    func testShortAnswerAndAttachmentFitWithAccessibilityText() {
+        launch(["-AHOpen", "req-next", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityL"])
+        let editor = field("answer-text-0")
+        editor.tap()
+        editor.typeText("A note\n")
+        assertCaretVisible("answer-text-0")
+        assertAttachmentVisible(0)
+        attachScreenshot("answer-accessibility-attachment")
+    }
+
+    func testEachQuestionRevealsItsOwnAttachmentEntryPoint() {
+        launch(["-AHOpen", "req-migration"])
+        let first = field("answer-text-0")
+        first.tap()
+        first.typeText("First answer")
+        assertCaretVisible("answer-text-0")
+        assertAttachmentVisible(0)
+        let second = field("answer-text-1")
+        second.tap()
+        second.typeText("Second answer")
+        assertCaretVisible("answer-text-1")
+        assertAttachmentVisible(1)
+        XCTAssertEqual(first.value as? String, "First answer")
+        attachScreenshot("answer-second-question-attachment")
+    }
+
+    /// The isolated simulator must contain a photo, as seeded with `simctl addmedia`.
+    func testAttachmentRowsMoveTheEntryPointWithoutHidingTheCaret() throws {
+        guard ProcessInfo.processInfo.environment["AH_INPUT_ATTACHMENT_QA"] == "YES" else {
+            throw XCTSkip("Requires the isolated attachment fixture library")
+        }
+        launch(["-AHOpen", "req-next"])
+        let editor = field("answer-text-0")
+        editor.tap()
+        assertAttachmentVisible(0)
+        app.buttons["add-attachment-0"].tap()
+        app.buttons["Photo Library"].tap()
+        let photo = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'")).firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: 30))
+        photo.tap()
+        let done = app.buttons["Done"]
+        if done.exists { done.tap() } else { app.buttons["Add"].tap() }
+        XCTAssertTrue(app.buttons["Remove attachment"].waitForExistence(timeout: 15))
+        editor.tap()
+        editor.typeText("An attached photo")
+        assertCaretVisible("answer-text-0")
+        assertAttachmentVisible(0)
+        attachScreenshot("answer-existing-attachment")
+        app.buttons["Remove attachment"].tap()
+        assertCaretVisible("answer-text-0")
+        assertAttachmentVisible(0)
+    }
+
     func testTaskCaretStaysAboveTheKeyboardAcrossNewlinesAndInternalScrolling() {
         launch(["-AHNewTask", "YES"])
         typeLines("task-text")

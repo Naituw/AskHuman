@@ -328,6 +328,7 @@ private struct QuestionCard: View {
     let composer: AnswerComposer
     let landing: Landing
     var focus: Binding<Int?>
+    @State private var inputReveal = InputRevealTarget()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -370,13 +371,14 @@ private struct QuestionCard: View {
                         if active { focus.wrappedValue = index }
                         else if focus.wrappedValue == index { focus.wrappedValue = nil }
                     }),
-                    lines: 1...10, identifier: "answer-text-\(index)"
+                    lines: 1...10, identifier: "answer-text-\(index)", revealTarget: inputReveal
                 )
                 .contentShape(Rectangle())
                 .simultaneousGesture(TapGesture().onEnded { focus.wrappedValue = index })
                 .padding(10)
                 .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                ReplyAttachmentBar(composer: composer, question: index)
+                .background(InputRevealAnchor(target: inputReveal, part: .editor))
+                ReplyAttachmentBar(composer: composer, question: index, revealTarget: inputReveal)
             }
         }
         .card()

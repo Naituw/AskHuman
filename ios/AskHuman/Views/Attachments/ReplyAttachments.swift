@@ -11,6 +11,7 @@ import AHStore
 struct ReplyAttachmentBar: View {
     let composer: AnswerComposer
     let question: Int
+    var revealTarget: InputRevealTarget?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -21,7 +22,7 @@ struct ReplyAttachmentBar: View {
                 }
             }
             if composer.canAttachMore {
-                AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachmentCount, identifier: "add-attachment-\(question)", preparationChanged: { id, active in
+                AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachmentCount, identifier: "add-attachment-\(question)", revealTarget: revealTarget, preparationChanged: { id, active in
                     composer.setAttachmentPreparation(id, active: active)
                 }) { name, mime, data, isImage in
                     try composer.addAttachment(name: name, mime: mime, data: data, isImage: isImage, question: question)
@@ -38,6 +39,7 @@ struct AttachmentMenu: View {
     let remaining: Int
     let identifier: String
     var compact = false
+    var revealTarget: InputRevealTarget?
     var preparationChanged: (UUID, Bool) -> Void = { _, _ in }
     var progressChanged: (AttachmentPreparation?) -> Void = { _ in }
     let add: (_ name: String, _ mime: String, _ data: Data, _ isImage: Bool) throws -> Void
@@ -55,6 +57,7 @@ struct AttachmentMenu: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             pickerMenu
+                .background(InputRevealAnchor(target: revealTarget, part: .attachment))
             if working && !compact {
                 AttachmentPreparationView(preparation: preparation)
             }
