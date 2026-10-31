@@ -1,7 +1,7 @@
 # AskHuman 项目级开发验收实施计划
 
 > 需求：[项目级开发验收](../specs/dev-verification-routing.md)。
-> 状态：项目级重做已实现并安装本树 Dev，正在完成最终 CI／草稿 PR；用户明确将真实渠道和本机界面验收后置。
+> 状态：项目级重做已实现并安装本树 Dev；自动验证范围见下文，CI 以 PR 当前提交的检查为准。用户明确将真实渠道和本机界面验收后置。
 > 在当前主工作树继续，不另建 worktree。保留原有 `PROGRESS.md` 和 Cursor 调查文档的未提交修改。
 
 ## 1 当前基线
@@ -65,10 +65,10 @@ Mac 图形、真实渠道和各客户端登录后的完整会话分别记录证�
 - 新安装程序校验实际构建；面对当前不兼容的正式端明确拒绝远程验收，未换新、未产生本机等待。
 - 新安装程序的两树进程回归通过：普通六工具／项目单工具、普通／Dev／普通、resume、stale build、私有 profile、旧 marker 升级及全局文件保持。
 - 独立私有 daemon 与回环 Telegram fixture 通过实际转送：问答、权限记忆、Stop 待办、取消、发送失败；正式待办、权限记忆和日常活跃槽未被测试动作修改。此为模拟渠道证据。
-- 前端 91 文件／1078 测试通过；Node 总计 87 测试，68 通过、19 平台条件跳过；普通前端构建不产出 DevelopmentView 工作台 chunk，Dev 安装包含该 chunk。
+- 前端 91 文件／1078 测试通过；Node 总计 88 测试，69 通过、19 平台条件跳过；普通前端构建不产出 DevelopmentView 工作台 chunk，Dev 安装包含该 chunk。
 - Codex 0.147 的 `mcp get askhuman-dev --json` 已正确解析本树配置与超时；不将配置解析等同于当前 App 已加载连接。
 - 16 处本机全局集成／配置内容与权限快照保持不变。项目生成配置只加入仓库本地精确 exclude，未修改用户级信任。
 
-本机最终完整 Rust：2295 passed／11 ignored；严格 Clippy 通过。新提交的 CI 结果完成后单独补记，不能引用旧 head 的 CI 代替。
+本机最终完整 Rust：2295 passed／11 ignored；严格 Clippy 通过。CI 状态以 [PR 当前提交的检查](https://github.com/Naituw/AskHuman/pull/27/checks) 为准，不引用旧 head 的结果代替。
 用户已选择先完成 CI／草稿 PR；真实渠道验收登记 AskHuman 待办 #5，本机界面沿用 #4。
 未发起真实模型调用，不能把私有 profile 的配置准备或手工协议夹具算作登录后 Agent 全流程通过。
