@@ -18,7 +18,7 @@ struct AnswerScreen: View {
     /// The question "Next" last led to, which flashes once it has arrived.
     @State private var landing = Landing()
     /// The question whose text field has the keyboard.
-    @FocusState private var focused: Int?
+    @State private var focused: Int?
     @Environment(\.launchOptions) private var launch
 
     fileprivate static let space = "answer-scroll"
@@ -327,7 +327,7 @@ private struct QuestionCard: View {
     let question: QuestionView
     let composer: AnswerComposer
     let landing: Landing
-    var focus: FocusState<Int?>.Binding
+    var focus: Binding<Int?>
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -363,16 +363,19 @@ private struct QuestionCard: View {
                 }
             }
             if !composer.selectOnly {
-                TextField(
-                    question.options.isEmpty ? "Your answer" : "Add a note (optional)",
+                CaretTextView(
+                    placeholder: question.options.isEmpty ? String(localized: "Your answer") : String(localized: "Add a note (optional)"),
                     text: Binding(get: { composer.answers[index].text }, set: { composer.setText($0, question: index) }),
-                    axis: .vertical
+                    focused: Binding(get: { focus.wrappedValue == index }, set: { active in
+                        if active { focus.wrappedValue = index }
+                        else if focus.wrappedValue == index { focus.wrappedValue = nil }
+                    }),
+                    lines: 1...10, identifier: "answer-text-\(index)"
                 )
-                .lineLimit(1...10)
-                .focused(focus, equals: index)
+                .contentShape(Rectangle())
+                .simultaneousGesture(TapGesture().onEnded { focus.wrappedValue = index })
                 .padding(10)
                 .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .accessibilityIdentifier("answer-text-\(index)")
                 ReplyAttachmentBar(composer: composer, question: index)
             }
         }

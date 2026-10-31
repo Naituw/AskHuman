@@ -33,6 +33,7 @@ private struct NewTaskForm: View {
     @State private var problem: String?
     @State private var confirmDiscard = false
     @State private var sentTick = 0
+    @State private var textFocused = false
 
     var body: some View {
         @Bindable var composer = composer
@@ -157,11 +158,13 @@ private struct NewTaskForm: View {
                 .pickerStyle(.navigationLink)
                 .accessibilityIdentifier("task-todo")
             }
-            TextField(
-                composer.todoId == nil ? "Describe the task" : "Anything to add? (optional)", text: $composer.text, axis: .vertical
+            CaretTextView(
+                placeholder: composer.todoId == nil ? String(localized: "Describe the task") : String(localized: "Anything to add? (optional)"),
+                text: $composer.text, focused: $textFocused,
+                lines: 4...12, identifier: "task-text"
             )
-            .lineLimit(4...12)
-            .accessibilityIdentifier("task-text")
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded { textFocused = true })
         } header: {
             Text("Task")
         } footer: {
