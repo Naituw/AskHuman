@@ -37,7 +37,9 @@ extension Error {
         case "empty": String(localized: "There is nothing to send.")
         case "tooLong": String(localized: "That message is too long.")
         case "attachment": String(localized: "An attachment could not be used. Remove it and try again.")
-        case "conflict", "interrupted": String(localized: "The Mac could not tell whether this was sent. Write it again.")
+        case "desktopDisconnected": String(localized: "Codex Desktop is disconnected. Open the chat on your Mac and try again.")
+        case "desktopSendFailed": String(localized: "Codex Desktop could not accept the message. Your draft is kept; try again.")
+        case "desktopUnknown", "conflict", "interrupted": String(localized: "The message may have been sent. Check the original chat before sending another message.")
         default: String(localized: "The Mac refused it (\(reason)).")
         }
     }

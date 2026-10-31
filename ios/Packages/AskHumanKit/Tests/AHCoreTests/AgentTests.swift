@@ -210,6 +210,24 @@ final class AgentTests: XCTestCase {
 
     // MARK: interjections
 
+    func testAnIdleDesktopChatAcceptsAMessageWithFilesAndNoPendingQueue() async throws {
+        let h = Harness()
+        h.mac.agents = ["codex:desktop": sampleAgent("codex:desktop", state: "idle", interject: true)]
+        h.mac.interjectReply = ("delivered", nil, 0)
+        await h.pair()
+        await eventually("the idle Desktop chat") { await h.state().agents.first?.view.canInterject.ok == true }
+        let source = UploadSource(name: "note.txt", mime: "text/plain", data: Data("note".utf8), isImage: false)
+        let result = try await h.engine.sendInterject(
+            macId: h.mac.macId, agentKey: "codex:desktop", text: "Continue", files: [source], clientMsgId: "desktop-message", progress: { _ in }
+        )
+        XCTAssertEqual(result, InterjectOutcome(status: "delivered", pending: 0))
+        let sent = try h.mac.received(InterjectSend.type)[0].body(as: InterjectSend.self)
+        XCTAssertEqual(sent.clientMsgId, "desktop-message")
+        XCTAssertEqual(sent.agentKey, "codex:desktop")
+        XCTAssertEqual(sent.text, "Continue")
+        XCTAssertEqual(sent.files.count, 1)
+    }
+
     func testAnInterjectionIsAcknowledgedAsQueued() async throws {
         let h = Harness()
         h.mac.agents = ["claude:s1": sampleAgent("claude:s1")]

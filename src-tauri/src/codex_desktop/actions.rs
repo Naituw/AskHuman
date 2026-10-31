@@ -4,6 +4,25 @@ use crate::agents::model_catalog::ModelChoice;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+/// A phone must retain its message identity whenever native submission may have happened.
+/// A missing receipt is safe only because submission always persists `unknown` first.
+pub(crate) fn outcome_unknown(id: &str) -> bool {
+    receipt_outcome_unknown(
+        &crate::paths::state_dir()
+            .join("codex-desktop-actions")
+            .join(format!("{id}.json")),
+    )
+}
+
+fn receipt_outcome_unknown(path: &std::path::Path) -> bool {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice::<Value>(&bytes)
+            .ok()
+            .is_none_or(|value| !matches!(value["status"].as_str(), Some("prepared" | "rejected"))),
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
+}
+
 pub(super) struct Action {
     path: PathBuf,
     pub value: Value,
@@ -200,6 +219,25 @@ impl Action {
 mod tests {
     use super::*;
     use runtime::{CreationError, CreationOutcome};
+
+    #[test]
+    fn a_phone_releases_its_message_id_only_when_submission_cannot_have_happened() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("receipt.json");
+        assert!(!receipt_outcome_unknown(&path));
+        for (status, unknown) in [
+            ("prepared", false),
+            ("rejected", false),
+            ("unknown", true),
+            ("accepted", true),
+            ("other", true),
+        ] {
+            save(&path, &json!({"status":status})).unwrap();
+            assert_eq!(receipt_outcome_unknown(&path), unknown, "{status}");
+        }
+        std::fs::write(&path, b"broken").unwrap();
+        assert!(receipt_outcome_unknown(&path));
+    }
 
     fn input() -> Value {
         json!({"op":"create","id":"operation","text":"task"})

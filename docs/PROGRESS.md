@@ -3,6 +3,14 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 待分发与真机验收：iOS 多行输入的光标跟随
+
+2026-10-31 用户确认只修回答框与创建任务框的光标持续可见，保留原位编辑；已在当前检出实现
+`Views/Common/CaretTextView.swift`，设计与已跑验证见 `docs/specs/ios-answer-flow.md` §3.5。
+iOS 27.0／18.5 的四项原生输入检查均通过，18.5 另过回答与新建任务完整流程；已运行 `./scripts/install.sh`。
+手机 App 尚未更新。下一步按用户选择分发 TestFlight，再在手机顺手确认中文输入法下的换行与候选栏；
+准备分发时只带本修复和已合入主分支的代码，不自动带入并行任务的改动。
+
 ## 待验收：项目开发环境的真实渠道与界面
 
 [PR #27](https://github.com/Naituw/AskHuman/pull/27) 已按项目级 rules／MCP、幂等准备和完整转送边界重做；
@@ -70,7 +78,7 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
     **不得再改写**（不要 rebase，也不要 force-push）；分支继续开发时同步 main 用合并（2026-10-26 合过一次：`chore(ios): merge main into feat/ios-channel`，合并时解了 `agents/stop.rs` 的冲突）
 
 已知延期（不阻塞原型）：
-- Codex 桌面 App 的会话暂不支持手机插话（返回 `unsupported`）；Pi 的扩展只有在 Stop 确认开着时才会随 daemon 启动自动迁移（2026-10-26 实测：日志出现 `migrated outdated Stop confirmation hooks: pi`），只开了生命周期跟踪的用户仍要在设置里重新保存 / 刷新才会上报失败的回合；已在运行的 Pi 会话要重启后才加载新扩展。
+- Pi 的扩展只有在 Stop 确认开着时才会随 daemon 启动自动迁移（2026-10-26 实测：日志出现 `migrated outdated Stop confirmation hooks: pi`），只开了生命周期跟踪的用户仍要在设置里重新保存 / 刷新才会上报失败的回合；已在运行的 Pi 会话要重启后才加载新扩展。
 - IM `/new` 与 iOS 新任务共用的启动流水线 `daemon/runtime/task_launch.rs::start_task` 没有自动化测试（该文件只有门槛顺序的 1 个测试）。2026-10-26 在真实飞书上走通过一轮 Codex 终端路径；TODO 出队、终端打不开时的清理、Codex App 路径只靠对照新旧实现读代码确认。要补自动测试，得先把 `open_terminal` / `todos` 等副作用抽成可注入的接缝。
 - 提问正文里的本地图片尚未改写为 `ahasset://`，列表项的墓碑展示也未做；撤回插话只取回文字、不取回附件。
 - 发行给朋友之前：EMQX 自动开户与额度共享、TestFlight 外部测试说明、隐私政策网址与联系邮箱。

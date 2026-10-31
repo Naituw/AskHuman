@@ -102,6 +102,10 @@ extension MockBackend {
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> InterjectOutcome {
         try requireOnline(macId)
+        if let reason = failNextInterject {
+            failNextInterject = nil
+            throw BackendError.rejected(reason)
+        }
         guard let first = agentIndex(macId, agentKey) else { throw BackendError.rejected("notFound") }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.count > 20_000 { throw BackendError.rejected("tooLong") }
@@ -304,6 +308,10 @@ extension MockBackend {
 
     public func setInterjectConsumeDelay(_ seconds: Double?) {
         interjectConsumeDelay = seconds
+    }
+
+    public func setNextInterjectFailure(_ reason: String?) {
+        failNextInterject = reason
     }
 
     /// The Agent disappears from the list (its session was cleaned up on the Mac).

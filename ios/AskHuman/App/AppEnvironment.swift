@@ -10,6 +10,7 @@ import AHTransport
 /// backend; the others pick the scenario and the first screen.
 struct LaunchOptions {
     var mock = false
+    var inputCaretDiagnostics = false
     var scenario: MockBackend.Scenario = .demo
     var latency = 1.0
     var tab: AppTab?
@@ -59,6 +60,7 @@ struct LaunchOptions {
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
+        inputCaretDiagnostics = defaults.bool(forKey: "AHInputCaretDiagnostics")
         if let name = defaults.string(forKey: "AHScenario"), let scenario = MockBackend.Scenario(rawValue: name) {
             self.scenario = scenario
         }

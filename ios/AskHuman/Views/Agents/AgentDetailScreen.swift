@@ -79,6 +79,11 @@ private struct AgentDetailContent: View {
             show(String(localized: "The Agent read your message."))
         }
         .alert("Could not send", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+            if store.interjectComposer(for: item).needsDeliveryReview {
+                Button("I checked the original chat") {
+                    store.interjectComposer(for: item).confirmDeliveryReviewed()
+                }
+            }
             Button("OK", role: .cancel) {}
         } message: {
             Text(problem ?? "")
@@ -91,7 +96,7 @@ private struct AgentDetailContent: View {
         if live, item.view.canInterject.ok {
             InterjectBar(item: item, composer: store.interjectComposer(for: item)) { outcome in
                 sentTick += 1
-                show(outcome.status == "delivered" ? String(localized: "Delivered to the Agent.") : String(localized: "Queued. The Agent reads it at its next step."))
+                show(outcome.status == "delivered" ? String(localized: "Message sent.") : String(localized: "Queued. The Agent reads it at its next step."))
             } onProblem: { message in
                 problem = message
             }

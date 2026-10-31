@@ -1,6 +1,6 @@
 //! Optional Codex desktop adapter. Only the daemon owns the live connection.
 //! Protocol attribution and license: see NOTICE.md in this directory.
-mod actions;
+pub(crate) mod actions;
 mod launch;
 pub use launch::{
     available, catalog_runtime, integration_enabled, launch_status, resolve_launch, LaunchStatus,

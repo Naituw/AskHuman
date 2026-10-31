@@ -1016,7 +1016,9 @@ final class AskHumanUITests: XCTestCase {
     func testCreatingATaskWalksThroughTheFormAndOpensTheNewAgent() {
         launch(extra: ["-AHTab", "agents"])
         requireElement("new-task").tap()
-        let start = requireElement("task-start")
+        // iOS 18 also gives a toolbar wrapper this identifier; its enabled flag is not the button's.
+        let start = app.buttons["task-start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 20))
         XCTAssertFalse(start.isEnabled)
         shot("79-task-form")
         // The Mac asks every time: nothing is preselected, so the choice comes first.

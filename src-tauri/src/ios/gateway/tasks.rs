@@ -97,7 +97,7 @@ impl Actor {
         ack
     }
 
-    pub(super) async fn on_interject_send(&mut self, phone_id: &str, send: wire::InterjectSend) {
+    pub(super) fn on_interject_send(&mut self, phone_id: &str, send: wire::InterjectSend) {
         let hash = body_hash(&json!({
             "agentKey": send.agent_key,
             "text": send.text,
@@ -113,33 +113,77 @@ impl Actor {
                 JournalLookup::Conflict => {
                     self.interject_ack(phone_id, &send, InterjectResult::rejected("conflict"));
                 }
+                _ if self.live.interject_inflight.contains(&send.client_msg_id) => {
+                    // The original delivery will acknowledge this message. Do not submit again.
+                }
                 _ => {
                     self.interject_ack(phone_id, &send, InterjectResult::rejected("interrupted"));
                 }
             }
             return;
         }
-        let result = self.try_interject(phone_id, &send).await;
+        let files = match self.prepare_interject(phone_id, &send) {
+            Ok(files) => files,
+            Err(result) => return self.finish_interject(phone_id, &send, result),
+        };
+        self.live
+            .interject_inflight
+            .insert(send.client_msg_id.clone());
+        let host = self.host.clone();
+        let phone_id = phone_id.to_string();
+        let destination = phone_id.clone();
+        let message = send.clone();
+        self.spawn_then(
+            async move {
+                host.interject(
+                    &destination,
+                    &message.client_msg_id,
+                    &message.agent_key,
+                    message.text.trim(),
+                    files,
+                )
+                .await
+            },
+            move |actor, result| {
+                actor.live.interject_inflight.remove(&send.client_msg_id);
+                actor.finish_interject(&phone_id, &send, result);
+            },
+        );
+    }
+
+    fn finish_interject(
+        &mut self,
+        phone_id: &str,
+        send: &wire::InterjectSend,
+        result: InterjectResult,
+    ) {
         let delivered = result.status != "rejected";
-        let ack = self.interject_ack(phone_id, &send, result);
+        let ack = wire::InterjectAck {
+            client_msg_id: send.client_msg_id.clone(),
+            agent_key: send.agent_key.clone(),
+            status: result.status.to_string(),
+            reason: result.reason,
+            pending: result.pending,
+        };
         self.finish_journal(&send.client_msg_id, t::INTERJECT_ACK, &ack);
+        self.send(phone_id, &ack);
         if delivered {
             // The pending marker of the Agent changed: show it without waiting for the next poll.
             self.live.agents_at = 0;
         }
     }
 
-    async fn try_interject(
+    fn prepare_interject(
         &mut self,
         phone_id: &str,
         send: &wire::InterjectSend,
-    ) -> InterjectResult {
+    ) -> Result<Vec<StagedFile>, InterjectResult> {
         let text = send.text.trim();
         if text.chars().count() > MAX_INTERJECT_CHARS {
-            return InterjectResult::rejected("tooLong");
+            return Err(InterjectResult::rejected("tooLong"));
         }
         if text.is_empty() && send.files.is_empty() {
-            return InterjectResult::rejected("empty");
+            return Err(InterjectResult::rejected("empty"));
         }
         // The state decides whether the text can still reach the Agent: never go by the cache.
         self.refresh_agents(self.now());
@@ -150,7 +194,7 @@ impl Actor {
             .find(|a| a.key == send.agent_key)
             .cloned()
         else {
-            return InterjectResult::rejected("notFound");
+            return Err(InterjectResult::rejected("notFound"));
         };
         if !agent.can_interject.ok {
             let reason = agent
@@ -158,11 +202,11 @@ impl Actor {
                 .reason
                 .as_deref()
                 .unwrap_or("notWorking");
-            return InterjectResult::rejected(reason);
+            return Err(InterjectResult::rejected(reason));
         }
         let files = match self.take_agent_uploads(phone_id, &send.agent_key, &send.files) {
             Ok(files) => files,
-            Err(_) => return InterjectResult::rejected("attachment"),
+            Err(_) => return Err(InterjectResult::rejected("attachment")),
         };
         let staged: Vec<StagedFile> = files
             .into_iter()
@@ -174,9 +218,7 @@ impl Actor {
                 path: file.path,
             })
             .collect();
-        self.host
-            .interject(phone_id, &send.agent_key, text, staged)
-            .await
+        Ok(staged)
     }
 
     pub(super) fn on_interject_clear(&mut self, phone_id: &str, agent_key: &str) {

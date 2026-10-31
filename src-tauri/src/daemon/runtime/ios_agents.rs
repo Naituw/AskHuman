@@ -111,8 +111,8 @@ fn clip(text: &str, max: usize) -> String {
     out
 }
 
-/// Whether text can still be handed to this session, and if not, why. The same rules as IM
-/// `/msg`: only a working session of a family with a hook that can carry the text.
+/// Desktop chats accept both a running turn's additions and an idle chat's next message.
+/// Other supported sessions need a working hook to carry the text.
 pub(super) fn can_interject(rec: &Value) -> CanInterject {
     let refuse = |reason: &str| CanInterject {
         ok: false,
@@ -121,12 +121,14 @@ pub(super) fn can_interject(rec: &Value) -> CanInterject {
     if text(rec, "state") == "ended" {
         return refuse("ended");
     }
-    // Grok has no channel for it; Codex App sessions are driven through the app, which the
-    // prototype does not reach from the phone.
-    if text(rec, "kind") == "grok" || rec["desktop"]["connected"] == true {
+    if text(rec, "kind") == "grok" {
         return refuse("unsupported");
     }
-    if text(rec, "state") != "working" {
+    if crate::codex_desktop::is_desktop_session(rec) {
+        if rec["desktop"]["connected"] != true {
+            return refuse("desktopDisconnected");
+        }
+    } else if text(rec, "state") != "working" {
         return refuse("notWorking");
     }
     CanInterject {
@@ -268,25 +270,51 @@ fn with_session_model(mut frame: Value, session: &SessionInfo) -> Value {
     frame
 }
 
-/// Queues text (and files) for a working session, or hands it to a hook that is waiting right
-/// now. Mirrors IM `/msg`: the iOS phone is registered for the "read" receipt of a queued entry.
-pub(super) fn interject(
+/// Sends directly to Desktop, or queues text and files for a working session's next hook.
+/// Only queued hook messages register the phone for a consumption receipt.
+pub(super) async fn interject(
     state: &Arc<ServerState>,
     phone_id: &str,
+    client_msg_id: &str,
     agent_key: &str,
     text_in: &str,
     files: Vec<StagedFile>,
 ) -> InterjectResult {
-    let Some((_, session_id)) = split_key(agent_key) else {
+    let Some((kind, session_id)) = split_key(agent_key) else {
         return InterjectResult::rejected("notFound");
     };
     let snapshot = state.agents.snapshot();
     let Some(rec) = find_agent_by_session(&snapshot, session_id) else {
         return InterjectResult::rejected("notFound");
     };
+    if text(rec, "kind") != kind.as_str() {
+        return InterjectResult::rejected("notFound");
+    }
     let can = can_interject(rec);
     if !can.ok {
         return InterjectResult::rejected(can.reason.as_deref().unwrap_or("notWorking"));
+    }
+    if crate::codex_desktop::is_desktop_session(rec) {
+        let operation = desktop_message(phone_id, client_msg_id, session_id, text_in, &files);
+        let crate::codex_desktop::Operation::Send { ref id, .. } = operation else {
+            unreachable!();
+        };
+        let id = id.clone();
+        return match crate::codex_desktop::shared().execute(operation).await {
+            Ok(_) => InterjectResult {
+                status: "delivered",
+                reason: None,
+                pending: 0,
+            },
+            Err(error) => {
+                log(&format!("ios: Codex Desktop message {id}: {error}"));
+                InterjectResult::rejected(if crate::codex_desktop::actions::outcome_unknown(&id) {
+                    "desktopUnknown"
+                } else {
+                    "desktopSendFailed"
+                })
+            }
+        };
     }
     let attachments = files
         .into_iter()
@@ -315,6 +343,30 @@ pub(super) fn interject(
             reason: None,
             pending: queued as u64,
         }
+    }
+}
+
+/// Stable, phone-scoped operation identity also protects the native Desktop receipt journal.
+fn desktop_message(
+    phone_id: &str,
+    client_msg_id: &str,
+    session_id: &str,
+    text: &str,
+    files: &[StagedFile],
+) -> crate::codex_desktop::Operation {
+    use sha2::{Digest, Sha256};
+    let hash =
+        Sha256::digest(serde_json::to_vec(&["ios-interject", phone_id, client_msg_id]).unwrap());
+    let mut bytes = [0; 16];
+    bytes.copy_from_slice(&hash[..16]);
+    crate::codex_desktop::Operation::Send {
+        session_id: session_id.to_string(),
+        text: text.to_string(),
+        files: files
+            .iter()
+            .map(|file| file.path.to_string_lossy().into_owned())
+            .collect(),
+        id: uuid::Uuid::from_bytes(bytes).to_string(),
     }
 }
 
@@ -448,10 +500,78 @@ mod tests {
             refused(json!({"kind": "grok"})).as_deref(),
             Some("unsupported")
         );
-        assert_eq!(
-            refused(json!({"desktop": {"connected": true}})).as_deref(),
-            Some("unsupported")
+        assert!(
+            can_interject(&record(
+                json!({"kind":"codex", "desktop":{"connected":true}})
+            ))
+            .ok
         );
+    }
+
+    #[test]
+    fn desktop_can_continue_idle_chats_but_never_falls_back_to_a_hook() {
+        for state in ["working", "idle"] {
+            assert!(
+                can_interject(&record(json!({
+                    "kind":"codex", "state":state, "terminal":"codex-app",
+                    "desktop":{"connected":true}
+                })))
+                .ok
+            );
+            for desktop in [json!({"connected":false}), Value::Null] {
+                assert_eq!(
+                    can_interject(&record(json!({
+                        "kind":"codex", "state":state, "terminal":"codex-app", "desktop":desktop
+                    })))
+                    .reason
+                    .as_deref(),
+                    Some("desktopDisconnected")
+                );
+            }
+        }
+        assert_eq!(
+            can_interject(&record(json!({
+                "kind":"codex", "state":"ended", "desktop":{"connected":true}
+            })))
+            .reason
+            .as_deref(),
+            Some("ended")
+        );
+    }
+
+    #[test]
+    fn desktop_messages_preserve_text_files_and_a_phone_scoped_operation_id() {
+        let file = StagedFile {
+            name: "photo.png".into(),
+            mime: "image/png".into(),
+            path: "/tmp/photo.png".into(),
+            size: 3,
+            is_image: true,
+        };
+        let make = |phone, message| {
+            serde_json::to_value(desktop_message(
+                phone,
+                message,
+                "session",
+                "hello",
+                std::slice::from_ref(&file),
+            ))
+            .unwrap()
+        };
+        let first = make("phone-a", "message-a");
+        assert_eq!(first, make("phone-a", "message-a"));
+        assert_ne!(first["id"], make("phone-b", "message-a")["id"]);
+        assert_ne!(first["id"], make("phone-a", "message-b")["id"]);
+        assert!(uuid::Uuid::parse_str(first["id"].as_str().unwrap()).is_ok());
+        assert_eq!(first["sessionId"], "session");
+        assert_eq!(first["text"], "hello");
+        assert_eq!(first["files"], json!(["/tmp/photo.png"]));
+        for setting in ["model", "effort", "permission", "speed"] {
+            assert!(
+                first.get(setting).is_none(),
+                "ordinary sends inherit {setting}"
+            );
+        }
     }
 
     #[test]

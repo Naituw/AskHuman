@@ -65,7 +65,7 @@ public protocol RemoteBackend: AnyObject, Sendable {
     /// Opens or closes the live frames of one Agent. A watch the user keeps open is asked for again
     /// after a reconnect.
     func watch(macId: String, agentKey: String, open: Bool) async
-    /// Sends a message to a working Agent. `clientMsgId` makes a retry of a failed attempt idempotent
+    /// Sends a message when the Mac allows it (also while idle for Desktop). `clientMsgId` makes a retry idempotent
     /// (pass the same one again). Throws `.rejected(reason)` when the Mac refused it.
     func sendInterject(
         macId: String, agentKey: String, text: String, files: [UploadSource], clientMsgId: String?,
