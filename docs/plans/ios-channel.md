@@ -578,3 +578,17 @@ Skill 已通过结构校验；脚本在真实归档上完成只读预检，并�
 本机受控目录的 API `.p8`、RSA 私钥、P12、签名密码文件及 AskHuman 接收的密钥上传副本已清理，清理后再次本地导出通过；iCloud 原始下载文件因系统权限阻挡未访问。
 用户随后明确选择保留 iCloud 原件作为备份；日常 Agent 复用 Keychain，不自动读取这份备份。
 
+## 2026-11-01：TestFlight 内部构建 3
+
+从 main `5ef38ead3527b66ed64c898ab4869db9e430db6f` 的完整源码归档并分发 `0.1.0 (3)`。
+包含统一回合结果与原会话接续、Codex Fast、任务附件、请求手动切换、到达动画、输入光标与附件入口可见性，以及连接状态提示。
+沿用原 bundle ID、签名团队、共享钥匙串组和内部测试组；由项目 `ios-testflight` skill 复用既有 Keychain 签名 helper 上传。
+
+合并后的 main 候选通过 2297 项 Rust、499 项 Swift、10 项隔离脚本、7 项动画对拍、Clippy all targets（`-D warnings`），
+以及 iOS 26.2 中文原生界面 8 项回归；本地化目录校验为 520 条。Rust 另有 10 项 ignored、2 项真实 Cursor 检查显式排除；
+Swift 的 43 项真实端到端检查因未配置环境跳过。Mac 端已运行 `./scripts/install.sh` 编译安装。
+
+归档与上传预检通过，Xcode 返回 `ARCHIVE SUCCEEDED` / `EXPORT SUCCEEDED`。Apple 构建
+`6b125b24-1856-404f-bcdc-c7d109dd4274` 状态为 `VALID`，已自动进入 `AskHuman Internal`。
+用户于 2026-11-01 确认已更新，原有 Mac 连接和输入均正常；已完成输入可见性修复的分发与真机确认。
+其余真机推送、切网与渠道验收矩阵继续由 `docs/PROGRESS.md` 跟踪。
