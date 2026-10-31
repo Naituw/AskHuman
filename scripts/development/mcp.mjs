@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
-import { readWorkspace, record, runAsk } from "./runtime.mjs";
+import { pathKey, physicalPath, readWorkspace, record, runAsk } from "./runtime.mjs";
 import { guard, monitor } from "./caller.mjs";
 
 const option = z.object({ text: z.string(), recommended: z.boolean().optional() });
@@ -30,7 +30,7 @@ function images(text, directory) {
     if (!mimeType) continue;
     try {
       const actual = fs.realpathSync(line);
-      const relative = path.relative(fs.realpathSync(directory), actual);
+      const relative = path.relative(physicalPath(directory), physicalPath(actual));
       const stat = fs.statSync(actual);
       if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || !stat.isFile()
           || stat.size > 10 * 1024 * 1024 || total + stat.size > 20 * 1024 * 1024) continue;
@@ -54,7 +54,7 @@ export function startMcp(root) {
     readWorkspace(root);
     const directory = path.join(root, ".askhuman-dev/mcp-connections");
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-    if (fs.realpathSync(directory) !== directory) throw new Error("linked project connection state requires review");
+    if (physicalPath(directory) !== pathKey(directory)) throw new Error("linked project connection state requires review");
     observation = path.join(directory, `${process.pid}.json`);
     const temporary = `${observation}.${randomUUID()}.tmp`;
     try {

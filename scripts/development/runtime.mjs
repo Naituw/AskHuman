@@ -7,11 +7,20 @@ import { randomUUID } from "node:crypto";
 export const manifestName = "workspace.json";
 const maxOutput = 16 * 1024 * 1024;
 
+// Rust canonical paths can carry a Windows verbatim prefix; Node and Git may omit it.
+export function pathKey(value) {
+  if (process.platform !== "win32") return value;
+  if (value.startsWith("\\\\?\\UNC\\")) value = "\\\\" + value.slice(8);
+  else if (value.startsWith("\\\\?\\")) value = value.slice(4);
+  return value.toLowerCase();
+}
+export function physicalPath(value) { return pathKey(fs.realpathSync(value)); }
+
 export function worktreeRoot(value) {
   if (!path.isAbsolute(value)) throw new Error("worktree must be an absolute path");
   const root = fs.realpathSync(value);
   const git = spawnSync("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8", timeout: 3000 });
-  if (git.status !== 0 || fs.realpathSync(git.stdout.trim()) !== root) {
+  if (git.status !== 0 || physicalPath(git.stdout.trim()) !== physicalPath(root)) {
     throw new Error("worktree must identify its git root");
   }
   return root;
@@ -25,7 +34,7 @@ export function readWorkspace(root) {
   }
   if (fs.statSync(file).size > 1024 * 1024) throw new Error("development manifest exceeds 1 MiB");
   const workspace = JSON.parse(fs.readFileSync(file, "utf8"));
-  if (workspace.version !== 1 || !path.isAbsolute(workspace.worktree) || fs.realpathSync(workspace.worktree) !== root) {
+  if (workspace.version !== 1 || !path.isAbsolute(workspace.worktree) || physicalPath(workspace.worktree) !== physicalPath(root)) {
     throw new Error("development manifest identity is inconsistent; run dev enable");
   }
   for (const key of ["systemBinary", "systemHome"]) {
@@ -34,7 +43,7 @@ export function readWorkspace(root) {
     }
   }
   const expectedHome = path.join(os.homedir(), ".askhuman");
-  const physical = (value) => { try { return fs.realpathSync(value); } catch { return path.resolve(value); } };
+  const physical = (value) => { try { return physicalPath(value); } catch { return pathKey(path.resolve(value)); } };
   if (physical(workspace.systemHome) !== physical(expectedHome)) throw new Error("development manifest formal home is inconsistent");
   return workspace;
 }
@@ -105,7 +114,7 @@ export function worker(root) {
   let actual;
   try { actual = fs.realpathSync(binary); fs.accessSync(binary, fs.constants.X_OK); }
   catch { throw new Error(`Dev binary is missing or not executable; run this worktree's install script: ${binary}`); }
-  const relative = path.relative(fs.realpathSync(path.join(root, ".askhuman-dev")), actual);
+  const relative = path.relative(physicalPath(path.join(root, ".askhuman-dev")), physicalPath(actual));
   if (!relative || relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
     throw new Error("Dev binary escapes this worktree's private directory");
   }
@@ -153,13 +162,13 @@ export async function runAsk(root, input, signal) {
 export function record(root, id) {
   const directory = path.join(root, ".askhuman-dev", "home", "state", "verifications");
   const file = path.join(directory, `${id}.json`);
-  const privateDirectory = fs.realpathSync(path.join(root, ".askhuman-dev"));
-  const relative = path.relative(privateDirectory, fs.realpathSync(file));
+  const privateDirectory = physicalPath(path.join(root, ".askhuman-dev"));
+  const relative = path.relative(privateDirectory, physicalPath(file));
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || fs.statSync(file).size > maxOutput * 2) {
     throw new Error("verification result escapes the private worktree or exceeds its budget");
   }
   const value = JSON.parse(fs.readFileSync(file, "utf8"));
-  if (value.info?.id !== id || value.info.worktree !== root) throw new Error("verification result identity mismatch");
+  if (value.info?.id !== id || physicalPath(value.info.worktree) !== physicalPath(root)) throw new Error("verification result identity mismatch");
   return { value, directory };
 }
 

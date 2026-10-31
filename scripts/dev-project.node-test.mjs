@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { askArguments, capture, workerEnvironment } from "./development/runtime.mjs";
+import { askArguments, capture, record, workerEnvironment } from "./development/runtime.mjs";
 import { guard, isTurnAbort, monitor, turnMetadata } from "./development/caller.mjs";
 
 const bridge = fileURLToPath(new URL("./dev.mjs", import.meta.url));
@@ -132,4 +132,18 @@ test("native cancellation matches the exact appended turn and handles partial li
   fs.appendFileSync(rollout, "}\n");
   await new Promise((resolve) => setTimeout(resolve, 150));
   assert.equal(controller.signal.aborted, true);
+});
+
+test("retained results compare physical worktrees across native path spellings", (t) => {
+  const fixtureValue = fixture(t);
+  const root = fixtureValue.tree("result-tree");
+  const directory = path.join(root, ".askhuman-dev/home/state/verifications");
+  fs.mkdirSync(directory, { recursive: true });
+  const id = "00000000-0000-4000-8000-000000000001";
+  const nativeRoot = process.platform === "win32" ? path.toNamespacedPath(root) : root + path.sep + ".";
+  fs.writeFileSync(path.join(directory, id + ".json"), JSON.stringify({ info: { id, worktree: nativeRoot } }));
+  assert.equal(record(root, id).value.info.id, id);
+  const other = fixtureValue.tree("another-tree");
+  fs.writeFileSync(path.join(directory, id + ".json"), JSON.stringify({ info: { id, worktree: other } }));
+  assert.throws(() => record(root, id), /identity mismatch/);
 });

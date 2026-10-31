@@ -493,7 +493,10 @@ fn observed_connection(root: &Path) -> bool {
             return false;
         };
         value["fingerprint"] == fingerprint
-            && value["worktree"] == root.to_string_lossy().as_ref()
+            && value["worktree"].as_str().is_some_and(|worktree| {
+                let worktree = Path::new(worktree);
+                worktree.is_absolute() && state::same_path(worktree, root)
+            })
             && value["pid"]
                 .as_u64()
                 .and_then(|pid| u32::try_from(pid).ok())
