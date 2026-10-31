@@ -45,7 +45,9 @@ pub fn system_target() -> Result<routing::Target, String> {
 pub fn system_target_for(root: &Path) -> Result<routing::Target, String> {
     let workspace = super::workspace::read(root)?;
     let binary = workspace.system_binary;
-    routing::check_capability(&binary)?;
+    routing::check_capability(&binary).map_err(|error| {
+        format!("formal remote relay is not ready: {error}; rebuilding Dev does not upgrade the formal installation, and no formal replacement was attempted")
+    })?;
     Ok(routing::Target {
         version: 1,
         kind: routing::TargetKind::System,

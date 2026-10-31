@@ -102,6 +102,30 @@ test("cancellation terminates the verification process instead of returning a hu
   await assert.rejects(result, /cancelled/);
 });
 
+test("the foreground session CLI passes stdin through to its private worker", { skip: process.platform === "win32" }, (t) => {
+  const { home, env, tree } = fixture(t);
+  const root = tree("foreground");
+  const directory = path.join(root, ".askhuman-dev");
+  fs.mkdirSync(path.join(directory, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(directory, "workspace.json"), JSON.stringify({
+    version: 1, worktree: root, systemBinary: path.join(home, "formal"), systemHome: path.join(home, ".askhuman"),
+  }));
+  fs.writeFileSync(path.join(directory, "bin/AskHuman"), `#!/usr/bin/env node
+if (process.argv[2] === "--development-capabilities") {
+  console.log(JSON.stringify({developmentVerification: 2}));
+} else {
+  let input = "";
+  process.stdin.on("data", data => input += data);
+  process.stdin.on("end", () => console.log(JSON.stringify({input, args: process.argv.slice(2)})));
+}
+`, { mode: 0o700 });
+  const result = spawnSync(process.execPath, [bridge, "session", "codex", "--stdio", "--worktree", root], {
+    env, input: "foreground input", encoding: "utf8", timeout: 10000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { input: "foreground input", args: ["dev", "session", "codex", "--stdio", "--worktree", root] });
+});
+
 test("background origins and delegated calls cannot create a development interaction", (t) => {
   const { home } = fixture(t);
   for (const source of ["system", "ambient_suggestions"]) {

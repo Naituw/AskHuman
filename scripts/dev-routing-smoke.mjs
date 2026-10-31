@@ -212,6 +212,22 @@ try {
 
   for (const [file, bytes] of globalSnapshot) assert.deepEqual(fs.existsSync(path.join(home,file)) ? fs.readFileSync(path.join(home,file)) : null, bytes, `project prep must preserve ${file}`);
   assert.equal(fs.existsSync(path.join(home, '.askhuman/development/routing.json')), false);
+  const manifestBeforeOldFormal = fs.readFileSync(path.join(a.root, '.askhuman-dev/workspace.json'));
+  const oldFormal = path.join(temp, 'old-formal');
+  fs.writeFileSync(oldFormal, '#!/bin/sh\nprintf \'{"developmentVerification":1}\\n\'\n', {mode:0o700});
+  const oldFormalBefore = fs.readFileSync(oldFormal);
+  const preparation = run(['dev','enable','--agent','codex','--system-binary',oldFormal],a.root);
+  assert.match(preparation.stdout, /prepared/);
+  assert.match(preparation.stdout, /verify\s+not ready/);
+  assert.match(preparation.stdout, /rebuilding Dev does not upgrade the formal installation/);
+  const blockedStatus = run(['dev','status'],a.root);
+  assert.match(blockedStatus.stdout, /delivery\s+formal remote relay/);
+  assert.match(blockedStatus.stdout, /remote\s+not ready/);
+  assert.doesNotMatch(blockedStatus.stdout, /popup-only/);
+  const blockedAsk = run(['dev','ask','--worktree',a.root,'--','must not show a question'],temp,{},false);
+  assert.match(blockedAsk.stderr, /rebuilding Dev does not upgrade the formal installation/);
+  assert.deepEqual(fs.readFileSync(oldFormal),oldFormalBefore);
+  fs.writeFileSync(path.join(a.root, '.askhuman-dev/workspace.json'),manifestBeforeOldFormal);
   assert.match(run(['dev','ask','--worktree',a.root,'--','must not show a question'],temp,{},false).stderr, /formal relay|formal daemon|remote channel/);
   const legacy = path.join(b.root, '.askhuman-dev/enabled');
   fs.writeFileSync(legacy, 'legacy marker');

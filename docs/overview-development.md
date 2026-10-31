@@ -7,10 +7,13 @@
 
 `development/project.rs` 将准备并入幂等 `dev enable`。主规则是入库的 `AGENTS.md`，
 Claude、Cursor、Antigravity 有最小项目适配，在首次 enable 前即可读取。
+是否启用 Dev 沿用原有任务约定，项目规则不要求每次功能开发初始化 Dev。
 程序只编辑本树的 `askhuman-dev` 原生项目 MCP 条目，JSONC/TOML 保留其它内容。
 同名自定义条目拒绝覆盖；私有 ledger 在发布前记意图，外部编辑阻止清理。
 新生成的本机配置精确加入 Git 仓库本地 exclude，不忽略整个客户端目录。
 写入与加载分开：当前控制器版本的真实工具调用留下存活观察记录，文件生成不宣称客户端已信任或重载。
+enable 报告准备结果；enable／status 分别检查安装构建和所选投递方式，旧正式端明确显示未就绪，
+不能靠重复重建 Dev 或刷新项目连接补齐正式转送能力。
 
 `workspace.rs` 的 `.askhuman-dev/workspace.json` 绑定物理树和正式入口。
 普通调用只保留旧 `enabled` 的 cwd 路由；新 manifest 不改变日常去向。
@@ -26,7 +29,7 @@ Claude、Cursor、Antigravity 有最小项目适配，在首次 enable 前即可
 controller 本地处理 Codex 后台／委派 guard、MCP 取消与精确 turn_aborted 兜底；
 日常身份和 provider 环境不传给 Dev，调用元数据只在 controller 中读取。
 
-`build.rs` 与 `dev-build-record.mjs` 使用相同源码快照算法，包含未提交构建输入。
+`build.rs` 与 `dev-build-record.mjs` 使用相同源码快照算法，包含未提交构建输入与嵌入 macOS 程序的 `Info.plist`。
 安装只在构建前后快照一致时签发 `build.json`，客户端检查实际程序、能力和 daemon 指纹。
 能力探测使用旧版也会拒绝的选项形式，避免旧程序把未知内部命令当成提问。
 普通／Dev MCP 生命周期内目标固定；缺失、旧版和 stale build 均明确失败。
@@ -73,6 +76,7 @@ Stop 的隐藏待办元数据在正式载荷中清除，选项文本返回后由
 
 不复制日常认证；登录和真实模型调用仍按用户授权。
 profile 普通退出保留，purge 仅清理本工具拥有且无活动会话的中性工作区。
+原生 profile 选项在 prompt 的 `--` 分隔符前组装；仓库 CLI 的 `session --stdio` 继承调用终端的输入输出。
 
 ## Dev 界面与普通产品
 

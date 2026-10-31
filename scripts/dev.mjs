@@ -42,7 +42,7 @@ export async function main(args) {
     const native = operation === "ui" ? ["dev", "ui", "--worktree", root]
       : operation === "session" ? ["dev", "session", ...args, "--worktree", root]
       : ["dev", "status"];
-    const result = await runWorker(root, native);
+    const result = await runWorker(root, native, { inheritStdio: operation === "session" && args.includes("--stdio") });
     process.stdout.write(result.stdout); process.stderr.write(result.stderr);
     process.exitCode = result.code ?? 1;
     return;

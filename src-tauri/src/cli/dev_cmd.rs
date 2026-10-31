@@ -319,7 +319,7 @@ fn cmd_enable(args: &[String]) {
         }
     };
 
-    println!("Dev Instance enabled");
+    println!("Dev Instance prepared (verification readiness is checked separately)");
     println!("  worktree   {}", root.display());
     println!("  home       {}", home.display());
     println!("  bin        {}", bin.display());
@@ -337,26 +337,69 @@ fn cmd_enable(args: &[String]) {
         .is_file()
     {
         println!("  next       run ./scripts/install.sh  (installs into this instance bin)");
-    } else {
-        println!("  next       node scripts/dev.mjs ask … / project MCP dev_ask");
     }
-    if let Some(path) = report.configuration_path {
+    if let Some(path) = &report.configuration_path {
         println!("  project MCP {}", path.display());
     }
-    match crate::development::relay::preflight(&root) {
-        Ok(()) => println!("  remote     compatible formal daemon and remote outlet available"),
-        Err(error) => println!("  remote     not ready: {error}"),
-    }
+    print_verification_readiness(&root);
     if report.connection_observed {
         println!("  readiness  a live project tool call was observed for this controller version");
     }
     if report.requires_reload {
         println!("  readiness  project configuration prepared; reload/trust the project and call dev_ask to verify loading");
     }
+    if report.configuration_path.is_some() || report.connection_observed {
+        println!("  session    connection observations do not prove this running client loaded the project tool");
+    }
     if agent.is_none() {
-        println!("  client     CLI ready; use --agent <name> to prepare a project MCP client");
+        println!(
+            "  client     CLI entry configured; use --agent <name> to prepare a project MCP client"
+        );
     }
     exit(0);
+}
+
+fn print_verification_readiness(root: &Path) {
+    let mut ready = true;
+    match crate::development::build::verify(root) {
+        Ok(_) => println!("  build      installed program matches current build inputs"),
+        Err(error) => {
+            println!("  build      not ready: {error}");
+            ready = false;
+        }
+    }
+    match crate::development::verification::preferences(root) {
+        Ok(preferences) => {
+            use crate::development::verification::Delivery;
+            match preferences.delivery {
+                Delivery::Remote => {
+                    println!("  delivery   formal remote relay");
+                    match crate::development::relay::preflight(root) {
+                        Ok(()) => println!(
+                            "  remote     compatible formal daemon and remote outlet available"
+                        ),
+                        Err(error) => {
+                            println!("  remote     not ready: {error}");
+                            ready = false;
+                        }
+                    }
+                }
+                Delivery::Local => println!("  delivery   local Dev popup (explicit preference)"),
+                Delivery::Channels => {
+                    println!("  delivery   Dev test channels (no relay or popup fallback)")
+                }
+            }
+        }
+        Err(error) => {
+            println!("  delivery   not ready: {error}");
+            ready = false;
+        }
+    }
+    if ready {
+        println!("  verify     use project askhuman-dev.dev_ask or node scripts/dev.mjs ask");
+    } else {
+        println!("  verify     not ready; preparation is not successful verification");
+    }
 }
 
 fn cmd_disable(args: &[String]) {
@@ -583,9 +626,12 @@ fn cmd_status() {
             let cfg = AppConfig::load_from(&home.join("config.json"));
             let ids = dev_presets::configured_channel_ids(&cfg.channels);
             if ids.is_empty() {
-                println!("  channels   popup-only");
+                println!("  channels   no dedicated remote test channels");
             } else {
                 println!("  channels   {}", ids.join(", "));
+            }
+            if crate::development::workspace::is_project(&root) {
+                print_verification_readiness(&root);
             }
 
             let rt = tokio::runtime::Builder::new_current_thread()

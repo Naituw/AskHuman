@@ -1215,17 +1215,7 @@ pub fn run_helper(args: &[String]) -> Result<()> {
         crate::daemon::lifecycle::log_runtime_event("windows_terminal", action, None);
     }
     std::env::set_current_dir(&record.cwd).context("failed to enter workspace")?;
-    let mut command = assemble_command(&record);
-    if let Some(profile) = development {
-        if profile.kind != record.kind || profile.executable != record.executable {
-            return Err(anyhow!(
-                "development launch does not match its client profile"
-            ));
-        }
-        crate::development::session::configure_agent_command(&mut command, &profile)
-            .map_err(anyhow::Error::msg)?;
-        command.env(LAUNCH_ID_ENV, &record.id);
-    }
+    let mut command = assemble_command(&record, development.as_ref())?;
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -1379,12 +1369,24 @@ fn validate_source_session_id(session_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// The command the helper replaces itself with. The record is already validated, so nothing here
-/// can fail; nothing is started.
-fn assemble_command(record: &LaunchRecord) -> Command {
+/// Build the invocation without starting it. Profile options must precede the prompt delimiter.
+fn assemble_command(
+    record: &LaunchRecord,
+    development: Option<&crate::development::session::Profile>,
+) -> Result<Command> {
     let mut command = Command::new(&record.executable);
     command.env_remove(crate::development::routing::TARGET_ENV);
     command.env(LAUNCH_ID_ENV, &record.id);
+    if let Some(profile) = development {
+        if profile.kind != record.kind || profile.executable != record.executable {
+            return Err(anyhow!(
+                "development launch does not match its client profile"
+            ));
+        }
+        crate::development::session::configure_agent_command(&mut command, profile)
+            .map_err(anyhow::Error::msg)?;
+        command.env(LAUNCH_ID_ENV, &record.id);
+    }
     command.args(agent_args(
         record.kind,
         record.permission,
@@ -1392,7 +1394,7 @@ fn assemble_command(record: &LaunchRecord) -> Command {
         &record.choice(),
         &task_with_attachments(&record.task, &record.files, &record.warnings),
     ));
-    command
+    Ok(command)
 }
 
 /// The flags that select a model and reasoning effort for a new task (none for a default
@@ -3039,7 +3041,7 @@ mod tests {
         );
         validate_claim(&record, &record.id).unwrap();
 
-        let command = assemble_command(&record);
+        let command = assemble_command(&record, None).unwrap();
         assert_eq!(command.get_program(), record.executable.as_str());
         let args: Vec<_> = command.get_args().collect();
         assert_eq!(
@@ -3061,9 +3063,79 @@ mod tests {
         let plain = stub_record(dir.path(), AgentKind::Claude, &ModelChoice::default());
         validate_claim(&plain, &plain.id).unwrap();
         assert_eq!(
-            assemble_command(&plain).get_args().collect::<Vec<_>>(),
+            assemble_command(&plain, None)
+                .unwrap()
+                .get_args()
+                .collect::<Vec<_>>(),
             ["write a haiku"]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn development_profile_options_precede_new_and_fork_prompt_delimiters() {
+        use crate::development::{build::BuildInfo, session::Profile};
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let private = root.join(".askhuman-dev");
+        let home = private.join("home");
+        fs::create_dir_all(private.join("bin")).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        fs::write(private.join("enabled"), "fixture").unwrap();
+        let binary = private.join("bin/AskHuman");
+        fs::write(&binary, "never executed").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        let neutral = temp.path().join("neutral");
+        fs::create_dir_all(&neutral).unwrap();
+        for (kind, mode) in [
+            (AgentKind::Codex, LaunchMode::New),
+            (
+                AgentKind::Codex,
+                LaunchMode::Fork {
+                    source_session_id: "codex-source".into(),
+                },
+            ),
+            (
+                AgentKind::Grok,
+                LaunchMode::Fork {
+                    source_session_id: "grok-source".into(),
+                },
+            ),
+        ] {
+            let mut record = stub_record(&root, kind, &ModelChoice::default());
+            record.launch_mode = mode;
+            let profile = Profile {
+                version: 1,
+                id: uuid::Uuid::new_v4().to_string(),
+                kind,
+                worktree: root.clone(),
+                directory: private.join("clients").join(kind.as_str()),
+                neutral_workspace: neutral.clone(),
+                executable: record.executable.clone(),
+                build: BuildInfo {
+                    version: 1,
+                    worktree: root.clone(),
+                    binary: binary.clone(),
+                    source_fingerprint: "fixture".into(),
+                    binary_fingerprint: "fixture".into(),
+                    git_commit: None,
+                    created_at_ms: 0,
+                },
+                prepared: true,
+            };
+            let command = assemble_command(&record, Some(&profile)).unwrap();
+            let args: Vec<_> = command.get_args().collect();
+            let option = args.iter().position(|arg| *arg == "--add-dir").unwrap();
+            let delimiter = args.iter().position(|arg| *arg == "--").unwrap();
+            assert!(
+                option < delimiter,
+                "profile options must be parsed as options: {args:?}"
+            );
+            assert_eq!(args[option + 1], root.as_os_str());
+            assert_eq!(command.get_current_dir(), Some(neutral.as_path()));
+        }
     }
 
     #[cfg(unix)]

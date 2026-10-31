@@ -57,10 +57,10 @@ export function workerEnvironment(environment = process.env) {
   return result;
 }
 
-export function capture(program, args, { root, signal, timeout, onCancel, env = workerEnvironment() } = {}) {
+export function capture(program, args, { root, signal, timeout, onCancel, inheritStdio = false, env = workerEnvironment() } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new Error("development verification cancelled"));
-    const child = spawn(program, args, { cwd: root, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    const child = spawn(program, args, { cwd: root, env, stdio: inheritStdio ? "inherit" : ["ignore", "pipe", "pipe"], windowsHide: !inheritStdio });
     let stdout = Buffer.alloc(0), stderr = Buffer.alloc(0), failure, killTimer;
     const stop = (error) => {
       failure ??= error;
@@ -74,11 +74,11 @@ export function capture(program, args, { root, signal, timeout, onCancel, env = 
     };
     signal?.addEventListener("abort", abort, { once: true });
     const timer = timeout && setTimeout(() => stop(new Error("development capability probe timed out")), timeout);
-    child.stdout.on("data", (data) => {
+    child.stdout?.on("data", (data) => {
       if (stdout.length + data.length > maxOutput) stop(new Error("development result exceeds the output budget"));
       else stdout = Buffer.concat([stdout, data]);
     });
-    child.stderr.on("data", (data) => {
+    child.stderr?.on("data", (data) => {
       if (stderr.length + data.length > maxOutput) stop(new Error("development diagnostics exceed the output budget"));
       else stderr = Buffer.concat([stderr, data]);
     });
@@ -128,7 +128,7 @@ export async function runWorker(root, args, options = {}) {
   if (probe.code !== 0 || capabilities.developmentVerification !== 2) {
     throw new Error("installed worktree program does not support isolated development verification; rebuild it");
   }
-  return capture(binary, args, { root, signal: options.signal, onCancel: options.onCancel, env: { ...workerEnvironment(), ASKHUMAN_DEV_DRIVER_PID: String(process.pid) } });
+  return capture(binary, args, { root, signal: options.signal, onCancel: options.onCancel, inheritStdio: options.inheritStdio, env: { ...workerEnvironment(), ASKHUMAN_DEV_DRIVER_PID: String(process.pid) } });
 }
 
 export async function runAsk(root, input, signal) {

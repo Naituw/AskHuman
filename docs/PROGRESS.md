@@ -7,6 +7,8 @@
 
 [PR #27](https://github.com/Naituw/AskHuman/pull/27) 已按项目级 rules／MCP、幂等准备和完整转送边界重做；
 自动验证范围见[计划](plans/dev-verification-routing.md)。普通用户不需迁移，本机全局集成未改。
+复核后已恢复原有任务适用范围，AGENTS 仅更新已启用 Dev 的验收入口并经用户 review；当前共享主目录已解除 Dev 启用。
+修复继续在主工作树，安装到临时目录验证；实际新发问和旧正式端的阻塞路径已补充进进程回归。
 2026-10-31 用户在外，明确选择先完成代码、CI 和草稿 PR，真实渠道等回家再验：
 
 - AskHuman 待办 #5（`3b1cd4da-3c1d-43c7-a923-5b12eecb68b1`）：配置独立测试 bot／配对，用隔离测试转送端验收问答、权限、Stop、取消与发送失败，不替换日常正式 daemon。

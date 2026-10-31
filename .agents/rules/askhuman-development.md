@@ -2,7 +2,6 @@
 trigger: always_on
 ---
 
-Read the repository root `AGENTS.md` before development. Follow its project-only preparation and
-explicit development verification workflow. Ordinary discussion and handoff use the normal
-AskHuman connection. Workspace MCP loading must be verified for the installed client version;
-it does not enable an unverified native session launcher.
+Read and follow the repository root `AGENTS.md`. For a task using a Dev Instance, its preparation
+and verification details are in `docs/agent-worktree-setup.md`. This rule does not require
+enabling Dev for every task or enable an unverified native session launcher.

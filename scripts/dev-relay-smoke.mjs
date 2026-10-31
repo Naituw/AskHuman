@@ -76,6 +76,33 @@ function daemon(args) {
   const log=fs.openSync(path.join(temp,"daemon-"+children.length+".log"),"a");
   const child=spawn(system,args,{env,cwd:temp,stdio:["ignore",log,log]}); fs.closeSync(log); children.push(child);
 }
+async function freshProjectAsk() {
+  const log=fs.openSync(path.join(temp,"project-mcp.log"),"a");
+  const child=spawn(process.execPath,[path.resolve("scripts/dev.mjs"),"mcp","--worktree",root],{env,cwd:temp,stdio:["pipe","pipe",log]});
+  fs.closeSync(log);children.push(child);
+  const pending=new Map();let nextId=0;
+  createInterface({input:child.stdout}).on("line",line=>{
+    const value=JSON.parse(line);pending.get(value.id)?.(value);pending.delete(value.id);
+  });
+  const call=(method,params)=>new Promise((resolve,reject)=>{
+    const id=++nextId,timer=setTimeout(()=>reject(new Error("project MCP call timed out: "+method)),30000);
+    pending.set(id,value=>{clearTimeout(timer);resolve(value);});
+    child.stdin.write(JSON.stringify({jsonrpc:"2.0",id,method,params})+"\n");
+  });
+  const initialized=await call("initialize",{protocolVersion:"2025-11-25",capabilities:{},clientInfo:{name:"fresh-verification-regression",version:"1"}});
+  assert.ok(initialized.result,JSON.stringify(initialized));
+  child.stdin.write(JSON.stringify({jsonrpc:"2.0",method:"notifications/initialized"})+"\n");
+  const answer=await call("tools/call",{name:"dev_ask",arguments:{worktree:root,message:"fresh installed-build verification",questions:[{question:"Continue?",options:[{text:"fresh-project-answer",recommended:true}]}]}});
+  assert.ok(!answer.result?.isError,JSON.stringify(answer));
+  assert.match(JSON.stringify(answer),/fresh-project-answer/);
+  assert.match(JSON.stringify(answer),/Dev verification metadata/);
+  const records=fs.readdirSync(path.join(devHome,"state/verifications")).filter(name=>name.endsWith(".json"));
+  assert.ok(records.some(name=>{
+    const record=JSON.parse(fs.readFileSync(path.join(devHome,"state/verifications",name)));
+    return record.status==="completed"&&record.stdout?.includes("fresh-project-answer");
+  }),"the actual worker must create and finish a new verification record");
+  child.stdin.end();
+}
 let build, target, profile;
 function interaction(delivery="remote") {
   const id=randomUUID(), now=Date.now();
@@ -114,6 +141,7 @@ try {
   await until(async()=> (await status(formalHome)).info?.developmentVerificationVersion===2 || (await status(formalHome)).developmentVerificationVersion===2);
   await until(async()=> !!(await status(devHome)));
   const ordinaryBefore=fs.readFileSync(path.join(formalHome,"state/todos.json"));
+  await freshProjectAsk();
   const answer=await frame(devHome,askTask(interaction()),v=>v.type==="final");
   assert.equal(answer.at(-1).exit_code,0,JSON.stringify(answer));
   assert.match(answer.at(-1).stdout,/fixture work/);
@@ -144,7 +172,7 @@ try {
   failSend=true;
   const failed=await frame(devHome,askTask(interaction()),v=>v.type==="final");
   assert.notEqual(failed.at(-1).exit_code,0,"send failure cannot become local success");
-  console.log("PASS: actual relay asks, native Stop/todo ownership, permission memory ownership, daily active slot preserved, cancellation and send failure");
+  console.log("PASS: fresh project MCP ask and retained result; actual relay asks, native Stop/todo ownership, permission memory ownership, daily active slot preserved, cancellation and send failure");
 } catch(error) {
   for(const name of fs.readdirSync(temp).filter(name=>name.endsWith(".log"))) console.error(fs.readFileSync(path.join(temp,name),"utf8").slice(-5000));
   throw error;

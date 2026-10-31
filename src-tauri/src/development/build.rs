@@ -26,6 +26,7 @@ const FILES: &[&str] = &[
     "src-tauri/Cargo.lock",
     "src-tauri/tauri.conf.json",
     "src-tauri/build.rs",
+    "src-tauri/Info.plist",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,6 +171,9 @@ mod tests {
         std::fs::create_dir_all(temp.path().join("src")).unwrap();
         std::fs::write(temp.path().join("src/测试.vue"), "changed source").unwrap();
         std::fs::write(temp.path().join("package.json"), "{}").unwrap();
+        std::fs::create_dir_all(temp.path().join("src-tauri")).unwrap();
+        let plist = temp.path().join("src-tauri/Info.plist");
+        std::fs::write(&plist, "<plist>original</plist>").unwrap();
         let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/dev-build-record.mjs");
         let output = std::process::Command::new("node")
             .arg(script)
@@ -178,9 +182,9 @@ mod tests {
             .output()
             .unwrap();
         assert!(output.status.success());
-        assert_eq!(
-            source_fingerprint(temp.path()).unwrap(),
-            String::from_utf8(output.stdout).unwrap().trim()
-        );
+        let before = source_fingerprint(temp.path()).unwrap();
+        assert_eq!(before, String::from_utf8(output.stdout).unwrap().trim());
+        std::fs::write(plist, "<plist>changed permissions</plist>").unwrap();
+        assert_ne!(before, source_fingerprint(temp.path()).unwrap());
     }
 }

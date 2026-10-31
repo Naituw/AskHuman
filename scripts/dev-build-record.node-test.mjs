@@ -37,6 +37,19 @@ test('includes added files and ignores generated output and instance state', (t)
   assert.notEqual(sourceFingerprint(root), first);
 });
 
+test('rejects an unbuilt change to the embedded macOS Info.plist', (t) => {
+  const { root, binary } = fixture(t);
+  fs.mkdirSync(path.join(root, 'src-tauri'));
+  const plist = path.join(root, 'src-tauri/Info.plist');
+  fs.writeFileSync(plist, '<plist>original permissions</plist>');
+  const before = sourceFingerprint(root);
+  recordBuild(root, binary, before);
+  fs.writeFileSync(plist, '<plist>changed permissions</plist>');
+  assert.notEqual(sourceFingerprint(root), before);
+  assert.throws(() => recordBuild(root, binary, before), /changed during installation/);
+  assert.equal(fs.existsSync(path.join(root, '.askhuman-dev/build.json')), false);
+});
+
 test('rejects binary aliases outside the instance, including dangling aliases', { skip: process.platform === 'win32' }, (t) => {
   const { root, binary } = fixture(t);
   fs.unlinkSync(binary);

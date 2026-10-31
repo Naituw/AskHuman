@@ -16,10 +16,10 @@
 
 ## 目标体验与准备
 
-本仓库每次功能开发前，从当前物理工作树根执行幂等准备：
+为任务准备或更新 Dev Instance 时，从当前物理工作树根执行幂等准备；普通任务继续遵守原有安装与 AskHuman 流程：
 
 ```bash
-AskHuman dev enable --agent codex   # 换成实际客户端；Pi 沿用 CLI
+AskHuman dev enable                # 自动识别客户端；识别不到时用 --agent codex 等指定
 ./scripts/install.sh
 # 项目 MCP: askhuman-dev.dev_ask({worktree:"绝对路径", message:"请验收"})
 node scripts/dev.mjs ask -- "请验收这次修改"
@@ -31,9 +31,12 @@ Windows 用 `.\scripts\install-windows.cmd`。普通需求讨论、审批和结�
 准备只写项目配置，不执行账户级迁移。重复调用不重写齐全文件，机器路径不入库。
 配置生成后按客户端要求信任项目、重载连接；未观察到项目工具调用时不声称会话已加载。
 
-初次引导规则随仓库提交，不依赖 enable 后生成。当前正式程序尚不支持项目准备时，可先编译
+项目说明随仓库提交，不依赖 enable 后生成；它不要求所有开发任务启用 Dev。当前正式程序尚不支持项目准备时，可先编译
 候选程序并用其 `dev enable --system-binary <稳定正式程序绝对路径>` 引导；不要为引导替换正在沟通的正式端。
-远程预检未通过会显示 not ready，验收明确失败；由用户另行安排兼容正式版的正常升级。
+enable 只完成准备，不代表验收可用。`dev status` 分别显示构建和当前投递方式的状态。
+默认远程投递要求正式程序和正在运行的正式 daemon 均兼容；预检未通过会显示 not ready，验收不会发出。
+刷新项目 MCP 不能补齐正式端能力，重复构建 Dev 也不会升级正式端。由用户另行安排兼容正式版的正常升级。
+项目工具名是 `askhuman-dev.dev_ask`；旧 `askhuman.dev_ask` 不等于已加载项目连接。
 
 ### 1. 普通功能开发
 
@@ -41,9 +44,9 @@ Windows 用 `.\scripts\install-windows.cmd`。普通需求讨论、审批和结�
 `--delivery local`，不会因远程失败自动退回本机。完整权限／Stop／恢复用独立测试 profile，
 真实 Agent／模型调用须先有授权，认证不复制。
 
-### 2. 仅在测试渠道实现时询问专用配置
+### 2. 测试渠道实现时的专用配置
 
-向操作者确认测试 bot／iOS 独立配对，或列出 `AskHuman dev preset list` 选择已有预设。
+是否挂预设遵守 AGENTS 的工作树准备约定。普通开发不需要专用 bot；测试渠道实现时必须确认测试 bot／iOS 独立配对，或列出 `AskHuman dev preset list` 选择已有预设。
 使用 `dev enable --preset <name>` 附加配置，验收明确选 `--delivery channels`。
 预设被占用时先释放对方租约；抢占需要明确授权，不能让两个 daemon 同连一个 bot。
 没有合适预设时先准备、安装，使用 `node scripts/dev.mjs ui` 打开本树 Dev 渠道设置，再保存

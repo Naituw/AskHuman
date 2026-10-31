@@ -11,7 +11,7 @@ export const sourceDirectories = [
 export const sourceFiles = [
   "package.json", "pnpm-lock.yaml", "vite.config.ts", "vite.attachment.config.ts",
   "tsconfig.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock",
-  "src-tauri/tauri.conf.json", "src-tauri/build.rs",
+  "src-tauri/tauri.conf.json", "src-tauri/build.rs", "src-tauri/Info.plist",
 ];
 
 function digest(bytes) {

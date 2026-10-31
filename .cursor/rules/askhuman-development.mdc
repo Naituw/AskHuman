@@ -3,6 +3,6 @@ description: AskHuman repository development workflow
 alwaysApply: true
 ---
 
-Read the repository root `AGENTS.md` before development, including its idempotent `dev enable`,
-project-only `askhuman-dev` verification and channel test rules. Ordinary discussion and handoff
-continue through the normal AskHuman connection. This file applies only inside this repository.
+Read and follow the repository root `AGENTS.md`. For a task using a Dev Instance, its preparation
+and verification details are in `docs/agent-worktree-setup.md`. This file applies only inside
+this repository and does not require enabling Dev for every task.
