@@ -109,15 +109,14 @@ impl Action {
         &mut self,
         installation: &runtime::Installation,
         cwd: &str,
-        title: &str,
         yolo: bool,
         choice: &ModelChoice,
     ) -> Result<String, String> {
         self.ensure_thread_with(|existing, settings, on_created| match existing {
             Some(id) => {
-                runtime::finish_creation(installation, cwd, title, id, choice, settings, on_created)
+                runtime::finish_creation(installation, cwd, id, choice, settings, on_created)
             }
-            None => runtime::create(installation, cwd, title, yolo, choice, on_created),
+            None => runtime::create(installation, cwd, yolo, choice, on_created),
         })
     }
 
