@@ -109,7 +109,7 @@ pub fn uninstall() -> Result<String> {
     let path = paths::grok_skill_md();
     if let Ok(text) = std::fs::read_to_string(&path) {
         if text.contains(SKILL_MARK) {
-            crate::development::migration::remove_file(&path)
+            std::fs::remove_file(&path)
                 .with_context(|| format!("failed to remove skill file: {}", path.display()))?;
             // 目录若已空（AskHuman 独占该 skill 目录），一并清理。
             if let Some(dir) = path.parent() {
@@ -166,7 +166,6 @@ pub fn open() {
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    crate::development::migration::before_write(path, Some(bytes))?;
     let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)?;

@@ -43,15 +43,15 @@ struct Binding {
     transcript: Option<PathBuf>,
 }
 
-/// Migrated Dev instances only accept native authority owned by a prepared test profile.
+/// Project Dev instances only accept native authority owned by a prepared test profile.
 pub fn requires_test_profile() -> bool {
-    routing::inherited()
-        .ok()
-        .flatten()
-        .is_some_and(|target| target.kind == routing::TargetKind::Dev)
-        && state::read()
-            .map(|s| s.mode == state::RoutingMode::Explicit)
-            .unwrap_or(true)
+    routing::inherited().ok().flatten().is_some_and(|target| {
+        target.kind == routing::TargetKind::Dev
+            && target
+                .worktree
+                .as_deref()
+                .is_some_and(super::workspace::is_project)
+    })
 }
 
 pub fn native_binding_allowed(kind: AgentKind, session_id: &str) -> bool {
@@ -553,7 +553,7 @@ pub fn run_cli(args: &[String]) -> Result<serde_json::Value, String> {
         .or_else(|| {
             std::env::current_dir()
                 .ok()
-                .and_then(|cwd| crate::dev_instance::find_dev_root(&cwd))
+                .and_then(|cwd| super::workspace::find_root(&cwd))
         })
         .ok_or("specify an enabled development worktree with --worktree")?;
     let kind = kind.ok_or("dev session requires an Agent: claude, codex, grok, or pi")?;

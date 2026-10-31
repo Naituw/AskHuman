@@ -315,9 +315,7 @@ pub(crate) fn set_with_env(
     let lock = mutation_lock::IntegrationMutationLock::acquire()?;
     set_unlocked_with_env(target, mode, env)?;
     drop(lock);
-    if target == AgentTarget::Cursor
-        && std::env::var_os(crate::development::migration::JOURNAL_ENV).is_none()
-    {
+    if target == AgentTarget::Cursor {
         crate::cursor_desktop::integration_changed()?;
     }
     Ok(())
@@ -1009,7 +1007,7 @@ mod antigravity_transition_tests {
             let state = home.join("state");
             std::fs::create_dir(&state).unwrap();
             std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
+            let output = std::process::Command::new(crate::development::routing::program_path().unwrap())
                 .args(["--exact", "integrations::agent_mode::antigravity_transition_tests::updates_restore_missing_cli_rules_and_preserve_strict_errors", "--nocapture"])
                 .env(CHILD, "1").env("HOME", &home).env("ASKHUMAN_HOME", &state)
                 .output().unwrap();

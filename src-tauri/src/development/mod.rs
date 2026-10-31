@@ -1,31 +1,31 @@
 //! Explicit development verification, independent from the everyday Agent session.
 
 pub mod build;
-pub mod migration;
+pub mod channel_safety;
+pub mod project;
 pub mod relay;
 pub mod routing;
 pub mod session;
 pub mod state;
 pub mod verification;
 pub mod workbench;
+pub mod workspace;
 
-pub const CAPABILITY_VERSION: u32 = 1;
+pub const CAPABILITY_VERSION: u32 = 2;
 
 pub fn client_environment_key(key: &str) -> bool {
-    key.eq_ignore_ascii_case(migration::JOURNAL_ENV)
-        || key.eq_ignore_ascii_case(session::PROFILE_ENV)
+    key.eq_ignore_ascii_case(session::PROFILE_ENV)
         || key.eq_ignore_ascii_case(verification::VERIFICATION_ENV)
+        || key.eq_ignore_ascii_case(verification::DRIVER_ENV)
         || key.eq_ignore_ascii_case(workbench::WINDOW_ENV)
-        || key.eq_ignore_ascii_case(routing::SYSTEM_BINDINGS_ENV)
 }
 
 pub fn clear_client_context(command: &mut std::process::Command) {
     command
         .env_remove(session::PROFILE_ENV)
-        .env_remove(verification::VERIFICATION_ENV);
+        .env_remove(verification::VERIFICATION_ENV)
+        .env_remove(verification::DRIVER_ENV);
     command.env_remove(workbench::WINDOW_ENV);
-    command.env_remove(routing::SYSTEM_BINDINGS_ENV);
-    command.env_remove(migration::JOURNAL_ENV);
 }
 
 pub fn capabilities() -> serde_json::Value {

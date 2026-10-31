@@ -20,8 +20,6 @@ const CONFIG_VERSION: u32 = 1;
 struct ExtensionConfig {
     version: u32,
     executable: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    instance: Option<String>,
     program_name: String,
     cli: bool,
     lifecycle: bool,
@@ -33,7 +31,6 @@ impl ExtensionConfig {
         Self {
             version: CONFIG_VERSION,
             executable,
-            instance: None,
             program_name: crate::cli::help::program_name(),
             cli: false,
             lifecycle: false,
@@ -134,7 +131,7 @@ fn update(change: impl FnOnce(&mut ExtensionConfig)) -> Result<()> {
 
     if !config.any_enabled() {
         if path.is_file() {
-            crate::development::migration::remove_file(&path)
+            std::fs::remove_file(&path)
                 .with_context(|| format!("failed to remove Pi extension: {}", path.display()))?;
         }
         if let Some(dir) = path.parent() {
@@ -161,7 +158,6 @@ fn render(config: &ExtensionConfig) -> Result<String> {
 fn refreshed_config(mut config: ExtensionConfig, executable: String) -> ExtensionConfig {
     config.version = CONFIG_VERSION;
     config.executable = executable;
-    config.instance = crate::development::routing::system_bindings().then(|| "system".into());
     config.program_name = crate::cli::help::program_name();
     config
 }
@@ -173,7 +169,6 @@ fn parse_config(text: &str) -> Option<ExtensionConfig> {
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    crate::development::migration::before_write(path, Some(bytes))?;
     let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)?;
@@ -231,7 +226,6 @@ mod tests {
 
     fn config() -> ExtensionConfig {
         ExtensionConfig {
-            instance: None,
             version: CONFIG_VERSION,
             executable: "/Applications/AskHuman".into(),
             program_name: "AskHuman".into(),

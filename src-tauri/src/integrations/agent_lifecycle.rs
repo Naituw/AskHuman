@@ -295,13 +295,7 @@ fn hook_command(
     if is_stop_event(kind, event_key) {
         return super::agent_stop::hook_command_for(exe, kind, true, stop_confirm);
     }
-    format!(
-        "{} {} {} {}",
-        crate::development::routing::integration_prefix(exe),
-        MARKER,
-        kind.as_str(),
-        lc_event
-    )
+    format!("\"{}\" {} {} {}", exe, MARKER, kind.as_str(), lc_event)
 }
 
 fn windows_hook_command(
@@ -1138,7 +1132,6 @@ fn write_toml(path: &std::path::Path, text: &str) -> Result<()> {
 }
 
 fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
-    crate::development::migration::before_write(path, Some(bytes))?;
     let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)?;

@@ -115,6 +115,7 @@ impl RequestEntry {
 /// A structured confirmation entry. Popup/IM transport fields are added independently from Ask so
 /// the existing Ask output/history contract remains untouched while both live in one registry.
 pub struct ConfirmEntry {
+    pub development: Option<Box<crate::development::verification::VerificationInfo>>,
     pub request_id: String,
     pub seq: u64,
     pub token: String,
@@ -294,6 +295,7 @@ pub fn create_internal_confirm(
         created_at_ms,
     };
     let entry = Arc::new(ConfirmEntry {
+        development: None,
         request_id,
         seq: 0,
         token: String::new(),
@@ -602,7 +604,8 @@ impl RequestRegistry {
             lang: task.lang.clone(),
             project: task.project.clone(),
             agent_kind: Some(task.agent_kind.clone()),
-            agent_session_id: Some(task.agent_session_id.clone()),
+            agent_session_id: (!task.development.as_ref().is_some_and(|info| info.relay))
+                .then(|| task.agent_session_id.clone()),
             agent_session_title: None,
             mcp_instance_id: None,
             agent_pid: None,
@@ -612,6 +615,7 @@ impl RequestRegistry {
             created_at_ms,
         };
         let entry = Arc::new(ConfirmEntry {
+            development: task.development,
             request_id: request_id.clone(),
             seq: self.next_seq.fetch_add(1, Ordering::SeqCst),
             token: token.clone(),
@@ -962,6 +966,7 @@ mod tests {
         })
         .collect();
         ConfirmTask {
+            development: None,
             caller_cwd: None,
             spec: ConfirmSpec {
                 title: "Permission request".into(),

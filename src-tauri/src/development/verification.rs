@@ -6,6 +6,8 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub const DRIVER_ENV: &str = "ASKHUMAN_DEV_DRIVER_PID";
+
 pub const VERIFICATION_ENV: &str = "ASKHUMAN_DEV_VERIFICATION_ID";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,7 +89,13 @@ pub fn preferences(root: &Path) -> Result<Preferences, String> {
     match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|e| format!("invalid Dev verification preferences: {e}")),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Preferences::default()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Preferences {
+            delivery: if super::workspace::is_project(root) {
+                Delivery::Remote
+            } else {
+                Delivery::Local
+            },
+        }),
         Err(e) => Err(e.to_string()),
     }
 }
@@ -162,6 +170,13 @@ pub fn complete(info: &VerificationInfo, stdout: &str, exit_code: i32) -> Result
     if stdout.len() > 16 * 1024 * 1024 {
         return Err("Dev verification result exceeds 16 MiB".into());
     }
+    if record.executor_pid != std::process::id()
+        && !crate::agents::detect::pid_alive(record.executor_pid)
+    {
+        record.status = "interrupted".into();
+        record.updated_at_ms = now_ms();
+        return write_record(&record);
+    }
     record.status = if exit_code == 0 {
         "completed"
     } else {
@@ -193,21 +208,10 @@ pub fn decorate_task(task: &mut crate::ipc::TaskRequest) -> Result<(), String> {
         .filter(|v| !v.is_empty())
     else {
         if let Some(profile) = super::session::active()? {
-            let actual = build::verify(&profile.worktree)?;
-            if actual.binary_fingerprint != profile.build.binary_fingerprint {
-                return Err("prepare the development test profile for the current build".into());
-            }
-            task.message.development = Some(Box::new(VerificationInfo {
-                id: uuid::Uuid::new_v4().to_string(),
-                worktree: profile.worktree.clone(),
-                build: profile.build,
-                delivery: Delivery::Channels,
-                relay: false,
-                diagnostics: Some(Diagnostics::from_target(&routing::dev_target(
-                    &profile.worktree,
-                )?)),
-                test_profile: Some(profile.id),
-            }));
+            let fingerprint =
+                serde_json::to_vec(&(&task.message, &task.questions, task.stop_confirmation))
+                    .map_err(|error| error.to_string())?;
+            task.message.development = Some(Box::new(profile_record(&profile, &fingerprint)?));
             task.project = profile.worktree.to_string_lossy().to_string();
             task.source = format!(
                 "Dev · {}",
@@ -250,6 +254,104 @@ pub fn decorate_task(task: &mut crate::ipc::TaskRequest) -> Result<(), String> {
     Ok(())
 }
 
+/// A native test interaction has its own lifetime and grant, just like a one-shot ask.
+fn profile_record(
+    profile: &super::session::Profile,
+    request: &[u8],
+) -> Result<VerificationInfo, String> {
+    let actual = build::verify(&profile.worktree)?;
+    if !profile.prepared || actual.binary_fingerprint != profile.build.binary_fingerprint {
+        return Err("prepare the development test profile for the current build".into());
+    }
+    prune_records(&profile.worktree)?;
+    let now = now_ms();
+    let info = VerificationInfo {
+        id: uuid::Uuid::new_v4().to_string(),
+        worktree: profile.worktree.clone(),
+        build: actual,
+        delivery: preferences(&profile.worktree)?.delivery,
+        relay: false,
+        test_profile: Some(profile.id.clone()),
+        diagnostics: Some(Diagnostics::from_target(&routing::dev_target(
+            &profile.worktree,
+        )?)),
+    };
+    if info.delivery == Delivery::Remote {
+        super::relay::authorize(&info)?;
+    }
+    write_record(&Record {
+        version: 1,
+        info: info.clone(),
+        request_fingerprint: format!("{:x}", Sha256::digest(request)),
+        status: "pending".into(),
+        executor_pid: std::process::id(),
+        stdout: None,
+        exit_code: None,
+        created_at_ms: now,
+        updated_at_ms: now,
+    })?;
+    Ok(info)
+}
+
+pub fn decorate_confirm(task: &mut crate::ipc::ConfirmTask) -> Result<(), String> {
+    if task.development.is_some() {
+        return Ok(());
+    }
+    if let Some(profile) = super::session::active()? {
+        task.development = Some(Box::new(profile_record(
+            &profile,
+            &serde_json::to_vec(&task.spec).map_err(|e| e.to_string())?,
+        )?));
+    }
+    Ok(())
+}
+
+pub fn validate_confirm(task: &mut crate::ipc::ConfirmTask) -> Result<(), String> {
+    if task.development.as_ref().is_some_and(|info| info.relay) {
+        return super::relay::validate_confirm(task);
+    }
+    let Some(info) = task.development.as_ref() else {
+        if super::session::requires_test_profile() {
+            return Err("Dev permissions require an isolated test profile".into());
+        }
+        return Ok(());
+    };
+    let profile = super::session::read(
+        &info.worktree,
+        info.test_profile
+            .as_deref()
+            .ok_or("permission test profile is missing")?,
+    )?;
+    let target = routing::inherited()?.ok_or("permission target is missing")?;
+    let binding = super::session::for_native(profile.kind, &task.agent_session_id)
+        .ok_or("permission test session is unbound")?;
+    if target.kind != routing::TargetKind::Dev
+        || !state::same_path(
+            &target.home,
+            &crate::dev_instance::instance_home(&info.worktree),
+        )
+        || !profile.prepared
+        || binding.id != profile.id
+        || task.agent_kind != profile.kind.as_str()
+        || profile.build.binary_fingerprint != info.build.binary_fingerprint
+        || build::verify(&info.worktree)?.binary_fingerprint != info.build.binary_fingerprint
+        || read_record(&info.worktree, &info.id)?.status != "pending"
+    {
+        return Err("permission test identity or build does not match this instance".into());
+    }
+    let record = read_record(&info.worktree, &info.id)?;
+    if serde_json::to_value(&record.info).map_err(|e| e.to_string())?
+        != serde_json::to_value(info).map_err(|e| e.to_string())?
+    {
+        return Err("permission metadata does not match its pending record".into());
+    }
+    if info.delivery == Delivery::Channels {
+        super::channel_safety::check(&info.worktree, &crate::config::AppConfig::load())?;
+    }
+    task.project = info.worktree.to_string_lossy().into_owned();
+    Ok(())
+}
+
 pub fn clear_native_context(command: &mut Command) {
     for kind in [
         crate::agents::AgentKind::Claude,
@@ -289,6 +391,9 @@ pub fn validate_task(task: &mut crate::ipc::TaskRequest) -> Result<(), String> {
     {
         return Err("verification was sent to the wrong instance".into());
     }
+    if info.delivery == Delivery::Channels {
+        super::channel_safety::check(&info.worktree, &crate::config::AppConfig::load())?;
+    }
     if let Some(profile_id) = &info.test_profile {
         let profile = super::session::read(&info.worktree, profile_id)?;
         if !profile.prepared
@@ -296,6 +401,13 @@ pub fn validate_task(task: &mut crate::ipc::TaskRequest) -> Result<(), String> {
             || build::verify(&info.worktree)?.binary_fingerprint != info.build.binary_fingerprint
         {
             return Err("development test profile does not match this build".into());
+        }
+        let record = read_record(&info.worktree, &info.id)?;
+        if record.status != "pending"
+            || serde_json::to_value(&record.info).map_err(|e| e.to_string())?
+                != serde_json::to_value(info).map_err(|e| e.to_string())?
+        {
+            return Err("test interaction does not match its pending record".into());
         }
         if let Some(session_id) = task.agent_session_id.as_deref() {
             let binding = super::session::for_native(profile.kind, session_id)
@@ -378,7 +490,7 @@ pub fn run_cli(args: &[String]) -> Result<(), String> {
         .or_else(|| {
             std::env::current_dir()
                 .ok()
-                .and_then(|cwd| crate::dev_instance::find_dev_root(&cwd))
+                .and_then(|cwd| super::workspace::find_root(&cwd))
         })
         .ok_or("no enabled Dev worktree; specify --worktree")?;
     let target = routing::dev_target(&root)?;
@@ -450,7 +562,16 @@ pub fn run_cli(args: &[String]) -> Result<(), String> {
         },
         request_fingerprint: fingerprint,
         status: "pending".into(),
-        executor_pid: std::process::id(),
+        executor_pid: std::env::var(DRIVER_ENV)
+            .ok()
+            .map(|value| {
+                value
+                    .parse::<u32>()
+                    .map_err(|_| "invalid development driver PID")
+            })
+            .transpose()?
+            .filter(|pid| *pid > 0)
+            .unwrap_or_else(std::process::id),
         stdout: None,
         exit_code: None,
         created_at_ms: now,
@@ -625,7 +746,7 @@ fn prune_records(root: &Path) -> Result<(), String> {
 /// A Windows driver cannot exec its child. If it disappears, drop the socket future so the
 /// daemon cancels this exact request. Unix exec keeps the record's executor PID unchanged.
 pub async fn wait_for_executor_exit(info: &VerificationInfo) {
-    if info.relay || info.test_profile.is_some() {
+    if info.relay {
         return std::future::pending().await;
     }
     let Ok(record) = read_record(&info.worktree, &info.id) else {

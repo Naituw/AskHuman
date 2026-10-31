@@ -25,6 +25,8 @@ required-features = ["collapse-prototype"]
 # 否则 tauri 的 build.rs 判定 dev=true，二进制会去连 devUrl(localhost) 而非内嵌资源，导致白屏。
 # 注意：`pnpm tauri dev` 不启用此特性，仍走 dev server 热重载。请勿移除。
 custom-protocol = ["tauri/custom-protocol"]
+# Embedded only by worktree installs, paired with VITE_ASKHUMAN_DEV_WORKBENCH.
+development-ui = []
 # Native collapse prototype (examples/popup_collapse_demo.rs): also compiles swift/prototype/*.swift
 # (window capture, burst recording, activation test hooks). Never enable it in product builds.
 collapse-prototype = []

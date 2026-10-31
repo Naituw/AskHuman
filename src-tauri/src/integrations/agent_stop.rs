@@ -263,11 +263,7 @@ pub(crate) fn hook_command(kind: AgentKind, track: bool, confirm: bool) -> Resul
 }
 
 pub(crate) fn hook_command_for(exe: &str, kind: AgentKind, track: bool, confirm: bool) -> String {
-    let mut command = format!(
-        "{} {MARKER} {}",
-        crate::development::routing::integration_prefix(exe),
-        kind.as_str()
-    );
+    let mut command = format!("\"{exe}\" {MARKER} {}", kind.as_str());
     if track {
         command.push_str(" track");
     }

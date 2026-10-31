@@ -362,8 +362,8 @@ fn hook_command(target: AgentTarget, event: &str) -> Result<String> {
         }
     };
     Ok(format!(
-        "{} {MARKER} {agent} {event}",
-        crate::development::routing::integration_prefix(&executable.to_string_lossy())
+        "\"{}\" {MARKER} {agent} {event}",
+        executable.to_string_lossy()
     ))
 }
 

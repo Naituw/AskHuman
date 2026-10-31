@@ -45,10 +45,7 @@ fn development_title(kind: AgentKind, session_id: &str) -> Option<Option<String>
             }
         }));
     }
-    (crate::dev_instance::is_dev_instance_context()
-        && crate::development::state::read()
-            .is_ok_and(|s| s.mode == crate::development::state::RoutingMode::Explicit))
-    .then_some(None)
+    crate::development::session::requires_test_profile().then_some(None)
 }
 
 /// 解析指定家族某 session 的标题。取不到返回 `None`。
@@ -453,11 +450,7 @@ pub(crate) fn transcript_path(kind: AgentKind, session_id: &str) -> Option<PathB
     if let Some(path) = crate::development::session::transcript_for(kind, session_id) {
         return Some(path);
     }
-    if session_id.is_empty()
-        || (crate::dev_instance::is_dev_instance_context()
-            && crate::development::state::read()
-                .is_ok_and(|s| s.mode == crate::development::state::RoutingMode::Explicit))
-    {
+    if session_id.is_empty() || crate::development::session::requires_test_profile() {
         return None;
     }
     match kind {

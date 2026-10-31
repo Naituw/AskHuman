@@ -101,8 +101,6 @@ fn group_for(command: &str) -> Group {
 fn development(invoke: Invoke<Wry>) -> bool {
     let handler: fn(Invoke<Wry>) -> bool = tauri::generate_handler![
         crate::development::workbench::development_status,
-        crate::development::workbench::development_migration,
-        crate::development::workbench::development_register,
         crate::development::workbench::development_set_delivery,
         crate::development::workbench::development_prepare_profile,
         crate::development::workbench::development_start_session,

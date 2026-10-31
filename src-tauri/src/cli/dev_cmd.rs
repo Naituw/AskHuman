@@ -15,42 +15,6 @@ pub fn dispatch(args: &[String], _lang: Lang) {
         exit(1);
     }
     match args[0].as_str() {
-        "migrate" => {
-            let result = match args.get(1).map(String::as_str) {
-                Some("plan") => crate::development::migration::plan().map(Some),
-                Some("status") => crate::development::migration::latest(),
-                Some("apply") => args
-                    .get(2)
-                    .ok_or_else(|| "missing migration ID".to_string())
-                    .and_then(|id| crate::development::migration::apply(id))
-                    .map(Some),
-                Some("rollback") => args
-                    .get(2)
-                    .ok_or_else(|| "missing migration ID".to_string())
-                    .and_then(|id| crate::development::migration::rollback(id))
-                    .map(Some),
-                _ => Err("use dev migrate plan|status|apply <id>|rollback <id>".into()),
-            };
-            match result {
-                Ok(value) => println!("{}", serde_json::to_string_pretty(&value).unwrap()),
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    exit(1)
-                }
-            }
-            exit(0);
-        }
-        "migrate-worker" => {
-            let result = match (args.get(1), args.get(2)) {
-                (Some(agent), Some(mode)) => crate::development::migration::worker(agent, mode),
-                _ => Err("missing migration worker action".into()),
-            };
-            if let Err(e) = result {
-                eprintln!("error: {e}");
-                exit(1)
-            }
-            exit(0);
-        }
         "session" => {
             match crate::development::session::run_cli(&args[1..]) {
                 Ok(receipt) => println!("{receipt}"),
@@ -108,51 +72,18 @@ pub fn dispatch(args: &[String], _lang: Lang) {
             }
             exit(0);
         }
-        "register-system" => {
-            let Some(binary) = args.get(1) else {
-                eprintln!("error: register-system requires a binary path");
-                exit(1);
+        "ui" => {
+            let root = match args.get(1).map(String::as_str) {
+                Some("--worktree") => args.get(2).map(PathBuf::from),
+                None => std::env::current_dir()
+                    .ok()
+                    .and_then(|cwd| crate::development::workspace::find_root(&cwd)),
+                _ => None,
             };
-            let result = std::env::current_dir()
-                .map_err(|e| e.to_string())
-                .map(|cwd| {
-                    let path = PathBuf::from(binary);
-                    if path.is_absolute() {
-                        path
-                    } else {
-                        cwd.join(path)
-                    }
-                })
-                .and_then(|binary| {
-                    let canonical = binary.canonicalize().map_err(|e| e.to_string())?;
-                    if canonical
-                        .components()
-                        .any(|part| part.as_os_str() == crate::dev_instance::DEV_DIR)
-                    {
-                        return Err("system entry cannot point into a Dev Instance".into());
-                    }
-                    crate::development::routing::check_capability(&binary)?;
-                    crate::development::state::update(|state| {
-                        if state.version == 0 && args.iter().any(|arg| arg == "--new-install") {
-                            state.mode = crate::development::state::RoutingMode::Explicit;
-                        }
-                        state.system_binary = Some(binary);
-                        Ok(())
-                    })
-                    .map(|_| ())
-                });
+            let result = root
+                .ok_or_else(|| "dev ui requires an enabled worktree".to_string())
+                .and_then(|root| crate::development::workbench::open_window(&root, "workbench"));
             if let Err(error) = result {
-                eprintln!("error: {error}");
-                exit(1);
-            }
-            exit(0);
-        }
-        "register-worktree" => {
-            let Some(root) = args.get(1) else {
-                eprintln!("error: register-worktree requires a path");
-                exit(1);
-            };
-            if let Err(error) = crate::development::state::register_worktree(Path::new(root)) {
                 eprintln!("error: {error}");
                 exit(1);
             }
@@ -191,13 +122,13 @@ pub fn dispatch(args: &[String], _lang: Lang) {
 fn print_usage() {
     eprintln!(
         "Usage:
-  AskHuman dev enable [--preset <name>]... [--force]
+  AskHuman dev enable [--agent <name>] [--system-binary <path>] [--preset <name>]... [--force]
   AskHuman dev disable [--purge]
   AskHuman dev status
+  AskHuman dev ui [--worktree <path>]
   AskHuman dev ask [--worktree <path>] [--delivery local|remote|channels] -- <question>
   AskHuman dev ask --worktree <path> --resume <verification-id>
   AskHuman dev session <agent> [--worktree <path>] [--task <text>] [--prepare-only|--stdio]
-  AskHuman --instance system dev migrate plan|status|apply <id>|rollback <id>
   AskHuman --instance system dev target
   AskHuman dev preset save <name> [--from-instance]
   AskHuman dev preset list
@@ -274,10 +205,6 @@ fn ensure_layout(root: &Path) -> Result<(PathBuf, PathBuf), String> {
     {
         return Err("Dev bin or home escapes the selected private worktree directory".into());
     }
-    let marker = dev.join(ENABLED_MARKER);
-    if !marker.exists() {
-        std::fs::write(&marker, b"").map_err(|e| e.to_string())?;
-    }
     seed_config_if_missing(&home)?;
     Ok((bin, home))
 }
@@ -289,13 +216,38 @@ fn pin_instance_management(root: &Path) {
     }
 }
 
-fn parse_enable_args(args: &[String]) -> (Vec<String>, bool) {
+fn parse_enable_args(
+    args: &[String],
+) -> (
+    Vec<String>,
+    bool,
+    Option<crate::agents::AgentKind>,
+    Option<PathBuf>,
+) {
     let mut presets = Vec::new();
     let mut force = false;
+    let mut agent = None;
+    let mut system_binary = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--force" => force = true,
+            "--agent" | "--system-binary" => {
+                let flag = args[i].clone();
+                i += 1;
+                let Some(value) = args.get(i) else {
+                    eprintln!("error: {flag} requires a value");
+                    exit(1);
+                };
+                if flag == "--agent" {
+                    agent = Some(crate::agents::AgentKind::parse(value).unwrap_or_else(|| {
+                        eprintln!("error: unknown development client '{value}'");
+                        exit(1);
+                    }));
+                } else {
+                    system_binary = Some(PathBuf::from(value));
+                }
+            }
             "--preset" => {
                 i += 1;
                 if i >= args.len() {
@@ -315,12 +267,24 @@ fn parse_enable_args(args: &[String]) -> (Vec<String>, bool) {
         }
         i += 1;
     }
-    (presets, force)
+    (presets, force, agent, system_binary)
 }
 
 fn cmd_enable(args: &[String]) {
-    let (presets, force) = parse_enable_args(args);
+    let (presets, force, agent, system_binary) = parse_enable_args(args);
     let root = require_git_root();
+    let agent = agent.or_else(crate::agents::detect::detect_invoking_agent);
+    let system_binary = system_binary
+        .or_else(|| {
+            crate::development::workspace::read(&root)
+                .ok()
+                .map(|workspace| workspace.system_binary)
+        })
+        .unwrap_or_else(|| crate::executable::launch_path().unwrap_or_default());
+    if let Err(error) = crate::development::project::ensure_legacy_idle(&root) {
+        eprintln!("error: {error}");
+        exit(1);
+    }
     let (bin, home) = match ensure_layout(&root) {
         Ok(v) => v,
         Err(e) => {
@@ -342,17 +306,25 @@ fn cmd_enable(args: &[String]) {
         }
     }
 
-    if let Err(error) = crate::development::state::register_worktree(&root) {
-        eprintln!("error: cannot register Dev worktree: {error}");
-        exit(1);
-    }
+    let prepared =
+        crate::development::project::prepare(&root, &system_binary, agent).and_then(|report| {
+            crate::development::project::retire_legacy_marker(&root)?;
+            Ok(report)
+        });
+    let report = match prepared {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("error: {error}");
+            exit(1);
+        }
+    };
 
     println!("Dev Instance enabled");
     println!("  worktree   {}", root.display());
     println!("  home       {}", home.display());
     println!("  bin        {}", bin.display());
     if presets.is_empty() {
-        println!("  channels   popup-only (no IM presets)");
+        println!("  delivery   formal remote relay (no dedicated channel preset)");
     } else {
         println!("  presets    {}", presets.join(", "));
     }
@@ -366,15 +338,23 @@ fn cmd_enable(args: &[String]) {
     {
         println!("  next       run ./scripts/install.sh  (installs into this instance bin)");
     } else {
-        if crate::development::state::read()
-            .is_ok_and(|state| state.mode == crate::development::state::RoutingMode::Explicit)
-        {
-            println!("  next       AskHuman dev ask … / MCP dev_ask  (explicit Dev verification)");
-        } else {
-            println!(
-                "  next       AskHuman … / MCP ask  (legacy automatic routing; see dev migrate)"
-            );
-        }
+        println!("  next       node scripts/dev.mjs ask … / project MCP dev_ask");
+    }
+    if let Some(path) = report.configuration_path {
+        println!("  project MCP {}", path.display());
+    }
+    match crate::development::relay::preflight(&root) {
+        Ok(()) => println!("  remote     compatible formal daemon and remote outlet available"),
+        Err(error) => println!("  remote     not ready: {error}"),
+    }
+    if report.connection_observed {
+        println!("  readiness  a live project tool call was observed for this controller version");
+    }
+    if report.requires_reload {
+        println!("  readiness  project configuration prepared; reload/trust the project and call dev_ask to verify loading");
+    }
+    if agent.is_none() {
+        println!("  client     CLI ready; use --agent <name> to prepare a project MCP client");
     }
     exit(0);
 }
@@ -392,7 +372,7 @@ fn cmd_disable(args: &[String]) {
     }
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let Some(root) = dev_instance::find_dev_root(&cwd).or_else(|| {
+    let Some(root) = crate::development::workspace::find_root(&cwd).or_else(|| {
         // Also allow disable from git root after marker deleted? Prefer find by git + .askhuman-dev
         find_git_root(&cwd).filter(|r| r.join(DEV_DIR).exists())
     }) else {
@@ -401,6 +381,10 @@ fn cmd_disable(args: &[String]) {
     };
 
     pin_instance_management(&root);
+    if let Err(error) = crate::development::project::remove(&root) {
+        eprintln!("error: {error}");
+        exit(1);
+    }
     if purge {
         if let Err(e) = crate::development::session::cleanup_workspaces(&root) {
             eprintln!("error: {e}");
@@ -453,6 +437,13 @@ fn cmd_disable(args: &[String]) {
     let marker = root.join(DEV_DIR).join(ENABLED_MARKER);
     if marker.exists() {
         let _ = std::fs::remove_file(&marker);
+    }
+    let manifest = crate::development::workspace::path(&root);
+    if manifest.exists() {
+        if let Err(error) = std::fs::remove_file(&manifest) {
+            eprintln!("error: cannot disable project development: {error}");
+            exit(1);
+        }
     }
 
     if purge {
@@ -557,7 +548,7 @@ fn terminate_instance_processes(instance_bin: &Path) -> Vec<u32> {
 
 fn cmd_status() {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let root = dev_instance::find_dev_root(&cwd);
+    let root = crate::development::workspace::find_root(&cwd);
     match root {
         None => {
             println!("dev instance: not enabled for cwd {}", cwd.display());

@@ -186,11 +186,7 @@ pub(crate) fn hook_command() -> Result<String> {
 }
 
 pub(crate) fn hook_command_for(exe: &str) -> String {
-    format!(
-        "{} {MARKER} {}",
-        crate::development::routing::integration_prefix(exe),
-        AgentKind::Claude.as_str()
-    )
+    format!("\"{exe}\" {MARKER} {}", AgentKind::Claude.as_str())
 }
 
 fn install(kind: AgentKind) -> Result<()> {

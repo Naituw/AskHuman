@@ -206,7 +206,6 @@ export interface DevVerificationInfo {
 }
 
 export interface DevWorkbenchStatus {
-  mode: "legacy" | "explicit";
   systemBinary: string | null;
   worktrees: DevWorktreeInfo[];
   agents: DevAgentSupport[];
@@ -1429,14 +1428,4 @@ export interface PopupProjectInfo {
   detached: boolean;
   worktree?: string | null;
   changes?: { total: number; staged: number; unstaged: number; untracked: number } | null;
-}
-
-export interface DevMigration {
-  id: string;
-  phase: "planned" | "partial" | "complete" | "rollingBack" | "rolledBack";
-  systemBinary: string;
-  actions: Array<{ agent: string; mode: string; status: string; error: string | null }>;
-  artifacts: Array<{ path: string }>;
-  conflicts: string[];
-  error: string | null;
 }

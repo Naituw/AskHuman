@@ -7,7 +7,7 @@
 //! See `docs/specs/dev-instance-parallel.md` §7.2.
 
 use crate::config::{AppConfig, ChannelsConfig};
-use crate::dev_instance::{self, DEV_DIR, ENABLED_MARKER};
+use crate::dev_instance;
 use crate::paths;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -119,7 +119,7 @@ fn write_index(index: &PresetIndex) -> Result<(), String> {
 
 fn lease_is_live(lease: &PresetLease) -> bool {
     let root = PathBuf::from(&lease.worktree_root);
-    root.join(DEV_DIR).join(ENABLED_MARKER).is_file()
+    crate::development::workspace::is_enabled(&root)
 }
 
 /// Sanitize preset name: letters, digits, `-`, `_`, `.` only.
@@ -527,5 +527,22 @@ mod tests {
         let redacted = redact_channels(&ch);
         assert_eq!(redacted["ios"]["password"], "***");
         assert_eq!(redacted["ios"]["host"], "broker.example");
+    }
+
+    #[test]
+    fn project_manifest_keeps_its_test_channel_lease_exclusive() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let lease = PresetLease {
+            worktree_root: root.to_string_lossy().to_string(),
+            claimed_at: 0,
+        };
+        assert!(!lease_is_live(&lease));
+        let manifest = crate::development::workspace::path(root);
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        std::fs::write(&manifest, "{}").unwrap();
+        assert!(lease_is_live(&lease));
+        std::fs::remove_file(manifest).unwrap();
+        assert!(!lease_is_live(&lease));
     }
 }

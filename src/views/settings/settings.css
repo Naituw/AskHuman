@@ -1282,17 +1282,3 @@
 .ios-device-meta.warn {
   color: #ff9f0a;
 }
-
-/* Keep all settings tabs reachable without covering the native controls or search button. */
-.settings-tabs {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  gap: 2px;
-  margin-inline-end: 34px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.settings-tabs::-webkit-scrollbar { display: none; }
-.settings-tabs.mac { margin-inline-start: 68px; }
-.tabbar .settings-tabs button { flex: none; white-space: nowrap; padding-inline: 10px; }

@@ -286,21 +286,6 @@ pub struct AskParams {
     session_token: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DevAskParams {
-    /// Absolute path to the enabled worktree being developed; never infer it from the MCP cwd.
-    pub worktree: String,
-    /// Optional delivery override: local popup, remote relay, or the Dev's own configured channels.
-    #[serde(default)]
-    pub delivery: Option<String>,
-    /// Resume an existing verification by ID without sending another question.
-    #[serde(default)]
-    pub resume: Option<String>,
-    #[serde(flatten)]
-    pub ask: AskParams,
-}
-
 // Input for `todo_add` (project-scoped queue; same store as CLI `todo add`).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -597,115 +582,6 @@ of files the human attached), and `[status]` (present on cancel or for a replaye
         }
 
         Ok(tool_result)
-    }
-
-    /// Explicitly test a worktree build while the ordinary MCP connection remains unchanged.
-    #[tool(
-        name = "dev_ask",
-        description = "Ask the human to verify an installed Dev Instance build. Use this after the worktree install script when testing AskHuman changes. Ordinary discussion must continue through ask. This runs the worktree Dev binary and returns the human's answer to this Agent without moving its native session, permissions, Stop hooks, history or todos to Dev. Supply an absolute enabled worktree path. Resume retrieves the same verification result and never sends a new question.",
-        annotations(destructive_hint = false, open_world_hint = false)
-    )]
-    async fn dev_ask(
-        &self,
-        Parameters(params): Parameters<DevAskParams>,
-        context: RequestContext<RoleServer>,
-        cancel: CancellationToken,
-    ) -> Result<CallToolResult, McpError> {
-        if let Some(blocked) = codex_thread_guard(&context.meta, "dev_ask") {
-            return Ok(blocked);
-        }
-        let root = PathBuf::from(&params.worktree);
-        if !root.is_absolute() {
-            return Err(McpError::invalid_params(
-                "worktree must be an absolute path",
-                None,
-            ));
-        }
-        if params.resume.is_none()
-            && params
-                .ask
-                .message
-                .as_ref()
-                .is_none_or(|s| s.trim().is_empty())
-            && params
-                .ask
-                .questions
-                .as_ref()
-                .is_none_or(|questions| questions.is_empty())
-        {
-            return Err(McpError::invalid_params(
-                "dev_ask requires a message, questions, or a resume ID",
-                None,
-            ));
-        }
-        let id = params
-            .resume
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        if uuid::Uuid::parse_str(&id).is_err() {
-            return Err(McpError::invalid_params("invalid verification ID", None));
-        }
-        let mut argv = vec![
-            "dev".into(),
-            "ask".into(),
-            "--worktree".into(),
-            params.worktree.clone(),
-        ];
-        if let Some(delivery) = &params.delivery {
-            crate::development::verification::Delivery::parse(delivery)
-                .map_err(|e| McpError::invalid_params(e, None))?;
-            argv.extend(["--delivery".into(), delivery.clone()]);
-        }
-        if params.resume.is_some() {
-            argv.extend(["--resume".into(), id.clone()]);
-        } else {
-            argv.extend(["--verification-id".into(), id.clone(), "--".into()]);
-            argv.extend(build_argv(&params.ask));
-        }
-        // The driver enters Dev explicitly; no daily binding is forwarded to its executor.
-        let command = self.child_command(&argv, None)?;
-        let call_cancel = cancel.child_token();
-        let monitor = start_codex_turn_abort_monitor(&context.meta, call_cancel.clone());
-        let output = capture_output(command, call_cancel).await;
-        drop(monitor);
-        let output = match output {
-            Ok(output) => output,
-            Err(CaptureError::Cancelled) => {
-                let _ = crate::development::verification::interrupted(&root, &id);
-                return Ok(CallToolResult::error(vec![ContentBlock::text(format!("Dev verification {id} was interrupted by the MCP client, not answered by the human."))]));
-            }
-            Err(CaptureError::Io(error)) => {
-                return Err(McpError::internal_error(
-                    format!("cannot start Dev verification: {error}"),
-                    None,
-                ))
-            }
-        };
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if !output.status.success() || stdout.trim().is_empty() {
-            return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                "Dev verification {id} failed (exit {:?}): {}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ))]));
-        }
-        let mut result =
-            CallToolResult::success(vec![ContentBlock::text(stdout.trim().to_string())]);
-        for (path, mime) in image_files(&stdout) {
-            if let Ok(bytes) = std::fs::read(path) {
-                result.content.push(ContentBlock::image(
-                    base64::engine::general_purpose::STANDARD.encode(bytes),
-                    mime.to_string(),
-                ));
-            }
-        }
-        if let Ok(record) = crate::development::verification::read_record(&root, &id) {
-            result.content.push(ContentBlock::text(format!(
-                "Dev verification metadata: {}",
-                serde_json::to_string(&record.info).unwrap_or_default()
-            )));
-        }
-        Ok(result)
     }
 
     /// End-of-task handoff for requesting a separate next task.
@@ -2504,42 +2380,40 @@ mod tests {
     #[test]
     fn ask_tool_schema_inlines_question_and_option_fields() {
         let server = AskServer::new();
-        for name in ["ask", "dev_ask"] {
-            let tool = server.tool_router.get(name).unwrap();
-            let schema = Value::Object((*tool.input_schema).clone());
+        let tool = server.tool_router.get("ask").unwrap();
+        let schema = Value::Object((*tool.input_schema).clone());
 
-            assert!(
-                !contains_ref(&schema),
-                "ask input schema must not expose $ref"
-            );
-            assert!(schema.get("$defs").is_none());
-            assert_eq!(
-                schema.pointer("/properties/questions/items/type"),
-                Some(&json!("object"))
-            );
-            assert_eq!(
-                schema.pointer("/properties/questions/items/properties/question/type"),
-                Some(&json!("string"))
-            );
-            assert_eq!(
-                schema.pointer("/properties/questions/items/required"),
-                Some(&json!(["question"]))
-            );
-            assert_eq!(
-                schema.pointer("/properties/questions/items/properties/options/items/type"),
-                Some(&json!("object"))
-            );
-            assert_eq!(
-                schema.pointer(
-                    "/properties/questions/items/properties/options/items/properties/text/type"
-                ),
-                Some(&json!("string"))
-            );
-            assert_eq!(
-                schema.pointer("/properties/questions/items/properties/options/items/required"),
-                Some(&json!(["text"]))
-            );
-        }
+        assert!(
+            !contains_ref(&schema),
+            "ask input schema must not expose $ref"
+        );
+        assert!(schema.get("$defs").is_none());
+        assert_eq!(
+            schema.pointer("/properties/questions/items/type"),
+            Some(&json!("object"))
+        );
+        assert_eq!(
+            schema.pointer("/properties/questions/items/properties/question/type"),
+            Some(&json!("string"))
+        );
+        assert_eq!(
+            schema.pointer("/properties/questions/items/required"),
+            Some(&json!(["question"]))
+        );
+        assert_eq!(
+            schema.pointer("/properties/questions/items/properties/options/items/type"),
+            Some(&json!("object"))
+        );
+        assert_eq!(
+            schema.pointer(
+                "/properties/questions/items/properties/options/items/properties/text/type"
+            ),
+            Some(&json!("string"))
+        );
+        assert_eq!(
+            schema.pointer("/properties/questions/items/properties/options/items/required"),
+            Some(&json!(["text"]))
+        );
     }
 
     #[test]

@@ -11,10 +11,7 @@ impl IntegrationMutationLock {
                 .map_err(anyhow::Error::msg)?
                 .is_none()
             && (std::env::var_os(crate::development::workbench::WINDOW_ENV).is_some()
-                || crate::development::state::read()
-                    .map_err(anyhow::Error::msg)?
-                    .mode
-                    == crate::development::state::RoutingMode::Explicit)
+                || crate::development::session::requires_test_profile())
         {
             return Err(anyhow::anyhow!("Dev cannot change everyday Agent integration; use an isolated test profile or the explicit system entry"));
         }

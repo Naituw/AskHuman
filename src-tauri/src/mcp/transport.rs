@@ -120,8 +120,8 @@ mod tests {
         reader.read_line(&mut line).await.unwrap();
         let reply: Value = serde_json::from_str(&line).unwrap();
         let tools = reply["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 7);
-        assert!(tools.iter().any(|tool| tool["name"] == "dev_ask"));
+        assert_eq!(tools.len(), 6);
+        assert!(!tools.iter().any(|tool| tool["name"] == "dev_ask"));
         assert!(tools.iter().any(|tool| tool["name"] == "ask"));
         drop(write);
         drop(reader);

@@ -499,12 +499,12 @@ pub(crate) fn uninstall_unlocked(agent: AgentTarget) -> Result<String> {
     if let Ok(old) = std::fs::read_to_string(&path) {
         // Cursor 旧格式独占整文件（头标记、无区块）：直接删除。
         if agent.is_owned_file() && is_managed_cursor_file(&old) && !has_block(&old) {
-            crate::development::migration::remove_file(&path)
+            std::fs::remove_file(&path)
                 .with_context(|| format!("failed to remove rule file: {}", path.display()))?;
         } else if has_block(&old) {
             let new_text = remove_block(&old);
             if agent.is_owned_file() && cursor_residual_is_empty(&new_text) {
-                crate::development::migration::remove_file(&path)
+                std::fs::remove_file(&path)
                     .with_context(|| format!("failed to remove rule file: {}", path.display()))?;
             } else {
                 atomic_write(&path, new_text.as_bytes())
@@ -576,7 +576,6 @@ pub fn open(agent: AgentTarget) {
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    crate::development::migration::before_write(path, Some(bytes))?;
     let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)?;

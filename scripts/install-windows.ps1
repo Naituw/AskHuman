@@ -14,7 +14,8 @@ $DefaultInstallDir = Join-Path $env:LOCALAPPDATA "Programs\AskHuman"
 $DevRoot = $null
 $Cursor = [IO.Path]::GetFullPath($RepoRoot)
 while (-not [string]::IsNullOrWhiteSpace($Cursor)) {
-  if (Test-Path -LiteralPath (Join-Path $Cursor ".askhuman-dev\enabled") -PathType Leaf) {
+  if ((Get-Item -LiteralPath (Join-Path $Cursor ".askhuman-dev\workspace.json") -Force -ErrorAction SilentlyContinue) -or
+      (Get-Item -LiteralPath (Join-Path $Cursor ".askhuman-dev\enabled") -Force -ErrorAction SilentlyContinue)) {
     $DevRoot = $Cursor
     break
   }
@@ -34,14 +35,13 @@ $UsesDefaultInstallDir = -not $ExplicitInstallDir -and -not $IsDevInstall
 $InstalledBin = Join-Path $InstallDir "AskHuman.exe"
 function Invoke-InstalledAskHuman {
   param([string[]]$Arguments)
-  $ContextKeys = @("ASKHUMAN_RESOLVED_TARGET_V1", "ASKHUMAN_DEV_TEST_PROFILE", "ASKHUMAN_DEV_VERIFICATION_ID", "ASKHUMAN_DEV_TEST_WINDOW", "ASKHUMAN_DEV_MIGRATION_ID", "ASKHUMAN_WRITE_SYSTEM_BINDINGS", "ASKHUMAN_HOME")
+  $ContextKeys = @("ASKHUMAN_RESOLVED_TARGET_V1", "ASKHUMAN_DEV_TEST_PROFILE", "ASKHUMAN_DEV_VERIFICATION_ID", "ASKHUMAN_DEV_TEST_WINDOW", "ASKHUMAN_DEV_DRIVER_PID", "ASKHUMAN_HOME")
   $SavedContext = @{}
   foreach ($Key in $ContextKeys) { $SavedContext[$Key] = [Environment]::GetEnvironmentVariable($Key, "Process"); [Environment]::SetEnvironmentVariable($Key, $null, "Process") }
   try { & $InstalledBin @Arguments }
   finally { foreach ($Key in $ContextKeys) { [Environment]::SetEnvironmentVariable($Key, $SavedContext[$Key], "Process") } }
 }
 
-$NewSystemInstall = -not $IsDevInstall -and -not (Test-Path -LiteralPath $InstalledBin) -and -not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".askhuman\config.json"))
 $DevSourceSnapshot = $null
 if ($IsDevInstall) {
   $DevSourceSnapshot = (& node (Join-Path $ScriptDir "dev-build-record.mjs") snapshot $RepoRoot | Out-String).Trim()
@@ -86,12 +86,15 @@ Write-Host "==> 安装前端依赖"
 pnpm install
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+$DevBuildFeatures = "custom-protocol"
+$env:VITE_ASKHUMAN_DEV_WORKBENCH = "0"
+if ($IsDevInstall) { $DevBuildFeatures = "custom-protocol,development-ui"; $env:VITE_ASKHUMAN_DEV_WORKBENCH = "1" }
 node scripts/build-frontend-if-needed.mjs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "==> 编译 $BuildProfile（前端资源在此步骤被嵌入）"
 # --features custom-protocol：生产构建必须启用，否则二进制以 dev 模式连 devUrl 导致白屏。
-cargo build --profile $BuildProfile --manifest-path src-tauri/Cargo.toml --features custom-protocol
+cargo build --profile $BuildProfile --manifest-path src-tauri/Cargo.toml --features $DevBuildFeatures
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $Bin = "src-tauri\target\$BuildProfile\AskHuman.exe"
@@ -163,11 +166,7 @@ if (-not $SkipCopy) {
 if ($IsDevInstall) {
   & node (Join-Path $ScriptDir "dev-build-record.mjs") record $DevRoot $InstalledBin $DevSourceSnapshot
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  Invoke-InstalledAskHuman -Arguments @("dev", "register-worktree", $DevRoot)
-} elseif ($NewSystemInstall) {
-  Invoke-InstalledAskHuman -Arguments @("dev", "register-system", $InstalledBin, "--new-install")
-} else {
-  Invoke-InstalledAskHuman -Arguments @("dev", "register-system", $InstalledBin)
+
 }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

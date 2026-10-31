@@ -68,7 +68,12 @@ pub fn dispatch() {
             exit(1);
         }
     };
-    if raw_argv.get(1).is_some_and(|s| s == "__dev-capabilities") {
+    if raw_argv.get(1).is_some_and(|s| {
+        matches!(
+            s.as_str(),
+            "__dev-capabilities" | "--development-capabilities"
+        )
+    }) {
         print_line(&crate::development::capabilities().to_string());
         exit(0);
     }
@@ -122,6 +127,49 @@ pub fn dispatch() {
                 argv.get(2).map(String::as_str).unwrap_or("settings"),
             ) {
                 eprintln!("AskHuman: {error}");
+                exit(1);
+            }
+            exit(0);
+        }
+        "__dev-channel-identities" => {
+            if !crate::development::routing::inherited()
+                .ok()
+                .flatten()
+                .is_some_and(|target| {
+                    target.kind == crate::development::routing::TargetKind::System
+                })
+            {
+                exit(1);
+            }
+            println!(
+                "{}",
+                serde_json::to_string(&crate::development::channel_safety::identities(
+                    &crate::config::AppConfig::load_readonly()
+                ))
+                .unwrap()
+            );
+            exit(0);
+        }
+        "__dev-interrupt" => {
+            let result = match (argv.get(2), argv.get(3)) {
+                (Some(root), Some(id)) => {
+                    crate::development::verification::interrupted(std::path::Path::new(root), id)
+                }
+                _ => Err("interrupt requires worktree and verification ID".into()),
+            };
+            if let Err(error) = result {
+                eprintln!("{error}");
+                exit(1);
+            }
+            exit(0);
+        }
+        "__dev-relay-preflight" => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            if let Err(error) = runtime.block_on(crate::development::relay::check_peer()) {
+                eprintln!("{error}");
                 exit(1);
             }
             exit(0);

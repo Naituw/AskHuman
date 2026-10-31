@@ -196,7 +196,7 @@ pub fn uninstall() -> Result<String> {
     }
     let script = paths::claude_hook_script();
     if script.exists() {
-        let _ = crate::development::migration::remove_file(&script);
+        let _ = std::fs::remove_file(&script);
     }
     let lang = crate::i18n::Lang::current();
     Ok(crate::i18n::tr(lang, "cmd.hookRemoved").to_string())
@@ -404,7 +404,6 @@ fn write_text(text: &str) -> Result<()> {
 }
 
 fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
-    crate::development::migration::before_write(path, Some(bytes))?;
     let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)?;

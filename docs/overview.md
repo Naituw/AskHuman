@@ -34,11 +34,14 @@
 
 **重复提问收敛**（`docs/specs/duplicate-ask-coalescing.md`）：agent 那一轮被中断后常原样重发同一个提问，而被中断的 CLI 进程不会被杀。Daemon 因此在建请求前先按「会话键 + 提问指纹」判重——同一提问仍在等人回答就合流到那张卡（多等待者共享一个终态，全部离场才取消），5 分钟内已答过则直接重放上次答案并在 `status` 说明。历史、待办出队与 `ask-received` 仍只发生一次。
 
-**Dev Instance（并行 / WorkTree 开发）**：每个已 `dev enable` 的 git 工作树有独立程序、home、daemon 和测试渠道。
-新安装及完成明确迁移的用户，普通 CLI／MCP 和受管 Hook 固定正式版；安装后通过 `dev ask`／MCP `dev_ask` 验收本树实际构建，完整集成使用独立 Agent 测试 profile。已有安装在迁移前保留 cwd 自动路由。
-入口先解析并固定程序、home 和内部继承上下文；Dev 失败不回退正式版，单次验收不取得日常原生会话控制权限。
-`ASKHUMAN_HOME` 仍不隔离用户级 Agent 文件；新流程的 Dev 不能改日常集成，测试 profile 写自己的文件。
-架构与边界见 [开发验收实现地图](overview-development.md)，操作见 [工作树准备流程](agent-worktree-setup.md)，需求见 [日常沟通与开发验收隔离](specs/dev-verification-routing.md)。
+**Dev Instance（并行 / WorkTree 开发）**：AskHuman 自身开发通过项目规则与独立 `askhuman-dev` MCP
+准备每树私有程序、home、daemon 和测试 profile；普通用户级规则、MCP 六工具和设置保持原流程。
+幂等 `dev enable` 写本树 `workspace.json`，它不触发普通 cwd 改道；旧 `enabled` 在本树明确升级前保留旧行为。
+安装后显式 Dev 验收默认由正式 daemon 的唯一远程连接转送；权限记忆、Stop 和待办动作只在原 Dev 执行。
+缺失、旧构建或不兼容正式端均失败，不切换日常会话，不隐式回退。真实渠道实现测试用独立 bot／配对。
+`ASKHUMAN_HOME` 仍不隔离用户级 Agent 文件；项目 Dev 拒绝改日常集成，完整测试用独立 profile。
+实现与能力边界见 [开发验收实现地图](overview-development.md)，操作见 [工作树准备流程](agent-worktree-setup.md)，
+需求见 [项目级开发验收](specs/dev-verification-routing.md)。
 
 ## 目录结构
 

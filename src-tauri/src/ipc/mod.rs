@@ -73,6 +73,9 @@ pub struct StatusInfo {
     /// A verification client must reject a peer that would ignore its isolation metadata.
     #[serde(default)]
     pub development_verification_version: u32,
+    /// Deliverable remote surfaces, bypassing the daily active-slot selection.
+    #[serde(default)]
+    pub development_remote_outlets: Vec<String>,
     pub pid: u32,
     pub version: String,
     pub protocol_version: u32,
@@ -235,6 +238,9 @@ impl TaskRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfirmTask {
+    /// Explicit development delivery, absent for ordinary permission requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub development: Option<Box<crate::development::verification::VerificationInfo>>,
     /// Actual invocation directory, distinct from the session's stable project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caller_cwd: Option<String>,
@@ -1056,6 +1062,7 @@ mod tests {
 
     fn confirm_task() -> ConfirmTask {
         ConfirmTask {
+            development: None,
             caller_cwd: None,
             spec: crate::models::ConfirmSpec {
                 title: "Approve?".into(),
@@ -1180,6 +1187,7 @@ mod tests {
     fn status_info_binary_facts_round_trip() {
         let info = StatusInfo {
             development_verification_version: 1,
+            development_remote_outlets: vec![],
             pid: 7,
             version: "0.15.0".into(),
             protocol_version: PROTOCOL_VERSION,

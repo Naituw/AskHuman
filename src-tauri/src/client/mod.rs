@@ -751,28 +751,52 @@ pub fn run_ask(task: crate::ipc::TaskRequest) -> ! {
 /// Run an internal Ask request and capture its rendered JSON instead of printing/exiting.
 /// Used by the Stop hook; timeout/disconnect/non-success all fail open as `None`.
 pub fn run_ask_capture(mut task: crate::ipc::TaskRequest, timeout: Duration) -> Option<String> {
-    crate::development::verification::decorate_task(&mut task).ok()?;
+    if let Err(error) = crate::development::verification::decorate_task(&mut task) {
+        eprintln!("AskHuman: {error}");
+        return None;
+    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .ok()?;
-    runtime.block_on(async move {
+    let info = task.message.development.clone();
+    let result = runtime.block_on(async move {
         let final_result = tokio::time::timeout(timeout, run_ask_final_async(task, false))
             .await
             .ok()?;
         (final_result.exit_code == 0).then_some(final_result.stdout)
-    })
+    });
+    if let Some(info) = info.filter(|info| !info.relay) {
+        match &result {
+            Some(stdout) => {
+                let _ = crate::development::verification::complete(&info, stdout, 0);
+            }
+            None => {
+                let _ = crate::development::verification::interrupted(&info.worktree, &info.id);
+            }
+        }
+    }
+    result
 }
 
 /// Submit a structured permission confirmation. Every transport/protocol/fallback failure returns
 /// `None` so the hook writes no decision and the agent keeps its native approval flow.
-pub fn run_confirm(task: crate::ipc::ConfirmTask) -> Option<crate::models::ConfirmResult> {
+pub fn run_confirm(mut task: crate::ipc::ConfirmTask) -> Option<crate::models::ConfirmResult> {
+    if let Err(error) = crate::development::verification::decorate_confirm(&mut task) {
+        eprintln!("AskHuman: {error}");
+        return None;
+    }
+    let info = task.development.clone();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .ok()?;
-    runtime.block_on(async move {
-        ensure_running().await.ok()?;
+    let result = runtime.block_on(async move {
+        if task.development.as_ref().is_some_and(|info| info.relay) {
+            crate::development::relay::check_peer().await.ok()?;
+        } else {
+            ensure_running().await.ok()?;
+        }
         let (mut reader, mut writer) = connect_split().await.ok()?;
         ipc::write_msg(&mut writer, &ClientMsg::Hello(hello()))
             .await
@@ -785,7 +809,19 @@ pub fn run_confirm(task: crate::ipc::ConfirmTask) -> Option<crate::models::Confi
             .await
             .ok()?;
         read_confirm_frames(&mut reader).await
-    })
+    });
+    if let Some(info) = info.filter(|info| !info.relay) {
+        let stdout = result
+            .as_ref()
+            .and_then(|value| serde_json::to_string(value).ok())
+            .unwrap_or_default();
+        let _ = crate::development::verification::complete(
+            &info,
+            &stdout,
+            if result.is_some() { 0 } else { 3 },
+        );
+    }
+    result
 }
 
 async fn read_confirm_frames<R>(reader: &mut R) -> Option<crate::models::ConfirmResult>
@@ -835,7 +871,7 @@ async fn run_ask_async(task: crate::ipc::TaskRequest) -> i32 {
     } else {
         run_ask_final_async(task, true).await
     };
-    if let Some(info) = verification.filter(|info| !info.relay && info.test_profile.is_none()) {
+    if let Some(info) = verification.filter(|info| !info.relay) {
         if let Err(error) =
             crate::development::verification::complete(&info, &result.stdout, result.exit_code)
         {
@@ -856,7 +892,19 @@ async fn run_ask_final_async(task: crate::ipc::TaskRequest, verbose: bool) -> As
     // 提交被受理后不再重试（避免重复弹窗）。
     'outer: loop {
         for _ in 0..3 {
-            match ensure_running().await {
+            let relay = task
+                .message
+                .development
+                .as_ref()
+                .is_some_and(|info| info.relay);
+            let readiness = if relay {
+                crate::development::relay::check_peer()
+                    .await
+                    .map_err(Error::other)
+            } else {
+                ensure_running().await
+            };
+            match readiness {
                 Ok(()) => {}
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
                     wait_for_drain().await;

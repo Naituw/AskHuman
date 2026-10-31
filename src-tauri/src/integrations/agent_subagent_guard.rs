@@ -165,8 +165,8 @@ fn hook_command(target: AgentTarget) -> Result<String> {
         _ => return Err(anyhow!("unsupported subagent guard target")),
     };
     Ok(format!(
-        "{} {MARKER} {agent}",
-        crate::development::routing::integration_prefix(&executable.to_string_lossy())
+        "\"{}\" {MARKER} {agent}",
+        executable.to_string_lossy()
     ))
 }
 

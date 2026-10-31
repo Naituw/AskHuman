@@ -1,44 +1,12 @@
 //! Resolve one process target before configuration, secrets, or a graphical runtime is loaded.
 
-use super::state::{self, RoutingMode};
+use super::state;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub const TARGET_ENV: &str = "ASKHUMAN_RESOLVED_TARGET_V1";
-pub const SYSTEM_BINDINGS_ENV: &str = "ASKHUMAN_WRITE_SYSTEM_BINDINGS";
-
-pub fn system_bindings() -> bool {
-    inherited()
-        .ok()
-        .flatten()
-        .is_some_and(|target| target.kind == TargetKind::System)
-        && std::env::var_os(super::session::PROFILE_ENV).is_none()
-        && (std::env::var(SYSTEM_BINDINGS_ENV).is_ok_and(|value| value == "1")
-            || state::read().is_ok_and(|state| state.mode == RoutingMode::Explicit))
-}
-
-pub fn integration_prefix(executable: &str) -> String {
-    if system_bindings() {
-        format!(
-            "'{}' --instance system",
-            executable.replace('\'', "'\"'\"'")
-        )
-    } else {
-        format!("\"{executable}\"")
-    }
-}
-
-pub fn integration_args(args: &[&str]) -> Vec<String> {
-    let mut result = Vec::new();
-    if system_bindings() {
-        result.extend(["--instance".into(), "system".into()]);
-    }
-    result.extend(args.iter().map(|value| value.to_string()));
-    result
-}
-
 /// Integration artifacts must retain the selected installation entry, even when the running
 /// image is reached through a symlink or retained by the Linux publisher.
 pub fn program_path() -> std::io::Result<PathBuf> {
@@ -48,30 +16,23 @@ pub fn program_path() -> std::io::Result<PathBuf> {
     }
 }
 
-fn registered_system_binary(fallback: &Path) -> Result<PathBuf, String> {
-    let binary = state::read()?
-        .system_binary
-        .unwrap_or_else(|| fallback.to_path_buf());
+fn formal_binary(fallback: &Path) -> Result<PathBuf, String> {
+    let root = executable_root(fallback).or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|cwd| super::workspace::find_root(&cwd))
+    });
+    let binary = match root.filter(|root| super::workspace::is_project(root)) {
+        Some(root) => super::workspace::read(&root)?.system_binary,
+        None => fallback.to_path_buf(),
+    };
     if executable_root(&binary).is_some() {
-        return Err("registered system entry points into a Dev Instance".into());
+        return Err("the formal entry cannot point into a Dev Instance".into());
     }
     if !binary.is_file() {
-        return Err("registered system entry is missing; reinstall the system AskHuman".into());
+        return Err("the formal AskHuman entry is missing".into());
     }
     Ok(binary)
-}
-
-fn system_entry(current: &Path, configured: &state::State) -> Result<PathBuf, String> {
-    if configured.mode == RoutingMode::Explicit {
-        return registered_system_binary(current);
-    }
-    // Preserve legacy binary choice while retaining a registered alias for the same image.
-    Ok(configured
-        .system_binary
-        .as_ref()
-        .filter(|entry| state::same_path(entry, current))
-        .cloned()
-        .unwrap_or_else(|| current.to_path_buf()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,12 +153,11 @@ pub fn dev_target(root: &Path) -> Result<Target, String> {
     let root = root
         .canonicalize()
         .map_err(|e| format!("invalid worktree {}: {e}", root.display()))?;
-    if !root
-        .join(crate::dev_instance::DEV_DIR)
-        .join(crate::dev_instance::ENABLED_MARKER)
-        .is_file()
-    {
+    if !super::workspace::is_enabled(&root) {
         return Err(format!("Dev Instance is not enabled at {}", root.display()));
+    }
+    if super::workspace::is_project(&root) {
+        super::workspace::read(&root)?;
     }
     let binary = crate::dev_instance::instance_bin(&root);
     if !binary.is_file() {
@@ -366,15 +326,13 @@ pub fn diagnostic() -> Result<Target, String> {
             no_keychain: true,
         });
     }
-    if state::read()?.mode == RoutingMode::Legacy {
-        if let Some(root) = crate::dev_instance::find_dev_root(&cwd) {
-            return dev_target(&root);
-        }
+    if let Some(root) = crate::dev_instance::find_dev_root(&cwd) {
+        return dev_target(&root);
     }
     Ok(Target {
         version: 1,
         kind: TargetKind::System,
-        binary: system_entry(&current, &state::read()?)?,
+        binary: current,
         home: state::system_home(),
         worktree: None,
         reason: "everyday system entry".into(),
@@ -405,7 +363,7 @@ fn reexec(target: &Target, argv: &[String]) -> Result<(), String> {
 
 pub fn check_capability(binary: &Path) -> Result<(), String> {
     let mut child = Command::new(binary)
-        .arg("__dev-capabilities")
+        .arg("--development-capabilities")
         .env_remove(TARGET_ENV)
         .env_remove(crate::dev_instance::ASKHUMAN_HOME_ENV)
         .stdin(Stdio::null())
@@ -427,7 +385,9 @@ pub fn check_capability(binary: &Path) -> Result<(), String> {
     }
     let output = child.wait_with_output().map_err(|e| e.to_string())?;
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
-    if !output.status.success() || value["developmentVerification"].as_u64() != Some(1) {
+    if !output.status.success()
+        || value["developmentVerification"].as_u64() != Some(super::CAPABILITY_VERSION as u64)
+    {
         return Err(format!(
             "{} does not support isolated Dev verification; install a compatible build",
             binary.display()
@@ -438,7 +398,12 @@ pub fn check_capability(binary: &Path) -> Result<(), String> {
 
 pub fn prepare(argv: Vec<String>) -> Result<Vec<String>, String> {
     // Probing an older executable must not recurse through any worktree dispatcher.
-    if argv.get(1).is_some_and(|s| s == "__dev-capabilities") {
+    if argv.get(1).is_some_and(|s| {
+        matches!(
+            s.as_str(),
+            "__dev-capabilities" | "--development-capabilities"
+        )
+    }) {
         return Ok(argv);
     }
     let parsed = parse_prefix(&argv)?;
@@ -455,7 +420,7 @@ pub fn prepare(argv: Vec<String>) -> Result<Vec<String>, String> {
                 matches!(role.as_str(), "__update-worker" | "__npm-update-worker")
             });
             if executable_root(&current).is_some() && target.kind == TargetKind::System {
-                return Err("a Dev executable cannot inherit the system instance; use the registered system entry".into());
+                return Err("a Dev executable cannot inherit the system instance; use the configured formal entry".into());
             }
             if !worker && !state::same_path(&current, &target.binary) {
                 return reexec(&target, &parsed.argv).map(|_| parsed.argv);
@@ -472,11 +437,11 @@ pub fn prepare(argv: Vec<String>) -> Result<Vec<String>, String> {
     let target = if parsed.selection == Some(Selection::Dev) {
         let root = parsed
             .worktree
-            .or_else(|| crate::dev_instance::find_dev_root(&cwd))
+            .or_else(|| super::workspace::find_root(&cwd))
             .ok_or("no enabled Dev worktree; specify --worktree")?;
         dev_target(&root)?
     } else if parsed.selection == Some(Selection::System) {
-        let binary = registered_system_binary(&current)?;
+        let binary = formal_binary(&current)?;
         Target {
             version: 1,
             kind: TargetKind::System,
@@ -500,7 +465,7 @@ pub fn prepare(argv: Vec<String>) -> Result<Vec<String>, String> {
             no_keychain: true,
         }
     } else {
-        if state::read()?.mode == RoutingMode::Legacy {
+        {
             crate::dev_instance::maybe_enter_dev_instance();
             if let Some(root) = crate::dev_instance::find_dev_root(&cwd).filter(|_| {
                 crate::dev_instance::classify_command(&parsed.argv)
@@ -520,7 +485,7 @@ pub fn prepare(argv: Vec<String>) -> Result<Vec<String>, String> {
                 return Ok(parsed.argv);
             }
         }
-        let binary = system_entry(&current, &state::read()?)?;
+        let binary = current.clone();
         Target {
             version: 1,
             kind: TargetKind::System,

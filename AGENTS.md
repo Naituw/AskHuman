@@ -6,9 +6,29 @@ Read [`docs/overview.md`](docs/overview.md) first to understand the architecture
 Its [“文档边界”](docs/overview.md#文档边界) section defines what belongs in the main overview versus supplementary overview, spec, and plan documents.
 When the task is complete, check whether the change made any overview or referenced spec inaccurate and update only the appropriate document; do not edit the main overview when the repository-wide map and invariants are unchanged.
 
-## Git worktree / parallel development
+## Project development environment
 
-If the task needs a **new or existing git worktree** for parallel feature work on this repo (so install/AskHuman do not share the main daemon or overwrite another agent’s binary), read [`docs/agent-worktree-setup.md`](docs/agent-worktree-setup.md) first and follow it—including asking the human via AskHuman whether to attach a channel preset—before coding. After `dev enable`, run `./scripts/install.sh` (Windows: `./scripts/install-windows.cmd`), then explicitly verify that worktree with MCP `dev_ask` or `AskHuman dev ask --worktree <absolute-path> -- …`. Ordinary discussion and the end-of-task handoff use the normal AskHuman entry. Existing installations retain automatic cwd routing until explicitly migrated; do not change global routing or Agent integrations just to run a test.
+Before each functional development task, run `AskHuman dev enable --agent <your-client>` from
+this physical worktree (supported names: codex, claude, cursor, grok, pi, antigravity). The command
+is idempotent: it checks the private manifest and repairs only missing or owned project configuration.
+Do not infer readiness from a previous conversation or branch. Read
+[`docs/agent-worktree-setup.md`](docs/agent-worktree-setup.md) before creating or entering a parallel tree.
+
+Ordinary discussion, approvals and the end-of-task handoff use the normal AskHuman connection.
+After installation, explicitly verify this tree with the **project** `askhuman-dev` MCP's `dev_ask`,
+or `node scripts/dev.mjs ask -- "…"` for a CLI client. This project-only verification exception
+leaves the daily session on the formal instance. Never rewrite user-level rules/MCP for development.
+New `.askhuman-dev/workspace.json` does not route ordinary calls to Dev. An old `enabled` marker
+keeps its historical routing until this tree's `dev enable` safely upgrades it; close old Dev
+Agent/MCP connections when the command reports them. Project configuration may need client trust
+or reload; a written file is not proof that a running client loaded it.
+
+Remote verification defaults to the formal daemon's existing channel connection. Ask about a
+separate test bot/pairing or preset **only when testing channel implementation**; then explicitly
+use `channels` delivery. Never reuse the formal bot in Dev or count relay success as a channel test.
+If testing the relay itself, use a private test relay with a test channel; do not replace the live
+formal daemon used for discussion. Full native MCP/Hook/permission/Stop tests use an isolated
+`node scripts/dev.mjs session <agent>` profile and require authorization before model calls.
 
 ## Tracking unfinished work in docs/PROGRESS.md
 
@@ -16,7 +36,7 @@ If the task needs a **new or existing git worktree** for parallel feature work o
 
 ## Verifying your changes
 
-After making any change to this project's functionality or logic, verify the result by running the install script to compile the new code directly into your environment, then use the newly installed `AskHuman` for subsequent prompts:
+After making any change to this project's functionality or logic, verify the result by running the install script to compile the new code directly into your environment, then explicitly verify the newly installed Dev build with the project tool/CLI above:
 
 ```bash
 # macOS / Linux

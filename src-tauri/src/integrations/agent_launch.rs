@@ -893,11 +893,7 @@ fn create_record_internal(
                 target: profile.id,
             }
         } else {
-            if crate::dev_instance::is_dev_instance_context()
-                && crate::development::state::read()
-                    .map_err(anyhow::Error::msg)?
-                    .mode
-                    == crate::development::state::RoutingMode::Explicit
+            if crate::development::session::requires_test_profile()
                 && source.channel != crate::development::session::SOURCE_CHANNEL
             {
                 return Err(anyhow!(
@@ -1387,9 +1383,7 @@ fn validate_source_session_id(session_id: &str) -> Result<()> {
 /// can fail; nothing is started.
 fn assemble_command(record: &LaunchRecord) -> Command {
     let mut command = Command::new(&record.executable);
-    command
-        .env_remove(crate::development::routing::TARGET_ENV)
-        .env_remove(crate::development::routing::SYSTEM_BINDINGS_ENV);
+    command.env_remove(crate::development::routing::TARGET_ENV);
     command.env(LAUNCH_ID_ENV, &record.id);
     command.args(agent_args(
         record.kind,

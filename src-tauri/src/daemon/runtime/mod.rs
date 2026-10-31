@@ -927,7 +927,9 @@ async fn serve(_lock: LockGuard) -> i32 {
         fs_router: tokio::sync::Mutex::new(None),
         tg_router: tokio::sync::Mutex::new(None),
         sl_router: tokio::sync::Mutex::new(None),
-        config: Mutex::new(AppConfig::load()),
+        config: Mutex::new(crate::development::channel_safety::runtime_config(
+            AppConfig::load(),
+        )),
         update: Mutex::new(init_update_snapshot()),
         agents: Arc::new(AgentRegistry::load()),
         interject: crate::agents::interject::InterjectStore::load(),
@@ -1550,6 +1552,13 @@ async fn control_loop(
             ClientMsg::Status => {
                 let info = StatusInfo {
                     development_verification_version: crate::development::CAPABILITY_VERSION,
+                    development_remote_outlets: with_ios(
+                        available_im_channels(&state.config_snapshot()),
+                        ios_can_deliver(state, &state.config_snapshot()),
+                    )
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
                     pid: std::process::id(),
                     version: version(),
                     protocol_version: ipc::PROTOCOL_VERSION,
@@ -2002,6 +2011,17 @@ async fn handle_submit_confirm(
     mut w: OwnedWriteHalf,
     state: &Arc<ServerState>,
 ) {
+    if let Err(error) = crate::development::verification::validate_confirm(&mut task) {
+        let _ = ipc::write_msg(&mut w, &ServerMsg::Warn { text: error }).await;
+        let _ = ipc::write_msg(
+            &mut w,
+            &ServerMsg::ConfirmFallback {
+                reason: ConfirmFallbackReason::InvalidRequest,
+            },
+        )
+        .await;
+        return;
+    }
     if crate::development::session::requires_test_profile()
         && !AgentKind::parse(&task.agent_kind).is_some_and(|kind| {
             crate::development::session::native_binding_allowed(kind, &task.agent_session_id)
@@ -2023,13 +2043,15 @@ async fn handle_submit_confirm(
         .await;
         return;
     }
-    let project = crate::project::for_session(
-        Some(&task.agent_kind),
-        Some(&task.agent_session_id),
-        std::path::Path::new(task.caller_cwd.as_deref().unwrap_or(&task.project)),
-    );
-    if !project.is_empty() {
-        task.project = project;
+    if task.development.is_none() {
+        let project = crate::project::for_session(
+            Some(&task.agent_kind),
+            Some(&task.agent_session_id),
+            std::path::Path::new(task.caller_cwd.as_deref().unwrap_or(&task.project)),
+        );
+        if !project.is_empty() {
+            task.project = project;
+        }
     }
 
     if state.draining.load(Ordering::SeqCst) {
@@ -2140,6 +2162,7 @@ async fn handle_submit_confirm(
         }
     }
 
+    let relay_task = task.clone();
     let agent_console_session_id = AgentKind::parse(&task.agent_kind).and_then(|kind| {
         state
             .agents
@@ -2182,15 +2205,29 @@ async fn handle_submit_confirm(
 
     // 缓存快照（密钥已解析）：零钥匙串、零磁盘读，见 `config_snapshot`。
     let config = state.config_snapshot();
-    let popup_enabled = popup_should_dispatch(&config, has_display());
-    let im_candidates = confirm_im_candidates(&entry, state, &config, popup_enabled);
+    let development = entry.development.as_deref();
+    let remote = development.is_some_and(|info| {
+        !info.relay && info.delivery == crate::development::verification::Delivery::Remote
+    });
+    let popup_enabled = development_popup_enabled(&config, development, has_display());
+    let im_candidates = if remote
+        || development
+            .is_some_and(|info| info.delivery == crate::development::verification::Delivery::Local)
+    {
+        vec![]
+    } else {
+        confirm_im_candidates(&entry, state, &config, popup_enabled)
+    };
+    if remote {
+        crate::development::relay::start_confirm(entry.clone(), relay_task);
+    }
     if popup_enabled {
         entry.start_delivery("popup");
     }
     for channel in &im_candidates {
         entry.start_delivery(*channel);
     }
-    if !popup_enabled && im_candidates.is_empty() {
+    if !remote && !popup_enabled && im_candidates.is_empty() {
         entry
             .coordinator
             .fallback(ConfirmFallbackReason::NoAvailableChannel);
@@ -2244,7 +2281,8 @@ async fn handle_submit_confirm(
             .await;
         }
     }
-    if config.channels.auto_activation {
+    if config.channels.auto_activation && !entry.development.as_ref().is_some_and(|info| info.relay)
+    {
         if let Some(winner) = entry.coordinator.winner_channel_id() {
             set_active_channel(state, &winner).await;
         }
@@ -2447,19 +2485,11 @@ async fn handle_submit(
 
     // 按接收请求时的 Daemon 配置快照决定是否投放 Popup。配置禁用或无显示
     // 环境时必须完全跳过 Helper，让 IM 成为唯一作答渠道。
-    let development = entry.request().message.development.as_ref();
-    let popup_enabled = match development {
-        Some(info)
-            if info.relay
-                || info.delivery == crate::development::verification::Delivery::Remote =>
-        {
-            false
-        }
-        Some(info) if info.delivery == crate::development::verification::Delivery::Local => {
-            has_display()
-        }
-        _ => popup_should_dispatch(&state.config_snapshot(), has_display()),
-    };
+    let popup_enabled = development_popup_enabled(
+        &state.config_snapshot(),
+        entry.request().message.development.as_deref(),
+        has_display(),
+    );
     // 方案3（spec §6.1）：尽早 spawn GUI Helper（独立短命进程，带一次性 token），让其 WebView
     // 初始化与下面的「入站监听 + IM 建连」并行——token 在 `registry.create()` 即登记，helper 可
     // 立即连上，不存在「helper 先连、entry 未注册」竞态。冷启动下这把 IM 建连（数百 ms）整段移出
@@ -2685,7 +2715,14 @@ async fn finish_request_bookkeeping(
 ) {
     // 「在哪个渠道作答就用哪个」：把活跃槽更新为本次作答渠道（弹窗作答 → "popup"，即不再发 IM）。
     // 若由此从某 IM 切走，旧 IM 在 set_active_channel 内收反激活提示。仅自动激活开时生效。
-    if auto {
+    if auto
+        && !entry
+            .request()
+            .message
+            .development
+            .as_ref()
+            .is_some_and(|info| info.relay)
+    {
         if let Some(winner) = entry.coordinator.winner_channel_id() {
             set_active_channel(state, &winner).await;
         }
@@ -3509,6 +3546,23 @@ async fn agent_kind_for_im(
     }
 }
 
+fn development_popup_enabled(
+    config: &AppConfig,
+    info: Option<&crate::development::verification::VerificationInfo>,
+    display: bool,
+) -> bool {
+    use crate::development::verification::Delivery;
+    match info {
+        Some(info)
+            if info.relay || matches!(info.delivery, Delivery::Remote | Delivery::Channels) =>
+        {
+            false
+        }
+        Some(info) if info.delivery == Delivery::Local => display,
+        _ => popup_should_dispatch(config, display),
+    }
+}
+
 /// 是否启用了任一 IM 渠道（仅看非密钥的 `enabled` 标志）。用于方案4 在读钥匙串前的廉价门控：
 /// 可安全用 `load_without_secrets()` 的结果判定（`enabled` 不是密钥）。
 fn any_im_enabled(config: &AppConfig) -> bool {
@@ -3642,7 +3696,12 @@ async fn attach_im_channels(
     let available = available_im_channels(&config);
     let candidates = with_ios(
         select_im_delivery_candidates(
-            config.channels.auto_activation,
+            config.channels.auto_activation
+                && !request
+                    .message
+                    .development
+                    .as_ref()
+                    .is_some_and(|info| info.relay),
             &available,
             active.as_deref(),
             &watching,
@@ -3823,7 +3882,8 @@ fn confirm_im_candidates(
     let available = available_im_channels(config);
     with_ios(
         select_im_delivery_candidates(
-            config.channels.auto_activation,
+            config.channels.auto_activation
+                && !entry.development.as_ref().is_some_and(|info| info.relay),
             &available,
             active.as_deref(),
             &watching,
@@ -3905,11 +3965,15 @@ async fn attach_confirm_im_channels(
             },
             "ios" => match ios_gateway(state) {
                 Some(gateway) => {
-                    let session = ios_session_ref(
-                        state,
-                        AgentKind::parse(&entry.agent_kind),
-                        Some(&entry.agent_session_id),
-                    );
+                    let session = if entry.development.as_ref().is_some_and(|info| info.relay) {
+                        None
+                    } else {
+                        ios_session_ref(
+                            state,
+                            AgentKind::parse(&entry.agent_kind),
+                            Some(&entry.agent_session_id),
+                        )
+                    };
                     crate::channels::confirm::start_ios(entry.clone(), gateway, session)
                 }
                 None => {
@@ -4429,7 +4493,7 @@ fn cleanup_temp_dirs() {
 
 /// config.json 变更（已去抖）：重载配置 → 失效凭据改动/被禁用渠道的缓存 Router → 通知活动 GUI。
 async fn on_config_changed(state: &Arc<ServerState>) {
-    let new = AppConfig::load();
+    let new = crate::development::channel_safety::runtime_config(AppConfig::load());
     let old = { state.config.lock().unwrap().clone() };
     invalidate_changed_routers(state, &old, &new).await;
     *state.config.lock().unwrap() = new.clone();
@@ -4703,14 +4767,47 @@ fn print_status(info: &StatusInfo) {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_kind_for_im, pending_launch_matches, popup_prewarm_requested, popup_should_dispatch,
-        select_im_delivery_candidates, task_workspace_options, with_ios, InboundRegistry,
-        PendingLaunchWatch,
+        agent_kind_for_im, development_popup_enabled, pending_launch_matches,
+        popup_prewarm_requested, popup_should_dispatch, select_im_delivery_candidates,
+        task_workspace_options, with_ios, InboundRegistry, PendingLaunchWatch,
     };
     use crate::agents::AgentKind;
     use crate::config::AppConfig;
     use crate::i18n::Lang;
     use std::sync::Arc;
+
+    #[test]
+    fn explicit_channel_testing_never_succeeds_through_a_local_popup() {
+        use crate::development::{
+            build::BuildInfo,
+            verification::{Delivery, VerificationInfo},
+        };
+        let root = std::path::PathBuf::from("/fixture");
+        let mut info = VerificationInfo {
+            id: "fixture".into(),
+            worktree: root.clone(),
+            delivery: Delivery::Channels,
+            relay: false,
+            test_profile: None,
+            diagnostics: None,
+            build: BuildInfo {
+                version: 1,
+                worktree: root.clone(),
+                binary: root.join("AskHuman"),
+                source_fingerprint: "s".into(),
+                binary_fingerprint: "b".into(),
+                git_commit: None,
+                created_at_ms: 0,
+            },
+        };
+        let config = AppConfig::default();
+        assert!(development_popup_enabled(&config, None, true));
+        assert!(!development_popup_enabled(&config, Some(&info), true));
+        info.delivery = Delivery::Local;
+        assert!(development_popup_enabled(&config, Some(&info), true));
+        info.delivery = Delivery::Remote;
+        assert!(!development_popup_enabled(&config, Some(&info), true));
+    }
 
     #[test]
     fn popup_delivery_requires_channel_and_display() {

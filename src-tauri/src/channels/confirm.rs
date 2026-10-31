@@ -725,6 +725,12 @@ struct IosConfirmSink {
 }
 
 impl crate::ios::gateway::requests::ConfirmSink for IosConfirmSink {
+    fn immediate_notification(&self) -> bool {
+        self.entry
+            .development
+            .as_ref()
+            .is_some_and(|info| info.relay)
+    }
     fn decide(&self, wire_index: usize, comment: Option<String>) -> Result<bool, String> {
         self.entry
             .coordinator

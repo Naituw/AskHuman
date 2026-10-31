@@ -322,7 +322,19 @@ impl Coordinator {
             return false;
         }
         let request = { self.inner.lock().unwrap().request.clone() };
-        crate::todos::apply_todo_deliveries(&request, &mut result, &self.project);
+        if request
+            .message
+            .development
+            .as_ref()
+            .is_some_and(|info| info.relay)
+        {
+            for answer in &mut result.answers {
+                answer.todo_ids.clear();
+                answer.todo_selections.clear();
+            }
+        } else {
+            crate::todos::apply_todo_deliveries(&request, &mut result, &self.project);
+        }
         let (exiter, pending_count, dequeue_ids) = {
             let inner = self.inner.lock().unwrap();
             // 进入收尾：此后 GUI 拦下关窗退出，独占由协调器主动 `app.exit`。

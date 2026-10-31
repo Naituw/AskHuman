@@ -1948,6 +1948,12 @@ where
         Some(tab) => format!("index.html?view=settings&tab={}", urlencode(tab)),
         None => "index.html?view=settings".to_string(),
     };
+    #[cfg(feature = "development-ui")]
+    if std::env::var(crate::development::workbench::WINDOW_ENV)
+        .is_ok_and(|kind| kind == "workbench")
+    {
+        url = "index.html?view=development".into();
+    }
     let window_effect = config.general.window_effect;
     let effective_window_effect = effective_window_effect(window_effect);
     append_window_effect_query(&mut url, effective_window_effect);
