@@ -37,6 +37,9 @@ struct AgentRow: View {
                         .lineLimit(2)
                 }
                 FlowLayout(spacing: 6, lineSpacing: 4) {
+                    if let title = item.resultTitle, !item.isWorking, item.view.state != "waiting" {
+                        Chip(text: title, tint: item.resultColor)
+                    }
                     Chip(text: item.stateTitle, tint: item.stateColor)
                     if item.view.state == "working" {
                         if let tool = item.view.currentTool, !tool.isEmpty {
@@ -51,6 +54,9 @@ struct AgentRow: View {
                         Chip(text: "\(item.view.pendingInterject) queued", systemImage: "paperplane", tint: .blue)
                     }
                 }
+                if item.needsAttention, let reason = item.resultReason {
+                    Text(verbatim: reason).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                }
             }
         }
         .padding(.vertical, 4)
@@ -61,5 +67,40 @@ struct AgentRow: View {
         var parts = [item.view.project.name.isEmpty ? item.view.kindLabel : item.view.project.name]
         if showMac { parts.append(item.macName) }
         return parts.joined(separator: " · ")
+    }
+}
+
+
+/// Both entry points share an operation identity and keep the free-form draft untouched.
+struct AgentContinueButton: View {
+    let item: AgentItem
+    @Environment(AppStore.self) private var store
+    @State private var problem: String?
+    @State private var notice: String?
+    var body: some View {
+        let action = store.continuation(for: item)
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                Task {
+                    do {
+                        let outcome = try await store.continueAgent(item)
+                        if outcome.notificationRegistered == false { notice = String(localized: "Message sent. The notification limit has been reached.") }
+                    } catch { problem = error.userMessage }
+                }
+            } label: {
+                HStack {
+                    if action.isSending { ProgressView() }
+                    Text(action.isSending ? "Waiting for the Agent to start…" : "Request continuation")
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(action.isSending || action.submittedResultId == item.view.lastTurnResult?.id || !store.isOnline(macId: item.macId) || !item.view.canInterject.ok)
+            .accessibilityIdentifier("agent-continue-\(item.agentKey)")
+            if let notice { Text(notice).font(.footnote).foregroundStyle(.secondary) }
+        }
+        .alert("Could not send", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+            if store.needsAgentDeliveryReview(item) { Button("I checked the original chat") { store.confirmAgentDeliveryReviewed(item) } }
+            Button("OK", role: .cancel) {}
+        } message: { Text(problem ?? "") }
     }
 }

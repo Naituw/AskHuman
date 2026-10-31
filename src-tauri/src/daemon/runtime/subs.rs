@@ -351,7 +351,7 @@ pub(super) async fn handle_interject_hold(
                 .unwrap_or_default();
             let delivered = ipc::write_msg(
                 &mut w,
-                &ServerMsg::InterjectDecision { action, text, attachments },
+                &ServerMsg::InterjectDecision { control: None, action, text, attachments },
             )
             .await
             .is_ok();

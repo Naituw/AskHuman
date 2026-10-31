@@ -99,6 +99,7 @@ pub trait Host: Send + Sync + 'static {
         _agent_key: &str,
         _text: &str,
         _files: Vec<StagedFile>,
+        _expected_result_id: Option<String>,
     ) -> InterjectResult {
         InterjectResult::rejected("unsupported")
     }
@@ -1165,6 +1166,10 @@ impl Actor {
             return;
         }
         let now = self.now();
+        if let Some(phone) = self.store.state.phone_mut(phone_id) {
+            phone.lifecycle_results = hello.lifecycle_results;
+            self.store.save_state();
+        }
         if let Some(rt) = self.rt.get_mut(phone_id) {
             rt.hello_at = Some(now);
             rt.device_name = sanitize_name(&hello.device_name);

@@ -92,7 +92,22 @@ impl LifecyclePreferences {
 /// 某家族要注册的事件：(配置文件里的事件键, 归一化 lifecycle 事件)。
 /// Codex 额外需要 snake_case 标签用于信任键/身份（见 `codex_label`）。
 fn events(kind: AgentKind) -> &'static [(&'static str, &'static str)] {
-    match kind {
+    #[cfg(test)]
+    let version = Some((u64::MAX, 0, 0));
+    #[cfg(not(test))]
+    let version = match kind {
+        AgentKind::Codex => super::agent_launch::codex_version(),
+        AgentKind::Grok => super::agent_launch::grok_version(),
+        _ => None,
+    };
+    events_for_version(kind, version)
+}
+
+fn events_for_version(
+    kind: AgentKind,
+    version: Option<(u64, u64, u64)>,
+) -> &'static [(&'static str, &'static str)] {
+    let all: &'static [(&'static str, &'static str)] = match kind {
         // Claude：SessionStart/UserPromptSubmit/Stop/SessionEnd。
         // 另加 StopFailure（API 错误结束回合时代替 Stop，官方文档明确 Stop 此时不触发）→ turn-end；
         // Pre/PostToolUse → activity（回合内工具调用心跳，喂「工作中兜底超时」，避免长回合误判空闲）。
@@ -105,13 +120,15 @@ fn events(kind: AgentKind) -> &'static [(&'static str, &'static str)] {
             ("StopFailure", "turn-end"),
             ("SessionEnd", "session-end"),
         ],
-        // Codex：无 SessionEnd / 无 StopFailure / 无 Notification（FINDINGS §6）。Pre/PostToolUse → activity。
+        // New lifecycle events are enabled only at the verified version baseline.
         AgentKind::Codex => &[
             ("SessionStart", "session-start"),
             ("UserPromptSubmit", "turn-start"),
             ("PreToolUse", "activity"),
             ("PostToolUse", "activity"),
             ("Stop", "turn-end"),
+            ("Interrupt", "turn-end"),
+            ("SessionEnd", "session-end"),
         ],
         // Cursor：原生 camelCase 事件。preToolUse/postToolUse → activity。
         AgentKind::Cursor => &[
@@ -132,9 +149,16 @@ fn events(kind: AgentKind) -> &'static [(&'static str, &'static str)] {
             ("Stop", "turn-end"),
             ("StopFailure", "turn-end"),
             ("SessionEnd", "session-end"),
+            ("StopCancelled", "turn-end"),
+            ("Notification", "turn-end"),
         ],
         // Pi emits lifecycle events from the managed TypeScript extension, not JSON hooks.
         AgentKind::Pi | AgentKind::Antigravity => &[],
+    };
+    match kind {
+        AgentKind::Codex if version.is_none_or(|v| v < (0, 163, 0)) => &all[..5],
+        AgentKind::Grok if version.is_none_or(|v| v < (1, 0, 70)) => &all[..7],
+        _ => all,
     }
 }
 
@@ -142,8 +166,18 @@ fn events(kind: AgentKind) -> &'static [(&'static str, &'static str)] {
 pub const PRE_TOOL_USE_TIMEOUT_SECS: u64 = 86400;
 
 /// Return the explicit lifecycle timeout for an event. Shared Stop handlers are handled separately.
+fn newer_events(kind: AgentKind) -> &'static [&'static str] {
+    match kind {
+        AgentKind::Codex => &["Interrupt", "SessionEnd"],
+        AgentKind::Grok => &["StopCancelled", "Notification"],
+        _ => &[],
+    }
+}
+
 fn event_timeout(kind: AgentKind, event_key: &str) -> Option<u64> {
     match (kind, event_key) {
+        (AgentKind::Codex, "Interrupt" | "SessionEnd") => Some(3),
+        (AgentKind::Grok, "StopCancelled" | "Notification") => Some(2),
         (AgentKind::Claude, "PreToolUse")
         | (AgentKind::Codex, "PreToolUse")
         | (AgentKind::Cursor, "preToolUse") => Some(PRE_TOOL_USE_TIMEOUT_SECS),
@@ -159,6 +193,8 @@ fn codex_label(event_key: &str) -> Option<&'static str> {
         "PreToolUse" => Some("pre_tool_use"),
         "PostToolUse" => Some("post_tool_use"),
         "Stop" => Some("stop"),
+        "Interrupt" => Some("interrupt"),
+        "SessionEnd" => Some("session_end"),
         _ => None,
     }
 }
@@ -627,14 +663,17 @@ fn json_presence_with_stop(
         let has_exact = arr
             .map(|a| {
                 a.iter().any(|e| {
-                    elem_matches(
-                        e,
-                        shape,
-                        &want,
-                        want_windows.as_deref(),
-                        want_timeout,
-                        want_unlimited_loop,
-                    )
+                    (kind != AgentKind::Grok
+                        || *event_key != "Notification"
+                        || e.get("matcher").and_then(Value::as_str) == Some("idle_prompt"))
+                        && elem_matches(
+                            e,
+                            shape,
+                            &want,
+                            want_windows.as_deref(),
+                            want_timeout,
+                            want_unlimited_loop,
+                        )
                 })
             })
             .unwrap_or(false);
@@ -642,6 +681,16 @@ fn json_presence_with_stop(
             any = true;
         }
         if !has_exact {
+            complete = false;
+        }
+    }
+    for key in newer_events(kind) {
+        if !events(kind).iter().any(|(event, _)| event == key)
+            && root["hooks"][key]
+                .as_array()
+                .is_some_and(|arr| arr.iter().any(|entry| elem_tracks_lifecycle(entry, shape)))
+        {
+            any = true;
             complete = false;
         }
     }
@@ -716,6 +765,17 @@ fn apply_json_install_with_stop(
     shape: Shape,
     stop_confirm: bool,
 ) -> Result<String> {
+    apply_json_install_for_events(kind, exe, text, shape, stop_confirm, events(kind))
+}
+
+fn apply_json_install_for_events(
+    kind: AgentKind,
+    exe: &str,
+    text: &str,
+    shape: Shape,
+    stop_confirm: bool,
+    enabled_events: &[(&str, &str)],
+) -> Result<String> {
     let source = if text.trim().is_empty() { "{}" } else { text };
     let root = CstRootNode::parse(source, &ParseOptions::default())
         .map_err(|e| anyhow!("解析配置失败，已中止（不覆盖原文件）：{e}"))?;
@@ -732,7 +792,25 @@ fn apply_json_install_with_stop(
         .object_value_or_create("hooks")
         .ok_or_else(|| anyhow!("配置的 'hooks' 不是对象，已中止"))?;
 
-    for (event_key, lc) in events(kind) {
+    // Downgrades remove our unsupported keys while preserving foreign handlers.
+    for key in newer_events(kind) {
+        if enabled_events.iter().any(|(event, _)| event == key) {
+            continue;
+        }
+        if let Some(arr) = hooks.array_value(key) {
+            for entry in arr.elements() {
+                if elem_node_has_marker(&entry, shape, false) {
+                    entry.remove();
+                }
+            }
+            if arr.elements().is_empty() {
+                if let Some(property) = hooks.get(key) {
+                    property.remove();
+                }
+            }
+        }
+    }
+    for (event_key, lc) in enabled_events {
         let command = hook_command(exe, kind, event_key, lc, stop_confirm);
         let cmd = command.as_str();
         let command_windows = (kind == AgentKind::Codex)
@@ -744,33 +822,37 @@ fn apply_json_install_with_stop(
         } else {
             event_timeout(kind, event_key)
         };
-        let entry = match (shape, timeout) {
-            (Shape::Nested, Some(t)) if kind == AgentKind::Codex => json!({
-                "hooks": [ {
-                    "type": "command",
-                    "command": cmd,
-                    "commandWindows": cmd_windows,
-                    "timeout": t
-                } ]
-            }),
-            (Shape::Nested, None) if kind == AgentKind::Codex => json!({
-                "hooks": [ {
-                    "type": "command",
-                    "command": cmd,
-                    "commandWindows": cmd_windows
-                } ]
-            }),
-            (Shape::Nested, Some(t)) => {
-                json!({ "hooks": [ { "type": "command", "command": cmd, "timeout": t } ] })
+        let entry = if kind == AgentKind::Grok && *event_key == "Notification" {
+            json!({ "matcher": "idle_prompt", "hooks": [{ "type": "command", "command": cmd, "timeout": 2 }] })
+        } else {
+            match (shape, timeout) {
+                (Shape::Nested, Some(t)) if kind == AgentKind::Codex => json!({
+                    "hooks": [ {
+                        "type": "command",
+                        "command": cmd,
+                        "commandWindows": cmd_windows,
+                        "timeout": t
+                    } ]
+                }),
+                (Shape::Nested, None) if kind == AgentKind::Codex => json!({
+                    "hooks": [ {
+                        "type": "command",
+                        "command": cmd,
+                        "commandWindows": cmd_windows
+                    } ]
+                }),
+                (Shape::Nested, Some(t)) => {
+                    json!({ "hooks": [ { "type": "command", "command": cmd, "timeout": t } ] })
+                }
+                (Shape::Nested, None) => {
+                    json!({ "hooks": [ { "type": "command", "command": cmd } ] })
+                }
+                (Shape::Flat, Some(t)) if kind == AgentKind::Cursor && *event_key == "stop" => {
+                    json!({ "command": cmd, "timeout": t, "loop_limit": null })
+                }
+                (Shape::Flat, Some(t)) => json!({ "command": cmd, "timeout": t }),
+                (Shape::Flat, None) => json!({ "command": cmd }),
             }
-            (Shape::Nested, None) => {
-                json!({ "hooks": [ { "type": "command", "command": cmd } ] })
-            }
-            (Shape::Flat, Some(t)) if kind == AgentKind::Cursor && *event_key == "stop" => {
-                json!({ "command": cmd, "timeout": t, "loop_limit": null })
-            }
-            (Shape::Flat, Some(t)) => json!({ "command": cmd, "timeout": t }),
-            (Shape::Flat, None) => json!({ "command": cmd }),
         };
         let arr = hooks
             .array_value_or_create(event_key)
@@ -942,11 +1024,10 @@ fn codex_trust_entries(hooks_json: &std::path::Path) -> Result<Vec<(String, Stri
                 let key = format!("{abs_str}:{label}:{gi}:{hi}");
                 // 按条目实际 timeout 计算（缺省 600、下限 1——复刻 codex discovery
                 // `timeout_sec.unwrap_or(600).max(1)` 的归一化）；PreToolUse 写入 86400。
-                let timeout = handler
-                    .get("timeout")
-                    .and_then(|t| t.as_u64())
-                    .unwrap_or(600)
-                    .max(1);
+                let timeout = handler.get("timeout").and_then(|t| t.as_u64()).map_or_else(
+                    || super::agent_permission::normalized_codex_timeout(event_key, None),
+                    |t| super::agent_permission::normalized_codex_timeout(event_key, Some(t)),
+                );
                 let hash = codex_trusted_hash(label, cmd, timeout);
                 out.push((key, hash));
             }
@@ -958,8 +1039,7 @@ fn codex_trust_entries(hooks_json: &std::path::Path) -> Result<Vec<(String, Stri
 /// 复刻 codex `version_for_toml(NormalizedHookIdentity)`：
 /// `"sha256:" + hex(sha256(canonical_compact_json(identity)))`。
 /// identity = { event_name, hooks:[{type:"command", command, timeout, async:false}] }
-/// （我们的事件 matcher 恒 None → 省略；timeout 按条目实际值——codex 归一化为
-/// `unwrap_or(600).max(1)`，PreToolUse 写 86400、其余默认 600；async 默认 false）。
+/// Match native timeout normalization, including the 1–3 second Interrupt/SessionEnd limit.
 fn codex_trusted_hash(label: &str, command: &str, timeout_sec: u64) -> String {
     let identity = serde_json::json!({
         "event_name": label,
@@ -1145,6 +1225,66 @@ mod tests {
 
     fn to_value(text: &str) -> Value {
         jsonc_parser::parse_to_serde_value(text, &ParseOptions::default()).unwrap()
+    }
+
+    #[test]
+    fn downgrade_removes_only_our_unsupported_event_entries() {
+        let current =
+            apply_json_install(AgentKind::Codex, "/bin/AskHuman", "{}", Shape::Nested).unwrap();
+        let mut value: Value = serde_json::from_str(&current).unwrap();
+        value["hooks"]["Interrupt"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"hooks":[{"type":"command","command":"foreign-interrupt"}]}));
+        let downgraded = apply_json_install_for_events(
+            AgentKind::Codex,
+            "/bin/AskHuman",
+            &value.to_string(),
+            Shape::Nested,
+            false,
+            events_for_version(AgentKind::Codex, Some((0, 162, 0))),
+        )
+        .unwrap();
+        let value: Value = serde_json::from_str(&downgraded).unwrap();
+        assert!(value["hooks"].get("SessionEnd").is_none());
+        assert_eq!(value["hooks"]["Interrupt"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            value["hooks"]["Interrupt"][0]["hooks"][0]["command"],
+            "foreign-interrupt"
+        );
+        assert!(value["hooks"]["Stop"].is_array());
+    }
+
+    #[test]
+    fn newly_verified_events_are_version_gated_and_short_hooks_have_native_trust_limits() {
+        assert_eq!(events_for_version(AgentKind::Codex, None).len(), 5);
+        assert_eq!(
+            events_for_version(AgentKind::Codex, Some((0, 162, 0))).len(),
+            5
+        );
+        assert_eq!(
+            events_for_version(AgentKind::Codex, Some((0, 163, 0))).len(),
+            7
+        );
+        assert_eq!(events_for_version(AgentKind::Grok, None).len(), 7);
+        assert_eq!(
+            events_for_version(AgentKind::Grok, Some((1, 0, 70))).len(),
+            9
+        );
+        for event in ["Interrupt", "SessionEnd"] {
+            assert_eq!(
+                super::super::agent_permission::normalized_codex_timeout(event, None),
+                1
+            );
+            assert_eq!(
+                super::super::agent_permission::normalized_codex_timeout(event, Some(999)),
+                3
+            );
+            assert_eq!(
+                super::super::agent_permission::normalized_codex_timeout(event, Some(0)),
+                1
+            );
+        }
     }
 
     #[test]

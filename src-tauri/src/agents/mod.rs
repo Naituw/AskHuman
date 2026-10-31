@@ -11,6 +11,7 @@
 
 pub mod activity;
 pub mod context_recovery;
+pub mod control;
 pub mod cursor_vscdb;
 pub mod delegated;
 pub mod detect;
@@ -18,6 +19,7 @@ pub mod interject;
 pub mod model_catalog;
 pub mod registry;
 pub mod report;
+pub mod result;
 pub mod session_info;
 pub mod session_paths;
 pub mod stop;

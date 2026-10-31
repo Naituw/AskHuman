@@ -254,6 +254,16 @@
         }
       }
     },
+    "A message is waiting for the Agent to start." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已有消息正在等待 Agent 开始。"
+          }
+        }
+      }
+    },
     "A new task I write" : {
       "localizations" : {
         "zh-Hans" : {
@@ -904,6 +914,16 @@
         }
       }
     },
+    "Completed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已完成"
+          }
+        }
+      }
+    },
     "Compressing video…" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1394,6 +1414,16 @@
         }
       }
     },
+    "Failed: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "出错了：%@"
+          }
+        }
+      }
+    },
     "Filter" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1420,6 +1450,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已完成"
+          }
+        }
+      }
+    },
+    "Finished: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已完成：%@"
           }
         }
       }
@@ -1470,6 +1510,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "接收通知"
+          }
+        }
+      }
+    },
+    "Handled elsewhere" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在其他端处理"
           }
         }
       }
@@ -1550,6 +1600,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "收件箱"
+          }
+        }
+      }
+    },
+    "Incomplete" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务未完成"
+          }
+        }
+      }
+    },
+    "Interrupted" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已中断"
           }
         }
       }
@@ -1670,6 +1740,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "最近在线"
+          }
+        }
+      }
+    },
+    "Last turn failed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上轮出错"
           }
         }
       }
@@ -1824,6 +1904,16 @@
         }
       }
     },
+    "Message sent. The notification limit has been reached." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "消息已发送，结果通知已达关注上限。"
+          }
+        }
+      }
+    },
     "Message to the Agent" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1890,6 +1980,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "需要更新"
+          }
+        }
+      }
+    },
+    "Needs attention" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要处理"
+          }
+        }
+      }
+    },
+    "Needs your confirmation" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要你确认"
+          }
+        }
+      }
+    },
+    "Needs your confirmation: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要你确认：%@"
           }
         }
       }
@@ -2502,6 +2622,23 @@
         }
       }
     },
+    "PUSH_FOLLOW_INCOMPLETE" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An Agent task is incomplete"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 任务未完成"
+          }
+        }
+      }
+    },
     "PUSH_FOLLOW_WAITING" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2896,6 +3033,16 @@
         }
       }
     },
+    "Request continuation" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要求继续"
+          }
+        }
+      }
+    },
     "Request unavailable" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2942,6 +3089,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "恢复"
+          }
+        }
+      }
+    },
+    "Result unknown" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "结果未知"
           }
         }
       }
@@ -3112,6 +3269,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已发送 · 还剩 %lld 条"
+          }
+        }
+      }
+    },
+    "Session ended" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会话已结束"
           }
         }
       }
@@ -3376,6 +3543,26 @@
         }
       }
     },
+    "Task incomplete" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务未完成"
+          }
+        }
+      }
+    },
+    "Task incomplete: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务未完成：%@"
+          }
+        }
+      }
+    },
     "That TODO is gone from the Mac." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3496,6 +3683,16 @@
         }
       }
     },
+    "The Agent ended this turn with an error." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 因错误结束了本轮运行。"
+          }
+        }
+      }
+    },
     "The Agent has not reported in" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3556,6 +3753,16 @@
         }
       }
     },
+    "The Agent reached its run limit." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 已达到本轮运行上限。"
+          }
+        }
+      }
+    },
     "The Agent read your message." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3602,6 +3809,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Agent 会在你 Mac 上的新终端窗口里启动。"
+          }
+        }
+      }
+    },
+    "The Agent stopped because it was not making progress." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 因无法继续推进而停止。"
           }
         }
       }
@@ -3876,6 +4093,16 @@
         }
       }
     },
+    "The original Agent is unavailable or does not support this action." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原 Agent 不可用，或尚不支持此操作。"
+          }
+        }
+      }
+    },
     "The pairing code has expired. Create a new one on the Mac." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3896,6 +4123,16 @@
         }
       }
     },
+    "The permission request was declined or cancelled." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "权限请求已被拒绝或取消。"
+          }
+        }
+      }
+    },
     "The permission setting on the Mac changed. Open the form again." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3912,6 +4149,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mac 恢复连接后，如果它还在等你，请求会显示在这里。"
+          }
+        }
+      }
+    },
+    "The session has changed. Refresh its state before continuing." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会话状态已变化，请刷新后再继续。"
           }
         }
       }
@@ -4224,6 +4471,16 @@
         }
       }
     },
+    "This session cannot receive messages while idle. Continue it in the original Agent." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此会话空闲时无法接收消息，请在原 Agent 中继续。"
+          }
+        }
+      }
+    },
     "This session has ended." : {
       "localizations" : {
         "zh-Hans" : {
@@ -4444,6 +4701,16 @@
         }
       }
     },
+    "Waiting for the Agent to start…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在等待 Agent 开始…"
+          }
+        }
+      }
+    },
     "Waiting for the first sync" : {
       "localizations" : {
         "zh-Hans" : {
@@ -4490,6 +4757,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "等你在 Mac 上点“允许”"
+          }
+        }
+      }
+    },
+    "Waiting for you: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在等你：%@"
           }
         }
       }
@@ -4630,6 +4907,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这个 Agent 完成或出错时，等你的 Mac 空闲一段时间后，你会收到通知。"
+          }
+        }
+      }
+    },
+    "You stopped this turn." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你已中断本轮运行。"
           }
         }
       }

@@ -38,6 +38,18 @@ private struct AgentDetailContent: View {
                     Notice(symbol: "tray", text: "The Mac no longer lists this session.", tint: .gray)
                 }
                 AgentHeader(item: item, model: watch?.frame?.model, reasoning: watch?.frame?.reasoning)
+                if let title = item.resultTitle, !item.isWorking, item.view.state != "waiting" {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(title).font(.headline).foregroundStyle(item.resultColor).accessibilityIdentifier("agent-last-result")
+                        if let reason = item.resultReason { Text(verbatim: reason).font(.subheadline) }
+                        if item.needsAttention, !gone, item.view.lastTurnResult?.id != nil { AgentContinueButton(item: item) }
+                        if let at = item.view.lastTurnResult?.at, at > 0 {
+                            Text(Date(timeIntervalSince1970: Double(at) / 1000), style: .relative).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding().background(.background, in: RoundedRectangle(cornerRadius: 14))
+                }
                 if item.view.state == "waiting", let requestId = item.view.waitingRequestId {
                     WaitingCard(item: item) { store.open(macId: item.macId, requestId: requestId) }
                 }
@@ -79,9 +91,9 @@ private struct AgentDetailContent: View {
             show(String(localized: "The Agent read your message."))
         }
         .alert("Could not send", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
-            if store.interjectComposer(for: item).needsDeliveryReview {
+            if store.needsAgentDeliveryReview(item) {
                 Button("I checked the original chat") {
-                    store.interjectComposer(for: item).confirmDeliveryReviewed()
+                    store.confirmAgentDeliveryReviewed(item)
                 }
             }
             Button("OK", role: .cancel) {}
@@ -96,7 +108,7 @@ private struct AgentDetailContent: View {
         if live, item.view.canInterject.ok {
             InterjectBar(item: item, composer: store.interjectComposer(for: item)) { outcome in
                 sentTick += 1
-                show(outcome.status == "delivered" ? String(localized: "Message sent.") : String(localized: "Queued. The Agent reads it at its next step."))
+                show(outcome.notificationRegistered == false ? String(localized: "Message sent. The notification limit has been reached.") : outcome.status == "delivered" ? String(localized: "Message sent.") : String(localized: "Queued. The Agent reads it at its next step."))
             } onProblem: { message in
                 problem = message
             }

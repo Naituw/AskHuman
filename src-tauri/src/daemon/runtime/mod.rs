@@ -35,6 +35,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::BufReader;
 use transport::{OwnedReadHalf, OwnedWriteHalf, Stream};
 
+mod agent_control;
 mod detect;
 mod fork;
 mod inbound;
@@ -229,6 +230,7 @@ struct ServerState {
     update: Mutex<UpdateSnapshot>,
     /// Agent lifecycle registry (lifecycle tracking spec D3).
     agents: Arc<AgentRegistry>,
+    agent_controls: crate::agents::control::ControlStore,
     /// Agent 插话队列（spec agent-interject）：内存常驻，变更时落盘 `interject.json`。
     interject: crate::agents::interject::InterjectStore,
     /// Short-lived Grok MCP session-binding candidates and process/instance partitions.
@@ -930,6 +932,7 @@ async fn serve(_lock: LockGuard) -> i32 {
         config: Mutex::new(AppConfig::load()),
         update: Mutex::new(init_update_snapshot()),
         agents: Arc::new(AgentRegistry::load()),
+        agent_controls: crate::agents::control::ControlStore::load(),
         interject: crate::agents::interject::InterjectStore::load(),
         grok_bindings: crate::context_binding::GrokBindingRegistry::default(),
         agent_subs: Mutex::new(Vec::new()),
@@ -988,15 +991,8 @@ async fn serve(_lock: LockGuard) -> i32 {
                 bridge.refresh(config.codex_desktop).await;
                 let sessions = bridge.sessions.lock().unwrap().clone();
                 for (id, session) in &sessions {
-                    if let Some(meta) = &session.meta {
-                        if session.connected {
-                            state.agents.update_desktop(
-                                id,
-                                &meta.title,
-                                &meta.cwd,
-                                session.active(),
-                            );
-                        }
+                    if session.meta.is_some() && session.connected {
+                        agent_control::observe_desktop(&state, id, session);
                     }
                 }
                 requests.tick(&bridge, &state.registry.in_flight_agent_requests());
@@ -1365,6 +1361,7 @@ enum Control {
         session_id: String,
         rx: tokio::sync::oneshot::Receiver<crate::agents::interject::WaitOutcome>,
     },
+    PassiveClosed,
     Closed,
 }
 
@@ -1374,7 +1371,9 @@ async fn handle_conn(stream: Stream, state: Arc<ServerState>) {
     let mut reader = BufReader::new(r);
     let mut w = w;
 
-    match control_loop(&mut reader, &mut w, &state).await {
+    let control = control_loop(&mut reader, &mut w, &state).await;
+    let passive = matches!(control, Control::PassiveClosed);
+    match control {
         Control::Submit(task) => handle_submit(*task, reader, w, &state).await,
         Control::SubmitConfirm(task) => handle_submit_confirm(*task, reader, w, &state).await,
         Control::Gui(token) => handle_gui(token, reader, w, &state).await,
@@ -1388,11 +1387,13 @@ async fn handle_conn(stream: Stream, state: Arc<ServerState>) {
         Control::InterjectHold { session_id, rx } => {
             handle_interject_hold(reader, w, &state, session_id, rx).await
         }
-        Control::Closed => {}
+        Control::Closed | Control::PassiveClosed => {}
     }
 
-    if let Ok(mut t) = state.last_active.lock() {
-        *t = Instant::now();
+    if !passive {
+        if let Ok(mut t) = state.last_active.lock() {
+            *t = Instant::now();
+        }
     }
     state.active.fetch_sub(1, Ordering::SeqCst);
 }
@@ -1424,6 +1425,7 @@ async fn control_loop(
                 // 已在排空：一律回 Draining（客户端等下线后用新二进制拉起重试）。
                 if state.draining.load(Ordering::SeqCst) {
                     let ack = HelloAck {
+                        agent_lifecycle_version: 1,
                         protocol_version: ipc::PROTOCOL_VERSION,
                         daemon_version: version(),
                         status: HelloStatus::Draining,
@@ -1486,6 +1488,7 @@ async fn control_loop(
                 let draining = stale && auto_restart && state.registry.active_count() > 0;
                 let restarting = stale && auto_restart && !draining;
                 let ack = HelloAck {
+                    agent_lifecycle_version: 1,
                     protocol_version: ipc::PROTOCOL_VERSION,
                     daemon_version: version(),
                     status: if draining {
@@ -1608,7 +1611,31 @@ async fn control_loop(
                 tool,
                 interject_poll,
                 failed,
+                observation,
             } => {
+                if let Some(signal) = observation
+                    .as_ref()
+                    .and_then(|observation| observation.control.as_deref())
+                {
+                    let allowed = agent == "pi"
+                        && hint_pid == Some(signal.pid)
+                        && !crate::dev_instance::is_dev_instance_context();
+                    let control = allowed
+                        .then(|| state.agent_controls.poll(&session_id, signal).ok())
+                        .flatten()
+                        .unwrap_or_default();
+                    let _ = ipc::write_msg(
+                        w,
+                        &ServerMsg::InterjectDecision {
+                            action: crate::ipc::InterjectAction::None,
+                            text: String::new(),
+                            attachments: vec![],
+                            control: Some(Box::new(control)),
+                        },
+                    )
+                    .await;
+                    return Control::PassiveClosed;
+                }
                 if let (Some(kind), Some(ev)) = (
                     AgentKind::parse(&agent).filter(|kind| *kind != AgentKind::Antigravity),
                     LifecycleEvent::parse(&event),
@@ -1622,6 +1649,7 @@ async fn control_loop(
                                 let _ = ipc::write_msg(
                                     w,
                                     &ServerMsg::InterjectDecision {
+                                        control: None,
                                         action: InterjectAction::None,
                                         text: String::new(),
                                         attachments: Vec::new(),
@@ -1636,6 +1664,7 @@ async fn control_loop(
                                 let delivered = ipc::write_msg(
                                     w,
                                     &ServerMsg::InterjectDecision {
+                                        control: None,
                                         action: InterjectAction::Message,
                                         text: delivery.text.clone(),
                                         attachments: delivery.attachments.clone(),
@@ -1661,6 +1690,7 @@ async fn control_loop(
                                 let _ = ipc::write_msg(
                                     w,
                                     &ServerMsg::InterjectDecision {
+                                        control: None,
                                         action: InterjectAction::Hold,
                                         text: String::new(),
                                         attachments: Vec::new(),
@@ -1678,10 +1708,70 @@ async fn control_loop(
 
                     let event_cwd = cwd.clone();
                     let cwd = crate::agents::session_info::workspace(kind, &session_id).or(cwd);
-                    let mut changed =
-                        state
-                            .agents
-                            .apply_event(kind, ev, &session_id, resolved_pid, cwd, ts);
+                    let observation = observation.or_else(|| {
+                        use crate::agents::result::{Observation, TurnOutcome, TurnResult};
+                        let mut legacy = Observation {
+                            tool_started: matches!(
+                                tool.as_ref().map(|tool| &tool.phase),
+                                Some(crate::ipc::ToolPhase::Pre)
+                            ),
+                            tool_finished: matches!(
+                                tool.as_ref().map(|tool| &tool.phase),
+                                Some(crate::ipc::ToolPhase::Post)
+                            ),
+                            ..Observation::default()
+                        };
+                        if ev == LifecycleEvent::TurnEnd {
+                            legacy.result = Some(TurnResult {
+                                source: Some("legacyHook".into()),
+                                id: String::new(),
+                                outcome: if failed {
+                                    TurnOutcome::Failed
+                                } else {
+                                    TurnOutcome::Unknown
+                                },
+                                turn_id: None,
+                                reason: None,
+                                summary: None,
+                                at: 0,
+                            });
+                        }
+                        Some(Box::new(legacy))
+                    });
+                    let applied = state.agents.apply_observed(
+                        kind,
+                        ev,
+                        &session_id,
+                        resolved_pid,
+                        cwd,
+                        ts,
+                        observation.as_deref(),
+                    );
+                    if !applied.accepted {
+                        if applied.changed {
+                            state.agents.persist();
+                        }
+                        continue;
+                    }
+                    let mut changed = applied.changed;
+                    if ev == LifecycleEvent::TurnStart {
+                        state.agent_controls.cancel_unsubmitted(kind, &session_id);
+                    }
+                    let started_control = (ev == LifecycleEvent::TurnStart)
+                        .then(|| {
+                            observation
+                                .as_ref()
+                                .and_then(|observation| {
+                                    state.agent_controls.started(
+                                        kind,
+                                        &session_id,
+                                        observation.control_operation_id.as_deref(),
+                                        observation.turn_id.as_deref(),
+                                    )
+                                })
+                                .and_then(|operation| operation.started_control())
+                        })
+                        .flatten();
                     if kind == AgentKind::Pi {
                         if let Some(path) = transcript_path.as_deref().and_then(|path| {
                             crate::agents::session_paths::register_pi(
@@ -1737,6 +1827,8 @@ async fn control_loop(
                             agent_key: ios_agents::agent_key(kind, &session_id),
                             event: ios_agents::event_kind(ev),
                             failed,
+                            result: state.agents.last_turn_result(kind, &session_id),
+                            started_control,
                         });
                     }
                     if matches!(ev, LifecycleEvent::TurnStart) {
@@ -1754,6 +1846,7 @@ async fn control_loop(
                     let _ = ipc::write_msg(
                         w,
                         &ServerMsg::InterjectDecision {
+                            control: None,
                             action: crate::ipc::InterjectAction::None,
                             text: String::new(),
                             attachments: Vec::new(),

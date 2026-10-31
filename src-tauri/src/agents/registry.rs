@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::detect::pid_alive;
+use super::result::{Observation, TurnResult};
 use super::title::resolve_list_title;
 use super::{AgentKind, LifecycleEvent};
 use crate::paths;
@@ -104,6 +105,20 @@ pub struct AgentRecord {
     /// uses `active_elapsed_secs` and `active_since` instead.
     #[serde(skip)]
     pub turn_started_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_turn_result: Option<TurnResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_turn_result: Option<TurnResult>,
+    #[serde(default, skip_serializing_if = "VecDeque::is_empty")]
+    pub closed_turn_ids: VecDeque<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AppliedObservation {
+    pub accepted: bool,
+    pub changed: bool,
 }
 
 /// 实时「当前工具」快照：跨进程只存原始工具名 + 已归一化的短对象 + 上报时间（秒）。
@@ -376,11 +391,102 @@ impl AgentRegistry {
         cwd: Option<String>,
         ts: u64,
     ) -> bool {
+        self.apply_observed(kind, event, session_id, pid, cwd, ts, None)
+            .changed
+    }
+
+    /// Classify and reject stale observations under the same lock as the state transition.
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_observed(
+        &self,
+        kind: AgentKind,
+        event: LifecycleEvent,
+        session_id: &str,
+        pid: Option<u32>,
+        cwd: Option<String>,
+        ts: u64,
+        observation: Option<&Observation>,
+    ) -> AppliedObservation {
         if session_id.is_empty() {
-            return false;
+            return AppliedObservation::default();
         }
         let now = if ts == 0 { now_secs() } else { ts };
         let mut inner = self.inner.lock().unwrap();
+
+        if let Some(observation) = observation {
+            if observation.subagent {
+                return AppliedObservation::default();
+            }
+            if let Some(record) = inner
+                .active
+                .iter()
+                .chain(inner.ended.iter())
+                .find(|r| r.kind == kind && r.session_id == session_id)
+            {
+                if observation.turn_id.is_none()
+                    && record.active_turn_id.is_none()
+                    && record.last_turn_result.is_some()
+                {
+                    if event == LifecycleEvent::Activity && observation.tool_finished {
+                        return AppliedObservation::default();
+                    }
+                    if event == LifecycleEvent::TurnEnd
+                        && observation.result.as_ref().is_none_or(|new| {
+                            !new.outcome
+                                .supersedes(record.last_turn_result.as_ref().unwrap().outcome)
+                        })
+                    {
+                        return AppliedObservation::default();
+                    }
+                }
+                if let Some(turn_id) = observation.turn_id.as_deref() {
+                    let closed = record.closed_turn_ids.iter().any(|id| id == turn_id);
+                    if event == LifecycleEvent::TurnEnd
+                        && record.active_turn_id.is_none()
+                        && record
+                            .last_turn_result
+                            .as_ref()
+                            .and_then(|result| result.turn_id.as_deref())
+                            .is_some_and(|last| last != turn_id)
+                    {
+                        // An unstarted terminal cannot displace a known later round, even after
+                        // its old ID has fallen outside the bounded terminal-before-start cache.
+                        return AppliedObservation::default();
+                    }
+
+                    if closed
+                        && matches!(event, LifecycleEvent::TurnStart | LifecycleEvent::Activity)
+                    {
+                        return AppliedObservation::default();
+                    }
+                    if matches!(event, LifecycleEvent::Activity | LifecycleEvent::TurnEnd)
+                        && record
+                            .active_turn_id
+                            .as_deref()
+                            .is_some_and(|id| id != turn_id)
+                    {
+                        return AppliedObservation::default();
+                    }
+                    if event == LifecycleEvent::TurnStart
+                        && record.active_turn_id.as_deref() == Some(turn_id)
+                    {
+                        return AppliedObservation::default();
+                    }
+                    if event == LifecycleEvent::TurnEnd
+                        && closed
+                        && record.last_turn_result.as_ref().is_some_and(|old| {
+                            old.turn_id.as_deref() != Some(turn_id)
+                                || observation
+                                    .result
+                                    .as_ref()
+                                    .is_some_and(|new| !new.outcome.supersedes(old.outcome))
+                        })
+                    {
+                        return AppliedObservation::default();
+                    }
+                }
+            }
+        }
 
         // 轮换（spec D7）：同一 pid 上若已有「另一个 session」活动 → 旧的判结束。
         let mut changed = false;
@@ -455,6 +561,10 @@ impl AgentRegistry {
                         current_tool: None,
                         turn_steps: 0,
                         turn_started_at: None,
+                        active_turn_id: None,
+                        last_turn_result: None,
+                        pending_turn_result: None,
+                        closed_turn_ids: VecDeque::new(),
                     });
                 }
                 (inner.active.len() - 1, true)
@@ -466,6 +576,83 @@ impl AgentRegistry {
         // false**，避免长回合里每次工具调用都落盘/广播（last_activity 仍已在内存刷新，喂兜底超时；
         // 相对时间由前端 ticker + 15s 轮询广播兜底）。
         let prev = inner.active[idx].state;
+        if let Some(observation) = observation {
+            let record = &mut inner.active[idx];
+            if event == LifecycleEvent::Activity && observation.tool_started {
+                changed |= record.pending_turn_result.take().is_some();
+            }
+            if event == LifecycleEvent::TurnEnd && observation.provisional {
+                if record.pending_turn_result != observation.result {
+                    record.pending_turn_result = observation.result.clone();
+                    changed = true;
+                }
+                return AppliedObservation {
+                    accepted: false,
+                    changed,
+                };
+            }
+            if event == LifecycleEvent::TurnStart {
+                changed |= record.last_turn_result.take().is_some()
+                    | record.pending_turn_result.take().is_some();
+                record.active_turn_id = Some(
+                    observation
+                        .turn_id
+                        .clone()
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                );
+            } else if event == LifecycleEvent::Activity && record.active_turn_id.is_none() {
+                record.active_turn_id = observation.turn_id.clone().or_else(|| {
+                    (observation.tool_started && record.last_turn_result.is_none())
+                        .then(|| uuid::Uuid::new_v4().to_string())
+                });
+                if record.active_turn_id.is_some() {
+                    changed |= record.last_turn_result.take().is_some();
+                }
+            } else if event == LifecycleEvent::TurnEnd {
+                let mut result = observation.result.clone();
+                if result
+                    .as_ref()
+                    .is_some_and(|result| result.reason.as_deref() == Some("idle_observed"))
+                {
+                    result = record.pending_turn_result.take().or_else(|| {
+                        record
+                            .last_turn_result
+                            .is_none()
+                            .then(|| observation.result.clone())
+                            .flatten()
+                    });
+                } else {
+                    record.pending_turn_result = None;
+                }
+                if let Some(mut result) = result {
+                    result.id = uuid::Uuid::new_v4().to_string();
+                    result.at = now.saturating_mul(1000);
+                    if result.turn_id.is_none() {
+                        result.turn_id = observation
+                            .turn_id
+                            .clone()
+                            .or_else(|| record.active_turn_id.clone())
+                            .or_else(|| {
+                                record
+                                    .last_turn_result
+                                    .as_ref()
+                                    .and_then(|previous| previous.turn_id.clone())
+                            });
+                    }
+                    if let Some(id) = result.turn_id.as_ref() {
+                        if !record.closed_turn_ids.contains(id) {
+                            record.closed_turn_ids.push_back(id.clone());
+                        }
+                        while record.closed_turn_ids.len() > 16 {
+                            record.closed_turn_ids.pop_front();
+                        }
+                    }
+                    changed |= record.last_turn_result.as_ref() != Some(&result);
+                    record.last_turn_result = Some(result);
+                }
+                record.active_turn_id = None;
+            }
+        }
         match event {
             LifecycleEvent::SessionStart => { /* 已确保登记，保持 Idle */ }
             LifecycleEvent::TurnStart => {
@@ -495,6 +682,20 @@ impl AgentRegistry {
             }
             LifecycleEvent::SessionEnd => {
                 let mut r = inner.active.remove(idx);
+                r.pending_turn_result = None;
+                if let Some(turn_id) = r.active_turn_id.take() {
+                    if r.last_turn_result.is_none() {
+                        r.last_turn_result = Some(TurnResult {
+                            source: None,
+                            id: uuid::Uuid::new_v4().to_string(),
+                            outcome: super::result::TurnOutcome::Unknown,
+                            turn_id: Some(turn_id),
+                            reason: Some("session_closed".into()),
+                            summary: None,
+                            at: now.saturating_mul(1000),
+                        });
+                    }
+                }
                 stop_active(&mut r, now);
                 r.state = AgentState::Ended;
                 r.ended_at = Some(now);
@@ -505,10 +706,24 @@ impl AgentRegistry {
                 changed = true;
             }
         }
-        changed
+        AppliedObservation {
+            accepted: true,
+            changed,
+        }
     }
 
     /// ask 调用顺带刷新活动 + 重置 TTL（spec D21）：仅刷新已存在的同家族 session，不新建。
+    pub fn last_turn_result(&self, kind: AgentKind, session_id: &str) -> Option<TurnResult> {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .active
+            .iter()
+            .chain(inner.ended.iter())
+            .find(|r| r.kind == kind && r.session_id == session_id)
+            .and_then(|r| r.last_turn_result.clone())
+    }
+
+    /// Refresh activity without creating a new tracked session.
     pub fn touch_activity(&self, kind: AgentKind, session_id: &str, pid: Option<u32>) -> bool {
         if session_id.is_empty() {
             return false;
@@ -660,6 +875,10 @@ impl AgentRegistry {
                 current_tool: None,
                 turn_steps: 0,
                 turn_started_at: None,
+                active_turn_id: None,
+                last_turn_result: None,
+                pending_turn_result: None,
+                closed_turn_ids: VecDeque::new(),
             });
             true
         }
@@ -1109,6 +1328,10 @@ impl AgentRegistry {
                 0,
             );
         }
+        self.annotate_desktop(id, title, cwd);
+    }
+
+    pub fn annotate_desktop(&self, id: &str, title: &str, cwd: &str) {
         if let Some(r) = self
             .inner
             .lock()
@@ -1118,6 +1341,7 @@ impl AgentRegistry {
             .find(|r| r.session_id == id)
         {
             r.title = Some(title.into());
+            r.cwd = Some(cwd.into());
             r.terminal = Some("codex-app".into());
         }
     }
@@ -1246,6 +1470,296 @@ mod tests {
 
     fn reg() -> AgentRegistry {
         AgentRegistry::new()
+    }
+
+    fn observed(turn: &str, outcome: Option<super::super::result::TurnOutcome>) -> Observation {
+        Observation {
+            turn_id: Some(turn.into()),
+            result: outcome.map(|outcome| TurnResult {
+                source: None,
+                id: String::new(),
+                outcome,
+                turn_id: Some(turn.into()),
+                reason: None,
+                summary: None,
+                at: 0,
+            }),
+            ..Observation::default()
+        }
+    }
+
+    #[test]
+    fn late_end_cannot_stop_a_new_turn_or_replace_its_result() {
+        use super::super::result::TurnOutcome;
+        let r = reg();
+        for (id, at) in [("first", 100), ("second", 200)] {
+            r.apply_observed(
+                AgentKind::Grok,
+                LifecycleEvent::TurnStart,
+                "s",
+                None,
+                None,
+                at,
+                Some(&observed(id, None)),
+            );
+        }
+        let late = r.apply_observed(
+            AgentKind::Grok,
+            LifecycleEvent::TurnEnd,
+            "s",
+            None,
+            None,
+            210,
+            Some(&observed("first", Some(TurnOutcome::Interrupted))),
+        );
+        assert!(!late.accepted);
+        assert_eq!(r.working_count(), 1);
+        assert!(r.last_turn_result(AgentKind::Grok, "s").is_none());
+    }
+
+    #[test]
+    fn a_failed_idle_turn_survives_session_end_and_serialization() {
+        use super::super::result::TurnOutcome;
+        let r = reg();
+        let result = observed("t", Some(TurnOutcome::Failed));
+        r.apply_observed(
+            AgentKind::Cursor,
+            LifecycleEvent::TurnEnd,
+            "s",
+            None,
+            None,
+            120,
+            Some(&result),
+        );
+        assert_eq!(r.idle_count(), 1);
+        r.apply_event(
+            AgentKind::Cursor,
+            LifecycleEvent::SessionEnd,
+            "s",
+            None,
+            None,
+            125,
+        );
+        let inner = r.inner.lock().unwrap();
+        let saved = serde_json::to_vec(&inner.ended[0]).unwrap();
+        let restored: AgentRecord = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(restored.state, AgentState::Ended);
+        assert_eq!(
+            restored.last_turn_result.unwrap().outcome,
+            TurnOutcome::Failed
+        );
+    }
+
+    #[test]
+    fn terminal_before_start_and_duplicate_terminal_do_not_revive_a_turn() {
+        use super::super::result::TurnOutcome;
+        let r = reg();
+        let result = observed("t", Some(TurnOutcome::Interrupted));
+        assert!(
+            r.apply_observed(
+                AgentKind::Codex,
+                LifecycleEvent::TurnEnd,
+                "s",
+                None,
+                None,
+                100,
+                Some(&result)
+            )
+            .accepted
+        );
+        assert!(
+            !r.apply_observed(
+                AgentKind::Codex,
+                LifecycleEvent::TurnStart,
+                "s",
+                None,
+                None,
+                101,
+                Some(&observed("t", None))
+            )
+            .accepted
+        );
+        assert!(
+            !r.apply_observed(
+                AgentKind::Codex,
+                LifecycleEvent::TurnEnd,
+                "s",
+                None,
+                None,
+                102,
+                Some(&result)
+            )
+            .accepted
+        );
+        assert_eq!(r.idle_count(), 1);
+        assert!(
+            r.apply_observed(
+                AgentKind::Codex,
+                LifecycleEvent::TurnStart,
+                "s",
+                None,
+                None,
+                103,
+                Some(&observed("next", None))
+            )
+            .accepted
+        );
+        assert!(r.last_turn_result(AgentKind::Codex, "s").is_none());
+    }
+
+    #[test]
+    fn a_stop_candidate_does_not_finish_until_the_idle_backstop_confirms_it() {
+        use super::super::result::TurnOutcome;
+        let r = reg();
+        r.apply_observed(
+            AgentKind::Grok,
+            LifecycleEvent::TurnStart,
+            "s",
+            None,
+            None,
+            100,
+            Some(&observed("t", None)),
+        );
+        let mut candidate = observed("t", Some(TurnOutcome::Completed));
+        candidate.provisional = true;
+        assert!(
+            !r.apply_observed(
+                AgentKind::Grok,
+                LifecycleEvent::TurnEnd,
+                "s",
+                None,
+                None,
+                101,
+                Some(&candidate)
+            )
+            .accepted
+        );
+        assert_eq!(r.working_count(), 1);
+        assert!(r.last_turn_result(AgentKind::Grok, "s").is_none());
+        let input = serde_json::json!({"hook_event_name":"Notification"});
+        let idle = super::super::result::observation(
+            AgentKind::Grok,
+            LifecycleEvent::TurnEnd,
+            Some(&input),
+        );
+        assert!(
+            r.apply_observed(
+                AgentKind::Grok,
+                LifecycleEvent::TurnEnd,
+                "s",
+                None,
+                None,
+                160,
+                Some(&idle)
+            )
+            .accepted
+        );
+        assert_eq!(
+            r.last_turn_result(AgentKind::Grok, "s").unwrap().outcome,
+            TurnOutcome::Completed
+        );
+        assert_eq!(r.idle_count(), 1);
+    }
+
+    #[test]
+    fn a_blocked_stop_candidate_is_invalidated_by_new_tool_work() {
+        use super::super::result::TurnOutcome;
+        let r = reg();
+        r.apply_observed(
+            AgentKind::Grok,
+            LifecycleEvent::TurnStart,
+            "s",
+            None,
+            None,
+            100,
+            Some(&observed("t", None)),
+        );
+        let mut candidate = observed("t", Some(TurnOutcome::Completed));
+        candidate.provisional = true;
+        r.apply_observed(
+            AgentKind::Grok,
+            LifecycleEvent::TurnEnd,
+            "s",
+            None,
+            None,
+            101,
+            Some(&candidate),
+        );
+        let mut work = observed("t", None);
+        work.tool_started = true;
+        r.apply_observed(
+            AgentKind::Grok,
+            LifecycleEvent::Activity,
+            "s",
+            None,
+            None,
+            102,
+            Some(&work),
+        );
+        let idle = super::super::result::observation(
+            AgentKind::Grok,
+            LifecycleEvent::TurnEnd,
+            Some(&serde_json::json!({"hook_event_name":"Notification"})),
+        );
+        r.apply_observed(
+            AgentKind::Grok,
+            LifecycleEvent::TurnEnd,
+            "s",
+            None,
+            None,
+            160,
+            Some(&idle),
+        );
+        assert_eq!(
+            r.last_turn_result(AgentKind::Grok, "s").unwrap().outcome,
+            TurnOutcome::Unknown
+        );
+    }
+
+    #[test]
+    fn a_very_old_terminal_cannot_replace_the_latest_idle_result() {
+        use super::super::result::TurnOutcome;
+        let r = reg();
+        for index in 0..20 {
+            let id = format!("turn-{index}");
+            r.apply_observed(
+                AgentKind::Grok,
+                LifecycleEvent::TurnStart,
+                "s",
+                None,
+                None,
+                100 + index * 2,
+                Some(&observed(&id, None)),
+            );
+            r.apply_observed(
+                AgentKind::Grok,
+                LifecycleEvent::TurnEnd,
+                "s",
+                None,
+                None,
+                101 + index * 2,
+                Some(&observed(&id, Some(TurnOutcome::Completed))),
+            );
+        }
+        assert!(
+            !r.apply_observed(
+                AgentKind::Grok,
+                LifecycleEvent::TurnEnd,
+                "s",
+                None,
+                None,
+                200,
+                Some(&observed("turn-0", Some(TurnOutcome::Interrupted)))
+            )
+            .accepted
+        );
+        assert_eq!(
+            r.last_turn_result(AgentKind::Grok, "s")
+                .unwrap()
+                .turn_id
+                .as_deref(),
+            Some("turn-19")
+        );
     }
 
     #[test]
@@ -1783,6 +2297,10 @@ mod tests {
             current_tool: None,
             turn_steps: 0,
             turn_started_at: None,
+            active_turn_id: None,
+            last_turn_result: None,
+            pending_turn_result: None,
+            closed_turn_ids: VecDeque::new(),
         };
         let mut active = vec![AgentRecord {
             state: AgentState::Working,

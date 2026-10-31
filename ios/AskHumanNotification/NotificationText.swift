@@ -38,6 +38,14 @@ enum NotificationText {
             return text.isEmpty ? String(localized: "Waiting for you") : String(localized: "Waiting for you: \(text)")
         case .followFailed:
             return text.isEmpty ? String(localized: "Failed") : String(localized: "Failed: \(text)")
+        case .followIncomplete:
+            let reason: String
+            switch text {
+            case "max_turns": reason = String(localized: "The Agent reached its run limit.")
+            case "no_progress": reason = String(localized: "The Agent stopped because it was not making progress.")
+            default: reason = text
+            }
+            return reason.isEmpty ? String(localized: "Task incomplete") : String(localized: "Task incomplete: \(reason)")
         case .resolved:
             return resolution(text)
         }

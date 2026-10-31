@@ -23,6 +23,10 @@ use serde::{Deserialize, Serialize};
 /// 以及 +1 时要同步更新的文档。
 pub const PROTOCOL_VERSION: u32 = 4;
 
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
 fn default_true() -> bool {
     true
 }
@@ -62,6 +66,8 @@ pub struct HelloAck {
     pub protocol_version: u32,
     pub daemon_version: String,
     pub status: HelloStatus,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub agent_lifecycle_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -629,6 +635,8 @@ pub enum ClientMsg {
         /// old hook never sets it and an old daemon ignores it, so it needs no protocol bump.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         failed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<Box<crate::agents::result::Observation>>,
     },
     /// Register one long-lived AskHuman MCP server process for Grok's best-effort session binding.
     McpInstanceRegister {
@@ -920,6 +928,8 @@ pub enum ServerMsg {
         text: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<FileAttachment>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        control: Option<Box<crate::agents::control::ControlReply>>,
     },
     /// Unique Grok side-channel claim. None means unavailable or ambiguous.
     GrokBindingClaim {
@@ -1416,6 +1426,7 @@ mod tests {
             tool: None,
             interject_poll: false,
             failed: false,
+            observation: None,
         })
         .unwrap();
         assert!(!out.contains("interject_poll"));
@@ -1435,6 +1446,7 @@ mod tests {
             tool: None,
             interject_poll: true,
             failed: false,
+            observation: None,
         })
         .unwrap();
         assert!(out.contains(r#""interject_poll":true"#));
@@ -1468,6 +1480,7 @@ mod tests {
             tool: None,
             interject_poll: false,
             failed: true,
+            observation: None,
         })
         .unwrap();
         assert!(out.contains(r#""failed":true"#));
@@ -1477,6 +1490,7 @@ mod tests {
     #[test]
     fn interject_decision_roundtrip() {
         let json = serde_json::to_string(&ServerMsg::InterjectDecision {
+            control: None,
             action: InterjectAction::Hold,
             text: String::new(),
             attachments: Vec::new(),

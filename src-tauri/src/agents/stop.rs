@@ -61,7 +61,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
                 LifecycleEvent::TurnEnd,
                 session_id,
                 cwd,
-                turn_failed(kind, &input),
+                &input,
             );
         }
         return None;
@@ -74,7 +74,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
                 LifecycleEvent::TurnEnd,
                 session_id,
                 cwd,
-                false,
+                &input,
             );
         }
         return None;
@@ -103,7 +103,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
                 LifecycleEvent::TurnEnd,
                 session_id,
                 cwd,
-                false,
+                &input,
             );
         }
         return None;
@@ -117,7 +117,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
                 LifecycleEvent::TurnEnd,
                 session_id,
                 cwd,
-                false,
+                &input,
             );
         }
         return None;
@@ -170,7 +170,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
                     LifecycleEvent::TurnEnd,
                     session_id,
                     cwd,
-                    false,
+                    &input,
                 );
             }
             None

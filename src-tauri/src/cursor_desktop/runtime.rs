@@ -40,6 +40,100 @@ pub(super) fn adapter_revision() -> String {
         .clone()
 }
 
+fn message_revision() -> String {
+    let mut hash = Sha256::new();
+    hash.update(BRIDGE);
+    hash.update(include_str!("message_renderer.js"));
+    hash.update(include_str!("message_dispatch.js"));
+    format!("{:x}", hash.finalize())[..16].into()
+}
+
+// Keep the existing completion adapter byte-for-byte unchanged. Message attachment happens only
+// on an explicit send and uses independent renderer state, revision, token, socket, and manifest.
+fn message_bridge() -> String {
+    BRIDGE
+        .replace(
+            "__ASKHUMAN_CURSOR_BRIDGE_",
+            "__ASKHUMAN_CURSOR_MESSAGE_BRIDGE_",
+        )
+        .replace(
+            "__ASKHUMAN_CURSOR_BACKGROUND_V1__",
+            "__ASKHUMAN_CURSOR_MESSAGES_V1__",
+        )
+        .replace(
+            "Buffer.byteLength(buffer) > 4096",
+            "Buffer.byteLength(buffer) > 262144",
+        )
+        .replace(
+            "else if (request.op === \"restore\")",
+            &format!(
+                "{}\n          else if (request.op === \"restore\")",
+                include_str!("message_dispatch.js")
+            ),
+        )
+}
+
+pub(super) async fn send_message(session_id: &str, id: &str, text: &str) -> super::MessageResult {
+    let setup = async {
+        let processes = discover().await?;
+        if processes.len() != 1 {
+            bail!("A single original Cursor process is required");
+        }
+        let process = processes.into_iter().next().unwrap();
+        prepare_dirs()?;
+        let path = manifests_dir().join(format!("messages-{}.json", process.pid));
+        let saved = std::fs::symlink_metadata(&path)
+            .ok()
+            .filter(|meta| {
+                meta.is_file() && meta.len() <= 8192 && meta.uid() == unsafe { libc::geteuid() }
+            })
+            .and_then(|_| std::fs::read(&path).ok())
+            .and_then(|bytes| serde_json::from_slice::<Manifest>(&bytes).ok())
+            .filter(|manifest| {
+                manifest.messages_only && manifest.process == process && manifest.owner == owner()
+            });
+        let manifest = saved.unwrap_or_else(|| {
+            let mut manifest = new_manifest(process);
+            manifest.messages_only = true;
+            manifest.socket = socket_dir().join(format!("m{}.sock", manifest.process.pid));
+            manifest
+        });
+        let ready = bridge_request(&manifest, "status")
+            .await
+            .is_ok_and(|status| {
+                status["enabled"] == true && status["adapterRevision"] == message_revision()
+            });
+        if !ready {
+            bootstrap(&manifest).await?;
+            write_private(&path, &manifest)?;
+        }
+        Ok::<_, anyhow::Error>(manifest)
+    }
+    .await;
+    let Ok(manifest) = setup else {
+        return super::MessageResult::Rejected("nativeUnavailable".into());
+    };
+    match bridge_message(
+        &manifest,
+        json!({"op":"message", "operation":{"sessionId":session_id,"id":id,"text":text}}),
+    )
+    .await
+    {
+        Ok(result) if result["status"] == "started" => result["turnId"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(|id| super::MessageResult::Started(id.into()))
+            .unwrap_or(super::MessageResult::Unknown),
+        Ok(result) if result["status"] == "rejected" => super::MessageResult::Rejected(
+            result["reason"]
+                .as_str()
+                .unwrap_or("nativeUnavailable")
+                .into(),
+        ),
+        _ => super::MessageResult::Unknown,
+    }
+}
+
 fn scan_inspector_fuse(mut reader: impl Read) -> Result<bool> {
     const SENTINEL: &[u8] = b"dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX";
     let mut found = false;
@@ -121,6 +215,8 @@ struct Manifest {
     socket: PathBuf,
     token: String,
     owner: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    messages_only: bool,
 }
 
 #[derive(Default)]
@@ -286,8 +382,17 @@ async fn inspect_process(process: &Process) -> Result<PathBuf> {
 }
 
 async fn bridge_request(manifest: &Manifest, op: &str) -> Result<Value> {
+    bridge_message(manifest, json!({"op": op})).await
+}
+
+async fn bridge_message(manifest: &Manifest, mut request: Value) -> Result<Value> {
     if manifest.owner != owner()
-        || manifest.socket != socket_dir().join(format!("p{}.sock", manifest.process.pid))
+        || manifest.socket
+            != socket_dir().join(format!(
+                "{}{}.sock",
+                if manifest.messages_only { "m" } else { "p" },
+                manifest.process.pid
+            ))
         || manifest.token.len() != 64
     {
         bail!("Cursor bridge manifest identity is invalid");
@@ -302,7 +407,8 @@ async fn bridge_request(manifest: &Manifest, op: &str) -> Result<Value> {
     }
     timeout(Duration::from_secs(8), async {
         let mut socket = UnixStream::connect(&manifest.socket).await?;
-        let mut request = serde_json::to_vec(&json!({"token": manifest.token, "op": op}))?;
+        request["token"] = json!(manifest.token);
+        let mut request = serde_json::to_vec(&request)?;
         request.push(b'\n');
         socket.write_all(&request).await?;
         let mut reader = BufReader::new(socket);
@@ -325,19 +431,30 @@ async fn bridge_request(manifest: &Manifest, op: &str) -> Result<Value> {
 }
 
 fn bootstrap_source(manifest: &Manifest, package: &Path, close_inspector: bool) -> String {
+    let revision = if manifest.messages_only {
+        message_revision()
+    } else {
+        adapter_revision()
+    };
     let config = json!({
         "socket": manifest.socket, "owner": manifest.owner,
         "token": manifest.token, "appPackage": package,
-        "revision": adapter_revision(),
+        "revision": revision,
     });
-    let renderer = RENDERER
-        .replacen("__ASKHUMAN_PREFLIGHT__", PREFLIGHT, 1)
-        .replace("__ASKHUMAN_OWNER__", &json!(manifest.owner).to_string())
-        .replace(
-            "__ASKHUMAN_REVISION__",
-            &json!(adapter_revision()).to_string(),
-        );
-    let bridge = BRIDGE
+    let renderer = if manifest.messages_only {
+        include_str!("message_renderer.js")
+    } else {
+        RENDERER
+    }
+    .replacen("__ASKHUMAN_PREFLIGHT__", PREFLIGHT, 1)
+    .replace("__ASKHUMAN_OWNER__", &json!(manifest.owner).to_string())
+    .replace("__ASKHUMAN_REVISION__", &json!(revision).to_string());
+    let bridge_template = if manifest.messages_only {
+        message_bridge()
+    } else {
+        BRIDGE.into()
+    };
+    let bridge = bridge_template
         .replacen("__ASKHUMAN_RENDERER__", &json!(renderer).to_string(), 1)
         .replacen("__ASKHUMAN_CONFIG__", &config.to_string(), 1);
     format!(
@@ -530,24 +647,31 @@ async fn close_owned_inspector(pid: u32) -> Result<()> {
 }
 
 fn load_manifests() -> HashMap<u32, Manifest> {
+    load_manifests_for(false)
+}
+
+fn load_manifests_for(messages_only: bool) -> HashMap<u32, Manifest> {
     std::fs::read_dir(manifests_dir())
         .into_iter()
         .flatten()
         .flatten()
         .filter_map(|entry| {
             let path = entry.path();
-            let file_pid = path
-                .file_name()?
-                .to_str()?
-                .strip_suffix(".json")?
-                .parse::<u32>()
-                .ok()?;
+            let stem = path.file_name()?.to_str()?.strip_suffix(".json")?;
+            let stem = if messages_only {
+                stem.strip_prefix("messages-")?
+            } else {
+                stem
+            };
+            let file_pid = stem.parse::<u32>().ok()?;
             let meta = std::fs::symlink_metadata(&path).ok()?;
             if !meta.is_file() || meta.len() > 8192 || meta.uid() != unsafe { libc::geteuid() } {
                 return None;
             }
             let manifest: Manifest = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
-            (manifest.owner == owner() && manifest.process.pid == file_pid)
+            (manifest.owner == owner()
+                && manifest.process.pid == file_pid
+                && manifest.messages_only == messages_only)
                 .then_some((manifest.process.pid, manifest))
         })
         .collect()
@@ -567,15 +691,45 @@ fn new_manifest(process: Process) -> Manifest {
             uuid::Uuid::new_v4().simple()
         ),
         owner: owner(),
+        messages_only: false,
     }
 }
 
 fn remove_manifest(manifest: &Manifest, remove_socket: bool) {
-    let _ = std::fs::remove_file(manifest_path(manifest.process.pid));
+    let path = if manifest.messages_only {
+        manifests_dir().join(format!("messages-{}.json", manifest.process.pid))
+    } else {
+        manifest_path(manifest.process.pid)
+    };
+    let _ = std::fs::remove_file(path);
     if remove_socket
-        && manifest.socket == socket_dir().join(format!("p{}.sock", manifest.process.pid))
+        && manifest.socket
+            == socket_dir().join(format!(
+                "{}{}.sock",
+                if manifest.messages_only { "m" } else { "p" },
+                manifest.process.pid
+            ))
     {
         let _ = std::fs::remove_file(&manifest.socket);
+    }
+}
+
+pub(super) fn has_message_bridges() -> bool {
+    !load_manifests_for(true).is_empty()
+}
+
+async fn restore_disabled_messages() {
+    if super::messages_enabled() {
+        return;
+    }
+    for manifest in load_manifests_for(true).values() {
+        let restored = bridge_request(manifest, "restore")
+            .await
+            .is_ok_and(|result| result["restored"] == true);
+        let dead = unsafe { libc::kill(manifest.process.pid as i32, 0) } != 0;
+        if restored || !manifest.socket.exists() || dead {
+            remove_manifest(manifest, dead);
+        }
     }
 }
 
@@ -584,6 +738,7 @@ pub(super) async fn run() {
     let mut retries = HashMap::<u32, Retry>::new();
     let mut last_error = None;
     loop {
+        restore_disabled_messages().await;
         let config = crate::config::AppConfig::load_without_secrets();
         let enabled = super::active(&config.cursor_desktop);
         let mut status = Status {
@@ -751,6 +906,17 @@ async fn reconcile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn message_bootstrap_has_independent_identity_and_never_changes_the_completion_revision() {
+        let bridge = message_bridge();
+        assert_eq!(bridge.matches("request.op === \"message\"").count(), 1);
+        assert_eq!(bridge.matches("request.op === \"restore\"").count(), 1);
+        assert!(!bridge.contains("__ASKHUMAN_CURSOR_BACKGROUND_V1__"));
+        assert!(bridge.contains("__ASKHUMAN_CURSOR_MESSAGES_V1__"));
+        assert!(!BRIDGE.contains("request.op === \"message\""));
+        assert_ne!(adapter_revision(), message_revision());
+    }
 
     #[test]
     fn signaling_requires_a_known_enabled_inspector_fuse() {

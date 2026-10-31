@@ -125,12 +125,14 @@ public struct Hello: WireMessage {
     public var proto: Int
     public var appVer: String
     public var deviceName: String
+    @OmitFalse public var lifecycleResults: Bool
 
-    public init(nonce: String, proto: Int = Wire.proto, appVer: String, deviceName: String) {
+    public init(nonce: String, proto: Int = Wire.proto, appVer: String, deviceName: String, lifecycleResults: Bool = false) {
         self.nonce = nonce
         self.proto = proto
         self.appVer = appVer
         self.deviceName = deviceName
+        self.lifecycleResults = lifecycleResults
     }
 }
 
@@ -579,6 +581,26 @@ public struct CanInterject: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+public struct AgentTurnResult: Codable, Equatable, Hashable, Sendable {
+    public var id: String?
+    public var source: String?
+    public var outcome: String
+    public var turnId: String?
+    public var reason: String?
+    public var summary: String?
+    public var at: UInt64
+
+    public init(outcome: String, turnId: String? = nil, reason: String? = nil, summary: String? = nil, at: UInt64 = 0, id: String? = nil, source: String? = nil) {
+        self.id = id
+        self.source = source
+        self.outcome = outcome
+        self.turnId = turnId
+        self.reason = reason
+        self.summary = summary
+        self.at = at
+    }
+}
+
 public struct AgentView: Codable, Equatable, Hashable, Sendable, Identifiable {
     /// `{kind}:{sessionId}`.
     public var key: String
@@ -599,6 +621,7 @@ public struct AgentView: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var waitingPreview: String?
     @OmitZero public var pendingInterject: UInt64
     @OmitFalse public var lastTurnFailed: Bool
+    public var lastTurnResult: AgentTurnResult?
     public var canInterject: CanInterject
     public var followed: Bool
 
@@ -608,7 +631,7 @@ public struct AgentView: Codable, Equatable, Hashable, Sendable, Identifiable {
         key: String, kind: String, kindLabel: String, sessionId: String, title: String, project: ProjectRef, state: String,
         startedAt: Int64, lastActivityAt: Int64, activeElapsedSecs: UInt64 = 0, turnSteps: UInt64 = 0, currentTool: String? = nil,
         waitingRequestId: String? = nil, waitingPreview: String? = nil, pendingInterject: UInt64 = 0, lastTurnFailed: Bool = false,
-        canInterject: CanInterject = CanInterject(ok: false), followed: Bool = false
+        lastTurnResult: AgentTurnResult? = nil, canInterject: CanInterject = CanInterject(ok: false), followed: Bool = false
     ) {
         self.key = key
         self.kind = kind
@@ -626,6 +649,7 @@ public struct AgentView: Codable, Equatable, Hashable, Sendable, Identifiable {
         self.waitingPreview = waitingPreview
         self.pendingInterject = pendingInterject
         self.lastTurnFailed = lastTurnFailed
+        self.lastTurnResult = lastTurnResult
         self.canInterject = canInterject
         self.followed = followed
     }
@@ -718,12 +742,14 @@ public struct InterjectSend: WireMessage {
     public var agentKey: String
     public var text: String
     @DefaultEmpty public var files: [String]
+    public var expectedResultId: String?
 
-    public init(clientMsgId: String, agentKey: String, text: String, files: [String] = []) {
+    public init(clientMsgId: String, agentKey: String, text: String, files: [String] = [], expectedResultId: String? = nil) {
         self.clientMsgId = clientMsgId
         self.agentKey = agentKey
         self.text = text
         self.files = files
+        self.expectedResultId = expectedResultId
     }
 }
 
@@ -735,6 +761,7 @@ public struct InterjectAck: WireMessage {
     public var status: String
     public var reason: String?
     public var pending: UInt64
+    public var notificationRegistered: Bool?
 }
 
 public struct InterjectClear: WireMessage {

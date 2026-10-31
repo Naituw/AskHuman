@@ -9,6 +9,8 @@ public actor MockBackend: RemoteBackend {
     public enum Scenario: String, Sendable, CaseIterable {
         /// Two paired Macs, a mixed inbox and some history.
         case demo
+        /// Durable failed, incomplete, and interrupted results with native idle control.
+        case agentResults
         /// First launch: nothing paired.
         case empty
         /// Paired Macs that are not reachable.
@@ -135,7 +137,7 @@ public actor MockBackend: RemoteBackend {
         let date = now()
         var initial: EngineState
         switch scenario {
-        case .demo, .quota, .single, .longs, .markdown, .strict, .tall, .gallery, .outdated, .bothSync:
+        case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .tall, .gallery, .outdated, .bothSync:
             let inbox: [InboxItem]
             switch scenario {
             case .single: inbox = MockData.inbox(now: date).filter { $0.requestId == "req-select" }
@@ -174,6 +176,22 @@ public actor MockBackend: RemoteBackend {
                 push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1, brokerHost: "broker.example.com"
             )
             entries = MockData.history(now: date)
+        }
+        if scenario == .agentResults {
+            for index in initial.agents.indices {
+                let key = initial.agents[index].agentKey
+                if key == MockData.endedAgentKey || key == MockData.idleAgentKey || key == MockData.unsupportedAgentKey {
+                    initial.agents[index].view.state = "idle"
+                    initial.agents[index].view.lastTurnFailed = key == MockData.endedAgentKey
+                    initial.agents[index].view.lastTurnResult = AgentTurnResult(outcome: key == MockData.endedAgentKey ? "failed" : "incomplete", turnId: "previous",
+                        reason: key == MockData.endedAgentKey ? "runtime_error" : "max_turns", at: UInt64(MockData.ms(date)), id: "result-" + key)
+                    initial.agents[index].view.canInterject = CanInterject(ok: key != MockData.unsupportedAgentKey, reason: key == MockData.unsupportedAgentKey ? "idleUnsupported" : nil)
+                }
+                if key == MockData.officeAgentKey {
+                    initial.agents[index].view.state = "idle"
+                    initial.agents[index].view.lastTurnResult = AgentTurnResult(outcome: "interrupted", reason: "user_interrupt", at: UInt64(MockData.ms(date)), id: "interrupted")
+                }
+            }
         }
         for index in initial.macs.indices {
             initial.macs[index].pendingCount = initial.inbox.filter { $0.macId == initial.macs[index].id }.count

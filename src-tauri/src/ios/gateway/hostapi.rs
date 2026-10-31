@@ -29,6 +29,7 @@ pub struct InterjectResult {
     pub reason: Option<String>,
     /// Interjections still waiting for the Agent (including this one when queued).
     pub pending: u64,
+    pub started_control: Option<crate::agents::control::StartedControl>,
 }
 
 impl InterjectResult {
@@ -37,6 +38,7 @@ impl InterjectResult {
             status: "rejected",
             reason: Some(reason.to_string()),
             pending: 0,
+            started_control: None,
         }
     }
 }
@@ -154,4 +156,6 @@ pub struct AgentEventInfo {
     pub event: AgentEventKind,
     /// The turn ended because of an error (never for a plain stop).
     pub failed: bool,
+    pub result: Option<crate::agents::result::TurnResult>,
+    pub started_control: Option<crate::agents::control::StartedControl>,
 }

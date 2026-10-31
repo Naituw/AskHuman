@@ -196,6 +196,10 @@ pub(super) fn agent_view(rec: &Value, pending: u64, projects: &ProjectCache) -> 
         waiting_request_id,
         pending_interject: pending,
         last_turn_failed: false,
+        last_turn_result: rec
+            .get("lastTurnResult")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok()),
         can_interject: can_interject(rec),
         followed: false,
     })
@@ -215,7 +219,9 @@ pub(super) fn agent_views(state: &Arc<ServerState>, projects: &ProjectCache) -> 
                 .pending_count(text(rec, "sessionId"))
                 .try_into()
                 .unwrap_or(u64::MAX);
-            agent_view(rec, pending, projects)
+            let mut view = agent_view(rec, pending, projects)?;
+            view.can_interject = super::agent_control::can_send(state, rec);
+            Some(view)
         })
         .collect()
 }
@@ -279,6 +285,7 @@ pub(super) async fn interject(
     agent_key: &str,
     text_in: &str,
     files: Vec<StagedFile>,
+    expected_result_id: Option<String>,
 ) -> InterjectResult {
     let Some((kind, session_id)) = split_key(agent_key) else {
         return InterjectResult::rejected("notFound");
@@ -290,7 +297,30 @@ pub(super) async fn interject(
     if text(rec, "kind") != kind.as_str() {
         return InterjectResult::rejected("notFound");
     }
-    let can = can_interject(rec);
+    if text(rec, "state") == "idle" || expected_result_id.is_some() {
+        return super::agent_control::send(
+            state,
+            super::agent_control::Message {
+                phone: phone_id,
+                message_id: client_msg_id,
+                kind,
+                sid: session_id,
+                text: text_in,
+                files: files
+                    .into_iter()
+                    .map(|file| FileAttachment {
+                        path: file.path.to_string_lossy().into_owned(),
+                        name: file.name,
+                        size: file.size,
+                        is_image: file.is_image,
+                    })
+                    .collect(),
+                expected_result_id,
+            },
+        )
+        .await;
+    }
+    let can = super::agent_control::can_send(state, rec);
     if !can.ok {
         return InterjectResult::rejected(can.reason.as_deref().unwrap_or("notWorking"));
     }
@@ -302,6 +332,7 @@ pub(super) async fn interject(
         let id = id.clone();
         return match crate::codex_desktop::shared().execute(operation).await {
             Ok(_) => InterjectResult {
+                started_control: None,
                 status: "delivered",
                 reason: None,
                 pending: 0,
@@ -333,12 +364,14 @@ pub(super) async fn interject(
     broadcast_agents_state(state);
     if queued == 0 {
         InterjectResult {
+            started_control: None,
             status: "delivered",
             reason: None,
             pending: 0,
         }
     } else {
         InterjectResult {
+            started_control: None,
             status: "queued",
             reason: None,
             pending: queued as u64,
@@ -354,11 +387,6 @@ fn desktop_message(
     text: &str,
     files: &[StagedFile],
 ) -> crate::codex_desktop::Operation {
-    use sha2::{Digest, Sha256};
-    let hash =
-        Sha256::digest(serde_json::to_vec(&["ios-interject", phone_id, client_msg_id]).unwrap());
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&hash[..16]);
     crate::codex_desktop::Operation::Send {
         session_id: session_id.to_string(),
         text: text.to_string(),
@@ -366,7 +394,7 @@ fn desktop_message(
             .iter()
             .map(|file| file.path.to_string_lossy().into_owned())
             .collect(),
-        id: uuid::Uuid::from_bytes(bytes).to_string(),
+        id: super::agent_control::operation_id(phone_id, client_msg_id),
     }
 }
 

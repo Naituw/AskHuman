@@ -58,6 +58,7 @@ final class PushDecryptorTests: XCTestCase {
         XCTAssertEqual(DecryptedPush.Kind("follow.done"), .followDone)
         XCTAssertEqual(DecryptedPush.Kind("follow.waiting"), .followWaiting)
         XCTAssertEqual(DecryptedPush.Kind("follow.failed"), .followFailed)
+        XCTAssertEqual(DecryptedPush.Kind("follow.incomplete"), .followIncomplete)
         XCTAssertEqual(DecryptedPush.Kind("resolved"), .resolved)
         XCTAssertEqual(DecryptedPush.Kind("from-the-future"), .other("from-the-future"))
     }

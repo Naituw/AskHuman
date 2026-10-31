@@ -314,6 +314,43 @@ final class AskHumanModelUITests: XCTestCase {
         _ = requireElement("watch-card")
         XCTAssertTrue(gone("agent-model", timeout: 3))
     }
+    func testFailedIdleResultContinuesWithoutErasingTheDraft() {
+        launch(extra: ["-AHScenario", "agentResults", "-AHTab", "agents"])
+        XCTAssertTrue(app.staticTexts[localized("Needs attention", "需要处理")].waitForExistence(timeout: 10))
+        requireElement("agent-row-\(endedAgent)").tap()
+        _ = requireElement("agent-last-result")
+        let field = requireElement("interject-field")
+        field.tap()
+        field.typeText("Keep this draft")
+        app.swipeDown()
+        let button = requireElement("agent-continue-\(endedAgent)")
+        XCTAssertEqual(button.label, localized("Request continuation", "要求继续"))
+        XCTAssertTrue(button.isEnabled)
+        shot("agent-failed-idle")
+        button.tap()
+        XCTAssertTrue(gone("agent-last-result"))
+        XCTAssertTrue((field.value as? String)?.contains("Keep this draft") == true)
+        _ = requireElement("follow-note")
+        shot("agent-continued-draft")
+    }
+
+    func testIncompleteListHasContinuationAndUnsupportedDetailExplainsWhy() {
+        launch(extra: ["-AHScenario", "agentResults", "-AHTab", "agents"])
+        let button = requireElement("agent-continue-\(endedAgent)")
+        XCTAssertTrue(button.isEnabled)
+        shot("agent-results-list")
+        button.tap()
+        XCTAssertTrue(gone("agent-continue-\(endedAgent)"))
+        let unsupported = "codex:cdx-leak"
+        reveal("agent-row-\(unsupported)")
+        requireElement("agent-row-\(unsupported)").tap()
+        _ = requireElement("agent-last-result")
+        XCTAssertFalse(requireElement("agent-continue-\(unsupported)").isEnabled)
+        let unavailable = requireElement("interject-unavailable")
+        XCTAssertTrue(unavailable.label.contains(localized("cannot receive messages while idle", "空闲时无法接收消息")))
+        shot("agent-incomplete-unavailable")
+    }
+
 }
 
 private extension XCUIElement {

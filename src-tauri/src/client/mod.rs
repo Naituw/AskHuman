@@ -437,10 +437,94 @@ pub fn report_agent_event(msg: ClientMsg) {
         // 即便 daemon 在排空（WouldBlock）也继续尝试直连：control_loop 不依赖 Hello 即可处理 AgentEvent，
         // 排空中的 daemon 退出前会持久化、由新 daemon 重载。
         let _ = ensure_running().await;
-        if let Ok((_, mut writer)) = connect_split().await {
+        if let Ok((mut reader, mut writer)) = connect_split().await {
+            if !accepts_observation(&mut reader, &mut writer, &msg).await {
+                return;
+            }
             let _ = ipc::write_msg(&mut writer, &msg).await;
         }
     });
+}
+
+/// Old peers can decode additive metadata but would misreport interrupted turns as completed.
+async fn accepts_observation(
+    reader: &mut Reader,
+    writer: &mut OwnedWriteHalf,
+    msg: &ClientMsg,
+) -> bool {
+    if !matches!(
+        msg,
+        ClientMsg::AgentEvent {
+            observation: Some(_),
+            ..
+        }
+    ) {
+        return true;
+    }
+    let handshake = async {
+        ipc::write_msg(writer, &ClientMsg::Hello(hello()))
+            .await
+            .ok()?;
+        match ipc::read_msg::<_, ServerMsg>(reader).await.ok()?? {
+            ServerMsg::HelloAck(ack) => {
+                Some(ack.status == HelloStatus::Ok && ack.agent_lifecycle_version >= 1)
+            }
+            _ => None,
+        }
+    };
+    tokio::time::timeout(Duration::from_millis(500), handshake)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false)
+}
+
+/// Poll an existing daemon without waking it; idle peers do not keep the daemon alive.
+pub fn agent_control_request(
+    session_id: String,
+    signal: crate::agents::control::ControlSignal,
+) -> Option<crate::agents::control::ControlReply> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    let msg = ClientMsg::AgentEvent {
+        agent: "pi".into(),
+        event: "control".into(),
+        session_id,
+        pid: None,
+        hint_pid: crate::agents::detect::parent_pid(std::process::id()),
+        cwd: None,
+        transcript_path: None,
+        launch_id: None,
+        prompt_sha256: None,
+        ts: 0,
+        tool: None,
+        interject_poll: false,
+        failed: false,
+        observation: Some(Box::new(crate::agents::result::Observation {
+            control: Some(Box::new(signal)),
+            ..Default::default()
+        })),
+    };
+    rt.block_on(async {
+        let (mut reader, mut writer) = connect_split().await.ok()?;
+        if !accepts_observation(&mut reader, &mut writer, &msg).await {
+            return None;
+        }
+        ipc::write_msg(&mut writer, &msg).await.ok()?;
+        match tokio::time::timeout(
+            Duration::from_secs(2),
+            ipc::read_msg::<_, ServerMsg>(&mut reader),
+        )
+        .await
+        .ok()?
+        .ok()??
+        {
+            ServerMsg::InterjectDecision { control, .. } => control.map(|reply| *reply),
+            _ => None,
+        }
+    })
 }
 
 /// Best-effort Grok side-channel pending report from the short-lived recovery hook.
@@ -545,6 +629,9 @@ pub fn report_agent_event_with_poll(msg: ClientMsg) -> InterjectPollOutcome {
         let Ok((mut reader, mut writer)) = connect_split().await else {
             return InterjectPollOutcome::Allow;
         };
+        if !accepts_observation(&mut reader, &mut writer, &msg).await {
+            return InterjectPollOutcome::Allow;
+        }
         if ipc::write_msg(&mut writer, &msg).await.is_err() {
             return InterjectPollOutcome::Allow;
         }
@@ -594,6 +681,7 @@ where
                 action,
                 text,
                 attachments,
+                ..
             })) => return Some((action, text, attachments)),
             Ok(Some(_)) => continue,
             Ok(None) | Err(_) => return None,
@@ -997,6 +1085,7 @@ mod tests {
     async fn first_frame_none_allows() {
         let out = run_frames(
             vec![ServerMsg::InterjectDecision {
+                control: None,
                 action: InterjectAction::None,
                 text: String::new(),
                 attachments: Vec::new(),
@@ -1018,6 +1107,7 @@ mod tests {
         };
         let out = run_frames(
             vec![ServerMsg::InterjectDecision {
+                control: None,
                 action: InterjectAction::Message,
                 text: "改用方案 B".into(),
                 attachments: vec![attachment.clone()],
@@ -1040,11 +1130,13 @@ mod tests {
         let out = run_frames(
             vec![
                 ServerMsg::InterjectDecision {
+                    control: None,
                     action: InterjectAction::Hold,
                     text: String::new(),
                     attachments: Vec::new(),
                 },
                 ServerMsg::InterjectDecision {
+                    control: None,
                     action: InterjectAction::Message,
                     text: "停一下".into(),
                     attachments: Vec::new(),
@@ -1068,11 +1160,13 @@ mod tests {
         let out = run_frames(
             vec![
                 ServerMsg::InterjectDecision {
+                    control: None,
                     action: InterjectAction::Hold,
                     text: String::new(),
                     attachments: Vec::new(),
                 },
                 ServerMsg::InterjectDecision {
+                    control: None,
                     action: InterjectAction::Release,
                     text: String::new(),
                     attachments: Vec::new(),
@@ -1090,6 +1184,7 @@ mod tests {
         // daemon 在 Hold 后退出（drain）：EOF → 放行。
         let out = run_frames(
             vec![ServerMsg::InterjectDecision {
+                control: None,
                 action: InterjectAction::Hold,
                 text: String::new(),
                 attachments: Vec::new(),
@@ -1126,6 +1221,7 @@ mod tests {
                     text: "noise".into(),
                 },
                 ServerMsg::InterjectDecision {
+                    control: None,
                     action: InterjectAction::Hold,
                     text: String::new(),
                     attachments: Vec::new(),
@@ -1134,6 +1230,7 @@ mod tests {
                     text: "noise2".into(),
                 },
                 ServerMsg::InterjectDecision {
+                    control: None,
                     action: InterjectAction::Message,
                     text: "msg".into(),
                     attachments: Vec::new(),

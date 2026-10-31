@@ -28,6 +28,33 @@ PLURAL_EN = {
 }
 
 ZH = {
+    "Failed: %@": "出错了：%@",
+    "Finished: %@": "已完成：%@",
+    "Handled elsewhere": "已在其他端处理",
+    "Needs your confirmation": "需要你确认",
+    "Needs your confirmation: %@": "需要你确认：%@",
+    "Waiting for you: %@": "在等你：%@",
+    "Needs attention": "需要处理",
+    "Session ended": "会话已结束",
+    "Completed": "已完成",
+    "Last turn failed": "上轮出错",
+    "Incomplete": "任务未完成",
+    "Interrupted": "已中断",
+    "Result unknown": "结果未知",
+    "Task incomplete": "任务未完成",
+    "Task incomplete: %@": "任务未完成：%@",
+    "Request continuation": "要求继续",
+    "Waiting for the Agent to start…": "正在等待 Agent 开始…",
+    "Message sent. The notification limit has been reached.": "消息已发送，结果通知已达关注上限。",
+    "The Agent reached its run limit.": "Agent 已达到本轮运行上限。",
+    "The Agent stopped because it was not making progress.": "Agent 因无法继续推进而停止。",
+    "You stopped this turn.": "你已中断本轮运行。",
+    "The permission request was declined or cancelled.": "权限请求已被拒绝或取消。",
+    "The Agent ended this turn with an error.": "Agent 因错误结束了本轮运行。",
+    "This session cannot receive messages while idle. Continue it in the original Agent.": "此会话空闲时无法接收消息，请在原 Agent 中继续。",
+    "The original Agent is unavailable or does not support this action.": "原 Agent 不可用，或尚不支持此操作。",
+    "A message is waiting for the Agent to start.": "已有消息正在等待 Agent 开始。",
+    "The session has changed. Refresh its state before continuing.": "会话状态已变化，请刷新后再继续。",
     # Agents
     "Agents": "Agents",
     # Agents tab (phase B)
@@ -514,6 +541,7 @@ PUSH = {
     "PUSH_FOLLOW_DONE": ("An Agent you follow has finished", "你关注的 Agent 已完成"),
     "PUSH_FOLLOW_WAITING": ("An Agent you follow is waiting for you", "你关注的 Agent 在等你"),
     "PUSH_FOLLOW_FAILED": ("An Agent you follow has failed", "你关注的 Agent 出错了"),
+    "PUSH_FOLLOW_INCOMPLETE": ("An Agent task is incomplete", "Agent 任务未完成"),
     "PUSH_RESOLVED": ("A request was handled elsewhere", "有个请求已在别处处理"),
 }
 
@@ -535,7 +563,8 @@ def unit(value):
 
 def extracted_keys():
     keys = {}
-    for path in sorted(glob.glob(DERIVED + "/*.stringsdata")):
+    paths = glob.glob(DERIVED + "/*.stringsdata") + glob.glob(DERIVED.replace("/AskHuman.build/Objects-normal/", "/AskHumanNotification.build/Objects-normal/") + "/*.stringsdata")
+    for path in sorted(paths):
         data = json.load(open(path))
         for _table, items in data.get("tables", {}).items():
             for item in items:

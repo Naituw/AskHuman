@@ -80,10 +80,11 @@ private struct AgentsList: View {
             ForEach(sections) { section in
                 Section {
                     ForEach(section.items) { item in
-                        NavigationLink(value: item.id) {
-                            AgentRow(item: item, showMac: store.macs.count > 1)
+                        VStack(alignment: .leading, spacing: 10) {
+                            NavigationLink(value: item.id) { AgentRow(item: item, showMac: store.macs.count > 1) }
+                                .accessibilityIdentifier("agent-row-\(item.agentKey)")
+                            if item.needsAttention, item.view.lastTurnResult?.id != nil { AgentContinueButton(item: item) }
                         }
-                        .accessibilityIdentifier("agent-row-\(item.agentKey)")
                     }
                 } header: {
                     AgentSectionTitle(id: section.id, count: section.items.count)
@@ -173,15 +174,16 @@ private struct AgentSectionTitle: View {
     private var title: Text {
         switch id {
         case "waiting": Text("Waiting for you")
+        case "attention": Text("Needs attention")
         case "working": Text("Working")
-        case "ended": Text("Finished")
+        case "ended": Text("Session ended")
         default: Text("Idle")
         }
     }
 
     private var color: Color {
         switch id {
-        case "waiting": .orange
+        case "waiting", "attention": .orange
         case "working": .green
         default: .gray
         }

@@ -30,6 +30,10 @@ extension Error {
     /// The short codes a Mac gives when it refuses a message to an Agent.
     private static func rejectionMessage(_ reason: String) -> String {
         switch reason {
+        case "idleUnsupported": String(localized: "This session cannot receive messages while idle. Continue it in the original Agent.")
+        case "nativeUnavailable": String(localized: "The original Agent is unavailable or does not support this action.")
+        case "controlStarting": String(localized: "A message is waiting for the Agent to start.")
+        case "stateChanged", "resultChanged": String(localized: "The session has changed. Refresh its state before continuing.")
         case "notWorking": String(localized: "The Agent is not working right now. Messages can only be sent while it works.")
         case "unsupported": String(localized: "This Agent cannot receive messages from the phone.")
         case "ended": String(localized: "This session has ended.")
@@ -39,7 +43,7 @@ extension Error {
         case "attachment": String(localized: "An attachment could not be used. Remove it and try again.")
         case "desktopDisconnected": String(localized: "Codex Desktop is disconnected. Open the chat on your Mac and try again.")
         case "desktopSendFailed": String(localized: "Codex Desktop could not accept the message. Your draft is kept; try again.")
-        case "desktopUnknown", "conflict", "interrupted": String(localized: "The message may have been sent. Check the original chat before sending another message.")
+        case "desktopUnknown", "controlUnknown", "conflict", "interrupted": String(localized: "The message may have been sent. Check the original chat before sending another message.")
         default: String(localized: "The Mac refused it (\(reason)).")
         }
     }

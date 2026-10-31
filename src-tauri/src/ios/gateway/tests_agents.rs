@@ -25,6 +25,20 @@ fn event(agent_key: &str, event: AgentEventKind, failed: bool) -> AgentEventInfo
         agent_key: agent_key.into(),
         event,
         failed,
+        result: (event == AgentEventKind::TurnEnd).then(|| crate::agents::result::TurnResult {
+            source: None,
+            id: "result".into(),
+            outcome: if failed {
+                crate::agents::result::TurnOutcome::Failed
+            } else {
+                crate::agents::result::TurnOutcome::Completed
+            },
+            turn_id: None,
+            reason: None,
+            summary: None,
+            at: 0,
+        }),
+        started_control: None,
     }
 }
 
@@ -817,4 +831,86 @@ fn oversized_frames_are_shrunk_to_the_budget() {
 
     let small = serde_json::json!({"phase": "idle", "text": "hi", "steps": [], "todos": []});
     assert_eq!(fit_frame(small.clone()), small);
+}
+
+#[tokio::test(start_paused = true)]
+async fn interrupted_phone_rounds_are_silent_and_do_not_follow_unrelated_mac_turns() {
+    use crate::agents::{control::StartedControl, result::TurnOutcome};
+    let (fx, mut phone) = away_follower().await;
+    let mut interrupted = turn_end(false);
+    let result = interrupted.result.as_mut().unwrap();
+    result.outcome = TurnOutcome::Interrupted;
+    result.turn_id = Some("phone-turn".into());
+    interrupted.started_control = Some(StartedControl {
+        phone_id: phone.phone_id.clone(),
+        operation_id: "operation-1".into(),
+        turn_id: "phone-turn".into(),
+    });
+    fx.gateway.agent_event(interrupted);
+    tokio::time::sleep(10 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 0);
+    fx.gateway
+        .agent_event(event("claude:s1", AgentEventKind::TurnStart, false));
+    let mut unrelated = turn_end(false);
+    unrelated.result.as_mut().unwrap().turn_id = Some("mac-turn".into());
+    fx.gateway.agent_event(unrelated);
+    tokio::time::sleep(10 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 0);
+    assert!(!follows_nothing(&mut phone).await);
+    let mut resumed = turn_end(false);
+    resumed.result.as_mut().unwrap().turn_id = Some("phone-turn-2".into());
+    resumed.started_control = Some(StartedControl {
+        phone_id: phone.phone_id.clone(),
+        operation_id: "operation-2".into(),
+        turn_id: "phone-turn-2".into(),
+    });
+    fx.gateway.agent_event(resumed.clone());
+    tokio::time::sleep(10 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 1);
+    fx.gateway.agent_event(resumed);
+    tokio::time::sleep(10 * SECOND).await;
+    assert_eq!(
+        fx.pusher.count(),
+        1,
+        "duplicate native proof cannot re-enroll a delivered round"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn incomplete_is_a_distinct_one_shot_result() {
+    use crate::agents::result::TurnOutcome;
+    let (fx, _phone) = away_follower().await;
+    fx.host.set_alert_after(900);
+    fx.host.touch_input();
+    let mut incomplete = turn_end(false);
+    let result = incomplete.result.as_mut().unwrap();
+    result.outcome = TurnOutcome::Incomplete;
+    result.reason = Some("max_turns".into());
+    fx.gateway.agent_event(incomplete);
+    tokio::time::sleep(16 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 1);
+    let push = fx.pusher.last().unwrap();
+    assert_eq!(push.loc_key, "PUSH_FOLLOW_INCOMPLETE");
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_old_phone_never_receives_an_unknown_incomplete_push_key() {
+    use crate::agents::result::TurnOutcome;
+    let (fx, mut phone) = away_follower().await;
+    phone
+        .send(&wire::Hello {
+            nonce: "old-phone".into(),
+            proto: wire::PROTO,
+            app_ver: "old".into(),
+            device_name: "Old phone".into(),
+            lifecycle_results: false,
+        })
+        .await;
+    let _: wire::HelloAck = phone.recv_body(t::HELLO_ACK).await;
+    phone.set_presence(true, false).await;
+    let mut incomplete = turn_end(false);
+    incomplete.result.as_mut().unwrap().outcome = TurnOutcome::Incomplete;
+    fx.gateway.agent_event(incomplete);
+    tokio::time::sleep(10 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 0);
 }

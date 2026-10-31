@@ -30,6 +30,7 @@ async fn with_agent() -> (Fixture, TestPhone) {
 
 fn interject(id: &str, agent_key: &str, text: &str) -> wire::InterjectSend {
     wire::InterjectSend {
+        expected_result_id: None,
         client_msg_id: id.into(),
         agent_key: agent_key.into(),
         text: text.into(),
@@ -106,6 +107,7 @@ async fn interjections_are_refused_with_a_reason() {
 async fn what_the_host_says_is_passed_on() {
     let (fx, mut phone) = with_agent().await;
     *fx.host.interject_result.lock().unwrap() = Some(InterjectResult {
+        started_control: None,
         status: "delivered",
         reason: None,
         pending: 0,
@@ -153,6 +155,7 @@ async fn a_slow_desktop_send_does_not_block_requests_or_submit_duplicates() {
     });
     fx.host.interject_delay_ms.store(5_000, Ordering::SeqCst);
     *fx.host.interject_result.lock().unwrap() = Some(InterjectResult {
+        started_control: None,
         status: "delivered",
         reason: None,
         pending: 0,

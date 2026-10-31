@@ -314,6 +314,10 @@ pub fn dispatch() {
             crate::agents::report::run(&argv[2..]);
             exit(0);
         }
+        "__agent-control" => {
+            crate::agents::control::run();
+            exit(0);
+        }
         // Hidden context-compaction/session-binding hook. It is mode-owned and separate from the
         // optional lifecycle capability inside the same automatic integration.
         "__context-recovery-hook" => {

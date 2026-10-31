@@ -100,6 +100,11 @@ pub fn run(args: &[String]) {
         tool,
         interject_poll,
         failed,
+        observation: Some(Box::new(super::result::observation(
+            intended,
+            event,
+            stdin.as_ref(),
+        ))),
     };
     if interject_poll {
         if let crate::client::InterjectPollOutcome::Deny { text, attachments } =
@@ -126,7 +131,7 @@ pub(super) fn report_simple_event(
     event: super::LifecycleEvent,
     session_id: String,
     cwd: Option<String>,
-    failed: bool,
+    input: &Value,
 ) {
     if session_id.trim().is_empty() {
         return;
@@ -147,7 +152,12 @@ pub(super) fn report_simple_event(
         ts: 0,
         tool: None,
         interject_poll: false,
-        failed,
+        failed: super::stop::turn_failed(intended, input),
+        observation: Some(Box::new(super::result::observation(
+            intended,
+            event,
+            Some(input),
+        ))),
     });
 }
 
@@ -460,6 +470,26 @@ struct HookInputSummary {
     #[serde(default)]
     stop_reason: Option<String>,
     #[serde(default)]
+    turn_id: Option<String>,
+    #[serde(default, rename = "turnId")]
+    turn_id_camel: Option<String>,
+    #[serde(default, rename = "promptId")]
+    prompt_id: Option<String>,
+    #[serde(default)]
+    generation_id: Option<String>,
+    #[serde(default, rename = "generationId")]
+    generation_id_camel: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default, rename = "cancelledBy")]
+    cancelled_by: Option<String>,
+    #[serde(default, rename = "subagentType")]
+    subagent_type: Option<String>,
+    #[serde(default)]
+    control_operation_id: Option<String>,
+    #[serde(default)]
     transcript_path: Option<String>,
     #[serde(default, rename = "transcriptPath")]
     transcript_path_camel: Option<String>,
@@ -515,6 +545,20 @@ impl HookInputSummary {
         );
         insert_summary_string(&mut map, "status", self.status);
         insert_summary_string(&mut map, "stop_reason", self.stop_reason);
+        insert_summary_string(
+            &mut map,
+            "turn_id",
+            self.turn_id
+                .or(self.turn_id_camel)
+                .or(self.prompt_id)
+                .or(self.generation_id)
+                .or(self.generation_id_camel),
+        );
+        insert_summary_string(&mut map, "reason", self.reason);
+        insert_summary_string(&mut map, "error", self.error);
+        insert_summary_string(&mut map, "cancelledBy", self.cancelled_by);
+        insert_summary_string(&mut map, "subagentType", self.subagent_type);
+        insert_summary_string(&mut map, "control_operation_id", self.control_operation_id);
         insert_summary_string(
             &mut map,
             "transcript_path",
@@ -659,6 +703,40 @@ mod tests {
 
             let parsed = read_stdin_json_from(&mut reader, 128).unwrap();
             assert!(super::super::stop::turn_failed(kind, &parsed), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn oversized_cancellation_preserves_the_native_round_and_reason() {
+        for (kind, fields) in [
+            (
+                AgentKind::Grok,
+                json!({"hookEventName":"StopCancelled", "promptId":"round", "reason":"max_turns", "cancelledBy":"runtime"}),
+            ),
+            (
+                AgentKind::Cursor,
+                json!({"generationId":"round", "status":"aborted"}),
+            ),
+        ] {
+            let mut input = fields;
+            input["tool_response"] = json!("x".repeat(4096));
+            let bytes = serde_json::to_vec(&input).unwrap();
+            let value = read_stdin_json_from(&mut Cursor::new(bytes), 128).unwrap();
+            let observation = super::super::result::observation(
+                kind,
+                super::super::LifecycleEvent::TurnEnd,
+                Some(&value),
+            );
+            assert_eq!(observation.turn_id.as_deref(), Some("round"));
+            let outcome = observation.result.unwrap().outcome;
+            assert_eq!(
+                outcome,
+                if kind == AgentKind::Grok {
+                    super::super::result::TurnOutcome::Incomplete
+                } else {
+                    super::super::result::TurnOutcome::Interrupted
+                }
+            );
         }
     }
 

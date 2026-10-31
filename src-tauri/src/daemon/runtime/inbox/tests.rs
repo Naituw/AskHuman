@@ -359,6 +359,7 @@ fn state() -> Arc<ServerState> {
         config: Mutex::new(config),
         update: Mutex::new(Default::default()),
         agents: Arc::new(AgentRegistry::new()),
+        agent_controls: crate::agents::control::ControlStore::load(),
         interject: crate::agents::interject::InterjectStore::new(),
         grok_bindings: Default::default(),
         agent_subs: Default::default(),

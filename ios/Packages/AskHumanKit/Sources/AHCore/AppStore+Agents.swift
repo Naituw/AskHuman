@@ -30,11 +30,12 @@ extension AppStore {
 
     public func agentSections(filter: AgentFilter? = nil) -> [AgentSection] {
         let items = agentItems(filter: filter)
-        func bucket(_ state: String) -> String {
-            ["waiting", "working", "ended"].contains(state) ? state : "idle"
+        func bucket(_ item: AgentItem) -> String {
+            if item.needsAttention { return "attention" }
+            return ["waiting", "working", "ended"].contains(item.view.state) ? item.view.state : "idle"
         }
-        return ["waiting", "working", "idle", "ended"].compactMap { id in
-            let group = items.filter { bucket($0.view.state) == id }
+        return ["waiting", "attention", "working", "idle", "ended"].compactMap { id in
+            let group = items.filter { bucket($0) == id }
             return group.isEmpty ? nil : AgentSection(id: id, items: group)
         }
     }
@@ -160,6 +161,8 @@ extension AppStore {
     /// Uploads the attachments and sends the message; the form is emptied once the Mac took it.
     @discardableResult
     public func send(_ composer: InterjectComposer, to item: AgentItem) async throws -> InterjectOutcome {
+        if needsAgentDeliveryReview(item) { throw BackendError.rejected("controlUnknown") }
+        if composer.isSending || continuation(for: item).isSending { throw BackendError.rejected("controlStarting") }
         composer.isSending = true
         composer.uploadProgress = nil
         defer {
@@ -175,17 +178,69 @@ extension AppStore {
                 progress: { fraction in Task { @MainActor in composer.uploadProgress = fraction } }
             )
             composer.reset()
+            noteNotificationLimit(outcome, item: item)
             return outcome
         } catch {
             // Unknown delivery must keep its identity: a new one could submit the message twice.
             if case BackendError.rejected(let reason) = error {
-                if ["desktopUnknown", "interrupted", "conflict"].contains(reason) {
+                if ["desktopUnknown", "controlUnknown", "interrupted", "conflict"].contains(reason) {
                     composer.needsDeliveryReview = true
                 } else {
                     composer.pendingMessageId = nil
                 }
             }
             throw error
+        }
+    }
+
+    public func needsAgentDeliveryReview(_ item: AgentItem) -> Bool {
+        interjectComposer(for: item).needsDeliveryReview || continuation(for: item).needsDeliveryReview
+    }
+
+    public func confirmAgentDeliveryReviewed(_ item: AgentItem) {
+        interjectComposer(for: item).confirmDeliveryReviewed()
+        continuation(for: item).confirmDeliveryReviewed()
+    }
+
+    public func continuation(for item: AgentItem) -> AgentContinuation {
+        if let existing = continuations[item.id] { return existing }
+        let continuation = AgentContinuation()
+        continuations[item.id] = continuation
+        return continuation
+    }
+
+    public func continueAgent(_ item: AgentItem) async throws -> InterjectOutcome {
+        let action = continuation(for: item)
+        guard !action.isSending, !interjectComposer(for: item).isSending else { throw BackendError.rejected("controlStarting") }
+        if needsAgentDeliveryReview(item) { throw BackendError.rejected("controlUnknown") }
+        guard let current = agent(id: item.id), current.needsAttention, current.view.canInterject.ok,
+              current.view.state == "idle", let resultId = current.view.lastTurnResult?.id, !resultId.isEmpty,
+              action.submittedResultId != resultId
+        else { throw BackendError.rejected("resultChanged") }
+        if action.needsDeliveryReview { throw BackendError.rejected("controlUnknown") }
+        if action.resultId != resultId { action.messageId = nil; action.resultId = resultId }
+        let messageId = action.messageId ?? Bytes.newMsgId()
+        action.messageId = messageId
+        action.isSending = true
+        defer { action.isSending = false }
+        do {
+            let outcome = try await backend.continueAgent(macId: item.macId, agentKey: item.agentKey, expectedResultId: resultId, clientMsgId: messageId)
+            action.submittedResultId = resultId
+            action.messageId = nil
+            noteNotificationLimit(outcome, item: item)
+            return outcome
+        } catch {
+            if case BackendError.rejected(let reason) = error {
+                if ["controlUnknown", "desktopUnknown", "interrupted", "conflict"].contains(reason) { action.needsDeliveryReview = true }
+                else { action.messageId = nil }
+            }
+            throw error
+        }
+    }
+
+    private func noteNotificationLimit(_ outcome: InterjectOutcome, item: AgentItem) {
+        if outcome.notificationRegistered == false {
+            show(Banner(kind: .warning, title: item.macName, subtitle: String(localized: "Message sent. The notification limit has been reached.")))
         }
     }
 

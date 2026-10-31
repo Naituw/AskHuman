@@ -9,6 +9,7 @@ public struct DecryptedPush: Equatable, Sendable {
         case followDone
         case followWaiting
         case followFailed
+        case followIncomplete
         case resolved
         /// A kind a newer Mac sends that this build does not know.
         case other(String)
@@ -20,6 +21,7 @@ public struct DecryptedPush: Equatable, Sendable {
             case "follow.done": self = .followDone
             case "follow.waiting": self = .followWaiting
             case "follow.failed": self = .followFailed
+            case "follow.incomplete": self = .followIncomplete
             case "resolved": self = .resolved
             default: self = .other(wire)
             }

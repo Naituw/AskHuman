@@ -90,10 +90,20 @@ impl Host for DaemonHost {
         agent_key: &str,
         text: &str,
         files: Vec<StagedFile>,
+        expected_result_id: Option<String>,
     ) -> InterjectResult {
         match self.state.upgrade() {
             Some(state) => {
-                ios_agents::interject(&state, phone_id, client_msg_id, agent_key, text, files).await
+                ios_agents::interject(
+                    &state,
+                    phone_id,
+                    client_msg_id,
+                    agent_key,
+                    text,
+                    files,
+                    expected_result_id,
+                )
+                .await
             }
             None => InterjectResult::rejected("unavailable"),
         }

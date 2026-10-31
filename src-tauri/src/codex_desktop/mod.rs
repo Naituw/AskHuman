@@ -388,6 +388,18 @@ impl Bridge {
     }
 
     pub async fn execute(self: &Arc<Self>, op: Operation) -> Result<Value, String> {
+        self.execute_with_idle_guard(op, false).await
+    }
+
+    pub async fn execute_idle(self: &Arc<Self>, op: Operation) -> Result<Value, String> {
+        self.execute_with_idle_guard(op, true).await
+    }
+
+    async fn execute_with_idle_guard(
+        self: &Arc<Self>,
+        op: Operation,
+        idle_only: bool,
+    ) -> Result<Value, String> {
         if matches!(op, Operation::Status) {
             self.refresh(crate::config::AppConfig::load_without_secrets().codex_desktop)
                 .await;
@@ -514,6 +526,11 @@ impl Bridge {
             Some(session) => session,
             None => return Err(action.fail_before_submit("activate", "Session disappeared")),
         };
+        if idle_only && s.active() {
+            return Err(
+                action.fail_before_submit("prepare-submit", "The chat started another turn")
+            );
+        }
         let model_settings = if matches!(op, Operation::Create { .. }) {
             Some(
                 action

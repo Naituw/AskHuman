@@ -123,6 +123,15 @@ extension MockBackend {
             throw BackendError.rejected("notWorking")
         }
         interjects.append(InterjectRecord(macId: macId, agentKey: agentKey, text: trimmed, files: files.count))
+        if state.agents[index].view.state == "idle" {
+            state.agents[index].view.state = "working"
+            state.agents[index].view.lastTurnResult = nil
+            state.agents[index].view.lastTurnFailed = false
+            state.agents[index].view.followed = true
+            publish()
+            return InterjectOutcome(status: "delivered", pending: 0, notificationRegistered: true)
+        }
+
         let key = AgentItem.key(macId, agentKey)
         interjectQueues[key, default: []].append(trimmed)
         let pending = interjectQueues[key]?.count ?? 1
@@ -136,6 +145,22 @@ extension MockBackend {
             }
         }
         return InterjectOutcome(status: "queued", pending: pending)
+    }
+
+    public func continueAgent(macId: String, agentKey: String, expectedResultId: String, clientMsgId: String) async throws -> InterjectOutcome {
+        try requireOnline(macId)
+        if let reason = failNextInterject { failNextInterject = nil; throw BackendError.rejected(reason) }
+        guard let index = agentIndex(macId, agentKey), state.agents[index].view.state == "idle",
+              state.agents[index].view.canInterject.ok, state.agents[index].view.lastTurnResult?.id == expectedResultId,
+              state.agents[index].needsAttention else { throw BackendError.rejected("resultChanged") }
+        interjects.append(InterjectRecord(macId: macId, agentKey: agentKey, text: "Inspect the previous attempt and continue from current progress.", files: 0))
+        let registered = state.agents.filter { $0.macId == macId && $0.view.followed }.count < followLimit || state.agents[index].view.followed
+        state.agents[index].view.state = "working"
+        state.agents[index].view.lastTurnResult = nil
+        state.agents[index].view.lastTurnFailed = false
+        state.agents[index].view.followed = registered
+        publish()
+        return InterjectOutcome(status: "delivered", pending: 0, notificationRegistered: registered)
     }
 
     /// The Agent reads the messages that were waiting for it.
@@ -325,6 +350,14 @@ extension MockBackend {
     }
 
     /// Moves an Agent into another state (for tests of the list and the detail screen).
+    public func setAgentResult(macId: String, agentKey: String, result: AgentTurnResult) {
+        guard let index = agentIndex(macId, agentKey) else { return }
+        state.agents[index].view.state = "idle"
+        state.agents[index].view.lastTurnResult = result
+        state.agents[index].view.lastTurnFailed = result.outcome == "failed"
+        publish()
+    }
+
     public func setAgentState(macId: String, agentKey: String, to newState: String) {
         guard let index = agentIndex(macId, agentKey) else { return }
         state.agents[index].view.state = newState

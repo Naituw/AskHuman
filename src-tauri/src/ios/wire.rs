@@ -303,6 +303,8 @@ pub struct Hello {
     pub proto: u32,
     pub app_ver: String,
     pub device_name: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub lifecycle_results: bool,
 }
 msg!(Hello, t::HELLO);
 
@@ -694,6 +696,8 @@ pub struct AgentView {
     pub pending_interject: u64,
     #[serde(default, skip_serializing_if = "is_false")]
     pub last_turn_failed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_turn_result: Option<crate::agents::result::TurnResult>,
     pub can_interject: CanInterject,
     pub followed: bool,
 }
@@ -787,6 +791,8 @@ pub struct InterjectSend {
     pub text: String,
     #[serde(default)]
     pub files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_result_id: Option<String>,
 }
 msg!(InterjectSend, t::INTERJECT_SEND);
 
@@ -800,6 +806,8 @@ pub struct InterjectAck {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub pending: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification_registered: Option<bool>,
 }
 msg!(InterjectAck, t::INTERJECT_ACK);
 

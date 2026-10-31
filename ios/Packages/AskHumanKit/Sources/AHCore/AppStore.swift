@@ -192,6 +192,7 @@ public final class AppStore {
     @ObservationIgnored private var pendingArrivals: [String: (macId: String, requestId: String)] = [:]
     /// Every Agent seen on the Agents tab, kept while its page may still be open.
     @ObservationIgnored var retainedAgents: [String: (item: AgentItem, at: Date)] = [:]
+    @ObservationIgnored var continuations: [String: AgentContinuation] = [:]
     @ObservationIgnored var interjectComposers: [String: InterjectComposer] = [:]
 
     private static let autoAdvanceKey = "ah.autoAdvance"
@@ -268,6 +269,7 @@ public final class AppStore {
         for (key, entry) in retainedAgents where now.timeIntervalSince(entry.at) > 600 && !agentPath.contains(key) {
             retainedAgents[key] = nil
         }
+        for key in continuations.keys where retainedAgents[key] == nil && !agentPath.contains(key) { continuations[key] = nil }
         for key in interjectComposers.keys where retainedAgents[key] == nil && !agentPath.contains(key) {
             interjectComposers[key] = nil
         }

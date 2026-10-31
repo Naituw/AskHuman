@@ -1,6 +1,7 @@
 // Generated and managed by AskHuman. Changes inside this file will be replaced.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
 const CONFIG = /* ASKHUMAN_CONFIG_BEGIN */ __ASKHUMAN_CONFIG_JSON__ /* ASKHUMAN_CONFIG_END */;
 const ASK_TIMEOUT_MS = 24 * 60 * 60 * 1000;
@@ -16,6 +17,12 @@ type RunningCommand = {
 
 let generation = 0;
 let recoveryPending = false;
+let controlGeneration = randomUUID();
+let controlTimer: ReturnType<typeof setTimeout> | undefined;
+let controlPoll: RunningCommand | undefined;
+let pendingControlId: string | undefined;
+let activeReportTurnId: string | undefined;
+let pendingContinuationTurnId: string | undefined;
 let lastRun:
   | { generation: number; stopReason?: string; message?: string }
   | undefined;
@@ -107,11 +114,70 @@ async function reportNative(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
 function report(ctx: ExtensionContext, event: string, extra: JsonObject = {}): void {
   const command = spawnJson(
     ["__agent-hook", "pi", event],
-    sessionPayload(ctx, extra),
+    sessionPayload(ctx, {
+      ...(["turn-start", "activity", "turn-end"].includes(event)
+        ? { turn_id: activeReportTurnId ?? `${controlGeneration}:${generation}` } : {}),
+      ...extra,
+    }),
     ctx,
     SHORT_TIMEOUT_MS,
   );
   void command.result;
+}
+
+function stopControlPolling(): void {
+  if (controlTimer) clearTimeout(controlTimer);
+  controlTimer = undefined;
+  controlPoll?.child.kill();
+  controlPoll = undefined;
+  pendingControlId = undefined;
+}
+
+function startControlPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
+  stopControlPolling();
+  if (!CONFIG.lifecycle) return;
+  const lease = controlGeneration;
+  const signal = (extra: JsonObject = {}) => sessionPayload(ctx, {
+    generation: lease, pid: process.pid, idle: ctx.isIdle() && !ctx.hasPendingMessages(), ...extra,
+  });
+  const tick = async () => {
+    if (lease !== controlGeneration) return;
+    try {
+      controlPoll = spawnJson(["__agent-control"], signal(), ctx, 4000);
+      const reply = await controlPoll.result;
+      controlPoll = undefined;
+      if (lease !== controlGeneration) return;
+      const operation = reply?.operation as JsonObject | undefined;
+      if (operation && typeof operation.id === "string" && typeof operation.text === "string") {
+        const id = operation.id;
+        let status = "rejected";
+        if (ctx.isIdle() && !ctx.hasPendingMessages()) {
+          pendingControlId = id;
+          const files = Array.isArray(operation.files) ? operation.files as JsonObject[] : [];
+          const attachments = files.filter(file => typeof file.path === "string")
+            .map(file => `- ${String(file.name ?? "attachment")}: ${String(file.path)}`).join("\n");
+          const text = operation.text + (attachments ? `\n\nUser attachments (read the files as needed):\n${attachments}` : "");
+          try {
+            await pi.sendUserMessage(text);
+            status = "accepted";
+            if (pendingControlId === id) pendingControlId = undefined;
+          } catch {
+            // The native call might have crossed its acceptance boundary before rejecting.
+            status = "unknown";
+            if (pendingControlId === id) pendingControlId = undefined;
+          }
+        }
+        if (lease === controlGeneration) {
+          await spawnJson(["__agent-control"], signal({ operationId: id, status }), ctx, 4000).result;
+        }
+      }
+    } catch {
+      // A disconnected daemon or disposed session must not affect the native agent.
+    } finally {
+      if (lease === controlGeneration) controlTimer = setTimeout(() => { void tick(); }, 1500);
+    }
+  };
+  controlTimer = setTimeout(() => { void tick(); }, 250);
 }
 
 function shellTokens(segment: string): string[] {
@@ -189,12 +255,17 @@ export default function askHumanExtension(pi: ExtensionAPI) {
   pi.on("model_select", async (_event, ctx) => { await reportNative(pi, ctx); });
   pi.on("thinking_level_select", async (_event, ctx) => { await reportNative(pi, ctx); });
   pi.on("session_start", async (_event, ctx) => {
+    stopControlPolling();
+    controlGeneration = randomUUID();
+    activeReportTurnId = undefined;
+    pendingContinuationTurnId = undefined;
     generation += 1;
     recoveryPending = false;
     lastRun = undefined;
     cancelPendingStop();
     await reportNative(pi, ctx);
     if (CONFIG.lifecycle) report(ctx, "session-start");
+    startControlPolling(pi, ctx);
   });
 
   pi.on("before_agent_start", async (event) => {
@@ -210,10 +281,15 @@ export default function askHumanExtension(pi: ExtensionAPI) {
 
   pi.on("agent_start", async (_event, ctx) => {
     generation += 1;
+    activeReportTurnId = pendingContinuationTurnId ?? `${controlGeneration}:${generation}`;
+    pendingContinuationTurnId = undefined;
+    const token = generation, operationId = pendingControlId;
+    pendingControlId = undefined;
     lastRun = undefined;
     cancelPendingStop();
     await reportNative(pi, ctx);
-    if (CONFIG.lifecycle) report(ctx, "turn-start");
+    if (generation !== token) return;
+    if (CONFIG.lifecycle) report(ctx, "turn-start", operationId ? { control_operation_id: operationId } : {});
   });
 
   pi.on("tool_call", async (event, ctx) => {
@@ -258,8 +334,9 @@ export default function askHumanExtension(pi: ExtensionAPI) {
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
+    const settledGeneration = generation, run = lastRun;
     await reportNative(pi, ctx);
-    const run = lastRun;
+    if (settledGeneration !== generation) return;
     if (!CONFIG.stop || !run || run.generation !== generation || run.stopReason !== "stop") {
       // Tell AskHuman why the turn ended so a failed run is not announced as finished.
       const reason = run && run.generation === generation ? run.stopReason : undefined;
@@ -267,7 +344,7 @@ export default function askHumanExtension(pi: ExtensionAPI) {
       return;
     }
 
-    const token = generation;
+    const token = generation, logicalTurnId = activeReportTurnId;
     cancelPendingStop();
     const command = spawnJson(
       ["__stop-hook", "pi", "confirm"],
@@ -298,17 +375,24 @@ export default function askHumanExtension(pi: ExtensionAPI) {
         !ctx.hasPendingMessages()
       ) {
         try {
+          // A managed Stop continuation is still the same unreported logical round.
+          // Ordinary later user messages always receive a fresh identity in agent_start.
+          pendingContinuationTurnId = logicalTurnId;
           await pi.sendUserMessage(prompt);
+          if (pendingContinuationTurnId === logicalTurnId) pendingContinuationTurnId = undefined;
           return;
         } catch {
+          pendingContinuationTurnId = undefined;
           // Fail open and report the settled turn below.
         }
       }
-      if (CONFIG.lifecycle) report(ctx, "turn-end");
+      if (CONFIG.lifecycle) report(ctx, "turn-end", { stop_reason: run.stopReason });
     });
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
+    stopControlPolling();
+    controlGeneration = randomUUID();
     generation += 1;
     lastRun = undefined;
     cancelPendingStop();

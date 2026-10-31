@@ -202,6 +202,7 @@ impl Host for TestHost {
         agent_key: &str,
         text: &str,
         files: Vec<StagedFile>,
+        _expected_result_id: Option<String>,
     ) -> InterjectResult {
         self.interject_ids
             .lock()
@@ -223,6 +224,7 @@ impl Host for TestHost {
             .unwrap()
             .clone()
             .unwrap_or(InterjectResult {
+                started_control: None,
                 status: "queued",
                 reason: None,
                 pending: 1,
@@ -319,6 +321,7 @@ pub fn sample_agent(key: &str, state: &str) -> AgentView {
         waiting_preview: None,
         pending_interject: 0,
         last_turn_failed: false,
+        last_turn_result: None,
         can_interject: CanInterject {
             ok: state == "working",
             reason: (state != "working").then(|| "notWorking".to_string()),
@@ -1003,6 +1006,7 @@ impl TestPhone {
             proto: wire::PROTO,
             app_ver: "1.0".into(),
             device_name: "Test iPhone".into(),
+            lifecycle_results: true,
         })
         .await;
         let ack: wire::HelloAck = self.recv_body(t::HELLO_ACK).await;

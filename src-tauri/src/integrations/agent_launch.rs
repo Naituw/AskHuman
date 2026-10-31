@@ -354,6 +354,22 @@ pub fn codex_version() -> Option<(u64, u64, u64)> {
     binary_probe(AgentKind::Codex, false).codex_version
 }
 
+pub fn grok_version() -> Option<(u64, u64, u64)> {
+    type VersionCache = Option<(String, Instant, Option<(u64, u64, u64)>)>;
+    static CACHE: OnceLock<Mutex<VersionCache>> = OnceLock::new();
+    let probe = binary_probe(AgentKind::Grok, false);
+    let executable = probe.lookup.executable()?;
+    let mut cache = CACHE.get_or_init(|| Mutex::new(None)).lock().unwrap();
+    if let Some((path, at, version)) = cache.as_ref() {
+        if path == executable && at.elapsed() < PROBE_CACHE_TTL {
+            return *version;
+        }
+    }
+    let version = detect_version(executable);
+    *cache = Some((executable.to_owned(), Instant::now(), version));
+    version
+}
+
 fn binary_probe(kind: AgentKind, force: bool) -> BinaryProbe {
     if !force {
         if let Some(hit) = cached_probe(kind) {

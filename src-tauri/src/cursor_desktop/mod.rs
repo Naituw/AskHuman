@@ -61,6 +61,50 @@ pub fn active(config: &Config) -> bool {
         ) != crate::integrations::agent_mode::Mode::None
 }
 
+/// Native idle control is separate from the optional background completion preference.
+fn messages_enabled() -> bool {
+    cfg!(target_os = "macos")
+        && !crate::dev_instance::is_dev_instance_context()
+        && crate::integrations::agent_mode::current(
+            crate::integrations::agent_rules::AgentTarget::Cursor,
+        ) != crate::integrations::agent_mode::Mode::None
+        && {
+            let lifecycle =
+                crate::integrations::agent_lifecycle::status(crate::agents::AgentKind::Cursor);
+            lifecycle.enabled && lifecycle.installed
+        }
+}
+
+pub fn messages_available(session_id: &str) -> bool {
+    messages_enabled() && crate::agents::cursor_vscdb::session_metadata(session_id).is_some()
+}
+
+pub enum MessageResult {
+    Started(String),
+    Rejected(String),
+    Unknown,
+}
+
+pub async fn send_message(session_id: &str, id: &str, text: &str) -> MessageResult {
+    if !messages_available(session_id) {
+        return MessageResult::Rejected("nativeUnavailable".into());
+    }
+    #[cfg(target_os = "macos")]
+    return runtime::send_message(session_id, id, text).await;
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (session_id, id, text);
+        MessageResult::Rejected("unsupported".into())
+    }
+}
+
+fn messages_need_cleanup() -> bool {
+    #[cfg(target_os = "macos")]
+    return !messages_enabled() && runtime::has_message_bridges();
+    #[cfg(not(target_os = "macos"))]
+    false
+}
+
 pub fn needs_cleanup() -> bool {
     #[cfg(target_os = "macos")]
     return runtime::has_managed_bridges();
@@ -164,6 +208,7 @@ pub fn status(config: &Config) -> Status {
 pub fn integration_changed() -> anyhow::Result<()> {
     if configured(&crate::config::AppConfig::load_without_secrets().cursor_desktop)
         || needs_cleanup()
+        || messages_need_cleanup()
     {
         // Mode mutation is synchronous and may be called from a Tokio worker. Use the client's
         // serialized startup protocol on a separate thread rather than nesting a runtime.
@@ -178,7 +223,7 @@ pub fn integration_changed() -> anyhow::Result<()> {
                         // An integration uninstall must finish restoration before callers remove
                         // the binary or stop the daemon. This does not wait on Cursor model turns.
                         for _ in 0..60 {
-                            if !needs_cleanup() { return Ok(()); }
+                            if !needs_cleanup() && !messages_need_cleanup() { return Ok(()); }
                             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                         }
                         return Err(std::io::Error::other("Cursor restoration is still pending; check doctor before removing AskHuman"));

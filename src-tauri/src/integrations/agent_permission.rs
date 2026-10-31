@@ -334,6 +334,8 @@ fn hook_label(event: &str) -> Option<&'static str> {
         "SubagentStart" => Some("subagent_start"),
         "SubagentStop" => Some("subagent_stop"),
         "Stop" => Some("stop"),
+        "Interrupt" => Some("interrupt"),
+        "SessionEnd" => Some("session_end"),
         _ => None,
     }
 }
@@ -347,9 +349,18 @@ fn event_uses_matcher(event: &str) -> bool {
             | "PreCompact"
             | "PostCompact"
             | "SessionStart"
+            | "SessionEnd"
             | "SubagentStart"
             | "SubagentStop"
     )
+}
+
+pub(crate) fn normalized_codex_timeout(event: &str, value: Option<u64>) -> u64 {
+    if matches!(event, "Interrupt" | "SessionEnd") {
+        value.unwrap_or(1).clamp(1, 3)
+    } else {
+        value.unwrap_or(600).max(1)
+    }
 }
 
 fn trust_entries(path: &Path, text: &str) -> Result<Vec<TrustEntry>> {
@@ -398,11 +409,10 @@ fn trust_entries(path: &Path, text: &str) -> Result<Vec<TrustEntry>> {
                     .get("command")
                     .and_then(Value::as_str)
                     .unwrap_or(command);
-                let timeout = handler
-                    .get("timeout")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(600)
-                    .max(1);
+                let timeout = handler.get("timeout").and_then(Value::as_u64).map_or_else(
+                    || normalized_codex_timeout(event, None),
+                    |t| normalized_codex_timeout(event, Some(t)),
+                );
                 let status_message = handler.get("statusMessage").and_then(Value::as_str);
                 // Codex only honors (and hashes) the limit on events that can emit
                 // `additionalContext`; elsewhere it is ignored with a warning.

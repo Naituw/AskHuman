@@ -1,5 +1,10 @@
 # Agent 生命周期追踪 + 状态窗口
 
+> **2026-10-31 更新**：当前实现接入 Codex `Interrupt`／`SessionEnd` 与 Grok
+> `StopCancelled`／空闲补漏（按已验证版本门槛安装）。统一结果、乱序关联、手机「需要处理」和
+> 原会话接续见 [Agent 生命周期结果与原会话继续](agent-lifecycle-results-and-recovery.md)。
+> 下文 §8.2 保留旧版源码调研记录，不代表当前事件能力。
+>
 > 状态：已实现（macOS/Linux/Windows），当前覆盖 Claude Code / Codex / Cursor / Grok / Pi。
 > 关联计划：`docs/plans/agent-lifecycle-tracking.md`
 > 关联调研：`demo/agent-lifecycle/FINDINGS.md`（三家 hook 事件/env、Cursor 双触发去重、进程存活轮询为唯一不漏的结束信号、身份相关结论、各家标题来源——全部实测）
@@ -66,7 +71,7 @@ AskHuman agents monitor
 | D2 | 平台范围 | **macOS + Linux + Windows**；三平台共享 daemon、Hook 协议和状态机，操作系统差异限于 IPC 与进程适配。 |
 | D3 | 总架构 | **daemon 为中枢**：内存维护 agent 注册表 + 持久化到 `~/.askhuman/agents.json`；hook 子进程经用户私有 daemon endpoint 上报事件；`agents monitor` 打开一个**长驻订阅** daemon 推送的 GUI 窗口（动态更新），`--text/--json` 返回一次快照。 |
 | D4 | Hook 命令实现 | 统一走二进制隐藏子命令 `AskHuman __agent-hook <agent> <event>`：读 stdin JSON 取 `session_id`、运行时 `detectRunningAgent` 去重、向上 walk 进程树找 agent pid、连 daemon 上报、**exit 0 + 空 stdout**。**不**再写独立 shell 脚本 |
-| D5 | 事件集 | 安装 **sessionStart + turn-start + turn-end + sessionEnd** 四类（Codex 无 sessionEnd，仅前三）。**进程存活轮询是权威的「已结束」判据**（关窗 / kill-9 时 turn-end/sessionEnd 都不触发，全靠它）；turn 起止仅用于切「工作中 / 空闲」 |
+| D5 | 事件集 | 安装 **sessionStart + turn-start + turn-end + sessionEnd** 四类；Codex 在已验证的 ≥0.163.0 版本安装 SessionEnd 和 Interrupt，旧版仍走兼容事件集。**有独立会话 pid 时进程存活轮询提供结束兜底**（关窗 / kill-9 时 turn-end/sessionEnd 都不触发，全靠它）；turn 起止仅用于切「工作中 / 空闲」 |
 | D6 | 鲁棒性（不依赖 sessionStart） | 任意事件（**尤其 turn-start**）都要做 pid 发现 + **幂等登记**；缺 sessionStart 也能正常追踪 |
 | D7 | 身份模型 | **身份 = `session_id`**（不同 session_id ⇒ 不同记录）。**pid 仅用于存活轮询**。同一 pid 出现**新** session_id ⇒ 旧 session 标记「已结束」、新 session 复用该 pid 追踪（**一个 pid 同时至多一个活动 session**）。pid 死亡 ⇒ 该 pid 当前活动 session 标记「已结束」 |
 | D8 | 状态三态 | **工作中**（turn 进行中）/ **空闲**（等输入）/ **已结束**。由 turn 事件 + 存活/TTL 推导 |
@@ -87,7 +92,7 @@ AskHuman agents monitor
 | D23 | stdout 契约 | `__agent-hook` **永远 `exit 0` + 空 stdout**（sessionStart/turn-start 的 stdout 会被注入模型上下文；Cursor `stop` 空输出 = no-op）。失败全部 fail-open |
 | D24 | i18n | 新 UI / 窗口中英双语（zh/en），沿用既有 i18n 体系 |
 | D25 | Codex app-server 共享 pid **不作会话 pid** | 新版 Codex TUI 经 UDS 连**长寿共享 app-server 守护**（reparent 到 PID 1、多 TUI 共用），hook/工具/MCP 都跑在 app-server 进程树内 → walk 只会命中 app-server、**永远拿不到 TUI pid**（源码+实测坐实，见 §8）。故 walk 命中的 Codex 祖先若是 app-server（判据见 D27）→ **视为「无可用会话 pid」记 `pid=None`**，走 D7/D12 的**无 pid 路径**（与 Claude 被 PID-scrub 时**同一条既有代码路径**）：不做 D7 轮换、不做存活轮询、由 D12 TTL + 「工作中兜底超时」治理。理由：app-server pid 打破 D7「一个 pid 至多一个活动 session、pid 死＝session 结束」假设——否则并发会话在 `apply_event` 里互相轮换误杀、幽灵会话永不结束、`touch_activity_by_pid` 跨 session 串味；且 app-server 无 tty，terminal 定位本就失败 |
-| D26 | interrupt / 关窗 结束判据（同 Claude 兜底） | Codex **无任何** interrupt/abort/SessionEnd hook（源码坐实：`Stop` 仅在回合**自然完成**触发，用户 Esc 打断走 `CodexErr::TurnAborted` 在 Stop 之前直接返回；见 §8）。故 Codex 的「打断 / 关窗 / 报错结束」＝Claude 无 Stop / 被 scrub 时的**同一兜底**：`working_backstop_sweep`（静默超时 工作中→空闲）+ D12 TTL（→已结束），**接受延迟**。正常回合结束仍由已安装的 `Stop`→turn-end hook 即时切「空闲」 |
+| D26 | interrupt / 关窗 / 报错结束判据 | Codex 当前版本提供活动主回合 Interrupt 与 SessionEnd；AskHuman 在已验证的 ≥0.163.0 安装这两个事件。Interrupt 归为 interrupted，不等于 API 失败；SessionEnd 保留结果，切换聊天本身不等于结束。没有独立错误 Hook 时，桌面原生终态可补 failed，其它来源保持 unknown 并沿用 Working backstop／TTL；旧版或缺失回调仍接受兜底延迟。详见统一结果 spec。 |
 | D27 | app-server 判据 | walk 命中的 Codex 祖先满足以下即判为「共享 app-server、非 TUI」→ 按 D25 记 `pid=None`：**`codex` 之后跳过前导全局选项，第一个非选项 token 为 `app-server` 子命令**（`codex app-server …`、`node …/codex app-server …`、ChatGPT/Codex Desktop 的 `codex -c features.…=true app-server …` 皆算；`--listen unix://`/`stdio://` 等为子命令后 flag）。**不得**用「参数任意位置出现 `app-server`」——`codex exec … app-server …` 子命令仍是 `exec`。取值型前导选项至少识别 `-c`/`--config`（及合并写法 `--config=`）。**兜底（可选）**：无 tty **且** 父链上溯到 PID 1。嵌入/旧模式 TUI 为纯 `codex`（无该子命令）→ pid 照常可用 |
 | D28 | 累计有效工作时长 | `AgentRecord` 持久化 `activeElapsedSecs` + `activeSince`：同一 session 跨 Turn 累计 Working 区间，只扣真正 Idle；AskHuman / Stop confirmation 等待仍算 Working，Stop continuation 不重置。正常 `turn-end` 冻结，backstop/TTL 用最后活动时刻封口、不计兜底宽限。旧记录字段缺失从 0 开始，不用 `startedAt` 近似历史。snapshot 的 `activeElapsedSecs` 注入含当前区间的生效总值，供 Watch 与工作中 Agent 单选卡统一展示；Idle/Ended Watch 终态显示冻结值。 |
 | D29 | Resume 继承与孪生并账（2026-07-25，用户实证） | 记录被判结束（SessionEnd / pid 死亡 / TTL / 重启存活复核）后同 session 事件再来 ＝ **resume**：`apply_event` 复活 ended 里的原记录并**继承**累计时长/起点/编号，不再新建零时长记录——此前 IDE 会话（pid 常缺失或误判）被反复拆成多条、累计时长归零重计（跑一上午只显示 30 分钟）。`load()` 时对历史数据做**孪生并账**：活动记录吸收同 (kind, session) 已结束孪生的时长与最早起点，纯已结束孪生合并到最新一条（幂等，仅影响累计展示与列表去重）。 |
@@ -106,7 +111,7 @@ AskHuman agents monitor
 - **Codex 信任哈希与 Codex 版本相关**：`trusted_hash` 由 Codex 源码的 hook identity 结构推导；若 Codex 改了该结构，旧哈希失效、hook 会被判 Untrusted 而不执行。需在 `status` 里能识别「未受信任 / 已漂移」并提示重装；算法与出处记于 `FINDINGS §6.2`。
 - **Linux 上 Claude 的 PID namespace 隔离**可能让 walk/`kill-0` 失效 → 落到 D12 的 TTL 兜底。
 - **空闲 agent 不保活 daemon** 的代价（D18）：agent 空闲超过 daemon 空闲上限后 daemon 退出，下个 turn-start 重新拉起（首事件略有延迟）；窗口开着时无此问题。**用户已确认可接受**。
-- **Codex app-server 共享 pid（D25–D27，§8）**：新版默认走共享 app-server → 追踪只能靠 `session_id` 身份 + hook 状态机 + TTL/兜底超时，**不能靠 pid 判存活**。代价：(1) 打断/关窗 无 hook → 结束/降级有延迟（同 Claude，D26）；(2) app-server 崩溃时其名下会话不会即时判死，最多滞留到 TTL（1h）；(3) 普通 Codex 会话因无 tty 不可聚焦；Windows 上由 AskHuman 创建且带登记 launch UUID 的任务不依赖 pid，可精确聚焦其 Windows Terminal 窗口。**判据（D27）依赖 Codex 命令行/进程形态**，若 Codex 改变 app-server 启动形态需同步；子命令位识别（含跳过 `-c` 等前导选项）比「无 tty+PID 1」更专一、更不易误伤真实 TUI。历史回归：ChatGPT Desktop 曾用 `codex -c features.code_mode_host=true app-server …`，旧实现要求 `codex` **紧邻** `app-server` 漏检 → 共享 pid 被写入多会话 → D7 互相轮换误杀。
+- **Codex app-server 共享 pid（D25–D27，§8）**：新版默认走共享 app-server → 追踪只能靠 `session_id` 身份 + hook 状态机 + TTL/兜底超时，**不能靠 pid 判存活**。代价：(1) 旧版或缺失 Interrupt／SessionEnd 时，结束／降级有延迟（D26）；(2) app-server 崩溃时其名下会话不会即时判死，最多滞留到 TTL（1h）；(3) 普通 Codex 会话因无 tty 不可聚焦；Windows 上由 AskHuman 创建且带登记 launch UUID 的任务不依赖 pid，可精确聚焦其 Windows Terminal 窗口。**判据（D27）依赖 Codex 命令行/进程形态**，若 Codex 改变 app-server 启动形态需同步；子命令位识别（含跳过 `-c` 等前导选项）比「无 tty+PID 1」更专一、更不易误伤真实 TUI。历史回归：ChatGPT Desktop 曾用 `codex -c features.code_mode_host=true app-server …`，旧实现要求 `codex` **紧邻** `app-server` 漏检 → 共享 pid 被写入多会话 → D7 互相轮换误杀。
 
 ## 8. Codex app-server 架构补充（2026-07 源码 + 实测坐实）
 

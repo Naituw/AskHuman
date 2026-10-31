@@ -9,8 +9,8 @@ final class AgentStoreTests: XCTestCase {
     private var backend: MockBackend!
     private var store: AppStore!
 
-    private func make(latency: Double = 0) async {
-        backend = MockBackend(scenario: .demo, latency: latency)
+    private func make(latency: Double = 0, scenario: MockBackend.Scenario = .demo) async {
+        backend = MockBackend(scenario: scenario, latency: latency)
         let defaults = UserDefaults(suiteName: "ah-test-" + UUID().uuidString)!
         store = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults)
         await store.start()
@@ -24,9 +24,9 @@ final class AgentStoreTests: XCTestCase {
     func testAgentsAreGroupedByStateWithQuestionsFirst() async {
         await make()
         let sections = store.agentSections()
-        XCTAssertEqual(sections.map(\.id), ["waiting", "working", "idle", "ended"])
+        XCTAssertEqual(sections.map(\.id), ["waiting", "attention", "working", "idle"])
         XCTAssertEqual(sections[0].items.map(\.agentKey), [MockData.waitingAgentKey])
-        XCTAssertEqual(Set(sections[1].items.map(\.agentKey)), [MockData.workingAgentKey, MockData.officeAgentKey])
+        XCTAssertEqual(Set(sections[2].items.map(\.agentKey)), [MockData.workingAgentKey, MockData.officeAgentKey])
         XCTAssertEqual(store.waitingAgentCount, 1)
     }
 
@@ -37,6 +37,84 @@ final class AgentStoreTests: XCTestCase {
         store.agentFilter = .mac(MockData.officeMacId)
         XCTAssertEqual(store.agentItems().count, 2)
         XCTAssertEqual(store.agentSections().map(\.id), ["working", "idle"])
+    }
+
+    func testFailedIdleAgentsRemainVisibleBeforeWorkingAgents() async {
+        await make()
+        await backend.setAgentResult(macId: MockData.homeMacId, agentKey: MockData.workingAgentKey,
+            result: AgentTurnResult(outcome: "failed", reason: "runtime_error", at: 123_000))
+        await eventually { self.store.agent(id: self.working.id)?.needsAttention == true }
+        let sections = store.agentSections()
+        XCTAssertEqual(Array(sections.map(\.id).prefix(3)), ["waiting", "attention", "working"])
+        XCTAssertEqual(Set(sections[1].items.map(\.agentKey)), [MockData.workingAgentKey, MockData.endedAgentKey])
+        XCTAssertEqual(sections[1].items.first?.view.state, "idle")
+    }
+
+    func testContinuationStartsANewRoundWithoutTouchingTheDraft() async throws {
+        await make()
+        let old = working
+        let composer = store.interjectComposer(for: old)
+        composer.text = "Keep this unsent note"
+        await backend.setAgentResult(macId: old.macId, agentKey: old.agentKey,
+            result: AgentTurnResult(outcome: "incomplete", turnId: "old", reason: "no_progress", at: 1, id: "result-1"))
+        await eventually { self.store.agent(id: old.id)?.needsAttention == true }
+        let outcome = try await store.continueAgent(old)
+        XCTAssertEqual(outcome.status, "delivered")
+        XCTAssertEqual(outcome.notificationRegistered, true)
+        XCTAssertEqual(composer.text, "Keep this unsent note")
+        await eventually { self.store.agent(id: old.id)?.view.state == "working" }
+        XCTAssertNil(store.agent(id: old.id)?.view.lastTurnResult)
+        do { _ = try await store.continueAgent(old); XCTFail("a second click must not submit") } catch {}
+        let records = await backend.interjects
+        XCTAssertEqual(records.count, 1)
+    }
+
+    func testUnknownContinuationKeepsItsIdentityUntilTheOriginalChatIsChecked() async throws {
+        await make()
+        let item = working
+        await backend.setAgentResult(macId: item.macId, agentKey: item.agentKey,
+            result: AgentTurnResult(outcome: "failed", at: 1, id: "result-2"))
+        await eventually { self.store.agent(id: item.id)?.needsAttention == true }
+        await backend.setNextInterjectFailure("controlUnknown")
+        do { _ = try await store.continueAgent(item); XCTFail("unknown") } catch {}
+        let action = store.continuation(for: item)
+        let id = action.messageId
+        XCTAssertNotNil(id)
+        XCTAssertTrue(action.needsDeliveryReview)
+        do { _ = try await store.continueAgent(item); XCTFail("review is required") } catch {}
+        XCTAssertEqual(action.messageId, id)
+        action.confirmDeliveryReviewed()
+        _ = try await store.continueAgent(item)
+        XCTAssertFalse(action.needsDeliveryReview)
+    }
+
+    func testUnknownDeliveryCannotBeBypassedThroughTheOtherEntryPoint() async throws {
+        await make()
+        let item = working
+        await backend.setAgentResult(macId: item.macId, agentKey: item.agentKey,
+            result: AgentTurnResult(outcome: "failed", at: 1, id: "result-3"))
+        await eventually { self.store.agent(id: item.id)?.needsAttention == true }
+        let composer = store.interjectComposer(for: item)
+        composer.text = "Unsent draft"
+        composer.needsDeliveryReview = true
+        do { _ = try await store.continueAgent(item); XCTFail("the first send needs review") } catch {}
+        store.confirmAgentDeliveryReviewed(item)
+        store.continuation(for: item).needsDeliveryReview = true
+        do { _ = try await store.send(composer, to: item); XCTFail("the continuation needs review") } catch {}
+        let records = await backend.interjects
+        XCTAssertTrue(records.isEmpty)
+        XCTAssertEqual(composer.text, "Unsent draft")
+    }
+
+    func testAFullNotificationListDoesNotHideSuccessfulNativeSubmission() async throws {
+        await make(scenario: .agentResults)
+        await backend.setFollowLimit(2)
+        let item = try XCTUnwrap(store.agent(id: AgentItem.key(MockData.homeMacId, MockData.endedAgentKey)))
+        let outcome = try await store.continueAgent(item)
+        XCTAssertEqual(outcome.status, "delivered")
+        XCTAssertEqual(outcome.notificationRegistered, false)
+        XCTAssertNotNil(store.banner, "the list result row disappears when the new round starts, so the warning must outlive it")
+        await eventually { self.store.agent(id: item.id)?.view.state == "working" }
     }
 
     // MARK: follow
@@ -230,7 +308,8 @@ final class AgentStoreTests: XCTestCase {
         let composer = store.interjectComposer(for: item)
         composer.text = "Please continue"
         let attachment = try composer.addAttachment(name: "note.txt", mime: "text/plain", data: Data("note".utf8), isImage: false)
-        for reason in ["desktopUnknown", "interrupted", "conflict"] {
+        for reason in ["desktopUnknown", "controlUnknown", "interrupted", "conflict"] {
+            composer.confirmDeliveryReviewed()
             composer.pendingMessageId = "same-message"
             await backend.setNextInterjectFailure(reason)
             do {

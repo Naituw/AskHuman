@@ -61,6 +61,14 @@ fn task_identity(create: &wire::TaskCreate) -> serde_json::Value {
     identity
 }
 
+fn interject_identity(send: &wire::InterjectSend) -> serde_json::Value {
+    let mut identity = json!({"agentKey": send.agent_key, "text": send.text, "files": send.files});
+    if let Some(expected) = &send.expected_result_id {
+        identity["expectedResultId"] = json!(expected);
+    }
+    identity
+}
+
 impl Actor {
     /// Runs `work` in the background and hands its result back to the actor.
     pub(super) fn spawn_then<T, Fut>(
@@ -87,6 +95,7 @@ impl Actor {
         result: InterjectResult,
     ) -> wire::InterjectAck {
         let ack = wire::InterjectAck {
+            notification_registered: None,
             client_msg_id: send.client_msg_id.clone(),
             agent_key: send.agent_key.clone(),
             status: result.status.to_string(),
@@ -98,11 +107,7 @@ impl Actor {
     }
 
     pub(super) fn on_interject_send(&mut self, phone_id: &str, send: wire::InterjectSend) {
-        let hash = body_hash(&json!({
-            "agentKey": send.agent_key,
-            "text": send.text,
-            "files": send.files,
-        }));
+        let hash = body_hash(&interject_identity(&send));
         if let Some(lookup) =
             self.replay_or_start(phone_id, &send.client_msg_id, t::INTERJECT_SEND, &hash)
         {
@@ -141,6 +146,7 @@ impl Actor {
                     &message.agent_key,
                     message.text.trim(),
                     files,
+                    message.expected_result_id.clone(),
                 )
                 .await
             },
@@ -158,12 +164,19 @@ impl Actor {
         result: InterjectResult,
     ) {
         let delivered = result.status != "rejected";
+        let notification_registered = result.started_control.as_ref().map(|control| {
+            self.activate_control_follow(&send.agent_key, control);
+            self.store.state.phone(phone_id).is_some_and(|phone| {
+                phone.follow_turns.get(&send.agent_key) == Some(&control.turn_id)
+            })
+        });
         let ack = wire::InterjectAck {
             client_msg_id: send.client_msg_id.clone(),
             agent_key: send.agent_key.clone(),
             status: result.status.to_string(),
             reason: result.reason,
             pending: result.pending,
+            notification_registered,
         };
         self.finish_journal(&send.client_msg_id, t::INTERJECT_ACK, &ack);
         self.send(phone_id, &ack);
@@ -488,6 +501,23 @@ mod tests {
             model: None,
             effort: None,
         }
+    }
+
+    #[test]
+    fn continuation_identity_includes_the_expected_result_without_changing_old_free_messages() {
+        let mut send = wire::InterjectSend {
+            client_msg_id: "one".into(),
+            agent_key: "cursor:s".into(),
+            text: "Continue".into(),
+            files: vec![],
+            expected_result_id: None,
+        };
+        let old = json!({"agentKey":"cursor:s", "text":"Continue", "files":[]});
+        assert_eq!(interject_identity(&send), old);
+        send.expected_result_id = Some("first".into());
+        let first = interject_identity(&send);
+        send.expected_result_id = Some("second".into());
+        assert_ne!(body_hash(&first), body_hash(&interject_identity(&send)));
     }
 
     #[test]

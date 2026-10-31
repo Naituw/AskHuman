@@ -31,6 +31,10 @@ public struct AgentItem: Identifiable, Sendable, Equatable {
     public var agentKey: String { view.key }
     public var isWorking: Bool { view.state == "working" }
     public var isEnded: Bool { view.state == "ended" }
+    public var needsAttention: Bool {
+        guard !["working", "waiting"].contains(view.state) else { return false }
+        return view.lastTurnResult.map { ["failed", "incomplete"].contains($0.outcome) } ?? view.lastTurnFailed
+    }
 }
 
 // MARK: watching
@@ -154,9 +158,12 @@ public struct InterjectOutcome: Sendable, Equatable {
     /// Messages still waiting for the Agent, including this one when queued.
     public var pending: Int
 
-    public init(status: String, pending: Int) {
+    public var notificationRegistered: Bool?
+
+    public init(status: String, pending: Int, notificationRegistered: Bool? = nil) {
         self.status = status
         self.pending = pending
+        self.notificationRegistered = notificationRegistered
     }
 }
 

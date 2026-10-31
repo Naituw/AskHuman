@@ -281,6 +281,9 @@ impl Actor {
             last_seen_at: now,
             state: PhoneState::PendingConfirm,
             follow_set: Vec::new(),
+            lifecycle_results: false,
+            follow_turns: Default::default(),
+            activated_controls: Vec::new(),
             push: None,
         });
         let rt = self.new_phone_rt(&phone_id);

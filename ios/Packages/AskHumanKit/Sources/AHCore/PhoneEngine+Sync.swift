@@ -53,7 +53,7 @@ extension PhoneEngine {
         macs[macId] = mac
         // A slow retry that was waiting is replaced by this attempt.
         cancelTimer("hello.retry." + macId)
-        let hello = Hello(nonce: nonce, appVer: config.appVersion, deviceName: config.deviceName)
+        let hello = Hello(nonce: nonce, appVer: config.appVersion, deviceName: config.deviceName, lifecycleResults: true)
         await send(hello, to: macId)
         after("hello." + macId, Self.helloTimeout) { engine in await engine.helloTimedOut(macId, nonce: nonce) }
     }

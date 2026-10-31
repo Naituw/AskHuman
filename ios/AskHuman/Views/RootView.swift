@@ -167,6 +167,7 @@ private struct BannerCard: View {
         case .agent(_, _, let event):
             switch event {
             case "failed": "xmark.octagon.fill"
+            case "incomplete": "exclamationmark.triangle.fill"
             case "waiting": "questionmark.bubble.fill"
             default: "checkmark.circle.fill"
             }
@@ -181,6 +182,7 @@ private struct BannerCard: View {
         case .agent(_, _, let event):
             switch event {
             case "failed": .red
+            case "incomplete": .orange
             case "waiting": .orange
             default: .green
             }
@@ -194,6 +196,7 @@ private struct BannerCard: View {
         guard case .agent(_, _, let event) = banner.kind else { return nil }
         switch event {
         case "failed": return "Agent failed"
+        case "incomplete": return "Task incomplete"
         case "waiting": return "Agent needs you"
         default: return "Agent finished"
         }

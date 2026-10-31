@@ -11,6 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::agents::result::{TurnOutcome, TurnResult};
 use serde_json::Value;
 
 use super::hostapi::{AgentEventInfo, AgentEventKind};
@@ -49,6 +50,7 @@ pub(crate) struct Live {
     pub agents_at: i64,
     /// Sessions whose last turn failed (cleared by the next turn).
     pub failed: HashSet<String>,
+    pub results: HashMap<String, TurnResult>,
     /// Session → when "done" is announced.
     pub done_at: HashMap<String, i64>,
     /// Results waiting for the Mac to be idle long enough; at most one per phone and Agent.
@@ -135,7 +137,11 @@ impl Actor {
             .map(|agent| {
                 let mut agent = agent.clone();
                 agent.followed = follow.contains(&agent.key);
-                agent.last_turn_failed = self.live.failed.contains(&agent.key);
+                agent.last_turn_failed = agent
+                    .last_turn_result
+                    .as_ref()
+                    .map(|result| result.outcome == TurnOutcome::Failed)
+                    .unwrap_or_else(|| self.live.failed.contains(&agent.key));
                 agent
             })
             .collect()
@@ -237,6 +243,7 @@ impl Actor {
             let present = phone.follow_set.contains(&set.agent_key);
             if !set.on {
                 phone.follow_set.retain(|key| key != &set.agent_key);
+                phone.follow_turns.remove(&set.agent_key);
             } else if present {
                 // Already following: nothing to change.
             } else if known.is_none_or(|a| a.state == "ended") {
@@ -251,6 +258,46 @@ impl Actor {
         self.revs.follow += 1;
         self.send_follow_state(phone_id, error);
         self.send_agents_delta(phone_id);
+    }
+
+    /// Adds an Agent to the follow set when there is room (tasks created from the phone).
+    pub(super) fn activate_control_follow(
+        &mut self,
+        agent_key: &str,
+        control: &crate::agents::control::StartedControl,
+    ) -> bool {
+        if !self
+            .store
+            .state
+            .active_phones()
+            .any(|phone| phone.phone_id == control.phone_id)
+        {
+            return false;
+        }
+        let Some(phone) = self.store.state.phone_mut(&control.phone_id) else {
+            return false;
+        };
+        if phone.activated_controls.contains(&control.operation_id) {
+            return false;
+        }
+        phone.activated_controls.push(control.operation_id.clone());
+        if phone.activated_controls.len() > 128 {
+            phone.activated_controls.remove(0);
+        }
+        let room = phone.follow_set.iter().any(|key| key == agent_key)
+            || phone.follow_set.len() < MAX_FOLLOW;
+        if room {
+            if !phone.follow_set.iter().any(|key| key == agent_key) {
+                phone.follow_set.push(agent_key.into());
+            }
+            phone
+                .follow_turns
+                .insert(agent_key.into(), control.turn_id.clone());
+        }
+        self.store.save_state();
+        self.revs.follow += 1;
+        self.send_follow_state(&control.phone_id, (!room).then_some("limit"));
+        room
     }
 
     /// Adds an Agent to the follow set when there is room (tasks created from the phone).
@@ -284,6 +331,9 @@ impl Actor {
         for phone in self.store.state.phones.iter_mut() {
             let before = phone.follow_set.len();
             phone.follow_set.retain(|key| alive.contains(key.as_str()));
+            phone
+                .follow_turns
+                .retain(|key, _| phone.follow_set.contains(key));
             if phone.follow_set.len() != before {
                 changed.push(phone.phone_id.clone());
             }
@@ -302,7 +352,16 @@ impl Actor {
         self.store
             .state
             .active_phones()
-            .filter(|p| p.follow_set.iter().any(|key| key == agent_key))
+            .filter(|p| {
+                p.follow_set.iter().any(|key| key == agent_key)
+                    && p.follow_turns.get(agent_key).is_none_or(|turn| {
+                        self.live
+                            .results
+                            .get(agent_key)
+                            .and_then(|result| result.turn_id.as_ref())
+                            == Some(turn)
+                    })
+            })
             .map(|p| p.phone_id.clone())
             .collect()
     }
@@ -312,11 +371,17 @@ impl Actor {
     pub(super) fn on_agent_event(&mut self, info: AgentEventInfo) {
         let now = self.now();
         let key = info.agent_key;
+        if let Some(control) = info.started_control {
+            if self.activate_control_follow(&key, &control) {
+                self.live.results.remove(&key);
+            }
+        }
         match info.event {
             // The Agent works again: the result that was about to be announced is no result.
             AgentEventKind::TurnStart => {
                 self.live.done_at.remove(&key);
                 self.live.failed.remove(&key);
+                self.live.results.remove(&key);
                 self.drop_notices(&key);
             }
             AgentEventKind::Activity => {
@@ -325,16 +390,61 @@ impl Actor {
             }
             AgentEventKind::SessionEnd => {
                 self.live.done_at.remove(&key);
-                self.live.failed.remove(&key);
                 self.drop_notices(&key);
             }
             AgentEventKind::TurnEnd => {
+                let outcome =
+                    info.result
+                        .as_ref()
+                        .map(|result| result.outcome)
+                        .unwrap_or(if info.failed {
+                            TurnOutcome::Failed
+                        } else {
+                            TurnOutcome::Unknown
+                        });
+                if let Some(result) = info.result {
+                    if self.live.results.get(&key).is_some_and(|old| {
+                        old.turn_id == result.turn_id
+                            && old.outcome == result.outcome
+                            && old.reason == result.reason
+                    }) {
+                        return;
+                    }
+                    self.live.results.insert(key.clone(), result);
+                }
                 self.live.done_at.remove(&key);
-                if info.failed {
+                self.drop_notices(&key);
+                if outcome == TurnOutcome::Failed {
                     self.live.failed.insert(key.clone());
                     self.announce(&key, "failed", now);
-                } else if !self.followers(&key).is_empty() {
+                } else if outcome == TurnOutcome::Incomplete {
+                    self.live.failed.remove(&key);
+                    self.announce(&key, "incomplete", now);
+                } else if outcome == TurnOutcome::Completed && !self.followers(&key).is_empty() {
+                    self.live.failed.remove(&key);
                     self.live.done_at.insert(key, now + DONE_DEBOUNCE_MS);
+                } else if outcome == TurnOutcome::Interrupted {
+                    self.live.failed.remove(&key);
+                    let turn = self
+                        .live
+                        .results
+                        .get(&key)
+                        .and_then(|result| result.turn_id.clone())
+                        .unwrap_or_default();
+                    for phone in self
+                        .store
+                        .state
+                        .phones
+                        .iter_mut()
+                        .filter(|phone| phone.follow_set.contains(&key))
+                    {
+                        // An interrupted phone round must not subscribe to unrelated later Mac turns.
+                        phone
+                            .follow_turns
+                            .entry(key.clone())
+                            .or_insert_with(|| turn.clone());
+                    }
+                    self.store.save_state();
                 }
             }
         }
@@ -394,21 +504,33 @@ impl Actor {
             .map(|a| a.kind_label.clone())
             .unwrap_or_default();
         let preview = self
-            .host
-            .watch_frame(agent_key)
-            .and_then(|data| {
-                data.frame
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
+            .live
+            .results
+            .get(agent_key)
+            .filter(|result| result.outcome.needs_attention())
+            .and_then(|result| result.summary.clone().or_else(|| result.reason.clone()))
+            .or_else(|| {
+                self.host.watch_frame(agent_key).and_then(|data| {
+                    data.frame
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
             })
             .map(|text| clip(&text, PUSH_PREVIEW_MAX_CHARS))
             .unwrap_or_default();
-        let loc_key = if kind == "done" {
-            "PUSH_FOLLOW_DONE"
-        } else {
-            "PUSH_FOLLOW_FAILED"
+        let loc_key = match kind {
+            "done" => "PUSH_FOLLOW_DONE",
+            "incomplete" => "PUSH_FOLLOW_INCOMPLETE",
+            _ => "PUSH_FOLLOW_FAILED",
         };
+        let result_at = self
+            .live
+            .results
+            .get(agent_key)
+            .map(|result| result.at as i64)
+            .filter(|at| *at > 0 && *at <= now)
+            .unwrap_or(now);
         let plain = PushPlain {
             k: format!("follow.{kind}"),
             rid: Some(agent_key.to_string()),
@@ -421,9 +543,18 @@ impl Actor {
             } else {
                 preview.clone()
             },
-            ts: now,
+            ts: result_at,
         };
         for phone_id in followers {
+            if kind == "incomplete"
+                && !self
+                    .store
+                    .state
+                    .phone(&phone_id)
+                    .is_some_and(|phone| phone.lifecycle_results)
+            {
+                continue;
+            }
             if self.is_looking(&phone_id) {
                 self.send(
                     &phone_id,
@@ -446,7 +577,7 @@ impl Actor {
                     agent_key: agent_key.to_string(),
                     loc_key,
                     plain: plain.clone(),
-                    at: now,
+                    at: result_at,
                 });
             }
             // A phone that cannot be pushed to stays a follower: nothing could reach it.
@@ -464,6 +595,7 @@ impl Actor {
         };
         let before = phone.follow_set.len();
         phone.follow_set.retain(|key| key != agent_key);
+        phone.follow_turns.remove(agent_key);
         if phone.follow_set.len() == before {
             return;
         }

@@ -83,6 +83,12 @@ pub struct PhoneRecord {
     pub state: PhoneState,
     #[serde(default)]
     pub follow_set: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lifecycle_results: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub follow_turns: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub activated_controls: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub push: Option<PushReg>,
 }
@@ -484,6 +490,9 @@ mod tests {
             last_seen_at: 0,
             state,
             follow_set: vec![],
+            lifecycle_results: false,
+            follow_turns: BTreeMap::new(),
+            activated_controls: vec![],
             push: None,
         }
     }

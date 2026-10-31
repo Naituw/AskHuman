@@ -101,3 +101,19 @@ public final class InterjectComposer {
         return String(String(cleaned).prefix(80))
     }
 }
+
+/// Continuation has its own identity so it never overwrites an unsent free-form draft.
+@MainActor
+@Observable
+public final class AgentContinuation {
+    public var isSending = false
+    public var needsDeliveryReview = false
+    public internal(set) var messageId: String?
+    public internal(set) var resultId: String?
+    public internal(set) var submittedResultId: String?
+    public init() {}
+    public func confirmDeliveryReviewed() {
+        messageId = nil
+        needsDeliveryReview = false
+    }
+}
