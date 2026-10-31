@@ -147,7 +147,7 @@ extension MockData {
             // Every model names its own efforts and the one it runs with.
             AgentOption(
                 kind: "codex", label: "Codex", ready: true, subtitle: "Codex App", permissionSelectable: true,
-                models: codexModels, defaultModel: DefaultModel(label: "GPT-5.1-Codex-Max", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high")
+                models: codexModels, defaultModel: DefaultModel(label: "GPT-5.1-Codex-Max", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high"), speedControl: true
             ),
             // Some models think, some do not: the effort row comes and goes with the model.
             AgentOption(
@@ -161,6 +161,7 @@ extension MockData {
         ].map { agent -> AgentOption in
             guard !models else { return agent }
             var plain = agent
+            plain.speedControl = nil
             plain.models = nil
             plain.defaultModel = nil
             return plain
@@ -187,7 +188,7 @@ extension MockData {
     private static let codexModels = [
         ModelOption(
             id: "gpt-5.1-codex-max", label: "GPT-5.1-Codex-Max", note: "The most capable model for long, agentic coding work.",
-            efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "medium"
+            efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "medium", fastSupported: true
         ),
         ModelOption(
             id: "gpt-5.1-codex-mini", label: "GPT-5.1-Codex-Mini", note: "Smaller and cheaper, for quicker tasks.",

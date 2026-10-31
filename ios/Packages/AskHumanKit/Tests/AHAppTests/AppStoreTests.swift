@@ -488,23 +488,38 @@ final class AppStoreTests: XCTestCase {
         XCTAssertEqual(store.drafts.draft(key: migration.id)?.answers[2].text, "draft")
     }
 
-    func testANewRequestRaisesABannerAndAHapticTick() async throws {
+    func testANewRequestRaisesAnAnimationAndAHapticTickWithoutABanner() async throws {
         await make()
         let before = store.arrivalTick
         await backend.simulateArrival()
         await eventually("tick") { self.store.arrivalTick == before + 1 }
-        guard case .request(let macId, _)? = store.banner?.kind else { return XCTFail("expected a request banner") }
-        XCTAssertEqual(macId, MockData.homeMacId)
-        XCTAssertEqual(store.banner?.title, "Cursor · HumanInLoop")
+        await eventually("animation") { self.store.requestArrivals.count == 1 }
+        XCTAssertEqual(store.requestArrivals.first?.macId, MockData.homeMacId)
+        XCTAssertNil(store.banner)
     }
 
-    func testTheBannerOfARequestNamesItsSession() async throws {
+    func testTheInitialInboxSnapshotDoesNotReplayExistingRequests() async {
+        await make()
+        XCTAssertEqual(store.pendingCount, 5)
+        XCTAssertEqual(store.arrivalTick, 0)
+        XCTAssertTrue(store.requestArrivals.isEmpty)
+    }
+
+    func testConcurrentArrivalsRemainIndependentAndKeepTheirRequestMetadata() async throws {
         await make()
         let before = store.arrivalTick
         await backend.simulateArrival(sessionTitle: "Review the release notes")
         await eventually("tick") { self.store.arrivalTick == before + 1 }
-        XCTAssertEqual(store.banner?.title, "Review the release notes", "the title replaces the Agent and project")
-        XCTAssertEqual(store.banner?.subtitle, "测试已通过，需要我提交这些改动吗？")
+        await backend.simulateArrival(sessionTitle: "Check permissions")
+        await eventually("both animations") { self.store.requestArrivals.count == 2 }
+        XCTAssertEqual(Set(store.requestArrivals.map(\.id)).count, 2)
+        let names = store.requestArrivals.compactMap { store.item(id: $0.id)?.sessionTitle }
+        XCTAssertEqual(Set(names), ["Review the release notes", "Check permissions"])
+        let first = try XCTUnwrap(store.requestArrivals.first)
+        store.finishRequestArrival(id: first.id)
+        XCTAssertEqual(store.requestArrivals.count, 1)
+        XCTAssertEqual(store.pendingCount, 7, "animation completion must not handle or read a question")
+        XCTAssertTrue(try XCTUnwrap(store.item(id: first.id)).unread)
     }
 
     func testTheInboxNamesARequestBySessionTitleElseByAgent() async throws {
@@ -528,17 +543,59 @@ final class AppStoreTests: XCTestCase {
         await eventually { self.store.state.inbox.count == 6 }
         XCTAssertEqual(store.arrivalTick, before)
         XCTAssertNil(store.banner)
+        XCTAssertTrue(store.requestArrivals.isEmpty)
     }
 
-    func testTheBannerDisappearsWhenItsRequestIsAnsweredElsewhere() async throws {
+    func testTheAnimationDisappearsWhenItsRequestFinishes() async throws {
         await make()
         await backend.simulateArrival()
-        await eventually { self.store.banner != nil }
+        await eventually { !self.store.requestArrivals.isEmpty }
         let arrived = try XCTUnwrap(store.state.inbox.first { $0.requestId.hasPrefix("req-live") })
         let composer = try XCTUnwrap(store.composer(for: arrived))
         composer.toggle(question: 0, option: 0)
         try await store.send(composer, item: arrived)
-        await eventually("banner cleared") { self.store.banner == nil }
+        await eventually("animation cleared") { self.store.requestArrivals.isEmpty }
+    }
+
+    func testOpeningTheRequestCancelsOnlyItsOwnAnimation() async throws {
+        await make()
+        await backend.simulateArrival()
+        await backend.simulateArrival()
+        await eventually { self.store.requestArrivals.count == 2 }
+        let first = try XCTUnwrap(store.requestArrivals.first)
+        store.open(macId: first.macId, requestId: first.requestId)
+        XCTAssertEqual(store.requestArrivals.count, 1)
+        XCTAssertNotEqual(store.requestArrivals.first?.id, first.id)
+    }
+
+    func testArrivalBeforeTheInboxStateIsReleasedWhenTheRequestBecomesKnown() async {
+        await make()
+        await backend.simulateArrival(eventBeforeState: true)
+        await eventually { self.store.requestArrivals.count == 1 }
+        XCTAssertNotNil(store.item(id: store.requestArrivals[0].id))
+        XCTAssertNil(store.banner)
+    }
+
+    func testPermissionAndStopRequestsEachOwnAnArrival() async {
+        await make()
+        await backend.simulateArrival(kind: "permission")
+        await backend.simulateArrival(kind: "stop")
+        await eventually { self.store.requestArrivals.count == 2 }
+        let requests = store.requestArrivals.compactMap { store.item(id: $0.id)?.view }
+        XCTAssertEqual(requests.map(\.kind), ["confirm", "confirm"])
+        XCTAssertEqual(Set(requests.compactMap { $0.confirm?.title }), ["允许运行这条命令吗？", "Agent 想结束本轮工作"])
+    }
+
+    func testLeavingTheForegroundClearsAnimationsWithoutReplayingOnReturn() async {
+        await make()
+        await backend.simulateArrival()
+        await eventually { self.store.requestArrivals.count == 1 }
+        await store.setInactive()
+        XCTAssertTrue(store.requestArrivals.isEmpty)
+        await store.setForeground(true)
+        await eventually { self.store.state.foreground }
+        XCTAssertTrue(store.requestArrivals.isEmpty)
+        XCTAssertEqual(store.pendingCount, 6)
     }
 
     // MARK: Macs and pairing

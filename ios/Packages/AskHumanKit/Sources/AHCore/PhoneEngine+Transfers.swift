@@ -189,7 +189,7 @@ extension PhoneEngine {
         return try await performUpload(macId: macId, scope: UploadScope(requestId: requestId), source: source, progress: progress)
     }
 
-    /// Pushes one file to a Mac for a question (`requestId` scope) or an Agent (`agentKey` scope).
+    /// Pushes one file to a Mac for a question, an Agent or a new task, bound to that scope.
     func performUpload(
         macId: String, scope: UploadScope, source: UploadSource, progress: @escaping @Sendable (Double) -> Void
     ) async throws -> String {
@@ -197,11 +197,13 @@ extension PhoneEngine {
         guard !source.data.isEmpty, source.data.count <= Wire.maxAssetBytes else { throw BackendError.tooLarge }
 
         let uploadId = Bytes.newId()
+        var completed = false
         uploadOwners[uploadId] = macId
         uploadMailboxes[uploadId] = UploadMailbox()
         defer {
             uploadMailboxes[uploadId] = nil
             uploadOwners[uploadId] = nil
+            if !completed, scope.taskId != nil { Task { await self.send(UploadCancel(uploadId: uploadId), to: macId) } }
         }
         let size = UInt64(source.data.count)
         let chunkSize = Wire.assetChunkBytes
@@ -250,6 +252,7 @@ extension PhoneEngine {
             }
         }
         progress(1)
+        completed = true
         return uploadId
     }
 

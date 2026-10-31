@@ -84,11 +84,12 @@ public struct WatchFrameData: Sendable, Equatable {
     /// The model the session runs with and its reasoning effort, when the Mac knows them.
     public var model: String?
     public var reasoning: String?
+    public var speed: TaskSpeed?
 
     public init(
         phase: String, title: String? = nil, project: String? = nil, text: String? = nil, steps: [WatchStep] = [],
         stepsOmitted: Int = 0, todos: [WatchTodo] = [], activeElapsedSecs: UInt64? = nil, at: Int64? = nil,
-        model: String? = nil, reasoning: String? = nil
+        model: String? = nil, reasoning: String? = nil, speed: TaskSpeed? = nil
     ) {
         self.phase = phase
         self.title = title
@@ -101,6 +102,7 @@ public struct WatchFrameData: Sendable, Equatable {
         self.at = at
         self.model = model
         self.reasoning = reasoning
+        self.speed = speed
     }
 
     /// `nil` when the value is not a frame object.
@@ -124,7 +126,7 @@ public struct WatchFrameData: Sendable, Equatable {
             phase: json["phase"]?.stringValue ?? "working", title: string("title"), project: string("project"),
             text: string("text"), steps: steps, stepsOmitted: Int(json["stepsOmitted"]?.intValue ?? 0), todos: todos,
             activeElapsedSecs: json["activeElapsedSecs"]?.intValue.map { UInt64(max(0, $0)) }, at: json["at"]?.intValue,
-            model: string("model"), reasoning: string("reasoning")
+            model: string("model"), reasoning: string("reasoning"), speed: string("speed").flatMap(TaskSpeed.init(rawValue:))
         )
     }
 }
@@ -204,10 +206,12 @@ public struct TaskProgress: Identifiable, Sendable, Equatable {
     /// The model the user picked (its display name; `nil` = "Default") and the effort (its id; `nil` = "Default").
     public var modelLabel: String?
     public var effort: String?
+    public var speed: TaskSpeed?
+    public var attachmentNames: [String]
 
     public init(
         id: String, macId: String, workspace: String, agentLabel: String, text: String, stage: String, reason: String? = nil,
-        agentKey: String? = nil, createdAt: Date, modelLabel: String? = nil, effort: String? = nil
+        agentKey: String? = nil, createdAt: Date, modelLabel: String? = nil, effort: String? = nil, speed: TaskSpeed? = nil, attachmentNames: [String] = []
     ) {
         self.id = id
         self.macId = macId
@@ -220,6 +224,8 @@ public struct TaskProgress: Identifiable, Sendable, Equatable {
         self.createdAt = createdAt
         self.modelLabel = modelLabel
         self.effort = effort
+        self.speed = speed
+        self.attachmentNames = attachmentNames
     }
 
     /// The user picked a model or an effort (rather than leaving both to the Agent).
@@ -257,12 +263,14 @@ public struct TaskDraft: Sendable, Equatable {
     /// The model id and effort the user picked; `nil` = "Default", which sends nothing.
     public var model: String?
     public var effort: String?
+    public var speed: TaskSpeed?
+    public var files: [UploadSource]
     /// The display name of the picked model (the progress page shows it).
     public var modelLabel: String?
 
     public init(
         workspaceId: String, workspaceName: String, agentKind: String, agentLabel: String, permission: String, todoId: String? = nil,
-        model: String? = nil, effort: String? = nil, modelLabel: String? = nil, text: String
+        model: String? = nil, effort: String? = nil, modelLabel: String? = nil, speed: TaskSpeed? = nil, files: [UploadSource] = [], text: String
     ) {
         self.workspaceId = workspaceId
         self.workspaceName = workspaceName
@@ -273,6 +281,8 @@ public struct TaskDraft: Sendable, Equatable {
         self.text = text
         self.model = model
         self.effort = effort
+        self.speed = speed
+        self.files = files
         self.modelLabel = modelLabel
     }
 }

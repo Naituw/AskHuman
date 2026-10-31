@@ -10,7 +10,6 @@ import AHTransport
 /// backend; the others pick the scenario and the first screen.
 struct LaunchOptions {
     var mock = false
-    var inputCaretDiagnostics = false
     var scenario: MockBackend.Scenario = .demo
     var latency = 1.0
     var tab: AppTab?
@@ -22,6 +21,9 @@ struct LaunchOptions {
     var followAgent: String?
     /// Opens the new task sheet first.
     var newTask = false
+    var taskAttachmentDemo = false
+    var noTaskAttachments = false
+    var failTaskUpload = false
     /// The mock Agents never pick up the messages sent to them (UI tests that withdraw one).
     var holdInterjects = false
     /// The mock Macs list no models, like an older Mac: the new task form has no model or effort row.
@@ -33,6 +35,14 @@ struct LaunchOptions {
     /// A request arrives a moment after launch (the request banner), from a session with this title;
     /// `none` for one without a title.
     var arrival: String?
+    var arrivalCount = 1
+    var arrivalDelay = 2.0
+    var arrivalMotionDiagnostics = false
+    var inputCaretDiagnostics = false
+    var arrivalMotionSlowdown = 1.0
+    var arrivalFullscreenFixture = false
+    var arrivalMarkedTextFixture = false
+    var arrivalReducedMotion = false
     /// Forces "open the next request after sending" on or off (UI tests need a fixed value).
     var autoAdvance: Bool?
     /// Seconds (real time) after which the `syncing` scenario turns into the demo; unset keeps it syncing.
@@ -60,7 +70,6 @@ struct LaunchOptions {
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
-        inputCaretDiagnostics = defaults.bool(forKey: "AHInputCaretDiagnostics")
         if let name = defaults.string(forKey: "AHScenario"), let scenario = MockBackend.Scenario(rawValue: name) {
             self.scenario = scenario
         }
@@ -70,11 +79,22 @@ struct LaunchOptions {
         openAgent = defaults.string(forKey: "AHOpenAgent")
         followAgent = defaults.string(forKey: "AHFollowAgent")
         newTask = defaults.bool(forKey: "AHNewTask")
+        taskAttachmentDemo = defaults.bool(forKey: "AHTaskAttachments")
+        noTaskAttachments = defaults.bool(forKey: "AHNoTaskAttachments")
+        failTaskUpload = defaults.bool(forKey: "AHFailTaskUpload")
         holdInterjects = defaults.bool(forKey: "AHHoldInterjects")
         noModels = defaults.bool(forKey: "AHNoModels")
         failTask = defaults.string(forKey: "AHFailTask")
         followEvent = defaults.string(forKey: "AHFollowEvent")
         arrival = defaults.string(forKey: "AHArrival")
+        arrivalCount = min(20, max(1, defaults.integer(forKey: "AHArrivalCount")))
+        if defaults.object(forKey: "AHArrivalDelay") != nil { arrivalDelay = max(0, defaults.double(forKey: "AHArrivalDelay")) }
+        arrivalMotionDiagnostics = defaults.bool(forKey: "AHArrivalMotionDiagnostics")
+        inputCaretDiagnostics = defaults.bool(forKey: "AHInputCaretDiagnostics")
+        arrivalFullscreenFixture = defaults.bool(forKey: "AHArrivalFullscreenFixture")
+        arrivalMarkedTextFixture = defaults.bool(forKey: "AHArrivalMarkedTextFixture")
+        arrivalReducedMotion = defaults.bool(forKey: "AHArrivalReducedMotion")
+        if defaults.object(forKey: "AHArrivalMotionSlowdown") != nil { arrivalMotionSlowdown = max(1, defaults.double(forKey: "AHArrivalMotionSlowdown")) }
         if defaults.object(forKey: "AHAutoAdvance") != nil { autoAdvance = defaults.bool(forKey: "AHAutoAdvance") }
         if defaults.object(forKey: "AHSyncDelay") != nil { syncDelay = defaults.double(forKey: "AHSyncDelay") }
         cachedInbox = defaults.bool(forKey: "AHCached")
@@ -117,8 +137,12 @@ final class AppEnvironment {
             }
             if let title = launch.arrival {
                 Task {
-                    try? await Task.sleep(for: .seconds(2))
-                    await backend.simulateArrival(sessionTitle: title == "none" ? nil : title)
+                    try? await Task.sleep(for: .seconds(launch.arrivalDelay))
+                    for index in 0..<launch.arrivalCount {
+                        await backend.simulateArrival(sessionTitle: title == "none" ? nil : title,
+                                                      kind: ["ask", "permission", "stop"][index % 3])
+                        try? await Task.sleep(for: .milliseconds(110))
+                    }
                 }
             }
             drafts = MemoryDraftStore()
@@ -171,6 +195,7 @@ final class AppEnvironment {
         if let backend = mock {
             if launch.noModels { await backend.setOffersModels(false) }
             if let reason = launch.failTask { await backend.setFailNextTask(reason) }
+            await backend.setTaskAttachmentOptions(supported: !launch.noTaskAttachments, failUpload: launch.failTaskUpload)
         }
         await store.start()
         await push.refreshAuthorization()
@@ -213,6 +238,12 @@ final class AppEnvironment {
             for _ in 0..<50 where store.taskMacs.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
             store.tab = .agents
             store.presentNewTask()
+            if launch.mock, launch.taskAttachmentDemo, let composer = store.taskComposer {
+                try? composer.addAttachment(name: "Notes.txt", mime: "text/plain", data: Data("Task notes".utf8), isImage: false)
+                if let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=") {
+                    try? composer.addAttachment(name: "Screen.png", mime: "image/png", data: png, isImage: true)
+                }
+            }
         }
     }
 }

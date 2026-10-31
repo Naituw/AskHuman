@@ -1,0 +1,1226 @@
+[
+  {
+    "elapsed": 0,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 453,
+      "scale": 0.78,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 0,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 100,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 447.6018652476545,
+      "scale": 0.8713530496550782,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 0.41524113479580993,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 219,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 440.0000121257746,
+      "scale": 0.9999997947945836,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 0.999999067248107,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 220,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 440,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 250,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 441.8139534883721,
+      "scale": 1,
+      "stretchX": 1.0438413361169103,
+      "stretchY": 0.958,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 500,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 400.4023796646836,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1000,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 411.65170362358026,
+      "scale": 1,
+      "stretchX": 0.9834875563636364,
+      "stretchY": 1.016789682319334,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1219,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 440.1605864752173,
+      "scale": 1,
+      "stretchX": 1.0001309077595986,
+      "stretchY": 0.999869109375,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1220,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 440,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1300,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 428.37669625548415,
+      "scale": 1,
+      "stretchX": 0.9916857952233443,
+      "stretchY": 1.0083839103239178,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1600,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 408.0522395673911,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1835,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 417.7869605142332,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1836,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 210,
+      "y": 417.87654320987656,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1950,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 209.41486936247284,
+      "y": 438.24270575919746,
+      "scale": 0.9976853874105609,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": -0.6927441811602018,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 0.892937547219753,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 2200,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 172.24548851563932,
+      "y": 685.3383496963322,
+      "scale": 0.5311565986942497,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": -7.970197202797559,
+      "morph": 0.13228155955868517,
+      "plateOpacity": 0.9497352669724253,
+      "haloOpacity": 0.0513205514365902,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 2450,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 76.67277210173523,
+      "y": 850.2555218174518,
+      "scale": 0.13685411257428148,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": -1.1168533006743333,
+      "morph": 0.9632064291415738,
+      "plateOpacity": 0.003033075285212461,
+      "haloOpacity": 0,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 2586,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 65,
+      "y": 850
+    },
+    "frame": {
+      "x": 65,
+      "y": 850,
+      "scale": 0.13636363636363635,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": -9.797174393178826e-16,
+      "morph": 1,
+      "plateOpacity": 0,
+      "haloOpacity": 0,
+      "done": true
+    }
+  },
+  {
+    "elapsed": 0,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 453,
+      "scale": 0.78,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 0,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 100,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 447.6018652476545,
+      "scale": 0.8713530496550782,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 0.41524113479580993,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 219,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 440.0000121257746,
+      "scale": 0.9999997947945836,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 0.999999067248107,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 220,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 440,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 250,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 441.8139534883721,
+      "scale": 1,
+      "stretchX": 1.0438413361169103,
+      "stretchY": 0.958,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 500,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 400.4023796646836,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1000,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 411.65170362358026,
+      "scale": 1,
+      "stretchX": 0.9834875563636364,
+      "stretchY": 1.016789682319334,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1219,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 440.1605864752173,
+      "scale": 1,
+      "stretchX": 1.0001309077595986,
+      "stretchY": 0.999869109375,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1220,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 440,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1300,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 428.37669625548415,
+      "scale": 1,
+      "stretchX": 0.9916857952233443,
+      "stretchY": 1.0083839103239178,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1600,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 408.0522395673911,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1835,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 417.7869605142332,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1836,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 210,
+      "y": 417.87654320987656,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1950,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 209.9604539432269,
+      "y": 452.9754723098364,
+      "scale": 0.9995460950197045,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": -0.6927441811602018,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 0.892937547219753,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 2200,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 203.24580067447272,
+      "y": 413.3905746000742,
+      "scale": 0.5889884680307778,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": -7.970197202797559,
+      "morph": 0.13228155955868517,
+      "plateOpacity": 0.9497352669724253,
+      "haloOpacity": 0.0513205514365902,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 2450,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 182.64165431770638,
+      "y": 127.39327050759628,
+      "scale": 0.13700601377082555,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": -1.1168533006743333,
+      "morph": 0.9632064291415738,
+      "plateOpacity": 0.003033075285212461,
+      "haloOpacity": 0,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 2586,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 180,
+      "y": 122
+    },
+    "frame": {
+      "x": 180,
+      "y": 122,
+      "scale": 0.13636363636363635,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": -9.797174393178826e-16,
+      "morph": 1,
+      "plateOpacity": 0,
+      "haloOpacity": 0,
+      "done": true
+    }
+  },
+  {
+    "elapsed": 0,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 453,
+      "scale": 0.78,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 0,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 100,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 447.6018652476545,
+      "scale": 0.8713530496550782,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 0.41524113479580993,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 219,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 440.0000121257746,
+      "scale": 0.9999997947945836,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 0.999999067248107,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 220,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 440,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 250,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 441.8139534883721,
+      "scale": 1,
+      "stretchX": 1.0438413361169103,
+      "stretchY": 0.958,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 500,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 400.4023796646836,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1000,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 411.65170362358026,
+      "scale": 1,
+      "stretchX": 0.9834875563636364,
+      "stretchY": 1.016789682319334,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1219,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 440.1605864752173,
+      "scale": 1,
+      "stretchX": 1.0001309077595986,
+      "stretchY": 0.999869109375,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1220,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 440,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1300,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 428.37669625548415,
+      "scale": 1,
+      "stretchX": 0.9916857952233443,
+      "stretchY": 1.0083839103239178,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1600,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 408.0522395673911,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1835,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 417.7869605142332,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1836,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210,
+      "y": 417.87654320987656,
+      "scale": 1,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": 0,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 1,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 1950,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 210.61719082198394,
+      "y": 436.8681446507401,
+      "scale": 0.9975003974881833,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": -0.6927441811602018,
+      "morph": 0,
+      "plateOpacity": 1,
+      "haloOpacity": 0.892937547219753,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 2200,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 248.36460380191198,
+      "y": 606.682955435082,
+      "scale": 0.5245591009992002,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": -7.970197202797559,
+      "morph": 0.13228155955868517,
+      "plateOpacity": 0.9497352669724253,
+      "haloOpacity": 0.0513205514365902,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 2450,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 343.4755181183731,
+      "y": 700.9303489753604,
+      "scale": 0.13683560803111738,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": -1.1168533006743333,
+      "morph": 0.9632064291415738,
+      "plateOpacity": 0.003033075285212461,
+      "haloOpacity": 0,
+      "done": false
+    }
+  },
+  {
+    "elapsed": 2586,
+    "origin": {
+      "x": 210,
+      "y": 440
+    },
+    "target": {
+      "x": 355,
+      "y": 700
+    },
+    "frame": {
+      "x": 355,
+      "y": 700,
+      "scale": 0.13636363636363635,
+      "stretchX": 1,
+      "stretchY": 1,
+      "opacity": 1,
+      "angle": -9.797174393178826e-16,
+      "morph": 1,
+      "plateOpacity": 0,
+      "haloOpacity": 0,
+      "done": true
+    }
+  }
+]

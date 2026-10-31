@@ -85,6 +85,8 @@ public actor MockBackend: RemoteBackend {
     public var failNextInterject: String?
     /// Whether the Macs list models for the new task form; `false` is a Mac that is too old to.
     public var offersModels = true
+    public var offersTaskAttachments = true
+    public var failNextTaskUpload = false
     /// The forms behind the Agents the mock started for new tasks (`macId|agentKey`).
     var launchedDrafts: [String: TaskDraft] = [:]
     /// How many Agents one Mac may follow (the real limit unless a test lowers it).
@@ -500,11 +502,11 @@ public actor MockBackend: RemoteBackend {
 
     /// Delivers a new request, as if the Agent on `macId` had just asked (from a session called
     /// `sessionTitle`, when given).
-    public func simulateArrival(macId: String = MockData.homeMacId, sessionTitle: String? = nil) {
+    public func simulateArrival(macId: String = MockData.homeMacId, sessionTitle: String? = nil, kind: String = "ask", eventBeforeState: Bool = false) async {
         counter += 1
         let date = now()
         let id = "req-live-\(counter)"
-        let view = RequestView(
+        var view = RequestView(
             id: id, kind: "ask", createdAt: MockData.ms(date), agent: AgentRef(kind: "cursor", label: "Cursor"),
             project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: sessionTitle,
             source: "cursor", contentHash: "h-" + id,
@@ -517,12 +519,19 @@ public actor MockBackend: RemoteBackend {
                 selectOnly: false, single: true
             )
         )
+        if kind == "permission" || kind == "stop" {
+            view = kind == "permission" ? MockData.permissionConfirm(now: date) : MockData.stopConfirm(now: date)
+            view.id = id
+            view.createdAt = MockData.ms(date)
+            view.contentHash = "h-" + id
+            view.sessionTitle = sessionTitle
+        }
         let name = state.macs.first { $0.id == macId }?.name ?? "Mac"
         state.inbox.insert(
             InboxItem(
                 macId: macId, macName: name, requestId: id,
                 summary: RequestSummary(
-                    id: id, kind: "ask", project: view.project, agent: view.agent, sessionTitle: sessionTitle,
+                    id: id, kind: view.kind, project: view.project, agent: view.agent, sessionTitle: sessionTitle,
                     createdAt: view.createdAt, preview: MockData.preview(of: view), contentHash: view.contentHash, size: 1_024
                 ),
                 view: view, receivedAt: date, unread: true, state: .pending
@@ -530,8 +539,12 @@ public actor MockBackend: RemoteBackend {
             at: 0
         )
         refreshCounts()
+        if eventBeforeState {
+            eventOut.yield(.requestArrived(macId: macId, requestId: id))
+            try? await Task.sleep(for: .milliseconds(40))
+        }
         publish()
-        eventOut.yield(.requestArrived(macId: macId, requestId: id))
+        if !eventBeforeState { eventOut.yield(.requestArrived(macId: macId, requestId: id)) }
     }
 
     public func setUnreachable(_ macIds: Set<String>) {

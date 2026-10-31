@@ -256,6 +256,7 @@ fn the_options_message_stays_far_below_the_wire_limit_for_the_largest_lists() {
         .collect();
     let probes = probes_of(readiness, Some(LaunchTarget::Terminal));
     let options = TaskOptions {
+        attachments_supported: None,
         enabled: true,
         blocked: None,
         permission_mode: "ask".into(),
@@ -549,4 +550,22 @@ async fn a_pick_only_the_current_configuration_allows_does_not_ask_the_agent_aga
     .await;
     assert_eq!(resolved, Ok(pick(None, Some("max"))));
     assert_eq!(loads.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn speed_capabilities_reach_the_phone_only_when_the_runtime_advertises_them() {
+    use crate::agents::model_catalog::SpeedCatalog;
+    let mut list = catalog(vec![entry("a", &[], None), entry("b", &[], None)]);
+    list.speed = Some(SpeedCatalog {
+        fast_models: std::collections::HashSet::from(["a".into()]),
+    });
+    let mut budget = MODELS_BYTES_BUDGET;
+    let (models, default) = model_options(Some(&list), &mut budget);
+    let models = models.unwrap();
+    assert_eq!(models[0].fast_supported, Some(true));
+    assert_eq!(models[1].fast_supported, Some(false));
+    assert!(default.is_none_or(|default| default.fast_supported.is_none()));
+    list.speed = None;
+    let (models, _) = model_options(Some(&list), &mut budget);
+    assert!(models.unwrap().iter().all(|m| m.fast_supported.is_none()));
 }

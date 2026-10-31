@@ -14,6 +14,9 @@
 > 关联计划：`docs/plans/ios-task-model.md`。落地后同步修订 `docs/specs/ios-channel.md`（§6.8 新建任务、决策表）、`docs/overview-ios.md`、
 > `docs/wiki/ios-setup.md` 与 `.en.md`。
 
+> 2026-10-31 补充：[Codex Fast 模式](ios-task-speed.md)增加独立、每次默认关闭且不记忆的速度开关。
+> 本文「默认不传参数」只指模型／强度；新版手机对可控制速度的 Codex 即使关闭开关也显式传标准速度。
+
 ## 现状（供评审对照）
 
 - **新建任务流水线**：手机 `task.options.get` → Mac 回 `task.options`（`workspaces[]`、`agents[]`、`permissionMode`）→ 手机 `task.create`

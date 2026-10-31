@@ -11,6 +11,7 @@ import AHStore
 struct ReplyAttachmentBar: View {
     let composer: AnswerComposer
     let question: Int
+    var revealTarget: InputRevealTarget?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -21,7 +22,7 @@ struct ReplyAttachmentBar: View {
                 }
             }
             if composer.canAttachMore {
-                AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachmentCount, identifier: "add-attachment-\(question)", preparationChanged: { id, active in
+                AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachmentCount, identifier: "add-attachment-\(question)", revealTarget: revealTarget, retainedPreparation: composer.attachmentPreparation(for: question), preparationChanged: { id, active in
                     composer.setAttachmentPreparation(id, active: active)
                 }) { name, mime, data, isImage in
                     try composer.addAttachment(name: name, mime: mime, data: data, isImage: isImage, question: question)
@@ -38,6 +39,9 @@ struct AttachmentMenu: View {
     let remaining: Int
     let identifier: String
     var compact = false
+    var fillsRow = false
+    var revealTarget: InputRevealTarget?
+    var retainedPreparation: AttachmentPreparationState?
     var preparationChanged: (UUID, Bool) -> Void = { _, _ in }
     var progressChanged: (AttachmentPreparation?) -> Void = { _ in }
     let add: (_ name: String, _ mime: String, _ data: Data, _ isImage: Bool) throws -> Void
@@ -46,15 +50,18 @@ struct AttachmentMenu: View {
     @State private var showPhotos = false
     @State private var showCamera = false
     @State private var showFiles = false
-    @State private var problem: String?
-    @State private var working = false
-    @State private var status = ""
-    @State private var fraction: Double?
-    @State private var operation: Task<Void, Never>?
+    @State private var localPreparation = AttachmentPreparationState()
+    private var state: AttachmentPreparationState { retainedPreparation ?? localPreparation }
+    private var problem: String? { get { state.problem } nonmutating set { state.problem = newValue } }
+    private var working: Bool { get { state.working } nonmutating set { state.working = newValue } }
+    private var status: String { get { state.status } nonmutating set { state.status = newValue } }
+    private var fraction: Double? { get { state.fraction } nonmutating set { state.fraction = newValue } }
+    private var operation: Task<Void, Never>? { get { state.operation } nonmutating set { state.operation = newValue } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             pickerMenu
+                .background(InputRevealAnchor(target: revealTarget, part: .attachment))
             if working && !compact {
                 AttachmentPreparationView(preparation: preparation)
             }
@@ -95,6 +102,8 @@ struct AttachmentMenu: View {
                     Text("Add attachment")
                 }
                 .font(.subheadline)
+                .frame(maxWidth: fillsRow ? .infinity : nil, alignment: .leading)
+                .contentShape(.rect)
             }
         }
         .barRoundButton(compact)
@@ -117,7 +126,7 @@ struct AttachmentMenu: View {
             guard case .success(let urls) = result else { return }
             start { await addFiles(urls) }
         }
-        .onDisappear { operation?.cancel() }
+        .onDisappear { if retainedPreparation == nil { operation?.cancel() } }
         .alert("Could not attach", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {

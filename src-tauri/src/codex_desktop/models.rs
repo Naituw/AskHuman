@@ -11,6 +11,7 @@ use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use crate::agents::model_catalog::{ModelChoice, SpeedCatalog, TaskSpeed};
 use serde_json::{json, Value};
 
 /// Most pages read: a catalog that never ends is cut.
@@ -36,6 +37,10 @@ pub fn list_models(
         deadline,
     )?;
     server.send(&json!({"method": "initialized"}))?;
+    read_entries(&mut server, deadline)
+}
+
+fn read_entries(server: &mut AppServer, deadline: Instant) -> Result<Vec<Value>, String> {
     let mut entries = Vec::new();
     let mut cursor: Option<String> = None;
     let mut seen = HashSet::new();
@@ -57,6 +62,43 @@ pub fn list_models(
         }
     }
     Ok(entries)
+}
+
+/// Checks the current runtime and workspace without starting a thread or sending a prompt.
+pub fn validate_task_speed(
+    executable: &Path,
+    home: &Path,
+    cwd: &Path,
+    choice: &ModelChoice,
+    timeout: Duration,
+) -> Result<(), String> {
+    let Some(speed) = choice.speed else {
+        return Ok(());
+    };
+    let deadline = Instant::now() + timeout;
+    let mut server = AppServer::start(executable, home)?;
+    server.request("initialize", json!({"clientInfo":{"name":"askhuman","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}), deadline)?;
+    server.send(&json!({"method":"initialized"}))?;
+    let config = server.request(
+        "config/read",
+        json!({"cwd":cwd,"includeLayers":false}),
+        deadline,
+    )?;
+    if speed == TaskSpeed::Fast && config["config"]["features"]["fast_mode"] == false {
+        return Err("Fast mode is disabled by Codex configuration".into());
+    }
+    let entries = read_entries(&mut server, deadline)?;
+    let catalog =
+        SpeedCatalog::from_entries(&entries).ok_or("Codex does not advertise speed controls")?;
+    if speed == TaskSpeed::Fast
+        && !choice
+            .model
+            .as_ref()
+            .is_some_and(|id| catalog.fast_models.contains(id))
+    {
+        return Err("Codex does not offer Fast mode for this model".into());
+    }
+    Ok(())
 }
 
 /// One `codex app-server` over stdio, closed when dropped.
@@ -193,6 +235,7 @@ if FAULT == 'exit':
 def entry(name, hidden=False):
     return {'id': name, 'model': name, 'displayName': name.upper(), 'hidden': hidden, 'isDefault': name == 'model-a',
             'defaultReasoningEffort': 'medium',
+            **({'serviceTiers': [{'id': 'fast'}] if name == 'model-a' else []} if FAULT.startswith('speed') else {}),
             'supportedReasoningEfforts': [{'reasoningEffort': 'low', 'description': ''}, {'reasoningEffort': 'medium', 'description': ''}]}
 for line in sys.stdin:
     req = json.loads(line)
@@ -205,6 +248,9 @@ for line in sys.stdin:
         # A notification and a request of the server's own, whose id collides with ours.
         print(json.dumps({'method': 'remoteControl/status/changed', 'params': {}}), flush=True)
         print(json.dumps({'id': req['id'], 'method': 'item/tool/requestUserInput', 'params': {}}), flush=True)
+    if method == 'config/read':
+        print(json.dumps({'id': req['id'], 'result': {'config': {'features': {'fast_mode': FAULT != 'speed-disabled'}}}}), flush=True)
+        continue
     if method == 'model/list' and FAULT == 'silent':
         continue
     if method == 'model/list' and FAULT == 'reject':
@@ -397,5 +443,61 @@ for line in sys.stdin:
         );
         assert!(result.is_err());
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn speed_validation_uses_the_workspace_and_never_creates_a_thread() {
+        let (dir, executable) = fake_codex("speed");
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        for speed in [TaskSpeed::Standard, TaskSpeed::Fast] {
+            let choice = ModelChoice {
+                speed: Some(speed),
+                model: Some("model-a".into()),
+                effort: None,
+            };
+            validate_task_speed(&executable, home.path(), cwd.path(), &choice, TIMEOUT).unwrap();
+        }
+        let calls = trace(&dir);
+        let reads: Vec<_> = calls
+            .iter()
+            .filter(|v| v["method"] == "config/read")
+            .collect();
+        assert_eq!(reads.len(), 2);
+        assert_eq!(
+            reads[0]["params"]["cwd"],
+            cwd.path().to_string_lossy().as_ref()
+        );
+        assert!(calls
+            .iter()
+            .filter_map(|v| v["method"].as_str())
+            .all(|method| matches!(
+                method,
+                "initialize" | "initialized" | "config/read" | "model/list"
+            )));
+    }
+
+    #[test]
+    fn unavailable_speed_is_rejected_by_the_current_runtime() {
+        for fault in ["speed", "speed-disabled", "normal"] {
+            let (_dir, executable) = fake_codex(fault);
+            let home = tempfile::tempdir().unwrap();
+            let choice = ModelChoice {
+                speed: Some(TaskSpeed::Fast),
+                model: Some(
+                    if fault == "speed" {
+                        "model-b"
+                    } else {
+                        "model-a"
+                    }
+                    .into(),
+                ),
+                effort: None,
+            };
+            assert!(
+                validate_task_speed(&executable, home.path(), home.path(), &choice, TIMEOUT)
+                    .is_err()
+            );
+        }
     }
 }

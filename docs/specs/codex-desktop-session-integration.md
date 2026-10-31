@@ -81,6 +81,9 @@ App 打开失败保留已创建 ID；传输结果未知保留任务和附件，�
 
 ## 新建模型与思考强度
 
+iOS 新任务另支持独立速度覆盖，`ModelSettings` 快照增加可选速度，线程创建与首轮接管使用同一档位；
+缺省保持原继承行为，详见 [iOS Fast 规格](ios-task-speed.md)。
+
 2026-10-25 确认：新任务跟随目标目录下 Codex 的有效默认配置，不增加模型选择 UI，也不固定模型或强度。
 由创建辅助进程调用 `config/read`（`cwd` 为任务目录、`includeLayers=false`），使用返回的
 `config.model` 与 `config.model_reasoning_effort`。配置层叠与项目信任由 Codex 解析，

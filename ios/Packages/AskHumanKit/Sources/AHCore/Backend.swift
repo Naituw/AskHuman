@@ -82,7 +82,7 @@ public protocol RemoteBackend: AnyObject, Sendable {
     func loadTaskOptions(macId: String) async
     func loadTaskTodos(macId: String, workspaceId: String) async
     /// Sends a new task; returns its id (the progress is in `EngineState.tasks`).
-    func createTask(macId: String, draft: TaskDraft) async throws -> String
+    func createTask(macId: String, draft: TaskDraft, progress: @escaping @Sendable (Double) -> Void) async throws -> String
     /// Sends a task whose outcome is unknown again, under the same id.
     func retryTask(id: String) async throws
     func dismissTask(id: String) async
@@ -112,5 +112,11 @@ public protocol RemoteBackend: AnyObject, Sendable {
 public extension RemoteBackend {
     func continueAgent(macId: String, agentKey: String, expectedResultId: String, clientMsgId: String) async throws -> InterjectOutcome {
         throw BackendError.rejected("unsupported")
+    }
+}
+
+public extension RemoteBackend {
+    func createTask(macId: String, draft: TaskDraft) async throws -> String {
+        try await createTask(macId: macId, draft: draft, progress: { _ in })
     }
 }

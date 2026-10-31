@@ -209,6 +209,8 @@ pub struct CreationError {
 pub struct ModelSettings {
     pub model: String,
     pub reasoning_effort: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<crate::agents::model_catalog::TaskSpeed>,
 }
 
 /// The model and effort a new thread starts with: what the user picked, else what Codex's own
@@ -237,11 +239,15 @@ fn resolve_model_settings<E>(
     };
     let configured_model = configured("model")?;
     let configured_effort = configured("model_reasoning_effort")?;
-    if choice.is_default() {
+    if choice.model.is_none()
+        && choice.effort.is_none()
+        && choice.speed != Some(crate::agents::model_catalog::TaskSpeed::Fast)
+    {
         if let (Some(model), Some(reasoning_effort)) = (&configured_model, &configured_effort) {
             return Ok(ModelSettings {
                 model: model.clone(),
                 reasoning_effort: reasoning_effort.clone(),
+                speed: choice.speed,
             });
         }
     }
@@ -261,6 +267,22 @@ fn resolve_model_settings<E>(
         .or_else(|| selected["model"].as_str().map(str::to_owned))
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| invalid("Codex did not identify its default model".into()))?;
+    if let Some(speed) = choice.speed {
+        let speeds = crate::agents::model_catalog::SpeedCatalog::from_entries(
+            std::slice::from_ref(&selected),
+        )
+        .ok_or_else(|| invalid("Codex does not advertise speed controls".into()))?;
+        if speed == crate::agents::model_catalog::TaskSpeed::Fast
+            && (config
+                .get("features")
+                .is_some_and(|f| f["fast_mode"] == false)
+                || !speeds.fast_models.contains(&model))
+        {
+            return Err(invalid(
+                "Fast mode is unavailable for the selected model".into(),
+            ));
+        }
+    }
     let offered: Vec<&str> = selected["supportedReasoningEfforts"]
         .as_array()
         .map(|options| {
@@ -296,6 +318,7 @@ fn resolve_model_settings<E>(
     Ok(ModelSettings {
         model,
         reasoning_effort,
+        speed: choice.speed,
     })
 }
 
@@ -339,6 +362,8 @@ struct ThreadStartParams<'a> {
     cwd: &'a str,
     ephemeral: bool,
     model: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service_tier: Option<&'static str>,
     config: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     approval_policy: Option<&'static str>,
@@ -351,6 +376,7 @@ fn thread_start_params(cwd: &str, yolo: bool, settings: &ModelSettings) -> Value
         cwd,
         ephemeral: false,
         model: &settings.model,
+        service_tier: settings.speed.map(|s| s.service_tier()),
         config: json!({"model_reasoning_effort":settings.reasoning_effort}),
         approval_policy: yolo.then_some("never"),
         sandbox: yolo.then_some(ThreadSandboxMode::DangerFullAccess),
@@ -643,6 +669,7 @@ mod tests {
 
     fn settings() -> ModelSettings {
         ModelSettings {
+            speed: None,
             model: "configured-model".into(),
             reasoning_effort: "max".into(),
         }
@@ -794,6 +821,7 @@ mod tests {
 
     fn settings_of(model: &str, effort: &str) -> ModelSettings {
         ModelSettings {
+            speed: None,
             model: model.into(),
             reasoning_effort: effort.into(),
         }
@@ -1345,5 +1373,62 @@ sys.exit(1 if FAULT == 'exit' else 0)
         assert_eq!(session_title(&config, "session"), None);
         db.execute_batch("DROP TABLE threads;").unwrap();
         assert_eq!(session_title(&config, "session"), None);
+    }
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::*;
+    use crate::agents::model_catalog::TaskSpeed;
+
+    #[test]
+    fn explicit_speed_overrides_config_without_changing_model_or_effort() {
+        for speed in [TaskSpeed::Standard, TaskSpeed::Fast] {
+            let pick = ModelChoice {
+                speed: Some(speed),
+                model: Some("a".into()),
+                effort: None,
+            };
+            let resolved = resolve_model_settings(&json!({"config":{"model":"a","model_reasoning_effort":"high","service_tier":"fast"}}), &pick,
+                |_| Ok::<_, String>(json!({"data":[{"id":"a","model":"a","serviceTiers":[{"id":"fast"}],"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"high"}]}]})), |e| e).unwrap();
+            assert_eq!(resolved.reasoning_effort, "high");
+            assert_eq!(
+                thread_start_params("/project", false, &resolved)["serviceTier"],
+                speed.service_tier()
+            );
+            let saved: ModelSettings =
+                serde_json::from_value(serde_json::to_value(&resolved).unwrap()).unwrap();
+            assert_eq!(saved, resolved);
+        }
+    }
+
+    #[test]
+    fn standard_speed_overrides_global_fast_even_when_model_and_effort_are_default() {
+        let pick = ModelChoice {
+            speed: Some(TaskSpeed::Standard),
+            ..Default::default()
+        };
+        let settings = resolve_model_settings::<String>(&json!({"config":{"model":"hidden","model_reasoning_effort":"max","service_tier":"fast"}}), &pick, |_| panic!("configured defaults need no model lookup"), |e| e).unwrap();
+        assert_eq!(settings.model, "hidden");
+        assert_eq!(settings.reasoning_effort, "max");
+        assert_eq!(
+            thread_start_params("/project", false, &settings)["serviceTier"],
+            "default"
+        );
+    }
+
+    #[test]
+    fn a_model_without_fast_or_a_disabled_feature_is_rejected_before_thread_creation() {
+        for config in [
+            json!({"config":{"model":"a","model_reasoning_effort":"high"}}),
+            json!({"config":{"model":"a","model_reasoning_effort":"high","features":{"fast_mode":false}}}),
+        ] {
+            let pick = ModelChoice {
+                speed: Some(TaskSpeed::Fast),
+                model: Some("a".into()),
+                effort: None,
+            };
+            assert!(resolve_model_settings(&config, &pick, |_| Ok::<_, String>(json!({"data":[{"model":"a","serviceTiers":[],"defaultReasoningEffort":"high"}]})), |e| e).is_err());
+        }
     }
 }

@@ -16,7 +16,15 @@ public final class AnswerComposer {
     public var uploadProgress: Double?
     public var isSending = false
     private var attachmentPreparations: Set<UUID> = []
+    private var preparationStates: [Int: AttachmentPreparationState] = [:]
     public var isPreparingAttachments: Bool { !attachmentPreparations.isEmpty }
+
+    public func attachmentPreparation(for question: Int) -> AttachmentPreparationState {
+        if let state = preparationStates[question] { return state }
+        let state = AttachmentPreparationState()
+        preparationStates[question] = state
+        return state
+    }
 
     public func setAttachmentPreparation(_ id: UUID, active: Bool) {
         if active { attachmentPreparations.insert(id) } else { attachmentPreparations.remove(id) }
@@ -197,6 +205,7 @@ public final class AnswerComposer {
     /// Forgets the draft (the request is finished).
     public func discard() {
         saveTask?.cancel()
+        for state in preparationStates.values { state.cancel() }
         drafts.remove(key: key)
     }
 

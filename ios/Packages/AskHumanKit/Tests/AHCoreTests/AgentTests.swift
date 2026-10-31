@@ -424,7 +424,7 @@ final class AgentTests: XCTestCase {
         let h = Harness()
         h.mac.ignoreTasks = true
         await h.pair()
-        let draft = TaskDraft(workspaceId: "ws1", workspaceName: "HumanInLoop", agentKind: "claude", agentLabel: "Claude Code", permission: "yolo", text: "Go")
+        let draft = TaskDraft(workspaceId: "ws1", workspaceName: "HumanInLoop", agentKind: "codex", agentLabel: "Codex", permission: "yolo", speed: .fast, text: "Go")
         let id = try await h.engine.createTask(macId: h.mac.macId, draft: draft)
         await eventually("task.create") { h.mac.count(TaskCreate.type) == 1 }
         await h.advance(until: { await h.state().tasks.first?.stage == "failed" }, "the accept timeout")
@@ -437,6 +437,9 @@ final class AgentTests: XCTestCase {
         await eventually("launched") { await h.state().tasks.first?.stage == "launched" }
         let ids = try h.mac.received(TaskCreate.type).map { try $0.body(as: TaskCreate.self).clientMsgId }
         XCTAssertEqual(ids, [id, id])
+        let speeds = try h.mac.received(TaskCreate.type).map { try $0.body(as: TaskCreate.self).speed }
+        XCTAssertEqual(speeds, [.fast, .fast])
+        XCTAssertEqual(task.speed, .fast)
         task = try unwrap(await h.state().tasks.first)
         XCTAssertNil(task.reason)
     }

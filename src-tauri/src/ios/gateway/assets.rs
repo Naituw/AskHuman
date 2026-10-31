@@ -34,6 +34,7 @@ pub(crate) struct Upload {
     request_id: Option<String>,
     /// Agent the file is for (interjections), when it is not tied to a question.
     agent_key: Option<String>,
+    task_id: Option<String>,
     next: u64,
     received: u64,
     hasher: Sha256,
@@ -204,12 +205,21 @@ impl Actor {
             .agent_key
             .as_deref()
             .map(|key| self.known_agent(key).is_some());
-        match (begin.scope.request_id.as_deref(), agent_known) {
-            (Some(request_id), _) if self.requests.find(request_id).is_some() => {}
-            (Some(_), _) => return reject(self, "gone"),
-            (None, Some(true)) => {}
-            (None, Some(false)) => return reject(self, "gone"),
-            (None, None) => return reject(self, "invalid"),
+        if let Some(task_id) = begin.scope.task_id.as_deref() {
+            if begin.scope.request_id.is_some()
+                || begin.scope.agent_key.is_some()
+                || !self.task_upload_allowed(phone_id, task_id)
+            {
+                return reject(self, "invalid");
+            }
+        } else {
+            match (begin.scope.request_id.as_deref(), agent_known) {
+                (Some(request_id), _) if self.requests.find(request_id).is_some() => {}
+                (Some(_), _) => return reject(self, "gone"),
+                (None, Some(true)) => {}
+                (None, Some(false)) => return reject(self, "gone"),
+                (None, None) => return reject(self, "invalid"),
+            }
         }
         let (count, bytes) = self.uploads.staged_for(phone_id);
         if count >= MAX_STAGED_UPLOADS_PER_PHONE || bytes + begin.size > MAX_STAGED_BYTES_PER_PHONE
@@ -224,6 +234,7 @@ impl Actor {
                 u.phone_id == phone_id
                     && u.request_id == begin.scope.request_id
                     && u.agent_key == begin.scope.agent_key
+                    && u.task_id == begin.scope.task_id
             })
             .count();
         if for_scope >= MAX_REPLY_ATTACHMENTS {
@@ -247,6 +258,7 @@ impl Actor {
                 sha256: begin.sha256.to_ascii_lowercase(),
                 request_id: begin.scope.request_id.clone(),
                 agent_key: begin.scope.agent_key.clone(),
+                task_id: begin.scope.task_id.clone(),
                 next: 0,
                 received: 0,
                 hasher: Sha256::new(),
@@ -378,6 +390,33 @@ impl Actor {
             });
             if !usable {
                 return Err("attachment is not available".into());
+            }
+        }
+        Ok(self.consume_uploads(ids))
+    }
+
+    /// Task files are scoped to one phone and creation ID; validate the entire batch before taking any.
+    pub(super) fn take_task_uploads(
+        &mut self,
+        phone_id: &str,
+        task_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<UploadedFile>, String> {
+        let distinct: std::collections::HashSet<_> = ids.iter().collect();
+        if ids.len() > MAX_REPLY_ATTACHMENTS || distinct.len() != ids.len() {
+            return Err("invalid task attachments".into());
+        }
+        for id in ids {
+            let usable = self.uploads.by_id.get(id).is_some_and(|u| {
+                u.phone_id == phone_id
+                    && u.complete
+                    && u.request_id.is_none()
+                    && u.agent_key.is_none()
+                    && u.task_id.as_deref() == Some(task_id)
+                    && std::fs::metadata(&u.path).is_ok_and(|m| m.is_file() && m.len() == u.size)
+            });
+            if !usable {
+                return Err("task attachment is not available".into());
             }
         }
         Ok(self.consume_uploads(ids))

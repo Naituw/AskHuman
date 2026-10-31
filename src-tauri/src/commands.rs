@@ -2899,6 +2899,7 @@ pub async fn new_task_launch(
             // The window offers no model choice yet; Codex's own configuration decides.
             model: None,
             effort: None,
+            speed: None,
         })
         .await?;
         if let (Some(project), Some(todo)) = (todo_project.as_deref(), todo_id.as_deref()) {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import AHCore
 import AHMarkdown
 import AHProtocol
@@ -14,6 +15,18 @@ import AHProtocol
 struct RequestScreen: View {
     let id: String
     @Environment(AppStore.self) private var store
+    @State private var switching = false
+    @State private var confirmCancel = false
+    @State private var confirmDismiss = false
+
+    private var hasNeighbors: Bool {
+        store.adjacentRequest(to: id, direction: -1) != nil || store.adjacentRequest(to: id, direction: 1) != nil
+    }
+
+    private var hasMore: Bool {
+        guard let item = store.displayItem(id: id) else { return false }
+        return item.view?.ask != nil || item.view?.confirm?.dismissIndex != nil
+    }
 
     var body: some View {
         // The receipt of the request this page takes over from, if it does: the store says so when it
@@ -27,8 +40,98 @@ struct RequestScreen: View {
         .id(id)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        .toolbar {
+            if hasNeighbors { navigationButtons }
+            if hasMore {
+                if #available(iOS 26, *), hasNeighbors {
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                }
+                moreMenu
+            }
+        }
+        .confirmationDialog("Cancel this request?", isPresented: $confirmCancel, titleVisibility: .visible) {
+            Button("Cancel request", role: .destructive) {
+                guard let item = store.displayItem(id: id) else { return }
+                Task { do { try await store.cancel(item) } catch { store.reportRequestError(error.userMessage, for: item.id) } }
+            }
+            Button("Keep it", role: .cancel) {}
+        } message: {
+            Text("The Agent is told that you cancelled.")
+        }
+        .confirmationDialog("Dismiss this confirmation?", isPresented: $confirmDismiss, titleVisibility: .visible) {
+            Button("Dismiss", role: .destructive) {
+                guard let item = store.displayItem(id: id), let composer = store.confirmComposer(for: item) else { return }
+                Task { do { try await store.dismiss(composer, item: item) } catch { store.reportRequestError(error.userMessage, for: item.id) } }
+            }
+            Button("Keep it", role: .cancel) {}
+        } message: {
+            Text("The Agent receives the default response, usually a refusal.")
+        }
+        .alert("Could not send", isPresented: Binding(get: { store.requestErrors[id] != nil }, set: { if !$0 { store.clearRequestError(for: id) } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(store.requestErrors[id] ?? "")
+        }
+        .onChange(of: id) { _, _ in
+            switching = false
+            confirmCancel = false
+            confirmDismiss = false
+        }
         .task(id: id) {
             if let item = store.item(id: id) { await store.opened(item) }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var navigationButtons: some ToolbarContent {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Button { switchRequest(-1) } label: { Label("Previous request", systemImage: "chevron.backward") }
+                .disabled(switching || store.adjacentRequest(to: id, direction: -1) == nil)
+                .accessibilityIdentifier("previous-request")
+            Button { switchRequest(1) } label: { Label("Next request", systemImage: "chevron.forward") }
+                .disabled(switching || store.adjacentRequest(to: id, direction: 1) == nil)
+                .accessibilityIdentifier("next-request")
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var moreMenu: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
+                if let item = store.displayItem(id: id) {
+                    if item.view?.ask != nil {
+                        Button("Cancel request", systemImage: "xmark.circle", role: .destructive) { confirmCancel = true }
+                            .disabled(store.finished[id] != nil || !store.isOnline(macId: item.macId))
+                    } else {
+                        Button("Dismiss", systemImage: "xmark.circle", role: .destructive) { confirmDismiss = true }
+                            .disabled(store.finished[id] != nil || !store.isOnline(macId: item.macId))
+                    }
+                }
+            } label: { Image(systemName: "ellipsis") }
+            .accessibilityLabel("More")
+            .accessibilityIdentifier("request-menu")
+        }
+    }
+
+    private func switchRequest(_ direction: Int) {
+        guard !switching else { return }
+        switching = true
+        let current = id
+        let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+        if let window = windows.first(where: \.isKeyWindow) {
+            func editingView(_ view: UIView) -> UIView? {
+                if view.isFirstResponder { return view }
+                for child in view.subviews { if let found = editingView(child) { return found } }
+                return nil
+            }
+            (editingView(window) as? UITextInput)?.unmarkText()
+            window.endEditing(true)
+        }
+        Task { @MainActor in
+            // Let native editors publish their final composition before the old page is saved.
+            await Task.yield()
+            withAnimation(.easeOut(duration: 0.18)) { store.switchRequest(from: current, direction: direction) }
+            switching = false
         }
     }
 }
@@ -350,7 +453,6 @@ struct FinishedNotice: View {
 struct FailedSubmissionNotice: View {
     let item: InboxItem
     @Environment(AppStore.self) private var store
-    @State private var problem: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -363,14 +465,13 @@ struct FailedSubmissionNotice: View {
             HStack {
                 Button("Send again") {
                     Task {
-                        do { try await store.retry(item) } catch { problem = error.userMessage }
+                        do { try await store.retry(item) } catch { store.reportRequestError(error.userMessage, for: item.id) }
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 Button("Discard", role: .destructive) { Task { await store.discardFailure(item) } }
                     .buttonStyle(.bordered)
             }
-            if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }
         }
         .card()
     }

@@ -15,13 +15,8 @@ struct NewTaskSheet: View {
             }
         }
         .presentationDetents([.large])
-        .interactiveDismissDisabled(store.viewingTask == nil && (store.taskComposer?.hasContent ?? false))
+        .interactiveDismissDisabled(store.viewingTask == nil && (store.taskComposer.map { $0.hasContent || $0.isSending || $0.isPreparingAttachments } ?? false))
     }
-}
-
-private extension TaskComposer {
-    /// The user wrote something that closing the sheet would lose.
-    var hasContent: Bool { !trimmedText.isEmpty }
 }
 
 private struct NewTaskForm: View {
@@ -69,12 +64,14 @@ private struct NewTaskForm: View {
                 }
             }
         }
+        .disabled(sending)
         .navigationTitle("New task")
         .navigationBarTitleDisplayMode(.inline)
         .scrollDismissesKeyboard(.interactively)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { cancel() }
+                    .disabled(sending)
                     .accessibilityIdentifier("task-cancel")
             }
             ToolbarItem(placement: .confirmationAction) {
@@ -145,6 +142,38 @@ private struct NewTaskForm: View {
 
         modelSection(options)
 
+        if composer.agentKind == "codex" {
+            Section {
+                if composer.offersSpeedControl(in: options) {
+                    Toggle("Fast mode", isOn: Binding(
+                        get: { composer.fastMode },
+                        set: { composer.setFastMode($0, in: options) }
+                    ))
+                    .disabled(!composer.supportsFast(in: options))
+                    .accessibilityIdentifier("task-fast")
+                    if !composer.supportsFast(in: options) {
+                        Text(composer.model(in: options) == nil
+                             ? "Choose a model to enable Fast mode."
+                             : "Fast mode is not available for this model.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if composer.fastWasReset {
+                        Text("Fast mode was turned off because the model is no longer available or does not support it.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("task-fast-reset")
+                    }
+                } else {
+                    Text("Update AskHuman and Codex on your Mac to choose a task speed.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("task-speed-unavailable")
+                }
+            } footer: {
+                if composer.offersSpeedControl(in: options) {
+                    Text("Fast is quicker, but uses more of your allowance. It starts off for each new task.")
+                }
+            }
+        }
+
         permissionSection(options)
 
         Section {
@@ -173,7 +202,44 @@ private struct NewTaskForm: View {
                     .foregroundStyle(composer.overLimit ? Color.red : Color.secondary)
                     .monospacedDigit()
             } else {
-                Text("The Agent starts in a new terminal window on your Mac.")
+                Text("The Agent starts on your Mac.")
+            }
+        }
+        taskAttachments(options)
+    }
+
+    @ViewBuilder
+    private func taskAttachments(_ options: TaskOptions) -> some View {
+        if options.attachmentsSupported == true || !composer.attachments.isEmpty {
+            Section {
+                ForEach(composer.attachments) { attachment in
+                    ReplyAttachmentRow(attachment: attachment, url: composer.url(of: attachment)) {
+                        composer.removeAttachment(id: attachment.id)
+                    }
+                }
+                if options.attachmentsSupported == true {
+                    AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachments.count,
+                        identifier: "task-attach", fillsRow: true, preparationChanged: { id, active in
+                            composer.setAttachmentPreparation(id, active: active)
+                        }) { name, mime, data, isImage in
+                            try composer.addAttachment(name: name, mime: mime, data: data, isImage: isImage)
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(!composer.canAttachMore || sending)
+                } else {
+                    Text("Update AskHuman on this Mac to start tasks with attachments.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("task-attachments-unavailable")
+                }
+                if let progress = composer.uploadProgress {
+                    ProgressView(value: progress)
+                        .accessibilityLabel("Uploading attachments")
+                        .accessibilityIdentifier("task-attachment-upload")
+                }
+            } header: {
+                Text("Attachments")
+            } footer: {
+                Text("Upload up to 5 files, 10 MB each. All attachments must upload before the task starts.")
             }
         }
     }
@@ -261,7 +327,7 @@ private struct NewTaskForm: View {
     }
 
     private func start() {
-        guard !sending else { return }
+        guard !sending, canStart else { return }
         sending = true
         Task {
             defer { sending = false }
@@ -276,7 +342,8 @@ private struct NewTaskForm: View {
                     store.presentTaskProgress(id)
                 }
             } catch {
-                problem = error.userMessage
+                if case BackendError.rejected(let reason) = error { problem = TaskTexts.failure(reason) }
+                else { problem = error.userMessage }
             }
         }
     }

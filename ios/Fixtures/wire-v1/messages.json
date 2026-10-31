@@ -188,6 +188,12 @@
     {"type": "upload.chunk", "body": {"uploadId": "u1", "index": 0, "data": "AAEC"}},
     {"type": "upload.ack", "name": "min", "body": {"uploadId": "u1", "nextIndex": 1, "status": "ok"}},
     {"type": "upload.ack", "name": "error", "body": {"uploadId": "u1", "nextIndex": 0, "status": "error", "reason": "hash mismatch"}},
-    {"type": "upload.cancel", "body": {"uploadId": "u1"}}
+    {"type": "upload.cancel", "body": {"uploadId": "u1"}},
+    {"type": "task.create", "name": "speed-standard", "body": {"clientMsgId": "c8", "workspaceId": "w1", "agentKind": "codex", "permission": "yolo", "todoId": "t1", "text": "Do the thing", "speed": "standard"}},
+    {"type": "task.create", "name": "speed-fast", "body": {"clientMsgId": "c8", "workspaceId": "w1", "agentKind": "codex", "permission": "yolo", "todoId": "t1", "text": "Do the thing", "speed": "fast"}},
+    {"type": "task.options", "name": "speed-control", "body": {"enabled": true, "permissionMode": "ask", "workspaces": [], "agents": [{"kind": "codex", "label": "Codex", "ready": true, "subtitle": "Codex App", "permissionSelectable": true, "speedControl": true, "models": [{"id": "model-a", "label": "Model A", "fastSupported": true}, {"id": "model-b", "label": "Model B", "fastSupported": false}]}]}},
+    {"type": "task.options", "name": "task-attachments", "body": {"enabled": true, "permissionMode": "ask", "workspaces": [{"id": "w1", "label": "HumanInLoop", "subtitle": "~/Developer/HumanInLoop", "pinned": true, "lastUsedAt": 1792900000000}], "agents": [{"kind": "claude", "label": "Claude Code", "ready": true, "subtitle": "claude", "permissionSelectable": true}, {"kind": "codex", "label": "Codex", "ready": false, "subtitle": "codex", "permissionSelectable": false, "reason": "not installed"}], "attachmentsSupported": true}},
+    {"type": "upload.begin", "name": "task-scope", "body": {"uploadId": "u1", "name": "photo.jpg", "mime": "image/jpeg", "size": 400000, "chunks": 3, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "scope": {"taskId": "n-files"}}},
+    {"type": "task.create", "name": "task-attachments", "body": {"clientMsgId": "n-files", "workspaceId": "w1", "agentKind": "claude", "permission": "yolo", "todoId": "t1", "text": "Do the thing", "files": ["u1"]}}
   ]
 }

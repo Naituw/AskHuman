@@ -1463,6 +1463,7 @@ async fn start_task_input_form(
             }
         };
         let spec = TaskSpec {
+            files: Vec::new(),
             channel: channel.clone(),
             source_target: task_source_target(&config, &channel),
             workspace: payload.workspace,

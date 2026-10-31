@@ -265,6 +265,7 @@ async fn upload_for_agent(
             chunks: 1,
             sha256: sha_hex(data),
             scope: wire::UploadScope {
+                task_id: None,
                 request_id: None,
                 agent_key: Some(key.into()),
             },
@@ -338,6 +339,7 @@ async fn uploads_for_unknown_agents_are_refused() {
             chunks: 1,
             sha256: sha_hex(b"a"),
             scope: wire::UploadScope {
+                task_id: None,
                 request_id: None,
                 agent_key: Some("claude:nope".into()),
             },
@@ -352,6 +354,8 @@ async fn uploads_for_unknown_agents_are_refused() {
 
 fn create(id: &str, text: &str) -> wire::TaskCreate {
     wire::TaskCreate {
+        files: Vec::new(),
+        speed: None,
         client_msg_id: id.into(),
         workspace_id: "ws1".into(),
         agent_kind: "claude".into(),
@@ -576,6 +580,7 @@ async fn the_models_an_agent_offers_reach_the_phone_with_the_options() {
     let (fx, mut phone) = with_agent().await;
     let models = vec![
         wire::ModelOption {
+            fast_supported: None,
             id: "model-a".into(),
             label: "Model A".into(),
             note: Some("flagship".into()),
@@ -583,6 +588,7 @@ async fn the_models_an_agent_offers_reach_the_phone_with_the_options() {
             default_effort: Some("high".into()),
         },
         wire::ModelOption {
+            fast_supported: None,
             id: "model-b".into(),
             label: "Model B".into(),
             note: None,
@@ -591,6 +597,7 @@ async fn the_models_an_agent_offers_reach_the_phone_with_the_options() {
         },
     ];
     let default_model = wire::DefaultModel {
+        fast_supported: None,
         label: Some("Model A".into()),
         efforts: Some(vec!["low".into(), "high".into()]),
         default_effort: Some("high".into()),
@@ -783,4 +790,181 @@ async fn taking_over_questions_goes_through_the_host() {
     let state: wire::SlotState = phone.recv_body(t::SLOT_STATE).await;
     assert!(state.active);
     assert_eq!(fx.host.slot_taken.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn task_speed_is_forwarded_replayed_and_conflicting_changes_do_not_launch() {
+    use crate::agents::model_catalog::TaskSpeed;
+    let (fx, mut phone) = with_agent().await;
+    load_options(&mut phone).await;
+    let mut task = create("speed-task", "do it");
+    task.agent_kind = "codex".into();
+    task.speed = Some(TaskSpeed::Fast);
+    phone.send(&task).await;
+    assert_eq!(status(&mut phone).await.stage, "accepted");
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    phone.send(&task).await;
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    task.speed = Some(TaskSpeed::Standard);
+    phone.send(&task).await;
+    assert_eq!(status(&mut phone).await.reason.as_deref(), Some("conflict"));
+    let launches = fx.host.launches.lock().unwrap();
+    assert_eq!(launches.len(), 1);
+    assert_eq!(launches[0].speed, Some(TaskSpeed::Fast));
+}
+
+async fn upload_for_task(phone: &mut TestPhone, task_id: &str, complete: bool) -> String {
+    let id = crypto::new_id();
+    let data = b"task attachment";
+    phone
+        .send(&wire::UploadBegin {
+            upload_id: id.clone(),
+            name: "Notes.txt".into(),
+            mime: "text/plain".into(),
+            size: data.len() as u64,
+            chunks: 1,
+            sha256: sha_hex(data),
+            scope: wire::UploadScope {
+                task_id: Some(task_id.into()),
+                request_id: None,
+                agent_key: None,
+            },
+        })
+        .await;
+    let begun: wire::UploadAck = phone.recv_body(t::UPLOAD_ACK).await;
+    assert_eq!(begun.status, "ok", "{:?}", begun.reason);
+    if complete {
+        phone
+            .send(&wire::UploadChunk {
+                upload_id: id.clone(),
+                index: 0,
+                data: crypto::b64u(data),
+            })
+            .await;
+        let ack: wire::UploadAck = phone.recv_body(t::UPLOAD_ACK).await;
+        assert_eq!(ack.status, "complete");
+    }
+    id
+}
+
+#[tokio::test(start_paused = true)]
+async fn task_attachments_are_delivered_once_and_their_ids_are_part_of_the_identity() {
+    let (fx, mut phone) = with_agent().await;
+    load_options(&mut phone).await;
+    let id = upload_for_task(&mut phone, "task-files", true).await;
+    let mut task = create("task-files", "review attached");
+    task.todo_id = Some("todo-existing".into());
+    task.files = vec![id];
+    phone.send(&task).await;
+    assert_eq!(status(&mut phone).await.stage, "accepted");
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    phone.send(&task).await;
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    {
+        let launches = fx.host.launches.lock().unwrap();
+        assert_eq!(launches.len(), 1);
+        assert_eq!(launches[0].todo_id.as_deref(), Some("todo-existing"));
+        assert_eq!(launches[0].files.len(), 1);
+        assert_eq!(launches[0].files[0].name, "Notes.txt");
+        assert_eq!(
+            std::fs::read(&launches[0].files[0].path).unwrap(),
+            b"task attachment"
+        );
+    }
+    task.files.clear();
+    phone.send(&task).await;
+    assert_eq!(status(&mut phone).await.reason.as_deref(), Some("conflict"));
+    assert_eq!(fx.host.launches.lock().unwrap().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn task_attachments_cannot_be_taken_by_another_task_or_an_interjection() {
+    let (fx, mut phone) = with_agent().await;
+    load_options(&mut phone).await;
+    let id = upload_for_task(&mut phone, "owner-task", true).await;
+    let mut other = create("other-task", "review");
+    other.files = vec![id.clone()];
+    phone.send(&other).await;
+    assert_eq!(
+        status(&mut phone).await.reason.as_deref(),
+        Some("attachment")
+    );
+    let mut message = interject("wrong-purpose", "claude:s1", "review");
+    message.files = vec![id.clone()];
+    phone.send(&message).await;
+    assert_eq!(ack(&mut phone).await.reason.as_deref(), Some("attachment"));
+    assert!(fx.host.launches.lock().unwrap().is_empty());
+    let mut owner = create("owner-task", "review");
+    owner.files = vec![id];
+    phone.send(&owner).await;
+    assert_eq!(status(&mut phone).await.stage, "accepted");
+    assert_eq!(status(&mut phone).await.stage, "launched");
+}
+
+#[tokio::test(start_paused = true)]
+async fn incomplete_duplicate_and_interjection_uploads_are_refused_for_tasks() {
+    let (fx, mut phone) = with_agent().await;
+    load_options(&mut phone).await;
+    let incomplete = upload_for_task(&mut phone, "incomplete-task", false).await;
+    let mut task = create("incomplete-task", "review");
+    task.files = vec![incomplete];
+    phone.send(&task).await;
+    assert_eq!(
+        status(&mut phone).await.reason.as_deref(),
+        Some("attachment")
+    );
+    let id = upload_for_task(&mut phone, "duplicate-task", true).await;
+    let mut task = create("duplicate-task", "review");
+    task.files = vec![id.clone(), id];
+    phone.send(&task).await;
+    assert_eq!(
+        status(&mut phone).await.reason.as_deref(),
+        Some("attachment")
+    );
+    let id = upload_for_agent(&mut phone, "notes.txt", "text/plain", b"hello", "claude:s1").await;
+    let mut task = create("wrong-scope", "review");
+    task.files = vec![id];
+    phone.send(&task).await;
+    assert_eq!(
+        status(&mut phone).await.reason.as_deref(),
+        Some("attachment")
+    );
+    assert!(fx.host.launches.lock().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn task_attachments_cannot_be_taken_by_another_phone() {
+    let (fx, mut owner) = with_agent().await;
+    load_options(&mut owner).await;
+    let id = upload_for_task(&mut owner, "shared-id", true).await;
+    let mut other = fx.live_phone().await;
+    settle_hello(&mut other).await;
+    load_options(&mut other).await;
+    let mut task = create("shared-id", "review");
+    task.files = vec![id];
+    other.send(&task).await;
+    assert_eq!(
+        status(&mut other).await.reason.as_deref(),
+        Some("attachment")
+    );
+    assert!(fx.host.launches.lock().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn task_attachments_are_bounded_even_when_all_uploads_are_complete() {
+    let (fx, mut phone) = with_agent().await;
+    load_options(&mut phone).await;
+    let mut task = create("too-many-files", "review");
+    for _ in 0..wire::MAX_REPLY_ATTACHMENTS {
+        task.files
+            .push(upload_for_task(&mut phone, "too-many-files", true).await);
+    }
+    task.files
+        .push(upload_for_task(&mut phone, "other-task", true).await);
+    phone.send(&task).await;
+    assert_eq!(
+        status(&mut phone).await.reason.as_deref(),
+        Some("attachment")
+    );
+    assert!(fx.host.launches.lock().unwrap().is_empty());
 }

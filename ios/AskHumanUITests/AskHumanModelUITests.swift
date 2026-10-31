@@ -314,6 +314,111 @@ final class AskHumanModelUITests: XCTestCase {
         _ = requireElement("watch-card")
         XCTAssertTrue(gone("agent-model", timeout: 3))
     }
+    func testCodexFastStartsOffAndTheProgressShowsTheChosenSpeed() {
+        openForm()
+        requireElement("task-agent-codex").tap()
+        reveal("task-model")
+        pickModel("gpt-5.1-codex-max", shownAs: "GPT-5.1-Codex-Max")
+        reveal("task-fast")
+        let toggle = requireElement("task-fast")
+        XCTAssertEqual(toggle.value as? String, "0")
+        XCTAssertTrue(toggle.isEnabled)
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(toggle.value as? String, "1")
+        shot("120-codex-fast")
+        fillAndStart()
+        XCTAssertEqual(requireElement("task-speed-pick").label, localized("Selected speed: Fast", "所选速度：Fast"))
+        shot("121-codex-fast-progress")
+    }
+
+    func testAnUnsupportedModelTurnsFastOffAndSubmitsStandard() {
+        openForm()
+        requireElement("task-agent-codex").tap()
+        reveal("task-model")
+        pickModel("gpt-5.1-codex-max", shownAs: "GPT-5.1-Codex-Max")
+        reveal("task-fast")
+        let toggle = requireElement("task-fast")
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(toggle.value as? String, "1")
+        reveal("task-model")
+        pickModel("gpt-5.1-codex-mini", shownAs: "GPT-5.1-Codex-Mini")
+        reveal("task-fast")
+        XCTAssertEqual(requireElement("task-fast").value as? String, "0")
+        XCTAssertFalse(requireElement("task-fast").isEnabled)
+        reveal("task-fast-reset")
+        _ = requireElement("task-fast-reset")
+        fillAndStart()
+        XCTAssertEqual(requireElement("task-speed-pick").label, localized("Selected speed: Standard", "所选速度：标准"))
+        shot("122-codex-standard-progress")
+    }
+
+    func testAnOldMacHasNoFastSwitch() {
+        openForm(extra: ["-AHNoModels", "YES"])
+        requireElement("task-agent-codex").tap()
+        reveal("task-speed-unavailable")
+        XCTAssertFalse(element("task-fast").exists)
+    }
+
+
+    func testTaskAttachmentsNeedInstructionsAndAppearOnTheProgressPage() {
+        openForm(extra: ["-AHTaskAttachments", "YES"])
+        reveal("task-permission-default")
+        requireElement("task-permission-default").tap()
+        requireElement("task-start").tap()
+        XCTAssertFalse(element("task-progress").exists)
+        reveal("task-attach")
+        requireElement("task-attach").tap()
+        XCTAssertTrue(app.buttons[localized("Photo Library", "照片图库")].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons[localized("Choose File", "选择文件")].exists)
+        shot("129-task-attachments-menu")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        shot("130-task-attachments-form")
+        fillAndStart()
+        XCTAssertTrue(waitForLabel("task-attachments-summary", containing: "Notes.txt"))
+        XCTAssertTrue(waitForLabel("task-attachments-summary", containing: "Screen.png"))
+        shot("131-task-attachments-progress")
+    }
+
+    func testAFailedTaskUploadKeepsTheDraftAndCanBeRetried() {
+        openForm(extra: ["-AHTaskAttachments", "YES", "-AHFailTaskUpload", "YES"])
+        reveal("task-permission-default")
+        requireElement("task-permission-default").tap()
+        type("Review these files", into: "task-text")
+        requireElement("task-start").tap()
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 15))
+        shot("132-task-upload-failed")
+        alert.buttons.firstMatch.tap()
+        XCTAssertTrue((requireElement("task-text").value as? String)?.contains("Review these files") == true)
+        reveal("task-attach")
+        shot("133-task-upload-draft-kept")
+        XCTAssertTrue(requireElement("task-start").isEnabled)
+        requireElement("task-start").tap()
+        _ = requireElement("task-progress")
+        XCTAssertTrue(waitForLabel("task-attachments-summary", containing: "Notes.txt"))
+        XCTAssertTrue(waitForLabel("task-attachments-summary", containing: "Screen.png"))
+    }
+
+    func testAttachmentsOnAnOldMacMustBeRemovedBeforeStarting() {
+        openForm(extra: ["-AHTaskAttachments", "YES", "-AHNoTaskAttachments", "YES"])
+        reveal("task-permission-default")
+        requireElement("task-permission-default").tap()
+        type("Review these files", into: "task-text")
+        reveal("task-attachments-unavailable")
+        XCTAssertFalse(element("task-attach").exists)
+        shot("134-task-attachments-old-mac")
+        requireElement("task-start").tap()
+        XCTAssertFalse(element("task-progress").exists)
+        let remove = app.buttons.matching(NSPredicate(format: "label == %@", localized("Remove attachment", "移除附件")))
+        for _ in 0..<2 {
+            XCTAssertTrue(remove.firstMatch.waitForExistence(timeout: 5))
+            remove.firstMatch.tap()
+        }
+        XCTAssertTrue(requireElement("task-start").isEnabled)
+        requireElement("task-start").tap()
+        _ = requireElement("task-progress")
+    }
+
     func testFailedIdleResultContinuesWithoutErasingTheDraft() {
         launch(extra: ["-AHScenario", "agentResults", "-AHTab", "agents"])
         XCTAssertTrue(app.staticTexts[localized("Needs attention", "需要处理")].waitForExistence(timeout: 10))
@@ -362,4 +467,5 @@ private extension XCUIElement {
         }
         typeText(text)
     }
+
 }

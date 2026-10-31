@@ -26,6 +26,9 @@ enum TaskTexts {
         case "todoGone": String(localized: "That TODO is gone from the Mac.")
         case "modelUnavailable": String(localized: "The Agent on the Mac no longer offers that model. Open the form again and choose another.")
         case "effortUnavailable": String(localized: "That effort is not available for the chosen model. Open the form again and choose another.")
+        case "attachment": String(localized: "The task attachments are not available. Your task was not started. Please try again.")
+        case "attachmentsUnsupported": String(localized: "Update AskHuman on this Mac to start tasks with attachments.")
+        case "speedUnavailable": String(localized: "That speed is no longer available on the Mac. Open the form again and choose another.")
         case "terminalFailed": String(localized: "The Mac could not open a terminal for the Agent.")
         case "invalid": String(localized: "The Mac did not accept this task.")
         case .some(let text) where !text.isEmpty: text

@@ -54,24 +54,46 @@ extension PhoneEngine {
 
     // MARK: creating
 
-    public func createTask(macId: String, draft: TaskDraft) async throws -> String {
+    public func createTask(macId: String, draft: TaskDraft, progress: @escaping @Sendable (Double) -> Void) async throws -> String {
         guard macs[macId]?.sync == .synced else { throw BackendError.macOffline }
+        guard draft.files.count <= Wire.maxReplyAttachments, draft.files.allSatisfy({ !$0.data.isEmpty && $0.data.count <= Wire.maxAssetBytes }) else { throw BackendError.tooLarge }
+        if !draft.files.isEmpty {
+            guard case .ready(let options)? = taskOptions[macId], options.attachmentsSupported == true else { throw BackendError.rejected("attachmentsUnsupported") }
+        }
         let id = Bytes.newMsgId()
+        var uploadIds: [String] = []
+        do {
+            for (index, source) in draft.files.enumerated() {
+                uploadIds.append(try await performUpload(macId: macId, scope: UploadScope(taskId: id), source: source, progress: { fraction in
+                    progress((Double(index) + fraction) / Double(draft.files.count))
+                }))
+            }
+            try Task.checkCancellation()
+        } catch {
+            for uploadId in uploadIds { await send(UploadCancel(uploadId: uploadId), to: macId) }
+            throw error
+        }
         let body = TaskCreate(
             clientMsgId: id, workspaceId: draft.workspaceId, agentKind: draft.agentKind, permission: draft.permission,
-            todoId: draft.todoId, model: draft.model, effort: draft.effort, text: draft.text
+            todoId: draft.todoId, model: draft.model, effort: draft.effort, speed: draft.speed, files: uploadIds.isEmpty ? nil : uploadIds, text: draft.text
         )
         taskBodies[id] = body
         tasks.insert(
             TaskProgress(
                 id: id, macId: macId, workspace: draft.workspaceName, agentLabel: draft.agentLabel, text: draft.text,
-                stage: "sending", createdAt: clock.now(), modelLabel: draft.modelLabel, effort: draft.effort
+                stage: "sending", createdAt: clock.now(), modelLabel: draft.modelLabel, effort: draft.effort, speed: draft.speed, attachmentNames: draft.files.map(\.name)
             ),
             at: 0
         )
         trimTasks()
         publish()
-        try await transmitTask(id: id, macId: macId)
+        do {
+            try await transmitTask(id: id, macId: macId)
+        } catch {
+            // A publish failure can still have reached the Mac. Once files were uploaded, keep
+            // the prepared task in its progress page so retry uses the same creation and file IDs.
+            if draft.files.isEmpty { throw error }
+        }
         return id
     }
 
@@ -96,6 +118,8 @@ extension PhoneEngine {
     private func transmitTask(id: String, macId: String) async throws {
         guard let body = taskBodies[id] else { return }
         guard await send(body, to: macId) else {
+            // An authenticated Mac receipt is stronger evidence than a missing MQTT PUBACK.
+            if let task = tasks.first(where: { $0.id == id }), task.stage != "sending" { return }
             updateTask(id) { $0.stage = "failed"; $0.reason = "connection" }
             publish()
             throw BackendError.macOffline
@@ -113,7 +137,8 @@ extension PhoneEngine {
         guard let task = tasks.first(where: { $0.id == status.clientMsgId }), task.macId == macId else { return }
         cancelTimer("task." + status.clientMsgId)
         // A stage never goes back: a late `accepted` must not undo `launched`.
-        if task.isFinal || Self.stageRank(status.stage) < Self.stageRank(task.stage) { return }
+        // A local connection failure is still awaiting the Mac's authoritative outcome.
+        if !task.canRetry && (task.isFinal || Self.stageRank(status.stage) < Self.stageRank(task.stage)) { return }
         updateTask(status.clientMsgId) {
             $0.stage = status.stage
             $0.reason = status.reason

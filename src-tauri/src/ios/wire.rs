@@ -864,6 +864,8 @@ pub struct WorkspaceOption {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelOption {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_supported: Option<bool>,
     /// What `task.create` sends back as `model`.
     pub id: String,
     pub label: String,
@@ -881,6 +883,8 @@ pub struct ModelOption {
 #[serde(rename_all = "camelCase")]
 pub struct DefaultModel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_supported: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Efforts the default model can run with; absent = no effort row for "Default".
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -892,6 +896,8 @@ pub struct DefaultModel {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentOption {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_control: Option<bool>,
     pub kind: String,
     pub label: String,
     pub ready: bool,
@@ -909,6 +915,8 @@ pub struct AgentOption {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments_supported: Option<bool>,
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked: Option<String>,
@@ -946,6 +954,10 @@ msg!(TaskTodos, t::TASK_TODOS);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskCreate {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<crate::agents::model_catalog::TaskSpeed>,
     pub client_msg_id: String,
     pub workspace_id: String,
     pub agent_kind: String,
@@ -1265,6 +1277,8 @@ msg!(AssetError, t::ASSET_ERROR);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadScope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -330,10 +330,19 @@ extension AppStore {
     /// Sends the form. Returns the id of the task to watch, or `nil` when the form is incomplete.
     public func createTask() async throws -> String? {
         guard let composer = taskComposer, case .ready(let options)? = state.taskOptions[composer.macId],
-              let draft = composer.draft(options: options)
+              var draft = composer.draft(options: options)
         else { return nil }
         composer.remember(options: options, defaults: defaults)
-        return try await backend.createTask(macId: composer.macId, draft: draft)
+        draft.files = try composer.sources()
+        composer.isSending = true
+        composer.uploadProgress = draft.files.isEmpty ? nil : 0
+        defer { composer.isSending = false; composer.uploadProgress = nil }
+        return try await backend.createTask(macId: composer.macId, draft: draft, progress: { [weak composer] fraction in
+            Task { @MainActor in
+                guard let composer, composer.isSending else { return }
+                composer.uploadProgress = fraction
+            }
+        })
     }
 
     public func task(id: String) -> TaskProgress? {

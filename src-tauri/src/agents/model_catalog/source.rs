@@ -180,6 +180,7 @@ pub fn refresh_default_with(
         AgentKind::Antigravity => return catalog.clone(),
     };
     AgentCatalog {
+        speed: catalog.speed.clone(),
         models: catalog.models.clone(),
         default,
         listed_default: catalog.listed_default.clone(),

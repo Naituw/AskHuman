@@ -81,6 +81,8 @@ pub(super) fn resolve_task_input(
 
 /// Everything a launch needs once the user decided.
 pub(super) struct TaskSpec {
+    /// Additional trusted local files, such as task-scoped iOS uploads.
+    pub files: Vec<String>,
     /// Who asked (`LaunchSource::channel`): an IM channel id or `ios`.
     pub channel: String,
     /// Where the asker lives (`LaunchSource::target`): the IM user or the phone id.
@@ -121,6 +123,7 @@ pub(super) async fn start_task(
     on_pending: impl FnOnce(&LaunchRecord),
 ) -> Result<Started, StartError> {
     let TaskSpec {
+        files,
         channel,
         source_target,
         workspace,
@@ -136,7 +139,7 @@ pub(super) async fn start_task(
         target: source_target,
     };
     let delivery_request_id = uuid::Uuid::new_v4().to_string();
-    let delivery = if let Some((project, todo)) = todo.as_ref() {
+    let mut delivery = if let Some((project, todo)) = todo.as_ref() {
         let expected: Vec<_> = todo.attachments.iter().map(|a| a.snapshot()).collect();
         crate::todos::prepare_delivery_consistent(
             project,
@@ -147,6 +150,7 @@ pub(super) async fn start_task(
     } else {
         crate::todo_attachments::TodoDelivery::default()
     };
+    delivery.files.extend(files);
     let take_todo = || {
         if let Some((project, todo)) = todo.as_ref() {
             let _ = crate::todos::take(project, std::slice::from_ref(&todo.id));
@@ -172,6 +176,7 @@ pub(super) async fn start_task(
                 id: delivery_request_id.clone(),
                 model: choice.model,
                 effort: choice.effort,
+                speed: choice.speed,
             })
             .await
             .map_err(StartError::Message)?;

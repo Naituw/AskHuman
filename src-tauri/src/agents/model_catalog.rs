@@ -33,6 +33,68 @@ pub const MAX_NOTE_CHARS: usize = 120;
 /// Most reasoning efforts kept per model.
 pub const MAX_EFFORTS_PER_MODEL: usize = 8;
 
+/// An explicit per-task speed; absence preserves the caller's existing inheritance behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskSpeed {
+    Standard,
+    Fast,
+}
+
+impl TaskSpeed {
+    pub fn service_tier(self) -> &'static str {
+        match self {
+            Self::Standard => "default",
+            Self::Fast => "fast",
+        }
+    }
+}
+
+/// Speed controls explicitly advertised by the selected Codex runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpeedCatalog {
+    pub fast_models: HashSet<String>,
+}
+
+impl SpeedCatalog {
+    pub fn from_entries(entries: &[serde_json::Value]) -> Option<Self> {
+        let mut known = false;
+        let mut fast_models = HashSet::new();
+        for entry in entries {
+            let current = entry.get("serviceTiers");
+            let tiers = entry
+                .get("serviceTiers")
+                .and_then(serde_json::Value::as_array);
+            let legacy = entry
+                .get("additionalSpeedTiers")
+                .and_then(serde_json::Value::as_array);
+            known |= tiers.is_some() || (current.is_none() && legacy.is_some());
+            // A present new field is authoritative, including an empty array.
+            let fast = match tiers {
+                Some(tiers) => tiers
+                    .iter()
+                    .any(|tier| matches!(tier["id"].as_str(), Some("fast" | "priority"))),
+                None if current.is_none() => legacy.is_some_and(|tiers| {
+                    tiers
+                        .iter()
+                        .any(|tier| matches!(tier.as_str(), Some("fast" | "priority")))
+                }),
+                None => false,
+            };
+            if fast {
+                if let Some(id) = entry["model"]
+                    .as_str()
+                    .or_else(|| entry["id"].as_str())
+                    .filter(|id| valid_model_id(id))
+                {
+                    fast_models.insert(id.to_string());
+                }
+            }
+        }
+        known.then_some(Self { fast_models })
+    }
+}
+
 /// What the user picked for a new task. `None` leaves that part to the Agent: no flag is passed
 /// and the Agent's own configuration decides, exactly as before this existed.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,22 +103,31 @@ pub struct ModelChoice {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<TaskSpeed>,
 }
 
 impl ModelChoice {
     pub fn new(model: Option<String>, effort: Option<String>) -> Self {
-        Self { model, effort }
+        Self {
+            model,
+            effort,
+            speed: None,
+        }
     }
 
     /// Nothing was picked: the Agent is started without any model or effort flag.
     pub fn is_default(&self) -> bool {
-        self.model.is_none() && self.effort.is_none()
+        self.model.is_none() && self.effort.is_none() && self.speed.is_none()
     }
 
     /// Whether `kind` can honour this choice and nothing in it could be mistaken for a flag.
     /// The values are also matched against the Agent's catalog before a task is accepted; this is
     /// the last line of defence between a value and an argv.
     pub fn check_for(&self, kind: AgentKind) -> Result<(), String> {
+        if self.speed.is_some() && kind != AgentKind::Codex {
+            return Err("only Codex supports a separate task speed".into());
+        }
         if let Some(model) = &self.model {
             if !valid_model_id(model) {
                 return Err("invalid model id".into());
@@ -141,6 +212,7 @@ pub struct DefaultInfo {
 /// Everything the phone may pick for one Agent.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AgentCatalog {
+    pub speed: Option<SpeedCatalog>,
     pub models: Vec<ModelEntry>,
     pub default: DefaultInfo,
     /// The id the Agent's own listing marks as its default (not the one the user configured).
@@ -158,6 +230,7 @@ impl AgentCatalog {
 /// Why a choice was refused; [`ChoiceError::reason`] is the wire string of the failed task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChoiceError {
+    SpeedUnsupported,
     /// The model is not in the Agent's catalog (any more).
     ModelUnavailable,
     /// The effort is not one the model (or the default model) offers.
@@ -167,6 +240,7 @@ pub enum ChoiceError {
 impl ChoiceError {
     pub fn reason(self) -> &'static str {
         match self {
+            ChoiceError::SpeedUnsupported => "speedUnavailable",
             ChoiceError::ModelUnavailable => "modelUnavailable",
             ChoiceError::EffortUnavailable => "effortUnavailable",
         }
@@ -183,10 +257,26 @@ pub fn resolve_choice(
     catalog: &AgentCatalog,
     wanted: &ModelChoice,
 ) -> Result<ModelChoice, ChoiceError> {
+    if let Some(speed) = wanted.speed {
+        if kind != AgentKind::Codex || catalog.speed.is_none() {
+            return Err(ChoiceError::SpeedUnsupported);
+        }
+        if speed == TaskSpeed::Fast
+            && !wanted
+                .model
+                .as_ref()
+                .is_some_and(|id| catalog.speed.as_ref().unwrap().fast_models.contains(id))
+        {
+            return Err(ChoiceError::SpeedUnsupported);
+        }
+    }
     if wanted.is_default() {
         return Ok(ModelChoice::default());
     }
     let Some(model) = &wanted.model else {
+        if wanted.effort.is_none() {
+            return Ok(wanted.clone());
+        }
         // A bare effort belongs to whatever the Agent runs by default.
         let effort = wanted.effort.as_deref().unwrap_or_default();
         return if catalog.default.efforts.iter().any(|e| e == effort) {
@@ -213,6 +303,7 @@ pub fn resolve_choice(
                     .as_ref()
                     .is_some_and(|pinned| !entry.efforts.contains(pinned));
             Ok(ModelChoice {
+                speed: wanted.speed,
                 model: Some(entry.id.clone()),
                 effort: pinned_is_unknown
                     .then(|| entry.default_effort.clone())
@@ -620,5 +711,61 @@ mod tests {
         assert_eq!(finish_entries(many).len(), MAX_MODELS_PER_AGENT);
         let efforts: Vec<String> = (0..20).map(|i| format!("e{i}")).collect();
         assert_eq!(clean_efforts(&efforts).len(), MAX_EFFORTS_PER_MODEL);
+    }
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn speed_capabilities_require_metadata_and_new_metadata_wins() {
+        assert!(SpeedCatalog::from_entries(&[json!({"model":"a"})]).is_none());
+        let entries = vec![
+            json!({"model":"a","serviceTiers":[{"id":"fast"}]}),
+            json!({"model":"b","additionalSpeedTiers":["priority"]}),
+            json!({"model":"c","serviceTiers":[],"additionalSpeedTiers":["fast"]}),
+            json!({"model":"d","serviceTiers":[{"id":"ultrafast"}]}),
+            json!({"model":"e","serviceTiers":null,"additionalSpeedTiers":["fast"]}),
+        ];
+        let speed = SpeedCatalog::from_entries(&entries).unwrap();
+        assert_eq!(speed.fast_models, HashSet::from(["a".into(), "b".into()]));
+    }
+
+    #[test]
+    fn speed_is_independent_and_restricted_to_codex() {
+        let mut catalog = AgentCatalog::default();
+        catalog.models.push(ModelEntry::plain("a", "A"));
+        catalog.models.push(ModelEntry::plain("b", "B"));
+        catalog.speed = Some(SpeedCatalog {
+            fast_models: HashSet::from(["a".into()]),
+        });
+        let mut pick = ModelChoice {
+            speed: Some(TaskSpeed::Standard),
+            ..Default::default()
+        };
+        assert!(!pick.is_default());
+        assert_eq!(
+            resolve_choice(AgentKind::Codex, &catalog, &pick),
+            Ok(pick.clone())
+        );
+        assert!(pick.check_for(AgentKind::Claude).is_err());
+        pick.speed = Some(TaskSpeed::Fast);
+        assert_eq!(
+            resolve_choice(AgentKind::Codex, &catalog, &pick),
+            Err(ChoiceError::SpeedUnsupported)
+        );
+        pick.model = Some("a".into());
+        assert_eq!(
+            resolve_choice(AgentKind::Codex, &catalog, &pick),
+            Ok(pick.clone())
+        );
+        pick.model = Some("b".into());
+        assert_eq!(
+            resolve_choice(AgentKind::Codex, &catalog, &pick),
+            Err(ChoiceError::SpeedUnsupported)
+        );
+        assert!(serde_json::from_value::<ModelChoice>(json!({"speed":"ultrafast"})).is_err());
     }
 }

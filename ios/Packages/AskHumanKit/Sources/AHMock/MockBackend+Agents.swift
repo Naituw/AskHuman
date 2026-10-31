@@ -198,7 +198,9 @@ extension MockBackend {
         state.taskOptions[macId] = .loading
         publish()
         await pause(0.5)
-        state.taskOptions[macId] = .ready(MockData.taskOptions(macId: macId, models: offersModels))
+        var options = MockData.taskOptions(macId: macId, models: offersModels)
+        options.attachmentsSupported = offersTaskAttachments ? true : nil
+        state.taskOptions[macId] = .ready(options)
         publish()
     }
 
@@ -208,8 +210,17 @@ extension MockBackend {
         publish()
     }
 
-    public func createTask(macId: String, draft: TaskDraft) async throws -> String {
+    public func createTask(macId: String, draft: TaskDraft, progress: @escaping @Sendable (Double) -> Void) async throws -> String {
         try requireOnline(macId)
+        guard draft.files.isEmpty || offersTaskAttachments else { throw BackendError.rejected("attachmentsUnsupported") }
+        guard draft.files.count <= Wire.maxReplyAttachments, draft.files.allSatisfy({ !$0.data.isEmpty && $0.data.count <= Wire.maxAssetBytes }) else { throw BackendError.tooLarge }
+        for index in draft.files.indices {
+            for part in 1...3 {
+                await pause(0.08)
+                progress((Double(index) + Double(part) / 3) / Double(draft.files.count))
+            }
+            if failNextTaskUpload { failNextTaskUpload = false; throw BackendError.rejected("attachment") }
+        }
         counter += 1
         let id = "mock-task-\(counter)"
         createdTasks.append(draft)
@@ -217,7 +228,7 @@ extension MockBackend {
         state.tasks.insert(
             TaskProgress(
                 id: id, macId: macId, workspace: draft.workspaceName, agentLabel: draft.agentLabel, text: draft.text,
-                stage: "sending", createdAt: now(), modelLabel: draft.modelLabel, effort: draft.effort
+                stage: "sending", createdAt: now(), modelLabel: draft.modelLabel, effort: draft.effort, speed: draft.speed, attachmentNames: draft.files.map(\.name)
             ),
             at: 0
         )
@@ -326,6 +337,12 @@ extension MockBackend {
         failNextTask = reason
     }
 
+    /// Models a Mac's task upload capability and a single failed upload.
+    public func setTaskAttachmentOptions(supported: Bool, failUpload: Bool) {
+        offersTaskAttachments = supported
+        failNextTaskUpload = failUpload
+    }
+
     /// Makes the Macs list no models, like an older Mac (the form then has no model or effort row).
     public func setOffersModels(_ offers: Bool) {
         offersModels = offers
@@ -358,6 +375,7 @@ extension MockBackend {
         publish()
     }
 
+    /// Moves an Agent into another state (for tests of the list and the detail screen).
     public func setAgentState(macId: String, agentKey: String, to newState: String) {
         guard let index = agentIndex(macId, agentKey) else { return }
         state.agents[index].view.state = newState

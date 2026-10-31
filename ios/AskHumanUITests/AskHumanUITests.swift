@@ -801,18 +801,21 @@ final class AskHumanUITests: XCTestCase {
         shot("98-history-detail-session-title")
     }
 
-    func testTheBannerOfANewRequestNamesItsSession() {
-        launch(extra: ["-AHArrival", "Review the release notes"])
-        let banner = requireElement("banner", timeout: 15)
-        XCTAssertTrue(banner.label.contains("Review the release notes"), banner.label)
-        XCTAssertFalse(banner.label.contains("Cursor · HumanInLoop"), "the title replaces the Agent and project: \(banner.label)")
-        shot("99-banner-session-title")
+    func testANewRequestKeepsItsSessionTitleWhileTheAnimationReplacesItsBanner() {
+        launch(extra: ["-AHArrival", "Review the release notes", "-AHArrivalMotionSlowdown", "10"])
+        let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "inbox-row-req-live-")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        XCTAssertTrue(row.label.contains("Review the release notes"), row.label)
+        XCTAssertFalse(element("banner").exists)
+        shot("99-arrival-session-title")
     }
 
-    func testTheBannerOfARequestWithoutATitleNamesTheAgentAndProject() {
-        launch(extra: ["-AHArrival", "none"])
-        let banner = requireElement("banner", timeout: 15)
-        XCTAssertTrue(banner.label.contains("Cursor · HumanInLoop"), banner.label)
+    func testANewRequestWithoutATitleKeepsItsInboxFallbackName() {
+        launch(extra: ["-AHArrival", "none", "-AHArrivalMotionSlowdown", "10"])
+        let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "inbox-row-req-live-")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        XCTAssertTrue(row.label.contains("Cursor"), row.label)
+        XCTAssertFalse(element("banner").exists)
     }
 
     // MARK: moving on after sending

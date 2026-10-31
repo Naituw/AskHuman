@@ -828,13 +828,15 @@ public struct ModelOption: Codable, Equatable, Hashable, Sendable, Identifiable 
     public var efforts: [String]?
     /// The effort the model runs with when none is chosen.
     public var defaultEffort: String?
+    public var fastSupported: Bool?
 
-    public init(id: String, label: String, note: String? = nil, efforts: [String]? = nil, defaultEffort: String? = nil) {
+    public init(id: String, label: String, note: String? = nil, efforts: [String]? = nil, defaultEffort: String? = nil, fastSupported: Bool? = nil) {
         self.id = id
         self.label = label
         self.note = note
         self.efforts = efforts
         self.defaultEffort = defaultEffort
+        self.fastSupported = fastSupported
     }
 }
 
@@ -844,11 +846,13 @@ public struct DefaultModel: Codable, Equatable, Hashable, Sendable {
     /// The efforts that model runs with; absent = "Default" has no effort row.
     public var efforts: [String]?
     public var defaultEffort: String?
+    public var fastSupported: Bool?
 
-    public init(label: String? = nil, efforts: [String]? = nil, defaultEffort: String? = nil) {
+    public init(label: String? = nil, efforts: [String]? = nil, defaultEffort: String? = nil, fastSupported: Bool? = nil) {
         self.label = label
         self.efforts = efforts
         self.defaultEffort = defaultEffort
+        self.fastSupported = fastSupported
     }
 }
 
@@ -862,10 +866,11 @@ public struct AgentOption: Codable, Equatable, Hashable, Sendable {
     /// The models the phone may pick besides "Default"; absent when the Mac knows none (or is older).
     public var models: [ModelOption]?
     public var defaultModel: DefaultModel?
+    public var speedControl: Bool?
 
     public init(
         kind: String, label: String, ready: Bool, subtitle: String, permissionSelectable: Bool, reason: String? = nil,
-        models: [ModelOption]? = nil, defaultModel: DefaultModel? = nil
+        models: [ModelOption]? = nil, defaultModel: DefaultModel? = nil, speedControl: Bool? = nil
     ) {
         self.kind = kind
         self.label = label
@@ -875,6 +880,7 @@ public struct AgentOption: Codable, Equatable, Hashable, Sendable {
         self.reason = reason
         self.models = models
         self.defaultModel = defaultModel
+        self.speedControl = speedControl
     }
 
     /// A model entry that does not decode is skipped instead of failing the whole `task.options`:
@@ -888,6 +894,7 @@ public struct AgentOption: Codable, Equatable, Hashable, Sendable {
         permissionSelectable = try c.decode(Bool.self, forKey: .permissionSelectable)
         reason = try c.decodeIfPresent(String.self, forKey: .reason)
         models = try? c.decodeIfPresent([Lossy<ModelOption>].self, forKey: .models)?.compactMap(\.value)
+        speedControl = try? c.decodeIfPresent(Bool.self, forKey: .speedControl)
         defaultModel = try? c.decodeIfPresent(DefaultModel.self, forKey: .defaultModel)
     }
 }
@@ -903,6 +910,7 @@ private struct Lossy<Value: Decodable>: Decodable {
 
 public struct TaskOptions: WireMessage {
     public static let type = "task.options"
+    public var attachmentsSupported: Bool?
     public var enabled: Bool
     public var blocked: String?
     /// `ask`, `agentDefault` or `yolo`.
@@ -910,7 +918,8 @@ public struct TaskOptions: WireMessage {
     public var workspaces: [WorkspaceOption]
     public var agents: [AgentOption]
 
-    public init(enabled: Bool, blocked: String? = nil, permissionMode: String, workspaces: [WorkspaceOption], agents: [AgentOption]) {
+    public init(enabled: Bool, blocked: String? = nil, permissionMode: String, workspaces: [WorkspaceOption], agents: [AgentOption], attachmentsSupported: Bool? = nil) {
+        self.attachmentsSupported = attachmentsSupported
         self.enabled = enabled
         self.blocked = blocked
         self.permissionMode = permissionMode
@@ -947,6 +956,10 @@ public struct TaskTodos: WireMessage {
     public var overflow: UInt64
 }
 
+public enum TaskSpeed: String, Codable, Equatable, Sendable {
+    case standard, fast
+}
+
 public struct TaskCreate: WireMessage {
     public static let type = "task.create"
     public var clientMsgId: String
@@ -960,10 +973,12 @@ public struct TaskCreate: WireMessage {
     public var model: String?
     /// An effort offered for that model (or for "Default"); absent = the Agent's own.
     public var effort: String?
+    public var speed: TaskSpeed?
+    public var files: [String]?
 
     public init(
         clientMsgId: String, workspaceId: String, agentKind: String, permission: String, todoId: String? = nil,
-        model: String? = nil, effort: String? = nil, text: String
+        model: String? = nil, effort: String? = nil, speed: TaskSpeed? = nil, files: [String]? = nil, text: String
     ) {
         self.clientMsgId = clientMsgId
         self.workspaceId = workspaceId
@@ -973,6 +988,8 @@ public struct TaskCreate: WireMessage {
         self.text = text
         self.model = model
         self.effort = effort
+        self.speed = speed
+        self.files = files
     }
 }
 
@@ -1302,10 +1319,12 @@ public struct AssetError: WireMessage {
 public struct UploadScope: Codable, Equatable, Hashable, Sendable {
     public var requestId: String?
     public var agentKey: String?
+    public var taskId: String?
 
-    public init(requestId: String? = nil, agentKey: String? = nil) {
+    public init(requestId: String? = nil, agentKey: String? = nil, taskId: String? = nil) {
         self.requestId = requestId
         self.agentKey = agentKey
+        self.taskId = taskId
     }
 }
 

@@ -37,7 +37,7 @@ private struct AgentDetailContent: View {
                 } else if gone {
                     Notice(symbol: "tray", text: "The Mac no longer lists this session.", tint: .gray)
                 }
-                AgentHeader(item: item, model: watch?.frame?.model, reasoning: watch?.frame?.reasoning)
+                AgentHeader(item: item, model: watch?.frame?.model, reasoning: watch?.frame?.reasoning, speed: watch?.frame?.speed)
                 if let title = item.resultTitle, !item.isWorking, item.view.state != "waiting" {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(title).font(.headline).foregroundStyle(item.resultColor).accessibilityIdentifier("agent-last-result")
@@ -161,6 +161,7 @@ private struct AgentHeader: View {
     /// What the session runs with, as the Mac reported it in the live view (the page shows what it has).
     let model: String?
     let reasoning: String?
+    let speed: TaskSpeed?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -189,6 +190,11 @@ private struct AgentHeader: View {
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("agent-model")
+            }
+            if let speed {
+                Text(speed == .fast ? "Configured speed: Fast" : "Configured speed: Standard")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("agent-speed")
             }
             // Only a task started from the phone is followed (the Agents tab lists every session anyway).
             // The Mac drops the follow once the first result was dealt with, and the line goes with it.

@@ -12,13 +12,12 @@ import AHStore
 struct AnswerScreen: View {
     let item: InboxItem
     @Environment(AppStore.self) private var store
-    @State private var confirmCancel = false
-    @State private var problem: String?
     @State private var tracker = ReadingTracker()
     /// The question "Next" last led to, which flashes once it has arrived.
     @State private var landing = Landing()
     /// The question whose text field has the keyboard.
     @State private var focused: Int?
+    @State private var messageReady = false
     @Environment(\.launchOptions) private var launch
 
     fileprivate static let space = "answer-scroll"
@@ -31,7 +30,7 @@ struct AnswerScreen: View {
                         if let finished = store.endedNotice(for: item.id) { FinishedNotice(finished: finished) }
                         if case .failed = item.state { FailedSubmissionNotice(item: item) }
                         RequestHeader(item: item)
-                        MessageCard(ask: ask, macId: item.macId, onSettled: { tracker.messageSettled() })
+                        MessageCard(ask: ask, macId: item.macId, onSettled: { tracker.messageSettled(); messageReady = true })
                         VStack(spacing: 0) {
                             ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
                                 QuestionCard(
@@ -39,6 +38,8 @@ struct AnswerScreen: View {
                                     landing: landing, focus: $focused
                                 )
                                     .background(FrameReader(.card(index)))
+                                    .background(RequestReadingAnchor(name: Self.cardID(index)))
+                                    .disabled(composer.isSending || sending)
                                     // The gap belongs to what "Next" scrolls to, so that a card does not end flush with the bar.
                                     .padding(.bottom, 16)
                                     .id(Self.cardID(index))
@@ -47,6 +48,8 @@ struct AnswerScreen: View {
                     }
                     .padding([.horizontal, .top])
                     .padding(.bottom, 8)
+                    .background(RequestReadingAnchor(name: "request-top"))
+                    .background(RequestScrollPosition(id: item.id, store: store, ready: messageReady || !MessageCard.drawnByWebPage(ask, launch: launch)))
                 }
                 .background(Color(.systemGroupedBackground))
                 .background(FrameReader(.safeTop))
@@ -54,7 +57,7 @@ struct AnswerScreen: View {
                 .actionBar {
                     SendBar(
                         item: item, composer: composer, moreBelow: tracker.moreBelow, ended: store.endedNotice(for: item.id) != nil,
-                        online: store.isOnline(macId: item.macId),
+                        connection: store.state.requestConnection(macId: item.macId),
                         onSend: { send(composer) },
                         onNext: { next(composer, proxy: proxy) },
                         onJump: { jumpToMissing(composer, proxy: proxy) }
@@ -71,43 +74,20 @@ struct AnswerScreen: View {
                     )
                 }
             }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("Cancel request", systemImage: "xmark.circle", role: .destructive) { confirmCancel = true }
-                            .disabled(store.finished[item.id] != nil || !store.isOnline(macId: item.macId))
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .accessibilityIdentifier("request-menu")
-                }
-            }
-            .confirmationDialog("Cancel this request?", isPresented: $confirmCancel, titleVisibility: .visible) {
-                Button("Cancel request", role: .destructive) {
-                    Task {
-                        do { try await store.cancel(item) } catch { problem = error.userMessage }
-                    }
-                }
-                Button("Keep it", role: .cancel) {}
-            } message: {
-                Text("The Agent is told that you cancelled.")
-            }
-            .alert("Could not send", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(problem ?? "")
-            }
+
         }
     }
 
     fileprivate static func cardID(_ index: Int) -> String { "question-\(index)" }
+
+    private var sending: Bool { if case .sending = item.state { true } else { false } }
 
     private func send(_ composer: AnswerComposer) {
         Task {
             do {
                 try await store.send(composer, item: item)
             } catch {
-                problem = error.userMessage
+                store.reportRequestError(error.userMessage, for: item.id)
             }
         }
     }
@@ -328,6 +308,7 @@ private struct QuestionCard: View {
     let composer: AnswerComposer
     let landing: Landing
     var focus: Binding<Int?>
+    @State private var inputReveal = InputRevealTarget()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -370,13 +351,14 @@ private struct QuestionCard: View {
                         if active { focus.wrappedValue = index }
                         else if focus.wrappedValue == index { focus.wrappedValue = nil }
                     }),
-                    lines: 1...10, identifier: "answer-text-\(index)"
+                    lines: 1...10, identifier: "answer-text-\(index)", revealTarget: inputReveal
                 )
                 .contentShape(Rectangle())
                 .simultaneousGesture(TapGesture().onEnded { focus.wrappedValue = index })
                 .padding(10)
                 .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                ReplyAttachmentBar(composer: composer, question: index)
+                .background(InputRevealAnchor(target: inputReveal, part: .editor))
+                ReplyAttachmentBar(composer: composer, question: index, revealTarget: inputReveal)
             }
         }
         .card()
@@ -536,7 +518,7 @@ private struct SendBar: View {
     /// A question is left below the screen.
     let moreBelow: Bool
     let ended: Bool
-    let online: Bool
+    let connection: RequestConnection
     let onSend: () -> Void
     let onNext: () -> Void
     let onJump: () -> Void
@@ -675,13 +657,17 @@ private struct SendBar: View {
     private var busy: Bool { composer.isSending || sendingState }
 
     private var enabled: Bool {
-        composer.canSend && !ended && online && !sendingState
+        composer.canSend && !ended && connection == .ready && !sendingState
+    }
+
+    private var connectionNotice: RequestConnectionNotice? {
+        connection.notice(offlineText: "The Mac is offline. Your draft is kept.")
     }
 
     /// A line under the count. One that says what "Send" is waiting for also leads to it.
     private var hint: (text: LocalizedStringKey, color: Color, leads: Bool)? {
         if ended { return ("This request has ended.", .secondary, false) }
-        if !online { return ("The Mac is offline. Your draft is kept.", .orange, false) }
+        if let notice = connectionNotice { return (notice.text, notice.color, false) }
         if sendingState { return ("Waiting for your Mac to confirm…", .secondary, false) }
         if composer.hasReachedEnd, composer.blockedReason == .needsSelection {
             return ("Choose an option for every question.", .secondary, composer.firstWithoutSelection != nil)
@@ -695,7 +681,9 @@ private struct SendBar: View {
     @ViewBuilder
     private func hintView(_ hint: (text: LocalizedStringKey, color: Color, leads: Bool), chip: Bool) -> some View {
         let label = HStack(spacing: 3) {
+            if !ended, connectionNotice?.progressing == true { ProgressView().controlSize(.mini) }
             Text(hint.text).multilineTextAlignment(.leading)
+                .accessibilityIdentifier(!ended && connectionNotice != nil ? "request-connection" : "request-hint")
             if hint.leads { Image(systemName: "chevron.right").font(.caption2.weight(.bold)) }
         }
         .font(.caption)

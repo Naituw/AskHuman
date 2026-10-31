@@ -634,6 +634,16 @@
         }
       }
     },
+    "Attachments" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附件"
+          }
+        }
+      }
+    },
     "Auto" : {
       "localizations" : {
         "zh-Hans" : {
@@ -804,6 +814,16 @@
         }
       }
     },
+    "Choose a model to enable Fast mode." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择具体模型以开启 Fast 模式。"
+          }
+        }
+      }
+    },
     "Choose an option for every question." : {
       "localizations" : {
         "zh-Hans" : {
@@ -934,6 +954,26 @@
         }
       }
     },
+    "Configured speed: Fast" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "速度配置：Fast"
+          }
+        }
+      }
+    },
+    "Configured speed: Standard" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "速度配置：标准"
+          }
+        }
+      }
+    },
     "Confirm that it is you before an Agent is started on your Mac." : {
       "localizations" : {
         "zh-Hans" : {
@@ -980,6 +1020,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在连接…"
+          }
+        }
+      }
+    },
+    "Connection interrupted. Retrying…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接已中断，正在重试…"
+          }
+        }
+      }
+    },
+    "Connection refused. Check the connection settings on your Mac." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接被拒绝，请在 Mac 上检查连接设置。"
           }
         }
       }
@@ -1420,6 +1480,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "出错了：%@"
+          }
+        }
+      }
+    },
+    "Fast is quicker, but uses more of your allowance. It starts off for each new task." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fast 更快，但消耗更多额度。每次新建任务时默认关闭。"
+          }
+        }
+      }
+    },
+    "Fast mode" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fast 模式"
+          }
+        }
+      }
+    },
+    "Fast mode is not available for this model." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型不支持 Fast 模式。"
+          }
+        }
+      }
+    },
+    "Fast mode was turned off because the model is no longer available or does not support it." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型已不可用或不支持 Fast，已关闭 Fast 模式。"
           }
         }
       }
@@ -1964,6 +2064,16 @@
         }
       }
     },
+    "More" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更多"
+          }
+        }
+      }
+    },
     "Name" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2050,6 +2160,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下一个问题"
+          }
+        }
+      }
+    },
+    "Next request" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一条消息"
           }
         }
       }
@@ -2803,6 +2923,16 @@
         }
       }
     },
+    "Previous request" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上一条消息"
+          }
+        }
+      }
+    },
     "Projects show up here once an Agent has worked in them on a Mac." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3179,6 +3309,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜索项目"
+          }
+        }
+      }
+    },
+    "Selected speed: Fast" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所选速度：Fast"
+          }
+        }
+      }
+    },
+    "Selected speed: Standard" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所选速度：标准"
           }
         }
       }
@@ -3623,6 +3773,16 @@
         }
       }
     },
+    "That speed is no longer available on the Mac. Open the form again and choose another." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 已不支持所选速度，请重新打开表单选择。"
+          }
+        }
+      }
+    },
     "That todo is too long." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3803,12 +3963,12 @@
         }
       }
     },
-    "The Agent starts in a new terminal window on your Mac." : {
+    "The Agent starts on your Mac." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Agent 会在你 Mac 上的新终端窗口里启动。"
+            "value" : "Agent 会在你的 Mac 上启动。"
           }
         }
       }
@@ -4169,6 +4329,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "该会话已结束。"
+          }
+        }
+      }
+    },
+    "The task attachments are not available. Your task was not started. Please try again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务附件不可用，任务尚未启动。请重试。"
           }
         }
       }
@@ -4651,6 +4821,16 @@
         }
       }
     },
+    "Update AskHuman and Codex on your Mac to choose a task speed." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新 Mac 上的 AskHuman 和 Codex 后即可选择任务速度。"
+          }
+        }
+      }
+    },
     "Update AskHuman on %@ to manage its todos from your phone." : {
       "localizations" : {
         "zh-Hans" : {
@@ -4661,12 +4841,32 @@
         }
       }
     },
+    "Update AskHuman on this Mac to start tasks with attachments." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新这台 Mac 上的 AskHuman 后即可创建带附件的任务。"
+          }
+        }
+      }
+    },
     "Updating…" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在更新…"
+          }
+        }
+      }
+    },
+    "Upload up to 5 files, 10 MB each. All attachments must upload before the task starts." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最多添加 5 个文件，每个不超过 10 MB。全部上传成功后才会启动任务。"
           }
         }
       }

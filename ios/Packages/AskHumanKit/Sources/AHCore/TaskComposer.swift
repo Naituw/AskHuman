@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import AHProtocol
+import AHStore
 
 /// How the user lets a new task act when the Mac asks every time.
 public enum PermissionChoice: String, Sendable {
@@ -50,10 +51,55 @@ public final class TaskComposer {
     @ObservationIgnored private var restoredAgentKind: String?
     @ObservationIgnored private var preserveUnavailablePreference = false
     public var todoId: String?
+    /// An opt-in for this form only. Never persisted with model and effort preferences.
+    public private(set) var fastMode = false
+    public private(set) var fastWasReset = false
     public var text = ""
+    public private(set) var attachments: [DraftAttachment] = []
+    public var isSending = false
+    public var uploadProgress: Double?
+    private var attachmentPreparations: Set<UUID> = []
+    public var isPreparingAttachments: Bool { !attachmentPreparations.isEmpty }
+    public var hasContent: Bool { !trimmedText.isEmpty || !attachments.isEmpty }
+    public var canAttachMore: Bool { attachments.count < Wire.maxReplyAttachments }
+    @ObservationIgnored private let directory: URL
 
     public init(macId: String) {
         self.macId = macId
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("ah-task", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+
+    deinit { try? FileManager.default.removeItem(at: directory) }
+
+    public func setAttachmentPreparation(_ id: UUID, active: Bool) {
+        if active { attachmentPreparations.insert(id) } else { attachmentPreparations.remove(id) }
+    }
+
+    @discardableResult
+    public func addAttachment(name: String, mime: String, data: Data, isImage: Bool) throws -> DraftAttachment {
+        guard data.count <= Wire.maxAssetBytes else { throw BackendError.tooLarge }
+        guard canAttachMore else { throw BackendError.invalid("At most \(Wire.maxReplyAttachments) attachments per task.") }
+        let id = Bytes.newId()
+        let safe = String(name.map { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_" ? $0 : "_" }.prefix(80))
+        let localName = id + "-" + safe
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: directory.appendingPathComponent(localName), options: .atomic)
+        let file = DraftAttachment(id: id, name: name, mime: mime, size: data.count, isImage: isImage, localName: localName)
+        attachments.append(file)
+        return file
+    }
+
+    public func url(of file: DraftAttachment) -> URL { directory.appendingPathComponent(file.localName) }
+
+    public func removeAttachment(id: String) {
+        guard let index = attachments.firstIndex(where: { $0.id == id }) else { return }
+        let removed = attachments.remove(at: index)
+        try? FileManager.default.removeItem(at: url(of: removed))
+    }
+
+    public func sources() throws -> [UploadSource] {
+        try attachments.map { UploadSource(name: $0.name, mime: $0.mime, data: try Data(contentsOf: url(of: $0)), isImage: $0.isImage) }
     }
 
     // MARK: choices
@@ -88,6 +134,8 @@ public final class TaskComposer {
     public func switchMac(to macId: String) {
         guard macId != self.macId else { return }
         self.macId = macId
+        fastMode = false
+        fastWasReset = false
         workspaceId = nil
         agentKind = nil
         todoId = nil
@@ -102,6 +150,8 @@ public final class TaskComposer {
     public func selectAgent(_ kind: String) {
         guard kind != agentKind else { return }
         agentKind = kind
+        fastMode = false
+        fastWasReset = false
         permissionChoice = nil
         modelId = nil
         pickedEffortId = nil
@@ -143,6 +193,10 @@ public final class TaskComposer {
             preserveUnavailablePreference = true
         }
         if effortId != nil, effort(in: options) == nil { pickedEffortId = nil }
+        if fastMode, !supportsFast(in: options) {
+            fastMode = false
+            fastWasReset = true
+        }
     }
 
     // MARK: derived
@@ -179,6 +233,25 @@ public final class TaskComposer {
 
     public func offersModelChoice(in options: TaskOptions) -> Bool {
         !models(in: options).isEmpty
+    }
+
+    public func offersSpeedControl(in options: TaskOptions) -> Bool {
+        agentKind == "codex" && agent(in: options)?.speedControl == true
+    }
+
+    public func supportsFast(in options: TaskOptions) -> Bool {
+        guard offersSpeedControl(in: options) else { return false }
+        return model(in: options)?.fastSupported == true
+    }
+
+    public func setFastMode(_ enabled: Bool, in options: TaskOptions) {
+        fastMode = enabled && supportsFast(in: options)
+        fastWasReset = false
+    }
+
+    public func speed(in options: TaskOptions) -> TaskSpeed? {
+        guard offersSpeedControl(in: options) else { return nil }
+        return fastMode && supportsFast(in: options) ? .fast : .standard
     }
 
     /// The model picked, or `nil` for "Default".
@@ -218,6 +291,8 @@ public final class TaskComposer {
     public var overLimit: Bool { charCount > Self.maxChars }
 
     public func canSubmit(options: TaskOptions) -> Bool {
+        guard !isSending, !isPreparingAttachments else { return false }
+        guard attachments.isEmpty || options.attachmentsSupported == true else { return false }
         guard options.enabled, workspace(in: options) != nil, let agent = agent(in: options), agent.ready else { return false }
         guard !overLimit else { return false }
         if offersPermissionChoice(in: options), permissionChoice == nil { return false }
@@ -231,7 +306,7 @@ public final class TaskComposer {
         return TaskDraft(
             workspaceId: workspace.id, workspaceName: workspace.label, agentKind: agent.kind, agentLabel: agent.label,
             permission: permission(in: options), todoId: todoId, model: model?.id, effort: effort(in: options),
-            modelLabel: model?.label, text: trimmedText
+            modelLabel: model?.label, speed: speed(in: options), text: trimmedText
         )
     }
 }

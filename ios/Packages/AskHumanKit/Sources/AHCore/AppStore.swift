@@ -129,6 +129,8 @@ public final class AppStore {
     public private(set) var finished: [String: FinishedRequest] = [:]
     /// Bumps for every request that arrives while the app is in the foreground (the UI plays a haptic).
     public internal(set) var arrivalTick = 0
+    /// Every new request owns an independent animation, including simultaneous arrivals.
+    public private(set) var requestArrivals: [RequestArrival] = []
     /// Bumps when the Mac accepted a submission of ours (the UI plays a haptic).
     public private(set) var sentTick = 0
     /// Set while the page of a request we just sent shows its receipt.
@@ -145,9 +147,22 @@ public final class AppStore {
     /// stack is closed: its draft is saved, or dropped when the request is over.
     public var inboxPath: [String] = [] {
         didSet {
+            if oldValue.last != inboxPath.last { requestNavigationEpoch &+= 1 }
             for id in Set(oldValue).subtracting(inboxPath) { closed(id: id) }
+            if let open = inboxPath.last {
+                if requestNavigation == nil { beginRequestNavigation(filter: filter, current: open) }
+                finishRequestArrival(id: open)
+            } else {
+                requestNavigation = nil
+                requestReadPositions.removeAll()
+            }
         }
     }
+    public private(set) var requestNavigation: RequestNavigation?
+    @ObservationIgnored private var requestReadPositions: [String: RequestReadPosition] = [:]
+    @ObservationIgnored private var requestNavigationEpoch: UInt64 = 0
+    @ObservationIgnored private var submissionNavigationEpochs: [String: UInt64] = [:]
+    public private(set) var requestErrors: [String: String] = [:]
     public var banner: Banner?
     /// Ids (`macId|agentKey`) of the Agents pushed on the Agents stack. The live frames of an Agent
     /// are asked for while its page is on the stack.
@@ -189,7 +204,9 @@ public final class AppStore {
     @ObservationIgnored private var noteTask: Task<Void, Never>?
     @ObservationIgnored public var advanceTiming = AdvanceTiming.standard
     /// Arrivals whose request is not in the published state yet (events and states travel apart).
-    @ObservationIgnored private var pendingArrivals: [String: (macId: String, requestId: String)] = [:]
+    @ObservationIgnored private var pendingArrivals: [String: RequestArrival] = [:]
+    @ObservationIgnored private var presentedArrivalIds: [String: Date] = [:]
+    @ObservationIgnored private var arrivalPresentationActive = true
     /// Every Agent seen on the Agents tab, kept while its page may still be open.
     @ObservationIgnored var retainedAgents: [String: (item: AgentItem, at: Date)] = [:]
     @ObservationIgnored var continuations: [String: AgentContinuation] = [:]
@@ -223,10 +240,14 @@ public final class AppStore {
     }
 
     public func setForeground(_ foreground: Bool) async {
+        arrivalPresentationActive = foreground
+        if !foreground { clearRequestArrivals() }
         await backend.setForeground(foreground)
     }
 
     public func setInactive() async {
+        arrivalPresentationActive = false
+        clearRequestArrivals()
         await backend.setInactive()
     }
 
@@ -248,6 +269,10 @@ public final class AppStore {
         todos.update(macs: next.macs, foreground: next.foreground)
         todos.update(agents: next.agents)
         let now = Date()
+        presentedArrivalIds = presentedArrivalIds.filter { now.timeIntervalSince($0.value) < 600 }
+        if !next.foreground { clearRequestArrivals() }
+        let liveArrivalIds = Set(next.inbox.map(\.id))
+        requestArrivals.removeAll { !liveArrivalIds.contains($0.id) }
         for item in next.inbox { retained[item.id] = (item, now) }
         for (key, entry) in retained where now.timeIntervalSince(entry.at) > 600 && !inboxPath.contains(key) {
             retained[key] = nil
@@ -258,7 +283,15 @@ public final class AppStore {
         }
         // Drop composers of requests that left the inbox and are not open any more.
         let live = Set(next.inbox.map(\.id))
+        if var navigation = requestNavigation {
+            let arrivals = inboxItems(filter: navigation.filter).sorted {
+                $0.receivedAt == $1.receivedAt ? $0.id < $1.id : $0.receivedAt < $1.receivedAt
+            }.map(\.id)
+            navigation.append(arrivals)
+            if navigation != requestNavigation { requestNavigation = navigation }
+        }
         for key in composers.keys where !live.contains(key) && !inboxPath.contains(key) {
+            composers[key]?.discard()
             composers[key] = nil
         }
         for key in confirmComposers.keys where !live.contains(key) && !inboxPath.contains(key) {
@@ -276,39 +309,48 @@ public final class AppStore {
         presentArrivals()
     }
 
-    /// Shows a banner for the newest arrival whose request is known by now.
+    /// States and events can arrive in either order; release every ready event exactly once.
     private func presentArrivals() {
-        var newest: InboxItem?
-        for (key, _) in pendingArrivals {
-            guard let item = state.inbox.first(where: { $0.id == key }) else { continue }
+        guard arrivalPresentationActive, state.foreground else { return }
+        for arrival in pendingArrivals.values.sorted(by: { $0.receivedAt < $1.receivedAt }) {
+            let key = arrival.id
+            guard state.inbox.contains(where: { $0.id == key }) else { continue }
             pendingArrivals[key] = nil
-            if newest == nil || item.receivedAt > newest!.receivedAt { newest = item }
+            guard inboxPath.last != key, presentedArrivalIds[key] == nil else { continue }
+            presentedArrivalIds[key] = arrival.receivedAt
+            requestArrivals.append(arrival)
         }
-        guard let item = newest else { return }
-        // The session's title names the request; without one, the Agent and project do.
-        let who = [item.summary.agent.label, item.summary.project.name].filter { !$0.isEmpty }.joined(separator: " · ")
-        show(Banner(
-            kind: .request(macId: item.macId, requestId: item.requestId),
-            title: item.sessionTitle ?? who,
-            subtitle: item.summary.preview
-        ))
+    }
+
+    public func finishRequestArrival(id: String) {
+        requestArrivals.removeAll { $0.id == id }
+        pendingArrivals[id] = nil
+    }
+
+    private func clearRequestArrivals() {
+        requestArrivals.removeAll()
+        pendingArrivals.removeAll()
     }
 
     private func handle(_ event: EngineEvent) async {
         switch event {
         case .requestArrived(let macId, let requestId):
             let key = CachedRequest.key(macId, requestId)
-            guard state.foreground, inboxPath.last != key else { return }
+            guard arrivalPresentationActive, state.foreground, inboxPath.last != key,
+                  presentedArrivalIds[key] == nil, pendingArrivals[key] == nil else { return }
             arrivalTick += 1
-            pendingArrivals[key] = (macId, requestId)
+            pendingArrivals[key] = RequestArrival(macId: macId, requestId: requestId)
             presentArrivals()
         case .requestFinished(let macId, let requestId, let outcome, let by):
             let key = CachedRequest.key(macId, requestId)
+            let submissionEpoch = submissionNavigationEpochs.removeValue(forKey: key)
             pendingArrivals[key] = nil
+            finishRequestArrival(id: key)
             if inboxPath.contains(key) {
                 finished[key] = FinishedRequest(outcome: outcome, by: by, at: Date())
                 // Our own submission went through: move on.
                 if by == nil, outcome == .answered || outcome == .cancelled || outcome == .dismissed,
+                   submissionEpoch == nil || submissionEpoch == requestNavigationEpoch,
                    let sent = retained[key]?.item, case .sending = sent.state {
                     advance(from: key, outcome: outcome)
                 }
@@ -318,6 +360,7 @@ public final class AppStore {
             }
         case .macUnpaired(let macId, let macName):
             pendingArrivals = pendingArrivals.filter { $0.value.macId != macId }
+            requestArrivals.removeAll { $0.macId == macId }
             show(Banner(kind: .warning, title: macName))
         case .pairingFinished:
             break
@@ -468,6 +511,7 @@ public final class AppStore {
         if autoAdvance, let next = nextPending(after: id) {
             // Said before the path changes: the next page is made with it.
             self.receipt?.next = next.id
+            beginRequestNavigation(filter: .all, current: next.id)
             inboxPath = [next.id]
             showSentNote(remaining: pendingCount)
         } else {
@@ -504,6 +548,39 @@ public final class AppStore {
         return candidates.first(where: \.unread) ?? candidates.first
     }
 
+    private func beginRequestNavigation(filter: InboxFilter, current: String) {
+        requestNavigation = RequestNavigation(filter: filter, ids: inboxSections(filter: filter).flatMap { $0.items.map(\.id) }, current: current)
+        requestReadPositions.removeAll()
+    }
+
+    public func adjacentRequest(to id: String, direction: Int) -> String? {
+        requestNavigation?.neighbor(of: id, direction: direction, live: Set(state.inbox.map(\.id)))
+    }
+
+    /// Replaces the single detail page. The caller commits editing before calling this method.
+    public func switchRequest(from id: String, direction: Int) {
+        guard inboxPath.last == id, let next = adjacentRequest(to: id, direction: direction) else { return }
+        cancelAdvance()
+        inboxPath = [next]
+    }
+
+    public func requestReadPosition(for id: String) -> RequestReadPosition? { requestReadPositions[id] }
+
+    public func saveRequestReadPosition(_ position: RequestReadPosition, for id: String) {
+        guard inboxPath.last == id else { return }
+        requestReadPositions[id] = position
+    }
+
+    public func reportRequestError(_ error: String, for id: String) {
+        requestErrors[id] = error
+        if inboxPath.last != id {
+            let source = displayItem(id: id)
+            show(Banner(kind: .warning, title: source?.sessionTitle ?? source?.summary.agent.label ?? String(localized: "Could not send"), subtitle: error))
+        }
+    }
+
+    public func clearRequestError(for id: String) { requestErrors[id] = nil }
+
     // MARK: opening requests
 
     /// Pushes a request on the inbox stack (from a tap, a banner or a notification).
@@ -513,6 +590,7 @@ public final class AppStore {
         guard inboxPath.last != key else { return }
         // Going elsewhere on purpose ends the show of a request just sent.
         cancelAdvance()
+        beginRequestNavigation(filter: .all, current: key)
         inboxPath = [key]
     }
 
@@ -565,6 +643,8 @@ public final class AppStore {
 
     /// Uploads the attachments and sends the answers.
     public func send(_ composer: AnswerComposer, item: InboxItem) async throws {
+        submissionNavigationEpochs[item.id] = requestNavigationEpoch
+        clearRequestError(for: item.id)
         composer.isSending = true
         composer.uploadProgress = nil
         defer {
@@ -591,11 +671,15 @@ public final class AppStore {
     }
 
     public func cancel(_ item: InboxItem) async throws {
+        submissionNavigationEpochs[item.id] = requestNavigationEpoch
+        clearRequestError(for: item.id)
         _ = try await backend.submitAnswer(macId: item.macId, requestId: item.requestId, action: "cancel", answers: [])
     }
 
     public func decide(_ composer: ConfirmComposer, item: InboxItem) async throws {
         guard let wireIndex = composer.selectedWireIndex else { return }
+        submissionNavigationEpochs[item.id] = requestNavigationEpoch
+        clearRequestError(for: item.id)
         composer.isSending = true
         defer { composer.isSending = false }
         _ = try await backend.submitConfirm(
@@ -604,12 +688,16 @@ public final class AppStore {
     }
 
     public func dismiss(_ composer: ConfirmComposer, item: InboxItem) async throws {
+        submissionNavigationEpochs[item.id] = requestNavigationEpoch
+        clearRequestError(for: item.id)
         composer.isSending = true
         defer { composer.isSending = false }
         _ = try await backend.submitConfirm(macId: item.macId, requestId: item.requestId, wireIndex: nil, dismiss: true, input: nil)
     }
 
     public func retry(_ item: InboxItem) async throws {
+        submissionNavigationEpochs[item.id] = requestNavigationEpoch
+        clearRequestError(for: item.id)
         if case .failed(let clientMsgId, _) = item.state { try await backend.retrySubmission(clientMsgId: clientMsgId) }
     }
 

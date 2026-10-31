@@ -202,6 +202,10 @@ fn model_options(
     let mut models = Vec::new();
     for entry in &catalog.models {
         let option = ModelOption {
+            fast_supported: catalog
+                .speed
+                .as_ref()
+                .map(|speed| speed.fast_models.contains(&entry.id)),
             id: entry.id.clone(),
             label: entry.label.clone(),
             note: entry.note.clone(),
@@ -218,6 +222,8 @@ fn model_options(
     let default = &catalog.default;
     let default_model = (default.label.is_some() || !default.efforts.is_empty()).then(|| {
         DefaultModel {
+            // The global default is not proof of a workspace's effective model.
+            fast_supported: None,
             label: default.label.clone(),
             efforts: (!default.efforts.is_empty()).then(|| default.efforts.clone()),
             // A default effort that is not one of the offered ones would mark nothing.
@@ -264,6 +270,10 @@ fn agent_options(
                 (None, None)
             };
             AgentOption {
+                speed_control: (is_codex
+                    && ready
+                    && catalogs.get(&item.kind).is_some_and(|c| c.speed.is_some()))
+                .then_some(true),
                 kind: item.kind.as_str().to_string(),
                 label: item.label.clone(),
                 ready,
@@ -324,6 +334,7 @@ pub(super) async fn choices(state: &Arc<ServerState>) -> TaskChoices {
         .collect();
     TaskChoices {
         options: TaskOptions {
+            attachments_supported: Some(true),
             enabled: true,
             blocked: None,
             permission_mode: mode.to_string(),
@@ -471,7 +482,10 @@ pub(super) async fn create(state: &Arc<ServerState>, launch: TaskLaunch) -> Resu
     }
     // A model or effort the phone picked is matched against the Agent's own list below; for that
     // the list's source is read from the same probe that says whether the Agent can start.
-    let wanted = ModelChoice::new(launch.model.clone(), launch.effort.clone());
+    let wanted = ModelChoice {
+        speed: launch.speed,
+        ..ModelChoice::new(launch.model.clone(), launch.effort.clone())
+    };
     let want_source = !wanted.is_default();
     let (ready, source) = tokio::task::spawn_blocking(move || {
         let readiness = agent_launch::readiness(kind);
@@ -513,6 +527,23 @@ pub(super) async fn create(state: &Arc<ServerState>, launch: TaskLaunch) -> Resu
     let task = resolve_task_input(todo.as_ref(), Some(&launch.text)).map_err(|_| "invalid")?;
     // The last check: it may wait for the Agent's own model list. The launch carries what that
     // list resolved the pick to, not what the phone wrote.
+    if wanted.speed.is_some() {
+        let runtime = source.as_ref().ok_or("speedUnavailable")?.clone();
+        let cwd = launch.workspace.clone();
+        let pick = wanted.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::codex_desktop::validate_task_speed(
+                Path::new(&runtime.executable),
+                runtime.codex_home.as_deref().ok_or("speedUnavailable")?,
+                Path::new(&cwd),
+                &pick,
+                source::LISTING_TIMEOUT,
+            )
+        })
+        .await
+        .map_err(|_| "speedUnavailable")?
+        .map_err(|_| "speedUnavailable")?;
+    }
     let choice = resolve_pick(kind, source, &wanted).await?;
 
     // Asking for work from the phone makes it the place to answer what the Agent asks next, the
@@ -522,6 +553,11 @@ pub(super) async fn create(state: &Arc<ServerState>, launch: TaskLaunch) -> Resu
     let phone_id = launch.phone_id.clone();
     let client_msg_id = launch.client_msg_id.clone();
     let spec = TaskSpec {
+        files: launch
+            .files
+            .iter()
+            .map(|f| f.path.to_string_lossy().into_owned())
+            .collect(),
         channel: "ios".to_string(),
         source_target: launch.phone_id,
         workspace: launch.workspace,

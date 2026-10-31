@@ -9,7 +9,10 @@ struct RootView: View {
     @State private var showPairing = false
     @State private var links = LinkPresenter()
     @State private var askAboutLeftovers: Bool
+    @State private var arrivalFullscreenFixture = false
+    @State private var showedArrivalFixture = false
     @Environment(\.launchOptions) private var launch
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(leftoverPairings: Int) {
         self.leftoverPairings = leftoverPairings
@@ -37,6 +40,18 @@ struct RootView: View {
                 .tag(AppTab.macs)
         }
         .environment(links)
+        .background {
+            ArrivalSceneHost(arrivals: store.requestArrivals, pendingCount: store.pendingCount,
+                             reduceMotion: reduceMotion || (launch.mock && launch.arrivalReducedMotion),
+                             diagnostics: launch.mock && launch.arrivalMotionDiagnostics,
+                             slowdown: launch.mock ? launch.arrivalMotionSlowdown : 1,
+                             compositionFixture: launch.mock && launch.arrivalMarkedTextFixture) { id in
+                store.finishRequestArrival(id: id)
+            }
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
         .overlay(alignment: .top) {
             VStack(spacing: 8) {
                 SentPillHost()
@@ -44,6 +59,23 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $showPairing) { PairingSheet() }
+        .fullScreenCover(isPresented: $arrivalFullscreenFixture) {
+            // A mock-only layout fixture verifies the no-navigation-bar presentation boundary.
+            VStack(spacing: 24) {
+                Image(systemName: "photo").font(.system(size: 100)).foregroundStyle(.blue)
+                    .accessibilityIdentifier("arrival-fullscreen-fixture")
+                Button("Close") { arrivalFullscreenFixture = false }
+                    .accessibilityIdentifier("arrival-fixture-close")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(.systemGroupedBackground))
+        }
+        .onAppear {
+            if launch.mock && launch.arrivalFullscreenFixture && !showedArrivalFixture {
+                showedArrivalFixture = true
+                arrivalFullscreenFixture = true
+            }
+        }
         .confirmationDialog(
             "Open this link?", isPresented: Binding(get: { links.pending != nil }, set: { if !$0 { links.pending = nil } }),
             titleVisibility: .visible, presenting: links.pending

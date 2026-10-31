@@ -1,0 +1,21 @@
+name: RequestSwitchDesign
+options:
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    PRODUCT_BUNDLE_IDENTIFIER: com.naituw.askhuman.design.requestswitch
+    GENERATE_INFOPLIST_FILE: YES
+    TARGETED_DEVICE_FAMILY: "1"
+    INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+targets:
+  RequestSwitchDesign:
+    type: application
+    platform: iOS
+    sources:
+      - DesignApp.swift
+      - ../../../ios/AskHuman/Views/Common/BottomBar.swift
+      - path: ../../../ios/AskHuman/Resources/Assets.xcassets
+        buildPhase: resources

@@ -132,12 +132,17 @@ pub struct LaunchRecord {
     /// The reasoning effort picked for this task; same rules as `model`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<crate::agents::model_catalog::TaskSpeed>,
 }
 
 impl LaunchRecord {
     /// The model and effort this record carries.
     pub fn choice(&self) -> ModelChoice {
-        ModelChoice::new(self.model.clone(), self.effort.clone())
+        ModelChoice {
+            speed: self.speed,
+            ..ModelChoice::new(self.model.clone(), self.effort.clone())
+        }
     }
 }
 
@@ -354,6 +359,7 @@ pub fn codex_version() -> Option<(u64, u64, u64)> {
     binary_probe(AgentKind::Codex, false).codex_version
 }
 
+/// Cache the Grok feature probe without invoking Cursor or loading any agent session.
 pub fn grok_version() -> Option<(u64, u64, u64)> {
     type VersionCache = Option<(String, Instant, Option<(u64, u64, u64)>)>;
     static CACHE: OnceLock<Mutex<VersionCache>> = OnceLock::new();
@@ -959,6 +965,7 @@ fn create_record_internal(
         launch_mode,
         model: choice.model.clone(),
         effort: choice.effort.clone(),
+        speed: choice.speed,
     };
     write_private_record(&record)?;
     Ok(record)
@@ -1111,6 +1118,9 @@ fn validate_claim(record: &LaunchRecord, token: &str) -> Result<()> {
         return Err(anyhow!("launch record task hash mismatch"));
     }
     let choice = record.choice();
+    if choice.speed.is_some() && record.payload_sha256.is_empty() {
+        return Err(anyhow!("launch record speed requires a payload hash"));
+    }
     if !record.payload_sha256.is_empty() {
         let expected = payload_sha256(
             &record.task,
@@ -1180,7 +1190,17 @@ fn payload_sha256(
 ) -> String {
     // A record without a model or effort hashes exactly as it did before they existed, so one
     // written by an older build still claims and nothing changes for tasks that pick nothing.
-    let payload = if choice.is_default() {
+    let payload = if choice.speed.is_some() {
+        serde_json::to_vec(&(
+            task,
+            files,
+            warnings,
+            launch_mode,
+            &choice.model,
+            &choice.effort,
+            choice.speed,
+        ))
+    } else if choice.is_default() {
         serde_json::to_vec(&(task, files, warnings, launch_mode))
     } else {
         serde_json::to_vec(&(
@@ -1232,6 +1252,12 @@ fn assemble_command(record: &LaunchRecord) -> Command {
 /// argv elements, never through a shell.
 fn model_flags(kind: AgentKind, choice: &ModelChoice) -> Vec<String> {
     let mut flags = Vec::new();
+    if let Some(speed) = choice.speed {
+        flags.extend([
+            "-c".to_string(),
+            format!("service_tier=\"{}\"", speed.service_tier()),
+        ]);
+    }
     if let Some(model) = &choice.model {
         flags.extend(["--model".to_string(), model.clone()]);
     }
@@ -2857,6 +2883,7 @@ mod tests {
             launch_mode: LaunchMode::New,
             model: choice.model.clone(),
             effort: choice.effort.clone(),
+            speed: choice.speed,
         }
     }
 
@@ -2912,6 +2939,27 @@ mod tests {
         let mut stripped = stub_record(dir.path(), AgentKind::Claude, &chosen);
         stripped.effort = None;
         assert!(claim(&stripped).unwrap_err().to_string().contains("hash"));
+
+        let mut speed_record = stub_record(
+            dir.path(),
+            AgentKind::Codex,
+            &ModelChoice {
+                speed: Some(crate::agents::model_catalog::TaskSpeed::Standard),
+                ..Default::default()
+            },
+        );
+        claim(&speed_record).unwrap();
+        speed_record.speed = Some(crate::agents::model_catalog::TaskSpeed::Fast);
+        assert!(claim(&speed_record)
+            .unwrap_err()
+            .to_string()
+            .contains("hash"));
+
+        speed_record.payload_sha256.clear();
+        assert!(claim(&speed_record)
+            .unwrap_err()
+            .to_string()
+            .contains("hash"));
 
         // The pre-launch-mode hash vouches for a plain task only.
         let mut legacy = stub_record(dir.path(), AgentKind::Claude, &ModelChoice::default());
@@ -3053,5 +3101,62 @@ mod tests {
         let help =
             probe_help(&executable, &["fork", "--help"]).expect("Codex fork help probe failed");
         assert!(help.contains("SESSION_ID"), "{help}");
+    }
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::*;
+    use crate::agents::model_catalog::TaskSpeed;
+
+    #[test]
+    fn a_speed_only_choice_emits_an_explicit_override_before_the_prompt() {
+        for (speed, tier) in [(TaskSpeed::Standard, "default"), (TaskSpeed::Fast, "fast")] {
+            let pick = ModelChoice {
+                speed: Some(speed),
+                ..Default::default()
+            };
+            assert_eq!(
+                agent_args(
+                    AgentKind::Codex,
+                    LaunchPermission::AgentDefault,
+                    &LaunchMode::New,
+                    &pick,
+                    "task"
+                ),
+                vec!["-c", &format!("service_tier=\"{tier}\""), "--", "task"]
+            );
+        }
+    }
+
+    #[test]
+    fn speed_is_integrity_protected_and_old_model_hashes_are_unchanged() {
+        let pick = ModelChoice::new(Some("a".into()), Some("high".into()));
+        let old = sha256(
+            &serde_json::to_vec(&(
+                "task",
+                Vec::<String>::new(),
+                Vec::<String>::new(),
+                LaunchMode::New,
+                &pick.model,
+                &pick.effort,
+            ))
+            .unwrap(),
+        );
+        assert_eq!(
+            payload_sha256("task", &[], &[], &LaunchMode::New, &pick),
+            old
+        );
+        let standard = ModelChoice {
+            speed: Some(TaskSpeed::Standard),
+            ..pick.clone()
+        };
+        let fast = ModelChoice {
+            speed: Some(TaskSpeed::Fast),
+            ..pick
+        };
+        let hash = |pick| payload_sha256("task", &[], &[], &LaunchMode::New, pick);
+        assert_ne!(hash(&standard), old);
+        assert_ne!(hash(&standard), hash(&fast));
     }
 }

@@ -6,7 +6,7 @@
 
 ## 处理规则
 
-1. 回答与插话共用的相册入口允许图片 / 视频混选，`preferredItemEncoding: .current` 避免选择器先做隐式转码。
+1. 回答、插话与新任务共用的相册入口允许图片 / 视频混选，`preferredItemEncoding: .current` 避免选择器先做隐式转码。
    图片表示优先保留既有图片处理，视频使用文件型 `Transferable`，不把整个大视频加载为 `Data`。
 2. Photos 给出的文件 URL 只保证在导入期间有效，因此先取得应用自有临时副本；成功、失败、取消或传输值被丢弃时释放。
    从“文件”选入的视频也走相同的准备流程，并保持 security-scoped URL 的访问期覆盖整个准备过程。
@@ -19,7 +19,7 @@
 6. 读取 / 检查显示状态；压缩进度条、百分比与取消按钮直接显示在作答区 / 插话栏，不必打开菜单。
    不设置自动超时，由用户决定继续等或取消。离开组件取消该批任务；取消后不添加晚到附件。
    AVAssetExportSession 不是 Sendable，所有状态与取消留在 MainActor；实际编码由 AVFoundation 执行。
-7. AnswerComposer / InterjectComposer 按 token 集合跟踪准备任务。所有准备完成后才恢复发送，一个任务结束不能提前放开另一任务的发送。
+7. AnswerComposer / InterjectComposer / TaskComposer 按 token 集合跟踪准备任务。所有准备完成后才恢复发送，一个任务结束不能提前放开另一任务的发送。
    视频按普通文件上传，`isImage: false`，答案使用 files 字段；附件行用电影图标、文件名与大小表示视频。
 
 ## 验证

@@ -16,6 +16,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 - 手机能做的事：回答问题 / 确认（含多题、推荐、附件）、看 Agent 列表（App 里没有手动关注：手机新建任务或原会话接续的新一轮出结果时 Mac 会通知，列表行与详情页只读地标出）、实时观察（Watch，≤2 路、仅前台）、给 Agent 插话、新建 Agent 任务（Face ID 确认）、管理待办（「待办」标签：来源是某台 Mac 或「iCloud」，浏览项目、增 / 改 / 勾 / 删 / 排序、⚡ 自动执行、看执行历史；`docs/specs/ios-todos.md`）。
 - **投递与通知分开**（`docs/specs/ios-alert-timing.md`）：iOS 不参与 IM 的活跃槽，`attach_im_channels` / `confirm_im_candidates` 在选完 IM 候选后用 `with_ios` 把它并进来，每个提问 / 确认都挂给所有已配对手机，手机一连上就从 hello 快照（`request.get`）拉到。手机在看（在线 + 前台 + 已 hello）时经 MQTT 实时送达、不推送；不在看时只有系统推送能打扰人，而它要等 Mac 键盘 / 鼠标空闲满 `channels.ios.alertAfterSecs`（默认 900 秒，`0` = 立即）才发，每题每手机最多一条，没有提醒。
 
+
 生命周期结果与原会话控制见 [统一结果与接续](specs/agent-lifecycle-results-and-recovery.md)：
 `AgentView.lastTurnResult` 独立于空闲／运行／结束状态；手机增加「需要处理」与两个接续入口。
 `daemon/runtime/agent_control.rs` 将原生新回合证明关联到手机；`PhoneRecord.followTurns` 将通知绑定该轮，
@@ -63,10 +64,14 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 - 新建任务的 `TaskComposer` 在点击「开始」时，将模型 / 强度按 Agent 存为这部手机的本地偏好，所有 Mac / 工作区共用；取消不更新。
   打开表单或切换 Mac / Agent 时恢复，缺少已保存模型的 Mac 临时回默认并保留原偏好。完整约定见 `docs/specs/ios-task-model.md` M3。
 - Agent 消息对 Codex Desktop 走原生 `Operation::Send`（运行中补充／空闲时继续，继承线程设置）；其余走原有工作中 Hook 队列。
-  Desktop 断开绝不回退队列；Gateway 后台发送并去重，成功只代表 App 接受。手机对不明结果保留消息 ID 与草稿，经用户检查原聊天后才能解除。见 `docs/specs/ios-channel.md` §6.7。
-- 回复与插话共用 `Views/Attachments/ReplyAttachments.swift` 的附件菜单：相册允许照片 / 视频混选，视频通过文件型 `Transferable` 读取。
-  `AHCore/VideoAttachmentPreparer.swift` 保留限额内原视频，超限时先预估可用压缩档位，只有预估 ≤8 MB 才尝试；编码一次后核对实际体积与完整时长。回答区与插话栏直接显示压缩进度及取消按钮，由用户决定是否继续等待。
-  导出器的状态与取消约束在 MainActor，原文件 / 导出临时目录按生命周期清理；两个 Composer 用准备任务的 token 集合阻止处理期间发送。验证办法见 `docs/plans/ios-video-attachments.md`。
+  Desktop 断开绝不回退队列；Gateway 后台发送并去重，成功只代表 App 接受。手机对不明结果保留消息 ID 与草稿，经用户检查原聊天后才能解除。见 `ios-channel.md` §6.7。
+- Codex 新任务可逐次开启 Fast（桌面 App／CLI 均支持），默认关闭且关闭明确传标准速度；速度不保存，模型／强度的偏好规则不变。
+  能力取对应 Codex 目录的逐模型声明，旧 Mac 隐藏开关；进度显示所选速度，详情仅显示会话有证据的速度配置。见 `docs/specs/ios-task-speed.md`。
+- 回复、插话与新任务共用 `Views/Attachments/ReplyAttachments.swift` 的附件菜单：相册允许照片 / 视频混选，视频通过文件型 `Transferable` 读取。
+  `AHCore/VideoAttachmentPreparer.swift` 保留限额内原视频，超限时先预估可用压缩档位，只有预估 ≤8 MB 才尝试；编码一次后核对实际体积与完整时长。回答区、插话栏与新任务表单直接显示压缩进度及取消按钮，由用户决定是否继续等待。
+  导出器的状态与取消约束在 MainActor，原文件 / 导出临时目录按生命周期清理；三个 Composer 用准备任务的 token 集合阻止处理期间发送。验证办法见 `docs/plans/ios-video-attachments.md`。
+- 新任务的手机附件最多 5 个、单个 10 MiB，必须有文字或待办，全部上传成功才创建。`TaskComposer` 持有本机临时文件与进度，
+  `upload.begin.scope.taskId` 与 `task.create.files` 将上传绑定至手机和任务；Mac 在共享启动管线合并待办附件。能力缺失时不允许带文件启动；规格见 `docs/specs/ios-task-attachments.md`。
 - 通知扩展 `AskHumanNotification` 只解密预览（`NotificationText`），不连网络。点击通知经 `AppStore.openNotification` 路由：提问类打开请求（请求还没到手机时页面用通知原文占位、转圈等待，只有 Mac 已答复且没有它才说「不可用」），`follow.*` 打开 Agent 页。
 - **请求正文由网页渲染，其余 Markdown 仍是原生**：提问页的 Message、确认页 / 历史详情的正文用 `WebMarkdownView`（`Views/Markdown/`）——一个 `WKWebView` 加载随 App 打包的 `Resources/WebMarkdown`（`project.yml` 里 `type: folder` 的文件夹引用；与 Mac 弹窗同一套 markdown-it + Mermaid，版本以根 `package.json` 为准，升级后跑 `ios/Tools/web-markdown/sync.sh` 重新拷贝并写 `VERSIONS.txt`）。一页至多一个（每个 `WKWebView` 各占一个 WebContent 进程）；页面无特权、禁网（CSP）、锁死导航，只有 `ready / height / rendered / copy / failed` 五个消息能回到 App，链接交给 `LinkPresenter.tapped`（http(s) 先确认域名，`mailto` / `tel` 交系统，其余忽略）。题干、列表卡片、Watch 卡片、附件预览仍走 `AHMarkdown` 解析 + `MarkdownView` 原生渲染（软换行换行、行内代码有底、可选字）。页面进程被回收超过 2 次 / 加载失败 / 5 秒（`-AHWebTimeout`；模拟器默认 30）没有高度会自动回落原生；Message 排好版之前多题表单不统计「看过」（`ReadingTracker.begin(awaitingMessage:patience:)` 等 `onSettled`，最多等看门狗时间 + 1 秒）。设计、限额与取舍见 `docs/specs/ios-web-markdown.md`。
 - 本地化：`Localizable.xcstrings`（en + zh-Hans）由 `ios/Tools/make-catalog.py` 从App 与通知扩展编译器产出的 `.stringsdata` 生成——先 `xcodebuild build -derivedDataPath build/DerivedData …`，再跑脚本；缺中文翻译会让脚本失败。
@@ -96,6 +101,12 @@ CI（`.github/workflows/build.yml`）只跑上表的「Swift 包」与「中继�
 
 ## 不变量与注意点
 
+- **请求详情不能把重连误报为 Mac 离线**：作答／确认页共用 `EngineState.requestConnection(macId:)` 与 `RequestConnectionNotice`，先判断手机连接阶段，再判断当前请求的目标 Mac。连接／重试中显示中性进度；仅在手机已连通且目标 `MacLink.macOffline` 时显示 Mac 离线。连接恢复保留页面和草稿，发送继续受就绪状态约束；见 `docs/specs/ios-answer-flow.md` §3.6。
+
+- **新请求的前台动效**：`AppStore.requestArrivals` 保留逐请求事件，状态／事件乱序时等请求进入 inbox 后各自释放，不生成旧的大横幅；打开、处理、失活时清理，动画完成不改未读。Agent 完成等其他横幅保留。
+  `Views/Arrival/ArrivalSceneHost.swift` 通过根视图的零尺寸 attachment 绑定真实 `UIWindowScene`，以不可成为 key、`hitTest` 恒为空且禁用交互的透明装饰窗口覆盖 App 页面／弹层。它不操作真实输入框；只有 Debug + mock 专属组合态测试 fixture 会准备 marked text。
+  `ArrivalLayout.swift` 从真实底栏、导航栏、安全区和键盘测量锚点；底栏可用飞收件箱，否则落顶部短暂提示，移动锚点平滑跟随。`AHCore/ArrivalMotion.swift` 与 Mac 共用 `ios/Fixtures/arrival-motion.json` 数值参考，使用原轨迹；SVG／PDF 位于 `ios/Tools/arrival-motion/` 与 assets。减少动态效果只显示静态提示，后台停止 display link。规格见 `docs/specs/ios-arrival-motion.md`。
+
 - **隔离**：任何隔离运行的 Mac / daemon 必须设置 `ASKHUMAN_HOME`（只改 `HOME` 时 daemon 标签虽已独立，但 GUI Host 登录项与 Agent hook 文件仍会碰到真实环境）；测试台在启动前断言它位于临时目录。
 - **IPC 协议号**：当前为 4，由 `ClientMsg::Ios` / `ServerMsg::Ios` 带来。给 `IosOp` / `IosResult` 加带 `#[serde(default)]` 的字段不 +1；规则见 `docs/overview.md` 的「IPC 协议号」。
 - **线协议**：`ios/wire.rs` 与 `AHProtocol` 的限额常量（信封 ≤ 900,000 B、分块 192 KB、附件 ≤ 10 MB、每次回复 ≤ 5 个附件、令牌桶 6/s 突发 10、Follow ≤ 5、任务正文 ≤ 3000 字、插话 ≤ 20,000 字、Watch 间隔 ≥ 2 s 且每手机 ≤ 2 路）两边必须一致；改任何一边先改夹具。
@@ -115,6 +126,8 @@ CI（`.github/workflows/build.yml`）只跑上表的「Swift 包」与「中继�
 - **多题表单的「发送」要等看过最后一题，而「下一题」只看屏幕位置**：`AnswerComposer` 记录每题是否「看过」（题卡底边进入过可视区，已作答的算看过；一旦看过最后一题就不再收回），多题时 `hasReachedEnd` 之前底部是「下一题」，之后是「发送」（屏幕下方还有题时，「发送」旁多一个「下一题」图标按钮；纯选择题表单没选全时，计数下的提示可点，跳到第一道没选的题）；与弹窗的 V1 / V2（`docs/specs/multi-question-vertical.md`）一致，改一边要同步改另一边。「下一题」落到哪张卡由 `QuestionNavigator`（AHCore，纯函数）按题卡与可视区的**当前**位置算——第一张底边还在可视区下方的卡，放得下就整张露出，放不下先对齐顶部、再按一次看底部——**不看「看过」的历史**，所以往回滑后再点不会跳过看过但没答的题（同弹窗的 `goNext`）。选项行点按即时选中，不做渐变（`OptionRow`）。规格与弹窗对照见 `docs/specs/ios-answer-flow.md`。
 - **提问页 / 确认页的底栏：iOS 26 起是浮动的 Liquid Glass 栏，之前是经典栏**（`Views/Common/BottomBar.swift`，规格 `docs/specs/ios-answer-flow.md` §3.4）：`.actionBar { … }` 在 iOS 26+ 用 `scrollEdgeEffectStyle(.soft, for: .bottom)` + `safeAreaBar`——栏自己**没有底板也没有分隔线**，内容滚到它后面，可读性靠系统的柔和渐隐（`.soft` 要显式写，自动样式在有的系统版本上是带硬边的色带）；iOS 17–25 回退到 `safeAreaInset` + `classicBarBacking()`（`.bar` 材质 + 分隔线）。栏里不是控件的文字（计数、提示、上传进度、确认页的状态行）一律过 `barStatusChip()` 放进玻璃小块——直接放在渐隐上，滚过来的内容会和它叠在一起读不清；**一行里的计数块与按钮同高**（行 `fixedSize(horizontal: false, vertical: true)`，两边的标签 `maxHeight: .infinity`，行高由最高的那块定；只在浮动栏、非辅助字号下），所以提示（它会折成两三行）不放进计数块，单独成行上方的一小条（`barStatusChip(compact: true)`），行的高度不随提示变——左右两块高度不一样会很难看，用户反馈过；**可点的小块（会跳去未答题的提示）要把玻璃包在按钮外面、内边距留在标签里**（`barChipButtonLabel()` + `barChipButtonGlass()`）：玻璃放进按钮的标签里，iOS 26.2 上点它没有反应（27.0 上有）；按钮用 `barPrimaryButton()` / `barSecondaryButton()`（iOS 26 起 `.glassProminent` / `.glass`，之前 `borderedProminent` / `bordered`）；一栏里的玻璃放进同一个 `GlassGroup`（`GlassEffectContainer`），栏内各块的间距要大于它的 `spacing`，否则相邻的玻璃会融成一块。**「下一题 → 发送」是同一个 `Button`**（`SendBar.primaryButton`，只换文字与标识 `next-button` ↔ `send-button`）：换成两个按钮时，玻璃样式下换身份的那几帧会闪出一个空胶囊。新加底栏沿用 `.actionBar`，不要自己写 `safeAreaInset` + `.background(.bar)`；带输入框的栏见下一条。
 - **输入栏（Agent 页的插话栏 `InterjectBar`、待办页的添加栏 `TodoAddBar`）同样是浮动玻璃栏**（规格 `docs/specs/ios-answer-flow.md` §3.4 G11）：同一套 `.actionBar` + `GlassGroup(spacing: 4)`，经典栏（iOS 17–25）一点没变，输入栏本来就没有分隔线，所以用 `classicBarBacking(hairline: false)`。**一排里的块同高**（`BottomBar.rowHeight` = 44 pt）：输入框 `barFieldBox(focus:)`（玻璃胶囊，折行后变圆角矩形，向上长高、圆钮留在底部；**整个框都是点按区域**——SwiftUI 的 `TextField` 只有那一行字能点，框比它高，空白处点了不弹键盘，所以框自己接点按手势去设 `@FocusState`，要把焦点传进来）；附件 / 自动执行是 `barRoundButton()`（系统的 `.glass` 圆钮），图标过 `barRoundGlyph()`——固定 17 pt、外框 30 pt，**圆钮的直径来自系统给玻璃按钮的内边距（`.regular` 每边 7 pt，`.large` 每边 15 pt）加上标签，不是自己画的**，所以标签框要按「44 − 14」算；发送是 `BarSendButton`（着色玻璃圆钮，发送中转圈）；附件列表与上传进度合成一块 `barPanel()`；字数与「不能发」的说明是 `barStatusChip(compact: true)` 的小条。iOS 26.2 上系统玻璃按钮在水平方向两侧各多出约 5 pt 的布局空隙（27.0 没有），圆钮离屏幕边是 21 pt 而不是 16 pt，没去补。
+- **详情的手动快切与自动前进是两条路径**（`docs/specs/ios-request-switching.md`）：`AppStore.requestNavigation` 捕获首次列表入栈时的筛选与展开顺序，显式 `open`／通知和自动前进入口用全部范围；`RequestNavigation` 只追加新 ID，以结束项作位置锚点并跳过它们。`RequestScreen` 共用右侧箭头组与最右更多菜单，手动替换唯一详情页、提交组合文字并收键盘。`requestNavigationEpoch` 随页面变化递增，发送记录代次，切走后即使再回来也不被旧回执推进；原 `nextPending` 的全收件箱选择不变。
+- **阅读和附件准备归请求拥有**：`RequestScrollPosition` 观察原生滚动几何，用 `RequestReadingAnchor` 记录题卡／正文锚点与相对偏移，Markdown 就绪后恢复；每请求位置保存在 AppStore 的非观察缓存，用户新滚动会结束恢复。它不替换 scroll delegate、不设置输入焦点。`AnswerComposer` 按题保留 `AttachmentPreparationState`，请求换页不取消准备，其他 AttachmentMenu 用法仍在离开时取消；结束草稿会取消其准备。发送中的原表单不可编辑，其他请求不受影响；失败说明按请求 ID 保存，不在别条表单上弹错。
 - **提交后的换页是一个小状态机**（`AppStore.advance` → `moveOn`）：收到 Mac 的确认后先设 `receipt`（`RequestScreen` 盖上全页「已发送」回执；它带着 `summary`——请求一关闭页面就没有详情了，回执自己记着是谁问的）；`AdvanceTiming.hold` 之后栈**一步**从 `[a]` 换成 `[b]`（栈里始终只有一页），回执记下 `next = b`，并出「已发送 · 还剩 N 条」提示条；位移由页面自己做（`RequestScreen.swift` 里的 `Arrival`，只有 `next` 指向它的页面才接手回执：回执的一份副本留在原地并略向左让，新页从右边滑进来盖住它，约 0.45 秒；新页的版面第一次排好后才开始动，否则长表单首次排版的卡顿会吃掉动画；「减少动态效果」下改成淡入）；`receipt` 一直留到 `settle`（0.8 秒）之后才清，回到列表时被弹出的那页也还在用它。**不用系统的推入**：它要把已发送页留在栈里、推完再拿掉，而 `NavigationStack` 按位置认页面，拿掉一页等于把第 0 位那页「改成」下一条——那页最后一帧（回执）会再闪两帧，它的滚动位置与 `@State`（阅读进度，决定底栏写「下一题」还是「发送」）也被沿用；而原地替换栈顶（`[a] → [b]`）在 iOS 27.0 上只有交叉淡入、在 18.5 上没有动画，两边都没有位移，所以位移放在页面里，并且每条请求一个独立页面（`RequestScreen` 上 `.id(id)`）。回执期间用户自己离开页面则 `cancelAdvance()`。UI 测试用 `AdvanceTiming.immediate` / `-AHAdvanceHold`；看这个动画要用不带 XCUITest 的 `simctl io recordVideo`（XCUITest 的无障碍快照会让过渡画面出现重影，长表单上一次查询要几秒，期间应用主线程被占住、动画被吞掉；录屏也是变帧率，只有帧的先后顺序可信）；模拟器场景 `single`（只剩一条）与 `longs`（两条长表单）就是为这条流程准备的。
 - **回答与创建任务的多行输入**共用 `Views/Common/CaretTextView.swift`：原生输入保留选区与中文组合态，在输入、选区、布局或键盘变化后只滚动露出光标所需的距离，视口扣除键盘和操作栏；行数上限后框内滚动。原生 UI 测试只在 Debug mock 的 `-AHInputCaretDiagnostics YES` 下读取真实光标几何，规格见 `docs/specs/ios-answer-flow.md` §3.5。
 - **空状态要按「TabBar 总在」居中**：请求页与 Agent 详情页隐藏 TabBar，返回时列表先出来、TabBar 约 0.5 秒后才回来，底部安全区增高约 48 pt，居中的空状态会上跳约 24 pt。列表页的空状态 / 骨架提示一律经 `.emptyState { … }`（`Views/Common/ListChrome.swift`，记住这个宽度下见过的最大底部边距）摆放，不要直接 `.overlay { ContentUnavailableView }`。

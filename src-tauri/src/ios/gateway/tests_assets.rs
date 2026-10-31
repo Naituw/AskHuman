@@ -170,6 +170,7 @@ fn begin(
             .max(1),
         sha256: sha_hex(data),
         scope: wire::UploadScope {
+            task_id: None,
             request_id: request_id.map(str::to_string),
             agent_key: None,
         },

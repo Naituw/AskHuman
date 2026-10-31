@@ -52,6 +52,12 @@ fn task_identity(create: &wire::TaskCreate) -> serde_json::Value {
         "todoId": create.todo_id,
         "text": create.text,
     });
+    if !create.files.is_empty() {
+        identity["files"] = json!(create.files);
+    }
+    if let Some(speed) = create.speed {
+        identity["speed"] = json!(speed);
+    }
     if let Some(model) = &create.model {
         identity["model"] = json!(model);
     }
@@ -292,6 +298,21 @@ impl Actor {
         );
     }
 
+    pub(super) fn task_upload_allowed(&self, phone_id: &str, task_id: &str) -> bool {
+        !task_id.is_empty()
+            && task_id.len() <= 128
+            && task_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+            && self
+                .rt
+                .get(phone_id)
+                .and_then(|rt| rt.workspaces.as_ref())
+                .is_some_and(|map| {
+                    self.now() - map.at <= WORKSPACES_TTL_MS && !map.paths.is_empty()
+                })
+    }
+
     fn workspace_path(&self, phone_id: &str, workspace_id: &str) -> Option<String> {
         let map = self.rt.get(phone_id)?.workspaces.as_ref()?;
         if self.now() - map.at > WORKSPACES_TTL_MS {
@@ -377,7 +398,8 @@ impl Actor {
         let Some(workspace) = self.workspace_path(phone_id, &create.workspace_id) else {
             return self.task_failed(phone_id, &id, "workspaceExpired");
         };
-        if create.agent_kind.trim().is_empty()
+        if (create.speed.is_some() && create.agent_kind != "codex")
+            || create.agent_kind.trim().is_empty()
             || !matches!(create.permission.as_str(), "default" | "yolo")
             // Whether they name something the Agent offers is the host's call; a value that
             // could not be one is refused here, before anything else looks at it.
@@ -393,9 +415,24 @@ impl Actor {
         if text.is_empty() && create.todo_id.is_none() {
             return self.task_failed(phone_id, &id, "empty");
         }
+        let files = match self.take_task_uploads(phone_id, &id, &create.files) {
+            Ok(files) => files
+                .into_iter()
+                .map(|file| StagedFile {
+                    size: std::fs::metadata(&file.path).map(|m| m.len()).unwrap_or(0),
+                    is_image: file.mime.starts_with("image/"),
+                    name: file.name,
+                    mime: file.mime,
+                    path: file.path,
+                })
+                .collect(),
+            Err(_) => return self.task_failed(phone_id, &id, "attachment"),
+        };
         self.task_status(phone_id, &id, "accepted", None);
         self.live.task_inflight.insert(id.clone());
         let launch = TaskLaunch {
+            files,
+            speed: create.speed,
             phone_id: phone_id.to_string(),
             client_msg_id: id.clone(),
             workspace,
@@ -492,6 +529,8 @@ mod tests {
 
     fn plain() -> wire::TaskCreate {
         wire::TaskCreate {
+            files: Vec::new(),
+            speed: None,
             client_msg_id: "n1".into(),
             workspace_id: "w1".into(),
             agent_kind: "claude".into(),

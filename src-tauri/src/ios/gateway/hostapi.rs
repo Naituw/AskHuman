@@ -43,7 +43,7 @@ impl InterjectResult {
     }
 }
 
-/// A file the phone uploaded for an interjection, staged on disk by the gateway.
+/// A file the phone uploaded for an interjection or task, staged on disk by the gateway.
 #[derive(Debug, Clone)]
 pub struct StagedFile {
     pub name: String,
@@ -66,6 +66,7 @@ impl TaskChoices {
     pub fn blocked(permission_mode: &str, reason: &str) -> Self {
         Self {
             options: TaskOptions {
+                attachments_supported: None,
                 enabled: false,
                 blocked: Some(reason.to_string()),
                 permission_mode: permission_mode.to_string(),
@@ -80,6 +81,8 @@ impl TaskChoices {
 /// A validated `task.create`.
 #[derive(Debug, Clone)]
 pub struct TaskLaunch {
+    pub files: Vec<StagedFile>,
+    pub speed: Option<crate::agents::model_catalog::TaskSpeed>,
     pub phone_id: String,
     pub client_msg_id: String,
     pub workspace: String,

@@ -334,6 +334,7 @@ pub fn sample_agent(key: &str, state: &str) -> AgentView {
 pub fn sample_choices() -> TaskChoices {
     TaskChoices {
         options: wire::TaskOptions {
+            attachments_supported: Some(true),
             enabled: true,
             blocked: None,
             permission_mode: "ask".into(),
@@ -345,6 +346,7 @@ pub fn sample_choices() -> TaskChoices {
                 last_used_at: BASE_MS,
             }],
             agents: vec![wire::AgentOption {
+                speed_control: None,
                 kind: "claude".into(),
                 label: "Claude Code".into(),
                 ready: true,

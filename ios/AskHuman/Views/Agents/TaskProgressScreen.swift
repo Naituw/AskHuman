@@ -58,6 +58,21 @@ struct TaskProgressScreen: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("task-model-line")
             }
+            if !task.attachmentNames.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(task.attachmentNames.enumerated()), id: \.offset) { _, name in
+                        Label { Text(verbatim: name) } icon: { Image(systemName: "paperclip") }
+                    }
+                }
+                .font(.footnote).foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("task-attachments-summary")
+            }
+            if let speed = task.speed {
+                Text(speed == .fast ? "Selected speed: Fast" : "Selected speed: Standard")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("task-speed-pick")
+            }
             Text(verbatim: task.text)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)

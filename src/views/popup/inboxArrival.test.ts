@@ -1,10 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import { arrivalAnimator, arrivalFrame, arrivalTiming, type ArrivalFrame } from "./inboxArrival";
+import iosMotionFrames from "../../../ios/Fixtures/arrival-motion.json";
 
 const geometry = { origin: { x: 780, y: 310 }, target: { x: 383, y: 151 } };
 const flyAt = arrivalTiming.appear + arrivalTiming.first + arrivalTiming.second;
 const landedAt = flyAt + arrivalTiming.fly;
 describe("arrival motion", () => {
+  it("matches the approved frames shared with the iOS implementation", () => {
+    for (const sample of iosMotionFrames) {
+      const actual = arrivalFrame(sample.elapsed, sample);
+      for (const [key, expected] of Object.entries(sample.frame)) {
+        const value = actual[key as keyof ArrivalFrame];
+        // JSON fixtures normalize negative zero; numerical values remain identical.
+        if (typeof expected === "number") expect(value).toBeCloseTo(expected, 10);
+        else expect(value).toBe(expected);
+      }
+    }
+  });
   it("lands exactly on the live dot as an opaque 10px circle", () => {
     const moved = { ...geometry, target: { x: 405, y: 228 } };
     const frame = arrivalFrame(landedAt, moved);

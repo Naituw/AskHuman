@@ -22,13 +22,18 @@ use super::{
 pub(super) struct Listing {
     pub models: Vec<ModelEntry>,
     pub default_id: Option<String>,
+    pub speed: Option<super::SpeedCatalog>,
 }
 
 impl Listing {
     fn finish(models: Vec<ModelEntry>, default_id: Option<String>) -> Self {
         let models = finish_entries(models);
         let default_id = default_id.filter(|id| models.iter().any(|m| &m.id == id));
-        Self { models, default_id }
+        Self {
+            models,
+            default_id,
+            speed: None,
+        }
     }
 
     #[cfg(test)]
@@ -164,6 +169,7 @@ pub(super) fn claude_catalog_with(settings: &ClaudeSettings, fable: bool) -> Age
         })
         .collect();
     AgentCatalog {
+        speed: None,
         models: finish_entries(models),
         default: DefaultInfo {
             label: some_text(&settings.model, MAX_LABEL_CHARS),
@@ -247,12 +253,15 @@ pub(super) fn parse_codex_models(entries: &[Value]) -> Listing {
             id,
         });
     }
-    Listing::finish(models, default_id)
+    let mut listing = Listing::finish(models, default_id);
+    listing.speed = super::SpeedCatalog::from_entries(entries);
+    listing
 }
 
 /// Codex's catalog plus what `config.toml` says is used by default.
 pub(super) fn codex_catalog(listing: Listing, config: &CodexConfig) -> AgentCatalog {
     AgentCatalog {
+        speed: listing.speed,
         default: codex_default(&listing.models, listing.default_id.as_deref(), config),
         models: listing.models,
         listed_default: listing.default_id,
@@ -345,6 +354,7 @@ pub(super) fn parse_cursor_list(text: &str) -> Listing {
 /// own default entry.
 pub(super) fn cursor_catalog(listing: Listing, config: &CursorConfig) -> AgentCatalog {
     AgentCatalog {
+        speed: None,
         default: cursor_default(&listing.models, listing.default_id.as_deref(), config),
         models: listing.models,
         listed_default: listing.default_id,
@@ -449,6 +459,7 @@ pub(super) fn parse_grok_models(text: &str) -> Listing {
 pub(super) fn grok_catalog(listing: Listing) -> AgentCatalog {
     let label = listing.default_id.clone();
     AgentCatalog {
+        speed: None,
         models: listing.models,
         default: DefaultInfo {
             label,
@@ -530,6 +541,7 @@ pub(super) fn parse_pi_list(text: &str) -> Listing {
 
 pub(super) fn pi_catalog(listing: Listing, settings: &PiSettings) -> AgentCatalog {
     AgentCatalog {
+        speed: None,
         default: pi_default(&listing.models, settings),
         models: listing.models,
         listed_default: None,

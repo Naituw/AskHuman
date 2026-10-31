@@ -6,8 +6,9 @@ import AHProtocol
 struct ConfirmScreen: View {
     let item: InboxItem
     @Environment(AppStore.self) private var store
-    @State private var confirmDismiss = false
-    @State private var problem: String?
+    @State private var detailReady = false
+
+    private var sending: Bool { if case .sending = item.state { true } else { false } }
 
     var body: some View {
         if let confirm = item.view?.confirm, let composer = store.confirmComposer(for: item) {
@@ -16,7 +17,8 @@ struct ConfirmScreen: View {
                     if let finished = store.endedNotice(for: item.id) { FinishedNotice(finished: finished) }
                     if case .failed = item.state { FailedSubmissionNotice(item: item) }
                     RequestHeader(item: item)
-                    DetailCard(confirm: confirm)
+                    DetailCard(confirm: confirm, onSettled: { detailReady = true })
+                        .background(RequestReadingAnchor(name: "confirmation-detail"))
                     VStack(spacing: 10) {
                         ForEach(confirm.choices, id: \.wireIndex) { choice in
                             ChoiceRow(choice: choice, selected: composer.selectedWireIndex == choice.wireIndex) {
@@ -25,58 +27,42 @@ struct ConfirmScreen: View {
                             .accessibilityIdentifier("choice-\(choice.wireIndex)")
                         }
                     }
+                    .background(RequestReadingAnchor(name: "confirmation-choices"))
+                    .disabled(composer.isSending || sending)
                     if let field = composer.visibleInput {
                         InputCard(field: field, composer: composer)
+                            .background(RequestReadingAnchor(name: "confirmation-input"))
+                            .disabled(composer.isSending || sending)
                     }
                     ExpiryLabel(date: composer.expiresAt)
                 }
                 .padding()
+                .background(RequestReadingAnchor(name: "request-top"))
+                .background(RequestScrollPosition(id: item.id, store: store, ready: detailReady || confirm.detail.bodyMd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
             }
             .background(Color(.systemGroupedBackground))
             .scrollDismissesKeyboard(.interactively)
             .actionBar {
                 bar(composer: composer, confirm: confirm)
             }
-            .toolbar {
-                if composer.canDismiss {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            Button("Dismiss", systemImage: "xmark.circle", role: .destructive) { confirmDismiss = true }
-                                .disabled(store.finished[item.id] != nil || !store.isOnline(macId: item.macId))
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                        }
-                    }
-                }
-            }
-            .confirmationDialog("Dismiss this confirmation?", isPresented: $confirmDismiss, titleVisibility: .visible) {
-                Button("Dismiss", role: .destructive) {
-                    Task {
-                        do { try await store.dismiss(composer, item: item) } catch { problem = error.userMessage }
-                    }
-                }
-                Button("Keep it", role: .cancel) {}
-            } message: {
-                Text("The Agent receives the default response, usually a refusal.")
-            }
-            .alert("Could not send", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(problem ?? "")
-            }
+
         }
     }
 
     private func bar(composer: ConfirmComposer, confirm: ConfirmView) -> some View {
         let sending: Bool = { if case .sending = item.state { return true } else { return false } }()
         let ended = store.endedNotice(for: item.id) != nil
-        let online = store.isOnline(macId: item.macId)
+        let connection = store.state.requestConnection(macId: item.macId)
         return GlassGroup(spacing: 4) {
             VStack(spacing: BottomBar.floats ? 8 : 6) {
                 if ended {
                     Text("This request has ended.").font(.caption).foregroundStyle(.secondary).barStatusChip(compact: true)
-                } else if !online {
-                    Text("The Mac is offline. Try again when it is back.").font(.caption).foregroundStyle(.orange).barStatusChip(compact: true)
+                } else if let notice = connection.notice(offlineText: "The Mac is offline. Try again when it is back.") {
+                    HStack(spacing: 3) {
+                        if notice.progressing { ProgressView().controlSize(.mini) }
+                        Text(notice.text).accessibilityIdentifier("request-connection")
+                    }
+                    .font(.caption).foregroundStyle(notice.color).barStatusChip(compact: true)
                 } else if sending {
                     Text("Waiting for your Mac to confirm…").font(.caption).foregroundStyle(.secondary).barStatusChip(compact: true)
                 }
@@ -85,7 +71,7 @@ struct ConfirmScreen: View {
                         do {
                             try await store.decide(composer, item: item)
                         } catch {
-                            problem = error.userMessage
+                            store.reportRequestError(error.userMessage, for: item.id)
                         }
                     }
                 } label: {
@@ -96,7 +82,7 @@ struct ConfirmScreen: View {
                     .frame(maxWidth: .infinity)
                 }
                 .barPrimaryButton()
-                .disabled(!composer.canSubmit || ended || !online || sending)
+                .disabled(!composer.canSubmit || ended || connection != .ready || sending)
                 .accessibilityIdentifier("submit-button")
             }
         }
@@ -108,6 +94,7 @@ struct ConfirmScreen: View {
 
 private struct DetailCard: View {
     let confirm: ConfirmView
+    var onSettled: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -125,7 +112,7 @@ private struct DetailCard: View {
             let body = confirm.detail.bodyMd.trimmingCharacters(in: .whitespacesAndNewlines)
             if !body.isEmpty {
                 Divider()
-                WebMarkdownView(text: body)
+                WebMarkdownView(text: body, onSettled: onSettled)
             } else if !confirm.detail.summary.isEmpty {
                 Divider()
                 Text(verbatim: confirm.detail.summary).font(.body).textSelection(.enabled)

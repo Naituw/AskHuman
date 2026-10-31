@@ -8,6 +8,7 @@ pub use launch::{
 };
 mod models;
 pub use models::list_models;
+pub use models::validate_task_speed;
 pub mod protocol;
 pub mod requests;
 mod runtime;
@@ -65,6 +66,8 @@ pub enum Operation {
         /// The reasoning effort to start the thread with; absent likewise.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effort: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        speed: Option<crate::agents::model_catalog::TaskSpeed>,
     },
 }
 
@@ -457,6 +460,7 @@ impl Bridge {
                 permission,
                 model,
                 effort,
+                speed,
                 ..
             } = &op
             {
@@ -466,8 +470,11 @@ impl Bridge {
                 if !matches!(permission.as_str(), "agent-default" | "yolo") {
                     return Err("Choose task permissions".into());
                 }
-                ModelChoice::new(model.clone(), effort.clone())
-                    .check_for(crate::agents::AgentKind::Codex)?;
+                ModelChoice {
+                    speed: *speed,
+                    ..ModelChoice::new(model.clone(), effort.clone())
+                }
+                .check_for(crate::agents::AgentKind::Codex)?;
             }
             runtime::detect(&crate::config::AppConfig::load_without_secrets().codex_desktop)
         })();
@@ -483,12 +490,16 @@ impl Bridge {
                 permission,
                 model,
                 effort,
+                speed,
                 ..
             } => {
                 let cwd = cwd.clone();
                 let title: String = text.chars().take(80).collect();
                 let yolo = permission == "yolo";
-                let choice = ModelChoice::new(model.clone(), effort.clone());
+                let choice = ModelChoice {
+                    speed: *speed,
+                    ..ModelChoice::new(model.clone(), effort.clone())
+                };
                 let (updated, result) = tokio::task::spawn_blocking(move || {
                     let result = action.ensure_thread(&installation, &cwd, &title, yolo, &choice);
                     (action, result)
@@ -624,6 +635,9 @@ fn control_request(
         {
             request["model"] = json!(model_settings.model);
             request["effort"] = json!(model_settings.reasoning_effort);
+            if let Some(speed) = model_settings.speed {
+                request["serviceTier"] = json!(speed.service_tier());
+            }
             // A resumed empty thread can carry null effort in its collaboration mode,
             // which takes precedence over top-level effort when the App starts a turn.
             request["collaborationMode"] = json!({
@@ -765,6 +779,7 @@ mod tests {
     #[test]
     fn yolo_first_turn_overrides_app_resumed_workspace_permissions() {
         let model_settings = runtime::ModelSettings {
+            speed: None,
             model: "configured-model".into(),
             reasoning_effort: "max".into(),
         };
@@ -853,6 +868,7 @@ mod tests {
     #[test]
     fn first_turn_carries_launch_defaults_over_the_apps_empty_collaboration_mode() {
         let settings = runtime::ModelSettings {
+            speed: None,
             model: "configured-model".into(),
             reasoning_effort: "max".into(),
         };
@@ -955,6 +971,7 @@ mod tests {
     #[test]
     fn create_operations_carry_a_model_choice_only_when_there_is_one() {
         let create = |model: Option<&str>, effort: Option<&str>| Operation::Create {
+            speed: None,
             cwd: "/project".into(),
             text: "task".into(),
             files: Vec::new(),
@@ -976,6 +993,7 @@ mod tests {
             Operation::Create {
                 model: None,
                 effort: None,
+                speed: None,
                 ..
             }
         ));
@@ -1036,5 +1054,54 @@ mod tests {
             );
         }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::*;
+    use crate::agents::model_catalog::TaskSpeed;
+
+    #[test]
+    fn app_handoff_keeps_the_explicit_speed_in_the_first_turn() {
+        for speed in [TaskSpeed::Standard, TaskSpeed::Fast] {
+            let settings = runtime::ModelSettings {
+                model: "a".into(),
+                reasoning_effort: "high".into(),
+                speed: Some(speed),
+            };
+            let (_, value) = control_request(
+                &Session::default(),
+                "thread",
+                "operation",
+                "task",
+                &[],
+                ControlIntent::Create {
+                    yolo: false,
+                    model_settings: &settings,
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                value["turnStart"]["request"]["serviceTier"],
+                speed.service_tier()
+            );
+            assert_eq!(
+                value["turnStart"]["request"]["collaborationMode"]["settings"]["reasoning_effort"],
+                "high"
+            );
+        }
+        let (_, ordinary) = control_request(
+            &Session::default(),
+            "thread",
+            "operation",
+            "message",
+            &[],
+            ControlIntent::Inherit,
+        )
+        .unwrap();
+        assert!(ordinary["turnStart"]["request"]
+            .get("serviceTier")
+            .is_none());
     }
 }

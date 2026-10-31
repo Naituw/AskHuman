@@ -244,6 +244,7 @@ mod tests {
     }
     fn settings() -> runtime::ModelSettings {
         runtime::ModelSettings {
+            speed: None,
             model: "configured-model".into(),
             reasoning_effort: "max".into(),
         }

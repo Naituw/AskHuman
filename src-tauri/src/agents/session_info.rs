@@ -20,6 +20,8 @@ pub struct SessionInfo {
     pub workspace: Option<String>,
     pub model: Option<String>,
     pub reasoning: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<crate::agents::model_catalog::TaskSpeed>,
     pub context: Option<ContextUsage>,
     pub reported_at: Option<u64>,
 }
@@ -400,6 +402,11 @@ fn parse_codex(values: &[Value], info: &mut SessionInfo) {
     for value in values {
         let payload = &value["payload"];
         if value["type"] == "turn_context" {
+            info.speed = match payload["service_tier"].as_str() {
+                Some("fast" | "priority") => Some(crate::agents::model_catalog::TaskSpeed::Fast),
+                Some("default") => Some(crate::agents::model_catalog::TaskSpeed::Standard),
+                _ => None,
+            };
             if let Some(model) = text(payload, "model") {
                 if info.model.as_deref() != Some(model.as_str()) {
                     info.context = None;
@@ -631,5 +638,37 @@ mod tests {
             });
             assert!(cache.lock().unwrap().len() <= RESOLVE_CACHE_MAX);
         }
+    }
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::*;
+    use crate::agents::model_catalog::TaskSpeed;
+    use serde_json::json;
+
+    #[test]
+    fn reported_speed_is_cleared_when_the_latest_turn_does_not_identify_it() {
+        let mut info = SessionInfo::default();
+        for (value, expected) in [
+            (json!("priority"), Some(TaskSpeed::Fast)),
+            (json!("default"), Some(TaskSpeed::Standard)),
+            (json!("ultrafast"), None),
+            (Value::Null, None),
+        ] {
+            parse_codex(
+                &[json!({"type":"turn_context","payload":{"service_tier":value}})],
+                &mut info,
+            );
+            assert_eq!(info.speed, expected);
+        }
+        parse_codex(
+            &[
+                json!({"type":"turn_context","payload":{"service_tier":"fast"}}),
+                json!({"type":"turn_context","payload":{}}),
+            ],
+            &mut info,
+        );
+        assert_eq!(info.speed, None);
     }
 }

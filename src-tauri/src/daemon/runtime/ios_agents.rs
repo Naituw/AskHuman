@@ -245,9 +245,31 @@ pub(super) fn watch_frame(state: &Arc<ServerState>, key: &str) -> Option<FrameDa
     // The model is read from the session's own files (not from the registry), at most every ten
     // seconds. It is left out of the signature on purpose: a change shows up with the next frame
     // that goes out for any other reason.
-    let session = crate::agents::session_info::resolve_cached(kind, session_id);
+    let mut session = crate::agents::session_info::resolve_cached(kind, session_id);
+    if kind == AgentKind::Codex {
+        if let Some(native) = crate::codex_desktop::shared()
+            .session(session_id)
+            .filter(|s| s.connected)
+        {
+            // Only the latest turn's explicit configuration is evidence; never use a launch receipt.
+            session.speed = crate::codex_desktop::protocol::turns(&native.state)
+                .last()
+                .and_then(|turn| {
+                    match turn["params"]["serviceTierForTurn"]
+                        .as_str()
+                        .or_else(|| turn["params"]["serviceTier"].as_str())
+                    {
+                        Some("fast" | "priority") => {
+                            Some(crate::agents::model_catalog::TaskSpeed::Fast)
+                        }
+                        Some("default") => Some(crate::agents::model_catalog::TaskSpeed::Standard),
+                        _ => None,
+                    }
+                });
+        }
+    }
     Some(FrameData {
-        sig: crate::watch::signature(&frame),
+        sig: format!("{}|{:?}", crate::watch::signature(&frame), session.speed),
         ended: frame.phase == crate::watch::WatchPhase::Ended,
         frame: with_session_model(frame_detail_json(session_id, &frame), &session),
     })
@@ -262,6 +284,9 @@ const SESSION_REASONING_MAX_CHARS: usize = 32;
 fn with_session_model(mut frame: Value, session: &SessionInfo) -> Value {
     use crate::agents::model_catalog::clean_text;
     if let Some(object) = frame.as_object_mut() {
+        if let Some(speed) = session.speed {
+            object.insert("speed".into(), serde_json::to_value(speed).unwrap());
+        }
         let fields = [
             ("model", &session.model, SESSION_MODEL_MAX_CHARS),
             ("reasoning", &session.reasoning, SESSION_REASONING_MAX_CHARS),
