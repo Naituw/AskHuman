@@ -468,6 +468,7 @@ pub fn sample_ask(id: &str) -> (Arc<AskRequest>, RequestView) {
         id: id.to_string(),
         is_markdown: true,
         message: MessagePrompt {
+            development: None,
             text: "Pick a deployment strategy".into(),
             files: Vec::new(),
         },

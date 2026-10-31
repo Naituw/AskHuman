@@ -51,7 +51,9 @@ pub struct Status {
 }
 
 pub fn configured(config: &Config) -> bool {
-    cfg!(target_os = "macos") && config.suppress_background_completion_follow_up
+    cfg!(target_os = "macos")
+        && !crate::dev_instance::is_dev_instance_context()
+        && config.suppress_background_completion_follow_up
 }
 
 pub fn active(config: &Config) -> bool {

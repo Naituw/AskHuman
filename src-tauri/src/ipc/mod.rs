@@ -70,6 +70,12 @@ pub struct HelloAck {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusInfo {
+    /// A verification client must reject a peer that would ignore its isolation metadata.
+    #[serde(default)]
+    pub development_verification_version: u32,
+    /// Deliverable remote surfaces, bypassing the daily active-slot selection.
+    #[serde(default)]
+    pub development_remote_outlets: Vec<String>,
     pub pid: u32,
     pub version: String,
     pub protocol_version: u32,
@@ -219,7 +225,7 @@ pub struct TaskRequest {
 impl TaskRequest {
     pub fn popup_kind(&self) -> PopupRequestKind {
         // Older Stop-hook clients identify their requests only by disabling history.
-        if self.stop_confirmation || !self.record_history {
+        if self.stop_confirmation || (!self.record_history && self.message.development.is_none()) {
             PopupRequestKind::Stop
         } else {
             PopupRequestKind::Ask
@@ -232,6 +238,9 @@ impl TaskRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfirmTask {
+    /// Explicit development delivery, absent for ordinary permission requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub development: Option<Box<crate::development::verification::VerificationInfo>>,
     /// Actual invocation directory, distinct from the session's stable project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caller_cwd: Option<String>,
@@ -1053,6 +1062,7 @@ mod tests {
 
     fn confirm_task() -> ConfirmTask {
         ConfirmTask {
+            development: None,
             caller_cwd: None,
             spec: crate::models::ConfirmSpec {
                 title: "Approve?".into(),
@@ -1162,6 +1172,7 @@ mod tests {
             "socket":"/tmp/s","activeRequests":3}"#;
         let info: StatusInfo = serde_json::from_str(json).unwrap();
         assert!(!info.draining);
+        assert_eq!(info.development_verification_version, 0);
         assert_eq!(info.active_requests, 3);
         assert!(info.im_connections.is_empty());
         // The binary facts were added later: an older daemon reports none of them.
@@ -1175,6 +1186,8 @@ mod tests {
     #[test]
     fn status_info_binary_facts_round_trip() {
         let info = StatusInfo {
+            development_verification_version: 1,
+            development_remote_outlets: vec![],
             pid: 7,
             version: "0.15.0".into(),
             protocol_version: PROTOCOL_VERSION,

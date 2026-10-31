@@ -63,7 +63,7 @@ pub fn compose(app_title: &str, session: Option<&str>) -> String {
 
 fn current_title(lang: Lang) -> String {
     let session = slot().lock().ok().and_then(|s| s.clone());
-    compose(i18n::tr(lang, "title.popup"), session.as_deref())
+    crate::development::window_title(&compose(i18n::tr(lang, "title.popup"), session.as_deref()))
 }
 
 /// Report the Agent session title of the popup that is on screen; `None` or a blank title means it

@@ -35,7 +35,7 @@
 > 恢复输出采用纯 CLI 区块，只保留非空 Message/附件、问题与人类实际答案；未选候选项和
 > recommended 标记仍保留在历史记录中，但不重新注入压缩后的模型上下文。
 
-> **实现期补充（2026-10-15）**：六个工具统一使用每调用的可信原生会话绑定。三个 Todo 工具也复用
+> **实现期补充（2026-10-15）**：六个日常工具统一使用每调用的可信原生会话绑定。三个 Todo 工具也复用
 > schema 隐藏的 Hook token 与 Grok 指纹旁路，以稳定会话工作区归项目；无绑定时保留 server cwd 回退。
 > 附件相对路径仍按真实 MCP server cwd 解析，不迁移旧待办 / 历史。详见 `popup-session-info.md`。
 >
@@ -44,6 +44,12 @@
 > `docs/specs/codex-delegated-run-silence.md`。MCP 侧：exec / review 进程里 `AskHuman mcp` 启动时做**一次**有界祖先探测，
 > 命中则 `tools/list` 为空、`initialize` 不带 `instructions`、不向 daemon 登记实例；其余委派线程在 `tools/call`
 > 时按 SessionStart hook 写下的标记本地拒绝。集成页 / `AskHuman agents delegated codex on` 的开关打开后全部按交互处理。
+
+> **项目开发验收**：普通 Rust MCP 保持六个工具。仅 AskHuman 仓库的项目连接 `askhuman-dev`
+> 通过 Node SDK 提供 `dev_ask`，绑定本树并委托实际构建；不覆盖普通 `askhuman`，不接受日常
+> 原生 session token。取消关闭对应子进程／socket并持久化中断，resume 校验构建且不重发。
+> 项目配置生成与客户端真实加载分别记录；规则适配随仓库提交，不修改用户级协议模板。
+> 详细边界见 [规格](dev-verification-routing.md) 与 [实现地图](../overview-development.md)。
 
 ## 1. 背景与动机
 

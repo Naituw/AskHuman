@@ -279,7 +279,8 @@ pub(crate) fn tracking_installed(kind: AgentKind) -> bool {
 
 /// 当前可执行文件绝对路径（hook 命令调用它）。
 fn exe_path() -> Result<String> {
-    let p = std::env::current_exe().context("failed to resolve current exe path")?;
+    let p = crate::development::routing::program_path()
+        .context("failed to resolve current exe path")?;
     Ok(p.to_string_lossy().to_string())
 }
 

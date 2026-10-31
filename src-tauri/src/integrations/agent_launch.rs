@@ -840,6 +840,16 @@ pub fn create_fork_record(
     task: &str,
 ) -> Result<LaunchRecord> {
     validate_source_session_id(source_session_id)?;
+    if let Some(profile) = crate::development::session::for_native(kind, source_session_id) {
+        return create_development_record(
+            &profile,
+            permission,
+            task,
+            LaunchMode::Fork {
+                source_session_id: source_session_id.to_string(),
+            },
+        );
+    }
     if crate::agents::transcript_full::transcript_mtime(kind, source_session_id).is_none() {
         return Err(anyhow!("source session transcript is unavailable"));
     }
@@ -871,6 +881,27 @@ fn create_record_internal(
     launch_mode: LaunchMode,
     choice: &ModelChoice,
 ) -> Result<LaunchRecord> {
+    let source =
+        if let Some(profile) = crate::development::session::active().map_err(anyhow::Error::msg)? {
+            if profile.kind != kind {
+                return Err(anyhow!(
+                    "a development child task must keep its isolated client profile"
+                ));
+            }
+            LaunchSource {
+                channel: crate::development::session::SOURCE_CHANNEL.into(),
+                target: profile.id,
+            }
+        } else {
+            if crate::development::session::requires_test_profile()
+                && source.channel != crate::development::session::SOURCE_CHANNEL
+            {
+                return Err(anyhow!(
+                    "start an isolated Dev test profile before creating native child tasks"
+                ));
+            }
+            source
+        };
     if kind == AgentKind::Antigravity {
         return Err(anyhow!("Antigravity launch/fork is unsupported"));
     }
@@ -920,11 +951,15 @@ fn create_record_internal(
             return Err(anyhow!(fork.diagnostics.join("; ")));
         }
     }
-    let askhuman_executable = std::env::current_exe()
+    let askhuman_executable = crate::development::routing::program_path()
         .context("failed to resolve AskHuman executable")?
         .to_string_lossy()
         .to_string();
     let created_at = epoch_secs();
+    let payload_hash = bind_development_hash(
+        payload_sha256(task, files, warnings, &launch_mode, choice),
+        &source,
+    );
     let record = LaunchRecord {
         id: uuid::Uuid::new_v4().to_string(),
         created_at,
@@ -934,7 +969,7 @@ fn create_record_internal(
         task_sha256: sha256(task.as_bytes()),
         files: files.to_vec(),
         warnings: warnings.to_vec(),
-        payload_sha256: payload_sha256(task, files, warnings, &launch_mode, choice),
+        payload_sha256: payload_hash,
         cwd: cwd.to_string_lossy().to_string(),
         kind,
         permission,
@@ -943,6 +978,62 @@ fn create_record_internal(
         launch_mode,
         model: choice.model.clone(),
         effort: choice.effort.clone(),
+    };
+    write_private_record(&record)?;
+    Ok(record)
+}
+
+fn bind_development_hash(hash: String, source: &LaunchSource) -> String {
+    if source.channel == crate::development::session::SOURCE_CHANNEL {
+        sha256(format!("askhuman-dev-launch-v1\0{}\0{hash}", source.target).as_bytes())
+    } else {
+        hash
+    }
+}
+
+pub(crate) fn create_development_record(
+    profile: &crate::development::session::Profile,
+    permission: LaunchPermission,
+    task: &str,
+    mode: LaunchMode,
+) -> Result<LaunchRecord> {
+    if task.trim().is_empty() || task.chars().count() > MAX_TASK_CHARS {
+        return Err(anyhow!(
+            "development task must contain 1..={MAX_TASK_CHARS} characters"
+        ));
+    }
+    if profile.kind == AgentKind::Pi && permission != LaunchPermission::AgentDefault {
+        return Err(anyhow!("Pi does not expose a built-in permission mode"));
+    }
+    let source = LaunchSource {
+        channel: crate::development::session::SOURCE_CHANNEL.into(),
+        target: profile.id.clone(),
+    };
+    let payload_hash = bind_development_hash(
+        payload_sha256(task, &[], &[], &mode, &ModelChoice::default()),
+        &source,
+    );
+    let now = epoch_secs();
+    let record = LaunchRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        created_at: now,
+        expires_at: now + RECORD_TTL_SECS,
+        source,
+        task: task.into(),
+        task_sha256: sha256(task.as_bytes()),
+        files: Vec::new(),
+        warnings: Vec::new(),
+        payload_sha256: payload_hash,
+        cwd: profile.worktree.to_string_lossy().to_string(),
+        kind: profile.kind,
+        permission,
+        executable: profile.executable.clone(),
+        askhuman_executable: crate::development::routing::program_path()?
+            .to_string_lossy()
+            .to_string(),
+        launch_mode: mode,
+        model: None,
+        effort: None,
     };
     write_private_record(&record)?;
     Ok(record)
@@ -960,6 +1051,7 @@ pub fn open_terminal(record: &LaunchRecord) -> Result<()> {
     let script = r#"on run argv
 tell application "Terminal"
   set launchTab to do script ""
+  if (count of argv) > 1 then set custom title of launchTab to (item 2 of argv)
   repeat while busy of launchTab
     delay 0.05
   end repeat
@@ -967,8 +1059,13 @@ tell application "Terminal"
   do script (item 1 of argv) in launchTab
 end tell
 end run"#;
+    let title = if record.source.channel == crate::development::session::SOURCE_CHANNEL {
+        "Dev · AskHuman"
+    } else {
+        "AskHuman"
+    };
     let status = Command::new("/usr/bin/osascript")
-        .args(["-e", script, &command])
+        .args(["-e", script, &command, title])
         .status()
         .context("failed to ask Terminal.app to open a window")?;
     if !status.success() {
@@ -1027,6 +1124,70 @@ pub fn open_terminal(_record: &LaunchRecord) -> Result<()> {
     Err(anyhow!("IM Agent launch is unsupported on this platform"))
 }
 
+pub(crate) fn development_terminal_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        [
+            "x-terminal-emulator",
+            "gnome-terminal",
+            "konsole",
+            "xfce4-terminal",
+            "xterm",
+        ]
+        .into_iter()
+        .any(|name| {
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+                .any(|dir| is_executable(&dir.join(name)))
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        terminal_available()
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn open_development_terminal(record: &LaunchRecord) -> Result<()> {
+    open_terminal(record)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn open_development_terminal(record: &LaunchRecord) -> Result<()> {
+    let candidates = [
+        "x-terminal-emulator",
+        "gnome-terminal",
+        "konsole",
+        "xfce4-terminal",
+        "xterm",
+    ];
+    for candidate in candidates {
+        let executable = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|directory| directory.join(candidate))
+            .find(|path| is_executable(path));
+        let Some(executable) = executable else {
+            continue;
+        };
+        let mut command = Command::new(executable);
+        command.arg(match candidate {
+            "gnome-terminal" => "--",
+            "xfce4-terminal" => "-x",
+            _ => "-e",
+        });
+        command
+            .arg(&record.askhuman_executable)
+            .arg("__agent-launch")
+            .arg(&record.id)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        crate::daemon::spawn::spawn_and_reap(&mut command)?;
+        return Ok(());
+    }
+    Err(anyhow!(
+        "no supported terminal is installed; use AskHuman dev session --stdio"
+    ))
+}
+
 /// Hidden helper entry point. Returns only on validation failure; success replaces this process
 /// with the selected Agent so it inherits the terminal's real TTY.
 pub fn run_helper(args: &[String]) -> Result<()> {
@@ -1034,6 +1195,14 @@ pub fn run_helper(args: &[String]) -> Result<()> {
         .first()
         .ok_or_else(|| anyhow!("missing launch token"))?;
     let record = claim_record(token)?;
+    let development = if record.source.channel == crate::development::session::SOURCE_CHANNEL {
+        Some(
+            crate::development::session::restore_for_launch(&record.source.target)
+                .map_err(anyhow::Error::msg)?,
+        )
+    } else {
+        None
+    };
     validate_claim(&record, token)?;
     #[cfg(windows)]
     {
@@ -1046,7 +1215,7 @@ pub fn run_helper(args: &[String]) -> Result<()> {
         crate::daemon::lifecycle::log_runtime_event("windows_terminal", action, None);
     }
     std::env::set_current_dir(&record.cwd).context("failed to enter workspace")?;
-    let mut command = assemble_command(&record);
+    let mut command = assemble_command(&record, development.as_ref())?;
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -1096,18 +1265,22 @@ fn validate_claim(record: &LaunchRecord, token: &str) -> Result<()> {
     }
     let choice = record.choice();
     if !record.payload_sha256.is_empty() {
-        let expected = payload_sha256(
-            &record.task,
-            &record.files,
-            &record.warnings,
-            &record.launch_mode,
-            &choice,
+        let expected = bind_development_hash(
+            payload_sha256(
+                &record.task,
+                &record.files,
+                &record.warnings,
+                &record.launch_mode,
+                &choice,
+            ),
+            &record.source,
         );
         let legacy = legacy_payload_sha256(&record.task, &record.files, &record.warnings);
         // The pre-launch-mode hash only ever described a plain new task; it must not vouch for a
         // record that also names a model.
         if record.payload_sha256 != expected
             && !(record.launch_mode == LaunchMode::New
+                && record.source.channel != crate::development::session::SOURCE_CHANNEL
                 && choice.is_default()
                 && record.payload_sha256 == legacy)
         {
@@ -1146,7 +1319,7 @@ fn validate_claim(record: &LaunchRecord, token: &str) -> Result<()> {
             "Agent executable changed after launch was requested"
         ));
     }
-    let current = std::env::current_exe()?;
+    let current = crate::development::routing::program_path()?;
     if !crate::path_identity::equivalent(&current.to_string_lossy(), &record.askhuman_executable) {
         return Err(anyhow!(
             "AskHuman executable changed after launch was requested"
@@ -1196,11 +1369,24 @@ fn validate_source_session_id(session_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// The command the helper replaces itself with. The record is already validated, so nothing here
-/// can fail; nothing is started.
-fn assemble_command(record: &LaunchRecord) -> Command {
+/// Build the invocation without starting it. Profile options must precede the prompt delimiter.
+fn assemble_command(
+    record: &LaunchRecord,
+    development: Option<&crate::development::session::Profile>,
+) -> Result<Command> {
     let mut command = Command::new(&record.executable);
+    command.env_remove(crate::development::routing::TARGET_ENV);
     command.env(LAUNCH_ID_ENV, &record.id);
+    if let Some(profile) = development {
+        if profile.kind != record.kind || profile.executable != record.executable {
+            return Err(anyhow!(
+                "development launch does not match its client profile"
+            ));
+        }
+        crate::development::session::configure_agent_command(&mut command, profile)
+            .map_err(anyhow::Error::msg)?;
+        command.env(LAUNCH_ID_ENV, &record.id);
+    }
     command.args(agent_args(
         record.kind,
         record.permission,
@@ -1208,7 +1394,7 @@ fn assemble_command(record: &LaunchRecord) -> Command {
         &record.choice(),
         &task_with_attachments(&record.task, &record.files, &record.warnings),
     ));
-    command
+    Ok(command)
 }
 
 /// The flags that select a model and reasoning effort for a new task (none for a default
@@ -2855,7 +3041,7 @@ mod tests {
         );
         validate_claim(&record, &record.id).unwrap();
 
-        let command = assemble_command(&record);
+        let command = assemble_command(&record, None).unwrap();
         assert_eq!(command.get_program(), record.executable.as_str());
         let args: Vec<_> = command.get_args().collect();
         assert_eq!(
@@ -2877,9 +3063,79 @@ mod tests {
         let plain = stub_record(dir.path(), AgentKind::Claude, &ModelChoice::default());
         validate_claim(&plain, &plain.id).unwrap();
         assert_eq!(
-            assemble_command(&plain).get_args().collect::<Vec<_>>(),
+            assemble_command(&plain, None)
+                .unwrap()
+                .get_args()
+                .collect::<Vec<_>>(),
             ["write a haiku"]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn development_profile_options_precede_new_and_fork_prompt_delimiters() {
+        use crate::development::{build::BuildInfo, session::Profile};
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let private = root.join(".askhuman-dev");
+        let home = private.join("home");
+        fs::create_dir_all(private.join("bin")).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        fs::write(private.join("enabled"), "fixture").unwrap();
+        let binary = private.join("bin/AskHuman");
+        fs::write(&binary, "never executed").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        let neutral = temp.path().join("neutral");
+        fs::create_dir_all(&neutral).unwrap();
+        for (kind, mode) in [
+            (AgentKind::Codex, LaunchMode::New),
+            (
+                AgentKind::Codex,
+                LaunchMode::Fork {
+                    source_session_id: "codex-source".into(),
+                },
+            ),
+            (
+                AgentKind::Grok,
+                LaunchMode::Fork {
+                    source_session_id: "grok-source".into(),
+                },
+            ),
+        ] {
+            let mut record = stub_record(&root, kind, &ModelChoice::default());
+            record.launch_mode = mode;
+            let profile = Profile {
+                version: 1,
+                id: uuid::Uuid::new_v4().to_string(),
+                kind,
+                worktree: root.clone(),
+                directory: private.join("clients").join(kind.as_str()),
+                neutral_workspace: neutral.clone(),
+                executable: record.executable.clone(),
+                build: BuildInfo {
+                    version: 1,
+                    worktree: root.clone(),
+                    binary: binary.clone(),
+                    source_fingerprint: "fixture".into(),
+                    binary_fingerprint: "fixture".into(),
+                    git_commit: None,
+                    created_at_ms: 0,
+                },
+                prepared: true,
+            };
+            let command = assemble_command(&record, Some(&profile)).unwrap();
+            let args: Vec<_> = command.get_args().collect();
+            let option = args.iter().position(|arg| *arg == "--add-dir").unwrap();
+            let delimiter = args.iter().position(|arg| *arg == "--").unwrap();
+            assert!(
+                option < delimiter,
+                "profile options must be parsed as options: {args:?}"
+            );
+            assert_eq!(args[option + 1], root.as_os_str());
+            assert_eq!(command.get_current_dir(), Some(neutral.as_path()));
+        }
     }
 
     #[cfg(unix)]

@@ -53,6 +53,47 @@ async fn hello_status() -> Option<HelloStatus> {
 
 /// 确保 Daemon 在运行且为当前二进制版本；必要时自启 / 等旧实例换新。
 pub async fn ensure_running() -> std::io::Result<()> {
+    ensure_running_inner().await?;
+    if crate::development::routing::inherited()
+        .map_err(Error::other)?
+        .is_some_and(|target| target.kind == crate::development::routing::TargetKind::Dev)
+    {
+        require_development_peer().await?;
+    }
+    Ok(())
+}
+
+fn development_peer_matches(
+    status: &StatusInfo,
+    expected: crate::daemon::lifecycle::Fingerprint,
+) -> bool {
+    status.development_verification_version == crate::development::CAPABILITY_VERSION
+        && status.fingerprint == Some(expected)
+}
+
+async fn require_development_peer() -> std::io::Result<()> {
+    let status = request_status_result()
+        .await?
+        .ok_or_else(|| Error::other("selected development daemon is unavailable"))?;
+    if !development_peer_matches(&status, crate::daemon::lifecycle::current_fingerprint()) {
+        return Err(Error::other("Dev verification requires a compatible daemon running this exact build; restart the selected instance before verification"));
+    }
+    Ok(())
+}
+
+async fn background_peer_ready() -> bool {
+    if ensure_running().await.is_ok() {
+        return true;
+    }
+    let dev = crate::development::routing::inherited()
+        .ok()
+        .flatten()
+        .is_some_and(|t| t.kind == crate::development::routing::TargetKind::Dev);
+    // Lifecycle reports may still reach a draining peer, provided it is the verified Dev build.
+    !dev || require_development_peer().await.is_ok()
+}
+
+async fn ensure_running_inner() -> std::io::Result<()> {
     // 1. 已在运行且 Ok → 直接用。
     match hello_status().await {
         Some(HelloStatus::Ok) => return Ok(()),
@@ -436,7 +477,9 @@ pub fn report_agent_event(msg: ClientMsg) {
     rt.block_on(async {
         // 即便 daemon 在排空（WouldBlock）也继续尝试直连：control_loop 不依赖 Hello 即可处理 AgentEvent，
         // 排空中的 daemon 退出前会持久化、由新 daemon 重载。
-        let _ = ensure_running().await;
+        if !background_peer_ready().await {
+            return;
+        }
         if let Ok((_, mut writer)) = connect_split().await {
             let _ = ipc::write_msg(&mut writer, &msg).await;
         }
@@ -455,7 +498,9 @@ pub async fn register_mcp_instance(
     server_pid: u32,
     parent_pid_hint: Option<u32>,
 ) {
-    let _ = ensure_running().await;
+    if !background_peer_ready().await {
+        return;
+    }
     if let Ok((_, mut writer)) = connect_split().await {
         let _ = ipc::write_msg(
             &mut writer,
@@ -541,7 +586,9 @@ pub fn report_agent_event_with_poll(msg: ClientMsg) -> InterjectPollOutcome {
         return InterjectPollOutcome::Allow;
     };
     rt.block_on(async {
-        let _ = ensure_running().await;
+        if !background_peer_ready().await {
+            return InterjectPollOutcome::Allow;
+        }
         let Ok((mut reader, mut writer)) = connect_split().await else {
             return InterjectPollOutcome::Allow;
         };
@@ -703,28 +750,53 @@ pub fn run_ask(task: crate::ipc::TaskRequest) -> ! {
 
 /// Run an internal Ask request and capture its rendered JSON instead of printing/exiting.
 /// Used by the Stop hook; timeout/disconnect/non-success all fail open as `None`.
-pub fn run_ask_capture(task: crate::ipc::TaskRequest, timeout: Duration) -> Option<String> {
+pub fn run_ask_capture(mut task: crate::ipc::TaskRequest, timeout: Duration) -> Option<String> {
+    if let Err(error) = crate::development::verification::decorate_task(&mut task) {
+        eprintln!("AskHuman: {error}");
+        return None;
+    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .ok()?;
-    runtime.block_on(async move {
+    let info = task.message.development.clone();
+    let result = runtime.block_on(async move {
         let final_result = tokio::time::timeout(timeout, run_ask_final_async(task, false))
             .await
             .ok()?;
         (final_result.exit_code == 0).then_some(final_result.stdout)
-    })
+    });
+    if let Some(info) = info.filter(|info| !info.relay) {
+        match &result {
+            Some(stdout) => {
+                let _ = crate::development::verification::complete(&info, stdout, 0);
+            }
+            None => {
+                let _ = crate::development::verification::interrupted(&info.worktree, &info.id);
+            }
+        }
+    }
+    result
 }
 
 /// Submit a structured permission confirmation. Every transport/protocol/fallback failure returns
 /// `None` so the hook writes no decision and the agent keeps its native approval flow.
-pub fn run_confirm(task: crate::ipc::ConfirmTask) -> Option<crate::models::ConfirmResult> {
+pub fn run_confirm(mut task: crate::ipc::ConfirmTask) -> Option<crate::models::ConfirmResult> {
+    if let Err(error) = crate::development::verification::decorate_confirm(&mut task) {
+        eprintln!("AskHuman: {error}");
+        return None;
+    }
+    let info = task.development.clone();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .ok()?;
-    runtime.block_on(async move {
-        ensure_running().await.ok()?;
+    let result = runtime.block_on(async move {
+        if task.development.as_ref().is_some_and(|info| info.relay) {
+            crate::development::relay::check_peer().await.ok()?;
+        } else {
+            ensure_running().await.ok()?;
+        }
         let (mut reader, mut writer) = connect_split().await.ok()?;
         ipc::write_msg(&mut writer, &ClientMsg::Hello(hello()))
             .await
@@ -737,7 +809,19 @@ pub fn run_confirm(task: crate::ipc::ConfirmTask) -> Option<crate::models::Confi
             .await
             .ok()?;
         read_confirm_frames(&mut reader).await
-    })
+    });
+    if let Some(info) = info.filter(|info| !info.relay) {
+        let stdout = result
+            .as_ref()
+            .and_then(|value| serde_json::to_string(value).ok())
+            .unwrap_or_default();
+        let _ = crate::development::verification::complete(
+            &info,
+            &stdout,
+            if result.is_some() { 0 } else { 3 },
+        );
+    }
+    result
 }
 
 async fn read_confirm_frames<R>(reader: &mut R) -> Option<crate::models::ConfirmResult>
@@ -775,7 +859,25 @@ fn daemon_start_error(verbose: bool, error: &Error) -> AskFinal {
 }
 
 async fn run_ask_async(task: crate::ipc::TaskRequest) -> i32 {
-    let result = run_ask_final_async(task, true).await;
+    let verification = task.message.development.clone();
+    let result = if let Some(info) = verification.as_ref() {
+        tokio::select! {
+            result = run_ask_final_async(task, true) => result,
+            _ = crate::development::verification::wait_for_executor_exit(info) => {
+                let _ = crate::development::verification::interrupted(&info.worktree, &info.id);
+                client_error(true, "Dev verification executor exited; no human answer was received")
+            }
+        }
+    } else {
+        run_ask_final_async(task, true).await
+    };
+    if let Some(info) = verification.filter(|info| !info.relay) {
+        if let Err(error) =
+            crate::development::verification::complete(&info, &result.stdout, result.exit_code)
+        {
+            eprintln!("AskHuman: cannot retain Dev verification result: {error}");
+        }
+    }
     if !result.stdout.is_empty() {
         println!("{}", result.stdout);
     }
@@ -790,7 +892,19 @@ async fn run_ask_final_async(task: crate::ipc::TaskRequest, verbose: bool) -> As
     // 提交被受理后不再重试（避免重复弹窗）。
     'outer: loop {
         for _ in 0..3 {
-            match ensure_running().await {
+            let relay = task
+                .message
+                .development
+                .as_ref()
+                .is_some_and(|info| info.relay);
+            let readiness = if relay {
+                crate::development::relay::check_peer()
+                    .await
+                    .map_err(Error::other)
+            } else {
+                ensure_running().await
+            };
+            match readiness {
                 Ok(()) => {}
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
                     wait_for_drain().await;
@@ -798,6 +912,16 @@ async fn run_ask_final_async(task: crate::ipc::TaskRequest, verbose: bool) -> As
                 }
                 Err(error) => {
                     return daemon_start_error(verbose, &error);
+                }
+            }
+            if task
+                .message
+                .development
+                .as_ref()
+                .is_some_and(|info| info.relay)
+            {
+                if let Err(error) = require_development_peer().await {
+                    return client_error(verbose, &error.to_string());
                 }
             }
             let Ok((mut reader, mut writer)) = connect_split().await else {
@@ -891,6 +1015,21 @@ mod tests {
     use super::*;
     use crate::ipc::InterjectAction;
     use tokio::io::BufReader;
+
+    #[test]
+    fn development_clients_require_both_capability_and_exact_daemon_identity() {
+        let mut status:StatusInfo=serde_json::from_value(serde_json::json!({"pid":1,"version":"old","protocolVersion":4,"uptimeSecs":0,"socket":"local","activeRequests":0})).unwrap();
+        let expected = crate::daemon::lifecycle::Fingerprint { size: 1, hash: 2 };
+        assert!(!development_peer_matches(&status, expected));
+        status.fingerprint = Some(expected);
+        assert!(!development_peer_matches(&status, expected));
+        status.development_verification_version = crate::development::CAPABILITY_VERSION;
+        assert!(development_peer_matches(&status, expected));
+        assert!(!development_peer_matches(
+            &status,
+            crate::daemon::lifecycle::Fingerprint { size: 1, hash: 3 }
+        ));
+    }
 
     #[test]
     fn daemon_start_failure_preserves_empty_stdout_and_exit_code_three() {

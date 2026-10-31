@@ -19,7 +19,7 @@ for arg in "$@"; do
 Usage: ./scripts/install.sh [--global] [--release]
 
   (default)  If the current directory is under a Dev Instance
-             (worktree with .askhuman-dev/enabled), install into
+             (worktree with .askhuman-dev/workspace.json or legacy enabled), install into
              <root>/.askhuman-dev/bin; otherwise ~/.local/bin. Uses the
              fast local `local-install` Cargo profile.
   --global   Always install to ~/.local/bin (or $INSTALL_DIR if set).
@@ -42,7 +42,7 @@ find_dev_enabled_root() {
   local dir
   dir="$(pwd)"
   while [ -n "$dir" ] && [ "$dir" != "/" ]; do
-    if [ -f "$dir/.askhuman-dev/enabled" ]; then
+    if [ -e "$dir/.askhuman-dev/workspace.json" ] || [ -L "$dir/.askhuman-dev/workspace.json" ] || [ -e "$dir/.askhuman-dev/enabled" ] || [ -L "$dir/.askhuman-dev/enabled" ]; then
       printf '%s\n' "$dir"
       return 0
     fi
@@ -52,6 +52,7 @@ find_dev_enabled_root() {
 }
 
 DEFAULT_INSTALL_DIR="${HOME}/.local/bin"
+DEV_ROOT=""
 if [ -n "${INSTALL_DIR:-}" ]; then
   : # explicit env wins
 elif [ "$FORCE_GLOBAL" -eq 1 ]; then
@@ -64,6 +65,19 @@ elif DEV_ROOT="$(find_dev_enabled_root)"; then
 else
   INSTALL_DIR="$DEFAULT_INSTALL_DIR"
 fi
+
+DEV_SOURCE_SNAPSHOT=""
+if [ -n "$DEV_ROOT" ]; then
+  node "$SCRIPT_DIR/dev-build-record.mjs" assert-target "$DEV_ROOT" "$INSTALL_DIR/AskHuman"
+  DEV_SOURCE_SNAPSHOT="$(node "$SCRIPT_DIR/dev-build-record.mjs" snapshot "$REPO_ROOT")"
+fi
+
+# Diagnostics must not inherit the calling Agent's client-only context.
+run_installed() (
+  unset ASKHUMAN_RESOLVED_TARGET_V1 ASKHUMAN_DEV_TEST_PROFILE ASKHUMAN_DEV_VERIFICATION_ID
+  unset ASKHUMAN_DEV_TEST_WINDOW ASKHUMAN_DEV_DRIVER_PID ASKHUMAN_HOME
+  "$INSTALL_DIR/AskHuman" "$@"
+)
 
 sign_via_gui_launchd() {
   local identity="$1"
@@ -205,11 +219,17 @@ fi
 echo "==> 安装前端依赖"
 pnpm install
 
+DEV_BUILD_FEATURES="custom-protocol"
+export VITE_ASKHUMAN_DEV_WORKBENCH=0
+if [ -n "$DEV_ROOT" ]; then
+  export VITE_ASKHUMAN_DEV_WORKBENCH=1
+  DEV_BUILD_FEATURES="custom-protocol,development-ui"
+fi
 node scripts/build-frontend-if-needed.mjs
 
 echo "==> 编译 $BUILD_PROFILE 二进制（前端资源在此步骤被嵌入）"
 # --features custom-protocol：生产构建必须启用，否则二进制以 dev 模式连 devUrl 导致白屏。
-cargo build --profile "$BUILD_PROFILE" --manifest-path src-tauri/Cargo.toml --features custom-protocol
+cargo build --profile "$BUILD_PROFILE" --manifest-path src-tauri/Cargo.toml --features "$DEV_BUILD_FEATURES"
 
 BIN_PATH="src-tauri/target/$BUILD_PROFILE/AskHuman"
 if [ ! -f "$BIN_PATH" ]; then
@@ -361,6 +381,12 @@ if [ "$SKIP_COPY" -eq 0 ]; then
   trap - EXIT INT TERM
 fi
 
+if [ -n "$DEV_ROOT" ]; then
+  node "$SCRIPT_DIR/dev-build-record.mjs" record "$DEV_ROOT" "$INSTALL_DIR/AskHuman" "$DEV_SOURCE_SNAPSHOT"
+  echo "    Dev 验收: AskHuman dev ask --worktree $DEV_ROOT …"
+
+fi
+
 # --- target/ 缓存清理 ---
 
 # cargo-sweep 回收长期未使用的依赖 hash；profile 预算（下方）不依赖它存在。
@@ -482,11 +508,11 @@ _enforce_profile_budget "release" "src-tauri/target/release" "$BUDGET_RELEASE_MB
 _enforce_swift_cache_budget
 
 echo "==> 完成：$INSTALL_DIR/AskHuman"
-if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
+if [ -z "$DEV_ROOT" ] && ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
   echo "提示: $INSTALL_DIR 不在 PATH 中，请将其加入 PATH。"
 fi
 
 # 多份安装 / PATH 遮蔽检查：内容不同的 AskHuman 并存时会轮流把对方的 daemon 顶掉
 # （docs/specs/daemon-graceful-drain.md §6）。只在发现冲突时输出；检查失败不影响安装结果。
 # Dev Instance 安装有独立 daemon，检查会自行跳过。
-"$INSTALLED_BIN" doctor install --warn-only || true
+run_installed doctor install --warn-only || true

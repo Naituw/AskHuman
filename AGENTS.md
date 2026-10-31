@@ -8,7 +8,7 @@ When the task is complete, check whether the change made any overview or referen
 
 ## Git worktree / parallel development
 
-If the task needs a **new or existing git worktree** for parallel feature work on this repo (so install/AskHuman do not share the main daemon or overwrite another agent’s binary), read [`docs/agent-worktree-setup.md`](docs/agent-worktree-setup.md) first and follow it—including asking the human via AskHuman whether to attach a channel preset—before coding. After `dev enable`, verification is still `./scripts/install.sh` then `AskHuman` (auto-routed into that worktree’s Dev Instance).
+If the task needs a **new or existing git worktree** for parallel feature work on this repo (so install/AskHuman do not share the main daemon or overwrite another agent’s binary), read [`docs/agent-worktree-setup.md`](docs/agent-worktree-setup.md) first and follow it—including asking the human via AskHuman whether to attach a channel preset—before coding. After `dev enable`, run `./scripts/install.sh` and verify through the project `askhuman-dev` MCP’s `dev_ask` (or `node scripts/dev.mjs ask` for CLI). Ordinary discussion, approvals and handoff continue through the normal AskHuman connection.
 
 ## Tracking unfinished work in docs/PROGRESS.md
 
@@ -17,6 +17,9 @@ If the task needs a **new or existing git worktree** for parallel feature work o
 ## Verifying your changes
 
 After making any change to this project's functionality or logic, verify the result by running the install script to compile the new code directly into your environment, then use the newly installed `AskHuman` for subsequent prompts:
+
+For an enabled Dev Instance, use the explicit verification flow above; ordinary discussion
+continues through the normal AskHuman connection.
 
 ```bash
 # macOS / Linux

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 pub fn integration_enabled() -> bool {
     cfg!(target_os = "macos")
+        && !crate::dev_instance::is_dev_instance_context()
         && crate::integrations::agent_mode::current(
             crate::integrations::agent_rules::AgentTarget::Codex,
         ) != crate::integrations::agent_mode::Mode::None

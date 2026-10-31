@@ -57,6 +57,7 @@ pub fn run(args: &[String]) {
     let hint_pid = detect::parent_pid(std::process::id());
     let cwd = resolve_cwd(&env, stdin.as_ref());
     let transcript_path = resolve_transcript_path(&env, stdin.as_ref());
+    crate::development::session::bind_native(intended, &session_id, transcript_path.as_deref());
     let launch_id = env
         .get(crate::integrations::agent_launch::LAUNCH_ID_ENV)
         .cloned();
@@ -132,6 +133,11 @@ pub(super) fn report_simple_event(
         return;
     }
     let hint_pid = detect::parent_pid(std::process::id());
+    crate::development::session::bind_native(
+        intended,
+        &session_id,
+        std::env::var("PI_SESSION_FILE").ok().as_deref(),
+    );
     crate::client::report_agent_event(ClientMsg::AgentEvent {
         agent: intended.as_str().to_string(),
         event: event.as_str().to_string(),

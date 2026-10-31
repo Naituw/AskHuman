@@ -30,7 +30,11 @@ pub fn save(
     save_into_dir(images, &dir, lang)
 }
 
-fn save_into_dir(images: &[ImageAttachment], dir: &Path, lang: Lang) -> Result<Vec<String>> {
+pub(crate) fn save_into_dir(
+    images: &[ImageAttachment],
+    dir: &Path,
+    lang: Lang,
+) -> Result<Vec<String>> {
     let mut used_names = HashSet::with_capacity(images.len());
     let mut paths_out = Vec::with_capacity(images.len());
     for (index, img) in images.iter().enumerate() {

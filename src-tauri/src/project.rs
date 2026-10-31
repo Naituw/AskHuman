@@ -25,6 +25,17 @@ pub fn detect() -> String {
 /// A trusted native workspace owns the project even when a tool changes its cwd.
 /// Plain CLI calls and unavailable session metadata retain the original directory rule.
 pub fn for_session(kind: Option<&str>, session_id: Option<&str>, cwd: &Path) -> String {
+    if let Ok(Some(profile)) = crate::development::session::active() {
+        return canonical_string(&profile.worktree);
+    }
+    if let Some(profile) = kind
+        .and_then(crate::agents::AgentKind::parse)
+        .zip(session_id)
+        .and_then(|(kind, sid)| crate::development::session::for_native(kind, sid))
+    {
+        return canonical_string(&profile.worktree);
+    }
+
     let workspace = kind
         .and_then(crate::agents::AgentKind::parse)
         .zip(session_id)

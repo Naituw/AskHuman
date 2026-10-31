@@ -149,6 +149,7 @@ fn prepare(sid: &str, s: &Session, r: &Value) -> Option<ClientMsg> {
                 return None;
             }
             Some(ClientMsg::SubmitConfirm(Box::new(ipc::ConfirmTask {
+                development: None,
                 caller_cwd: None,
                 spec: ConfirmSpec {
                     title: if zh {

@@ -322,7 +322,19 @@ impl Coordinator {
             return false;
         }
         let request = { self.inner.lock().unwrap().request.clone() };
-        crate::todos::apply_todo_deliveries(&request, &mut result, &self.project);
+        if request
+            .message
+            .development
+            .as_ref()
+            .is_some_and(|info| info.relay)
+        {
+            for answer in &mut result.answers {
+                answer.todo_ids.clear();
+                answer.todo_selections.clear();
+            }
+        } else {
+            crate::todos::apply_todo_deliveries(&request, &mut result, &self.project);
+        }
         let (exiter, pending_count, dequeue_ids) = {
             let inner = self.inner.lock().unwrap();
             // 进入收尾：此后 GUI 拦下关窗退出，独占由协调器主动 `app.exit`。
@@ -477,10 +489,25 @@ impl Coordinator {
             (inner.exiter.clone(), inner.request.clone())
         };
         let result = self.result.lock().unwrap().take();
-        let Some(result) = result else {
+        let Some(mut result) = result else {
             // 无结果（headless 全部会话结束仍未作答）：不退出，交由调用方报错。
             return;
         };
+        if let Some(info) = request.message.development.as_deref() {
+            if let Err(error) =
+                crate::development::verification::retain_reply_files(info, &mut result)
+            {
+                self.deliver(
+                    exiter,
+                    RenderOutcome {
+                        stdout: String::new(),
+                        stderr: Some(error),
+                        exit_code: 1,
+                    },
+                );
+                return;
+            }
+        }
         // 渲染一次（图片落盘只发生一次），拿到给 CLI 的文本与各题图片路径。
         let (outcome, image_paths) = super::render_result(&request, &result, self.lang);
         // 旁路写回复历史：最佳努力，绝不影响主流程（stdout / 退出码）。

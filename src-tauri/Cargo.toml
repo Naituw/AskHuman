@@ -25,6 +25,8 @@ required-features = ["collapse-prototype"]
 # 否则 tauri 的 build.rs 判定 dev=true，二进制会去连 devUrl(localhost) 而非内嵌资源，导致白屏。
 # 注意：`pnpm tauri dev` 不启用此特性，仍走 dev server 热重载。请勿移除。
 custom-protocol = ["tauri/custom-protocol"]
+# Embedded only by worktree installs, paired with VITE_ASKHUMAN_DEV_WORKBENCH.
+development-ui = []
 # Native collapse prototype (examples/popup_collapse_demo.rs): also compiles swift/prototype/*.swift
 # (window capture, burst recording, activation test hooks). Never enable it in product builds.
 collapse-prototype = []
@@ -134,6 +136,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_Diagnostics_Debug",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Console",
+  "Win32_System_Environment",
   "Win32_System_RemoteDesktop",
   "Win32_System_Registry",
   "Win32_System_Threading",
