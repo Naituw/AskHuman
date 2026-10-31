@@ -14,15 +14,14 @@ export function pathKey(value) {
   else if (value.startsWith("\\\\?\\")) value = value.slice(4);
   return value.toLowerCase();
 }
-export function physicalPath(value) { return pathKey(fs.realpathSync(value)); }
+export function physicalPath(value) { return pathKey(fs.realpathSync.native(value)); }
 
 export function worktreeRoot(value) {
   if (!path.isAbsolute(value)) throw new Error("worktree must be an absolute path");
-  const root = fs.realpathSync(value);
+  const root = fs.realpathSync.native(value);
   const git = spawnSync("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8", timeout: 3000 });
-  if (git.status !== 0 || physicalPath(git.stdout.trim()) !== physicalPath(root)) {
-    throw new Error("worktree must identify its git root");
-  }
+  if (git.status !== 0) throw new Error(`cannot identify the project git root: ${(git.stderr || git.error?.message || "git exited without a root").trim().slice(0, 1024)}`);
+  if (physicalPath(git.stdout.trim()) !== physicalPath(root)) throw new Error("worktree must identify its git root");
   return root;
 }
 

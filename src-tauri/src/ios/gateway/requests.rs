@@ -47,6 +47,10 @@ pub trait AskSink: Send + Sync + 'static {
 
 /// The confirmation side of a request.
 pub trait ConfirmSink: Send + Sync + 'static {
+    /// Explicit development relays cannot wait for the daily idle notification policy.
+    fn immediate_notification(&self) -> bool {
+        false
+    }
     /// `Ok(true)` decided, `Ok(false)` already decided, `Err` invalid input.
     fn decide(&self, wire_index: usize, comment: Option<String>) -> Result<bool, String>;
     fn winner(&self) -> Option<String>;
@@ -472,7 +476,7 @@ impl Actor {
     /// still notifies. Cheap while nothing waits: the system clock is read only for a waiting
     /// request.
     pub(super) fn flush_due_notifications(&mut self, now: i64) {
-        let mut waiting: Vec<(String, String)> = Vec::new();
+        let mut waiting: Vec<(String, String, bool)> = Vec::new();
         for pending in &self.requests.pending {
             for (phone_id, delivery) in &pending.phones {
                 if !delivery.seen
@@ -480,7 +484,13 @@ impl Actor {
                     && !self.is_looking(phone_id)
                     && self.can_push(phone_id, now)
                 {
-                    waiting.push((phone_id.clone(), pending.view.id.clone()));
+                    let immediate = pending.ask.as_ref().is_some_and(|ask| {
+                        ask.message
+                            .development
+                            .as_ref()
+                            .is_some_and(|info| info.relay)
+                    }) || matches!(&pending.sink, Sink::Confirm(sink) if sink.immediate_notification());
+                    waiting.push((phone_id.clone(), pending.view.id.clone(), immediate));
                 }
             }
         }
@@ -488,10 +498,11 @@ impl Actor {
             return;
         }
         let after = self.host.alert_after_secs();
-        if after > 0 && self.host.mac_idle_secs().is_some_and(|idle| idle < after) {
-            return;
-        }
-        for (phone_id, request_id) in waiting {
+        let delayed = after > 0 && self.host.mac_idle_secs().is_some_and(|idle| idle < after);
+        for (phone_id, request_id, immediate) in waiting {
+            if delayed && !immediate {
+                continue;
+            }
             let Some(view) = self.requests.find(&request_id).map(|p| p.view.clone()) else {
                 continue;
             };
