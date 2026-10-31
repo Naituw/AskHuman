@@ -88,7 +88,11 @@ final class AgentTests: XCTestCase {
         let sent = try h.mac.received(FollowSet.type)[0].body(as: FollowSet.self)
         XCTAssertEqual(sent.agentKey, "claude:s1")
         XCTAssertTrue(sent.on)
-        await eventually("followed") { await h.state().agents.first?.view.followed == true }
+        await eventually("follow acknowledged and persisted") {
+            let state = await h.state()
+            return state.agents.first?.view.followed == true
+                && h.store.meta(macId: h.mac.macId).follow == ["claude:s1"]
+        }
         XCTAssertEqual(h.store.meta(macId: h.mac.macId).follow, ["claude:s1"], "remembered on the phone")
 
         try await h.engine.setFollow(macId: h.mac.macId, agentKey: "claude:s1", on: false)
