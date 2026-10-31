@@ -52,7 +52,7 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
     **不得再改写**（不要 rebase，也不要 force-push）；分支继续开发时同步 main 用合并（2026-10-26 合过一次：`chore(ios): merge main into feat/ios-channel`，合并时解了 `agents/stop.rs` 的冲突）
 
 已知延期（不阻塞原型）：
-- Codex 桌面 App 的会话暂不支持手机插话（返回 `unsupported`）；Pi 的扩展只有在 Stop 确认开着时才会随 daemon 启动自动迁移（2026-10-26 实测：日志出现 `migrated outdated Stop confirmation hooks: pi`），只开了生命周期跟踪的用户仍要在设置里重新保存 / 刷新才会上报失败的回合；已在运行的 Pi 会话要重启后才加载新扩展。
+- Pi 的扩展只有在 Stop 确认开着时才会随 daemon 启动自动迁移（2026-10-26 实测：日志出现 `migrated outdated Stop confirmation hooks: pi`），只开了生命周期跟踪的用户仍要在设置里重新保存 / 刷新才会上报失败的回合；已在运行的 Pi 会话要重启后才加载新扩展。
 - IM `/new` 与 iOS 新任务共用的启动流水线 `daemon/runtime/task_launch.rs::start_task` 没有自动化测试（该文件只有门槛顺序的 1 个测试）。2026-10-26 在真实飞书上走通过一轮 Codex 终端路径；TODO 出队、终端打不开时的清理、Codex App 路径只靠对照新旧实现读代码确认。要补自动测试，得先把 `open_terminal` / `todos` 等副作用抽成可注入的接缝。
 - 提问正文里的本地图片尚未改写为 `ahasset://`，列表项的墓碑展示也未做；撤回插话只取回文字、不取回附件。
 - 发行给朋友之前：EMQX 自动开户与额度共享、TestFlight 外部测试说明、隐私政策网址与联系邮箱。

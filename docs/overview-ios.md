@@ -57,6 +57,8 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 
 - 新建任务的 `TaskComposer` 在点击「开始」时，将模型 / 强度按 Agent 存为这部手机的本地偏好，所有 Mac / 工作区共用；取消不更新。
   打开表单或切换 Mac / Agent 时恢复，缺少已保存模型的 Mac 临时回默认并保留原偏好。完整约定见 `docs/specs/ios-task-model.md` M3。
+- Agent 消息对 Codex Desktop 走原生 `Operation::Send`（运行中补充／空闲时继续，继承线程设置）；其余走原有工作中 Hook 队列。
+  Desktop 断开绝不回退队列；Gateway 后台发送并去重，成功只代表 App 接受。手机对不明结果保留消息 ID 与草稿，经用户检查原聊天后才能解除。见 `docs/specs/ios-channel.md` §6.7。
 - 回复与插话共用 `Views/Attachments/ReplyAttachments.swift` 的附件菜单：相册允许照片 / 视频混选，视频通过文件型 `Transferable` 读取。
   `AHCore/VideoAttachmentPreparer.swift` 保留限额内原视频，超限时先预估可用压缩档位，只有预估 ≤8 MB 才尝试；编码一次后核对实际体积与完整时长。回答区与插话栏直接显示压缩进度及取消按钮，由用户决定是否继续等待。
   导出器的状态与取消约束在 MainActor，原文件 / 导出临时目录按生命周期清理；两个 Composer 用准备任务的 token 集合阻止处理期间发送。验证办法见 `docs/plans/ios-video-attachments.md`。

@@ -86,12 +86,15 @@ impl Host for DaemonHost {
     async fn interject(
         &self,
         phone_id: &str,
+        client_msg_id: &str,
         agent_key: &str,
         text: &str,
         files: Vec<StagedFile>,
     ) -> InterjectResult {
         match self.state.upgrade() {
-            Some(state) => ios_agents::interject(&state, phone_id, agent_key, text, files),
+            Some(state) => {
+                ios_agents::interject(&state, phone_id, client_msg_id, agent_key, text, files).await
+            }
             None => InterjectResult::rejected("unavailable"),
         }
     }

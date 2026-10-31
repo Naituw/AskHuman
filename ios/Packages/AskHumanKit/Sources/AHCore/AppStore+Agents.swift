@@ -177,8 +177,14 @@ extension AppStore {
             composer.reset()
             return outcome
         } catch {
-            // A refusal is final: the next try is a new message.
-            if case BackendError.rejected = error { composer.pendingMessageId = nil }
+            // Unknown delivery must keep its identity: a new one could submit the message twice.
+            if case BackendError.rejected(let reason) = error {
+                if ["desktopUnknown", "interrupted", "conflict"].contains(reason) {
+                    composer.needsDeliveryReview = true
+                } else {
+                    composer.pendingMessageId = nil
+                }
+            }
             throw error
         }
     }

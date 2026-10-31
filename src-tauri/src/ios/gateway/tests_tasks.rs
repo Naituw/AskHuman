@@ -141,6 +141,64 @@ async fn repeating_an_interjection_does_not_queue_it_twice() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_slow_desktop_send_does_not_block_requests_or_submit_duplicates() {
+    let (fx, mut phone) = with_agent().await;
+    fx.host
+        .set_agents(vec![sample_agent("codex:desktop", "idle")]);
+    fx.host.update_agent("codex:desktop", |agent| {
+        agent.can_interject = wire::CanInterject {
+            ok: true,
+            reason: None,
+        }
+    });
+    fx.host.interject_delay_ms.store(5_000, Ordering::SeqCst);
+    *fx.host.interject_result.lock().unwrap() = Some(InterjectResult {
+        status: "delivered",
+        reason: None,
+        pending: 0,
+    });
+    let message = interject("desktop-message", "codex:desktop", "continue");
+    phone.send(&message).await;
+    phone.send(&message).await;
+    // An unrelated query must be answered while the native app is still sending.
+    phone
+        .send(&wire::InterjectQuery {
+            agent_key: "codex:desktop".into(),
+        })
+        .await;
+    assert!(phone
+        .recv_within(t::INTERJECT_STATE, SECOND)
+        .await
+        .is_some());
+    assert!(
+        !phone.gets(t::INTERJECT_ACK, SECOND).await,
+        "no premature success or rejection"
+    );
+    let first = ack(&mut phone).await;
+    assert_eq!(first.status, "delivered");
+    assert_eq!(first.pending, 0);
+    phone.send(&message).await;
+    assert_eq!(ack(&mut phone).await, first);
+    assert_eq!(fx.host.interjects.lock().unwrap().len(), 1);
+    assert_eq!(*fx.host.interject_ids.lock().unwrap(), ["desktop-message"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_uncertain_desktop_send_is_replayed_without_sending_again() {
+    let (fx, mut phone) = with_agent().await;
+    fx.host
+        .set_agents(vec![sample_agent("codex:desktop", "working")]);
+    *fx.host.interject_result.lock().unwrap() = Some(InterjectResult::rejected("desktopUnknown"));
+    let message = interject("desktop-unknown", "codex:desktop", "also check this");
+    phone.send(&message).await;
+    let first = ack(&mut phone).await;
+    assert_eq!(first.reason.as_deref(), Some("desktopUnknown"));
+    phone.send(&message).await;
+    assert_eq!(ack(&mut phone).await, first);
+    assert_eq!(fx.host.interjects.lock().unwrap().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn queued_interjections_can_be_read_and_withdrawn() {
     let (fx, mut phone) = with_agent().await;
     *fx.host.interject_pending.lock().unwrap() = (2, "first\n\nsecond".into());

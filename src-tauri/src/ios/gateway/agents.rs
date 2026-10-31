@@ -57,6 +57,8 @@ pub(crate) struct Live {
     pub task_waits: Vec<TaskWait>,
     /// `task.create` messages whose terminal is still being started.
     pub task_inflight: HashSet<String>,
+    /// Messages being handed to a native app or hook; duplicates await the first result.
+    pub interject_inflight: HashSet<String>,
     /// `task.create` message → Agent session that already showed up while its terminal was still
     /// being started (the session can beat the launcher's return).
     pub task_early: HashMap<String, String>,

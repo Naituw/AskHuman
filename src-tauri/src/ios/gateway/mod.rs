@@ -95,6 +95,7 @@ pub trait Host: Send + Sync + 'static {
     async fn interject(
         &self,
         _phone_id: &str,
+        _client_msg_id: &str,
         _agent_key: &str,
         _text: &str,
         _files: Vec<StagedFile>,
@@ -1054,7 +1055,7 @@ impl Actor {
             }
             t::INTERJECT_SEND => {
                 let send = body!(wire::InterjectSend);
-                self.on_interject_send(phone_id, send).await;
+                self.on_interject_send(phone_id, send);
             }
             t::INTERJECT_CLEAR => {
                 let clear = body!(wire::InterjectClear);

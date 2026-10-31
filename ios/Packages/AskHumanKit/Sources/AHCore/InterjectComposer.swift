@@ -3,7 +3,7 @@ import Observation
 import AHProtocol
 import AHStore
 
-/// The message being written to a working Agent: text and a few attachments. Attachments are kept
+/// The message being written to an Agent: text and a few attachments. Attachments are kept
 /// in a temporary folder until the message is sent or the form is discarded.
 @MainActor
 @Observable
@@ -25,6 +25,13 @@ public final class InterjectComposer {
     /// Set while a send may or may not have reached the Mac: sending again reuses it so the Mac
     /// does not deliver the message twice.
     @ObservationIgnored public var pendingMessageId: String?
+    public var needsDeliveryReview = false
+
+    /// Called only after the user checked the original chat and chooses a fresh submission.
+    public func confirmDeliveryReviewed() {
+        pendingMessageId = nil
+        needsDeliveryReview = false
+    }
 
     @ObservationIgnored private let directory: URL
 
@@ -84,6 +91,7 @@ public final class InterjectComposer {
         text = ""
         attachments = []
         pendingMessageId = nil
+        needsDeliveryReview = false
         uploadProgress = nil
         try? FileManager.default.removeItem(at: directory)
     }

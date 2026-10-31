@@ -884,6 +884,26 @@
         }
       }
     },
+    "Codex Desktop could not accept the message. Your draft is kept; try again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex Desktop 未能接收消息。草稿已保留，请重试。"
+          }
+        }
+      }
+    },
+    "Codex Desktop is disconnected. Open the chat on your Mac and try again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex Desktop 已断开连接。请在 Mac 上打开原聊天后重试。"
+          }
+        }
+      }
+    },
     "Compressing video…" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1080,16 +1100,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "删除待办"
-          }
-        }
-      }
-    },
-    "Delivered to the Agent." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已送达 Agent。"
           }
         }
       }
@@ -1494,6 +1504,16 @@
         }
       }
     },
+    "I checked the original chat" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我已检查原聊天"
+          }
+        }
+      }
+    },
     "Idle" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1790,6 +1810,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "中"
+          }
+        }
+      }
+    },
+    "Message sent." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "消息已发送。"
           }
         }
       }
@@ -3606,16 +3636,6 @@
         }
       }
     },
-    "The Mac could not tell whether this was sent. Write it again." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac 无法确认是否已发出。请重新写一遍。"
-          }
-        }
-      }
-    },
     "The Mac did not accept this task." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3822,6 +3842,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法读取该文件。"
+          }
+        }
+      }
+    },
+    "The message may have been sent. Check the original chat before sending another message." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "消息可能已经发送。再次发送前，请先检查原聊天。"
           }
         }
       }

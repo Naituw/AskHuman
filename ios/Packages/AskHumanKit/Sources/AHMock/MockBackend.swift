@@ -80,6 +80,7 @@ public actor MockBackend: RemoteBackend {
     public internal(set) var createdTasks: [TaskDraft] = []
     /// Makes the next new task fail with this reason (a one-shot).
     public var failNextTask: String?
+    public var failNextInterject: String?
     /// Whether the Macs list models for the new task form; `false` is a Mac that is too old to.
     public var offersModels = true
     /// The forms behind the Agents the mock started for new tasks (`macId|agentKey`).

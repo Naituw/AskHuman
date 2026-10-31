@@ -224,6 +224,53 @@ final class AgentStoreTests: XCTestCase {
         await eventually { self.store.agent(id: item.id)?.view.pendingInterject == 0 }
     }
 
+    func testUncertainDeliveryRetainsTheDraftAndIdentityUntilTheChatIsReviewed() async throws {
+        await make()
+        let item = working
+        let composer = store.interjectComposer(for: item)
+        composer.text = "Please continue"
+        let attachment = try composer.addAttachment(name: "note.txt", mime: "text/plain", data: Data("note".utf8), isImage: false)
+        for reason in ["desktopUnknown", "interrupted", "conflict"] {
+            composer.pendingMessageId = "same-message"
+            await backend.setNextInterjectFailure(reason)
+            do {
+                _ = try await store.send(composer, to: item)
+                XCTFail("expected an uncertain delivery")
+            } catch BackendError.rejected(let actual) {
+                XCTAssertEqual(actual, reason)
+            }
+            XCTAssertEqual(composer.pendingMessageId, "same-message")
+            XCTAssertTrue(composer.needsDeliveryReview)
+            XCTAssertEqual(composer.text, "Please continue")
+            XCTAssertEqual(composer.attachments.map(\.id), [attachment.id])
+            XCTAssertFalse(composer.isSending)
+        }
+        composer.confirmDeliveryReviewed()
+        XCTAssertNil(composer.pendingMessageId)
+        XCTAssertFalse(composer.needsDeliveryReview)
+        XCTAssertEqual(composer.text, "Please continue")
+    }
+
+    func testADefiniteDesktopRefusalKeepsTheDraftButAllowsAFreshAttempt() async throws {
+        await make()
+        let item = working
+        let composer = store.interjectComposer(for: item)
+        composer.text = "Continue"
+        await backend.setNextInterjectFailure("desktopSendFailed")
+        do {
+            _ = try await store.send(composer, to: item)
+            XCTFail("expected a refusal")
+        } catch BackendError.rejected(let reason) {
+            XCTAssertEqual(reason, "desktopSendFailed")
+        }
+        XCTAssertNil(composer.pendingMessageId)
+        XCTAssertFalse(composer.needsDeliveryReview)
+        XCTAssertEqual(composer.text, "Continue")
+        _ = try await store.send(composer, to: item)
+        XCTAssertEqual(composer.text, "")
+        XCTAssertNil(composer.pendingMessageId)
+    }
+
     // MARK: new tasks
 
     func testTheNewTaskFormStartsOnAMacThatCanRunTasks() async {

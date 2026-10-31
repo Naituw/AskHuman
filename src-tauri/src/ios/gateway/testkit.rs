@@ -44,6 +44,8 @@ pub struct TestHost {
     pub frames: Mutex<HashMap<String, FrameData>>,
     /// What `interject` answers; `None` means "queued, one pending".
     pub interject_result: Mutex<Option<InterjectResult>>,
+    pub interject_delay_ms: AtomicU64,
+    pub interject_ids: Mutex<Vec<String>>,
     /// `(phone, agent, text, file count)` of every interjection that reached the host.
     pub interjects: Mutex<Vec<(String, String, String, usize)>>,
     pub interject_pending: Mutex<(u64, String)>,
@@ -84,6 +86,8 @@ impl TestHost {
             agents: Mutex::new(Vec::new()),
             frames: Mutex::new(HashMap::new()),
             interject_result: Mutex::new(None),
+            interject_delay_ms: AtomicU64::new(0),
+            interject_ids: Mutex::new(Vec::new()),
             interjects: Mutex::new(Vec::new()),
             interject_pending: Mutex::new((0, String::new())),
             staged: Mutex::new(Vec::new()),
@@ -194,10 +198,15 @@ impl Host for TestHost {
     async fn interject(
         &self,
         phone_id: &str,
+        client_msg_id: &str,
         agent_key: &str,
         text: &str,
         files: Vec<StagedFile>,
     ) -> InterjectResult {
+        self.interject_ids
+            .lock()
+            .unwrap()
+            .push(client_msg_id.to_string());
         self.interjects.lock().unwrap().push((
             phone_id.to_string(),
             agent_key.to_string(),
@@ -205,6 +214,10 @@ impl Host for TestHost {
             files.len(),
         ));
         *self.staged.lock().unwrap() = files;
+        tokio::time::sleep(Duration::from_millis(
+            self.interject_delay_ms.load(Ordering::SeqCst),
+        ))
+        .await;
         self.interject_result
             .lock()
             .unwrap()

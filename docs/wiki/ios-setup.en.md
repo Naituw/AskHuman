@@ -117,5 +117,5 @@ Agent ─► AskHuman on the Mac ──MQTT (TLS)──► EMQX ──► AskHum
 
 - Experimental: the settings entry and the commands are hidden by default and details may change.
 - Live watching only works while the app is in the foreground and stops in the background.
-- Codex desktop App sessions cannot be messaged from the phone yet; Codex has no "failed" state, so there is no "failed" push for it.
+- Codex Desktop chats accept additions while running and new messages while idle, including images and files, with the chat's existing settings. Desktop must stay connected on the Mac. Success means the App accepted the message, not that the model read it; it cannot be withdrawn. If delivery is uncertain, inspect the original chat before choosing **I checked the original chat**; this prompt and recovery action require an updated phone app. Codex has no "failed" state, so there is no "failed" push for it.
 - Withdrawing a message gives back the text only, not the attachments you had picked.
