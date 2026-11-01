@@ -21,7 +21,7 @@ final class Harness: @unchecked Sendable {
     private var collected: [EngineEvent] = []
     private var eventTask: Task<Void, Never>?
 
-    init(relay: FakeRelay = FakeRelay()) {
+    init(relay: FakeRelay = FakeRelay(), collectEvents: Bool = true) {
         self.relay = relay
         root = FileManager.default.temporaryDirectory.appendingPathComponent("ah-core-\(UUID().uuidString)")
         phone = broker.makeClient()
@@ -35,11 +35,13 @@ final class Harness: @unchecked Sendable {
             )
         )
         mac = TestMac(broker: broker, user: "u1", clock: clock)
-        eventTask = Task { [engine, weak self] in
-            for await event in engine.events {
-                self?.lock.lock()
-                self?.collected.append(event)
-                self?.lock.unlock()
+        if collectEvents {
+            eventTask = Task { [engine, weak self] in
+                for await event in engine.events {
+                    self?.lock.lock()
+                    self?.collected.append(event)
+                    self?.lock.unlock()
+                }
             }
         }
     }

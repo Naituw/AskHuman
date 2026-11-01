@@ -164,6 +164,7 @@ mod platform_impl {
         use std::process::{Command, Stdio};
 
         let mut cmd = Command::new(exe);
+        crate::development::clear_client_context(&mut cmd);
         crate::executable::set_launch_entry(&mut cmd, exe);
         cmd.arg("--gui-host")
             .stdin(Stdio::null())

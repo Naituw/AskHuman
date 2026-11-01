@@ -68,6 +68,16 @@ final class AskHumanArrivalUITests: XCTestCase {
         status("touch=pass")
     }
 
+    func testALiveRequestStillBouncesWhileTheInboxIsFrontmost() {
+        launch(extra: ["-AHTab", "inbox"])
+        let inbox = app.tabBars.buttons[language == "en" ? "Inbox" : "收件箱"]
+        XCTAssertTrue(inbox.isSelected)
+        status("active=1")
+        status("phase=bounce")
+        status("destination=inbox")
+        shot("147-arrival-live-inbox")
+    }
+
     func testTypingContinuesInTheTaskSheetWhileAnArrivalIsOnScreen() {
         launch(extra: ["-AHNewTask", "YES"], slowdown: 8)
         reveal("task-text")

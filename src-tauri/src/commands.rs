@@ -2541,6 +2541,7 @@ pub struct SecretsPresent {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsPayload {
+    everyday_integrations_read_only: bool,
     config: AppConfig,
     secrets_present: SecretsPresent,
 }
@@ -2590,6 +2591,8 @@ pub fn get_settings() -> SettingsPayload {
     config.channels.slack.app_token.clear();
     config.channels.ios.password.clear();
     SettingsPayload {
+        everyday_integrations_read_only: crate::dev_instance::is_dev_instance_context()
+            && std::env::var_os(crate::development::workbench::WINDOW_ENV).is_some(),
         config,
         secrets_present,
     }
@@ -2610,7 +2613,9 @@ pub async fn save_settings(
     }
     if config.agent_tasks.enabled {
         config.general.daemon_lifecycle = crate::config::DaemonLifecycleMode::KeepAlive;
-        crate::integrations::login_item::sync_daemon(true).map_err(|e| e.to_string())?;
+        if !crate::dev_instance::is_dev_instance_context() {
+            crate::integrations::login_item::sync_daemon(true).map_err(|e| e.to_string())?;
+        }
     }
     // Secrets are governed solely by the explicit actions (the incoming config carries blank
     // placeholders). unchanged → leave the field empty so save() won't touch the keychain;

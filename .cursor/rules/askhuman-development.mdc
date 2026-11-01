@@ -1,0 +1,8 @@
+---
+description: AskHuman repository development workflow
+alwaysApply: true
+---
+
+Read and follow the repository root `AGENTS.md`. For a task using a Dev Instance, its preparation
+and verification details are in `docs/agent-worktree-setup.md`. This file applies only inside
+this repository and does not require enabling Dev for every task.

@@ -2,7 +2,7 @@
 
 > 状态：已实现；操作与 Agent 约束见 `docs/agent-worktree-setup.md`。
 > 影响面：路径解析（`paths`）、CLI 入口改道、daemon 生命周期与配置/密钥加载、`install.sh`、可选 `dev` 子命令；**不改**主环境默认「每用户单 Daemon + 生产渠道」契约。
-> 后续已确认需求：[日常沟通与开发验收隔离](dev-verification-routing.md)；尚未实现，本文的自动路由与操作约束继续有效。
+> 路由与验收的新行为见 [日常沟通与开发验收隔离](dev-verification-routing.md)。本文 D5／D8／D18 的 cwd 自动行为仅适用于仍有旧 enabled 标记的工作树；新 workspace.json 不触发普通 cwd 改道；每树程序、home、渠道和预设模型继续有效。
 
 ## 1. 背景
 
@@ -14,7 +14,7 @@
 
 已有 graceful drain（`docs/specs/daemon-graceful-drain.md`）解决「换新打断在途」，但**不能**解决并行开发下的串行等待与二进制互踩。perf harness 用临时 `HOME` + `ASKHUMAN_NO_KEYCHAIN` 证明了整树隔离可行，但不是产品化开发流程。
 
-## 2. 目标
+## 2. 原有目标与兼容行为
 
 - **主环境不变**：未进入 Dev Instance 时，行为与今天完全一致（单 Daemon、生产 config/钥匙串、生产 bot）。
 - **每个 Git WorkTree（含主工作树，若 enable）可有一套独立 Dev Instance**：独立二进制、独立 Daemon、独立 config/home；彼此与主环境互不 drain、互不覆盖 bin。
@@ -34,7 +34,7 @@
 | D7 | 多 WorkTree 模型 | **主工作树 + N 个子 WorkTree，每个可独立 enable**；每套实例数据与 bin 都落在**该工作树根**下，互不共享、互不继承 |
 | D8 | Agent 流程 | enable 之后，既有「install → AskHuman 提问」提示词**不改** |
 | D9 | 安装逃生口 | 已 enable 树内更新生产 bin：Unix `./scripts/install.sh --global`；Windows `.\scripts\install-windows.cmd -Global` |
-| D10 | `dev disable` | 默认只去掉 `enabled`，并停止本实例 daemon/GUI Host；**保留** `bin/`+`home/`。`--purge` 还会在有界优雅退出后按精确实例 EXE 路径收口残留 GUI 子进程，再删除整个 `.askhuman-dev` |
+| D10 | `dev disable` | 默认清理自己的项目 MCP 条目与 manifest／旧 `enabled`，并停止本实例 daemon/GUI Host；**保留** `bin/`+`home/`。`--purge` 还会在有界优雅退出后按精确实例 EXE 路径收口残留 GUI 子进程，再删除整个 `.askhuman-dev` |
 | D11 | 渠道预设存放 | 机器级 `~/.askhuman/dev-presets/`（主 daemon **不**加载）；每预设一文件 + `index.json` 租约 |
 | D12 | 预设绑定 | `dev enable --preset <name>…`：占**独占租约**并将渠道片段**物化**进该树 `home/config.json` |
 | D13 | 租约冲突 | 已被其它 worktree 占用 → enable **失败**并指明 holder；`--force` **抢租约** + stderr 强警告（一期不自动 stop 对方 daemon / 不改对方 home） |

@@ -32,7 +32,7 @@ struct LaunchOptions {
     var failTask: String?
     /// A followed Agent reports `done`, `failed` or `waiting` a moment after launch (the follow banner).
     var followEvent: String?
-    /// A request arrives a moment after launch (the request banner), from a session with this title;
+    /// A request arrives a moment after launch (the arrival animation), from a session with this title;
     /// `none` for one without a title.
     var arrival: String?
     var arrivalCount = 1

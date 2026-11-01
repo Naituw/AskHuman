@@ -8,6 +8,7 @@ import { type PopupScope } from "./popup/usePopupCore";
 import { createPopupContext } from "./popup/context";
 import { frozenMainStyle, usePreviewDivider } from "./popup/usePreviewDivider";
 import PopupNavbar from "./popup/PopupNavbar.vue";
+import DevVerificationBanner from "./popup/DevVerificationBanner.vue";
 import FindBar from "./popup/FindBar.vue";
 import ConfirmPane from "./popup/ConfirmPane.vue";
 import MessageSection from "./popup/MessageSection.vue";
@@ -104,13 +105,14 @@ const { beginDivider } = usePreviewDivider({ mainWidth: () => previewLayout.valu
       @wheel.passive="onContentWheel"
       @markdown-content-updated="refreshFind"
     >
+      <DevVerificationBanner v-if="request?.message.development" :info="request.message.development" />
       <ConfirmPane v-if="isConfirm" />
       <template v-else>
         <MessageSection />
         <QuestionCards v-if="verticalMode" />
         <SequentialPane v-else />
         <!-- 待办下拉区：跟在最后一个问题后面（sequential 多题时仅最后一题面板显示） -->
-        <TodoSection />
+        <TodoSection v-if="!request?.message.development || !!request?.message.development?.testProfile" />
       </template>
     </div>
 

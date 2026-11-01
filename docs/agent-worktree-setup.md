@@ -14,60 +14,44 @@
 
 主环境日常使用（`~/.local/bin` + `~/.askhuman` + 生产 bot）与本文无关；未 `dev enable` 的树行为与过去一致。
 
-## 目标体验
+## 目标体验与准备
 
-准备完成后，agent **提示词仍只需**：
+为任务准备或更新 Dev Instance 时，从当前物理工作树根执行幂等准备；普通任务继续遵守原有安装与 AskHuman 流程：
 
 ```bash
+AskHuman dev enable                # 自动识别客户端；识别不到时用 --agent codex 等指定
 ./scripts/install.sh
-AskHuman "…"   # 或 MCP ask
+# 项目 MCP: askhuman-dev.dev_ask({worktree:"绝对路径", message:"请验收"})
+node scripts/dev.mjs ask -- "请验收这次修改"
+node scripts/dev.mjs ui
 ```
 
-不必在提示词里分支 env / PATH；cwd 在已 enable 的树内会自动改道到该树的 bin + daemon。
+Windows 用 `.\scripts\install-windows.cmd`。普通需求讨论、审批和结束交接始终用日常 AskHuman。
+新 manifest 不改变普通 cwd 路由；旧 enabled 仅在本树 enable 检查无旧 Dev 会话／MCP后备份移除。
+准备只写项目配置，不执行账户级迁移。重复调用不重写齐全文件，机器路径不入库。
+配置生成后按客户端要求信任项目、重载连接；未观察到项目工具调用时不声称会话已加载。
 
-Windows 对应安装命令是 `.\scripts\install-windows.cmd`；其余 `AskHuman dev …` 命令相同。
+项目说明随仓库提交，不依赖 enable 后生成；它不要求所有开发任务启用 Dev。当前正式程序尚不支持项目准备时，可先编译
+候选程序并用其 `dev enable --system-binary <稳定正式程序绝对路径>` 引导；不要为引导替换正在沟通的正式端。
+enable 只完成准备，不代表验收可用。`dev status` 分别显示构建和当前投递方式的状态。
+默认远程投递要求正式程序和正在运行的正式 daemon 均兼容；预检未通过会显示 not ready，验收不会发出。
+刷新项目 MCP 不能补齐正式端能力，重复构建 Dev 也不会升级正式端。由用户另行安排兼容正式版的正常升级。
+项目工具名是 `askhuman-dev.dev_ask`；旧 `askhuman.dev_ask` 不等于已加载项目连接。
 
-## 准备步骤
+### 1. 普通功能开发
 
-### 1. 进入 worktree 根目录
+默认借用正式 daemon 的远程出口，不需为每棵树询问 channel。纯本机外观验收明确指定
+`--delivery local`，不会因远程失败自动退回本机。完整权限／Stop／恢复用独立测试 profile，
+真实 Agent／模型调用须先有授权，认证不复制。
 
-```bash
-cd /path/to/your-worktree
-```
+### 2. 测试渠道实现时的专用配置
 
-### 2. 用 AskHuman 询问操作者（必须）
-
-在 `dev enable` 前，通过 AskHuman **向人确认**：
-
-1. 本 worktree 是否需要 **IM 测试渠道**（飞书 / 钉钉 / Telegram / Slack）？  
-   - **不需要** → popup-only，`dev enable` 不带 `--preset`。  
-   - **需要** → 继续下面 2a / 2b。
-
-2a. 已有机器级预设时：
-
-```bash
-AskHuman dev preset list
-```
-
-把列表给操作者选择一个或多个名字，然后：
-
-```bash
-AskHuman dev enable --preset <name>
-# 多个：--preset a --preset b
-```
-
-若报「已被其它 worktree 占用」：告知人可在对方树 `dev disable`，或确认后使用 `--force`（会抢租约；对方若仍跑着 daemon 可能双连 bot）。
-
-2b. 还没有合适预设时：
-
-```bash
-AskHuman dev enable
-AskHuman --settings          # 在 GUI 里只配【测试】bot，勿用生产凭据
-# 或：AskHuman channel set …
-AskHuman dev preset save <name> --from-instance
-```
-
-之后其它新树可直接 `dev enable --preset <name>`。
+是否挂预设遵守 AGENTS 的工作树准备约定。普通开发不需要专用 bot；测试渠道实现时必须确认测试 bot／iOS 独立配对，或列出 `AskHuman dev preset list` 选择已有预设。
+使用 `dev enable --preset <name>` 附加配置，验收明确选 `--delivery channels`。
+预设被占用时先释放对方租约；抢占需要明确授权，不能让两个 daemon 同连一个 bot。
+没有合适预设时先准备、安装，使用 `node scripts/dev.mjs ui` 打开本树 Dev 渠道设置，再保存
+`AskHuman dev preset save <name> --from-instance`。不能复用正式 bot 或配对，也不能将正式转送成功
+计为被测 channel 成功。测试转送本身时另起私有测试转送端，不替换正在沟通的正式 daemon。
 
 ### 3. （可选）播种构建缓存，加速首次 install
 
@@ -152,17 +136,18 @@ macOS 沿用原有复制和签名流程，不使用 Linux 的 retained 目录与
 
 ```bash
 AskHuman dev status
-AskHuman daemon status    # endpoint 应按本树 .askhuman-dev/home/ 独立派生
+AskHuman --instance dev --worktree /absolute/path/to/worktree daemon status
+# endpoint 应按本树 .askhuman-dev/home/ 独立派生
 ```
 
 ## 禁止事项
 
 - **不要**把生产 bot 凭据写进 dev 实例，也不要指望从主配置一键导入（产品不提供）。  
 - **不要**在两棵树上同时 `enable --preset` 同一预设（平台长连接互斥）；需要并行真 IM 时准备**两套**测试 bot / 两个预设。  
-- **不要**为了「走 dev」去改 agent 全局提示词分支；靠目录标记自动改道。
+- **不要**为了验收改写日常 Agent 配置；使用 `dev ask`／`dev_ask`，完整集成用独立测试 profile。
 - **不要**在实例里运行会改 Agent 集成的显式命令（`AskHuman agents …`、设置页的 Agent 集成开关）来「试一试」：
   `ASKHUMAN_HOME` 不隔离 `~/.cursor/hooks.json`、`~/.codex/…`、`~/.claude/settings.json` 等，这些写入会落到**真实**用户配置。
-  实例 daemon 启动时的自动迁移已被跳过，但显式命令不受限（见 spec §7.1）。
+  项目 Dev 和独立测试窗口会拒绝这种全局修改；旧兼容流程仍需遵守此约束。
 - **不要**为了验证只换 `HOME` 起 daemon / GUI Host：沙箱必须同时设**非空 `ASKHUMAN_HOME`**（实例上下文）。
   launchd label 在 `gui/<uid>` 域内按用户全局生效：daemon 的 label 现在随配置目录区分（配置目录不是账户自己的
   `~/.askhuman` 就用独立 label），所以只换 `HOME` 不会再 `bootout` 真实 daemon；但登录项、Agent hook 文件等
@@ -172,7 +157,7 @@ AskHuman daemon status    # endpoint 应按本树 .askhuman-dev/home/ 独立派�
 ## 结束 worktree 时（可选）
 
 ```bash
-AskHuman dev disable           # 停实例 daemon、释 preset 租约、去 enabled；保留 bin/home
+AskHuman dev disable           # 停实例 daemon、释 preset 租约、清理自己的项目 MCP 和 manifest／旧 enabled；保留 bin/home
 AskHuman dev disable --purge   # 连 .askhuman-dev 目录一起删
 ```
 
@@ -184,6 +169,6 @@ AskHuman dev disable --purge   # 连 .askhuman-dev 目录一起删
 | 现象 | 处理 |
 |---|---|
 | `binary is missing` | 在本树跑 `./scripts/install.sh`；Windows 跑 `.\scripts\install-windows.cmd` |
-| 提问仍进主 daemon | 确认 cwd 在 enable 的树内；PATH 上的 `AskHuman` 是否已含 dispatcher（至少全局装过一版本功能） |
+| 普通提问仍进正式端 | 新项目的预期行为；验收请用项目 `dev_ask` 或 `node scripts/dev.mjs ask` |
 | preset 占用冲突 | 对方 `dev disable` 或本树 `--force` |
-| 设置改到了生产 config | 未 enable；先 `dev enable` 再 `--settings` |
+| 要打开 Dev 设置 | `node scripts/dev.mjs ui`，再打开 Dev 渠道；普通 `--settings` 仍属日常入口 |

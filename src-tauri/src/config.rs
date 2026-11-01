@@ -643,6 +643,25 @@ impl AppConfig {
         cfg
     }
 
+    /// Resolve formal channel identity without repairing permissions or migrating credentials.
+    pub(crate) fn load_readonly() -> Self {
+        let primary = paths::config_file();
+        let mut config = if primary.is_file() {
+            Self::load_from(&primary)
+        } else {
+            Self::load_from(&paths::legacy_config_file())
+        };
+        for spec in &SECRET_SPECS {
+            let field = (spec.field)(&mut config);
+            if field.is_empty() {
+                if let Ok(Some(value)) = secrets::get(spec.account) {
+                    *field = value;
+                }
+            }
+        }
+        config
+    }
+
     /// Like `load()` but skips OS-keychain secret resolution/migration entirely.
     ///
     /// Use this from paths that only need non-secret config (UI language, theme, window size,

@@ -11,6 +11,7 @@ import { usePopupWindowTitle } from "./usePopupWindowTitle";
 
 const { t } = useI18n();
 const {
+  request,
   scrolled,
   agentInline,
   headerPrefix,
@@ -52,7 +53,12 @@ const {
 } = usePopupContext();
 
 // The Agent session title: drawn in the title strip on macOS, written into the native window title elsewhere.
-const sessionTitle = computed(() => (agentSessionTitle.value || "").trim());
+const sessionTitle = computed(() => {
+  const development = request.value?.message.development;
+  return development
+    ? `${t(development.testProfile ? "development.testProfile" : "development.verification")} · ${development.worktree.replace(/\\/g, "/").split("/").filter(Boolean).pop()}`
+    : (agentSessionTitle.value || "").trim();
+});
 usePopupWindowTitle(sessionTitle, popupActive);
 </script>
 

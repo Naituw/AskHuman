@@ -87,6 +87,21 @@ pub struct Session {
     pub error: Option<String>,
 }
 impl Session {
+    fn sync_native_title(&mut self) {
+        if !self.connected {
+            return;
+        }
+        if let Some(title) = self.state["title"]
+            .as_str()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        {
+            if let Some(meta) = &mut self.meta {
+                meta.title = title.to_string();
+            }
+        }
+    }
+
     pub fn active(&self) -> bool {
         self.connected && self.state["threadRuntimeStatus"]["type"] == "active"
     }
@@ -223,7 +238,10 @@ impl Bridge {
             let mut sessions = self.sessions.lock().unwrap();
             for row in meta {
                 let id = row.id.clone();
-                sessions.entry(id).or_default().meta = Some(row);
+                let session = sessions.entry(id).or_default();
+                session.meta = Some(row);
+                // Stream state can contain a title before its database write becomes visible.
+                session.sync_native_title();
             }
             *self.last_scan.lock().unwrap() = Some(std::time::Instant::now());
         }
@@ -320,6 +338,7 @@ impl Bridge {
         if !valid {
             s.owner = None;
         }
+        s.sync_native_title();
     }
 
     pub fn session(&self, id: &str) -> Option<Session> {
@@ -494,14 +513,13 @@ impl Bridge {
                 ..
             } => {
                 let cwd = cwd.clone();
-                let title: String = text.chars().take(80).collect();
                 let yolo = permission == "yolo";
                 let choice = ModelChoice {
                     speed: *speed,
                     ..ModelChoice::new(model.clone(), effort.clone())
                 };
                 let (updated, result) = tokio::task::spawn_blocking(move || {
-                    let result = action.ensure_thread(&installation, &cwd, &title, yolo, &choice);
+                    let result = action.ensure_thread(&installation, &cwd, yolo, &choice);
                     (action, result)
                 })
                 .await
@@ -654,7 +672,12 @@ fn control_request(
                 request["sandboxPolicy"] = json!({"type":"dangerFullAccess"});
             }
         }
-        let context = json!({"inheritThreadSettings":true,"attachments":[],"commentAttachments":[],"fileAttachments":files.iter().map(|p|json!({"path":p,"label":std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy()})).collect::<Vec<_>>()});
+        let mut context = json!({"inheritThreadSettings":true,"attachments":[],"commentAttachments":[],"fileAttachments":files.iter().map(|p|json!({"path":p,"label":std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy()})).collect::<Vec<_>>()});
+        if matches!(intent, ControlIntent::Create { .. }) {
+            // The App's direct first-turn path requests a native title only for an unnamed
+            // thread with a start kind. Ordinary sends keep the existing conversation settings.
+            context["threadStartKind"] = json!("default");
+        }
         if session.active() {
             (
                 "thread-follower-steer-turn",
@@ -746,6 +769,9 @@ mod tests {
             params["turnStart"]["context"]["inheritThreadSettings"],
             true
         );
+        assert!(params["turnStart"]["context"]
+            .get("threadStartKind")
+            .is_none());
         session.state = Arc::new(
             json!({"threadRuntimeStatus":{"type":"active"},"turnHistory":{"kind":"canonical","history":[{"turnId":"current","status":"inProgress","items":[]}]}}),
         );
@@ -895,6 +921,7 @@ mod tests {
                 },
             )
             .unwrap();
+            assert_eq!(params["turnStart"]["context"]["threadStartKind"], "default");
             let request = &params["turnStart"]["request"];
             for field in ["model", "effort", "collaborationMode"] {
                 assert!(schema["turnStartProperties"].get(field).is_some());
@@ -1034,6 +1061,47 @@ mod tests {
         assert!(!b.session("s").unwrap().connected);
         b.event(snapshot("new-owner", 11, Value::Null));
         assert!(!b.session("s").unwrap().connected);
+    }
+
+    #[test]
+    fn native_titles_replace_placeholders_and_only_valid_owner_updates_are_used() {
+        let b = bridge();
+        b.sessions.lock().unwrap().insert(
+            "s".into(),
+            Session {
+                meta: Some(SessionMeta {
+                    id: "s".into(),
+                    title: "Original task description".into(),
+                    cwd: "/project".into(),
+                }),
+                ..Session::default()
+            },
+        );
+        let title = || b.session("s").unwrap().meta.unwrap().title;
+        let mut native = snapshot("owner", 11, json!(1));
+        native["params"]["change"]["conversationState"]["title"] = json!("Generated title");
+        b.event(native);
+        assert_eq!(title(), "Generated title");
+        let patch = |owner: &str, base: u64, revision: u64, title: &str| {
+            json!({"method":"thread-stream-state-changed","version":11,"sourceClientId":owner,
+                "params":{"hostId":"local","conversationId":"s","change":{
+                    "type":"patches","baseRevision":base,"revision":revision,
+                    "patches":[{"op":"replace","path":"/title","value":title}]}}})
+        };
+        b.event(patch("impostor", 1, 2, "Wrong owner"));
+        assert_eq!(title(), "Generated title");
+        b.event(patch("owner", 1, 2, "My manual name"));
+        assert_eq!(title(), "My manual name");
+        {
+            let mut sessions = b.sessions.lock().unwrap();
+            let session = sessions.get_mut("s").unwrap();
+            session.meta.as_mut().unwrap().title = "Stale database title".into();
+            session.sync_native_title();
+        }
+        assert_eq!(title(), "My manual name");
+        b.event(patch("owner", 0, 3, "Wrong revision"));
+        assert!(!b.session("s").unwrap().connected);
+        assert_eq!(title(), "My manual name");
     }
     #[test]
     fn ledger_preserves_unknown_outcomes_and_private_files() {

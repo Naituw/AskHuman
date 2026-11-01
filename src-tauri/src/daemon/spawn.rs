@@ -51,8 +51,8 @@ fn spawn_windows_detached() -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{
-        CreateProcessW, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, PROCESS_INFORMATION,
-        STARTUPINFOW,
+        CreateProcessW, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT,
+        PROCESS_INFORMATION, STARTUPINFOW,
     };
 
     let exe = crate::executable::launch_path()?;
@@ -75,6 +75,7 @@ fn spawn_windows_detached() -> std::io::Result<()> {
         ..Default::default()
     };
     let mut process = PROCESS_INFORMATION::default();
+    let environment = background_environment()?;
     let created = unsafe {
         CreateProcessW(
             application.as_ptr(),
@@ -82,8 +83,8 @@ fn spawn_windows_detached() -> std::io::Result<()> {
             std::ptr::null(),
             std::ptr::null(),
             0,
-            CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
-            std::ptr::null(),
+            CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+            environment.as_ptr().cast(),
             std::ptr::null(),
             &startup,
             &mut process,
@@ -97,6 +98,45 @@ fn spawn_windows_detached() -> std::io::Result<()> {
         CloseHandle(process.hProcess);
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn background_environment() -> std::io::Result<Vec<u16>> {
+    use windows_sys::Win32::System::Environment::{
+        FreeEnvironmentStringsW, GetEnvironmentStringsW,
+    };
+    // Preserve Windows' complete sorted block, including hidden drive-current-directory entries.
+    unsafe {
+        let block = GetEnvironmentStringsW();
+        if block.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut pointer = block;
+        let mut result = Vec::new();
+        while *pointer != 0 {
+            let mut length = 0;
+            while *pointer.add(length) != 0 {
+                length += 1;
+            }
+            let entry = std::slice::from_raw_parts(pointer, length);
+            let name_end = entry
+                .iter()
+                .position(|ch| *ch == b'=' as u16)
+                .unwrap_or(length);
+            let name = String::from_utf16_lossy(&entry[..name_end]);
+            if !crate::development::client_environment_key(&name) {
+                result.extend_from_slice(entry);
+                result.push(0);
+            }
+            pointer = pointer.add(length + 1);
+        }
+        FreeEnvironmentStringsW(block);
+        result.push(0);
+        if result.len() == 1 {
+            result.push(0);
+        }
+        Ok(result)
+    }
 }
 
 /// Prevent background roles from opening a second console while keeping ordinary CLI output.
@@ -161,6 +201,7 @@ fn spawn_plain_detached() -> std::io::Result<()> {
     let log_err = log.try_clone()?;
 
     let mut cmd = Command::new(exe);
+    crate::development::clear_client_context(&mut cmd);
     cmd.arg("daemon")
         .arg("run")
         .stdin(Stdio::null())
@@ -382,7 +423,7 @@ fn askhuman_env_xml(
         let (Some(key), Some(value)) = (key.to_str(), value.to_str()) else {
             continue;
         };
-        if key.starts_with("ASKHUMAN_") {
+        if key.starts_with("ASKHUMAN_") && !crate::development::client_environment_key(key) {
             xml.push_str(&plist_env_entry(key, value));
         }
     }

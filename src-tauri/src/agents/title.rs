@@ -24,8 +24,35 @@ const MAX_NAME_TAIL_BYTES: u64 = 1024 * 1024;
 const MAX_PI_HEADER_BYTES: u64 = 64 * 1024;
 const MAX_PI_SESSION_FILES: usize = 4096;
 
+// A bound test session may only resolve files inside its own native client profile.
+fn development_title(kind: AgentKind, session_id: &str) -> Option<Option<String>> {
+    if crate::development::session::for_native(kind, session_id).is_some() {
+        let path = crate::development::session::transcript_for(kind, session_id);
+        return Some(path.and_then(|path| {
+            match kind {
+                AgentKind::Codex => codex_user_message(&path).or_else(|| first_user_message(&path)),
+                AgentKind::Claude => {
+                    claude_session_name(&path).or_else(|| first_user_message(&path))
+                }
+                AgentKind::Grok => path
+                    .parent()
+                    .and_then(grok_session_name)
+                    .or_else(|| grok_first_query(&path)),
+                AgentKind::Pi => pi_session_name(&path)
+                    .flatten()
+                    .or_else(|| pi_first_user(&path)),
+                _ => None,
+            }
+        }));
+    }
+    crate::development::session::requires_test_profile().then_some(None)
+}
+
 /// 解析指定家族某 session 的标题。取不到返回 `None`。
 pub fn resolve_title(kind: AgentKind, session_id: &str) -> Option<String> {
+    if let Some(title) = development_title(kind, session_id) {
+        return title.map(|s| clean_title(&s));
+    }
     if session_id.is_empty() {
         return None;
     }
@@ -47,6 +74,9 @@ pub(crate) fn resolve_popup_title(
     cached: Option<String>,
     codex_config: &crate::codex_desktop::Config,
 ) -> Option<String> {
+    if let Some(title) = development_title(kind, session_id) {
+        return title.or(cached);
+    }
     if session_id.trim().is_empty() {
         return None;
     }
@@ -417,7 +447,10 @@ fn unwrap_tag(text: &str, tag: &str) -> Option<String> {
 /// 按 `session_id` 定位某家 agent 的 transcript（jsonl）文件路径。取不到返回 `None`。
 /// 与 `resolve_title` 的取标题不同，这里定位的是**对话流水**文件（供解析尾部「当前活动」）。
 pub(crate) fn transcript_path(kind: AgentKind, session_id: &str) -> Option<PathBuf> {
-    if session_id.is_empty() {
+    if let Some(path) = crate::development::session::transcript_for(kind, session_id) {
+        return Some(path);
+    }
+    if session_id.is_empty() || crate::development::session::requires_test_profile() {
         return None;
     }
     match kind {

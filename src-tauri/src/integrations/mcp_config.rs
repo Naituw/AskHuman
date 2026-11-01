@@ -1154,7 +1154,8 @@ fn harden_file(path: &Path) {
 fn harden_file(_path: &Path) {}
 
 fn current_exe_string() -> Result<String> {
-    let p = std::env::current_exe().context("failed to resolve current exe path")?;
+    let p = crate::development::routing::program_path()
+        .context("failed to resolve current exe path")?;
     Ok(p.to_string_lossy().to_string())
 }
 

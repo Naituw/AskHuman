@@ -502,7 +502,10 @@ public actor MockBackend: RemoteBackend {
 
     /// Delivers a new request, as if the Agent on `macId` had just asked (from a session called
     /// `sessionTitle`, when given).
-    public func simulateArrival(macId: String = MockData.homeMacId, sessionTitle: String? = nil, kind: String = "ask", eventBeforeState: Bool = false) async {
+    public func simulateArrival(
+        macId: String = MockData.homeMacId, sessionTitle: String? = nil, kind: String = "ask",
+        eventBeforeState: Bool = false, observedAt: ContinuousClock.Instant = .now
+    ) async {
         counter += 1
         let date = now()
         let id = "req-live-\(counter)"
@@ -539,12 +542,14 @@ public actor MockBackend: RemoteBackend {
             at: 0
         )
         refreshCounts()
-        if eventBeforeState {
-            eventOut.yield(.requestArrived(macId: macId, requestId: id))
+        let arrival = EngineEvent.requestArrived(macId: macId, requestId: id, observedAt: observedAt)
+        let notify = state.foreground
+        if eventBeforeState && notify {
+            eventOut.yield(arrival)
             try? await Task.sleep(for: .milliseconds(40))
         }
         publish()
-        if !eventBeforeState { eventOut.yield(.requestArrived(macId: macId, requestId: id)) }
+        if !eventBeforeState && notify { eventOut.yield(arrival) }
     }
 
     public func setUnreachable(_ macIds: Set<String>) {

@@ -28,6 +28,7 @@ mod cursor_desktop;
 mod daemon;
 mod dev_instance;
 mod dev_presets;
+mod development;
 mod dingtalk;
 mod executable;
 mod export;

@@ -248,6 +248,7 @@ mod tests {
             caller_cwd: None,
             native_request_id: None,
             message: MessagePrompt {
+                development: None,
                 text: "hello".into(),
                 files: vec![attachment("/tmp/a.png")],
             },

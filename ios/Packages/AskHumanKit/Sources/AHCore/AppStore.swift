@@ -127,9 +127,9 @@ public final class AppStore {
     public private(set) var history: [HistoryEntry] = []
     /// Requests that ended while open, by inbox item id.
     public private(set) var finished: [String: FinishedRequest] = [:]
-    /// Bumps for every request that arrives while the app is in the foreground (the UI plays a haptic).
+    /// Bumps when a live foreground arrival is ready to present (the UI plays a haptic).
     public internal(set) var arrivalTick = 0
-    /// Every new request owns an independent animation, including simultaneous arrivals.
+    /// Every live arrival owns an independent animation, including simultaneous arrivals.
     public private(set) var requestArrivals: [RequestArrival] = []
     /// Bumps when the Mac accepted a submission of ours (the UI plays a haptic).
     public private(set) var sentTick = 0
@@ -206,7 +206,8 @@ public final class AppStore {
     /// Arrivals whose request is not in the published state yet (events and states travel apart).
     @ObservationIgnored private var pendingArrivals: [String: RequestArrival] = [:]
     @ObservationIgnored private var presentedArrivalIds: [String: Date] = [:]
-    @ObservationIgnored private var arrivalPresentationActive = true
+    /// Presentation follows the scene, independently of the backend's buffered foreground snapshots.
+    @ObservationIgnored private var arrivalPresentationBegan: ContinuousClock.Instant? = .now
     /// Every Agent seen on the Agents tab, kept while its page may still be open.
     @ObservationIgnored var retainedAgents: [String: (item: AgentItem, at: Date)] = [:]
     @ObservationIgnored var continuations: [String: AgentContinuation] = [:]
@@ -240,13 +241,17 @@ public final class AppStore {
     }
 
     public func setForeground(_ foreground: Bool) async {
-        arrivalPresentationActive = foreground
-        if !foreground { clearRequestArrivals() }
+        if foreground {
+            if arrivalPresentationBegan == nil { arrivalPresentationBegan = .now }
+        } else {
+            arrivalPresentationBegan = nil
+            clearRequestArrivals()
+        }
         await backend.setForeground(foreground)
     }
 
     public func setInactive() async {
-        arrivalPresentationActive = false
+        arrivalPresentationBegan = nil
         clearRequestArrivals()
         await backend.setInactive()
     }
@@ -270,7 +275,6 @@ public final class AppStore {
         todos.update(agents: next.agents)
         let now = Date()
         presentedArrivalIds = presentedArrivalIds.filter { now.timeIntervalSince($0.value) < 600 }
-        if !next.foreground { clearRequestArrivals() }
         let liveArrivalIds = Set(next.inbox.map(\.id))
         requestArrivals.removeAll { !liveArrivalIds.contains($0.id) }
         for item in next.inbox { retained[item.id] = (item, now) }
@@ -311,7 +315,7 @@ public final class AppStore {
 
     /// States and events can arrive in either order; release every ready event exactly once.
     private func presentArrivals() {
-        guard arrivalPresentationActive, state.foreground else { return }
+        guard arrivalPresentationBegan != nil else { return }
         for arrival in pendingArrivals.values.sorted(by: { $0.receivedAt < $1.receivedAt }) {
             let key = arrival.id
             guard state.inbox.contains(where: { $0.id == key }) else { continue }
@@ -319,6 +323,7 @@ public final class AppStore {
             guard inboxPath.last != key, presentedArrivalIds[key] == nil else { continue }
             presentedArrivalIds[key] = arrival.receivedAt
             requestArrivals.append(arrival)
+            arrivalTick += 1
         }
     }
 
@@ -334,11 +339,10 @@ public final class AppStore {
 
     private func handle(_ event: EngineEvent) async {
         switch event {
-        case .requestArrived(let macId, let requestId):
+        case .requestArrived(let macId, let requestId, let observedAt):
             let key = CachedRequest.key(macId, requestId)
-            guard arrivalPresentationActive, state.foreground, inboxPath.last != key,
+            guard let began = arrivalPresentationBegan, observedAt >= began, inboxPath.last != key,
                   presentedArrivalIds[key] == nil, pendingArrivals[key] == nil else { return }
-            arrivalTick += 1
             pendingArrivals[key] = RequestArrival(macId: macId, requestId: requestId)
             presentArrivals()
         case .requestFinished(let macId, let requestId, let outcome, let by):

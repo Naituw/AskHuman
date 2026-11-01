@@ -25,7 +25,16 @@ pub fn source_name_for_agent(agent: Option<crate::agents::AgentKind>) -> String 
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    resolve_source(custom.as_deref(), agent)
+    let source = resolve_source(custom.as_deref(), agent);
+    if crate::development::session::active()
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        format!("Dev · {source}")
+    } else {
+        source
+    }
 }
 
 /// 来源名解析的纯逻辑（不读 env，便于测试）。`custom` 为已 trim 的非空自定义来源名。
@@ -98,6 +107,9 @@ impl AskRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessagePrompt {
+    /// Build-specific verification metadata, independent from the human-authored message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub development: Option<Box<crate::development::verification::VerificationInfo>>,
     #[serde(default)]
     pub text: String,
     /// 提问附带的文件（AI→人，仅用于弹窗展示，不进入结果输出）。
@@ -107,7 +119,11 @@ pub struct MessagePrompt {
 
 impl MessagePrompt {
     pub fn new(text: String, files: Vec<FileAttachment>) -> Self {
-        Self { text, files }
+        Self {
+            text,
+            files,
+            development: None,
+        }
     }
 }
 

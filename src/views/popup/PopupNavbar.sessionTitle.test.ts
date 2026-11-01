@@ -22,7 +22,8 @@ import { PopupCtxKey, type PopupContext } from "./context";
 function navbar(title: string, active = true) {
   const agentSessionTitle = ref(title);
   const popupActive = ref(active);
-  const context = { agentSessionTitle, popupActive, agentLabel: "", projectName: "" } as unknown as PopupContext;
+  const request = ref<{ message: { development?: { worktree: string; testProfile?: string } } } | null>(null);
+  const context = { request, agentSessionTitle, popupActive, agentLabel: "", projectName: "" } as unknown as PopupContext;
   const wrapper = mount(PopupNavbar, {
     global: {
       plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })],
@@ -31,7 +32,7 @@ function navbar(title: string, active = true) {
       stubs: { transition: false },
     },
   });
-  return { wrapper, agentSessionTitle, popupActive };
+  return { wrapper, agentSessionTitle, popupActive, request };
 }
 
 describe("the session title in the popup's navbar", () => {
@@ -84,4 +85,18 @@ describe("the session title in the popup's navbar", () => {
     await nextTick();
     expect(mocks.setTitle).toHaveBeenLastCalledWith("Renamed");
   });
+  it("keeps Dev verification and independent profile titles separate from the daily session title", async () => {
+    const { wrapper, request } = navbar("Daily session");
+    request.value = { message: { development: { worktree: "/work/tree-a" } } };
+    await nextTick();
+    expect(wrapper.get(".session-strip-title").text()).toContain("tree-a");
+    expect(wrapper.text()).not.toContain("Daily session");
+    request.value.message.development!.testProfile = "private-profile";
+    await nextTick();
+    expect(wrapper.get(".session-strip-title").text()).toContain("Dev test session");
+    request.value = null;
+    await nextTick();
+    expect(wrapper.get(".session-strip-title").text()).toBe("Daily session");
+  });
+
 });

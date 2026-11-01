@@ -5,6 +5,8 @@ import PopupView from "./views/PopupView.vue";
 import PopupInboxView from "./views/PopupInboxView.vue";
 // 设置 / 历史 / Agents 非关键路径：异步加载，Vite 自动分块，使弹窗入口 chunk 不再
 // 携带这三个视图及其依赖（减少解析/执行，落在 page boot 与 frontend boot 段）。
+const DevelopmentView = import.meta.env.VITE_ASKHUMAN_DEV_WORKBENCH === "1"
+  ? defineAsyncComponent(() => import("./views/DevelopmentView.vue")) : null;
 const SettingsView = defineAsyncComponent(() => import("./views/SettingsView.vue"));
 const HistoryView = defineAsyncComponent(() => import("./views/HistoryView.vue"));
 const AgentsView = defineAsyncComponent(() => import("./views/AgentsView.vue"));
@@ -22,7 +24,8 @@ const view = computed(() => {
 </script>
 
 <template>
-  <SettingsView v-if="view === 'settings'" />
+  <DevelopmentView v-if="DevelopmentView && view === 'development'" />
+  <SettingsView v-else-if="view === 'settings'" />
   <HistoryView v-else-if="view === 'history'" />
   <AgentsView v-else-if="view === 'agents'" />
   <InterjectView v-else-if="view === 'interject'" />

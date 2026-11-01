@@ -64,13 +64,15 @@ pub fn status() -> ExtensionStatus {
             ..ExtensionStatus::default()
         };
     };
-    let expected = std::env::current_exe().ok().and_then(|executable| {
-        render(&refreshed_config(
-            config.clone(),
-            executable.to_string_lossy().to_string(),
-        ))
+    let expected = crate::development::routing::program_path()
         .ok()
-    });
+        .and_then(|executable| {
+            render(&refreshed_config(
+                config.clone(),
+                executable.to_string_lossy().to_string(),
+            ))
+            .ok()
+        });
     ExtensionStatus {
         installed: true,
         outdated: expected.as_deref() != Some(text.as_str()),
@@ -115,7 +117,7 @@ pub fn open() {
 }
 
 fn update(change: impl FnOnce(&mut ExtensionConfig)) -> Result<()> {
-    let executable = std::env::current_exe()
+    let executable = crate::development::routing::program_path()
         .context("failed to resolve current executable")?
         .to_string_lossy()
         .to_string();

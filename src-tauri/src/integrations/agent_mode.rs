@@ -1007,7 +1007,7 @@ mod antigravity_transition_tests {
             let state = home.join("state");
             std::fs::create_dir(&state).unwrap();
             std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
+            let output = std::process::Command::new(crate::development::routing::program_path().unwrap())
                 .args(["--exact", "integrations::agent_mode::antigravity_transition_tests::updates_restore_missing_cli_rules_and_preserve_strict_errors", "--nocapture"])
                 .env(CHILD, "1").env("HOME", &home).env("ASKHUMAN_HOME", &state)
                 .output().unwrap();

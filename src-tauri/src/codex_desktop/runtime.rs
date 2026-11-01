@@ -387,7 +387,6 @@ fn thread_start_params(cwd: &str, yolo: bool, settings: &ModelSettings) -> Value
 pub fn create(
     installation: &Installation,
     cwd: &str,
-    title: &str,
     yolo: bool,
     choice: &ModelChoice,
     on_created: impl FnOnce(&str, &ModelSettings) -> Result<(), String>,
@@ -395,7 +394,6 @@ pub fn create(
     create_or_finish(
         installation,
         cwd,
-        title,
         yolo,
         choice,
         None,
@@ -408,7 +406,6 @@ pub fn create(
 pub fn finish_creation(
     installation: &Installation,
     cwd: &str,
-    title: &str,
     id: &str,
     choice: &ModelChoice,
     model_settings: Option<&ModelSettings>,
@@ -417,7 +414,6 @@ pub fn finish_creation(
     create_or_finish(
         installation,
         cwd,
-        title,
         false,
         choice,
         Some(id),
@@ -431,7 +427,6 @@ pub fn finish_creation(
 fn create_or_finish(
     installation: &Installation,
     cwd: &str,
-    title: &str,
     yolo: bool,
     choice: &ModelChoice,
     existing: Option<&str>,
@@ -622,14 +617,11 @@ fn create_or_finish(
                 error
             })?;
         }
-        request(
-            "thread/name/set",
-            json!({"threadId":id,"name":title}),
-            &session_id,
-        )?;
+        // A persisted name is treated as a deliberate title by the App and suppresses its
+        // native first-turn title generation. The task text is only a local display fallback.
         request(
             "thread/read",
-            json!({"threadId":id,"includeTurns":true}),
+            json!({"threadId":id,"includeTurns":false}),
             &session_id,
         )?;
         Ok(id)
@@ -934,7 +926,7 @@ for line in sys.stdin:
         sys.exit(0)
     if method == 'thread/start' and FAULT == 'start-timeout':
         continue
-    rejected = (method == 'initialize' and FAULT == 'initialize-reject') or (method == 'config/read' and FAULT == 'config-reject') or (method == 'thread/start' and FAULT in ['start-reject', 'start-other']) or (method == 'thread/name/set' and FAULT == 'name-reject') or (method == 'thread/read' and FAULT == 'read-reject')
+    rejected = (method == 'initialize' and FAULT == 'initialize-reject') or (method == 'config/read' and FAULT == 'config-reject') or (method == 'thread/start' and FAULT in ['start-reject', 'start-other']) or (method == 'thread/read' and (FAULT == 'read-reject' or (FAULT == 'history-unsupported' and req['params'].get('includeTurns'))))
     if rejected:
         resp = {'id':req['id'], 'error':{'code':-32000 if FAULT == 'start-other' else -32602, 'message':'injected rejection'}}
     elif method == 'config/read':
@@ -969,12 +961,11 @@ sys.exit(1 if FAULT == 'exit' else 0)
     #[cfg(unix)]
     fn creation_helper_emits_only_empty_thread_setup_and_resume_does_not_start_again() {
         for yolo in [false, true] {
-            let (dir, installation) = fake_runtime("success");
+            let (dir, installation) = fake_runtime("history-unsupported");
             let mut persisted = None;
             let id = create(
                 &installation,
                 dir.path().to_str().unwrap(),
-                "title",
                 yolo,
                 &ModelChoice::default(),
                 |id, settings| {
@@ -996,7 +987,6 @@ sys.exit(1 if FAULT == 'exit' else 0)
                     "initialized",
                     "config/read",
                     "thread/start",
-                    "thread/name/set",
                     "thread/read"
                 ]
             );
@@ -1008,10 +998,13 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 calls[3]["params"],
                 thread_start_params(dir.path().to_str().unwrap(), yolo, &settings())
             );
+            assert_eq!(
+                calls[4]["params"],
+                json!({"threadId":id,"includeTurns":false})
+            );
             finish_creation(
                 &installation,
                 dir.path().to_str().unwrap(),
-                "title",
                 &id,
                 &ModelChoice::default(),
                 Some(&settings()),
@@ -1026,6 +1019,7 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 1
             );
             assert!(!trace(&dir).iter().any(|r| r["method"] == "turn/start"));
+            assert!(!trace(&dir).iter().any(|r| r["method"] == "thread/name/set"));
         }
     }
 
@@ -1038,7 +1032,6 @@ sys.exit(1 if FAULT == 'exit' else 0)
         let id = create(
             &installation,
             cwd,
-            "title",
             false,
             &pick(Some("model-x"), Some("low")),
             |id, settings| {
@@ -1063,7 +1056,6 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 "config/read",
                 "model/list",
                 "thread/start",
-                "thread/name/set",
                 "thread/read"
             ]
         );
@@ -1078,7 +1070,6 @@ sys.exit(1 if FAULT == 'exit' else 0)
         let err = create(
             &installation,
             dir.path().to_str().unwrap(),
-            "title",
             false,
             &pick(Some("gone"), None),
             |_, _| panic!("no thread may be recorded"),
@@ -1137,13 +1128,6 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 false,
             ),
             (
-                "name-reject",
-                CreationOutcome::Created,
-                Some("thread/name/set"),
-                Some(-32602),
-                true,
-            ),
-            (
                 "read-reject",
                 CreationOutcome::Created,
                 Some("thread/read"),
@@ -1156,7 +1140,6 @@ sys.exit(1 if FAULT == 'exit' else 0)
             let err = create_or_finish(
                 &installation,
                 dir.path().to_str().unwrap(),
-                "title",
                 true,
                 &ModelChoice::default(),
                 None,
@@ -1177,7 +1160,6 @@ sys.exit(1 if FAULT == 'exit' else 0)
         let err = create(
             &installation,
             dir.path().to_str().unwrap(),
-            "title",
             true,
             &ModelChoice::default(),
             |_, _| Err("disk failure".into()),
@@ -1191,7 +1173,6 @@ sys.exit(1 if FAULT == 'exit' else 0)
         let err = create(
             &installation,
             dir.path().to_str().unwrap(),
-            "title",
             true,
             &ModelChoice::default(),
             |_, _| Ok(()),
@@ -1209,7 +1190,6 @@ sys.exit(1 if FAULT == 'exit' else 0)
             "config-reject",
             "start-reject",
             "start-drop",
-            "name-reject",
             "read-reject",
             "exit",
         ] {
@@ -1221,7 +1201,6 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 .ensure_thread(
                     &installation,
                     dir.path().to_str().unwrap(),
-                    "title",
                     true,
                     &ModelChoice::default(),
                 )
@@ -1254,7 +1233,6 @@ sys.exit(1 if FAULT == 'exit' else 0)
                 .ensure_thread(
                     &installation,
                     dir.path().to_str().unwrap(),
-                    "title",
                     true,
                     &ModelChoice::default(),
                 )

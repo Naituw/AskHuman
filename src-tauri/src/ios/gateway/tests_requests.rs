@@ -8,6 +8,52 @@ use crate::ios::wire::{self, t, AnswerItem, PushPlain};
 
 const SECOND: Duration = Duration::from_secs(1);
 
+#[tokio::test(start_paused = true)]
+async fn explicit_dev_relay_pushes_at_once_without_accelerating_daily_requests() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    let phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    fx.host.touch_input();
+    deliver_ask(&fx, "daily");
+    let (mut ask, view) = sample_ask("dev");
+    let root = std::path::PathBuf::from("/fixture/worktree");
+    Arc::make_mut(&mut ask).message.development = Some(Box::new(
+        crate::development::verification::VerificationInfo {
+            id: uuid::Uuid::new_v4().to_string(),
+            worktree: root.clone(),
+            delivery: crate::development::verification::Delivery::Remote,
+            relay: true,
+            test_profile: None,
+            diagnostics: None,
+            build: crate::development::build::BuildInfo {
+                version: 1,
+                worktree: root.clone(),
+                binary: root.join("AskHuman"),
+                source_fingerprint: "source".into(),
+                binary_fingerprint: "binary".into(),
+                git_commit: None,
+                created_at_ms: 0,
+            },
+        },
+    ));
+    fx.gateway.deliver(DeliverRequest {
+        view,
+        sink: Sink::Ask(FakeAsk::new()),
+        ask: Some(ask),
+        deadline_ms: None,
+        assets: Vec::new(),
+    });
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(
+        fx.pusher.count(),
+        1,
+        "only the Dev relay bypasses the idle delay"
+    );
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(fx.pusher.count(), 1, "the daily question keeps waiting");
+}
+
 fn answer(client_msg_id: &str, request_id: &str, answers: Vec<AnswerItem>) -> wire::AnswerSubmit {
     wire::AnswerSubmit {
         client_msg_id: client_msg_id.into(),

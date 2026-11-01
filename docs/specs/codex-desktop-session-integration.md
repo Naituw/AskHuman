@@ -50,7 +50,7 @@ iOS Agent 详情页也复用 `Operation::Send`，支持运行中补充、空闲�
   相同 ID 不接受不同内容；已接受操作重试只回执，结果未知不自动重发。GUI 保留失败草稿，
   新建待提交 ID 保存在本地；控制台需明确检查原聊天后才能编辑新的发送。
   新建的明确拒绝记录为 `rejected`，用户再次提交同一 UUID 时可重试；立即落盘线程 ID 和
-  `created` 后，命名、读取、辅助进程退出及 App 接管失败均复用原线程续接。首次任务提交前
+  `created` 后，读取、辅助进程退出及 App 接管失败均复用原线程续接。首次任务提交前
   写 `unknown`，收到接受回执后才写 `accepted`。解析错误仅 -32600/-32602 证明未执行
   thread/start；其它错误保守处理。台账保留失败阶段、RPC method/code 和已知 ID；ID 落盘
   失败仍为 unknown，已知 ID 仅作诊断。历史 unknown 不自动降级或清理。
@@ -62,13 +62,16 @@ iOS Agent 详情页也复用 `Operation::Send`，支持运行中补充、空闲�
   → App 内置 codex app-server --listen stdio://
   → initialize / initialized → config/read(cwd) → 按需 model/list
   → thread/start(ephemeral=false，显式模型与思考强度)
-  → 立即记录 thread ID / 模型设置 / created → thread/name/set → thread/read(includeTurns=true)
+  → 立即记录 thread ID / 模型设置 / created → thread/read(includeTurns=false)
   → 关闭 stdin，等待辅助进程退出
   → codex://threads/<id> 打开 App → 等待 owner 接管
-  → 原生 start-turn 提交首条任务 → 记录 accepted → 待办出队
+  → 原生 start-turn 提交首条任务（普通会话类型）→ 记录 accepted → 待办出队
+  → Codex App 异步生成原生标题 → 桌面状态与后续提问读取原生名称
 ```
 
-辅助进程不执行 turn/start。目录可以不是 App 已保存项目；不创建 worktree。默认权限继承目标
+辅助进程不执行 turn/start。空线程准备只读取线程元数据，不要求当前 CLI 的完整历史读取能力；
+线程 ID 和模型快照仍先落盘，读取失败后沿用同一操作和线程续接。
+目录可以不是 App 已保存项目；不创建 worktree。默认权限继承目标
 目录配置，省略 approvalPolicy 和 sandbox；YOLO 明确设置 approvalPolicy=never、
 sandbox=danger-full-access。App 接管空线程可能按默认权限恢复，因此 YOLO 创建的首轮
 私有 start-turn 还须显式携带 approvalPolicy=never、sandboxPolicy.type=dangerFullAccess；
@@ -78,6 +81,35 @@ sandbox=danger-full-access。App 接管空线程可能按默认权限恢复，�
 的 SandboxPolicy 类型使用 camelCase，不能全局替换拼写。
 App 打开失败保留已创建 ID；传输结果未知保留任务和附件，提示检查原聊天，不回退终端。
 深链接可能切换桌面当前聊天。发送中附件以绝对路径引用，图片同时使用 localImage 输入。
+
+## 原生自动标题（2026-11-01）
+
+所有由 AskHuman 创建的 Codex Desktop 新任务共用此行为，覆盖手机、电脑与 IM。
+描述前 80 字只作 AskHuman 内存中的临时展示；创建辅助进程及续接过程均不调用
+`thread/name/set`，避免把临时描述写成正式名称，或在重试时覆盖用户手动改名。
+
+创建首轮的 native `turnStart.context` 带 `threadStartKind="default"`。当前 App 的 owner
+直接启动路径在「没有正式标题 + 带会话类型」时发出 `initial-title-requested`，由 App 现有
+标题生成器决定模型与生成策略。标题生成异步进行，不延迟原任务；普通补充消息和继续会话
+不额外设置此字段。已有正式名称仍由原生门槛保护。AskHuman 不实现独立的标题生成调用。
+
+通过 owner／revision 验证的原生状态中的 `title` 更新 `SessionMeta`，再由已有 2 秒桌面观察
+循环同步 Agent 列表；后续提问读取原生名称。数据库扫描不覆盖仍有效的最新流状态标题。
+生成暂未完成时保留临时描述；历史会话不批量回填。
+
+本机内置 `codex-cli 0.164.0-alpha.11.1` 的 App 代码已核对；
+`scripts/codex-native-title.node-test.mjs` 只提取并执行已安装 App 的标题事件门槛，替换其生成
+回调做契约检查，不运行模型，也不把 App 专有实现复制进仓库。未安装 Codex Desktop 的主机
+跳过该检查。Rust 回归覆盖辅助进程无命名写入、首轮上下文、手动名称保护及标题状态同步。
+本轮已通过 56 项 Rust 桌面回归、本机 App 事件门槛契约、Clippy（all targets／`-D warnings`）、
+格式检查与 `./scripts/install.sh`。
+
+2026-11-01 经用户批准，以 `gpt-6-luna`／低推理运行一次真实验收。首次准备空线程时，当前 CLI
+对 `thread/read(includeTurns=true)` 返回 `list_turns is not supported yet`，此时没有提交任务；改为
+元数据读取后沿用同一操作与线程续接，成功提交一轮任务。观察到名称由空变为原生生成的「回复收到」
+（从续接操作开始约 7.4 秒，单样本），数据库、桌面接入元数据和 Agent 注册表三处一致。
+验收线程已停止并归档，工作目录保持为空。当前旧会话另按用户确认的明确名称，通过原生改名工具补正，
+并核对数据库与注册表一致；其他旧会话保持原名。
 
 ## 新建模型与思考强度
 

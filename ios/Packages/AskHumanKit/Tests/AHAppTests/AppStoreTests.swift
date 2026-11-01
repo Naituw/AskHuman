@@ -598,6 +598,39 @@ final class AppStoreTests: XCTestCase {
         XCTAssertEqual(store.pendingCount, 6)
     }
 
+    func testAnArrivalQueuedBeforeReactivationDoesNotAnimateOrVibrateAfterwards() async {
+        await make()
+        let observedAt = ContinuousClock.now
+        await store.setInactive()
+        await store.setForeground(true)
+        await backend.simulateArrival(observedAt: observedAt)
+        await eventually("the queued request is still stored") { self.store.pendingCount == 6 }
+        await backend.simulateArrival()
+        await eventually("the genuinely live arrival") { self.store.arrivalTick == 1 }
+        XCTAssertEqual(store.requestArrivals.map(\.requestId), ["req-live-2"])
+        XCTAssertEqual(store.pendingCount, 7)
+    }
+
+    func testRepeatedForegroundUpdatesDoNotSuppressAnArrivalFromTheCurrentStay() async {
+        await make()
+        let observedAt = ContinuousClock.now
+        await store.setForeground(true)
+        await backend.simulateArrival(observedAt: observedAt)
+        await eventually { self.store.requestArrivals.count == 1 }
+        XCTAssertEqual(store.arrivalTick, 1)
+    }
+
+    func testAnArrivalWhileInactiveIsNotReplayedWhenTheAppReturns() async {
+        await make()
+        await store.setInactive()
+        await backend.simulateArrival()
+        await eventually { self.store.pendingCount == 6 }
+        await store.setForeground(true)
+        await backend.simulateArrival()
+        await eventually { self.store.arrivalTick == 1 }
+        XCTAssertEqual(store.requestArrivals.map(\.requestId), ["req-live-2"])
+    }
+
     // MARK: Macs and pairing
 
     func testPairingWalksThroughTheStages() async throws {

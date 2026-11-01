@@ -27,6 +27,7 @@ extension PhoneEngine {
             if !hasSubmission { finish(key, outcome: .ended, by: nil) }
         }
         var fetch: [String] = []
+        // Snapshots restore inbox state; only ordered request.new deltas announce arrivals.
         for summary in snapshot.items {
             let key = CachedRequest.key(macId, summary.id)
             if var runtime = requests[key] {
@@ -38,7 +39,6 @@ extension PhoneEngine {
                 cached.unread = true
                 requests[key] = RequestRuntime(cached: cached, state: .pending)
                 store.saveRequest(cached)
-                emit(.requestArrived(macId: macId, requestId: summary.id))
                 fetch.append(summary.id)
             }
         }
@@ -85,7 +85,7 @@ extension PhoneEngine {
                 macId: macId, requestId: view.id, summary: summary, view: message.full ? view : nil, receivedAt: clock.now()
             )
             requests[key] = RequestRuntime(cached: cached, state: .pending)
-            emit(.requestArrived(macId: macId, requestId: view.id))
+            if foreground { emit(.requestArrived(macId: macId, requestId: view.id)) }
         }
         persistRequest(key)
         if message.full {

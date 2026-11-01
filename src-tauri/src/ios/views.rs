@@ -314,6 +314,7 @@ mod tests {
     fn ask_view_carries_origin_options_and_flags() {
         let mut request = AskRequest::new(
             MessagePrompt {
+                development: None,
                 text: "Pick one".into(),
                 files: Vec::new(),
             },
@@ -390,6 +391,7 @@ mod tests {
         std::fs::write(&txt, "hello").unwrap();
         let request = AskRequest::new(
             MessagePrompt {
+                development: None,
                 text: String::new(),
                 files: vec![
                     FileAttachment {

@@ -124,7 +124,7 @@ impl ControlStore {
                     .then(|| (entry.metadata().and_then(|meta| meta.modified()).ok(), path))
             })
             .collect();
-        files.sort_by(|a, b| b.0.cmp(&a.0));
+        files.sort_by_key(|entry| std::cmp::Reverse(entry.0));
         for (_, path) in files.into_iter().take(512) {
             if let Some(id) = path.file_stem().and_then(|s| s.to_str()) {
                 let _ = store.existing(id);

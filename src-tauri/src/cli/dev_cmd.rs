@@ -15,6 +15,94 @@ pub fn dispatch(args: &[String], _lang: Lang) {
         exit(1);
     }
     match args[0].as_str() {
+        "session" => {
+            match crate::development::session::run_cli(&args[1..]) {
+                Ok(receipt) => println!("{receipt}"),
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    exit(1);
+                }
+            }
+            exit(0);
+        }
+        "session-launch" => {
+            let result = match (args.get(1), args.get(2)) {
+                (Some(id), Some(token)) => crate::development::session::launch_active(
+                    id,
+                    token,
+                    args.get(3).is_some_and(|arg| arg == "--stdio"),
+                ),
+                _ => Err("session-launch requires a profile and launch token".into()),
+            };
+            match result {
+                Ok(receipt) => println!("{receipt}"),
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    exit(1);
+                }
+            }
+            exit(0);
+        }
+        "session-configure" => {
+            let result = args
+                .get(1)
+                .ok_or_else(|| "missing development profile ID".to_string())
+                .and_then(|id| crate::development::session::configure_active(id));
+            if let Err(error) = result {
+                eprintln!("error: {error}");
+                exit(1);
+            }
+            exit(0);
+        }
+        "ask" => {
+            if let Err(error) = crate::development::verification::run_cli(&args[1..]) {
+                eprintln!("error: {error}");
+                exit(1);
+            }
+            exit(0);
+        }
+        "target" => {
+            let result = crate::development::routing::diagnostic().map(Some);
+            match result {
+                Ok(target) => println!("{}", serde_json::to_string_pretty(&target).unwrap()),
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    exit(1);
+                }
+            }
+            exit(0);
+        }
+        "ui" => {
+            let root = match args.get(1).map(String::as_str) {
+                Some("--worktree") => args.get(2).map(PathBuf::from),
+                None => std::env::current_dir()
+                    .ok()
+                    .and_then(|cwd| crate::development::workspace::find_root(&cwd)),
+                _ => None,
+            };
+            let result = root
+                .ok_or_else(|| "dev ui requires an enabled worktree".to_string())
+                .and_then(|root| crate::development::workbench::open_window(&root, "workbench"));
+            if let Err(error) = result {
+                eprintln!("error: {error}");
+                exit(1);
+            }
+            exit(0);
+        }
+        "build-verify" => {
+            let root = args
+                .get(1)
+                .map(PathBuf::from)
+                .unwrap_or_else(require_git_root);
+            match crate::development::build::verify(&root) {
+                Ok(info) => println!("{}", serde_json::to_string_pretty(&info).unwrap()),
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    exit(1);
+                }
+            }
+            exit(0);
+        }
         "enable" => cmd_enable(&args[1..]),
         "disable" => cmd_disable(&args[1..]),
         "status" => cmd_status(),
@@ -34,9 +122,14 @@ pub fn dispatch(args: &[String], _lang: Lang) {
 fn print_usage() {
     eprintln!(
         "Usage:
-  AskHuman dev enable [--preset <name>]... [--force]
+  AskHuman dev enable [--agent <name>] [--system-binary <path>] [--preset <name>]... [--force]
   AskHuman dev disable [--purge]
   AskHuman dev status
+  AskHuman dev ui [--worktree <path>]
+  AskHuman dev ask [--worktree <path>] [--delivery local|remote|channels] -- <question>
+  AskHuman dev ask --worktree <path> --resume <verification-id>
+  AskHuman dev session <agent> [--worktree <path>] [--task <text>] [--prepare-only|--stdio]
+  AskHuman --instance system dev target
   AskHuman dev preset save <name> [--from-instance]
   AskHuman dev preset list
   AskHuman dev preset show <name>
@@ -92,25 +185,69 @@ fn seed_config_if_missing(home: &Path) -> Result<(), String> {
 
 fn ensure_layout(root: &Path) -> Result<(PathBuf, PathBuf), String> {
     let dev = root.join(DEV_DIR);
+    std::fs::create_dir_all(&dev).map_err(|e| e.to_string())?;
+    let private = dev.canonicalize().map_err(|e| e.to_string())?;
+    if !private.starts_with(root.canonicalize().map_err(|e| e.to_string())?) {
+        return Err("Dev directory escapes the selected worktree".into());
+    }
     let bin = dev.join("bin");
     let home = dev.join("home");
     std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
-    let marker = dev.join(ENABLED_MARKER);
-    if !marker.exists() {
-        std::fs::write(&marker, b"").map_err(|e| e.to_string())?;
+    if !bin
+        .canonicalize()
+        .map_err(|e| e.to_string())?
+        .starts_with(&private)
+        || !home
+            .canonicalize()
+            .map_err(|e| e.to_string())?
+            .starts_with(&private)
+    {
+        return Err("Dev bin or home escapes the selected private worktree directory".into());
     }
     seed_config_if_missing(&home)?;
     Ok((bin, home))
 }
 
-fn parse_enable_args(args: &[String]) -> (Vec<String>, bool) {
+fn pin_instance_management(root: &Path) {
+    if let Err(error) = crate::development::routing::pin_management(root) {
+        eprintln!("error: {error}");
+        exit(1);
+    }
+}
+
+fn parse_enable_args(
+    args: &[String],
+) -> (
+    Vec<String>,
+    bool,
+    Option<crate::agents::AgentKind>,
+    Option<PathBuf>,
+) {
     let mut presets = Vec::new();
     let mut force = false;
+    let mut agent = None;
+    let mut system_binary = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--force" => force = true,
+            "--agent" | "--system-binary" => {
+                let flag = args[i].clone();
+                i += 1;
+                let Some(value) = args.get(i) else {
+                    eprintln!("error: {flag} requires a value");
+                    exit(1);
+                };
+                if flag == "--agent" {
+                    agent = Some(crate::agents::AgentKind::parse(value).unwrap_or_else(|| {
+                        eprintln!("error: unknown development client '{value}'");
+                        exit(1);
+                    }));
+                } else {
+                    system_binary = Some(PathBuf::from(value));
+                }
+            }
             "--preset" => {
                 i += 1;
                 if i >= args.len() {
@@ -130,12 +267,24 @@ fn parse_enable_args(args: &[String]) -> (Vec<String>, bool) {
         }
         i += 1;
     }
-    (presets, force)
+    (presets, force, agent, system_binary)
 }
 
 fn cmd_enable(args: &[String]) {
-    let (presets, force) = parse_enable_args(args);
+    let (presets, force, agent, system_binary) = parse_enable_args(args);
     let root = require_git_root();
+    let agent = agent.or_else(crate::agents::detect::detect_invoking_agent);
+    let system_binary = system_binary
+        .or_else(|| {
+            crate::development::workspace::read(&root)
+                .ok()
+                .map(|workspace| workspace.system_binary)
+        })
+        .unwrap_or_else(|| crate::executable::launch_path().unwrap_or_default());
+    if let Err(error) = crate::development::project::ensure_legacy_idle(&root) {
+        eprintln!("error: {error}");
+        exit(1);
+    }
     let (bin, home) = match ensure_layout(&root) {
         Ok(v) => v,
         Err(e) => {
@@ -145,8 +294,7 @@ fn cmd_enable(args: &[String]) {
     };
 
     // Pin env so subsequent logic in this process uses instance home (also for preset materialise).
-    std::env::set_var(dev_instance::ASKHUMAN_HOME_ENV, &home);
-    std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
+    pin_instance_management(&root);
 
     if !presets.is_empty() {
         match dev_presets::apply_presets_to_instance(&root, &home, &presets, force) {
@@ -158,12 +306,25 @@ fn cmd_enable(args: &[String]) {
         }
     }
 
-    println!("Dev Instance enabled");
+    let prepared =
+        crate::development::project::prepare(&root, &system_binary, agent).and_then(|report| {
+            crate::development::project::retire_legacy_marker(&root)?;
+            Ok(report)
+        });
+    let report = match prepared {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("error: {error}");
+            exit(1);
+        }
+    };
+
+    println!("Dev Instance prepared (verification readiness is checked separately)");
     println!("  worktree   {}", root.display());
     println!("  home       {}", home.display());
     println!("  bin        {}", bin.display());
     if presets.is_empty() {
-        println!("  channels   popup-only (no IM presets)");
+        println!("  delivery   formal remote relay (no dedicated channel preset)");
     } else {
         println!("  presets    {}", presets.join(", "));
     }
@@ -176,10 +337,69 @@ fn cmd_enable(args: &[String]) {
         .is_file()
     {
         println!("  next       run ./scripts/install.sh  (installs into this instance bin)");
-    } else {
-        println!("  next       AskHuman … / MCP ask  (auto-routed to this instance)");
+    }
+    if let Some(path) = &report.configuration_path {
+        println!("  project MCP {}", path.display());
+    }
+    print_verification_readiness(&root);
+    if report.connection_observed {
+        println!("  readiness  a live project tool call was observed for this controller version");
+    }
+    if report.requires_reload {
+        println!("  readiness  project configuration prepared; reload/trust the project and call dev_ask to verify loading");
+    }
+    if report.configuration_path.is_some() || report.connection_observed {
+        println!("  session    connection observations do not prove this running client loaded the project tool");
+    }
+    if agent.is_none() {
+        println!(
+            "  client     CLI entry configured; use --agent <name> to prepare a project MCP client"
+        );
     }
     exit(0);
+}
+
+fn print_verification_readiness(root: &Path) {
+    let mut ready = true;
+    match crate::development::build::verify(root) {
+        Ok(_) => println!("  build      installed program matches current build inputs"),
+        Err(error) => {
+            println!("  build      not ready: {error}");
+            ready = false;
+        }
+    }
+    match crate::development::verification::preferences(root) {
+        Ok(preferences) => {
+            use crate::development::verification::Delivery;
+            match preferences.delivery {
+                Delivery::Remote => {
+                    println!("  delivery   formal remote relay");
+                    match crate::development::relay::preflight(root) {
+                        Ok(()) => println!(
+                            "  remote     compatible formal daemon and remote outlet available"
+                        ),
+                        Err(error) => {
+                            println!("  remote     not ready: {error}");
+                            ready = false;
+                        }
+                    }
+                }
+                Delivery::Local => println!("  delivery   local Dev popup (explicit preference)"),
+                Delivery::Channels => {
+                    println!("  delivery   Dev test channels (no relay or popup fallback)")
+                }
+            }
+        }
+        Err(error) => {
+            println!("  delivery   not ready: {error}");
+            ready = false;
+        }
+    }
+    if ready {
+        println!("  verify     use project askhuman-dev.dev_ask or node scripts/dev.mjs ask");
+    } else {
+        println!("  verify     not ready; preparation is not successful verification");
+    }
 }
 
 fn cmd_disable(args: &[String]) {
@@ -195,7 +415,7 @@ fn cmd_disable(args: &[String]) {
     }
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let Some(root) = dev_instance::find_dev_root(&cwd).or_else(|| {
+    let Some(root) = crate::development::workspace::find_root(&cwd).or_else(|| {
         // Also allow disable from git root after marker deleted? Prefer find by git + .askhuman-dev
         find_git_root(&cwd).filter(|r| r.join(DEV_DIR).exists())
     }) else {
@@ -203,9 +423,17 @@ fn cmd_disable(args: &[String]) {
         exit(1);
     };
 
-    let home = dev_instance::instance_home(&root);
-    std::env::set_var(dev_instance::ASKHUMAN_HOME_ENV, &home);
-    std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
+    pin_instance_management(&root);
+    if let Err(error) = crate::development::project::remove(&root) {
+        eprintln!("error: {error}");
+        exit(1);
+    }
+    if purge {
+        if let Err(e) = crate::development::session::cleanup_workspaces(&root) {
+            eprintln!("error: {e}");
+            exit(1)
+        }
+    }
 
     // Best-effort stop the daemon in this instance partition before removing its marker/data.
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -252,6 +480,13 @@ fn cmd_disable(args: &[String]) {
     let marker = root.join(DEV_DIR).join(ENABLED_MARKER);
     if marker.exists() {
         let _ = std::fs::remove_file(&marker);
+    }
+    let manifest = crate::development::workspace::path(&root);
+    if manifest.exists() {
+        if let Err(error) = std::fs::remove_file(&manifest) {
+            eprintln!("error: cannot disable project development: {error}");
+            exit(1);
+        }
     }
 
     if purge {
@@ -356,7 +591,7 @@ fn terminate_instance_processes(instance_bin: &Path) -> Vec<u32> {
 
 fn cmd_status() {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let root = dev_instance::find_dev_root(&cwd);
+    let root = crate::development::workspace::find_root(&cwd);
     match root {
         None => {
             println!("dev instance: not enabled for cwd {}", cwd.display());
@@ -366,8 +601,7 @@ fn cmd_status() {
         Some(root) => {
             let home = dev_instance::instance_home(&root);
             let bin = dev_instance::instance_bin(&root);
-            std::env::set_var(dev_instance::ASKHUMAN_HOME_ENV, &home);
-            std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
+            pin_instance_management(&root);
 
             println!("dev instance: enabled");
             println!("  worktree   {}", root.display());
@@ -392,9 +626,12 @@ fn cmd_status() {
             let cfg = AppConfig::load_from(&home.join("config.json"));
             let ids = dev_presets::configured_channel_ids(&cfg.channels);
             if ids.is_empty() {
-                println!("  channels   popup-only");
+                println!("  channels   no dedicated remote test channels");
             } else {
                 println!("  channels   {}", ids.join(", "));
+            }
+            if crate::development::workspace::is_project(&root) {
+                print_verification_readiness(&root);
             }
 
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -516,9 +753,7 @@ fn preset_save(args: &[String]) {
         eprintln!("error: cwd is not a Dev Instance (run `dev enable` first)");
         exit(1);
     };
-    let home = dev_instance::instance_home(&root);
-    std::env::set_var(dev_instance::ASKHUMAN_HOME_ENV, &home);
-    std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
+    pin_instance_management(&root);
 
     let cfg = AppConfig::load();
     let channels = match dev_presets::extract_configured_channels(&cfg) {

@@ -447,9 +447,15 @@ impl AskServer {
             },
             hidden,
             mcp_instance_id: uuid::Uuid::new_v4().to_string(),
-            project: std::env::current_dir()
+            project: crate::development::session::active()
                 .ok()
-                .map(|cwd| crate::project::detect_from(&cwd))
+                .flatten()
+                .map(|profile| crate::project::detect_from(&profile.worktree))
+                .or_else(|| {
+                    std::env::current_dir()
+                        .ok()
+                        .map(|cwd| crate::project::detect_from(&cwd))
+                })
                 .unwrap_or_default(),
             executable: crate::executable::launch_path().map_err(|error| error.to_string()),
         }
@@ -1179,7 +1185,7 @@ async fn claim_grok_binding(
 
 /// Errors from [`capture_output`].
 #[derive(Debug)]
-enum CaptureError {
+pub(crate) enum CaptureError {
     /// MCP client cancelled the in-flight `tools/call` (`notifications/cancelled`).
     Cancelled,
     Io(std::io::Error),
@@ -1193,7 +1199,7 @@ enum CaptureError {
 /// - Future drop（测试 abort / 极端宿主杀任务）：同一 `kill_on_drop(true)` 兜底。
 ///
 /// 子进程放进独立 task，是因为 `wait_with_output` 会 move `Child`，无法在 `select!` 另一臂再 `kill`。
-async fn capture_output(
+pub(crate) async fn capture_output(
     mut command: tokio::process::Command,
     cancel: CancellationToken,
 ) -> Result<Output, CaptureError> {
