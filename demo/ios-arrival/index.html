@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AskHuman iOS · 新请求到达动效原型</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#edf0f6;color:#18253c;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}button,input{font:inherit}button{cursor:pointer}#stage{width:900px;height:1800px;position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 30%,#fff 0,#f3f5fa 60%,#e7edf7 100%)}header{position:absolute;left:64px;right:64px;top:44px}#eyebrow{font-size:19px;letter-spacing:2px;color:#53718f}h1{font-size:39px;line-height:1.2;margin:14px 0 0;letter-spacing:-1px}#phone{position:absolute;left:124.5px;top:178px;width:651px;height:1413.6px;border-radius:72px;box-shadow:0 24px 58px #2b416323,0 0 0 4px #25334a;overflow:hidden;background:#f2f2f7}#viewport{width:420px;height:912px;transform:scale(1.55);transform-origin:0 0;position:relative;overflow:hidden}#screen{width:420px;height:912px;position:absolute;inset:0}#motion,#motion *{pointer-events:none!important}#motion{position:absolute;inset:0;z-index:20}#receiver{position:absolute;left:160px;top:122px;width:100px;height:24px;display:flex;gap:5px;justify-content:center;align-items:center;font-size:10px;font-weight:600;color:#2677d4;background:linear-gradient(#f9fcff,#e9f2fd);border:0.5px solid #b7d0ee;border-radius:12px;box-shadow:0 2px 8px #2b4f7b12;opacity:0}#receiver svg{width:13px;height:13px}#receiver-dot{width:6px;height:6px;border-radius:50%;background:#2685e8}#tab-glow{position:absolute;left:40px;top:826px;width:52px;height:52px;border-radius:20px;background:radial-gradient(circle,#2685e859,#2685e800 70%);opacity:0}#badge{position:absolute;left:77px;top:834px;border-radius:11px;min-width:19px;height:21px;padding:0 4px;background:#ff3b30;color:white;font-size:13px;line-height:21px;text-align:center;opacity:0}#halo{position:absolute;width:130px;height:130px;border-radius:50%;background:radial-gradient(circle,#2685e831,transparent 68%);transform:translate(-50%,-50%);opacity:0}#flight-target{position:absolute;width:14px;height:14px;border-radius:50%;background:#2685e8;opacity:0}footer{position:absolute;left:62px;right:62px;top:1634px}#caption{font-size:29px;font-weight:600;line-height:1.4}#detail{font-size:23px;line-height:1.55;color:#61738b;margin-top:10px}#progress{position:absolute;bottom:30px;left:64px;right:64px;display:flex;gap:8px}#progress i{display:block;height:3px;flex:1;background:#cfd8e4;border-radius:2px}#progress i.on{background:#2685e8}.floater{position:absolute;left:0;top:0;width:88px;height:88px;transform-origin:center}.floater .a-halo{position:absolute;inset:-30px;border-radius:50%;background:radial-gradient(circle,#2685e82b,transparent 68%);opacity:var(--halo)}.face{position:absolute;inset:0;display:grid;place-items:center;transform-origin:50% 100%;transform:scale(var(--sx),var(--sy))}.plate{position:absolute;inset:0;border-radius:calc(24px + 20px * var(--m));background:linear-gradient(145deg,#fff 10%,#f8fbff 47%,#eaf1fb);box-shadow:0 1px 2px #17345214,0 5px 10px #1b3d6324,0 15px 28px #233e622b,0 0 0 .5px #54729633,0 1.2px 1px #fff inset,0 -1px 1px #b5c7e044 inset;opacity:var(--plate)}.graphic{position:relative;width:52px;height:52px;clip-path:circle(var(--clip) at 50% 50%);transform:scale(var(--gs))}.hole{opacity:var(--hole)}#draft{position:absolute;left:38px;top:136px;width:325px;height:78px;border:0;outline:0;background:white;color:#16171a;font-family:-apple-system,"PingFang SC",sans-serif;font-size:17px;line-height:1.45;resize:none;z-index:2;display:none;caret-color:#007aff}#draft:focus{outline:none}#caret{pointer-events:none;position:absolute;width:2px;height:20px;background:#007aff;z-index:3;display:none}#typing-proof{position:absolute;right:22px;bottom:366px;font-size:10px;color:#507391;background:#f2f7fdd9;padding:4px 7px;border-radius:7px;opacity:0}.controls{padding:16px;max-width:900px;display:flex;gap:10px;flex-wrap:wrap}.controls button{padding:8px 14px;border:1px solid #b8c9df;border-radius:10px;background:white;color:#18345a}.controls button[aria-pressed=true]{background:#237edb;color:white}.controls label{display:flex;align-items:center;gap:8px}.controls input{width:300px}body.video .controls{display:none}
+#input-mask{position:absolute;left:38px;top:125px;width:325px;height:90px;z-index:1;background:white;display:none}#principal{position:absolute;left:144px;width:132px;height:30px;background:#f2f2f7;text-align:center;font-size:17px;font-weight:600;line-height:22px;opacity:0}#receiver{height:18px;font-size:9px;width:96px;left:162px;border-radius:9px}#receiver svg{width:11px;height:11px}#receiver-dot{display:none;width:5px;height:5px}
+</style>
+<main id="stage" aria-label="新请求弹跳动画的视觉原型">
+<header><div id="eyebrow">ASKHUMAN / iOS MOTION STUDY</div><h1 id="title"></h1></header>
+<div id="phone"><div id="viewport"><img id="screen" alt="真实 App 模拟器的示例页面"><div id="input-mask"></div><textarea id="draft" aria-label="继续编辑的任务草稿" spellcheck="false"></textarea><div id="caret"></div><div id="typing-proof">正在输入 · 焦点保留</div><div id="motion" aria-hidden="true"><div id="principal"></div><div id="receiver"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16l2 10v6H2v-6zM2 14h6l2 3h4l2-3h6"/></svg><span>收件箱 · <b id="receiver-count">7</b></span><span id="receiver-dot"></span></div><div id="tab-glow"></div><div id="badge">7</div><div id="halo"></div><div id="flight-target"></div><div id="floaters"></div></div></div></div>
+<footer><div id="caption"></div><div id="detail"></div></footer><div id="progress"></div>
+</main><div class="controls"><button id="play">重播</button><label>片段 <select id="scene"></select></label><label>进度 <input id="seek" type="range" min="0" max="5000" value="0" step="1"></label></div>
+<script type="module">
+import {arrivalFrame} from './mac-motion.js';
+const $=id=>document.getElementById(id);
+const scenes=[
+ {title:'A · 飞入熟悉的收件箱',img:'agents',kind:'tab',caption:'两次弹跳，沿弧线收入底部标签',detail:'不切走当前页面；落位只亮起一次，待处理数量保留。'},
+ {title:'A · 输入时，收纳到标题下',img:'keyboard',kind:'title',typing:true,caption:'键盘不收起，输入继续',detail:'底栏不可见时，用短暂的收件提示承接；整层完全穿透。'},
+ {title:'A · 打开弹层，也能收到',img:'sheet',kind:'title',caption:'新任务、预览等页面，采用同一承接位置',detail:'不关闭弹层，不滚动表单；收纳提示随后轻轻淡出。'},
+ {title:'A · 三条到达，各自完整弹跳',img:'agents',kind:'tab',burst:true,caption:'提问、权限、Stop 各自播放，不合并',detail:'同一时刻小幅错位，互不排队；各自沿弧线收入收件箱。'},
+ {title:'B · 所有页面统一顶部落点',img:'agents',kind:'title',caption:'另一方向：始终飞入标题下的收件提示',detail:'位置始终一致；但主页面会多出一处短暂的收件标记。'},
+ {title:'B · 键盘出现时，位置也不变',img:'keyboard',kind:'title',typing:true,caption:'两种落点，比较哪一种更自然',detail:'A 优先使用现有收件箱；B 始终使用顶部收纳提示。'}
+];
+const bubble=`<div class="a-halo"></div><div class="face"><div class="plate"></div><svg viewBox="0 0 24 24" class="graphic"><defs><mask id="MASK" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24" style="mask-type:luminance"><path fill="#fff" d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/><g class="hole" fill="none" stroke="#000" stroke-width="1.85" stroke-linecap="round"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></g></mask><linearGradient id="BLUE" x1="0" y1="0" x2=".2" y2="1"><stop stop-color="#4797eb"/><stop offset="1" stop-color="#2685e8"/></linearGradient></defs><path fill="url(#BLUE)" mask="url(#MASK)" d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg></div>`;
+let current=-1,raf=0,epoch=0;
+const clamp=x=>Math.max(0,Math.min(1,x));const smooth=x=>{x=clamp(x);return x*x*(3-2*x)};
+function showScene(index){
+ current=index;const s=scenes[index];$('title').textContent=s.title;$('screen').src=`assets/${s.img}.png`;$('caption').textContent=s.caption;$('detail').textContent=s.detail;$('scene').value=index;
+ $('floaters').innerHTML=Array.from({length:s.burst?3:1},(_,i)=>`<div class="floater" id="f${i}">${bubble.replaceAll('MASK','mask'+i).replaceAll('BLUE','blue'+i)}</div>`).join('');
+ $('progress').innerHTML=scenes.map((_,i)=>`<i class="${i===index?'on':''}"></i>`).join('');
+ $('input-mask').style.display=s.typing?'block':'none';$('draft').style.display=s.typing?'block':'none';$('typing-proof').style.opacity=0;$('caret').style.display=s.typing?'block':'none';
+ if(s.typing){$('draft').value='请检查附件里的界面，';$('draft').focus({preventScroll:true});}
+}
+function paint(index,ms,{type=true}={}){
+ if(index!==current)showScene(index);const s=scenes[index];$('seek').value=ms;
+ const baseStart=760,flightEnd=baseStart+2586;const lastEnd=flightEnd+(s.burst?220:0);
+ const receiptOpacity=smooth((ms-baseStart-1520)/200)*(1-smooth((ms-lastEnd-950)/450));
+ $('receiver').style.opacity=s.kind==='title'?receiptOpacity:0;
+ const titleY=s.img==='agents'?90:110;
+ let target=s.kind==='tab'?{x:65,y:850}:{x:177,y:titleY+12};
+ $('receiver').style.top=(titleY+3)+'px';$('principal').style.top=(titleY-15)+'px';$('principal').textContent=s.img==='agents'?'Agents':'新任务';$('principal').style.opacity=s.kind==='title'?receiptOpacity:0;
+ $('principal').style.background=s.img==='agents'?'#f2f2f7':'#f5f5f8';$('principal').style.transform=`translateY(${-receiptOpacity*6}px)`;if(s.kind==='title'){const a=$('receiver').querySelector('svg').getBoundingClientRect(),v=$('viewport').getBoundingClientRect();target={x:(a.x+a.width/2-v.x)/1.55,y:(a.y+a.height/2-v.y)/1.55};}
+ let landed=0;
+ for(let i=0;i<(s.burst?3:1);i++){
+  const elapsed=ms-baseStart-i*110,origin={x:210+(s.burst?(i-1)*53:0),y:s.typing?330:440};
+  const f=$('f'+i);if(elapsed<0||elapsed>3226){f.style.opacity=0;if(elapsed>2586)landed++;continue;}
+  const state=arrivalFrame(elapsed,{origin,target});
+  if(elapsed>=2586)landed++;
+  const size=.80;f.style.transform=`translate(${state.x-44}px,${state.y-44}px) scale(${state.scale*size}) rotate(${state.angle}deg)`;f.style.opacity=state.opacity*(1-smooth((elapsed-2586)/160));
+  for(const [k,v] of Object.entries({sx:state.stretchX,sy:state.stretchY,m:state.morph,hole:1-state.morph,plate:state.plateOpacity,halo:state.haloOpacity,clip:`${68+(100*10/24-68)*state.morph}%`,gs:1+(88/52-1)*state.morph}))f.style.setProperty('--'+k,v);
+ }
+ const pulse=(ms>=flightEnd&&ms<=lastEnd+640)?Math.max(0,Math.sin(Math.PI*clamp((ms-flightEnd)/(lastEnd+640-flightEnd)))):0;
+ $('tab-glow').style.opacity=s.kind==='tab'?pulse*.85:0;
+ $('badge').style.opacity=s.img==='agents'&&landed>0?1:0;$('badge').textContent=6+landed;
+ $('receiver-count').textContent=6+landed;
+ $('receiver').style.transform=`translateY(${(1-receiptOpacity)*-3}px) scale(${1+pulse*.045})`;
+ if(s.typing&&type){const text='请检查附件里的界面，先比较两种方案，再调整动画。';const length=11+Math.floor(clamp((ms-300)/3600)*(text.length-11));$('draft').value=text.slice(0,length);$('draft').selectionStart=$('draft').selectionEnd=length;const ctx=document.createElement('canvas').getContext('2d');ctx.font='17px -apple-system, PingFang SC';let line='',row=0;for(const c of text.slice(0,length)){if(ctx.measureText(line+c).width>320){row++;line='';}line+=c;}$('caret').style.left=(40+ctx.measureText(line).width)+'px';$('caret').style.top=(139+row*24.65)+'px';$('caret').style.opacity=Math.floor(ms/420)%2?0:1;}
+ return {scene:index,time:ms,landed,target,focus:document.activeElement?.id};
+}
+function play(){cancelAnimationFrame(raf);epoch=performance.now();function tick(now){const t=now-epoch;paint(current,t);if(t<5000)raf=requestAnimationFrame(tick)}raf=requestAnimationFrame(tick)}
+scenes.forEach((s,i)=>$('scene').add(new Option(s.title,i)));$('scene').onchange=()=>{paint(+$('scene').value,0);play()};$('play').onclick=play;$('seek').oninput=()=>{cancelAnimationFrame(raf);paint(current,+$('seek').value)};
+window.motionPrototype={scenes,paint,showScene,play,get current(){return current}};
+await Promise.all(['agents','keyboard','sheet'].map(n=>new Promise(r=>{const a=new Image();a.onload=r;a.src=`assets/${n}.png`})));
+paint(0,0);window.prototypeReady=true;if(!new URLSearchParams(location.search).has('render'))play();
+</script></html>

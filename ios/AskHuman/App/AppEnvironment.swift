@@ -30,9 +30,16 @@ struct LaunchOptions {
     var failTask: String?
     /// A followed Agent reports `done`, `failed` or `waiting` a moment after launch (the follow banner).
     var followEvent: String?
-    /// A request arrives a moment after launch (the request banner), from a session with this title;
+    /// A request arrives a moment after launch (the arrival animation), from a session with this title;
     /// `none` for one without a title.
     var arrival: String?
+    var arrivalCount = 1
+    var arrivalDelay = 2.0
+    var arrivalMotionDiagnostics = false
+    var arrivalMotionSlowdown = 1.0
+    var arrivalFullscreenFixture = false
+    var arrivalMarkedTextFixture = false
+    var arrivalReducedMotion = false
     /// Forces "open the next request after sending" on or off (UI tests need a fixed value).
     var autoAdvance: Bool?
     /// Seconds (real time) after which the `syncing` scenario turns into the demo; unset keeps it syncing.
@@ -75,6 +82,13 @@ struct LaunchOptions {
         failTask = defaults.string(forKey: "AHFailTask")
         followEvent = defaults.string(forKey: "AHFollowEvent")
         arrival = defaults.string(forKey: "AHArrival")
+        arrivalCount = min(20, max(1, defaults.integer(forKey: "AHArrivalCount")))
+        if defaults.object(forKey: "AHArrivalDelay") != nil { arrivalDelay = max(0, defaults.double(forKey: "AHArrivalDelay")) }
+        arrivalMotionDiagnostics = defaults.bool(forKey: "AHArrivalMotionDiagnostics")
+        arrivalFullscreenFixture = defaults.bool(forKey: "AHArrivalFullscreenFixture")
+        arrivalMarkedTextFixture = defaults.bool(forKey: "AHArrivalMarkedTextFixture")
+        arrivalReducedMotion = defaults.bool(forKey: "AHArrivalReducedMotion")
+        if defaults.object(forKey: "AHArrivalMotionSlowdown") != nil { arrivalMotionSlowdown = max(1, defaults.double(forKey: "AHArrivalMotionSlowdown")) }
         if defaults.object(forKey: "AHAutoAdvance") != nil { autoAdvance = defaults.bool(forKey: "AHAutoAdvance") }
         if defaults.object(forKey: "AHSyncDelay") != nil { syncDelay = defaults.double(forKey: "AHSyncDelay") }
         cachedInbox = defaults.bool(forKey: "AHCached")
@@ -117,8 +131,12 @@ final class AppEnvironment {
             }
             if let title = launch.arrival {
                 Task {
-                    try? await Task.sleep(for: .seconds(2))
-                    await backend.simulateArrival(sessionTitle: title == "none" ? nil : title)
+                    try? await Task.sleep(for: .seconds(launch.arrivalDelay))
+                    for index in 0..<launch.arrivalCount {
+                        await backend.simulateArrival(sessionTitle: title == "none" ? nil : title,
+                                                      kind: ["ask", "permission", "stop"][index % 3])
+                        try? await Task.sleep(for: .milliseconds(110))
+                    }
                 }
             }
             drafts = MemoryDraftStore()

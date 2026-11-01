@@ -260,7 +260,9 @@ public struct EngineState: Sendable, Equatable {
 
 /// One-off happenings the UI reacts to (notifications to clear, toasts, haptics).
 public enum EngineEvent: Sendable, Equatable {
-    case requestArrived(macId: String, requestId: String)
+    /// A live delta received in the foreground, never an item discovered through a snapshot.
+    /// The phone's monotonic receipt time lets the UI discard events queued before reactivation.
+    case requestArrived(macId: String, requestId: String, observedAt: ContinuousClock.Instant = .now)
     case requestFinished(macId: String, requestId: String, outcome: HistoryOutcome, by: String?)
     case macUnpaired(macId: String, macName: String)
     case pairingFinished(macId: String)

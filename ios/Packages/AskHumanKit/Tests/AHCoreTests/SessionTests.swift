@@ -248,7 +248,10 @@ final class SessionTests: XCTestCase {
         await eventually("request.ack") { h.mac.count(RequestAck.type) == 1 }
         XCTAssertEqual(try h.mac.received(RequestAck.type)[0].body(as: RequestAck.self).requestId, request.id)
         XCTAssertEqual(h.store.cachedRequests().count, 1, "persisted")
-        XCTAssertEqual(h.events.contains(.requestArrived(macId: h.mac.macId, requestId: request.id)), true)
+        XCTAssertTrue(h.events.contains { event in
+            guard case .requestArrived(let macId, let requestId, _) = event else { return false }
+            return macId == h.mac.macId && requestId == request.id
+        })
 
         await h.engine.markSeen(macId: h.mac.macId, requestId: request.id)
         await eventually("request.seen") { h.mac.count(RequestSeen.type) == 1 }
