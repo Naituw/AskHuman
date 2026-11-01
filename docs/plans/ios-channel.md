@@ -592,3 +592,13 @@ Swift 的 43 项真实端到端检查因未配置环境跳过。Mac 端已运行
 `6b125b24-1856-404f-bcdc-c7d109dd4274` 状态为 `VALID`，已自动进入 `AskHuman Internal`。
 用户于 2026-11-01 确认已更新，原有 Mac 连接和输入均正常；已完成输入可见性修复的分发与真机确认。
 其余真机推送、切网与渠道验收矩阵继续由 `docs/PROGRESS.md` 跟踪。
+
+## 2026-11-01：TestFlight 内部构建 4
+
+从合并后的 main `4381628c617cc61d1c0f2d12d7cddb31797b7e93` 生成干净源码副本，分发 `0.1.0 (4)`。
+保留 build 3 的现有功能，并修复到达动画的触发资格：前台收件箱实时新增仍播放，打开、刷新或重连时的快照补齐不播放，
+跨活动期排队的旧事件与相应到达震动不补播。设计与验证见 [动效实施记录](ios-arrival-motion.md#testflight-分发2026-11-01)。
+
+沿用 bundle ID、签名团队、共享钥匙串组与 `AskHuman Internal`，复用既有 Keychain helper；归档和上传预检通过，
+Xcode 返回 `ARCHIVE SUCCEEDED` / `EXPORT SUCCEEDED`。Apple build `b29e802b-ff20-44c3-9f0f-889c093646f8`
+状态为 `VALID`，已加入内部测试组。用户确认已更新至 build 4，原有 Mac 连接正常；到达时机的真机日常观察继续跟踪。

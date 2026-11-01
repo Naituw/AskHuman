@@ -37,3 +37,14 @@ iOS 27.0 专用模拟器上的「收件箱实时到达」与「并发／触摸�
 `./scripts/install.sh` 成功安装到 `~/.local/bin/AskHuman`；本轮未分发手机 App，真机观察待新版安装后进行，见 `docs/PROGRESS.md`。
 
 提交前另以 HEAD 加本次选定内容组成独立源码快照验证，排除了当前共享工作树里的其他并行功能：Swift 包 472 通过、43 跳过，iOS 模拟器 App 与 UI 测试目标 `build-for-testing` 通过；原型脚本 Node 语法检查通过。
+
+## TestFlight 分发（2026-11-01）
+
+用户要求将当前开发分支合入 main、推送并更新手机。已以 main `4381628c` 的干净源码副本归档，
+保留 build 3 已有的任务附件、Fast、请求快切与 Agent 结果等功能，分发 `0.1.0 (4)`。
+合并验证：Rust 2324 通过／11 ignored，Swift 507 通过／43 个外部服务用例跳过，前端 1079 通过，Node 80 通过／19 平台限定项跳过；
+类型检查、构建、格式、Clippy 与桌面安装通过。Clippy 要求的反向排序写法做了等价调整，控制模块 4 项回归通过。
+
+归档与上传预检、`ARCHIVE SUCCEEDED`、`EXPORT SUCCEEDED` 均通过；Apple build
+`b29e802b-ff20-44c3-9f0f-889c093646f8` 已为 `VALID` 并进入原内部测试组。用户已在手机更新，确认原有 Mac 连接正常。
+本轮真机确认覆盖安装与连接；到达资格的实际使用观察继续留在 `docs/PROGRESS.md`。代码与分发记录均推送到 origin。
