@@ -51,6 +51,7 @@ struct RootView: View {
             .frame(width: 0, height: 0)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
+            DeveloperOverlayAnchor()
         }
         .overlay(alignment: .top) {
             VStack(spacing: 8) {

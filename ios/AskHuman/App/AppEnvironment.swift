@@ -45,6 +45,8 @@ struct LaunchOptions {
     var arrivalReducedMotion = false
     /// Forces "open the next request after sending" on or off (UI tests need a fixed value).
     var autoAdvance: Bool?
+    /// Forces the developer mode (the floating button) on or off.
+    var developerMode: Bool?
     /// Seconds (real time) after which the `syncing` scenario turns into the demo; unset keeps it syncing.
     var syncDelay: Double?
     /// The `syncing` scenario starts with the requests the phone kept from the last run.
@@ -96,6 +98,7 @@ struct LaunchOptions {
         arrivalReducedMotion = defaults.bool(forKey: "AHArrivalReducedMotion")
         if defaults.object(forKey: "AHArrivalMotionSlowdown") != nil { arrivalMotionSlowdown = max(1, defaults.double(forKey: "AHArrivalMotionSlowdown")) }
         if defaults.object(forKey: "AHAutoAdvance") != nil { autoAdvance = defaults.bool(forKey: "AHAutoAdvance") }
+        if defaults.object(forKey: "AHDeveloperMode") != nil { developerMode = defaults.bool(forKey: "AHDeveloperMode") }
         if defaults.object(forKey: "AHSyncDelay") != nil { syncDelay = defaults.double(forKey: "AHSyncDelay") }
         cachedInbox = defaults.bool(forKey: "AHCached")
         if defaults.object(forKey: "AHAdvanceHold") != nil { advanceHold = defaults.double(forKey: "AHAdvanceHold") }
@@ -150,6 +153,7 @@ final class AppEnvironment {
             let suite = UserDefaults(suiteName: "ah.mock") ?? defaults
             suite.removePersistentDomain(forName: "ah.mock")
             if let autoAdvance = launch.autoAdvance { suite.set(autoAdvance, forKey: "ah.autoAdvance") }
+            if let developerMode = launch.developerMode { suite.set(developerMode, forKey: "ah.developerMode") }
             store = AppStore(backend: backend, drafts: drafts, defaults: suite)
             if let hold = launch.advanceHold { store.advanceTiming.hold = .seconds(hold) }
             if let settle = launch.advanceSettle { store.advanceTiming.settle = .seconds(settle) }

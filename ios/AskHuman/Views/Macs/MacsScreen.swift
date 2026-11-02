@@ -50,6 +50,15 @@ struct MacsScreen: View {
                     Text("The name your Macs show for this phone. It applies to pairings you make from now on.")
                 }
 
+                Section {
+                    Toggle("Developer mode", isOn: $store.developerMode)
+                        .accessibilityIdentifier("developer-mode-toggle")
+                } header: {
+                    Text("Developer")
+                } footer: {
+                    Text("Puts a button above every screen. Press and hold it, then slide to a shortcut and let go. Drag it to move it.")
+                }
+
                 if let traffic = store.state.traffic {
                     Section {
                         LabeledContent("Sent", value: Int(traffic.sentBytes).formatted(.file))
