@@ -21,6 +21,26 @@
         }
       }
     },
+    "%@ did not answer. Try again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 没有响应，请重试。"
+          }
+        }
+      }
+    },
+    "%@ is not reachable right now." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 暂时连不上。"
+          }
+        }
+      }
+    },
     "%@ is not reachable. Its sessions are hidden until it is back." : {
       "localizations" : {
         "zh-Hans" : {
@@ -294,6 +314,16 @@
         }
       }
     },
+    "Add" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加"
+          }
+        }
+      }
+    },
     "Add a Mac" : {
       "localizations" : {
         "zh-Hans" : {
@@ -330,6 +360,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加待办"
+          }
+        }
+      }
+    },
+    "Added to %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已添加到 %@"
           }
         }
       }
@@ -824,6 +864,26 @@
         }
       }
     },
+    "Choose a project" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择项目"
+          }
+        }
+      }
+    },
+    "Choose a project first." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先选择项目。"
+          }
+        }
+      }
+    },
     "Choose an option for every question." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1194,6 +1254,36 @@
         }
       }
     },
+    "Developer" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开发者"
+          }
+        }
+      }
+    },
+    "Developer mode" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开发者模式"
+          }
+        }
+      }
+    },
+    "Developer tools" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开发者工具"
+          }
+        }
+      }
+    },
     "Diagram could not be rendered; showing source" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1230,6 +1320,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这里无法绘制图表，已显示源码"
+          }
+        }
+      }
+    },
+    "Did not answer" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有响应"
           }
         }
       }
@@ -2334,6 +2434,16 @@
         }
       }
     },
+    "Not reachable right now." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂时连不上。"
+          }
+        }
+      }
+    },
     "Not sent — tap to retry" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2933,6 +3043,16 @@
         }
       }
     },
+    "Project" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "项目"
+          }
+        }
+      }
+    },
     "Projects show up here once an Agent has worked in them on a Mac." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2959,6 +3079,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "推送通知"
+          }
+        }
+      }
+    },
+    "Puts a button above every screen. Press and hold it, then slide to a shortcut and let go. Drag it to move it." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在所有界面上方显示一个按钮。按住它，滑到某个快捷项后松手即可触发；拖动它可以移动位置。"
           }
         }
       }
@@ -3019,6 +3149,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已排队，Agent 会在下一步读取。"
+          }
+        }
+      }
+    },
+    "Quick todo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快速待办"
           }
         }
       }
@@ -3759,6 +3899,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这不是有效的配对码，请从 Mac 重新复制。"
+          }
+        }
+      }
+    },
+    "That is too long: %lld of %lld characters." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内容太长了：%lld / %lld 个字符。"
           }
         }
       }
@@ -4591,6 +4741,16 @@
         }
       }
     },
+    "This project is no longer on %@. Choose another." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个项目已不在 %@ 上，请另选一个。"
+          }
+        }
+      }
+    },
     "This project is no longer there." : {
       "localizations" : {
         "zh-Hans" : {
@@ -4831,12 +4991,32 @@
         }
       }
     },
+    "Update AskHuman on %@ to add todos from here." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先更新 %@ 上的 AskHuman，才能在这里添加待办。"
+          }
+        }
+      }
+    },
     "Update AskHuman on %@ to manage its todos from your phone." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "请先更新 %@ 上的 AskHuman，才能在手机上管理它的待办。"
+          }
+        }
+      }
+    },
+    "Update AskHuman on this Mac to add todos from here." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先更新这台 Mac 上的 AskHuman，才能在这里添加待办。"
           }
         }
       }

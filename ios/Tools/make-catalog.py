@@ -552,6 +552,25 @@ ZH = {
     "this Mac": "这台 Mac",
     "via %@": "经由 %@",
     "· on %@": "· 在 %@ 上",
+    # Developer mode (docs/specs/ios-developer-mode.md); the wording of the todos it adds follows the Todos tab
+    "%@ did not answer. Try again.": "%@ 没有响应，请重试。",
+    "%@ is not reachable right now.": "%@ 暂时连不上。",
+    "Add": "添加",
+    "Added to %@": "已添加到 %@",
+    "Choose a project": "选择项目",
+    "Choose a project first.": "请先选择项目。",
+    "Developer": "开发者",
+    "Developer mode": "开发者模式",
+    "Developer tools": "开发者工具",
+    "Did not answer": "没有响应",
+    "Not reachable right now.": "暂时连不上。",
+    "Project": "项目",
+    "Puts a button above every screen. Press and hold it, then slide to a shortcut and let go. Drag it to move it.": "在所有界面上方显示一个按钮。按住它，滑到某个快捷项后松手即可触发；拖动它可以移动位置。",
+    "Quick todo": "快速待办",
+    "That is too long: %lld of %lld characters.": "内容太长了：%lld / %lld 个字符。",
+    "This project is no longer on %@. Choose another.": "这个项目已不在 %@ 上，请另选一个。",
+    "Update AskHuman on %@ to add todos from here.": "请先更新 %@ 上的 AskHuman，才能在这里添加待办。",
+    "Update AskHuman on this Mac to add todos from here.": "请先更新这台 Mac 上的 AskHuman，才能在这里添加待办。",
 }
 
 # Shown by iOS itself when a push cannot be decrypted by the notification extension.
