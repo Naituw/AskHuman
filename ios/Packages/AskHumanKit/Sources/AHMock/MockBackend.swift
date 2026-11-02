@@ -108,6 +108,11 @@ public actor MockBackend: RemoteBackend {
     public internal(set) var todoOps: [TodoOperation] = []
     /// Makes the next todo write fail the way a Mac that could not store it does (a one-shot).
     public var failNextTodoWrite: String?
+    /// The next this many todo writes are done by the Mac, but its answer never arrives (the call times out).
+    /// Asking again with the same `clientMsgId` gets the answer the Mac stored.
+    public var loseNextTodoAnswers = 0
+    /// The next this many asks for a Mac's todo projects get no answer (the call times out).
+    public var loseNextTodoProjectAnswers = 0
     /// What the Home MacBook Pro's sync line says is wrong (`notSignedIn`, `quota`, …); `nil` when nothing is.
     public var todoSyncProblem: String?
     /// The Macs that sync their todos through iCloud (`mode: icloud`); the others keep their own.

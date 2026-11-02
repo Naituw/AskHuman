@@ -32,6 +32,10 @@ extension MockBackend {
         try requireTodoMac(macId)
         await pause(0.15)
         try requireTodoMac(macId)
+        if loseNextTodoProjectAnswers > 0 {
+            loseNextTodoProjectAnswers -= 1
+            throw BackendError.timedOut
+        }
         var rows = (syncingTodoMacs.contains(macId) ? todoSyncedRows[macId] : nil) ?? todoRows[macId] ?? []
         for index in rows.indices {
             if let list = todoLists[todoKey(macId, rows[index].id)] {
@@ -60,9 +64,17 @@ extension MockBackend {
         await pause(0.25)
         try requireTodoMac(macId)
         todoOps.append(operation)
-        if let again = todoAcks[operation.clientMsgId] { return again }
-        let ack = applyTodo(macId: macId, operation: operation)
-        todoAcks[operation.clientMsgId] = ack
+        let ack: TodoAck
+        if let again = todoAcks[operation.clientMsgId] {
+            ack = again
+        } else {
+            ack = applyTodo(macId: macId, operation: operation)
+            todoAcks[operation.clientMsgId] = ack
+        }
+        if loseNextTodoAnswers > 0 {
+            loseNextTodoAnswers -= 1
+            throw BackendError.timedOut
+        }
         return ack
     }
 
@@ -155,6 +167,10 @@ extension MockBackend {
 
 extension MockBackend {
     public func setFailNextTodoWrite(_ reason: String?) { failNextTodoWrite = reason }
+
+    public func setLoseNextTodoAnswers(_ count: Int) { loseNextTodoAnswers = count }
+
+    public func setLoseNextTodoProjectAnswers(_ count: Int) { loseNextTodoProjectAnswers = count }
 
     public func setTodoSyncProblem(_ problem: String?) { todoSyncProblem = problem }
 

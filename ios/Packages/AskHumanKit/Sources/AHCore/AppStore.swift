@@ -187,6 +187,15 @@ public final class AppStore {
     /// The Todos tab: the todos of the Macs, shown and edited from here.
     public let todos: TodosStore
 
+    /// The developer mode: a floating button above every screen with shortcuts (quick-add of a todo).
+    public let developer: DeveloperTools
+
+    /// The developer mode's switch, for a settings toggle to bind to.
+    public var developerMode: Bool {
+        get { developer.enabled }
+        set { developer.enabled = newValue }
+    }
+
     @ObservationIgnored public let backend: RemoteBackend
     @ObservationIgnored public let drafts: DraftStore
     @ObservationIgnored let defaults: UserDefaults
@@ -220,6 +229,7 @@ public final class AppStore {
         self.drafts = drafts
         self.defaults = defaults
         todos = TodosStore(backend: backend, defaults: defaults)
+        developer = DeveloperTools(backend: backend, defaults: defaults)
         autoAdvance = defaults.object(forKey: Self.autoAdvanceKey) as? Bool ?? true
     }
 
@@ -273,6 +283,7 @@ public final class AppStore {
         hasState = true
         todos.update(macs: next.macs, foreground: next.foreground)
         todos.update(agents: next.agents)
+        developer.update(macs: next.macs)
         let now = Date()
         presentedArrivalIds = presentedArrivalIds.filter { now.timeIntervalSince($0.value) < 600 }
         let liveArrivalIds = Set(next.inbox.map(\.id))
