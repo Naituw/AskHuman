@@ -10,6 +10,10 @@
 > `pi.sendUserMessage`。错误、取消、过期裁决和 session/generation 不匹配均 fail-open。Pi 没有 MCP
 > mode，preference 仅在 CLI mode 激活；完整设计见 `docs/plans/pi-agent-integration.md`。
 
+> **2026-11-02 扩展**：原有开关现统一为「结束／出错时确认」，最终失败卡由 daemon 的普通 Ask 服务处理；
+> 用户已确认的行为、各家错误能力和接续边界见 [最终失败确认](agent-failure-confirmation.md)。
+> 下文正常 Stop 的原生裁决语义不因此扩展到错误 Hook。
+
 ## 1. 背景与目标
 
 当前 Agent 即使收到强制交互提示词，仍可能不调用人机交互工具，直接自然结束本轮。
@@ -34,11 +38,11 @@
 | Pi | Extension `agent_end` + `agent_settled` | `pi.sendUserMessage` | 只接受 `stopReason="stop"`；其它原因放行 | 支持自然完成 |
 
 当前在 **Claude Code / Codex / Cursor / Pi 的自然完成**时发确认卡。
-错误和用户取消不发卡、不尝试外部 `resume`。三家错误路径继续沿用现有生命周期管理：
+正常 Stop handler 不对错误或用户取消输出 continuation，也不尝试外部 `resume`。最终失败另由统一错误卡处理；事件来源沿用生命周期与已接入的原生终态：
 
 - Claude `StopFailure → turn-end`，立即置空闲；
 - Cursor `stop → turn-end`，包括 `aborted/error`；
-- Codex 没有即时 Hook，继续使用 30 分钟 working backstop 降空闲及无 PID 时 1 小时 TTL；
+- Codex 无错误 Hook；Desktop 原生终态及已核对 CLI 共享服务可补最终失败，其它形态仍用 working backstop／TTL，不凭超时断言失败；
 - Grok 的既有 `StopFailure → turn-end` 不受本功能影响。
 
 依据：
@@ -58,8 +62,8 @@
 - Stop preference 在产品语义上独立于 lifecycle preference 和权限审批，并跨 integration mode 切换
   保留；但 active confirmation 只在 CLI/MCP mode 安装，None 下暂停并隐藏，重新集成时按原
   preference 恢复。Lifecycle 自身是自动集成拥有的可选 capability，不允许脱离 active mode 安装。
-- Grok 显示不支持或不展示开关，不安装 Stop 确认 Hook。
-- 仅自然完成触发；错误、API failure、用户主动取消不发卡。
+- Grok 的同一开关仅控制最终出错提醒，不安装正常 Stop 确认 gate；默认关闭。
+- 正常 Stop 确认仅自然完成触发；整轮最终失败共用开关，走独立错误卡服务。用户主动取消不发卡。
 - Codex 的内部 thread 与**委派运行**不触发结束确认。Codex 的 Stop hook 输入里没有 `thread_source`
   （`StopCommandInput` 在 0.144.1–0.163.0 字段一致，见 `codex-delegated-run-silence.md` F14），所以
   Stop 静默只看两类信号：`transcript_path` 字段明确为 `null`（未创建 rollout 的 ephemeral thread；字段缺失
@@ -171,7 +175,7 @@ active mode 下共享 reconcile 的四种状态：
 |---|---|---|
 | 关 | 关 | 不安装 |
 | 开 | 关 | 直接上报 `turn-end` |
-| 关 | 开 | 等待确认；不写生命周期注册表 |
+| 关 | 开 | 等待确认，并记录错误处理所需的最小会话／结果观察；不安装工具活动追踪或修改 lifecycle 偏好 |
 | 开 | 开 | 等待确认；结束/fail-open 后上报 `turn-end`，继续时保持 working |
 
 integration mode 在上述矩阵之外同时门控两个 capability：None 必须删除实际 lifecycle 与 Stop
@@ -296,7 +300,7 @@ watch 并集、渠道扰动、取消及现有卡片终态，不新增 Stop 专�
 - 不通过 Hook 内另起 `claude --resume` / `codex resume` / `cursor-agent --resume` 恢复错误会话；
   这不等价于继续当前 TUI，并有终端归属、并发 transcript、权限继承风险。
 - 不支持 Grok Stop 自动续跑，除非 Grok 后续提供可阻塞 Stop 或可消费的 follow-up 输出。
-- 不保证 Agent 错误、用户中断、进程崩溃时出现接管卡。
+- 不保证缺少可靠终态来源或进程崩溃时出现接管卡；已知最终失败来源的处理见最终失败确认规格，用户中断始终静默。
 - Agent 仍可在续跑后再次不按 Instructions 提问；本设计通过每次自然 Stop 都再次询问来保留人工接管点。
 - 多个第三方 Stop Hook 仍可能彼此影响；AskHuman 只能保证自身 handler 单一，设置/doctor 应提示同事件
   其它 handler 的共存风险。

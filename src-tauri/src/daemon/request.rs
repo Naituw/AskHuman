@@ -743,6 +743,18 @@ impl RequestRegistry {
         ids
     }
 
+    /// Continuation cannot bypass an unanswered question or permission gate. Resolved cards
+    /// may still be registered while their terminal presentation is being cleaned up.
+    pub fn waiting_for_session(&self, session: &str) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner.by_id.values().any(|entry| {
+            entry.agent_session_id.as_deref() == Some(session) && !entry.coordinator.is_finalizing()
+        }) || inner
+            .confirm_by_id
+            .values()
+            .any(|entry| entry.agent_session_id == session && !entry.coordinator.is_terminal())
+    }
+
     /// 在途请求的 `(agent session_id, request_id, 预览)` 映射（同 session 多请求取最早登记的）。
     /// 供状态窗口快照注入 `waitingRequestId`/`waitingPreview`（spec gui-agent-console C7/R2）：
     /// 边栏 🙋 徽标 + 等待横幅摘要 + 「去回答」精确聚焦对应弹窗。
@@ -1361,6 +1373,9 @@ mod tests {
         let (a2, _rx2) = registry.create(ask("s-ask"), None); // 同 session 第二条：应被去重忽略
         let (c1, _rx3) = registry.create_confirm(confirm_task(), None).unwrap(); // session-1
         let rows = registry.in_flight_agent_requests();
+        assert!(registry.waiting_for_session("s-ask"));
+        assert!(registry.waiting_for_session("session-1"));
+        assert!(!registry.waiting_for_session("another-session"));
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].0, "s-ask");
         assert_eq!(rows[0].1, a1.request_id);
@@ -1373,5 +1388,7 @@ mod tests {
         registry.remove(&a2.request_id);
         registry.remove_confirm(&c1.request_id);
         assert!(registry.in_flight_agent_requests().is_empty());
+        assert!(!registry.waiting_for_session("s-ask"));
+        assert!(!registry.waiting_for_session("session-1"));
     }
 }

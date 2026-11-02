@@ -206,6 +206,10 @@ impl Requests {
     fn recent(&self, id: &str) -> Option<&Recent> {
         self.recent.iter().find(|r| r.id == id)
     }
+
+    pub(super) fn answer_phone(&self, id: &str) -> Option<String> {
+        self.recent(id).and_then(|result| result.winner.clone())
+    }
 }
 
 // ---------------------------------------------------------------- view helpers

@@ -20,7 +20,7 @@ for (const key of Object.keys(env)) if (key.startsWith("ASKHUMAN_") && key !== "
 const formalHome = path.join(home, ".askhuman"), devHome = path.join(root, ".askhuman-dev/home");
 const system = path.join(temp, "formal/AskHuman");
 fs.mkdirSync(path.dirname(system)); fs.copyFileSync(binary, system); fs.chmodSync(system, 0o700);
-const children = [], updates = [];
+const children = [], updates = [], cardBodies = [];
 let updateId = 0, messageId = 0, autoReply = true, failSend = false, cards = 0;
 function callback(mid, data) { return { update_id: ++updateId, callback_query: { id: String(updateId), data, from: {id: 1}, message: {message_id: mid, chat: {id: 1}} } }; }
 const api = http.createServer(async (req,res) => {
@@ -39,6 +39,7 @@ const api = http.createServer(async (req,res) => {
     const confirm = buttons.some(button => button.callback_data?.startsWith("pc:"));
     const ask = buttons.some(button => button.callback_data === "submit");
     if (ask || confirm) {
+      cardBodies.push(body.text ?? "");
       cards++;
       if (autoReply) setTimeout(() => {
         updates.push(callback(mid, confirm ? "pc:do:0" : "toggle:0"));
@@ -67,6 +68,14 @@ function frame(home, message, terminal) {
   });
 }
 async function status(home) { return (await frame(home,{type:"status"},v=>v.type==="status"))[0]; }
+async function nativeEvent(event,observation) {
+  await new Promise((resolve,reject)=>{
+    const socket=createConnection(path.join(devHome,"daemon.sock"));
+    const timer=setTimeout(()=>{socket.destroy();reject(new Error("native event timed out"));},5000);
+    socket.on("error",reject);socket.on("close",()=>{clearTimeout(timer);resolve();});
+    socket.on("connect",()=>socket.end(JSON.stringify({type:"agentEvent",agent:"codex",event,session_id:"test-session",cwd:root,observation})+"\n"));
+  });
+}
 async function until(fn) {
   const end=Date.now()+15000;
   while(Date.now()<end) { try { if(await fn()) return; } catch {} await new Promise(r=>setTimeout(r,50)); }
@@ -160,6 +169,19 @@ try {
   assert.match(fs.readFileSync(path.join(devHome,"state/codex_rules.json"),"utf8"),/test-session/);
   assert.equal(fs.existsSync(path.join(formalHome,"state/codex_rules.json")),false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(formalHome,"state/auto-channel.json"))).channel,"popup");
+  // A daemon-owned failure has no PROFILE_ENV: it must recover private authority from the
+  // native binding, not from the ordinary user's Codex mode or credentials.
+  write(path.join(devHome,"stop-preferences.json"),{codex:true});
+  write(path.join(directory,"hooks.json"),{hooks:{Stop:[{hooks:[{type:"command",command:"fixture __stop-hook codex confirm"}]}]}});
+  const failuresBefore=cards, turn=randomUUID();
+  await nativeEvent("turn-start",{turnId:turn});
+  const failure={turnId:turn,result:{outcome:"failed",turnId:turn,source:"fixture",reason:"runtime_error",summary:"fixture selected model is at capacity"}};
+  await nativeEvent("turn-end",failure);
+  await until(()=>cards===failuresBefore+1);
+  await until(async()=>/"activeRequests":0/.test(JSON.stringify(await status(devHome))));
+  assert.ok(cardBodies.some(text=>/This Agent turn failed|Agent 本轮出错/.test(text)),"the daemon-generated failure card reaches the formal loopback outlet");
+  await nativeEvent("turn-end",failure);
+  await new Promise(resolve=>setTimeout(resolve,200));assert.equal(cards,failuresBefore+1,"duplicate native failure is not forwarded again");
   autoReply=false;
   const count=cards;
   const cancelled=createConnection(path.join(devHome,"daemon.sock"));
@@ -172,7 +194,7 @@ try {
   failSend=true;
   const failed=await frame(devHome,askTask(interaction()),v=>v.type==="final");
   assert.notEqual(failed.at(-1).exit_code,0,"send failure cannot become local success");
-  console.log("PASS: fresh project MCP ask and retained result; actual relay asks, native Stop/todo ownership, permission memory ownership, daily active slot preserved, cancellation and send failure");
+  console.log("PASS: fresh project MCP ask and retained result; actual relay asks, native Stop/todo ownership, permission memory ownership, daemon-owned final failure and duplicate suppression, daily active slot preserved, cancellation and send failure");
 } catch(error) {
   for(const name of fs.readdirSync(temp).filter(name=>name.endsWith(".log"))) console.error(fs.readFileSync(path.join(temp,name),"utf8").slice(-5000));
   throw error;

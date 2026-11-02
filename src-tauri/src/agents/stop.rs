@@ -55,7 +55,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
     // Cursor also emits stop for aborted/error turns, but only consumes followup_message for a
     // completed turn. Non-natural stops only retain the existing lifecycle turn-end behavior.
     if !is_natural_stop(kind, &input) {
-        if track {
+        if track || confirm {
             super::report::report_simple_event(
                 kind,
                 LifecycleEvent::TurnEnd,
@@ -68,7 +68,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
     }
 
     if !confirm {
-        if track {
+        if track || confirm {
             super::report::report_simple_event(
                 kind,
                 LifecycleEvent::TurnEnd,
@@ -97,7 +97,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
                 .or_else(|| input.get("turnId"))
                 .and_then(Value::as_str),
         });
-        if track {
+        if track || confirm {
             super::report::report_simple_event(
                 kind,
                 LifecycleEvent::TurnEnd,
@@ -111,7 +111,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
 
     let last_message = last_assistant_message(kind, &input);
     if last_message.user_confirmed_end_turn {
-        if track {
+        if track || confirm {
             super::report::report_simple_event(
                 kind,
                 LifecycleEvent::TurnEnd,
@@ -164,7 +164,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
             &crate::prompts::stop_continue_prompt(kind, instruction.as_deref()),
         )),
         StopDecision::End => {
-            if track {
+            if track || confirm {
                 super::report::report_simple_event(
                     kind,
                     LifecycleEvent::TurnEnd,

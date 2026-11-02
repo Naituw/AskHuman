@@ -14,6 +14,7 @@ use crate::agents::AgentKind;
 use super::hook_edit;
 
 pub const MARKER: &str = "__stop-hook";
+pub const FAILURE_MARKER: &str = "__failure-hook";
 pub const TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,10 +43,12 @@ struct Preferences {
     cursor: Option<bool>,
     #[serde(default)]
     pi: Option<bool>,
+    #[serde(default)]
+    grok: Option<bool>,
 }
 
 pub fn supported(kind: AgentKind) -> bool {
-    !matches!(kind, AgentKind::Grok | AgentKind::Antigravity)
+    kind != AgentKind::Antigravity
 }
 
 pub fn enabled(kind: AgentKind) -> bool {
@@ -57,7 +60,8 @@ pub fn enabled(kind: AgentKind) -> bool {
         AgentKind::Claude => preferences.claude.unwrap_or(false),
         AgentKind::Codex => preferences.codex.unwrap_or(false),
         AgentKind::Cursor => preferences.cursor.unwrap_or(false),
-        AgentKind::Grok | AgentKind::Antigravity => false,
+        AgentKind::Grok => preferences.grok.unwrap_or(false),
+        AgentKind::Antigravity => false,
         AgentKind::Pi => preferences.pi.unwrap_or(true),
     }
 }
@@ -73,7 +77,8 @@ pub fn set_enabled(kind: AgentKind, value: bool) -> Result<()> {
         AgentKind::Claude => preferences.claude = Some(value),
         AgentKind::Codex => preferences.codex = Some(value),
         AgentKind::Cursor => preferences.cursor = Some(value),
-        AgentKind::Grok | AgentKind::Antigravity => unreachable!(),
+        AgentKind::Grok => preferences.grok = Some(value),
+        AgentKind::Antigravity => unreachable!(),
         AgentKind::Pi => preferences.pi = Some(value),
     }
     save_preferences(&preferences)?;
@@ -140,6 +145,7 @@ pub fn status(kind: AgentKind) -> StopStatus {
         .unwrap_or_default();
     let path = hook_path(kind);
     let text = std::fs::read_to_string(path).unwrap_or_else(|_| "{}".into());
+    let sources_ok = failure_sources_match(kind, &text, track, confirm);
     let handler_state = inspect_handler_state(
         kind,
         &text,
@@ -150,8 +156,16 @@ pub fn status(kind: AgentKind) -> StopStatus {
     StopStatus {
         supported: true,
         enabled: preference_enabled,
-        installed: handler_state.configured,
-        outdated: handler_state.outdated,
+        installed: if kind == AgentKind::Grok {
+            confirm && (track || text.contains(FAILURE_MARKER))
+        } else {
+            handler_state.configured
+        },
+        outdated: (kind != AgentKind::Grok && handler_state.outdated)
+            || !sources_ok
+            || confirm
+                && kind == AgentKind::Codex
+                && !super::agent_lifecycle::owned_codex_handlers_trusted(),
         other_handlers_detected: handler_state.other_handlers_detected,
     }
 }
@@ -227,6 +241,7 @@ pub fn migrate_outdated() -> Vec<AgentKind> {
         AgentKind::Codex,
         AgentKind::Cursor,
         AgentKind::Pi,
+        AgentKind::Grok,
     ] {
         let state = status(kind);
         if state.outdated {
@@ -310,7 +325,7 @@ fn install_handler(kind: AgentKind, track: bool, confirm: bool) -> Result<()> {
         if let Err(error) = super::agent_permission::reconcile_codex_trust(
             original,
             &updated,
-            &[super::agent_lifecycle::MARKER, MARKER],
+            &[super::agent_lifecycle::MARKER, MARKER, FAILURE_MARKER],
         ) {
             restore(&path, original_bytes.as_deref());
             return Err(error);
@@ -348,6 +363,9 @@ fn apply_handler_state(
     track: bool,
     confirm: bool,
 ) -> Result<String> {
+    if kind == AgentKind::Grok {
+        return apply_failure_sources(kind, original, executable, track, confirm);
+    }
     let without_lifecycle = match kind {
         AgentKind::Cursor => {
             hook_edit::remove_flat_marker(original, "stop", super::agent_lifecycle::MARKER)?
@@ -359,12 +377,12 @@ fn apply_handler_state(
         _ => hook_edit::remove_nested_marker(&without_lifecycle, "Stop", MARKER)?,
     };
     if !track && !confirm {
-        return Ok(without_stop);
+        return apply_failure_sources(kind, &without_stop, executable, track, confirm);
     }
     let command = hook_command_for(executable, kind, track, confirm);
     let command_windows = (kind == AgentKind::Codex)
         .then(|| windows_hook_command_for(executable, kind, track, confirm));
-    match kind {
+    let updated = match kind {
         AgentKind::Cursor => hook_edit::upsert_flat_handler(
             &without_stop,
             "stop",
@@ -390,7 +408,109 @@ fn apply_handler_state(
             TIMEOUT_SECS,
             None,
         ),
+    }?;
+    apply_failure_sources(kind, &updated, executable, track, confirm)
+}
+
+/// Minimal observations keep a failed result tied to its next real turn without enabling the
+/// user's full lifecycle preference or installing tool-activity hooks.
+fn apply_failure_sources(
+    kind: AgentKind,
+    original: &str,
+    executable: &str,
+    track: bool,
+    confirm: bool,
+) -> Result<String> {
+    let mut updated = original.to_string();
+    for event in [
+        "SessionStart",
+        "UserPromptSubmit",
+        "StopFailure",
+        "Stop",
+        "Interrupt",
+        "SessionEnd",
+        "StopCancelled",
+        "Notification",
+        "sessionStart",
+        "beforeSubmitPrompt",
+        "sessionEnd",
+    ] {
+        updated = if kind == AgentKind::Cursor {
+            hook_edit::remove_flat_marker(&updated, event, FAILURE_MARKER)?
+        } else {
+            hook_edit::remove_nested_marker(&updated, event, FAILURE_MARKER)?
+        };
     }
+    if !confirm
+        || matches!(
+            kind,
+            AgentKind::Cursor | AgentKind::Pi | AgentKind::Antigravity
+        )
+    {
+        return Ok(updated);
+    }
+    for &(event, lifecycle_event) in super::agent_lifecycle::events(kind) {
+        if matches!(event, "PreToolUse" | "PostToolUse")
+            || event == "Stop" && kind != AgentKind::Grok
+        {
+            continue;
+        }
+        let already_observed = track
+            && jsonc_parser::parse_to_serde_value::<Value>(
+                &updated,
+                &jsonc_parser::ParseOptions::default(),
+            )
+            .ok()
+            .and_then(|root| root["hooks"][event].as_array().cloned())
+            .is_some_and(|groups| {
+                groups
+                    .iter()
+                    .any(|group| group.to_string().contains(super::agent_lifecycle::MARKER))
+            });
+        if already_observed {
+            continue;
+        }
+        let command = format!(
+            "\"{executable}\" {FAILURE_MARKER} {} {lifecycle_event}",
+            kind.as_str()
+        );
+        let windows = (kind == AgentKind::Codex).then(|| {
+            hook_edit::powershell_command(
+                executable,
+                &[FAILURE_MARKER, kind.as_str(), lifecycle_event],
+            )
+        });
+        updated = hook_edit::upsert_nested_group_with_windows(
+            &updated,
+            event,
+            FAILURE_MARKER,
+            &command,
+            windows.as_deref(),
+            super::agent_lifecycle::event_timeout(kind, event).unwrap_or(10),
+            (event == "Notification").then_some("idle_prompt"),
+        )?;
+    }
+    Ok(updated)
+}
+
+fn failure_sources_match(kind: AgentKind, original: &str, track: bool, confirm: bool) -> bool {
+    let executable = crate::development::routing::program_path().ok();
+    let expected = apply_failure_sources(
+        kind,
+        original,
+        &executable
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        track,
+        confirm,
+    );
+    let parse = |text: &str| {
+        jsonc_parser::parse_to_serde_value::<Value>(text, &jsonc_parser::ParseOptions::default())
+            .ok()
+    };
+    expected
+        .ok()
+        .is_some_and(|expected| parse(&expected) == parse(original))
 }
 
 fn hook_path(kind: AgentKind) -> std::path::PathBuf {
@@ -398,9 +518,8 @@ fn hook_path(kind: AgentKind) -> std::path::PathBuf {
         AgentKind::Claude => crate::paths::claude_settings_json(),
         AgentKind::Codex => crate::paths::codex_hooks_json(),
         AgentKind::Cursor => crate::paths::cursor_hooks_json(),
-        AgentKind::Grok | AgentKind::Antigravity => {
-            crate::paths::config_dir().join("unsupported-stop-hooks.json")
-        }
+        AgentKind::Grok => crate::paths::grok_hooks_json(),
+        AgentKind::Antigravity => crate::paths::config_dir().join("unsupported-stop-hooks.json"),
         AgentKind::Pi => crate::paths::pi_extension_file(),
     }
 }
@@ -465,12 +584,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn confirmation_without_lifecycle_installs_only_necessary_observations() {
+        for kind in [AgentKind::Claude, AgentKind::Codex, AgentKind::Grok] {
+            let updated = apply_failure_sources(kind, "{}", "/test/AskHuman", false, true).unwrap();
+            let value: Value = serde_json::from_str(&updated).unwrap();
+            assert!(value["hooks"]["SessionStart"].is_array());
+            assert!(value["hooks"]["UserPromptSubmit"].is_array());
+            assert!(value["hooks"].get("PreToolUse").is_none());
+            assert!(value["hooks"].get("PostToolUse").is_none());
+            if kind != AgentKind::Codex {
+                assert!(value["hooks"]["StopFailure"].is_array());
+            }
+            let removed =
+                apply_failure_sources(kind, &updated, "/test/AskHuman", false, false).unwrap();
+            assert!(!removed.contains(FAILURE_MARKER));
+        }
+    }
+
+    #[test]
+    fn full_lifecycle_removes_duplicate_failure_sources_and_keeps_other_hooks() {
+        let original = r#"{"hooks":{"StopFailure":[{"hooks":[{"type":"command","command":"user-notifier"}]}]}}"#;
+        let minimal =
+            apply_failure_sources(AgentKind::Claude, original, "/test/AskHuman", false, true)
+                .unwrap();
+        assert!(minimal.contains(FAILURE_MARKER));
+        let mut full_hooks: Value = serde_json::from_str(&minimal).unwrap();
+        for &(event, lifecycle_event) in super::super::agent_lifecycle::events(AgentKind::Claude) {
+            if let Some(groups) = full_hooks["hooks"][event].as_array_mut() {
+                groups.push(serde_json::json!({"hooks":[{"command":format!("/test/AskHuman __agent-hook claude {lifecycle_event}")}]}));
+            }
+        }
+        let full = apply_failure_sources(
+            AgentKind::Claude,
+            &full_hooks.to_string(),
+            "/test/AskHuman",
+            true,
+            true,
+        )
+        .unwrap();
+        assert!(!full.contains(FAILURE_MARKER));
+        assert!(full.contains("user-notifier"));
+        let grok =
+            apply_handler_state(AgentKind::Grok, original, "/test/AskHuman", false, true).unwrap();
+        assert!(!grok.contains(MARKER));
+        assert!(grok.contains(FAILURE_MARKER));
+    }
+
+    #[test]
     fn supported_matrix_and_default_off() {
         assert!(supported(AgentKind::Claude));
         assert!(supported(AgentKind::Codex));
         assert!(supported(AgentKind::Cursor));
         assert!(supported(AgentKind::Pi));
-        assert!(!supported(AgentKind::Grok));
+        assert!(supported(AgentKind::Grok));
     }
 
     #[test]

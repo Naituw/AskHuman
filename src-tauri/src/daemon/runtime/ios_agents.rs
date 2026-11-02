@@ -326,6 +326,7 @@ pub(super) async fn interject(
         return super::agent_control::send(
             state,
             super::agent_control::Message {
+                continuation_instruction: None,
                 phone: phone_id,
                 message_id: client_msg_id,
                 kind,

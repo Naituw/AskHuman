@@ -619,11 +619,12 @@ export default {
       askQuestionTitle: "Take over the native question tool",
       askQuestionHint:
         "When Claude asks through its own built-in question tool, answer from the AskHuman popup or any IM instead of the terminal; the answer goes straight back to Claude, and cancelling asks it to ask again.",
-      stopTitle: "Confirm before ending",
+      stopTitle: "Confirm on completion or error",
       stopHint:
-        "When this Agent naturally finishes a turn, ask through the active popup or IM whether to continue or end. Errors and manual cancellations are not intercepted.",
+        "Ask before a natural completion, or show a card after a final turn failure. Sessions with a continuation channel can continue. Automatic retries, tool errors and manual cancellations stay quiet. Phone pushes use the existing notification timing.",
+      stopGrokHint: "Final error reminders only. Natural completions are not intercepted and continuation from an error card is not yet supported; choose Got it to dismiss.",
       stopUnsupported:
-        "This Agent cannot continue from a blocking Stop hook. Grok is not supported in this release.",
+        "This Agent has no reliable completion or error event source for this feature yet.",
       stopCoexist:
         "Other visible Stop handlers were found. They run concurrently and may independently continue or stop the Agent.",
       permissionUnsupported:

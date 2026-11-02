@@ -453,6 +453,10 @@ pub fn dispatch() {
             exit(0);
         }
         // Hidden Stop confirmation hook. Failures emit `{}` so the agent can stop normally.
+        "__failure-hook" => {
+            crate::agents::report::run(&argv[2..]);
+            exit(0);
+        }
         "__stop-hook" => {
             crate::agents::stop::run(&argv[2..]);
             exit(0);

@@ -3,6 +3,21 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 待合并：Agent 最终失败确认
+
+2026-11-02 已按用户批准完成 [规格](specs/agent-failure-confirmation.md) 与
+[计划](plans/agent-failure-confirmation.md) 的实现，位于工作树 `../HumanInLoop-failure-confirmation`、
+分支 `codex/agent-failure-confirmation`。共享「结束／出错时确认」开关；最终失败进入普通错误卡，
+有能力时要求原会话继续，无能力时仅「知道了」；Grok 仅错误，Antigravity 不宣称支持。
+Codex CLI 0.163.0 只读观察现有共享服务，不盲投无法原子绑定原失败回合的队列。
+
+Rust 2,336／前端 1,079／Pi 6 项、Clippy 1.99 与两个实际 daemon 隔离链路脚本通过。
+无预设 Dev 安装与正式远程转送完成；用户已在 iOS 收到模拟错误卡并提交预选「知道了」，
+构建身份及成功回传已核对，证据见规格与计划。未复现真实模型容量错误，未做真实失败后原生接续；
+真实模型请求需单独授权，Cursor 不做真实启动／探测。
+
+下一步：经交接决定是否合并 main 并安装日常版。当前日常程序未替换；完成合并安装后删除本节。
+
 ## 待验收：项目开发环境的真实渠道与界面
 
 [PR #27](https://github.com/Naituw/AskHuman/pull/27) 已按项目级 rules／MCP、幂等准备和完整转送边界重做；

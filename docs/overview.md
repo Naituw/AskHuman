@@ -516,17 +516,17 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 
 ## Agent Stop 结束确认
 
-> 规格 `docs/specs/agent-stop-confirmation.md`。
+> 规格 `docs/specs/agent-stop-confirmation.md`；最终失败处理见 `docs/specs/agent-failure-confirmation.md`。
 
 Cursor Desktop 另有默认关闭的实验性“禁止后台完成后自动续跑”能力，原生行为预检通过后才接入。
 由 Daemon 管理普通启动、窗口接入和还原，不依赖结束确认或逐会话结束状态。范围与验收真值见
 `docs/specs/cursor-desktop-background-followup.md`；终端 Cursor CLI 不在该能力范围内。
 
-- 处理 Claude Code、Codex、Cursor、Pi 的自然完成；Grok、错误和用户中断不能可靠 continuation，不发卡。
-- Claude Code、Codex、Cursor 的独立开关默认关，Pi 默认开；询问“继续/结束”，24h 或基础设施失败 fail-open，投放沿用活跃槽 ∪ watch 渠道。
-- Stop preference 独立保存，但只在 CLI/MCP mode 生效；None 隐藏开关并删除共享 handler，重新集成时
+- 正常 Stop 处理 Claude Code、Codex、Cursor、Pi 的自然完成；同一「结束／出错时确认」开关另使整轮最终失败进入普通作答卡。有原会话通道时可要求继续，否则仅「知道了」。用户中断、工具错误、自动重试中静默；Grok 仅支持出错提醒，Antigravity 尚无可靠来源。
+- Claude Code、Codex、Cursor、Grok 的各家开关默认关，Pi 默认开，已有偏好保留；自然完成询问“继续/结束”，24h 或基础设施失败 fail-open，投放沿用活跃槽 ∪ watch 渠道。错误卡也进入 iOS 普通收件箱，沿用其空闲推送门槛，不要求手机发起资格。
+- Stop preference 独立保存，但只在 CLI/MCP mode 生效；关闭全量 lifecycle 时仍可安装必要的结果观察，错误卡由 daemon 持有。None 隐藏开关并删除共享 handler 与观察产物，重新集成时
   自动恢复。Active mode 内若只开 lifecycle，共享 Stop handler 只带 `track`、不弹确认卡。
-- 继续时使用各家原生 continuation；Pi Extension 在同一会话空闲且无排队消息时调用 `pi.sendUserMessage`。下一次自然 Stop 再询问，不做外部 resume。
+- 错误后接续复用 `daemon/runtime/agent_control.rs` 的持久操作与实际开始回执；`agents/codex_cli.rs` 只读观察已知共享服务的最终失败，暂不向 CLI 队列投递。继续时使用各家原生 continuation；Pi Extension 在同一会话空闲且无排队消息时调用 `pi.sendUserMessage`。下一次自然 Stop 再询问，不做外部 resume。
 - Stop 确认复用普通 Ask 单选链路并写入回复历史，已提交问答参与 `show_last`；它与 lifecycle 共用单一 Stop handler，避免并发 Hook 提前置空闲。
 - `[user_confirmed_end_turn]` 出现在最后回复任意位置即表示用户已明确同意结束，命中后直接放行，避免再次确认。
 

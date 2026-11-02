@@ -37,6 +37,7 @@ use transport::{OwnedReadHalf, OwnedWriteHalf, Stream};
 
 mod agent_control;
 mod detect;
+mod failure_confirmation;
 mod fork;
 mod inbound;
 mod inbox;
@@ -231,6 +232,7 @@ struct ServerState {
     /// Agent lifecycle registry (lifecycle tracking spec D3).
     agents: Arc<AgentRegistry>,
     agent_controls: crate::agents::control::ControlStore,
+    failure_confirmations: failure_confirmation::Cards,
     /// Agent 插话队列（spec agent-interject）：内存常驻，变更时落盘 `interject.json`。
     interject: crate::agents::interject::InterjectStore,
     /// Short-lived Grok MCP session-binding candidates and process/instance partitions.
@@ -935,6 +937,7 @@ async fn serve(_lock: LockGuard) -> i32 {
         update: Mutex::new(init_update_snapshot()),
         agents: Arc::new(AgentRegistry::load()),
         agent_controls: crate::agents::control::ControlStore::load(),
+        failure_confirmations: failure_confirmation::Cards::default(),
         interject: crate::agents::interject::InterjectStore::load(),
         grok_bindings: crate::context_binding::GrokBindingRegistry::default(),
         agent_subs: Mutex::new(Vec::new()),
@@ -979,6 +982,8 @@ async fn serve(_lock: LockGuard) -> i32 {
     }
 
     crate::cursor_desktop::start();
+
+    tokio::spawn(agent_control::watch_codex_cli(state.clone()));
 
     // The daemon owns desktop subscriptions and routes native prompts through the existing coordinator.
     {
@@ -1838,6 +1843,7 @@ async fn control_loop(
                     }
                     ensure_inbound_listeners(state).await;
                     state.watch.notify.notify_one();
+                    failure_confirmation::observe(state, kind, &session_id, ev);
                     if let Some(gateway) = ios_gateway(state) {
                         gateway.agent_event(crate::ios::gateway::AgentEventInfo {
                             agent_key: ios_agents::agent_key(kind, &session_id),

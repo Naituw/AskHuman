@@ -117,3 +117,17 @@ test("Pi managed Stop continuation preserves the phone round until its actual re
   assert.equal(result.payload.turn_id, original); assert.equal(result.payload.stop_reason, "stop");
   await f.emit("session_shutdown");
 });
+
+test("Pi error confirmation observes errors and supports control with full lifecycle disabled", async () => {
+  const f = fixture({ lifecycle: false, stop: true, cli: true }, { manual: true });
+  await f.emit("session_start"); await f.emit("agent_start");
+  const turn = f.calls.findLast(call => call.args[2] === "turn-start").payload.turn_id;
+  await f.emit("agent_end", { messages: [{ role: "assistant", stopReason: "error", errorMessage: "selected model is at capacity", content: [] }] });
+  await f.emit("agent_settled"); await new Promise(setImmediate);
+  const result = f.calls.findLast(call => call.args[2] === "turn-end");
+  assert.equal(result.payload.stop_reason, "error"); assert.equal(result.payload.turn_id, turn);
+  assert.equal(result.payload.error_details, "selected model is at capacity");
+  assert.equal(f.calls.filter(call => call.args[0] === "__stop-hook").length, 0);
+  await f.poll(); assert.ok(f.calls.some(call => call.args[0] === "__agent-control"));
+  await f.emit("session_shutdown");
+});

@@ -494,6 +494,10 @@ struct HookInputSummary {
     #[serde(default, rename = "subagentType")]
     subagent_type: Option<String>,
     #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default, alias = "errorDetails", alias = "reasonDetails")]
+    error_details: Option<String>,
+    #[serde(default)]
     control_operation_id: Option<String>,
     #[serde(default)]
     transcript_path: Option<String>,
@@ -564,6 +568,8 @@ impl HookInputSummary {
         insert_summary_string(&mut map, "error", self.error);
         insert_summary_string(&mut map, "cancelledBy", self.cancelled_by);
         insert_summary_string(&mut map, "subagentType", self.subagent_type);
+        insert_summary_string(&mut map, "agent_id", self.agent_id);
+        insert_summary_string(&mut map, "error_details", self.error_details);
         insert_summary_string(&mut map, "control_operation_id", self.control_operation_id);
         insert_summary_string(
             &mut map,

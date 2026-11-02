@@ -51,6 +51,7 @@ pub(crate) struct Live {
     /// Sessions whose last turn failed (cleared by the next turn).
     pub failed: HashSet<String>,
     pub results: HashMap<String, TurnResult>,
+    pub failure_cards: HashMap<String, String>,
     /// Session → when "done" is announced.
     pub done_at: HashMap<String, i64>,
     /// Results waiting for the Mac to be idle long enough; at most one per phone and Agent.
@@ -379,6 +380,7 @@ impl Actor {
         match info.event {
             // The Agent works again: the result that was about to be announced is no result.
             AgentEventKind::TurnStart => {
+                self.live.failure_cards.remove(&key);
                 self.live.done_at.remove(&key);
                 self.live.failed.remove(&key);
                 self.live.results.remove(&key);
@@ -389,6 +391,7 @@ impl Actor {
                 self.drop_notices(&key);
             }
             AgentEventKind::SessionEnd => {
+                self.live.failure_cards.remove(&key);
                 self.live.done_at.remove(&key);
                 self.drop_notices(&key);
             }
@@ -416,7 +419,14 @@ impl Actor {
                 self.drop_notices(&key);
                 if outcome == TurnOutcome::Failed {
                     self.live.failed.insert(key.clone());
-                    self.announce(&key, "failed", now);
+                    if !self.live.failure_cards.get(&key).is_some_and(|id| {
+                        self.live
+                            .results
+                            .get(&key)
+                            .is_some_and(|result| &result.id == id)
+                    }) {
+                        self.announce(&key, "failed", now);
+                    }
                 } else if outcome == TurnOutcome::Incomplete {
                     self.live.failed.remove(&key);
                     self.announce(&key, "incomplete", now);
@@ -464,6 +474,35 @@ impl Actor {
         for key in due {
             self.live.done_at.remove(&key);
             self.announce(&key, "done", now);
+        }
+    }
+
+    pub(super) fn release_failure(&mut self, key: &str, result_id: &str) {
+        if self
+            .live
+            .failure_cards
+            .get(key)
+            .is_some_and(|id| id == result_id)
+        {
+            self.live.failure_cards.remove(key);
+            if self.live.results.get(key).is_some_and(|result| {
+                result.id == result_id && result.outcome == TurnOutcome::Failed
+            }) {
+                self.announce(key, "failed", self.now());
+            }
+        }
+    }
+
+    pub(super) fn consume_failure(&mut self, key: &str, result_id: &str) {
+        if self
+            .live
+            .failure_cards
+            .get(key)
+            .is_some_and(|id| id == result_id)
+        {
+            for phone in self.followers(key) {
+                self.deliver_follow(&phone, key);
+            }
         }
     }
 

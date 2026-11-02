@@ -674,7 +674,7 @@ const {
           </label>
         </div>
         <p class="card-desc agent-hint">
-          {{ t("settings.integration.stopHint") }}
+          {{ t(a.id === 'grok' ? "settings.integration.stopGrokHint" : "settings.integration.stopHint") }}
         </p>
         <p
           v-if="modes[a.id].stop.otherHandlersDetected"

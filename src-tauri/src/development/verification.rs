@@ -254,6 +254,34 @@ pub fn decorate_task(task: &mut crate::ipc::TaskRequest) -> Result<(), String> {
     Ok(())
 }
 
+/// Daemon-owned native interactions have no client profile environment; resolve their
+/// authority from the same owned session binding used by native control.
+pub(crate) fn decorate_native_task(
+    task: &mut crate::ipc::TaskRequest,
+    kind: crate::agents::AgentKind,
+    session: &str,
+) -> Result<(), String> {
+    if !super::session::requires_test_profile() {
+        return Ok(());
+    }
+    let profile = super::session::for_native(kind, session)
+        .ok_or("native interaction requires an owned test profile")?;
+    let fingerprint =
+        serde_json::to_vec(&(&task.message, &task.questions, &task.native_request_id))
+            .map_err(|e| e.to_string())?;
+    task.message.development = Some(Box::new(profile_record(&profile, &fingerprint)?));
+    task.project = profile.worktree.to_string_lossy().into_owned();
+    task.source = format!(
+        "Dev · {}",
+        profile
+            .worktree
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+    );
+    Ok(())
+}
+
 /// A native test interaction has its own lifetime and grant, just like a one-shot ask.
 fn profile_record(
     profile: &super::session::Profile,

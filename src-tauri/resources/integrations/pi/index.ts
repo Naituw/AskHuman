@@ -24,7 +24,7 @@ let pendingControlId: string | undefined;
 let activeReportTurnId: string | undefined;
 let pendingContinuationTurnId: string | undefined;
 let lastRun:
-  | { generation: number; stopReason?: string; message?: string }
+  | { generation: number; stopReason?: string; message?: string; errorDetails?: string }
   | undefined;
 let pendingStop:
   | { generation: number; child: ChildProcessWithoutNullStreams }
@@ -135,7 +135,7 @@ function stopControlPolling(): void {
 
 function startControlPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
   stopControlPolling();
-  if (!CONFIG.lifecycle) return;
+  if (!CONFIG.lifecycle && !CONFIG.stop) return;
   const lease = controlGeneration;
   const signal = (extra: JsonObject = {}) => sessionPayload(ctx, {
     generation: lease, pid: process.pid, idle: ctx.isIdle() && !ctx.hasPendingMessages(), ...extra,
@@ -225,7 +225,7 @@ function boundedInput(input: unknown): unknown {
   }
 }
 
-function assistantSummary(messages: unknown[]): { stopReason?: string; message?: string } {
+function assistantSummary(messages: unknown[]): { stopReason?: string; message?: string; errorDetails?: string } {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index] as JsonObject;
     if (message?.role !== "assistant") continue;
@@ -240,6 +240,7 @@ function assistantSummary(messages: unknown[]): { stopReason?: string; message?:
     return {
       stopReason: typeof message.stopReason === "string" ? message.stopReason : undefined,
       message: text || undefined,
+      errorDetails: typeof message.errorMessage === "string" ? message.errorMessage.slice(0, 2000) : undefined,
     };
   }
   return {};
@@ -264,7 +265,7 @@ export default function askHumanExtension(pi: ExtensionAPI) {
     lastRun = undefined;
     cancelPendingStop();
     await reportNative(pi, ctx);
-    if (CONFIG.lifecycle) report(ctx, "session-start");
+    if (CONFIG.lifecycle || CONFIG.stop) report(ctx, "session-start");
     startControlPolling(pi, ctx);
   });
 
@@ -289,7 +290,7 @@ export default function askHumanExtension(pi: ExtensionAPI) {
     cancelPendingStop();
     await reportNative(pi, ctx);
     if (generation !== token) return;
-    if (CONFIG.lifecycle) report(ctx, "turn-start", operationId ? { control_operation_id: operationId } : {});
+    if (CONFIG.lifecycle || CONFIG.stop) report(ctx, "turn-start", operationId ? { control_operation_id: operationId } : {});
   });
 
   pi.on("tool_call", async (event, ctx) => {
@@ -303,7 +304,7 @@ export default function askHumanExtension(pi: ExtensionAPI) {
     ) {
       input.timeout = 86400;
     }
-    if (!CONFIG.lifecycle) return;
+    if (!CONFIG.lifecycle && !CONFIG.stop) return;
     const command = spawnJson(
       ["__agent-hook", "pi", "activity"],
       sessionPayload(ctx, {
@@ -321,7 +322,7 @@ export default function askHumanExtension(pi: ExtensionAPI) {
   });
 
   pi.on("tool_result", async (event, ctx) => {
-    if (!CONFIG.lifecycle) return;
+    if (!CONFIG.lifecycle && !CONFIG.stop) return;
     report(ctx, "activity", {
       hook_event_name: "PostToolUse",
       tool_name: event.toolName,
@@ -340,7 +341,7 @@ export default function askHumanExtension(pi: ExtensionAPI) {
     if (!CONFIG.stop || !run || run.generation !== generation || run.stopReason !== "stop") {
       // Tell AskHuman why the turn ended so a failed run is not announced as finished.
       const reason = run && run.generation === generation ? run.stopReason : undefined;
-      if (CONFIG.lifecycle) report(ctx, "turn-end", reason ? { stop_reason: reason } : {});
+      if (CONFIG.lifecycle || CONFIG.stop) report(ctx, "turn-end", reason ? { stop_reason: reason, error_details: reason === "error" ? run?.errorDetails : undefined } : {});
       return;
     }
 
@@ -386,7 +387,7 @@ export default function askHumanExtension(pi: ExtensionAPI) {
           // Fail open and report the settled turn below.
         }
       }
-      if (CONFIG.lifecycle) report(ctx, "turn-end", { stop_reason: run.stopReason });
+      if (CONFIG.lifecycle || CONFIG.stop) report(ctx, "turn-end", { stop_reason: run.stopReason });
     });
   });
 
@@ -396,6 +397,6 @@ export default function askHumanExtension(pi: ExtensionAPI) {
     generation += 1;
     lastRun = undefined;
     cancelPendingStop();
-    if (CONFIG.lifecycle) report(ctx, "session-end");
+    if (CONFIG.lifecycle || CONFIG.stop) report(ctx, "session-end");
   });
 }

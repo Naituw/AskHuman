@@ -389,6 +389,44 @@ impl IosGateway {
             .send(Cmd::Run(Box::new(move |actor| actor.on_agent_event(info))));
     }
 
+    pub fn hold_failure(&self, key: &str, result_id: &str) {
+        let (key, result_id) = (key.to_string(), result_id.to_string());
+        let _ = self.cmd.send(Cmd::Run(Box::new(move |actor| {
+            if actor.live.failure_cards.len() < 512 || actor.live.failure_cards.contains_key(&key) {
+                actor.live.failure_cards.insert(key, result_id);
+            }
+        })));
+    }
+
+    pub fn consume_failure(&self, key: &str, result_id: &str) {
+        let (key, result_id) = (key.to_string(), result_id.to_string());
+        let _ = self.cmd.send(Cmd::Run(Box::new(move |actor| {
+            actor.consume_failure(&key, &result_id)
+        })));
+    }
+
+    pub async fn answer_phone(&self, request_id: &str) -> Option<String> {
+        let request_id = request_id.to_string();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        self.cmd
+            .send(Cmd::Run(Box::new(move |actor| {
+                let _ = sender.send(actor.requests.answer_phone(&request_id));
+            })))
+            .ok()?;
+        tokio::time::timeout(std::time::Duration::from_secs(2), receiver)
+            .await
+            .ok()?
+            .ok()
+            .flatten()
+    }
+
+    pub fn release_failure(&self, key: &str, result_id: &str) {
+        let (key, result_id) = (key.to_string(), result_id.to_string());
+        let _ = self.cmd.send(Cmd::Run(Box::new(move |actor| {
+            actor.release_failure(&key, &result_id)
+        })));
+    }
+
     /// A queued interjection that came from `phone_id` was handed to the Agent.
     pub fn interject_consumed(&self, phone_id: &str, agent_key: &str) {
         let (phone_id, agent_key) = (phone_id.to_string(), agent_key.to_string());

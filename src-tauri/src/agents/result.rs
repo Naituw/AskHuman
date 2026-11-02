@@ -108,7 +108,8 @@ pub fn observation(
         256,
     );
     let name = event_name(input);
-    let subagent = kind == AgentKind::Grok && text("subagentType").is_some_and(|s| !s.is_empty());
+    let subagent = kind == AgentKind::Grok && text("subagentType").is_some_and(|s| !s.is_empty())
+        || kind == AgentKind::Claude && text("agent_id").is_some_and(|s| !s.is_empty());
     let mut observation = Observation {
         turn_id: turn_id.clone(),
         subagent,
@@ -181,7 +182,14 @@ pub fn observation(
         summary: bounded(
             text("error_details")
                 .or_else(|| text("errorDetails"))
-                .or_else(|| text("reasonDetails")),
+                .or_else(|| text("reasonDetails"))
+                .or_else(|| {
+                    if name == "stopfailure" {
+                        text("last_assistant_message").or_else(|| text("lastAssistantMessage"))
+                    } else {
+                        None
+                    }
+                }),
             320,
         ),
         at: 0,
@@ -193,6 +201,21 @@ pub fn observation(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_claude_subagent_failure_is_not_a_main_session_failure_card() {
+        let input = json!({"hook_event_name":"StopFailure","agent_id":"child","error":"overloaded","last_assistant_message":"API overloaded"});
+        let result = observation(
+            AgentKind::Claude,
+            super::super::LifecycleEvent::TurnEnd,
+            Some(&input),
+        );
+        assert!(result.subagent);
+        assert_eq!(
+            result.result.unwrap().summary.as_deref(),
+            Some("API overloaded")
+        );
+    }
 
     #[test]
     fn cancellation_is_not_success_or_failure() {

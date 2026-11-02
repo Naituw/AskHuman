@@ -513,6 +513,51 @@ async fn a_failure_waits_like_a_finished_turn() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_failure_card_suppresses_the_result_push_and_a_failed_submission_restores_it() {
+    let (fx, _phone) = away_follower().await;
+    fx.host.set_alert_after(0);
+    fx.gateway.hold_failure("claude:s1", "result");
+    fx.gateway.agent_event(turn_end(true));
+    tokio::time::sleep(5 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 0);
+    fx.gateway.release_failure("claude:s1", "another-result");
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(fx.pusher.count(), 0);
+    fx.gateway.release_failure("claude:s1", "result");
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(fx.pusher.count(), 1);
+    fx.gateway.release_failure("claude:s1", "result");
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(fx.pusher.count(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_acknowledged_failure_card_consumes_the_old_phone_notification() {
+    let (fx, mut phone) = away_follower().await;
+    fx.gateway.hold_failure("claude:s1", "result");
+    fx.gateway.agent_event(turn_end(true));
+    fx.gateway.consume_failure("claude:s1", "result");
+    let state: wire::FollowState = phone.recv_body(t::FOLLOW_STATE).await;
+    assert!(state.keys.is_empty());
+    fx.gateway.release_failure("claude:s1", "result");
+    tokio::time::sleep(20 * MINUTE).await;
+    assert_eq!(fx.pusher.count(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_old_failure_card_cannot_restore_a_notice_after_a_new_round() {
+    let (fx, _phone) = away_follower().await;
+    fx.host.set_alert_after(0);
+    fx.gateway.hold_failure("claude:s1", "result");
+    fx.gateway.agent_event(turn_end(true));
+    fx.gateway
+        .agent_event(event("claude:s1", AgentEventKind::TurnStart, false));
+    fx.gateway.release_failure("claude:s1", "result");
+    tokio::time::sleep(5 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 0);
+}
+
+#[tokio::test(start_paused = true)]
 async fn input_on_the_mac_after_a_result_voids_it() {
     let (fx, mut phone) = away_follower().await;
     fx.host.set_alert_after(900);

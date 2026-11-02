@@ -973,6 +973,23 @@ async fn run_ask_async(task: crate::ipc::TaskRequest) -> i32 {
 }
 
 async fn run_ask_final_async(task: crate::ipc::TaskRequest, verbose: bool) -> AskFinal {
+    run_ask_observed(task, verbose, None).await
+}
+
+/// Dropping this future closes its submission connection and cancels its request.
+pub(crate) async fn internal_ask(
+    task: crate::ipc::TaskRequest,
+    accepted: &std::sync::Mutex<Option<String>>,
+) -> (String, i32) {
+    let result = run_ask_observed(task, false, Some(accepted)).await;
+    (result.stdout, result.exit_code)
+}
+
+async fn run_ask_observed(
+    task: crate::ipc::TaskRequest,
+    verbose: bool,
+    accepted: Option<&std::sync::Mutex<Option<String>>>,
+) -> AskFinal {
     use crate::ipc::ServerMsg;
 
     // 外层循环：撞上 Daemon 排空（draining）时无限等待其下线，然后重置重试预算重来。
@@ -1047,7 +1064,11 @@ async fn run_ask_final_async(task: crate::ipc::TaskRequest, verbose: bool) -> As
             // 流式取回：Warn → stderr；Final → stdout + 退出码；中途断连 → 退出码 3（P4）。
             loop {
                 match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
-                    Ok(Some(ServerMsg::Accepted { .. })) => {}
+                    Ok(Some(ServerMsg::Accepted { request_id })) => {
+                        if let Some(accepted) = accepted {
+                            *accepted.lock().unwrap() = Some(request_id);
+                        }
+                    }
                     // 排空闸门拒绝（只出现在 Accepted 之前）：等旧 Daemon 下线后重来。
                     Ok(Some(ServerMsg::Draining { .. })) => {
                         wait_for_drain().await;

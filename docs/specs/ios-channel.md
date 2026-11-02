@@ -60,7 +60,7 @@
 | D16 | 多问题交互 | 纵向长表单：所有问题平铺滚动 + 底部固定操作条（显示已答 n/N），与 Mac 弹窗一致；多题时按钮先是「下一题」，最后一题进入屏幕后才变成「发送」（弹窗 V1 / V2，见 `multi-question-vertical.md`；2026-10-26 补） |
 | D17 | 收件箱 | 汇总收件箱；按项目分组、未读蓝点、独立草稿，与 Mac 弹窗一致 |
 | D18 | 观察与结果通知 | 打开某 Agent 详情时才实时推流（不占名额、仅前台）；另有通知集（每台 Mac 每部手机 ≤5 个），其中的 Agent 第一次「完成 / 出错」时通知（原设计是手动「关注」；2026-10-27 起：App 里没有手动入口，手机创建任务及手机原会话消息真正启动的新一轮会进来，删除「等待你」，推送遵守 Mac 空闲规则，一次性，见 `docs/specs/ios-follow-narrowing.md`） |
-| D19 | 出错信号 | 生命周期 turn-end 事件新增可选 `failed` 标记（Claude 与 Grok 的 `StopFailure`、Cursor 的 `status=error`、Pi 的 `stop_reason=error`）；Codex 没有对应 hook，该家不提供出错通知；Mac 上其它界面行为不变；是向后兼容的可选字段，不升级协议号 |
+| D19 | 出错信号 | 统一 TurnResult 为准，保留可选 `failed` 投影；Claude/Grok、Cursor、Pi 各按其最终错误事件，Codex Desktop 与已核对的 CLI 共享服务按原生终态。缺少来源时保持未知。开启「结束／出错时确认」还会生成普通错误卡，不受 D18 手机发起资格限制，与同轮结果提醒去重；见 `agent-failure-confirmation.md` |
 | D20 | 安全门 | 提交新任务（含 YOLO）需要 Face ID / 设备密码；回答与插话不需要 |
 | D21 | 标识 | Bundle ID `com.naituw.humaninloop.ios`；通知扩展 `com.naituw.humaninloop.ios.notification`；显示名「AskHuman」（若 App Store Connect 名称被占用，退回「AskHuman Mobile」）；Team 沿用 `DMJXDB9H6Q` |
 | D22 | 设置入口 | 内测期放「实验」Tab（需先打开隐蔽开关 `experimental.enabled`）；对外发行后再转正到「渠道」Tab（与「Agent 任务」从实验转正走同一路径） |

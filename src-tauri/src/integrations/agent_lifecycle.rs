@@ -91,7 +91,7 @@ impl LifecyclePreferences {
 
 /// 某家族要注册的事件：(配置文件里的事件键, 归一化 lifecycle 事件)。
 /// Codex 额外需要 snake_case 标签用于信任键/身份（见 `codex_label`）。
-fn events(kind: AgentKind) -> &'static [(&'static str, &'static str)] {
+pub(crate) fn events(kind: AgentKind) -> &'static [(&'static str, &'static str)] {
     #[cfg(test)]
     let version = Some((u64::MAX, 0, 0));
     #[cfg(not(test))]
@@ -174,7 +174,7 @@ fn newer_events(kind: AgentKind) -> &'static [&'static str] {
     }
 }
 
-fn event_timeout(kind: AgentKind, event_key: &str) -> Option<u64> {
+pub(crate) fn event_timeout(kind: AgentKind, event_key: &str) -> Option<u64> {
     match (kind, event_key) {
         (AgentKind::Codex, "Interrupt" | "SessionEnd") => Some(3),
         (AgentKind::Grok, "StopCancelled" | "Notification") => Some(2),
@@ -445,6 +445,7 @@ pub(crate) fn install_unlocked(kind: AgentKind) -> Result<String> {
             return Err(anyhow!("Antigravity lifecycle tracking is unsupported"))
         }
     }
+    super::agent_stop::reconcile_current_mode_unlocked(kind)?;
     Ok(message("cmd.lifecycleInstalled"))
 }
 
@@ -976,6 +977,16 @@ fn codex_status() -> DiskLifecycleStatus {
     }
 }
 
+pub(crate) fn owned_codex_handlers_trusted() -> bool {
+    codex_trust_entries(&paths::codex_hooks_json()).is_ok_and(|entries| {
+        let have = read_codex_trust();
+        !entries.is_empty()
+            && entries
+                .iter()
+                .all(|(key, hash)| have.get(key) == Some(hash))
+    })
+}
+
 /// 由 hooks.json 实际结构计算本功能各 handler 的 (信任键, trusted_hash)。
 /// 信任键 = `<abs hooks.json>:<snake_label>:<group_index>:<handler_index>`。
 fn codex_trust_entries(hooks_json: &std::path::Path) -> Result<Vec<(String, String)>> {
@@ -1016,7 +1027,9 @@ fn codex_trust_entries(hooks_json: &std::path::Path) -> Result<Vec<(String, Stri
                         .get(*field)
                         .and_then(Value::as_str)
                         .is_some_and(|command| {
-                            command.contains(MARKER) || command.contains(super::agent_stop::MARKER)
+                            command.contains(MARKER)
+                                || command.contains(super::agent_stop::MARKER)
+                                || command.contains(super::agent_stop::FAILURE_MARKER)
                         })
                 });
                 if !is_command || !owned {

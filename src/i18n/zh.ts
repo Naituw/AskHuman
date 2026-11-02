@@ -607,11 +607,12 @@ export default {
       askQuestionTitle: "接管原生提问工具",
       askQuestionHint:
         "Claude 用自己内置的提问工具问你时，改由 AskHuman 弹窗或 IM 作答，答案直接回传给 Claude，不必回到终端；取消则要求它重新询问。",
-      stopTitle: "结束前确认",
+      stopTitle: "结束／出错时确认",
       stopHint:
-        "该 Agent 自然完成一轮时，通过当前活跃弹窗或 IM 询问继续还是结束；错误和用户主动取消不会被拦截。",
+        "自然完成时询问继续还是结束；整轮最终出错时显示处理卡，支持接续的会话可要求继续。自动重试中、工具错误和用户取消不提醒，手机推送沿用现有提醒时机。",
+      stopGrokHint: "目前仅支持整轮出错提醒，不拦截正常结束，也暂不支持从错误卡接续；可以选择「知道了」。",
       stopUnsupported:
-        "该 Agent 无法通过可阻塞的 Stop Hook 继续；当前仅 Grok 不支持。",
+        "该 Agent 尚无可靠的结束／出错事件来源，暂不支持此确认功能。",
       stopCoexist:
         "检测到其它可见的 Stop handler；它们会并发执行，并可能独立决定继续或结束 Agent。",
       permissionUnsupported: "该 Agent 不支持原生 PermissionRequest 审批闭环。",

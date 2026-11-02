@@ -341,6 +341,7 @@ fn state() -> Arc<ServerState> {
     let mut config = AppConfig::default();
     config.general.popup_prewarm = false;
     Arc::new(ServerState {
+        failure_confirmations: failure_confirmation::Cards::default(),
         startup_fp: lifecycle::Fingerprint { size: 0, hash: 0 },
         exe_path: String::new(),
         restart_hold: Default::default(),

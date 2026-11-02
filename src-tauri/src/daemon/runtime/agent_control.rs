@@ -10,6 +10,59 @@ use serde_json::Value;
 
 pub(super) const CONTINUE_PROMPT: &str = "Inspect why the previous attempt stopped and what has already been completed. Continue the current task from its existing progress, without repeating successful operations. If you cannot proceed, explain the blocker and ask for the specific help you need.";
 
+pub(super) async fn watch_codex_cli(state: Arc<ServerState>) {
+    let mut observer = crate::agents::codex_cli::Observer::default();
+    loop {
+        let enabled = crate::integrations::agent_stop::enabled(AgentKind::Codex)
+            && crate::integrations::agent_launch::codex_version().is_some_and(|v| v >= (0, 163, 0));
+        let snapshot = state.agents.snapshot();
+        let candidates: Vec<_> = snapshot
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|record| {
+                enabled
+                    && record["kind"] == "codex"
+                    && record["state"] == "working"
+                    && !crate::codex_desktop::is_desktop_session(record)
+            })
+            .filter_map(|record| {
+                let sid = record["sessionId"].as_str()?;
+                let turn = record["activeTurnId"].as_str()?;
+                (crate::development::session::native_binding_allowed(AgentKind::Codex, sid)
+                    && failure_confirmation::enabled(AgentKind::Codex, sid))
+                .then(|| (sid.to_string(), turn.to_string()))
+            })
+            .take(32)
+            .collect();
+        if candidates.is_empty() {
+            observer.close();
+        } else if let Some(program) =
+            crate::integrations::agent_launch::readiness(AgentKind::Codex).executable
+        {
+            for (sid, turn) in candidates {
+                let home = crate::development::session::for_native(AgentKind::Codex, &sid)
+                    .map(|profile| profile.directory)
+                    .unwrap_or_else(crate::paths::codex_dir);
+                if let Some(observation) = observer.failed_turn(&program, &home, &sid, &turn).await
+                {
+                    apply(
+                        &state,
+                        AgentKind::Codex,
+                        &sid,
+                        LifecycleEvent::TurnEnd,
+                        observation,
+                        None,
+                    );
+                    broadcast_agents_state(&state);
+                    state.watch.notify.notify_one();
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+}
+
 pub(super) fn operation_id(phone: &str, message: &str) -> String {
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(serde_json::to_vec(&["ios-interject", phone, message]).unwrap());
@@ -81,6 +134,7 @@ pub(super) struct Message<'a> {
     pub text: &'a str,
     pub files: Vec<FileAttachment>,
     pub expected_result_id: Option<String>,
+    pub continuation_instruction: Option<&'a str>,
 }
 
 pub(super) async fn send(state: &Arc<ServerState>, message: Message<'_>) -> InterjectResult {
@@ -100,6 +154,7 @@ pub(super) async fn send(state: &Arc<ServerState>, message: Message<'_>) -> Inte
         return InterjectResult::rejected("notFound");
     };
     if rec["state"] != "idle"
+        || state.registry.waiting_for_session(message.sid)
         || rec["waitingRequestId"]
             .as_str()
             .is_some_and(|s| !s.is_empty())
@@ -125,7 +180,13 @@ pub(super) async fn send(state: &Arc<ServerState>, message: Message<'_>) -> Inte
             .then(|| state.agent_controls.pi_generation(message.sid))
             .flatten(),
         text: if message.expected_result_id.is_some() {
-            CONTINUE_PROMPT.into()
+            match message
+                .continuation_instruction
+                .filter(|text| !text.trim().is_empty())
+            {
+                Some(text) => format!("{CONTINUE_PROMPT}\n\nUser instruction:\n{text}"),
+                None => CONTINUE_PROMPT.into(),
+            }
         } else {
             message.text.into()
         },
@@ -271,6 +332,7 @@ fn apply(
         state.agent_controls.cancel_unsubmitted(kind, sid);
     }
     if applied.accepted || event == LifecycleEvent::TurnEnd && started_control.is_some() {
+        failure_confirmation::observe(state, kind, sid, event);
         if let Some(gateway) = ios_gateway(state) {
             gateway.agent_event(AgentEventInfo {
                 agent_key: ios_agents::agent_key(kind, sid),
