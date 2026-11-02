@@ -156,6 +156,26 @@ App 目标编译通过；Mac 端、线协议、中继、推送规则都没改。
 2026-11-01 已通过 TestFlight 分发 `0.1.0 (4)`（源码 main `4381628c`），用户已更新并确认原有 Mac 连接正常。
 触发时机已有真实引擎回归与模拟器验证；后续日常使用观察“回来补齐不弹、前台实时新到仍弹”，确认后删除本节。
 
+## 待验收：iOS 开发者模式（P1–P5 已实现并过模拟器自动化，真机一轮 P6 等用户同意）
+
+2026-11-02 用户要求给 iOS App 加「开发者模式」：Macs 标签里的开关（默认关）打开后，所有界面之上出现一个可拖动的浮动按钮，按住它、滑到条目松手；
+v1 只有「快速添加待办」（不离开当前界面，把一句话记成某个项目的待办）。需求 [`docs/specs/ios-developer-mode.md`](specs/ios-developer-mode.md)
+（D1–D17；其中「agent 设计」的部分用户已认可，原话在 §11），计划 [`docs/plans/ios-developer-mode.md`](plans/ios-developer-mode.md)。没有 Rust 与线协议改动。
+
+已完成：AHCore（位置 / 手势状态机 / `QuickTodoComposer`）与单测、App 的开关与两个独立窗口（按钮窗口、快速添加窗口）、项目选择、中英文案、
+`AskHumanDeveloperUITests`（17 条，英文与中文各跑过）。实现中顺带修了一个既有的布局死循环：键盘从另一个窗口盖到全屏图片查看器上时 App 卡死
+（`ImageGallery.swift` 每页改取外层 `GeometryReader` 的尺寸，图片位置比以前高约 11 pt；原因与约束见 `docs/overview-ios.md` 的不变量）。
+**没有在真机上用过，新版也没装到手机。**
+
+下一步：
+- [ ] P6 真机一轮（**先问用户**；用 `ios-testflight` 技能出内测包）：手势阈值的手感（`DeveloperPressTuning.menuDelay` 0.12 s、`moveSlop` 10 pt；按下后立刻划向菜单会变成拖按钮，
+  这是设计内的代价）、真机键盘与「关掉快速添加页后原输入框重新编辑」、按钮盖在 Safari / 图片查看器 / 系统弹窗之上的表现、触觉、VoiceOver。
+  调整常量或手势规则前先经 AskHuman 确认，结果写回规格 §11。
+- [ ] 已知局限（规格 §8，真机用下来觉得别扭再提）：按钮盖在 App 内的系统弹窗（alert、确认对话框）之上，可能遮住弹窗边缘的按钮；目标 Mac 离线时不会像待办页那样自动换机。
+- [ ] 模拟器回归（iPhone 16 / iOS 18.5，开发者模式关）的对照结果：其余 134 条 UI 测试里 127 条通过、3 条跳过、4 条失败；这 4 条在功能开发之前的提交（`190a76ad`）上用同一台模拟器跑，**同样失败或偶发**，与本功能无关，原因都没查：
+  `AskHumanTodosUITests.testAMacThatPredatesTodosAsksForAnUpdate`（上文已记）与 `testMacsThatBothSyncAreOneICloudSourceWithTheirOwnProjectsAndTheAgentsDots`（`AskHumanTodosUITests.swift:162`，断言「iCloud names its Macs」；与前一条同样走来源菜单，疑似同一个 18.5 上菜单无障碍报法的问题）；
+  `AskHumanInputVisibilityUITests.testShortAnswerAndAttachmentFitWithAccessibilityText` 与 `testEachQuestionRevealsItsOwnAttachmentEntryPoint`（都是 `Failed to synthesize event: Neither element nor any descendant has keyboard focus`：点了输入框没拿到键盘焦点；前一条稳定，后一条在基线上 2 次里 1 次失败）。第一条在 iOS 27.0 上通过（上文有记），其余三条没有换别的系统版本试过。
+
 ## 待验收：iOS「做完 / 出错」通知收窄（Mac 端与 App 端都已实现，真机一轮未做）
 
 2026-10-27 用户决定：App 里去掉手动「关注」星标（Agents 页本来就能看到所有 Agent 的状态），只保留「从手机创建的任务做完 / 出错」的自动通知，

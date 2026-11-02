@@ -1,6 +1,6 @@
 # 计划：iOS 开发者模式（浮动按钮 + 快速添加待办）
 
-> 需求：`docs/specs/ios-developer-mode.md`（决策编号 D1–D17 指其 §3）。状态：2026-11-02 起草，**待用户审阅**；审阅通过前不写代码。
+> 需求：`docs/specs/ios-developer-mode.md`（决策编号 D1–D17 指其 §3）。状态：2026-11-02 起草；用户已审阅通过，P1–P5 已实现（见「实现记录」），**P6 待用户同意后再做**。
 > 分支：直接在 `main` 上按阶段提交。改动只在 `ios/` 与 `docs/`：不碰 Rust、不需要 Dev Instance、不跑 `./scripts/install.sh`。
 > 工程由 XcodeGen 生成（`*.xcodeproj` 不入库）：每次新增 App 侧文件后先 `cd ios && xcodegen generate`。
 > 开发开始后，任何方案改动都先经 AskHuman 与用户确认；用户的审阅意见会追加到需求文档末尾（标注为反馈意见）。
@@ -64,7 +64,7 @@
 - `groups`：项目选择的数据，按 Mac 一组；`loadProjects()` 对每台**在线且 `caps.todos`** 的 Mac 并行调一次 `todoProjects(macId:)`，组内顺序保持 Mac 给的顺序，**不过滤**仅云端 / 仅本机的项目（需求 §6.2），同一个 iCloud 项目在每台开了同步的 Mac 下各出现一次、不去重；离线 / 太旧 / 超时的 Mac 各自带原因；`query` 过滤。
 - `choose(_ project: TodoListedProject)`：记下目标并持久化。
 - `unavailable: QuickTodoUnavailable?`：由文字校验（空 / 超过 `Wire.todoTextMaxChars`）、目标、目标 Mac 的 `link` 与 `caps.todos` 推导，对应需求 §6.1 的四行文案。
-- `send() async`：状态 `editing → sending → (成功 | 失败)`。用 `TodoMutation.add(localId:text:auto: false).operation(clientMsgId:projectId:)` 拼出 `todo.op`（因此不带 `auto`），每次发送用新的 `clientMsgId`，调 `backend.todoApply(macId:operation:)`；`BackendError.timedOut` 时用同一个 id 再问一次（与 `TodosStore.send` 一致）。结果映射成 `QuickTodoFailure`：`macOffline` / `unknownMac` → `unreachable`；两次都超时 → `timedOut`；ack `notFound`（原因 `unknownProject`）→ `projectGone`，同时清掉已存的目标并置 `needsProject = true`，视图据此进入项目选择（已不存在的项目不该留作目标）；ack `rejected` 或其他抛错 → `refused(原因)`；ack 其余非 `ok` → `notSaved`。成功后清空文字并让 `DeveloperTools` 出提示。
+- `send() async`：状态 `editing → sending → (成功 | 失败)`。用 `TodoMutation.add(localId:text:auto: false).operation(clientMsgId:projectId:)` 拼出 `todo.op`（因此不带 `auto`），每次发送用新的 `clientMsgId`，调 `backend.todoApply(macId:operation:)`；`BackendError.timedOut` 时用同一个 id 再问一次（与 `TodosStore.send` 一致）；两次都超时后记下这次尝试（id + 文字 + 目标），用户再点「添加」时若三者没变就沿用这个 id。结果映射成 `QuickTodoFailure`：`macOffline` / `unknownMac` → `unreachable`；两次都超时 → `timedOut`；ack `notFound`（原因 `unknownProject`）→ `projectGone`，同时清掉已存的目标，视图看到 `projectGone` 就进入项目选择（已不存在的项目不该留作目标）；ack `rejected` 或其他抛错 → `refused(原因)`；ack 其余非 `ok` → `notSaved`。成功后清空文字并让 `DeveloperTools` 出提示。
 - 没有离线队列：`unavailable != nil` 时 `send()` 直接返回。
 
 **单测（`AHAppTests`）**
@@ -94,7 +94,7 @@
 - 触摸：重写 `touchesBegan / Moved / Ended / Cancelled`，把事件喂给 `DeveloperPress`，按返回的效果依次执行；`menuDelay` 用主 run loop 上的一次性计时器（`.common` 模式），状态机离开 `pending` 时取消。
 - 动画：弹簧吸附与菜单出现；「减少动态效果」打开时改为淡入淡出。
 - 触觉：打开菜单、切换高亮、触发条目各一次（`UIImpactFeedbackGenerator` / `UISelectionFeedbackGenerator`）。
-- 菜单视图：行 = 图标 + 标题，高亮行淡强调色底；标识 `dev-menu`、`dev-menu-quick-todo`；按钮标识 `dev-button`。
+- 菜单视图：行 = 图标 + 标题，高亮行淡强调色底；行标识 `dev-menu-<条目 id>`（v1 是 `dev-menu-quickTodo`）；按钮标识 `dev-button`。
 - 提示视图：顶部安全区下一个胶囊（对勾 + 「已添加到 <项目名>」），1.8 秒淡出，同时 `UIAccessibility.post(.announcement)`；标识 `dev-toast`。
 - 布局更新：监听窗口 bounds / 安全区变化与 `keyboardWillChangeFrame` / `keyboardWillHide`，用 `displayedCenter` 重排；场景失活（`UIScene.willDeactivateNotification`、`willResignActive`）时收起菜单并按取消处理。
 - 无障碍：按钮是辅助元素（标签「Developer tools」），激活 = 菜单（打开）；带一个自定义动作「Quick add todo」直接触发；菜单条目是普通按钮。
@@ -110,13 +110,14 @@
 **`QuickTodoView`**（SwiftUI，`NavigationStack`）
 
 - 顶栏：左「Cancel」、中「Quick todo」、右「Add」（`unavailable != nil` 或发送中禁用，发送中显示转圈）；标识 `quick-todo-cancel` / `quick-todo-send`。
-- 项目行：显示 `<Mac 名> · <项目名>`，无目标时是强调色的「Choose a project」；点按推入项目选择；标识 `quick-todo-project`。
-- 文本框：`TextField("New todo", axis: .vertical)`、`lineLimit(1...5)`、出现即聚焦，发送中只读；标识 `quick-todo-field`。
+- 项目行：第一行是项目名（带同名区分后缀），第二行小字是 Mac 名，无目标时是强调色的「Choose a project」；点按推入项目选择；标识 `quick-todo-project`。
+- 文本框：`TextField("New todo", axis: .vertical)`、`lineLimit(3...10)`、出现即聚焦，发送中只读；标识 `quick-todo-field`。
+- 发送中：「Cancel」置灰、`.interactiveDismissDisabled(true)`，转圈标识 `quick-todo-sending`（Mac 的拒绝若在页面走了之后才到，就没处可说）。
 - 说明行：`unavailable` 的原因或失败原因（红色），标识 `quick-todo-note`。
-- 首次（无目标）或 `needsProject` 时，页面一出现就推入项目选择；选定后弹回并聚焦文本框。
+- 首次（无目标）时，页面一出现就推入项目选择（不带转场动画）；`projectGone` 时也推入；选定后弹回并聚焦文本框。
 - 成功：`DeveloperTools` 设置提示 → 窗口收尾 → 按钮窗口显示提示。
 
-**`QuickTodoProjectPicker`**：`List` 按 `groups` 分段（段头 = Mac 名；离线 / 太旧 / 无应答的段写原因，无应答可重试），行 = 项目名 + 后缀 + 待办数；`searchable`；加载中显示进度；选中调用 `choose` 并返回；标识 `quick-todo-picker`、`quick-todo-project-<id>`。
+**`QuickTodoProjectPicker`**：`List` 按 `groups` 分段（段头 = Mac 名；离线 / 太旧的段没有行、原因写在段脚注，无应答的段一行「Did not answer」加可重试的「Try again」），行 = 与待办页同款（图标、项目名、后缀、仓库地址、待办数，当前目标带对勾）；`searchable`；加载中显示进度；选中调用 `choose` 并返回；标识 `quick-todo-picker`、`quick-todo-project-<id>`、`quick-todo-loading-<macId>`、`quick-todo-retry-<macId>`。
 
 **文案**放 `Design/DeveloperTexts.swift`（不可用原因与失败原因的映射，与 `TodoTexts.swift` 同风格）。已有的句子直接复用：`notSaved`、`refused(原因)` 用 `TodoNotice.message`（含「The Mac could not save that.」与各拒绝原因）；需求要求带 Mac 名的句子新增：连不上、没有应答、已不在该 Mac 上、请先更新该 Mac 上的 AskHuman。
 
@@ -143,6 +144,17 @@
 - `docs/overview-ios.md`：「手机能做的事」补一句开发者模式；iOS App 一节说明 `Views/Developer/`；「Mock 模式启动参数」那一行补 `-AHDeveloperMode YES|NO`；「不变量与注意点」补：按钮窗口不得 `makeKeyAndVisible`、窗口层级（主 +1 到达动效 / +2 按钮 / +3 快速添加）、快速添加窗口收尾必须恢复 key 与第一响应者、手势常量集中在 `DeveloperPressTuning` / `DeveloperMetrics`。需求文档的决策记录（§3）不动。
 - `docs/PROGRESS.md`：新增「待验收：iOS 开发者模式」一节，写已完成与自动化覆盖、以及真机一轮要看的项（见 P6）。
 - 提交：实现提交 `feat(ios): …` 带 `Release-Note: skip` 脚注；文档提交 `docs(ios): …`。每阶段一个提交。
+
+## 实现记录（P1–P5）
+
+与上面写的计划不同的地方（面向使用的那部分在需求 §11）：
+
+- **窗口宿主分三层**：`DeveloperOverlayAnchor`（放进 `RootView` 背景，只读 `store.developer`，免得整个标签视图跟着重算）→ `DeveloperOverlayHost`（零尺寸 `UIViewRepresentable`）→ `DeveloperOverlayController`（建与拆两个窗口，管键盘与场景通知）。触摸与布局在 `DeveloperOverlayView`，按钮 / 菜单行 / 菜单 / 提示 / 触觉是 `DeveloperButtonViews.swift` 里的几个 UIKit 类。
+- **快速添加页**：发送中不能取消、不能下拉收起；文本框默认三行；项目行两行；超时后再发沿用同一个 `clientMsgId`；`notFound` 清掉已存的目标，由 `projectGone` 驱动视图进入项目选择（上文各处已改）。
+- **无障碍**：浮动按钮的标签是「Developer tools」，自定义动作 = 各菜单条目的标题（v1 只有「Quick todo」）；菜单行的标识是 `dev-menu-<条目 id>`，没有 `dev-menu` 容器标识。
+- **图片查看器**（`ImageGallery.swift`）：每页的尺寸改取外层 `GeometryReader`（`.ignoresSafeArea()`）。这是 P4 的 UI 测试在「键盘盖在全屏查看器上」时发现的：竖直方向的 `containerRelativeFrame` 在容器被另一个窗口的键盘反复改动时让分页永远排不稳，App 主线程被布局占满。试过的、**没有**用的办法：给滚动视图或 `NavigationStack` 外面加 `.ignoresSafeArea(.keyboard)`、只忽略容器的安全区、`frame(maxHeight: .infinity)`（会让版面差 17 pt）。图片因此比以前高约 11 pt，其余像素不变。
+- **UI 测试**：`AskHumanDeveloperUITests` 共 17 条，覆盖开关、手势（按住滑动、轻点、滑出菜单、拖动吸附与不出安全区）、盖住 sheet 与它的键盘、盖住全屏图片查看器、快速添加全流程、记住目标与换项目、焦点恢复（请求页的回答框、sheet 里的输入框）、离线与太旧的 Mac、到达动效共存。XCUITest 的几个坑已记在 `overview-ios.md`。
+- **验证结果**（2026-11-03，模拟器 iPhone 16 / iOS 18.5）：Swift 包全量 314 条无失败（`DeveloperPlacementTests`、`DeveloperPressTests`、`DeveloperToolsTests`、`QuickTodoComposerTests` 在内；要真实 daemon 与本地 broker 的 43 条端到端用例照例跳过）；`AskHumanDeveloperUITests` 英文与中文各整班跑过一次，17 / 17 全过（英文第一次整班跑时有 3 条因测试进程被系统杀掉而失败，单独重跑 3 / 3 通过、再整班跑 17 / 17 通过，属环境偶发）；中文截图目测过设置分区、项目选择的原因脚注与提示；`make-catalog.py` 无缺项，再跑一遍没有新的差异。开发者模式关着时，其余 134 条 UI 测试 127 条通过、3 条跳过、4 条失败，这 4 条在功能开发之前的提交上同样失败或偶发（对照方法与名单见 `docs/PROGRESS.md` 的开发者模式一节）。
 
 ## P6：真机一轮（需要用户在场，先问再做）
 
