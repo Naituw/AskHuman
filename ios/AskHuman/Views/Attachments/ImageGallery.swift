@@ -34,25 +34,33 @@ struct ImageGalleryViewer: View {
             // Every page is there from the start (a page that is not near the one on show is only a
             // placeholder, it takes nothing to hold), so a swipe always has a page to reveal and the
             // ones beside the one on show are already coming from the Mac when one swipes to them.
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal) {
-                    HStack(spacing: 0) {
-                        ForEach(Array(images.enumerated()), id: \.element.assetId) { index, asset in
-                            AssetPage(macId: macId, asset: asset, near: abs(index - position) <= 1) { arrived[asset.assetId] = $0 }
-                                .containerRelativeFrame([.horizontal, .vertical])
-                                .id(asset.assetId)
+            //
+            // A page is as big as the sheet, taken from outside the scroll view. It is not sized by its
+            // container (`containerRelativeFrame`): a keyboard that comes up over the sheet from another
+            // window (the quick-add page) keeps resizing that container, the paging never settles, and the
+            // app stops answering.
+            GeometryReader { viewport in
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 0) {
+                            ForEach(Array(images.enumerated()), id: \.element.assetId) { index, asset in
+                                AssetPage(macId: macId, asset: asset, near: abs(index - position) <= 1) { arrived[asset.assetId] = $0 }
+                                    .frame(width: viewport.size.width, height: viewport.size.height)
+                                    .id(asset.assetId)
+                            }
                         }
+                        .scrollTargetLayout()
                     }
-                    .scrollTargetLayout()
+                    .scrollTargetBehavior(.paging)
+                    .scrollPosition(id: page)
+                    .scrollIndicators(.hidden)
+                    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                    // The binding alone does not move a stack that is not lazy to its first value.
+                    .onAppear { proxy.scrollTo(start, anchor: .leading) }
                 }
-                .scrollTargetBehavior(.paging)
-                .scrollPosition(id: page)
-                .scrollIndicators(.hidden)
-                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-                // The binding alone does not move a stack that is not lazy to its first value.
-                .onAppear { proxy.scrollTo(start, anchor: .leading) }
             }
-            .ignoresSafeArea(edges: .bottom)
+            // The whole sheet, under the bars and under a keyboard alike, so nothing over it moves a page.
+            .ignoresSafeArea()
             .accessibilityIdentifier("image-gallery")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
