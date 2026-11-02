@@ -118,3 +118,6 @@ P0 通过只表示某条路线可以实现，不代替真实 capacity 失败、�
   审阅代码时的一个推断（未触发）：`Observer::failed_turn` 连接失败不退避，共享服务 socket 残留而没人监听时，
   daemon 会每 5 秒为每个这样的会话起一次 `codex app-server proxy` 再退出。本机目前没有非 Desktop 的 Codex 会话，
   采样 20 秒未见子进程。
+- 合并后按用户选择清理了 `HumanInLoop-failure-confirmation` 工作树（`dev disable --purge`、`git worktree remove`）与
+  `codex/agent-failure-confirmation` 分支（已完全并入 `main`）。Dev 实例里的验证记录原始文件随之删除，
+  文档中保留记录 ID 与指纹。
