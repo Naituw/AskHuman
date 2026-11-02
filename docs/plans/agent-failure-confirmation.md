@@ -1,6 +1,7 @@
 # Agent 最终失败确认实施计划
 
-> 状态：2026-11-02 用户批准按顺序全部实现；P0 能力结论已落实，P1–P3 实现完成，P4 Dev 安装、隔离链路与手机预选项验收通过；尚未合并／安装日常版。
+> 状态：2026-11-02 用户批准按顺序全部实现；P0 能力结论已落实，P1–P3 实现完成，P4 Dev 安装、隔离链路与手机预选项验收通过；
+> 同日合并进 `main` 并装为日常版，合并后的验证见 §10。真实容量错误与失败后的原生接续尚未实测。
 > 需求与已确认决策：[agent-failure-confirmation](../specs/agent-failure-confirmation.md)。
 
 ## 1. 实施前准备
@@ -98,3 +99,22 @@ P0 通过只表示某条路线可以实现，不代替真实 capacity 失败、�
   用户另经正常 AskHuman 确认确实在 iOS 收到并提交。随后仅补齐临时失联／接续拒绝的中文和英文说明，重新安装并跑相关检查。
   没有调用模型；这证明模拟终态→开发 daemon→正式远程出口→手机回答回传，不表示真实容量错误或原生接续已实测。
 - 本次没有改 Swift、推送中继或 IPC 类型；现有 iOS App 可回答普通错误卡，无需为本功能另发 TestFlight。
+
+## 10. 合并与日常版安装（2026-11-02）
+
+- 实现会话在交接时被额度限制中止；用户在交接里选了「合并到 main 并安装日常版」，由另一会话接手执行。
+  `codex/agent-failure-confirmation`（`13102995`）与 `main` 无分叉，快进合并，保持线性历史；未推送。
+- 主工作树（非 Dev）`./scripts/install.sh` 装为日常版，daemon 无在途请求，随即换新。新 daemon 启动只迁移了 Pi 运行时扩展
+  （上报 `errorDetails`；只开「确认」也上报生命周期事件；已在运行的 Pi 会话需重启才加载）。
+  Claude／Codex／Cursor／Grok 的真实 hook 配置前后逐字节一致：它们都开着生命周期追踪，Claude 的 `StopFailure → turn-end`、
+  Cursor 的 `stop`（新二进制对非自然结束也上报）已经把失败送到 daemon；Codex 无失败 Hook，靠 Desktop 原生终态。
+  Codex 的 Hook 仍为「已信任」；Grok 出现新的「结束／出错确认」开关，默认关。
+- 对装好的日常二进制重跑 `scripts/agent-failure-smoke.mjs` 通过（私有 HOME + 非空 `ASKHUMAN_HOME`），前后真实配置哈希不变，
+  无残留进程。`vue-tsc`、前端全量与 Pi／脚本 node 测试通过；Rust 分两批在合并后的主工作树上跑：
+  `agents::*`／`integrations::agent_*`／`ios::gateway`／`daemon::request` 共 274 项，`daemon::`（含
+  `daemon::server_impl::failure_confirmation`）共 189 项，均 0 失败（后一批另有 1 项原本即 ignore）。
+  该测试目标共 2,348 项，等于实现会话报告的 2,336 通过＋10 忽略＋2 项排除的真实 Cursor 用例，未重跑全量。
+- 未实测：真实 capacity 失败、失败后的原生接续；有「工作中」的非 Desktop Codex 会话时对共享服务的真实观察。
+  审阅代码时的一个推断（未触发）：`Observer::failed_turn` 连接失败不退避，共享服务 socket 残留而没人监听时，
+  daemon 会每 5 秒为每个这样的会话起一次 `codex app-server proxy` 再退出。本机目前没有非 Desktop 的 Codex 会话，
+  采样 20 秒未见子进程。

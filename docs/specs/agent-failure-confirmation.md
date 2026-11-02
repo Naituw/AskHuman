@@ -1,6 +1,7 @@
 # Agent 最终失败确认
 
-> 状态：2026-11-02 已按用户批准实现；独立 Dev 安装、隔离链路与 iOS 模拟失败卡验收通过，尚未合并／安装日常版。
+> 状态：2026-11-02 已按用户批准实现；独立 Dev 安装、隔离链路与 iOS 模拟失败卡验收通过，同日合并进 `main` 并装为日常版；
+> 真实容量错误与失败后的原生接续尚未实测。
 > 实施计划：[agent-failure-confirmation](../plans/agent-failure-confirmation.md)。
 > 正常 Stop 与原生控制基础分别见 [Stop 确认](agent-stop-confirmation.md) 和
 > [生命周期结果与接续](agent-lifecycle-results-and-recovery.md)。
