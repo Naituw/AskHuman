@@ -118,6 +118,12 @@ final class AskHumanDeveloperUITests: XCTestCase {
         dismissTheKeyboardTip()
     }
 
+    /// Opens the page the way a tap does: the button, then its one row.
+    private func openTheQuickAddPage() {
+        requireElement("dev-button").tap()
+        requireElement("dev-menu-quickTodo", timeout: 5).tap()
+    }
+
     private func typeIntoTheField(_ text: String) {
         let field = requireElement("quick-todo-field")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10), "the page opens with the keyboard up")
@@ -472,5 +478,125 @@ final class AskHumanDeveloperUITests: XCTestCase {
             eventually(timeout: 10) { !self.app.keyboards.firstMatch.exists && abs(self.button.frame.midY - resting.midY) < 3 },
             "back at \(resting), now \(button.frame)"
         )
+    }
+
+    func testTheButtonIsAboveAFullScreenImageViewerAndThePageOpensOverItToo() {
+        launch(scenario: "gallery", extra: ["-AHWebMarkdown", "NO", "-AHOpen", "req-gallery"])
+        let thumbnail = app.buttons["wide-1.png"]
+        XCTAssertTrue(thumbnail.waitForExistence(timeout: 15))
+        thumbnail.tap()
+        let gallery = requireElement("image-gallery")
+        XCTAssertTrue(button.waitForExistence(timeout: 5), "the viewer covers the screen, and the button is on it")
+        XCTAssertTrue(button.isHittable, "nothing of the viewer is over the button")
+        shot("dev-15-over-the-viewer")
+
+        // Everywhere else the screen is still the viewer's: a swipe pages.
+        gallery.swipeLeft()
+        XCTAssertTrue(
+            eventually(timeout: 10) { self.element("gallery-name").label == "tall-2.png" },
+            "the viewer pages under the button: \(element("gallery-name").label)"
+        )
+
+        // The page opens over the viewer, and the viewer is as it was once the page is gone.
+        openTheQuickAddPage()
+        _ = requireElement("quick-todo-picker", timeout: 10)
+        requireElement("quick-todo-project-" + askHuman).tap()
+        _ = requireElement("quick-todo-field", timeout: 10)
+        shot("dev-16-page-over-the-viewer")
+        control("quick-todo-cancel").tap()
+        XCTAssertTrue(gone("quick-todo-field", timeout: 10), "the page closes")
+        XCTAssertEqual(element("gallery-name").label, "tall-2.png", "the viewer is where it was")
+        XCTAssertTrue(button.isHittable)
+    }
+
+    // MARK: nothing to add to
+
+    /// No Mac can take a todo: each is listed with why not, there is nothing to choose, and the page says so.
+    private func expectNoMacCanTakeATodo(scenario: String, reason: String) {
+        launch(scenario: scenario)
+        openTheQuickAddPage()
+        _ = requireElement("quick-todo-picker", timeout: 10)
+
+        XCTAssertTrue(app.staticTexts[reason].firstMatch.waitForExistence(timeout: 10), "no reason is given")
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == %@", reason)).count, 2, "one for each Mac")
+        XCTAssertFalse(
+            app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "quick-todo-project-")).firstMatch.exists,
+            "there is nothing to choose"
+        )
+        shot("dev-17-\(scenario)")
+
+        // Back on the page nothing is chosen, and that is all it says: the text is empty, it needs no explaining.
+        app.navigationBars.buttons[localized("Quick todo", "快速待办")].tap()
+        let note = requireElement("quick-todo-note", timeout: 5)
+        XCTAssertEqual(note.label, localized("Choose a project first.", "请先选择项目。"))
+        XCTAssertFalse(control("quick-todo-send").isEnabled, "nothing can be added")
+        control("quick-todo-cancel").tap()
+        XCTAssertTrue(gone("quick-todo-field", timeout: 10), "the page can still be closed")
+    }
+
+    func testWhenNoMacIsReachableTheListSaysWhyAndNothingCanBeAdded() {
+        expectNoMacCanTakeATodo(scenario: "offline", reason: localized("Not reachable right now.", "暂时连不上。"))
+    }
+
+    func testAMacThatPredatesTodosIsListedWithTheUpdateItNeeds() {
+        expectNoMacCanTakeATodo(
+            scenario: "outdated",
+            reason: localized("Update AskHuman on this Mac to add todos from here.", "请先更新这台 Mac 上的 AskHuman，才能在这里添加待办。")
+        )
+    }
+
+    // MARK: while a request arrives
+
+    /// A request that arrives `seconds` after the launch and flies for a long while (the app's own test hook).
+    private func arrival(after seconds: Int, slowdown: Int) -> [String] {
+        ["-AHArrival", "Motion verification", "-AHArrivalDelay", "\(seconds)", "-AHArrivalCount", "1",
+         "-AHArrivalMotionDiagnostics", "YES", "-AHArrivalMotionSlowdown", "\(slowdown)", "-AHWebMarkdown", "NO", "-AHTab", "agents"]
+    }
+
+    private func arrivalStatus(_ text: String, timeout: TimeInterval = 20, file: StaticString = #filePath, line: UInt = #line) {
+        let view = requireElement("arrival-motion-state", file: file, line: line)
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", text), object: view)
+        XCTAssertEqual(XCTWaiter().wait(for: [expectation], timeout: timeout), .completed, "\(view.value ?? "")", file: file, line: line)
+    }
+
+    func testTheButtonTakesItsOwnTouchesAndPassesTheRestWhileARequestArrives() {
+        launch(extra: arrival(after: 3, slowdown: 20))
+        _ = requireElement("dev-button")
+        arrivalStatus("active=1", timeout: 30)
+        XCTAssertTrue(button.isHittable, "the button is above the window the bubble flies in")
+        shot("dev-18-while-a-request-arrives")
+
+        button.tap()
+        _ = requireElement("dev-menu-quickTodo", timeout: 5)
+        point(screen.width / 2, screen.height / 2).tap()
+        XCTAssertTrue(gone("dev-menu-quickTodo", timeout: 5), "the menu works during the flight")
+
+        // A touch anywhere else goes through both windows to the tab bar under them.
+        let todos = app.tabBars.buttons[localized("Todos", "待办")]
+        todos.tap()
+        XCTAssertTrue(todos.isSelected, "the windows above the app pass the touch on")
+        arrivalStatus("active=1")
+    }
+
+    func testTypingContinuesInThePageWhileARequestArrivesUnderIt() {
+        launch(extra: arrival(after: 18, slowdown: 12))
+        openTheQuickAddPage()
+        _ = requireElement("quick-todo-picker", timeout: 10)
+        requireElement("quick-todo-project-" + askHuman).tap()
+        let field = requireElement("quick-todo-field", timeout: 10)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+        dismissTheKeyboardTip()
+        field.typeText("Typing while it arrives")
+
+        arrivalStatus("active=1", timeout: 40)
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "the arrival does not take the keyboard from the page")
+        XCTAssertEqual(field.value as? String, "Typing while it arrives")
+        field.typeText(" and goes on")
+        XCTAssertEqual(field.value as? String, "Typing while it arrives and goes on")
+        arrivalStatus("active=1")
+        shot("dev-19-page-while-a-request-arrives")
+
+        control("quick-todo-cancel").tap()
+        XCTAssertTrue(gone("quick-todo-field", timeout: 10), "the page closes")
     }
 }
