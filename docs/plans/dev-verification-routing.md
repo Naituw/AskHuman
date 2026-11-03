@@ -152,6 +152,8 @@ PR #27 合并后补做 §7 留下的本机界面与正式渠道转送验收（�
 | 1 | Dev 设置窗口仍显示 Agents 页。页上的操作会被后端守卫拒绝，页面却照样摆出来，与规格 §8「不提供修改日常集成的按钮」不符。原来的只读标记只对工作台打开的设置窗口成立，Dev 卡片齿轮打开的没有 | 页面与守卫共用 `integrations/mutation_lock.rs::everyday_changes_blocked`；Dev 窗口隐藏 Agents 页，标签、搜索与深链接都落回「通用」。真值表与标签守卫有单测 |
 | 2 | 取消的转送请求要等满 5 秒才结束，Dev daemon 记 `cancellation finalize timed out`：`RelayChannel` 被打断后从不通知收尾 | 被打断的转送在子进程结束后 `notify_finalized`（与 iOS 渠道同一做法）；单测覆盖「被计入、通知后立即放行」 |
 | 3 | `dev ask --resume` 对被 `kill -9` 的验收显示 `pending`，实际没人在等 | 执行者已不存在的 `pending` 记录显示为 `interrupted`，重复 ID 的提示同；单测覆盖 |
+| 4 | 登录后的 Grok 私有会话（用户在私有 profile 里自己登录后）起不来：启动器给 Grok 传 `--add-dir <工作树>`，Grok 1.0.70 报 `Session creation failed: Invalid params: "additionalDirectories is not supported: a session works only in its cwd"`，会话建不出来，只在重试循环里卡着。原单测只断言参数里有 `--add-dir`，没有真启动过 | Grok 不再传 `--add-dir`，仍用中性目录做 cwd，任务文本写明源码树路径；Codex 不变。单测改为断言 Grok 没有该参数 |
+| 5 | `dev session`（非 `--stdio`）成功弹出终端后仍报 `invalid development launch receipt`：`osascript` 把新标签引用（`tab 1 of window id N`）打印到 stdout，混进 JSON 回执 | `open_terminal` 丢弃 `osascript` 的 stdout |
 
 **修复后的构建（同一临时 worktree 重新安装）**
 
@@ -161,6 +163,24 @@ PR #27 合并后补做 §7 留下的本机界面与正式渠道转送验收（�
   正式端卡片收尾 `card_finalize_succeeded`，不再出现 5 秒超时。
 - `--resume`：被强杀的记录显示 `(interrupted)`；旧构建的记录仍按「属于不同构建」拒绝。
 - `--delivery channels` 且 Dev 没有专用测试渠道：退出码 3，明确报告没有渠道可投递，不弹本机卡片，也没有请求到达正式 daemon。
+
+**登录后的 Grok 私有会话（修复后的构建；用户在私有 profile 里自己登录，没有读取或复制任何认证文件）**
+
+- 启动：`dev session grok` 弹出终端标签，回执是干净的 JSON；Grok 1.0.70 在中性目录建出会话，任务文本自动提交，不再需要手动回车。
+- 能力边界：Grok 在 AskHuman 里只有 MCP 提问与生命周期追踪，没有权限卡和 Stop 卡（`overview.md`：Grok 仅 None／MCP，
+  不支持 stop／interject）。模型经工具搜索调用 `ask` 时，Grok 对 `use_tool` 弹出的是它自己的终端权限提示，
+  要用户在 Grok 终端批准（这次等了约 29 分钟）；这不是 AskHuman 的卡片。
+- 问答：批准后 Grok 日志记 `mcp_tool_call_started`（server `askhuman`、`ask`、超时 86400 s）；Dev daemon 受理请求
+  `ade157e6-7eb4-4daf-b0da-4ebf30800c07`，以 `dev-relay` 渠道转送正式 daemon（正式请求 `ea43fb66-9712-4a08-88b9-c004335b1661`），
+  用户回答 `ok`，两边在同一秒收尾（约 81 秒），`mcp_tool_call_completed` 成功返回；模型随后执行 `echo askhuman-dev-ok`
+  （Grok 原生权限 25 ms 放行）并以 `turn_ended completed` 结束。Dev 历史行 `channel: dev-relay`、`source: Dev · HumanInLoop-devacc`、答案 `["ok"]`。
+- 生命周期：Dev 的 `agents.json` 记下这条 Grok 会话（`kind: grok`、`apple-terminal`、`idle`，`lastTurnResult` 为 `completed`、来源 `hook`），
+  私有 profile 的生命周期 hook 确实到达 Dev daemon。
+- 全局边界：18 个全局集成文件（含 `~/.grok/config.toml`、`hooks.json`、`AGENTS.md`）的哈希与权限前后一致。
+- 两处修复后的补充检查：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过；
+  `integrations::agent_launch` 与 `development::session` 的 47 个单测通过（含改过的
+  `development_profile_options_precede_new_and_fork_prompt_delimiters`，现在断言 Grok 没有 `--add-dir`、Codex 仍有）。
+  完整 `cargo test` 以上一轮的 2343 通过为准，修复后没有整体重跑，新 head 以 CI 为准。
 
 **自动检查（本机，同一临时 worktree）**
 
@@ -177,4 +197,5 @@ PR #27 合并后补做 §7 留下的本机界面与正式渠道转送验收（�
   走查结论：`channels` 既不走转送分支也不开本机弹窗（`daemon/runtime/mod.rs` 的 `development_popup_enabled` 与转送分支都排除它），
   只用 Dev 自己的渠道配置；Dev 渠道身份与正式相同时 `development/channel_safety.rs` 关闭 Dev 的全部 IM 渠道
   （daemon 启动、配置重载、`channels` 请求与权限校验都检查，任何校验失败都按关闭处理），不会连接正式 bot。
-- 登录后的私有 Agent 会话（只做 Grok；Codex 暂无额度）：见 `PROGRESS.md`。
+- 其他 Agent 的登录后私有会话：Codex 暂无额度，Claude Code／Pi 未测，Cursor 永不实测。
+  Grok 只验了问答与生命周期；Fork／转录控制与最终失败提醒（Grok 仅支持错误提醒）没有在登录后实测。见 `PROGRESS.md`。

@@ -70,7 +70,7 @@ Stop 的隐藏待办元数据在正式载荷中清除，选项文本返回后由
 | --- | --- |
 | Claude Code | CLAUDE_CONFIG_DIR、仅 user settings、严格私有 MCP |
 | Codex CLI | CODEX_HOME、拥有的中性 git 工作区、add-dir 目标树 |
-| Grok | GROK_HOME、中性工作区、按现有 Stop 能力开放 |
+| Grok | GROK_HOME、中性工作区（Grok 不接受附加目录，源码树路径只写在任务文本里）、按现有 Stop 能力开放 |
 | Pi | PI_CODING_AGENT_DIR、关闭自动扩展发现、明确私有扩展 |
 | Cursor / Antigravity | 项目 MCP 与完整隔离启动分别判定，完整启动尚未开放 |
 

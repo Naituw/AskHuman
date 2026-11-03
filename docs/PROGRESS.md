@@ -28,14 +28,16 @@ Grok 仅错误，Antigravity 不宣称支持；Codex CLI 只读观察共享服�
 
 [PR #27](https://github.com/Naituw/AskHuman/pull/27) 已于 2026-11-01 合并，普通用户不需迁移，本机全局集成未改。
 真实 Codex 与 iOS 转送证据见[计划 §7](plans/dev-verification-routing.md#7-真实-codex-与-ios-转送验证2026-10-31)。
-2026-11-03 在临时 worktree 补做了本机界面与正式渠道转送验收（本机界面待办已完成），并修了验收发现的三处问题——
-Dev 设置窗口仍显示 Agents 页、取消的转送请求等满 5 秒才收尾、`--resume` 把已死的验收显示为 `pending`；
+2026-11-03 在临时 worktree 补做了本机界面、正式渠道转送与登录后 Grok 私有会话的验收（本机界面待办已完成），
+并修了验收发现的五处问题——Dev 设置窗口仍显示 Agents 页、取消的转送请求等满 5 秒才收尾、`--resume` 把已死的验收显示为 `pending`、
+`dev session grok` 传了 Grok 不接受的 `--add-dir`、终端回执被 `osascript` 的输出污染；
 证据见[计划 §8](plans/dev-verification-routing.md#8-合并后的本机验收与修复2026-11-03)。仍未验证：
 
 - Dev 专用测试渠道（`--delivery channels`）的真实收发：没有专用 bot／配对，用户决定先不配置。
   已做代码走查和「无渠道时明确失败」的实测，没有真实卡片往返。配好后用隔离测试转送端验收问答、权限、Stop、取消与发送失败，不替换日常正式 daemon。
-- 登录后的私有 Agent 会话：用户选择只做 Grok（Codex 暂无额度，Claude／Pi 未测，Cursor 永不实测）。
-  须由用户自己在私有 profile 里登录，不复制认证；登录后验证问答、权限与 Stop 走 Dev 并经正式渠道转送。
+- 其他 Agent 的登录后私有会话：Grok 的问答（Dev → 正式渠道 → 回到 Grok）与生命周期已验收；Grok 没有权限／Stop 卡，
+  它的权限提示是 Grok 自己的终端提示，不归 AskHuman。Codex 暂无额度，Claude Code／Pi 未测，Cursor 永不实测；
+  须由用户自己在私有 profile 里登录，不复制认证。Grok 的 Fork／转录控制与最终失败提醒也没在登录后实测。
   项目 CLI 的实际加载不代表当前 App 会话已刷新工具目录。
 
 以上完成后删除本节。
