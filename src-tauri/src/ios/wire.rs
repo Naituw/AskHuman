@@ -791,8 +791,6 @@ pub struct InterjectSend {
     pub text: String,
     #[serde(default)]
     pub files: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_result_id: Option<String>,
 }
 msg!(InterjectSend, t::INTERJECT_SEND);
 

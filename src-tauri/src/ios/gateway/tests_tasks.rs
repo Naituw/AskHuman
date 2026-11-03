@@ -30,7 +30,6 @@ async fn with_agent() -> (Fixture, TestPhone) {
 
 fn interject(id: &str, agent_key: &str, text: &str) -> wire::InterjectSend {
     wire::InterjectSend {
-        expected_result_id: None,
         client_msg_id: id.into(),
         agent_key: agent_key.into(),
         text: text.into(),
