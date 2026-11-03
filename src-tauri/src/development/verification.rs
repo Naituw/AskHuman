@@ -76,6 +76,19 @@ pub struct Record {
     pub updated_at_ms: u64,
 }
 
+impl Record {
+    /// The status to show a person. A CLI that was killed outright never gets to mark its record
+    /// interrupted, so a `pending` record whose executor is gone is reported as `interrupted`:
+    /// the state every orderly exit reaches, and the truth, because nobody is waiting for it.
+    fn display_status(&self) -> &str {
+        if self.status == "pending" && !crate::agents::detect::pid_alive(self.executor_pid) {
+            "interrupted"
+        } else {
+            &self.status
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Preferences {
@@ -531,6 +544,7 @@ pub fn run_cli(args: &[String]) -> Result<(), String> {
         {
             return Err("verification belongs to a different build; start a new verification for the installed source".into());
         }
+        let status = record.display_status().to_string();
         if let (Some(stdout), Some(code)) = (record.stdout, record.exit_code) {
             if !stdout.is_empty() {
                 println!("{stdout}");
@@ -538,8 +552,7 @@ pub fn run_cli(args: &[String]) -> Result<(), String> {
             std::process::exit(code);
         }
         return Err(format!(
-            "Dev verification {id} has no terminal answer ({}); no new question was sent",
-            record.status
+            "Dev verification {id} has no terminal answer ({status}); no new question was sent"
         ));
     }
     let ask = &args[index..];
@@ -567,13 +580,14 @@ pub fn run_cli(args: &[String]) -> Result<(), String> {
                 "Dev verification ID was already used for different inputs or another build".into(),
             );
         }
+        let status = record.display_status().to_string();
         if let (Some(stdout), Some(code)) = (record.stdout, record.exit_code) {
             if !stdout.is_empty() {
                 println!("{stdout}");
             }
             std::process::exit(code);
         }
-        return Err(format!("Dev verification {id} already exists ({}); resume it instead of sending another question", record.status));
+        return Err(format!("Dev verification {id} already exists ({status}); resume it instead of sending another question"));
     }
     prune_records(root)?;
     let now = now_ms();
@@ -851,6 +865,58 @@ mod tests {
         assert_eq!(record.status, "interrupted");
         assert!(record.stdout.is_none());
     }
+    #[test]
+    fn a_pending_record_without_a_live_executor_reads_as_interrupted() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let mut record = Record {
+            version: 1,
+            info: VerificationInfo {
+                id: uuid::Uuid::new_v4().to_string(),
+                worktree: root.clone(),
+                delivery: Delivery::Local,
+                relay: false,
+                test_profile: None,
+                diagnostics: None,
+                build: build::BuildInfo {
+                    version: 1,
+                    worktree: root.clone(),
+                    binary: root.join("AskHuman"),
+                    source_fingerprint: "source".into(),
+                    binary_fingerprint: "binary".into(),
+                    git_commit: None,
+                    created_at_ms: 1,
+                },
+            },
+            request_fingerprint: "request".into(),
+            status: "pending".into(),
+            // This test process is alive, so the question still counts as waiting.
+            executor_pid: std::process::id(),
+            stdout: None,
+            exit_code: None,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+        assert_eq!(record.display_status(), "pending");
+
+        // A CLI killed outright leaves `pending` behind with a process that no longer exists.
+        let mut gone = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--list")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        record.executor_pid = gone.id();
+        gone.wait().unwrap();
+        assert_eq!(record.display_status(), "interrupted");
+
+        // Terminal states are never rewritten.
+        for status in ["completed", "failed", "interrupted"] {
+            record.status = status.into();
+            assert_eq!(record.display_status(), status);
+        }
+    }
+
     #[test]
     fn retained_attachments_survive_original_file_changes() {
         let temp = tempfile::tempdir().unwrap();
