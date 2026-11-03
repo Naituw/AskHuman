@@ -49,7 +49,7 @@ Mac / iOS 交互原型、双向消息与进程重启补发已验证）。2026-10
 [`docs/specs/ios-channel.md`](specs/ios-channel.md)，计划 [`docs/plans/ios-channel.md`](plans/ios-channel.md)
 （作为新渠道 `ios`；EMQX 杭州 + 腾讯云云函数推送中继 + 端到端加密；多 Mac 配对同一部手机；回答 / 确认 / 附件 /
 Watch / Follow / 插话 / 新任务），实现地图见 [`docs/overview-ios.md`](overview-ios.md)，用户说明见
-[`docs/wiki/ios-setup.md`](wiki/ios-setup.md)。实现在 worktree `HumanInLoop-ios`（分支 `feat/ios-channel`），2026-10-26 已快进合并进 `main`（渠道默认关闭：受 `experimental.enabled` 隐藏，`channels.ios.enabled` 默认 `false`；所有 `feat` / `fix` 提交都带 `Release-Note: skip`，不进发布说明）。代码已随 v0.16.0 发出，发布说明未提及该渠道。
+[`docs/wiki/ios-setup.md`](wiki/ios-setup.md)。实现在 worktree `HumanInLoop-ios`（分支 `feat/ios-channel`），2026-10-26 已快进合并进 `main`（worktree 与分支 2026-11-03 已删除，本地与 `origin` 都删了；删前分支指向 `15f1c491`，已完整并入 `main`，也没有 PR；渠道默认关闭：受 `experimental.enabled` 隐藏，`channels.ios.enabled` 默认 `false`；所有 `feat` / `fix` 提交都带 `Release-Note: skip`，不进发布说明）。代码已随 v0.16.0 发出，发布说明未提及该渠道。
 
 **状态（2026-10-25）**：Mac Gateway / IPC 3→4 / 设置页 / CLI、推送中继 `relay/`、iOS App（收件箱 · 作答 · 确认 ·
 附件 · Agents · 关注 · 实时观察 · 插话 · 新任务 · 历史 · 配对 · 通知扩展）全部实现，通过 Rust / Swift / 中继 / 前端测试、
@@ -87,8 +87,8 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
     提交前要对齐 CI 时：`PATH=~/.rustup/toolchains/1.99.0-aarch64-apple-darwin/bin:$PATH CARGO_TARGET_DIR=/tmp/<独立目录> cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
     （在持久 shell 里用 `export` 会把工具链环境泄漏给后面的命令，写成行内前缀）
   - 决定是否公开该渠道（README 链接、去掉提交的 `Release-Note: skip`）
-  - 这条分支的历史已在公开仓库（`origin/feat/ios-channel` 与 `origin/main`）：推送前从历史里清掉了真实 EMQX 实例 ID 与 APNs Key ID（提交哈希因此改写过一次，文档里改用提交标题指代）。
-    **不得再改写**（不要 rebase，也不要 force-push）；分支继续开发时同步 main 用合并（2026-10-26 合过一次：`chore(ios): merge main into feat/ios-channel`，合并时解了 `agents/stop.rs` 的冲突）
+  - 这条分支的历史已在公开仓库（`origin/main`；分支 `feat/ios-channel` 2026-11-03 已删除）：推送前从历史里清掉了真实 EMQX 实例 ID 与 APNs Key ID（提交哈希因此改写过一次，文档里改用提交标题指代）。
+    **不得再改写**（不要 rebase，也不要 force-push `main`）；iOS 的后续工作直接在 `main` 上做，或从 `main` 开新分支
 
 已知延期（不阻塞原型）：
 - Pi 的扩展只有在 Stop 确认开着时才会随 daemon 启动自动迁移（2026-10-26 实测：日志出现 `migrated outdated Stop confirmation hooks: pi`），只开了生命周期跟踪的用户仍要在设置里重新保存 / 刷新才会上报失败的回合；已在运行的 Pi 会话要重启后才加载新扩展。
