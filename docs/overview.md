@@ -146,7 +146,7 @@ AskHuman/
       commands.rs            前端调用的 Tauri command 集合
       popup_drop.rs          Popup 拖入文件：失败带原因与位置类别的图片读取，以及不含路径的拖拽诊断日志
       codex_desktop/               可选 macOS Codex App 原生会话与创建适配器
-      cursor_desktop/              可选 macOS Cursor Desktop 后台完成续跑控制与私有运行桥
+      cursor_desktop/              可选 macOS Cursor Desktop 后台完成续跑控制、私有运行桥，以及 Agents 窗口新建任务（create/launch）
       integrations/agent_launch.rs  新建/Fork 共用一次性 LaunchRecord、readiness 与固定 argv adapter
 
       app/
@@ -269,6 +269,7 @@ AskHuman/
         activity.rs          transcript 尾部活动解析
         session_paths.rs     Pi 自定义 sessionDir transcript 路径校验与缓存
         cursor_vscdb.rs      Cursor IDE 会话实时源（state.vscdb；活动/标题/完整会话）
+        cursor_max/          旧按次计费计划下 Cursor Max 模式的判定、强制关闭与启动后复查（规格 cursor-max-control）
         registry.rs          Agent 状态推导、持久化与快照
         interject.rs         插话队列、等待与持久化
         stop.rs              Stop Hook 捕获与原生 continuation
@@ -360,6 +361,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 - 共享命令包括 `/new`、`/fork`、`/help`、`/here`、`/status`、`/watch`、`/unwatch`、`/msg`、`/msg-clear`、`/yolo`、`/diff`、`/stage`、`/transcript`、`/todo`、`/todo-rm` 和 `/todo-auto`；Slack 使用 `!` 作为可输入的备用前缀。
 - macOS 或 Windows 开启 `agentTasks` 后，`/new` 依次选择 workspace、已就绪 Agent 与权限，在新的 Terminal.app 或 Windows Terminal 窗口启动真实交互会话；Pi 没有内置权限模式，选中后跳过权限选择并固定使用 Agent 默认行为。Daemon 只负责启动前流程，之后复用 lifecycle/watch。
 - macOS 与 Windows 本地 GUI 亦可创建任务（不要求开启 `agentTasks`）：待办窗口行内按钮与托盘「新建 Agent 任务」打开统一的新建任务窗口，就绪判定与启动链路与 `/new` 相同；见 `docs/specs/gui-agent-task-launch.md`。
+- Cursor 任务另有两项：① **Max 控制**（`agents/cursor_max`，规格 `docs/specs/cursor-max-control.md`）——旧按次计费计划里 Max 按 API 费率扣额度，所以 GUI 表单、`/new` 与 iOS 创建 Cursor 任务时默认强制关闭 Max（需要 Max 的模型拦截启动，GUI/iOS 可按任务打开「允许 Max」），启动后复查，新计划与「沿用 Cursor 设置」策略下不干预；② **Agents 窗口路线**（`cursor_desktop/`，规格 `docs/specs/cursor-desktop-task-creation.md`，实验）——`cursorDesktop.launchPreference` 为 `desktop` 时，新任务经 daemon 持有的私有桥在已打开的 Cursor Agents 窗口里创建并自动发送，所有核对在提交前闸门里完成，失败即拒绝，不会改走终端。
 - Claude Code、Codex、Grok、Pi 的 Working/Idle 原生会话可通过 IM `/fork`、Agent 控制台或托盘立即分叉；源会话继续运行，新分支共用 cwd。继承标题的子会话在控制台、托盘和 IM 选择列表中前置显示直接父序号；watch 卡不增加 Fork 按钮，Cursor CLI 不支持；详见 `docs/specs/agent-session-fork.md`。
 - Agent 数字编号在 daemon 生命周期内稳定，供状态、关注、插话和 Git/会话导出共用；无参目标选择复用跨渠道单选卡模型。
 - Watch 订阅持久化并就地更新原卡；`/stage` 必须经过跨渠道 Confirm，不能直接执行暂存。

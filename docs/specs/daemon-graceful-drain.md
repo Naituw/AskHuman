@@ -92,3 +92,15 @@ Linux 安装以原子交换保留仍在运行的 ELF 后，`current_exe()` 会�
 独立 daemon、GUI Host、MCP 提问子 CLI、设置内测试提问和重启设置都从安装入口启动。
 GUI Host 的盘上监听与重启同样使用安装入口，启动身份则仍取实际运行映像；两者可以是不同构建。
 这些调整不改变 IPC 消息或协议号，也不修改排空、在途草稿与首答胜出的语义。
+
+## 8. 协议号 4 → 5 的升级过渡（2026-11-03 补充）
+
+Cursor 新建任务把「Agents 窗口路线」的操作通过新增的 `ClientMsg::CursorDesktop` / `ServerMsg::CursorDesktop`
+（`CursorDesktopOp` / `CursorDesktopResult`，与 Codex 的同构消息并列）送到 Daemon，新增枚举变体旧端无法解码，
+按 D11 把 `PROTOCOL_VERSION` 从 4 提到 5。过渡期的行为与此前每次 +1 相同，没有新增机制：
+
+- 新客户端（协议号 5）握手遇到旧 Daemon（4）时，由旧 Daemon 回 `Restarting` 并按 D1–D4 排空：在途提问完成、新提交被拒后由客户端等待新 Daemon，不丢已显示的提问与草稿。
+- 旧客户端（4，例如另装的旧版 CLI）连到新 Daemon 时同样按 D11 让位，不会与新 Daemon 并存；两份不同协议号的二进制并存时，Daemon 会随调用方互相顶替，直到旧版被升级。
+- 同一协议号内的互通不受影响：本次的消息只在 `__cursor-desktop` 隐藏入口和 GUI 的 Cursor 新建任务调用，旧客户端不会收到它。
+
+不改排空、在途草稿与首答胜出的语义。
