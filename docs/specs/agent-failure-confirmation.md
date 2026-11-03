@@ -2,8 +2,9 @@
 
 > 状态：2026-11-02 已按用户批准实现；独立 Dev 安装、隔离链路与 iOS 模拟失败卡验收通过，同日合并进 `main` 并装为日常版；
 > 真实容量错误与失败后的原生接续尚未实测。
-> 2026-11-03：手机 Agents 页不再提供「要求继续」，错误卡成为唯一处理入口；Cursor 重试用尽后不发 `stop` 的缺口、
-> 卡片跨 daemon 换新保留见[失败处理统一到收件箱](agent-failure-inbox.md)（草案）。
+> 2026-11-03：手机 Agents 页不再提供「要求继续」，错误卡成为唯一处理入口；Cursor 重试用尽后不发 `stop` 的缺口由
+> 结构化日志检测补上，`incomplete` 同样出卡，未处理的卡跨 daemon 换新保留（F9、F10），见
+> [失败处理统一到收件箱](agent-failure-inbox.md)。
 > 实施计划：[agent-failure-confirmation](../plans/agent-failure-confirmation.md)。
 > 正常 Stop 与原生控制基础分别见 [Stop 确认](agent-stop-confirmation.md) 和
 > [生命周期结果与接续](agent-lifecycle-results-and-recovery.md)。
@@ -29,6 +30,8 @@ Agent 因模型容量、API、连接等错误最终停止一轮时，用户能�
 | F6 | Agent 暂无接续能力时，提供「知道了（该 Agent 暂不支持接续）」；不能显示一个无效的继续操作 |
 | F7 | 错误卡立即进入 iOS 收件箱，系统推送沿用现有 Mac 空闲门槛，不为错误另设立即推送或延迟 |
 | F8 | Grok 也提供同一个设置项，说明「仅支持出错提醒」；首版错误卡按 F6 处理 |
+| F9 | 凡能检测到的意外结束都出卡：`failed` 与 `incomplete`（如 Grok 达到运行上限／没有进展）一视同仁；无法接续的按 F6 当作通知 |
+| F10 | 未处理的错误卡跨 daemon 换新保留（`~/.askhuman/state/failure-cards.json`），且不再拦截换新排空 |
 
 已有默认值为 Claude/Codex/Cursor 关闭、Pi 开启；新增 Grok 无既有偏好，按关闭初始化。
 集成 mode=None 时不激活该能力，保留偏好；重新集成后恢复偏好。
@@ -85,7 +88,7 @@ watch 路由投放，首个合法回答生效。
 | Codex Desktop / macOS | 现有原生 canonical turn 的 `failed` 与 `error.message` | 已有原生发送与持久回执 | 可复用；仍需失败卡到原生操作的完整验证 |
 | Codex CLI / 共享 app-server | ≥0.163.0：只读原服务的 thread metadata 与最新 turn，严格核对本轮 ID 与 `failed` | 暂不开放；现有队列不能原子绑定预期失败结果 | 可检测已知共享服务的最终失败，卡片仅提供「知道了」；无服务／其它运行形态不猜测失败 |
 | Claude Code | `StopFailure` | 当前没有接入空闲原会话控制 | 可报错，先提供 F6 的确认卡 |
-| Cursor Desktop | `stop.status=error`；**重试用尽的最终出错不发 `stop`**（2026-11-03 在本机三次真实失败上确认），拟补日志检测，见 [agent-failure-inbox §4](agent-failure-inbox.md#4-cursor-出错检测) | 已有原生消息桥 | 静态契约与隔离替身验证；不得擅自启动或探测真实 Cursor |
+| Cursor Desktop | `stop.status=error`；**重试用尽的最终出错不发 `stop`**（2026-11-03 在本机三次真实失败上确认），由只读尾随 Cursor 结构化日志的 `agent.turn.outcome` 补上，见 [agent-failure-inbox §4](agent-failure-inbox.md#4-cursor-出错检测) | 已有原生消息桥 | 静态契约与隔离替身验证；不得擅自启动或探测真实 Cursor；真实出错与续跑待自然发生后核实 |
 | Cursor CLI | `stop.status=error` | 当前没有接入空闲原会话控制 | 可报错，先提供 F6 的确认卡 |
 | Pi | 扩展 settled 后本轮 `stopReason=error` | 已有扩展控制与 `pi.sendUserMessage` | 复用同会话／代际控制 |
 | Grok | `StopFailure` | 首版不接入接续 | 仅错误卡与 F6，正常结束确认仍不支持 |
@@ -127,6 +130,7 @@ Codex `--no-daemon`、自定义远端／独立 app-server 等不能仅凭安装�
 - 新回合、结束会话与卡片过期须撤销旧操作资格；卡片不能干扰正在等待的权限／普通 Ask。
 - 使用当前普通请求契约；若确需新增 IPC 载荷，按 overview 的兼容规则决定是否提升协议，不能预先假定无需升级。
 - 重启沿用现有请求恢复边界；不因读到历史 failed 就批量补弹旧错误，也不把本功能扩展成通用在途请求恢复工程。
+  唯一的例外是本功能自己建过且尚未处理的卡（F10）：只恢复它们，且卡不计入排空判定。
 - 发生能力漂移、失联或基础设施错误时，说明不可接续；不自动提权、改模型、盲打终端按键或另起会话。
 
 ## 6. 验收要点

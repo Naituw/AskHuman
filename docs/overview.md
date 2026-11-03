@@ -269,6 +269,7 @@ AskHuman/
         activity.rs          transcript 尾部活动解析
         session_paths.rs     Pi 自定义 sessionDir transcript 路径校验与缓存
         cursor_vscdb.rs      Cursor IDE 会话实时源（state.vscdb；活动/标题/完整会话）
+        cursor_log.rs        Cursor 结构化日志的只读尾随（重试用尽、不发 stop 的最终出错）
         registry.rs          Agent 状态推导、持久化与快照
         interject.rs         插话队列、等待与持久化
         stop.rs              Stop Hook 捕获与原生 continuation
@@ -522,10 +523,11 @@ Cursor Desktop 另有默认关闭的实验性“禁止后台完成后自动续�
 由 Daemon 管理普通启动、窗口接入和还原，不依赖结束确认或逐会话结束状态。范围与验收真值见
 `docs/specs/cursor-desktop-background-followup.md`；终端 Cursor CLI 不在该能力范围内。
 
-- 正常 Stop 处理 Claude Code、Codex、Cursor、Pi 的自然完成；同一「结束／出错时确认」开关另使整轮最终失败进入普通作答卡。有原会话通道时可要求继续，否则仅「知道了」。用户中断、工具错误、自动重试中静默；Grok 仅支持出错提醒，Antigravity 尚无可靠来源。
+- 正常 Stop 处理 Claude Code、Codex、Cursor、Pi 的自然完成；同一「结束／出错时确认」开关另使整轮最终失败（`failed`，以及 Grok 因运行上限／没有进展停下的 `incomplete`）进入普通作答卡。有原会话通道时可要求继续，否则仅「知道了」（当作通知）。用户中断、工具错误、自动重试中静默；Grok 仅支持出错提醒，Antigravity 尚无可靠来源。
 - Claude Code、Codex、Cursor、Grok 的各家开关默认关，Pi 默认开，已有偏好保留；自然完成询问“继续/结束”，24h 或基础设施失败 fail-open，投放沿用活跃槽 ∪ watch 渠道。错误卡也进入 iOS 普通收件箱，沿用其空闲推送门槛，不要求手机发起资格。
 - Stop preference 独立保存，但只在 CLI/MCP mode 生效；关闭全量 lifecycle 时仍可安装必要的结果观察，错误卡由 daemon 持有。None 隐藏开关并删除共享 handler 与观察产物，重新集成时
   自动恢复。Active mode 内若只开 lifecycle，共享 Stop handler 只带 `track`、不弹确认卡。
+- 错误卡是处理失败的唯一入口（见 `docs/specs/agent-failure-inbox.md`）：未处理的卡写入 `~/.askhuman/state/failure-cards.json`，跨 daemon 换新保留，且作为 daemon 自持的卡（`RequestEntry::held`）不计入排空判定。Cursor 重试用尽后既不发 `stop` 也不发 `sessionEnd`，由 `agents/cursor_log.rs` 只读尾随它的结构化日志补上；该日志只作用于 hook 已登记的会话，从不启动或探测 Cursor。
 - 错误后接续复用 `daemon/runtime/agent_control.rs` 的持久操作与实际开始回执；`agents/codex_cli.rs` 只读观察已知共享服务的最终失败，暂不向 CLI 队列投递。继续时使用各家原生 continuation；Pi Extension 在同一会话空闲且无排队消息时调用 `pi.sendUserMessage`。下一次自然 Stop 再询问，不做外部 resume。
 - Stop 确认复用普通 Ask 单选链路并写入回复历史，已提交问答参与 `show_last`；它与 lifecycle 共用单一 Stop handler，避免并发 Hook 提前置空闲。
 - `[user_confirmed_end_turn]` 出现在最后回复任意位置即表示用户已明确同意结束，命中后直接放行，避免再次确认。
