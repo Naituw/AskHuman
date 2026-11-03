@@ -3,8 +3,9 @@ import AHCore
 
 /// The window of the floating button. Transparent, above the app's window and the arrival animation, and
 /// never made key: making it key would take the keyboard from whatever is being typed in (see
-/// `ArrivalSceneController`; the window is only ever un-hidden). A touch that is not on the button or the
-/// open menu falls through to the windows below.
+/// `ArrivalSceneController`; the window is only ever un-hidden). A touch that is not on the button falls
+/// through to the windows below. The button's menu is not drawn here: the system presents it, above every
+/// window.
 final class DeveloperButtonWindow: UIWindow {
     override var canBecomeKey: Bool { false }
 
@@ -14,29 +15,27 @@ final class DeveloperButtonWindow: UIWindow {
     }
 }
 
-/// What the button's window shows, and the one view in it that takes touches: on the button while the menu is
-/// shut, anywhere while it is open (a touch outside closes it and goes no further). The decisions are
-/// `DeveloperPress`'s (the same code the unit tests run); this carries out what it asks for.
+/// What the button's window shows: the button, which takes touches only where it is, and the note that
+/// follows a finished action. This view places the button (where the user left it, above the keyboard while
+/// one is up, dimmed when it has not been touched for a while) and lets a finger drag it; the menu and what a
+/// finger does in it are the system's, on the button itself.
 final class DeveloperOverlayView: UIView {
+    /// The user chose an entry of the button's menu.
     var onInvoke: ((DeveloperMenuItem) -> Void)?
     /// The button was dropped: this is where it stays.
     var onPlace: ((DeveloperPlacement) -> Void)?
     /// The note with this id has been up long enough.
     var onToastFinished: ((Int) -> Void)?
 
-    private let items = DeveloperMenuItem.allCases
     private var placement = DeveloperPlacement.standard
-    private var press = DeveloperPress()
-    private let button = DeveloperButtonView()
-    private let menu = DeveloperMenuView()
+    private let button = DeveloperButton()
     private let toastView = DeveloperToastView()
-    private let haptics = DeveloperHaptics()
     private var keyboardTop: CGFloat?
     private var buttonCenter = CGPoint.zero
-    private var menuLayout: DeveloperMenuLayout?
-    private var activeTouch: UITouch?
+    /// The button's center when the finger that is dragging it took hold.
+    private var grabbedAt = CGPoint.zero
+    private var dragging = false
     private var shownToast: Int?
-    private var menuTask: Task<Void, Never>?
     private var idleTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
 
@@ -47,22 +46,23 @@ final class DeveloperOverlayView: UIView {
         backgroundColor = .clear
         isOpaque = false
         isMultipleTouchEnabled = false
-        addSubview(menu)
         addSubview(button)
         addSubview(toastView)
         isAccessibilityElement = false
         accessibilityElements = [button]
-        button.accessibilityCustomActions = items.map { item in
-            UIAccessibilityCustomAction(name: item.title) { [weak self] _ in
-                self?.onInvoke?(item)
-                return true
-            }
-        }
+
+        button.onInvoke = { [weak self] item in self?.onInvoke?(item) }
+        button.onTouchDown = { [weak self] in self?.wake() }
+        button.onTouchEnd = { [weak self] in self?.scheduleIdle() }
+        // A finger that moves right away is recognized as a pan before the menu has opened, and then the
+        // button is the pan's: it follows the finger. One that rests gets the menu, and the pan never starts.
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
+        pan.maximumNumberOfTouches = 1
+        button.addGestureRecognizer(pan)
+
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(keyboardChanged), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         center.addObserver(self, selector: #selector(keyboardHidden), name: UIResponder.keyboardWillHideNotification, object: nil)
-        center.addObserver(self, selector: #selector(interrupted), name: UIApplication.willResignActiveNotification, object: nil)
-        center.addObserver(self, selector: #selector(sceneInterrupted), name: UIScene.willDeactivateNotification, object: nil)
         scheduleIdle()
     }
 
@@ -83,23 +83,15 @@ final class DeveloperOverlayView: UIView {
         )
     }
 
-    private var buttonRect: CGRect {
-        let size = DeveloperMetrics.buttonSize
-        return CGRect(x: buttonCenter.x - size / 2, y: buttonCenter.y - size / 2, width: size, height: size)
-    }
-
-    private var hitMap: DeveloperHitMap { DeveloperHitMap(button: buttonRect, menu: menuLayout) }
-
     override func layoutSubviews() {
         super.layoutSubviews()
         guard bounds.width > 0, bounds.height > 0 else { return }
         // A finger that is dragging the button owns its center; at any other time it rests where the
         // placement says (and above the keyboard, if one is up).
-        if press.phase != .dragging {
+        if !dragging {
             buttonCenter = placement.displayedCenter(in: layout)
             button.center = buttonCenter
         }
-        if menuLayout != nil { layOutMenu() }
         toastView.place(in: bounds, safeTop: safeAreaInsets.top)
     }
 
@@ -113,7 +105,7 @@ final class DeveloperOverlayView: UIView {
     func apply(placement new: DeveloperPlacement, animated: Bool = true) {
         guard new != placement else { return }
         placement = new
-        if press.phase == .idle { moveButton(animated: animated) }
+        if !dragging { moveButton(animated: animated) }
     }
 
     private func moveButton(animated: Bool) {
@@ -135,114 +127,42 @@ final class DeveloperOverlayView: UIView {
 
     // MARK: Touches
 
+    /// Only the button takes a touch; the rest of the window is not there.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard !isHidden, alpha > 0.01, isUserInteractionEnabled else { return nil }
-        if menuLayout != nil { return self }
-        return buttonRect.contains(point) ? self : nil
+        guard !isHidden, alpha > 0.01, isUserInteractionEnabled, button.frame.contains(point) else { return nil }
+        return button.hitTest(convert(point, to: button), with: event)
     }
 
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard activeTouch == nil, let touch = touches.first else { return }
-        activeTouch = touch
-        wake()
-        haptics.prepare()
-        run(press.down(at: touch.location(in: self), hits: hitMap))
-    }
-
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = activeTouch, touches.contains(touch) else { return }
-        run(press.move(to: touch.location(in: self), hits: hitMap))
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = activeTouch, touches.contains(touch) else { return }
-        activeTouch = nil
-        run(press.up(at: touch.location(in: self), hits: hitMap))
-        if press.phase == .idle { scheduleIdle() }
-    }
-
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = activeTouch, touches.contains(touch) else { return }
-        activeTouch = nil
-        run(press.cancel())
-        scheduleIdle()
-    }
-
-    @objc private func interrupted() {
-        activeTouch = nil
-        run(press.cancel())
-        scheduleIdle()
-    }
-
-    @objc private func sceneInterrupted(_ note: Notification) {
-        guard let scene = note.object as? UIScene, scene === window?.windowScene else { return }
-        interrupted()
-    }
-
-    // MARK: Effects
-
-    private func run(_ effects: [DeveloperPress.Effect]) {
-        for effect in effects {
-            switch effect {
-            case .scheduleMenuTimer(let delay):
-                menuTask?.cancel()
-                menuTask = Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(delay))
-                    guard !Task.isCancelled, let self else { return }
-                    self.menuTask = nil
-                    self.run(self.press.menuTimerFired())
-                }
-            case .cancelMenuTimer:
-                menuTask?.cancel()
-                menuTask = nil
-            case .showMenu:
-                showMenu()
-            case .hideMenu:
-                hideMenu()
-            case .highlight(let item):
-                menu.setHighlighted(item)
-            case .beginDrag:
-                button.setLifted(true, reduceMotion: reduceMotion)
-            case .drag(let center):
-                buttonCenter = DeveloperPlacement.clampedDragCenter(center, in: layout)
-                button.center = buttonCenter
-            case .endDrag(let center):
-                let dropped = DeveloperPlacement.clampedDragCenter(center, in: layout)
-                placement = DeveloperPlacement.snapped(from: dropped, in: layout)
-                onPlace?(placement)
-                button.setLifted(false, reduceMotion: reduceMotion)
-                moveButton(animated: true)
-            case .invoke(let item):
-                onInvoke?(item)
-            case .haptic(let kind):
-                haptics.play(kind)
-            case .restorePosition:
-                button.setLifted(false, reduceMotion: reduceMotion)
-                moveButton(animated: true)
-            }
+    @objc private func panned(_ pan: UIPanGestureRecognizer) {
+        switch pan.state {
+        case .began:
+            wake()
+            dragging = true
+            grabbedAt = button.center
+            button.setLifted(true, reduceMotion: reduceMotion)
+        case .changed:
+            let move = pan.translation(in: self)
+            buttonCenter = DeveloperPlacement.clampedDragCenter(
+                CGPoint(x: grabbedAt.x + move.x, y: grabbedAt.y + move.y), in: layout
+            )
+            button.center = buttonCenter
+        case .ended:
+            dragging = false
+            placement = DeveloperPlacement.snapped(from: buttonCenter, in: layout)
+            onPlace?(placement)
+            button.setLifted(false, reduceMotion: reduceMotion)
+            moveButton(animated: true)
+            scheduleIdle()
+        case .cancelled, .failed:
+            // The system took the touch away (a call, a notification, the app losing the screen): the button
+            // goes back to where it was before this touch began.
+            dragging = false
+            button.setLifted(false, reduceMotion: reduceMotion)
+            moveButton(animated: true)
+            scheduleIdle()
+        default:
+            break
         }
-    }
-
-    private func showMenu() {
-        layOutMenu()
-        menu.show(reduceMotion: reduceMotion)
-        updateAccessibilityElements()
-    }
-
-    private func hideMenu() {
-        menuLayout = nil
-        menu.hide(reduceMotion: reduceMotion)
-        updateAccessibilityElements()
-        scheduleIdle()
-    }
-
-    /// Puts the menu where the button now is (the window may have changed size or the keyboard come up).
-    private func layOutMenu() {
-        let made = DeveloperMenuLayout.make(
-            items: items, width: menu.contentWidth(for: items), buttonCenter: buttonCenter, in: layout
-        )
-        menuLayout = made
-        menu.apply(made, opensLeft: buttonCenter.x >= bounds.width / 2)
     }
 
     // MARK: Idle
@@ -261,7 +181,7 @@ final class DeveloperOverlayView: UIView {
         idleTask?.cancel()
         idleTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(DeveloperMetrics.idleDelay))
-            guard !Task.isCancelled, let self, self.press.phase == .idle else { return }
+            guard !Task.isCancelled, let self, !self.dragging else { return }
             UIView.animate(withDuration: 0.4, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
                 self.button.alpha = DeveloperMetrics.idleAlpha
             }
@@ -325,15 +245,7 @@ final class DeveloperOverlayView: UIView {
 
     private func updateAccessibilityElements() {
         var elements: [Any] = [button]
-        if menuLayout != nil { elements += menu.rows }
         if toastView.isShowing { elements.append(toastView) }
         accessibilityElements = elements
-    }
-
-    /// The two-finger scrub closes the open menu.
-    override func accessibilityPerformEscape() -> Bool {
-        guard menuLayout != nil else { return false }
-        run(press.cancel())
-        return true
     }
 }

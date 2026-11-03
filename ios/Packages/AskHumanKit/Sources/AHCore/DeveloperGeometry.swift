@@ -1,11 +1,11 @@
 import CoreGraphics
 import Foundation
 
-// Where the floating developer button sits and where its menu opens (docs/specs/ios-developer-mode.md §5).
-// Only numbers and rectangles: the views feed in what the window looks like and draw what comes out, so
-// all of it is tested without a screen. No UIKit here (this target builds on macOS as well).
+// Where the floating developer button sits (docs/specs/ios-developer-mode.md §5). Only numbers and
+// rectangles: the views feed in what the window looks like and draw what comes out, so all of it is tested
+// without a screen. No UIKit here (this target builds on macOS as well).
 
-/// The sizes of the floating button and its menu, in one place so that the views and the tests agree.
+/// The size of the floating button and the times around it, in one place so that the views and the tests agree.
 public enum DeveloperMetrics {
     /// Diameter of the button.
     public static let buttonSize: CGFloat = 44
@@ -14,13 +14,6 @@ public enum DeveloperMetrics {
     public static let edgeMargin: CGFloat = 6
     /// Gap kept between the button and the top and the bottom of the safe area.
     public static let verticalMargin: CGFloat = 8
-    /// Gap between the button and the menu.
-    public static let menuGap: CGFloat = 10
-    public static let menuRowHeight: CGFloat = 52
-    public static let menuMinWidth: CGFloat = 220
-    public static let menuCornerRadius: CGFloat = 16
-    /// How far above the first row and below the last one a finger still counts as being on it.
-    public static let menuHitSlop: CGFloat = 8
     /// The button dims to `idleAlpha` after this long without a touch.
     public static let idleDelay: TimeInterval = 2.5
     public static let idleAlpha: CGFloat = 0.5
@@ -152,73 +145,10 @@ extension DeveloperPlacement {
 
 // MARK: menu
 
-/// The things the developer menu offers. One for now: the structure is what makes more of them cheap.
+/// The things the developer menu offers. One for now: the structure is what makes more of them cheap. The
+/// menu itself is the system's (`UIMenu` on the button): this is only what it lists.
 public enum DeveloperMenuItem: String, CaseIterable, Identifiable, Sendable {
     case quickTodo
 
     public var id: String { rawValue }
-}
-
-/// The menu next to the button: its frame and the frame of each row.
-public struct DeveloperMenuLayout: Equatable, Sendable {
-    public var items: [DeveloperMenuItem]
-    public var frame: CGRect
-    public var rows: [CGRect]
-
-    /// The menu opens toward the inside of the screen (a button on the right opens it to the left), centered
-    /// on the button's height and kept inside the safe area. `width` is what the rows need; it is never less
-    /// than `menuMinWidth` and never more than the room between the button and the other edge.
-    public static func make(
-        items: [DeveloperMenuItem], width: CGFloat = DeveloperMetrics.menuMinWidth, buttonCenter: CGPoint, in layout: DeveloperLayout
-    ) -> DeveloperMenuLayout {
-        let radius = DeveloperMetrics.buttonRadius
-        let gap = DeveloperMetrics.menuGap
-        let leftBound = layout.safeArea.left + DeveloperMetrics.edgeMargin
-        let rightBound = layout.size.width - layout.safeArea.right - DeveloperMetrics.edgeMargin
-        let opensLeft = buttonCenter.x >= layout.size.width / 2
-        let room = opensLeft ? buttonCenter.x - radius - gap - leftBound : rightBound - (buttonCenter.x + radius + gap)
-        let menuWidth = max(0, min(max(width, DeveloperMetrics.menuMinWidth), room))
-        let x = opensLeft ? buttonCenter.x - radius - gap - menuWidth : buttonCenter.x + radius + gap
-
-        let height = DeveloperMetrics.menuRowHeight * CGFloat(items.count)
-        let low = layout.safeArea.top + DeveloperMetrics.verticalMargin
-        let high = layout.size.height - layout.safeArea.bottom - DeveloperMetrics.verticalMargin - height
-        let y = high >= low ? min(max(buttonCenter.y - height / 2, low), high) : low
-
-        let rows = items.indices.map { index in
-            CGRect(x: x, y: y + CGFloat(index) * DeveloperMetrics.menuRowHeight, width: menuWidth, height: DeveloperMetrics.menuRowHeight)
-        }
-        return DeveloperMenuLayout(items: items, frame: CGRect(x: x, y: y, width: menuWidth, height: height), rows: rows)
-    }
-
-    /// The item a finger at `point` is on. A little above the first row and below the last one still counts,
-    /// so that the ends of the menu are not hard to hit.
-    public func item(at point: CGPoint) -> DeveloperMenuItem? {
-        guard !rows.isEmpty, point.x >= frame.minX, point.x <= frame.maxX else { return nil }
-        if let index = rows.firstIndex(where: { $0.contains(point) }) { return items[index] }
-        let slop = DeveloperMetrics.menuHitSlop
-        if point.y < frame.minY, point.y >= frame.minY - slop { return items.first }
-        if point.y >= frame.maxY, point.y <= frame.maxY + slop { return items.last }
-        return nil
-    }
-
-    /// Whether a touch at `point` belongs to the menu.
-    public func contains(_ point: CGPoint) -> Bool {
-        frame.insetBy(dx: 0, dy: -DeveloperMetrics.menuHitSlop).contains(point)
-    }
-}
-
-/// What a finger can land on: the button, and the menu while it is open.
-public struct DeveloperHitMap: Equatable, Sendable {
-    public var button: CGRect
-    public var menu: DeveloperMenuLayout?
-
-    public init(button: CGRect, menu: DeveloperMenuLayout? = nil) {
-        self.button = button
-        self.menu = menu
-    }
-
-    public func isOnButton(_ point: CGPoint) -> Bool { button.contains(point) }
-
-    public func item(at point: CGPoint) -> DeveloperMenuItem? { menu?.item(at: point) }
 }

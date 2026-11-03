@@ -3,7 +3,8 @@ import XCTest
 /// The developer mode (`docs/specs/ios-developer-mode.md`) through the real UI over the mock backend, in
 /// English or Chinese (`TEST_RUNNER_AH_UI_LANG=zh-Hans`): the floating button, its menu, and what a finger can
 /// do to them. The button lives in a window of its own, so these also check that it sits above the others and
-/// lets the touches that are not its own through.
+/// lets the touches that are not its own through. The menu is the system's: what it does with a finger (where
+/// it opens, what a slide onto a row does) is not tested here, only that it opens and that its row works.
 @MainActor
 final class AskHumanDeveloperUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -49,7 +50,11 @@ final class AskHumanDeveloperUITests: XCTestCase {
     }
 
     private func gone(_ id: String, timeout: TimeInterval = 10) -> Bool {
-        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element(id))
+        isGone(element(id), timeout: timeout)
+    }
+
+    private func isGone(_ element: XCUIElement, timeout: TimeInterval = 10) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
 
@@ -118,10 +123,17 @@ final class AskHumanDeveloperUITests: XCTestCase {
         dismissTheKeyboardTip()
     }
 
+    /// The one row of the button's menu. The menu is the system's, and a system menu's rows carry no
+    /// identifier: the row is found by its text (as a button, so that the page's own title is not it).
+    private var menuRow: XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label == %@", localized("Quick todo", "快速待办"))).firstMatch
+    }
+
     /// Opens the page the way a tap does: the button, then its one row.
     private func openTheQuickAddPage() {
         requireElement("dev-button").tap()
-        requireElement("dev-menu-quickTodo", timeout: 5).tap()
+        XCTAssertTrue(menuRow.waitForExistence(timeout: 5), "the menu did not open")
+        menuRow.tap()
     }
 
     private func typeIntoTheField(_ text: String) {
@@ -130,7 +142,6 @@ final class AskHumanDeveloperUITests: XCTestCase {
         dismissTheKeyboardTip()
         field.typeText(text)
     }
-    private var row: XCUIElement { element("dev-menu-quickTodo") }
 
     private var origin: XCUICoordinate { app.coordinate(withNormalizedOffset: .zero) }
 
@@ -140,6 +151,10 @@ final class AskHumanDeveloperUITests: XCTestCase {
 
     private var screen: CGRect { app.windows.firstMatch.frame }
 
+    /// A spot that no menu covers (the menu opens near the button, at the right or the left edge) and that has
+    /// nothing a tap could do: a tap there closes an open menu and goes no further.
+    private var spotAwayFromTheMenu: XCUICoordinate { point(screen.width / 2, 97) }
+
     /// A finger goes down on the middle of `from`, stays `hold` seconds, moves to `target` (in points of the
     /// screen) and lets go.
     private func slide(from: XCUIElement, hold: TimeInterval, to target: CGPoint) {
@@ -147,13 +162,15 @@ final class AskHumanDeveloperUITests: XCTestCase {
             .press(forDuration: hold, thenDragTo: point(target.x, target.y))
     }
 
-    /// Where the one row of the menu is when it opens from `button`: toward the inside of the screen, level
-    /// with it (the menu is 220 pt wide at the least, 10 pt from the button).
-    private func rowCenter(opensFrom button: XCUIElement) -> CGPoint {
-        let frame = button.frame
-        let toTheLeft = frame.midX >= screen.width / 2
-        let dx: CGFloat = 22 + 10 + 110
-        return CGPoint(x: toTheLeft ? frame.midX - dx : frame.midX + dx, y: frame.midY)
+    /// Opens the menu with a tap, waits for its row and closes it again; that row's place is where the menu
+    /// opens from this button (a finger that is down cannot look: where to slide to is learned first).
+    private func learnWhereTheRowOpens() -> CGPoint {
+        requireElement("dev-button").tap()
+        XCTAssertTrue(menuRow.waitForExistence(timeout: 5), "the menu did not open")
+        let frame = menuRow.frame
+        spotAwayFromTheMenu.tap()
+        XCTAssertTrue(isGone(menuRow, timeout: 5), "a tap away from the menu closes it")
+        return CGPoint(x: frame.midX, y: frame.midY)
     }
 
     private func tab(_ index: Int) {
@@ -207,23 +224,23 @@ final class AskHumanDeveloperUITests: XCTestCase {
 
     func testATapOpensTheMenuAndATapOutsideClosesItBeforeItReachesTheScreen() {
         launch()
-        button.tap()
-        _ = requireElement("dev-menu-quickTodo", timeout: 5)
-        shot("dev-03-menu")
+        // The project under the tap that closes the menu: its place is read while nothing covers it.
+        let project = requireElement("todo-project-" + askHuman)
+        let projectSpot = point(project.frame.minX + 40, project.frame.midY)
 
-        // The menu opens toward the inside of the screen, level with the button, and stays.
-        XCTAssertLessThan(row.frame.maxX, button.frame.minX)
-        XCTAssertEqual(row.frame.midY, button.frame.midY, accuracy: 30)
+        button.tap()
+        XCTAssertTrue(menuRow.waitForExistence(timeout: 5), "a tap opens the menu")
+        shot("dev-03-menu")
         RunLoop.current.run(until: Date().addingTimeInterval(0.6))
-        XCTAssertTrue(row.exists, "a tap leaves the menu open")
+        XCTAssertTrue(menuRow.exists, "a tap leaves the menu open")
 
         // A tap outside closes it, and does not go on to the project under it.
-        element("todo-project-" + askHuman).coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).tap()
-        XCTAssertTrue(gone("dev-menu-quickTodo", timeout: 5), "a tap outside closes the menu")
+        projectSpot.tap()
+        XCTAssertTrue(isGone(menuRow, timeout: 5), "a tap outside closes the menu")
         XCTAssertFalse(element("todo-project-screen").exists, "the tap that closed the menu was not the screen's")
 
         // The next one is the screen's.
-        element("todo-project-" + askHuman).tap()
+        project.tap()
         _ = requireElement("todo-project-screen", timeout: 10)
         XCTAssertTrue(button.exists, "the button is above the project page too")
     }
@@ -235,11 +252,16 @@ final class AskHumanDeveloperUITests: XCTestCase {
         XCTAssertTrue(button.exists)
     }
 
-    func testSlidingOffTheMenuLetsGoOfItAndNothingHappens() {
+    func testLettingGoOutsideTheMenuChoosesNothingAndDoesNotMoveTheButton() {
         launch()
         let before = button.frame
-        slide(from: button, hold: 0.5, to: CGPoint(x: 60, y: 120))
-        XCTAssertTrue(gone("dev-menu-quickTodo", timeout: 5), "let go outside the menu, it closes")
+        slide(from: button, hold: 0.8, to: CGPoint(x: 60, y: 120))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+        // What the system does with such a finger (it leaves the menu open, today) is its business; the
+        // menu is closed here so that the button can be looked at.
+        if menuRow.exists { spotAwayFromTheMenu.tap() }
+        XCTAssertTrue(isGone(menuRow, timeout: 5), "the menu can be closed")
+        XCTAssertFalse(element("quick-todo-picker").exists, "nothing was chosen")
         XCTAssertEqual(button.frame.midX, before.midX, accuracy: 2, "the button did not move: the finger was choosing, not dragging")
         XCTAssertEqual(button.frame.midY, before.midY, accuracy: 2)
     }
@@ -254,7 +276,7 @@ final class AskHumanDeveloperUITests: XCTestCase {
         slide(from: button, hold: 0.01, to: CGPoint(x: 70, y: 600))
         XCTAssertTrue(eventually { self.button.frame.midX < 60 }, "dropped on the left half it goes to the left edge: \(button.frame)")
         XCTAssertEqual(button.frame.midY, 600, accuracy: 24, "and stays where it was dropped, up and down")
-        XCTAssertFalse(element("dev-menu-quickTodo").exists, "dragging does not open the menu")
+        XCTAssertFalse(menuRow.exists, "dragging does not open the menu")
         shot("dev-04-dragged-left")
 
         // It keeps its place when the app moves on.
@@ -262,10 +284,10 @@ final class AskHumanDeveloperUITests: XCTestCase {
         XCTAssertLessThan(button.frame.midX, 60)
         XCTAssertEqual(button.frame.midY, 600, accuracy: 24)
 
-        // From the left the menu opens toward the right.
+        // From the left edge the menu opens too, and all of it is on the screen.
         button.tap()
-        _ = requireElement("dev-menu-quickTodo", timeout: 5)
-        XCTAssertGreaterThan(row.frame.minX, button.frame.maxX)
+        XCTAssertTrue(menuRow.waitForExistence(timeout: 5), "the menu opens from the left edge")
+        XCTAssertTrue(screen.contains(menuRow.frame), "the menu is on the screen: \(menuRow.frame)")
         shot("dev-05-menu-from-the-left")
     }
 
@@ -283,9 +305,12 @@ final class AskHumanDeveloperUITests: XCTestCase {
 
     // MARK: the quick-add page
 
-    /// The same finger as a user's: down on the button, a moment's rest, then to the row, and up.
+    /// The same finger as a user's: down on the button, a moment's rest while the system opens the menu under
+    /// it, then to the row, and up. The finger does not let go before it is on the row.
     private func openTheQuickAddPageWithOneFinger() {
-        slide(from: button, hold: 0.5, to: rowCenter(opensFrom: button))
+        let row = learnWhereTheRowOpens()
+        button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 1.0, thenDragTo: point(row.x, row.y), withVelocity: .slow, thenHoldForDuration: 0.4)
     }
 
     func testPressSlideAndLetGoOnTheRowOpensThePageAndATodoIsAdded() {
@@ -326,16 +351,15 @@ final class AskHumanDeveloperUITests: XCTestCase {
 
     func testTheProjectIsRememberedAndCancelKeepsTheText() {
         launch()
-        openTheQuickAddPageWithOneFinger()
+        openTheQuickAddPage()
         requireElement("quick-todo-project-" + askHuman).tap()
         typeIntoTheField("Half a thought")
         control("quick-todo-cancel").tap()
         XCTAssertTrue(gone("quick-todo-field", timeout: 10), "Cancel closes the page")
         XCTAssertFalse(element("dev-toast").exists, "a todo that was not added has no note")
 
-        // Next time (by taps this time): straight to the text, with the project known and the text still there.
-        button.tap()
-        requireElement("dev-menu-quickTodo", timeout: 5).tap()
+        // Next time: straight to the text, with the project known and the text still there.
+        openTheQuickAddPage()
         let field = requireElement("quick-todo-field", timeout: 10)
         XCTAssertFalse(element("quick-todo-picker").exists, "the project is remembered")
         XCTAssertTrue(element("quick-todo-project").label.contains("AskHuman"))
@@ -344,7 +368,7 @@ final class AskHumanDeveloperUITests: XCTestCase {
 
     func testTheProjectCanBeChangedAndFoundBySearching() {
         launch()
-        openTheQuickAddPageWithOneFinger()
+        openTheQuickAddPage()
         _ = requireElement("quick-todo-picker", timeout: 10)
         focusTheSearch()
 
@@ -388,8 +412,7 @@ final class AskHumanDeveloperUITests: XCTestCase {
         answer.typeText("My unfinished answer")
 
         // Up with the page, with a project already chosen (the picker has nothing to do with this).
-        button.tap()
-        requireElement("dev-menu-quickTodo", timeout: 5).tap()
+        openTheQuickAddPage()
         _ = requireElement("quick-todo-picker", timeout: 10)
         requireElement("quick-todo-project-" + askHuman).tap()
         _ = requireElement("quick-todo-field", timeout: 10)
@@ -419,8 +442,7 @@ final class AskHumanDeveloperUITests: XCTestCase {
         dismissTheKeyboardTip()
         field.typeText("A task I am writing")
 
-        button.tap()
-        requireElement("dev-menu-quickTodo", timeout: 5).tap()
+        openTheQuickAddPage()
         _ = requireElement("quick-todo-picker", timeout: 10)
         requireElement("quick-todo-project-" + askHuman).tap()
         _ = requireElement("quick-todo-field", timeout: 10)
@@ -460,14 +482,13 @@ final class AskHumanDeveloperUITests: XCTestCase {
         )
         shot("dev-06-above-keyboard")
 
-        // It still takes a touch there, over the sheet.
+        // It still takes a touch there, over the sheet, and the menu comes up over the sheet too.
         button.tap()
-        _ = requireElement("dev-menu-quickTodo", timeout: 5)
-        XCTAssertTrue(app.keyboards.firstMatch.exists, "the button's window never takes the keyboard away from the sheet")
-        // A tap away from the menu closes it. It lands on the title of the sheet, not on the field: with the
-        // keyboard up the field sits level with the button, where the one row of the menu is.
-        point(screen.width / 2, 97).tap()
-        XCTAssertTrue(gone("dev-menu-quickTodo", timeout: 5))
+        XCTAssertTrue(menuRow.waitForExistence(timeout: 5), "the menu opens over the sheet")
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "the button's menu never takes the keyboard away from the sheet")
+        // A tap away from the menu closes it. It lands on the title of the sheet, not on the field.
+        spotAwayFromTheMenu.tap()
+        XCTAssertTrue(isGone(menuRow, timeout: 5))
         XCTAssertFalse(element("quick-todo-picker").exists, "that tap was not on the row")
 
         // And back where it was left once the keyboard goes.
@@ -567,9 +588,9 @@ final class AskHumanDeveloperUITests: XCTestCase {
         shot("dev-18-while-a-request-arrives")
 
         button.tap()
-        _ = requireElement("dev-menu-quickTodo", timeout: 5)
-        point(screen.width / 2, screen.height / 2).tap()
-        XCTAssertTrue(gone("dev-menu-quickTodo", timeout: 5), "the menu works during the flight")
+        XCTAssertTrue(menuRow.waitForExistence(timeout: 5), "the menu opens during the flight")
+        spotAwayFromTheMenu.tap()
+        XCTAssertTrue(isGone(menuRow, timeout: 5), "and closes during it")
 
         // A touch anywhere else goes through both windows to the tab bar under them.
         let todos = app.tabBars.buttons[localized("Todos", "待办")]

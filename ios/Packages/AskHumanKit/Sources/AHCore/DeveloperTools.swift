@@ -16,8 +16,8 @@ public struct DeveloperToast: Identifiable, Equatable, Sendable {
 /// above every screen, with a menu of shortcuts. Off, the app is the app it always was.
 ///
 /// This holds what the views read and write: whether the mode is on, where the button was left, the note
-/// that follows a finished action, and whether the quick-add page is up. How a finger moves the button is
-/// `DeveloperPress`; the windows themselves are the app's business.
+/// that follows a finished action, and whether the quick-add page is up. How a finger moves the button, and the
+/// menu it opens, belong to the button's own view; the windows themselves are the app's business.
 @MainActor
 @Observable
 public final class DeveloperTools {
