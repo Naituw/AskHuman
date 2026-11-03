@@ -310,7 +310,6 @@ pub(super) async fn interject(
     agent_key: &str,
     text_in: &str,
     files: Vec<StagedFile>,
-    expected_result_id: Option<String>,
 ) -> InterjectResult {
     let Some((kind, session_id)) = split_key(agent_key) else {
         return InterjectResult::rejected("notFound");
@@ -322,7 +321,7 @@ pub(super) async fn interject(
     if text(rec, "kind") != kind.as_str() {
         return InterjectResult::rejected("notFound");
     }
-    if text(rec, "state") == "idle" || expected_result_id.is_some() {
+    if text(rec, "state") == "idle" {
         return super::agent_control::send(
             state,
             super::agent_control::Message {
@@ -341,7 +340,7 @@ pub(super) async fn interject(
                         is_image: file.is_image,
                     })
                     .collect(),
-                expected_result_id,
+                expected_result_id: None,
             },
         )
         .await;

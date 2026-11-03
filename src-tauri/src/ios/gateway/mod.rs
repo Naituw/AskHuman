@@ -99,7 +99,6 @@ pub trait Host: Send + Sync + 'static {
         _agent_key: &str,
         _text: &str,
         _files: Vec<StagedFile>,
-        _expected_result_id: Option<String>,
     ) -> InterjectResult {
         InterjectResult::rejected("unsupported")
     }

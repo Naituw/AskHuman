@@ -68,11 +68,7 @@ fn task_identity(create: &wire::TaskCreate) -> serde_json::Value {
 }
 
 fn interject_identity(send: &wire::InterjectSend) -> serde_json::Value {
-    let mut identity = json!({"agentKey": send.agent_key, "text": send.text, "files": send.files});
-    if let Some(expected) = &send.expected_result_id {
-        identity["expectedResultId"] = json!(expected);
-    }
-    identity
+    json!({"agentKey": send.agent_key, "text": send.text, "files": send.files})
 }
 
 impl Actor {
@@ -152,7 +148,6 @@ impl Actor {
                     &message.agent_key,
                     message.text.trim(),
                     files,
-                    message.expected_result_id.clone(),
                 )
                 .await
             },
@@ -543,20 +538,17 @@ mod tests {
     }
 
     #[test]
-    fn continuation_identity_includes_the_expected_result_without_changing_old_free_messages() {
-        let mut send = wire::InterjectSend {
+    fn a_free_message_keeps_the_identity_its_journal_entries_were_written_with() {
+        let send = wire::InterjectSend {
             client_msg_id: "one".into(),
             agent_key: "cursor:s".into(),
             text: "Continue".into(),
             files: vec![],
-            expected_result_id: None,
         };
-        let old = json!({"agentKey":"cursor:s", "text":"Continue", "files":[]});
-        assert_eq!(interject_identity(&send), old);
-        send.expected_result_id = Some("first".into());
-        let first = interject_identity(&send);
-        send.expected_result_id = Some("second".into());
-        assert_ne!(body_hash(&first), body_hash(&interject_identity(&send)));
+        assert_eq!(
+            interject_identity(&send),
+            json!({"agentKey":"cursor:s", "text":"Continue", "files":[]})
+        );
     }
 
     #[test]

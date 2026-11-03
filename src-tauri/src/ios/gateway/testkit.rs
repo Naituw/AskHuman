@@ -202,7 +202,6 @@ impl Host for TestHost {
         agent_key: &str,
         text: &str,
         files: Vec<StagedFile>,
-        _expected_result_id: Option<String>,
     ) -> InterjectResult {
         self.interject_ids
             .lock()
