@@ -13,7 +13,14 @@ Grok 仅错误，Antigravity 不宣称支持；Codex CLI 只读观察共享服�
 只迁移了 Pi 扩展（已在运行的 Pi 会话要重启）；隔离链路脚本对日常二进制通过。已做的自动化与手机预选项验收
 用的都是模拟终态，没有调用模型。
 
+2026-11-03：手机 Agents 页的「需要处理」分组与「要求继续」按钮已去掉，错误卡成为唯一处理入口（本地提交，iOS 未出包）。
+本机三次真实 Cursor 出错（05:47／08:59／12:53，都在等待 AskHuman 回答期间）证实：Cursor 重试用尽后既不发 `stop`
+也不发 `sessionEnd`，这类失败没有卡，会话一路变成「已结束」。方案草案（Cursor 日志检测、卡片跨换新保留并不拦换新、
+续跑指令提示读回答）见 [specs/agent-failure-inbox.md](specs/agent-failure-inbox.md)。
+
 下一步：
+- [ ] 用户确认 [agent-failure-inbox §6](specs/agent-failure-inbox.md#6-决定) 的 I4–I9 后按它实现；确认前不写代码。上线后
+  第一次自然发生的 Cursor 出错要对照核实（Cursor 永不实测），结果写回这里。
 - [ ] 真实失败路径（真实模型请求须先经用户授权；Cursor 永不实测）：日常使用中遇到真实的 `selected model is at capacity`
   （或其它最终失败）时核对——Popup／iOS 收件箱出现错误卡、Mac 空闲门槛之后才推送、Codex Desktop 上「要求继续」
   确实让原会话开始新一轮、「知道了」保留失败状态。不必专门造故障。
@@ -448,6 +455,8 @@ checkpoint；网络中途断开后，Cursor 连续两次“流已建立却无 ch
 （`Agent stopped retrying …`），实测 5 个长回合里 4 个因此终止。候选：① 规则层改为后台 AskHuman + `AwaitShell`
 分段等待；② 程序层让 AskHuman 每 N 分钟返回“仍在等待，请重跑”，daemon 保持问题挂起。2026-10-26 用户决定先记录、
 后续讨论；尚未修改任何规则 / 代码，也未做需计费的真实验证（需先经用户批准）。
+2026-11-03：同一类中止在本机又出现 3 次（05:47／08:59／12:53；Cursor 结构化日志 `agent.turn.outcome` 记为 error，
+重试 6／4／0 次）。保活是预防；出错后的入口（日志检测加错误卡）是兜底，见 [specs/agent-failure-inbox.md](specs/agent-failure-inbox.md)，两条线互不依赖。
 
 下一步：与用户确认方案取向和周期 N；`transportCap=10` 仍是硬上限，要延长还需降低断线频率；方案 ② 可与
 “daemon 即时换新与在途提问恢复”共用请求身份 / 重连基础设施。已登记 AskHuman 项目 todo #8。

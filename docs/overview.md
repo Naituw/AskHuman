@@ -411,7 +411,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
   capability：首次集成默认开，显式偏好跨模式切换保留，None 必须移除实际产物；它与 IM
   autoActivation 相互独立。
 - Daemon 的 `AgentRegistry` 以 session id 为主身份，推导工作中、空闲、已结束；pid/liveness 与超时只做兜底。
-- 上轮结果独立持久化为 completed／failed／interrupted／incomplete／unknown；只有真实新回合开始才清除。手机按需显示「需要处理」，用户中断静默，未完成使用独立提醒。
+- 上轮结果独立持久化为 completed／failed／interrupted／incomplete／unknown；只有真实新回合开始才清除。手机 Agents 页只显示结果与原因（失败的处理动作只在收件箱的错误卡），用户中断静默，未完成使用独立提醒。
 - 生命周期状态被 `/status`、watch、插话、托盘/状态窗口和 Daemon 空闲退出共同使用；修改事件或状态模型时必须检查这些消费者。
 - 生命周期缺失、过期、显式关闭漂移与 None 旧孤立产物都进入 Agent 卡的更新状态，不由 lifecycle
   自身在 daemon 启动时后台迁移。只有工作中 Agent 或状态窗口连接阻止闲退；graceful drain 不受
@@ -431,7 +431,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 - Daemon 按 session 维护并持久化待送达队列；GUI composer 整体覆盖，IM `/msg` 追加。
 - Agent 下一次 PreToolUse 读取并原子消费消息；composer 已打开时 hook 可等待提交或取消，热路径不做文件 IO。
 - 排队消息被实际读取后向来源 IM 发阅读回执；即时送达、撤回、覆盖或未消费的消息不回执。
-- 手机另有按原生能力开放的空闲消息与「要求继续」：macOS Codex Desktop／Cursor Desktop，以及存活的 Pi Extension；由 `daemon/runtime/agent_control.rs` 联合 `agents/control.rs` 处理，普通工具前插话队列不能唤醒空闲 CLI。真实新回合开始后，来源手机只登记该轮的一次结果通知。
+- 手机另有按原生能力开放的空闲消息（错误卡的「要求继续」走同一条原生通道）：macOS Codex Desktop／Cursor Desktop，以及存活的 Pi Extension；由 `daemon/runtime/agent_control.rs` 联合 `agents/control.rs` 处理，普通工具前插话队列不能唤醒空闲 CLI。真实新回合开始后，来源手机只登记该轮的一次结果通知。
 - 入口为 Agent 状态窗口、托盘菜单和 IM `/msg`；队列实现位于 `agents/interject.rs`。
 
 ## 项目待办 + whats-next
