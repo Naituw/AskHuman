@@ -417,19 +417,24 @@ impl Actor {
                 }
                 self.live.done_at.remove(&key);
                 self.drop_notices(&key);
+                // A card the Mac holds for this very result already tells the user; announcing it
+                // too would say the same thing twice.
+                let carded = self.live.failure_cards.get(&key).is_some_and(|id| {
+                    self.live
+                        .results
+                        .get(&key)
+                        .is_some_and(|result| &result.id == id)
+                });
                 if outcome == TurnOutcome::Failed {
                     self.live.failed.insert(key.clone());
-                    if !self.live.failure_cards.get(&key).is_some_and(|id| {
-                        self.live
-                            .results
-                            .get(&key)
-                            .is_some_and(|result| &result.id == id)
-                    }) {
+                    if !carded {
                         self.announce(&key, "failed", now);
                     }
                 } else if outcome == TurnOutcome::Incomplete {
                     self.live.failed.remove(&key);
-                    self.announce(&key, "incomplete", now);
+                    if !carded {
+                        self.announce(&key, "incomplete", now);
+                    }
                 } else if outcome == TurnOutcome::Completed && !self.followers(&key).is_empty() {
                     self.live.failed.remove(&key);
                     self.live.done_at.insert(key, now + DONE_DEBOUNCE_MS);
@@ -485,10 +490,19 @@ impl Actor {
             .is_some_and(|id| id == result_id)
         {
             self.live.failure_cards.remove(key);
-            if self.live.results.get(key).is_some_and(|result| {
-                result.id == result_id && result.outcome == TurnOutcome::Failed
-            }) {
-                self.announce(key, "failed", self.now());
+            // The card never reached the user: fall back to the announcement it replaced.
+            let announcement = self
+                .live
+                .results
+                .get(key)
+                .filter(|result| result.id == result_id)
+                .and_then(|result| match result.outcome {
+                    TurnOutcome::Failed => Some("failed"),
+                    TurnOutcome::Incomplete => Some("incomplete"),
+                    _ => None,
+                });
+            if let Some(announcement) = announcement {
+                self.announce(key, announcement, self.now());
             }
         }
     }

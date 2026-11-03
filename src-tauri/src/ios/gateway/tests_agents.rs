@@ -531,6 +531,48 @@ async fn a_failure_card_suppresses_the_result_push_and_a_failed_submission_resto
     assert_eq!(fx.pusher.count(), 1);
 }
 
+fn incomplete_end() -> AgentEventInfo {
+    let mut incomplete = turn_end(false);
+    let result = incomplete.result.as_mut().unwrap();
+    result.outcome = crate::agents::result::TurnOutcome::Incomplete;
+    result.reason = Some("max_turns".into());
+    incomplete
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_card_for_an_unfinished_turn_replaces_the_announcement_unless_it_fails_to_arrive() {
+    let (fx, _phone) = away_follower().await;
+    fx.host.set_alert_after(0);
+    fx.gateway.hold_failure("claude:s1", "result");
+    fx.gateway.agent_event(incomplete_end());
+    tokio::time::sleep(5 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 0, "the card already says it");
+    fx.gateway.release_failure("claude:s1", "another-result");
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(fx.pusher.count(), 0);
+    fx.gateway.release_failure("claude:s1", "result");
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(
+        fx.pusher.count(),
+        1,
+        "the card never arrived: announce it after all"
+    );
+    assert_eq!(fx.pusher.last().unwrap().loc_key, "PUSH_FOLLOW_INCOMPLETE");
+    fx.gateway.release_failure("claude:s1", "result");
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(fx.pusher.count(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unfinished_turn_without_a_card_is_still_announced() {
+    let (fx, _phone) = away_follower().await;
+    fx.host.set_alert_after(0);
+    fx.gateway.agent_event(incomplete_end());
+    tokio::time::sleep(5 * SECOND).await;
+    assert_eq!(fx.pusher.count(), 1);
+    assert_eq!(fx.pusher.last().unwrap().loc_key, "PUSH_FOLLOW_INCOMPLETE");
+}
+
 #[tokio::test(start_paused = true)]
 async fn an_acknowledged_failure_card_consumes_the_old_phone_notification() {
     let (fx, mut phone) = away_follower().await;

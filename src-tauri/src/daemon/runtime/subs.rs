@@ -154,7 +154,9 @@ pub(super) async fn build_tray_state(state: &Arc<ServerState>) -> ServerMsg {
         running: true,
         version: version(),
         uptime_secs: now_secs().saturating_sub(state.started_at),
-        active_requests: state.registry.active_count(),
+        // Cards the daemon holds for the user are not waited for by a drain, but they are pending
+        // questions all the same: the icon and the list below show them.
+        active_requests: state.registry.in_flight_count(),
         im_connections: active_im_connections(state).await,
         draining: state.draining.load(Ordering::SeqCst),
         agents_working: state.agents.working_count(),

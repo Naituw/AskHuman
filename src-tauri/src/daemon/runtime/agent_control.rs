@@ -8,7 +8,101 @@ use crate::models::FileAttachment;
 use serde_json::json;
 use serde_json::Value;
 
-pub(super) const CONTINUE_PROMPT: &str = "Inspect why the previous attempt stopped and what has already been completed. Continue the current task from its existing progress, without repeating successful operations. If you cannot proceed, explain the blocker and ask for the specific help you need.";
+/// The continuation instruction of a failure card. The `--show-last` pointer stays neutral on
+/// purpose: it does not claim anything about what the Agent was doing when the turn stopped.
+pub(super) const CONTINUE_PROMPT: &str = "Inspect why the previous attempt stopped and what has already been completed. Continue the current task from its existing progress, without repeating successful operations. If you cannot proceed, explain the blocker and ask for the specific help you need. If needed, you can run `AskHuman --show-last` to see the latest AskHuman question and the answer given to it.";
+
+/// Cursor sends neither `stop` nor `sessionEnd` once it gives up on a turn after exhausting its
+/// retries, so the turn would stay "working" until a backstop. Its structured log is the only
+/// first-party record of that outcome: tail it read-only and feed the failure into the registry
+/// like any other failed `TurnEnd`. This never talks to Cursor and never starts a request
+/// (`docs/specs/agent-failure-inbox.md` §4).
+pub(super) async fn watch_cursor_log(state: Arc<ServerState>) {
+    use crate::agents::cursor_log::{default_root, Tailer};
+    // Project Dev Instances never act on the user's real Cursor.
+    if crate::development::session::requires_test_profile() {
+        return;
+    }
+    let Some(root) = default_root() else {
+        return;
+    };
+    let mut tailer: Option<Tailer> = None;
+    loop {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        // Following the log is a few `stat` calls per poll, and only the switch can ask for it. A
+        // follower dropped while the switch is off restarts at the end of the logs when it is on
+        // again: what happened meanwhile is not news.
+        if !crate::integrations::agent_stop::enabled(AgentKind::Cursor) {
+            tailer = None;
+            continue;
+        }
+        let mut current = tailer.take().unwrap_or_else(|| Tailer::new(root.clone()));
+        let polled = tokio::task::spawn_blocking(move || {
+            let now = std::time::Instant::now();
+            let failures = current.poll(now);
+            let malformed = current.take_malformed(now);
+            (current, failures, malformed)
+        })
+        .await;
+        let Ok((current, failures, malformed)) = polled else {
+            continue;
+        };
+        tailer = Some(current);
+        if let Some(count) = malformed {
+            log(&format!(
+                "cursor log: {count} unreadable agent.turn.outcome line(s) in the last hour; the Cursor log format may have changed"
+            ));
+        }
+        for failure in failures {
+            apply_cursor_failure(&state, &failure);
+        }
+    }
+}
+
+/// One failed turn from Cursor's log, applied as a failed `TurnEnd` of a session the hooks already
+/// registered.
+fn apply_cursor_failure(state: &Arc<ServerState>, failure: &crate::agents::cursor_log::Failure) {
+    let sid = failure.conversation_id.as_str();
+    // The log names every conversation Cursor ran, including ones this daemon never heard of
+    // (subagents, other windows, sessions from before the daemon started). Only a session the
+    // hooks registered can have a turn to end, and this source must not invent sessions.
+    if !state.agents.knows_session(AgentKind::Cursor, sid)
+        || !crate::development::session::native_binding_allowed(AgentKind::Cursor, sid)
+        || !failure_confirmation::enabled(AgentKind::Cursor, sid)
+    {
+        return;
+    }
+    log(&format!(
+        "cursor log: failed turn session={} retries={}",
+        sid.chars().take(8).collect::<String>(),
+        failure
+            .retries
+            .map_or_else(|| "?".to_string(), |retries| retries.to_string())
+    ));
+    let observation = Observation {
+        turn_id: Some(failure.request_id.clone()),
+        result: Some(TurnResult {
+            source: Some("cursorLog".into()),
+            id: String::new(),
+            outcome: TurnOutcome::Failed,
+            turn_id: Some(failure.request_id.clone()),
+            reason: Some("runtime_error".into()),
+            summary: failure.summary(Lang::current()),
+            at: 0,
+        }),
+        ..Observation::default()
+    };
+    apply(
+        state,
+        AgentKind::Cursor,
+        sid,
+        LifecycleEvent::TurnEnd,
+        observation,
+        None,
+    );
+    broadcast_agents_state(state);
+    state.watch.notify.notify_one();
+}
 
 pub(super) async fn watch_codex_cli(state: Arc<ServerState>) {
     let mut observer = crate::agents::codex_cli::Observer::default();

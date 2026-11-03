@@ -13,6 +13,7 @@ pub mod activity;
 pub mod codex_cli;
 pub mod context_recovery;
 pub mod control;
+pub mod cursor_log;
 pub mod cursor_vscdb;
 pub mod delegated;
 pub mod detect;
