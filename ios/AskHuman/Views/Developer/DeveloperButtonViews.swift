@@ -72,6 +72,9 @@ final class DeveloperMenuRowView: UIView {
     private static let trailing: CGFloat = 20
     private static let iconWidth: CGFloat = 24
     private static let gap: CGFloat = 12
+    /// The highlight stays inside the row, so that its corners follow the menu's own rounded corners instead of
+    /// reaching out of them (the first and the last row sit right at the edge of the menu).
+    private static let highlightInset = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
 
     init(item: DeveloperMenuItem) {
         self.item = item
@@ -79,6 +82,8 @@ final class DeveloperMenuRowView: UIView {
         isUserInteractionEnabled = false
 
         highlightView.backgroundColor = UIColor.tintColor.withAlphaComponent(0.18)
+        highlightView.layer.cornerRadius = DeveloperMetrics.menuCornerRadius - Self.highlightInset.left
+        highlightView.layer.cornerCurve = .continuous
         highlightView.alpha = 0
         addSubview(highlightView)
 
@@ -118,7 +123,7 @@ final class DeveloperMenuRowView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        highlightView.frame = bounds
+        highlightView.frame = bounds.inset(by: Self.highlightInset)
         icon.frame = CGRect(x: Self.leading, y: 0, width: Self.iconWidth, height: bounds.height)
         let labelX = Self.leading + Self.iconWidth + Self.gap
         label.frame = CGRect(x: labelX, y: 0, width: max(0, bounds.width - labelX - Self.trailing), height: bounds.height)
