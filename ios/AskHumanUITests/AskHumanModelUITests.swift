@@ -419,38 +419,39 @@ final class AskHumanModelUITests: XCTestCase {
         _ = requireElement("task-progress")
     }
 
-    func testFailedIdleResultContinuesWithoutErasingTheDraft() {
+    func testFailedResultsAreReportedWithoutAnyButton() {
         launch(extra: ["-AHScenario", "agentResults", "-AHTab", "agents"])
-        XCTAssertTrue(app.staticTexts[localized("Needs attention", "需要处理")].waitForExistence(timeout: 10))
+        _ = requireElement("agent-row-\(endedAgent)")
+        // A failure gets no group of its own and no action here: what to do about it is asked in the inbox.
+        XCTAssertFalse(app.staticTexts[localized("Needs attention", "需要处理")].exists)
+        XCTAssertFalse(element("agent-continue-\(endedAgent)").exists)
+        shot("agent-results-list")
+        requireElement("agent-row-\(endedAgent)").tap()
+        XCTAssertEqual(requireElement("agent-last-result").label, localized("Last turn failed", "上轮出错"))
+        XCTAssertFalse(element("agent-continue-\(endedAgent)").exists)
+        shot("agent-failed-idle")
+    }
+
+    func testAMessageToAFailedIdleSessionStartsANewRound() {
+        launch(extra: ["-AHScenario", "agentResults", "-AHTab", "agents"])
         requireElement("agent-row-\(endedAgent)").tap()
         _ = requireElement("agent-last-result")
         let field = requireElement("interject-field")
         field.tap()
-        field.typeText("Keep this draft")
-        app.swipeDown()
-        let button = requireElement("agent-continue-\(endedAgent)")
-        XCTAssertEqual(button.label, localized("Request continuation", "要求继续"))
-        XCTAssertTrue(button.isEnabled)
-        shot("agent-failed-idle")
-        button.tap()
+        field.typeText("Please continue")
+        requireElement("interject-send").tap()
         XCTAssertTrue(gone("agent-last-result"))
-        XCTAssertTrue((field.value as? String)?.contains("Keep this draft") == true)
         _ = requireElement("follow-note")
-        shot("agent-continued-draft")
+        shot("agent-continued-by-message")
     }
 
-    func testIncompleteListHasContinuationAndUnsupportedDetailExplainsWhy() {
+    func testAnIdleSessionThatCannotTakeMessagesExplainsWhy() {
         launch(extra: ["-AHScenario", "agentResults", "-AHTab", "agents"])
-        let button = requireElement("agent-continue-\(endedAgent)")
-        XCTAssertTrue(button.isEnabled)
-        shot("agent-results-list")
-        button.tap()
-        XCTAssertTrue(gone("agent-continue-\(endedAgent)"))
         let unsupported = "codex:cdx-leak"
         reveal("agent-row-\(unsupported)")
         requireElement("agent-row-\(unsupported)").tap()
         _ = requireElement("agent-last-result")
-        XCTAssertFalse(requireElement("agent-continue-\(unsupported)").isEnabled)
+        XCTAssertFalse(element("agent-continue-\(unsupported)").exists)
         let unavailable = requireElement("interject-unavailable")
         XCTAssertTrue(unavailable.label.contains(localized("cannot receive messages while idle", "空闲时无法接收消息")))
         shot("agent-incomplete-unavailable")

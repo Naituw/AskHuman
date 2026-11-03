@@ -12,12 +12,18 @@ final class AgentResultTests: XCTestCase {
     }
 
     func testResultDoesNotReplaceTheRuntimeState() {
-        XCTAssertTrue(item(state: "idle", outcome: "failed").needsAttention)
-        XCTAssertTrue(item(state: "ended", outcome: "incomplete").needsAttention)
-        XCTAssertFalse(item(state: "working", outcome: "failed").needsAttention)
-        XCTAssertFalse(item(state: "waiting", outcome: "failed").needsAttention)
-        XCTAssertFalse(item(state: "idle", outcome: "interrupted").needsAttention)
-        XCTAssertFalse(item(state: "idle", outcome: "unknown").needsAttention)
+        XCTAssertTrue(item(state: "idle", outcome: "failed").lastTurnFellShort)
+        XCTAssertTrue(item(state: "ended", outcome: "incomplete").lastTurnFellShort)
+        XCTAssertFalse(item(state: "idle", outcome: "interrupted").lastTurnFellShort)
+        XCTAssertFalse(item(state: "idle", outcome: "unknown").lastTurnFellShort)
+        XCTAssertFalse(item(state: "idle", outcome: "completed").lastTurnFellShort)
+    }
+
+    func testARunningOrWaitingSessionDoesNotShowItsOldResult() {
+        XCTAssertFalse(item(state: "working", outcome: "failed").showsLastResult)
+        XCTAssertFalse(item(state: "waiting", outcome: "failed").showsLastResult)
+        XCTAssertTrue(item(state: "idle", outcome: "failed").showsLastResult)
+        XCTAssertTrue(item(state: "ended", outcome: "failed").showsLastResult, "a session that ended still reports how its last turn went")
     }
 
     func testResultsSurviveWireRoundTripsAndFutureOutcomesStayReadable() throws {
@@ -26,6 +32,6 @@ final class AgentResultTests: XCTestCase {
         let decoded = try JSONDecoder().decode(AgentView.self, from: encoded)
         XCTAssertEqual(decoded.lastTurnResult?.outcome, "futureOutcome")
         XCTAssertEqual(decoded.state, "idle")
-        XCTAssertFalse(AgentItem(macId: "mac", macName: "Mac", view: decoded).needsAttention)
+        XCTAssertFalse(AgentItem(macId: "mac", macName: "Mac", view: decoded).lastTurnFellShort)
     }
 }

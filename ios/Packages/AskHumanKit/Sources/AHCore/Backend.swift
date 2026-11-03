@@ -71,7 +71,6 @@ public protocol RemoteBackend: AnyObject, Sendable {
         macId: String, agentKey: String, text: String, files: [UploadSource], clientMsgId: String?,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> InterjectOutcome
-    func continueAgent(macId: String, agentKey: String, expectedResultId: String, clientMsgId: String) async throws -> InterjectOutcome
     /// Withdraws the messages still waiting for an Agent; returns how many are left.
     func clearInterject(macId: String, agentKey: String) async throws -> Int
     /// The messages still waiting for an Agent, with their text (to take them back into the editor).
@@ -107,12 +106,6 @@ public protocol RemoteBackend: AnyObject, Sendable {
 
     // push
     func updatePushToken(_ token: Data?) async
-}
-
-public extension RemoteBackend {
-    func continueAgent(macId: String, agentKey: String, expectedResultId: String, clientMsgId: String) async throws -> InterjectOutcome {
-        throw BackendError.rejected("unsupported")
-    }
 }
 
 public extension RemoteBackend {

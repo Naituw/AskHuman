@@ -24,9 +24,10 @@ final class AgentStoreTests: XCTestCase {
     func testAgentsAreGroupedByStateWithQuestionsFirst() async {
         await make()
         let sections = store.agentSections()
-        XCTAssertEqual(sections.map(\.id), ["waiting", "attention", "working", "idle"])
+        XCTAssertEqual(sections.map(\.id), ["waiting", "working", "idle", "ended"])
         XCTAssertEqual(sections[0].items.map(\.agentKey), [MockData.waitingAgentKey])
-        XCTAssertEqual(Set(sections[2].items.map(\.agentKey)), [MockData.workingAgentKey, MockData.officeAgentKey])
+        XCTAssertEqual(Set(sections[1].items.map(\.agentKey)), [MockData.workingAgentKey, MockData.officeAgentKey])
+        XCTAssertEqual(sections[3].items.map(\.agentKey), [MockData.endedAgentKey], "a failed session that ended stays in its own group")
         XCTAssertEqual(store.waitingAgentCount, 1)
     }
 
@@ -39,81 +40,43 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertEqual(store.agentSections().map(\.id), ["working", "idle"])
     }
 
-    func testFailedIdleAgentsRemainVisibleBeforeWorkingAgents() async {
+    func testAFailedResultDoesNotMoveAnAgentOutOfItsStateGroup() async {
         await make()
         await backend.setAgentResult(macId: MockData.homeMacId, agentKey: MockData.workingAgentKey,
             result: AgentTurnResult(outcome: "failed", reason: "runtime_error", at: 123_000))
-        await eventually { self.store.agent(id: self.working.id)?.needsAttention == true }
+        await eventually { self.store.agent(id: self.working.id)?.view.state == "idle" }
         let sections = store.agentSections()
-        XCTAssertEqual(Array(sections.map(\.id).prefix(3)), ["waiting", "attention", "working"])
-        XCTAssertEqual(Set(sections[1].items.map(\.agentKey)), [MockData.workingAgentKey, MockData.endedAgentKey])
-        XCTAssertEqual(sections[1].items.first?.view.state, "idle")
+        XCTAssertEqual(sections.map(\.id), ["waiting", "working", "idle", "ended"], "there is no separate group for failures")
+        XCTAssertTrue(sections[2].items.map(\.agentKey).contains(MockData.workingAgentKey))
+        XCTAssertEqual(store.agent(id: working.id)?.lastTurnFellShort, true)
     }
 
-    func testContinuationStartsANewRoundWithoutTouchingTheDraft() async throws {
-        await make()
-        let old = working
-        let composer = store.interjectComposer(for: old)
-        composer.text = "Keep this unsent note"
-        await backend.setAgentResult(macId: old.macId, agentKey: old.agentKey,
-            result: AgentTurnResult(outcome: "incomplete", turnId: "old", reason: "no_progress", at: 1, id: "result-1"))
-        await eventually { self.store.agent(id: old.id)?.needsAttention == true }
-        let outcome = try await store.continueAgent(old)
+    func testAMessageToAnIdleAgentStartsANewRoundAndClearsItsOldResult() async throws {
+        await make(scenario: .agentResults)
+        let item = try XCTUnwrap(store.agent(id: AgentItem.key(MockData.homeMacId, MockData.endedAgentKey)))
+        XCTAssertTrue(item.lastTurnFellShort)
+        let composer = store.interjectComposer(for: item)
+        composer.text = "Please continue"
+        let outcome = try await store.send(composer, to: item)
         XCTAssertEqual(outcome.status, "delivered")
         XCTAssertEqual(outcome.notificationRegistered, true)
-        XCTAssertEqual(composer.text, "Keep this unsent note")
-        await eventually { self.store.agent(id: old.id)?.view.state == "working" }
-        XCTAssertNil(store.agent(id: old.id)?.view.lastTurnResult)
-        do { _ = try await store.continueAgent(old); XCTFail("a second click must not submit") } catch {}
+        XCTAssertEqual(composer.text, "")
+        await eventually { self.store.agent(id: item.id)?.view.state == "working" }
+        XCTAssertNil(store.agent(id: item.id)?.view.lastTurnResult)
         let records = await backend.interjects
-        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records.map(\.text), ["Please continue"])
     }
 
-    func testUnknownContinuationKeepsItsIdentityUntilTheOriginalChatIsChecked() async throws {
-        await make()
-        let item = working
-        await backend.setAgentResult(macId: item.macId, agentKey: item.agentKey,
-            result: AgentTurnResult(outcome: "failed", at: 1, id: "result-2"))
-        await eventually { self.store.agent(id: item.id)?.needsAttention == true }
-        await backend.setNextInterjectFailure("controlUnknown")
-        do { _ = try await store.continueAgent(item); XCTFail("unknown") } catch {}
-        let action = store.continuation(for: item)
-        let id = action.messageId
-        XCTAssertNotNil(id)
-        XCTAssertTrue(action.needsDeliveryReview)
-        do { _ = try await store.continueAgent(item); XCTFail("review is required") } catch {}
-        XCTAssertEqual(action.messageId, id)
-        action.confirmDeliveryReviewed()
-        _ = try await store.continueAgent(item)
-        XCTAssertFalse(action.needsDeliveryReview)
-    }
-
-    func testUnknownDeliveryCannotBeBypassedThroughTheOtherEntryPoint() async throws {
-        await make()
-        let item = working
-        await backend.setAgentResult(macId: item.macId, agentKey: item.agentKey,
-            result: AgentTurnResult(outcome: "failed", at: 1, id: "result-3"))
-        await eventually { self.store.agent(id: item.id)?.needsAttention == true }
-        let composer = store.interjectComposer(for: item)
-        composer.text = "Unsent draft"
-        composer.needsDeliveryReview = true
-        do { _ = try await store.continueAgent(item); XCTFail("the first send needs review") } catch {}
-        store.confirmAgentDeliveryReviewed(item)
-        store.continuation(for: item).needsDeliveryReview = true
-        do { _ = try await store.send(composer, to: item); XCTFail("the continuation needs review") } catch {}
-        let records = await backend.interjects
-        XCTAssertTrue(records.isEmpty)
-        XCTAssertEqual(composer.text, "Unsent draft")
-    }
-
-    func testAFullNotificationListDoesNotHideSuccessfulNativeSubmission() async throws {
+    func testAFullNotificationListDoesNotHideASuccessfulSend() async throws {
         await make(scenario: .agentResults)
         await backend.setFollowLimit(2)
         let item = try XCTUnwrap(store.agent(id: AgentItem.key(MockData.homeMacId, MockData.endedAgentKey)))
-        let outcome = try await store.continueAgent(item)
+        let composer = store.interjectComposer(for: item)
+        composer.text = "Please continue"
+        let outcome = try await store.send(composer, to: item)
         XCTAssertEqual(outcome.status, "delivered")
         XCTAssertEqual(outcome.notificationRegistered, false)
-        XCTAssertNotNil(store.banner, "the list result row disappears when the new round starts, so the warning must outlive it")
+        XCTAssertNotNil(store.banner, "the result row disappears when the new round starts, so the warning must outlive it")
         await eventually { self.store.agent(id: item.id)?.view.state == "working" }
     }
 
