@@ -18,7 +18,8 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 
 
 生命周期结果与原会话控制见 [统一结果与接续](specs/agent-lifecycle-results-and-recovery.md)：
-`AgentView.lastTurnResult` 独立于空闲／运行／结束状态；手机增加「需要处理」与两个接续入口。
+`AgentView.lastTurnResult` 独立于空闲／运行／结束状态；手机 Agents 页只显示结果与原因，不设「需要处理」分组，
+失败的处理动作只在收件箱的错误卡（[决定](specs/agent-failure-inbox.md)），可接收消息的空闲会话另有详情页自由消息。
 `daemon/runtime/agent_control.rs` 将原生新回合证明关联到手机；`PhoneRecord.followTurns` 将通知绑定该轮，
 `lifecycleResults` 能力声明避免旧手机收到不认识的未完成推送。用户中断静默，结果随 `agents.json` 保留。
 
