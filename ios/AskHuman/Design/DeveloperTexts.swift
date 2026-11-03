@@ -34,6 +34,7 @@ extension QuickTodoUnavailable {
         case .noProject: String(localized: "Choose a project first.")
         case .macOffline(let mac): String(localized: "\(mac) is not reachable right now.")
         case .macNeedsUpdate(let mac): String(localized: "Update AskHuman on \(mac) to add todos from here.")
+        case .icloudOffline: String(localized: "No Mac with iCloud sync is reachable right now.")
         case .tooLong(let count, let limit): String(localized: "That is too long: \(count) of \(limit) characters.")
         }
     }
@@ -44,8 +45,9 @@ extension QuickTodoFailure {
     var text: String {
         switch self {
         case .unreachable(let mac): String(localized: "\(mac) is not reachable right now.")
+        case .icloudUnreachable: String(localized: "No Mac with iCloud sync is reachable right now.")
         case .timedOut(let mac): String(localized: "\(mac) did not answer. Try again.")
-        case .projectGone(let mac): String(localized: "This project is no longer on \(mac). Choose another.")
+        case .projectGone(let mac): String(localized: "This project is no longer on \(mac ?? String(localized: "iCloud")). Choose another.")
         case .notSaved: TodoNotice.notSaved.message
         case .refused(let reason): TodoNotice.refused(reason).message
         }

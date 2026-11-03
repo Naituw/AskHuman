@@ -101,6 +101,20 @@ extension TodoSourceChoice {
     }
 }
 
+extension TodoSection {
+    /// The heading of a group of projects: the Todos tab and the project choice of the developer mode name
+    /// their groups alike. `macName` is the Mac of a group of projects that are only on one Mac.
+    func title(macName: String?) -> Text {
+        switch kind {
+        case .withTodos: Text("With todos")
+        case .synced: Text("Synced with iCloud")
+        case .recent: Text("Recent projects")
+        case .empty: Text("Without todos")
+        case .localOnly: Text("Only on \(macName ?? String(localized: "this Mac"))")
+        }
+    }
+}
+
 extension TodoActivity {
     /// The colors of the Agents tab: orange waits for you, green is at work, gray is idle.
     var color: Color {

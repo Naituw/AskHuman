@@ -285,6 +285,28 @@ public enum TodoRows {
         }
         return out
     }
+
+    /// The rows of a source, each with the Mac that told it. `projects` is what `serving` answered. iCloud adds,
+    /// from the other Macs behind it (`others`, what each said), the projects only they have: those without a
+    /// repository, which no other Mac (and not iCloud) knows. The Todos tab and the project choice of the
+    /// developer mode list a source through this one function, so they cannot disagree about it.
+    public static func listed(
+        _ projects: TodoProjects, of source: TodoSource, servedBy serving: String, macs: [MacState],
+        others: [String: TodoProjects]
+    ) -> [TodoListedProject] {
+        func name(_ id: String) -> String { macs.first { $0.id == id }?.name ?? "" }
+        var out = projects.projects.map { TodoListedProject(macId: serving, macName: name(serving), row: $0) }
+        guard source == .icloud else { return out }
+        for mac in macs where mac.id != serving {
+            guard let reply = others[mac.id] else { continue }
+            for var row in reply.projects where row.scope == "localOnly" || row.scope == "local" {
+                // Whatever the Mac called its sections, here they are the ones of the iCloud view.
+                row.section = (row.pending > 0 ? TodoSection.Kind.localOnly : .empty).rawValue
+                out.append(TodoListedProject(macId: mac.id, macName: mac.name, row: row))
+            }
+        }
+        return out
+    }
 }
 
 // MARK: sync status

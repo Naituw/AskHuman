@@ -6,22 +6,33 @@ import AHProtocol
 // todo of a remembered project, from wherever the phone is. It writes through the same `todo.op` as the
 // Todos tab and keeps nothing of the text on disk (docs/specs/ios-todos.md I13: no offline queue).
 
-/// Where quick-added todos go: a project on a Mac. What is stored on the phone is only names and the
-/// Mac's opaque ids, never a path.
+/// Where quick-added todos go: a project on one Mac, or an iCloud project that any Mac with sync can take.
+/// What is stored on the phone is only names, the Mac's opaque ids and a repository address, never a path.
 public struct QuickTodoTarget: Codable, Equatable, Hashable, Sendable {
+    /// The Mac that listed the project; for an iCloud project, the Mac that served iCloud when it was chosen.
     public var macId: String
     public var macName: String
     public var projectId: String
     public var projectName: String
     /// The suffix that tells projects of the same name apart ("work", "playground"), when there is one.
     public var projectHint: String?
+    /// An iCloud project: its repository, which names it on every Mac that syncs (each of them has its own id
+    /// for it). The todo goes through `macId` while that Mac can take it, and through another Mac behind iCloud
+    /// when it cannot. `nil` for a project that is on one Mac only.
+    public var icloudRepo: String?
 
-    public init(macId: String, macName: String, projectId: String, projectName: String, projectHint: String? = nil) {
+    public var viaICloud: Bool { icloudRepo != nil }
+
+    public init(
+        macId: String, macName: String, projectId: String, projectName: String, projectHint: String? = nil,
+        icloudRepo: String? = nil
+    ) {
         self.macId = macId
         self.macName = macName
         self.projectId = projectId
         self.projectName = projectName
         self.projectHint = projectHint
+        self.icloudRepo = icloudRepo
     }
 }
 
@@ -30,6 +41,8 @@ public enum QuickTodoUnavailable: Equatable, Sendable {
     case noProject
     case macOffline(mac: String)
     case macNeedsUpdate(mac: String)
+    /// An iCloud project, and no Mac that syncs can be reached.
+    case icloudOffline
     case tooLong(count: Int, limit: Int)
 }
 
@@ -37,32 +50,58 @@ public enum QuickTodoUnavailable: Equatable, Sendable {
 public enum QuickTodoFailure: Equatable, Sendable {
     /// The Mac could not be reached, so nothing was sent.
     case unreachable(mac: String)
+    /// An iCloud project, and no Mac that syncs could be reached (or none of them knows the project).
+    case icloudUnreachable
     /// No answer came, twice: the todo may or may not be there.
     case timedOut(mac: String)
-    /// The Mac does not know the project any more.
-    case projectGone(mac: String)
+    /// The Mac does not know the project any more (`nil`: iCloud's project).
+    case projectGone(mac: String?)
     /// The Mac could not store it.
     case notSaved
     /// The Mac refused: `empty`, `tooLong`, `unsupported`, …
     case refused(String)
 }
 
-/// One Mac in the list the project is chosen from.
-public struct QuickTodoGroup: Identifiable, Equatable, Sendable {
+/// One entry of the first list the project is chosen from: where to look, as the title of the Todos tab offers
+/// it. iCloud stands for every Mac that syncs; a Mac that does not is a source of its own.
+public struct QuickTodoSource: Identifiable, Equatable, Sendable {
     public enum State: Equatable, Sendable {
         case loading
+        /// The rows of the source, each with the Mac that told it.
         case projects([TodoListedProject])
-        case offline
-        case needsUpdate
-        /// The Mac was asked and did not answer.
-        case noAnswer
+        /// It could not be listed; `TodoFailure.timedOut` and `.other` are worth asking again.
+        case failed(TodoFailure)
     }
 
-    public var macId: String
-    public var macName: String
+    public var choice: TodoSourceChoice
     public var state: State
+    /// iCloud: the name of the Mac whose answer the rows are.
+    public var servedBy: String?
 
-    public var id: String { macId }
+    public init(choice: TodoSourceChoice, state: State, servedBy: String? = nil) {
+        self.choice = choice
+        self.state = state
+        self.servedBy = servedBy
+    }
+
+    public var id: String { choice.id }
+    public var source: TodoSource { choice.source }
+
+    /// Whether there is anything to look at behind the row: not for a Mac that is out of reach or too old, nor
+    /// for iCloud while no Mac that syncs can be reached.
+    public var canOpen: Bool {
+        switch choice.availability {
+        case .offline, .needsUpdate, .noSync: return false
+        case .available: break
+        }
+        if case .failed(let failure) = state {
+            switch failure {
+            case .timedOut, .other: return true
+            case .noMacs, .offline, .needsUpdate, .noSyncMac: return false
+            }
+        }
+        return true
+    }
 }
 
 @MainActor
@@ -77,13 +116,28 @@ public final class QuickTodoComposer {
     public var text = ""
     /// The search of the project list.
     public var query = ""
+    /// The "projects without todos" section of the list is open (it stays shut until asked for, as on the Todos tab).
+    public var emptyExpanded = false
     public private(set) var phase: Phase = .editing
     public private(set) var failure: QuickTodoFailure?
-    /// The Macs and what they have, for the project list.
-    public private(set) var groups: [QuickTodoGroup] = []
 
     private var stored: QuickTodoTarget?
     private var macs: [MacState] = []
+
+    /// What each Mac answered when it was asked for its projects. Kept until the list is asked for anew.
+    private var answers: [String: Answer] = [:]
+    /// What the Todos tab last heard each Mac do with its todos, and what the Macs said when this list asked
+    /// them (that wins; a Mac that goes offline keeps what it was last heard to do, as on the Todos tab).
+    private var storedModes: [String: TodoMode] = [:]
+    private var learnedModes: [String: TodoMode] = [:]
+    /// The Mac that served iCloud last on the Todos tab.
+    private var lastICloudMac: String?
+
+    private enum Answer {
+        case pending
+        case projects(TodoProjects)
+        case failed(TodoFailure)
+    }
 
     @ObservationIgnored private let backend: RemoteBackend
     @ObservationIgnored private let defaults: UserDefaults
@@ -106,22 +160,46 @@ public final class QuickTodoComposer {
         self.backend = backend
         self.defaults = defaults
         stored = defaults.data(forKey: Self.targetKey).flatMap { try? JSONDecoder().decode(QuickTodoTarget.self, from: $0) }
+        storedModes = TodosStore.storedModes(defaults)
+        lastICloudMac = defaults.string(forKey: TodosStore.icloudMacKey)
     }
 
     // MARK: the target
 
     /// The project the todo goes to, with the Mac's name as it is now. A project of a Mac that is not paired
-    /// any more counts as none (it is kept, and comes back if that Mac is paired again).
+    /// any more counts as none (it is kept, and comes back if that Mac is paired again). An iCloud project is
+    /// not tied to the Mac it was chosen through: it stays while any Mac is paired.
     public var target: QuickTodoTarget? {
-        guard var target = stored, let mac = macs.first(where: { $0.id == target.macId }) else { return nil }
-        target.macName = mac.name
-        return target
+        guard var target = stored else { return nil }
+        if let mac = macs.first(where: { $0.id == target.macId }) {
+            target.macName = mac.name
+            return target
+        }
+        return target.viaICloud && !macs.isEmpty ? target : nil
     }
 
-    public func choose(_ project: TodoListedProject) {
+    /// The source the target is listed under: iCloud for an iCloud project and for a project that only a Mac
+    /// behind iCloud has, else the Mac itself.
+    public var currentSource: TodoSource? {
+        guard let target else { return nil }
+        if target.viaICloud { return .icloud }
+        return TodoSources.isAbsorbed(target.macId, macs: macs, modes: modes) ? .icloud : .mac(target.macId)
+    }
+
+    /// Whether `project`, as `source` lists it, is the one the todos go to now.
+    public func isCurrent(_ project: TodoListedProject, in source: TodoSource) -> Bool {
+        guard let stored else { return false }
+        if let repo = stored.icloudRepo { return source == .icloud && project.repo == repo }
+        return stored.macId == project.macId && stored.projectId == project.id
+    }
+
+    /// Makes `project`, as `source` lists it, the target. An iCloud project (one with a repository) is chosen
+    /// as iCloud's, not as the Mac's that happened to serve it; one that exists on a single Mac stays that Mac's.
+    public func choose(_ project: TodoListedProject, in source: TodoSource) {
+        let repo = source == .icloud && !project.isOnlyOnItsMac ? project.repo : nil
         stored = QuickTodoTarget(
             macId: project.macId, macName: project.macName, projectId: project.id, projectName: project.name,
-            projectHint: project.hint
+            projectHint: project.hint, icloudRepo: repo
         )
         failure = nil
         lastAttempt = nil
@@ -142,11 +220,25 @@ public final class QuickTodoComposer {
         target.flatMap { target in macs.first { $0.id == target.macId } }
     }
 
+    private var modes: [String: TodoMode] {
+        storedModes.merging(learnedModes) { _, learned in learned }
+    }
+
+    /// The Macs that can serve iCloud now, best first (the one the project was chosen through first).
+    private func icloudCandidates(lastUsed: String?) -> [String] {
+        TodoSources.icloudCandidates(macs: macs, modes: modes, lastUsed: lastUsed, failed: [])
+    }
+
     /// What stands in the way of sending, in the order the page says it.
     public var unavailable: QuickTodoUnavailable? {
-        guard let target, let mac = targetMac else { return .noProject }
-        if mac.link != .online { return .macOffline(mac: target.macName) }
-        if !mac.caps.todos { return .macNeedsUpdate(mac: target.macName) }
+        guard let target else { return .noProject }
+        if target.viaICloud {
+            if icloudCandidates(lastUsed: target.macId).isEmpty { return .icloudOffline }
+        } else {
+            guard let mac = targetMac else { return .noProject }
+            if mac.link != .online { return .macOffline(mac: target.macName) }
+            if !mac.caps.todos { return .macNeedsUpdate(mac: target.macName) }
+        }
         let count = text.trimmingCharacters(in: .whitespacesAndNewlines).count
         if count > Wire.todoTextMaxChars { return .tooLong(count: count, limit: Wire.todoTextMaxChars) }
         return nil
@@ -160,6 +252,34 @@ public final class QuickTodoComposer {
 
     // MARK: sending
 
+    /// Where a send goes: a Mac, and that Mac's id for the project.
+    private struct Route {
+        var macId: String
+        var macName: String
+        var projectId: String
+    }
+
+    /// A project on one Mac goes to that Mac. An iCloud project goes through the Mac it was chosen through
+    /// while that one can serve iCloud, and otherwise through the first other Mac that can and knows it: that
+    /// Mac has its own id for the project, found by the repository.
+    private func route(for target: QuickTodoTarget) async -> Route? {
+        func name(_ id: String) -> String { macs.first { $0.id == id }?.name ?? target.macName }
+        guard let repo = target.icloudRepo else {
+            return Route(macId: target.macId, macName: target.macName, projectId: target.projectId)
+        }
+        let candidates = icloudCandidates(lastUsed: target.macId)
+        if candidates.contains(target.macId) {
+            return Route(macId: target.macId, macName: name(target.macId), projectId: target.projectId)
+        }
+        for id in candidates {
+            guard let reply = try? await backend.todoProjects(macId: id), TodoMode(rawValue: reply.mode) == .icloud,
+                let row = reply.projects.first(where: { $0.repo == repo })
+            else { continue }
+            return Route(macId: id, macName: name(id), projectId: row.id)
+        }
+        return nil
+    }
+
     /// Adds the text to the target project, without ⚡ (the Mac's answer is waited for). Returns the target when
     /// the Mac took it, and then the text is gone; otherwise `nil`, the text stays and `failure` says why.
     @discardableResult
@@ -169,16 +289,24 @@ public final class QuickTodoComposer {
         failure = nil
         defer { phase = .editing }
 
+        // What the Todos tab has heard since is what the Macs are taken to do.
+        storedModes = TodosStore.storedModes(defaults)
+        guard let route = await route(for: target) else {
+            lastAttempt = nil
+            failure = .icloudUnreachable
+            return nil
+        }
+
         let clientMsgId = lastAttempt.flatMap { $0.target == target && $0.text == body ? $0.clientMsgId : nil } ?? UUID().uuidString
         let operation = TodoMutation.add(localId: clientMsgId, text: body, auto: false)
-            .operation(clientMsgId: clientMsgId, projectId: target.projectId)
+            .operation(clientMsgId: clientMsgId, projectId: route.projectId)
 
         // A lost answer is asked for again once; the id makes the repeat harmless.
         var ack: TodoAck?
         var problem: Error?
         for _ in 0..<2 {
             do {
-                ack = try await backend.todoApply(macId: target.macId, operation: operation)
+                ack = try await backend.todoApply(macId: route.macId, operation: operation)
                 problem = nil
                 break
             } catch BackendError.timedOut {
@@ -194,9 +322,9 @@ public final class QuickTodoComposer {
             switch problem as? BackendError {
             case .timedOut?:
                 lastAttempt = Attempt(clientMsgId: clientMsgId, text: body, target: target)
-                failure = .timedOut(mac: target.macName)
+                failure = .timedOut(mac: route.macName)
             case .macOffline?, .unknownMac?:
-                failure = .unreachable(mac: target.macName)
+                failure = .unreachable(mac: route.macName)
             case .cancelled?:
                 break
             case .rejected(let reason)?, .unavailable(let reason)?, .invalid(let reason)?:
@@ -216,7 +344,7 @@ public final class QuickTodoComposer {
             // The project is gone from that Mac: it cannot stay the target.
             stored = nil
             persistTarget()
-            failure = .projectGone(mac: target.macName)
+            failure = .projectGone(mac: target.viaICloud ? nil : target.macName)
         case "rejected":
             failure = .refused(ack.reason ?? "")
         default:
@@ -231,26 +359,133 @@ public final class QuickTodoComposer {
     public func update(macs next: [MacState]) {
         let before = Self.usable(macs)
         macs = next
-        if picking, Self.usable(next) != before { Task { await loadProjects() } }
+        // What was heard of a Mac that is not paired any more goes.
+        let paired = Set(next.map(\.id))
+        if !next.isEmpty, learnedModes.keys.contains(where: { !paired.contains($0) }) {
+            learnedModes = learnedModes.filter { paired.contains($0.key) }
+        }
+        if picking, Self.usable(next) != before { startLoadingProjects() }
     }
 
     private static func usable(_ list: [MacState]) -> Set<String> {
         Set(list.filter { $0.link == .online && $0.caps.todos }.map(\.id))
     }
 
-    /// Asks every Mac that is online and knows todos for its projects, all at once; the others are listed
-    /// with the reason they have none. Rows come in the order the Mac gave them.
-    public func loadProjects() async {
+    /// The sources to choose from, as the Todos tab's menu lists them (iCloud first; a Mac that syncs is part
+    /// of it, with several Macs paired), each with what it holds so far.
+    public var sources: [QuickTodoSource] {
+        TodoSources.choices(macs: macs, modes: modes).map { choice in
+            switch choice.source {
+            case .icloud: return icloud(choice)
+            case .mac(let id): return QuickTodoSource(choice: choice, state: state(ofMac: id))
+            }
+        }
+    }
+
+    /// Some Mac that was asked has not answered yet, and nothing is known of what it does with its todos: the
+    /// sources would change as soon as it does (a Mac that syncs becomes part of iCloud). The list of them waits.
+    public var isLearning: Bool {
+        macs.contains { mac in
+            guard Self.usable([mac]).contains(mac.id), modes[mac.id] == nil else { return false }
+            switch answers[mac.id] {
+            case nil, .pending?: return true
+            case .projects?, .failed?: return false
+            }
+        }
+    }
+
+    /// The groups of the projects of `source` under the search, as the Todos tab groups them.
+    public func sections(of source: TodoSource) -> [TodoSection] {
+        guard case .projects(let rows)? = sources.first(where: { $0.source == source })?.state else { return [] }
+        return TodoRows.sections(listed: rows, source: source, query: query, emptyExpanded: emptyExpanded)
+    }
+
+    /// A paired Mac's name.
+    public func macName(_ id: String?) -> String? {
+        id.flatMap { id in macs.first { $0.id == id }?.name }
+    }
+
+    private func state(ofMac id: String) -> QuickTodoSource.State {
+        guard let mac = macs.first(where: { $0.id == id }) else { return .failed(.offline) }
+        if !mac.caps.todos { return .failed(.needsUpdate) }
+        if mac.link != .online { return .failed(.offline) }
+        switch answers[id] {
+        case nil, .pending?:
+            return .loading
+        case .projects(let reply)?:
+            return .projects(TodoRows.listed(reply, of: .mac(id), servedBy: id, macs: macs, others: [:]))
+        case .failed(let failure)?:
+            return .failed(failure)
+        }
+    }
+
+    /// iCloud is served by the first Mac in the ranking that answered with sync on, like the Todos tab picks
+    /// its Mac; what the other Macs behind it have of their own is listed with it.
+    private func icloud(_ choice: TodoSourceChoice) -> QuickTodoSource {
+        var lastFailure: TodoFailure?
+        for id in icloudCandidates(lastUsed: lastICloudMac) {
+            switch answers[id] {
+            case nil, .pending?:
+                // A better ranked Mac has not answered yet: it may be the one.
+                return QuickTodoSource(choice: choice, state: .loading)
+            case .failed(let failure)?:
+                lastFailure = failure
+            case .projects(let reply)?:
+                guard TodoMode(rawValue: reply.mode) == .icloud else { continue }
+                var others: [String: TodoProjects] = [:]
+                for mac in macs where mac.id != id {
+                    if case .projects(let other)? = answers[mac.id], TodoMode(rawValue: other.mode) == .icloud { others[mac.id] = other }
+                }
+                return QuickTodoSource(
+                    choice: choice, state: .projects(TodoRows.listed(reply, of: .icloud, servedBy: id, macs: macs, others: others)),
+                    servedBy: macName(id)
+                )
+            }
+        }
+        // The Macs were there but did not answer, or none of them syncs.
+        if let lastFailure { return QuickTodoSource(choice: choice, state: .failed(lastFailure)) }
+        let anyOnline = macs.contains { $0.link == .online && $0.caps.todos }
+        return QuickTodoSource(choice: choice, state: .failed(.noSyncMac(anyOnline: anyOnline)))
+    }
+
+    /// Opens the project list: takes what the Todos tab knows of the Macs by now, and asks every Mac that is
+    /// online and knows todos for its projects, all at once. It returns at once and the list fills as they
+    /// answer; the task ends when all of them have. The Macs that cannot be asked are told apart by the sources
+    /// (offline, too old).
+    @discardableResult
+    public func startLoadingProjects() -> Task<Void, Never> {
         picking = true
         epoch += 1
         let mine = epoch
-        groups = macs.map { mac in
-            let state: QuickTodoGroup.State =
-                mac.link != .online ? .offline : (mac.caps.todos ? .loading : .needsUpdate)
-            return QuickTodoGroup(macId: mac.id, macName: mac.name, state: state)
+        storedModes = TodosStore.storedModes(defaults)
+        lastICloudMac = defaults.string(forKey: TodosStore.icloudMacKey)
+        let asked = Self.usable(macs)
+        answers = Dictionary(uniqueKeysWithValues: asked.map { ($0, Answer.pending) })
+        return Task { await ask(Array(asked), epoch: mine) }
+    }
+
+    /// `startLoadingProjects`, waited for.
+    public func loadProjects() async {
+        await startLoadingProjects().value
+    }
+
+    /// Asks a source again, after it did not answer or when the user pulls down: what the Macs already said
+    /// stays on screen until the new answers are in.
+    public func retry(_ source: TodoSource) async {
+        let ids: [String]
+        switch source {
+        case .mac(let id): ids = Self.usable(macs).contains(id) ? [id] : []
+        case .icloud: ids = Self.usable(macs).filter { modes[$0] != .local }.sorted()
         }
-        let asked = macs.filter { $0.link == .online && $0.caps.todos }.map(\.id)
-        let tasks = asked.map { id in
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            if case .failed? = answers[id] { answers[id] = .pending }
+        }
+        await ask(ids, epoch: epoch)
+    }
+
+    private func ask(_ ids: [String], epoch mine: Int) async {
+        let tasks = ids.map { id in
             Task { @MainActor in
                 let result = await self.fetch(id)
                 self.adopt(result, from: id, epoch: mine)
@@ -259,28 +494,12 @@ public final class QuickTodoComposer {
         for task in tasks { await task.value }
     }
 
-    /// Asks one Mac again, after it did not answer.
-    public func retry(macId: String) async {
-        guard let index = groups.firstIndex(where: { $0.macId == macId }) else { return }
-        groups[index].state = .loading
-        let mine = epoch
-        adopt(await fetch(macId), from: macId, epoch: mine)
-    }
-
     /// The list is not on screen any more: answers still on their way are dropped.
     public func closeProjects() {
         picking = false
         epoch += 1
-    }
-
-    /// The groups the search leaves. While searching, only projects are shown, and only the Macs that have a match.
-    public var visibleGroups: [QuickTodoGroup] {
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return groups }
-        return groups.compactMap { group in
-            guard case .projects(let list) = group.state else { return nil }
-            let matched = list.filter { TodoRows.matches($0, query: query) }
-            return matched.isEmpty ? nil : QuickTodoGroup(macId: group.macId, macName: group.macName, state: .projects(matched))
-        }
+        query = ""
+        emptyExpanded = false
     }
 
     private func fetch(_ macId: String) async -> Result<TodoProjects, Error> {
@@ -288,17 +507,13 @@ public final class QuickTodoComposer {
     }
 
     private func adopt(_ result: Result<TodoProjects, Error>, from macId: String, epoch mine: Int) {
-        guard mine == epoch, let index = groups.firstIndex(where: { $0.macId == macId }) else { return }
-        let name = groups[index].macName
+        guard mine == epoch, macs.contains(where: { $0.id == macId }) else { return }
         switch result {
         case .success(let reply):
-            groups[index].state = .projects(reply.projects.map { TodoListedProject(macId: macId, macName: name, row: $0) })
+            learnedModes[macId] = TodoMode(rawValue: reply.mode) ?? .local
+            answers[macId] = .projects(reply)
         case .failure(let error):
-            switch error as? BackendError {
-            case .macOffline?, .unknownMac?: groups[index].state = .offline
-            case .rejected("unsupported")?: groups[index].state = .needsUpdate
-            default: groups[index].state = .noAnswer
-            }
+            answers[macId] = .failed(TodoFailure.of(error))
         }
     }
 }

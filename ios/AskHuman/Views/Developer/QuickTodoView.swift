@@ -5,7 +5,8 @@ import AHCore
 /// one sentence. It only draws what `QuickTodoComposer` says and calls `DeveloperTools` for what the buttons do.
 struct QuickTodoView: View {
     @Environment(AppStore.self) private var store
-    @State private var picking = false
+    /// The choice of the project, when it is open: the sources, then the projects of one of them.
+    @State private var path: [QuickTodoStep] = []
     @FocusState private var focused: Bool
 
     private var developer: DeveloperTools { store.developer }
@@ -13,11 +14,11 @@ struct QuickTodoView: View {
     var body: some View {
         @Bindable var composer = developer.quickTodo
         let sending = composer.phase == .sending
-        NavigationStack {
+        NavigationStack(path: $path) {
             Form {
                 Section {
                     Button {
-                        picking = true
+                        openThePicker()
                     } label: {
                         QuickTodoProjectRow(target: composer.target)
                     }
@@ -53,8 +54,11 @@ struct QuickTodoView: View {
                     }
                 }
             }
-            .navigationDestination(isPresented: $picking) {
-                QuickTodoProjectPicker { picking = false }
+            .navigationDestination(for: QuickTodoStep.self) { step in
+                switch step {
+                case .sources: QuickTodoSourcePicker()
+                case .projects(let source): QuickTodoProjectList(source: source) { path = [] }
+                }
             }
         }
         // While the Mac is being asked there is no way out: a refusal that came after the page was gone
@@ -62,20 +66,43 @@ struct QuickTodoView: View {
         .interactiveDismissDisabled(sending)
         .task {
             if composer.target == nil {
-                // The first time there is no project yet, so the page opens on the list of them.
+                // The first time there is no project yet, so the page opens on the choice of one.
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
-                withTransaction(transaction) { picking = true }
+                withTransaction(transaction) { openThePicker() }
             } else {
                 focused = true
             }
         }
-        .onChange(of: picking) { _, now in
-            if !now { focused = true }
+        .onChange(of: path.isEmpty) { _, closed in
+            if closed {
+                composer.closeProjects()
+                focused = true
+            }
         }
         .onChange(of: composer.failure) { _, failure in
             // The project is gone from that Mac: choosing another is the only way on.
-            if case .projectGone = failure { picking = true }
+            if case .projectGone = failure { openThePicker() }
+        }
+        // The page goes (a swipe can close it with the choice open): the Macs are not asked any more.
+        .onDisappear { composer.closeProjects() }
+    }
+
+    /// Opens the choice of the project. When there is just one source that is no choice, so it opens on its
+    /// projects. Otherwise, with a project chosen it opens on the projects of that project's source, so that
+    /// another one of it is a tap away (the back button goes to the sources); with none, or when that source
+    /// cannot be looked into now, it opens on the sources.
+    private func openThePicker() {
+        let composer = developer.quickTodo
+        // Started first: what the Todos tab knows of the Macs by now is what tells the sources apart.
+        composer.startLoadingProjects()
+        let sources = composer.sources
+        if sources.count == 1, let only = sources.first, only.canOpen {
+            path = [.projects(only.source)]
+        } else if let current = composer.currentSource, sources.first(where: { $0.source == current })?.canOpen == true {
+            path = [.sources, .projects(current)]
+        } else {
+            path = [.sources]
         }
     }
 }
@@ -98,7 +125,9 @@ private struct QuickTodoProjectRow: View {
                             Text(verbatim: hint).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
-                    Text(verbatim: target.macName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    // An iCloud project is iCloud's, whichever Mac it goes through.
+                    (target.viaICloud ? Text("iCloud") : Text(verbatim: target.macName))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
             } else {
                 Text("Choose a project").foregroundStyle(Color.accentColor)

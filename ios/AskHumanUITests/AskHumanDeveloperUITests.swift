@@ -12,6 +12,10 @@ final class AskHumanDeveloperUITests: XCTestCase {
 
     /// The "AskHuman" project of the demo's iCloud source (the first row of the Todos tab).
     private let askHuman = "a1b2c3d4e5f60001"
+    /// The Office iMac does not sync, so it is a source of its own, and "AskHuman · work" and "· playground" are its.
+    private let officeSource = "mac:mockofficemacmacmacmacmac"
+    private let officeWork = "b1b2c3d4e5f60001"
+    private let officePlayground = "b1b2c3d4e5f60002"
 
     override func setUp() async throws {
         continueAfterFailure = false
@@ -134,6 +138,23 @@ final class AskHumanDeveloperUITests: XCTestCase {
         requireElement("dev-button").tap()
         XCTAssertTrue(menuRow.waitForExistence(timeout: 5), "the menu did not open")
         menuRow.tap()
+    }
+
+    /// The choice of the project as a user makes it: the source first (the page opens on the sources while no
+    /// project is chosen), then the project.
+    private func chooseProject(_ id: String, from source: String = "icloud") {
+        _ = requireElement("quick-todo-picker", timeout: 10)
+        requireElement("quick-todo-source-" + source).tap()
+        requireElement("quick-todo-project-" + id).tap()
+    }
+
+    /// The list of projects is lazy and the sheet is half the screen high: swiping up lifts the sheet and then
+    /// scrolls down the list (`down: false`: back up it), until the row is there.
+    private func scrollTheProjects(to id: String, down: Bool = true) {
+        let list = element("quick-todo-projects")
+        for _ in 0..<4 where !element("quick-todo-project-" + id).exists {
+            if down { list.swipeUp(velocity: .slow) } else { list.swipeDown(velocity: .slow) }
+        }
     }
 
     private func typeIntoTheField(_ text: String) {
@@ -317,14 +338,26 @@ final class AskHumanDeveloperUITests: XCTestCase {
         launch()
         openTheQuickAddPageWithOneFinger()
 
-        // The first time there is no project yet: the page opens on the list of them, a group for each Mac.
+        // The first time there is no project yet: the page opens on the sources, as the Todos tab has them.
+        // The Home MacBook Pro syncs, so it is what iCloud is made of; the Office iMac is a source of its own.
         _ = requireElement("quick-todo-picker", timeout: 10)
-        shot("dev-07-picker")
-        requireElement("quick-todo-project-" + askHuman).tap()
+        requireElement("quick-todo-source-icloud")
+        requireElement("quick-todo-source-" + officeSource)
+        XCTAssertFalse(element("quick-todo-source-mac:mockhomemacmacmacmacmacmac").exists, "a Mac that syncs is part of iCloud")
+        shot("dev-07-sources")
 
-        // Back at the text, with the project on top and the keyboard up.
+        // iCloud's projects, grouped as on the Todos tab; what is only on the Office iMac is not among them.
+        requireElement("quick-todo-source-icloud").tap()
+        _ = requireElement("quick-todo-projects", timeout: 10)
+        requireElement("quick-todo-project-" + askHuman)
+        XCTAssertFalse(element("quick-todo-project-" + officeWork).exists, "the Office iMac's projects are not iCloud's")
+        shot("dev-07-projects")
+        element("quick-todo-project-" + askHuman).tap()
+
+        // Back at the text, with the project on top (it says iCloud) and the keyboard up.
         _ = requireElement("quick-todo-field")
-        XCTAssertTrue(element("quick-todo-project").label.contains("AskHuman"), element("quick-todo-project").label)
+        let chosen = element("quick-todo-project").label
+        XCTAssertTrue(chosen.contains("AskHuman") && chosen.contains("iCloud"), chosen)
         XCTAssertFalse(control("quick-todo-send").isEnabled, "there is nothing to add yet")
         typeIntoTheField("Try the quick add")
         XCTAssertTrue(control("quick-todo-send").isEnabled)
@@ -352,7 +385,7 @@ final class AskHumanDeveloperUITests: XCTestCase {
     func testTheProjectIsRememberedAndCancelKeepsTheText() {
         launch()
         openTheQuickAddPage()
-        requireElement("quick-todo-project-" + askHuman).tap()
+        chooseProject(askHuman)
         typeIntoTheField("Half a thought")
         control("quick-todo-cancel").tap()
         XCTAssertTrue(gone("quick-todo-field", timeout: 10), "Cancel closes the page")
@@ -369,32 +402,44 @@ final class AskHumanDeveloperUITests: XCTestCase {
     func testTheProjectCanBeChangedAndFoundBySearching() {
         launch()
         openTheQuickAddPage()
+        // The Office iMac is a source of its own: its projects are the ones searched.
         _ = requireElement("quick-todo-picker", timeout: 10)
+        requireElement("quick-todo-source-" + officeSource).tap()
+        _ = requireElement("quick-todo-projects", timeout: 10)
         focusTheSearch()
 
-        // Three projects are called AskHuman, on two Macs: the suffix tells them apart.
+        // Two of its projects are called AskHuman: the suffix tells them apart.
         app.typeText("askhuman")
-        _ = requireElement("quick-todo-project-" + askHuman)
-        _ = requireElement("quick-todo-project-b1b2c3d4e5f60001")
-        _ = requireElement("quick-todo-project-b1b2c3d4e5f60002")
-        XCTAssertFalse(element("quick-todo-project-a1b2c3d4e5f60002").exists, "Billing Service does not match")
+        _ = requireElement("quick-todo-project-" + officeWork)
+        _ = requireElement("quick-todo-project-" + officePlayground)
+        XCTAssertFalse(element("quick-todo-project-b1b2c3d4e5f60003").exists, "sandbox does not match")
         app.typeText(" playground")
-        XCTAssertTrue(element("quick-todo-project-b1b2c3d4e5f60002").waitForExistence(timeout: 5))
-        XCTAssertTrue(gone("quick-todo-project-b1b2c3d4e5f60001", timeout: 5), "every word has to match")
+        XCTAssertTrue(element("quick-todo-project-" + officePlayground).waitForExistence(timeout: 5))
+        XCTAssertTrue(gone("quick-todo-project-" + officeWork, timeout: 5), "every word has to match")
         shot("dev-10-search")
-        element("quick-todo-project-b1b2c3d4e5f60002").tap()
+        element("quick-todo-project-" + officePlayground).tap()
 
         _ = requireElement("quick-todo-field")
         let label = element("quick-todo-project").label
         XCTAssertTrue(label.contains("playground") && label.contains("Office iMac"), label)
 
-        // The row on the page takes it back to the list, and another choice replaces the first.
+        // The row on the page takes it back to the projects of that source, and another choice replaces the first.
         element("quick-todo-project").tap()
-        _ = requireElement("quick-todo-picker", timeout: 10)
+        _ = requireElement("quick-todo-projects", timeout: 10)
         focusTheSearch()
         app.typeText("work")
-        requireElement("quick-todo-project-b1b2c3d4e5f60001").tap()
+        requireElement("quick-todo-project-" + officeWork).tap()
         XCTAssertTrue(element("quick-todo-project").label.contains("work"), element("quick-todo-project").label)
+
+        // The back button of that list is the way to the sources: another source, another project. (The page
+        // behind the sheet has a "Source" button too, so the list's own bar is the one looked in.)
+        element("quick-todo-project").tap()
+        _ = requireElement("quick-todo-projects", timeout: 10)
+        app.navigationBars["Office iMac"].buttons[localized("Source", "来源")].tap()
+        requireElement("quick-todo-source-icloud").tap()
+        requireElement("quick-todo-project-" + askHuman).tap()
+        let icloud = element("quick-todo-project").label
+        XCTAssertTrue(icloud.contains("AskHuman") && icloud.contains("iCloud") && !icloud.contains("Office"), icloud)
     }
 
     /// The main window's keyboard goes to the page while it is up, and comes back to what was being typed in.
@@ -413,8 +458,7 @@ final class AskHumanDeveloperUITests: XCTestCase {
 
         // Up with the page, with a project already chosen (the picker has nothing to do with this).
         openTheQuickAddPage()
-        _ = requireElement("quick-todo-picker", timeout: 10)
-        requireElement("quick-todo-project-" + askHuman).tap()
+        chooseProject(askHuman)
         _ = requireElement("quick-todo-field", timeout: 10)
         shot("dev-11-over-an-answer")
         control("quick-todo-cancel").tap()
@@ -443,8 +487,7 @@ final class AskHumanDeveloperUITests: XCTestCase {
         field.typeText("A task I am writing")
 
         openTheQuickAddPage()
-        _ = requireElement("quick-todo-picker", timeout: 10)
-        requireElement("quick-todo-project-" + askHuman).tap()
+        chooseProject(askHuman)
         _ = requireElement("quick-todo-field", timeout: 10)
         shot("dev-13-over-a-sheet")
         control("quick-todo-cancel").tap()
@@ -520,8 +563,7 @@ final class AskHumanDeveloperUITests: XCTestCase {
 
         // The page opens over the viewer, and the viewer is as it was once the page is gone.
         openTheQuickAddPage()
-        _ = requireElement("quick-todo-picker", timeout: 10)
-        requireElement("quick-todo-project-" + askHuman).tap()
+        chooseProject(askHuman)
         _ = requireElement("quick-todo-field", timeout: 10)
         shot("dev-16-page-over-the-viewer")
         control("quick-todo-cancel").tap()
@@ -532,7 +574,7 @@ final class AskHumanDeveloperUITests: XCTestCase {
 
     // MARK: nothing to add to
 
-    /// No Mac can take a todo: each is listed with why not, there is nothing to choose, and the page says so.
+    /// No Mac can take a todo: every source is listed dimmed with why not, there is nothing to open, and the page says so.
     private func expectNoMacCanTakeATodo(scenario: String, reason: String) {
         launch(scenario: scenario)
         openTheQuickAddPage()
@@ -540,6 +582,15 @@ final class AskHumanDeveloperUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts[reason].firstMatch.waitForExistence(timeout: 10), "no reason is given")
         XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == %@", reason)).count, 2, "one for each Mac")
+        XCTAssertTrue(
+            app.staticTexts[localized("No Mac has iCloud sync on", "没有 Mac 开启了 iCloud 同步")].exists,
+            "iCloud says that nothing in it can be reached"
+        )
+        let sources = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "quick-todo-source-"))
+        XCTAssertEqual(sources.count, 3, "iCloud and the two Macs")
+        for index in 0..<sources.count {
+            XCTAssertFalse(sources.element(boundBy: index).isEnabled, "\(sources.element(boundBy: index).identifier) can be opened")
+        }
         XCTAssertFalse(
             app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "quick-todo-project-")).firstMatch.exists,
             "there is nothing to choose"
@@ -556,14 +607,47 @@ final class AskHumanDeveloperUITests: XCTestCase {
     }
 
     func testWhenNoMacIsReachableTheListSaysWhyAndNothingCanBeAdded() {
-        expectNoMacCanTakeATodo(scenario: "offline", reason: localized("Not reachable right now.", "暂时连不上。"))
+        expectNoMacCanTakeATodo(scenario: "offline", reason: localized("Offline", "离线"))
     }
 
     func testAMacThatPredatesTodosIsListedWithTheUpdateItNeeds() {
-        expectNoMacCanTakeATodo(
-            scenario: "outdated",
-            reason: localized("Update AskHuman on this Mac to add todos from here.", "请先更新这台 Mac 上的 AskHuman，才能在这里添加待办。")
-        )
+        expectNoMacCanTakeATodo(scenario: "outdated", reason: localized("Needs an update", "需要更新"))
+    }
+
+    // MARK: two Macs that sync
+
+    /// Two Macs that both sync through iCloud are one source, so there is nothing to choose between: the page
+    /// opens on its projects. A project both have is listed once; what only one has is listed under its Mac.
+    func testMacsThatBothSyncAreOneICloudWhoseProjectsAreListedOnce() {
+        launch(scenario: "bothSync")
+        openTheQuickAddPage()
+        _ = requireElement("quick-todo-projects", timeout: 15)
+        XCTAssertFalse(element("quick-todo-picker").exists, "one source is no choice")
+
+        // "AskHuman" is on both Macs, and the Todos tab lists it once; each Mac's own projects are in a group of its
+        // own, further down (the sheet is half the screen high: swiping up lifts it and then scrolls).
+        _ = requireElement("quick-todo-project-" + askHuman)
+        XCTAssertFalse(element("quick-todo-project-" + officeWork).exists, "the Office iMac's AskHuman is the same project")
+        scrollTheProjects(to: "b1b2c3d4e5f60004")
+        _ = requireElement("quick-todo-project-a1b2c3d4e5f60006")
+        XCTAssertTrue(app.staticTexts[localized("Only on Home MacBook Pro", "仅在 Home MacBook Pro")].exists)
+        XCTAssertTrue(app.staticTexts[localized("Only on Office iMac", "仅在 Office iMac")].exists)
+        shot("dev-20-both-sync")
+
+        // A project of iCloud is iCloud's, not one Mac's: the page says so.
+        scrollTheProjects(to: askHuman, down: false)
+        requireElement("quick-todo-project-" + askHuman).tap()
+        _ = requireElement("quick-todo-field", timeout: 10)
+        let label = element("quick-todo-project").label
+        XCTAssertTrue(label.contains("AskHuman") && label.contains("iCloud") && !label.contains("MacBook"), label)
+
+        // A project that only the Office iMac has stays that Mac's.
+        element("quick-todo-project").tap()
+        _ = requireElement("quick-todo-projects", timeout: 10)
+        scrollTheProjects(to: "b1b2c3d4e5f60004")
+        requireElement("quick-todo-project-b1b2c3d4e5f60004").tap()
+        let intranet = element("quick-todo-project").label
+        XCTAssertTrue(intranet.contains("intranet") && intranet.contains("Office iMac"), intranet)
     }
 
     // MARK: while a request arrives
@@ -602,8 +686,7 @@ final class AskHumanDeveloperUITests: XCTestCase {
     func testTypingContinuesInThePageWhileARequestArrivesUnderIt() {
         launch(extra: arrival(after: 18, slowdown: 12))
         openTheQuickAddPage()
-        _ = requireElement("quick-todo-picker", timeout: 10)
-        requireElement("quick-todo-project-" + askHuman).tap()
+        chooseProject(askHuman)
         let field = requireElement("quick-todo-field", timeout: 10)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
         dismissTheKeyboardTip()

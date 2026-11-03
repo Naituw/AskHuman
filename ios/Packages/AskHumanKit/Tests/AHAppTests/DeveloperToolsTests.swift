@@ -22,11 +22,11 @@ final class DeveloperToolsTests: XCTestCase {
 
     private func chooseOfficeWork() async {
         await developer.quickTodo.loadProjects()
-        let office = developer.quickTodo.groups.first { $0.macId == MockData.officeMacId }
+        let office = developer.quickTodo.sources.first { $0.source == .mac(MockData.officeMacId) }
         guard case .projects(let rows)? = office?.state, let project = rows.first(where: { $0.id == MockData.todoOfficeWorkProject }) else {
             return XCTFail("the Office iMac lists no AskHuman · work")
         }
-        developer.quickTodo.choose(project)
+        developer.quickTodo.choose(project, in: .mac(MockData.officeMacId))
     }
 
     // MARK: the switch

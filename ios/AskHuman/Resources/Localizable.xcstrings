@@ -1324,16 +1324,6 @@
         }
       }
     },
-    "Did not answer" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "没有响应"
-          }
-        }
-      }
-    },
     "Discard" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2324,6 +2314,16 @@
         }
       }
     },
+    "No Mac with iCloud sync is reachable right now." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开启了 iCloud 同步的 Mac 暂时都连不上。"
+          }
+        }
+      }
+    },
     "No history yet" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2430,16 +2430,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "以后再说"
-          }
-        }
-      }
-    },
-    "Not reachable right now." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "暂时连不上。"
           }
         }
       }
@@ -3039,16 +3029,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上一条消息"
-          }
-        }
-      }
-    },
-    "Project" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "项目"
           }
         }
       }
@@ -5007,16 +4987,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "请先更新 %@ 上的 AskHuman，才能在手机上管理它的待办。"
-          }
-        }
-      }
-    },
-    "Update AskHuman on this Mac to add todos from here." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请先更新这台 Mac 上的 AskHuman，才能在这里添加待办。"
           }
         }
       }

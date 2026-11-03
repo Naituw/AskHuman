@@ -79,13 +79,14 @@ private struct TodoSourceMenu: View {
 
 /// The search field, except where there is nothing to search: a Mac that cannot be reached or needs an
 /// update leaves an explanation on the page, and a search field above it only gets in the way.
-private struct ProjectSearch: ViewModifier {
+struct ProjectSearch: ViewModifier {
     @Binding var text: String
     let enabled: Bool
+    var placement: SearchFieldPlacement = .automatic
 
     func body(content: Content) -> some View {
         if enabled {
-            content.searchable(text: $text, prompt: "Search projects")
+            content.searchable(text: $text, placement: placement, prompt: "Search projects")
         } else {
             content
         }
@@ -117,7 +118,10 @@ private struct TodosList: View {
                         .accessibilityIdentifier("todo-project-" + project.id)
                     }
                 } header: {
-                    TodoSectionHeader(section: section)
+                    TodoSectionHeader(
+                        section: section, macName: todos.macName(section.macId), emptyExpanded: $todos.emptyExpanded,
+                        toggleId: "todo-empty-toggle"
+                    )
                 }
             }
             if todos.projects?.truncated == true {
@@ -134,19 +138,23 @@ private struct TodosList: View {
     }
 }
 
-private struct TodoSectionHeader: View {
-    @Environment(AppStore.self) private var store
+/// The heading of a group of projects, here and in the project choice of the developer mode. The group of
+/// projects without todos folds: it stays closed until asked for.
+struct TodoSectionHeader: View {
     let section: TodoSection
+    /// The Mac of a group of projects that are only on one Mac.
+    let macName: String?
+    @Binding var emptyExpanded: Bool
+    /// What the UI tests call the fold.
+    let toggleId: String
 
     var body: some View {
-        let todos = store.todos
         if section.kind == .empty {
-            // Projects without todos stay closed until asked for.
             Button {
-                todos.emptyExpanded.toggle()
+                emptyExpanded.toggle()
             } label: {
                 HStack(spacing: 6) {
-                    title
+                    section.title(macName: macName)
                     Text("\(section.total)").foregroundStyle(.secondary)
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.bold))
@@ -159,20 +167,10 @@ private struct TodoSectionHeader: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("todo-empty-toggle")
+            .accessibilityIdentifier(toggleId)
             .animation(.snappy, value: section.collapsed)
         } else {
-            title.font(.footnote.weight(.semibold)).textCase(nil)
-        }
-    }
-
-    private var title: Text {
-        switch section.kind {
-        case .withTodos: Text("With todos")
-        case .synced: Text("Synced with iCloud")
-        case .recent: Text("Recent projects")
-        case .empty: Text("Without todos")
-        case .localOnly: Text("Only on \(store.todos.macName(section.macId) ?? String(localized: "this Mac"))")
+            section.title(macName: macName).font(.footnote.weight(.semibold)).textCase(nil)
         }
     }
 }

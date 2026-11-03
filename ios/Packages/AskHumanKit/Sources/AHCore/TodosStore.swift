@@ -102,7 +102,9 @@ public final class TodosStore {
     @ObservationIgnored private(set) var rechecks = 0
 
     private static let sourceKey = "ah.todos.source"
-    private static let icloudMacKey = "ah.todos.icloudMac"
+    /// The Mac that served iCloud last. The project choice of the developer mode reads it too, so that both
+    /// ask the same Mac.
+    static let icloudMacKey = "ah.todos.icloudMac"
     private static let modesKey = "ah.todos.modes"
 
     /// How long the phone waits before it asks again while the Mac says it is syncing: about 35 seconds in
@@ -134,22 +136,9 @@ public final class TodosStore {
         return TodoRows.sections(listed: listed(projects, of: source), source: source, query: query, emptyExpanded: emptyExpanded)
     }
 
-    /// The rows of the source, each with the Mac that told it. iCloud adds, from the other Macs behind it,
-    /// the projects only they have: those without a repository, which no other Mac (and not iCloud) knows.
+    /// The rows of the source, each with the Mac that told it (`TodoRows.listed`).
     private func listed(_ projects: TodoProjects, of source: TodoSource) -> [TodoListedProject] {
-        func name(_ id: String) -> String { macs.first { $0.id == id }?.name ?? "" }
-        let serving = accessMacId ?? ""
-        var out = projects.projects.map { TodoListedProject(macId: serving, macName: name(serving), row: $0) }
-        guard source == .icloud else { return out }
-        for mac in macs where mac.id != serving {
-            guard let reply = others[mac.id] else { continue }
-            for var row in reply.projects where row.scope == "localOnly" || row.scope == "local" {
-                // Whatever the Mac called its sections, here they are the ones of the iCloud view.
-                row.section = (row.pending > 0 ? TodoSection.Kind.localOnly : .empty).rawValue
-                out.append(TodoListedProject(macId: mac.id, macName: mac.name, row: row))
-            }
-        }
-        return out
+        TodoRows.listed(projects, of: source, servedBy: accessMacId ?? "", macs: macs, others: others)
     }
 
     /// What the Agents are doing in a listed project, or `nil` when none is live in it.
@@ -355,7 +344,9 @@ public final class TodosStore {
         if let data = try? JSONEncoder().encode(raw) { defaults.set(data, forKey: Self.modesKey) }
     }
 
-    private static func storedModes(_ defaults: UserDefaults) -> [String: TodoMode] {
+    /// What each Mac was last heard to do with its todos (the Todos tab keeps it; the project choice of the
+    /// developer mode starts from it).
+    static func storedModes(_ defaults: UserDefaults) -> [String: TodoMode] {
         guard let data = defaults.data(forKey: modesKey),
             let raw = try? JSONDecoder().decode([String: String].self, from: data)
         else { return [:] }
