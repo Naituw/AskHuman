@@ -1428,6 +1428,10 @@ async fn control_loop(
                 let result = crate::codex_desktop::shared().execute(operation).await;
                 let _ = ipc::write_msg(w, &ServerMsg::CodexDesktop { result }).await;
             }
+            ClientMsg::CursorDesktop { operation } => {
+                let result = crate::cursor_desktop::execute(operation).await;
+                let _ = ipc::write_msg(w, &ServerMsg::CursorDesktop { result }).await;
+            }
             ClientMsg::Hello(hello) => {
                 // 已在排空：一律回 Draining（客户端等下线后用新二进制拉起重试）。
                 if state.draining.load(Ordering::SeqCst) {

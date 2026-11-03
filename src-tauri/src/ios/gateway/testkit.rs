@@ -346,6 +346,7 @@ pub fn sample_choices() -> TaskChoices {
             }],
             agents: vec![wire::AgentOption {
                 speed_control: None,
+                max_control: None,
                 kind: "claude".into(),
                 label: "Claude Code".into(),
                 ready: true,

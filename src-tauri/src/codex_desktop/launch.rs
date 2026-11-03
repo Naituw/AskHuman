@@ -131,8 +131,13 @@ pub fn resolve_launch(
     id: Option<&str>,
     explicit: Option<LaunchTarget>,
 ) -> Result<LaunchTarget, String> {
-    if kind != crate::agents::AgentKind::Codex {
-        return Ok(LaunchTarget::Terminal);
+    match kind {
+        crate::agents::AgentKind::Codex => {}
+        // Cursor has its own route choice (the Agents window), decided the same way.
+        crate::agents::AgentKind::Cursor => {
+            return crate::cursor_desktop::resolve_launch(id, explicit)
+        }
+        _ => return Ok(LaunchTarget::Terminal),
     }
     if let Some(id) = id {
         uuid::Uuid::parse_str(id).map_err(|_| "Invalid operation ID")?;

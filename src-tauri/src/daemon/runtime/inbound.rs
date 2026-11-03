@@ -729,7 +729,10 @@ pub(super) async fn start_new_task_flow(
         .collect::<Vec<_>>()
         .join("\n");
     let ready: Vec<_> = readiness.into_iter().filter(|item| item.ready).collect();
-    if ready.is_empty() && !crate::codex_desktop::available(&config.codex_desktop) {
+    if ready.is_empty()
+        && !crate::codex_desktop::available(&config.codex_desktop)
+        && !crate::cursor_desktop::launch_status(false).desktop_available
+    {
         let title = match lang {
             Lang::Zh => "没有已就绪的 Agent。",
             Lang::En => "No Agent is ready.",
@@ -916,14 +919,13 @@ pub(super) async fn continue_task_picker(
             }
             payload.workspace = selected_id.to_string();
             let codex_status = crate::codex_desktop::launch_status(false);
+            let cursor_status = crate::cursor_desktop::launch_status(false);
             let options = crate::integrations::agent_launch::launchable_readiness()
                 .into_iter()
-                .filter(|item| {
-                    if item.kind == AgentKind::Codex {
-                        codex_status.target.is_some()
-                    } else {
-                        item.ready
-                    }
+                .filter(|item| match item.kind {
+                    AgentKind::Codex => codex_status.target.is_some(),
+                    AgentKind::Cursor => cursor_status.target.is_some(),
+                    _ => item.ready,
                 })
                 .map(|item| crate::select::SelectOption {
                     id: item.kind.as_str().to_string(),
@@ -932,14 +934,21 @@ pub(super) async fn continue_task_picker(
                     primary: item.label,
                     badge: None,
                     elapsed: None,
-                    secondary: Some(if item.kind == AgentKind::Codex {
-                        codex_status.description(lang)
-                    } else {
-                        format!(
+                    secondary: Some(match item.kind {
+                        AgentKind::Codex => codex_status.description(lang),
+                        // The terminal route keeps the line it always had; only the Agents
+                        // window needs saying.
+                        AgentKind::Cursor
+                            if cursor_status.target
+                                == Some(crate::codex_desktop::LaunchTarget::Desktop) =>
+                        {
+                            cursor_status.description(lang)
+                        }
+                        _ => format!(
                             "{} · {}",
                             item.integration_mode,
                             item.executable.unwrap_or_default()
-                        )
+                        ),
                     }),
                 })
                 .collect();
@@ -971,10 +980,10 @@ pub(super) async fn continue_task_picker(
             let Some(kind) = AgentKind::parse(&payload.kind) else {
                 return;
             };
-            let ready = if kind == AgentKind::Codex {
-                crate::codex_desktop::launch_status(false).target.is_some()
-            } else {
-                crate::integrations::agent_launch::readiness(kind).ready
+            let ready = match kind {
+                AgentKind::Codex => crate::codex_desktop::launch_status(false).target.is_some(),
+                AgentKind::Cursor => crate::cursor_desktop::launch_status(false).target.is_some(),
+                _ => crate::integrations::agent_launch::readiness(kind).ready,
             };
             if !ready {
                 let _ =
@@ -1474,6 +1483,8 @@ async fn start_task_input_form(
             todo: todo.map(|todo| (todo_project, todo)),
             // IM `/new` has no model choice yet.
             choice: crate::agents::model_catalog::ModelChoice::default(),
+            // ...and no switch for Cursor's Max mode: the default policy applies.
+            allow_max: false,
         };
         let started = start_task(&state, spec, |record| {
             register_pending_launch_watch(&state, record, &channel, &config, lang)
@@ -1488,7 +1499,15 @@ async fn start_task_input_form(
                 {
                     handle_watch_cmd(&state, &channel, Some(seq), &config, lang).await;
                 }
-                format!("Codex App accepted the task. Session: {session_id}")
+                match kind {
+                    AgentKind::Cursor => match lang {
+                        Lang::Zh => format!("Cursor 已在 Agents 窗口创建任务。会话：{session_id}"),
+                        Lang::En => {
+                            format!("Cursor created the task in its Agents window. Session: {session_id}")
+                        }
+                    },
+                    _ => format!("Codex App accepted the task. Session: {session_id}"),
+                }
             }
             Ok(Started::Terminal) => match lang {
                 Lang::Zh => "已在电脑上打开新的系统终端窗口并启动任务。",
@@ -1497,6 +1516,9 @@ async fn start_task_input_form(
             .to_string(),
             Err(StartError::Message(message)) => message,
             Err(StartError::Terminal(error)) => format!("Failed to launch task: {error:#}"),
+            Err(StartError::MaxRequired(required)) => {
+                super::task_launch::max_required_text(&required, lang)
+            }
         };
         let _ = reply_channel_text(&channel, &config, &text).await;
         state.watch.notify.notify_one();

@@ -335,6 +335,29 @@ export interface NewTaskInit {
   permissionPrompt: "ask" | "agent-default" | "yolo" | string;
 }
 
+/**
+ * What the new-task form shows for Cursor while Max control is in force (spec cursor-max-control §5).
+ * The backend returns `null` instead when it is not (token-based plan, or the "follow Cursor" policy).
+ */
+export interface CursorTaskOptions {
+  /** Whether the plan came from Cursor's own data rather than being assumed. */
+  planKnown: boolean;
+  /** Whether Cursor's model list could be read; when not, only Cursor's default can be picked. */
+  listed: boolean;
+  models: CursorTaskModel[];
+  /** What "follow Cursor's default" stands for. */
+  default: { label?: string; maxRequired?: boolean };
+}
+
+export interface CursorTaskModel {
+  /** What goes after `--model`. */
+  id: string;
+  label: string;
+  note?: string;
+  /** `true` = cannot run without Max, `false` = can, absent = not known. */
+  maxRequired?: boolean;
+}
+
 /** 新建任务窗口的项目下拉候选。 */
 export interface NewTaskProject {
   /** workspace 路径（canonical cwd）或待办项目 git 根。 */
@@ -1019,9 +1042,18 @@ export interface PermissionsConfig {
 
 export type AgentTaskPermission = "ask" | "agent-default" | "yolo";
 
+/** How Max mode is handled for Cursor tasks (spec cursor-max-control §6). */
+export interface CursorMaxConfig {
+  /** `enforce-off`: keep Max off and refuse models that need it; `inherit`: do nothing. */
+  policy: "enforce-off" | "inherit";
+  /** The account's plan: detected from Cursor's data, or set by hand. */
+  plan: "auto" | "legacy" | "token-based";
+}
+
 export interface AgentTasksConfig {
   enabled: boolean;
   permissionPrompt: AgentTaskPermission;
+  cursorMax: CursorMaxConfig;
 }
 
 export interface AgentTaskWorkspace {
@@ -1055,7 +1087,7 @@ export interface AgentTaskReadiness {
 
 export interface AppConfig {
   codexDesktop?: {appPath: string; codexHome: string; launchPreference: "terminal" | "desktop"};
-  cursorDesktop?: {suppressBackgroundCompletionFollowUp: boolean};
+  cursorDesktop?: {suppressBackgroundCompletionFollowUp: boolean; launchPreference?: "terminal" | "desktop"};
   general: GeneralConfig;
   channels: ChannelsConfig;
   agentTasks: AgentTasksConfig;
@@ -1420,6 +1452,8 @@ export interface PopupAgentInfo {
   workspace?: string | null;
   model?: string | null;
   reasoning?: string | null;
+  /** Cursor Desktop only: whether the session runs in Max mode, as its own record says. */
+  maxMode?: boolean | null;
   context?: { usedTokens: number; windowTokens: number; remainingPercent: number; estimated: boolean } | null;
   reportedAt?: number | null;
 }

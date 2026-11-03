@@ -84,6 +84,31 @@ fn kv_get(conn: &Connection, key: &str) -> Option<String> {
     .ok()
 }
 
+/// One `ItemTable` value (the IDE's own key/value store), read-only. `None` when the database or
+/// the key is missing, the value is not UTF-8 text, or it is longer than `max_bytes`.
+pub(crate) fn item_value(key: &str, max_bytes: usize) -> Option<String> {
+    let conn = open()?;
+    item_value_in(&conn, key, max_bytes)
+}
+
+fn item_value_in(conn: &Connection, key: &str, max_bytes: usize) -> Option<String> {
+    use rusqlite::types::ValueRef;
+    conn.query_row(
+        "SELECT value FROM ItemTable WHERE key = ?1 AND length(CAST(value AS BLOB)) <= ?2",
+        rusqlite::params![key, i64::try_from(max_bytes).ok()?],
+        |row| {
+            Ok(match row.get_ref(0)? {
+                ValueRef::Text(bytes) | ValueRef::Blob(bytes) => {
+                    String::from_utf8(bytes.to_vec()).ok()
+                }
+                _ => None,
+            })
+        },
+    )
+    .ok()
+    .flatten()
+}
+
 /// Cursor's own project index preserves exact filesystem paths, unlike the lossy directory slug.
 /// Prefer it when available so drive letters, UNC shares, spaces, and non-ASCII names need no
 /// reconstruction. Returned timestamps are Unix seconds.

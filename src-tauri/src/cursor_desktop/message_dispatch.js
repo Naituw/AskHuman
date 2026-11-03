@@ -9,3 +9,15 @@ else if (request.op === "message") {
   if (matches.length !== 1) result = { status: "rejected", reason: matches.length ? "nativeUnavailable" : "notFound" };
   else result = await evaluate(matches[0], `globalThis[${JSON.stringify(rendererKey)}].send(${JSON.stringify(request.operation)})`);
 }
+else if (request.op === "create") {
+  // A new task goes to the one Agents window; with none or several there is no unambiguous target.
+  await refresh();
+  const agents = [];
+  for (const record of windows.values()) {
+    if (record.phase !== "active" || record.wc.isDestroyed()) continue;
+    const isAgents = await evaluate(record.wc, `globalThis[${JSON.stringify(rendererKey)}]?.isAgents?.() === true`);
+    if (isAgents) agents.push(record.wc);
+  }
+  if (agents.length !== 1) result = { status: "rejected", reason: agents.length ? "multipleAgentsWindows" : "noAgentsWindow" };
+  else result = await evaluate(agents[0], `globalThis[${JSON.stringify(rendererKey)}].create(${JSON.stringify(request.operation)})`);
+}

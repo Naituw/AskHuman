@@ -227,6 +227,9 @@ pub struct HostState {
     update_action: Mutex<UpdateActionState>,
     pub daemon_up: AtomicBool,
     pub windows_open: AtomicUsize,
+    /// Background jobs that started in a window and must outlive it (see [`hold_while`]); the Host
+    /// does not exit while any is running.
+    pub holds: AtomicUsize,
     /// 是否曾经打开过窗口（off/active 模式退出判定用，避免开窗前误退）。
     pub ever_open: AtomicBool,
     /// 启动宽限是否已过（覆盖「OpenWindow 始终未到达」的兜底退出）。
@@ -287,6 +290,7 @@ pub fn setup(app: &mut tauri::App, config: &AppConfig) -> tauri::Result<()> {
     // The entry may already contain a newer build; startup identity is always the mapped image.
     let startup_fp = lifecycle::current_fingerprint();
 
+    let _ = HOST_APP.set(app.handle().clone());
     app.manage(HostState {
         mode: Mutex::new(mode),
         daemon_lifecycle: Mutex::new(config.general.daemon_lifecycle),
@@ -296,6 +300,7 @@ pub fn setup(app: &mut tauri::App, config: &AppConfig) -> tauri::Result<()> {
         update_action: Mutex::new(UpdateActionState::Idle),
         daemon_up: AtomicBool::new(false),
         windows_open: AtomicUsize::new(0),
+        holds: AtomicUsize::new(0),
         ever_open: AtomicBool::new(false),
         grace_over: AtomicBool::new(false),
         tray: Mutex::new(None),
@@ -1727,6 +1732,32 @@ async fn keepalive_task(stop: Arc<Notify>) {
     }
 }
 
+/// The Host's own app handle, for work that has to reach it from a plain command.
+static HOST_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+
+/// Runs `work` in the background and keeps this Host process alive until it ends, even when every
+/// window is closed: a job started from a window (such as the short watch after a Cursor launch)
+/// must not be cut off by the Host exiting with its last window. Outside a Host the work simply
+/// runs.
+pub fn hold_while<F>(work: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    let app = HOST_APP.get().cloned();
+    if let Some(state) = app.as_ref().and_then(|app| app.try_state::<HostState>()) {
+        state.holds.fetch_add(1, Ordering::SeqCst);
+    }
+    tauri::async_runtime::spawn(async move {
+        work.await;
+        if let Some(app) = app {
+            if let Some(state) = app.try_state::<HostState>() {
+                state.holds.fetch_sub(1, Ordering::SeqCst);
+            }
+            evaluate_exit(&app);
+        }
+    });
+}
+
 /// 宿主退出判定（spec D4/D5/§5.4）。可在任意线程调用。
 fn evaluate_exit(app: &AppHandle) {
     let Some(state) = app.try_state::<HostState>() else {
@@ -1734,6 +1765,9 @@ fn evaluate_exit(app: &AppHandle) {
     };
     if state.windows_open.load(Ordering::SeqCst) > 0 {
         return; // 有窗口绝不退出。
+    }
+    if state.holds.load(Ordering::SeqCst) > 0 {
+        return; // A background job that outlives its window is still running.
     }
     let settled = state.ever_open.load(Ordering::SeqCst) || state.grace_over.load(Ordering::SeqCst);
     match state.mode() {

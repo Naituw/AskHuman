@@ -58,6 +58,9 @@ fn task_identity(create: &wire::TaskCreate) -> serde_json::Value {
     if let Some(speed) = create.speed {
         identity["speed"] = json!(speed);
     }
+    if create.allow_max {
+        identity["allowMax"] = json!(true);
+    }
     if let Some(model) = &create.model {
         identity["model"] = json!(model);
     }
@@ -394,6 +397,7 @@ impl Actor {
             return self.task_failed(phone_id, &id, "workspaceExpired");
         };
         if (create.speed.is_some() && create.agent_kind != "codex")
+            || (create.allow_max && create.agent_kind != "cursor")
             || create.agent_kind.trim().is_empty()
             || !matches!(create.permission.as_str(), "default" | "yolo")
             // Whether they name something the Agent offers is the host's call; a value that
@@ -428,6 +432,7 @@ impl Actor {
         let launch = TaskLaunch {
             files,
             speed: create.speed,
+            allow_max: create.allow_max,
             phone_id: phone_id.to_string(),
             client_msg_id: id.clone(),
             workspace,
@@ -526,6 +531,7 @@ mod tests {
         wire::TaskCreate {
             files: Vec::new(),
             speed: None,
+            allow_max: false,
             client_msg_id: "n1".into(),
             workspace_id: "w1".into(),
             agent_kind: "claude".into(),
@@ -574,6 +580,20 @@ mod tests {
             ..plain()
         };
         assert_eq!(task_identity(&again), task_identity(&plain()));
+    }
+
+    #[test]
+    fn allowing_max_makes_a_different_task_and_leaving_it_out_changes_nothing() {
+        let with = |allow_max: bool| {
+            task_identity(&wire::TaskCreate {
+                allow_max,
+                ..plain()
+            })
+        };
+        // A task that does not allow Max keeps exactly the identity it had before the field existed.
+        assert_eq!(with(false), task_identity(&plain()));
+        assert!(with(false).get("allowMax").is_none());
+        assert_ne!(body_hash(&with(true)), body_hash(&with(false)));
     }
 
     #[test]

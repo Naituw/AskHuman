@@ -83,6 +83,8 @@ impl TaskChoices {
 pub struct TaskLaunch {
     pub files: Vec<StagedFile>,
     pub speed: Option<crate::agents::model_catalog::TaskSpeed>,
+    /// Cursor only: the phone allowed Max mode for this task.
+    pub allow_max: bool,
     pub phone_id: String,
     pub client_msg_id: String,
     pub workspace: String,

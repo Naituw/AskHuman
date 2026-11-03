@@ -54,6 +54,9 @@ public final class TaskComposer {
     /// An opt-in for this form only. Never persisted with model and effort preferences.
     public private(set) var fastMode = false
     public private(set) var fastWasReset = false
+    /// Cursor only, and likewise an opt-in for this form: on the old request-based plan Max mode is
+    /// billed at API rates, so it starts off for every task and is never remembered.
+    public private(set) var allowMax = false
     public var text = ""
     public private(set) var attachments: [DraftAttachment] = []
     public var isSending = false
@@ -136,6 +139,7 @@ public final class TaskComposer {
         self.macId = macId
         fastMode = false
         fastWasReset = false
+        allowMax = false
         workspaceId = nil
         agentKind = nil
         todoId = nil
@@ -152,6 +156,7 @@ public final class TaskComposer {
         agentKind = kind
         fastMode = false
         fastWasReset = false
+        allowMax = false
         permissionChoice = nil
         modelId = nil
         pickedEffortId = nil
@@ -197,6 +202,8 @@ public final class TaskComposer {
             fastMode = false
             fastWasReset = true
         }
+        // A Mac that stops controlling Max has no such switch to leave on.
+        if allowMax, !offersMaxControl(in: options) { allowMax = false }
     }
 
     // MARK: derived
@@ -254,6 +261,35 @@ public final class TaskComposer {
         return fastMode && supportsFast(in: options) ? .fast : .standard
     }
 
+    // MARK: Max mode (Cursor)
+
+    /// The form shows the Max switch and marks only when the Mac controls Max for Cursor tasks.
+    public func offersMaxControl(in options: TaskOptions) -> Bool {
+        agentKind == "cursor" && agent(in: options)?.maxControl == true
+    }
+
+    public func setAllowMax(_ enabled: Bool, in options: TaskOptions) {
+        allowMax = enabled && offersMaxControl(in: options)
+    }
+
+    /// Whether what would run (the model picked, else the one "Default" stands for) needs Max:
+    /// `true` = needs, `false` = does not, `nil` = the Mac cannot tell, or it does not control Max.
+    public func maxRequired(in options: TaskOptions) -> Bool? {
+        guard offersMaxControl(in: options) else { return nil }
+        if modelId != nil { return model(in: options)?.maxRequired }
+        return defaultModel(in: options)?.maxRequired
+    }
+
+    /// The Mac would refuse this task: its model needs Max and the task does not allow it.
+    public func isBlockedByMax(in options: TaskOptions) -> Bool {
+        offersMaxControl(in: options) && !allowMax && maxRequired(in: options) == true
+    }
+
+    /// What goes on the wire: only a Cursor task on a Mac that controls Max can carry the permission.
+    public func allowsMax(in options: TaskOptions) -> Bool {
+        offersMaxControl(in: options) && allowMax
+    }
+
     /// The model picked, or `nil` for "Default".
     public func model(in options: TaskOptions) -> ModelOption? {
         guard let modelId else { return nil }
@@ -295,6 +331,7 @@ public final class TaskComposer {
         guard attachments.isEmpty || options.attachmentsSupported == true else { return false }
         guard options.enabled, workspace(in: options) != nil, let agent = agent(in: options), agent.ready else { return false }
         guard !overLimit else { return false }
+        guard !isBlockedByMax(in: options) else { return false }
         if offersPermissionChoice(in: options), permissionChoice == nil { return false }
         return !trimmedText.isEmpty || todoId != nil
     }
@@ -306,7 +343,7 @@ public final class TaskComposer {
         return TaskDraft(
             workspaceId: workspace.id, workspaceName: workspace.label, agentKind: agent.kind, agentLabel: agent.label,
             permission: permission(in: options), todoId: todoId, model: model?.id, effort: effort(in: options),
-            modelLabel: model?.label, speed: speed(in: options), text: trimmedText
+            modelLabel: model?.label, speed: speed(in: options), allowMax: allowsMax(in: options), text: trimmedText
         )
     }
 }

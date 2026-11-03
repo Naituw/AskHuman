@@ -28,6 +28,8 @@ struct LaunchOptions {
     var holdInterjects = false
     /// The mock Macs list no models, like an older Mac: the new task form has no model or effort row.
     var noModels = false
+    /// The mock Mac controls Cursor's Max mode (UI tests of the Allow Max switch).
+    var maxControl = false
     /// The next new task of the mock fails with this reason (the texts of the progress page).
     var failTask: String?
     /// A followed Agent reports `done`, `failed` or `waiting` a moment after launch (the follow banner).
@@ -86,6 +88,7 @@ struct LaunchOptions {
         failTaskUpload = defaults.bool(forKey: "AHFailTaskUpload")
         holdInterjects = defaults.bool(forKey: "AHHoldInterjects")
         noModels = defaults.bool(forKey: "AHNoModels")
+        maxControl = defaults.bool(forKey: "AHMaxControl")
         failTask = defaults.string(forKey: "AHFailTask")
         followEvent = defaults.string(forKey: "AHFollowEvent")
         arrival = defaults.string(forKey: "AHArrival")
@@ -198,6 +201,7 @@ final class AppEnvironment {
         // These two are in place before anything can ask the mock for a list or start a task.
         if let backend = mock {
             if launch.noModels { await backend.setOffersModels(false) }
+            if launch.maxControl { await backend.setOffersMaxControl(true) }
             if let reason = launch.failTask { await backend.setFailNextTask(reason) }
             await backend.setTaskAttachmentOptions(supported: !launch.noTaskAttachments, failUpload: launch.failTaskUpload)
         }

@@ -130,7 +130,10 @@ extension MockData {
 
     /// What a Mac offers for a new task. `models: false` is a Mac that is too old to list any: the
     /// Agents have no `models` or `defaultModel`, and the form has no model or effort row.
-    public static func taskOptions(macId: String, models: Bool = true) -> TaskOptions {
+    ///
+    /// `maxControl: true` is a Mac that controls Cursor's Max mode (an account on the old request-based
+    /// plan): the Cursor agent offers the switch and its models say whether they need Max.
+    public static func taskOptions(macId: String, models: Bool = true, maxControl: Bool = false) -> TaskOptions {
         if macId == officeMacId {
             return TaskOptions(enabled: false, blocked: "noTerminal", permissionMode: "ask", workspaces: [], agents: [])
         }
@@ -165,6 +168,18 @@ extension MockData {
             plain.models = nil
             plain.defaultModel = nil
             return plain
+        }
+        .map { agent -> AgentOption in
+            guard maxControl, agent.kind == "cursor" else { return agent }
+            var marked = agent
+            marked.maxControl = true
+            marked.models = marked.models?.map { model in
+                var model = model
+                model.maxRequired = cursorMaxMarks[model.id]
+                return model
+            }
+            if marked.defaultModel != nil { marked.defaultModel?.maxRequired = cursorMaxMarks["auto"] }
+            return marked
         }
         return TaskOptions(
             enabled: true, permissionMode: "ask",
@@ -213,6 +228,14 @@ extension MockData {
         ("gemini-3-pro", "Gemini 3 Pro"), ("grok-4", "Grok 4"), ("grok-code-fast-1", "Grok Code Fast 1"),
         ("kimi-k2", "Kimi K2"), ("qwen3-coder", "Qwen3 Coder"),
     ].map { ModelOption(id: $0.0, label: $0.1) }
+
+    /// Which of the Cursor models need Max, as a Mac on the old plan would say. A model that is not here is
+    /// one the Mac cannot tell about (it must not be read as "does not need Max").
+    static let cursorMaxMarks: [String: Bool] = [
+        "auto": false, "composer-1": false, "gpt-5": false, "gpt-5-high": false, "gpt-5-codex": false,
+        "gpt-5.1-codex-max": true, "gpt-5.1-codex-max-high": true, "sonnet-4.5": false, "sonnet-4.5-thinking": false,
+        "opus-4.1": true, "grok-4": true,
+    ]
 
     public static func todos(workspaceId: String) -> [TodoOption] {
         guard workspaceId == "ws-humaninloop" else { return [] }

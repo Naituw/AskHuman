@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useI18n } from "vue-i18n";
-import { cursorDesktopStatus, type CursorDesktopStatus } from "../../lib/ipc";
+import { cursorDesktopStatus, cursorLaunchStatus, type CursorDesktopStatus, type CursorLaunchStatus } from "../../lib/ipc";
+import { cursorLaunchDescription } from "../../lib/cursorLaunch";
 import { isMac } from "../../lib/platform";
 import { useSettingsContext } from "./context";
 
@@ -14,6 +15,15 @@ const error = ref("");
 const enabled = computed(() => config.value?.cursorDesktop?.suppressBackgroundCompletionFollowUp ?? false);
 const phase = computed(() => !isMac ? "unsupported" : status.value?.phase ?? (enabled.value ? "attaching" : "disabled"));
 const detail = computed(() => error.value || status.value?.error || status.value?.windows.find(w => w.error)?.error || "");
+// Where new Cursor tasks run: the CLI in a terminal (default) or Cursor's Agents window.
+const launchStatus = ref<CursorLaunchStatus | null>(null);
+const launchSaving = ref(false);
+const launchChecking = ref(false);
+const launchResolving = ref(false);
+const launchError = ref("");
+const launchPreference = computed(() => config.value?.cursorDesktop?.launchPreference ?? "terminal");
+const launchMismatch = computed(() => !!launchStatus.value && launchStatus.value.target !== launchStatus.value.preference);
+let launchGeneration = 0;
 let generation = 0, disposed = false;
 let refreshing: number | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -61,22 +71,71 @@ async function choose(value: boolean) {
   await refresh();
 }
 
-watch(() => modes.value.cursor.mode, () => { void refresh(); });
+async function refreshLaunch() {
+  if (disposed || launchSaving.value) return;
+  const current = ++launchGeneration;
+  launchChecking.value = true;
+  try {
+    const result = await cursorLaunchStatus(true);
+    if (disposed || current !== launchGeneration) return;
+    launchStatus.value = result;
+    // Reconcile only this preference; other settings may contain unsaved edits.
+    if (config.value?.cursorDesktop) config.value.cursorDesktop.launchPreference = result.preference;
+    launchError.value = "";
+  } catch (e) {
+    if (!disposed && current === launchGeneration) {
+      if (launchResolving.value) launchStatus.value = null;
+      launchError.value = String(e);
+    }
+  } finally {
+    if (!disposed && current === launchGeneration) {
+      launchChecking.value = false;
+      launchResolving.value = false;
+    }
+  }
+}
+
+async function chooseLaunch(value: "terminal" | "desktop") {
+  if (!config.value || launchSaving.value || value === launchPreference.value) return;
+  if (value === "desktop" && !isMac) return;
+  ++launchGeneration;
+  launchChecking.value = false;
+  const previous = launchPreference.value;
+  launchSaving.value = true;
+  launchResolving.value = true;
+  launchError.value = "";
+  config.value.cursorDesktop ??= { suppressBackgroundCompletionFollowUp: false };
+  config.value.cursorDesktop.launchPreference = value;
+  try { await persist(); }
+  catch (e) {
+    config.value.cursorDesktop.launchPreference = previous;
+    launchError.value = String(e);
+    launchSaving.value = false;
+    launchResolving.value = false;
+    return;
+  }
+  launchSaving.value = false;
+  await refreshLaunch();
+}
+
+const refreshAll = () => { void refresh(); void refreshLaunch(); };
+watch(() => modes.value.cursor.mode, refreshAll);
 onMounted(async () => {
-  window.addEventListener("focus", refresh);
+  window.addEventListener("focus", refreshAll);
   timer = setInterval(() => {
     if (enabled.value || ["detaching", "error", "offline"].includes(phase.value)) void refresh();
   }, 3000);
-  unlisten = await listen("settings-updated", () => { void refresh(); });
+  unlisten = await listen("settings-updated", refreshAll);
   if (disposed) { unlisten(); return; }
-  await refresh();
+  await Promise.all([refresh(), refreshLaunch()]);
 });
 onBeforeUnmount(() => {
   disposed = true;
   ++generation;
+  ++launchGeneration;
   if (timer) clearInterval(timer);
   unlisten?.();
-  window.removeEventListener("focus", refresh);
+  window.removeEventListener("focus", refreshAll);
 });
 </script>
 
@@ -98,4 +157,31 @@ onBeforeUnmount(() => {
     {{ saving ? t("cursorDesktop.saving") : detail ? t("cursorDesktop.error") : t(`cursorDesktop.${phase}`) }}
   </p>
   <p v-if="detail" class="result err" role="alert">{{ detail }}</p>
+  <hr class="divider" />
+  <div class="row agent-row">
+    <span class="label">{{ t("cursorDesktop.launch.preference") }}</span>
+    <span class="spacer" />
+    <div class="segmented" :aria-label="t('cursorDesktop.launch.preference')">
+      <button v-for="value in (['terminal', 'desktop'] as const)" :key="value"
+        type="button" class="seg" :class="{ active: launchPreference === value }"
+        :aria-pressed="launchPreference === value"
+        :disabled="launchSaving || modeBusy.cursor || (value === 'desktop' && !isMac)"
+        @click="chooseLaunch(value)">{{ t(value === 'desktop' ? 'cursorDesktop.launch.preferWindow' : 'cursorDesktop.launch.preferCli') }}</button>
+    </div>
+  </div>
+  <div class="row launch-result">
+    <p class="card-desc agent-hint" role="status">
+      {{ launchSaving || launchResolving || (!launchStatus && launchChecking) ? t('desktop.checking') : launchStatus ? cursorLaunchDescription(launchStatus, t) : launchError ? t('desktop.detectionFailed') : t('desktop.checking') }}
+    </p>
+    <button v-if="launchMismatch && !launchResolving" type="button" class="btn refresh-runtime"
+      :disabled="launchChecking || launchSaving" @click="refreshLaunch">{{ t(launchChecking ? 'desktop.checking' : 'desktop.refresh') }}</button>
+  </div>
+  <p class="card-desc agent-hint">{{ t("cursorDesktop.launch.hint") }}</p>
+  <p v-if="launchError" class="result err" role="alert">{{ launchError }}</p>
 </template>
+
+<style scoped>
+.launch-result { align-items: center; gap: 12px; margin-top: 4px; }
+.launch-result .card-desc { flex: 1; min-width: 0; margin: 0; }
+.refresh-runtime { flex: none; }
+</style>

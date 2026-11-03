@@ -269,13 +269,16 @@ public struct TaskDraft: Sendable, Equatable {
     public var model: String?
     public var effort: String?
     public var speed: TaskSpeed?
+    /// Cursor only: the task may run in Max mode. Off unless the user turned it on for this task.
+    public var allowMax: Bool
     public var files: [UploadSource]
     /// The display name of the picked model (the progress page shows it).
     public var modelLabel: String?
 
     public init(
         workspaceId: String, workspaceName: String, agentKind: String, agentLabel: String, permission: String, todoId: String? = nil,
-        model: String? = nil, effort: String? = nil, modelLabel: String? = nil, speed: TaskSpeed? = nil, files: [UploadSource] = [], text: String
+        model: String? = nil, effort: String? = nil, modelLabel: String? = nil, speed: TaskSpeed? = nil, allowMax: Bool = false,
+        files: [UploadSource] = [], text: String
     ) {
         self.workspaceId = workspaceId
         self.workspaceName = workspaceName
@@ -287,6 +290,7 @@ public struct TaskDraft: Sendable, Equatable {
         self.model = model
         self.effort = effort
         self.speed = speed
+        self.allowMax = allowMax
         self.files = files
         self.modelLabel = modelLabel
     }

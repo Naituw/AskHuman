@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// 改本文件的消息类型前先读 `docs/overview.md` 的「IPC 协议号」：什么改动要 +1、什么不要，
 /// 以及 +1 时要同步更新的文档。
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 fn is_zero_u32(value: &u32) -> bool {
     *value == 0
@@ -543,6 +543,9 @@ pub enum ClientMsg {
     CodexDesktop {
         operation: crate::codex_desktop::Operation,
     },
+    CursorDesktop {
+        operation: crate::cursor_desktop::Operation,
+    },
     /// CLI / 控制连接握手。
     Hello(ClientHello),
     /// `daemon status`。
@@ -782,6 +785,9 @@ pub enum InterjectAction {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ServerMsg {
     CodexDesktop {
+        result: Result<serde_json::Value, String>,
+    },
+    CursorDesktop {
         result: Result<serde_json::Value, String>,
     },
     HelloAck(HelloAck),

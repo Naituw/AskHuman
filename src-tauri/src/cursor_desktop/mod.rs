@@ -1,15 +1,35 @@
 //! Optional macOS Cursor Desktop background-completion control, owned by the daemon.
 
+mod create;
+mod launch;
 #[cfg(target_os = "macos")]
 mod runtime;
+
+pub use create::{execute, plan, Operation, PlanError};
+pub use launch::{launch_status, resolve_launch, LaunchStatus};
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// The same choice of route as Codex's, so IM and iOS carry one kind of target for every Agent.
+pub use crate::codex_desktop::LaunchTarget;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
     pub suppress_background_completion_follow_up: bool,
+    /// Where new Cursor tasks run. Unlike Codex's, the default is the terminal: the Agents-window
+    /// route is experimental and only used once the user has chosen it.
+    pub launch_preference: LaunchTarget,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            suppress_background_completion_follow_up: false,
+            launch_preference: LaunchTarget::Terminal,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -85,6 +85,8 @@ public actor MockBackend: RemoteBackend {
     public var failNextInterject: String?
     /// Whether the Macs list models for the new task form; `false` is a Mac that is too old to.
     public var offersModels = true
+    /// Whether the Macs control Cursor's Max mode (an account on the old request-based plan).
+    public var offersMaxControl = false
     public var offersTaskAttachments = true
     public var failNextTaskUpload = false
     /// The forms behind the Agents the mock started for new tasks (`macId|agentKey`).

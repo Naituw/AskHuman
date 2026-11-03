@@ -213,6 +213,11 @@ export function useSettingsSearch(deps: {
           "settings.agentTasks.readiness",
           "settings.agentTasks.workspaces",
         ]),
+        e("advanced", "settings.cursorMax.title", [
+          "settings.cursorMax.description",
+          "settings.cursorMax.policy",
+          "settings.cursorMax.plan",
+        ]),
       );
     }
     return list;

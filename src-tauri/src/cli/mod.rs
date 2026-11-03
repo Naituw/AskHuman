@@ -491,6 +491,29 @@ pub fn dispatch() {
             print_line(&serde_json::to_string(&result).unwrap_or_default());
             exit(if result.is_ok() { 0 } else { 1 });
         }
+        // Hidden: one Cursor Desktop operation as JSON on stdin; the daemon's answer on stdout.
+        // It is how a creation is tried without the GUI (`dryRun` checks the whole path and
+        // sends nothing).
+        "__cursor-desktop" => {
+            use std::io::Read;
+            let mut input = String::new();
+            if std::io::stdin()
+                .take(1024 * 1024)
+                .read_to_string(&mut input)
+                .is_err()
+            {
+                exit(1);
+            }
+            let result = serde_json::from_str::<crate::cursor_desktop::Operation>(&input)
+                .map_err(|e| e.to_string())
+                .and_then(|op| {
+                    tokio::runtime::Runtime::new()
+                        .map_err(|e| e.to_string())?
+                        .block_on(crate::client::cursor_desktop(op))
+                });
+            print_line(&serde_json::to_string(&result).unwrap_or_default());
+            exit(if result.is_ok() { 0 } else { 1 });
+        }
         "__ask-question-hook" => {
             crate::ask_question::run(argv.get(2).map(String::as_str));
             exit(0);

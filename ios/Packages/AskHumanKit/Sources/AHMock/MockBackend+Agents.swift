@@ -184,7 +184,7 @@ extension MockBackend {
         state.taskOptions[macId] = .loading
         publish()
         await pause(0.5)
-        var options = MockData.taskOptions(macId: macId, models: offersModels)
+        var options = MockData.taskOptions(macId: macId, models: offersModels, maxControl: offersMaxControl)
         options.attachmentsSupported = offersTaskAttachments ? true : nil
         state.taskOptions[macId] = .ready(options)
         publish()
@@ -332,6 +332,11 @@ extension MockBackend {
     /// Makes the Macs list no models, like an older Mac (the form then has no model or effort row).
     public func setOffersModels(_ offers: Bool) {
         offersModels = offers
+    }
+
+    /// Makes the Macs control Cursor's Max mode, like a Mac whose account is on the old plan.
+    public func setOffersMaxControl(_ offers: Bool) {
+        offersMaxControl = offers
     }
 
     public func setInterjectConsumeDelay(_ seconds: Double?) {

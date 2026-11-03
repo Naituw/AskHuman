@@ -25,17 +25,23 @@ struct ModelPickerScreen: View {
         let models = options.map { composer.models(in: $0) } ?? []
         let shown = filtered(models)
         let picked = options.flatMap { composer.model(in: $0)?.id }
+        // Only a Mac that controls Max says which models need it.
+        let marksMax = options.map { composer.offersMaxControl(in: $0) } ?? false
         List {
             Section {
                 row(
                     id: nil, title: String(localized: "Default"),
                     detail: options.flatMap { composer.defaultModel(in: $0)?.label } ?? String(localized: "Agent's own setting"),
-                    selected: picked == nil
+                    selected: picked == nil,
+                    needsMax: marksMax && options.flatMap { composer.defaultModel(in: $0)?.maxRequired } == true
                 )
             }
             Section {
                 ForEach(shown) { model in
-                    row(id: model.id, title: model.label, detail: model.note, selected: picked == model.id)
+                    row(
+                        id: model.id, title: model.label, detail: model.note, selected: picked == model.id,
+                        needsMax: marksMax && model.maxRequired == true
+                    )
                 }
             }
         }
@@ -56,7 +62,7 @@ struct ModelPickerScreen: View {
         return models.filter { $0.label.localizedCaseInsensitiveContains(needle) || $0.id.localizedCaseInsensitiveContains(needle) }
     }
 
-    private func row(id: String?, title: String, detail: String?, selected: Bool) -> some View {
+    private func row(id: String?, title: String, detail: String?, selected: Bool, needsMax: Bool = false) -> some View {
         Button {
             if let options { composer.selectModel(id, in: options) }
             dismiss()
@@ -72,6 +78,14 @@ struct ModelPickerScreen: View {
                     }
                 }
                 Spacer(minLength: 0)
+                if needsMax {
+                    Text("Needs Max")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Color.orange.opacity(0.15), in: Capsule())
+                }
                 if selected {
                     Image(systemName: "checkmark").foregroundStyle(Color.accentColor).fontWeight(.semibold)
                 }

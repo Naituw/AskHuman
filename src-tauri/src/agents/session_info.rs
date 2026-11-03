@@ -22,6 +22,10 @@ pub struct SessionInfo {
     pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed: Option<crate::agents::model_catalog::TaskSpeed>,
+    /// Cursor Desktop only: whether the session runs in Max mode, as its own record says. Shown
+    /// read-only (red when on); a CLI session has no per-session record, so it stays `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_mode: Option<bool>,
     pub context: Option<ContextUsage>,
     pub reported_at: Option<u64>,
 }
@@ -387,6 +391,9 @@ fn cursor_info(value: &Value) -> SessionInfo {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
             .map(str::to_string),
+        max_mode: value
+            .pointer("/modelConfig/maxMode")
+            .and_then(Value::as_bool),
         ..Default::default()
     };
     if let (Some(used), Some(window)) = (
@@ -541,6 +548,16 @@ mod tests {
         assert!(cursor_info(&json!({"modelConfig":{"modelName":"model"}}))
             .context
             .is_none());
+        // Max is reported as the record says it, and only when it says anything.
+        assert_eq!(info.max_mode, None);
+        for (max, expected) in [
+            (json!(true), Some(true)),
+            (json!(false), Some(false)),
+            (json!("yes"), None),
+        ] {
+            let info = cursor_info(&json!({"modelConfig":{"modelName":"m","maxMode":max}}));
+            assert_eq!(info.max_mode, expected);
+        }
         assert!(context(42, 0, None, false).is_none());
         assert!(context(42, 100, Some(f64::NAN), false).is_none());
     }
