@@ -602,3 +602,14 @@ Swift 的 43 项真实端到端检查因未配置环境跳过。Mac 端已运行
 沿用 bundle ID、签名团队、共享钥匙串组与 `AskHuman Internal`，复用既有 Keychain helper；归档和上传预检通过，
 Xcode 返回 `ARCHIVE SUCCEEDED` / `EXPORT SUCCEEDED`。Apple build `b29e802b-ff20-44c3-9f0f-889c093646f8`
 状态为 `VALID`，已加入内部测试组。用户确认已更新至 build 4，原有 Mac 连接正常；到达时机的真机日常观察继续跟踪。
+
+## 2026-11-03：TestFlight 内部构建 5
+
+从 main `2295390a19e04a0b250d4aacd41ce5543d32742d`（工作树干净）归档并分发 `0.1.0 (5)`。
+相对 build 4，iOS 侧只多了开发者模式（[需求](../specs/ios-developer-mode.md)：Macs 设置里的开关、浮动按钮与系统菜单、快速添加待办，iOS 26 起 Liquid Glass）
+和它顺带修的全屏图片查看器布局死循环；没有协议、推送中继与 Mac 端改动。用户在开发者模式实现完成后选了「现在做」真机一轮（该计划的 P6）。
+
+出包前：Swift 包 290 项无失败，开发者模式 UI 测试在 iOS 27.0（英文、中文）与 iOS 18.5（英文）上通过（详见 [开发者模式计划](ios-developer-mode.md) 的实现记录），本地化目录无变化。
+沿用 bundle ID、签名团队、共享钥匙串组与 `AskHuman Internal`，复用既有 Keychain helper；归档和上传预检通过，
+Xcode 返回 `ARCHIVE SUCCEEDED` / `EXPORT SUCCEEDED`。Apple build `56574ec7-6cda-4ded-904f-94485ec9f41e`
+状态为 `VALID`，已加入内部测试组（组内共 4 个构建，测试员 1 已安装 / 1 已邀请）。用户是否已更新、真机手感如何还没有确认，跟踪在 `docs/PROGRESS.md` 的开发者模式一节。
