@@ -247,14 +247,16 @@ it("treats a Cursor with no route at all as not startable", async () => {
   expect(wrapper.get(".nt-agent").text()).toContain("Unable to start: Cursor is not running; Cursor CLI was not detected");
 });
 
-it("does not blame the Agents window when the terminal was the choice", async () => {
+it("leaves the card as it always was when the terminal was the choice and cannot be used", async () => {
   api.readiness.mockResolvedValue(cursorReadiness(false));
   api.route.mockResolvedValue({ ...route("terminal", null), desktopReason: "appNotRunning", terminalReason: "cliNotDetected" });
   wrapper = mount(NewTaskForm, { props: { lockProject: "/project" }, global: { plugins: [i18n] } });
   await flushPromises();
   expect(wrapper.get(".nt-agent").classes()).toContain("disabled");
-  expect(wrapper.get(".nt-agent").text()).toContain("Unable to start: Cursor CLI was not detected");
+  // The readiness chips, with nothing about an Agents window nobody asked for.
+  expect(wrapper.get(".nt-agent").text()).toContain("CLI");
   expect(wrapper.get(".nt-agent").text()).not.toContain("Cursor is not running");
+  expect(wrapper.get(".nt-agent").text()).not.toContain("Agents window");
 });
 
 it("retries a failed launch under the same operation id, and a changed model is a new operation", async () => {
