@@ -15,6 +15,7 @@ import { useIntegration } from "./useIntegration";
 import { useAgentTasks } from "./useAgentTasks";
 import { useChannels } from "./useChannels";
 import { useSettingsSearch } from "./useSearch";
+import { guardedTab } from "./tabData";
 import { isMac, isWindows, supportsAgentTasks } from "../../lib/platform";
 
 export { isMac, isWindows, supportsAgentTasks };
@@ -47,7 +48,10 @@ type ClearedKey =
 
 function createCore() {
   const config = ref<AppConfig | null>(null);
-  const activeTab = ref<Tab>(parseInitialTab());
+  // Set from `get_settings`: true when this window must not change the everyday Agent integration
+  // (a Dev instance), in which case the Agents tab does not exist.
+  const everydayIntegrationsReadOnly = ref(false);
+  const activeTab = guardedTab(parseInitialTab(), everydayIntegrationsReadOnly);
 
   // Secrets are never loaded into the UI; we only know whether each is configured (for the
   // placeholder) and track an explicit "cleared" intent until the next save.
@@ -151,6 +155,7 @@ function createCore() {
   return {
     config,
     activeTab,
+    everydayIntegrationsReadOnly,
     secretsPresent,
     SECRET_PLACEHOLDER,
     persist,
@@ -168,6 +173,7 @@ export function createSettingsContext() {
   const search = useSettingsSearch({
     config: core.config,
     activeTab: core.activeTab,
+    everydayIntegrationsReadOnly: core.everydayIntegrationsReadOnly,
   });
 
   const ctx = {

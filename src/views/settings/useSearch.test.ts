@@ -75,6 +75,43 @@ describe("useSettingsSearch", () => {
     });
     wrapper.unmount();
   });
+  it("leaves out the Agents tab when this window has none", async () => {
+    i18n.global.locale.value = "en";
+    const readOnly = ref(true);
+    let search!: ReturnType<typeof useSettingsSearch>;
+    const wrapper = mount(
+      defineComponent({
+        setup() {
+          search = useSettingsSearch({
+            config: ref<AppConfig | null>(null),
+            activeTab: ref<Tab>("general"),
+            everydayIntegrationsReadOnly: readOnly,
+          });
+          return () => null;
+        },
+      }),
+      { global: { plugins: [i18n] } },
+    );
+
+    for (const query of ["antigravity", "lifecycle tracking", "pi"]) {
+      search.searchQuery.value = query;
+      await nextTick();
+      expect(search.searchResults.value.every((entry) => entry.tab !== "integration")).toBe(
+        true,
+      );
+    }
+    // Other tabs stay searchable.
+    search.searchQuery.value = "sound";
+    await nextTick();
+    expect(search.searchResults.value.some((entry) => entry.tab === "general")).toBe(true);
+
+    // The restriction is live: results come back when it lifts.
+    search.searchQuery.value = "antigravity";
+    readOnly.value = false;
+    await nextTick();
+    expect(search.searchResults.value.some((entry) => entry.tab === "integration")).toBe(true);
+    wrapper.unmount();
+  });
   it("indexes the Antigravity integration card", async () => {
     i18n.global.locale.value = "en";
     let search!: ReturnType<typeof useSettingsSearch>;
