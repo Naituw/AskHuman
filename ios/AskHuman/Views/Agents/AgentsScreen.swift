@@ -2,7 +2,7 @@ import SwiftUI
 import AHCore
 import AHProtocol
 
-/// The Agents tab: every session on the paired Macs, the ones that need you first.
+/// The Agents tab: every session on the paired Macs, the ones waiting for you first.
 struct AgentsScreen: View {
     @Environment(AppStore.self) private var store
     @Binding var showPairing: Bool
@@ -80,11 +80,8 @@ private struct AgentsList: View {
             ForEach(sections) { section in
                 Section {
                     ForEach(section.items) { item in
-                        VStack(alignment: .leading, spacing: 10) {
-                            NavigationLink(value: item.id) { AgentRow(item: item, showMac: store.macs.count > 1) }
-                                .accessibilityIdentifier("agent-row-\(item.agentKey)")
-                            if item.needsAttention, item.view.lastTurnResult?.id != nil { AgentContinueButton(item: item) }
-                        }
+                        NavigationLink(value: item.id) { AgentRow(item: item, showMac: store.macs.count > 1) }
+                            .accessibilityIdentifier("agent-row-\(item.agentKey)")
                     }
                 } header: {
                     AgentSectionTitle(id: section.id, count: section.items.count)
@@ -174,7 +171,6 @@ private struct AgentSectionTitle: View {
     private var title: Text {
         switch id {
         case "waiting": Text("Waiting for you")
-        case "attention": Text("Needs attention")
         case "working": Text("Working")
         case "ended": Text("Session ended")
         default: Text("Idle")
@@ -183,7 +179,7 @@ private struct AgentSectionTitle: View {
 
     private var color: Color {
         switch id {
-        case "waiting", "attention": .orange
+        case "waiting": .orange
         case "working": .green
         default: .gray
         }

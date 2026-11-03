@@ -742,14 +742,12 @@ public struct InterjectSend: WireMessage {
     public var agentKey: String
     public var text: String
     @DefaultEmpty public var files: [String]
-    public var expectedResultId: String?
 
-    public init(clientMsgId: String, agentKey: String, text: String, files: [String] = [], expectedResultId: String? = nil) {
+    public init(clientMsgId: String, agentKey: String, text: String, files: [String] = []) {
         self.clientMsgId = clientMsgId
         self.agentKey = agentKey
         self.text = text
         self.files = files
-        self.expectedResultId = expectedResultId
     }
 }
 

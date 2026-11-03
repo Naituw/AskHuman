@@ -31,9 +31,14 @@ public struct AgentItem: Identifiable, Sendable, Equatable {
     public var agentKey: String { view.key }
     public var isWorking: Bool { view.state == "working" }
     public var isEnded: Bool { view.state == "ended" }
-    public var needsAttention: Bool {
-        guard !["working", "waiting"].contains(view.state) else { return false }
-        return view.lastTurnResult.map { ["failed", "incomplete"].contains($0.outcome) } ?? view.lastTurnFailed
+
+    /// The last result is worth showing now: nothing is running or waiting on a question that would replace it.
+    public var showsLastResult: Bool { !isWorking && view.state != "waiting" }
+
+    /// The last turn failed or stopped before its work was done. The Agents tab only reports it (a
+    /// red or orange result) and offers no action: what to do about it is asked in the inbox.
+    public var lastTurnFellShort: Bool {
+        view.lastTurnResult.map { ["failed", "incomplete"].contains($0.outcome) } ?? view.lastTurnFailed
     }
 }
 

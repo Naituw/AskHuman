@@ -38,11 +38,10 @@ private struct AgentDetailContent: View {
                     Notice(symbol: "tray", text: "The Mac no longer lists this session.", tint: .gray)
                 }
                 AgentHeader(item: item, model: watch?.frame?.model, reasoning: watch?.frame?.reasoning, speed: watch?.frame?.speed)
-                if let title = item.resultTitle, !item.isWorking, item.view.state != "waiting" {
+                if let title = item.resultTitle, item.showsLastResult {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(title).font(.headline).foregroundStyle(item.resultColor).accessibilityIdentifier("agent-last-result")
                         if let reason = item.resultReason { Text(verbatim: reason).font(.subheadline) }
-                        if item.needsAttention, !gone, item.view.lastTurnResult?.id != nil { AgentContinueButton(item: item) }
                         if let at = item.view.lastTurnResult?.at, at > 0 {
                             Text(Date(timeIntervalSince1970: Double(at) / 1000), style: .relative).font(.caption).foregroundStyle(.secondary)
                         }

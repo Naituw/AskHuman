@@ -2184,16 +2184,6 @@
         }
       }
     },
-    "Needs attention" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需要处理"
-          }
-        }
-      }
-    },
     "Needs your confirmation" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3279,16 +3269,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在渲染图表…"
-          }
-        }
-      }
-    },
-    "Request continuation" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "要求继续"
           }
         }
       }
@@ -5047,16 +5027,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "等待 Apple"
-          }
-        }
-      }
-    },
-    "Waiting for the Agent to start…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在等待 Agent 开始…"
           }
         }
       }

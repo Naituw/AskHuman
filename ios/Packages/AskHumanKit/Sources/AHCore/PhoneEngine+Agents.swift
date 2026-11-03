@@ -200,17 +200,6 @@ extension PhoneEngine {
         macId: String, agentKey: String, text: String, files: [UploadSource], clientMsgId: String?,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> InterjectOutcome {
-        try await sendAgentMessage(macId: macId, agentKey: agentKey, text: text, files: files, clientMsgId: clientMsgId, expectedResultId: nil, progress: progress)
-    }
-
-    public func continueAgent(macId: String, agentKey: String, expectedResultId: String, clientMsgId: String) async throws -> InterjectOutcome {
-        try await sendAgentMessage(macId: macId, agentKey: agentKey, text: "Continue", files: [], clientMsgId: clientMsgId, expectedResultId: expectedResultId, progress: { _ in })
-    }
-
-    private func sendAgentMessage(
-        macId: String, agentKey: String, text: String, files: [UploadSource], clientMsgId: String?, expectedResultId: String?,
-        progress: @escaping @Sendable (Double) -> Void
-    ) async throws -> InterjectOutcome {
         guard macs[macId]?.sync == .synced else { throw BackendError.macOffline }
         let id = clientMsgId ?? Bytes.newMsgId()
         var uploadIds: [String] = []
@@ -222,7 +211,7 @@ extension PhoneEngine {
                 progress: { fraction in progress((done + fraction) / total) }
             ))
         }
-        let message = InterjectSend(clientMsgId: id, agentKey: agentKey, text: text, files: uploadIds, expectedResultId: expectedResultId)
+        let message = InterjectSend(clientMsgId: id, agentKey: agentKey, text: text, files: uploadIds)
         guard interjectBoxes[id] == nil else { throw BackendError.unavailable("busy") }
         interjectBoxes[id] = ReplyMailbox(owner: macId)
         defer {
