@@ -1088,8 +1088,11 @@ end run"#;
     } else {
         "AskHuman"
     };
+    // osascript prints the new tab reference ("tab 1 of window id N"). Keep it off stdout so a
+    // caller that reads a JSON receipt (`dev session`) does not take it for part of the receipt.
     let status = Command::new("/usr/bin/osascript")
         .args(["-e", script, &command, title])
+        .stdout(Stdio::null())
         .status()
         .context("failed to ask Terminal.app to open a window")?;
     if !status.success() {
@@ -3171,6 +3174,16 @@ mod tests {
             };
             let command = assemble_command(&record, Some(&profile)).unwrap();
             let args: Vec<_> = command.get_args().collect();
+            assert_eq!(command.get_current_dir(), Some(neutral.as_path()));
+            if kind == AgentKind::Grok {
+                // Grok 1.0.70 fails to create a session that has extra directories ("a session
+                // works only in its cwd"), so the neutral workspace is its only directory.
+                assert!(
+                    !args.iter().any(|arg| *arg == "--add-dir"),
+                    "Grok must not be given extra directories: {args:?}"
+                );
+                continue;
+            }
             let option = args.iter().position(|arg| *arg == "--add-dir").unwrap();
             let delimiter = args.iter().position(|arg| *arg == "--").unwrap();
             assert!(
@@ -3178,7 +3191,6 @@ mod tests {
                 "profile options must be parsed as options: {args:?}"
             );
             assert_eq!(args[option + 1], root.as_os_str());
-            assert_eq!(command.get_current_dir(), Some(neutral.as_path()));
         }
     }
 
