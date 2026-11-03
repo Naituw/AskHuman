@@ -1,6 +1,6 @@
 # 计划：iOS 开发者模式（浮动按钮 + 快速添加待办）
 
-> 需求：`docs/specs/ios-developer-mode.md`（决策编号 D1–D19 指其 §3）。状态：2026-11-02 起草；用户已审阅通过，P1–P5 已实现（见「实现记录」），P6：2026-11-03 用户同意后已出内测包 `0.1.0 (5)`，**等用户试用反馈**。2026-11-03 起按钮与菜单改用系统 `UIMenu`（需求 D18、D19）：下文已按新做法改写，自绘版的做法与它的验证结果只留在「实现记录」里。
+> 需求：`docs/specs/ios-developer-mode.md`（决策编号 D1–D21 指其 §3）。状态：2026-11-02 起草；用户已审阅通过，P1–P5 已实现（见「实现记录」），P6：2026-11-03 用户同意后已出内测包 `0.1.0 (5)`，**等用户试用反馈**。2026-11-03 起按钮与菜单改用系统 `UIMenu`（需求 D18、D19）：下文已按新做法改写，自绘版的做法与它的验证结果只留在「实现记录」里。同日项目选择改成与待办页同一套来源规则（需求 D20、D21，用户定）：P1、P3、P4 的相关描述已按新做法改写，起因与验证见最后一篇「实现记录」；这一版**还没有出内测包**（用户定：验证完先汇报，再决定）。
 > 分支：直接在 `main` 上按阶段提交。改动只在 `ios/` 与 `docs/`：不碰 Rust、不需要 Dev Instance、不跑 `./scripts/install.sh`。
 > 工程由 XcodeGen 生成（`*.xcodeproj` 不入库）：每次新增 App 侧文件后先 `cd ios && xcodegen generate`。
 > 开发开始后，任何方案改动都先经 AskHuman 与用户确认；用户的审阅意见会追加到需求文档末尾（标注为反馈意见）。
@@ -50,18 +50,19 @@
 
 **`QuickTodoComposer`**（`@MainActor @Observable`；依赖 `RemoteBackend`、`defaults`，Mac 列表由 `update(macs:)` 推入）。复用现有零件，不另造一套：项目行用 `TodoListedProject`，搜索用 `TodoRows.matches(_:query:)`，文字校验用 `TodoText.validate`，写入消息用 `TodoMutation`。
 
-- `target: QuickTodoTarget?`：`macId`、`macName`、`projectId`、`projectName`；持久化键 `ah.dev.quickTodoTarget`（JSON）。目标 Mac 已不在配对列表里时视为没有目标（不删存档，重新配对同一台 Mac 时仍可用）。
+- `target: QuickTodoTarget?`：`macId`、`macName`、`projectId`、`projectName`、`projectHint`、`icloudRepo`（仅 iCloud 项目有，需求 D21）；持久化键 `ah.dev.quickTodoTarget`（JSON）。目标 Mac 已不在配对列表里时视为没有目标（不删存档，重新配对同一台 Mac 时仍可用）；iCloud 目标不绑定当初经过的那台 Mac，只要还配对着任何一台 Mac 就保留。
 - `text`：只在内存；`send` 成功才清空。
-- `groups`：项目选择的数据，按 Mac 一组；`loadProjects()` 对每台**在线且 `caps.todos`** 的 Mac 并行调一次 `todoProjects(macId:)`，组内顺序保持 Mac 给的顺序，**不过滤**仅云端 / 仅本机的项目（需求 §6.2），同一个 iCloud 项目在每台开了同步的 Mac 下各出现一次、不去重；离线 / 太旧 / 超时的 Mac 各自带原因；`query` 过滤。
-- `choose(_ project: TodoListedProject)`：记下目标并持久化。
-- `unavailable: QuickTodoUnavailable?`：由文字校验（空 / 超过 `Wire.todoTextMaxChars`）、目标、目标 Mac 的 `link` 与 `caps.todos` 推导，对应需求 §6.1 的四行文案。
-- `send() async`：状态 `editing → sending → (成功 | 失败)`。用 `TodoMutation.add(localId:text:auto: false).operation(clientMsgId:projectId:)` 拼出 `todo.op`（因此不带 `auto`），每次发送用新的 `clientMsgId`，调 `backend.todoApply(macId:operation:)`；`BackendError.timedOut` 时用同一个 id 再问一次（与 `TodosStore.send` 一致）；两次都超时后记下这次尝试（id + 文字 + 目标），用户再点「添加」时若三者没变就沿用这个 id。结果映射成 `QuickTodoFailure`：`macOffline` / `unknownMac` → `unreachable`；两次都超时 → `timedOut`；ack `notFound`（原因 `unknownProject`）→ `projectGone`，同时清掉已存的目标，视图看到 `projectGone` 就进入项目选择（已不存在的项目不该留作目标）；ack `rejected` 或其他抛错 → `refused(原因)`；ack 其余非 `ok` → `notSaved`。成功后清空文字并让 `DeveloperTools` 出提示。
+- `sources`：项目选择的第一级，`TodoSources.choices(macs:modes:)` 列出的来源（iCloud 在前，开着同步的 Mac 在多台 Mac 时并入 iCloud），每个带自己的状态（加载中 / 项目行 / 失败原因）和 `canOpen`。`startLoadingProjects()` 对每台**在线且 `caps.todos`** 的 Mac 并行调一次 `todoProjects(macId:)`（`loadProjects()` 是等它结束的版本），先取待办页记下的各 Mac 模式（`TodosStore.storedModes`），答复里的 `mode` 再覆盖；iCloud 的行取自 `TodoSources.icloudCandidates` 排在最前且已回答的 Mac，再并入其他成员 Mac 的「仅本机」项目（`TodoRows.listed`，与待办页共用）；离线 / 太旧由来源自己的可用性表达，超时等失败可经 `retry(_ source:)` 重问。`isLearning`：有 Mac 被问了、还没答又没有任何记录时为真，来源列表此时显示占位。
+- `sections(of:)`：某来源的项目，分组与搜索都走 `TodoRows.sections`（待办页同一个函数），`query`、`emptyExpanded` 是页面状态。
+- `choose(_ project:, in source:)`：记下目标并持久化；从 iCloud 下选、且项目有仓库地址的记成 iCloud 项目（`icloudRepo`），其余记成那台 Mac 的。`currentSource`、`isCurrent(_:in:)` 给页面画对勾与决定打开哪一级。
+- `unavailable: QuickTodoUnavailable?`：由文字校验（空 / 超过 `Wire.todoTextMaxChars`）、目标、目标 Mac 的 `link` 与 `caps.todos`（iCloud 目标看有没有候选 Mac）推导，对应需求 §6.1 的五行文案。
+- `send() async`：状态 `editing → sending → (成功 | 失败)`。先定发往哪台 Mac（`route(for:)`）：Mac 上的项目就是记下的那台；iCloud 项目先走记下的那台 Mac（它还在候选里就用它的项目 id），否则按候选顺序逐台调 `todoProjects` 取第一台 `mode == icloud` 且列表里有同一仓库地址的，用它给的项目 id；找不到 → `icloudUnreachable`。再用 `TodoMutation.add(localId:text:auto: false).operation(clientMsgId:projectId:)` 拼出 `todo.op`（因此不带 `auto`），每次发送用新的 `clientMsgId`，调 `backend.todoApply(macId:operation:)`；`BackendError.timedOut` 时用同一个 id 再问一次（与 `TodosStore.send` 一致）；两次都超时后记下这次尝试（id + 文字 + 目标），用户再点「添加」时若三者没变就沿用这个 id。结果映射成 `QuickTodoFailure`：`macOffline` / `unknownMac` → `unreachable`；两次都超时 → `timedOut`；ack `notFound`（原因 `unknownProject`）→ `projectGone`，同时清掉已存的目标，视图看到 `projectGone` 就进入项目选择（已不存在的项目不该留作目标；iCloud 项目的 `mac` 为 `nil`，文案写「iCloud」）；ack `rejected` 或其他抛错 → `refused(原因)`；ack 其余非 `ok` → `notSaved`。成功后清空文字并让 `DeveloperTools` 出提示。
 - 没有离线队列：`unavailable != nil` 时 `send()` 直接返回。
 
 **单测（`AHAppTests`）**
 
 - `DeveloperPlacementTests`：默认值与 JSON 往返、损坏数据回默认；`restingCenter` 在安全区边界与不同侧边；`snapped` 的左右分界与纵向夹取；`displayedCenter` 避让键盘且不改 `placement`；拖动中的夹取。
-- `QuickTodoComposerTests`（`MockBackend`）：校验与 `unavailable` 各情形；`loadProjects` 只问在线且有能力的 Mac、分组与搜索；目标持久化与 Mac 被取消配对；`send` 成功 / 超时重发同一 `clientMsgId` / Mac 离线 / `unknownProject` / `failed` / `rejected`；不带 `auto`；失败保留文字、成功清空；`ok` 之后 `MockBackend` 里该项目多了一条。
+- `QuickTodoComposerTests`（`MockBackend`）：校验与 `unavailable` 各情形（含 iCloud 无 Mac 可用）；`loadProjects` 只问在线且有能力的 Mac；来源与分组（iCloud 并入开着同步的 Mac、同一项目只出现一次、「仅在 X」按 Mac 一段、只配对一台 Mac、离线与太旧的原因、重试、排序用待办页记下的 Mac、`isLearning`）与搜索；目标持久化（含 iCloud 目标、旧版目标、Mac 被取消配对）；`send` 成功 / 超时重发同一 `clientMsgId` / Mac 离线 / `unknownProject` / `failed` / `rejected`；iCloud 项目的换机（选它时经过的 Mac 掉线后改走另一台、另一台不认识时报错、两台之间的项目 id 不同）；不带 `auto`；失败保留文字、成功清空；`ok` 之后 `MockBackend` 里该项目多了一条。
 
 ## P2：App 开关、窗口宿主与按钮
 
@@ -99,28 +100,32 @@
 **`QuickTodoView`**（SwiftUI，`NavigationStack`）
 
 - 顶栏：左「Cancel」、中「Quick todo」、右「Add」（`unavailable != nil` 或发送中禁用，发送中显示转圈）；标识 `quick-todo-cancel` / `quick-todo-send`。
-- 项目行：第一行是项目名（带同名区分后缀），第二行小字是 Mac 名，无目标时是强调色的「Choose a project」；点按推入项目选择；标识 `quick-todo-project`。
+- 项目行：第一行是项目名（带同名区分后缀），第二行小字是来源（iCloud 项目写「iCloud」，Mac 上的项目写 Mac 名），无目标时是强调色的「Choose a project」；点按打开项目选择；标识 `quick-todo-project`。
 - 文本框：`TextField("New todo", axis: .vertical)`、`lineLimit(3...10)`、出现即聚焦，发送中只读；标识 `quick-todo-field`。
 - 发送中：「Cancel」置灰、`.interactiveDismissDisabled(true)`，转圈标识 `quick-todo-sending`（Mac 的拒绝若在页面走了之后才到，就没处可说）。
 - 说明行：`unavailable` 的原因或失败原因（红色），标识 `quick-todo-note`。
-- 首次（无目标）时，页面一出现就推入项目选择（不带转场动画）；`projectGone` 时也推入；选定后弹回并聚焦文本框。
+- 项目选择是 `NavigationStack(path:)` 上的两级（`QuickTodoStep`：`.sources` 与 `.projects(来源)`）。`openThePicker()`：先 `startLoadingProjects()`（让待办页记下的各 Mac 模式先生效），只有一个来源且能打开时直接推它的项目列表，否则已有目标且其来源能打开时一次推入「来源列表 + 目标所在来源的项目列表」（返回键到来源列表），否则只推来源列表。首次（无目标）时页面一出现就打开（不带转场动画）；`projectGone` 时也打开；选定后路径清空、弹回并聚焦文本框；路径清空或页面消失时 `closeProjects()`（丢掉还在路上的答复、清空搜索）。
 - 成功：`DeveloperTools` 设置提示 → 窗口收尾 → 按钮窗口显示提示。
 
-**`QuickTodoProjectPicker`**：`List` 按 `groups` 分段（段头 = Mac 名；离线 / 太旧的段没有行、原因写在段脚注，无应答的段一行「Did not answer」加可重试的「Try again」），行 = 与待办页同款（图标、项目名、后缀、仓库地址、待办数，当前目标带对勾）；`searchable`；加载中显示进度；选中调用 `choose` 并返回；标识 `quick-todo-picker`、`quick-todo-project-<id>`、`quick-todo-loading-<macId>`、`quick-todo-retry-<macId>`。
+**`QuickTodoProjectPicker.swift`**：
+- 第一级 `QuickTodoSourcePicker`：`List`，每个来源一行（`NavigationLink(value:)`，图标 / 名字 / 副标题沿用待办页来源菜单的 `TodoSourceChoice.titleText` / `subtitleText` / `symbol`，目标所在的带对勾），`canOpen` 为假的置灰；`isLearning` 时换成两行 `SkeletonRows`；标题「Source」；标识 `quick-todo-picker`、`quick-todo-source-<TodoSourceChoice.id>`（`icloud`、`mac:<id>`）。
+- 第二级 `QuickTodoProjectList`：`List` 按 `sections(of:)` 分段，段头是待办页那个 `TodoSectionHeader`（从 `TodosScreen.swift` 提成共用的，段标题的文字在 `TodoSection.title(macName:)`），行 = 与待办页同款（图标、项目名、后缀、仓库地址或「Only in iCloud」或「Only on X」、待办数，当前目标带对勾，没有 Agent 状态点）；`searchable`（共用 `ProjectSearch`，抽屉常显）；加载中是 `SkeletonRows`；失败 / 没有项目 / 搜不到走待办页同款的空态，失败可重试（按钮与下拉刷新）；标题是来源名；离开时清搜索与「没有待办」的展开；标识 `quick-todo-projects`、`quick-todo-project-<id>`、`quick-todo-empty-toggle`、`quick-todo-retry`。若这个来源已经不存在（一台 Mac 刚被发现开着同步、并进了 iCloud），显示 iCloud 的列表。
+- `projectGone` 的红字（`quick-todo-note`）放在先打开的那一级的顶部。
 
 **文案**放 `Design/DeveloperTexts.swift`（不可用原因与失败原因的映射，与 `TodoTexts.swift` 同风格）。已有的句子直接复用：`notSaved`、`refused(原因)` 用 `TodoNotice.message`（含「The Mac could not save that.」与各拒绝原因）；需求要求带 Mac 名的句子新增：连不上、没有应答、已不在该 Mac 上、请先更新该 Mac 上的 AskHuman。
 
 ## P4：Mock 与 UI 测试
 
-- 数据：沿用 `demo` 场景的两台 Mac（Home MacBook Pro 走 iCloud、Office iMac 本地；后者有两个同名项目「AskHuman · work / playground」，正好覆盖同名后缀）；`offline` 场景（两台 Mac 都连不上）与 `outdated` 场景（两台 Mac 都没有待办能力）测项目选择里的原因分组；`bothSync` 场景测同一 iCloud 项目在两台 Mac 下各出现一次。不新增 Mock 数据，除非用例发现缺项再补。「目标 Mac 掉线」没有运行时开关可在 UI 测试里翻转，由 P1 的 `QuickTodoComposerTests` 用 `MockBackend.setLink(_:for:)` 覆盖。
+- 数据：沿用 `demo` 场景的两台 Mac（Home MacBook Pro 走 iCloud、Office iMac 本地；后者有两个同名项目「AskHuman · work / playground」，正好覆盖同名后缀）；`offline` 场景（两台 Mac 都连不上）与 `outdated` 场景（两台 Mac 都没有待办能力）测来源列表里的原因；`bothSync` 场景测两台 Mac 并成一个 iCloud、同一项目只出现一次、「仅在 X」按 Mac 分段。不新增 Mock 数据，除非用例发现缺项再补。「目标 Mac 掉线」没有运行时开关可在 UI 测试里翻转，由 P1 的 `QuickTodoComposerTests` 用 `MockBackend.setLink(_:for:)` 覆盖。
 - `AskHumanUITests` 新增用例（前台跑，约定见 `overview-ios.md` 的验证表）：
   1. 开关：默认没有 `dev-button`；Macs 设置里打开后出现、关闭后消失；`-AHDeveloperMode YES` 直接出现。
   2. 手势：用 `XCUICoordinate.press(forDuration:thenDragTo:withVelocity:thenHoldForDuration:)`：起点取 `dev-button` 的中心，终点取菜单行的位置。手势开始时系统菜单还没有出来，所以先用一次轻点打开菜单、读出行的 frame（行没有标识，按标题找）、点空白处关上；然后按住 1 秒、慢速滑到那里并停一下再松手 → 快速添加页出现；在菜单外松手 → 没有页面，按钮没动。
   3. 轻点：点按钮 → 菜单出现；等一会儿还在；点菜单外（落在一个项目行上）→ 收起，且那一点没有触发下面的控件；下一次点同一个行才进入项目页。
   4. 拖动：把按钮拖到屏幕左侧 → 吸附到左边；位置记住（重启后同一侧）；拖动期间没有菜单。
   5. 盖住 sheet：先打开 Agents 页的新建任务 sheet，再用按钮添加待办 → 成功后新建任务 sheet 仍在、内容未丢。
-  6. 快速添加：首次进入项目选择 → 搜索 → 选「AskHuman · work」→ 输入 → 添加 → 页面收起、出现 `dev-toast`；再打开时直接显示目标并聚焦文本框；在待办页该项目里能看到新条目。
-  7. 不可用：`offline` 场景下打开快速添加页，项目选择里两台 Mac 都写明连不上、没有可选项，「添加」置灰并提示先选项目；`outdated` 场景同理，写明要更新；输入的文字不丢。
+  6. 快速添加：首次进入来源列表（iCloud 与 Office iMac，Home MacBook Pro 并在 iCloud 里）→ 点 iCloud 进它的项目列表 → 选「AskHuman」→ 页面上写「iCloud」→ 输入 → 添加 → 页面收起、出现 `dev-toast`；再打开时直接显示目标并聚焦文本框；在待办页该项目里能看到新条目。换项目：选 Office iMac 来源 → 搜索 → 选「AskHuman · playground」；再点项目行直接是 Office iMac 的项目列表，返回键到来源列表，换回 iCloud 的项目。
+  7. 不可用：`offline` 场景下打开快速添加页，来源列表里 iCloud 与两台 Mac 都置灰、点不开，两台 Mac 写明「离线」，「添加」置灰并提示先选项目；`outdated` 场景同理，写明「需要更新」；输入的文字不丢。
+  7a. `bothSync` 场景：两台 Mac 并成一个 iCloud，只有一个来源，页面直接打开它的项目列表；两台 Mac 都有的 AskHuman 只出现一次（Office 那份的 id 不在列表里）；「仅在 Home MacBook Pro」「仅在 Office iMac」各一段；选 AskHuman 记成 iCloud 项目，选 Office 才有的 intranet 记成 Office iMac 的项目。
   8. 焦点恢复：打开一个请求页并聚焦回复输入框、输入几个字，用按钮打开并取消快速添加页 → 回复输入框重新获得焦点，文字仍在。
   9. 键盘避让：键盘弹出时按钮不在键盘区域内。
   10. 与到达动效共存：用 `-AHArrival` 与 `-AHArrivalDelay` 让新请求在快速添加页打开期间到达 → 页面与键盘不被打断、已输入的文字不丢，关闭页面后新请求已在收件箱里。
@@ -139,7 +144,7 @@
 与上面写的计划不同的地方（面向使用的那部分在需求 §11）：
 
 - **窗口宿主分三层**：`DeveloperOverlayAnchor`（放进 `RootView` 背景，只读 `store.developer`，免得整个标签视图跟着重算）→ `DeveloperOverlayHost`（零尺寸 `UIViewRepresentable`）→ `DeveloperOverlayController`（建与拆两个窗口，管键盘与场景通知）。位置、拖动与键盘避让在 `DeveloperOverlayView`，按钮 `DeveloperButton` 与提示 `DeveloperToastView` 是 `DeveloperButtonViews.swift` 里的两个 UIKit 类（自绘版的菜单行、菜单与触觉类已在改用系统菜单时删除，见下一节）。
-- **快速添加页**：发送中不能取消、不能下拉收起；文本框默认三行；项目行两行；超时后再发沿用同一个 `clientMsgId`；`notFound` 清掉已存的目标，由 `projectGone` 驱动视图进入项目选择（上文各处已改）。
+- **快速添加页**：发送中不能取消、不能下拉收起；文本框默认三行；项目行两行；超时后再发沿用同一个 `clientMsgId`；`notFound` 清掉已存的目标，由 `projectGone` 驱动视图进入项目选择（上文各处已改）。（项目选择的两级结构是后来改的，见最后一篇实现记录。）
 - **无障碍**：浮动按钮的标签是「Developer tools」，菜单是系统的 `UIMenu`（VoiceOver 由系统处理）；菜单条目没有标识，UI 测试按标题找。
 - **图片查看器**（`ImageGallery.swift`）：每页的尺寸改取外层 `GeometryReader`（`.ignoresSafeArea()`）。这是 P4 的 UI 测试在「键盘盖在全屏查看器上」时发现的：竖直方向的 `containerRelativeFrame` 在容器被另一个窗口的键盘反复改动时让分页永远排不稳，App 主线程被布局占满。试过的、**没有**用的办法：给滚动视图或 `NavigationStack` 外面加 `.ignoresSafeArea(.keyboard)`、只忽略容器的安全区、`frame(maxHeight: .infinity)`（会让版面差 17 pt）。图片因此比以前高约 11 pt，其余像素不变。
 - **UI 测试**：`AskHumanDeveloperUITests` 共 17 条，覆盖开关、手势（按住滑动、轻点、在菜单外松手、拖动吸附与不出安全区）、盖住 sheet 与它的键盘、盖住全屏图片查看器、快速添加全流程、记住目标与换项目、焦点恢复（请求页的回答框、sheet 里的输入框）、离线与太旧的 Mac、到达动效共存。XCUITest 的几个坑已记在 `overview-ios.md`。
@@ -154,6 +159,16 @@
 - **UI 测试的改动**：菜单条目按标题找（`app.buttons`，label 等于「Quick todo」/「快速待办」）；按住滑动那一条先用一次轻点读出条目的位置，再 `press(forDuration:thenDragTo:withVelocity:thenHoldForDuration:)`；「点菜单外面」改用屏幕上方一块没有菜单的空地（`spotAwayFromTheMenu`）——iOS 18 的菜单在按钮下方，屏幕中心可能落在菜单里，点到条目上去（到达动效那条第一次就这样在 18.5 上失败了）；去掉「菜单朝内侧、与按钮同高」的几何断言，换成「菜单打开、整个在屏幕内」；在菜单外松手的那条不再断言菜单是否关闭（系统的决定），只断言没有选中任何条目、按钮没动。条数不变，17 条。
 - **验证结果**（2026-11-03）：Swift 包全量 290 条无失败（比自绘版少的 24 条是 `DeveloperPressTests` 与菜单几何的用例；要真实 daemon 与本地 broker 的端到端用例照例跳过）；`AskHumanDeveloperUITests` 在 iOS 27.0 / iPhone Air 上英文与中文各 17 / 17 通过；在 iOS 18.5 / iPhone 16 上英文 16 / 17，失败的是上面说的到达动效那条；那一条改了点按位置之后，在两个系统上都单独重跑通过（整班没有为它再各跑一遍）；目测过 iOS 27.0 浅色与深色（玻璃按钮、玻璃提示条、菜单从按钮长出来）与 iOS 18.5（毛玻璃按钮、经典菜单、提示条）的截图；`make-catalog.py` 无变化（没有新增或删除文案）。开发者模式关着时按钮窗口根本不建，其余 UI 测试没有重跑——它们走的代码这次没有动。
 
+## 实现记录（项目选择改成与待办页同一套来源规则，2026-11-03）
+
+需求 D20、D21；用户的问题与选择原话见需求 §11。这里记做法与验证。
+
+- **起因**：用户看过 `0.1.0 (5)` 后问为什么首次的选项目界面和待办页不一样（用 iCloud 待办时 AskHuman 应该在 iCloud 里，而不是两台 Mac 各一个）。原因是 P1 的 `groups` 把每台 Mac 对 `todo.projects.get` 的答复各排一组，而待办页对同步的 Mac 做了「并成 iCloud」（`ios-todos.md` I17）。需求起草时把这条记成「后置」，用户没同意后置。
+- **做法**：AHCore：`TodoModels.swift` 新增纯函数 `TodoRows.listed`（iCloud 的行 = 服务它的 Mac 的行 + 其他成员 Mac 的「仅本机」项目，段落改写成待办页的），`TodosStore.listed` 改成调它，所以两边用同一份规则；`TodosStore.icloudMacKey` 与 `storedModes` 放开给快速添加页读；`QuickTodoComposer` 重写（`groups` 没了，换成 `sources` / `sections(of:)` / `isLearning` / `retry(_:)` / `currentSource` / `isCurrent(_:in:)` / `startLoadingProjects()`，`choose` 带来源；目标加 `icloudRepo`，`send` 加 `route(for:)` 换机）。App：`QuickTodoProjectPicker.swift` 重写为两级（来源 → 项目），`QuickTodoView` 改 `NavigationStack(path:)`；`TodosScreen.swift` 把 `ProjectSearch` 与 `TodoSectionHeader` 放开共用（段标题的文字移到 `TodoSection.title(macName:)`）；`DeveloperTexts.swift` 两条新文案（共用一句「开启了 iCloud 同步的 Mac 暂时都连不上。」）、`make-catalog.py` 去掉 4 条不再用的译文。没有新增或删除文件（`xcodegen generate` 不用重跑），没有 Rust 改动。
+- **没问过用户的细节**（需求 §11 已写）：已有目标时点项目行直接打开目标来源的项目列表；只有一个来源时跳过来源列表。
+- **UI 测试**：`AskHumanDeveloperUITests` 18 条（原 17 条，新增 `testMacsThatBothSyncAreOneICloudWhoseProjectsAreListedOnce`）；各处「选项目」改走 `chooseProject(_:from:)`（先点来源再点项目）；「搜索与换项目」改为：在 Office iMac 来源里搜索并选 playground → 再点项目行直接回到 Office iMac 的项目列表 → 返回键到来源列表 → 换到 iCloud 选 AskHuman（页面上写「iCloud」）；不可用的两条改成来源列表置灰与原因（「离线」「需要更新」）。后面的 sheet 只有半屏高，列表是惰性的：要看到下面的段得先在列表上滑（`scrollTheProjects(to:)`）；页面后面的待办页标题上也有一个叫「Source」的按钮，所以找返回键要限定在这一级自己的导航栏里。
+- **验证结果**（2026-11-03）：Swift 包全量 305 条无失败（`QuickTodoComposerTests` 36 条，原 21 条；要真实 daemon 与本地 broker 的端到端用例照例跳过）；`AskHumanDeveloperUITests` 在 iOS 27.0（模拟器 `AskHuman iOS Dev`，iPhone 18 Pro）上英文、中文各 18 条里 17 条通过，没过的是同一条 `testTheButtonIsAboveASheetAndItsKeyboardAndRidesAboveTheKeyboard`：它在新建任务 sheet 上把按钮往下拖的第一步常常拖不到位（按钮没动，或停在半路）。这条与项目选择无关：另在 `HEAD`（没有这次改动）的干净 worktree 上单独跑它，出结果的 3 次都在同一个断言上失败（还有 2 次测试进程一启动就被系统杀掉，没有结果）；这次改动的树上单独跑 7 次，1 次通过、6 次失败；同一条在 iOS 18.5 / iPhone 16 上 2 次都通过。原因没查（是 XCUITest 在 iOS 27 的玻璃按钮上合成的拖动不稳，还是真实的拖动识别有问题，要看真机上的手感）；iOS 18.5 上项目选择相关的 6 条全过；`AskHumanTodosUITests` 10 / 10（`TodoSectionHeader` 与 `ProjectSearch` 改动后待办页没变）；目测过 iOS 27.0 与 18.5 的来源列表、项目列表、`bothSync` 的分段，以及中文版；`make-catalog.py` 无缺项。**没有出内测包**（用户定）。
+
 ## P6：真机一轮（需要用户在场，先问再做）
 
 自动化验证不了的：系统菜单的弹出延迟与拖动的分工手感（按下后立刻划向菜单会变成拖按钮，这是设计内的代价）、玻璃的观感、真机键盘与窗口焦点恢复、按钮盖在 Safari / 图片查看器 / 系统弹窗之上的表现、触觉、VoiceOver 可用性。计划：问过用户后用 `ios-testflight` 技能出一个内测包装到手机，用户试用并反馈；改手势规则（例如拖动识别的灵敏度）前先经 AskHuman 确认，结果写进 `PROGRESS.md`。
@@ -166,5 +181,6 @@
 - **与 `ArrivalSceneHost` 共存**：按钮窗口不成为 key、到达动效窗口 `hitTest` 恒为空，两者互不抢触摸；快速添加窗口（主 +3）在动效窗口（主 +1）之上，打开期间到达的动效会被它盖住，要确认动效不抢焦点、不改键盘状态（P4 用例 10）；在 `-AHArrival` 的动效场景下同时打开开发者模式，确认互不影响。
 - **状态栏与导航栏表现**：新增的窗口都带根控制器，要确认它们不改变状态栏样式与大标题滚动行为（浅色、深色各看一次）；有影响就停下与用户确认处理办法。
 - **XCUITest 里的按住拖动**对元素在手势中途才出现不友好（系统菜单的行也是手势开始后才有），所以目标用坐标而不是元素，位置先用一次轻点读出来；若在模拟器上不稳定，停下与用户确认测试策略。
-- **同一个 iCloud 项目会在每台开了同步的 Mac 下各出现一次**（项目选择按 Mac 分组、不去重；选哪台就经哪台写入，目标 Mac 掉线时不改道，需求 D14）。这是需求既定行为，真机用下来觉得别扭再提出调整。
+- **iCloud 项目换机的重复风险**：若第一台其实已经存下、只是应答丢了，重发又去了另一台，幂等键只在各自的 Mac 里去重，会出现两条（需求 §8）。需要「应答丢失」与「换机」同时发生，不处理。
+- **来源列表要等各 Mac 回答过是否开着同步才定形**：待办页没记过时是几行灰色占位，通常不到半秒；若有 Mac 一直不答，占位在它超时后结束，那台 Mac 作为独立来源出现。
 - **本期不加任何 Rust 改动**：若实现中发现必须改，先与用户确认（会牵涉 `PROTOCOL_VERSION` 与 `ios/wire.rs`）。
