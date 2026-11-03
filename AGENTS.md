@@ -29,6 +29,10 @@ continues through the normal AskHuman connection.
 ./scripts/install-windows.cmd
 ```
 
+## Before a long build or test
+
+Before `./scripts/install.sh`, `cargo test`, `cargo clippy` or `xcodebuild`, run `node scripts/machine-health.mjs`. If it exits 2 (the machine is thrashing) the same job takes 10–25 minutes instead of 1–3, so tell the human through AskHuman with its report and ask them to free memory, run the job in the background and poll it in short slices that say what is being waited on, and never wait silently.
+
 ## Installing or updating the iOS app
 
 For remote iPhone installation or a new internal TestFlight build, use the project skill
