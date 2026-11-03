@@ -32,4 +32,30 @@
 
 ## 验证记录
 
-（实现后补。）
+2026-11-03～04，全部在 worktree 与本机完成：没有运行过 `cursor-agent`，没有驱动 Cursor 运行任何 Agent，没有碰真实的 `~/.askhuman`。
+这台机器 8 核 16 GB，期间其他 Agent 的构建与模拟器让平均负载常在 500–1000，下面几处超时都是这个原因。
+
+- Rust：`cargo test` 2409 通过、0 失败、11 条本来就忽略；`cargo clippy` 与 `cargo fmt --check` 无告警。
+  覆盖合成目录夹具（全 Max、混合、无 Max、歧义 id、参数不全、缓存缺失／损坏）、配置文本替换（键序、缩进、权限、无法解析不动、并发互斥）、
+  记录哈希新旧兼容、三个入口的拦截／提示／放行、复查的触发与超时。
+- 前端：`vue-tsc` 通过；vitest 94 个文件 1111 条，首轮 5 条超时（`PopupInboxView.drop` 4 条、`.later` 1 条，默认 5 秒在负载约 900 时不够，
+  与本分支无关），这两个文件放宽超时重跑 98/98 通过。
+- Swift 包（AskHumanKit 七个测试包）：569 条通过、0 失败，另 43 条要真实服务的端到端用例按设计跳过；含 `TaskMaxTests`
+  （开关默认关、需要 Max 时拦截、放行后可启动、旧 Mac 不显示、换 Agent 或 Mac 时复位）。
+- iOS 模拟器 UI 测试（`AskHumanModelUITests` 的两条 Max 用例，iPhone 16 / iOS 18.5，英文与中文各跑）：
+  `testCursorOnTheOldPlanStartsWithMaxOffAndBlocksAModelThatNeedsIt`（开关默认关、选需要 Max 的模型被拦下并说明、打开开关解除、换小模型读「不需要 Max」、
+  放行后能启动）英文 261 秒、中文 276 秒通过；`testTheMaxSwitchBelongsToCursorAloneAndToAMacThatControlsMax`（只有 Cursor 且 Mac 控制 Max 时才有开关）
+  英文 115 秒、中文 148 秒通过（英文之后又重跑过两次，一次等待超时、一次 XCTest 与应用失联，都是负载近 1000 时的基础设施失败，不是断言失败；
+  这条的测试体在两次通过之后没有改过）。截图看过：被拦下时开关关、「将使用：… 需要 Max」橙字、红字说明、「开始」灰；打开开关后红字消失。
+  过程中修了测试自己的两个问题：第一条的最后一步误用了 Cursor 表单里没有的「权限」行（该 Agent 的权限由它自己决定），改为直接填文字并点开始；
+  负载近 1000 时 10 秒的等待不够（改为 30 秒，点开关改为不会因点击迟到而翻回）。
+- Node：`cursor-create.node-test.mjs` 19/19；全量 `scripts/*.node-test.mjs` 119 条中 98 通过、19 跳过（平台限定）、2 失败——都是安装脚本测试
+  （`install-unix` 的 `TEST_FAIL_SIGN`、`seed-worktree-target` 的「path packages cannot be listed」）在重负载下 `spawnSync bash` 30 秒超时，本分支没改 `scripts/install*`。
+- Dev Instance（`scripts/install.sh` 装到 worktree 的 `.askhuman-dev/`）：握手、协议号 5、Desktop 路线按设计不可用。
+- 界面：用 Chromium 加假的 Tauri 桥看过 GUI 新建任务表单的 Cursor 行（浅色／深色、中英文）：模型选择器与 Max 标记、「将使用」行、开关、拦截红字；一次性脚本，未提交。
+- 本机只读观察（零请求；读 `state.vscdb` 与 `cli-config.json` 的白名单键，不读凭据）：`hasTokenBasedPricing=false`（旧计划）；47 个模型里 27 个可不开 Max 使用、
+  20 个按缓存仅限 Max（含 CLI 默认的 Grok 4.7 256K High Fast）；`cli-config.json` 的 `maxMode` 与 `model.maxMode` 都是 `false`。
+  对照 Cursor CLI 2026.10.01 的代码（只读）：`resolveMaxModePersistence` 在所选变体需要 Max 时写 `maxMode:true`（并标 `maxModeAutoEnabled`），
+  换到不需要 Max 的模型时只在「由自动开启」的前提下才自动关回，所以手动开启过的持久 Max 会一直粘着——这正是启动前强制关闭的原因。
+- **未验证**（要真实 Cursor／cursor-agent，等验证计划获批）：CLI 在强制关闭之后的实际行为与计费、缓存与服务端目录是否一致、Agents 窗口路线的全部未验证项。
+  验证计划见 [Desktop 计划](cursor-desktop-task-creation.md)的「真实验证计划」。
