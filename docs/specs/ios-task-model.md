@@ -16,6 +16,9 @@
 
 > 2026-10-31 补充：[Codex Fast 模式](ios-task-speed.md)增加独立、每次默认关闭且不记忆的速度开关。
 > 本文「默认不传参数」只指模型／强度；新版手机对可控制速度的 Codex 即使关闭开关也显式传标准速度。
+>
+> 2026-11-03 补充：[Cursor Max 模式控制](cursor-max-control.md)给 Cursor 增加按任务的「允许 Max」开关（默认关、不记忆）、
+> 模型的 Max 标记与被拦截的原因码；线协议只加可选字段（`maxControl`、`maxRequired`、`allowMax`），协议号不变。
 
 ## 现状（供评审对照）
 
