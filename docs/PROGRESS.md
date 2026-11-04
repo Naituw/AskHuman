@@ -5,7 +5,7 @@
 
 ## 待验收：Agent 最终失败确认（已合并并装为日常版，真实失败路径未验）
 
-2026-11-02 已快进合并进 `main`（本地，**未推送**）并 `./scripts/install.sh` 装为日常版。需求
+2026-11-02 已快进合并进 `main` 并 `./scripts/install.sh` 装为日常版。需求
 [规格](specs/agent-failure-confirmation.md)，计划与合并后的验证见
 [计划 §10](plans/agent-failure-confirmation.md#10-合并与日常版安装2026-11-02)。
 共享「结束／出错时确认」开关：最终失败进入普通错误卡，有原会话通道时可「要求继续」，否则仅「知道了」；
@@ -13,23 +13,25 @@ Grok 仅错误，Antigravity 不宣称支持；Codex CLI 只读观察共享服�
 只迁移了 Pi 扩展（已在运行的 Pi 会话要重启）；隔离链路脚本对日常二进制通过。已做的自动化与手机预选项验收
 用的都是模拟终态，没有调用模型。
 
-2026-11-03：手机 Agents 页的「需要处理」分组与「要求继续」按钮已去掉，错误卡成为唯一处理入口（本地提交，iOS 未出包）。
+2026-11-03：手机 Agents 页的「需要处理」分组与「要求继续」按钮已去掉，错误卡成为唯一处理入口（iOS 未出包）。
 本机三次真实 Cursor 出错（05:47／08:59／12:53，都在等待 AskHuman 回答期间）证实：Cursor 重试用尽后既不发 `stop`
 也不发 `sessionEnd`，这类失败原本没有卡，会话一路变成「已结束」。按用户确认的 I4–I9 已实现：只读尾随 Cursor 结构化日志
 检测出错（macOS，共用 Cursor 的确认开关）、`incomplete` 也出卡（不能接续的当作通知）、未处理的卡写入
 `~/.askhuman/state/failure-cards.json` 跨 daemon 换新保留且不拦换新排空、「要求继续」的指令末尾带一句中性的
 `--show-last` 提示。规格与决定见 [specs/agent-failure-inbox.md](specs/agent-failure-inbox.md)。
 
-2026-11-04：上述实现已验证并 `./scripts/install.sh` 装为日常版（本地提交，**未推送**）：全量 `cargo test` 2369 个
-通过、CI 同参数 clippy 通过、隔离冒烟 `scripts/agent-failure-cursor-smoke.mjs` 对装出的二进制通过（七个场景，规格 §7）。
-装机时日常 daemon 正在为另一个会话挂着的提问排空，新版要等它排空完成后才接管，在那之前不会尾随 Cursor 日志
-（`AskHuman daemon status` 不再显示 draining 即已换新）。顺带修了一处：held 卡不计入 `active_count()` 后，菜单栏图标
-与托盘「待答」列表曾少算它们，现在改用含 held 卡的 `in_flight_count()`。
+2026-11-04：上述实现已验证并 `./scripts/install.sh` 装为日常版，已推送：全量 `cargo test` 通过、CI 同参数 clippy 通过、
+隔离冒烟 `scripts/agent-failure-cursor-smoke.mjs` 对装出的二进制通过（八个场景，规格 §7）。顺带修了一处：held 卡不计入
+`active_count()` 后，菜单栏图标与托盘「待答」列表曾少算它们，现在改用含 held 卡的 `in_flight_count()`。
+新 daemon 接管后（05:32）当天就遇到两次自然的 Cursor 出错（07:08、07:56）：检测、登记、卡内容都对，但**卡在约 2 秒内被自己
+撤销**——开着「按需发送」时卡自己的提交把失败的会话拉回「工作中」（规格 §5.3）；隔离验证当时都关着该开关，所以没发现。
+已修复并加了冒烟场景 8；修复版装机后还没有新的真实样本。
 
 下一步：
-- [ ] Cursor 出错检测要等**第一次自然发生的 Cursor 出错**来核实（Cursor 永不实测；先确认日常 daemon 已换成新版）：卡是否在回答挂着的提问后出现、
-  原因文本与重试次数是否对、`daemon.log` 里有没有 `cursor log: failed turn …`、「要求继续」经 Cursor 桥是否真的让原会话
-  开始新一轮；也留意 `cursor log: N unreadable agent.turn.outcome line(s)`（Cursor 升级后日志格式漂移）。核实后写回这里。
+- [ ] 修复后的 Cursor 出错卡要等**下一次自然发生的 Cursor 出错**来核实（Cursor 永不实测）：卡能留住直到有人处理（不再 2 秒内
+  自己撤销；`history.jsonl` 里不该再出现 caller 取消的卡记录）、回答挂着的提问后立刻出现、原因文本与重试次数对、
+  `daemon.log` 里有 `cursor log: failed turn …`、「要求继续」经 Cursor 桥是否真的让原会话开始新一轮；也留意
+  `cursor log: N unreadable agent.turn.outcome line(s)`（Cursor 升级后日志格式漂移）。核实后写回这里。
 - [ ] 已知边界（规格 §4.2、§3）：会话已被挤出 registry「最近结束」列表（10 条）时对应失败不出卡；进程在回合中途消失
   （崩溃、被杀、终端关闭）没有任何来源报告失败，未纳入，等用户决定要不要作为仅通知的卡。
 - [ ] 真实失败路径（真实模型请求须先经用户授权；Cursor 永不实测）：日常使用中遇到真实的 `selected model is at capacity`

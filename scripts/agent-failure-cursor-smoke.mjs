@@ -118,11 +118,15 @@ const REASON = "Agent turn stopped after repeated resume attempts made no progre
 const said = pattern => messages.filter(text => pattern.test(text)).length;
 const working = session => until(async () => (await record(session))?.state === "working", "a working session");
 
+// `autoActivation` is the "send on demand" switch. The daemon reads it again on every submission,
+// so a scenario can flip it without a restart.
+const config = autoActivation => JSON.stringify({
+  general: { popupPrewarm: false, menuBarIcon: "off" },
+  channels: { autoActivation, popup: { enabled: false }, telegram: { enabled: true, botToken: "123:fixture", chatId: "1", apiBaseUrl: `http://127.0.0.1:${api.address().port}` } },
+});
+
 try {
-  fs.writeFileSync(path.join(ah, "config.json"), JSON.stringify({
-    general: { popupPrewarm: false, menuBarIcon: "off" },
-    channels: { autoActivation: false, popup: { enabled: false }, telegram: { enabled: true, botToken: "123:fixture", chatId: "1", apiBaseUrl: `http://127.0.0.1:${api.address().port}` } },
-  }));
+  fs.writeFileSync(path.join(ah, "config.json"), config(false));
   await run(["agents", "mode", "cursor", "mcp"]);
   await run(["agents", "stop", "cursor", "on"]);
   daemon = spawnDaemon();
@@ -222,13 +226,38 @@ try {
   assert.equal(await within(questionExit, 15000, "the question's answer"), 0);
   assert.match(output, /\bA\b/, output);
   await until(() => said(/Connection failed repeatedly/) >= 1, "the failure card after the answer");
-  assert.equal(cards.length, asked + 2);
+  // The card reaches the transport as its text and then, a moment later, the message that carries
+  // the answer buttons; only that one is counted here.
+  await until(() => cards.length === asked + 2, "the failure card's answer buttons");
   answer(cards[asked + 1]);
   await until(() => !fs.existsSync(cardsFile), "settled failure card");
 
-  console.log("PASS: forged Cursor log → one card and a failed result; unknown conversations and repeated lines ignored; held card does not keep the daemon; card survives a replacement with its age; answered and withdrawn cards leave the record; switch off stops the follower without replay; a card waits behind a pending question and follows its answer");
+  // 8. The same card with "send on demand" on, which is how the daily setup runs. The card is a
+  //    request of the failed session; counting it as that Agent working again would flip the
+  //    session out of idle, and the card checks for idle every two seconds and would withdraw
+  //    itself. Scenarios 1 to 7 ran with the switch off and could not see that.
+  fs.writeFileSync(path.join(ah, "config.json"), config(true));
+  const demand = randomUUID(), demandTurn = randomUUID();
+  await startSession(demand); await startTurn(demand, demandTurn);
+  await working(demand);
+  const beforeDemand = cards.length;
+  fail(demand, demandTurn, REASON);
+  await until(() => cards.length === beforeDemand + 1, "the card with send on demand on");
+  await sleep(6000); // several of the card's own checks
+  const standing = await record(demand);
+  assert.equal(standing.state, "idle", "the card's own request is not the Agent working again");
+  assert.equal(standing.lastTurnResult.outcome, "failed");
+  assert.deepEqual(saved().map(card => card.sessionId), [demand], "the card is still waiting to be answered");
+  answer(cards[beforeDemand]);
+  await until(() => !fs.existsSync(cardsFile), "settled card with send on demand on");
+  const settled = await record(demand);
+  assert.equal(settled.state, "idle");
+  assert.equal(settled.lastTurnResult.outcome, "failed", "acknowledging keeps the failure in the Agents list");
+
+  console.log("PASS: forged Cursor log → one card and a failed result; unknown conversations and repeated lines ignored; held card does not keep the daemon; card survives a replacement with its age; answered and withdrawn cards leave the record; switch off stops the follower without replay; a card waits behind a pending question and follows its answer; with send on demand on the card keeps standing until answered");
 } catch (error) {
   if (fs.existsSync(path.join(temp, "daemon.log"))) console.error(fs.readFileSync(path.join(temp, "daemon.log"), "utf8").slice(-7000));
+  console.error(`cards: ${cards.length}; messages sent to the transport:\n${messages.map((text, index) => `${index + 1}. ${text.replace(/\s+/g, " ").slice(0, 140)}`).join("\n")}`);
   throw error;
 } finally {
   if (daemon) {
