@@ -27,9 +27,9 @@
 - JS：假服务与假草稿的对象图脚本测试——成功、结构预检失败、非 Agents、各核对项不符、提交抛错、重复调用、`dryRun`
   清理。Rust：桩桥与临时目录覆盖回执阶段、崩溃恢复、选择规则、错误映射、协议新旧互通。
 - Dev Instance 内只验证非 Cursor 部分（界面、状态行、协议）。
-- **真实验证**不自动执行：下面的「真实验证计划」经用户批准才做，失败即停，不重试。
+- **真实验证**不自动执行：下面的「真实验证计划」里只有阶段 1–2 由 Agent 在用户批准装机后做，阶段 3–4 由用户自己做；失败即停，不重试。
 
-## 真实验证计划（2026-11-04 提交审批，批准前不执行任何一步）
+## 真实验证计划（2026-11-04 用户裁定：阶段 1–2 由 Agent 在日常版装好后执行，阶段 3–4 由用户自行执行）
 
 只验证本机看不到的两件事：Cursor 私有创建入口在真实环境里的行为（规格 §9 的未验证项），以及 Max 保护在日常安装上的
 真实表现。**逐阶段推进，任一阶段与预期不符就停下、记录、报告，不重试、不绕过。** 真实模型请求只有阶段 3、4 各一次，
@@ -38,12 +38,15 @@
 前置：日常安装换成本分支的构建（Desktop 路线默认仍关，Max 保护默认开）。`./scripts/install.sh` 会让 daemon 换新
 （协议号 4→5，按排空过渡，见 `daemon-graceful-drain.md` §8）。合并与安装的先后由用户定（见 `docs/PROGRESS.md`）。
 
+用户 2026-11-04 的裁定：Agent 只执行阶段 1–2（按设计 0 请求），**不执行阶段 3、4**；阶段 3、4 由用户按下面的「阶段 3、4：用户自行执行的步骤」
+自己做，并把现象原样告诉 Agent。计划写好不等于获准：装日常版之前和每个阶段开始之前，Agent 都先在日常渠道里问用户。
+
 | 阶段 | 做什么 | 请求数 | 通过标准 | 不符时 |
 | --- | --- | --- | --- | --- |
-| 1 日常版只读检查 | 设置页 Cursor 小节、GUI 新建任务的 Cursor 模型列表与 Max 标记、默认模型被拦截、「允许 Max」解除、换小模型；手机上同样的开关与标记（用户看，中英文各一次）。**不点开始** | 0 | 计划显示「旧计划」；本机缓存 47 个模型里 27 个可不开 Max 用、20 个仅 Max（含 CLI 默认的 Grok 4.7），界面与之一致 | 记录差异，停 |
-| 2 Desktop `dryRun` | Cursor 开着、恰一个 Agents 窗口、里面有验证项目；`echo '{"op":"create","cwd":…,"text":"dry run","permission":"agent-default","id":<新 UUID>,"model":<小模型>,"dryRun":true}' \| AskHuman __cursor-desktop` | 按设计 0 | 结果 `dryRun`；窗口里没有留下聊天（或已软归档）；回执 `dryRun`；状态库里该 ID 没有消息 | 任何其他结果（`nativeUnavailable`、`rejected` 等）都带原因，停，**不进阶段 3** |
-| 3 一次最小真实创建 | 同一项目与小模型，`dryRun:false`，提示词「只回复 OK，不要使用任何工具」，权限默认 | 1 | 见下 | 闸门拒绝＝没有请求；已发出而模型、Max 或目标不符：请用户在 Cursor 里点停止，停 |
-| 4（可选）CLI 一次 | GUI 新建任务表单（目标终端），Cursor、同一小模型、不允许 Max、同一句提示 | 1 | `cli-config.json` 的 `maxMode` 仍为 `false`；45 秒内没有 Max 告警卡；任务正常回答；表单与 helper 无异常 | 停 |
+| 1 日常版只读检查（Agent） | 设置页 Cursor 小节、GUI 新建任务的 Cursor 模型列表与 Max 标记、默认模型被拦截、「允许 Max」解除、换小模型；手机上同样的开关与标记（用户看，中英文各一次）。**不点开始** | 0 | 计划显示「旧计划」；本机缓存 47 个模型里 27 个可不开 Max 用、20 个仅 Max（含 CLI 默认的 Grok 4.7），界面与之一致 | 记录差异，停 |
+| 2 Desktop `dryRun`（Agent） | Cursor 开着、恰一个 Agents 窗口、里面有验证项目；`echo '{"op":"create","cwd":…,"text":"dry run","permission":"agent-default","id":<新 UUID>,"model":<小模型>,"dryRun":true}' \| AskHuman __cursor-desktop` | 按设计 0 | 结果 `dryRun`；窗口里没有留下聊天（或已软归档）；回执 `dryRun`；状态库里该 ID 没有消息 | 任何其他结果（`nativeUnavailable`、`rejected` 等）都带原因，停，**不进阶段 3** |
+| 3 一次最小真实创建（用户） | 同一项目与小模型，`dryRun:false`，提示词「只回复 OK，不要使用任何工具」，权限默认 | 1 | 见下 | 闸门拒绝＝没有请求；已发出而模型、Max 或目标不符：请用户在 Cursor 里点停止，停 |
+| 4（可选）CLI 一次（用户） | GUI 新建任务表单（目标终端），Cursor、同一小模型、不允许 Max、同一句提示 | 1 | `cli-config.json` 的 `maxMode` 仍为 `false`；45 秒内没有 Max 告警卡；任务正常回答；表单与 helper 无异常 | 停 |
 
 阶段 3 要核对的（对应规格 §9）：结果 `started` 且会话 ID＝操作 ID，回执 `accepted`；会话在 Agents 窗口的正确项目下、本地、
 没有新建 worktree 或分支（项目的 `git worktree list` 前后一致）；模型是所选小模型、没有 Max 标记、权限为默认；只读读
@@ -51,8 +54,56 @@
 阶段 2 的 `dryRun` 没有留下草稿；约 10 分钟后 Cursor 正常（适配器持有引用的副作用）；用户在 Cursor 网页用量里确认这一次按
 普通请求计，不是 API 费率。
 
-验证项目：用户在 Agents 窗口里指定一个现有的小项目，或由我建一个空的 git 仓库（零请求）交给用户加进 Agents 窗口。
-小模型由用户在批准时选（缓存里没有任何 Max 变体的候选：GPT-5 Mini、Gemini 2.5 Flash、Claude Haiku 4.5、GPT-5.4 Nano 等）。
+### 阶段 3、4：用户自行执行的步骤
+
+前提：阶段 1、2 都按预期通过，日常版已装上本分支。**每一步与预期不符就停，把现象和完整输出原样告诉 Agent，不要重试，也不要换参数再试。**
+下面的 `<P>`（验证项目的绝对路径）和 `<M>`（小模型的 `--model` 标识）由 Agent 在阶段 2 通过后填好，连命令一起发给用户。
+
+**阶段 3：在 Agents 窗口里新建（1 个普通请求）**
+
+1. Cursor 开着，只留**一个** Agents 窗口，验证项目 `<P>` 已在里面。先记下 `git -C <P> worktree list` 的输出。
+2. 在终端里运行（`ID` 是这次操作的编号，也是 Cursor 里会话的 ID；保留这个终端，后面要再用）：
+
+   ```bash
+   ID=$(uuidgen); echo "$ID"
+   echo '{"op":"create","cwd":"<P>","text":"只回复 OK，不要使用任何工具","permission":"agent-default","id":"'"$ID"'","model":"<M>","dryRun":false}' | AskHuman __cursor-desktop
+   ```
+
+   成功时输出形如 `{"Ok":{"sessionId":"<ID>","status":"started","dryRun":false,…,"maxMode":false}}`。输出 `{"Err":"…"}` 时先读原因：
+   被拒绝的原因（没有 Agents 窗口、多个窗口、读回不符等）都表示**没有向模型发送任何内容**。
+3. 核对：
+   - Agents 窗口里 `<P>` 项目下多了一个本地会话，模型是 `<M>`，没有 Max 标记，权限是默认，回答「OK」；
+   - 状态库里该会话没开 Max（只读查询）：
+
+     ```bash
+     sqlite3 -readonly "$HOME/Library/Application Support/Cursor/User/globalStorage/state.vscdb" \
+       "select json_extract(value,'\$.modelConfig.maxMode'), json_extract(value,'\$.modelConfig.modelName') from cursorDiskKV where key='composerData:$ID'"
+     ```
+
+     应得 `0|<M 对应的模型名>`；
+   - **把第 2 步的同一条命令原样再运行一遍**（同一个 `$ID`）：应当原样返回第一次的结果，窗口里**不出现第二个聊天**；
+   - `git -C <P> worktree list` 与第 1 步一致（没有新建 worktree 或分支）；
+   - 20 秒内 AskHuman 没有弹「Max 被打开」的告警卡；
+   - 约 10 分钟后 Cursor 仍正常（适配器持有引用的副作用）；
+   - 在 Cursor 网页用量里确认这一次按普通请求计，不是 API 费率。
+4. 回复 Agent：每一项通过／不通过，加上第 2 步的完整输出。
+
+**阶段 4（可选）：经 CLI 创建一次（1 个普通请求）**
+
+1. 记下 CLI 配置里 `maxMode` 的当前值，应为 `False`（Python 的写法；配置在 `~/.cursor/cli-config.json`，设了 `CURSOR_CONFIG_DIR` 或
+   `XDG_CONFIG_HOME` 时在那里）：
+
+   ```bash
+   python3 -c "import json,os; print(json.load(open(os.path.expanduser('~/.cursor/cli-config.json'))).get('maxMode'))"
+   ```
+
+2. 在 AskHuman 的新建任务表单里：Agent 选 Cursor、项目 `<P>`、模型 `<M>`、「允许 Max」保持关着、权限默认，提示词「只回复 OK，不要使用任何工具」，
+   运行位置选终端（CLI），点开始。
+3. 核对：任务在终端里正常回答；再运行第 1 步的命令，`maxMode` 仍是 `False`；45 秒内 AskHuman 没有弹「Max 被打开」的告警卡。
+4. 回复 Agent：每一项通过／不通过。
+
+验证项目：用户在 Agents 窗口里指定一个现有的小项目，或由 Agent 建一个空的 git 仓库（零请求）交给用户加进 Agents 窗口。
+小模型由用户在阶段 2 通过之后选（缓存里没有任何 Max 变体的候选：GPT-5 Mini、Gemini 2.5 Flash、Claude Haiku 4.5、GPT-5.4 Nano 等）。
 
 **费用上界**：阶段 3、4 各最多一个普通（非 Max）请求；阶段 2 在私有闸门的行为与读到的代码不一致时最多发出一句固定占位文字，
 同样是一个普通请求，并且这种情况下**不再进入阶段 3**。
@@ -69,4 +120,4 @@
   不可用原因；clippy 与 `cargo fmt --check` 无告警。
 - Dev Instance（装在 worktree 的 `.askhuman-dev/`）：`AskHuman __cursor-desktop` 的 `dryRun` 请求回
   `{"Err":"A Dev Instance does not use Cursor Desktop"}`（按设计）；daemon 握手 `version 0.16.0 (protocol 5)`。
-- **未验证**（等上面的验证计划获批）：规格 §9 的全部不确定点；表单、IM、iOS 在真实 Cursor 下的状态与结果。
+- **未验证**（要先装日常版；阶段 1–2 由 Agent、阶段 3–4 由用户做）：规格 §9 的全部不确定点；表单、IM、iOS 在真实 Cursor 下的状态与结果。

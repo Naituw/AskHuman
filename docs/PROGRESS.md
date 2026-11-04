@@ -280,14 +280,14 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] 后置（需求 §11）：手机直连 CloudKit（Mac 都不在线也能用，需用户授权开 iCloud 容器 + Swift 重实现同步核心）、附件的查看与添加、「全部待办」聚合页、清空历史、从 iCloud 移除项目、待办推送、离线编辑队列。
 - [ ] 已知局限（需求 §10）：Mac 都不在线时手机看不到待办；线协议里 `helper` 没有「未安装」状态，手机上「没装」与「没在跑」显示成同一句；单条超大待办（桌面端 / CLI 不限长度，手机端限 4000 字）可能让那个项目的 `todo.list` 装不进一条消息而超时。
 
-## 待验收：Cursor 任务的 Max 模式控制与 Agents 窗口新建任务（已实现并过自动化，分支未合并，真实验证等用户批准计划）
+## 待验收：Cursor 任务的 Max 模式控制与 Agents 窗口新建任务（已实现并过自动化，已合入最新 main，等 main 工作区干净后合回并装机）
 
 2026-11-03 用户说旧「按次计费」计划里 Cursor 的 Max 模式按 API 费率扣 Credit，所以不敢用 AskHuman 新建 Cursor 任务，要求分析并支持控制 Max，
 并强调**研发与调研期间严禁触发任何计费**（不运行 `cursor-agent` 任务、不驱动 Cursor 跑 Agent；测试只用桩可执行文件、临时配置与合成目录）。
 经 5 轮 AskHuman 问答定下范围：需求 [`docs/specs/cursor-max-control.md`](specs/cursor-max-control.md)（M1–M8）与
 [`docs/specs/cursor-desktop-task-creation.md`](specs/cursor-desktop-task-creation.md)（D1–D5），计划同名在 `docs/plans/`，各带「验证记录」。
-分支 `feat/cursor-max-control`（worktree `../HumanInLoop-cursor-max`，从 main `454adeba` 分出；`73527b9c` 文档、`2600561f` 功能，之后是测试与文档提交），
-**未合并、未装为日常版**；Dev Instance 已装在 worktree 里验证过非计费部分。
+分支 `feat/cursor-max-control`（worktree `../HumanInLoop-cursor-max`；`73527b9c` 文档、`2600561f` 功能，之后是测试与文档提交；2026-11-04 已把当时的 main
+合入分支，见提交 `chore: merge main into feat/cursor-max-control`），**未合回 main、未装为日常版**；Dev Instance 已装在 worktree 里验证过非计费部分。
 
 做法：
 - **Max 控制**：新 Cursor 任务默认不允许 Max；GUI 新建表单与 iPhone 各有一个「允许 Max」开关（默认关、不记忆）。关着时：启动前把 Cursor CLI 配置里持久化的
@@ -307,9 +307,11 @@ Desktop 适配器脚本测试 19/19；全量 node 测试里两条安装脚本测
 一次性 Chromium 加假 Tauri 桥看过新建表单的 Cursor 行（浅色／深色、中英文，未提交）。
 
 下一步：
-- [ ] **用户批准「真实验证计划」**（[`docs/plans/cursor-desktop-task-creation.md`](plans/cursor-desktop-task-creation.md)「真实验证计划」；2026-11-04 已经 AskHuman 提交）。批准前不做任何真实验证：不起 Cursor 任务、不驱动 Cursor。
-- [ ] **合并与装日常版**：Desktop 路线只有日常安装能验。main 的工作区现在有另一个 Agent 的 18 个未提交文件（agent-failure 收件箱），其中 `docs/overview.md`、`docs/specs/daemon-graceful-drain.md`、
-  `src-tauri/src/agents/mod.rs`、`src-tauri/src/daemon/runtime/mod.rs` 与本分支重叠（本条目所在的 `docs/PROGRESS.md` 也是），等它提交后再合并；合并前把 main 合进分支并复测，
+- [ ] **真实验证（2026-11-04 用户裁定）**：阶段 1–2（日常版只读检查、Desktop `dryRun`，按设计 0 请求）由 Agent 在日常版装好后执行；阶段 3、4（各 1 个普通非 Max 请求）
+  由**用户**按 [计划](plans/cursor-desktop-task-creation.md)「真实验证计划」里的「阶段 3、4：用户自行执行的步骤」自己做。Agent 不执行阶段 3、4，除阶段 1–2 外不起 Cursor 任务、不驱动 Cursor；
+  阶段 2 之前还要用户在 Agents 窗口里准备好验证项目。
+- [ ] **合回 main 与装日常版**（动手前先问用户）：Desktop 路线只有日常安装能验。2026-11-04 已把 main 合入分支（5 处冲突，其中两份失败收件箱规格是分支带着的旧副本，取 main 的版本）并复测；
+  main 的工作区现在有未提交的 `docs/PROGRESS.md`（本分支也改了它），git 会拒绝合并，等它提交后再合；合并前先把 main 之后的新提交再合入分支并复测，
   再核对 overview 协议号历史里的提交号 `2600561`（分支若被改写要同步）。`./scripts/install.sh` 会让 daemon 换新（协议号 4→5，按排空过渡）。从 worktree 用 `--global` 装会覆盖共享的 `~/.local/bin`，要用户明确同意。
 - [ ] iOS：出 TestFlight 包（项目 skill `ios-testflight`）后，用户在手机上看「允许 Max」开关与模型的 Max 标记，中英文各一次。
 - [ ] 真实验证通过后，用户在设置里把 `cursorDesktop.launchPreference` 改为 `desktop`（D5）。
