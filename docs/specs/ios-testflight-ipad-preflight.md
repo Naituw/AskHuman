@@ -1,6 +1,6 @@
 # iOS 出包预检：接受 iPad（设备族 1,2）
 
-> 状态：2026-11-04 起草；同日用户批准按计划实施，实施中。实施计划：[ios-testflight-ipad-preflight](../plans/ios-testflight-ipad-preflight.md)。
+> 状态：2026-11-04 起草；同日用户批准按计划实施，已实施并验证。实施计划：[ios-testflight-ipad-preflight](../plans/ios-testflight-ipad-preflight.md)。
 > 关联：项目 skill [`ios-testflight`](../../.agents/skills/ios-testflight/SKILL.md)；iPad 来自 [ios-large-screen](ios-large-screen.md)；
 > 这个问题是 [ios-testflight-build-notes](ios-testflight-build-notes.md) 的 `changes.mjs` 在第一份真实输出里发现的。
 

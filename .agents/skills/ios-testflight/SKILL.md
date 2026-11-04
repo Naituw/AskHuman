@@ -51,7 +51,7 @@ Paths below are relative to the repository root. Set `SKILL_DIR=.agents/skills/i
    python3 "$SKILL_DIR/scripts/upload.py" ios/build/AskHuman-TestFlight.xcarchive
    ```
 
-   Preflight checks both bundle IDs and versions, iPhone device family, production push environment, privacy manifest, internal-only export options, and the installed helper's signature. It does not read credentials. Fix an unexpected value in source configuration, regenerate, and rebuild; do not edit a signed archive.
+   Preflight checks both bundle IDs and versions, that the app and its extension ship to exactly iPhone and iPad (device family `1,2`), the iPad orientation declaration (all four, or `UIRequiresFullScreen`), production push environment, privacy manifest, internal-only export options, and the installed helper's signature. It does not read credentials. Fix an unexpected value in source configuration, regenerate, and rebuild; do not edit a signed archive. If the shipped device families change on purpose, update `upload.py` and `TestFlightHelper.swift` together and reinstall the helper.
 6. For an authorized delivery, upload that archive once:
 
    ```sh

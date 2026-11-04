@@ -172,3 +172,4 @@ build 2 的出包记录没有写源码提交，不补。这四个提交都已核
 没有验证的：整条链的首次真用要等 build 7；多行中英文测试内容在手机 TestFlight 里的实际显示只验到 API 读回，没有在手机上看过（`probe` 的标记文本已被删除）。
 
 发现：`changes.mjs` 在 main 上列出的 3 个提交里有「iPad 设备族」（`build(ios): ship the app to iPad as well as iPhone`，设备族改为 `1,2`）。`upload.py` 与 helper 的出包预检仍要求 `UIDeviceFamily == [1]`，所以 build 7 会被预检拦下。这是 skill 既有的 iPhone-only 约束，与本功能无关，这里没有改，记在 `docs/PROGRESS.md`，出 build 7 前先问用户。
+后续：该约束已由 [ios-testflight-ipad-preflight](ios-testflight-ipad-preflight.md) 放宽为只认 iPhone＋iPad。

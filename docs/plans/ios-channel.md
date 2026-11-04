@@ -641,4 +641,4 @@ build 6 没有回填测试内容；只对它做过一次 `probe`（写入、读�
 - `c70518b4` `feat(ios): add two-column layout for iPad and foldable inner screens`
 - `fea5d4d4` `test(ios): cover the two-column layout on iPad and the foldable`
 
-`ios/` 共 21 个文件、+1342 −146。其中设备族改为 `1,2`，而出包预检（`upload.py` 与 helper）仍只认 iPhone，下一次出包会被拦下，记在 `docs/PROGRESS.md`。
+`ios/` 共 21 个文件、+1342 −146。其中设备族改为 `1,2`；出包预检（`upload.py` 与 helper）原先只认 iPhone，后来已放宽为只认 iPhone＋iPad 并增加 iPad 方向检查，见 [ios-testflight-ipad-preflight](ios-testflight-ipad-preflight.md)。

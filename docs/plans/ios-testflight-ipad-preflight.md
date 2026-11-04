@@ -1,6 +1,6 @@
 # iOS 出包预检接受 iPad 实施计划
 
-需求与决策见 [规格](../specs/ios-testflight-ipad-preflight.md)。状态：2026-11-04 起草；同日用户批准按计划实施，实施中。
+需求与决策见 [规格](../specs/ios-testflight-ipad-preflight.md)。状态：2026-11-04 起草；同日用户批准按计划实施，已实施并验证（见 §9）。
 
 本计划自成一体：先复述要做什么与全部规则，再给改动清单、各部分设计、验证与提交。**任何与本计划不一致的做法，先经 AskHuman 问用户。**
 
@@ -97,3 +97,25 @@ main 上的 iOS 工程已经把主 App 与通知扩展的设备族都改成 `1,2
 | 严格规则在以后有意改设备族时会再次拦住出包 | 这是选定的取舍；错误信息写明要同步修改的位置 |
 | 带「7」的本地验证归档被误当成真正的 build 7 | 放在非标准路径，验证后删除；真正出 build 7 时 skill 会从确认过的提交重新归档 |
 | 方向规则误拒绝合法配置 | 全屏应用用 `UIRequiresFullScreen` 放行；`~ipad` 键优先于通用键，与系统取值一致 |
+
+## 9. 实施记录（2026-11-04）
+
+与计划的差异（都没有改变方案，只是更细或多做了一点）：
+
+1. `inspect_archive` 把原先合在一起的「Bundle ID 或设备族」错误拆成两条；通知扩展的「Bundle ID／版本／构建号」与「设备族」也拆成两条，从错误信息就能看出是哪个原因。
+2. helper 里新增内联的小函数 `isShippedDeviceFamily`：除了「排序后恰好 `[1, 2]`」，也拒绝布尔与实数，和 Python 的 `has_device_family` 一致。
+3. 计划 §5 说 Swift 检查不单独测试。额外做了一次不提交的核对：把这个函数原样从源码里取出，对 21 种 plist 数组（顺序、重复、缺失、字符串、布尔、实数、嵌套……）与 Python 逐一比对，全部一致。提交的测试只在源码层面保护「Python 与 Swift 用同一对设备族」。
+4. 额外做了通知扩展的负向检查（计划只列了 build 6 的归档）：把 iPad 候选归档复制到临时目录，只把扩展的 `UIDeviceFamily` 改成 `[1]`，Python 预检与新 helper 都拒绝（helper 报第二条错误信息）；副本已删除。
+5. 候选归档沿用 build 6 的 DerivedData，增量构建很快完成，归档约 48 MB。
+
+验证结果：
+
+- **离线**：新增测试文件 3 条（36 个合成归档用例，5 个应通过、31 个应拒绝），与 `ios-testflight-changes` 共 22 条通过；`node --test scripts/*.node-test.mjs` 共 155 条，0 失败（19 条跳过，属于其他文件，与之前相同）。12 个变异（集合比较放宽成超集、接受布尔与实数、通用方向列表优先于 `~ipad`、忽略 `UIRequiresFullScreen`、任何真值都算全屏、不查扩展、只要 iPhone、去掉方向检查、畸形方向条目让检查崩溃、只要求三个方向、Swift 改回 iPhone-only、Swift 改回精确列表比较）全部被测试发现，每次变异后文件逐字节恢复。
+- **候选归档**（当前 main `b9302825`，构建号 7，仅本地）：`ARCHIVE SUCCEEDED`。Info.plist 实际值：版本 `0.1.0`；主 App 与扩展 `UIDeviceFamily=[1, 2]`；主 App `UISupportedInterfaceOrientations` 只有竖屏、`UISupportedInterfaceOrientations~ipad` 四个方向；没有 `UIRequiresFullScreen`；`UILaunchScreen={}`；`CFBundleIcons~ipad` 含 `AppIcon60x60` 与 `AppIcon76x76`，归档里有 `AppIcon76x76@2x~ipad.png`；`Assets.car` 里的 `AppIcon` 有 phone 与 pad 两套（1024 源图）。
+- **预检**：iPad 候选归档通过（不读凭据）。
+- **helper 重装**：新 helper 306,320 字节，换掉的 305,408 字节版本留作 `testflight-helper.previous`；`status` 输出换前换后逐字节相同，Keychain 无弹窗。
+- **正向**：新 helper 下 `--check-signing` 为 `EXPORT SUCCEEDED`；导出的 IPA 里主 App 与扩展都是 `[1, 2]`、构建号 7。之后无残留：临时密钥目录为空，没有 launchd 任务，钥匙串搜索列表只有登录钥匙串，也没有操作临时目录。
+- **负向**：build 6 的仅 iPhone 归档——`upload.py` 以设备族原因失败（退出码 1），`helper.py export` 失败并报「Archive preflight failed; rebuild the intended iPhone and iPad release (device family 1,2) with its privacy manifest.」（退出码 1，发生在读取任何密钥之前），无残留。扩展负向见差异 4。
+- **清理**：候选归档与 `ios/build/TestFlightSigningCheck` 已删除；`ios/build` 剩 build 6 的归档与 DerivedData（406 MB）。没有上传任何东西，也没有占用 build 7 的号码。
+
+没有验证的：Apple 服务端对 iPad 构建的校验（图标、方向、启动屏等）要到 build 7 真的上传时才会第一次生效；上面的实际 Info.plist 值只能降低风险。`docs/PROGRESS.md` 已把这一点记在 build 7 首次真用那一条里。
