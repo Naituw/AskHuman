@@ -36,6 +36,7 @@ struct ConfirmScreen: View {
                     }
                     ExpiryLabel(date: composer.expiresAt)
                 }
+                .readableWidth()
                 .padding()
                 .background(RequestReadingAnchor(name: "request-top"))
                 .background(RequestScrollPosition(id: item.id, store: store, ready: detailReady || confirm.detail.bodyMd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))

@@ -22,9 +22,14 @@ struct ArrivalLayout {
         let hasKeyboard = !keyboard.isNull && keyboard.height > 20
         let tabBar = !inPresentation && !hasKeyboard
             ? descendants(of: window).compactMap { $0 as? UITabBar }.first { visible($0, in: window) } : nil
+        // Only a bar along the bottom edge takes room from the page. A wide window has it elsewhere: at
+        // the top (iPad) or at the side (the inner screen of a foldable turned sideways).
+        let bottomBar = tabBar.map { $0.convert($0.bounds, to: window) }.flatMap {
+            $0.width > $0.height && $0.midY > window.bounds.midY ? $0 : nil
+        }
 
         let top = max(window.safeAreaInsets.top, nav?.maxY ?? window.safeAreaInsets.top)
-        let bottom = hasKeyboard ? keyboard.minY : (tabBar.map { $0.convert($0.bounds, to: window).minY }
+        let bottom = hasKeyboard ? keyboard.minY : (bottomBar?.minY
             ?? (window.bounds.maxY - window.safeAreaInsets.bottom))
         let low = min(top + 72, bottom - 48), high = max(low, bottom - 56)
         var origin = CGPoint(x: window.bounds.midX, y: (low + high) / 2)
@@ -76,6 +81,10 @@ struct ArrivalLayout {
     @MainActor
     private static func inboxAnchor(_ bar: UITabBar, in window: UIWindow) -> CGPoint? {
         guard let items = bar.items, !items.isEmpty else { return nil }
+        // A wide window can have the bar at the side (a foldable turned sideways). The system draws its
+        // items itself there: the bar holds no controls, nothing says where the first icon is, and a guess
+        // from the frame of the whole bar would land on the status area. The title takes the bubble then.
+        guard bar.bounds.width > bar.bounds.height else { return nil }
         let controls = descendants(of: bar).compactMap { $0 as? UIControl }.filter {
             let rect = $0.convert($0.bounds, to: window)
             return visible($0, in: window) && rect.width > 20 && rect.width < bar.bounds.width * 0.6 && rect.height > 20

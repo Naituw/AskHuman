@@ -8,6 +8,19 @@ struct AgentsScreen: View {
     @Binding var showPairing: Bool
 
     var body: some View {
+        ColumnsOrStack {
+            AgentsColumns(showPairing: $showPairing)
+        } stack: {
+            stack
+        }
+        .sheet(isPresented: Binding(get: { store.isTaskSheetPresented }, set: { if !$0 { store.dismissNewTask() } })) {
+            NewTaskSheet()
+        }
+    }
+
+    /// The phone's way: the list, and the session pushed over it.
+    @ViewBuilder
+    private var stack: some View {
         @Bindable var store = store
         NavigationStack(path: $store.agentPath) {
             Group {
@@ -17,11 +30,68 @@ struct AgentsScreen: View {
                     OnboardingView(showPairing: $showPairing)
                 }
             }
-            .navigationTitle("Agents")
-            .navigationBarTitleDisplayMode(.inline)
+            .modifier(AgentsBar())
             .navigationDestination(for: String.self) { id in
                 AgentDetailScreen(id: id)
             }
+        }
+    }
+}
+
+/// A wide window: the sessions on the left, and on the right the one that was picked from them.
+///
+/// What the list has picked is what the tab has open (`agentPath` holds that one session, as it does on
+/// the phone), so a session opened from a notification or a banner is the one the list shows as picked.
+private struct AgentsColumns: View {
+    @Environment(AppStore.self) private var store
+    @Binding var showPairing: Bool
+
+    var body: some View {
+        let open = store.agentPath.last
+        // Before the Macs have answered nobody knows whether one is paired: the list stays until they say
+        // so, as it does for everyone who has one.
+        let hasList = store.hasPairedMacs || !store.hasState
+        ListDetailColumns(hasList: hasList, opened: open) {
+            AgentsList(selection: selection)
+                .modifier(AgentsBar())
+        } detail: {
+            if !hasList {
+                OnboardingView(showPairing: $showPairing)
+            } else if let open {
+                AgentDetailScreen(id: open)
+                    // Each session has its own page: what is typed or shown on one is not carried to the next.
+                    .id(open)
+            } else {
+                DetailPlaceholder(
+                    title: "Select a session", symbol: "person.2.wave.2",
+                    message: "Pick one from the list to follow it and talk to it."
+                )
+            }
+        }
+    }
+
+    private var selection: Binding<String?> {
+        Binding(
+            get: { store.agentPath.last },
+            set: { id in
+                if let id {
+                    if store.agentPath.last != id { store.agentPath = [id] }
+                } else if !store.agentPath.isEmpty {
+                    store.agentPath = []
+                }
+            }
+        )
+    }
+}
+
+/// The title and the buttons in the bar of the list of sessions.
+private struct AgentsBar: ViewModifier {
+    @Environment(AppStore.self) private var store
+
+    func body(content: Content) -> some View {
+        content
+            .navigationTitle("Agents")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if store.hasPairedMacs {
                     ToolbarItem(placement: .principal) { SyncTitle(title: "Agents") }
@@ -42,15 +112,13 @@ struct AgentsScreen: View {
                     }
                 }
             }
-        }
-        .sheet(isPresented: Binding(get: { store.isTaskSheetPresented }, set: { if !$0 { store.dismissNewTask() } })) {
-            NewTaskSheet()
-        }
     }
 }
 
 private struct AgentsList: View {
     @Environment(AppStore.self) private var store
+    /// Set where the list is the left column of two: a row is picked, not pushed.
+    var selection: Binding<String?>?
     @State private var brokerTrouble = false
     @State private var loadingTooLong = false
 
@@ -80,8 +148,7 @@ private struct AgentsList: View {
             ForEach(sections) { section in
                 Section {
                     ForEach(section.items) { item in
-                        NavigationLink(value: item.id) { AgentRow(item: item, showMac: store.macs.count > 1) }
-                            .accessibilityIdentifier("agent-row-\(item.agentKey)")
+                        row(item)
                     }
                 } header: {
                     AgentSectionTitle(id: section.id, count: section.items.count)
@@ -102,6 +169,18 @@ private struct AgentsList: View {
         .refreshable { await store.refresh() }
         .raised($brokerTrouble, after: 10, while: store.syncStatus == .reconnecting)
         .raised($loadingTooLong, after: 15, while: readiness == .loading)
+    }
+
+    @ViewBuilder
+    private func row(_ item: AgentItem) -> some View {
+        let content = AgentRow(item: item, showMac: store.macs.count > 1)
+        if let selection {
+            content.pickable(picked: selection.wrappedValue == item.id) { selection.wrappedValue = item.id }
+                .accessibilityIdentifier("agent-row-\(item.agentKey)")
+        } else {
+            NavigationLink(value: item.id) { content }
+                .accessibilityIdentifier("agent-row-\(item.agentKey)")
+        }
     }
 
     private var filterName: String {

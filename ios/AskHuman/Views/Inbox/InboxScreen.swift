@@ -7,6 +7,19 @@ struct InboxScreen: View {
     @Binding var showPairing: Bool
 
     var body: some View {
+        // A wide window shows the list beside the request that was picked, and shows them from the first
+        // frame on: the page of a tab that changes from a stack to columns (the Macs have answered, or the
+        // first one was paired) is where an iPad's bar at the top goes wrong.
+        ColumnsOrStack {
+            InboxColumns(showPairing: $showPairing)
+        } stack: {
+            stack
+        }
+    }
+
+    /// The phone's way: the list, and the request pushed over it.
+    @ViewBuilder
+    private var stack: some View {
         @Bindable var store = store
         NavigationStack(path: $store.inboxPath) {
             Group {
@@ -33,8 +46,60 @@ struct InboxScreen: View {
     }
 }
 
+/// A wide window: the list on the left, and on the right the request that was picked from it.
+///
+/// What the list has selected is what the inbox has open (`inboxPath` holds that one request, as it
+/// does on the phone), so a request opened from a notification, a banner or the arrows is the one the
+/// list shows as picked, and going back to the list is an empty selection.
+private struct InboxColumns: View {
+    @Environment(AppStore.self) private var store
+    @Binding var showPairing: Bool
+
+    var body: some View {
+        let open = store.inboxPath.last
+        // Before the Macs have answered nobody knows whether one is paired: the list stays until they
+        // say so, as it does for everyone who has one.
+        let hasList = store.hasPairedMacs || !store.hasState
+        ListDetailColumns(hasList: hasList, opened: open) {
+            InboxList(selection: selection)
+                .navigationTitle("Inbox")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .principal) { SyncTitle(title: "Inbox") }
+                    ToolbarItem(placement: .topBarLeading) { InboxFilterMenu() }
+                }
+        } detail: {
+            if !hasList {
+                OnboardingView(showPairing: $showPairing)
+            } else if let open {
+                RequestScreen(id: open)
+            } else {
+                DetailPlaceholder(
+                    title: "Select a request", symbol: "tray",
+                    message: "Pick one from the list to read and answer it."
+                )
+            }
+        }
+    }
+
+    private var selection: Binding<String?> {
+        Binding(
+            get: { store.inboxPath.last },
+            set: { id in
+                if let id {
+                    store.openFromList(id)
+                } else if !store.inboxPath.isEmpty {
+                    store.inboxPath = []
+                }
+            }
+        )
+    }
+}
+
 private struct InboxList: View {
     @Environment(AppStore.self) private var store
+    /// Set where the list is the left column of two: a row is picked, not pushed.
+    var selection: Binding<String?>?
     @State private var brokerTrouble = false
     @State private var loadingTooLong = false
 
@@ -52,10 +117,8 @@ private struct InboxList: View {
             ForEach(sections) { section in
                 Section {
                     ForEach(section.items) { item in
-                        NavigationLink(value: item.id) {
-                            InboxRow(item: item, hasDraft: store.hasDraft(for: item))
-                        }
-                        .accessibilityIdentifier("inbox-row-\(item.requestId)")
+                        row(item)
+                            .accessibilityIdentifier("inbox-row-\(item.requestId)")
                     }
                 } header: {
                     SectionTitle(section: section, showMac: store.macs.count > 1)
@@ -76,6 +139,16 @@ private struct InboxList: View {
         .refreshable { await store.refresh() }
         .raised($brokerTrouble, after: 10, while: store.syncStatus == .reconnecting)
         .raised($loadingTooLong, after: 15, while: readiness == .loading)
+    }
+
+    @ViewBuilder
+    private func row(_ item: InboxItem) -> some View {
+        let content = InboxRow(item: item, hasDraft: store.hasDraft(for: item))
+        if let selection {
+            content.pickable(picked: selection.wrappedValue == item.id) { selection.wrappedValue = item.id }
+        } else {
+            NavigationLink(value: item.id) { content }
+        }
     }
 
     private var filterName: String {

@@ -607,6 +607,16 @@ public final class AppStore {
         inboxPath = [key]
     }
 
+    /// Opens a request picked in the list of a two-column layout, where the list stays on screen while
+    /// a request is open. It is what the stack does when the reader goes back to the list and picks the
+    /// next one: the queue the arrows walk is built again, from what the list shows now.
+    public func openFromList(_ id: String) {
+        guard inboxPath.last != id else { return }
+        cancelAdvance()
+        beginRequestNavigation(filter: filter, current: id)
+        inboxPath = [id]
+    }
+
     private func cancelAdvance() {
         advanceTask?.cancel()
         noteTask?.cancel()

@@ -35,6 +35,7 @@ struct OnboardingView: View {
                 .controlSize(.large)
                 .accessibilityIdentifier("pair-a-mac")
             }
+            .widthCapped(Columns.focusedWidth)
             .padding(20)
         }
         .background(Color(.systemGroupedBackground))
