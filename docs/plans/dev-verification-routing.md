@@ -1,12 +1,13 @@
 # AskHuman 项目级开发验收实施计划
 
 > 需求：[项目级开发验收](../specs/dev-verification-routing.md)。
-> 状态：项目级重做已实现；2026-10-31 复核修正见 §6，真实 Luna 与 iOS 转送证据见 §7。当前共享主工作树已解除 Dev 启用，修复继续在主工作树进行，安装验证不替换正式程序。CI 以 PR 当前提交的检查为准；独立测试渠道、本机界面及登录后的完整隔离会话仍待验收。
-> 在当前主工作树继续，不另建 worktree。保留原有 `PROGRESS.md` 和 Cursor 调查文档的未提交修改。
+> 状态：[PR #27](https://github.com/Naituw/AskHuman/pull/27) 已于 2026-11-01 合并。项目级重做已实现；2026-10-31 复核修正见 §6，真实 Luna 与 iOS 转送证据见 §7；
+> 2026-11-03 补做了本机界面与正式渠道转送验收并修复了验收发现的问题，见 §8。Dev 专用测试渠道的真实收发与登录后的完整隔离会话仍待验收（见 `PROGRESS.md`）。
+> §1–§7 是合并前的记录（当时在主工作树继续、不另建 worktree、保留未提交修改），不代表现在的工作方式。
 
-## 1 当前基线
+## 1 合并前的基线
 
-[PR #27](https://github.com/Naituw/AskHuman/pull/27) 保持草稿。原实现及旧 CI 留在 git 历史，
+[PR #27](https://github.com/Naituw/AskHuman/pull/27) 当时保持草稿（2026-11-01 合并）。原实现及旧 CI 留在 git 历史，
 不能按旧的 7 项 CI 全绿宣布新版完成。本机没有执行全局集成迁移。
 
 新方案只准备本仓库的项目规则、开发 MCP 与工作树设施；不再执行前次 12 个全局文件的迁移计划。
@@ -123,3 +124,78 @@ Mac 图形、真实渠道和各客户端登录后的完整会话分别记录证�
 
 本轮证明项目开发工具与正式 iOS 出口的真实转送；没有替换正式 daemon，也不替代专用 bot／配对的渠道实现验收。
 GUI 待办 #4、独立测试渠道待办 #5 继续保留；完整隔离 profile 的登录后会话另行验收，不要求用户现在登录。
+
+## 8 合并后的本机验收与修复（2026-11-03）
+
+PR #27 合并后补做 §7 留下的本机界面与正式渠道转送验收（这也是对 [Issue #23](https://github.com/Naituw/AskHuman/issues/23)
+所提路由模式与 Agent 策略的实际回答：日常 AskHuman 永远是正式版，验收显式进入 Dev）。验收在临时 worktree
+`HumanInLoop-devacc` 里进行，自 `95551a23` 起，安装到该树的 `.askhuman-dev/bin`，用毕移除；
+主工作树当时有另一会话的未提交改动，没有触碰。正式程序与正式 daemon 全程未替换。
+界面由本会话用 macOS 窗口自动化逐张截图核对，不是 CI 的替代也不是 CI 的结果。
+
+**修复前的构建**
+
+- Dev 卡片身份：标题、来源、工作树标签、横幅，展开详情与 `build.json`／验收 ID 一致。
+- 本机四条终态路径共五张卡：作答；卡片「取消」；`kill -9` CLI；`kill -9` 驱动进程（记录转 `interrupted`，迟到回答不被接受）。
+  `--resume` 返回已存答案且不发新请求。
+- 工作台：三张卡片、实例详情、投递选项、480 pt 最小宽度布局无裁切；正式设置没有开发页；
+  Dev 历史与正式历史互不串（Dev 5 张，正式 0 张）。
+- 全局边界：18 个全局集成文件（哈希与权限）与正式 `config.json` 前后一致。
+- 正式渠道转送（默认 `remote`）：R1 的卡片到达正式 daemon 与飞书，取消得到 `card_finalize_succeeded`；
+  R2 由用户在手机回复「ok」，Dev 记录 `cafb30ad-d32b-4021-8f4c-252b8d3dabc2` 为 `completed`、退出码 0、`[user_input]\nok`，
+  正式请求 `17bbc9d6-23d7-44bf-9bd4-b20b0786220b` 约 11 分钟后结束。
+
+**发现并修复**
+
+| # | 现象 | 修复 |
+| --- | --- | --- |
+| 1 | Dev 设置窗口仍显示 Agents 页。页上的操作会被后端守卫拒绝，页面却照样摆出来，与规格 §8「不提供修改日常集成的按钮」不符。原来的只读标记只对工作台打开的设置窗口成立，Dev 卡片齿轮打开的没有 | 页面与守卫共用 `integrations/mutation_lock.rs::everyday_changes_blocked`；Dev 窗口隐藏 Agents 页，标签、搜索与深链接都落回「通用」。真值表与标签守卫有单测 |
+| 2 | 取消的转送请求要等满 5 秒才结束，Dev daemon 记 `cancellation finalize timed out`：`RelayChannel` 被打断后从不通知收尾 | 被打断的转送在子进程结束后 `notify_finalized`（与 iOS 渠道同一做法）；单测覆盖「被计入、通知后立即放行」 |
+| 3 | `dev ask --resume` 对被 `kill -9` 的验收显示 `pending`，实际没人在等 | 执行者已不存在的 `pending` 记录显示为 `interrupted`，重复 ID 的提示同；单测覆盖 |
+| 4 | 登录后的 Grok 私有会话（用户在私有 profile 里自己登录后）起不来：启动器给 Grok 传 `--add-dir <工作树>`，Grok 1.0.70 报 `Session creation failed: Invalid params: "additionalDirectories is not supported: a session works only in its cwd"`，会话建不出来，只在重试循环里卡着。原单测只断言参数里有 `--add-dir`，没有真启动过 | Grok 不再传 `--add-dir`，仍用中性目录做 cwd，任务文本写明源码树路径；Codex 不变。单测改为断言 Grok 没有该参数 |
+| 5 | `dev session`（非 `--stdio`）成功弹出终端后仍报 `invalid development launch receipt`：`osascript` 把新标签引用（`tab 1 of window id N`）打印到 stdout，混进 JSON 回执 | `open_terminal` 丢弃 `osascript` 的 stdout |
+
+**修复后的构建（同一临时 worktree 重新安装）**
+
+- 设置窗口：从工作台「Configure Dev channels」与 Dev 卡片右上齿轮两条入口打开，都只有「General／Channels／Advanced」；
+  搜索「antigravity」得到「No matching settings」。
+- 转送取消：再发一张转送卡后强杀调用方，Dev daemon 的 `cli disconnected; cancelling` 与 `cancellation finalized` 在同一秒，
+  正式端卡片收尾 `card_finalize_succeeded`，不再出现 5 秒超时。
+- `--resume`：被强杀的记录显示 `(interrupted)`；旧构建的记录仍按「属于不同构建」拒绝。
+- `--delivery channels` 且 Dev 没有专用测试渠道：退出码 3，明确报告没有渠道可投递，不弹本机卡片，也没有请求到达正式 daemon。
+
+**登录后的 Grok 私有会话（修复后的构建；用户在私有 profile 里自己登录，没有读取或复制任何认证文件）**
+
+- 启动：`dev session grok` 弹出终端标签，回执是干净的 JSON；Grok 1.0.70 在中性目录建出会话，任务文本自动提交，不再需要手动回车。
+- 能力边界：Grok 在 AskHuman 里只有 MCP 提问与生命周期追踪，没有权限卡和 Stop 卡（`overview.md`：Grok 仅 None／MCP，
+  不支持 stop／interject）。模型经工具搜索调用 `ask` 时，Grok 对 `use_tool` 弹出的是它自己的终端权限提示，
+  要用户在 Grok 终端批准（这次等了约 29 分钟）；这不是 AskHuman 的卡片。
+- 问答：批准后 Grok 日志记 `mcp_tool_call_started`（server `askhuman`、`ask`、超时 86400 s）；Dev daemon 受理请求
+  `ade157e6-7eb4-4daf-b0da-4ebf30800c07`，以 `dev-relay` 渠道转送正式 daemon（正式请求 `ea43fb66-9712-4a08-88b9-c004335b1661`），
+  用户回答 `ok`，两边在同一秒收尾（约 81 秒），`mcp_tool_call_completed` 成功返回；模型随后执行 `echo askhuman-dev-ok`
+  （Grok 原生权限 25 ms 放行）并以 `turn_ended completed` 结束。Dev 历史行 `channel: dev-relay`、`source: Dev · HumanInLoop-devacc`、答案 `["ok"]`。
+- 生命周期：Dev 的 `agents.json` 记下这条 Grok 会话（`kind: grok`、`apple-terminal`、`idle`，`lastTurnResult` 为 `completed`、来源 `hook`），
+  私有 profile 的生命周期 hook 确实到达 Dev daemon。
+- 全局边界：18 个全局集成文件（含 `~/.grok/config.toml`、`hooks.json`、`AGENTS.md`）的哈希与权限前后一致。
+- 两处修复后的补充检查：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过；
+  `integrations::agent_launch` 与 `development::session` 的 47 个单测通过（含改过的
+  `development_profile_options_precede_new_and_fork_prompt_delimiters`，现在断言 Grok 没有 `--add-dir`、Codex 仍有）。
+  完整 `cargo test` 以上一轮的 2343 通过为准，修复后没有整体重跑，新 head 以 CI 为准。
+
+**自动检查（本机，同一临时 worktree）**
+
+- `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过；完整 `cargo test`：2343 通过、0 失败、11 忽略，
+  其中包含本轮新增的 6 个单测（转送取消 1、`--resume` 状态 1、集成写入守卫 4）。
+  转送取消的单测先断言收尾仍被占住，再断言通知后立即放行，不会只靠时序通过。
+- `vue-tsc --noEmit` 通过。完整 vitest 在机器负载 500–900（另有会话在跑 iOS 模拟器与 Xcode 测试）时有 4 个
+  `PopupInboxView` 用例因 5 秒超时失败，与本轮改动无关；单独重跑这两个文件（加长超时）122 个用例全部通过。
+  这不是 CI 的结果，新 head 的 CI 以 GitHub 为准。
+
+**仍未验证**
+
+- Dev 专用测试渠道的真实收发：用户决定先不配置专用 bot／配对。只做了代码走查和上面的无渠道失败检查。
+  走查结论：`channels` 既不走转送分支也不开本机弹窗（`daemon/runtime/mod.rs` 的 `development_popup_enabled` 与转送分支都排除它），
+  只用 Dev 自己的渠道配置；Dev 渠道身份与正式相同时 `development/channel_safety.rs` 关闭 Dev 的全部 IM 渠道
+  （daemon 启动、配置重载、`channels` 请求与权限校验都检查，任何校验失败都按关闭处理），不会连接正式 bot。
+- 其他 Agent 的登录后私有会话：Codex 暂无额度，Claude Code／Pi 未测，Cursor 永不实测。
+  Grok 只验了问答与生命周期；Fork／转录控制与最终失败提醒（Grok 仅支持错误提醒）没有在登录后实测。见 `PROGRESS.md`。

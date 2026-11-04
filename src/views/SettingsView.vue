@@ -30,6 +30,7 @@ const ctx = createSettingsContext();
 const {
   config,
   activeTab,
+  everydayIntegrationsReadOnly,
   secretsPresent,
   updateSummary,
   searchActive,
@@ -94,6 +95,8 @@ onBeforeUnmount(() => {
 
 onMounted(async () => {
   const payload = await getSettings();
+  // Before `config`, so the first render already knows whether the Agents tab exists.
+  everydayIntegrationsReadOnly.value = payload.everydayIntegrationsReadOnly === true;
   config.value = payload.config;
   secretsPresent.value = payload.secretsPresent;
   applyTheme(payload.config.general.theme);
@@ -115,8 +118,9 @@ onMounted(async () => {
     gotoTabTarget(e.payload);
   });
   // Local integration status is cheap after CLI probes were removed; start it in the
-  // background so the tab-bar update badge can appear without blocking the window.
-  void ctx.ensureIntegration();
+  // background so the tab-bar update badge can appear without blocking the window. A window
+  // without the Agents tab has no badge to show.
+  if (!everydayIntegrationsReadOnly.value) void ctx.ensureIntegration();
   watch(activeTab, (tab) => {
     void ensureTabData(tab);
   });
@@ -155,6 +159,7 @@ function gotoTabTarget(raw: string) {
         {{ t("settings.tabs.general") }}
       </button>
       <button
+        v-if="!everydayIntegrationsReadOnly"
         :data-tauri-drag-region="tabDrag"
         :class="{ active: activeTab === 'integration' }"
         @mousedown="onTabDown"

@@ -66,6 +66,10 @@ pub struct RequestEntry {
     pub gui_connected: AtomicBool,
     /// GUI content and its hidden native window reached the presentation handshake.
     pub gui_ready: AtomicBool,
+    /// A card the daemon itself holds on the user's behalf (an Agent's final failure), not a
+    /// caller waiting for an answer. It survives a daemon replacement through its own record, so a
+    /// drain does not wait for it (`docs/specs/agent-failure-inbox.md` §5.1).
+    pub held: bool,
     /// CLI 断开 / 请求结束时通知 GUI 连接处理器收尾。
     pub cancel: Arc<Notify>,
     /// 渲染结果发送端（协调器 finish 与看门狗共用；连接处理器从对应 rx 取）。
@@ -428,6 +432,7 @@ impl RequestRegistry {
         let fingerprint = super::ask_dedup::fingerprint(&task);
         let coalesce_fingerprint = super::ask_dedup::coalesce_fingerprint(&task);
         let popup_kind = task.popup_kind();
+        let held = crate::agents::failure::is_card_id(task.native_request_id.as_deref());
 
         // Daemon 分配权威 request_id（用于临时目录）。
         let mut request = AskRequest::new(task.message, task.questions, task.is_markdown);
@@ -500,6 +505,7 @@ impl RequestRegistry {
             resolved_agent: Arc::new(Mutex::new(None)),
             gui_connected: AtomicBool::new(false),
             gui_ready: AtomicBool::new(false),
+            held,
             cancel: Arc::new(Notify::new()),
             final_tx,
         });
@@ -674,8 +680,23 @@ impl RequestRegistry {
         }
     }
 
-    /// 活动请求数（供 status）。
+    /// 活动请求数（供 status 与排空判定）。不含 daemon 自持的卡片（`RequestEntry::held`）：
+    /// 它们没有调用方在等，换新后由持久化记录恢复，排空不应为它们等上最长 24 小时。
     pub fn active_count(&self) -> usize {
+        let inner = self.inner.lock().unwrap();
+        inner.by_id.values().filter(|entry| !entry.held).count() + inner.confirm_by_id.len()
+    }
+
+    /// Cards the daemon holds for the user (see `RequestEntry::held`).
+    pub fn held_count(&self) -> usize {
+        let inner = self.inner.lock().unwrap();
+        inner.by_id.values().filter(|entry| entry.held).count()
+    }
+
+    /// Every request the user may still answer, held cards included: the menu-bar icon and the
+    /// list of pending questions (`pending_infos`) show all of them. Only the drain decision leaves
+    /// the held ones out (`active_count`).
+    pub fn in_flight_count(&self) -> usize {
         let inner = self.inner.lock().unwrap();
         inner.by_id.len() + inner.confirm_by_id.len()
     }
@@ -1144,6 +1165,34 @@ mod tests {
         assert!(registry
             .try_attach(&key, &entry.coalesce_fingerprint)
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn cards_the_daemon_holds_do_not_count_as_requests_to_drain() {
+        use crate::agents::{failure, AgentKind};
+        let registry = RequestRegistry::new();
+        let mut card = ask_task(Some("s1"), "What now?");
+        card.native_request_id = Some(failure::card_id(AgentKind::Cursor, "s1", "r1"));
+        let (card, _card_rx) = registry.create(card, None);
+        let mut feedback = ask_task(Some("s1"), "Could not confirm");
+        feedback.native_request_id = Some(failure::feedback_id("r1"));
+        let (feedback, _feedback_rx) = registry.create(feedback, None);
+        assert!(card.held && feedback.held);
+        assert_eq!((registry.active_count(), registry.held_count()), (0, 2));
+        // The menu bar still counts them: they wait for an answer like any other card.
+        assert_eq!(registry.in_flight_count(), 2);
+        // Another daemon-owned ask and an Agent's own question are real requests to wait for.
+        let mut native = ask_task(Some("s2"), "From the desktop");
+        native.native_request_id = Some("Desktop:42".into());
+        let (native, _native_rx) = registry.create(native, None);
+        let (ask, _ask_rx) = registry.create(ask_task(Some("s3"), "Continue?"), None);
+        assert!(!native.held && !ask.held);
+        assert_eq!((registry.active_count(), registry.held_count()), (2, 2));
+        // The held cards still answer to everything else: they are listed, cancellable requests,
+        // and the count behind the menu-bar list matches the list itself.
+        assert_eq!(registry.in_flight_entries().len(), 4);
+        assert_eq!(registry.in_flight_count(), registry.pending_infos().len());
+        assert_eq!(registry.in_flight_count(), 4);
     }
 
     fn queue_entry(index: usize) -> crate::todos::TodoEntry {

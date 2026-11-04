@@ -2591,8 +2591,10 @@ pub fn get_settings() -> SettingsPayload {
     config.channels.slack.app_token.clear();
     config.channels.ios.password.clear();
     SettingsPayload {
-        everyday_integrations_read_only: crate::dev_instance::is_dev_instance_context()
-            && std::env::var_os(crate::development::workbench::WINDOW_ENV).is_some(),
+        // Same decision as the write path: the page must not offer what the backend refuses.
+        // If it cannot be determined, the write path refuses too, so hide the Agents tab.
+        everyday_integrations_read_only:
+            crate::integrations::mutation_lock::everyday_changes_blocked().unwrap_or(true),
         config,
         secrets_present,
     }

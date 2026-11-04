@@ -15,12 +15,23 @@ Grok 仅错误，Antigravity 不宣称支持；Codex CLI 只读观察共享服�
 
 2026-11-03：手机 Agents 页的「需要处理」分组与「要求继续」按钮已去掉，错误卡成为唯一处理入口（本地提交，iOS 未出包）。
 本机三次真实 Cursor 出错（05:47／08:59／12:53，都在等待 AskHuman 回答期间）证实：Cursor 重试用尽后既不发 `stop`
-也不发 `sessionEnd`，这类失败没有卡，会话一路变成「已结束」。方案草案（Cursor 日志检测、卡片跨换新保留并不拦换新、
-续跑指令提示读回答）见 [specs/agent-failure-inbox.md](specs/agent-failure-inbox.md)。
+也不发 `sessionEnd`，这类失败原本没有卡，会话一路变成「已结束」。按用户确认的 I4–I9 已实现：只读尾随 Cursor 结构化日志
+检测出错（macOS，共用 Cursor 的确认开关）、`incomplete` 也出卡（不能接续的当作通知）、未处理的卡写入
+`~/.askhuman/state/failure-cards.json` 跨 daemon 换新保留且不拦换新排空、「要求继续」的指令末尾带一句中性的
+`--show-last` 提示。规格与决定见 [specs/agent-failure-inbox.md](specs/agent-failure-inbox.md)。
+
+2026-11-04：上述实现已验证并 `./scripts/install.sh` 装为日常版（本地提交，**未推送**）：全量 `cargo test` 2369 个
+通过、CI 同参数 clippy 通过、隔离冒烟 `scripts/agent-failure-cursor-smoke.mjs` 对装出的二进制通过（七个场景，规格 §7）。
+装机时日常 daemon 正在为另一个会话挂着的提问排空，新版要等它排空完成后才接管，在那之前不会尾随 Cursor 日志
+（`AskHuman daemon status` 不再显示 draining 即已换新）。顺带修了一处：held 卡不计入 `active_count()` 后，菜单栏图标
+与托盘「待答」列表曾少算它们，现在改用含 held 卡的 `in_flight_count()`。
 
 下一步：
-- [ ] 用户确认 [agent-failure-inbox §6](specs/agent-failure-inbox.md#6-决定) 的 I4–I9 后按它实现；确认前不写代码。上线后
-  第一次自然发生的 Cursor 出错要对照核实（Cursor 永不实测），结果写回这里。
+- [ ] Cursor 出错检测要等**第一次自然发生的 Cursor 出错**来核实（Cursor 永不实测；先确认日常 daemon 已换成新版）：卡是否在回答挂着的提问后出现、
+  原因文本与重试次数是否对、`daemon.log` 里有没有 `cursor log: failed turn …`、「要求继续」经 Cursor 桥是否真的让原会话
+  开始新一轮；也留意 `cursor log: N unreadable agent.turn.outcome line(s)`（Cursor 升级后日志格式漂移）。核实后写回这里。
+- [ ] 已知边界（规格 §4.2、§3）：会话已被挤出 registry「最近结束」列表（10 条）时对应失败不出卡；进程在回合中途消失
+  （崩溃、被杀、终端关闭）没有任何来源报告失败，未纳入，等用户决定要不要作为仅通知的卡。
 - [ ] 真实失败路径（真实模型请求须先经用户授权；Cursor 永不实测）：日常使用中遇到真实的 `selected model is at capacity`
   （或其它最终失败）时核对——Popup／iOS 收件箱出现错误卡、Mac 空闲门槛之后才推送、Codex Desktop 上「要求继续」
   确实让原会话开始新一轮、「知道了」保留失败状态。不必专门造故障。
@@ -31,23 +42,23 @@ Grok 仅错误，Antigravity 不宣称支持；Codex CLI 只读观察共享服�
   非 Desktop Codex 会话起一次 `codex app-server proxy` 再退出。本机当前没有这类会话，采样 20 秒未见子进程；
   要处理就加按 home 的失败冷却（30–60 秒）。
 
-## 待验收：项目开发环境的真实渠道与界面
+## 待验收：项目开发环境的专用测试渠道与登录后的私有 Agent 会话
 
-[PR #27](https://github.com/Naituw/AskHuman/pull/27) 已按项目级 rules／MCP、幂等准备和完整转送边界重做；
-自动验证范围见[计划](plans/dev-verification-routing.md)。普通用户不需迁移，本机全局集成未改。
-复核后已恢复原有任务适用范围，AGENTS 仅更新已启用 Dev 的验收入口并经用户 review；当前共享主目录已解除 Dev 启用。
-修复继续在主工作树，安装到临时目录验证；实际新发问和旧正式端的阻塞路径已补充进进程回归。
-2026-10-31 用户在外，明确选择先完成代码、CI 和草稿 PR，真实渠道等回家再验：
+[PR #27](https://github.com/Naituw/AskHuman/pull/27) 已于 2026-11-01 合并，普通用户不需迁移，本机全局集成未改。
+真实 Codex 与 iOS 转送证据见[计划 §7](plans/dev-verification-routing.md#7-真实-codex-与-ios-转送验证2026-10-31)。
+2026-11-03 在临时 worktree 补做了本机界面、正式渠道转送与登录后 Grok 私有会话的验收（本机界面待办已完成），
+并修了验收发现的五处问题——Dev 设置窗口仍显示 Agents 页、取消的转送请求等满 5 秒才收尾、`--resume` 把已死的验收显示为 `pending`、
+`dev session grok` 传了 Grok 不接受的 `--add-dir`、终端回执被 `osascript` 的输出污染；
+证据见[计划 §8](plans/dev-verification-routing.md#8-合并后的本机验收与修复2026-11-03)。仍未验证：
 
-- AskHuman 待办 #5（`3b1cd4da-3c1d-43c7-a923-5b12eecb68b1`）：配置独立测试 bot／配对，用隔离测试转送端验收问答、权限、Stop、取消与发送失败，不替换日常正式 daemon。
-- 原待办 #4（`045264e5-6e9f-46bf-9e68-fb5df394e899`）：解锁后检查新的 Dev 工作台、窄窗口、Dev 工作树／构建标识与卡片；正式设置已无开发页。
+- Dev 专用测试渠道（`--delivery channels`）的真实收发：没有专用 bot／配对，用户决定先不配置。
+  已做代码走查和「无渠道时明确失败」的实测，没有真实卡片往返。配好后用隔离测试转送端验收问答、权限、Stop、取消与发送失败，不替换日常正式 daemon。
+- 其他 Agent 的登录后私有会话：Grok 的问答（Dev → 正式渠道 → 回到 Grok）与生命周期已验收；Grok 没有权限／Stop 卡，
+  它的权限提示是 Grok 自己的终端提示，不归 AskHuman。Codex 暂无额度，Claude Code／Pi 未测，Cursor 永不实测；
+  须由用户自己在私有 profile 里登录，不复制认证。Grok 的 Fork／转录控制与最终失败提醒也没在登录后实测。
+  项目 CLI 的实际加载不代表当前 App 会话已刷新工具目录。
 
-2026-10-31 经用户授权，用真实 Codex CLI 0.163.0／`gpt-6-luna`（低推理、标准速度）完成无 Dev 普通项目，
-以及同一开发会话的「普通 → 显式 Dev → 普通」三次真人问答；用户说明只接收 iOS 通道。Dev 实际构建、
-远程转送与成功终态均核对，证据见[计划 §7](plans/dev-verification-routing.md#7-真实-codex-与-ios-转送验证2026-10-31)。
-独立 `session --stdio` 已到原生登录菜单并验证终端按键透传；用户现在不想且不方便登录，已停止设备登录等待，
-未复制认证，登录后的完整隔离模型／权限／Stop 会话仍未测。项目 CLI 的实际加载不代表当前 App 会话已刷新工具目录。
-本轮临时 Dev 已停止并解除启用。以上剩余验收完成后删除本节。
+以上完成后删除本节。
 
 ## 进行中：iOS 原生渠道（原型已完成，待真实服务与真机验收）
 

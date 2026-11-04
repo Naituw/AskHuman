@@ -3,10 +3,56 @@
 
 use serde_json::Value;
 
-use super::{result::TurnResult, AgentKind};
+use super::{
+    result::{TurnOutcome, TurnResult},
+    AgentKind,
+};
 use crate::i18n::Lang;
 use crate::ipc::TaskRequest;
 use crate::models::{OptionItem, Question};
+
+/// Native-id prefix of the card asking what to do about a turn that did not end well.
+const CARD_PREFIX: &str = "failure:";
+/// Native-id prefix of the follow-up card saying a continuation could not be confirmed.
+const FEEDBACK_PREFIX: &str = "failure-control:";
+
+pub fn card_id(kind: AgentKind, session: &str, result: &str) -> String {
+    format!("{CARD_PREFIX}{}:{session}:{result}", kind.as_str())
+}
+
+pub fn feedback_id(result: &str) -> String {
+    format!("{FEEDBACK_PREFIX}{result}")
+}
+
+/// Whether a request's native id names a card the daemon holds for the user rather than a
+/// question an Agent is waiting on.
+pub fn is_card_id(native_request_id: Option<&str>) -> bool {
+    native_request_id
+        .is_some_and(|id| id.starts_with(CARD_PREFIX) || id.starts_with(FEEDBACK_PREFIX))
+}
+
+/// What the card says happened. Known reason codes read as a sentence, not as a raw code.
+fn reason_text(result: &TurnResult, lang: Lang) -> String {
+    let text = match (result.summary.as_deref(), result.reason.as_deref()) {
+        (Some(summary), _) => summary,
+        (None, Some("max_turns")) => match lang {
+            Lang::Zh => "Agent 达到了运行上限。",
+            Lang::En => "The Agent reached its run limit.",
+        },
+        (None, Some("no_progress")) => match lang {
+            Lang::Zh => "Agent 因没有进展而停止。",
+            Lang::En => "The Agent stopped because it was not making progress.",
+        },
+        (None, Some(reason)) => reason,
+        (None, None) => match (result.outcome, lang) {
+            (TurnOutcome::Incomplete, Lang::Zh) => "Agent 本轮没有完成。",
+            (TurnOutcome::Incomplete, Lang::En) => "The Agent did not finish this turn.",
+            (_, Lang::Zh) => "Agent 因错误停止了本轮。",
+            (_, Lang::En) => "The Agent ended this turn with an error.",
+        },
+    };
+    text.chars().take(2000).collect()
+}
 
 pub fn task(
     kind: AgentKind,
@@ -16,15 +62,7 @@ pub fn task(
     can_continue: bool,
     lang: Lang,
 ) -> TaskRequest {
-    let reason = result
-        .summary
-        .as_deref()
-        .or(result.reason.as_deref())
-        .unwrap_or(match lang {
-            Lang::Zh => "Agent 因错误停止了本轮。",
-            Lang::En => "The Agent ended this turn with an error.",
-        });
-    let reason: String = reason.chars().take(2000).collect();
+    let reason = reason_text(result, lang);
     let mut task = super::stop::build_task(kind, session, project, &[], 0, Some(&reason), lang);
     if let Some(at) = chrono::DateTime::from_timestamp_millis(result.at as i64) {
         task.message.text = format!(
@@ -36,23 +74,27 @@ pub fn task(
         );
     }
     task.stop_confirmation = false;
-    task.native_request_id = Some(format!(
-        "failure:{}:{}:{}",
-        kind.as_str(),
-        session,
-        result.id
-    ));
+    task.native_request_id = Some(card_id(kind, session, &result.id));
     task.caller_pid = 0;
     task.select_only = !can_continue;
+    let incomplete = result.outcome == TurnOutcome::Incomplete;
     let (question, retry, acknowledge, unsupported) = match lang {
         Lang::Zh => (
-            "Agent 本轮出错了，接下来怎么处理？",
+            if incomplete {
+                "Agent 本轮没有完成，接下来怎么处理？"
+            } else {
+                "Agent 本轮出错了，接下来怎么处理？"
+            },
             "要求继续",
             "知道了",
             "知道了（该 Agent 暂不支持接续）",
         ),
         Lang::En => (
-            "This Agent turn failed. What should happen next?",
+            if incomplete {
+                "This Agent turn did not finish. What should happen next?"
+            } else {
+                "This Agent turn failed. What should happen next?"
+            },
             "Request continuation",
             "Got it",
             "Got it (continuation is not supported for this Agent)",
@@ -230,5 +272,121 @@ mod tests {
             instruction(&answer(json!([0]), ""), !disconnected.select_only),
             None
         );
+    }
+
+    fn result(outcome: TurnOutcome, reason: Option<&str>, summary: Option<&str>) -> TurnResult {
+        TurnResult {
+            id: "r1".into(),
+            outcome,
+            source: None,
+            turn_id: None,
+            reason: reason.map(str::to_string),
+            summary: summary.map(str::to_string),
+            at: 0,
+        }
+    }
+
+    #[test]
+    fn an_unfinished_turn_gets_its_own_wording_and_the_same_options() {
+        let failed = task(
+            AgentKind::Grok,
+            "s",
+            "/project",
+            &result(TurnOutcome::Failed, None, None),
+            true,
+            Lang::En,
+        );
+        let unfinished = task(
+            AgentKind::Grok,
+            "s",
+            "/project",
+            &result(TurnOutcome::Incomplete, Some("max_turns"), None),
+            true,
+            Lang::En,
+        );
+        assert_eq!(
+            failed.questions[0].message,
+            "This Agent turn failed. What should happen next?"
+        );
+        assert_eq!(
+            unfinished.questions[0].message,
+            "This Agent turn did not finish. What should happen next?"
+        );
+        assert!(unfinished
+            .message
+            .text
+            .contains("The Agent reached its run limit."));
+        assert!(!unfinished.message.text.contains("max_turns"));
+        let options = |card: &TaskRequest| -> Vec<String> {
+            card.questions[0]
+                .predefined_options
+                .iter()
+                .map(|option| option.text.clone())
+                .collect()
+        };
+        assert_eq!(options(&failed), options(&unfinished));
+        assert_eq!(options(&unfinished), ["Request continuation", "Got it"]);
+        let zh = task(
+            AgentKind::Grok,
+            "s",
+            "/project",
+            &result(TurnOutcome::Incomplete, Some("no_progress"), None),
+            false,
+            Lang::Zh,
+        );
+        assert_eq!(
+            zh.questions[0].message,
+            "Agent 本轮没有完成，接下来怎么处理？"
+        );
+        assert!(zh.message.text.contains("Agent 因没有进展而停止。"));
+        assert!(zh.questions[0].predefined_options[0]
+            .text
+            .contains("暂不支持接续"));
+    }
+
+    #[test]
+    fn the_reason_prefers_the_agents_own_words_then_known_codes_then_the_raw_code() {
+        let reason = |result: &TurnResult| reason_text(result, Lang::En);
+        let said = result(
+            TurnOutcome::Failed,
+            Some("max_turns"),
+            Some("The disk is full"),
+        );
+        assert_eq!(reason(&said), "The disk is full");
+        let coded = result(TurnOutcome::Incomplete, Some("something_new"), None);
+        assert_eq!(reason(&coded), "something_new");
+        assert_eq!(
+            reason(&result(TurnOutcome::Incomplete, None, None)),
+            "The Agent did not finish this turn."
+        );
+        assert_eq!(
+            reason(&result(TurnOutcome::Failed, None, None)),
+            "The Agent ended this turn with an error."
+        );
+        let long = result(TurnOutcome::Failed, None, Some(&"x".repeat(5000)));
+        assert_eq!(reason(&long).chars().count(), 2000);
+    }
+
+    #[test]
+    fn only_the_cards_the_daemon_holds_are_recognized_by_their_native_id() {
+        let card = task(
+            AgentKind::Cursor,
+            "s",
+            "/project",
+            &result(TurnOutcome::Failed, None, None),
+            true,
+            Lang::En,
+        );
+        assert_eq!(
+            card.native_request_id.as_deref(),
+            Some("failure:cursor:s:r1")
+        );
+        assert!(is_card_id(card.native_request_id.as_deref()));
+        assert!(is_card_id(Some(&feedback_id("r1"))));
+        assert!(!is_card_id(None));
+        // Other daemon-owned asks keep their own native ids and are real requests.
+        assert!(!is_card_id(Some("Desktop:42")));
+        assert!(!is_card_id(Some("dev-relay:abc")));
+        assert!(!is_card_id(Some("my-failure:cursor:s:r1")));
     }
 }

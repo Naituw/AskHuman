@@ -937,7 +937,9 @@ async fn serve(_lock: LockGuard) -> i32 {
         update: Mutex::new(init_update_snapshot()),
         agents: Arc::new(AgentRegistry::load()),
         agent_controls: crate::agents::control::ControlStore::load(),
-        failure_confirmations: failure_confirmation::Cards::default(),
+        failure_confirmations: failure_confirmation::Cards::persistent(
+            crate::paths::failure_cards_file(),
+        ),
         interject: crate::agents::interject::InterjectStore::load(),
         grok_bindings: crate::context_binding::GrokBindingRegistry::default(),
         agent_subs: Mutex::new(Vec::new()),
@@ -984,6 +986,16 @@ async fn serve(_lock: LockGuard) -> i32 {
     crate::cursor_desktop::start();
 
     tokio::spawn(agent_control::watch_codex_cli(state.clone()));
+    tokio::spawn(agent_control::watch_cursor_log(state.clone()));
+
+    // Failure cards the previous daemon had not seen answered come back once this one is serving.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            failure_confirmation::restore(&state);
+        });
+    }
 
     // The daemon owns desktop subscriptions and routes native prompts through the existing coordinator.
     {
@@ -1228,6 +1240,9 @@ async fn serve(_lock: LockGuard) -> i32 {
     // Shutting down: cancel any in-flight requests so their IM cards finalize to "Cancelled".
     // Unlike CLI-disconnect, the runtime is about to exit, so we give the finalize HTTP calls a
     // brief bounded window to land (sessions may take up to ~1s to notice the cancel + ~0.3s HTTP).
+    // Failure cards are cancelled with everything else, but that is this process ending, not the
+    // user dealing with them: freeze their record first so the successor brings them back.
+    state.failure_confirmations.freeze();
     state.popup_focus.lock().unwrap().clear();
     if state.registry.cancel_all_requests() > 0 {
         tokio::time::sleep(Duration::from_millis(2000)).await;
@@ -2099,7 +2114,10 @@ fn begin_drain(state: &Arc<ServerState>) {
     tokio::spawn(async move {
         loop {
             if state.registry.active_count() == 0 {
-                log("drain complete; shutting down");
+                log(&format!(
+                    "drain complete; shutting down ({} failure card(s) left to the successor)",
+                    state.registry.held_count()
+                ));
                 state.shutdown.notify_one();
                 return;
             }
