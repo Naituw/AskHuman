@@ -280,7 +280,7 @@ Mac 未开启「Agent 任务」或终端不可用时，入口置灰并说明如�
 - 完整会话 transcript 回放；
 - 密钥在线轮换（协议已预留字段）；
 - 公开发行（App Store）、多租户中继、自动开户；
-- 手机端「稍后回答」标记、iPad 适配；
+- 手机端「稍后回答」标记；iPad 适配（后来由 `ios-large-screen.md` 取代，已完成）；
 - 手机离线排队答案；
 - Windows / Linux 上的实机验证；
 - 与 Dev Instance 渠道预设的集成；
