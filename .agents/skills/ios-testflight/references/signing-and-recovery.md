@@ -9,7 +9,9 @@ The login Keychain holds two generic-password items under service `com.naituw.as
 - `app-store-connect.api-private-key`: the API signing key.
 - `signing-keychain.password`: the password of the dedicated distribution keychain.
 
-Their access rules trust the Developer ID-signed executable with identifier `com.naituw.askhuman.testflight-helper`, team `DMJXDB9H6Q`. The helper exposes fixed status, local export, upload, and one-time migration operations; it has no credential-dump command. Status requests sign JWTs in memory and use an ephemeral HTTP session. The upload operation is restricted to the existing AskHuman bundle/team and internal-only export options.
+Their access rules trust the Developer ID-signed executable with identifier `com.naituw.askhuman.testflight-helper`, team `DMJXDB9H6Q`. The helper exposes fixed status, local export, upload, one-time migration, and TestFlight-notes operations; it has no credential-dump command. Status requests sign JWTs in memory and use an ephemeral HTTP session. The upload operation is restricted to the existing AskHuman bundle/team and internal-only export options.
+
+The `notes` operation (modes `read`, `write`, `probe`) acts only on this app and on one VALID, unexpired build number, and only on `zh-Hans` and `en-US` text of 1–4000 UTF-16 units. It sends a fixed set of requests: find the build, then list, create, and modify `betaBuildLocalizations`. A gate rejects every other method or path; a `DELETE` is allowed only in `probe` mode and only for an entry that same run created, and a `PATCH` only for an entry listed for the target build. Writes are read back and compared. The request arrives as an owner-only `0600` file in the launcher's throwaway directory, never in argv or the environment, and the output never contains tokens or credentials. Modifying modes share the export lock. The rules are implemented twice, in `NotesRules.swift` (inside the helper) and in `helper.py`; `scripts/notes-rules-cases.json` is the shared contract and `scripts/ios-testflight-changes.node-test.mjs` runs both implementations against it.
 
 Project Python/Node scripts invoke this executable through a one-shot job in the user's GUI launchd domain. That security session is necessary for background agents to access the login Keychain reliably. No foreground app or screen unlock is required when the login Keychain itself remains unlocked. The helper disables credential UI: if access is denied or the login Keychain is locked, it returns an error instead of waiting for an invisible dialog. Ask the user to restore access; do not retrieve their Mac login password or search for plaintext substitutes.
 
@@ -23,10 +25,13 @@ The user authorized unattended use of this specific helper. Publishing still req
 - `testflight-export-options.plist`: manual signing for team `DMJXDB9H6Q`, app-store-connect upload, internal-only testing, and both provisioning-profile mappings.
 - `testflight-signing.keychain-db`: the encrypted local distribution identity.
 - `testflight-helper`: the signed operation helper.
+- `testflight-helper.previous`: the helper that the latest `install` replaced. To undo an update, rename it back to `testflight-helper`.
 
-After a reviewed helper source change, run `python3 .agents/skills/ios-testflight/scripts/helper.py install`. The installer compiles the source and requires the established Developer ID identity; it verifies the identifier and team before replacing the binary. Stable signing requirements let a rebuilt helper use its existing Keychain authorization. Do not use an ad-hoc signature or another team's certificate as a workaround.
+After a reviewed helper source change, run `python3 .agents/skills/ios-testflight/scripts/helper.py install`. The installer compiles `TestFlightHelper.swift` and `NotesRules.swift` together and requires the established Developer ID identity; it verifies the identifier and team before replacing the binary, and first keeps the binary being replaced as `testflight-helper.previous` (also verified). Stable signing requirements let a rebuilt helper use its existing Keychain authorization. Do not use an ad-hoc signature or another team's certificate as a workaround.
 
 `python3 .agents/skills/ios-testflight/scripts/upload.py <archive> --check-signing` exercises Keychain reads, dedicated-keychain unlock, temporary-file handling, and local IPA signing **without uploading**. Use it when repairing credentials or changing the helper; routine updates need not sign twice.
+
+After a helper change, also check the notes path: `helper.py notes --build <N> --mode read`, and once `--mode probe` against a delivered VALID build that has no notes. The probe creates a two-line marker (with a bullet and Chinese text, so newline and non-ASCII handling are covered) for each locale without an entry, reads it back, deletes it, and confirms the deletion. It refuses when both locales already have entries and never touches an existing one. The marker can be visible on a phone for a short time. This was done on build 6 on 2026-11-04.
 
 ## Temporary material and cancellation
 
@@ -61,6 +66,9 @@ Cloud signing rejected the App Manager key, so the user chose a local Apple Dist
 - **Privacy/export declarations:** Current encryption uses system CryptoKit. The app declares its exemption and app-owned UserDefaults/container metadata uses. Reassess if actual encryption/API usage changes.
 - **Unknown upload result:** Check the exact build's Apple state before retrying. Transfer completion alone is not delivery.
 - **VALID but unavailable:** Check the internal group and tester invitation state. New testers accept Apple's email; later builds appear in TestFlight. A new audience requires a request covering those people.
+- **Notes write failed after a successful upload:** Do not upload again. A 401/403 means the API key's role or access changed: ask the user, and do not raise privileges. Other errors carry Apple's own `errors[]` text; retry only `notes` (it is idempotent and verified by read-back) once the cause is understood.
+- **No baseline tag, or the numbers disagree:** `changes.mjs` stops on purpose. Ask the user which commit the last build came from rather than guessing; `docs/plans/ios-channel.md` names the source commit of each delivered build.
+- **Probe leftover:** A failed probe tries to clean up its own entries and reports any resource ID it could not delete. The helper never deletes an entry it did not create, so ask the user to remove a leftover in App Store Connect.
 
 ## Sources and project context
 

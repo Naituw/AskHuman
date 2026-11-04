@@ -626,3 +626,19 @@ Xcode 返回 `ARCHIVE SUCCEEDED` / `EXPORT SUCCEEDED`。Apple build `56574ec7-6c
 沿用 bundle ID、签名团队、共享钥匙串组与 `AskHuman Internal`，复用既有 Keychain helper；预检通过（版本 `0.1.0`、构建 `6`、仅内部），
 `ARCHIVE SUCCEEDED` / `EXPORT SUCCEEDED`（归档用 `-jobs 3`、降低优先级，机器当时在换页）。Apple build `cf44dca8-03dc-4c31-9d3c-f4acb6424ef2`
 状态为 `VALID`，已加入内部测试组（组内共 5 个构建，测试员 1 已安装 / 1 已邀请）。用户是否已更新、真机上的表现还没有确认，跟踪在 `docs/PROGRESS.md` 的 Cursor Max、开发者模式两节。
+
+## 2026-11-04：出包前清单与 TestFlight 测试内容
+
+`ios-testflight` 技能现在在出包前列出自上个构建以来 `ios/` 下的提交、等用户确认，上传后把确认过的中英文测试内容写进 TestFlight，并给源码提交打本地标签 `ios-testflight-N`（起因：build 6 带上了用户选过「先不出」的改动）。
+需求 [ios-testflight-build-notes](../specs/ios-testflight-build-notes.md)，计划与实施记录 [ios-testflight-build-notes](ios-testflight-build-notes.md)。
+
+补了本地附注标签（不推送）：`ios-testflight-3` → `5ef38ead`、`-4` → `4381628c`、`-5` → `2295390a`、`-6` → `9f00abcb`（build 2 没有记源码提交，不补）。
+build 6 没有回填测试内容；只对它做过一次 `probe`（写入、读回、删除，两种语言都通过，之后 build 6 没有测试内容）。
+
+此刻 main（`2bc60ffa`）相对 build 6 的 iOS 提交只有下面三个，下一个包会带上它们（这是 `changes.mjs` 的第一份真实输出）：
+
+- `30d9559e` `build(ios): ship the app to iPad as well as iPhone`
+- `c70518b4` `feat(ios): add two-column layout for iPad and foldable inner screens`
+- `fea5d4d4` `test(ios): cover the two-column layout on iPad and the foldable`
+
+`ios/` 共 21 个文件、+1342 −146。其中设备族改为 `1,2`，而出包预检（`upload.py` 与 helper）仍只认 iPhone，下一次出包会被拦下，记在 `docs/PROGRESS.md`。
