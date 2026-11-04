@@ -301,6 +301,15 @@ private func runXcode(_ args: [String]) throws -> Int32 {
     return result & 0x7f == 0 ? (result >> 8) & 0xff : 128 + (result & 0x7f)
 }
 
+/// The project ships to iPhone (1) and iPad (2): exactly that pair of integers, in any order. Keep it in step with
+/// `DEVICE_FAMILY` in upload.py.
+private func isShippedDeviceFamily(_ value: Any?) -> Bool {
+    guard let numbers = value as? [NSNumber] else { return false }
+    // Booleans and reals are NSNumbers too; only genuine integers count.
+    guard numbers.allSatisfy({ CFGetTypeID($0) == CFNumberGetTypeID() && !CFNumberIsFloatType($0 as CFNumber) }) else { return false }
+    return numbers.map(\.intValue).sorted() == [1, 2]
+}
+
 private func exportArchive(_ archive: URL, root: URL, config: [String: Any], upload: Bool) throws -> Int32 {
     let lockFD = open(root.appendingPathComponent("testflight-upload.lock").path, O_CREAT | O_RDWR, 0o600)
     guard lockFD >= 0 else { throw Failure("Cannot open the upload lock.") }
@@ -308,17 +317,17 @@ private func exportArchive(_ archive: URL, root: URL, config: [String: Any], upl
     guard flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw Failure("Another TestFlight export is using this signing configuration.") }
     let app = archive.appendingPathComponent("Products/Applications/AskHuman.app")
     guard let info = NSDictionary(contentsOf: app.appendingPathComponent("Info.plist")) as? [String: Any],
-          info["CFBundleIdentifier"] as? String == bundleID, info["UIDeviceFamily"] as? [Int] == [1],
+          info["CFBundleIdentifier"] as? String == bundleID, isShippedDeviceFamily(info["UIDeviceFamily"]),
           info["AHPushEnvironment"] as? String == "prod", info["ITSAppUsesNonExemptEncryption"] as? Bool == false,
           FileManager.default.fileExists(atPath: app.appendingPathComponent("PrivacyInfo.xcprivacy").path) else {
-        throw Failure("Archive preflight failed; rebuild the intended iPhone release with its privacy manifest.")
+        throw Failure("Archive preflight failed; rebuild the intended iPhone and iPad release (device family 1,2) with its privacy manifest.")
     }
     guard let version = info["CFBundleShortVersionString"] as? String, !version.isEmpty,
           let build = info["CFBundleVersion"] as? String, !build.isEmpty,
           let notification = NSDictionary(contentsOf: app.appendingPathComponent("PlugIns/AskHumanNotification.appex/Info.plist")) as? [String: Any],
           notification["CFBundleIdentifier"] as? String == bundleID + ".notification",
           notification["CFBundleShortVersionString"] as? String == version, notification["CFBundleVersion"] as? String == build,
-          notification["UIDeviceFamily"] as? [Int] == [1] else { throw Failure("App and extension version/build/device family must match.") }
+          isShippedDeviceFamily(notification["UIDeviceFamily"]) else { throw Failure("App and extension must have the same version and build, and both ship to iPhone and iPad (device family 1,2).") }
     let optionsURL = root.appendingPathComponent("testflight-export-options.plist")
     guard var options = NSDictionary(contentsOf: optionsURL) as? [String: Any], options["signingStyle"] as? String == "manual",
           options["teamID"] as? String == "DMJXDB9H6Q", options["method"] as? String == "app-store-connect",

@@ -15,6 +15,63 @@ from helper import interrupted, invoke, verify
 
 BUNDLE_ID = "com.naituw.humaninloop.ios"
 TEAM_ID = "DMJXDB9H6Q"
+# The project ships to iPhone (1) and iPad (2). TestFlightHelper.swift enforces the same pair.
+DEVICE_FAMILY = [1, 2]
+IPAD_ORIENTATIONS = {
+    "UIInterfaceOrientationPortrait",
+    "UIInterfaceOrientationPortraitUpsideDown",
+    "UIInterfaceOrientationLandscapeLeft",
+    "UIInterfaceOrientationLandscapeRight",
+}
+DEVICE_FAMILY_ADVICE = (
+    "the project ships to iPhone and iPad (device family 1,2) for both the app and its extension. "
+    "If that changed on purpose, update upload.py and TestFlightHelper.swift together and reinstall the helper; "
+    "otherwise fix TARGETED_DEVICE_FAMILY, regenerate the project, and rebuild."
+)
+
+
+def has_device_family(info):
+    """True when UIDeviceFamily is exactly the shipped pair of genuine integers, in any order."""
+    families = info.get("UIDeviceFamily")
+    return (isinstance(families, list) and all(type(item) is int for item in families)
+            and sorted(families) == DEVICE_FAMILY)
+
+
+def declares_ipad_orientations(info):
+    """Apple rejects an iPad build that neither supports all four orientations nor opts out of multitasking."""
+    if info.get("UIRequiresFullScreen") is True:
+        return True
+    # On iPad the suffixed key takes over completely, so the generic list is only a fallback.
+    declared = info.get("UISupportedInterfaceOrientations~ipad", info.get("UISupportedInterfaceOrientations"))
+    return isinstance(declared, list) and IPAD_ORIENTATIONS.issubset(item for item in declared if isinstance(item, str))
+
+
+def inspect_archive(archive):
+    """Check the archived app and its extension; return (version, build). Reads only files inside the archive."""
+    app = archive / "Products/Applications/AskHuman.app"
+    info = plistlib.loads((app / "Info.plist").read_bytes())
+    if info.get("CFBundleIdentifier") != BUNDLE_ID:
+        raise RuntimeError("Unexpected bundle ID; regenerate the project and rebuild.")
+    if not has_device_family(info):
+        raise RuntimeError("Unexpected app device family: " + DEVICE_FAMILY_ADVICE)
+    # The family check above guarantees iPad is part of the build, so its orientations always matter.
+    if not declares_ipad_orientations(info):
+        raise RuntimeError("An iPad build must declare all four orientations in UISupportedInterfaceOrientations~ipad "
+                           "or set UIRequiresFullScreen; Apple rejects the upload otherwise.")
+    if info.get("AHPushEnvironment") != "prod" or info.get("ITSAppUsesNonExemptEncryption") is not False:
+        raise RuntimeError("Review the production push environment and encryption declaration before distributing.")
+    if not (app / "PrivacyInfo.xcprivacy").is_file():
+        raise RuntimeError("The archive is missing its privacy manifest.")
+    if not info.get("CFBundleShortVersionString") or not info.get("CFBundleVersion"):
+        raise RuntimeError("The archive is missing its version or build number.")
+    extension = plistlib.loads((app / "PlugIns/AskHumanNotification.appex/Info.plist").read_bytes())
+    if extension.get("CFBundleIdentifier") != BUNDLE_ID + ".notification" or any(
+        extension.get(key) != info[key] for key in ("CFBundleVersion", "CFBundleShortVersionString")
+    ):
+        raise RuntimeError("The notification extension must match the app's version and build.")
+    if not has_device_family(extension):
+        raise RuntimeError("Unexpected notification extension device family: " + DEVICE_FAMILY_ADVICE)
+    return info["CFBundleShortVersionString"], info["CFBundleVersion"]
 
 
 def prepare(archive, config_path):
@@ -32,23 +89,8 @@ def prepare(archive, config_path):
         raise RuntimeError("Export options must use the established manual, internal-only distribution setup.")
     if not {BUNDLE_ID, BUNDLE_ID + ".notification"}.issubset(options.get("provisioningProfiles", {})):
         raise RuntimeError("Export options need profiles for both the app and its notification extension.")
-    app = archive / "Products/Applications/AskHuman.app"
-    info = plistlib.loads((app / "Info.plist").read_bytes())
-    if info.get("CFBundleIdentifier") != BUNDLE_ID or info.get("UIDeviceFamily") != [1]:
-        raise RuntimeError("Unexpected bundle ID or device family; regenerate the project and rebuild.")
-    if info.get("AHPushEnvironment") != "prod" or info.get("ITSAppUsesNonExemptEncryption") is not False:
-        raise RuntimeError("Review the production push environment and encryption declaration before distributing.")
-    if not (app / "PrivacyInfo.xcprivacy").is_file():
-        raise RuntimeError("The archive is missing its privacy manifest.")
-    if not info.get("CFBundleShortVersionString") or not info.get("CFBundleVersion"):
-        raise RuntimeError("The archive is missing its version or build number.")
-    extension = plistlib.loads((app / "PlugIns/AskHumanNotification.appex/Info.plist").read_bytes())
-    if extension.get("CFBundleIdentifier") != BUNDLE_ID + ".notification" or any(
-        extension.get(key) != info[key] for key in ("CFBundleVersion", "CFBundleShortVersionString", "UIDeviceFamily")
-    ):
-        raise RuntimeError("The notification extension must match the app's version, build, and device family.")
-    print(json.dumps({"archive": str(archive), "bundleId": BUNDLE_ID,
-                      "version": info["CFBundleShortVersionString"], "build": info["CFBundleVersion"],
+    version, build = inspect_archive(archive)
+    print(json.dumps({"archive": str(archive), "bundleId": BUNDLE_ID, "version": version, "build": build,
                       "credentialBackend": "keychain", "internalOnly": True}, indent=2), flush=True)
 
 
