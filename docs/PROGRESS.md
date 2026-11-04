@@ -44,6 +44,21 @@ Grok 仅错误，Antigravity 不宣称支持；Codex CLI 只读观察共享服�
   非 Desktop Codex 会话起一次 `codex app-server proxy` 再退出。本机当前没有这类会话，采样 20 秒未见子进程；
   要处理就加按 home 的失败冷却（30–60 秒）。
 
+## 待验收：已结束 / 空闲 Cursor Desktop 聊天的消息（手机 + Mac 控制台，真实 Cursor 里一次都没试过）
+
+2026-11-04：registry 标为「已结束」的 Cursor Desktop 聊天（其实只是一小时无活动的判定，聊天还在 Cursor 里）手机现在也能发；
+Mac 控制台对空闲 / 已结束的 Cursor Desktop 聊天不再只提示「回到原始 Agent 界面」，而是直接发（快照 `canMessage`、
+`agents_message`、`ClientMsg::AgentMessage`，并入尚未发布的协议号 5）。规格见
+[specs/agent-lifecycle-results-and-recovery.md §5.4](specs/agent-lifecycle-results-and-recovery.md)。
+开发期间不得用 Cursor 触发 Agent（计费），所以只有 Cursor 替身的单测（状态闸、回执幂等、拒绝用语、registry 复活为运行中）、
+控制台组件测试和 IPC 形状测试；没有向真实 Cursor 发过任何消息。iOS App 没改（已结束的会话本来就列在 Mac 上，`live` 不受影响）。
+
+下一步：
+- [ ] 用户首次真实使用时核对（不要为此专门触发 Agent）：给一个「已结束」或空闲、且**已在 Cursor 窗口里打开**的聊天发消息，
+  Cursor 里是否出现这条用户消息并开始新一轮、控制台 / 手机是否转为运行中；聊天没在任何窗口里打开时，是否得到
+  「Cursor 里没有打开这个聊天，没有发送」；桥对隔了很久的聊天（`isQuietForBackgroundSubmit`）是否照常放行。
+- [ ] 若「聊天没在窗口里打开」很常见：考虑让桥先打开聊天（需要新的桥能力，须单独评估）；眼下按桥的既有前提直接拒绝。
+
 ## 待验收：项目开发环境的专用测试渠道与登录后的私有 Agent 会话
 
 [PR #27](https://github.com/Naituw/AskHuman/pull/27) 已于 2026-11-01 合并，普通用户不需迁移，本机全局集成未改。

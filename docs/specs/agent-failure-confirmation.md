@@ -56,6 +56,9 @@ Agent 因模型容量、API、连接等错误最终停止一轮时，用户能�
 - 只有「知道了（该 Agent 暂不支持接续）」；正文说明需回原 Agent 处理。
 - 不提供会被丢弃的补充输入，也不将纯文字回答解释为发送成功。
 - 原本支持但连接暂不可用、会话已结束等情况，说明具体原因，不能把暂时不可用说成永久不支持。
+  Cursor Desktop 的聊天没有被任何 Cursor 窗口加载时（桥回答 `notFound`，回执里记为 `chatNotLoaded`），
+  正文说明需要先在 Cursor 里打开该聊天；registry 因一小时无活动标为「已结束」的 Cursor Desktop 聊天
+  只要还在 Cursor 的会话库里，仍按空闲聊天处理（见 [agent-lifecycle-results-and-recovery.md](agent-lifecycle-results-and-recovery.md) §5.4）。
 
 关闭、取消或沿用的 24 小时请求到期均只关闭处理卡，不重试、不停止原会话。
 关闭卡片不把真实失败改成完成，Agents 页仍保留真实的上轮结果。
