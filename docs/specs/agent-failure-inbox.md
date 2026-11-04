@@ -1,8 +1,9 @@
 # Agent 失败处理统一到收件箱，并检测 Cursor 的出错停止
 
-> 状态：2026-11-03 定稿（I1–I9 均经用户确认），2026-11-04 实现并验证：全量 `cargo test`（2369 个通过）、CI 同参数
-> `clippy -D warnings`、隔离冒烟 `scripts/agent-failure-cursor-smoke.mjs`（§7）对 `install.sh` 装出的二进制通过。
-> Cursor 的真实出错与「要求继续」从未、也不会主动实测（会计费），要等第一次自然发生的失败来核实。
+> 状态：2026-11-03 定稿（I1–I9 均经用户确认），2026-11-04 实现并验证：全量 `cargo test`（2376 个通过）、CI 同参数
+> `clippy -D warnings`、隔离冒烟 `scripts/agent-failure-cursor-smoke.mjs`（§7，八个场景）对 `install.sh` 装出的二进制通过。
+> 装机当天第一次自然出错（两次）暴露了卡会在约 2 秒内自己撤销的问题，已修复（§5.3）；修复后的卡还没有真实样本。
+> Cursor 的真实出错与「要求继续」从未、也不会主动实测（会计费），要等自然发生的失败来核实。
 > 未出 TestFlight 包（iOS 只涉及 Agents 页，等用户说出包）。
 > 关联：[最终失败确认](agent-failure-confirmation.md)（错误卡本体）、
 > [生命周期结果与原会话继续](agent-lifecycle-results-and-recovery.md)、
@@ -165,6 +166,21 @@ Cursor 的原因是 Cursor 自己的英文原文（如「Agent turn stopped afte
 不假设 Agent 当时在做什么（不说「如果你在等 AskHuman 的回答……」）。因为 `CONTINUE_PROMPT` 同时用于手机的空闲消息接续，
 这句话对所有「要求继续」一视同仁；普通的自由消息不带它。
 
+### 5.3 卡自己的提交不算 Agent 又在工作
+
+2026-11-04 的两次自然出错（07:08:59 与 07:56:18，会话 `539e12dc`、`05275d1a`）检测与登记都对，卡却在建立后约 2 秒就被
+撤销，没等到人看：开着「按需发送」（日常配置 `autoActivation: true`）时，daemon 受理每个提问都会把提问所属的 Agent
+登记为工作中；错误卡本身也是带会话 ID 的提问，于是刚失败的会话被拉回「工作中」，而卡每 2 秒核对一次「会话仍空闲、结果
+未变」，一读到「工作中」就自己撤销。`539e12dc` 那次出错时挂着一个提问，卡在提问被回答后才提交，同样 2 秒内被撤销。
+证据：`history.jsonl` 里各有一条 caller 取消的卡记录；失败的会话停在「工作中」，失败结果还在，`activeSince` 正是卡提交
+的那一秒。
+
+修复：`marks_session_working(auto, from_mcp, native_request_id)` 决定一次提交是否登记 Agent 为工作中，daemon 自持的卡
+与续跑反馈卡（`is_card_id`）一律不登记，只刷新活动时间。卡是同一条提交路径，按代码判断，由 hook 上报最终失败的
+Codex、Claude 等的卡在开着该开关时也会这样（未单独观察）。更早的 `scripts/agent-failure-smoke.mjs` 与本功能最初的冒烟
+都把 `autoActivation` 关着，所以没有发现；冒烟现在多一个场景（§7 的 8）在开着它时核对卡能一直等到回答，修复前该场景
+对装出的二进制失败。那两张被撤销的卡不补弹（I7：不为历史失败补弹）。
+
 ## 6. 决定
 
 | 编号 | 决定 | 状态 |
@@ -194,8 +210,8 @@ Cursor 的原因是 Cursor 自己的英文原文（如「Agent turn stopped afte
   `Incomplete` 卡的标题与原因措辞；iOS 网关对 `Incomplete` 的去重与「卡没送到则回退为提醒」。
 
 隔离冒烟 `node scripts/agent-failure-cursor-smoke.mjs [AskHuman 路径]`（默认 `src-tauri/target/local-install/AskHuman`；
-约 70 秒）：私有 HOME 与独立 daemon、回环 Telegram 替身、伪造的 Cursor 日志行（`ASKHUMAN_CURSOR_LOG_ROOT` 指向临时
-目录），不启动 Cursor，不产生任何 Cursor 请求。七个场景：
+约 80 秒）：私有 HOME 与独立 daemon、回环 Telegram 替身、伪造的 Cursor 日志行（`ASKHUMAN_CURSOR_LOG_ROOT` 指向临时
+目录），不启动 Cursor，不产生任何 Cursor 请求。八个场景：
 
 1. 伪造的 error 行 → 一张卡与一条 `source=cursorLog`、回合 ID 对得上的失败结果；陌生会话被忽略（不凭空创建会话）；
    重复的行不出第二张卡。
@@ -205,14 +221,17 @@ Cursor 的原因是 Cursor 自己的英文原文（如「Agent turn stopped afte
 5. 新回合撤销未答的卡。
 6. 关闭开关即停止跟随，重新打开后不回放。
 7. 出错时挂着一个提问：提问保持在途，卡排队，提问回答后才出现。
+8. 打开「按需发送」（日常配置，见 §5.3）后，卡一直等到回答：会话保持空闲、记录仍在，回答后失败仍留在 Agents。
+   场景 1–7 都在该开关关着时跑，看不到 §5.3 的问题。
 
-对没有这一功能的旧二进制必然失败（已用旧版做过反证）。机器负载高到数百时个别命令可能超时（`agents monitor --json`
-30 秒），重跑一次即可。
+对没有这一功能的旧二进制必然失败（已用旧版做过反证）；场景 8 在 §5.3 的修复前对装出的二进制失败（会话被卡自己拉回
+「工作中」）。机器负载高到数百时个别命令可能超时（`agents monitor --json` 30 秒），重跑一次即可。
 
 不能验证的：
 
 - **真实的 Cursor 出错**（只能等自然发生）、**Cursor 桥的「要求继续」**（永不实测）、Cursor 升级后日志格式漂移
   （靠 `daemon.log` 的漂移行发现）。第一次自然发生的 Cursor 出错要对照核实，结果写进 `docs/PROGRESS.md`。
+  11-04 已自然发生两次：检测、登记、卡的内容都对，但卡被自己撤销（§5.3，已修复）；修复后的卡还没有真实样本。
 - 隔离验证只用伪造的日志文件和 hook 子命令，不启动 Cursor、不产生任何 Cursor 请求。
 
 用户可见的注意点：
@@ -235,6 +254,8 @@ Cursor 的原因是 Cursor 自己的英文原文（如「Agent turn stopped afte
   `daemon/runtime/subs.rs`：`build_tray_state` 用 `in_flight_count`（菜单栏图标与「待答」列表）。`agents/failure.rs`：
   卡片 ID 与 `is_card_id`、`Incomplete` 的标题与原因措辞。`ios/gateway/agents.rs`：`Incomplete` 与卡的去重。`paths.rs`：
   `failure_cards_file()`。
+- `daemon/runtime/mod.rs`：`marks_session_working`（§5.3；`handle_submit` 与 `spawn_agent_resolve` 都用它决定是否把提问的
+  Agent 登记为工作中）。
 - `scripts/agent-failure-cursor-smoke.mjs`（新）：§7 的隔离冒烟。
 - iOS：本文 §2 之外无改动（错误卡是普通提问）。`PROTOCOL_VERSION` 不变（没有新增 IPC 消息；`failure-cards.json` 只是
   本地文件）。
