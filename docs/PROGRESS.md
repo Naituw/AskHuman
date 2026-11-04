@@ -282,7 +282,7 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] 后置（需求 §11）：手机直连 CloudKit（Mac 都不在线也能用，需用户授权开 iCloud 容器 + Swift 重实现同步核心）、附件的查看与添加、「全部待办」聚合页、清空历史、从 iCloud 移除项目、待办推送、离线编辑队列。
 - [ ] 已知局限（需求 §10）：Mac 都不在线时手机看不到待办；线协议里 `helper` 没有「未安装」状态，手机上「没装」与「没在跑」显示成同一句；单条超大待办（桌面端 / CLI 不限长度，手机端限 4000 字）可能让那个项目的 `todo.list` 装不进一条消息而超时。
 
-## 待验收：Cursor 任务的 Max 模式控制与 Agents 窗口新建任务（已合回 main 并装为日常版；真实验证阶段 1 已过，阶段 2 起待做）
+## 待验收：Cursor 任务的 Max 模式控制与 Agents 窗口新建任务（已合回 main 并装为日常版；真实验证阶段 1–2 已过，阶段 3–4 等用户自己做）
 
 2026-11-03 用户说旧「按次计费」计划里 Cursor 的 Max 模式按 API 费率扣 Credit，所以不敢用 AskHuman 新建 Cursor 任务，要求分析并支持控制 Max，
 并强调**研发与调研期间严禁触发任何计费**（不运行 `cursor-agent` 任务、不驱动 Cursor 跑 Agent；测试只用桩可执行文件、临时配置与合成目录）。
@@ -316,9 +316,11 @@ Swift 569 通过（43 条按设计跳过）、两条 Max 的 iOS UI 测试英文
   由**用户**按 [计划](plans/cursor-desktop-task-creation.md)「真实验证计划」里的「阶段 3、4：用户自行执行的步骤」自己做。Agent 不执行阶段 3、4，除阶段 1–2 外不起 Cursor 任务。
   - ✅ 阶段 1（2026-11-04，日常版 `7e07a728`，0 请求）：设置页检测为「旧计划」；新建表单里默认模型被拦、「允许 Max」解除拦截、换小模型解除拦截，
     24 个模型的 Max 标记与 Cursor 缓存逐个一致；没有启动任何任务。细节见计划「验证记录」。
-  - 阶段 2（`gpt-5.4-nano`、不允许 Max）：第一次 `dryRun` 因 Agents 窗口不认识验证项目 `~/Developer/AskHumanCursorVerify`（空 git 仓库）被拒
-    （回执 `rejected`／`projectNotFound`，0 请求，闸门本身还没验到）。项目已写进 Cursor 的工作区记录，但运行中的 Agents 窗口不会实时读到别的窗口新开的文件夹；
-    要在 Agents 窗口自己的界面里添加，或重启 Cursor 后再跑（新 ID）。机器一直在换页（交换区 20–23 GiB），用户让 Agent 盯着内存占用。
+  - ✅ 阶段 2（2026-11-04，日常版 `7e07a728`，`gpt-5.4-nano`、不允许 Max，0 请求）：第一次 `dryRun` 因 Agents 窗口不认识验证项目 `~/Developer/AskHumanCursorVerify`
+    （空 git 仓库）被拒（`rejected`／`projectNotFound`）；Computer Use 不能操作 Cursor，由用户自己在 Agents 窗口里把项目加进去后，第二次（新 ID）约 1 秒返回 `dryRun`、
+    `tidied: archived`，观察到模型 `gpt-5.4-nano`、`maxMode:false`、无权限覆盖；回执 `dryRun`；状态库只多一条空聊天（无消息、无用量），验证项目没有新 worktree 或分支。
+    **没有直接看到 Agents 窗口的界面**：请用户做阶段 3 时顺便看一眼侧栏里没有「dry run」会话（状态库里查不到归档标志位）。
+  - 阶段 3、4（用户做）：命令已按验证项目 `~/Developer/AskHumanCursorVerify` 与模型 `gpt-5.4-nano` 填好，在计划的「阶段 3、4：用户自行执行的步骤」里；等用户把现象告诉 Agent。
 - [ ] iOS：出 TestFlight 包（项目 skill `ios-testflight`）后，用户在手机上看「允许 Max」开关与模型的 Max 标记，中英文各一次。
 - [ ] 真实验证通过后，用户在设置里把 `cursorDesktop.launchPreference` 改为 `desktop`（D5）。
 - [ ] 已知局限（规格 §3、§4.4）：缓存只是建议性证据，可能比服务端目录旧；CLI 对「默认模型本身需要 Max」只在内存里推导，改配置关不掉，只靠创建时的预判拦截。
