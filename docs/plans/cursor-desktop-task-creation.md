@@ -112,6 +112,13 @@
 
 2026-11-03～04，只在 worktree 与本机：没有启动真实的 Cursor 任务，没有向任何模型发送提示词；适配器只对着合成的服务与会话对象跑。
 
+- **阶段 1（2026-11-04，Agent，日常版 `7e07a728`，0 请求）通过。** 做法：AskHuman 的窗口属于后台应用，Computer Use 的应用列表里没有它，按进程号解析成应用目标，
+  只做「按下控件／滚动」，不发键盘事件（⌘↵ 会提交），不操作 Cursor，从不按「启动任务」。结果：设置页「Cursor 任务的 Max 模式」检测结果＝旧计划（按次计费）；
+  新建表单（待办的「创建 Agent 任务」进入，Agent 选 Cursor）里，沿用默认＝「Grok 4.7 256K High Fast · 需要 Max」被拦（选了权限模式「Agent 默认」后「启动任务」仍 disabled）、
+  勾「允许 Max」后拦截消失、换 Composer 2.5 后读作「不需要 Max」且拦截消失；模型下拉 24 个（Cursor CLI 暴露的部分，缓存共 47 个）：12 个不需要、12 个需要，
+  与 Cursor 本地缓存逐个核对（14 个按显示名精确匹配、10 个按模型族匹配）0 个不符；关窗后没有启动记录与回执、没有新的 `cursor-agent` 进程；
+  `agentTasks.cursorMax` 与 `launchPreference` 都没写（取默认：强制关闭＋自动检测、终端）。手机端的开关与标记留给 TestFlight 包。
+
 - JS：`scripts/cursor-create.node-test.mjs` 19/19 通过（成功只提交一次、以现有默认配置为底、`yolo` 覆盖与读回、每个读回不符都在提交前停下并归档、
   `dryRun` 通过与被拒、结构预检、项目歧义与别名、非法操作、提交前后出错的区别、过期不提交、同 ID 加入／冲突／拒绝后重来、`pending`、
   引用保持、Agents 窗口的唯一性与 active 窗口）；原有 `cursor-message.node-test.mjs` 不变。
@@ -120,4 +127,4 @@
   不可用原因；clippy 与 `cargo fmt --check` 无告警。
 - Dev Instance（装在 worktree 的 `.askhuman-dev/`）：`AskHuman __cursor-desktop` 的 `dryRun` 请求回
   `{"Err":"A Dev Instance does not use Cursor Desktop"}`（按设计）；daemon 握手 `version 0.16.0 (protocol 5)`。
-- **未验证**（要先装日常版；阶段 1–2 由 Agent、阶段 3–4 由用户做）：规格 §9 的全部不确定点；表单、IM、iOS 在真实 Cursor 下的状态与结果。
+- **未验证**（阶段 2 起；阶段 2 由 Agent、阶段 3–4 由用户做）：规格 §9 的全部不确定点；IM、iOS 在真实 Cursor 下的状态与结果（GUI 表单与设置页的 Max 部分已由阶段 1 验过）。
