@@ -1,6 +1,6 @@
 # 需求：在收到的请求里直接给当前项目添加待办（弹窗顶栏浮层 + iOS 请求页）
 
-> 状态：**2026-11-04 起草，等用户评审**。决策由用户在 AskHuman 两轮问答里定下（选项与原话见 §10）；第二轮里我列出的「默认做法」用户没有异议，已并入 §3。
+> 状态：**2026-11-04 已实现并装机验证**（分支 `feat/todo-quick-add`）；用户评审后批准本文与计划。决策由用户在 AskHuman 三轮问答里定下（选项与原话见 §10）；第二轮里我列出的「默认做法」用户没有异议，已并入 §3。与本文有出入的地方只有计划「实施记录」里列的几处测试用的小件，正文各节照实现为准。
 > 用户原话（2026-11-04）：「我想在收到的任务的弹窗或者是 iOS 的消息里面。可以直接给当前项目添加待办。」
 > 关联计划：`docs/plans/todo-quick-add.md`。落地后同步修订：`docs/specs/todo-whats-next.md`（D7 的「不提供新增」）、`docs/specs/ios-todos.md`（项目 id 的反查范围、请求页新增）、`docs/overview-ios.md`、`docs/wiki/ios-setup.md` / `ios-setup.en.md`。
 > 前置资料：`docs/specs/todo-whats-next.md`（待办的本机语义、D7 弹窗待办区）、`docs/specs/ios-todos.md`（`todo.*` 线协议、项目 id 的哈希、I6 / I13）、`docs/specs/ios-developer-mode.md`（另一个、全局的「快速添加待办」，本需求不动它）。
@@ -195,3 +195,7 @@
 - 快捷键：「A. 要：⌘T（Windows / Linux 为 Ctrl+T）打开 / 关闭浮层并聚焦输入框」
 - iOS sheet 内容：「A. 不放：只有目标项目（只读）+ 输入框」
 - 第 2 轮我另列了 9 条「默认做法」，用户没有提出异议；它们就是 D3 / D5 / D7 / D12 的细节。与当时说法不同的一处已在 D12 标出（Mac 离线 / 太旧时菜单项不置灰，改在 sheet 里说明）。
+
+**第 3 轮**（评审与工作方式）：
+- 需求与计划：「通过，按计划开工」
+- 工作方式：「主检出建分支 feat/todo-quick-add，装机验证用日常环境」（不开 worktree 与 Dev Instance；TestFlight 不出，除非用户要）

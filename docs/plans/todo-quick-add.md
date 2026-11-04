@@ -1,7 +1,7 @@
 # 计划：在收到的请求里直接给当前项目添加待办
 
-> 需求：`docs/specs/todo-quick-add.md`（决策编号 D1–D15 均指其 §3）。状态：2026-11-04 起草，**等用户评审需求与本计划**，通过前不写代码。
-> 分支 / 工作方式：待用户定（见文末「开工前要定的事」）。下文各阶段的文件名是起草时的设想，**实际以文末「实施记录」为准**（实现后补）。
+> 需求：`docs/specs/todo-quick-add.md`（决策编号 D1–D15 均指其 §3）。状态：2026-11-04 用户批准需求与本计划，已实施完毕，见文末「实施记录」。
+> 分支 / 工作方式：主检出建分支 `feat/todo-quick-add`、做完合并回 main、装机验证用日常环境（用户定，见文末「开工前定下的事」）。下文各阶段的文件名是起草时的设想，**实际以文末「实施记录」为准**。
 
 ## 阶段
 
@@ -101,6 +101,31 @@
 6. **机器很忙**：全量编译与模拟器测试在这台机器上可能要十几分钟；开发中只跑定向测试，阶段结束跑一遍完整的。
 7. **⌘T 被系统吃掉**：不太可能（弹窗没有自定义原生菜单加速键），但 P6 必须在真机上确认；若被吃掉，回来找你换键，不自己换。
 
-## 开工前要定的事
+## 开工前定下的事
 
-- 工作方式：在主检出里建分支 `feat/todo-quick-add`、做完合并回 main（我的建议：只有这一个任务在动、不需要并行 worktree 与 Dev Instance；装机验证直接装到日常环境，按 `AGENTS.md`），还是开 worktree + Dev Instance 隔离。
+- 工作方式（用户 2026-11-04 定）：在主检出里建分支 `feat/todo-quick-add`、做完合并回 main；只有这一个任务在动，不开 worktree 与 Dev Instance；装机验证装到日常环境，按 `AGENTS.md`。TestFlight 不出，除非用户要。
+
+## 实施记录（2026-11-04，P0–P7 完成）
+
+| 阶段 | 提交 | 结果 |
+|---|---|---|
+| P0 | `e42dacc0` 需求与计划 | — |
+| P1（Mac） | `26b7afe6`（带 `Release-Note: skip`） | `RequestRegistry::in_flight_projects()`（`daemon/request.rs`）；`ios_todos.rs` 的 `World` 多一份 `in_flight`，`resolve` 在 ranked / stored / synced 之后再查它，三个入口从 `state.registry` 取 |
+| P2–P3（弹窗） | `c4e3911d` | `useTodoPopover.ts`、`TodoPopover.vue`、`PopupNavbar.vue`、`usePopupCore.ts`、`popup.css`、`shortcut.ts`、i18n；单测 `useTodoPopover.test.ts`、集成测试 `PopupView.todoPopover.test.ts`（三种请求的按键隔离、whats-next、无项目、合并窗口、查找条、粘贴图片、Tab 移出等） |
+| P4–P5（iOS） | `4b71abd4` | `RequestTodoComposer`、共享发送函数 `TodoAddCall`（`QuickTodoComposer` 改用它，没有复制）、`AppStore.todoComposer(for:)`、`RequestTodoSheet`、`RequestScreen` 的菜单项 / sheet / 成功胶囊、`Localizable.xcstrings`、`make-catalog.py`；单测 `RequestTodoComposerTests` 27 条；UI 测试 `AskHumanRequestTodoUITests` 8 条 |
+| P6（验证） | `69a1bae1`（端到端测试） | 见下 |
+| P7（文档） | `e0f10d17` 与随后的状态更新 | `overview-ios.md`、`ios-todos.md`（I20 + §6.2）、`todo-whats-next.md`（D7）、`wiki/ios-setup*.md`；主 `overview.md` 不改 |
+
+**验证结果**（都在这台机器上；真实弹窗与端到端用的是隔离实例，没有碰日常的 `~/.askhuman`）：
+
+- Rust：全量 `cargo test` 2469 通过、11 忽略；`cargo clippy --all-targets -- -D warnings` 在本机 1.94.1 与 CI 同版本的 1.99.0 下都过（只有 vendored `tao` 里原有的告警）；`cargo fmt --check` 过。
+- 前端：`vitest` 97 个文件、1171 条全过；`vue-tsc --noEmit` 过。
+- Swift 包：649 条（其中 44 条端到端缺环境变量而跳过）无失败；真实 daemon + 本地 broker 的 `TodoE2ETests` 6 条全过，含新增的 `testAWaitingRequestsProjectTakesATodoFromThePhone`（一次性 Mac 上挂着请求，项目没有任何待办，手机经请求页的 composer 加两条，Mac 上按序列出、不带 ⚡，请求随后仍可作答）。
+- iOS 模拟器 UI 测试：`AskHumanRequestTodoUITests` 英文与简体中文各跑一遍全过；邻近的 `AskHumanRequestNavigationUITests`、`AskHumanTodosUITests`、`AskHumanDeveloperUITests` 里两条与待办相关的、`testRequestCanBeCancelledFromTheMenu` 英文全过（`testDraggingATodoUpChangesTheOrder` 的长按拖动在满载时失败过一次，单独重跑通过）。
+- 真实弹窗（macOS）：`./scripts/install.sh` 装机后，在一个隔离的 AskHuman 实例（独立 `ASKHUMAN_HOME` 与 `HOME`、自己的 daemon / 弹窗进程）里按了一遍。**普通提问**：⌘T 打开并聚焦、按钮与 ⌘↵ 添加、Esc 只关浮层并还原焦点、浮层里 ⌘1 与裸 Enter 不漏出去、正文待办计数实时更新、⌘T 再按关闭；**whats-next**：添加后立刻多出一个选项、Esc 同样只关浮层；**权限确认卡**：浮层里空草稿 ⌘↵、裸 Enter、Esc 都不批准也不拒绝（hook 一直挂着），能添加，关掉浮层后 ⌘↵ 才按选中的「拒绝」返回决定。
+
+**与计划不同的地方**：
+
+- 真实弹窗验证用的是隔离实例而不是日常 daemon：装机时另一个会话有请求在等，日常 daemon 按「优雅换新」（`daemon-graceful-drain.md`）等它结束才换成新二进制，没有为此 `daemon restart --force`。所以「`waiting` 态 Agent 的项目在日常 daemon 上反查」没有在日常环境单独做，由真实 daemon 的端到端测试覆盖。
+- 测试用的小件：`AppStore.todoNoteHold`（成功提示停留时间，默认 2 秒）与启动参数 `-AHTodoNoteHold`（只给 UI 测试，满载的模拟器上 2 秒太短）；`MockBackend` 在项目首次添加后把它补进该 Mac 的项目列表（对应真实 Mac 上「项目有了待办就出现在列表里」）；端到端的 `MacInstance.ask` 多了一个工作目录参数（请求的项目是它的 git 根）。
+- 没做的验证：Windows / Linux 的真实弹窗里按 Ctrl+T（需求 §6.3 要求真机确认一次）；iOS 真机与 TestFlight 包（用户没要）。这两项记在 `docs/PROGRESS.md`。
