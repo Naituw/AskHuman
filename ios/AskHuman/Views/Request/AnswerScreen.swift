@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import AHCore
 import AHProtocol
 import AHStore
@@ -8,13 +9,16 @@ import AHStore
 /// With several questions the bar offers "Next" until the last question has been on screen, and
 /// only then "Send", as the Mac popup does: a stray tap cannot send answers that were never read.
 /// "Next" itself follows where the screen is (`QuestionNavigator`), never what was looked at before,
-/// so that a question that was seen but not answered is not jumped over.
+/// so that a question that was seen but not answered is not jumped over. A person who is typing is
+/// where the keyboard is, though: "Next" continues from that question (spec `ios-answer-flow.md` F4, F12, F13).
 struct AnswerScreen: View {
     let item: InboxItem
     @Environment(AppStore.self) private var store
     @State private var tracker = ReadingTracker()
     /// The question "Next" last led to, which flashes once it has arrived.
     @State private var landing = Landing()
+    /// The input of each question, to hand the keyboard from one to the next (`carryTheKeyboard`).
+    @State private var inputs = InputTargets()
     /// The question whose text field has the keyboard.
     @State private var focused: Int?
     @State private var messageReady = false
@@ -35,7 +39,7 @@ struct AnswerScreen: View {
                             ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
                                 QuestionCard(
                                     index: index, count: ask.questions.count, ask: ask, question: question, composer: composer,
-                                    landing: landing, focus: $focused
+                                    landing: landing, focus: $focused, inputReveal: inputs.target(index)
                                 )
                                     .background(FrameReader(.card(index)))
                                     .background(RequestReadingAnchor(name: Self.cardID(index)))
@@ -53,7 +57,8 @@ struct AnswerScreen: View {
                     .background(RequestScrollPosition(id: item.id, store: store, ready: messageReady || !MessageCard.drawnByWebPage(ask, launch: launch)))
                 }
                 .background(Color(.systemGroupedBackground))
-                .background(FrameReader(.safeTop))
+                // A background stays between the bars, so its frame is the part of the screen the form is seen in.
+                .background(FrameReader(.visible))
                 .scrollDismissesKeyboard(.interactively)
                 .actionBar {
                     SendBar(
@@ -63,7 +68,6 @@ struct AnswerScreen: View {
                         onNext: { next(composer, proxy: proxy) },
                         onJump: { jumpToMissing(composer, proxy: proxy) }
                     )
-                    .background(FrameReader(.barTop))
                 }
                 .coordinateSpace(name: Self.space)
                 .onPreferenceChange(ReadingKey.self) { tracker.update($0, composer: composer) }
@@ -93,16 +97,42 @@ struct AnswerScreen: View {
         }
     }
 
-    /// Leads to the first question whose bottom is not on screen yet: all of it when it fits (as the
-    /// popup's "next" does), else its top, and on the next press its bottom. Nothing that was seen
-    /// or answered before matters, only where the screen is now.
+    /// "Next". A person who is typing is in the question that has the keyboard, so it leads to the question
+    /// after that one, whatever the screen shows (F12); when that is a plain-text question the keyboard moves
+    /// to it and stays up (F13). Otherwise it leads to the first question whose bottom is not on screen yet:
+    /// all of it when it fits (as the popup's "next" does), else its top, and on the next press its bottom.
+    /// Nothing that was seen or answered before matters, only where the screen is now.
     private func next(_ composer: AnswerComposer, proxy: ScrollViewProxy) {
+        // A second press while the keyboard is still being taken away would work out the same step twice.
+        guard !tracker.advancing else { return }
+        tracker.advancing = true
+        let typing = focused
         Task {
+            defer { tracker.advancing = false }
+            if let typing, typing + 1 < composer.questionCount, composer.isTextOnly(typing + 1),
+               carryTheKeyboard(to: typing + 1) {
+                return
+            }
             await putTheKeyboardAway()
-            guard let viewport = tracker.viewport(),
-                  let target = QuestionNavigator.next(in: viewport, count: composer.questionCount) else { return }
+            guard let viewport = tracker.viewport() else { return }
+            let target = typing.flatMap { QuestionNavigator.next(after: $0, in: viewport, count: composer.questionCount) }
+                ?? QuestionNavigator.next(in: viewport, count: composer.questionCount)
+            guard let target else { return }
             go(to: target, proxy: proxy)
         }
+    }
+
+    /// Moves the keyboard to the input of the question that comes next and keeps it up: the page slides to
+    /// the caret as it follows it when a field is tapped, and the card flashes like any other landing.
+    /// `false` when the input cannot take it, and the keyboard is where it was.
+    ///
+    /// UIKit hands the keyboard over (`InlineTextView.takeTheKeyboard`) rather than this setting `focused`
+    /// for SwiftUI to make the two inputs resign and become in its update pass: the nested layout of a resign
+    /// in there undoes the other input's `becomeFirstResponder`, and the keyboard stays with nothing typing into it.
+    private func carryTheKeyboard(to question: Int) -> Bool {
+        guard inputs.target(question).textView?.takeTheKeyboard() == true else { return false }
+        landing.flash(question)
+        return true
     }
 
     /// Leads to the first question of a select-only form that still has no selection (what "Send"
@@ -120,18 +150,71 @@ struct AnswerScreen: View {
     }
 
     private func go(to target: QuestionNavigator.Target, proxy: ScrollViewProxy) {
-        withAnimation(.easeInOut(duration: 0.4)) {
-            proxy.scrollTo(Self.cardID(target.question), anchor: target.anchor == .bottom ? .bottom : .top)
+        // A question that is all on screen is only pointed at.
+        if target.anchor != .stay {
+            withAnimation(.easeInOut(duration: 0.4)) {
+                proxy.scrollTo(Self.cardID(target.question), anchor: target.anchor == .bottom ? .bottom : .top)
+            }
         }
         landing.flash(target.question)
     }
 
-    /// The keyboard covers the question that is being led to, and its coming down changes the room
-    /// there is: let it go first, and the scroll is worked out for the screen that is left.
+    /// The keyboard covers the question that is being led to, and its going changes the room there is: let
+    /// it go first, and the scroll is worked out for the screen that is left.
+    ///
+    /// It is resigned here, from the action of a button, and not by clearing `focused` and leaving it to
+    /// `CaretTextView.updateUIView`: a keyboard that goes in the middle of a SwiftUI update leaves the bar and
+    /// the scroll area where the keyboard had put them (a blank band under them) until something else makes the
+    /// screen lay out again, and the card typed in, which reaches a point or two under the bar then, is taken
+    /// for one not reached. Nor is a fixed wait any good: the layout takes the room back in a few frames, the
+    /// keyboard itself needs about 0.4 s. So this waits for the layout, not for the clock, and the page is
+    /// worked out (and scrolls) while the keyboard is still on its way down.
     private func putTheKeyboardAway() async {
         guard focused != nil else { return }
+        let before = tracker.viewport()?.bottom
+        let keyboard = KeyboardExit()
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         focused = nil
-        try? await Task.sleep(for: .milliseconds(320))
+        // No word of a keyboard going (a hardware keyboard has none on screen): nothing to wait for.
+        guard await keyboard.waitForStart(within: .milliseconds(150)) else { return }
+        await tracker.settle(from: before, timeout: .milliseconds(500))
+    }
+}
+
+/// The input of every question, kept apart from the cards so that the screen can reach it.
+@MainActor
+private final class InputTargets {
+    private var targets: [Int: InputRevealTarget] = [:]
+
+    func target(_ question: Int) -> InputRevealTarget {
+        if let known = targets[question] { return known }
+        let target = InputRevealTarget()
+        targets[question] = target
+        return target
+    }
+}
+
+/// Notes that a keyboard has started to leave: the notification is what says there is something to wait for.
+/// (An observer of this kind goes away with the object, so nothing is removed by hand.)
+@MainActor
+private final class KeyboardExit {
+    private(set) var started = false
+
+    init() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyboardWillHide), name: UIResponder.keyboardWillHideNotification, object: nil
+        )
+    }
+
+    @objc private func keyboardWillHide(_ notification: Notification) { started = true }
+
+    /// Whether the keyboard started to leave within `timeout`.
+    func waitForStart(within timeout: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while !started, ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return started
     }
 }
 
@@ -152,10 +235,9 @@ struct Landing: Equatable {
 private struct Reading: Equatable {
     /// The frame of every question card.
     var cards: [Int: CGRect] = [:]
-    /// Where the bottom bar starts: what is above it is on screen.
-    var barTop: CGFloat?
-    /// Where the navigation bar ends.
-    var safeTop: CGFloat?
+    /// The part of the scrolling screen that can be seen: from under the navigation bar down to the top of
+    /// the bottom bar, which the keyboard moves up when it is there.
+    var visible: CGRect?
 }
 
 private struct ReadingKey: PreferenceKey {
@@ -164,16 +246,14 @@ private struct ReadingKey: PreferenceKey {
     static func reduce(value: inout Reading, nextValue: () -> Reading) {
         let next = nextValue()
         value.cards.merge(next.cards) { $1 }
-        if let barTop = next.barTop { value.barTop = barTop }
-        if let safeTop = next.safeTop { value.safeTop = safeTop }
+        if let visible = next.visible { value.visible = visible }
     }
 }
 
 private struct FrameReader: View {
     enum Part {
         case card(Int)
-        case barTop
-        case safeTop
+        case visible
     }
 
     let part: Part
@@ -190,10 +270,8 @@ private struct FrameReader: View {
         switch part {
         case .card(let index):
             return Reading(cards: [index: proxy.frame(in: .named(AnswerScreen.space))])
-        case .barTop:
-            return Reading(barTop: proxy.frame(in: .named(AnswerScreen.space)).minY)
-        case .safeTop:
-            return Reading(safeTop: proxy.safeAreaInsets.top)
+        case .visible:
+            return Reading(visible: proxy.frame(in: .named(AnswerScreen.space)))
         }
     }
 }
@@ -211,6 +289,9 @@ private final class ReadingTracker {
     @ObservationIgnored private var live = false
     @ObservationIgnored private var messageIsLaidOut = false
     @ObservationIgnored private var questionCount = 0
+
+    /// A "Next" is under way and has not led anywhere yet, so that a second press does not start another.
+    @ObservationIgnored var advancing = false
 
     /// The first layout passes are not trusted (the bars may not have their final size yet): the
     /// questions on screen are counted a moment after the form appeared. A message drawn by a web page
@@ -247,15 +328,32 @@ private final class ReadingTracker {
 
     /// What the screen shows of the questions right now; `nil` before anything was measured.
     func viewport() -> QuestionNavigator.Viewport? {
-        guard let barTop = latest.barTop else { return nil }
-        return QuestionNavigator.Viewport(cards: latest.cards, top: latest.safeTop ?? 0, bottom: barTop)
+        guard let visible = latest.visible else { return nil }
+        return QuestionNavigator.Viewport(cards: latest.cards, top: visible.minY, bottom: visible.maxY)
+    }
+
+    /// Waits until the visible part of the screen has grown from `bottom` (the keyboard went and the bar
+    /// came down) and stopped changing, or until `timeout`: a screen whose layout is not final is no
+    /// ground to work out a scroll on. A few frames, in practice.
+    func settle(from bottom: CGFloat?, timeout: Duration) async {
+        let deadline = ContinuousClock.now + timeout
+        var previous: CGRect?
+        var steady = 0
+        while ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(16))
+            guard let visible = latest.visible else { continue }
+            let grown = bottom.map { visible.maxY > $0 + 1 } ?? true
+            steady = grown && visible == previous ? steady + 1 : 0
+            previous = visible
+            if steady >= 2 { return }
+        }
     }
 
     /// A question counts as seen once its bottom is above the bottom bar, whether it is still on
     /// screen or already scrolled past (spec `multi-question-vertical.md` V1).
     private func markSeen(_ composer: AnswerComposer) {
-        guard let barTop = latest.barTop else { return }
-        for (index, frame) in latest.cards where frame.maxY <= barTop + 1 {
+        guard let visible = latest.visible else { return }
+        for (index, frame) in latest.cards where frame.maxY <= visible.maxY + 1 {
             composer.markSeen(index)
         }
     }
@@ -309,7 +407,7 @@ private struct QuestionCard: View {
     let composer: AnswerComposer
     let landing: Landing
     var focus: Binding<Int?>
-    @State private var inputReveal = InputRevealTarget()
+    let inputReveal: InputRevealTarget
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

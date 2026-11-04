@@ -179,6 +179,9 @@ final class InlineTextView: UITextView {
     private var keyboardFrame: CGRect?
     private var diagnosticLabel: UILabel?
     private var followsCaret = false
+    /// Set while the keyboard is handed over from another input: the first scroll that brings this one into
+    /// view slides, where a scroll after typing is a jump of a line.
+    private var slidesIntoView = false
     private var observedPans: [UIPanGestureRecognizer] = []
     private let clearance: CGFloat = 12
 
@@ -244,6 +247,21 @@ final class InlineTextView: UITextView {
         super.willMove(toWindow: newWindow)
     }
 
+    /// Takes the keyboard over from the input that has it: UIKit moves the first responder in one step, so the
+    /// keyboard neither leaves nor comes again, and the page slides to this input as the caret needs.
+    ///
+    /// This is done here, from a button's action, and not by SwiftUI through `updateUIView` (the old input
+    /// resigning, this one becoming): a resign in the middle of an update pass runs the layout again inside
+    /// itself, and the `becomeFirstResponder` of the other input that the pass makes in there is undone
+    /// when the outer resign unwinds. The keyboard is left on screen with nothing that has it.
+    @discardableResult
+    func takeTheKeyboard() -> Bool {
+        slidesIntoView = true
+        let taken = becomeFirstResponder()
+        if !taken { slidesIntoView = false }
+        return taken
+    }
+
     /// Coalesce input, selection and layout changes into one correction after layout settles.
     func requestReveal(resuming: Bool = false) {
         guard isFirstResponder else { return }
@@ -303,6 +321,8 @@ final class InlineTextView: UITextView {
         let scrolls = ancestorScrolls
         // A deliberate gesture may move away from the caret; typing or a new selection follows it again.
         guard !isDragging, !isDecelerating, !scrolls.contains(where: { $0.isDragging || $0.isDecelerating }) else { return }
+        let slides = slidesIntoView
+        slidesIntoView = false
         window.layoutIfNeeded()
         layoutIfNeeded()
         let caret = caretRect(for: selection.end)
@@ -327,17 +347,26 @@ final class InlineTextView: UITextView {
             if target.maxY > visible.maxY { delta = target.maxY - visible.maxY }
             else if target.minY < visible.minY { delta = target.minY - visible.minY }
             else { continue }
-            self.scroll(scroll, by: delta)
+            self.scroll(scroll, by: delta, sliding: slides)
         }
         publishDiagnostics()
     }
 
-    private func scroll(_ view: UIScrollView, by delta: CGFloat) {
+    private func scroll(_ view: UIScrollView, by delta: CGFloat, sliding: Bool = false) {
         let minimum = -view.adjustedContentInset.top
         let maximum = max(minimum, view.contentSize.height - view.bounds.height + view.adjustedContentInset.bottom)
         let y = min(maximum, max(minimum, view.contentOffset.y + delta))
-        if abs(y - view.contentOffset.y) > 0.5 {
-            view.setContentOffset(CGPoint(x: view.contentOffset.x, y: y), animated: false)
+        guard abs(y - view.contentOffset.y) > 0.5 else { return }
+        let offset = CGPoint(x: view.contentOffset.x, y: y)
+        if sliding, abs(delta) > 40, !UIAccessibility.isReduceMotionEnabled {
+            // The offset is set inside the animation block, so it reads as its final value at once and the
+            // corrections that follow (the keyboard says again where it is) find nothing left to do, instead
+            // of cutting the slide short.
+            UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseInOut, .allowUserInteraction, .beginFromCurrentState]) {
+                view.contentOffset = offset
+            }
+        } else {
+            view.setContentOffset(offset, animated: false)
         }
     }
 

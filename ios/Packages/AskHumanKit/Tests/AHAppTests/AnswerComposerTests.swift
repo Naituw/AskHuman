@@ -185,6 +185,15 @@ final class AnswerComposerTests: XCTestCase {
         XCTAssertNil(drafts.draft(key: "mac/req"))
     }
 
+    func testAQuestionWithoutOptionsIsABareInputOnlyWhereTextIsTaken() {
+        let form = composer(ask([question("choose", "a", "b"), question("write")]))
+        XCTAssertFalse(form.isTextOnly(0), "with options, the text is a note beside a choice")
+        XCTAssertTrue(form.isTextOnly(1))
+        XCTAssertFalse(form.isTextOnly(5), "not a question of the form")
+        let strict = composer(ask([question("choose", "a", "b"), question("write")], selectOnly: true), key: "mac/strict")
+        XCTAssertFalse(strict.isTextOnly(1), "a select-only form takes no text at all")
+    }
+
     // MARK: reading progress (spec multi-question-vertical V1/V2)
 
     func testASingleQuestionIsReadFromTheStart() {

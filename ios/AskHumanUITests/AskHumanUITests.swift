@@ -324,6 +324,100 @@ final class AskHumanUITests: XCTestCase {
         XCTAssertTrue(element("send-button").exists)
     }
 
+    // MARK: "Next" while typing (spec ios-answer-flow.md F12–F14)
+
+    /// Polls until the condition holds, for up to `timeout` seconds.
+    private func waitUntil(timeout: TimeInterval = 4, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return condition()
+    }
+
+    /// Whether the bottom bar is back at the foot of the screen, so that no band of empty screen is left
+    /// under it: what a keyboard that went in the middle of a layout pass used to leave behind.
+    private func barIsAtTheFootOfTheScreen() -> Bool {
+        let screen = app.windows.firstMatch.frame
+        return requireElement("answered-count").frame.maxY > screen.height - 120
+    }
+
+    private func keyboardIsUp() -> Bool { app.keyboards.firstMatch.exists }
+
+    /// The text typed in a question's field (an empty field answers with its placeholder, which has no
+    /// text of its own in it).
+    private func typedText(_ id: String) -> String { (requireElement(id).value as? String) ?? "" }
+
+    /// Typing in a question that has options and tapping "Next" used to lead back to the same question:
+    /// the keyboard was still on its way down, and the screen not yet laid out again, when the next
+    /// question was worked out. Answers short and long (a long one grows the card), several times in one run.
+    func testNextAfterTypingLeadsOnToTheNextQuestion() {
+        launch()
+        openRequest("req-migration")
+        _ = requireElement("next-button")
+        let answers = [
+            "Yes, go online.",
+            "First line.\nSecond line.\nThird line.\nFourth line.\nFifth line.\nSixth line.\nSeventh line.",
+            "Once more.",
+        ]
+        for (round, answer) in answers.enumerated() {
+            type(answer, into: "answer-text-0")
+            XCTAssertTrue(keyboardIsUp(), "round \(round): the person is typing")
+            if round == 0 { shot("40-typing-in-the-first") }
+            requireElement("next-button").tap()
+            XCTAssertTrue(
+                waitUntil { isBetweenTheBars("answer-text-1") && barIsAtTheFootOfTheScreen() },
+                "round \(round): Next after typing in the first question leads to the second, with the screen laid out again"
+            )
+            if round == 0 { shot("41-led-to-the-second") }
+            XCTAssertTrue(waitUntil { !keyboardIsUp() }, "round \(round): a question with options has no use for the keyboard")
+        }
+        XCTAssertTrue(answeredCount().contains("1/3"), "the typed text is an answer of its own")
+    }
+
+    /// The question after the one typed in takes the keyboard along when it is a plain input: the caret goes
+    /// there and the keyboard neither leaves nor comes again.
+    func testNextCarriesTheKeyboardToAPlainTextQuestion() {
+        launch()
+        openRequest("req-migration")
+        _ = requireElement("next-button")
+        type("Keep it behind a flag.", into: "answer-text-1")
+        XCTAssertTrue(keyboardIsUp())
+        shot("42-typing-in-the-second")
+        requireElement("next-button").tap()
+        // The keyboard is on screen the whole time: a hide and a show in a row would be seen as a flicker.
+        for _ in 0..<8 {
+            XCTAssertTrue(keyboardIsUp(), "the keyboard stays up while the caret moves on")
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        // Whatever is typed now lands in the third question: nothing has keyboard focus otherwise.
+        app.typeText("Then a rollback plan.")
+        XCTAssertTrue(typedText("answer-text-2").contains("rollback"), "the third question took the typing")
+        XCTAssertFalse(typedText("answer-text-1").contains("rollback"), "and the second did not")
+        XCTAssertTrue(isBetweenTheBars("answer-text-2"), "the question the caret is in shows above the keyboard")
+        XCTAssertTrue(element("send-button").waitForExistence(timeout: 5), "the last question is on screen: Send is next")
+        shot("43-carried-to-the-third")
+    }
+
+    /// The same, one step further: from the first question the way leads over a question with options (the
+    /// keyboard goes), and from there to the plain one, where typing is carried on without it.
+    func testNextAfterTypingCanWalkThroughAllThreeQuestions() {
+        launch()
+        openRequest("req-migration")
+        _ = requireElement("next-button")
+        type("Question one.", into: "answer-text-0")
+        requireElement("next-button").tap()
+        XCTAssertTrue(waitUntil { isBetweenTheBars("answer-text-1") && barIsAtTheFootOfTheScreen() })
+        type("Question two.", into: "answer-text-1")
+        requireElement("next-button").tap()
+        XCTAssertTrue(waitUntil { isBetweenTheBars("answer-text-2") })
+        XCTAssertTrue(keyboardIsUp())
+        app.typeText("Question three.")
+        XCTAssertTrue(typedText("answer-text-2").contains("three"))
+        XCTAssertTrue(answeredCount().contains("3/3"))
+    }
+
     func testTheHintOfAnIncompleteSelectOnlyFormLeadsToTheFirstOpenQuestion() {
         launch("strict")
         openRequest("req-strict")
