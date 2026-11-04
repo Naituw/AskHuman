@@ -191,7 +191,7 @@ App 目标编译通过；Mac 端、线协议、中继、推送规则都没改。
 2026-11-01 已通过 TestFlight 分发 `0.1.0 (4)`（源码 main `4381628c`），用户已更新并确认原有 Mac 连接正常。
 触发时机已有真实引擎回归与模拟器验证；后续日常使用观察“回来补齐不弹、前台实时新到仍弹”，确认后删除本节。
 
-## 待验收：iOS 开发者模式（P1–P5 已实现并过模拟器自动化；内测包 0.1.0 (5) 已出，等用户真机试用反馈；之后改的项目选择还没出包）
+## 待验收：iOS 开发者模式（P1–P5 已实现并过模拟器自动化；内测包 0.1.0 (5)、含新版项目选择的 (6) 已出，等用户真机试用反馈）
 
 2026-11-02 用户要求给 iOS App 加「开发者模式」：Macs 标签里的开关（默认关）打开后，所有界面之上出现一个可拖动的浮动按钮，按住它、滑到条目松手；
 v1 只有「快速添加待办」（不离开当前界面，把一句话记成某个项目的待办）。需求 [`docs/specs/ios-developer-mode.md`](specs/ios-developer-mode.md)
@@ -206,7 +206,8 @@ v1 只有「快速添加待办」（不离开当前界面，把一句话记成�
 - [ ] P6 真机一轮（内测包已出，等用户装上试用并反馈；要看的是）：系统菜单的弹出延迟与拖动的分工手感（模拟器上菜单约 75–180 ms 出现，按下后立刻移动则是拖动；
   按下后立刻划向菜单会变成拖按钮，是设计内的代价；真机上没有可调的常量）、iOS 26 玻璃的观感（按钮与提示条）、真机键盘与「关掉快速添加页后原输入框重新编辑」、
   按钮盖在 Safari / 图片查看器 / 系统弹窗之上的表现、触觉、VoiceOver。改手势规则前先经 AskHuman 确认，结果写回规格 §11。
-- [ ] 新版项目选择（2026-11-03，与待办页同一套来源规则）**没有出内测包**：用户看过汇报后选了「先不出：你再看看，需要时再说」，要出时用 `ios-testflight` 技能出 `0.1.0 (6)`。出包后真机上请看：来源列表与待办页是否一致、iCloud 目标在服务它的 Mac 掉线后换机写入是否顺（规格 §8 记了换机的边界）、半屏高的 sheet 里项目列表是否太挤（用户定：保持现状，真机上看了再定；现在 sheet 是 `.medium` 与 `.large` 两档，打开选择时不会自动拉高；若要自动拉到大档，方案是选项目时拉到 `.large`、回到文本页时收回半屏，需先问用户）。
+- [ ] 新版项目选择（2026-11-03，与待办页同一套来源规则）已随内测包 `0.1.0 (6)` 出去（2026-11-04）。用户此前看过汇报后选了「先不出：你再看看，需要时再说」，但 build 6 是为 Cursor Max 开关出的 main 整包，
+  出包前没有单独拿这一点问用户，出包后已如实告知。真机上请看：来源列表与待办页是否一致、iCloud 目标在服务它的 Mac 掉线后换机写入是否顺（规格 §8 记了换机的边界）、半屏高的 sheet 里项目列表是否太挤（用户定：保持现状，真机上看了再定；现在 sheet 是 `.medium` 与 `.large` 两档，打开选择时不会自动拉高；若要自动拉到大档，方案是选项目时拉到 `.large`、回到文本页时收回半屏，需先问用户）。
 - [ ] 已知局限（规格 §8，真机用下来觉得别扭再提）：按钮盖在 App 内的系统弹窗（alert、确认对话框）之上，可能遮住弹窗边缘的按钮；iCloud 项目换机时若第一台其实已存下、只是应答丢了，重发去另一台会多出一条；换机时尚未同步到另一台的项目找不到。
 - [ ] iOS 27.0 模拟器（`AskHuman iOS Dev`，iPhone 18 Pro）上大多失败的 UI 测试：`AskHumanDeveloperUITests.testTheButtonIsAboveASheetAndItsKeyboardAndRidesAboveTheKeyboard`——第一步在新建任务 sheet 上把按钮往下拖，按钮没动或停在半路（`AskHumanDeveloperUITests.swift` 的 `midY > screen.height - 200` 断言）。与项目选择无关：`6b59ebaa`（这次改动之前）的干净 worktree 上同样失败（出结果的 3 次全失败，另 2 次进程启动即被杀），改动后的树上 7 次里 1 次通过；iOS 18.5 / iPhone 16 上 2 次都通过，之前在 iPhone Air / iOS 27.0 上整班跑也过。原因没查：可能是 XCUITest 在 iOS 27 玻璃按钮上合成的拖动不稳（同一班其他拖动用例都通过），也可能是真实的拖动识别有问题；真机上留意「拖按钮」是否偶尔拖不动，尤其在 sheet 打开时（P6 已有这一项）。用户定：先放着，真机上拖按钮有问题再查。
 - [ ] 模拟器回归（iPhone 16 / iOS 18.5，开发者模式关）的对照结果：其余 134 条 UI 测试里 127 条通过、3 条跳过、4 条失败；这 4 条在功能开发之前的提交（`190a76ad`）上用同一台模拟器跑，**同样失败或偶发**，与本功能无关，原因都没查：
@@ -297,14 +298,14 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] 后置（需求 §11）：手机直连 CloudKit（Mac 都不在线也能用，需用户授权开 iCloud 容器 + Swift 重实现同步核心）、附件的查看与添加、「全部待办」聚合页、清空历史、从 iCloud 移除项目、待办推送、离线编辑队列。
 - [ ] 已知局限（需求 §10）：Mac 都不在线时手机看不到待办；线协议里 `helper` 没有「未安装」状态，手机上「没装」与「没在跑」显示成同一句；单条超大待办（桌面端 / CLI 不限长度，手机端限 4000 字）可能让那个项目的 `todo.list` 装不进一条消息而超时。
 
-## 待验收：Cursor 任务的 Max 模式控制与 Agents 窗口新建任务（已实现并过自动化，已合入最新 main，等 main 工作区干净后合回并装机）
+## 待验收：Cursor 任务的 Max 模式控制与 Agents 窗口新建任务（已合回 main 并装为日常版；真实验证阶段 1–2 已过，阶段 3–4 等用户自己做）
 
 2026-11-03 用户说旧「按次计费」计划里 Cursor 的 Max 模式按 API 费率扣 Credit，所以不敢用 AskHuman 新建 Cursor 任务，要求分析并支持控制 Max，
 并强调**研发与调研期间严禁触发任何计费**（不运行 `cursor-agent` 任务、不驱动 Cursor 跑 Agent；测试只用桩可执行文件、临时配置与合成目录）。
 经 5 轮 AskHuman 问答定下范围：需求 [`docs/specs/cursor-max-control.md`](specs/cursor-max-control.md)（M1–M8）与
 [`docs/specs/cursor-desktop-task-creation.md`](specs/cursor-desktop-task-creation.md)（D1–D5），计划同名在 `docs/plans/`，各带「验证记录」。
 分支 `feat/cursor-max-control`（worktree `../HumanInLoop-cursor-max`；`73527b9c` 文档、`2600561f` 功能，之后是测试与文档提交；2026-11-04 已把当时的 main
-合入分支，见提交 `chore: merge main into feat/cursor-max-control`），**未合回 main、未装为日常版**；Dev Instance 已装在 worktree 里验证过非计费部分。
+合入分支，见提交 `chore: merge main into feat/cursor-max-control`），**2026-11-04 已 fast-forward 合入 main（`7e07a728`）并装为日常版**（daemon 协议 5）；Dev Instance 已在 worktree 里验证过非计费部分。
 
 做法：
 - **Max 控制**：新 Cursor 任务默认不允许 Max；GUI 新建表单与 iPhone 各有一个「允许 Max」开关（默认关、不记忆）。关着时：启动前把 Cursor CLI 配置里持久化的
@@ -327,13 +328,17 @@ Swift 569 通过（43 条按设计跳过）、两条 Max 的 iOS UI 测试英文
 第二次合入（无冲突）后重跑了 fmt／clippy／`cargo test`（2449 通过），其余沿用上面的结果。
 
 下一步：
-- [ ] **真实验证（2026-11-04 用户裁定）**：阶段 1–2（日常版只读检查、Desktop `dryRun`，按设计 0 请求）由 Agent 在日常版装好后执行；阶段 3、4（各 1 个普通非 Max 请求）
-  由**用户**按 [计划](plans/cursor-desktop-task-creation.md)「真实验证计划」里的「阶段 3、4：用户自行执行的步骤」自己做。Agent 不执行阶段 3、4，除阶段 1–2 外不起 Cursor 任务、不驱动 Cursor；
-  阶段 2 之前还要用户在 Agents 窗口里准备好验证项目。
-- [ ] **合回 main 与装日常版**（动手前先问用户）：Desktop 路线只有日常安装能验。2026-11-04 已把 main 合入分支两次（第一次 5 处冲突，其中两份失败收件箱规格是分支带着的旧副本，取 main 的版本；
-  第二次无冲突）并复测；分支此刻不落后于 main，main 的工作区也是干净的。合回前再看一眼 main 有没有新提交（另一个 Agent 一直在 main 上推进，有就先合入分支并复测）；
-  核对 overview 协议号历史里的提交号 `2600561`（分支若被改写要同步；分支还带着三个与 main 内容相同的重复提交——失败收件箱规格与手机端精简——用合并而不是变基落地能保留这个哈希）。`./scripts/install.sh` 会让 daemon 换新（协议号 4→5，按排空过渡）。从 worktree 用 `--global` 装会覆盖共享的 `~/.local/bin`，要用户明确同意。
-- [ ] iOS：出 TestFlight 包（项目 skill `ios-testflight`）后，用户在手机上看「允许 Max」开关与模型的 Max 标记，中英文各一次。
+- [ ] **真实验证（2026-11-04 用户裁定）**：阶段 1–2（日常版只读检查、Desktop `dryRun`，按设计 0 请求）由 Agent 执行；阶段 3、4（各 1 个普通非 Max 请求）
+  由**用户**按 [计划](plans/cursor-desktop-task-creation.md)「真实验证计划」里的「阶段 3、4：用户自行执行的步骤」自己做。Agent 不执行阶段 3、4，除阶段 1–2 外不起 Cursor 任务。
+  - ✅ 阶段 1（2026-11-04，日常版 `7e07a728`，0 请求）：设置页检测为「旧计划」；新建表单里默认模型被拦、「允许 Max」解除拦截、换小模型解除拦截，
+    24 个模型的 Max 标记与 Cursor 缓存逐个一致；没有启动任何任务。细节见计划「验证记录」。
+  - ✅ 阶段 2（2026-11-04，日常版 `7e07a728`，`gpt-5.4-nano`、不允许 Max，0 请求）：第一次 `dryRun` 因 Agents 窗口不认识验证项目 `~/Developer/AskHumanCursorVerify`
+    （空 git 仓库）被拒（`rejected`／`projectNotFound`）；Computer Use 不能操作 Cursor，由用户自己在 Agents 窗口里把项目加进去后，第二次（新 ID）约 1 秒返回 `dryRun`、
+    `tidied: archived`，观察到模型 `gpt-5.4-nano`、`maxMode:false`、无权限覆盖；回执 `dryRun`；状态库只多一条空聊天（无消息、无用量），验证项目没有新 worktree 或分支。
+    **没有直接看到 Agents 窗口的界面**：请用户做阶段 3 时顺便看一眼侧栏里没有「dry run」会话（状态库里查不到归档标志位）。
+  - 阶段 3、4（用户做）：命令已按验证项目 `~/Developer/AskHumanCursorVerify` 与模型 `gpt-5.4-nano` 填好，在计划的「阶段 3、4：用户自行执行的步骤」里；等用户把现象告诉 Agent。
+- [ ] iOS：内测包 `0.1.0 (6)` 已出（2026-11-04，`VALID`、已在 `AskHuman Internal`，含「允许 Max」开关与 Max 标记）。**它是 main 的整包**，同时带上了新版项目选择（用户此前选过「先不出」）
+  与「去掉 Agents 页需要关注分组」，详见 `docs/plans/ios-channel.md`。等用户在手机上更新后看「允许 Max」开关与模型的 Max 标记，中英文各一次。
 - [ ] 真实验证通过后，用户在设置里把 `cursorDesktop.launchPreference` 改为 `desktop`（D5）。
 - [ ] 已知局限（规格 §3、§4.4）：缓存只是建议性证据，可能比服务端目录旧；CLI 对「默认模型本身需要 Max」只在内存里推导，改配置关不掉，只靠创建时的预判拦截。
   上面两条观察合起来的含义：当前 CLI 默认模型 Grok 4.7 按缓存是「仅 Max」，而配置里 `maxMode:false`，不运行 Cursor 无法判断哪个对。**用户可以在 Cursor 网页用量里看一眼过去 Grok 4.7 的请求有没有按 Max／API 费率计**。
