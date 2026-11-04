@@ -1,6 +1,6 @@
 # iOS 内测包：出包前的变更清单与 TestFlight「测试内容」
 
-> 状态：2026-11-04 起草，同日用户批准计划（见「反馈意见」），实施中。实施计划：[ios-testflight-build-notes](../plans/ios-testflight-build-notes.md)。
+> 状态：2026-11-04 起草，同日用户批准计划（见「反馈意见」）并已实现、验到 build 6；整条链等 build 7 首次真用。实施计划：[ios-testflight-build-notes](../plans/ios-testflight-build-notes.md)。
 > 关联：项目 skill [`ios-testflight`](../../.agents/skills/ios-testflight/SKILL.md)；每次出包的记录在 [ios-channel 计划](../plans/ios-channel.md)
 > 的「TestFlight 内部构建 N」；Keychain 与稳定签名见 [secret-storage-keychain](secret-storage-keychain.md)。
 
@@ -68,7 +68,7 @@ helper 是唯一能读 Keychain 凭据的程序（见 [secret-storage-keychain](
 `notes` 只在它已有的边界内增加一条窄路径：
 
 - **只作用于本 App**（App ID `6828712684`）的一个指定构建号；该构建必须存在、`processingState=VALID`、未过期。
-- **只允许两种语言** `zh-Hans`、`en-US`；每种 1–4000 个字符的纯文本（按 UTF-16 单元计，是几种计法里最严的）。换行统一为 `\n`，去掉整段末尾的空白与换行，拒绝除换行外的控制字符；超长直接拒绝，不截断。
+- **只允许两种语言** `zh-Hans`、`en-US`；每种 1–4000 个字符的纯文本（按 UTF-16 单元计，是几种计法里最严的）。换行统一为 `\n`，去掉整段末尾连续的空格（U+0020）与换行（其他空白字符，如不换行空格，原样保留），拒绝除换行外的控制字符；超长直接拒绝，不截断。
 - **只调用固定的几个接口**：按 App 与构建号查询构建；`betaBuildLocalizations` 的读取、创建、修改；以及仅在 `probe` 模式下对**自己刚创建的那一条**的删除。不开放任意网址或方法。
 - **输入来自 `0600` 临时文件**（启动器创建、结束后删除），不走命令行参数或环境变量；输出只含构建号、Apple 构建 ID、各语言的动作与字数（`read` 模式另含现有文本，不是机密），**从不输出令牌或凭据**。
 - **幂等且必读回**：文本与线上相同则不写（`unchanged`）；每次写入之后都读回并逐字比对，不一致即失败。

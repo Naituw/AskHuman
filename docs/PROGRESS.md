@@ -217,6 +217,19 @@ v1 只有「快速添加待办」（不离开当前界面，把一句话记成�
   `AskHumanTodosUITests.testAMacThatPredatesTodosAsksForAnUpdate`（上文已记）与 `testMacsThatBothSyncAreOneICloudSourceWithTheirOwnProjectsAndTheAgentsDots`（`AskHumanTodosUITests.swift:162`，断言「iCloud names its Macs」；与前一条同样走来源菜单，疑似同一个 18.5 上菜单无障碍报法的问题）；
   `AskHumanInputVisibilityUITests.testShortAnswerAndAttachmentFitWithAccessibilityText` 与 `testEachQuestionRevealsItsOwnAttachmentEntryPoint`（都是 `Failed to synthesize event: Neither element nor any descendant has keyboard focus`：点了输入框没拿到键盘焦点；前一条稳定，后一条在基线上 2 次里 1 次失败）。第一条在 iOS 27.0 上通过（上文有记），其余三条没有换别的系统版本试过。
 
+## 待验收：iOS 出包前的变更清单与 TestFlight 测试内容（helper、脚本与标签已验到 build 6；整条链要到 build 7 才首次真用）
+
+2026-11-04 用户要求给 `ios-testflight` 技能补一步：出包前列出自上个构建以来的 iOS 提交，让用户确认包里有什么（起因：build 6 带上了用户选过「先不出」的改动）；
+随后又要求把确认过的内容写进 TestFlight 的「测试内容」。需求 [ios-testflight-build-notes](specs/ios-testflight-build-notes.md)，计划与实施记录 [ios-testflight-build-notes](plans/ios-testflight-build-notes.md)。
+
+已完成并验过：`changes.mjs`（基线标签、清单、「被丢掉的集合」校验）、签名 helper 的 `notes` 操作（`read`／`write`／`probe`）与 `helper.py notes`、skill 流程改写；
+本机已装新 helper（换掉的旧版留作 `testflight-helper.previous`）；本地附注标签 `ios-testflight-3/4/5/6` 已补；对 build 6 做过 `read` 与 `probe`（两种语言都「写入→读回→删除」通过，事后没有残留）；
+`status` 与 `upload.py … --check-signing` 在新 helper 下正常；离线测试 19 条（`npm test` 会跑）。
+
+下一步：
+- [ ] build 7 首次真用：用户下次要求出包时，完整走 skill 的第 1–10 步（出包前清单与确认门 → 归档上传 → `VALID` 后写测试内容并读回 → 打标签 `ios-testflight-7` → 记录）。第一次真写测试内容的结果，尤其是多行中英文在手机 TestFlight 里的显示，要记进出包记录；全部走通后删除本节。
+- [ ] 下一次出包会被现有预检拦下：main 上已有 iPad 与折叠屏内屏的改动（`build(ios): ship the app to iPad as well as iPhone`，设备族改为 `1,2`），而 `upload.py` 与签名 helper 的出包预检仍要求 `UIDeviceFamily == [1]`（只认 iPhone）。放宽成 `[1, 2]` 要改 helper（审阅、重装）；这次没有动它，出 build 7 前先问用户怎么处理。
+
 ## 待验收：iOS「做完 / 出错」通知收窄（Mac 端与 App 端都已实现，真机一轮未做）
 
 2026-10-27 用户决定：App 里去掉手动「关注」星标（Agents 页本来就能看到所有 Agent 的状态），只保留「从手机创建的任务做完 / 出错」的自动通知，

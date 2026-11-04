@@ -1,6 +1,6 @@
 # iOS 出包前变更清单与 TestFlight 测试内容 实施计划
 
-需求与决策见 [规格](../specs/ios-testflight-build-notes.md)。状态：2026-11-04 起草，同日用户批准（含换 helper、补标签 3–6、对 build 6 做 read 与 probe，三处默认做法不改），实施中。
+需求与决策见 [规格](../specs/ios-testflight-build-notes.md)。状态：2026-11-04 起草，同日用户批准（含换 helper、补标签 3–6、对 build 6 做 read 与 probe，三处默认做法不改），同日已实现并验到 build 6；整条链等 build 7 首次真用（见 §10 实施记录）。
 
 本计划自成一体：先复述要做什么与全部规则，再给改动清单、各部分的设计、验证与提交。**任何与本计划不一致的做法，先经 AskHuman 问用户。**
 
@@ -63,7 +63,7 @@
 **请求校验（`NotesRules.swift`，启动器那边再做一遍）**：
 
 - `mode` 只能是上述三个；`build` 必须匹配 `^[1-9][0-9]{0,8}$`；`write` 必须带 `texts` 且至少一种语言，`read`／`probe` 不得带。
-- 语言只能是 `zh-Hans`、`en-US`。文本规范化：`\r\n`、`\r` 统一为 `\n`；去掉整段末尾的空白与换行；拒绝除换行外的控制字符（U+0000–U+001F、U+007F）。规范化后长度 1–4000，**按 UTF-16 单元计**（是字符数、标量数、字形簇数里最严的一个），超长直接拒绝，不截断。
+- 语言只能是 `zh-Hans`、`en-US`。文本规范化：`\r\n`、`\r` 统一为 `\n`；去掉整段末尾连续的空格（U+0020）与换行，其他空白字符（如不换行空格）原样保留，这样 Swift 与 Python 两边不会因为各自的「空白」定义不同而漂移；拒绝除换行外的控制字符（U+0000–U+001F、U+007F）。检查顺序固定为：控制字符、是否为空、长度。规范化后长度 1–4000，**按 UTF-16 单元计**（是字符数、标量数、字形簇数里最严的一个），超长直接拒绝，不截断。
 - 请求文件必须是普通文件、属于当前用户、权限 `0600`、不超过 64 KiB。
 
 **接口白名单**（同一个函数集中检查方法与路径形状，其他一律拒绝）：
@@ -149,3 +149,26 @@ build 2 的出包记录没有写源码提交，不补。这四个提交都已核
 | 标签打错提交 | 归档前后各校验 HEAD 与工作树；变了就停下问用户；标签用附注并写明 Apple 构建 ID |
 | 换点出包的临时 worktree 占盘 | 出包前沿用机器健康检查；用完立即删除临时 worktree |
 | 误以为「写了测试内容」＝「用户已同意发布」 | 上传授权仍来自用户对具体出包的请求；测试内容只是该次授权的一部分，且已在出包前经用户确认 |
+
+## 10. 实施记录（2026-11-04）
+
+与计划的差异：
+
+1. 提交：计划的第 2、3 个提交合成一个。`changes.mjs` 与 `notes` 共用同一个测试文件（`scripts/*.node-test.mjs` 是项目的测试入口），拆开会让第一个提交的测试不是全绿。
+2. 空白规则细化为只认 U+0020 与 U+000A，检查顺序固定为「控制字符、是否为空、长度」（见 §3），避免 Swift 与 Python 各自的「空白」定义不同。
+3. 闸门比计划更窄：`PATCH` 只允许改「本次为目标构建列出的」或「本次创建的」条目，并且只在 `write` 模式。
+4. 真实运行发现一个启动器的错误：`read` 与 `probe` 发出的请求里带了空的 `texts`，helper 按设计拒绝（发生在任何网络请求之前，没有副作用）。启动器改为只在 `write` 时带 `texts`（`notes_wire`），并增加「启动器写出的请求必须能被 helper 的校验原样接受」的往返测试；故意把它改坏后，该测试会变红。
+
+测试：`scripts/ios-testflight-changes.node-test.mjs` 共 19 条（合成 git 仓库测 `changes.mjs`；Python 与 Swift 两边读同一份 `notes-rules-cases.json`；`NotesRulesTests.swift` 128 项检查；helper 全部源码的类型检查）。另做了 12 项变异检查（故意改坏长度上限、闸门、空白规则、合并提交处理、基线排序、脏树检查、「被丢掉的集合」校验等），测试全部变红。
+
+在线验证（均按计划顺序，逐步进行）：
+
+- 换 helper 前先留一份 `status` 输出；`helper.py install`（新 helper 305 KB；换掉的旧 helper 保存为 `testflight-helper.previous`，与换前字节一致）；换后的 `status` 与换前逐字相同，Keychain 静默可用，没有弹授权。
+- `upload.py ios/build/AskHuman-TestFlight.xcarchive --check-signing`：`EXPORT SUCCEEDED`（只在本地签名，没有上传；没有临时密钥残留）。
+- build 6 `notes --mode read`：没有任何语言有文本。Apple 接受了按 App 与构建号查构建、按构建过滤测试内容两种查询。
+- build 6 `notes --mode probe`：`en-US` 与 `zh-Hans` 都 `probed` 且读回一致（标记文本两行共 48 个 UTF-16 单元，换行、`•`、中文都原样读回），全程 4.6 秒；随后再 `read`，build 6 没有残留。没有向 build 6 写过任何真实文字。
+- 本地附注标签 `ios-testflight-3/4/5/6` 已建（仅本地，远端没有）。`changes.mjs --point main`：基线 `ios-testflight-6`，列出 3 个 iOS 提交（见 `docs/plans/ios-channel.md`）。
+
+没有验证的：整条链的首次真用要等 build 7；多行中英文测试内容在手机 TestFlight 里的实际显示只验到 API 读回，没有在手机上看过（`probe` 的标记文本已被删除）。
+
+发现：`changes.mjs` 在 main 上列出的 3 个提交里有「iPad 设备族」（`build(ios): ship the app to iPad as well as iPhone`，设备族改为 `1,2`）。`upload.py` 与 helper 的出包预检仍要求 `UIDeviceFamily == [1]`，所以 build 7 会被预检拦下。这是 skill 既有的 iPhone-only 约束，与本功能无关，这里没有改，记在 `docs/PROGRESS.md`，出 build 7 前先问用户。
