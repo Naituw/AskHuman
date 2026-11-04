@@ -1,12 +1,13 @@
 <script setup lang="ts">
 // 交互区插槽（spec gui-agent-console R1/C3/C9）：按优先级切换——插话输入（工作中且非 Grok）/
+// Cursor Desktop 聊天直发输入（空闲或已结束，daemon 标 `canMessage`）/
 // Grok 提示 / 空闲提示（+ 新建任务快捷入口）/ 已结束提示。未来「提问卡」为最高优先级内容。
-import { codexDesktop, codexDesktopAttachments } from "../../lib/ipc";
+import { agentsMessage, codexDesktop, codexDesktopAttachments } from "../../lib/ipc";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import type { AgentRecord, ImageAttachment } from "../../lib/types";
+import type { AgentKind, AgentRecord, ImageAttachment } from "../../lib/types";
 import ComposerAttachments from "../../components/ComposerAttachments.vue";
 import { useInterjectAttachments } from "../interject/useInterjectAttachments";
 import { primaryModifierPressed, primaryShortcutLabel } from "../../lib/platform";
@@ -38,8 +39,12 @@ const busy = ref(false);
 const error = ref("");
 const receipt = ref("");
 const pending = ref<{op: "send"; sessionId: string; text: string; files: string[]; id: string} | null>(null);
+// A message sent straight to a Cursor chat that is not working. Its id, text and files are fixed
+// when the first attempt starts, so pressing Send again after a lost answer is the same operation;
+// `unknown` marks a verdict that says it may have been sent, which only the user can settle.
+const direct = ref<{id: string; kind: AgentKind; sessionId: string; text: string; files: string[]; unknown: boolean} | null>(null);
 let stopId: string | null = null;
-function editable() { return !busy.value && !pending.value; }
+function editable() { return !busy.value && !pending.value && !direct.value; }
 function paste(event: ClipboardEvent) { if (editable()) attachments.onPaste(event); }
 
 
@@ -50,6 +55,7 @@ watch(
     draft.value = "";
     attachments.reset();
     pending.value = null;
+    direct.value = null;
     stopId = null;
     error.value = "";
     receipt.value = "";
@@ -58,13 +64,59 @@ watch(
 
 function canSend(): boolean {
   return props.record.kind !== "antigravity" && (
-    !!props.record.desktop || (props.record.state === "working" && props.record.kind !== "grok")
+    !!props.record.desktop || !!props.record.canMessage || !!direct.value ||
+    (props.record.state === "working" && props.record.kind !== "grok")
   );
+}
+
+function placeholder(): string {
+  if (props.record.desktop) return t("desktop.message");
+  return t(props.record.canMessage || direct.value ? "console.cursorPlaceholder" : "console.composerPlaceholder");
+}
+
+async function sendDirect(text: string): Promise<void> {
+  const sessionId = props.record.sessionId;
+  busy.value = true;
+  error.value = "";
+  receipt.value = "";
+  try {
+    direct.value ??= {
+      id: crypto.randomUUID(), kind: props.record.kind, sessionId, text, unknown: false,
+      files: await codexDesktopAttachments(attachments.filePaths.value, attachments.pastedImages.value),
+    };
+    const sent = direct.value;
+    const result = await agentsMessage(sent.id, sent.kind, sent.sessionId, sent.text, sent.files);
+    // The console may have moved to another session while the answer was on its way.
+    if (props.record.sessionId !== sessionId) return;
+    if (result.status === "accepted") {
+      direct.value = null;
+      draft.value = "";
+      attachments.reset();
+      receipt.value = t("console.cursorSent");
+    } else if (result.status === "rejected") {
+      // Nothing was sent and the id is spent: the draft stays for another try under a new id.
+      direct.value = null;
+      error.value = result.message;
+    } else {
+      sent.unknown = true;
+      error.value = result.message;
+    }
+  } catch (e) {
+    // No verdict arrived: pressing Send again retries the very same operation.
+    if (props.record.sessionId === sessionId) error.value = String(e);
+  } finally {
+    busy.value = false;
+  }
 }
 
 async function send(): Promise<void> {
   const text = draft.value.trim();
   if (busy.value || attachments.busy.value || (!text && !attachments.hasAttachments.value) || !canSend()) return;
+  if (direct.value?.unknown) return;
+  if (props.record.canMessage || direct.value) {
+    await sendDirect(direct.value?.text ?? text);
+    return;
+  }
   if (!props.record.desktop) {
     emit("send", text, attachments.filePaths.value, attachments.pastedImages.value);
     draft.value = "";
@@ -168,7 +220,7 @@ onBeforeUnmount(() => unlistenDrop?.());
               v-model="draft"
               class="textarea"
               rows="2"
-              :placeholder="t(record.desktop ? 'desktop.message' : 'console.composerPlaceholder')"
+              :placeholder="placeholder()"
               :readonly="!editable()"
               @keydown="onKeydown"
             />
@@ -207,7 +259,7 @@ onBeforeUnmount(() => unlistenDrop?.());
             <button v-if="record.desktop && record.state === 'working'" class="btn" :disabled="busy" @click="stop">{{ t('desktop.stop') }}</button>
             <button
               class="btn primary send"
-              :disabled="(!draft.trim() && !attachments.hasAttachments.value) || attachments.busy.value || busy"
+              :disabled="(!draft.trim() && !attachments.hasAttachments.value) || attachments.busy.value || busy || direct?.unknown"
               @click="send"
             >
               {{ t("console.send") }} <span class="kbd">{{ submitBareEnter ? "↵" : submitShortcut }}</span>
@@ -219,7 +271,7 @@ onBeforeUnmount(() => unlistenDrop?.());
         </p>
         <p v-if="error" class="attachment-error" role="alert">{{ error }}</p>
         <p v-else-if="receipt" class="interact-hint" role="status">{{ receipt }}</p>
-        <button v-if="pending && !busy" class="pending-revoke" @click="pending = null; error = ''">{{ t('desktop.checked') }}</button>
+        <button v-if="(pending || direct) && !busy" class="pending-revoke" @click="pending = null; direct = null; error = ''">{{ t('desktop.checked') }}</button>
       </div>
     </template>
     <p v-else-if="record.state === 'working' && record.kind === 'grok'" class="interact-hint">

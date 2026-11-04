@@ -274,6 +274,7 @@ fn history(invoke: Invoke<Wry>) -> bool {
         crate::commands::agents_focus,
         crate::commands::focus_request,
         crate::commands::interject_append,
+        crate::commands::agents_message,
         crate::commands::interject_peek,
         crate::commands::console_transcript,
         crate::commands::console_diff_stat,

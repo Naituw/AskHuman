@@ -1052,6 +1052,8 @@ export default {
       write: "Edit",
     },
     composerPlaceholder: "Message this agent (delivered at its next tool call)…",
+    cursorPlaceholder: "Message this Cursor chat (it must be open in a Cursor window)…",
+    cursorSent: "Sent. Cursor has started working on it.",
     send: "Send",
     pendingCount: "{n} queued",
     pendingAttachments: "{n} attachment(s)",

@@ -321,8 +321,11 @@ pub(super) async fn interject(
     if text(rec, "kind") != kind.as_str() {
         return InterjectResult::rejected("notFound");
     }
-    if text(rec, "state") == "idle" {
-        return super::agent_control::send(
+    // A Cursor Desktop chat the registry has called "ended" is still a chat; whether it can be
+    // continued is `agent_control`'s call (`can_send`), not a queue for a hook that will not run.
+    if text(rec, "state") == "idle" || (text(rec, "state") == "ended" && kind == AgentKind::Cursor)
+    {
+        let sent = super::agent_control::send(
             state,
             super::agent_control::Message {
                 continuation_instruction: None,
@@ -344,6 +347,7 @@ pub(super) async fn interject(
             },
         )
         .await;
+        return super::agent_control::for_phone(sent);
     }
     let can = super::agent_control::can_send(state, rec);
     if !can.ok {

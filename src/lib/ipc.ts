@@ -248,6 +248,19 @@ export const interjectAppend = (
   pastedImages: ImageAttachment[] = [],
 ) => invoke<void>("interject_append", { sessionId, text, filePaths, pastedImages });
 
+/** The daemon's verdict on a message sent straight to a chat that is not working. */
+export type AgentsMessageResult =
+  | {status: "accepted"}
+  /** Nothing was sent, and `id` is spent: the next attempt needs a new one. */
+  | {status: "rejected"; reason: string; message: string}
+  /** It may have been sent; `message` says to check the chat first. */
+  | {status: "unknown"; message: string};
+/** Send a message straight to a chat the console can message (`AgentRecord.canMessage`). Files must
+ *  already be on disk (`codexDesktopAttachments`), and a retry of the same `id` must carry the same
+ *  text and files. A thrown error means no verdict arrived: retry with the same `id`. */
+export const agentsMessage = (id: string, kind: AgentKind, sessionId: string, text: string, filePaths: string[]) =>
+  invoke<AgentsMessageResult>("agents_message", {id, kind, sessionId, text, filePaths});
+
 /** 待送达气泡内容查询；daemon 未运行时返回空状态。 */
 export const interjectPeek = (sessionId: string) =>
   invoke<InterjectPending>("interject_peek", { sessionId });

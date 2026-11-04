@@ -1115,6 +1115,18 @@ pub async fn cursor_desktop(
     .await
 }
 
+/// Send a message typed in the Agents console straight to a chat that is not working. `Err` means
+/// the daemon's answer did not arrive, so the message may or may not have been sent.
+pub async fn agent_message(
+    message: crate::agents::control::ConsoleMessage,
+) -> Result<serde_json::Value, String> {
+    desktop_round_trip(ClientMsg::AgentMessage { message }, |msg| match msg {
+        ServerMsg::AgentMessage { result } => Some(result),
+        _ => None,
+    })
+    .await
+}
+
 /// One request and its single answer on a fresh connection to the daemon.
 async fn desktop_round_trip(
     request: ClientMsg,

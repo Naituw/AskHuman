@@ -4201,6 +4201,28 @@ pub async fn interject_append(
     Ok(())
 }
 
+/// 控制台给不在工作中的 Cursor Desktop 聊天直接发消息：不排队，由 daemon 送进原聊天并回判定
+/// （`status` 为 `accepted` / `rejected` / `unknown`）。`file_paths` 必须是已落盘的文件：同一 `id`
+/// 的重试要带同样的路径，粘贴的图片先用 `codex_desktop_attachments` 落盘一次。
+#[tauri::command]
+pub async fn agents_message(
+    id: String,
+    kind: crate::agents::AgentKind,
+    session_id: String,
+    text: String,
+    file_paths: Option<Vec<String>>,
+) -> Result<serde_json::Value, String> {
+    let files = prepare_interject_attachments(file_paths.unwrap_or_default(), Vec::new()).await?;
+    crate::client::agent_message(crate::agents::control::ConsoleMessage {
+        id,
+        kind,
+        session_id,
+        text,
+        files,
+    })
+    .await
+}
+
 /// 待送达气泡内容查询（C3）：返回全文、条数与附件；daemon 未运行 → 空状态。
 #[tauri::command]
 pub async fn interject_peek(session_id: String) -> Result<InterjectPendingView, String> {

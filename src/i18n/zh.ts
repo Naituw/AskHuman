@@ -1030,6 +1030,8 @@ export default {
       write: "编辑",
     },
     composerPlaceholder: "给这个 Agent 发消息（下一次工具调用时送达）…",
+    cursorPlaceholder: "给这个 Cursor 聊天发消息（需要它已在 Cursor 窗口中打开）…",
+    cursorSent: "已发送，Cursor 开始处理。",
     send: "发送",
     pendingCount: "待送达 {n} 条",
     pendingAttachments: "{n} 个附件",

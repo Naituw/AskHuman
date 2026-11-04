@@ -48,14 +48,26 @@ pub(super) fn agents_snapshot_for_gui(state: &Arc<ServerState>) -> serde_json::V
     snap
 }
 
+/// 给状态窗口订阅者的快照：`agents_snapshot_for_gui` 再标上控制台可以直接发消息的聊天
+/// （`canMessage: true`，目前只有 Cursor Desktop 的空闲 / 已结束聊天）。手机端自己按会话算
+/// `canInterject`，故不走这里。
+pub(super) fn agents_snapshot_for_console(state: &Arc<ServerState>) -> serde_json::Value {
+    let mut snap = agents_snapshot_for_gui(state);
+    super::agent_control::mark_messageable(state, &mut snap, &super::agent_control::cached_chat);
+    snap
+}
+
 /// 向所有状态窗口推送一次 agent 全量快照（顺带剔除已断开的发送端）。
 /// agent 忙闲变化也影响菜单栏状态，故顺带刷新 TrayState。
 pub(super) fn broadcast_agents_state(state: &Arc<ServerState>) {
-    let msg = ServerMsg::AgentsState {
-        agents: agents_snapshot_for_gui(state),
-    };
-    if let Ok(mut subs) = state.agent_subs.lock() {
-        subs.retain(|tx| tx.send(msg.clone()).is_ok());
+    // 无订阅者时不构造快照（廉价早退）：新订阅者在订阅时自会拿到一份完整快照。
+    if has_agent_subs(state) {
+        let msg = ServerMsg::AgentsState {
+            agents: agents_snapshot_for_console(state),
+        };
+        if let Ok(mut subs) = state.agent_subs.lock() {
+            subs.retain(|tx| tx.send(msg.clone()).is_ok());
+        }
     }
     broadcast_tray_state(state);
 }
@@ -82,7 +94,7 @@ pub(super) async fn handle_agents_sub(
         subs.push(tx.clone());
     }
     let _ = tx.send(ServerMsg::AgentsState {
-        agents: agents_snapshot_for_gui(state),
+        agents: agents_snapshot_for_console(state),
     });
 
     // 读循环：焦点会话更新 + 断开探测（其它消息忽略）。

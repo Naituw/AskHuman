@@ -142,6 +142,8 @@ pub fn control_reason(reason: Option<&str>, lang: Lang) -> Option<&'static str> 
         ("stateChanged" | "resultChanged", Lang::En) => "The chat or turn has changed. Check the original chat first.",
         ("ended" | "notFound", Lang::Zh) => "原会话已经结束或无法找到，请回到原 Agent 检查。",
         ("ended" | "notFound", Lang::En) => "The original chat has ended or cannot be found. Check it in the Agent.",
+        ("chatNotLoaded", Lang::Zh) => "Cursor 里没有打开这个聊天，没有发送；请先在 Cursor 里打开它，再回到原会话检查。",
+        ("chatNotLoaded", Lang::En) => "Cursor has not opened this chat in any window, so nothing was sent. Open it in Cursor and check the original chat.",
         ("nativeUnavailable", Lang::Zh) => "原会话的控制通道暂不可用，请恢复连接后检查原会话。",
         ("nativeUnavailable", Lang::En) => "The chat's control channel is temporarily unavailable. Reconnect and check the original chat.",
         _ => return None,
