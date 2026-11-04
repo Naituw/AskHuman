@@ -225,10 +225,12 @@ v1 只有「快速添加待办」（不离开当前界面，把一句话记成�
 已完成并验过：`changes.mjs`（基线标签、清单、「被丢掉的集合」校验）、签名 helper 的 `notes` 操作（`read`／`write`／`probe`）与 `helper.py notes`、skill 流程改写；
 本机已装新 helper（换掉的旧版留作 `testflight-helper.previous`）；本地附注标签 `ios-testflight-3/4/5/6` 已补；对 build 6 做过 `read` 与 `probe`（两种语言都「写入→读回→删除」通过，事后没有残留）；
 `status` 与 `upload.py … --check-signing` 在新 helper 下正常；离线测试 19 条（`npm test` 会跑）。
+出包预检已放宽为只认 iPhone＋iPad（设备族 `1,2`，App 与通知扩展都要），并检查 iPad 方向声明，需求与计划 [ios-testflight-ipad-preflight](specs/ios-testflight-ipad-preflight.md)：
+用 build 7 候选归档在本地验过预检与 `--check-signing`，build 6 的仅 iPhone 归档被预检与 helper 拒绝；helper 因此再次重装（换掉的版本留作 `testflight-helper.previous`），另有离线测试 3 条；候选归档已删除，没有上传。
 
 下一步：
 - [ ] build 7 首次真用：用户下次要求出包时，完整走 skill 的第 1–10 步（出包前清单与确认门 → 归档上传 → `VALID` 后写测试内容并读回 → 打标签 `ios-testflight-7` → 记录）。第一次真写测试内容的结果，尤其是多行中英文在手机 TestFlight 里的显示，要记进出包记录；全部走通后删除本节。
-- [ ] 下一次出包会被现有预检拦下：main 上已有 iPad 与折叠屏内屏的改动（`build(ios): ship the app to iPad as well as iPhone`，设备族改为 `1,2`），而 `upload.py` 与签名 helper 的出包预检仍要求 `UIDeviceFamily == [1]`（只认 iPhone）。放宽成 `[1, 2]` 要改 helper（审阅、重装）；这次没有动它，出 build 7 前先问用户怎么处理。
+  build 7 也是 Apple 服务端第一次校验 iPad 构建（图标、方向、启动屏等；本地预检与候选归档的实际值只能降低风险，无法替代）：上传若报新的校验错误，停下并如实报告，不换参数重试。
 
 ## 待验收：iOS「做完 / 出错」通知收窄（Mac 端与 App 端都已实现，真机一轮未做）
 
