@@ -716,6 +716,30 @@ impl RequestRegistry {
             .collect()
     }
 
+    /// The project key of every request still waiting for an answer (asks and confirmations,
+    /// held cards included), verbatim as the surfaces show it: the phone hashes this same string
+    /// into the project id it writes todos under (docs/specs/todo-quick-add.md D14). Blank keys
+    /// are skipped and duplicates collapsed; asks come first, then confirmations, each in
+    /// creation order, so the answer is stable.
+    pub fn in_flight_projects(&self) -> Vec<String> {
+        let inner = self.inner.lock().unwrap();
+        let mut asks: Vec<&Arc<RequestEntry>> = inner.by_id.values().collect();
+        asks.sort_by_key(|entry| entry.seq);
+        let mut confirms: Vec<&Arc<ConfirmEntry>> = inner.confirm_by_id.values().collect();
+        confirms.sort_by_key(|entry| entry.seq);
+        let keys = asks
+            .into_iter()
+            .map(|entry| entry.show.project.as_str())
+            .chain(confirms.into_iter().map(|entry| entry.project.as_str()));
+        let mut projects: Vec<String> = Vec::new();
+        for key in keys {
+            if !key.trim().is_empty() && !projects.iter().any(|seen| seen == key) {
+                projects.push(key.to_string());
+            }
+        }
+        projects
+    }
+
     /// 所有在途请求关联的调用方 agent pid（去重）。供 daemon「工作中兜底超时」豁免——
     /// 凡有在途 AskHuman 请求的 agent（正等待人类回答）都持续刷新活动、不被降级为空闲。
     /// 优先用异步解析出的 `resolved_agent.pid`（最准、当次现取），否则回退 `show.agent_pid`。
@@ -1439,5 +1463,46 @@ mod tests {
         assert!(registry.in_flight_agent_requests().is_empty());
         assert!(!registry.waiting_for_session("s-ask"));
         assert!(!registry.waiting_for_session("session-1"));
+    }
+
+    /// `in_flight_projects` (docs/specs/todo-quick-add.md D14): the project key of every request
+    /// still waiting, verbatim, asks before confirmations, blanks skipped, duplicates collapsed.
+    #[test]
+    fn in_flight_projects_lists_waiting_requests_in_order_without_blanks_or_duplicates() {
+        let in_project = |project: &str| -> TaskRequest {
+            let mut task = ask_task(None, "continue?");
+            task.project = project.to_string();
+            task
+        };
+        let registry = RequestRegistry::new();
+        assert!(registry.in_flight_projects().is_empty());
+
+        let mut confirm = confirm_task();
+        confirm.project = "/w/gate".into();
+        let (c1, _rx1) = registry.create_confirm(confirm, None).unwrap();
+        let (a1, _rx2) = registry.create(in_project("/w/app"), None);
+        let (a2, _rx3) = registry.create(in_project("/w/app"), None); // same project again
+        let (a3, _rx4) = registry.create(in_project(""), None); // no project: nothing to write to
+        let (a4, _rx5) = registry.create(in_project("   "), None);
+        let (a5, _rx6) = registry.create(in_project("/w/blog"), None);
+        let mut gate_again = confirm_task();
+        gate_again.project = "/w/gate".into();
+        let (c2, _rx7) = registry.create_confirm(gate_again, None).unwrap();
+        assert_eq!(
+            registry.in_flight_projects(),
+            ["/w/app", "/w/blog", "/w/gate"],
+            "asks first (creation order), then confirmations; blanks and repeats dropped"
+        );
+
+        // A request that ended no longer counts.
+        registry.remove(&a1.request_id);
+        registry.remove(&a2.request_id);
+        registry.remove(&a3.request_id);
+        registry.remove(&a4.request_id);
+        assert_eq!(registry.in_flight_projects(), ["/w/blog", "/w/gate"]);
+        registry.remove(&a5.request_id);
+        registry.remove_confirm(&c1.request_id);
+        registry.remove_confirm(&c2.request_id);
+        assert!(registry.in_flight_projects().is_empty());
     }
 }

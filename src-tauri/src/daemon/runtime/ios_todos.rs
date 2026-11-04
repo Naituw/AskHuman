@@ -105,11 +105,21 @@ struct World {
     file: TodoFile,
     ranked: Vec<RankedTodoProject>,
     sync: Vec<service::SyncProject>,
+    /// The projects of requests still waiting for an answer. The phone adds a todo to the project
+    /// of the request it is looking at; an Agent blocked on that request is `waiting`, which the
+    /// ranking skips, so the project may be in no list at all (docs/specs/todo-quick-add.md D14).
+    /// Only used to resolve ids: it never adds a row to the project list.
+    in_flight: Vec<String>,
     enabled: bool,
 }
 
 impl World {
-    fn gather(env: &TodoEnv, workspaces: Vec<Workspace>, agents: Option<&Value>) -> Self {
+    fn gather(
+        env: &TodoEnv,
+        workspaces: Vec<Workspace>,
+        agents: Option<&Value>,
+        in_flight: Vec<String>,
+    ) -> Self {
         let file = env.file();
         let ranked = rank_todo_projects(&file.projects, workspaces, agents);
         let enabled = env.sync.enabled();
@@ -122,12 +132,14 @@ impl World {
             file,
             ranked,
             sync,
+            in_flight,
             enabled,
         }
     }
 
-    /// The key a project id names, searched in the lists and in the sync links (any directory of
-    /// a synced project resolves, so an id from before the list was re-ranked still works).
+    /// The key a project id names, searched in the lists, in the sync links (any directory of a
+    /// synced project resolves, so an id from before the list was re-ranked still works) and in
+    /// the projects of the requests still waiting.
     fn resolve(&self, id: &str) -> Option<String> {
         let ranked = self.ranked.iter().map(|project| project.key.as_str());
         let stored = self
@@ -141,9 +153,11 @@ impl World {
             .iter()
             .flat_map(|project| project.keys.iter().chain(project.cloud_key.iter()))
             .map(String::as_str);
+        let waiting = self.in_flight.iter().map(String::as_str);
         ranked
             .chain(stored)
             .chain(synced)
+            .chain(waiting)
             .find(|key| project_id(key) == id)
             .map(str::to_string)
     }
@@ -385,10 +399,16 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, 
 
 pub(super) async fn projects(state: &Arc<ServerState>) -> wire::TodoProjects {
     let agents = state.agents.snapshot();
+    let in_flight = state.registry.in_flight_projects();
     blocking(
         move || {
             let env = TodoEnv::production();
-            let world = World::gather(&env, crate::agents::workspaces::list(), Some(&agents));
+            let world = World::gather(
+                &env,
+                crate::agents::workspaces::list(),
+                Some(&agents),
+                in_flight,
+            );
             projects_of(&env, &world)
         },
         wire::TodoProjects::empty(),
@@ -398,12 +418,18 @@ pub(super) async fn projects(state: &Arc<ServerState>) -> wire::TodoProjects {
 
 pub(super) async fn list(state: &Arc<ServerState>, id: &str) -> wire::TodoList {
     let agents = state.agents.snapshot();
+    let in_flight = state.registry.in_flight_projects();
     let id = id.to_string();
     let fallback = wire::TodoList::missing(&id, 0);
     blocking(
         move || {
             let env = TodoEnv::production();
-            let world = World::gather(&env, crate::agents::workspaces::list(), Some(&agents));
+            let world = World::gather(
+                &env,
+                crate::agents::workspaces::list(),
+                Some(&agents),
+                in_flight,
+            );
             list_by_id(&env, &world, &id)
         },
         fallback,
@@ -413,11 +439,17 @@ pub(super) async fn list(state: &Arc<ServerState>, id: &str) -> wire::TodoList {
 
 pub(super) async fn apply(state: &Arc<ServerState>, op: &wire::TodoOp) -> TodoApplied {
     let agents = state.agents.snapshot();
+    let in_flight = state.registry.in_flight_projects();
     let op = op.clone();
     blocking(
         move || {
             let env = TodoEnv::production();
-            let world = World::gather(&env, crate::agents::workspaces::list(), Some(&agents));
+            let world = World::gather(
+                &env,
+                crate::agents::workspaces::list(),
+                Some(&agents),
+                in_flight,
+            );
             apply_op(&env, &world, &op)
         },
         TodoApplied::refused("failed", "persist", None),
@@ -561,11 +593,17 @@ mod tests {
         }
 
         fn world(&self) -> World {
-            World::gather(&self.env, Vec::new(), None)
+            World::gather(&self.env, Vec::new(), None, Vec::new())
         }
 
         fn world_with(&self, workspaces: Vec<Workspace>) -> World {
-            World::gather(&self.env, workspaces, None)
+            World::gather(&self.env, workspaces, None, Vec::new())
+        }
+
+        /// A world in which these projects have a request waiting for an answer.
+        fn world_in_flight(&self, projects: &[&str]) -> World {
+            let waiting = projects.iter().map(|key| key.to_string()).collect();
+            World::gather(&self.env, Vec::new(), None, waiting)
         }
 
         fn projects(&self) -> wire::TodoProjects {
@@ -868,7 +906,7 @@ mod tests {
             history_limit: 100,
             sync: Box::new(sync),
         };
-        let world = World::gather(&env, Vec::new(), None);
+        let world = World::gather(&env, Vec::new(), None, Vec::new());
         let list = list_by_id(&env, &world, &project_id("/w/app"));
         assert_eq!(list.pending[0].by.as_deref(), Some("MacBook"));
         assert_eq!(
@@ -998,6 +1036,94 @@ mod tests {
         );
         assert_eq!(result.status, "ok");
         assert_eq!(result.list.unwrap().pending.len(), 1);
+    }
+
+    // The request-page "add todo" (docs/specs/todo-quick-add.md D14): the project of a request that
+    // is still waiting resolves even though no list knows it.
+
+    fn add_op(key: &str, text: &str) -> wire::TodoOp {
+        wire::TodoOp {
+            id: project_id(key),
+            text: Some(text.into()),
+            ..op("add")
+        }
+    }
+
+    #[test]
+    fn add_to_the_project_of_a_waiting_request_that_no_list_knows() {
+        let s = setup(FakeSync::default());
+        // Nothing about /w/blocked is stored, ranked, hidden or synced: only its request is waiting.
+        let refused = apply_op(&s.env, &s.world(), &add_op("/w/blocked", "note"));
+        assert_eq!(
+            (refused.status, refused.reason.as_deref()),
+            ("notFound", Some("unknownProject")),
+            "without the waiting request the id is unknown, as before"
+        );
+        assert!(todos::list_at(&s.env.path, "/w/blocked").is_empty());
+
+        let world = s.world_in_flight(&["/w/blocked"]);
+        let added = apply_op(&s.env, &world, &add_op("/w/blocked", "note"));
+        assert_eq!(added.status, "ok");
+        let list = added.list.expect("the project afterwards");
+        assert_eq!(list.name, "blocked");
+        assert_eq!(
+            list.pending
+                .iter()
+                .map(|t| t.text.as_str())
+                .collect::<Vec<_>>(),
+            ["note"]
+        );
+        // It landed in the same store, under the same key, the popup writes to.
+        let stored = todos::list_at(&s.env.path, "/w/blocked");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].text, "note");
+        assert_eq!(stored[0].id, added.todo_id.expect("the new todo's id"));
+    }
+
+    #[test]
+    fn a_hidden_workspace_resolves_while_its_request_waits() {
+        let s = setup(FakeSync::default());
+        let mut hidden = workspace("/w/hidden");
+        hidden.hidden = true;
+        let off_list = World::gather(&s.env, vec![hidden.clone()], None, Vec::new());
+        let refused = apply_op(&s.env, &off_list, &add_op("/w/hidden", "note"));
+        assert_eq!(refused.reason.as_deref(), Some("unknownProject"));
+
+        let waiting = World::gather(&s.env, vec![hidden], None, vec!["/w/hidden".to_string()]);
+        let added = apply_op(&s.env, &waiting, &add_op("/w/hidden", "note"));
+        assert_eq!(added.status, "ok");
+        assert_eq!(todos::list_at(&s.env.path, "/w/hidden").len(), 1);
+    }
+
+    #[test]
+    fn a_waiting_request_does_not_add_a_row_to_the_project_list() {
+        let s = setup(FakeSync::default());
+        s.add("/w/app", "one");
+        let world = s.world_in_flight(&["/w/blocked", "/w/app"]);
+        let list = projects_of(&s.env, &world);
+        assert_eq!(
+            list.projects.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["app"],
+            "the list is what the desktop sidebar shows; the waiting request only makes ids resolve"
+        );
+    }
+
+    #[test]
+    fn the_todos_of_a_waiting_requests_project_can_be_read() {
+        let s = setup(FakeSync::default());
+        s.add("/w/blocked", "already queued");
+        let world = s.world_in_flight(&["/w/blocked"]);
+        let list = list_by_id(&s.env, &world, &project_id("/w/blocked"));
+        assert!(list.found);
+        assert_eq!(list.pending.len(), 1);
+        // A project with no todos at all reads as an empty, found queue.
+        let empty = list_by_id(
+            &s.env,
+            &s.world_in_flight(&["/w/fresh"]),
+            &project_id("/w/fresh"),
+        );
+        assert!(empty.found);
+        assert!(empty.pending.is_empty());
     }
 
     #[test]
