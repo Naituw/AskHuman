@@ -1,5 +1,5 @@
 import XCTest
-import AHCore
+@testable import AHCore
 import AHMock
 import AHStore
 import AHProtocol
@@ -48,6 +48,46 @@ final class RequestNavigationTests: XCTestCase {
         XCTAssertEqual(store.item(id: try XCTUnwrap(store.requestNavigation?.ids.last))?.sessionTitle, "A new question")
         let seen = await backend.seen
         XCTAssertTrue(seen.isEmpty, "assembling a queue never marks its neighbors read")
+    }
+
+    func testPickingFromAListThatStaysOnScreenBuildsTheQueueAgainFromWhatTheListShowsNow() async throws {
+        await make()
+        let migration = try item("req-migration")
+        store.inboxPath = [migration.id]
+        XCTAssertEqual(store.requestNavigation?.filter, .all)
+        // Two columns: the list stays up while a request is open, so it can be narrowed and picked from.
+        store.filter = .asks
+        let shown = store.inboxSections().flatMap { $0.items.map(\.id) }
+        let target = try XCTUnwrap(shown.first { $0 != migration.id })
+        store.openFromList(target)
+        XCTAssertEqual(store.inboxPath, [target], "picking replaces the open request, it does not stack")
+        XCTAssertEqual(store.requestNavigation?.filter, .asks)
+        XCTAssertEqual(store.requestNavigation?.ids, shown)
+        let seen = await backend.seen
+        XCTAssertTrue(seen.isEmpty, "building the queue never marks anything read; only a page that is shown does")
+        // Picking the open one again changes nothing.
+        let queue = store.requestNavigation
+        store.openFromList(target)
+        XCTAssertEqual(store.requestNavigation, queue)
+        XCTAssertEqual(store.inboxPath, [target])
+    }
+
+    func testPickingFromTheListEndsTheShowOfARequestJustSent() async throws {
+        await make()
+        let select = try item("req-select")
+        store.inboxPath = [select.id]
+        store.advanceTiming = AdvanceTiming(hold: .seconds(30), settle: .zero, note: .zero)
+        let composer = try XCTUnwrap(store.composer(for: select))
+        composer.toggle(question: 0, option: 0)
+        try await store.send(composer, item: select)
+        await eventually { self.store.receipt != nil }
+        let other = try XCTUnwrap(store.state.inbox.first { $0.id != select.id && $0.state == .pending })
+        store.openFromList(other.id)
+        XCTAssertNil(store.receipt, "going to another request on purpose ends the receipt")
+        XCTAssertEqual(store.inboxPath, [other.id])
+        XCTAssertEqual(store.requestNavigation?.ids.contains(other.id), true)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(store.inboxPath, [other.id], "the move that was pending must not drag the reader away again")
     }
 
     func testExplicitEntryUsesAllRequestsEvenWhenTheListIsFiltered() async throws {

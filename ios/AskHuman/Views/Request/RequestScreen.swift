@@ -39,7 +39,7 @@ struct RequestScreen: View {
         // read of it) is left on this one.
         .id(id)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
+        .hidesTabBarWhenCompact()
         .toolbar {
             if hasNeighbors { navigationButtons }
             if hasMore {
@@ -306,6 +306,7 @@ private struct MissingRequestPage: View {
                     if let hint = store.hint(for: id) { HintCard(hint: hint) }
                     status(missing)
                 }
+                .readableWidth()
                 .padding()
             }
             .background(Color(.systemGroupedBackground))
@@ -371,6 +372,7 @@ private struct LoadingRequest: View {
                     Text("Loading the full request…").foregroundStyle(.secondary)
                 }
             }
+            .readableWidth()
             .padding()
         }
         .background(Color(.systemGroupedBackground))

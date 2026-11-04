@@ -62,6 +62,7 @@ private struct AgentDetailContent: View {
                 }
                 WatchCard(item: item, watch: watch, live: live)
             }
+            .readableWidth()
             .padding()
             .padding(.bottom, 8)
         }
@@ -69,7 +70,7 @@ private struct AgentDetailContent: View {
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle(item.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
+        .hidesTabBarWhenCompact()
         .actionBar {
             bottomBar(live: live)
         }

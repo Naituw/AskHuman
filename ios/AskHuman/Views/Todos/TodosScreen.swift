@@ -9,6 +9,19 @@ struct TodosScreen: View {
     @Binding var showPairing: Bool
 
     var body: some View {
+        ColumnsOrStack {
+            TodosColumns(showPairing: $showPairing)
+        } stack: {
+            stack
+        }
+        // The tab asks the Macs for nothing while it is not the one on screen.
+        .onChange(of: store.tab, initial: true) { _, tab in
+            store.todos.setVisible(tab == .todos)
+        }
+    }
+
+    /// The phone's way: the projects, and the one that was opened pushed over them.
+    private var stack: some View {
         NavigationStack {
             Group {
                 if store.hasPairedMacs {
@@ -17,8 +30,7 @@ struct TodosScreen: View {
                     OnboardingView(showPairing: $showPairing)
                 }
             }
-            .navigationTitle("Todos")
-            .navigationBarTitleDisplayMode(.inline)
+            .modifier(TodosBar())
             .navigationDestination(
                 item: Binding(
                     get: { store.todos.opened },
@@ -27,16 +39,56 @@ struct TodosScreen: View {
             ) { target in
                 TodoProjectScreen(target: target)
             }
+        }
+    }
+}
+
+/// A wide window: the projects on the left, and on the right the todos of the one that was opened.
+///
+/// What is open is what the store has open (`todos.opened`, as it is for the phone's stack), so a project
+/// that goes away with its Mac leaves the right side to the placeholder.
+private struct TodosColumns: View {
+    @Environment(AppStore.self) private var store
+    @Binding var showPairing: Bool
+
+    var body: some View {
+        let open = store.todos.opened
+        // Before the Macs have answered nobody knows whether one is paired: the list stays until they say
+        // so, as it does for everyone who has one.
+        let hasList = store.hasPairedMacs || !store.hasState
+        ListDetailColumns(hasList: hasList, opened: open.map { "\($0.macId)/\($0.id)" }) {
+            TodosList(columns: true)
+                .modifier(TodosBar())
+        } detail: {
+            if !hasList {
+                OnboardingView(showPairing: $showPairing)
+            } else if let open {
+                TodoProjectScreen(target: open)
+                    // Each project has its own page: what is typed or folded on one is not carried to the next.
+                    .id("\(open.macId)/\(open.id)")
+            } else {
+                DetailPlaceholder(
+                    title: "Select a project", symbol: "checklist",
+                    message: "Pick one from the list to see and edit its todos."
+                )
+            }
+        }
+    }
+}
+
+/// The title in the bar of the list of projects: where the todos come from.
+private struct TodosBar: ViewModifier {
+    @Environment(AppStore.self) private var store
+
+    func body(content: Content) -> some View {
+        content
+            .navigationTitle("Todos")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if store.hasPairedMacs {
                     ToolbarItem(placement: .principal) { TodoSourceMenu() }
                 }
             }
-        }
-        // The tab asks the Macs for nothing while it is not the one on screen.
-        .onChange(of: store.tab, initial: true) { _, tab in
-            store.todos.setVisible(tab == .todos)
-        }
     }
 }
 
@@ -95,6 +147,8 @@ struct ProjectSearch: ViewModifier {
 
 private struct TodosList: View {
     @Environment(AppStore.self) private var store
+    /// Set where the list is the left column of two: the project that is open is tinted.
+    var columns = false
 
     var body: some View {
         @Bindable var todos = store.todos
@@ -109,13 +163,15 @@ private struct TodosList: View {
                 Section {
                     // Two Macs can send the same row id (it is a hash of a path): rows are told apart by Mac too.
                     ForEach(section.rows, id: \.key) { project in
+                        let picked = columns && todos.opened?.macId == project.macId && todos.opened?.id == project.id
                         Button {
                             todos.open(project)
                         } label: {
-                            TodoProjectRowView(project: project, kind: section.kind)
+                            TodoProjectRowView(project: project, kind: section.kind, pushes: !columns)
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("todo-project-" + project.id)
+                        .pickedRow(columns ? picked : nil)
                     }
                 } header: {
                     TodoSectionHeader(
@@ -179,6 +235,8 @@ private struct TodoProjectRowView: View {
     @Environment(AppStore.self) private var store
     let project: TodoListedProject
     let kind: TodoSection.Kind
+    /// The row opens its page over the list (the phone's stack): it says so with an arrow.
+    var pushes = true
 
     private var row: TodoProjectRow { project.row }
 
@@ -212,7 +270,9 @@ private struct TodoProjectRowView: View {
                     .padding(.vertical, 2)
                     .background(Color(.tertiarySystemFill), in: Capsule())
             }
-            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            if pushes {
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
         }
         .contentShape(Rectangle())
         .padding(.vertical, 2)

@@ -46,6 +46,7 @@ struct AnswerScreen: View {
                             }
                         }
                     }
+                    .readableWidth()
                     .padding([.horizontal, .top])
                     .padding(.bottom, 8)
                     .background(RequestReadingAnchor(name: "request-top"))

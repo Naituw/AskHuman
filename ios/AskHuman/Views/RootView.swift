@@ -148,6 +148,7 @@ struct InAppBanner: View {
         ZStack(alignment: .top) {
             if let banner = store.banner {
                 BannerCard(banner: banner)
+                    .frame(maxWidth: Columns.bannerWidth)
                     .padding(.horizontal, 12)
                     .padding(.top, 4)
                     .transition(.move(edge: .top).combined(with: .opacity))

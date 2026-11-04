@@ -17,6 +17,7 @@ struct HistoryDetailScreen: View {
                     confirmContent(confirm)
                 }
             }
+            .readableWidth()
             .padding()
         }
         .background(Color(.systemGroupedBackground))

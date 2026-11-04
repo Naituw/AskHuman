@@ -6,55 +6,110 @@ import AHStore
 
 struct HistoryScreen: View {
     @Environment(AppStore.self) private var store
+    /// The entry that is open: the one pushed over the list on a phone, the one beside it in a wide window.
+    /// Both ends read it from here, so a window that changes from one to the other keeps what was open.
+    @State private var opened: String?
+
+    var body: some View {
+        ColumnsOrStack {
+            HistoryColumns(opened: $opened)
+        } stack: {
+            NavigationStack(path: Binding(get: { opened.map { [$0] } ?? [] }, set: { opened = $0.last })) {
+                HistoryList()
+                    .navigationDestination(for: String.self) { id in
+                        if let entry = store.history.first(where: { $0.id == id }) {
+                            HistoryDetailScreen(entry: entry)
+                        } else {
+                            ContentUnavailableView("Entry removed", systemImage: "trash")
+                        }
+                    }
+            }
+        }
+    }
+}
+
+/// A wide window: the history on the left, and on the right the entry that was picked from it.
+private struct HistoryColumns: View {
+    @Environment(AppStore.self) private var store
+    @Binding var opened: String?
+
+    var body: some View {
+        let entry = opened.flatMap { id in store.history.first { $0.id == id } }
+        ListDetailColumns(opened: entry?.id) {
+            HistoryList(selection: $opened)
+        } detail: {
+            if let entry {
+                HistoryDetailScreen(entry: entry)
+                    // Each entry has its own page: what the one before it showed is not carried over.
+                    .id(entry.id)
+            } else {
+                DetailPlaceholder(
+                    title: "Select an entry", symbol: "clock",
+                    message: "Pick one from the list to see what was asked and how you answered."
+                )
+            }
+        }
+        // An entry that was deleted (or the history that was cleared) is no longer the one that is open.
+        .onChange(of: entry == nil, initial: true) { _, gone in
+            if gone, opened != nil { opened = nil }
+        }
+    }
+}
+
+private struct HistoryList: View {
+    @Environment(AppStore.self) private var store
+    /// Set where the list is the left column of two: a row is picked, not pushed.
+    var selection: Binding<String?>?
     @State private var query = ""
     @State private var confirmClear = false
 
     var body: some View {
-        NavigationStack {
-            let entries = filtered
-            List {
-                ForEach(entries) { entry in
-                    NavigationLink(value: entry.id) { HistoryRow(entry: entry) }
-                        .swipeActions {
-                            Button("Delete", role: .destructive) { Task { await store.deleteHistory(id: entry.id) } }
-                        }
-                        .accessibilityIdentifier("history-row-\(entry.request.id)")
-                }
+        let entries = filtered
+        List {
+            ForEach(entries) { entry in
+                row(entry)
+                    .swipeActions {
+                        Button("Delete", role: .destructive) { Task { await store.deleteHistory(id: entry.id) } }
+                    }
+                    .accessibilityIdentifier("history-row-\(entry.request.id)")
             }
-            .listStyle(.plain)
-            .overlay {
-                if store.history.isEmpty {
-                    ContentUnavailableView("No history yet", systemImage: "clock", description: Text("Requests you answer or cancel are listed here. They stay on this phone only."))
-                } else if entries.isEmpty {
-                    ContentUnavailableView.search(text: query)
-                }
+        }
+        .listStyle(.plain)
+        .overlay {
+            if store.history.isEmpty {
+                ContentUnavailableView("No history yet", systemImage: "clock", description: Text("Requests you answer or cancel are listed here. They stay on this phone only."))
+            } else if entries.isEmpty {
+                ContentUnavailableView.search(text: query)
             }
-            .searchable(text: $query, prompt: "Search history")
-            .navigationTitle("History")
-            .navigationDestination(for: String.self) { id in
-                if let entry = store.history.first(where: { $0.id == id }) {
-                    HistoryDetailScreen(entry: entry)
-                } else {
-                    ContentUnavailableView("Entry removed", systemImage: "trash")
-                }
-            }
-            .toolbar {
-                if !store.history.isEmpty {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            Button("Clear history", systemImage: "trash", role: .destructive) { confirmClear = true }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                        }
+        }
+        .searchable(text: $query, prompt: "Search history")
+        .navigationTitle("History")
+        .toolbar {
+            if !store.history.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("Clear history", systemImage: "trash", role: .destructive) { confirmClear = true }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
                 }
             }
-            .confirmationDialog("Clear the whole history?", isPresented: $confirmClear, titleVisibility: .visible) {
-                Button("Clear history", role: .destructive) { Task { await store.clearHistory() } }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This cannot be undone. Nothing is removed from your Macs.")
-            }
+        }
+        .confirmationDialog("Clear the whole history?", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("Clear history", role: .destructive) { Task { await store.clearHistory() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This cannot be undone. Nothing is removed from your Macs.")
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ entry: HistoryEntry) -> some View {
+        if let selection {
+            HistoryRow(entry: entry)
+                .pickable(picked: selection.wrappedValue == entry.id) { selection.wrappedValue = entry.id }
+        } else {
+            NavigationLink(value: entry.id) { HistoryRow(entry: entry) }
         }
     }
 

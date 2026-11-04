@@ -123,7 +123,9 @@ private struct ActionBarPin<Bar: View>: ViewModifier {
             // with a crisp edge on others.
             content
                 .scrollEdgeEffectStyle(.soft, for: .bottom)
-                .safeAreaBar(edge: .bottom, spacing: 0) { bar }
+                // The controls line up with the page above them, which is laid out no wider than a
+                // readable width. (The classic band, below, is a material across the whole width.)
+                .safeAreaBar(edge: .bottom, spacing: 0) { bar.readableWidth() }
         } else {
             content.safeAreaInset(edge: .bottom, spacing: 0) { bar }
         }

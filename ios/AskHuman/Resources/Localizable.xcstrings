@@ -3013,6 +3013,56 @@
         }
       }
     },
+    "Pick one from the list to follow it and talk to it." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从列表里选一个，查看它的进展并与它对话。"
+          }
+        }
+      }
+    },
+    "Pick one from the list to read and answer it." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从列表里选一条，查看并回答。"
+          }
+        }
+      }
+    },
+    "Pick one from the list to see and edit its todos." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从列表里选一个，查看并编辑它的待办。"
+          }
+        }
+      }
+    },
+    "Pick one from the list to see how it is doing and to manage it." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从列表里选一台，查看它的状态并管理它。"
+          }
+        }
+      }
+    },
+    "Pick one from the list to see what was asked and how you answered." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从列表里选一条，查看当时的提问和你的回答。"
+          }
+        }
+      }
+    },
     "Plan" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3429,6 +3479,56 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜索项目"
+          }
+        }
+      }
+    },
+    "Select a Mac" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一台 Mac"
+          }
+        }
+      }
+    },
+    "Select a project" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个项目"
+          }
+        }
+      }
+    },
+    "Select a request" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一条请求"
+          }
+        }
+      }
+    },
+    "Select a session" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个会话"
+          }
+        }
+      }
+    },
+    "Select an entry" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一条记录"
           }
         }
       }
