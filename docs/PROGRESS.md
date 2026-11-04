@@ -217,7 +217,7 @@ v1 只有「快速添加待办」（不离开当前界面，把一句话记成�
   `AskHumanTodosUITests.testAMacThatPredatesTodosAsksForAnUpdate`（上文已记）与 `testMacsThatBothSyncAreOneICloudSourceWithTheirOwnProjectsAndTheAgentsDots`（`AskHumanTodosUITests.swift:162`，断言「iCloud names its Macs」；与前一条同样走来源菜单，疑似同一个 18.5 上菜单无障碍报法的问题）；
   `AskHumanInputVisibilityUITests.testShortAnswerAndAttachmentFitWithAccessibilityText` 与 `testEachQuestionRevealsItsOwnAttachmentEntryPoint`（都是 `Failed to synthesize event: Neither element nor any descendant has keyboard focus`：点了输入框没拿到键盘焦点；前一条稳定，后一条在基线上 2 次里 1 次失败）。第一条在 iOS 27.0 上通过（上文有记），其余三条没有换别的系统版本试过。
 
-## 待验收：iOS 出包前的变更清单与 TestFlight 测试内容（helper、脚本与标签已验到 build 6；整条链要到 build 7 才首次真用）
+## 待验收：iOS 出包前的变更清单与 TestFlight 测试内容（build 7 已首次走完整条链，等用户在手机上看测试内容的显示）
 
 2026-11-04 用户要求给 `ios-testflight` 技能补一步：出包前列出自上个构建以来的 iOS 提交，让用户确认包里有什么（起因：build 6 带上了用户选过「先不出」的改动）；
 随后又要求把确认过的内容写进 TestFlight 的「测试内容」。需求 [ios-testflight-build-notes](specs/ios-testflight-build-notes.md)，计划与实施记录 [ios-testflight-build-notes](plans/ios-testflight-build-notes.md)。
@@ -228,9 +228,22 @@ v1 只有「快速添加待办」（不离开当前界面，把一句话记成�
 出包预检已放宽为只认 iPhone＋iPad（设备族 `1,2`，App 与通知扩展都要），并检查 iPad 方向声明，需求与计划 [ios-testflight-ipad-preflight](specs/ios-testflight-ipad-preflight.md)：
 用 build 7 候选归档在本地验过预检与 `--check-signing`，build 6 的仅 iPhone 归档被预检与 helper 拒绝；helper 因此再次重装（换掉的版本留作 `testflight-helper.previous`），另有离线测试 3 条；候选归档已删除，没有上传。
 
+2026-11-04 出 build 7 时整条链首次真用并走通：清单与确认门（走了一次）→ 归档、预检、上传 → Apple `VALID`（也是 Apple 第一次校验 iPad 构建，没有新的校验错误）→
+中英文测试内容写入并读回逐字一致 → 标签 `ios-testflight-7` → 出包记录（见 `docs/plans/ios-channel.md` 的「TestFlight 内部构建 7」）。
+同日用户改规则：今后确认门默认不经——用户要求出包就直接出，清单与测试内容在出包后的汇报里给出，要求先看才确认（规格 T12）。
+
 下一步：
-- [ ] build 7 首次真用：用户下次要求出包时，完整走 skill 的第 1–10 步（出包前清单与确认门 → 归档上传 → `VALID` 后写测试内容并读回 → 打标签 `ios-testflight-7` → 记录）。第一次真写测试内容的结果，尤其是多行中英文在手机 TestFlight 里的显示，要记进出包记录；全部走通后删除本节。
-  build 7 也是 Apple 服务端第一次校验 iPad 构建（图标、方向、启动屏等；本地预检与候选归档的实际值只能降低风险，无法替代）：上传若报新的校验错误，停下并如实报告，不换参数重试。
+- [ ] 用户在手机 TestFlight 里看 build 7 的测试内容（简体中文与 English 各一份，多行与「•」）显示是否正常；有问题就改写法（规格「测试内容的写法」）并记进出包记录，没问题就删除本节。
+
+## 待验收：iOS 大屏适配（iPad 与折叠屏内屏的两栏；已随内测包 0.1.0 (7) 出去，真机一轮未做）
+
+2026-11-04 合并进 main，随内测包 `0.1.0 (7)` 第一次交付：App 设备族是 iPhone＋iPad，iPad 四向旋转、可分屏，仍是单窗口。需求 [specs/ios-large-screen.md](specs/ios-large-screen.md)，
+说明在 `docs/overview-ios.md`。收件箱、Agents、待办、历史、Macs 五个标签页在窗口宽度 ≥ 700 pt 时左列表右详情；更窄时是系统的浮层侧栏；辅助功能字号（AX1 及以上）回落成单栏；
+iPhone 与折叠屏外屏不变。只在 iPad mini 与折叠屏（Duo）模拟器上验过（竖屏、横屏、折叠／展开、辅助功能字号回落），没有在真实 iPad 或折叠屏手机上看过。
+
+下一步：
+- [ ] 有 iPad 或折叠屏手机时真机看一轮：竖屏、横屏、折叠／展开、分屏改变窗口大小时两栏是否正常、打开的那一项是否保留；点列表行的手感；键盘（含外接键盘）；辅助功能大字号下回落单栏。意见记进 `specs/ios-large-screen.md`。
+- [ ] 未定的小事（用户还没表态）：两栏里列表行的底色是系统在侧栏里给的卡片底色，不是手机上的白色（规格「选中行样式」）；真机上觉得别扭再提。
 
 ## 待验收：iOS「做完 / 出错」通知收窄（Mac 端与 App 端都已实现，真机一轮未做）
 
@@ -258,7 +271,7 @@ App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-foll
 
 下一步：
 - [ ] 用户在真机上验收：Message 的渲染（表格、流程图、选字、链接）、选项点按手感、「下一题」往回滑后不跳题、辅助字号下的底栏；有意见记进 `ios-channel.md` §15
-- [ ] 输入后点「下一题」与键盘接力（2026-11-04 用户在真机上反馈：在一道题里输入完点「下一题」，落下来的还是当前这题）：已修键盘收起时布局卡住的根因，并加了「在哪题输入就从哪题往后」与键盘接力（下一题是纯文本题时光标直接带过去、键盘不收，页面滑到那一题），见 `ios-answer-flow.md` §2.5、F4、F12、F13。只过了模拟器测试，**真机上没试**。真机上请看：输入后点「下一题」是否稳稳落在下一题、接力时页面滑动（约 0.3 秒）与闪一下是否顺手、带外接键盘的 iPad 上是否正常
+- [ ] 输入后点「下一题」与键盘接力（2026-11-04 用户在真机上反馈：在一道题里输入完点「下一题」，落下来的还是当前这题）：已修键盘收起时布局卡住的根因，并加了「在哪题输入就从哪题往后」与键盘接力（下一题是纯文本题时光标直接带过去、键盘不收，页面滑到那一题），见 `ios-answer-flow.md` §2.5、F4、F12、F13。只过了模拟器测试，已随内测包 `0.1.0 (7)` 出去（2026-11-04），**真机上没试**。真机上请看：输入后点「下一题」是否稳稳落在下一题、接力时页面滑动（约 0.3 秒）与闪一下是否顺手、带外接键盘的 iPad 上是否正常
 - [ ] 真机冒烟：新版已装在 iPhone Air 上（10-29 凌晨 03:40 前后装过一次，10-30 凌晨又覆盖装了 `77697b7` 的 Debug 构建，含此前所有提交）；后一次启动过，只看了 Mock 的 Agent 页，Markdown 页还没人在真机上看；解锁后直接打开 App 就是新版。想在真机上看 Markdown 展示页（Mock，不碰真实数据）：
   `xcrun devicectl device process launch --device 00008150-00043D6A2E12401C --terminate-existing com.naituw.humaninloop.ios -- -AHMock YES -AHScenario markdown -AHOpen req-markdown`，从主屏再打开 App 就回到真实模式（见 `docs/plans/ios-web-markdown.md` §1.6）
 - [ ] 图片缩略图与查看器（2026-10-29 用户在真机上反馈：图片缩略图不是 1:1、溢出格子，多张会叠在一起；查看图片时不能横滑到下一张）：已改成 1:1 方块缩略图与左右滑动的图片查看器（`ios-channel.md` §15 的 2026-10-29 一节），只过了模拟器测试（iOS 27.0 / 18.5），**真机上没滑过**。
