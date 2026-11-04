@@ -165,6 +165,63 @@ final class TodoE2ETests: E2ECase {
         XCTAssertEqual(gone.list?.pendingTotal, 2, "a refusal still brings the phone up to date")
     }
 
+    // MARK: adding from a request
+
+    /// What "Add" does on the request page's "Add todo…" sheet: the same composer, over the real gateway.
+    @MainActor
+    private static func addFromTheRequestPage(
+        engine: PhoneEngine, item: InboxItem, text: String, mac: MacState?
+    ) async -> (sent: Bool, failure: QuickTodoFailure?) {
+        let composer = RequestTodoComposer(
+            backend: engine, macId: item.macId, macName: item.macName, projectKey: item.summary.project.key,
+            projectName: item.summary.project.name, mac: mac
+        )
+        composer.text = text
+        let sent = await composer.send()
+        return (sent, composer.failure)
+    }
+
+    /// A request that is still waiting names its project, and the Mac takes a todo for it even though that
+    /// project is in none of its lists: no todo yet, no hook that registered the folder, no Agent working in
+    /// it (docs/specs/todo-quick-add.md D14). The id the phone works out from the request's project key is the
+    /// one the Mac uses for the project in its own list.
+    func testAWaitingRequestsProjectTakesATodoFromThePhone() async throws {
+        try await pair()
+        let project = try repository("zeta")
+        let before = try await projects()
+        XCTAssertNil(before.projects.first { $0.name == "zeta" }, "nothing has told the Mac about this project")
+
+        let ask = try mac.ask(["-q", "Which way?", "-o", "Left", "-o", "Right"], cwd: project)
+        let item = try await phone.request()
+        XCTAssertTrue(item.hasProject)
+        XCTAssertEqual(item.summary.project.name, "zeta")
+        let macState = await phone.state().macs.first
+
+        let engine = phone.engine
+        let first = await Self.addFromTheRequestPage(engine: engine, item: item, text: "Cover the rollback path", mac: macState)
+        XCTAssertTrue(first.sent, "\(String(describing: first.failure))")
+        let second = await Self.addFromTheRequestPage(engine: engine, item: item, text: "Ask about the retention", mac: macState)
+        XCTAssertTrue(second.sent, "\(String(describing: second.failure))")
+
+        // The Mac's own list agrees, in order, and the project is in its project list now under the same id.
+        let onMac = try await todo(["list"], in: project)
+        XCTAssertTrue(onMac.stdout.contains("Cover the rollback path"), onMac.stdout)
+        XCTAssertTrue(onMac.stdout.contains("Ask about the retention"), onMac.stdout)
+        let listed = try await row(named: "zeta")
+        XCTAssertEqual(listed.id, TodoProjectId.of(key: item.summary.project.key))
+        XCTAssertEqual(listed.pending, 2)
+        let snapshot = try await list(listed.id)
+        XCTAssertEqual(snapshot.pending.map(\.text), ["Cover the rollback path", "Ask about the retention"])
+        XCTAssertTrue(snapshot.pending.allSatisfy { !$0.auto }, "a todo from the request page carries no ⚡")
+
+        // The request itself is untouched by all this and can still be answered.
+        _ = try await phone.engine.submitAnswer(
+            macId: item.macId, requestId: item.requestId, action: "send", answers: [AnswerItem(q: 0, sel: [1])]
+        )
+        await assertFinishes(ask)
+        XCTAssertTrue(ask.stdout.contains("Right"), ask.stdout)
+    }
+
     // MARK: watching
 
     func testAWatchedListTellsThePhoneWhenTheMacChanges() async throws {

@@ -235,9 +235,10 @@ final class MacInstance: @unchecked Sendable {
         return line.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Starts `AskHuman` with the given arguments and returns the running process.
-    func ask(_ args: [String], stdin: String? = nil) throws -> Cmd {
-        let cmd = Cmd(environment.askHumanBinary, args, env: env, cwd: home, stdin: stdin)
+    /// Starts `AskHuman` with the given arguments and returns the running process. It runs in `cwd` (the
+    /// instance's home by default), and a request names the git root of that directory as its project.
+    func ask(_ args: [String], stdin: String? = nil, cwd: URL? = nil) throws -> Cmd {
+        let cmd = Cmd(environment.askHumanBinary, args, env: env, cwd: cwd ?? home, stdin: stdin)
         try cmd.start()
         children.append(cmd)
         return cmd
