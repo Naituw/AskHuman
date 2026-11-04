@@ -85,6 +85,51 @@ final class QuestionNavigatorTests: XCTestCase {
         XCTAssertNil(QuestionNavigator.next(in: viewport([card(110, 250)]), count: 1))
     }
 
+    // MARK: typing in a question (the keyboard sets the starting point)
+
+    func testAfterTypingNextLeadsToTheQuestionAfterTheOneTypedIn() {
+        // Q1 was typed in and reaches 2 points below the bar line of 700 (the keyboard-time layout), Q2 is
+        // below. The position would call Q1 not reached; the keyboard says it is where the person is.
+        let screen = viewport([card(380, 322), card(718, 300), card(1034, 300)])
+        XCTAssertEqual(QuestionNavigator.next(in: screen, count: 3)?.question, 0, "by position, the card typed in")
+        XCTAssertEqual(QuestionNavigator.next(after: 0, in: screen, count: 3), Target(question: 1, anchor: .bottom))
+    }
+
+    func testAfterTypingAQuestionThatIsAllOnScreenIsOnlyPointedAt() {
+        // Q2 sits entirely on screen under Q1: by position it would be passed over for Q3.
+        let narrow = viewport([card(110, 200), card(326, 200), card(542, 300)])
+        XCTAssertEqual(QuestionNavigator.next(in: narrow, count: 3)?.question, 2, "by position, Q2 is passed")
+        XCTAssertEqual(QuestionNavigator.next(after: 0, in: narrow, count: 3), Target(question: 1, anchor: .stay))
+        XCTAssertEqual(QuestionNavigator.next(after: 1, in: narrow, count: 3), Target(question: 2, anchor: .bottom))
+    }
+
+    func testAfterTypingATallQuestionIsShownFromItsTopThenFromItsBottom() {
+        func form(scrolledTo q2Top: CGFloat) -> Viewport {
+            viewport([card(q2Top - 216, 200), card(q2Top, 900), card(q2Top + 916, 200)])
+        }
+        XCTAssertEqual(QuestionNavigator.next(after: 0, in: form(scrolledTo: 326), count: 3), Target(question: 1, anchor: .top))
+        XCTAssertEqual(QuestionNavigator.next(after: 0, in: form(scrolledTo: 100), count: 3), Target(question: 1, anchor: .bottom))
+        XCTAssertEqual(QuestionNavigator.next(after: 0, in: form(scrolledTo: -100), count: 3), Target(question: 1, anchor: .bottom),
+                       "past its top: its bottom, not the top again")
+    }
+
+    func testAfterTypingAQuestionWithItsBottomOnScreenButItsTopCutOffIsShownFromTheTop() {
+        let screen = viewport([card(-400, 200), card(-30, 300), card(286, 200)])
+        XCTAssertEqual(QuestionNavigator.next(after: 0, in: screen, count: 3), Target(question: 1, anchor: .top))
+    }
+
+    func testTypingInTheLastQuestionLeadsNowhere() {
+        XCTAssertNil(QuestionNavigator.next(after: 2, in: three(first: 110), count: 3))
+        XCTAssertNil(QuestionNavigator.next(after: 0, in: viewport([card(110, 250)]), count: 1), "a single question")
+    }
+
+    func testAfterTypingAnUnmeasuredNextQuestionHasNoTarget() {
+        var screen = three(first: 110)
+        screen.cards[1] = nil
+        XCTAssertNil(QuestionNavigator.next(after: 0, in: screen, count: 3), "the caller falls back to the position")
+        XCTAssertNil(QuestionNavigator.next(after: 7, in: three(first: 110), count: 3), "not a question of the form")
+    }
+
     // MARK: revealing a given question
 
     func testRevealLeavesAQuestionThatIsAllOnScreenAlone() {

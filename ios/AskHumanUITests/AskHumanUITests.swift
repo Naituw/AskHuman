@@ -324,6 +324,54 @@ final class AskHumanUITests: XCTestCase {
         XCTAssertTrue(element("send-button").exists)
     }
 
+    // MARK: "Next" while typing (spec ios-answer-flow.md F4, F12)
+
+    /// Polls until the condition holds, for up to `timeout` seconds.
+    private func waitUntil(timeout: TimeInterval = 4, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return condition()
+    }
+
+    /// Whether the bottom bar is back at the foot of the screen, so that no band of empty screen is left
+    /// under it: what a keyboard that went in the middle of a layout pass used to leave behind.
+    private func barIsAtTheFootOfTheScreen() -> Bool {
+        let screen = app.windows.firstMatch.frame
+        return requireElement("answered-count").frame.maxY > screen.height - 120
+    }
+
+    private func keyboardIsUp() -> Bool { app.keyboards.firstMatch.exists }
+
+    /// Typing in a question that has options and tapping "Next" used to lead back to the same question:
+    /// the keyboard was still on its way down, and the screen not yet laid out again, when the next
+    /// question was worked out. Answers short and long (a long one grows the card), several times in one run.
+    func testNextAfterTypingLeadsOnToTheNextQuestion() {
+        launch()
+        openRequest("req-migration")
+        _ = requireElement("next-button")
+        let answers = [
+            "Yes, go online.",
+            "First line.\nSecond line.\nThird line.\nFourth line.\nFifth line.\nSixth line.\nSeventh line.",
+            "Once more.",
+        ]
+        for (round, answer) in answers.enumerated() {
+            type(answer, into: "answer-text-0")
+            XCTAssertTrue(keyboardIsUp(), "round \(round): the person is typing")
+            if round == 0 { shot("40-typing-in-the-first") }
+            requireElement("next-button").tap()
+            XCTAssertTrue(
+                waitUntil { isBetweenTheBars("answer-text-1") && barIsAtTheFootOfTheScreen() },
+                "round \(round): Next after typing in the first question leads to the second, with the screen laid out again"
+            )
+            if round == 0 { shot("41-led-to-the-second") }
+            XCTAssertTrue(waitUntil { !keyboardIsUp() }, "round \(round): a question with options has no use for the keyboard")
+        }
+        XCTAssertTrue(answeredCount().contains("1/3"), "the typed text is an answer of its own")
+    }
+
     func testTheHintOfAnIncompleteSelectOnlyFormLeadsToTheFirstOpenQuestion() {
         launch("strict")
         openRequest("req-strict")

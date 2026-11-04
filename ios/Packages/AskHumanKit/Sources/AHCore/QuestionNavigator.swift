@@ -8,11 +8,17 @@ import CoreGraphics
 /// after the last question the person has reached, however far down they went before and whatever was
 /// seen or answered on the way. (An earlier version led to "the first question not read yet", which
 /// jumped over the questions that were looked at but not answered once the person had scrolled back.)
+///
+/// One thing sets the pointer by hand, as it does in the popup (H4: typing in a question makes it the
+/// current one): the keyboard. A person who is typing is in the question that has it, and "Next" goes
+/// to the one after, whatever the screen shows (`next(after:in:count:margin:)`).
 public enum QuestionNavigator {
     /// Which edge of the visible area the question is lined up with.
     public enum Anchor: Equatable, Sendable {
         case top
         case bottom
+        /// The question is all on screen already: nothing scrolls, it is only pointed at.
+        case stay
     }
 
     public struct Target: Equatable, Sendable {
@@ -57,10 +63,35 @@ public enum QuestionNavigator {
         for question in 0..<count {
             guard let frame = viewport.cards[question] else { continue }
             if frame.maxY <= viewport.bottom + tolerance { continue }
-            if fits(frame, in: viewport, margin: margin) { return Target(question: question, anchor: .bottom) }
-            return Target(question: question, anchor: frame.minY > viewport.top + tolerance ? .top : .bottom)
+            return lead(to: question, frame, in: viewport, margin: margin)
         }
         return nil
+    }
+
+    /// The target of "Next" for a person typing in `question`: the question after it, wherever it is.
+    ///
+    /// The position cannot say where a person is while the keyboard hides half the screen, and the card
+    /// typed in reaches down to the bar, a point or two below its edge. The keyboard can: it is in
+    /// `question`. The target is brought into view as `next(in:count:margin:)` does (all of it when it
+    /// fits, a taller one from its top and then from its bottom); one that is all on screen is not
+    /// scrolled, only pointed at (`Anchor.stay`), as the popup's "next" does. `nil` when `question` is
+    /// the last one, or the place of the one after it is not known.
+    public static func next(after question: Int, in viewport: Viewport, count: Int, margin: CGFloat = 16) -> Target? {
+        let target = question + 1
+        guard count > 1, (0..<count).contains(question), target < count, let frame = viewport.cards[target] else { return nil }
+        let belowTheTop = frame.minY >= viewport.top - tolerance
+        let aboveTheBottom = frame.maxY <= viewport.bottom + tolerance
+        if belowTheTop, aboveTheBottom { return Target(question: target, anchor: .stay) }
+        // Its bottom is on screen and its top is cut off: show it from the top.
+        if aboveTheBottom { return Target(question: target, anchor: .top) }
+        return lead(to: target, frame, in: viewport, margin: margin)
+    }
+
+    /// How to bring a question whose bottom is below the visible area into view: all of it, lined up
+    /// with the bottom, when it fits; else its top, and once the top is at the edge its bottom.
+    private static func lead(to question: Int, _ frame: CGRect, in viewport: Viewport, margin: CGFloat) -> Target {
+        if fits(frame, in: viewport, margin: margin) { return Target(question: question, anchor: .bottom) }
+        return Target(question: question, anchor: frame.minY > viewport.top + tolerance ? .top : .bottom)
     }
 
     /// How to bring a given question into view (to point at it, as the hint of a select-only form
