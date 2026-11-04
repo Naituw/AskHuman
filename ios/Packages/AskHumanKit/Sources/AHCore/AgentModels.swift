@@ -31,9 +31,14 @@ public struct AgentItem: Identifiable, Sendable, Equatable {
     public var agentKey: String { view.key }
     public var isWorking: Bool { view.state == "working" }
     public var isEnded: Bool { view.state == "ended" }
-    public var needsAttention: Bool {
-        guard !["working", "waiting"].contains(view.state) else { return false }
-        return view.lastTurnResult.map { ["failed", "incomplete"].contains($0.outcome) } ?? view.lastTurnFailed
+
+    /// The last result is worth showing now: nothing is running or waiting on a question that would replace it.
+    public var showsLastResult: Bool { !isWorking && view.state != "waiting" }
+
+    /// The last turn failed or stopped before its work was done. The Agents tab only reports it (a
+    /// red or orange result) and offers no action: what to do about it is asked in the inbox.
+    public var lastTurnFellShort: Bool {
+        view.lastTurnResult.map { ["failed", "incomplete"].contains($0.outcome) } ?? view.lastTurnFailed
     }
 }
 
@@ -264,13 +269,16 @@ public struct TaskDraft: Sendable, Equatable {
     public var model: String?
     public var effort: String?
     public var speed: TaskSpeed?
+    /// Cursor only: the task may run in Max mode. Off unless the user turned it on for this task.
+    public var allowMax: Bool
     public var files: [UploadSource]
     /// The display name of the picked model (the progress page shows it).
     public var modelLabel: String?
 
     public init(
         workspaceId: String, workspaceName: String, agentKind: String, agentLabel: String, permission: String, todoId: String? = nil,
-        model: String? = nil, effort: String? = nil, modelLabel: String? = nil, speed: TaskSpeed? = nil, files: [UploadSource] = [], text: String
+        model: String? = nil, effort: String? = nil, modelLabel: String? = nil, speed: TaskSpeed? = nil, allowMax: Bool = false,
+        files: [UploadSource] = [], text: String
     ) {
         self.workspaceId = workspaceId
         self.workspaceName = workspaceName
@@ -282,6 +290,7 @@ public struct TaskDraft: Sendable, Equatable {
         self.model = model
         self.effort = effort
         self.speed = speed
+        self.allowMax = allowMax
         self.files = files
         self.modelLabel = modelLabel
     }

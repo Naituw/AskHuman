@@ -742,14 +742,12 @@ public struct InterjectSend: WireMessage {
     public var agentKey: String
     public var text: String
     @DefaultEmpty public var files: [String]
-    public var expectedResultId: String?
 
-    public init(clientMsgId: String, agentKey: String, text: String, files: [String] = [], expectedResultId: String? = nil) {
+    public init(clientMsgId: String, agentKey: String, text: String, files: [String] = []) {
         self.clientMsgId = clientMsgId
         self.agentKey = agentKey
         self.text = text
         self.files = files
-        self.expectedResultId = expectedResultId
     }
 }
 
@@ -829,14 +827,21 @@ public struct ModelOption: Codable, Equatable, Hashable, Sendable, Identifiable 
     /// The effort the model runs with when none is chosen.
     public var defaultEffort: String?
     public var fastSupported: Bool?
+    /// Cursor only, while the Mac controls Max mode: `true` = this model cannot run without Max,
+    /// `false` = it can, absent = the Mac cannot tell. Never read absent as "no".
+    public var maxRequired: Bool?
 
-    public init(id: String, label: String, note: String? = nil, efforts: [String]? = nil, defaultEffort: String? = nil, fastSupported: Bool? = nil) {
+    public init(
+        id: String, label: String, note: String? = nil, efforts: [String]? = nil, defaultEffort: String? = nil,
+        fastSupported: Bool? = nil, maxRequired: Bool? = nil
+    ) {
         self.id = id
         self.label = label
         self.note = note
         self.efforts = efforts
         self.defaultEffort = defaultEffort
         self.fastSupported = fastSupported
+        self.maxRequired = maxRequired
     }
 }
 
@@ -847,12 +852,18 @@ public struct DefaultModel: Codable, Equatable, Hashable, Sendable {
     public var efforts: [String]?
     public var defaultEffort: String?
     public var fastSupported: Bool?
+    /// Same meaning as `ModelOption.maxRequired`, for the model "Default" stands for.
+    public var maxRequired: Bool?
 
-    public init(label: String? = nil, efforts: [String]? = nil, defaultEffort: String? = nil, fastSupported: Bool? = nil) {
+    public init(
+        label: String? = nil, efforts: [String]? = nil, defaultEffort: String? = nil, fastSupported: Bool? = nil,
+        maxRequired: Bool? = nil
+    ) {
         self.label = label
         self.efforts = efforts
         self.defaultEffort = defaultEffort
         self.fastSupported = fastSupported
+        self.maxRequired = maxRequired
     }
 }
 
@@ -867,10 +878,14 @@ public struct AgentOption: Codable, Equatable, Hashable, Sendable {
     public var models: [ModelOption]?
     public var defaultModel: DefaultModel?
     public var speedControl: Bool?
+    /// Cursor only: the Mac controls Max mode for tasks (`docs/specs/cursor-max-control.md`). Absent
+    /// = it does not (a new-plan account, the "follow Cursor" policy, or an older Mac): the form shows
+    /// nothing about Max.
+    public var maxControl: Bool?
 
     public init(
         kind: String, label: String, ready: Bool, subtitle: String, permissionSelectable: Bool, reason: String? = nil,
-        models: [ModelOption]? = nil, defaultModel: DefaultModel? = nil, speedControl: Bool? = nil
+        models: [ModelOption]? = nil, defaultModel: DefaultModel? = nil, speedControl: Bool? = nil, maxControl: Bool? = nil
     ) {
         self.kind = kind
         self.label = label
@@ -881,6 +896,7 @@ public struct AgentOption: Codable, Equatable, Hashable, Sendable {
         self.models = models
         self.defaultModel = defaultModel
         self.speedControl = speedControl
+        self.maxControl = maxControl
     }
 
     /// A model entry that does not decode is skipped instead of failing the whole `task.options`:
@@ -895,6 +911,7 @@ public struct AgentOption: Codable, Equatable, Hashable, Sendable {
         reason = try c.decodeIfPresent(String.self, forKey: .reason)
         models = try? c.decodeIfPresent([Lossy<ModelOption>].self, forKey: .models)?.compactMap(\.value)
         speedControl = try? c.decodeIfPresent(Bool.self, forKey: .speedControl)
+        maxControl = try? c.decodeIfPresent(Bool.self, forKey: .maxControl)
         defaultModel = try? c.decodeIfPresent(DefaultModel.self, forKey: .defaultModel)
     }
 }
@@ -974,11 +991,15 @@ public struct TaskCreate: WireMessage {
     /// An effort offered for that model (or for "Default"); absent = the Agent's own.
     public var effort: String?
     public var speed: TaskSpeed?
+    /// Cursor only: the task may run in Max mode. Absent = it may not (an older phone never sends it,
+    /// and the Mac then keeps Max off).
+    public var allowMax: Bool?
     public var files: [String]?
 
     public init(
         clientMsgId: String, workspaceId: String, agentKind: String, permission: String, todoId: String? = nil,
-        model: String? = nil, effort: String? = nil, speed: TaskSpeed? = nil, files: [String]? = nil, text: String
+        model: String? = nil, effort: String? = nil, speed: TaskSpeed? = nil, allowMax: Bool? = nil,
+        files: [String]? = nil, text: String
     ) {
         self.clientMsgId = clientMsgId
         self.workspaceId = workspaceId
@@ -989,6 +1010,7 @@ public struct TaskCreate: WireMessage {
         self.model = model
         self.effort = effort
         self.speed = speed
+        self.allowMax = allowMax
         self.files = files
     }
 }

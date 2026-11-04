@@ -134,7 +134,64 @@ pub struct LaunchRecord {
     pub effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed: Option<crate::agents::model_catalog::TaskSpeed>,
+    /// Cursor's Max mode (docs/specs/cursor-max-control.md §4). `Some(false)`: the launch keeps Max
+    /// off and the helper turns the CLI's persisted toggles off before it starts; `Some(true)`: the
+    /// user allowed Max for this task; `None` (also in records from older versions): not handled.
+    /// Covered by `payload_sha256` whenever it is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_max: Option<bool>,
 }
+
+/// A Cursor launch was refused because its model cannot run without Max mode and the task does
+/// not allow Max. Callers recognise it with `downcast_ref` to show the reason and the way out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaxRequired {
+    /// The model that needs Max (its id; `None` when it is Cursor's default).
+    pub model: Option<String>,
+    /// How that model is named for the user.
+    pub label: Option<String>,
+}
+
+impl MaxRequired {
+    /// The reason code iOS and the GUI act on.
+    pub const REASON: &'static str = "maxRequired";
+
+    /// What a surface without its own wording (IM, the Agents-window route) tells the user.
+    pub fn guidance(&self, lang: crate::i18n::Lang) -> String {
+        use crate::i18n::Lang;
+        let name = self.label.as_deref().or(self.model.as_deref());
+        match lang {
+            Lang::Zh => format!(
+                "未启动：{}需要 Cursor 的 Max 模式（旧计划里按 API 费率计费）。请改用不需要 Max 的模型；\
+                 或在电脑／手机上新建任务时打开「允许 Max」；也可以在设置里把 Cursor 的 Max 策略改为「沿用 Cursor 当前设置」。",
+                name.map_or("Cursor 当前默认模型".to_string(), |name| format!("模型 {name} "))
+            ),
+            Lang::En => format!(
+                "Not started: {} needs Cursor's Max mode (billed at API rates on the request-based plan). \
+                 Pick a model that does not need Max, allow Max when you create the task on the computer or the phone, \
+                 or set Cursor's Max policy to \"Follow Cursor's current settings\" in Settings.",
+                name.map_or("Cursor's current default model".to_string(), |name| format!("model {name}"))
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for MaxRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = self
+            .label
+            .as_deref()
+            .or(self.model.as_deref())
+            .unwrap_or("The model Cursor would use by default");
+        write!(
+            f,
+            "{name} needs Cursor's Max mode, which is billed at API rates on the request-based plan. \
+             Allow Max for this task, or pick a model that does not need it."
+        )
+    }
+}
+
+impl std::error::Error for MaxRequired {}
 
 impl LaunchRecord {
     /// The model and effort this record carries.
@@ -840,6 +897,25 @@ pub fn create_record_with_choice(
     warnings: &[String],
     choice: &ModelChoice,
 ) -> Result<LaunchRecord> {
+    create_record_with_options(
+        source, cwd, kind, permission, task, files, warnings, choice, false,
+    )
+}
+
+/// [`create_record_with_choice`] for an entry that can also let the user allow Cursor's Max mode
+/// for this one task. Every other entry point passes `false`: Max is never allowed implicitly.
+#[allow(clippy::too_many_arguments)]
+pub fn create_record_with_options(
+    source: LaunchSource,
+    cwd: &Path,
+    kind: AgentKind,
+    permission: LaunchPermission,
+    task: &str,
+    files: &[String],
+    warnings: &[String],
+    choice: &ModelChoice,
+    allow_max: bool,
+) -> Result<LaunchRecord> {
     create_record_internal(
         source,
         cwd,
@@ -850,6 +926,7 @@ pub fn create_record_with_choice(
         warnings,
         LaunchMode::New,
         choice,
+        allow_max,
     )
 }
 
@@ -888,6 +965,7 @@ pub fn create_fork_record(
         },
         // A fork keeps the model of the session it continues.
         &ModelChoice::default(),
+        false,
     )
 }
 
@@ -902,6 +980,7 @@ fn create_record_internal(
     warnings: &[String],
     launch_mode: LaunchMode,
     choice: &ModelChoice,
+    allow_max: bool,
 ) -> Result<LaunchRecord> {
     let source =
         if let Some(profile) = crate::development::session::active().map_err(anyhow::Error::msg)? {
@@ -934,6 +1013,9 @@ fn create_record_internal(
     }
     // Checked before any readiness probe or file write, like the task boundaries below.
     choice.check_for(kind).map_err(|error| anyhow!(error))?;
+    if allow_max && kind != AgentKind::Cursor {
+        return Err(anyhow!("only Cursor has a Max mode"));
+    }
     if matches!(launch_mode, LaunchMode::Fork { .. }) && !choice.is_default() {
         return Err(anyhow!("a forked session keeps its own model"));
     }
@@ -960,6 +1042,9 @@ fn create_record_internal(
     if !cwd.is_dir() {
         return Err(anyhow!("workspace is not a directory"));
     }
+    // Before the (slow) readiness probe and before anything is written: a model that cannot run
+    // without Max is refused here, for every entry point alike.
+    let allow_max_record = decide_max(kind, &launch_mode, choice, allow_max)?;
     let status = readiness(kind);
     if !status.ready {
         return Err(anyhow!(status.diagnostics.join("; ")));
@@ -979,7 +1064,14 @@ fn create_record_internal(
         .to_string();
     let created_at = epoch_secs();
     let payload_hash = bind_development_hash(
-        payload_sha256(task, files, warnings, &launch_mode, choice),
+        payload_sha256(
+            task,
+            files,
+            warnings,
+            &launch_mode,
+            choice,
+            allow_max_record,
+        ),
         &source,
     );
     let record = LaunchRecord {
@@ -1001,9 +1093,54 @@ fn create_record_internal(
         model: choice.model.clone(),
         effort: choice.effort.clone(),
         speed: choice.speed,
+        allow_max: allow_max_record,
     };
     write_private_record(&record)?;
     Ok(record)
+}
+
+/// What a new record says about Cursor's Max mode: `Some(false)` keeps it off, `Some(true)`
+/// records that the user allowed it, `None` leaves it alone. Refuses a model that cannot run
+/// without Max when Max is not allowed.
+fn decide_max(
+    kind: AgentKind,
+    mode: &LaunchMode,
+    choice: &ModelChoice,
+    allow_max: bool,
+) -> Result<Option<bool>> {
+    if kind != AgentKind::Cursor {
+        return Ok(None);
+    }
+    let request = crate::agents::cursor_max::Request {
+        target: crate::agents::cursor_max::Target::Cli,
+        model: choice.model.as_deref(),
+        allow_max,
+    };
+    max_decision(
+        &crate::agents::cursor_max::assess(&request),
+        mode,
+        allow_max,
+    )
+}
+
+/// [`decide_max`] for an assessment that was already made.
+fn max_decision(
+    assessment: &crate::agents::cursor_max::Assessment,
+    mode: &LaunchMode,
+    allow_max: bool,
+) -> Result<Option<bool>> {
+    use crate::agents::cursor_max::Outcome;
+    match assessment.outcome {
+        Outcome::Untouched => Ok(allow_max.then_some(true)),
+        Outcome::ForceOff { .. } => Ok(Some(false)),
+        // A fork continues the session's own model, which is not known here: Max stays off, but
+        // the fork is never refused for a model that was not picked.
+        Outcome::Blocked if *mode != LaunchMode::New => Ok(Some(false)),
+        Outcome::Blocked => Err(anyhow::Error::new(MaxRequired {
+            model: assessment.model.clone(),
+            label: assessment.label.clone(),
+        })),
+    }
 }
 
 fn bind_development_hash(hash: String, source: &LaunchSource) -> String {
@@ -1033,7 +1170,7 @@ pub(crate) fn create_development_record(
         target: profile.id.clone(),
     };
     let payload_hash = bind_development_hash(
-        payload_sha256(task, &[], &[], &mode, &ModelChoice::default()),
+        payload_sha256(task, &[], &[], &mode, &ModelChoice::default(), None),
         &source,
     );
     let now = epoch_secs();
@@ -1058,6 +1195,7 @@ pub(crate) fn create_development_record(
         model: None,
         effort: None,
         speed: None,
+        allow_max: None,
     };
     write_private_record(&record)?;
     Ok(record)
@@ -1088,8 +1226,11 @@ end run"#;
     } else {
         "AskHuman"
     };
+    // osascript prints the new tab reference ("tab 1 of window id N"). Keep it off stdout so a
+    // caller that reads a JSON receipt (`dev session`) does not take it for part of the receipt.
     let status = Command::new("/usr/bin/osascript")
         .args(["-e", script, &command, title])
+        .stdout(Stdio::null())
         .status()
         .context("failed to ask Terminal.app to open a window")?;
     if !status.success() {
@@ -1228,6 +1369,7 @@ pub fn run_helper(args: &[String]) -> Result<()> {
         None
     };
     validate_claim(&record, token)?;
+    enforce_max(&record)?;
     #[cfg(windows)]
     {
         let action = if super::terminal_focus::register_windows_terminal_window(&record.id).is_ok()
@@ -1256,6 +1398,70 @@ pub fn run_helper(args: &[String]) -> Result<()> {
     }
     #[cfg(not(any(unix, windows)))]
     Err(anyhow!("Agent launch is unsupported on this platform"))
+}
+
+/// The last line of defence for a Cursor launch that must keep Max off (docs/specs/cursor-max-control.md
+/// §4.3), run in the terminal right before the Agent starts: the decision is made again from fresh
+/// data, and the CLI's persisted Max toggles are turned off.
+fn enforce_max(record: &LaunchRecord) -> Result<()> {
+    if record.kind != AgentKind::Cursor || record.allow_max != Some(false) {
+        return Ok(());
+    }
+    let request = crate::agents::cursor_max::Request {
+        target: crate::agents::cursor_max::Target::Cli,
+        model: record.model.as_deref(),
+        allow_max: false,
+    };
+    let assessment = crate::agents::cursor_max::assess(&request);
+    enforce_max_with(
+        record,
+        &assessment,
+        crate::agents::cursor_max::cli_config::config_path(),
+        &paths::state_dir().join("cursor-max.lock"),
+    )
+}
+
+fn enforce_max_with(
+    record: &LaunchRecord,
+    assessment: &crate::agents::cursor_max::Assessment,
+    config: Option<PathBuf>,
+    lock: &Path,
+) -> Result<()> {
+    use crate::agents::cursor_max::{cli_config, Outcome};
+    match assessment.outcome {
+        // The settings were relaxed after the launch was requested: nothing to enforce.
+        Outcome::Untouched => return Ok(()),
+        Outcome::Blocked if record.launch_mode == LaunchMode::New => {
+            return Err(anyhow::Error::new(MaxRequired {
+                model: assessment.model.clone(),
+                label: assessment.label.clone(),
+            }));
+        }
+        Outcome::Blocked | Outcome::ForceOff { .. } => {}
+    }
+    // No config yet: the CLI writes its own, with Max off.
+    let Some(path) = config.filter(|path| path.is_file()) else {
+        return Ok(());
+    };
+    match cli_config::force_off(&path, lock) {
+        Ok(cli_config::ForceOff::Turned) => {
+            crate::daemon::lifecycle::log_runtime_event(
+                "cursor_max",
+                "persisted_max_turned_off",
+                None,
+            );
+        }
+        Ok(cli_config::ForceOff::Unchanged) => {}
+        // Not fatal: the launcher keeps watching the config after the start and says so if Max is on.
+        Err(error) => {
+            crate::daemon::lifecycle::log_runtime_event("cursor_max", "turn_off_failed", None);
+            eprintln!(
+                "AskHuman: could not turn Cursor's Max mode off in {}: {error}",
+                path.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 fn write_private_record(record: &LaunchRecord) -> Result<()> {
@@ -1291,6 +1497,11 @@ fn validate_claim(record: &LaunchRecord, token: &str) -> Result<()> {
     if choice.speed.is_some() && record.payload_sha256.is_empty() {
         return Err(anyhow!("launch record speed requires a payload hash"));
     }
+    if record.allow_max.is_some()
+        && (record.payload_sha256.is_empty() || record.kind != AgentKind::Cursor)
+    {
+        return Err(anyhow!("launch record carries an invalid Max decision"));
+    }
     if !record.payload_sha256.is_empty() {
         let expected = bind_development_hash(
             payload_sha256(
@@ -1299,16 +1510,18 @@ fn validate_claim(record: &LaunchRecord, token: &str) -> Result<()> {
                 &record.warnings,
                 &record.launch_mode,
                 &choice,
+                record.allow_max,
             ),
             &record.source,
         );
         let legacy = legacy_payload_sha256(&record.task, &record.files, &record.warnings);
         // The pre-launch-mode hash only ever described a plain new task; it must not vouch for a
-        // record that also names a model.
+        // record that also names a model or a Max decision.
         if record.payload_sha256 != expected
             && !(record.launch_mode == LaunchMode::New
                 && record.source.channel != crate::development::session::SOURCE_CHANNEL
                 && choice.is_default()
+                && record.allow_max.is_none()
                 && record.payload_sha256 == legacy)
         {
             return Err(anyhow!("launch record payload hash mismatch"));
@@ -1361,10 +1574,24 @@ fn payload_sha256(
     warnings: &[String],
     launch_mode: &LaunchMode,
     choice: &ModelChoice,
+    allow_max: Option<bool>,
 ) -> String {
     // A record without a model or effort hashes exactly as it did before they existed, so one
     // written by an older build still claims and nothing changes for tasks that pick nothing.
-    let payload = if choice.speed.is_some() {
+    // The same goes for the Max decision: it only enters the hash once a record carries one.
+    let payload = if let Some(allow_max) = allow_max {
+        serde_json::to_vec(&(
+            "cursor-max-v1",
+            task,
+            files,
+            warnings,
+            launch_mode,
+            &choice.model,
+            &choice.effort,
+            choice.speed,
+            allow_max,
+        ))
+    } else if choice.speed.is_some() {
         serde_json::to_vec(&(
             task,
             files,
@@ -3017,7 +3244,7 @@ mod tests {
         let files = vec!["/tmp/a b.md".to_string()];
         let warnings = vec!["warning".to_string()];
         let hash = |mode: &LaunchMode, choice: &ModelChoice| {
-            payload_sha256("task", &files, &warnings, mode, choice)
+            payload_sha256("task", &files, &warnings, mode, choice, None)
         };
 
         // No choice: byte-for-byte what it was before model and effort existed.
@@ -3058,7 +3285,7 @@ mod tests {
             task_sha256: sha256(task.as_bytes()),
             files: Vec::new(),
             warnings: Vec::new(),
-            payload_sha256: payload_sha256(task, &[], &[], &LaunchMode::New, choice),
+            payload_sha256: payload_sha256(task, &[], &[], &LaunchMode::New, choice, None),
             cwd: fs::canonicalize(dir).unwrap().to_string_lossy().into(),
             kind,
             permission: LaunchPermission::AgentDefault,
@@ -3071,6 +3298,7 @@ mod tests {
             model: choice.model.clone(),
             effort: choice.effort.clone(),
             speed: choice.speed,
+            allow_max: None,
         }
     }
 
@@ -3171,6 +3399,16 @@ mod tests {
             };
             let command = assemble_command(&record, Some(&profile)).unwrap();
             let args: Vec<_> = command.get_args().collect();
+            assert_eq!(command.get_current_dir(), Some(neutral.as_path()));
+            if kind == AgentKind::Grok {
+                // Grok 1.0.70 fails to create a session that has extra directories ("a session
+                // works only in its cwd"), so the neutral workspace is its only directory.
+                assert!(
+                    !args.iter().any(|arg| *arg == "--add-dir"),
+                    "Grok must not be given extra directories: {args:?}"
+                );
+                continue;
+            }
             let option = args.iter().position(|arg| *arg == "--add-dir").unwrap();
             let delimiter = args.iter().position(|arg| *arg == "--").unwrap();
             assert!(
@@ -3178,7 +3416,6 @@ mod tests {
                 "profile options must be parsed as options: {args:?}"
             );
             assert_eq!(args[option + 1], root.as_os_str());
-            assert_eq!(command.get_current_dir(), Some(neutral.as_path()));
         }
     }
 
@@ -3248,7 +3485,8 @@ mod tests {
         fork.launch_mode = LaunchMode::Fork {
             source_session_id: "source-123".into(),
         };
-        fork.payload_sha256 = payload_sha256(&fork.task, &[], &[], &fork.launch_mode, &chosen);
+        fork.payload_sha256 =
+            payload_sha256(&fork.task, &[], &[], &fork.launch_mode, &chosen, None);
         assert!(claim(&fork)
             .unwrap_err()
             .to_string()
@@ -3276,6 +3514,224 @@ mod tests {
         assert_eq!(value["effort"], "high");
         let back: LaunchRecord = serde_json::from_value(value).unwrap();
         assert_eq!(back.choice(), choice(Some("model-a"), Some("high")));
+    }
+
+    fn assessment(
+        outcome: crate::agents::cursor_max::Outcome,
+    ) -> crate::agents::cursor_max::Assessment {
+        use crate::agents::cursor_max::{Assessment, Need, Plan};
+        Assessment {
+            plan: Plan::Legacy,
+            plan_known: true,
+            need: Need::Required,
+            model: Some("model-x".into()),
+            label: Some("Model X".into()),
+            outcome,
+        }
+    }
+
+    #[test]
+    fn the_max_decision_follows_the_assessment() {
+        use crate::agents::cursor_max::Outcome;
+        let decide =
+            |outcome, mode: &LaunchMode, allow| max_decision(&assessment(outcome), mode, allow);
+        let new = LaunchMode::New;
+        assert_eq!(
+            decide(Outcome::ForceOff { unknown: false }, &new, false).unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            decide(Outcome::ForceOff { unknown: true }, &new, false).unwrap(),
+            Some(false)
+        );
+        // Nothing to enforce: only an explicit allowance is recorded.
+        assert_eq!(decide(Outcome::Untouched, &new, false).unwrap(), None);
+        assert_eq!(decide(Outcome::Untouched, &new, true).unwrap(), Some(true));
+
+        let refused = decide(Outcome::Blocked, &new, false).unwrap_err();
+        let refused = refused.downcast_ref::<MaxRequired>().expect("typed error");
+        assert_eq!(refused.model.as_deref(), Some("model-x"));
+        assert!(refused
+            .to_string()
+            .contains("Model X needs Cursor's Max mode"));
+
+        // A continued session keeps its own model: Max stays off, but it is never refused.
+        let fork = LaunchMode::Fork {
+            source_session_id: "s".into(),
+        };
+        assert_eq!(decide(Outcome::Blocked, &fork, false).unwrap(), Some(false));
+    }
+
+    #[test]
+    fn only_cursor_has_a_max_decision_and_other_kinds_cannot_allow_it() {
+        let attempt = |kind, allow_max| {
+            create_record_with_options(
+                LaunchSource {
+                    channel: "test".into(),
+                    target: String::new(),
+                },
+                Path::new("/nonexistent-askhuman-test-dir"),
+                kind,
+                LaunchPermission::AgentDefault,
+                "task",
+                &[],
+                &[],
+                &ModelChoice::default(),
+                allow_max,
+            )
+            .unwrap_err()
+            .to_string()
+        };
+        assert!(attempt(AgentKind::Claude, true).contains("only Cursor has a Max mode"));
+        // Without the flag a non-Cursor launch goes on to the next check, as before.
+        assert!(attempt(AgentKind::Claude, false).contains("workspace"));
+        // For Cursor the workspace is checked before anything about Max is read.
+        assert!(attempt(AgentKind::Cursor, true).contains("workspace"));
+        assert!(attempt(AgentKind::Cursor, false).contains("workspace"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_max_decision_is_covered_by_the_hash_and_belongs_to_cursor_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let claim = |record: &LaunchRecord| validate_claim(record, &record.id);
+        let plain = ModelChoice::default();
+        let rehash = |record: &mut LaunchRecord| {
+            record.payload_sha256 = payload_sha256(
+                &record.task,
+                &record.files,
+                &record.warnings,
+                &record.launch_mode,
+                &record.choice(),
+                record.allow_max,
+            );
+        };
+
+        let mut record = stub_record(dir.path(), AgentKind::Cursor, &plain);
+        let before = record.payload_sha256.clone();
+        record.allow_max = Some(false);
+        rehash(&mut record);
+        assert_ne!(record.payload_sha256, before);
+        claim(&record).unwrap();
+
+        // Flipping or dropping the decision after the hash was taken is caught...
+        let mut flipped = record.clone();
+        flipped.allow_max = Some(true);
+        assert!(claim(&flipped).unwrap_err().to_string().contains("hash"));
+        let mut dropped = record.clone();
+        dropped.allow_max = None;
+        assert!(claim(&dropped).unwrap_err().to_string().contains("hash"));
+        // ...even when the old plain-task hash is put back.
+        let mut legacy = record.clone();
+        legacy.allow_max = Some(false);
+        legacy.payload_sha256 =
+            legacy_payload_sha256(&legacy.task, &legacy.files, &legacy.warnings);
+        assert!(claim(&legacy).unwrap_err().to_string().contains("hash"));
+        // A decision needs a hash at all.
+        let mut unhashed = record.clone();
+        unhashed.payload_sha256.clear();
+        assert!(claim(&unhashed)
+            .unwrap_err()
+            .to_string()
+            .contains("Max decision"));
+        // Allowed and kept off hash differently.
+        let mut allowed = record.clone();
+        allowed.allow_max = Some(true);
+        rehash(&mut allowed);
+        assert_ne!(allowed.payload_sha256, record.payload_sha256);
+        claim(&allowed).unwrap();
+
+        // Another Agent cannot carry one.
+        let mut claude = stub_record(dir.path(), AgentKind::Claude, &plain);
+        claude.allow_max = Some(false);
+        rehash(&mut claude);
+        assert!(claim(&claude)
+            .unwrap_err()
+            .to_string()
+            .contains("Max decision"));
+
+        // An old record has no such field and still claims.
+        let old = stub_record(dir.path(), AgentKind::Cursor, &plain);
+        let value = serde_json::to_value(&old).unwrap();
+        assert!(value.get("allowMax").is_none());
+        let back: LaunchRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(back.allow_max, None);
+        claim(&back).unwrap();
+        let mut value = serde_json::to_value(&record).unwrap();
+        assert_eq!(value["allowMax"], false);
+        value["allowMax"] = serde_json::Value::Null;
+        let back: LaunchRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(back.allow_max, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_helper_keeps_the_persisted_max_toggles_off_and_never_touches_other_files() {
+        use crate::agents::cursor_max::Outcome;
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("cli-config.json");
+        let lock = dir.path().join("cursor-max.lock");
+        let body = r#"{ "maxMode": true, "model": { "maxMode": true } }"#;
+        let record = stub_record(dir.path(), AgentKind::Cursor, &ModelChoice::default());
+        let run = |outcome, record: &LaunchRecord, path: Option<PathBuf>| {
+            enforce_max_with(record, &assessment(outcome), path, &lock)
+        };
+        let on = || {
+            crate::agents::cursor_max::cli_config::read_state_at(&config)
+                .unwrap()
+                .persisted_max()
+        };
+
+        // Max is allowed or the settings were relaxed since: nothing is touched.
+        fs::write(&config, body).unwrap();
+        run(Outcome::Untouched, &record, Some(config.clone())).unwrap();
+        assert!(on());
+        assert_eq!(fs::read_to_string(&config).unwrap(), body);
+
+        // A model that needs Max is refused here too, with the file left alone.
+        let error = run(Outcome::Blocked, &record, Some(config.clone())).unwrap_err();
+        assert!(error.downcast_ref::<MaxRequired>().is_some());
+        assert!(on());
+
+        // The ordinary case: both toggles go off.
+        run(
+            Outcome::ForceOff { unknown: false },
+            &record,
+            Some(config.clone()),
+        )
+        .unwrap();
+        assert!(!on());
+        assert_eq!(
+            fs::read_to_string(&config).unwrap(),
+            r#"{ "maxMode": false, "model": { "maxMode": false } }"#
+        );
+
+        // A fork cannot be refused, but its toggles are turned off all the same.
+        fs::write(&config, body).unwrap();
+        let mut fork = record.clone();
+        fork.launch_mode = LaunchMode::Fork {
+            source_session_id: "s".into(),
+        };
+        run(Outcome::Blocked, &fork, Some(config.clone())).unwrap();
+        assert!(!on());
+
+        // No config, no config directory, or one that cannot be understood: the launch goes on.
+        run(Outcome::ForceOff { unknown: true }, &record, None).unwrap();
+        run(
+            Outcome::ForceOff { unknown: true },
+            &record,
+            Some(dir.path().join("missing.json")),
+        )
+        .unwrap();
+        let odd = r#"{"maxMode":true,"maxMode":true}"#;
+        fs::write(&config, odd).unwrap();
+        run(
+            Outcome::ForceOff { unknown: true },
+            &record,
+            Some(config.clone()),
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(&config).unwrap(), odd);
     }
 
     #[test]
@@ -3401,7 +3857,7 @@ mod speed_tests {
             .unwrap(),
         );
         assert_eq!(
-            payload_sha256("task", &[], &[], &LaunchMode::New, &pick),
+            payload_sha256("task", &[], &[], &LaunchMode::New, &pick, None),
             old
         );
         let standard = ModelChoice {
@@ -3412,7 +3868,7 @@ mod speed_tests {
             speed: Some(TaskSpeed::Fast),
             ..pick
         };
-        let hash = |pick| payload_sha256("task", &[], &[], &LaunchMode::New, pick);
+        let hash = |pick| payload_sha256("task", &[], &[], &LaunchMode::New, pick, None);
         assert_ne!(hash(&standard), old);
         assert_ne!(hash(&standard), hash(&fast));
     }

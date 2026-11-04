@@ -2,7 +2,7 @@ import SwiftUI
 import AHCore
 import AHProtocol
 
-/// The Agents tab: every session on the paired Macs, the ones that need you first.
+/// The Agents tab: every session on the paired Macs, the ones waiting for you first.
 struct AgentsScreen: View {
     @Environment(AppStore.self) private var store
     @Binding var showPairing: Bool
@@ -175,27 +175,12 @@ private struct AgentsList: View {
     private func row(_ item: AgentItem) -> some View {
         let content = AgentRow(item: item, showMac: store.macs.count > 1)
         if let selection {
-            // The tint is the row's, the button only the part of it that says which session it is: the
-            // button to continue is another one.
-            let picked = selection.wrappedValue == item.id
-            VStack(alignment: .leading, spacing: 10) {
-                content.pickButton(picked: picked) { selection.wrappedValue = item.id }
-                    .accessibilityIdentifier("agent-row-\(item.agentKey)")
-                continueButton(item)
-            }
-            .pickedBackground(picked)
+            content.pickable(picked: selection.wrappedValue == item.id) { selection.wrappedValue = item.id }
+                .accessibilityIdentifier("agent-row-\(item.agentKey)")
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                NavigationLink(value: item.id) { content }
-                    .accessibilityIdentifier("agent-row-\(item.agentKey)")
-                continueButton(item)
-            }
+            NavigationLink(value: item.id) { content }
+                .accessibilityIdentifier("agent-row-\(item.agentKey)")
         }
-    }
-
-    @ViewBuilder
-    private func continueButton(_ item: AgentItem) -> some View {
-        if item.needsAttention, item.view.lastTurnResult?.id != nil { AgentContinueButton(item: item) }
     }
 
     private var filterName: String {
@@ -265,7 +250,6 @@ private struct AgentSectionTitle: View {
     private var title: Text {
         switch id {
         case "waiting": Text("Waiting for you")
-        case "attention": Text("Needs attention")
         case "working": Text("Working")
         case "ended": Text("Session ended")
         default: Text("Idle")
@@ -274,7 +258,7 @@ private struct AgentSectionTitle: View {
 
     private var color: Color {
         switch id {
-        case "waiting", "attention": .orange
+        case "waiting": .orange
         case "working": .green
         default: .gray
         }

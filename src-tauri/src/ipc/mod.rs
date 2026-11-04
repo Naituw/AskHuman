@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// 改本文件的消息类型前先读 `docs/overview.md` 的「IPC 协议号」：什么改动要 +1、什么不要，
 /// 以及 +1 时要同步更新的文档。
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 fn is_zero_u32(value: &u32) -> bool {
     *value == 0
@@ -543,6 +543,14 @@ pub enum ClientMsg {
     CodexDesktop {
         operation: crate::codex_desktop::Operation,
     },
+    CursorDesktop {
+        operation: crate::cursor_desktop::Operation,
+    },
+    /// Mac 控制台给一个不在工作中的会话发消息（目前只有 Cursor Desktop 聊天）：Daemon 直接送进原聊天，
+    /// 并回 `ServerMsg::AgentMessage`。同一 `id` 的重试得到同一个结果。
+    AgentMessage {
+        message: crate::agents::control::ConsoleMessage,
+    },
     /// CLI / 控制连接握手。
     Hello(ClientHello),
     /// `daemon status`。
@@ -782,6 +790,14 @@ pub enum InterjectAction {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ServerMsg {
     CodexDesktop {
+        result: Result<serde_json::Value, String>,
+    },
+    CursorDesktop {
+        result: Result<serde_json::Value, String>,
+    },
+    /// `ClientMsg::AgentMessage` 的答复：`Ok` 载荷的 `status` 为 `accepted`、`rejected`（没有发出，
+    /// 该 `id` 已作废）或 `unknown`（可能已发出），`message` 是给用户看的本地化文案。
+    AgentMessage {
         result: Result<serde_json::Value, String>,
     },
     HelloAck(HelloAck),
@@ -1565,5 +1581,25 @@ mod tests {
                 "roundtrip variant mismatch: {json}"
             );
         }
+    }
+
+    #[test]
+    fn agent_message_wire_shape_is_stable_and_files_are_optional() {
+        // What the console sends today: no `files` key at all must still be a valid message.
+        let json = r#"{"type":"agentMessage","message":{"id":"m1","kind":"cursor","sessionId":"s1","text":"hi"}}"#;
+        let ClientMsg::AgentMessage { message } = serde_json::from_str(json).unwrap() else {
+            panic!("not an agentMessage");
+        };
+        assert_eq!(message.id, "m1");
+        assert_eq!(message.kind, crate::agents::AgentKind::Cursor);
+        assert_eq!(message.session_id, "s1");
+        assert!(message.files.is_empty());
+        let answer = ServerMsg::AgentMessage {
+            result: Ok(serde_json::json!({"status": "accepted"})),
+        };
+        assert_eq!(
+            serde_json::to_value(&answer).unwrap(),
+            serde_json::json!({"type": "agentMessage", "result": {"Ok": {"status": "accepted"}}})
+        );
     }
 }

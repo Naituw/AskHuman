@@ -613,3 +613,16 @@ Xcode 返回 `ARCHIVE SUCCEEDED` / `EXPORT SUCCEEDED`。Apple build `b29e802b-ff
 沿用 bundle ID、签名团队、共享钥匙串组与 `AskHuman Internal`，复用既有 Keychain helper；归档和上传预检通过，
 Xcode 返回 `ARCHIVE SUCCEEDED` / `EXPORT SUCCEEDED`。Apple build `56574ec7-6cda-4ded-904f-94485ec9f41e`
 状态为 `VALID`，已加入内部测试组（组内共 4 个构建，测试员 1 已安装 / 1 已邀请）。用户是否已更新、真机手感如何还没有确认，跟踪在 `docs/PROGRESS.md` 的开发者模式一节。
+
+## 2026-11-04：TestFlight 内部构建 6
+
+为 Cursor 任务的 Max 开关出包（用户在 Max 计划里定了「Desktop `dryRun` 阶段通过后再出」）。从分支 `feat/cursor-max-control` 的 `9f00abcb`（工作树干净；`ios/` 与 main `7e07a728` 逐字一致，两者只差文档）
+归档并分发 `0.1.0 (6)`。**这是 main 上自 build 5 以来全部 iOS 改动的整包，不是只含 Max 一项**：
+- Cursor 任务的 Max 控制（`2600561f`、`9df00e98`、`6537f791`）：新建任务里的「允许 Max」开关、模型与「默认」的 Max 标记、中文文案；线协议只多了可选字段 `allowMax`、`maxRequired`；
+- 新版项目选择（`b8245459`，[开发者模式规格](../specs/ios-developer-mode.md) D20 / D21）：用户此前看过汇报选了「先不出」，这次它因为已在 main 里随包出去了。**出包前没有把这一点单独提给用户确认**（只检查了 Max 一项），出包后如实告知；
+- 去掉 Agents 页「需要关注」分组与所有「请求继续」按钮（`12b61dc2`，Agent 最终失败确认那条线：失败改在 Mac 收件箱出卡，手机只报状态）。
+
+出包前没有重跑测试，沿用合入 main 后的结果：Swift 包 569 通过（43 条要真实服务的端到端按设计跳过），两条 Max 的 iOS UI 测试英文通过（中文没重跑，核对了字符串目录）。
+沿用 bundle ID、签名团队、共享钥匙串组与 `AskHuman Internal`，复用既有 Keychain helper；预检通过（版本 `0.1.0`、构建 `6`、仅内部），
+`ARCHIVE SUCCEEDED` / `EXPORT SUCCEEDED`（归档用 `-jobs 3`、降低优先级，机器当时在换页）。Apple build `cf44dca8-03dc-4c31-9d3c-f4acb6424ef2`
+状态为 `VALID`，已加入内部测试组（组内共 5 个构建，测试员 1 已安装 / 1 已邀请）。用户是否已更新、真机上的表现还没有确认，跟踪在 `docs/PROGRESS.md` 的 Cursor Max、开发者模式两节。

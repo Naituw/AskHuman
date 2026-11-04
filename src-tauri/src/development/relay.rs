@@ -381,12 +381,27 @@ impl Channel for RelayChannel {
                     sink.surface_lost("dev-relay", &error);
                 }
             }
+            report_interrupted(&cancel, &sink).await;
         });
     }
 
     fn interrupt(&self, _reason: &Interruption) {
         self.cancel.cancel();
     }
+}
+
+/// An interrupted remote surface tells the coordinator once it has stopped. A cancelled request
+/// is held until every such surface reports in (or the finalize timeout passes). The relay draws
+/// nothing itself — the everyday daemon repaints its own cards — so it reports as soon as its
+/// delegated process is gone; staying silent only made every cancelled relay wait out the timeout.
+async fn report_interrupted(cancel: &CancellationToken, sink: &ResultSink) {
+    if !cancel.is_cancelled() {
+        return;
+    }
+    // The coordinator counts the surfaces it waits for right after interrupting them, and a report
+    // sent before that is lost. A short pause lets the count land first.
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    sink.notify_finalized();
 }
 
 async fn forward(
@@ -697,6 +712,45 @@ mod tests {
             ChannelAction::Cancel
         ));
     }
+    #[tokio::test]
+    async fn a_cancelled_relay_reports_in_so_cancellation_does_not_wait_out_the_timeout() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let coordinator = crate::app::coordinator::Coordinator::new_ipc(
+            AskRequest::new(
+                crate::models::MessagePrompt::new("context".into(), Vec::new()),
+                vec![crate::models::Question::new("question".into(), Vec::new())],
+                true,
+            ),
+            crate::i18n::Lang::En,
+            tx,
+            "/project".into(),
+            "Dev".into(),
+            crate::app::coordinator::HistoryBinding::default(),
+            false,
+        );
+        let relay = RelayChannel::new();
+        coordinator.register(relay.clone());
+        // The coordinator interrupts the relay and starts counting the surfaces it must wait for.
+        coordinator.cancel_request("Caller".into(), "caller");
+        assert!(relay.cancel.is_cancelled());
+        // The relay is counted: until it reports in, the cancelled request is still held.
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            coordinator.wait_for_finalizers(),
+        )
+        .await
+        .is_err());
+        report_interrupted(&relay.cancel, &coordinator).await;
+        // Without the report this waits for the whole finalize timeout and then fails.
+        let finalized = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            coordinator.wait_for_finalizers(),
+        )
+        .await
+        .expect("a reported relay must not hold the cancelled request");
+        assert!(finalized);
+    }
+
     #[test]
     fn relay_grants_bind_one_worktree_build_question_and_expiry() {
         let root = tempfile::tempdir().unwrap();

@@ -1,8 +1,9 @@
 # Agent 生命周期追踪 + 状态窗口
 
 > **2026-10-31 更新**：当前实现接入 Codex `Interrupt`／`SessionEnd` 与 Grok
-> `StopCancelled`／空闲补漏（按已验证版本门槛安装）。统一结果、乱序关联、手机「需要处理」和
-> 原会话接续见 [Agent 生命周期结果与原会话继续](agent-lifecycle-results-and-recovery.md)。
+> `StopCancelled`／空闲补漏（按已验证版本门槛安装）。统一结果、乱序关联、手机上轮结果展示和
+> 原会话接续见 [Agent 生命周期结果与原会话继续](agent-lifecycle-results-and-recovery.md)
+> （2026-11-03 起失败的处理动作只在收件箱的错误卡，见 [失败处理统一到收件箱](agent-failure-inbox.md)）。
 > 下文 §8.2 保留旧版源码调研记录，不代表当前事件能力。
 >
 > 状态：已实现（macOS/Linux/Windows），当前覆盖 Claude Code / Codex / Cursor / Grok / Pi。

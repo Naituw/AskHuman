@@ -157,7 +157,7 @@ onBeforeUnmount(() => {
             <svg viewBox="0 0 20 20" aria-hidden="true"><path v-if="copied === 'session'" d="m4 10 4 4 8-9"/><path v-else d="M7 3h9v11H7z M4 6H3v11h9v-1"/></svg>
           </button>
         </div>
-        <div v-if="agent?.model" class="source-info-row"><span class="source-info-key">{{ t('sourceInfo.model') }}</span><span class="source-info-value">{{ agent.model }}</span></div>
+        <div v-if="agent?.model" class="source-info-row"><span class="source-info-key">{{ t('sourceInfo.model') }}</span><span class="source-info-value">{{ agent.model }}</span><span v-if="agent.maxMode === true" class="source-max" data-testid="source-max" :title="t('sourceInfo.maxModeHint')">{{ t('sourceInfo.maxMode') }}</span></div>
         <div v-if="agent?.reasoning" class="source-info-row"><span class="source-info-key">{{ t('sourceInfo.reasoning') }}</span><span>{{ agent.reasoning }}</span></div>
         <div v-if="contextText" class="source-context"><span class="source-info-key">{{ t('sourceInfo.context') }}</span><span>{{ contextText }}</span><small v-if="agent?.context?.estimated">{{ t('sourceInfo.estimated') }}</small></div>
         <p v-if="reported && (agent?.model || agent?.context)" class="source-info-time">{{ t('sourceInfo.reportedAt', { time: reported }) }}</p>
@@ -187,6 +187,8 @@ onBeforeUnmount(() => {
 .source-info-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; min-width: 0; }
 .source-info-key { flex: 0 0 auto; color: var(--text-secondary); }
 .source-info-value { min-width: 0; overflow-wrap: anywhere; }
+/* Max mode is billed at API rates on the request-based plan, so it is shown in the warning color. */
+.source-max { flex: 0 0 auto; padding: 0 5px; border-radius: 5px; background: color-mix(in srgb, #ff453a 16%, transparent); color: #ff453a; font-size: 10px; font-weight: 700; line-height: 1.6; }
 .source-session-id code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 11px; }
 .source-info-action { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 25px; height: 25px; padding: 4px; background: transparent; color: var(--text-secondary); border: none; border-radius: 5px; cursor: pointer; }
 .source-info-action:hover { background: var(--bg-elevated); color: var(--text-primary); }

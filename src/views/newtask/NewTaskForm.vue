@@ -3,13 +3,16 @@
 // 项目 → 任务来源（直接输入 / 项目待办 + 可选补充）→ Agent → 权限 → 启动。
 // 窗口版（NewTaskView）与控制台内嵌版（NewTaskPane）共用；宿主负责主题/语言与启动后的收尾
 // （关窗 / 选中新会话），本组件成功后仅 emit `launched`。
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   agentTaskReadiness,
   codexLaunchStatus,
   type CodexLaunchStatus,
+  cursorLaunchStatus,
+  type CursorLaunchStatus,
+  newTaskCursorOptions,
   newTaskInit,
   newTaskLaunch,
   newTaskProjects,
@@ -22,6 +25,7 @@ import {
 import type {
   AgentKind,
   AgentTaskReadiness,
+  CursorTaskOptions,
   NewTaskProject,
   PopupSubmitKey,
   TodoEntry,
@@ -29,6 +33,7 @@ import type {
 import { AGENT_INSTALL_DOCS } from "../settings/useAgentTasks";
 import { primaryModifierPressed, primaryShortcutLabel } from "../../lib/platform";
 import { codexLaunchDescription } from "../../lib/codexLaunch";
+import { cursorLaunchDescription } from "../../lib/cursorLaunch";
 import LaunchPermission from "./LaunchPermission.vue";
 
 const { t } = useI18n();
@@ -153,10 +158,25 @@ function selectTodo(entry: TodoEntry): void {
 const readiness = ref<AgentTaskReadiness[] | null>(null);
 const selectedKind = ref<AgentKind | null>(null);
 const desktop = ref<CodexLaunchStatus | null>(null);
+/** Where a new Cursor task would run; `null` while unknown, which leaves Cursor judged by its own readiness. */
+const cursorLaunch = ref<CursorLaunchStatus | null>(null);
 const operationId = ref(crypto.randomUUID());
 function agentAvailable(item: AgentTaskReadiness): boolean {
-  return item.kind === "codex" ? !!desktop.value?.target : item.ready;
+  if (item.kind === "codex") return !!desktop.value?.target;
+  if (item.kind === "cursor" && cursorLaunch.value) return !!cursorLaunch.value.target;
+  return item.ready;
 }
+/** Said under Cursor only when its Agents window is involved; the terminal route reads as it always did. */
+const cursorRouteNote = computed(() => {
+  const status = cursorLaunch.value;
+  if (!status || (status.target !== "desktop" && status.preference !== "desktop")) return null;
+  return cursorLaunchDescription(status, t);
+});
+const footerNote = computed(() => {
+  if (selectedKind.value === "codex" && desktop.value?.target === "desktop") return "desktop.launchNote";
+  if (selectedKind.value === "cursor" && cursorLaunch.value?.target === "desktop") return "newTask.cursorWindowNote";
+  return "newTask.launchNote";
+});
 /** Readiness still lists launch-unsupported families for Settings/doctor, never for this picker. */
 const launchableReadiness = computed(
   () => readiness.value?.filter((item) => item.launchSupported) ?? null,
@@ -165,8 +185,13 @@ const targetReady = computed(() => !!launchableReadiness.value?.find(r => r.kind
 
 async function loadReadiness(): Promise<void> {
   try {
-    const [list, status] = await Promise.all([agentTaskReadiness(), codexLaunchStatus(true).catch(() => null)]);
+    const [list, status, cursor] = await Promise.all([
+      agentTaskReadiness(),
+      codexLaunchStatus(true).catch(() => null),
+      cursorLaunchStatus(true).catch(() => null),
+    ]);
     desktop.value = status;
+    cursorLaunch.value = cursor;
     readiness.value = list;
     // 已选 Agent 不再就绪（重查后）→ 取消选择。
     if (
@@ -214,6 +239,89 @@ const effectivePermission = computed<"agent-default" | "yolo" | null>(() => {
   return permissionChoice.value;
 });
 
+// ===== Cursor：模型与 Max 控制（spec cursor-max-control §5）=====
+/**
+ * 仅在 Max 受控时（旧计划且策略为强制关闭）才有值；`null` = 不受控或尚未读到，表单与从前一致。
+ */
+const cursorOptions = ref<CursorTaskOptions | null>(null);
+/** 选中的 Cursor 模型 id；空串 = 沿用 Cursor 默认。 */
+const cursorModel = ref("");
+/** 每个任务单独决定，默认关，不记忆。 */
+const allowMax = ref(false);
+let cursorOptionsSeq = 0;
+
+async function loadCursorOptions(): Promise<void> {
+  const seq = ++cursorOptionsSeq;
+  if (selectedKind.value !== "cursor") {
+    cursorOptions.value = null;
+    return;
+  }
+  try {
+    const options = await newTaskCursorOptions();
+    // 过期响应（期间换了 Agent 或又发起了新读取）丢弃。
+    if (seq !== cursorOptionsSeq) return;
+    cursorOptions.value = options;
+    // 选中的模型已不在清单里 → 回到默认，避免带着一个看不见的选择启动。
+    if (
+      cursorModel.value &&
+      !options?.models.some((m) => m.id === cursorModel.value)
+    ) {
+      cursorModel.value = "";
+    }
+  } catch (err) {
+    if (seq !== cursorOptionsSeq) return;
+    console.warn("new-task cursor options failed", err);
+    cursorOptions.value = null;
+  }
+}
+
+/** 换 Agent 就重置：模型选择与「允许 Max」都不跨 Agent 保留。 */
+watch(selectedKind, () => {
+  cursorModel.value = "";
+  allowMax.value = false;
+  void loadCursorOptions();
+});
+
+function resetCursorChoices(): void {
+  cursorModel.value = "";
+  allowMax.value = false;
+}
+
+/** 「将使用」：所选模型，或 Cursor 的当前默认；Max 结论为 true／false／未知（undefined）。 */
+const willUse = computed(() => {
+  const options = cursorOptions.value;
+  if (selectedKind.value !== "cursor" || !options) return null;
+  if (cursorModel.value) {
+    const model = options.models.find((m) => m.id === cursorModel.value);
+    return {
+      label: model?.label ?? cursorModel.value,
+      maxRequired: model?.maxRequired,
+    };
+  }
+  return {
+    label: options.default.label ?? t("newTask.cursorDefaultModel"),
+    maxRequired: options.default.maxRequired,
+  };
+});
+
+function maxMark(maxRequired: boolean | undefined): string {
+  if (maxRequired === true) return t("newTask.cursorMaxRequiredMark");
+  if (maxRequired === false) return t("newTask.cursorMaxNotRequiredMark");
+  return t("newTask.cursorMaxUnknownMark");
+}
+
+/** 模型需要 Max 而本次不允许：禁止启动，出路是换模型或打开开关。 */
+const maxBlocked = computed(
+  () => !allowMax.value && willUse.value?.maxRequired === true
+);
+/** 无法判断是否需要 Max：照常启动，仅灰字说明。 */
+const maxUnknown = computed(
+  () =>
+    !allowMax.value &&
+    willUse.value !== null &&
+    willUse.value.maxRequired === undefined
+);
+
 // ===== 任务拼装与校验（spec §3.3）=====
 const MAX_TASK_CHARS = 3000;
 
@@ -236,7 +344,8 @@ const canLaunch = computed(
     !!selectedKind.value &&
     !!effectivePermission.value &&
     finalTask.value.length > 0 &&
-    !tooLong.value
+    !tooLong.value &&
+    !maxBlocked.value
 );
 
 // ===== 启动 =====
@@ -257,6 +366,13 @@ async function launch(): Promise<void> {
       const saved=JSON.parse(localStorage.getItem("codex-desktop-pending-create") || "null");
       operationId.value = (saved?.key === key || saved?.key === legacyKey) && typeof saved.id === "string" ? saved.id : crypto.randomUUID();
       localStorage.setItem("codex-desktop-pending-create",JSON.stringify({key,id:operationId.value}));
+    } else if (selectedKind.value === "cursor") {
+      // A retry of the same task reuses its operation id, so a creation Cursor may already have
+      // done is never repeated; a different model or Max choice is a different task.
+      const key=JSON.stringify([selectedProject.value,finalTask.value,effectivePermission.value,selectedTodo.value?.project,selectedTodo.value?.id,selectedTodo.value?.attachments,cursorOptions.value ? cursorModel.value : "",cursorOptions.value ? allowMax.value : false]);
+      const saved=JSON.parse(localStorage.getItem("cursor-desktop-pending-create") || "null");
+      operationId.value = saved?.key === key && typeof saved.id === "string" ? saved.id : crypto.randomUUID();
+      localStorage.setItem("cursor-desktop-pending-create",JSON.stringify({key,id:operationId.value}));
     }
     await newTaskLaunch({
       operationId: operationId.value,
@@ -274,9 +390,20 @@ async function launch(): Promise<void> {
           sourcePath: attachment.sourcePath,
           storage: attachment.storage,
         })) ?? [],
+      // Max 控制只对 Cursor 且受控时生效；其余情况不带这两项，行为与从前一致。
+      model:
+        selectedKind.value === "cursor" && cursorOptions.value && cursorModel.value
+          ? cursorModel.value
+          : null,
+      allowMax:
+        selectedKind.value === "cursor" && cursorOptions.value
+          ? allowMax.value
+          : undefined,
     });
     localStorage.removeItem("codex-desktop-pending-create");
+    localStorage.removeItem("cursor-desktop-pending-create");
     operationId.value=crypto.randomUUID();
+    resetCursorChoices();
   } catch (err) {
     launchError.value = t("newTask.launchFailed", { e: String(err) });
     return;
@@ -315,6 +442,7 @@ async function applyPreselect(
   todoMissing.value = false;
   launchError.value = "";
   inputText.value = "";
+  resetCursorChoices();
   await loadTodosFor(selectedProject.value);
   if (todoId) {
     const entry = todos.value.find((e) => e.id === todoId);
@@ -333,8 +461,13 @@ function applyPopupSubmitKey(value: unknown): void {
 let unlistenSettings: UnlistenFn | null = null;
 let unlistenTodos: UnlistenFn | null = null;
 
+function onWindowFocus(): void {
+  void loadReadiness();
+  void loadCursorOptions();
+}
+
 onMounted(async () => {
-  window.addEventListener("focus", loadReadiness);
+  window.addEventListener("focus", onWindowFocus);
   try {
     const init = await newTaskInit();
     applyPopupSubmitKey(init.popupSubmitKey);
@@ -353,6 +486,7 @@ onMounted(async () => {
     (e) => {
       applyPopupSubmitKey(e.payload.popupSubmitKey);
       void loadReadiness();
+      void loadCursorOptions();
     }
   );
   // todos.json 被任意进程改写 → 重载所选项目待办；选中待办被删时保留快照并提示（IM D31）。
@@ -391,7 +525,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("focus", loadReadiness);
+  window.removeEventListener("focus", onWindowFocus);
   unlistenSettings?.();
   unlistenTodos?.();
 });
@@ -566,6 +700,9 @@ onBeforeUnmount(() => {
                 <span v-if="item.kind === 'codex' && desktop" class="nt-agent-sub">
                   {{ codexLaunchDescription(desktop, t) }}
                 </span>
+                <span v-else-if="item.kind === 'cursor' && cursorRouteNote" class="nt-agent-sub">
+                  {{ cursorRouteNote }}
+                </span>
                 <span v-else-if="item.ready" class="nt-agent-sub" :title="item.executable ?? ''">
                   {{ item.integrationMode.toUpperCase() }} · {{ item.executable }}
                 </span>
@@ -601,6 +738,52 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
+        <!-- Cursor：模型选择与「允许 Max」（仅 Max 受控时出现，spec cursor-max-control §5） -->
+        <section
+          v-if="selectedKind === 'cursor' && cursorOptions"
+          class="nt-section"
+          data-testid="nt-cursor-max"
+        >
+          <label class="nt-label" for="nt-cursor-model">{{ t("newTask.cursorModelLabel") }}</label>
+          <select
+            id="nt-cursor-model"
+            v-model="cursorModel"
+            class="nt-select"
+            :disabled="!cursorOptions.listed"
+          >
+            <option value="">{{ t("newTask.cursorModelDefault") }}</option>
+            <option v-for="m in cursorOptions.models" :key="m.id" :value="m.id" :title="m.note ?? ''">
+              {{ m.label }}{{ m.maxRequired === undefined ? "" : ` · ${maxMark(m.maxRequired)}` }}
+            </option>
+          </select>
+          <p v-if="!cursorOptions.listed" class="nt-note">
+            {{ t("newTask.cursorModelsUnavailable") }}
+          </p>
+          <p v-if="willUse" class="nt-note nt-will-use" :class="{ bad: maxBlocked }">
+            {{ t("newTask.cursorWillUse", { model: willUse.label, max: maxMark(willUse.maxRequired) }) }}
+          </p>
+          <button
+            type="button"
+            class="nt-choice nt-allow-max"
+            :class="{ active: allowMax, danger: allowMax }"
+            role="switch"
+            :aria-checked="allowMax"
+            @click="allowMax = !allowMax"
+          >
+            <span class="nt-check" :class="{ on: allowMax }" />
+            <span class="nt-choice-text">
+              {{ t("newTask.allowMax") }}
+              <span class="nt-choice-sub">{{ t("newTask.allowMaxDesc") }}</span>
+            </span>
+          </button>
+          <p v-if="maxBlocked" class="nt-error" data-testid="nt-max-blocked">
+            {{ t("newTask.maxBlocked", { model: willUse?.label ?? "" }) }}
+          </p>
+          <p v-else-if="maxUnknown" class="nt-note" data-testid="nt-max-unknown">
+            {{ t("newTask.maxUnknownNote") }}
+          </p>
+        </section>
+
         <LaunchPermission
           v-if="selectedKind !== 'pi'"
           v-model="permissionChoice"
@@ -613,7 +796,7 @@ onBeforeUnmount(() => {
     <footer v-if="loaded && (locked || projects.length)" class="nt-footer">
       <p v-if="launchError" class="nt-error">{{ launchError }}</p>
       <div class="nt-footer-row">
-        <span class="nt-note">{{ t(selectedKind === "codex" && desktop?.target === "desktop" ? "desktop.launchNote" : "newTask.launchNote") }}</span>
+        <span class="nt-note">{{ t(footerNote) }}</span>
         <button
           type="button"
           class="nt-btn nt-btn-launch"
@@ -771,6 +954,23 @@ onBeforeUnmount(() => {
 .nt-radio.on {
   border-color: #0a84ff;
   background: radial-gradient(circle, #0a84ff 0 3.5px, transparent 4px);
+}
+/* Switch-like control (Allow Max): a checkbox, since it is on/off rather than one of several. */
+.nt-check {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  border-radius: 3px;
+  border: 1.4px solid var(--text-secondary);
+  box-sizing: border-box;
+}
+.nt-check.on {
+  border-color: #ff453a;
+  background: #ff453a;
+}
+.nt-will-use.bad {
+  color: #ff453a;
 }
 .nt-choice.danger .nt-radio.on {
   border-color: #ff453a;

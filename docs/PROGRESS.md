@@ -3,9 +3,9 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 待验收：Agent 最终失败确认（已合并并装为日常版，真实失败路径未验）
+## 待验收：Agent 最终失败确认（已合并并装为日常版；Cursor 的真实失败路径已验，其余未验）
 
-2026-11-02 已快进合并进 `main`（本地，**未推送**）并 `./scripts/install.sh` 装为日常版。需求
+2026-11-02 已快进合并进 `main` 并 `./scripts/install.sh` 装为日常版。需求
 [规格](specs/agent-failure-confirmation.md)，计划与合并后的验证见
 [计划 §10](plans/agent-failure-confirmation.md#10-合并与日常版安装2026-11-02)。
 共享「结束／出错时确认」开关：最终失败进入普通错误卡，有原会话通道时可「要求继续」，否则仅「知道了」；
@@ -13,7 +13,30 @@ Grok 仅错误，Antigravity 不宣称支持；Codex CLI 只读观察共享服�
 只迁移了 Pi 扩展（已在运行的 Pi 会话要重启）；隔离链路脚本对日常二进制通过。已做的自动化与手机预选项验收
 用的都是模拟终态，没有调用模型。
 
+2026-11-03：手机 Agents 页的「需要处理」分组与「要求继续」按钮已去掉，错误卡成为唯一处理入口（iOS 未出包）。
+本机三次真实 Cursor 出错（05:47／08:59／12:53，都在等待 AskHuman 回答期间）证实：Cursor 重试用尽后既不发 `stop`
+也不发 `sessionEnd`，这类失败原本没有卡，会话一路变成「已结束」。按用户确认的 I4–I9 已实现：只读尾随 Cursor 结构化日志
+检测出错（macOS，共用 Cursor 的确认开关）、`incomplete` 也出卡（不能接续的当作通知）、未处理的卡写入
+`~/.askhuman/state/failure-cards.json` 跨 daemon 换新保留且不拦换新排空、「要求继续」的指令末尾带一句中性的
+`--show-last` 提示。规格与决定见 [specs/agent-failure-inbox.md](specs/agent-failure-inbox.md)。
+
+2026-11-04：上述实现已验证并 `./scripts/install.sh` 装为日常版，已推送：全量 `cargo test` 通过、CI 同参数 clippy 通过、
+隔离冒烟 `scripts/agent-failure-cursor-smoke.mjs` 对装出的二进制通过（八个场景，规格 §7）。顺带修了一处：held 卡不计入
+`active_count()` 后，菜单栏图标与托盘「待答」列表曾少算它们，现在改用含 held 卡的 `in_flight_count()`。
+新 daemon 接管后（05:32）当天就遇到两次自然的 Cursor 出错（07:08、07:56）：检测、登记、卡内容都对，但**卡在约 2 秒内被自己
+撤销**——开着「按需发送」时卡自己的提交把失败的会话拉回「工作中」（规格 §5.3）；隔离验证当时都关着该开关，所以没发现。
+已修复并加了冒烟场景 8。修复版装机后又自然遇到三次 Cursor 出错（11-04 09:39、09:58、10:58），都核实了：卡留到用户处理
+（出错后约 2 分钟、50 秒、13 秒，用户在手机上点了「要求继续」；修复前的两张卡 07:21、07:56 在 `history.jsonl` 里是 `cancel | caller`，
+之后再没有）、`daemon.log` 有 `cursor log: failed turn …`、「要求继续」经 Cursor 桥让原会话开始新一轮（`agent-controls`
+日志里三条都是 `started`，10:58 那条就是本会话自己的新一轮）、没有 `unreadable agent.turn.outcome` 告警（日志格式没漂移）。
+10:58 那次还逐项对过 Cursor 自己的结构化日志：`error_text: Connection failed repeatedly`、`retries_attempted: 0`，
+与卡文本和 `retries=0` 一致。
+
 下一步：
+- [ ] Cursor 出错卡只剩一条路径没有单独核实：**回答挂着的提问之后**立刻出现（上面三次里有没有碰到没单独查）。
+  等下一次自然出错时顺手看一眼（Cursor 永不实测），核实后写回这里。
+- [ ] 已知边界（规格 §4.2、§3）：会话已被挤出 registry「最近结束」列表（10 条）时对应失败不出卡；进程在回合中途消失
+  （崩溃、被杀、终端关闭）没有任何来源报告失败，未纳入，等用户决定要不要作为仅通知的卡。
 - [ ] 真实失败路径（真实模型请求须先经用户授权；Cursor 永不实测）：日常使用中遇到真实的 `selected model is at capacity`
   （或其它最终失败）时核对——Popup／iOS 收件箱出现错误卡、Mac 空闲门槛之后才推送、Codex Desktop 上「要求继续」
   确实让原会话开始新一轮、「知道了」保留失败状态。不必专门造故障。
@@ -24,23 +47,38 @@ Grok 仅错误，Antigravity 不宣称支持；Codex CLI 只读观察共享服�
   非 Desktop Codex 会话起一次 `codex app-server proxy` 再退出。本机当前没有这类会话，采样 20 秒未见子进程；
   要处理就加按 home 的失败冷却（30–60 秒）。
 
-## 待验收：项目开发环境的真实渠道与界面
+## 待验收：已结束 / 空闲 Cursor Desktop 聊天的消息（手机 + Mac 控制台，真实 Cursor 里一次都没试过）
 
-[PR #27](https://github.com/Naituw/AskHuman/pull/27) 已按项目级 rules／MCP、幂等准备和完整转送边界重做；
-自动验证范围见[计划](plans/dev-verification-routing.md)。普通用户不需迁移，本机全局集成未改。
-复核后已恢复原有任务适用范围，AGENTS 仅更新已启用 Dev 的验收入口并经用户 review；当前共享主目录已解除 Dev 启用。
-修复继续在主工作树，安装到临时目录验证；实际新发问和旧正式端的阻塞路径已补充进进程回归。
-2026-10-31 用户在外，明确选择先完成代码、CI 和草稿 PR，真实渠道等回家再验：
+2026-11-04：registry 标为「已结束」的 Cursor Desktop 聊天（其实只是一小时无活动的判定，聊天还在 Cursor 里）手机现在也能发；
+Mac 控制台对空闲 / 已结束的 Cursor Desktop 聊天不再只提示「回到原始 Agent 界面」，而是直接发（快照 `canMessage`、
+`agents_message`、`ClientMsg::AgentMessage`，并入尚未发布的协议号 5）。规格见
+[specs/agent-lifecycle-results-and-recovery.md §5.4](specs/agent-lifecycle-results-and-recovery.md)。
+开发期间不得用 Cursor 触发 Agent（计费），所以只有 Cursor 替身的单测（状态闸、回执幂等、拒绝用语、registry 复活为运行中）、
+控制台组件测试和 IPC 形状测试；没有向真实 Cursor 发过任何消息。iOS App 没改（已结束的会话本来就列在 Mac 上，`live` 不受影响）。
 
-- AskHuman 待办 #5（`3b1cd4da-3c1d-43c7-a923-5b12eecb68b1`）：配置独立测试 bot／配对，用隔离测试转送端验收问答、权限、Stop、取消与发送失败，不替换日常正式 daemon。
-- 原待办 #4（`045264e5-6e9f-46bf-9e68-fb5df394e899`）：解锁后检查新的 Dev 工作台、窄窗口、Dev 工作树／构建标识与卡片；正式设置已无开发页。
+下一步：
+- [ ] 用户首次真实使用时核对（不要为此专门触发 Agent）：给一个「已结束」或空闲、且**已在 Cursor 窗口里打开**的聊天发消息，
+  Cursor 里是否出现这条用户消息并开始新一轮、控制台 / 手机是否转为运行中；聊天没在任何窗口里打开时，是否得到
+  「Cursor 里没有打开这个聊天，没有发送」；桥对隔了很久的聊天（`isQuietForBackgroundSubmit`）是否照常放行。
+- [ ] 若「聊天没在窗口里打开」很常见：考虑让桥先打开聊天（需要新的桥能力，须单独评估）；眼下按桥的既有前提直接拒绝。
 
-2026-10-31 经用户授权，用真实 Codex CLI 0.163.0／`gpt-6-luna`（低推理、标准速度）完成无 Dev 普通项目，
-以及同一开发会话的「普通 → 显式 Dev → 普通」三次真人问答；用户说明只接收 iOS 通道。Dev 实际构建、
-远程转送与成功终态均核对，证据见[计划 §7](plans/dev-verification-routing.md#7-真实-codex-与-ios-转送验证2026-10-31)。
-独立 `session --stdio` 已到原生登录菜单并验证终端按键透传；用户现在不想且不方便登录，已停止设备登录等待，
-未复制认证，登录后的完整隔离模型／权限／Stop 会话仍未测。项目 CLI 的实际加载不代表当前 App 会话已刷新工具目录。
-本轮临时 Dev 已停止并解除启用。以上剩余验收完成后删除本节。
+## 待验收：项目开发环境的专用测试渠道与登录后的私有 Agent 会话
+
+[PR #27](https://github.com/Naituw/AskHuman/pull/27) 已于 2026-11-01 合并，普通用户不需迁移，本机全局集成未改。
+真实 Codex 与 iOS 转送证据见[计划 §7](plans/dev-verification-routing.md#7-真实-codex-与-ios-转送验证2026-10-31)。
+2026-11-03 在临时 worktree 补做了本机界面、正式渠道转送与登录后 Grok 私有会话的验收（本机界面待办已完成），
+并修了验收发现的五处问题——Dev 设置窗口仍显示 Agents 页、取消的转送请求等满 5 秒才收尾、`--resume` 把已死的验收显示为 `pending`、
+`dev session grok` 传了 Grok 不接受的 `--add-dir`、终端回执被 `osascript` 的输出污染；
+证据见[计划 §8](plans/dev-verification-routing.md#8-合并后的本机验收与修复2026-11-03)。仍未验证：
+
+- Dev 专用测试渠道（`--delivery channels`）的真实收发：没有专用 bot／配对，用户决定先不配置。
+  已做代码走查和「无渠道时明确失败」的实测，没有真实卡片往返。配好后用隔离测试转送端验收问答、权限、Stop、取消与发送失败，不替换日常正式 daemon。
+- 其他 Agent 的登录后私有会话：Grok 的问答（Dev → 正式渠道 → 回到 Grok）与生命周期已验收；Grok 没有权限／Stop 卡，
+  它的权限提示是 Grok 自己的终端提示，不归 AskHuman。Codex 暂无额度，Claude Code／Pi 未测，Cursor 永不实测；
+  须由用户自己在私有 profile 里登录，不复制认证。Grok 的 Fork／转录控制与最终失败提醒也没在登录后实测。
+  项目 CLI 的实际加载不代表当前 App 会话已刷新工具目录。
+
+以上完成后删除本节。
 
 ## 进行中：iOS 原生渠道（原型已完成，待真实服务与真机验收）
 
@@ -156,7 +194,7 @@ App 目标编译通过；Mac 端、线协议、中继、推送规则都没改。
 2026-11-01 已通过 TestFlight 分发 `0.1.0 (4)`（源码 main `4381628c`），用户已更新并确认原有 Mac 连接正常。
 触发时机已有真实引擎回归与模拟器验证；后续日常使用观察“回来补齐不弹、前台实时新到仍弹”，确认后删除本节。
 
-## 待验收：iOS 开发者模式（P1–P5 已实现并过模拟器自动化；内测包 0.1.0 (5) 已出，等用户真机试用反馈；之后改的项目选择还没出包）
+## 待验收：iOS 开发者模式（P1–P5 已实现并过模拟器自动化；内测包 0.1.0 (5)、含新版项目选择的 (6) 已出，等用户真机试用反馈）
 
 2026-11-02 用户要求给 iOS App 加「开发者模式」：Macs 标签里的开关（默认关）打开后，所有界面之上出现一个可拖动的浮动按钮，按住它、滑到条目松手；
 v1 只有「快速添加待办」（不离开当前界面，把一句话记成某个项目的待办）。需求 [`docs/specs/ios-developer-mode.md`](specs/ios-developer-mode.md)
@@ -171,7 +209,8 @@ v1 只有「快速添加待办」（不离开当前界面，把一句话记成�
 - [ ] P6 真机一轮（内测包已出，等用户装上试用并反馈；要看的是）：系统菜单的弹出延迟与拖动的分工手感（模拟器上菜单约 75–180 ms 出现，按下后立刻移动则是拖动；
   按下后立刻划向菜单会变成拖按钮，是设计内的代价；真机上没有可调的常量）、iOS 26 玻璃的观感（按钮与提示条）、真机键盘与「关掉快速添加页后原输入框重新编辑」、
   按钮盖在 Safari / 图片查看器 / 系统弹窗之上的表现、触觉、VoiceOver。改手势规则前先经 AskHuman 确认，结果写回规格 §11。
-- [ ] 新版项目选择（2026-11-03，与待办页同一套来源规则）**没有出内测包**：用户看过汇报后选了「先不出：你再看看，需要时再说」，要出时用 `ios-testflight` 技能出 `0.1.0 (6)`。出包后真机上请看：来源列表与待办页是否一致、iCloud 目标在服务它的 Mac 掉线后换机写入是否顺（规格 §8 记了换机的边界）、半屏高的 sheet 里项目列表是否太挤（用户定：保持现状，真机上看了再定；现在 sheet 是 `.medium` 与 `.large` 两档，打开选择时不会自动拉高；若要自动拉到大档，方案是选项目时拉到 `.large`、回到文本页时收回半屏，需先问用户）。
+- [ ] 新版项目选择（2026-11-03，与待办页同一套来源规则）已随内测包 `0.1.0 (6)` 出去（2026-11-04）。用户此前看过汇报后选了「先不出：你再看看，需要时再说」，但 build 6 是为 Cursor Max 开关出的 main 整包，
+  出包前没有单独拿这一点问用户，出包后已如实告知。真机上请看：来源列表与待办页是否一致、iCloud 目标在服务它的 Mac 掉线后换机写入是否顺（规格 §8 记了换机的边界）、半屏高的 sheet 里项目列表是否太挤（用户定：保持现状，真机上看了再定；现在 sheet 是 `.medium` 与 `.large` 两档，打开选择时不会自动拉高；若要自动拉到大档，方案是选项目时拉到 `.large`、回到文本页时收回半屏，需先问用户）。
 - [ ] 已知局限（规格 §8，真机用下来觉得别扭再提）：按钮盖在 App 内的系统弹窗（alert、确认对话框）之上，可能遮住弹窗边缘的按钮；iCloud 项目换机时若第一台其实已存下、只是应答丢了，重发去另一台会多出一条；换机时尚未同步到另一台的项目找不到。
 - [ ] iOS 27.0 模拟器（`AskHuman iOS Dev`，iPhone 18 Pro）上大多失败的 UI 测试：`AskHumanDeveloperUITests.testTheButtonIsAboveASheetAndItsKeyboardAndRidesAboveTheKeyboard`——第一步在新建任务 sheet 上把按钮往下拖，按钮没动或停在半路（`AskHumanDeveloperUITests.swift` 的 `midY > screen.height - 200` 断言）。与项目选择无关：`6b59ebaa`（这次改动之前）的干净 worktree 上同样失败（出结果的 3 次全失败，另 2 次进程启动即被杀），改动后的树上 7 次里 1 次通过；iOS 18.5 / iPhone 16 上 2 次都通过，之前在 iPhone Air / iOS 27.0 上整班跑也过。原因没查：可能是 XCUITest 在 iOS 27 玻璃按钮上合成的拖动不稳（同一班其他拖动用例都通过），也可能是真实的拖动识别有问题；真机上留意「拖按钮」是否偶尔拖不动，尤其在 sheet 打开时（P6 已有这一项）。用户定：先放着，真机上拖按钮有问题再查。
 - [ ] 模拟器回归（iPhone 16 / iOS 18.5，开发者模式关）的对照结果：其余 134 条 UI 测试里 127 条通过、3 条跳过、4 条失败；这 4 条在功能开发之前的提交（`190a76ad`）上用同一台模拟器跑，**同样失败或偶发**，与本功能无关，原因都没查：
@@ -261,6 +300,52 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] 决定：默认来源记着「iCloud」之后，若所有 Mac 都关了同步，页面现在会说「iCloud 同步没开」、菜单里 Mac 重新出现，需要手动选一台（规格 §10 第 8 条）；要不要改成自动退回某台 Mac，等用户定。
 - [ ] 后置（需求 §11）：手机直连 CloudKit（Mac 都不在线也能用，需用户授权开 iCloud 容器 + Swift 重实现同步核心）、附件的查看与添加、「全部待办」聚合页、清空历史、从 iCloud 移除项目、待办推送、离线编辑队列。
 - [ ] 已知局限（需求 §10）：Mac 都不在线时手机看不到待办；线协议里 `helper` 没有「未安装」状态，手机上「没装」与「没在跑」显示成同一句；单条超大待办（桌面端 / CLI 不限长度，手机端限 4000 字）可能让那个项目的 `todo.list` 装不进一条消息而超时。
+
+## 待验收：Cursor 任务的 Max 模式控制与 Agents 窗口新建任务（已合回 main 并装为日常版；真实验证阶段 1–2 已过，阶段 3–4 等用户自己做）
+
+2026-11-03 用户说旧「按次计费」计划里 Cursor 的 Max 模式按 API 费率扣 Credit，所以不敢用 AskHuman 新建 Cursor 任务，要求分析并支持控制 Max，
+并强调**研发与调研期间严禁触发任何计费**（不运行 `cursor-agent` 任务、不驱动 Cursor 跑 Agent；测试只用桩可执行文件、临时配置与合成目录）。
+经 5 轮 AskHuman 问答定下范围：需求 [`docs/specs/cursor-max-control.md`](specs/cursor-max-control.md)（M1–M8）与
+[`docs/specs/cursor-desktop-task-creation.md`](specs/cursor-desktop-task-creation.md)（D1–D5），计划同名在 `docs/plans/`，各带「验证记录」。
+分支 `feat/cursor-max-control`（worktree `../HumanInLoop-cursor-max`；`73527b9c` 文档、`2600561f` 功能，之后是测试与文档提交；2026-11-04 已把当时的 main
+合入分支，见提交 `chore: merge main into feat/cursor-max-control`），**2026-11-04 已 fast-forward 合入 main（`7e07a728`）并装为日常版**（daemon 协议 5）；Dev Instance 已在 worktree 里验证过非计费部分。
+
+做法：
+- **Max 控制**：新 Cursor 任务默认不允许 Max；GUI 新建表单与 iPhone 各有一个「允许 Max」开关（默认关、不记忆）。关着时：启动前把 Cursor CLI 配置里持久化的
+  `maxMode` 强制关成 `false`（最小文本替换，不读 `authInfo`）；将用的模型按 Cursor 本地模型目录只能在 Max 下运行则**拦截启动**并说明；判不出（缓存缺失等）照常启动并提示；
+  启动后 45 秒内复查，Max 开着就发一张「知道了」卡（GUI、IM、iOS 三入口）。IM `/new` 无开关，按默认策略。设置 `agentTasks.cursorMax.{policy: enforce-off|inherit,
+  plan: auto|legacy|token-based}`；新计划（按 token 计费）下整套 Max 界面隐藏、不干预；检测不出按旧计划。GUI 表单为 Cursor 新增模型选择器（带 Max 标记）；Desktop 会话信息里 Max 开着标红。
+- **Agents 窗口新建任务**（实验、仅 macOS、默认关 `cursorDesktop.launchPreference: terminal`、Dev Instance 按设计不启用）：daemon 的 Desktop 消息桥在 Agents 窗口里调它自己的
+  `agentRepositoryService.createAgent`，带提交前闸门——读回会话逐项核对（本地目标、项目、模式、模型、`maxMode`、权限覆盖），任一项不符就抛错、Cursor 在发模型请求之前丢弃会话；
+  `dryRun` 在闸门通过后同样抛错。回执 `cursor-desktop-actions/<id>.json` 保证同一操作 ID 重试不重复创建。新增 `ClientMsg/ServerMsg::CursorDesktop`，**`PROTOCOL_VERSION` 4→5**
+  （overview 的「IPC 协议号」历史与 `daemon-graceful-drain.md` §8 已记）。
+- 本机只读观察（零请求）：Cursor 本地缓存 `hasTokenBasedPricing=false`（旧计划）；47 个模型里 27 个可不开 Max 用、20 个按缓存仅限 Max，**含 CLI 当前默认的 Grok 4.7 256K High Fast**；
+  `cli-config.json` 的 `maxMode` 与 `model.maxMode` 都是 `false`。
+
+自测（2026-11-03～04，都在这台机器上；没碰真实的 `~/.askhuman`，没运行过 `cursor-agent`，没驱动 Cursor 跑任何 Agent）：Rust `cargo test` 2409 通过、clippy／fmt 干净；`vue-tsc` 通过；
+vitest 1111 条里 5 条在机器负载约 900 时 5 秒超时（`PopupInboxView.drop/later`，与本分支无关），放宽超时重跑这两个文件 98/98 通过；Swift 包 569 通过（43 条要真实服务的端到端按设计跳过）；
+Desktop 适配器脚本测试 19/19；全量 node 测试里两条安装脚本测试在重负载下 `spawnSync bash` 30 秒超时（本分支没动 `scripts/install*`）。iOS 模拟器 UI 测试见两份计划的「验证记录」。
+一次性 Chromium 加假 Tauri 桥看过新建表单的 Cursor 行（浅色／深色、中英文，未提交）。
+2026-11-04 合入 main 后复测：`cargo test` 2448 通过、clippy／fmt 过钩子、`vue-tsc` 通过、vitest 1115 条全过（超时放宽到 120 秒）、node 114 通过／19 跳过／0 失败、
+Swift 569 通过（43 条按设计跳过）、两条 Max 的 iOS UI 测试英文通过（中文没重跑，核对了字符串目录）。main 之后又进了两个提交，
+第二次合入（无冲突）后重跑了 fmt／clippy／`cargo test`（2449 通过），其余沿用上面的结果。
+
+下一步：
+- [ ] **真实验证（2026-11-04 用户裁定）**：阶段 1–2（日常版只读检查、Desktop `dryRun`，按设计 0 请求）由 Agent 执行；阶段 3、4（各 1 个普通非 Max 请求）
+  由**用户**按 [计划](plans/cursor-desktop-task-creation.md)「真实验证计划」里的「阶段 3、4：用户自行执行的步骤」自己做。Agent 不执行阶段 3、4，除阶段 1–2 外不起 Cursor 任务。
+  - ✅ 阶段 1（2026-11-04，日常版 `7e07a728`，0 请求）：设置页检测为「旧计划」；新建表单里默认模型被拦、「允许 Max」解除拦截、换小模型解除拦截，
+    24 个模型的 Max 标记与 Cursor 缓存逐个一致；没有启动任何任务。细节见计划「验证记录」。
+  - ✅ 阶段 2（2026-11-04，日常版 `7e07a728`，`gpt-5.4-nano`、不允许 Max，0 请求）：第一次 `dryRun` 因 Agents 窗口不认识验证项目 `~/Developer/AskHumanCursorVerify`
+    （空 git 仓库）被拒（`rejected`／`projectNotFound`）；Computer Use 不能操作 Cursor，由用户自己在 Agents 窗口里把项目加进去后，第二次（新 ID）约 1 秒返回 `dryRun`、
+    `tidied: archived`，观察到模型 `gpt-5.4-nano`、`maxMode:false`、无权限覆盖；回执 `dryRun`；状态库只多一条空聊天（无消息、无用量），验证项目没有新 worktree 或分支。
+    **没有直接看到 Agents 窗口的界面**：请用户做阶段 3 时顺便看一眼侧栏里没有「dry run」会话（状态库里查不到归档标志位）。
+  - 阶段 3、4（用户做）：命令已按验证项目 `~/Developer/AskHumanCursorVerify` 与模型 `gpt-5.4-nano` 填好，在计划的「阶段 3、4：用户自行执行的步骤」里；等用户把现象告诉 Agent。
+- [ ] iOS：内测包 `0.1.0 (6)` 已出（2026-11-04，`VALID`、已在 `AskHuman Internal`，含「允许 Max」开关与 Max 标记）。**它是 main 的整包**，同时带上了新版项目选择（用户此前选过「先不出」）
+  与「去掉 Agents 页需要关注分组」，详见 `docs/plans/ios-channel.md`。等用户在手机上更新后看「允许 Max」开关与模型的 Max 标记，中英文各一次。
+- [ ] 真实验证通过后，用户在设置里把 `cursorDesktop.launchPreference` 改为 `desktop`（D5）。
+- [ ] 已知局限（规格 §3、§4.4）：缓存只是建议性证据，可能比服务端目录旧；CLI 对「默认模型本身需要 Max」只在内存里推导，改配置关不掉，只靠创建时的预判拦截。
+  上面两条观察合起来的含义：当前 CLI 默认模型 Grok 4.7 按缓存是「仅 Max」，而配置里 `maxMode:false`，不运行 Cursor 无法判断哪个对。**用户可以在 Cursor 网页用量里看一眼过去 Grok 4.7 的请求有没有按 Max／API 费率计**。
+  新任务不选模型（用 Cursor 默认）又不开「允许 Max」时，现在会被拦截，要换一个不需要 Max 的模型或打开开关。
 
 ## 进行中：iOS 新建任务时选模型与强度——Mac 端与 iOS App（P1–P3）已完成，下一步 P4（文档回写与真机一轮）
 
@@ -448,6 +533,8 @@ checkpoint；网络中途断开后，Cursor 连续两次“流已建立却无 ch
 （`Agent stopped retrying …`），实测 5 个长回合里 4 个因此终止。候选：① 规则层改为后台 AskHuman + `AwaitShell`
 分段等待；② 程序层让 AskHuman 每 N 分钟返回“仍在等待，请重跑”，daemon 保持问题挂起。2026-10-26 用户决定先记录、
 后续讨论；尚未修改任何规则 / 代码，也未做需计费的真实验证（需先经用户批准）。
+2026-11-03：同一类中止在本机又出现 3 次（05:47／08:59／12:53；Cursor 结构化日志 `agent.turn.outcome` 记为 error，
+重试 6／4／0 次）。保活是预防；出错后的入口（日志检测加错误卡）是兜底，见 [specs/agent-failure-inbox.md](specs/agent-failure-inbox.md)，两条线互不依赖。
 
 下一步：与用户确认方案取向和周期 N；`transportCap=10` 仍是硬上限，要延长还需降低断线频率；方案 ② 可与
 “daemon 即时换新与在途提问恢复”共用请求身份 / 重连基础设施。已登记 AskHuman 项目 todo #8。

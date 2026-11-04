@@ -40,6 +40,21 @@ pub struct ControlReply {
     pub operation: Option<ControlCommand>,
 }
 
+/// A message typed in the Mac's own Agents console for a chat that is not working: the one kind
+/// the console sends itself instead of queueing it for a hook that would never run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsoleMessage {
+    /// The caller's operation id. A retry of the same message carries the same one; a new message
+    /// gets a new one, because the journal answers a spent id with its first verdict.
+    pub id: String,
+    pub kind: AgentKind,
+    pub session_id: String,
+    pub text: String,
+    #[serde(default)]
+    pub files: Vec<FileAttachment>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartedControl {
     pub phone_id: String,

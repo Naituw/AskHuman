@@ -49,6 +49,23 @@ notifications or archiving/hiding chats. Stopping the daemon manually can leave 
 active; disable this switch or integration to restore native follow-ups. `AskHuman doctor --json`
 includes `cursorDesktop` diagnostics.
 
+## Creating Cursor tasks
+
+**Where tasks run.** The "Agents → Cursor" integration card lets you choose where new tasks run: the CLI (default) or the
+Agents window (experimental, macOS only). With the Agents window selected, Cursor tasks created from the GUI, IM `/new` or the
+phone start a chat in your already-open Cursor Agents window and send the task automatically. Cursor must be running with exactly
+one Agents window, and the project must already be added there. If the window is not available before creation, the task
+uses the CLI and the card's status line says why; once a task has started in the Agents window, a failure never falls back to the CLI.
+
+**Max mode.** On the old request-based plan, Max mode is billed at API rates and burns through credits quickly, so AskHuman
+turns Max off by default when it creates a Cursor task (Advanced → "Max mode for Cursor tasks"):
+
+- The "Allow Max" switch in the new-task window and on the phone is off by default, is chosen per task, and is never saved; turning it on runs with Cursor's default behavior. IM `/new` has no switch and follows the default policy.
+- The Cursor model list marks which models need Max. A model that needs Max does not start while Max is not allowed, and you are told to pick another model or allow Max for this task. When AskHuman cannot tell, the task still starts with a notice and is re-checked after launch.
+- The CLI route turns off the CLI's global Max switch, which is a sticky global setting: manual CLI runs afterwards stay off until you turn it back on with `/max-mode`. The Agents window route only affects the chat it creates.
+- If Max is found switched on again after launch, an ordinary question card alerts you.
+- The policy can be changed to "Follow Cursor's current setting", which means no intervention, no blocking and no notices. The new token-based plans have no Max mode; the plan type is detected automatically and can be set manually, and on a new plan all related UI is hidden and Cursor's settings are left untouched.
+
 ## Codex MCP environment overrides
 
 `AskHuman agents mode codex mcp --env DISPLAY=:1` explicitly adds an environment variable to Codex's AskHuman MCP server. Repeat `--env NAME=VALUE` to merge multiple keys; the last repeated key wins. Values may be empty or contain `=`. Names must be nonempty and contain neither `=` nor NUL; values must not contain NUL. Other agents and modes reject this option before changing integration files.

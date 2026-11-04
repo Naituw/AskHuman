@@ -57,6 +57,21 @@ describe("source information cards",()=>{
     await wrapper.setProps({active:false});resolve({model:"late-wrong-request"});await flushPromises();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
+  it("marks a session that runs in Max mode and says nothing otherwise",async()=>{
+    mocks.agent.mockResolvedValue({ model:"big-model",maxMode:true });
+    const on=start();await hover(on);
+    const badge=document.querySelector('[data-testid="source-max"]');
+    expect(badge?.textContent).toBe("Max");
+    expect(badge?.getAttribute("title")).toContain("billed at API rates");
+    on.unmount();wrappers.length=0;document.body.innerHTML="";
+    for (const maxMode of [false,null,undefined]) {
+      mocks.agent.mockResolvedValue({ model:"small-model",maxMode });
+      const off=start();await hover(off);
+      expect(document.querySelector('[role="dialog"]')?.textContent).toContain("small-model");
+      expect(document.querySelector('[data-testid="source-max"]')).toBeNull();
+      off.unmount();wrappers.length=0;document.body.innerHTML="";
+    }
+  });
   it("omits unavailable fields and only keeps one source card open",async()=>{
     mocks.agent.mockResolvedValue({});const a=start(),p=start("project");await hover(a);
     expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("Model");

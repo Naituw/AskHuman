@@ -791,8 +791,6 @@ pub struct InterjectSend {
     pub text: String,
     #[serde(default)]
     pub files: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_result_id: Option<String>,
 }
 msg!(InterjectSend, t::INTERJECT_SEND);
 
@@ -866,6 +864,10 @@ pub struct WorkspaceOption {
 pub struct ModelOption {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fast_supported: Option<bool>,
+    /// Cursor only (docs/specs/cursor-max-control.md): `Some(true)` = the model cannot run without
+    /// Max mode, `Some(false)` = it can, absent = not known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_required: Option<bool>,
     /// What `task.create` sends back as `model`.
     pub id: String,
     pub label: String,
@@ -884,6 +886,9 @@ pub struct ModelOption {
 pub struct DefaultModel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fast_supported: Option<bool>,
+    /// Same meaning as [`ModelOption::max_required`], for the model "Default" stands for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_required: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Efforts the default model can run with; absent = no effort row for "Default".
@@ -898,6 +903,10 @@ pub struct DefaultModel {
 pub struct AgentOption {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed_control: Option<bool>,
+    /// Cursor only: the Mac keeps Max mode off unless a task allows it, so the phone shows the
+    /// Max marks and the "Allow Max" switch. Absent = nothing to show.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_control: Option<bool>,
     pub kind: String,
     pub label: String,
     pub ready: bool,
@@ -958,6 +967,9 @@ pub struct TaskCreate {
     pub files: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed: Option<crate::agents::model_catalog::TaskSpeed>,
+    /// Cursor only: allow Max mode for this task. Absent (an older phone) = not allowed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_max: bool,
     pub client_msg_id: String,
     pub workspace_id: String,
     pub agent_kind: String,

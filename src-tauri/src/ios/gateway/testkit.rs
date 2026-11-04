@@ -202,7 +202,6 @@ impl Host for TestHost {
         agent_key: &str,
         text: &str,
         files: Vec<StagedFile>,
-        _expected_result_id: Option<String>,
     ) -> InterjectResult {
         self.interject_ids
             .lock()
@@ -347,6 +346,7 @@ pub fn sample_choices() -> TaskChoices {
             }],
             agents: vec![wire::AgentOption {
                 speed_control: None,
+                max_control: None,
                 kind: "claude".into(),
                 label: "Claude Code".into(),
                 ready: true,

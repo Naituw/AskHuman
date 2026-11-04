@@ -180,6 +180,13 @@ pub fn interject_file() -> PathBuf {
     state_dir().join("interject.json")
 }
 
+/// Final-failure cards the user has not answered yet (`~/.askhuman/state/failure-cards.json`).
+/// Written while a card is waiting and removed once it is answered, replaced or revoked, so a daemon
+/// replacement can bring the card back (`docs/specs/agent-failure-inbox.md` §5.1).
+pub fn failure_cards_file() -> PathBuf {
+    state_dir().join("failure-cards.json")
+}
+
 /// `/msg` 一次性输入卡的最小恢复账本。只保存卡片定位与目标会话，不保存用户输入内容。
 pub fn msg_compose_file() -> PathBuf {
     state_dir().join("msg-compose.json")

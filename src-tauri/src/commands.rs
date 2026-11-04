@@ -2591,8 +2591,10 @@ pub fn get_settings() -> SettingsPayload {
     config.channels.slack.app_token.clear();
     config.channels.ios.password.clear();
     SettingsPayload {
-        everyday_integrations_read_only: crate::dev_instance::is_dev_instance_context()
-            && std::env::var_os(crate::development::workbench::WINDOW_ENV).is_some(),
+        // Same decision as the write path: the page must not offer what the backend refuses.
+        // If it cannot be determined, the write path refuses too, so hide the Agents tab.
+        everyday_integrations_read_only:
+            crate::integrations::mutation_lock::everyday_changes_blocked().unwrap_or(true),
         config,
         secrets_present,
     }
@@ -2708,6 +2710,14 @@ pub fn agent_task_workspace_hide(path: String, hidden: bool) -> Result<(), Strin
 #[tauri::command]
 pub fn agent_task_workspace_forget(path: String) -> Result<(), String> {
     crate::agents::workspaces::forget(&path)
+}
+
+/// The plan Cursor's own data reports, shown read-only beside the Max plan setting.
+#[tauri::command]
+pub async fn agent_task_cursor_plan() -> crate::agents::cursor_max::Detected {
+    tokio::task::spawn_blocking(crate::agents::cursor_max::detect)
+        .await
+        .unwrap_or(crate::agents::cursor_max::Detected::Unknown)
 }
 
 #[tauri::command]
@@ -2830,6 +2840,70 @@ fn todo_project_keys() -> Vec<String> {
         .collect()
 }
 
+/// Cursor's model list as this process asks for it, kept for a while so the form does not start
+/// the CLI every time it opens (the daemon has its own copy for the phone).
+fn cursor_catalog_cache(
+) -> &'static std::sync::Arc<crate::agents::model_catalog::cache::CatalogCache> {
+    use crate::agents::model_catalog::cache::{CatalogCache, CATALOG_TTL, FAILURE_RETRY};
+    static CACHE: std::sync::OnceLock<std::sync::Arc<CatalogCache>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| CatalogCache::new(CATALOG_TTL, FAILURE_RETRY))
+}
+
+/// What the new-task form shows for Cursor while Max control is in force: the models with their Max
+/// marks and what Cursor's default means (docs/specs/cursor-max-control.md §5). `None` when Max is
+/// not controlled (token-based plan, or the "follow Cursor" policy): the form then looks as before.
+#[tauri::command]
+pub async fn new_task_cursor_options() -> Option<crate::agents::cursor_max::options::TaskOptions> {
+    use crate::agents::model_catalog::source::{self, CatalogSource};
+    // Cursor's own files and the settings, read now: nothing about Max is kept here.
+    let hints = tokio::task::spawn_blocking(crate::agents::cursor_max::Hints::load)
+        .await
+        .ok()
+        .flatten()?;
+    let executable = tokio::task::spawn_blocking(|| {
+        crate::integrations::agent_launch::readiness(crate::agents::AgentKind::Cursor)
+    })
+    .await
+    .ok()
+    // The list only needs the CLI binary, which the Agents window route may not otherwise use.
+    .filter(|readiness| readiness.binary_ready)
+    .and_then(|readiness| readiness.executable);
+    let catalog = match executable {
+        Some(executable) => {
+            let source = CatalogSource {
+                kind: crate::agents::AgentKind::Cursor,
+                executable,
+                codex_home: None,
+            };
+            let key = source.cache_key();
+            let loader = source.clone();
+            cursor_catalog_cache()
+                .get(&key, std::time::Duration::from_secs(6), move || {
+                    source::load(&loader)
+                })
+                .await
+                .map(|catalog| source::refresh_default(&source, &catalog))
+        }
+        None => None,
+    };
+    // "Cursor's default" means something else in the Agents window than in the CLI.
+    let desktop = tokio::task::spawn_blocking(|| {
+        crate::cursor_desktop::launch_status(false).target
+            == Some(crate::codex_desktop::LaunchTarget::Desktop)
+    })
+    .await
+    .unwrap_or(false);
+    Some(crate::agents::cursor_max::options::build(
+        &hints,
+        catalog.as_ref(),
+        if desktop {
+            crate::agents::cursor_max::Target::Desktop
+        } else {
+            crate::agents::cursor_max::Target::Cli
+        },
+    ))
+}
+
 /// 项目候选（本地快路径）：workspace 索引 + 待办项目，供首屏即时填充。
 #[tauri::command]
 pub fn new_task_projects() -> Vec<NewTaskProject> {
@@ -2867,8 +2941,18 @@ pub async fn new_task_launch(
     todo_attachments: Option<Vec<crate::todo_attachments::TodoAttachmentSnapshot>>,
     launch_target: Option<crate::codex_desktop::LaunchTarget>,
     operation_id: Option<String>,
+    model: Option<String>,
+    allow_max: Option<bool>,
 ) -> Result<(), String> {
     let parsed_kind = crate::agents::AgentKind::parse(&kind).ok_or("unknown agent kind")?;
+    // Only Cursor's form offers a model and Max choice; nothing else may slip one in.
+    let model = model
+        .map(|model| model.trim().to_string())
+        .filter(|model| !model.is_empty());
+    let allow_max = allow_max.unwrap_or(false);
+    if parsed_kind != crate::agents::AgentKind::Cursor && (model.is_some() || allow_max) {
+        return Err("Only Cursor tasks take a model or Max choice here".to_string());
+    }
     let op_id = operation_id.clone();
     let resolved = tokio::task::spawn_blocking(move || {
         crate::codex_desktop::resolve_launch(parsed_kind, op_id.as_deref(), launch_target)
@@ -2876,8 +2960,11 @@ pub async fn new_task_launch(
     .await
     .map_err(|e| e.to_string())??;
     if resolved == crate::codex_desktop::LaunchTarget::Desktop {
-        if kind != "codex" {
-            return Err("Only Codex supports desktop tasks".into());
+        if !matches!(
+            parsed_kind,
+            crate::agents::AgentKind::Codex | crate::agents::AgentKind::Cursor
+        ) {
+            return Err("Only Codex and Cursor support desktop tasks".into());
         }
         let id = operation_id.ok_or("Desktop tasks require a stable operation ID")?;
         uuid::Uuid::parse_str(&id).map_err(|_| "Invalid operation ID")?;
@@ -2895,18 +2982,51 @@ pub async fn new_task_launch(
         if !delivery.warnings.is_empty() {
             return Err(delivery.warnings.join("\n"));
         }
-        crate::client::codex_desktop(crate::codex_desktop::Operation::Create {
-            cwd: workspace,
-            text: task,
-            files: delivery.files,
-            permission,
-            id,
-            // The window offers no model choice yet; Codex's own configuration decides.
-            model: None,
-            effort: None,
-            speed: None,
-        })
-        .await?;
+        if parsed_kind == crate::agents::AgentKind::Cursor {
+            // The form already refuses a model that needs Max; this is the same check in the
+            // words of the user's language, before the daemon is asked.
+            let (planned_model, planned_max) = (model.clone(), allow_max);
+            let planned = tokio::task::spawn_blocking(move || {
+                crate::cursor_desktop::plan(planned_model.as_deref(), planned_max)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            match planned {
+                Err(crate::cursor_desktop::PlanError::MaxRequired(required)) => {
+                    return Err(required.guidance(crate::i18n::Lang::current()));
+                }
+                Err(error) => return Err(error.to_string()),
+                Ok(_) => {}
+            }
+            crate::client::cursor_desktop(crate::cursor_desktop::Operation::Create {
+                cwd: workspace,
+                text: crate::integrations::agent_launch::task_with_attachments(
+                    &task,
+                    &delivery.files,
+                    &[],
+                ),
+                permission,
+                id,
+                model,
+                allow_max,
+                title: None,
+                dry_run: false,
+            })
+            .await?;
+        } else {
+            crate::client::codex_desktop(crate::codex_desktop::Operation::Create {
+                cwd: workspace,
+                text: task,
+                files: delivery.files,
+                permission,
+                id,
+                // The window offers no model choice yet; Codex's own configuration decides.
+                model: None,
+                effort: None,
+                speed: None,
+            })
+            .await?;
+        }
         if let (Some(project), Some(todo)) = (todo_project.as_deref(), todo_id.as_deref()) {
             let _ = crate::todos::take(project, &[todo.into()]);
         }
@@ -2922,8 +3042,9 @@ pub async fn new_task_launch(
     if task.contains('\0') {
         return Err("Task must not contain NUL characters".to_string());
     }
+    let choice = crate::agents::model_catalog::ModelChoice::new(model, None);
     // create_record 内部含 login-shell readiness 复检（≤2s 阻塞探测），放 blocking 线程。
-    tokio::task::spawn_blocking(move || {
+    let recheck = tokio::task::spawn_blocking(move || {
         let delivery_request_id = uuid::Uuid::new_v4().to_string();
         let delivery =
             if let (Some(project), Some(id)) = (todo_project.as_deref(), todo_id.as_deref()) {
@@ -2940,7 +3061,7 @@ pub async fn new_task_launch(
             channel: "gui".to_string(),
             target: String::new(),
         };
-        let record = match crate::integrations::agent_launch::create_record_with_files(
+        let record = match crate::integrations::agent_launch::create_record_with_options(
             source,
             std::path::Path::new(&workspace),
             kind,
@@ -2948,6 +3069,8 @@ pub async fn new_task_launch(
             &task,
             &delivery.files,
             &delivery.warnings,
+            &choice,
+            allow_max,
         ) {
             Ok(record) => record,
             Err(error) => {
@@ -2965,10 +3088,15 @@ pub async fn new_task_launch(
                 let _ = crate::todos::take(project, std::slice::from_ref(&id.to_string()));
             }
         }
-        Ok::<(), String>(())
+        // A Cursor task that kept Max off is watched for a while after it starts.
+        Ok::<_, String>(crate::agents::cursor_max::recheck::launch_of(&record))
     })
     .await
     .map_err(|e| e.to_string())??;
+    if let Some(launch) = recheck {
+        // The window may be closed right after launching; the watch must outlive it.
+        crate::app::gui_host::hold_while(crate::agents::cursor_max::recheck::after_launch(launch));
+    }
     // 活跃槽切 popup（G11）：人在电脑旁，新 Agent 的提问默认弹窗。即发即走，不影响启动结果。
     tokio::spawn(crate::client::activate_popup_slot());
     Ok(())
@@ -4071,6 +4199,28 @@ pub async fn interject_append(
         attachments,
     });
     Ok(())
+}
+
+/// 控制台给不在工作中的 Cursor Desktop 聊天直接发消息：不排队，由 daemon 送进原聊天并回判定
+/// （`status` 为 `accepted` / `rejected` / `unknown`）。`file_paths` 必须是已落盘的文件：同一 `id`
+/// 的重试要带同样的路径，粘贴的图片先用 `codex_desktop_attachments` 落盘一次。
+#[tauri::command]
+pub async fn agents_message(
+    id: String,
+    kind: crate::agents::AgentKind,
+    session_id: String,
+    text: String,
+    file_paths: Option<Vec<String>>,
+) -> Result<serde_json::Value, String> {
+    let files = prepare_interject_attachments(file_paths.unwrap_or_default(), Vec::new()).await?;
+    crate::client::agent_message(crate::agents::control::ConsoleMessage {
+        id,
+        kind,
+        session_id,
+        text,
+        files,
+    })
+    .await
 }
 
 /// 待送达气泡内容查询（C3）：返回全文、条数与附件；daemon 未运行 → 空状态。
@@ -5378,6 +5528,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
         };
         let err = launch("nope", "yolo", "task").await.unwrap_err();
@@ -5536,6 +5688,18 @@ pub async fn codex_desktop(
     operation: crate::codex_desktop::Operation,
 ) -> Result<serde_json::Value, String> {
     crate::client::codex_desktop(operation).await
+}
+
+/// Where a new Cursor task would run now: the CLI, or Cursor's Agents window.
+#[tauri::command]
+pub async fn cursor_launch_status(
+    force: Option<bool>,
+) -> Result<crate::cursor_desktop::LaunchStatus, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::cursor_desktop::launch_status(force.unwrap_or(false))
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

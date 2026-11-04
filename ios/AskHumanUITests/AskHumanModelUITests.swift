@@ -48,15 +48,36 @@ final class AskHumanModelUITests: XCTestCase {
         return found
     }
 
-    private func gone(_ id: String, timeout: TimeInterval = 10) -> Bool {
+    /// The waits below are long on purpose: a machine that is busy with other builds answers a tap seconds late,
+    /// and a longer wait costs time only when the screen really is wrong.
+    private func gone(_ id: String, timeout: TimeInterval = 30) -> Bool {
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element(id))
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
 
     /// Waits until the accessibility label of the element contains `text`.
-    private func waitForLabel(_ id: String, containing text: String, timeout: TimeInterval = 10) -> Bool {
+    private func waitForLabel(_ id: String, containing text: String, timeout: TimeInterval = 30) -> Bool {
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", text), object: element(id))
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    /// Waits until the value of the element (a switch reads "0" or "1") is `value`.
+    private func waitForValue(_ id: String, _ value: String, timeout: TimeInterval = 30) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: element(id))
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    /// Taps a switch the way the Fast test does (the right end of its row) and waits for it to read `value`.
+    /// A machine under load can drop a tap, so a tap that changed nothing is repeated once; but never when the
+    /// first one only landed late (the switch already reads `value`), which would flip it back.
+    private func setSwitch(_ id: String, to value: String) {
+        for _ in 0..<2 {
+            if (element(id).value as? String) != value {
+                element(id).coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+            }
+            if waitForValue(id, value) { return }
+        }
+        XCTFail("\(id) never read \(value)")
     }
 
     private func localized(_ en: String, _ zh: String) -> String { language == "en" ? en : zh }
@@ -75,11 +96,17 @@ final class AskHumanModelUITests: XCTestCase {
         add(attachment)
     }
 
-    /// Scrolls the form until the element exists (a lazy form only creates the rows near the visible area).
+    /// Scrolls the form until the element exists (a lazy form only creates the rows near the visible area):
+    /// down first, and back up when the row is above what was scrolled to (after typing at the bottom, say).
     private func reveal(_ id: String) {
         var tries = 0
         while !element(id).exists, tries < 8 {
             app.swipeUp(velocity: .slow)
+            tries += 1
+        }
+        tries = 0
+        while !element(id).exists, tries < 16 {
+            app.swipeDown(velocity: .slow)
             tries += 1
         }
         let target = requireElement(id)
@@ -352,6 +379,60 @@ final class AskHumanModelUITests: XCTestCase {
         shot("122-codex-standard-progress")
     }
 
+    // MARK: Cursor's Max mode (docs/specs/cursor-max-control.md)
+
+    func testCursorOnTheOldPlanStartsWithMaxOffAndBlocksAModelThatNeedsIt() {
+        openForm(extra: ["-AHMaxControl", "YES"])
+        requireElement("task-agent-cursor").tap()
+        reveal("task-max")
+        let toggle = requireElement("task-max")
+        XCTAssertEqual(toggle.value as? String, "0", "Max is never pre-armed")
+        // A model the Mac knows needs Max is marked so, and the form says it is in the way. That Start
+        // stays off while it is (with a whole form) is the composer's `canSubmit`, covered by `TaskMaxTests`.
+        reveal("task-model")
+        pickModel("gpt-5.1-codex-max", shownAs: "Codex Max")
+        reveal("task-max-blocked")
+        XCTAssertTrue(waitForLabel("task-max-verdict", containing: localized("Needs Max", "需要 Max")), element("task-max-verdict").label)
+        shot("123-cursor-max-blocked")
+        // Allowing Max for this task lifts the block.
+        reveal("task-max")
+        setSwitch("task-max", to: "1")
+        XCTAssertTrue(gone("task-max-blocked", timeout: 30), "allowing Max lifts the block")
+        shot("124-cursor-max-allowed")
+        // A model that does not need Max reads so.
+        reveal("task-model")
+        pickModel("sonnet-4.5", shownAs: "Sonnet")
+        XCTAssertTrue(waitForLabel("task-max-verdict", containing: localized("No Max needed", "不需要 Max")), element("task-max-verdict").label)
+        // Back on the model that needs Max, the task starts, because this task allows Max. The demo
+        // Mac leaves Cursor's permissions to Cursor, so the form has no permission row to choose.
+        reveal("task-model")
+        pickModel("gpt-5.1-codex-max", shownAs: "Codex Max")
+        type("Add a dark mode toggle to the settings page.", into: "task-text")
+        requireElement("task-start").tap()
+        _ = requireElement("task-progress")
+    }
+
+    func testTheMaxSwitchBelongsToCursorAloneAndToAMacThatControlsMax() {
+        openForm(extra: ["-AHMaxControl", "YES"])
+        // Once the form has settled on the default Agent (Claude), a plain existence check is fair: a
+        // short `gone` timeout can run out before a slow machine finishes answering the first query.
+        _ = requireElement("task-model")
+        XCTAssertFalse(element("task-max").exists, "Claude has no Max mode")
+        requireElement("task-agent-cursor").tap()
+        reveal("task-max")
+        reveal("task-agent-codex")
+        requireElement("task-agent-codex").tap()
+        XCTAssertTrue(gone("task-max", timeout: 30), "Codex has no Max mode")
+
+        // A Mac that does not control Max (a newer plan, or an older Mac) shows nothing about it.
+        launch(extra: ["-AHTab", "agents", "-AHNewTask", "YES"])
+        _ = requireElement("task-agent-cursor")
+        requireElement("task-agent-cursor").tap()
+        _ = requireElement("task-model")
+        XCTAssertFalse(element("task-max").exists, "this Mac does not control Max")
+        XCTAssertFalse(element("task-max-verdict").exists, "nor does it say what Max would be")
+    }
+
     func testAnOldMacHasNoFastSwitch() {
         openForm(extra: ["-AHNoModels", "YES"])
         requireElement("task-agent-codex").tap()
@@ -419,38 +500,39 @@ final class AskHumanModelUITests: XCTestCase {
         _ = requireElement("task-progress")
     }
 
-    func testFailedIdleResultContinuesWithoutErasingTheDraft() {
+    func testFailedResultsAreReportedWithoutAnyButton() {
         launch(extra: ["-AHScenario", "agentResults", "-AHTab", "agents"])
-        XCTAssertTrue(app.staticTexts[localized("Needs attention", "需要处理")].waitForExistence(timeout: 10))
+        _ = requireElement("agent-row-\(endedAgent)")
+        // A failure gets no group of its own and no action here: what to do about it is asked in the inbox.
+        XCTAssertFalse(app.staticTexts[localized("Needs attention", "需要处理")].exists)
+        XCTAssertFalse(element("agent-continue-\(endedAgent)").exists)
+        shot("agent-results-list")
+        requireElement("agent-row-\(endedAgent)").tap()
+        XCTAssertEqual(requireElement("agent-last-result").label, localized("Last turn failed", "上轮出错"))
+        XCTAssertFalse(element("agent-continue-\(endedAgent)").exists)
+        shot("agent-failed-idle")
+    }
+
+    func testAMessageToAFailedIdleSessionStartsANewRound() {
+        launch(extra: ["-AHScenario", "agentResults", "-AHTab", "agents"])
         requireElement("agent-row-\(endedAgent)").tap()
         _ = requireElement("agent-last-result")
         let field = requireElement("interject-field")
         field.tap()
-        field.typeText("Keep this draft")
-        app.swipeDown()
-        let button = requireElement("agent-continue-\(endedAgent)")
-        XCTAssertEqual(button.label, localized("Request continuation", "要求继续"))
-        XCTAssertTrue(button.isEnabled)
-        shot("agent-failed-idle")
-        button.tap()
+        field.typeText("Please continue")
+        requireElement("interject-send").tap()
         XCTAssertTrue(gone("agent-last-result"))
-        XCTAssertTrue((field.value as? String)?.contains("Keep this draft") == true)
         _ = requireElement("follow-note")
-        shot("agent-continued-draft")
+        shot("agent-continued-by-message")
     }
 
-    func testIncompleteListHasContinuationAndUnsupportedDetailExplainsWhy() {
+    func testAnIdleSessionThatCannotTakeMessagesExplainsWhy() {
         launch(extra: ["-AHScenario", "agentResults", "-AHTab", "agents"])
-        let button = requireElement("agent-continue-\(endedAgent)")
-        XCTAssertTrue(button.isEnabled)
-        shot("agent-results-list")
-        button.tap()
-        XCTAssertTrue(gone("agent-continue-\(endedAgent)"))
         let unsupported = "codex:cdx-leak"
         reveal("agent-row-\(unsupported)")
         requireElement("agent-row-\(unsupported)").tap()
         _ = requireElement("agent-last-result")
-        XCTAssertFalse(requireElement("agent-continue-\(unsupported)").isEnabled)
+        XCTAssertFalse(element("agent-continue-\(unsupported)").exists)
         let unavailable = requireElement("interject-unavailable")
         XCTAssertTrue(unavailable.label.contains(localized("cannot receive messages while idle", "空闲时无法接收消息")))
         shot("agent-incomplete-unavailable")

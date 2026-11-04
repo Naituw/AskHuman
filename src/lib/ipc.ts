@@ -181,6 +181,9 @@ export const agentTaskReadiness = (opts?: { kind?: AgentKind; force?: boolean })
   );
 export const agentTaskTestTerminal = () =>
   invoke<void>("agent_task_test_terminal");
+/** The plan Cursor's own local data reports (read-only, beside the Max plan setting). */
+export const agentTaskCursorPlan = () =>
+  invoke<"legacy" | "token-based" | "unknown">("agent_task_cursor_plan");
 
 export const getPrompt = (variant?: "cli" | "mcp") =>
   invoke<string>("get_prompt", { variant });
@@ -244,6 +247,19 @@ export const interjectAppend = (
   filePaths: string[] = [],
   pastedImages: ImageAttachment[] = [],
 ) => invoke<void>("interject_append", { sessionId, text, filePaths, pastedImages });
+
+/** The daemon's verdict on a message sent straight to a chat that is not working. */
+export type AgentsMessageResult =
+  | {status: "accepted"}
+  /** Nothing was sent, and `id` is spent: the next attempt needs a new one. */
+  | {status: "rejected"; reason: string; message: string}
+  /** It may have been sent; `message` says to check the chat first. */
+  | {status: "unknown"; message: string};
+/** Send a message straight to a chat the console can message (`AgentRecord.canMessage`). Files must
+ *  already be on disk (`codexDesktopAttachments`), and a retry of the same `id` must carry the same
+ *  text and files. A thrown error means no verdict arrived: retry with the same `id`. */
+export const agentsMessage = (id: string, kind: AgentKind, sessionId: string, text: string, filePaths: string[]) =>
+  invoke<AgentsMessageResult>("agents_message", {id, kind, sessionId, text, filePaths});
 
 /** 待送达气泡内容查询；daemon 未运行时返回空状态。 */
 export const interjectPeek = (sessionId: string) =>
@@ -659,6 +675,13 @@ export const newTaskProjectsRefreshed = () =>
 export const projectKeyOf = (dir: string) =>
   invoke<string>("project_key_of", { dir });
 
+/**
+ * Cursor's models with their Max marks, and what its default stands for. `null` when Max is not
+ * controlled (new plan, or the "follow Cursor" policy): the form then looks as it always did.
+ */
+export const newTaskCursorOptions = () =>
+  invoke<import("./types").CursorTaskOptions | null>("new_task_cursor_options");
+
 /** Start a task through the private LaunchRecord and platform-terminal bridge. */
 export const newTaskLaunch = (payload: {
   launchTarget?: "terminal" | "desktop";
@@ -670,6 +693,10 @@ export const newTaskLaunch = (payload: {
   todoProject?: string | null;
   todoId?: string | null;
   todoAttachments?: import("./types").TodoAttachmentSnapshot[];
+  /** Cursor only: the model to pass with `--model`; absent follows Cursor's default. */
+  model?: string | null;
+  /** Cursor only: let the task use Max; absent means no. */
+  allowMax?: boolean;
 }) =>
   invoke<void>("new_task_launch", {
     launchTarget: payload.launchTarget ?? null,
@@ -681,6 +708,8 @@ export const newTaskLaunch = (payload: {
     todoProject: payload.todoProject ?? null,
     todoId: payload.todoId ?? null,
     todoAttachments: payload.todoAttachments ?? [],
+    model: payload.model ?? null,
+    allowMax: payload.allowMax ?? null,
   });
 
 // ===== Native Agent session Fork =====
@@ -731,6 +760,19 @@ export interface CodexLaunchStatus {
   integrated: boolean;
 }
 export const codexLaunchStatus = (force = false) => invoke<CodexLaunchStatus>("codex_launch_status", {force});
+
+export type CursorUnavailableReason = "unsupportedPlatform" | "devInstance" | "integrationDisabled" | "trackingNotConfigured" | "appNotRunning" | "multipleApps" | "cliNotDetected" | "cliIntegrationNotConfigured" | "cliTrackingDisabled" | "cliTrackingNeedsUpdate" | "cliTrackingNotConfigured" | "terminalUnavailable";
+/** Where a new Cursor task would run: the CLI in a terminal, or Cursor's Agents window. */
+export interface CursorLaunchStatus {
+  preference: "desktop" | "terminal";
+  target: "desktop" | "terminal" | null;
+  desktopAvailable: boolean;
+  terminalAvailable: boolean;
+  desktopReason: CursorUnavailableReason | null;
+  terminalReason: CursorUnavailableReason | null;
+  integrated: boolean;
+}
+export const cursorLaunchStatus = (force = false) => invoke<CursorLaunchStatus>("cursor_launch_status", {force});
 
 export const popupAgentInfo = (requestId: string) => invoke<import("./types").PopupAgentInfo>("popup_agent_info", { requestId });
 export const popupProjectInfo = (requestId: string) => invoke<import("./types").PopupProjectInfo>("popup_project_info", { requestId });

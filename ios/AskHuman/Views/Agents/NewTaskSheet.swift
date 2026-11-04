@@ -174,6 +174,10 @@ private struct NewTaskForm: View {
             }
         }
 
+        if composer.offersMaxControl(in: options) {
+            maxSection(options)
+        }
+
         permissionSection(options)
 
         Section {
@@ -276,6 +280,43 @@ private struct NewTaskForm: View {
                     .accessibilityIdentifier("task-effort")
                 }
             }
+        }
+    }
+
+    /// Cursor on the old request-based plan: Max mode is billed at API rates, so it is off for every
+    /// task unless allowed here, and a model that cannot run without Max does not start without it.
+    @ViewBuilder
+    private func maxSection(_ options: TaskOptions) -> some View {
+        let name = composer.model(in: options)?.label
+            ?? composer.defaultModel(in: options)?.label
+            ?? String(localized: "Agent's own setting")
+        Section {
+            Toggle("Allow Max", isOn: Binding(
+                get: { composer.allowMax },
+                set: { composer.setAllowMax($0, in: options) }
+            ))
+            .accessibilityIdentifier("task-max")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Will use: \(name)")
+                switch composer.maxRequired(in: options) {
+                case true?:
+                    Text("Needs Max").font(.caption).foregroundStyle(.orange)
+                case false?:
+                    Text("No Max needed").font(.caption).foregroundStyle(.secondary)
+                case nil:
+                    Text("Whether it needs Max is unknown").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("task-max-verdict")
+            if composer.isBlockedByMax(in: options) {
+                Label("\(name) needs Max. Turn on Allow Max, or choose another model.", systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("task-max-blocked")
+            }
+        } footer: {
+            Text("On the old request-based plan, Max is billed at API rates. It starts off for each new task, and your Mac keeps Max off unless you allow it.")
         }
     }
 

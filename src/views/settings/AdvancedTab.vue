@@ -4,6 +4,7 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSettingsContext } from "./context";
+import CursorMaxCard from "./CursorMaxCard.vue";
 import PermissionRulesCard from "./PermissionRulesCard.vue";
 
 const { t } = useI18n();
@@ -212,6 +213,9 @@ const config = computed(() => ctx.config.value!);
       <p v-if="taskSettingsMessage" class="result">{{ taskSettingsMessage }}</p>
     </template>
   </div>
+
+  <!-- Cursor 任务的 Max 控制（spec cursor-max-control §6）：与 IM 任务开关无关，GUI／iOS 新建任务同样受它管 -->
+  <CursorMaxCard v-if="supportsAgentTasks" />
 
   <!-- Codex 权限授权管理（spec codex-permission-remember §6.3） -->
   <PermissionRulesCard />

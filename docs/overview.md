@@ -146,7 +146,7 @@ AskHuman/
       commands.rs            前端调用的 Tauri command 集合
       popup_drop.rs          Popup 拖入文件：失败带原因与位置类别的图片读取，以及不含路径的拖拽诊断日志
       codex_desktop/               可选 macOS Codex App 原生会话与创建适配器
-      cursor_desktop/              可选 macOS Cursor Desktop 后台完成续跑控制与私有运行桥
+      cursor_desktop/              可选 macOS Cursor Desktop 后台完成续跑控制、私有运行桥，以及 Agents 窗口新建任务（create/launch）
       integrations/agent_launch.rs  新建/Fork 共用一次性 LaunchRecord、readiness 与固定 argv adapter
 
       app/
@@ -269,6 +269,8 @@ AskHuman/
         activity.rs          transcript 尾部活动解析
         session_paths.rs     Pi 自定义 sessionDir transcript 路径校验与缓存
         cursor_vscdb.rs      Cursor IDE 会话实时源（state.vscdb；活动/标题/完整会话）
+        cursor_log.rs        Cursor 结构化日志的只读尾随（重试用尽、不发 stop 的最终出错）
+        cursor_max/          旧按次计费计划下 Cursor Max 模式的判定、强制关闭与启动后复查（规格 cursor-max-control）
         registry.rs          Agent 状态推导、持久化与快照
         interject.rs         插话队列、等待与持久化
         stop.rs              Stop Hook 捕获与原生 continuation
@@ -302,7 +304,7 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 
 +1 的代价是每个跨号的客户端与 Daemon 互相让位、旧客户端无法与新 Daemon 共存，所以能用「加可选字段」解决的不要 +1。+1 时：改常量，在下面的历史补一行（日期、提交、变更点），并在 `daemon-graceful-drain.md` 记下升级过渡期的影响。
 
-**历史**（当前为 4）：1 = Daemon 骨架（`9660532`，2026-06-07）；2 = 结构化确认（`2c76c44`，2026-07-11）；3 = 共享作答窗口，新增 `PopupHostHello` / `PopupHostIdle` / `PopupHostAccepted` / `PopupSubmissionAck` / `PopupRequestKind` 等（`799334f`，2026-10-06）；4 = iOS 渠道管理，新增 `ClientMsg::Ios` / `ServerMsg::Ios`（`IosOp` / `IosResult`）（`128bffd`，2026-10-25）。对应发布版：0.4.3–0.8.2 为 1，0.9.1–0.13.2 为 2，0.14.2–0.15.1 为 3，0.16.0 起为 4。排空相关的增量（`HelloStatus::Draining`、`ServerMsg::Draining`、`Stop.force`、`StatusInfo.draining`）和 `StatusInfo` 的二进制信息字段都没有 +1。
+**历史**（当前为 5）：1 = Daemon 骨架（`9660532`，2026-06-07）；2 = 结构化确认（`2c76c44`，2026-07-11）；3 = 共享作答窗口，新增 `PopupHostHello` / `PopupHostIdle` / `PopupHostAccepted` / `PopupSubmissionAck` / `PopupRequestKind` 等（`799334f`，2026-10-06）；4 = iOS 渠道管理，新增 `ClientMsg::Ios` / `ServerMsg::Ios`（`IosOp` / `IosResult`）（`128bffd`，2026-10-25）；5 = Cursor Desktop 新建任务，新增 `ClientMsg::CursorDesktop`（载荷 `Operation`）/ `ServerMsg::CursorDesktop`（载荷 `Result<Value, String>`），与 Codex Desktop 同构（`2600561`，2026-11-03）；同一个尚未发布的 5 还含 Mac 控制台给 Cursor Desktop 聊天直发消息的 `ClientMsg::AgentMessage`（载荷 `ConsoleMessage`）/ `ServerMsg::AgentMessage`（载荷 `Result<Value, String>`）（2026-11-04）——5 没有发布版，所以并入而不再 +1，5 一发布，之后新增变体就必须 +1。对应发布版：0.4.3–0.8.2 为 1，0.9.1–0.13.2 为 2，0.14.2–0.15.1 为 3，0.16.0 为 4，0.16.0 之后的下一个发布版起为 5。排空相关的增量（`HelloStatus::Draining`、`ServerMsg::Draining`、`Stop.force`、`StatusInfo.draining`）和 `StatusInfo` 的二进制信息字段都没有 +1。
 
 ## 前端 ↔ 后端命令（`commands.rs` ↔ `lib/ipc.ts`）
 
@@ -321,7 +323,7 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 - 版本自更新：`get_app_version`、`update_check`、`update_get_notes`、`update_apply`、`update_dismiss`、`popup_update_state`、`restart_settings`
 - Agent 生命周期：`agents_init`、`agent_force_idle`；自动集成卡内的 capability 通过
   `agent_mode_status` 聚合，并由 `agent_lifecycle_status` / `install` / `uninstall` 查询或切换
-- Agent 控制台（spec gui-agent-console）：`agents_focus`（焦点会话，daemon 推 `agent-detail` 帧）、`focus_request`（去回答）、`interject_append` / `interject_peek`（输入框追加与待送达气泡）、`console_transcript`（完整会话分页）、`console_diff_stat` / `console_diff_file` / `console_stage`（项目 diff 状态条与暂存）
+- Agent 控制台（spec gui-agent-console）：`agents_focus`（焦点会话，daemon 推 `agent-detail` 帧）、`focus_request`（去回答）、`interject_append` / `interject_peek`（输入框追加与待送达气泡）、`agents_message`（空闲或已结束的 Cursor Desktop 聊天——快照带 `canMessage` 的那些——直接送进原聊天，经 `ClientMsg::AgentMessage`，答复 `accepted` / `rejected` / `unknown`）、`console_transcript`（完整会话分页）、`console_diff_stat` / `console_diff_file` / `console_stage`（项目 diff 状态条与暂存）
 - 新建 Agent 任务（GUI）：`open_new_task`、`new_task_init`、`new_task_projects`(+`_refreshed`)、`project_key_of`、`new_task_launch`
 
 Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-popup-ui.md`：
@@ -360,6 +362,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 - 共享命令包括 `/new`、`/fork`、`/help`、`/here`、`/status`、`/watch`、`/unwatch`、`/msg`、`/msg-clear`、`/yolo`、`/diff`、`/stage`、`/transcript`、`/todo`、`/todo-rm` 和 `/todo-auto`；Slack 使用 `!` 作为可输入的备用前缀。
 - macOS 或 Windows 开启 `agentTasks` 后，`/new` 依次选择 workspace、已就绪 Agent 与权限，在新的 Terminal.app 或 Windows Terminal 窗口启动真实交互会话；Pi 没有内置权限模式，选中后跳过权限选择并固定使用 Agent 默认行为。Daemon 只负责启动前流程，之后复用 lifecycle/watch。
 - macOS 与 Windows 本地 GUI 亦可创建任务（不要求开启 `agentTasks`）：待办窗口行内按钮与托盘「新建 Agent 任务」打开统一的新建任务窗口，就绪判定与启动链路与 `/new` 相同；见 `docs/specs/gui-agent-task-launch.md`。
+- Cursor 任务另有两项：① **Max 控制**（`agents/cursor_max`，规格 `docs/specs/cursor-max-control.md`）——旧按次计费计划里 Max 按 API 费率扣额度，所以 GUI 表单、`/new` 与 iOS 创建 Cursor 任务时默认强制关闭 Max（需要 Max 的模型拦截启动，GUI/iOS 可按任务打开「允许 Max」），启动后复查，新计划与「沿用 Cursor 设置」策略下不干预；② **Agents 窗口路线**（`cursor_desktop/`，规格 `docs/specs/cursor-desktop-task-creation.md`，实验）——`cursorDesktop.launchPreference` 为 `desktop` 时，新任务经 daemon 持有的私有桥在已打开的 Cursor Agents 窗口里创建并自动发送，所有核对在提交前闸门里完成，失败即拒绝，不会改走终端。
 - Claude Code、Codex、Grok、Pi 的 Working/Idle 原生会话可通过 IM `/fork`、Agent 控制台或托盘立即分叉；源会话继续运行，新分支共用 cwd。继承标题的子会话在控制台、托盘和 IM 选择列表中前置显示直接父序号；watch 卡不增加 Fork 按钮，Cursor CLI 不支持；详见 `docs/specs/agent-session-fork.md`。
 - Agent 数字编号在 daemon 生命周期内稳定，供状态、关注、插话和 Git/会话导出共用；无参目标选择复用跨渠道单选卡模型。
 - Watch 订阅持久化并就地更新原卡；`/stage` 必须经过跨渠道 Confirm，不能直接执行暂存。
@@ -411,7 +414,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
   capability：首次集成默认开，显式偏好跨模式切换保留，None 必须移除实际产物；它与 IM
   autoActivation 相互独立。
 - Daemon 的 `AgentRegistry` 以 session id 为主身份，推导工作中、空闲、已结束；pid/liveness 与超时只做兜底。
-- 上轮结果独立持久化为 completed／failed／interrupted／incomplete／unknown；只有真实新回合开始才清除。手机按需显示「需要处理」，用户中断静默，未完成使用独立提醒。
+- 上轮结果独立持久化为 completed／failed／interrupted／incomplete／unknown；只有真实新回合开始才清除。手机 Agents 页只显示结果与原因（失败的处理动作只在收件箱的错误卡），用户中断静默，未完成使用独立提醒。
 - 生命周期状态被 `/status`、watch、插话、托盘/状态窗口和 Daemon 空闲退出共同使用；修改事件或状态模型时必须检查这些消费者。
 - 生命周期缺失、过期、显式关闭漂移与 None 旧孤立产物都进入 Agent 卡的更新状态，不由 lifecycle
   自身在 daemon 启动时后台迁移。只有工作中 Agent 或状态窗口连接阻止闲退；graceful drain 不受
@@ -431,7 +434,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 - Daemon 按 session 维护并持久化待送达队列；GUI composer 整体覆盖，IM `/msg` 追加。
 - Agent 下一次 PreToolUse 读取并原子消费消息；composer 已打开时 hook 可等待提交或取消，热路径不做文件 IO。
 - 排队消息被实际读取后向来源 IM 发阅读回执；即时送达、撤回、覆盖或未消费的消息不回执。
-- 手机另有按原生能力开放的空闲消息与「要求继续」：macOS Codex Desktop／Cursor Desktop，以及存活的 Pi Extension；由 `daemon/runtime/agent_control.rs` 联合 `agents/control.rs` 处理，普通工具前插话队列不能唤醒空闲 CLI。真实新回合开始后，来源手机只登记该轮的一次结果通知。
+- 手机另有按原生能力开放的空闲消息（错误卡的「要求继续」走同一条原生通道）：macOS Codex Desktop／Cursor Desktop，以及存活的 Pi Extension；由 `daemon/runtime/agent_control.rs` 联合 `agents/control.rs` 处理，普通工具前插话队列不能唤醒空闲 CLI。registry 标为「已结束」的 Cursor Desktop 聊天（一小时无活动的判定，聊天本身还在）只要仍在 Cursor 的会话库里也算数；Mac 控制台对这类聊天走同一个提交服务直发（快照 `canMessage`，见 `docs/specs/agent-lifecycle-results-and-recovery.md` §5.4）。真实新回合开始后，来源手机只登记该轮的一次结果通知。
 - 入口为 Agent 状态窗口、托盘菜单和 IM `/msg`；队列实现位于 `agents/interject.rs`。
 
 ## 项目待办 + whats-next
@@ -522,10 +525,11 @@ Cursor Desktop 另有默认关闭的实验性“禁止后台完成后自动续�
 由 Daemon 管理普通启动、窗口接入和还原，不依赖结束确认或逐会话结束状态。范围与验收真值见
 `docs/specs/cursor-desktop-background-followup.md`；终端 Cursor CLI 不在该能力范围内。
 
-- 正常 Stop 处理 Claude Code、Codex、Cursor、Pi 的自然完成；同一「结束／出错时确认」开关另使整轮最终失败进入普通作答卡。有原会话通道时可要求继续，否则仅「知道了」。用户中断、工具错误、自动重试中静默；Grok 仅支持出错提醒，Antigravity 尚无可靠来源。
+- 正常 Stop 处理 Claude Code、Codex、Cursor、Pi 的自然完成；同一「结束／出错时确认」开关另使整轮最终失败（`failed`，以及 Grok 因运行上限／没有进展停下的 `incomplete`）进入普通作答卡。有原会话通道时可要求继续，否则仅「知道了」（当作通知）。用户中断、工具错误、自动重试中静默；Grok 仅支持出错提醒，Antigravity 尚无可靠来源。
 - Claude Code、Codex、Cursor、Grok 的各家开关默认关，Pi 默认开，已有偏好保留；自然完成询问“继续/结束”，24h 或基础设施失败 fail-open，投放沿用活跃槽 ∪ watch 渠道。错误卡也进入 iOS 普通收件箱，沿用其空闲推送门槛，不要求手机发起资格。
 - Stop preference 独立保存，但只在 CLI/MCP mode 生效；关闭全量 lifecycle 时仍可安装必要的结果观察，错误卡由 daemon 持有。None 隐藏开关并删除共享 handler 与观察产物，重新集成时
   自动恢复。Active mode 内若只开 lifecycle，共享 Stop handler 只带 `track`、不弹确认卡。
+- 错误卡是处理失败的唯一入口（见 `docs/specs/agent-failure-inbox.md`）：未处理的卡写入 `~/.askhuman/state/failure-cards.json`，跨 daemon 换新保留，且作为 daemon 自持的卡（`RequestEntry::held`）不计入排空判定。Cursor 重试用尽后既不发 `stop` 也不发 `sessionEnd`，由 `agents/cursor_log.rs` 只读尾随它的结构化日志补上；该日志只作用于 hook 已登记的会话，从不启动或探测 Cursor。
 - 错误后接续复用 `daemon/runtime/agent_control.rs` 的持久操作与实际开始回执；`agents/codex_cli.rs` 只读观察已知共享服务的最终失败，暂不向 CLI 队列投递。继续时使用各家原生 continuation；Pi Extension 在同一会话空闲且无排队消息时调用 `pi.sendUserMessage`。下一次自然 Stop 再询问，不做外部 resume。
 - Stop 确认复用普通 Ask 单选链路并写入回复历史，已提交问答参与 `show_last`；它与 lifecycle 共用单一 Stop handler，避免并发 Hook 提前置空闲。
 - `[user_confirmed_end_turn]` 出现在最后回复任意位置即表示用户已明确同意结束，命中后直接放行，避免再次确认。

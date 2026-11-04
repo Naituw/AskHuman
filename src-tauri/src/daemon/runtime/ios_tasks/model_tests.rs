@@ -42,6 +42,21 @@ fn codex_status(target: Option<LaunchTarget>) -> LaunchStatus {
     }
 }
 
+/// Cursor's route as the terminal route alone gives it: it can start exactly when its CLI is
+/// ready.
+fn cursor_status(ready: bool) -> crate::cursor_desktop::LaunchStatus {
+    let target = ready.then_some(LaunchTarget::Terminal);
+    crate::cursor_desktop::LaunchStatus {
+        preference: LaunchTarget::Terminal,
+        target,
+        desktop_available: false,
+        terminal_available: ready,
+        integrated: true,
+        desktop_reason: None,
+        terminal_reason: None,
+    }
+}
+
 fn runtime() -> Option<(PathBuf, PathBuf)> {
     Some((PathBuf::from("/app/codex"), PathBuf::from("/data/codex")))
 }
@@ -66,10 +81,16 @@ fn pick(model: Option<&str>, effort: Option<&str>) -> ModelChoice {
 }
 
 fn probes_of(readiness: Vec<AgentReadiness>, target: Option<LaunchTarget>) -> AgentProbes {
+    let cursor = cursor_status(
+        readiness
+            .iter()
+            .any(|item| item.kind == AgentKind::Cursor && item.ready),
+    );
     AgentProbes {
         readiness,
         codex: codex_status(target),
         codex_runtime: target.and(runtime()),
+        cursor,
     }
 }
 

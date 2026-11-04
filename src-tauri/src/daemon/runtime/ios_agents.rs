@@ -310,7 +310,6 @@ pub(super) async fn interject(
     agent_key: &str,
     text_in: &str,
     files: Vec<StagedFile>,
-    expected_result_id: Option<String>,
 ) -> InterjectResult {
     let Some((kind, session_id)) = split_key(agent_key) else {
         return InterjectResult::rejected("notFound");
@@ -322,8 +321,11 @@ pub(super) async fn interject(
     if text(rec, "kind") != kind.as_str() {
         return InterjectResult::rejected("notFound");
     }
-    if text(rec, "state") == "idle" || expected_result_id.is_some() {
-        return super::agent_control::send(
+    // A Cursor Desktop chat the registry has called "ended" is still a chat; whether it can be
+    // continued is `agent_control`'s call (`can_send`), not a queue for a hook that will not run.
+    if text(rec, "state") == "idle" || (text(rec, "state") == "ended" && kind == AgentKind::Cursor)
+    {
+        let sent = super::agent_control::send(
             state,
             super::agent_control::Message {
                 continuation_instruction: None,
@@ -341,10 +343,11 @@ pub(super) async fn interject(
                         is_image: file.is_image,
                     })
                     .collect(),
-                expected_result_id,
+                expected_result_id: None,
             },
         )
         .await;
+        return super::agent_control::for_phone(sent);
     }
     let can = super::agent_control::can_send(state, rec);
     if !can.ok {

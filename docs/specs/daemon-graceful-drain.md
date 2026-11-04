@@ -37,6 +37,7 @@
 | D10 | 互相顶替的刹车（hold，2026-10-22） | 同一对二进制（按内容指纹）10 分钟内已互相顶替 ≥2 次后，第 3 次起 Daemon **不再**因「客户端二进制与自己内容不同」而让位：回 `HelloStatus::Ok`，照常服务该客户端（同一协议号、内容不同的客户端共用当前 Daemon）。只拦这一种让位：自身盘上二进制被换（那是升级）、客户端协议号不同、`ASKHUMAN_DAEMON_AUTORESTART=0` 的行为都不变。hold 的状态：内存里一份「粘性」状态（任何内容不同的客户端 Hello 都续期，30 分钟没有这种 Hello 即结束，Daemon 退出即清），外加持久化的换新历史 `~/.askhuman/state/daemon-restarts.json`（≤50 条 / ≤24 小时），让刚重启的新 Daemon 立刻重新推出 hold、不参与新一轮互顶。`daemon stop` / `daemon restart` 会清掉历史（人为重置）。连装新构建每次都是新内容，凑不成「同一对」，不受影响。分析见 §6 |
 | D11 | 协议号不同的客户端永不 hold | 旧协议号客户端收到 `Restarting` 后会等待并最终以替换策略（`SpawnPolicy::Replace`）杀掉仍存活的 Daemon，也解码不了新版消息，让它们与新 Daemon 共存没有安全的办法，所以协议号不同永远让位。由此也要求**同一协议号内必须保持互通**（hold 之后，同号不同内容的二进制会真的互相通信）：新增枚举变体、改字段含义等会让旧端出错的改动都要 +1，见 `docs/overview.md`「IPC 协议号」 |
 | D12 | 可观测性（2026-10-22） | 每次让位都在 `daemon.log` 写明原因（`client binary differs` / `own binary changed on disk` / `protocol version differs`）、客户端版本 / 协议号 / pid / 路径，以及 Daemon 自己的 exe 与指纹；`started` 行带 `exe=` 与 `fp=`；hold 开始写一行详细说明，之后至多每 5 分钟一行。`daemon status` 增 `binary` 行与 hold 警告；`StatusInfo` 增 `exePath` / `fingerprint` / `binaryConflict`（都带 `serde(default)`，新旧互相忽略）。`AskHuman doctor` 增 Install 小节，`doctor install [--warn-only] [--json]` 可单独运行：列出 PATH 上的各份二进制（按内容指纹区分，npm shim 解析到真实平台包），指出排第一的是哪份，并提示 ① 当前二进制被 PATH 里更靠前的另一份遮蔽 ② PATH 上有内容不同的多份 ③ Daemon 来自另一个文件 ④ hold 正在生效；并列出近 1 小时的换新记录。指向同一个文件的多个入口（例如 `~/.local/bin/AskHuman` 是链到 npm 包内二进制的符号链接，装一次所有名字同时更新）算同一份、不报警：单文件布局本身没有不一致，`install.sh` 照常写到链接指向的文件。`install.sh` 装完后调用 `doctor install --warn-only`（无冲突时静默；Dev Instance 只跳过 PATH 比对）。不做托盘 / 菜单栏提示；Windows 脚本与「hooks / MCP 配置里写死路径」的扫描之后再做（见 `docs/PROGRESS.md`） |
+| D13 | daemon 自持的错误卡不算在途请求（2026-11-03） | Agent 最终失败的错误卡（`native_request_id` 以 `failure:` / `failure-control:` 开头）是 daemon 替用户持有的卡，没有调用方在等，最长挂 24 小时；若计入「在途请求」，用户这时换新会让所有新提问排队到有人回答这张卡为止。`RequestRegistry::active_count()`（排空判定、`daemon status`、SIGTERM / `daemon stop` 是否排空）因此不计它们（菜单栏图标与「待答」列表用 `in_flight_count()`，仍计入）；卡自己写入 `~/.askhuman/state/failure-cards.json`，关停时（accept 循环退出后、取消请求之前）冻结该记录，新 daemon 启动后恢复。见 `docs/specs/agent-failure-inbox.md` §5.1 |
 
 ## 4. 约束与既有规则（不可破坏）
 
@@ -92,3 +93,15 @@ Linux 安装以原子交换保留仍在运行的 ELF 后，`current_exe()` 会�
 独立 daemon、GUI Host、MCP 提问子 CLI、设置内测试提问和重启设置都从安装入口启动。
 GUI Host 的盘上监听与重启同样使用安装入口，启动身份则仍取实际运行映像；两者可以是不同构建。
 这些调整不改变 IPC 消息或协议号，也不修改排空、在途草稿与首答胜出的语义。
+
+## 8. 协议号 4 → 5 的升级过渡（2026-11-03 补充）
+
+Cursor 新建任务把「Agents 窗口路线」的操作通过新增的 `ClientMsg::CursorDesktop` / `ServerMsg::CursorDesktop`
+（`CursorDesktopOp` / `CursorDesktopResult`，与 Codex 的同构消息并列）送到 Daemon，新增枚举变体旧端无法解码，
+按 D11 把 `PROTOCOL_VERSION` 从 4 提到 5。过渡期的行为与此前每次 +1 相同，没有新增机制：
+
+- 新客户端（协议号 5）握手遇到旧 Daemon（4）时，由旧 Daemon 回 `Restarting` 并按 D1–D4 排空：在途提问完成、新提交被拒后由客户端等待新 Daemon，不丢已显示的提问与草稿。
+- 旧客户端（4，例如另装的旧版 CLI）连到新 Daemon 时同样按 D11 让位，不会与新 Daemon 并存；两份不同协议号的二进制并存时，Daemon 会随调用方互相顶替，直到旧版被升级。
+- 同一协议号内的互通不受影响：本次的消息只在 `__cursor-desktop` 隐藏入口和 GUI 的 Cursor 新建任务调用，旧客户端不会收到它。
+
+不改排空、在途草稿与首答胜出的语义。

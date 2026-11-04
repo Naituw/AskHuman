@@ -10,6 +10,8 @@ export default {
     "copyPath": "Copy path",
     "openTerminal": "Open in terminal",
     "model": "Model",
+    "maxMode": "Max",
+    "maxModeHint": "Max mode is on for this session (billed at API rates on the request-based plan)",
     "reasoning": "Reasoning",
     "context": "Context",
     "contextValue": "{n}% left · {used} / {total}",
@@ -719,6 +721,30 @@ export default {
       hidden: "Hidden",
       forget: "Forget",
     },
+    cursorMax: {
+      title: "Max mode for Cursor tasks",
+      description:
+        "On the old request-based plan, Max mode is billed at API rates and uses up your allowance quickly. AskHuman keeps Max off when it starts a Cursor task. The new plan has no Max mode; then nothing about it appears here or in the New Task form.",
+      policy: "Max policy",
+      policyEnforceOff: "Force off (recommended)",
+      policyInherit: "Follow Cursor's current settings",
+      policyEnforceOffDesc:
+        "Each time a Cursor task starts, the CLI's global Max switch is turned off, and a model that needs Max is refused unless the task turns on \"Allow Max\". The switch is global and sticky: running the CLI by hand afterwards keeps it off until you turn it on with /max-mode.",
+      policyInheritDesc:
+        "No intervention, no refusal, no notice: the New Task form shows nothing about Max and Cursor's own settings apply.",
+      plan: "Plan type",
+      planAuto: "Detect automatically",
+      planLegacy: "Old plan (request-based)",
+      planTokenBased: "New plan (usage-based)",
+      detected: "Detected: {plan}",
+      detectedLegacy: "Old plan (request-based)",
+      detectedTokenBased: "New plan (no Max mode)",
+      detectedUnknown:
+        "Could not be detected (no Cursor Desktop data on this machine); treated as the old plan",
+      detectedLoading: "Detecting…",
+      planHint:
+        "If you only use the CLI, have no Cursor Desktop data, and are on the new plan, choose \"New plan\" here to hide the Max controls.",
+    },
     channels: {
       autoActivationTitle: "On-demand IM delivery",
       autoActivationDesc:
@@ -1026,6 +1052,8 @@ export default {
       write: "Edit",
     },
     composerPlaceholder: "Message this agent (delivered at its next tool call)…",
+    cursorPlaceholder: "Message this Cursor chat (it must be open in a Cursor window)…",
+    cursorSent: "Sent. Cursor has started working on it.",
     send: "Send",
     pendingCount: "{n} queued",
     pendingAttachments: "{n} attachment(s)",
@@ -1220,9 +1248,26 @@ export default {
     launch: "Start task",
     launching: "Starting…",
     launchNote: "Submitting starts the Agent in a new Terminal window.",
+    cursorWindowNote: "Submitting creates a chat in Cursor's Agents window and sends the task.",
     tooLong: "Task exceeds 3000 characters (currently {n})",
     launchFailed: "Failed to launch: {e}",
     todoMissing: "This todo has been removed; launching uses its saved snapshot.",
+    cursorModelLabel: "Cursor model",
+    cursorModelDefault: "Follow Cursor's default",
+    cursorModelsUnavailable:
+      "Cursor's model list could not be read, so only Cursor's default model can be used.",
+    cursorMaxRequiredMark: "Needs Max",
+    cursorMaxNotRequiredMark: "No Max needed",
+    cursorMaxUnknownMark: "unknown",
+    cursorWillUse: "Will use: {model} · {max}",
+    cursorDefaultModel: "Cursor's current default model",
+    allowMax: "Allow Max",
+    allowMaxDesc:
+      "On the request-based plan Max is billed at API rates. Off by default: AskHuman turns Max off for this task. When on, Cursor's own default behavior applies and AskHuman does not enable Max for you.",
+    maxBlocked:
+      "{model} needs Max, which this task does not allow. Pick a model that does not need Max, or turn on \"Allow Max\".",
+    maxUnknownNote:
+      "Whether it needs Max could not be determined (no Cursor Desktop model cache, or the model is not in it). The task still starts with Max turned off and is checked again afterwards.",
   },
   forkTask: {
     title: "Fork Agent Session",
@@ -1251,6 +1296,29 @@ export default {
     unsupported: "Currently available on macOS only",
     error: "Unable to activate in all Cursor Desktop windows",
     saving: "Saving…",
+    launch: {
+      preference: "New task location",
+      preferCli: "CLI (terminal)",
+      preferWindow: "Agents window",
+      hint: "With \"Agents window\", new tasks are created and sent in the Cursor Agents window you already have open (experimental). Open that window and add the project first; AskHuman never falls back to the CLI when it fails.",
+      willUseWindow: "New tasks will use Cursor's Agents window",
+      willUseCli: "New tasks will use the CLI",
+      unavailable: "No Cursor Agents window or CLI is available",
+      reasons: {
+        unsupportedPlatform: "This runtime is unsupported on this platform",
+        devInstance: "A Dev Instance does not use Cursor Desktop",
+        integrationDisabled: "Cursor integration is disabled",
+        trackingNotConfigured: "Cursor lifecycle tracking is not configured",
+        appNotRunning: "Cursor is not running",
+        multipleApps: "More than one Cursor process is running",
+        cliNotDetected: "Cursor CLI was not detected",
+        cliIntegrationNotConfigured: "CLI integration with AskHuman is not configured",
+        cliTrackingDisabled: "CLI lifecycle tracking is disabled",
+        cliTrackingNeedsUpdate: "CLI lifecycle tracking needs updating",
+        cliTrackingNotConfigured: "CLI lifecycle tracking is not configured",
+        terminalUnavailable: "The system terminal is unavailable",
+      },
+    },
   },
   interject: {
     title: "Message to Agent",

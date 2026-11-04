@@ -723,6 +723,17 @@ impl AgentRegistry {
             .and_then(|r| r.last_turn_result.clone())
     }
 
+    /// Whether the session is tracked, active or recently ended. Read-only: unlike an observation it
+    /// never creates a record, so a source with no hook of its own cannot invent sessions.
+    pub fn knows_session(&self, kind: AgentKind, session_id: &str) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .active
+            .iter()
+            .chain(inner.ended.iter())
+            .any(|r| r.kind == kind && r.session_id == session_id)
+    }
+
     /// Refresh activity without creating a new tracked session.
     pub fn touch_activity(&self, kind: AgentKind, session_id: &str, pid: Option<u32>) -> bool {
         if session_id.is_empty() {
@@ -1555,6 +1566,35 @@ mod tests {
             restored.last_turn_result.unwrap().outcome,
             TurnOutcome::Failed
         );
+    }
+
+    #[test]
+    fn knowing_a_session_covers_ended_records_and_never_creates_one() {
+        let r = reg();
+        assert!(!r.knows_session(AgentKind::Cursor, "s"));
+        r.apply_event(
+            AgentKind::Cursor,
+            LifecycleEvent::SessionStart,
+            "s",
+            None,
+            None,
+            100,
+        );
+        assert!(r.knows_session(AgentKind::Cursor, "s"));
+        assert!(!r.knows_session(AgentKind::Claude, "s"));
+        assert!(!r.knows_session(AgentKind::Cursor, "other"));
+        r.apply_event(
+            AgentKind::Cursor,
+            LifecycleEvent::SessionEnd,
+            "s",
+            None,
+            None,
+            110,
+        );
+        assert!(r.knows_session(AgentKind::Cursor, "s"));
+        assert!(!r.knows_session(AgentKind::Cursor, "other"));
+        assert_eq!(r.inner.lock().unwrap().active.len(), 0);
+        assert_eq!(r.inner.lock().unwrap().ended.len(), 1);
     }
 
     #[test]

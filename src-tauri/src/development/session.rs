@@ -407,10 +407,16 @@ pub fn configure_agent_command(
                 ])
                 .arg(profile.directory.join(".claude.json"));
         }
-        AgentKind::Codex | AgentKind::Grok => {
+        AgentKind::Codex => {
             // A neutral cwd prevents parent-directory project configs from restoring daily MCPs.
             command.current_dir(&profile.neutral_workspace);
             command.arg("--add-dir").arg(&profile.worktree);
+        }
+        AgentKind::Grok => {
+            // Same neutral cwd. Grok 1.0.70 refuses extra directories ("a session works only in
+            // its cwd") and then never creates the session, so none is passed; the task text names
+            // the source worktree.
+            command.current_dir(&profile.neutral_workspace);
         }
         AgentKind::Pi => {
             command

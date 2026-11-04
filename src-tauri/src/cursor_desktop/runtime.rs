@@ -73,43 +73,46 @@ fn message_bridge() -> String {
         )
 }
 
-pub(super) async fn send_message(session_id: &str, id: &str, text: &str) -> super::MessageResult {
-    let setup = async {
-        let processes = discover().await?;
-        if processes.len() != 1 {
-            bail!("A single original Cursor process is required");
-        }
-        let process = processes.into_iter().next().unwrap();
-        prepare_dirs()?;
-        let path = manifests_dir().join(format!("messages-{}.json", process.pid));
-        let saved = std::fs::symlink_metadata(&path)
-            .ok()
-            .filter(|meta| {
-                meta.is_file() && meta.len() <= 8192 && meta.uid() == unsafe { libc::geteuid() }
-            })
-            .and_then(|_| std::fs::read(&path).ok())
-            .and_then(|bytes| serde_json::from_slice::<Manifest>(&bytes).ok())
-            .filter(|manifest| {
-                manifest.messages_only && manifest.process == process && manifest.owner == owner()
-            });
-        let manifest = saved.unwrap_or_else(|| {
-            let mut manifest = new_manifest(process);
-            manifest.messages_only = true;
-            manifest.socket = socket_dir().join(format!("m{}.sock", manifest.process.pid));
-            manifest
-        });
-        let ready = bridge_request(&manifest, "status")
-            .await
-            .is_ok_and(|status| {
-                status["enabled"] == true && status["adapterRevision"] == message_revision()
-            });
-        if !ready {
-            bootstrap(&manifest).await?;
-            write_private(&path, &manifest)?;
-        }
-        Ok::<_, anyhow::Error>(manifest)
+/// The authenticated endpoint of the message bridge in the one running Cursor, attaching it first
+/// when it is not there yet (or runs an older adapter).
+async fn message_manifest() -> Result<Manifest> {
+    let processes = discover().await?;
+    if processes.len() != 1 {
+        bail!("A single original Cursor process is required");
     }
-    .await;
+    let process = processes.into_iter().next().unwrap();
+    prepare_dirs()?;
+    let path = manifests_dir().join(format!("messages-{}.json", process.pid));
+    let saved = std::fs::symlink_metadata(&path)
+        .ok()
+        .filter(|meta| {
+            meta.is_file() && meta.len() <= 8192 && meta.uid() == unsafe { libc::geteuid() }
+        })
+        .and_then(|_| std::fs::read(&path).ok())
+        .and_then(|bytes| serde_json::from_slice::<Manifest>(&bytes).ok())
+        .filter(|manifest| {
+            manifest.messages_only && manifest.process == process && manifest.owner == owner()
+        });
+    let manifest = saved.unwrap_or_else(|| {
+        let mut manifest = new_manifest(process);
+        manifest.messages_only = true;
+        manifest.socket = socket_dir().join(format!("m{}.sock", manifest.process.pid));
+        manifest
+    });
+    let ready = bridge_request(&manifest, "status")
+        .await
+        .is_ok_and(|status| {
+            status["enabled"] == true && status["adapterRevision"] == message_revision()
+        });
+    if !ready {
+        bootstrap(&manifest).await?;
+        write_private(&path, &manifest)?;
+    }
+    Ok(manifest)
+}
+
+pub(super) async fn send_message(session_id: &str, id: &str, text: &str) -> super::MessageResult {
+    let setup = message_manifest().await;
     let Ok(manifest) = setup else {
         return super::MessageResult::Rejected("nativeUnavailable".into());
     };
@@ -132,6 +135,64 @@ pub(super) async fn send_message(session_id: &str, id: &str, text: &str) -> supe
         ),
         _ => super::MessageResult::Unknown,
     }
+}
+
+/// One ask of the Agents window's creation code. A failure before the request is written says
+/// the task cannot have reached Cursor; any later one leaves that open.
+async fn bridge_create(
+    manifest: &Manifest,
+    operation: Value,
+) -> std::result::Result<Value, super::create::SendError> {
+    use super::create::SendError;
+    let clip = |error: &anyhow::Error| error.to_string().chars().take(160).collect::<String>();
+    check_endpoint(manifest).map_err(|error| SendError::NotSent(clip(&error)))?;
+    bridge_message(manifest, json!({"op": "create", "operation": operation}))
+        .await
+        .map_err(|error| SendError::Unclear(clip(&error)))
+}
+
+/// Creates a task in the Agents window and waits for its final answer (see `create::poll`).
+pub(super) async fn create(request: Value, deadline: Instant) -> super::create::Reply {
+    use super::create::{poll, Reply};
+    let manifest = match message_manifest().await {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            return Reply::Rejected {
+                reason: "nativeUnavailable".into(),
+                detail: Some(error.to_string().chars().take(160).collect()),
+            }
+        }
+    };
+    poll(
+        |operation| bridge_create(&manifest, operation),
+        request,
+        deadline,
+        Duration::from_millis(250),
+    )
+    .await
+}
+
+fn processes_of(text: &str) -> usize {
+    parse_processes(text, unsafe { libc::geteuid() }).len()
+}
+
+/// Original Cursor Desktop processes of this user, for the cheap availability check.
+pub(super) async fn process_count() -> Result<usize> {
+    Ok(processes_of(
+        &output("/bin/ps", &["-axo", "pid=,uid=,lstart=,comm="]).await?,
+    ))
+}
+
+/// [`process_count`] for a caller that is not async (the new-task form's status line).
+pub(super) fn process_count_blocking() -> Result<usize> {
+    let output = std::process::Command::new("/bin/ps")
+        .args(["-axo", "pid=,uid=,lstart=,comm="])
+        .output()
+        .context("Process inspection failed")?;
+    if !output.status.success() || output.stdout.len() > 4 * 1024 * 1024 {
+        bail!("Process inspection failed");
+    }
+    Ok(processes_of(&String::from_utf8_lossy(&output.stdout)))
 }
 
 fn scan_inspector_fuse(mut reader: impl Read) -> Result<bool> {
@@ -385,7 +446,8 @@ async fn bridge_request(manifest: &Manifest, op: &str) -> Result<Value> {
     bridge_message(manifest, json!({"op": op})).await
 }
 
-async fn bridge_message(manifest: &Manifest, mut request: Value) -> Result<Value> {
+/// The endpoint is this user's own authenticated socket; nothing is written to it here.
+fn check_endpoint(manifest: &Manifest) -> Result<()> {
     if manifest.owner != owner()
         || manifest.socket
             != socket_dir().join(format!(
@@ -405,6 +467,11 @@ async fn bridge_message(manifest: &Manifest, mut request: Value) -> Result<Value
     {
         bail!("Cursor bridge endpoint permissions are invalid");
     }
+    Ok(())
+}
+
+async fn bridge_message(manifest: &Manifest, mut request: Value) -> Result<Value> {
+    check_endpoint(manifest)?;
     timeout(Duration::from_secs(8), async {
         let mut socket = UnixStream::connect(&manifest.socket).await?;
         request["token"] = json!(manifest.token);

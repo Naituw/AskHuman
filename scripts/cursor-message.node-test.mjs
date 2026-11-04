@@ -56,5 +56,6 @@ test('the independent authenticated message bridge template is valid JavaScript'
     .replaceAll('Buffer.byteLength(buffer) > 4096', 'Buffer.byteLength(buffer) > 262144')
     .replace('else if (request.op === "restore")', `${dispatch}\nelse if (request.op === "restore")`);
   assert.equal(bridge.split('request.op === "message"').length, 2);
+  assert.equal(bridge.split('request.op === "create"').length, 2);
   new vm.Script(bridge);
 });

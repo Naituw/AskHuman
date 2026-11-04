@@ -42,6 +42,7 @@ fn group_for(command: &str) -> Group {
         Group::Todo
     } else if command.starts_with("codex_desktop")
         || command == "codex_launch_status"
+        || command == "cursor_launch_status"
         || command.starts_with("new_task_")
         || command.starts_with("fork_task_")
         || matches!(
@@ -191,6 +192,7 @@ fn integration(invoke: Invoke<Wry>) -> bool {
         crate::commands::agent_task_workspace_hide,
         crate::commands::agent_task_workspace_forget,
         crate::commands::agent_task_readiness,
+        crate::commands::agent_task_cursor_plan,
         crate::commands::agent_task_test_terminal,
         crate::commands::collaboration_style_defaults,
         crate::commands::collaboration_style_apply_integrations,
@@ -272,6 +274,7 @@ fn history(invoke: Invoke<Wry>) -> bool {
         crate::commands::agents_focus,
         crate::commands::focus_request,
         crate::commands::interject_append,
+        crate::commands::agents_message,
         crate::commands::interject_peek,
         crate::commands::console_transcript,
         crate::commands::console_diff_stat,
@@ -339,8 +342,10 @@ fn task(invoke: Invoke<Wry>) -> bool {
         crate::commands::new_task_projects_refreshed,
         crate::commands::project_key_of,
         crate::commands::new_task_launch,
+        crate::commands::new_task_cursor_options,
         crate::commands::codex_desktop,
         crate::commands::codex_launch_status,
+        crate::commands::cursor_launch_status,
         crate::commands::codex_desktop_attachments,
         crate::commands::fork_task_init,
         crate::commands::fork_task_launch,
@@ -386,6 +391,7 @@ mod tests {
         assert_eq!(group_for("console_transcript"), Group::History);
         assert_eq!(group_for("todos_add"), Group::Todo);
         assert_eq!(group_for("fork_task_launch"), Group::Task);
+        assert_eq!(group_for("new_task_cursor_options"), Group::Task);
         assert_eq!(group_for("update_apply"), Group::Update);
     }
 }

@@ -81,6 +81,16 @@
         }
       }
     },
+    "%@ needs Max. Turn on Allow Max, or choose another model." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 需要 Max。请打开「允许 Max」，或换一个模型。"
+          }
+        }
+      }
+    },
     "%lld" : {
       "shouldTranslate" : false
     },
@@ -480,6 +490,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "你所有同步的待办"
+          }
+        }
+      }
+    },
+    "Allow Max" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许 Max"
           }
         }
       }
@@ -2174,22 +2194,22 @@
         }
       }
     },
+    "Needs Max" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要 Max"
+          }
+        }
+      }
+    },
     "Needs an update" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "需要更新"
-          }
-        }
-      }
-    },
-    "Needs attention" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需要处理"
           }
         }
       }
@@ -2320,6 +2340,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "开启了 iCloud 同步的 Mac 暂时都连不上。"
+          }
+        }
+      }
+    },
+    "No Max needed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不需要 Max"
           }
         }
       }
@@ -2610,6 +2640,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在 Mac 上打开 AskHuman 设置 → 实验 → iOS App 渠道。"
+          }
+        }
+      }
+    },
+    "On the old request-based plan, Max is billed at API rates. It starts off for each new task, and your Mac keeps Max off unless you allow it." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "旧的按次计费套餐里，Max 按 API 价格计费。每次新建任务时默认关闭；不允许时，Mac 会让 Max 保持关闭。"
           }
         }
       }
@@ -3333,16 +3373,6 @@
         }
       }
     },
-    "Request continuation" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "要求继续"
-          }
-        }
-      }
-    },
     "Request unavailable" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3999,6 +4029,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "消息太长了。"
+          }
+        }
+      }
+    },
+    "That model needs Max, which this task does not allow. Turn on Allow Max or choose another model." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该模型需要 Max，而本次任务不允许使用 Max。请打开「允许 Max」或换一个模型。"
           }
         }
       }
@@ -5151,16 +5191,6 @@
         }
       }
     },
-    "Waiting for the Agent to start…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在等待 Agent 开始…"
-          }
-        }
-      }
-    },
     "Waiting for the first sync" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5261,12 +5291,32 @@
         }
       }
     },
+    "Whether it needs Max is unknown" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未能判断是否需要 Max"
+          }
+        }
+      }
+    },
     "Will notify you" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "会通知你"
+          }
+        }
+      }
+    },
+    "Will use: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将使用：%@"
           }
         }
       }

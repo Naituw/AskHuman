@@ -34,7 +34,6 @@ ZH = {
     "Needs your confirmation": "需要你确认",
     "Needs your confirmation: %@": "需要你确认：%@",
     "Waiting for you: %@": "在等你：%@",
-    "Needs attention": "需要处理",
     "Session ended": "会话已结束",
     "Completed": "已完成",
     "Last turn failed": "上轮出错",
@@ -43,8 +42,6 @@ ZH = {
     "Result unknown": "结果未知",
     "Task incomplete": "任务未完成",
     "Task incomplete: %@": "任务未完成：%@",
-    "Request continuation": "要求继续",
-    "Waiting for the Agent to start…": "正在等待 Agent 开始…",
     "Message sent. The notification limit has been reached.": "消息已发送，结果通知已达关注上限。",
     "The Agent reached its run limit.": "Agent 已达到本轮运行上限。",
     "The Agent stopped because it was not making progress.": "Agent 因无法继续推进而停止。",
@@ -73,6 +70,15 @@ ZH = {
     "Configured speed: Fast": "速度配置：Fast",
     "Configured speed: Standard": "速度配置：标准",
     "That speed is no longer available on the Mac. Open the form again and choose another.": "Mac 已不支持所选速度，请重新打开表单选择。",
+    # New task: Cursor's Max mode (old request-based plan)
+    "Allow Max": "允许 Max",
+    "Will use: %@": "将使用：%@",
+    "Needs Max": "需要 Max",
+    "No Max needed": "不需要 Max",
+    "Whether it needs Max is unknown": "未能判断是否需要 Max",
+    "%@ needs Max. Turn on Allow Max, or choose another model.": "%@ 需要 Max。请打开「允许 Max」，或换一个模型。",
+    "On the old request-based plan, Max is billed at API rates. It starts off for each new task, and your Mac keeps Max off unless you allow it.": "旧的按次计费套餐里，Max 按 API 价格计费。每次新建任务时默认关闭；不允许时，Mac 会让 Max 保持关闭。",
+    "That model needs Max, which this task does not allow. Turn on Allow Max or choose another model.": "该模型需要 Max，而本次任务不允许使用 Max。请打开「允许 Max」或换一个模型。",
     # Agents
     "Agents": "Agents",
     # Agents tab (phase B)

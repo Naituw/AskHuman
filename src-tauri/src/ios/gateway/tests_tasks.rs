@@ -30,7 +30,6 @@ async fn with_agent() -> (Fixture, TestPhone) {
 
 fn interject(id: &str, agent_key: &str, text: &str) -> wire::InterjectSend {
     wire::InterjectSend {
-        expected_result_id: None,
         client_msg_id: id.into(),
         agent_key: agent_key.into(),
         text: text.into(),
@@ -356,6 +355,7 @@ fn create(id: &str, text: &str) -> wire::TaskCreate {
     wire::TaskCreate {
         files: Vec::new(),
         speed: None,
+        allow_max: false,
         client_msg_id: id.into(),
         workspace_id: "ws1".into(),
         agent_kind: "claude".into(),
@@ -581,6 +581,7 @@ async fn the_models_an_agent_offers_reach_the_phone_with_the_options() {
     let models = vec![
         wire::ModelOption {
             fast_supported: None,
+            max_required: None,
             id: "model-a".into(),
             label: "Model A".into(),
             note: Some("flagship".into()),
@@ -589,6 +590,7 @@ async fn the_models_an_agent_offers_reach_the_phone_with_the_options() {
         },
         wire::ModelOption {
             fast_supported: None,
+            max_required: None,
             id: "model-b".into(),
             label: "Model B".into(),
             note: None,
@@ -598,6 +600,7 @@ async fn the_models_an_agent_offers_reach_the_phone_with_the_options() {
     ];
     let default_model = wire::DefaultModel {
         fast_supported: None,
+        max_required: None,
         label: Some("Model A".into()),
         efforts: Some(vec!["low".into(), "high".into()]),
         default_effort: Some("high".into()),
@@ -811,6 +814,51 @@ async fn task_speed_is_forwarded_replayed_and_conflicting_changes_do_not_launch(
     let launches = fx.host.launches.lock().unwrap();
     assert_eq!(launches.len(), 1);
     assert_eq!(launches[0].speed, Some(TaskSpeed::Fast));
+}
+
+#[tokio::test(start_paused = true)]
+async fn allow_max_is_forwarded_replayed_and_only_a_cursor_task_may_carry_it() {
+    let (fx, mut phone) = with_agent().await;
+    load_options(&mut phone).await;
+    // Only Cursor has a Max mode: asking for it on another Agent is refused before anything starts.
+    let mut other = create("max-claude", "do it");
+    other.allow_max = true;
+    phone.send(&other).await;
+    assert_eq!(status(&mut phone).await.reason.as_deref(), Some("invalid"));
+
+    let mut task = create("max-task", "do it");
+    task.agent_kind = "cursor".into();
+    task.allow_max = true;
+    phone.send(&task).await;
+    assert_eq!(status(&mut phone).await.stage, "accepted");
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    // Sent again as it was: answered from the journal, nothing starts.
+    phone.send(&task).await;
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    // The same id without the permission is a different message, not a quieter copy of the first.
+    task.allow_max = false;
+    phone.send(&task).await;
+    assert_eq!(status(&mut phone).await.reason.as_deref(), Some("conflict"));
+    let launches = fx.host.launches.lock().unwrap();
+    assert_eq!(launches.len(), 1);
+    assert!(launches[0].allow_max);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cursor_task_without_allow_max_keeps_the_identity_it_always_had() {
+    let (fx, mut phone) = with_agent().await;
+    load_options(&mut phone).await;
+    let mut task = create("plain-cursor", "do it");
+    task.agent_kind = "cursor".into();
+    phone.send(&task).await;
+    assert_eq!(status(&mut phone).await.stage, "accepted");
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    // An older phone never sends the field; the same task replays as itself.
+    phone.send(&task).await;
+    assert_eq!(status(&mut phone).await.stage, "launched");
+    let launches = fx.host.launches.lock().unwrap();
+    assert_eq!(launches.len(), 1);
+    assert!(!launches[0].allow_max);
 }
 
 async fn upload_for_task(phone: &mut TestPhone, task_id: &str, complete: bool) -> String {

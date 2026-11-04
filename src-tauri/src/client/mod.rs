@@ -1097,6 +1097,41 @@ async fn run_ask_observed(
 pub async fn codex_desktop(
     operation: crate::codex_desktop::Operation,
 ) -> Result<serde_json::Value, String> {
+    desktop_round_trip(ClientMsg::CodexDesktop { operation }, |msg| match msg {
+        ServerMsg::CodexDesktop { result } => Some(result),
+        _ => None,
+    })
+    .await
+}
+
+/// Create a task in Cursor Desktop's Agents window through the daemon.
+pub async fn cursor_desktop(
+    operation: crate::cursor_desktop::Operation,
+) -> Result<serde_json::Value, String> {
+    desktop_round_trip(ClientMsg::CursorDesktop { operation }, |msg| match msg {
+        ServerMsg::CursorDesktop { result } => Some(result),
+        _ => None,
+    })
+    .await
+}
+
+/// Send a message typed in the Agents console straight to a chat that is not working. `Err` means
+/// the daemon's answer did not arrive, so the message may or may not have been sent.
+pub async fn agent_message(
+    message: crate::agents::control::ConsoleMessage,
+) -> Result<serde_json::Value, String> {
+    desktop_round_trip(ClientMsg::AgentMessage { message }, |msg| match msg {
+        ServerMsg::AgentMessage { result } => Some(result),
+        _ => None,
+    })
+    .await
+}
+
+/// One request and its single answer on a fresh connection to the daemon.
+async fn desktop_round_trip(
+    request: ClientMsg,
+    answer: impl FnOnce(ServerMsg) -> Option<Result<serde_json::Value, String>>,
+) -> Result<serde_json::Value, String> {
     let (mut reader, mut writer) = open_for_subscribe().await.map_err(|e| e.to_string())?;
     ipc::write_msg(&mut writer, &ClientMsg::Hello(hello()))
         .await
@@ -1105,15 +1140,16 @@ pub async fn codex_desktop(
     {
         return Err("Daemon is restarting".into());
     }
-    ipc::write_msg(&mut writer, &ClientMsg::CodexDesktop { operation })
+    ipc::write_msg(&mut writer, &request)
         .await
         .map_err(|e| e.to_string())?;
     match ipc::read_msg::<_, ServerMsg>(&mut reader)
         .await
         .map_err(|e| e.to_string())?
+        .and_then(answer)
     {
-        Some(ServerMsg::CodexDesktop { result }) => result,
-        _ => {
+        Some(result) => result,
+        None => {
             Err("Desktop operation response lost. Check the original chat before retrying.".into())
         }
     }

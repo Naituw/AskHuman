@@ -14,6 +14,7 @@
   自动集成有效时，由 Daemon 管理实验性的 Desktop 全局后台完成续跑控制；逐窗口原生行为预检
   通过后才修改处理器并报告 active。有效能力独立保活，不改写 `general.daemonLifecycle`；
   None 停止接入但保留偏好，终端 Cursor CLI 不在范围内。
+- `cursorDesktop.launchPreference`：`terminal|desktop`，默认 `terminal`；新 Cursor 任务的运行位置。`desktop` 在 macOS 上经 Agents 窗口创建（实验），不可用时落回终端并在状态行说明；偏好终端时终端不可用也不会改用 Agents 窗口（与 Codex 的双向回退不同）；任务开始后不再改走另一条路径。
 - `general`
   - `theme`、`language`、`alwaysOnTop`、`appearAnimation`、`windowEffect`（`solid|blur|glass`；配置默认 `blur`，显式 `glass` 在 macOS 26 以下有效值自动解析为 `blur`）
   - `speechLanguage`、`speechShortcut`
@@ -31,6 +32,7 @@
 - `channels.autoEndWatch`：切离活跃 IM 后自动结束该渠道 watch，默认 `true`，仅在 `autoActivation` 开启时生效
 - `agentTasks.enabled`：从 IM 创建电脑端 Agent 任务，默认 `false`；开启会强制 `daemonLifecycle=keepalive` 并同步 daemon 登录项。入口在设置「高级」Tab（2026-07-25 从「实验」转正）
 - `agentTasks.permissionPrompt`：`ask|agent-default|yolo`，默认 `ask`
+- `agentTasks.cursorMax.{policy, plan}`：Cursor Max 模式控制。`policy` 为 `enforce-off`（默认，创建任务时强制关闭 Max）或 `inherit`（沿用 Cursor 当前设置，不干预）；`plan` 为 `auto`（默认，读 Cursor 的本地数据判断）、`legacy` 或 `token-based`（新计划无 Max，全部隐藏且不干预）；每次启动读取，改后立即生效
 - `experimental.enabled`：显示实验区，默认 `false`（当前实验区里是 iOS 渠道卡；`channel list` 与帮助也只在它开启时列出 `ios`）
 - `experimental.verticalQuestions`：多问题纵向同时显示全部问题，默认 `true`（设置「通用」Tab 可关回旧版一次一题；配置键沿用 `experimental.` 前缀）。2026-10-17 起出厂默认由关改为开：新配置与缺该字段的旧配置跟随新默认，已落盘的显式值（含 `false`）不迁移
 

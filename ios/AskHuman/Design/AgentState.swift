@@ -33,7 +33,7 @@ extension AgentItem {
         }
     }
 
-    var resultColor: Color { view.lastTurnResult?.outcome == "incomplete" ? .orange : needsAttention ? .red : .gray }
+    var resultColor: Color { view.lastTurnResult?.outcome == "incomplete" ? .orange : lastTurnFellShort ? .red : .gray }
 
     var resultReason: String? {
         if let summary = view.lastTurnResult?.summary, !summary.isEmpty { return summary }

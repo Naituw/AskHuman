@@ -16,7 +16,7 @@ use super::*;
 use crate::agents::model_catalog::cache::{CatalogCache, CATALOG_TTL, FAILURE_RETRY};
 use crate::agents::model_catalog::source::{self, CatalogSource};
 use crate::agents::model_catalog::{resolve_choice, AgentCatalog, ModelChoice};
-use crate::codex_desktop::LaunchStatus;
+use crate::codex_desktop::{LaunchStatus, LaunchTarget};
 use crate::config::AgentTaskPermission;
 use crate::integrations::agent_launch::{self, AgentReadiness, LaunchPermission, LaunchRecord};
 use crate::ios::gateway::{TaskChoices, TaskLaunch, TodoChoices};
@@ -93,6 +93,8 @@ struct AgentProbes {
     codex: LaunchStatus,
     /// The Codex executable and data directory a task started now would run on.
     codex_runtime: Option<(PathBuf, PathBuf)>,
+    /// Where a Cursor task started now would run: the CLI or the Agents window.
+    cursor: crate::cursor_desktop::LaunchStatus,
 }
 
 fn probe_agents() -> AgentProbes {
@@ -111,16 +113,17 @@ fn probe_agents() -> AgentProbes {
         readiness,
         codex,
         codex_runtime,
+        cursor: crate::cursor_desktop::launch_status(false),
     }
 }
 
-/// Whether a task can be started on this Agent right now. Codex is judged by its launch route
-/// (Desktop App or terminal); the others by their own readiness.
-fn is_ready(item: &AgentReadiness, codex: &LaunchStatus) -> bool {
-    if item.kind == AgentKind::Codex {
-        codex.target.is_some()
-    } else {
-        item.ready
+/// Whether a task can be started on this Agent right now. Codex and Cursor are judged by their
+/// launch route (Desktop or terminal); the others by their own readiness.
+fn is_ready(item: &AgentReadiness, probes: &AgentProbes) -> bool {
+    match item.kind {
+        AgentKind::Codex => probes.codex.target.is_some(),
+        AgentKind::Cursor => probes.cursor.target.is_some(),
+        _ => item.ready,
     }
 }
 
@@ -151,7 +154,7 @@ fn catalog_sources(probes: &AgentProbes) -> Vec<CatalogSource> {
     probes
         .readiness
         .iter()
-        .filter(|item| is_ready(item, &probes.codex))
+        .filter(|item| is_ready(item, probes))
         .filter_map(|item| {
             catalog_source(
                 item.kind,
@@ -206,6 +209,8 @@ fn model_options(
                 .speed
                 .as_ref()
                 .map(|speed| speed.fast_models.contains(&entry.id)),
+            // Filled in afterwards for the one Agent that has a Max mode.
+            max_required: None,
             id: entry.id.clone(),
             label: entry.label.clone(),
             note: entry.note.clone(),
@@ -224,6 +229,7 @@ fn model_options(
         DefaultModel {
             // The global default is not proof of a workspace's effective model.
             fast_supported: None,
+            max_required: None,
             label: default.label.clone(),
             efforts: (!default.efforts.is_empty()).then(|| default.efforts.clone()),
             // A default effort that is not one of the offered ones would mark nothing.
@@ -249,15 +255,24 @@ fn agent_options(
         .iter()
         .map(|item| {
             let is_codex = item.kind == AgentKind::Codex;
-            let ready = is_ready(item, &probes.codex);
+            // Cursor says so only when its Agents window is involved; the terminal route keeps
+            // the words it always had.
+            let cursor_desktop = item.kind == AgentKind::Cursor
+                && (probes.cursor.target == Some(LaunchTarget::Desktop)
+                    || probes.cursor.preference == LaunchTarget::Desktop);
+            let ready = is_ready(item, probes);
             let subtitle = if is_codex {
                 probes.codex.description(lang)
+            } else if cursor_desktop {
+                probes.cursor.description(lang)
             } else {
                 item.integration_mode.clone()
             };
             let reason = (!ready).then(|| {
                 let reason = if is_codex {
                     probes.codex.description(lang)
+                } else if cursor_desktop {
+                    probes.cursor.description(lang)
                 } else {
                     item.diagnostics.first().cloned().unwrap_or_default()
                 };
@@ -270,6 +285,7 @@ fn agent_options(
                 (None, None)
             };
             AgentOption {
+                max_control: None,
                 speed_control: (is_codex
                     && ready
                     && catalogs.get(&item.kind).is_some_and(|c| c.speed.is_some()))
@@ -286,6 +302,36 @@ fn agent_options(
             }
         })
         .collect()
+}
+
+/// Adds what Cursor's Max mode means to the Cursor agent of `task.options` (docs/specs/cursor-max-control.md
+/// §5): the switch is offered, and each model says whether it can run without Max. With no hints
+/// (the token-based plan, or the "follow Cursor" policy) the options stay exactly as they were.
+fn apply_max_hints(
+    agents: &mut [AgentOption],
+    hints: Option<&crate::agents::cursor_max::Hints>,
+    target: crate::agents::cursor_max::Target,
+) {
+    let Some(hints) = hints else {
+        return;
+    };
+    for agent in agents
+        .iter_mut()
+        .filter(|agent| agent.kind == AgentKind::Cursor.as_str() && agent.ready)
+    {
+        agent.max_control = Some(true);
+        for model in agent.models.iter_mut().flatten() {
+            model.max_required = hints.need(&model.id).as_bool();
+        }
+        // What "Default" stands for depends on where the task runs.
+        let default = hints.default_model(target).need.as_bool();
+        if default.is_some() {
+            agent
+                .default_model
+                .get_or_insert_with(DefaultModel::default)
+                .max_required = default;
+        }
+    }
 }
 
 /// What a phone may pick from. Mirrors the gates of IM `/new`, but reports them as codes.
@@ -306,6 +352,7 @@ pub(super) async fn choices(state: &Arc<ServerState>) -> TaskChoices {
         readiness: Vec::new(),
         codex: crate::codex_desktop::launch_status(false),
         codex_runtime: None,
+        cursor: crate::cursor_desktop::launch_status(false),
     });
     if workspaces.is_empty() {
         return TaskChoices::blocked(mode, "noWorkspace");
@@ -313,7 +360,26 @@ pub(super) async fn choices(state: &Arc<ServerState>) -> TaskChoices {
     // Only Agents that can be started get a model list; the lists come from the cache and are
     // asked for side by side, so the wait is spent once whatever the number of Agents.
     let catalogs = fetch_catalogs(catalog_sources(&probes)).await;
-    let agents = agent_options(&probes, mode, Lang::current(), &catalogs);
+    let mut agents = agent_options(&probes, mode, Lang::current(), &catalogs);
+    if agents
+        .iter()
+        .any(|agent| agent.kind == AgentKind::Cursor.as_str() && agent.ready)
+    {
+        // Cursor's own files and the settings, read now: nothing about Max is cached here.
+        let hints = tokio::task::spawn_blocking(crate::agents::cursor_max::Hints::load)
+            .await
+            .ok()
+            .flatten();
+        apply_max_hints(
+            &mut agents,
+            hints.as_ref(),
+            if probes.cursor.target == Some(LaunchTarget::Desktop) {
+                crate::agents::cursor_max::Target::Desktop
+            } else {
+                crate::agents::cursor_max::Target::Cli
+            },
+        );
+    }
     if !agents.iter().any(|agent| agent.ready) {
         return TaskChoices::blocked(mode, "noAgent");
     }
@@ -498,6 +564,13 @@ pub(super) async fn create(state: &Arc<ServerState>, launch: TaskLaunch) -> Resu
                 status.target.is_some(),
                 catalog_source(kind, None, runtime.as_ref()),
             )
+        } else if kind == AgentKind::Cursor {
+            // The list of models is the CLI's either way; whether a task can start is the route's.
+            let source = catalog_source(kind, readiness.executable.as_deref(), None);
+            (
+                crate::cursor_desktop::launch_status(false).target.is_some(),
+                source,
+            )
         } else {
             let source = catalog_source(kind, readiness.executable.as_deref(), None);
             (readiness.ready, source)
@@ -568,6 +641,7 @@ pub(super) async fn create(state: &Arc<ServerState>, launch: TaskLaunch) -> Resu
         todo: todo.map(|todo| (project, todo)),
         // Resolved against the Agent's model list above; a default pick stays default.
         choice,
+        allow_max: launch.allow_max,
     };
     let result = start_task(state, spec, |record| {
         register_pending(state, record, &phone_id, &client_msg_id)
@@ -577,13 +651,15 @@ pub(super) async fn create(state: &Arc<ServerState>, launch: TaskLaunch) -> Resu
     match result {
         Ok(Started::Terminal) => Ok(()),
         Ok(Started::Desktop(answer)) => {
-            // The Codex App names the session right away: there is nothing to wait for.
+            // The Codex App and Cursor's Agents window name the session right away: there is
+            // nothing to wait for.
             if let (Some(sid), Some(gateway)) = (answer["sessionId"].as_str(), ios_gateway(state)) {
-                gateway.task_matched(&phone_id, &client_msg_id, &agent_key(AgentKind::Codex, sid));
+                gateway.task_matched(&phone_id, &client_msg_id, &agent_key(kind, sid));
             }
             Ok(())
         }
         Err(StartError::Message(message)) => Err(clip(&message, REASON_MAX_CHARS)),
+        Err(StartError::MaxRequired(_)) => Err(agent_launch::MaxRequired::REASON.into()),
         Err(StartError::Terminal(error)) => {
             log(&format!("ios: task launch failed: {error:#}"));
             Err("terminalFailed".into())
@@ -635,6 +711,117 @@ mod tests {
             Some(LaunchPermission::AgentDefault)
         );
         assert_eq!(allowed(Ask, AgentKind::Claude, "root"), None);
+    }
+
+    fn agent(kind: &str, ready: bool, models: &[&str]) -> AgentOption {
+        AgentOption {
+            max_control: None,
+            speed_control: None,
+            kind: kind.into(),
+            label: kind.into(),
+            ready,
+            subtitle: "cli".into(),
+            permission_selectable: true,
+            reason: None,
+            models: Some(
+                models
+                    .iter()
+                    .map(|id| ModelOption {
+                        fast_supported: None,
+                        max_required: None,
+                        id: id.to_string(),
+                        label: id.to_string(),
+                        note: None,
+                        efforts: None,
+                        default_effort: None,
+                    })
+                    .collect(),
+            ),
+            default_model: None,
+        }
+    }
+
+    /// Hints from synthetic data only: the CLI's own selection is the mixed model's Max variant.
+    fn max_hints() -> crate::agents::cursor_max::Hints {
+        use crate::agents::cursor_max::catalog::{fixtures, Selection};
+        use crate::agents::cursor_max::{cli_config::CliState, Hints, Inputs};
+        let cli = CliState {
+            selected: Some(Selection {
+                model: "mixed".into(),
+                params: vec![
+                    ("context".to_string(), "1m".to_string()),
+                    ("effort".to_string(), "high".to_string()),
+                ],
+                max_mode: false,
+            }),
+            ..CliState::default()
+        };
+        Hints::new(
+            crate::config::CursorMaxConfig::default(),
+            Inputs {
+                catalog: Some(fixtures::catalog(Some(false))),
+                cli: Some(cli),
+            },
+        )
+        .expect("the default settings control Max on the legacy plan")
+    }
+
+    #[test]
+    fn max_hints_switch_on_the_control_and_mark_each_cursor_model() {
+        let mut agents = vec![agent(
+            "cursor",
+            true,
+            &["mixed-200k-high", "mixed-1m-high", "brand-new"],
+        )];
+        apply_max_hints(
+            &mut agents,
+            Some(&max_hints()),
+            crate::agents::cursor_max::Target::Cli,
+        );
+        let cursor = &agents[0];
+        assert_eq!(cursor.max_control, Some(true));
+        let marks: Vec<_> = cursor
+            .models
+            .iter()
+            .flatten()
+            .map(|model| model.max_required)
+            .collect();
+        // Unknown stays absent: the phone must not read it as "does not need Max".
+        assert_eq!(marks, [Some(false), Some(true), None]);
+        // And "Default" says what Cursor itself would start with.
+        assert_eq!(
+            cursor.default_model.as_ref().and_then(|d| d.max_required),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn without_hints_the_options_are_exactly_what_they_were() {
+        let mut agents = vec![
+            agent("cursor", true, &["mixed-1m-high"]),
+            agent("claude", true, &["opus"]),
+        ];
+        let before = serde_json::to_value(&agents).unwrap();
+        apply_max_hints(&mut agents, None, crate::agents::cursor_max::Target::Cli);
+        assert_eq!(serde_json::to_value(&agents).unwrap(), before);
+        // The wire leaves the new fields out altogether rather than sending nulls.
+        assert!(before[0].get("maxControl").is_none());
+        assert!(before[0]["models"][0].get("maxRequired").is_none());
+    }
+
+    #[test]
+    fn only_a_ready_cursor_agent_gets_the_max_control() {
+        let mut agents = vec![
+            agent("cursor", false, &["mixed-1m-high"]),
+            agent("claude", true, &["mixed-1m-high"]),
+        ];
+        let before = serde_json::to_value(&agents).unwrap();
+        apply_max_hints(
+            &mut agents,
+            Some(&max_hints()),
+            crate::agents::cursor_max::Target::Cli,
+        );
+        assert_eq!(serde_json::to_value(&agents).unwrap(), before);
     }
 
     #[test]

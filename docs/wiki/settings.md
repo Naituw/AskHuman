@@ -45,6 +45,22 @@ macOS 的「Agents → Cursor」集成卡提供 **禁止后台完成后自动续
 手动停止 Daemon 后，已接入窗口的拦截可能继续驻留；要恢复原生续跑行为，应关闭本开关或
 切至未集成。可用 `AskHuman doctor --json` 查看 `cursorDesktop` 诊断。
 
+## 新建 Cursor 任务
+
+**运行位置。** 「Agents → Cursor」集成卡的「新任务运行位置」可选 CLI（默认）或 Agents 窗口（实验，仅 macOS）。
+选 Agents 窗口后，GUI、IM `/new` 与手机新建的 Cursor 任务会在你已打开的 Cursor Agents 窗口里创建会话并自动发送；
+需要 Cursor 正在运行、只有一个 Agents 窗口，且项目已添加到其中。创建前窗口不可用时，新任务改用 CLI，集成卡状态行会说明原因；
+任务一旦在 Agents 窗口里开始，失败也不会再自动改用 CLI。
+
+**Max 模式。** 仍在旧的按次计费计划里的用户，Max 按 API 费率计费、额度消耗很快，所以 AskHuman 新建 Cursor 任务时
+默认强制关闭 Max（「高级 → Cursor 任务的 Max 模式」）：
+
+- 新建任务窗口与手机新建页里的「允许 Max」默认关闭，每个任务单独选择、不会保存；打开后按 Cursor 默认行为运行。IM `/new` 没有开关，按默认策略执行。
+- Cursor 模型列表会标出每个模型是否需要 Max。需要 Max 的模型在不允许 Max 时不会启动，并提示换用不需要 Max 的模型，或本次打开「允许 Max」；无法判断时照常启动并提示，启动后再复查。
+- CLI 路线通过关闭 CLI 的全局 Max 开关实现，这是全局粘性设置：之后手动运行 CLI 也保持关闭，直到你用 `/max-mode` 重新打开。Agents 窗口路线只作用于这次创建的会话。
+- 启动后若发现 Max 又被打开，会弹出一张普通提问卡提醒。
+- 策略可改为「沿用 Cursor 当前设置」，此时不干预、不拦截、不提示。新计划（按用量计费）没有 Max，计划类型自动检测，也可手动指定；新计划下所有相关界面都会隐藏，也不会改动 Cursor 的设置。
+
 ## Codex MCP 环境变量
 
 可显式运行 `AskHuman agents mode codex mcp --env DISPLAY=:1` 配置 MCP server 环境变量。`--env NAME=VALUE` 可重复；同名变量以最后一次为准，值可为空或包含 `=`。变量名不可为空或包含 `=`、NUL，值不可包含 NUL。仅 Codex MCP 模式支持该选项。安装和更新保留未指定的环境变量；Claude/Cursor 更新也保留已有 JSON `env`。无效环境配置会中止写入。此行为需主动启用，不会自动注入桌面环境变量。

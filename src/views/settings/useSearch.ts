@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import type { AppConfig } from "../../lib/types";
 import { isMac, supportsAgentTasks } from "../../lib/platform";
 import type { Tab } from "./context";
+import { tabAllowed } from "./tabData";
 
 // 静态索引：每条 = 一个设置项（tab + 展示/锚定标题 + 参与匹配的额外文案）。标题文本
 // 与模板渲染文本同源（都经 t()），跳转后按文本在 DOM 里定位，无须给每行加 id。
@@ -19,6 +20,8 @@ interface SearchEntry {
 export function useSettingsSearch(deps: {
   config: Ref<AppConfig | null>;
   activeTab: Ref<Tab>;
+  /** Hides results on tabs this window does not have (the Agents tab in a Dev instance). */
+  everydayIntegrationsReadOnly?: Ref<boolean>;
 }) {
   const { t } = useI18n();
   const { activeTab } = deps;
@@ -213,6 +216,11 @@ export function useSettingsSearch(deps: {
           "settings.agentTasks.readiness",
           "settings.agentTasks.workspaces",
         ]),
+        e("advanced", "settings.cursorMax.title", [
+          "settings.cursorMax.description",
+          "settings.cursorMax.policy",
+          "settings.cursorMax.plan",
+        ]),
       );
     }
     return list;
@@ -221,7 +229,9 @@ export function useSettingsSearch(deps: {
   const searchResults = computed<SearchEntry[]>(() => {
     const q = searchQuery.value.trim().toLowerCase();
     if (!q) return [];
+    const readOnly = deps.everydayIntegrationsReadOnly?.value ?? false;
     return searchIndex.value
+      .filter((s) => tabAllowed(s.tab, readOnly))
       .filter(
         (s) =>
           s.title.toLowerCase().includes(q) ||

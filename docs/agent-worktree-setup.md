@@ -153,6 +153,10 @@ AskHuman --instance dev --worktree /absolute/path/to/worktree daemon status
   `~/.askhuman` 就用独立 label），所以只换 `HOME` 不会再 `bootout` 真实 daemon；但登录项、Agent hook 文件等
   用户级全局状态的自动写入只在实例上下文里才被跳过，只换 `HOME` 仍不隔离它们。
   需要验证 Agent 集成写入时，用一次性假 `HOME` + 非空 `ASKHUMAN_HOME`，收尾核对真实 hook 文件与登录项未变。
+- **不要**在持久 shell 里 `export ASKHUMAN_HOME=…`（Agent 的 Shell 工具可能在多次调用之间保留导出的环境变量，Cursor 的就会）：
+  之后每一条普通 `AskHuman`——包括给人类的审批、报告和结束交接——都会被它路由进 Dev 实例，弹在 Dev 窗口里，日常渠道一条都收不到。
+  对实例跑一条命令只用一次性前缀（`ASKHUMAN_HOME=… AskHuman …`）或子 shell，验收用 `dev ask`／`dev_ask`；每次向人类发报告或
+  审批前，确认 `env | grep ASKHUMAN` 为空，且 `AskHuman dev target` 显示 `"kind": "system"`。
 
 ## 结束 worktree 时（可选）
 

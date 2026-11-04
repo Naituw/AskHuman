@@ -75,7 +75,9 @@ extension PhoneEngine {
         }
         let body = TaskCreate(
             clientMsgId: id, workspaceId: draft.workspaceId, agentKind: draft.agentKind, permission: draft.permission,
-            todoId: draft.todoId, model: draft.model, effort: draft.effort, speed: draft.speed, files: uploadIds.isEmpty ? nil : uploadIds, text: draft.text
+            todoId: draft.todoId, model: draft.model, effort: draft.effort, speed: draft.speed,
+            // Absent rather than false: the Mac then sees exactly what an older phone would send.
+            allowMax: draft.allowMax ? true : nil, files: uploadIds.isEmpty ? nil : uploadIds, text: draft.text
         )
         taskBodies[id] = body
         tasks.insert(

@@ -937,7 +937,9 @@ async fn serve(_lock: LockGuard) -> i32 {
         update: Mutex::new(init_update_snapshot()),
         agents: Arc::new(AgentRegistry::load()),
         agent_controls: crate::agents::control::ControlStore::load(),
-        failure_confirmations: failure_confirmation::Cards::default(),
+        failure_confirmations: failure_confirmation::Cards::persistent(
+            crate::paths::failure_cards_file(),
+        ),
         interject: crate::agents::interject::InterjectStore::load(),
         grok_bindings: crate::context_binding::GrokBindingRegistry::default(),
         agent_subs: Mutex::new(Vec::new()),
@@ -984,6 +986,16 @@ async fn serve(_lock: LockGuard) -> i32 {
     crate::cursor_desktop::start();
 
     tokio::spawn(agent_control::watch_codex_cli(state.clone()));
+    tokio::spawn(agent_control::watch_cursor_log(state.clone()));
+
+    // Failure cards the previous daemon had not seen answered come back once this one is serving.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            failure_confirmation::restore(&state);
+        });
+    }
 
     // The daemon owns desktop subscriptions and routes native prompts through the existing coordinator.
     {
@@ -1228,6 +1240,9 @@ async fn serve(_lock: LockGuard) -> i32 {
     // Shutting down: cancel any in-flight requests so their IM cards finalize to "Cancelled".
     // Unlike CLI-disconnect, the runtime is about to exit, so we give the finalize HTTP calls a
     // brief bounded window to land (sessions may take up to ~1s to notice the cancel + ~0.3s HTTP).
+    // Failure cards are cancelled with everything else, but that is this process ending, not the
+    // user dealing with them: freeze their record first so the successor brings them back.
+    state.failure_confirmations.freeze();
     state.popup_focus.lock().unwrap().clear();
     if state.registry.cancel_all_requests() > 0 {
         tokio::time::sleep(Duration::from_millis(2000)).await;
@@ -1427,6 +1442,14 @@ async fn control_loop(
             ClientMsg::CodexDesktop { operation } => {
                 let result = crate::codex_desktop::shared().execute(operation).await;
                 let _ = ipc::write_msg(w, &ServerMsg::CodexDesktop { result }).await;
+            }
+            ClientMsg::CursorDesktop { operation } => {
+                let result = crate::cursor_desktop::execute(operation).await;
+                let _ = ipc::write_msg(w, &ServerMsg::CursorDesktop { result }).await;
+            }
+            ClientMsg::AgentMessage { message } => {
+                let result = agent_control::send_from_console(state, message).await;
+                let _ = ipc::write_msg(w, &ServerMsg::AgentMessage { result }).await;
             }
             ClientMsg::Hello(hello) => {
                 // 已在排空：一律回 Draining（客户端等下线后用新二进制拉起重试）。
@@ -2095,7 +2118,10 @@ fn begin_drain(state: &Arc<ServerState>) {
     tokio::spawn(async move {
         loop {
             if state.registry.active_count() == 0 {
-                log("drain complete; shutting down");
+                log(&format!(
+                    "drain complete; shutting down ({} failure card(s) left to the successor)",
+                    state.registry.held_count()
+                ));
                 state.shutdown.notify_one();
                 return;
             }
@@ -2412,6 +2438,14 @@ async fn handle_submit_confirm(
     log(&format!("confirmation request {request_id} done"));
 }
 
+/// Whether a submission registers its Agent as working (the "send on demand" bookkeeping). The
+/// daemon's own failure cards never do: a card is a request the daemon holds for a session that has
+/// just failed, and reading it as the Agent working again would take that session out of idle, which
+/// is the moment the card withdraws itself.
+fn marks_session_working(auto: bool, from_mcp: bool, native_request_id: Option<&str>) -> bool {
+    auto && !from_mcp && !crate::agents::failure::is_card_id(native_request_id)
+}
+
 /// CLI 提交一次任务：建请求、spawn GUI Helper、流式回结果；CLI 断开则取消。
 async fn handle_submit(
     mut task: TaskRequest,
@@ -2465,6 +2499,7 @@ async fn handle_submit(
     let kind_env = task.agent_kind.as_deref().and_then(AgentKind::parse);
     let sid_env = task.agent_session_id.clone();
     let from_mcp = task.from_mcp;
+    let register_working = marks_session_working(auto, from_mcp, task.native_request_id.as_deref());
     let caller_pid = task.caller_pid;
     let cwd = Some(task.project.clone()).filter(|s| !s.trim().is_empty());
     let changed = match (kind_env, sid_env.clone(), task.agent_pid) {
@@ -2472,7 +2507,7 @@ async fn handle_submit(
         (Some(kind), Some(sid), pid) => {
             // MCP 工具调用不单独创建 lifecycle session；可信的每调用绑定仅用于
             // 刷新已由 lifecycle hook 追踪的 session。
-            if auto && !from_mcp {
+            if register_working {
                 state.agents.upsert_working(kind, &sid, pid, cwd.clone())
             } else {
                 state.agents.touch_activity(kind, &sid, pid)
@@ -2629,7 +2664,7 @@ async fn handle_submit(
         kind_env,
         sid_env,
         from_mcp,
-        auto,
+        register_working,
         cwd,
     );
 
@@ -3554,7 +3589,7 @@ fn spawn_agent_resolve(
     kind_env: Option<AgentKind>,
     sid_env: Option<String>,
     from_mcp: bool,
-    auto: bool,
+    register_working: bool,
     cwd: Option<String>,
 ) -> Option<tokio::sync::oneshot::Receiver<Option<AgentKind>>> {
     if caller_pid == 0 {
@@ -3584,7 +3619,7 @@ fn spawn_agent_resolve(
         // 注册表活动：env 有会话 → 按 session 刷新并补 pid；否则（MCP）按 pid 刷新（只更新、绝不新建）。
         let changed = match (kind_env, &sid_env) {
             (Some(k), Some(sid)) => {
-                if auto && !from_mcp {
+                if register_working {
                     state.agents.upsert_working(k, sid, Some(pid), cwd.clone())
                 } else {
                     state.agents.touch_activity(k, sid, Some(pid))
@@ -4869,9 +4904,10 @@ fn print_status(info: &StatusInfo) {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_kind_for_im, development_popup_enabled, pending_launch_matches,
-        popup_prewarm_requested, popup_should_dispatch, select_im_delivery_candidates,
-        task_workspace_options, with_ios, InboundRegistry, PendingLaunchWatch,
+        agent_kind_for_im, development_popup_enabled, marks_session_working,
+        pending_launch_matches, popup_prewarm_requested, popup_should_dispatch,
+        select_im_delivery_candidates, task_workspace_options, with_ios, InboundRegistry,
+        PendingLaunchWatch,
     };
     use crate::agents::AgentKind;
     use crate::config::AppConfig;
@@ -4909,6 +4945,24 @@ mod tests {
         assert!(development_popup_enabled(&config, Some(&info), true));
         info.delivery = Delivery::Remote;
         assert!(!development_popup_enabled(&config, Some(&info), true));
+    }
+
+    #[test]
+    fn a_failure_card_never_reads_as_its_agent_working_again() {
+        // With "send on demand" every ordinary question registers its Agent as working ...
+        assert!(marks_session_working(true, false, None));
+        assert!(marks_session_working(true, false, Some("a-tool-call-id")));
+        assert!(!marks_session_working(false, false, None));
+        assert!(
+            !marks_session_working(true, true, None),
+            "an MCP call never registers"
+        );
+        // ... but the daemon's own cards and their feedback do not: they belong to a session that
+        // has just failed, and the card withdraws itself as soon as that session is not idle.
+        let card = crate::agents::failure::card_id(AgentKind::Cursor, "session", "result");
+        assert!(!marks_session_working(true, false, Some(&card)));
+        let feedback = crate::agents::failure::feedback_id("result");
+        assert!(!marks_session_working(true, false, Some(&feedback)));
     }
 
     #[test]

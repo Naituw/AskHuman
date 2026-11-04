@@ -514,6 +514,8 @@ impl Default for ExperimentalConfig {
 pub struct AgentTasksConfig {
     pub enabled: bool,
     pub permission_prompt: AgentTaskPermission,
+    /// How Cursor's Max mode is treated when a Cursor task is started (docs/specs/cursor-max-control.md §6).
+    pub cursor_max: CursorMaxConfig,
 }
 
 impl Default for AgentTasksConfig {
@@ -521,8 +523,40 @@ impl Default for AgentTasksConfig {
         Self {
             enabled: false,
             permission_prompt: AgentTaskPermission::Ask,
+            cursor_max: CursorMaxConfig::default(),
         }
     }
+}
+
+/// Max-mode handling for Cursor tasks. The defaults protect a request-based plan; an account on the
+/// token-based plan has no Max mode and is left alone whatever these say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CursorMaxConfig {
+    pub policy: CursorMaxPolicy,
+    pub plan: CursorPlanSetting,
+}
+
+/// What AskHuman does about Max when it starts a Cursor task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CursorMaxPolicy {
+    /// Keep Max off unless the task allows it, and refuse models that cannot run without it.
+    #[default]
+    EnforceOff,
+    /// Do not intervene: Cursor's current settings apply.
+    Inherit,
+}
+
+/// Which plan to treat the Cursor account as being on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CursorPlanSetting {
+    /// Read it from Cursor's own data; when that is not possible, assume the request-based plan.
+    #[default]
+    Auto,
+    Legacy,
+    TokenBased,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

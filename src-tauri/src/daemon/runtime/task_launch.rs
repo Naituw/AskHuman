@@ -97,13 +97,17 @@ pub(super) struct TaskSpec {
     /// The model and effort picked for the task; the default leaves both to the Agent. Callers
     /// pass values already matched against the Agent's catalog.
     pub choice: ModelChoice,
+    /// The user allowed Cursor's Max mode for this task. Only a surface that asked for it says
+    /// `true`; everything else keeps Max off (docs/specs/cursor-max-control.md).
+    pub allow_max: bool,
 }
 
 /// Where the task went.
 pub(super) enum Started {
     /// A new terminal window was opened.
     Terminal,
-    /// The Codex App accepted it; the value is the app's answer (carries `sessionId`).
+    /// The Codex App or Cursor's Agents window accepted it; the value is the app's answer
+    /// (carries `sessionId`).
     Desktop(serde_json::Value),
 }
 
@@ -112,6 +116,67 @@ pub(super) enum StartError {
     Message(String),
     /// The terminal could not be opened.
     Terminal(anyhow::Error),
+    /// A Cursor model that cannot run without Max, and Max was not allowed: nothing was started.
+    MaxRequired(agent_launch::MaxRequired),
+}
+
+/// What IM tells the user when a Cursor task is refused for needing Max.
+pub(super) fn max_required_text(
+    required: &agent_launch::MaxRequired,
+    lang: crate::i18n::Lang,
+) -> String {
+    required.guidance(lang)
+}
+
+/// What a task in Cursor's Agents window needs.
+struct CursorDesktopTask {
+    workspace: String,
+    /// The task with its attachments named in it, as the terminal path words them.
+    text: String,
+    permission: &'static str,
+    id: String,
+    model: Option<String>,
+    allow_max: bool,
+}
+
+/// Creates the task in Cursor's Agents window. A model that cannot run without Max is refused
+/// here with the same typed reason as the terminal path, before Cursor is contacted; the
+/// daemon's own plan repeats the check and stays the authority.
+async fn start_cursor_desktop(task: CursorDesktopTask) -> Result<serde_json::Value, StartError> {
+    let CursorDesktopTask {
+        workspace,
+        text,
+        permission,
+        id,
+        model,
+        allow_max,
+    } = task;
+    let planned = {
+        let model = model.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::cursor_desktop::plan(model.as_deref(), allow_max)
+        })
+        .await
+    };
+    match planned {
+        Ok(Err(crate::cursor_desktop::PlanError::MaxRequired(required))) => {
+            return Err(StartError::MaxRequired(required));
+        }
+        Ok(Err(error)) => return Err(StartError::Message(error.to_string())),
+        Ok(Ok(_)) | Err(_) => {}
+    }
+    crate::cursor_desktop::execute(crate::cursor_desktop::Operation::Create {
+        cwd: workspace,
+        text,
+        permission: permission.into(),
+        id,
+        model,
+        allow_max,
+        title: None,
+        dry_run: false,
+    })
+    .await
+    .map_err(StartError::Message)
 }
 
 /// Starts the task. `on_pending` runs for a terminal launch right before the window opens, with
@@ -133,6 +198,7 @@ pub(super) async fn start_task(
         task,
         todo,
         choice,
+        allow_max,
     } = spec;
     let source = LaunchSource {
         channel,
@@ -163,16 +229,29 @@ pub(super) async fn start_task(
         if !delivery.warnings.is_empty() {
             return Err(StartError::Message(delivery.warnings.join("\n")));
         }
+        let permission = match permission {
+            LaunchPermission::AgentDefault => "agent-default",
+            LaunchPermission::Yolo => "yolo",
+        };
+        if kind == AgentKind::Cursor {
+            let answer = start_cursor_desktop(CursorDesktopTask {
+                workspace,
+                text: agent_launch::task_with_attachments(&task, &delivery.files, &[]),
+                permission,
+                id: delivery_request_id.clone(),
+                model: choice.model,
+                allow_max,
+            })
+            .await?;
+            take_todo();
+            return Ok(Started::Desktop(answer));
+        }
         let answer = crate::codex_desktop::shared()
             .execute(crate::codex_desktop::Operation::Create {
                 cwd: workspace,
                 text: task,
                 files: delivery.files,
-                permission: match permission {
-                    LaunchPermission::AgentDefault => "agent-default",
-                    LaunchPermission::Yolo => "yolo",
-                }
-                .into(),
+                permission: permission.into(),
                 id: delivery_request_id.clone(),
                 model: choice.model,
                 effort: choice.effort,
@@ -193,7 +272,7 @@ pub(super) async fn start_task(
         return Ok(Started::Desktop(answer));
     }
 
-    let record = match agent_launch::create_record_with_choice(
+    let record = match agent_launch::create_record_with_options(
         source,
         std::path::Path::new(&workspace),
         kind,
@@ -202,17 +281,25 @@ pub(super) async fn start_task(
         &delivery.files,
         &delivery.warnings,
         &choice,
+        allow_max,
     ) {
         Ok(record) => record,
         Err(error) => {
             crate::todo_attachments::cleanup_delivery(&delivery_request_id);
-            return Err(StartError::Terminal(error));
+            return Err(match error.downcast::<agent_launch::MaxRequired>() {
+                Ok(required) => StartError::MaxRequired(required),
+                Err(error) => StartError::Terminal(error),
+            });
         }
     };
     on_pending(&record);
     match agent_launch::open_terminal(&record) {
         Ok(()) => {
             take_todo();
+            // A launch that must keep Cursor's Max mode off is watched for a short while.
+            if let Some(launch) = crate::agents::cursor_max::recheck::launch_of(&record) {
+                tokio::spawn(crate::agents::cursor_max::recheck::after_launch(launch));
+            }
             Ok(Started::Terminal)
         }
         Err(error) => {
