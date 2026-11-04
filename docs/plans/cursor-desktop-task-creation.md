@@ -118,6 +118,13 @@
   勾「允许 Max」后拦截消失、换 Composer 2.5 后读作「不需要 Max」且拦截消失；模型下拉 24 个（Cursor CLI 暴露的部分，缓存共 47 个）：12 个不需要、12 个需要，
   与 Cursor 本地缓存逐个核对（14 个按显示名精确匹配、10 个按模型族匹配）0 个不符；关窗后没有启动记录与回执、没有新的 `cursor-agent` 进程；
   `agentTasks.cursorMax` 与 `launchPreference` 都没写（取默认：强制关闭＋自动检测、终端）。手机端的开关与标记留给 TestFlight 包。
+- **阶段 2 第一次尝试（2026-11-04，Agent，日常版 `7e07a728`，0 请求）：前置条件不满足，在查项目这一步被拒，闸门本身还没验到。** 验证项目
+  `~/Developer/AskHumanCursorVerify`（空 git 仓库，一个 README 提交）已建；`open -g -a Cursor <P>` 在 Cursor 里打开一次，Cursor 把它写进工作区记录
+  （`workspaceMetadata.entries` 9→10，不论窗口是否还开着都留着），随后用 System Events 按窗口名和 `AXCloseButton` 只关了那个新窗口（没碰 Agents 窗口；
+  状态库里多出一条没有消息、没有标题的空聊天，时间与开窗吻合，应是 Cursor 为新窗口自动建的，没有删）。接着跑 `dryRun`（`gpt-5.4-nano`、不允许 Max）：
+  `{"Err":"Agents 窗口里没有这个项目。请先在 Cursor 的 Agents 窗口添加该项目，或把运行位置改为 CLI。（9 known projects）"}`，回执 `rejected`／`projectNotFound`，
+  状态库里没有该 ID 的聊天，没有任何模型请求。看起来 Agents 窗口的项目列表是它自己装入内存的，别的窗口新开的文件夹不会实时进来；
+  要让它认识验证项目，得在 Agents 窗口自己的界面里添加，或让它重载（重启 Cursor）。这一次之后没有重试。
 
 - JS：`scripts/cursor-create.node-test.mjs` 19/19 通过（成功只提交一次、以现有默认配置为底、`yolo` 覆盖与读回、每个读回不符都在提交前停下并归档、
   `dryRun` 通过与被拒、结构预检、项目歧义与别名、非法操作、提交前后出错的区别、过期不提交、同 ID 加入／冲突／拒绝后重来、`pending`、
