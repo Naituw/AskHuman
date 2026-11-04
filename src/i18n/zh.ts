@@ -182,6 +182,8 @@ export default {
       agentConsole: "在 Agent 窗口中查看",
       pin: "窗口置顶",
       todos: "项目待办",
+      // 请求有项目时，待办按钮展开「添加待办」浮层。
+      todosPopover: "添加项目待办（{shortcut}）",
       settings: "设置",
       history: "历史记录",
       update: "有可用更新",
@@ -238,6 +240,17 @@ export default {
       // 每条选中的待办并入回答时的整行文案（与手输文本空行分隔）。
       mergeLine: "另外看一下这个待办任务：{text}",
     },
+    // 顶栏待办按钮的浮层（docs/specs/todo-quick-add.md）。
+    todoPopover: {
+      title: "添加到 {project}",
+      placeholder: "添加一条待办…",
+      submitHint: "{key} 添加",
+      add: "添加",
+      adding: "正在添加…",
+      empty: "这个项目还没有待办",
+      openWindow: "打开待办窗口",
+      addFailed: "没能添加待办：{reason}",
+    },
   },
   // 后端(Swift/Rust)语音事件以语义 key 上报，前端在此翻译。
   speech: {
@@ -269,6 +282,7 @@ export default {
       options: "与「选项快捷键」({shortcut}) 冲突",
       editing: "与系统编辑快捷键 ({shortcut}) 冲突，建议增加修饰键或换一个",
       find: "与「查找」({shortcut}) 冲突",
+      todos: "与「添加项目待办」({shortcut}) 冲突",
     },
   },
   development: {

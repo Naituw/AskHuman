@@ -186,6 +186,8 @@ export default {
       agentConsole: "View in Agent Window",
       pin: "Keep on top",
       todos: "Project todos",
+      // The todo button opens the add-a-todo popover when the request has a project.
+      todosPopover: "Add a project todo ({shortcut})",
       settings: "Settings",
       history: "History",
       update: "Update available",
@@ -247,6 +249,17 @@ export default {
       // Line merged into the answer for each selected todo (blank-line separated).
       mergeLine: "Also look into this todo task: {text}",
     },
+    // The navbar todo button's popover (docs/specs/todo-quick-add.md).
+    todoPopover: {
+      title: "Add to {project}",
+      placeholder: "Add a todo…",
+      submitHint: "{key} to add",
+      add: "Add",
+      adding: "Adding…",
+      empty: "No todos in this project yet",
+      openWindow: "Open the Todos window",
+      addFailed: "Could not add the todo: {reason}",
+    },
   },
   // 后端(Swift/Rust)语音事件以语义 key 上报，前端在此翻译。
   speech: {
@@ -279,6 +292,7 @@ export default {
       options: "Conflicts with option shortcuts ({shortcut})",
       editing: "Conflicts with system edit shortcut ({shortcut}); add another modifier or pick another",
       find: "Conflicts with Find ({shortcut})",
+      todos: "Conflicts with Add a project todo ({shortcut})",
     },
   },
   development: {

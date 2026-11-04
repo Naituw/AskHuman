@@ -140,6 +140,13 @@ describe("shortcutConflict", () => {
     expect(shortcutConflict(spec({ cmd: true, shift: true, key: "f" }))).toBeNull();
   });
 
+  it("rejects ⌘T reserved for the navbar todo popover", () => {
+    expect(shortcutConflict(spec({ cmd: true, key: "t" }))?.key).toBe("todos");
+    expect(shortcutConflict(spec({ ctrl: true, key: "t" }))?.key).toBe("todos");
+    expect(shortcutConflict(spec({ cmd: true, shift: true, key: "t" }))).toBeNull();
+    expect(shortcutConflict(spec({ cmd: true, alt: true, key: "t" }))).toBeNull();
+  });
+
   it("accepts a normal combo", () => {
     expect(shortcutConflict(spec({ cmd: true, key: "d" }))).toBeNull();
   });

@@ -78,6 +78,7 @@ import { useSpeech } from "./useSpeech";
 import { useAttachments } from "./useAttachments";
 import { useUpdateState } from "./useUpdateState";
 import { usePopupFind } from "./usePopupFind";
+import { useTodoPopover } from "./useTodoPopover";
 import {
   canComposerDock,
   composerHomeVisibleRatio,
@@ -867,15 +868,18 @@ export function usePopupCore(scope?: PopupScope) {
 
   let todoLoadGeneration = 0;
   async function loadTodos() {
-    if (!projectPath.value || !request.value) return;
+    // A confirmation card has no `request`, but its todo popover lists the project's todos too
+    // (docs/specs/todo-quick-add.md D9); the body todo section stays ask-only (`todoSectionVisible`).
+    if (!projectPath.value || (!request.value && !confirmRequest.value)) return;
     const generation = ++todoLoadGeneration;
     try {
       const latest = await todosList(projectPath.value);
       if (generation !== todoLoadGeneration) return;
       const liveIds = new Set(latest.map((todo) => todo.id));
       todos.value = latest;
-      if (whatsNext.value) {
-        const question = request.value.questions[0];
+      const asked = request.value;
+      if (whatsNext.value && asked) {
+        const question = asked.questions[0];
         if (!question) return;
         const refreshed = refreshWhatsNextTodos(
           question.predefinedOptions,
@@ -1987,6 +1991,34 @@ export function usePopupCore(scope?: PopupScope) {
     find.noteFindInteraction(event);
   }
 
+  // ===== Adding a todo to this request's project from the navbar button (docs/specs/todo-quick-add.md) =====
+  const todoPopover = useTodoPopover({
+    projectPath,
+    todos,
+    loadTodos,
+    removeTodo,
+    submitWithBareEnter,
+    findActive: find.findActive,
+    speechTaken: (e) =>
+      speech.speechSupported.value &&
+      !!speech.speechShortcut.value &&
+      matchShortcut(e, speech.speechShortcut.value),
+    insertNewline: insertNewlineInFocusedTextarea,
+    suspended: () => !acceptsInput() || showCancelConfirm.value || showConfirmCloseWarning.value,
+  });
+
+  /** The navbar todo button: the popover, or the todos window when the request has no project. */
+  function onTodoButtonClick() {
+    if (todoPopover.todoPopoverAvailable.value) todoPopover.toggleTodoPopover();
+    else openTodosWindow();
+  }
+
+  /** The popover's "open the todos window" link. */
+  function openTodosWindowFromPopover() {
+    todoPopover.closeTodoPopover(false);
+    openTodosWindow();
+  }
+
   function startPermissionDiffEnrichment() {
     const edit = permissionEdit.value;
     const id = confirmRequest.value?.id;
@@ -2120,6 +2152,10 @@ export function usePopupCore(scope?: PopupScope) {
     const mod = primaryModifierPressed(e);
     cmdHeld.value = onlyCmdHeld(e);
     if (!isConfirm.value && (e.isComposing || e.keyCode === 229)) return;
+    // The todo popover (⌘T) is keyboard-modal: while it is open it takes every key (except ⌘W), so
+    // it goes before find and every business shortcut — an Enter meant for its input must never
+    // submit an answer or approve a permission card.
+    if (!showCancelConfirm.value && !showConfirmCloseWarning.value && todoPopover.handleTodoPopoverKeydown(e)) return;
     // In-page find (⌘/Ctrl+F, Esc while open, ⌘G, …) — before business shortcuts.
     if (!showCancelConfirm.value && !showConfirmCloseWarning.value && find.handleFindKeydown(e)) return;
     if (isConfirm.value) {
@@ -2346,6 +2382,7 @@ export function usePopupCore(scope?: PopupScope) {
     current.value = 0;
     todos.value = [];
     todosOpen.value = false;
+    todoPopover.resetTodoPopover();
     todoChosenIds.value = [];
     todoChosenSnapshots.value = {};
     attach.loadThumbs();
@@ -2704,7 +2741,8 @@ export function usePopupCore(scope?: PopupScope) {
     hasDraft,
     // Native preview uses the same submit policy and temporarily yields to root overlays.
     submitWithBareEnter,
-    nativePreviewBlocked: computed(() => !popupActive.value || !!(scope?.nativePreviewBlocked ?? scope?.blocked)?.value || showCancelConfirm.value || showConfirmCloseWarning.value || submitting.value),
+    // The native preview sits above the page, so it must also give way to the todo popover.
+    nativePreviewBlocked: computed(() => !popupActive.value || !!(scope?.nativePreviewBlocked ?? scope?.blocked)?.value || showCancelConfirm.value || showConfirmCloseWarning.value || submitting.value || todoPopover.todoPopoverOpen.value),
     registerNativePreviewSync: scope?.nativePreviewSync,
     // In-page find
     findActive: find.findActive,
@@ -2876,6 +2914,19 @@ export function usePopupCore(scope?: PopupScope) {
     openSettingsWindow,
     openTodosWindow,
     openHistoryWindow,
+    // Add-a-todo popover on the navbar todo button (docs/specs/todo-quick-add.md)
+    onTodoButtonClick,
+    openTodosWindowFromPopover,
+    todoPopoverOpen: todoPopover.todoPopoverOpen,
+    todoPopoverAvailable: todoPopover.todoPopoverAvailable,
+    todoDraft: todoPopover.todoDraft,
+    todoAdding: todoPopover.todoAdding,
+    todoAddError: todoPopover.todoAddError,
+    todoJustAddedId: todoPopover.todoJustAddedId,
+    todoInputEl: todoPopover.todoInputEl,
+    closeTodoPopover: todoPopover.closeTodoPopover,
+    addTodoFromPopover: todoPopover.addTodoFromPopover,
+    removeTodoFromPopover: todoPopover.removeTodoFromPopover,
     // R6 引导
     imTipVisible,
     imTipConfigure,

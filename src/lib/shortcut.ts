@@ -231,5 +231,9 @@ export function shortcutConflict(s: ShortcutSpec): ConflictReason | null {
   if (mod && !s.alt && !s.shift && s.key === "f") {
     return { key: "find", params: { shortcut: primaryShortcutLabel("f") } };
   }
+  // The navbar todo popover is fixed to ⌘/⌃T (docs/specs/todo-quick-add.md D7).
+  if (mod && !s.alt && !s.shift && s.key === "t") {
+    return { key: "todos", params: { shortcut: primaryShortcutLabel("t") } };
+  }
   return null;
 }
