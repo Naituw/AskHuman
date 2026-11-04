@@ -332,7 +332,7 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 
 ## 待验收：在请求里直接添加待办（弹窗顶栏浮层 + iOS 请求页；macOS 弹窗与模拟器已验，Windows / Linux 与真机未验）
 
-需求 `docs/specs/todo-quick-add.md`、计划 `docs/plans/todo-quick-add.md`（实施记录里有全部验证结果）。分支 `feat/todo-quick-add` 2026-11-04 合并进 main（本地，**未推送**）并 `./scripts/install.sh` 装为日常版；装机时另一个会话有请求在等，日常 daemon 按优雅换新等它结束，新二进制在那之后的下一次调用接手（没有 `--force`）。
+需求 `docs/specs/todo-quick-add.md`、计划 `docs/plans/todo-quick-add.md`（实施记录里有全部验证结果）。分支 `feat/todo-quick-add` 2026-11-04 快进合并进 main、已推送（该次推送的 CI 全绿），并 `./scripts/install.sh` 装为日常版；装机时另一个会话有请求在等，日常 daemon 按优雅换新等它结束，新二进制在那之后的下一次调用接手（没有 `--force`）。
 
 - [ ] Windows / Linux：在真实弹窗里按 Ctrl+T 打开浮层、添加、Esc，再在一张确认卡里验 Enter / Esc 不漏出去（需求 §6.3 要求真机确认一次；macOS 已在隔离实例里按过）
 - [ ] iOS 真机：请求页「⋯」→「添加待办…」。手机上现有的内测包不含这个功能，要看得先出新的 TestFlight 包（用户没要，先不出；要出走 `ios-testflight` 技能）；对应的 Mac 也要装带这次改动的版本，否则碰到「不在待办候选里的在途项目」会回「这个项目已不在」
