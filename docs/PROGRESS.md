@@ -3,7 +3,7 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 待验收：Agent 最终失败确认（已合并并装为日常版，真实失败路径未验）
+## 待验收：Agent 最终失败确认（已合并并装为日常版；Cursor 的真实失败路径已验，其余未验）
 
 2026-11-02 已快进合并进 `main` 并 `./scripts/install.sh` 装为日常版。需求
 [规格](specs/agent-failure-confirmation.md)，计划与合并后的验证见
@@ -25,13 +25,16 @@ Grok 仅错误，Antigravity 不宣称支持；Codex CLI 只读观察共享服�
 `active_count()` 后，菜单栏图标与托盘「待答」列表曾少算它们，现在改用含 held 卡的 `in_flight_count()`。
 新 daemon 接管后（05:32）当天就遇到两次自然的 Cursor 出错（07:08、07:56）：检测、登记、卡内容都对，但**卡在约 2 秒内被自己
 撤销**——开着「按需发送」时卡自己的提交把失败的会话拉回「工作中」（规格 §5.3）；隔离验证当时都关着该开关，所以没发现。
-已修复并加了冒烟场景 8；修复版装机后还没有新的真实样本。
+已修复并加了冒烟场景 8。修复版装机后又自然遇到三次 Cursor 出错（11-04 09:39、09:58、10:58），都核实了：卡留到用户处理
+（出错后约 2 分钟、50 秒、13 秒，用户在手机上点了「要求继续」；修复前的两张卡 07:21、07:56 在 `history.jsonl` 里是 `cancel | caller`，
+之后再没有）、`daemon.log` 有 `cursor log: failed turn …`、「要求继续」经 Cursor 桥让原会话开始新一轮（`agent-controls`
+日志里三条都是 `started`，10:58 那条就是本会话自己的新一轮）、没有 `unreadable agent.turn.outcome` 告警（日志格式没漂移）。
+10:58 那次还逐项对过 Cursor 自己的结构化日志：`error_text: Connection failed repeatedly`、`retries_attempted: 0`，
+与卡文本和 `retries=0` 一致。
 
 下一步：
-- [ ] 修复后的 Cursor 出错卡要等**下一次自然发生的 Cursor 出错**来核实（Cursor 永不实测）：卡能留住直到有人处理（不再 2 秒内
-  自己撤销；`history.jsonl` 里不该再出现 caller 取消的卡记录）、回答挂着的提问后立刻出现、原因文本与重试次数对、
-  `daemon.log` 里有 `cursor log: failed turn …`、「要求继续」经 Cursor 桥是否真的让原会话开始新一轮；也留意
-  `cursor log: N unreadable agent.turn.outcome line(s)`（Cursor 升级后日志格式漂移）。核实后写回这里。
+- [ ] Cursor 出错卡只剩一条路径没有单独核实：**回答挂着的提问之后**立刻出现（上面三次里有没有碰到没单独查）。
+  等下一次自然出错时顺手看一眼（Cursor 永不实测），核实后写回这里。
 - [ ] 已知边界（规格 §4.2、§3）：会话已被挤出 registry「最近结束」列表（10 条）时对应失败不出卡；进程在回合中途消失
   （崩溃、被杀、终端关闭）没有任何来源报告失败，未纳入，等用户决定要不要作为仅通知的卡。
 - [ ] 真实失败路径（真实模型请求须先经用户授权；Cursor 永不实测）：日常使用中遇到真实的 `selected model is at capacity`
