@@ -57,6 +57,9 @@ struct LaunchOptions {
     /// stretch them to have time to look; the app's own values are made for the eye).
     var advanceHold: Double?
     var advanceSettle: Double?
+    /// Seconds the "Added to <project>" note stays over a request page (the app's own 2 is too short for a
+    /// UI test that polls a busy simulator).
+    var todoNoteHold: Double?
     /// A request (on the first Mac) whose notification was tapped: its page opens at once, whether or
     /// not the Macs have answered yet, with a made-up notification text.
     var notifyRequest: String?
@@ -106,6 +109,7 @@ struct LaunchOptions {
         cachedInbox = defaults.bool(forKey: "AHCached")
         if defaults.object(forKey: "AHAdvanceHold") != nil { advanceHold = defaults.double(forKey: "AHAdvanceHold") }
         if defaults.object(forKey: "AHAdvanceSettle") != nil { advanceSettle = defaults.double(forKey: "AHAdvanceSettle") }
+        if defaults.object(forKey: "AHTodoNoteHold") != nil { todoNoteHold = max(0, defaults.double(forKey: "AHTodoNoteHold")) }
         notifyRequest = defaults.string(forKey: "AHNotify")
         if defaults.object(forKey: "AHWebMarkdown") != nil { webMarkdown = defaults.bool(forKey: "AHWebMarkdown") }
         if defaults.object(forKey: "AHWebTimeout") != nil { webTimeout = defaults.double(forKey: "AHWebTimeout") }
@@ -160,6 +164,7 @@ final class AppEnvironment {
             store = AppStore(backend: backend, drafts: drafts, defaults: suite)
             if let hold = launch.advanceHold { store.advanceTiming.hold = .seconds(hold) }
             if let settle = launch.advanceSettle { store.advanceTiming.settle = .seconds(settle) }
+            if let hold = launch.todoNoteHold { store.todoNoteHold = .seconds(hold) }
             leftoverPairings = 0
         } else {
             let group = Bundle.main.object(forInfoDictionaryKey: "AHKeychainGroup") as? String

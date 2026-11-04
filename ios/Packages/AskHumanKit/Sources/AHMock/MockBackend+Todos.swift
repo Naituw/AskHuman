@@ -90,7 +90,10 @@ extension MockBackend {
             failNextTodoWrite = nil
             return reply("failed", reason: reason)
         }
-        guard var list = todoLists[key] else { return reply("notFound", reason: "unknownProject") }
+        let started = todoLists[key] == nil
+        guard var list = todoLists[key] ?? waitingProject(macId: macId, projectId: operation.id) else {
+            return reply("notFound", reason: "unknownProject")
+        }
 
         let mutation: TodoMutation
         var created: String?
@@ -131,8 +134,34 @@ extension MockBackend {
         }
         mutation.apply(to: &list, now: now())
         todoLists[key] = list
+        if started { listProject(macId: macId, list: list) }
         bumpTodoRev(macId)
         return reply("ok", todoId: created)
+    }
+
+    /// The Mac holds todos of a project it did not list before: its project list names the project from now on
+    /// (a Mac that syncs lists a project without a repository among those only it has).
+    private func listProject(macId: String, list: ProjectTodos) {
+        let syncing = syncingTodoMacs.contains(macId)
+        let row = TodoProjectRow(
+            id: list.id, name: list.name, scope: syncing ? "localOnly" : "local", section: syncing ? "localOnly" : "withTodos"
+        )
+        if !todoRows[macId, default: []].contains(where: { $0.id == row.id }) { todoRows[macId, default: []].append(row) }
+        if let synced = todoSyncedRows[macId], !synced.contains(where: { $0.id == row.id }) { todoSyncedRows[macId]?.append(row) }
+    }
+
+    /// A project that only a request still waiting on this Mac knows (docs/specs/todo-quick-add.md D14). The real
+    /// Mac finds it among its in-flight requests and starts its todos empty; its project list names it once a
+    /// todo is in (`listProject`).
+    private func waitingProject(macId: String, projectId: String) -> ProjectTodos? {
+        for item in state.inbox where item.macId == macId {
+            let project = item.summary.project
+            guard !project.key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                TodoProjectId.of(key: project.key) == projectId
+            else { continue }
+            return ProjectTodos(id: projectId, rev: todoRev, name: project.name, canAuto: false)
+        }
+        return nil
     }
 
     private func bumpTodoRev(_ macId: String) {

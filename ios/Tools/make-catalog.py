@@ -574,6 +574,20 @@ ZH = {
     "That is too long: %lld of %lld characters.": "内容太长了：%lld / %lld 个字符。",
     "This project is no longer on %@. Choose another.": "这个项目已不在 %@ 上，请另选一个。",
     "Update AskHuman on %@ to add todos from here.": "请先更新 %@ 上的 AskHuman，才能在这里添加待办。",
+    # The request page's "Add todo…" (docs/specs/todo-quick-add.md); the rest of its words are the quick-add's
+    "Add todo…": "添加待办…",
+    # Large screens (docs/specs/ios-large-screen.md): what the empty detail column says. These were put into the
+    # catalog by hand once; they are here so that the script reproduces the catalog again.
+    "Pick one from the list to follow it and talk to it.": "从列表里选一个，查看它的进展并与它对话。",
+    "Pick one from the list to read and answer it.": "从列表里选一条，查看并回答。",
+    "Pick one from the list to see and edit its todos.": "从列表里选一个，查看并编辑它的待办。",
+    "Pick one from the list to see how it is doing and to manage it.": "从列表里选一台，查看它的状态并管理它。",
+    "Pick one from the list to see what was asked and how you answered.": "从列表里选一条，查看当时的提问和你的回答。",
+    "Select a Mac": "选择一台 Mac",
+    "Select a project": "选择一个项目",
+    "Select a request": "选择一条请求",
+    "Select a session": "选择一个会话",
+    "Select an entry": "选择一条记录",
 }
 
 # Shown by iOS itself when a push cannot be decrypted by the notification extension.

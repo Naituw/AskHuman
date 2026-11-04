@@ -134,6 +134,10 @@ public struct InboxItem: Identifiable, Sendable, Equatable {
     /// What names the request in lists and banners: its session's title, else the Agent.
     public var displayTitle: String { sessionTitle ?? summary.agent.label }
 
+    /// The request names a project, so a todo can be added to it from the request page (the Mac skips a
+    /// blank key the same way when it looks for the projects of the requests it is waiting on).
+    public var hasProject: Bool { !summary.project.key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
     public init(
         macId: String, macName: String, requestId: String, summary: RequestSummary, view: RequestView?,
         receivedAt: Date, unread: Bool, state: RequestState

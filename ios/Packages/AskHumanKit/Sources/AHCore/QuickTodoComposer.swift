@@ -298,57 +298,27 @@ public final class QuickTodoComposer {
         }
 
         let clientMsgId = lastAttempt.flatMap { $0.target == target && $0.text == body ? $0.clientMsgId : nil } ?? UUID().uuidString
-        let operation = TodoMutation.add(localId: clientMsgId, text: body, auto: false)
-            .operation(clientMsgId: clientMsgId, projectId: route.projectId)
-
-        // A lost answer is asked for again once; the id makes the repeat harmless.
-        var ack: TodoAck?
-        var problem: Error?
-        for _ in 0..<2 {
-            do {
-                ack = try await backend.todoApply(macId: route.macId, operation: operation)
-                problem = nil
-                break
-            } catch BackendError.timedOut {
-                problem = BackendError.timedOut
-            } catch {
-                problem = error
-                break
-            }
-        }
-
-        guard let ack else {
-            lastAttempt = nil
-            switch problem as? BackendError {
-            case .timedOut?:
-                lastAttempt = Attempt(clientMsgId: clientMsgId, text: body, target: target)
-                failure = .timedOut(mac: route.macName)
-            case .macOffline?, .unknownMac?:
-                failure = .unreachable(mac: route.macName)
-            case .cancelled?:
-                break
-            case .rejected(let reason)?, .unavailable(let reason)?, .invalid(let reason)?:
-                failure = .refused(reason)
-            default:
-                failure = .notSaved
-            }
-            return nil
-        }
+        let outcome = await TodoAddCall.send(
+            backend: backend, macId: route.macId, macName: route.macName, projectId: route.projectId, text: body,
+            clientMsgId: clientMsgId
+        )
 
         lastAttempt = nil
-        switch ack.status {
-        case "ok":
+        switch outcome {
+        case .added:
             text = ""
             return target
-        case "notFound":
+        case .projectGone:
             // The project is gone from that Mac: it cannot stay the target.
             stored = nil
             persistTarget()
             failure = .projectGone(mac: target.viaICloud ? nil : target.macName)
-        case "rejected":
-            failure = .refused(ack.reason ?? "")
-        default:
-            failure = .notSaved
+        case .cancelled:
+            break
+        case .failed(let reason):
+            // No answer came, twice: the same text sent again repeats the same write.
+            if case .timedOut = reason { lastAttempt = Attempt(clientMsgId: clientMsgId, text: body, target: target) }
+            failure = reason
         }
         return nil
     }

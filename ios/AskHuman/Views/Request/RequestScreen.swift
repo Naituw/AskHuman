@@ -18,6 +18,10 @@ struct RequestScreen: View {
     @State private var switching = false
     @State private var confirmCancel = false
     @State private var confirmDismiss = false
+    /// The "Add todo…" sheet is open (docs/specs/todo-quick-add.md §4.2).
+    @State private var addingTodo = false
+    /// The todo that was just added, while its note floats over the top of the page.
+    @State private var addedNote: TodoAddedNote?
 
     private var hasNeighbors: Bool {
         store.adjacentRequest(to: id, direction: -1) != nil || store.adjacentRequest(to: id, direction: 1) != nil
@@ -25,7 +29,7 @@ struct RequestScreen: View {
 
     private var hasMore: Bool {
         guard let item = store.displayItem(id: id) else { return false }
-        return item.view?.ask != nil || item.view?.confirm?.dismissIndex != nil
+        return item.hasProject || item.view?.ask != nil || item.view?.confirm?.dismissIndex != nil
     }
 
     var body: some View {
@@ -72,10 +76,27 @@ struct RequestScreen: View {
         } message: {
             Text(store.requestErrors[id] ?? "")
         }
+        .sheet(isPresented: $addingTodo) { todoSheet }
+        .overlay(alignment: .top) {
+            if let note = addedNote {
+                TodoAddedPill(project: note.project)
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .allowsHitTesting(false)
+            }
+        }
+        // The note goes by itself; a second todo added meanwhile has a note, and a timer, of its own.
+        .task(id: addedNote?.id) {
+            guard addedNote != nil else { return }
+            try? await Task.sleep(for: store.todoNoteHold)
+            if !Task.isCancelled { withAnimation(.easeOut(duration: 0.2)) { addedNote = nil } }
+        }
         .onChange(of: id) { _, _ in
             switching = false
             confirmCancel = false
             confirmDismiss = false
+            addingTodo = false
+            addedNote = nil
         }
         .task(id: id) {
             if let item = store.item(id: id) { await store.opened(item) }
@@ -99,10 +120,15 @@ struct RequestScreen: View {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 if let item = store.displayItem(id: id) {
+                    // Always offered for a request with a project: when the Mac cannot be reached, the sheet says so.
+                    if item.hasProject {
+                        Button("Add todo…", systemImage: "text.badge.plus") { addingTodo = true }
+                            .accessibilityIdentifier("request-menu-add-todo")
+                    }
                     if item.view?.ask != nil {
                         Button("Cancel request", systemImage: "xmark.circle", role: .destructive) { confirmCancel = true }
                             .disabled(store.finished[id] != nil || !store.isOnline(macId: item.macId))
-                    } else {
+                    } else if item.view?.confirm?.dismissIndex != nil {
                         Button("Dismiss", systemImage: "xmark.circle", role: .destructive) { confirmDismiss = true }
                             .disabled(store.finished[id] != nil || !store.isOnline(macId: item.macId))
                     }
@@ -110,6 +136,21 @@ struct RequestScreen: View {
             } label: { Image(systemName: "ellipsis") }
             .accessibilityLabel("More")
             .accessibilityIdentifier("request-menu")
+        }
+    }
+
+    /// The sheet that adds a todo to the request's project.
+    @ViewBuilder
+    private var todoSheet: some View {
+        if let item = store.displayItem(id: id), let composer = store.todoComposer(for: item) {
+            RequestTodoSheet(
+                composer: composer,
+                added: { project in
+                    addingTodo = false
+                    withAnimation(.spring(duration: 0.3)) { addedNote = TodoAddedNote(project: project) }
+                },
+                cancel: { addingTodo = false }
+            )
         }
     }
 
@@ -134,6 +175,13 @@ struct RequestScreen: View {
             switching = false
         }
     }
+}
+
+/// A todo that was just added from the page: the name of its project, and an identity of its own so that the
+/// next one added gets a timer of its own.
+private struct TodoAddedNote: Equatable {
+    let id = UUID()
+    let project: String
 }
 
 /// A request page that takes over from the page that was just sent: the receipt of that page stays

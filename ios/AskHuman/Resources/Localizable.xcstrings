@@ -374,6 +374,16 @@
         }
       }
     },
+    "Add todo…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加待办…"
+          }
+        }
+      }
+    },
     "Added to %@" : {
       "localizations" : {
         "zh-Hans" : {
