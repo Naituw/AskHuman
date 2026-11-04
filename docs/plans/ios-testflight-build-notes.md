@@ -1,6 +1,6 @@
 # iOS 出包前变更清单与 TestFlight 测试内容 实施计划
 
-需求与决策见 [规格](../specs/ios-testflight-build-notes.md)。状态：2026-11-04 起草，同日用户批准（含换 helper、补标签 3–6、对 build 6 做 read 与 probe，三处默认做法不改），同日已实现并验到 build 6；整条链等 build 7 首次真用（见 §10 实施记录）。
+需求与决策见 [规格](../specs/ios-testflight-build-notes.md)。状态：2026-11-04 起草，同日用户批准（含换 helper、补标签 3–6、对 build 6 做 read 与 probe，三处默认做法不改），同日已实现并验到 build 6；build 7（同日）首次真用，整条链走通；出 build 7 时用户把确认门改为默认不经（规格 T12，下文凡写「确认门」「出包前确认」处都按此理解，见 §10 末尾）。
 
 本计划自成一体：先复述要做什么与全部规则，再给改动清单、各部分的设计、验证与提交。**任何与本计划不一致的做法，先经 AskHuman 问用户。**
 
@@ -173,3 +173,16 @@ build 2 的出包记录没有写源码提交，不补。这四个提交都已核
 
 发现：`changes.mjs` 在 main 上列出的 3 个提交里有「iPad 设备族」（`build(ios): ship the app to iPad as well as iPhone`，设备族改为 `1,2`）。`upload.py` 与 helper 的出包预检仍要求 `UIDeviceFamily == [1]`，所以 build 7 会被预检拦下。这是 skill 既有的 iPhone-only 约束，与本功能无关，这里没有改，记在 `docs/PROGRESS.md`，出 build 7 前先问用户。
 后续：该约束已由 [ios-testflight-ipad-preflight](ios-testflight-ipad-preflight.md) 放宽为只认 iPhone＋iPad。
+
+### build 7 首次真用（2026-11-04）
+
+完整走了 §5 的七步：
+
+- 清单：`changes.mjs` 基线 `ios-testflight-6` → `9f00abc`，出包点 `71e7fb5`（main 的合并提交，工作树干净），5 个 iOS 提交、27 个文件 +1692 −183（iPad 设备族与两栏布局 3 个、答题「下一题」2 个）；Apple 最大构建号 6＝最大标签号 6。
+- 确认门：这一次走了（用户看过清单与两份文案后选「按清单出包」，文案未改），随后用户改了规则，见规格 T12；SKILL.md 的第 3 步、第 8 步、第 10 步已按此改写。
+- 归档、预检、上传：`ARCHIVE SUCCEEDED`（`-jobs 3`、低优先级）；预检通过（`0.1.0 (7)`、设备族 1,2、仅内部）；`EXPORT SUCCEEDED`、`Upload succeeded`。约 2.5 分钟后 Apple 状态 `VALID`，进入 `AskHuman Internal`（组内共 6 个构建）。这是 Apple 第一次校验 iPad 构建：没有新的校验错误，也没有换过任何参数。
+- 测试内容：中文 339、英文 988 个字符，两种语言都是 `created`，读回逐字一致（`helper.py notes … --mode write`，随后又 `--mode read` 比对一次）；私有临时文件已删除。
+- 标签：`ios-testflight-7` → `71e7fb58`；事后 `changes.mjs` 以它为基线，清单为空，建议构建号 8。
+- 没有验证的：多行中英文测试内容在手机 TestFlight 里的实际显示，等用户看。
+
+起草文案时的取舍：「请重点看」第 2 条（iPad／折叠屏）不来自 `docs/PROGRESS.md`——大屏适配之前没有待验收项，出包时补了一节。
