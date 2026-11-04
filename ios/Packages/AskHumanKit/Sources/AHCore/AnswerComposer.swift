@@ -69,6 +69,13 @@ public final class AnswerComposer {
 
     public var answeredCount: Int { answers.indices.filter(isAnswered).count }
 
+    /// Whether a question is a bare input: the form takes free text and the question offers no options,
+    /// so typing is all there is to do in it. (With options, the text is a note beside a choice.)
+    public func isTextOnly(_ question: Int) -> Bool {
+        guard !selectOnly, ask.questions.indices.contains(question) else { return false }
+        return ask.questions[question].options.isEmpty
+    }
+
     /// Select-only requests need a selection for every question; others may be sent as they are.
     public var canSend: Bool {
         if isSending || isPreparingAttachments { return false }

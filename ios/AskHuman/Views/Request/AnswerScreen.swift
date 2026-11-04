@@ -10,13 +10,15 @@ import AHStore
 /// only then "Send", as the Mac popup does: a stray tap cannot send answers that were never read.
 /// "Next" itself follows where the screen is (`QuestionNavigator`), never what was looked at before,
 /// so that a question that was seen but not answered is not jumped over. A person who is typing is
-/// where the keyboard is, though: "Next" continues from that question (spec `ios-answer-flow.md` F12).
+/// where the keyboard is, though: "Next" continues from that question (spec `ios-answer-flow.md` F4, F12, F13).
 struct AnswerScreen: View {
     let item: InboxItem
     @Environment(AppStore.self) private var store
     @State private var tracker = ReadingTracker()
     /// The question "Next" last led to, which flashes once it has arrived.
     @State private var landing = Landing()
+    /// The input of each question, to hand the keyboard from one to the next (`carryTheKeyboard`).
+    @State private var inputs = InputTargets()
     /// The question whose text field has the keyboard.
     @State private var focused: Int?
     @State private var messageReady = false
@@ -37,7 +39,7 @@ struct AnswerScreen: View {
                             ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
                                 QuestionCard(
                                     index: index, count: ask.questions.count, ask: ask, question: question, composer: composer,
-                                    landing: landing, focus: $focused
+                                    landing: landing, focus: $focused, inputReveal: inputs.target(index)
                                 )
                                     .background(FrameReader(.card(index)))
                                     .background(RequestReadingAnchor(name: Self.cardID(index)))
@@ -96,9 +98,10 @@ struct AnswerScreen: View {
     }
 
     /// "Next". A person who is typing is in the question that has the keyboard, so it leads to the question
-    /// after that one, whatever the screen shows (F12). Otherwise it leads to the first question whose bottom
-    /// is not on screen yet: all of it when it fits (as the popup's "next" does), else its top, and on the next
-    /// press its bottom. Nothing that was seen or answered before matters, only where the screen is now.
+    /// after that one, whatever the screen shows (F12); when that is a plain-text question the keyboard moves
+    /// to it and stays up (F13). Otherwise it leads to the first question whose bottom is not on screen yet:
+    /// all of it when it fits (as the popup's "next" does), else its top, and on the next press its bottom.
+    /// Nothing that was seen or answered before matters, only where the screen is now.
     private func next(_ composer: AnswerComposer, proxy: ScrollViewProxy) {
         // A second press while the keyboard is still being taken away would work out the same step twice.
         guard !tracker.advancing else { return }
@@ -106,6 +109,10 @@ struct AnswerScreen: View {
         let typing = focused
         Task {
             defer { tracker.advancing = false }
+            if let typing, typing + 1 < composer.questionCount, composer.isTextOnly(typing + 1),
+               carryTheKeyboard(to: typing + 1) {
+                return
+            }
             await putTheKeyboardAway()
             guard let viewport = tracker.viewport() else { return }
             let target = typing.flatMap { QuestionNavigator.next(after: $0, in: viewport, count: composer.questionCount) }
@@ -113,6 +120,19 @@ struct AnswerScreen: View {
             guard let target else { return }
             go(to: target, proxy: proxy)
         }
+    }
+
+    /// Moves the keyboard to the input of the question that comes next and keeps it up: the page slides to
+    /// the caret as it follows it when a field is tapped, and the card flashes like any other landing.
+    /// `false` when the input cannot take it, and the keyboard is where it was.
+    ///
+    /// UIKit hands the keyboard over (`InlineTextView.takeTheKeyboard`) rather than this setting `focused`
+    /// for SwiftUI to make the two inputs resign and become in its update pass: the nested layout of a resign
+    /// in there undoes the other input's `becomeFirstResponder`, and the keyboard stays with nothing typing into it.
+    private func carryTheKeyboard(to question: Int) -> Bool {
+        guard inputs.target(question).textView?.takeTheKeyboard() == true else { return false }
+        landing.flash(question)
+        return true
     }
 
     /// Leads to the first question of a select-only form that still has no selection (what "Send"
@@ -158,6 +178,19 @@ struct AnswerScreen: View {
         // No word of a keyboard going (a hardware keyboard has none on screen): nothing to wait for.
         guard await keyboard.waitForStart(within: .milliseconds(150)) else { return }
         await tracker.settle(from: before, timeout: .milliseconds(500))
+    }
+}
+
+/// The input of every question, kept apart from the cards so that the screen can reach it.
+@MainActor
+private final class InputTargets {
+    private var targets: [Int: InputRevealTarget] = [:]
+
+    func target(_ question: Int) -> InputRevealTarget {
+        if let known = targets[question] { return known }
+        let target = InputRevealTarget()
+        targets[question] = target
+        return target
     }
 }
 
@@ -374,7 +407,7 @@ private struct QuestionCard: View {
     let composer: AnswerComposer
     let landing: Landing
     var focus: Binding<Int?>
-    @State private var inputReveal = InputRevealTarget()
+    let inputReveal: InputRevealTarget
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
