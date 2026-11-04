@@ -123,6 +123,138 @@ private func status(_ config: [String: Any]) async throws {
     try emit(["app": app["data"] ?? [:], "builds": builds["data"] ?? [], "versions": builds["included"] ?? [], "internalGroups": internalGroups])
 }
 
+/// Reads or writes the TestFlight "What to Test" text of one build. Every rule lives in NotesRules.swift;
+/// every request below passes through `NotesGate`, which allows only the fixed endpoints for the request's mode.
+private func notes(_ config: [String: Any], root: URL, request: NotesRequest) async throws {
+    // Modifying modes share the export lock, so only one modifying operation runs at a time.
+    var lockFD: Int32 = -1
+    if request.mode != .read {
+        lockFD = open(root.appendingPathComponent("testflight-upload.lock").path, O_CREAT | O_RDWR, 0o600)
+        guard lockFD >= 0 else { throw Failure("Cannot open the upload lock.") }
+        guard flock(lockFD, LOCK_EX | LOCK_NB) == 0 else {
+            close(lockFD)
+            throw Failure("Another TestFlight operation is using this signing configuration.")
+        }
+    }
+    defer { if lockFD >= 0 { close(lockFD) } }
+
+    let authorization = try token(config)
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    let gate = NotesGate(mode: request.mode)
+
+    func send(_ method: String, _ path: String, query: [String: String] = [:], body: [String: Any]? = nil) async throws -> [String: Any] {
+        try gate.authorize(method: method, path: path)
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "api.appstoreconnect.apple.com"
+        components.path = path
+        if !query.isEmpty { components.queryItems = query.keys.sorted().map { URLQueryItem(name: $0, value: query[$0]) } }
+        var urlRequest = URLRequest(url: components.url!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+        urlRequest.httpMethod = method
+        urlRequest.setValue("Bearer " + authorization, forHTTPHeaderField: "Authorization")
+        if let body {
+            urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        let (data, response) = try await session.data(for: urlRequest)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(code) else { throw Failure(NotesRules.appleErrorSummary(status: code, body: data)) }
+        if data.isEmpty { return [:] }
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw Failure("Invalid Apple response.") }
+        return object
+    }
+
+    let found = try await send("GET", NotesGate.builds, query: [
+        "filter[app]": appID, "filter[version]": request.build, "fields[builds]": "version,processingState,expired", "limit": "10",
+    ])
+    guard let items = found["data"] as? [[String: Any]], items.count == 1, let buildID = items[0]["id"] as? String,
+          NotesGate.isIdentifier(buildID), let attributes = items[0]["attributes"] as? [String: Any] else {
+        throw Failure("Expected exactly one build numbered \(request.build) for this app.")
+    }
+    guard attributes["processingState"] as? String == "VALID", attributes["expired"] as? Bool == false else {
+        throw Failure("Build \(request.build) must be VALID and not expired (state: \(attributes["processingState"] as? String ?? "unknown")).")
+    }
+
+    func fetch() async throws -> [String: RemoteNote] {
+        let body = try await send("GET", NotesGate.collection, query: [
+            "filter[build]": buildID, "fields[betaBuildLocalizations]": "locale,whatsNew", "limit": "200",
+        ])
+        let existing = try NotesRules.parseLocalizations(body)
+        for note in existing.values { try gate.learn(note.id) }
+        return existing
+    }
+
+    func create(_ locale: String, _ text: String) async throws -> String {
+        let created = try await send("POST", NotesGate.collection, body: ["data": [
+            "type": "betaBuildLocalizations",
+            "attributes": ["locale": locale, "whatsNew": text],
+            "relationships": ["build": ["data": ["type": "builds", "id": buildID]]],
+        ]])
+        guard let id = (created["data"] as? [String: Any])?["id"] as? String else { throw Failure("Apple did not return the new localization's ID.") }
+        try gate.recordCreated(id)
+        return id
+    }
+
+    func result(_ locales: [String: Any], extra: [String: Any] = [:]) throws {
+        try emit(["mode": request.mode.rawValue, "build": request.build, "appleBuildId": buildID, "locales": locales].merging(extra) { current, _ in current })
+    }
+
+    var report = [String: Any]()
+    switch request.mode {
+    case .read:
+        for (locale, note) in try await fetch() { report[locale] = ["length": note.text.utf16.count, "text": note.text] }
+        try result(report)
+    case .write:
+        let existing = try await fetch()
+        for step in NotesRules.writePlan(existing: existing, texts: request.texts) {
+            guard let text = request.texts[step.locale] else { continue }
+            switch step.action {
+            case .unchanged:
+                report[step.locale] = ["action": "unchanged", "length": text.utf16.count]
+            case .create:
+                _ = try await create(step.locale, text)
+                report[step.locale] = ["action": "created", "length": text.utf16.count]
+            case .update(let id):
+                _ = try await send("PATCH", NotesGate.collection + "/" + id, body: ["data": [
+                    "type": "betaBuildLocalizations", "id": id, "attributes": ["whatsNew": text],
+                ]])
+                report[step.locale] = ["action": "updated", "length": text.utf16.count]
+            }
+        }
+        let after = try await fetch()
+        for locale in request.texts.keys.sorted() where after[locale]?.text != request.texts[locale] {
+            throw Failure("Read-back for \(locale) did not match the written text; inspect the build's test information before retrying.")
+        }
+        try result(report, extra: ["verified": true])
+    case .probe:
+        let existing = try await fetch()
+        let free = try NotesRules.probeLocales(existing: Set(existing.keys))
+        var live = [String: String]()
+        do {
+            for locale in free {
+                let id = try await create(locale, NotesRules.probeText)
+                live[locale] = id
+                guard try await fetch()[locale]?.text == NotesRules.probeText else {
+                    throw Failure("The probe text for \(locale) did not read back identically.")
+                }
+                _ = try await send("DELETE", NotesGate.collection + "/" + id)
+                guard try await fetch()[locale] == nil else { throw Failure("The probe entry for \(locale) is still present after its deletion.") }
+                live[locale] = nil
+                report[locale] = ["action": "probed", "length": NotesRules.probeText.utf16.count]
+            }
+        } catch {
+            var leftover = [String]()
+            for id in live.values.sorted() {
+                do { _ = try await send("DELETE", NotesGate.collection + "/" + id) } catch { leftover.append(id) }
+            }
+            if !leftover.isEmpty { try? result(report, extra: ["leftover": leftover]) }
+            throw error
+        }
+        try result(report, extra: ["verified": true, "skippedExistingLocales": existing.keys.sorted()])
+    }
+}
+
 private func searchList() throws -> [SecKeychain] {
     var array: CFArray?
     try checked(SecKeychainCopySearchList(&array), "Read keychain search list")
@@ -284,6 +416,9 @@ private enum TestFlightHelper {
                 try store(Data(contentsOf: root.appendingPathComponent("signing-keychain-password")), account: signingAccount)
                 try emit(["migrated": true, "service": service, "secretContentsReturned": false])
             case "status": try await status(config)
+            case "notes":
+                guard args.count == 7 else { throw Failure("A notes request file is required.") }
+                try await notes(config, root: root, request: try NotesRules.loadRequest(path: args[6]))
             case "upload", "export":
                 guard args.count == 7 else { throw Failure("An archive path is required.") }
                 code = try exportArchive(URL(fileURLWithPath: args[6]), root: root, config: config, upload: args[5] == "upload")
