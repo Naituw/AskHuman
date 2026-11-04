@@ -28,12 +28,19 @@
 - 前端：表单行、选择器、开关、新计划与「沿用」策略下隐藏；设置页。Swift：新字段、开关、标记、旧 Mac 兼容、共用夹具；
   中英文模拟器界面测试。
 - `scripts/install.sh`（Dev Instance）后在本树用 `dev_ask` 验收界面与告警卡；不触发任何 Agent。
-- **真实验证**不在本计划内自动执行：实现完成后单独提交「验证计划」，经用户批准才进行。
+- **真实验证**不在本计划内自动执行：验证计划写在 [Desktop 计划](cursor-desktop-task-creation.md)里；2026-11-04 用户裁定阶段 1–2 由 Agent 在日常版装好后做、
+  阶段 3–4 由用户自己做。
 
 ## 验证记录
 
 2026-11-03～04，全部在 worktree 与本机完成：没有运行过 `cursor-agent`，没有驱动 Cursor 运行任何 Agent，没有碰真实的 `~/.askhuman`。
 这台机器 8 核 16 GB，期间其他 Agent 的构建与模拟器让平均负载常在 500–1000，下面几处超时都是这个原因。
+
+- **2026-11-04 把 main 合入分支后复测**（合并提交 `chore: merge main into feat/cursor-max-control`，5 处冲突的处理写在提交说明里；
+  复测时机器在换页，健康检查多次报 thrashing，负载 25–150）：`cargo fmt --check` 与 `clippy --all-targets -D warnings` 在合并提交的 pre-commit 钩子里通过；
+  `cargo test` 2448 通过、0 失败、11 条忽略；`vue-tsc` 通过；vitest 94 个文件 1115 条全部通过（超时放宽到 120 秒）；node 133 条中 114 通过、19 跳过、0 失败
+  （下面那两条安装脚本测试这次没有超时）；Swift 包 612 条执行、569 通过、43 条按设计跳过、0 失败；两条 Max 的 iOS UI 测试英文通过（285 秒、72 秒）。
+  中文没有重跑 UI 测试（合并没动界面代码），改为核对了字符串目录：540 个键都有 zh-Hans，Max 相关的 8 条齐全。
 
 - Rust：`cargo test` 2409 通过、0 失败、11 条本来就忽略；`cargo clippy` 与 `cargo fmt --check` 无告警。
   覆盖合成目录夹具（全 Max、混合、无 Max、歧义 id、参数不全、缓存缺失／损坏）、配置文本替换（键序、缩进、权限、无法解析不动、并发互斥）、
@@ -57,5 +64,5 @@
   20 个按缓存仅限 Max（含 CLI 默认的 Grok 4.7 256K High Fast）；`cli-config.json` 的 `maxMode` 与 `model.maxMode` 都是 `false`。
   对照 Cursor CLI 2026.10.01 的代码（只读）：`resolveMaxModePersistence` 在所选变体需要 Max 时写 `maxMode:true`（并标 `maxModeAutoEnabled`），
   换到不需要 Max 的模型时只在「由自动开启」的前提下才自动关回，所以手动开启过的持久 Max 会一直粘着——这正是启动前强制关闭的原因。
-- **未验证**（要真实 Cursor／cursor-agent，等验证计划获批）：CLI 在强制关闭之后的实际行为与计费、缓存与服务端目录是否一致、Agents 窗口路线的全部未验证项。
+- **未验证**（要真实 Cursor／cursor-agent；日常版装好后，阶段 1–2 由 Agent、阶段 3–4 由用户做）：CLI 在强制关闭之后的实际行为与计费、缓存与服务端目录是否一致、Agents 窗口路线的全部未验证项。
   验证计划见 [Desktop 计划](cursor-desktop-task-creation.md)的「真实验证计划」。

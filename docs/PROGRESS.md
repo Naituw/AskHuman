@@ -305,6 +305,8 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 vitest 1111 条里 5 条在机器负载约 900 时 5 秒超时（`PopupInboxView.drop/later`，与本分支无关），放宽超时重跑这两个文件 98/98 通过；Swift 包 569 通过（43 条要真实服务的端到端按设计跳过）；
 Desktop 适配器脚本测试 19/19；全量 node 测试里两条安装脚本测试在重负载下 `spawnSync bash` 30 秒超时（本分支没动 `scripts/install*`）。iOS 模拟器 UI 测试见两份计划的「验证记录」。
 一次性 Chromium 加假 Tauri 桥看过新建表单的 Cursor 行（浅色／深色、中英文，未提交）。
+2026-11-04 合入 main 后复测：`cargo test` 2448 通过、clippy／fmt 过钩子、`vue-tsc` 通过、vitest 1115 条全过（超时放宽到 120 秒）、node 114 通过／19 跳过／0 失败、
+Swift 569 通过（43 条按设计跳过）、两条 Max 的 iOS UI 测试英文通过（中文没重跑，核对了字符串目录）。
 
 下一步：
 - [ ] **真实验证（2026-11-04 用户裁定）**：阶段 1–2（日常版只读检查、Desktop `dryRun`，按设计 0 请求）由 Agent 在日常版装好后执行；阶段 3、4（各 1 个普通非 Max 请求）
