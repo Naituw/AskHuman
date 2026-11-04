@@ -41,6 +41,8 @@
   `cargo test` 2448 通过、0 失败、11 条忽略；`vue-tsc` 通过；vitest 94 个文件 1115 条全部通过（超时放宽到 120 秒）；node 133 条中 114 通过、19 跳过、0 失败
   （下面那两条安装脚本测试这次没有超时）；Swift 包 612 条执行、569 通过、43 条按设计跳过、0 失败；两条 Max 的 iOS UI 测试英文通过（285 秒、72 秒）。
   中文没有重跑 UI 测试（合并没动界面代码），改为核对了字符串目录：540 个键都有 zh-Hans，Max 相关的 8 条齐全。
+  之后 main 又进了两个提交（失败卡不再自己撤回，改了 `daemon/runtime/mod.rs`），第二次合入（无冲突）后重跑了 `cargo fmt --check`、
+  `clippy --all-targets -D warnings` 与 `cargo test`（2449 通过、0 失败）；前端、Swift、node 与 UI 测试不受这两个提交影响，沿用上面的结果。
 
 - Rust：`cargo test` 2409 通过、0 失败、11 条本来就忽略；`cargo clippy` 与 `cargo fmt --check` 无告警。
   覆盖合成目录夹具（全 Max、混合、无 Max、歧义 id、参数不全、缓存缺失／损坏）、配置文本替换（键序、缩进、权限、无法解析不动、并发互斥）、

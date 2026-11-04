@@ -308,15 +308,16 @@ vitest 1111 条里 5 条在机器负载约 900 时 5 秒超时（`PopupInboxView
 Desktop 适配器脚本测试 19/19；全量 node 测试里两条安装脚本测试在重负载下 `spawnSync bash` 30 秒超时（本分支没动 `scripts/install*`）。iOS 模拟器 UI 测试见两份计划的「验证记录」。
 一次性 Chromium 加假 Tauri 桥看过新建表单的 Cursor 行（浅色／深色、中英文，未提交）。
 2026-11-04 合入 main 后复测：`cargo test` 2448 通过、clippy／fmt 过钩子、`vue-tsc` 通过、vitest 1115 条全过（超时放宽到 120 秒）、node 114 通过／19 跳过／0 失败、
-Swift 569 通过（43 条按设计跳过）、两条 Max 的 iOS UI 测试英文通过（中文没重跑，核对了字符串目录）。
+Swift 569 通过（43 条按设计跳过）、两条 Max 的 iOS UI 测试英文通过（中文没重跑，核对了字符串目录）。main 之后又进了两个提交，
+第二次合入（无冲突）后重跑了 fmt／clippy／`cargo test`（2449 通过），其余沿用上面的结果。
 
 下一步：
 - [ ] **真实验证（2026-11-04 用户裁定）**：阶段 1–2（日常版只读检查、Desktop `dryRun`，按设计 0 请求）由 Agent 在日常版装好后执行；阶段 3、4（各 1 个普通非 Max 请求）
   由**用户**按 [计划](plans/cursor-desktop-task-creation.md)「真实验证计划」里的「阶段 3、4：用户自行执行的步骤」自己做。Agent 不执行阶段 3、4，除阶段 1–2 外不起 Cursor 任务、不驱动 Cursor；
   阶段 2 之前还要用户在 Agents 窗口里准备好验证项目。
-- [ ] **合回 main 与装日常版**（动手前先问用户）：Desktop 路线只有日常安装能验。2026-11-04 已把 main 合入分支（5 处冲突，其中两份失败收件箱规格是分支带着的旧副本，取 main 的版本）并复测；
-  main 的工作区现在有未提交的 `docs/PROGRESS.md`（本分支也改了它），git 会拒绝合并，等它提交后再合；合并前先把 main 之后的新提交再合入分支并复测，
-  再核对 overview 协议号历史里的提交号 `2600561`（分支若被改写要同步）。`./scripts/install.sh` 会让 daemon 换新（协议号 4→5，按排空过渡）。从 worktree 用 `--global` 装会覆盖共享的 `~/.local/bin`，要用户明确同意。
+- [ ] **合回 main 与装日常版**（动手前先问用户）：Desktop 路线只有日常安装能验。2026-11-04 已把 main 合入分支两次（第一次 5 处冲突，其中两份失败收件箱规格是分支带着的旧副本，取 main 的版本；
+  第二次无冲突）并复测；分支此刻不落后于 main，main 的工作区也是干净的。合回前再看一眼 main 有没有新提交（另一个 Agent 一直在 main 上推进，有就先合入分支并复测）；
+  核对 overview 协议号历史里的提交号 `2600561`（分支若被改写要同步；分支还带着三个与 main 内容相同的重复提交——失败收件箱规格与手机端精简——用合并而不是变基落地能保留这个哈希）。`./scripts/install.sh` 会让 daemon 换新（协议号 4→5，按排空过渡）。从 worktree 用 `--global` 装会覆盖共享的 `~/.local/bin`，要用户明确同意。
 - [ ] iOS：出 TestFlight 包（项目 skill `ios-testflight`）后，用户在手机上看「允许 Max」开关与模型的 Max 标记，中英文各一次。
 - [ ] 真实验证通过后，用户在设置里把 `cursorDesktop.launchPreference` 改为 `desktop`（D5）。
 - [ ] 已知局限（规格 §3、§4.4）：缓存只是建议性证据，可能比服务端目录旧；CLI 对「默认模型本身需要 Max」只在内存里推导，改配置关不掉，只靠创建时的预判拦截。
