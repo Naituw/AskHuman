@@ -13,7 +13,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 - iOS 是 Daemon 里的又一个渠道（`channels/ios.rs`），受 `experimental.enabled` 隐藏；一个 Mac 一份 broker 凭据，多台 Mac 共用同一份（连接串可导入导出），手机经二维码配对。
 - **端到端加密**：每个配对一对方向密钥（ChaCha20-Poly1305），broker 只见密文；配对用一次性票据 + 6 位校验码，由 Mac 用户在设置页或 CLI 上放行。推送预览同样加密，由手机上的通知扩展解密。
 - **Mac 不持有 APNs 密钥**：Mac 把加密后的信封和手机的不透明句柄交给中继，中继按固定白名单拼出提醒并转给 APNs。
-- 手机能做的事：回答问题 / 确认（含多题、推荐、附件）、看 Agent 列表（App 里没有手动关注：手机新建任务或原会话接续的新一轮出结果时 Mac 会通知，列表行与详情页只读地标出）、实时观察（Watch，≤2 路、仅前台）、给 Agent 插话、新建 Agent 任务（Face ID 确认）、管理待办（「待办」标签：来源是某台 Mac 或「iCloud」，浏览项目、增 / 改 / 勾 / 删 / 排序、⚡ 自动执行、看执行历史；`docs/specs/ios-todos.md`）；可选的开发者模式（Macs 标签里的开关，默认关）：全局浮动按钮，按住滑到条目松手，v1 只有「快速添加待办」，不用离开当前界面（`docs/specs/ios-developer-mode.md`）。
+- 手机能做的事：回答问题 / 确认（含多题、推荐、附件）、看 Agent 列表（App 里没有手动关注：手机新建任务或原会话接续的新一轮出结果时 Mac 会通知，列表行与详情页只读地标出）、实时观察（Watch，≤2 路、仅前台）、给 Agent 插话、新建 Agent 任务（Face ID 确认）、管理待办（「待办」标签：来源是某台 Mac 或「iCloud」，浏览项目、增 / 改 / 勾 / 删 / 排序、⚡ 自动执行、看执行历史；`docs/specs/ios-todos.md`）；在请求页「⋯」→「添加待办…」里直接给该请求的项目记一条待办（只有文字，写到该请求所在的那台 Mac；`docs/specs/todo-quick-add.md`）；可选的开发者模式（Macs 标签里的开关，默认关）：全局浮动按钮，按住滑到条目松手，v1 只有「快速添加待办」，不用离开当前界面（`docs/specs/ios-developer-mode.md`）。
 - **投递与通知分开**（`docs/specs/ios-alert-timing.md`）：iOS 不参与 IM 的活跃槽，`attach_im_channels` / `confirm_im_candidates` 在选完 IM 候选后用 `with_ios` 把它并进来，每个提问 / 确认都挂给所有已配对手机，手机一连上就从 hello 快照（`request.get`）拉到。手机在看（在线 + 前台 + 已 hello）时经 MQTT 实时送达、不推送；不在看时只有系统推送能打扰人，而它要等 Mac 键盘 / 鼠标空闲满 `channels.ios.alertAfterSecs`（默认 900 秒，`0` = 立即）才发，每题每手机最多一条，没有提醒。
 
 
@@ -58,7 +58,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
   | `AHProtocol` | 与 Rust 对应的线协议、加解密、信封（通知扩展也链接它，所以保持极小） |
   | `AHStore` | 文件型 JSON 存储（历史、草稿、发件箱、流量）、钥匙串 `Vault`、`PushDecryptor`（通知扩展用） |
   | `AHTransport` | `BrokerClient` 抽象、`MQTTBrokerClient`（CocoaMQTT）、进程内 `LoopbackBroker` |
-  | `AHCore` | `PhoneEngine`（actor：连接、配对、同步、发件箱重试、推送登记、Agents / Watch / 插话 / 任务 / 待办请求）、`TodosStore`（待办标签的状态：来源与 iCloud 接入 Mac、多台 Mac 开着同步时合并成 iCloud 一个来源、项目行上取自 Agents 页状态的点、「Mac 最后的回答 + 用户未被应答的写入」叠加出屏幕上的列表、写入队列）与 `AppStore`（`@MainActor @Observable`，UI 的唯一入口）及各 Composer；开发者模式的逻辑也在这里（`DeveloperTools`：开关、按钮位置、提示，`DeveloperGeometry` 的位置 / 吸附几何，`QuickTodoComposer`），不依赖 UIKit，能在 macOS 上 `swift test` |
+  | `AHCore` | `PhoneEngine`（actor：连接、配对、同步、发件箱重试、推送登记、Agents / Watch / 插话 / 任务 / 待办请求）、`TodosStore`（待办标签的状态：来源与 iCloud 接入 Mac、多台 Mac 开着同步时合并成 iCloud 一个来源、项目行上取自 Agents 页状态的点、「Mac 最后的回答 + 用户未被应答的写入」叠加出屏幕上的列表、写入队列）与 `AppStore`（`@MainActor @Observable`，UI 的唯一入口）及各 Composer；开发者模式的逻辑也在这里（`DeveloperTools`：开关、按钮位置、提示，`DeveloperGeometry` 的位置 / 吸附几何，`QuickTodoComposer`）；请求页的「添加待办…」由 `RequestTodoComposer` 管（按请求缓存，与 `QuickTodoComposer` 共用 `TodoAddCall` 的发送与「丢回包重发一次」），不依赖 UIKit，能在 macOS 上 `swift test` |
   | `AHMarkdown` | Markdown 块解析，供原生渲染（题干、列表摘要、Watch 卡片、附件预览，以及网页渲染不可用时的回落）；请求正文平时由网页渲染（见下） |
   | `AHMock` | `MockBackend`：演示数据与可编程故障，UI 测试和截图都跑在它上面 |
 
