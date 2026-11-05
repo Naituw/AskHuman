@@ -758,3 +758,32 @@ iOS 18.5 上的无障碍树把每个工具栏按钮报成「容器＋按钮」�
 
 出包前验证：包里的 iOS 源码就是特殊回复分支最后验证过的那份（之后只有文档提交）——Swift 包 672 条、真实 Daemon 端到端、`AskHumanAwayUITests`（iOS 18.5 16/16、iOS 27.0 英文与简体中文各 16/16）、`AskHumanTodoPickUITests`、主类 `AskHumanUITests` 等，细节见 [special-replies 的实施记录](special-replies.md)。
 **没做**：任何真机、iOS 17、iPad / Duo 大屏上的常驻条、用最终包复查 Release 配置下的生产推送。Mac 端日常版已经是带这次改动的版本（`caps.away`、`caps.answerTodos` 由 Mac 宣告，手机据此显示入口）。
+
+
+## 2026-11-05：TestFlight 外部候选构建 10
+
+用户批准为 1–5 位开发者朋友准备外部 TestFlight，并批准发布公开材料、配套 Mac 预览包、上传与 Beta 审核；详细实现与审核状态见 [外部测试计划](ios-external-testflight.md)。
+
+版本 **0.1.0 (10)**，基线 `ios-testflight-9` → `fc87415d509a021f3b980b108a44011463336448`；已批准的归档源码固定为 `d3bb8336e38ff27d01ca0d97d80f3c561e5b1847`。自基线以来只有一个 iOS 增量提交：2026-11-05 `8398a3e3 feat(ios): prepare private external TestFlight testing`，在 Macs 的“关于”里新增随语言打开的隐私政策与接入指南。归档后合入 main 的测试 / 文档及“已结束问题页面”不在此包。
+
+Release 归档及 external 预检通过；首次上传最终确认 401 后先查 Apple，确认未生成构建，再以同一归档受控重试。23:34:13（北京时间）`EXPORT SUCCEEDED`，之后 Apple build `81b235eb-4db3-46ee-8372-e74ca5bcbe0a` 已 `VALID`、`APP_STORE_ELIGIBLE`，有效期至 2027-02-03 23:35:46。持久化导出配置仍默认 internal-only。
+
+中英文测试内容已写入并逐字读回（中文 265、英文 746 UTF-16 units）：
+
+```text
+构建 10 · 源码 d3bb833
+• Mac 页的“关于”中新增隐私政策与内测接入指南，随 App 语言打开中文或英文页面。
+
+首次内测：使用自己的 Mac 和 EMQX，按接入指南配对。可从手机回答提问与确认、查看 Agent、发送消息及管理待办；Mac 需要保持在线。
+
+请重点看
+• 新安装后配对自己的 Mac，并在 App 前台回答一次普通终端提问。
+• 将 Mac 推送时机临时设为“立即”，检查锁屏通知、点击后打开题目及回答。
+• 切换 Wi-Fi / 蜂窝后能否恢复；同一题从多个设备回答时，是否仅首次回答生效。
+```
+
+本地附注标签 `ios-testflight-10` → `d3bb833`，未推送；标签记录已上传源码，不代表外部审核通过。`AskHuman Internal` 已自动包含该构建。`AskHuman Friends` 仅包含该构建、关闭公开链接和自动通知、0 位测试员。23:45:26 提交 Beta App Review，读回 `WAITING_FOR_REVIEW` / `WAITING_FOR_BETA_REVIEW`。
+
+验证：24 项 helper / notes / changes / preflight 回归、专用 iPhone 18 Pro iOS 27.0 的 Macs 页面测试 1/1、最终 install.sh 与 Dev 提问均通过。四个公开页面匿名访问 HTTP 200，Mac 预览 ZIP 的公开下载校验值与本地一致。
+
+尚未完成：Apple 审核、明确邮箱邀请、首位朋友安装与自己的 Mac / EMQX 配对、前台回答、生产锁屏推送、切网恢复与首答生效。Mac 包目前仅 Apple Silicon，Developer ID 签名但未公证；首次新 Mac 安装仍需朋友验证。未创建自动监控，未向朋友发送邀请。

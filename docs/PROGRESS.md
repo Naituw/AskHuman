@@ -3,13 +3,15 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 进行中：iOS 朋友外部 TestFlight 测试
+## 待 Apple 审核与首位朋友验收：iOS 外部 TestFlight
 
 用户已批准 [开发计划](plans/ios-external-testflight.md)：首批 1–5 位朋友，各自 Mac 与 EMQX，开发者提供现有推送中继；外部邮件邀请，无公开加入链接，先不提供演示模式、直接尝试 Beta 审核。
-工作树 `HumanInLoop-ios-external-testflight`（`codex/ios-external-testflight`），不挂渠道预设。外测状态/联系人查询、显式外部上传、受限 metadata/group/submit/invite 工具、中英文公开材料与 App 内链接已实现；24 项工具回归、iOS 页面回归通过。Pages 与 Mac 预览包已公开、Apple 审核资料已完整读回；首次 build 10 传输完成后的最终确认 401，Apple 尚未出现 build 10，未送审。
+工作树 `HumanInLoop-ios-external-testflight`（`codex/ios-external-testflight`），不挂渠道预设。工具、公开材料与 App 内链接已完成；24 项工具回归、iOS 页面回归、最终安装及 Dev 转送通过。Pages 与 Mac 预览包已公开、Apple 审核资料与中英文测试说明已读回。
 用户已批准启用 GitHub Pages、发布独立 Mac 预览包并继续上传/送审；审核联系人选定 Spatialify，个人信息只存私有输入并提交 Apple。
 完成标准与分阶段验证见计划；未经批准不加演示模式、不迁移中继、不自动创建定时任务。
-候选源码 d3bb833；iOS 0.1.0 (10) 已本地归档/预检，外部模式本地签名验证通过；同源码 Apple Silicon Mac 包已签名并保存到私有 release 目录，尚未发布。最终 Dev 转送已收到回答。接下来复查 Apple 构建号，以同一归档受控重试上传，VALID 后分组、写测试说明并送审。朋友邮箱尚未提供。
+2026-11-05 23:45（北京时间）已提交 **0.1.0 (10)**：Apple build `81b235eb-4db3-46ee-8372-e74ca5bcbe0a`，VALID、APP_STORE_ELIGIBLE、`WAITING_FOR_BETA_REVIEW`（审核提交 `WAITING_FOR_REVIEW`）。源码与本地标签 `ios-testflight-10` 固定 `d3bb833`；后续 main 的已结束问题页面改动不在此包。首次上传最终确认 401 已通过同归档受控重试解决，不再重传。
+`AskHuman Friends` 已包含 build 10，公开链接关闭、手动指定构建、自动通知关闭、0 位测试员。尚未获批或邀请；朋友邮箱尚未提供。
+下一步：查询审核结果，获批后接收并仅邀请用户明确提供的 1–5 个邮箱；首位朋友按[中文接入指南](https://naituw.github.io/AskHuman/beta-zh/)安装[配套 Apple Silicon Mac 预览包](https://github.com/Naituw/AskHuman/releases/tag/friends-beta-20261105)，完成配对、前台回答、锁屏推送、切网与首答验证。若审核要求演示资源，先带实际反馈向用户确认。
 
 ## 待平台验收：Daemon 更新接班的 Windows / Linux 原生路径
 
