@@ -115,3 +115,14 @@ P0 已完成；P1 的文案/界面已完成，发布与最终审核输入待处�
 发布仍采用已验收的 d3bb833 候选。等待期间 main 增加的真实 Codex 测试及文档已合入发布工具分支；
 它们不进入现有候选归档。主工作树另有进行中的未提交 iOS 改动，本次在隔离树推送已提交历史，不操作那些文件。
 最终 Dev 已完成；Apple 重查最新仍为 9、INTERNAL_ONLY，尚无外部组。
+
+### 已发布与首次上传结果
+
+- 远端 main / codex/ios-external-testflight 已推至 e22cb150；完整 CI（run 42040697614）通过。
+- Pages 已启用 workflow 模式、HTTPS 强制；部署 run 42040761031 通过。四个公开页面均无需登录 HTTP 200，内容与候选一致。
+- Mac 预览版：<https://github.com/Naituw/AskHuman/releases/tag/friends-beta-20261105>；tag 固定 d3bb833，prerelease、非 latest，稳定版仍为 v0.16.0。公开 ZIP 下载 SHA256 与本地一致。
+- Apple 应用级中英文 Beta 资料及 Spatialify 审核联系人已写入并完整读回。PATCH 曾超时，但读回证明全部字段已保存，没有重复写入。
+- 用户释放资源后磁盘从约 277 MiB 恢复到约 50 GiB；本树 Cargo local-install 缓存已用官方 clean 命令清理，归档 / 安装包仍保留。
+- 2026-11-05 23:03 开始第一次 build 10 外部上传。签名通过，Xcode 的 swinfo / xcrun 工具发现阶段约 14 分钟；23:18 文件传输到 100%，23:19 最后的 CHANGE UPLOAD STATE TO COMPLETE 返回 401 / reauthenticationNotSupported，进程退出 70（EXPORT FAILED）。
+- 上传会话 81b235eb-4db3-46ee-8372-e74ca5bcbe0a 最后读到 AWAITING_UPLOAD；新 token 的只读查询仍成功，Apple 构建列表最高仍为 9。不能把传输 100% 当作上传完成，也没有创建 ios-testflight-10 标签、外测组或审核提交。
+- 接下来：资源平稳后重新核对 Apple，再用同一归档和新上传认证做受控重试；若 build 10 已出现则只观察它，不重传。不更换 API key 或证书。
