@@ -1786,6 +1786,30 @@ pub(super) async fn handle_inbound(state: &Arc<ServerState>, channel_id: &str, t
             activate_channel_on_action(state, channel_id, &config, lang).await;
             handle_yolo_cmd(state, channel_id, sel, &config, lang).await;
         }
+        // /away, /back: the global away switch (spec special-replies D40). Like /watch they count
+        // as acting on this channel, so the receipt lands where the user is.
+        Parsed::Command(Command::Away(note)) => {
+            activate_channel_on_action(state, channel_id, &config, lang).await;
+            let op = crate::daemon::away::AwayOp::Start { note: note.clone() };
+            super::away_ops::apply_away_op(state, &op);
+            let _ = reply_channel_text(
+                channel_id,
+                &config,
+                &crate::autochannel::away_on_receipt(note.as_deref(), prefix, lang),
+            )
+            .await;
+        }
+        Parsed::Command(Command::Back) => {
+            activate_channel_on_action(state, channel_id, &config, lang).await;
+            let was_on = super::away_ops::away_snapshot(state).global.is_some();
+            super::away_ops::apply_away_op(state, &crate::daemon::away::AwayOp::End);
+            let _ = reply_channel_text(
+                channel_id,
+                &config,
+                &crate::autochannel::away_off_receipt(was_on, lang),
+            )
+            .await;
+        }
         Parsed::Command(Command::Help) | Parsed::UnknownCommand => {
             let has_q = has_active_question_on(state, channel_id);
             let _ = reply_channel_help(

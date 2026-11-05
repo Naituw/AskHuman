@@ -87,6 +87,10 @@ pub enum Command {
     /// `/todo-auto`、`/自动待办`：无编号 → 选项目（带文本则新增自动待办）；`Some(n)` 是
     /// 兼容入口，无文本打开切换卡，带文本直接新增一条自动执行待办。
     TodoAuto(Option<u64>, Option<String>),
+    /// `/away [note]`、`/离开`：开启全局离开模式（spec special-replies D40）；其后的原文是给 Agent 的备注。
+    Away(Option<String>),
+    /// `/back`、`/回来`：关闭全局离开模式；只清除全局开关与「照常提问」覆盖，不动已单独离开/静音的会话。
+    Back,
     /// `/yolo [off [编号]]`：Codex YOLO 模式管理（D53）。`List` → 带关闭按钮的会话选择卡；
     /// `Off(Some(n))` → 按 Agent 编号直关；`Off(None)` → 恰一个开着直关，多个弹卡。
     Yolo(YoloSel),
@@ -463,6 +467,11 @@ fn classify_prefixed(trimmed: &str) -> Parsed {
             };
             Parsed::Command(Command::Yolo(sel))
         }
+        "away" | "离开" => {
+            let note = (!rest.trim().is_empty()).then(|| rest.trim().to_string());
+            Parsed::Command(Command::Away(note))
+        }
+        "back" | "回来" => Parsed::Command(Command::Back),
         "help" | "帮助" | "?" | "？" => Parsed::Command(Command::Help),
         _ if bang => Parsed::Text,
         _ => Parsed::UnknownCommand,
@@ -636,6 +645,14 @@ pub fn help_view(
             "autoChannel.helpDescYolo",
             Some("autoChannel.helpPhraseYolo"),
         ),
+        command(
+            "away",
+            " [note]",
+            " [备注]",
+            "autoChannel.helpDescAway",
+            None,
+        ),
+        command("back", "", "", "autoChannel.helpDescBack", None),
     ]);
 
     let code_commands = vec![
@@ -788,6 +805,28 @@ pub fn activated_receipt(pending: usize, lang: Lang) -> String {
         s.push_str(&i18n::tr(lang, "autoChannel.pending").replace("{n}", &pending.to_string()));
     }
     s
+}
+
+/// `/away` receipt: the mode is on, how to end it, and the note the Agents will see.
+pub fn away_on_receipt(note: Option<&str>, prefix: &str, lang: Lang) -> String {
+    let mut text = i18n::tr(lang, "autoChannel.awayOn").replace("{back}", &format!("{prefix}back"));
+    if let Some(note) = note {
+        text.push_str(&i18n::tr(lang, "autoChannel.awayNote").replace("{note}", note));
+    }
+    text
+}
+
+/// `/back` receipt; `was_on` tells whether there was anything to turn off.
+pub fn away_off_receipt(was_on: bool, lang: Lang) -> String {
+    i18n::tr(
+        lang,
+        if was_on {
+            "autoChannel.awayOff"
+        } else {
+            "autoChannel.awayWasOff"
+        },
+    )
+    .to_string()
 }
 
 /// 反激活提示：活跃槽切到别处时发给**旧**渠道，明确告知切到了哪个渠道（`new_id`，含 "popup"），
@@ -1298,6 +1337,38 @@ mod tests {
     }
 
     #[test]
+    fn away_and_back_are_commands_with_an_optional_note() {
+        assert_eq!(classify("/away"), Parsed::Command(Command::Away(None)));
+        assert_eq!(
+            classify("/away not on prod, keep going"),
+            Parsed::Command(Command::Away(Some("not on prod, keep going".into())))
+        );
+        assert_eq!(classify("!away  "), Parsed::Command(Command::Away(None)));
+        assert_eq!(
+            classify("/离开 别动生产环境"),
+            Parsed::Command(Command::Away(Some("别动生产环境".into())))
+        );
+        assert_eq!(classify("/back"), Parsed::Command(Command::Back));
+        assert_eq!(classify("!back"), Parsed::Command(Command::Back));
+        assert_eq!(classify("/回来"), Parsed::Command(Command::Back));
+        // Only the prefixed form is a command: bare words stay ordinary text.
+        assert_eq!(classify("away"), Parsed::Text);
+        assert_eq!(classify("离开"), Parsed::Text);
+    }
+
+    #[test]
+    fn away_receipts_name_the_way_back_and_the_note() {
+        let on = away_on_receipt(Some("keep going"), "!", Lang::En);
+        assert!(on.contains("!back"));
+        assert!(on.contains("keep going"));
+        assert!(!away_on_receipt(None, "/", Lang::En).contains("{note}"));
+        assert_ne!(
+            away_off_receipt(true, Lang::En),
+            away_off_receipt(false, Lang::En)
+        );
+    }
+
+    #[test]
     fn command_phrase_keys_are_unique() {
         let mut seen = std::collections::HashSet::new();
         for (key, _) in COMMAND_PHRASES {
@@ -1791,7 +1862,7 @@ mod tests {
             .flat_map(|section| section.commands.iter())
             .map(|command| command.syntax.as_str())
             .collect();
-        assert_eq!(syntaxes.len(), 16);
+        assert_eq!(syntaxes.len(), 18);
         assert_eq!(
             syntaxes,
             vec![
@@ -1803,6 +1874,8 @@ mod tests {
                 "/msg [编号] [内容]",
                 "/msg-clear <编号>",
                 "/yolo [off [编号]]",
+                "/away [备注]",
+                "/back",
                 "/diff [编号]",
                 "/stage [编号]",
                 "/transcript [编号]",
@@ -1829,7 +1902,14 @@ mod tests {
                 .flat_map(|section| section.commands.iter())
             {
                 let Some(phrase) = &command.phrase else {
-                    assert!(command.syntax.starts_with("/msg-clear"));
+                    // Commands that would collide with ordinary replies advertise no bare phrase.
+                    assert!(
+                        ["/msg-clear", "/away", "/back"]
+                            .iter()
+                            .any(|name| command.syntax.starts_with(name)),
+                        "unexpected command without a phrase: {}",
+                        command.syntax
+                    );
                     continue;
                 };
                 assert!(

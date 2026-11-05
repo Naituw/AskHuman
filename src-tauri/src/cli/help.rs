@@ -61,6 +61,7 @@ pub fn help_text(lang: Lang) -> String {
             "  agents mode codex mcp [--env NAME=VALUE]  Merge explicit MCP environment overrides (repeatable)".to_string(),
             "  mcp                     Run as an MCP server over STDIO, exposing ask, whats_next, show_last, todo_add, todo_list, and todo_update".to_string(),
             "  todo <sub>              Project todos: add [--auto] [-f path] <text> / list / attach / detach / rm / clear".to_string(),
+            "  away <sub>              Away mode: on [note] [--session] / off [--session] / status (Agents may turn it on, only you can turn it off)".to_string(),
             "  channel <sub>           Configure IM channels without a GUI (list/set/enable/disable/test/detect; see 'channel help')".to_string(),
             "  agents <sub>            Agent status & integrations (monitor/show/install/uninstall/update; see 'agents help')".to_string(),
             "  config <sub>            Generic config key/value fallback (show/get/set/unset/path; see 'config help')".to_string(),
@@ -101,6 +102,7 @@ pub fn help_text(lang: Lang) -> String {
             "  update prepare          Windows：手动更新前排空并关闭后台进程".to_string(),
             "  mcp                     以 MCP server（STDIO）运行，暴露 ask、whats_next、show_last、todo_add、todo_list 与 todo_update".to_string(),
             "  todo <子命令>            项目待办：add [--auto] [-f 路径] <文本> / list / attach / detach / rm / clear".to_string(),
+            "  away <子命令>            离开模式：on [备注] [--session] / off [--session] / status（Agent 可以开启，只有你能关闭）".to_string(),
             "  channel <子命令>         无 GUI 配置 IM 渠道（list/set/enable/disable/test/detect；见 'channel help'）".to_string(),
             "  agents <子命令>          Agent 状态与集成（monitor/show/install/uninstall/update；见 'agents help'）".to_string(),
             "  config <子命令>          通用配置键值兜底（show/get/set/unset/path；见 'config help'）".to_string(),
@@ -530,6 +532,15 @@ mod tests {
             assert!(ah.contains("todo add"));
             // 旧「固定英文结束句」已废除，不应再出现在 help 里。
             assert!(!ah.contains("no more tasks"));
+        }
+    }
+
+    #[test]
+    fn help_lists_the_away_subcommand() {
+        for lang in [Lang::En, Lang::Zh] {
+            let help = help_text(lang);
+            assert!(help.contains("away "));
+            assert!(help.contains("--session"));
         }
     }
 

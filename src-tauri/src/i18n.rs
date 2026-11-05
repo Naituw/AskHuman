@@ -467,6 +467,23 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         ),
         // 补推在途后缀（仅当补推了 N(>0) 条在途未答问题时追加到激活回执后）。
         "autoChannel.pending" => pick(lang, " ({n} pending question(s) delivered)", "（已补推 {n} 条待答问题）"),
+        // /away、/back receipts ({back} = the channel's own spelling of the /back command).
+        "autoChannel.awayOn" => pick(
+            lang,
+            "☾ Away mode is on. Agent questions now get an automatic \"the user is away\" reply, and an Agent that is truly stuck can still reach you. Send {back} to end it.",
+            "☾ 离开模式已开启。Agent 的提问会收到「用户已离开」的自动回复；确实卡住的 Agent 仍然可以联系到你。发送 {back} 结束。",
+        ),
+        "autoChannel.awayNote" => pick(lang, "\nNote for the Agents: {note}", "\n给 Agent 的备注：{note}"),
+        "autoChannel.awayOff" => pick(
+            lang,
+            "Away mode is off. Agents ask you as usual again.",
+            "离开模式已关闭，Agent 将照常向你提问。",
+        ),
+        "autoChannel.awayWasOff" => pick(
+            lang,
+            "Away mode was not on.",
+            "离开模式本来就没有开启。",
+        ),
         // 反激活提示（活跃槽切到别处时发给旧渠道；{target} = 新渠道展示名，如「弹窗」「钉钉」）。
         "autoChannel.deactivated" => pick(
             lang,
@@ -658,6 +675,16 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             lang,
             "View or turn off Codex YOLO sessions",
             "查看或关闭 Codex YOLO 会话",
+        ),
+        "autoChannel.helpDescAway" => pick(
+            lang,
+            "Turn on away mode: Agent questions get an automatic reply",
+            "开启离开模式：Agent 的提问会收到自动回复",
+        ),
+        "autoChannel.helpDescBack" => pick(
+            lang,
+            "Turn away mode off; Agents ask you again",
+            "关闭离开模式，Agent 恢复向你提问",
         ),
         "autoChannel.helpDescDiff" => pick(
             lang,

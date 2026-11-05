@@ -1,5 +1,6 @@
 pub mod agents_cmd;
 pub mod args;
+pub mod away_cmd;
 pub mod cfgio;
 pub mod channel_cmd;
 pub mod config_cmd;
@@ -555,6 +556,10 @@ pub fn dispatch() {
         // Agent 状态 + 集成子命令组（spec：cli-config）：monitor / show / install / uninstall / update。
         "agents" => {
             agents_cmd::dispatch(&argv[2..], lang);
+        }
+        // Away mode (spec special-replies D40): on / off / status.
+        "away" => {
+            away_cmd::dispatch(&argv[2..], lang);
         }
         // IM 渠道配置（headless / 无 GUI）：list / set / enable / disable / test / detect。
         "channel" => {
