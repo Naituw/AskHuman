@@ -563,8 +563,14 @@ public actor MockBackend: RemoteBackend {
     /// names who did it. `submitAnswer` cannot model this, because the end of our own submission
     /// carries no name and makes the app move on to the next request.
     public func simulateFinishedElsewhere(requestId: String, macId: String = MockData.homeMacId, by: String = "Another phone") {
+        simulateFinished(requestId: requestId, macId: macId, outcome: .answered, by: by)
+    }
+
+    /// Ends a request with any outcome a Mac reports for one that was not ours to answer: answered on another
+    /// surface (`by` names it), cancelled by the Agent, timed out, or ended some other way.
+    public func simulateFinished(requestId: String, macId: String = MockData.homeMacId, outcome: HistoryOutcome, by: String? = nil) {
         guard let item = state.inbox.first(where: { $0.macId == macId && $0.requestId == requestId }) else { return }
-        finish(item.id, outcome: .answered, answers: [], choice: nil, input: nil, by: by)
+        finish(item.id, outcome: outcome, answers: [], choice: nil, input: nil, by: by)
     }
 
     /// Delivers a new request, as if the Agent on `macId` had just asked (from a session called

@@ -39,6 +39,12 @@ struct LaunchOptions {
     var arrival: String?
     var arrivalCount = 1
     var arrivalDelay = 2.0
+    /// The request `-AHOpen` names ends this many seconds after launch, as if it had been settled somewhere else
+    /// (the ended request page). `-AHEndHow` says how (`answeredElsewhere`, `cancelled`, `expired`, `ended`) and
+    /// `-AHEndBy` who answered it (a channel's name, as a Mac reports it: "Popup", "Slack").
+    var endAfter: Double?
+    var endHow: HistoryOutcome = .answeredElsewhere
+    var endBy: String?
     var arrivalMotionDiagnostics = false
     var inputCaretDiagnostics = false
     var arrivalMotionSlowdown = 1.0
@@ -97,6 +103,9 @@ struct LaunchOptions {
         arrival = defaults.string(forKey: "AHArrival")
         arrivalCount = min(20, max(1, defaults.integer(forKey: "AHArrivalCount")))
         if defaults.object(forKey: "AHArrivalDelay") != nil { arrivalDelay = max(0, defaults.double(forKey: "AHArrivalDelay")) }
+        if defaults.object(forKey: "AHEndAfter") != nil { endAfter = max(0, defaults.double(forKey: "AHEndAfter")) }
+        if let how = defaults.string(forKey: "AHEndHow").flatMap(HistoryOutcome.init(rawValue:)) { endHow = how }
+        endBy = defaults.string(forKey: "AHEndBy")
         arrivalMotionDiagnostics = defaults.bool(forKey: "AHArrivalMotionDiagnostics")
         inputCaretDiagnostics = defaults.bool(forKey: "AHInputCaretDiagnostics")
         arrivalFullscreenFixture = defaults.bool(forKey: "AHArrivalFullscreenFixture")
@@ -227,6 +236,14 @@ final class AppEnvironment {
             for _ in 0..<50 where store.state.inbox.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
             if let item = store.state.inbox.first(where: { $0.requestId == request || $0.id == request }) {
                 store.open(macId: item.macId, requestId: item.requestId)
+                // The page is up: the request ends while it is being looked at.
+                if let seconds = launch.endAfter, let backend = mock {
+                    let (macId, requestId, outcome, by) = (item.macId, item.requestId, launch.endHow, launch.endBy)
+                    Task {
+                        try? await Task.sleep(for: .seconds(seconds))
+                        await backend.simulateFinished(requestId: requestId, macId: macId, outcome: outcome, by: by)
+                    }
+                }
             }
         }
         if let agent = launch.openAgent {
