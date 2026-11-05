@@ -47,6 +47,7 @@ let package = Package(
         // The observable layer the screens use (composers, app store), driven by the mock backend.
         .testTarget(name: "AHAppTests", dependencies: ["AHCore", "AHMock", "AHProtocol", "AHStore"]),
         // Runs the real engine against a real Mac daemon over a local broker; skipped unless AH_E2E_BIN is set.
+        // CodexAgentE2ETests start a real, paid Codex and also need AH_E2E_CODEX=1.
         .testTarget(name: "AHE2ETests", dependencies: ["AHCore", "AHProtocol", "AHStore", "AHTransport"]),
     ]
 )
