@@ -12,13 +12,17 @@ struct ConfirmScreen: View {
 
     var body: some View {
         if let confirm = item.view?.confirm, let composer = store.confirmComposer(for: item) {
+            // Set once the request has ended somewhere else while the page is open (§3.7): a strip says so, the
+            // body fades and nothing takes an answer.
+            let finished = store.endedNotice(for: item.id)
+            let ended = finished != nil
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if let finished = store.endedNotice(for: item.id) { FinishedNotice(finished: finished) }
                     if case .failed = item.state { FailedSubmissionNotice(item: item) }
                     RequestHeader(item: item)
                     DetailCard(confirm: confirm, onSettled: { detailReady = true })
                         .background(RequestReadingAnchor(name: "confirmation-detail"))
+                        .endedDimming(ended)
                     VStack(spacing: 10) {
                         ForEach(confirm.choices, id: \.wireIndex) { choice in
                             ChoiceRow(choice: choice, selected: composer.selectedWireIndex == choice.wireIndex) {
@@ -28,13 +32,16 @@ struct ConfirmScreen: View {
                         }
                     }
                     .background(RequestReadingAnchor(name: "confirmation-choices"))
-                    .disabled(composer.isSending || sending)
+                    // Disabled plain buttons are paler by themselves: no `endedDimming` on top.
+                    .disabled(composer.isSending || sending || ended)
                     if let field = composer.visibleInput {
                         InputCard(field: field, composer: composer)
                             .background(RequestReadingAnchor(name: "confirmation-input"))
-                            .disabled(composer.isSending || sending)
+                            .disabled(composer.isSending || sending || ended)
+                            .endedDimming(ended)
                     }
-                    ExpiryLabel(date: composer.expiresAt)
+                    // Its countdown means nothing once the request has ended.
+                    if !ended { ExpiryLabel(date: composer.expiresAt) }
                 }
                 .readableWidth()
                 .padding()
@@ -46,7 +53,8 @@ struct ConfirmScreen: View {
             .actionBar {
                 bar(composer: composer, confirm: confirm)
             }
-
+            .endedStrip(finished)
+            .endedCue(finished)
         }
     }
 

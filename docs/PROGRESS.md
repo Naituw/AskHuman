@@ -398,6 +398,23 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] **iOS 真机验收**：已随内测包 `0.1.0 (9)` 出去（2026-11-05，更新 TestFlight 即可；Mac 日常版已是带这次改动的版本，入口由 `caps.away` / `caps.answerTodos` 把关：新 App 连老 Mac 不显示入口，老 App 没有这些界面）。待用户在真机上看：离开模式的橙色条与 Mac 的状态、计数一致，「发送并离开 / 发送并停用」不被截断，底栏菜单的展开方向与顺序，选项目待办后 Agent 收到的回答与 Mac 上待办的变化。iOS 17 的降级条样式、iPad / Duo 大屏上的常驻条没有看过（iOS 18.5 模拟器的经典条已逐屏看过并跑过 `AskHumanAwayUITests`，修了「发送并离开」按钮被截断，见计划「iOS 18.5 经典条补验」）
 - [ ] 控制台里 Agent 页头的横幅 / 会话菜单在真实数据上的样子没再核对（组件与逻辑有测试）
 
+## 待验收：iOS 已结束的请求页（钉住的状态条 + 正文变灰 + 控件停用；已实现并过模拟器自动化，手机上没看过，未出内测包）
+
+用户 2026-11-05 在用过离开模式的版本后反馈：别处已回答的问题，手机上「不够明显」，读着读着才发现不用回答了。范围他选了「整个请求已在别处结束（Mac 弹窗 / IM 答了、Agent 取消、超时），手机上的页面还开着」，
+形式让我设计（「不一定是整体变淡」）；之后他问「往下滑它会消失吗」，我答不会（钉住），他选了「保持钉住」。需求 [`docs/specs/ios-answer-flow.md`](specs/ios-answer-flow.md) §3.7（E1–E8）、验收第 13–14 条；
+实现在 `ios/AskHuman/Views/Request/EndedState.swift`（提问页与确认页各挂一次）。尚未提交到远端，也没有新的 TestFlight 包。
+
+做了什么：页面开着时请求在别处结束，导航栏下钉一条带色状态条（「无需回复」+ 原因句；颜色跟结果走，与历史页一致），正文（消息、各题、确认页的详情 / 选项 / 输入框）不透明度 0.6，控件停用，确认页的过期倒计时隐藏；
+眼前由进行中变已结束时一次触感 + VoiceOver 播报；自己发出的回答（页面是回执）与历史详情不变。条里的字最大到辅助功能第一档。mock 里用 `-AHOpen <id> -AHEndAfter <秒> -AHEndHow … -AHEndBy …` 触发（见 `docs/overview-ios.md`）。
+
+自测：`AskHumanEndedUITests`（中英文各 5 条）在 iOS 27.0 全过，英文 5 条在 iOS 18.5 也全过；iOS 26.2 只用截图看过外观（与 27.0 一致）；浅色、深色、最大辅助字号在 27.0 上看过，18.5 的经典条看过滚动后的样子（为此在条后垫了 `.bar`）；Swift 包 `AHAppTests` 399 条全过。
+相关回归（iOS 27.0）：请求导航 / 连接、待办挑选三组，加主类里 22 条提问页与确认页的用例，共 39 条，38 条过；唯一失败的是 `AskHumanRequestNavigationUITests.testManualReturnRestoresTheReadingPositionOfALongForm`（`:101`），就是上面「特殊回复」一节记下的 main 上已有的不稳定用例，换成不带状态条的构建它也是时过时不过，带状态条的构建用 `test-without-building` 复跑时也至少过了三次。没跑的：离开模式用例的后 11 条、`AskHumanRequestTodoUITests`、`AskHumanInputVisibilityUITests`、主类里与请求页无关的用例、iPad 两栏（`AskHumanLargeScreenUITests`）；也没跑 `./scripts/install.sh`（这次只动了 iOS App 与文档，Mac 端二进制没有变化）。
+
+下一步：
+- [ ] 真机验收（要出新的内测包；出不出由用户定，出包走 `ios-testflight` 技能）：让 Mac 弹窗先答掉一条、手机停在那页，看状态条是否一眼能看到、正文变灰到什么程度合适（现在 0.6，想更淡 / 更不淡改 `EndedDimming.level`）、触感与播报是否合适；有意见记进 `ios-answer-flow.md` §5
+- [ ] 没看过：iOS 17、iPad / 折叠屏内屏上的样子；VoiceOver 实际读出的内容（只验了无障碍标识与标签，没开 VoiceOver 听）
+- [ ] 取舍待用户看过再定：条里白字在橙 / 灰上对比不高（约 2.4 / 3.4 比 1，与离开模式的橙条同一做法），若觉得难读，可把橙与灰的底色调深一档（会与历史页的颜色略不同）
+
 ## 待验收：Cursor 任务的 Max 模式控制与 Agents 窗口新建任务（已合回 main 并装为日常版；真实验证阶段 1–2 已过，阶段 3–4 等用户自己做）
 
 2026-11-03 用户说旧「按次计费」计划里 Cursor 的 Max 模式按 API 费率扣 Credit，所以不敢用 AskHuman 新建 Cursor 任务，要求分析并支持控制 Max，
