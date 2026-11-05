@@ -402,7 +402,7 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 
 用户 2026-11-05 在用过离开模式的版本后反馈：别处已回答的问题，手机上「不够明显」，读着读着才发现不用回答了。范围他选了「整个请求已在别处结束（Mac 弹窗 / IM 答了、Agent 取消、超时），手机上的页面还开着」，
 形式让我设计（「不一定是整体变淡」）；之后他问「往下滑它会消失吗」，我答不会（钉住），他选了「保持钉住」。需求 [`docs/specs/ios-answer-flow.md`](specs/ios-answer-flow.md) §3.7（E1–E8）、验收第 13–14 条；
-实现在 `ios/AskHuman/Views/Request/EndedState.swift`（提问页与确认页各挂一次）。尚未提交到远端，也没有新的 TestFlight 包。
+实现在 `ios/AskHuman/Views/Request/EndedState.swift`（提问页与确认页各挂一次）。已推送到 `origin/main`（2026-11-05，`f5167d3a`、`2c752ed6`、`9666acaf`），还没有带它的 TestFlight 包。
 
 做了什么：页面开着时请求在别处结束，导航栏下钉一条带色状态条（「无需回复」+ 原因句；颜色跟结果走，与历史页一致），正文（消息、各题、确认页的详情 / 选项 / 输入框）不透明度 0.6，控件停用，确认页的过期倒计时隐藏；
 眼前由进行中变已结束时一次触感 + VoiceOver 播报；自己发出的回答（页面是回执）与历史详情不变。条里的字最大到辅助功能第一档。mock 里用 `-AHOpen <id> -AHEndAfter <秒> -AHEndHow … -AHEndBy …` 触发（见 `docs/overview-ios.md`）。
