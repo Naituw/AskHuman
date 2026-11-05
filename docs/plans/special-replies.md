@@ -140,3 +140,31 @@ Mac 端本来就有现成的东西：`QuestionAnswer.todo_ids` / `todo_selection
 - **老 Mac**：`caps.answerTodos == false` 时不显示待办卡，What's next 保持原样，`AppStore.send` 一律发 `todoIds: []`。Mock 后端的默认 `demo` 场景保持 `answerTodos: false`，已有 UI 测试不受影响；新场景 `todoPick`（`-AHScenario todoPick`）带七条待办（第 4 条带一个附件）。
 - **界面**：`TodoPickCard`（折叠的「待办 N」卡，`checklist` 图标、数量、「已选 N」、脚注）与 `TodoQueueRows`（What's next 的单选行 + 「显示全部 N 条待办」）在新文件 `Views/Request/TodoPickViews.swift`；`OptionRow` 改成包内可见以便复用，附件数用回形针小标签。
 - **测试**：Rust `ios::` 282 条（含 8 条新网关用例与夹具往返）；Swift 包 `AHAppTests` / `AHCoreTests` / `AHProtocolTests` / `AHStoreTests` 全绿（新增 11 条 `AnswerComposer`、25 条 `RequestTodoPicker`、3 条 `SessionTests`）；`AHE2ETests/TodoE2ETests` 加四条（合并 + 出队 + 附件、What's next 名额之外按 id、已不存在的待办拒收且请求保留、仅选择模式拒收）；UI 测试 `AskHumanTodoPickUITests`（en + zh-Hans）。具体结果见下面各条验证记录。
+
+### P2a 引擎与 Agent 文字（已完成）
+
+与上文设计一致，差异与补充：
+
+- **模块**：`daemon/away.rs`（纯判定 `judge` + `AwayEngine`：状态、持久化到 `state/away.json`（临时文件 + 原子替换）、计数；hook 用 `session_muted` 直接读文件，读不到或解析失败一律当作正常模式）；`daemon/runtime/away_ops.rs`（自动回复、`AwayOp` 的应用、答案里的 directive、变化后的广播）。
+- **谁被拦截**：`is_agent_ask` ——Ask 类弹窗、不是开发中继、没有 `native_request_id`。Stop 确认、出错 / 复查卡、Codex 原生问题、开发中继既不被拦截，也不显示快捷回复（`AskRequest.quick_reply = false`，N10；该字段只在 false 时序列化，所以不认识它的旧发送方仍有菜单）。
+- **会话键**：复用 `ask_dedup::session_key`（`sid:<Agent 会话 id>`，没有就 `mcp:<实例 id>`；两者都没有的调用方只受全局设置影响）。优先级：会话覆盖 > 全局；会话里 mute > away > normal；`normal` 是「全局离开时，这个会话照常问我」（N1）。
+- **防呆**：同一会话 10 分钟内连续 3 次不带 `--escalate` 的提问被自动回复，第 4 次放行（`escalated: repeated`），放行后计数清零。托盘「要求提问」（P2c 接 UI）发的是固定文案的插话（`QUICK_ASK_TEXT`），daemon 在追加插话时认出它，给该会话开 30 分钟的一次性放行（`escalated: requested`，N2）。
+- **自动回复的形态**：`Accepted` + `Final`（退出码 0）；文本模式是 `[status]` 区块，JSON 模式是 `{"action":"auto_reply","channel":"away|mute","status":…}`；提问 / whats-next / 不再使用各有一段中英文案（`away.reply.ask|whatsNext|mute`），离开备注接在后面（`away.note`）。历史 channel 为 `away` / `mute`；不进重放缓存，不触发 `ask-received`。
+- **`--escalate`**：`TaskRequest.escalate`（可选）、CLI 旗标、MCP `ask` / `whats_next` 的 `escalate` 入参；`AskRequest.escalated` 带原因（`asked` / `repeated` / `requested`）。**端到端时才发现**：`cli/mod.rs` 入口有一份「第一个参数允许的旗标」白名单，`--escalate` 不在里面，`AskHuman --escalate …` 会被当成未知选项；已改成常量 `ASK_LEADING_FLAGS`，并加了「白名单里每一项都被 `parse_ask` 接受」的测试。
+- **弹窗回答里的 directive**：`ClientMsg::Answer.directive`（可选字段）暂存在 `RequestEntry` 上，回答被接受之后才应用（被拒收的回答不会改状态），引导语追加在回答后面；弹窗一侧是 `PopupSubmission.directive`，Tauri 命令 `away_end` 经 `client::away_op` 发 `AwayOp::End`。
+- **解除与清理**：「不再使用」的解除只经 interject 队列（D15）；会话结束（SessionEnd）与 15 秒一次的清扫（`sweep`）清掉会话覆盖与计数。
+- **Hook**：Stop 确认对静音会话放行（`suppression_reason_with_mute`，识别用 `task.stop_confirmation`）；Claude `AskUserQuestion` 接管（`ask_question.rs`）：「不再使用」时什么都不写；离开时 `decide()` 返回 `deny`，自动回复文字放进理由；带 directive 的回答把答案放进 `deny` 理由（`askQuestion.answered`）。
+- **协议**：`ClientMsg::Away` / `ServerMsg::Away` 并入未发布的 5，没有再 +1；`Answer.directive`、`TaskRequest.escalate`、`AskRequest.escalated` / `quick_reply` 都是可选字段。
+- **验证**：全量 `cargo test`（bin）2534 条通过（其中 `daemon::away` 约 35 条、`away_ops`、`ipc`、`cli`、`models`、`daemon::request` 的新用例）；`cargo fmt`、`cargo clippy --all-targets -D warnings` 通过（提交钩子也会跑）。**真实 daemon 端到端**（`./scripts/install.sh` 装的二进制复制到 `/tmp`，独立 `ASKHUMAN_HOME`，用 `CLAUDECODE` + `CLAUDE_CODE_SESSION_ID` 冒充 Claude 会话）：全局离开时的提问 / `--output json` / whats-next 都得到自动回复且计数落盘；会话静音（含 whats-next）；`normal` 覆盖照常送达；第 4 次放行；`--escalate` 送达，之后的普通提问仍被自动回复（升级不解除离开）；在真实弹窗里选「不再使用」后发送，会话变成静音，回答带静音引导语；历史里有 `away` / `mute` 条目。**没做**：真实 Claude / Codex / Cursor 各一轮（要先有真实 Agent 调用的授权）；Stop hook 与 `AskUserQuestion` 接管目前只有单测。
+
+### P2b 弹窗（已完成）
+
+与上文设计一致，差异与补充：
+
+- **组件**：`QuickReplyMenu.vue`、`ArmedDirectiveBar.vue`、`EscalatedNotice.vue`，状态与键盘在新的组合式函数 `useQuickReply.ts`（接进 `usePopupCore.ts`）；`PopupFooter.vue` 的多题与单题页脚放了触发按钮（权限 / 确认卡的页脚没有；Stop 确认与出错卡走单题页脚，靠 `quick_reply = false` 隐藏）；样式是 `popup.css` 里的 `.qr-*`。
+- **键盘**：⌘K / Ctrl+K 开关菜单，↑↓ 与回车选择，Esc 关闭并还焦点；菜单打开期间对键盘模态（回答区自己的 Enter / Esc、数字键、⌘T 都不穿透；先于待办浮层处理，菜单开着时待办浮层不响应）；`shortcut.ts` 把 ⌘K 列为保留键（自定义快捷键冲突检测）。
+- **待发**：选了指令后进入 `armedDirective`；`canSubmit` 在待发时恒为真（纯选择题也能不选就发）；主按钮变成「发送并…」，多题页脚的上一个 / 下一个临时收起；× 撤销。离开模式的范围（所有 Agent / 仅此会话）与备注随 `submit_popup` 的 `directive` 发给 daemon，备注为空时省略。
+- **升级提示条**：来自 `AskRequest.escalated`；菜单里「离开模式…」变成「结束离开模式」（Tauri 命令 `away_end`）。
+- **英文按钮文案**：设计稿只有中文（「发送并开启离开模式」「发送并停用 AskHuman」）；英文取 “Send and go away” / “Send and turn off”——更长的版本在 560pt 宽的默认窗口里会把别的按钮挤成两行。
+- **真窗口目视**（隔离 daemon 的真实弹窗，截图）发现并修了三处：提示条标题后多了一段空隙（CSS 的 `margin-right` 把冒号隔开了）、待发时页脚按钮折行（`.footer .btn { white-space: nowrap }`）、待发条的说明被一行截断（现在最多两行）。
+- **验证**：`PopupView.quickReply.test.ts` 36 条（菜单键盘与模态、待发条、撤销、多题、严格选择、What's next、非 Agent 卡片没有按钮、升级条与 `away_end`、与查找 / 语音 / 待办浮层并存、粘贴隔离、合并窗口）；全量 `npx vitest run` 98 个文件 1208 条通过；`npx vue-tsc --noEmit` 通过。原型 `popup-reply-menu.html` 没有改：它是视觉规格，产品里的类名是 `qr-*`。
