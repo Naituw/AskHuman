@@ -1,4 +1,4 @@
 interface:
   display_name: "iOS TestFlight"
   short_description: "Build and deliver AskHuman Mobile updates"
-  default_prompt: "Use $ios-testflight to build and deliver the latest AskHuman iOS app through internal TestFlight."
+  default_prompt: "Use $ios-testflight to build and deliver the latest AskHuman iOS app through TestFlight, using internal delivery by default and the external workflow only when that audience is requested."

@@ -106,6 +106,18 @@ CI（`.github/workflows/build.yml`）只跑上表的「Swift 包」与「中继�
 
 模拟器场景（`SimulatorLiveTests` + `AskHumanLiveUITests`）把一次性 Mac 留在宿主进程里，手机侧是 `xcodebuild test-without-building` 启动的 XCUITest，两边用 `ui/` `host/` 目录里的「会合点」文件互相等待。它走完：配对与校验码 → 通知权限 → token → 中继登记 → Mac 持有句柄 → 前台单题 / 多题 → 权限确认（允许；带理由拒绝）→ 一个 `__agent-hook` 会话（App 以 `-AHFollowAgent` 启动，所以这个会话「会通知你」）：列表、实时观看、详情页的那行说明与列表行上的铃铛（没有关注按钮）、插话与读取回执 → 任务被关闭时新任务表单的提示 → App 离开前台 → 一次真 APNs 沙盒推送（模拟器收得到，扩展会运行；`simctl push` 不会运行扩展）→ 点击横幅 → 该 Agent 第一次结束回合的推送（一次性：之后会话移出通知集）→ 点击打开 Agent 页 → 历史 → 解除配对。一次性 Mac 的 `alertAfterSecs` 播种为 `0`（真实服务模式的 `RealBroker.settings()`），推送不依赖这台机器此刻是否空闲。配对码含 broker 密码，只经命名管道从宿主交给 UI 测试（不落文件、不进环境变量 / 剪贴板，码在屏幕上时不截图），`xcresult` 结束时删除，并在日志与模拟器键盘日志里扫描配对码。模拟器默认只卸载 App + `simctl keychain reset` + 等 CPU 静下来；`AH_E2E_SIM_ERASE=1` 才抹掉设备（首次开机要占满一个核好几分钟）。`AH_E2E_SHOTS=<目录>` 保留截图。
 
+## TestFlight 分发与朋友内测
+
+日常交付默认内部测试，构建号由本地 `ios-testflight-N` 标签和 Apple 状态共同确定；流程在
+[项目 skill](../.agents/skills/ios-testflight/SKILL.md)。朋友外测必须显式 `--audience external`：
+上传、Beta 审核与邮箱邀请是独立步骤，`VALID` 不代表审核通过。受限 helper 的实现与完成条件见
+[外测规格](specs/ios-external-testflight.md)，执行证据与待处理输入见[计划](plans/ios-external-testflight.md)。
+
+Macs 页「关于」提供隐私政策与内测接入指南，按 App 语言选中英文。
+公开材料仅来自 `docs/public/ios/` 的四个白名单页面，`scripts/build-ios-beta-site.mjs` 生成 `site-dist/`；
+GitHub Pages 工作流只允许手动触发。页面必须先上线、核实实际 URL 后才能交付带这些链接的 iOS 构建。
+审核联系人、朋友邮箱、连接串和中继运行配置不写进公开材料。
+
 ## 不变量与注意点
 
 - **请求详情不能把重连误报为 Mac 离线**：作答／确认页共用 `EngineState.requestConnection(macId:)` 与 `RequestConnectionNotice`，先判断手机连接阶段，再判断当前请求的目标 Mac。连接／重试中显示中性进度；仅在手机已连通且目标 `MacLink.macOffline` 时显示 Mac 离线。连接恢复保留页面和草稿，发送继续受就绪状态约束；见 `docs/specs/ios-answer-flow.md` §3.6。

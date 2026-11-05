@@ -1,0 +1,5 @@
+AskHuman connects your iPhone to the AI agents running on your own Mac. Answer questions and approval requests, inspect sessions, send instructions and manage project todos while away from your desk.
+
+This invitation-only beta is for developers with their own Mac, AskHuman desktop installation and EMQX broker. The maintainer provides the push relay. It is not a standalone AI chat service; agent operations use your own accounts and allowance. There is no in-app account registration or demo mode.
+
+Follow the setup guide before testing. Begin with pairing and a simple terminal question, then check lock-screen notifications and switching networks. Keep your Mac online. Send feedback through TestFlight with the app build, device, steps and time; remove passwords, pairing codes and confidential content from screenshots.

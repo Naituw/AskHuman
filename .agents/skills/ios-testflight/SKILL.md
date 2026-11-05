@@ -1,17 +1,17 @@
 ---
 name: ios-testflight
-description: Build, upload, and deliver AskHuman Mobile updates through internal TestFlight. Use when the user asks to install or update the iOS app remotely, publish a new internal build, or troubleshoot this project's TestFlight delivery.
+description: Build, upload, and deliver AskHuman Mobile updates through internal or explicitly requested external TestFlight. Use for remote iOS updates, friend beta invitations, Beta App Review, or troubleshooting this project's TestFlight delivery.
 ---
 
 # iOS TestFlight
 
-Deliver the requested iOS revision to the user's phone through the existing internal TestFlight setup. An explicit request to install or deliver a new version authorizes the upload to this existing audience; a code review or build-only request does not. Reuse the configured credentials and signing identity.
+Deliver the requested iOS revision through the existing TestFlight setup. Internal delivery is the default. For external testing, first read [references/external-testing.md](references/external-testing.md); it adds explicit audience selection, review materials, submission and invitation gates to the build steps below. An explicit request to install or deliver a new version authorizes the upload to this existing audience; a code review or build-only request does not. Reuse the configured credentials and signing identity.
 
 ## Established setup
 
 - App Store Connect: **AskHuman Mobile**, App ID **6828712684**.
 - Installed display name: **AskHuman**; bundle ID **com.naituw.humaninloop.ios**; team **DMJXDB9H6Q**.
-- Internal group: **AskHuman Internal**, automatically receiving subsequent builds. Uploads are internal-only; no external review or App Store submission is needed.
+- Internal group: **AskHuman Internal**, automatically receiving subsequent builds. Uploads default to internal-only; internal delivery needs no external review or App Store submission. External delivery must use `--audience external` and pass Beta App Review.
 - Baselines: every delivered build N has a local annotated tag `ios-testflight-N` on its source commit (build 2 predates the tags). Tags are not pushed. They are what lets `changes.mjs` list what a new build adds.
 - Local non-secret configuration: `~/.config/askhuman-release/app-store-connect.json` (`keyId`, `issuerId`, `credentialBackend=keychain`) and `testflight-export-options.plist`.
 - Credentials live in the login Keychain under service `com.naituw.askhuman.testflight`. The fixed, Developer ID-signed `testflight-helper` is authorized to use them. The distribution signing key stays in `testflight-signing.keychain-db`; its unlock password also lives in the login Keychain.
@@ -53,7 +53,7 @@ Paths below are relative to the repository root. Set `SKILL_DIR=.agents/skills/i
    python3 "$SKILL_DIR/scripts/upload.py" ios/build/AskHuman-TestFlight.xcarchive
    ```
 
-   Preflight checks both bundle IDs and versions, that the app and its extension ship to exactly iPhone and iPad (device family `1,2`), the iPad orientation declaration (all four, or `UIRequiresFullScreen`), production push environment, privacy manifest, internal-only export options, and the installed helper's signature. It does not read credentials. Fix an unexpected value in source configuration, regenerate, and rebuild; do not edit a signed archive. If the shipped device families change on purpose, update `upload.py` and `TestFlightHelper.swift` together and reinstall the helper.
+   Preflight checks both bundle IDs and versions, that the app and its extension ship to exactly iPhone and iPad (device family `1,2`), the iPad orientation declaration (all four, or `UIRequiresFullScreen`), production push environment, privacy manifest, the internal-only export template (external mode changes a temporary copy only), and the installed helper's signature. It does not read credentials. Fix an unexpected value in source configuration, regenerate, and rebuild; do not edit a signed archive. If the shipped device families change on purpose, update `upload.py` and `TestFlightHelper.swift` together and reinstall the helper.
 6. For an authorized delivery, upload that archive once:
 
    ```sh
@@ -80,14 +80,14 @@ TestFlight shows them under the build, in Simplified Chinese (`zh-Hans`) and Eng
 - Then one sentence per user-visible change (what it does and where to see it), writing a feature's commits as one entry; mention test, refactor and chore commits only when they change behavior; no commit hashes in the body; bullets use `•`.
 - Then 1–3 items under `请重点看` / `Please check` that need a real device, taken from the pending checks in `docs/PROGRESS.md` where they apply.
 - Chinese and English entries correspond one to one. If the build contains a change the user earlier chose to hold back, say so plainly.
-- At most 4000 characters (aim for 1500). Every internal tester can read them: no secrets, local paths or unreleased information.
+- At most 4000 characters (aim for 1500). Every tester with access to the build can read them: no secrets, local paths or unreleased information.
 - Apple's validator rejects some symbols, such as `✓` and `✕` (HTTP 409 `INVALID_TEXT … contains invalid characters`; nothing is written). Spell icons out in words ("checkmark", "cross"). `⋯`, `→`, `·`, `–` and CJK punctuation were accepted (build 8).
 
 ## Boundaries and recovery
 
-- Keychain access is granted to the stable signed helper, not to Python, Node, or a general credential-reading CLI. Its public operations return status, perform an export/upload, or read and write the TestFlight notes of one build (`notes`: this app only, `zh-Hans` and `en-US` only, fixed endpoints; deletion exists only in `probe` mode and only for an entry that same run created); no operation returns private-key contents. Scripts never read a persistent `.p8` or password file, nor pass a password in argv/environment.
+- Keychain access is granted to the stable signed helper, not to Python, Node, or a general credential-reading CLI. Its public operations return internal/external status, recover existing review contacts when explicitly requested, perform bounded external metadata/group/submission/invitation operations (see the external reference), perform an export/upload, or read and write the TestFlight notes of one build (`notes`: this app only, `zh-Hans` and `en-US` only, fixed endpoints; deletion exists only in `probe` mode and only for an entry that same run created); no operation returns private-key contents. Scripts never read a persistent `.p8` or password file, nor pass a password in argv/environment.
 - When the login Keychain is unlocked, the approved helper can work while the screen is locked. A locked login Keychain, missing item, or changed authorization must fail promptly and be resolved through the user. Do not enable access for all applications, use ad-hoc signing, or fall back to plaintext files.
-- Rebuilding the helper with its established identifier and Developer ID preserves Keychain authorization. Use `python3 "$SKILL_DIR/scripts/helper.py" install` when a reviewed helper update is needed; it keeps the replaced binary as `testflight-helper.previous`, and renaming that file back undoes the update. Ordinary uploads reuse the installed binary. After a helper change, check `status.mjs`, `upload.py <archive> --check-signing`, and `helper.py notes --mode read`; to exercise the write path run `notes --mode probe` once against an already delivered VALID build that has no notes (it writes a marker text, reads it back, and deletes it). Never write real text to any build except the one just delivered. For credential repair, read the recovery reference first.
+- Rebuilding the helper with its established identifier and Developer ID preserves Keychain authorization. Use `python3 "$SKILL_DIR/scripts/helper.py" install` when a reviewed helper update is needed; it keeps the replaced binary as `testflight-helper.previous`, and renaming that file back undoes the update. Ordinary uploads reuse the installed binary. After a helper change, check `status.mjs`, `upload.py <archive> --check-signing`, and `helper.py notes --mode read`; if the notes write path changed, exercise it with `notes --mode probe` once against an already delivered VALID build that has no notes (it writes a marker text, reads it back, and deletes it). Never write real text to any build except the one just delivered. For credential repair, read the recovery reference first.
 - A force-killed process cannot run cleanup; the next exclusive export removes stale helper-owned temporary directories. Keep the credential directory `0700` and temporary key files `0600`. The helper never writes temporary credentials into the project.
 - Preserve the existing bundle ID, team, and shared keychain group so an update retains pairing identity. Do not create an external/public group or add other testers without a request covering that audience.
 - For missing/expired credentials, certificate/profile failures, or initial setup on another Mac, read [references/signing-and-recovery.md](references/signing-and-recovery.md). Do not revoke unrelated certificates or increase API privileges to get past a failure.

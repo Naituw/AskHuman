@@ -381,6 +381,6 @@ test("NotesRules.swift passes its own tests and the shared cases", { skip: !canC
 });
 
 test("the signed helper's sources still type-check together", { skip: !canCompileSwift && "needs macOS with swiftc" }, () => {
-  const check = spawnSync("xcrun", ["swiftc", "-typecheck", "-parse-as-library", join(scriptsDir, "TestFlightHelper.swift"), join(scriptsDir, "NotesRules.swift")], { encoding: "utf8" });
+  const check = spawnSync("xcrun", ["swiftc", "-typecheck", "-parse-as-library", ...["TestFlightHelper.swift", "NotesRules.swift", "ExternalStatus.swift", "DistributionRules.swift", "ExternalTesting.swift"].map(name => join(scriptsDir, name))], { encoding: "utf8" });
   assert.equal(check.status, 0, check.stderr);
 });

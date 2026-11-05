@@ -16,7 +16,7 @@ import uuid
 
 IDENTIFIER = "com.naituw.askhuman.testflight-helper"
 IDENTITY = "Developer ID Application: Wu Tian (DMJXDB9H6Q)"
-HELPER_SOURCES = ("TestFlightHelper.swift", "NotesRules.swift")
+HELPER_SOURCES = ("TestFlightHelper.swift", "NotesRules.swift", "ExternalStatus.swift", "DistributionRules.swift", "ExternalTesting.swift")
 
 # Rules for the `notes` operation. NotesRules.swift enforces the same rules inside the helper;
 # notes-rules-cases.json is the contract both implementations must reproduce.
@@ -127,9 +127,11 @@ def install(root):
           + (" The previous helper is kept as testflight-helper.previous." if kept else ""))
 
 
-def invoke(action, archive, config, request=None):
+def invoke(action, archive, config, request=None, audience="internal"):
     import plistlib
 
+    if audience not in ("internal", "external") or (audience != "internal" and action not in ("upload", "export")):
+        raise ValueError("Only upload/export accept a TestFlight audience (internal or external).")
     binary = config.parent / "testflight-helper"
     verify(binary)
     domain = f"gui/{os.getuid()}"
@@ -144,6 +146,8 @@ def invoke(action, archive, config, request=None):
         args = [str(binary), "--config", str(config), "--result", str(result), action]
         if archive is not None:
             args.append(str(archive.resolve()))
+            if audience != "internal":
+                args.append(audience)
         if request is not None:
             # The request travels in an owner-only file inside this throwaway directory, never in argv or the environment.
             request_file = folder / "request.json"
@@ -209,9 +213,11 @@ def dry_run_report(request):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["install", "migrate", "status", "export", "upload", "notes"])
+    parser.add_argument("action", choices=["install", "migrate", "status", "external-status", "contact-sources", "external", "export", "upload", "notes"])
     parser.add_argument("archive", nargs="?", type=Path)
     parser.add_argument("--config", type=Path, default=Path.home() / ".config/askhuman-release/app-store-connect.json")
+    parser.add_argument("--audience", choices=("internal", "external"), default="internal")
+    parser.add_argument("--request", type=Path, help="Private JSON request for a bounded external testing operation")
     notes = parser.add_argument_group("notes", "read, write or probe a build's TestFlight test information")
     notes.add_argument("--build", help="build number (CFBundleVersion)")
     notes.add_argument("--mode", choices=NOTES_MODES, help="read: show it; write: set it; probe: write a marker to an empty locale, read it back, delete it")
@@ -220,8 +226,19 @@ def main():
     notes.add_argument("--dry-run", action="store_true", help="validate and describe the request without contacting anything")
     args = parser.parse_args()
     config = args.config.expanduser().resolve()
+    if args.audience != "internal" and args.action not in ("upload", "export"):
+        parser.error("--audience external only applies to upload/export.")
     if args.action != "notes" and any([args.build, args.mode, args.zh, args.en, args.dry_run]):
         parser.error("--build, --mode, --zh, --en and --dry-run only apply to the notes action.")
+    if args.action == "external":
+        if args.archive is not None or args.request is None:
+            parser.error("external requires --request and no archive; use metadata, group, submit or invite in its JSON mode.")
+        if args.request.stat().st_size > 65536:
+            parser.error("External testing requests may not exceed 64 KiB.")
+        request = json.loads(args.request.read_text(encoding="utf-8"))
+        return invoke("external", None, config, request=request)
+    if args.request is not None:
+        parser.error("--request only applies to external.")
     if args.action == "install":
         install(config.parent)
         return 0
@@ -249,7 +266,7 @@ def main():
         return invoke("notes", None, config, request=notes_wire(request))
     if (args.action in ("upload", "export")) != (args.archive is not None):
         parser.error("Only upload/export require an archive path.")
-    return invoke(args.action, args.archive, config)
+    return invoke(args.action, args.archive, config, audience=args.audience)
 
 
 if __name__ == "__main__":

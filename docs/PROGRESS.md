@@ -3,6 +3,13 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 进行中：iOS 朋友外部 TestFlight 测试
+
+用户已批准 [开发计划](plans/ios-external-testflight.md)：首批 1–5 位朋友，各自 Mac 与 EMQX，开发者提供现有推送中继；外部邮件邀请，无公开加入链接，先不提供演示模式、直接尝试 Beta 审核。
+工作树 `HumanInLoop-ios-external-testflight`（`codex/ios-external-testflight`），不挂渠道预设。外测状态/联系人查询、显式外部上传、受限 metadata/group/submit/invite 工具、中英文公开材料与 App 内链接已实现；24 项工具回归、iOS 页面回归通过。尚未上线 Pages、上传外测构建或送审。
+用户暂不方便配置，要求先完成所有可独立推进工作，再集中处理必要输入。联系方式先从 Apple 现有应用资料核查；不猜测或公开审核电话。GitHub Pages 优先，但目前未启用，实际配置需要后续确认。
+完成标准与分阶段验证见计划；未经批准不加演示模式、不迁移中继、不自动创建定时任务。
+
 ## 待平台验收：Daemon 更新接班的 Windows / Linux 原生路径
 
 2026-11-05 [更新接班与错误卡修复](specs/daemon-update-and-failure-recovery.md)已合并 main 并装为日常版。

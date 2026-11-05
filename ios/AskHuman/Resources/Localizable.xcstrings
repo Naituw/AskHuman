@@ -910,6 +910,16 @@
         }
       }
     },
+    "Beta setup guide" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内测接入指南"
+          }
+        }
+      }
+    },
     "Broker" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3515,6 +3525,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上一条消息"
+          }
+        }
+      }
+    },
+    "Privacy Policy" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隐私政策"
           }
         }
       }

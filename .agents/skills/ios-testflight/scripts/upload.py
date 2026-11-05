@@ -74,7 +74,9 @@ def inspect_archive(archive):
     return info["CFBundleShortVersionString"], info["CFBundleVersion"]
 
 
-def prepare(archive, config_path):
+def prepare(archive, config_path, audience="internal"):
+    if audience not in ("internal", "external"):
+        raise ValueError("Audience must be internal or external.")
     root = config_path.parent
     if root.stat().st_uid != os.getuid() or root.stat().st_mode & 0o077:
         raise RuntimeError("The local configuration directory must be owner-only.")
@@ -91,21 +93,24 @@ def prepare(archive, config_path):
         raise RuntimeError("Export options need profiles for both the app and its notification extension.")
     version, build = inspect_archive(archive)
     print(json.dumps({"archive": str(archive), "bundleId": BUNDLE_ID, "version": version, "build": build,
-                      "credentialBackend": "keychain", "internalOnly": True}, indent=2), flush=True)
+                      "credentialBackend": "keychain", "audience": audience,
+                      "internalOnly": audience == "internal"}, indent=2), flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
     parser.add_argument("--config", type=Path, default=Path.home() / ".config/askhuman-release/app-store-connect.json")
+    parser.add_argument("--audience", choices=("internal", "external"), default="internal",
+                        help="Default: internal. External permits Beta App Review; it does not submit or invite anyone.")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--upload", action="store_true", help="Deliver through internal TestFlight")
+    mode.add_argument("--upload", action="store_true", help="Upload for the explicitly selected TestFlight audience")
     mode.add_argument("--check-signing", action="store_true", help="Export locally without uploading to Apple")
     args = parser.parse_args()
     archive, config = args.archive.resolve(), args.config.expanduser().resolve()
-    prepare(archive, config)
+    prepare(archive, config, args.audience)
     if args.upload or args.check_signing:
-        return invoke("upload" if args.upload else "export", archive, config)
+        return invoke("upload" if args.upload else "export", archive, config, audience=args.audience)
     print("Preflight passed. Nothing uploaded; add --upload for an authorized delivery.")
     return 0
 

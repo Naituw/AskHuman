@@ -39,3 +39,6 @@ demo/tray-menu-close/swift/test_fix
 # CloudKit helper of the todo sync: xcodegen output and build products
 todo-sync-helper/build/
 todo-sync-helper/Config/
+
+# Generated public beta documentation
+site-dist/

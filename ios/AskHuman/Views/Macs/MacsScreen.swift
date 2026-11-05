@@ -130,6 +130,10 @@ private struct MacsList: View {
 
             Section {
                 LabeledContent("Version", value: Self.version)
+                Link("Privacy Policy", destination: Self.privacyURL)
+                    .accessibilityIdentifier("privacy-policy")
+                Link("Beta setup guide", destination: Self.betaGuideURL)
+                    .accessibilityIdentifier("beta-setup-guide")
                 if let host = store.state.brokerHost {
                     LabeledContent("Broker", value: host)
                 }
@@ -180,6 +184,16 @@ private struct MacsList: View {
         let build = info?["CFBundleVersion"] as? String ?? "0"
         return "\(short) (\(build))"
     }
+
+    private static var privacyURL: URL {
+        URL(string: "https://naituw.github.io/AskHuman/" + (usesChinese ? "privacy-zh/" : "privacy/"))!
+    }
+
+    private static var betaGuideURL: URL {
+        URL(string: "https://naituw.github.io/AskHuman/" + (usesChinese ? "beta-zh/" : "beta/"))!
+    }
+
+    private static var usesChinese: Bool { Bundle.main.preferredLocalizations.first?.hasPrefix("zh") == true }
 }
 
 private struct MacRow: View {

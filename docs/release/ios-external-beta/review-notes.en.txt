@@ -1,0 +1,16 @@
+AskHuman is a companion for developer-owned Macs running AskHuman and AI coding agents. It is not a standalone chat service. There is no app login, shared account or in-app demo mode. Full functionality requires a Mac and a separately configured MQTT broker. The iOS app is supplied through TestFlight; the reviewer does not need to compile or sign the iOS app.
+
+Setup guide: https://naituw.github.io/AskHuman/beta/
+Privacy policy: https://naituw.github.io/AskHuman/privacy/
+
+Before submission, the developer must append the compatible Mac package download/source revision and the existing push-relay URL to these notes. Do not submit this draft with that information missing. Do not supply an expiring pairing QR code: the reviewer generates a new one on their own Mac.
+
+Review steps:
+1. Install the specified AskHuman Mac companion. Enable experimental features in General settings, then enable the iOS App channel under Experimental.
+2. Configure your own EMQX Serverless broker using the guide's authentication/topic rules, enter the supplied push-relay URL and run Test Connection. The relay holds the developer's APNs signing credentials; they are not needed on the reviewer's Mac.
+3. On the Mac, select Pair New Phone. In the iOS app, open Macs, Add a Mac and scan the QR code. Compare the six-digit codes and approve on the Mac within five minutes.
+4. Run AskHuman -q "Review test: please reply received" in the Mac terminal. Answer on the phone and observe the terminal result. This test does not require any paid AI model request.
+5. Temporarily set the Mac's push timing to Immediately, lock the phone and send another question. Check the notification, open it and answer. The usual default waits for fifteen minutes of Mac inactivity.
+6. Session inspection and task creation require the reviewer's own configured agents. Remote task creation must also be enabled on the Mac. The Mac must remain online.
+
+If this companion-device setup prevents review, please contact the review contact with the required access or demonstration material. We have not supplied a hosted shared Mac, broker account or demo environment in this submission.

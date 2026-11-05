@@ -310,7 +310,7 @@ private func isShippedDeviceFamily(_ value: Any?) -> Bool {
     return numbers.map(\.intValue).sorted() == [1, 2]
 }
 
-private func exportArchive(_ archive: URL, root: URL, config: [String: Any], upload: Bool) throws -> Int32 {
+private func exportArchive(_ archive: URL, root: URL, config: [String: Any], upload: Bool, audience: TestFlightAudience = .internal) throws -> Int32 {
     let lockFD = open(root.appendingPathComponent("testflight-upload.lock").path, O_CREAT | O_RDWR, 0o600)
     guard lockFD >= 0 else { throw Failure("Cannot open the upload lock.") }
     defer { close(lockFD) }
@@ -334,7 +334,7 @@ private func exportArchive(_ archive: URL, root: URL, config: [String: Any], upl
           options["testFlightInternalTestingOnly"] as? Bool == true,
           let profiles = options["provisioningProfiles"] as? [String: String],
           profiles[bundleID] != nil, profiles[bundleID + ".notification"] != nil else { throw Failure("Only the established internal TestFlight signing configuration is supported.") }
-    options["destination"] = upload ? "upload" : "export"
+    options = audience.exportOptions(from: options, upload: upload)
     var temporaryRoot = root.appendingPathComponent("temporary-keys", isDirectory: true)
     try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     var backupPolicy = URLResourceValues()
@@ -425,12 +425,34 @@ private enum TestFlightHelper {
                 try store(Data(contentsOf: root.appendingPathComponent("signing-keychain-password")), account: signingAccount)
                 try emit(["migrated": true, "service": service, "secretContentsReturned": false])
             case "status": try await status(config)
+            case "external-status", "contact-sources":
+                guard args.count == 6 else { throw Failure("Inspection does not accept arguments.") }
+                let transport = ExternalStatusTransport(authorization: try token(config))
+                defer { transport.close() }
+                let inspector = ExternalStatus(get: transport.get)
+                if args[5] == "contact-sources" { try emit(try await inspector.contacts()) }
+                else { try emit(try await inspector.inspect()) }
+            case "external":
+                guard args.count == 7 else { throw Failure("An external testing request file is required.") }
+                let request = try ExternalRequest(json(URL(fileURLWithPath: args[6])))
+                let lockFD = open(root.appendingPathComponent("testflight-upload.lock").path, O_CREAT | O_RDWR, 0o600)
+                guard lockFD >= 0 else { throw Failure("Cannot open the TestFlight operation lock.") }
+                defer { close(lockFD) }
+                guard flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw Failure("Another TestFlight mutation is running.") }
+                defer { _ = flock(lockFD, LOCK_UN) }
+                let transport = ExternalStatusTransport(authorization: try token(config))
+                defer { transport.close() }
+                try emit(try await ExternalTesting(send: transport.send).run(request))
             case "notes":
                 guard args.count == 7 else { throw Failure("A notes request file is required.") }
                 try await notes(config, root: root, request: try NotesRules.loadRequest(path: args[6]))
             case "upload", "export":
-                guard args.count == 7 else { throw Failure("An archive path is required.") }
-                code = try exportArchive(URL(fileURLWithPath: args[6]), root: root, config: config, upload: args[5] == "upload")
+                guard args.count == 7 || args.count == 8,
+                      let audience = TestFlightAudience(rawValue: args.count == 8 ? args[7] : "internal") else {
+                    throw Failure("An archive and a valid TestFlight audience (internal or external) are required.")
+                }
+                code = try exportArchive(URL(fileURLWithPath: args[6]), root: root, config: config,
+                                         upload: args[5] == "upload", audience: audience)
             default: throw Failure("Unsupported operation; this helper does not export credential contents.")
             }
         } catch {
