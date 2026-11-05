@@ -741,6 +741,10 @@ private struct SendBar: View {
                 }
                 primaryButton
             }
+            // "Send and go away" is the longest thing the row ever says. Left to the stack's even split, the count gets
+            // room it does not need and the words are cut ("Send and go…") on the classic bar; with the priority the
+            // buttons are sized first and only the count gives way.
+            .layoutPriority(composer.directive == nil ? 0 : 1)
         }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -772,6 +776,9 @@ private struct SendBar: View {
             }
         }
         .font(.subheadline.weight(.medium))
+        // Only while an instruction is armed does the count have to give way to the longer button.
+        .lineLimit(composer.directive == nil ? nil : 1)
+        .minimumScaleFactor(composer.directive == nil ? 1 : 0.8)
         .accessibilityLabel(Text("Answered \(composer.answeredCount)/\(composer.questionCount)"))
         .accessibilityIdentifier("answered-count")
     }
