@@ -114,6 +114,9 @@ Message、题干及 Confirm 的 Markdown 链接共用 `lib/markdownLinks.ts`，�
 的链接保持原界面。Popup 建窗时注入 `popup_navigation.js`，在主文档捕获阶段取消链接
 的默认 click / auxclick 导航，继续让正文处理器打开目标，不影响 Mermaid sandbox 子帧。
 合并与独立模式使用相同保护，避免链接替换整个作答页面及丢失草稿；规则见规格 §20。
+`popup_navigation.rs` 在 WebView 原生导航层再校验完整初始文档 URL（保留 view / effect 查询参数），
+拒绝本地路径的 SPA 回退、其他页面与新窗口请求；允许原文档片段和 Mermaid sandbox 文档。
+被拦截动作只记录固定 `popup_navigation / blocked` 日志，不记录链接路径。DOM 点击仍负责系统打开。
 
 ## 稍后回答与小窗
 

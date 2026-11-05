@@ -35,6 +35,18 @@ pub const CODEX_DIRECT_ONLY_NAMESPACE: &str = "mcp__askhuman";
 pub const CODEX_STARTUP_TIMEOUT_SEC: i64 = 30;
 /// Codex MCP 工具调用超时（秒）：取很大值，等待人类回应不被取消（spec D6）。
 pub const CODEX_TOOL_TIMEOUT_SEC: i64 = 86400;
+// HTTP-only options must not survive conversion of our Codex entry to stdio.
+const CODEX_HTTP_ONLY_FIELDS: &[&str] = &[
+    "url",
+    "bearer_token",
+    "bearer_token_env_var",
+    "http_headers",
+    "env_http_headers",
+    "http_headers_helper",
+    "oauth",
+    "oauth_resource",
+    "auth",
+];
 /// Claude Code（CLI）MCP 工具调用超时（**毫秒**）：写入 `mcpServers.askhuman.timeout`，覆盖其
 /// 默认 60s（MCP TS SDK `DEFAULT_REQUEST_TIMEOUT_MSEC`），否则等待人类超过 60s 会被 `-32001` 取消。
 /// 取 24h，与 Codex 的 `tool_timeout_sec`(86400s) 对齐。Cursor 的 MCP 超时硬编码 ~60s、不可配置，
@@ -866,6 +878,11 @@ fn apply_install_toml_outcome_env(
     entry.insert("startup_timeout_sec", value(startup));
     entry.insert("tool_timeout_sec", value(tool));
     if target == AgentTarget::Codex {
+        // Codex selects stdio when command is present and rejects HTTP options,
+        // even empty ones. Only normalize our entry; other servers keep theirs.
+        for field in CODEX_HTTP_ONLY_FIELDS {
+            entry.remove(field);
+        }
         // AskHuman before v0.15 wrote `approval_mode` straight under the server table. Codex
         // only reads `default_tools_approval_mode` there (`approval_mode` is a per-tool key
         // under `tools.<name>`), so it ignores the old key and warns about it at every start.
@@ -1080,7 +1097,11 @@ fn toml_entry_matches(target: AgentTarget, text: &str, command: &str) -> bool {
         None => entry.get("tool_timeouts").is_none(),
     };
     let direct_only_ok = target != AgentTarget::Codex || codex_direct_only_matches(&doc);
-    cmd_ok && args_ok && startup_ok && tool_ok && ask_ok && direct_only_ok
+    let transport_ok = target != AgentTarget::Codex
+        || CODEX_HTTP_ONLY_FIELDS
+            .iter()
+            .all(|field| entry.get(field).is_none());
+    cmd_ok && args_ok && startup_ok && tool_ok && ask_ok && direct_only_ok && transport_ok
 }
 
 // MARK: - 私有 IO / 工具
@@ -1781,6 +1802,119 @@ mod tests {
         let new = apply_install_toml(CODEX, &old, EXE).unwrap();
         assert!(toml_entry_matches(CODEX, &new, EXE));
         assert!(!toml_entry_matches(CODEX, &new, "/old/AskHuman"));
+    }
+
+    #[test]
+    fn codex_http_options_need_update_even_when_empty() {
+        let installed = apply_install_toml(CODEX, "", EXE).unwrap();
+        for option in [
+            "url = \"https://example.invalid/mcp\"",
+            "url = \"\"",
+            "bearer_token = \"\"",
+            "bearer_token_env_var = \"\"",
+            "http_headers = {}",
+            "env_http_headers = {}",
+            "http_headers_helper = \"\"",
+            "oauth = {}",
+            "oauth_resource = \"\"",
+            "auth = \"oauth\"",
+        ] {
+            let mixed = installed.replacen(
+                "[mcp_servers.askhuman]",
+                &format!("[mcp_servers.askhuman]\n{option}"),
+                1,
+            );
+            assert!(toml_installed(&mixed));
+            assert!(!toml_entry_matches(CODEX, &mixed, EXE), "{option}");
+            let repaired = apply_install_toml(CODEX, &mixed, EXE).unwrap();
+            assert_eq!(repaired, installed, "{option}");
+            assert!(toml_entry_matches(CODEX, &repaired, EXE));
+        }
+    }
+
+    #[test]
+    fn codex_http_conversion_preserves_stdio_options_and_other_servers() {
+        let input = r#"# User settings
+model = "gpt-5"
+
+[mcp_servers.other]
+url = "https://other.invalid/mcp"
+bearer_token_env_var = "OTHER_TOKEN"
+
+[mcp_servers.askhuman]
+url = "https://old.invalid/mcp"
+bearer_token = "old-token"
+bearer_token_env_var = "OLD_TOKEN"
+http_headers_helper = "old-header-helper"
+oauth_resource = "https://old.invalid"
+auth = "oauth"
+env_vars = ["DISPLAY"]
+cwd = "/workspace"
+enabled = false
+disabled_tools = ["todo_add"]
+default_tools_approval_mode = "prompt"
+
+[mcp_servers.askhuman.http_headers]
+Authorization = "old-token"
+
+[mcp_servers.askhuman.env_http_headers]
+Authorization = "OLD_TOKEN"
+
+[mcp_servers.askhuman.oauth]
+client_id = "old-client"
+
+[mcp_servers.askhuman.env]
+DISPLAY = ":1"
+
+[mcp_servers.askhuman.tools.ask]
+approval_mode = "prompt"
+"#;
+        let out = apply_install_toml(CODEX, input, EXE).unwrap();
+        let before: toml_edit::DocumentMut = input.parse().unwrap();
+        let after: toml_edit::DocumentMut = out.parse().unwrap();
+        let entry = toml_entry(&after).unwrap();
+        assert!(toml_entry_matches(CODEX, &out, EXE));
+        assert!(out.starts_with("# User settings\nmodel = \"gpt-5\""));
+        assert_eq!(
+            before["mcp_servers"]["other"].to_string(),
+            after["mcp_servers"]["other"].to_string()
+        );
+        for field in [
+            "env_vars",
+            "cwd",
+            "enabled",
+            "disabled_tools",
+            "default_tools_approval_mode",
+            "env",
+            "tools",
+        ] {
+            assert_eq!(
+                toml_entry(&before).unwrap().get(field).unwrap().to_string(),
+                entry.get(field).unwrap().to_string(),
+                "{field}"
+            );
+        }
+        for field in [
+            "url",
+            "bearer_token",
+            "bearer_token_env_var",
+            "http_headers",
+            "env_http_headers",
+            "http_headers_helper",
+            "oauth",
+            "oauth_resource",
+            "auth",
+        ] {
+            assert!(entry.get(field).is_none(), "{field}");
+        }
+        assert_eq!(apply_install_toml(CODEX, &out, EXE).unwrap(), out);
+        // Grok uses the same TOML editor, but this migration belongs only to Codex.
+        let grok = apply_install_toml(GROK, input, EXE).unwrap();
+        let grok_doc: toml_edit::DocumentMut = grok.parse().unwrap();
+        assert_eq!(
+            toml_entry(&grok_doc).unwrap().get("url").unwrap().as_str(),
+            Some("https://old.invalid/mcp")
+        );
     }
 
     #[test]

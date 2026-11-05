@@ -13,6 +13,7 @@ pub(crate) mod popup_canvas;
 mod popup_drag_front;
 pub mod popup_inbox;
 pub mod popup_inbox_geometry;
+mod popup_navigation;
 pub mod popup_preview;
 pub mod popup_preview_actions;
 pub(crate) mod popup_preview_geometry;
@@ -1067,9 +1068,22 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                             url.push_str("&layoutReview=1");
                         }
                         append_window_effect_query(&mut url, effective_window_effect);
+                        let document_url = popup_navigation::document_url(app.config(), &url)?;
                         let builder =
                             WebviewWindowBuilder::new(app, "popup", WebviewUrl::App(url.into()))
                                 .initialization_script(include_str!("popup_navigation.js"))
+                                .on_navigation(move |destination| {
+                                    let allowed = popup_navigation::allows(&document_url, destination);
+                                    if !allowed {
+                                        crate::daemon::lifecycle::log_runtime_event(
+                                            "popup_navigation",
+                                            "blocked",
+                                            None,
+                                        );
+                                    }
+                                    allowed
+                                })
+                                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                                 .title(crate::development::window_title(i18n::tr(lang, "title.popup")))
                                 .inner_size(initial_size.0, initial_size.1)
                                 .min_inner_size(minimum.0, minimum.1)
