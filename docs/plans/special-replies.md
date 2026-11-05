@@ -1,6 +1,6 @@
 # 计划：特殊回复（手机选待办、离开模式、本会话不再使用、快捷回复）
 
-> 需求：`docs/specs/special-replies.md`（决策编号 D1–D40、默认做法 N1–N10 均指其 §3）。状态：2026-11-05 用户批准设计并授权「按顺序全部实现」；实现在分支 `feat/special-replies`（worktree `HumanInLoop-special-replies`，Dev Instance）上进行，进度与差异见文末「实施记录」。下文的文件名与步骤是起草时对代码现状的判断，**实施时以代码为准，并在文末「实施记录」补记差异**。
+> 需求：`docs/specs/special-replies.md`（决策编号 D1–D40、默认做法 N1–N10 均指其 §3）。状态：2026-11-05 用户批准设计并授权「按顺序全部实现」；实现在分支 `feat/special-replies`（worktree `HumanInLoop-special-replies`，Dev Instance）上完成，2026-11-05 经用户同意快进合入本地 main 并装为日常版（未推送；worktree 与分支随后清理），进度与差异见文末「实施记录」。下文的文件名与步骤是起草时对代码现状的判断，**实施时以代码为准，并在文末「实施记录」补记差异**。
 > 分支 / 工作方式：见「开工前定下的事」。每一期单独验收、单独提交（D1），期与期之间互不阻塞。
 
 ## 阶段

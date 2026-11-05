@@ -360,13 +360,13 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] Windows / Linux：在真实弹窗里按 Ctrl+T 打开浮层、添加、Esc，再在一张确认卡里验 Enter / Esc 不漏出去（需求 §6.3 要求真机确认一次；macOS 已在隔离实例里按过）
 - [ ] iOS 真机：请求页「⋯」→「添加待办…」。已随内测包 `0.1.0 (8)` 出去（2026-11-05，更新 TestFlight 即可）；对应的 Mac 也要装带这次改动的版本（本机日常版已装），否则碰到「不在待办候选里的在途项目」会回「这个项目已不在」
 
-## 待验收：特殊回复（手机选待办 / 离开模式 / 本会话不再使用 / 快捷回复）——P1–P4 已实现并提交在 `feat/special-replies`，未推送、未合回 main、未出 TestFlight
+## 待验收：特殊回复（手机选待办 / 离开模式 / 本会话不再使用 / 快捷回复）——P1–P4 已实现，已快进合入 main（本地，未推送）并装为日常版，未出 TestFlight
 
 用户 2026-11-04 提出，经十轮 AskHuman 问答定稿；2026-11-05 授权「按顺序全部实现」（当时人不在，所以开工前的几个问题由实施者按默认值定下，记在计划的「开工前定下的事」里，
 用户回来后可否决）。需求 [`docs/specs/special-replies.md`](specs/special-replies.md)
 （界面稿在 `docs/assets/special-replies/`，浏览器原型在 `src/prototype/`，入口见 `docs/development.md`），计划
 [`docs/plans/special-replies.md`](plans/special-replies.md)（文末「实施记录」按期记差异与验证结果，「总体没有验证的部分」是下面清单的出处）。
-实现在 worktree `../HumanInLoop-special-replies`（分支 `feat/special-replies`，Dev Instance；2026-11-05 已两次把 main（最近一次是 `b03606fc`）合进分支，所以对 main 可直接 fast-forward）；协议号 5 是并入未发布的那一版（v0.16.0 是 4）。
+实现在分支 `feat/special-replies`（worktree 里开发，Dev Instance），2026-11-05 经用户同意快进合入本地 main（到 `6d6aed5f`，**未推送**），并 `./scripts/install.sh` 装为日常版（装机时日常 daemon 有一个别的会话的在途请求，换新走原地交接，请求没有被打断，日志里可见 fp `a81bff16` → `aaa29bbe`）；worktree 与分支随后清理。协议号 5 是并入未发布的那一版（v0.16.0 是 4）。
 
 做了什么：四块能力共用 Daemon 里的「模式引擎」（`daemon/away.rs`，状态落盘 `~/.askhuman/state/away.json`）——① iOS 在提问里选项目待办、What's next 看完整队列；
 ② 离开模式（Agent 的每次提问与 whats-next 都被自动回复，带 `--escalate` 才像没离开一样送达；只能手动结束；Mac 桌面胶囊 / 托盘 / 控制台，手机常驻条）与会话级「不再使用 AskHuman」；
@@ -386,8 +386,7 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] **用户复核**需求 §3.10 里**没有单独确认过**的默认做法 N1–N10（实现按原文采用），其中「欢迎回来」的空闲门槛取 5 分钟（第 5 轮图文）；第 9 轮的提问正文误写成 15 分钟，以 5 分钟为准
 - [ ] **真实 Agent 端到端**：Claude Code / Codex / Cursor 各一轮（开离开 → 提问与 whats-next 被自动回复 → `--escalate` 送达 → 结束；「不再使用」→ 即时提示、Stop 确认静音、权限与出错卡仍在）。要先有用户对真实 Agent 调用的授权
 - [ ] **桌面胶囊在真实桌面上的交互**：悬停 / 点击展开、拖动后位置记忆、「欢迎回来」的触发（5 分钟空闲后敲键盘）、全屏应用与多桌面上的可见性。这台机器截不了屏、Computer Use 也列不出 AskHuman 的后台应用，只验了窗口几何（`CGWindowListCopyWindowInfo`）与浏览器里的真实组件；Windows / Linux 的托盘月亮与控制台也没看过
-- [ ] **iOS**：iOS 17 的降级条样式、iPad / Duo 大屏上的常驻条与真机一轮（iOS 18.5 模拟器的经典条已逐屏看过并跑过 `AskHumanAwayUITests`，修了「发送并离开」按钮被截断；其余在 iOS 27.0 模拟器上验，见计划「iOS 18.5 经典条补验」）；TestFlight **没有出**（用户没要；要出走 `ios-testflight` 技能），Mac 也要装带这次改动的版本，否则手机上没有离开 / 待办入口（`caps.away` / `caps.answerTodos` 把关）
-- [ ] **合回 main**：分支未推送。2026-11-05 收尾时 main 已全部包含在分支里（`git rev-list --left-right --count main...feat/special-replies` 左边，即 main 独有的提交，是 0），main 检出干净，所以 `git -C <main 检出> merge --ff-only feat/special-replies` 即可；合完后 `./scripts/install.sh` 装为日常版（如果合之前 main 又前进了，先在分支里 `git merge main`）
+- [ ] **iOS**：iOS 17 的降级条样式、iPad / Duo 大屏上的常驻条与真机一轮（iOS 18.5 模拟器的经典条已逐屏看过并跑过 `AskHumanAwayUITests`，修了「发送并离开」按钮被截断；其余在 iOS 27.0 模拟器上验，见计划「iOS 18.5 经典条补验」）；TestFlight **没有出**（用户没要；要出走 `ios-testflight` 技能）：本机 Mac 已装带这次改动的版本，但手机上的离开 / 待办入口要等出了新的 TestFlight 包才有（`caps.away` / `caps.answerTodos` 把关：新 App 连老 Mac 不显示入口，老 App 没有这些界面）
 - [ ] 控制台里 Agent 页头的横幅 / 会话菜单在真实数据上的样子没再核对（组件与逻辑有测试）
 
 ## 待验收：Cursor 任务的 Max 模式控制与 Agents 窗口新建任务（已合回 main 并装为日常版；真实验证阶段 1–2 已过，阶段 3–4 等用户自己做）
