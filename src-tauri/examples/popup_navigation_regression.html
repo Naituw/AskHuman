@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AskHuman navigation regression</title>
+<textarea id="draft"></textarea>
+<a href="/Users/test/My%20Report.md:82:5"><span>Local document</span></a>
+<script>
+(async () => {
+  const invoke = window.__TAURI__.core.invoke;
+  const initial = location.href;
+  const view = new URL(initial).searchParams.get("view");
+  // A leaked navigation drops the view parameter, exactly as in the user report.
+  if (!view) {
+    await invoke("report_results", { report: { passed: false, error: "shared popup requires a request ID", url: location.href } });
+    return;
+  }
+  const draft = document.getElementById("draft");
+  draft.value = "unsent draft " + view;
+  const failures = [];
+  const check = (condition, name) => { if (!condition) failures.push(name); };
+  const settle = () => new Promise(resolve => setTimeout(resolve, 100));
+  // Ordinary DOM links are covered by the initialization script, before Vue mounts.
+  for (const type of ["click", "auxclick"]) {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true });
+    document.querySelector("a span").dispatchEvent(event);
+    check(event.defaultPrevented, type + " prevented");
+  }
+  // Native navigation does not dispatch DOM click events. Exercise the actual WebView
+  // decision callback, including the SPA path that destroyed the question and draft.
+  for (const destination of [
+    "/Users/test/My%20Report.md:82:5", "docs/report.md#L8", "index.html",
+    "?view=settings", "https://example.invalid/", "file:///Users/test/report.md"
+  ]) {
+    location.assign(destination);
+    await settle();
+    check(location.href === initial, "URL preserved: " + destination);
+    check(document.getElementById("draft") === draft && draft.value === "unsent draft " + view,
+      "draft preserved: " + destination);
+  }
+  // Mermaid's deliberately script-free sandbox must still load through the same callback.
+  const frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", "");
+  const loaded = new Promise(resolve => {
+    frame.onload = () => resolve(true);
+    setTimeout(() => resolve(false), 2000);
+  });
+  frame.src = "data:text/html;charset=UTF-8;base64," + btoa("<svg xmlns='http://www.w3.org/2000/svg' width='30' height='20'></svg>");
+  document.body.appendChild(frame);
+  check(await loaded, "sandboxed diagram loaded");
+  window.open("/Users/test/report.md", "_blank");
+  await settle();
+  check(location.href === initial, "new-window request preserves document");
+  await invoke("report_results", { report: { passed: failures.length === 0, view, failures, url: location.href, draft: draft.value } });
+})().catch(error => window.__TAURI__.core.invoke("report_results", { report: { passed: false, error: String(error) } }));
+</script>

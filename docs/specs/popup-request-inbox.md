@@ -545,6 +545,12 @@ Review 和原生证据见 [原生几何复核](../investigations/popup-native-ge
 及中键链接的默认导航，作为正文处理器之外的兜底；保留 Vue 事件路由及 Mermaid sandbox
 子帧。合并与独立模式都遵守此约定，不通过放宽共享宿主请求 ID 校验来掩盖错误跳转。
 
+WebView 原生导航层也必须保护完整初始文档路由（含 `view` / `effect` 查询参数），不能只检查
+应用 origin 或协议：同 origin 的本地路径会命中 SPA 回退，仍会重挂错误视图。其他页面导航和
+新窗口请求被拒绝；正常链接继续由 DOM 处理器按原始路径交给系统，不从已经解析过的应用 URL
+反推文件路径或项目。原文档片段、Mermaid 的无脚本 sandbox data 文档及空子帧仍可加载。
+拦截记录固定事件 `popup_navigation / blocked`，不将文档路径或内容写入日志。
+
 ## 21. 宿主失败诊断
 
 Daemon 持续排空 Popup Host 的 stderr，最多保留前 8 KiB。宿主正常退出时丢弃，

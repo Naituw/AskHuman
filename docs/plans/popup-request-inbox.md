@@ -578,3 +578,30 @@ Rust 格式、全 targets Clippy（`-D warnings`）与 diff 检查通过。
 `Cursor 标题更新支持2`。再次生成两个新提问后，两张来源行均读取到新名字，用户确认正确。
 这项实窗证据覆盖 Codex Desktop；Cursor 继续复用其原有的原生会话名读取路径，展示时的
 非空缓存刷新由共享入口回归覆盖，没有据此声称已做 Cursor 的手动 Rename 验收。
+
+## 30. v0.16.0 本地链接报错的原生导航保护（2026-11-05）
+
+用户提供 macOS v0.16.0 截图，普通点击本地文档链接后显示
+`Failed to load: shared popup requires a request ID`，红色关闭按钮也无效。
+v0.16.0 已包含 §28 的修复；52 项现有前端链接回归仍全部通过。没有原始链接，不能声称
+已经复现这次普通点击漏拦截的具体原因。确认的缺口是：现有保护仅捕获 DOM click / auxclick，
+绕过 DOM 事件的 WebView 导航没有原生保护。页面一旦被替换，关闭事件仍交给已卸载的
+Inbox 前端确认，因而没有接收者。
+
+按用户要求在主工作树开发。`popup_navigation.rs` 校验完整初始文档 URL，拒绝其他路径、
+查询参数或外部页面；建窗同时拒绝新窗口请求。保留片段定位和 Mermaid sandbox data 文档 / 空帧。
+正常链接仍经原始 href 的系统打开逻辑，不从 Tauri URL 猜文件路径，也不放宽共享请求校验。
+原生拒绝只记固定事件，不含路径。初始化脚本为未经 Vite 转译的原始 JS，同时移除可选链语法。
+
+新增 `popup_navigation_regression` 原生 WebView 回归（与生产共用策略和初始化脚本）：
+共享 / 独立两种初始路由、同 origin 本地路径与 SPA 回退、相对路径、错误 view、外部 URL、
+file URL、sandbox data 文档与草稿保留。设置 `ASKHUMAN_NAVIGATION_NEGATIVE_CONTROL=1`
+可禁用原生保护，验证脚本能捕获页面被替换的失败。此受控复现不等同于复现用户的普通单击。
+
+验证结果：新增 Rust 策略测试 2/2、现有前端链接测试 52/52、Rust 格式和 diff 检查通过。
+原生回归在 macOS WKWebView 上两种路由都保留完整 URL 和草稿，sandbox 图表加载成功；
+关闭原生保护后以退出码 1 捕获 `tauri://localhost/Users/...` 的 SPA 页面替换及缺少请求 ID。
+`./scripts/install.sh` 已完成编译、签名并安装至 `~/.local/bin/AskHuman`；正式 daemon 在在途
+请求自然完结后自动换新，新 PID 90077、0 active，未强制取消请求。
+用户本轮不方便实窗单击和关闭确认验收，决定保留自动验证结论并提交；这两项没有手动通过证据。
+Windows / Linux 未在本轮实机补验。
