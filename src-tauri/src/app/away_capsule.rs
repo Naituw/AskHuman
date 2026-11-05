@@ -157,15 +157,17 @@ impl WelcomeWatch {
     }
 }
 
-/// The top-centre of the capsule window in physical pixels; what is remembered when the user drags
-/// it. The width changes between the capsule and the card, so the centre is the stable part.
+/// The top-centre of the capsule window in logical points (the global desktop space macOS itself
+/// uses, which stays consistent across displays of different scales); what is remembered when the
+/// user drags it. The width changes between the capsule and the card, so the centre is the stable
+/// part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Anchor {
     pub cx: i32,
     pub top: i32,
 }
 
-/// A rectangle on the virtual desktop, in physical pixels.
+/// A rectangle on the virtual desktop, in logical points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Area {
     pub x: i32,
@@ -177,6 +179,23 @@ pub struct Area {
 impl Area {
     fn contains(&self, x: i32, y: i32) -> bool {
         x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
+    }
+}
+
+/// A monitor rectangle in logical points. Tao reports monitors in physical pixels (the points times
+/// that monitor's own scale), so dividing by the same scale gives the points back exactly, whatever
+/// the scales of the other displays are.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn area_in_points(
+    position: tauri::PhysicalPosition<i32>,
+    size: tauri::PhysicalSize<u32>,
+    scale: f64,
+) -> Area {
+    Area {
+        x: (f64::from(position.x) / scale).round() as i32,
+        y: (f64::from(position.y) / scale).round() as i32,
+        w: (f64::from(size.width) / scale).round() as i32,
+        h: (f64::from(size.height) / scale).round() as i32,
     }
 }
 
@@ -258,7 +277,7 @@ mod window {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, Instant};
     use tauri::{
-        AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewUrl,
+        AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl,
         WebviewWindowBuilder, Window,
     };
 
@@ -397,36 +416,23 @@ mod window {
         Ok(())
     }
 
-    /// Top-left of the window in physical pixels: where the user left it, or top centre.
+    /// Top-left of the window in logical points: where the user left it, or top centre.
     fn initial_position(app: &AppHandle) -> Option<(i32, i32)> {
         let primary = app.primary_monitor().ok().flatten()?;
-        let scale = primary.scale_factor();
         let work = primary.work_area();
-        let main_work_area = Area {
-            x: work.position.x,
-            y: work.position.y,
-            w: work.size.width as i32,
-            h: work.size.height as i32,
-        };
+        let main_work_area = area_in_points(work.position, work.size, primary.scale_factor());
         let screens: Vec<Area> = app
             .available_monitors()
             .ok()?
             .iter()
-            .map(|m| Area {
-                x: m.position().x,
-                y: m.position().y,
-                w: m.size().width as i32,
-                h: m.size().height as i32,
-            })
+            .map(|m| area_in_points(*m.position(), *m.size(), m.scale_factor()))
             .collect();
-        let width = (INITIAL_SIZE.0 * scale).round() as i32;
-        let margin = (MARGIN_LOGICAL * scale).round() as i32;
         Some(place(
             load_anchor(),
             &screens,
             main_work_area,
-            width,
-            margin,
+            INITIAL_SIZE.0.round() as i32,
+            MARGIN_LOGICAL.round() as i32,
         ))
     }
 
@@ -468,11 +474,13 @@ mod window {
         ) else {
             return;
         };
-        let centre = position.x + (size.width as i32) / 2;
+        // In logical points, like everything that is remembered about the window's place.
+        let position = position.to_logical::<f64>(scale);
+        let size = size.to_logical::<f64>(scale);
+        let centre = position.x + size.width / 2.0;
         note_own_move();
         let _ = window.set_size(LogicalSize::new(width, height));
-        let new_width = (width * scale).round() as i32;
-        let _ = window.set_position(PhysicalPosition::new(centre - new_width / 2, position.y));
+        let _ = window.set_position(LogicalPosition::new(centre - width / 2.0, position.y));
     }
 
     /// The user moved the window (or we did, a moment ago): remember where it ended up.
@@ -487,10 +495,16 @@ mod window {
             if MOVE_GENERATION.load(Ordering::SeqCst) != generation {
                 return;
             }
-            if let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) {
+            if let (Ok(position), Ok(size), Ok(scale)) = (
+                window.outer_position(),
+                window.outer_size(),
+                window.scale_factor(),
+            ) {
+                let position = position.to_logical::<f64>(scale);
+                let size = size.to_logical::<f64>(scale);
                 save_anchor(Anchor {
-                    cx: position.x + (size.width as i32) / 2,
-                    top: position.y,
+                    cx: (position.x + size.width / 2.0).round() as i32,
+                    top: position.y.round() as i32,
                 });
             }
         });
@@ -760,34 +774,64 @@ mod tests {
 
     #[test]
     fn the_window_goes_top_centre_unless_a_remembered_spot_is_still_on_a_screen() {
+        // A MacBook screen (1512 x 982 points, menu bar 37 points tall because of the notch) with an
+        // external display to its right.
         let main = Area {
             x: 0,
-            y: 74,
-            w: 3024,
-            h: 1818,
+            y: 37,
+            w: 1512,
+            h: 945,
         };
         let screens = [
             Area {
                 x: 0,
                 y: 0,
-                w: 3024,
-                h: 1964,
+                w: 1512,
+                h: 982,
             },
             Area {
-                x: 3024,
+                x: 1512,
                 y: 0,
                 w: 2560,
                 h: 1440,
             },
         ];
         // Default: centred below the menu bar.
-        assert_eq!(place(None, &screens, main, 520, 16), (1252, 90));
+        assert_eq!(place(None, &screens, main, 260, 8), (626, 45));
         // A spot on the second screen is kept; the window is centred on it.
-        let saved = Anchor { cx: 4000, top: 300 };
-        assert_eq!(place(Some(saved), &screens, main, 520, 16), (3740, 300));
+        let saved = Anchor { cx: 2800, top: 300 };
+        assert_eq!(place(Some(saved), &screens, main, 260, 8), (2670, 300));
         // A spot on a screen that is gone falls back to the default.
         let gone = Anchor { cx: 7000, top: 300 };
-        assert_eq!(place(Some(gone), &screens, main, 520, 16), (1252, 90));
+        assert_eq!(place(Some(gone), &screens, main, 260, 8), (626, 45));
+    }
+
+    #[test]
+    fn monitors_come_back_as_points_whatever_their_scale() {
+        // A 2x display: tao says 6016 x 3324 pixels starting 60 pixels down; macOS says 3008 x 1662
+        // points starting 30 down. Treating the pixels as points put the capsule at the far right.
+        let area = area_in_points(
+            tauri::PhysicalPosition::new(0, 60),
+            tauri::PhysicalSize::new(6016, 3324),
+            2.0,
+        );
+        assert_eq!(
+            area,
+            Area {
+                x: 0,
+                y: 30,
+                w: 3008,
+                h: 1662
+            }
+        );
+        // A 1x display to the right keeps its own origin.
+        let second = area_in_points(
+            tauri::PhysicalPosition::new(3008, 0),
+            tauri::PhysicalSize::new(1920, 1080),
+            1.0,
+        );
+        assert_eq!(second.x, 3008);
+        assert_eq!((second.w, second.h), (1920, 1080));
     }
 
     #[test]
