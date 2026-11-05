@@ -236,10 +236,39 @@ P4 之后把当时的 main（`b0e83385`：守护进程交接、失败恢复、iO
 - **再次合并 main**（`86aa3f7d`）：main 又走了两个提交（弹窗里拦截原生导航离开答题页、Codex 的 stdio MCP 配置修复），无冲突，协议号仍是 5，分支继续可对 main 快进。合并后 `cargo fmt --check`、`clippy --all-targets -D warnings` 干净，`cargo test --bin AskHuman` 2596 通过 / 0 失败 / 11 忽略。
 - **没看的**：iOS 17、iPad 与 Duo 大屏上的常驻条，真机。
 
+### 真实 Codex 端到端（2026-11-05）
+
+用户授权「只用 Codex 做端到端，跑通就行」。用真实的 `codex exec`（`codex-cli 0.163.0`，模型沿用用户配置的 `gpt-6.1-sol`，推理强度压到 low）对一台**一次性的隔离 Mac** 跑了四个场景，外加一个 hook 级场景。人由 Swift 端到端框架（`AHE2ETests`）里的假手机扮演：本地 broker、真实 Daemon、真实配对，手机引擎用 `setAway` / `submitAnswer(directive:)` / `setSessionAway` 操作。
+
+**隔离**（每个场景之后都核对）：Codex 进程拿真实 HOME（登录态在那里），但环境变量只给最小一份（HOME、PATH、LANG 等）加一次性的 `ASKHUMAN_HOME` 与 `ASKHUMAN_NO_KEYCHAIN`，Cursor、令牌之类的变量一个都不带；用户自己的 `~/.codex/hooks.json`（AskHuman 的 SessionStart 注入协议、工具活动、Stop 确认、权限）照常加载，靠继承的 `ASKHUMAN_HOME` 全部落在一次性 Daemon 里；MCP 服务与模型、推理强度都在命令行里给，不读用户的 `config.toml`（那里的 hook 信任记录也就读不到，所以加 `--dangerously-bypass-hook-trust`，让这份用户自己的 hooks 在本次运行里免确认）。每个场景之后：真实 `~/.askhuman` 里搜不到这次运行独有的工作目录名，不存在 `state/away.json`，日常 Daemon 的离开状态仍是关。一次性家里设了 `agents delegated codex on`（`codex exec` 算被委派运行，默认静默）、`agents permission codex on`、`agents stop codex on`。
+
+```
+codex exec --ignore-user-config --dangerously-bypass-hook-trust --skip-git-repo-check --json -s read-only \
+  -C <一次性工作目录> -m gpt-6.1-sol -c model_reasoning_effort="low" \
+  -c mcp_servers.askhuman.command="<AskHuman>" -c 'mcp_servers.askhuman.args=["mcp"]' \
+  -c 'mcp_servers.askhuman.env={ASKHUMAN_HOME="<一次性目录>", ASKHUMAN_NO_KEYCHAIN="1"}' \
+  -c mcp_servers.askhuman.default_tools_approval_mode="approve" "<提示词>"
+```
+
+**结果（全部通过）**：
+
+| 场景 | 真实 Codex 做了什么，手机看到什么 | 约 |
+|---|---|---|
+| 离开 → 升级 | 手机开离开（带备注）。第一次 `ask` 没带 `escalate`，被自动回复，正文含「用户已离开，别等、自己判断继续；真无法推进或都做完了才带 `escalate: true`」和备注原文，手机没收到任何卡。Codex 随后带 `escalate: true` 再问，手机收到 `escalated` 的提问，作答后答案回到 Codex。收尾的 `whats_next` 同样先被自动回复，再带 `escalate: true` 送达手机，作答后 Codex 以 `[user_confirmed_end_turn]` 结束 | 35 秒 |
+| 不再使用 | 手机在第一个提问上附「不再使用」（会话级）。Codex 收到所选选项加「本会话已关闭 AskHuman，不要再调用（含 whats-next）」。它随后的第二次 `ask` 与 `whats_next` 都被即时回了同一句提示，没有任何卡到手机；手机经 `away.state` 看到这个会话（Codex 的会话 id）是静音。Codex 结束时 Stop hook 被「会话已静音」放行（日志 `stop_confirmation / suppressed / session_muted`，会话键与 MCP 调用是同一个 `sid:<Codex 会话 id>`） | 45 秒 |
+| 解除 → 插话 | 静音后 6 秒，手机把该会话设回「跟随全局」。Codex 正在跑三条 `sleep 25`，三条跑完后再次 `ask`，**这次到了手机**（普通提问，不是升级），作答后 Codex 输出 `COLOR=red` 并正常结束。提示词要求「被告知可以再用才再问」，而它上一次拿到的回答是「不要再调用」，所以它只可能是从插话里得知的（hook 注入的文字在 Codex 的 JSON 事件里看不到，这里以行为为证） | 2 分钟 |
+| Stop 确认在离开时照常（hook 级，没有真 Codex） | 真 Codex 带着注入的协议，每次都走 whats-next 并以 `[user_confirmed_end_turn]` 收尾，Stop 确认根本不会触发（手机选「结束本轮」，或回一句并不批准结束的话，Codex 都照样带标记收尾）。所以用 Codex 形的 Stop 载荷直接喂 `AskHuman __stop-hook codex track confirm`：离开开着时手机收到「Agent 准备结束本轮」（继续对话 / 结束对话，不是升级），选结束后 hook 放行；把该会话设成不再使用后，同一个 hook 即时放行、手机没有卡，日志同上 | 7 秒 |
+
+另一次探针确认了隔离本身：一次只回答「OK」的运行，hook 与工具调用都进了一次性 Daemon，真实 `~/.askhuman` 里没有任何痕迹。
+
+**顺带观察到的**：① SessionStart hook 注入的协议比提示词里的「不要调用 AskHuman」更强，Codex 一律会走 `whats_next` 并带结束标记；手机回「Nothing more. You may stop now.」或「just reply DONE」它都当成批准结束。② `codex exec` 把审批策略固定成「从不审批」（`-c approval_policy` 不起作用），Codex 自己说「环境禁止申请提权」，所以**权限审批卡在离开 / 不再使用时仍送达**这一条没法用 `exec` 验证，仍只有单测。
+
+**清理**：8 个 Codex 线程经 `thread/archive` 归档到 `~/.codex/archived_sessions/`（可恢复，同 `docs/specs/codex-delegated-run-silence.md` 的做法）；一次性 Mac、broker 与临时目录已删，用户的 Codex 配置与 hooks 没有改动。驱动用的 Swift 测试（约 400 行）没有入库：它会启动真实的付费 Agent，要入库的话应做成 `AH_E2E_CODEX=1` 才跑的用例。
+
 ### 总体没有验证的部分
 
-- **真实 Agent 端到端**：Claude Code / Codex / Cursor 各一轮（开离开 → 提问与 whats-next 被自动回复 → `--escalate` 送达 → 结束；「不再使用」→ 即时提示、Stop 确认静音、权限与出错卡仍在）。需要用户授权真实 Agent 调用；只有隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话的端到端，以及 Stop hook / `AskUserQuestion` 接管的单测。
+- **真实 Agent 端到端**：Codex 一轮已跑通（见上节）。Claude Code、Cursor 没有授权，仍只有隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话的端到端，以及 Stop hook / `AskUserQuestion` 接管的单测。真实 Agent 下还没验证的是权限审批卡与出错卡在离开 / 不再使用时照常送达（`codex exec` 触发不了审批，要在交互式会话里看）。
 - **桌面胶囊在真实桌面上的交互**与 Windows / Linux 的托盘月亮、控制台（见 P2c）。
-- **iOS 17 的降级条样式**、iPad / Duo 大屏上的常驻条与真机一轮（iOS 18.5 的经典条已补验，见上）；**TestFlight 没有出**。
+- **iOS 17 的降级条样式**、iPad / Duo 大屏上的常驻条与真机一轮（iOS 18.5 的经典条已补验，见上）；TestFlight 已出 `0.1.0 (9)`（记录在 `docs/plans/ios-channel.md`），真机验收在用户那边。
 - 需求 §3.10 的默认做法 N1–N10 没有再次征求用户意见（用户不在），按原文采用。
 
