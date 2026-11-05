@@ -243,3 +243,16 @@ WebKit 载入页面时给第一个控件的初始焦点和程序性聚焦不算�
 Agent 展示完整原生标题、Session ID 及可靠的模型 / 上下文；项目展示稳定路径、不同调用目录及 Git 摘要。
 终端动作只接受本请求的已知目录。浮层不占常驻高度；每次打开按需读取，短缓存、无轮询、跨请求失效。
 完整决策与来源边界见 `specs/popup-session-info.md`。
+
+## 快捷回复菜单、待发指令与升级提示
+
+规格 `docs/specs/special-replies.md`（D17–D21、D27），计划与验证见 `docs/plans/special-replies.md`，浏览器原型 `src/prototype/popup-reply-menu.html`。页脚「快捷回复」按钮（发送左边，一个弹窗一个，不挂在某一题上）只出现在 Agent 自己的提问弹窗（含 What's next）；Stop 确认、出错卡、Codex 原生问题与开发中继带 `AskRequest.quick_reply = false`，权限与确认卡的页脚本来没有这个按钮（N10）。
+
+- **组件与状态**：`QuickReplyMenu.vue` 画按钮与菜单，`ArmedDirectiveBar.vue` 画输入区上方的待发条，`EscalatedNotice.vue` 画升级提示条；全部状态与键盘规则在组合式函数 `useQuickReply.ts`（接进 `usePopupCore.ts`），`popup.css` 里是 `.qr-*` 样式。菜单自上而下是：预设（每行一句，右侧数字角标）、离开模式 / 不再使用 AskHuman 两个指令（升级题上的第一条换成「结束离开模式」）、底部「管理快捷回复…」（`openSettings("general#quick-replies")`，设置窗口滚到该卡并高亮）。
+- **预设**（D18、D27）：来自请求自带的 `AskRequest.quickReplies`（Daemon 在建请求时解好，What's next、严格选择与没有菜单的卡片为空；前端对这两种还会再挡一次）。点一行或按数字键（1–9，第 10 条是 0）直接发送：`collectAnswers(presetText)` 把**还没有答案的题**（没选项、没文字、没有挑待办）的 `userInput` 填成这句，已答的题保持原样；所有题都已作答时预设置灰（照常列出但不可选，箭头键跳过它们，头部提示改成「每个问题都已作答」）。头部右侧的提示在多题时写明有几题会得到同一句回复。`submit()` 保持无参（模板里直接绑 `@click`，参数会变成事件对象），预设走 `submitWith(presetText)`，提交载荷与普通回答完全一样、`directive` 照常带上，所以 Agent 收到的是普通回答。
+- **指令先待发再生效**（D19）：选了「离开模式…」或「不再使用…」只会把 `armedDirective` 放到待发条里；离开模式带范围下拉（所有 Agent / 仅此会话）与备注，不再使用固定为本会话；主按钮变成「发送并开启离开模式 / 发送并停用 AskHuman」（英文 “Send and go away” / “Send and turn off”，更长的措辞会把 560pt 宽默认窗口的页脚挤成两行），纯选择题也能不选就发（`canSubmit` 在待发时恒为真）；× 撤销。待发时页脚收成「取消 / 稍后回答 / 快捷回复 / 发送并…」，多题的上一个 / 下一个临时收起。指令随 `submit_popup` 的 `directive { kind, scope, note }` 交给 Daemon，在回答被接受之后才应用。
+- **升级提示条**（D21）：`AskRequest.escalated`（`asked` / `repeated` / `requested`）非空时，导航栏下面出现一条说明它为什么在离开模式里仍然送达，并带「结束离开模式」（Tauri 命令 `away_end`，失败时保留提示条并显示原因）。
+- **菜单的摆放**：菜单宽 336pt、右对齐按钮；多题时页脚的「上一题 / 下一题 / 发送」会把按钮挤到偏左，菜单打开后 `QuickReplyMenu.vue` 量一次自己的左边缘，超出窗口就整体右移（`translateX`，留 12px 边距）；一条预设最多显示两行（超出省略），菜单高度不超过窗口（`max-height: calc(100vh - 84px)`，超出在菜单内滚动，键盘移动高亮行时跟着滚）；头部标题不换行，提示文案要短（「点击即发送 · 未作答的 N 题同样回复」）。出厂预设的英文也按「一行放得下」写。
+- **键盘**：⌘K / Ctrl+K 开关菜单（列为保留键，`shortcut.ts::shortcutConflict` 对自定义语音快捷键报冲突）；菜单打开期间对键盘是模态的——除 ⌘W 外，回答区自己的 Enter / Esc、⌘数字、⌘T 都不会穿透，只有数字键、↑↓、回车和 Esc 归菜单；Esc 只关菜单并把焦点还给原处；它先于待办浮层处理，浮层开着时 ⌘K 不响应。
+
+设置里的「快捷回复」卡（`settings/QuickRepliesCard.vue`，General 页，元素 id `quick-replies`）编辑 `general.quickReplies`：每行一个输入框（失焦保存，清空即删除），左侧把手拖动或在把手上按 ↑ / ↓ 排序，右侧叉号删除；最多 10 条，「恢复默认」把配置写回 `null`；没编辑过时显示出厂 5 条（`quick_reply_defaults` 命令按界面语言取），第一次编辑就把它们存成用户自己的列表。

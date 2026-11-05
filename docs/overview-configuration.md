@@ -22,6 +22,8 @@
   - `menuBarIcon`（`off|active|always`，默认 `always`，macOS/Linux/Windows 桌面；已有显式值保持不变）
   - `popupPrewarm`（默认 `true`，macOS/Linux/Windows 桌面）
   - `daemonLifecycle`（`activity|keepalive`，默认 `activity`，macOS/Linux/Windows）
+  - `quickReplies`（`null` 或字符串数组，默认缺省 = `null`）：弹窗与手机「快捷回复」菜单里的预设。`null` = 从没编辑过，Daemon 在建请求时取出厂 5 条并跟随界面语言（`i18n.rs::quick_reply_factory`）；一旦在设置里编辑就存成用户自己的列表（可以是空数组 = 不要预设）。读取一律经 `sanitize_quick_replies`：去首尾空白、丢空行、每条最多 200 个字符、最多 10 条（`QUICK_REPLIES_MAX` / `QUICK_REPLY_MAX_CHARS`，前端 `settings/quickReplies.ts` 有同样的常量，改要两边一起改）；`save_settings` 落盘前也会再过一遍。每个请求在创建时把解出的列表放进 `AskRequest.quick_replies`（What's next、严格选择与没有菜单的卡片为空），手机从 `AskView.quickReplies` 读到的就是同一份，所以每台 Mac 各用各的配置、手机不编辑。设计见 `docs/specs/special-replies.md` D27
+  - `away`（离开模式的桌面外观与推送节奏；模式本身不在配置里，在 `~/.askhuman/state/away.json`）：`capsule`（桌面胶囊，默认 `true`，仅 macOS 有效）、`welcomeBack`（回到电脑时的「欢迎回来」提醒，默认 `true`，仅 macOS）、`pushAfterSecs`（离开期间升级提问等 Mac 空闲多久才推到手机，默认 60，`0` = 立即，上限同 `alertAfterSecs`；取它与 iOS 渠道自己的 `alertAfterSecs` 的较小值，所以只会让推送更早、不会更晚；只在 iOS 渠道开启时有意义）
 - `channels.popup`：`enabled`、`width`、`height`、`rememberSize`
 - `channels.telegram`：`enabled`、`botToken`、`chatId`、`apiBaseUrl`
 - `channels.dingding`：`enabled`、`clientId`、`clientSecret`、`userId`、普通提问/确认/权限卡片模板 ID，以及文本附件内联/转 docx 开关；Agent 任务输入复用普通提问模板

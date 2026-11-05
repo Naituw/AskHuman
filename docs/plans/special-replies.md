@@ -69,7 +69,7 @@ Mac 端本来就有现成的东西：`QuestionAnswer.todo_ids` / `todo_selection
 
 - **数据**：`general.quickReplies: Option<Vec<String>>`（缺省 = 出厂 5 条，跟随界面语言；一旦编辑就存成用户的列表；最多 10 条，每条有长度上限）；出厂文字放 `prompts.rs` / `i18n.rs`。
 - **设置**：`SettingsView.vue` 的「快捷回复」卡：可编辑列表、拖动排序、增删、恢复默认；「离开 / 不再使用」固定在菜单底部的说明。
-- **弹窗**：菜单上半加预设、数字键 1–5 直选、底部「管理快捷回复…」（打开设置 › 通用）。点预设直接发送：已作答的题保持原答案、未作答的题都填这一句；全部已作答时预设置灰（D18）；What's next 弹窗没有预设（D20）。
+- **弹窗**：菜单上半加预设、数字键直选（1–9，第 10 条是 0）、底部「管理快捷回复…」（打开设置 › 通用）。点预设直接发送：已作答的题保持原答案、未作答的题都填这一句；全部已作答时预设置灰（D18）；What's next 弹窗没有预设（D20）。
 - **手机**：预设经现有 Mac 状态快照的可选字段下发（请求所属那台 Mac 的，N8）；底栏菜单里加预设，点一下就发，合成规则同弹窗；手机不编辑。
 - 测试：`vitest`（菜单、合成、置灰、数字键）、`cargo test`（配置往返、上限）、iOS 包测试与 UI 测试（预设发送、What's next 页没有预设）；原型 `popup-reply-menu.html` 同步。
 
@@ -168,3 +168,54 @@ Mac 端本来就有现成的东西：`QuestionAnswer.todo_ids` / `todo_selection
 - **英文按钮文案**：设计稿只有中文（「发送并开启离开模式」「发送并停用 AskHuman」）；英文取 “Send and go away” / “Send and turn off”——更长的版本在 560pt 宽的默认窗口里会把别的按钮挤成两行。
 - **真窗口目视**（隔离 daemon 的真实弹窗，截图）发现并修了三处：提示条标题后多了一段空隙（CSS 的 `margin-right` 把冒号隔开了）、待发时页脚按钮折行（`.footer .btn { white-space: nowrap }`）、待发条的说明被一行截断（现在最多两行）。
 - **验证**：`PopupView.quickReply.test.ts` 36 条（菜单键盘与模态、待发条、撤销、多题、严格选择、What's next、非 Agent 卡片没有按钮、升级条与 `away_end`、与查找 / 语音 / 待办浮层并存、粘贴隔离、合并窗口）；全量 `npx vitest run` 98 个文件 1208 条通过；`npx vue-tsc --noEmit` 通过。原型 `popup-reply-menu.html` 没有改：它是视觉规格，产品里的类名是 `qr-*`。
+
+### P2c Mac 承载面（已完成）
+
+与上文设计一致，差异与补充：
+
+- **托盘**：`scripts/gen_tray_away_icon.py` 生成月亮徽标图标（`tray-idle-away.png`）；图标优先级是「有待答请求 > 离开 > 集成提醒的「?」」——有待答请求时仍是「活动」图标，离开状态压过低等级的集成提醒（提醒仍留在菜单里）。菜单状态区下面是离开分组（未开：一键「开启离开模式」；已开：状态行（精确到分钟）+「结束离开模式」），每个 Agent 子菜单底部两项勾选；托盘「要求提问」发的是固定文案的插话，Daemon 认出后给该会话开 30 分钟的一次性放行（P2a 的 `QUICK_ASK_TEXT`）。托盘设为「关闭」（`menuBarIcon = off`）时没有菜单栏图标，托盘上的入口自然不存在；没有为此另造入口，胶囊、控制台、CLI、IM 与手机仍可用。
+- **控制台**：`AwayBanner.vue`（全局离开的提示条）、`AwayMenu.vue`（会话页头的「AskHuman ⌄」下拉）、`Sidebar.vue` 只给单独设置过的会话加小图标；格式化放进 `console/away.ts`（有单测）。
+- **设置**：「离开模式」卡（`AwayCard.vue`）三项：桌面胶囊、回到电脑时提醒、推送到手机的等待时间；`general.away.pushAfterSecs` 取它与 iOS 渠道 `alertAfterSecs` 的较小值（只会让推送更早，见 `AwayConfig::alert_after_secs`）。
+- **桌面胶囊（macOS）**：spike 的结论是**不需要 NSPanel**——Tauri 窗口属性（透明、无边框、置顶、全空间、不可聚焦、不进任务栏）加两条 NSWindow 设置（`collectionBehavior = canJoinAllSpaces | stationary | ignoresCycle | fullScreenAuxiliary`，`level = NSStatusWindowLevel (25)`）就够。真机检查（隔离 daemon，`CGWindowListCopyWindowInfo`）：窗口层级 25、在屏幕上、前台应用不变（不抢焦点）；3008×1692 点的主屏上落在 X=1401（= 屏宽/2 − 胶囊宽/2）、Y=38（= 可用区域顶 30 + 8）。位置记忆按屏幕布局存；**窗口大小由页面上报**（`capsule_resize`），宿主按胶囊中心重新摆放。
+- **踩到的坑**：窗口创建参数是逻辑点，而 tao 报的显示器几何是物理像素；胶囊最初两者混用，在 2× 屏上落点偏了一倍（`b4c5bec5` 修复，改为先把显示器换算成点）。
+- **欢迎回来**：离开期间每 3 秒读一次 `idle::secs_since_last_input()`，空闲满 `WELCOME_IDLE_SECS`（300 秒，N7）之后的第一次输入把同一张卡展开成「欢迎回来」；120 秒无人回应收回成胶囊，不会自动结束离开模式（D23）。判定是纯函数（有单测，含「采样来得晚」的情形）。
+- **浏览器里目视真实组件**（`mockIPC` 把真实的 `AwayCapsuleView` 摆在假桌面上，浅色 / 深色、中 / 英）：胶囊（月亮、时长、等待数徽标）、展开卡（备注、各 Agent 次数、等待条与「查看」）、欢迎回来卡都与原型一致。
+- **没做 / 没验证**：胶囊的悬停与点击展开、拖动并记忆位置、欢迎回来的真实触发、全屏应用与多个桌面上方是否可见——都只有单测或浏览器里的页面，没有在真实桌面上手动操作（这台机器上截不到 GUI Host 的窗口：`screencapture` 失败，computer-use 也不列出这类附属应用）；Windows / Linux 没有胶囊与欢迎回来（按计划）。
+
+### P2d iOS 承载面（已完成）
+
+与上文设计一致，差异与补充：
+
+- **线协议**：`away.state`（`rev`、`global`、`sessions[]`、`escalatedWaiting`）、`away.set`、`away.session.set`；`Caps.away`；`AnswerSubmit.directive`；`RequestView.escalated`。**与设计的差异**：没有单独的 `away.get`——状态放在 `hello` 快照里，之后每次变化、重新同步时主动下发；`away.set` 没有单独回执（紧接着到的 `away.state` 就是确认）；会话行里没有每行的 `mode`（手机用 `away.state.sessions` 推出），Agent 快照因此没动。夹具与两边测试同步（`ios/Fixtures/wire-v1/messages.json`）。
+- **Mac 网关**：`Host` trait 加 `away()` / `away_apply()`，Daemon 侧调同一个引擎接口（`daemon/runtime/ios.rs`）；回答里的 `directive` 只在**这条回答赢得请求**时才应用——选择落在 `Coordinator` 的一个 directive 槽里，由收尾代码取走，所以无论哪个渠道答，应用的位置只有一处。多台 Mac 各自独立，手机逐台下发。
+- **手机**：`AwayStore`（`AppStore+Away.swift`、`AwayModels.swift`、`PhoneEngine+Away.swift`）；`AwayStrip`（标签栏根页面上方的橙色条，带「结束」；推出去的页面没有标签栏也就没有条）、Agents 工具栏的月亮按钮与半屏开启页（≥2 台 Mac 才显示 Mac 卡）、Agent 详情里的「此会话的 AskHuman」行与 Agent 行上的小标签、升级提问上的提示卡、底栏旁的菜单与待发面板（`Views/Away/`）。
+- **界面细节**：待发面板在请求结束时清空；Agent 行上的次数用紧凑的小标签；条里的文字允许缩小（`minimumScaleFactor`）；一个 SwiftUI 的坑：空的待发面板仍然占一份布局间距，已处理（面板为空时不参与布局）。
+- **老 Mac**：没有 `caps.away` 就不显示任何离开相关入口（有测试）。
+- **验证**：Rust `ios::gateway` 的 `tests_away`；Swift 包测试（引擎、`AwayStore`、夹具往返）；模拟器 UI 测试 `AskHumanAwayUITests`（en + zh-Hans，模拟器 iOS 27）。iOS 17–18 的降级条样式没有在旧系统的模拟器上看过。
+
+### P3 快捷回复（已完成）
+
+与上文设计一致，差异与补充：
+
+- **预设由 Daemon 解好随请求带着**：`quick_replies_for`（`daemon/request.rs`）在建请求时按配置（没编辑过就取出厂 5 条，随界面语言）算出列表，放进 `AskRequest.quick_replies`，手机从 `AskView.quickReplies` 读同一份（可选字段，没有升协议号）。What's next、严格选择和没有菜单的卡片里是空的，所以每台 Mac 各用各的配置（N8），手机不编辑。
+- **配置与清洗**：`general.quickReplies`（`null` = 没编辑过）；`sanitize_quick_replies`（去空白、丢空行、每条最多 200 个字符、最多 10 条）在读取和保存时都跑，前端 `settings/quickReplies.ts` 有同样的常量与函数。
+- **弹窗**：数字键直选是 **1–9，第 10 条是 0**（计划里写的 1–5 是起草时的想法）；全部已作答时预设**置灰而不是隐藏**（仍列出、箭头键跳过，头部提示改成「每个问题都已作答」），这样菜单的形状不随答题进度变化；多出一行「管理快捷回复…」，打开设置并高亮那张卡。`submit()` 保持无参（模板里直接绑 `@click`），预设走 `submitWith(presetText)`。点预设时已选 / 已写 / 已挑待办的题保持原答案，其余题的文字被填成这一句；待发指令照常随预设一起发出。
+- **手机**：底栏菜单的第一段是「快捷回复」（SwiftUI `Menu` 向上展开，系统会把顺序翻过来，所以第一个预设离拇指最近——用截图确认过），第二段是两条指令；点预设就发。`AnswerComposer.items(uploads:fillingWith:)` 只用**这条请求自带的**预设填充（传别的文字一律忽略）；`quickReplyTargets == 0`（全部已答）时预设置灰。Mock 后端把预设挂在「支持离开模式的 Mac」上（`away` / `awayOn` 场景），默认 `demo` 场景不带。UI 测试按**标签**找菜单项（系统菜单项没有 `accessibilityIdentifier`）。
+- **真窗口 / 浏览器里目视**（`mockIPC` 里的真实 `PopupView` 与 `SettingsView`）发现并修了四处：多题页脚里菜单从按钮右缘往左伸 336pt，会越过窗口左缘被截掉（现在打开后量一次、平移回窗口内）；菜单头部的标题被挤成两行、提示也折成两行（标题不换行，提示缩短：「Click to send · fills 3 unanswered」）；英文出厂预设「Use your own judgement, no need to wait for me」排不进一行、留下孤字（缩短成「…, don't wait for me」，Rust、手机 mock 与 UI 测试同步）；十条预设的菜单比小窗口还高（菜单加 `max-height` 与滚动，方向键移动时把高亮行滚进视野）。预设行最多显示两行，再长就省略（完整文字在悬停提示里）。
+- **验证**：`PopupView.quickReply.test.ts` 51 条；`QuickRepliesCard.test.ts` 14 条加清洗函数用例；`cargo test` 的 `config` / `daemon::request` / `ios` 新用例；Swift 包 `AnswerComposerTests` / `AwayStoreTests`；模拟器 UI 测试四条（菜单顺序、预设一点即发并在历史里可见、全部已答时置灰、严格选择与 What's next 没有预设）。
+
+### P4 CLI 与 IM 命令（已完成）
+
+与上文设计一致，差异与补充：
+
+- `AskHuman away on [备注] [--session]` / `off` / `status`（`cli/away_cmd.rs`）：`status` 直接读 `state/away.json`、不拉起 Daemon；`--session` 只作用于调用它的 Agent 会话；**Agent 进程里只允许开启、不允许 `off`**（用户决定什么时候回来，N6）。
+- IM：`/away [备注]`、`/back`（别名 `/离开`、`/回来`；Slack 用 `!`），各答一行并写明回来的办法；只有带前缀的形式才是命令（「away」一词出现在普通消息里不会触发）。
+- 测试：命令解析、拒绝逻辑、IM 命令分发（`autochannel`、`daemon/runtime/inbound.rs`）。
+
+### 总体没有验证的部分
+
+- **真实 Agent 端到端**：Claude Code / Codex / Cursor 各一轮（开离开 → 提问与 whats-next 被自动回复 → `--escalate` 送达 → 结束；「不再使用」→ 即时提示、Stop 确认静音、权限与出错卡仍在）。需要用户授权真实 Agent 调用；只有隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话的端到端，以及 Stop hook / `AskUserQuestion` 接管的单测。
+- **桌面胶囊在真实桌面上的交互**与 Windows / Linux 的托盘月亮、控制台（见 P2c）。
+- **iOS 17–18 的降级条样式**与真机一轮；**TestFlight 没有出**。
+- 需求 §3.10 的默认做法 N1–N10 没有再次征求用户意见（用户不在），按原文采用。
+

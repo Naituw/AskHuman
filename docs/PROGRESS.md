@@ -337,25 +337,28 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] Windows / Linux：在真实弹窗里按 Ctrl+T 打开浮层、添加、Esc，再在一张确认卡里验 Enter / Esc 不漏出去（需求 §6.3 要求真机确认一次；macOS 已在隔离实例里按过）
 - [ ] iOS 真机：请求页「⋯」→「添加待办…」。手机上现有的内测包不含这个功能，要看得先出新的 TestFlight 包（用户没要，先不出；要出走 `ios-testflight` 技能）；对应的 Mac 也要装带这次改动的版本，否则碰到「不在待办候选里的在途项目」会回「这个项目已不在」
 
-## 进行中：特殊回复（手机选待办 / 离开模式 / 本会话不再使用 / 快捷回复）——设计已定稿（2026-11-05），在 `feat/special-replies` 上逐期实现
+## 待验收：特殊回复（手机选待办 / 离开模式 / 本会话不再使用 / 快捷回复）——P1–P4 已实现并提交在 `feat/special-replies`，未推送、未合回 main、未出 TestFlight
 
-用户 2026-11-04 提出，经十轮 AskHuman 问答定稿，2026-11-05 授权「按顺序全部实现」（当时人不在，所以开工前的几个问题由实施者按默认值定下，记在计划的「开工前定下的事」里，
+用户 2026-11-04 提出，经十轮 AskHuman 问答定稿；2026-11-05 授权「按顺序全部实现」（当时人不在，所以开工前的几个问题由实施者按默认值定下，记在计划的「开工前定下的事」里，
 用户回来后可否决）。需求 [`docs/specs/special-replies.md`](specs/special-replies.md)
 （界面稿在 `docs/assets/special-replies/`，浏览器原型在 `src/prototype/`，入口见 `docs/development.md`），计划
-[`docs/plans/special-replies.md`](plans/special-replies.md)（文末「实施记录」按期记差异与验证结果）。
-实现在 worktree `../HumanInLoop-special-replies`（分支 `feat/special-replies`，Dev Instance）；**未推送、未合回 main、未出 TestFlight**。
+[`docs/plans/special-replies.md`](plans/special-replies.md)（文末「实施记录」按期记差异与验证结果，「总体没有验证的部分」是下面清单的出处）。
+实现在 worktree `../HumanInLoop-special-replies`（分支 `feat/special-replies`，Dev Instance，基于本地 main 的 `2adccc03`）；协议号 5 是并入未发布的那一版（v0.16.0 是 4）。
 
-要点：四块能力共用 Daemon 里的「模式引擎」——① iOS 在提问里选项目待办、What's next 看完整队列；② 离开模式（Agent 的每次提问与
-whats-next 都被自动回复，带 `--escalate` 才像没离开一样送达；只能手动结束；Mac 桌面胶囊 / 托盘 / 控制台，手机常驻条）与会话级「不再使用
-AskHuman」；③ 弹窗与手机的快捷回复菜单（预设在 Mac 设置里编辑）；④ 可选的 CLI / IM 命令。
+做了什么：四块能力共用 Daemon 里的「模式引擎」（`daemon/away.rs`，状态落盘 `~/.askhuman/state/away.json`）——① iOS 在提问里选项目待办、What's next 看完整队列；
+② 离开模式（Agent 的每次提问与 whats-next 都被自动回复，带 `--escalate` 才像没离开一样送达；只能手动结束；Mac 桌面胶囊 / 托盘 / 控制台，手机常驻条）与会话级「不再使用 AskHuman」；
+③ 弹窗与手机的快捷回复菜单（预设在 Mac 设置里编辑）；④ CLI `AskHuman away on/off/status` 与 IM `/away`、`/back`。全貌见 `docs/overview.md`「离开模式、本会话不再使用与快捷回复」。
+
+自测（都在隔离的 Dev Instance / 临时 `ASKHUMAN_HOME` 里，没碰日常 daemon，没发到用户手机）：`cargo fmt --check` 与 `clippy -D warnings` 干净，`cargo test --bin AskHuman` 2583 通过 / 0 失败；
+vitest、`vue-tsc`、Swift 包、模拟器 UI 测试（`AskHumanAwayUITests` 中英文等）的结果见计划「实施记录」；隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话跑通了离开 / 升级 / 不再使用的端到端。
 
 下一步：
-- [x] 工作方式与协议号：worktree + Dev Instance；P2a 的新变体并入未发布的协议号 5（v0.16.0 是 4）
-- [ ] 请用户复核需求 §3.10 里**没有单独确认过**的默认做法 N1–N10（实现按原文采用），其中「欢迎回来」的空闲门槛取 5 分钟（第 5 轮图文）；第 9 轮的提问正文误写成 15 分钟，以 5 分钟为准
-- [x] P1 iOS 待办（实现与验证见计划「实施记录」）
-- [x] P2a 引擎与 Agent 文字、P2b 弹窗（实现与验证见计划「实施记录」；真实 Claude / Codex / Cursor 各一轮还没跑，要先有真实 Agent 调用的授权）
-- [ ] 按 P2c Mac 承载面 → P2d iOS 承载面 → P3 快捷回复 → P4（可选）CLI / IM 命令的顺序，逐期实现、验收、提交（计划「阶段」）
-- [ ] P2c 先做桌面胶囊的窗口 spike（不抢焦点、所有桌面可见、全屏应用上方是否可见），结果记进计划的实施记录
+- [ ] **用户复核**需求 §3.10 里**没有单独确认过**的默认做法 N1–N10（实现按原文采用），其中「欢迎回来」的空闲门槛取 5 分钟（第 5 轮图文）；第 9 轮的提问正文误写成 15 分钟，以 5 分钟为准
+- [ ] **真实 Agent 端到端**：Claude Code / Codex / Cursor 各一轮（开离开 → 提问与 whats-next 被自动回复 → `--escalate` 送达 → 结束；「不再使用」→ 即时提示、Stop 确认静音、权限与出错卡仍在）。要先有用户对真实 Agent 调用的授权
+- [ ] **桌面胶囊在真实桌面上的交互**：悬停 / 点击展开、拖动后位置记忆、「欢迎回来」的触发（5 分钟空闲后敲键盘）、全屏应用与多桌面上的可见性。这台机器截不了屏、Computer Use 也列不出 AskHuman 的后台应用，只验了窗口几何（`CGWindowListCopyWindowInfo`）与浏览器里的真实组件；Windows / Linux 的托盘月亮与控制台也没看过
+- [ ] **iOS**：iOS 17–18 的降级条样式（常驻条与底栏菜单；模拟器只验了 iOS 26）与真机一轮；TestFlight **没有出**（用户没要；要出走 `ios-testflight` 技能），Mac 也要装带这次改动的版本，否则手机上没有离开 / 待办入口（`caps.away` / `caps.answerTodos` 把关）
+- [ ] **合回 main**：分支未推送。main 检出里别的会话有未提交的改动（`Localizable.xcstrings`、`make-catalog.py` 等），合并时这两处可能冲突；合完后 `./scripts/install.sh` 装为日常版
+- [ ] 控制台里 Agent 页头的横幅 / 会话菜单在真实数据上的样子没再核对（组件与逻辑有测试）
 
 ## 待验收：Cursor 任务的 Max 模式控制与 Agents 窗口新建任务（已合回 main 并装为日常版；真实验证阶段 1–2 已过，阶段 3–4 等用户自己做）
 

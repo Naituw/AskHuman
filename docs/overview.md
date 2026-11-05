@@ -109,6 +109,7 @@ AskHuman/
         debug_cmd.rs         不进入 help 的调试子命令
         todo_cmd.rs          todo add/list/attach/detach/rm/clear 子命令
         todo_sync_cmd.rs     隐藏的 todo-sync 子命令（排障与 helper 拉起 tick 的入口）
+        away_cmd.rs          away on/off/status 子命令（status 直读状态文件、不拉起 Daemon）
         file_attachment.rs   -f 路径解析与校验
         output.rs            文本/JSON 结果格式化
         image_writer.rs      回复图片落盘
@@ -153,6 +154,7 @@ AskHuman/
         mod.rs               Tauri 运行时与各类窗口创建
         gui_host.rs          GUI Host、托盘和 daemon 状态订阅
         tray_menu.rs         托盘菜单模型与最小 diff
+        away_capsule.rs      macOS 离开模式桌面胶囊与「欢迎回来」（展示数据与判定是平台无关的纯函数，窗口只在 macOS）
         coordinator.rs       首答胜出与其它渠道取消
         popup_inbox.rs · popup_inbox_geometry.rs  共享宿主请求状态及三区几何事务
         popup_canvas.rs · swift/PopupCanvas.swift  过渡固定画布与普通原生自适应布局；小窗的缩放由 swift/PopupCollapse.swift 逐帧动画
@@ -245,6 +247,8 @@ AskHuman/
           detect.rs          渠道自动识别流程
           ios.rs · ios_agents.rs · ios_tasks.rs  iOS Gateway 的 Host 实现（启停、Agent / Watch / 插话、新任务）
           task_launch.rs     IM /new 与 iOS 共用的 Agent 任务启动
+          away_ops.rs        离开 / 静音的自动回复、AwayOp 应用、回答里的 directive 与状态广播
+        away.rs              离开 / 静音引擎：纯判定 judge、AwayEngine、state/away.json、引导语
         lifecycle.rs         单实例、指纹与空闲生命周期
         restart_guard.rs     换新原因记录，以及两份二进制互相顶替时拒绝再让位（hold）
         spawn.rs             Daemon 脱离启动
@@ -304,7 +308,7 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 
 +1 的代价是每个跨号的客户端与 Daemon 互相让位、旧客户端无法与新 Daemon 共存，所以能用「加可选字段」解决的不要 +1。+1 时：改常量，在下面的历史补一行（日期、提交、变更点），并在 `daemon-graceful-drain.md` 记下升级过渡期的影响。
 
-**历史**（当前为 5）：1 = Daemon 骨架（`9660532`，2026-06-07）；2 = 结构化确认（`2c76c44`，2026-07-11）；3 = 共享作答窗口，新增 `PopupHostHello` / `PopupHostIdle` / `PopupHostAccepted` / `PopupSubmissionAck` / `PopupRequestKind` 等（`799334f`，2026-10-06）；4 = iOS 渠道管理，新增 `ClientMsg::Ios` / `ServerMsg::Ios`（`IosOp` / `IosResult`）（`128bffd`，2026-10-25）；5 = Cursor Desktop 新建任务，新增 `ClientMsg::CursorDesktop`（载荷 `Operation`）/ `ServerMsg::CursorDesktop`（载荷 `Result<Value, String>`），与 Codex Desktop 同构（`2600561`，2026-11-03）；同一个尚未发布的 5 还含 Mac 控制台给 Cursor Desktop 聊天直发消息的 `ClientMsg::AgentMessage`（载荷 `ConsoleMessage`）/ `ServerMsg::AgentMessage`（载荷 `Result<Value, String>`）（2026-11-04）——5 没有发布版，所以并入而不再 +1，5 一发布，之后新增变体就必须 +1。对应发布版：0.4.3–0.8.2 为 1，0.9.1–0.13.2 为 2，0.14.2–0.15.1 为 3，0.16.0 为 4，0.16.0 之后的下一个发布版起为 5。排空相关的增量（`HelloStatus::Draining`、`ServerMsg::Draining`、`Stop.force`、`StatusInfo.draining`）和 `StatusInfo` 的二进制信息字段都没有 +1。
+**历史**（当前为 5）：1 = Daemon 骨架（`9660532`，2026-06-07）；2 = 结构化确认（`2c76c44`，2026-07-11）；3 = 共享作答窗口，新增 `PopupHostHello` / `PopupHostIdle` / `PopupHostAccepted` / `PopupSubmissionAck` / `PopupRequestKind` 等（`799334f`，2026-10-06）；4 = iOS 渠道管理，新增 `ClientMsg::Ios` / `ServerMsg::Ios`（`IosOp` / `IosResult`）（`128bffd`，2026-10-25）；5 = Cursor Desktop 新建任务，新增 `ClientMsg::CursorDesktop`（载荷 `Operation`）/ `ServerMsg::CursorDesktop`（载荷 `Result<Value, String>`），与 Codex Desktop 同构（`2600561`，2026-11-03）；同一个尚未发布的 5 还含 Mac 控制台给 Cursor Desktop 聊天直发消息的 `ClientMsg::AgentMessage`（载荷 `ConsoleMessage`）/ `ServerMsg::AgentMessage`（载荷 `Result<Value, String>`）（2026-11-04）；还有离开模式的 `ClientMsg::Away`（载荷 `AwayOp`）/ `ServerMsg::Away`（载荷 `AwaySnapshot`）（2026-11-05；`Answer.directive`、`TaskRequest.escalate`、`AskRequest.escalated` / `quick_reply` / `quick_replies` 与托盘 / Agent 快照里的 `away` 都是带 `#[serde(default)]` 的可选字段，不另计）——5 没有发布版，所以并入而不再 +1，5 一发布，之后新增变体就必须 +1。对应发布版：0.4.3–0.8.2 为 1，0.9.1–0.13.2 为 2，0.14.2–0.15.1 为 3，0.16.0 为 4，0.16.0 之后的下一个发布版起为 5。排空相关的增量（`HelloStatus::Draining`、`ServerMsg::Draining`、`Stop.force`、`StatusInfo.draining`）和 `StatusInfo` 的二进制信息字段都没有 +1。
 
 ## 前端 ↔ 后端命令（`commands.rs` ↔ `lib/ipc.ts`）
 
@@ -312,6 +316,7 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 - 附件面板（Popup 提问附件与历史详情）：`popup_preview_prepare` / `layout`、`popup_preview_read` / `cancel_read` / `thumbnail`、`popup_preview_reveal` / `menu`（命令名沿用；`request_id` 实为所有者 ID：Popup 请求 ID，或历史窗口的 `history:<条目 ID>`）；原文件打开仍用 `open_path`
 - Popup 拖入文件（`popup_drop.rs`）：`popup_drop_read_image`（读拖入的图片，失败时拒绝出 `{reason, where, message}`）、`popup_drop_log`（把每次拖拽的结果写进 `daemon.log` 的 `askhuman_drop` 行，只记标签与计数，不记路径和文件名）
 - 其他附件入口：`preview_attachments`、`close_preview`、`read_image_data_url`、`file_icon_data_url`、`show_attachment_menu`、`attachments_exist`（逐路径答复原文件是否还在，只有 `NotFound` 算不存在；弹窗与历史的胶囊据此标出已不存在的附件并拒绝拖出）
+- 离开模式与快捷回复：`away_end`（弹窗 / 控制台里「结束离开模式」，经 `client::away_op`）、`quick_reply_defaults`（设置卡的出厂预设，中英各一份）、`capsule_init` / `capsule_resize` / `capsule_dismiss_welcome` / `capsule_focus_waiting`（桌面胶囊窗口，仅 macOS）
 - 设置：`get_settings`、`save_settings`、`get_prompt`、`set_theme`、`update_theme`、`open_settings`、`popup_sound_support`、`play_popup_sound`
 - 历史：`open_history`、`history_init`、`get_history`、`get_history_projects`、`history_count`、`trim_history`、`resolve_history_session_titles`、`delete_history_entries`、`clear_all_history`
 - Cursor / Claude 超时 Hook 与 Pi Extension：前两者保留专用命令；统一设置入口走 `agent_mode_*` 与 `agent_hook_reveal` / `open`
@@ -340,6 +345,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 - **形态**：Mac Gateway ↔ 自备 EMQX（MQTT TLS / WSS）↔ iOS App；推送经 `relay/` 的无状态云函数到 APNs。Mac 不持有任何 APNs 密钥，中继不存任何状态。
 - **不变量**：端到端加密（每配对一对方向密钥，broker 与中继只见密文）；一份 broker 凭据多台 Mac 共用；状态变更消息按 `msgId` 幂等；渠道藏在 `experimental.enabled` 后，`channel list` 与帮助默认不列出；EMQX 消费上限保持 0，不自动付费。
 - **投递与通知分开**：iOS 不参与 IM 的活跃槽 / `channels.autoActivation`——每个提问和确认都挂给所有已配对手机，手机一打开就能拉到；手机没在看时的系统推送只在 Mac 键盘 / 鼠标空闲满 `channels.ios.alertAfterSecs`（默认 15 分钟，`0` = 立即）后才发，每题每手机最多一条，不重复提醒。规格见 `docs/specs/ios-alert-timing.md`。
+- **手机上的回答与离开模式**：提问里可以选项目待办（`AnswerSubmit.todoIds`，Mac 网关按提问的项目反查并合并进回答，What's next 里看完整队列；`Caps.answerTodos` 缺失的旧 Mac 不显示），回答的底栏菜单有快捷回复与「离开模式 / 不再使用」两条指令（`AskView.quickReplies`、`AnswerSubmit.directive`），Agents 页有离开模式的常驻条、开启页与会话行（`away.state` / `away.set` / `away.session.set`、`Caps.away`）。细节见 `docs/overview-ios.md`，规格 `docs/specs/special-replies.md`。
 - **跨语言**：Rust `ios/{crypto,envelope,wire}.rs` 与 Swift `AHProtocol` 共用 `ios/Fixtures/wire-v1/`，限额常量两边一致；改线协议先改夹具。
 - **验证**：Rust Gateway 测试台、Swift 包测试、真实 daemon 端到端（一次性 Mac + 本地 broker）、模拟器 UI 测试与中继 `node --test`，命令见 `docs/overview-ios.md`。
 
@@ -443,10 +449,21 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 
 - 待办按统一项目身份（可信会话工作区的 git 根 / cwd 回退）归属，`~/.askhuman/state/todos.json` 是唯一数据源：所有进程直读直写 + 文件锁串行化，不依赖 daemon 存活，跨平台。GUI / CLI / MCP 可在创建时或对已有 Todo 独立管理附件；GUI 默认折叠附件摘要，支持新增区 / 每条 Pending Todo 拖入、新增输入框粘贴图片，以及选中行后粘贴剪贴板图片。单文件 ≤10 MiB 由 AskHuman 托管，>10 MiB 保留绝对路径引用（无稳定源路径的剪贴板图片超过阈值则拒绝），每条最多 20 个，并生成最长边 128 px 的图片缓存缩略图。用户可见写操作在落盘失败时必须报错。
 - Agent 完成任务后必须调 `AskHuman --whats-next`（MCP 为 `whats_next` 工具）：固定提问 + 可选的 Agent 建议任务 + 待办 chip + 恒有「结束本轮」；顺序固定为建议任务、待办、结束，总选项最多 10 条。建议任务仅在确有建议时通过 `-o`/`-o!`（MCP `options`）传入，选择结果保持普通 Ask 的 `[selected_options]` 语义；待办派活为 `[user_input]`，准许结束为 `[selected_options]`，取消为 `[status]`。选中的待办按 id best-effort 出队（Coordinator 汇聚点统一处理）。标记为「自动执行」（⚡）的待办优先级不变：whats-next 时不发卡、直接按队列顺序派发最靠前一条。
-- 送达面：whats-next / 普通提问 Popup 折叠待办区 / Stop 确认卡（兜底）都以选项形式呈现待办；GUI / IM 新建 Agent 任务也可直接执行待办。所有出口在执行前按卡片附件快照与最新 Todo 求交集，托管文件建立请求级交付副本，失效项转为 warning，选项只显示 `【N 个附件】`（支持富文本颜色时为灰色）而不向 IM 上传本地文件。输入面：CLI `todo` 子命令、Popup 内新增、GUI 待办窗口（托盘/AgentsView 入口）、IM `/todo`；IM 创建/管理首版仍只支持文字。
+- 送达面：whats-next / 普通提问 Popup 折叠待办区 / Stop 确认卡（兜底）都以选项形式呈现待办（iOS 在提问里另有「待办」卡、What's next 里看完整队列，选中的 id 随回答上报，由 Mac 网关按同一规则并进回答，见 `docs/specs/special-replies.md` D28–D29）；GUI / IM 新建 Agent 任务也可直接执行待办。所有出口在执行前按卡片附件快照与最新 Todo 求交集，托管文件建立请求级交付副本，失效项转为 warning，选项只显示 `【N 个附件】`（支持富文本颜色时为灰色）而不向 IM 上传本地文件。输入面：CLI `todo` 子命令、Popup 内新增、GUI 待办窗口（托盘/AgentsView 入口）、IM `/todo`；IM 创建/管理首版仍只支持文字。
 - IM `/todo`（管理卡：飞书代码卡自带输入表单，钉钉复用提问卡模板 `allow_input`，TG/Slack 文本 + 命令提示）、`/todo-rm`（复用单选卡逐条删除、就地刷新）与 `/todo-auto`（切换自动执行标记）由跨平台 daemon 承载，实现在共享 server core 的 `daemon/runtime/todo.rs`。
 - macOS 与 Windows 上，待办窗口每条待办另有「创建任务」按钮：预选项目与该待办打开新建任务窗口，Terminal.app 或 Windows Terminal 启动成功后按快照出队（spec `docs/specs/gui-agent-task-launch.md`）。
 - **跨 Mac 同步（实验，仅 macOS，每台 Mac 单独开启）**：同一 Apple ID 的多台 Mac 经 iCloud（CloudKit）共享待办与执行历史，规格 `docs/specs/todo-sync.md`，实现地图 `docs/overview-todo-sync.md`。不变量：`todos.json` 仍是本机唯一数据源且 `todos.rs` 的写函数不变，同步核心 `todo_sync/` 经旁路状态 `state/todo-sync/` 做字段级合并（项目身份 = git remote，同仓库的多个目录是副本，无 remote 的目录不同步），云端访问全部经 CloudKit helper `.app`（Rust 侧只有 `Transport` 抽象）；开关是标记文件，关闭时各入口只多一次 `stat`，Dev Instance 恒关闭；读取钩子只做本地阶段，唯有 whats-next 在上次拉取超过 20 秒时最多等 1.5 秒；待办窗口的打开路径不得联网、拉起 helper 或 git。本机没有目录的云端项目以虚拟键 `icloud:<身份>` 住在 `todos.json` 里。
+
+## 离开模式、本会话不再使用与快捷回复
+
+> 需求 `docs/specs/special-replies.md`，计划与实施记录 `docs/plans/special-replies.md`，用户说明在 `docs/wiki/settings.md`（桌面端的快捷回复与离开模式）和 `docs/wiki/ios-setup.md`（手机端）。
+
+- **两种状态，一个引擎**：离开模式（全局，或单个会话）让 Agent 的提问与 whats-next 被 Daemon 自动回复「我不在，按你自己的判断推进；实在无法继续再问」；「本会话不再使用」（静音）让该会话得到「用户选择不再使用 AskHuman」的回复。引擎在 `daemon/away.rs`（纯判定 `judge` + `AwayEngine`），状态持久化到 `~/.askhuman/state/away.json`（临时文件 + 原子替换）；会话键是 `sid:<Agent 会话 id>`，没有就 `mcp:<实例 id>`；`Directive{kind,scope,note}` 是用户在弹窗 / 手机里选的「发送并…」，在回答被接受之后才生效。
+- **拦截点**：`daemon/runtime/mod.rs::handle_submit`，在刷新 Agent 会话活动之后、去重挂靠与建请求**之前**，只拦截 `is_agent_ask`（Ask 类弹窗，非开发中继、非 Codex 原生问题）。Stop 确认、权限审批、出错卡与 Codex 原生问题既不被拦截，也没有快捷回复菜单（`AskRequest.quick_reply = false`）。自动回复是 `Accepted` + `Final`，历史 channel 为 `away` / `mute`，不进重放缓存。
+- **升级与防呆**：`--escalate`（MCP `escalate: true`；CLI 入口的白名单是 `ASK_LEADING_FLAGS`）让一次提问照常送达（`AskRequest.escalated` = `asked|repeated|requested`），升级不解除离开；同一会话 10 分钟内连续 3 次不带 `--escalate` 的提问被自动回复、第 4 次放行；托盘「要求提问」的固定插话给该会话 30 分钟的一次放行。
+- **Hook 不经 IPC**：Stop 确认对静音会话放行、Claude `AskUserQuestion` 接管的 `decide()` 都直接读 `state/away.json`（读不到或解析失败一律当作正常模式，宁可多问一次）。**解除静音只能走插话队列**（不能用向原会话发消息的办法，那会触发新一轮计费）；会话结束与 15 秒一次的清扫清掉会话覆盖与计数。
+- **承载面都调同一个引擎接口**（`ClientMsg::Away` → `daemon/runtime/away_ops.rs`）：托盘（月亮图标、离开分组、Agent 子菜单）、控制台（提示条、侧栏图标、会话页头下拉）、设置「离开模式」卡、macOS 桌面胶囊与欢迎回来（`app/away_capsule.rs`）、CLI `AskHuman away on|off|status`、IM `/away` `/back`、iOS（`away.*` 线消息）。Agent 进程里的 `away off` 被拒绝（用户决定什么时候回来）。离开期间升级提问推到手机的等待取 `general.away.pushAfterSecs` 与 iOS 渠道自己的等待的较小值。
+- **快捷回复**：`general.quickReplies`（`null` = 出厂 5 条，随界面语言）；Daemon 在建请求时解成 `AskRequest.quick_replies`，手机从 `AskView.quickReplies` 读同一份。弹窗里一点即发、填给所有还没有答案的题；What's next 与严格选择没有预设。前端见 `docs/overview-popup-ui.md`，配置见 `docs/overview-configuration.md`，手机见 `docs/overview-ios.md`。
 
 ## 菜单栏 / 托盘图标 + 统一 GUI Host（macOS / Linux / Windows 桌面）
 

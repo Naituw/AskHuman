@@ -30,6 +30,28 @@ Every reply (a "send" completed in the popup or any channel, plus a cancel you t
 - **Filter** — use one two-level scope menu to pick a project, then "Everything in this project" / "All sessions" or one session from its submenu; space-separated keywords can be layered on top. Native Agent sessions show a best-effort title and short ID; MCP fallbacks are explicitly labeled as approximate sessions.
 - **Clean up** — the context action reads "Delete current search results", "Clear selected session history", or "Clear selected project history" and deletes only the entries frozen when confirmation opens. New matching entries that arrive afterward are retained. "Clear all history" remains separate and is the only item shown for the unfiltered global scope.
 
+## Quick replies
+
+The **Quick reply** button in the popup footer (⌘K / Ctrl+K) lists your preset replies: click one, or press the digits 1–9 (0 for the tenth), and it is **sent at once**. Questions you have already answered keep your answers; the ones without an answer all receive that sentence; once every question is answered the presets grey out. What's next and choose-only questions have no presets. The phone's answer screen has the same menu in its bottom bar — one tap sends; the presets are those of the Mac the question came from, and the phone does not edit them.
+
+Edit them under **Settings → General → Quick replies** (or "Manage quick replies…" at the bottom of the menu):
+
+- Five come built in ("Continue", "Use your own judgement, don't wait for me", …) in the interface language; changing any one of them makes the list yours.
+- One input per row, saved when it loses focus; clearing a row deletes it; drag the handle on the left (or press ↑ / ↓ on it) to reorder; up to 10 replies of at most 200 characters; "Restore defaults" returns to the built-in list.
+
+## Away mode and "stop using AskHuman in this session"
+
+The other two entries in the menu are **instructions**: they do not send anything yet, they wait above the answer area and take effect with this answer when you press "Send and …".
+
+- **Away mode**: while it is on, the Agent's questions and What's next no longer pop up; the Agent immediately gets "the user is away — analyse carefully and carry on the best way you see; ask again only if you truly cannot continue or everything is done". An Agent that asks again with `--escalate` (MCP: `escalate: true`) reaches you as if you were there, with a banner at the top saying it was escalated; escalating does not end away mode. Choose "All Agents" or "This session only" and optionally add a note (it stays attached to the reminder). Every automatic reply is recorded in the reply history so you can review it when you are back.
+  - **Visible**: the tray icon carries a moon, the console shows a banner, on macOS a desktop capsule sits at the top centre of the screen (hover or click to expand, draggable, can be turned off in Settings), and the phone app shows an orange strip above the tab bar.
+  - **Turn on**: "Away mode…" in the menu, the tray menu, the "AskHuman" menu in a console session header, the moon button on the phone's Agents page, `AskHuman away on [note] [--session]`, or `/away [note]` in IM.
+  - **Turn off**: only you can — "End away mode" at the top of an escalated popup, the tray, the console, the capsule, "End" on the phone, `AskHuman away off` (refused inside an Agent process), or `/back` in IM. On macOS, when you return to the computer after five idle minutes, a "Welcome back" summary appears; it only reminds, it never ends away mode.
+  - **Settings → General → Away mode**: the desktop capsule, the welcome-back reminder, and "Wait before pushing to the phone" (default: Mac idle for 1 minute; the shorter of this and the iOS channel's own push timing applies).
+- **Stop using AskHuman in this session**: this answer tells the Agent "the user chose not to use AskHuman, don't use it again"; afterwards any call from that session (including `--whats-next`) gets the same reminder immediately, and the Stop confirmation stops interrupting. Permission approvals and error notifications still work. To undo it, switch "Stop using" off for that session in the tray's Agent submenu, the console session header's "AskHuman" menu, or the phone's session row: at its next tool call the Agent reads "you may use AskHuman again" (delivered through the interject queue, so nothing is sent to the original chat and no new billed turn starts).
+
+Stop confirmations, permission approvals, error cards and Codex native questions have no such button and are not affected by away mode.
+
 ## Cursor Desktop background follow-ups
 
 On macOS, **Agents → Cursor → Prevent background completion follow-ups (experimental)** is off by default and
