@@ -191,7 +191,7 @@ Mac 端本来就有现成的东西：`QuestionAnswer.todo_ids` / `todo_selection
 - **手机**：`AwayStore`（`AppStore+Away.swift`、`AwayModels.swift`、`PhoneEngine+Away.swift`）；`AwayStrip`（标签栏根页面上方的橙色条，带「结束」；推出去的页面没有标签栏也就没有条）、Agents 工具栏的月亮按钮与半屏开启页（≥2 台 Mac 才显示 Mac 卡）、Agent 详情里的「此会话的 AskHuman」行与 Agent 行上的小标签、升级提问上的提示卡、底栏旁的菜单与待发面板（`Views/Away/`）。
 - **界面细节**：待发面板在请求结束时清空；Agent 行上的次数用紧凑的小标签；条里的文字允许缩小（`minimumScaleFactor`）；一个 SwiftUI 的坑：空的待发面板仍然占一份布局间距，已处理（面板为空时不参与布局）。
 - **老 Mac**：没有 `caps.away` 就不显示任何离开相关入口（有测试）。
-- **验证**：Rust `ios::gateway` 的 `tests_away`；Swift 包测试（引擎、`AwayStore`、夹具往返）；模拟器 UI 测试 `AskHumanAwayUITests`（en + zh-Hans，模拟器 iOS 27）。iOS 17–18 的降级条样式没有在旧系统的模拟器上看过。
+- **验证**：Rust `ios::gateway` 的 `tests_away`；Swift 包测试（引擎、`AwayStore`、夹具往返）；模拟器 UI 测试 `AskHumanAwayUITests`（en + zh-Hans，模拟器 iOS 27）。iOS 18.5 的经典条样式在后面的「iOS 18.5 经典条补验」里补验过；iOS 17 没看过。
 
 ### P3 快捷回复（已完成）
 
@@ -223,13 +223,23 @@ P4 之后把当时的 main（`b0e83385`：守护进程交接、失败恢复、iO
 - **Swift 包**：6 个测试包共 672 条、0 失败（要真实服务的端到端按设计跳过）。
 - **真实 Daemon 端到端**（`AHE2ETests`，本地 broker，用合并后装出来的二进制）：41 通过、12 按设计跳过、**3 失败，而且在 main 上同样失败**：`AgentE2ETests.testAMessageToAnAgentThatIsNotWorkingIsRefused` 与 `testSessionsOfTheMacAreListedWithTheirState`（期望 `notWorking`，main 的 `agent_control.rs::can_interject` 现在对空闲会话返回 `idleUnsupported`），以及 `testAFollowedSessionReportsWhenItsTurnEnds`（等不到 `done` 事件）。用 main 的日常版二进制（`~/.local/bin/AskHuman`，装机早于 `b0e83385`）单独跑这三条，失败一模一样，所以不是本功能或这次合并带来的，多半是 main 上的 Agent 生命周期改动之后这些用例没有跟着改，留给那边处理。`TodoE2ETests` 里本功能加的四条通过。
 - **隔离 Daemon 里用合并后的二进制冒充 Claude 会话**：`away on` → 提问被自动回复（带备注）→ `away status` 显示自动回复次数 → `away off`，一切如设计。
-- **iOS 模拟器 UI 测试**（`AskHuman SR UI`，iPhone，iOS 26）：`AskHumanAwayUITests` 16/16（英文、简体中文各一遍）、`AskHumanTodoPickUITests` 6/6（简体中文）、主类 `AskHumanUITests` 63/63（英文）、`AskHumanRequestNavigationUITests` 8、`AskHumanRequestTodoUITests` 8、`AskHumanTodosUITests` 10、`AskHumanRequestConnectionUITests` 3、`AskHumanArrivalUITests` 7 全过；`AskHumanInputVisibilityUITests` 9 条里 7 过、1 条要专用相册夹具而跳过、1 条 `testEachQuestionRevealsItsOwnAttachmentEntryPoint` 偶发失败（`second.typeText` 前的点按没拿到键盘焦点，约两次里一次）。**在不含本分支改动的 main 上同样复现**（同一行、同一报错，第 2 轮失败），是已有的不稳定用例，不是本功能引入的。
+- **iOS 模拟器 UI 测试**（`AskHuman SR UI`，iPhone，iOS 27.0）：`AskHumanAwayUITests` 16/16（英文、简体中文各一遍）、`AskHumanTodoPickUITests` 6/6（简体中文）、主类 `AskHumanUITests` 63/63（英文）、`AskHumanRequestNavigationUITests` 8、`AskHumanRequestTodoUITests` 8、`AskHumanTodosUITests` 10、`AskHumanRequestConnectionUITests` 3、`AskHumanArrivalUITests` 7 全过；`AskHumanInputVisibilityUITests` 9 条里 7 过、1 条要专用相册夹具而跳过、1 条 `testEachQuestionRevealsItsOwnAttachmentEntryPoint` 偶发失败（`second.typeText` 前的点按没拿到键盘焦点，约两次里一次）。**在不含本分支改动的 main 上同样复现**（同一行、同一报错，第 2 轮失败），是已有的不稳定用例，不是本功能引入的。
 - **没有重跑**：`AskHumanDeveloperUITests`、`AskHumanModelUITests`、`AskHumanWebUITests`、`AskHumanLargeScreenUITests`（要 iPad / Duo 模拟器）、`AskHumanLiveUITests`（要真实服务）和视频附件那一条。它们覆盖开发者模式、新建任务表单、Markdown 页与大屏，本分支没有改这些页面（新建任务表单的顶栏按钮是 main 带来的改动，那边自己验过）。
+
+### iOS 18.5 经典条补验与再次合并 main（2026-11-05）
+
+在 iOS 18.5 的模拟器（`AskHuman SR 18`，iPhone 16）上补看了经典样式（iOS 17–25 没有液态玻璃的底栏）：常驻条、开启页、升级提示卡、底栏菜单与待发面板逐屏目视，再跑 `AskHumanAwayUITests`。
+
+- **目视发现并修了一处**（`02ca1be7`）：待发「发送并离开」时，经典底栏里计数块分到的宽度比它需要的多，按钮标签被截成「Send and go…」。现在待发期间按钮先定尺寸、只有计数块让位（一行，最小缩到 80%）；没有待发指令时两个修饰符取的都是默认值，布局与之前完全一样。其余几屏（常驻条、开启页、升级提示、底栏菜单的顺序、待发面板）与 iOS 27 一致，没有别的问题。
+- **两处测试脆弱点，不是应用问题**（`734a86a2`）：① iOS 18.5 上点一行不会先把它从底栏下面滚出来，`isHittable` 还报真——迁移请求第一题的选项落在屏幕下沿，点按没有选中，「全部答完后预设置灰」那条用例因此失败；测试里加了 `scrollIntoReach`，先把这一行滑到上下栏之间再点，并等计数变成 3/3。② 发送之后页面有时没有自己退回列表：Mock 的回答是即时的，「已结束」事件可能先于「发送中」状态到达，而 `AppStore.advance(from:)` 只在状态是「发送中」时才换页（真实 Mac 有网络往返，不会这样；这个设计在 main 上就是如此）；测试里加了 `leaveTheSentRequest()`，没回到列表就点返回。
+- **结果**：iOS 18.5 上 `AskHumanAwayUITests` 16/16；iOS 27.0 上同一个类英文 16/16、简体中文 16/16；`AskHumanInputVisibilityUITests` 8 通过、1 条要专用相册夹具而跳过（上一轮偶发失败的那条这次也过了）；`AskHumanRequestNavigationUITests` 7/8，失败的是 `testManualReturnRestoresTheReadingPositionOfALongForm`（返回后长表单的阅读位置 15 秒内没回到原处，`AskHumanRequestNavigationUITests.swift:101`）。**这条在 main（`b03606fc`，不含本分支任何改动，临时 worktree 里单独构建）上同样失败、同样 7/8**，暂存掉本次的 `AnswerScreen` 改动也一样；它之前通过过（合并后的第一轮验证里这个类 8/8，重启模拟器后单跑也过过一次），所以是 main 上已有的不稳定用例，不是本功能引入的，已记进 PROGRESS。
+- **再次合并 main**（`86aa3f7d`）：main 又走了两个提交（弹窗里拦截原生导航离开答题页、Codex 的 stdio MCP 配置修复），无冲突，协议号仍是 5，分支继续可对 main 快进。合并后 `cargo fmt --check`、`clippy --all-targets -D warnings` 干净，`cargo test --bin AskHuman` 2596 通过 / 0 失败 / 11 忽略。
+- **没看的**：iOS 17、iPad 与 Duo 大屏上的常驻条，真机。
 
 ### 总体没有验证的部分
 
 - **真实 Agent 端到端**：Claude Code / Codex / Cursor 各一轮（开离开 → 提问与 whats-next 被自动回复 → `--escalate` 送达 → 结束；「不再使用」→ 即时提示、Stop 确认静音、权限与出错卡仍在）。需要用户授权真实 Agent 调用；只有隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话的端到端，以及 Stop hook / `AskUserQuestion` 接管的单测。
 - **桌面胶囊在真实桌面上的交互**与 Windows / Linux 的托盘月亮、控制台（见 P2c）。
-- **iOS 17–18 的降级条样式**与真机一轮；**TestFlight 没有出**。
+- **iOS 17 的降级条样式**、iPad / Duo 大屏上的常驻条与真机一轮（iOS 18.5 的经典条已补验，见上）；**TestFlight 没有出**。
 - 需求 §3.10 的默认做法 N1–N10 没有再次征求用户意见（用户不在），按原文采用。
 

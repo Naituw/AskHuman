@@ -366,26 +366,27 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 用户回来后可否决）。需求 [`docs/specs/special-replies.md`](specs/special-replies.md)
 （界面稿在 `docs/assets/special-replies/`，浏览器原型在 `src/prototype/`，入口见 `docs/development.md`），计划
 [`docs/plans/special-replies.md`](plans/special-replies.md)（文末「实施记录」按期记差异与验证结果，「总体没有验证的部分」是下面清单的出处）。
-实现在 worktree `../HumanInLoop-special-replies`（分支 `feat/special-replies`，Dev Instance；2026-11-05 已把当时的 main `b0e83385` 合进分支，所以对 main 可直接 fast-forward）；协议号 5 是并入未发布的那一版（v0.16.0 是 4）。
+实现在 worktree `../HumanInLoop-special-replies`（分支 `feat/special-replies`，Dev Instance；2026-11-05 已两次把 main（最近一次是 `b03606fc`）合进分支，所以对 main 可直接 fast-forward）；协议号 5 是并入未发布的那一版（v0.16.0 是 4）。
 
 做了什么：四块能力共用 Daemon 里的「模式引擎」（`daemon/away.rs`，状态落盘 `~/.askhuman/state/away.json`）——① iOS 在提问里选项目待办、What's next 看完整队列；
 ② 离开模式（Agent 的每次提问与 whats-next 都被自动回复，带 `--escalate` 才像没离开一样送达；只能手动结束；Mac 桌面胶囊 / 托盘 / 控制台，手机常驻条）与会话级「不再使用 AskHuman」；
 ③ 弹窗与手机的快捷回复菜单（预设在 Mac 设置里编辑）；④ CLI `AskHuman away on/off/status` 与 IM `/away`、`/back`。全貌见 `docs/overview.md`「离开模式、本会话不再使用与快捷回复」。
 
-自测（合并 main 之后；都在隔离的 Dev Instance / 临时 `ASKHUMAN_HOME` 里，没碰日常 daemon，没发到用户手机）：`cargo fmt --check` 与 `clippy -D warnings` 干净，`cargo test --bin AskHuman` 2592 通过 / 0 失败；
+自测（合并 main 之后；都在隔离的 Dev Instance / 临时 `ASKHUMAN_HOME` 里，没碰日常 daemon，没发到用户手机）：`cargo fmt --check` 与 `clippy -D warnings` 干净，`cargo test --bin AskHuman` 2596 通过 / 0 失败；
 `vue-tsc` 通过、vitest 1276 条全过；Swift 包 672 条 0 失败；真实 Daemon 端到端 41 通过（3 条 `AgentE2ETests` 失败，在 main 上同样失败，见下）；
-模拟器 UI 测试 128 条通过（`AskHumanAwayUITests` 中英文、`AskHumanTodoPickUITests`、主类 `AskHumanUITests` 63 条等，细节见计划「合并 main 与最终验证」）；
+模拟器 UI 测试 128 条通过（`AskHumanAwayUITests` 中英文、`AskHumanTodoPickUITests`、主类 `AskHumanUITests` 63 条等，细节见计划「合并 main 与最终验证」；iOS 18.5 的经典条另验过，`AskHumanAwayUITests` 16/16，见「iOS 18.5 经典条补验」）；
 隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话跑通了离开 / 升级 / 不再使用的端到端。
 
 **不是本功能带来、但这次验证里撞到的 main 上的已有问题**（留给对应的同学 / 会话处理）：
 - `AHE2ETests/AgentE2ETests` 的三条用例在 main 上就失败：`testAMessageToAnAgentThatIsNotWorkingIsRefused`、`testSessionsOfTheMacAreListedWithTheirState`（期望 `notWorking`，`agent_control.rs::can_interject` 现在对空闲会话返回 `idleUnsupported`）、`testAFollowedSessionReportsWhenItsTurnEnds`（等不到 `done` 事件）；用 main 的日常版二进制单独跑得到同样的失败。
 - `AskHumanInputVisibilityUITests.testEachQuestionRevealsItsOwnAttachmentEntryPoint` 偶发失败（第二题输入框点按后没有键盘焦点），在 main 上同样复现。
+- `AskHumanRequestNavigationUITests.testManualReturnRestoresTheReadingPositionOfALongForm`（`AskHumanRequestNavigationUITests.swift:101`，返回后长表单的阅读位置 15 秒内没回到原处）在 iOS 27.0 模拟器上多数时候失败，在 main（`b03606fc`，临时 worktree 单独构建）上同样 7/8；偶尔能过（重启模拟器后单跑过过一次），是已有的不稳定用例，原因没查（可能与 `-AHWebMarkdown YES` 下网页内容高度异步变化有关）。
 
 下一步：
 - [ ] **用户复核**需求 §3.10 里**没有单独确认过**的默认做法 N1–N10（实现按原文采用），其中「欢迎回来」的空闲门槛取 5 分钟（第 5 轮图文）；第 9 轮的提问正文误写成 15 分钟，以 5 分钟为准
 - [ ] **真实 Agent 端到端**：Claude Code / Codex / Cursor 各一轮（开离开 → 提问与 whats-next 被自动回复 → `--escalate` 送达 → 结束；「不再使用」→ 即时提示、Stop 确认静音、权限与出错卡仍在）。要先有用户对真实 Agent 调用的授权
 - [ ] **桌面胶囊在真实桌面上的交互**：悬停 / 点击展开、拖动后位置记忆、「欢迎回来」的触发（5 分钟空闲后敲键盘）、全屏应用与多桌面上的可见性。这台机器截不了屏、Computer Use 也列不出 AskHuman 的后台应用，只验了窗口几何（`CGWindowListCopyWindowInfo`）与浏览器里的真实组件；Windows / Linux 的托盘月亮与控制台也没看过
-- [ ] **iOS**：iOS 17–18 的降级条样式（常驻条与底栏菜单；模拟器只验了 iOS 26）与真机一轮；TestFlight **没有出**（用户没要；要出走 `ios-testflight` 技能），Mac 也要装带这次改动的版本，否则手机上没有离开 / 待办入口（`caps.away` / `caps.answerTodos` 把关）
+- [ ] **iOS**：iOS 17 的降级条样式、iPad / Duo 大屏上的常驻条与真机一轮（iOS 18.5 模拟器的经典条已逐屏看过并跑过 `AskHumanAwayUITests`，修了「发送并离开」按钮被截断；其余在 iOS 27.0 模拟器上验，见计划「iOS 18.5 经典条补验」）；TestFlight **没有出**（用户没要；要出走 `ios-testflight` 技能），Mac 也要装带这次改动的版本，否则手机上没有离开 / 待办入口（`caps.away` / `caps.answerTodos` 把关）
 - [ ] **合回 main**：分支未推送。main 检出里别的会话有未提交的改动（`Localizable.xcstrings`、`make-catalog.py` 等），合并时这两处可能冲突；合完后 `./scripts/install.sh` 装为日常版
 - [ ] 控制台里 Agent 页头的横幅 / 会话菜单在真实数据上的样子没再核对（组件与逻辑有测试）
 
