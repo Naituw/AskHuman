@@ -240,7 +240,7 @@ P4 之后把当时的 main（`b0e83385`：守护进程交接、失败恢复、iO
 
 用户授权「只用 Codex 做端到端，跑通就行」。用真实的 `codex exec`（`codex-cli 0.163.0`，模型沿用用户配置的 `gpt-6.1-sol`，推理强度压到 low）对一台**一次性的隔离 Mac** 跑了四个场景，外加一个 hook 级场景。人由 Swift 端到端框架（`AHE2ETests`）里的假手机扮演：本地 broker、真实 Daemon、真实配对，手机引擎用 `setAway` / `submitAnswer(directive:)` / `setSessionAway` 操作。
 
-**隔离**（每个场景之后都核对）：Codex 进程拿真实 HOME（登录态在那里），但环境变量只给最小一份（HOME、PATH、LANG 等）加一次性的 `ASKHUMAN_HOME` 与 `ASKHUMAN_NO_KEYCHAIN`，Cursor、令牌之类的变量一个都不带；用户自己的 `~/.codex/hooks.json`（AskHuman 的 SessionStart 注入协议、工具活动、Stop 确认、权限）照常加载，靠继承的 `ASKHUMAN_HOME` 全部落在一次性 Daemon 里；MCP 服务与模型、推理强度都在命令行里给，不读用户的 `config.toml`（那里的 hook 信任记录也就读不到，所以加 `--dangerously-bypass-hook-trust`，让这份用户自己的 hooks 在本次运行里免确认）。每个场景之后：真实 `~/.askhuman` 里搜不到这次运行独有的工作目录名，不存在 `state/away.json`，日常 Daemon 的离开状态仍是关。一次性家里设了 `agents delegated codex on`（`codex exec` 算被委派运行，默认静默）、`agents permission codex on`、`agents stop codex on`。
+**隔离**（每个场景之后都核对）：Codex 进程拿真实 HOME（登录态在那里），但环境变量只给最小一份（HOME、PATH、LANG 等）加一次性的 `ASKHUMAN_HOME` 与 `ASKHUMAN_NO_KEYCHAIN`，Cursor、令牌之类的变量一个都不带（入库的测试只多放行 Codex 自己读的 `CODEX_HOME`、`OPENAI_API_KEY` 等，设了才传；那次手动运行里一个都没设）；用户自己的 `~/.codex/hooks.json`（AskHuman 的 SessionStart 注入协议、工具活动、Stop 确认、权限）照常加载，靠继承的 `ASKHUMAN_HOME` 全部落在一次性 Daemon 里；MCP 服务与模型、推理强度都在命令行里给，不读用户的 `config.toml`（那里的 hook 信任记录也就读不到，所以加 `--dangerously-bypass-hook-trust`，让这份用户自己的 hooks 在本次运行里免确认）。每个场景之后：真实 `~/.askhuman` 里搜不到这次运行独有的工作目录名，不存在 `state/away.json`，日常 Daemon 的离开状态仍是关。一次性家里设了 `agents delegated codex on`（`codex exec` 算被委派运行，默认静默）、`agents permission codex on`、`agents stop codex on`。
 
 ```
 codex exec --ignore-user-config --dangerously-bypass-hook-trust --skip-git-repo-check --json -s read-only \
@@ -263,7 +263,15 @@ codex exec --ignore-user-config --dangerously-bypass-hook-trust --skip-git-repo-
 
 **顺带观察到的**：① SessionStart hook 注入的协议比提示词里的「不要调用 AskHuman」更强，Codex 一律会走 `whats_next` 并带结束标记；手机回「Nothing more. You may stop now.」或「just reply DONE」它都当成批准结束。② `codex exec` 把审批策略固定成「从不审批」（`-c approval_policy` 不起作用），Codex 自己说「环境禁止申请提权」，所以**权限审批卡在离开 / 不再使用时仍送达**这一条没法用 `exec` 验证，仍只有单测。
 
-**清理**：8 个 Codex 线程经 `thread/archive` 归档到 `~/.codex/archived_sessions/`（可恢复，同 `docs/specs/codex-delegated-run-silence.md` 的做法）；一次性 Mac、broker 与临时目录已删，用户的 Codex 配置与 hooks 没有改动。驱动用的 Swift 测试（约 400 行）没有入库：它会启动真实的付费 Agent，要入库的话应做成 `AH_E2E_CODEX=1` 才跑的用例。
+**清理**：8 个 Codex 线程经 `thread/archive` 归档到 `~/.codex/archived_sessions/`（可恢复，同 `docs/specs/codex-delegated-run-silence.md` 的做法）；一次性 Mac、broker 与临时目录已删，用户的 Codex 配置与 hooks 没有改动。
+
+**驱动测试已入库**（`ios/Packages/AskHumanKit/Tests/AHE2ETests/`：`CodexAgentE2ETests.swift`，共用部分在 `CodexE2ECase.swift`，收尾归档用的最小 `codex app-server` 客户端在 `CodexAppServer.swift`）。`CodexAgentE2ETests` 的四个用例（隔离探针、离开、不再使用、解除后插话）要启动真实的付费 Agent，只在 `AH_E2E_CODEX=1` 时跑，命令见 `docs/overview-ios.md`；没装 Codex、没登录或没装 AskHuman 的 Codex hooks 时自动跳过。Stop hook 那一条不需要 Codex，拆成 `CodexStopHookE2ETests`，和其他端到端一起默认跑。与首次手动运行相比，入库时改了几处：
+
+- 去掉了提示词里「申请提权」的步骤：`exec` 不审批，那一步什么也触发不了（Codex 看到审批策略禁止提权，连命令都不试）。
+- 线程由测试自己在收尾时归档（`codex app-server` 的 `thread/archive`；超时失败的用例同样归档），不再靠事后跑脚本。
+- 隔离检查更严：要求一次性家里确实搜得到这次运行的目录名（否则「真实家里没有」什么也证明不了）；「真实 `state/away.json` 不存在」改成「里面没有这次运行的会话 id」，因为用户自己也可能在用离开模式。
+- 应答更稳：不带结束标记就收尾的 Codex 会触发 Stop 确认，手机不回应就卡到超时。入库前的第一次验证里探针正是这样失败的（Codex 只回了「OK」，没走 `whats_next`，Stop 确认的卡在 7 秒时到了手机，没人应答，一直等到 240 秒超时），所以现在探针、离开、解除后插话三个用例都会应答 Stop 确认与 What's next（「不再使用」用例里这些卡本就不该到手机，到了就记为失败并答掉，免得干等），解除后插话的断言也改成只认各自的问题文字，不数卡片总数。
+- 模型由 `AH_E2E_CODEX_MODEL` 指定，缺省用 Codex 自己的默认模型（手动运行与入库后的验证都用 `gpt-6.1-sol`）。
 
 ### 总体没有验证的部分
 
