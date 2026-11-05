@@ -57,6 +57,45 @@ export interface AwaySnapshot {
   escalatedWaiting: number;
 }
 
+/** One Agent session in the away capsule's expanded card (mirrors `app::away_capsule::CapsuleRow`). */
+export interface CapsuleRow {
+  /** Agent family: claude / codex / cursor / grok. */
+  kind: string;
+  title: string;
+  replies: number;
+}
+
+/** What the desktop capsule and its card show (mirrors `app::away_capsule::CapsuleView`). */
+export interface CapsuleView {
+  /** `all` while the global switch is on; `sessions` when only single sessions are away. */
+  scope: "all" | "sessions";
+  sinceMs: number;
+  /** Sessions that are away on their own (scope `sessions`). */
+  sessions: number;
+  /** Their keys: "end away mode" puts each back to following the global switch. */
+  sessionKeys: string[];
+  replies: number;
+  /** Escalated questions waiting for an answer. */
+  waiting: number;
+  rows: CapsuleRow[];
+  /** Rows that did not fit the card. */
+  more: number;
+  note?: string | null;
+}
+
+/** The capsule window's state: the view (`null` = nothing to show) and whether the card is "welcome back". */
+export interface CapsuleState {
+  view: CapsuleView | null;
+  welcome: boolean;
+}
+
+/** What the capsule window asks for when it opens. */
+export interface CapsuleInit {
+  state: CapsuleState;
+  theme: ThemeMode;
+  lang: string;
+}
+
 /** One state-changing request (`daemon::away::AwayOp`). */
 export type AwayOp =
   | { op: "state" }

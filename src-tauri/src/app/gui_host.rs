@@ -233,6 +233,10 @@ pub struct HostState {
     pub daemon_lifecycle: Mutex<DaemonLifecycleMode>,
     pub lang: Mutex<Lang>,
     pub data: Mutex<TrayData>,
+    /// What the away-mode capsule window shows right now (`away_capsule::sync` keeps it current).
+    pub capsule: Mutex<crate::app::away_capsule::CapsuleState>,
+    /// The away settings (capsule, welcome back), refreshed with every configuration change.
+    pub away_cfg: Mutex<crate::config::AwayConfig>,
     /// Current-mode integration bundles that need reconciliation, in settings display order.
     pub integration_updates: Mutex<Vec<String>>,
     /// GUI Host owns menu-triggered update feedback even while daemon is down.
@@ -268,8 +272,14 @@ pub struct HostState {
 }
 
 impl HostState {
-    fn mode(&self) -> MenuBarIconMode {
+    pub(crate) fn mode(&self) -> MenuBarIconMode {
         *self.mode.lock().unwrap()
+    }
+    pub(crate) fn away_config(&self) -> crate::config::AwayConfig {
+        self.away_cfg.lock().unwrap().clone()
+    }
+    pub(crate) fn daemon_up_now(&self) -> bool {
+        self.daemon_up.load(Ordering::SeqCst)
     }
     fn lang(&self) -> Lang {
         *self.lang.lock().unwrap()
@@ -308,6 +318,8 @@ pub fn setup(app: &mut tauri::App, config: &AppConfig) -> tauri::Result<()> {
         daemon_lifecycle: Mutex::new(config.general.daemon_lifecycle),
         lang: Mutex::new(lang),
         data: Mutex::new(initial_tray_data()),
+        capsule: Mutex::new(Default::default()),
+        away_cfg: Mutex::new(config.general.away.clone()),
         integration_updates: Mutex::new(detect_integration_updates()),
         update_action: Mutex::new(UpdateActionState::Idle),
         daemon_up: AtomicBool::new(false),
@@ -361,6 +373,7 @@ pub fn setup(app: &mut tauri::App, config: &AppConfig) -> tauri::Result<()> {
     start_status_subscription(handle.clone());
     start_config_watch(handle.clone());
     start_binary_watch(handle.clone());
+    crate::app::away_capsule::start_welcome_watch(&handle);
 
     // 启动宽限：12s 后标记并复核退出（覆盖 OpenWindow 始终未到达的极端情况）。
     let h = handle.clone();
@@ -665,6 +678,9 @@ pub fn refresh_tray(app: &AppHandle) {
     let Some(state) = app.try_state::<HostState>() else {
         return;
     };
+    // The away-mode capsule follows the same data but not the tray's content signature: it has to
+    // react to a change even when the menu itself looks the same.
+    crate::app::away_capsule::sync(app);
     let tray_guard = state.tray.lock().unwrap();
     let Some(tray) = tray_guard.as_ref() else {
         return;
@@ -2275,6 +2291,7 @@ fn apply_config(app: &AppHandle, cfg: &AppConfig) {
     let old_mode = state.mode();
     *state.lang.lock().unwrap() = new_lang;
     *state.mode.lock().unwrap() = new_mode;
+    *state.away_cfg.lock().unwrap() = cfg.general.away.clone();
 
     if new_mode != old_mode {
         apply_activation_policy(app, new_mode);

@@ -1,6 +1,7 @@
 //! Tauri runtime for daemon-backed popups and shared desktop windows.
 
 pub mod attachment_owner;
+pub mod away_capsule;
 pub mod confirm_coordinator;
 pub mod coordinator;
 pub mod gui_host;
@@ -976,6 +977,12 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                     WindowEvent::Destroyed => attachment_owner::forget_history(window.app_handle()),
                     _ => {}
                 },
+                // The away-mode capsule: remember where the user drags it.
+                away_capsule::LABEL => {
+                    if matches!(event, WindowEvent::Moved(_)) {
+                        away_capsule::moved(window);
+                    }
+                }
                 // 设置窗口关闭时清掉 Liquid Glass 注册表条目：插件按 label 缓存玻璃视图，
                 // 若不清理，下次同 label 重开会走 update 分支去操作已销毁的旧视图，导致背景透明无玻璃。
                 #[cfg(target_os = "macos")]

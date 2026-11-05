@@ -1080,6 +1080,25 @@ export default {
       daysAgo: "{n} 天前",
     },
   },
+  // 桌面离开模式胶囊与展开卡（docs/specs/special-replies.md D22、D23）。
+  capsule: {
+    title: "离开模式",
+    welcomeTitle: "欢迎回来",
+    scopeAll: "所有 Agent",
+    scopeSessions: "{n} 个会话",
+    startedAt: "{time} 开始",
+    awayFor: "已离开 {d}",
+    welcomeSub: "你离开了 {d}，离开模式仍在运行",
+    note: "备注：{note}",
+    replies: "期间自动回复 {n} 次",
+    times: "{n} 次",
+    more: "还有 {n} 个会话",
+    waiting: "{n} 个提问在等你处理",
+    view: "查看",
+    viewRecord: "查看记录",
+    keepAway: "保持离开",
+    end: "结束离开模式",
+  },
   console: {
     // 控制台里的离开模式（docs/specs/special-replies.md D25）：全局提示条、侧栏小图标、
     // 详情头部的「AskHuman」会话级下拉。

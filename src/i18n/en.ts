@@ -1102,6 +1102,25 @@ export default {
       daysAgo: "{n}d ago",
     },
   },
+  // The desktop capsule of away mode and its card (docs/specs/special-replies.md D22, D23).
+  capsule: {
+    title: "Away mode",
+    welcomeTitle: "Welcome back",
+    scopeAll: "All Agents",
+    scopeSessions: "{n} session(s)",
+    startedAt: "since {time}",
+    awayFor: "away for {d}",
+    welcomeSub: "You were away for {d}; away mode is still on",
+    note: "Note: {note}",
+    replies: "Auto-replies while away: {n}",
+    times: "{n}×",
+    more: "and {n} more",
+    waiting: "{n} question(s) waiting for you",
+    view: "View",
+    viewRecord: "View record",
+    keepAway: "Keep away",
+    end: "End away mode",
+  },
   console: {
     // Away mode in the console (docs/specs/special-replies.md D25): the global banner, the glyphs
     // in the sidebar and the per-session "AskHuman" menu in the detail header.

@@ -14,9 +14,10 @@ const InterjectView = defineAsyncComponent(() => import("./views/InterjectView.v
 const TodosView = defineAsyncComponent(() => import("./views/TodosView.vue"));
 const NewTaskView = defineAsyncComponent(() => import("./views/NewTaskView.vue"));
 const ForkTaskView = defineAsyncComponent(() => import("./views/ForkTaskView.vue"));
+const AwayCapsuleView = defineAsyncComponent(() => import("./views/AwayCapsuleView.vue"));
 
 // 视图模式由 Rust 侧通过窗口 URL 的查询参数注入：
-// ?view=popup | settings | history | agents | interject | todos | newtask | forktask
+// ?view=popup | settings | history | agents | interject | todos | newtask | forktask | away-capsule
 const view = computed(() => {
   const params = new URLSearchParams(window.location.search);
   return params.get("view") ?? "popup";
@@ -32,6 +33,7 @@ const view = computed(() => {
   <TodosView v-else-if="view === 'todos'" />
   <NewTaskView v-else-if="view === 'newtask'" />
   <ForkTaskView v-else-if="view === 'forktask'" />
+  <AwayCapsuleView v-else-if="view === 'away-capsule'" />
   <PopupInboxView v-else-if="view === 'popup-inbox'" />
   <PopupView v-else />
 </template>

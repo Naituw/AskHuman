@@ -419,6 +419,10 @@ pub struct DetectRequest {
 pub struct PendingRequestInfo {
     pub id: String,
     pub preview: String,
+    /// The question reached the user although away mode was on (an Agent escalation), so the
+    /// desktop capsule can take the user straight to it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub escalated: bool,
 }
 
 /// 一条活动 agent 的菜单栏摘要（D→宿主，托盘「Agent 状态」子菜单用，spec agent-interject D7）。
@@ -1382,6 +1386,7 @@ mod tests {
             pending_requests: vec![PendingRequestInfo {
                 id: "r1".to_string(),
                 preview: "deploy?".to_string(),
+                escalated: false,
             }],
             agents: vec![TrayAgentInfo {
                 session_id: "s1".to_string(),

@@ -186,6 +186,12 @@ pub fn away_file() -> PathBuf {
     state_dir().join("away.json")
 }
 
+/// Where the user left the away-mode capsule (`~/.askhuman/state/away-capsule.json`); a window
+/// position, so it lives with the other small state rather than in the configuration.
+pub fn away_capsule_file() -> PathBuf {
+    state_dir().join("away-capsule.json")
+}
+
 /// Final-failure cards the user has not answered yet (`~/.askhuman/state/failure-cards.json`).
 /// Written while a card is waiting and removed once it is answered, replaced or revoked, so a daemon
 /// replacement can bring the card back (`docs/specs/agent-failure-inbox.md` §5.1).

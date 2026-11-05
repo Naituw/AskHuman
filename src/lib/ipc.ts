@@ -4,6 +4,7 @@ import type {
   AppConfig,
   AwayOp,
   AwaySnapshot,
+  CapsuleInit,
   ChannelIssue,
   DingTalkDetectArgs,
   DingTalkTestArgs,
@@ -102,6 +103,19 @@ export const awayApply = (op: AwayOp) => invoke<AwaySnapshot>("away_apply", { op
 
 /** The picture the GUI Host last heard of the daemon (no daemon round trip); empty while nothing is set. */
 export const awayCached = () => invoke<AwaySnapshot>("away_cached");
+
+/** The away capsule window: its state with the app's theme and language, asked once when it opens. */
+export const capsuleInit = () => invoke<CapsuleInit>("capsule_init");
+
+/** The capsule page reports the size it needs (capsule or card); the window follows, centred. */
+export const capsuleResize = (width: number, height: number) =>
+  invoke<void>("capsule_resize", { width, height });
+
+/** "Keep away" on the welcome-back card. */
+export const capsuleDismissWelcome = () => invoke<void>("capsule_dismiss_welcome");
+
+/** The card's "view" button: bring the waiting question's popup forward. */
+export const capsuleFocusWaiting = () => invoke<void>("capsule_focus_waiting");
 
 /** Open the reply history filtered to the automatic replies of one channel (`away` / `mute`). */
 export const openHistoryChannel = (channel: string) =>

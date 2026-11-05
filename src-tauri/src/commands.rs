@@ -1445,6 +1445,31 @@ pub fn away_cached(app: AppHandle) -> crate::daemon::away::AwaySnapshot {
         .unwrap_or_default()
 }
 
+/// What the away-mode capsule window shows, with the app's theme and language. The window asks once
+/// when it opens; later changes arrive as `capsule-state` events.
+#[tauri::command]
+pub fn capsule_init(app: AppHandle) -> crate::app::away_capsule::CapsuleInit {
+    crate::app::away_capsule::init(&app)
+}
+
+/// The capsule page reports the size it needs (capsule or expanded card); the window follows.
+#[tauri::command]
+pub fn capsule_resize(app: AppHandle, width: f64, height: f64) {
+    crate::app::away_capsule::resize(&app, width, height);
+}
+
+/// "Keep away" on the welcome-back card.
+#[tauri::command]
+pub fn capsule_dismiss_welcome(app: AppHandle) {
+    crate::app::away_capsule::dismiss_welcome(&app);
+}
+
+/// The card's "view" button: bring the waiting question's popup forward.
+#[tauri::command]
+pub fn capsule_focus_waiting(app: AppHandle) {
+    crate::app::away_capsule::focus_waiting(&app);
+}
+
 #[tauri::command]
 pub async fn cancel_popup(app: AppHandle, request_id: Option<String>) -> Result<(), String> {
     if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {

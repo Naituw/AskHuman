@@ -389,6 +389,12 @@ impl AwaySnapshot {
         self.global.is_some()
     }
 
+    /// True while the global switch is on or at least one session is away on its own (mute is not
+    /// away mode): the desktop capsule and the welcome-back reminder exist for exactly this.
+    pub fn any_away(&self) -> bool {
+        self.global.is_some() || self.sessions.iter().any(|s| s.mode == SessionMode::Away)
+    }
+
     /// True when neither the global switch nor any session override is set: nothing to show.
     pub fn is_empty(&self) -> bool {
         self.global.is_none() && self.sessions.is_empty()

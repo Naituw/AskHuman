@@ -908,6 +908,7 @@ impl RequestRegistry {
                         PendingRequestInfo {
                             id: entry.request_id.clone(),
                             preview: preview_of(entry.request()),
+                            escalated: !entry.held && entry.request().escalated.is_some(),
                         },
                     )
                 })
@@ -920,6 +921,7 @@ impl RequestRegistry {
                                 &entry.request.detail.summary,
                                 PREVIEW_MAX_CHARS,
                             ),
+                            escalated: false,
                         },
                     )
                 }))
