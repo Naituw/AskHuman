@@ -375,7 +375,8 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 自测（合并 main 之后；都在隔离的 Dev Instance / 临时 `ASKHUMAN_HOME` 里，没碰日常 daemon，没发到用户手机）：`cargo fmt --check` 与 `clippy -D warnings` 干净，`cargo test --bin AskHuman` 2596 通过 / 0 失败；
 `vue-tsc` 通过、vitest 1276 条全过；Swift 包 672 条 0 失败；真实 Daemon 端到端 41 通过（3 条 `AgentE2ETests` 失败，在 main 上同样失败，见下）；
 模拟器 UI 测试 128 条通过（`AskHumanAwayUITests` 中英文、`AskHumanTodoPickUITests`、主类 `AskHumanUITests` 63 条等，细节见计划「合并 main 与最终验证」；iOS 18.5 的经典条另验过，`AskHumanAwayUITests` 16/16，见「iOS 18.5 经典条补验」）；
-隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话跑通了离开 / 升级 / 不再使用的端到端。
+隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话跑通了离开 / 升级 / 不再使用的端到端；
+2026-11-05 又用**真实 Codex**（`codex exec`，隔离的一次性 Mac + 假手机，没碰日常 daemon）跑通四个场景：离开 → 提问与 whats-next 被自动回复 → `escalate` 送达手机；不再使用 → 后续调用即时回提示、Stop 确认静音；从手机解除 → 插话让它再次提问，细节见计划「真实 Codex 端到端」。
 
 **不是本功能带来、但这次验证里撞到的 main 上的已有问题**（留给对应的同学 / 会话处理）：
 - `AHE2ETests/AgentE2ETests` 的三条用例在 main 上就失败：`testAMessageToAnAgentThatIsNotWorkingIsRefused`、`testSessionsOfTheMacAreListedWithTheirState`（期望 `notWorking`，`agent_control.rs::can_interject` 现在对空闲会话返回 `idleUnsupported`）、`testAFollowedSessionReportsWhenItsTurnEnds`（等不到 `done` 事件）；用 main 的日常版二进制单独跑得到同样的失败。
@@ -384,7 +385,7 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 
 下一步：
 - [ ] **用户复核**需求 §3.10 里**没有单独确认过**的默认做法 N1–N10（实现按原文采用），其中「欢迎回来」的空闲门槛取 5 分钟（第 5 轮图文）；第 9 轮的提问正文误写成 15 分钟，以 5 分钟为准
-- [ ] **真实 Agent 端到端**：Claude Code / Codex / Cursor 各一轮（开离开 → 提问与 whats-next 被自动回复 → `--escalate` 送达 → 结束；「不再使用」→ 即时提示、Stop 确认静音、权限与出错卡仍在）。要先有用户对真实 Agent 调用的授权
+- [ ] **真实 Agent 端到端的剩余部分**：Codex 一轮已跑通（见上）。还没做的：Claude Code、Cursor 各一轮（开离开 → 提问与 whats-next 被自动回复 → `--escalate` 送达 → 结束；「不再使用」→ 即时提示、Stop 确认静音、解除后插话），要先有用户对真实 Agent 调用的授权；以及权限审批卡 / 出错卡在离开与不再使用时仍送达——`codex exec` 固定为不审批，触发不了，要在交互式会话里看（现在只有单测与 Stop hook 级的验证）
 - [ ] **桌面胶囊在真实桌面上的交互**：悬停 / 点击展开、拖动后位置记忆、「欢迎回来」的触发（5 分钟空闲后敲键盘）、全屏应用与多桌面上的可见性。这台机器截不了屏、Computer Use 也列不出 AskHuman 的后台应用，只验了窗口几何（`CGWindowListCopyWindowInfo`）与浏览器里的真实组件；Windows / Linux 的托盘月亮与控制台也没看过
 - [ ] **iOS 真机验收**：已随内测包 `0.1.0 (9)` 出去（2026-11-05，更新 TestFlight 即可；Mac 日常版已是带这次改动的版本，入口由 `caps.away` / `caps.answerTodos` 把关：新 App 连老 Mac 不显示入口，老 App 没有这些界面）。待用户在真机上看：离开模式的橙色条与 Mac 的状态、计数一致，「发送并离开 / 发送并停用」不被截断，底栏菜单的展开方向与顺序，选项目待办后 Agent 收到的回答与 Mac 上待办的变化。iOS 17 的降级条样式、iPad / Duo 大屏上的常驻条没有看过（iOS 18.5 模拟器的经典条已逐屏看过并跑过 `AskHumanAwayUITests`，修了「发送并离开」按钮被截断，见计划「iOS 18.5 经典条补验」）
 - [ ] 控制台里 Agent 页头的横幅 / 会话菜单在真实数据上的样子没再核对（组件与逻辑有测试）
