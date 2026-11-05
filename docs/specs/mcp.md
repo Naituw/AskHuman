@@ -266,6 +266,11 @@ argv 映射：`message`→首个位置参数（或经 `-q` 拆分）；每个 qu
   startup_timeout_sec = 30
   tool_timeout_sec = 86400
   ```
+  AskHuman 固定使用 STDIO。安装 / 更新时只在 `mcp_servers.askhuman` 内清理 HTTP 专用字段
+  `url`、`bearer_token`、`bearer_token_env_var`、`http_headers`、`env_http_headers`、
+  `http_headers_helper`、`oauth`、`oauth_resource`、`auth`，避免与 `command` 混用导致 Codex
+  在读取配置时失败（`url = ""` 等空值也冲突）。已安装条目含这些字段即显示「需更新」。
+  保留 `env`、`env_vars`、`cwd`、启用状态与工具策略，以及其它 MCP server 的内容。
 - **Cursor**：`~/.cursor/mcp.json`（与 hooks.json 不同文件），`jsonc` CST 写。**不写 `timeout`**（Cursor 不认该字段且超时硬编码 ~60s 不可配）：
   ```json
   { "mcpServers": { "askhuman": { "command": "<绝对路径>", "args": ["mcp"] } } }
