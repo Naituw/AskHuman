@@ -19,6 +19,8 @@ const props = defineProps<{
   todoCounts: Record<string, number>;
   /** 相对时间重算锚点（父级 1s 心跳）。 */
   nowMs: number;
+  /** Sessions that were set on their own to away or "stop using AskHuman", by session id (glyph at the row's end). */
+  awayModes?: Record<string, "away" | "mute">;
 }>();
 
 const emit = defineEmits<{
@@ -154,6 +156,18 @@ function forkParentLabel(a: AgentRecord): string {
               {{ kindLabel(a.kind) }} · {{ rowTime(a) }}
               <span v-if="a.pendingInterject" class="ij-mini" :title="t('agents.pendingInterject')">✉</span>
             </span>
+          </span>
+          <!-- Only sessions that were set on their own carry a glyph (spec special-replies D25). -->
+          <span
+            v-if="awayModes?.[a.sessionId]"
+            class="away-glyph"
+            :class="awayModes[a.sessionId]"
+            :title="awayModes[a.sessionId] === 'away' ? t('console.away.glyphAway') : t('console.away.glyphMute')"
+            :aria-label="awayModes[a.sessionId] === 'away' ? t('console.away.glyphAway') : t('console.away.glyphMute')"
+            :data-glyph="awayModes[a.sessionId]"
+          >
+            <svg v-if="awayModes[a.sessionId] === 'away'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" /></svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 .6 5" /><path d="M17 17H3s3-2 3-9a4.67 4.67 0 0 1 .3-1.7" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /><path d="m2 2 20 20" /></svg>
           </span>
         </li>
         <li
@@ -362,6 +376,24 @@ function forkParentLabel(a: AgentRecord): string {
 .ij-mini {
   color: var(--accent);
   margin-left: 4px;
+}
+.away-glyph {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  padding-left: 6px;
+}
+.away-glyph svg {
+  width: 13px;
+  height: 13px;
+}
+.away-glyph.away {
+  color: var(--accent-orange, #ff9f0a);
+}
+.away-glyph.mute {
+  color: var(--text-tertiary);
 }
 .sess-empty {
   padding: 4px 8px;

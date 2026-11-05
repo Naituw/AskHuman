@@ -64,6 +64,7 @@ pub(super) fn broadcast_agents_state(state: &Arc<ServerState>) {
     if has_agent_subs(state) {
         let msg = ServerMsg::AgentsState {
             agents: agents_snapshot_for_console(state),
+            away: away_for_frame(state),
         };
         if let Ok(mut subs) = state.agent_subs.lock() {
             subs.retain(|tx| tx.send(msg.clone()).is_ok());
@@ -95,6 +96,7 @@ pub(super) async fn handle_agents_sub(
     }
     let _ = tx.send(ServerMsg::AgentsState {
         agents: agents_snapshot_for_console(state),
+        away: away_for_frame(state),
     });
 
     // 读循环：焦点会话更新 + 断开探测（其它消息忽略）。
@@ -157,10 +159,15 @@ pub(super) async fn build_tray_state(state: &Arc<ServerState>) -> ServerMsg {
     // Agent 子菜单摘要（spec agent-interject D7）：注册表活动会话 + 插话「待送达」标记。
     let mut agents = state.agents.tray_agent_infos();
     let pending_ij = state.interject.pending_sessions();
+    // Away mode and mute: the picture for the icon, the menu group and each Agent's two toggles.
+    let away_picture = away_snapshot(state);
     for a in agents.iter_mut() {
         if pending_ij.iter().any(|p| p == &a.session_id) {
             a.pending_interject = true;
         }
+        a.mode = away_picture
+            .session_mode(&crate::daemon::away::sid_key(&a.session_id))
+            .map(|mode| mode.as_str().to_string());
     }
     ServerMsg::TrayState {
         running: true,
@@ -179,6 +186,7 @@ pub(super) async fn build_tray_state(state: &Arc<ServerState>) -> ServerMsg {
         pending_requests: state.registry.pending_infos(),
         agents,
         channel_issues: channel_issue_infos(),
+        away: (!away_picture.is_empty()).then_some(away_picture),
     }
 }
 

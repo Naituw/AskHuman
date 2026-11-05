@@ -2541,8 +2541,10 @@ pub(crate) fn spawn_agents_subscription(
                     });
                     loop {
                         match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
-                            Ok(Some(ServerMsg::AgentsState { agents })) => {
+                            Ok(Some(ServerMsg::AgentsState { agents, away })) => {
                                 let _ = app.emit("agents-updated", agents);
+                                // Absent means nothing is set: the console clears its banner.
+                                let _ = app.emit("away-updated", away.unwrap_or_default());
                             }
                             Ok(Some(ServerMsg::AgentDetail { detail })) => {
                                 let _ = app.emit("agent-detail", detail);

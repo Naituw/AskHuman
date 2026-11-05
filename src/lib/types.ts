@@ -22,6 +22,48 @@ export interface AskRequest {
 /** Why a question came through away mode: the Agent asked for it, it asked repeatedly, or the user asked it to ask. */
 export type EscalationReason = "asked" | "repeated" | "requested";
 
+// ===== Away mode and per-session mute (docs/specs/special-replies.md; mirrors `daemon::away`) =====
+
+/** A session's own setting; a session without one follows the global switch. */
+export type AwaySessionMode = "away" | "mute" | "normal";
+
+/** What a surface can ask for one session (`follow` removes the override). */
+export type AwaySessionSetting = "follow" | AwaySessionMode;
+
+export interface AwayGlobalView {
+  sinceMs: number;
+  note?: string | null;
+  /** Automatic replies handed out since the switch went on. */
+  replies: number;
+  /** The same count per session key (`sid:<id>`); the empty key collects callers without a session. */
+  repliesBySession?: Record<string, number>;
+}
+
+export interface AwaySessionView {
+  /** `sid:<agent session id>` or `mcp:<instance id>`. */
+  sessionKey: string;
+  mode: AwaySessionMode;
+  sinceMs: number;
+  note?: string | null;
+  replies: number;
+}
+
+/** The state as every surface shows it. */
+export interface AwaySnapshot {
+  /** Present while the global switch is on. */
+  global?: AwayGlobalView | null;
+  sessions: AwaySessionView[];
+  /** Escalated questions that are waiting for an answer right now. */
+  escalatedWaiting: number;
+}
+
+/** One state-changing request (`daemon::away::AwayOp`). */
+export type AwayOp =
+  | { op: "state" }
+  | { op: "start"; note?: string | null }
+  | { op: "end" }
+  | { op: "session"; sessionKey: string; setting: AwaySessionSetting; note?: string | null };
+
 export type ConfirmFieldKind = "text" | "path" | "timestamp";
 export type ConfirmActionRole = "primary" | "default" | "destructive";
 
@@ -621,7 +663,9 @@ export interface HistorySessionTitleResult {
 /** Popup-originated initial/retarget filter for the global history window. */
 export type HistoryOpenTarget =
   | { type: "agent"; agentKind: string; sessionId: string }
-  | { type: "mcp"; project: string; instanceId: string };
+  | { type: "mcp"; project: string; instanceId: string }
+  /** Every reply of one channel: the away-mode "view the record" link (channel `away` / `mute`). */
+  | { type: "channel"; channel: string };
 
 export interface HistoryOpenRequest {
   all: boolean;
@@ -856,6 +900,18 @@ export interface GeneralConfig {
   popupPrewarm: boolean;
   /** Daemon lifecycle: activity（按需起+空闲退出）/ keepalive（常驻+开机自启）。 */
   daemonLifecycle: DaemonLifecycleMode;
+  /** Away mode on the desktop (docs/specs/special-replies.md D14, D22, D23, D26). */
+  away: AwayConfig;
+}
+
+/** Away-mode surfaces and timing (mirrors Rust `AwayConfig`); the mode itself lives in the daemon. */
+export interface AwayConfig {
+  /** Keep the always-on-top capsule on screen while away (macOS only). */
+  capsule: boolean;
+  /** Expand the capsule into "welcome back" when the user returns after being idle (macOS only). */
+  welcomeBack: boolean;
+  /** Seconds the Mac must be idle before an escalated question is pushed to the phone; 0 = at once. */
+  pushAfterSecs: number;
 }
 
 /** Menu bar / tray status icon mode (mirrors Rust `MenuBarIconMode`). */

@@ -204,18 +204,18 @@ impl Host for DaemonHost {
     }
 
     fn alert_after_secs(&self) -> u64 {
-        self.state
-            .upgrade()
-            .map(|state| {
-                state
-                    .config
-                    .lock()
-                    .unwrap()
-                    .channels
-                    .ios
-                    .effective_alert_after_secs()
-            })
-            .unwrap_or(0)
+        let Some(state) = self.state.upgrade() else {
+            return 0;
+        };
+        let (ios_secs, away) = {
+            let config = state.config.lock().unwrap();
+            (
+                config.channels.ios.effective_alert_after_secs(),
+                config.general.away.clone(),
+            )
+        };
+        // While away, an escalated question reaches the phone sooner (special-replies D14).
+        away.alert_after_secs(ios_secs, state.away.any_away())
     }
 }
 

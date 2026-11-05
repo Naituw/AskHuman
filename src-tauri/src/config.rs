@@ -212,6 +212,54 @@ pub struct GeneralConfig {
     pub popup_prewarm: bool,
     /// 守护进程生命周期模式（activity 默认 / keepalive 保活）。三平台共享 daemon；UI 入口在「高级」Tab。
     pub daemon_lifecycle: DaemonLifecycleMode,
+    /// Away mode on the desktop (`docs/specs/special-replies.md` D14, D22, D23, D26).
+    pub away: AwayConfig,
+}
+
+/// Away-mode surfaces and timing. The mode itself lives in the daemon's state file, not here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AwayConfig {
+    /// Keep the small always-on-top capsule on screen while away mode is on (macOS only).
+    pub capsule: bool,
+    /// Expand the capsule into "welcome back" when the user returns after being idle (macOS only).
+    pub welcome_back: bool,
+    /// While away mode is on, a question that was escalated is pushed to the phone once the Mac has
+    /// been idle this long (seconds; `0` pushes at once). Normally the iOS channel's own push timing
+    /// applies; this only ever makes the push earlier.
+    pub push_after_secs: u64,
+}
+
+/// Default of `AwayConfig::push_after_secs`: one minute.
+pub const AWAY_PUSH_AFTER_SECS_DEFAULT: u64 = 60;
+/// Upper bound of `AwayConfig::push_after_secs`: 24 hours (the same bound as the iOS push timing).
+pub const AWAY_PUSH_AFTER_SECS_MAX: u64 = IOS_ALERT_AFTER_SECS_MAX;
+
+impl AwayConfig {
+    /// The wait in effect, clamped to `0..=AWAY_PUSH_AFTER_SECS_MAX`; the file keeps what was written.
+    pub fn effective_push_after_secs(&self) -> u64 {
+        self.push_after_secs.min(AWAY_PUSH_AFTER_SECS_MAX)
+    }
+
+    /// The wait before an unseen question is pushed to the phone: the iOS channel's own timing,
+    /// cut down to `push_after_secs` while any away mode is on (it never makes the push later).
+    pub fn alert_after_secs(&self, ios_secs: u64, away_now: bool) -> u64 {
+        if away_now {
+            ios_secs.min(self.effective_push_after_secs())
+        } else {
+            ios_secs
+        }
+    }
+}
+
+impl Default for AwayConfig {
+    fn default() -> Self {
+        Self {
+            capsule: true,
+            welcome_back: true,
+            push_after_secs: AWAY_PUSH_AFTER_SECS_DEFAULT,
+        }
+    }
 }
 
 /// 回复历史默认保留条数。
@@ -243,6 +291,7 @@ impl Default for GeneralConfig {
             menu_bar_icon: MenuBarIconMode::Always,
             popup_prewarm: true,
             daemon_lifecycle: DaemonLifecycleMode::Activity,
+            away: AwayConfig::default(),
         }
     }
 }
@@ -927,6 +976,57 @@ mod tests {
             serde_json::from_str(r#"{"channels":{"ios":{"alertAfterSecs":999999999}}}"#).unwrap();
         assert_eq!(wild.channels.ios.alert_after_secs, 999_999_999);
         assert_eq!(wild.channels.ios.effective_alert_after_secs(), 86_400);
+    }
+
+    #[test]
+    fn away_settings_default_on_and_the_push_wait_is_clamped() {
+        // Old configs have no `away` section: capsule and welcome-back on, push after a minute.
+        let old: AppConfig = serde_json::from_str(r#"{"general":{"theme":"dark"}}"#).unwrap();
+        assert!(old.general.away.capsule);
+        assert!(old.general.away.welcome_back);
+        assert_eq!(old.general.away.push_after_secs, 60);
+        assert_eq!(old.general.away.effective_push_after_secs(), 60);
+
+        // A partial section keeps the other defaults; `0` (push at once) survives a round trip.
+        let partial: AppConfig =
+            serde_json::from_str(r#"{"general":{"away":{"capsule":false,"pushAfterSecs":0}}}"#)
+                .unwrap();
+        assert!(!partial.general.away.capsule);
+        assert!(partial.general.away.welcome_back);
+        assert_eq!(partial.general.away.effective_push_after_secs(), 0);
+        let json = serde_json::to_value(&partial).unwrap();
+        assert_eq!(json["general"]["away"]["capsule"], false);
+        assert_eq!(json["general"]["away"]["pushAfterSecs"], 0);
+
+        // An out-of-range value stays in the file but is never acted on.
+        let wild: AppConfig =
+            serde_json::from_str(r#"{"general":{"away":{"pushAfterSecs":999999999}}}"#).unwrap();
+        assert_eq!(wild.general.away.push_after_secs, 999_999_999);
+        assert_eq!(wild.general.away.effective_push_after_secs(), 86_400);
+    }
+
+    #[test]
+    fn away_mode_only_ever_shortens_the_phone_push_wait() {
+        let away = AwayConfig::default(); // 60 s
+                                          // Not away: the iOS channel's own timing, whatever it is.
+        assert_eq!(away.alert_after_secs(900, false), 900);
+        assert_eq!(away.alert_after_secs(0, false), 0);
+        // Away: a minute, unless the channel is already quicker.
+        assert_eq!(away.alert_after_secs(900, true), 60);
+        assert_eq!(away.alert_after_secs(30, true), 30);
+        assert_eq!(away.alert_after_secs(0, true), 0);
+        // A longer away wait than the channel timing changes nothing.
+        let slow = AwayConfig {
+            push_after_secs: 3600,
+            ..AwayConfig::default()
+        };
+        assert_eq!(slow.alert_after_secs(900, true), 900);
+        // "At once" while away.
+        let at_once = AwayConfig {
+            push_after_secs: 0,
+            ..AwayConfig::default()
+        };
+        assert_eq!(at_once.alert_after_secs(900, true), 0);
     }
 
     #[test]

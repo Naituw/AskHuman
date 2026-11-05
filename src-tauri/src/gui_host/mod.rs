@@ -44,6 +44,9 @@ pub enum HistoryOpenTarget {
         project: String,
         instance_id: String,
     },
+    /// Every reply of one channel, across projects: the away-mode "view the record" link
+    /// (channel `away` / `mute`, `docs/specs/special-replies.md` D13).
+    Channel { channel: String },
 }
 
 /// Initial or retargeting request consumed by the history window.
@@ -355,6 +358,16 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<HistoryOpenTarget>(&json).unwrap(),
             target
+        );
+
+        let channel = HistoryOpenTarget::Channel {
+            channel: "away".into(),
+        };
+        let json = serde_json::to_string(&channel).unwrap();
+        assert_eq!(json, r#"{"type":"channel","channel":"away"}"#);
+        assert_eq!(
+            serde_json::from_str::<HistoryOpenTarget>(&json).unwrap(),
+            channel
         );
 
         let legacy = r#"{"type":"openWindow","kind":"history","all":false}"#;

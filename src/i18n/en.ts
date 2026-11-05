@@ -879,6 +879,22 @@ export default {
       todoLimitHint:
         "Maximum executed todos kept per project (view and restore them in the Todos window's History section). 0 stops recording; existing history is kept.",
     },
+    // The "Away mode" card (docs/specs/special-replies.md D26).
+    away: {
+      title: "Away mode",
+      capsule: "Desktop capsule",
+      capsuleHint:
+        "While away mode is on, a small capsule stays at the top centre of the screen, right below the notch. Click it to see how many replies were sent, or to end the mode.",
+      welcomeBack: "Remind me when I'm back",
+      welcomeBackHint:
+        "When you start using the computer again during away mode, \"Welcome back\" appears so you can decide whether to end it. It never ends on its own.",
+      pushAfter: "Wait before pushing to the phone",
+      pushNow: "Immediately",
+      pushIdle: "After the Mac is idle for {time}",
+      pushCustom: "{value} (custom)",
+      pushHint:
+        "Only while away mode is on: once an Agent escalates a question, the phone is notified when the Mac has been idle this long. Otherwise the iOS channel's own push timing applies.",
+    },
     about: {
       title: "About",
       currentVersion: "Current version",
@@ -1025,6 +1041,9 @@ export default {
       slack: "Slack",
       caller: "Caller",
       system: "System",
+      // Automatic replies of away mode / "stop using AskHuman" (docs/specs/special-replies.md D13).
+      away: "Away auto-reply",
+      mute: "Muted auto-reply",
       unknown: "Unknown",
     },
     time: {
@@ -1084,6 +1103,34 @@ export default {
     },
   },
   console: {
+    // Away mode in the console (docs/specs/special-replies.md D25): the global banner, the glyphs
+    // in the sidebar and the per-session "AskHuman" menu in the detail header.
+    away: {
+      bannerTitle: "Away mode is on",
+      bannerScopeAll: "All Agents",
+      bannerFor: "for {d}",
+      bannerReplies: "auto-replies: {n}",
+      bannerWaiting: "{n} escalated question(s) waiting",
+      viewRecord: "View record",
+      end: "End away mode",
+      glyphAway: "Away mode for this session",
+      glyphMute: "AskHuman is off for this session",
+      menuKey: "AskHuman",
+      menuLabel: "AskHuman for this session",
+      valueNormal: "normal",
+      valueFollow: "follows global",
+      valueAway: "away",
+      valueMute: "off",
+      valueAlways: "always asks",
+      optNormal: "Normal",
+      optAway: "Away mode (this session)",
+      optMute: "Stop using AskHuman (this session)",
+      optFollow: "Follow global",
+      optAlways: "Always ask normally",
+      durationM: "{m} min",
+      durationHM: "{h} h {m} min",
+      durationNow: "under a minute",
+    },
     filter: {
       all: "All",
       working: "Working",

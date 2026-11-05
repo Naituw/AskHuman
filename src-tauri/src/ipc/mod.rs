@@ -458,6 +458,10 @@ pub struct TrayAgentInfo {
     pub pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_id: Option<String>,
+    /// This session's own away-mode setting (`away` / `mute` / `normal`); `None` = it follows the
+    /// global switch. Drives the two toggles in the Agent's submenu (special-replies D24).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -911,6 +915,10 @@ pub enum ServerMsg {
     /// `agents` 为记录数组，前端按类型分组、按状态排序渲染。
     AgentsState {
         agents: serde_json::Value,
+        /// Away mode and per-session mute (console banner, sidebar glyphs, per-session menu).
+        /// Absent while nothing is set (and from an older daemon).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        away: Option<crate::daemon::away::AwaySnapshot>,
     },
     /// 控制台焦点会话详情帧（D→agents 订阅者，spec gui-agent-console C8/R5）：tagged JSON
     /// （`type: "watchFrame"` + 会话 id + Watch 帧字段），签名变化才推。未来可扩展新 type。
@@ -951,6 +959,10 @@ pub enum ServerMsg {
         /// 各渠道最近未恢复的故障（R7；旧 daemon 缺此字段 → 空 Vec，托盘不显示警示）。
         #[serde(default)]
         channel_issues: Vec<ChannelIssueInfo>,
+        /// Away mode and per-session mute as the surfaces show them (tray icon and menu, console,
+        /// desktop capsule). Absent while nothing is set (and from an older daemon).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        away: Option<crate::daemon::away::AwaySnapshot>,
     },
     /// 聚焦并闪烁某请求的弹窗（daemon→该请求的 GUI Helper）。弹窗进程据此 `set_focus` + 通知前端闪烁。
     FocusPopup {
@@ -1385,12 +1397,23 @@ mod tests {
                 forkable: false,
                 pid: Some(7),
                 launch_id: Some("123e4567-e89b-12d3-a456-426614174000".to_string()),
+                mode: Some("mute".to_string()),
             }],
             channel_issues: vec![ChannelIssueInfo {
                 channel: "slack".to_string(),
                 message: "invalid_auth".to_string(),
                 at_ms: 1_700_000_000_000,
             }],
+            away: Some(crate::daemon::away::AwaySnapshot {
+                global: Some(crate::daemon::away::GlobalView {
+                    since_ms: 1_700_000_000_000,
+                    note: None,
+                    replies: 2,
+                    replies_by_session: Default::default(),
+                }),
+                sessions: Vec::new(),
+                escalated_waiting: 1,
+            }),
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"trayState""#));
@@ -1399,6 +1422,8 @@ mod tests {
         assert!(json.contains(r#""preview":"deploy?""#));
         assert!(json.contains(r#""pendingInterject":true"#));
         assert!(json.contains("\"forkedFromSeq\":2"));
+        assert!(json.contains(r#""mode":"mute""#));
+        assert!(json.contains(r#""away":{"global":{"sinceMs":1700000000000"#));
         let back: ServerMsg = serde_json::from_str(&json).unwrap();
         match back {
             ServerMsg::TrayState {
@@ -1408,6 +1433,7 @@ mod tests {
                 update_available,
                 agents,
                 channel_issues,
+                away,
                 ..
             } => {
                 assert!(running);
@@ -1416,12 +1442,16 @@ mod tests {
                 assert!(update_available);
                 assert_eq!(agents.len(), 1);
                 assert!(agents[0].focusable);
+                assert_eq!(agents[0].mode.as_deref(), Some("mute"));
                 assert_eq!(channel_issues.len(), 1);
                 assert_eq!(channel_issues[0].channel, "slack");
+                let away = away.expect("the away picture travels with the tray state");
+                assert!(away.is_away());
+                assert_eq!(away.escalated_waiting, 1);
             }
             other => panic!("unexpected: {:?}", other),
         }
-        // 旧 daemon 回包缺 agents / channel_issues 字段 → 空 Vec（宿主退回普通条目 / 不显示警示）。
+        // 旧 daemon 回包缺 agents / channel_issues / away 字段 → 空 Vec / None（宿主退回普通条目 / 不显示离开状态）。
         let old = r#"{"type":"trayState","running":true,"version":"0.6","uptime_secs":1,
             "active_requests":0,"im_connections":[],"draining":false,"agents_working":0,
             "agents_idle":0,"update_available":false,"update_latest":"","pending":false}"#;
@@ -1429,10 +1459,12 @@ mod tests {
             ServerMsg::TrayState {
                 agents,
                 channel_issues,
+                away,
                 ..
             } => {
                 assert!(agents.is_empty());
                 assert!(channel_issues.is_empty());
+                assert!(away.is_none());
             }
             other => panic!("unexpected: {:?}", other),
         }

@@ -860,6 +860,22 @@ export default {
       todoLimitHint:
         "每个项目保留的「已执行待办」条数上限（在待办窗口的「历史」区查看、可恢复）。设为 0 则停止新增记录，已有历史保留。",
     },
+    // 「离开模式」卡（docs/specs/special-replies.md D26）。
+    away: {
+      title: "离开模式",
+      capsule: "桌面胶囊",
+      capsuleHint:
+        "开启离开模式后，在屏幕顶部居中（刘海正下方）常驻一个小胶囊，点开可查看自动回复情况、随时结束。",
+      welcomeBack: "回到电脑时提醒",
+      welcomeBackHint:
+        "离开期间你重新操作电脑时弹出「欢迎回来」，由你决定是否结束；不会自动结束。",
+      pushAfter: "推送到手机的等待时间",
+      pushNow: "立即",
+      pushIdle: "Mac 空闲 {time}后",
+      pushCustom: "{value}（自定义）",
+      pushHint:
+        "只在离开模式期间生效：Agent 升级提问后，Mac 空闲满这个时长就推送到手机；平时沿用「渠道 › iOS App › 推送时机」。",
+    },
     about: {
       title: "关于",
       currentVersion: "当前版本",
@@ -1004,6 +1020,9 @@ export default {
       telegram: "Telegram",
       caller: "调用方",
       system: "系统",
+      // Automatic replies of away mode / "stop using AskHuman" (docs/specs/special-replies.md D13).
+      away: "离开自动回复",
+      mute: "停用自动回复",
       unknown: "未知",
     },
     time: {
@@ -1062,6 +1081,34 @@ export default {
     },
   },
   console: {
+    // 控制台里的离开模式（docs/specs/special-replies.md D25）：全局提示条、侧栏小图标、
+    // 详情头部的「AskHuman」会话级下拉。
+    away: {
+      bannerTitle: "离开模式开启中",
+      bannerScopeAll: "所有 Agent",
+      bannerFor: "已 {d}",
+      bannerReplies: "自动回复 {n} 次",
+      bannerWaiting: "{n} 个升级提问待答",
+      viewRecord: "查看记录",
+      end: "结束离开模式",
+      glyphAway: "此会话处于离开模式",
+      glyphMute: "此会话不再使用 AskHuman",
+      menuKey: "AskHuman",
+      menuLabel: "此会话的 AskHuman 设置",
+      valueNormal: "正常",
+      valueFollow: "跟随全局",
+      valueAway: "离开中",
+      valueMute: "已停用",
+      valueAlways: "始终提问",
+      optNormal: "正常",
+      optAway: "离开模式（此会话）",
+      optMute: "不再使用 AskHuman（此会话）",
+      optFollow: "跟随全局",
+      optAlways: "始终正常提问",
+      durationM: "{m} 分",
+      durationHM: "{h} 小时 {m} 分",
+      durationNow: "不到 1 分钟",
+    },
     filter: {
       all: "全部",
       working: "工作中",

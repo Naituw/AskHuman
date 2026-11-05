@@ -15,6 +15,12 @@ pub(super) fn away_snapshot(state: &Arc<ServerState>) -> AwaySnapshot {
     snapshot
 }
 
+/// The picture to attach to a pushed frame (console, menu bar): nothing while nothing is set.
+pub(super) fn away_for_frame(state: &Arc<ServerState>) -> Option<AwaySnapshot> {
+    let snapshot = away_snapshot(state);
+    (!snapshot.is_empty()).then_some(snapshot)
+}
+
 /// Fan-out after the away state changed: the console and the menu bar rebuild their pictures.
 pub(super) fn broadcast_away(state: &Arc<ServerState>) {
     broadcast_agents_state(state);

@@ -7,6 +7,7 @@ import { formatShortcut } from "../../lib/shortcut";
 import { primaryModifierLabel, primaryShortcutLabel } from "../../lib/platform";
 import type { UiLanguage } from "../../lib/types";
 import { useSettingsContext } from "./context";
+import AwayCard from "./AwayCard.vue";
 
 const { t } = useI18n();
 const ctx = useSettingsContext();
@@ -366,6 +367,9 @@ const config = computed(() => ctx.config.value!);
     </div>
     <p class="card-desc">{{ t("settings.history.todoLimitHint") }}</p>
   </div>
+
+  <!-- 离开模式：桌面胶囊 / 回到电脑时提醒（仅 macOS）/ 推送到手机的等待时间（iOS 渠道可见时） -->
+  <AwayCard />
 
   <!-- 语音输入（仅 macOS） -->
   <div v-if="isMac" class="card">

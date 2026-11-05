@@ -1317,6 +1317,8 @@ impl AgentRegistry {
                         .is_some(),
                 pid: r.pid,
                 launch_id: r.launch_id.clone(),
+                // Filled in by the daemon from the away engine.
+                mode: None,
             })
             .collect()
     }

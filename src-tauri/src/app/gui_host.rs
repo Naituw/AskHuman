@@ -51,6 +51,8 @@ mod icon_bytes {
     pub const ACTIVE: &[u8] = include_bytes!("../../icons/tray/tray-active.png");
     pub const STOPPED: &[u8] = include_bytes!("../../icons/tray/tray-stopped.png");
     pub const IDLE_ATTENTION: &[u8] = include_bytes!("../../icons/tray/tray-idle-attention.png");
+    /// Idle robot with a moon badge: away mode is on (`scripts/gen_tray_away_icon.py`).
+    pub const IDLE_AWAY: &[u8] = include_bytes!("../../icons/tray/tray-idle-away.png");
     pub const STOPPED_ATTENTION: &[u8] =
         include_bytes!("../../icons/tray/tray-stopped-attention.png");
     /// 仅 macOS 把单色图当作模板图染色；其它平台原样显示。
@@ -104,6 +106,15 @@ pub struct TrayData {
     pub agents: Vec<ipc::TrayAgentInfo>,
     /// 各渠道最近未恢复的故障（R7：托盘警示项，点击打开设置渠道 tab）。
     pub channel_issues: Vec<ipc::ChannelIssueInfo>,
+    /// Away mode and per-session mute (icon moon badge, menu group, per-Agent toggles, capsule).
+    pub away: Option<crate::daemon::away::AwaySnapshot>,
+}
+
+impl TrayData {
+    /// Whether the global away switch is on.
+    fn away_on(&self) -> bool {
+        self.away.as_ref().is_some_and(|away| away.is_away())
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -583,14 +594,18 @@ fn icon_source(
     daemon_up: bool,
     active_requests: usize,
     integration_attention: bool,
+    away: bool,
 ) -> &'static [u8] {
-    match (daemon_up, active_requests > 0, integration_attention) {
-        (false, _, true) => icon_bytes::STOPPED_ATTENTION,
-        (false, _, false) => icon_bytes::STOPPED,
-        // Pending replies take priority over the lower-severity integration reminder.
-        (true, true, _) => icon_bytes::ACTIVE,
-        (true, false, true) => icon_bytes::IDLE_ATTENTION,
-        (true, false, false) => icon_bytes::IDLE,
+    match (daemon_up, active_requests > 0, away, integration_attention) {
+        (false, _, _, true) => icon_bytes::STOPPED_ATTENTION,
+        (false, _, _, false) => icon_bytes::STOPPED,
+        // Pending replies take priority over everything else, the "?" included (special-replies D24).
+        (true, true, _, _) => icon_bytes::ACTIVE,
+        // Away mode is a state the user chose and must not forget, so it outranks the
+        // lower-severity integration reminder (which stays in the menu).
+        (true, false, true, _) => icon_bytes::IDLE_AWAY,
+        (true, false, false, true) => icon_bytes::IDLE_ATTENTION,
+        (true, false, false, false) => icon_bytes::IDLE,
     }
 }
 
@@ -598,10 +613,11 @@ fn icon_for(
     daemon_up: bool,
     active_requests: usize,
     integration_attention: bool,
+    away: bool,
     dark: bool,
 ) -> Option<Image<'static>> {
     decode_icon(
-        icon_source(daemon_up, active_requests, integration_attention),
+        icon_source(daemon_up, active_requests, integration_attention, away),
         dark,
     )
 }
@@ -684,6 +700,7 @@ pub fn refresh_tray(app: &AppHandle) {
         up,
         data.active_requests,
         !integration_updates.is_empty(),
+        up && data.away_on(),
         dark_tray,
     ) {
         let _ = tray.set_icon(Some(img));
@@ -707,6 +724,10 @@ pub fn refresh_tray(app: &AppHandle) {
     } else {
         i18n::tr(lang, "tray.tooltipStopped").to_string()
     };
+    if up && data.away_on() {
+        tip.push_str(" · ");
+        tip.push_str(i18n::tr(lang, "tray.awayTooltip"));
+    }
     if !integration_updates.is_empty() {
         tip.push_str(" · ");
         tip.push_str(i18n::tr(lang, "tray.integrationUpdatesTooltip"));
@@ -751,7 +772,7 @@ fn menu_signature(
         .iter()
         .map(|a| {
             format!(
-                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 a.session_id,
                 a.seq,
                 a.kind,
@@ -761,13 +782,21 @@ fn menu_signature(
                 a.state,
                 a.pending_interject as u8,
                 a.focusable as u8,
-                a.forkable as u8
+                a.forkable as u8,
+                a.mode.as_deref().unwrap_or("")
             )
         })
         .collect::<Vec<_>>()
         .join(";");
+    // The away group shows how long away mode has been on, to the minute.
+    let away = data
+        .away
+        .as_ref()
+        .and_then(|a| a.global.as_ref())
+        .map(|g| fmt_away_for(g.since_ms, lang))
+        .unwrap_or_default();
     format!(
-        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}|{}",
+        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}|{}|{}",
         lang,
         up as u8,
         data.version,
@@ -794,6 +823,7 @@ fn menu_signature(
         integration_updates.join(","),
         update_action,
         dark_tray as u8,
+        away,
     )
 }
 
@@ -876,6 +906,87 @@ fn fmt_uptime(secs: u64) -> String {
         format!("{}m", secs / 60)
     } else {
         format!("{}s", secs)
+    }
+}
+
+/// How long away mode has been on, to the minute (the tray status row; minute granularity keeps
+/// the menu from refreshing every second).
+fn fmt_away_for(since_ms: u64, lang: Lang) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let mins = now.saturating_sub(since_ms) / 60_000;
+    if mins < 1 {
+        i18n::tr(lang, "tray.awayForNow").to_string()
+    } else if mins < 60 {
+        i18n::tr(lang, "tray.awayForM").replace("{m}", &mins.to_string())
+    } else {
+        i18n::tr(lang, "tray.awayForHM")
+            .replace("{h}", &(mins / 60).to_string())
+            .replace("{m}", &(mins % 60).to_string())
+    }
+}
+
+/// What one Agent's two switches show and what a click on each asks the daemon for.
+#[derive(Debug, PartialEq, Eq)]
+struct AgentToggles {
+    /// "Away mode (this session)" is in effect for the session.
+    away_on: bool,
+    /// The `SessionSetting` a click on it sends.
+    away_click: &'static str,
+    /// "Stop using AskHuman (this session)" is on.
+    mute_on: bool,
+    mute_click: &'static str,
+}
+
+/// `own` is the session's own setting (`away` / `mute` / `normal`, `None` = it follows the global
+/// switch); while the global switch is on, a session that follows it is away too. Turning "away"
+/// off while the global switch is on opts the session out of it ("normal"); otherwise it just drops
+/// the session's own setting.
+fn agent_toggles(own: Option<&str>, global_on: bool) -> AgentToggles {
+    let away_on = match own {
+        Some("away") => true,
+        Some(_) => false,
+        None => global_on,
+    };
+    let away_click = if away_on {
+        if global_on {
+            "normal"
+        } else {
+            "follow"
+        }
+    } else if own == Some("normal") {
+        "follow"
+    } else {
+        "away"
+    };
+    let mute_on = own == Some("mute");
+    AgentToggles {
+        away_on,
+        away_click,
+        mute_on,
+        mute_click: if mute_on { "follow" } else { "mute" },
+    }
+}
+
+fn checked_label(text: &str, on: bool) -> String {
+    if on {
+        format!("✓ {text}")
+    } else {
+        text.to_string()
+    }
+}
+
+/// Maps the setting named in a tray menu id back to the daemon's enum.
+fn parse_session_setting(name: &str) -> Option<crate::daemon::away::SessionSetting> {
+    use crate::daemon::away::SessionSetting;
+    match name {
+        "follow" => Some(SessionSetting::Follow),
+        "away" => Some(SessionSetting::Away),
+        "mute" => Some(SessionSetting::Mute),
+        "normal" => Some(SessionSetting::Normal),
+        _ => None,
     }
 }
 
@@ -967,6 +1078,32 @@ fn build_specs(
             integration_updates_text(integration_updates, lang),
             true,
         ));
+    }
+
+    // —— Away mode group (special-replies D24): one click turns it on for every Agent; while it is
+    // on there is a status row with the way out. Questions that are pending sit right below. ——
+    if up {
+        nodes.push(Node::separator("sep.away"));
+        match data.away.as_ref().and_then(|a| a.global.as_ref()) {
+            Some(global) => {
+                nodes.push(Node::item(
+                    "st.away",
+                    i18n::tr(lang, "tray.awayStatus")
+                        .replace("{d}", &fmt_away_for(global.since_ms, lang)),
+                    false,
+                ));
+                nodes.push(Node::item(
+                    "away_end",
+                    i18n::tr(lang, "tray.awayEnd").to_string(),
+                    true,
+                ));
+            }
+            None => nodes.push(Node::item(
+                "away_start",
+                i18n::tr(lang, "tray.awayStart").to_string(),
+                true,
+            )),
+        }
     }
 
     // —— 操作区 ——
@@ -1111,6 +1248,20 @@ fn build_specs(
                         true,
                     ));
                 }
+                // The two per-session switches (special-replies D24). The tray menu has no check
+                // items, so an "on" switch carries a leading check mark.
+                let toggles = agent_toggles(a.mode.as_deref(), data.away_on());
+                sub.push(Node::separator("sep.away"));
+                sub.push(Node::item(
+                    format!("awayset:{}:{}", toggles.away_click, a.session_id),
+                    checked_label(i18n::tr(lang, "tray.agentAway"), toggles.away_on),
+                    true,
+                ));
+                sub.push(Node::item(
+                    format!("awayset:{}:{}", toggles.mute_click, a.session_id),
+                    checked_label(i18n::tr(lang, "tray.agentMute"), toggles.mute_on),
+                    true,
+                ));
                 if sub.is_empty() {
                     // 无任何可用动作（grok 且终端不可聚焦）：列为只读行，仅供感知。
                     children.push(Node::item(format!("agent:{}", a.session_id), title, false));
@@ -1358,6 +1509,22 @@ pub fn on_menu_event(app: &AppHandle, id: &str) {
         });
         return;
     }
+    // Agent 子菜单的两个开关（离开模式 / 不再使用 AskHuman，此会话）：id 里带着要设成的值。
+    if let Some(rest) = id.strip_prefix("awayset:") {
+        if let Some((setting, session_id)) = rest.split_once(':') {
+            if let Some(setting) = parse_session_setting(setting) {
+                let op = crate::daemon::away::AwayOp::Session {
+                    session_key: crate::daemon::away::sid_key(session_id),
+                    setting,
+                    note: None,
+                };
+                tauri::async_runtime::spawn(async move {
+                    let _ = crate::client::away_op(op).await;
+                });
+            }
+        }
+        return;
+    }
     // 渠道故障警示行（R7）：打开设置并定位到渠道 tab（错误详情显示在渠道卡片上）。
     if id.starts_with("chissue:") {
         open_window_settings_tab(app, "channel");
@@ -1518,6 +1685,19 @@ pub fn on_menu_event(app: &AppHandle, id: &str) {
         // B2：用户主动重启宿主完成二进制换新（窗口开着也重启——用户已知情选择）。
         "host_restart" => {
             restart_host(app);
+        }
+        // Away mode for every Agent, no note (special-replies D24); a scope or a note is chosen in
+        // the popup's menu instead.
+        "away_start" => {
+            tauri::async_runtime::spawn(async {
+                let _ =
+                    crate::client::away_op(crate::daemon::away::AwayOp::Start { note: None }).await;
+            });
+        }
+        "away_end" => {
+            tauri::async_runtime::spawn(async {
+                let _ = crate::client::away_op(crate::daemon::away::AwayOp::End).await;
+            });
         }
         "start_daemon" => {
             tauri::async_runtime::spawn(async {
@@ -1897,6 +2077,7 @@ fn start_status_subscription(app: AppHandle) {
                                 pending_requests,
                                 agents,
                                 channel_issues,
+                                away,
                             })) => {
                                 let persisted = crate::update::state::load();
                                 let (update_available, update_latest, pending) =
@@ -1923,6 +2104,7 @@ fn start_status_subscription(app: AppHandle) {
                                         pending_requests,
                                         agents,
                                         channel_issues,
+                                        away,
                                     };
                                 }
                                 refresh_on_main(&app);
@@ -2276,6 +2458,7 @@ mod tests {
                     forkable: true,
                     pid: Some(42),
                     launch_id: None,
+                    mode: None,
                 }],
                 ..Default::default()
             },
@@ -2552,10 +2735,286 @@ mod tests {
 
     #[test]
     fn pending_reply_icon_takes_priority_over_integration_attention() {
-        assert_eq!(icon_source(false, 0, true), icon_bytes::STOPPED_ATTENTION);
-        assert_eq!(icon_source(true, 0, true), icon_bytes::IDLE_ATTENTION);
-        assert_eq!(icon_source(true, 1, true), icon_bytes::ACTIVE);
-        assert_eq!(icon_source(true, 0, false), icon_bytes::IDLE);
+        assert_eq!(
+            icon_source(false, 0, true, false),
+            icon_bytes::STOPPED_ATTENTION
+        );
+        assert_eq!(
+            icon_source(true, 0, true, false),
+            icon_bytes::IDLE_ATTENTION
+        );
+        assert_eq!(icon_source(true, 1, true, false), icon_bytes::ACTIVE);
+        assert_eq!(icon_source(true, 0, false, false), icon_bytes::IDLE);
+    }
+
+    #[test]
+    fn away_icon_shows_the_moon_unless_a_question_is_waiting() {
+        // The moon outranks the integration reminder, the "?" outranks the moon.
+        assert_eq!(icon_source(true, 0, false, true), icon_bytes::IDLE_AWAY);
+        assert_eq!(icon_source(true, 0, true, true), icon_bytes::IDLE_AWAY);
+        assert_eq!(icon_source(true, 2, false, true), icon_bytes::ACTIVE);
+        // A stopped daemon cannot be away.
+        assert_eq!(icon_source(false, 0, false, true), icon_bytes::STOPPED);
+        // The shipped asset decodes like every other tray icon.
+        assert!(decode_icon(icon_bytes::IDLE_AWAY, false).is_some());
+        assert!(decode_icon(icon_bytes::IDLE_AWAY, true).is_some());
+    }
+
+    fn now_ms_u64() -> u64 {
+        crate::history::now_ms() as u64
+    }
+
+    fn away_snapshot(since_ms: u64) -> crate::daemon::away::AwaySnapshot {
+        crate::daemon::away::AwaySnapshot {
+            global: Some(crate::daemon::away::GlobalView {
+                since_ms,
+                note: None,
+                replies: 0,
+                replies_by_session: Default::default(),
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn menu_for(data: &TrayData) -> Vec<Node> {
+        build_specs(
+            true,
+            Lang::En,
+            data,
+            &[],
+            true,
+            false,
+            &UpdateActionState::Idle,
+        )
+    }
+
+    #[test]
+    fn tray_menu_offers_to_turn_away_mode_on_when_it_is_off() {
+        let nodes = menu_for(&TrayData {
+            running: true,
+            ..Default::default()
+        });
+        assert_eq!(item(&nodes, "away_start"), ("Turn On Away Mode", true));
+        assert!(!has_item(&nodes, "away_end"));
+        assert!(!has_item(&nodes, "st.away"));
+    }
+
+    #[test]
+    fn tray_menu_shows_how_long_away_mode_has_been_on_and_the_way_out() {
+        let now = now_ms_u64();
+        let nodes = menu_for(&TrayData {
+            running: true,
+            away: Some(away_snapshot(now - (83 * 60_000 + 5_000))),
+            ..Default::default()
+        });
+        assert_eq!(
+            item(&nodes, "st.away"),
+            ("☾ Away mode on · for 1 h 23 min", false)
+        );
+        assert_eq!(item(&nodes, "away_end"), ("End Away Mode", true));
+        assert!(!has_item(&nodes, "away_start"));
+        // The group sits between the status rows and the actions: the way out comes before the
+        // pending-questions group and the windows.
+        let position = |key: &str| {
+            nodes
+                .iter()
+                .position(|node| match node {
+                    Node::Item { key: k, .. } | Node::Submenu { key: k, .. } => k == key,
+                    Node::Separator { .. } => false,
+                })
+                .unwrap_or_else(|| panic!("missing {key}"))
+        };
+        assert!(position("st.title") < position("st.away"));
+        assert!(position("away_end") < position("open_settings"));
+    }
+
+    #[test]
+    fn away_duration_is_told_to_the_minute() {
+        let now = now_ms_u64();
+        assert_eq!(fmt_away_for(now - 5_000, Lang::En), "just now");
+        assert_eq!(fmt_away_for(now - 5_000, Lang::Zh), "刚刚开启");
+        assert_eq!(fmt_away_for(now - 7 * 60_000 - 1, Lang::En), "for 7 min");
+        assert_eq!(fmt_away_for(now - 7 * 60_000 - 1, Lang::Zh), "已 7 分");
+        assert_eq!(
+            fmt_away_for(now - 125 * 60_000 - 1, Lang::Zh),
+            "已 2 小时 5 分"
+        );
+    }
+
+    #[test]
+    fn each_agent_gets_the_two_session_switches_with_a_mark_when_on() {
+        let agent = |mode: Option<&str>| ipc::TrayAgentInfo {
+            session_id: "s1".to_string(),
+            seq: 1,
+            kind: "claude".to_string(),
+            title: "t".to_string(),
+            forked_from_seq: None,
+            project_name: "p".to_string(),
+            cwd: None,
+            state: "idle".to_string(),
+            pending_interject: false,
+            focusable: false,
+            forkable: false,
+            pid: None,
+            launch_id: None,
+            mode: mode.map(str::to_string),
+        };
+        let submenu_items = |nodes: &[Node]| -> Vec<(String, String)> {
+            nodes
+                .iter()
+                .find_map(|node| match node {
+                    Node::Submenu { key, children, .. } if key == "agents_menu" => {
+                        children.iter().find_map(|child| match child {
+                            Node::Submenu { key, children, .. } if key == "agent:s1" => {
+                                Some(children)
+                            }
+                            _ => None,
+                        })
+                    }
+                    _ => None,
+                })
+                .expect("agent submenu")
+                .iter()
+                .filter_map(|node| match node {
+                    Node::Item { key, text, .. } if key.starts_with("awayset:") => {
+                        Some((key.clone(), text.clone()))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+
+        // Nothing set: both off; a click asks for away / mute.
+        let plain = menu_for(&TrayData {
+            running: true,
+            agents: vec![agent(None)],
+            ..Default::default()
+        });
+        assert_eq!(
+            submenu_items(&plain),
+            vec![
+                (
+                    "awayset:away:s1".to_string(),
+                    "Away Mode (This Session)".to_string()
+                ),
+                (
+                    "awayset:mute:s1".to_string(),
+                    "Stop Using AskHuman (This Session)".to_string()
+                ),
+            ]
+        );
+
+        // Muted: the second switch is marked and a click lifts the mute.
+        let muted = menu_for(&TrayData {
+            running: true,
+            agents: vec![agent(Some("mute"))],
+            ..Default::default()
+        });
+        assert_eq!(
+            submenu_items(&muted)[1],
+            (
+                "awayset:follow:s1".to_string(),
+                "✓ Stop Using AskHuman (This Session)".to_string()
+            )
+        );
+
+        // Away for everyone: this session is away too and a click opts it out.
+        let global = menu_for(&TrayData {
+            running: true,
+            agents: vec![agent(None)],
+            away: Some(away_snapshot(0)),
+            ..Default::default()
+        });
+        assert_eq!(
+            submenu_items(&global)[0],
+            (
+                "awayset:normal:s1".to_string(),
+                "✓ Away Mode (This Session)".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn session_switches_always_ask_for_the_opposite_of_what_is_shown() {
+        let t = agent_toggles;
+        // Follows a switch that is off.
+        assert_eq!(
+            t(None, false),
+            AgentToggles {
+                away_on: false,
+                away_click: "away",
+                mute_on: false,
+                mute_click: "mute"
+            }
+        );
+        // Away for this session only: a click drops it.
+        assert_eq!(t(Some("away"), false).away_click, "follow");
+        assert!(t(Some("away"), false).away_on);
+        // Away for everyone: a session that follows it is away; a click opts it out ...
+        assert!(t(None, true).away_on);
+        assert_eq!(t(None, true).away_click, "normal");
+        // ... and an opted-out session is not away; a click makes it follow again.
+        assert!(!t(Some("normal"), true).away_on);
+        assert_eq!(t(Some("normal"), true).away_click, "follow");
+        // A session of its own that is also away for everyone opts out the same way.
+        assert_eq!(t(Some("away"), true).away_click, "normal");
+        // Mute is independent of the global switch and is lifted by following it again.
+        assert!(t(Some("mute"), true).mute_on);
+        assert_eq!(t(Some("mute"), true).mute_click, "follow");
+        assert!(!t(Some("mute"), true).away_on);
+        assert_eq!(t(Some("mute"), false).away_click, "away");
+    }
+
+    #[test]
+    fn menu_signature_follows_the_away_state() {
+        let sig = |data: &TrayData| {
+            menu_signature(
+                true,
+                Lang::En,
+                data,
+                &[],
+                true,
+                false,
+                &UpdateActionState::Idle,
+                false,
+            )
+        };
+        let plain = TrayData {
+            running: true,
+            ..Default::default()
+        };
+        let away = TrayData {
+            away: Some(away_snapshot(now_ms_u64())),
+            ..plain.clone()
+        };
+        assert_ne!(sig(&plain), sig(&away));
+        // A session's own setting changes the menu too.
+        let mut agent = ipc::TrayAgentInfo {
+            session_id: "s1".to_string(),
+            seq: 1,
+            kind: "claude".to_string(),
+            title: String::new(),
+            forked_from_seq: None,
+            project_name: String::new(),
+            cwd: None,
+            state: "idle".to_string(),
+            pending_interject: false,
+            focusable: false,
+            forkable: false,
+            pid: None,
+            launch_id: None,
+            mode: None,
+        };
+        let a = TrayData {
+            agents: vec![agent.clone()],
+            ..plain.clone()
+        };
+        agent.mode = Some("mute".to_string());
+        let b = TrayData {
+            agents: vec![agent],
+            ..plain
+        };
+        assert_ne!(sig(&a), sig(&b));
     }
 
     #[test]

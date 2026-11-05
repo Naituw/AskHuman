@@ -9,6 +9,8 @@ import { applyTheme } from "../lib/theme";
 import { applyLanguage } from "../i18n";
 import {
   agentForceIdle,
+  awayApply,
+  awayCached,
   codexDesktop,
   agentsFocus,
   agentsInit,
@@ -16,6 +18,7 @@ import {
   focusAgentTerminal,
   focusRequest,
   interjectAppend,
+  openHistoryChannel,
   interjectClear,
   interjectPeek,
   newTaskProjects,
@@ -27,6 +30,8 @@ import { isFocusableTerminal } from "../lib/terminals";
 import type {
   AgentDetailFrame,
   AgentRecord,
+  AwaySessionSetting,
+  AwaySnapshot,
   ImageAttachment,
   ThemeMode,
 } from "../lib/types";
@@ -37,6 +42,9 @@ import TranscriptPane from "./console/TranscriptPane.vue";
 import DiffBar from "./console/DiffBar.vue";
 import InteractSlot from "./console/InteractSlot.vue";
 import NewTaskPane from "./console/NewTaskPane.vue";
+import AwayBanner from "./console/AwayBanner.vue";
+import AwayMenu from "./console/AwayMenu.vue";
+import { emptyAway, glyphModes, ownMode, sidKey } from "./console/away";
 import {
   anchor,
   basename,
@@ -57,6 +65,35 @@ const loaded = ref(false);
 const nowMs = ref(Date.now());
 const newTaskSupported = ref(false);
 const submitBareEnter = ref(false);
+
+// ===== Away mode (docs/specs/special-replies.md D25) =====
+// The picture arrives with every snapshot frame (`away-updated`); the cached value covers the time
+// before the first frame.
+const away = ref<AwaySnapshot>(emptyAway());
+const awayGlyphs = computed(() => glyphModes(away.value));
+const selOwnMode = computed(() => (sel.value ? ownMode(away.value, sel.value.sessionId) : null));
+
+async function onAwaySet(setting: AwaySessionSetting): Promise<void> {
+  const a = sel.value;
+  if (!a) return;
+  try {
+    away.value = await awayApply({ op: "session", sessionKey: sidKey(a.sessionId), setting });
+  } catch (err) {
+    console.warn("away set failed", err);
+  }
+}
+
+async function onAwayEnd(): Promise<void> {
+  try {
+    away.value = await awayApply({ op: "end" });
+  } catch (err) {
+    console.warn("away end failed", err);
+  }
+}
+
+function onAwayRecord(): void {
+  openHistoryChannel("away").catch((err) => console.warn("open away record failed", err));
+}
 
 // ===== 过滤（C6）=====
 const FILTERS: ConsoleFilter[] = ["all", "working", "idle"];
@@ -397,6 +434,7 @@ const isEmpty = computed(
 );
 
 let unlistenAgents: UnlistenFn | null = null;
+let unlistenAway: UnlistenFn | null = null;
 let unlistenDetail: UnlistenFn | null = null;
 let unlistenSettings: UnlistenFn | null = null;
 let unlistenGoto: UnlistenFn | null = null;
@@ -423,6 +461,14 @@ onMounted(async () => {
       selectSession(sorted[0].sessionId);
     }
   });
+  unlistenAway = await listen<AwaySnapshot>("away-updated", (e) => {
+    away.value = e.payload ?? emptyAway();
+  });
+  awayCached()
+    .then((snapshot) => {
+      away.value = snapshot ?? emptyAway();
+    })
+    .catch(() => {});
   unlistenDetail = await listen<AgentDetailFrame>("agent-detail", (e) => {
     if (e.payload?.sessionId === selectedId.value) {
       frame.value = e.payload;
@@ -477,6 +523,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   unlistenAgents?.();
+  unlistenAway?.();
   unlistenDetail?.();
   unlistenSettings?.();
   unlistenGoto?.();
@@ -516,7 +563,16 @@ onBeforeUnmount(() => {
       <p class="empty-hint">{{ t("agents.emptyHint") }}</p>
     </div>
 
-    <div v-else class="con-body">
+    <template v-else>
+    <AwayBanner
+      v-if="away.global"
+      :global="away.global"
+      :waiting="away.escalatedWaiting"
+      :now-ms="nowMs"
+      @view-record="onAwayRecord"
+      @end="onAwayEnd"
+    />
+    <div class="con-body">
       <Sidebar
         :groups="groups"
         :recent="recent"
@@ -524,6 +580,7 @@ onBeforeUnmount(() => {
         :new-task-supported="newTaskSupported"
         :todo-counts="todoCounts"
         :now-ms="nowMs"
+        :away-modes="awayGlyphs"
         @select="selectSession"
         @plus="onPlus"
         @todos="onOpenTodosPath"
@@ -588,6 +645,12 @@ onBeforeUnmount(() => {
               <span v-if="sel.forkedFromSessionId" class="dt-elapsed">
                 · {{ t("agents.forkedFrom", { id: forkParentLabel(sel) }) }}
               </span>
+              <AwayMenu
+                v-if="sel.state !== 'ended'"
+                :own="selOwnMode"
+                :global-on="!!away.global"
+                @set="onAwaySet"
+              />
               <span class="spacer" />
               <span v-if="sel.cwd" class="dt-path" :title="sel.cwd">{{ sel.cwd }}</span>
             </div>
@@ -654,6 +717,7 @@ onBeforeUnmount(() => {
         </div>
       </main>
     </div>
+    </template>
   </div>
 </template>
 

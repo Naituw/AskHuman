@@ -1445,6 +1445,21 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         // Agent 子菜单「添加待办」：打开待办窗口并预选该 agent 的项目、聚焦新增输入框。
         "tray.agentAddTodo" => pick(lang, "Add Todo…", "添加待办…"),
         "tray.agentAskNow" => pick(lang, "Ask Me Now", "要求提问"),
+        // Away mode (docs/specs/special-replies.md D24): the group under the status rows, the
+        // tooltip, and the two per-session switches at the bottom of an Agent's submenu.
+        "tray.awayStart" => pick(lang, "Turn On Away Mode", "开启离开模式"),
+        "tray.awayEnd" => pick(lang, "End Away Mode", "结束离开模式"),
+        "tray.awayStatus" => pick(lang, "☾ Away mode on · {d}", "☾ 离开模式开启中 · {d}"),
+        "tray.awayTooltip" => pick(lang, "Away mode on", "离开模式开启中"),
+        "tray.awayForNow" => pick(lang, "just now", "刚刚开启"),
+        "tray.awayForM" => pick(lang, "for {m} min", "已 {m} 分"),
+        "tray.awayForHM" => pick(lang, "for {h} h {m} min", "已 {h} 小时 {m} 分"),
+        "tray.agentAway" => pick(lang, "Away Mode (This Session)", "离开模式（此会话）"),
+        "tray.agentMute" => pick(
+            lang,
+            "Stop Using AskHuman (This Session)",
+            "不再使用 AskHuman（此会话）",
+        ),
         "tray.checkUpdate" => pick(lang, "Check for Updates", "检查更新"),
         "tray.checkingUpdate" => pick(lang, "Checking for updates…", "正在检查更新…"),
         "tray.updateCurrent" => pick(lang, "AskHuman is up to date", "AskHuman 已是最新版"),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alertAfterChoices, idleDuration, splitDuration } from "./iosAlertTiming";
+import { AWAY_PUSH_PRESETS, alertAfterChoices, idleDuration, splitDuration } from "./iosAlertTiming";
 
 describe("iosAlertTiming", () => {
   it("splits a configured wait into the largest unit that divides it", () => {
@@ -27,6 +27,11 @@ describe("iosAlertTiming", () => {
     expect(alertAfterChoices(0)).toEqual([0, 300, 900, 1800, 3600]);
     expect(alertAfterChoices(600)).toEqual([0, 300, 600, 900, 1800, 3600]);
     expect(alertAfterChoices(86_400)).toEqual([0, 300, 900, 1800, 3600, 86_400]);
+  });
+
+  it("lists the away-mode presets, with a hand-edited value in its place", () => {
+    expect(alertAfterChoices(60, AWAY_PUSH_PRESETS)).toEqual([0, 60, 300]);
+    expect(alertAfterChoices(120, AWAY_PUSH_PRESETS)).toEqual([0, 60, 120, 300]);
   });
 
   it("ignores a value that cannot be a wait", () => {

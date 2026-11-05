@@ -61,6 +61,17 @@ pub enum SessionMode {
     Normal,
 }
 
+impl SessionMode {
+    /// The wire / UI name (`away`, `mute`, `normal`), the same as the serialized form.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SessionMode::Away => "away",
+            SessionMode::Mute => "mute",
+            SessionMode::Normal => "normal",
+        }
+    }
+}
+
 /// The global away switch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -150,6 +161,15 @@ impl AwayState {
             },
             None => Effective::Normal,
         }
+    }
+
+    /// True while the global switch or any session's own "away" setting is on.
+    pub fn any_away(&self) -> bool {
+        self.global.is_some()
+            || self
+                .sessions
+                .values()
+                .any(|entry| entry.mode == SessionMode::Away)
     }
 
     /// True when any part of the state would change how a question is handled.
@@ -367,6 +387,19 @@ impl AwaySnapshot {
     /// True while the global switch is on.
     pub fn is_away(&self) -> bool {
         self.global.is_some()
+    }
+
+    /// True when neither the global switch nor any session override is set: nothing to show.
+    pub fn is_empty(&self) -> bool {
+        self.global.is_none() && self.sessions.is_empty()
+    }
+
+    /// The override of one session (`None` = it follows the global switch).
+    pub fn session_mode(&self, key: &str) -> Option<SessionMode> {
+        self.sessions
+            .iter()
+            .find(|view| view.session_key == key)
+            .map(|view| view.mode)
     }
 }
 
@@ -739,6 +772,11 @@ impl AwayEngine {
 
     pub fn is_away(&self) -> bool {
         self.inner.lock().unwrap().state.global.is_some()
+    }
+
+    /// Whether the global switch or any session's own setting is "away".
+    pub fn any_away(&self) -> bool {
+        self.inner.lock().unwrap().state.any_away()
     }
 
     /// The user asked this session to ask them: its next question is delivered (spec N2).
@@ -1130,6 +1168,23 @@ mod tests {
         // Ending global away drops the now meaningless override.
         e.apply(&AwayOp::End, 4);
         assert!(e.snapshot().sessions.is_empty());
+    }
+
+    #[test]
+    fn any_away_counts_the_global_switch_and_sessions_set_to_away_but_not_mute() {
+        let e = engine();
+        assert!(!e.any_away());
+        // Muting a session changes how its questions are handled, not whether the user is away.
+        session(&e, "sid:a", SessionSetting::Mute, 1);
+        assert!(!e.any_away());
+        session(&e, "sid:b", SessionSetting::Away, 2);
+        assert!(e.any_away());
+        assert!(!e.is_away());
+        session(&e, "sid:b", SessionSetting::Follow, 3);
+        assert!(!e.any_away());
+        start(&e, 4);
+        assert!(e.any_away());
+        assert!(e.is_away());
     }
 
     #[test]

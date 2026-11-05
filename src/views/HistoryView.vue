@@ -608,6 +608,15 @@ async function applyOpenRequest(request: HistoryOpenRequest) {
     const allEntries = await getHistory(null, true);
     if (seq !== openSeq || load !== loadSeq) return;
     acceptEntries(allEntries);
+    if (request.target?.type === "channel") {
+      // "View the record" of away mode: every project, narrowed by the channel's name (the search
+      // box matches both the channel id and its label).
+      selected.value = ALL;
+      selectedSession.value = ALL_HISTORY_SESSIONS;
+      query.value = channelName(request.target.channel);
+      activeId.value = filteredEntries.value[0]?.id ?? null;
+      return;
+    }
     if (request.target) {
       const targetToken = historySessionToken(request.target);
       if (allEntries.some((entry) => matchesHistorySession(entry, targetToken))) {

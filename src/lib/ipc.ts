@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AgentsInit,
   AppConfig,
+  AwayOp,
+  AwaySnapshot,
   ChannelIssue,
   DingTalkDetectArgs,
   DingTalkTestArgs,
@@ -94,6 +96,16 @@ export const submitPopup = (submission: PopupSubmission, requestId?: string) =>
 
 /** Turn global away mode off (the escalation banner and the quick-reply menu; docs/specs/special-replies.md D21). */
 export const awayEnd = () => invoke<void>("away_end");
+
+/** Any away-mode operation (console banner and per-session menu, desktop capsule); answers with the state afterwards. */
+export const awayApply = (op: AwayOp) => invoke<AwaySnapshot>("away_apply", { op });
+
+/** The picture the GUI Host last heard of the daemon (no daemon round trip); empty while nothing is set. */
+export const awayCached = () => invoke<AwaySnapshot>("away_cached");
+
+/** Open the reply history filtered to the automatic replies of one channel (`away` / `mute`). */
+export const openHistoryChannel = (channel: string) =>
+  invoke<void>("open_history_channel", { channel });
 
 export const submitConfirmAction = (
   choiceIndex: number,

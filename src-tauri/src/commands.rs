@@ -1427,6 +1427,24 @@ pub async fn away_end() -> Result<(), String> {
         .map(|_| ())
 }
 
+/// Any away-mode operation from a window (console banner and per-session menu, desktop capsule):
+/// the daemon owns the state and answers with the picture afterwards.
+#[tauri::command]
+pub async fn away_apply(
+    op: crate::daemon::away::AwayOp,
+) -> Result<crate::daemon::away::AwaySnapshot, String> {
+    crate::client::away_op(op).await
+}
+
+/// The away picture the GUI Host last heard of the daemon (no daemon round trip, never starts
+/// it); empty outside a Host or while nothing is set.
+#[tauri::command]
+pub fn away_cached(app: AppHandle) -> crate::daemon::away::AwaySnapshot {
+    app.try_state::<crate::app::gui_host::HostState>()
+        .and_then(|state| state.data.lock().unwrap().away.clone())
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub async fn cancel_popup(app: AppHandle, request_id: Option<String>) -> Result<(), String> {
     if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
@@ -2374,6 +2392,22 @@ pub fn open_history(
         effective_popup_history_context(&app, &state)
     };
     route_open_history_window(app, project, target);
+    Ok(())
+}
+
+/// Opens the reply history on the automatic replies of one channel (`away` / `mute`), across all
+/// projects: the "view the record" link of the away-mode banner and capsule.
+#[tauri::command]
+pub fn open_history_channel(app: AppHandle, channel: String) -> Result<(), String> {
+    let channel = channel.trim().to_string();
+    if channel.is_empty() {
+        return Err("a channel is required".to_string());
+    }
+    route_open_history_window(
+        app,
+        String::new(),
+        Some(crate::gui_host::HistoryOpenTarget::Channel { channel }),
+    );
     Ok(())
 }
 

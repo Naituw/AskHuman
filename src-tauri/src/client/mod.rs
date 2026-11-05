@@ -852,7 +852,7 @@ async fn agents_snapshot_once() -> Option<serde_json::Value> {
         .ok()?;
     loop {
         match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
-            Ok(Some(ServerMsg::AgentsState { agents })) => return Some(agents),
+            Ok(Some(ServerMsg::AgentsState { agents, .. })) => return Some(agents),
             Ok(Some(_)) => continue,
             _ => return None,
         }

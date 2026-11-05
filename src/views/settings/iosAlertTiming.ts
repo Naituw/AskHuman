@@ -4,6 +4,12 @@
 /** Seconds offered in the settings; `0` pushes as soon as a question arrives. */
 export const ALERT_AFTER_PRESETS: readonly number[] = [0, 300, 900, 1800, 3600];
 
+/**
+ * Seconds offered for the away-mode push wait (docs/specs/special-replies.md D14): at once, or once
+ * the Mac has been idle one or five minutes. It only ever makes the push earlier than the above.
+ */
+export const AWAY_PUSH_PRESETS: readonly number[] = [0, 60, 300];
+
 export type DurationUnit = "seconds" | "minutes" | "hours";
 
 export interface SplitDuration {
@@ -29,8 +35,11 @@ export function idleDuration(secs: number): SplitDuration {
  * The waits to list: the presets plus the configured value when it is none of them (a hand-edited
  * config file), in ascending order so a custom value never hides among the presets.
  */
-export function alertAfterChoices(current: number): number[] {
-  const choices = [...ALERT_AFTER_PRESETS];
+export function alertAfterChoices(
+  current: number,
+  presets: readonly number[] = ALERT_AFTER_PRESETS,
+): number[] {
+  const choices = [...presets];
   if (Number.isFinite(current) && current >= 0 && !choices.includes(current)) choices.push(current);
   return choices.sort((a, b) => a - b);
 }
