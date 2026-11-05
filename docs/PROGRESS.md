@@ -7,9 +7,9 @@
 
 用户已批准 [开发计划](plans/ios-external-testflight.md)：首批 1–5 位朋友，各自 Mac 与 EMQX，开发者提供现有推送中继；外部邮件邀请，无公开加入链接，先不提供演示模式、直接尝试 Beta 审核。
 工作树 `HumanInLoop-ios-external-testflight`（`codex/ios-external-testflight`），不挂渠道预设。外测状态/联系人查询、显式外部上传、受限 metadata/group/submit/invite 工具、中英文公开材料与 App 内链接已实现；24 项工具回归、iOS 页面回归通过。尚未上线 Pages、上传外测构建或送审。
-用户暂不方便配置，要求先完成所有可独立推进工作，再集中处理必要输入。联系方式先从 Apple 现有应用资料核查；不猜测或公开审核电话。GitHub Pages 优先，但目前未启用，实际配置需要后续确认。
+用户已批准启用 GitHub Pages、发布独立 Mac 预览包并继续上传/送审；审核联系人选定 Spatialify，个人信息只存私有输入并提交 Apple。
 完成标准与分阶段验证见计划；未经批准不加演示模式、不迁移中继、不自动创建定时任务。
-候选源码 d3bb833；iOS 0.1.0 (10) 已本地归档/预检，外部模式本地签名验证通过；同源码 Apple Silicon Mac 包已签名并保存到私有 release 目录，尚未发布。后续先完成最终 Dev 转送回答，集中确认 Pages / Mac 预览包发布及审核联系人来源，再复查构建号、上传和送审。朋友邮箱尚未提供。
+候选源码 d3bb833；iOS 0.1.0 (10) 已本地归档/预检，外部模式本地签名验证通过；同源码 Apple Silicon Mac 包已签名并保存到私有 release 目录，尚未发布。最终 Dev 转送已收到回答。接下来发布 Pages / Mac 包，再复查构建号、上传和送审。朋友邮箱尚未提供。
 
 ## 待平台验收：Daemon 更新接班的 Windows / Linux 原生路径
 
