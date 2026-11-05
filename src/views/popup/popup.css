@@ -1890,6 +1890,9 @@ mark.popup-find-hit-current,
   z-index: 50;
   box-sizing: border-box;
   width: min(336px, calc(100vw - 24px));
+  /* Ten presets are taller than a small window: the menu scrolls instead of running off the top. */
+  max-height: calc(100vh - 84px);
+  overflow-y: auto;
   padding: 6px;
   display: flex;
   flex-direction: column;
@@ -1911,7 +1914,9 @@ mark.popup-find-hit-current,
   font-weight: 600;
   color: var(--text-secondary);
 }
-.qr-head-hint { font-weight: 400; color: var(--text-tertiary); }
+/* The title keeps its line; the hint on the right takes what is left and may wrap. */
+.qr-head > :first-child { flex: none; white-space: nowrap; }
+.qr-head-hint { font-weight: 400; color: var(--text-tertiary); text-align: right; }
 .qr-item {
   display: flex;
   align-items: flex-start;
@@ -1936,9 +1941,18 @@ mark.popup-find-hit-current,
 .qr-item-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .qr-item-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qr-item-sub { font-size: 11.5px; line-height: 1.35; color: var(--text-secondary); }
-/* A preset is one line with its digit on the right; a long one is cut with an ellipsis (its title has the rest). */
+/* A preset has its digit on the right and shows up to two lines; a longer one is cut with an ellipsis (its title
+   has the rest). */
 .qr-preset { align-items: center; padding-top: 6px; padding-bottom: 6px; }
-.qr-preset-text { flex: 1 1 auto; min-width: 0; }
+.qr-preset-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .qr-key {
   flex: none;
   font-family: inherit;

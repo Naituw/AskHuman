@@ -133,7 +133,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "quickReply.factory.1" => pick(lang, "Continue", "继续"),
         "quickReply.factory.2" => pick(
             lang,
-            "Use your own judgement, no need to wait for me",
+            "Use your own judgement, don't wait for me",
             "按你的判断来，不用等我",
         ),
         "quickReply.factory.3" => pick(

@@ -7,7 +7,7 @@ extension MockData {
     /// The factory quick replies a Mac offers with its questions (docs/specs/special-replies.md D27).
     public static let quickReplies = [
         "Continue",
-        "Use your own judgement, no need to wait for me",
+        "Use your own judgement, don't wait for me",
         "Skip this one and work on something else",
         "Explain in more detail",
         "None of these fit, try another approach",

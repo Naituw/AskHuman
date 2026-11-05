@@ -264,7 +264,7 @@ final class AskHumanAwayUITests: XCTestCase {
     /// What the mock Macs offer (`MockData.quickReplies`); the system gives the menu's entries no identifiers, so they
     /// are found by their text.
     private let firstReply = "Continue"
-    private let secondReply = "Use your own judgement, no need to wait for me"
+    private let secondReply = "Use your own judgement, don't wait for me"
     private let lastReply = "None of these fit, try another approach"
 
     /// A tap outside closes an open menu and goes no further.

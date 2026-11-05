@@ -274,8 +274,8 @@ export default {
         muteSub: "The Agent stops asking me in this session",
       },
       presetsSend: "Click to send",
-      presetsSendFillOne: "Click to send · the unanswered question gets the same reply",
-      presetsSendFill: "Click to send · the {n} unanswered questions get the same reply",
+      presetsSendFillOne: "Click to send · fills 1 unanswered",
+      presetsSendFill: "Click to send · fills {n} unanswered",
       presetsDone: "Every question has an answer",
       manage: "Manage quick replies…",
       armed: {

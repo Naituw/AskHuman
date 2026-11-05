@@ -177,6 +177,35 @@ describe("the quick-reply menu", () => {
       expect(wrapper.find(".qr-head-hint").text()).toBe(primaryShortcutLabel("k"));
     });
 
+    it("slides the menu back inside the window when its button sits left of centre", async () => {
+      // jsdom has no layout: report the menu hanging 73px past the window's left edge, as it does in a
+      // several-question footer where Previous / Next / Send crowd the button.
+      const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+        const menuBox = this.classList.contains("qr-menu");
+        return { left: menuBox ? -73 : 0, right: 0, top: 0, bottom: 0, width: menuBox ? 336 : 0, height: 0, x: 0, y: 0, toJSON: () => ({}) };
+      });
+      try {
+        const { wrapper } = await mountRequest();
+        await trigger(wrapper).trigger("click");
+        await flushPromises();
+        expect(menu(wrapper).attributes("style")).toContain("translateX(85px)");
+
+        // Closed and opened again, it is measured again.
+        press(window, { key: "Escape" });
+        await flushPromises();
+        expect(menu(wrapper).exists()).toBe(false);
+        rect.mockImplementation(function (this: HTMLElement) {
+          const menuBox = this.classList.contains("qr-menu");
+          return { left: menuBox ? 40 : 0, right: 0, top: 0, bottom: 0, width: menuBox ? 336 : 0, height: 0, x: 0, y: 0, toJSON: () => ({}) };
+        });
+        await trigger(wrapper).trigger("click");
+        await flushPromises();
+        expect(menu(wrapper).attributes("style") ?? "").not.toContain("translateX");
+      } finally {
+        rect.mockRestore();
+      }
+    });
+
     it("opens with the shortcut and moves the highlight with the arrows", async () => {
       const { wrapper } = await mountRequest();
       await openWithKey(wrapper);
@@ -729,7 +758,7 @@ describe("the quick-reply menu", () => {
       await answerBox(wrapper).setValue("my own answer");
       await trigger(wrapper).trigger("click");
       await flushPromises();
-      expect(wrapper.find(".qr-head-hint").text()).toBe("Click to send · the 2 unanswered questions get the same reply");
+      expect(wrapper.find(".qr-head-hint").text()).toBe("Click to send · fills 2 unanswered");
       await pick(wrapper, 0);
       expect(submitted()).toEqual([expect.objectContaining({
         answers: [
@@ -746,7 +775,7 @@ describe("the quick-reply menu", () => {
       await answerBox(wrapper).setValue("first done");
       await trigger(wrapper).trigger("click");
       await flushPromises();
-      expect(wrapper.find(".qr-head-hint").text()).toBe("Click to send · the unanswered question gets the same reply");
+      expect(wrapper.find(".qr-head-hint").text()).toBe("Click to send · fills 1 unanswered");
     });
 
     it("greys the presets out once every question has an answer and starts on the directives", async () => {

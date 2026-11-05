@@ -38,11 +38,31 @@ const headHint = computed(() => {
 const shortcut = primaryShortcutLabel("k");
 const menuEl = ref<HTMLElement | null>(null);
 
+// The menu hangs from the button's right edge. With several questions Previous / Next / Send sit on that
+// button's right, so the button is left of centre and a full-width menu would run past the window's left edge:
+// slide it back inside (the width already fits the window, see .qr-menu).
+const WINDOW_MARGIN = 12;
+const shiftX = ref(0);
+async function keepMenuInside() {
+  shiftX.value = 0;
+  await nextTick();
+  const box = menuEl.value?.getBoundingClientRect();
+  if (!box || box.width === 0) return;
+  shiftX.value = Math.max(0, WINDOW_MARGIN - box.left);
+}
+watch(quickReplyOpen, (open) => {
+  if (open) void keepMenuInside();
+  else shiftX.value = 0;
+});
+
 // Roving focus: the highlighted row owns the focus, so Enter and the screen reader follow the arrows.
 watch([quickReplyOpen, quickReplyIndex], async ([open, index]) => {
   if (!open) return;
   await nextTick();
-  menuEl.value?.querySelectorAll<HTMLElement>(".qr-item")[index as number]?.focus({ preventScroll: true });
+  const row = menuEl.value?.querySelectorAll<HTMLElement>(".qr-item")[index as number];
+  row?.focus({ preventScroll: true });
+  // A tall menu scrolls inside itself (see .qr-menu); keep the highlighted row in view.
+  row?.scrollIntoView?.({ block: "nearest" });
 });
 
 // Tab (or a click on another control) moving the focus out of the menu closes it; the window losing
@@ -77,6 +97,7 @@ function onFocusOut(event: FocusEvent) {
       v-if="quickReplyOpen"
       ref="menuEl"
       class="qr-menu"
+      :style="shiftX ? { transform: `translateX(${shiftX}px)` } : undefined"
       role="menu"
       :aria-label="t('popup.quickReply.menu')"
       @paste.stop
