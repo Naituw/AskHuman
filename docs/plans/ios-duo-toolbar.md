@@ -93,4 +93,18 @@ Duo 外屏竖屏的右侧有一列「侧栏」（时钟 / Wi-Fi 下面）。系�
 
 ## 9. 实施记录
 
-（实施时在此补：提交、遇到的问题、验证结果、出包的 build 号。）
+2026-11-05 全部做完，直接在 `main` 上提交（没推送）。
+
+- 提交：`a6c79f29` 本计划；`72bac227` `feat(ios)` 组件 ＋ 9 个文件的调用点 ＋ 字符串 ＋ 画廊测试改按 id；`77959702` 规格 §6「工具栏按钮与 Duo 侧栏」与 `overview-ios.md` 一条；`c9095887` 配对页完成态的测试。
+- 实现与 §3、§4 一致，多出来的 id：`todo-edit-cancel`、`scanner-cancel`、`asset-close`、`gallery-close`（原先这几个按钮没有 id，UI 测试按文字找）。`AskHumanUITests` 画廊用例改按 `gallery-close`，其余用例本来就按 id，没动。
+- 验证：
+  - Duo 外屏竖屏（iOS 27.1）逐屏截图：新建任务（空 / 输入后可发）、任务进度、添加待办、编辑待办、配对、画廊、待办项目页与重排中。取消 / 确认 / 关闭都进了侧栏，顶栏没留文字按钮；禁用态的 ↑ 是灰的、可发后是蓝的。
+    发送中转圈留在 sheet 顶栏、✕ 不动，这一条来自早先的探针（§1），真实的新建任务页没有单独截发送中。
+  - 普通 iPhone（iOS 27.0）：sheet 左上 ✕、右上蓝色 ✓ / ↑；UI 测试 `AskHumanTodosUITests` 10、`AskHumanRequestTodoUITests` 8、`AskHumanUITests`（画廊、文件、新建任务、离开表单、配对两条）、`AskHumanModelUITests` 4、`AskHumanDeveloperUITests` 2、`AskHumanArrivalUITests` 1 全绿。
+  - iOS 18.5：新建任务与项目页截图，仍是 Cancel / Start / Edit 文字按钮。
+  - 配对页的完成态：测试里等到 ✕ 变成蓝色 ✓（`.confirmationAction`）再点它关闭 sheet。
+- iOS 18.5 上无障碍树把每个工具栏按钮报成「容器＋按钮」两个同 id 节点（没改的 `new-task` 也一样），所以 `AskHumanRequestTodoUITests` 里按 id 读 `isEnabled` 的那条在 18.5 上不可靠；这是原来就有的，没有为此改测试。
+- 没做：`AskHumanLargeScreenUITests`（要 iPad / Duo 模拟器）、`AskHumanLiveUITests`、用最终包复查外屏横屏与内屏、任何真机。
+- 出包：build 8（`0.1.0 (8)`），本地标签 `ios-testflight-8` → `c9095887`；记录在 `docs/plans/ios-channel.md`「2026-11-05：TestFlight 内部构建 8」。与 §7 的差别：主检出里有别的会话的未跟踪文件，没有停下来问用户，而是从 `c9095887` 的干净临时 worktree 归档（包的内容就是那个提交）。
+  测试内容第一次被 Apple 拒了：`✓`、`✕` 不被接受（HTTP 409），改成文字后通过，已写进 `specs/ios-testflight-build-notes.md` 与技能。
+- 剩下的事（真机看 Duo 侧栏、外屏横屏与内屏复查、任务进度页「关闭」的蓝色）在 `docs/PROGRESS.md`「iOS 顶栏按钮进折叠屏侧栏」。
