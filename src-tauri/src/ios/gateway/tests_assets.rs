@@ -230,6 +230,7 @@ fn submit(client_msg_id: &str, request_id: &str, items: Vec<AnswerItem>) -> wire
         action: "send".into(),
         answers: items,
         todo_ids: Vec::new(),
+        directive: None,
     }
 }
 

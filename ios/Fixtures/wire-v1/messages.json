@@ -5,12 +5,12 @@
     {"type": "pair.request", "body": {"phoneId": "3qjxfkln6hdpmcvbtzaswe4r5y", "name": "Wutian iPhone", "ek": "BXkzYb0PqN0oQmwFh0wJ6wG2uK1m0o3cV3tqYhS9m1A", "appVer": "1.0 (1)", "proto": 1}},
     {"type": "pair.pending", "body": {"macId": "mfx2c3rhs6kq7tw4dnb5vypa2e"}},
     {"type": "pair.reject", "body": {"reason": "rejected"}},
-    {"type": "pair.accept", "body": {"macId": "mfx2c3rhs6kq7tw4dnb5vypa2e", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true}}},
+    {"type": "pair.accept", "body": {"macId": "mfx2c3rhs6kq7tw4dnb5vypa2e", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true, "away": true}}},
     {"type": "pair.done", "name": "min", "body": {"name": "Wutian iPhone"}},
     {"type": "pair.done", "name": "full", "body": {"name": "Wutian iPhone", "handle": "v1.AAAA", "env": "sandbox", "expiresAt": 1808000000}},
 
     {"type": "hello", "body": {"nonce": "q3ZkL1m0Xw4", "proto": 1, "appVer": "1.0 (1)", "deviceName": "Wutian iPhone"}},
-    {"type": "hello.ack", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": false, "interject": true, "watch": true, "todos": false, "answerTodos": false}, "slot": {"active": true, "autoActivation": true}}},
+    {"type": "hello.ack", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": false, "interject": true, "watch": true, "todos": false, "answerTodos": false, "away": false}, "slot": {"active": true, "autoActivation": true}}},
     {"type": "error", "name": "min", "body": {"ref": "m1", "code": "unknown_type"}},
     {"type": "error", "name": "full", "body": {"ref": "m2", "code": "clock_skew", "message": "message timestamp outside the allowed window"}},
     {"type": "resync", "body": {"stream": "inbox"}},
@@ -24,6 +24,9 @@
 
     {"type": "inbox.snapshot", "body": {"epoch": "0123456789abcdef", "rev": 7, "items": [
       {"id": "req1", "kind": "ask", "project": {"key": "p1", "name": "HumanInLoop"}, "agent": {"kind": "claude", "label": "Claude Code"}, "sessionTitle": "Refactor the gateway \u91cd\u6784\u7f51\u5173", "createdAt": 1792900000000, "preview": "Which approach do you prefer?", "contentHash": "sha256-abc", "size": 2048}
+    ]}},
+    {"type": "inbox.snapshot", "name": "escalated", "body": {"epoch": "0123456789abcdef", "rev": 13, "items": [
+      {"id": "req3", "kind": "ask", "project": {"key": "p1", "name": "HumanInLoop"}, "agent": {"kind": "claude", "label": "Claude Code"}, "createdAt": 1792900002000, "preview": "Blocked: the migration needs a decision.", "contentHash": "sha256-esc", "size": 321, "escalated": true}
     ]}},
     {"type": "request.new", "name": "ask", "body": {"rev": 8, "full": true, "request": {
       "id": "req1", "kind": "ask", "createdAt": 1792900000000,
@@ -42,6 +45,17 @@
           {"text": "Anything else?", "options": []}
         ],
         "selectOnly": false, "single": true, "whatsNext": true
+      }
+    }}},
+    {"type": "request.new", "name": "escalated", "body": {"rev": 12, "full": true, "request": {
+      "id": "req3", "kind": "ask", "createdAt": 1792900002000,
+      "agent": {"kind": "claude", "label": "Claude Code"}, "project": {"key": "p1", "name": "HumanInLoop"},
+      "source": "cli", "contentHash": "sha256-esc", "escalated": true,
+      "ask": {
+        "isMarkdown": false,
+        "message": {"text": "Blocked: the migration needs a decision.", "files": []},
+        "questions": [{"text": "Run the migration?", "options": [{"text": "Yes", "recommended": false}, {"text": "No", "recommended": false}]}],
+        "selectOnly": false, "single": false
       }
     }}},
     {"type": "request.new", "name": "confirm", "body": {"rev": 9, "full": false, "request": {
@@ -84,6 +98,7 @@
     {"type": "answer.submit", "name": "todos", "body": {"clientMsgId": "c4", "requestId": "req1", "action": "send", "answers": [
       {"q": 1, "sel": [0], "text": "because", "images": [], "files": []}
     ], "todoIds": ["t1", "t2"]}},
+    {"type": "answer.submit", "name": "directive", "body": {"clientMsgId": "c5", "requestId": "req1", "action": "send", "answers": [{"q": 0, "sel": [0], "images": [], "files": []}], "directive": {"kind": "away", "scope": "session", "note": "keep going"}}},
     {"type": "answer.ack", "name": "min", "body": {"clientMsgId": "c1", "requestId": "req1", "status": "accepted"}},
     {"type": "answer.ack", "name": "full", "body": {"clientMsgId": "c1", "requestId": "req1", "status": "invalid", "reason": "question 1 needs an answer"}},
     {"type": "confirm.decide", "name": "choice", "body": {"clientMsgId": "c3", "requestId": "req2", "wireIndex": 1, "input": "not needed"}},
@@ -167,6 +182,18 @@
     {"type": "task.status", "name": "full", "body": {"clientMsgId": "c8", "stage": "watching", "reason": "matched", "agentKey": "claude:s9"}},
     {"type": "slot.take", "body": {"clientMsgId": "c10"}},
     {"type": "slot.state", "body": {"rev": 5, "active": true, "autoActivation": false}},
+    {"type": "away.state", "name": "off", "body": {"rev": 0, "sessions": [], "escalatedWaiting": 0}},
+    {"type": "away.state", "name": "on", "body": {"rev": 3, "global": {"sinceMs": 1792900000000, "note": "keep going, do not touch prod", "replies": 6},
+      "sessions": [
+        {"sessionId": "s-away", "mode": "away", "sinceMs": 1792900100000, "note": "be bold", "replies": 2},
+        {"sessionId": "s-mute", "mode": "mute", "sinceMs": 1792900200000, "replies": 0},
+        {"sessionId": "s-normal", "mode": "normal", "sinceMs": 1792900300000, "replies": 0}
+      ],
+      "escalatedWaiting": 1}},
+    {"type": "away.set", "name": "on", "body": {"clientMsgId": "a1", "on": true, "note": "keep going"}},
+    {"type": "away.set", "name": "off", "body": {"clientMsgId": "a2", "on": false}},
+    {"type": "away.session.set", "name": "mute", "body": {"clientMsgId": "a3", "sessionId": "s-mute", "setting": "mute"}},
+    {"type": "away.session.set", "name": "away", "body": {"clientMsgId": "a4", "sessionId": "s-away", "setting": "away", "note": "be bold"}},
 
     {"type": "todo.projects.get", "body": {}},
     {"type": "todo.projects", "name": "local", "body": {"rev": 4096, "mode": "local", "projects": [{"id": "0123456789abcdef", "name": "app", "pending": 2, "history": 5, "scope": "local", "section": "withTodos", "agent": "working"}, {"id": "fedcba9876543210", "name": "api", "hint": "work", "pending": 0, "history": 0, "scope": "local", "section": "recent"}]}},

@@ -186,6 +186,7 @@ pub fn ask_view(
         source: source_label(origin),
         content_hash: String::new(),
         truncated: false,
+        escalated: request.escalated.is_some(),
         ask: Some(AskView {
             is_markdown: request.is_markdown,
             message: MessageView {
@@ -271,6 +272,7 @@ pub fn confirm_view(request: &ConfirmRequest, origin: &ConversationOrigin) -> Re
         source: source_label(origin),
         content_hash: String::new(),
         truncated: false,
+        escalated: false,
         ask: None,
         confirm: Some(ConfirmView {
             title: request.title.clone(),

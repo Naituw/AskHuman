@@ -10,6 +10,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use super::{Actor, TodoPick};
+use crate::daemon::away::{Directive, DirectiveKind, Scope};
 use crate::ios::envelope;
 use crate::ios::push::PushOutcome;
 use crate::ios::store::{JournalEntry, JournalLookup, JournalResult};
@@ -45,6 +46,10 @@ pub trait AskSink: Send + Sync + 'static {
     fn winner(&self) -> Option<String>;
     /// The surface can no longer reach a phone; the request keeps waiting elsewhere.
     fn surface_lost(&self, reason: &str);
+    /// Stashes (or, with `None`, drops) the directive that came with the answer about to be
+    /// submitted; the daemon applies it only if that answer wins the request. Sinks of requests
+    /// that cannot carry one ignore it.
+    fn set_directive(&self, _directive: Option<crate::daemon::away::Directive>) {}
 }
 
 /// The confirmation side of a request.
@@ -344,7 +349,31 @@ fn summarize(view: &RequestView, size: u64) -> RequestSummary {
         preview: preview_of(view),
         content_hash: view.content_hash.clone(),
         size,
+        escalated: view.escalated,
     }
+}
+
+/// The directive a phone sent with its answer, checked. A directive this Mac cannot read is
+/// refused rather than dropped: the user asked for something that would silently not happen.
+fn directive_of(submit: &AnswerSubmit) -> Result<Option<Directive>, String> {
+    let Some(wire) = &submit.directive else {
+        return Ok(None);
+    };
+    let kind = match wire.kind.as_str() {
+        "away" => DirectiveKind::Away,
+        "mute" => DirectiveKind::Mute,
+        _ => return Err("unknown directive".into()),
+    };
+    let scope = match wire.scope.as_str() {
+        "global" => Scope::Global,
+        "session" => Scope::Session,
+        _ => return Err("unknown directive scope".into()),
+    };
+    Ok(Some(Directive {
+        kind,
+        scope,
+        note: wire.note.clone(),
+    }))
 }
 
 fn answer_hash(submit: &AnswerSubmit) -> String {
@@ -357,6 +386,9 @@ fn answer_hash(submit: &AnswerSubmit) -> String {
     // that crosses an upgrade of the Mac still replays instead of being called a conflict.
     if !submit.todo_ids.is_empty() {
         canonical["todoIds"] = json!(submit.todo_ids);
+    }
+    if let Some(directive) = &submit.directive {
+        canonical["directive"] = json!(directive);
     }
     short_hash(&serde_json::to_vec(&canonical).expect("answer serializes"))
 }
@@ -973,6 +1005,10 @@ impl Actor {
         };
         let (sink, ask) = (sink.clone(), ask.clone());
         let project_key = pending.view.project.key.clone();
+        let directive = match directive_of(submit) {
+            Ok(directive) => directive,
+            Err(reason) => return ("invalid", Some(reason)),
+        };
         let result = match submit.action.as_str() {
             "cancel" => ChannelResult::cancel("ios"),
             "send" => match self.build_answers(phone_id, &ask, &project_key, submit) {
@@ -985,9 +1021,17 @@ impl Actor {
             },
             _ => return ("invalid", Some("unknown action".into())),
         };
+        // Stashed before the race is decided; dropped again when another surface wins.
+        let carries_directive = directive.is_some() && submit.action == "send";
+        if carries_directive {
+            sink.set_directive(directive);
+        }
         if sink.try_submit(result) {
             ("accepted", None)
         } else {
+            if carries_directive {
+                sink.set_directive(None);
+            }
             ("lost", sink.winner())
         }
     }

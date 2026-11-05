@@ -78,6 +78,10 @@ pub struct Coordinator {
     /// Why the most recent surface disappeared (`"<id>: <reason>"`), surfaced on stderr when the
     /// last one goes away.
     last_surface_loss: Mutex<Option<String>>,
+    /// The one-shot directive (away mode on, stop using AskHuman) that came with the answer being
+    /// submitted, from the popup's quick-reply menu or the phone; the daemon applies it when the
+    /// winning answer's result is delivered (docs/specs/special-replies.md N3).
+    directive: Mutex<Option<crate::daemon::away::Directive>>,
 }
 
 struct Inner {
@@ -199,7 +203,19 @@ impl Coordinator {
             record_history_enabled,
             surfaces_settled: AtomicBool::new(false),
             last_surface_loss: Mutex::new(None),
+            directive: Mutex::new(None),
         })
+    }
+
+    /// Stashes (or, with `None`, drops) the directive of the answer being submitted. Set before the
+    /// race is decided and dropped again by the surface that did not win.
+    pub fn set_directive(&self, directive: Option<crate::daemon::away::Directive>) {
+        *self.directive.lock().unwrap() = directive;
+    }
+
+    /// Takes the stashed directive, if any.
+    pub fn take_directive(&self) -> Option<crate::daemon::away::Directive> {
+        self.directive.lock().unwrap().take()
     }
 
     /// 是否已进入收尾阶段（供 GUI 事件循环决定是否拦下关窗退出）。

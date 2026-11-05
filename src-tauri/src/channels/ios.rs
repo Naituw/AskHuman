@@ -107,6 +107,10 @@ impl AskSink for CoordSink {
     fn surface_lost(&self, reason: &str) {
         self.0.surface_lost(CHANNEL_ID, reason);
     }
+
+    fn set_directive(&self, directive: Option<crate::daemon::away::Directive>) {
+        self.0.set_directive(directive);
+    }
 }
 
 impl Channel for IosChannel {

@@ -167,6 +167,10 @@ pub mod t {
     pub const SLOT_TAKE: &str = "slot.take";
     pub const SLOT_STATE: &str = "slot.state";
 
+    pub const AWAY_STATE: &str = "away.state";
+    pub const AWAY_SET: &str = "away.set";
+    pub const AWAY_SESSION_SET: &str = "away.session.set";
+
     pub const TODO_PROJECTS_GET: &str = "todo.projects.get";
     pub const TODO_PROJECTS: &str = "todo.projects";
     pub const TODO_LIST_GET: &str = "todo.list.get";
@@ -226,6 +230,11 @@ pub struct Caps {
     /// todo picker: a todo picked for a Mac that would drop the field would be lost silently.
     #[serde(default)]
     pub answer_todos: bool,
+    /// The Mac has away mode (`away.*`, `answer.submit` `directive`, `escalated` on requests;
+    /// docs/specs/special-replies.md D31–D34). Older Macs do not send it, and the phone then hides
+    /// every away control for that Mac.
+    #[serde(default)]
+    pub away: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -342,7 +351,7 @@ msg!(ErrorBody, t::ERROR);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Resync {
-    /// `inbox`, `agents`, `follow` or `slot`.
+    /// `inbox`, `agents`, `follow`, `slot` or `away`.
     pub stream: String,
 }
 msg!(Resync, t::RESYNC);
@@ -521,6 +530,10 @@ pub struct RequestView {
     pub content_hash: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub truncated: bool,
+    /// The Agent asked although the user is away, because it cannot go on or is done (the question
+    /// went out with `--escalate`; docs/specs/special-replies.md D5). Additive: older phones ignore it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub escalated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask: Option<AskView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -541,6 +554,9 @@ pub struct RequestSummary {
     pub preview: String,
     pub content_hash: String,
     pub size: u64,
+    /// The same flag as `RequestView::escalated`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub escalated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -631,8 +647,26 @@ pub struct AnswerSubmit {
     /// dequeues them, as the popup does. Additive: absent from older phones and when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub todo_ids: Vec<String>,
+    /// A one-shot instruction that travels with the answer (the bar menu on the answer screen;
+    /// docs/specs/special-replies.md N3). Applied by the Mac only when this answer wins the request.
+    /// Additive: absent from older phones and when the user chose none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directive: Option<AnswerDirective>,
 }
 msg!(AnswerSubmit, t::ANSWER_SUBMIT);
+
+/// What the user asked for besides answering: turn away mode on, or stop using AskHuman in this
+/// session. The same shape as the popup's directive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnswerDirective {
+    /// `away` or `mute`.
+    pub kind: String,
+    /// `global` or `session` (mute is always about the asking session).
+    pub scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1029,6 +1063,75 @@ pub struct SlotState {
 }
 msg!(SlotState, t::SLOT_STATE);
 
+// ---------------------------------------------------------------- away mode (docs/specs/special-replies.md)
+
+/// The global away switch as the phone sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwayGlobal {
+    /// Unix milliseconds the switch went on.
+    pub since_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Automatic replies handed out since it went on.
+    #[serde(default)]
+    pub replies: u32,
+}
+
+/// One Agent session that was set on its own. Only sessions of a known Agent (`sid:` keys) are
+/// listed: the phone names them by the Agent's own session id, the one in its `agentKey`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwaySession {
+    pub session_id: String,
+    /// `away`, `mute` or `normal`.
+    pub mode: String,
+    pub since_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub replies: u32,
+}
+
+/// The Mac's away state, sent after `hello`, on every change and on `resync` of the `away` stream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwayState {
+    pub rev: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global: Option<AwayGlobal>,
+    #[serde(default)]
+    pub sessions: Vec<AwaySession>,
+    /// Questions that reached the user as escalations and still wait for an answer.
+    #[serde(default)]
+    pub escalated_waiting: u32,
+}
+msg!(AwayState, t::AWAY_STATE);
+
+/// Turn the global away switch on (with an optional note for the Agents) or off.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwaySet {
+    pub client_msg_id: String,
+    pub on: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+msg!(AwaySet, t::AWAY_SET);
+
+/// Set or clear what one Agent session does on its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwaySessionSet {
+    pub client_msg_id: String,
+    pub session_id: String,
+    /// `follow` (no setting of its own), `away`, `mute` or `normal`.
+    pub setting: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+msg!(AwaySessionSet, t::AWAY_SESSION_SET);
+
 // ---------------------------------------------------------------- todos (docs/specs/ios-todos.md §5)
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1424,6 +1527,9 @@ registry!(
     TaskStatus,
     SlotTake,
     SlotState,
+    AwayState,
+    AwaySet,
+    AwaySessionSet,
     TodoProjectsGet,
     TodoProjects,
     TodoListGet,
@@ -1621,9 +1727,18 @@ mod tests {
         assert_eq!(old.session_title, None);
         let summary = serde_json::to_value(RequestSummary {
             session_title: Some("Fix it".into()),
-            ..old
+            ..old.clone()
         })
         .unwrap();
         assert_eq!(summary["sessionTitle"], "Fix it");
+        // The escalation flag is omitted when false and read as false when absent.
+        assert!(summary.get("escalated").is_none(), "{summary}");
+        assert!(!old.escalated);
+        let flagged = serde_json::to_value(RequestSummary {
+            escalated: true,
+            ..old
+        })
+        .unwrap();
+        assert_eq!(flagged["escalated"], true);
     }
 }

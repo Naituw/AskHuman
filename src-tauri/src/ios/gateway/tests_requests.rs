@@ -61,6 +61,7 @@ fn answer(client_msg_id: &str, request_id: &str, answers: Vec<AnswerItem>) -> wi
         action: "send".into(),
         answers,
         todo_ids: Vec::new(),
+        directive: None,
     }
 }
 
@@ -171,6 +172,7 @@ async fn cancel_is_forwarded_as_a_cancel() {
             action: "cancel".into(),
             answers: Vec::new(),
             todo_ids: Vec::new(),
+            directive: None,
         })
         .await;
     let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;

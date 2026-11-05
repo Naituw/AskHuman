@@ -155,6 +155,49 @@ impl TodoApplied {
     }
 }
 
+/// What the Mac's away engine holds, in the phone's terms (docs/specs/special-replies.md D31–D34).
+/// The gateway adds the revision and sends it as `away.state`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AwayView {
+    pub global: Option<crate::ios::wire::AwayGlobal>,
+    /// Sessions of a known Agent that were set on their own.
+    pub sessions: Vec<crate::ios::wire::AwaySession>,
+    /// Escalated questions still waiting for an answer.
+    pub escalated_waiting: u32,
+}
+
+impl AwayView {
+    /// The phone's picture of the engine's snapshot: sessions of a known Agent only (a `sid:` key is
+    /// the Agent's own session id, the one in the phone's `agentKey`; MCP instance keys name nothing
+    /// the phone lists).
+    pub fn from_snapshot(snapshot: &crate::daemon::away::AwaySnapshot) -> Self {
+        Self {
+            global: snapshot
+                .global
+                .as_ref()
+                .map(|global| crate::ios::wire::AwayGlobal {
+                    since_ms: global.since_ms as i64,
+                    note: global.note.clone(),
+                    replies: global.replies,
+                }),
+            sessions: snapshot
+                .sessions
+                .iter()
+                .filter_map(|session| {
+                    Some(crate::ios::wire::AwaySession {
+                        session_id: session.session_key.strip_prefix("sid:")?.to_string(),
+                        mode: session.mode.as_str().to_string(),
+                        since_ms: session.since_ms as i64,
+                        note: session.note.clone(),
+                        replies: session.replies,
+                    })
+                })
+                .collect(),
+            escalated_waiting: snapshot.escalated_waiting,
+        }
+    }
+}
+
 /// Lifecycle events the daemon reports about an Agent session (the subset Follow needs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentEventKind {

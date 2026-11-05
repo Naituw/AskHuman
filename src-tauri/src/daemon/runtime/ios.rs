@@ -8,8 +8,8 @@ use super::ios_agents::{self, ProjectCache};
 use super::*;
 use crate::config::IosChannelConfig;
 use crate::ios::gateway::{
-    FrameData, GatewayDeps, Host, InterjectResult, IosGateway, StagedFile, TaskChoices, TaskLaunch,
-    TodoApplied, TodoChoices, TodoPick,
+    AwayView, FrameData, GatewayDeps, Host, InterjectResult, IosGateway, StagedFile, TaskChoices,
+    TaskLaunch, TodoApplied, TodoChoices, TodoPick,
 };
 use crate::ios::push::HttpPushClient;
 use crate::ios::store::Store;
@@ -70,6 +70,7 @@ impl Host for DaemonHost {
             watch: true,
             todos: true,
             answer_todos: true,
+            away: true,
         }
     }
 
@@ -216,6 +217,21 @@ impl Host for DaemonHost {
         };
         // While away, an escalated question reaches the phone sooner (special-replies D14).
         away.alert_after_secs(ios_secs, state.away.any_away())
+    }
+
+    fn away(&self) -> Option<AwayView> {
+        let state = self.state.upgrade()?;
+        Some(AwayView::from_snapshot(&super::away_ops::away_snapshot(
+            &state,
+        )))
+    }
+
+    fn away_apply(&self, op: &crate::daemon::away::AwayOp) -> bool {
+        let Some(state) = self.state.upgrade() else {
+            return false;
+        };
+        super::away_ops::apply_away_op(&state, op);
+        true
     }
 }
 

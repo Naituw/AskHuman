@@ -74,20 +74,18 @@ pub struct RequestEntry {
     pub cancel: Arc<Notify>,
     /// 渲染结果发送端（协调器 finish 与看门狗共用；连接处理器从对应 rx 取）。
     pub final_tx: UnboundedSender<RenderOutcome>,
-    /// The one-shot directive that came with the answer being accepted (quick-reply menu); the
-    /// daemon applies it when the answer's result is delivered.
-    directive: Mutex<Option<crate::daemon::away::Directive>>,
 }
 
 impl RequestEntry {
-    /// Stashes (or, with `None`, drops) the directive of the answer being submitted.
+    /// Stashes (or, with `None`, drops) the directive of the answer being submitted. It lives on the
+    /// coordinator, the one handle every answering surface (popup, phone) holds.
     pub fn set_directive(&self, directive: Option<crate::daemon::away::Directive>) {
-        *self.directive.lock().unwrap() = directive;
+        self.coordinator.set_directive(directive);
     }
 
     /// Takes the stashed directive, if any.
     pub fn take_directive(&self) -> Option<crate::daemon::away::Directive> {
-        self.directive.lock().unwrap().take()
+        self.coordinator.take_directive()
     }
 
     pub fn request(&self) -> &AskRequest {
@@ -535,7 +533,6 @@ impl RequestRegistry {
             held,
             cancel: Arc::new(Notify::new()),
             final_tx,
-            directive: Mutex::new(None),
         });
 
         let mut inner = self.inner.lock().unwrap();

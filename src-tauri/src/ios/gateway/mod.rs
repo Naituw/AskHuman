@@ -21,6 +21,8 @@ mod tests_agents;
 #[cfg(test)]
 mod tests_assets;
 #[cfg(test)]
+mod tests_away;
+#[cfg(test)]
 mod tests_requests;
 #[cfg(test)]
 mod tests_tasks;
@@ -49,10 +51,11 @@ use super::wire::{
     self, t, AgentView, Caps, Msg, Presence, SlotInfo, CLOCK_SKEW_MS, KID_PAIR, PROTO,
 };
 use crate::config::IosChannelConfig;
+use crate::daemon::away::{AwayOp, SessionSetting};
 
 use assets::Uploads;
 pub use hostapi::{
-    AgentEventInfo, AgentEventKind, FrameData, InterjectResult, StagedFile, TaskChoices,
+    AgentEventInfo, AgentEventKind, AwayView, FrameData, InterjectResult, StagedFile, TaskChoices,
     TaskLaunch, TodoApplied, TodoChoices, TodoPick,
 };
 pub use pairing::PairInfo;
@@ -124,6 +127,16 @@ pub trait Host: Send + Sync + 'static {
     }
     /// Makes iOS the active channel (the phone's "take over questions" button).
     async fn take_slot(&self) {}
+
+    /// The away mode picture phones get (`None` when this host has no away mode). Polled about once
+    /// a second while phones are live, like the slot.
+    fn away(&self) -> Option<AwayView> {
+        None
+    }
+    /// Applies one away operation a phone asked for; `false` when this host has no away mode.
+    fn away_apply(&self, _op: &crate::daemon::away::AwayOp) -> bool {
+        false
+    }
 
     /// The projects the todo screen lists (docs/specs/ios-todos.md §6.1).
     async fn todo_projects(&self) -> wire::TodoProjects {
@@ -549,6 +562,7 @@ pub(crate) struct Revs {
     pub inbox: u64,
     pub follow: u64,
     pub slot: u64,
+    pub away: u64,
 }
 
 pub(crate) struct Actor {
@@ -585,6 +599,8 @@ pub(crate) struct Actor {
     pub todos: todos::TodoLive,
     /// Last slot state announced to the phones (`None` until the first tick).
     pub last_slot: Option<SlotInfo>,
+    /// Last away picture announced to the phones (`None` until the first tick).
+    pub last_away: Option<AwayView>,
 
     pub dirty: bool,
     pub last_flush_ms: i64,
@@ -651,6 +667,7 @@ impl Actor {
             live: agents::Live::default(),
             todos: todos::TodoLive::default(),
             last_slot: None,
+            last_away: None,
             dirty: false,
             last_flush_ms: now,
             last_prune_ms: now,
@@ -1127,6 +1144,14 @@ impl Actor {
                 let take = body!(wire::SlotTake);
                 self.on_slot_take(phone_id, &take.client_msg_id);
             }
+            t::AWAY_SET => {
+                let set = body!(wire::AwaySet);
+                self.on_away_set(phone_id, &plain.i, set);
+            }
+            t::AWAY_SESSION_SET => {
+                let set = body!(wire::AwaySessionSet);
+                self.on_away_session_set(phone_id, &plain.i, set);
+            }
             t::TODO_PROJECTS_GET => self.on_todo_projects_get(phone_id),
             t::TODO_LIST_GET => {
                 let get = body!(wire::TodoListGet);
@@ -1239,7 +1264,7 @@ impl Actor {
 
     /// The current state of every stream, as the phone gets it after `hello`.
     fn send_snapshots(&mut self, phone_id: &str) {
-        for stream in ["inbox", "agents", "follow", "slot"] {
+        for stream in ["inbox", "agents", "follow", "slot", "away"] {
             self.send_stream_snapshot(phone_id, stream);
         }
     }
@@ -1277,6 +1302,12 @@ impl Actor {
                         auto_activation: slot.auto_activation,
                     },
                 );
+            }
+            "away" => {
+                if let Some(view) = self.host.away() {
+                    let state = away_state(self.revs.away, view);
+                    self.send(phone_id, &state);
+                }
             }
             _ => {}
         }
@@ -1337,6 +1368,7 @@ impl Actor {
         self.tick_requests(now).await;
         self.prune_uploads(now);
         self.tick_slot();
+        self.tick_away();
         self.tick_agents(now);
         self.tick_follow(now);
         self.flush_follow_notices(now);
@@ -1396,6 +1428,66 @@ impl Actor {
         }
     }
 
+    /// Tells the live phones when the away picture (global switch, per-session settings, waiting
+    /// escalations) changes, whoever changed it: the tray, the console, the CLI, IM or a phone.
+    fn tick_away(&mut self) {
+        let Some(view) = self.host.away() else {
+            return;
+        };
+        let previous = self.last_away.replace(view.clone());
+        if previous.is_none_or(|previous| previous == view) {
+            return;
+        }
+        self.revs.away += 1;
+        let state = away_state(self.revs.away, view);
+        for phone_id in self.live_phones() {
+            self.send(&phone_id, &state);
+        }
+    }
+
+    fn on_away_set(&mut self, phone_id: &str, message_id: &str, set: wire::AwaySet) {
+        let op = if set.on {
+            AwayOp::Start { note: set.note }
+        } else {
+            AwayOp::End
+        };
+        self.apply_away(phone_id, message_id, &op);
+    }
+
+    fn on_away_session_set(&mut self, phone_id: &str, message_id: &str, set: wire::AwaySessionSet) {
+        let setting = match set.setting.as_str() {
+            "follow" => SessionSetting::Follow,
+            "away" => SessionSetting::Away,
+            "mute" => SessionSetting::Mute,
+            "normal" => SessionSetting::Normal,
+            _ => {
+                self.send_error(phone_id, message_id, "bad_request", None);
+                return;
+            }
+        };
+        let session_id = set.session_id.trim();
+        if session_id.is_empty() || session_id.len() > 256 {
+            self.send_error(phone_id, message_id, "bad_request", None);
+            return;
+        }
+        let op = AwayOp::Session {
+            session_key: crate::daemon::away::sid_key(session_id),
+            setting,
+            note: set.note,
+        };
+        self.apply_away(phone_id, message_id, &op);
+    }
+
+    /// Hands the operation to the daemon and tells every live phone what became of it at once,
+    /// instead of at the next tick.
+    fn apply_away(&mut self, phone_id: &str, message_id: &str, op: &AwayOp) {
+        if !self.host.away_apply(op) {
+            self.send_error(phone_id, message_id, "unsupported_type", None);
+            return;
+        }
+        self.tick_away();
+    }
+
     async fn shutdown(&mut self) {
         self.publish_presence(false);
         if self.dirty {
@@ -1405,6 +1497,16 @@ impl Actor {
         self.transport.disconnect().await;
         self.connected = false;
         self.refresh_status();
+    }
+}
+
+/// The wire form of the away picture.
+fn away_state(rev: u64, view: AwayView) -> wire::AwayState {
+    wire::AwayState {
+        rev,
+        global: view.global,
+        sessions: view.sessions,
+        escalated_waiting: view.escalated_waiting,
     }
 }
 

@@ -75,6 +75,12 @@ pub struct TestHost {
     pub last_input_ms: Mutex<Option<i64>>,
     /// What `alert_after_secs` answers; `0` pushes at once (the default keeps older tests simple).
     pub alert_after: AtomicU64,
+    /// The Mac's away engine; `away_supported` false makes the host act like one without away mode.
+    pub away_engine: crate::daemon::away::AwayEngine,
+    pub away_supported: std::sync::atomic::AtomicBool,
+    pub escalated_waiting: std::sync::atomic::AtomicU32,
+    /// Every away operation a phone asked for.
+    pub away_ops: Mutex<Vec<crate::daemon::away::AwayOp>>,
 }
 
 impl TestHost {
@@ -109,6 +115,10 @@ impl TestHost {
             slot_taken: AtomicUsize::new(0),
             last_input_ms: Mutex::new(None),
             alert_after: AtomicU64::new(0),
+            away_engine: crate::daemon::away::AwayEngine::in_memory(),
+            away_supported: std::sync::atomic::AtomicBool::new(true),
+            escalated_waiting: std::sync::atomic::AtomicU32::new(0),
+            away_ops: Mutex::new(Vec::new()),
         })
     }
 
@@ -175,11 +185,30 @@ impl Host for TestHost {
             watch: true,
             todos: true,
             answer_todos: true,
+            away: true,
         }
     }
 
     fn slot(&self) -> SlotInfo {
         self.slot.lock().unwrap().clone()
+    }
+
+    fn away(&self) -> Option<crate::ios::gateway::AwayView> {
+        if !self.away_supported.load(Ordering::SeqCst) {
+            return None;
+        }
+        let mut snapshot = self.away_engine.snapshot();
+        snapshot.escalated_waiting = self.escalated_waiting.load(Ordering::SeqCst);
+        Some(crate::ios::gateway::AwayView::from_snapshot(&snapshot))
+    }
+
+    fn away_apply(&self, op: &crate::daemon::away::AwayOp) -> bool {
+        if !self.away_supported.load(Ordering::SeqCst) {
+            return false;
+        }
+        self.away_ops.lock().unwrap().push(op.clone());
+        self.away_engine.apply(op, self.now_ms() as u64);
+        true
     }
 
     fn mac_idle_secs(&self) -> Option<u64> {
@@ -409,6 +438,9 @@ pub struct FakeAsk {
     pub lost: Mutex<Vec<String>>,
     /// Channel that decided the request; like the real coordinator, unset until somebody did.
     pub decided: Mutex<Option<String>>,
+    /// Every call of `set_directive`, in order: the directive stashed for the answer, then `None`
+    /// when another surface won.
+    pub directives: Mutex<Vec<Option<crate::daemon::away::Directive>>>,
 }
 
 impl FakeAsk {
@@ -418,6 +450,7 @@ impl FakeAsk {
             win: AtomicBool::new(true),
             lost: Mutex::new(Vec::new()),
             decided: Mutex::new(None),
+            directives: Mutex::new(Vec::new()),
         })
     }
 }
@@ -436,6 +469,10 @@ impl AskSink for FakeAsk {
 
     fn surface_lost(&self, reason: &str) {
         self.lost.lock().unwrap().push(reason.to_string());
+    }
+
+    fn set_directive(&self, directive: Option<crate::daemon::away::Directive>) {
+        self.directives.lock().unwrap().push(directive);
     }
 }
 
@@ -529,6 +566,7 @@ pub fn sample_ask(id: &str) -> (Arc<AskRequest>, RequestView) {
         source: "Codex".into(),
         content_hash: String::new(),
         truncated: false,
+        escalated: false,
         ask: Some(AskView {
             is_markdown: true,
             message: wire::MessageView {
@@ -578,6 +616,7 @@ pub fn sample_confirm(id: &str, expires_at: i64) -> RequestView {
         source: "Claude Code".into(),
         content_hash: String::new(),
         truncated: false,
+        escalated: false,
         ask: None,
         confirm: Some(ConfirmView {
             title: "Permission request".into(),
