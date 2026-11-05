@@ -264,6 +264,11 @@ export default {
         mute: "本会话不再使用 AskHuman…",
         muteSub: "这个会话里 Agent 不再向我提问",
       },
+      presetsSend: "点击即发送",
+      presetsSendFillOne: "点击即发送 · 未作答的那题同样回复",
+      presetsSendFill: "点击即发送 · 未作答的 {n} 题同样回复",
+      presetsDone: "每个问题都已作答",
+      manage: "管理快捷回复…",
       armed: {
         group: "待发的指令",
         away: "离开模式",
@@ -859,6 +864,21 @@ export default {
       todoLimit: "待办历史保留条数",
       todoLimitHint:
         "每个项目保留的「已执行待办」条数上限（在待办窗口的「历史」区查看、可恢复）。设为 0 则停止新增记录，已有历史保留。",
+    },
+    // 「快捷回复」卡（docs/specs/special-replies.md D27）。
+    quickReplies: {
+      title: "快捷回复",
+      hint:
+        "显示在弹窗的「快捷回复」菜单和手机的回复菜单里。点一下就把这句话作为所有尚未作答的问题的回复发送；已经写了的答案保持原样。菜单只放前 {max} 条。",
+      usingDefaults: "当前是出厂预设；改动任意一条后，这份列表就归你了。",
+      placeholder: "回复内容（一行）",
+      add: "添加一条",
+      full: "菜单最多放 {max} 条",
+      restore: "恢复默认",
+      drag: "拖动排序",
+      moveUp: "上移",
+      moveDown: "下移",
+      remove: "删除",
     },
     // 「离开模式」卡（docs/specs/special-replies.md D26）。
     away: {

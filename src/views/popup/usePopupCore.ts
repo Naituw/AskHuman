@@ -1724,13 +1724,29 @@ export function usePopupCore(scope?: PopupScope) {
     submit();
   }
 
-  function collectAnswers(): QuestionAnswer[] {
+  /**
+   * Whether a quick-reply preset would be this question's answer (docs/specs/special-replies.md D18): the
+   * question has nothing in it yet. Picked project todos go with the last question, so they answer it.
+   */
+  function presetFillsQuestion(i: number): boolean {
+    if (isAnswered(i)) return false;
+    return !(i === total.value - 1 && selectedTodos.value.length > 0);
+  }
+
+  /** How many questions a preset would answer; 0 where a free-text reply is not what is asked for. */
+  function presetTargets(): number {
+    if (selectOnly.value || whatsNext.value) return 0;
+    return questions.value.filter((_, i) => presetFillsQuestion(i)).length;
+  }
+
+  /** `presetText` is a quick reply: it is the reply of every question that has no answer yet. */
+  function collectAnswers(presetText?: string): QuestionAnswer[] {
     return questions.value.map((q, i) => {
       const answer: QuestionAnswer = {
         selectedOptions: q.predefinedOptions
           .map((o) => o.text)
           .filter((o) => (chosenByQ.value[i] ?? []).includes(o)),
-        userInput: inputByQ.value[i] ?? "",
+        userInput: presetText && presetFillsQuestion(i) ? presetText : (inputByQ.value[i] ?? ""),
         images: imagesByQ.value[i] ?? [],
         files: (replyFilesByQ.value[i] ?? []).map((f) => f.path),
       };
@@ -1788,14 +1804,19 @@ export function usePopupCore(scope?: PopupScope) {
     });
   }
 
-  async function submit() {
+  /** Sends the popup. A template binds this straight to `@click`, so it must not take the event as an argument. */
+  function submit() {
+    return submitWith();
+  }
+
+  async function submitWith(presetText?: string) {
     if (submitting.value || !canSubmit.value) return;
     submitting.value = true;
     scope?.sending?.();
     submissionError.value = null;
     try {
       await submitPopup(
-        { answers: collectAnswers(), directive: quickReply.quickReplyDirective.value },
+        { answers: collectAnswers(presetText), directive: quickReply.quickReplyDirective.value },
         scope?.requestId,
       );
     } catch (error) {
@@ -2031,6 +2052,11 @@ export function usePopupCore(scope?: PopupScope) {
       showCancelConfirm.value ||
       showConfirmCloseWarning.value ||
       todoPopover.todoPopoverOpen.value,
+    presetTargets,
+    sendPreset: (text) => submitWith(text),
+    openManage: () => {
+      openSettings("general#quick-replies").catch(() => {});
+    },
   });
 
   /** The navbar todo button: the popover, or the todos window when the request has no project. */

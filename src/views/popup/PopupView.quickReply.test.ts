@@ -28,6 +28,7 @@ if (typeof globalThis.CSS === "undefined") {
 
 const PRIMARY: KeyboardEventInit = desktopPlatform === "mac" ? { metaKey: true } : { ctrlKey: true };
 const SPEECH_ON_K = "cmd+k";
+const MANAGE = "Manage quick replies…";
 
 const base = {
   theme: "light", alwaysOnTop: false, sourceName: "Codex", project: "/project", projectName: "project",
@@ -140,7 +141,8 @@ describe("the quick-reply menu", () => {
   const trigger = (w: VueWrapper) => w.find<HTMLButtonElement>(".footer .qr-trigger");
   const menu = (w: VueWrapper) => w.find(".qr-menu");
   const items = (w: VueWrapper) => w.findAll(".qr-item");
-  const itemLabels = (w: VueWrapper) => items(w).map((item) => item.find(".qr-item-text").text());
+  const itemLabels = (w: VueWrapper) =>
+    items(w).map((item) => (item.find(".qr-item-text").exists() ? item.find(".qr-item-text").text() : item.text()));
   const bar = (w: VueWrapper) => w.find(".qr-bar");
   const banner = (w: VueWrapper) => w.find(".qr-banner");
   const primary = (w: VueWrapper) => w.find<HTMLButtonElement>(".footer .btn-primary");
@@ -158,7 +160,7 @@ describe("the quick-reply menu", () => {
   };
 
   describe("on an ordinary question", () => {
-    it("opens from the button and lists the two directives", async () => {
+    it("opens from the button and lists the two directives and the link to the settings", async () => {
       const { wrapper } = await mountRequest();
       expect(trigger(wrapper).text()).toContain("Quick reply");
       expect(trigger(wrapper).attributes("aria-expanded")).toBe("false");
@@ -168,7 +170,7 @@ describe("the quick-reply menu", () => {
       await flushPromises();
       expect(menu(wrapper).exists()).toBe(true);
       expect(trigger(wrapper).attributes("aria-expanded")).toBe("true");
-      expect(itemLabels(wrapper)).toEqual(["Away mode…", "Stop using AskHuman in this session…"]);
+      expect(itemLabels(wrapper)).toEqual(["Away mode…", "Stop using AskHuman in this session…", MANAGE]);
       // The first row is highlighted and holds the focus.
       expect(items(wrapper)[0].classes()).toContain("hover");
       expect(document.activeElement).toBe(items(wrapper)[0].element);
@@ -185,10 +187,13 @@ describe("the quick-reply menu", () => {
       expect(document.activeElement).toBe(items(wrapper)[1].element);
       press(window, { key: "ArrowDown" });
       await flushPromises();
+      expect(items(wrapper)[2].classes()).toContain("hover");
+      press(window, { key: "ArrowDown" });
+      await flushPromises();
       expect(items(wrapper)[0].classes()).toContain("hover");
       press(window, { key: "ArrowUp" });
       await flushPromises();
-      expect(items(wrapper)[1].classes()).toContain("hover");
+      expect(items(wrapper)[2].classes()).toContain("hover");
     });
 
     it("arms the highlighted row with Enter and never submits the answer", async () => {
@@ -425,7 +430,7 @@ describe("the quick-reply menu", () => {
       const { wrapper } = await mountRequest();
       await trigger(wrapper).trigger("click");
       await flushPromises();
-      expect(itemLabels(wrapper)).toEqual(["Away mode…", "Stop using AskHuman in this session…"]);
+      expect(itemLabels(wrapper)).toEqual(["Away mode…", "Stop using AskHuman in this session…", MANAGE]);
     });
   });
 
@@ -460,7 +465,7 @@ describe("the quick-reply menu", () => {
       expect(banner(wrapper).find(".qr-banner-action").text()).toBe("End away mode");
       await trigger(wrapper).trigger("click");
       await flushPromises();
-      expect(itemLabels(wrapper)).toEqual(["End away mode", "Stop using AskHuman in this session…"]);
+      expect(itemLabels(wrapper)).toEqual(["End away mode", "Stop using AskHuman in this session…", MANAGE]);
     });
 
     it("says why each kind of escalation came through", async () => {
@@ -482,7 +487,7 @@ describe("the quick-reply menu", () => {
       expect(banner(wrapper).exists()).toBe(false);
       await trigger(wrapper).trigger("click");
       await flushPromises();
-      expect(itemLabels(wrapper)).toEqual(["Away mode…", "Stop using AskHuman in this session…"]);
+      expect(itemLabels(wrapper)).toEqual(["Away mode…", "Stop using AskHuman in this session…", MANAGE]);
       // Ending away mode answers nothing.
       expect(calls("submit_popup")).toEqual([]);
     });
@@ -634,6 +639,203 @@ describe("the quick-reply menu", () => {
     });
   });
 
+  describe("with the user's quick replies (docs/specs/special-replies.md D18, D27)", () => {
+    const REPLIES = ["Continue", "Use your own judgement", "Skip this one"];
+    const presetRows = (w: VueWrapper) => w.findAll(".qr-preset");
+    const pick = async (w: VueWrapper, index: number) => {
+      await w.find(`.qr-item[data-item='preset-${index}']`).trigger("click");
+      await flushPromises();
+    };
+    beforeEach(() => { interaction = (id) => ask(id, { quickReplies: REPLIES }); });
+
+    it("lists them first with their digits, then the directives and the link to the settings", async () => {
+      const { wrapper } = await mountRequest();
+      await trigger(wrapper).trigger("click");
+      await flushPromises();
+      expect(itemLabels(wrapper)).toEqual([...REPLIES, "Away mode…", "Stop using AskHuman in this session…", MANAGE]);
+      expect(presetRows(wrapper).map((row) => row.find(".qr-key").text())).toEqual(["1", "2", "3"]);
+      expect(wrapper.find(".qr-head-hint").text()).toBe("Click to send");
+      expect(wrapper.findAll(".qr-sep")).toHaveLength(2);
+      // The first preset is highlighted and holds the focus.
+      expect(items(wrapper)[0].classes()).toContain("hover");
+      expect(document.activeElement).toBe(items(wrapper)[0].element);
+    });
+
+    it("sends a clicked preset at once as the reply of the question", async () => {
+      const { wrapper } = await mountRequest();
+      await trigger(wrapper).trigger("click");
+      await pick(wrapper, 1);
+      expect(menu(wrapper).exists()).toBe(false);
+      expect(submitted()).toEqual([expect.objectContaining({
+        answers: [expect.objectContaining({ selectedOptions: [], userInput: "Use your own judgement" })],
+      })]);
+      expect(submitted()[0].directive).toBeUndefined();
+    });
+
+    it("picks a preset with its digit while the menu is open", async () => {
+      const { wrapper } = await mountRequest();
+      await openWithKey(wrapper);
+      press(window, { key: "3" });
+      await flushPromises();
+      expect(submitted()).toEqual([expect.objectContaining({
+        answers: [expect.objectContaining({ userInput: "Skip this one" })],
+      })]);
+    });
+
+    it("counts to ten with the digits 1…9 and 0", async () => {
+      const ten = Array.from({ length: 10 }, (_, i) => `reply ${i + 1}`);
+      interaction = (id) => ask(id, { quickReplies: ten });
+      const { wrapper } = await mountRequest();
+      await openWithKey(wrapper);
+      expect(presetRows(wrapper).map((row) => row.find(".qr-key").text())).toEqual(
+        ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+      );
+      press(window, { key: "0" });
+      await flushPromises();
+      expect(submitted()).toEqual([expect.objectContaining({
+        answers: [expect.objectContaining({ userInput: "reply 10" })],
+      })]);
+    });
+
+    it("swallows a digit that has no preset, a modified one and a digit while closed does nothing", async () => {
+      const { wrapper } = await mountRequest();
+      await openWithKey(wrapper);
+      press(window, { key: "7" });
+      press(window, { key: "1", shiftKey: true });
+      await flushPromises();
+      expect(menu(wrapper).exists()).toBe(true);
+      expect(calls("submit_popup")).toEqual([]);
+      press(window, { key: "Escape" });
+      await flushPromises();
+      press(window, { key: "1" });
+      await flushPromises();
+      expect(calls("submit_popup")).toEqual([]);
+    });
+
+    it("sends the highlighted preset with Enter", async () => {
+      const { wrapper } = await mountRequest();
+      await openWithKey(wrapper);
+      press(window, { key: "ArrowDown" });
+      press(window, { key: "Enter" });
+      await flushPromises();
+      expect(submitted()).toEqual([expect.objectContaining({
+        answers: [expect.objectContaining({ userInput: "Use your own judgement" })],
+      })]);
+    });
+
+    it("keeps what was answered already and gives every other question the reply", async () => {
+      interaction = (id) => ask(id, { quickReplies: REPLIES }, 3);
+      const { wrapper } = await mountRequest();
+      await answerBox(wrapper).setValue("my own answer");
+      await trigger(wrapper).trigger("click");
+      await flushPromises();
+      expect(wrapper.find(".qr-head-hint").text()).toBe("Click to send · the 2 unanswered questions get the same reply");
+      await pick(wrapper, 0);
+      expect(submitted()).toEqual([expect.objectContaining({
+        answers: [
+          expect.objectContaining({ userInput: "my own answer" }),
+          expect.objectContaining({ userInput: "Continue" }),
+          expect.objectContaining({ userInput: "Continue" }),
+        ],
+      })]);
+    });
+
+    it("says so when a single question is left to answer", async () => {
+      interaction = (id) => ask(id, { quickReplies: REPLIES }, 2);
+      const { wrapper } = await mountRequest();
+      await answerBox(wrapper).setValue("first done");
+      await trigger(wrapper).trigger("click");
+      await flushPromises();
+      expect(wrapper.find(".qr-head-hint").text()).toBe("Click to send · the unanswered question gets the same reply");
+    });
+
+    it("greys the presets out once every question has an answer and starts on the directives", async () => {
+      const { wrapper } = await mountRequest();
+      await answerBox(wrapper).setValue("my answer");
+      await trigger(wrapper).trigger("click");
+      await flushPromises();
+      expect(presetRows(wrapper).every((row) => row.classes().includes("disabled"))).toBe(true);
+      expect(presetRows(wrapper)[0].attributes("aria-disabled")).toBe("true");
+      expect(wrapper.find(".qr-head-hint").text()).toBe("Every question has an answer");
+      expect(items(wrapper)[3].classes()).toContain("hover");
+      expect(document.activeElement).toBe(items(wrapper)[3].element);
+
+      // Neither a click, a digit nor Enter sends anything.
+      await pick(wrapper, 0);
+      press(window, { key: "1" });
+      await flushPromises();
+      expect(calls("submit_popup")).toEqual([]);
+      expect(menu(wrapper).exists()).toBe(true);
+
+      // The arrows skip the greyed-out rows in both directions.
+      press(window, { key: "ArrowUp" });
+      await flushPromises();
+      expect(items(wrapper)[5].classes()).toContain("hover");
+      press(window, { key: "ArrowDown" });
+      await flushPromises();
+      expect(items(wrapper)[3].classes()).toContain("hover");
+    });
+
+    it("counts a picked option as an answer", async () => {
+      const { wrapper } = await mountRequest();
+      await wrapper.find(".option").trigger("click");
+      await trigger(wrapper).trigger("click");
+      await flushPromises();
+      expect(wrapper.find(".qr-head-hint").text()).toBe("Every question has an answer");
+    });
+
+    it("sends the armed directive along with the preset", async () => {
+      const { wrapper } = await mountRequest();
+      await trigger(wrapper).trigger("click");
+      await choose(wrapper, "mute");
+      expect(bar(wrapper).exists()).toBe(true);
+      await trigger(wrapper).trigger("click");
+      await pick(wrapper, 0);
+      expect(submitted()).toEqual([expect.objectContaining({
+        answers: [expect.objectContaining({ userInput: "Continue" })],
+        directive: { kind: "mute", scope: "session" },
+      })]);
+    });
+
+    it("opens the settings at the quick-reply card from the last row", async () => {
+      const { wrapper } = await mountRequest();
+      await trigger(wrapper).trigger("click");
+      await wrapper.find(".qr-item[data-item='manage']").trigger("click");
+      await flushPromises();
+      expect(calls("open_settings")).toEqual([{ tab: "general#quick-replies" }]);
+      expect(menu(wrapper).exists()).toBe(false);
+      expect(calls("submit_popup")).toEqual([]);
+    });
+
+    it("shows no presets on What's next or a strict choice, even if some arrive", async () => {
+      interaction = (id) => ask(id, { quickReplies: REPLIES, selectOnly: true });
+      const strict = await mountRequest("strict");
+      await trigger(strict.wrapper).trigger("click");
+      await flushPromises();
+      expect(presetRows(strict.wrapper)).toHaveLength(0);
+      expect(itemLabels(strict.wrapper)).toEqual(["Away mode…", "Stop using AskHuman in this session…", MANAGE]);
+
+      interaction = (id) => ({
+        ...whatsNext(id),
+        interaction: { type: "ask", request: { ...(whatsNext(id).interaction as { request: AskRequest }).request, quickReplies: REPLIES } },
+      }) as PopupInit;
+      const next = await mountRequest("next");
+      await trigger(next.wrapper).trigger("click");
+      await flushPromises();
+      expect(presetRows(next.wrapper)).toHaveLength(0);
+    });
+
+    it("reads in Chinese too", async () => {
+      interaction = (id) => ask(id, { quickReplies: ["继续", "按你的判断来"] });
+      overrides = { language: "zh" };
+      const { wrapper } = await mountRequest("a", false, "zh");
+      await trigger(wrapper).trigger("click");
+      await flushPromises();
+      expect(itemLabels(wrapper)).toEqual(["继续", "按你的判断来", "离开模式…", "本会话不再使用 AskHuman…", "管理快捷回复…"]);
+      expect(wrapper.find(".qr-head-hint").text()).toBe("点击即发送");
+    });
+  });
+
   describe("in Chinese", () => {
     it("reads the way the prototype does", async () => {
       interaction = (id) => ask(id, { escalated: "asked" });
@@ -644,7 +846,7 @@ describe("the quick-reply menu", () => {
       expect(banner(wrapper).find(".qr-banner-action").text()).toBe("结束离开模式");
       await trigger(wrapper).trigger("click");
       await flushPromises();
-      expect(itemLabels(wrapper)).toEqual(["结束离开模式", "本会话不再使用 AskHuman…"]);
+      expect(itemLabels(wrapper)).toEqual(["结束离开模式", "本会话不再使用 AskHuman…", "管理快捷回复…"]);
     });
   });
 });

@@ -401,6 +401,21 @@ fn memory_finalizer(
     }))
 }
 
+/// The quick replies a question's menu offers (docs/specs/special-replies.md D18, D20, D27): the
+/// configured list, but none where a free-text reply would not be taken or makes no sense: What's
+/// next (the user is asked for a task, not for a nudge), strict-choice questions (they accept only
+/// the listed options) and anything without the menu.
+fn quick_replies_for(
+    request: &AskRequest,
+    general: &crate::config::GeneralConfig,
+    lang: Lang,
+) -> Vec<String> {
+    if !request.quick_reply || request.whats_next || request.select_only {
+        return Vec::new();
+    }
+    general.effective_quick_replies(lang)
+}
+
 #[derive(Default)]
 struct Inner {
     by_id: HashMap<String, Arc<RequestEntry>>,
@@ -466,6 +481,11 @@ impl RequestRegistry {
         request.whats_next = task.whats_next;
         request.escalated = escalated;
         request.quick_reply = quick_reply;
+        request.quick_replies = quick_replies_for(
+            &request,
+            &crate::config::AppConfig::load_without_secrets().general,
+            lang,
+        );
 
         let (final_tx, final_rx) = tokio::sync::mpsc::unbounded_channel();
         let coordinator = Coordinator::new_ipc(
@@ -1159,6 +1179,47 @@ mod tests {
         stop.stop_confirmation = true;
         let (entry, _rx) = registry.create(stop, None);
         assert!(!entry.request().quick_reply);
+    }
+
+    fn plain_ask() -> AskRequest {
+        AskRequest::new(Default::default(), Vec::new(), true)
+    }
+
+    #[test]
+    fn the_menu_gets_the_factory_replies_in_the_language_until_the_user_edits_them() {
+        let general = crate::config::GeneralConfig::default();
+        let en = quick_replies_for(&plain_ask(), &general, Lang::En);
+        assert_eq!(en.len(), 5);
+        assert_eq!(en[0], "Continue");
+        let zh = quick_replies_for(&plain_ask(), &general, Lang::Zh);
+        assert_eq!(zh[0], "继续");
+        assert_eq!(zh.len(), 5);
+
+        let mut edited = crate::config::GeneralConfig {
+            quick_replies: Some(vec!["  Ship it ".into(), "".into(), "Hold on".into()]),
+            ..Default::default()
+        };
+        assert_eq!(
+            quick_replies_for(&plain_ask(), &edited, Lang::Zh),
+            vec!["Ship it".to_string(), "Hold on".to_string()]
+        );
+        // A list the user emptied means no replies, not the factory ones again.
+        edited.quick_replies = Some(Vec::new());
+        assert!(quick_replies_for(&plain_ask(), &edited, Lang::En).is_empty());
+    }
+
+    #[test]
+    fn what_next_strict_choice_and_menuless_questions_get_no_replies() {
+        let general = crate::config::GeneralConfig::default();
+        let mut whats_next = plain_ask();
+        whats_next.whats_next = true;
+        assert!(quick_replies_for(&whats_next, &general, Lang::En).is_empty());
+        let mut select_only = plain_ask();
+        select_only.select_only = true;
+        assert!(quick_replies_for(&select_only, &general, Lang::En).is_empty());
+        let mut no_menu = plain_ask();
+        no_menu.quick_reply = false;
+        assert!(quick_replies_for(&no_menu, &general, Lang::En).is_empty());
     }
 
     fn ask_task(session: Option<&str>, question: &str) -> TaskRequest {

@@ -228,6 +228,10 @@ public actor MockBackend: RemoteBackend {
                 }
             }
         }
+        if scenario == .away || scenario == .awayOn {
+            // The Macs that know away mode are the ones that offer quick replies too.
+            MockData.applyQuickReplies(to: &initial)
+        }
         if scenario == .awayOn {
             MockData.applyAwayOn(to: &initial, now: date)
         }

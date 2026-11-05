@@ -391,4 +391,70 @@ final class AnswerComposerTests: XCTestCase {
         form.dropTodoOptionSelections()
         XCTAssertEqual(form.answers[0].selected, [0], "an ordinary question's options are its own")
     }
+    // MARK: quick replies (docs/specs/special-replies.md D18/D27)
+
+    private func repliesAsk(_ questions: [QuestionView], selectOnly: Bool = false, whatsNext: Bool = false) -> AskView {
+        AskView(
+            isMarkdown: true, message: MessageView(text: "m", files: []), questions: questions,
+            selectOnly: selectOnly, single: false, whatsNext: whatsNext, quickReplies: ["Continue", "Skip this one"]
+        )
+    }
+
+    func testAQuickReplyAnswersEveryQuestionThatHasNoAnswerYet() {
+        let form = composer(repliesAsk([question("1", "a", "b"), question("2"), question("3")]))
+        XCTAssertEqual(form.quickReplies, ["Continue", "Skip this one"])
+        XCTAssertEqual(form.quickReplyTargets, 3)
+        form.toggle(question: 0, option: 1)
+        XCTAssertEqual(form.quickReplyTargets, 2)
+        XCTAssertEqual(form.items(uploads: [:], fillingWith: "Continue"), [
+            AnswerItem(q: 0, sel: [1]),
+            AnswerItem(q: 1, text: "Continue"),
+            AnswerItem(q: 2, text: "Continue"),
+        ])
+        XCTAssertEqual(form.answers[1].text, "", "the form itself is not changed: a failed send leaves the draft as it was")
+    }
+
+    func testAnAnsweredQuestionKeepsItsTextAndAttachmentsWhenAReplyGoesOut() throws {
+        let form = composer(repliesAsk([question("1"), question("2")]))
+        form.setText("  my own words  ", question: 0)
+        let image = try form.addAttachment(name: "p.png", mime: "image/png", data: Data([1]), isImage: true, question: 0)
+        XCTAssertEqual(form.items(uploads: [image.id: "up-1"], fillingWith: "Continue"), [
+            AnswerItem(q: 0, text: "my own words", images: ["up-1"]),
+            AnswerItem(q: 1, text: "Continue"),
+        ])
+    }
+
+    func testWithEveryQuestionAnsweredThereIsNothingForAReplyToAnswer() {
+        let form = composer(repliesAsk([question("1", "a"), question("2")]))
+        form.toggle(question: 0, option: 0)
+        form.setText("typed", question: 1)
+        XCTAssertEqual(form.quickReplyTargets, 0, "the menu greys the replies out")
+        XCTAssertEqual(form.items(uploads: [:], fillingWith: "Continue"), form.items(uploads: [:]))
+    }
+
+    func testAPickedTodoAnswersTheLastQuestionSoAReplyLeavesItAlone() {
+        let form = composer(repliesAsk([question("1"), question("2")]))
+        form.setTodoIds(["t1"])
+        XCTAssertEqual(form.quickReplyTargets, 1)
+        XCTAssertFalse(form.quickReplyFills(1))
+        XCTAssertEqual(form.items(uploads: [:], fillingWith: "Continue"), [AnswerItem(q: 0, text: "Continue")])
+    }
+
+    func testQuickRepliesBelongToOrdinaryQuestionsOnly() {
+        let strict = composer(repliesAsk([question("1", "a", "b")], selectOnly: true))
+        XCTAssertTrue(strict.quickReplies.isEmpty, "a strict choice takes no free text")
+        XCTAssertEqual(strict.quickReplyTargets, 0)
+        let next = composer(repliesAsk([question("What next?", "a", "b")], whatsNext: true))
+        XCTAssertTrue(next.quickReplies.isEmpty, "the next task is not answered with a sentence")
+        let plain = composer(ask([question("1", "a")]))
+        XCTAssertTrue(plain.quickReplies.isEmpty, "a Mac with no replies offers none")
+        XCTAssertEqual(plain.quickReplyTargets, 0)
+    }
+
+    func testOnlyAReplyOfTheRequestFillsIn() {
+        let form = composer(repliesAsk([question("1")]))
+        XCTAssertTrue(form.items(uploads: [:], fillingWith: "Something else").isEmpty, "not one of the Mac's replies")
+        XCTAssertTrue(form.items(uploads: [:], fillingWith: "   ").isEmpty)
+        XCTAssertTrue(form.items(uploads: [:], fillingWith: nil).isEmpty)
+    }
 }

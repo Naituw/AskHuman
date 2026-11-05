@@ -1,6 +1,6 @@
-// Popup "Quick reply" menu (docs/specs/special-replies.md D19–D21): the footer button's state, the
-// directive that waits for Send ("away mode" / "stop using AskHuman" for this session) and the
-// escalation banner's "end away mode".
+// Popup "Quick reply" menu (docs/specs/special-replies.md D17–D21, D27): the footer button's state, the
+// user's preset replies (one click sends them), the directive that waits for Send ("away mode" /
+// "stop using AskHuman" for this session) and the escalation banner's "end away mode".
 //
 // The menu is KEYBOARD-MODAL like the todo popover: while it is open `handleQuickReplyKeydown`
 // swallows every shortcut the popup owns except ⌘/Ctrl+W, so a key meant for the menu can never
@@ -23,8 +23,27 @@ export interface ArmedDirective {
 
 export type QuickReplyItemId = "away" | "endAway" | "mute";
 
-export interface QuickReplyItem {
-  id: QuickReplyItemId;
+/** One row of the menu, in the order it is shown: presets, then the directives, then "manage". */
+export type QuickReplyItem =
+  | {
+      kind: "preset";
+      /** Stable key and `data-item` of the row. */
+      id: string;
+      /** Index in the user's list. */
+      index: number;
+      text: string;
+      /** The digit that picks it (1–9, then 0), if it has one. */
+      key: string | null;
+      /** Every question already has an answer, so there is nothing a preset could fill in. */
+      disabled: boolean;
+    }
+  | { kind: "directive"; id: QuickReplyItemId; disabled: false }
+  | { kind: "manage"; id: "manage"; disabled: false };
+
+/** The digit key of the n-th preset: 1…9, then 0 for the tenth. */
+export function presetKey(index: number): string | null {
+  if (index < 0 || index > 9) return null;
+  return String((index + 1) % 10);
 }
 
 export interface QuickReplyDeps {
@@ -38,6 +57,12 @@ export interface QuickReplyDeps {
   speechTaken: (event: KeyboardEvent) => boolean;
   /** The popup cannot take input right now (hidden, behind a dialog, another overlay is open). */
   suspended: () => boolean;
+  /** How many questions a preset would answer: those with nothing in them yet (0 where presets make no sense). */
+  presetTargets: () => number;
+  /** Sends the popup now with this text as the reply of every question that has no answer yet (spec D18). */
+  sendPreset: (text: string) => void | Promise<void>;
+  /** Opens the settings window at the quick-reply card ("Manage quick replies…"). */
+  openManage: () => void;
 }
 
 export function useQuickReply(deps: QuickReplyDeps) {
@@ -59,10 +84,35 @@ export function useQuickReply(deps: QuickReplyDeps) {
     awayEnded.value ? null : deps.request.value?.escalated ?? null,
   );
 
-  /** What the menu offers: while away mode is on (this is an escalation) it is "end", else "start". */
+  /**
+   * The user's presets this question carries. The daemon sends none with What's next or a strict choice (spec D20,
+   * D27), and a free-text reply makes no sense there, so this hides them even if some arrive.
+   */
+  const presets = computed(() => {
+    const request = deps.request.value;
+    if (!available.value || !request || request.whatsNext || request.selectOnly) return [];
+    return (request.quickReplies ?? []).filter((text) => text.trim());
+  });
+  /** How many questions a click on a preset would fill in; the menu says so and greys the presets out at 0. */
+  const presetTargets = computed(() => (presets.value.length ? deps.presetTargets() : 0));
+  const presetsEnabled = computed(() => presetTargets.value > 0);
+
+  /**
+   * What the menu offers: the presets, then the directives (while away mode is on, which makes this an
+   * escalation, the first one is "end", else "start"), then the link to the settings.
+   */
   const items = computed<QuickReplyItem[]>(() => [
-    { id: escalated.value ? "endAway" : "away" },
-    { id: "mute" },
+    ...presets.value.map<QuickReplyItem>((text, index) => ({
+      kind: "preset",
+      id: `preset-${index}`,
+      index,
+      text,
+      key: presetKey(index),
+      disabled: !presetsEnabled.value,
+    })),
+    { kind: "directive", id: escalated.value ? "endAway" : "away", disabled: false },
+    { kind: "directive", id: "mute", disabled: false },
+    { kind: "manage", id: "manage", disabled: false },
   ]);
 
   /** The directive to send along with the answer; undefined when nothing is armed. */
@@ -83,7 +133,7 @@ export function useQuickReply(deps: QuickReplyDeps) {
     if (open.value || !available.value || deps.suspended()) return;
     const active = document.activeElement;
     restoreFocusEl = active instanceof HTMLElement && active !== document.body ? active : null;
-    index.value = 0;
+    index.value = Math.max(0, items.value.findIndex((item) => !item.disabled));
     open.value = true;
   }
 
@@ -103,9 +153,17 @@ export function useQuickReply(deps: QuickReplyDeps) {
     else openMenu();
   }
 
+  /** Moves the highlight, skipping rows that cannot be picked (greyed-out presets). */
   function move(delta: number) {
     const count = items.value.length;
-    index.value = (index.value + delta + count) % count;
+    let next = index.value;
+    for (let step = 0; step < count; step++) {
+      next = (next + delta + count) % count;
+      if (!items.value[next]?.disabled) {
+        index.value = next;
+        return;
+      }
+    }
   }
 
   /** Arms a directive: it waits above the footer until Send (spec D19), × takes it back. */
@@ -148,6 +206,27 @@ export function useQuickReply(deps: QuickReplyDeps) {
     }
     // Picking a row is not a reason to lose the place in the answer: the focus goes back where it was.
     if (target?.isConnected) void nextTick(() => target.focus({ preventScroll: true }));
+  }
+
+  /** A preset sends the popup at once: answered questions keep their answers, the others get this text. */
+  function choosePreset(index: number) {
+    const text = presets.value[index];
+    if (text === undefined || !presetsEnabled.value) return;
+    closeMenu(false);
+    void deps.sendPreset(text);
+  }
+
+  function chooseManage() {
+    closeMenu(false);
+    deps.openManage();
+  }
+
+  /** Whatever row it is (a click, Enter on the highlighted row, a digit). */
+  function chooseItem(item: QuickReplyItem) {
+    if (item.disabled) return;
+    if (item.kind === "preset") choosePreset(item.index);
+    else if (item.kind === "manage") chooseManage();
+    else choose(item.id);
   }
 
   /** Forget everything about the previous request (the core is initialised once per request). */
@@ -215,7 +294,15 @@ export function useQuickReply(deps: QuickReplyDeps) {
       if (target instanceof HTMLElement && target.closest(".qr-item")) return true;
       event.preventDefault();
       const item = items.value[index.value];
-      if (item) choose(item.id);
+      if (item) chooseItem(item);
+      return true;
+    }
+    // A digit picks the preset that carries it; the key is the menu's own, so a modified digit (⌘1 picks an
+    // option of the question) stays swallowed above.
+    if (/^[0-9]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+      event.preventDefault();
+      const preset = items.value.find((item) => item.kind === "preset" && item.key === event.key);
+      if (preset) chooseItem(preset);
       return true;
     }
     return true;
@@ -226,6 +313,7 @@ export function useQuickReply(deps: QuickReplyDeps) {
     quickReplyOpen: open,
     quickReplyIndex: index,
     quickReplyItems: items,
+    quickReplyPresetTargets: presetTargets,
     quickReplyDirective: directive,
     quickReplyEscalated: escalated,
     quickReplyEnding: ending,
@@ -234,6 +322,7 @@ export function useQuickReply(deps: QuickReplyDeps) {
     closeQuickReply: closeMenu,
     toggleQuickReply: toggleMenu,
     chooseQuickReply: choose,
+    chooseQuickReplyItem: chooseItem,
     armDirective: arm,
     disarmDirective: disarm,
     endAwayMode,

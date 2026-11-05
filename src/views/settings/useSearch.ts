@@ -128,6 +128,7 @@ export function useSettingsSearch(deps: {
       e("general", "settings.popupBehavior.testPopup"),
       e("general", "settings.history.title"),
       e("general", "settings.history.limit", ["settings.history.limitHint"]),
+      e("general", "settings.quickReplies.title", ["settings.quickReplies.hint"]),
       e("general", "settings.away.title", [
         "settings.away.capsule",
         "settings.away.welcomeBack",

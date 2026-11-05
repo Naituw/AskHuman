@@ -284,14 +284,22 @@ public struct AskView: Codable, Equatable, Hashable, Sendable {
     public var selectOnly: Bool
     public var single: Bool
     @OmitFalse public var whatsNext: Bool
+    /// The quick replies the answer screen's menu offers, in the order they are shown: the Mac's own list as it was
+    /// when the question was created (docs/specs/special-replies.md D27, N8). Empty where the menu has no replies
+    /// (What's next, select-only questions) and from Macs that predate them.
+    @OmitEmpty public var quickReplies: [String]
 
-    public init(isMarkdown: Bool, message: MessageView, questions: [QuestionView], selectOnly: Bool, single: Bool, whatsNext: Bool = false) {
+    public init(
+        isMarkdown: Bool, message: MessageView, questions: [QuestionView], selectOnly: Bool, single: Bool,
+        whatsNext: Bool = false, quickReplies: [String] = []
+    ) {
         self.isMarkdown = isMarkdown
         self.message = message
         self.questions = questions
         self.selectOnly = selectOnly
         self.single = single
         self.whatsNext = whatsNext
+        self.quickReplies = quickReplies
     }
 }
 

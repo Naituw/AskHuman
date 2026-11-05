@@ -97,6 +97,12 @@ pub struct AskRequest {
         skip_serializing_if = "is_quick_reply"
     )]
     pub quick_reply: bool,
+    /// The quick replies the menu offers on this question, in the order they are shown: the user's
+    /// own list or the factory one, as it was when the question was created. Empty for what the
+    /// menu does not give replies to (What's next, strict-choice questions, anything without the
+    /// menu). Omitted when empty, so a sender that predates the field still parses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quick_replies: Vec<String>,
 }
 
 fn default_quick_reply() -> bool {
@@ -132,6 +138,7 @@ impl AskRequest {
             whats_next: false,
             escalated: None,
             quick_reply: true,
+            quick_replies: Vec::new(),
         }
     }
 }

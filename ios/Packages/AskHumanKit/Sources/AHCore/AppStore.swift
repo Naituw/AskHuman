@@ -706,8 +706,9 @@ public final class AppStore {
 
     // MARK: actions
 
-    /// Uploads the attachments and sends the answers.
-    public func send(_ composer: AnswerComposer, item: InboxItem) async throws {
+    /// Uploads the attachments and sends the answers. `quickReply` is one of the replies of the bar menu: it becomes
+    /// the answer of every question that has none yet, and what was answered stays (docs/specs/special-replies.md D18).
+    public func send(_ composer: AnswerComposer, item: InboxItem, quickReply: String? = nil) async throws {
         submissionNavigationEpochs[item.id] = requestNavigationEpoch
         clearRequestError(for: item.id)
         composer.isSending = true
@@ -731,7 +732,8 @@ public final class AppStore {
             )
         }
         _ = try await backend.submitAnswer(
-            macId: item.macId, requestId: item.requestId, action: "send", answers: composer.items(uploads: uploads),
+            macId: item.macId, requestId: item.requestId, action: "send",
+            answers: composer.items(uploads: uploads, fillingWith: quickReply),
             todoIds: macTakesPickedTodos(item.macId) ? composer.todoIds : [],
             directive: offersDirectives(for: item) ? composer.directive?.wire : nil
         )

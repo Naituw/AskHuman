@@ -45,6 +45,7 @@ import type {
   PopupSubmission,
   ProjectInfo,
   SecretActions,
+  QuickReplyDefaults,
   SettingsPayload,
   SlackDetectArgs,
   SlackTestArgs,
@@ -169,6 +170,9 @@ export const showAttachmentMenu = (path: string) =>
   invoke<void>("show_attachment_menu", { path });
 
 export const getSettings = () => invoke<SettingsPayload>("get_settings");
+
+/** The factory quick replies in both interface languages, shown by the settings card until the list is edited. */
+export const quickReplyDefaults = () => invoke<QuickReplyDefaults>("quick_reply_defaults");
 
 /** Codex 权限授权管理面板（spec codex-permission-remember §6.3）：全部操作经 daemon 完成。 */
 export const permissionRulesPanel = (op: PermissionRulesOp) =>

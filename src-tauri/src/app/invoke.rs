@@ -169,6 +169,7 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::file_icon_data_url,
         crate::commands::show_attachment_menu,
         crate::commands::get_settings,
+        crate::commands::quick_reply_defaults,
         crate::commands::save_settings,
         crate::commands::get_prompt,
         crate::commands::open_test_popup,

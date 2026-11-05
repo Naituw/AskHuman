@@ -197,6 +197,7 @@ pub fn ask_view(
             select_only: request.select_only,
             single: request.single,
             whats_next: request.whats_next,
+            quick_replies: request.quick_replies.clone(),
         }),
         confirm: None,
     };

@@ -4,6 +4,25 @@ import AHCore
 
 /// Sample away state for the demo mode and the UI tests.
 extension MockData {
+    /// The factory quick replies a Mac offers with its questions (docs/specs/special-replies.md D27).
+    public static let quickReplies = [
+        "Continue",
+        "Use your own judgement, no need to wait for me",
+        "Skip this one and work on something else",
+        "Explain in more detail",
+        "None of these fit, try another approach",
+    ]
+
+    /// Gives the questions the quick replies, as a Mac that has away mode does: every question but What's next and a
+    /// strict choice carries them.
+    static func applyQuickReplies(to state: inout EngineState) {
+        for index in state.inbox.indices {
+            guard var ask = state.inbox[index].view?.ask, !ask.whatsNext, !ask.selectOnly else { continue }
+            ask.quickReplies = quickReplies
+            state.inbox[index].view?.ask = ask
+        }
+    }
+
     /// The question the `awayOn` scenario shows as an escalation.
     public static let escalatedRequestId = "req-migration"
 

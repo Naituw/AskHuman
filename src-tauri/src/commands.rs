@@ -2673,12 +2673,33 @@ pub fn get_settings() -> SettingsPayload {
     }
 }
 
+/// The factory quick replies in both interface languages: the settings card shows them as the list
+/// until the user edits it (docs/specs/special-replies.md D27).
+#[derive(Serialize)]
+pub struct QuickReplyDefaults {
+    en: Vec<String>,
+    zh: Vec<String>,
+}
+
+#[tauri::command]
+pub fn quick_reply_defaults() -> QuickReplyDefaults {
+    use crate::i18n::{quick_reply_factory, Lang};
+    QuickReplyDefaults {
+        en: quick_reply_factory(Lang::En),
+        zh: quick_reply_factory(Lang::Zh),
+    }
+}
+
 #[tauri::command]
 pub async fn save_settings(
     app: AppHandle,
     mut config: AppConfig,
     secret_actions: SecretActions,
 ) -> Result<(), String> {
+    // The menu holds a handful of one-line replies: what the settings page sent is cut to that.
+    if let Some(list) = config.general.quick_replies.as_deref() {
+        config.general.quick_replies = Some(crate::config::sanitize_quick_replies(list));
+    }
     let cursor_runtime_needed = crate::cursor_desktop::configured(&config.cursor_desktop)
         || crate::cursor_desktop::configured(&AppConfig::load_without_secrets().cursor_desktop);
     if cursor_runtime_needed {

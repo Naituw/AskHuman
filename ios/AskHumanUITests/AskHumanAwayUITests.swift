@@ -259,4 +259,92 @@ final class AskHumanAwayUITests: XCTestCase {
         let row = requireElement("agent-row-cursor:cur-migrate")
         XCTAssertTrue(row.label.contains(localized("Not using AskHuman", "不再使用 AskHuman")), row.label)
     }
+    // MARK: quick replies (docs/specs/special-replies.md D18, D30)
+
+    /// What the mock Macs offer (`MockData.quickReplies`); the system gives the menu's entries no identifiers, so they
+    /// are found by their text.
+    private let firstReply = "Continue"
+    private let secondReply = "Use your own judgement, no need to wait for me"
+    private let lastReply = "None of these fit, try another approach"
+
+    /// A tap outside closes an open menu and goes no further.
+    private func dismissTheMenu() {
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+    }
+
+    /// Answers all three questions of the migration request, so that nothing is left for a quick reply to answer.
+    private func answerEveryQuestionOfTheMigration() {
+        requireElement("option-0-0").tap()
+        for id in ["option-1-0", "answer-text-2"] {
+            var swipes = 0
+            while !element(id).isHittable, swipes < 8 {
+                app.swipeUp(velocity: .slow)
+                swipes += 1
+            }
+            XCTAssertTrue(element(id).isHittable, "\(id) is within reach")
+            element(id).tap()
+            if id.hasPrefix("answer-text") { element(id).typeText("done") }
+        }
+    }
+
+    func testTheBarMenuListsTheMacsQuickRepliesBelowTheInstructionsNearestTheThumb() {
+        launch("away", tab: "inbox")
+        openRequest("req-migration")
+        requireElement("quick-reply-menu").tap()
+        let first = labelled(firstReply)
+        XCTAssertTrue(first.waitForExistence(timeout: 10), "the first quick reply is in the menu")
+        let last = labelled(lastReply)
+        let away = labelled(localized("Away mode", "离开模式"))
+        XCTAssertTrue(last.exists && away.exists)
+        XCTAssertGreaterThan(first.frame.minY, last.frame.minY, "the first reply is the one nearest the thumb")
+        XCTAssertGreaterThan(last.frame.minY, away.frame.minY, "the instructions sit above the replies")
+        shot("away-8-quick-replies")
+    }
+
+    func testAQuickReplyAnswersTheQuestionsLeftAndSendsAtOnce() {
+        launch("away", tab: "inbox")
+        openRequest("req-migration")
+        requireElement("option-0-0").tap()
+        requireElement("quick-reply-menu").tap()
+        let reply = labelled(secondReply)
+        XCTAssertTrue(reply.waitForExistence(timeout: 10))
+        reply.tap()
+        XCTAssertTrue(gone("inbox-row-req-migration", timeout: 15), "one tap sent the form")
+
+        tab("History", "历史").tap()
+        requireElement("history-row-req-migration").tap()
+        XCTAssertTrue(labelled(secondReply).waitForExistence(timeout: 10), "the questions nobody answered got the reply")
+        shot("away-9-quick-reply-history")
+    }
+
+    func testTheQuickRepliesAreGreyedOutOnceEveryQuestionHasAnAnswer() {
+        launch("away", tab: "inbox")
+        openRequest("req-migration")
+        requireElement("quick-reply-menu").tap()
+        XCTAssertTrue(labelled(firstReply).waitForExistence(timeout: 10))
+        XCTAssertTrue(labelled(firstReply).isEnabled, "nothing is answered yet")
+        dismissTheMenu()
+        XCTAssertTrue(XCTWaiter().wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: labelled(firstReply)
+        )], timeout: 10) == .completed)
+
+        answerEveryQuestionOfTheMigration()
+        requireElement("quick-reply-menu").tap()
+        XCTAssertTrue(labelled(firstReply).waitForExistence(timeout: 10))
+        XCTAssertFalse(labelled(firstReply).isEnabled, "nothing is left for a reply to answer")
+        XCTAssertTrue(labelled(localized("Away mode", "离开模式")).isEnabled, "the instructions stay")
+        shot("away-10-replies-greyed")
+    }
+
+    func testAStrictChoiceAndWhatsNextHaveNoQuickReplies() {
+        launch("away", tab: "inbox")
+        for id in ["req-select", "req-next"] {
+            openRequest(id)
+            requireElement("quick-reply-menu").tap()
+            XCTAssertTrue(labelled(localized("Away mode", "离开模式")).waitForExistence(timeout: 10), "\(id) has the instructions")
+            XCTAssertFalse(labelled(firstReply).exists, "\(id) takes no free-text reply")
+            dismissTheMenu()
+            back()
+        }
+    }
 }

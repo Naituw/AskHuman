@@ -17,6 +17,12 @@ export interface AskRequest {
   escalated?: EscalationReason;
   /** False for Stop confirmations, failure cards, native Codex questions and development relays (N10); absent = true. */
   quickReply?: boolean;
+  /**
+   * The quick replies the menu offers on this question, in order (docs/specs/special-replies.md D27): the user's
+   * own list or the factory one as it was when the question was created. Absent or empty = none (What's next,
+   * strict-choice questions, anything without the menu).
+   */
+  quickReplies?: string[];
 }
 
 /** Why a question came through away mode: the Agent asked for it, it asked repeatedly, or the user asked it to ask. */
@@ -941,6 +947,17 @@ export interface GeneralConfig {
   daemonLifecycle: DaemonLifecycleMode;
   /** Away mode on the desktop (docs/specs/special-replies.md D14, D22, D23, D26). */
   away: AwayConfig;
+  /**
+   * The user's own quick replies (docs/specs/special-replies.md D27); `null` = never edited, so the factory
+   * list in the interface language applies. At most 10, each one line.
+   */
+  quickReplies: string[] | null;
+}
+
+/** The factory quick replies in both interface languages (`quick_reply_defaults`). */
+export interface QuickReplyDefaults {
+  en: string[];
+  zh: string[];
 }
 
 /** Away-mode surfaces and timing (mirrors Rust `AwayConfig`); the mode itself lives in the daemon. */

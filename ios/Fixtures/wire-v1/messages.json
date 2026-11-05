@@ -58,6 +58,18 @@
         "selectOnly": false, "single": false
       }
     }}},
+    {"type": "request.new", "name": "quickReplies", "body": {"rev": 14, "full": true, "request": {
+      "id": "req4", "kind": "ask", "createdAt": 1792900003000,
+      "agent": {"kind": "cursor", "label": "Cursor"}, "project": {"key": "p1", "name": "HumanInLoop"},
+      "source": "cli", "contentHash": "sha256-qr",
+      "ask": {
+        "isMarkdown": false,
+        "message": {"text": "Ready to ship?", "files": []},
+        "questions": [{"text": "Merge it?", "options": []}],
+        "selectOnly": false, "single": false,
+        "quickReplies": ["Continue", "\u6309\u4f60\u7684\u5224\u65ad\u6765\uff0c\u4e0d\u7528\u7b49\u6211"]
+      }
+    }}},
     {"type": "request.new", "name": "confirm", "body": {"rev": 9, "full": false, "request": {
       "id": "req2", "kind": "confirm", "createdAt": 1792900001000,
       "agent": {"kind": "codex", "label": "Codex"}, "project": {"key": "p2", "name": "Other"},

@@ -548,6 +548,7 @@ pub fn sample_ask(id: &str) -> (Arc<AskRequest>, RequestView) {
         whats_next: false,
         escalated: None,
         quick_reply: true,
+        quick_replies: Vec::new(),
     };
     let view = RequestView {
         id: id.to_string(),
@@ -592,6 +593,7 @@ pub fn sample_ask(id: &str) -> (Arc<AskRequest>, RequestView) {
             select_only: false,
             single: false,
             whats_next: false,
+            quick_replies: Vec::new(),
         }),
         confirm: None,
     };

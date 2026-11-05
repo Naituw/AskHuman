@@ -73,6 +73,7 @@ struct AnswerScreen: View {
                         item: item, composer: composer, moreBelow: tracker.moreBelow, ended: store.endedNotice(for: item.id) != nil,
                         connection: store.state.requestConnection(macId: item.macId),
                         onSend: { send(composer) },
+                        onQuickReply: { reply in send(composer, quickReply: reply) },
                         onNext: { next(composer, proxy: proxy) },
                         onJump: { jumpToMissing(composer, proxy: proxy) }
                     )
@@ -102,10 +103,10 @@ struct AnswerScreen: View {
 
     private var sending: Bool { if case .sending = item.state { true } else { false } }
 
-    private func send(_ composer: AnswerComposer) {
+    private func send(_ composer: AnswerComposer, quickReply: String? = nil) {
         Task {
             do {
-                try await store.send(composer, item: item)
+                try await store.send(composer, item: item, quickReply: quickReply)
             } catch {
                 store.reportRequestError(error.userMessage, for: item.id)
             }
@@ -677,6 +678,8 @@ private struct SendBar: View {
     let ended: Bool
     let connection: RequestConnection
     let onSend: () -> Void
+    /// A quick reply of the bar menu: sends the form with it.
+    let onQuickReply: (String) -> Void
     let onNext: () -> Void
     let onJump: () -> Void
 
@@ -731,7 +734,7 @@ private struct SendBar: View {
                 // there. After that "Send" takes the main place, and "Next" stays beside it while there
                 // are questions below the screen, as the popup's "Next" does until it reaches the last.
                 if store.offersDirectives(for: item) {
-                    DirectiveMenu(composer: composer, disabled: ended || busy)
+                    DirectiveMenu(composer: composer, disabled: ended || busy, canSend: enabled, onQuickReply: onQuickReply)
                 }
                 if composer.hasReachedEnd, moreBelow {
                     nextIconButton.transition(.opacity.combined(with: .scale(scale: 0.92)))

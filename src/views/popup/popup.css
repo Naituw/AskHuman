@@ -1936,6 +1936,36 @@ mark.popup-find-hit-current,
 .qr-item-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .qr-item-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qr-item-sub { font-size: 11.5px; line-height: 1.35; color: var(--text-secondary); }
+/* A preset is one line with its digit on the right; a long one is cut with an ellipsis (its title has the rest). */
+.qr-preset { align-items: center; padding-top: 6px; padding-bottom: 6px; }
+.qr-preset-text { flex: 1 1 auto; min-width: 0; }
+.qr-key {
+  flex: none;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--border);
+  border-radius: 5px;
+  padding: 3px 5px;
+  opacity: 0.85;
+}
+/* Every question has an answer already: the presets stay listed but cannot be picked. */
+.qr-item.disabled { opacity: 0.45; }
+.qr-item.disabled.hover,
+.qr-item.disabled:hover { background: transparent; }
+.qr-sep { flex: none; height: 0; margin: 5px 4px; border-top: var(--hairline) solid var(--border); }
+.qr-manage {
+  align-self: flex-start;
+  width: auto;
+  padding: 4px 10px;
+  color: var(--accent);
+  font-size: 12px;
+}
+.qr-manage.hover,
+.qr-manage:hover,
+.qr-manage:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 .qr-bar {
   flex: 0 0 auto;

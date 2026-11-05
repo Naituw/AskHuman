@@ -78,6 +78,20 @@ pub fn source_header(lang: Lang, key: &'static str, source: &str) -> String {
     tr(effective, key).replace("{source}", source)
 }
 
+/// The factory quick replies in the given language (docs/specs/special-replies.md D27).
+pub fn quick_reply_factory(lang: Lang) -> Vec<String> {
+    [
+        "quickReply.factory.1",
+        "quickReply.factory.2",
+        "quickReply.factory.3",
+        "quickReply.factory.4",
+        "quickReply.factory.5",
+    ]
+    .into_iter()
+    .map(|key| tr(lang, key).to_string())
+    .collect()
+}
+
 /// 词条查询：源语言英文，缺失 key 原样返回（兜底）。
 /// 含 `{x}` 占位符的模板由调用方用 `str::replace` 填充。
 /// `key` 取 `'static`（调用方均传字面量），以便兜底分支可原样返回。
@@ -113,6 +127,25 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             lang,
             "Standing note from the user (valid for as long as they are away): {note}",
             "用户的常驻备注（离开期间一直有效）：{note}",
+        ),
+        // The factory quick replies (docs/specs/special-replies.md D27); the user's own list replaces
+        // them as soon as it is edited. Each one is a whole sentence an Agent can act on.
+        "quickReply.factory.1" => pick(lang, "Continue", "继续"),
+        "quickReply.factory.2" => pick(
+            lang,
+            "Use your own judgement, no need to wait for me",
+            "按你的判断来，不用等我",
+        ),
+        "quickReply.factory.3" => pick(
+            lang,
+            "Skip this one and work on something else",
+            "先跳过这个，做别的",
+        ),
+        "quickReply.factory.4" => pick(lang, "Explain in more detail", "再详细解释一下"),
+        "quickReply.factory.5" => pick(
+            lang,
+            "None of these fit, try another approach",
+            "都不合适，换个思路",
         ),
         // 接管 Claude AskUserQuestion 时，单选题的题面标注（我们的卡片按整卡多选渲染，spec D5）。
         "askQuestion.pickOne" => pick(lang, "(pick one)", "（只选一项）"),

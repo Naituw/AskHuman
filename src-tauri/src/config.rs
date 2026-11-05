@@ -214,6 +214,42 @@ pub struct GeneralConfig {
     pub daemon_lifecycle: DaemonLifecycleMode,
     /// Away mode on the desktop (`docs/specs/special-replies.md` D14, D22, D23, D26).
     pub away: AwayConfig,
+    /// The user's own quick replies (`docs/specs/special-replies.md` D27). `None` is "never edited": the
+    /// factory list in the interface language applies. Once edited it is the user's list, even an empty one.
+    pub quick_replies: Option<Vec<String>>,
+}
+
+/// The most quick replies the menu holds.
+pub const QUICK_REPLIES_MAX: usize = 10;
+/// The longest one quick reply, in characters.
+pub const QUICK_REPLY_MAX_CHARS: usize = 200;
+
+/// A quick-reply list as the menu may hold it: every entry trimmed, blank ones dropped, each cut to
+/// `QUICK_REPLY_MAX_CHARS` characters, at most `QUICK_REPLIES_MAX` entries.
+pub fn sanitize_quick_replies(list: &[String]) -> Vec<String> {
+    list.iter()
+        .map(|reply| reply.trim())
+        .filter(|reply| !reply.is_empty())
+        .map(|reply| {
+            reply
+                .chars()
+                .take(QUICK_REPLY_MAX_CHARS)
+                .collect::<String>()
+        })
+        .map(|reply| reply.trim_end().to_string())
+        .take(QUICK_REPLIES_MAX)
+        .collect()
+}
+
+impl GeneralConfig {
+    /// The quick replies the menu offers: the user's list when there is one, else the factory five in
+    /// the given language.
+    pub fn effective_quick_replies(&self, lang: crate::i18n::Lang) -> Vec<String> {
+        match &self.quick_replies {
+            Some(list) => sanitize_quick_replies(list),
+            None => crate::i18n::quick_reply_factory(lang),
+        }
+    }
 }
 
 /// Away-mode surfaces and timing. The mode itself lives in the daemon's state file, not here.
@@ -292,6 +328,7 @@ impl Default for GeneralConfig {
             popup_prewarm: true,
             daemon_lifecycle: DaemonLifecycleMode::Activity,
             away: AwayConfig::default(),
+            quick_replies: None,
         }
     }
 }
@@ -1027,6 +1064,75 @@ mod tests {
             ..AwayConfig::default()
         };
         assert_eq!(at_once.alert_after_secs(900, true), 0);
+    }
+
+    #[test]
+    fn quick_replies_default_to_the_factory_list_and_an_edited_list_replaces_it() {
+        use crate::i18n::Lang;
+        // Old configs have no `quickReplies`: never edited, so the factory five follow the language.
+        let old: AppConfig = serde_json::from_str(r#"{"general":{}}"#).unwrap();
+        assert_eq!(old.general.quick_replies, None);
+        let en = old.general.effective_quick_replies(Lang::En);
+        assert_eq!(en.len(), 5);
+        assert_eq!(en[0], "Continue");
+        assert_eq!(old.general.effective_quick_replies(Lang::Zh)[0], "继续");
+
+        // `null` in the file is the same as absent.
+        let null: AppConfig = serde_json::from_str(r#"{"general":{"quickReplies":null}}"#).unwrap();
+        assert_eq!(null.general.quick_replies, None);
+
+        // An edited list is the user's, in the order they gave, whatever the language.
+        let edited: AppConfig =
+            serde_json::from_str(r#"{"general":{"quickReplies":["Go on","Wait"]}}"#).unwrap();
+        assert_eq!(
+            edited.general.effective_quick_replies(Lang::Zh),
+            vec!["Go on".to_string(), "Wait".to_string()]
+        );
+        let json = serde_json::to_value(&edited).unwrap();
+        assert_eq!(
+            json["general"]["quickReplies"],
+            serde_json::json!(["Go on", "Wait"])
+        );
+
+        // Deleting every reply is a choice too: it does not bring the factory ones back.
+        let emptied: AppConfig =
+            serde_json::from_str(r#"{"general":{"quickReplies":[]}}"#).unwrap();
+        assert!(emptied.general.effective_quick_replies(Lang::En).is_empty());
+    }
+
+    #[test]
+    fn quick_replies_are_kept_to_what_the_menu_can_hold() {
+        let long = "x".repeat(QUICK_REPLY_MAX_CHARS + 50);
+        let many: Vec<String> = (0..QUICK_REPLIES_MAX + 4)
+            .map(|i| format!("reply {i}"))
+            .collect();
+        let cleaned = sanitize_quick_replies(
+            &[
+                vec!["  padded  ".to_string(), "   ".to_string(), long.clone()],
+                many,
+            ]
+            .concat(),
+        );
+        assert_eq!(cleaned.len(), QUICK_REPLIES_MAX, "at most ten");
+        assert_eq!(cleaned[0], "padded", "trimmed, blank ones dropped");
+        assert_eq!(
+            cleaned[1].chars().count(),
+            QUICK_REPLY_MAX_CHARS,
+            "cut by characters"
+        );
+        // Characters, not bytes: a cut never lands inside a character.
+        let wide = "回".repeat(QUICK_REPLY_MAX_CHARS + 5);
+        let cut = sanitize_quick_replies(&[wide]);
+        assert_eq!(cut[0].chars().count(), QUICK_REPLY_MAX_CHARS);
+        // The list in the file is cleaned the same way when the menu reads it.
+        let general = GeneralConfig {
+            quick_replies: Some(vec!["  one ".into(), "".into()]),
+            ..Default::default()
+        };
+        assert_eq!(
+            general.effective_quick_replies(crate::i18n::Lang::En),
+            vec!["one".to_string()]
+        );
     }
 
     #[test]

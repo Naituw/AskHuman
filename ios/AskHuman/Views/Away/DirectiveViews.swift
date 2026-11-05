@@ -2,28 +2,51 @@ import SwiftUI
 import AHCore
 import AHProtocol
 
-// The one-shot instructions that go with an answer (docs/specs/special-replies.md D30): the menu beside "Send", and the panel
-// above the bar that shows what is armed. Nothing happens until the answer is sent; the cross takes it back.
+// The quick replies and one-shot instructions that go with an answer (docs/specs/special-replies.md D30): the menu beside
+// "Send", and the panel above the bar that shows what is armed. A quick reply is sent at once; an instruction waits until
+// the answer is sent, and the cross takes it back.
 
-/// The glass button beside "Send" that opens the menu.
+/// The glass button beside "Send" that opens the menu: the Mac's quick replies (the first one nearest the thumb, as the
+/// menu opens upwards), then the two instructions.
 struct DirectiveMenu: View {
     let composer: AnswerComposer
     let disabled: Bool
+    /// The answer can be sent right now (the Mac is reachable, nothing is still being prepared): a quick reply sends it.
+    let canSend: Bool
+    let onQuickReply: (String) -> Void
 
     var body: some View {
         Menu {
-            Button {
-                composer.directive = .away
-            } label: {
-                Label("Away mode", systemImage: "moon")
+            let replies = composer.quickReplies
+            if !replies.isEmpty {
+                // Greyed out once every question has an answer: there is nothing left for a reply to answer.
+                let usable = canSend && composer.quickReplyTargets > 0
+                Section("Quick replies") {
+                    ForEach(Array(replies.enumerated()), id: \.offset) { index, reply in
+                        Button {
+                            onQuickReply(reply)
+                        } label: {
+                            Text(verbatim: reply)
+                        }
+                        .disabled(!usable)
+                        .accessibilityIdentifier("quick-reply-\(index)")
+                    }
+                }
             }
-            .accessibilityIdentifier("directive-away")
-            Button {
-                composer.directive = .mute
-            } label: {
-                Label("Stop using AskHuman", systemImage: "bell.slash")
+            Section {
+                Button {
+                    composer.directive = .away
+                } label: {
+                    Label("Away mode", systemImage: "moon")
+                }
+                .accessibilityIdentifier("directive-away")
+                Button {
+                    composer.directive = .mute
+                } label: {
+                    Label("Stop using AskHuman", systemImage: "bell.slash")
+                }
+                .accessibilityIdentifier("directive-mute")
             }
-            .accessibilityIdentifier("directive-mute")
         } label: {
             let glyph = Image(systemName: "text.bubble")
             if BottomBar.floats {

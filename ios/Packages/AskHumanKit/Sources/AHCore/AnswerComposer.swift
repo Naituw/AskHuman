@@ -242,13 +242,38 @@ public final class AnswerComposer {
         drafts.filesDirectory(key: key).appendingPathComponent(attachment.localName)
     }
 
+    // MARK: quick replies
+
+    /// The quick replies the question carries, in the order the menu lists them (docs/specs/special-replies.md D27):
+    /// the Mac's own list for this request. None for What's next and a strict choice, where a sentence is no answer.
+    public var quickReplies: [String] {
+        guard !selectOnly, !ask.whatsNext else { return [] }
+        return ask.quickReplies
+    }
+
+    /// Whether a quick reply would be this question's answer (D18): the question has nothing in it yet. Picked
+    /// project todos go with the last question, so they answer it.
+    public func quickReplyFills(_ question: Int) -> Bool {
+        answers.indices.contains(question) && !isAnswered(question)
+    }
+
+    /// How many questions a click on a quick reply would answer; the menu greys the replies out at 0.
+    public var quickReplyTargets: Int {
+        quickReplies.isEmpty ? 0 : answers.indices.filter(quickReplyFills).count
+    }
+
     // MARK: sending
 
-    /// The wire answers: one item per answered question, with the upload ids of its attachments.
-    public func items(uploads: [String: String]) -> [AnswerItem] {
-        answers.indices.compactMap { index in
+    /// The wire answers: one item per answered question, with the upload ids of its attachments. With a quick reply
+    /// (D18) every question that has no answer yet gets it as its text; the answered ones stay as they are.
+    public func items(uploads: [String: String], fillingWith quickReply: String? = nil) -> [AnswerItem] {
+        let reply = quickReply?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return answers.indices.compactMap { index in
             // The picked todos travel beside the items (`todoIds`), not as an item of their own.
-            guard !answers[index].isEmpty else { return nil }
+            guard !answers[index].isEmpty else {
+                guard let reply, !reply.isEmpty, quickReplies.contains(quickReply ?? ""), quickReplyFills(index) else { return nil }
+                return AnswerItem(q: index, sel: [], text: reply, images: [], files: [])
+            }
             let answer = answers[index]
             let text = answer.text.trimmingCharacters(in: .whitespacesAndNewlines)
             var images: [String] = []

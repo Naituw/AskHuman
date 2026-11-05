@@ -22,6 +22,35 @@ final class AwayStoreTests: XCTestCase {
         try XCTUnwrap(store.agent(id: AgentItem.key(mac, key)))
     }
 
+    func testAMacThatHasAwayModeOffersQuickRepliesWithItsQuestions() async throws {
+        await make(.away)
+        let plain = try XCTUnwrap(store.state.inbox.first { $0.requestId == "req-migration" })
+        XCTAssertEqual(plain.view?.ask?.quickReplies, MockData.quickReplies)
+        let strict = store.state.inbox.compactMap(\.view?.ask).filter { $0.selectOnly || $0.whatsNext }
+        XCTAssertTrue(strict.allSatisfy { $0.quickReplies.isEmpty }, "none for What's next or a strict choice")
+        await make(.demo)
+        XCTAssertTrue(store.state.inbox.compactMap(\.view?.ask).allSatisfy { $0.quickReplies.isEmpty })
+    }
+
+    func testAQuickReplyGoesOutAsTheAnswerOfTheQuestionsNobodyAnswered() async throws {
+        await make(.away)
+        let item = try XCTUnwrap(store.state.inbox.first { $0.requestId == "req-migration" })
+        let form = try XCTUnwrap(store.composer(for: item))
+        XCTAssertEqual(form.quickReplies, MockData.quickReplies)
+        form.toggle(question: 0, option: 1)
+        form.directive = .mute
+        try await store.send(form, item: item, quickReply: form.quickReplies[0])
+
+        let submissions = await backend.submissions
+        let sent = try XCTUnwrap(submissions.last)
+        XCTAssertEqual(sent.answers, [
+            AnswerItem(q: 0, sel: [1]),
+            AnswerItem(q: 1, text: "Continue"),
+            AnswerItem(q: 2, text: "Continue"),
+        ])
+        XCTAssertEqual(sent.directive?.kind, "mute", "an instruction armed beforehand goes with the reply")
+    }
+
     func testMacsWithoutAwayModeOfferNothing() async throws {
         await make(.demo)
         XCTAssertFalse(store.offersAway)

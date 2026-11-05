@@ -273,6 +273,11 @@ export default {
         mute: "Stop using AskHuman in this session…",
         muteSub: "The Agent stops asking me in this session",
       },
+      presetsSend: "Click to send",
+      presetsSendFillOne: "Click to send · the unanswered question gets the same reply",
+      presetsSendFill: "Click to send · the {n} unanswered questions get the same reply",
+      presetsDone: "Every question has an answer",
+      manage: "Manage quick replies…",
       armed: {
         group: "Pending instruction",
         away: "Away mode",
@@ -878,6 +883,21 @@ export default {
       todoLimit: "Todo history entries",
       todoLimitHint:
         "Maximum executed todos kept per project (view and restore them in the Todos window's History section). 0 stops recording; existing history is kept.",
+    },
+    // The "Quick replies" card (docs/specs/special-replies.md D27).
+    quickReplies: {
+      title: "Quick replies",
+      hint:
+        "Shown in the popup's Quick reply menu and in the phone's reply menu. One click sends the text as the reply to every question that has no answer yet; answers you already wrote are kept. The menu holds the first {max}.",
+      usingDefaults: "These are the factory replies. Edit one and the list becomes yours.",
+      placeholder: "Reply text (one line)",
+      add: "Add a reply",
+      full: "The menu holds at most {max} replies",
+      restore: "Restore the defaults",
+      drag: "Drag to reorder",
+      moveUp: "Move up",
+      moveDown: "Move down",
+      remove: "Delete",
     },
     // The "Away mode" card (docs/specs/special-replies.md D26).
     away: {
