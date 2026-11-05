@@ -1,6 +1,6 @@
 # Daemon 更新接班与错误卡 24 小时接续
 
-> 状态：2026-11-05 用户已评审通过并要求实施；已实现，macOS 隔离回归通过并安装 Dev。正式转送往返已确认，正在按用户授权合并并安装日常版。
+> 状态：2026-11-05 已按用户批准设计实现，合并 main 并安装日常版；macOS 隔离回归、Dev 正式转送及日常运行指纹均已验证。Windows/Linux 原生路径仍待验收。
 > 用户已确认的行为边界见 §2。本文补充而不替换
 > [优雅排空](daemon-graceful-drain.md)、[错误收件箱](agent-failure-inbox.md)与
 > [生命周期结果及接续](agent-lifecycle-results-and-recovery.md)。
@@ -247,7 +247,7 @@ Windows 接班、macOS launchd 与 Linux 更新入口均需对应平台验证；
 最终实现改用 execve，明确保留 ENOEXEC，并增加仅临时文本文件的单测（不会执行该文件）。
 
 尚未做 Windows/Linux 原生接班验收，不以 macOS 结果代替；崩溃自动恢复与自动打开 Cursor 聊天仍不在范围内。
-这次修复只会从含修复的新 daemon 起生效，当前日常 daemon 尚未替换；旧版已经丢掉的卡不自动补弹。
+这次修复从含修复的新 daemon 起生效，日常 daemon 已确认换成修复版；旧版已经丢掉的卡不自动补弹。
 
 启动恢复补充回归：Cards 清单在 AgentRegistry::load 之前读取，其权威引用在遍历/裁剪任何记录前应用。
 这样可恢复“卡已写入、registry 的 lease 字段尚未写入就退出”的旧格式/中断状态；临时文件测试让该失败记录
@@ -258,3 +258,10 @@ Windows 接班、macOS launchd 与 Linux 更新入口均需对应平台验证；
 代码提交 `37f2ebf5`；冷加载缺少 registry lease 字段的真实隔离 daemon 扩展也已通过。
 Dev 自身从旧构建到最终构建的盘上更新在同一 PID 75828 完成，日志包含 update handoff healthy（无客户端负责拉起）。
 用户随后明确授权合并 main、按优雅方式安装日常版；合并保留同期 iOS / Duo 工具栏工作。
+
+日常交付已完成：main 经保留历史的合并更新至 `5d20567e`（同期 iOS/Duo 工作未改写），`install.sh` 成功。
+正式 daemon PID 90077，协议号仍为 5，运行指纹 `5c5d6ea5` 与安装文件一致；doctor install 无 findings、只发现一份安装。
+iOS gateway connected=true、pendingRequests=0、lastError=null；手机处于后台/离线状态，推送登记仍为 ok，未声称验证手机前台 UI。
+对实际日常二进制重跑接班五场景与错误卡十场景（含移除 registry lease 模拟两份文件之间退出的变体），全部通过。
+未主动触发真实 Cursor 失败或接续，也没有重复发布 TestFlight。独立 Dev 已停用并清除，已合并开发工作树/分支已删除。
+用户选为后续独立设计的 daemon 崩溃自愈已记项目待办；没有执行远程推送。
