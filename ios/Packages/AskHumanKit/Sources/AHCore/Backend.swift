@@ -45,8 +45,12 @@ public protocol RemoteBackend: AnyObject, Sendable {
     /// The request was opened in the UI: clears the unread flag and tells the Mac.
     func markSeen(macId: String, requestId: String) async
     /// Sends an answer and returns its client message id. Throws `.macOffline` when the Mac cannot
-    /// be reached (nothing is queued for later). `todoIds` are the project todos picked with the answer.
-    func submitAnswer(macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String]) async throws -> String
+    /// be reached (nothing is queued for later). `todoIds` are the project todos picked with the answer;
+    /// `directive` is the one-shot instruction (away mode on, stop using AskHuman) the user attached.
+    func submitAnswer(
+        macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String],
+        directive: AnswerDirective?
+    ) async throws -> String
     func submitConfirm(macId: String, requestId: String, wireIndex: Int?, dismiss: Bool, input: String?) async throws -> String
     /// Sends a failed submission again under the same client message id.
     func retrySubmission(clientMsgId: String) async throws
@@ -88,6 +92,13 @@ public protocol RemoteBackend: AnyObject, Sendable {
     /// Makes this phone the one that receives the Mac's questions now.
     func takeSlot(macId: String) async throws
 
+    // away mode
+    /// Turns the Mac's global away switch on (with a note the Agents see) or off. The new state comes back as
+    /// `MacState.away`. Throws `.macOffline` when the Mac cannot be reached.
+    func setAway(macId: String, on: Bool, note: String?) async throws
+    /// Sets or clears what one Agent session does on its own (`sessionId` is the Agent's own id).
+    func setSessionAway(macId: String, sessionId: String, setting: AwaySessionSetting, note: String?) async throws
+
     // todos
     /// The projects a Mac lists for its todos (`mode`, sync facts, rows).
     func todoProjects(macId: String) async throws -> TodoProjects
@@ -115,8 +126,17 @@ public extension RemoteBackend {
 }
 
 extension RemoteBackend {
-    /// An answer that picks no todos.
+    /// An answer that picks no todos and carries no directive.
     public func submitAnswer(macId: String, requestId: String, action: String, answers: [AnswerItem]) async throws -> String {
-        try await submitAnswer(macId: macId, requestId: requestId, action: action, answers: answers, todoIds: [])
+        try await submitAnswer(macId: macId, requestId: requestId, action: action, answers: answers, todoIds: [], directive: nil)
+    }
+
+    /// An answer with todos and no directive.
+    public func submitAnswer(
+        macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String]
+    ) async throws -> String {
+        try await submitAnswer(
+            macId: macId, requestId: requestId, action: action, answers: answers, todoIds: todoIds, directive: nil
+        )
     }
 }

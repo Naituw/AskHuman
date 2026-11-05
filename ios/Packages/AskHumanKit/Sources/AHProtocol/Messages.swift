@@ -16,13 +16,20 @@ public struct Caps: Codable, Equatable, Sendable {
     /// The Mac takes the project todos picked while answering (`answer.submit` `todoIds`). A Mac without
     /// it would drop the field, so the phone shows no todo picker for it.
     public var answerTodos: Bool
+    /// The Mac has away mode (`away.*`, a `directive` with an answer, `escalated` on requests). A Mac
+    /// without it would drop the directive, so the phone shows no away control for it.
+    public var away: Bool
 
-    public init(newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false, answerTodos: Bool = false) {
+    public init(
+        newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false, answerTodos: Bool = false,
+        away: Bool = false
+    ) {
         self.newTask = newTask
         self.interject = interject
         self.watch = watch
         self.todos = todos
         self.answerTodos = answerTodos
+        self.away = away
     }
 
     public init(from decoder: Decoder) throws {
@@ -32,6 +39,7 @@ public struct Caps: Codable, Equatable, Sendable {
         watch = try c.decode(Bool.self, forKey: .watch)
         todos = try c.decodeIfPresent(Bool.self, forKey: .todos) ?? false
         answerTodos = try c.decodeIfPresent(Bool.self, forKey: .answerTodos) ?? false
+        away = try c.decodeIfPresent(Bool.self, forKey: .away) ?? false
     }
 }
 
@@ -395,12 +403,16 @@ public struct RequestView: Codable, Equatable, Hashable, Sendable {
     public var source: String
     public var contentHash: String
     @OmitFalse public var truncated: Bool
+    /// The Agent asked although the user is away, because it cannot go on or is done. Older Macs never
+    /// send it.
+    @OmitFalse public var escalated: Bool
     public var ask: AskView?
     public var confirm: ConfirmView?
 
     public init(
         id: String, kind: String, createdAt: Int64, agent: AgentRef, project: ProjectRef, sessionTitle: String? = nil,
-        source: String, contentHash: String, truncated: Bool = false, ask: AskView? = nil, confirm: ConfirmView? = nil
+        source: String, contentHash: String, truncated: Bool = false, escalated: Bool = false, ask: AskView? = nil,
+        confirm: ConfirmView? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -411,6 +423,7 @@ public struct RequestView: Codable, Equatable, Hashable, Sendable {
         self.source = source
         self.contentHash = contentHash
         self.truncated = truncated
+        self.escalated = escalated
         self.ask = ask
         self.confirm = confirm
     }
@@ -427,10 +440,12 @@ public struct RequestSummary: Codable, Equatable, Hashable, Sendable {
     public var preview: String
     public var contentHash: String
     public var size: UInt64
+    /// The same flag as `RequestView.escalated`.
+    @OmitFalse public var escalated: Bool
 
     public init(
         id: String, kind: String, project: ProjectRef, agent: AgentRef, sessionTitle: String? = nil, createdAt: Int64,
-        preview: String, contentHash: String, size: UInt64
+        preview: String, contentHash: String, size: UInt64, escalated: Bool = false
     ) {
         self.id = id
         self.kind = kind
@@ -441,6 +456,7 @@ public struct RequestSummary: Codable, Equatable, Hashable, Sendable {
         self.preview = preview
         self.contentHash = contentHash
         self.size = size
+        self.escalated = escalated
     }
 }
 
@@ -533,13 +549,36 @@ public struct AnswerSubmit: WireMessage {
     /// Ids of the project todos picked for this answer, in the order the phone lists them. The Mac puts
     /// their text into the answer and takes them off the queue, as the popup does.
     @OmitEmpty public var todoIds: [String]
+    /// A one-shot instruction that travels with the answer (the bar menu on the answer screen). The Mac
+    /// applies it only when this answer wins the request. Older Macs would drop it: the phone offers it
+    /// only for Macs with `Caps.away`.
+    public var directive: AnswerDirective?
 
-    public init(clientMsgId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String] = []) {
+    public init(
+        clientMsgId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String] = [],
+        directive: AnswerDirective? = nil
+    ) {
         self.clientMsgId = clientMsgId
         self.requestId = requestId
         self.action = action
         self.answers = answers
         self.todoIds = todoIds
+        self.directive = directive
+    }
+}
+
+/// What the user asks for besides answering: turn away mode on, or stop using AskHuman in this session.
+public struct AnswerDirective: Codable, Equatable, Hashable, Sendable {
+    /// `away` or `mute`.
+    public var kind: String
+    /// `global` or `session` (mute is always about the asking session).
+    public var scope: String
+    public var note: String?
+
+    public init(kind: String, scope: String, note: String? = nil) {
+        self.kind = kind
+        self.scope = scope
+        self.note = note
     }
 }
 
@@ -1047,6 +1086,97 @@ public struct SlotState: WireMessage {
     public var autoActivation: Bool
 }
 
+// MARK: away mode (docs/specs/special-replies.md)
+
+/// The global away switch as the Mac reports it.
+public struct AwayGlobal: Codable, Equatable, Hashable, Sendable {
+    /// Unix milliseconds the switch went on.
+    public var sinceMs: Int64
+    public var note: String?
+    /// Automatic replies handed out since it went on.
+    public var replies: Int
+
+    public init(sinceMs: Int64, note: String? = nil, replies: Int = 0) {
+        self.sinceMs = sinceMs
+        self.note = note
+        self.replies = replies
+    }
+}
+
+/// One Agent session that was set on its own. `sessionId` is the Agent's own id, the one in its `agentKey`.
+public struct AwaySession: Codable, Equatable, Hashable, Sendable {
+    public var sessionId: String
+    /// `away`, `mute` or `normal`.
+    public var mode: String
+    public var sinceMs: Int64
+    public var note: String?
+    public var replies: Int
+
+    public init(sessionId: String, mode: String, sinceMs: Int64, note: String? = nil, replies: Int = 0) {
+        self.sessionId = sessionId
+        self.mode = mode
+        self.sinceMs = sinceMs
+        self.note = note
+        self.replies = replies
+    }
+}
+
+/// The Mac's away state: sent after `hello`, on every change and on `resync` of the `away` stream.
+public struct AwayState: WireMessage {
+    public static let type = "away.state"
+    public var rev: UInt64
+    public var global: AwayGlobal?
+    public var sessions: [AwaySession]
+    /// Questions that reached the user as escalations and still wait for an answer.
+    public var escalatedWaiting: Int
+
+    public init(rev: UInt64, global: AwayGlobal? = nil, sessions: [AwaySession] = [], escalatedWaiting: Int = 0) {
+        self.rev = rev
+        self.global = global
+        self.sessions = sessions
+        self.escalatedWaiting = escalatedWaiting
+    }
+}
+
+/// Turn the global away switch on (with an optional note for the Agents) or off.
+public struct AwaySet: WireMessage {
+    public static let type = "away.set"
+    public var clientMsgId: String
+    public var on: Bool
+    public var note: String?
+
+    public init(clientMsgId: String, on: Bool, note: String? = nil) {
+        self.clientMsgId = clientMsgId
+        self.on = on
+        self.note = note
+    }
+}
+
+/// What the user chose for one Agent session.
+public enum AwaySessionSetting: String, Codable, Equatable, Hashable, Sendable, CaseIterable {
+    /// No setting of its own: the session follows the global one.
+    case follow
+    case away
+    case mute
+    case normal
+}
+
+/// Set or clear what one Agent session does on its own.
+public struct AwaySessionSet: WireMessage {
+    public static let type = "away.session.set"
+    public var clientMsgId: String
+    public var sessionId: String
+    public var setting: String
+    public var note: String?
+
+    public init(clientMsgId: String, sessionId: String, setting: AwaySessionSetting, note: String? = nil) {
+        self.clientMsgId = clientMsgId
+        self.sessionId = sessionId
+        self.setting = setting.rawValue
+        self.note = note
+    }
+}
+
 // MARK: todos (docs/specs/ios-todos.md §5)
 
 public struct TodoProjectsGet: WireMessage {
@@ -1425,6 +1555,7 @@ public enum MessageRegistry {
         InterjectAck.self, InterjectClear.self, InterjectQuery.self, InterjectState.self,
         InterjectConsumed.self, TaskOptionsGet.self, TaskOptions.self, TaskTodosGet.self,
         TaskTodos.self, TaskCreate.self, TaskStatus.self, SlotTake.self, SlotState.self,
+        AwayState.self, AwaySet.self, AwaySessionSet.self,
         TodoProjectsGet.self, TodoProjects.self, TodoListGet.self, ProjectTodos.self, TodoOperation.self,
         TodoAck.self, TodoWatch.self, TodoChanged.self,
         AssetGet.self, AssetChunk.self, AssetError.self, UploadBegin.self, UploadChunk.self,

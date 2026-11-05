@@ -41,10 +41,13 @@ public struct MacState: Identifiable, Sendable, Equatable {
     public var pendingCount: Int
     /// Push registration status the Mac reported (`ok`, `missing`, `gone`, `error`).
     public var pushStatus: String?
+    /// The Mac's away state as of its last report; `nil` until it reported one this session (and for
+    /// Macs without away mode).
+    public var away: AwayState?
 
     public init(
         id: String, name: String, macName: String, alias: String?, link: MacLink, caps: Caps, slot: SlotInfo?,
-        pairedAt: Date, lastSeenAt: Date?, pendingCount: Int, pushStatus: String?
+        pairedAt: Date, lastSeenAt: Date?, pendingCount: Int, pushStatus: String?, away: AwayState? = nil
     ) {
         self.id = id
         self.name = name
@@ -57,6 +60,7 @@ public struct MacState: Identifiable, Sendable, Equatable {
         self.lastSeenAt = lastSeenAt
         self.pendingCount = pendingCount
         self.pushStatus = pushStatus
+        self.away = away
     }
 }
 

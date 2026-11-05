@@ -732,7 +732,8 @@ public final class AppStore {
         }
         _ = try await backend.submitAnswer(
             macId: item.macId, requestId: item.requestId, action: "send", answers: composer.items(uploads: uploads),
-            todoIds: macTakesPickedTodos(item.macId) ? composer.todoIds : []
+            todoIds: macTakesPickedTodos(item.macId) ? composer.todoIds : [],
+            directive: offersDirectives(for: item) ? composer.directive?.wire : nil
         )
     }
 

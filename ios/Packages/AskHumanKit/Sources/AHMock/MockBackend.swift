@@ -38,6 +38,11 @@ public actor MockBackend: RemoteBackend {
         /// The demo, with both Macs taking the todos picked while answering (`caps.answerTodos`) and a queue of seven
         /// todos for the project of the Home MacBook Pro's requests. The other scenarios have Macs from before that.
         case todoPick
+        /// The demo, with both Macs on an AskHuman that has away mode (`caps.away`); nothing is away yet.
+        case away
+        /// `away` with the Home MacBook Pro already away: for 40 minutes, with a note, one session of its own muted and
+        /// another asking normally anyway, and the migration question an escalation.
+        case awayOn
         /// Paired Macs that have not answered yet, as right after the app opened: the lists are
         /// still loading. They stay so unless a sync delay is given, after which the demo appears.
         case syncing
@@ -54,6 +59,8 @@ public actor MockBackend: RemoteBackend {
         public var input: String?
         /// Project todos picked with an answer.
         public var todoIds: [String] = []
+        /// The one-shot instruction that went with the answer.
+        public var directive: AnswerDirective?
     }
 
     public nonisolated let states: AsyncStream<EngineState>
@@ -101,6 +108,16 @@ public actor MockBackend: RemoteBackend {
     /// The Agent picks queued messages up after this many seconds (scaled by the latency);
     /// `nil` keeps them queued until `consumeInterjects` is called.
     public var interjectConsumeDelay: Double? = 4
+
+    // Away mode (`MockBackend+Away.swift`).
+    /// A change of away mode as the mock received it (for tests); `setting` is `on` / `off` for the global switch.
+    public struct AwayCall: Equatable, Sendable {
+        public var macId: String
+        public var sessionId: String?
+        public var setting: String
+        public var note: String?
+    }
+    public internal(set) var awayCalls: [AwayCall] = []
 
     // Todos (`MockBackend+Todos.swift`).
     var todoRows: [String: [TodoProjectRow]] = [:]
@@ -151,7 +168,8 @@ public actor MockBackend: RemoteBackend {
         let date = now()
         var initial: EngineState
         switch scenario {
-        case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .tall, .gallery, .outdated, .bothSync, .todoPick:
+        case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .tall, .gallery, .outdated, .bothSync, .todoPick,
+             .away, .awayOn:
             let inbox: [InboxItem]
             switch scenario {
             case .single: inbox = MockData.inbox(now: date).filter { $0.requestId == "req-select" }
@@ -167,7 +185,10 @@ public actor MockBackend: RemoteBackend {
                 : TrafficStats(month: "2026-10", sentBytes: 18_432, receivedBytes: 96_210, sentMessages: 41, receivedMessages: 77)
             initial = EngineState(
                 phase: .connected(via: "tcp"), foreground: true,
-                macs: MockData.macs(now: date, knowTodos: scenario != .outdated, pickTodos: scenario == .todoPick), inbox: inbox,
+                macs: MockData.macs(
+                    now: date, knowTodos: scenario != .outdated, pickTodos: scenario == .todoPick,
+                    awayMode: scenario == .away || scenario == .awayOn
+                ), inbox: inbox,
                 push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1,
                 traffic: traffic,
                 brokerHost: "broker.example.com", agents: MockData.agents(now: date)
@@ -206,6 +227,9 @@ public actor MockBackend: RemoteBackend {
                     initial.agents[index].view.lastTurnResult = AgentTurnResult(outcome: "interrupted", reason: "user_interrupt", at: UInt64(MockData.ms(date)), id: "interrupted")
                 }
             }
+        }
+        if scenario == .awayOn {
+            MockData.applyAwayOn(to: &initial, now: date)
         }
         for index in initial.macs.indices {
             initial.macs[index].pendingCount = initial.inbox.filter { $0.macId == initial.macs[index].id }.count
@@ -375,9 +399,15 @@ public actor MockBackend: RemoteBackend {
         publish()
     }
 
-    public func submitAnswer(macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String]) async throws -> String {
+    public func submitAnswer(
+        macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String], directive: AnswerDirective?
+    ) async throws -> String {
         let index = try inboxIndex(macId: macId, requestId: requestId, kind: "ask")
-        submissions.append(Submission(macId: macId, requestId: requestId, action: action, answers: answers, wireIndex: nil, dismiss: false, input: nil, todoIds: todoIds))
+        submissions.append(Submission(
+            macId: macId, requestId: requestId, action: action, answers: answers, wireIndex: nil, dismiss: false, input: nil,
+            todoIds: todoIds, directive: action == "cancel" ? nil : directive
+        ))
+        if action != "cancel", let directive { applyDirective(directive, macId: macId, request: state.inbox[index]) }
         // The Mac looks the picked todos up before it takes the answer: when one is gone it refuses all of it.
         let refused = action == "send" && !todoIds.isEmpty
             && !takePickedTodos(macId: macId, projectKey: state.inbox[index].summary.project.key, ids: todoIds)

@@ -34,6 +34,7 @@ struct AnswerScreen: View {
                     VStack(alignment: .leading, spacing: 16) {
                         if let finished = store.endedNotice(for: item.id) { FinishedNotice(finished: finished) }
                         if case .failed = item.state { FailedSubmissionNotice(item: item) }
+                        if store.isEscalated(item), store.endedNotice(for: item.id) == nil { EscalationNotice(item: item) }
                         RequestHeader(item: item)
                         MessageCard(ask: ask, macId: item.macId, onSettled: { tracker.messageSettled(); messageReady = true })
                         VStack(spacing: 0) {
@@ -680,6 +681,7 @@ private struct SendBar: View {
     let onJump: () -> Void
 
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(AppStore.self) private var store
 
     /// At the accessibility text sizes the buttons go under the text: side by side they would leave
     /// the words a few letters of width.
@@ -697,6 +699,9 @@ private struct SendBar: View {
                     // make the count chip two or three lines tall, and the buttons beside it a different
                     // height from it; this way the row keeps one height whatever the hint says.
                     if BottomBar.floats, let hint { hintView(hint, chip: true) }
+                    // What the user armed from the menu: it goes with the answer, and the cross takes it back. Not
+                    // there at all while nothing is armed: an empty view would still add the stack's spacing.
+                    if composer.directive != nil { DirectivePanel(composer: composer) }
                     controls
                 }
             }
@@ -706,6 +711,12 @@ private struct SendBar: View {
         .classicBarBacking()
         .animation(.snappy(duration: 0.25), value: composer.hasReachedEnd)
         .animation(.snappy(duration: 0.25), value: moreBelow)
+        .animation(.snappy(duration: 0.25), value: composer.directive?.kind)
+        // Once the question is over (sent, or answered elsewhere) there is nothing left to arm: the panel goes, and with
+        // it the keyboard of its note.
+        .onChange(of: ended) { _, nowEnded in
+            if nowEnded { composer.directive = nil }
+        }
     }
 
     /// The count and the buttons. On the floating bar they are laid out at the height of the tallest of
@@ -719,6 +730,9 @@ private struct SendBar: View {
                 // Sending waits until the last question was on screen; until then the button leads
                 // there. After that "Send" takes the main place, and "Next" stays beside it while there
                 // are questions below the screen, as the popup's "Next" does until it reaches the last.
+                if store.offersDirectives(for: item) {
+                    DirectiveMenu(composer: composer, disabled: ended || busy)
+                }
                 if composer.hasReachedEnd, moreBelow {
                     nextIconButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
                 }
@@ -744,9 +758,19 @@ private struct SendBar: View {
     }
 
     private var count: some View {
-        Text("Answered \(composer.answeredCount)/\(composer.questionCount)")
-            .font(.subheadline.weight(.medium))
-            .accessibilityIdentifier("answered-count")
+        // On the floating bar, an armed instruction makes the button say more ("Send and go away"), and the chip gives
+        // up its word to make room for it.
+        let compact = BottomBar.floats && composer.directive != nil
+        return Group {
+            if compact {
+                Text(verbatim: "\(composer.answeredCount)/\(composer.questionCount)")
+            } else {
+                Text("Answered \(composer.answeredCount)/\(composer.questionCount)")
+            }
+        }
+        .font(.subheadline.weight(.medium))
+        .accessibilityLabel(Text("Answered \(composer.answeredCount)/\(composer.questionCount)"))
+        .accessibilityIdentifier("answered-count")
     }
 
     private var countChip: some View {
@@ -767,15 +791,17 @@ private struct SendBar: View {
     /// going and another coming.
     private var primaryButton: some View {
         let reached = composer.hasReachedEnd
-        let label: LocalizedStringKey = reached ? (busy ? "Sending…" : "Send") : "Next question"
+        let label: LocalizedStringKey = reached ? (busy ? "Sending…" : sendTitle) : "Next question"
         return Button(action: reached ? onSend : onNext) {
             ZStack {
                 if reached {
                     HStack(spacing: 6) {
                         if busy { ProgressView().controlSize(.small).tint(.white) }
-                        Text(busy ? "Sending…" : "Send")
+                        // "Send and go away" is longer than "Send": it shrinks a little before it would be cut.
+                        Text(busy ? "Sending…" : sendTitle)
                             .font(.headline)
                             .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                     }
                 } else {
                     HStack(spacing: 6) {
@@ -790,6 +816,15 @@ private struct SendBar: View {
         .disabled(reached ? !enabled : (ended || sendingState))
         .accessibilityLabel(label)
         .accessibilityIdentifier(reached ? "send-button" : "next-button")
+    }
+
+    /// What "Send" says: an armed instruction is part of what is sent.
+    private var sendTitle: LocalizedStringKey {
+        switch composer.directive?.kind {
+        case .away: "Send and go away"
+        case .mute: "Send and stop"
+        case nil: "Send"
+        }
     }
 
     /// Beside "Send", while there is more below.

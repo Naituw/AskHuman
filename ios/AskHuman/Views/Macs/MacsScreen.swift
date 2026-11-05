@@ -16,6 +16,7 @@ struct MacsScreen: View {
         } stack: {
             NavigationStack(path: Binding(get: { opened.map { [$0] } ?? [] }, set: { opened = $0.last })) {
                 MacsList(showPairing: $showPairing)
+                    .awayStrip()
                     .navigationDestination(for: String.self) { id in MacDetailScreen(macId: id) }
             }
         }
@@ -32,6 +33,7 @@ private struct MacsColumns: View {
         let mac = opened.flatMap { id in store.macs.first { $0.id == id } }
         ListDetailColumns(opened: mac?.id) {
             MacsList(showPairing: $showPairing, selection: $opened)
+                .awayStrip()
         } detail: {
             if let mac {
                 MacDetailScreen(macId: mac.id)

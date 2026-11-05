@@ -6,6 +6,7 @@ import AHProtocol
 struct AgentRow: View {
     let item: AgentItem
     let showMac: Bool
+    @Environment(AppStore.self) private var store
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -41,6 +42,14 @@ struct AgentRow: View {
                         Chip(text: title, tint: item.resultColor)
                     }
                     Chip(text: item.stateTitle, tint: item.stateColor)
+                    if store.isEscalatedWaiting(item) {
+                        Chip(text: "Escalated while away", systemImage: "moon.fill", tint: .orange)
+                    }
+                    switch store.sessionMode(of: item) {
+                    case .mute: Chip(text: "Not using AskHuman", systemImage: "bell.slash")
+                    case .away: Chip(text: "Away", systemImage: "moon.fill", tint: .orange)
+                    case .follow, .normal: EmptyView()
+                    }
                     if item.view.state == "working" {
                         if let tool = item.view.currentTool, !tool.isEmpty {
                             // The tool may carry a whole command: the chip shortens it to the row.

@@ -15,6 +15,10 @@ public final class AnswerComposer {
     /// Ids of the project todos picked to go with the answer (docs/specs/special-replies.md D28): the Mac puts
     /// their text into the answer and takes them off the queue. In the order the picker lists them.
     public private(set) var todoIds: [String]
+    /// What the user chose from the bar menu to go with the answer (away mode on, stop using AskHuman): armed
+    /// until the answer is sent or the user takes it back. Not part of the draft: it is a decision of the moment,
+    /// and a draft that comes back later should not turn it on by itself.
+    public var directive: AnswerDirectiveChoice?
     /// Upload progress while sending (0…1), `nil` otherwise.
     public var uploadProgress: Double?
     public var isSending = false

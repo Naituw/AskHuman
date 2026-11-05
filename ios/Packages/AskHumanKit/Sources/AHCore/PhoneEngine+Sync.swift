@@ -94,6 +94,8 @@ extension PhoneEngine {
         mac.slot = ack.slot
         mac.inboxRev = nil
         mac.slotRev = nil
+        mac.away = nil
+        mac.awayRev = nil
         mac.agents = [:]
         mac.agentsRev = nil
         mac.followRev = nil
@@ -126,6 +128,16 @@ extension PhoneEngine {
         if let last = mac.slotRev, state.rev <= last { return }
         mac.slotRev = state.rev
         mac.slot = SlotInfo(active: state.active, autoActivation: state.autoActivation)
+        macs[macId] = mac
+    }
+
+    /// The Mac's away state. Revisions only grow within a session (`hello.ack` starts a new one), so an
+    /// older or repeated state is dropped.
+    func onAwayState(_ macId: String, _ state: AwayState) {
+        guard var mac = macs[macId], mac.epoch != nil else { return }
+        if let last = mac.awayRev, state.rev <= last { return }
+        mac.awayRev = state.rev
+        mac.away = state
         macs[macId] = mac
     }
 

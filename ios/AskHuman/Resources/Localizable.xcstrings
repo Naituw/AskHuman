@@ -97,6 +97,62 @@
     "%lld / %lld" : {
       "shouldTranslate" : false
     },
+    "%lld Macs" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld Mac"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld Macs"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 台 Mac"
+          }
+        }
+      }
+    },
+    "%lld automatic replies" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld automatic reply"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld automatic replies"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动回复 %lld 次"
+          }
+        }
+      }
+    },
     "%lld earlier steps not shown" : {
       "localizations" : {
         "en" : {
@@ -294,6 +350,16 @@
         }
       }
     },
+    "A Mac did not answer. Away mode is still on there." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有一台 Mac 没有响应，它上面的离开模式仍然开着。"
+          }
+        }
+      }
+    },
     "A message is waiting for the Agent to start." : {
       "localizations" : {
         "zh-Hans" : {
@@ -414,6 +480,16 @@
         }
       }
     },
+    "After you send, the Agent is told. Later calls to AskHuman get a hint at once." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送后 Agent 会收到通知，之后再调用 AskHuman 会直接得到提示。"
+          }
+        }
+      }
+    },
     "Agent" : {
       "localizations" : {
         "zh-Hans" : {
@@ -504,6 +580,16 @@
         }
       }
     },
+    "All Agents" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所有 Agent"
+          }
+        }
+      }
+    },
     "All caught up" : {
       "localizations" : {
         "zh-Hans" : {
@@ -540,6 +626,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "允许通知后，即使 AskHuman 已关闭，新提问也能送达你。通知内容经过端到端加密，只有这部手机能读取。"
+          }
+        }
+      }
+    },
+    "Always ask normally" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "始终正常提问"
           }
         }
       }
@@ -684,6 +780,16 @@
         }
       }
     },
+    "AskHuman in this session" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此会话的 AskHuman"
+          }
+        }
+      }
+    },
     "AskHuman on this Mac has to run as a login item before it can open terminals for tasks." : {
       "localizations" : {
         "zh-Hans" : {
@@ -770,6 +876,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "自动执行需要 Mac 上的文件夹，而这个项目没有。"
+          }
+        }
+      }
+    },
+    "Away" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "离开中"
+          }
+        }
+      }
+    },
+    "Away mode" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "离开模式"
+          }
+        }
+      }
+    },
+    "Away mode is on" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "离开模式开启中"
           }
         }
       }
@@ -1224,6 +1360,16 @@
         }
       }
     },
+    "Could not end away mode" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法结束离开模式"
+          }
+        }
+      }
+    },
     "Could not load todos" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1544,6 +1690,26 @@
         }
       }
     },
+    "End" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "结束"
+          }
+        }
+      }
+    },
+    "End away mode" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "结束离开模式"
+          }
+        }
+      }
+    },
     "Ended" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1574,12 +1740,42 @@
         }
       }
     },
+    "Escalated while away" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "离开期间升级"
+          }
+        }
+      }
+    },
+    "Escalated while you are away" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "离开模式下的升级提问"
+          }
+        }
+      }
+    },
     "Estimated from what this phone sent and received through the broker. The broker's free allowance is 1 GB a month." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "根据这部手机通过 Broker 收发的数据估算。Broker 每月的免费额度是 1 GB。"
+          }
+        }
+      }
+    },
+    "Every automatic reply carries this sentence while away mode is on." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "离开期间，每条自动回复都会带上这句话。"
           }
         }
       }
@@ -1754,6 +1950,26 @@
         }
       }
     },
+    "Follow away mode" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跟随离开模式"
+          }
+        }
+      }
+    },
+    "For %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已 %@"
+          }
+        }
+      }
+    },
     "Forget all pairings" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1790,6 +2006,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "接收通知"
+          }
+        }
+      }
+    },
+    "Go with your best judgement; ask again if you are stuck" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按你的判断推进；卡住了再问我"
           }
         }
       }
@@ -2154,6 +2380,16 @@
         }
       }
     },
+    "Macs it applies to" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "生效的 Mac"
+          }
+        }
+      }
+    },
     "Max" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2384,6 +2620,16 @@
         }
       }
     },
+    "No Mac is online with away mode right now." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "现在没有在线且支持离开模式的 Mac。"
+          }
+        }
+      }
+    },
     "No Mac is paired yet." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2504,6 +2750,16 @@
         }
       }
     },
+    "Normal" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正常"
+          }
+        }
+      }
+    },
     "Not a readable image" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2564,12 +2820,52 @@
         }
       }
     },
+    "Not turned on for %@: it did not answer." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没能为 %@ 开启：它没有响应。"
+          }
+        }
+      }
+    },
+    "Not using AskHuman" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不再使用 AskHuman"
+          }
+        }
+      }
+    },
     "Not yet" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "尚未"
+          }
+        }
+      }
+    },
+    "Note (optional)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "备注（可选）"
+          }
+        }
+      }
+    },
+    "Note for the Agents (optional)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "给 Agent 的备注（可选）"
           }
         }
       }
@@ -2674,6 +2970,16 @@
         }
       }
     },
+    "Offline, cannot be set now" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不在线，现在无法设置"
+          }
+        }
+      }
+    },
     "On" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2720,6 +3026,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "旧的按次计费套餐里，Max 按 API 价格计费。每次新建任务时默认关闭；不允许时，Mac 会让 Max 保持关闭。"
+          }
+        }
+      }
+    },
+    "Once it is on, an Agent's questions get an automatic reply: you are away, so it should go on by its own judgement. Only when it cannot go on does it ask you again, and then your phone and Mac let you know." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开启后，Agent 的提问会自动得到回复：你不在，请按它自己的判断继续。只有它确实无法继续时才会再次向你提问，那时你的手机和 Mac 会提醒你。"
           }
         }
       }
@@ -3303,6 +3619,16 @@
         }
       }
     },
+    "Quick replies" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快捷回复"
+          }
+        }
+      }
+    },
     "Quick todo" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3563,6 +3889,16 @@
         }
       }
     },
+    "Scope" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "范围"
+          }
+        }
+      }
+    },
     "Search history" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3679,6 +4015,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重新发送"
+          }
+        }
+      }
+    },
+    "Send and go away" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送并离开"
+          }
+        }
+      }
+    },
+    "Send and stop" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送并停用"
           }
         }
       }
@@ -3953,6 +4309,26 @@
         }
       }
     },
+    "Stop using AskHuman" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不再使用 AskHuman"
+          }
+        }
+      }
+    },
+    "Stopped" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已停用"
+          }
+        }
+      }
+    },
     "Submit" : {
       "localizations" : {
         "zh-Hans" : {
@@ -4029,6 +4405,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "拍照"
+          }
+        }
+      }
+    },
+    "Take it back" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销"
           }
         }
       }
@@ -4333,6 +4719,26 @@
         }
       }
     },
+    "The Agent says everything is done." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 表示已全部完成。"
+          }
+        }
+      }
+    },
+    "The Agent says it cannot go on without you." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 表示无法继续推进，需要你处理。"
+          }
+        }
+      }
+    },
     "The Agent starts on your Mac." : {
       "localizations" : {
         "zh-Hans" : {
@@ -4429,6 +4835,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mac 没有响应，以下是它最后一次报告的状态。"
+          }
+        }
+      }
+    },
+    "The Mac did not answer. Try again when it is online." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 没有响应，上线后再试。"
           }
         }
       }
@@ -5041,6 +5457,16 @@
         }
       }
     },
+    "This session only" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅此会话"
+          }
+        }
+      }
+    },
     "This task is gone" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5141,6 +5567,16 @@
         }
       }
     },
+    "Turn on away mode" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开启离开模式"
+          }
+        }
+      }
+    },
     "Turn on notifications" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5227,6 +5663,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "请先更新 %@ 上的 AskHuman，才能在手机上管理它的待办。"
+          }
+        }
+      }
+    },
+    "Update AskHuman on this Mac first" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先更新这台 Mac 上的 AskHuman"
           }
         }
       }
@@ -5660,6 +6106,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "iCloud 待办由开启了同步的 Mac 提供。请让其中一台上线，或在上方选择一台 Mac。"
+          }
+        }
+      }
+    },
+    "less than a minute" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不到 1 分钟"
           }
         }
       }

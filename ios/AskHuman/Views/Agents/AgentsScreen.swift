@@ -25,7 +25,7 @@ struct AgentsScreen: View {
         NavigationStack(path: $store.agentPath) {
             Group {
                 if store.hasPairedMacs {
-                    AgentsList()
+                    AgentsList().awayStrip()
                 } else {
                     OnboardingView(showPairing: $showPairing)
                 }
@@ -53,6 +53,7 @@ private struct AgentsColumns: View {
         let hasList = store.hasPairedMacs || !store.hasState
         ListDetailColumns(hasList: hasList, opened: open) {
             AgentsList(selection: selection)
+                .awayStrip()
                 .modifier(AgentsBar())
         } detail: {
             if !hasList {
@@ -87,11 +88,13 @@ private struct AgentsColumns: View {
 /// The title and the buttons in the bar of the list of sessions.
 private struct AgentsBar: ViewModifier {
     @Environment(AppStore.self) private var store
+    @State private var showAway = false
 
     func body(content: Content) -> some View {
         content
             .navigationTitle("Agents")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showAway) { AwayStartSheet() }
             .toolbar {
                 if store.hasPairedMacs {
                     ToolbarItem(placement: .principal) { SyncTitle(title: "Agents") }
@@ -99,6 +102,10 @@ private struct AgentsBar: ViewModifier {
                 // The only thing to filter by is the Mac.
                 if store.macs.count > 1 {
                     ToolbarItem(placement: .topBarLeading) { AgentFilterMenu() }
+                }
+                // Away mode: hollow while it is off, solid orange while it is on (docs/specs/special-replies.md D32).
+                if store.hasPairedMacs, store.offersAway {
+                    ToolbarItem(placement: .topBarTrailing) { AwayToolbarButton(showSheet: $showAway) }
                 }
                 if !store.taskMacs.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {

@@ -24,7 +24,7 @@ struct InboxScreen: View {
         NavigationStack(path: $store.inboxPath) {
             Group {
                 if store.hasPairedMacs {
-                    InboxList()
+                    InboxList().awayStrip()
                 } else {
                     OnboardingView(showPairing: $showPairing)
                 }
@@ -62,6 +62,7 @@ private struct InboxColumns: View {
         let hasList = store.hasPairedMacs || !store.hasState
         ListDetailColumns(hasList: hasList, opened: open) {
             InboxList(selection: selection)
+                .awayStrip()
                 .navigationTitle("Inbox")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {

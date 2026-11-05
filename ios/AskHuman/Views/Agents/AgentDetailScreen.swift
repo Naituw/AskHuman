@@ -209,6 +209,7 @@ private struct AgentHeader: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("follow-note")
             }
+            SessionAwayRow(item: item)
         }
         .card()
     }

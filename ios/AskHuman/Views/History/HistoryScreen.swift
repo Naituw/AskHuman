@@ -16,6 +16,7 @@ struct HistoryScreen: View {
         } stack: {
             NavigationStack(path: Binding(get: { opened.map { [$0] } ?? [] }, set: { opened = $0.last })) {
                 HistoryList()
+                    .awayStrip()
                     .navigationDestination(for: String.self) { id in
                         if let entry = store.history.first(where: { $0.id == id }) {
                             HistoryDetailScreen(entry: entry)
@@ -37,6 +38,7 @@ private struct HistoryColumns: View {
         let entry = opened.flatMap { id in store.history.first { $0.id == id } }
         ListDetailColumns(opened: entry?.id) {
             HistoryList(selection: $opened)
+                .awayStrip()
         } detail: {
             if let entry {
                 HistoryDetailScreen(entry: entry)

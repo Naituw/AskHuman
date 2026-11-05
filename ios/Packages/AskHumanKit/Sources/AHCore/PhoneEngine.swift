@@ -566,6 +566,7 @@ public actor PhoneEngine: RemoteBackend {
             case AnswerAck.type: await onAnswerAck(macId, try plain.body(as: AnswerAck.self))
             case ConfirmAck.type: await onConfirmAck(macId, try plain.body(as: ConfirmAck.self))
             case SlotState.type: onSlotState(macId, try plain.body(as: SlotState.self))
+            case AwayState.type: onAwayState(macId, try plain.body(as: AwayState.self))
             case AgentsSnapshot.type: await onAgentsSnapshot(macId, try plain.body(as: AgentsSnapshot.self))
             case AgentsDelta.type: await onAgentsDelta(macId, try plain.body(as: AgentsDelta.self))
             case FollowState.type: onFollowState(macId, try plain.body(as: FollowState.self))
@@ -659,7 +660,8 @@ public actor PhoneEngine: RemoteBackend {
             MacState(
                 id: mac.record.macId, name: mac.record.displayName, macName: mac.record.macName, alias: mac.record.alias,
                 link: link(of: mac), caps: mac.caps ?? mac.record.caps, slot: mac.slot, pairedAt: mac.record.pairedAt,
-                lastSeenAt: mac.lastSeenAt, pendingCount: pending[mac.record.macId] ?? 0, pushStatus: mac.pushStatus
+                lastSeenAt: mac.lastSeenAt, pendingCount: pending[mac.record.macId] ?? 0, pushStatus: mac.pushStatus,
+                away: mac.away
             )
         }
         let inbox = requests.values.compactMap { runtime -> InboxItem? in
@@ -716,6 +718,9 @@ struct MacRuntime {
     var caps: Caps?
     var slot: SlotInfo?
     var slotRev: UInt64?
+    /// The Mac's away state and its revision; both void with the session.
+    var away: AwayState?
+    var awayRev: UInt64?
     var inboxRev: UInt64?
     var agents: [String: AgentView] = [:]
     var agentsRev: UInt64?
@@ -752,6 +757,8 @@ struct MacRuntime {
         epoch = nil
         slot = nil
         slotRev = nil
+        away = nil
+        awayRev = nil
         inboxRev = nil
         agents = [:]
         agentsRev = nil

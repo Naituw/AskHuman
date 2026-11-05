@@ -51,6 +51,13 @@ final class TestMac: @unchecked Sendable {
     var followRev: UInt64 = 1
     var slotRev: UInt64 = 1
     var slotActive = true
+    // Away mode: see `TestMac+Away.swift`.
+    var awayRev: UInt64 = 1
+    var awayGlobal: AwayGlobal?
+    var awaySessions: [AwaySession] = []
+    var awayEscalated = 0
+    /// Whether the Mac replies to a change with a fresh `away.state` (a Mac that lost the message does not).
+    var answersAway = true
     /// What the Mac answers to `interject.send` (nil = no answer at all).
     var interjectReply: (status: String, reason: String?, pending: UInt64)? = ("queued", nil, 1)
     var interjectQueue: [String] = []
@@ -313,6 +320,7 @@ final class TestMac: @unchecked Sendable {
                 case "agents": await sendAgentsSnapshot(to: phoneId)
                 case "follow": await sendFollowState(to: phoneId)
                 case "slot": await sendDown(SlotState(rev: slotRev, active: slotActive, autoActivation: false), to: phoneId)
+                case "away": await sendAwayState(to: phoneId)
                 default: break
                 }
             }
@@ -352,6 +360,8 @@ final class TestMac: @unchecked Sendable {
             }
         case UploadChunk.type:
             if let chunk = try? plain.body(as: UploadChunk.self) { await takeUploadChunk(chunk, from: phoneId) }
+        case AwaySet.type, AwaySessionSet.type:
+            await handleAway(plain, from: phoneId)
         default:
             await handleAgents(plain, from: phoneId)
         }
@@ -372,6 +382,7 @@ final class TestMac: @unchecked Sendable {
         await sendAgentsSnapshot(to: phoneId)
         await sendFollowState(to: phoneId)
         await sendDown(SlotState(rev: slotRev, active: slotActive, autoActivation: false), to: phoneId)
+        if caps.away { await sendAwayState(to: phoneId) }
     }
 
     func sendInboxSnapshot(to phoneId: String) async {
@@ -433,12 +444,12 @@ final class TestMac: @unchecked Sendable {
 
 func sampleAsk(
     id: String = Bytes.newId(), text: String = "Which database should we use?", options: [String] = ["PostgreSQL", "SQLite"],
-    sessionTitle: String? = nil
+    sessionTitle: String? = nil, escalated: Bool = false
 ) -> RequestView {
     RequestView(
         id: id, kind: "ask", createdAt: 1_800_000_000_000, agent: AgentRef(kind: "codex", label: "Codex"),
         project: ProjectRef(key: "proj", name: "HumanInLoop"), sessionTitle: sessionTitle, source: "cli",
-        contentHash: "h-\(id.prefix(6))",
+        contentHash: "h-\(id.prefix(6))", escalated: escalated,
         ask: AskView(
             isMarkdown: true, message: MessageView(text: text, files: []),
             questions: [QuestionView(text: "Pick one", options: options.map { OptionView(text: $0, recommended: false) })],

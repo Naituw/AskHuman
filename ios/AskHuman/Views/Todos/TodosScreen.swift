@@ -25,7 +25,7 @@ struct TodosScreen: View {
         NavigationStack {
             Group {
                 if store.hasPairedMacs {
-                    TodosList()
+                    TodosList().awayStrip()
                 } else {
                     OnboardingView(showPairing: $showPairing)
                 }
@@ -58,6 +58,7 @@ private struct TodosColumns: View {
         let hasList = store.hasPairedMacs || !store.hasState
         ListDetailColumns(hasList: hasList, opened: open.map { "\($0.macId)/\($0.id)" }) {
             TodosList(columns: true)
+                .awayStrip()
                 .modifier(TodosBar())
         } detail: {
             if !hasList {
