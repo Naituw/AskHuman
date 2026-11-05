@@ -721,3 +721,40 @@ build 6 没有回填测试内容；只对它做过一次 `probe`（写入、读�
 **没做**：`AskHumanLargeScreenUITests`（iPad／Duo）、`AskHumanLiveUITests`、用最终包复查 Duo 外屏横屏与内屏、任何真机。
 iOS 18.5 上的无障碍树把每个工具栏按钮报成「容器＋按钮」两个同 id 节点（没改的 `new-task` 也一样，不是这次引入的），所以 `AskHumanRequestTodoUITests` 里读按钮 `isEnabled` 的那条在 18.5 上不可靠，没有为此改测试。
 真机上的 Duo 侧栏观感还没人看，跟踪在 `docs/PROGRESS.md`「iOS 顶栏按钮进 Duo 侧栏」一节。
+
+## 2026-11-05：TestFlight 内部构建 9
+
+用户把特殊回复（手机选待办 / 离开模式 / 本会话不再使用 / 快捷回复，需求 [special-replies](../specs/special-replies.md)、计划 [special-replies](special-replies.md)）快进合入 main 并装为日常版之后，选了「出一版 TestFlight 内测包，我在手机上验收离开模式 / 待办 / 快捷回复」，于是出包 `0.1.0 (9)`。
+
+从 main `fc87415d509a021f3b980b108a44011463336448`（`docs(progress): mark the special-replies work as merged into main and installed`）归档并分发：主检出的树是干净的，归档前后 `HEAD` 没动，所以直接在主检出里归档，没有用临时 worktree。
+基线标签 `ios-testflight-8`（`c909588`），Apple 上最大的构建号 8 与它一致。`changes.mjs` 列出的 iOS 提交共 7 个，`ios/` 共 47 个文件、+4295 −70，全是特殊回复这一件事：
+
+- 回答时选项目待办、What's next 看完整队列：`3261ef98`；
+- 离开模式与「不再使用 AskHuman」的手机端（线协议与回答里的指令 `def2262e`，常驻条、开启页与会话行 `86df1402`）；
+- 快捷回复（手机底栏菜单随 `4d65d821`，该提交同时包含 Mac 弹窗与设置）；
+- 经典底栏（iOS 17–25）上「发送并离开」被截断的修复 `02ca1be7`，以及配套的 UI 测试加固 `734a86a2`；`2642b976` 主要是弹窗里菜单的修复，`ios/` 里只有手机 Mock 与 UI 测试中的英文出厂预设文字跟着改了。
+
+出包前机器健康检查退出码 0（ok）；归档 `ARCHIVE SUCCEEDED`，预检通过（`0.1.0`、构建 `9`、仅内部），上传 `EXPORT SUCCEEDED`、`Upload succeeded`（18:30）。
+上传后约 6 分钟 Apple 状态才变为 `VALID`（比前几个构建慢，期间 `status.mjs` 里一直没有这个构建，没有重传）：Apple build `4995dc3a-db74-457e-9d1a-d7a2ad6bcc1f`，已加入内部测试组（组内共 8 个构建，测试员 1 已安装 / 1 已邀请）。
+
+测试内容（中文 657、英文 1688 个字符，两种语言都写入并读回逐字一致；英文那份与中文一一对应，这里不重复）：
+
+```
+构建 9 · 源码 fc87415
+
+• 提问页可以直接选项目待办：多了一张折叠的「待办」卡，选中的待办会跟着回答一起发给 Agent（和 Mac 弹窗里的选法一致）；What's next 页能看到完整的待办队列，不再被截断。
+• 离开模式：Agents 页右上角的月亮按钮可以开启（可写备注；有多台 Mac 时可以选哪几台）。开启后所有标签页上方有一条橙色常驻条，随时点「结束」；离开期间 Agent 的提问由 AskHuman 自动回复，只有 Agent 明确升级的提问才会推给你，提问页上会提示这是升级的提问。
+• 不再使用 AskHuman：在提问页底栏的菜单里选「不再使用 AskHuman」，按「发送并停用」，这个 Agent 会话之后的提问会被即时提示；也可以在 Agent 详情里对单个会话设置。
+• 快捷回复：提问页底栏的菜单顶部列出在 Mac 设置里编辑的预设回复，点一下直接发送，已经回答的问题保持原答案。
+• 以上入口需要 Mac 端也升到带这次改动的版本；老版本的 Mac 上不显示这些入口。
+
+请重点看
+• 开启离开模式后，让 Mac 上的 Agent 提一次问：确认它拿到的是自动回复，手机上的橙色条与 Mac 的状态、计数一致，点「结束」后立刻恢复正常。
+• 提问页底栏：「发送并离开」「发送并停用」有没有被截断；菜单展开的方向和顺序（第一条预设离拇指最近）顺不顺手。
+• 在提问里选一条项目待办后发送：Agent 收到的回答里有没有这条待办，Mac 上的待办列表有没有相应变化。
+```
+
+标签 `ios-testflight-9` → `fc87415`（本地附注标签，不推送）；事后 `changes.mjs`：基线 `ios-testflight-9`，清单为空，下一个构建号 10。
+
+出包前验证：包里的 iOS 源码就是特殊回复分支最后验证过的那份（之后只有文档提交）——Swift 包 672 条、真实 Daemon 端到端、`AskHumanAwayUITests`（iOS 18.5 16/16、iOS 27.0 英文与简体中文各 16/16）、`AskHumanTodoPickUITests`、主类 `AskHumanUITests` 等，细节见 [special-replies 的实施记录](special-replies.md)。
+**没做**：任何真机、iOS 17、iPad / Duo 大屏上的常驻条、用最终包复查 Release 配置下的生产推送。Mac 端日常版已经是带这次改动的版本（`caps.away`、`caps.answerTodos` 由 Mac 宣告，手机据此显示入口）。

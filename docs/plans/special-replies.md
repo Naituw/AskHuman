@@ -240,6 +240,6 @@ P4 之后把当时的 main（`b0e83385`：守护进程交接、失败恢复、iO
 
 - **真实 Agent 端到端**：Claude Code / Codex / Cursor 各一轮（开离开 → 提问与 whats-next 被自动回复 → `--escalate` 送达 → 结束；「不再使用」→ 即时提示、Stop 确认静音、权限与出错卡仍在）。需要用户授权真实 Agent 调用；只有隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话的端到端，以及 Stop hook / `AskUserQuestion` 接管的单测。
 - **桌面胶囊在真实桌面上的交互**与 Windows / Linux 的托盘月亮、控制台（见 P2c）。
-- **iOS 17 的降级条样式**、iPad / Duo 大屏上的常驻条与真机一轮（iOS 18.5 的经典条已补验，见上）；**TestFlight 没有出**。
+- **iOS 17 的降级条样式**、iPad / Duo 大屏上的常驻条与真机一轮（iOS 18.5 的经典条已补验，见上）；TestFlight 已出 `0.1.0 (9)`（记录在 `docs/plans/ios-channel.md`），真机验收在用户那边。
 - 需求 §3.10 的默认做法 N1–N10 没有再次征求用户意见（用户不在），按原文采用。
 
