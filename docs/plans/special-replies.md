@@ -1,7 +1,7 @@
 # 计划：特殊回复（手机选待办、离开模式、本会话不再使用、快捷回复）
 
-> 需求：`docs/specs/special-replies.md`（决策编号 D1–D40、默认做法 N1–N10 均指其 §3）。状态：2026-11-05 用户批准设计，**尚未开工**；下文的文件名与步骤是起草时对代码现状的判断，**实施时以代码为准，并在文末「实施记录」补记差异**。
-> 分支 / 工作方式：开工前再问用户（见「开工前定下的事」）。每一期单独验收、单独提交（D1），期与期之间互不阻塞。
+> 需求：`docs/specs/special-replies.md`（决策编号 D1–D40、默认做法 N1–N10 均指其 §3）。状态：2026-11-05 用户批准设计并授权「按顺序全部实现」；实现在分支 `feat/special-replies`（worktree `HumanInLoop-special-replies`，Dev Instance）上进行，进度与差异见文末「实施记录」。下文的文件名与步骤是起草时对代码现状的判断，**实施时以代码为准，并在文末「实施记录」补记差异**。
+> 分支 / 工作方式：见「开工前定下的事」。每一期单独验收、单独提交（D1），期与期之间互不阻塞。
 
 ## 阶段
 
@@ -119,12 +119,24 @@ Mac 端本来就有现成的东西：`QuestionAnswer.todo_ids` / `todo_selection
 
 ## 开工前定下的事
 
-- **工作方式**：在主检出建分支，还是用 worktree + Dev Instance？（按 `AGENTS.md` 与 `docs/agent-worktree-setup.md`；用 worktree 时要通过 AskHuman 问用户是否挂渠道预设。）
-- **P2a 是否并入未发布的协议号 5**：开工时查 5 有没有随发布版发出再定（需求与 `overview.md` 的历史段落）。
+用户在开工时说「你自己按顺序全部实现完成，我要去上班了，不能回答你的问题了」，所以下面几条由实施者按默认值定下（没有问用户），用户回来后可整条否决：
+
+- **工作方式**：worktree + Dev Instance——`/Users/wutian/Developer/HumanInLoop-special-replies`，分支 `feat/special-replies`（自本地 `main` 的 `2adccc03` 起）；`AskHuman dev enable` 不挂渠道预设（没人能答）。主检出里别的 agent 的未提交改动（iOS 界面一批、`Localizable.xcstrings`、`make-catalog.py`）不碰；日后合回 `main` 时 `Localizable.xcstrings` / `make-catalog.py` 可能冲突，那是预期的。
+- **P2a 并入未发布的协议号 5**：最近的发布版 v0.16.0 的 `PROTOCOL_VERSION` 是 4，5 还没发出，所以 `ClientMsg::Away` / `ServerMsg::Away` 并入 5、不再 +1；`overview.md` 的历史段落在 P5 补一句。
 - **iOS 模拟器**：为本任务新克隆一台专用设备，用完删除；不碰 `AskHuman iOS Dev` 与 `iPhone Duo`。
-- **TestFlight**：默认不出，用户要再出。
-- 复核需求 §3.10 的默认做法 N1–N10（用户没有单独确认过，开工前可整条否决）。
+- **TestFlight**：不出；**不推送**远端；不做全局安装（`./scripts/install.sh` 在 worktree 里只装进 `.askhuman-dev/bin/`）。
+- **验证时的投递**：`node scripts/dev.mjs ask --delivery local`，避免走远程中继把验证用的提问推到用户手机上。
+- 需求 §3.10 的默认做法 N1–N10 按原文采用。
 
 ## 实施记录
 
-尚未开工。
+### P1 iOS 待办（已完成）
+
+与上文设计一致，差异与补充：
+
+- **线协议**：`AnswerSubmit.todo_ids`、`Caps.answer_todos` 如设计；`answer_hash` 只在 `todoIds` 非空时才把它算进去，所以不带待办的回答哈希与旧版逐字相同（不会让旧版发件箱里的重发被判成冲突）。网关用 `invalid` + 原因文字拒收：`this question accepts only the listed options`（仅选择模式）、`too many todos`、`duplicate todo`、`choose one next task`（What's next 一次只收一个待办）、`todo gone`（常量 `wire::REJECT_TODO_GONE`）。手机把 `invalid` 回执显示为 `RequestState.failed(reason:)`，其中 `todo gone` 有单独的提示与「重新选择」按钮（重新取列表，草稿保留）。
+- **Mac 网关**：`Host` trait 加 `todo_picks(project_key, ids)`（先 `todo_sync::service::before_read` 再 `todos::list`）与 `todo_merge_line(text)`（i18n 键 `todo.mergeLine`）；合并规则在纯函数 `merge_todo_picks`：普通提问把「手写文字 + 每条待办一句合并句」并进最后一题（空行分隔），What's next 把待办原文放在回答最前、手写文字在后，都填 `todo_ids` / `todo_selections`（附件快照）。
+- **手机引擎**：`RequestTodoPicker`（按请求缓存在 `AppStore.todoPickers`，请求结束时清理）；`AnswerComposer` 持有 `todoIds`，「已作答」与「有内容」都把待办算进去（只选待办也能发送），What's next 的待办与选项互斥且最多选一个，草稿 `Draft.todoIds` 随发件箱落盘、重启后保留。取列表失败时 What's next 回落成问题自带的 `todo: true` 选项；Mac 离线期间队列保留在屏幕上（草稿不丢），重连后重新读；刷新保持 `.loaded` 不闪烁；折叠时已选但排在第 5 条之后的行仍然可见。
+- **老 Mac**：`caps.answerTodos == false` 时不显示待办卡，What's next 保持原样，`AppStore.send` 一律发 `todoIds: []`。Mock 后端的默认 `demo` 场景保持 `answerTodos: false`，已有 UI 测试不受影响；新场景 `todoPick`（`-AHScenario todoPick`）带七条待办（第 4 条带一个附件）。
+- **界面**：`TodoPickCard`（折叠的「待办 N」卡，`checklist` 图标、数量、「已选 N」、脚注）与 `TodoQueueRows`（What's next 的单选行 + 「显示全部 N 条待办」）在新文件 `Views/Request/TodoPickViews.swift`；`OptionRow` 改成包内可见以便复用，附件数用回形针小标签。
+- **测试**：Rust `ios::` 282 条（含 8 条新网关用例与夹具往返）；Swift 包 `AHAppTests` / `AHCoreTests` / `AHProtocolTests` / `AHStoreTests` 全绿（新增 11 条 `AnswerComposer`、25 条 `RequestTodoPicker`、3 条 `SessionTests`）；`AHE2ETests/TodoE2ETests` 加四条（合并 + 出队 + 附件、What's next 名额之外按 id、已不存在的待办拒收且请求保留、仅选择模式拒收）；UI 测试 `AskHumanTodoPickUITests`（en + zh-Hans）。具体结果见下面各条验证记录。

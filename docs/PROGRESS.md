@@ -337,20 +337,23 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] Windows / Linux：在真实弹窗里按 Ctrl+T 打开浮层、添加、Esc，再在一张确认卡里验 Enter / Esc 不漏出去（需求 §6.3 要求真机确认一次；macOS 已在隔离实例里按过）
 - [ ] iOS 真机：请求页「⋯」→「添加待办…」。手机上现有的内测包不含这个功能，要看得先出新的 TestFlight 包（用户没要，先不出；要出走 `ios-testflight` 技能）；对应的 Mac 也要装带这次改动的版本，否则碰到「不在待办候选里的在途项目」会回「这个项目已不在」
 
-## 待实现：特殊回复（手机选待办 / 离开模式 / 本会话不再使用 / 快捷回复）——设计已定稿（2026-11-05），尚未开工
+## 进行中：特殊回复（手机选待办 / 离开模式 / 本会话不再使用 / 快捷回复）——设计已定稿（2026-11-05），在 `feat/special-replies` 上逐期实现
 
-用户 2026-11-04 提出，经十轮 AskHuman 问答定稿。需求 [`docs/specs/special-replies.md`](specs/special-replies.md)
+用户 2026-11-04 提出，经十轮 AskHuman 问答定稿，2026-11-05 授权「按顺序全部实现」（当时人不在，所以开工前的几个问题由实施者按默认值定下，记在计划的「开工前定下的事」里，
+用户回来后可否决）。需求 [`docs/specs/special-replies.md`](specs/special-replies.md)
 （界面稿在 `docs/assets/special-replies/`，浏览器原型在 `src/prototype/`，入口见 `docs/development.md`），计划
-[`docs/plans/special-replies.md`](plans/special-replies.md)。**目前没有功能代码**，只有文档与原型页。
+[`docs/plans/special-replies.md`](plans/special-replies.md)（文末「实施记录」按期记差异与验证结果）。
+实现在 worktree `../HumanInLoop-special-replies`（分支 `feat/special-replies`，Dev Instance）；**未推送、未合回 main、未出 TestFlight**。
 
 要点：四块能力共用 Daemon 里的「模式引擎」——① iOS 在提问里选项目待办、What's next 看完整队列；② 离开模式（Agent 的每次提问与
 whats-next 都被自动回复，带 `--escalate` 才像没离开一样送达；只能手动结束；Mac 桌面胶囊 / 托盘 / 控制台，手机常驻条）与会话级「不再使用
 AskHuman」；③ 弹窗与手机的快捷回复菜单（预设在 Mac 设置里编辑）；④ 可选的 CLI / IM 命令。
 
 下一步：
-- [ ] 开工前问用户：工作方式（分支，还是 worktree + Dev Instance）、协议号是否并入尚未发布的 5（计划「开工前定下的事」）
-- [ ] 开工前请用户复核需求 §3.10 里**没有单独确认过**的默认做法 N1–N10，其中「欢迎回来」的空闲门槛取 5 分钟（第 5 轮图文）；第 9 轮的提问正文误写成 15 分钟，以 5 分钟为准
-- [ ] 按 P1 iOS 待办 → P2a–P2d 离开 / 不再使用 → P3 快捷回复 → P4（可选）CLI / IM 命令的顺序，逐期实现、验收、提交（计划「阶段」）
+- [x] 工作方式与协议号：worktree + Dev Instance；P2a 的新变体并入未发布的协议号 5（v0.16.0 是 4）
+- [ ] 请用户复核需求 §3.10 里**没有单独确认过**的默认做法 N1–N10（实现按原文采用），其中「欢迎回来」的空闲门槛取 5 分钟（第 5 轮图文）；第 9 轮的提问正文误写成 15 分钟，以 5 分钟为准
+- [x] P1 iOS 待办（实现与验证见计划「实施记录」）
+- [ ] 按 P2a–P2d 离开 / 不再使用 → P3 快捷回复 → P4（可选）CLI / IM 命令的顺序，逐期实现、验收、提交（计划「阶段」）
 - [ ] P2c 先做桌面胶囊的窗口 spike（不抢焦点、所有桌面可见、全屏应用上方是否可见），结果记进计划的实施记录
 
 ## 待验收：Cursor 任务的 Max 模式控制与 Agents 窗口新建任务（已合回 main 并装为日常版；真实验证阶段 1–2 已过，阶段 3–4 等用户自己做）

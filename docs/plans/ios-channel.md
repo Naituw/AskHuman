@@ -161,7 +161,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 | `request.ack` | 手机→Mac | 手机已持久保存该请求（取消推送回退） |
 | `request.seen` | 手机→Mac | 请求已在 UI 打开（用于替换通知与未读） |
 | `request.resolved` | Mac→手机 | `rev, requestId, how(answered/cancelled/expired/answeredElsewhere), by` |
-| `answer.submit` | 手机→Mac | `clientMsgId, requestId, action(send/cancel), answers[{q, sel[选项下标], text?, images[uploadId], files[uploadId]}]` |
+| `answer.submit` | 手机→Mac | `clientMsgId, requestId, action(send/cancel), answers[{q, sel[选项下标], text?, images[uploadId], files[uploadId]}], todoIds?[待办 id]`（`todoIds` 只在 `caps.answerTodos` 的 Mac 上发，由 Mac 网关并进回答，见 `docs/specs/special-replies.md` D28 / D29） |
 | `answer.ack` | Mac→手机 | `clientMsgId, requestId, status(accepted/lost/expired/invalid), reason?` |
 | `confirm.decide` | 手机→Mac | `clientMsgId, requestId, wireIndex 或 dismiss=true, input?` |
 
