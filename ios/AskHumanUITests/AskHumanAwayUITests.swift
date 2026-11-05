@@ -81,6 +81,27 @@ final class AskHumanAwayUITests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
     }
 
+    /// After a send the app goes back to the list by itself. When the finish event overtakes the "sending" state (a race
+    /// of the mock, whose answers come back at once) the page stays on its "ended" banner, and the way back is the button.
+    private func leaveTheSentRequest() {
+        if app.tabBars.firstMatch.waitForExistence(timeout: 6) { return }
+        back()
+        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 10), "back at the list")
+    }
+
+    /// Swipes until a row is clear of the top bar and the bottom bar. On older systems the automatic scrolling of a tap does
+    /// not bring a row out from under the bar, and `isHittable` still says yes for it.
+    private func scrollIntoReach(_ id: String, maxSwipes: Int = 10) {
+        var swipes = 0
+        while swipes < maxSwipes {
+            let target = element(id)
+            if target.exists, target.frame.minY > 140, target.frame.maxY < app.frame.height - 200 { break }
+            app.swipeUp(velocity: .slow)
+            swipes += 1
+        }
+        XCTAssertTrue(element(id).isHittable, "\(id) is within reach")
+    }
+
     /// "Send" takes the place of "Next" once the last question has been on screen.
     private func reachTheEnd(maxSwipes: Int = 10) {
         var swipes = 0
@@ -240,13 +261,16 @@ final class AskHumanAwayUITests: XCTestCase {
         element("directive-note").typeText("Back at five")
         requireElement("send-button").tap()
         XCTAssertTrue(gone("directive-panel", timeout: 15), "sent: nothing is left to arm")
+        leaveTheSentRequest()
         requireElement("away-strip", timeout: 15)
     }
 
     func testSendingWithMuteArmedStopsTheSession() {
         launch("away", tab: "inbox")
         openRequest("req-migration")
-        requireElement("option-0-0").tap()
+        requireElement("option-0-0")
+        scrollIntoReach("option-0-0")
+        element("option-0-0").tap()
         requireElement("quick-reply-menu").tap()
         labelled(localized("Stop using AskHuman", "不再使用 AskHuman")).tap()
         XCTAssertEqual(requireElement("directive-panel").exists, true)
@@ -255,6 +279,7 @@ final class AskHumanAwayUITests: XCTestCase {
         XCTAssertEqual(send.label, localized("Send and stop", "发送并停用"))
         send.tap()
         XCTAssertTrue(gone("inbox-row-req-migration", timeout: 15))
+        leaveTheSentRequest()
         tab("Agents", "Agents").tap()
         let row = requireElement("agent-row-cursor:cur-migrate")
         XCTAssertTrue(row.label.contains(localized("Not using AskHuman", "不再使用 AskHuman")), row.label)
@@ -274,17 +299,17 @@ final class AskHumanAwayUITests: XCTestCase {
 
     /// Answers all three questions of the migration request, so that nothing is left for a quick reply to answer.
     private func answerEveryQuestionOfTheMigration() {
-        requireElement("option-0-0").tap()
-        for id in ["option-1-0", "answer-text-2"] {
-            var swipes = 0
-            while !element(id).isHittable, swipes < 8 {
-                app.swipeUp(velocity: .slow)
-                swipes += 1
-            }
-            XCTAssertTrue(element(id).isHittable, "\(id) is within reach")
+        requireElement("option-0-0")
+        for id in ["option-0-0", "option-1-0", "answer-text-2"] {
+            scrollIntoReach(id)
             element(id).tap()
             if id.hasPrefix("answer-text") { element(id).typeText("done") }
         }
+        // The count follows the typing a moment later on a slow system, and the menu is built from it when it opens.
+        let counted = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "3/3"), object: element("answered-count")
+        )
+        XCTAssertEqual(XCTWaiter().wait(for: [counted], timeout: 10), .completed, "all three questions count as answered")
     }
 
     func testTheBarMenuListsTheMacsQuickRepliesBelowTheInstructionsNearestTheThumb() {
