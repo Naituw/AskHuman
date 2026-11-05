@@ -407,7 +407,9 @@ pub(super) fn ios_channel_for(
 ) -> Option<Arc<dyn Channel>> {
     let gateway = ios_gateway(state)?;
     Some(Arc::new(
-        crate::channels::ios::IosChannel::new(gateway, request_id).with_session(session),
+        crate::channels::ios::IosChannel::new(gateway, request_id)
+            .with_session(session)
+            .with_quiet_feedback(state.registry.quiet_feedback(request_id)),
     ))
 }
 

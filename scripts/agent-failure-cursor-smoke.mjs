@@ -48,7 +48,7 @@ const api = http.createServer(async (request, response) => {
   else if (method === "sendMessage") {
     const id = ++message; result = { message_id: id, chat: { id: 1 }, text: body.text };
     messages.push(body.text ?? "");
-    if (body.reply_markup?.inline_keyboard?.flat().some(button => button.callback_data === "submit")) cards.push({ id });
+    if (body.reply_markup?.inline_keyboard?.flat().some(button => button.callback_data === "submit")) cards.push({ id, ack: /Request continuation|要求继续/.test(body.text) ? "toggle:1" : "toggle:0" });
   }
   response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ ok: true, result }));
 });
@@ -101,7 +101,7 @@ const outcome = (session, request, text, retries) => `2026-11-03 05:47:50.114 [i
 })}\n`;
 const fail = (session, request, text, retries = "3") => fs.appendFileSync(logFile, outcome(session, request, text, retries));
 const saved = () => JSON.parse(fs.readFileSync(cardsFile, "utf8")).cards;
-const answer = card => updates.push(callback(card.id, "toggle:0"), callback(card.id, "submit"));
+const answer = card => updates.push(callback(card.id, card.ack), callback(card.id, "submit"));
 function spawnDaemon() {
   const log = fs.openSync(path.join(temp, "daemon.log"), "a");
   const child = spawn(binary, ["daemon", "run"], { cwd: temp, env, stdio: ["ignore", log, log] });
@@ -253,6 +253,66 @@ try {
   const settled = await record(demand);
   assert.equal(settled.state, "idle");
   assert.equal(settled.lastTurnResult.outcome, "failed", "acknowledging keeps the failure in the Agents list");
+
+  // 9. Persist a naturally detected fake failure, then advance only the fixtures' clocks and
+  // add more than ten ended sessions. A real restart must still show the ended chat's card.
+  fs.writeFileSync(path.join(ah, "config.json"), config(false));
+  const archived = randomUUID(), archivedTurn = randomUUID();
+  await startSession(archived); await startTurn(archived, archivedTurn);
+  await working(archived);
+  const beforeArchived = cards.length;
+  fail(archived, archivedTurn, "A retained failure");
+  await until(() => cards.length === beforeArchived + 1, "the retained failure");
+  daemon.kill("SIGTERM"); await within(exited(daemon), 15000, "shutdown before aging fixtures");
+  const past = Date.now() - 23 * 3600_000;
+  const savedFile = JSON.parse(fs.readFileSync(cardsFile, "utf8"));
+  savedFile.cards[0].createdMs = past;
+  fs.writeFileSync(cardsFile, JSON.stringify(savedFile));
+  const agentsPath = path.join(ah, "agents.json"), agents = JSON.parse(fs.readFileSync(agentsPath, "utf8"));
+  const old = agents.active.find(r => r.sessionId === archived);
+  agents.active = agents.active.filter(r => r.sessionId !== archived);
+  Object.assign(old, { state: "ended", endedAt: Math.floor(Date.now()/1000) - 3600, lastActivity: Math.floor(Date.now()/1000) - 7200, activeSince: null });
+  old.failureRetention.expiresMs = past + 86400_000;
+  agents.ended.unshift(old);
+  for (let i = 0; i < 25; i++) {
+    const ordinary = { ...old, sessionId: randomUUID() };
+    delete ordinary.failureRetention; delete ordinary.lastTurnResult;
+    agents.ended.push(ordinary);
+  }
+  fs.writeFileSync(agentsPath, JSON.stringify(agents));
+  daemon = spawnDaemon(); await until(status, "restart with aged ended session");
+  await until(() => cards.length === beforeArchived + 2, "the ended session's restored card");
+  assert.equal((await record(archived)).state, "ended", "restoring a card never fabricates session activity");
+  assert.equal(saved()[0].createdMs, past);
+  assert.equal((await status()).activeRequests, 0);
+  // This fake ID has no real Cursor chat: pressing continue must reject before dispatch and
+  // re-offer the same failure, with the original deadline, rather than consume it.
+  const beforeRetry = cards.length;
+  updates.push(callback(cards.at(-1).id, "toggle:0"), callback(cards.at(-1).id, "submit"));
+  await until(() => cards.length === beforeRetry + 1, "a safe retry after native unavailability");
+  assert.equal(saved()[0].createdMs, past);
+  assert.equal((await record(archived)).state, "ended");
+  answer(cards.at(-1));
+  await until(() => !fs.existsSync(cardsFile), "acknowledgment of the retained failure");
+  console.log("PASS: ended failure survives >10 newer sessions, keeps its 24h deadline, and native unavailability leaves a retryable card");
+
+  // 10. The deadline also applies while the daemon is down; restart cannot renew an expired card.
+  await tailerReady();
+  const expiredSession = randomUUID(), expiredTurn = randomUUID();
+  await startSession(expiredSession); await startTurn(expiredSession, expiredTurn);
+  const beforeExpired = cards.length;
+  fail(expiredSession, expiredTurn, "An expired failure");
+  await until(() => cards.length === beforeExpired + 1, "the expiring card");
+  daemon.kill("SIGTERM"); await within(exited(daemon), 15000, "shutdown before card expiry");
+  const expiredSaved = JSON.parse(fs.readFileSync(cardsFile, "utf8"));
+  expiredSaved.cards[0].createdMs = Date.now() - 86400_000 - 1;
+  fs.writeFileSync(cardsFile, JSON.stringify(expiredSaved));
+  const countAtExpiry = cards.length;
+  daemon = spawnDaemon(); await until(status, "restart after card expiry");
+  await until(() => !fs.existsSync(cardsFile), "expired persistent card removal");
+  await sleep(3500);
+  assert.equal(cards.length, countAtExpiry, "restart cannot give an expired failure a new day");
+  console.log("PASS: a card expires 24h after detection even across a daemon restart");
 
   console.log("PASS: forged Cursor log → one card and a failed result; unknown conversations and repeated lines ignored; held card does not keep the daemon; card survives a replacement with its age; answered and withdrawn cards leave the record; switch off stops the follower without replay; a card waits behind a pending question and follows its answer; with send on demand on the card keeps standing until answered");
 } catch (error) {

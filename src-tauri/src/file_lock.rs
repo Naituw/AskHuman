@@ -9,6 +9,18 @@ pub struct FileLock {
 }
 
 impl FileLock {
+    #[cfg(unix)]
+    pub(crate) fn close_on_exec(&self) -> io::Result<()> {
+        use std::os::fd::AsRawFd;
+        let fd = self.file.as_raw_fd();
+        // Only this private descriptor is changed; the old daemon keeps ownership until exec.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
     pub fn exclusive(path: &Path) -> io::Result<Self> {
         let file = open_lock_file(path)?;
         fs2::FileExt::lock_exclusive(&file)?;

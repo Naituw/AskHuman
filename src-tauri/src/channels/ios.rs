@@ -18,6 +18,7 @@ pub const CHANNEL_ID: &str = "ios";
 pub struct IosChannel {
     gateway: Arc<IosGateway>,
     request_id: String,
+    quiet_feedback: bool,
     /// The Agent session that asks, for the title the phone shows.
     session: Option<SessionRef>,
     /// Set by `start`; shared with the finalization task spawned by `interrupt`.
@@ -27,10 +28,16 @@ pub struct IosChannel {
 }
 
 impl IosChannel {
+    pub fn with_quiet_feedback(mut self, quiet: bool) -> Self {
+        self.quiet_feedback = quiet;
+        self
+    }
+
     pub fn new(gateway: Arc<IosGateway>, request_id: &str) -> Self {
         Self {
             gateway,
             request_id: request_id.to_string(),
+            quiet_feedback: false,
             session: None,
             sink: Arc::new(OnceLock::new()),
             interrupted: Arc::new(AtomicBool::new(false)),
@@ -93,9 +100,12 @@ impl SessionRef {
 }
 
 /// The coordinator seen from the gateway.
-struct CoordSink(ResultSink);
+struct CoordSink(ResultSink, bool);
 
 impl AskSink for CoordSink {
+    fn quiet_feedback(&self) -> bool {
+        self.1
+    }
     fn try_submit(&self, result: ChannelResult) -> bool {
         self.0.try_submit(result)
     }
@@ -118,6 +128,7 @@ impl Channel for IosChannel {
         let _ = self.sink.set(sink.clone());
         let gateway = self.gateway.clone();
         let request = Arc::new(request.clone());
+        let quiet_feedback = self.quiet_feedback;
         let origin = origin.clone();
         let interrupted = self.interrupted.clone();
         let session = self.session.clone();
@@ -147,7 +158,7 @@ impl Channel for IosChannel {
             }
             gateway.deliver(DeliverRequest {
                 view: built.view,
-                sink: Sink::Ask(Arc::new(CoordSink(sink))),
+                sink: Sink::Ask(Arc::new(CoordSink(sink, quiet_feedback))),
                 ask: Some(request),
                 deadline_ms: None,
                 assets: built.assets,

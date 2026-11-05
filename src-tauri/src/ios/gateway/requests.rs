@@ -37,6 +37,10 @@ const MAX_ANSWER_TEXT_CHARS: usize = 64 * 1024;
 
 /// The question side of a request: where answers go.
 pub trait AskSink: Send + Sync + 'static {
+    /// Feedback belongs in the inbox but must not ring for the same failure again.
+    fn quiet_feedback(&self) -> bool {
+        false
+    }
     /// Submits the answer; `true` when this submission decided the request.
     fn try_submit(&self, result: ChannelResult) -> bool;
     /// Channel that decided the request, once it is decided.
@@ -482,6 +486,9 @@ impl Actor {
     pub(super) fn flush_due_notifications(&mut self, now: i64) {
         let mut waiting: Vec<(String, String, bool)> = Vec::new();
         for pending in &self.requests.pending {
+            if matches!(&pending.sink, Sink::Ask(sink) if sink.quiet_feedback()) {
+                continue;
+            }
             for (phone_id, delivery) in &pending.phones {
                 if !delivery.seen
                     && !delivery.pushed
@@ -1187,6 +1194,9 @@ impl Actor {
         // Push fallback for requests the foreground phone never acknowledged.
         let mut due: Vec<(String, String)> = Vec::new();
         for pending in &self.requests.pending {
+            if matches!(&pending.sink, Sink::Ask(sink) if sink.quiet_feedback()) {
+                continue;
+            }
             for (phone_id, delivery) in &pending.phones {
                 if let Some(sent) = delivery.mqtt_sent_ms {
                     if !delivery.acked

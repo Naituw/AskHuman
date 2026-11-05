@@ -51,10 +51,20 @@ pub enum AgentState {
     Ended,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailureRetention {
+    pub result_id: String,
+    pub expires_ms: u64,
+}
+
 /// 单个被追踪 agent（一条 session）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRecord {
+    /// Keeps an unhandled failure addressable without claiming its session is active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_retention: Option<FailureRetention>,
     /// 稳定数字编号：**当前 daemon 生命周期内**单调递增、不复用、从 1 起，供 IM `/status <编号>` 寻址。
     /// 不跨 daemon 重启保留（`load()` 会对还原记录按序重排），故盘上旧值忽略（`serde(default)`）。
     #[serde(default)]
@@ -258,15 +268,24 @@ impl AgentRegistry {
     }
 
     /// 从 `~/.askhuman/agents.json` 还原，并对每条活动记录用 kill-0 复核存活、剔除已死（spec D18）。
-    pub fn load() -> Self {
+    pub fn load(retention: &[(AgentKind, String, String, u64)]) -> Self {
+        Self::load_file(&paths::agents_file(), retention)
+    }
+
+    fn load_file(file: &std::path::Path, retention: &[(AgentKind, String, String, u64)]) -> Self {
         let reg = Self::new();
-        let Ok(text) = std::fs::read_to_string(paths::agents_file()) else {
+        let Ok(text) = std::fs::read_to_string(file) else {
             return reg;
         };
-        let Ok(parsed) = serde_json::from_str::<Persisted>(&text) else {
+        let Ok(mut parsed) = serde_json::from_str::<Persisted>(&text) else {
             return reg;
         };
         let now = now_secs();
+        // The card journal is authoritative, including a crash after writing the card but
+        // before persisting its registry lease. Apply it before any history trimming.
+        for record in parsed.active.iter_mut().chain(parsed.ended.iter_mut()) {
+            record.failure_retention = retention_for(record, retention, now.saturating_mul(1000));
+        }
         let mut inner = reg.inner.lock().unwrap();
         for mut rec in parsed.active {
             // Legacy records have no active-time fields. Start them at daemon restore instead of
@@ -542,6 +561,7 @@ impl AgentRegistry {
                 } else {
                     let seq = inner.alloc_seq();
                     inner.active.push(AgentRecord {
+                        failure_retention: None,
                         seq,
                         kind,
                         session_id: session_id.to_string(),
@@ -734,6 +754,52 @@ impl AgentRegistry {
             .any(|r| r.kind == kind && r.session_id == session_id)
     }
 
+    /// Remove orphaned leases after a crash between updating the two persistent stores.
+    pub fn reconcile_failure_retention(&self, pending: &[(AgentKind, String, String, u64)]) {
+        let mut inner = self.inner.lock().unwrap();
+        let Inner { active, ended, .. } = &mut *inner;
+        for record in active.iter_mut().chain(ended.iter_mut()) {
+            record.failure_retention =
+                retention_for(record, pending, now_secs().saturating_mul(1000));
+        }
+        trim_ended(ended, now_secs().saturating_mul(1000));
+    }
+
+    /// A card's lease protects its result from history eviction, never from session TTL.
+    pub fn retain_failure(&self, kind: AgentKind, sid: &str, result: &str, expires_ms: u64) {
+        let mut inner = self.inner.lock().unwrap();
+        let Inner { active, ended, .. } = &mut *inner;
+        if let Some(record) = active.iter_mut().chain(ended.iter_mut()).find(|r| {
+            r.kind == kind
+                && r.session_id == sid
+                && r.last_turn_result
+                    .as_ref()
+                    .is_some_and(|last| last.id == result)
+        }) {
+            record.failure_retention = Some(FailureRetention {
+                result_id: result.into(),
+                expires_ms,
+            });
+        }
+    }
+
+    pub fn release_failure(&self, kind: AgentKind, sid: &str, result: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        let Inner { active, ended, .. } = &mut *inner;
+        for record in active.iter_mut().chain(ended.iter_mut()) {
+            if record.kind == kind
+                && record.session_id == sid
+                && record
+                    .failure_retention
+                    .as_ref()
+                    .is_some_and(|r| r.result_id == result)
+            {
+                record.failure_retention = None;
+            }
+        }
+        trim_ended(ended, now_secs().saturating_mul(1000));
+    }
+
     /// Refresh activity without creating a new tracked session.
     pub fn touch_activity(&self, kind: AgentKind, session_id: &str, pid: Option<u32>) -> bool {
         if session_id.is_empty() {
@@ -867,6 +933,7 @@ impl AgentRegistry {
         } else {
             let seq = inner.alloc_seq();
             inner.active.push(AgentRecord {
+                failure_retention: None,
                 seq,
                 kind,
                 session_id: session_id.to_string(),
@@ -916,10 +983,12 @@ impl AgentRegistry {
     pub fn ttl_sweep(&self) -> bool {
         let now = now_secs();
         let mut inner = self.inner.lock().unwrap();
+        let before = inner.ended.len();
+        trim_ended(&mut inner.ended, now.saturating_mul(1000));
         let expired: Vec<AgentRecord> = drain_where(&mut inner.active, |r| {
             r.pid.is_none() && now.saturating_sub(r.last_activity) > TTL_SECS
         });
-        let changed = !expired.is_empty();
+        let changed = !expired.is_empty() || before != inner.ended.len();
         for mut r in expired {
             let active_end = r.last_activity.min(now);
             stop_active(&mut r, active_end);
@@ -1461,11 +1530,64 @@ impl Default for AgentRegistry {
 }
 
 /// 把记录压入「已结束」队列，超出 MAX_ENDED 则从队首淘汰。
+fn retention_for(
+    record: &AgentRecord,
+    pending: &[(AgentKind, String, String, u64)],
+    now_ms: u64,
+) -> Option<FailureRetention> {
+    pending
+        .iter()
+        .find(|(kind, sid, result, expires)| {
+            *kind == record.kind
+                && sid == &record.session_id
+                && *expires > now_ms
+                && record
+                    .last_turn_result
+                    .as_ref()
+                    .is_some_and(|r| &r.id == result)
+        })
+        .map(|(_, _, result, expires)| FailureRetention {
+            result_id: result.clone(),
+            expires_ms: *expires,
+        })
+}
+
+fn failure_retained(rec: &AgentRecord, now_ms: u64) -> bool {
+    rec.failure_retention.as_ref().is_some_and(|lease| {
+        lease.expires_ms > now_ms
+            && rec
+                .last_turn_result
+                .as_ref()
+                .is_some_and(|r| r.id == lease.result_id)
+    })
+}
+
+fn trim_ended(ended: &mut VecDeque<AgentRecord>, now_ms: u64) {
+    let mut ordinary = 0;
+    let mut retained = 0;
+    let keep: Vec<bool> = ended
+        .iter()
+        .rev()
+        .map(|rec| {
+            if failure_retained(rec, now_ms) {
+                retained += 1;
+                retained <= 256
+            } else {
+                ordinary += 1;
+                ordinary <= MAX_ENDED
+            }
+        })
+        .collect();
+    let mut index = keep.len();
+    ended.retain(|_| {
+        index -= 1;
+        keep[index]
+    });
+}
+
 fn push_ended(ended: &mut VecDeque<AgentRecord>, rec: AgentRecord) {
     ended.push_back(rec);
-    while ended.len() > MAX_ENDED {
-        ended.pop_front();
-    }
+    trim_ended(ended, now_secs().saturating_mul(1000));
 }
 
 /// 从 Vec 中取出满足谓词的元素（保留其余），返回被取出的。
@@ -2325,6 +2447,7 @@ mod tests {
     #[test]
     fn merge_ended_twins_folds_totals() {
         let mk = |sid: &str, elapsed: u64, started: u64, ended_at: u64| AgentRecord {
+            failure_retention: None,
             seq: 0,
             kind: AgentKind::Cursor,
             session_id: sid.into(),
@@ -2696,6 +2819,111 @@ mod tests {
         let json = serde_json::to_string(&data).unwrap();
         assert!(!json.contains("currentTool"));
         assert!(!json.contains("current_tool"));
+    }
+
+    fn failed_record(sid: &str) -> AgentRecord {
+        serde_json::from_value(serde_json::json!({
+            "kind":"cursor", "sessionId":sid, "startedAt":1, "lastActivity":1,
+            "state":"idle", "endedAt":null,
+            "lastTurnResult":{"id":"result", "outcome":"failed", "at":1}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn unhandled_failure_survives_ttl_history_eviction_and_persistence() {
+        let registry = AgentRegistry::new();
+        registry
+            .inner
+            .lock()
+            .unwrap()
+            .active
+            .push(failed_record("failed"));
+        let deadline = now_secs().saturating_mul(1000) + 86_400_000;
+        registry.retain_failure(AgentKind::Cursor, "failed", "result", deadline);
+        assert!(registry.ttl_sweep());
+        let mut inner = registry.inner.lock().unwrap();
+        assert_eq!(inner.ended.front().unwrap().state, AgentState::Ended);
+        for i in 0..30 {
+            push_ended(&mut inner.ended, failed_record(&format!("ordinary-{i}")));
+        }
+        assert_eq!(inner.ended.len(), MAX_ENDED + 1);
+        let saved = serde_json::to_vec(&Persisted {
+            active: inner.active.clone(),
+            ended: inner.ended.iter().cloned().collect(),
+        })
+        .unwrap();
+        let restored: Persisted = serde_json::from_slice(&saved).unwrap();
+        assert!(restored
+            .ended
+            .iter()
+            .any(|r| r.session_id == "failed" && failure_retained(r, deadline - 1)));
+        assert!(!failure_retained(
+            restored
+                .ended
+                .iter()
+                .find(|r| r.session_id == "failed")
+                .unwrap(),
+            deadline
+        ));
+        drop(inner);
+        registry.release_failure(AgentKind::Cursor, "failed", "result");
+        assert!(!registry.knows_session(AgentKind::Cursor, "failed"));
+    }
+
+    #[test]
+    fn cold_load_applies_the_card_journal_before_trimming_unpinned_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("agents.json");
+        let mut failed = failed_record("failed-before-lease-was-written");
+        failed.state = AgentState::Ended;
+        let mut ended = vec![failed];
+        for i in 0..25 {
+            let mut newer = failed_record(&format!("newer-{i}"));
+            newer.state = AgentState::Ended;
+            ended.push(newer);
+        }
+        std::fs::write(
+            &file,
+            serde_json::to_vec(&Persisted {
+                active: vec![],
+                ended,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let lease = (
+            AgentKind::Cursor,
+            "failed-before-lease-was-written".into(),
+            "result".into(),
+            now_secs().saturating_mul(1000) + 86_400_000,
+        );
+        let restored = AgentRegistry::load_file(&file, &[lease]);
+        assert!(restored.knows_session(AgentKind::Cursor, "failed-before-lease-was-written"));
+        assert_eq!(restored.inner.lock().unwrap().ended.len(), MAX_ENDED + 1);
+        assert!(!AgentRegistry::load_file(&file, &[])
+            .knows_session(AgentKind::Cursor, "failed-before-lease-was-written"));
+    }
+
+    #[test]
+    fn stale_result_or_removed_card_does_not_pin_history() {
+        let registry = AgentRegistry::new();
+        registry
+            .inner
+            .lock()
+            .unwrap()
+            .active
+            .push(failed_record("failed"));
+        let deadline = now_secs().saturating_mul(1000) + 86_400_000;
+        registry.retain_failure(AgentKind::Cursor, "failed", "old", deadline);
+        assert!(registry.inner.lock().unwrap().active[0]
+            .failure_retention
+            .is_none());
+        registry.retain_failure(AgentKind::Cursor, "failed", "result", deadline);
+        registry.reconcile_failure_retention(&[]);
+        assert!(registry.inner.lock().unwrap().active[0]
+            .failure_retention
+            .is_none());
     }
 
     // ── Title refresh: the native session name is re-read on a TTL ──

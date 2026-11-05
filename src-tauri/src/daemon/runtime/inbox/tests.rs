@@ -350,6 +350,8 @@ fn state() -> Arc<ServerState> {
         last_active: Mutex::new(Instant::now()),
         shutdown: Default::default(),
         draining: AtomicBool::new(true),
+        exit_intent: Mutex::new(Default::default()),
+        closing: AtomicBool::new(false),
         registry: RequestRegistry::new(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(Default::default()),

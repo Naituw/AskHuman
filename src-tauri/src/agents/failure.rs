@@ -24,6 +24,10 @@ pub fn feedback_id(result: &str) -> String {
     format!("{FEEDBACK_PREFIX}{result}")
 }
 
+pub fn is_feedback_id(native_request_id: Option<&str>) -> bool {
+    native_request_id.is_some_and(|id| id.starts_with(FEEDBACK_PREFIX))
+}
+
 /// Whether a request's native id names a card the daemon holds for the user rather than a
 /// question an Agent is waiting on.
 pub fn is_card_id(native_request_id: Option<&str>) -> bool {

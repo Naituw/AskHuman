@@ -2,6 +2,7 @@
 
 pub mod ask_dedup;
 pub mod config_watch;
+pub mod handoff;
 pub mod lifecycle;
 pub mod popup_focus;
 pub mod popup_inbox;

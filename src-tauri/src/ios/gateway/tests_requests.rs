@@ -1319,3 +1319,51 @@ async fn revoking_a_phone_stops_deliveries_to_it() {
     assert!(!phone.gets(t::REQUEST_NEW, SECOND).await);
     assert_eq!(sink.lost.lock().unwrap().len(), 1, "nobody left to ask");
 }
+
+struct QuietFeedback(Arc<FakeAsk>);
+impl super::requests::AskSink for QuietFeedback {
+    fn quiet_feedback(&self) -> bool {
+        true
+    }
+    fn try_submit(&self, answer: crate::models::ChannelResult) -> bool {
+        super::requests::AskSink::try_submit(&*self.0, answer)
+    }
+    fn winner(&self) -> Option<String> {
+        super::requests::AskSink::winner(&*self.0)
+    }
+    fn surface_lost(&self, reason: &str) {
+        super::requests::AskSink::surface_lost(&*self.0, reason);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn continuation_feedback_stays_in_the_inbox_without_another_push_or_ack_fallback() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let deliver = |id| {
+        let (ask, view) = sample_ask(id);
+        fx.gateway.deliver(DeliverRequest {
+            view,
+            sink: Sink::Ask(Arc::new(QuietFeedback(FakeAsk::new()))),
+            ask: Some(ask),
+            deadline_ms: None,
+            assets: Vec::new(),
+        });
+    };
+    deliver("quiet-foreground");
+    phone.recv(t::REQUEST_NEW).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(
+        fx.pusher.count(),
+        0,
+        "an unacknowledged feedback is not a new error alert"
+    );
+    phone.set_presence(true, false).await;
+    deliver("quiet-background");
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(
+        fx.pusher.count(),
+        0,
+        "a feedback does not ring again in the background"
+    );
+}

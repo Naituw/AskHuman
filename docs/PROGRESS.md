@@ -3,6 +3,17 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 待合并 / 平台验收：Daemon 更新接班与错误卡 24 小时接续
+
+2026-11-05 用户批准[设计与实施记录](specs/daemon-update-and-failure-recovery.md)并要求实施。
+独立工作树 `HumanInLoop-daemon-recovery`、分支 `codex/daemon-failure-recovery`，Dev 默认正式端转送，无专用渠道预设。
+已实现并安装 Dev：自身盘上更新由 daemon 自行接班；错误卡及原生接续资格独立保留 24 小时，不受会话一小时 TTL
+或普通 ended 历史容量影响；临时未发送可明确重试，未知发送结果防重放，反馈不再重复推送。
+实施阶段全量 2475 通过（11 ignored），最终相关 325 通过（1 ignored），CI 1.99.0 同参数 clippy 通过；
+接班五场景、两次安装与并发等待 CLI 的隔离扩展、Cursor 替身十场景全部通过，没有触发真实 Cursor Agent。
+下一步：正式转送 Dev 验收回答；合并、日常安装与运行指纹核对；Windows/Linux 原生接班验收仍未做。
+崩溃自愈与自动打开 Cursor 聊天不在此次范围，旧版已删除的卡不回放。
+
 ## 待验收：Agent 最终失败确认（已合并并装为日常版；Cursor 的真实失败路径已验，其余未验）
 
 2026-11-02 已快进合并进 `main` 并 `./scripts/install.sh` 装为日常版。需求

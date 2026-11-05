@@ -34,6 +34,14 @@ struct Saved {
     result: String,
     /// Anchors the card's lifetime across daemon replacements.
     created_ms: u64,
+    attempt: Option<Attempt>,
+    attempted: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct Attempt {
+    phone: String,
+    message: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -48,6 +56,10 @@ struct SavedCard {
     session_id: String,
     result_id: String,
     created_ms: u64,
+    #[serde(default)]
+    attempt: Option<Attempt>,
+    #[serde(default)]
+    attempted: bool,
 }
 
 /// A card that was waiting when the previous daemon went away.
@@ -60,14 +72,16 @@ struct Pending {
 impl Cards {
     /// A table that keeps its unanswered cards in `file` and starts with the ones found there.
     pub(super) fn persistent(file: PathBuf) -> Self {
-        Self {
+        let cards = Self {
             inner: Mutex::new(Inner {
                 saved: load(&file, now_ms()),
                 ..Inner::default()
             }),
             file: Some(file),
             frozen: AtomicBool::new(false),
-        }
+        };
+        cards.persist(&cards.inner.lock().unwrap());
+        cards
     }
 
     /// Registers the card for `result`: its cancel handle and creation time, or `None` when that
@@ -82,6 +96,7 @@ impl Cards {
         let mut inner = self.inner.lock().unwrap();
         let identity = format!("{}:{sid}:{result}", kind.as_str());
         if inner.seen.contains(&identity)
+            || inner.saved.len() >= MAX_CARDS && !inner.saved.contains_key(&(kind, sid.into()))
             || inner.active.len() >= MAX_CARDS && !inner.active.contains_key(&(kind, sid.into()))
         {
             return None;
@@ -102,11 +117,23 @@ impl Cards {
             .get(&(kind, sid.to_string()))
             .filter(|saved| saved.result == result)
             .map_or_else(now_ms, |saved| saved.created_ms);
+        let attempt = inner
+            .saved
+            .get(&(kind, sid.to_string()))
+            .filter(|s| s.result == result)
+            .and_then(|s| s.attempt.clone());
+        let attempted = inner
+            .saved
+            .get(&(kind, sid.to_string()))
+            .filter(|s| s.result == result)
+            .is_some_and(|s| s.attempted);
         inner.saved.insert(
             (kind, sid.into()),
             Saved {
                 result: result.into(),
                 created_ms,
+                attempt,
+                attempted,
             },
         );
         self.persist(&inner);
@@ -130,6 +157,8 @@ impl Cards {
             Saved {
                 result: result.into(),
                 created_ms: now_ms(),
+                attempt: None,
+                attempted: false,
             },
         );
         self.persist(&inner);
@@ -191,10 +220,84 @@ impl Cards {
             .collect()
     }
 
+    pub(super) fn saved_count(&self) -> usize {
+        self.inner.lock().unwrap().saved.len()
+    }
+
+    pub(super) fn retention_snapshot(&self) -> Vec<(AgentKind, String, String, u64)> {
+        self.inner
+            .lock()
+            .unwrap()
+            .saved
+            .iter()
+            .filter(|(_, s)| !expired(s.created_ms, now_ms()))
+            .map(|((kind, sid), s)| {
+                (
+                    *kind,
+                    sid.clone(),
+                    s.result.clone(),
+                    s.created_ms
+                        .saturating_add(CARD_LIFETIME.as_millis() as u64),
+                )
+            })
+            .collect()
+    }
+
+    fn reconcile_retention(&self, agents: &AgentRegistry) {
+        // Keep the card table locked while reconciling, so a newly remembered failure cannot
+        // lose its lease to an older snapshot. No registry method calls back into Cards.
+        let inner = self.inner.lock().unwrap();
+        let leases: Vec<_> = inner
+            .saved
+            .iter()
+            .filter(|(_, s)| !expired(s.created_ms, now_ms()))
+            .map(|((kind, sid), s)| {
+                (
+                    *kind,
+                    sid.clone(),
+                    s.result.clone(),
+                    s.created_ms
+                        .saturating_add(CARD_LIFETIME.as_millis() as u64),
+                )
+            })
+            .collect();
+        agents.reconcile_failure_retention(&leases);
+    }
+
+    fn saved(&self, kind: AgentKind, sid: &str) -> Option<Saved> {
+        self.inner
+            .lock()
+            .unwrap()
+            .saved
+            .get(&(kind, sid.into()))
+            .cloned()
+    }
+
+    fn attempt(&self, kind: AgentKind, sid: &str, result: &str, attempt: Option<Attempt>) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(saved) = inner
+            .saved
+            .get_mut(&(kind, sid.into()))
+            .filter(|s| s.result == result)
+        else {
+            return false;
+        };
+        let previous = (saved.attempt.clone(), saved.attempted);
+        saved.attempted |= attempt.is_some();
+        saved.attempt = attempt;
+        if self.persist(&inner) {
+            return true;
+        }
+        let saved = inner.saved.get_mut(&(kind, sid.into())).unwrap();
+        saved.attempt = previous.0;
+        saved.attempted = previous.1;
+        false
+    }
+
     /// Writes the record: removals are skipped once frozen, but never what was added after.
-    fn persist(&self, inner: &Inner) {
+    fn persist(&self, inner: &Inner) -> bool {
         let Some(file) = &self.file else {
-            return;
+            return true;
         };
         let mut cards: Vec<SavedCard> = inner
             .saved
@@ -204,10 +307,12 @@ impl Cards {
                 session_id: sid.clone(),
                 result_id: saved.result.clone(),
                 created_ms: saved.created_ms,
+                attempt: saved.attempt.clone(),
+                attempted: saved.attempted,
             })
             .collect();
         cards.sort_by(|a, b| (&a.kind, &a.session_id).cmp(&(&b.kind, &b.session_id)));
-        write(file, cards);
+        write(file, cards).is_ok()
     }
 }
 
@@ -235,6 +340,8 @@ fn load(file: &std::path::Path, now: u64) -> HashMap<(AgentKind, String), Saved>
                 Saved {
                     result: card.result_id,
                     created_ms: card.created_ms,
+                    attempt: card.attempt,
+                    attempted: card.attempted,
                 },
             ))
         })
@@ -243,21 +350,18 @@ fn load(file: &std::path::Path, now: u64) -> HashMap<(AgentKind, String), Saved>
 }
 
 /// Atomic and best-effort: a failed write only costs the restoration of a card.
-fn write(file: &std::path::Path, cards: Vec<SavedCard>) {
+fn write(file: &std::path::Path, cards: Vec<SavedCard>) -> std::io::Result<()> {
     if cards.is_empty() {
-        let _ = std::fs::remove_file(file);
-        return;
+        return match std::fs::remove_file(file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
     }
-    let Ok(json) = serde_json::to_vec_pretty(&SavedFile { cards }) else {
-        return;
-    };
-    if let Some(parent) = file.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let tmp = file.with_extension(format!("json.tmp-{}", uuid::Uuid::new_v4()));
-    if std::fs::write(&tmp, json).is_err() || std::fs::rename(&tmp, file).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
+    crate::integrations::hook_edit::atomic_write_private(
+        file,
+        &serde_json::to_vec_pretty(&SavedFile { cards })?,
+    )
+    .map_err(std::io::Error::other)
 }
 
 fn current(state: &ServerState, kind: AgentKind, sid: &str, result: &str) -> bool {
@@ -270,7 +374,7 @@ fn current(state: &ServerState, kind: AgentKind, sid: &str, result: &str) -> boo
         .any(|record| {
             record["kind"] == kind.as_str()
                 && record["sessionId"] == sid
-                && record["state"] == "idle"
+                && matches!(record["state"].as_str(), Some("idle" | "ended"))
                 && record["lastTurnResult"]["id"] == result
                 && matches!(
                     record["lastTurnResult"]["outcome"].as_str(),
@@ -325,6 +429,9 @@ pub(super) fn enabled(kind: AgentKind, sid: &str) -> bool {
 
 /// Only accepted observations enter here; an old round cannot cancel a new round's card.
 pub(super) fn observe(state: &Arc<ServerState>, kind: AgentKind, sid: &str, event: LifecycleEvent) {
+    if state.closing.load(Ordering::SeqCst) {
+        return;
+    }
     if matches!(
         event,
         LifecycleEvent::TurnStart | LifecycleEvent::SessionEnd
@@ -349,6 +456,18 @@ pub(super) fn observe(state: &Arc<ServerState>, kind: AgentKind, sid: &str, even
     if !current(state, kind, sid, &result.id) {
         return;
     }
+    state.failure_confirmations.remember(kind, sid, &result.id);
+    if let Some(saved) = state.failure_confirmations.saved(kind, sid) {
+        state.agents.retain_failure(
+            kind,
+            sid,
+            &result.id,
+            saved
+                .created_ms
+                .saturating_add(CARD_LIFETIME.as_millis() as u64),
+        );
+        state.agents.persist();
+    }
     if state.draining.load(Ordering::SeqCst) {
         // This daemon is about to be replaced and shows no new cards: leave this one to its
         // successor instead of dropping it.
@@ -361,9 +480,22 @@ pub(super) fn observe(state: &Arc<ServerState>, kind: AgentKind, sid: &str, even
 /// Brings back the cards the previous daemon had not seen answered. A card whose result is no
 /// longer the session's latest unhandled one is dropped: the user, or the Agent itself, moved on.
 pub(super) fn restore(state: &Arc<ServerState>) {
-    for Pending { kind, sid, result } in state.failure_confirmations.pending() {
-        // Keep the session from aging out before the card's own refresh takes over.
-        state.agents.touch_activity(kind, &sid, None);
+    let pending = state.failure_confirmations.pending();
+    state
+        .failure_confirmations
+        .reconcile_retention(&state.agents);
+    state.agents.persist();
+    for Pending { kind, sid, result } in pending {
+        if let Some(saved) = state.failure_confirmations.saved(kind, &sid) {
+            state.agents.retain_failure(
+                kind,
+                &sid,
+                &result,
+                saved
+                    .created_ms
+                    .saturating_add(CARD_LIFETIME.as_millis() as u64),
+            );
+        }
         let card = state
             .agents
             .last_turn_result(kind, &sid)
@@ -371,8 +503,28 @@ pub(super) fn restore(state: &Arc<ServerState>) {
             .filter(|r| enabled(kind, &sid) && current(state, kind, &sid, &r.id));
         match card {
             Some(card) => start_card(state, kind, &sid, card),
-            None => state.failure_confirmations.finish(kind, &sid, &result),
+            None => {
+                state.failure_confirmations.finish(kind, &sid, &result);
+                state.agents.release_failure(kind, &sid, &result);
+                state.agents.persist();
+            }
         }
+    }
+}
+
+fn supports_continue(kind: AgentKind, record: &serde_json::Value) -> bool {
+    match kind {
+        AgentKind::Cursor => {
+            cfg!(target_os = "macos")
+                && (record["lastTurnResult"]["source"] == "cursorLog"
+                    || crate::agents::cursor_vscdb::session_metadata(
+                        record["sessionId"].as_str().unwrap_or_default(),
+                    )
+                    .is_some())
+        }
+        AgentKind::Pi => true,
+        AgentKind::Codex => crate::codex_desktop::is_desktop_session(record),
+        _ => false,
     }
 }
 
@@ -381,183 +533,243 @@ fn start_card(state: &Arc<ServerState>, kind: AgentKind, sid: &str, result: Turn
     else {
         return;
     };
-    let snapshot = state.agents.snapshot();
-    let Some(record) = snapshot
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|r| r["kind"] == kind.as_str() && r["sessionId"] == sid)
-    else {
-        state.failure_confirmations.finish(kind, sid, &result.id);
-        return;
-    };
-    let availability = super::agent_control::can_send(state, record);
-    let can_continue = availability.ok;
-    let project = record["cwd"]
-        .as_str()
-        .map(|cwd| crate::project::detect_from(std::path::Path::new(cwd)))
-        .unwrap_or_default();
-    let lang = Lang::current();
-    let mut task = crate::agents::failure::task(kind, sid, &project, &result, can_continue, lang);
-    if !can_continue {
-        let reason = match (kind, availability.reason.as_deref()) {
-            (AgentKind::Pi, Some("idleUnsupported")) => Some("nativeUnavailable"),
-            (_, reason) => reason,
-        };
-        crate::agents::failure::unavailable(&mut task, reason, lang);
-    }
-    if crate::development::verification::decorate_native_task(&mut task, kind, sid).is_err() {
-        state.failure_confirmations.finish(kind, sid, &result.id);
-        return;
-    }
-    let key = ios_agents::agent_key(kind, sid);
-    if let Some(gateway) = ios_gateway(state) {
-        gateway.hold_failure(&key, &result.id);
-    }
-    // A restored card has already spent part of its day.
-    let remaining = CARD_LIFETIME
-        .saturating_sub(Duration::from_millis(now_ms().saturating_sub(created_ms)))
-        .max(Duration::from_secs(1));
     let state = state.clone();
     let sid = sid.to_string();
     tokio::spawn(async move {
-        let accepted = Mutex::new(None::<String>);
-        let info = task.message.development.clone();
-        let ask = async {
-            while state.registry.waiting_for_session(&sid) {
-                tokio::time::sleep(Duration::from_millis(250)).await;
+        let deadline_ms = created_ms.saturating_add(CARD_LIFETIME.as_millis() as u64);
+        let mut feedback = String::new();
+        loop {
+            if state.closing.load(Ordering::SeqCst) {
+                return;
             }
-            crate::client::internal_ask(task, &accepted).await
-        };
-        let answer = tokio::select! {
-            _ = cancel.notified() => None,
-            answer = tokio::time::timeout(remaining, ask) => answer.ok(),
-            _ = async {
-                loop {
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                    if !current(&state,kind,&sid,&result.id) || !enabled(kind,&sid) { break; }
-                }
-            } => None,
-        };
-        if let Some(info) = info.filter(|info| !info.relay) {
-            match &answer {
-                Some((stdout, code)) => {
-                    let _ = crate::development::verification::complete(&info, stdout, *code);
-                }
-                None => {
-                    let _ = crate::development::verification::interrupted(&info.worktree, &info.id);
-                }
+            if now_ms() >= deadline_ms
+                || !current(&state, kind, &sid, &result.id)
+                || !enabled(kind, &sid)
+            {
+                break;
             }
-        }
-        if current(&state, kind, &sid, &result.id)
-            && (accepted.lock().unwrap().is_none()
-                || answer.as_ref().is_some_and(|(_, code)| *code == 3))
-        {
-            if let Some(gateway) = ios_gateway(&state) {
-                gateway.release_failure(&key, &result.id);
-            }
-        }
-        if accepted.lock().unwrap().is_some()
-            && answer.as_ref().is_none_or(|(_, code)| *code != 3)
-            && current(&state, kind, &sid, &result.id)
-        {
-            if let Some(gateway) = ios_gateway(&state) {
-                gateway.consume_failure(&key, &result.id);
-            }
-        }
-        if let Some((stdout, 0)) = answer {
-            if let Some(instruction) = crate::agents::failure::instruction(&stdout, can_continue) {
-                if current(&state, kind, &sid, &result.id) {
-                    let request_id = accepted.lock().unwrap().clone();
-                    let channel_is_ios = serde_json::from_str::<serde_json::Value>(&stdout)
+            let snapshot = state.agents.snapshot();
+            let Some(record) = snapshot.as_array().and_then(|records| {
+                records
+                    .iter()
+                    .find(|r| r["kind"] == kind.as_str() && r["sessionId"] == sid)
+            }) else {
+                break;
+            };
+            let project = record["cwd"]
+                .as_str()
+                .map(|cwd| crate::project::detect_from(std::path::Path::new(cwd)))
+                .unwrap_or_default();
+            let lang = Lang::current();
+            let previous = state
+                .failure_confirmations
+                .saved(kind, &sid)
+                .and_then(|s| s.attempt);
+            if let Some(operation) = previous
+                .as_ref()
+                .and_then(|attempt| {
+                    state
+                        .agent_controls
+                        .existing(&super::agent_control::operation_id(
+                            &attempt.phone,
+                            &attempt.message,
+                        ))
                         .ok()
-                        .is_some_and(|value| value["channel"] == "ios");
-                    let phone = if channel_is_ios {
-                        if let (Some(gateway), Some(request_id)) = (ios_gateway(&state), request_id)
-                        {
-                            gateway
-                                .answer_phone(&request_id)
-                                .await
-                                .unwrap_or_else(|| "failure-confirmation".into())
-                        } else {
-                            "failure-confirmation".into()
-                        }
-                    } else {
-                        "failure-confirmation".into()
+                        .flatten()
+                })
+                .filter(|operation| operation.status == "started")
+            {
+                if let Some(turn_id) = operation.turn_id {
+                    let observation = crate::agents::result::Observation {
+                        turn_id: Some(turn_id),
+                        ..Default::default()
                     };
-                    let response = super::agent_control::send(
-                        &state,
-                        super::agent_control::Message {
-                            phone: &phone,
-                            message_id: &result.id,
-                            kind,
-                            sid: &sid,
-                            text: "",
-                            files: vec![],
-                            expected_result_id: Some(result.id.clone()),
-                            continuation_instruction: Some(&instruction),
-                        },
-                    )
-                    .await;
-                    if response.status != "delivered" {
-                        let mut feedback = crate::agents::failure::task(
-                            kind, &sid, &project, &result, false, lang,
-                        );
-                        feedback.native_request_id =
-                            Some(crate::agents::failure::feedback_id(&result.id));
-                        feedback.questions[0].predefined_options[0].text = match lang {
-                            Lang::Zh => "知道了",
-                            Lang::En => "Got it",
-                        }
-                        .into();
-                        feedback.message.text = match lang {
-                            Lang::Zh=>"未能确认接续已开始。请先检查原会话，再决定是否重试；不要连续重复提交。",
-                            Lang::En=>"Continuation could not be confirmed. Check the original chat before retrying; do not repeatedly submit the same instruction.",
-                        }.into();
-                        if let Some(detail) =
-                            crate::agents::failure::control_reason(response.reason.as_deref(), lang)
-                        {
-                            feedback.message.text.push_str(&format!("\n\n{detail}"));
-                        }
-                        log(&format!(
-                            "failure continuation agent={} reason={}",
-                            kind.as_str(),
-                            response.reason.as_deref().unwrap_or("controlUnknown")
-                        ));
-                        if crate::development::verification::decorate_native_task(
-                            &mut feedback,
-                            kind,
-                            &sid,
-                        )
-                        .is_ok()
-                        {
-                            let feedback_info = feedback.message.development.clone();
-                            let acceptance = Mutex::new(None);
-                            let feedback_result = tokio::select! {
-                                _ = cancel.notified() => None,
-                                result = tokio::time::timeout(Duration::from_secs(86400),crate::client::internal_ask(feedback,&acceptance)) => result.ok(),
-                            };
-                            if let Some(info) = feedback_info.filter(|info| !info.relay) {
-                                match feedback_result {
-                                    Some((stdout, code)) => {
-                                        let _ = crate::development::verification::complete(
-                                            &info, &stdout, code,
-                                        );
-                                    }
-                                    None => {
-                                        let _ = crate::development::verification::interrupted(
-                                            &info.worktree,
-                                            &info.id,
-                                        );
-                                    }
-                                }
-                            }
-                        }
+                    state.agents.apply_observed(
+                        kind,
+                        LifecycleEvent::TurnStart,
+                        &sid,
+                        None,
+                        None,
+                        0,
+                        Some(&observation),
+                    );
+                }
+                break;
+            }
+            let uncertain = previous.as_ref().is_some_and(|attempt| {
+                let id = super::agent_control::operation_id(&attempt.phone, &attempt.message);
+                match state.agent_controls.existing(&id) {
+                    Ok(None) => false, // No durable journal means no dispatch could have happened.
+                    Ok(Some(op)) => !matches!(op.status.as_str(), "rejected" | "started"),
+                    Err(_) => true,
+                }
+            });
+            if previous.is_some() && !uncertain {
+                state
+                    .failure_confirmations
+                    .attempt(kind, &sid, &result.id, None);
+            }
+            let can_continue = supports_continue(kind, record) && !uncertain;
+            let mut task =
+                crate::agents::failure::task(kind, &sid, &project, &result, can_continue, lang);
+            // A new delivery must not replay the answer to the previous delivery of this failure.
+            let quiet_feedback = state
+                .failure_confirmations
+                .saved(kind, &sid)
+                .is_some_and(|s| s.attempted)
+                || !feedback.is_empty();
+            let identity = if quiet_feedback {
+                crate::agents::failure::feedback_id(&result.id)
+            } else {
+                task.native_request_id.take().unwrap()
+            };
+            task.native_request_id = Some(format!("{}:{}", identity, uuid::Uuid::new_v4()));
+            if uncertain {
+                task.questions[0].predefined_options[0].text = match lang {
+                    Lang::Zh => "知道了",
+                    Lang::En => "Got it",
+                }
+                .into();
+                task.message.text.push_str(match lang {
+                    Lang::Zh => "\n\n接续已提交，但尚未确认是否开始。请检查原会话；为避免重复执行，当前不会再次发送。",
+                    Lang::En => "\n\nContinuation may have been submitted. Check the original chat; another send is blocked to avoid duplicates.",
+                });
+            } else if !feedback.is_empty() {
+                task.message.text.push_str(&format!("\n\n{feedback}"));
+            }
+            if crate::development::verification::decorate_native_task(&mut task, kind, &sid)
+                .is_err()
+            {
+                break;
+            }
+            let info = task.message.development.clone();
+            let accepted = Mutex::new(None::<String>);
+            let key = ios_agents::agent_key(kind, &sid);
+            if let Some(gateway) = ios_gateway(&state) {
+                gateway.hold_failure(&key, &result.id);
+            }
+            let ask = async {
+                while state.registry.waiting_for_session(&sid) {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+                crate::client::internal_ask(task, &accepted).await
+            };
+            let answer = tokio::select! {
+                _ = cancel.notified() => None,
+                answer = tokio::time::timeout(Duration::from_millis(deadline_ms.saturating_sub(now_ms()).max(1)), ask) => answer.ok(),
+                _ = async { loop {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    if state.closing.load(Ordering::SeqCst) || !current(&state, kind, &sid, &result.id) || !enabled(kind, &sid) { break; }
+                }} => None,
+            };
+            if let Some(info) = info.filter(|i| !i.relay) {
+                match &answer {
+                    Some((stdout, code)) => {
+                        let _ = crate::development::verification::complete(&info, stdout, *code);
+                    }
+                    None => {
+                        let _ =
+                            crate::development::verification::interrupted(&info.worktree, &info.id);
                     }
                 }
             }
+            if state.closing.load(Ordering::SeqCst) {
+                return;
+            }
+            let Some((stdout, code)) = answer else {
+                break;
+            };
+            if code != 0 {
+                // Infrastructure failure is not an acknowledgment. Leave the persistent card for
+                // this daemon's next recovery, or its successor.
+                if let Some(gateway) = ios_gateway(&state) {
+                    gateway.release_failure(&key, &result.id);
+                }
+                tokio::select! {
+                    _ = cancel.notified() => break,
+                    _ = tokio::time::sleep(Duration::from_secs(15)) => {},
+                }
+                continue;
+            }
+            let Some(instruction) = crate::agents::failure::instruction(&stdout, can_continue)
+            else {
+                if let Some(gateway) = ios_gateway(&state) {
+                    gateway.consume_failure(&key, &result.id);
+                }
+                break;
+            };
+            if !current(&state, kind, &sid, &result.id) {
+                break;
+            }
+            let request_id = accepted.lock().unwrap().clone();
+            let channel_is_ios = serde_json::from_str::<serde_json::Value>(&stdout)
+                .ok()
+                .is_some_and(|v| v["channel"] == "ios");
+            let phone = if channel_is_ios {
+                if let (Some(gateway), Some(id)) = (ios_gateway(&state), request_id) {
+                    gateway
+                        .answer_phone(&id)
+                        .await
+                        .unwrap_or_else(|| "failure-confirmation".into())
+                } else {
+                    "failure-confirmation".into()
+                }
+            } else {
+                "failure-confirmation".into()
+            };
+            let attempt = Attempt {
+                phone,
+                message: uuid::Uuid::new_v4().to_string(),
+            };
+            if !state
+                .failure_confirmations
+                .attempt(kind, &sid, &result.id, Some(attempt.clone()))
+            {
+                feedback = match lang { Lang::Zh => "未能保存接续记录，没有发送。请检查磁盘空间后重试。", Lang::En => "Could not save the continuation record. Nothing was sent; check disk space and retry." }.into();
+                continue;
+            }
+            let response = super::agent_control::send(
+                &state,
+                super::agent_control::Message {
+                    phone: &attempt.phone,
+                    message_id: &attempt.message,
+                    kind,
+                    sid: &sid,
+                    text: "",
+                    files: vec![],
+                    expected_result_id: Some(result.id.clone()),
+                    continuation_instruction: Some(&instruction),
+                },
+            )
+            .await;
+            if response.status == "delivered" {
+                break;
+            }
+            let unknown = matches!(
+                response.reason.as_deref(),
+                Some(
+                    "controlUnknown"
+                        | "conflict"
+                        | "interrupted"
+                        | "desktopUnknown"
+                        | "controlStarting"
+                )
+            );
+            if !unknown {
+                state
+                    .failure_confirmations
+                    .attempt(kind, &sid, &result.id, None);
+            }
+            feedback = crate::agents::failure::control_reason(response.reason.as_deref(), lang)
+                .unwrap_or(match lang {
+                    Lang::Zh => "没有发送。请恢复原会话后重试。",
+                    Lang::En => "Nothing was sent. Restore the original chat and retry.",
+                })
+                .to_string();
         }
         state.failure_confirmations.finish(kind, &sid, &result.id);
+        state.agents.release_failure(kind, &sid, &result.id);
+        state.agents.persist();
     });
 }
 
@@ -777,5 +989,53 @@ mod tests {
         assert!(cards.begin(AgentKind::Cursor, "s0", "r2").is_some());
         cards.remember(AgentKind::Cursor, "one-too-many", "r");
         assert_eq!(cards.inner.lock().unwrap().saved.len(), MAX_CARDS);
+    }
+    #[test]
+    fn continuation_attempt_and_original_deadline_survive_replacement() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = file(&directory);
+        let cards = Cards::persistent(path.clone());
+        cards.remember(AgentKind::Cursor, "s", "r");
+        let created = cards.saved(AgentKind::Cursor, "s").unwrap().created_ms;
+        let attempt = Attempt {
+            phone: "phone".into(),
+            message: "click-one".into(),
+        };
+        assert!(cards.attempt(AgentKind::Cursor, "s", "r", Some(attempt.clone())));
+        let restored = Cards::persistent(path);
+        restored.begin(AgentKind::Cursor, "s", "r").unwrap();
+        let saved = restored.saved(AgentKind::Cursor, "s").unwrap();
+        assert_eq!(saved.attempt, Some(attempt));
+        assert_eq!(saved.created_ms, created);
+        assert!(!expired(created, created + 86_400_000 - 1));
+        assert!(expired(created, created + 86_400_000));
+        assert!(restored.attempt(AgentKind::Cursor, "s", "r", None));
+        assert_eq!(
+            restored.saved(AgentKind::Cursor, "s").unwrap().created_ms,
+            created
+        );
+    }
+
+    #[test]
+    fn a_failed_attempt_write_never_authorizes_a_send() {
+        let directory = tempfile::tempdir().unwrap();
+        let blocker = directory.path().join("not-a-directory");
+        std::fs::write(&blocker, "x").unwrap();
+        let cards = Cards::persistent(blocker.join("cards.json"));
+        cards.remember(AgentKind::Cursor, "s", "r");
+        assert!(!cards.attempt(
+            AgentKind::Cursor,
+            "s",
+            "r",
+            Some(Attempt {
+                phone: "phone".into(),
+                message: "click".into()
+            })
+        ));
+        assert!(cards
+            .saved(AgentKind::Cursor, "s")
+            .unwrap()
+            .attempt
+            .is_none());
     }
 }

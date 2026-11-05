@@ -664,7 +664,7 @@ pub fn refresh_tray(app: &AppHandle) {
     let stale = state.binary_stale.load(Ordering::SeqCst);
 
     // 内容签名：与上次相同 → 整次跳过，不触碰托盘（连 diff 都省，确保展开的菜单纹丝不动）。
-    let sig = menu_signature(
+    let mut sig = menu_signature(
         up,
         lang,
         &data,
@@ -674,6 +674,11 @@ pub fn refresh_tray(app: &AppHandle) {
         &update_action,
         dark_tray,
     );
+    sig.push_str(if crate::daemon::handoff::failed() {
+        "|handoff-failed"
+    } else {
+        ""
+    });
     if state.menu_sig.lock().unwrap().as_deref() == Some(sig.as_str()) {
         return;
     }
@@ -892,6 +897,17 @@ fn build_specs(
 ) -> Vec<Node> {
     let mut nodes: Vec<Node> = Vec::new();
 
+    if crate::daemon::handoff::failed() {
+        nodes.push(Node::item(
+            "st.handoff_failed",
+            match lang {
+                Lang::Zh => "自动换新失败，请手动启动守护进程",
+                Lang::En => "Automatic restart failed; start the daemon manually",
+            }
+            .to_string(),
+            false,
+        ));
+    }
     // —— 状态区（只读）——
     let title = if up {
         i18n::tr(lang, "tray.running").to_string()
@@ -1970,7 +1986,12 @@ fn spawn_daemon_state_watch(event: Arc<Notify>) {
             match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 if let Ok(ev) = res {
                     // Reading daemon.json (inotify `Access` events) says nothing about the daemon.
-                    if crate::daemon::config_watch::is_file_change(&ev, &name) {
+                    if crate::daemon::config_watch::is_file_change(&ev, &name)
+                        || crate::daemon::config_watch::is_file_change(
+                            &ev,
+                            std::ffi::OsStr::new("daemon-handoff.json"),
+                        )
+                    {
                         let _ = tx.send(());
                     }
                 }
