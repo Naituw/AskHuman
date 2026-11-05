@@ -79,6 +79,21 @@ Current prototypes:
   real DOM) are the only prototype code, and a cell without `strip` hides the product's strip for comparison. Controls
   cover theme, title length, window width and late arrival; `popup-session-title-frame.html?variant=strip|caption|reply|inline&…`
   renders one window. Pure browser, no Tauri, so the Windows / Linux native title is only drawn as an illustration.
+- `popup-reply-menu.html` — the popup footer "Quick reply" menu, the armed away / mute bar and the escalated-request
+  banner (spec `docs/specs/special-replies.md` D17–D21, images in `docs/assets/special-replies/`). The **real** `PopupView`
+  runs against `mockIPC` (`replyMenuMock.ts`); `ReplyMenuFrame.vue` teleports what the prototype adds into its DOM.
+  `?scene=idle|menu|armed-away|armed-mute|escalated&q=1|3` plus `answered=1`, `platform=mac|win`, `theme=light|dark`,
+  `w=`, `h=`, `note=`, `away=1`, `hover=`, `later=0`. Not shipped: the product popup has none of these controls yet.
+- `mac-away.html` — the Mac away-mode surfaces on a cropped desktop (menu bar, wallpaper): desktop capsule, expanded
+  card, the "welcome back" card and the tray menus (spec `special-replies.md` D22–D24).
+  `?view=capsule|capsule-pending|card|welcome|tray-on|tray-off|tray-agent&w=&h=&theme=`; `capsule-center` is the same as
+  `capsule`, and `banner-over` / `menubar-card` are the two placements that were rejected for the capsule (top right,
+  no floating window). `mac-away-board.html?board=hud|tray|place&theme=` lays several of these out on one board (the
+  images in `docs/assets/special-replies/` were rendered from it; the capsule's default is top centre, under the notch).
+- `console-away.html` — the Agent console baseline with the global away banner (`?variant=banner`), the sidebar glyphs
+  and the per-session "AskHuman" pull-down (`?variant=menu`); spec `special-replies.md` D25.
+- `settings-away.html` — Settings › General with the "Quick replies" and "Away mode" cards (spec `special-replies.md`
+  D26); `?theme=light|dark&focus=1&tab=general`.
 
 **Workflow:** iterate UI ideas on the prototype first (cheap, instant feedback, user can review
 in a browser), get the design confirmed, then port to the real views. Keep the prototype in

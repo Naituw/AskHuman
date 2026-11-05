@@ -1,0 +1,482 @@
+/* Prototype-only styles for the Mac-side away-mode surfaces. Uses the real tokens. */
+html.ma-frame,
+html.ma-frame body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.ma-desk {
+  position: relative;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+:root.theme-light .ma-desk {
+  --ma-bar-bg: rgba(238, 240, 244, 0.72);
+  --ma-bar-fg: rgba(0, 0, 0, 0.86);
+  background: linear-gradient(160deg, #d4dae3 0%, #c6cdd9 100%);
+}
+:root.theme-dark .ma-desk {
+  --ma-bar-bg: rgba(26, 28, 34, 0.7);
+  --ma-bar-fg: rgba(255, 255, 255, 0.92);
+  background: linear-gradient(160deg, #262b36 0%, #1a1e27 100%);
+}
+
+/* ── Menu bar ── */
+.ma-menubar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 25px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  background: var(--ma-bar-bg);
+  color: var(--ma-bar-fg);
+  font-size: 13px;
+  backdrop-filter: blur(20px) saturate(1.6);
+}
+.ma-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding-right: 10px;
+}
+.ma-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 21px;
+  padding: 0 5px;
+  border-radius: 5px;
+}
+.ma-status.open {
+  background: color-mix(in srgb, var(--ma-bar-fg) 18%, transparent);
+}
+.ma-glyph {
+  width: 24px;
+  height: 18px;
+  display: block;
+}
+:root.theme-dark .ma-glyph {
+  filter: invert(1);
+}
+.ma-sys {
+  display: block;
+  color: var(--ma-bar-fg);
+}
+.ma-clock {
+  font-weight: 500;
+  letter-spacing: 0.1px;
+}
+
+/* ── Floating HUD (capsule + card) ── */
+.ma-hud {
+  position: absolute;
+  top: 34px;
+  right: 14px;
+  background: var(--surface-overlay);
+  border: 0.5px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.2),
+    0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.ma-capsule {
+  height: 28px;
+  padding: 0 12px 0 10px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.ma-moon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--accent-orange);
+}
+.ma-cap-title {
+  font-weight: 500;
+}
+.ma-cap-time {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.ma-pend {
+  min-width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  padding: 0 4px;
+  border-radius: 8px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.ma-card {
+  width: 332px;
+  padding: 14px;
+  border-radius: 14px;
+  box-sizing: border-box;
+}
+.ma-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ma-card-icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-orange);
+  background: color-mix(in srgb, var(--accent-orange) 15%, transparent);
+}
+.ma-card-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.ma-card-titles {
+  min-width: 0;
+  flex: 1;
+}
+.ma-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.ma-card-sub {
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.ma-card-elapsed {
+  flex: none;
+  align-self: flex-start;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  padding-top: 1px;
+}
+
+.ma-sec-label {
+  margin: 14px 0 4px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+.ma-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ma-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12.5px;
+}
+.ma-row-kind {
+  flex: none;
+  font-weight: 500;
+}
+.ma-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.ma-row-count {
+  flex: none;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ma-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+}
+.ma-pending-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+.ma-pending-text {
+  flex: 1;
+}
+.ma-link {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.ma-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+.ma-spacer {
+  flex: 1;
+}
+
+/* ── Native menu look (NSMenu) ── */
+.ma-menu {
+  position: absolute;
+  padding: 5px;
+  border-radius: 10px;
+  box-sizing: border-box;
+  font-size: 13px;
+  line-height: 22px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+:root.theme-light .ma-menu {
+  background: rgba(247, 247, 249, 0.9);
+  color: rgba(0, 0, 0, 0.88);
+  border: 0.5px solid rgba(0, 0, 0, 0.2);
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.3),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.5);
+  --ma-off: rgba(0, 0, 0, 0.34);
+  --ma-sep: rgba(0, 0, 0, 0.12);
+}
+:root.theme-dark .ma-menu {
+  background: rgba(44, 44, 48, 0.9);
+  color: rgba(255, 255, 255, 0.92);
+  border: 0.5px solid rgba(255, 255, 255, 0.18);
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  --ma-off: rgba(255, 255, 255, 0.34);
+  --ma-sep: rgba(255, 255, 255, 0.14);
+}
+.ma-mi {
+  height: 22px;
+  padding: 0 10px 0 11px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.ma-menu.lead .ma-mi {
+  padding-left: 4px;
+}
+.ma-mi-lead {
+  width: 0;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ma-menu.lead .ma-mi-lead {
+  width: 20px;
+}
+.ma-mi-lead svg {
+  width: 13px;
+  height: 13px;
+}
+.ma-mi-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ma-mi.off {
+  color: var(--ma-off);
+}
+.ma-mi.hover {
+  background: var(--accent);
+  color: #fff;
+}
+.ma-mi-chev {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  margin-left: 10px;
+  opacity: 0.7;
+}
+.ma-sep {
+  height: 1px;
+  margin: 5px 6px;
+  background: var(--ma-sep);
+}
+
+/* ── Review board (several frames in one image) ── */
+.mb-board {
+  display: inline-grid;
+  grid-template-columns: 420px 420px;
+  gap: 16px 20px;
+  padding: 20px;
+  background: #f4f4f6;
+  font-family: var(--font-sans);
+}
+:root.theme-dark .mb-board {
+  background: #0f0f11;
+}
+.mb-cell {
+  margin: 0;
+}
+.mb-wide {
+  grid-column: 1 / -1;
+}
+.mb-cell figcaption {
+  margin: 0 2px 7px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.mb-cell figcaption b {
+  display: inline-block;
+  min-width: 15px;
+  margin-right: 6px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.mb-cell .ma-desk {
+  border-radius: 10px;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+}
+
+/* ── Placement alternatives ── */
+.ma-compact .ma-sys {
+  display: none;
+}
+.ma-notch {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 104px;
+  height: 25px;
+  transform: translateX(-50%);
+  border-radius: 0 0 13px 13px;
+  background: #000;
+}
+.ma-hud.center {
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.ma-status-text {
+  margin-left: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.ma-status:has(.ma-status-text) {
+  padding: 0 8px 0 5px;
+}
+.ma-card.popover {
+  top: 35px;
+  right: 8px;
+}
+.ma-arrow {
+  position: absolute;
+  top: -5px;
+  left: 115px;
+  width: 10px;
+  height: 10px;
+  background: var(--surface-overlay);
+  border-left: 0.5px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  border-top: 0.5px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  transform: rotate(45deg);
+  border-top-left-radius: 2px;
+}
+
+/* Another app's notification banner (same slot macOS uses: top-right under the menu bar) */
+.ma-banner {
+  position: absolute;
+  top: 32px;
+  right: 10px;
+  z-index: 5;
+  width: 344px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 14px 11px 12px;
+  border-radius: 16px;
+  backdrop-filter: blur(5px) saturate(1.5);
+  -webkit-backdrop-filter: blur(5px) saturate(1.5);
+}
+:root.theme-light .ma-banner {
+  background: rgba(247, 247, 249, 0.62);
+  color: rgba(0, 0, 0, 0.88);
+  box-shadow:
+    0 10px 34px rgba(0, 0, 0, 0.28),
+    0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+:root.theme-dark .ma-banner {
+  background: rgba(50, 50, 54, 0.72);
+  color: rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 10px 34px rgba(0, 0, 0, 0.5),
+    0 0 0 0.5px rgba(255, 255, 255, 0.14);
+}
+.ma-banner-icon {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #34c759;
+  color: #fff;
+}
+.ma-banner-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.ma-banner-body {
+  flex: 1;
+  min-width: 0;
+}
+.ma-banner-row {
+  display: flex;
+  align-items: baseline;
+}
+.ma-banner-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+}
+.ma-banner-time {
+  font-size: 12px;
+  opacity: 0.55;
+}
+.ma-banner-text {
+  margin-top: 1px;
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.mb-place .mb-tall {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+}

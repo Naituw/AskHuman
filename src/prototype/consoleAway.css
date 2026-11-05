@@ -1,0 +1,174 @@
+/* Prototype-only overlay styles for the console away-mode surfaces. */
+
+/* Hide prototype-only chrome of the baseline so renders look like the product. */
+.console > .top > .proto-tag,
+.console > .top > .icon-btn {
+  display: none;
+}
+
+/* Hide prototype-only chrome of the baseline so renders look like the product. */
+.console > .top > .proto-tag,
+.console > .top > .icon-btn {
+  display: none;
+}
+
+/* Slot the banner between header and body without touching the baseline's scoped styles. */
+.console > .top {
+  order: 0;
+}
+.console > .ca-banner {
+  order: 1;
+}
+.console > .body {
+  order: 2;
+}
+
+.ca-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  border-bottom: var(--hairline) solid var(--border);
+  background: color-mix(in srgb, var(--accent-orange) 9%, var(--control-bg));
+}
+.ca-banner-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--accent-orange);
+}
+.ca-banner-title {
+  font-weight: 600;
+}
+.ca-banner-desc {
+  color: var(--text-secondary);
+}
+.ca-spacer {
+  flex: 1;
+}
+.ca-banner-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+.ca-banner-btn.strong {
+  font-weight: 500;
+}
+
+/* Sidebar glyph (per-session overrides only) */
+.sess > .ca-glyph {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  padding-left: 6px;
+}
+.ca-glyph svg {
+  width: 13px;
+  height: 13px;
+}
+.ca-glyph.moon {
+  color: var(--accent-orange);
+}
+.ca-glyph.bell-off {
+  color: var(--text-tertiary);
+}
+
+/* Detail header pull-down: sits right after the elapsed text in the meta row */
+.dt-meta > * {
+  order: 0;
+}
+.dt-meta > .ca-ctl-wrap {
+  order: 1;
+}
+.dt-meta > .spacer {
+  order: 2;
+}
+.dt-meta > .dt-path {
+  order: 3;
+}
+.ca-ctl-wrap {
+  position: relative;
+  margin-left: 6px;
+  display: inline-flex;
+}
+.ca-ctl {
+  appearance: none;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px 0 8px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+.ca-ctl-key {
+  color: var(--text-tertiary);
+}
+.ca-ctl-chev {
+  width: 11px;
+  height: 11px;
+  opacity: 0.7;
+}
+.ca-ctl.away {
+  color: color-mix(in srgb, var(--accent-orange) 85%, var(--text-primary));
+  background: color-mix(in srgb, var(--accent-orange) 14%, transparent);
+}
+.ca-ctl.away .ca-ctl-key {
+  color: inherit;
+  opacity: 0.75;
+}
+
+.ca-pop {
+  position: absolute;
+  top: 25px;
+  left: 0;
+  z-index: 20;
+  min-width: 232px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--surface-overlay);
+  border: var(--hairline) solid var(--control-border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  font-size: 13px;
+}
+.ca-pop-item {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px 0 4px;
+  border-radius: 6px;
+  color: var(--text-primary);
+}
+.ca-pop-item:hover {
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+.ca-pop-check {
+  width: 20px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+.ca-pop-check svg {
+  width: 13px;
+  height: 13px;
+}
+.ca-pop-label {
+  flex: 1;
+  white-space: nowrap;
+}
