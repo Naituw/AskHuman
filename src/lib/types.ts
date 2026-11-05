@@ -13,7 +13,14 @@ export interface AskRequest {
   outputFormat: OutputFormat;
   /** whats-next 提问（spec todo-whats-next D2/D7）：待办已是问题选项，折叠待办区只留增删。 */
   whatsNext?: boolean;
+  /** Set when the question reached the user although away mode is on (docs/specs/special-replies.md D21). */
+  escalated?: EscalationReason;
+  /** False for Stop confirmations, failure cards, native Codex questions and development relays (N10); absent = true. */
+  quickReply?: boolean;
 }
+
+/** Why a question came through away mode: the Agent asked for it, it asked repeatedly, or the user asked it to ask. */
+export type EscalationReason = "asked" | "repeated" | "requested";
 
 export type ConfirmFieldKind = "text" | "path" | "timestamp";
 export type ConfirmActionRole = "primary" | "default" | "destructive";
@@ -531,8 +538,17 @@ export interface QuestionAnswer {
   }>;
 }
 
+/** A one-shot instruction that travels with an answer (the quick-reply menu; docs/specs/special-replies.md D19). */
+export interface PopupDirective {
+  kind: "away" | "mute";
+  /** Mute is always about the asking session; away may cover every Agent or only this session. */
+  scope: "global" | "session";
+  note?: string;
+}
+
 export interface PopupSubmission {
   answers: QuestionAnswer[];
+  directive?: PopupDirective;
 }
 
 export type ChannelAction = "send" | "cancel";

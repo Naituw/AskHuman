@@ -79,6 +79,7 @@ import { useAttachments } from "./useAttachments";
 import { useUpdateState } from "./useUpdateState";
 import { usePopupFind } from "./usePopupFind";
 import { useTodoPopover } from "./useTodoPopover";
+import { useQuickReply, type ArmedDirective } from "./useQuickReply";
 import {
   canComposerDock,
   composerHomeVisibleRatio,
@@ -229,6 +230,8 @@ export function usePopupCore(scope?: PopupScope) {
   const visited = ref<boolean[]>([]);
 
   const submitting = ref(false);
+  /** A quick-reply directive waiting for Send (docs/specs/special-replies.md D19); see useQuickReply. */
+  const armedDirective = ref<ArmedDirective | null>(null);
   /** Submit shortcut: cmdEnter (default) or enter. From popup_init / settings-updated. */
   const popupSubmitKey = ref<"cmdEnter" | "enter">("cmdEnter");
   const submitWithBareEnter = computed(() => popupSubmitKey.value === "enter");
@@ -1044,7 +1047,10 @@ export function usePopupCore(scope?: PopupScope) {
       todoChosenIds.value.length > 0
   );
   // 严格选择下「必须选中才能提交」：每个有选项的问题都需至少一个勾选。
+  // An armed directive is itself a reply ("I'm away", "stop using AskHuman"): it may go out with the
+  // questions left unanswered, also in strict-choice mode.
   const canSubmit = computed(() => {
+    if (armedDirective.value) return true;
     if (!selectOnly.value) return true;
     return questions.value.every(
       (_, i) => (chosenByQ.value[i]?.length ?? 0) > 0
@@ -1788,7 +1794,10 @@ export function usePopupCore(scope?: PopupScope) {
     scope?.sending?.();
     submissionError.value = null;
     try {
-      await submitPopup({ answers: collectAnswers() }, scope?.requestId);
+      await submitPopup(
+        { answers: collectAnswers(), directive: quickReply.quickReplyDirective.value },
+        scope?.requestId,
+      );
     } catch (error) {
       submissionError.value = String(error);
       submitting.value = false;
@@ -2007,6 +2016,23 @@ export function usePopupCore(scope?: PopupScope) {
     suspended: () => !acceptsInput() || showCancelConfirm.value || showConfirmCloseWarning.value,
   });
 
+  // ===== Quick-reply menu in the footer (docs/specs/special-replies.md D19–D21) =====
+  const quickReply = useQuickReply({
+    request,
+    isConfirm,
+    armed: armedDirective,
+    findActive: () => find.findActive.value,
+    speechTaken: (e) =>
+      speech.speechSupported.value &&
+      !!speech.speechShortcut.value &&
+      matchShortcut(e, speech.speechShortcut.value),
+    suspended: () =>
+      !acceptsInput() ||
+      showCancelConfirm.value ||
+      showConfirmCloseWarning.value ||
+      todoPopover.todoPopoverOpen.value,
+  });
+
   /** The navbar todo button: the popover, or the todos window when the request has no project. */
   function onTodoButtonClick() {
     if (todoPopover.todoPopoverAvailable.value) todoPopover.toggleTodoPopover();
@@ -2155,6 +2181,9 @@ export function usePopupCore(scope?: PopupScope) {
     // The todo popover (⌘T) is keyboard-modal: while it is open it takes every key (except ⌘W), so
     // it goes before find and every business shortcut — an Enter meant for its input must never
     // submit an answer or approve a permission card.
+    // The quick-reply menu (⌘K) is modal in the same way and goes first: while it is open the todo
+    // shortcut must not open the popover on top of it (it stays closed while the popover is open).
+    if (!showCancelConfirm.value && !showConfirmCloseWarning.value && quickReply.handleQuickReplyKeydown(e)) return;
     if (!showCancelConfirm.value && !showConfirmCloseWarning.value && todoPopover.handleTodoPopoverKeydown(e)) return;
     // In-page find (⌘/Ctrl+F, Esc while open, ⌘G, …) — before business shortcuts.
     if (!showCancelConfirm.value && !showConfirmCloseWarning.value && find.handleFindKeydown(e)) return;
@@ -2383,6 +2412,7 @@ export function usePopupCore(scope?: PopupScope) {
     todos.value = [];
     todosOpen.value = false;
     todoPopover.resetTodoPopover();
+    quickReply.resetQuickReply();
     todoChosenIds.value = [];
     todoChosenSnapshots.value = {};
     attach.loadThumbs();
@@ -2927,6 +2957,9 @@ export function usePopupCore(scope?: PopupScope) {
     closeTodoPopover: todoPopover.closeTodoPopover,
     addTodoFromPopover: todoPopover.addTodoFromPopover,
     removeTodoFromPopover: todoPopover.removeTodoFromPopover,
+    // Quick-reply menu, the directive armed from it, and the escalation banner
+    armedDirective,
+    ...quickReply,
     // R6 引导
     imTipVisible,
     imTipConfigure,

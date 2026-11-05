@@ -251,6 +251,45 @@ export default {
       openWindow: "打开待办窗口",
       addFailed: "没能添加待办：{reason}",
     },
+    // 页脚「快捷回复」菜单与待发条（docs/specs/special-replies.md D19–D21）。
+    quickReply: {
+      button: "快捷回复",
+      menu: "快捷回复",
+      hint: "快捷回复（{shortcut}）",
+      item: {
+        away: "离开模式…",
+        awaySub: "我暂时不在，Agent 的提问不再弹出，让它自己推进",
+        endAway: "结束离开模式",
+        endAwaySub: "离开模式开启中，结束后 Agent 的提问照常弹出",
+        mute: "本会话不再使用 AskHuman…",
+        muteSub: "这个会话里 Agent 不再向我提问",
+      },
+      armed: {
+        group: "待发的指令",
+        away: "离开模式",
+        scope: "范围",
+        scopeAll: "所有 Agent",
+        scopeSession: "仅此会话",
+        note: "附加指示",
+        notePlaceholder: "附加指示（可选），例如：别动生产环境",
+        mute: "本会话不再使用 AskHuman",
+        muteText: "Agent 不再向你提问，权限审批与出错通知除外",
+        undo: "取消",
+      },
+      send: {
+        away: "发送并开启离开模式",
+        mute: "发送并停用 AskHuman",
+      },
+    },
+    // 离开模式期间被升级过来的提问顶部的提示条（docs/specs/special-replies.md D21）。
+    escalated: {
+      title: "离开模式开启中",
+      asked: "，Agent 请求你处理（无法继续，或已全部完成）",
+      repeated: "，Agent 多次提问，这次已转给你",
+      requested: "，这是你要求它提的问题",
+      end: "结束离开模式",
+      endFailed: "没能结束离开模式：{message}",
+    },
   },
   // 后端(Swift/Rust)语音事件以语义 key 上报，前端在此翻译。
   speech: {
@@ -283,6 +322,7 @@ export default {
       editing: "与系统编辑快捷键 ({shortcut}) 冲突，建议增加修饰键或换一个",
       find: "与「查找」({shortcut}) 冲突",
       todos: "与「添加项目待办」({shortcut}) 冲突",
+      quickReply: "与「快捷回复」({shortcut}) 冲突",
     },
   },
   development: {

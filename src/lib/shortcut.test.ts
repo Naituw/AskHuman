@@ -147,6 +147,13 @@ describe("shortcutConflict", () => {
     expect(shortcutConflict(spec({ cmd: true, alt: true, key: "t" }))).toBeNull();
   });
 
+  it("rejects ⌘K reserved for the quick-reply menu", () => {
+    expect(shortcutConflict(spec({ cmd: true, key: "k" }))?.key).toBe("quickReply");
+    expect(shortcutConflict(spec({ ctrl: true, key: "k" }))?.key).toBe("quickReply");
+    expect(shortcutConflict(spec({ cmd: true, shift: true, key: "k" }))).toBeNull();
+    expect(shortcutConflict(spec({ cmd: true, alt: true, key: "k" }))).toBeNull();
+  });
+
   it("accepts a normal combo", () => {
     expect(shortcutConflict(spec({ cmd: true, key: "d" }))).toBeNull();
   });

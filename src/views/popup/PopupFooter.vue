@@ -3,6 +3,7 @@
 import { useI18n } from "vue-i18n";
 import { primaryShortcutLabel } from "../../lib/platform";
 import PopupLaterButton from "./PopupLaterButton.vue";
+import QuickReplyMenu from "./QuickReplyMenu.vue";
 import { usePopupContext } from "./context";
 
 const { t } = useI18n();
@@ -36,6 +37,7 @@ const {
   confirmCanSubmit,
   submitConfirm,
   requestConfirmClose,
+  armedDirective,
 } = usePopupContext();
 </script>
 
@@ -66,7 +68,20 @@ const {
     </button>
     <PopupLaterButton />
     <span class="spacer"></span>
+    <QuickReplyMenu />
+    <!-- An armed directive is a commit: the navigation gives way to one button that says what Send will do. -->
     <button
+      v-if="armedDirective"
+      class="btn btn-primary qr-send"
+      type="button"
+      :disabled="submitting"
+      @click="submit"
+    >
+      {{ submitting ? t("popup.inbox.sending") : t(`popup.quickReply.send.${armedDirective.kind}`) }}
+      <kbd class="sc">{{ submitKeyLabel }}</kbd>
+    </button>
+    <button
+      v-if="!armedDirective"
       class="btn"
       type="button"
       :disabled="submitting || !canGoPrev"
@@ -76,6 +91,7 @@ const {
       {{ t("popup.prev") }} <kbd v-if="canGoPrev" class="sc">{{ previousShortcut }}</kbd>
     </button>
     <button
+      v-if="!armedDirective"
       class="btn"
       :class="{ 'btn-primary': nextPrimary }"
       type="button"
@@ -87,7 +103,7 @@ const {
       <kbd v-if="!onLastQuestion && !submitShowsCmdEnter" class="sc">{{ submitKeyLabel }}</kbd>
     </button>
     <button
-      v-if="verticalMode ? lastSeen : allViewed"
+      v-if="!armedDirective && (verticalMode ? lastSeen : allViewed)"
       class="btn"
       :class="{ 'btn-primary': submitPrimary }"
       type="button"
@@ -106,13 +122,22 @@ const {
     </button>
     <PopupLaterButton />
     <span class="spacer"></span>
+    <QuickReplyMenu />
     <button
       class="btn btn-primary"
+      :class="{ 'qr-send': !!armedDirective }"
       type="button"
       :disabled="submitting || !canSubmit"
       @click="submit"
     >
-      {{ submitting ? t("popup.inbox.sending") : t("popup.send") }} <kbd class="sc">{{ submitKeyLabel }}</kbd>
+      {{
+        submitting
+          ? t("popup.inbox.sending")
+          : armedDirective
+            ? t(`popup.quickReply.send.${armedDirective.kind}`)
+            : t("popup.send")
+      }}
+      <kbd class="sc">{{ submitKeyLabel }}</kbd>
     </button>
   </div>
 

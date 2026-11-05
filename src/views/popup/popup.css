@@ -1870,6 +1870,158 @@ mark.popup-find-hit-current,
   flex: 1 1 auto;
   pointer-events: none;
 }
+/* A button's label stays on one line; an armed directive makes the send label longer, and wrapping the others
+   would shift the whole row. */
+.footer .btn { white-space: nowrap; }
+
+/* ---- Quick-reply menu, armed directive bar and escalation banner (docs/specs/special-replies.md D19–D21) ----
+   The menu opens upwards from its footer button; the bar sits between the answer area and the footer; the banner
+   sits under the navbar. Prototype: src/prototype/popup-reply-menu.html. */
+.qr-anchor { position: relative; display: flex; }
+/* .popup-main is a containing block (container-type), so this covers the popup, as the todo popover's does. */
+.qr-backdrop { position: fixed; inset: 0; z-index: 40; }
+.qr-trigger { display: inline-flex; align-items: center; gap: 5px; }
+.qr-trigger svg { opacity: 0.55; margin-right: -3px; }
+.qr-trigger.open { background: var(--control-hover-bg); }
+.qr-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 50;
+  box-sizing: border-box;
+  width: min(336px, calc(100vw - 24px));
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--surface-overlay);
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+}
+.qr-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 10px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.qr-head-hint { font-weight: 400; color: var(--text-tertiary); }
+.qr-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.35;
+  text-align: left;
+  cursor: default;
+  outline: none;
+}
+.qr-item:hover,
+.qr-item.hover,
+.qr-item:focus-visible { background: color-mix(in srgb, var(--text-primary) 7%, transparent); }
+.qr-ico { flex: none; width: 16px; height: 16px; margin-top: 1px; color: var(--text-secondary); }
+.qr-item-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qr-item-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qr-item-sub { font-size: 11.5px; line-height: 1.35; color: var(--text-secondary); }
+
+.qr-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--space-4);
+  font-size: 12px;
+  border-top: var(--hairline) solid var(--border);
+  background: var(--bg-elevated);
+}
+.qr-bar-ico { flex: none; width: 16px; height: 16px; color: var(--accent-orange); }
+.qr-bar-label { flex: none; font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
+.qr-bar-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+.qr-scope { flex: none; padding-top: 4px; padding-bottom: 4px; font-size: 12px; }
+.qr-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: var(--radius-md);
+  border: var(--hairline) solid var(--control-border);
+  background: var(--control-bg);
+  box-shadow: var(--clickable-shadow);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+.qr-note::placeholder { color: var(--text-tertiary); }
+.qr-note:focus { box-shadow: var(--focus-ring), var(--clickable-shadow); }
+.qr-bar-close {
+  flex: none;
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+}
+.qr-bar-close:hover:not(:disabled) { background: rgba(128, 128, 128, 0.2); }
+.qr-note + .qr-bar-close { margin-left: 0; }
+
+.qr-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px var(--space-4);
+  font-size: 12px;
+  background: color-mix(in srgb, var(--accent-orange) 9%, var(--control-bg));
+  border-bottom: var(--hairline) solid color-mix(in srgb, var(--accent-orange) 24%, transparent);
+}
+.qr-banner-text { flex: 1 1 auto; min-width: 0; color: var(--text-primary); }
+.qr-banner-text b { font-weight: 600; }
+.qr-banner-action {
+  flex: none;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: default;
+}
+.qr-banner-action:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.qr-banner-action:disabled { opacity: 0.5; }
+.qr-banner-error { flex: 0 0 auto; margin: 6px var(--space-4) 0; }
 /* 待办下拉区（spec todo-whats-next D7 第 11 轮改版）：内容区里、最后一个问题之后。
    收起＝一行「▸ 待办 N」；展开＝复用 .options/.option（与预选答案同构）+ 行内删除。 */
 .todo-section {

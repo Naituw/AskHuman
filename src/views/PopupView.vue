@@ -16,6 +16,8 @@ import QuestionCards from "./popup/QuestionCards.vue";
 import SequentialPane from "./popup/SequentialPane.vue";
 import TodoSection from "./popup/TodoSection.vue";
 import ComposerDock from "./popup/ComposerDock.vue";
+import ArmedDirectiveBar from "./popup/ArmedDirectiveBar.vue";
+import EscalatedNotice from "./popup/EscalatedNotice.vue";
 import PopupFooter from "./popup/PopupFooter.vue";
 import PopupOverlays from "./popup/PopupOverlays.vue";
 import AttachmentPreviewPanel from "./popup/AttachmentPreviewPanel.vue";
@@ -94,6 +96,8 @@ const { beginDivider } = usePreviewDivider({ mainWidth: () => previewLayout.valu
       <div v-if="dropHint" class="drop-hint" aria-hidden="true"><span>{{ dropHint }}</span></div>
     </Transition>
     <PopupNavbar />
+    <!-- A question that came through away mode says why, with a one-click way out (spec D21). -->
+    <EscalatedNotice v-if="!isConfirm" />
     <FindBar v-if="findActive && findScope === 'question'" />
     <p v-if="submissionError" class="status-error popup-submission-error" role="alert">{{ t("popup.inbox.submitError", { message: submissionError }) }}</p>
     <!-- What became of files dropped on a standalone popup (an inbox page shows its own notice). -->
@@ -117,6 +121,8 @@ const { beginDivider } = usePreviewDivider({ mainWidth: () => previewLayout.valu
     </div>
 
     <ComposerDock v-if="!isConfirm" />
+    <!-- A quick-reply directive waits here until Send (spec D19). -->
+    <ArmedDirectiveBar v-if="!isConfirm" />
 
     <input
       :ref="(el) => (fileRef = el as HTMLInputElement | null)"

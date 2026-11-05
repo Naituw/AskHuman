@@ -235,5 +235,9 @@ export function shortcutConflict(s: ShortcutSpec): ConflictReason | null {
   if (mod && !s.alt && !s.shift && s.key === "t") {
     return { key: "todos", params: { shortcut: primaryShortcutLabel("t") } };
   }
+  // The footer's quick-reply menu is fixed to ⌘/⌃K (docs/specs/special-replies.md D18).
+  if (mod && !s.alt && !s.shift && s.key === "k") {
+    return { key: "quickReply", params: { shortcut: primaryShortcutLabel("k") } };
+  }
   return null;
 }

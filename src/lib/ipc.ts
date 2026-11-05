@@ -92,6 +92,9 @@ export const popupShowWindow = (requestId?: string) => invoke<void>("popup_show_
 export const submitPopup = (submission: PopupSubmission, requestId?: string) =>
   invoke<void>("submit_popup", { submission, requestId });
 
+/** Turn global away mode off (the escalation banner and the quick-reply menu; docs/specs/special-replies.md D21). */
+export const awayEnd = () => invoke<void>("away_end");
+
 export const submitConfirmAction = (
   choiceIndex: number,
   comment?: string | null,

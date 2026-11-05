@@ -260,6 +260,45 @@ export default {
       openWindow: "Open the Todos window",
       addFailed: "Could not add the todo: {reason}",
     },
+    // The footer's "Quick reply" menu and the armed directive bar (docs/specs/special-replies.md D19–D21).
+    quickReply: {
+      button: "Quick reply",
+      menu: "Quick reply",
+      hint: "Quick reply ({shortcut})",
+      item: {
+        away: "Away mode…",
+        awaySub: "I'm away for a while: stop popping up the Agent's questions and let it carry on",
+        endAway: "End away mode",
+        endAwaySub: "Away mode is on; once it ends the Agent's questions pop up as usual",
+        mute: "Stop using AskHuman in this session…",
+        muteSub: "The Agent stops asking me in this session",
+      },
+      armed: {
+        group: "Pending instruction",
+        away: "Away mode",
+        scope: "Scope",
+        scopeAll: "All Agents",
+        scopeSession: "This session only",
+        note: "Extra instruction",
+        notePlaceholder: "Extra instruction (optional), e.g. leave production alone",
+        mute: "Stop using AskHuman in this session",
+        muteText: "The Agent stops asking you; permission approvals and error notices stay",
+        undo: "Undo",
+      },
+      send: {
+        away: "Send and go away",
+        mute: "Send and turn off",
+      },
+    },
+    // The banner on a question that was escalated while away mode is on (docs/specs/special-replies.md D21).
+    escalated: {
+      title: "Away mode is on",
+      asked: ": the Agent is asking for you (it cannot continue, or everything is done)",
+      repeated: ": the Agent kept asking, so this one was passed to you",
+      requested: ": you asked this session to ask you",
+      end: "End away mode",
+      endFailed: "Could not end away mode: {message}",
+    },
   },
   // 后端(Swift/Rust)语音事件以语义 key 上报，前端在此翻译。
   speech: {
@@ -293,6 +332,7 @@ export default {
       editing: "Conflicts with system edit shortcut ({shortcut}); add another modifier or pick another",
       find: "Conflicts with Find ({shortcut})",
       todos: "Conflicts with Add a project todo ({shortcut})",
+      quickReply: "Conflicts with Quick reply ({shortcut})",
     },
   },
   development: {
