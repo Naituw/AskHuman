@@ -807,45 +807,7 @@ mod tests {
     }
 
     fn state(directory: &std::path::Path) -> Arc<ServerState> {
-        let mut config = AppConfig::default();
-        config.general.popup_prewarm = false;
-        Arc::new(ServerState {
-            failure_confirmations: failure_confirmation::Cards::default(),
-            startup_fp: lifecycle::Fingerprint { size: 0, hash: 0 },
-            exe_path: String::new(),
-            restart_hold: Default::default(),
-            started_at: 0,
-            active: AtomicUsize::new(1),
-            last_active: Mutex::new(Instant::now()),
-            shutdown: Default::default(),
-            draining: AtomicBool::new(true),
-            registry: RequestRegistry::new(),
-            popup_focus: Mutex::new(PopupFocusArbiter::new()),
-            popup_inbox: Mutex::new(Default::default()),
-            dd_router: Default::default(),
-            fs_router: Default::default(),
-            tg_router: Default::default(),
-            sl_router: Default::default(),
-            config: Mutex::new(config),
-            update: Mutex::new(Default::default()),
-            agents: Arc::new(AgentRegistry::new()),
-            agent_controls: crate::agents::control::ControlStore::new(directory.join("controls")),
-            interject: crate::agents::interject::InterjectStore::new(),
-            grok_bindings: Default::default(),
-            agent_subs: Default::default(),
-            tray_subs: Default::default(),
-            active_channel: Mutex::new(None),
-            inbound_listeners: Default::default(),
-            warm_pool: Mutex::new(None),
-            warm_spawning: AtomicBool::new(false),
-            watch: Default::default(),
-            select: Default::default(),
-            pending_launches: Default::default(),
-            gui_focus: Default::default(),
-            last_waiting: Default::default(),
-            replay: Mutex::new(crate::daemon::ask_dedup::ReplayCache::new()),
-            ios: Mutex::new(None),
-        })
+        super::super::test_state(directory)
     }
 
     /// A session the registry has already given up on, the way a Cursor Desktop chat ends after

@@ -36,6 +36,7 @@ use tokio::io::BufReader;
 use transport::{OwnedReadHalf, OwnedWriteHalf, Stream};
 
 mod agent_control;
+mod away_ops;
 mod detect;
 mod failure_confirmation;
 mod fork;
@@ -51,6 +52,7 @@ mod task_launch;
 mod todo;
 mod watch;
 
+use away_ops::*;
 use detect::*;
 use fork::*;
 use inbound::*;
@@ -235,6 +237,9 @@ struct ServerState {
     failure_confirmations: failure_confirmation::Cards,
     /// Agent 插话队列（spec agent-interject）：内存常驻，变更时落盘 `interject.json`。
     interject: crate::agents::interject::InterjectStore,
+    /// Away mode and per-session mute (`docs/specs/special-replies.md`): the daemon is the only
+    /// writer of `state/away.json`.
+    away: crate::daemon::away::AwayEngine,
     /// Short-lived Grok MCP session-binding candidates and process/instance partitions.
     grok_bindings: crate::context_binding::GrokBindingRegistry,
     /// 状态窗口订阅者的发送端列表（变化 / 心跳时推 `AgentsState`）。
@@ -290,6 +295,51 @@ impl ServerState {
     fn config_snapshot(&self) -> AppConfig {
         self.config.lock().unwrap().clone()
     }
+}
+
+/// A server state for tests: draining (so nothing is spawned), no popup prewarm, everything empty.
+#[cfg(test)]
+fn test_state(directory: &std::path::Path) -> Arc<ServerState> {
+    let mut config = AppConfig::default();
+    config.general.popup_prewarm = false;
+    Arc::new(ServerState {
+        failure_confirmations: failure_confirmation::Cards::default(),
+        startup_fp: lifecycle::Fingerprint { size: 0, hash: 0 },
+        exe_path: String::new(),
+        restart_hold: Default::default(),
+        started_at: 0,
+        active: AtomicUsize::new(1),
+        last_active: Mutex::new(Instant::now()),
+        shutdown: Default::default(),
+        draining: AtomicBool::new(true),
+        registry: RequestRegistry::new(),
+        popup_focus: Mutex::new(PopupFocusArbiter::new()),
+        popup_inbox: Mutex::new(Default::default()),
+        dd_router: Default::default(),
+        fs_router: Default::default(),
+        tg_router: Default::default(),
+        sl_router: Default::default(),
+        config: Mutex::new(config),
+        update: Mutex::new(Default::default()),
+        agents: Arc::new(AgentRegistry::new()),
+        agent_controls: crate::agents::control::ControlStore::new(directory.join("controls")),
+        interject: crate::agents::interject::InterjectStore::new(),
+        away: crate::daemon::away::AwayEngine::in_memory(),
+        grok_bindings: Default::default(),
+        agent_subs: Default::default(),
+        tray_subs: Default::default(),
+        active_channel: Mutex::new(None),
+        inbound_listeners: Default::default(),
+        warm_pool: Mutex::new(None),
+        warm_spawning: AtomicBool::new(false),
+        watch: Default::default(),
+        select: Default::default(),
+        pending_launches: Default::default(),
+        gui_focus: Default::default(),
+        last_waiting: Default::default(),
+        replay: Mutex::new(crate::daemon::ask_dedup::ReplayCache::new()),
+        ios: Mutex::new(None),
+    })
 }
 
 fn apply_popup_effects(state: &Arc<ServerState>, effects: Vec<PopupEffect>) {
@@ -941,6 +991,7 @@ async fn serve(_lock: LockGuard) -> i32 {
             crate::paths::failure_cards_file(),
         ),
         interject: crate::agents::interject::InterjectStore::load(),
+        away: crate::daemon::away::AwayEngine::load(),
         grok_bindings: crate::context_binding::GrokBindingRegistry::default(),
         agent_subs: Mutex::new(Vec::new()),
         tray_subs: Mutex::new(Vec::new()),
@@ -1157,6 +1208,7 @@ async fn serve(_lock: LockGuard) -> i32 {
                 if ij_changed {
                     state.interject.persist();
                 }
+                sweep(&state);
                 if changed || ij_changed || has_agent_subs(&state) {
                     broadcast_agents_state(&state);
                 }
@@ -1845,6 +1897,7 @@ async fn control_loop(
                         if state.interject.remove_session(&session_id) {
                             state.interject.persist();
                         }
+                        session_ended(state, &session_id);
                     }
                     match tool {
                         Some(crate::ipc::ToolReport {
@@ -2027,6 +2080,7 @@ async fn control_loop(
                 text,
                 attachments,
             } => {
+                note_requested_ask(state, &session_id, &text);
                 interject_append(state, &session_id, &text, attachments);
             }
             // 撤回待送达。
@@ -2069,6 +2123,11 @@ async fn control_loop(
                         .await;
                     }
                 }
+            }
+            // Away mode and mute: read or change the state, reply with the picture afterwards.
+            ClientMsg::Away { op } => {
+                let snapshot = apply_away_op(state, &op);
+                let _ = ipc::write_msg(w, &ServerMsg::Away { snapshot }).await;
             }
             // iOS channel management (settings window / CLI): the gateway lives in this daemon.
             ClientMsg::Ios { op } => {
@@ -2531,6 +2590,19 @@ async fn handle_submit(
     };
     let lang = Lang::resolve(&task.lang);
 
+    // Away mode and mute (`docs/specs/special-replies.md`): answer an Agent's own question on the
+    // user's behalf, or let it through marked as an escalation. This runs after the registry
+    // refresh above (the session still counts as active) and before coalescing, so an automatic
+    // reply never reaches the replay cache or the user's `ask-received` hook (spec N4).
+    let escalated = match state.away.judge_task(&task, now_ms()) {
+        crate::daemon::away::Verdict::Deliver => None,
+        crate::daemon::away::Verdict::Escalated(reason) => Some(reason),
+        crate::daemon::away::Verdict::Reply(reply) => {
+            finish_auto_reply(state, &task, reply, &mut w).await;
+            return;
+        }
+    };
+
     // 重复提问收敛（spec duplicate-ask-coalescing）：agent 那一轮被中断后往往原样重发同一个
     // 提问，而旧的 CLI 进程不会被杀，旧卡片仍然有效。这里在建新请求之前先看两件事——
     // 同一个提问是不是还挂在人面前（合流），或者刚刚已经被回答过（重放）。
@@ -2580,7 +2652,10 @@ async fn handle_submit(
         }
     }
 
-    let (entry, mut final_rx) = state.registry.create(task, agent_console_session_id);
+    let (entry, mut final_rx) =
+        state
+            .registry
+            .create_escalated(task, agent_console_session_id, escalated);
     let request_id = entry.request_id.clone();
     let session_key = entry.session_key.clone();
     crate::perf::mark(&perf_id, "dmn.created");
@@ -2787,6 +2862,10 @@ async fn handle_submit(
             }
         }
     };
+
+    // A directive that came with the accepted answer (quick-reply menu) is applied now and its
+    // guidance joins what the Agent receives, followers included.
+    let outcome = outcome.map(|o| finish_with_directive(state, &entry, o));
 
     // 先把结果分发给合流上来的调用方，再走本连接自己的收尾。
     if let Some(o) = outcome.as_ref() {
@@ -3117,9 +3196,17 @@ async fn serve_gui(
                         dismissal_received = true;
                         break;
                     }
-                    Ok(Some(ClientMsg::Answer { action, answers, .. })) => {
+                    Ok(Some(ClientMsg::Answer {
+                        action,
+                        answers,
+                        directive,
+                        ..
+                    })) => {
                         if answer_received {
                             continue;
+                        }
+                        if action == ChannelAction::Send {
+                            entry.set_directive(directive);
                         }
                         let result = match action {
                             ChannelAction::Send => ChannelResult {

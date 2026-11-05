@@ -134,6 +134,7 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::popup_agent_resolved,
         crate::commands::popup_show_window,
         crate::commands::submit_popup,
+        crate::commands::away_end,
         crate::commands::submit_confirm_action,
         crate::commands::confirm_popup_ready,
         crate::commands::cancel_popup,

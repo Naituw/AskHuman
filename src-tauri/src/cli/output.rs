@@ -31,6 +31,55 @@ pub fn cancel_output(lang: Lang) -> String {
     format!("{}\n{}", MARKER_STATUS, tr(lang, "status.cancel"))
 }
 
+/// Text output of an automatic reply (away mode / mute): a status block like a cancellation, so
+/// the Agent reads it as "no answer from the user, and this is what to do now".
+pub fn auto_reply_output(text: &str) -> String {
+    format!("{}\n{}", MARKER_STATUS, text)
+}
+
+/// JSON output of an automatic reply. `action` is `auto_reply` (never `answer` or `cancel`) and
+/// `channel` names which automatic reply it was (`away` / `mute`).
+pub fn auto_reply_json(channel: &str, text: &str) -> String {
+    serde_json::to_string_pretty(&serde_json::json!({
+        "action": "auto_reply",
+        "channel": channel,
+        "status": text,
+    }))
+    .unwrap_or_default()
+}
+
+/// Appends a status text to an already rendered answer: the guidance that comes with a one-shot
+/// directive sent along with the answer. Text output gets a trailing `[status]` block; JSON output
+/// gets its `status` field filled in (an existing status stays, the new text follows it) and, when
+/// `directive` names the kind, a `directive` field so a reader can tell the status is guidance
+/// that came with a real answer.
+pub fn append_status(stdout: &str, text: &str, json: bool, directive: Option<&str>) -> String {
+    if json {
+        return match serde_json::from_str::<serde_json::Value>(stdout) {
+            Ok(serde_json::Value::Object(mut map)) => {
+                let merged = match map.get("status").and_then(serde_json::Value::as_str) {
+                    Some(existing) if !existing.trim().is_empty() => format!("{existing}\n{text}"),
+                    _ => text.to_string(),
+                };
+                map.insert("status".into(), serde_json::Value::String(merged));
+                if let Some(kind) = directive {
+                    map.insert("directive".into(), serde_json::Value::String(kind.into()));
+                }
+                serde_json::to_string_pretty(&serde_json::Value::Object(map))
+                    .unwrap_or_else(|_| stdout.to_string())
+            }
+            // Not an object or not JSON at all: never produce broken JSON.
+            _ => stdout.to_string(),
+        };
+    }
+    let body = stdout.trim_end();
+    if body.is_empty() {
+        auto_reply_output(text)
+    } else {
+        format!("{body}\n\n{}\n{}", MARKER_STATUS, text)
+    }
+}
+
 /// 单题的已渲染回答（图片已落盘为路径，文件为透传的绝对路径）。
 pub struct RenderedAnswer<'a> {
     pub selected_options: &'a [String],
@@ -365,6 +414,57 @@ mod tests {
     }
 
     // 结构断言用英文（源语言）；字段标记恒英文，不随语言变化。
+
+    #[test]
+    fn auto_reply_text_is_a_status_block() {
+        assert_eq!(auto_reply_output("go on"), "[status]\ngo on");
+    }
+
+    #[test]
+    fn auto_reply_json_has_its_own_action_and_never_looks_like_an_answer() {
+        let value: serde_json::Value =
+            serde_json::from_str(&auto_reply_json("away", "go on")).unwrap();
+        assert_eq!(value["action"], "auto_reply");
+        assert_eq!(value["channel"], "away");
+        assert_eq!(value["status"], "go on");
+        assert!(value.get("answers").is_none());
+    }
+
+    #[test]
+    fn append_status_follows_a_text_answer_in_its_own_block() {
+        let out = append_status("[selected_options]\nA\n", "stop asking", false, None);
+        assert_eq!(out, "[selected_options]\nA\n\n[status]\nstop asking");
+        // With no answer at all only the status remains.
+        assert_eq!(
+            append_status("", "stop asking", false, None),
+            "[status]\nstop asking"
+        );
+    }
+
+    #[test]
+    fn append_status_fills_the_json_status_field_and_keeps_an_existing_one() {
+        let out = append_status(
+            r#"{"action":"answer","answers":[]}"#,
+            "stop asking",
+            true,
+            Some("mute"),
+        );
+        let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(value["action"], "answer");
+        assert_eq!(value["status"], "stop asking");
+        assert_eq!(value["directive"], "mute");
+        let out = append_status(
+            r#"{"action":"answer","status":"replayed"}"#,
+            "stop asking",
+            true,
+            None,
+        );
+        let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(value["status"], "replayed\nstop asking");
+        assert!(value.get("directive").is_none());
+        // Broken JSON is left alone rather than made worse.
+        assert_eq!(append_status("not json", "x", true, None), "not json");
+    }
 
     #[test]
     fn options_only() {

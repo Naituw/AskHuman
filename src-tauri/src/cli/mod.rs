@@ -59,6 +59,26 @@ fn print_line(text: &str) {
     let _ = writeln!(out, "{text}").and_then(|_| out.flush());
 }
 
+/// The options that start an ask when they come first. Anything else starting with `-` is an
+/// unknown option; every flag `args::parse_ask` accepts must be listed here, or the entry point
+/// rejects it before `parse_ask` ever sees it (the tests keep the two in step).
+const ASK_LEADING_FLAGS: &[&str] = &[
+    "-q",
+    "--question",
+    "-o",
+    "--option",
+    "-o!",
+    "--option!",
+    "-f",
+    "--file",
+    "--stdin",
+    "--select-only",
+    "--single",
+    "--output",
+    "--whats-next",
+    "--escalate",
+];
+
 /// 入口分发：在创建任何窗口前按 argv 分流。
 pub fn dispatch() {
     let raw_argv = match crate::development::routing::prepare(std::env::args().collect()) {
@@ -565,24 +585,7 @@ pub fn dispatch() {
         }
         // 第一题既可用位置参数，也可用 `-q`/`--question`；提问相关 flag 一律进入提问分支，
         // 由 `parse_ask` 给出精确错误（如缺少问题内容、选项需在问题之后）。
-        first
-            if first.starts_with('-')
-                && !matches!(
-                    first,
-                    "-q" | "--question"
-                        | "-o"
-                        | "--option"
-                        | "-o!"
-                        | "--option!"
-                        | "-f"
-                        | "--file"
-                        | "--stdin"
-                        | "--select-only"
-                        | "--single"
-                        | "--output"
-                        | "--whats-next"
-                ) =>
-        {
+        first if first.starts_with('-') && !ASK_LEADING_FLAGS.contains(&first) => {
             eprintln!(
                 "{}{}\n",
                 i18n::err_prefix(lang),
@@ -690,6 +693,7 @@ pub fn dispatch() {
                     perf_id,
                     perf_autodismiss: crate::perf::autodismiss(),
                     whats_next: parsed.whats_next,
+                    escalate: parsed.escalate,
                 };
                 if let Err(error) = crate::development::verification::decorate_task(&mut task) {
                     eprintln!("AskHuman: {error}");
@@ -1047,6 +1051,34 @@ mod tests {
             auto: false,
             attachments: Vec::new(),
         }
+    }
+
+    /// The entry point rejects an unlisted leading option before `parse_ask` sees it, so a flag the
+    /// parser knows but this list lacks is unusable as the first argument (it hid `--escalate`).
+    #[test]
+    fn every_leading_ask_flag_is_accepted_by_the_parser() {
+        let lang = Lang::En;
+        for flag in ASK_LEADING_FLAGS {
+            let error = args::parse_ask(
+                &[
+                    flag.to_string(),
+                    "value".to_string(),
+                    "-q".to_string(),
+                    "Q".to_string(),
+                ],
+                lang,
+                Some("stdin".to_string()),
+            )
+            .err()
+            .unwrap_or_default();
+            assert!(
+                !error.contains("unknown option"),
+                "`{flag}` is listed but the parser rejects it: {error}"
+            );
+        }
+        // Flags that are not asks' own stay rejected.
+        assert!(!ASK_LEADING_FLAGS.contains(&"--bogus"));
+        assert!(ASK_LEADING_FLAGS.contains(&"--escalate"));
     }
 
     #[test]

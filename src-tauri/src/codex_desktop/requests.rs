@@ -118,6 +118,7 @@ fn prepare(sid: &str, s: &Session, r: &Value) -> Option<ClientMsg> {
                 perf_id: String::new(),
                 perf_autodismiss: false,
                 whats_next: false,
+                escalate: false,
             }))
         }
         "item/commandExecution/requestApproval"

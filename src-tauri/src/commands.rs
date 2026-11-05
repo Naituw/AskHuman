@@ -1344,6 +1344,9 @@ pub fn open_fork_task(app: AppHandle, session: String) -> Result<(), String> {
 pub struct PopupSubmission {
     #[serde(default)]
     answers: Vec<QuestionAnswer>,
+    /// One-shot instruction from the quick-reply menu ("I'm away", "stop using AskHuman").
+    #[serde(default)]
+    directive: Option<crate::daemon::away::Directive>,
 }
 
 #[tauri::command]
@@ -1361,13 +1364,14 @@ pub async fn submit_popup(
                     request_id: id.clone(),
                     action: crate::models::ChannelAction::Send,
                     answers: submission.answers,
+                    directive: submission.directive,
                 },
                 crate::app::popup_inbox::CompletionFeedback::Sent,
             )
             .await;
     }
     if let Some(bridge) = app.try_state::<crate::app::GuiBridge>() {
-        bridge.send_answer(submission.answers);
+        bridge.send_answer(submission.answers, submission.directive);
     }
     Ok(())
 }
@@ -1414,6 +1418,15 @@ pub fn confirm_popup_ready(app: AppHandle, request_id: Option<String>) -> Result
     Ok(())
 }
 
+/// Turn global away mode off: the escalation banner's button and the quick-reply menu's
+/// "end away mode" entry (docs/specs/special-replies.md D21).
+#[tauri::command]
+pub async fn away_end() -> Result<(), String> {
+    crate::client::away_op(crate::daemon::away::AwayOp::End)
+        .await
+        .map(|_| ())
+}
+
 #[tauri::command]
 pub async fn cancel_popup(app: AppHandle, request_id: Option<String>) -> Result<(), String> {
     if let Some(inbox) = app.try_state::<crate::app::popup_inbox::Inbox>() {
@@ -1424,6 +1437,7 @@ pub async fn cancel_popup(app: AppHandle, request_id: Option<String>) -> Result<
                 request_id: id.clone(),
                 action: crate::models::ChannelAction::Cancel,
                 answers: Vec::new(),
+                directive: None,
             },
             InteractionRequest::Confirm(request) => {
                 let choice_index = request

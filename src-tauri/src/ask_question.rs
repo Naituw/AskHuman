@@ -76,6 +76,14 @@ fn run_inner(agent: Option<&str>) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string);
+    // The user turned AskHuman off for this session: leave Claude's own picker alone, like every
+    // other case where the human cannot be asked (`docs/specs/special-replies.md` D6).
+    if session_id
+        .as_deref()
+        .is_some_and(crate::daemon::away::session_muted)
+    {
+        return None;
+    }
     let task = crate::ipc::TaskRequest {
         caller_cwd: Some(cwd.clone()),
         native_request_id: None,
@@ -102,6 +110,7 @@ fn run_inner(agent: Option<&str>) -> Option<String> {
         // exercise the cancel branch without a human clicking.
         perf_autodismiss: crate::perf::autodismiss(),
         whats_next: false,
+        escalate: false,
     };
 
     let stdout = crate::client::run_ask_capture(task, ANSWER_TIMEOUT)?;
@@ -184,12 +193,42 @@ fn build_questions(raw: &[Value], lang: Lang) -> Option<(Vec<Question>, Vec<Prep
 
 /// Turn the JSON reply into the hook decision (spec D6–D10). Pure so the mapping is unit-testable.
 fn decide(reply: &Value, prepared: &[Prepared], tool_input: &Value, lang: Lang) -> String {
-    let cancelled = reply.get("action").and_then(Value::as_str) == Some("cancel");
+    let action = reply.get("action").and_then(Value::as_str);
+    let status = reply
+        .get("status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    // Away mode answered instead of the user: no picker, and the status tells Claude what to do.
+    if action == Some("auto_reply") {
+        return deny(status.unwrap_or_else(|| crate::i18n::tr(lang, "status.cancel")));
+    }
+    let cancelled = action == Some("cancel");
     let answers = if cancelled {
         Map::new()
     } else {
         collect_answers(reply, prepared)
     };
+    // The answer came with a one-shot directive ("away", "stop using AskHuman"): Claude only reads
+    // `answers` through `allow`, so the answers travel in the reason of a `deny` together with the
+    // guidance, and Claude is told not to ask again.
+    if let (Some(status), true, true) = (
+        status,
+        reply.get("directive").is_some(),
+        !answers.is_empty(),
+    ) {
+        let answered: Vec<String> = answers
+            .iter()
+            .map(|(question, answer)| {
+                format!("- {question}: {}", answer.as_str().unwrap_or_default())
+            })
+            .collect();
+        return deny(&format!(
+            "{}\n{}\n\n{status}",
+            crate::i18n::tr(lang, "askQuestion.answered"),
+            answered.join("\n")
+        ));
+    }
     if answers.is_empty() {
         // Explicit cancel, or a submit with nothing in it: ask Claude to ask again (spec D9).
         return json!({
@@ -211,6 +250,18 @@ fn decide(reply: &Value, prepared: &[Prepared], tool_input: &Value, lang: Lang) 
             "hookEventName": "PreToolUse",
             "permissionDecision": "allow",
             "updatedInput": updated,
+        }
+    })
+    .to_string()
+}
+
+/// A `deny` whose reason Claude reads.
+fn deny(reason: &str) -> String {
+    json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
         }
     })
     .to_string()

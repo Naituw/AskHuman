@@ -278,6 +278,7 @@ mod tests {
             caller_pid: 0,
             from_mcp: false,
             whats_next: false,
+            escalate: false,
             perf_id: String::new(),
             perf_autodismiss: false,
         }

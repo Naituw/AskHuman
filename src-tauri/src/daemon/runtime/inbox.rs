@@ -460,15 +460,23 @@ pub(super) async fn handle_popup_host<R, W>(
                 request_id,
                 action,
                 answers,
+                directive,
             } => {
                 let entry = state.popup_inbox.lock().unwrap().get(&request_id);
                 let (winner, error) = match entry {
                     Some(InteractionEntry::Ask(entry)) => {
+                        // Stashed before the race is decided; dropped again when another surface wins.
+                        if action == ChannelAction::Send {
+                            entry.set_directive(directive);
+                        }
                         let won = entry.coordinator.try_submit(ChannelResult {
                             action,
                             answers,
                             source_channel_id: "popup".into(),
                         });
+                        if !won {
+                            entry.set_directive(None);
+                        }
                         (
                             Some(if won {
                                 "popup".into()

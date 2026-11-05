@@ -84,6 +84,39 @@ pub struct AskRequest {
     /// 固定结束句），弹窗折叠待办区不重复渲染 chip。普通提问恒 false（序列化省略）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub whats_next: bool,
+    /// Set by the daemon when the question reached the user although away mode is on (see
+    /// `docs/specs/special-replies.md`); the popup and phone say why it came through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escalated: Option<EscalationReason>,
+    /// Whether the popup and the phone offer their quick-reply menu for this question. Only an
+    /// Agent's own questions do; Stop confirmations, failure cards, native Codex questions and
+    /// development relays do not (spec N10). Sent only when false, so a sender that predates the
+    /// field keeps the menu.
+    #[serde(
+        default = "default_quick_reply",
+        skip_serializing_if = "is_quick_reply"
+    )]
+    pub quick_reply: bool,
+}
+
+fn default_quick_reply() -> bool {
+    true
+}
+
+fn is_quick_reply(value: &bool) -> bool {
+    *value
+}
+
+/// Why a question reached the user although away mode is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EscalationReason {
+    /// The Agent passed the escalation flag: it cannot continue or is done.
+    Asked,
+    /// The anti-lockout rule let a repeated plain ask through.
+    Repeated,
+    /// The user asked this session to ask them (tray "Ask Me Now").
+    Requested,
 }
 
 impl AskRequest {
@@ -97,6 +130,8 @@ impl AskRequest {
             single: false,
             output_format: OutputFormat::Text,
             whats_next: false,
+            escalated: None,
+            quick_reply: true,
         }
     }
 }
@@ -840,6 +875,47 @@ impl ChannelResult {
 mod tests {
     use super::*;
     use crate::agents::AgentKind;
+
+    #[test]
+    fn quick_reply_is_sent_only_when_off_and_defaults_to_on() {
+        let mut request = AskRequest::new(MessagePrompt::default(), Vec::new(), false);
+        let value = serde_json::to_value(&request).unwrap();
+        assert!(value.get("quickReply").is_none());
+
+        request.quick_reply = false;
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["quickReply"], false);
+        let back: AskRequest = serde_json::from_value(value).unwrap();
+        assert!(!back.quick_reply);
+
+        // A sender that predates the field keeps the menu.
+        let mut legacy =
+            serde_json::to_value(AskRequest::new(MessagePrompt::default(), Vec::new(), false))
+                .unwrap();
+        legacy.as_object_mut().unwrap().remove("quickReply");
+        let parsed: AskRequest = serde_json::from_value(legacy).unwrap();
+        assert!(parsed.quick_reply);
+    }
+
+    #[test]
+    fn escalation_reason_round_trips_and_is_omitted_when_absent() {
+        let mut request = AskRequest::new(MessagePrompt::default(), Vec::new(), false);
+        assert!(serde_json::to_value(&request)
+            .unwrap()
+            .get("escalated")
+            .is_none());
+        for (reason, wire) in [
+            (EscalationReason::Asked, "asked"),
+            (EscalationReason::Repeated, "repeated"),
+            (EscalationReason::Requested, "requested"),
+        ] {
+            request.escalated = Some(reason);
+            let value = serde_json::to_value(&request).unwrap();
+            assert_eq!(value["escalated"], wire);
+            let back: AskRequest = serde_json::from_value(value).unwrap();
+            assert_eq!(back.escalated, Some(reason));
+        }
+    }
 
     #[test]
     fn resolve_source_prefers_custom_over_agent() {

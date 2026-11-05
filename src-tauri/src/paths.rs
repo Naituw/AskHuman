@@ -180,6 +180,12 @@ pub fn interject_file() -> PathBuf {
     state_dir().join("interject.json")
 }
 
+/// Away mode and per-session mute (`~/.askhuman/state/away.json`, `docs/specs/special-replies.md`).
+/// The daemon is the only writer; hooks read it directly because they must not wait for the daemon.
+pub fn away_file() -> PathBuf {
+    state_dir().join("away.json")
+}
+
 /// Final-failure cards the user has not answered yet (`~/.askhuman/state/failure-cards.json`).
 /// Written while a card is waiting and removed once it is answered, replaced or revoked, so a daemon
 /// replacement can bring the card back (`docs/specs/agent-failure-inbox.md` §5.1).

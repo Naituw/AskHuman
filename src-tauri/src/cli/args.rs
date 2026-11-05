@@ -38,6 +38,9 @@ pub struct AskArgs {
     pub whats_next: bool,
     /// Suggested whats-next tasks from `-o`/`-o!`; always empty for ordinary asks.
     pub whats_next_options: Vec<OptArg>,
+    /// `--escalate`: insist on reaching the user although away mode is on. Meaningful only to the
+    /// daemon; in every other state it changes nothing.
+    pub escalate: bool,
 }
 
 /// 解析 `AskHuman <Message> [-f <path>] [-q <text> [-o <opt>] ...]`。
@@ -70,6 +73,7 @@ pub fn parse_ask(
     let mut single = false;
     let mut output_format = crate::models::OutputFormat::Text;
     let mut whats_next = false;
+    let mut escalate = false;
 
     let mut seen_positional = false;
     let mut seen_question_flag = false;
@@ -156,6 +160,10 @@ pub fn parse_ask(
                 whats_next = true;
                 i += 1;
             }
+            "--escalate" => {
+                escalate = true;
+                i += 1;
+            }
             a if a.starts_with('-') => {
                 return Err(tr(lang, "cli.unknownOptionColon").replace("{opt}", a));
             }
@@ -197,6 +205,7 @@ pub fn parse_ask(
             output_format: crate::models::OutputFormat::Text,
             whats_next: true,
             whats_next_options: lead_options,
+            escalate,
         });
     }
 
@@ -227,6 +236,7 @@ pub fn parse_ask(
         output_format,
         whats_next: false,
         whats_next_options: Vec::new(),
+        escalate,
     })
 }
 
@@ -675,5 +685,30 @@ mod tests {
         let p = pa(&v(&["report", "--whats-next"])).unwrap();
         assert!(p.whats_next);
         assert_eq!(p.message_text, "report");
+    }
+
+    // ===== --escalate (docs/specs/special-replies.md D4) =====
+
+    #[test]
+    fn escalate_flag_parses_for_asks_and_whats_next() {
+        let p = pa(&v(&["Which one?"])).unwrap();
+        assert!(!p.escalate);
+        let p = pa(&v(&["Which one?", "--escalate"])).unwrap();
+        assert!(p.escalate);
+        assert_eq!(p.questions.len(), 1);
+        // Free position, also with other flags and with -q questions.
+        let p = pa(&v(&["--escalate", "-q", "Q1", "-o", "A"])).unwrap();
+        assert!(p.escalate);
+        assert_eq!(p.questions[0].message, "Q1");
+        // whats-next keeps it as well.
+        let p = pa(&v(&["--whats-next", "done", "--escalate"])).unwrap();
+        assert!(p.whats_next);
+        assert!(p.escalate);
+        assert_eq!(p.message_text, "done");
+        let p = pa(&v(&["--whats-next", "--escalate", "-o!", "Add tests"])).unwrap();
+        assert!(p.escalate);
+        assert_eq!(p.whats_next_options.len(), 1);
+        // A bare flag with no content is still an error: there is nothing to ask.
+        assert!(pa(&v(&["--escalate"])).is_err());
     }
 }

@@ -226,6 +226,10 @@ pub struct TaskRequest {
     /// 结果渲染为一段纯文本。旧 CLI 不带 → false（普通提问，行为不变）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub whats_next: bool,
+    /// The Agent insists on reaching the user although away mode is on (`--escalate`, MCP
+    /// `escalate: true`). Only the daemon decides what that means; older clients never send it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub escalate: bool,
 }
 
 impl TaskRequest {
@@ -594,6 +598,10 @@ pub enum ClientMsg {
         action: ChannelAction,
         #[serde(default)]
         answers: Vec<QuestionAnswer>,
+        /// A one-shot instruction sent along with the answer (quick-reply menu: away mode, stop
+        /// using AskHuman). The daemon applies it only when this answer is the one accepted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        directive: Option<crate::daemon::away::Directive>,
     },
     /// GUI Helper submits a structured confirmation choice. `choice_index` is mapped through the
     /// daemon-owned request ledger; GUI-provided action ids are never accepted.
@@ -731,6 +739,9 @@ pub enum ClientMsg {
     PermissionRules { op: PermissionRulesOp },
     /// iOS channel management (settings process / CLI). Replies with one `Ios` frame.
     Ios { op: IosOp },
+    /// Away mode and per-session mute (`docs/specs/special-replies.md`): read or change the state.
+    /// Replies with one `Away` frame carrying the state afterwards.
+    Away { op: crate::daemon::away::AwayOp },
     /// GUI 启动新任务后把活跃槽切到 popup（spec gui-agent-task-launch G11）：人在电脑旁，
     /// 新 Agent 的提问默认弹窗。即发即走，无回包；旧 daemon 解析失败断连无副作用。
     ActivatePopupSlot,
@@ -976,6 +987,10 @@ pub enum ServerMsg {
     /// iOS channel management reply (`ClientMsg::Ios`).
     Ios {
         result: IosResult,
+    },
+    /// Reply to `ClientMsg::Away`: the away state after the operation.
+    Away {
+        snapshot: crate::daemon::away::AwaySnapshot,
     },
 }
 
@@ -1601,5 +1616,103 @@ mod tests {
             serde_json::to_value(&answer).unwrap(),
             serde_json::json!({"type": "agentMessage", "result": {"Ok": {"status": "accepted"}}})
         );
+    }
+
+    /// The escalation flag is sent only when set, and a task from an older client still parses.
+    #[test]
+    fn task_request_escalate_flag_is_optional_on_the_wire() {
+        let legacy = r#"{
+          "message":{"text":"done","files":[]},
+          "questions":[{"message":"continue?","predefinedOptions":[]}],
+          "isMarkdown":true,
+          "source":"Codex",
+          "lang":"en"
+        }"#;
+        let mut task: TaskRequest = serde_json::from_str(legacy).unwrap();
+        assert!(!task.escalate);
+        assert!(!serde_json::to_string(&task).unwrap().contains("escalate"));
+        task.escalate = true;
+        let serialized = serde_json::to_string(&task).unwrap();
+        assert!(serialized.contains(r#""escalate":true"#));
+        let back: TaskRequest = serde_json::from_str(&serialized).unwrap();
+        assert!(back.escalate);
+    }
+
+    /// An answer from a popup without the quick-reply menu carries no directive; one with it
+    /// round-trips, and the optional field never shows up when unset.
+    #[test]
+    fn answer_directive_is_optional_and_round_trips() {
+        let legacy = r#"{"type":"answer","request_id":"r1","action":"send","answers":[]}"#;
+        let ClientMsg::Answer { directive, .. } = serde_json::from_str(legacy).unwrap() else {
+            panic!("not an answer");
+        };
+        assert!(directive.is_none());
+
+        let msg = ClientMsg::Answer {
+            request_id: "r1".into(),
+            action: ChannelAction::Send,
+            answers: Vec::new(),
+            directive: None,
+        };
+        assert!(!serde_json::to_string(&msg).unwrap().contains("directive"));
+
+        let msg = ClientMsg::Answer {
+            request_id: "r1".into(),
+            action: ChannelAction::Send,
+            answers: Vec::new(),
+            directive: Some(crate::daemon::away::Directive {
+                kind: crate::daemon::away::DirectiveKind::Away,
+                scope: crate::daemon::away::Scope::Session,
+                note: Some("back at 3".into()),
+            }),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""directive":{"kind":"away","scope":"session","note":"back at 3"}"#)
+        );
+        let ClientMsg::Answer { directive, .. } = serde_json::from_str(&json).unwrap() else {
+            panic!("not an answer");
+        };
+        assert_eq!(directive.unwrap().note.as_deref(), Some("back at 3"));
+    }
+
+    /// The away operation and its reply keep a stable wire shape (tray, CLI and phone share it).
+    #[test]
+    fn away_messages_round_trip() {
+        use crate::daemon::away::{AwayOp, AwaySnapshot, SessionSetting};
+
+        let ops = [
+            AwayOp::State,
+            AwayOp::Start { note: None },
+            AwayOp::Start {
+                note: Some("lunch".into()),
+            },
+            AwayOp::End,
+            AwayOp::Session {
+                session_key: "sid:abc".into(),
+                setting: SessionSetting::Mute,
+                note: None,
+            },
+        ];
+        for op in ops {
+            let json = serde_json::to_string(&ClientMsg::Away { op: op.clone() }).unwrap();
+            let ClientMsg::Away { op: back } = serde_json::from_str(&json).unwrap() else {
+                panic!("not an away op: {json}");
+            };
+            assert_eq!(back, op, "{json}");
+        }
+        assert_eq!(
+            serde_json::to_value(ClientMsg::Away { op: AwayOp::End }).unwrap(),
+            serde_json::json!({"type": "away", "op": {"op": "end"}})
+        );
+
+        let reply = ServerMsg::Away {
+            snapshot: AwaySnapshot::default(),
+        };
+        let json = serde_json::to_string(&reply).unwrap();
+        let ServerMsg::Away { snapshot } = serde_json::from_str(&json).unwrap() else {
+            panic!("not an away reply: {json}");
+        };
+        assert!(!snapshot.is_away());
     }
 }

@@ -228,7 +228,33 @@ fn confirmation_suppression_reason(
     session_id: &str,
     input: &Value,
 ) -> Option<String> {
-    confirmation_suppression_reason_with(kind, session_id, input, &super::delegated::silenced)
+    suppression_reason_with_mute(
+        kind,
+        session_id,
+        input,
+        &crate::daemon::away::session_muted,
+        &super::delegated::silenced,
+    )
+}
+
+/// Audit reason of a Stop confirmation silenced because the user turned AskHuman off for the
+/// session (`docs/specs/special-replies.md` D6).
+const MUTED_REASON: &str = "session_muted";
+
+/// `confirmation_suppression_reason` with the mute lookup injected. The user's own instruction
+/// comes first: while AskHuman is off for the session no card is shown, and the hook reports the
+/// turn end like any other unconfirmed stop.
+fn suppression_reason_with_mute(
+    kind: AgentKind,
+    session_id: &str,
+    input: &Value,
+    muted: &dyn Fn(&str) -> bool,
+    delegated_silence: &dyn Fn(&str, Option<&Value>) -> Option<String>,
+) -> Option<String> {
+    if muted(session_id) {
+        return Some(MUTED_REASON.to_string());
+    }
+    confirmation_suppression_reason_with(kind, session_id, input, delegated_silence)
 }
 
 fn confirmation_suppression_reason_with(
@@ -390,6 +416,7 @@ pub(crate) fn build_task(
         perf_id: String::new(),
         perf_autodismiss: false,
         whats_next: false,
+        escalate: false,
     }
 }
 
@@ -600,6 +627,55 @@ mod tests {
             )
             .as_deref(),
             Some("codex_transcript_path_null")
+        );
+    }
+
+    #[test]
+    fn a_muted_session_gets_no_stop_confirmation_whatever_the_agent() {
+        let muted = |session: &str| session == "quiet";
+        for kind in [
+            AgentKind::Claude,
+            AgentKind::Codex,
+            AgentKind::Cursor,
+            AgentKind::Grok,
+            AgentKind::Pi,
+        ] {
+            assert_eq!(
+                suppression_reason_with_mute(
+                    kind,
+                    "quiet",
+                    &json!({"transcript_path":"/tmp/rollout.jsonl"}),
+                    &muted,
+                    &never_delegated
+                )
+                .as_deref(),
+                Some("session_muted"),
+                "{kind:?}"
+            );
+            // Another session of the same agent is untouched.
+            assert_eq!(
+                suppression_reason_with_mute(
+                    kind,
+                    "other",
+                    &json!({"transcript_path":"/tmp/rollout.jsonl"}),
+                    &muted,
+                    &never_delegated
+                ),
+                None,
+                "{kind:?}"
+            );
+        }
+        // Mute takes the audit reason over the delegated-run reasons.
+        assert_eq!(
+            suppression_reason_with_mute(
+                AgentKind::Codex,
+                "quiet",
+                &json!({"transcript_path":null}),
+                &muted,
+                &never_delegated
+            )
+            .as_deref(),
+            Some("session_muted")
         );
     }
 

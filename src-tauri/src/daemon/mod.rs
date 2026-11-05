@@ -1,6 +1,7 @@
 //! Cross-platform daemon entry point and shared server core.
 
 pub mod ask_dedup;
+pub mod away;
 pub mod config_watch;
 pub mod lifecycle;
 pub mod popup_focus;

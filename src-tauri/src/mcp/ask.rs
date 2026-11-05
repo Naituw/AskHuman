@@ -281,6 +281,10 @@ pub struct AskParams {
     /// Optional file paths (images or documents) to attach to what the human sees.
     #[serde(default)]
     pub files: Option<Vec<String>>,
+    /// Set to true ONLY when a previous AskHuman reply told you the user is away and instructed
+    /// you to escalate. Leave it out otherwise.
+    #[serde(default)]
+    pub escalate: Option<bool>,
     #[serde(default, rename = "__askhuman_session_token_v1")]
     #[schemars(skip)]
     session_token: Option<String>,
@@ -347,6 +351,10 @@ pub struct WhatsNextParams {
     /// Optional file paths (e.g. a report or summary document) to attach to what the human sees.
     #[serde(default)]
     pub files: Option<Vec<String>>,
+    /// Set to true ONLY when a previous AskHuman reply told you the user is away and instructed
+    /// you to escalate. Leave it out otherwise.
+    #[serde(default)]
+    pub escalate: Option<bool>,
     #[serde(default, rename = "__askhuman_session_token_v1")]
     #[schemars(skip)]
     session_token: Option<String>,
@@ -1128,6 +1136,9 @@ pub(crate) fn ask_arguments_value(params: &AskParams) -> Value {
             serde_json::to_value(value).expect("file paths are serializable"),
         );
     }
+    if params.escalate == Some(true) {
+        object.insert("escalate".into(), Value::Bool(true));
+    }
     Value::Object(object)
 }
 
@@ -1156,6 +1167,9 @@ pub(crate) fn whats_next_arguments_value(params: &WhatsNextParams) -> Value {
             "files".into(),
             serde_json::to_value(value).expect("file paths are serializable"),
         );
+    }
+    if params.escalate == Some(true) {
+        object.insert("escalate".into(), Value::Bool(true));
     }
     Value::Object(object)
 }
@@ -1299,6 +1313,10 @@ fn build_argv(params: &AskParams) -> Vec<String> {
         }
     }
 
+    if params.escalate == Some(true) {
+        argv.push("--escalate".to_string());
+    }
+
     argv
 }
 
@@ -1323,6 +1341,9 @@ fn build_whats_next_argv(params: &WhatsNextParams) -> Vec<String> {
             argv.push("-f".to_string());
             argv.push(f.clone());
         }
+    }
+    if params.escalate == Some(true) {
+        argv.push("--escalate".to_string());
     }
     argv
 }

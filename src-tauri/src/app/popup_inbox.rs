@@ -458,6 +458,7 @@ mod tests {
             request_id: id.into(),
             action: crate::models::ChannelAction::Cancel,
             answers: vec![],
+            directive: None,
         }
     }
     #[test]

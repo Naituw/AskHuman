@@ -74,9 +74,22 @@ pub struct RequestEntry {
     pub cancel: Arc<Notify>,
     /// 渲染结果发送端（协调器 finish 与看门狗共用；连接处理器从对应 rx 取）。
     pub final_tx: UnboundedSender<RenderOutcome>,
+    /// The one-shot directive that came with the answer being accepted (quick-reply menu); the
+    /// daemon applies it when the answer's result is delivered.
+    directive: Mutex<Option<crate::daemon::away::Directive>>,
 }
 
 impl RequestEntry {
+    /// Stashes (or, with `None`, drops) the directive of the answer being submitted.
+    pub fn set_directive(&self, directive: Option<crate::daemon::away::Directive>) {
+        *self.directive.lock().unwrap() = directive;
+    }
+
+    /// Takes the stashed directive, if any.
+    pub fn take_directive(&self) -> Option<crate::daemon::away::Directive> {
+        self.directive.lock().unwrap().take()
+    }
+
     pub fn request(&self) -> &AskRequest {
         self.show
             .interaction
@@ -419,6 +432,17 @@ impl RequestRegistry {
         task: TaskRequest,
         agent_console_session_id: Option<String>,
     ) -> (Arc<RequestEntry>, UnboundedReceiver<RenderOutcome>) {
+        self.create_escalated(task, agent_console_session_id, None)
+    }
+
+    /// `create` for a question that reached the user although away mode is on: the reason travels
+    /// with the request so every surface can say why it came through.
+    pub fn create_escalated(
+        &self,
+        task: TaskRequest,
+        agent_console_session_id: Option<String>,
+        escalated: Option<crate::models::EscalationReason>,
+    ) -> (Arc<RequestEntry>, UnboundedReceiver<RenderOutcome>) {
         let request_id = uuid::Uuid::new_v4().to_string();
         let token = uuid::Uuid::new_v4().to_string();
         let lang = Lang::resolve(&task.lang);
@@ -432,6 +456,7 @@ impl RequestRegistry {
         let fingerprint = super::ask_dedup::fingerprint(&task);
         let coalesce_fingerprint = super::ask_dedup::coalesce_fingerprint(&task);
         let popup_kind = task.popup_kind();
+        let quick_reply = super::away::is_agent_ask(&task);
         let held = crate::agents::failure::is_card_id(task.native_request_id.as_deref());
 
         // Daemon 分配权威 request_id（用于临时目录）。
@@ -441,6 +466,8 @@ impl RequestRegistry {
         request.single = task.single;
         request.output_format = task.output_format;
         request.whats_next = task.whats_next;
+        request.escalated = escalated;
+        request.quick_reply = quick_reply;
 
         let (final_tx, final_rx) = tokio::sync::mpsc::unbounded_channel();
         let coordinator = Coordinator::new_ipc(
@@ -508,6 +535,7 @@ impl RequestRegistry {
             held,
             cancel: Arc::new(Notify::new()),
             final_tx,
+            directive: Mutex::new(None),
         });
 
         let mut inner = self.inner.lock().unwrap();
@@ -699,6 +727,17 @@ impl RequestRegistry {
     pub fn in_flight_count(&self) -> usize {
         let inner = self.inner.lock().unwrap();
         inner.by_id.len() + inner.confirm_by_id.len()
+    }
+
+    /// Questions that reached the user as escalations from away mode and are still waiting for an
+    /// answer (the counter on the desktop capsule and the phone's strip).
+    pub fn escalated_waiting(&self) -> usize {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .by_id
+            .values()
+            .filter(|entry| !entry.held && entry.request().escalated.is_some())
+            .count()
     }
 
     /// 当前所有在途请求项的快照（供「补推在途」把已发问题补发到新激活的渠道）。
@@ -1101,6 +1140,26 @@ mod tests {
             entry.show.agent_console_session_id.as_deref(),
             Some("conversation-1")
         );
+    }
+
+    #[test]
+    fn only_an_agents_own_questions_offer_the_quick_reply_menu() {
+        let registry = RequestRegistry::new();
+
+        let (entry, _rx) = registry.create(ask_task(Some("s1"), "continue?"), None);
+        assert!(entry.request().quick_reply);
+
+        // A question the host application owns (a native Codex request, a failure card …).
+        let mut native = ask_task(Some("s1"), "native?");
+        native.native_request_id = Some("codex:thread:turn:item".into());
+        let (entry, _rx) = registry.create(native, None);
+        assert!(!entry.request().quick_reply);
+
+        // The Stop-hook confirmation is not a question the Agent asked.
+        let mut stop = ask_task(Some("s1"), "stop?");
+        stop.stop_confirmation = true;
+        let (entry, _rx) = registry.create(stop, None);
+        assert!(!entry.request().quick_reply);
     }
 
     fn ask_task(session: Option<&str>, question: &str) -> TaskRequest {

@@ -362,6 +362,7 @@ fn state() -> Arc<ServerState> {
         agents: Arc::new(AgentRegistry::new()),
         agent_controls: crate::agents::control::ControlStore::load(),
         interject: crate::agents::interject::InterjectStore::new(),
+        away: crate::daemon::away::AwayEngine::in_memory(),
         grok_bindings: Default::default(),
         agent_subs: Default::default(),
         tray_subs: Default::default(),
@@ -559,6 +560,7 @@ async fn fragmented_answer(external_terminal: bool) {
             }],
             ..Default::default()
         }],
+        directive: None,
     };
     let mut bytes = serde_json::to_vec(&answer).unwrap();
     bytes.push(b'\n');
@@ -615,6 +617,7 @@ async fn fragmented_answer(external_terminal: bool) {
                 user_input: Some("second".into()),
                 ..Default::default()
             }],
+            directive: None,
         },
     )
     .await

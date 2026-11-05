@@ -243,6 +243,7 @@ impl GuiBridge {
             request_id,
             action: ChannelAction::Cancel,
             answers: Vec::new(),
+            directive: None,
         });
     }
 
@@ -250,12 +251,17 @@ impl GuiBridge {
         !self.presented.swap(true, Ordering::SeqCst)
     }
 
-    /// 提交作答。
-    pub fn send_answer(&self, answers: Vec<QuestionAnswer>) {
+    /// 提交作答。`directive` is the one-shot instruction picked from the quick-reply menu.
+    pub fn send_answer(
+        &self,
+        answers: Vec<QuestionAnswer>,
+        directive: Option<crate::daemon::away::Directive>,
+    ) {
         self.terminal(crate::ipc::ClientMsg::Answer {
             request_id: self.request_id(),
             action: ChannelAction::Send,
             answers,
+            directive,
         });
     }
 
@@ -265,6 +271,7 @@ impl GuiBridge {
             request_id: self.request_id(),
             action: ChannelAction::Cancel,
             answers: Vec::new(),
+            directive: None,
         });
     }
 

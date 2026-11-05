@@ -25,8 +25,9 @@ use tauri::{AppHandle, Manager};
 use tokio::io::BufReader;
 use tokio::sync::Notify;
 
-const QUICK_ASK_INTERJECT: &str =
-    "I have a new thought. Before continuing, ask me immediately using the questioning tool described in your instructions.";
+/// The fixed interjection behind "Ask Me Now". The daemon recognises the exact text (spec N2), so
+/// the constant lives with the away engine.
+const QUICK_ASK_INTERJECT: &str = crate::daemon::away::QUICK_ASK_TEXT;
 
 /// 某 label 是否为宿主统一承载的窗口（用于窗口计数 / 续命判定）。
 /// 插话 composer 窗口每 session 一个，label 动态（`interject-<hash>`），按前缀识别。

@@ -509,6 +509,8 @@ pub fn sample_ask(id: &str) -> (Arc<AskRequest>, RequestView) {
         single: false,
         output_format: Default::default(),
         whats_next: false,
+        escalated: None,
+        quick_reply: true,
     };
     let view = RequestView {
         id: id.to_string(),

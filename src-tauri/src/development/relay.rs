@@ -456,6 +456,7 @@ async fn forward(
         perf_id: String::new(),
         perf_autodismiss: false,
         whats_next: false,
+        escalate: false,
     };
     let path = payload_path(&info.worktree, &info.id)?;
     strip_todos(&mut task.questions);

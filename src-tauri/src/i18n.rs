@@ -92,8 +92,37 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "用户取消了操作，你必须重新询问用户是否确定要取消，直到用户给出明确答复",
         ),
         "status.unanswered" => pick(lang, "The user did not answer this question", "用户未回答此问题"),
+        // —— Away mode and mute (docs/specs/special-replies.md §4.1): the text an Agent receives
+        // instead of an answer. The result marker is added by the caller. ——
+        "away.reply.ask" => pick(
+            lang,
+            "The user is away (AskHuman away mode is on) and cannot answer right now. This is the user's own instruction.\nDo not wait for an answer: analyze the situation carefully and carry on with the current work in the way you judge best.\nOnly if you truly cannot make progress, or everything is done, call AskHuman again with --escalate (MCP: escalate: true); the user will then receive it as if they were present.",
+            "用户已离开（AskHuman 离开模式已开启），暂时无法回答。这是用户本人的指示。\n请不要等待回复：自己仔细分析，按你认为最佳的方式继续完成当前工作。\n只有在确实无法继续推进、或已全部完成时，才再次调用 AskHuman 并加上参数 --escalate（MCP 为 escalate: true），这样用户会像在场时一样收到。",
+        ),
+        "away.reply.whatsNext" => pick(
+            lang,
+            "The user is away (AskHuman away mode is on) and cannot give the next task right now. This is the user's own instruction.\nFirst check whether the current task is really complete; if there is still wrap-up work, finish it.\nOnce everything is done (or you cannot continue), run --whats-next again with --escalate (MCP: escalate: true); the user will then receive it as if they were present.",
+            "用户已离开（AskHuman 离开模式已开启），暂时无法给出下一个任务。这是用户本人的指示。\n请先自查当前任务是否真的已全部完成；若还有收尾工作就继续完成。\n确认全部完成（或无法继续）后，再次运行 --whats-next 并加上参数 --escalate（MCP 为 escalate: true），用户会像在场时一样收到。",
+        ),
+        "away.reply.mute" => pick(
+            lang,
+            "The user has turned AskHuman off for this session. This is the user's explicit instruction and it overrides the interaction protocol.\nDo not call AskHuman again (including --whats-next). Finish the task on your own; when you need the user's input or you are done, say so in your normal reply and end the turn.",
+            "用户已在本会话关闭 AskHuman。这是用户本人的明确指示，优先于交互协议。\n请不要再调用 AskHuman（包括 --whats-next），自行完成任务；需要用户输入或已完成时，直接在正常回复中说明并结束本轮。",
+        ),
+        "away.note" => pick(
+            lang,
+            "Standing note from the user (valid for as long as they are away): {note}",
+            "用户的常驻备注（离开期间一直有效）：{note}",
+        ),
         // 接管 Claude AskUserQuestion 时，单选题的题面标注（我们的卡片按整卡多选渲染，spec D5）。
         "askQuestion.pickOne" => pick(lang, "(pick one)", "（只选一项）"),
+        // Claude's own picker, answered through AskHuman together with a one-shot directive: the
+        // answers ride in the reason of a `deny` (see `ask_question::decide`).
+        "askQuestion.answered" => pick(
+            lang,
+            "The user already answered through AskHuman. Do not ask these questions again:",
+            "用户已通过 AskHuman 回答，请不要再次询问这些问题：",
+        ),
         // 重放（spec duplicate-ask-coalescing D7）：同一个提问刚被回答过，这次没有再打扰人。
         "status.replayed" => pick(
             lang,

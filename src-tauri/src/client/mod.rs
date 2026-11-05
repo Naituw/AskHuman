@@ -272,6 +272,41 @@ pub async fn permission_rules_op(
     }
 }
 
+/// Away mode operation (popup banner, tray, settings window, CLI): the state lives in the daemon,
+/// which answers with the state after the operation. Starts the daemon when it is not running.
+pub async fn away_op(
+    op: crate::daemon::away::AwayOp,
+) -> Result<crate::daemon::away::AwaySnapshot, String> {
+    ensure_running().await.map_err(|e| e.to_string())?;
+    let (mut reader, mut writer) = connect_split().await.map_err(|e| e.to_string())?;
+    ipc::write_msg(&mut writer, &ClientMsg::Hello(hello()))
+        .await
+        .map_err(|e| e.to_string())?;
+    loop {
+        match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
+            Ok(Some(ServerMsg::HelloAck(ack))) => {
+                if ack.status == HelloStatus::Ok {
+                    break;
+                }
+                return Err("daemon is restarting".to_string());
+            }
+            Ok(Some(_)) => continue,
+            _ => return Err("daemon connection lost".to_string()),
+        }
+    }
+    ipc::write_msg(&mut writer, &ClientMsg::Away { op })
+        .await
+        .map_err(|e| e.to_string())?;
+    loop {
+        match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
+            Ok(Some(ServerMsg::Away { snapshot })) => return Ok(snapshot),
+            Ok(Some(ServerMsg::Error { message })) => return Err(message),
+            Ok(Some(_)) => continue,
+            _ => return Err("daemon connection lost".to_string()),
+        }
+    }
+}
+
 /// Tell an already-running daemon to reload the persisted update snapshot. This is best-effort and
 /// deliberately does not start the daemon merely because Settings or the tray checked for updates.
 pub async fn notify_update_state_changed() {

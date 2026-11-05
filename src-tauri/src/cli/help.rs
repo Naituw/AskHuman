@@ -48,6 +48,7 @@ pub fn help_text(lang: Lang) -> String {
             "  --select-only           Choice only: forbid free text/attachments (each question must have options)".to_string(),
             "  --output <text|json>    Output format (default: text)".to_string(),
             "  --whats-next            Ask \"what should we do next?\" with optional suggested tasks and project todos (see --agent-help)".to_string(),
+            "  --escalate              Reach the user even in away mode; only when an away reply told you to (see --agent-help)".to_string(),
             String::new(),
             "Management:".to_string(),
             "  --settings              Open the settings window".to_string(),
@@ -88,6 +89,7 @@ pub fn help_text(lang: Lang) -> String {
             "  --select-only           严格选择：禁用自由文本/附件（每题必须有选项）".to_string(),
             "  --output <text|json>    输出格式（默认 text）".to_string(),
             "  --whats-next            提问「接下来做什么？」，可附建议任务，本项目待办也作为选项（见 --agent-help）".to_string(),
+            "  --escalate              即使用户处于离开模式也要联系到他；仅当离开提示要求时使用（见 --agent-help）".to_string(),
             String::new(),
             "管理:".to_string(),
             "  --settings              启动设置界面".to_string(),
@@ -263,6 +265,16 @@ pub fn agent_help_text(lang: Lang) -> String {
             );
             out.push("  suggestions. Takes no -q (the question is fixed).".to_string());
             out.push(String::new());
+            out.push("Away mode:".to_string());
+            out.push(
+                "  The user may be away; AskHuman then answers for them and says what to do."
+                    .to_string(),
+            );
+            out.push(
+                "  Add --escalate (MCP: escalate: true) only when that reply tells you to."
+                    .to_string(),
+            );
+            out.push(String::new());
             out.push("Context-compaction recovery:".to_string());
             out.push(format!(
                 "  Run {prog} --show-last after summarization, or whenever the exact last AskHuman question/answer is uncertain."
@@ -327,6 +339,12 @@ pub fn agent_help_text(lang: Lang) -> String {
             );
             out.push("  选项，因为结束项已内置。无建议时省略。不接受 -q（问题固定）。".to_string());
             out.push(String::new());
+            out.push("离开模式:".to_string());
+            out.push("  用户可能已离开；此时 AskHuman 会代为回复，并告诉你该怎么做。".to_string());
+            out.push(
+                "  仅当那条回复要求时，才加上 --escalate（MCP 为 escalate: true）。".to_string(),
+            );
+            out.push(String::new());
             out.push("上下文压缩恢复:".to_string());
             out.push(format!(
                 "  被摘要后，或不确定上一次 AskHuman 问答的精确内容时，运行 {prog} --show-last。"
@@ -361,7 +379,11 @@ pub fn scripting_help_text(lang: Lang) -> String {
             out.push(String::new());
             out.push("JSON output (--output json):".to_string());
             out.push(
-                "  action   \"answer\" when the user responded, \"cancel\" when they cancelled"
+                "  action   \"answer\" when the user responded, \"cancel\" when they cancelled,"
+                    .to_string(),
+            );
+            out.push(
+                "           \"auto_reply\" when away mode answered instead (read status)"
                     .to_string(),
             );
             out.push(
@@ -404,7 +426,10 @@ pub fn scripting_help_text(lang: Lang) -> String {
             out.extend(exit_code_lines(lang));
             out.push(String::new());
             out.push("JSON 输出（--output json）:".to_string());
-            out.push("  action   用户作答为 \"answer\"，取消为 \"cancel\"".to_string());
+            out.push(
+                "  action   用户作答为 \"answer\"，取消为 \"cancel\"，离开模式代为回复为 \"auto_reply\"（见 status）"
+                    .to_string(),
+            );
             out.push("  channel  回应来自哪个渠道（popup/slack/feishu/...）".to_string());
             out.push("  answers  仅 \"answer\" 时出现；每个「已作答」的问题一条:".to_string());
             out.push("    question_index    问题的 0 基下标".to_string());
@@ -545,5 +570,19 @@ mod tests {
         assert!(zh.contains("任务完成后的交接（--whats-next）"));
         assert!(zh.contains("仅在当前任务完全完成后运行"));
         assert!(zh.contains("不要添加结束/停止\n  选项，因为结束项已内置"));
+    }
+
+    #[test]
+    fn help_documents_escalate_for_away_mode() {
+        // docs/specs/special-replies.md D4: --help lists the flag, --agent-help says when to use it
+        // (only when an away reply asks for it) and the scripting help documents the new action.
+        for lang in [Lang::En, Lang::Zh] {
+            assert!(help_text(lang).contains("--escalate"));
+            let agent = agent_help_text(lang);
+            assert!(agent.contains("--escalate"));
+            assert!(agent.contains("escalate: true"));
+            let scripting = scripting_help_text(lang);
+            assert!(scripting.contains("auto_reply"));
+        }
     }
 }
