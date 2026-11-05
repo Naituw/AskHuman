@@ -64,7 +64,10 @@ struct ImageGalleryViewer: View {
             .accessibilityIdentifier("image-gallery")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    CloseToolbarButton { dismiss() }
+                        .accessibilityIdentifier("gallery-close")
+                }
                 ToolbarItem(placement: .principal) { heading }
                 if let url = images.indices.contains(position) ? arrived[images[position].assetId] : nil {
                     ToolbarItem(placement: .primaryAction) { ShareLink(item: url) }

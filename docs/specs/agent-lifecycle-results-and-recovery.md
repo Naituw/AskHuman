@@ -279,3 +279,13 @@ main 尚无新的 Dev 测试 profile 管线，Pi 原生控制在 Dev Instance �
 - [Cursor Hooks](https://cursor.com/docs/hooks#stop)：整轮 stop.status 与工具局部失败的不同层级。
 - [Cursor SDK](https://cursor.com/docs/sdk/typescript#local-agent-stores)：SDK 自有本地存储与恢复范围。
 - [Pi Extensions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md#agent_start--agent_end--agent_settled)：最终空闲边界与原生消息能力。
+
+### 5.5 错误卡保留期间的接续（2026-11-05）
+
+已登记且未处理的错误卡从首次检测失败保留 24 小时；一小时无活动进入 ended 或普通历史被 10 条容量裁剪，
+不撤销错误提醒或原生接续资格。registry 为该错误保留有限期引用，不伪造会话活动。
+支持原生接续的 Cursor Desktop、Codex Desktop 和 Pi 在点击时重新校验实际会话、空闲、代际、预期失败结果及在途请求；
+不能以新进程或新聊天冒充已消失的原会话。Cursor 聊天需已在窗口打开，本次不自动打开。
+临时不可用且明确没有发送时可以再点；已经提交但结果不明时必须先核实，不自动重发。
+生命周期的显式结束/新回合和用户“知道了”仍结束旧卡。
+详见 [24 小时接续设计](daemon-update-and-failure-recovery.md)与 [错误卡 §9](agent-failure-inbox.md#9-排空数小时后的恢复与-24-小时接续2026-11-05)。

@@ -22,7 +22,7 @@ struct TaskProgressScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Close") { store.dismissNewTask() }
+                CloseToolbarButton { store.dismissNewTask() }
                     .accessibilityIdentifier("task-close")
             }
         }

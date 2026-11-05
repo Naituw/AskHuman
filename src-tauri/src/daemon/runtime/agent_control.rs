@@ -273,14 +273,18 @@ pub(super) fn can_send_with(
     // A Cursor Desktop chat has no process whose exit would end it. "Ended" is the registry's
     // verdict after an hour without activity, so while the chat itself is still there it can be
     // continued like an idle one. Every other kind has an end that means it.
-    if rec["state"] == "ended" && !cursor_chat() {
+    if rec["state"] == "ended" && !cursor_chat() && !retained_result(rec) {
         return refuse("ended");
     }
     if state.agent_controls.pending(kind, sid) {
         return refuse("controlStarting");
     }
     if crate::codex_desktop::is_desktop_session(rec) {
-        return ios_agents::can_interject(rec);
+        let mut current = rec.clone();
+        if current["state"] == "ended" && retained_result(rec) {
+            current["state"] = "idle".into();
+        }
+        return ios_agents::can_interject(&current);
     }
     if rec["state"] == "working" {
         return ios_agents::can_interject(rec);
@@ -354,8 +358,13 @@ pub(super) async fn send_with(
     };
     // An "ended" Cursor Desktop chat is one the registry gave up on after an hour of silence;
     // `can_send_with` below decides whether the chat itself is still there to be continued.
-    let sendable =
-        rec["state"] == "idle" || (rec["state"] == "ended" && message.kind == AgentKind::Cursor);
+    let sendable = rec["state"] == "idle"
+        || (rec["state"] == "ended"
+            && (message.kind == AgentKind::Cursor
+                || message
+                    .expected_result_id
+                    .as_deref()
+                    .is_some_and(|id| valid_result(rec, id) && retained_result(rec))));
     if !sendable
         || state.registry.waiting_for_session(message.sid)
         || rec["waitingRequestId"]
@@ -616,6 +625,13 @@ pub(super) async fn send_from_console_with(
     }
 }
 
+fn retained_result(rec: &Value) -> bool {
+    rec["failureRetention"]["expiresMs"]
+        .as_u64()
+        .is_some_and(|expires| expires > now_ms())
+        && rec["failureRetention"]["resultId"] == rec["lastTurnResult"]["id"]
+}
+
 pub(super) fn valid_result(rec: &Value, id: &str) -> bool {
     !id.is_empty()
         && rec["lastTurnResult"]["id"] == id
@@ -642,6 +658,9 @@ fn apply(
             observation.turn_id.as_deref(),
         )
         .and_then(|operation| operation.started_control());
+    if state.closing.load(Ordering::SeqCst) {
+        return;
+    }
     let applied = state
         .agents
         .apply_observed(kind, event, sid, None, cwd, 0, Some(&observation));
@@ -1170,5 +1189,75 @@ mod tests {
         assert!(!valid_result(&rec, "old"));
         rec["lastTurnResult"]["outcome"] = json!("interrupted");
         assert!(!valid_result(&rec, "r"));
+    }
+    #[tokio::test]
+    async fn failure_continuation_after_ttl_can_retry_a_definite_rejection_but_not_replay_a_click()
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        let result = TurnResult {
+            id: "failure".into(),
+            outcome: TurnOutcome::Failed,
+            source: Some("cursorLog".into()),
+            turn_id: Some("failed-turn".into()),
+            at: now_ms(),
+            reason: None,
+            summary: None,
+        };
+        state.agents.apply_observed(
+            AgentKind::Cursor,
+            LifecycleEvent::TurnEnd,
+            "chat",
+            None,
+            Some("/tmp/project".into()),
+            0,
+            Some(&Observation {
+                turn_id: Some("failed-turn".into()),
+                result: Some(result),
+                ..Default::default()
+            }),
+        );
+        let result_id = record(&state, "chat")["lastTurnResult"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        state
+            .agents
+            .retain_failure(AgentKind::Cursor, "chat", &result_id, now_ms() + 86_400_000);
+        state.agents.apply_event(
+            AgentKind::Cursor,
+            LifecycleEvent::SessionEnd,
+            "chat",
+            None,
+            None,
+            0,
+        );
+        let failure_message = |id| Message {
+            expected_result_id: Some(result_id.clone()),
+            ..message(id, "chat", "")
+        };
+        let unavailable = Chat::new(true, Some(MessageResult::Rejected("notFound".into())));
+        let first = send_with(&state, failure_message("first-click"), &unavailable).await;
+        assert_eq!(first.reason.as_deref(), Some(CHAT_NOT_LOADED));
+        let ready = Chat::new(true, Some(MessageResult::Started("new-turn".into())));
+        assert_eq!(
+            send_with(&state, failure_message("first-click"), &ready)
+                .await
+                .reason
+                .as_deref(),
+            Some(CHAT_NOT_LOADED)
+        );
+        assert!(
+            ready.sent().is_empty(),
+            "retransmitting one click never sends again"
+        );
+        assert_eq!(
+            send_with(&state, failure_message("second-click"), &ready)
+                .await
+                .status,
+            "delivered"
+        );
+        assert_eq!(ready.sent().len(), 1);
+        assert_eq!(record(&state, "chat")["state"], "working");
     }
 }

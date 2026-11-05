@@ -143,11 +143,10 @@ pub fn dispatch(args: &[String]) -> i32 {
         && args.first().is_some_and(|arg| arg == "run")
         && args.iter().skip(1).any(|arg| arg == "--background");
     // 子命令后仅允许 `--force`，以及 Windows 内部 detached run 的 `--background`。
-    if let Some(extra) = args
-        .iter()
-        .skip(1)
-        .find(|arg| arg.as_str() != "--force" && !(background && arg.as_str() == "--background"))
-    {
+    if let Some(extra) = args.iter().skip(1).find(|arg| {
+        arg.as_str() != "--force"
+            && !(background && matches!(arg.as_str(), "--background" | "--wait-for-handoff"))
+    }) {
         eprintln!("unknown daemon argument: {}", extra);
         return 1;
     }
@@ -179,15 +178,44 @@ fn run_cmd(background: bool) -> i32 {
     BACKGROUND_LOG_TO_FILE.store(background, Ordering::Relaxed);
     #[cfg(not(windows))]
     let _ = background;
-    let lock = match lifecycle::acquire_lock() {
-        Ok(Some(l)) => l,
-        Ok(None) => {
-            log("another daemon is already running; exiting");
-            return 0;
-        }
-        Err(e) => {
-            log(&format!("failed to acquire lock: {}", e));
-            return 1;
+    let wait_for_handoff = cfg!(windows) && std::env::args().any(|arg| arg == "--wait-for-handoff");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let lock = loop {
+        match lifecycle::acquire_lock() {
+            Ok(Some(lock)) => break lock,
+            Ok(None) if wait_for_handoff && Instant::now() < deadline => {
+                if block_on(async {
+                    tokio::time::timeout(Duration::from_millis(250), client::request_status())
+                        .await
+                        .ok()
+                        .flatten()
+                })
+                .is_some_and(|s| {
+                    !s.draining
+                        && s.fingerprint == Some(lifecycle::current_fingerprint())
+                        && s.protocol_version == ipc::PROTOCOL_VERSION
+                }) {
+                    super::handoff::healthy(lifecycle::current_fingerprint());
+                    return 0;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Ok(None) => {
+                log(if wait_for_handoff {
+                    "update handoff lock wait timed out"
+                } else {
+                    "another daemon is already running; exiting"
+                });
+                #[cfg(windows)]
+                if wait_for_handoff {
+                    super::handoff::timed_out();
+                }
+                return if wait_for_handoff { 1 } else { 0 };
+            }
+            Err(error) => {
+                log(&format!("failed to acquire lock: {error}"));
+                return 1;
+            }
         }
     };
     // The daemon's environment is not a Terminal window's, and the phone only shows a one-line
@@ -195,7 +223,12 @@ fn run_cmd(background: bool) -> i32 {
     crate::integrations::agent_launch::log_lookup_misses(true);
     // 复用 tauri 的全局（多线程）tokio 运行时，使各 Channel 的 `tauri::async_runtime::spawn`
     // 与 Daemon 自身的任务跑在同一运行时上（不初始化任何 GUI / AppKit）。
-    tauri::async_runtime::block_on(serve(lock))
+    let intent = Arc::new(Mutex::new(super::handoff::Intent::default()));
+    let code = tauri::async_runtime::block_on(serve(&lock, intent.clone()));
+    if *intent.lock().unwrap() == super::handoff::Intent::ReplaceOwnBinary {
+        return super::handoff::replace(lock, background);
+    }
+    code
 }
 
 struct ServerState {
@@ -214,6 +247,8 @@ struct ServerState {
     shutdown: tokio::sync::Notify,
     /// 排空状态（graceful drain）：true 时拒绝新 Submit/Detect，在途请求服务到完结后退出。
     draining: AtomicBool,
+    exit_intent: Mutex<super::handoff::Intent>,
+    closing: AtomicBool,
     /// 活动请求登记表。
     registry: Arc<RequestRegistry>,
     /// Cross-process popup focus owner and background cascade order.
@@ -312,6 +347,8 @@ fn test_state(directory: &std::path::Path) -> Arc<ServerState> {
         last_active: Mutex::new(Instant::now()),
         shutdown: Default::default(),
         draining: AtomicBool::new(true),
+        exit_intent: Mutex::new(Default::default()),
+        closing: AtomicBool::new(false),
         registry: RequestRegistry::new(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(Default::default()),
@@ -848,6 +885,9 @@ fn broadcast_popup_state(state: &Arc<ServerState>, message: ServerMsg) {
 
 /// 检测盘上二进制是否已被换新（应用内更新或外部 npm 更新）。变化则标记 pending + 广播。
 fn check_pending_update(state: &Arc<ServerState>) {
+    if state.closing.load(Ordering::SeqCst) {
+        return;
+    }
     let now_fp = lifecycle::launch_fingerprint();
     if now_fp == state.startup_fp {
         return;
@@ -870,7 +910,8 @@ fn check_pending_update(state: &Arc<ServerState>) {
         // 受 ASKHUMAN_DAEMON_AUTORESTART 开关控制（默认开），与 Hello 分支保持一致。
         let auto_restart = std::env::var("ASKHUMAN_DAEMON_AUTORESTART")
             .map(|v| v != "0")
-            .unwrap_or(true);
+            .unwrap_or(true)
+            && *state.exit_intent.lock().unwrap() != super::handoff::Intent::Stop;
         if auto_restart {
             restart_guard::record(restart_guard::Yield {
                 at_ms: now_ms(),
@@ -888,12 +929,13 @@ fn check_pending_update(state: &Arc<ServerState>) {
                 state.startup_fp.short(),
                 now_fp.short(),
             ));
+            request_exit(state, super::handoff::Intent::ReplaceOwnBinary);
             begin_drain(state);
         }
     }
 }
 
-async fn serve(_lock: LockGuard) -> i32 {
+async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i32 {
     let listener = match transport::bind() {
         Ok(l) => l,
         Err(e) => {
@@ -965,6 +1007,11 @@ async fn serve(_lock: LockGuard) -> i32 {
     sync_daemon_login_item();
     crate::integrations::agent_launch::cleanup_expired_records();
 
+    let failure_confirmations =
+        failure_confirmation::Cards::persistent(crate::paths::failure_cards_file());
+    let agents = Arc::new(AgentRegistry::load(
+        &failure_confirmations.retention_snapshot(),
+    ));
     let state = Arc::new(ServerState {
         startup_fp,
         exe_path,
@@ -974,6 +1021,8 @@ async fn serve(_lock: LockGuard) -> i32 {
         last_active: Mutex::new(Instant::now()),
         shutdown: tokio::sync::Notify::new(),
         draining: AtomicBool::new(false),
+        exit_intent: Mutex::new(Default::default()),
+        closing: AtomicBool::new(false),
         registry: RequestRegistry::new(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(super::popup_inbox::Host::default()),
@@ -985,11 +1034,9 @@ async fn serve(_lock: LockGuard) -> i32 {
             AppConfig::load(),
         )),
         update: Mutex::new(init_update_snapshot()),
-        agents: Arc::new(AgentRegistry::load()),
+        agents,
         agent_controls: crate::agents::control::ControlStore::load(),
-        failure_confirmations: failure_confirmation::Cards::persistent(
-            crate::paths::failure_cards_file(),
-        ),
+        failure_confirmations,
         interject: crate::agents::interject::InterjectStore::load(),
         away: crate::daemon::away::AwayEngine::load(),
         grok_bindings: crate::context_binding::GrokBindingRegistry::default(),
@@ -1008,6 +1055,7 @@ async fn serve(_lock: LockGuard) -> i32 {
         ios: Mutex::new(None),
     });
 
+    let mut background_tasks = Vec::new();
     // SIGTERM = `daemon stop` (graceful). launchd `bootout`, user logout and a plain `kill <pid>`
     // all deliver SIGTERM; without a handler the process died on the spot, leaving no log line and
     // cutting every in-flight popup off. Each signal is handled exactly like `ClientMsg::Stop
@@ -1016,13 +1064,14 @@ async fn serve(_lock: LockGuard) -> i32 {
     #[cfg(unix)]
     {
         let state = state.clone();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             use tokio::signal::unix::{signal, SignalKind};
             let Ok(mut term) = signal(SignalKind::terminate()) else {
                 log("failed to install SIGTERM handler; termination will be abrupt");
                 return;
             };
             while term.recv().await.is_some() {
+                request_exit(&state, super::handoff::Intent::Stop);
                 if state.registry.active_count() > 0 {
                     log("SIGTERM received with active requests; draining");
                     begin_drain(&state);
@@ -1031,27 +1080,27 @@ async fn serve(_lock: LockGuard) -> i32 {
                     state.shutdown.notify_one();
                 }
             }
-        });
+        }));
     }
 
     crate::cursor_desktop::start();
 
-    tokio::spawn(agent_control::watch_codex_cli(state.clone()));
-    tokio::spawn(agent_control::watch_cursor_log(state.clone()));
+    background_tasks.push(tokio::spawn(agent_control::watch_codex_cli(state.clone())));
+    background_tasks.push(tokio::spawn(agent_control::watch_cursor_log(state.clone())));
 
     // Failure cards the previous daemon had not seen answered come back once this one is serving.
     {
         let state = state.clone();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(2)).await;
             failure_confirmation::restore(&state);
-        });
+        }));
     }
 
     // The daemon owns desktop subscriptions and routes native prompts through the existing coordinator.
     {
         let state = state.clone();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             let bridge = crate::codex_desktop::shared();
             let mut requests = crate::codex_desktop::requests::Tracker::default();
             let mut was_enabled = false;
@@ -1072,13 +1121,13 @@ async fn serve(_lock: LockGuard) -> i32 {
                 was_enabled = enabled;
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
-        });
+        }));
     }
 
     // 空闲退出检查。
     {
         let state = state.clone();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             let timeout = idle_timeout();
             loop {
                 tokio::time::sleep(Duration::from_secs(30)).await;
@@ -1120,59 +1169,63 @@ async fn serve(_lock: LockGuard) -> i32 {
                     }
                 }
             }
-        });
+        }));
     }
 
     // 配置实时生效（A12）：监听 config.json 变更 → 重载 + 失效改动的 Router + 通知活动 GUI。
     {
         let state = state.clone();
         let mut rx = config_watch::spawn();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             while rx.recv().await.is_some() {
                 on_config_changed(&state).await;
             }
-        });
+        }));
     }
 
     // 渠道健康表变化（R7）→ 即时推一帧 TrayState（托盘警示实时出现/消失）。
     // 回调可能来自任意渠道 task；broadcast 内部自行 spawn，无订阅者时廉价早退。
     {
         let state = state.clone();
-        crate::channels::health::set_notifier(move || broadcast_tray_state(&state));
+        crate::channels::health::set_notifier(move || {
+            if !state.closing.load(Ordering::SeqCst) {
+                broadcast_tray_state(&state);
+            }
+        });
     }
 
     // 临时目录清理（A10）：启动即清一次，之后每小时清理过期 temp/askhuman/<id>/。
     // 顺带轮转 daemon.log（超 5MB → 挪 .1 并清空；保活 daemon 长跑也不至无限增长）。
-    tokio::spawn(async move {
+    background_tasks.push(tokio::spawn(async move {
         loop {
             cleanup_temp_dirs();
             crate::todos::cleanup_attachment_orphans();
             lifecycle::rotate_log_if_needed();
             tokio::time::sleep(Duration::from_secs(3600)).await;
         }
-    });
+    }));
 
     // 版本自更新：后台定期检查远端最新版（启动稍延迟一次，之后每 24h），有变化广播给弹窗。
     {
         let state = state.clone();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(20)).await;
             loop {
                 check_for_update(&state).await;
                 tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
             }
-        });
+        }));
     }
 
     // 版本自更新：周期监听盘上二进制指纹（应用内更新 / 外部 npm 更新）→ 标记待生效并广播。
     {
         let state = state.clone();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(15)).await;
                 check_pending_update(&state);
             }
-        });
+        }));
     }
 
     // Agent 生命周期：进程存活轮询 + TTL 兜底（spec D5/D12）。变化即持久化 + 推快照；
@@ -1181,7 +1234,7 @@ async fn serve(_lock: LockGuard) -> i32 {
     // 15s 的判定延迟可接受，又能显著降低 daemon 空转唤醒。
     {
         let state = state.clone();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(15)).await;
                 // 在途 AskHuman 豁免：先给「正等待人类回答」的 agent 刷新活动，使其不被兜底降级。
@@ -1217,7 +1270,7 @@ async fn serve(_lock: LockGuard) -> i32 {
                     broadcast_tray_state(&state);
                 }
             }
-        });
+        }));
     }
 
     // 菜单栏图标已开启则兜底拉起 GUI 宿主（单实例去重；always 主要靠登录项）。
@@ -1232,53 +1285,66 @@ async fn serve(_lock: LockGuard) -> i32 {
     // 无启用 IM 时 `ensure_inbound_listeners` 自身零钥匙串直接返回。监听不计入保活，不阻止空闲退出。
     {
         let st = state.clone();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             ensure_inbound_listeners(&st).await;
-        });
+        }));
     }
 
     // iOS channel: connect to the broker as soon as the daemon is up (a no-op unless enabled).
     {
         let st = state.clone();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             ensure_ios_gateway(&st).await;
-        });
+        }));
     }
 
     // `/watch` 实时关注引擎（spec docs/specs/im-watch.md）：先恢复持久化订阅（重启后继续
     // 编辑同一张卡），再进入 Notify / 自适应 tick 循环。
     {
         let st = state.clone();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             watch_restore_and_run(st).await;
-        });
+        }));
     }
 
     // select/confirm 路由重建旁路任务：避免 card handler → ensure_select_routes 的 async 类型环。
     {
         let st = state.clone();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             loop {
                 st.select.route_refresh.notified().await;
                 ensure_select_routes(&st).await;
             }
-        });
+        }));
     }
 
     // `/msg` 输入卡恢复/过期引擎：启动即把上次异常退出留下的卡定格，之后每 15 秒收尾 TTL 到期卡。
     {
         let st = state.clone();
-        tokio::spawn(async move {
+        background_tasks.push(tokio::spawn(async move {
             loop {
                 finalize_expired_msg_compose_cards(&st).await;
                 tokio::time::sleep(Duration::from_secs(15)).await;
             }
-        });
+        }));
     }
 
+    super::handoff::healthy(startup_fp);
     loop {
         tokio::select! {
-            _ = state.shutdown.notified() => break,
+            _ = state.shutdown.notified() => {
+                #[cfg(windows)]
+                if *state.exit_intent.lock().unwrap() == super::handoff::Intent::ReplaceOwnBinary {
+                    if let Err(error) = super::handoff::prepare() {
+                        log(&format!("update handoff preparation failed; keeping the old daemon: {error}"));
+                        request_exit(&state, super::handoff::Intent::Stop);
+                        state.draining.store(false, Ordering::SeqCst);
+                        broadcast_tray_state(&state);
+                        continue;
+                    }
+                }
+                break;
+            },
             accepted = listener.accept() => match accepted {
                 Ok((stream, _addr)) => {
                     let st = state.clone();
@@ -1288,6 +1354,15 @@ async fn serve(_lock: LockGuard) -> i32 {
             }
         }
     }
+
+    state.closing.store(true, Ordering::SeqCst);
+    for task in &background_tasks {
+        task.abort();
+    }
+    for task in background_tasks {
+        let _ = task.await;
+    }
+    *exit.lock().unwrap() = *state.exit_intent.lock().unwrap();
 
     // Shutting down: cancel any in-flight requests so their IM cards finalize to "Cancelled".
     // Unlike CLI-disconnect, the runtime is about to exit, so we give the finalize HTTP calls a
@@ -1490,6 +1565,9 @@ async fn control_loop(
             return Control::Closed;
         }; // EOF / 对端关闭
 
+        if state.closing.load(Ordering::SeqCst) {
+            return Control::Closed;
+        }
         match msg {
             ClientMsg::CodexDesktop { operation } => {
                 let result = crate::codex_desktop::shared().execute(operation).await;
@@ -1525,7 +1603,8 @@ async fn control_loop(
                     own_changed || hello.fingerprint != state.startup_fp || protocol_differs;
                 let auto_restart = std::env::var("ASKHUMAN_DAEMON_AUTORESTART")
                     .map(|v| v != "0")
-                    .unwrap_or(true);
+                    .unwrap_or(true)
+                    && *state.exit_intent.lock().unwrap() != super::handoff::Intent::Stop;
                 let peer = restart_guard::Peer::from_hello(&hello);
                 // Two differently built binaries in use at once make the daemon give way to each
                 // other forever. Once the same pair has swapped twice within ten minutes, stop
@@ -1617,6 +1696,16 @@ async fn control_loop(
                 } else {
                     String::new()
                 };
+                if draining || restarting {
+                    request_exit(
+                        state,
+                        if own_changed {
+                            super::handoff::Intent::ReplaceOwnBinary
+                        } else {
+                            super::handoff::Intent::YieldToClient
+                        },
+                    );
+                }
                 if draining {
                     log(&format!(
                         "stale binary/protocol detected with active requests; draining ({yield_detail})"
@@ -1668,6 +1757,7 @@ async fn control_loop(
                 let _ = ipc::write_msg(w, &ServerMsg::Status(info)).await;
             }
             ClientMsg::Stop { force } => {
+                request_exit(state, super::handoff::Intent::Stop);
                 let _ = ipc::write_msg(w, &ServerMsg::Stopping).await;
                 // 默认 graceful：有在途请求时排空后退出；`--force` 或无在途 → 立即退出。
                 if !force && state.registry.active_count() > 0 {
@@ -2165,6 +2255,10 @@ async fn control_loop(
 }
 
 /// 进入排空状态（幂等）：首次置位时 spawn 看门狗，在途请求全部完结后触发退出。
+fn request_exit(state: &ServerState, next: super::handoff::Intent) {
+    state.exit_intent.lock().unwrap().request(next);
+}
+
 fn begin_drain(state: &Arc<ServerState>) {
     if state.draining.swap(true, Ordering::SeqCst) {
         return; // 已在排空。
@@ -2178,8 +2272,9 @@ fn begin_drain(state: &Arc<ServerState>) {
         loop {
             if state.registry.active_count() == 0 {
                 log(&format!(
-                    "drain complete; shutting down ({} failure card(s) left to the successor)",
-                    state.registry.held_count()
+                    "drain complete; shutting down ({} failure card(s) left to the successor; {} saved)",
+                    state.registry.held_count(),
+                    state.failure_confirmations.saved_count()
                 ));
                 state.shutdown.notify_one();
                 return;
@@ -2562,6 +2657,7 @@ async fn handle_submit(
     let caller_pid = task.caller_pid;
     let cwd = Some(task.project.clone()).filter(|s| !s.trim().is_empty());
     let changed = match (kind_env, sid_env.clone(), task.agent_pid) {
+        _ if crate::agents::failure::is_card_id(task.native_request_id.as_deref()) => false,
         // 有 session_id（shell 工具子进程能从 env 拿到）：按 session 刷新。
         (Some(kind), Some(sid), pid) => {
             // MCP 工具调用不单独创建 lifecycle session；可信的每调用绑定仅用于
@@ -3705,6 +3801,7 @@ fn spawn_agent_resolve(
 
         // 注册表活动：env 有会话 → 按 session 刷新并补 pid；否则（MCP）按 pid 刷新（只更新、绝不新建）。
         let changed = match (kind_env, &sid_env) {
+            _ if entry.held => false,
             (Some(k), Some(sid)) => {
                 if register_working {
                     state.agents.upsert_working(k, sid, Some(pid), cwd.clone())

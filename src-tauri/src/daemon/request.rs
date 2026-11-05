@@ -70,6 +70,8 @@ pub struct RequestEntry {
     /// caller waiting for an answer. It survives a daemon replacement through its own record, so a
     /// drain does not wait for it (`docs/specs/agent-failure-inbox.md` §5.1).
     pub held: bool,
+    /// Feedback for an already handled click is visible in the inbox without another push.
+    pub quiet_feedback: bool,
     /// CLI 断开 / 请求结束时通知 GUI 连接处理器收尾。
     pub cancel: Arc<Notify>,
     /// 渲染结果发送端（协调器 finish 与看门狗共用；连接处理器从对应 rx 取）。
@@ -471,6 +473,8 @@ impl RequestRegistry {
         let popup_kind = task.popup_kind();
         let quick_reply = super::away::is_agent_ask(&task);
         let held = crate::agents::failure::is_card_id(task.native_request_id.as_deref());
+        let quiet_feedback =
+            crate::agents::failure::is_feedback_id(task.native_request_id.as_deref());
 
         // Daemon 分配权威 request_id（用于临时目录）。
         let mut request = AskRequest::new(task.message, task.questions, task.is_markdown);
@@ -551,6 +555,7 @@ impl RequestRegistry {
             gui_connected: AtomicBool::new(false),
             gui_ready: AtomicBool::new(false),
             held,
+            quiet_feedback,
             cancel: Arc::new(Notify::new()),
             final_tx,
         });
@@ -758,6 +763,15 @@ impl RequestRegistry {
     }
 
     /// 当前所有在途请求项的快照（供「补推在途」把已发问题补发到新激活的渠道）。
+    pub fn quiet_feedback(&self, request_id: &str) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .by_id
+            .get(request_id)
+            .is_some_and(|entry| entry.quiet_feedback)
+    }
+
     pub fn in_flight_entries(&self) -> Vec<Arc<RequestEntry>> {
         self.inner.lock().unwrap().by_id.values().cloned().collect()
     }
@@ -802,7 +816,7 @@ impl RequestRegistry {
     pub fn in_flight_agent_pids(&self) -> Vec<u32> {
         let inner = self.inner.lock().unwrap();
         let mut pids: Vec<u32> = Vec::new();
-        for entry in inner.by_id.values() {
+        for entry in inner.by_id.values().filter(|entry| !entry.held) {
             let pid = entry
                 .resolved_agent
                 .lock()
@@ -829,7 +843,7 @@ impl RequestRegistry {
     pub fn in_flight_agent_session_ids(&self) -> Vec<String> {
         let inner = self.inner.lock().unwrap();
         let mut ids: Vec<String> = Vec::new();
-        for entry in inner.by_id.values() {
+        for entry in inner.by_id.values().filter(|entry| !entry.held) {
             if let Some(sid) = entry.agent_session_id.as_ref() {
                 if !sid.is_empty() && !ids.contains(sid) {
                     ids.push(sid.clone());

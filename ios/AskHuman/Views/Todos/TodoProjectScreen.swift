@@ -60,7 +60,7 @@ struct TodoProjectScreen: View {
         .hidesTabBarWhenCompact()
         .toolbar {
             if let list, list.pending.count > 1, todos.canWrite {
-                ToolbarItem(placement: .topBarTrailing) { EditButton().accessibilityIdentifier("todo-reorder") }
+                ToolbarItem(placement: .topBarTrailing) { ReorderToolbarButton().accessibilityIdentifier("todo-reorder") }
             }
         }
         .actionBar {

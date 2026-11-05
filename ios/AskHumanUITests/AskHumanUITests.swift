@@ -588,7 +588,7 @@ final class AskHumanUITests: XCTestCase {
         page.swipeRight()
         XCTAssertTrue(waitForLabel("gallery-position", "Image 1 of 4"), "the first picture has none before it")
 
-        app.buttons["Close"].tap()
+        requireElement("gallery-close").tap()
         XCTAssertTrue(gone("image-gallery"), "the viewer closes")
         thumbnail("square-3.png").tap()
         XCTAssertTrue(waitForLabel("gallery-position", "Image 3 of 4"), "and opens on whichever picture is tapped next")
@@ -691,6 +691,12 @@ final class AskHumanUITests: XCTestCase {
         requireElement("pair-button").tap()
         _ = requireElement("pairing-sas", timeout: 15)
         shot("52-pairing-sas")
+
+        // The mock Mac confirms by itself; the sheet's one button then turns from Cancel into Done, and closes it.
+        XCTAssertTrue(waitForLabel("pairing-close", localized("Done", "完成"), timeout: 40), "the pairing finishes")
+        shot("54-pairing-done")
+        requireElement("pairing-close").tap()
+        XCTAssertTrue(gone("pairing-close"), "Done closes the sheet")
     }
 
     func testAMalformedPairingCodeIsRefused() {

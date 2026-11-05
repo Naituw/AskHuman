@@ -40,7 +40,7 @@ struct QuickTodoView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { developer.dismissQuickTodo() }
+                    CancelToolbarButton { developer.dismissQuickTodo() }
                         .disabled(sending)
                         .accessibilityIdentifier("quick-todo-cancel")
                 }
@@ -48,7 +48,7 @@ struct QuickTodoView: View {
                     if sending {
                         ProgressView().accessibilityIdentifier("quick-todo-sending")
                     } else {
-                        Button("Add") { Task { await developer.submitQuickTodo() } }
+                        ConfirmToolbarButton("Add", systemImage: "arrow.up") { Task { await developer.submitQuickTodo() } }
                             .disabled(!composer.canSend)
                             .accessibilityIdentifier("quick-todo-send")
                     }
