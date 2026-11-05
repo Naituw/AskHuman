@@ -2740,6 +2740,16 @@
         }
       }
     },
+    "No reply needed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无需回复"
+          }
+        }
+      }
+    },
     "None" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5433,16 +5443,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这会从这部手机移除所有 Mac 和 Broker 账号。你的 Mac 会收到通知，你随时可以重新配对。"
-          }
-        }
-      }
-    },
-    "This request has ended" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "该请求已结束"
           }
         }
       }

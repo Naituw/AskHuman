@@ -470,35 +470,6 @@ struct RequestHeader: View {
     }
 }
 
-/// The notice on a page whose request ended while it was open.
-struct FinishedNotice: View {
-    let finished: FinishedRequest
-
-    var body: some View {
-        Label {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("This request has ended").font(.subheadline.weight(.semibold))
-                Text(detail).font(.footnote).foregroundStyle(.secondary)
-            }
-        } icon: {
-            Image(systemName: finished.outcome.symbol).foregroundStyle(finished.outcome.color)
-        }
-        .card()
-        .accessibilityIdentifier("finished-notice")
-    }
-
-    private var detail: String {
-        switch finished.outcome {
-        case .answeredElsewhere: finished.by.map { String(localized: "It was answered on \($0).") } ?? String(localized: "It was answered elsewhere.")
-        case .cancelled: String(localized: "The Agent cancelled it.")
-        case .expired: String(localized: "It timed out.")
-        case .answered: String(localized: "It was answered.")
-        case .dismissed: String(localized: "It was dismissed.")
-        case .ended: String(localized: "It finished while you were away.")
-        }
-    }
-}
-
 /// Shown when the last submission did not get through.
 struct FailedSubmissionNotice: View {
     let item: InboxItem

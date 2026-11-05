@@ -29,14 +29,18 @@ struct AnswerScreen: View {
     var body: some View {
         if let ask = item.view?.ask, let composer = store.composer(for: item) {
             let picker = store.todoPicker(for: item)
+            // Set once the request has ended somewhere else while the page is open (§3.7): a strip says so, the
+            // body fades and nothing takes an answer.
+            let finished = store.endedNotice(for: item.id)
+            let ended = finished != nil
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        if let finished = store.endedNotice(for: item.id) { FinishedNotice(finished: finished) }
                         if case .failed = item.state { FailedSubmissionNotice(item: item) }
-                        if store.isEscalated(item), store.endedNotice(for: item.id) == nil { EscalationNotice(item: item) }
+                        if store.isEscalated(item), !ended { EscalationNotice(item: item) }
                         RequestHeader(item: item)
                         MessageCard(ask: ask, macId: item.macId, onSettled: { tracker.messageSettled(); messageReady = true })
+                            .endedDimming(ended)
                         VStack(spacing: 0) {
                             ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
                                 QuestionCard(
@@ -45,7 +49,7 @@ struct AnswerScreen: View {
                                 )
                                     .background(FrameReader(.card(index)))
                                     .background(RequestReadingAnchor(name: Self.cardID(index)))
-                                    .disabled(composer.isSending || sending)
+                                    .disabled(composer.isSending || sending || ended)
                                     // The gap belongs to what "Next" scrolls to, so that a card does not end flush with the bar.
                                     .padding(.bottom, 16)
                                     .id(Self.cardID(index))
@@ -53,10 +57,11 @@ struct AnswerScreen: View {
                             // What's next lists the queue among its options; every other ask gets a card for it.
                             if !ask.whatsNext, let picker, picker.isVisible {
                                 TodoPickCard(picker: picker)
-                                    .disabled(composer.isSending || sending)
+                                    .disabled(composer.isSending || sending || ended)
                                     .padding(.bottom, 16)
                             }
                         }
+                        .endedDimming(ended)
                     }
                     .readableWidth()
                     .padding([.horizontal, .top])
@@ -70,7 +75,7 @@ struct AnswerScreen: View {
                 .scrollDismissesKeyboard(.interactively)
                 .actionBar {
                     SendBar(
-                        item: item, composer: composer, moreBelow: tracker.moreBelow, ended: store.endedNotice(for: item.id) != nil,
+                        item: item, composer: composer, moreBelow: tracker.moreBelow, ended: ended,
                         connection: store.state.requestConnection(macId: item.macId),
                         onSend: { send(composer) },
                         onQuickReply: { reply in send(composer, quickReply: reply) },
@@ -78,6 +83,8 @@ struct AnswerScreen: View {
                         onJump: { jumpToMissing(composer, proxy: proxy) }
                     )
                 }
+                .endedStrip(finished)
+                .endedCue(finished)
                 .coordinateSpace(name: Self.space)
                 .onPreferenceChange(ReadingKey.self) { tracker.update($0, composer: composer) }
                 // The queue is read each time the page comes up.

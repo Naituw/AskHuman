@@ -453,7 +453,7 @@ ZH = {
     "Loading the full request…": "正在加载完整请求…",
     "Your Mac is not reachable": "连不上你的 Mac",
     "The request shows up here when it is back, if it is still waiting.": "Mac 恢复连接后，如果它还在等你，请求会显示在这里。",
-    "This request has ended": "该请求已结束",
+    "No reply needed": "无需回复",
     # Root
     "Open this link?": "打开这个链接？",
     "Open %@": "打开 %@",
