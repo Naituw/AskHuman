@@ -12,6 +12,7 @@
 2026-11-05 23:45（北京时间）已提交 **0.1.0 (10)**：Apple build `81b235eb-4db3-46ee-8372-e74ca5bcbe0a`，VALID、APP_STORE_ELIGIBLE、`WAITING_FOR_BETA_REVIEW`（审核提交 `WAITING_FOR_REVIEW`）。源码与本地标签 `ios-testflight-10` 固定 `d3bb833`；后续 main 的已结束问题页面改动不在此包。首次上传最终确认 401 已通过同归档受控重试解决，不再重传。
 `AskHuman Friends` 已包含 build 10，公开链接关闭、手动指定构建、自动通知关闭、0 位测试员。尚未获批或邀请；朋友邮箱尚未提供。
 下一步：查询审核结果，获批后接收并仅邀请用户明确提供的 1–5 个邮箱；首位朋友按[中文接入指南](https://naituw.github.io/AskHuman/beta-zh/)安装[配套 Apple Silicon Mac 预览包](https://github.com/Naituw/AskHuman/releases/tag/friends-beta-20261105)，完成配对、前台回答、锁屏推送、切网与首答验证。若审核要求演示资源，先带实际反馈向用户确认。
+用户在送审报告后选择“后续记为待办，拿到审核结果和邮箱后继续”；已记录项目待办，本次交付止于送审，不建立定时监控。
 
 ## 待平台验收：Daemon 更新接班的 Windows / Linux 原生路径
 
