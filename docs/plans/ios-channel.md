@@ -679,3 +679,45 @@ build 6 没有回填测试内容；只对它做过一次 `probe`（写入、读�
 出包前验证：答题改动的包单测 44 个全过，iPhone 模拟器 UI 测试（新增 3 个，连跑 3 轮压竞态）与另外 10 个回归全绿，iOS 18.5 经典底栏 4 个通过；
 大屏改动在合并前于 iPad／折叠屏模拟器上验过；合并后 `ios/` 没有变，没有重跑全量。
 用户是否已更新、真机手感、手机 TestFlight 里测试内容（多行中英文）的显示还没有确认，分别跟踪在 `docs/PROGRESS.md` 的「输入后点下一题」条目、大屏适配一节、出包前清单一节。
+
+## 2026-11-05：TestFlight 内部构建 8
+
+用户说顶栏里的文字按钮在 iPhone Duo 上不会移到侧栏、操作不便，选定方案后要求「改完生成新的 TestFlight 版本」（计划与实施记录 [ios-duo-toolbar](ios-duo-toolbar.md)），于是出包 `0.1.0 (8)`。
+
+从 main `c909588783d072155eeaeb1f71e103052fc05577`（`test(ios): cover the pairing sheet turning into Done when it finishes`）归档并分发。
+**这次是从干净的临时 worktree 归档的**（`git worktree add --detach /tmp/… <commit>`，在里面重新 `xcodegen generate`，出完包即删）：主检出里有一个不是这次改动的未跟踪文件 `docs/specs/daemon-update-and-failure-recovery.md`
+（另一个会话在写的文档），而技能要求出包用的树干净、标签要指向打进包里的源码；从该提交的干净树归档同时满足这两点，也不用动那个文件。`changes.mjs` 也是在这个干净树里跑的（它只看当前目录的 `git status`）。
+这是对技能「树不干净就停下问用户」一条的变通：包的内容就是那个提交，没有任何别人的改动混进去。
+
+基线标签 `ios-testflight-7`（`71e7fb58`），Apple 上最大的构建号 7 与它一致。`changes.mjs` 列出的 iOS 提交共 4 个，`ios/` 共 25 个文件、+1299 −65：
+
+- 在请求里直接添加待办（iOS 请求页「⋯」→「添加待办…」；之前一直没出包，这次第一次带给用户）：`4b71abd4`，测试 `69a1bae1`；
+- 顶栏按钮进 Duo 侧栏：`72bac227` 把 sheet 的取消 / 确认 / 关闭与待办项目页的「编辑」在 iOS 26 起改成图标或角色按钮（iOS 17–25 仍是文字），测试 `c9095887` 补配对页的完成态。
+
+出包前机器健康检查退出码 1（tight：交换区 8.3 / 10 GiB，另有 cargo／rustc 在编译），不是 thrashing；归档 `ARCHIVE SUCCEEDED`（约 1.5 分钟），预检通过（`0.1.0`、构建 `8`、仅内部），上传 `EXPORT SUCCEEDED`、`Upload succeeded`。
+约 3 分钟后 Apple 状态 `VALID`：Apple build `575967d5-5e0a-483b-85b1-9d72c03688ee`，已加入内部测试组（组内共 7 个构建，测试员 1 已安装 / 1 已邀请）。
+
+测试内容（中文 348、英文 918 个字符，两种语言都写入并读回逐字一致；英文那份与中文一一对应，这里不重复）：
+
+```
+构建 8 · 源码 c909588
+
+• 请求页：右上「⋯」菜单新增「添加待办…」，可以直接把一条待办记进这个请求所属的项目。
+• 折叠屏手机：新建任务、添加待办、编辑待办、配对 Mac、看图等弹出页的按钮，在 iOS 26 及以上改成图标（取消和关闭是叉，确认是对勾或向上箭头），系统会把它们放进侧边栏；iOS 17–25 仍是文字按钮。
+• 待办项目页：iOS 26 及以上，「编辑」换成「重新排序」图标，排序时变成对勾。
+
+请重点看
+• 折叠屏手机上，各个弹出页的叉、对勾和蓝色向上箭头是否都出现在侧边栏里，顶栏里有没有还得伸手去点的文字按钮；蓝色向上箭头（开始任务）看不看得懂。
+• 请求页「⋯」→「添加待办…」：弹出页写的项目和 Mac 对不对，添加后在 Mac 上能不能看到这条待办。
+```
+
+**新踩到一条规则**：TestFlight 的测试内容不接受 `✓`、`✕` 这类符号——第一次写入被拒（HTTP 409，`ENTITY_ERROR.ATTRIBUTE.INVALID.INVALID_TEXT … contains invalid characters '[✓, ✕]'`），什么都没写进去；
+改成文字「叉／对勾／向上箭头」后通过。`⋯`、`→`、`·`、`–` 和中文标点实测没有问题。规格与技能的「测试内容的写法」已补这一条。
+
+标签 `ios-testflight-8` → `c909588`（本地附注标签，不推送）；事后 `changes.mjs`：基线 `ios-testflight-8`，清单为空，下一个构建号 9。
+
+出包前验证：Duo 外屏竖屏（iOS 27.1）逐屏截图（新建任务与进度、添加待办、编辑待办、配对、画廊、项目页重排）；iPhone 模拟器 iOS 27.0 上 UI 测试 `AskHumanTodosUITests` 10、`AskHumanRequestTodoUITests` 8、
+`AskHumanUITests`（画廊、文件、新建任务、离开表单、配对两条）、`AskHumanModelUITests` 4、`AskHumanDeveloperUITests` 2、`AskHumanArrivalUITests` 1 全绿；iOS 18.5 上截图确认文字按钮与以前逐字一样。
+**没做**：`AskHumanLargeScreenUITests`（iPad／Duo）、`AskHumanLiveUITests`、用最终包复查 Duo 外屏横屏与内屏、任何真机。
+iOS 18.5 上的无障碍树把每个工具栏按钮报成「容器＋按钮」两个同 id 节点（没改的 `new-task` 也一样，不是这次引入的），所以 `AskHumanRequestTodoUITests` 里读按钮 `isEnabled` 的那条在 18.5 上不可靠，没有为此改测试。
+真机上的 Duo 侧栏观感还没人看，跟踪在 `docs/PROGRESS.md`「iOS 顶栏按钮进 Duo 侧栏」一节。

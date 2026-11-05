@@ -3383,6 +3383,16 @@
         }
       }
     },
+    "Reorder" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新排序"
+          }
+        }
+      }
+    },
     "Request unavailable" : {
       "localizations" : {
         "zh-Hans" : {

@@ -70,7 +70,7 @@ private struct NewTaskForm: View {
         .scrollDismissesKeyboard(.interactively)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { cancel() }
+                CancelToolbarButton { cancel() }
                     .disabled(sending)
                     .accessibilityIdentifier("task-cancel")
             }
@@ -78,8 +78,7 @@ private struct NewTaskForm: View {
                 if sending {
                     ProgressView()
                 } else {
-                    Button("Start") { start() }
-                        .fontWeight(.semibold)
+                    ConfirmToolbarButton("Start", systemImage: "arrow.up", emphasized: true) { start() }
                         .disabled(!canStart)
                         .accessibilityIdentifier("task-start")
                 }

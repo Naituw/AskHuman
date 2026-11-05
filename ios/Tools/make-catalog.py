@@ -518,6 +518,7 @@ ZH = {
     "Projects show up here once an Agent has worked in them on a Mac.": "Agent 在 Mac 上处理过的项目会显示在这里。",
     "Pull down to try again.": "下拉即可重试。",
     "Recent projects": "最近的项目",
+    "Reorder": "重新排序",
     "Restore": "恢复",
     "Run automatically": "自动执行",
     "Search projects": "搜索项目",

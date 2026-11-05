@@ -1,6 +1,6 @@
 # Daemon 更新接班与错误卡 24 小时接续
 
-> 状态：2026-11-05 用户已评审通过并要求实施；已实现，macOS 隔离回归通过并安装 Dev。正式转送往返待确认，尚未合并或安装日常版。
+> 状态：2026-11-05 用户已评审通过并要求实施；已实现，macOS 隔离回归通过并安装 Dev。正式转送往返已确认，正在按用户授权合并并安装日常版。
 > 用户已确认的行为边界见 §2。本文补充而不替换
 > [优雅排空](daemon-graceful-drain.md)、[错误收件箱](agent-failure-inbox.md)与
 > [生命周期结果及接续](agent-lifecycle-results-and-recovery.md)。
@@ -236,7 +236,7 @@ Windows 接班、macOS launchd 与 Linux 更新入口均需对应平台验证；
 | --- | --- |
 | 实施阶段 Rust 全量 | 2475 passed，11 ignored，0 failed；在最终 execve/静默反馈收尾前执行 |
 | 最终代码相关 Rust 测试 | daemon、agents::registry、ios::gateway::tests_requests：325 passed、1 ignored、0 failed |
-| CI 版本 clippy | Rust 1.99.0，all-targets + custom-protocol,development-ui + -D warnings 通过 |
+| CI 版本 clippy | Rust 1.99.0；定制 feature 组合通过，最终提交也经 pre-commit 的默认 feature / all-targets / -D warnings 检查通过 |
 | 最终 Dev install | install.sh 成功；build.json 确认程序与全部当前构建输入一致 |
 | daemon-update-handoff-smoke.mjs | 五项通过：无客户端自接班、旧提问答完后接班、stop 优先、auto-restart=0、损坏镜像有界失败并留诊断 |
 | 追加并发隔离场景 | 同一 drain 两次安装 + 新 CLI 同时等待，CLI 在同 PID 后继恢复，停止与失败路径也通过；基于上述 fixture 的临时扩展运行 |
@@ -252,3 +252,9 @@ Windows 接班、macOS launchd 与 Linux 更新入口均需对应平台验证；
 启动恢复补充回归：Cards 清单在 AgentRegistry::load 之前读取，其权威引用在遍历/裁剪任何记录前应用。
 这样可恢复“卡已写入、registry 的 lease 字段尚未写入就退出”的旧格式/中断状态；临时文件测试让该失败记录
 排在 25 条普通 ended 之前，证明冷加载仍保留它，不依赖两秒后的 restore 补救。
+
+最终 Dev 验收 `0cc20b31-e28d-41a7-82a2-d287a0725b01` 已从正式远程渠道往返，用户回复「收到」。
+该构建 sourceFingerprint 为 `722b44cad89e28f3bb8aaba53b8ffe022f0e2bd401a4e6e983cfb1b76c1f6d03`，
+代码提交 `37f2ebf5`；冷加载缺少 registry lease 字段的真实隔离 daemon 扩展也已通过。
+Dev 自身从旧构建到最终构建的盘上更新在同一 PID 75828 完成，日志包含 update handoff healthy（无客户端负责拉起）。
+用户随后明确授权合并 main、按优雅方式安装日常版；合并保留同期 iOS / Duo 工具栏工作。

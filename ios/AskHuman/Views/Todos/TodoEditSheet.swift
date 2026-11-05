@@ -54,10 +54,11 @@ struct TodoEditSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    CancelToolbarButton { dismiss() }
+                        .accessibilityIdentifier("todo-edit-cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save", action: save)
+                    ConfirmToolbarButton("Save", systemImage: "checkmark", action: save)
                         .disabled(!canSave)
                         .accessibilityIdentifier("todo-edit-save")
                 }

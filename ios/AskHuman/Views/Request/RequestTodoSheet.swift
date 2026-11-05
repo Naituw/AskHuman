@@ -35,7 +35,7 @@ struct RequestTodoSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: cancel)
+                    CancelToolbarButton(action: cancel)
                         .disabled(sending)
                         .accessibilityIdentifier("request-todo-cancel")
                 }
@@ -43,7 +43,7 @@ struct RequestTodoSheet: View {
                     if sending {
                         ProgressView().accessibilityIdentifier("request-todo-sending")
                     } else {
-                        Button("Add") { Task { if await composer.send() { added(composer.projectName) } } }
+                        ConfirmToolbarButton("Add", systemImage: "arrow.up") { Task { if await composer.send() { added(composer.projectName) } } }
                             .disabled(!composer.canSend)
                             .accessibilityIdentifier("request-todo-send")
                     }

@@ -1,0 +1,59 @@
+/* Prototype-only styles for the away-mode / quick-reply settings cards. */
+/* `?focus=1`: keep only the context card and the new cards. */
+.sa-focus .settings-body > .card:not(.sa-card):not(.sa-ctx) {
+  display: none;
+}
+
+.sa-first {
+  margin-bottom: 8px;
+}
+.sa-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sa-li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sa-grip {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--text-tertiary);
+  cursor: grab;
+}
+.sa-input {
+  flex: 1;
+  min-width: 0;
+}
+.sa-del {
+  appearance: none;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.sa-del:hover {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-primary);
+}
+.sa-del svg {
+  width: 13px;
+  height: 13px;
+}
+.sa-foot {
+  margin-top: 10px;
+}

@@ -81,6 +81,7 @@ TestFlight shows them under the build, in Simplified Chinese (`zh-Hans`) and Eng
 - Then 1–3 items under `请重点看` / `Please check` that need a real device, taken from the pending checks in `docs/PROGRESS.md` where they apply.
 - Chinese and English entries correspond one to one. If the build contains a change the user earlier chose to hold back, say so plainly.
 - At most 4000 characters (aim for 1500). Every internal tester can read them: no secrets, local paths or unreleased information.
+- Apple's validator rejects some symbols, such as `✓` and `✕` (HTTP 409 `INVALID_TEXT … contains invalid characters`; nothing is written). Spell icons out in words ("checkmark", "cross"). `⋯`, `→`, `·`, `–` and CJK punctuation were accepted (build 8).
 
 ## Boundaries and recovery
 
