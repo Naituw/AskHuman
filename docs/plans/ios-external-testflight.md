@@ -91,8 +91,20 @@
 - 工具回归 **24/24** 通过，包含旧 notes / changes / archive 规则、新 audience、资料读回、提交幂等、外测状态与邀请边界。
 - iOS 27.0 专用 iPhone 18 Pro 模拟器：`testMacsTabListsTheMacsAndOpensOne` **1/1** 通过，App 与扩展完成编译。未动日常 Duo 模拟器。
 - 静态站生成 5 页，桌面与 390px 手机宽度浏览器预览通过；目前仅本地预览，不代表 Pages 已上线。
-- 新 helper 已按既有 Developer ID 重装，保留 previous；通过真实 external-status、build 9 notes read。外部模式本地签名验证另记后续结果。
+- 新 helper 已按既有 Developer ID 重装，保留 previous；通过真实 external-status、build 9 notes read。以现有 build 9 archive 做外部模式本地导出，`EXPORT SUCCEEDED`（仅签名验证，没有上传或改变 build 9 的 Apple 受众）。
 - 最后 install.sh 已成功装到本树 Dev 目录；最终转送验证已发出，待回答。未覆盖日常二进制。
 - 构建前健康检查曾退出 2（交换 9.6 GiB、负载 215）；按 AGENTS 报告后用户回复“继续”。后续负载回落，检查为 tight，长任务后台运行。
 
-P0 已完成；P1 的文案/界面已完成，发布与最终审核输入待处理；P2/P3 实现与离线测试完成，真实写入待发布步骤；P4 正在收尾本地验证；P5 未开始。全流程尚未完成，不能声称“已可邀请”。
+P0 已完成；P1 的文案/界面已完成，发布与最终审核输入待处理；P2/P3 实现与离线测试完成，真实写入待发布步骤；P4 本地候选归档与预检已通过，最终 Dev 回答待回收、发布输入待确认；P5 未开始。全流程尚未完成，不能声称“已可邀请”。
+
+### 本地候选产物（尚未发布）
+
+- 源码点 `d3bb8336e38ff27d01ca0d97d80f3c561e5b1847`，包含实现提交 `8398a3e3`，已合入 main 的 build 9 / 真实 Codex 验收文档。
+- `changes.mjs`：基线 `ios-testflight-9`，一个 iOS 增量提交（关于页两处链接），建议下一号 10。
+- `0.1.0 (10)` 候选：`ios/build/AskHuman-External-Candidate.xcarchive`，Release `ARCHIVE SUCCEEDED`，external preflight 通过；10 未在 Apple 占用，上传前必须再次核对。
+- 对应中英文 What to Test 已生成并 dry-run 通过（英文 746、中文 265 UTF-16 units）；保存在仓库外。
+- Apple Silicon Mac 配套包从同一源码点用普通 `custom-protocol` / `local-install` 构建，不带 development-ui；通过既有 Developer ID 签名校验和 `--help` 启动。没有替换日常安装。
+  私有产物目录 `~/.config/askhuman-release/friends-candidate-d3bb833/`，zip 16.7 MiB，含二进制、安装说明和 SHA256SUMS；binary SHA256 为 `3af24ef66f606a5df56846f9b2446817bf5ec7ae2190341341043ded38505357`。
+  它尚未公证、未发布、未在朋友的新 Mac 验证；不是 Intel / universal 包。版本字符串仍为 0.16.0，以源码点 / 校验值区别旧公开发布。
+- 已读现有中继 URL并放入私有英文审核草稿；`GET /v1/health` 返回 HTTP 200、ok=true。没有复制 broker 凭据。待公开 Mac 下载 URL 后移除草稿提醒，选定联系人即可生成最终 metadata JSON。
+- 可选公开承载：代码合并后手动发布 Pages；Mac zip 作为单独的 GitHub prerelease 资源（非 `v*` 标签，不触发正式桌面发版流水线），保留现有稳定版本。实际发布前集中由用户确认。
