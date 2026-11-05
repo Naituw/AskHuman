@@ -588,7 +588,7 @@ final class AskHumanUITests: XCTestCase {
         page.swipeRight()
         XCTAssertTrue(waitForLabel("gallery-position", "Image 1 of 4"), "the first picture has none before it")
 
-        app.buttons["Close"].tap()
+        requireElement("gallery-close").tap()
         XCTAssertTrue(gone("image-gallery"), "the viewer closes")
         thumbnail("square-3.png").tap()
         XCTAssertTrue(waitForLabel("gallery-position", "Image 3 of 4"), "and opens on whichever picture is tapped next")

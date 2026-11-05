@@ -127,7 +127,10 @@ struct AssetViewer: View {
                 .navigationTitle(asset.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+                    ToolbarItem(placement: .cancellationAction) {
+                        CloseToolbarButton { dismiss() }
+                            .accessibilityIdentifier("asset-close")
+                    }
                     if let ready {
                         ToolbarItem(placement: .primaryAction) { ShareLink(item: ready) }
                     }

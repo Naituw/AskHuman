@@ -20,13 +20,25 @@ struct PairingSheet: View {
             .navigationTitle("Pair a Mac")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(isDone ? "Done" : "Cancel") { close() }
-                        .accessibilityIdentifier("pairing-close")
+                // From iOS 26 "Done" is a blue ✓ on the trailing side, as everywhere else; before, it keeps
+                // the place of the "Cancel" it replaces.
+                ToolbarItem(placement: isDone ? Self.donePlacement : .cancellationAction) {
+                    if isDone {
+                        ConfirmToolbarButton("Done", systemImage: "checkmark") { close() }
+                            .accessibilityIdentifier("pairing-close")
+                    } else {
+                        CancelToolbarButton { close() }
+                            .accessibilityIdentifier("pairing-close")
+                    }
                 }
             }
         }
         .interactiveDismissDisabled(store.state.pairing != nil && !isTerminal)
+    }
+
+    private static var donePlacement: ToolbarItemPlacement {
+        if #available(iOS 26, *) { return .confirmationAction }
+        return .cancellationAction
     }
 
     private var isDone: Bool {
@@ -280,7 +292,10 @@ struct QRScannerScreen: View {
                 .navigationTitle("Scan QR code")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                    ToolbarItem(placement: .cancellationAction) {
+                        CancelToolbarButton { dismiss() }
+                            .accessibilityIdentifier("scanner-cancel")
+                    }
                 }
         }
     }
