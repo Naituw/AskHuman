@@ -95,6 +95,45 @@ Macs 的列表栏仍是整页设置（已配对的 Mac、通知、通用、开�
 - 每个 Tab 右栏的页面都加了 `.id(<选中项>)`，换一项时不沿用上一项的 `@State`。
 - 到达动效：`ArrivalLayout` 只把贴着窗口底边的标签栏当作「占用底部」；标签栏在侧边（Duo 横屏）时气泡落到导航标题。
 
-## 6. 暂缓
+## 6. 工具栏按钮与 Duo 侧栏
+
+2026-11-05 补充（实施计划见 `docs/plans/ios-duo-toolbar.md`）。Duo 外屏的右边有一列系统「侧栏」：状态栏的时钟 / Wi-Fi 下面是一排按钮，离拇指近。系统只把**图标或带角色的**顶栏项目放进去，纯文字按钮留在顶栏，够不着。没有公开 API 能强制，也没有「侧栏在不在」的判断，所以不做 Duo 专属分支，而是让 iOS 26+ 的顶栏按钮一律用系统写法。
+
+### 6.1 实测规则（iOS 27.1 的 Duo 模拟器，外屏 466×678pt）
+
+| 顶栏里放什么 | 落在哪 |
+|---|---|
+| `Image`、带 SF Symbol 的 `Label`（写 `.titleAndIcon` 也只显示图标）、带图标的 `Menu`、系统返回键、`ShareLink` | 侧栏 |
+| 无标题的角色按钮 `Button(role: .cancel / .close / .confirm)` | 侧栏：✕ / ✕ / 蓝色 ✓ |
+| `Button(role: .confirm)` 配图标 `Label`（如 `Label("Start", systemImage: "arrow.up")`） | 侧栏，蓝色图标，无障碍标签是 Label 的标题 |
+| 纯文字按钮（`Button("Edit")`、`EditButton`、`Menu("Sort")`；`Button("Start", role: .confirm)` 只是蓝色药丸） | **留在顶栏** |
+| `.principal` 里的内容（如待办首页的来源菜单） | 顶栏 |
+| `.bottomBar` | 底栏 |
+
+sheet 里同理：图标 / 角色按钮靠到 sheet 自己右边的一列，文字留在 sheet 顶边。外屏横屏右边也有一列；内屏竖屏没有侧栏（都在顶栏）；内屏横屏的 sheet 是居中卡片，按钮留在卡片顶栏。痛点只在外屏。
+
+### 6.2 决策表
+
+| 项 | 决定 | 来源 |
+|---|---|---|
+| 写法 | iOS 26+ 用角色按钮 / 图标；iOS 17–25 仍是文字按钮，逐字不变 | 用户定 |
+| 取消 | ✕（`.cancel`） | 用户定 |
+| 提交新内容（新建任务的 Start、添加待办的 Add） | 蓝色 ↑，与其他 sheet 一致；不做底部整条 CTA | 用户定 |
+| 保存、完成（编辑待办的 Save、配对的 Done） | 蓝色 ✓ | 用户定 |
+| 关闭（只看内容的页面：任务进度、图片画廊、资源预览） | ✕（`.close`） | 用户定 |
+| 待办项目页的 Edit（只用来重排） | 重排图标 ⇅，编辑中变蓝色 ✓ | 用户定 |
+| 不改 | 待办首页的来源菜单 “iCloud ▾”（`.principal`）；请求页的上一条 / 下一条 | 用户定（没选） |
+| 不做 Duo 专属分支 | 靠安全区去猜侧栏在不在太脆；`.titleAndIcon` 的 Label 在普通顶栏也只显示图标，没有「一份代码两头兼顾」 | agent 设计 |
+| 发送中 | 确认键换成 `ProgressView`，留在 sheet 顶栏、✕ 不动 | agent 设计 |
+
+### 6.3 约定
+
+新写 sheet 或全屏页的顶栏按钮，用 `Views/Common/ToolbarButtons.swift` 里的 `CancelToolbarButton`、`CloseToolbarButton`、`ConfirmToolbarButton`、`ReorderToolbarButton`，不要直接写 `Button("…")`；`disabled`、`accessibilityIdentifier` 照旧写在调用点。
+
+- 确认键必须带图标 `Label`：无标题的 `Button(role: .confirm)` 读作 “Done”，Start / Add / Save 会被读错；文字标题加 `.confirm` 又不会进侧栏。
+- 配对页完成后的 Done 在 iOS 26+ 换到 `.confirmationAction`（蓝色 ✓ 在右），之前保持原来的左侧位置。
+- 任务进度页的 ✕ 放在 `.confirmationAction`，所以在 iOS 26+ 是蓝色的 ✕，与原来蓝色药丸 “Close” 的强调一致。
+
+## 7. 暂缓
 
 键盘快捷键（⌘1–5、↑↓、⌘↩）、指针悬停效果、附件拖放、Stage Manager 尺寸细调，记在一条项目待办里，不在本次范围。
