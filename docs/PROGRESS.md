@@ -366,14 +366,20 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 用户回来后可否决）。需求 [`docs/specs/special-replies.md`](specs/special-replies.md)
 （界面稿在 `docs/assets/special-replies/`，浏览器原型在 `src/prototype/`，入口见 `docs/development.md`），计划
 [`docs/plans/special-replies.md`](plans/special-replies.md)（文末「实施记录」按期记差异与验证结果，「总体没有验证的部分」是下面清单的出处）。
-实现在 worktree `../HumanInLoop-special-replies`（分支 `feat/special-replies`，Dev Instance，基于本地 main 的 `2adccc03`）；协议号 5 是并入未发布的那一版（v0.16.0 是 4）。
+实现在 worktree `../HumanInLoop-special-replies`（分支 `feat/special-replies`，Dev Instance；2026-11-05 已把当时的 main `b0e83385` 合进分支，所以对 main 可直接 fast-forward）；协议号 5 是并入未发布的那一版（v0.16.0 是 4）。
 
 做了什么：四块能力共用 Daemon 里的「模式引擎」（`daemon/away.rs`，状态落盘 `~/.askhuman/state/away.json`）——① iOS 在提问里选项目待办、What's next 看完整队列；
 ② 离开模式（Agent 的每次提问与 whats-next 都被自动回复，带 `--escalate` 才像没离开一样送达；只能手动结束；Mac 桌面胶囊 / 托盘 / 控制台，手机常驻条）与会话级「不再使用 AskHuman」；
 ③ 弹窗与手机的快捷回复菜单（预设在 Mac 设置里编辑）；④ CLI `AskHuman away on/off/status` 与 IM `/away`、`/back`。全貌见 `docs/overview.md`「离开模式、本会话不再使用与快捷回复」。
 
-自测（都在隔离的 Dev Instance / 临时 `ASKHUMAN_HOME` 里，没碰日常 daemon，没发到用户手机）：`cargo fmt --check` 与 `clippy -D warnings` 干净，`cargo test --bin AskHuman` 2583 通过 / 0 失败；
-vitest、`vue-tsc`、Swift 包、模拟器 UI 测试（`AskHumanAwayUITests` 中英文等）的结果见计划「实施记录」；隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话跑通了离开 / 升级 / 不再使用的端到端。
+自测（合并 main 之后；都在隔离的 Dev Instance / 临时 `ASKHUMAN_HOME` 里，没碰日常 daemon，没发到用户手机）：`cargo fmt --check` 与 `clippy -D warnings` 干净，`cargo test --bin AskHuman` 2592 通过 / 0 失败；
+`vue-tsc` 通过、vitest 1276 条全过；Swift 包 672 条 0 失败；真实 Daemon 端到端 41 通过（3 条 `AgentE2ETests` 失败，在 main 上同样失败，见下）；
+模拟器 UI 测试 128 条通过（`AskHumanAwayUITests` 中英文、`AskHumanTodoPickUITests`、主类 `AskHumanUITests` 63 条等，细节见计划「合并 main 与最终验证」）；
+隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话跑通了离开 / 升级 / 不再使用的端到端。
+
+**不是本功能带来、但这次验证里撞到的 main 上的已有问题**（留给对应的同学 / 会话处理）：
+- `AHE2ETests/AgentE2ETests` 的三条用例在 main 上就失败：`testAMessageToAnAgentThatIsNotWorkingIsRefused`、`testSessionsOfTheMacAreListedWithTheirState`（期望 `notWorking`，`agent_control.rs::can_interject` 现在对空闲会话返回 `idleUnsupported`）、`testAFollowedSessionReportsWhenItsTurnEnds`（等不到 `done` 事件）；用 main 的日常版二进制单独跑得到同样的失败。
+- `AskHumanInputVisibilityUITests.testEachQuestionRevealsItsOwnAttachmentEntryPoint` 偶发失败（第二题输入框点按后没有键盘焦点），在 main 上同样复现。
 
 下一步：
 - [ ] **用户复核**需求 §3.10 里**没有单独确认过**的默认做法 N1–N10（实现按原文采用），其中「欢迎回来」的空闲门槛取 5 分钟（第 5 轮图文）；第 9 轮的提问正文误写成 15 分钟，以 5 分钟为准

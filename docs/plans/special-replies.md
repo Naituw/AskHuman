@@ -212,6 +212,20 @@ Mac 端本来就有现成的东西：`QuestionAnswer.todo_ids` / `todo_selection
 - IM：`/away [备注]`、`/back`（别名 `/离开`、`/回来`；Slack 用 `!`），各答一行并写明回来的办法；只有带前缀的形式才是命令（「away」一词出现在普通消息里不会触发）。
 - 测试：命令解析、拒绝逻辑、IM 命令分发（`autochannel`、`daemon/runtime/inbound.rs`）。
 
+### 合并 main 与最终验证（2026-11-05）
+
+P4 之后把当时的 main（`b0e83385`：守护进程交接、失败恢复、iOS 顶栏按钮）合进了分支（`30fe8973`），所以之后对 main 可以直接 fast-forward。三处冲突都是两边各自追加：`docs/overview-ios.md`（两条 iOS 要点都留）、`daemon/runtime/agent_control.rs` 的测试夹具（沿用本分支共享的 `test_state`，补上 main 给 `ServerState` 新加的 `exit_intent`、`closing`）、`ios/gateway/tests_requests.rs`（两组新测试都留）。协议号两边都是 5，没有变。
+
+合并后的验证（都在隔离环境里，没碰日常 Daemon，没有任何东西发到用户手机）：
+
+- **Rust**：`cargo fmt --check` 与 `clippy --all-targets -D warnings` 干净（只有 `vendor/tao` 里本来就有的警告），`cargo test --bin AskHuman` 2592 通过 / 0 失败 / 11 忽略。
+- **前端**：`vue-tsc` 通过；vitest 102 个文件、1276 条全过。
+- **Swift 包**：6 个测试包共 672 条、0 失败（要真实服务的端到端按设计跳过）。
+- **真实 Daemon 端到端**（`AHE2ETests`，本地 broker，用合并后装出来的二进制）：41 通过、12 按设计跳过、**3 失败，而且在 main 上同样失败**：`AgentE2ETests.testAMessageToAnAgentThatIsNotWorkingIsRefused` 与 `testSessionsOfTheMacAreListedWithTheirState`（期望 `notWorking`，main 的 `agent_control.rs::can_interject` 现在对空闲会话返回 `idleUnsupported`），以及 `testAFollowedSessionReportsWhenItsTurnEnds`（等不到 `done` 事件）。用 main 的日常版二进制（`~/.local/bin/AskHuman`，装机早于 `b0e83385`）单独跑这三条，失败一模一样，所以不是本功能或这次合并带来的，多半是 main 上的 Agent 生命周期改动之后这些用例没有跟着改，留给那边处理。`TodoE2ETests` 里本功能加的四条通过。
+- **隔离 Daemon 里用合并后的二进制冒充 Claude 会话**：`away on` → 提问被自动回复（带备注）→ `away status` 显示自动回复次数 → `away off`，一切如设计。
+- **iOS 模拟器 UI 测试**（`AskHuman SR UI`，iPhone，iOS 26）：`AskHumanAwayUITests` 16/16（英文、简体中文各一遍）、`AskHumanTodoPickUITests` 6/6（简体中文）、主类 `AskHumanUITests` 63/63（英文）、`AskHumanRequestNavigationUITests` 8、`AskHumanRequestTodoUITests` 8、`AskHumanTodosUITests` 10、`AskHumanRequestConnectionUITests` 3、`AskHumanArrivalUITests` 7 全过；`AskHumanInputVisibilityUITests` 9 条里 7 过、1 条要专用相册夹具而跳过、1 条 `testEachQuestionRevealsItsOwnAttachmentEntryPoint` 偶发失败（`second.typeText` 前的点按没拿到键盘焦点，约两次里一次）。**在不含本分支改动的 main 上同样复现**（同一行、同一报错，第 2 轮失败），是已有的不稳定用例，不是本功能引入的。
+- **没有重跑**：`AskHumanDeveloperUITests`、`AskHumanModelUITests`、`AskHumanWebUITests`、`AskHumanLargeScreenUITests`（要 iPad / Duo 模拟器）、`AskHumanLiveUITests`（要真实服务）和视频附件那一条。它们覆盖开发者模式、新建任务表单、Markdown 页与大屏，本分支没有改这些页面（新建任务表单的顶栏按钮是 main 带来的改动，那边自己验过）。
+
 ### 总体没有验证的部分
 
 - **真实 Agent 端到端**：Claude Code / Codex / Cursor 各一轮（开离开 → 提问与 whats-next 被自动回复 → `--escalate` 送达 → 结束；「不再使用」→ 即时提示、Stop 确认静音、权限与出错卡仍在）。需要用户授权真实 Agent 调用；只有隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话的端到端，以及 Stop hook / `AskUserQuestion` 接管的单测。
