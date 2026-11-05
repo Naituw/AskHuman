@@ -387,7 +387,7 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 - [ ] **真实 Agent 端到端**：Claude Code / Codex / Cursor 各一轮（开离开 → 提问与 whats-next 被自动回复 → `--escalate` 送达 → 结束；「不再使用」→ 即时提示、Stop 确认静音、权限与出错卡仍在）。要先有用户对真实 Agent 调用的授权
 - [ ] **桌面胶囊在真实桌面上的交互**：悬停 / 点击展开、拖动后位置记忆、「欢迎回来」的触发（5 分钟空闲后敲键盘）、全屏应用与多桌面上的可见性。这台机器截不了屏、Computer Use 也列不出 AskHuman 的后台应用，只验了窗口几何（`CGWindowListCopyWindowInfo`）与浏览器里的真实组件；Windows / Linux 的托盘月亮与控制台也没看过
 - [ ] **iOS**：iOS 17 的降级条样式、iPad / Duo 大屏上的常驻条与真机一轮（iOS 18.5 模拟器的经典条已逐屏看过并跑过 `AskHumanAwayUITests`，修了「发送并离开」按钮被截断；其余在 iOS 27.0 模拟器上验，见计划「iOS 18.5 经典条补验」）；TestFlight **没有出**（用户没要；要出走 `ios-testflight` 技能），Mac 也要装带这次改动的版本，否则手机上没有离开 / 待办入口（`caps.away` / `caps.answerTodos` 把关）
-- [ ] **合回 main**：分支未推送。main 检出里别的会话有未提交的改动（`Localizable.xcstrings`、`make-catalog.py` 等），合并时这两处可能冲突；合完后 `./scripts/install.sh` 装为日常版
+- [ ] **合回 main**：分支未推送。2026-11-05 收尾时 main 已全部包含在分支里（`git rev-list --left-right --count main...feat/special-replies` 左边，即 main 独有的提交，是 0），main 检出干净，所以 `git -C <main 检出> merge --ff-only feat/special-replies` 即可；合完后 `./scripts/install.sh` 装为日常版（如果合之前 main 又前进了，先在分支里 `git merge main`）
 - [ ] 控制台里 Agent 页头的横幅 / 会话菜单在真实数据上的样子没再核对（组件与逻辑有测试）
 
 ## 待验收：Cursor 任务的 Max 模式控制与 Agents 窗口新建任务（已合回 main 并装为日常版；真实验证阶段 1–2 已过，阶段 3–4 等用户自己做）
