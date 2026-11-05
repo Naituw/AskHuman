@@ -25,6 +25,21 @@ extension MockData {
         public var lists: [String: ProjectTodos]
     }
 
+    /// The queue the `todoPick` scenario gives the project of the Home MacBook Pro's requests, the first one being
+    /// what the Agent takes first. Three of them are the todos the demo's What's next question carries.
+    public static func pickableTodos(now: Date = Date()) -> [TodoItem] {
+        func at(_ ago: TimeInterval) -> UInt64 { UInt64(max(0, now.addingTimeInterval(-ago).timeIntervalSince1970 * 1000)) }
+        return [
+            TodoItem(id: "todo-pick-1", text: "补全 Agents 列表的空态", createdAtMs: at(70_000), auto: true),
+            TodoItem(id: "todo-pick-2", text: "实现通知扩展的解密", createdAtMs: at(60_000)),
+            TodoItem(id: "todo-pick-3", text: "整理 Markdown 渲染的快照测试", createdAtMs: at(50_000)),
+            TodoItem(id: "todo-pick-4", text: "把弹窗里的待办面板同步到手机，选中后随回答一起发送", createdAtMs: at(40_000), att: 1),
+            TodoItem(id: "todo-pick-5", text: "设置页增加离开模式的说明文案", createdAtMs: at(30_000)),
+            TodoItem(id: "todo-pick-6", text: "排查 Windows 下托盘图标偏移", createdAtMs: at(20_000)),
+            TodoItem(id: "todo-pick-7", text: "给 CLI 增加 --escalate 参数的文档", createdAtMs: at(10_000)),
+        ]
+    }
+
     public static func todoSample(now: Date = Date()) -> TodoSample {
         func at(_ ago: TimeInterval) -> UInt64 { UInt64(max(0, now.addingTimeInterval(-ago).timeIntervalSince1970 * 1000)) }
         var rows: [String: [TodoProjectRow]] = [:]

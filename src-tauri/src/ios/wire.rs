@@ -42,6 +42,9 @@ pub const TODO_MAX_PENDING: usize = 300;
 pub const TODO_MAX_HISTORY: usize = 100;
 pub const TODO_MAX_PROJECTS: usize = 200;
 pub const TODO_TEXT_MAX_CHARS: usize = 4000;
+/// The `answer.ack` reason when a todo picked with an answer is no longer in the Mac's queue (the phone reads
+/// the queue again and lets go of it); the Swift side matches this text.
+pub const REJECT_TODO_GONE: &str = "todo gone";
 pub const KEEPALIVE_SECS: u64 = 30;
 pub const PUSH_FALLBACK_SECS: u64 = 3;
 pub const HANDLE_REFRESH_DAYS: i64 = 90;
@@ -218,6 +221,11 @@ pub struct Caps {
     /// The Mac serves `todo.*` (docs/specs/ios-todos.md I7). Older Macs do not send it.
     #[serde(default)]
     pub todos: bool,
+    /// The Mac takes project todos picked while answering (`answer.submit` `todoIds`,
+    /// docs/specs/special-replies.md D28). Older Macs do not send it, and the phone then shows no
+    /// todo picker: a todo picked for a Mac that would drop the field would be lost silently.
+    #[serde(default)]
+    pub answer_todos: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -618,6 +626,11 @@ pub struct AnswerSubmit {
     pub action: String,
     #[serde(default)]
     pub answers: Vec<AnswerItem>,
+    /// Ids of the project todos picked for this answer, in the order the phone lists them
+    /// (docs/specs/special-replies.md D28/D29). The Mac merges their text into the answer and
+    /// dequeues them, as the popup does. Additive: absent from older phones and when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub todo_ids: Vec<String>,
 }
 msg!(AnswerSubmit, t::ANSWER_SUBMIT);
 

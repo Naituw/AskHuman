@@ -9,7 +9,7 @@ use std::sync::Arc;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::Actor;
+use super::{Actor, TodoPick};
 use crate::ios::envelope;
 use crate::ios::push::PushOutcome;
 use crate::ios::store::{JournalEntry, JournalLookup, JournalResult};
@@ -20,7 +20,9 @@ use crate::ios::wire::{
     RequestSummary, RequestView, INLINE_REQUEST_BYTES, MAX_PLAIN_BYTES, PUSH_FALLBACK_SECS,
     PUSH_PREVIEW_MAX_CHARS, PUSH_SESSION_MAX_CHARS,
 };
-use crate::models::{AskRequest, ChannelAction, ChannelResult, ImageAttachment, QuestionAnswer};
+use crate::models::{
+    AskRequest, ChannelAction, ChannelResult, ImageAttachment, QuestionAnswer, TodoSelection,
+};
 use base64::Engine;
 
 /// How long a request may stay undeliverable (broker down, no push) before the surface is
@@ -346,12 +348,61 @@ fn summarize(view: &RequestView, size: u64) -> RequestSummary {
 }
 
 fn answer_hash(submit: &AnswerSubmit) -> String {
-    let canonical = json!({
+    let mut canonical = json!({
         "requestId": submit.request_id,
         "action": submit.action,
         "answers": submit.answers,
     });
+    // Left out when empty, so the hash of an answer without todos is what it always was: a repeat
+    // that crosses an upgrade of the Mac still replays instead of being called a conflict.
+    if !submit.todo_ids.is_empty() {
+        canonical["todoIds"] = json!(submit.todo_ids);
+    }
     short_hash(&serde_json::to_vec(&canonical).expect("answer serializes"))
+}
+
+/// Puts the picked todos into the answers the way the popup does (`collectAnswers` in
+/// `usePopupCore.ts`), so the Agent reads the same words whichever device answered, and fills the
+/// ids and attachment snapshots the Coordinator dequeues and delivers from.
+///
+/// A question: the todos go into the last one, after what the person wrote, each on a line of its
+/// own. What's next: the todo is the next task itself, so its text leads and what the person wrote
+/// follows (the popup's handling of a todo of the refreshed queue).
+fn merge_todo_picks(
+    ask: &AskRequest,
+    answers: &mut [QuestionAnswer],
+    picks: Vec<TodoPick>,
+    merge_line: impl Fn(&str) -> String,
+) {
+    let Some(first) = picks.first() else { return };
+    let Some(last) = answers.len().checked_sub(1) else {
+        return;
+    };
+    let index = if ask.whats_next { 0 } else { last };
+    let answer = &mut answers[index];
+    let typed = answer.user_input.take();
+    let parts: Vec<String> = if ask.whats_next {
+        std::iter::once(first.text.clone()).chain(typed).collect()
+    } else {
+        typed
+            .into_iter()
+            .chain(picks.iter().map(|pick| merge_line(&pick.text)))
+            .collect()
+    };
+    let merged = parts
+        .into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    answer.user_input = Some(merged).filter(|text| !text.is_empty());
+    answer.todo_ids = picks.iter().map(|pick| pick.id.clone()).collect();
+    answer.todo_selections = picks
+        .into_iter()
+        .map(|pick| TodoSelection {
+            id: pick.id,
+            attachments: pick.attachments,
+        })
+        .collect();
 }
 
 fn decide_hash(decide: &ConfirmDecide) -> String {
@@ -921,9 +972,10 @@ impl Actor {
             return ("invalid", Some("not a question".into()));
         };
         let (sink, ask) = (sink.clone(), ask.clone());
+        let project_key = pending.view.project.key.clone();
         let result = match submit.action.as_str() {
             "cancel" => ChannelResult::cancel("ios"),
-            "send" => match self.build_answers(phone_id, &ask, submit) {
+            "send" => match self.build_answers(phone_id, &ask, &project_key, submit) {
                 Ok(answers) => ChannelResult {
                     action: ChannelAction::Send,
                     answers,
@@ -940,10 +992,48 @@ impl Actor {
         }
     }
 
+    /// The todos a phone picked while answering, looked up on this Mac before anything is consumed
+    /// (docs/specs/special-replies.md D28/D29). Empty when none were picked.
+    fn resolve_todo_picks(
+        &self,
+        ask: &AskRequest,
+        project_key: &str,
+        submit: &AnswerSubmit,
+        answers: &[QuestionAnswer],
+    ) -> Result<Vec<TodoPick>, String> {
+        let ids = &submit.todo_ids;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        if ask.select_only {
+            return Err("this question accepts only the listed options".into());
+        }
+        if ids.len() > wire::TODO_MAX_PENDING {
+            return Err("too many todos".into());
+        }
+        let mut seen = std::collections::HashSet::new();
+        if !ids.iter().all(|id| seen.insert(id.as_str())) {
+            return Err("duplicate todo".into());
+        }
+        if ask.whats_next {
+            // The next task is one thing: a todo or one of the options, never both.
+            let chosen = answers.first().map_or(0, |a| a.selected_options.len());
+            if ids.len() > 1 || chosen > 0 {
+                return Err("choose one next task".into());
+            }
+        }
+        let picks = self.host.todo_picks(project_key, ids);
+        if picks.len() != ids.len() || picks.iter().zip(ids).any(|(pick, id)| &pick.id != id) {
+            return Err(wire::REJECT_TODO_GONE.into());
+        }
+        Ok(picks)
+    }
+
     fn build_answers(
         &mut self,
         phone_id: &str,
         ask: &AskRequest,
+        project_key: &str,
         submit: &AnswerSubmit,
     ) -> Result<Vec<QuestionAnswer>, String> {
         let mut answers = vec![QuestionAnswer::default(); ask.questions.len()];
@@ -992,6 +1082,10 @@ impl Actor {
                 ..QuestionAnswer::default()
             };
         }
+        let picks = self.resolve_todo_picks(ask, project_key, submit, &answers)?;
+        merge_todo_picks(ask, &mut answers, picks, |text| {
+            self.host.todo_merge_line(text)
+        });
         // Uploads are consumed only once the whole answer is known to be valid, so a rejected
         // answer can be corrected and resubmitted without uploading again.
         let all_ids: Vec<String> = submit

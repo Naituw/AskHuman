@@ -26,6 +26,10 @@ public enum Wire {
     public static let todoMaxHistory = 100
     public static let todoMaxProjects = 200
     public static let todoTextMaxChars = 4000
+    /// The most todos one answer may pick (the Mac refuses more than a queue holds).
+    public static let maxPickedTodos = todoMaxPending
+    /// What the Mac says (`answer.ack` `reason`) when a todo picked with an answer is no longer in its queue.
+    public static let todoGone = "todo gone"
 
     public static let publishRatePerSec = 6.0
     public static let publishBurst = 10.0

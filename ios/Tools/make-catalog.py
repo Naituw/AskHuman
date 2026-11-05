@@ -588,6 +588,16 @@ ZH = {
     "Select a request": "选择一条请求",
     "Select a session": "选择一个会话",
     "Select an entry": "选择一条记录",
+    # Project todos in the answer form (docs/specs/special-replies.md D28/D29)
+    "%lld selected": "已选 %lld",
+    "Picked todos are sent to the Agent with your answer and removed from the list.": "选中的待办会和你的回答一起发给 Agent，并从待办里移除。",
+    "Show all %lld todos": "显示全部 %lld 条待办",
+    "Show less": "收起",
+    "Expanded": "已展开",
+    "Collapsed": "已折叠",
+    "Attachments: %lld": "附件：%lld",
+    "A todo you picked is no longer on the list. The list is up to date now: choose again and send.": "你选的待办已经不在列表里了。列表已更新，请重新选择后再发送。",
+    "Choose again": "重新选择",
 }
 
 # Shown by iOS itself when a push cannot be decrypted by the notification extension.

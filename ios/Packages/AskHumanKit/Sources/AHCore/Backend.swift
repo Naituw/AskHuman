@@ -45,8 +45,8 @@ public protocol RemoteBackend: AnyObject, Sendable {
     /// The request was opened in the UI: clears the unread flag and tells the Mac.
     func markSeen(macId: String, requestId: String) async
     /// Sends an answer and returns its client message id. Throws `.macOffline` when the Mac cannot
-    /// be reached (nothing is queued for later).
-    func submitAnswer(macId: String, requestId: String, action: String, answers: [AnswerItem]) async throws -> String
+    /// be reached (nothing is queued for later). `todoIds` are the project todos picked with the answer.
+    func submitAnswer(macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String]) async throws -> String
     func submitConfirm(macId: String, requestId: String, wireIndex: Int?, dismiss: Bool, input: String?) async throws -> String
     /// Sends a failed submission again under the same client message id.
     func retrySubmission(clientMsgId: String) async throws
@@ -111,5 +111,12 @@ public protocol RemoteBackend: AnyObject, Sendable {
 public extension RemoteBackend {
     func createTask(macId: String, draft: TaskDraft) async throws -> String {
         try await createTask(macId: macId, draft: draft, progress: { _ in })
+    }
+}
+
+extension RemoteBackend {
+    /// An answer that picks no todos.
+    public func submitAnswer(macId: String, requestId: String, action: String, answers: [AnswerItem]) async throws -> String {
+        try await submitAnswer(macId: macId, requestId: requestId, action: action, answers: answers, todoIds: [])
     }
 }

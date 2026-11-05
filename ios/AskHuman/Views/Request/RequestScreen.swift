@@ -509,20 +509,35 @@ struct FailedSubmissionNotice: View {
             Label("Your reply was not delivered", systemImage: "exclamationmark.triangle.fill")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.red)
-            Text("The Mac did not confirm it. You can send it again or discard it and edit your answer.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            HStack {
-                Button("Send again") {
-                    Task {
-                        do { try await store.retry(item) } catch { store.reportRequestError(error.userMessage, for: item.id) }
+            if todoGone {
+                // Nothing to send again: the answer named a todo that is no longer in the queue (the page has
+                // read the queue again and let go of it).
+                Text("A todo you picked is no longer on the list. The list is up to date now: choose again and send.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Button("Choose again") { Task { await store.discardFailure(item) } }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("choose-again")
+            } else {
+                Text("The Mac did not confirm it. You can send it again or discard it and edit your answer.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("Send again") {
+                        Task {
+                            do { try await store.retry(item) } catch { store.reportRequestError(error.userMessage, for: item.id) }
+                        }
                     }
+                    .buttonStyle(.borderedProminent)
+                    Button("Discard", role: .destructive) { Task { await store.discardFailure(item) } }
+                        .buttonStyle(.bordered)
                 }
-                .buttonStyle(.borderedProminent)
-                Button("Discard", role: .destructive) { Task { await store.discardFailure(item) } }
-                    .buttonStyle(.bordered)
             }
         }
         .card()
+    }
+
+    private var todoGone: Bool {
+        if case .failed(_, Wire.todoGone) = item.state { true } else { false }
     }
 }

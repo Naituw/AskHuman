@@ -53,7 +53,7 @@ use crate::config::IosChannelConfig;
 use assets::Uploads;
 pub use hostapi::{
     AgentEventInfo, AgentEventKind, FrameData, InterjectResult, StagedFile, TaskChoices,
-    TaskLaunch, TodoApplied, TodoChoices,
+    TaskLaunch, TodoApplied, TodoChoices, TodoPick,
 };
 pub use pairing::PairInfo;
 use requests::{DeliverRequest, Resolution};
@@ -144,6 +144,17 @@ pub trait Host: Send + Sync + 'static {
     }
     /// A phone looks at the todos: fetch what other devices changed, if that is due.
     fn todo_refresh(&self) {}
+    /// The pending todos of the project `project_key` that carry one of `ids`, in the order of `ids`
+    /// (docs/specs/special-replies.md D28). An id no todo carries is left out: the gateway refuses
+    /// the answer as "todo gone" and the phone looks at the list again.
+    fn todo_picks(&self, _project_key: &str, _ids: &[String]) -> Vec<TodoPick> {
+        Vec::new()
+    }
+    /// The line that carries a picked todo into the text of an answer. The popup calls it
+    /// `popup.todos.mergeLine`, in the language of the Mac's interface.
+    fn todo_merge_line(&self, text: &str) -> String {
+        format!("Also look into this todo task: {text}")
+    }
 
     /// Seconds since the last keyboard / mouse input on this Mac; `None` when unknown. A question
     /// the phone has not looked at is pushed only once the Mac has been idle for

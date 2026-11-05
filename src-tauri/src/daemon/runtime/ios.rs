@@ -9,7 +9,7 @@ use super::*;
 use crate::config::IosChannelConfig;
 use crate::ios::gateway::{
     FrameData, GatewayDeps, Host, InterjectResult, IosGateway, StagedFile, TaskChoices, TaskLaunch,
-    TodoApplied, TodoChoices,
+    TodoApplied, TodoChoices, TodoPick,
 };
 use crate::ios::push::HttpPushClient;
 use crate::ios::store::Store;
@@ -69,6 +69,7 @@ impl Host for DaemonHost {
             interject: true,
             watch: true,
             todos: true,
+            answer_todos: true,
         }
     }
 
@@ -166,6 +167,28 @@ impl Host for DaemonHost {
 
     fn todo_refresh(&self) {
         ios_todos::refresh();
+    }
+
+    fn todo_picks(&self, project_key: &str, ids: &[String]) -> Vec<TodoPick> {
+        // The local phase of a sync tick, like every other read of the project's todos.
+        crate::todo_sync::service::before_read(project_key);
+        let entries = crate::todos::list(project_key);
+        ids.iter()
+            .filter_map(|id| entries.iter().find(|entry| &entry.id == id))
+            .map(|entry| TodoPick {
+                id: entry.id.clone(),
+                text: entry.text.clone(),
+                attachments: entry
+                    .attachments
+                    .iter()
+                    .map(|attachment| attachment.snapshot())
+                    .collect(),
+            })
+            .collect()
+    }
+
+    fn todo_merge_line(&self, text: &str) -> String {
+        crate::i18n::tr(crate::i18n::Lang::current(), "todo.mergeLine").replace("{text}", text)
     }
 
     fn slot(&self) -> SlotInfo {

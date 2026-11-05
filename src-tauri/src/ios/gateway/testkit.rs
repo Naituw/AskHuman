@@ -13,7 +13,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use super::requests::{AskSink, ConfirmSink};
 use super::{
     FrameData, GatewayDeps, Host, InterjectResult, IosGateway, StagedFile, TaskChoices, TaskLaunch,
-    TodoApplied, TodoChoices,
+    TodoApplied, TodoChoices, TodoPick,
 };
 use crate::config::IosChannelConfig;
 use crate::ios::crypto::{self, KeyPair, PairContext};
@@ -64,6 +64,8 @@ pub struct TestHost {
     /// What `todo_rev` answers; a test bumps it to simulate a write by someone else.
     pub todo_store_rev: AtomicU64,
     pub todo_refreshes: AtomicUsize,
+    /// The pending todos `todo_picks` finds, by project key.
+    pub todo_pick_store: Mutex<HashMap<String, Vec<TodoPick>>>,
     pub task_result: Mutex<Result<(), String>>,
     /// Virtual time `task_create` takes.
     pub task_delay_ms: AtomicU64,
@@ -100,6 +102,7 @@ impl TestHost {
             todo_ops: Mutex::new(Vec::new()),
             todo_store_rev: AtomicU64::new(1),
             todo_refreshes: AtomicUsize::new(0),
+            todo_pick_store: Mutex::new(HashMap::new()),
             task_result: Mutex::new(Ok(())),
             task_delay_ms: AtomicU64::new(0),
             launches: Mutex::new(Vec::new()),
@@ -171,6 +174,7 @@ impl Host for TestHost {
             interject: true,
             watch: true,
             todos: true,
+            answer_todos: true,
         }
     }
 
@@ -293,6 +297,14 @@ impl Host for TestHost {
 
     fn todo_refresh(&self) {
         self.todo_refreshes.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn todo_picks(&self, project_key: &str, ids: &[String]) -> Vec<TodoPick> {
+        let store = self.todo_pick_store.lock().unwrap();
+        let known = store.get(project_key).map(Vec::as_slice).unwrap_or(&[]);
+        ids.iter()
+            .filter_map(|id| known.iter().find(|pick| &pick.id == id).cloned())
+            .collect()
     }
 }
 

@@ -510,6 +510,62 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(h.mac.answer(for: request.id)?.clientMsgId, id)
     }
 
+    func testPickedTodosTravelWithTheAnswer() async throws {
+        let h = Harness()
+        await h.pair()
+        let request = sampleAsk()
+        await h.mac.deliver(request)
+        await eventually("inbox") { await h.state().inbox.count == 1 }
+        _ = try await h.engine.submitAnswer(
+            macId: h.mac.macId, requestId: request.id, action: "send", answers: [AnswerItem(q: 0, sel: [0], text: "because")],
+            todoIds: ["t1", "t2"]
+        )
+        await eventually("answer at the Mac") { h.mac.count(AnswerSubmit.type) == 1 }
+        let submit = try unwrap(h.mac.answer(for: request.id))
+        XCTAssertEqual(submit.todoIds, ["t1", "t2"])
+        XCTAssertEqual(submit.answers, [AnswerItem(q: 0, sel: [0], text: "because")])
+        await eventually("finished") { await h.state().inbox.isEmpty }
+    }
+
+    func testAnAnswerWithoutTodosHasNoTodoField() async throws {
+        let h = Harness()
+        await h.pair()
+        let request = sampleAsk()
+        await h.mac.deliver(request)
+        await eventually("inbox") { await h.state().inbox.count == 1 }
+        _ = try await h.engine.submitAnswer(macId: h.mac.macId, requestId: request.id, action: "send", answers: [AnswerItem(q: 0, sel: [0])])
+        await eventually("answer at the Mac") { h.mac.count(AnswerSubmit.type) == 1 }
+        let body = h.mac.received(AnswerSubmit.type)[0].b
+        guard case .object(let fields) = body else { return XCTFail("an object") }
+        XCTAssertNil(fields["todoIds"], "an older Mac must not see a field it does not know")
+    }
+
+    func testThePickedTodosSurviveARestartInTheOutbox() async throws {
+        let h = Harness()
+        await h.pair()
+        let request = sampleAsk()
+        await h.mac.deliver(request)
+        await eventually("inbox") { await h.state().inbox.count == 1 }
+        h.mac.ignoreAnswers = true
+        let id = try await h.engine.submitAnswer(
+            macId: h.mac.macId, requestId: request.id, action: "send", answers: [AnswerItem(q: 0, sel: [0])], todoIds: ["t7"]
+        )
+        await eventually("answer at the Mac") { h.mac.count(AnswerSubmit.type) == 1 }
+        await h.engine.setForeground(false)
+
+        h.mac.ignoreAnswers = false
+        let engine2 = PhoneEngine(
+            vault: h.vault, store: h.store, broker: h.broker.makeClient(), clock: h.clock, relay: FakeRelay(),
+            config: EngineConfig(deviceName: "Test iPhone", appVersion: "1.0", bundleId: "b", pushEnv: "dev", allowPlainLoopback: false, assetDirectory: h.root.appendingPathComponent("assets2"))
+        )
+        await engine2.start()
+        await engine2.setForeground(true)
+        await eventually("the answer is accepted after the retry") { await engine2.snapshot().inbox.isEmpty }
+        let again = try unwrap(h.mac.answer(for: request.id))
+        XCTAssertEqual(again.clientMsgId, id)
+        XCTAssertEqual(again.todoIds, ["t7"], "the retry carries what the first try did")
+    }
+
     // MARK: clocks and tampering
 
     func testMessagesWithAStaleClockAreDroppedAndFlagged() async throws {

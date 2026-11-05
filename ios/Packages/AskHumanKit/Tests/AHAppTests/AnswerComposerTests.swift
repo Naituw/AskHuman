@@ -268,4 +268,127 @@ final class AnswerComposerTests: XCTestCase {
         XCTAssertFalse(form.canSend)
         XCTAssertEqual(form.blockedReason, .needsSelection)
     }
+
+    // MARK: project todos (docs/specs/special-replies.md D28/D29)
+
+    private func whatsNext() -> AskView {
+        AskView(
+            isMarkdown: true, message: MessageView(text: "done", files: []),
+            questions: [QuestionView(text: "What next?", options: [
+                OptionView(text: "from the Agent", recommended: false),
+                OptionView(text: "⚡ a queued todo", recommended: false, todo: true),
+                OptionView(text: "End this round", recommended: false),
+            ])],
+            selectOnly: false, single: true, whatsNext: true
+        )
+    }
+
+    func testPickedTodosAnswerTheLastQuestionAndAreNotAnItemOfTheirOwn() {
+        let form = composer(ask([question("1", "a"), question("2", "b")]))
+        XCTAssertFalse(form.hasContent)
+        form.setTodoIds(["t1", "t2"])
+        XCTAssertEqual(form.todoIds, ["t1", "t2"], "in the order the picker lists them")
+        XCTAssertTrue(form.hasContent)
+        XCTAssertTrue(form.isAnswered(1), "they go into the last question's answer")
+        XCTAssertFalse(form.isAnswered(0))
+        XCTAssertEqual(form.answeredCount, 1)
+        XCTAssertTrue(form.items(uploads: [:]).isEmpty, "the ids travel beside the items")
+        XCTAssertTrue(form.isTodoPicked("t2"))
+        XCTAssertFalse(form.isTodoPicked("t3"))
+    }
+
+    func testAnAnswerWithTodosAndTextKeepsBothAndTheTextOnItsOwnItem() {
+        let form = composer(ask([question("1", "a")]))
+        form.setTodoIds(["t1"])
+        form.setText("  because  ", question: 0)
+        let items = form.items(uploads: [:])
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0].text, "because")
+        XCTAssertEqual(form.todoIds, ["t1"])
+    }
+
+    func testASelectOnlyFormTakesNoTodos() {
+        let form = composer(ask([question("1", "a", "b")], selectOnly: true))
+        form.setTodoIds(["t1"])
+        XCTAssertTrue(form.todoIds.isEmpty)
+        XCTAssertFalse(form.hasContent)
+    }
+
+    func testPickedTodosSurviveARestartInTheDraft() {
+        let view = ask([question("1", "a")])
+        let first = composer(view, debounce: .seconds(60))
+        first.setTodoIds(["t1", "t2"])
+        first.flush()
+        let second = composer(view)
+        XCTAssertEqual(second.todoIds, ["t1", "t2"])
+        XCTAssertTrue(second.hasContent)
+    }
+
+    func testADraftWithOnlyTodosIsNotEmptyAndOneFromBeforeTodosHasNone() throws {
+        XCTAssertFalse(Draft(answers: [DraftAnswer()], todoIds: ["t1"]).isEmpty)
+        XCTAssertTrue(Draft(answers: [DraftAnswer()]).isEmpty)
+        let old = #"{"answers":[{"selected":[0],"text":"","attachments":[]}],"updatedAt":0}"#
+        let draft = try JSONDecoder().decode(Draft.self, from: Data(old.utf8))
+        XCTAssertEqual(draft.todoIds, [])
+        XCTAssertEqual(draft.answers.count, 1)
+    }
+
+    func testLettingGoOfTheLastTodoEmptiesTheFormAgain() {
+        let form = composer(ask([question("1", "a")]))
+        form.setTodoIds(["t1"])
+        form.setTodoIds([])
+        XCTAssertFalse(form.hasContent)
+        XCTAssertFalse(form.isAnswered(0))
+    }
+
+    func testTodosThatAreNoLongerInTheQueueAreLetGoOf() {
+        let form = composer(ask([question("1", "a")]))
+        form.setTodoIds(["t1", "t2", "t3"])
+        form.keepTodos(in: ["t1", "t3", "t9"])
+        XCTAssertEqual(form.todoIds, ["t1", "t3"])
+    }
+
+    func testWhatsNextTakesOneTodoAndALaterChoiceReplacesIt() {
+        let form = composer(whatsNext())
+        form.toggle(question: 0, option: 0)
+        form.setTodoIds(["t1", "t2"])
+        XCTAssertEqual(form.todoIds, ["t1"], "the next task is one thing")
+        XCTAssertEqual(form.answers[0].selected, [], "a todo takes the place of the option that was chosen")
+        form.toggle(question: 0, option: 2)
+        XCTAssertEqual(form.todoIds, [], "an option takes the place of the todo")
+        XCTAssertEqual(form.answers[0].selected, [2])
+    }
+
+    func testOtherAsksTakeAsManyTodosAsTheQueueHolds() {
+        let form = composer(ask([question("1", "a")]))
+        let ids = (0..<Wire.maxPickedTodos + 5).map { "t\($0)" }
+        form.setTodoIds(ids)
+        XCTAssertEqual(form.todoIds.count, Wire.maxPickedTodos)
+    }
+
+    func testTheTodosAWhatsNextQuestionCarriesAreLetGoOfWhenTheQueueTakesTheirPlace() {
+        let form = composer(whatsNext())
+        form.toggle(question: 0, option: 1)
+        form.toggle(question: 0, option: 0)
+        XCTAssertEqual(form.answers[0].selected, [0], "single choice: the last one stays")
+        form.toggle(question: 0, option: 1)
+        XCTAssertEqual(form.answers[0].selected, [1])
+        form.dropTodoOptionSelections()
+        XCTAssertEqual(form.answers[0].selected, [], "a hidden choice would be sent without being seen")
+        form.toggle(question: 0, option: 0)
+        form.dropTodoOptionSelections()
+        XCTAssertEqual(form.answers[0].selected, [0], "an option the Agent offered stays")
+    }
+
+    func testOnlyWhatsNextDropsTheOptionsThatStandForTodos() {
+        let view = AskView(
+            isMarkdown: true, message: MessageView(text: "m", files: []),
+            questions: [QuestionView(text: "q", options: [OptionView(text: "a", recommended: false, todo: true)])],
+            selectOnly: false, single: true
+        )
+        let form = composer(view)
+        form.toggle(question: 0, option: 0)
+        form.dropTodoOptionSelections()
+        XCTAssertEqual(form.answers[0].selected, [0], "an ordinary question's options are its own")
+    }
 }

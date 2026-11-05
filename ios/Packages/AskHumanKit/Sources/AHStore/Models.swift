@@ -125,14 +125,24 @@ public struct DraftAttachment: Codable, Equatable, Sendable, Identifiable {
 
 public struct Draft: Codable, Equatable, Sendable {
     public var answers: [DraftAnswer]
+    /// Ids of the project todos picked with the answer. Drafts written before todos could be picked have none.
+    public var todoIds: [String]
     public var updatedAt: Date
 
-    public init(answers: [DraftAnswer], updatedAt: Date = Date()) {
+    public init(answers: [DraftAnswer], todoIds: [String] = [], updatedAt: Date = Date()) {
         self.answers = answers
+        self.todoIds = todoIds
         self.updatedAt = updatedAt
     }
 
-    public var isEmpty: Bool { answers.allSatisfy(\.isEmpty) }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        answers = try c.decode([DraftAnswer].self, forKey: .answers)
+        todoIds = try c.decodeIfPresent([String].self, forKey: .todoIds) ?? []
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+    }
+
+    public var isEmpty: Bool { answers.allSatisfy(\.isEmpty) && todoIds.isEmpty }
 }
 
 /// A submission waiting for its acknowledgement. Persisted so that a restart does not lose it;

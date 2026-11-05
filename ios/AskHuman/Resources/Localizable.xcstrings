@@ -237,6 +237,16 @@
         }
       }
     },
+    "%lld selected" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已选 %lld"
+          }
+        }
+      }
+    },
     "%lld." : {
       "shouldTranslate" : false
     },
@@ -310,6 +320,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法读取这张照片。"
+          }
+        }
+      }
+    },
+    "A todo you picked is no longer on the list. The list is up to date now: choose again and send." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你选的待办已经不在列表里了。列表已更新，请重新选择后再发送。"
           }
         }
       }
@@ -714,6 +734,16 @@
         }
       }
     },
+    "Attachments: %lld" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附件：%lld"
+          }
+        }
+      }
+    },
     "Auto" : {
       "localizations" : {
         "zh-Hans" : {
@@ -914,6 +944,16 @@
         }
       }
     },
+    "Choose again" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新选择"
+          }
+        }
+      }
+    },
     "Choose an option for every question." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1020,6 +1060,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Codex Desktop 已断开连接。请在 Mac 上打开原聊天后重试。"
+          }
+        }
+      }
+    },
+    "Collapsed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已折叠"
           }
         }
       }
@@ -1540,6 +1590,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每个提问都会发到你的手机。"
+          }
+        }
+      }
+    },
+    "Expanded" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已展开"
           }
         }
       }
@@ -3113,6 +3173,16 @@
         }
       }
     },
+    "Picked todos are sent to the Agent with your answer and removed from the list." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选中的待办会和你的回答一起发给 Agent，并从待办里移除。"
+          }
+        }
+      }
+    },
     "Plan" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3723,12 +3793,32 @@
         }
       }
     },
+    "Show all %lld todos" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示全部 %lld 条待办"
+          }
+        }
+      }
+    },
     "Show diagram" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "查看图表"
+          }
+        }
+      }
+    },
+    "Show less" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "收起"
           }
         }
       }

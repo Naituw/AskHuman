@@ -35,6 +35,9 @@ public actor MockBackend: RemoteBackend {
         case outdated
         /// The demo, with both Macs syncing their todos through iCloud (the Office iMac has a project of its own).
         case bothSync
+        /// The demo, with both Macs taking the todos picked while answering (`caps.answerTodos`) and a queue of seven
+        /// todos for the project of the Home MacBook Pro's requests. The other scenarios have Macs from before that.
+        case todoPick
         /// Paired Macs that have not answered yet, as right after the app opened: the lists are
         /// still loading. They stay so unless a sync delay is given, after which the demo appears.
         case syncing
@@ -49,6 +52,8 @@ public actor MockBackend: RemoteBackend {
         public var wireIndex: Int?
         public var dismiss: Bool
         public var input: String?
+        /// Project todos picked with an answer.
+        public var todoIds: [String] = []
     }
 
     public nonisolated let states: AsyncStream<EngineState>
@@ -146,7 +151,7 @@ public actor MockBackend: RemoteBackend {
         let date = now()
         var initial: EngineState
         switch scenario {
-        case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .tall, .gallery, .outdated, .bothSync:
+        case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .tall, .gallery, .outdated, .bothSync, .todoPick:
             let inbox: [InboxItem]
             switch scenario {
             case .single: inbox = MockData.inbox(now: date).filter { $0.requestId == "req-select" }
@@ -162,7 +167,7 @@ public actor MockBackend: RemoteBackend {
                 : TrafficStats(month: "2026-10", sentBytes: 18_432, receivedBytes: 96_210, sentMessages: 41, receivedMessages: 77)
             initial = EngineState(
                 phase: .connected(via: "tcp"), foreground: true,
-                macs: MockData.macs(now: date, knowTodos: scenario != .outdated), inbox: inbox,
+                macs: MockData.macs(now: date, knowTodos: scenario != .outdated, pickTodos: scenario == .todoPick), inbox: inbox,
                 push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1,
                 traffic: traffic,
                 brokerHost: "broker.example.com", agents: MockData.agents(now: date)
@@ -211,6 +216,13 @@ public actor MockBackend: RemoteBackend {
         todoSyncedRows = sample.syncedRows
         todoLists = sample.lists
         if scenario == .bothSync { syncingTodoMacs = [MockData.homeMacId, MockData.officeMacId] }
+        if scenario == .todoPick {
+            // The queue of the project the Home MacBook Pro's requests come from, under the id the Mac makes of its key.
+            let projectId = TodoProjectId.of(key: "proj-humaninloop")
+            todoLists[MockData.homeMacId + "|" + projectId] = ProjectTodos(
+                id: projectId, rev: 1, name: "HumanInLoop", canAuto: true, pending: MockData.pickableTodos(now: date)
+            )
+        }
     }
 
     // MARK: lifecycle
@@ -363,10 +375,16 @@ public actor MockBackend: RemoteBackend {
         publish()
     }
 
-    public func submitAnswer(macId: String, requestId: String, action: String, answers: [AnswerItem]) async throws -> String {
+    public func submitAnswer(macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String]) async throws -> String {
         let index = try inboxIndex(macId: macId, requestId: requestId, kind: "ask")
-        submissions.append(Submission(macId: macId, requestId: requestId, action: action, answers: answers, wireIndex: nil, dismiss: false, input: nil))
-        return try await settle(index: index, outcome: action == "cancel" ? .cancelled : .answered, answers: answers, choice: nil, input: nil)
+        submissions.append(Submission(macId: macId, requestId: requestId, action: action, answers: answers, wireIndex: nil, dismiss: false, input: nil, todoIds: todoIds))
+        // The Mac looks the picked todos up before it takes the answer: when one is gone it refuses all of it.
+        let refused = action == "send" && !todoIds.isEmpty
+            && !takePickedTodos(macId: macId, projectKey: state.inbox[index].summary.project.key, ids: todoIds)
+        return try await settle(
+            index: index, outcome: action == "cancel" ? .cancelled : .answered, answers: answers, choice: nil, input: nil,
+            refusal: refused ? Wire.todoGone : nil
+        )
     }
 
     public func submitConfirm(macId: String, requestId: String, wireIndex: Int?, dismiss: Bool, input: String?) async throws -> String {
@@ -385,10 +403,18 @@ public actor MockBackend: RemoteBackend {
         return index
     }
 
-    private func settle(index: Int, outcome: HistoryOutcome, answers: [AnswerItem], choice: String?, input: String?) async throws -> String {
+    private func settle(
+        index: Int, outcome: HistoryOutcome, answers: [AnswerItem], choice: String?, input: String?, refusal: String? = nil
+    ) async throws -> String {
         let item = state.inbox[index]
         counter += 1
         let clientMsgId = "mock-msg-\(counter)"
+        if let refusal {
+            // An `invalid` acknowledgement: the request stays, with the reason.
+            state.inbox[index].state = .failed(clientMsgId: clientMsgId, reason: refusal)
+            publish()
+            return clientMsgId
+        }
         if failNextSubmission {
             failNextSubmission = false
             state.inbox[index].state = .failed(clientMsgId: clientMsgId, reason: "timeout")

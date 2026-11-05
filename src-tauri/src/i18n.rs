@@ -177,6 +177,13 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         // （`output::strip_todo_prefix`，两种语言都尝试）。
         "whatsNext.todoPrefix" => pick(lang, "Run todo: ", "执行待办："),
         "todo.attachmentBadge" => pick(lang, "【{n} attachments】", "【{n} 个附件】"),
+        // The line that carries a todo the phone picked into the text of an answer; the same words
+        // as the popup's `popup.todos.mergeLine` (src/i18n).
+        "todo.mergeLine" => pick(
+            lang,
+            "Also look into this todo task: {text}",
+            "另外看一下这个待办任务：{text}",
+        ),
         // 选项类展示点超过 MAX_OPTION_TODOS 时的溢出提示（附正文尾部，第 14 轮定案）。
         "todo.moreNote" => pick(
             lang,

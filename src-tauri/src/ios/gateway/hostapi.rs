@@ -107,6 +107,17 @@ pub struct TodoChoices {
     pub overflow: u64,
 }
 
+/// A project todo a phone picked while answering (docs/specs/special-replies.md D28/D29): what the
+/// gateway needs to put it into the answer the way the popup does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoPick {
+    pub id: String,
+    /// The task text as stored.
+    pub text: String,
+    /// What the Mac holds for the todo right now. The delivery re-checks it when the answer wins.
+    pub attachments: Vec<crate::todo_attachments::TodoAttachmentSnapshot>,
+}
+
 /// What the daemon did with a todo write (docs/specs/ios-todos.md §6.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TodoApplied {

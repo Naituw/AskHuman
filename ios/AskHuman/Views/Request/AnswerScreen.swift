@@ -28,6 +28,7 @@ struct AnswerScreen: View {
 
     var body: some View {
         if let ask = item.view?.ask, let composer = store.composer(for: item) {
+            let picker = store.todoPicker(for: item)
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
@@ -39,7 +40,7 @@ struct AnswerScreen: View {
                             ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
                                 QuestionCard(
                                     index: index, count: ask.questions.count, ask: ask, question: question, composer: composer,
-                                    landing: landing, focus: $focused, inputReveal: inputs.target(index)
+                                    landing: landing, focus: $focused, inputReveal: inputs.target(index), picker: picker
                                 )
                                     .background(FrameReader(.card(index)))
                                     .background(RequestReadingAnchor(name: Self.cardID(index)))
@@ -47,6 +48,12 @@ struct AnswerScreen: View {
                                     // The gap belongs to what "Next" scrolls to, so that a card does not end flush with the bar.
                                     .padding(.bottom, 16)
                                     .id(Self.cardID(index))
+                            }
+                            // What's next lists the queue among its options; every other ask gets a card for it.
+                            if !ask.whatsNext, let picker, picker.isVisible {
+                                TodoPickCard(picker: picker)
+                                    .disabled(composer.isSending || sending)
+                                    .padding(.bottom, 16)
                             }
                         }
                     }
@@ -71,6 +78,13 @@ struct AnswerScreen: View {
                 }
                 .coordinateSpace(name: Self.space)
                 .onPreferenceChange(ReadingKey.self) { tracker.update($0, composer: composer) }
+                // The queue is read each time the page comes up.
+                .task(id: item.id) { await picker?.load() }
+                // The Mac refused the answer because a picked todo is gone: the queue is read again (and what
+                // is gone is let go of), and the notice says what to do.
+                .onChange(of: item.state) { _, state in
+                    if case .failed(_, Wire.todoGone) = state { picker?.reload() }
+                }
                 .task(id: item.id) {
                     await tracker.begin(
                         composer, awaitingMessage: MessageCard.drawnByWebPage(ask, launch: launch),
@@ -408,6 +422,15 @@ private struct QuestionCard: View {
     let landing: Landing
     var focus: Binding<Int?>
     let inputReveal: InputRevealTarget
+    /// What's next lists the project's whole queue through it (D29); other asks have a card of their own.
+    var picker: RequestTodoPicker?
+
+    /// The picker that lists the queue in place of the todos the question carries, when this is What's next
+    /// and the Mac can give the queue.
+    private var queue: RequestTodoPicker? {
+        guard ask.whatsNext, let picker, picker.listsQueue else { return nil }
+        return picker
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -430,15 +453,23 @@ private struct QuestionCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             if !question.options.isEmpty {
+                let listing = self.queue
+                // The queue stands where the question's own todos are (just before "end" when it has none).
+                let slot = listing == nil ? nil : (question.options.firstIndex { $0.todo } ?? question.options.count - 1)
                 VStack(spacing: 8) {
                     ForEach(Array(question.options.enumerated()), id: \.offset) { optionIndex, option in
-                        OptionRow(
-                            option: option, single: composer.single,
-                            selected: composer.isSelected(question: index, option: optionIndex)
-                        ) {
-                            composer.toggle(question: index, option: optionIndex)
+                        if let listing, optionIndex == slot, listing.isVisible {
+                            TodoQueueRows(picker: listing)
                         }
-                        .accessibilityIdentifier("option-\(index)-\(optionIndex)")
+                        if listing == nil || !option.todo {
+                            OptionRow(
+                                option: option, single: composer.single,
+                                selected: composer.isSelected(question: index, option: optionIndex)
+                            ) {
+                                composer.toggle(question: index, option: optionIndex)
+                            }
+                            .accessibilityIdentifier("option-\(index)-\(optionIndex)")
+                        }
                     }
                 }
             }
@@ -497,11 +528,33 @@ private struct LandingFlash: View {
 /// Choosing should feel firm. The press shows at once (darker, a touch smaller, nothing fades), the
 /// new state replaces the old one with no cross-fade, and a tick of haptic confirms it. (It used to be
 /// a plain button whose choice faded in over about a third of a second, which felt soft.)
-private struct OptionRow: View {
-    let option: OptionView
+struct OptionRow: View {
+    let text: String
+    let recommended: Bool
+    /// How many attachments the row carries (a todo's), shown as a chip.
+    let attachments: Int
     let single: Bool
     let selected: Bool
     let action: () -> Void
+
+    init(option: OptionView, single: Bool, selected: Bool, action: @escaping () -> Void) {
+        text = option.text
+        recommended = option.recommended
+        attachments = 0
+        self.single = single
+        self.selected = selected
+        self.action = action
+    }
+
+    /// A todo of the project's queue, listed like an option (docs/specs/special-replies.md D28/D29).
+    init(todo: TodoItem, single: Bool, selected: Bool, action: @escaping () -> Void) {
+        text = todo.text
+        recommended = false
+        attachments = Int(todo.att)
+        self.single = single
+        self.selected = selected
+        self.action = action
+    }
 
     /// Counts the presses, so that a tick is felt once per press: a single-choice form changes two
     /// rows when the choice moves, and each of them reacting to its own change would tick twice.
@@ -515,13 +568,17 @@ private struct OptionRow: View {
         } label: {
             HStack(alignment: .top, spacing: 12) {
                 OptionMark(single: single, selected: selected, pops: !reduceMotion)
-                Text(verbatim: option.text)
+                Text(verbatim: text)
                     .font(.body)
                     .foregroundStyle(.primary)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if option.recommended {
+                if recommended {
                     Chip(text: "Recommended", systemImage: "star.fill", tint: .orange)
+                }
+                if attachments > 0 {
+                    Chip(verbatim: "\(attachments)", systemImage: "paperclip")
+                        .accessibilityLabel("Attachments: \(attachments)")
                 }
             }
             .padding(.horizontal, 12)

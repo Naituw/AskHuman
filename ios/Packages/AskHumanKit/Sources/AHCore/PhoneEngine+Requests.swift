@@ -239,13 +239,13 @@ extension PhoneEngine {
         publish()
     }
 
-    public func submitAnswer(macId: String, requestId: String, action: String, answers: [AnswerItem]) async throws -> String {
+    public func submitAnswer(macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String]) async throws -> String {
         let key = CachedRequest.key(macId, requestId)
         guard let runtime = requests[key], runtime.cached.view?.ask != nil else { throw BackendError.unknownRequest }
         guard macs[macId]?.sync == .synced else { throw BackendError.macOffline }
         if case .sending = runtime.state { throw BackendError.invalid("This request is already being sent.") }
         let clientMsgId = Bytes.newMsgId()
-        let submit = AnswerSubmit(clientMsgId: clientMsgId, requestId: requestId, action: action, answers: answers)
+        let submit = AnswerSubmit(clientMsgId: clientMsgId, requestId: requestId, action: action, answers: answers, todoIds: todoIds)
         let body = try AHJSON.tree(submit)
         return await enqueue(
             OutboxItem(clientMsgId: clientMsgId, macId: macId, kind: .answer, subject: requestId, type: AnswerSubmit.type, body: body, createdAt: clock.now())

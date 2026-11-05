@@ -5,12 +5,12 @@
     {"type": "pair.request", "body": {"phoneId": "3qjxfkln6hdpmcvbtzaswe4r5y", "name": "Wutian iPhone", "ek": "BXkzYb0PqN0oQmwFh0wJ6wG2uK1m0o3cV3tqYhS9m1A", "appVer": "1.0 (1)", "proto": 1}},
     {"type": "pair.pending", "body": {"macId": "mfx2c3rhs6kq7tw4dnb5vypa2e"}},
     {"type": "pair.reject", "body": {"reason": "rejected"}},
-    {"type": "pair.accept", "body": {"macId": "mfx2c3rhs6kq7tw4dnb5vypa2e", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true}}},
+    {"type": "pair.accept", "body": {"macId": "mfx2c3rhs6kq7tw4dnb5vypa2e", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true}}},
     {"type": "pair.done", "name": "min", "body": {"name": "Wutian iPhone"}},
     {"type": "pair.done", "name": "full", "body": {"name": "Wutian iPhone", "handle": "v1.AAAA", "env": "sandbox", "expiresAt": 1808000000}},
 
     {"type": "hello", "body": {"nonce": "q3ZkL1m0Xw4", "proto": 1, "appVer": "1.0 (1)", "deviceName": "Wutian iPhone"}},
-    {"type": "hello.ack", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": false, "interject": true, "watch": true, "todos": false}, "slot": {"active": true, "autoActivation": true}}},
+    {"type": "hello.ack", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": false, "interject": true, "watch": true, "todos": false, "answerTodos": false}, "slot": {"active": true, "autoActivation": true}}},
     {"type": "error", "name": "min", "body": {"ref": "m1", "code": "unknown_type"}},
     {"type": "error", "name": "full", "body": {"ref": "m2", "code": "clock_skew", "message": "message timestamp outside the allowed window"}},
     {"type": "resync", "body": {"stream": "inbox"}},
@@ -81,6 +81,9 @@
       {"q": 1, "sel": [], "images": [], "files": []}
     ]}},
     {"type": "answer.submit", "name": "cancel", "body": {"clientMsgId": "c2", "requestId": "req1", "action": "cancel", "answers": []}},
+    {"type": "answer.submit", "name": "todos", "body": {"clientMsgId": "c4", "requestId": "req1", "action": "send", "answers": [
+      {"q": 1, "sel": [0], "text": "because", "images": [], "files": []}
+    ], "todoIds": ["t1", "t2"]}},
     {"type": "answer.ack", "name": "min", "body": {"clientMsgId": "c1", "requestId": "req1", "status": "accepted"}},
     {"type": "answer.ack", "name": "full", "body": {"clientMsgId": "c1", "requestId": "req1", "status": "invalid", "reason": "question 1 needs an answer"}},
     {"type": "confirm.decide", "name": "choice", "body": {"clientMsgId": "c3", "requestId": "req2", "wireIndex": 1, "input": "not needed"}},

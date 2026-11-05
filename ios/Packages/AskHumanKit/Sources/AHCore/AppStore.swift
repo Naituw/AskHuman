@@ -203,6 +203,8 @@ public final class AppStore {
     @ObservationIgnored private var confirmComposers: [String: ConfirmComposer] = [:]
     /// The "Add todo…" sheets of the request pages, by inbox item id (memory only).
     @ObservationIgnored private var todoComposers: [String: RequestTodoComposer] = [:]
+    /// The todos a request can be answered with, by inbox item id (memory only; what is picked is the draft's).
+    @ObservationIgnored private var todoPickers: [String: RequestTodoPicker] = [:]
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var lastHistoryRevision = -1
     /// Every request seen in the inbox, kept while its page may still be open: when the request ends
@@ -288,6 +290,7 @@ public final class AppStore {
         todos.update(agents: next.agents)
         developer.update(macs: next.macs)
         for composer in todoComposers.values { composer.update(mac: next.macs.first { $0.id == composer.macId }) }
+        for picker in todoPickers.values { picker.update(mac: next.macs.first { $0.id == picker.macId }) }
         let now = Date()
         presentedArrivalIds = presentedArrivalIds.filter { now.timeIntervalSince($0.value) < 600 }
         let liveArrivalIds = Set(next.inbox.map(\.id))
@@ -318,6 +321,9 @@ public final class AppStore {
         }
         for key in todoComposers.keys where !live.contains(key) && !inboxPath.contains(key) {
             todoComposers[key] = nil
+        }
+        for key in todoPickers.keys where !live.contains(key) && !inboxPath.contains(key) {
+            todoPickers[key] = nil
         }
         taskOptionsArrived()
         for item in next.agents { retainedAgents[item.id] = (item, now) }
@@ -665,6 +671,19 @@ public final class AppStore {
         return composer
     }
 
+    /// The todos of the request's project that can be picked while answering (docs/specs/special-replies.md D28):
+    /// `nil` when there is nothing to pick them for (no project, or a request that takes no answer form).
+    public func todoPicker(for item: InboxItem) -> RequestTodoPicker? {
+        guard item.hasProject, let composer = composer(for: item) else { return nil }
+        if let existing = todoPickers[item.id] { return existing }
+        let picker = RequestTodoPicker(
+            backend: backend, composer: composer, macId: item.macId, projectKey: item.summary.project.key,
+            mac: state.macs.first { $0.id == item.macId }
+        )
+        todoPickers[item.id] = picker
+        return picker
+    }
+
     /// The form left the screen: save, and forget the in-memory state of finished requests.
     public func closed(id: String) {
         hints[id] = nil
@@ -674,6 +693,7 @@ public final class AppStore {
             composers[id] = nil
             confirmComposers[id] = nil
             todoComposers[id] = nil
+            todoPickers[id] = nil
             finished[id] = nil
             retained[id] = nil
         }
@@ -711,8 +731,15 @@ public final class AppStore {
             )
         }
         _ = try await backend.submitAnswer(
-            macId: item.macId, requestId: item.requestId, action: "send", answers: composer.items(uploads: uploads)
+            macId: item.macId, requestId: item.requestId, action: "send", answers: composer.items(uploads: uploads),
+            todoIds: macTakesPickedTodos(item.macId) ? composer.todoIds : []
         )
+    }
+
+    /// A Mac from before the todo picker would drop the ids, and the answer would go without them silently:
+    /// the picker is not shown for it, and nothing picked earlier is sent to it.
+    private func macTakesPickedTodos(_ macId: String) -> Bool {
+        state.macs.first { $0.id == macId }?.caps.answerTodos == true
     }
 
     public func cancel(_ item: InboxItem) async throws {

@@ -13,12 +13,16 @@ public struct Caps: Codable, Equatable, Sendable {
     /// The Mac serves the todo screen (`todo.*`). Macs from before it, and pairings stored before it,
     /// have none.
     public var todos: Bool
+    /// The Mac takes the project todos picked while answering (`answer.submit` `todoIds`). A Mac without
+    /// it would drop the field, so the phone shows no todo picker for it.
+    public var answerTodos: Bool
 
-    public init(newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false) {
+    public init(newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false, answerTodos: Bool = false) {
         self.newTask = newTask
         self.interject = interject
         self.watch = watch
         self.todos = todos
+        self.answerTodos = answerTodos
     }
 
     public init(from decoder: Decoder) throws {
@@ -27,6 +31,7 @@ public struct Caps: Codable, Equatable, Sendable {
         interject = try c.decode(Bool.self, forKey: .interject)
         watch = try c.decode(Bool.self, forKey: .watch)
         todos = try c.decodeIfPresent(Bool.self, forKey: .todos) ?? false
+        answerTodos = try c.decodeIfPresent(Bool.self, forKey: .answerTodos) ?? false
     }
 }
 
@@ -525,12 +530,16 @@ public struct AnswerSubmit: WireMessage {
     /// `send` or `cancel`.
     public var action: String
     @DefaultEmpty public var answers: [AnswerItem]
+    /// Ids of the project todos picked for this answer, in the order the phone lists them. The Mac puts
+    /// their text into the answer and takes them off the queue, as the popup does.
+    @OmitEmpty public var todoIds: [String]
 
-    public init(clientMsgId: String, requestId: String, action: String, answers: [AnswerItem]) {
+    public init(clientMsgId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String] = []) {
         self.clientMsgId = clientMsgId
         self.requestId = requestId
         self.action = action
         self.answers = answers
+        self.todoIds = todoIds
     }
 }
 

@@ -12,6 +12,9 @@ public final class AnswerComposer {
     public let key: String
     public let ask: AskView
     public private(set) var answers: [DraftAnswer]
+    /// Ids of the project todos picked to go with the answer (docs/specs/special-replies.md D28): the Mac puts
+    /// their text into the answer and takes them off the queue. In the order the picker lists them.
+    public private(set) var todoIds: [String]
     /// Upload progress while sending (0…1), `nil` otherwise.
     public var uploadProgress: Double?
     public var isSending = false
@@ -39,7 +42,10 @@ public final class AnswerComposer {
         self.ask = ask
         self.drafts = drafts
         self.debounce = debounce
-        let stored = drafts.draft(key: key)?.answers ?? []
+        let draft = drafts.draft(key: key)
+        let stored = draft?.answers ?? []
+        // A select-only request takes no todos, and a What's next answer is a todo or an option, not both.
+        todoIds = ask.selectOnly ? [] : Array((draft?.todoIds ?? []).prefix(ask.whatsNext ? 1 : Wire.maxPickedTodos))
         answers = ask.questions.indices.map { index in
             guard index < stored.count else { return DraftAnswer() }
             var answer = stored[index]
@@ -53,6 +59,7 @@ public final class AnswerComposer {
             }
             return answer
         }
+        if ask.whatsNext, !todoIds.isEmpty, !answers.isEmpty { answers[0].selected = [] }
     }
 
     // MARK: rules
@@ -61,9 +68,11 @@ public final class AnswerComposer {
     public var single: Bool { ask.single }
     public var questionCount: Int { ask.questions.count }
 
-    /// A question counts as answered when something was selected, written or attached.
+    /// A question counts as answered when something was selected, written or attached. The picked todos go
+    /// into the last question's answer, so they answer it.
     public func isAnswered(_ question: Int) -> Bool {
         guard answers.indices.contains(question) else { return false }
+        if question == questionCount - 1, !todoIds.isEmpty { return true }
         return !answers[question].isEmpty
     }
 
@@ -126,7 +135,7 @@ public final class AnswerComposer {
         return answers.indices.first { answers[$0].selected.isEmpty }
     }
 
-    public var hasContent: Bool { answers.contains { !$0.isEmpty } }
+    public var hasContent: Bool { !todoIds.isEmpty || answers.contains { !$0.isEmpty } }
 
     /// Attachments of the whole form; the Mac accepts a handful per request.
     public var attachmentCount: Int { answers.reduce(0) { $0 + $1.attachments.count } }
@@ -150,8 +159,46 @@ public final class AnswerComposer {
             selected.append(option)
             selected.sort()
         }
+        // What's next: the next task is one choice, a todo of the queue or an option.
+        if ask.whatsNext, !selected.isEmpty { todoIds = [] }
         answers[question].selected = selected
         changed()
+    }
+
+    // MARK: todos
+
+    public func isTodoPicked(_ id: String) -> Bool { todoIds.contains(id) }
+
+    /// Replaces the picked todos; the picker hands them over in the order of its list. In What's next a todo
+    /// is the next task, so picking one lets go of the option that was chosen.
+    public func setTodoIds(_ ids: [String]) {
+        guard !selectOnly else { return }
+        let ids = Array(ids.prefix(ask.whatsNext ? 1 : Wire.maxPickedTodos))
+        guard ids != todoIds else { return }
+        todoIds = ids
+        if ask.whatsNext, !ids.isEmpty, !answers.isEmpty { answers[0].selected = [] }
+        changed()
+    }
+
+    /// Lets go of the picked todos that are no longer in the queue (somebody finished or removed them).
+    public func keepTodos(in available: Set<String>) {
+        setTodoIds(todoIds.filter(available.contains))
+    }
+
+    /// What's next with the whole queue listed: the options the question carries for queue entries are not
+    /// shown any more, so a choice of one of them is let go of (it would be a hidden choice otherwise).
+    public func dropTodoOptionSelections() {
+        guard ask.whatsNext else { return }
+        var dropped = false
+        for question in answers.indices {
+            let options = ask.questions[question].options
+            let kept = answers[question].selected.filter { options.indices.contains($0) && !options[$0].todo }
+            if kept != answers[question].selected {
+                answers[question].selected = kept
+                dropped = true
+            }
+        }
+        if dropped { changed() }
     }
 
     public func setText(_ text: String, question: Int) {
@@ -196,7 +243,8 @@ public final class AnswerComposer {
     /// The wire answers: one item per answered question, with the upload ids of its attachments.
     public func items(uploads: [String: String]) -> [AnswerItem] {
         answers.indices.compactMap { index in
-            guard isAnswered(index) else { return nil }
+            // The picked todos travel beside the items (`todoIds`), not as an item of their own.
+            guard !answers[index].isEmpty else { return nil }
             let answer = answers[index]
             let text = answer.text.trimmingCharacters(in: .whitespacesAndNewlines)
             var images: [String] = []
@@ -220,7 +268,7 @@ public final class AnswerComposer {
 
     private func changed() {
         saveTask?.cancel()
-        let snapshot = Draft(answers: answers)
+        let snapshot = Draft(answers: answers, todoIds: todoIds)
         let drafts = drafts
         let key = key
         let debounce = debounce
@@ -234,7 +282,7 @@ public final class AnswerComposer {
     /// Writes the draft right now (the form is leaving the screen).
     public func flush() {
         saveTask?.cancel()
-        drafts.save(Draft(answers: answers), key: key)
+        drafts.save(Draft(answers: answers, todoIds: todoIds), key: key)
     }
 
     private static func safeFileName(_ name: String) -> String {

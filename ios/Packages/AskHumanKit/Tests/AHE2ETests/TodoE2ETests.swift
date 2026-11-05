@@ -222,6 +222,144 @@ final class TodoE2ETests: E2ECase {
         XCTAssertTrue(ask.stdout.contains("Right"), ask.stdout)
     }
 
+    // MARK: picking todos while answering
+
+    /// The project's pending queue; a project with nothing pending (and no request waiting on it) is not listed at all.
+    private func pending(_ project: URL) async throws -> [TodoItem] {
+        let all = try await projects()
+        guard let row = all.projects.first(where: { $0.name == project.lastPathComponent }) else { return [] }
+        return try await list(row.id).pending
+    }
+
+    /// What the phone's answer form does with the todos it picks (docs/specs/special-replies.md D28): their ids ride
+    /// with `answer.submit`, and the Mac puts their text into the answer, takes them off the queue and delivers them.
+    func testTodosPickedWhileAnsweringJoinTheAnswerAndLeaveTheQueue() async throws {
+        try await pair()
+        let project = try repository("theta")
+        for text in ["Cover the rollback path", "Update the changelog", "Rename the helper"] {
+            try await todo(["add", text], in: project)
+        }
+
+        let ask = try mac.ask(["-q", "Which way?", "-o", "Left", "-o", "Right"], cwd: project)
+        let item = try await phone.request()
+        let queue = try await list(TodoProjectId.of(key: item.summary.project.key)).pending
+        XCTAssertEqual(queue.map(\.text), ["Cover the rollback path", "Update the changelog", "Rename the helper"])
+        let caps = await phone.state().macs.first?.caps
+        XCTAssertEqual(caps?.answerTodos, true, "the Mac announces that it takes picked todos")
+
+        _ = try await phone.engine.submitAnswer(
+            macId: item.macId, requestId: item.requestId, action: "send",
+            answers: [AnswerItem(q: 0, sel: [1], text: "because")], todoIds: [queue[0].id, queue[2].id]
+        )
+        await assertFinishes(ask)
+        XCTAssertTrue(ask.stdout.contains("Right"), ask.stdout)
+        XCTAssertTrue(ask.stdout.contains("because"), ask.stdout)
+        let first = try XCTUnwrap(ask.stdout.range(of: "Cover the rollback path"), ask.stdout)
+        let second = try XCTUnwrap(ask.stdout.range(of: "Rename the helper"), ask.stdout)
+        XCTAssertLessThan(first.lowerBound, second.lowerBound, "in the queue's order, as the popup merges them")
+        XCTAssertFalse(ask.stdout.contains("Update the changelog"), "what was not picked is not in the answer")
+
+        await eventually("the picked todos to leave the queue") {
+            ((try? await self.pending(project))?.map(\.text)) == ["Update the changelog"]
+        }
+        let id = try await row(named: "theta").id
+        let history = try await list(id).history.map(\.text)
+        XCTAssertEqual(Set(history), ["Cover the rollback path", "Rename the helper"])
+    }
+
+    /// A todo alone is an answer, and What's next takes it by id even when the question did not carry it: the Mac lists
+    /// ten of the queue in the question, the phone shows all of it.
+    func testWhatsNextTakesATodoBeyondItsTenByIdAndItIsTheNextTask() async throws {
+        try await pair()
+        let project = try repository("iota")
+        for number in 1...12 { try await todo(["add", "Task number \(number)"], in: project) }
+
+        let next = try mac.ask(["--whats-next"], cwd: project)
+        let item = try await phone.request()
+        XCTAssertEqual(item.view?.ask?.whatsNext, true)
+        let carried = item.view?.ask?.questions.first?.options.filter(\.todo).count ?? 0
+        XCTAssertLessThanOrEqual(carried, 10, "the question lists at most ten of the queue")
+        let queue = try await list(TodoProjectId.of(key: item.summary.project.key)).pending
+        XCTAssertEqual(queue.count, 12, "the phone reads the whole queue")
+
+        _ = try await phone.engine.submitAnswer(
+            macId: item.macId, requestId: item.requestId, action: "send", answers: [], todoIds: [queue[11].id]
+        )
+        await assertFinishes(next)
+        XCTAssertTrue(next.stdout.contains("Task number 12"), next.stdout)
+        await eventually("the picked todo to leave the queue") {
+            ((try? await self.pending(project))?.count) == 11
+        }
+    }
+
+    /// A pick that is gone by the time the Mac looks is refused as a whole; the request stays, and the same answer
+    /// without it goes through.
+    func testAPickedTodoThatIsGoneRefusesTheAnswerAndTheRequestStays() async throws {
+        try await pair()
+        let project = try repository("kappa")
+        try await todo(["add", "Will be gone"], in: project)
+        try await todo(["add", "Stays"], in: project)
+
+        let ask = try mac.ask(["-q", "Ready?", "-o", "Yes", "-o", "No"], cwd: project)
+        let item = try await phone.request()
+        let id = TodoProjectId.of(key: item.summary.project.key)
+        let queue = try await list(id).pending
+        _ = try await apply(id, "remove", todoId: queue[0].id)
+
+        _ = try await phone.engine.submitAnswer(
+            macId: item.macId, requestId: item.requestId, action: "send", answers: [AnswerItem(q: 0, sel: [0])],
+            todoIds: [queue[0].id, queue[1].id]
+        )
+        await eventually("the refusal") {
+            if case .failed(_, let reason)? = await self.phone.state().inbox.first?.state { return reason == Wire.todoGone }
+            return false
+        }
+        XCTAssertTrue(ask.isRunning, "the request is still waiting")
+        let left = try await pending(project).map(\.text)
+        XCTAssertEqual(left, ["Stays"], "nothing was taken")
+
+        if case .failed(let clientMsgId, _)? = await phone.state().inbox.first?.state {
+            await phone.engine.discardSubmission(clientMsgId: clientMsgId)
+        }
+        _ = try await phone.engine.submitAnswer(
+            macId: item.macId, requestId: item.requestId, action: "send", answers: [AnswerItem(q: 0, sel: [0])],
+            todoIds: [queue[1].id]
+        )
+        await assertFinishes(ask)
+        XCTAssertTrue(ask.stdout.contains("Stays"), ask.stdout)
+        let remaining = try await pending(project).map(\.text)
+        XCTAssertEqual(remaining, [])
+    }
+
+    /// A select-only question takes no todos: the Mac refuses an answer that names one.
+    func testASelectOnlyQuestionRefusesPickedTodos() async throws {
+        try await pair()
+        let project = try repository("lambda")
+        try await todo(["add", "Not for this one"], in: project)
+
+        let ask = try mac.ask(["-q", "Pick one", "-o", "A", "-o", "B", "--select-only"], cwd: project)
+        let item = try await phone.request()
+        let queue = try await pending(project)
+        _ = try await phone.engine.submitAnswer(
+            macId: item.macId, requestId: item.requestId, action: "send", answers: [AnswerItem(q: 0, sel: [0])],
+            todoIds: [queue[0].id]
+        )
+        await eventually("the refusal") {
+            if case .failed? = await self.phone.state().inbox.first?.state { return true }
+            return false
+        }
+        XCTAssertTrue(ask.isRunning)
+        if case .failed(let clientMsgId, _)? = await phone.state().inbox.first?.state {
+            await phone.engine.discardSubmission(clientMsgId: clientMsgId)
+        }
+        _ = try await phone.engine.submitAnswer(
+            macId: item.macId, requestId: item.requestId, action: "send", answers: [AnswerItem(q: 0, sel: [1])]
+        )
+        await assertFinishes(ask)
+        let remaining = try await pending(project).map(\.text)
+        XCTAssertEqual(remaining, ["Not for this one"])
+    }
+
     // MARK: watching
 
     func testAWatchedListTellsThePhoneWhenTheMacChanges() async throws {

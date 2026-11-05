@@ -164,6 +164,29 @@ extension MockBackend {
         return nil
     }
 
+    /// What the Mac does with the todos picked with an answer (docs/specs/special-replies.md D28): they leave the
+    /// queue (and count as done), or, when one of them is no longer there, nothing happens and the answer is
+    /// refused. `true` when they were taken.
+    func takePickedTodos(macId: String, projectKey: String, ids: [String]) -> Bool {
+        let key = todoKey(macId, TodoProjectId.of(key: projectKey))
+        guard var list = todoLists[key] else { return false }
+        let picked = ids.compactMap { id in list.pending.first { $0.id == id } }
+        guard picked.count == ids.count else { return false }
+        let doneAt = UInt64(max(0, now().timeIntervalSince1970 * 1000))
+        list.pending.removeAll { item in ids.contains(item.id) }
+        list.pendingTotal = UInt64(list.pending.count)
+        list.history.insert(
+            contentsOf: picked.reversed().map {
+                TodoDoneItem(id: $0.id, text: $0.text, createdAtMs: $0.createdAtMs, doneAtMs: doneAt, agent: $0.agent, att: $0.att)
+            },
+            at: 0
+        )
+        list.historyTotal = UInt64(list.history.count)
+        todoLists[key] = list
+        bumpTodoRev(macId)
+        return true
+    }
+
     private func bumpTodoRev(_ macId: String) {
         todoRev += 1
         if todoWatchers.contains(macId) { eventOut.yield(.todoChanged(macId: macId, rev: todoRev)) }
@@ -179,6 +202,16 @@ extension MockBackend {
         } else {
             todoWatchers.remove(macId)
         }
+    }
+
+    /// A todo is finished or removed from elsewhere (another phone, the popup, an Agent).
+    public func simulateTodoGone(macId: String, projectKey: String, todoId: String) {
+        let key = todoKey(macId, TodoProjectId.of(key: projectKey))
+        guard var list = todoLists[key] else { return }
+        list.pending.removeAll { $0.id == todoId }
+        list.pendingTotal = UInt64(list.pending.count)
+        todoLists[key] = list
+        bumpTodoRev(macId)
     }
 
     /// A todo appears from elsewhere (another Mac, an Agent): the phone hears `todo.changed` when it watches.

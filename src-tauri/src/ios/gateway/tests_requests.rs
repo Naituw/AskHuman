@@ -60,6 +60,7 @@ fn answer(client_msg_id: &str, request_id: &str, answers: Vec<AnswerItem>) -> wi
         request_id: request_id.into(),
         action: "send".into(),
         answers,
+        todo_ids: Vec::new(),
     }
 }
 
@@ -169,6 +170,7 @@ async fn cancel_is_forwarded_as_a_cancel() {
             request_id: "req1".into(),
             action: "cancel".into(),
             answers: Vec::new(),
+            todo_ids: Vec::new(),
         })
         .await;
     let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
@@ -1318,4 +1320,343 @@ async fn revoking_a_phone_stops_deliveries_to_it() {
     fx.settle().await;
     assert!(!phone.gets(t::REQUEST_NEW, SECOND).await);
     assert_eq!(sink.lost.lock().unwrap().len(), 1, "nobody left to ask");
+}
+
+// ---------------------------------------------------------------- todos picked while answering
+// (docs/specs/special-replies.md D28/D29)
+
+fn pick(id: &str, text: &str) -> TodoPick {
+    TodoPick {
+        id: id.into(),
+        text: text.into(),
+        attachments: Vec::new(),
+    }
+}
+
+fn answer_with_todos(
+    client_msg_id: &str,
+    request_id: &str,
+    answers: Vec<AnswerItem>,
+    todo_ids: &[&str],
+) -> wire::AnswerSubmit {
+    let mut submit = answer(client_msg_id, request_id, answers);
+    submit.todo_ids = todo_ids.iter().map(|id| id.to_string()).collect();
+    submit
+}
+
+/// A question request of the project `/tmp/proj` that the host knows these todos of.
+fn deliver_ask_with_todos(fx: &Fixture, id: &str, picks: Vec<TodoPick>) -> Arc<FakeAsk> {
+    fx.host
+        .todo_pick_store
+        .lock()
+        .unwrap()
+        .insert("/tmp/proj".into(), picks);
+    deliver_ask(fx, id)
+}
+
+/// The same request as a What's next one: one single-choice question with a suggestion and the
+/// built-in end option, no todo options (the phone shows the queue itself).
+fn deliver_whats_next(fx: &Fixture, id: &str, picks: Vec<TodoPick>) -> Arc<FakeAsk> {
+    fx.host
+        .todo_pick_store
+        .lock()
+        .unwrap()
+        .insert("/tmp/proj".into(), picks);
+    let (mut ask, mut view) = sample_ask(id);
+    {
+        let ask = Arc::make_mut(&mut ask);
+        ask.whats_next = true;
+        ask.single = true;
+        ask.questions.truncate(1);
+        ask.questions[0].predefined_options = vec![
+            crate::models::OptionItem::new("Tidy the docs", false),
+            crate::models::OptionItem::new("End this turn", false),
+        ];
+    }
+    {
+        let view = view.ask.as_mut().unwrap();
+        view.whats_next = true;
+        view.single = true;
+        view.questions.truncate(1);
+        view.questions[0].options.truncate(2);
+    }
+    let sink = FakeAsk::new();
+    fx.gateway.deliver(DeliverRequest {
+        view,
+        sink: Sink::Ask(sink.clone()),
+        ask: Some(ask),
+        deadline_ms: None,
+        assets: Vec::new(),
+    });
+    sink
+}
+
+#[tokio::test(start_paused = true)]
+async fn todos_picked_on_the_phone_join_the_last_answer_like_in_the_popup() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let managed = crate::todo_attachments::TodoAttachmentSnapshot {
+        id: "att1".into(),
+        name: "log.txt".into(),
+        path: "/managed/log.txt".into(),
+        source_path: "/src/log.txt".into(),
+        storage: crate::todo_attachments::TodoAttachmentStorage::Managed,
+    };
+    let sink = deliver_ask_with_todos(
+        &fx,
+        "req1",
+        vec![
+            TodoPick {
+                attachments: vec![managed.clone()],
+                ..pick("t1", "Fix the flaky test")
+            },
+            pick("t2", "Document escalate"),
+            pick("t3", "Never picked"),
+        ],
+    );
+    phone.recv(t::REQUEST_NEW).await;
+
+    phone
+        .send(&answer_with_todos(
+            "c1",
+            "req1",
+            vec![item(0, &[1], None), item(1, &[0], Some("  because  "))],
+            &["t1", "t2"],
+        ))
+        .await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "accepted", "{ack:?}");
+
+    let results = sink.results.lock().unwrap();
+    let first = &results[0].answers[0];
+    assert!(
+        first.todo_ids.is_empty(),
+        "the todos belong to the last question"
+    );
+    assert_eq!(first.user_input, None);
+    let last = &results[0].answers[1];
+    assert_eq!(last.selected_options, ["no"]);
+    assert_eq!(
+        last.user_input.as_deref(),
+        Some(
+            "because\n\nAlso look into this todo task: Fix the flaky test\n\nAlso look into this todo task: Document escalate"
+        )
+    );
+    assert_eq!(last.todo_ids, ["t1", "t2"]);
+    assert_eq!(last.todo_selections.len(), 2);
+    assert_eq!(last.todo_selections[0].id, "t1");
+    assert_eq!(last.todo_selections[0].attachments, vec![managed]);
+    assert!(last.todo_selections[1].attachments.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_todo_alone_is_a_complete_answer() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let sink = deliver_ask_with_todos(&fx, "req1", vec![pick("t1", "Fix the flaky test")]);
+    phone.recv(t::REQUEST_NEW).await;
+
+    phone
+        .send(&answer_with_todos("c1", "req1", Vec::new(), &["t1"]))
+        .await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "accepted", "{ack:?}");
+
+    let results = sink.results.lock().unwrap();
+    assert_eq!(results[0].answers[0].user_input, None);
+    assert_eq!(
+        results[0].answers[1].user_input.as_deref(),
+        Some("Also look into this todo task: Fix the flaky test")
+    );
+    assert_eq!(results[0].answers[1].todo_ids, ["t1"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_todo_the_mac_no_longer_has_refuses_the_whole_answer() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let sink = deliver_ask_with_todos(&fx, "req1", vec![pick("t1", "Fix the flaky test")]);
+    phone.recv(t::REQUEST_NEW).await;
+
+    for (n, ids) in [&["gone"][..], &["t1", "gone"][..]].into_iter().enumerate() {
+        phone
+            .send(&answer_with_todos(
+                &format!("c{n}"),
+                "req1",
+                vec![item(0, &[0], None)],
+                ids,
+            ))
+            .await;
+        let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+        assert_eq!(ack.status, "invalid", "case {n}");
+        assert_eq!(ack.reason.as_deref(), Some("todo gone"), "case {n}");
+    }
+    assert!(sink.results.lock().unwrap().is_empty());
+    assert_eq!(fx.gateway.state().await.unwrap().pending_requests, 1);
+
+    // The phone looks at the list again and sends what is left.
+    phone
+        .send(&answer_with_todos(
+            "c9",
+            "req1",
+            vec![item(0, &[0], None)],
+            &["t1"],
+        ))
+        .await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "accepted");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_todo_listed_twice_is_invalid() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    deliver_ask_with_todos(&fx, "req1", vec![pick("t1", "Fix the flaky test")]);
+    phone.recv(t::REQUEST_NEW).await;
+
+    phone
+        .send(&answer_with_todos("c1", "req1", Vec::new(), &["t1", "t1"]))
+        .await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "invalid");
+    assert_eq!(ack.reason.as_deref(), Some("duplicate todo"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_select_only_request_takes_no_todos() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    fx.host
+        .todo_pick_store
+        .lock()
+        .unwrap()
+        .insert("/tmp/proj".into(), vec![pick("t1", "Fix the flaky test")]);
+    let (mut ask, mut view) = sample_ask("req1");
+    Arc::make_mut(&mut ask).select_only = true;
+    view.ask.as_mut().unwrap().select_only = true;
+    let sink = FakeAsk::new();
+    fx.gateway.deliver(DeliverRequest {
+        view,
+        sink: Sink::Ask(sink.clone()),
+        ask: Some(ask),
+        deadline_ms: None,
+        assets: Vec::new(),
+    });
+    phone.recv(t::REQUEST_NEW).await;
+
+    phone
+        .send(&answer_with_todos(
+            "c1",
+            "req1",
+            vec![item(0, &[0], None), item(1, &[0], None)],
+            &["t1"],
+        ))
+        .await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "invalid");
+    assert!(sink.results.lock().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_todo_picked_for_whats_next_is_the_next_task() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let sink = deliver_whats_next(
+        &fx,
+        "next1",
+        vec![
+            pick("t1", "Fix the flaky test"),
+            pick("t2", "Document escalate"),
+        ],
+    );
+    phone.recv(t::REQUEST_NEW).await;
+
+    phone
+        .send(&answer_with_todos(
+            "c1",
+            "next1",
+            vec![item(0, &[], Some("  mind the CI  "))],
+            &["t2"],
+        ))
+        .await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "accepted", "{ack:?}");
+
+    let results = sink.results.lock().unwrap();
+    let answer = &results[0].answers[0];
+    assert!(answer.selected_options.is_empty());
+    // The stored text is the task: no "also look into" line, and the person's words follow.
+    assert_eq!(
+        answer.user_input.as_deref(),
+        Some("Document escalate\n\nmind the CI")
+    );
+    assert_eq!(answer.todo_ids, ["t2"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn whats_next_takes_one_next_task_only() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let sink = deliver_whats_next(
+        &fx,
+        "next1",
+        vec![
+            pick("t1", "Fix the flaky test"),
+            pick("t2", "Document escalate"),
+        ],
+    );
+    phone.recv(t::REQUEST_NEW).await;
+
+    let cases = [
+        // Two todos.
+        answer_with_todos("c1", "next1", Vec::new(), &["t1", "t2"]),
+        // A todo and the end option.
+        answer_with_todos("c2", "next1", vec![item(0, &[1], None)], &["t1"]),
+    ];
+    for (n, submit) in cases.into_iter().enumerate() {
+        phone.send(&submit).await;
+        let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+        assert_eq!(ack.status, "invalid", "case {n}");
+    }
+    assert!(sink.results.lock().unwrap().is_empty());
+
+    // The option alone is the old shape and still works.
+    phone
+        .send(&answer("c3", "next1", vec![item(0, &[1], None)]))
+        .await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "accepted");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_picked_todos_are_part_of_what_makes_a_repeat_the_same_answer() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let sink = deliver_ask_with_todos(
+        &fx,
+        "req1",
+        vec![
+            pick("t1", "Fix the flaky test"),
+            pick("t2", "Document escalate"),
+        ],
+    );
+    phone.recv(t::REQUEST_NEW).await;
+
+    let submit = answer_with_todos("c1", "req1", vec![item(0, &[0], None)], &["t1"]);
+    phone.send(&submit).await;
+    let first: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(first.status, "accepted");
+
+    // The ack got lost and the phone sends it again: replayed, not submitted twice.
+    phone.send(&submit).await;
+    let again: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(again, first);
+    assert_eq!(sink.results.lock().unwrap().len(), 1);
+
+    // The same client message id with other todos is a different answer.
+    let other = answer_with_todos("c1", "req1", vec![item(0, &[0], None)], &["t2"]);
+    phone.send(&other).await;
+    let conflict: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(conflict.status, "invalid");
+    assert_eq!(conflict.reason.as_deref(), Some("conflict"));
 }
