@@ -8,7 +8,9 @@ When the task is complete, check whether the change made any overview or referen
 
 ## Git worktree / parallel development
 
-If the task needs a **new or existing git worktree** for parallel feature work on this repo (so install/AskHuman do not share the main daemon or overwrite another agent’s binary), read [`docs/agent-worktree-setup.md`](docs/agent-worktree-setup.md) first and follow it—including asking the human via AskHuman whether to attach a channel preset—before coding. After `dev enable`, run `./scripts/install.sh` and verify through the project `askhuman-dev` MCP’s `dev_ask` (or `node scripts/dev.mjs ask` for CLI). Ordinary discussion, approvals and handoff continue through the normal AskHuman connection.
+In the existing AskHuman worktree-preparation question, always offer **work in the main worktree** alongside **create/use a separate Dev Worktree**. Keep this to **one question round**: include any required channel-preset choice as complete options in that same request, rather than asking about the location and preset separately. Ordinary Dev verification uses the production daemon's remote delivery and does not need a channel-preset question. Recommend an option based on the task and briefly explain why; neither option is always the default. Honor an execution location already chosen for the task without asking again. Choosing the main worktree does not itself require creating another worktree or enabling a Dev Instance; follow that tree's existing setup.
+
+If the task needs a **new or existing git worktree** for parallel feature work on this repo (so install/AskHuman do not share the main daemon or overwrite another agent’s binary), read [`docs/agent-worktree-setup.md`](docs/agent-worktree-setup.md) first and follow it—including any required channel-preset choice in the same preparation question above—before coding. After `dev enable`, run `./scripts/install.sh` and verify through the project `askhuman-dev` MCP’s `dev_ask` (or `node scripts/dev.mjs ask` for CLI). Ordinary discussion, approvals and handoff continue through the normal AskHuman connection.
 
 ## Tracking unfinished work in docs/PROGRESS.md
 
