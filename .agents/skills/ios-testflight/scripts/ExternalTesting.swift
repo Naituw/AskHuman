@@ -3,12 +3,13 @@ import CoreFoundation
 
 /// A closed request vocabulary for this app's first external beta. No arbitrary endpoints or app IDs.
 struct ExternalRequest {
-    enum Mode: String { case metadata, group, submit, invite }
+    enum Mode: String { case metadata, group, submit, invite, start }
     let mode: Mode
     let build: String?
     let localizations: [String: [String: String]]
     let review: [String: Any]
     let emails: [String]
+    let internalTesterCount: Int?
 
     init(_ value: [String: Any]) throws {
         guard let raw = value["mode"] as? String, let mode = Mode(rawValue: raw) else {
@@ -16,6 +17,7 @@ struct ExternalRequest {
         }
         self.mode = mode
         let allowed: Set<String> = mode == .metadata ? ["mode", "localizations", "review"]
+            : mode == .start ? ["mode", "build", "emails", "internalTesterCount"]
             : mode == .invite ? ["mode", "build", "emails"] : ["mode", "build"]
         guard Set(value.keys).isSubset(of: allowed) else { throw ExternalStatusError("Unexpected external testing fields.") }
         build = value["build"] as? String
@@ -27,6 +29,14 @@ struct ExternalRequest {
         localizations = value["localizations"] as? [String: [String: String]] ?? [:]
         review = value["review"] as? [String: Any] ?? [:]
         emails = value["emails"] as? [String] ?? []
+        if mode == .start {
+            guard let count = value["internalTesterCount"] as? NSNumber,
+                  CFGetTypeID(count) != CFBooleanGetTypeID(), (0...100).contains(count.intValue),
+                  count.doubleValue == Double(count.intValue) else {
+                throw ExternalStatusError("Starting testing requires the explicitly approved internal tester count.")
+            }
+            internalTesterCount = count.intValue
+        } else { internalTesterCount = nil }
         if mode == .metadata {
             guard Set(localizations.keys) == Set(["en-US", "zh-Hans"]) else {
                 throw ExternalStatusError("Metadata requires both en-US and zh-Hans.")
@@ -54,7 +64,7 @@ struct ExternalRequest {
             }
             try Self.email(review["contactEmail"] as! String)
         }
-        if mode == .invite {
+        if mode == .invite || mode == .start {
             guard (1...5).contains(emails.count), Set(emails.map { $0.lowercased() }).count == emails.count else {
                 throw ExternalStatusError("Provide one to five distinct, explicitly authorized tester emails.")
             }
@@ -143,7 +153,10 @@ struct ExternalTesting {
         guard ["BETA_APPROVED", "READY_FOR_BETA_TESTING", "IN_BETA_TESTING"].contains(state) else {
             throw ExternalStatusError("Invite testers only after Beta App Review approval.")
         }
-        return try await invite(request.emails, groupID: groupID)
+        if request.mode == .start {
+            return try await start(request, buildID: id, groupID: groupID, detail: detail)
+        }
+        return try await invite(request.emails, groupID: groupID, buildReady: state != "BETA_APPROVED")
     }
 
     private func metadata(_ request: ExternalRequest) async throws -> [String: Any] {
@@ -244,7 +257,47 @@ struct ExternalTesting {
         return ["action": "group", "groupId": id, "buildId": buildID, "verified": true]
     }
 
-    private func invite(_ emails: [String], groupID: String) async throws -> [String: Any] {
+    private func start(_ request: ExternalRequest, buildID: String, groupID: String,
+                       detail: [String: Any]) async throws -> [String: Any] {
+        // Build notifications reach every assigned tester; validate the separately approved audience first.
+        let groups = try await list("betaGroups", ["filter[builds]": buildID,
+            "fields[betaGroups]": "name,isInternalGroup,publicLinkEnabled,hasAccessToAllBuilds"])
+        let internalGroups = groups.filter { ExternalStatus.attributes($0)["isInternalGroup"] as? Bool == true }
+        guard groups.count == 2, groups.contains(where: { $0["id"] as? String == groupID }),
+              internalGroups.count == 1,
+              ExternalStatus.attributes(internalGroups[0])["name"] as? String == "AskHuman Internal",
+              ExternalStatus.attributes(detail)["autoNotifyEnabled"] as? Bool == false else {
+            throw ExternalStatusError("Build notifications require only the approved Friends and Internal groups with auto-notify off.")
+        }
+        let internalID = try ExternalStatus.id(internalGroups[0])
+        let internalMembers = try await list("betaGroups/\(internalID)/betaTesters", ["fields[betaTesters]": "state"])
+        let friends = try await list("betaGroups/\(groupID)/betaTesters", ["fields[betaTesters]": "email,state"])
+        let friendEmails = friends.compactMap { (ExternalStatus.attributes($0)["email"] as? String)?.lowercased() }
+        guard internalMembers.count == request.internalTesterCount, friendEmails.count == friends.count,
+              Set(friendEmails).count == friends.count,
+              Set(friendEmails) == Set(request.emails.map { $0.lowercased() }) else {
+            throw ExternalStatusError("Build notification audience differs from the explicitly approved tester list or internal count.")
+        }
+        let approvedIDs = try Set((internalMembers + friends).map { try ExternalStatus.id($0) })
+        let individuals = try await list("builds/\(buildID)/individualTesters", ["fields[betaTesters]": "state"])
+        guard try individuals.allSatisfy({ approvedIDs.contains(try ExternalStatus.id($0)) }) else {
+            throw ExternalStatusError("The build has an individual tester outside the approved groups.")
+        }
+        let state = ExternalStatus.attributes(detail)["externalBuildState"] as? String ?? "UNKNOWN"
+        if state == "BETA_APPROVED" {
+            _ = try await write("POST", "buildBetaNotifications", type: "buildBetaNotifications",
+                                relationships: ["build": relation("builds", buildID)])
+        }
+        let after = ExternalStatus.resource(try await get("builds/\(buildID)/buildBetaDetail"))
+        let afterState = ExternalStatus.attributes(after)["externalBuildState"] as? String ?? "UNKNOWN"
+        guard ["READY_FOR_BETA_TESTING", "IN_BETA_TESTING"].contains(afterState) else {
+            throw ExternalStatusError("Build notification result is \(afterState); inspect status before another attempt.")
+        }
+        return ["action": "start", "unchanged": state != "BETA_APPROVED", "externalState": afterState,
+                "externalTesterCount": friends.count, "internalTesterCount": internalMembers.count]
+    }
+
+    private func invite(_ emails: [String], groupID: String, buildReady: Bool) async throws -> [String: Any] {
         var changed = 0
         var states = [String: Int]()
         let roster = try await list("betaGroups/\(groupID)/betaTesters", ["fields[betaTesters]": "email,state"])
@@ -253,9 +306,16 @@ struct ExternalTesting {
             throw ExternalStatusError("The initial friends audience is limited to five identifiable email testers.")
         }
         func lookup(_ email: String, groupOnly: Bool) async throws -> [[String: Any]] {
-            var query = ["filter[email]": email, "fields[betaTesters]": "email,state"]
-            if groupOnly { query["filter[betaGroups]"] = groupID; query["filter[apps]"] = Self.appID }
-            let found = try await list("betaTesters", query)
+            let found: [[String: Any]]
+            if groupOnly {
+                // Resolve membership through the already validated app's group, not combined relationship filters.
+                let members = try await list("betaGroups/\(groupID)/betaTesters", ["fields[betaTesters]": "email,state"])
+                found = members.filter {
+                    (ExternalStatus.attributes($0)["email"] as? String)?.lowercased() == email.lowercased()
+                }
+            } else {
+                found = try await list("betaTesters", ["filter[email]": email, "fields[betaTesters]": "email,state"])
+            }
             guard found.count <= 1, found.allSatisfy({
                 (ExternalStatus.attributes($0)["email"] as? String)?.lowercased() == email.lowercased()
             }) else { throw ExternalStatusError("Tester lookup was ambiguous or returned a different email.") }
@@ -276,7 +336,7 @@ struct ExternalTesting {
             guard var member = try await lookup(email, groupOnly: true).first else {
                 throw ExternalStatusError("Tester assignment did not read back; inspect before retrying.")
             }
-            if ExternalStatus.attributes(member)["state"] as? String == "NOT_INVITED" {
+            if buildReady, ExternalStatus.attributes(member)["state"] as? String == "NOT_INVITED" {
                 // Auto-notify is off. Always specify both tester and app; never send an app-wide invitation.
                 let id = try ExternalStatus.id(member)
                 _ = try await write("POST", "betaTesterInvitations", type: "betaTesterInvitations",
@@ -287,13 +347,15 @@ struct ExternalTesting {
                 member = updated
             }
             let state = ExternalStatus.attributes(member)["state"] as? String ?? "UNKNOWN"
-            guard ["INVITED", "ACCEPTED", "INSTALLED"].contains(state) else {
+            guard ["INVITED", "ACCEPTED", "INSTALLED"].contains(state) || (!buildReady && state == "NOT_INVITED") else {
                 throw ExternalStatusError("Tester state is \(state); inspect it before another invitation attempt.")
             }
             states[state, default: 0] += 1
         }
         return ["action": "invite", "assigned": emails.count, "changed": changed,
-                "testerStates": states,
-                "note": "Apple invitation state is verified. Actual installation, pairing and push testing remain separate checks."]
+                "testerStates": states, "requiresStartTesting": !buildReady,
+                "note": buildReady
+                    ? "Apple invitation state is verified. Actual installation, pairing and push testing remain separate checks."
+                    : "Testers are assigned but no invitations were sent. Separately authorize start testing, then inspect invitation state."]
     }
 }

@@ -232,7 +232,7 @@ def main():
         parser.error("--build, --mode, --zh, --en and --dry-run only apply to the notes action.")
     if args.action == "external":
         if args.archive is not None or args.request is None:
-            parser.error("external requires --request and no archive; use metadata, group, submit or invite in its JSON mode.")
+            parser.error("external requires --request and no archive; use metadata, group, submit, invite or start in its JSON mode.")
         if args.request.stat().st_size > 65536:
             parser.error("External testing requests may not exceed 64 KiB.")
         request = json.loads(args.request.read_text(encoding="utf-8"))

@@ -13,6 +13,11 @@ private final class FakeApple {
     var accountTesters = [[String: Any]]()
     var autoNotify = true
     var dropWrites = false
+    var paginateTesters = false
+    var internalTesters: [[String: Any]] = [["id": "internal-one"], ["id": "internal-two"]]
+    var individualTesters = [[String: Any]]()
+    var extraNotificationGroup = false
+    var stallNotification = false
 
     func send(_ method: String, _ path: String, _ query: [String: String], _ body: [String: Any]?) async throws -> [String: Any] {
         calls.append(method + " " + path)
@@ -49,10 +54,27 @@ private final class FakeApple {
             precondition(attrs["isInternalGroup"] as? Bool == false && attrs["publicLinkEnabled"] as? Bool == false)
             group = ["id": "friends", "attributes": attrs]; return ["data": group!]
         case ("GET", "betaGroups/friends/builds"): return ["data": assigned ? [["id": "build"]] : []]
-        case ("GET", "betaGroups/friends/betaTesters"): return ["data": testers]
+        case ("GET", "betaGroups/friends/betaTesters"):
+            return paginateTesters ? ["data": testers, "links": ["next": "another-page"]] : ["data": testers]
+        case ("GET", "betaGroups"):
+            precondition(query["filter[builds]"] == "build" && query["filter[app]"] == nil)
+            var groups = group.map { [$0] } ?? []
+            groups.append(["id": "internal", "attributes": ["name": "AskHuman Internal", "isInternalGroup": true]])
+            if extraNotificationGroup { groups.append(["id": "other-group"]) }
+            return ["data": groups]
+        case ("GET", "betaGroups/internal/betaTesters"): return ["data": internalTesters]
+        case ("GET", "builds/build/individualTesters"): return ["data": individualTesters]
+        case ("POST", "buildBetaNotifications"):
+            precondition(((data["relationships"] as! [String: Any])["build"] as! [String: Any])["data"] as? [String: String] == ["type": "builds", "id": "build"])
+            precondition(state == "BETA_APPROVED" && !autoNotify)
+            if !stallNotification { state = "IN_BETA_TESTING" }
+            return [:]
         case ("GET", "betaTesters"):
-            let source = query["filter[betaGroups]"] == nil ? accountTesters : testers
-            return ["data": source.filter { ExternalStatus.attributes($0)["email"] as? String == query["filter[email]"] }]
+            // Apple rejects the combined app/group lookup used by the original invitation path.
+            guard query["filter[apps]"] == nil, query["filter[betaGroups]"] == nil else {
+                throw ExternalStatusError("Apple GET betaTesters failed (HTTP 400, PARAMETER_ERROR.INVALID)")
+            }
+            return ["data": accountTesters.filter { ExternalStatus.attributes($0)["email"] as? String == query["filter[email]"] }]
         case ("POST", "betaTesters"):
             precondition(((data["relationships"] as! [String: Any])["betaGroups"] as! [String: Any])["data"] as? [[String: String]] == [["type": "betaGroups", "id": "friends"]])
             let tester: [String: Any] = ["id": "tester-\(accountTesters.count)", "attributes": attrs.merging(["state": "NOT_INVITED"]) { _, new in new }]
@@ -102,6 +124,9 @@ enum ExternalTestingTests {
             ["mode": "submit", "build": "../10"],
             ["mode": "invite", "build": "10", "emails": ["a@example.com", "A@example.com"]],
             ["mode": "invite", "build": "10", "emails": ["a@example.com\nBcc:other@example.com"]],
+            ["mode": "start", "build": "10", "emails": ["a@example.com"]],
+            ["mode": "start", "build": "10", "emails": ["a@example.com"], "internalTesterCount": true],
+            ["mode": "start", "build": "10", "emails": ["a@example.com"], "internalTesterCount": 1.5],
             ["mode": "delete", "build": "10"]
         ] {
             await refuses { _ = try ExternalRequest(raw) }
@@ -129,6 +154,11 @@ enum ExternalTestingTests {
         await refuses { _ = try await api.run(invite) }
         precondition(apple.mutations.count == submitted)
         apple.state = "BETA_APPROVED"
+        let staged = try await api.run(invite)
+        precondition(staged["requiresStartTesting"] as? Bool == true)
+        precondition((staged["testerStates"] as? [String: Int])?["NOT_INVITED"] == 1)
+        precondition(!apple.mutations.contains("POST betaTesterInvitations"))
+        apple.state = "IN_BETA_TESTING"
         let result = try await api.run(invite)
         precondition((result["testerStates"] as? [String: Int])?["INVITED"] == 1)
         let invited = apple.mutations.count
@@ -161,9 +191,60 @@ enum ExternalTestingTests {
         let invitationFailure = FakeApple()
         let failingAPI = ExternalTesting(send: invitationFailure.send)
         _ = try await failingAPI.run(group)
-        invitationFailure.state = "BETA_APPROVED"; invitationFailure.dropWrites = true
+        invitationFailure.state = "IN_BETA_TESTING"; invitationFailure.dropWrites = true
         await refuses { _ = try await failingAPI.run(invite) }
         precondition(invitationFailure.mutations.filter { $0 == "POST betaTesterInvitations" }.count == 1)
+        let membership = FakeApple()
+        let membershipAPI = ExternalTesting(send: membership.send)
+        _ = try await membershipAPI.run(group)
+        membership.state = "BETA_APPROVED"
+        membership.testers = [
+            ["id": "unrelated", "attributes": ["email": "other@example.com", "state": "NOT_INVITED"]],
+            ["id": "installed", "attributes": ["email": "FRIEND@example.com", "state": "INSTALLED"]]
+        ]
+        let membershipWrites = membership.mutations.count
+        let installed = try await membershipAPI.run(invite)
+        precondition((installed["testerStates"] as? [String: Int])?["INSTALLED"] == 1)
+        precondition(membership.mutations.count == membershipWrites)
+        membership.testers.append(["id": "duplicate", "attributes": ["email": "friend@example.com", "state": "INVITED"]])
+        await refuses { _ = try await membershipAPI.run(invite) }
+        precondition(membership.mutations.count == membershipWrites)
+        membership.testers = []
+        membership.paginateTesters = true
+        await refuses { _ = try await membershipAPI.run(invite) }
+        precondition(membership.mutations.count == membershipWrites)
+        let start = try ExternalRequest(["mode": "start", "build": "10", "emails": ["friend@example.com"], "internalTesterCount": 2])
+        let notification = FakeApple()
+        let notificationAPI = ExternalTesting(send: notification.send)
+        _ = try await notificationAPI.run(group)
+        notification.testers = [["id": "friend", "attributes": ["email": "FRIEND@example.com", "state": "NOT_INVITED"]]]
+        let beforeStart = notification.mutations.count
+        await refuses { _ = try await notificationAPI.run(start) }
+        notification.state = "BETA_APPROVED"
+        notification.internalTesters.append(["id": "unapproved-internal"])
+        await refuses { _ = try await notificationAPI.run(start) }
+        notification.internalTesters.removeLast()
+        notification.testers.append(["id": "other", "attributes": ["email": "other@example.com"]])
+        await refuses { _ = try await notificationAPI.run(start) }
+        notification.testers.removeLast()
+        notification.extraNotificationGroup = true
+        await refuses { _ = try await notificationAPI.run(start) }
+        notification.extraNotificationGroup = false
+        notification.individualTesters = [["id": "unapproved-individual"]]
+        await refuses { _ = try await notificationAPI.run(start) }
+        notification.individualTesters = []
+        notification.paginateTesters = true
+        await refuses { _ = try await notificationAPI.run(start) }
+        notification.paginateTesters = false
+        precondition(notification.mutations.count == beforeStart)
+        let started = try await notificationAPI.run(start)
+        precondition(started["externalState"] as? String == "IN_BETA_TESTING")
+        precondition(notification.mutations.count == beforeStart + 1)
+        _ = try await notificationAPI.run(start)
+        precondition(notification.mutations.count == beforeStart + 1)
+        notification.state = "BETA_APPROVED"; notification.stallNotification = true
+        await refuses { _ = try await notificationAPI.run(start) }
+        precondition(notification.mutations.count == beforeStart + 2)
         print("External mutation scope, approval gates, read-back and retry checks passed")
     }
 }
