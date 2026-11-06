@@ -144,7 +144,8 @@ P0–P4 已完成。P5 于 2026-11-06 完成获批、开始测试和首位朋友
 - 修复查询后，成员已加入，但 `POST betaTesterInvitations` 返回 HTTP 409 / `STATE_ERROR.TESTER_INVITE.NO_INSTALLABLE_BUILDS`；复查 Friends 为 1 位 `NOT_INVITED`，构建仍 `BETA_APPROVED`。自动通知关闭时，还需手动开始测试，不能把获批当作已经可安装。
 - 按 Apple OpenAPI 4.6 和官方 Build Beta Notifications 文档补上封闭的 `start` 操作。该操作会通知构建所有已分配测试员，用户已另行明确批准：原有 2 位内部测试员和这一位朋友。执行前验证只有 Friends / AskHuman Internal 两组、确切外部邮箱表、批准的内部人数，以及无超出两组的独立测试员；不改变自动通知或公开链接。
 - 新邀请路径在 `BETA_APPROVED` 只准备成员并返回 `requiresStartTesting: true`，不尝试发出不可安装构建的邀请；开始测试独立授权，ready/testing 后才继续确切收件人的邀请。未知结果不自动重发。
-- 工具回归 **24/24** 通过：先复现旧查询失败，再验证修复，并覆盖准备成员、开始测试去重、受众变更拒绝、分页拒绝和结果不明停止。稳定签名 helper 已重装；原 status、build 10 中英文 notes read 和本地外部签名 `EXPORT SUCCEEDED` 均通过，没有新上传或修改 build 10 内容。工作树 install.sh 成功，初次 Dev 正式转送收到“收到”；最终转送的回复待补。
+- 工具回归 **24/24** 通过：先复现旧查询失败，再验证修复，并覆盖准备成员、开始测试去重、受众变更拒绝、分页拒绝和结果不明停止。稳定签名 helper 已重装；原 status、build 10 中英文 notes read 和本地外部签名 `EXPORT SUCCEEDED` 均通过，没有新上传或修改 build 10 内容。工作树 install.sh 成功，初次与最终 Dev 正式转送均收到“收到”（最终 verification `970a477d-e85e-41ac-b078-9b1b049a88de`）；随后安装的 AskHuman 二进制内容未变化。
 - **22:35（北京时间）**：`start` 读回 `IN_BETA_TESTING`、外部 1 人、内部 2 人；随后 `invite` 读回 `INVITED: 1`、`requiresStartTesting: false`、`changed: 0`，未重复创建成员。尚无接受邀请、安装、配对或生产推送通过的证据。
 - 接入指南、隐私页面、预览包下载和现有中继 `/v1/health` 均实际检查成功；后续 Mac 按用户选择的新发布版安装。首位朋友需完成前台回答、锁屏通知与点击回答、Wi-Fi/蜂窝切换和首答生效，才能完成 P5。原项目待办仍保留，无定时监控。
 - 用户再次明确先等自己发布新 Mac 版本；收到版本号或链接后再继续朋友安装验收，不在发布前催促操作。工具修复留在外测工作树，主工作树正有其他发布改动，未混入或覆盖。
+- 2026-11-07 用户要求本轮先结束，新版有了再告知。本轮范围止于邀请；后续安装、配对与推送验收已记待办 `73650ea1-449e-42bd-91e4-61a18478d84d`，不自动监控或启动。
