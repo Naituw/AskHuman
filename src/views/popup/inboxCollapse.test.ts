@@ -23,6 +23,15 @@ describe("arrival (R5)", () => {
     expect(out.effect).toBeNull();
   });
 
+  it("starts an empty round expanded even if its previous form is collapsed", () => {
+    const a = req();
+    const out = arrive({ ...emptyState(), view: "collapsed" }, a);
+    expect(out.state.view).toBe("expanded");
+    expect(out.state.active).toBe(a.requestId);
+    expect(out.state.requests[0].secondary).toBe(false);
+    expect(out.effect).toBe("expand");
+  });
+
   it("keeps the current body when the window is already expanded (D7)", () => {
     const [a, b] = [req(), req()];
     const out = arrive(build(a), b);
@@ -217,6 +226,13 @@ describe("restoring and browsing (R2, R6, R7, C9)", () => {
     expect(out.state.active).toBe(a.requestId);
     expect(out.state.requests.find(r => r.requestId === a.requestId)!.secondary).toBe(false);
     expect(collapseWindow(out.state).effect).toBeNull();
+  });
+
+  it("does not collapse an empty round", () => {
+    const state = emptyState();
+    const out = collapseWindow(state);
+    expect(out.state).toBe(state);
+    expect(out.effect).toBeNull();
   });
 
   it("can collapse a browsed secondary request only when no primary remains", () => {

@@ -81,7 +81,11 @@ export function arrive(state: InboxState, request: CollapseRequest, options: { s
   const first = state.requests.length === 0;
   const groupOrder = state.groupOrder.includes(request.project) ? state.groupOrder : [...state.groupOrder, request.project];
   const next = patch(state, { requests: [...state.requests, { ...request, secondary: false }], groupOrder });
-  if (first) return { state: show(next, request.requestId), effect: null, closed: false };
+  if (first) return {
+    state: patch(show(next, request.requestId), { view: "expanded" }),
+    effect: state.view === "collapsed" ? "expand" : null,
+    closed: false,
+  };
   if (state.view === "collapsed") {
     const target = options.showNew === false ? defaultOpenTarget(state) ?? request.requestId : request.requestId;
     return { state: patch(show(next, target), { view: "expanded" }), effect: "expand", closed: false };
@@ -137,7 +141,7 @@ export function browse(state: InboxState, id: string): Outcome {
  * for it, while the expanded window shows nothing but secondary requests (a "peek"). A primary request keeps it open.
  */
 export function collapseWindow(state: InboxState): Outcome {
-  if (state.view === "collapsed" || hasPrimary(state)) return none(state);
+  if (!state.requests.length || state.view === "collapsed" || hasPrimary(state)) return none(state);
   return { state: patch(state, { view: "collapsed" }), effect: "collapse", closed: false };
 }
 

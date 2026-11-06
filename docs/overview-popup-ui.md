@@ -141,7 +141,8 @@ Windows / Linux 的实机补验清单见 `PROGRESS.md`。
   但尚未在真实的 Windows / Linux 上验证。
 - **激活与切走缩回**：「用户在 AskHuman」是进程级状态。macOS 由 `popup_activation.rs` + `swift/PopupActivation.swift` 观察
   `NSApplication` 的激活通知，命令 `popup_app_active` 给起始值、事件 `popup-app-active` 推变化；Windows / Linux 用 popup 窗口的
-  `Focused` 事件。页面对离开留 200ms 抖动保护；有主要请求、窗口已是小窗、拖拽进行中都不触发缩回。
+  `Focused` 事件。页面对离开留 200ms 抖动保护；没有待答请求、有主要请求、窗口已是小窗、拖拽进行中都不触发缩回。
+  一轮结束后窗口隐藏引起的失活不再折叠空队列；新一轮首条请求始终恢复展开状态。
 - **拖入文件**：`popup/useInboxDrop.ts` 注册一个窗口级 `onDragDropEvent`（inbox 下 `usePopupCore` 不再自己监听），事件在
   `inboxDrop.ts::serialDrag` 里串行并合并。小窗上停留 500ms 展开到指针下那一行的请求（否则默认目标），展开后停留 250ms 切到另一行，
   Sidebar 列表与正文靠近上下边缘 56px 内自动滚动；松手落到指针下的请求，纵向布局落到指针下的题卡、顺序布局落当前题。

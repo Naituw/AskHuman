@@ -374,6 +374,26 @@ describe("answer later and the small window", () => {
   });
 
   describe("round boundaries and refusal (R9)", () => {
+    it("keeps the idle host expanded when hiding the last request deactivates the app", async () => {
+      await start("a");
+      await later("a");
+      emit("popup-inbox-terminal", { requestId: "a", winner: "slack" }); await flushPromises();
+      await tick(600);
+      expect(calls("popup_inbox_idle")).toHaveLength(1);
+      mock.invoke.mockClear();
+
+      emit("popup-app-active", false);
+      await tick(200);
+      expect(layouts()).toEqual([]);
+      expect(wrapper.find(".inbox-root").attributes("data-view")).toBe("expanded");
+
+      emit("popup-inbox-show", request("z")); await flushPromises();
+      expect(layouts().length).toBeGreaterThan(0);
+      expect(layouts().every(args => !args.collapsed)).toBe(true);
+      expect(visible("z")).toBe(true);
+      expect(bodyInert()).toBe(false);
+    });
+
     it("starts the next round expanded and unmarked after the last request ends in the small window", async () => {
       await start("a");
       await later("a");
