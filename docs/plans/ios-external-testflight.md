@@ -1,6 +1,6 @@
 # iOS 朋友外部测试：开发与交付计划
 
-日期：2026-11-05。状态：用户已批准，正在实施。工作树不挂渠道预设；优先 GitHub Pages（目前未启用，配置准备完后集中确认）。联系方式先查 Apple 既有资料；用户暂不方便配置，先完成全部可独立推进的工作。
+日期：2026-11-05。状态：公开材料已发布，0.1.0 (10) 已提交 Beta App Review，等待审核与朋友接入。工作树不挂渠道预设；GitHub Pages 已获授权启用，审核联系人已按用户选择复用 Spatialify。
 
 ## 已确认的目标
 
@@ -8,7 +8,7 @@
 
 用户已要求写开发计划并由 agent 推进全部流程，包括实现、核验、准备资料、上传及送审。联系人、隐私页面发布位置和首批邀请名单须由用户提供或确认；不猜测身份和公开联系方式。
 
-## 当前证据与缺口（2026-11-05 只读核查）
+## 起始证据与缺口（2026-11-05 实施前只读核查）
 
 - AskHuman Mobile：App ID 6828712684，Bundle ID com.naituw.humaninloop.ios，沿用 Team、通知扩展和共享钥匙串组。
 - 最新 Apple 构建为 **0.1.0 (9)**，VALID、INTERNAL_ONLY，外测状态 NOT_APPLICABLE；本地 `ios-testflight-9` 指向 fc87415d。它不能转成外测构建；实际出包前再次查询最高号。
@@ -77,11 +77,11 @@
 
 最终完成条件：可外测构建获批，确认名单中的朋友已获邀请，并有首位朋友成功安装/配对/问答与推送的证据；其他人的未完成动作明确列出。若用户只要求推进到送审/邀请，则按其明确调整的边界交付。
 
-## 待集中处理的输入
+## 输入处理结果
 
-- 是否启用 GitHub Pages 的 Actions 发布，并发布已准备的隐私 / 接入页面；需要先合并 / 推送工作流到默认分支。
-- 复用哪一个已有应用的审核联系人；反馈邮箱可复用两者一致的现有值，不用重新填写。
-- 兼容 Mac 包的下载地址与中继 URL须填入最终私有审核材料；朋友邮箱可以等获批后再提供。
+- 已批准并启用 GitHub Pages 的 Actions 发布，隐私 / 接入页面已上线。
+- 用户选定 Spatialify 的审核联系人，反馈邮箱复用两个已有应用一致的值；均只存私有输入并提交 Apple。
+- 兼容 Mac 包的公开下载地址与既有中继 URL 已填入最终私有审核材料；朋友邮箱尚未提供，可以等获批后再提供。
 
 ## 执行记录
 
@@ -90,24 +90,24 @@
 - 完成 `external-status` / 显式 `contact-sources`、外部导出选择、封闭 metadata/group/submit/invite 操作；真实 Apple 只读已验证，未触发写入。
 - 工具回归 **24/24** 通过，包含旧 notes / changes / archive 规则、新 audience、资料读回、提交幂等、外测状态与邀请边界。
 - iOS 27.0 专用 iPhone 18 Pro 模拟器：`testMacsTabListsTheMacsAndOpensOne` **1/1** 通过，App 与扩展完成编译。未动日常 Duo 模拟器。
-- 静态站生成 5 页，桌面与 390px 手机宽度浏览器预览通过；目前仅本地预览，不代表 Pages 已上线。
+- 静态站生成 5 页，桌面与 390px 手机宽度浏览器预览通过；后续公开部署见下文。
 - 新 helper 已按既有 Developer ID 重装，保留 previous；通过真实 external-status、build 9 notes read。以现有 build 9 archive 做外部模式本地导出，`EXPORT SUCCEEDED`（仅签名验证，没有上传或改变 build 9 的 Apple 受众）。
 - 最后 install.sh 已成功装到本树 Dev 目录；最终转送收到“收到”（verification 2d687f06-9693-45db-9553-1a35130802f8）。未覆盖日常二进制。
 - 构建前健康检查曾退出 2（交换 9.6 GiB、负载 215）；按 AGENTS 报告后用户回复“继续”。后续负载回落，检查为 tight，长任务后台运行。
 
-P0 已完成；P1 的文案/界面已完成，发布与最终审核输入待处理；P2/P3 实现与离线测试完成，真实写入待发布步骤；P4 本地候选归档与预检已通过，Dev 转送已通过、发布输入已确认；P5 未开始。全流程尚未完成，不能声称“已可邀请”。
+P0–P4 已完成：实现、验证、发布、上传与审核提交均已读回。P5 等待 Apple 审核、明确邀请名单及朋友真机验收。全流程尚未完成，不能声称“已可邀请”。
 
-### 本地候选产物（尚未发布）
+### 候选产物与固定源码点
 
 - 源码点 `d3bb8336e38ff27d01ca0d97d80f3c561e5b1847`，包含实现提交 `8398a3e3`，已合入 main 的 build 9 / 真实 Codex 验收文档。
 - `changes.mjs`：基线 `ios-testflight-9`，一个 iOS 增量提交（关于页两处链接），建议下一号 10。
-- `0.1.0 (10)` 候选：`ios/build/AskHuman-External-Candidate.xcarchive`，Release `ARCHIVE SUCCEEDED`，external preflight 通过；10 未在 Apple 占用，上传前必须再次核对。
+- `0.1.0 (10)` 归档：`ios/build/AskHuman-External-Candidate.xcarchive`，Release `ARCHIVE SUCCEEDED`，external preflight 通过；选择号码及上传前均核对 Apple 最大构建为 9。
 - 对应中英文 What to Test 已生成并 dry-run 通过（英文 746、中文 265 UTF-16 units）；保存在仓库外。
 - Apple Silicon Mac 配套包从同一源码点用普通 `custom-protocol` / `local-install` 构建，不带 development-ui；通过既有 Developer ID 签名校验和 `--help` 启动。没有替换日常安装。
   私有产物目录 `~/.config/askhuman-release/friends-candidate-d3bb833/`，zip 16.7 MiB，含二进制、安装说明和 SHA256SUMS；binary SHA256 为 `3af24ef66f606a5df56846f9b2446817bf5ec7ae2190341341043ded38505357`。
-  它尚未公证、未发布、未在朋友的新 Mac 验证；不是 Intel / universal 包。版本字符串仍为 0.16.0，以源码点 / 校验值区别旧公开发布。
-- 已读现有中继 URL并放入私有英文审核草稿；`GET /v1/health` 返回 HTTP 200、ok=true。没有复制 broker 凭据。待公开 Mac 下载 URL 后移除草稿提醒，选定联系人即可生成最终 metadata JSON。
-- 可选公开承载：代码合并后手动发布 Pages；Mac zip 作为单独的 GitHub prerelease 资源（非 `v*` 标签，不触发正式桌面发版流水线），保留现有稳定版本。实际发布前集中由用户确认。
+  它已发布，尚未公证、未在朋友的新 Mac 验证；不是 Intel / universal 包。版本字符串仍为 0.16.0，以源码点 / 校验值区别旧公开发布。
+- 已读现有中继 URL并放入私有英文审核材料；`GET /v1/health` 返回 HTTP 200、ok=true。没有复制 broker 凭据。最终 metadata JSON 包含公开 Mac 下载 URL 与选定联系人，已提交并读回。
+- 经用户确认：代码合并后手动发布 Pages；Mac zip 作为单独的 GitHub prerelease 资源（非 `v*` 标签，不触发正式桌面发版流水线），保留现有稳定版本。
 
 ### 发布授权与版本冻结
 
@@ -115,3 +115,24 @@ P0 已完成；P1 的文案/界面已完成，发布与最终审核输入待处�
 发布仍采用已验收的 d3bb833 候选。等待期间 main 增加的真实 Codex 测试及文档已合入发布工具分支；
 它们不进入现有候选归档。主工作树另有进行中的未提交 iOS 改动，本次在隔离树推送已提交历史，不操作那些文件。
 最终 Dev 已完成；Apple 重查最新仍为 9、INTERNAL_ONLY，尚无外部组。
+
+### 已发布与首次上传结果
+
+- 远端 main / codex/ios-external-testflight 已推至 e22cb150；完整 CI（run 42040697614）通过。
+- Pages 已启用 workflow 模式、HTTPS 强制；部署 run 42040761031 通过。四个公开页面均无需登录 HTTP 200，内容与候选一致。
+- Mac 预览版：<https://github.com/Naituw/AskHuman/releases/tag/friends-beta-20261105>；tag 固定 d3bb833，prerelease、非 latest，稳定版仍为 v0.16.0。公开 ZIP 下载 SHA256 与本地一致。
+- Apple 应用级中英文 Beta 资料及 Spatialify 审核联系人已写入并完整读回。PATCH 曾超时，但读回证明全部字段已保存，没有重复写入。
+- 用户释放资源后磁盘从约 277 MiB 恢复到约 50 GiB；本树 Cargo local-install 缓存已用官方 clean 命令清理，归档 / 安装包仍保留。
+- 2026-11-05 23:03 开始第一次 build 10 外部上传。签名通过，Xcode 的 swinfo / xcrun 工具发现阶段约 14 分钟；23:18 文件传输到 100%，23:19 最后的 CHANGE UPLOAD STATE TO COMPLETE 返回 401 / reauthenticationNotSupported，进程退出 70（EXPORT FAILED）。
+- 首次失败时，上传会话 81b235eb-4db3-46ee-8372-e74ca5bcbe0a 最后读到 AWAITING_UPLOAD；新 token 的只读查询仍成功，Apple 构建列表最高仍为 9。当时没有把传输 100% 当作上传完成，也没有创建标签、外测组或审核提交。
+
+### 受控重试成功与 Beta 审核提交
+
+- 资源平稳后再次确认 Apple 未出现 build 10，使用同一归档与新上传认证重试；没有更换 API key、证书或候选源码。2026-11-05 **23:34:13（北京时间）** 返回 `Upload succeeded` / `EXPORT SUCCEEDED`。
+- 随后 Apple 处理完成：build `81b235eb-4db3-46ee-8372-e74ca5bcbe0a`，版本 0.1.0 (10)，`VALID`、`APP_STORE_ELIGIBLE`、未过期、非豁免加密为 false。到期时间 2027-02-03 23:35:46（北京时间）。持久化内部导出配置仍为 internal-only，临时凭据已清理。
+- 中英文 What to Test 写入并逐字读回，中文 265、英文 746 UTF-16 units；中文全文记录于 [iOS 交付记录](ios-channel.md#2026-11-05testflight-外部候选构建-10)，英文与中文对应。
+- 建立 `AskHuman Friends`（组 ID `168413b8-7d93-45ab-9ca1-8810aea0a186`）：外部组，公开链接关闭，手动指定 build 10，自动通知关闭，测试员 0。原内部组也已自动收到 build 10。
+- **23:45:26** 提交并读回：审核提交 `WAITING_FOR_REVIEW`，构建外测状态 `WAITING_FOR_BETA_REVIEW`。这表示等待 Beta App Review，尚未获批，也没有邀请朋友。
+- 本地附注标签 `ios-testflight-10` 指向明确批准并冻结的源码 `d3bb8336e38ff27d01ca0d97d80f3c561e5b1847`，未推送标签。后续合入 main 的“已结束问题页面”及测试 / 文档不在该归档，不能把当前 HEAD 当作这个包的源码。
+- 后续只查询审核进展；审核通过后接收明确邮箱名单并执行邀请、首位朋友验收。没有创建定时监控；若 Apple 要求演示资源，携实际反馈向用户确认，不自行扩展范围。
+- 用户收到完整交付报告及中英文测试说明后，明确选择“后续记为待办，拿到审核结果和邮箱后继续”。已创建项目待办 `7ceb1fca-b979-4508-8ebd-1ad240058f8f`；本次工作按此边界完成，P5 延后，不建立定时监控。

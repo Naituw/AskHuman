@@ -15,7 +15,7 @@ python3 .agents/skills/ios-testflight/scripts/helper.py contact-sources
 ## Materials and local validation
 
 - Public documents: `docs/public/ios/{privacy,privacy-zh,beta,beta-zh}.md`. Build with `node scripts/build-ios-beta-site.mjs`. This removes and recreates the dedicated `site-dist` output and publishes only those pages plus an index.
-- Intended HTTPS base: `https://naituw.github.io/AskHuman/`. Verify privacy and guide URLs in both languages without authentication **before shipping**. GitHub Pages was disabled on 2026-11-05; the owner explicitly requires confirmation before enabling it. The workflow is manual, so committing it alone does not publish anything.
+- Published HTTPS base: `https://naituw.github.io/AskHuman/`. Verify privacy and guide URLs in both languages without authentication **before shipping**. GitHub Pages was enabled with the owner's approval on 2026-11-05. The workflow is manual, so committing changed pages alone does not publish them.
 - Descriptions and review notes: `docs/release/ios-external-beta/`. They are drafts until the Mac download and relay information are attached. Describe the actual Mac/MQTT dependency and absence of an in-app demo honestly. Do not claim approval is guaranteed.
 - Keep contact/recipient JSON outside the repository, mode `0600`. There is no reason to read a `.p8` file or increase API-key privileges.
 - Run `node --test scripts/ios-testflight-changes.node-test.mjs scripts/ios-testflight-preflight.node-test.mjs scripts/ios-testflight-external.node-test.mjs`. The fake transport exercises the real Swift mutation rules with no credentials or network.
