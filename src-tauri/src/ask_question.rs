@@ -111,6 +111,7 @@ fn run_inner(agent: Option<&str>) -> Option<String> {
         perf_autodismiss: crate::perf::autodismiss(),
         whats_next: false,
         escalate: false,
+        escalation_reason: None,
     };
 
     let stdout = crate::client::run_ask_capture(task, ANSWER_TIMEOUT)?;

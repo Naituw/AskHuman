@@ -226,10 +226,13 @@ pub struct TaskRequest {
     /// 结果渲染为一段纯文本。旧 CLI 不带 → false（普通提问，行为不变）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub whats_next: bool,
-    /// The Agent insists on reaching the user although away mode is on (`--escalate`, MCP
-    /// `escalate: true`). Only the daemon decides what that means; older clients never send it.
+    /// Legacy request to escalate without a reason. The daemon returns migration guidance.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub escalate: bool,
+    /// The Agent's reason for escalation. New callers leave the legacy flag false so an older
+    /// daemon cannot mistake an unchecked reason for its unconditional escalation flag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escalation_reason: Option<String>,
 }
 
 impl TaskRequest {
@@ -1673,6 +1676,25 @@ mod tests {
         assert!(serialized.contains(r#""escalate":true"#));
         let back: TaskRequest = serde_json::from_str(&serialized).unwrap();
         assert!(back.escalate);
+        assert!(back.escalation_reason.is_none());
+        task.escalate = false;
+        task.escalation_reason = Some("The task is complete".into());
+        let value = serde_json::to_value(&task).unwrap();
+        assert!(value.get("escalate").is_none());
+        assert_eq!(value["escalationReason"], "The task is complete");
+        let back: TaskRequest = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(back.escalation_reason, task.escalation_reason);
+        // An older daemon ignores the additive reason and does not see an unchecked true flag.
+        #[derive(serde::Deserialize)]
+        struct OldEscalation {
+            #[serde(default)]
+            escalate: bool,
+        }
+        assert!(
+            !serde_json::from_value::<OldEscalation>(value)
+                .unwrap()
+                .escalate
+        );
     }
 
     /// An answer from a popup without the quick-reply menu carries no directive; one with it

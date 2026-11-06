@@ -484,7 +484,9 @@ mod tests {
         };
         let ask = away_dir.guidance(false, Lang::En);
         assert!(ask.contains("--escalate") && ask.contains("no prod"));
-        assert!(away_dir.guidance(true, Lang::En).contains("--whats-next"));
+        let next = away_dir.guidance(true, Lang::En);
+        assert!(next.contains("cannot give the next task right now"));
+        assert!(next.contains("MCP: escalate: \"reason\"") && next.contains("no prod"));
         let mute = Directive {
             kind: DirectiveKind::Mute,
             scope: Scope::Session,

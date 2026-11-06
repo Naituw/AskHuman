@@ -110,13 +110,43 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         // instead of an answer. The result marker is added by the caller. ——
         "away.reply.ask" => pick(
             lang,
-            "The user is away (AskHuman away mode is on) and cannot answer right now. This is the user's own instruction.\nDo not wait for an answer: analyze the situation carefully and carry on with the current work in the way you judge best.\nOnly if you truly cannot make progress, or everything is done, call AskHuman again with --escalate (MCP: escalate: true); the user will then receive it as if they were present.",
-            "用户已离开（AskHuman 离开模式已开启），暂时无法回答。这是用户本人的指示。\n请不要等待回复：自己仔细分析，按你认为最佳的方式继续完成当前工作。\n只有在确实无法继续推进、或已全部完成时，才再次调用 AskHuman 并加上参数 --escalate（MCP 为 escalate: true），这样用户会像在场时一样收到。",
+            "The user is away (AskHuman away mode is on) and cannot answer right now. This is the user's own instruction.\nAnalyze carefully and keep working toward the user's original objective. Research, a plan, or a partial implementation does not complete the whole task; do not reclassify remaining work within that objective as a separate next task. Make ordinary design and implementation decisions yourself; explicit task limits and requirements still apply.\nBefore contacting the user again, carefully assess current progress and remaining work: is there anything else you can do independently? If something requires the user's action or decision, first finish other work that does not depend on it, and accurately identify anything that remains unverified.\nEscalate only when the original objective is fully complete or none of the remaining work can genuinely proceed independently. Provide a brief reason explaining why contacting the user is necessary now and why there is no other work you can continue.\nPass --escalate \"reason\" (MCP: escalate: \"reason\"), not just the boolean true. The reason will be shown to the user with this report.",
+            "用户已离开（AskHuman 离开模式已开启），暂时无法回答。这是用户本人的指示。\n请仔细分析并继续完成用户原本要达成的目标，不要把调研、方案或局部实现当作整个任务完成，也不要把目标内剩余的工作当作下一个任务。常规方案与实现选择请自行判断；用户明确限定的范围和要求仍有效。\n再次联系用户前，请认真检查当前进展和剩余事项：是否还有能自主推进的工作？遇到需要真人操作或决定的事项，也先完成其他不依赖它的工作，并如实保留未验证的部分。\n只有原目标已全部完成，或剩余工作确实都无法自主推进时，才升级。请提供一个简短理由，说明为什么现在必须联系用户，以及为什么已经没有其他能继续推进的工作。\n升级时传 --escalate \"理由\"（MCP：escalate: \"理由\"），不要只传布尔值 true。理由会与这次报告一起展示给用户。",
         ),
         "away.reply.whatsNext" => pick(
             lang,
-            "The user is away (AskHuman away mode is on) and cannot give the next task right now. This is the user's own instruction.\nFirst check whether the current task is really complete; if there is still wrap-up work, finish it.\nOnce everything is done (or you cannot continue), run --whats-next again with --escalate (MCP: escalate: true); the user will then receive it as if they were present.",
-            "用户已离开（AskHuman 离开模式已开启），暂时无法给出下一个任务。这是用户本人的指示。\n请先自查当前任务是否真的已全部完成；若还有收尾工作就继续完成。\n确认全部完成（或无法继续）后，再次运行 --whats-next 并加上参数 --escalate（MCP 为 escalate: true），用户会像在场时一样收到。",
+            "The user is away (AskHuman away mode is on) and cannot give the next task right now. This is the user's own instruction.\nCheck completion against the user's original objective: finishing research, a plan, or a partial implementation does not complete the whole task. Continue any work you can still do within that objective; do not package it as a separate next task and wait for the user to choose it. Make ordinary design and implementation decisions yourself; explicit task limits and requirements still apply.\nBefore contacting the user again, carefully assess current progress and remaining work: is there anything else you can do independently? If something requires the user's action or decision, first finish other work that does not depend on it, and accurately identify anything that remains unverified.\nEscalate only when the original objective is fully complete or none of the remaining work can genuinely proceed independently. Provide a brief reason explaining why contacting the user is necessary now and why there is no other work you can continue.\nPass --escalate \"reason\" (MCP: escalate: \"reason\"), not just the boolean true. The reason will be shown to the user with this report.",
+            "用户已离开（AskHuman 离开模式已开启），暂时无法给出下一个任务。这是用户本人的指示。\n请按用户原本要达成的目标自查：调研、方案或局部实现完成，不等于整个任务完成。目标内还有能推进的工作就继续，不要把它包装成下一个任务来等用户选择。常规方案与实现选择请自行判断；用户明确限定的范围和要求仍有效。\n再次联系用户前，请认真检查当前进展和剩余事项：是否还有能自主推进的工作？遇到需要真人操作或决定的事项，也先完成其他不依赖它的工作，并如实保留未验证的部分。\n只有原目标已全部完成，或剩余工作确实都无法自主推进时，才升级。请提供一个简短理由，说明为什么现在必须联系用户，以及为什么已经没有其他能继续推进的工作。\n升级时传 --escalate \"理由\"（MCP：escalate: \"理由\"），不要只传布尔值 true。理由会与这次报告一起展示给用户。",
+        ),
+        "away.escalation.missingReason" => pick(
+            lang,
+            "This escalation did not include a reason and has not been delivered to the user. Follow the guidance below to reassess; if escalation is still necessary, provide a reason as text.",
+            "这次升级没有提供理由，尚未送达用户。请按下面的指引自查；仍需升级时，以文字填写理由。",
+        ),
+        "away.escalation.reasonTitle" => pick(
+            lang,
+            "Agent-provided escalation reason",
+            "Agent 提供的升级理由",
+        ),
+        "away.escalation.fallbackTitle" => pick(
+            lang,
+            "System fallback delivery",
+            "系统兜底放行",
+        ),
+        "away.escalation.fallbackBody" => pick(
+            lang,
+            "The agent repeatedly asked without an escalation reason. The system delivered this request to avoid a deadlock; the agent has not provided a reason.",
+            "Agent 连续提问但未提供升级理由，系统为避免卡住而放行。本次没有 Agent 提供的升级理由。",
+        ),
+        "away.escalation.tooLong" => pick(
+            lang,
+            "The escalation reason must not exceed {max} characters. Please shorten it.",
+            "升级理由不能超过 {max} 个字符，请简写。",
+        ),
+        "away.escalation.missingContent" => pick(
+            lang,
+            "--escalate now takes a reason. Supply the question separately with -q, a message, or --stdin.",
+            "--escalate 现在需要填写理由。请另用 -q、消息正文或 --stdin 提供问题。",
         ),
         "away.reply.mute" => pick(
             lang,

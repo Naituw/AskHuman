@@ -590,7 +590,11 @@ pub fn dispatch() {
         }
         // 第一题既可用位置参数，也可用 `-q`/`--question`；提问相关 flag 一律进入提问分支，
         // 由 `parse_ask` 给出精确错误（如缺少问题内容、选项需在问题之后）。
-        first if first.starts_with('-') && !ASK_LEADING_FLAGS.contains(&first) => {
+        first
+            if first.starts_with('-')
+                && !ASK_LEADING_FLAGS.contains(&first)
+                && !first.starts_with("--escalate=") =>
+        {
             eprintln!(
                 "{}{}\n",
                 i18n::err_prefix(lang),
@@ -699,6 +703,7 @@ pub fn dispatch() {
                     perf_autodismiss: crate::perf::autodismiss(),
                     whats_next: parsed.whats_next,
                     escalate: parsed.escalate,
+                    escalation_reason: parsed.escalation_reason,
                 };
                 if let Err(error) = crate::development::verification::decorate_task(&mut task) {
                     eprintln!("AskHuman: {error}");

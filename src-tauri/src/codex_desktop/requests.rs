@@ -119,6 +119,7 @@ fn prepare(sid: &str, s: &Session, r: &Value) -> Option<ClientMsg> {
                 perf_autodismiss: false,
                 whats_next: false,
                 escalate: false,
+                escalation_reason: None,
             }))
         }
         "item/commandExecution/requestApproval"

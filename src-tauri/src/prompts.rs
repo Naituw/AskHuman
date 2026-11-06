@@ -119,6 +119,7 @@ fn cli_reference_with_agent(agent: Option<AgentKind>) -> String {
 {wait_rule}
 - Before asking, run `{program} --agent-help` to learn its usage.
 - If you were just summarized, or if you are unsure of the exact details of the last question you asked me through AskHuman and my answer, run `{program} --show-last` before continuing.
+- When AskHuman returns away-mode guidance, follow it and make ordinary decisions needed to continue toward my original objective without routine confirmation under the collaboration style below. Explicit task limits still apply. Provide an escalation reason only after the self-check described in that reply.
 
 - When asking through `{program}`, provide predefined options whenever applicable, mark your recommended option(s) with `-o!`, and briefly explain your rationale.
 - I can ONLY see what is delivered through `{program}`. Anything I need to review , or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through `{program}`, inline or attached with `-f`. Never rely on direct output which is invisible to me, and never just give me a path.
@@ -162,6 +163,7 @@ fn mcp_reference_with_agent(_agent: Option<AgentKind>) -> String {
 - You MUST ask me questions by calling the `ask` tool provided by the AskHuman MCP server (referred to below as the AskHuman `ask` tool). DO NOT ask questions in direct output, and DO NOT ask by ending the turn.
 - The AskHuman `ask` tool blocks until I reply, which may take a long time; always wait for its result instead of giving up or proceeding on assumptions.
 - If you were just summarized, or if you are unsure of the exact details of the last question you asked me through AskHuman and my answer, call the AskHuman MCP `show_last` tool before continuing.
+- When AskHuman returns away-mode guidance, follow it and make ordinary decisions needed to continue toward my original objective without routine confirmation under the collaboration style below. Explicit task limits still apply. Provide an escalation reason only after the self-check described in that reply.
 
 - When asking through the AskHuman `ask` tool, provide predefined options whenever applicable, mark your recommended option(s) as recommended, and briefly explain your rationale.
 - I can ONLY see what is delivered through the AskHuman `ask` tool. Anything I need to review, or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through the AskHuman `ask` tool, inline or attached as files. Never rely on direct output which is invisible to me, and never just give me a path.

@@ -409,8 +409,8 @@ fn input_shape_matches(tool_name: &str, input: &Value) -> bool {
         return false;
     };
     let allowed: &[&str] = match tool_name {
-        "ask" => &["message", "questions", "files"],
-        "whats_next" => &["message", "options", "files"],
+        "ask" => &["message", "questions", "files", "escalate"],
+        "whats_next" => &["message", "options", "files", "escalate"],
         "show_last" => &["count"],
         "todo_add" => &["text", "auto", "files"],
         "todo_list" => &[],
@@ -418,6 +418,12 @@ fn input_shape_matches(tool_name: &str, input: &Value) -> bool {
         _ => return false,
     };
     if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return false;
+    }
+    if object
+        .get("escalate")
+        .is_some_and(|value| !value.is_string() && !value.is_boolean() && !value.is_null())
+    {
         return false;
     }
     match tool_name {
@@ -563,6 +569,25 @@ mod tests {
             &json!({"questions": [{"question": "Continue?"}]})
         ));
         assert!(input_shape_matches("whats_next", &json!({})));
+        for tool in ["ask", "whats_next"] {
+            for reason in [
+                json!("Need the user's decision"),
+                json!(true),
+                json!(false),
+                json!(null),
+            ] {
+                assert!(input_shape_matches(
+                    tool,
+                    &json!({"message": "Q", "escalate": reason})
+                ));
+            }
+            for invalid in [json!(1), json!({"reason": "Q"}), json!([])] {
+                assert!(!input_shape_matches(
+                    tool,
+                    &json!({"message": "Q", "escalate": invalid})
+                ));
+            }
+        }
         assert!(input_shape_matches(
             "whats_next",
             &json!({"message": "done", "options": [], "files": []})

@@ -616,6 +616,43 @@ mod tests {
     }
 
     #[test]
+    fn escalation_reason_participates_in_the_same_binding_fingerprint_as_the_handler() {
+        for value in [
+            serde_json::json!(" reason \n"),
+            serde_json::json!(true),
+            serde_json::json!(false),
+            serde_json::Value::Null,
+        ] {
+            let raw = serde_json::json!({"message": "done", "escalate": value});
+            let ask: crate::mcp::ask::AskParams = serde_json::from_value(raw.clone()).unwrap();
+            let next: crate::mcp::ask::WhatsNextParams =
+                serde_json::from_value(raw.clone()).unwrap();
+            assert_eq!(
+                canonical_tool_arguments_sha256("ask", &raw),
+                Some(canonical_arguments_sha256(
+                    &crate::mcp::ask::ask_arguments_value(&ask)
+                ))
+            );
+            assert_eq!(
+                canonical_tool_arguments_sha256("whats_next", &raw),
+                Some(canonical_arguments_sha256(
+                    &crate::mcp::ask::whats_next_arguments_value(&next)
+                ))
+            );
+        }
+        assert_ne!(
+            canonical_tool_arguments_sha256(
+                "ask",
+                &serde_json::json!({"message": "Q", "escalate": "a"})
+            ),
+            canonical_tool_arguments_sha256(
+                "ask",
+                &serde_json::json!({"message": "Q", "escalate": "b"})
+            )
+        );
+    }
+
+    #[test]
     fn grok_claim_requires_one_candidate_in_exact_instance_partition() {
         let registry = GrokBindingRegistry::default();
         let now = crate::history::now_ms();

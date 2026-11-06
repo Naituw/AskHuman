@@ -417,6 +417,7 @@ pub(crate) fn build_task(
         perf_autodismiss: false,
         whats_next: false,
         escalate: false,
+        escalation_reason: None,
     }
 }
 

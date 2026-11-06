@@ -265,6 +265,34 @@ fn codex_thread_guard_with(
     (action == "suppressed").then(|| CallToolResult::error(vec![ContentBlock::text(message)]))
 }
 
+// Old clients can still send a bool; expose only strings in the model-facing schema. A legacy
+// true is forwarded without a reason so the daemon can guide it and retain anti-lockout counting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EscalationInput {
+    Reason(String),
+    Legacy(bool),
+}
+
+impl EscalationInput {
+    fn argument_value(&self) -> Option<Value> {
+        match self {
+            Self::Reason(reason) => Some(Value::String(reason.clone())),
+            Self::Legacy(true) => Some(Value::Bool(true)),
+            Self::Legacy(false) => None,
+        }
+    }
+
+    fn push_arg(&self, argv: &mut Vec<String>) {
+        match self {
+            // The equals form also preserves reasons that start with '-' and explicit empties.
+            Self::Reason(reason) => argv.push(format!("--escalate={reason}")),
+            Self::Legacy(true) => argv.push("--escalate".into()),
+            Self::Legacy(false) => {}
+        }
+    }
+}
+
 // `ask` 工具的入参（MCP 入参 schema 由 schemars 从本结构派生）。结构体级注释用 `//` 以免泄漏进对外
 // schema 的 description；字段级 `///` 才是给 agent 读的描述，须为英文。
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -281,10 +309,10 @@ pub struct AskParams {
     /// Optional file paths (images or documents) to attach to what the human sees.
     #[serde(default)]
     pub files: Option<Vec<String>>,
-    /// Set to true ONLY when a previous AskHuman reply told you the user is away and instructed
-    /// you to escalate. Leave it out otherwise.
+    /// Why this request must reach the user now. Use only as instructed by an AskHuman away reply.
     #[serde(default)]
-    pub escalate: Option<bool>,
+    #[schemars(with = "Option<String>")]
+    pub escalate: Option<EscalationInput>,
     #[serde(default, rename = "__askhuman_session_token_v1")]
     #[schemars(skip)]
     session_token: Option<String>,
@@ -351,10 +379,10 @@ pub struct WhatsNextParams {
     /// Optional file paths (e.g. a report or summary document) to attach to what the human sees.
     #[serde(default)]
     pub files: Option<Vec<String>>,
-    /// Set to true ONLY when a previous AskHuman reply told you the user is away and instructed
-    /// you to escalate. Leave it out otherwise.
+    /// Why this request must reach the user now. Use only as instructed by an AskHuman away reply.
     #[serde(default)]
-    pub escalate: Option<bool>,
+    #[schemars(with = "Option<String>")]
+    pub escalate: Option<EscalationInput>,
     #[serde(default, rename = "__askhuman_session_token_v1")]
     #[schemars(skip)]
     session_token: Option<String>,
@@ -1136,8 +1164,12 @@ pub(crate) fn ask_arguments_value(params: &AskParams) -> Value {
             serde_json::to_value(value).expect("file paths are serializable"),
         );
     }
-    if params.escalate == Some(true) {
-        object.insert("escalate".into(), Value::Bool(true));
+    if let Some(value) = params
+        .escalate
+        .as_ref()
+        .and_then(EscalationInput::argument_value)
+    {
+        object.insert("escalate".into(), value);
     }
     Value::Object(object)
 }
@@ -1168,8 +1200,12 @@ pub(crate) fn whats_next_arguments_value(params: &WhatsNextParams) -> Value {
             serde_json::to_value(value).expect("file paths are serializable"),
         );
     }
-    if params.escalate == Some(true) {
-        object.insert("escalate".into(), Value::Bool(true));
+    if let Some(value) = params
+        .escalate
+        .as_ref()
+        .and_then(EscalationInput::argument_value)
+    {
+        object.insert("escalate".into(), value);
     }
     Value::Object(object)
 }
@@ -1313,8 +1349,8 @@ fn build_argv(params: &AskParams) -> Vec<String> {
         }
     }
 
-    if params.escalate == Some(true) {
-        argv.push("--escalate".to_string());
+    if let Some(escalate) = &params.escalate {
+        escalate.push_arg(&mut argv);
     }
 
     argv
@@ -1342,8 +1378,8 @@ fn build_whats_next_argv(params: &WhatsNextParams) -> Vec<String> {
             argv.push(f.clone());
         }
     }
-    if params.escalate == Some(true) {
-        argv.push("--escalate".to_string());
+    if let Some(escalate) = &params.escalate {
+        escalate.push_arg(&mut argv);
     }
     argv
 }
@@ -2396,6 +2432,45 @@ mod tests {
             schema.pointer("/properties/options/items/properties/recommended/type"),
             Some(&json!("boolean"))
         );
+    }
+
+    #[test]
+    fn escalation_schema_offers_strings_and_legacy_arguments_still_reach_the_daemon() {
+        let server = AskServer::new();
+        for name in ["ask", "whats_next"] {
+            let tool = server.tool_router.get(name).unwrap();
+            let schema = Value::Object((*tool.input_schema).clone());
+            let property = schema.pointer("/properties/escalate").unwrap();
+            assert!(property.to_string().contains("string"));
+            assert!(!property.to_string().contains("boolean"));
+            assert!(property["description"].as_str().unwrap().len() < 140);
+        }
+        for (value, reason, legacy) in [
+            (
+                json!(" -why \"now\"\n第二行 "),
+                Some("-why \"now\"\n第二行"),
+                false,
+            ),
+            (json!(""), Some(""), false),
+            (json!(true), None, true),
+            (json!(false), None, false),
+            (Value::Null, None, false),
+        ] {
+            let ask: AskParams = serde_json::from_value(json!({
+                "message": "Q", "escalate": value.clone()
+            }))
+            .unwrap();
+            let next: WhatsNextParams = serde_json::from_value(json!({
+                "message": "done", "escalate": value
+            }))
+            .unwrap();
+            for argv in [build_argv(&ask), build_whats_next_argv(&next)] {
+                let parsed =
+                    crate::cli::args::parse_ask(&argv, crate::i18n::Lang::En, None).unwrap();
+                assert_eq!(parsed.escalation_reason.as_deref(), reason);
+                assert_eq!(parsed.escalate, legacy);
+            }
+        }
     }
 
     #[test]

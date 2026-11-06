@@ -358,7 +358,7 @@ final class CodexAgentE2ETests: CodexE2ECase {
         let asks = steps.filter { $0.hasPrefix("MCP askhuman.ask") }
         XCTAssertGreaterThanOrEqual(asks.count, 2, "the first ask was answered by AskHuman, the Agent asked again")
         XCTAssertTrue(asks.first?.contains("E2E-NOTE") == true, "the away note reaches the Agent in the automatic reply")
-        XCTAssertTrue(asks.contains { $0.contains("escalate") && $0.contains("true") }, "the Agent escalated explicitly")
+        XCTAssertTrue(seenCards.contains { $0.contains("ASK escalated=true") && $0.contains("Agent-provided escalation reason") }, "the Agent supplied an escalation reason that reached the phone")
         XCTAssertTrue(seenCards.contains { $0.contains("ASK escalated=true") && $0.contains("Which fruit") }, "the escalated question reached the phone")
         XCTAssertFalse(seenCards.contains { $0.contains("ASK escalated=false") && $0.contains("Which fruit") }, "the first question never reached the phone")
         XCTAssertTrue(steps.contains { $0.hasPrefix("AGENT") && $0.contains("FRUIT=apple") }, "the answer of the phone made it to the Agent")

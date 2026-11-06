@@ -319,6 +319,7 @@ pub struct AskFacts<'a> {
     pub session_key: Option<&'a str>,
     pub whats_next: bool,
     pub escalate: bool,
+    pub escalation_reason: Option<&'a str>,
     pub lang: Lang,
 }
 
@@ -444,6 +445,47 @@ pub fn clean_note(note: Option<&str>) -> Option<String> {
     Some(trimmed.chars().take(NOTE_MAX_CHARS).collect())
 }
 
+pub const ESCALATION_REASON_MAX_CHARS: usize = 2000;
+
+/// Reject oversized input instead of silently changing the Agent's stated reason.
+pub fn validate_escalation_reason(reason: Option<&str>, lang: Lang) -> Result<(), String> {
+    if reason.is_some_and(|text| text.trim().chars().count() > ESCALATION_REASON_MAX_CHARS) {
+        return Err(crate::i18n::tr(lang, "away.escalation.tooLong")
+            .replace("{max}", &ESCALATION_REASON_MAX_CHARS.to_string()));
+    }
+    Ok(())
+}
+
+fn nonempty_reason(reason: Option<&str>) -> Option<&str> {
+    reason.map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Add the same literal reason to every delivery surface and history before fingerprinting.
+pub fn decorate_escalation(task: &mut TaskRequest, escalation: Option<EscalationReason>) {
+    let lang = Lang::resolve(&task.lang);
+    let (title, text) = if escalation == Some(EscalationReason::Repeated) {
+        (
+            crate::i18n::tr(lang, "away.escalation.fallbackTitle"),
+            crate::i18n::tr(lang, "away.escalation.fallbackBody"),
+        )
+    } else if let Some(reason) = nonempty_reason(task.escalation_reason.as_deref()) {
+        (crate::i18n::tr(lang, "away.escalation.reasonTitle"), reason)
+    } else {
+        return;
+    };
+    let prefix = if task.is_markdown {
+        format!(
+            "**{title}**\n\n{}\n\n",
+            crate::msg_card::escape_markdown(text)
+        )
+    } else {
+        format!("{title}\n{text}\n\n")
+    };
+    if !task.message.text.starts_with(&prefix) {
+        task.message.text.insert_str(0, &prefix);
+    }
+}
+
 // ===== Guidance text =====
 
 /// The text an Agent receives instead of an answer (spec §4.1).
@@ -529,7 +571,7 @@ impl Inner {
                     self.nudges.remove(&counter_key);
                     return (Verdict::Escalated(EscalationReason::Requested), changed);
                 }
-                if facts.escalate {
+                if nonempty_reason(facts.escalation_reason).is_some() {
                     self.nudges.remove(&counter_key);
                     return (Verdict::Escalated(EscalationReason::Asked), changed);
                 }
@@ -541,7 +583,7 @@ impl Inner {
                     nudge.window_start_ms = now_ms;
                 }
                 if nudge.count >= NUDGE_FREE_ASKS {
-                    // The Agent keeps asking without the escalation flag: let the user see it.
+                    // Repeated requests without a reason still retain the anti-lockout fallback.
                     self.nudges.remove(&counter_key);
                     return (Verdict::Escalated(EscalationReason::Repeated), changed);
                 }
@@ -562,15 +604,22 @@ impl Inner {
                         }
                     }
                 }
+                let mut text = guidance(
+                    AutoKind::Away,
+                    facts.whats_next,
+                    note.as_deref(),
+                    facts.lang,
+                );
+                if facts.escalate || facts.escalation_reason.is_some() {
+                    text = format!(
+                        "{}\n{text}",
+                        crate::i18n::tr(facts.lang, "away.escalation.missingReason")
+                    );
+                }
                 (
                     Verdict::Reply(AutoReply {
                         kind: AutoKind::Away,
-                        text: guidance(
-                            AutoKind::Away,
-                            facts.whats_next,
-                            note.as_deref(),
-                            facts.lang,
-                        ),
+                        text,
                     }),
                     changed,
                 )
@@ -743,6 +792,7 @@ impl AwayEngine {
                 session_key: key.as_deref(),
                 whats_next: task.whats_next,
                 escalate: task.escalate,
+                escalation_reason: task.escalation_reason.as_deref(),
                 lang: Lang::resolve(&task.lang),
             },
             now_ms,
@@ -922,6 +972,7 @@ mod tests {
             session_key: key,
             whats_next: false,
             escalate: false,
+            escalation_reason: None,
             lang: Lang::En,
         }
     }
@@ -957,7 +1008,7 @@ mod tests {
         };
         assert_eq!(reply.kind, AutoKind::Away);
         assert!(reply.text.contains("--escalate"));
-        assert!(reply.text.contains("MCP: escalate: true"));
+        assert!(reply.text.contains("MCP: escalate: \"reason\""));
         let snap = e.snapshot();
         let global = snap.global.unwrap();
         assert_eq!(global.replies, 1);
@@ -1021,7 +1072,7 @@ mod tests {
     }
 
     #[test]
-    fn escalation_flag_delivers_and_resets_the_anti_lockout_count() {
+    fn escalation_reason_delivers_and_resets_the_anti_lockout_count() {
         let e = engine();
         start(&e, 10);
         assert!(matches!(
@@ -1033,7 +1084,7 @@ mod tests {
             Verdict::Reply(_)
         ));
         let mut f = facts(Some("sid:a"));
-        f.escalate = true;
+        f.escalation_reason = Some("All work is complete");
         assert_eq!(e.judge(&f, 40), Verdict::Escalated(EscalationReason::Asked));
         // The count starts over after an escalation: three more plain asks are answered.
         for t in [50, 60, 70] {
@@ -1067,6 +1118,76 @@ mod tests {
             e.judge(&facts(Some("sid:a")), 5),
             Verdict::Reply(_)
         ));
+    }
+
+    #[test]
+    fn missing_reasons_get_guidance_and_share_the_normal_fallback_counter() {
+        let e = engine();
+        start(&e, 0);
+        let mut f = facts(Some("sid:a"));
+        f.escalate = true;
+        for (t, reason) in [(1, None), (2, Some("")), (3, Some(" \n\t"))] {
+            f.escalation_reason = reason;
+            let Verdict::Reply(reply) = e.judge(&f, t) else {
+                panic!("a missing reason must not directly escalate");
+            };
+            assert!(reply
+                .text
+                .starts_with("This escalation did not include a reason"));
+            assert!(reply.text.contains("original objective"));
+            assert!(reply.text.contains("--escalate \"reason\""));
+        }
+        assert_eq!(
+            e.judge(&facts(Some("sid:a")), 4),
+            Verdict::Escalated(EscalationReason::Repeated)
+        );
+        assert_eq!(e.snapshot().global.unwrap().replies, 3);
+    }
+
+    #[test]
+    fn delivered_reasons_are_literal_stable_and_part_of_request_identity() {
+        let mut task = sample_task();
+        task.escalation_reason =
+            Some("  # Why <now> *here*\n[link](https://example.test)  ".into());
+        task.is_markdown = true;
+        let original_questions = task.questions.clone();
+        let original_fingerprint = crate::daemon::ask_dedup::fingerprint(&task);
+        decorate_escalation(&mut task, Some(EscalationReason::Asked));
+        assert!(task
+            .message
+            .text
+            .starts_with("**Agent-provided escalation reason**\n\n\\#"));
+        assert!(task.message.text.contains("\\<now\\> \\*here\\*"));
+        assert!(task.message.text.ends_with("\n\nhello"));
+        assert_eq!(
+            serde_json::to_value(&task.questions).unwrap(),
+            serde_json::to_value(original_questions).unwrap()
+        );
+        let fingerprint = crate::daemon::ask_dedup::fingerprint(&task);
+        assert_ne!(fingerprint, original_fingerprint);
+        let once = task.message.text.clone();
+        decorate_escalation(&mut task, Some(EscalationReason::Asked));
+        assert_eq!(task.message.text, once);
+        assert_eq!(crate::daemon::ask_dedup::fingerprint(&task), fingerprint);
+
+        let mut retry = sample_task();
+        retry.is_markdown = true;
+        retry.escalation_reason = task.escalation_reason.clone();
+        decorate_escalation(&mut retry, None); // Away ended while the same call was retried.
+        assert_eq!(
+            crate::daemon::ask_dedup::coalesce_fingerprint(&retry),
+            crate::daemon::ask_dedup::coalesce_fingerprint(&task)
+        );
+
+        let mut fallback = sample_task();
+        fallback.lang = "zh".into();
+        decorate_escalation(&mut fallback, Some(EscalationReason::Repeated));
+        assert!(fallback.message.text.starts_with("系统兜底放行\n"));
+        assert!(fallback.message.text.contains("未提供升级理由"));
+        assert!(!fallback.message.text.contains("Agent 提供的升级理由\n"));
+        let mut requested = sample_task();
+        decorate_escalation(&mut requested, Some(EscalationReason::Requested));
+        assert_eq!(requested.message.text, "hello");
     }
 
     #[test]
@@ -1122,7 +1243,7 @@ mod tests {
         let e = engine();
         session(&e, "sid:a", SessionSetting::Mute, 5);
         let mut f = facts(Some("sid:a"));
-        f.escalate = true;
+        f.escalation_reason = Some("All work is complete");
         let Verdict::Reply(reply) = e.judge(&f, 10) else {
             panic!("a muted session must get an automatic reply");
         };
@@ -1440,7 +1561,7 @@ mod tests {
             panic!("expected an automatic reply");
         };
         assert!(reply.text.contains("下一个任务"));
-        task.escalate = true;
+        task.escalation_reason = Some("All work is complete".into());
         assert_eq!(
             e.judge_task(&task, 3),
             Verdict::Escalated(EscalationReason::Asked)

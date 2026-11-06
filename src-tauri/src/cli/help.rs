@@ -48,7 +48,7 @@ pub fn help_text(lang: Lang) -> String {
             "  --select-only           Choice only: forbid free text/attachments (each question must have options)".to_string(),
             "  --output <text|json>    Output format (default: text)".to_string(),
             "  --whats-next            Ask \"what should we do next?\" with optional suggested tasks and project todos (see --agent-help)".to_string(),
-            "  --escalate              Reach the user even in away mode; only when an away reply told you to (see --agent-help)".to_string(),
+            "  --escalate <reason>      Escalate with a reason; use only as instructed by an away reply".to_string(),
             String::new(),
             "Management:".to_string(),
             "  --settings              Open the settings window".to_string(),
@@ -90,7 +90,7 @@ pub fn help_text(lang: Lang) -> String {
             "  --select-only           严格选择：禁用自由文本/附件（每题必须有选项）".to_string(),
             "  --output <text|json>    输出格式（默认 text）".to_string(),
             "  --whats-next            提问「接下来做什么？」，可附建议任务，本项目待办也作为选项（见 --agent-help）".to_string(),
-            "  --escalate              即使用户处于离开模式也要联系到他；仅当离开提示要求时使用（见 --agent-help）".to_string(),
+            "  --escalate <理由>        带理由升级提问；仅按离开自动回复的指引使用".to_string(),
             String::new(),
             "管理:".to_string(),
             "  --settings              启动设置界面".to_string(),
@@ -269,11 +269,11 @@ pub fn agent_help_text(lang: Lang) -> String {
             out.push(String::new());
             out.push("Away mode:".to_string());
             out.push(
-                "  The user may be away; AskHuman then answers for them and says what to do."
+                "  AskHuman's automatic reply explains how to continue and when to escalate."
                     .to_string(),
             );
             out.push(
-                "  Add --escalate (MCP: escalate: true) only when that reply tells you to."
+                "  When instructed to escalate, pass --escalate \"reason\"; for MCP, use escalate: \"reason\"."
                     .to_string(),
             );
             out.push(String::new());
@@ -342,9 +342,9 @@ pub fn agent_help_text(lang: Lang) -> String {
             out.push("  选项，因为结束项已内置。无建议时省略。不接受 -q（问题固定）。".to_string());
             out.push(String::new());
             out.push("离开模式:".to_string());
-            out.push("  用户可能已离开；此时 AskHuman 会代为回复，并告诉你该怎么做。".to_string());
+            out.push("  AskHuman 会在自动回复中说明如何继续，以及何时可以升级。".to_string());
             out.push(
-                "  仅当那条回复要求时，才加上 --escalate（MCP 为 escalate: true）。".to_string(),
+                "  按该指引升级时传 --escalate \"理由\"；MCP 对应 escalate: \"理由\"。".to_string(),
             );
             out.push(String::new());
             out.push("上下文压缩恢复:".to_string());
@@ -591,7 +591,7 @@ mod tests {
             assert!(help_text(lang).contains("--escalate"));
             let agent = agent_help_text(lang);
             assert!(agent.contains("--escalate"));
-            assert!(agent.contains("escalate: true"));
+            assert!(agent.contains("escalate: \""));
             let scripting = scripting_help_text(lang);
             assert!(scripting.contains("auto_reply"));
         }

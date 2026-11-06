@@ -38,9 +38,10 @@ pub struct AskArgs {
     pub whats_next: bool,
     /// Suggested whats-next tasks from `-o`/`-o!`; always empty for ordinary asks.
     pub whats_next_options: Vec<OptArg>,
-    /// `--escalate`: insist on reaching the user although away mode is on. Meaningful only to the
-    /// daemon; in every other state it changes nothing.
+    /// A legacy bare `--escalate`; retained to return guidance instead of silently delivering.
     pub escalate: bool,
+    /// A supplied reason, including an empty value that needs migration guidance.
+    pub escalation_reason: Option<String>,
 }
 
 /// 解析 `AskHuman <Message> [-f <path>] [-q <text> [-o <opt>] ...]`。
@@ -74,6 +75,7 @@ pub fn parse_ask(
     let mut output_format = crate::models::OutputFormat::Text;
     let mut whats_next = false;
     let mut escalate = false;
+    let mut escalation_reason = None;
 
     let mut seen_positional = false;
     let mut seen_question_flag = false;
@@ -161,7 +163,16 @@ pub fn parse_ask(
                 i += 1;
             }
             "--escalate" => {
-                escalate = true;
+                if let Some(value) = args.get(i + 1).filter(|s| !s.starts_with('-')) {
+                    escalation_reason = Some(value.trim().to_string());
+                    i += 2;
+                } else {
+                    escalate = true;
+                    i += 1;
+                }
+            }
+            a if a.starts_with("--escalate=") => {
+                escalation_reason = Some(a["--escalate=".len()..].trim().to_string());
                 i += 1;
             }
             a if a.starts_with('-') => {
@@ -178,6 +189,10 @@ pub fn parse_ask(
             }
         }
     }
+
+    crate::daemon::away::validate_escalation_reason(escalation_reason.as_deref(), lang)?;
+    // A reason is the new request representation; only an unvalued legacy flag uses the bool.
+    escalate &= escalation_reason.is_none();
 
     // whats-next fixes the question but accepts `-o`/`-o!` suggestions. Other question-shaping
     // flags remain incompatible (spec D2). Message may be empty, so skip ordinary normalization.
@@ -206,11 +221,15 @@ pub fn parse_ask(
             whats_next: true,
             whats_next_options: lead_options,
             escalate,
+            escalation_reason,
         });
     }
 
     // 有效性校验（归一化前）：至少有 Message 文本 / 一个 -q / 一个 -f；仅 -o 不算有效。
     if message_text.trim().is_empty() && questions.is_empty() && message_files.is_empty() {
+        if escalation_reason.is_some() {
+            return Err(tr(lang, "away.escalation.missingContent").to_string());
+        }
         return Err(tr(lang, "cli.missingContent").to_string());
     }
 
@@ -237,6 +256,7 @@ pub fn parse_ask(
         whats_next: false,
         whats_next_options: Vec::new(),
         escalate,
+        escalation_reason,
     })
 }
 
@@ -688,6 +708,37 @@ mod tests {
     }
 
     // ===== --escalate (docs/specs/special-replies.md D4) =====
+
+    #[test]
+    fn escalation_reasons_preserve_values_without_setting_the_legacy_flag() {
+        for argv in [
+            v(&["--escalate", "  需要真机操作  ", "-q", "Ready?"]),
+            v(&["--escalate=  需要真机操作  ", "Ready?"]),
+        ] {
+            let p = pa(&argv).unwrap();
+            assert_eq!(p.escalation_reason.as_deref(), Some("需要真机操作"));
+            assert!(!p.escalate);
+            assert_eq!(p.questions[0].message, "Ready?");
+        }
+        let p = pa(&v(&["--whats-next", "done", "--escalate=-reason"])).unwrap();
+        assert_eq!(p.escalation_reason.as_deref(), Some("-reason"));
+        assert_eq!(p.message_text, "done");
+        assert!(p.whats_next);
+        let p = pa(&v(&["Q", "--escalate="])).unwrap();
+        assert_eq!(p.escalation_reason.as_deref(), Some(""));
+        assert!(!p.escalate);
+    }
+
+    #[test]
+    fn escalation_does_not_silently_drop_content_or_truncate_a_reason() {
+        let error = pa(&v(&["--escalate", "old positional question"])).unwrap_err();
+        assert!(error.contains("reason"));
+        let max = crate::daemon::away::ESCALATION_REASON_MAX_CHARS;
+        let reason = "问".repeat(max);
+        assert!(pa(&["Q".into(), format!("--escalate={reason}")]).is_ok());
+        let error = pa(&["Q".into(), format!("--escalate={reason}x")]).unwrap_err();
+        assert!(error.contains(&max.to_string()));
+    }
 
     #[test]
     fn escalate_flag_parses_for_asks_and_whats_next() {

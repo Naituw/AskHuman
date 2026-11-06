@@ -457,6 +457,7 @@ async fn forward(
         perf_autodismiss: false,
         whats_next: false,
         escalate: false,
+        escalation_reason: None,
     };
     let path = payload_path(&info.worktree, &info.id)?;
     strip_todos(&mut task.questions);

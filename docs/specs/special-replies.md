@@ -1,6 +1,7 @@
 # 需求：特殊回复——手机选待办、离开模式、本会话不再使用、快捷回复
 
-> 状态：**2026-11-05 设计定稿，尚未实现**（P1–P4 均未开工，进度见 `docs/PROGRESS.md`）。决策由用户在 AskHuman 十轮问答里逐项定下（选项与原话见 §10）；§3.10 列了用户没有单独确认过的默认做法，不同意可整条否决。
+> 状态：**首版已于 2026-11-05 实现、合并并装为日常版**，剩余验收见 `docs/PROGRESS.md`。决策由用户在 AskHuman 十轮问答里逐项定下（选项与原话见 §10）；§3.10 列了用户没有单独确认过的默认做法，不同意可整条否决。
+> 2026-11-06 修订：D4 / D9 / D16 / §4.1 已按[完成标准与带理由升级](away-completion-guidance.md)更新；完整文案、兼容与验证边界以该修订为准。
 > 关联计划：`docs/plans/special-replies.md`。
 > 前置资料：`docs/specs/todo-whats-next.md`（D2 whats-next 的固定问题与 10 个名额、D7 弹窗待办区）、`docs/specs/ios-todos.md`（`todo.*` 线协议）、`docs/specs/agent-interject.md`（插话队列）、`docs/specs/duplicate-ask-coalescing.md`（会话键）、`docs/specs/ios-alert-timing.md`（手机推送时机与 Mac 空闲时长）、`docs/specs/agent-stop-confirmation.md`、`docs/specs/popup-request-inbox.md`、`docs/specs/todo-quick-add.md`。
 > 界面稿：`docs/assets/special-replies/`（静态图，只表达布局与信息，不是像素稿）；浏览器原型在 `src/prototype/`（`popup-reply-menu.html`、`mac-away.html`、`mac-away-board.html`、`console-away.html`、`settings-away.html`，见 `docs/development.md`）；iOS 稿是 iOS 27 模拟器里用 App 现有卡片、选项行与底栏代码渲染的截图，不是手绘。
@@ -18,7 +19,7 @@
 目标：四块能力，共用一套 Daemon 内的「模式引擎」，弹窗、Mac 各承载面与 iPhone 都是它的入口：
 
 1. **iOS 待办（P1）**：手机上像弹窗一样选项目待办；What's next 看到完整队列。
-2. **离开模式 / 本会话不再使用 AskHuman（P2）**：Agent 的提问与 whats-next 被自动回复，真卡住或做完才带 `--escalate` 来找人；会话可以单独停用。
+2. **离开模式 / 本会话不再使用 AskHuman（P2）**：Agent 的提问与 whats-next 被自动回复，真卡住或做完才带 `--escalate "理由"` 来找人；会话可以单独停用。
 3. **快捷回复（P3）**：可编辑的预设一键回复。
 4. **CLI / IM 命令（P4，可选）**。
 
@@ -37,7 +38,7 @@
 | 离开模式（away） | 人不在，Agent 的普通提问与 whats-next 被 Daemon 直接自动回复，不弹窗、不推送 |
 | 不再使用（mute） | 用户在某个会话里关掉 AskHuman：该会话的提问与 whats-next 即时回提示、Stop 确认静音。只有会话级 |
 | 范围 | 一次设置作用的对象：「所有 Agent」（全局）或「仅此会话」 |
-| 升级提问 | 带 `--escalate`（CLI 参数；MCP 为 `escalate: true`）的提问或 whats-next，或被防呆放行的第 4 次提问；离开模式下照常送达 |
+| 升级提问 | 带 `--escalate "理由"`（CLI 参数；MCP 为 `escalate: "理由"`）的提问或 whats-next，或被防呆放行的第 4 次提问；离开模式下照常送达 |
 | 自动回复 | Daemon 在建请求之前直接回给 Agent 的一段文字（`[status]` 开头）；不弹窗、不推送，但进历史 |
 | 引导语 | 自动回复里的文字，三段，见 §4.1 |
 | 会话键 | `sid:{agent_session_id}`，拿不到时退到 `mcp:{mcp_instance_id}`（`daemon/ask_dedup.rs::session_key`，与重复提问收敛同一个） |
@@ -59,12 +60,12 @@
 | 编号 | 决策项 | 结论 | 理由 / 否决后的代价 |
 |---|---|---|---|
 | D3 | 范围 | 全局（默认）+「仅此会话」覆盖；生效状态 = 会话设置 ?? 全局；同一范围内离开与不再使用互斥；「不再使用」只有会话级；全局离开时，会话里可选「始终正常提问」让某个 Agent 不受离开影响 | 用户定（第 1 轮 Q3 选「两者并存」；第 5 轮控制台下拉） |
-| D4 | 离开期间的拦截 | 普通提问与 whats-next **每一次**都被即时拦截并回引导语（不只第一次）。带 `--escalate` 的调用与未离开时完全一样（弹窗 / IM / 手机推送），卡片标「升级提问」：普通提问写「Agent 表示无法继续」，whats-next 写「Agent 表示已全部完成」 | 用户定（第 1 轮 Q4、Q5；第 2 轮 Q1 确认、Q2 选 `--escalate`）。参数名要同时表达「无法继续」与「已全部完成」，也与卡片上的「升级提问」对应；卡片标注按类型推断是第 2 轮的默认，用户未异议 |
+| D4 | 离开期间的拦截 | 普通提问与 whats-next 每次即时回自查引导；只有非空 `--escalate "理由"`（MCP `escalate: "理由"`）直接主动升级。共享正文最前面展示「Agent 提供的升级理由」，升级不结束离开。旧 true / 空理由返回缺理由说明与完整引导 | 2026-11-06 用户批准修订；程序只校验有无理由，不审查其真假；完成以用户原目标为准，明确范围限制仍有效 |
 | D5 | 拦不住的 | Stop 确认、权限审批、出错卡由 Hook 触发、Agent 控制不了，离开时照常投递并等人 | 用户定（第 1 轮 Q5「Stop 就只能等了」；第 2 轮 Q1 确认） |
 | D6 | 不再使用 | 提问与 whats-next 即时回提示（引导语③）；Stop 确认静音；权限审批、出错卡保留；Claude 内置提问（AskUserQuestion）的接管让路 | 用户定（第 1 轮 Q2 选 A） |
 | D7 | whats-next 的自动待办 | 仍先于拦截派发：CLI 本地就出队并打印，不进 Daemon（`cli/mod.rs::try_whats_next_auto`） | 第 2 轮默认，用户未异议；那是用户预先授权的下一个任务 |
 | D8 | Claude 内置提问 | 离开时同样拦截（deny + 引导语）；不再使用时让路（后者随 D6） | 前半是第 2 轮默认，用户未异议 |
-| D9 | 防呆 | 同一会话 10 分钟内连续 3 次不带参数的提问，第 4 次直接送达，并标「Agent 多次未使用升级参数」；不再兜底 `[escalate]` 开头的 MCP 写法 | 第 2 轮默认，第 3 轮说明「去掉 `[escalate]` 兜底、只靠防呆」后用户选「按精简版」。防 Agent 不认识参数、或 MCP 客户端丢了新参数而被卡死 |
+| D9 | 防呆 | 同一会话 10 分钟内前三次无有效理由请求自动回复，第 4 次送达；普通请求、旧 true 和空理由共用计数。正文前置「系统兜底放行」并注明 Agent 未提供理由 | 2026-11-06 用户明确保留此防卡死例外；不支持 `[escalate]` 文本兜底 |
 | D10 | 结束方式 | 只能手动结束；靠强可见的指示（手机常驻条、Mac 胶囊与托盘）防忘记 | 用户定（第 1 轮 Q4；第 2 轮 Q1 确认） |
 | D11 | 备注 | 开启离开时可写备注，作为离开期间的常驻附加指示，附在之后每条自动回复里（例如「别动生产环境」对所有 Agent 生效） | 用户定（第 3 轮 Q4） |
 | D12 | 持久化 | 状态存盘，Mac 重启或更新 Daemon 后继续生效，直到手动结束；「仅此会话」的设置随会话结束清除 | 用户定（第 8 轮 Q2）。否则夜里一次自动更新会让离开模式静默失效 |
@@ -76,7 +77,7 @@
 
 | 编号 | 决策项 | 结论 | 理由 / 否决后的代价 |
 |---|---|---|---|
-| D16 | 引导语 | 三段、精简版，中英各一份、随界面语言：只说「你已离开 / 已关闭、这是用户本人的指示、自己仔细分析按最佳方式继续、确实无法继续或已全部完成才带 `--escalate`」；不写细则 | 用户定（第 3 轮 Q1「按精简版」；第 2 轮 Q3 的意见：Agent 的推荐未必仔细想过，写进去会被当成规则）。原文见 §4.1 |
+| D16 | 引导语 | 中英同步，围绕原目标继续；常规决策自主推进，明确只分析 / 只设计 / 审核后实施限制仍有效；真人依赖先做完独立工作，如实保留未验证部分；原目标完成或确实无法继续才带理由升级 | 2026-11-06 用户批准完整文案；参数描述保持简短，自查和传参方法集中在共用自动回复，见 §4.1 |
 
 ### 3.4 弹窗
 
@@ -151,23 +152,9 @@
 
 ### 4.1 Agent 看到的文字
 
-离开 · 普通提问被拦截：
-
-```
-[status]
-用户已离开（AskHuman 离开模式已开启），暂时无法回答。这是用户本人的指示。
-请不要等待：自己仔细分析，按你认为最佳的方式继续完成当前工作。
-只有在确实无法继续推进、或已全部完成时，才再次调用 AskHuman 并加上参数 --escalate（MCP 为 escalate: true），这样用户会像在场时一样收到。
-```
-
-离开 · whats-next 被拦截：
-
-```
-[status]
-用户已离开（AskHuman 离开模式已开启），暂时无法给出下一个任务。这是用户本人的指示。
-请先自查任务是否真的已全部完成；若还有收尾工作就继续完成。
-确认全部完成（或无法继续）后，再次运行 --whats-next 并加上参数 --escalate（MCP 为 escalate: true），用户会像在场时一样收到。
-```
+离开的普通提问、whats-next、旧 true / 空理由自动回复，以及中英完整文案见
+[完成标准与带理由升级 §3](away-completion-guidance.md#3-完整自动回复)。CLI 与 MCP 共用这些回复；
+固定协议对常规确认要求的说明见该文 §5 和附录。
 
 本会话不再使用（弹窗 / 手机里选择时的回复，以及之后每次调用的即时回复）：
 
@@ -258,8 +245,8 @@ What's next 的完整待办（前 5 条 + 「显示全部」）：
 - **输出格式**：自动回复复用取消 / 重放已有的状态载体（`cli/output.rs` 的 `[status]` 区块；JSON 输出模式下写入 `status` 字段，同 `ask_dedup::mark_replayed`），另加一个可选字段标明是自动回复的种类，让 Claude 内置提问钩子能把它认出来；MCP 路径原样透传文本区块（`mcp/ask.rs`），Agent 看到的就是引导语。
 - **Stop 确认**：不进引擎拦截（D5）。「不再使用」时的静音放在 Stop hook 现有的抑制通路里：`agents/stop.rs::confirmation_suppression_reason`（已用于 Codex 委派运行的静默，命中时写 `log_guard_audit` 并按「没接入 AskHuman」放行），新增一个「会话已静音」的原因。注意 `TaskRequest::popup_kind()` 会把 `!record_history` 的内部卡片（出错卡等）也归为 `Stop`，所以识别 Stop 确认要用 `task.stop_confirmation`，不能用 `popup_kind()`，否则会误把出错卡静音。权限审批走 `ClientMsg::SubmitConfirm`（`ConfirmTask`），不进引擎。
 - **Hook 怎么读模式**：Stop hook 与 Claude 内置提问钩子是各自独立的短命进程；它们只读状态文件（原子替换写入，读到的永远是完整版本），不走 IPC，Daemon 没起来也读得到；写入仍只有 Daemon（D38）。
-- **`--escalate`**：`cli/args.rs` 解析，经 `TaskRequest.escalate`（可选字段）送到 Daemon；MCP 的 `ask` / `whats_next` 入参加 `escalate`（`mcp/ask.rs`）；`--agent-help` 里只写一行「仅在离开模式的提示要求时使用」。升级放行的请求在 `ShowPayload` 与 iOS 的请求摘要里带标记（可选字段），供弹窗提示条与手机提示卡使用。
-- **防呆**：每个会话键一个「连续未升级的被拦次数 + 首次时间」，10 分钟窗口；第 4 次放行并标「多次未使用升级参数」；任何一次真实回答或窗口过期都清零。
+- **`--escalate "理由"`**：`cli/args.rs` 解析，经新增可选 `TaskRequest.escalationReason` 送到 Daemon；旧 `escalate: bool` 只供兼容提示。MCP 的 `ask` / `whats_next` 对外提供字符串、兼容解码旧布尔值。理由由 Daemon 在判定后、去重前加入共享正文，所有渠道与历史一致；已有升级标记与提示条保留。详细规则见[离开模式修订 §7](away-completion-guidance.md#7-输入兼容展示与兜底)。
+- **防呆**：每个会话键一个「连续未升级的被拦次数 + 首次时间」，10 分钟窗口；第 4 次放行并前置「系统兜底放行」，注明 Agent 未提供理由；任何一次真实回答或窗口过期都清零。
 - **Claude 内置提问接管**（`ask_question.rs`，PreToolUse 钩子）：它提交的是一个普通的 `TaskRequest`（带会话 id、`record_history: true`），所以离开模式下由引擎拦截，钩子收到带自动回复标记的 JSON 后，`decide()` 返回 `deny`，把引导语放进 `permissionDecisionReason`（Claude 会看到它）；「不再使用」时钩子在 `run_inner` 开头读状态文件，命中就什么都不写、让 Claude 用它原生的选择器（与该钩子「任何让人无法作答的失败都不输出」的既有做法一致）。
 - **插话**：解除「不再使用」时调用 `InterjectQueue::append(会话, 文本, [], None)`；Grok 不通知（D15）。
 - **配置**：`general` 下新增 `quickReplies`（缺省 = 出厂默认）与 `away`（`capsule`、`welcomeBack`、`pushAfterSecs`，默认 `true`、`true`、`60`）；出厂预设与引导语文本放 `prompts.rs` / i18n。
@@ -302,7 +289,7 @@ What's next 的完整待办（前 5 条 + 「显示全部」）：
 - **Rust 单测**：`verdict` 的完整矩阵（全局 / 会话 / 升级 / Stop / 确认卡 / 无会话键 / 优先级 N1）、防呆窗口、持久化与重启恢复、会话结束清除、历史标记、插话入队、旧端消息缺字段的反序列化；协议号规则的断言（可选字段不抬）。
 - **弹窗 vitest**：菜单键盘（⌘K、数字键、↑↓ 回车、Esc）、预设合成答案（已答保持 / 未答补全 / 全答置灰）、待发条与主按钮文案、升级提示条、窄窗口。
 - **iOS**：Swift 包测试（协议夹具、回答合成、待办卡与 What's next 的选择逻辑）；模拟器 UI 测试覆盖待办卡、「显示全部」、系统菜单与待发面板、开启页、会话行、升级提示卡、常驻条（iOS 26 与较早系统各一遍）。
-- **真实 Agent 端到端**（P2）：Claude Code、Codex、Cursor 各一轮：开离开 → 提问被自动回复 → 带 `--escalate` 送达 → 结束；不再使用 → 即时提示 → 解除后插话；Stop / 权限 / 出错卡在离开时照常。
+- **真实 Agent 端到端**（P2）：Claude Code、Codex、Cursor 各一轮：开离开 → 提问被自动回复 → 带 `--escalate "理由"` 送达 → 结束；不再使用 → 即时提示 → 解除后插话；Stop / 权限 / 出错卡在离开时照常。
 - **平台**：macOS 全套；Windows / Linux 验弹窗、托盘与控制台；真机一轮（iPhone）。
 
 ## 8. 落地后要同步的文档

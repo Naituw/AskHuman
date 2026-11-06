@@ -2607,7 +2607,12 @@ async fn handle_submit(
     mut w: OwnedWriteHalf,
     state: &Arc<ServerState>,
 ) {
-    if let Err(error) = crate::development::verification::validate_task(&mut task) {
+    if let Err(error) = crate::development::verification::validate_task(&mut task).and_then(|()| {
+        crate::daemon::away::validate_escalation_reason(
+            task.escalation_reason.as_deref(),
+            Lang::resolve(&task.lang),
+        )
+    }) {
         let _ = ipc::write_msg(&mut w, &ServerMsg::Warn { text: error }).await;
         let _ = ipc::write_msg(
             &mut w,
@@ -2698,6 +2703,7 @@ async fn handle_submit(
             return;
         }
     };
+    crate::daemon::away::decorate_escalation(&mut task, escalated);
 
     // 重复提问收敛（spec duplicate-ask-coalescing）：agent 那一轮被中断后往往原样重发同一个
     // 提问，而旧的 CLI 进程不会被杀，旧卡片仍然有效。这里在建新请求之前先看两件事——
