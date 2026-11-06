@@ -120,3 +120,44 @@ IM `/new` 已支持从四种 IM 选择 workspace / Agent / 权限并在 macOS �
   切到 popup；顺带添加托盘入口。
 - **2026-08-19**：Lifecycle readiness 修复入口改到「Agents」Tab 对应 Agent 卡内的 lifecycle 行；
   自动集成首次启用默认开启 lifecycle，用户显式关闭后仍会保持 readiness 不通过。
+
+
+## 8. 桌面新建任务设置与 iOS 对齐（2026-11-06）
+
+用户确认在主工作树实施，并按 iOS 的启动设置补齐待办 ▶、托盘新建任务与控制台「＋」三个入口。
+实现记录见 [gui-task-settings](../plans/gui-task-settings.md)。三个入口仍共用 `NewTaskForm.vue`。
+
+### 模型与强度
+
+- 所有可启动 Agent 都能选择模型；清单与强度沿用 [iOS 规则](ios-task-model.md)，Cursor 的档位仍折在模型 ID 里。
+- 模型清单超过 12 项时提供名称 / ID 搜索。默认项展示 Agent 自己的设置，清单不可用时回默认。
+- 模型与强度按 Agent 存在桌面本机的 localStorage，各项目和桌面入口共用，与手机偏好独立。
+  点击开始时保存，失败也保存，取消不保存。切换 Agent 恢复其上次提交的偏好。
+- 已保存模型暂时不可用时临时回默认且保留原偏好；手动改选并提交才替换。模型仍在而强度失效时只清强度。
+- 刷新目录不覆盖未提交的有效选择；切换模型时保留仍支持的强度，否则回默认。
+
+### Fast 与 Max
+
+- Codex Fast 沿用 [速度规则](ios-task-speed.md)：每个任务默认关且不记忆；有速度能力时关闭明确传 `standard`。
+  只允许明确支持 Fast 的具体模型开启，不能根据默认模型的显示标签推断；换到不支持的模型或能力消失时关闭并提示。
+  换 Agent 或开始新任务时复位；同一任务重试保留选择。
+- Cursor Max 沿用 [Max 规则](cursor-max-control.md)：每个任务默认不允许，不记忆；需要 Max 时禁止启动并提示。
+  新计划或沿用 Cursor 策略下隐藏 Max 控件与标记，模型选择仍然存在。目录缺失时仍展示已知的默认模型 Max 判定。
+
+### 后端与重试
+
+- `new_task_options(kind)` 从当前启动路线获取目录、默认模型与能力，复用 `model_catalog::source`、30 分钟缓存和
+  `resolve_choice`。Codex App 与终端使用各自的可执行文件和数据目录；无需开启远程 `agentTasks` 功能。
+- `new_task_launch` 接受所有 Agent 的 `model / effort`，以及 Codex 的 `speed` 和 Cursor 的 `allowMax`。
+  启动前按实际目标重新校验；Fast / 标准速度还读取当前工作区配置并检查最新速度目录。
+  无效选择在创建记录、交付附件、打开终端和待办出队之前拒绝；不静默换模型或速度。
+- 校验后的 `ModelChoice` 传入已有 LaunchRecord 或 Codex Desktop `Operation::Create`，沿用已有首轮、幂等与待办出队语义。
+  模型、强度、速度、Max 选择都参与桌面请求重试身份；失败不清除草稿或请求 ID，新选择生成新身份。
+  升级前未完成的 Codex 创建请求按原回执和原速度继承语义重试，表单明确提示；自动新增的标准速度不能触发重复创建。
+  另一个 Agent 的任务成功不清除尚未确认结果的请求回执。
+- 只有 Tauri 命令参数变化；已有 IPC / iOS 消息类型不变，不抬协议号。
+
+### 验证边界
+
+目录投影、能力、偏好、复位、搜索、参数提交、拒绝与重试用合成数据验证；不发送真实模型任务。
+修改后安装到主环境并用新安装的 AskHuman 进行验收；真实计费任务另由用户明确授权或手动执行。

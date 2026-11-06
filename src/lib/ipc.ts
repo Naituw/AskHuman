@@ -708,12 +708,9 @@ export const newTaskProjectsRefreshed = () =>
 export const projectKeyOf = (dir: string) =>
   invoke<string>("project_key_of", { dir });
 
-/**
- * Cursor's models with their Max marks, and what its default stands for. `null` when Max is not
- * controlled (new plan, or the "follow Cursor" policy): the form then looks as it always did.
- */
-export const newTaskCursorOptions = () =>
-  invoke<import("./types").CursorTaskOptions | null>("new_task_cursor_options");
+/** Models, reasoning efforts and per-task Fast / Max controls for the current launch route. */
+export const newTaskOptions = (kind: string) =>
+  invoke<import("./types").NewTaskOptions>("new_task_options", { kind });
 
 /** Start a task through the private LaunchRecord and platform-terminal bridge. */
 export const newTaskLaunch = (payload: {
@@ -726,8 +723,10 @@ export const newTaskLaunch = (payload: {
   todoProject?: string | null;
   todoId?: string | null;
   todoAttachments?: import("./types").TodoAttachmentSnapshot[];
-  /** Cursor only: the model to pass with `--model`; absent follows Cursor's default. */
+  /** Absent model / effort follows the Agent's own settings. */
   model?: string | null;
+  effort?: string | null;
+  speed?: "standard" | "fast" | null;
   /** Cursor only: let the task use Max; absent means no. */
   allowMax?: boolean;
 }) =>
@@ -742,6 +741,8 @@ export const newTaskLaunch = (payload: {
     todoId: payload.todoId ?? null,
     todoAttachments: payload.todoAttachments ?? [],
     model: payload.model ?? null,
+    effort: payload.effort ?? null,
+    speed: payload.speed ?? null,
     allowMax: payload.allowMax ?? null,
   });
 

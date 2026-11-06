@@ -3,7 +3,7 @@
 //!
 //! This is the shared vocabulary of the launch pipeline: `TaskSpec` carries a [`ModelChoice`],
 //! the one-time `LaunchRecord` stores it, the helper turns it into command-line flags and the
-//! Codex App path into thread settings. On top of that sits the catalog an iOS phone picks from:
+//! Codex App path into thread settings. On top of that sits the catalog iOS and desktop task forms pick from:
 //! what each Agent says about its own models ([`AgentCatalog`], read by [`source`], cached by
 //! [`cache`]) and the check that a choice names something the catalog really offers
 //! ([`resolve_choice`]). Nothing here starts an Agent session.

@@ -2934,68 +2934,13 @@ fn todo_project_keys() -> Vec<String> {
         .collect()
 }
 
-/// Cursor's model list as this process asks for it, kept for a while so the form does not start
-/// the CLI every time it opens (the daemon has its own copy for the phone).
-fn cursor_catalog_cache(
-) -> &'static std::sync::Arc<crate::agents::model_catalog::cache::CatalogCache> {
-    use crate::agents::model_catalog::cache::{CatalogCache, CATALOG_TTL, FAILURE_RETRY};
-    static CACHE: std::sync::OnceLock<std::sync::Arc<CatalogCache>> = std::sync::OnceLock::new();
-    CACHE.get_or_init(|| CatalogCache::new(CATALOG_TTL, FAILURE_RETRY))
-}
-
-/// What the new-task form shows for Cursor while Max control is in force: the models with their Max
-/// marks and what Cursor's default means (docs/specs/cursor-max-control.md §5). `None` when Max is
-/// not controlled (token-based plan, or the "follow Cursor" policy): the form then looks as before.
+/// The model, effort, Fast and Max settings of the selected Agent's current launch route.
 #[tauri::command]
-pub async fn new_task_cursor_options() -> Option<crate::agents::cursor_max::options::TaskOptions> {
-    use crate::agents::model_catalog::source::{self, CatalogSource};
-    // Cursor's own files and the settings, read now: nothing about Max is kept here.
-    let hints = tokio::task::spawn_blocking(crate::agents::cursor_max::Hints::load)
-        .await
-        .ok()
-        .flatten()?;
-    let executable = tokio::task::spawn_blocking(|| {
-        crate::integrations::agent_launch::readiness(crate::agents::AgentKind::Cursor)
-    })
-    .await
-    .ok()
-    // The list only needs the CLI binary, which the Agents window route may not otherwise use.
-    .filter(|readiness| readiness.binary_ready)
-    .and_then(|readiness| readiness.executable);
-    let catalog = match executable {
-        Some(executable) => {
-            let source = CatalogSource {
-                kind: crate::agents::AgentKind::Cursor,
-                executable,
-                codex_home: None,
-            };
-            let key = source.cache_key();
-            let loader = source.clone();
-            cursor_catalog_cache()
-                .get(&key, std::time::Duration::from_secs(6), move || {
-                    source::load(&loader)
-                })
-                .await
-                .map(|catalog| source::refresh_default(&source, &catalog))
-        }
-        None => None,
-    };
-    // "Cursor's default" means something else in the Agents window than in the CLI.
-    let desktop = tokio::task::spawn_blocking(|| {
-        crate::cursor_desktop::launch_status(false).target
-            == Some(crate::codex_desktop::LaunchTarget::Desktop)
-    })
-    .await
-    .unwrap_or(false);
-    Some(crate::agents::cursor_max::options::build(
-        &hints,
-        catalog.as_ref(),
-        if desktop {
-            crate::agents::cursor_max::Target::Desktop
-        } else {
-            crate::agents::cursor_max::Target::Cli
-        },
-    ))
+pub async fn new_task_options(
+    kind: String,
+) -> Result<crate::agents::task_options::TaskOptions, String> {
+    let kind = crate::agents::AgentKind::parse(&kind).ok_or("unknown agent kind")?;
+    crate::agents::task_options::options(kind).await
 }
 
 /// 项目候选（本地快路径）：workspace 索引 + 待办项目，供首屏即时填充。
@@ -3036,23 +2981,41 @@ pub async fn new_task_launch(
     launch_target: Option<crate::codex_desktop::LaunchTarget>,
     operation_id: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
+    speed: Option<crate::agents::model_catalog::TaskSpeed>,
     allow_max: Option<bool>,
 ) -> Result<(), String> {
     let parsed_kind = crate::agents::AgentKind::parse(&kind).ok_or("unknown agent kind")?;
-    // Only Cursor's form offers a model and Max choice; nothing else may slip one in.
-    let model = model
-        .map(|model| model.trim().to_string())
-        .filter(|model| !model.is_empty());
-    let allow_max = allow_max.unwrap_or(false);
-    if parsed_kind != crate::agents::AgentKind::Cursor && (model.is_some() || allow_max) {
-        return Err("Only Cursor tasks take a model or Max choice here".to_string());
+    let permission_mode = match permission.as_str() {
+        "agent-default" => crate::integrations::agent_launch::LaunchPermission::AgentDefault,
+        "yolo" => crate::integrations::agent_launch::LaunchPermission::Yolo,
+        _ => return Err("permission choice is required".to_string()),
+    };
+    if task.contains('\0') {
+        return Err("Task must not contain NUL characters".to_string());
     }
+    let allow_max = allow_max.unwrap_or(false);
+    if parsed_kind != crate::agents::AgentKind::Cursor && allow_max {
+        return Err("Only Cursor tasks take a Max choice".to_string());
+    }
+    let wanted = crate::agents::model_catalog::ModelChoice {
+        model: model
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        effort: effort
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        speed,
+    };
+    wanted.check_for(parsed_kind)?;
     let op_id = operation_id.clone();
     let resolved = tokio::task::spawn_blocking(move || {
         crate::codex_desktop::resolve_launch(parsed_kind, op_id.as_deref(), launch_target)
     })
     .await
     .map_err(|e| e.to_string())??;
+    let choice =
+        crate::agents::task_options::validate(parsed_kind, resolved, &workspace, wanted).await?;
     if resolved == crate::codex_desktop::LaunchTarget::Desktop {
         if !matches!(
             parsed_kind,
@@ -3079,7 +3042,7 @@ pub async fn new_task_launch(
         if parsed_kind == crate::agents::AgentKind::Cursor {
             // The form already refuses a model that needs Max; this is the same check in the
             // words of the user's language, before the daemon is asked.
-            let (planned_model, planned_max) = (model.clone(), allow_max);
+            let (planned_model, planned_max) = (choice.model.clone(), allow_max);
             let planned = tokio::task::spawn_blocking(move || {
                 crate::cursor_desktop::plan(planned_model.as_deref(), planned_max)
             })
@@ -3101,7 +3064,7 @@ pub async fn new_task_launch(
                 ),
                 permission,
                 id,
-                model,
+                model: choice.model,
                 allow_max,
                 title: None,
                 dry_run: false,
@@ -3114,10 +3077,9 @@ pub async fn new_task_launch(
                 files: delivery.files,
                 permission,
                 id,
-                // The window offers no model choice yet; Codex's own configuration decides.
-                model: None,
-                effort: None,
-                speed: None,
+                model: choice.model,
+                effort: choice.effort,
+                speed: choice.speed,
             })
             .await?;
         }
@@ -3128,15 +3090,7 @@ pub async fn new_task_launch(
         return Ok(());
     }
     let kind = crate::agents::AgentKind::parse(&kind).ok_or("unknown agent kind")?;
-    let permission = match permission.as_str() {
-        "agent-default" => crate::integrations::agent_launch::LaunchPermission::AgentDefault,
-        "yolo" => crate::integrations::agent_launch::LaunchPermission::Yolo,
-        _ => return Err("permission choice is required".to_string()),
-    };
-    if task.contains('\0') {
-        return Err("Task must not contain NUL characters".to_string());
-    }
-    let choice = crate::agents::model_catalog::ModelChoice::new(model, None);
+    let permission = permission_mode;
     // create_record 内部含 login-shell readiness 复检（≤2s 阻塞探测），放 blocking 线程。
     let recheck = tokio::task::spawn_blocking(move || {
         let delivery_request_id = uuid::Uuid::new_v4().to_string();
@@ -5617,6 +5571,8 @@ mod tests {
                 kind.to_string(),
                 permission.to_string(),
                 task.to_string(),
+                None,
+                None,
                 None,
                 None,
                 None,

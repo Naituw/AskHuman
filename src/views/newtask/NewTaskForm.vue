@@ -12,7 +12,6 @@ import {
   type CodexLaunchStatus,
   cursorLaunchStatus,
   type CursorLaunchStatus,
-  newTaskCursorOptions,
   newTaskInit,
   newTaskLaunch,
   newTaskProjects,
@@ -25,7 +24,6 @@ import {
 import type {
   AgentKind,
   AgentTaskReadiness,
-  CursorTaskOptions,
   NewTaskProject,
   PopupSubmitKey,
   TodoEntry,
@@ -35,8 +33,9 @@ import { primaryModifierPressed, primaryShortcutLabel } from "../../lib/platform
 import { codexLaunchDescription } from "../../lib/codexLaunch";
 import { cursorLaunchDescription } from "../../lib/cursorLaunch";
 import LaunchPermission from "./LaunchPermission.vue";
+import { useTaskSettings } from "./useTaskSettings";
 
-const { t } = useI18n();
+const { t, te } = useI18n();
 
 const props = defineProps<{
   /** 锁定项目（控制台内嵌版）：项目区只读展示、不加载候选下拉。 */
@@ -160,7 +159,7 @@ const selectedKind = ref<AgentKind | null>(null);
 const desktop = ref<CodexLaunchStatus | null>(null);
 /** Where a new Cursor task would run; `null` while unknown, which leaves Cursor judged by its own readiness. */
 const cursorLaunch = ref<CursorLaunchStatus | null>(null);
-const operationId = ref(crypto.randomUUID());
+const operationId = ref<string>(crypto.randomUUID());
 function agentAvailable(item: AgentTaskReadiness): boolean {
   if (item.kind === "codex") return !!desktop.value?.target;
   if (item.kind === "cursor" && cursorLaunch.value) return !!cursorLaunch.value.target;
@@ -239,88 +238,42 @@ const effectivePermission = computed<"agent-default" | "yolo" | null>(() => {
   return permissionChoice.value;
 });
 
-// ===== Cursor：模型与 Max 控制（spec cursor-max-control §5）=====
-/**
- * 仅在 Max 受控时（旧计划且策略为强制关闭）才有值；`null` = 不受控或尚未读到，表单与从前一致。
- */
-const cursorOptions = ref<CursorTaskOptions | null>(null);
-/** 选中的 Cursor 模型 id；空串 = 沿用 Cursor 默认。 */
-const cursorModel = ref("");
-/** 每个任务单独决定，默认关，不记忆。 */
-const allowMax = ref(false);
-let cursorOptionsSeq = 0;
-
-async function loadCursorOptions(): Promise<void> {
-  const seq = ++cursorOptionsSeq;
-  if (selectedKind.value !== "cursor") {
-    cursorOptions.value = null;
-    return;
-  }
-  try {
-    const options = await newTaskCursorOptions();
-    // 过期响应（期间换了 Agent 或又发起了新读取）丢弃。
-    if (seq !== cursorOptionsSeq) return;
-    cursorOptions.value = options;
-    // 选中的模型已不在清单里 → 回到默认，避免带着一个看不见的选择启动。
-    if (
-      cursorModel.value &&
-      !options?.models.some((m) => m.id === cursorModel.value)
-    ) {
-      cursorModel.value = "";
-    }
-  } catch (err) {
-    if (seq !== cursorOptionsSeq) return;
-    console.warn("new-task cursor options failed", err);
-    cursorOptions.value = null;
-  }
-}
-
-/** 换 Agent 就重置：模型选择与「允许 Max」都不跨 Agent 保留。 */
-watch(selectedKind, () => {
-  cursorModel.value = "";
-  allowMax.value = false;
-  void loadCursorOptions();
+// Model preferences and per-task Fast / Max settings follow the iOS composer rules.
+const {
+  options: taskOptions, loading: optionsLoading, failed: optionsFailed,
+  modelId, effortId, model: pickedModel, effortChoices, defaultEffort, offersModels,
+  speedControl, supportsFast, fast, fastWasReset, speed, maxControl,
+  maxRequired, maxBlocked, allowMax, reload: loadTaskOptions,
+  selectModel, selectEffort, setFast, remember: rememberChoices, resetTask: resetTaskChoices,
+} = useTaskSettings(selectedKind);
+const modelSearch = ref("");
+watch(selectedKind, () => { modelSearch.value = ""; });
+const filteredModels = computed(() => {
+  const all = taskOptions.value?.models ?? [];
+  const needle = modelSearch.value.trim().toLowerCase();
+  const matches = all.filter(m => !needle || m.label.toLowerCase().includes(needle) || m.id.toLowerCase().includes(needle));
+  // Keep the current selection visible even while the user searches for its replacement.
+  if (pickedModel.value && !matches.some(m => m.id === pickedModel.value?.id)) return [pickedModel.value, ...matches];
+  return matches;
 });
-
-function resetCursorChoices(): void {
-  cursorModel.value = "";
-  allowMax.value = false;
+function chooseModel(event: Event): void {
+  selectModel((event.target as HTMLSelectElement).value || null);
+  modelSearch.value = "";
 }
-
-/** 「将使用」：所选模型，或 Cursor 的当前默认；Max 结论为 true／false／未知（undefined）。 */
 const willUse = computed(() => {
-  const options = cursorOptions.value;
-  if (selectedKind.value !== "cursor" || !options) return null;
-  if (cursorModel.value) {
-    const model = options.models.find((m) => m.id === cursorModel.value);
-    return {
-      label: model?.label ?? cursorModel.value,
-      maxRequired: model?.maxRequired,
-    };
-  }
-  return {
-    label: options.default.label ?? t("newTask.cursorDefaultModel"),
-    maxRequired: options.default.maxRequired,
-  };
+  if (!maxControl.value) return null;
+  return { label: pickedModel.value?.label ?? taskOptions.value?.default.label ?? t("newTask.cursorDefaultModel"), maxRequired: maxRequired.value };
 });
-
-function maxMark(maxRequired: boolean | undefined): string {
-  if (maxRequired === true) return t("newTask.cursorMaxRequiredMark");
-  if (maxRequired === false) return t("newTask.cursorMaxNotRequiredMark");
+function maxMark(required: boolean | null | undefined): string {
+  if (required === true) return t("newTask.cursorMaxRequiredMark");
+  if (required === false) return t("newTask.cursorMaxNotRequiredMark");
   return t("newTask.cursorMaxUnknownMark");
 }
-
-/** 模型需要 Max 而本次不允许：禁止启动，出路是换模型或打开开关。 */
-const maxBlocked = computed(
-  () => !allowMax.value && willUse.value?.maxRequired === true
-);
-/** 无法判断是否需要 Max：照常启动，仅灰字说明。 */
-const maxUnknown = computed(
-  () =>
-    !allowMax.value &&
-    willUse.value !== null &&
-    willUse.value.maxRequired === undefined
-);
+const maxUnknown = computed(() => maxControl.value && !allowMax.value && maxRequired.value == null);
+function effortLabel(id: string): string {
+  const key = `newTask.efforts.${id}`;
+  return te(key) ? t(key) : id;
+}
 
 // ===== 任务拼装与校验（spec §3.3）=====
 const MAX_TASK_CHARS = 3000;
@@ -337,9 +290,30 @@ const finalTask = computed(() => {
 const taskChars = computed(() => [...finalTask.value].length);
 const tooLong = computed(() => taskChars.value > MAX_TASK_CHARS);
 
+// A pre-upgrade pending create must keep its original receipt and inherited speed. Assigning
+// a new id merely because this form now defaults to explicit standard could duplicate the task.
+const pendingVersion = ref(0);
+function readPendingCreate(): { storageKey: string; key: string; submittedSpeed: "standard" | "fast" | undefined; inheritedSpeed: boolean; id: string | null } | null {
+  const kind = selectedKind.value;
+  if (kind !== "codex" && kind !== "cursor") return null;
+  const base = [selectedProject.value, finalTask.value, effectivePermission.value, selectedTodo.value?.project, selectedTodo.value?.id, selectedTodo.value?.attachments];
+  const storageKey = `${kind}-desktop-pending-create`;
+  let saved: { key: string; id: string } | null = null;
+  try { saved = JSON.parse(localStorage.getItem(storageKey) || "null"); } catch { /* Ignore malformed local state. */ }
+  const oldKeys = kind === "codex"
+    ? [JSON.stringify(base), JSON.stringify([selectedProject.value, finalTask.value, effectivePermission.value, selectedTodo.value?.id])]
+    : [JSON.stringify([...base, modelId.value ?? "", maxControl.value ? allowMax.value : false])];
+  const legacy = !!saved && typeof saved.id === "string" && !effortId.value && !fast.value
+    && (kind === "cursor" || !modelId.value) && oldKeys.includes(saved.key);
+  const submittedSpeed = legacy ? undefined : speed.value;
+  const key = legacy ? saved!.key : JSON.stringify([...base, modelId.value, effortId.value, submittedSpeed, maxControl.value ? allowMax.value : false]);
+  return { storageKey, key, submittedSpeed, inheritedSpeed: legacy && kind === "codex", id: saved && typeof saved.id === "string" && saved.key === key ? saved.id : null };
+}
+const pendingCreate = computed(() => { pendingVersion.value; return readPendingCreate(); });
+
 const canLaunch = computed(
   () =>
-    !launching.value && targetReady.value &&
+    !launching.value && !optionsLoading.value && !optionsFailed.value && targetReady.value &&
     !!selectedProject.value &&
     !!selectedKind.value &&
     !!effectivePermission.value &&
@@ -359,20 +333,12 @@ async function launch(): Promise<void> {
   launching.value = true;
   launchError.value = "";
   try {
-    if (selectedKind.value === "codex") {
-      const key=JSON.stringify([selectedProject.value,finalTask.value,effectivePermission.value,selectedTodo.value?.project,selectedTodo.value?.id,selectedTodo.value?.attachments]);
-      // Keep pre-upgrade pending operations pinned to their original receipt.
-      const legacyKey=JSON.stringify([selectedProject.value,finalTask.value,effectivePermission.value,selectedTodo.value?.id]);
-      const saved=JSON.parse(localStorage.getItem("codex-desktop-pending-create") || "null");
-      operationId.value = (saved?.key === key || saved?.key === legacyKey) && typeof saved.id === "string" ? saved.id : crypto.randomUUID();
-      localStorage.setItem("codex-desktop-pending-create",JSON.stringify({key,id:operationId.value}));
-    } else if (selectedKind.value === "cursor") {
-      // A retry of the same task reuses its operation id, so a creation Cursor may already have
-      // done is never repeated; a different model or Max choice is a different task.
-      const key=JSON.stringify([selectedProject.value,finalTask.value,effectivePermission.value,selectedTodo.value?.project,selectedTodo.value?.id,selectedTodo.value?.attachments,cursorOptions.value ? cursorModel.value : "",cursorOptions.value ? allowMax.value : false]);
-      const saved=JSON.parse(localStorage.getItem("cursor-desktop-pending-create") || "null");
-      operationId.value = saved?.key === key && typeof saved.id === "string" ? saved.id : crypto.randomUUID();
-      localStorage.setItem("cursor-desktop-pending-create",JSON.stringify({key,id:operationId.value}));
+    rememberChoices();
+    const pending = readPendingCreate();
+    if (pending) {
+      operationId.value = pending.id ?? crypto.randomUUID();
+      localStorage.setItem(pending.storageKey, JSON.stringify({ key: pending.key, id: operationId.value }));
+      pendingVersion.value++;
     }
     await newTaskLaunch({
       operationId: operationId.value,
@@ -390,22 +356,19 @@ async function launch(): Promise<void> {
           sourcePath: attachment.sourcePath,
           storage: attachment.storage,
         })) ?? [],
-      // Max 控制只对 Cursor 且受控时生效；其余情况不带这两项，行为与从前一致。
-      model:
-        selectedKind.value === "cursor" && cursorOptions.value && cursorModel.value
-          ? cursorModel.value
-          : null,
-      allowMax:
-        selectedKind.value === "cursor" && cursorOptions.value
-          ? allowMax.value
-          : undefined,
+      model: pickedModel.value?.id ?? null,
+      effort: effortId.value,
+      speed: pending ? pending.submittedSpeed : speed.value,
+      allowMax: maxControl.value ? allowMax.value : undefined,
     });
-    localStorage.removeItem("codex-desktop-pending-create");
-    localStorage.removeItem("cursor-desktop-pending-create");
+    if (pending) localStorage.removeItem(pending.storageKey);
+    pendingVersion.value++;
     operationId.value=crypto.randomUUID();
-    resetCursorChoices();
+    resetTaskChoices();
   } catch (err) {
-    launchError.value = t("newTask.launchFailed", { e: String(err) });
+    const reason = String(err).replace(/^Error: /, "");
+    const key = `newTask.optionErrors.${reason}`;
+    launchError.value = t("newTask.launchFailed", { e: te(key) ? t(key) : String(err) });
     return;
   } finally {
     launching.value = false;
@@ -442,7 +405,7 @@ async function applyPreselect(
   todoMissing.value = false;
   launchError.value = "";
   inputText.value = "";
-  resetCursorChoices();
+  resetTaskChoices();
   await loadTodosFor(selectedProject.value);
   if (todoId) {
     const entry = todos.value.find((e) => e.id === todoId);
@@ -463,7 +426,7 @@ let unlistenTodos: UnlistenFn | null = null;
 
 function onWindowFocus(): void {
   void loadReadiness();
-  void loadCursorOptions();
+  void loadTaskOptions();
 }
 
 onMounted(async () => {
@@ -486,7 +449,7 @@ onMounted(async () => {
     (e) => {
       applyPopupSubmitKey(e.payload.popupSubmitKey);
       void loadReadiness();
-      void loadCursorOptions();
+      void loadTaskOptions();
     }
   );
   // todos.json 被任意进程改写 → 重载所选项目待办；选中待办被删时保留快照并提示（IM D31）。
@@ -738,50 +701,63 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <!-- Cursor：模型选择与「允许 Max」（仅 Max 受控时出现，spec cursor-max-control §5） -->
-        <section
-          v-if="selectedKind === 'cursor' && cursorOptions"
-          class="nt-section"
-          data-testid="nt-cursor-max"
-        >
-          <label class="nt-label" for="nt-cursor-model">{{ t("newTask.cursorModelLabel") }}</label>
-          <select
-            id="nt-cursor-model"
-            v-model="cursorModel"
-            class="nt-select"
-            :disabled="!cursorOptions.listed"
-          >
-            <option value="">{{ t("newTask.cursorModelDefault") }}</option>
-            <option v-for="m in cursorOptions.models" :key="m.id" :value="m.id" :title="m.note ?? ''">
-              {{ m.label }}{{ m.maxRequired === undefined ? "" : ` · ${maxMark(m.maxRequired)}` }}
-            </option>
-          </select>
-          <p v-if="!cursorOptions.listed" class="nt-note">
-            {{ t("newTask.cursorModelsUnavailable") }}
-          </p>
+        <section v-if="selectedKind" class="nt-section" data-testid="nt-task-settings" :inert="launching">
+          <p v-if="optionsLoading" class="nt-note">{{ t("newTask.optionsLoading") }}</p>
+          <template v-else-if="optionsFailed">
+            <p class="nt-error">{{ t("newTask.optionsFailed") }}</p>
+            <button type="button" class="nt-btn" @click="loadTaskOptions">{{ t("newTask.retryOptions") }}</button>
+          </template>
+          <template v-else>
+            <div class="nt-options-header">
+              <label class="nt-label" for="nt-task-model">{{ t("newTask.modelLabel") }}</label>
+              <button type="button" class="nt-refresh-options" @click="loadTaskOptions">{{ t("newTask.refreshOptions") }}</button>
+            </div>
+            <input
+              v-if="(taskOptions?.models.length ?? 0) > 12"
+              v-model="modelSearch" type="search" class="nt-select" data-testid="nt-model-search"
+              :placeholder="t('newTask.searchModels')" :aria-label="t('newTask.searchModels')"
+            />
+            <select id="nt-task-model" :value="modelId ?? ''" class="nt-select" :disabled="!offersModels" @change="chooseModel">
+              <option value="">{{ t("newTask.modelDefault") }}</option>
+              <option v-for="m in filteredModels" :key="m.id" :value="m.id" :title="m.note ?? ''">
+                {{ m.label }}{{ maxControl && m.maxRequired != null ? ` · ${maxMark(m.maxRequired)}` : "" }}
+              </option>
+            </select>
+            <p v-if="!offersModels" class="nt-note">{{ t("newTask.modelsUnavailable") }}</p>
+            <p v-else-if="!modelId" class="nt-note">{{ t("newTask.defaultMeans", { model: taskOptions?.default.label ?? t('newTask.agentOwnSetting') }) }}</p>
+            <p v-else-if="pickedModel?.note" class="nt-note">{{ pickedModel.note }}</p>
+            <template v-if="offersModels && effortChoices.length">
+              <label class="nt-label" for="nt-task-effort">{{ t("newTask.effortLabel") }}</label>
+              <select id="nt-task-effort" :value="effortId ?? ''" class="nt-select" @change="selectEffort(($event.target as HTMLSelectElement).value || null)">
+                <option value="">{{ defaultEffort ? t('newTask.effortDefault', { effort: effortLabel(defaultEffort) }) : t('newTask.modelDefault') }}</option>
+                <option v-for="level in effortChoices" :key="level" :value="level">{{ effortLabel(level) }}</option>
+              </select>
+            </template>
+            <p v-if="pendingCreate?.inheritedSpeed" class="nt-note" data-testid="nt-legacy-retry">{{ t("newTask.legacyRetry") }}</p>
+            <template v-if="selectedKind === 'codex'">
+              <template v-if="speedControl">
+                <button type="button" class="nt-choice nt-fast" :class="{ active: fast }" role="switch" :aria-checked="fast" :disabled="!supportsFast" @click="setFast(!fast)">
+                  <span class="nt-check" :class="{ on: fast }" />
+                  <span class="nt-choice-text">{{ t("newTask.fastMode") }}<span class="nt-choice-sub">{{ t("newTask.fastDesc") }}</span></span>
+                </button>
+                <p v-if="!supportsFast" class="nt-note">{{ t(modelId ? 'newTask.fastUnsupported' : 'newTask.fastChooseModel') }}</p>
+                <p v-if="fastWasReset" class="nt-note" data-testid="nt-fast-reset">{{ t("newTask.fastReset") }}</p>
+              </template>
+              <p v-else class="nt-note">{{ t("newTask.fastUnavailable") }}</p>
+            </template>
+          </template>
+        </section>
+
+        <section v-if="maxControl && !optionsLoading" class="nt-section" data-testid="nt-cursor-max" :inert="launching">
           <p v-if="willUse" class="nt-note nt-will-use" :class="{ bad: maxBlocked }">
             {{ t("newTask.cursorWillUse", { model: willUse.label, max: maxMark(willUse.maxRequired) }) }}
           </p>
-          <button
-            type="button"
-            class="nt-choice nt-allow-max"
-            :class="{ active: allowMax, danger: allowMax }"
-            role="switch"
-            :aria-checked="allowMax"
-            @click="allowMax = !allowMax"
-          >
+          <button type="button" class="nt-choice nt-allow-max" :class="{ active: allowMax, danger: allowMax }" role="switch" :aria-checked="allowMax" @click="allowMax = !allowMax">
             <span class="nt-check" :class="{ on: allowMax }" />
-            <span class="nt-choice-text">
-              {{ t("newTask.allowMax") }}
-              <span class="nt-choice-sub">{{ t("newTask.allowMaxDesc") }}</span>
-            </span>
+            <span class="nt-choice-text">{{ t("newTask.allowMax") }}<span class="nt-choice-sub">{{ t("newTask.allowMaxDesc") }}</span></span>
           </button>
-          <p v-if="maxBlocked" class="nt-error" data-testid="nt-max-blocked">
-            {{ t("newTask.maxBlocked", { model: willUse?.label ?? "" }) }}
-          </p>
-          <p v-else-if="maxUnknown" class="nt-note" data-testid="nt-max-unknown">
-            {{ t("newTask.maxUnknownNote") }}
-          </p>
+          <p v-if="maxBlocked" class="nt-error" data-testid="nt-max-blocked">{{ t("newTask.maxBlocked", { model: willUse?.label ?? '' }) }}</p>
+          <p v-else-if="maxUnknown" class="nt-note" data-testid="nt-max-unknown">{{ t("newTask.maxUnknownNote") }}</p>
         </section>
 
         <LaunchPermission
@@ -812,6 +788,9 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.nt-options-header { display: flex; align-items: center; justify-content: space-between; }
+.nt-refresh-options { color: var(--text-secondary); background: none; border: 0; font: inherit; font-size: 12px; cursor: pointer; }
+
 .nt-form {
   display: flex;
   flex-direction: column;

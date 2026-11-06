@@ -12,7 +12,7 @@ vi.mock("../../lib/ipc", () => ({
   codexLaunchStatus: api.status,
   cursorLaunchStatus: vi.fn(async () => null),
   newTaskInit: vi.fn(async () => ({popupSubmitKey:"cmdEnter",permissionPrompt:"agent-default"})),
-  newTaskCursorOptions: vi.fn(async () => null),
+  newTaskOptions: vi.fn(async () => ({ listed: false, models: [], default: { efforts: [] }, speedControl: false, maxControl: false })),
   newTaskLaunch: api.launch,
   newTaskProjects: vi.fn(async () => []), newTaskProjectsRefreshed:vi.fn(async () => []),
   openPath:vi.fn(),openSettings:vi.fn(), projectKeyOf: vi.fn(async () => "/project"), todosList: vi.fn(async () => []),

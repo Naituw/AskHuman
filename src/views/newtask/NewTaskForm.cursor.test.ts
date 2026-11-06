@@ -2,7 +2,7 @@ import { mount, flushPromises, type VueWrapper } from "@vue/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import NewTaskForm from "./NewTaskForm.vue";
 import { i18n } from "../../i18n";
-import type { CursorTaskOptions } from "../../lib/types";
+import type { NewTaskOptions } from "../../lib/types";
 
 const api = vi.hoisted(() => ({
   launch: vi.fn(),
@@ -15,7 +15,7 @@ vi.mock("../../lib/ipc", () => ({
   agentTaskReadiness: api.readiness,
   codexLaunchStatus: vi.fn(async () => null),
   cursorLaunchStatus: api.route,
-  newTaskCursorOptions: api.options,
+  newTaskOptions: api.options,
   newTaskInit: vi.fn(async () => ({
     popupSubmitKey: "cmdEnter",
     permissionPrompt: "agent-default",
@@ -30,16 +30,17 @@ vi.mock("../../lib/ipc", () => ({
 }));
 
 /** Synthetic model list: nothing here comes from a real Cursor installation. */
-function options(patch: Partial<CursorTaskOptions> = {}): CursorTaskOptions {
+function options(patch: Partial<NewTaskOptions> = {}): NewTaskOptions {
   return {
-    planKnown: true,
+    speedControl: false,
+    maxControl: true,
     listed: true,
     models: [
-      { id: "small", label: "Small", maxRequired: false },
-      { id: "big-max", label: "Big Max", maxRequired: true },
-      { id: "fresh", label: "Fresh" },
+      { id: "small", label: "Small", efforts: [], maxRequired: false },
+      { id: "big-max", label: "Big Max", efforts: [], maxRequired: true },
+      { id: "fresh", label: "Fresh", efforts: [] },
     ],
-    default: { label: "Big Max", maxRequired: true },
+    default: { label: "Big Max", efforts: [], maxRequired: true },
     ...patch,
   };
 }
@@ -101,17 +102,19 @@ const section = () => wrapper.find("[data-testid=nt-cursor-max]");
 const launchButton = () => wrapper.get(".nt-btn-launch");
 const allowSwitch = () => wrapper.get(".nt-allow-max");
 
-it("shows nothing extra while Max is not controlled and passes no Max fields", async () => {
-  api.options.mockResolvedValue(null);
+it("keeps model choice while Max is not controlled and passes no Max permission", async () => {
+  api.options.mockResolvedValue(options({ maxControl: false }));
   await form();
   expect(section().exists()).toBe(false);
+  expect(wrapper.get("#nt-task-model").findAll("option")).toHaveLength(4);
   expect(launchButton().attributes("disabled")).toBeUndefined();
+  await wrapper.get("#nt-task-model").setValue("small");
   await launchButton().trigger("click");
   await flushPromises();
   expect(api.launch).toHaveBeenCalledTimes(1);
   const payload = api.launch.mock.calls[0][0];
   expect(payload).toMatchObject({ kind: "cursor", workspace: "/project", task: "Task" });
-  expect(payload.model).toBeNull();
+  expect(payload.model).toBe("small");
   expect(payload.allowMax).toBeUndefined();
 });
 
@@ -135,7 +138,7 @@ it("blocks a default that needs Max until the task allows it", async () => {
 
 it("launches a model that does not need Max with Max left off", async () => {
   await form();
-  await wrapper.get("#nt-cursor-model").setValue("small");
+  await wrapper.get("#nt-task-model").setValue("small");
   expect(wrapper.get(".nt-will-use").text()).toBe("Will use: Small · No Max needed");
   expect(wrapper.find("[data-testid=nt-max-blocked]").exists()).toBe(false);
   await launchButton().trigger("click");
@@ -145,9 +148,9 @@ it("launches a model that does not need Max with Max left off", async () => {
 
 it("marks every listed model and leaves the unknown one unmarked", async () => {
   await form();
-  const labels = wrapper.findAll("#nt-cursor-model option").map((o) => o.text());
+  const labels = wrapper.findAll("#nt-task-model option").map((o) => o.text());
   expect(labels).toEqual([
-    "Follow Cursor's default",
+    "Default",
     "Small · No Max needed",
     "Big Max · Needs Max",
     "Fresh",
@@ -156,7 +159,7 @@ it("marks every listed model and leaves the unknown one unmarked", async () => {
 
 it("lets an unknown verdict through with a note", async () => {
   await form();
-  await wrapper.get("#nt-cursor-model").setValue("fresh");
+  await wrapper.get("#nt-task-model").setValue("fresh");
   expect(wrapper.get(".nt-will-use").text()).toBe("Will use: Fresh · unknown");
   expect(wrapper.get("[data-testid=nt-max-unknown]").text()).toContain("could not be determined");
   expect(launchButton().attributes("disabled")).toBeUndefined();
@@ -164,10 +167,10 @@ it("lets an unknown verdict through with a note", async () => {
 
 it("falls back to Cursor's default when its model list cannot be read", async () => {
   api.options.mockResolvedValue(
-    options({ listed: false, models: [], default: { maxRequired: false } }),
+    options({ listed: false, models: [], default: { efforts: [], maxRequired: false } }),
   );
   await form();
-  expect(wrapper.get("#nt-cursor-model").attributes("disabled")).toBeDefined();
+  expect(wrapper.get("#nt-task-model").attributes("disabled")).toBeDefined();
   expect(wrapper.text()).toContain("model list could not be read");
   // The default has no known name, so the line says what it stands for.
   expect(wrapper.get(".nt-will-use").text()).toBe(
@@ -176,30 +179,30 @@ it("falls back to Cursor's default when its model list cannot be read", async ()
   expect(launchButton().attributes("disabled")).toBeUndefined();
 });
 
-it("does not carry a model or the Max switch over to the next task", async () => {
+it("remembers the submitted model but resets Max for the next task", async () => {
   await form();
-  await wrapper.get("#nt-cursor-model").setValue("small");
+  await wrapper.get("#nt-task-model").setValue("small");
   await allowSwitch().trigger("click");
   await launchButton().trigger("click");
   await flushPromises();
   expect(api.launch).toHaveBeenCalledTimes(1);
-  expect((wrapper.get("#nt-cursor-model").element as HTMLSelectElement).value).toBe("");
+  expect((wrapper.get("#nt-task-model").element as HTMLSelectElement).value).toBe("small");
   expect(allowSwitch().attributes("aria-checked")).toBe("false");
 });
 
 it("drops a model that the refreshed list no longer offers", async () => {
   await form();
-  await wrapper.get("#nt-cursor-model").setValue("small");
-  api.options.mockResolvedValue(options({ models: [{ id: "other", label: "Other", maxRequired: false }] }));
+  await wrapper.get("#nt-task-model").setValue("small");
+  api.options.mockResolvedValue(options({ models: [{ id: "other", label: "Other", efforts: [], maxRequired: false }] }));
   window.dispatchEvent(new Event("focus"));
   await flushPromises();
-  expect((wrapper.get("#nt-cursor-model").element as HTMLSelectElement).value).toBe("");
+  expect((wrapper.get("#nt-task-model").element as HTMLSelectElement).value).toBe("");
 });
 
 it("hides the section again when Max stops being controlled", async () => {
   await form();
   expect(section().exists()).toBe(true);
-  api.options.mockResolvedValue(null);
+  api.options.mockResolvedValue(options({ maxControl: false }));
   window.dispatchEvent(new Event("focus"));
   await flushPromises();
   expect(section().exists()).toBe(false);
@@ -209,7 +212,7 @@ it("hides the section again when Max stops being controlled", async () => {
 // --- where the task runs (docs/specs/cursor-desktop-task-creation.md §3) ---
 
 /** A default that needs no Max, so Max control does not block the launch under test. */
-const freeDefault = () => options({ default: { label: "Small", maxRequired: false } });
+const freeDefault = () => options({ default: { label: "Small", efforts: [], maxRequired: false } });
 
 it("keeps the terminal route silent: nothing about the Agents window is said", async () => {
   api.route.mockResolvedValue(route("terminal"));
@@ -271,7 +274,7 @@ it("retries a failed launch under the same operation id, and a changed model is 
   await launchButton().trigger("click");
   await flushPromises();
   expect(api.launch.mock.calls[1][0].operationId).toBe(first);
-  await wrapper.get("#nt-cursor-model").setValue("small");
+  await wrapper.get("#nt-task-model").setValue("small");
   await launchButton().trigger("click");
   await flushPromises();
   expect(api.launch.mock.calls[2][0].operationId).not.toBe(first);

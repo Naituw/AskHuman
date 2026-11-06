@@ -351,7 +351,7 @@ fn task(invoke: Invoke<Wry>) -> bool {
         crate::commands::new_task_projects_refreshed,
         crate::commands::project_key_of,
         crate::commands::new_task_launch,
-        crate::commands::new_task_cursor_options,
+        crate::commands::new_task_options,
         crate::commands::codex_desktop,
         crate::commands::codex_launch_status,
         crate::commands::cursor_launch_status,
@@ -400,7 +400,7 @@ mod tests {
         assert_eq!(group_for("console_transcript"), Group::History);
         assert_eq!(group_for("todos_add"), Group::Todo);
         assert_eq!(group_for("fork_task_launch"), Group::Task);
-        assert_eq!(group_for("new_task_cursor_options"), Group::Task);
+        assert_eq!(group_for("new_task_options"), Group::Task);
         assert_eq!(group_for("update_apply"), Group::Update);
     }
 }

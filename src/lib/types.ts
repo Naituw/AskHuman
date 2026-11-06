@@ -429,27 +429,27 @@ export interface NewTaskInit {
   permissionPrompt: "ask" | "agent-default" | "yolo" | string;
 }
 
-/**
- * What the new-task form shows for Cursor while Max control is in force (spec cursor-max-control §5).
- * The backend returns `null` instead when it is not (token-based plan, or the "follow Cursor" policy).
- */
-export interface CursorTaskOptions {
-  /** Whether the plan came from Cursor's own data rather than being assumed. */
-  planKnown: boolean;
-  /** Whether Cursor's model list could be read; when not, only Cursor's default can be picked. */
+/** Launch settings offered by the selected Agent, shared by all desktop new-task entry points. */
+export interface NewTaskOptions {
   listed: boolean;
-  models: CursorTaskModel[];
-  /** What "follow Cursor's default" stands for. */
-  default: { label?: string; maxRequired?: boolean };
+  models: TaskModelOption[];
+  default: TaskModelDefault;
+  speedControl: boolean;
+  maxControl: boolean;
 }
 
-export interface CursorTaskModel {
-  /** What goes after `--model`. */
+export interface TaskModelDefault {
+  label?: string | null;
+  efforts: string[];
+  defaultEffort?: string | null;
+  maxRequired?: boolean | null;
+}
+
+export interface TaskModelOption extends TaskModelDefault {
   id: string;
   label: string;
-  note?: string;
-  /** `true` = cannot run without Max, `false` = can, absent = not known. */
-  maxRequired?: boolean;
+  note?: string | null;
+  fastSupported?: boolean | null;
 }
 
 /** 新建任务窗口的项目下拉候选。 */
