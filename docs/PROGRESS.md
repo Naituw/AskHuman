@@ -359,8 +359,8 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 
 下一步：
 - [ ] **看着用一阵**：两台的真实数据已在同步（见上一段）。有异常（重复、缺失、迟迟不到）先看 `AskHuman todo-sync status` 与 `~/Library/Logs/AskHumanTodoSync/helper.log`；要退回就 `AskHuman todo-sync disable`，装前备份在两台的 `~/.askhuman/state/todos.json.before-todo-sync-2026-10-28`（满意后可删）。B 的旧二进制备份在 B 的 `~/.askhuman/backups/pre-todo-sync-install-*/`。
-- [ ] **需要真实环境的剩余项**：首次安装与登录项批准形态（A、B 注册后都直接是 `enabled`，没弹过批准）；独立账号 / 稳定系统及新组件 24 小时运行。用户 2026-11-07 明确要求不做断网相关和睡眠测试，本轮不执行，保留未验证边界。SSH 到 Mac B 的旧同意已用完，再用要当次同意。
-- [ ] **正式分发准备**：安装 / 升级 / 回滚、嵌入资源、签名公证流水线与中英文用户说明已实现。`1808f269` 已单独推送 main；内嵌候选装机、0.1.0 → 0.16.0 组件升级及 CI 四平台仅验证流程通过，发布阶段 skipped。CI 的 ARM / Intel 实物已下载并通过签名、npm / Direct 资源检查。仍待独立账号 / 稳定系统、首次批准形态与新组件 24 小时记录；未公开发布。该 feat 提交已提供用户可见发布说明，详情见新计划。
+- [ ] **需要真实环境的剩余项**：首次安装与登录项批准形态（A、B 注册后都直接是 `enabled`，没弹过批准）；独立账号 / 稳定系统。用户 2026-11-07 明确要求不做断网相关和睡眠测试，并因功能仍属实验性取消新版必须运行满 24 小时的门槛；不为此等待或安排回查，保留未验证边界。SSH 到 Mac B 的旧同意已用完，再用要当次同意。
+- [ ] **正式分发准备**：安装 / 升级 / 回滚、嵌入资源、签名公证流水线与中英文用户说明已实现。`1808f269` 已单独推送 main；内嵌候选装机、0.1.0 → 0.16.0 组件升级及 CI 四平台仅验证流程通过，发布阶段 skipped。CI 的 ARM / Intel 实物已下载并通过签名、npm / Direct 资源检查。仍待独立账号 / 稳定系统与首次批准形态；未公开发布。该 feat 提交已提供用户可见发布说明，详情见新计划。
 - [ ] 性能基线 / A-B：已重建 P0 `9f5bab2b` 与本轮前 `980349aa` 的参考程序，均在 `todo-sync-helper/build`，未安装到日常入口。繁忙环境下原 P0 完整 A/B 返回 1；本轮前主线的 stress 对比通过（冷端到端 +4 ms、热端到端 -16.5 ms、热前端 +4.5 ms），暂未检出本轮明显增量回归。热前端 p90 随负载波动为 192.4–301.8 ms，未写 baseline、未关闭原 P0 门槛。用户选择保留当前环境、单任务后台继续；仍需安静亮屏后复核原 P0 并建立正式基线，iCloud 模式首屏也需真实启用环境补验。完整数字与限制见新计划。
 - [ ] 分发给别人前：按正式分发规格完成内嵌公证资源和 CI 配置；用另一个大陆 iCloud 账号复测首次初始化，补稳定系统与恢复验收。helper 仍是首次启用时安装的独立 `.app`，资源内嵌方案替代旧计划的主应用 bundle 内嵌登录项。附件同步、手机直连 CloudKit 另行评审（iOS App 读写待办已由 Mac 网关代答，见下一节）。
 - 构建小贴士（shell 的 HOME 被指向 `/tmp/ph`）：`export CARGO_HOME=/Users/wutian/.cargo CARGO_INCREMENTAL=0 GIT_CONFIG_GLOBAL=/Users/wutian/.gitconfig npm_config_store_dir=/Users/wutian/Library/pnpm/store`，否则 cargo 会重新下载依赖、`./scripts/install.sh` 会卡在 pnpm 的交互提示
