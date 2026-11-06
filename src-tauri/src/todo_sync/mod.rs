@@ -20,6 +20,7 @@ pub mod diff;
 pub mod helper_client;
 pub mod hlc;
 pub mod identity;
+pub mod installer;
 pub mod links;
 pub mod merge;
 pub mod model;

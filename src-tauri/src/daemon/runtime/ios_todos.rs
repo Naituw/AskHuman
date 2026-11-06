@@ -528,6 +528,9 @@ mod tests {
                     },
                 ],
                 helper: HelperStatus {
+                    bundled: false,
+                    needs_approval: false,
+                    installation_error: None,
                     state: "running".into(),
                     version: None,
                     environment: None,

@@ -1075,7 +1075,7 @@ export interface TodoSyncConfig {
 
 /** What `todo_sync_status` returns (mirror of Rust `todo_sync::service::Status`). */
 export interface TodoSyncStatus {
-  /** macOS, outside a Dev Instance. */
+  /** macOS 14 or later, outside a Dev Instance. */
   supported: boolean;
   enabled: boolean;
   /** A tick is running right now. */
@@ -1096,6 +1096,9 @@ export interface TodoSyncStatus {
     environment: string | null;
     problem: string | null;
     installed: boolean;
+    bundled?: boolean;
+    needsApproval?: boolean;
+    installationError?: string | null;
   };
   lastTick: {
     atMs: number;

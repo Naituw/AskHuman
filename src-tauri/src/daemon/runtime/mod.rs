@@ -1056,6 +1056,10 @@ async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i
     });
 
     let mut background_tasks = Vec::new();
+    #[cfg(target_os = "macos")]
+    if crate::todo_sync::service::is_enabled() && crate::todo_sync::service::supported() {
+        std::thread::spawn(crate::todo_sync::service::maintain_helper);
+    }
     // SIGTERM = `daemon stop` (graceful). launchd `bootout`, user logout and a plain `kill <pid>`
     // all deliver SIGTERM; without a handler the process died on the spot, leaving no log line and
     // cutting every in-flight popup off. Each signal is handled exactly like `ClientMsg::Stop

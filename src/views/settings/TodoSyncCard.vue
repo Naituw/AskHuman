@@ -110,6 +110,7 @@ const pausedText = computed(() => {
 const helperText = computed(() => {
   const h = status.value?.helper;
   if (!h) return "";
+  if (h.installationError) return t("settings.experimental.todoSync.helperInstallFailed", { e: h.installationError });
   if (h.state === "running") {
     const base = t("settings.experimental.todoSync.helperRunning", { version: h.version ?? "?" });
     return h.problem
@@ -117,15 +118,16 @@ const helperText = computed(() => {
       : base;
   }
   if (h.state === "incompatible") return t("settings.experimental.todoSync.helperIncompatible");
+  if (!h.installed && h.bundled === false) return t("settings.experimental.todoSync.helperUnavailable");
   return h.installed
     ? t("settings.experimental.todoSync.helperNotRunning")
     : t("settings.experimental.todoSync.helperNotInstalled");
 });
 
 const helperOk = computed(
-  () => status.value?.helper.state === "running" && !status.value.helper.problem,
+  () => status.value?.helper.state === "running" && !status.value.helper.problem && !status.value.helper.installationError,
 );
-const canRepair = computed(() => !!status.value?.helper.installed && !helperOk.value);
+const canRepair = computed(() => !!(status.value?.helper.installed || status.value?.helper.bundled) && !helperOk.value);
 
 async function chooseLocation(target: "local" | "icloud"): Promise<void> {
   if (target === "icloud" && !enabled.value) await enable(failed);
@@ -173,7 +175,7 @@ async function onClear(): Promise<void> {
             :disabled="!!busy"
             @click="chooseLocation('icloud')"
           >
-            {{ t("settings.experimental.todoSync.icloud") }}
+            {{ t(busy === 'enable' ? "settings.experimental.todoSync.preparing" : "settings.experimental.todoSync.icloud") }}
           </button>
         </div>
       </div>
@@ -218,7 +220,7 @@ async function onClear(): Promise<void> {
           {{ t("settings.experimental.todoSync.repair") }}
         </button>
       </div>
-      <div v-if="needsApproval" class="ts-approval">
+      <div v-if="needsApproval || status.helper.needsApproval" class="ts-approval">
         <p class="card-desc">{{ t("settings.experimental.todoSync.repairApproval") }}</p>
         <button type="button" class="btn" @click="openLoginItems">
           {{ t("settings.experimental.todoSync.openLoginItems") }}

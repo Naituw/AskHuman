@@ -76,7 +76,7 @@ describe("TodoSyncCard", () => {
     ipc.todoSyncStatus.mockResolvedValue(status({ supported: false, enabled: false }));
     const wrapper = mountCard();
     await flushPromises();
-    expect(wrapper.text()).toContain("macOS only");
+    expect(wrapper.text()).toContain("macOS 14 or later");
     expect(wrapper.find(".segmented").exists()).toBe(false);
     wrapper.unmount();
   });
@@ -91,6 +91,44 @@ describe("TodoSyncCard", () => {
     expect(devices[0].text()).toContain("this Mac");
     expect(devices[1].text()).toContain("MacBook Pro");
     expect(wrapper.get(".ts-helper").text()).toBe("running · v1");
+    wrapper.unmount();
+  });
+
+  it("keeps the system approval instructions after reopening settings", async () => {
+    ipc.todoSyncStatus.mockResolvedValue(status({ helper: {
+      state: "notRunning", version: null, environment: null, problem: null,
+      installed: true, bundled: true, needsApproval: true,
+    } }));
+    const wrapper = mountCard();
+    await flushPromises();
+    expect(wrapper.find(".ts-approval").text()).toContain("Allow AskHuman Todo Sync");
+    expect(wrapper.find(".ts-approval button").exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("can reinstall a missing bundled component", async () => {
+    ipc.todoSyncStatus.mockResolvedValue(status({ helper: {
+      state: "notRunning", version: null, environment: null, problem: null,
+      installed: false, bundled: true,
+    } }));
+    ipc.todoSyncRepair.mockResolvedValue({ ok: true, needsApproval: false, message: "" });
+    const wrapper = mountCard();
+    await flushPromises();
+    await wrapper.get(".ts-inline-btn").trigger("click");
+    await flushPromises();
+    expect(ipc.todoSyncRepair).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  it("offers repair when an update failed while the old helper still runs", async () => {
+    ipc.todoSyncStatus.mockResolvedValue(status({ helper: {
+      state: "running", version: "0.1.0", environment: "production", problem: null,
+      installed: true, bundled: true, installationError: "disk full",
+    } }));
+    const wrapper = mountCard();
+    await flushPromises();
+    expect(wrapper.get(".ts-helper").text()).toContain("sync component update failed: disk full");
+    expect(wrapper.find(".ts-inline-btn").exists()).toBe(true);
     wrapper.unmount();
   });
 

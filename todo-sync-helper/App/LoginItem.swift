@@ -43,7 +43,8 @@ enum CommandLineTool {
                 if LoginItem.service.status != .requiresApproval { failure = "\(thrown)" }
             }
             let status = LoginItem.service.status
-            if status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+            // The settings card provides an explicit link. Background maintenance must not open
+            // System Settings merely because an approval is still pending.
             var out: [String: Any] = ["loginItem": LoginItem.statusName(status)]
             if let failure { out["error"] = failure }
             print(Self.json(out))

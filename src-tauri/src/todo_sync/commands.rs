@@ -5,7 +5,6 @@
 //! the status, shows what it has, and asks again after an action.
 
 use super::service::{self, ProjectDetails, Status, SyncProject};
-use serde::Serialize;
 
 async fn blocking<T, F>(f: F) -> Result<T, String>
 where
@@ -123,35 +122,10 @@ pub async fn todo_sync_resume() -> Result<Status, String> {
     .await
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RepairOutcome {
-    /// The helper is registered and was started.
-    pub ok: bool,
-    /// macOS wants the user to allow it under System Settings → Login Items.
-    pub needs_approval: bool,
-    pub message: String,
-}
-
-/// "Repair": register the helper app as a login item and start it.
+/// "Repair": install or update the bundled helper, register it and start it.
 #[tauri::command]
-pub async fn todo_sync_repair() -> Result<RepairOutcome, String> {
-    blocking(|| {
-        let app = service::helper_app_path().ok_or_else(|| "helperNotInstalled".to_string())?;
-        let exe = app.join("Contents/MacOS/AskHumanTodoSync");
-        let out = std::process::Command::new(&exe)
-            .arg("--register")
-            .output()
-            .map_err(|e| format!("cannot run the helper: {e}"))?;
-        let code = out.status.code().unwrap_or(1);
-        Ok(RepairOutcome {
-            ok: code == 0,
-            // The helper exits 3 when the registration waits for the user's approval.
-            needs_approval: code == 3,
-            message: String::from_utf8_lossy(&out.stdout).trim().to_string(),
-        })
-    })
-    .await
+pub async fn todo_sync_repair() -> Result<super::installer::Registration, String> {
+    blocking(|| service::repair_helper().map_err(|e| e.to_string())).await
 }
 
 /// Open System Settings at Login Items (where the user approves the helper).

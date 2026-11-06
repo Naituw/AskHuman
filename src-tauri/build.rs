@@ -1,7 +1,10 @@
 #[path = "src/gsettings_schema.rs"]
 mod gsettings_schema;
+#[path = "build/todo_sync_resource.rs"]
+mod todo_sync_resource;
 
 fn main() {
+    embed_todo_sync_helper();
     println!("cargo:rerun-if-changed=src/gsettings_schema.rs");
     println!("cargo:rerun-if-env-changed=GSETTINGS_SCHEMAS_PATH");
     let schema_dirs = if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
@@ -41,6 +44,28 @@ fn main() {
         build_swift_bridges(&manifest_dir);
     }
     tauri_build::build()
+}
+
+/// Carry the notarized helper inside the executable so even older direct updaters (which copy
+/// only AskHuman) deliver it. Source / development builds may omit it; public macOS releases may not.
+fn embed_todo_sync_helper() {
+    println!("cargo:rerun-if-changed=build/todo_sync_resource.rs");
+    println!("cargo:rerun-if-env-changed=ASKHUMAN_TODO_SYNC_ARCHIVE");
+    println!("cargo:rerun-if-env-changed=ASKHUMAN_REQUIRE_TODO_SYNC_RESOURCE");
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    let archive = std::env::var_os("ASKHUMAN_TODO_SYNC_ARCHIVE").filter(|v| !v.is_empty());
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let source = archive.map(std::path::PathBuf::from);
+    if let Some(source) = &source {
+        println!("cargo:rerun-if-changed={}", source.display());
+    }
+    todo_sync_resource::write(
+        &out,
+        &target_os,
+        source.as_deref(),
+        std::env::var("ASKHUMAN_REQUIRE_TODO_SYNC_RESOURCE").as_deref() == Ok("1"),
+    )
+    .expect("cannot prepare the todo sync helper resource");
 }
 
 /// Compile the Swift bridges for the Cargo target architecture and emit link arguments.

@@ -44,6 +44,7 @@ targets:
         LSMinimumSystemVersion: "14.0"
         NSPrincipalClass: NSApplication
         HelperContainerID: $(HELPER_CONTAINER_ID)
+        AskHumanTodoSyncProtocol: "1"
     entitlements:
       path: Config/AskHumanTodoSync.entitlements
       properties:

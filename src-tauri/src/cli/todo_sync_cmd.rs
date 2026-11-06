@@ -41,6 +41,26 @@ pub fn dispatch(args: &[String], lang: Lang) -> ! {
             control(service::clear_cloud(), "iCloud todo data cleared", lang)
         }
         Some("repair") => repair(lang),
+        Some("resource-info") => {
+            let info = crate::todo_sync::installer::resource_info();
+            print_line(&info.to_string());
+            exit(
+                if rest.iter().any(|a| a == "--require-bundled")
+                    && !crate::todo_sync::installer::bundled()
+                {
+                    1
+                } else {
+                    0
+                },
+            );
+        }
+        Some("resource-verify") => match crate::todo_sync::installer::verify_resource() {
+            Ok(()) => {
+                print_line("embedded sync component verified");
+                exit(0);
+            }
+            Err(error) => fail(lang, &error.to_string()),
+        },
         Some(other) => fail(lang, &format!("unknown todo-sync subcommand: {other}")),
     }
 }
@@ -84,7 +104,7 @@ fn status(args: &[String]) -> ! {
     print_line(&format!(
         "sync: {}{}",
         if !status.supported {
-            "not available here (macOS only, not in a Dev Instance)"
+            "not available here (requires macOS 14+, outside Dev Instances)"
         } else if status.enabled {
             "on"
         } else {
@@ -214,19 +234,11 @@ fn tick(args: &[String], lang: Lang) -> ! {
 /// Register the helper app as a login item (what `scripts/todo-sync-install-helper.sh` does at the
 /// end of an install) and start it.
 fn repair(lang: Lang) -> ! {
-    let Some(app) = service::helper_app_path() else {
-        fail(
-            lang,
-            "the sync helper app is not installed (run scripts/todo-sync-install-helper.sh)",
-        );
-    };
-    let exe = app.join("Contents/MacOS/AskHumanTodoSync");
-    match std::process::Command::new(&exe).arg("--register").output() {
-        Ok(out) => {
-            print_line(String::from_utf8_lossy(&out.stdout).trim());
-            // 3 = approval pending in System Settings > Login Items: not an error of ours.
-            exit(out.status.code().unwrap_or(1));
+    match service::repair_helper() {
+        Ok(outcome) => {
+            print_line(&outcome.message);
+            exit(if outcome.needs_approval { 3 } else { 0 });
         }
-        Err(e) => fail(lang, &format!("cannot run the helper: {e}")),
+        Err(e) => fail(lang, &e.to_string()),
     }
 }

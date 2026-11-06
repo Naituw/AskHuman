@@ -60,13 +60,13 @@ fn helper_launch_path(dir: &Path) -> PathBuf {
 
 /// Sync is turned on for this Mac. One `stat`.
 pub fn is_enabled() -> bool {
-    marker_path(&dir()).exists()
+    marker_path(&dir()).exists() && supported()
 }
 
 /// Whether this build and instance can sync at all (the helper is a macOS app; Dev Instances never
 /// touch the production container).
 pub fn supported() -> bool {
-    cfg!(target_os = "macos") && !crate::dev_instance::is_dev_instance()
+    super::installer::supported_os() && !crate::dev_instance::is_dev_instance()
 }
 
 fn device_name_from(config: &crate::config::AppConfig) -> String {
@@ -487,6 +487,7 @@ pub enum ControlError {
     Unsupported,
     Tick(TickError),
     Io(std::io::Error),
+    Helper(String),
 }
 
 impl std::fmt::Display for ControlError {
@@ -495,11 +496,12 @@ impl std::fmt::Display for ControlError {
             ControlError::Unsupported => {
                 write!(
                     f,
-                    "iCloud todo sync is only available on macOS, outside Dev Instances"
+                    "iCloud todo sync requires macOS 14 or later, outside Dev Instances"
                 )
             }
             ControlError::Tick(e) => write!(f, "{e}"),
             ControlError::Io(e) => write!(f, "{e}"),
+            ControlError::Helper(e) => write!(f, "{e}"),
         }
     }
 }
@@ -549,7 +551,38 @@ pub fn enable() -> Result<(), ControlError> {
     if env.device_name.is_empty() {
         env.device_name = computer_name();
     }
+    // Install and register before creating the opt-in marker. A missing or invalid release
+    // component must not leave the UI claiming that iCloud storage has been enabled.
+    super::installer::prepare(&env.dir).map_err(|e| ControlError::Helper(e.to_string()))?;
+    let _ = std::fs::remove_file(env.dir.join("helper-install-error.json"));
     enable_with(&env, poll_minutes(), &RealEffects)
+}
+
+pub fn repair_helper() -> anyhow::Result<super::installer::Registration> {
+    let outcome = super::installer::prepare(&dir())?;
+    let _ = std::fs::remove_file(dir().join("helper-install-error.json"));
+    Ok(outcome)
+}
+
+/// Run once at daemon startup, off the request path. npm upgrades carry a new local archive;
+/// already-enabled users get the matching helper without visiting the settings card again.
+pub fn maintain_helper() {
+    if !supported() || !is_enabled() {
+        return;
+    }
+    let env = production_env();
+    let result = (|| -> anyhow::Result<()> {
+        write_helper_config(&env, true, poll_minutes())?;
+        super::installer::prepare(&env.dir)?;
+        Ok(())
+    })();
+    let error_path = env.dir.join("helper-install-error.json");
+    if let Err(error) = result {
+        eprintln!("[todo-sync] component maintenance failed: {error}");
+        let _ = write_json_atomic(&error_path, &json!({ "message": error.to_string() }));
+    } else {
+        let _ = std::fs::remove_file(error_path);
+    }
 }
 
 pub fn enable_with(
@@ -624,6 +657,9 @@ pub struct HelperStatus {
     /// Why the running helper cannot reach CloudKit, if it cannot.
     pub problem: Option<String>,
     pub installed: bool,
+    pub bundled: bool,
+    pub needs_approval: bool,
+    pub installation_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -687,6 +723,12 @@ pub fn status_with(env: &Env, supported: bool) -> Status {
             environment: None,
             problem: None,
             installed: supported && helper_app_path().is_some(),
+            bundled: supported && super::installer::bundled(),
+            needs_approval: false,
+            installation_error: std::fs::read(env.dir.join("helper-install-error.json"))
+                .ok()
+                .and_then(|v| serde_json::from_slice::<serde_json::Value>(&v).ok())
+                .and_then(|v| v["message"].as_str().map(str::to_string)),
         },
         last_tick: read_last_tick(&env.dir),
         newer_state: false,
@@ -740,6 +782,12 @@ pub fn status_with(env: &Env, supported: bool) -> Status {
                 out.helper.version = Some(info.helper_version);
                 out.helper.environment = Some(info.environment);
                 out.helper.problem = info.problem;
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if out.helper.installed && out.helper.state != "running" {
+            if let Some(app) = helper_app_path() {
+                out.helper.needs_approval = super::installer::needs_approval(&app);
             }
         }
     }

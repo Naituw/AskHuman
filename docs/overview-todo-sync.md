@@ -32,11 +32,12 @@ todos.json ◄── 读写 ──► CLI / 弹窗 / 待办窗口 / IM / MCP    
 | `tick.rs` | 一个 tick（`full` / `local_only` / `reconcile` / `restart_from_local` / `resume` / `clear_cloud` / `remove_project` / `peek`）；`state.json` 先于 `todos.json` 落盘，令牌在合并并物化之后才推进，推送确认后才记已推 |
 | `transport.rs` | `Transport` trait（账号、建区、增量拉取、保存、删区）、`NetError`（含 `TimedOut` / `Unavailable` 这类软结果）、`MemTransport`（测试用内存云，可注入故障） |
 | `helper_client.rs` | 生产 `Transport`：helper RPC 的客户端，线格式由 `todo-sync-helper/Fixtures/rpc-v1` 夹具钉住（Rust 与 Swift 共用）；helper 缺失 / 未签名 / 太旧 / 太慢都是软结果，tick 照做本地部分 |
+| `installer.rs` | 随 Mac 可执行文件嵌入的已公证 helper 资源；macOS 14 门控、签名 / Production 权限校验、首次安装与注册、升级、防降级、失败回滚。只有显式启用 / 修复或已开启同步的 daemon 启动维护会进入安装路径 |
 | `service.rs` | 生产接线：文件位置、启用 / 停用 / 清除 / 恢复 / 从本地重来、状态（设置卡与侧栏底部用）、读取钩子、helper 拉起节流、窗口用的项目列表与详情、从 iCloud 移除项目 |
 | `commands.rs` | `todo_sync_*` Tauri 命令：状态 / 启用 / 停用 / 立即同步 / `touch` / 清除 / 本地重来 / 恢复 / 修复 / 打开登录项，以及 iCloud 模式窗口用的 `projects` / `project_details` / `remove_project` / `history_count`；都在阻塞线程上跑，窗口从不等网络 |
 | `sim.rs` | 整体测试：多台模拟 Mac（各有 `todos.json`、旁路与时钟）+ 一个可注入故障与崩溃点的内存云；顺序模型、随机并发、崩溃点全枚举、各暂停原因、虚拟键场景 |
 
-`src-tauri/src/cli/todo_sync_cmd.rs`：隐藏（不进 help）的 `AskHuman todo-sync status | tick | enable | disable | resume | restart-from-local | clear-cloud | repair`；`tick --reason` 就是 helper 拉起的那条命令。
+`src-tauri/src/cli/todo_sync_cmd.rs`：隐藏（不进 help）的 `AskHuman todo-sync status | tick | enable | disable | resume | restart-from-local | clear-cloud | repair | resource-info | resource-verify`；`tick --reason` 就是 helper 拉起的那条命令。`resource-info --require-bundled` 检查资源哈希与存在性；`resource-verify` 在临时目录校验实际内嵌的组件、版本与公证；两者都不安装、不注册、不执行 helper，也不访问 iCloud。
 
 旁路目录 `~/.askhuman/state/todo-sync/`：`state.json`、`todo-sync.lock`、`enabled`（开关）、`helper.json`（交给 helper 的配置）、`helper-launch`（拉起节流）、`last-tick.json`（最近一次 tick 的结果，状态展示用）、`helper.sock`（套接字，路径长度受 104 字节限制）。标记在而 `state.json` 缺失或损坏时，下一次 tick 自行重建状态（新设备 id，云端实体按 id 认领，不重复也不丢）；没有标记就什么都不建。
 
@@ -72,7 +73,13 @@ todos.json ◄── 读写 ──► CLI / 弹窗 / 待办窗口 / IM / MCP    
 
 ## CloudKit helper（`todo-sync-helper/`）
 
-`Kit/`（线编解码、分发、tick 调度、错误映射、套接字服务、CloudKit 后端）是纯 Swift 包，`swift test` 即可；`App/`（`AppDelegate`、`HelperRuntime`、登录项注册、触发器、拉起 tick）由 XcodeGen 的工程 `project.yml` 生成。`todo-sync-helper/scripts/build.sh unsigned|dev|devid` 构建；`dev` / `devid` 需要维护者的 Apple 账号，没有 `HELPER_ALLOW_CLOUD_CHANGES=1` 会拒绝运行。`scripts/todo-sync-install-helper.sh` 把构建好的 `.app` 装进 `~/Applications`、注册登录项并打招呼。helper 暂不随正式版发布（后置项见 `docs/PROGRESS.md`）。
+`Kit/`（线编解码、分发、tick 调度、错误映射、套接字服务、CloudKit 后端）是纯 Swift 包，`swift test` 即可；`App/`（`AppDelegate`、`HelperRuntime`、登录项注册、触发器、拉起 tick）由 XcodeGen 的工程 `project.yml` 生成。`todo-sync-helper/scripts/build.sh unsigned|dev|devid` 是原自用构建入口；`dev` / `devid` 可能创建 Apple 账号资源，没有 `HELPER_ALLOW_CLOUD_CHANGES=1` 会拒绝运行。`scripts/todo-sync-install-helper.sh` 保留为自用的手动安装入口。
+
+正式分发准备见 [规格](specs/todo-sync-release.md) / [计划](plans/todo-sync-release.md)。`todo-sync-helper/scripts/release.py build` 使用已有 Developer ID 和 Production profile 做 universal 构建，不自动创建账号资源；`notarize --allow-apple-upload` 单独上传公证、staple 并生成 zip。发布流水线先完成这份资源，再用 `ASKHUMAN_TODO_SYNC_ARCHIVE` 嵌入两个 Mac 架构的主程序，`ASKHUMAN_REQUIRE_TODO_SYNC_RESOURCE=1` 防止缺资源的正式构建。npm 与旧直接更新器复制主程序即携带组件。首次启用才解包、验证和注册；源码构建可省略资源，继续使用已有的自用 helper。具体发布和真实验收状态以 PROGRESS / 计划为准，不能从代码已存在推断已经公开发布。
+
+构建期资源生成在 `src-tauri/build/todo_sync_resource.rs`，独立 Rust 回归通过 Node 测试入口运行；
+`scripts/todo-sync-resource-smoke.mjs` 用真实主程序验证 npm pack / 解包和旧版只复制主程序的路径，
+核对实际资源 hash、架构与信任检查。维护者配置与操作见 [RELEASING](../todo-sync-helper/RELEASING.md)。
 
 **装到另一台 Mac**：`ditto -c -k --keepParent` 打成 zip，`scp` 过去后 `ditto -x -k` 解开（不带隔离属性），在那台上跑 `scripts/todo-sync-install-helper.sh <解开的 .app>`（SSH 里也能注册登录项）；两台 `hello` 回的 `accountHash` 前 8 位应一致。AskHuman 本体要用**那台 Mac 自己的** Developer ID 签名：钥匙串按指定要求（含团队 ID）信任二进制，把另一个团队签的二进制直接拷过去会让后台 daemon 读不到 IM 密钥（见 `scripts/install.sh` 的签名注释）。SSH 会话拿不到签名私钥（`codesign` 报 `errSecInternalComponent`），要像 `install.sh` 的 `sign_via_gui_launchd` 那样用 `launchctl bootstrap gui/<uid>` 起一次性任务在 GUI 会话里签；最省事的是在那台上直接 `./scripts/install.sh`。`~/.local/bin/AskHuman` 若是指向 npm 包的符号链接，要替换的是链接指向的文件。上传、重签用的暂存、旧版备份各要一份二进制大小（约 50 MB）的空间，装前先看一眼 `df`：磁盘快满时 `mktemp` 会在发布任何东西之前报 `No space left on device`，不会留下半成品。装完用 `AskHuman doctor` 看 daemon 已换成新指纹。
 

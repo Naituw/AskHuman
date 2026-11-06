@@ -15,13 +15,104 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      verify_only:
+        description: Build and verify artifacts without publishing npm or a release
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
 jobs:
+  todo-sync-helper:
+    name: build and notarize universal todo sync helper
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check release version before Apple uploads
+        run: |
+          python3 - <<'PY'
+          import json, os
+          version = json.load(open('package.json'))['version']
+          package_version = json.load(open('packaging/npm/humaninloop/package.json'))['version']
+          if version != package_version:
+              raise SystemExit('frontend and npm package versions differ')
+          if os.environ.get('GITHUB_REF_TYPE') == 'tag' and os.environ['GITHUB_REF_NAME'] != f'v{version}':
+              raise SystemExit('release tag does not match the source version')
+          PY
+      - name: Build and notarize the Production helper
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          MACOS_TODO_SYNC_PROFILE_BASE64: ${{ secrets.MACOS_TODO_SYNC_PROFILE_BASE64 }}
+          MACOS_NOTARY_KEY_BASE64: ${{ secrets.MACOS_NOTARY_KEY_BASE64 }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Missing credentials must fail before any platform package can be published.
+          for name in MACOS_CERT_P12_BASE64 MACOS_CERT_PASSWORD MACOS_KEYCHAIN_PASSWORD MACOS_TODO_SYNC_PROFILE_BASE64; do
+            test -n "${!name}" || { echo "::error::missing required secret: $name"; exit 1; }
+          done
+          if [ -n "$MACOS_NOTARY_KEY_BASE64" ] && [ -n "$MACOS_NOTARY_KEY_ID" ] && [ -n "$MACOS_NOTARY_ISSUER" ]; then
+            NOTARY_AUTH=api-key
+          elif [ -n "$MACOS_NOTARY_APPLE_ID" ] && [ -n "$MACOS_NOTARY_PASSWORD" ]; then
+            NOTARY_AUTH=app-password
+          else
+            echo '::error::configure a notary Team API key or Apple ID + app-specific password'
+            exit 1
+          fi
+          brew install xcodegen
+          CERT="$RUNNER_TEMP/helper-signing.p12"
+          KEYCHAIN="$RUNNER_TEMP/helper-signing.keychain-db"
+          PROFILE="$RUNNER_TEMP/helper.provisionprofile"
+          NOTARY_KEY="$RUNNER_TEMP/notary.p8"
+          trap 'rm -f "$CERT" "$PROFILE" "$NOTARY_KEY"; security delete-keychain "$KEYCHAIN" >/dev/null 2>&1 || true' EXIT
+          printf '%s' "$MACOS_CERT_P12_BASE64" | base64 --decode > "$CERT"
+          printf '%s' "$MACOS_TODO_SYNC_PROFILE_BASE64" | base64 --decode > "$PROFILE"
+          if [ "$NOTARY_AUTH" = api-key ]; then
+            printf '%s' "$MACOS_NOTARY_KEY_BASE64" | base64 --decode > "$NOTARY_KEY"
+          else
+            touch "$NOTARY_KEY"
+          fi
+          chmod 600 "$CERT" "$PROFILE" "$NOTARY_KEY"
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT" -P "$MACOS_CERT_PASSWORD" -t cert -f pkcs12 -k "$KEYCHAIN" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk '/Developer ID Application/{print $2; exit}')
+          test -n "$IDENTITY" || { echo '::error::Developer ID identity unavailable'; exit 1; }
+          python3 todo-sync-helper/scripts/release.py build --profile "$PROFILE" --identity "$IDENTITY" --output "$RUNNER_TEMP/todo-sync"
+          if [ "$NOTARY_AUTH" = api-key ]; then
+            python3 todo-sync-helper/scripts/release.py notarize --app "$RUNNER_TEMP/todo-sync/AskHumanTodoSync.app" --output "$RUNNER_TEMP/todo-sync/AskHumanTodoSync.zip" --key "$NOTARY_KEY" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER" --allow-apple-upload
+          else
+            xcrun notarytool store-credentials AskHumanCI --apple-id "$MACOS_NOTARY_APPLE_ID" --password "$MACOS_NOTARY_PASSWORD" --team-id DMJXDB9H6Q --keychain "$KEYCHAIN"
+            python3 todo-sync-helper/scripts/release.py notarize --app "$RUNNER_TEMP/todo-sync/AskHumanTodoSync.app" --output "$RUNNER_TEMP/todo-sync/AskHumanTodoSync.zip" --keychain-profile AskHumanCI --keychain "$KEYCHAIN" --allow-apple-upload
+          fi
+      - name: Keep notarization recovery inputs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: todo-sync-notary-recovery
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/todo-sync/notary-*.json
+            ${{ runner.temp }}/todo-sync/notary-input.zip
+      - uses: actions/upload-artifact@v6
+        with:
+          name: todo-sync-resource
+          if-no-files-found: error
+          path: ${{ runner.temp }}/todo-sync/AskHumanTodoSync.zip
+
   build:
     name: build ${{ matrix.target }}
+    needs: todo-sync-helper
     strategy:
       fail-fast: false
       matrix:
@@ -74,7 +165,26 @@ jobs:
 
       - run: pnpm build
 
+      - uses: actions/download-artifact@v7
+        if: runner.os == 'macOS'
+        with:
+          name: todo-sync-resource
+          path: todo-sync-resource
+
+      - name: Require the embedded todo sync resource on macOS
+        if: runner.os == 'macOS'
+        run: |
+          echo "ASKHUMAN_TODO_SYNC_ARCHIVE=$GITHUB_WORKSPACE/todo-sync-resource/AskHumanTodoSync.zip" >> "$GITHUB_ENV"
+          echo "ASKHUMAN_REQUIRE_TODO_SYNC_RESOURCE=1" >> "$GITHUB_ENV"
+
       - run: cargo build --release --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --features custom-protocol
+
+      - name: Verify the embedded resource (native macOS)
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          src-tauri/target/${{ matrix.target }}/release/AskHuman todo-sync resource-info --require-bundled
+          src-tauri/target/${{ matrix.target }}/release/AskHuman todo-sync resource-verify
+          node scripts/todo-sync-resource-smoke.mjs --binary src-tauri/target/${{ matrix.target }}/release/AskHuman --archive todo-sync-resource/AskHumanTodoSync.zip
 
       # Sign macOS binaries with the Developer ID cert (explicit, from Secrets — no auto-detect) so
       # the keychain trusts them across updates (DR is cdhash-independent → secret reads stay
@@ -122,6 +232,7 @@ jobs:
   publish:
     name: publish npm + GitHub Release
     needs: build
+    if: github.event_name == 'push' || github.event.inputs.verify_only == 'false'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6

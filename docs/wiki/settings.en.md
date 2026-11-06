@@ -6,6 +6,9 @@ Run `AskHuman --settings` (or click the gear in the popup's top-right) to open t
 
 ## General
 
+iCloud todo sync stays under Experimental and requires enabling experimental features first.
+See [iCloud todo sync](todo-sync.en.md) for requirements, setup, and limitations.
+
 - **Theme** — system / light / dark.
 - **Always on top** — keep the popup above other windows.
 - **Appear animation** (macOS only) — None / Document / Alert.

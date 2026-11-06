@@ -334,9 +334,12 @@ App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-foll
 - [ ] 后置（需求 §4）：Mermaid 对齐 Mac 的 `sandbox`、`ahasset://` 本地图片、Markdown 附件预览改网页渲染、页内查找
 - [ ] 仓库外的原型目录 `/Users/wutian/Developer/HumanInLoop-ios-web-md-proto/`（约 399 MB，正式实现已从中移植）可以删除，删之前请用户确认
 
-## 进行中：跨设备待办同步（多台 Mac，iCloud）——已合并进 main（本地，未推送），两台 Mac 已装机并对真实数据启用，剩下的真机项要用户在场
+## 进行中：跨设备待办同步（多台 Mac，iCloud）——已在 origin/main，自用已启用，正在准备正式分发
 
 需求 `docs/specs/todo-sync.md`、计划 `docs/plans/todo-sync.md`（实施记录在其 §10）、实现地图 `docs/overview-todo-sync.md`、界面稿 `docs/assets/todo-sync-ui/`。
+2026-11-06 用户要求按面向所有用户的正式发布要求准备；继续留在实验设置、默认关闭；接受现有后台传播延迟，不再以 5 秒作为发布门槛。
+已确认 npm 平台子包携带组件、首次启用才安装、同步要求 macOS 14+（本体仍 11+）；为覆盖旧版直接更新器，后续确认把已签名公证的 helper zip 嵌入 Mac 可执行文件。
+按用户要求直接在主工作树开发；规格 [todo-sync-release](specs/todo-sync-release.md)，计划 [todo-sync-release](plans/todo-sync-release.md)。朋友独立账号的首次使用验收安排在候选包完成后，已记项目待办。
 2026-10-27 用户评审通过并说「你自己全部搞定，我要上班了」；分支 `feat/todo-sync`，worktree `../HumanInLoop-todosync`（Dev Instance，popup-only）；两者 2026-10-29 已清理（提交都在 main 里）。
 S0 可行性 spike 的结果摘要在需求附录 A；spike 工程在仓库外：`~/Developer/AskHuman-TodoSync-Spike/`（复现方法见其中的 `RUNBOOK.txt`）。
 
@@ -356,12 +359,10 @@ P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端
 
 下一步：
 - [ ] **看着用一阵**：两台的真实数据已在同步（见上一段）。有异常（重复、缺失、迟迟不到）先看 `AskHuman todo-sync status` 与 `~/Library/Logs/AskHumanTodoSync/helper.log`；要退回就 `AskHuman todo-sync disable`，装前备份在两台的 `~/.askhuman/state/todos.json.before-todo-sync-2026-10-28`（满意后可删）。B 的旧二进制备份在 B 的 `~/.askhuman/backups/pre-todo-sync-install-*/`。
-- [ ] **推送延迟没达到需求 §16 第 1 条的 5 秒，等用户定怎么办**（2026-10-29 凌晨用户在场，两台真 Mac、真实区、探针待办，19 个计入样本）：落地时间最快 3.1 秒、中位 22.7 秒、p90 47 秒、最大 139 秒，5 秒内的 2/17，另有 2 个 240 秒内没落地；其中我们自己的固定部分中位约 3.4 秒（源端去抖 + 先拉后推约 2.2 秒、对端拉取约 1.2 秒），推送到达 0.1–52.6 秒（中位 15.7 秒）才是大头，两台各开 `caffeinate -u` 没有改善。规格与计划已改成实测描述，§16 第 1 条的标准本身没动。出路：① 改标准；② 固定部分压到约 2 秒（去抖 1 秒 → 0.3 秒、刚拉过时跳过「先拉」）；③ 待办窗口可见时 helper 每 3 秒快速轮询；④ 维持现状。数据、方法与局限见计划 §10，工具 `python3 scripts/todo-sync-latency-probe.py run --peer <B>`。
 - [ ] **需要用户在场的真机项**（计划 §5 P6、§6 的 E8 / E9，远程与无人值守做不了）：睡眠唤醒与联网恢复触发（用户 2026-10-28 23:29 选了「先不做，稍后再说」；工具已备好：`python3 scripts/todo-sync-trigger-check.py sleep` 让本机睡眠、你按键唤醒，`… network` 把 Wi-Fi 关 15 秒再开，各自核对 helper 日志里 `reason=wake|unlock` / `network` 的 tick，Cursor 会断线几十秒；`selftest` / `status` 不碰系统）；登录项的批准形态（A、B 注册后都直接是 `enabled`，没弹过批准，所以那条路径没见过）与 helper 缺失 / 过期时的安装体验；24 小时浸泡；公证（`scripts/notarize.sh`，需用户授权）。SSH 到 Mac B 的同意只覆盖了装机与 2026-10-29 凌晨的延迟测量（都已用完），再用要重新同意；不改 B 的网络 / 代理设置。
-- [ ] **发布**：main 还没推送；P3–P5 的提交带 `Release-Note: skip`（helper 暂不随版本发布）；决定随版本发布时补一条带用户可见说明的 `feat(todo-sync)` 提交
-- [ ] P0 的绝对基线 `docs/perf/todos-window-baseline.json` 还没生成（机器常被别的任务占满，负载 5–230，计时不可信）；P1 的性能门用 `--ref <P0 参考二进制>` A/B（参考二进制在 worktree 的 `.askhuman-dev/perf-ref/AskHuman-p0`，被 gitignore）。安静且屏幕亮着时（窗口得真的绘制，否则脚本报「the window never painted」）跑 `scripts/perf-todos-window.mjs` 出基线，并按它校准需求 §9.9 的目标；iCloud 模式的首屏数字要真机开了同步后补（Dev Instance 开不了）
-- [ ] 用户文档 `docs/wiki/todo-sync.md`（含英文版）等 helper 能随版本发布时再写
-- [ ] 分发给别人前：用另一个大陆 iCloud 账号复测（容器 / 用户层初始化）；helper 打进 `AskHuman.app` 的 `Contents/Library/LoginItems`、公证、自更新下发；附件同步、手机直连 CloudKit 等另行评审（iOS App 读写待办已经由 Mac 网关代答做了，见下一节）
+- [ ] **正式分发准备**：安装 / 升级 / 回滚、嵌入资源、签名公证流水线与中英文用户说明已实现，正在验证（见新计划）。本机 universal Production 候选已获 Apple Accepted 并 staple，CI secrets 已由用户手动配置且核对名称；仍需内嵌产物升级、CI 实际构建、独立账号 / 稳定系统与恢复场景验收。未公开发布。历史 P3–P5 带 `Release-Note: skip`，实际发版时须补用户可见说明。
+- [ ] 性能基线 / A-B：旧 worktree 的 P0 参考二进制已不存在；已定位可重建的参考提交 `9f5bab2b`（旧下拉框 + 埋点），归档在 `todo-sync-helper/build/perf-reference-source`。2026-11-06 当前候选的压力热前端 p90 227 ms，但取样负载 369 → 116.8，未写 baseline、未关闭原对比门槛。machine-health 持续退出 2，已告知并请用户释放内存；用户选择「保持当前环境，单任务后台继续」。后续在临时目录构建参考并用现有 `scripts/perf-todos-window.mjs --ref <参考程序>` 做交错 A/B；安静亮屏后保留正式基线。iCloud 模式首屏仍需真实启用环境补验。
+- [ ] 分发给别人前：按正式分发规格完成内嵌公证资源和 CI 配置；用另一个大陆 iCloud 账号复测首次初始化，补稳定系统与恢复验收。helper 仍是首次启用时安装的独立 `.app`，资源内嵌方案替代旧计划的主应用 bundle 内嵌登录项。附件同步、手机直连 CloudKit 另行评审（iOS App 读写待办已由 Mac 网关代答，见下一节）。
 - 构建小贴士（shell 的 HOME 被指向 `/tmp/ph`）：`export CARGO_HOME=/Users/wutian/.cargo CARGO_INCREMENTAL=0 GIT_CONFIG_GLOBAL=/Users/wutian/.gitconfig npm_config_store_dir=/Users/wutian/Library/pnpm/store`，否则 cargo 会重新下载依赖、`./scripts/install.sh` 会卡在 pnpm 的交互提示
 
 ## 待验收：iOS App 管理待办（已合并进 main，两台 Mac 与 iPhone Air 都已换上新版，决策全部是 agent 在用户睡觉时代定的，等用户审阅与真机验收）
