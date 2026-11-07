@@ -55,24 +55,34 @@ The other two entries in the menu are **instructions**: they do not send anythin
 
 Stop confirmations, permission approvals, error cards and Codex native questions have no such button and are not affected by away mode.
 
-## Cursor Desktop background follow-ups
+## Cursor Desktop session protection
 
-On macOS, **Agents → Cursor → Prevent background completion follow-ups (experimental)** is off by default and
+On macOS, **Agents → Cursor → Cursor session protection (experimental)** is off by default and
 available while CLI/MCP integration is active. It applies to every local Cursor Desktop chat,
-including chats that have not called AskHuman. Background commands and subagents keep running and
-retain their results; completion notifications no longer start a model turn automatically. Send a
-message to continue. Active Await calls still receive results. Goals, subscriptions and scheduled
-automation are separate. Terminal Cursor CLI is not covered.
+including chats that have not called AskHuman, and covers two things under one switch:
+
+- **Background completions no longer continue on their own.** Background commands and subagents keep
+  running and retain their results; completion notifications no longer start a model turn
+  automatically, so send a message to continue. Active Await calls still receive results. Goals,
+  subscriptions and scheduled automation are separate.
+- **Running chats keep their messages in memory (Agents window only).** When a long first turn finally
+  fails, Cursor judges from the messages it still has loaded whether the submission produced anything,
+  and can wrongly archive the chat. While a chat is generating, the protection keeps its loaded
+  messages, lowering that risk. It costs more memory for running chats, does not fix Cursor's own
+  error handling, and cannot protect a turn that already had gaps before the protection was active.
+
+Terminal Cursor CLI is not covered.
 
 While enabled, AskHuman keeps its daemon running and automatically attaches to existing and newly
-opened Cursor windows. Settings distinguish waiting, connecting, active and failed states. A compatible
-Cursor version must pass checks before protection becomes active; failed checks leave native behavior
-in place. Startup and reload require a short attachment period. No special Cursor launch command is
-needed, and compatibility with future upgrades is not guaranteed.
+opened Cursor windows. Settings distinguish waiting, connecting, active, partly active (the part that
+is not active is named, and the other keeps working) and failed states. A compatible Cursor version
+must pass checks before each part becomes active; failed checks leave native behavior in place.
+Startup and reload require a short attachment period. No special Cursor launch command is needed, and
+compatibility with future upgrades is not guaranteed.
 Disabling the switch or integration restores native behavior without replaying already settled
 notifications or archiving/hiding chats. Stopping the daemon manually can leave existing window guards
-active; disable this switch or integration to restore native follow-ups. `AskHuman doctor --json`
-includes `cursorDesktop` diagnostics.
+active; disable this switch or integration to restore native behavior. `AskHuman doctor --json`
+includes `cursorDesktop` diagnostics (counts of ignored unloads only; no chat IDs or message content).
 
 ## Creating Cursor tasks
 

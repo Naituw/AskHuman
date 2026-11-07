@@ -25,6 +25,20 @@
   const lease = crypto.randomUUID();
   const installSource = rendererSource.replace("__ASKHUMAN_LEASE__", JSON.stringify(lease));
   const windows = new Map();
+  // The completion adapter is the primary guard; its window fields keep their meaning. Optional
+  // extra guards share this bridge's attachment and lifecycle but never each other's failures.
+  const primary = {
+    key: rendererKey, source: installSource, label: "Completion adapter",
+    ready: state => state?.enabled && state.intact && state.verified,
+    notReady: "Completion adapter did not pass native preflight",
+  };
+  const guards = (Array.isArray(config.guards) ? config.guards : []).map(guard => ({
+    name: String(guard.name), key: String(guard.key), label: `${guard.name} guard`,
+    source: String(guard.source).replace("__ASKHUMAN_LEASE__", JSON.stringify(lease)),
+    // Unavailable is a settled outcome (a contract that does not match is not retried).
+    ready: state => ["active", "notApplicable", "unavailable"].includes(state?.state),
+    notReady: `The ${guard.name} guard did not settle`,
+  }));
   let enabled = true, stopped = false, refreshPromise, registration;
   const bounded = (promise, ms, label) => {
     let timer;
@@ -33,22 +47,26 @@
     })]).finally(() => clearTimeout(timer));
   };
   const evaluate = (wc, expression) => bounded(wc.executeJavaScript(expression), 3000, "Window evaluation timed out");
-  const readState = wc => evaluate(wc, `(async () => {
-    const s = globalThis[${JSON.stringify(rendererKey)}];
+  const readState = (wc, key = rendererKey) => evaluate(wc, `(async () => {
+    const s = globalThis[${JSON.stringify(key)}];
     if (!s) return null;
     if (s.owner !== ${JSON.stringify(config.owner)}) throw new Error("Another AskHuman instance owns this window");
     if (s.revision !== ${JSON.stringify(config.revision)}) throw new Error("A different adapter version requires restoration");
     if (s.lease !== ${JSON.stringify(lease)}) throw new Error("A different adapter installation requires restoration");
     return await s.activate();
   })()`);
-  const restoreWindow = wc => evaluate(wc, `(() => {
-    const s = globalThis[${JSON.stringify(rendererKey)}];
+  const restoreState = (wc, key) => evaluate(wc, `(() => {
+    const s = globalThis[${JSON.stringify(key)}];
     if (!s) return true;
     if (s.owner !== ${JSON.stringify(config.owner)} || s.revision !== ${JSON.stringify(config.revision)} || s.lease !== ${JSON.stringify(lease)}) return false;
     return s.restore();
   })()`);
+  // Every guard is restored; one that cannot be restored keeps the bridge available for a retry.
+  const restoreWindow = async wc => (await Promise.all(
+    [rendererKey, ...guards.map(guard => guard.key)].map(key => restoreState(wc, key)),
+  )).every(Boolean);
 
-  async function install(wc) {
+  async function install(wc, guard = primary) {
     if (wc.debugger.isAttached() || wc.isDevToolsOpened()) throw new Error("Window debugger is in use");
     let attached = false, breakpoint, listener, oursPaused = false;
     const group = `askhuman-${crypto.randomUUID()}`;
@@ -71,11 +89,11 @@
             const frame = params.callFrames?.[0];
             if (!frame) throw new Error("Composer provider frame is unavailable");
             const result = await command("Debugger.evaluateOnCallFrame", {
-              callFrameId: frame.callFrameId, expression: installSource, returnByValue: true,
+              callFrameId: frame.callFrameId, expression: guard.source, returnByValue: true,
             });
             if (result.exceptionDetails) {
               const detail = result.exceptionDetails.exception?.description?.split("\n")[0];
-              throw new Error(detail?.slice(0, 180) || "Completion adapter contract check failed");
+              throw new Error(detail?.slice(0, 180) || `${guard.label} contract check failed`);
             }
             resolve(result.result?.value);
           } catch (error) { reject(error); }
@@ -93,7 +111,7 @@
         expression: "globalThis.__SSG_COMPOSER_PROVIDER__.getStates()", returnByValue: true,
       });
       const [state] = await bounded(Promise.all([paused, invoke]), 5000, "Composer discovery timed out");
-      if (!state?.prepared) throw new Error("Completion adapter was not prepared");
+      if (!state?.prepared) throw new Error(`${guard.label} was not prepared`);
     } finally {
       if (listener) wc.debugger.removeListener("message", listener);
       if (breakpoint) try { await command("Debugger.removeBreakpoint", { breakpointId: breakpoint }); } catch {}
@@ -104,19 +122,20 @@
         try { wc.debugger.detach(); } catch {}
       }
     }
-    const state = await readState(wc);
-    if (!state?.enabled || !state.intact || !state.verified) throw new Error("Completion adapter did not pass native preflight");
+    const state = await readState(wc, guard.key);
+    if (!guard.ready(state)) throw new Error(guard.notReady);
     return state;
   }
 
   function track(wc) {
     if (wc.isDestroyed() || wc.getType() !== "window" || windows.has(wc.id)) return;
-    const record = { wc, phase: "attaching", generation: 0, suppressed: 0, retryAt: 0, attempts: 0 };
+    const record = { wc, phase: "attaching", generation: 0, suppressed: 0, retryAt: 0, attempts: 0, guards: {} };
     record.reload = () => {
       record.generation++;
       record.phase = "attaching";
       record.retryAt = 0;
       record.attempts = 0;
+      record.guards = {};
       delete record.error;
     };
     record.destroy = () => windows.delete(wc.id);
@@ -135,41 +154,96 @@
         if (wc.isDestroyed()) { windows.delete(wc.id); continue; }
         const workbench = /\/vs\/(?:code\/[^/]+\/)?workbench\/workbench(?:\.[^/?#]+)?\.html(?:[?#]|$)/;
         if (!workbench.test(wc.getURL())) { record.phase = "ignored"; continue; }
-        if (record.retryAt > Date.now()) continue;
-        const generation = record.generation;
-        try {
-          let state = await readState(wc);
-          if (!state) state = await install(wc);
-          if (stopped || !enabled || generation !== record.generation) {
-            if (stopped || !enabled) await restoreWindow(wc).catch(() => {});
-            continue;
-          }
-          if (!state.enabled || !state.intact || !state.verified) throw new Error("The completion adapter is not verified or was replaced");
-          record.phase = "active";
-          record.surface = state.surface;
-          record.suppressed = state.suppressed;
-          record.verified = state.verified;
-          record.checks = state.checks;
-          record.attempts = 0;
-          record.retryAt = 0;
-          delete record.error;
-        } catch (error) {
-          if (generation !== record.generation) continue;
-          record.phase = "error";
-          record.error = String(error.message ?? error).slice(0, 200);
-          record.attempts++;
-          record.retryAt = Date.now() + Math.min(30000, 1000 * 2 ** Math.min(record.attempts - 1, 5));
-        }
+        await refreshPrimary(record);
+        for (const guard of guards) await refreshGuard(record, guard);
       }
     })().finally(() => { refreshPromise = undefined; });
     return refreshPromise;
   }
+
+  async function refreshPrimary(record) {
+    if (record.retryAt > Date.now()) return;
+    const wc = record.wc;
+    const generation = record.generation;
+    try {
+      let state = await readState(wc);
+      if (!state) state = await install(wc, primary);
+      if (stopped || !enabled || generation !== record.generation) {
+        if (stopped || !enabled) await restoreWindow(wc).catch(() => {});
+        return;
+      }
+      if (!state.enabled || !state.intact || !state.verified) throw new Error("The completion adapter is not verified or was replaced");
+      record.phase = "active";
+      record.surface = state.surface;
+      record.suppressed = state.suppressed;
+      record.verified = state.verified;
+      record.checks = state.checks;
+      record.attempts = 0;
+      record.retryAt = 0;
+      delete record.error;
+    } catch (error) {
+      if (generation !== record.generation) return;
+      record.phase = "error";
+      record.error = String(error.message ?? error).slice(0, 200);
+      record.attempts++;
+      record.retryAt = Date.now() + Math.min(30000, 1000 * 2 ** Math.min(record.attempts - 1, 5));
+    }
+  }
+
+  // An extra guard keeps its own retry schedule: its failure never changes the primary's phase,
+  // and a settled "unavailable" is only polled, not reinstalled, until the window reloads.
+  async function refreshGuard(record, guard) {
+    if (stopped || !enabled) return;
+    const slot = record.guards[guard.name] ??= { attempts: 0, retryAt: 0 };
+    if (slot.retryAt > Date.now()) return;
+    const wc = record.wc;
+    const generation = record.generation;
+    try {
+      let state = await readState(wc, guard.key);
+      if (!state) state = await install(wc, guard);
+      if (stopped || !enabled || generation !== record.generation) {
+        if (stopped || !enabled) await restoreWindow(wc).catch(() => {});
+        return;
+      }
+      if (!guard.ready(state)) throw new Error(guard.notReady);
+      slot.status = state;
+      slot.attempts = 0;
+      slot.retryAt = 0;
+      delete slot.error;
+    } catch (error) {
+      if (generation !== record.generation) return;
+      slot.error = String(error.message ?? error).slice(0, 200);
+      slot.attempts++;
+      slot.retryAt = Date.now() + Math.min(30000, 1000 * 2 ** Math.min(slot.attempts - 1, 5));
+    }
+  }
+
+  // Only known, bounded fields leave the window. Counts are plain non-negative integers that the
+  // daemon can always parse: 64-bit fields stay within the safe range, 32-bit ones within a million.
+  const count = value => Number.isFinite(value) && value > 0 ? Math.min(Math.floor(value), Number.MAX_SAFE_INTEGER) : 0;
+  const small = value => Math.min(count(value), 1000000);
+  const guardStatus = (record, guard) => {
+    const slot = record.guards[guard.name] ?? {};
+    const reported = slot.status ?? {};
+    const error = slot.error ?? (typeof reported.error === "string" ? reported.error.slice(0, 200) : undefined);
+    return {
+      state: slot.error ? "unavailable" : typeof reported.state === "string" ? reported.state : "pending",
+      error, checks: small(reported.checks),
+      skipped: count(reported.skipped), skippedBubbles: count(reported.skippedBubbles), passed: count(reported.passed),
+      lastSkippedAt: count(reported.lastSkippedAt),
+      recent: (Array.isArray(reported.recent) ? reported.recent : []).slice(-20).map(entry => ({
+        at: count(entry?.at), bubbles: count(entry?.bubbles), scope: entry?.scope === "all" ? "all" : "partial",
+      })),
+      atRisk: Number.isFinite(reported.atRisk) ? small(reported.atRisk) : null, atRiskAt: count(reported.atRiskAt),
+    };
+  };
 
   const status = () => ({
     protocol: 1, adapterRevision: config.revision, pid: process.pid, version: electron.app.getVersion(), enabled: enabled && !stopped,
     windows: [...windows.values()].filter(r => r.phase !== "ignored" && !r.wc.isDestroyed()).map(r => ({
       id: r.wc.id, phase: r.phase, surface: r.surface, suppressed: r.suppressed,
       verified: r.phase === "active" && r.verified === true, checks: r.checks ?? 0, error: r.error,
+      ...Object.fromEntries(guards.map(guard => [guard.name, guardStatus(r, guard)])),
     })),
   });
   const created = (_event, wc) => track(wc);

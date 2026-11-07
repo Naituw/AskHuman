@@ -25,6 +25,10 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 const RENDERER: &str = include_str!("renderer.js");
 const PREFLIGHT: &str = include_str!("preflight.js");
 const BRIDGE: &str = include_str!("bridge.js");
+// The running-chat protection is an independent guard hosted by the same bridge.
+const RETENTION: &str = include_str!("retention.js");
+const RETENTION_PREFLIGHT: &str = include_str!("retention_preflight.js");
+const RETENTION_KEY: &str = "__ASKHUMAN_CURSOR_RETENTION_V1__";
 const PORT: u16 = 9229;
 
 pub(super) fn adapter_revision() -> String {
@@ -35,6 +39,8 @@ pub(super) fn adapter_revision() -> String {
             hash.update(BRIDGE);
             hash.update(RENDERER);
             hash.update(PREFLIGHT);
+            hash.update(RETENTION);
+            hash.update(RETENTION_PREFLIGHT);
             format!("{:x}", hash.finalize())[..16].into()
         })
         .clone()
@@ -503,11 +509,23 @@ fn bootstrap_source(manifest: &Manifest, package: &Path, close_inspector: bool) 
     } else {
         adapter_revision()
     };
-    let config = json!({
+    let mut config = json!({
         "socket": manifest.socket, "owner": manifest.owner,
         "token": manifest.token, "appPackage": package,
         "revision": revision,
     });
+    if !manifest.messages_only {
+        // The message bridge hosts only its own renderer. The running-chat protection rides with
+        // the completion adapter's bridge and is reported next to it, never inside it.
+        config["guards"] = json!([{
+            "name": "retention",
+            "key": RETENTION_KEY,
+            "source": RETENTION
+                .replacen("__ASKHUMAN_RETENTION_PREFLIGHT__", RETENTION_PREFLIGHT, 1)
+                .replace("__ASKHUMAN_OWNER__", &json!(manifest.owner).to_string())
+                .replace("__ASKHUMAN_REVISION__", &json!(revision).to_string()),
+        }]);
+    }
     let renderer = if manifest.messages_only {
         include_str!("message_renderer.js")
     } else {
@@ -943,7 +961,9 @@ async fn reconcile(
                         status.cursor_versions.push(version.into());
                     }
                 }
-                all_active &= super::windows_verified(&windows);
+                // Every window's guards are judged together below; here a process only needs to
+                // have produced windows at all.
+                all_active &= !windows.is_empty();
                 for mut window in windows {
                     window.pid = manifest.process.pid;
                     status.windows.push(window);
@@ -956,17 +976,11 @@ async fn reconcile(
             }
         }
     }
-    status.active = all_active;
-    status.phase = if status.error.is_some() || status.windows.iter().any(|w| w.phase == "error") {
-        "error"
-    } else if all_active {
-        "active"
-    } else if status.processes == 0 || status.windows.is_empty() {
-        "waiting"
-    } else {
-        "attaching"
-    }
-    .into();
+    // Each window's two guards are judged on their own: one that cannot attach leaves the other
+    // working and the phase `partial`, never a false `active`.
+    let (active, phase) = super::overall(all_active, status.error.is_some(), &status.windows);
+    status.active = active;
+    status.phase = phase.into();
     Ok(())
 }
 
@@ -1031,9 +1045,89 @@ mod tests {
         assert!(!source.contains("__ASKHUMAN_RENDERER__"));
         assert!(!source.contains("__ASKHUMAN_OWNER__"));
         assert!(!source.contains("__ASKHUMAN_PREFLIGHT__"));
+        assert!(!source.contains("__ASKHUMAN_RETENTION_PREFLIGHT__"));
         assert!(source.contains("finally"));
         assert!(manifest.socket.as_os_str().len() < 100);
         assert_eq!(manifest.token.len(), 64);
+    }
+
+    fn process() -> Process {
+        Process {
+            pid: 42,
+            started: "a".into(),
+            executable: "/Applications/Cursor.app/Contents/MacOS/Cursor".into(),
+        }
+    }
+
+    #[test]
+    fn the_protection_guard_ships_with_the_completion_bridge_only() {
+        let package = Path::new("/tmp/package.json");
+        let manifest = new_manifest(process());
+        let completion = bootstrap_source(&manifest, package, false);
+        assert!(completion.contains(RETENTION_KEY));
+        assert!(completion.contains("\"name\":\"retention\""));
+        // The guard's own owner and revision are filled in exactly (as JSON string literals).
+        assert!(completion.contains(&format!("const owner = \\\"{}\\\";", manifest.owner)));
+        assert!(completion.contains(&format!("const revision = \\\"{}\\\";", adapter_revision())));
+        // The lease is the bridge's to fill at runtime; the preflight is embedded once.
+        assert!(completion.contains("__ASKHUMAN_LEASE__"));
+        assert!(!completion.contains("__ASKHUMAN_RETENTION_PREFLIGHT__"));
+        assert_eq!(completion.matches("function verifyRetention").count(), 1);
+
+        let mut messages = new_manifest(process());
+        messages.messages_only = true;
+        let message_source = bootstrap_source(&messages, package, false);
+        assert!(!message_source.contains(RETENTION_KEY));
+        assert!(!message_source.contains("\"guards\""));
+        assert!(!message_source.contains("function verifyRetention"));
+    }
+
+    #[test]
+    fn the_revision_covers_every_source_the_bridge_ships() {
+        let mut every = Sha256::new();
+        for part in [BRIDGE, RENDERER, PREFLIGHT, RETENTION, RETENTION_PREFLIGHT] {
+            every.update(part);
+        }
+        assert_eq!(adapter_revision(), format!("{:x}", every.finalize())[..16]);
+        // A guard update must reach already attached bridges, so it cannot keep the old revision.
+        let mut legacy = Sha256::new();
+        for part in [BRIDGE, RENDERER, PREFLIGHT] {
+            legacy.update(part);
+        }
+        assert_ne!(adapter_revision(), format!("{:x}", legacy.finalize())[..16]);
+        assert_ne!(adapter_revision(), message_revision());
+    }
+
+    /// The assembled bootstrap is what Cursor's main process evaluates, so a quoting or
+    /// placeholder mistake in the assembly would only show up there. Skipped without Node.
+    #[test]
+    fn the_assembled_bootstraps_are_valid_javascript_when_node_is_available() {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let package = Path::new("/tmp/a'\"b/package.json");
+        let completion = new_manifest(process());
+        let mut messages = new_manifest(process());
+        messages.messages_only = true;
+        for (name, manifest) in [("completion", completion), ("messages", messages)] {
+            let path = directory.path().join(format!("{name}.js"));
+            std::fs::write(&path, bootstrap_source(&manifest, package, true)).unwrap();
+            let checked = std::process::Command::new("node")
+                .arg("--check")
+                .arg(&path)
+                .output()
+                .unwrap();
+            assert!(
+                checked.status.success(),
+                "{name} bootstrap is not valid JavaScript: {}",
+                String::from_utf8_lossy(&checked.stderr)
+            );
+        }
     }
 
     #[tokio::test]

@@ -348,10 +348,13 @@ fn render_text(
 
     let cursor = crate::cursor_desktop::status(&cfg.cursor_desktop);
     out.push_str(&format!(
-        "\nCursor Desktop\n  background-followup-control: {} ({} windows)\n",
+        "\nCursor Desktop\n  session-protection: {} ({} windows)\n",
         cursor.phase,
         cursor.windows.len(),
     ));
+    if let Some(summary) = crate::cursor_desktop::retention_summary(&cursor.windows) {
+        out.push_str(&format!("  running-chat-protection: {summary}\n"));
+    }
     if let Some(error) = cursor.error {
         out.push_str(&format!("  {error}\n"));
     }

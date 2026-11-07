@@ -98,6 +98,82 @@ it("clears a restoration error when an automatic retry succeeds after disabling"
   expect(row.find('[role="alert"]').exists()).toBe(false);
 });
 
+// --- two guards under one switch (docs/specs/cursor-desktop-background-followup.md §7) ---
+
+const retention = (state: string, error?: string) => ({
+  state, error, checks: state === "active" ? 10 : 0, skipped: 0, skippedBubbles: 0, passed: 0,
+  lastSkippedAt: 0, recent: [], atRisk: null, atRiskAt: 0,
+});
+const guarded = (completion: "active" | "error", guard: ReturnType<typeof retention>, id = 1) => ({
+  pid: 7, id, phase: completion, surface: "agents", suppressed: 0,
+  verified: completion === "active", checks: completion === "active" ? 6 : 0,
+  error: completion === "error" ? "Unsupported background completion contract" : undefined, retention: guard,
+});
+const partial = (...windows: ReturnType<typeof guarded>[]) => ({ ...state(true, "partial"), processes: 1, windows });
+const unloadError = "Unsupported conversation unload contract: method is missing";
+
+it("names the running-chat protection when only that guard is missing, and still shows why", async () => {
+  api.status.mockResolvedValue(partial(guarded("active", retention("unavailable", unloadError))));
+  const row = await mountRow();
+  expect(row.get('[role="status"]').text()).toBe("Partly active: running-chat protection is not active");
+  expect(row.get('[role="alert"]').text()).toContain(unloadError);
+});
+
+it("names the background-completion guard when only that guard is missing", async () => {
+  api.status.mockResolvedValue(partial(guarded("error", retention("active"))));
+  const row = await mountRow();
+  expect(row.get('[role="status"]').text()).toBe("Partly active: background-completion guard is not active");
+  expect(row.get('[role="alert"]').text()).toContain("Unsupported background completion contract");
+});
+
+it("names both guards when different windows each lack one", async () => {
+  api.status.mockResolvedValue(partial(
+    guarded("active", retention("unavailable", unloadError), 1), guarded("error", retention("active"), 2)));
+  const row = await mountRow();
+  expect(row.get('[role="status"]').text())
+    .toBe("Partly active: background-completion guard and running-chat protection are not active");
+});
+
+it("words the partly active state in Chinese", async () => {
+  i18n.global.locale.value = "zh";
+  api.status.mockResolvedValue(partial(guarded("active", retention("unavailable", unloadError))));
+  const row = await mountRow();
+  expect(row.get('[role="status"]').text()).toBe("部分生效：运行中会话保护未生效");
+  api.status.mockResolvedValue(partial(
+    guarded("active", retention("unavailable", unloadError), 1), guarded("error", retention("active"), 2)));
+  window.dispatchEvent(new Event("focus"));
+  await flushPromises();
+  expect(row.get('[role="status"]').text()).toBe("部分生效：后台完成续跑拦截、运行中会话保护未生效");
+});
+
+it("does not claim a missing guard it cannot name", async () => {
+  api.status.mockResolvedValue(partial(guarded("active", retention("active"))));
+  const row = await mountRow();
+  expect(row.get('[role="status"]').text()).toBe("Checking and connecting to Cursor Desktop…");
+  expect(row.find('[role="alert"]').exists()).toBe(false);
+});
+
+it("stays fully active, and without a warning, when both guards work or one does not apply", async () => {
+  api.status.mockResolvedValue({ ...state(true, "active"), processes: 1, windows: [
+    guarded("active", retention("active"), 1),
+    { ...guarded("active", retention("notApplicable"), 2), surface: "ide" },
+  ] });
+  const row = await mountRow();
+  expect(row.get('[role="status"]').text()).toBe("Active in Cursor Desktop");
+  expect(row.find('[role="alert"]').exists()).toBe(false);
+});
+
+it("keeps the single switch and renames it for both protections", async () => {
+  const row = await mountRow();
+  expect(row.findAll('input[type="checkbox"]')).toHaveLength(1);
+  expect(row.text()).toContain("Cursor session protection (experimental)");
+  expect(row.text()).toContain("running chat keeps its messages in memory");
+  i18n.global.locale.value = "zh";
+  await flushPromises();
+  expect(row.text()).toContain("Cursor 会话防护（实验）");
+  expect(row.text()).toContain("运行中的会话不再被释放内存中的消息");
+});
+
 // --- where new Cursor tasks run (docs/specs/cursor-desktop-task-creation.md §3) ---
 
 const launchButtons = (row: VueWrapper) => row.findAll(".segmented button");

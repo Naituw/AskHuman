@@ -114,3 +114,9 @@ Agent Host 日志明确选择 `runtime=connect`，reason `managed-local-unavaila
 报告不可用并有界重试，不能把挂载失败显示为已生效。Windows/Linux、终端 Cursor CLI 和其它
 自动调度不在此版范围。手动停止 Daemon 后已有窗口拦截可能仍在，明确关闭本开关或切至 None
 才是还原原生后台续跑行为的入口；Daemon 重新运行会接管存量桥。
+
+## 6. 2026-11-07：运行中会话保护（增量）
+
+同一开关下新增第二个独立守卫（Agents 窗口里不卸载生成中会话的消息）。实现位置、与规格草案的差异、
+自动化与真实 Cursor 3.27.22 的验证记录和未验证部分，见规格
+[§7.12](../specs/cursor-desktop-background-followup.md#712-实现与验证记录2026-11-07)；待观察项在 `docs/PROGRESS.md`。

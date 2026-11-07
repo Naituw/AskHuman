@@ -766,6 +766,24 @@ export interface CodexDesktopStatus {
   sessions: { id: string; title: string; cwd: string; connected: boolean; active: boolean; error?: string }[];
 }
 
+/** Running-chat protection of one window; counts only, never a chat id or content. */
+export interface CursorRetentionStatus {
+  state: "active" | "notApplicable" | "unavailable" | "pending" | string;
+  error?: string | null;
+  checks: number;
+  skipped: number;
+  skippedBubbles: number;
+  passed: number;
+  lastSkippedAt: number;
+  recent: {at: number; bubbles: number; scope: "all" | "partial" | string}[];
+  atRisk?: number | null;
+  atRiskAt: number;
+}
+/** `phase`, `verified` and `checks` describe the background-completion guard; `retention` the other one. */
+export interface CursorDesktopWindow {
+  pid: number; id: number; phase: string; surface?: string; suppressed: number; verified: boolean; checks: number; error?: string;
+  retention?: CursorRetentionStatus | null;
+}
 export interface CursorDesktopStatus {
   supported: boolean;
   preferenceEnabled: boolean;
@@ -773,7 +791,7 @@ export interface CursorDesktopStatus {
   active: boolean;
   phase: string;
   processes: number;
-  windows: {pid: number; id: number; phase: string; surface?: string; suppressed: number; verified: boolean; checks: number; error?: string}[];
+  windows: CursorDesktopWindow[];
   error?: string;
 }
 export const cursorDesktopStatus = () => invoke<CursorDesktopStatus>("cursor_desktop_status");

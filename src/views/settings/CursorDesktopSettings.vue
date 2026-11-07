@@ -14,7 +14,27 @@ const saving = ref(false);
 const error = ref("");
 const enabled = computed(() => config.value?.cursorDesktop?.suppressBackgroundCompletionFollowUp ?? false);
 const phase = computed(() => !isMac ? "unsupported" : status.value?.phase ?? (enabled.value ? "attaching" : "disabled"));
-const detail = computed(() => error.value || status.value?.error || status.value?.windows.find(w => w.error)?.error || "");
+const detail = computed(() => error.value || status.value?.error
+  || status.value?.windows.find(w => w.error)?.error
+  || status.value?.windows.find(w => w.retention?.error)?.retention?.error || "");
+// The two guards are reported apart, so a partly active state can name the one that is missing.
+const missing = computed(() => {
+  const windows = status.value?.windows ?? [];
+  const names: ("completion" | "retention")[] = [];
+  if (windows.some(w => w.phase === "error")) names.push("completion");
+  if (windows.some(w => w.retention?.state === "unavailable")) names.push("retention");
+  return names;
+});
+const statusText = computed(() => {
+  if (saving.value) return t("cursorDesktop.saving");
+  if (phase.value === "partial") {
+    // Without a named guard there is nothing truthful to say beyond "still checking".
+    if (!missing.value.length) return t("cursorDesktop.attaching");
+    const what = missing.value.map(name => t(`cursorDesktop.guards.${name}`)).join(t("cursorDesktop.guards.separator"));
+    return t("cursorDesktop.partial", { what }, missing.value.length);
+  }
+  return detail.value ? t("cursorDesktop.error") : t(`cursorDesktop.${phase.value}`);
+});
 // Where new Cursor tasks run: the CLI in a terminal (default) or Cursor's Agents window.
 const launchStatus = ref<CursorLaunchStatus | null>(null);
 const launchSaving = ref(false);
@@ -153,9 +173,7 @@ onBeforeUnmount(() => {
   </div>
   <p class="card-desc agent-hint">{{ t("cursorDesktop.hint") }}</p>
   <p class="card-desc agent-hint">{{ t("cursorDesktop.experimental") }}</p>
-  <p class="card-desc agent-hint" role="status">
-    {{ saving ? t("cursorDesktop.saving") : detail ? t("cursorDesktop.error") : t(`cursorDesktop.${phase}`) }}
-  </p>
+  <p class="card-desc agent-hint" role="status">{{ statusText }}</p>
   <p v-if="detail" class="result err" role="alert">{{ detail }}</p>
   <hr class="divider" />
   <div class="row agent-row">

@@ -32,24 +32,174 @@ impl Default for Config {
     }
 }
 
+/// One recent skipped unload. Anonymous by construction: no chat id and no content.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RecentSkip {
+    pub at: u64,
+    pub bubbles: u64,
+    /// `all` when a running chat's whole loaded history was kept, otherwise `partial`.
+    pub scope: String,
+}
+
+/// Running-chat protection of one window, reported apart from the completion guard's fields.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RetentionStatus {
+    /// `active`, `notApplicable` (IDE windows), `unavailable`, or `pending`.
+    pub state: String,
+    pub error: Option<String>,
+    pub checks: u32,
+    pub skipped: u64,
+    pub skipped_bubbles: u64,
+    pub passed: u64,
+    pub last_skipped_at: u64,
+    pub recent: Vec<RecentSkip>,
+    /// Running chats whose last message of yours is already outside the loaded history; `None`
+    /// when it could not be measured. Purely diagnostic: it never affects the guard.
+    pub at_risk: Option<u32>,
+    pub at_risk_at: u64,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct WindowStatus {
     pub pid: u32,
     pub id: u32,
+    /// The phase, `verified` and `checks` below describe the completion guard only.
     pub phase: String,
     pub surface: Option<String>,
     pub suppressed: u64,
     pub verified: bool,
     pub checks: u32,
     pub error: Option<String>,
+    pub retention: Option<RetentionStatus>,
 }
 
-pub(super) fn windows_verified(windows: &[WindowStatus]) -> bool {
-    !windows.is_empty()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GuardState {
+    Active,
+    NotApplicable,
+    Failed,
+    Pending,
+}
+
+fn completion_state(window: &WindowStatus) -> GuardState {
+    if window.phase == "active" && window.verified && window.checks >= 6 {
+        GuardState::Active
+    } else if window.phase == "error" {
+        GuardState::Failed
+    } else {
+        GuardState::Pending
+    }
+}
+
+fn retention_state(window: &WindowStatus) -> GuardState {
+    match window.retention.as_ref() {
+        Some(retention) if retention.state == "active" && retention.checks >= 6 => {
+            GuardState::Active
+        }
+        // Only an IDE window may be exempt; the surface is known once the completion guard saw it.
+        Some(retention) if retention.state == "notApplicable" => {
+            if matches!(window.surface.as_deref(), None | Some("ide")) {
+                GuardState::NotApplicable
+            } else {
+                GuardState::Failed
+            }
+        }
+        Some(retention) if retention.state == "unavailable" => GuardState::Failed,
+        _ => GuardState::Pending,
+    }
+}
+
+/// How completely one window is protected. The two guards are judged independently, so one that
+/// cannot attach never hides or disables the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Coverage {
+    /// Every guard that applies to the window is verified.
+    Full,
+    /// One guard is verified and the other is not working.
+    Partial,
+    /// No applicable guard is working.
+    Failed,
+    /// Still attaching or verifying.
+    Attaching,
+}
+
+pub(super) fn coverage(window: &WindowStatus) -> Coverage {
+    use GuardState::*;
+    match (completion_state(window), retention_state(window)) {
+        (Active, Active | NotApplicable) => Coverage::Full,
+        (Active, Failed) | (Failed, Active) => Coverage::Partial,
+        (Failed, Failed | NotApplicable) => Coverage::Failed,
+        _ => Coverage::Attaching,
+    }
+}
+
+/// The overall `(active, phase)` of one reconcile pass. `attached` means every Cursor process
+/// answered and has at least one window; `error` is a process-level failure.
+pub(super) fn overall(
+    attached: bool,
+    error: bool,
+    windows: &[WindowStatus],
+) -> (bool, &'static str) {
+    let count = |wanted| windows.iter().filter(|w| coverage(w) == wanted).count();
+    if error || count(Coverage::Failed) > 0 {
+        (false, "error")
+    } else if windows.is_empty() {
+        (false, "waiting")
+    } else if attached && count(Coverage::Full) == windows.len() {
+        (true, "active")
+    } else if !attached || count(Coverage::Attaching) > 0 {
+        (false, "attaching")
+    } else {
+        (false, "partial")
+    }
+}
+
+/// A saved `active` claim must be backed by its own windows.
+fn windows_fully_covered(windows: &[WindowStatus]) -> bool {
+    !windows.is_empty() && windows.iter().all(|w| coverage(w) == Coverage::Full)
+}
+
+/// A saved `partial` claim needs at least one partly protected window and none that is worse.
+fn windows_partly_covered(windows: &[WindowStatus]) -> bool {
+    windows.iter().any(|w| coverage(w) == Coverage::Partial)
         && windows
             .iter()
-            .all(|window| window.phase == "active" && window.verified && window.checks >= 6)
+            .all(|w| matches!(coverage(w), Coverage::Full | Coverage::Partial))
+}
+
+/// One diagnostic line for the running-chat protection; `None` while no window reports it.
+/// Counts only: no chat ids and no content.
+pub fn retention_summary(windows: &[WindowStatus]) -> Option<String> {
+    let reported: Vec<&RetentionStatus> = windows
+        .iter()
+        .filter_map(|w| w.retention.as_ref())
+        .collect();
+    if reported.is_empty() {
+        return None;
+    }
+    let count = |state: &str| reported.iter().filter(|r| r.state == state).count();
+    let active: Vec<_> = reported.iter().filter(|r| r.state == "active").collect();
+    let at_risk = if active.is_empty() || active.iter().any(|r| r.at_risk.is_none()) {
+        "unknown".to_string()
+    } else {
+        active
+            .iter()
+            .filter_map(|r| r.at_risk)
+            .fold(0_u32, |sum, n| sum.saturating_add(n))
+            .to_string()
+    };
+    Some(format!(
+        "{} active, {} not applicable, {} unavailable, {} pending; unloads skipped {}; running chats at risk {}",
+        count("active"),
+        count("notApplicable"),
+        count("unavailable"),
+        reported.len() - count("active") - count("notApplicable") - count("unavailable"),
+        reported.iter().map(|r| r.skipped).sum::<u64>(),
+        at_risk,
+    ))
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -206,7 +356,10 @@ pub fn status(config: &Config) -> Status {
         {
             saved.preference_enabled = config.suppress_background_completion_follow_up;
             if enabled && saved.enabled {
-                if saved.active && !windows_verified(&saved.windows) {
+                // A saved claim must be backed by the saved windows themselves.
+                if (saved.active && !windows_fully_covered(&saved.windows))
+                    || (saved.phase == "partial" && !windows_partly_covered(&saved.windows))
+                {
                     saved.active = false;
                     saved.phase = "attaching".into();
                 }
@@ -268,17 +421,247 @@ pub fn start() {
 mod tests {
     use super::*;
 
+    fn retention(state: &str, checks: u32) -> Option<RetentionStatus> {
+        Some(RetentionStatus {
+            state: state.into(),
+            checks,
+            ..RetentionStatus::default()
+        })
+    }
+
+    /// `completion`: `active` (verified), `error`, or `attaching`; `guard`: the retention state
+    /// the window reports, or `None` when it reports nothing.
+    fn window(completion: &str, surface: &str, guard: Option<(&str, u32)>) -> WindowStatus {
+        WindowStatus {
+            id: 1,
+            phase: completion.into(),
+            surface: Some(surface.into()),
+            verified: completion == "active",
+            checks: if completion == "active" { 6 } else { 0 },
+            retention: guard.and_then(|(state, checks)| retention(state, checks)),
+            ..WindowStatus::default()
+        }
+    }
+
     #[test]
     fn unverified_or_partial_windows_cannot_report_active() {
         let mut window: WindowStatus = serde_json::from_str(r#"{"phase":"active"}"#).unwrap();
-        assert!(!windows_verified(std::slice::from_ref(&window)));
+        window.retention = retention("active", 10);
+        assert_ne!(
+            coverage(&window),
+            Coverage::Full,
+            "completion is not verified"
+        );
         window.verified = true;
         window.checks = 5;
-        assert!(!windows_verified(std::slice::from_ref(&window)));
+        assert_ne!(
+            coverage(&window),
+            Coverage::Full,
+            "too few completion checks"
+        );
         window.checks = 6;
-        assert!(windows_verified(std::slice::from_ref(&window)));
-        assert!(!windows_verified(&[window, WindowStatus::default()]));
-        assert!(!windows_verified(&[]));
+        assert_eq!(coverage(&window), Coverage::Full);
+        window.retention = retention("active", 5);
+        assert_ne!(
+            coverage(&window),
+            Coverage::Full,
+            "too few retention checks"
+        );
+        window.retention = None;
+        assert_ne!(
+            coverage(&window),
+            Coverage::Full,
+            "retention was never reported"
+        );
+        window.retention = retention("active", 10);
+        assert!(windows_fully_covered(std::slice::from_ref(&window)));
+        assert!(!windows_fully_covered(&[window, WindowStatus::default()]));
+        assert!(!windows_fully_covered(&[]));
+    }
+
+    #[test]
+    fn each_guard_is_judged_on_its_own() {
+        use Coverage::*;
+        let table = [
+            // (completion, retention state, expected)
+            ("active", Some(("active", 10)), Full),
+            ("active", Some(("notApplicable", 0)), Full),
+            ("active", Some(("unavailable", 0)), Partial),
+            ("active", Some(("pending", 0)), Attaching),
+            ("active", None, Attaching),
+            ("error", Some(("active", 10)), Partial),
+            ("error", Some(("notApplicable", 0)), Failed),
+            ("error", Some(("unavailable", 0)), Failed),
+            ("error", Some(("pending", 0)), Attaching),
+            ("error", None, Attaching),
+            ("attaching", Some(("active", 10)), Attaching),
+            ("attaching", Some(("unavailable", 0)), Attaching),
+            ("attaching", Some(("notApplicable", 0)), Attaching),
+            ("attaching", None, Attaching),
+        ];
+        for (completion, guard, expected) in table {
+            assert_eq!(
+                coverage(&window(completion, "agents", guard)),
+                // An Agents window is never exempt, so `notApplicable` there means a broken guard.
+                match (guard, expected) {
+                    (Some(("notApplicable", _)), Full) => Partial,
+                    (Some(("notApplicable", _)), Failed) => Failed,
+                    (_, expected) => expected,
+                },
+                "agents window: completion {completion}, retention {guard:?}"
+            );
+            if matches!(guard, Some(("notApplicable", _))) {
+                assert_eq!(
+                    coverage(&window(completion, "ide", guard)),
+                    expected,
+                    "ide window: completion {completion}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn only_an_ide_window_is_exempt_from_the_running_chat_protection() {
+        let agents = window("active", "agents", Some(("notApplicable", 0)));
+        assert_eq!(coverage(&agents), Coverage::Partial);
+        let ide = window("active", "ide", Some(("notApplicable", 0)));
+        assert_eq!(coverage(&ide), Coverage::Full);
+        // Before the completion guard has seen the surface, the retention guard's own call stands.
+        let unknown = WindowStatus {
+            surface: None,
+            ..window("error", "ide", Some(("notApplicable", 0)))
+        };
+        assert_eq!(coverage(&unknown), Coverage::Failed);
+    }
+
+    #[test]
+    fn overall_phase_follows_the_windows_and_never_overclaims() {
+        let full = window("active", "agents", Some(("active", 10)));
+        let partial = window("active", "agents", Some(("unavailable", 0)));
+        let attaching = window("attaching", "agents", None);
+        let failed = window("error", "ide", Some(("notApplicable", 0)));
+        let owned = |windows: &[&WindowStatus]| -> Vec<WindowStatus> {
+            windows.iter().map(|w| (*w).clone()).collect()
+        };
+
+        assert_eq!(overall(false, false, &[]), (false, "waiting"));
+        assert_eq!(overall(true, false, &[]), (false, "waiting"));
+        assert_eq!(overall(false, true, &[]), (false, "error"));
+        assert_eq!(overall(true, false, &owned(&[&full])), (true, "active"));
+        assert_eq!(
+            overall(true, false, &owned(&[&full, &full])),
+            (true, "active")
+        );
+        assert_eq!(
+            overall(true, false, &owned(&[&full, &partial])),
+            (false, "partial")
+        );
+        assert_eq!(
+            overall(true, false, &owned(&[&partial])),
+            (false, "partial")
+        );
+        assert_eq!(
+            overall(true, false, &owned(&[&partial, &attaching])),
+            (false, "attaching")
+        );
+        assert_eq!(
+            overall(true, false, &owned(&[&full, &attaching])),
+            (false, "attaching")
+        );
+        assert_eq!(
+            overall(true, false, &owned(&[&full, &failed])),
+            (false, "error")
+        );
+        assert_eq!(
+            overall(true, false, &owned(&[&partial, &failed])),
+            (false, "error")
+        );
+        // A Cursor process that has not produced its windows yet keeps the claim at attaching.
+        assert_eq!(
+            overall(false, false, &owned(&[&full])),
+            (false, "attaching")
+        );
+        assert_eq!(
+            overall(false, false, &owned(&[&partial])),
+            (false, "attaching")
+        );
+        // A process-level failure always wins, even when the windows look healthy.
+        assert_eq!(overall(true, true, &owned(&[&full])), (false, "error"));
+    }
+
+    #[test]
+    fn saved_claims_need_matching_windows() {
+        let full = window("active", "agents", Some(("active", 10)));
+        let partial = window("active", "agents", Some(("unavailable", 0)));
+        assert!(windows_fully_covered(std::slice::from_ref(&full)));
+        assert!(!windows_fully_covered(&[full.clone(), partial.clone()]));
+        assert!(windows_partly_covered(&[full.clone(), partial.clone()]));
+        assert!(!windows_partly_covered(std::slice::from_ref(&full)));
+        assert!(!windows_partly_covered(&[]));
+        let failed = window("error", "ide", Some(("notApplicable", 0)));
+        assert!(!windows_partly_covered(&[partial, failed]));
+    }
+
+    #[test]
+    fn a_status_saved_before_the_protection_existed_still_loads() {
+        let old = r#"{"supported":true,"enabled":true,"active":true,"phase":"active",
+            "windows":[{"pid":1,"id":2,"phase":"active","surface":"agents","suppressed":3,
+            "verified":true,"checks":6}]}"#;
+        let status: Status = serde_json::from_str(old).unwrap();
+        assert!(status.windows[0].retention.is_none());
+        // Without a retention report the window cannot be fully covered.
+        assert!(!windows_fully_covered(&status.windows));
+    }
+
+    #[test]
+    fn retention_status_uses_camel_case_and_tolerates_missing_fields() {
+        let reported: WindowStatus = serde_json::from_str(
+            r#"{"id":1,"phase":"active","verified":true,"checks":6,"retention":{
+                "state":"active","checks":10,"skipped":2,"skippedBubbles":12,"passed":4,
+                "lastSkippedAt":1790000000000,"atRisk":null,"atRiskAt":0,
+                "recent":[{"at":1790000000000,"bubbles":6,"scope":"all"}]}}"#,
+        )
+        .unwrap();
+        let retention = reported.retention.unwrap();
+        assert_eq!(retention.skipped_bubbles, 12);
+        assert_eq!(retention.last_skipped_at, 1_790_000_000_000);
+        assert_eq!(retention.at_risk, None);
+        assert_eq!(retention.recent[0].scope, "all");
+        let minimal: WindowStatus =
+            serde_json::from_str(r#"{"retention":{"state":"pending"}}"#).unwrap();
+        assert_eq!(minimal.retention.unwrap().recent.len(), 0);
+        let value = serde_json::to_value(RetentionStatus::default()).unwrap();
+        for key in [
+            "skippedBubbles",
+            "lastSkippedAt",
+            "atRisk",
+            "atRiskAt",
+            "recent",
+        ] {
+            assert!(value.get(key).is_some(), "{key} must be serialized");
+        }
+    }
+
+    #[test]
+    fn retention_summary_counts_only_and_marks_unknown_risk() {
+        assert_eq!(retention_summary(&[]), None);
+        assert_eq!(retention_summary(&[WindowStatus::default()]), None);
+        let mut one = window("active", "agents", Some(("active", 10)));
+        one.retention.as_mut().unwrap().skipped = 3;
+        one.retention.as_mut().unwrap().at_risk = Some(2);
+        let mut two = window("active", "agents", Some(("active", 10)));
+        two.retention.as_mut().unwrap().skipped = 4;
+        two.retention.as_mut().unwrap().at_risk = Some(1);
+        let ide = window("active", "ide", Some(("notApplicable", 0)));
+        let broken = window("active", "agents", Some(("unavailable", 0)));
+        assert_eq!(
+            retention_summary(&[one.clone(), two.clone(), ide.clone(), broken]).unwrap(),
+            "2 active, 1 not applicable, 1 unavailable, 0 pending; unloads skipped 7; running chats at risk 3"
+        );
+        two.retention.as_mut().unwrap().at_risk = None;
+        assert!(retention_summary(&[one, two, ide])
+            .unwrap()
+            .ends_with("running chats at risk unknown"));
     }
 
     #[test]

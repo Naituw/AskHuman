@@ -147,7 +147,7 @@ AskHuman/
       commands.rs            前端调用的 Tauri command 集合
       popup_drop.rs          Popup 拖入文件：失败带原因与位置类别的图片读取，以及不含路径的拖拽诊断日志
       codex_desktop/               可选 macOS Codex App 原生会话与创建适配器
-      cursor_desktop/              可选 macOS Cursor Desktop 后台完成续跑控制、私有运行桥，以及 Agents 窗口新建任务（create/launch）
+      cursor_desktop/              可选 macOS Cursor Desktop 会话防护（后台完成续跑拦截与 Agents 窗口运行中会话保护两个独立守卫）、私有运行桥，以及 Agents 窗口新建任务（create/launch）
       integrations/agent_launch.rs  新建/Fork 共用一次性 LaunchRecord、readiness 与固定 argv adapter
 
       app/
@@ -538,9 +538,11 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 
 > 规格 `docs/specs/agent-stop-confirmation.md`；最终失败处理见 `docs/specs/agent-failure-confirmation.md`。
 
-Cursor Desktop 另有默认关闭的实验性“禁止后台完成后自动续跑”能力，原生行为预检通过后才接入。
+Cursor Desktop 另有默认关闭的实验性“Cursor 会话防护”（同一开关），含两个独立守卫：禁止后台完成后自动续跑，
+以及 Agents 窗口里不再卸载运行中会话的消息（降低长首轮失败后被误归档的风险）。各自原生行为预检通过后才接入，
+一个不可用时另一个照常，设置页显示“部分生效”。
 由 Daemon 管理普通启动、窗口接入和还原，不依赖结束确认或逐会话结束状态。范围与验收真值见
-`docs/specs/cursor-desktop-background-followup.md`；终端 Cursor CLI 不在该能力范围内。
+`docs/specs/cursor-desktop-background-followup.md`（§7 为运行中会话保护）；终端 Cursor CLI 不在该能力范围内。
 
 - 正常 Stop 处理 Claude Code、Codex、Cursor、Pi 的自然完成；同一「结束／出错时确认」开关另使整轮最终失败（`failed`，以及 Grok 因运行上限／没有进展停下的 `incomplete`）进入普通作答卡。有原会话通道时可要求继续，否则仅「知道了」（当作通知）。用户中断、工具错误、自动重试中静默；Grok 仅支持出错提醒，Antigravity 尚无可靠来源。
 - Claude Code、Codex、Cursor、Grok 的各家开关默认关，Pi 默认开，已有偏好保留；自然完成询问“继续/结束”，24h 或基础设施失败 fail-open，投放沿用活跃槽 ∪ watch 渠道。错误卡也进入 iOS 普通收件箱，沿用其空闲推送门槛，不要求手机发起资格。

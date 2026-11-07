@@ -10,10 +10,11 @@
 
 ## 字段地图
 
-- `cursorDesktop.suppressBackgroundCompletionFollowUp`：默认 `false`；macOS Cursor 的 CLI/MCP
-  自动集成有效时，由 Daemon 管理实验性的 Desktop 全局后台完成续跑控制；逐窗口原生行为预检
-  通过后才修改处理器并报告 active。有效能力独立保活，不改写 `general.daemonLifecycle`；
-  None 停止接入但保留偏好，终端 Cursor CLI 不在范围内。
+- `cursorDesktop.suppressBackgroundCompletionFollowUp`：默认 `false`，字段名沿用；一个开关管 Cursor
+  会话防护的两个独立守卫——后台完成续跑拦截，以及 Agents 窗口里运行中会话保护（不卸载生成中会话的消息）。
+  macOS Cursor 的 CLI/MCP 自动集成有效时，由 Daemon 管理实验性的 Desktop 全局接入；逐窗口、逐守卫原生行为预检
+  通过后才修改并报告 active，一个守卫不可用时另一个照常（状态 `partial`）。有效能力独立保活，不改写
+  `general.daemonLifecycle`；None 停止接入但保留偏好，终端 Cursor CLI 不在范围内。
 - `cursorDesktop.launchPreference`：`terminal|desktop`，默认 `terminal`；新 Cursor 任务的运行位置。`desktop` 在 macOS 上经 Agents 窗口创建（实验），不可用时落回终端并在状态行说明；偏好终端时终端不可用也不会改用 Agents 窗口（与 Codex 的双向回退不同）；任务开始后不再改走另一条路径。
 - `general`
   - `theme`、`language`、`alwaysOnTop`、`appearAnimation`、`windowEffect`（`solid|blur|glass`；配置默认 `blur`，显式 `glass` 在 macOS 26 以下有效值自动解析为 `blur`）
