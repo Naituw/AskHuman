@@ -88,6 +88,14 @@ extension View {
             .frame(width: BottomBar.roundGlyphBox, height: BottomBar.roundGlyphBox)
     }
 
+    /// The glyph for a round button that is not `rowHeight` across but as tall as the row it is in (the answer bar's
+    /// `ButtonRow`, which offers it a square of that size). The box is at least as big as `barRoundGlyph`'s and takes all the
+    /// room it is offered, so the circle grows with the row and the glyph stays in the middle of it; the glyph grows with the
+    /// text size as the row does (its height is the main button's words), so it is not lost in a big circle.
+    func barRowRoundGlyph(weight: Font.Weight = .semibold) -> some View {
+        modifier(BarRowRoundGlyph(weight: weight))
+    }
+
     /// The bar's main button: tinted glass from iOS 26, a filled capsule before.
     func barPrimaryButton() -> some View {
         modifier(BarButton(prominent: true))
@@ -227,6 +235,21 @@ private struct BarFieldBox: ViewModifier {
                 .padding(.vertical, 8)
                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
+    }
+}
+
+private struct BarRowRoundGlyph: ViewModifier {
+    let weight: Font.Weight
+    /// The main button says its words in `.headline`: the row, and so the circle, is as tall as that follows the text size.
+    @ScaledMetric(relativeTo: .headline) private var size: CGFloat = 17
+
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: size, weight: weight))
+            .frame(
+                minWidth: BottomBar.roundGlyphBox, maxWidth: .infinity,
+                minHeight: BottomBar.roundGlyphBox, maxHeight: .infinity
+            )
     }
 }
 

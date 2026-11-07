@@ -14,6 +14,9 @@ struct DirectiveMenu: View {
     /// The answer can be sent right now (the Mac is reachable, nothing is still being prepared): a quick reply sends it.
     let canSend: Bool
     let onQuickReply: (String) -> Void
+    /// The circle is as tall as the row it is in, which is laid out by the answer bar's `ButtonRow` (floating bar only):
+    /// the glyph's box takes all the room it is offered. Otherwise it is `BottomBar.rowHeight` across.
+    var fillsRow = false
 
     var body: some View {
         Menu {
@@ -50,7 +53,7 @@ struct DirectiveMenu: View {
         } label: {
             let glyph = Image(systemName: "text.bubble")
             if BottomBar.floats {
-                glyph.barRoundGlyph()
+                if fillsRow { glyph.barRowRoundGlyph() } else { glyph.barRoundGlyph() }
             } else {
                 glyph.font(.title3).frame(width: 32, height: 32)
             }

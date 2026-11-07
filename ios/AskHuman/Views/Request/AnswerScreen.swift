@@ -729,31 +729,59 @@ private struct SendBar: View {
         }
     }
 
-    /// The count and the buttons. On the floating bar they are laid out at the height of the tallest of
-    /// them and each takes all of it, so that the chip and the capsules beside it are one height.
+    /// The count and the buttons.
+    ///
+    /// On the floating bar `CountAndButtons` lays them out: side by side while there is room for both, at the height of the
+    /// tallest of them with each taking all of it (so that the chip and the capsules beside it are one height), and the
+    /// count above the buttons when there is not. The accessibility text sizes always stack them. The classic bar is a plain
+    /// row, whose buttons keep their own height whatever the count does.
+    @ViewBuilder
     private var controls: some View {
-        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 12))
-        return layout {
-            statusBlock
-            if !stacked { Spacer(minLength: 8) }
-            HStack(spacing: 12) {
-                // Sending waits until the last question was on screen; until then the button leads
-                // there. After that "Send" takes the main place, and "Next" stays beside it while there
-                // are questions below the screen, as the popup's "Next" does until it reaches the last.
-                if store.offersDirectives(for: item) {
-                    DirectiveMenu(composer: composer, disabled: ended || busy, canSend: enabled, onQuickReply: onQuickReply)
-                }
-                if composer.hasReachedEnd, moreBelow {
-                    nextIconButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
-                }
-                primaryButton
+        if BottomBar.floats, !stacked {
+            CountAndButtons() {
+                adaptiveCountChip
+                buttons
             }
-            // "Send and go away" is the longest thing the row ever says. Left to the stack's even split, the count gets
-            // room it does not need and the words are cut ("Send and go…") on the classic bar; with the priority the
-            // buttons are sized first and only the count gives way.
-            .layoutPriority(composer.directive == nil ? 0 : 1)
+        } else {
+            let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 12))
+            layout {
+                statusBlock
+                if !stacked { Spacer(minLength: 8) }
+                buttons
+                    // "Send and go away" is the longest thing the row ever says. Left to the stack's even split, the count gets
+                    // room it does not need and the words are cut ("Send and go…") on the classic bar; with the priority the
+                    // buttons are sized first and only the count gives way.
+                    .layoutPriority(composer.directive == nil ? 0 : 1)
+            }
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The row of buttons: the quick-reply menu, "Next", "Send". On the floating bar `ButtonRow` makes the two small ones
+    /// circles as tall as "Send" (and so as wide), whatever the text size makes that.
+    @ViewBuilder
+    private var buttons: some View {
+        if BottomBar.floats {
+            ButtonRow { buttonItems }
+        } else {
+            HStack(spacing: 12) { buttonItems }
+        }
+    }
+
+    /// The buttons themselves, the main one last (`ButtonRow` relies on that).
+    @ViewBuilder
+    private var buttonItems: some View {
+        // Sending waits until the last question was on screen; until then the button leads
+        // there. After that "Send" takes the main place, and "Next" stays beside it while there
+        // are questions below the screen, as the popup's "Next" does until it reaches the last.
+        if store.offersDirectives(for: item) {
+            DirectiveMenu(composer: composer, disabled: ended || busy, canSend: enabled, onQuickReply: onQuickReply,
+                          fillsRow: BottomBar.floats)
+        }
+        if composer.hasReachedEnd, moreBelow {
+            nextIconButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
+        }
+        primaryButton
     }
 
     /// Set on what sits in the row beside the buttons, to be as tall as the row.
@@ -771,6 +799,8 @@ private struct SendBar: View {
         }
     }
 
+    /// The count of the classic bar and of the accessibility text sizes. The row of the floating bar has
+    /// `adaptiveCountChip`, which finds the wording that fits for itself.
     private var count: some View {
         // On the floating bar, an armed instruction makes the button say more ("Send and go away"), and the chip gives
         // up its word to make room for it.
@@ -790,9 +820,39 @@ private struct SendBar: View {
         .accessibilityIdentifier("answered-count")
     }
 
-    private var countChip: some View {
+    private var countChip: some View { chip(count) }
+
+    /// The count chip of the side-by-side row (`CountAndButtons`). It says "Answered 1/3" while that fits beside the buttons,
+    /// and "1/3" when only that does. Each wording keeps its own size however little room it is offered (`fixedSize`): that
+    /// is how the layout can tell that even the short one does not fit, and puts the chip above the buttons.
+    private var adaptiveCountChip: some View {
+        chip(
+            ViewThatFits(in: .horizontal) {
+                countText(brief: false)
+                countText(brief: true)
+            }
+        )
+    }
+
+    private func countText(brief: Bool) -> some View {
+        Group {
+            if brief {
+                Text(verbatim: "\(composer.answeredCount)/\(composer.questionCount)")
+            } else {
+                Text("Answered \(composer.answeredCount)/\(composer.questionCount)")
+            }
+        }
+        .font(.subheadline.weight(.medium))
+        .lineLimit(1)
+        .fixedSize()
+        // VoiceOver says the whole of it, whichever wording is on screen.
+        .accessibilityLabel(Text("Answered \(composer.answeredCount)/\(composer.questionCount)"))
+        .accessibilityIdentifier("answered-count")
+    }
+
+    private func chip(_ label: some View) -> some View {
         let uploading = composer.uploadProgress
-        return count
+        return label
             // The progress line is drawn over the bottom of the text, in room kept for it, so that it takes
             // the width of the text and does not widen the chip.
             .padding(.bottom, uploading == nil ? 0 : 10)
@@ -827,7 +887,8 @@ private struct SendBar: View {
                     }
                 }
             }
-            .frame(minWidth: 84, maxWidth: stacked ? .infinity : nil, maxHeight: rowFill)
+            // On the floating bar `ButtonRow` gives it what the circles leave of the row, as tall as the row.
+            .frame(minWidth: 84, maxWidth: stacked || BottomBar.floats ? .infinity : nil, maxHeight: BottomBar.floats ? .infinity : nil)
         }
         .barPrimaryButton()
         .disabled(reached ? !enabled : (ended || sendingState))
@@ -844,17 +905,28 @@ private struct SendBar: View {
         }
     }
 
-    /// Beside "Send", while there is more below.
+    /// Beside "Send", while there is more below. On the floating bar a glass circle like the menu's, as tall as the row.
+    @ViewBuilder
     private var nextIconButton: some View {
-        Button(action: onNext) {
-            Image(systemName: "chevron.down")
-                .font(.body.weight(.semibold))
-                .frame(minWidth: 22, maxHeight: rowFill)
+        if BottomBar.floats {
+            Button(action: onNext) {
+                Image(systemName: "chevron.down").barRowRoundGlyph()
+            }
+            .barRoundButton()
+            .disabled(ended || sendingState)
+            .accessibilityLabel("Next question")
+            .accessibilityIdentifier("next-button")
+        } else {
+            Button(action: onNext) {
+                Image(systemName: "chevron.down")
+                    .font(.body.weight(.semibold))
+                    .frame(minWidth: 22)
+            }
+            .barSecondaryButton()
+            .disabled(ended || sendingState)
+            .accessibilityLabel("Next question")
+            .accessibilityIdentifier("next-button")
         }
-        .barSecondaryButton()
-        .disabled(ended || sendingState)
-        .accessibilityLabel("Next question")
-        .accessibilityIdentifier("next-button")
     }
 
     private var sendingState: Bool {
@@ -911,6 +983,133 @@ private struct SendBar: View {
             label.barStatusChip(compact: true)
         } else {
             label
+        }
+    }
+}
+
+/// The buttons of the floating answer bar: the round ones (the quick-reply menu, "Next") and, last, the main one ("Send").
+///
+/// All are as tall as the tallest of them, or as the row asks them to be (a count chip that is taller); the round ones are
+/// as wide as they are tall, so that they are circles whatever the text size makes the row; the main one has the rest of the
+/// width. A stack cannot do that: the width of a circle follows from the height of the row, which a stack learns only after
+/// it has divided the width. (Next to "Send" the circles were a different height from it, and "Next" a capsule.)
+private struct ButtonRow: Layout {
+    static let spacing: CGFloat = 12
+
+    private struct Arrangement {
+        var height: CGFloat
+        var mainWidth: CGFloat
+        var size: CGSize
+    }
+
+    private func arrangement(_ proposal: ProposedViewSize, _ subviews: Subviews) -> Arrangement {
+        guard let main = subviews.last else { return Arrangement(height: 0, mainWidth: 0, size: .zero) }
+        let rounds = subviews.dropLast()
+        let mainIdeal = main.sizeThatFits(.unspecified)
+        // The round ones are at least the size of a glass circle round its glyph (`BottomBar.rowHeight`).
+        var height = max(mainIdeal.height, rounds.map { $0.sizeThatFits(.unspecified).height }.max() ?? 0)
+        if let asked = proposal.height, asked.isFinite { height = max(height, asked) }
+        let roundsWidth = CGFloat(rounds.count) * (height + Self.spacing)
+        let mainWidth: CGFloat
+        if let offered = proposal.width, offered.isFinite {
+            mainWidth = max(offered - roundsWidth, main.sizeThatFits(.zero).width)
+        } else {
+            mainWidth = mainIdeal.width
+        }
+        return Arrangement(height: height, mainWidth: mainWidth, size: CGSize(width: roundsWidth + mainWidth, height: height))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrangement(proposal, subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let main = subviews.last else { return }
+        let placed = arrangement(ProposedViewSize(width: bounds.width, height: bounds.height), subviews)
+        var x = bounds.minX
+        for round in subviews.dropLast() {
+            round.place(at: CGPoint(x: x, y: bounds.minY), anchor: .topLeading, proposal: ProposedViewSize(width: placed.height, height: placed.height))
+            x += placed.height + Self.spacing
+        }
+        main.place(at: CGPoint(x: x, y: bounds.minY), anchor: .topLeading, proposal: ProposedViewSize(width: placed.mainWidth, height: placed.height))
+    }
+}
+
+/// The count and the buttons of the floating answer bar: side by side while there is room for both, and the count above the
+/// buttons when there is not. The buttons keep their own size either way.
+///
+/// What this replaces was a plain row in which every block took the height of the tallest. On a narrow screen the count was
+/// left a few points of width and wrapped to three or four lines, and the buttons were stretched to that height with it.
+///
+/// It takes two subviews, in this order: the count chip, which has a short wording of its own for when it is offered little
+/// room (so how wide it is depends on the width it is offered), and the row of buttons, which is as wide as it needs to be.
+private struct CountAndButtons: Layout {
+    /// The least room between the count and the buttons. It is more than the glass container's merge distance (`GlassGroup`
+    /// in `SendBar`), so the two shapes never melt into one.
+    static let gap: CGFloat = 12
+    /// Between the count and the buttons when the count is above them.
+    static let stackedSpacing: CGFloat = 10
+
+    /// How the subviews go for a width. Each is placed with the proposal it was measured with (the height aside), so that it
+    /// makes the same choices when it is placed as when it was measured: the count's wording depends on the width it is offered.
+    private struct Arrangement {
+        var sideBySide: Bool
+        var countProposal: ProposedViewSize
+        var buttonsProposal: ProposedViewSize
+        /// The height of the count: where the buttons start when it is above them.
+        var countHeight: CGFloat
+        var size: CGSize
+    }
+
+    private func arrangement(width: CGFloat?, subviews: Subviews) -> Arrangement {
+        guard subviews.count == 2 else {
+            return Arrangement(sideBySide: true, countProposal: .zero, buttonsProposal: .zero, countHeight: 0, size: .zero)
+        }
+        let count = subviews[0]
+        let buttons = subviews[1]
+        // One height for both, as the chip and the capsules of a row have: the taller of the two. (The count is as tall for
+        // either wording; it is taller than the buttons while an upload's progress line is in it.)
+        let height = max(count.sizeThatFits(.unspecified).height, buttons.sizeThatFits(.unspecified).height)
+        // The buttons come first and are never squeezed: the count has what they leave of the width. Their width follows
+        // from the height of the row, since the round ones are as wide as they are tall.
+        let buttonsSize = buttons.sizeThatFits(ProposedViewSize(width: nil, height: height))
+        let room = width.map { max($0 - buttonsSize.width - Self.gap, 0) }
+        let countSize = count.sizeThatFits(ProposedViewSize(width: room, height: nil))
+        if let width, let room, countSize.width > room + 0.5 {
+            // Not even the short wording fits beside the buttons.
+            let wide = ProposedViewSize(width: width, height: nil)
+            let countAbove = count.sizeThatFits(wide)
+            let buttonsBelow = buttons.sizeThatFits(wide)
+            return Arrangement(
+                sideBySide: false,
+                countProposal: wide,
+                buttonsProposal: wide,
+                countHeight: countAbove.height,
+                size: CGSize(width: width, height: countAbove.height + Self.stackedSpacing + buttonsBelow.height)
+            )
+        }
+        return Arrangement(
+            sideBySide: true,
+            countProposal: ProposedViewSize(width: room, height: height),
+            buttonsProposal: ProposedViewSize(width: nil, height: height),
+            countHeight: height,
+            size: CGSize(width: width ?? countSize.width + Self.gap + buttonsSize.width, height: height)
+        )
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrangement(width: proposal.width, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        let placed = arrangement(width: bounds.width, subviews: subviews)
+        subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.minY), anchor: .topLeading, proposal: placed.countProposal)
+        if placed.sideBySide {
+            subviews[1].place(at: CGPoint(x: bounds.maxX, y: bounds.minY), anchor: .topTrailing, proposal: placed.buttonsProposal)
+        } else {
+            let top = bounds.minY + placed.countHeight + Self.stackedSpacing
+            subviews[1].place(at: CGPoint(x: bounds.minX, y: top), anchor: .topLeading, proposal: placed.buttonsProposal)
         }
     }
 }

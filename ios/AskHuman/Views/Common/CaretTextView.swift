@@ -35,7 +35,11 @@ struct CaretTextView: UIViewRepresentable {
         if focused.wrappedValue, !view.isFirstResponder, view.window != nil {
             view.becomeFirstResponder()
         } else if !focused.wrappedValue, view.isFirstResponder {
-            view.resignFirstResponder()
+            // Not in the middle of the pass: a resign asks the hosting view whether it can take the responder over, and
+            // that runs the view graph again inside this update (see `InlineTextView.setEditable`).
+            DispatchQueue.main.async { [weak view, focused] in
+                if let view, !focused.wrappedValue, view.isFirstResponder { view.resignFirstResponder() }
+            }
         }
     }
 
@@ -51,7 +55,7 @@ struct CaretTextView: UIViewRepresentable {
         let font = UIFont.preferredFont(forTextStyle: .body, compatibleWith: view.traitCollection)
         if view.font != font { view.font = font }
         view.textColor = enabled ? .label : .secondaryLabel
-        if view.isEditable != enabled { view.isEditable = enabled }
+        view.setEditable(enabled)
         view.lineRange = lines
         view.revealTarget = revealTarget
         view.placeholder.text = placeholder
@@ -245,6 +249,32 @@ final class InlineTextView: UITextView {
     override func willMove(toWindow newWindow: UIWindow?) {
         if newWindow == nil { removeDiagnostics() }
         super.willMove(toWindow: newWindow)
+    }
+
+    private var wantsEditable = true
+    private var editableChangeQueued = false
+
+    /// Makes the text view editable or read-only (the form is disabled while an answer is on its way).
+    ///
+    /// A text view that has the keyboard resigns the moment it stops being editable, and a resign in the middle of a SwiftUI
+    /// update pass runs the view graph again inside itself (the responder chain asks the hosting view whether it can take
+    /// the responder over). With some content on the page that is an AttributeGraph cycle which kept the app from answering
+    /// for a minute after "Send". So the switch to read-only waits until the pass is over; the other way round, and for a
+    /// text view without the keyboard, nothing resigns and it is made at once.
+    func setEditable(_ editable: Bool) {
+        wantsEditable = editable
+        guard isEditable != editable else { return }
+        if editable || !isFirstResponder {
+            isEditable = editable
+            return
+        }
+        guard !editableChangeQueued else { return }
+        editableChangeQueued = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            editableChangeQueued = false
+            if isEditable != wantsEditable { isEditable = wantsEditable }
+        }
     }
 
     /// Takes the keyboard over from the input that has it: UIKit moves the first responder in one step, so the
