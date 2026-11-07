@@ -1821,8 +1821,8 @@ mark.popup-find-hit-current,
   border-top: var(--hairline) solid var(--border);
   background: transparent;
 }
-/* R6 一次性引导提示条（页脚上方） */
-.im-tip {
+/* 设置向导提示条（页脚上方） */
+.setup-hint {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -1832,11 +1832,11 @@ mark.popup-find-hit-current,
   background: color-mix(in srgb, var(--accent, #0a84ff) 8%, transparent);
   font-size: 12px;
 }
-.im-tip-text {
+.setup-hint-text {
   flex: 1 1 auto;
   color: var(--text-secondary);
 }
-.im-tip-action {
+.setup-hint-action {
   flex: 0 0 auto;
   border: none;
   background: transparent;
@@ -1846,10 +1846,10 @@ mark.popup-find-hit-current,
   color: var(--accent, #0a84ff);
   cursor: default;
 }
-.im-tip-action:hover {
+.setup-hint-action:hover {
   text-decoration: underline;
 }
-.im-tip-close {
+.setup-hint-close {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -1862,7 +1862,7 @@ mark.popup-find-hit-current,
   color: var(--text-muted, #8e8e93);
   cursor: default;
 }
-.im-tip-close:hover {
+.setup-hint-close:hover {
   background: rgba(128, 128, 128, 0.2);
   color: var(--text-secondary);
 }

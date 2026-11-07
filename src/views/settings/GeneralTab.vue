@@ -9,6 +9,8 @@ import type { UiLanguage } from "../../lib/types";
 import { useSettingsContext } from "./context";
 import AwayCard from "./AwayCard.vue";
 import QuickRepliesCard from "./QuickRepliesCard.vue";
+import LoginItemRow from "./LoginItemRow.vue";
+import SetupCard from "./SetupCard.vue";
 
 const { t } = useI18n();
 const ctx = useSettingsContext();
@@ -66,6 +68,8 @@ const config = computed(() => ctx.config.value!);
 </script>
 
 <template>
+  <SetupCard />
+
   <div class="card">
     <p class="card-title">{{ t("settings.appearance.title") }}</p>
     <div class="row">
@@ -325,6 +329,7 @@ const config = computed(() => ctx.config.value!);
       </div>
     </div>
     <p class="card-desc">{{ t("settings.menuBar.hint") }}</p>
+    <LoginItemRow />
   </div>
 
   <!-- 回复历史 -->

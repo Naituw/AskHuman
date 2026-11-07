@@ -175,8 +175,8 @@ export function installMock(params: FrameParams): void {
         return { branch: "main", detached: false, worktree: null, changes: { total: 3, staged: 1, unstaged: 2, untracked: 0 } };
       case "todos_list":
         return [];
-      case "popup_im_tip_visible":
-        return false;
+      case "popup_setup_hint":
+        return null;
       default:
         return null;
     }

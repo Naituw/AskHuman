@@ -610,6 +610,13 @@ pub fn needs_update() -> bool {
     }
 }
 
+/// Whether the GUI Host login item exists **for this instance**. Always `false` in a Dev Instance
+/// context: the item is machine-global, so its presence says nothing about an isolated instance
+/// (and an instance must never read it as evidence about its own state).
+pub fn instance_has_login_item() -> bool {
+    !is_dev_instance_context() && is_installed()
+}
+
 /// 确保登录项与当前 exe 一致：缺失或需更新则（重）安装。幂等。
 pub fn ensure_installed() -> std::io::Result<()> {
     if is_dev_instance_context() {

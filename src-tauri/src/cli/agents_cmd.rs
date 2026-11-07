@@ -83,16 +83,17 @@ fn monitor(args: &[String], lang: Lang) -> Result<(), String> {
     }
 }
 
+/// Whether a graphical session can show a window (also asked by `setup`).
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn gui_available() -> bool {
+pub(crate) fn gui_available() -> bool {
     true
 }
 #[cfg(all(unix, not(target_os = "macos")))]
-fn gui_available() -> bool {
+pub(crate) fn gui_available() -> bool {
     std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
 #[cfg(not(any(unix, windows)))]
-fn gui_available() -> bool {
+pub(crate) fn gui_available() -> bool {
     false
 }
 

@@ -2653,6 +2653,12 @@ async fn handle_submit(
         .await;
         return;
     }
+    // The setup wizard's own test questions (`docs/plans/onboarding.md` §4.1) differ from an
+    // ordinary question in the four places that read this policy below; everything else is
+    // shared with it. An ordinary question gets today's behavior.
+    let probe_policy = crate::onboarding::probe::policy(crate::onboarding::probe::parse_probe_id(
+        task.native_request_id.as_deref(),
+    ));
     // 「自动激活」开启时：每次提问按「工作中」兜底登记会话（无 turn hook 也能驱动入站监听 / 切槽）；
     // 开关关时保持旧行为（仅刷新已追踪会话的活动，尊重「未装 hook = 不追踪」，不污染注册表）。
     let auto = AppConfig::load_without_secrets().channels.auto_activation;
@@ -2768,12 +2774,13 @@ async fn handle_submit(
     log(&format!("request {} accepted", request_id));
 
     // Fire `ask-received` once per accepted request, independent of popup state.
-    if !entry
-        .request()
-        .message
-        .development
-        .as_ref()
-        .is_some_and(|info| info.relay)
+    if probe_policy.ask_received_hook
+        && !entry
+            .request()
+            .message
+            .development
+            .as_ref()
+            .is_some_and(|info| info.relay)
     {
         crate::hooks::fire_ask_received(
             &request_id,
@@ -2803,11 +2810,12 @@ async fn handle_submit(
 
     // 按接收请求时的 Daemon 配置快照决定是否投放 Popup。配置禁用或无显示
     // 环境时必须完全跳过 Helper，让 IM 成为唯一作答渠道。
-    let popup_enabled = development_popup_enabled(
-        &state.config_snapshot(),
-        entry.request().message.development.as_deref(),
-        has_display(),
-    );
+    let popup_enabled = probe_policy.popup
+        && development_popup_enabled(
+            &state.config_snapshot(),
+            entry.request().message.development.as_deref(),
+            has_display(),
+        );
     // 方案3（spec §6.1）：尽早 spawn GUI Helper（独立短命进程，带一次性 token），让其 WebView
     // 初始化与下面的「入站监听 + IM 建连」并行——token 在 `registry.create()` 即登记，helper 可
     // 立即连上，不存在「helper 先连、entry 未注册」竞态。冷启动下这把 IM 建连（数百 ms）整段移出
@@ -2875,6 +2883,8 @@ async fn handle_submit(
         {
             false
         }
+        // The popup self-test stays on this computer.
+        _ if probe_policy.im == crate::onboarding::probe::ImScope::Nothing => false,
         _ => {
             attach_im_channels(
                 &entry,
@@ -2885,6 +2895,7 @@ async fn handle_submit(
                 kind_env,
                 from_mcp,
                 agent_resolution,
+                probe_policy.im.only(),
             )
             .await
         }
@@ -2994,7 +3005,13 @@ async fn handle_submit(
     }
     if caller_gone {
         // 原始调用方早已离场（它的连接是死的）；结果已交给还在等的那些调用方，这里只做收尾。
-        finish_request_bookkeeping(state, &entry, &request_id, auto).await;
+        finish_request_bookkeeping(
+            state,
+            &entry,
+            &request_id,
+            auto && probe_policy.follow_active_channel,
+        )
+        .await;
         return;
     }
 
@@ -3024,7 +3041,14 @@ async fn handle_submit(
             .await;
         }
     }
-    finish_request_bookkeeping(state, &entry, &request_id, auto).await;
+    // A setup check never moves the active channel: it only tried a route out.
+    finish_request_bookkeeping(
+        state,
+        &entry,
+        &request_id,
+        auto && probe_policy.follow_active_channel,
+    )
+    .await;
 }
 
 /// 一次提问完结后的公共收尾：活跃槽、弹窗焦点、登记表、菜单栏与 `/watch` 跟底。
@@ -3846,6 +3870,9 @@ fn spawn_agent_resolve(
         if let Ok(mut slot) = entry.resolved_agent.lock() {
             *slot = Some(resolved.clone());
         }
+        // The pending list now names this request's Agent (an MCP caller's family is only known
+        // from here); tell the menu-bar subscribers, the setup wizard's Agent check among them.
+        broadcast_tray_state(&state);
         if let Ok(slot) = entry.gui.lock() {
             if let Some(tx) = slot.as_ref() {
                 let _ = tx.send(ServerMsg::AgentResolved {
@@ -3962,17 +3989,17 @@ fn select_im_delivery_candidates(
     }
 }
 
+/// The candidates of a request scoped to one channel (the setup wizard's round-trip check):
+/// that channel when it can really deliver, nothing otherwise. The active-channel rules and
+/// iOS play no part.
+fn scoped_candidates(only: &str, available: &[&'static str]) -> Vec<&'static str> {
+    available.iter().copied().filter(|id| *id == only).collect()
+}
+
 /// The Agent that asks, as far as it is known: the hint of the caller, else what the daemon
 /// resolved from the process tree, else what the caller reported.
 fn entry_agent_kind(entry: &RequestEntry, resolved_hint: Option<AgentKind>) -> Option<AgentKind> {
-    let resolved = entry
-        .resolved_agent
-        .lock()
-        .ok()
-        .and_then(|slot| slot.as_ref().and_then(|agent| agent.kind.clone()))
-        .and_then(|kind| AgentKind::parse(&kind));
-    let initial = entry.show.agent_kind.as_deref().and_then(AgentKind::parse);
-    resolved_hint.or(resolved).or(initial)
+    resolved_hint.or_else(|| entry.agent_family())
 }
 
 fn im_conversation_origin(
@@ -3997,6 +4024,7 @@ async fn attach_im_channels(
     known_agent_kind: Option<AgentKind>,
     from_mcp: bool,
     agent_resolution: Option<tokio::sync::oneshot::Receiver<Option<AgentKind>>>,
+    only: Option<&str>,
 ) -> bool {
     // 方案4（spec §4）的「仅弹窗用户零钥匙串」目标现由缓存快照达成：快照在启动 / 配置变更时
     // 已解析密钥，这里读缓存即可，热路径不再触碰钥匙串与磁盘。
@@ -4027,21 +4055,26 @@ async fn attach_im_channels(
         None => Vec::new(),
     };
     let available = available_im_channels(&config);
-    let candidates = with_ios(
-        select_im_delivery_candidates(
-            config.channels.auto_activation
-                && !request
-                    .message
-                    .development
-                    .as_ref()
-                    .is_some_and(|info| info.relay),
-            &available,
-            active.as_deref(),
-            &watching,
-            popup_available,
+    let candidates = match only {
+        // A request scoped to one channel (the setup wizard's round-trip check) goes there and
+        // nowhere else: neither the active slot nor iOS adds anything.
+        Some(id) => scoped_candidates(id, &available),
+        None => with_ios(
+            select_im_delivery_candidates(
+                config.channels.auto_activation
+                    && !request
+                        .message
+                        .development
+                        .as_ref()
+                        .is_some_and(|info| info.relay),
+                &available,
+                active.as_deref(),
+                &watching,
+                popup_available,
+            ),
+            ios_can_deliver(state, &config),
         ),
-        ios_can_deliver(state, &config),
-    );
+    };
     if candidates.is_empty() {
         return false;
     }
@@ -5101,7 +5134,7 @@ fn print_status(info: &StatusInfo) {
 mod tests {
     use super::{
         agent_kind_for_im, development_popup_enabled, marks_session_working,
-        pending_launch_matches, popup_prewarm_requested, popup_should_dispatch,
+        pending_launch_matches, popup_prewarm_requested, popup_should_dispatch, scoped_candidates,
         select_im_delivery_candidates, task_workspace_options, with_ios, InboundRegistry,
         PendingLaunchWatch,
     };
@@ -5273,6 +5306,20 @@ mod tests {
         // No phone to deliver to (or the channel is off): no iOS candidate; no duplicates either.
         assert!(with_ios(Vec::new(), false).is_empty());
         assert_eq!(with_ios(vec!["ios"], true), vec!["ios"]);
+    }
+
+    #[test]
+    fn a_scoped_request_reaches_only_its_channel_when_that_channel_can_deliver() {
+        let available = ["dingding", "feishu", "telegram"];
+        assert_eq!(scoped_candidates("feishu", &available), vec!["feishu"]);
+        assert_eq!(scoped_candidates("dingding", &available), vec!["dingding"]);
+        // A channel that is off or incomplete is not available, so there is nothing to deliver to
+        // (the request then fails with "no channel" instead of reaching a different channel).
+        assert!(scoped_candidates("slack", &available).is_empty());
+        assert!(scoped_candidates("feishu", &[]).is_empty());
+        // iOS is never part of a scoped request, and an unknown id matches nothing.
+        assert!(scoped_candidates("ios", &available).is_empty());
+        assert!(scoped_candidates("", &available).is_empty());
     }
 
     #[tokio::test]

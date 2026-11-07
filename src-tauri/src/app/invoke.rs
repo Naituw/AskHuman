@@ -17,11 +17,13 @@ enum Group {
     Todo,
     Task,
     Update,
+    Setup,
 }
 
 pub(super) fn handle(invoke: Invoke<Wry>) -> bool {
     match group_for(invoke.message.command()) {
         Group::Development => development(invoke),
+        Group::Setup => setup(invoke),
         Group::Core => core(invoke),
         Group::Integration => integration(invoke),
         Group::Channel => channel(invoke),
@@ -35,6 +37,13 @@ pub(super) fn handle(invoke: Invoke<Wry>) -> bool {
 fn group_for(command: &str) -> Group {
     if command.starts_with("development_") {
         Group::Development
+    } else if command.starts_with("setup_")
+        || matches!(
+            command,
+            "open_setup" | "popup_setup_hint" | "popup_setup_hint_dismiss"
+        )
+    {
+        Group::Setup
     } else if command.starts_with("todos_")
         || command.starts_with("todo_sync_")
         || matches!(command, "todo_attachment_thumbnail" | "open_todos")
@@ -111,6 +120,28 @@ fn development(invoke: Invoke<Wry>) -> bool {
     handler(invoke)
 }
 
+/// The setup wizard (docs/specs/onboarding.md): its own handler keeps the Agent scan and apply
+/// futures out of `core`'s stack frame.
+#[inline(never)]
+fn setup(invoke: Invoke<Wry>) -> bool {
+    let handler: fn(Invoke<Wry>) -> bool = tauri::generate_handler![
+        crate::onboarding::commands::setup_status,
+        crate::onboarding::commands::setup_agents_scan,
+        crate::onboarding::commands::setup_env_check,
+        crate::onboarding::commands::setup_apply_agents,
+        crate::onboarding::commands::setup_channel_status,
+        crate::onboarding::commands::setup_skip,
+        crate::onboarding::commands::setup_finish,
+        crate::onboarding::commands::setup_login_item_enable,
+        crate::onboarding::commands::setup_probe_start,
+        crate::onboarding::commands::setup_probe_cancel,
+        crate::onboarding::commands::open_setup,
+        crate::onboarding::commands::popup_setup_hint,
+        crate::onboarding::commands::popup_setup_hint_dismiss,
+    ];
+    handler(invoke)
+}
+
 #[inline(never)]
 fn core(invoke: Invoke<Wry>) -> bool {
     let handler: fn(Invoke<Wry>) -> bool = tauri::generate_handler![
@@ -179,8 +210,6 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::update_theme,
         crate::commands::open_settings,
         crate::commands::open_agent_console,
-        crate::commands::popup_im_tip_visible,
-        crate::commands::popup_im_tip_dismiss,
         crate::commands::apply_window_effect,
         crate::commands::start_speech,
         crate::commands::stop_speech,
@@ -402,5 +431,29 @@ mod tests {
         assert_eq!(group_for("fork_task_launch"), Group::Task);
         assert_eq!(group_for("new_task_options"), Group::Task);
         assert_eq!(group_for("update_apply"), Group::Update);
+    }
+
+    #[test]
+    fn routes_the_setup_wizard_commands_to_their_own_group() {
+        for command in [
+            "setup_status",
+            "setup_agents_scan",
+            "setup_env_check",
+            "setup_apply_agents",
+            "setup_channel_status",
+            "setup_skip",
+            "setup_finish",
+            "setup_login_item_enable",
+            "setup_probe_start",
+            "setup_probe_cancel",
+            "open_setup",
+            "popup_setup_hint",
+            "popup_setup_hint_dismiss",
+        ] {
+            assert_eq!(group_for(command), Group::Setup, "{command}");
+        }
+        // The Channel branch matches `*_test` / `*_detect_*`: wizard commands must not fall in it.
+        assert_eq!(group_for("setup_channel_status"), Group::Setup);
+        assert_eq!(group_for("open_settings"), Group::Core);
     }
 }

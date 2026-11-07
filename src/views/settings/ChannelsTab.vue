@@ -17,6 +17,7 @@ const {
   stepWidth,
   stepHeight,
   cancelDetect,
+  settingsTargetHighlight,
   telegramTesting,
   telegramMessage,
   telegramError,
@@ -136,7 +137,11 @@ const config = computed(() => ctx.config.value!);
     </p>
   </div>
 
-  <div class="card channel-card channel-card-telegram">
+  <div
+    id="channel-telegram"
+    class="card channel-card channel-card-telegram"
+    :class="{ 'settings-target-highlight': settingsTargetHighlight === 'channel-telegram' }"
+  >
     <div class="row">
       <p class="card-title">{{ t("settings.channels.telegramTitle") }}</p>
       <a class="link guide-link" href="#" @click.prevent="openChannelGuide('telegram')">
@@ -223,7 +228,11 @@ const config = computed(() => ctx.config.value!);
     </template>
   </div>
 
-  <div class="card channel-card channel-card-dingtalk">
+  <div
+    id="channel-dingding"
+    class="card channel-card channel-card-dingtalk"
+    :class="{ 'settings-target-highlight': settingsTargetHighlight === 'channel-dingding' }"
+  >
     <div class="row">
       <p class="card-title">{{ t("settings.channels.dingtalkTitle") }}</p>
       <a class="link guide-link" href="#" @click.prevent="openChannelGuide('dingding')">
@@ -390,7 +399,11 @@ const config = computed(() => ctx.config.value!);
     </template>
   </div>
 
-  <div class="card channel-card channel-card-feishu">
+  <div
+    id="channel-feishu"
+    class="card channel-card channel-card-feishu"
+    :class="{ 'settings-target-highlight': settingsTargetHighlight === 'channel-feishu' }"
+  >
     <div class="row">
       <p class="card-title">{{ t("settings.channels.feishuTitle") }}</p>
       <span class="channel-recommended-badge">
@@ -519,7 +532,11 @@ const config = computed(() => ctx.config.value!);
     </template>
   </div>
 
-  <div class="card channel-card channel-card-slack">
+  <div
+    id="channel-slack"
+    class="card channel-card channel-card-slack"
+    :class="{ 'settings-target-highlight': settingsTargetHighlight === 'channel-slack' }"
+  >
     <div class="row">
       <p class="card-title">{{ t("settings.channels.slackTitle") }}</p>
       <a class="link guide-link" href="#" @click.prevent="openChannelGuide('slack')">

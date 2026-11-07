@@ -967,7 +967,8 @@
 .agent-card {
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-.agent-card.settings-target-highlight {
+.agent-card.settings-target-highlight,
+.channel-card.settings-target-highlight {
   border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
@@ -1281,4 +1282,43 @@
 }
 .ios-device-meta.warn {
   color: #ff9f0a;
+}
+
+/* Setup wizard entries in Settings: the banner under the tab bar while the Agent question is open,
+   and the menu-bar row that offers the login item that has not been written yet. */
+.setup-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 var(--space-4);
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent, #3b82f6) 40%, var(--border));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent, #3b82f6) 12%, var(--card-bg));
+}
+.setup-banner .btn,
+.setup-card .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.setup-banner-text {
+  flex: 1 1 auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.setup-banner-close {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: default;
+}
+.setup-banner-close:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
 }

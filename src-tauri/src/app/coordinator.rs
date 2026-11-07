@@ -567,6 +567,12 @@ impl Coordinator {
         }
     }
 
+    /// Whether this request's terminal result goes to reply history (what the daemon chose).
+    #[cfg(test)]
+    pub(crate) fn records_history(&self) -> bool {
+        self.record_history_enabled
+    }
+
     /// Append a reply-history entry for this terminal result (best-effort side channel).
     ///
     /// `finish` records user-initiated terminal results; caller/system cancellation records the

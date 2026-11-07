@@ -551,6 +551,7 @@ pub fn sample_ask(id: &str) -> (Arc<AskRequest>, RequestView) {
         quick_reply: true,
         quick_replies: Vec::new(),
         annotatable: false,
+        setup_probe: false,
     };
     let view = RequestView {
         id: id.to_string(),

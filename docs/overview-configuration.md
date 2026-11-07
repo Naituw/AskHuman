@@ -50,9 +50,11 @@
 Agent 任务的 workspace 索引独立存于 `~/.askhuman/agent-workspaces.json`，一次性启动记录存于
 `~/.askhuman/state/agent-launches/`；二者都不是 `AppConfig`。
 
-轻量界面状态（如弹窗「配置 IM 渠道」一次性引导的已关闭标记）独立存于
+轻量界面状态（设置向导里用户明确跳过的域与对「后台」做过选择的标记，即 `onboarding` 字段；
+旧弹窗「配置 IM 渠道」小条的已关闭标记 `imTipDismissed` 只读保留、仍算「远程回答已跳过」）独立存于
 `~/.askhuman/ui-state.json`（`src-tauri/src/uistate.rs`）：读失败视为默认、写失败静默，
-与用户配置分离以免互相触发保存/迁移逻辑。
+与用户配置分离以免互相触发保存/迁移逻辑。向导的其余状态都从机器现状推导，不落盘
+（`docs/specs/onboarding.md` §4）。
 各 Agent 的 capability 偏好也不在 `AppConfig` 里，各自独立成文件：权限审批
 `~/.askhuman/permission-preferences.json`、结束确认 `~/.askhuman/stop-preferences.json`、
 接管 Claude 内置提问 `~/.askhuman/ask-question-preferences.json`（默认开，见

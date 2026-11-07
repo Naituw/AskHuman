@@ -13,6 +13,7 @@ pub mod image_writer;
 pub mod install_check;
 pub mod ios_cmd;
 pub mod output;
+pub mod setup_cmd;
 pub mod todo_cmd;
 pub mod todo_sync_cmd;
 pub mod update_cmd;
@@ -139,6 +140,9 @@ pub fn dispatch() {
             i18n::tr(lang, "cli.seeAgentHelp").replace("{prog}", &help::program_name())
         );
         print_line(&help::help_text(lang));
+        // A person at a terminal who has not connected any Agent yet gets one line pointing to
+        // `setup`; an Agent's call (no terminal) never sees it. The exit code stays 1.
+        setup_cmd::print_welcome_if_due(lang);
         exit(1);
     }
 
@@ -568,6 +572,10 @@ pub fn dispatch() {
         // 通用键值兜底：show / get / set / unset / path。
         "config" => {
             config_cmd::dispatch(&argv[2..], lang);
+        }
+        // 安装后的引导设置（spec onboarding）：接入 Agent、可选远程回答；自己 exit。
+        "setup" => {
+            setup_cmd::dispatch(&argv[2..], lang);
         }
         // 一屏体检：daemon / 渠道 / 集成。
         "doctor" => {

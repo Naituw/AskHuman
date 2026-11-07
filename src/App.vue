@@ -8,6 +8,7 @@ import PopupInboxView from "./views/PopupInboxView.vue";
 const DevelopmentView = import.meta.env.VITE_ASKHUMAN_DEV_WORKBENCH === "1"
   ? defineAsyncComponent(() => import("./views/DevelopmentView.vue")) : null;
 const SettingsView = defineAsyncComponent(() => import("./views/SettingsView.vue"));
+const SetupView = defineAsyncComponent(() => import("./views/SetupView.vue"));
 const HistoryView = defineAsyncComponent(() => import("./views/HistoryView.vue"));
 const AgentsView = defineAsyncComponent(() => import("./views/AgentsView.vue"));
 const InterjectView = defineAsyncComponent(() => import("./views/InterjectView.vue"));
@@ -17,7 +18,7 @@ const ForkTaskView = defineAsyncComponent(() => import("./views/ForkTaskView.vue
 const AwayCapsuleView = defineAsyncComponent(() => import("./views/AwayCapsuleView.vue"));
 
 // 视图模式由 Rust 侧通过窗口 URL 的查询参数注入：
-// ?view=popup | settings | history | agents | interject | todos | newtask | forktask | away-capsule
+// ?view=popup | settings | setup | history | agents | interject | todos | newtask | forktask | away-capsule
 const view = computed(() => {
   const params = new URLSearchParams(window.location.search);
   return params.get("view") ?? "popup";
@@ -27,6 +28,7 @@ const view = computed(() => {
 <template>
   <DevelopmentView v-if="DevelopmentView && view === 'development'" />
   <SettingsView v-else-if="view === 'settings'" />
+  <SetupView v-else-if="view === 'setup'" />
   <HistoryView v-else-if="view === 'history'" />
   <AgentsView v-else-if="view === 'agents'" />
   <InterjectView v-else-if="view === 'interject'" />

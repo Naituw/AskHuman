@@ -22,6 +22,7 @@ import ExperimentalTab from "./settings/ExperimentalTab.vue";
 import IntegrationTab from "./settings/IntegrationTab.vue";
 import ChannelsTab from "./settings/ChannelsTab.vue";
 import SettingsOverlays from "./settings/SettingsOverlays.vue";
+import SetupBanner from "./settings/SetupBanner.vue";
 import "./settings/settings.css";
 
 const { t } = useI18n();
@@ -263,6 +264,8 @@ function gotoTabTarget(raw: string) {
         </div>
       </div>
     </nav>
+
+    <SetupBanner />
 
     <div class="settings-body">
       <GeneralTab v-if="activeTab === 'general'" />

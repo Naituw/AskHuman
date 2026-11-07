@@ -210,6 +210,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "title.todos" => pick(lang, "AskHuman Todos", "AskHuman 待办"),
         "title.newTask" => pick(lang, "New Agent Task", "新建 Agent 任务"),
         "title.forkTask" => pick(lang, "Fork Agent Session", "Fork Agent 会话"),
+        "title.setup" => pick(lang, "AskHuman Setup", "AskHuman 设置向导"),
 
         // —— macOS 附件右键菜单 ——
         "menu.open" => pick(lang, "Open", "打开"),
@@ -229,6 +230,11 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             lang,
             "Run `{prog} --agent-help` to see the full asking usage.",
             "运行 `{prog} --agent-help` 查看完整的提问用法说明。",
+        ),
+        "cli.setupWelcome" => pick(
+            lang,
+            "New here? Run `{prog} setup` to connect your Agents and, optionally, remote answering (about 2 minutes).",
+            "第一次使用？运行 `{prog} setup`，约 2 分钟接入 Agent（以及可选的远程回答）。",
         ),
         "cli.unknownOption" => pick(lang, "unknown option {opt}", "未知选项 {opt}"),
         "cli.unknownOptionColon" => pick(lang, "unknown option: {opt}", "未知选项: {opt}"),
@@ -1519,6 +1525,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "↑ {v} 已安装 — 下次使用时启动新版 daemon",
         ),
         // 操作区。
+        "tray.openSetup" => pick(lang, "Setup Guide…", "设置向导…"),
         "tray.openSettings" => pick(lang, "Settings", "设置"),
         "tray.openHistory" => pick(lang, "History", "历史记录"),
         "tray.openTodos" => pick(lang, "Todos", "待办"),

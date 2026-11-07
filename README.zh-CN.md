@@ -45,7 +45,19 @@ npm i -g askhuman
 
 ## 使用
 
-### 一、AskHuman 命令
+### 一、运行设置向导
+
+安装完成后先运行一次，这是第一步：
+
+```bash
+AskHuman setup
+```
+
+约 2 分钟的引导流程：接入你的 Agent（Cursor、Claude Code、Codex、Grok、Pi、Antigravity），可选地配置经 Telegram / Slack / 钉钉 / 飞书远程回答，并且只在你选择时让 AskHuman 常驻菜单栏或后台运行。修改你的文件之前，会先列出将改动哪些文件。没有图形会话（SSH、服务器）或加 `--text` 时，同一流程在终端里进行。
+
+之后随时可以再次运行，用来补上 Agent 或渠道：已经配置好的保持不变。设置页「通用」顶部的「设置向导」卡片也能打开它。向导运行前已打开的 Agent 会话需要重启，才会加载新的指令。
+
+### 二、AskHuman 命令
 
 `AskHuman` 是一个命令行工具，AI Agent 通过它向你提问并取回结果。几个最常见的用法：
 
@@ -67,13 +79,16 @@ AskHuman -q "要继续吗？" -o "继续" -o "停止" --stdin <<'EOF'
 EOF
 
 # 其它常用
+AskHuman setup        # 设置向导（加 --text 为终端版）
 AskHuman --settings   # 打开设置界面
 AskHuman --history    # 打开回复历史（加 --all 看全部项目）
 ```
 
 整个 CLI 的完整用法见 `AskHuman --help`，面向 AI 的提问用法见 `AskHuman --agent-help`，面向脚本/自动化（`--select-only` / `--single` / `--output json`）见 `AskHuman --scripting-help`。
 
-### 二、集成到 Agent 中
+### 三、集成到 Agent 中
+
+`AskHuman setup` 已经替你做了这一步；本节用于之后调整，或自己手动集成。
 
 为了让 Agent 在结束或需要确认时主动调用 `AskHuman`，需要把相应提示词加入 Agent 的全局提示词。运行 `AskHuman --settings` 打开设置，进入 **Agents** 面板，按需选择：
 
@@ -82,7 +97,9 @@ AskHuman --history    # 打开回复历史（加 --all 看全部项目）
 
 Antigravity 在 Unix 上支持 **未集成**、**CLI**、**MCP** 三种互斥模式，推荐 **CLI**，也可选择 **MCP**。集成会为 Antigravity 家族安装一份共享规则；具体客户端是否读取规则、能否执行所选调用方式，仍取决于该客户端。Windows 上目前会明确拒绝 Antigravity 集成变更。配置路径、会话限制和未支持能力见 [Antigravity 集成](docs/wiki/antigravity-setup.md)。
 
-### 三、配置沟通渠道
+### 四、配置沟通渠道
+
+设置向导会一次带你配置一个渠道；本节用于之后新增或修改渠道。
 
 默认即有本地弹窗。你也可以开启钉钉、飞书、Telegram、Slack 等渠道——这样无论是否在电脑前，都能收到提问并回复（多个渠道可同时开启并行「抢答」）。在设置的 **通信渠道** Tab 配置，每个渠道的接入步骤见：
 
@@ -91,7 +108,7 @@ Antigravity 在 Unix 上支持 **未集成**、**CLI**、**MCP** 三种互斥模
 - [Telegram](docs/wiki/telegram-setup.md)
 - [Slack](docs/wiki/slack-setup.md)
 
-### 四、通用设置
+### 五、通用设置
 
 主题、窗口、语音输入、回复历史等通用偏好见[通用设置](docs/wiki/settings.md)。
 

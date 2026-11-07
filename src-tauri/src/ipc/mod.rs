@@ -426,6 +426,15 @@ pub struct PendingRequestInfo {
     /// desktop capsule can take the user straight to it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub escalated: bool,
+    /// Family of the Agent that asked (`claude` / `codex` / …) once it is known. The setup
+    /// wizard's "try it in an Agent" check reads it; absent for confirmations, for questions
+    /// whose Agent is not resolved yet, and from a daemon that predates the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_kind: Option<String>,
+    /// The question is an Agent's own (`AskRequest::quick_reply`): not a Stop card, a failure
+    /// card, a native Codex question, a development relay or one of the wizard's own checks.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_ask: bool,
 }
 
 /// 一条活动 agent 的菜单栏摘要（D→宿主，托盘「Agent 状态」子菜单用，spec agent-interject D7）。
@@ -1395,6 +1404,8 @@ mod tests {
                 id: "r1".to_string(),
                 preview: "deploy?".to_string(),
                 escalated: false,
+                agent_kind: Some("claude".to_string()),
+                agent_ask: true,
             }],
             agents: vec![TrayAgentInfo {
                 session_id: "s1".to_string(),
@@ -1481,6 +1492,38 @@ mod tests {
             }
             other => panic!("unexpected: {:?}", other),
         }
+    }
+
+    /// The Agent fields of a pending request are sent only when set, and a peer that predates
+    /// them reads a request as no Agent's question (no protocol bump).
+    #[test]
+    fn pending_request_agent_fields_are_optional_on_the_wire() {
+        let plain = PendingRequestInfo {
+            id: "r1".to_string(),
+            preview: "deploy?".to_string(),
+            escalated: false,
+            agent_kind: None,
+            agent_ask: false,
+        };
+        let value = serde_json::to_value(&plain).unwrap();
+        assert!(value.get("agent_kind").is_none());
+        assert!(value.get("agent_ask").is_none());
+
+        let asked = PendingRequestInfo {
+            agent_kind: Some("codex".to_string()),
+            agent_ask: true,
+            ..plain
+        };
+        let back: PendingRequestInfo =
+            serde_json::from_value(serde_json::to_value(&asked).unwrap()).unwrap();
+        assert_eq!(back.agent_kind.as_deref(), Some("codex"));
+        assert!(back.agent_ask);
+
+        let legacy: PendingRequestInfo =
+            serde_json::from_str(r#"{"id":"r1","preview":"deploy?"}"#).unwrap();
+        assert!(legacy.agent_kind.is_none());
+        assert!(!legacy.agent_ask);
+        assert!(!legacy.escalated);
     }
 
     /// 旧端忽略未知变体：当前二进制收到未来新增的 `{"type":"somethingNew"}` 应报错而非 panic；

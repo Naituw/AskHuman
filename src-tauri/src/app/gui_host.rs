@@ -34,7 +34,7 @@ const QUICK_ASK_INTERJECT: &str = crate::daemon::away::QUICK_ASK_TEXT;
 pub fn is_hosted_label(label: &str) -> bool {
     matches!(
         label,
-        "settings" | "history" | "agents" | "todos" | "newtask"
+        "settings" | "history" | "agents" | "todos" | "newtask" | "setup"
     ) || label.starts_with("interject-")
 }
 
@@ -239,6 +239,10 @@ pub struct HostState {
     pub away_cfg: Mutex<crate::config::AwayConfig>,
     /// Current-mode integration bundles that need reconciliation, in settings display order.
     pub integration_updates: Mutex<Vec<String>>,
+    /// The setup wizard's Agent question is still open (`!onboarding::state::agents_decided()`):
+    /// while set, the tray offers a "Setup Guide…" entry. Recomputed where the integration facts
+    /// are (`refresh_integration_updates`) and when the wizard records a decision.
+    pub setup_pending: AtomicBool,
     /// GUI Host owns menu-triggered update feedback even while daemon is down.
     update_action: Mutex<UpdateActionState>,
     pub daemon_up: AtomicBool,
@@ -287,7 +291,7 @@ impl HostState {
 }
 
 /// 当前平台是否支持托盘（macOS 恒真；Linux 需图形会话）。
-fn tray_supported() -> bool {
+pub(crate) fn tray_supported() -> bool {
     #[cfg(target_os = "macos")]
     {
         true
@@ -321,6 +325,7 @@ pub fn setup(app: &mut tauri::App, config: &AppConfig) -> tauri::Result<()> {
         capsule: Mutex::new(Default::default()),
         away_cfg: Mutex::new(config.general.away.clone()),
         integration_updates: Mutex::new(detect_integration_updates()),
+        setup_pending: AtomicBool::new(!crate::onboarding::state::agents_decided()),
         update_action: Mutex::new(UpdateActionState::Idle),
         daemon_up: AtomicBool::new(false),
         windows_open: AtomicUsize::new(0),
@@ -363,8 +368,10 @@ pub fn setup(app: &mut tauri::App, config: &AppConfig) -> tauri::Result<()> {
     if mode != MenuBarIconMode::Off && tray_supported() {
         let _ = ensure_tray(&app.handle().clone(), true);
     }
-    // always 模式装登录项（best-effort）。
-    if mode == MenuBarIconMode::Always {
+    // always 模式保证登录项存在且指向当前二进制（best-effort）。新用户在做出选择前不静默写入
+    // （`docs/specs/onboarding.md` D13）：已有登录项（老用户），或用户已通过设置向导 / 显式切换
+    // 菜单栏图标做过选择，才继续维护它。
+    if mode == MenuBarIconMode::Always && crate::onboarding::state::login_item_gate_open() {
         let _ = crate::integrations::login_item::ensure_installed();
     }
 
@@ -697,6 +704,7 @@ pub fn refresh_tray(app: &AppHandle) {
     let stale = state.binary_stale.load(Ordering::SeqCst);
 
     // 内容签名：与上次相同 → 整次跳过，不触碰托盘（连 diff 都省，确保展开的菜单纹丝不动）。
+    let setup_pending = state.setup_pending.load(Ordering::SeqCst);
     let mut sig = menu_signature(
         up,
         lang,
@@ -706,6 +714,7 @@ pub fn refresh_tray(app: &AppHandle) {
         stale,
         &update_action,
         dark_tray,
+        setup_pending,
     );
     sig.push_str(if crate::daemon::handoff::failed() {
         "|handoff-failed"
@@ -738,6 +747,7 @@ pub fn refresh_tray(app: &AppHandle) {
             lifecycle_on,
             stale,
             &update_action,
+            setup_pending,
         ));
     }
     let mut tip = if up {
@@ -771,6 +781,7 @@ fn menu_signature(
     stale: bool,
     update_action: &UpdateActionState,
     dark_tray: bool,
+    setup_pending: bool,
 ) -> String {
     // 待答子菜单内容（id+预览）也入签名：列表/预览变化即触发 diff。
     let pending: String = data
@@ -817,7 +828,7 @@ fn menu_signature(
         .map(|g| fmt_away_for(g.since_ms, lang))
         .unwrap_or_default();
     format!(
-        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}|{}|{}",
+        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}|{}|{}|{}",
         lang,
         up as u8,
         data.version,
@@ -845,6 +856,7 @@ fn menu_signature(
         update_action,
         dark_tray as u8,
         away,
+        setup_pending as u8,
     )
 }
 
@@ -880,9 +892,39 @@ pub(crate) fn refresh_integration_updates(app: &AppHandle) {
             true
         }
     };
-    if changed {
+    // The wizard's Agent question rests on the same integration facts, so it is settled at the
+    // same junction.
+    let pending_changed = store_setup_pending(&state);
+    if changed || pending_changed {
         refresh_on_main(app);
     }
+    if pending_changed {
+        emit_setup_status_changed(app);
+    }
+}
+
+/// Recompute `setup_pending` from disk; true when it changed.
+fn store_setup_pending(state: &HostState) -> bool {
+    let pending = !crate::onboarding::state::agents_decided();
+    state.setup_pending.swap(pending, Ordering::SeqCst) != pending
+}
+
+/// The wizard recorded a decision (skip / finish): settle the tray entry and tell every window.
+pub(crate) fn refresh_setup_state(app: &AppHandle) {
+    let Some(state) = app.try_state::<HostState>() else {
+        return;
+    };
+    if store_setup_pending(&state) {
+        refresh_on_main(app);
+    }
+    emit_setup_status_changed(app);
+}
+
+/// Tell every hosted window that the setup wizard's "decided" state may have changed: the Settings
+/// banner, the menu-bar hint and the wizard itself refresh on it. No payload.
+pub(crate) fn emit_setup_status_changed(app: &AppHandle) {
+    use tauri::Emitter;
+    let _ = app.emit("setup-status-changed", ());
 }
 
 fn integration_agent_label(id: &str) -> &str {
@@ -1014,6 +1056,7 @@ fn parse_session_setting(name: &str) -> Option<crate::daemon::away::SessionSetti
 /// 生成「期望的托盘菜单节点列表」（声明式，spec D7）：状态区只读条目 + 操作区可点条目。
 /// 每个节点带稳定 `key`（可点条目的 `key` 即事件路由 id）；由 `TrayMenu::apply` diff 应用——
 /// 文字变化只 `set_text`、结构变化才最小增删，绝不整段重建（整段重建会关掉已展开菜单）。
+#[allow(clippy::too_many_arguments)] // each argument is one independent input of the menu
 fn build_specs(
     up: bool,
     lang: Lang,
@@ -1022,6 +1065,7 @@ fn build_specs(
     lifecycle_on: bool,
     stale: bool,
     update_action: &UpdateActionState,
+    setup_pending: bool,
 ) -> Vec<Node> {
     let mut nodes: Vec<Node> = Vec::new();
 
@@ -1163,6 +1207,14 @@ fn build_specs(
             nodes.push(Node::submenu("st.pending_menu", title, true, children));
         }
         nodes.push(Node::separator("sep.pending"));
+    }
+    // While the wizard's Agent question is open, offer the guide right above Settings.
+    if setup_pending {
+        nodes.push(Node::item(
+            "open_setup",
+            i18n::tr(lang, "tray.openSetup").to_string(),
+            true,
+        ));
     }
     nodes.push(Node::item(
         "open_settings",
@@ -1623,6 +1675,16 @@ pub fn on_menu_event(app: &AppHandle, id: &str) {
     }
     match id {
         "open_settings" => open_window(app, WindowKind::Settings, false, None, None, None, None),
+        // The tray entry only exists while the Agent question is open, so it starts on that page.
+        "open_setup" => open_window(
+            app,
+            WindowKind::Setup,
+            false,
+            Some("agents".to_string()),
+            None,
+            None,
+            None,
+        ),
         // 托盘「历史」无调用方项目上下文 → 默认展示全部项目。
         "open_history" => open_window(app, WindowKind::History, true, None, None, None, None),
         "open_agents" => open_window(app, WindowKind::Agents, false, None, None, None, None),
@@ -1756,7 +1818,8 @@ pub fn on_menu_event(app: &AppHandle, id: &str) {
 
 /// 在宿主进程内打开（或聚焦）指定窗口，并刷新窗口计数 / 续命。须在主线程调用。
 /// `param` 按窗口类型复用：历史窗口 = 调用方项目 key（默认过滤到该项目，None 用宿主自身项目）；
-/// 设置窗口 = 初始定位 tab（如 "channel"，None 用默认 tab）；待办/新建任务窗口 = 预选项目 key。
+/// 设置窗口 = 初始定位 tab（如 "channel"，None 用默认 tab）；待办/新建任务窗口 = 预选项目 key；
+/// 安装向导窗口 = 目标页（`agents` | `remote` | `done`，None 用第一页）。
 /// `target.session` 用于 Agent 窗口预选或插话窗口唯一键；`target.agent/cwd` 仅插话窗口使用；
 /// `todo` 仅新建任务窗口使用。
 pub(crate) fn open_window(
@@ -1818,6 +1881,10 @@ pub(crate) fn open_window(
             Some(t) => crate::app::create_fork_task_window(app, &cfg, &t.session, pin_above_popup),
             None => return,
         },
+        // `param` = the wizard page to show (docs/specs/onboarding.md).
+        WindowKind::Setup => {
+            crate::app::create_setup_window(app, &cfg, param.as_deref(), pin_above_popup)
+        }
     };
     if r.is_ok() {
         // 宿主是 accessory app（不自动激活）：新建窗口需显式聚焦，才能前置到置顶弹窗之上并接收键盘。
@@ -1828,6 +1895,7 @@ pub(crate) fn open_window(
             WindowKind::Todos => "todos".to_string(),
             WindowKind::NewTask => "newtask".to_string(),
             WindowKind::ForkTask => "fork-task".to_string(),
+            WindowKind::Setup => "setup".to_string(),
             WindowKind::Interject => target
                 .as_ref()
                 .map(|t| crate::gui_host::interject_label(&t.session))
@@ -2335,6 +2403,10 @@ fn apply_config(app: &AppHandle, cfg: &AppConfig) {
                 }
             }
         }
+        // An explicit change of the menu-bar mode is the user's choice about the background
+        // behaviour: from now on `always` may keep its login item (onboarding D13).
+        crate::onboarding::state::mark_background_decided();
+        emit_setup_status_changed(app);
     }
 
     // 守护进程生命周期换挡：切到「保活」即视为一次触发——立即拉起 daemon（若未运行）。
@@ -2400,7 +2472,17 @@ fn host_disk_fingerprint(state: &HostState) -> Fingerprint {
     }
 }
 
-/// 用盘上（新）二进制重启宿主：释放单实例锁；always 交 launchd KeepAlive 重启，其它自我 re-exec。
+/// Whether a host replacing itself may just exit and let launchd's `KeepAlive` start the new
+/// binary. That holds only when the login item (the KeepAlive plist) really exists: with
+/// `menuBarIcon = always` but no login item (a fresh install before the user chose, or a Dev
+/// instance) nothing would restart the host, so it must spawn its successor itself.
+#[cfg(any(target_os = "macos", test))]
+fn restart_via_launchd(mode: MenuBarIconMode, has_login_item: bool) -> bool {
+    mode == MenuBarIconMode::Always && has_login_item
+}
+
+/// 用盘上（新）二进制重启宿主：释放单实例锁；always 且登录项在则交 launchd KeepAlive 重启，
+/// 其它自我 re-exec。
 fn restart_host(app: &AppHandle) {
     let Some(state) = app.try_state::<HostState>() else {
         return;
@@ -2410,7 +2492,10 @@ fn restart_host(app: &AppHandle) {
     release_lock(); // 让新实例可抢锁。
     #[cfg(target_os = "macos")]
     {
-        if mode == MenuBarIconMode::Always {
+        if restart_via_launchd(
+            mode,
+            crate::integrations::login_item::instance_has_login_item(),
+        ) {
             app.exit(0);
             return;
         }
@@ -2451,6 +2536,24 @@ mod tests {
             Some("daemon.json")
         );
         assert!(!path.to_string_lossy().starts_with(r"\\.\pipe\"));
+    }
+
+    #[test]
+    fn host_restart_delegates_to_launchd_only_when_the_login_item_exists() {
+        for mode in [
+            MenuBarIconMode::Off,
+            MenuBarIconMode::Active,
+            MenuBarIconMode::Always,
+        ] {
+            for has_login_item in [false, true] {
+                let expected = mode == MenuBarIconMode::Always && has_login_item;
+                assert_eq!(
+                    restart_via_launchd(mode, has_login_item),
+                    expected,
+                    "mode {mode:?}, login item {has_login_item}"
+                );
+            }
+        }
     }
 
     fn item<'a>(nodes: &'a [Node], key: &str) -> (&'a str, bool) {
@@ -2504,6 +2607,7 @@ mod tests {
             true,
             false,
             &UpdateActionState::Idle,
+            false,
         );
         let agent_title = nodes
             .iter()
@@ -2596,6 +2700,7 @@ mod tests {
             false,
             false,
             &UpdateActionState::Current,
+            false,
         );
         assert_eq!(
             item(&nodes, "st.update_action"),
@@ -2618,6 +2723,7 @@ mod tests {
             false,
             false,
             &UpdateActionState::Found("1.2.0".to_string()),
+            false,
         );
         assert_eq!(
             item(&nodes, "st.update_action"),
@@ -2644,6 +2750,7 @@ mod tests {
             false,
             false,
             &UpdateActionState::Applying,
+            false,
         );
         assert_eq!(
             item(&nodes, "st.update_action"),
@@ -2692,6 +2799,7 @@ mod tests {
             false,
             false,
             &UpdateActionState::Idle,
+            false,
         );
 
         assert_eq!(item(&nodes, "st.version"), ("Version 1.1.0", false));
@@ -2756,6 +2864,7 @@ mod tests {
             false,
             false,
             &UpdateActionState::Idle,
+            false,
         );
         assert_eq!(
             item(&nodes, "integration_updates"),
@@ -2823,6 +2932,7 @@ mod tests {
             true,
             false,
             &UpdateActionState::Idle,
+            false,
         )
     }
 
@@ -2835,6 +2945,66 @@ mod tests {
         assert_eq!(item(&nodes, "away_start"), ("Turn On Away Mode", true));
         assert!(!has_item(&nodes, "away_end"));
         assert!(!has_item(&nodes, "st.away"));
+    }
+
+    fn menu_with_setup_question(lang: Lang, pending: bool) -> Vec<Node> {
+        build_specs(
+            true,
+            lang,
+            &TrayData {
+                running: true,
+                ..Default::default()
+            },
+            &[],
+            true,
+            false,
+            &UpdateActionState::Idle,
+            pending,
+        )
+    }
+
+    #[test]
+    fn tray_offers_the_setup_guide_right_above_settings_only_while_the_agent_question_is_open() {
+        let position = |nodes: &[Node], key: &str| {
+            nodes.iter().position(|node| match node {
+                Node::Item { key: k, .. } | Node::Submenu { key: k, .. } => k == key,
+                Node::Separator { .. } => false,
+            })
+        };
+        let open = menu_with_setup_question(Lang::En, true);
+        assert_eq!(item(&open, "open_setup"), ("Setup Guide…", true));
+        assert_eq!(
+            position(&open, "open_setup").map(|index| index + 1),
+            position(&open, "open_settings"),
+            "the entry sits directly above Settings"
+        );
+        assert_eq!(
+            item(&menu_with_setup_question(Lang::Zh, true), "open_setup"),
+            ("设置向导…", true)
+        );
+
+        let settled = menu_with_setup_question(Lang::En, false);
+        assert!(!has_item(&settled, "open_setup"));
+        assert!(has_item(&settled, "open_settings"));
+    }
+
+    #[test]
+    fn menu_signature_follows_the_setup_question() {
+        let signature = |pending| {
+            menu_signature(
+                true,
+                Lang::En,
+                &TrayData::default(),
+                &[],
+                false,
+                false,
+                &UpdateActionState::Idle,
+                false,
+                pending,
+            )
+        };
+        assert_ne!(signature(true), signature(false));
+        assert_eq!(signature(true), signature(true));
     }
 
     #[test]
@@ -3014,6 +3184,7 @@ mod tests {
                 true,
                 false,
                 &UpdateActionState::Idle,
+                false,
                 false,
             )
         };
@@ -3202,6 +3373,7 @@ mod tests {
             false,
             &UpdateActionState::Idle,
             false,
+            false,
         );
         let sig_dark = menu_signature(
             true,
@@ -3212,6 +3384,7 @@ mod tests {
             false,
             &UpdateActionState::Idle,
             true,
+            false,
         );
         assert_ne!(sig_light, sig_dark);
     }

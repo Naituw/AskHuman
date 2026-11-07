@@ -16,8 +16,11 @@ Under the hood it's a single executable (Tauri 2 / Rust). This npm package distr
 
 ```bash
 npm i -g askhuman
+AskHuman setup        # first step: a short guided setup (add --text for the terminal version)
 AskHuman "Continue?" -o "Continue" -o "Stop"
 ```
+
+`AskHuman setup` connects your Agents (Cursor, Claude Code, Codex, Grok, Pi, Antigravity) and, if you want, remote answering through Telegram / Slack / DingTalk / Feishu. It lists the files it will change before changing them, and you can run it again at any time. See the [full usage guide](https://github.com/Naituw/AskHuman#usage).
 
 ## As a dependency (programmatic use)
 

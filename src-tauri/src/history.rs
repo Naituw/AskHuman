@@ -108,6 +108,13 @@ pub fn load(project: Option<&str>, all: bool) -> Vec<HistoryEntry> {
     load_at(&paths::history_file(), project, all)
 }
 
+/// Whether any recorded reply came from a real Agent (`agent_kind` set). A question typed by hand
+/// in a terminal carries no Agent family, so it does not count. Used as evidence by the setup
+/// wizard's "Agent domain already decided" check.
+pub fn has_agent_origin() -> bool {
+    has_agent_origin_at(&paths::history_file())
+}
+
 /// Latest completed exchange for one exact native Agent session.
 pub fn latest_send_for_session(agent_kind: &str, session_id: &str) -> Option<HistoryEntry> {
     recent_sends_for_session(agent_kind, session_id, 1)
@@ -242,6 +249,15 @@ fn record_at(path: &Path, entry: HistoryEntry, limit: u32) {
     }
     trim_vec(&mut entries, limit as usize);
     let _ = write_all_at(path, &entries);
+}
+
+fn has_agent_origin_at(path: &Path) -> bool {
+    read_all_at(path).iter().any(|entry| {
+        entry
+            .agent_kind
+            .as_deref()
+            .is_some_and(|kind| !kind.trim().is_empty())
+    })
 }
 
 fn load_at(path: &Path, project: Option<&str>, all: bool) -> Vec<HistoryEntry> {
@@ -603,6 +619,27 @@ mod tests {
         let legacy = r#"{"id":"old","timestampMs":3,"action":"send"}"#;
         let parsed: HistoryEntry = serde_json::from_str(legacy).unwrap();
         assert!(parsed.annotations.is_empty());
+    }
+
+    #[test]
+    fn agent_origin_needs_a_non_blank_agent_kind() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        assert!(!has_agent_origin_at(&path), "no history file");
+        // A question typed by hand in a terminal has no Agent family.
+        record_at(&path, entry("manual", "/p", 1), 200);
+        assert!(!has_agent_origin_at(&path));
+        let mut blank = entry("blank", "/p", 2);
+        blank.agent_kind = Some("  ".to_string());
+        record_at(&path, blank, 200);
+        assert!(
+            !has_agent_origin_at(&path),
+            "a blank family is not evidence"
+        );
+        let mut real = entry("real", "/p", 3);
+        real.agent_kind = Some("codex".to_string());
+        record_at(&path, real, 200);
+        assert!(has_agent_origin_at(&path));
     }
 
     #[test]

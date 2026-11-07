@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 页脚区（多根组件）：R6 一次性 IM 引导条 + 三种底部按钮排布（多题导航 / 单题发送 / 确认提交）。
+// 页脚区（多根组件）：设置向导提示条 + 三种底部按钮排布（多题导航 / 单题发送 / 确认提交）。
 import { useI18n } from "vue-i18n";
 import { primaryShortcutLabel } from "../../lib/platform";
 import AnnotationChip from "./AnnotationChip.vue";
@@ -11,12 +11,13 @@ const { t } = useI18n();
 const cancelShortcut = primaryShortcutLabel("w");
 const previousShortcut = primaryShortcutLabel("[");
 const {
+  request,
   isConfirm,
   isMulti,
   verticalMode,
-  imTipVisible,
-  imTipConfigure,
-  imTipDismiss,
+  setupHint,
+  setupHintAct,
+  setupHintDismiss,
   submitting,
   requestCancel,
   cancelKeyHint,
@@ -43,17 +44,18 @@ const {
 </script>
 
 <template>
-  <!-- 首次运行引导（R6）：未配置 IM 渠道时的一次性提示条 -->
-  <div v-if="imTipVisible" class="im-tip">
-    <span class="im-tip-text">{{ t("popup.imTip.text") }}</span>
-    <button class="im-tip-action" type="button" @click="imTipConfigure">
-      {{ t("popup.imTip.action") }}
+  <!-- 设置向导提示条：指向仍有未决问题的向导页（v1：未配置 IM 渠道时的一次性提示）；向导自己的测试提问上不显示 -->
+  <div v-if="setupHint && !request?.setupProbe" class="setup-hint" data-testid="setup-hint">
+    <span class="setup-hint-text">{{ t(`popup.setupHint.${setupHint.id}.text`) }}</span>
+    <button class="setup-hint-action" type="button" data-testid="setup-hint-action" @click="setupHintAct">
+      {{ t(`popup.setupHint.${setupHint.id}.action`) }}
     </button>
     <button
-      class="im-tip-close"
+      class="setup-hint-close"
       type="button"
-      :title="t('popup.imTip.dismiss')"
-      @click="imTipDismiss"
+      data-testid="setup-hint-dismiss"
+      :title="t(`popup.setupHint.${setupHint.id}.dismiss`)"
+      @click="setupHintDismiss"
     >
       <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
         <line x1="2" y1="2" x2="10" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />

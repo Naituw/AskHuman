@@ -110,6 +110,12 @@ pub struct AskRequest {
     /// predates the field never offers notes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub annotatable: bool,
+    /// Whether this is one of the setup wizard's own test questions (`docs/specs/onboarding.md`
+    /// D11). Only the daemon sets it, from the request's native id marker; the popup shows no
+    /// setup hint on such a question. Sent only when true, so a sender that predates the field
+    /// reads it as an ordinary question.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub setup_probe: bool,
 }
 
 fn default_quick_reply() -> bool {
@@ -147,6 +153,7 @@ impl AskRequest {
             quick_reply: true,
             quick_replies: Vec::new(),
             annotatable: false,
+            setup_probe: false,
         }
     }
 }
@@ -937,6 +944,27 @@ mod tests {
         legacy.as_object_mut().unwrap().remove("annotatable");
         let parsed: AskRequest = serde_json::from_value(legacy).unwrap();
         assert!(!parsed.annotatable);
+    }
+
+    #[test]
+    fn setup_probe_is_sent_only_when_true_and_defaults_to_false() {
+        let mut request = AskRequest::new(MessagePrompt::default(), Vec::new(), false);
+        let value = serde_json::to_value(&request).unwrap();
+        assert!(value.get("setupProbe").is_none());
+
+        request.setup_probe = true;
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["setupProbe"], true);
+        let back: AskRequest = serde_json::from_value(value).unwrap();
+        assert!(back.setup_probe);
+
+        // A sender that predates the field is an ordinary question.
+        let mut legacy =
+            serde_json::to_value(AskRequest::new(MessagePrompt::default(), Vec::new(), false))
+                .unwrap();
+        legacy.as_object_mut().unwrap().remove("setupProbe");
+        let parsed: AskRequest = serde_json::from_value(legacy).unwrap();
+        assert!(!parsed.setup_probe);
     }
 
     #[test]

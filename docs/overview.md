@@ -58,7 +58,7 @@ AskHuman/
   src/                       Vue 前端（Vite 根目录）
     index.html               前端入口、首帧关键样式与平台探测
     main.ts                  挂载 App、引入全局样式
-    App.vue                  按 URL 路由 popup/settings/history/agents/interject/todos/newtask/forktask
+    App.vue                  按 URL 路由 popup/settings/setup/history/agents/interject/todos/newtask/forktask
     views/PopupInboxView.vue  共享作答窗口、请求导航、稍后回答与小窗（专题见 overview-popup-ui.md）和统一关闭
     views/PopupView.vue      每请求提问与回答正文（编排层；状态与区块组件在 views/popup/）
     views/AgentsView.vue     Agent 控制台（双栏：边栏+详情；spec gui-agent-console）
@@ -70,6 +70,7 @@ AskHuman/
     views/ForkTaskView.vue   原生会话 Fork 独立窗口（固定源会话 + 权限 + 分支指令）
     views/newtask/LaunchPermission.vue  新建/Fork 共用权限控件
     views/SettingsView.vue   设置页（编排层；各 tab 组件与域逻辑在 views/settings/）
+    views/SetupView.vue      安装后设置向导（三页：接入 Agent / 远程回答 / 完成；页面与状态在 views/setup/，设置页的横幅与入口卡在 views/settings/Setup*.vue）
     views/HistoryView.vue    回复历史列表、搜索与筛选；右侧附件预览面板与分栏
     views/history/useHistoryPreview.ts  历史窗口唯一的附件预览控制器（面板本体复用 views/popup/）
     views/history/useAttachmentFilter.ts · AttachmentFilter.vue · AttachmentChips.vue  附件筛选（状态、按钮 + 面板、条件标签）
@@ -104,6 +105,7 @@ AskHuman/
         channel_cmd.rs       channel 配置、测试与识别子命令
         ios_cmd.rs           channel ios 子命令（status / pair / allow / devices / revoke）与连接串导入
         agents_cmd.rs        agents 模式、状态与 capability 子命令
+        setup_cmd.rs         setup 子命令（GUI 向导，无图形会话或 --text 时走终端文字流程）与无参 `AskHuman` 的一行欢迎语
         doctor.rs            daemon、已装二进制、渠道和 Agent 集成体检
         install_check.rs     已装 AskHuman 二进制 / PATH 遮蔽 / Daemon 互顶检查（doctor install）
         debug_cmd.rs         不进入 help 的调试子命令
@@ -224,6 +226,8 @@ AskHuman/
         agent_mode.rs        None/CLI/MCP 模式编排
         agent_stop.rs        Agent Stop 结束确认配置
         login_item.rs        macOS/Linux/Windows GUI Host 与 daemon 登录项
+
+      onboarding/            安装后设置向导的后端（spec onboarding）：Agent / 远程渠道 / 后台三域的「已决定」判定（只把用户的明确选择写进 ui-state.json 的 `onboarding` 字段，其余从机器现状推导）、Agent 表 · 检测 · 应用 · 将改文件预览、环境体检、终端文字流程 `text.rs`，以及可选验证 `probe*.rs`
 
       ipc/
         mod.rs               CLI/Daemon/Popup 消息类型
@@ -469,19 +473,20 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 
 > 需求 `docs/specs/menu-bar-tray.md`，计划 `docs/plans/menu-bar-tray.md`。
 
-- 每个交互式桌面会话使用单实例 GUI Host；Daemon 保持无 GUI。Host 承载设置、历史、待办、Agent、Interject、新建任务、Fork 与托盘，所有入口路由到它以保证每类窗口唯一。
+- 每个交互式桌面会话使用单实例 GUI Host；Daemon 保持无 GUI。Host 承载设置、设置向导、历史、待办、Agent、Interject、新建任务、Fork 与托盘，所有入口路由到它以保证每类窗口唯一。
 - Host 使用独立的用户私有 `gui-host.sock` 或 Windows named pipe，加跨进程锁做单实例；即使 Daemon 未运行，设置和历史仍能打开。
 - `general.menuBarIcon` 支持 `off|active|always`；Windows 使用原生托盘，Linux 桌面 best-effort。
 - 托盘状态订阅不保活；只有打开窗口的独立连接给 Daemon 续命。`general.daemonLifecycle=keepalive` 是正交的常驻策略。
 - `TrayState` 汇总待答、IM、Agent、更新与 drain；菜单可聚焦待答 Popup、打开 Agent/插话、控制 Daemon 和应用更新。
 - GUI Host 启动与 daemon 停→运行时复用 Agents 设置页口径检查集成更新；待更新时菜单显示可点击警告，无待答时 template 图标显示右上实心圆，设置内更新成功后即时清除。
-- GUI Host 只在无窗口时换到新二进制；GUI Host always 与 Daemon keepalive 的登录项分别管理。
+- GUI Host 只在无窗口时换到新二进制；GUI Host always 与 Daemon keepalive 的登录项分别管理。`menuBarIcon = always` 的登录项只在已存在、或用户对「后台」做过选择之后才由 GUI Host 启动时维护（做过选择 = 向导点「完成」、在设置里切换菜单栏图标或点「启用」、`config set|unset general.menuBarIcon`）：新用户在选择前默认值虽是 `always`，也不会被静默写入登录项，已有登录项的用户行为不变（需求 `docs/specs/onboarding.md` D13）。
 
 ## CLI 配置与 Agent 集成（headless / 无 GUI）
 
 > 需求 `docs/specs/cli-config.md`，计划 `docs/plans/cli-config.md`。
 
 - headless/SSH 可用 `channel`、`agents`、`config`、`doctor` 完成渠道配置与 Agent 集成；各子命令提供 help 和 JSON 输出。
+- 新用户从 `AskHuman setup [--text]` 起步（需求 `docs/specs/onboarding.md`，计划 `docs/plans/onboarding.md`）：有图形会话时打开三页向导（GUI Host 的 `setup` 窗口），无图形会话或带 `--text` 时在终端走同一流程；两者共用 `onboarding/` 与 `agents` / `channel` 的同一批写入函数，不另有一套逻辑。向导按 Agent / 远程渠道 / 后台三个域各自记「已决定」（Agent 域驱动设置页横幅、托盘项与无参 `AskHuman` 的欢迎语，远程域只驱动弹窗底部提示条，后台域不驱动提示）；可选验证用带 `setup-probe:` 前缀的原生请求 ID 标记一次普通提问（`AskRequest.setup_probe`，可选字段、不抬协议号），Daemon 对它不记历史、渠道可限定为一家。
 - `channel set` 无 flag 走交互向导，有 flag 走脚本；密钥只从 env/file/stdin 或隐藏输入读取，不进 argv。
 - `agents mode` 维护 None/CLI/MCP 整包；permission/stop 的 preference 独立保存，但只有集成 mode
   才安装交互接管产物，None 隐藏对应设置并卸载其 active 能力。Lifecycle 也是 mode 拥有的可选

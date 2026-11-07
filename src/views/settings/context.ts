@@ -15,6 +15,7 @@ import { useIntegration } from "./useIntegration";
 import { useAgentTasks } from "./useAgentTasks";
 import { useChannels } from "./useChannels";
 import { useSettingsSearch } from "./useSearch";
+import { useSetupStatus } from "./useSetupStatus";
 import { guardedTab } from "./tabData";
 import { isMac, isWindows, supportsAgentTasks } from "../../lib/platform";
 
@@ -46,7 +47,9 @@ type ClearedKey =
   | "slackApp"
   | "iosBroker";
 
-function createCore() {
+// Shared with the setup wizard window, which must save, hide and clear secrets exactly like the
+// settings window does.
+export function createCore() {
   const config = ref<AppConfig | null>(null);
   // Set from `get_settings`: true when this window must not change the everyday Agent integration
   // (a Dev instance), in which case the Agents tab does not exist.
@@ -170,6 +173,7 @@ export function createSettingsContext() {
   const tasks = useAgentTasks(core);
   const integration = useIntegration(core, tasks);
   const channels = useChannels(core);
+  const setup = useSetupStatus();
   const search = useSettingsSearch({
     config: core.config,
     activeTab: core.activeTab,
@@ -186,6 +190,7 @@ export function createSettingsContext() {
     ...integration,
     ...tasks,
     ...channels,
+    ...setup,
     ...search,
   };
   provide(SettingsCtxKey, ctx);

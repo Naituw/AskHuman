@@ -51,6 +51,7 @@ pub fn help_text(lang: Lang) -> String {
             "  --escalate <reason>      Escalate with a reason; use only as instructed by an away reply".to_string(),
             String::new(),
             "Management:".to_string(),
+            "  setup [--text]          Guided setup after install: connect your Agents and, optionally, remote answering (terminal version when there is no graphical session)".to_string(),
             "  --settings              Open the settings window".to_string(),
             "  --history [--all]       Open the reply history window (current project; --all for every project)".to_string(),
             "  --caller-agent antigravity  Declare the caller family (prefix before command; no session authority)".to_string(),
@@ -93,6 +94,7 @@ pub fn help_text(lang: Lang) -> String {
             "  --escalate <理由>        带理由升级提问；仅按离开自动回复的指引使用".to_string(),
             String::new(),
             "管理:".to_string(),
+            "  setup [--text]          安装后的引导设置：接入 Agent，并可选配置远程回答（没有图形会话时使用终端版）".to_string(),
             "  --settings              启动设置界面".to_string(),
             "  --history [--all]       启动回复历史窗口（默认当前项目；--all 查看全部项目）".to_string(),
             "  --caller-agent antigravity  声明调用家族（放在命令前，不提供会话身份）".to_string(),
@@ -536,6 +538,16 @@ mod tests {
             assert!(ah.contains("todo add"));
             // 旧「固定英文结束句」已废除，不应再出现在 help 里。
             assert!(!ah.contains("no more tasks"));
+        }
+    }
+
+    #[test]
+    fn help_lists_the_setup_subcommand_first_in_management() {
+        for lang in [Lang::En, Lang::Zh] {
+            let help = help_text(lang);
+            let setup = help.find("setup [--text]").expect("setup is listed");
+            let settings = help.find("--settings").expect("settings is listed");
+            assert!(setup < settings, "{help}");
         }
     }
 

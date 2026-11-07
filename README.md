@@ -45,7 +45,19 @@ You can also download a platform archive from [GitHub Releases](https://github.c
 
 ## Usage
 
-### 1. The AskHuman command
+### 1. Run the setup wizard
+
+Right after installing, run this once — it is the first step:
+
+```bash
+AskHuman setup
+```
+
+A short guided flow (about 2 minutes). It connects your Agents (Cursor, Claude Code, Codex, Grok, Pi, Antigravity), optionally sets up remote answering through Telegram / Slack / DingTalk / Feishu, and — only if you choose to — keeps AskHuman in the menu bar or running in the background. Before it changes any of your files it shows you which ones. Without a graphical session (SSH, a server) or with `--text`, the same flow runs in your terminal.
+
+You can run it again any time to add an Agent or a channel: what is already set up stays as it is. It is also in **Settings → General → Setup wizard**. Restart any Agent session that was already open so it loads the new instructions.
+
+### 2. The AskHuman command
 
 `AskHuman` is a command-line tool that AI agents use to ask you questions and get the result back. The most common usages:
 
@@ -68,13 +80,16 @@ AskHuman -q "Continue?" -o "Continue" -o "Stop" --stdin <<'EOF'
 EOF
 
 # Other common ones
+AskHuman setup        # the setup wizard (add --text for the terminal version)
 AskHuman --settings   # open the settings UI
 AskHuman --history    # open reply history (add --all for every project)
 ```
 
 For the full CLI usage, see `AskHuman --help`; for the asking usage tuned for AI agents, see `AskHuman --agent-help`; for scripting/automation (`--select-only` / `--single` / `--output json`), see `AskHuman --scripting-help`.
 
-### 2. Integrate with your Agent
+### 3. Integrate with your Agent
+
+`AskHuman setup` already does this for you; this section is for adjusting it later or doing it by hand.
 
 To make your agent call `AskHuman` on its own when finishing or needing confirmation, add the relevant prompt to the agent's global instructions. Run `AskHuman --settings`, open the **Agents** panel, and choose:
 
@@ -83,7 +98,9 @@ To make your agent call `AskHuman` on its own when finishing or needing confirma
 
 Antigravity supports **None**, **CLI**, and **MCP** on Unix, with **CLI recommended** and **MCP selectable**. Its integration writes one shared rule for the Antigravity family; whether a particular Antigravity client discovers that rule and can run the selected transport depends on the client. Windows Antigravity integration changes are currently rejected. See [Antigravity setup](docs/wiki/antigravity-setup.en.md) for the configuration paths, session limits, and unsupported features.
 
-### 3. Set up communication channels
+### 4. Set up communication channels
+
+The setup wizard walks you through one channel at a time; this section is for adding or changing one later.
 
 The local popup works out of the box. You can also enable DingTalk, Feishu, Telegram, or Slack — so you get questions and can reply whether or not you're at your desk (multiple channels can run in parallel and race for the answer). Configure them in the **Channels** tab; for each channel's onboarding steps, see:
 
@@ -92,7 +109,7 @@ The local popup works out of the box. You can also enable DingTalk, Feishu, Tele
 - [Telegram](docs/wiki/telegram-setup.en.md)
 - [Slack](docs/wiki/slack-setup.en.md)
 
-### 4. General settings
+### 5. General settings
 
 For general preferences such as theme, window behavior, speech input, and reply history, see [General Settings](docs/wiki/settings.en.md).
 

@@ -3,6 +3,7 @@
 //! Phase 1 仅挂 popup adapter：提交时建 Coordinator（Ipc 退出）、注册弹窗 adapter、分配一次性 token；
 //! GUI Helper 连上后凭 token 找到该请求、收 `show`、回 `answer`。IM 渠道在 Phase 2 接入。
 
+use crate::agents::AgentKind;
 use crate::app::confirm_coordinator::{ConfirmCoordinator, ConfirmOutcome};
 use crate::app::coordinator::Coordinator;
 use crate::app::RenderOutcome;
@@ -95,6 +96,18 @@ impl RequestEntry {
             .interaction
             .ask()
             .expect("ask entry must carry an ask interaction")
+    }
+
+    /// The Agent family that asks, as far as it is known: what the daemon resolved from the
+    /// process tree, else what the caller reported.
+    pub fn agent_family(&self) -> Option<AgentKind> {
+        let resolved = self
+            .resolved_agent
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().and_then(|agent| agent.kind.clone()))
+            .and_then(|kind| AgentKind::parse(&kind));
+        resolved.or_else(|| self.show.agent_kind.as_deref().and_then(AgentKind::parse))
     }
 
     /// 当前等待者个数。
@@ -472,6 +485,8 @@ impl RequestRegistry {
         let coalesce_fingerprint = super::ask_dedup::coalesce_fingerprint(&task);
         let popup_kind = task.popup_kind();
         let quick_reply = super::away::is_agent_ask(&task);
+        // One of the setup wizard's own test questions (`docs/plans/onboarding.md` §4.1).
+        let probe = crate::onboarding::probe::parse_probe_id(task.native_request_id.as_deref());
         let held = crate::agents::failure::is_card_id(task.native_request_id.as_deref());
         let quiet_feedback =
             crate::agents::failure::is_feedback_id(task.native_request_id.as_deref());
@@ -488,6 +503,7 @@ impl RequestRegistry {
         // Notes on the message go with an Agent's own questions (spec `message-annotations`
         // N2); strict-choice takes the listed options only, so it takes no notes either.
         request.annotatable = quick_reply && !request.select_only;
+        request.setup_probe = probe.is_some();
         request.quick_replies = quick_replies_for(
             &request,
             &crate::config::AppConfig::load_without_secrets().general,
@@ -506,7 +522,9 @@ impl RequestRegistry {
                 agent_session_id: task.agent_session_id.clone(),
                 mcp_instance_id: task.mcp_instance_id.clone(),
             },
-            task.record_history,
+            // A wizard test question never joins the reply history. The task keeps
+            // `record_history` as sent: turning it off would make `popup_kind()` a Stop card.
+            task.record_history && probe.is_none(),
         );
 
         let gui: GuiSlot = Arc::new(Mutex::new(None));
@@ -943,6 +961,9 @@ impl RequestRegistry {
                             id: entry.request_id.clone(),
                             preview: preview_of(entry.request()),
                             escalated: !entry.held && entry.request().escalated.is_some(),
+                            agent_kind: entry.agent_family().map(|kind| kind.as_str().to_string()),
+                            // `quick_reply` is true exactly for an Agent's own question.
+                            agent_ask: entry.request().quick_reply,
                         },
                     )
                 })
@@ -956,6 +977,8 @@ impl RequestRegistry {
                                 PREVIEW_MAX_CHARS,
                             ),
                             escalated: false,
+                            agent_kind: None,
+                            agent_ask: false,
                         },
                     )
                 }))
@@ -1322,6 +1345,110 @@ mod tests {
             let (entry, _rx) = registry.create(task, None);
             assert_eq!(entry.show.kind, expected);
         }
+    }
+
+    fn setup_probe_task(target: crate::onboarding::probe::ProbeTarget) -> TaskRequest {
+        let mut task = ask_task(None, "Did it appear?");
+        task.agent_kind = None;
+        task.native_request_id = Some(crate::onboarding::probe::native_id(target, "n1"));
+        task
+    }
+
+    #[test]
+    fn a_setup_test_question_is_an_ordinary_card_that_leaves_no_trace() {
+        use crate::onboarding::probe::ProbeTarget;
+        let registry = RequestRegistry::new();
+        for target in [ProbeTarget::Popup, ProbeTarget::Channel("slack")] {
+            let (entry, _rx) = registry.create(setup_probe_task(target), None);
+            let request = entry.request();
+            assert!(request.setup_probe, "{target:?}");
+            // It is not an Agent's question: no quick replies, no notes on the message.
+            assert!(!request.quick_reply && !request.annotatable, "{target:?}");
+            // `record_history` stays on the task, so the popup is still the ask card; the
+            // coordinator is what keeps it out of the reply history.
+            assert_eq!(entry.show.kind, crate::ipc::PopupRequestKind::Ask);
+            assert!(!entry.coordinator.records_history(), "{target:?}");
+        }
+    }
+
+    #[test]
+    fn an_ordinary_question_is_recorded_and_is_not_a_setup_test() {
+        let registry = RequestRegistry::new();
+        let (entry, _rx) = registry.create(ask_task(Some("s1"), "continue?"), None);
+        assert!(!entry.request().setup_probe);
+        assert!(entry.coordinator.records_history());
+
+        // Only the exact marker counts: a lookalike native id is an ordinary request.
+        for native_id in [
+            "setup-probe:popup:",
+            "setup-probe:ios:n1",
+            "setup-probe:n1",
+            "x",
+        ] {
+            let mut task = ask_task(None, "continue?");
+            task.native_request_id = Some(native_id.into());
+            let (entry, _rx) = registry.create(task, None);
+            assert!(!entry.request().setup_probe, "{native_id}");
+            assert!(entry.coordinator.records_history(), "{native_id}");
+        }
+    }
+
+    #[test]
+    fn the_menu_bar_list_says_which_requests_are_an_agents_own_questions() {
+        use crate::onboarding::probe::ProbeTarget;
+        let registry = RequestRegistry::new();
+        let (ask, _ask_rx) = registry.create(ask_task(Some("s1"), "continue?"), None);
+        let (probe, _probe_rx) = registry.create(setup_probe_task(ProbeTarget::Popup), None);
+        let mut stop = ask_task(Some("s2"), "all done");
+        stop.stop_confirmation = true;
+        let (stop, _stop_rx) = registry.create(stop, None);
+
+        let infos = registry.pending_infos();
+        let info = |id: &str| infos.iter().find(|info| info.id == id).unwrap().clone();
+
+        let ask = info(&ask.request_id);
+        assert!(ask.agent_ask);
+        assert_eq!(ask.agent_kind.as_deref(), Some("cursor"));
+        // The wizard's own question has no Agent behind it, and neither does a Stop card.
+        let probe = info(&probe.request_id);
+        assert!(!probe.agent_ask);
+        assert_eq!(probe.agent_kind, None);
+        assert!(!info(&stop.request_id).agent_ask);
+    }
+
+    #[test]
+    fn an_agent_card_counts_as_an_agents_question_only_when_the_agent_asked() {
+        use crate::agents::{failure, AgentKind};
+        let registry = RequestRegistry::new();
+        let mut card = ask_task(Some("s1"), "What now?");
+        card.native_request_id = Some(failure::card_id(AgentKind::Cursor, "s1", "r1"));
+        let (card, _rx) = registry.create(card, None);
+        // The daemon holds this card for an Agent that already failed: not a question it asked.
+        let infos = registry.pending_infos();
+        let info = infos.iter().find(|i| i.id == card.request_id).unwrap();
+        assert!(!info.agent_ask);
+    }
+
+    #[test]
+    fn the_agent_family_prefers_what_the_daemon_resolved() {
+        let registry = RequestRegistry::new();
+        let (entry, _rx) = registry.create(ask_task(Some("s1"), "continue?"), None);
+        // Only what the caller reported.
+        assert_eq!(entry.agent_family(), Some(AgentKind::Cursor));
+        // The process-tree walk found out better.
+        *entry.resolved_agent.lock().unwrap() = Some(ResolvedAgent {
+            kind: Some("claude".into()),
+            ..ResolvedAgent::default()
+        });
+        assert_eq!(entry.agent_family(), Some(AgentKind::Claude));
+        // A resolution without a family falls back to the reported one.
+        *entry.resolved_agent.lock().unwrap() = Some(ResolvedAgent::default());
+        assert_eq!(entry.agent_family(), Some(AgentKind::Cursor));
+        // Nothing is known.
+        let mut unknown = ask_task(Some("s2"), "continue?");
+        unknown.agent_kind = None;
+        let (entry, _rx) = registry.create(unknown, None);
+        assert_eq!(entry.agent_family(), None);
     }
 
     #[test]

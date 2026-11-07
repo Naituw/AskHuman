@@ -1,0 +1,466 @@
+// State and actions of the setup wizard window (docs/specs/onboarding.md, docs/plans/onboarding.md §3).
+//
+// The wizard reuses the settings window's core (one `persist()`, the same "saved" placeholders and
+// secret clearing) and its channel logic (`useChannels`: connection test, auto-detect, health), and
+// only adds the step machine and the Agent-page state, so nothing here can drift from Settings.
+import { computed, inject, provide, reactive, ref, watch, type InjectionKey } from "vue";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import {
+  agentModeStatus,
+  collaborationStyleApplyIntegrations,
+  getSettings,
+  setupAgentsScan,
+  setupApplyAgents,
+  setupChannelStatus,
+  setupEnvCheck,
+  setupFinish,
+  setupSkip,
+  setupStatus,
+} from "../../lib/ipc";
+import type {
+  AgentId,
+  CollaborationStyle,
+  SettingsPayload,
+  SetupAgentRow,
+  SetupApplyResult,
+  SetupChannelStatus,
+  SetupEnvReport,
+  SetupStatus,
+} from "../../lib/types";
+import { createCore } from "../settings/context";
+import { useChannels } from "../settings/useChannels";
+import {
+  agentsPrimary,
+  isIntegrated,
+  isMainRow,
+  isPending,
+  preselect,
+  type RowPick,
+} from "./agentRows";
+import {
+  channelDef,
+  channelOps,
+  channelSection,
+  requiredFieldsFilled,
+  type ChannelId,
+} from "./channelDefs";
+import { createProbes } from "./useProbe";
+
+export type SetupPage = "agents" | "remote" | "done";
+export const SETUP_PAGES: readonly SetupPage[] = ["agents", "remote", "done"];
+
+/** A page name from a URL or an event; anything unknown starts at the first page. */
+export function parsePage(raw: string | null | undefined): SetupPage {
+  return SETUP_PAGES.includes(raw as SetupPage) ? (raw as SetupPage) : "agents";
+}
+
+/** The per-Agent features the Done page summarises. */
+export type CapabilityKey = "lifecycle" | "permission" | "stop" | "askQuestion";
+
+export function createSetup(initialPage: SetupPage = "agents") {
+  const core = createCore();
+  const channels = useChannels(core);
+  const { config, persist } = core;
+
+  const page = ref<SetupPage>(initialPage);
+  const status = ref<SetupStatus | null>(null);
+  /** The optional checks (popup, channel round trip, Agent question); none gates finishing. */
+  const probes = createProbes();
+
+  function goto(next: SetupPage) {
+    page.value = next;
+    // A page change always lands on that page's list, never inside a channel's detail form.
+    detail.value = null;
+    // The channel round trip belongs to that form.
+    probes.release("channel");
+  }
+
+  // The settings window's channel health poll only runs while its channel tab is "active"; the
+  // wizard's remote page stands in for that tab.
+  watch(
+    page,
+    (current) => {
+      core.activeTab.value = current === "remote" ? "channel" : "general";
+    },
+    { immediate: true },
+  );
+
+  async function refreshStatus() {
+    try {
+      status.value = await setupStatus();
+    } catch {
+      /* keep the last known status */
+    }
+  }
+
+  /** A Dev Instance must not touch the everyday Agent integration. */
+  const readOnly = computed(
+    () =>
+      core.everydayIntegrationsReadOnly.value ||
+      status.value?.everydayIntegrationsReadOnly === true,
+  );
+
+  // ===== Page 1: Agents =====
+  const rows = ref<SetupAgentRow[]>([]);
+  const rowsLoaded = ref(false);
+  const rowsError = ref<string | null>(null);
+  const picks = reactive<Record<string, RowPick>>({});
+  const env = ref<SetupEnvReport | null>(null);
+
+  const style = ref<CollaborationStyle>("aligned");
+  const styleBaseline = ref<CollaborationStyle>("aligned");
+  const applying = ref(false);
+  const applyError = ref<string | null>(null);
+  const applyResults = reactive<Record<string, SetupApplyResult>>({});
+  const appliedOnce = ref(false);
+
+  async function scanAgents(keepPicks = false) {
+    try {
+      const list = await setupAgentsScan();
+      rows.value = list;
+      for (const row of list) {
+        if (!keepPicks || !picks[row.id]) picks[row.id] = preselect(row);
+      }
+      rowsError.value = null;
+    } catch (e) {
+      rowsError.value = String(e);
+    } finally {
+      rowsLoaded.value = true;
+    }
+  }
+
+  async function loadEnv() {
+    try {
+      env.value = await setupEnvCheck();
+    } catch {
+      env.value = null;
+    }
+  }
+
+  const mainRows = computed(() => rows.value.filter(isMainRow));
+  const otherRows = computed(() => rows.value.filter((row) => !isMainRow(row)));
+  const pendingRows = computed(() =>
+    rows.value.filter((row) => isPending(row, picks[row.id])),
+  );
+  const styleChanged = computed(() => style.value !== styleBaseline.value);
+  const hasChanges = computed(
+    () => !readOnly.value && (pendingRows.value.length > 0 || styleChanged.value),
+  );
+  const agentsPrimaryKind = computed(() =>
+    agentsPrimary(hasChanges.value, appliedOnce.value),
+  );
+  /** Something already integrated: the welcome text says what a rerun keeps. */
+  const isRerun = computed(() => rows.value.some(isIntegrated));
+  /** A CLI-mode Agent is integrated or about to be: it needs `AskHuman` on the login PATH. */
+  const cliSelected = computed(() =>
+    rows.value.some(
+      (row) =>
+        row.mode === "cli" || (picks[row.id]?.checked === true && picks[row.id]?.mode === "cli"),
+    ),
+  );
+  const showPathCard = computed(
+    () => env.value?.askhumanOnPath === "missing" && cliSelected.value,
+  );
+
+  /**
+   * Write what the page shows: the collaboration style first (so the managed block the new
+   * integrations get already carries it), then the ticked rows one by one. Results stay on the
+   * page; it does not move on by itself.
+   */
+  async function applyAgents() {
+    if (applying.value || readOnly.value || !hasChanges.value) return;
+    const cfg = config.value;
+    if (!cfg) return;
+    applying.value = true;
+    applyError.value = null;
+    try {
+      if (styleChanged.value) {
+        cfg.general.collaborationStyle = style.value;
+        await persist();
+        await collaborationStyleApplyIntegrations();
+        styleBaseline.value = style.value;
+      }
+      const selections = pendingRows.value.map((row) => ({
+        agent: row.id,
+        mode: picks[row.id].mode,
+      }));
+      if (selections.length > 0) {
+        const results = await setupApplyAgents(selections);
+        for (const result of results) {
+          applyResults[result.agent] = result;
+          // What is on disk now is the baseline; a failed row keeps its pick so it can be retried.
+          if (result.ok && result.modeAfter !== "none") {
+            picks[result.agent] = { checked: true, mode: result.modeAfter };
+          }
+        }
+      }
+      appliedOnce.value = true;
+      await scanAgents(true);
+      void refreshStatus();
+    } catch (e) {
+      applyError.value = String(e);
+    } finally {
+      applying.value = false;
+    }
+  }
+
+  async function skipAgents() {
+    try {
+      await setupSkip("agents");
+    } catch {
+      /* a failed write only means the reminder stays */
+    }
+    await refreshStatus();
+    goto("remote");
+  }
+
+  // ===== Page 2: Remote answering =====
+  const channelRows = ref<SetupChannelStatus[]>([]);
+  /** The channel whose detail form is open; `null` = the list. */
+  const detail = ref<ChannelId | null>(null);
+  const savingChannel = ref(false);
+  const channelSavedId = ref<ChannelId | null>(null);
+  const channelSaveError = ref<"missing" | string | null>(null);
+
+  async function refreshChannelStatus() {
+    try {
+      channelRows.value = await setupChannelStatus();
+    } catch {
+      /* keep the last rows */
+    }
+  }
+
+  const enabledChannelIds = computed(() =>
+    channelRows.value.filter((row) => row.enabled).map((row) => row.id),
+  );
+  const hasEnabledChannel = computed(() => enabledChannelIds.value.length > 0);
+
+  function openChannel(id: ChannelId) {
+    detail.value = id;
+    channelSavedId.value = null;
+    channelSaveError.value = null;
+    probes.release("channel");
+  }
+
+  function closeChannel() {
+    detail.value = null;
+    probes.release("channel");
+    void refreshChannelStatus();
+  }
+
+  /** The round trip needs the channel saved and on: the check sends through the saved settings. */
+  function canProbeChannel(id: ChannelId): boolean {
+    const row = channelRows.value.find((candidate) => candidate.id === id);
+    return row?.enabled === true && row.configured;
+  }
+
+  /** Save the credentials and turn the channel on; the same `persist()` as the settings page. */
+  async function saveChannel(id: ChannelId) {
+    const cfg = config.value;
+    const def = channelDef(id);
+    if (!cfg || !def || savingChannel.value) return;
+    channelSaveError.value = null;
+    channelSavedId.value = null;
+    if (!requiredFieldsFilled(def, cfg, core.secretsPresent.value)) {
+      channelSaveError.value = "missing";
+      return;
+    }
+    const section = channelSection(cfg, id);
+    const was = section.enabled;
+    section.enabled = true;
+    savingChannel.value = true;
+    try {
+      await persist();
+      channelSavedId.value = id;
+      await refreshChannelStatus();
+    } catch (e) {
+      section.enabled = was;
+      channelSaveError.value = String(e);
+    } finally {
+      savingChannel.value = false;
+    }
+  }
+
+  async function skipRemote() {
+    try {
+      await setupSkip("remote");
+    } catch {
+      /* the popup hint may show once more; nothing else depends on it */
+    }
+    await refreshStatus();
+    goto("done");
+  }
+
+  // ===== Page 3: Done =====
+  const backgroundA = ref(false);
+  const backgroundB = ref(false);
+  const finishing = ref(false);
+  const finishError = ref<string | null>(null);
+  const capabilities = ref<CapabilityKey[]>([]);
+
+  /** The union of the per-Agent features that are on for the integrated Agents. */
+  async function loadCapabilities() {
+    const found = new Set<CapabilityKey>();
+    await Promise.all(
+      rows.value.filter(isIntegrated).map(async (row) => {
+        try {
+          const mode = await agentModeStatus(row.id as AgentId);
+          if (mode.lifecycle.supported && mode.lifecycle.enabled) found.add("lifecycle");
+          if (mode.permission.supported && mode.permission.enabled) found.add("permission");
+          if (mode.stop.supported && mode.stop.enabled) found.add("stop");
+          if (mode.askQuestion.supported && mode.askQuestion.enabled) found.add("askQuestion");
+        } catch {
+          /* a row whose status cannot be read adds nothing */
+        }
+      }),
+    );
+    const order: CapabilityKey[] = ["lifecycle", "permission", "stop", "askQuestion"];
+    capabilities.value = order.filter((key) => found.has(key));
+  }
+
+  /**
+   * Asking an Agent for a question only means something once an Agent is connected, and never in
+   * a Dev Instance (its Agents talk to the everyday daemon, not to this one).
+   */
+  const agentProbeAvailable = computed(
+    () => !readOnly.value && rows.value.some(isIntegrated),
+  );
+
+  /** Switch B is only offered once a remote channel is on; the Agent-task feature pins it on. */
+  const showBackgroundB = computed(() => hasEnabledChannel.value);
+  const backgroundBLocked = computed(() => config.value?.agentTasks?.enabled === true);
+
+  async function closeWindow() {
+    try {
+      await getCurrentWebviewWindow().close();
+    } catch (err) {
+      console.warn("setup window close failed", err);
+    }
+  }
+
+  /**
+   * Done: save the two background choices, record the decision (and the login item), close.
+   * The page only moves a menu-bar icon that is `always` (to `active`) or turns it on; it never
+   * picks `off`.
+   */
+  async function finish() {
+    const cfg = config.value;
+    if (!cfg || finishing.value) return;
+    finishing.value = true;
+    finishError.value = null;
+    try {
+      if (status.value?.trayAvailable) {
+        if (backgroundA.value) cfg.general.menuBarIcon = "always";
+        else if (cfg.general.menuBarIcon === "always") cfg.general.menuBarIcon = "active";
+      }
+      if (showBackgroundB.value) {
+        cfg.general.daemonLifecycle = backgroundB.value ? "keepalive" : "activity";
+      }
+      await persist();
+      await setupFinish();
+      // Nothing the checks were waiting for matters once the wizard is done.
+      probes.releaseAll();
+      await closeWindow();
+    } catch (e) {
+      finishError.value = String(e);
+    } finally {
+      finishing.value = false;
+    }
+  }
+
+  /** Fill the shared core from `get_settings` and start the slow probes without blocking paint. */
+  async function load(): Promise<SettingsPayload> {
+    const [payload, current] = await Promise.all([
+      getSettings(),
+      setupStatus().catch(() => null),
+    ]);
+    core.everydayIntegrationsReadOnly.value = payload.everydayIntegrationsReadOnly === true;
+    core.config.value = payload.config;
+    core.secretsPresent.value = payload.secretsPresent;
+    status.value = current;
+    const collab = payload.config.general.collaborationStyle ?? "aligned";
+    style.value = collab;
+    styleBaseline.value = collab;
+    backgroundA.value = payload.config.general.menuBarIcon === "always";
+    backgroundB.value = payload.config.general.daemonLifecycle === "keepalive";
+    void scanAgents();
+    void loadEnv();
+    void refreshChannelStatus();
+    return payload;
+  }
+
+  const ctx = {
+    ...core,
+    ...channels,
+    page,
+    goto,
+    status,
+    readOnly,
+    refreshStatus,
+    load,
+    closeWindow,
+    // Agents
+    rows,
+    rowsLoaded,
+    rowsError,
+    picks,
+    env,
+    style,
+    styleBaseline,
+    styleChanged,
+    applying,
+    applyError,
+    applyResults,
+    appliedOnce,
+    mainRows,
+    otherRows,
+    pendingRows,
+    hasChanges,
+    agentsPrimaryKind,
+    isRerun,
+    showPathCard,
+    scanAgents,
+    applyAgents,
+    skipAgents,
+    // Remote
+    channelRows,
+    detail,
+    savingChannel,
+    channelSavedId,
+    channelSaveError,
+    enabledChannelIds,
+    hasEnabledChannel,
+    refreshChannelStatus,
+    openChannel,
+    closeChannel,
+    saveChannel,
+    skipRemote,
+    canProbeChannel,
+    channelOpsFor: (id: ChannelId) => channelOps(id, channels),
+    // Optional checks
+    probes,
+    agentProbeAvailable,
+    // Done
+    backgroundA,
+    backgroundB,
+    showBackgroundB,
+    backgroundBLocked,
+    finishing,
+    finishError,
+    capabilities,
+    loadCapabilities,
+    finish,
+  };
+  provide(SetupCtxKey, ctx);
+  return ctx;
+}
+
+export type SetupContext = ReturnType<typeof createSetup>;
+
+const SetupCtxKey: InjectionKey<SetupContext> = Symbol("setup-ctx");
+
+export function useSetupContext(): SetupContext {
+  const ctx = inject(SetupCtxKey);
+  if (!ctx) throw new Error("setup context not provided");
+  return ctx;
+}

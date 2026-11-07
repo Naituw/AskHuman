@@ -13,8 +13,8 @@ type Layout = "single" | "multi" | "confirm";
 function footer(layout: Layout, options: { available?: boolean; marked?: boolean; submitting?: boolean } = {}) {
   const toggleLater = vi.fn();
   const context = {
-    isConfirm: layout === "confirm", isMulti: layout === "multi", verticalMode: false, imTipVisible: false,
-    imTipConfigure: vi.fn(), imTipDismiss: vi.fn(), submitting: ref(options.submitting ?? false),
+    isConfirm: layout === "confirm", isMulti: layout === "multi", verticalMode: false, setupHint: ref(null),
+    setupHintAct: vi.fn(), setupHintDismiss: vi.fn(), submitting: ref(options.submitting ?? false),
     requestCancel: vi.fn(), canGoPrev: false, goPrev: vi.fn(), goNext: vi.fn(), actionQuestionIndex: 0, total: 2,
     onLastQuestion: false, submitShowsCmdEnter: false, submitKeyLabel: "⌘↵", submitPrimary: false, nextPrimary: true,
     lastSeen: true, allViewed: true, canSubmit: true, submit: vi.fn(), confirmRequest: null, confirmCanSubmit: true,

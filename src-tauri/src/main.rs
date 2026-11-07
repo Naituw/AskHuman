@@ -66,6 +66,7 @@ mod macos_window_order;
 mod mcp;
 mod models;
 mod msg_card;
+mod onboarding;
 mod path_identity;
 mod paths;
 mod perf;

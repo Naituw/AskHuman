@@ -144,7 +144,7 @@ impl Finding {
         }
     }
 
-    fn message(&self, lang: Lang, now_ms: u64) -> String {
+    pub(crate) fn message(&self, lang: Lang, now_ms: u64) -> String {
         match self {
             Finding::Held(conflict) => {
                 let minutes = now_ms.saturating_sub(conflict.since_ms) / 60_000;
@@ -247,19 +247,31 @@ pub struct Report {
 
 /// Read the real machine and inspect it.
 pub fn collect(status: Option<&StatusInfo>) -> Report {
+    collect_with_path(status, None)
+}
+
+/// Like [`collect`], but scans `path_dirs` instead of this process's `PATH` when given. The setup
+/// wizard passes the login shell's `PATH`: a GUI process inherits a sparse one that would hide
+/// copies a terminal can reach.
+pub fn collect_with_path(status: Option<&StatusInfo>, path_dirs: Option<Vec<PathBuf>>) -> Report {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     let dev_instance = crate::dev_instance::is_dev_instance_context();
-    let path_dirs = std::env::var_os("PATH")
-        .filter(|_| !dev_instance)
-        .map(|paths| {
-            std::env::split_paths(&paths)
-                .filter(|dir| !dir.as_os_str().is_empty())
-                .collect()
+    let path_dirs: Vec<PathBuf> = if dev_instance {
+        Vec::new()
+    } else {
+        path_dirs.unwrap_or_else(|| {
+            std::env::var_os("PATH")
+                .map(|paths| {
+                    std::env::split_paths(&paths)
+                        .filter(|dir| !dir.as_os_str().is_empty())
+                        .collect()
+                })
+                .unwrap_or_default()
         })
-        .unwrap_or_default();
+    };
     let daemon = status
         .filter(|s| !dev_instance && !s.exe_path.is_empty())
         .map(|s| DaemonBinary {

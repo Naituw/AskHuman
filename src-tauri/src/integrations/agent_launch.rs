@@ -576,6 +576,22 @@ pub(crate) fn with_binary_probe_test_state<R>(f: impl FnOnce() -> R) -> R {
     result
 }
 
+/// For tests outside this module whose code under test probes the Agent CLIs (`agent_mode::set`
+/// for Codex asks for its version): every Agent answers "not found" at once, so no login shell
+/// and no Agent binary ever runs.
+#[cfg(test)]
+pub(crate) fn with_no_agent_installed<R>(f: impl FnOnce() -> R) -> R {
+    with_binary_probe_test_state(|| {
+        participate_in_binary_probe_test();
+        set_binary_probe_test_override(BinaryProbe {
+            lookup: Lookup::not_found(),
+            pi_version: None,
+            codex_version: None,
+        });
+        f()
+    })
+}
+
 #[cfg(test)]
 pub(crate) fn binary_probe_test_count() -> usize {
     binary_probe_test_harness().hits.load(Ordering::SeqCst)
@@ -1957,6 +1973,60 @@ fn lookup_executable(name: &str) -> Lookup {
     {
         let _ = name;
         Lookup::not_found()
+    }
+}
+
+/// Outcome of asking the user's login shell where one command lives, for the setup wizard's
+/// environment check (which only needs "found / missing / could not tell").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EnvLookup {
+    /// An absolute, canonical path of an executable file.
+    Found(String),
+    /// The shell ran and the command is not on its PATH.
+    Missing,
+    /// The lookup did not complete (timeout, shell would not start); says nothing either way.
+    Unknown(String),
+}
+
+/// Where the login shell finds `name` (a fixed command name, never user input) together with the
+/// `PATH` that shell came up with (empty when unknown). Unix asks the interactive login shell the
+/// same way [`lookup_executable`] does; Windows resolves with `where.exe` and reports this
+/// process's own `PATH`, which is the one a new terminal gets.
+pub(crate) fn lookup_with_login_path(name: &'static str) -> (EnvLookup, String) {
+    #[cfg(unix)]
+    {
+        let shell = login_shell();
+        match run_login_shell(&shell, &lookup_script(name), RESOLVE_TIMEOUT) {
+            Ok(run) => {
+                let path = marked_line(&run.markers, PATH_MARKER).unwrap_or_default();
+                let lookup = match interpret_lookup(&shell, RESOLVE_TIMEOUT, &run) {
+                    Lookup::Found(found) => EnvLookup::Found(found),
+                    Lookup::NotFound { .. } => EnvLookup::Missing,
+                    Lookup::Failed(reason) => EnvLookup::Unknown(reason),
+                };
+                (lookup, path)
+            }
+            Err(error) => (
+                EnvLookup::Unknown(format!("could not start the login shell {shell}: {error}")),
+                String::new(),
+            ),
+        }
+    }
+    #[cfg(windows)]
+    {
+        let path = std::env::var("PATH").unwrap_or_default();
+        match resolve_windows_executable(name) {
+            Some(found) => (EnvLookup::Found(found), path),
+            None => (EnvLookup::Missing, path),
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = name;
+        (
+            EnvLookup::Unknown("unsupported platform".to_string()),
+            String::new(),
+        )
     }
 }
 

@@ -47,6 +47,14 @@ import type {
   SecretActions,
   QuickReplyDefaults,
   SettingsPayload,
+  SetupAgentRow,
+  SetupApplyResult,
+  SetupChannelStatus,
+  SetupEnvReport,
+  SetupHint,
+  SetupProbeKind,
+  SetupSelection,
+  SetupStatus,
   SlackDetectArgs,
   SlackTestArgs,
   SlackWaitArgs,
@@ -248,11 +256,51 @@ export const openSettings = (tab?: string) =>
 /** 打开 Agent Window 并定位到 daemon 为当前弹窗严格匹配的会话。 */
 export const openAgentConsole = (requestId?: string) => invoke<void>("open_agent_console", { requestId });
 
-export const popupImTipVisible = () =>
-  invoke<boolean>("popup_im_tip_visible");
+// ===== Setup wizard (docs/specs/onboarding.md) =====
 
-export const popupImTipDismiss = () =>
-  invoke<void>("popup_im_tip_dismiss");
+export const setupStatus = () => invoke<SetupStatus>("setup_status");
+
+export const setupAgentsScan = () => invoke<SetupAgentRow[]>("setup_agents_scan");
+
+export const setupEnvCheck = () => invoke<SetupEnvReport>("setup_env_check");
+
+/** Apply the confirmed Agent rows one by one; a failure on one never stops the others. */
+export const setupApplyAgents = (selections: SetupSelection[]) =>
+  invoke<SetupApplyResult[]>("setup_apply_agents", { selections });
+
+export const setupChannelStatus = () =>
+  invoke<SetupChannelStatus[]>("setup_channel_status");
+
+/** Record that the user passed on a wizard step on purpose (it stops being offered). */
+export const setupSkip = (domain: "agents" | "remote") =>
+  invoke<void>("setup_skip", { domain });
+
+/** The wizard's last page: records the background choice and settles anything still open. */
+export const setupFinish = () => invoke<void>("setup_finish");
+
+/** Install the login item for a menu-bar icon that is set to "always". */
+export const setupLoginItemEnable = () => invoke<void>("setup_login_item_enable");
+
+/**
+ * Start one of the optional checks and get its id; how it ended arrives as the
+ * `setup-probe-result` event. A check of the same kind that is still running is stopped first.
+ */
+export const setupProbeStart = (kind: SetupProbeKind, channel?: string) =>
+  invoke<string>("setup_probe_start", { kind, channel: channel ?? null });
+
+/** Stop a running check (cancelled by the person, or the window closed). */
+export const setupProbeCancel = (probeId: string) =>
+  invoke<void>("setup_probe_cancel", { probeId });
+
+/** Open (or focus) the setup wizard, optionally on a page (`agents` | `remote` | `done`). */
+export const openSetup = (page?: string) =>
+  invoke<void>("open_setup", { page: page ?? null });
+
+/** The popup footer's pointer to an unfinished wizard page, or `null` when nothing is open. */
+export const popupSetupHint = () => invoke<SetupHint | null>("popup_setup_hint");
+
+export const popupSetupHintDismiss = (id: string) =>
+  invoke<void>("popup_setup_hint_dismiss", { id });
 
 export const openHistory = (requestId?: string) => invoke<void>("open_history", { requestId });
 

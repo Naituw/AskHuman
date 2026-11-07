@@ -404,7 +404,7 @@ fn toggle(args: &[String], on: bool, lang: Lang) -> Result<(), String> {
 
 // ——— test ———
 
-fn test(args: &[String], lang: Lang) -> Result<(), String> {
+pub(crate) fn test(args: &[String], lang: Lang) -> Result<(), String> {
     let name = args.first().ok_or_else(|| {
         cfgio::t(
             lang,
@@ -475,7 +475,7 @@ fn test(args: &[String], lang: Lang) -> Result<(), String> {
 
 // ——— detect ———
 
-fn detect(args: &[String], lang: Lang) -> Result<(), String> {
+pub(crate) fn detect(args: &[String], lang: Lang) -> Result<(), String> {
     let name = args.first().ok_or_else(|| {
         cfgio::t(
             lang,
@@ -604,6 +604,16 @@ fn detect(args: &[String], lang: Lang) -> Result<(), String> {
 // ——— 交互向导 ———
 
 fn wizard(name: &str, lang: Lang) -> Result<(), String> {
+    wizard_inner(name, lang, false)
+}
+
+/// The same wizard as run from the setup flow: the user came here to turn the channel on, so
+/// "Enable this channel?" defaults to yes even for a channel that is currently off.
+pub(crate) fn wizard_for_setup(name: &str, lang: Lang) -> Result<(), String> {
+    wizard_inner(name, lang, true)
+}
+
+fn wizard_inner(name: &str, lang: Lang, enable_by_default: bool) -> Result<(), String> {
     let mut cfg = AppConfig::load();
     eprintln!(
         "{}",
@@ -619,7 +629,7 @@ fn wizard(name: &str, lang: Lang) -> Result<(), String> {
             let c = &mut cfg.channels.telegram;
             c.enabled = yes_no(
                 &cfgio::t(lang, "Enable this channel?", "启用该渠道?"),
-                c.enabled,
+                c.enabled || enable_by_default,
             )?;
             c.chat_id = cfgio::prompt_line("chatId", &c.chat_id)?;
             c.api_base_url = cfgio::prompt_line("apiBaseUrl", &c.api_base_url)?;
@@ -629,7 +639,7 @@ fn wizard(name: &str, lang: Lang) -> Result<(), String> {
             let c = &mut cfg.channels.dingding;
             c.enabled = yes_no(
                 &cfgio::t(lang, "Enable this channel?", "启用该渠道?"),
-                c.enabled,
+                c.enabled || enable_by_default,
             )?;
             c.client_id = cfgio::prompt_line("clientId", &c.client_id)?;
             c.user_id = cfgio::prompt_line("userId", &c.user_id)?;
@@ -644,7 +654,7 @@ fn wizard(name: &str, lang: Lang) -> Result<(), String> {
             let c = &mut cfg.channels.feishu;
             c.enabled = yes_no(
                 &cfgio::t(lang, "Enable this channel?", "启用该渠道?"),
-                c.enabled,
+                c.enabled || enable_by_default,
             )?;
             c.app_id = cfgio::prompt_line("appId", &c.app_id)?;
             c.open_id = cfgio::prompt_line("openId", &c.open_id)?;
@@ -655,7 +665,7 @@ fn wizard(name: &str, lang: Lang) -> Result<(), String> {
             let c = &mut cfg.channels.slack;
             c.enabled = yes_no(
                 &cfgio::t(lang, "Enable this channel?", "启用该渠道?"),
-                c.enabled,
+                c.enabled || enable_by_default,
             )?;
             c.user_id = cfgio::prompt_line("userId", &c.user_id)?;
             prompt_secret_into(&mut c.bot_token, "botToken", lang)?;
@@ -665,7 +675,7 @@ fn wizard(name: &str, lang: Lang) -> Result<(), String> {
             let c = &mut cfg.channels.ios;
             c.enabled = yes_no(
                 &cfgio::t(lang, "Enable this channel?", "启用该渠道?"),
-                c.enabled,
+                c.enabled || enable_by_default,
             )?;
             c.host = cfgio::prompt_line("host", &c.host)?;
             c.port = parse_port(&cfgio::prompt_line("port", &c.port.to_string())?, lang)?;

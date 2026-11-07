@@ -136,12 +136,23 @@ fn set(args: &[String], lang: Lang) -> Result<(), String> {
         cfgio::block_on(crate::client::ensure_running()).map_err(|error| error.to_string())?;
     }
     cfg.save().map_err(|e| e.to_string())?;
+    note_background_choice(&key);
     print_line(&cfgio::t(
         lang,
         &format!("{key} updated"),
         &format!("{key} 已更新"),
     ));
     Ok(())
+}
+
+const MENU_BAR_ICON_KEY: &str = "general.menuBarIcon";
+
+/// Setting (or resetting) the menu-bar mode by hand is the user's own choice about the background
+/// behaviour, so `menuBarIcon = always` may keep its login item from now on (onboarding D13).
+fn note_background_choice(key: &str) {
+    if key == MENU_BAR_ICON_KEY {
+        crate::onboarding::state::mark_background_decided();
+    }
 }
 
 fn unset(args: &[String], lang: Lang) -> Result<(), String> {
@@ -180,6 +191,7 @@ fn unset(args: &[String], lang: Lang) -> Result<(), String> {
         cfgio::block_on(crate::client::ensure_running()).map_err(|error| error.to_string())?;
     }
     cfg.save().map_err(|e| e.to_string())?;
+    note_background_choice(key);
     print_line(&cfgio::t(
         lang,
         &format!("{key} reset to default"),
@@ -296,4 +308,43 @@ fn help(lang: Lang) -> String {
 /// stdout 输出一行（BrokenPipe 静默；见 `cli::print_line`）。
 fn print_line(s: &str) {
     super::print_line(s);
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::onboarding::testutil;
+    use crate::uistate;
+
+    fn args(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|part| part.to_string()).collect()
+    }
+
+    #[test]
+    fn menu_bar_icon_choice_is_remembered_but_other_keys_are_not() {
+        if !testutil::in_child() {
+            testutil::run_in_child(
+                module_path!(),
+                "menu_bar_icon_choice_is_remembered_but_other_keys_are_not",
+            );
+            return;
+        }
+        // An unrelated key leaves the background undecided.
+        set(&args(&["general.language", "en"]), Lang::En).unwrap();
+        assert!(!uistate::load().onboarding.background_decided);
+
+        // Setting the menu-bar mode is a choice, whatever the value.
+        set(&args(&["general.menuBarIcon", "active"]), Lang::En).unwrap();
+        assert!(uistate::load().onboarding.background_decided);
+
+        // So is resetting it to the default.
+        uistate::update(|state| state.onboarding.background_decided = false);
+        unset(&args(&["general.menuBarIcon"]), Lang::En).unwrap();
+        assert!(uistate::load().onboarding.background_decided);
+
+        // A rejected value is not a choice.
+        uistate::update(|state| state.onboarding.background_decided = false);
+        assert!(set(&args(&["general.menuBarIcon", "sideways"]), Lang::En).is_err());
+        assert!(!uistate::load().onboarding.background_decided);
+    }
 }

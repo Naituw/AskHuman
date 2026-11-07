@@ -72,6 +72,9 @@ Codex 一行改用 `protocol=`（SessionStart hook 的交付状态：`ok` / `unt
 另有「安装」小节：本机 PATH 上有几份 AskHuman、哪份生效、Daemon 来自哪份、近期的换新记录。`AskHuman doctor install [--warn-only] [--json]`
 可单独运行它（`install.sh` 装完后以 `--warn-only` 调用），规则见 `docs/specs/daemon-graceful-drain.md` D12。
 
+### `AskHuman setup [--text]` —— 安装后的引导设置
+面向第一次用的人：把上面的 `agents mode`、`channel set` 与后台（菜单栏 / 开机自启）选择串成一个引导流程。有图形会话时打开 GUI 向导窗口；没有图形会话或带 `--text` 时在终端里走同一流程（要求 stdin 是终端，否则报错并指向本节的免交互命令）。它不是新的写入逻辑，复用同一批集成与配置函数；重复运行只补缺，不动已有配置。需求、决策与验收见 [onboarding.md](onboarding.md)，开发计划见 `docs/plans/onboarding.md`。
+
 ## 关键决策（访谈锁定）
 
 - **D1 命名空间**：三组 `channel` / `agents` / `config` + 顶层 `doctor`（贴合现有 `daemon`/`agents` 风格）。

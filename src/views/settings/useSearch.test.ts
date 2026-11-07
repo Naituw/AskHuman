@@ -138,4 +138,34 @@ describe("useSettingsSearch", () => {
     });
     wrapper.unmount();
   });
+  it.each([
+    ["en", "wizard", "Setup wizard"],
+    ["zh", "向导", "设置向导"],
+  ] as const)("indexes the setup wizard card on the General tab in %s", async (locale, query, title) => {
+    i18n.global.locale.value = locale;
+    let search!: ReturnType<typeof useSettingsSearch>;
+    const wrapper = mount(
+      defineComponent({
+        setup() {
+          search = useSettingsSearch({
+            config: ref<AppConfig | null>(null),
+            activeTab: ref<Tab>("integration"),
+          });
+          return () => null;
+        },
+      }),
+      { global: { plugins: [i18n] } },
+    );
+
+    search.searchQuery.value = query;
+    await nextTick();
+
+    expect(search.searchResults.value).toContainEqual({
+      tab: "general",
+      title,
+      extra: expect.any(Array),
+    });
+    wrapper.unmount();
+    i18n.global.locale.value = "en";
+  });
 });

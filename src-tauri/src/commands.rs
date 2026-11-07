@@ -2209,7 +2209,7 @@ pub fn agents_start_subscription(app: AppHandle) {
 /// 把「打开窗口」请求路由到统一 GUI 宿主（spec D3）：宿主在则聚焦/新建（全局单窗），不在则拉起。
 /// 失败兜底：在当前（弹窗）进程内直接建窗，保证按钮始终能开窗。整个过程在后台线程进行，
 /// 避免阻塞调用方（弹窗 UI 线程）——`host_open` 在宿主冷启动时可能耗时上百毫秒到数秒。
-fn route_open_window(
+pub(crate) fn route_open_window(
     app: AppHandle,
     kind: crate::gui_host::WindowKind,
     all: bool,
@@ -2270,6 +2270,10 @@ fn route_open_window(
                     }
                     None => Ok(()),
                 },
+                // `project` slot = the wizard page to show.
+                WindowKind::Setup => {
+                    crate::app::create_setup_window(&fallback, &cfg, project.as_deref(), pin)
+                }
             };
         });
     });
@@ -3541,26 +3545,6 @@ pub fn open_settings(app: AppHandle, tab: Option<String>) -> Result<(), String> 
         None,
     );
     Ok(())
-}
-
-// ===== 弹窗一次性引导（R6）=====
-
-/// 弹窗是否应显示「配置 IM 渠道」一次性引导：未被关闭过，且当前没有任何 IM 渠道启用。
-#[tauri::command]
-pub fn popup_im_tip_visible() -> bool {
-    if crate::uistate::load().im_tip_dismissed {
-        return false;
-    }
-    let ch = AppConfig::load_without_secrets().channels;
-    !(ch.telegram.enabled || ch.dingding.enabled || ch.feishu.enabled || ch.slack.enabled)
-}
-
-/// 永久关闭「配置 IM 渠道」引导（点 ✕ 或点「打开设置」时调用）。
-#[tauri::command]
-pub fn popup_im_tip_dismiss() {
-    let mut s = crate::uistate::load();
-    s.im_tip_dismissed = true;
-    crate::uistate::save(&s);
 }
 
 /// 实时切换窗口材质（纯色/模糊/玻璃）到本进程**全部**已打开 WebView 窗口（含 history/agents 等）。

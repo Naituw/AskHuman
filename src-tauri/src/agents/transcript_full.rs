@@ -1466,7 +1466,7 @@ fn shellish_tokens(cmd: &str) -> Vec<String> {
 /// 隐藏 hook 子命令（`__` 前缀）另行排除。
 const NON_ASK_SUBCOMMANDS: &[&str] = &[
     "daemon", "agents", "dev", "todo", "channel", "config", "doctor", "mcp", "debug", "help",
-    "version",
+    "version", "setup",
 ];
 
 /// Parse an AskHuman CLI invocation into `(message, questions, kind)`
@@ -2328,6 +2328,7 @@ mod tests {
         assert!(parse_askhuman_cli("AskHuman daemon status").is_none());
         assert!(parse_askhuman_cli("AskHuman agents monitor --json").is_none());
         assert!(parse_askhuman_cli("AskHuman todo add \"买菜\"").is_none());
+        assert!(parse_askhuman_cli("AskHuman setup --text").is_none());
         assert!(parse_askhuman_cli("AskHuman __agent-hook cursor activity").is_none());
         assert!(parse_askhuman_cli("AskHuman --show-last").is_none());
         // 链式：管理段被跳过，提问段命中。

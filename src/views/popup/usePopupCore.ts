@@ -26,8 +26,9 @@ import {
   popupAgentTerminal,
   popupAgentResolved,
   popupShowWindow,
-  popupImTipVisible,
-  popupImTipDismiss,
+  popupSetupHint,
+  popupSetupHintDismiss,
+  openSetup,
   todosList,
   todosRemove,
 } from "../../lib/ipc";
@@ -56,6 +57,7 @@ import type {
   PermissionEditIntent,
   Question,
   QuestionAnswer,
+  SetupHint,
   ThemeMode,
   TodoEntry,
 } from "../../lib/types";
@@ -1181,18 +1183,23 @@ export function usePopupCore(scope?: PopupScope) {
     openSettings().catch(() => {});
   }
 
-  // ===== 首次运行引导（R6）：无 IM 渠道时页脚上方的一次性提示 =====
-  const imTipVisible = ref(false);
+  // ===== 设置向导提示条：页脚上方、指向仍有未决问题的向导页（一次性） =====
+  // v1 只有「远程回答」一项（无 IM 渠道且没关闭过）；点「去配置」与 ✕ 都记为该项已决定。
+  const setupHint = ref<SetupHint | null>(null);
 
-  function imTipConfigure() {
-    imTipVisible.value = false;
-    popupImTipDismiss().catch(() => {});
-    openSettings("channel").catch(() => {});
+  function setupHintAct() {
+    const hint = setupHint.value;
+    if (!hint) return;
+    setupHint.value = null;
+    popupSetupHintDismiss(hint.id).catch(() => {});
+    openSetup(hint.page).catch(() => {});
   }
 
-  function imTipDismiss() {
-    imTipVisible.value = false;
-    popupImTipDismiss().catch(() => {});
+  function setupHintDismiss() {
+    const hint = setupHint.value;
+    if (!hint) return;
+    setupHint.value = null;
+    popupSetupHintDismiss(hint.id).catch(() => {});
   }
 
   function openHistoryWindow() {
@@ -2746,9 +2753,9 @@ export function usePopupCore(scope?: PopupScope) {
     } catch {
       /* 无 daemon / 单进程回退：忽略 */
     }
-    // R6 一次性引导：未配置任何 IM 渠道且未被关闭过时，页脚上方显示提示条。
+    // 设置向导提示条：渠道域未决（没有渠道启用且未被关闭过）时，页脚上方显示一次性提示。
     try {
-      imTipVisible.value = await popupImTipVisible();
+      setupHint.value = await popupSetupHint();
     } catch {
       /* 旧后端无此命令：忽略 */
     }
@@ -3039,10 +3046,10 @@ export function usePopupCore(scope?: PopupScope) {
     // Notes on passages of the Agent's text (the selection button, editor, footer chip and list)
     ...annotations,
     onMarkdownContentUpdated,
-    // R6 引导
-    imTipVisible,
-    imTipConfigure,
-    imTipDismiss,
+    // 设置向导提示条
+    setupHint,
+    setupHintAct,
+    setupHintDismiss,
     // 待办下拉区（spec todo-whats-next D7）
     todos,
     todosOpen,

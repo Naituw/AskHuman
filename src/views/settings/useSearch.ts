@@ -194,6 +194,7 @@ export function useSettingsSearch(deps: {
       list.push(e("general", "settings.popupBehavior.windowEffect"));
     }
     list.push(
+      e("general", "settings.setup.cardTitle", ["settings.setup.cardDesc"]),
       e("general", "settings.menuBar.title", [
         "settings.menuBar.icon",
         "settings.menuBar.hint",

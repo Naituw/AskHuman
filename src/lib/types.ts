@@ -25,6 +25,8 @@ export interface AskRequest {
   quickReplies?: string[];
   /** The Agent's text may carry notes the user writes on passages of it (docs/specs/message-annotations.md); absent = false. */
   annotatable?: boolean;
+  /** One of the setup wizard's own test questions (docs/specs/onboarding.md D11): the popup shows no setup pointer on it; absent = false. */
+  setupProbe?: boolean;
 }
 
 /** Why a question came through away mode: the Agent asked for it, it asked repeatedly, or the user asked it to ask. */
@@ -1609,4 +1611,124 @@ export interface PopupProjectInfo {
   detached: boolean;
   worktree?: string | null;
   changes?: { total: number; staged: number; unstaged: number; untracked: number } | null;
+}
+
+// ===== Setup wizard (docs/specs/onboarding.md; mirrors the Rust `onboarding` module) =====
+
+/** Which first-run questions are settled, and what this machine can offer (`setup_status`). */
+export interface SetupStatus {
+  /** At least one Agent is integrated, was skipped on purpose, or has already answered through AskHuman. */
+  agentsDecided: boolean;
+  /** An IM channel is on, or the remote-answering step was skipped. */
+  remoteDecided: boolean;
+  /** The GUI Host login item exists, or the user answered the background question. */
+  backgroundDecided: boolean;
+  loginItemInstalled: boolean;
+  /** The platform has a login item this instance may manage (not a Dev Instance). */
+  loginItemAvailable: boolean;
+  trayAvailable: boolean;
+  /** A Dev Instance must not change the everyday Agent integration. */
+  everydayIntegrationsReadOnly: boolean;
+}
+
+/** Why an Agent counts as installed on this machine. */
+export interface SetupAgentSignals {
+  cli: boolean;
+  configDir: boolean;
+  app: boolean;
+}
+
+/** One file the integration writes; `exists` = applying modifies it instead of creating it. */
+export interface SetupPlannedFile {
+  path: string;
+  exists: boolean;
+}
+
+export interface SetupPlannedByMode {
+  cli: SetupPlannedFile[];
+  mcp: SetupPlannedFile[];
+}
+
+/** A mode the wizard can apply (it never uninstalls). */
+export type SetupAgentMode = "cli" | "mcp";
+
+/** Codex protocol delivery state; `untrusted` right after installing means "trust the hook on first launch". */
+export type SetupCodexDelivery =
+  | "notInstalled"
+  | "trusted"
+  | "untrusted"
+  | "needsUpdate"
+  | "unsupportedVersion";
+
+/** One row of the wizard's Agent page (`setup_agents_scan`). */
+export interface SetupAgentRow {
+  id: AgentId;
+  title: string;
+  signals: SetupAgentSignals;
+  detected: boolean;
+  /** The integration mode currently on disk. */
+  mode: AgentMode;
+  needsUpdate: boolean;
+  /** Why the state could not be read; the row is shown disabled. */
+  statusError: string | null;
+  supportsCli: boolean;
+  supportsMcp: boolean;
+  recommended: SetupAgentMode;
+  delivery: SetupCodexDelivery | null;
+  planned: SetupPlannedByMode;
+}
+
+export interface SetupSelection {
+  agent: AgentId;
+  mode: SetupAgentMode;
+}
+
+export interface SetupApplyResult {
+  agent: AgentId;
+  requested: SetupAgentMode;
+  ok: boolean;
+  error: string | null;
+  /** The mode read back after the write. */
+  modeAfter: AgentMode;
+  delivery: SetupCodexDelivery | null;
+}
+
+/** Environment findings worth a card on the Agent page (`setup_env_check`). */
+export interface SetupEnvReport {
+  askhumanOnPath: "found" | "missing" | "unknown";
+  pathFix: { command: string; dir: string; needsPathEdit: boolean } | null;
+  transient: { path: string; kind: "temp" | "downloads" | "npx" } | null;
+  installs: { message: string } | null;
+}
+
+/** One remote-answering channel's state (`setup_channel_status`). */
+export interface SetupChannelStatus {
+  id: string;
+  enabled: boolean;
+  configured: boolean;
+  /** `null` while the daemon is not running (unknown, not "disconnected"). */
+  connected: boolean | null;
+}
+
+/** The popup's one-line pointer to a wizard page that still has an open question. */
+export interface SetupHint {
+  id: string;
+  page: string;
+}
+
+/** The wizard's optional checks (docs/specs/onboarding.md D11). */
+export type SetupProbeKind = "popup" | "channel" | "agent";
+
+/** How a check ended; `cancelled` is also what closing the test question without answering gives. */
+export type SetupProbeOutcome = "ok" | "timeout" | "cancelled" | "failed";
+
+/** The `setup-probe-result` event: a check ended. */
+export interface SetupProbeResult {
+  probeId: string;
+  kind: SetupProbeKind;
+  /** Which channel a `channel` check ran for. */
+  channel?: string;
+  outcome: SetupProbeOutcome;
+  /** The Agent family whose question the `agent` check saw. */
+  agentKind?: string;
 }

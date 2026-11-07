@@ -25,6 +25,9 @@ pub enum WindowKind {
     NewTask,
     /// Native session Fork form; global singleton retargeted by `session`.
     ForkTask,
+    /// The setup wizard (docs/specs/onboarding.md): global singleton; `project` carries the page
+    /// to show (`agents` | `remote` | `done`, optional).
+    Setup,
 }
 
 /// Exact reply-history filter requested by a popup. Native Agent sessions are globally scoped;
@@ -378,5 +381,21 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn the_setup_window_kind_travels_as_lowercase_setup_with_its_page() {
+        assert_eq!(
+            serde_json::to_string(&WindowKind::Setup).unwrap(),
+            r#""setup""#
+        );
+        let msg = r#"{"type":"openWindow","kind":"setup","project":"remote"}"#;
+        match serde_json::from_str::<HostMsg>(msg).unwrap() {
+            HostMsg::OpenWindow { kind, project, .. } => {
+                assert_eq!(kind, WindowKind::Setup);
+                assert_eq!(project.as_deref(), Some("remote"));
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
     }
 }

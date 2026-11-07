@@ -2007,6 +2007,57 @@ where
     Ok(())
 }
 
+/// Create (or focus) the setup wizard window (docs/specs/onboarding.md): a global singleton with
+/// label `setup`. `page` is the wizard page to show (`agents` | `remote` | `done`): an open window
+/// switches through the `setup-goto-page` event, a new one takes it in its URL.
+/// `pin_above_popup` means the same as for [`create_settings_window`].
+pub(crate) fn create_setup_window<R, M>(
+    manager: &M,
+    config: &AppConfig,
+    page: Option<&str>,
+    pin_above_popup: bool,
+) -> tauri::Result<()>
+where
+    R: tauri::Runtime,
+    M: Manager<R>,
+{
+    let page = page.filter(|page| !page.is_empty());
+    if let Some(w) = manager.get_webview_window("setup") {
+        let _ = w.set_focus();
+        if let Some(page) = page {
+            use tauri::Emitter;
+            let _ = w.emit("setup-goto-page", page.to_string());
+        }
+        return Ok(());
+    }
+    let theme = window_theme(config);
+    let lang = Lang::resolve(&config.general.language);
+    let window_bg = background_for(resolved_theme(config));
+    let mut url = String::from("index.html?view=setup");
+    if let Some(page) = page {
+        url.push_str("&page=");
+        url.push_str(&urlencode(page));
+    }
+    let window_effect = config.general.window_effect;
+    let effective_window_effect = effective_window_effect(window_effect);
+    append_window_effect_query(&mut url, effective_window_effect);
+    let builder = WebviewWindowBuilder::new(manager, "setup", WebviewUrl::App(url.into()))
+        .title(crate::development::window_title(i18n::tr(
+            lang,
+            "title.setup",
+        )))
+        .inner_size(640.0, 720.0)
+        .min_inner_size(560.0, 600.0)
+        .center()
+        .always_on_top(pin_above_popup)
+        .theme(theme);
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+    let win = apply_surface(builder, window_bg, effective_window_effect).build()?;
+    #[cfg(target_os = "macos")]
+    set_runtime_window_effect_with_bg(&win, window_effect, window_bg);
+    Ok(())
+}
+
 /// 创建（或聚焦已存在的）独立历史窗口。供 `--history` 启动与弹窗导航栏共用。
 /// `all` 为 true 时窗口默认展示全部项目（经 URL 参数传递）。
 /// `project_override` 为 Some 时（宿主路由场景）携带调用方项目 key，让窗口默认过滤到该项目，
