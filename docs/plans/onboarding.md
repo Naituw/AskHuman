@@ -321,26 +321,26 @@ Rust 单测（均不碰真实 HOME / 钥匙串）：
 - 新文件：
   - `views/SetupView.vue`：窗口壳（可点击的步骤条 + 页面容器 + 底部导航）；挂载时 `Promise.all([getSettings(), setupStatus()])`，把 `config` / `secretsPresent` / `everydayIntegrationsReadOnly` 灌入 `core`（同 `SettingsView`）；应用主题 / 语言并监听 `settings-updated`；初始页读 URL `?page=`，监听 `setup-goto-page` 与 `setup-status-changed`。
   - `views/setup/useSetup.ts`：状态机与动作（页、`status`、`rows`、`style`、`applyResults`、`env`、`channelStatus`、后台两个开关）。
-  - `views/setup/AgentsPage.vue`、`RemotePage.vue`、`DonePage.vue`、`SetupChannelForm.vue`、`EnvCards.vue`。
+  - `views/setup/AgentsPage.vue`（Agent 磁贴 `AgentTile.vue`）、`RemotePage.vue`、`DonePage.vue`、`SetupChannelForm.vue`、`EnvCards.vue`；共用 `SetupHeader.vue`（页头）与 `BrandBadge.vue`（徽标，图案注册表 `brandBadges.ts`）。版式见 spec §8 第 7 轮。
   - `views/settings/useSetupStatus.ts`：共享的 `status` + `refresh()`（挂载、`setup-status-changed`、窗口获得焦点时刷新），供设置页横幅 / 卡片 / 菜单栏提示使用。
 - 中途关闭窗口不保存步骤进度；已应用的改动保留（D4）。
 
 ### 3.3 第 1 页：接入 Agent（D5–D9、D19、D23）
 
 - 挂载即并行发起 `setupAgentsScan()` 与 `setupEnvCheck()`；扫描期间显示占位，不阻塞步骤导航。
-- 分组：**主区** = `detected || mode != none` 的行；**「其他 Agent」折叠区** = 其余（默认不勾选，仍可手动接入）。
+- 分组：**主区** = `detected || mode != none` 的行；**「未检测到的 Agent（N）」折叠区** = 其余（默认不勾选，仍可手动接入）。
 - 预填：`mode`（所选模式）= `currentMode != none ? currentMode : recommended`；`checked` = `currentMode != none ? true : detected`。已集成行取消勾选 = 「本次不动它」，向导永不卸载。
-- 每行：勾选框 + 标题 + 状态标签 + 模式下拉（只列该家支持的模式，推荐项带「推荐」）+「将改动的文件」折叠（来自 `planned[mode]`，标新建 / 修改）。状态标签：已集成 →「已集成 · CLI/MCP」；`needsUpdate` →「有更新」（默认纳入应用）；Codex `delivery == untrusted` →「待信任」并在行内提示「首次启动 Codex 时按提示信任 Hook」；`unsupportedVersion` → 行内错误；`statusError` →「无法读取状态」（行禁用）。Cursor 行附既有 `settings.integration.cursorRulesHint` 文案。
+- 每个磁贴（`AgentTile.vue`，整块可点勾选）：徽标 + 标题 + 状态标签 + 勾选标记 + 接入方式分段控件（只列该家支持的模式，推荐项带「推荐」；只支持一种时显示固定标签；点选方式同时勾选该家）。「将创建或修改的文件」不放在磁贴里，而是磁贴下方的折叠合并清单（按 Agent 分组，来自 `planned[mode]`，标新建 / 修改）。状态标签：已集成 →「已集成 · CLI/MCP」；`needsUpdate` →「有更新」（默认纳入应用）；Codex `delivery == untrusted` →「待信任」，并在磁贴下方的提示卡片里写「首次启动 Codex 时按提示信任 Hook」；`unsupportedVersion` → 磁贴内错误；`statusError` →「无法读取状态」（磁贴禁用）。勾选 Cursor 时，同一提示卡片附既有 `settings.integration.cursorRulesHint` 文案。「已检测到」标签不在磁贴上重复（分区标题已写明）。
 - `pending(row)` = `checked && (mode != currentMode || needsUpdate)`。主按钮：存在 `pending` 或风格有改动 →「应用并继续」，否则「下一步」。「跳过此步」仅在 Agent 域未决时显示，点击 `setupSkip("agents")` 后前进。
 - 协作风格 2 选 1（对齐 / 自主，各一句说明），预选当前值；当前为 `custom` 时多一项已选中的「自定义（在设置页编辑）」。
 - 应用顺序（D7）：风格有改动 → `core.config.general.collaborationStyle = …` → `await core.persist()` → `await collaborationStyleApplyIntegrations()`；随后 `setupApplyAgents(pending 行)`；刷新扫描。结果就地显示每行 ✓ / ✗ + 原因（失败行可重试）；全部处理完显示「已打开的 Agent 会话需要重启才会加载」；主按钮变「继续」，不自动跳转。
 - Dev（`everydayIntegrationsReadOnly`）：整个 Agent 区只读（行、风格均禁用，隐藏应用按钮），顶部显示只读说明；「下一步」仍可用。
-- 欢迎文案：存在已集成 Agent 视为重跑，显示「已保留你现有的配置，只会改动你勾选的项」，否则显示首次文案。
+- 页头：存在已集成 Agent 视为重跑，显示精简页头与「已保留你现有的配置，只会改动你勾选的项」；否则显示欢迎页头（应用图标 + 欢迎标题 + 首次文案）。
 - 环境红卡（`EnvCards.vue`，位于页面顶部，无命中不占版面）：PATH 卡（含可复制的修复命令与 `needsPathEdit` 说明）、稳定位置卡、多份卡（摘要 + `AskHuman doctor install`）；可见性规则见 §1.6。
 
 ### 3.4 第 2 页：远程回答（D10、D18、D19、D22）
 
-- 渠道由注册表 `views/setup/channelDefs.ts` 驱动：`telegram` / `slack` / `dingding` / `feishu` 四项；当「实验功能」开启（`core.config.experimental.enabled`）时再追加一行「iOS（实验）」，点击 `openSettings("experimental")`，不内嵌表单。后续把 iOS 接成同构模块只需新增一项。
+- 渠道由注册表 `views/setup/channelDefs.ts` 驱动：`feishu`（带「推荐」标）/ `telegram` / `dingding` / `slack` 四项，顺序同设置页的渠道页；当「实验功能」开启（`core.config.experimental.enabled`）时再追加一行「iOS（实验）」，点击 `openSettings("experimental")`，不内嵌表单。后续把 iOS 接成同构模块只需新增一项。
 - 列表态：每行显示状态（未配置 / 已配置 / 已配置 · 已连接 / 异常——异常取 `useChannels.channelIssueText(id)`）+「配置」或「编辑」。页面可见期间 `core.activeTab.value = "channel"`（让 `useChannels` 的健康轮询工作），离开时还原 `"general"`；进入页面与保存后刷新 `setupChannelStatus()`。
 - 详情态（`SetupChannelForm.vue`，一次一个渠道，返回回到列表）：3–5 行平台侧要点（从 `docs/wiki/<slug>.md` 摘取，i18n）+「查看教程」（`useChannels.openChannelGuide(id)`）+ 必填字段 + 自动识别 +「保存并启用」+「在设置页打开更多选项」（`openSettings("channel#channel-<id>")`，多账号 / 超时 / 卡片模板等高级项都走这里）。
 

@@ -247,6 +247,24 @@ describe("setup wizard", () => {
       expect(ipc.setupAgentsScan.mock.calls.length).toBe(scanCalls + 1);
     });
 
+    it("gives a step the user already settled a check instead of its number", async () => {
+      statusValue = status({ agentsDecided: true, remoteDecided: true });
+      const w = await mountWizard("remote");
+      expect(get(w, "step-agents").classes()).toContain("done");
+      expect(get(w, "step-agents").find(".setup-step-check").exists()).toBe(true);
+      // The page being shown keeps its number, and Done is never settled before it is finished.
+      expect(get(w, "step-remote").find(".setup-step-check").exists()).toBe(false);
+      expect(text(w, "step-remote")).toContain("2");
+      expect(get(w, "step-done").classes()).not.toContain("done");
+    });
+
+    it("keeps the numbers while nothing is settled", async () => {
+      const w = await mountWizard();
+      for (const name of ["agents", "remote", "done"]) {
+        expect(get(w, `step-${name}`).find(".setup-step-check").exists()).toBe(false);
+      }
+    });
+
     it("follows a language change made in another window", async () => {
       const w = await mountWizard();
       await emit("settings-updated", { language: "zh" });
@@ -268,7 +286,7 @@ describe("setup wizard", () => {
 
       // The undetected Agent is folded away until asked for.
       expect(find(w, "agent-antigravity").exists()).toBe(false);
-      expect(text(w, "agents-others-toggle")).toContain("Other Agents (1)");
+      expect(text(w, "agents-others-toggle")).toContain("Agents not detected (1)");
       await click(w, "agents-others-toggle");
       expect(find(w, "agents-others").exists()).toBe(true);
       expect(isChecked(w, "agent-check-antigravity")).toBe(false);
@@ -279,7 +297,8 @@ describe("setup wizard", () => {
       const w = await mountWizard();
       expect(text(w, "agent-tag-claude-integrated")).toBe("Connected · CLI");
       expect(text(w, "agent-tag-grok-integrated")).toBe("Connected · MCP");
-      expect(text(w, "agent-tag-cursor-detected")).toBe("Detected");
+      // The section title already says "Detected", so a tile does not repeat it.
+      expect(find(w, "agent-tag-cursor-detected").exists()).toBe(false);
       expect(text(w, "agent-tag-grok-needsUpdate")).toBe("Update available");
       expect(text(w, "agent-tag-codex-untrusted")).toBe("Needs trust");
       expect(text(w, "agent-tag-pi-unreadable")).toBe("Cannot read state");
@@ -295,42 +314,80 @@ describe("setup wizard", () => {
       expect(isDisabled(w, "agent-check-claude")).toBe(false);
     });
 
+    // The way to connect is a two-button control; the pressed button is the chosen mode.
+    const pressed = (w: VueWrapper, id: string) => get(w, id).attributes("aria-pressed") === "true";
+    const modeLabels = (w: VueWrapper, id: string) =>
+      get(w, id)
+        .findAll("button")
+        .map((b) => b.text());
+
     it("preselects the integrated mode, or the recommended one, and marks the recommended mode", async () => {
       rowsValue = mixedRows();
       const w = await mountWizard();
-      const claudeMode = get(w, "agent-mode-claude");
-      expect((claudeMode.element as HTMLSelectElement).value).toBe("cli");
-      expect(claudeMode.findAll("option").map((o) => o.text())).toEqual(["CLI (recommended)", "MCP"]);
-      const cursorMode = get(w, "agent-mode-cursor");
-      expect((cursorMode.element as HTMLSelectElement).value).toBe("mcp");
-      expect(cursorMode.findAll("option").map((o) => o.text())).toEqual(["CLI", "MCP (recommended)"]);
+      expect(pressed(w, "agent-mode-claude-cli")).toBe(true);
+      expect(pressed(w, "agent-mode-claude-mcp")).toBe(false);
+      expect(modeLabels(w, "agent-mode-claude")).toEqual(["CLI (recommended)", "MCP"]);
+      expect(pressed(w, "agent-mode-cursor-mcp")).toBe(true);
+      expect(modeLabels(w, "agent-mode-cursor")).toEqual(["CLI", "MCP (recommended)"]);
       // An integrated Agent keeps its own mode even where it is not the recommended one.
-      expect((get(w, "agent-mode-grok").element as HTMLSelectElement).value).toBe("mcp");
+      expect(pressed(w, "agent-mode-grok-mcp")).toBe(true);
+      expect(pressed(w, "agent-mode-grok-cli")).toBe(false);
     });
 
-    it("lists the files an apply would touch, only for rows that would change", async () => {
+    it("shows the only mode an Agent supports as a fixed label, not a choice", async () => {
+      rowsValue = [row({ id: "grok", title: "Grok", supportsCli: false, recommended: "mcp" })];
+      const w = await mountWizard();
+      expect(find(w, "agent-mode-grok-cli").exists()).toBe(false);
+      expect(find(w, "agent-mode-grok-mcp").exists()).toBe(false);
+      expect(text(w, "agent-mode-grok")).toBe("MCP (recommended)");
+    });
+
+    it("choosing how to connect an Agent also ticks it", async () => {
+      const w = await mountWizard();
+      await get(w, "agent-check-claude").setValue(false);
+      expect(isChecked(w, "agent-check-claude")).toBe(false);
+      await click(w, "agent-mode-claude-mcp");
+      expect(isChecked(w, "agent-check-claude")).toBe(true);
+      expect(pressed(w, "agent-mode-claude-mcp")).toBe(true);
+      expect(pressed(w, "agent-mode-claude-cli")).toBe(false);
+    });
+
+    it("lists the files an apply would touch below the tiles, only for rows that would change", async () => {
       rowsValue = mixedRows();
       const w = await mountWizard();
+      // Folded away at first, with only the number of files on the toggle.
       expect(find(w, "agent-files-cursor").exists()).toBe(false);
-      await get(w, "agent-cursor").get(".setup-files-toggle").trigger("click");
+      expect(text(w, "agents-files-toggle")).toContain("(2)");
+      await click(w, "agents-files-toggle");
       const items = get(w, "agent-files-cursor").findAll("li");
       expect(items.map((li) => [li.get(".setup-file-kind").text(), li.get("code").text()])).toEqual([
         ["edit", "/u/.cursor/mcp.json"],
         ["new", "/u/.cursor/rules/askhuman.mdc"],
       ]);
       // Claude is integrated and current: nothing to show.
-      expect(get(w, "agent-claude").find(".setup-files-toggle").exists()).toBe(false);
+      expect(find(w, "agent-files-claude").exists()).toBe(false);
     });
 
-    it("greets a rerun differently from a first run", async () => {
+    it("leaves out the file list when nothing would be written", async () => {
+      const w = await mountWizard();
+      expect(find(w, "agents-files").exists()).toBe(false);
+    });
+
+    it("greets a first run with a welcome and a rerun with the compact header", async () => {
+      rowsValue = [row({ id: "claude", mode: "none" })];
       const first = await mountWizard();
-      expect(text(first, "agents-lead")).toContain("Your existing setup is kept");
+      expect(first.get("h1").text()).toBe("Welcome to AskHuman");
+      expect(text(first, "agents-lead")).toContain("Pick the Agents to connect");
+      expect(first.find(".setup-app-icon").exists()).toBe(true);
       first.unmount();
       wrappers.length = 0;
 
-      rowsValue = [row({ id: "claude", mode: "none" })];
-      const second = await mountWizard();
-      expect(text(second, "agents-lead")).toContain("Once an Agent is connected");
+      // Claude is already connected, so this is somebody coming back.
+      rowsValue = [row({ id: "claude", mode: "cli" })];
+      const rerun = await mountWizard();
+      expect(rerun.get("h1").text()).toBe("Connect your Agents");
+      expect(text(rerun, "agents-lead")).toContain("Your existing setup is kept");
+      expect(rerun.find(".setup-app-icon").exists()).toBe(false);
     });
 
     it("the main button follows what would be written", async () => {
@@ -527,7 +584,7 @@ describe("setup wizard", () => {
         expect(find(w, "env-path").exists()).toBe(false);
 
         // Switching that row to CLI makes the missing PATH matter.
-        await get(w, "agent-mode-cursor").setValue("cli");
+        await click(w, "agent-mode-cursor-cli");
         expect(find(w, "env-path").exists()).toBe(true);
         expect(find(w, "env-path-edit").exists()).toBe(false);
       });
@@ -552,6 +609,46 @@ describe("setup wizard", () => {
   });
 
   describe("page 2: remote answering", () => {
+    it("lists the channels in the settings page's order and recommends only Feishu", async () => {
+      const w = await mountWizard("remote");
+      const ids = w.findAll('[data-testid^="channel-row-"]').map((el) => el.attributes("data-testid"));
+      expect(ids).toEqual([
+        "channel-row-feishu",
+        "channel-row-telegram",
+        "channel-row-dingding",
+        "channel-row-slack",
+      ]);
+      expect(get(w, "channel-row-feishu").find(".setup-recommended").exists()).toBe(true);
+      for (const id of ["telegram", "dingding", "slack"]) {
+        expect(get(w, `channel-row-${id}`).find(".setup-recommended").exists()).toBe(false);
+      }
+    });
+
+    it("names what each channel needs, leaving out the field auto-detect fills in", async () => {
+      const w = await mountWizard("remote");
+      // Telegram has no auto-detect: both fields are typed.
+      expect(get(w, "channel-row-telegram").text()).toContain("Needs Bot Token · Chat ID");
+      // Feishu's Open ID is filled in by auto-detect, so only the credentials are named.
+      expect(get(w, "channel-row-feishu").text()).toContain("Needs App ID · App Secret");
+      expect(get(w, "channel-row-feishu").text()).not.toContain("Open ID");
+      // The alias in parentheses stays out of the short line.
+      expect(get(w, "channel-row-dingding").text()).toContain("Needs ClientId · ClientSecret");
+    });
+
+    it("stops naming what a channel needs once it is set up", async () => {
+      channelRows = [
+        channelRow("feishu", { enabled: true, configured: true, connected: true }),
+        channelRow("telegram", { enabled: false, configured: true }),
+        // Incomplete: enabled but not configured, so it still says what is missing.
+        channelRow("slack", { enabled: true, configured: false }),
+      ];
+      const w = await mountWizard("remote");
+      expect(get(w, "channel-row-feishu").text()).not.toContain("Needs");
+      expect(get(w, "channel-row-telegram").text()).not.toContain("Needs");
+      expect(get(w, "channel-row-slack").text()).toContain("Needs Bot Token · App-Level Token");
+      expect(get(w, "channel-row-dingding").text()).toContain("Needs ClientId · ClientSecret");
+    });
+
     it("shows each channel's state", async () => {
       channelRows = [
         channelRow("telegram"),
@@ -739,6 +836,10 @@ describe("setup wizard", () => {
       channelRows = [channelRow("slack", { enabled: true, configured: true })];
     }
 
+    /** The test ids of the summary chips that start with a prefix, in page order. */
+    const chipIds = (w: VueWrapper, prefix: string) =>
+      w.findAll(`[data-testid^="${prefix}"]`).map((chip) => chip.attributes("data-testid"));
+
     it("summarises the Agents, the style, the channels and what is switched on", async () => {
       rowsValue = mixedRows();
       payload = settings({ style: "autonomous" });
@@ -753,11 +854,21 @@ describe("setup wizard", () => {
         stop: { supported: true, enabled: true },
       };
       const w = await mountWizard("done");
-      expect(text(w, "summary-agents")).toBe("Claude Code · CLI / Grok · MCP / Codex · CLI");
+      // One chip per connected Agent, in the scan's order, each with the way it is connected.
+      expect(chipIds(w, "summary-agent-")).toEqual([
+        "summary-agent-claude",
+        "summary-agent-grok",
+        "summary-agent-codex",
+      ]);
+      expect(text(w, "summary-agent-claude")).toContain("Claude Code");
+      expect(get(w, "summary-agent-claude").get("em").text()).toBe("CLI");
+      expect(get(w, "summary-agent-grok").get("em").text()).toBe("MCP");
+      expect(get(w, "summary-agent-codex").get("em").text()).toBe("CLI");
       expect(text(w, "summary-style")).toBe(message("settings.integration.collabAutonomous"));
-      expect(text(w, "summary-channels")).toBe(
-        `${message("settings.channels.slackTitle")} / ${message("settings.channels.feishuTitle")}`,
-      );
+      // Only channels that are on, in the order the remote page lists them.
+      expect(chipIds(w, "summary-channel-")).toEqual(["summary-channel-feishu", "summary-channel-slack"]);
+      expect(text(w, "summary-channel-slack")).toContain(message("settings.channels.slackTitle"));
+      expect(text(w, "summary-channel-feishu")).toContain(message("settings.channels.feishuTitle"));
       expect(text(w, "summary-capabilities")).toContain("Lifecycle tracking · Stop confirmation");
       await click(w, "summary-adjust");
       expect(ipc.openSettings).toHaveBeenCalledWith("integration");
@@ -767,14 +878,17 @@ describe("setup wizard", () => {
       rowsValue = [row({ id: "claude", mode: "none" })];
       const w = await mountWizard("done");
       expect(text(w, "summary-agents")).toBe("None yet");
-      expect(text(w, "summary-channels")).toBe("None yet");
+      expect(text(w, "summary-channels")).toBe(message("setup.done.channelsLater"));
+      expect(chipIds(w, "summary-agent-")).toEqual([]);
+      expect(chipIds(w, "summary-channel-")).toEqual([]);
       expect(find(w, "summary-capabilities").exists()).toBe(false);
     });
 
     it("still has the summary when the page is opened directly, before any scan", async () => {
       rowsValue = mixedRows();
       const w = await mountWizard("done");
-      expect(text(w, "summary-agents")).toContain("Claude Code · CLI");
+      expect(text(w, "summary-agent-claude")).toContain("Claude Code");
+      expect(get(w, "summary-agent-claude").get("em").text()).toBe("CLI");
     });
 
     it("offers the launch-at-login switch only where there is a tray, from the menu-bar mode", async () => {

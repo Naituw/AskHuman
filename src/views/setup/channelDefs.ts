@@ -28,6 +28,8 @@ export interface ChannelDef {
   id: ChannelId;
   /** i18n key of the channel's name. */
   titleKey: string;
+  /** The channel the Settings page recommends (it carries the same badge there). */
+  recommended?: boolean;
   /** Required fields, in the order they are asked. */
   fields: ChannelField[];
   /** How many platform-side key points `setup.channels.<id>.points.<n>` holds. */
@@ -37,6 +39,23 @@ export interface ChannelDef {
 }
 
 export const CHANNEL_DEFS: readonly ChannelDef[] = [
+  // Same order as the Settings channel tab: the recommended channel first.
+  {
+    id: "feishu",
+    titleKey: "settings.channels.feishuTitle",
+    recommended: true,
+    fields: [
+      { key: "appId", labelKey: "settings.channels.appId" },
+      {
+        key: "appSecret",
+        labelKey: "settings.channels.appSecret",
+        secret: { present: "feishuSecret", clear: "feishu" },
+      },
+      { key: "openId", labelKey: "settings.channels.openId", detected: true },
+    ],
+    points: 4,
+    detectHintKey: "settings.channels.feishuDetectHint",
+  },
   {
     id: "telegram",
     titleKey: "settings.channels.telegramTitle",
@@ -50,6 +69,21 @@ export const CHANNEL_DEFS: readonly ChannelDef[] = [
     ],
     points: 3,
     detectHintKey: null,
+  },
+  {
+    id: "dingding",
+    titleKey: "settings.channels.dingtalkTitle",
+    fields: [
+      { key: "clientId", labelKey: "settings.channels.clientId" },
+      {
+        key: "clientSecret",
+        labelKey: "settings.channels.clientSecret",
+        secret: { present: "dingdingSecret", clear: "dingding" },
+      },
+      { key: "userId", labelKey: "settings.channels.userId", detected: true },
+    ],
+    points: 4,
+    detectHintKey: "settings.channels.detectHint",
   },
   {
     id: "slack",
@@ -69,36 +103,6 @@ export const CHANNEL_DEFS: readonly ChannelDef[] = [
     ],
     points: 5,
     detectHintKey: "settings.channels.slackDetectHint",
-  },
-  {
-    id: "dingding",
-    titleKey: "settings.channels.dingtalkTitle",
-    fields: [
-      { key: "clientId", labelKey: "settings.channels.clientId" },
-      {
-        key: "clientSecret",
-        labelKey: "settings.channels.clientSecret",
-        secret: { present: "dingdingSecret", clear: "dingding" },
-      },
-      { key: "userId", labelKey: "settings.channels.userId", detected: true },
-    ],
-    points: 4,
-    detectHintKey: "settings.channels.detectHint",
-  },
-  {
-    id: "feishu",
-    titleKey: "settings.channels.feishuTitle",
-    fields: [
-      { key: "appId", labelKey: "settings.channels.appId" },
-      {
-        key: "appSecret",
-        labelKey: "settings.channels.appSecret",
-        secret: { present: "feishuSecret", clear: "feishu" },
-      },
-      { key: "openId", labelKey: "settings.channels.openId", detected: true },
-    ],
-    points: 4,
-    detectHintKey: "settings.channels.feishuDetectHint",
   },
 ];
 

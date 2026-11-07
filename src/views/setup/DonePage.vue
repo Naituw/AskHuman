@@ -5,9 +5,11 @@ import { computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { openSettings } from "../../lib/ipc";
 import { isMac } from "../../lib/platform";
+import BrandBadge from "./BrandBadge.vue";
+import ProbeRow from "./ProbeRow.vue";
+import SetupHeader from "./SetupHeader.vue";
 import { isIntegrated } from "./agentRows";
 import { CHANNEL_DEFS } from "./channelDefs";
-import ProbeRow from "./ProbeRow.vue";
 import { useSetupContext } from "./useSetup";
 
 const { t } = useI18n();
@@ -37,13 +39,7 @@ const trayAvailable = computed(() => status.value?.trayAvailable === true);
 /** The login-item notice only applies where this instance really writes one. */
 const showLoginItemNote = computed(() => status.value?.loginItemAvailable === true && isMac);
 
-const agentsText = computed(() => {
-  const integrated = rows.value.filter(isIntegrated);
-  if (integrated.length === 0) return t("setup.done.noneYet");
-  return integrated
-    .map((row) => `${row.title} · ${row.mode === "cli" ? "CLI" : "MCP"}`)
-    .join(" / ");
-});
+const integratedRows = computed(() => rows.value.filter(isIntegrated));
 
 const styleText = computed(() => {
   switch (styleBaseline.value) {
@@ -56,12 +52,9 @@ const styleText = computed(() => {
   }
 });
 
-const channelsText = computed(() => {
-  const names = CHANNEL_DEFS.filter((def) => enabledChannelIds.value.includes(def.id)).map((def) =>
-    t(def.titleKey),
-  );
-  return names.length > 0 ? names.join(" / ") : t("setup.done.noneYet");
-});
+const enabledChannels = computed(() =>
+  CHANNEL_DEFS.filter((def) => enabledChannelIds.value.includes(def.id)),
+);
 
 const capabilitiesText = computed(() =>
   capabilities.value.map((key) => t(`setup.done.capabilities.${key}`)).join(" · "),
@@ -84,85 +77,127 @@ onMounted(async () => {
 
 <template>
   <div class="settings-body setup-body">
-    <h1 class="setup-title">{{ t("setup.done.title") }}</h1>
-    <p class="setup-lead">{{ t("setup.done.lead") }}</p>
+    <div class="setup-page">
+      <SetupHeader :title="t('setup.done.title')" :lead="t('setup.done.lead')">
+        <template #icon>
+          <span class="setup-success" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false"><path d="M5.5 12.8l4.2 4.2 8.8-9.4" /></svg>
+          </span>
+        </template>
+      </SetupHeader>
 
-    <div class="card" data-testid="done-summary">
-      <p class="card-title">{{ t("setup.done.summaryTitle") }}</p>
-      <div class="row">
-        <span class="label">{{ t("setup.done.agents") }}</span>
-        <span class="spacer"></span>
-        <span class="setup-value" data-testid="summary-agents">{{
-          rowsLoaded ? agentsText : "…"
-        }}</span>
-      </div>
-      <div class="row">
-        <span class="label">{{ t("setup.agents.styleTitle") }}</span>
-        <span class="spacer"></span>
-        <span class="setup-value" data-testid="summary-style">{{ styleText }}</span>
-      </div>
-      <div class="row">
-        <span class="label">{{ t("setup.done.channels") }}</span>
-        <span class="spacer"></span>
-        <span class="setup-value" data-testid="summary-channels">{{ channelsText }}</span>
-      </div>
-      <div v-if="capabilities.length > 0" class="row" data-testid="summary-capabilities">
-        <span class="label">{{ t("setup.done.capabilitiesTitle") }}</span>
-        <span class="spacer"></span>
-        <span class="setup-value">{{ capabilitiesText }}</span>
-      </div>
-      <p v-if="capabilities.length > 0" class="card-desc">
-        <a
-          class="link"
-          href="#"
-          data-testid="summary-adjust"
-          @click.prevent="openSettings('integration')"
-        >
-          {{ t("setup.done.adjust") }} ↗
-        </a>
-      </p>
-    </div>
+      <section class="setup-panel" data-testid="done-summary">
+        <ul class="check-list">
+          <li class="check-item" :class="{ none: rowsLoaded && integratedRows.length === 0 }">
+            <span class="check-icon" aria-hidden="true"></span>
+            <span class="check-label">{{ t("setup.done.agents") }}</span>
+            <span class="check-value" data-testid="summary-agents">
+              <template v-if="!rowsLoaded">…</template>
+              <span v-else-if="integratedRows.length === 0" class="check-none">{{
+                t("setup.done.noneYet")
+              }}</span>
+              <template v-else>
+                <span
+                  v-for="row in integratedRows"
+                  :key="row.id"
+                  class="check-chip"
+                  :data-testid="`summary-agent-${row.id}`"
+                >
+                  <BrandBadge :id="row.id" :label="row.title" size="sm" />
+                  {{ row.title }}
+                  <em>{{ row.mode === "cli" ? "CLI" : "MCP" }}</em>
+                </span>
+              </template>
+            </span>
+          </li>
 
-    <!-- Optional checks: whatever they find, Done stays available (D11). -->
-    <div class="card" data-testid="done-verify">
-      <p class="card-title">{{ t("setup.probe.title") }}</p>
-      <p class="card-desc">{{ t("setup.probe.lead") }}</p>
-      <ProbeRow
-        kind="popup"
-        :state="probes.states.popup"
-        @start="probes.start('popup')"
-        @cancel="probes.cancel('popup')"
-      />
-      <ProbeRow
-        v-if="agentProbeAvailable"
-        kind="agent"
-        :state="probes.states.agent"
-        :params="{ agent: probedAgentName }"
-        @start="probes.start('agent')"
-        @cancel="probes.cancel('agent')"
-      />
-    </div>
+          <li class="check-item">
+            <span class="check-icon" aria-hidden="true"></span>
+            <span class="check-label">{{ t("setup.agents.styleTitle") }}</span>
+            <span class="check-value" data-testid="summary-style">{{ styleText }}</span>
+          </li>
 
-    <div v-if="trayAvailable || showBackgroundB" class="card" data-testid="done-background">
-      <p class="card-title">{{ t("setup.done.backgroundTitle") }}</p>
-      <template v-if="trayAvailable">
-        <div class="row">
-          <span class="label">{{ t("setup.done.switchA") }}</span>
-          <span class="spacer"></span>
+          <li class="check-item" :class="{ none: enabledChannels.length === 0 }">
+            <span class="check-icon" aria-hidden="true"></span>
+            <span class="check-label">{{ t("setup.done.channels") }}</span>
+            <span class="check-value" data-testid="summary-channels">
+              <span v-if="enabledChannels.length === 0" class="check-none">{{
+                t("setup.done.channelsLater")
+              }}</span>
+              <template v-else>
+                <span
+                  v-for="def in enabledChannels"
+                  :key="def.id"
+                  class="check-chip"
+                  :data-testid="`summary-channel-${def.id}`"
+                >
+                  <BrandBadge :id="def.id" :label="t(def.titleKey)" size="sm" />
+                  {{ t(def.titleKey) }}
+                </span>
+              </template>
+            </span>
+          </li>
+
+          <li v-if="capabilities.length > 0" class="check-item" data-testid="summary-capabilities">
+            <span class="check-icon" aria-hidden="true"></span>
+            <span class="check-label">{{ t("setup.done.capabilitiesTitle") }}</span>
+            <span class="check-value">{{ capabilitiesText }}</span>
+          </li>
+        </ul>
+        <p v-if="capabilities.length > 0" class="check-adjust">
+          <a
+            class="link"
+            href="#"
+            data-testid="summary-adjust"
+            @click.prevent="openSettings('integration')"
+          >
+            {{ t("setup.done.adjust") }} ↗
+          </a>
+        </p>
+      </section>
+
+      <!-- Optional checks: whatever they find, Done stays available (D11). -->
+      <section class="setup-panel" data-testid="done-verify">
+        <h2 class="setup-section-title">{{ t("setup.probe.title") }}</h2>
+        <p class="setup-section-lead">{{ t("setup.probe.lead") }}</p>
+        <ProbeRow
+          kind="popup"
+          :state="probes.states.popup"
+          @start="probes.start('popup')"
+          @cancel="probes.cancel('popup')"
+        />
+        <ProbeRow
+          v-if="agentProbeAvailable"
+          kind="agent"
+          :state="probes.states.agent"
+          :params="{ agent: probedAgentName }"
+          @start="probes.start('agent')"
+          @cancel="probes.cancel('agent')"
+        />
+      </section>
+
+      <section v-if="trayAvailable || showBackgroundB" class="setup-panel" data-testid="done-background">
+        <h2 class="setup-section-title">{{ t("setup.done.backgroundTitle") }}</h2>
+        <div v-if="trayAvailable" class="setup-switch-row">
+          <div class="setup-switch-text">
+            <p class="setup-switch-label">{{ t("setup.done.switchA") }}</p>
+            <p class="setup-switch-desc">{{ t("setup.done.switchADesc") }}</p>
+            <p v-if="showLoginItemNote" class="setup-switch-desc" data-testid="login-item-note">
+              {{ t("setup.done.loginItemNote") }}
+            </p>
+          </div>
           <label class="switch">
             <input v-model="backgroundA" type="checkbox" data-testid="switch-a" />
             <span class="track"></span>
           </label>
         </div>
-        <p class="card-desc">{{ t("setup.done.switchADesc") }}</p>
-        <p v-if="showLoginItemNote" class="card-desc" data-testid="login-item-note">
-          {{ t("setup.done.loginItemNote") }}
-        </p>
-      </template>
-      <template v-if="showBackgroundB">
-        <div class="row">
-          <span class="label">{{ t("setup.done.switchB") }}</span>
-          <span class="spacer"></span>
+        <div v-if="showBackgroundB" class="setup-switch-row">
+          <div class="setup-switch-text">
+            <p class="setup-switch-label">{{ t("setup.done.switchB") }}</p>
+            <p class="setup-switch-desc">
+              {{ backgroundBLocked ? t("setup.done.switchBLocked") : t("setup.done.switchBDesc") }}
+            </p>
+          </div>
           <label class="switch">
             <input
               v-model="backgroundB"
@@ -173,15 +208,12 @@ onMounted(async () => {
             <span class="track"></span>
           </label>
         </div>
-        <p class="card-desc">
-          {{ backgroundBLocked ? t("setup.done.switchBLocked") : t("setup.done.switchBDesc") }}
-        </p>
-      </template>
-    </div>
+      </section>
 
-    <div class="card" data-testid="done-next">
-      <p class="card-title">{{ t("setup.done.nextTitle") }}</p>
-      <p class="card-desc">{{ t("setup.done.nextBody") }}</p>
+      <section class="setup-tip" data-testid="done-next">
+        <p class="setup-tip-title">{{ t("setup.done.nextTitle") }}</p>
+        <p class="setup-tip-body">{{ t("setup.done.nextBody") }}</p>
+      </section>
     </div>
   </div>
 
@@ -191,7 +223,7 @@ onMounted(async () => {
     </p>
     <span class="spacer"></span>
     <button
-      class="btn btn-primary"
+      class="btn btn-primary btn-lg"
       type="button"
       data-testid="finish"
       :disabled="finishing"

@@ -1,20 +1,28 @@
 <script setup lang="ts">
 // Wizard page 1: connect the Agents and pick the collaboration style (docs/specs/onboarding.md D5-D9).
+// A first run opens with a welcome header; a rerun gets the compact one that says what is kept.
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import appIcon from "../../../src-tauri/icons/128x128@2x.png";
 import type { CollaborationStyle } from "../../lib/types";
-import AgentRow from "./AgentRow.vue";
+import AgentTile from "./AgentTile.vue";
+import BrandBadge from "./BrandBadge.vue";
 import EnvCards from "./EnvCards.vue";
+import SetupHeader from "./SetupHeader.vue";
+import { isBlocked } from "./agentRows";
 import { useSetupContext } from "./useSetup";
 
 const { t } = useI18n();
 const {
   status,
   readOnly,
+  rows,
   rowsLoaded,
   rowsError,
+  picks,
   mainRows,
   otherRows,
+  pendingRows,
   isRerun,
   style,
   styleBaseline,
@@ -29,11 +37,24 @@ const {
 } = useSetupContext();
 
 const othersOpen = ref(false);
+const filesOpen = ref(false);
 
 /** "Custom" is only an option while it is what is set: it is edited in Settings, never here. */
 const styleOptions = computed<CollaborationStyle[]>(() =>
   styleBaseline.value === "custom" ? ["aligned", "autonomous", "custom"] : ["aligned", "autonomous"],
 );
+
+function styleLabel(option: CollaborationStyle): string {
+  if (option === "aligned") return t("settings.integration.collabAligned");
+  if (option === "autonomous") return t("settings.integration.collabAutonomous");
+  return t("setup.agents.styleCustom");
+}
+
+function styleDesc(option: CollaborationStyle): string {
+  if (option === "aligned") return t("settings.integration.collabAlignedDesc");
+  if (option === "autonomous") return t("settings.integration.collabAutonomousDesc");
+  return t("settings.integration.collabCustomDesc");
+}
 
 const primaryLabel = computed(() => {
   switch (agentsPrimaryKind.value) {
@@ -46,6 +67,30 @@ const primaryLabel = computed(() => {
   }
 });
 
+/** Agents ticked for this round; a row that cannot be changed never counts. */
+const selectedCount = computed(
+  () => rows.value.filter((row) => !isBlocked(row) && picks[row.id]?.checked === true).length,
+);
+
+/** The files applying would write, grouped by Agent; empty while nothing is pending. */
+const plannedGroups = computed(() =>
+  pendingRows.value
+    .map((row) => ({ row, files: row.planned[picks[row.id].mode] }))
+    .filter((group) => group.files.length > 0),
+);
+const plannedCount = computed(() =>
+  plannedGroups.value.reduce((total, group) => total + group.files.length, 0),
+);
+
+/** Per-Agent hints that do not belong on a tile: they are long and only matter once ticked. */
+const cursorRow = computed(() => {
+  const row = rows.value.find((candidate) => candidate.id === "cursor");
+  return row && !isBlocked(row) && picks.cursor?.checked === true ? row : undefined;
+});
+const codexRow = computed(() =>
+  rows.value.find((row) => row.id === "codex" && row.delivery === "untrusted"),
+);
+
 async function onPrimary() {
   if (agentsPrimaryKind.value === "apply") await applyAgents();
   else goto("remote");
@@ -54,90 +99,147 @@ async function onPrimary() {
 
 <template>
   <div class="settings-body setup-body">
-    <h1 class="setup-title">{{ t("setup.agents.title") }}</h1>
-    <p class="setup-lead" data-testid="agents-lead">
-      {{ isRerun ? t("setup.agents.leadRerun") : t("setup.agents.lead") }}
-    </p>
+    <div class="setup-page">
+      <SetupHeader
+        :variant="isRerun ? 'page' : 'hero'"
+        :title="isRerun ? t('setup.agents.title') : t('setup.agents.welcomeTitle')"
+        :lead="isRerun ? t('setup.agents.leadRerun') : t('setup.agents.lead')"
+        lead-testid="agents-lead"
+      >
+        <template v-if="!isRerun" #icon>
+          <img class="setup-app-icon" :src="appIcon" alt="" width="84" height="84" />
+        </template>
+      </SetupHeader>
 
-    <EnvCards />
+      <EnvCards />
 
-    <p v-if="readOnly" class="setup-note" data-testid="agents-readonly">
-      {{ t("setup.agents.readOnly") }}
-    </p>
-
-    <div v-if="!rowsLoaded" class="settings-section-loading" data-testid="agents-loading">
-      <span class="permission-state-spinner"></span>
-      <p>{{ t("setup.agents.scanning") }}</p>
-    </div>
-    <div v-else-if="rowsError" class="card" data-testid="agents-scan-error">
-      <p class="error-text">{{ rowsError }}</p>
-      <button class="btn" type="button" @click="scanAgents()">
-        {{ t("settings.integration.retryStatus") }}
-      </button>
-    </div>
-    <template v-else>
-      <div v-if="mainRows.length > 0" class="card setup-agents" data-testid="agents-main">
-        <AgentRow v-for="row in mainRows" :key="row.id" :row="row" />
-      </div>
-      <p v-else class="setup-note" data-testid="agents-none">
-        {{ t("setup.agents.noneDetected") }}
+      <p v-if="readOnly" class="setup-note" data-testid="agents-readonly">
+        {{ t("setup.agents.readOnly") }}
       </p>
 
-      <template v-if="otherRows.length > 0">
-        <button
-          class="link setup-others-toggle"
-          type="button"
-          data-testid="agents-others-toggle"
-          @click="othersOpen = !othersOpen"
-        >
-          {{ othersOpen ? "▾" : "▸" }} {{ t("setup.agents.others", { n: otherRows.length }) }}
+      <div v-if="!rowsLoaded" class="settings-section-loading" data-testid="agents-loading">
+        <span class="permission-state-spinner"></span>
+        <p>{{ t("setup.agents.scanning") }}</p>
+      </div>
+      <div v-else-if="rowsError" class="card" data-testid="agents-scan-error">
+        <p class="error-text">{{ rowsError }}</p>
+        <button class="btn" type="button" @click="scanAgents()">
+          {{ t("settings.integration.retryStatus") }}
         </button>
-        <div v-if="othersOpen" class="card setup-agents" data-testid="agents-others">
-          <AgentRow v-for="row in otherRows" :key="row.id" :row="row" />
-        </div>
+      </div>
+      <template v-else>
+        <section v-if="mainRows.length > 0" class="setup-section">
+          <h2 class="setup-section-title">
+            {{ t("setup.agents.detectedTitle") }}
+            <span class="setup-count">{{ mainRows.length }}</span>
+          </h2>
+          <div class="agent-grid" data-testid="agents-main">
+            <AgentTile v-for="row in mainRows" :key="row.id" :row="row" />
+          </div>
+        </section>
+        <p v-else class="setup-note" data-testid="agents-none">
+          {{ t("setup.agents.noneDetected") }}
+        </p>
+
+        <template v-if="otherRows.length > 0">
+          <button
+            class="setup-disclosure"
+            type="button"
+            data-testid="agents-others-toggle"
+            :aria-expanded="othersOpen"
+            @click="othersOpen = !othersOpen"
+          >
+            <span class="disclosure-caret" :class="{ open: othersOpen }">▸</span>
+            {{ t("setup.agents.others", { n: otherRows.length }) }}
+          </button>
+          <div v-if="othersOpen" class="agent-grid" data-testid="agents-others">
+            <AgentTile v-for="row in otherRows" :key="row.id" :row="row" />
+          </div>
+        </template>
+
+        <ul v-if="cursorRow || codexRow" class="setup-notes" data-testid="agents-notes">
+          <li v-if="cursorRow" data-testid="agent-note-cursor">
+            <b>{{ cursorRow.title }}</b> {{ t("settings.integration.cursorRulesHint") }}
+          </li>
+          <li v-if="codexRow" data-testid="agent-trust-codex">
+            <b>{{ codexRow.title }}</b> {{ t("setup.agents.codexTrustHint") }}
+          </li>
+        </ul>
+
+        <section v-if="plannedCount > 0" class="setup-files-card" data-testid="agents-files">
+          <button
+            class="setup-disclosure"
+            type="button"
+            data-testid="agents-files-toggle"
+            :aria-expanded="filesOpen"
+            @click="filesOpen = !filesOpen"
+          >
+            <span class="disclosure-caret" :class="{ open: filesOpen }">▸</span>
+            {{ t("setup.agents.files", { n: plannedCount }) }}
+          </button>
+          <div v-if="filesOpen" class="setup-files-groups">
+            <div
+              v-for="group in plannedGroups"
+              :key="group.row.id"
+              class="setup-files-group"
+              :data-testid="`agent-files-${group.row.id}`"
+            >
+              <p class="setup-files-agent">
+                <BrandBadge :id="group.row.id" :label="group.row.title" size="sm" />
+                {{ group.row.title }}
+              </p>
+              <ul class="setup-files">
+                <li v-for="file in group.files" :key="file.path">
+                  <span class="setup-file-kind">{{
+                    file.exists ? t("setup.agents.fileModify") : t("setup.agents.fileCreate")
+                  }}</span>
+                  <code class="agent-path">{{ file.path }}</code>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="setup-section" data-testid="agents-style">
+          <h2 class="setup-section-title">{{ t("setup.agents.styleTitle") }}</h2>
+          <p class="setup-section-lead">{{ t("setup.agents.styleLead") }}</p>
+          <div class="style-grid">
+            <label
+              v-for="option in styleOptions"
+              :key="option"
+              class="style-card"
+              :class="{ on: style === option }"
+            >
+              <input
+                v-model="style"
+                class="tile-input"
+                type="radio"
+                name="collaboration-style"
+                :value="option"
+                :disabled="readOnly || applying"
+                :data-testid="`style-${option}`"
+              />
+              <span class="style-card-head">
+                <b>{{ styleLabel(option) }}</b>
+                <span class="style-radio" aria-hidden="true"></span>
+              </span>
+              <span class="style-card-desc">{{ styleDesc(option) }}</span>
+            </label>
+          </div>
+        </section>
       </template>
 
-      <div class="card setup-style" data-testid="agents-style">
-        <p class="card-title">{{ t("setup.agents.styleTitle") }}</p>
-        <label v-for="option in styleOptions" :key="option" class="setup-radio">
-          <input
-            v-model="style"
-            type="radio"
-            name="collaboration-style"
-            :value="option"
-            :disabled="readOnly || applying"
-            :data-testid="`style-${option}`"
-          />
-          <span>
-            <b>{{
-              option === "aligned"
-                ? t("settings.integration.collabAligned")
-                : option === "autonomous"
-                  ? t("settings.integration.collabAutonomous")
-                  : t("setup.agents.styleCustom")
-            }}</b>
-            <span class="setup-radio-desc">{{
-              option === "aligned"
-                ? t("settings.integration.collabAlignedDesc")
-                : option === "autonomous"
-                  ? t("settings.integration.collabAutonomousDesc")
-                  : t("settings.integration.collabCustomDesc")
-            }}</span>
-          </span>
-        </label>
-      </div>
-    </template>
-
-    <p v-if="applyError" class="error-text" data-testid="agents-apply-error">{{ applyError }}</p>
-    <p v-if="appliedOnce" class="setup-note" data-testid="agents-restart">
-      {{ t("setup.agents.restartNote") }}
-    </p>
+      <p v-if="applyError" class="error-text" data-testid="agents-apply-error">{{ applyError }}</p>
+      <p v-if="appliedOnce" class="setup-note" data-testid="agents-restart">
+        {{ t("setup.agents.restartNote") }}
+      </p>
+    </div>
   </div>
 
   <footer class="setup-footer">
     <button
       v-if="status && !status.agentsDecided"
-      class="btn"
+      class="btn setup-skip"
       type="button"
       data-testid="agents-skip"
       :disabled="applying"
@@ -146,8 +248,11 @@ async function onPrimary() {
       {{ t("setup.agents.skip") }}
     </button>
     <span class="spacer"></span>
+    <span v-if="rowsLoaded && !rowsError" class="setup-footer-hint" data-testid="agents-selected">
+      {{ t("setup.agents.selected", { n: selectedCount }) }}
+    </span>
     <button
-      class="btn btn-primary"
+      class="btn btn-primary btn-lg"
       type="button"
       data-testid="agents-primary"
       :disabled="applying || !rowsLoaded"

@@ -5,6 +5,7 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { openSettings } from "../../lib/ipc";
+import BrandBadge from "./BrandBadge.vue";
 import { channelSection, type ChannelDef } from "./channelDefs";
 import ProbeRow from "./ProbeRow.vue";
 import { idleProbe } from "./useProbe";
@@ -48,18 +49,25 @@ function secretSaved(field: ChannelDef["fields"][number]): boolean {
 
 <template>
   <div class="settings-body setup-body" :data-testid="`channel-form-${def.id}`">
-    <button
-      class="link setup-back"
-      type="button"
-      data-testid="channel-back"
-      @click="closeChannel"
-    >
-      ‹ {{ t("setup.remote.back") }}
-    </button>
+    <div class="setup-page">
+      <button
+        class="link setup-back"
+        type="button"
+        data-testid="channel-back"
+        @click="closeChannel"
+      >
+        ‹ {{ t("setup.remote.back") }}
+      </button>
 
-    <div class="card">
-      <div class="row">
-        <p class="card-title">{{ t(def.titleKey) }}</p>
+      <div class="channel-form-head">
+        <BrandBadge :id="def.id" :label="t(def.titleKey)" />
+        <h1 class="channel-form-title">
+          {{ t(def.titleKey) }}
+          <span v-if="def.recommended" class="setup-recommended">{{
+            t("settings.channels.recommendedBadge")
+          }}</span>
+        </h1>
+        <span class="spacer"></span>
         <a
           class="link guide-link"
           href="#"
@@ -70,113 +78,120 @@ function secretSaved(field: ChannelDef["fields"][number]): boolean {
         </a>
       </div>
 
-      <ol class="setup-points" data-testid="channel-points">
-        <li v-for="n in def.points" :key="n">
-          {{ t(`setup.channels.${def.id}.points.p${n}`) }}
-        </li>
-      </ol>
-      <hr class="divider" />
+      <section class="setup-panel">
+        <h2 class="setup-section-title">{{ t("setup.remote.prepare") }}</h2>
+        <ol class="setup-points" data-testid="channel-points">
+          <li v-for="n in def.points" :key="n">
+            <span class="point-no" aria-hidden="true">{{ n }}</span>
+            <span class="point-text">{{ t(`setup.channels.${def.id}.points.p${n}`) }}</span>
+          </li>
+        </ol>
+      </section>
 
-      <div v-for="field in def.fields" :key="field.key" class="field">
-        <label>{{ t(field.labelKey) }}</label>
-        <div class="row">
-          <input
-            v-model="section[field.key]"
-            class="input"
-            style="flex: 1"
-            :type="field.secret ? 'password' : 'text'"
-            :placeholder="secretSaved(field) ? SECRET_PLACEHOLDER : ''"
-            :data-testid="`field-${def.id}-${field.key}`"
-          />
+      <section class="setup-panel">
+        <h2 class="setup-section-title">{{ t("setup.remote.fill") }}</h2>
+
+        <div v-for="field in def.fields" :key="field.key" class="field">
+          <label>{{ t(field.labelKey) }}</label>
+          <div class="row">
+            <input
+              v-model="section[field.key]"
+              class="input"
+              style="flex: 1"
+              :type="field.secret ? 'password' : 'text'"
+              :placeholder="secretSaved(field) ? SECRET_PLACEHOLDER : ''"
+              :data-testid="`field-${def.id}-${field.key}`"
+            />
+            <button
+              v-if="secretSaved(field) && field.secret"
+              class="btn"
+              type="button"
+              :data-testid="`clear-${def.id}-${field.key}`"
+              @click="clearSecret(field.secret.clear)"
+            >
+              {{ t("settings.channels.clearSecret") }}
+            </button>
+            <template v-if="field.detected && ops.runDetect">
+              <button
+                class="btn"
+                type="button"
+                :disabled="ops.detecting?.value"
+                :data-testid="`detect-${def.id}`"
+                @click="ops.runDetect?.()"
+              >
+                {{
+                  ops.detecting?.value
+                    ? t("settings.channels.detecting")
+                    : t("settings.channels.autoDetect")
+                }}
+              </button>
+              <button
+                v-if="ops.detecting?.value"
+                class="btn"
+                type="button"
+                @click="cancelDetect"
+              >
+                {{ t("settings.channels.detectCancel") }}
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <i18n-t
+          v-if="def.detectHintKey && ops.detectCode?.value"
+          :keypath="def.detectHintKey"
+          tag="p"
+          class="result ok"
+          data-testid="detect-hint"
+        >
+          <template #code
+            ><b>{{ ops.detectCode?.value }}</b></template
+          >
+        </i18n-t>
+        <p
+          v-if="ops.message.value"
+          class="result"
+          :class="ops.error.value ? 'err' : 'ok'"
+          data-testid="channel-message"
+        >
+          {{ ops.message.value }}
+        </p>
+
+        <div class="row setup-form-actions">
           <button
-            v-if="secretSaved(field) && field.secret"
             class="btn"
             type="button"
-            :data-testid="`clear-${def.id}-${field.key}`"
-            @click="clearSecret(field.secret.clear)"
+            :disabled="ops.testing.value"
+            data-testid="channel-test"
+            @click="ops.runTest()"
           >
-            {{ t("settings.channels.clearSecret") }}
+            {{
+              ops.testing.value
+                ? t("settings.channels.testing")
+                : t("settings.channels.testConnection")
+            }}
           </button>
-          <template v-if="field.detected && ops.runDetect">
-            <button
-              class="btn"
-              type="button"
-              :disabled="ops.detecting?.value"
-              :data-testid="`detect-${def.id}`"
-              @click="ops.runDetect?.()"
-            >
-              {{
-                ops.detecting?.value
-                  ? t("settings.channels.detecting")
-                  : t("settings.channels.autoDetect")
-              }}
-            </button>
-            <button
-              v-if="ops.detecting?.value"
-              class="btn"
-              type="button"
-              @click="cancelDetect"
-            >
-              {{ t("settings.channels.detectCancel") }}
-            </button>
-          </template>
+          <span class="spacer"></span>
+          <button
+            class="btn btn-primary"
+            type="button"
+            :disabled="savingChannel"
+            data-testid="channel-save"
+            @click="saveChannel(def.id)"
+          >
+            {{ t("setup.remote.saveEnable") }}
+          </button>
         </div>
-      </div>
+        <p v-if="channelSaveError === 'missing'" class="error-text" data-testid="channel-missing">
+          {{ t("setup.remote.missing") }}
+        </p>
+        <p v-else-if="channelSaveError" class="error-text">{{ channelSaveError }}</p>
+        <p v-if="channelSavedId === def.id" class="result ok" data-testid="channel-saved">
+          {{ t("setup.remote.saved") }}
+        </p>
+      </section>
 
-      <i18n-t
-        v-if="def.detectHintKey && ops.detectCode?.value"
-        :keypath="def.detectHintKey"
-        tag="p"
-        class="result ok"
-        data-testid="detect-hint"
-      >
-        <template #code
-          ><b>{{ ops.detectCode?.value }}</b></template
-        >
-      </i18n-t>
-      <p
-        v-if="ops.message.value"
-        class="result"
-        :class="ops.error.value ? 'err' : 'ok'"
-        data-testid="channel-message"
-      >
-        {{ ops.message.value }}
-      </p>
-
-      <div class="row setup-form-actions">
-        <button
-          class="btn"
-          type="button"
-          :disabled="ops.testing.value"
-          data-testid="channel-test"
-          @click="ops.runTest()"
-        >
-          {{
-            ops.testing.value
-              ? t("settings.channels.testing")
-              : t("settings.channels.testConnection")
-          }}
-        </button>
-        <span class="spacer"></span>
-        <button
-          class="btn btn-primary"
-          type="button"
-          :disabled="savingChannel"
-          data-testid="channel-save"
-          @click="saveChannel(def.id)"
-        >
-          {{ t("setup.remote.saveEnable") }}
-        </button>
-      </div>
-      <p v-if="channelSaveError === 'missing'" class="error-text" data-testid="channel-missing">
-        {{ t("setup.remote.missing") }}
-      </p>
-      <p v-else-if="channelSaveError" class="error-text">{{ channelSaveError }}</p>
-      <p v-if="channelSavedId === def.id" class="result ok" data-testid="channel-saved">
-        {{ t("setup.remote.saved") }}
-      </p>
-      <template v-if="canProbeChannel(def.id)">
-        <hr class="divider" />
+      <section v-if="canProbeChannel(def.id)" class="setup-panel">
         <ProbeRow
           kind="channel"
           :state="probe"
@@ -185,7 +200,8 @@ function secretSaved(field: ChannelDef["fields"][number]): boolean {
           @start="probes.start('channel', def.id)"
           @cancel="probes.cancel('channel')"
         />
-      </template>
+      </section>
+
       <p class="setup-more">
         <a
           class="link"

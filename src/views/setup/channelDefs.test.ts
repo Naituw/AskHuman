@@ -33,6 +33,11 @@ describe("channelDef", () => {
     expect(channelDef("ios")).toBeUndefined();
   });
 
+  it("lists the channels in the order the settings page does, and recommends only Feishu", () => {
+    expect(CHANNEL_DEFS.map((d) => d.id)).toEqual(["feishu", "telegram", "dingding", "slack"]);
+    expect(CHANNEL_DEFS.filter((d) => d.recommended).map((d) => d.id)).toEqual(["feishu"]);
+  });
+
   it("points only at texts that exist in both languages", () => {
     for (const tree of [en as unknown as Messages, zh as unknown as Messages]) {
       for (const def of CHANNEL_DEFS) {

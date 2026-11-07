@@ -2,7 +2,7 @@
 // Setup wizard window shell (docs/specs/onboarding.md): a clickable step bar over three pages.
 // The window is a global singleton; a second entry point focuses it and moves it to the page it
 // asks for (`?page=` on a fresh window, `setup-goto-page` on an open one).
-import { onBeforeUnmount, onMounted } from "vue";
+import { computed, onBeforeUnmount, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { applyLanguage } from "../i18n";
@@ -11,14 +11,23 @@ import type { SetupProbeResult, ThemeMode, UiLanguage } from "../lib/types";
 import AgentsPage from "./setup/AgentsPage.vue";
 import DonePage from "./setup/DonePage.vue";
 import RemotePage from "./setup/RemotePage.vue";
-import { SETUP_PAGES, createSetup, parsePage } from "./setup/useSetup";
+import { SETUP_PAGES, createSetup, parsePage, type SetupPage } from "./setup/useSetup";
 import "./settings/settings.css";
 import "./setup/setup.css";
 
 const { t } = useI18n();
 
 const setup = createSetup(parsePage(new URLSearchParams(window.location.search).get("page")));
-const { config, page, goto, load, refreshStatus, scanAgents, probes } = setup;
+const { config, page, status, goto, load, refreshStatus, scanAgents, probes } = setup;
+
+const currentIndex = computed(() => SETUP_PAGES.indexOf(page.value));
+
+/** A step the user already settled (set up or skipped) gets a check instead of its number. */
+function stepDone(name: SetupPage): boolean {
+  if (name === "agents") return status.value?.agentsDecided === true;
+  if (name === "remote") return status.value?.remoteDecided === true;
+  return false;
+}
 
 const unlisteners: UnlistenFn[] = [];
 // A check still running when the window goes away is stopped (its own timeout is the fallback).
@@ -66,19 +75,42 @@ onMounted(async () => {
 
 <template>
   <div v-if="config" class="settings setup-win" data-testid="setup-window">
-    <nav class="tabbar" data-tauri-drag-region>
-      <button
-        v-for="(name, index) in SETUP_PAGES"
-        :key="name"
-        type="button"
-        :class="{ active: page === name }"
-        :data-testid="`step-${name}`"
-        @click="goto(name)"
-      >
-        <span class="setup-step-no">{{ index + 1 }}</span
-        >{{ t(`setup.steps.${name}`) }}
-      </button>
-    </nav>
+    <header class="setup-top" data-tauri-drag-region>
+      <ol class="setup-steps" data-tauri-drag-region>
+        <template v-for="(name, index) in SETUP_PAGES" :key="name">
+          <li
+            v-if="index > 0"
+            class="setup-step-line"
+            :class="{ filled: index <= currentIndex }"
+            aria-hidden="true"
+            data-tauri-drag-region
+          ></li>
+          <li class="setup-step-item">
+            <button
+              type="button"
+              class="setup-step"
+              :class="{ active: page === name, done: stepDone(name) }"
+              :aria-current="page === name ? 'step' : undefined"
+              :data-testid="`step-${name}`"
+              @click="goto(name)"
+            >
+              <span class="setup-step-dot">
+                <svg
+                  v-if="stepDone(name) && page !== name"
+                  class="setup-step-check"
+                  viewBox="0 0 12 12"
+                  aria-hidden="true"
+                >
+                  <path d="M2.6 6.5l2.2 2.2 4.6-5" />
+                </svg>
+                <template v-else>{{ index + 1 }}</template>
+              </span>
+              <span class="setup-step-name">{{ t(`setup.steps.${name}`) }}</span>
+            </button>
+          </li>
+        </template>
+      </ol>
+    </header>
     <AgentsPage v-if="page === 'agents'" />
     <RemotePage v-else-if="page === 'remote'" />
     <DonePage v-else />
