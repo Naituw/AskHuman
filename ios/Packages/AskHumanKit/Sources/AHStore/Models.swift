@@ -123,15 +123,41 @@ public struct DraftAttachment: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// A note the user wrote on a passage of the message (docs/specs/message-annotations.md), as the draft keeps it.
+/// `start` and `end` are offsets into the text of the message page, as the page last reported them: they let the
+/// page draw the highlight again when the message is shown once more. `quote` is the passage as seen. Only
+/// `{quote, note}` go over the wire.
+public struct DraftAnnotation: Codable, Equatable, Hashable, Sendable, Identifiable {
+    /// Unique among the notes of one request; the page and the sheets refer to a note by it.
+    public var id: Int
+    public var start: Int
+    public var end: Int
+    public var quote: String
+    public var note: String
+
+    public init(id: Int, start: Int, end: Int, quote: String, note: String) {
+        self.id = id
+        self.start = start
+        self.end = end
+        self.quote = quote
+        self.note = note
+    }
+}
+
 public struct Draft: Codable, Equatable, Sendable {
     public var answers: [DraftAnswer]
     /// Ids of the project todos picked with the answer. Drafts written before todos could be picked have none.
     public var todoIds: [String]
+    /// Notes written on passages of the message, in reading order. Drafts written before notes have none.
+    public var annotations: [DraftAnnotation]
     public var updatedAt: Date
 
-    public init(answers: [DraftAnswer], todoIds: [String] = [], updatedAt: Date = Date()) {
+    public init(
+        answers: [DraftAnswer], todoIds: [String] = [], annotations: [DraftAnnotation] = [], updatedAt: Date = Date()
+    ) {
         self.answers = answers
         self.todoIds = todoIds
+        self.annotations = annotations
         self.updatedAt = updatedAt
     }
 
@@ -139,10 +165,11 @@ public struct Draft: Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         answers = try c.decode([DraftAnswer].self, forKey: .answers)
         todoIds = try c.decodeIfPresent([String].self, forKey: .todoIds) ?? []
+        annotations = try c.decodeIfPresent([DraftAnnotation].self, forKey: .annotations) ?? []
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     }
 
-    public var isEmpty: Bool { answers.allSatisfy(\.isEmpty) && todoIds.isEmpty }
+    public var isEmpty: Bool { answers.allSatisfy(\.isEmpty) && todoIds.isEmpty && annotations.isEmpty }
 }
 
 /// A submission waiting for its acknowledgement. Persisted so that a restart does not lose it;
@@ -197,6 +224,8 @@ public struct HistoryEntry: Codable, Equatable, Sendable, Identifiable {
     public var by: String?
     /// What this phone sent (empty when it did not answer).
     public var answers: [AnswerItem]
+    /// The notes that went with the answer. History written before notes have none.
+    @DefaultEmpty public var annotations: [AnnotationItem]
     public var confirmChoice: String?
     public var confirmInput: String?
     public var receivedAt: Date
@@ -204,8 +233,8 @@ public struct HistoryEntry: Codable, Equatable, Sendable, Identifiable {
 
     public init(
         id: String, macId: String, macName: String, request: RequestView, outcome: HistoryOutcome, by: String? = nil,
-        answers: [AnswerItem] = [], confirmChoice: String? = nil, confirmInput: String? = nil, receivedAt: Date,
-        finishedAt: Date
+        answers: [AnswerItem] = [], annotations: [AnnotationItem] = [], confirmChoice: String? = nil,
+        confirmInput: String? = nil, receivedAt: Date, finishedAt: Date
     ) {
         self.id = id
         self.macId = macId
@@ -214,6 +243,7 @@ public struct HistoryEntry: Codable, Equatable, Sendable, Identifiable {
         self.outcome = outcome
         self.by = by
         self.answers = answers
+        self.annotations = annotations
         self.confirmChoice = confirmChoice
         self.confirmInput = confirmInput
         self.receivedAt = receivedAt

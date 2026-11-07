@@ -444,7 +444,7 @@ final class TestMac: @unchecked Sendable {
 
 func sampleAsk(
     id: String = Bytes.newId(), text: String = "Which database should we use?", options: [String] = ["PostgreSQL", "SQLite"],
-    sessionTitle: String? = nil, escalated: Bool = false
+    sessionTitle: String? = nil, escalated: Bool = false, annotatable: Bool = false
 ) -> RequestView {
     RequestView(
         id: id, kind: "ask", createdAt: 1_800_000_000_000, agent: AgentRef(kind: "codex", label: "Codex"),
@@ -453,7 +453,7 @@ func sampleAsk(
         ask: AskView(
             isMarkdown: true, message: MessageView(text: text, files: []),
             questions: [QuestionView(text: "Pick one", options: options.map { OptionView(text: $0, recommended: false) })],
-            selectOnly: false, single: true
+            selectOnly: false, single: true, annotatable: annotatable
         )
     )
 }

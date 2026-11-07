@@ -131,6 +131,38 @@ final class AppStoreTests: XCTestCase {
         XCTAssertNotEqual(answer?.images, answer?.files)
     }
 
+    func testNotesTravelWithTheAnswerAndAreKeptInTheHistory() async throws {
+        await make()
+        let select = try item("req-select")
+        // The sample requests come from a Mac that offers no notes: the form is made over a copy that does.
+        var ask = try XCTUnwrap(select.view?.ask)
+        ask.annotatable = true
+        let composer = AnswerComposer(key: select.id, ask: ask, drafts: store.drafts)
+        composer.toggle(question: 0, option: 0)
+        composer.addAnnotation(start: 40, end: 51, quote: "second bit", note: "b")
+        composer.addAnnotation(start: 4, end: 14, quote: "first bit", note: "a")
+        try await store.send(composer, item: select)
+
+        let notes = [AnnotationItem(quote: "first bit", note: "a"), AnnotationItem(quote: "second bit", note: "b")]
+        let submission = await backend.submissions.first
+        XCTAssertEqual(submission?.annotations, notes, "in reading order")
+        XCTAssertEqual(submission?.answers.first?.sel, [0])
+        await eventually("the history has the request") { self.store.history.first?.id == select.id }
+        XCTAssertEqual(store.history.first?.annotations, notes)
+    }
+
+    func testAnAnswerWithoutNotesSendsNone() async throws {
+        await make()
+        let select = try item("req-select")
+        let composer = try XCTUnwrap(store.composer(for: select))
+        composer.toggle(question: 0, option: 0)
+        try await store.send(composer, item: select)
+        let submission = await backend.submissions.first
+        XCTAssertEqual(submission?.annotations, [])
+        await eventually("the history has the request") { self.store.history.first?.id == select.id }
+        XCTAssertEqual(store.history.first?.annotations, [])
+    }
+
     func testCancellingSendsTheCancelAction() async throws {
         await make()
         let migration = try item("req-migration")

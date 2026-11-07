@@ -134,10 +134,14 @@ extension PhoneEngine {
         }
         // If our own submission decided it, keep what we sent (the ack may arrive after this).
         var answers: [AnswerItem] = []
+        var annotations: [AnnotationItem] = []
         var choice: String?
         var input: String?
         if outcome == .answered, let item = outbox.values.first(where: { $0.macId == macId && $0.subject == message.requestId }) {
-            if let submit = try? AHJSON.value(AnswerSubmit.self, from: item.body) { answers = submit.answers }
+            if let submit = try? AHJSON.value(AnswerSubmit.self, from: item.body) {
+                answers = submit.answers
+                annotations = submit.annotations
+            }
             if let decide = try? AHJSON.value(ConfirmDecide.self, from: item.body) {
                 input = decide.input
                 if let index = decide.wireIndex, let confirm = requests[key]?.cached.view?.confirm {
@@ -145,7 +149,10 @@ extension PhoneEngine {
                 }
             }
         }
-        finish(key, outcome: outcome, by: message.by, answers: answers, confirmChoice: choice, confirmInput: input)
+        finish(
+            key, outcome: outcome, by: message.by, answers: answers, annotations: annotations, confirmChoice: choice,
+            confirmInput: input
+        )
     }
 
     /// Tells the Mac the request is stored on the phone (so no push is needed).
@@ -187,8 +194,8 @@ extension PhoneEngine {
 
     /// Moves a request out of the inbox into the local history.
     func finish(
-        _ key: String, outcome: HistoryOutcome, by: String?, answers: [AnswerItem] = [], confirmChoice: String? = nil,
-        confirmInput: String? = nil
+        _ key: String, outcome: HistoryOutcome, by: String?, answers: [AnswerItem] = [], annotations: [AnnotationItem] = [],
+        confirmChoice: String? = nil, confirmInput: String? = nil
     ) {
         guard let runtime = requests.removeValue(forKey: key) else { return }
         let cached = runtime.cached
@@ -204,7 +211,8 @@ extension PhoneEngine {
         store.appendHistory(
             HistoryEntry(
                 id: key, macId: cached.macId, macName: name, request: view, outcome: outcome, by: by, answers: answers,
-                confirmChoice: confirmChoice, confirmInput: confirmInput, receivedAt: cached.receivedAt, finishedAt: clock.now()
+                annotations: annotations, confirmChoice: confirmChoice, confirmInput: confirmInput,
+                receivedAt: cached.receivedAt, finishedAt: clock.now()
             ),
             now: clock.now()
         )
@@ -241,7 +249,7 @@ extension PhoneEngine {
 
     public func submitAnswer(
         macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String],
-        directive: AnswerDirective?
+        directive: AnswerDirective?, annotations: [AnnotationItem]
     ) async throws -> String {
         let key = CachedRequest.key(macId, requestId)
         guard let runtime = requests[key], runtime.cached.view?.ask != nil else { throw BackendError.unknownRequest }
@@ -250,7 +258,7 @@ extension PhoneEngine {
         let clientMsgId = Bytes.newMsgId()
         let submit = AnswerSubmit(
             clientMsgId: clientMsgId, requestId: requestId, action: action, answers: answers, todoIds: todoIds,
-            directive: directive
+            directive: directive, annotations: annotations
         )
         let body = try AHJSON.tree(submit)
         return await enqueue(
@@ -348,7 +356,10 @@ extension PhoneEngine {
     func onAnswerAck(_ macId: String, _ ack: AnswerAck) async {
         guard let item = outbox[ack.clientMsgId], item.macId == macId else { return }
         let submit = try? AHJSON.value(AnswerSubmit.self, from: item.body)
-        resolveSubmission(item, status: ack.status, reason: ack.reason, answers: submit?.answers ?? [], cancelled: submit?.action == "cancel")
+        resolveSubmission(
+            item, status: ack.status, reason: ack.reason, answers: submit?.answers ?? [],
+            annotations: submit?.annotations ?? [], cancelled: submit?.action == "cancel"
+        )
     }
 
     func onConfirmAck(_ macId: String, _ ack: ConfirmAck) async {
@@ -366,14 +377,17 @@ extension PhoneEngine {
     }
 
     func resolveSubmission(
-        _ item: OutboxItem, status: String, reason: String?, answers: [AnswerItem], cancelled: Bool,
-        confirmChoice: String? = nil, confirmInput: String? = nil
+        _ item: OutboxItem, status: String, reason: String?, answers: [AnswerItem], annotations: [AnnotationItem] = [],
+        cancelled: Bool, confirmChoice: String? = nil, confirmInput: String? = nil
     ) {
         cancelTimer("ack." + item.clientMsgId)
         let key = CachedRequest.key(item.macId, item.subject ?? "")
         switch status {
         case "accepted":
-            finish(key, outcome: cancelled ? .cancelled : .answered, by: nil, answers: answers, confirmChoice: confirmChoice, confirmInput: confirmInput)
+            finish(
+                key, outcome: cancelled ? .cancelled : .answered, by: nil, answers: answers, annotations: annotations,
+                confirmChoice: confirmChoice, confirmInput: confirmInput
+            )
         case "lost":
             finish(key, outcome: .answeredElsewhere, by: nil)
         case "expired":

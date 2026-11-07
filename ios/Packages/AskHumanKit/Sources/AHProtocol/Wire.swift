@@ -31,6 +31,12 @@ public enum Wire {
     /// What the Mac says (`answer.ack` `reason`) when a todo picked with an answer is no longer in its queue.
     public static let todoGone = "todo gone"
 
+    /// Notes on the message (docs/specs/message-annotations.md); mirror `MAX_ANNOTATIONS`, `MAX_NOTE_CHARS` and
+    /// `MAX_QUOTE_CHARS` in `src-tauri/src/annotations.rs`. The Mac cleans what it gets to these limits anyway.
+    public static let maxAnnotations = 20
+    public static let maxNoteChars = 2000
+    public static let maxQuoteChars = 2000
+
     public static let publishRatePerSec = 6.0
     public static let publishBurst = 10.0
     public static let watchMinIntervalMs = 2_000

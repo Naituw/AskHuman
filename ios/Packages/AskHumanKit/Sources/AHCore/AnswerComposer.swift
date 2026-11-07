@@ -15,6 +15,14 @@ public final class AnswerComposer {
     /// Ids of the project todos picked to go with the answer (docs/specs/special-replies.md D28): the Mac puts
     /// their text into the answer and takes them off the queue. In the order the picker lists them.
     public private(set) var todoIds: [String]
+    /// Notes written on passages of the message (docs/specs/message-annotations.md), in reading order: the notes
+    /// whose passage the page can show by their position in the message, then the ones it could not find (N3).
+    /// They are not an answer: they count as content of the form (N8), but answer no question and change nothing
+    /// about what Send requires.
+    public private(set) var annotations: [DraftAnnotation]
+    /// Notes the message page could not find in the message as it is drawn now: the text changed since the note
+    /// was written. Not saved, the page finds out again each time it draws.
+    public private(set) var unlocatedAnnotations: Set<Int> = []
     /// What the user chose from the bar menu to go with the answer (away mode on, stop using AskHuman): armed
     /// until the answer is sent or the user takes it back. Not part of the draft: it is a decision of the moment,
     /// and a draft that comes back later should not turn it on by itself.
@@ -40,6 +48,9 @@ public final class AnswerComposer {
     @ObservationIgnored private let drafts: DraftStore
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private let debounce: Duration
+    /// Never goes back down while the form lives, so that a late report of the page about a note that is gone
+    /// cannot land on a new note that took its number.
+    @ObservationIgnored private var nextAnnotationId: Int
 
     public init(key: String, ask: AskView, drafts: DraftStore, debounce: Duration = .milliseconds(300)) {
         self.key = key
@@ -50,6 +61,10 @@ public final class AnswerComposer {
         let stored = draft?.answers ?? []
         // A select-only request takes no todos, and a What's next answer is a todo or an option, not both.
         todoIds = ask.selectOnly ? [] : Array((draft?.todoIds ?? []).prefix(ask.whatsNext ? 1 : Wire.maxPickedTodos))
+        // Notes belong to a request that offered them: the Mac would drop them from any other.
+        let restored = ask.annotatable ? Self.restoredAnnotations(draft?.annotations ?? []) : []
+        annotations = restored
+        nextAnnotationId = (restored.map(\.id).max() ?? 0) + 1
         answers = ask.questions.indices.map { index in
             guard index < stored.count else { return DraftAnswer() }
             var answer = stored[index]
@@ -139,7 +154,9 @@ public final class AnswerComposer {
         return answers.indices.first { answers[$0].selected.isEmpty }
     }
 
-    public var hasContent: Bool { !todoIds.isEmpty || answers.contains { !$0.isEmpty } }
+    /// Whether the form holds anything the user wrote or chose, notes included (they are kept in the draft, N8).
+    /// Notes alone do not make a question answered, though: see `isAnswered`.
+    public var hasContent: Bool { !todoIds.isEmpty || !annotations.isEmpty || answers.contains { !$0.isEmpty } }
 
     /// Attachments of the whole form; the Mac accepts a handful per request.
     public var attachmentCount: Int { answers.reduce(0) { $0 + $1.attachments.count } }
@@ -242,6 +259,157 @@ public final class AnswerComposer {
         drafts.filesDirectory(key: key).appendingPathComponent(attachment.localName)
     }
 
+    // MARK: notes on the message (docs/specs/message-annotations.md)
+
+    /// Whether the form is full of notes (`Wire.maxAnnotations`).
+    public var annotationLimitReached: Bool { annotations.count >= Wire.maxAnnotations }
+
+    /// Whether one more note may be written: the Mac offered notes for this request, and there is room.
+    /// Whether the phone can show the message for selecting is for the screen to know.
+    public var canAddAnnotation: Bool { ask.annotatable && !annotationLimitReached }
+
+    public func annotation(id: Int) -> DraftAnnotation? { annotations.first { $0.id == id } }
+
+    /// Whether the page found the note's passage when it last drew the message.
+    public func isLocated(_ id: Int) -> Bool { !unlocatedAnnotations.contains(id) }
+
+    /// Keeps a note about the passage `start..<end` (offsets into the text of the message page, as the page
+    /// reported them), reading order restored. `quote` is the passage as seen. Nothing is added, and `nil` comes
+    /// back, when notes are not offered, the form is full, or the passage or the note is empty.
+    @discardableResult
+    public func addAnnotation(start: Int, end: Int, quote: String, note: String) -> DraftAnnotation? {
+        let quote = Self.cleanQuote(quote)
+        let note = Self.cleanNote(note)
+        guard canAddAnnotation, start >= 0, end > start, !quote.isEmpty, !note.isEmpty else { return nil }
+        let added = DraftAnnotation(id: nextAnnotationId, start: start, end: end, quote: quote, note: note)
+        nextAnnotationId += 1
+        annotations.append(added)
+        sortAnnotations()
+        changed()
+        return added
+    }
+
+    /// Replaces what a note says. False when there is no such note or the new text is empty (the note then stays as it
+    /// was; taking a note away is `removeAnnotation`).
+    @discardableResult
+    public func setAnnotationNote(_ note: String, id: Int) -> Bool {
+        guard let index = annotations.firstIndex(where: { $0.id == id }) else { return false }
+        let note = Self.cleanNote(note)
+        guard !note.isEmpty else { return false }
+        if annotations[index].note != note {
+            annotations[index].note = note
+            changed()
+        }
+        return true
+    }
+
+    public func removeAnnotation(id: Int) {
+        guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+        annotations.remove(at: index)
+        if unlocatedAnnotations.contains(id) { unlocatedAnnotations.remove(id) }
+        changed()
+    }
+
+    /// What the message page found for one note when it drew the message.
+    public struct AnnotationPosition: Equatable, Sendable {
+        public var id: Int
+        public var start: Int
+        public var end: Int
+        /// False when neither the stored offsets nor a search for the quote found the passage.
+        public var located: Bool
+
+        public init(id: Int, start: Int, end: Int, located: Bool) {
+            self.id = id
+            self.start = start
+            self.end = end
+            self.located = located
+        }
+    }
+
+    /// Takes what the page reports after drawing the message: the offsets a note really sits at now (kept in the
+    /// draft, so that the next drawing starts from them) and which notes it could not find. Reading order is
+    /// restored, the notes without a place last (N3). Reports about notes that are gone are ignored; nothing is
+    /// written, or saved, when nothing changed, because the page reports after every drawing.
+    public func applyAnnotationPositions(_ reports: [AnnotationPosition]) {
+        var moved = false
+        var lost = unlocatedAnnotations
+        for report in reports {
+            guard let index = annotations.firstIndex(where: { $0.id == report.id }) else { continue }
+            guard report.located else {
+                lost.insert(report.id)
+                continue
+            }
+            lost.remove(report.id)
+            guard report.start >= 0, report.end > report.start,
+                  annotations[index].start != report.start || annotations[index].end != report.end else { continue }
+            annotations[index].start = report.start
+            annotations[index].end = report.end
+            moved = true
+        }
+        if lost != unlocatedAnnotations { unlocatedAnnotations = lost }
+        if sortAnnotations() || moved { changed() }
+    }
+
+    /// The notes as the wire carries them, in reading order.
+    public var annotationItems: [AnnotationItem] {
+        annotations.map { AnnotationItem(quote: $0.quote, note: $0.note) }
+    }
+
+    /// Notes with a place by position, then the ones without (stable: notes at one position keep their order).
+    /// True when the order changed.
+    @discardableResult
+    private func sortAnnotations() -> Bool {
+        let ordered = annotations.enumerated().sorted { left, right in
+            let leftLost = unlocatedAnnotations.contains(left.element.id)
+            let rightLost = unlocatedAnnotations.contains(right.element.id)
+            if leftLost != rightLost { return rightLost }
+            if !leftLost, left.element.start != right.element.start { return left.element.start < right.element.start }
+            return left.offset < right.offset
+        }.map(\.element)
+        guard ordered != annotations else { return false }
+        annotations = ordered
+        return true
+    }
+
+    /// A draft written for a request is taken back as it is, minus what cannot be right: no more than the limit,
+    /// no empty or repeated note, no negative offsets (the page finds a passage by its quote when the offsets
+    /// are off).
+    private static func restoredAnnotations(_ stored: [DraftAnnotation]) -> [DraftAnnotation] {
+        var seen: Set<Int> = []
+        var kept: [DraftAnnotation] = []
+        for var note in stored {
+            note.quote = cleanQuote(note.quote)
+            note.note = cleanNote(note.note)
+            guard !note.quote.isEmpty, !note.note.isEmpty, seen.insert(note.id).inserted else { continue }
+            note.start = max(0, note.start)
+            note.end = max(note.start + 1, note.end)
+            kept.append(note)
+            if kept.count == Wire.maxAnnotations { break }
+        }
+        return kept
+    }
+
+    /// What the user wrote, without the blanks around it, cut to the limit the Mac keeps.
+    private static func cleanNote(_ text: String) -> String {
+        String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Wire.maxNoteChars))
+    }
+
+    /// A passage on one line (runs of blanks and line breaks become one space), cut in the middle with `…` where it
+    /// is longer than the Mac keeps. The page already hands passages over like this; this keeps a wrong one from
+    /// reaching the wire.
+    private static func cleanQuote(_ text: String) -> String {
+        let folded = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let scalars = Array(folded.unicodeScalars)
+        guard scalars.count > Wire.maxQuoteChars else { return folded }
+        let head = (Wire.maxQuoteChars - 1) / 2
+        let tail = Wire.maxQuoteChars - 1 - head
+        var cut = String.UnicodeScalarView()
+        cut.append(contentsOf: scalars.prefix(head))
+        cut.append("…")
+        cut.append(contentsOf: scalars.suffix(tail))
+        return String(cut)
+    }
+
     // MARK: quick replies
 
     /// The quick replies the question carries, in the order the menu lists them (docs/specs/special-replies.md D27):
@@ -297,7 +465,7 @@ public final class AnswerComposer {
 
     private func changed() {
         saveTask?.cancel()
-        let snapshot = Draft(answers: answers, todoIds: todoIds)
+        let snapshot = Draft(answers: answers, todoIds: todoIds, annotations: annotations)
         let drafts = drafts
         let key = key
         let debounce = debounce
@@ -311,7 +479,7 @@ public final class AnswerComposer {
     /// Writes the draft right now (the form is leaving the screen).
     public func flush() {
         saveTask?.cancel()
-        drafts.save(Draft(answers: answers, todoIds: todoIds), key: key)
+        drafts.save(Draft(answers: answers, todoIds: todoIds, annotations: annotations), key: key)
     }
 
     private static func safeFileName(_ name: String) -> String {

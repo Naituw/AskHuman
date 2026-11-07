@@ -112,6 +112,26 @@ final class LocalStoreTests: XCTestCase {
         XCTAssertNil(store.draft(key: key), "an all-empty draft deletes the stored one")
     }
 
+    func testADraftOfOnlyNotesIsKeptWithTheirPositions() {
+        let key = "m/r1"
+        let notes = [
+            DraftAnnotation(id: 1, start: 4, end: 11, quote: "passage", note: "why?"),
+            DraftAnnotation(id: 3, start: 30, end: 42, quote: "another bit", note: "and this?"),
+        ]
+        store.saveDraft(Draft(answers: [DraftAnswer()], annotations: notes), key: key)
+        XCTAssertEqual(store.draft(key: key)?.annotations, notes, "notes are content of the form (N8)")
+        store.saveDraft(Draft(answers: [DraftAnswer()]), key: key)
+        XCTAssertNil(store.draft(key: key), "without them the draft is empty again")
+    }
+
+    func testADraftWrittenBeforeNotesStillOpens() throws {
+        let old = #"{"answers":[{"selected":[0],"text":"","attachments":[]}],"todoIds":["t1"],"updatedAt":0}"#
+        let draft = try JSONDecoder().decode(Draft.self, from: Data(old.utf8))
+        XCTAssertTrue(draft.annotations.isEmpty)
+        XCTAssertEqual(draft.todoIds, ["t1"])
+        XCTAssertFalse(draft.isEmpty)
+    }
+
     func testOutboxKeepsOrder() {
         let body = JSONValue.object(["a": .int(1)])
         store.saveOutbox(OutboxItem(clientMsgId: "b", macId: "m", kind: .answer, subject: "r", type: "answer.submit", body: body, createdAt: Date(timeIntervalSince1970: 20)))
@@ -142,6 +162,27 @@ final class LocalStoreTests: XCTestCase {
 
         store.appendHistory(entry("e0", age: 0), now: now)
         XCTAssertEqual(store.history().filter { $0.id == "e0" }.count, 1, "re-adding replaces")
+    }
+
+    func testHistoryKeepsTheNotesThatWentWithTheAnswer() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let notes = [AnnotationItem(quote: "passage", note: "why?"), AnnotationItem(quote: "other", note: "and this?")]
+        let entry = HistoryEntry(
+            id: "h", macId: "m", macName: "Mac", request: view("r"), outcome: .answered,
+            answers: [AnswerItem(q: 0, sel: [0])], annotations: notes, receivedAt: now, finishedAt: now
+        )
+        store.appendHistory(entry, now: now)
+        XCTAssertEqual(store.history(), [entry])
+        XCTAssertEqual(store.history().first?.annotations, notes)
+
+        // An entry written before notes existed has no such key, and still opens.
+        guard var stored = try JSONSerialization.jsonObject(with: JSONEncoder().encode(entry)) as? [String: Any] else {
+            return XCTFail("an object")
+        }
+        stored["annotations"] = nil
+        let old = try JSONDecoder().decode(HistoryEntry.self, from: JSONSerialization.data(withJSONObject: stored))
+        XCTAssertTrue(old.annotations.isEmpty)
+        XCTAssertEqual(old.answers, entry.answers)
     }
 
     func testForgetRemovesEverythingOfOneMac() {

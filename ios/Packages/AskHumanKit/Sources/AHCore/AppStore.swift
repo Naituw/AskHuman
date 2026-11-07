@@ -785,7 +785,9 @@ public final class AppStore {
             macId: item.macId, requestId: item.requestId, action: "send",
             answers: composer.items(uploads: uploads, fillingWith: quickReply),
             todoIds: macTakesPickedTodos(item.macId) ? composer.todoIds : [],
-            directive: offersDirectives(for: item) ? composer.directive?.wire : nil
+            directive: offersDirectives(for: item) ? composer.directive?.wire : nil,
+            // Notes are written only where the Mac offered them (`AskView.annotatable`), so they go as they are.
+            annotations: composer.annotationItems
         )
     }
 

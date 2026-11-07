@@ -19,10 +19,15 @@ public struct Caps: Codable, Equatable, Sendable {
     /// The Mac has away mode (`away.*`, a `directive` with an answer, `escalated` on requests). A Mac
     /// without it would drop the directive, so the phone shows no away control for it.
     public var away: Bool
+    /// The Mac takes notes written on passages of the message (`answer.submit` `annotations`, `annotatable` on
+    /// requests; docs/specs/message-annotations.md). A Mac without it would drop the notes, so the phone offers
+    /// none for it. Left out of the wire when false, like on the Mac side, so a Mac and a phone that both
+    /// predate it exchange exactly what they always did.
+    @OmitFalse public var annotations: Bool
 
     public init(
         newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false, answerTodos: Bool = false,
-        away: Bool = false
+        away: Bool = false, annotations: Bool = false
     ) {
         self.newTask = newTask
         self.interject = interject
@@ -30,6 +35,7 @@ public struct Caps: Codable, Equatable, Sendable {
         self.todos = todos
         self.answerTodos = answerTodos
         self.away = away
+        self.annotations = annotations
     }
 
     public init(from decoder: Decoder) throws {
@@ -40,6 +46,7 @@ public struct Caps: Codable, Equatable, Sendable {
         todos = try c.decodeIfPresent(Bool.self, forKey: .todos) ?? false
         answerTodos = try c.decodeIfPresent(Bool.self, forKey: .answerTodos) ?? false
         away = try c.decodeIfPresent(Bool.self, forKey: .away) ?? false
+        annotations = try c.decodeIfPresent(Bool.self, forKey: .annotations) ?? false
     }
 }
 
@@ -288,10 +295,14 @@ public struct AskView: Codable, Equatable, Hashable, Sendable {
     /// when the question was created (docs/specs/special-replies.md D27, N8). Empty where the menu has no replies
     /// (What's next, select-only questions) and from Macs that predate them.
     @OmitEmpty public var quickReplies: [String]
+    /// The phone may let the user select text in this question's message and write notes on it
+    /// (docs/specs/message-annotations.md). Only a Mac that takes notes sets it, so an older Mac never does;
+    /// an older phone ignores it.
+    @OmitFalse public var annotatable: Bool
 
     public init(
         isMarkdown: Bool, message: MessageView, questions: [QuestionView], selectOnly: Bool, single: Bool,
-        whatsNext: Bool = false, quickReplies: [String] = []
+        whatsNext: Bool = false, quickReplies: [String] = [], annotatable: Bool = false
     ) {
         self.isMarkdown = isMarkdown
         self.message = message
@@ -300,6 +311,7 @@ public struct AskView: Codable, Equatable, Hashable, Sendable {
         self.single = single
         self.whatsNext = whatsNext
         self.quickReplies = quickReplies
+        self.annotatable = annotatable
     }
 }
 
@@ -547,6 +559,18 @@ public struct AnswerItem: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+/// A note the user wrote on a passage of the message (docs/specs/message-annotations.md): the text they selected,
+/// as seen (rendered, folded to one line), and what they wrote about it.
+public struct AnnotationItem: Codable, Equatable, Hashable, Sendable {
+    public var quote: String
+    public var note: String
+
+    public init(quote: String, note: String) {
+        self.quote = quote
+        self.note = note
+    }
+}
+
 public struct AnswerSubmit: WireMessage {
     public static let type = "answer.submit"
     public var clientMsgId: String
@@ -561,10 +585,14 @@ public struct AnswerSubmit: WireMessage {
     /// applies it only when this answer wins the request. Older Macs would drop it: the phone offers it
     /// only for Macs with `Caps.away`.
     public var directive: AnswerDirective?
+    /// Notes written on passages of the message, in reading order (docs/specs/message-annotations.md). The Mac
+    /// cleans them when the answer wins. Older Macs would drop them: the phone offers notes only for Macs with
+    /// `Caps.annotations`. Absent when the user wrote none.
+    @OmitEmpty public var annotations: [AnnotationItem]
 
     public init(
         clientMsgId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String] = [],
-        directive: AnswerDirective? = nil
+        directive: AnswerDirective? = nil, annotations: [AnnotationItem] = []
     ) {
         self.clientMsgId = clientMsgId
         self.requestId = requestId
@@ -572,6 +600,7 @@ public struct AnswerSubmit: WireMessage {
         self.answers = answers
         self.todoIds = todoIds
         self.directive = directive
+        self.annotations = annotations
     }
 }
 

@@ -46,10 +46,11 @@ public protocol RemoteBackend: AnyObject, Sendable {
     func markSeen(macId: String, requestId: String) async
     /// Sends an answer and returns its client message id. Throws `.macOffline` when the Mac cannot
     /// be reached (nothing is queued for later). `todoIds` are the project todos picked with the answer;
-    /// `directive` is the one-shot instruction (away mode on, stop using AskHuman) the user attached.
+    /// `directive` is the one-shot instruction (away mode on, stop using AskHuman) the user attached;
+    /// `annotations` are the notes written on passages of the message, in reading order.
     func submitAnswer(
         macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String],
-        directive: AnswerDirective?
+        directive: AnswerDirective?, annotations: [AnnotationItem]
     ) async throws -> String
     func submitConfirm(macId: String, requestId: String, wireIndex: Int?, dismiss: Bool, input: String?) async throws -> String
     /// Sends a failed submission again under the same client message id.
@@ -126,17 +127,31 @@ public extension RemoteBackend {
 }
 
 extension RemoteBackend {
-    /// An answer that picks no todos and carries no directive.
+    /// An answer that picks no todos and carries no directive or notes.
     public func submitAnswer(macId: String, requestId: String, action: String, answers: [AnswerItem]) async throws -> String {
-        try await submitAnswer(macId: macId, requestId: requestId, action: action, answers: answers, todoIds: [], directive: nil)
+        try await submitAnswer(
+            macId: macId, requestId: requestId, action: action, answers: answers, todoIds: [], directive: nil, annotations: []
+        )
     }
 
-    /// An answer with todos and no directive.
+    /// An answer with todos and no directive or notes.
     public func submitAnswer(
         macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String]
     ) async throws -> String {
         try await submitAnswer(
-            macId: macId, requestId: requestId, action: action, answers: answers, todoIds: todoIds, directive: nil
+            macId: macId, requestId: requestId, action: action, answers: answers, todoIds: todoIds, directive: nil,
+            annotations: []
+        )
+    }
+
+    /// An answer with todos and a directive, and no notes.
+    public func submitAnswer(
+        macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String],
+        directive: AnswerDirective?
+    ) async throws -> String {
+        try await submitAnswer(
+            macId: macId, requestId: requestId, action: action, answers: answers, todoIds: todoIds, directive: directive,
+            annotations: []
         )
     }
 }

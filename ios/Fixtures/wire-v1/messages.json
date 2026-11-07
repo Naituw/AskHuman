@@ -6,6 +6,7 @@
     {"type": "pair.pending", "body": {"macId": "mfx2c3rhs6kq7tw4dnb5vypa2e"}},
     {"type": "pair.reject", "body": {"reason": "rejected"}},
     {"type": "pair.accept", "body": {"macId": "mfx2c3rhs6kq7tw4dnb5vypa2e", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true, "away": true}}},
+    {"type": "pair.accept", "name": "annotations", "body": {"macId": "mfx2c3rhs6kq7tw4dnb5vypa2e", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true, "away": true, "annotations": true}}},
     {"type": "pair.done", "name": "min", "body": {"name": "Wutian iPhone"}},
     {"type": "pair.done", "name": "full", "body": {"name": "Wutian iPhone", "handle": "v1.AAAA", "env": "sandbox", "expiresAt": 1808000000}},
 
@@ -70,6 +71,18 @@
         "quickReplies": ["Continue", "\u6309\u4f60\u7684\u5224\u65ad\u6765\uff0c\u4e0d\u7528\u7b49\u6211"]
       }
     }}},
+    {"type": "request.new", "name": "annotatable", "body": {"rev": 15, "full": true, "request": {
+      "id": "req5", "kind": "ask", "createdAt": 1792900004000,
+      "agent": {"kind": "claude", "label": "Claude Code"}, "project": {"key": "p1", "name": "HumanInLoop"},
+      "source": "mcp", "contentHash": "sha256-an",
+      "ask": {
+        "isMarkdown": true,
+        "message": {"text": "## Plan\n\nMigrate **users** first, then `orders`.", "files": []},
+        "questions": [{"text": "Which table next?", "options": [{"text": "orders", "recommended": true}]}],
+        "selectOnly": false, "single": false,
+        "annotatable": true
+      }
+    }}},
     {"type": "request.new", "name": "confirm", "body": {"rev": 9, "full": false, "request": {
       "id": "req2", "kind": "confirm", "createdAt": 1792900001000,
       "agent": {"kind": "codex", "label": "Codex"}, "project": {"key": "p2", "name": "Other"},
@@ -111,6 +124,10 @@
       {"q": 1, "sel": [0], "text": "because", "images": [], "files": []}
     ], "todoIds": ["t1", "t2"]}},
     {"type": "answer.submit", "name": "directive", "body": {"clientMsgId": "c5", "requestId": "req1", "action": "send", "answers": [{"q": 0, "sel": [0], "images": [], "files": []}], "directive": {"kind": "away", "scope": "session", "note": "keep going"}}},
+    {"type": "answer.submit", "name": "annotations", "body": {"clientMsgId": "c6", "requestId": "req5", "action": "send", "answers": [{"q": 0, "sel": [0], "images": [], "files": []}], "annotations": [
+      {"quote": "Migrate users first", "note": "Why not orders first? \u4e3a\u4ec0\u4e48\u4e0d\u5148\u8fc1\u79fb orders\uff1f"},
+      {"quote": "then orders", "note": "Needs a rollback plan."}
+    ]}},
     {"type": "answer.ack", "name": "min", "body": {"clientMsgId": "c1", "requestId": "req1", "status": "accepted"}},
     {"type": "answer.ack", "name": "full", "body": {"clientMsgId": "c1", "requestId": "req1", "status": "invalid", "reason": "question 1 needs an answer"}},
     {"type": "confirm.decide", "name": "choice", "body": {"clientMsgId": "c3", "requestId": "req2", "wireIndex": 1, "input": "not needed"}},

@@ -61,6 +61,8 @@ public actor MockBackend: RemoteBackend {
         public var todoIds: [String] = []
         /// The one-shot instruction that went with the answer.
         public var directive: AnswerDirective?
+        /// Notes written on passages of the message that went with the answer.
+        public var annotations: [AnnotationItem] = []
     }
 
     public nonisolated let states: AsyncStream<EngineState>
@@ -404,20 +406,23 @@ public actor MockBackend: RemoteBackend {
     }
 
     public func submitAnswer(
-        macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String], directive: AnswerDirective?
+        macId: String, requestId: String, action: String, answers: [AnswerItem], todoIds: [String], directive: AnswerDirective?,
+        annotations: [AnnotationItem]
     ) async throws -> String {
         let index = try inboxIndex(macId: macId, requestId: requestId, kind: "ask")
+        // As on the Mac, a cancellation drops the notes.
+        let notes = action == "cancel" ? [] : annotations
         submissions.append(Submission(
             macId: macId, requestId: requestId, action: action, answers: answers, wireIndex: nil, dismiss: false, input: nil,
-            todoIds: todoIds, directive: action == "cancel" ? nil : directive
+            todoIds: todoIds, directive: action == "cancel" ? nil : directive, annotations: notes
         ))
         if action != "cancel", let directive { applyDirective(directive, macId: macId, request: state.inbox[index]) }
         // The Mac looks the picked todos up before it takes the answer: when one is gone it refuses all of it.
         let refused = action == "send" && !todoIds.isEmpty
             && !takePickedTodos(macId: macId, projectKey: state.inbox[index].summary.project.key, ids: todoIds)
         return try await settle(
-            index: index, outcome: action == "cancel" ? .cancelled : .answered, answers: answers, choice: nil, input: nil,
-            refusal: refused ? Wire.todoGone : nil
+            index: index, outcome: action == "cancel" ? .cancelled : .answered, answers: answers, annotations: notes,
+            choice: nil, input: nil, refusal: refused ? Wire.todoGone : nil
         )
     }
 
@@ -438,7 +443,8 @@ public actor MockBackend: RemoteBackend {
     }
 
     private func settle(
-        index: Int, outcome: HistoryOutcome, answers: [AnswerItem], choice: String?, input: String?, refusal: String? = nil
+        index: Int, outcome: HistoryOutcome, answers: [AnswerItem], annotations: [AnnotationItem] = [], choice: String?,
+        input: String?, refusal: String? = nil
     ) async throws -> String {
         let item = state.inbox[index]
         counter += 1
@@ -461,21 +467,23 @@ public actor MockBackend: RemoteBackend {
         let delay = latency * 0.7
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            await self?.finish(item.id, outcome: outcome, answers: answers, choice: choice, input: input)
+            await self?.finish(item.id, outcome: outcome, answers: answers, annotations: annotations, choice: choice, input: input)
         }
         return clientMsgId
     }
 
     /// `by` names the other phone that finished the request; it is `nil` when our own submission did.
     private func finish(
-        _ id: String, outcome: HistoryOutcome, answers: [AnswerItem], choice: String?, input: String?, by: String? = nil
+        _ id: String, outcome: HistoryOutcome, answers: [AnswerItem], annotations: [AnnotationItem] = [], choice: String?,
+        input: String?, by: String? = nil
     ) {
         guard let index = state.inbox.firstIndex(where: { $0.id == id }), let view = state.inbox[index].view else { return }
         let item = state.inbox.remove(at: index)
         entries.insert(
             HistoryEntry(
                 id: item.id, macId: item.macId, macName: item.macName, request: view, outcome: outcome, answers: answers,
-                confirmChoice: choice, confirmInput: input, receivedAt: item.receivedAt, finishedAt: now()
+                annotations: annotations, confirmChoice: choice, confirmInput: input, receivedAt: item.receivedAt,
+                finishedAt: now()
             ),
             at: 0
         )
