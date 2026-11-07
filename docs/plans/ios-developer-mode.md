@@ -181,7 +181,7 @@
 - **测试**：Swift 包 `DiagnosticsTests`（9 条：容量与「更早的没了」、单行与长度、进程启动后秒数、多线程写入、共享日志、分节顺序与复制时才读取、同标题再注册替换、抬头与已运行时间、时长格式）；`DeveloperToolsTests` 新增 6 条（菜单顺序、复制 → 剪贴板 / 提示条 / 日志、无 sink 时什么也不做、`AppStore` 记标签页切换、摘要不含名字、提示条的停留时间）；`AskHumanDeveloperUITests` 新增 `testTheMenuCopiesTheDiagnosticsAndTheNoteSaysSoWithoutOpeningAPage`（菜单两行按顺序、点后者出「Diagnostics copied」/「已复制诊断信息」、不开任何页面、提示条自己消失）。
 - **验证结果**（2026-11-07）：Swift 包 `DiagnosticsTests` 9 条加 `DeveloperToolsTests` 15 条共 24 条全过；App 目标编译没有新增警告。Duo 副屏模拟器（iOS 27.1，专用模拟器，用完已删）上实际复制出一份约 19 KB 的报告：各节齐全，没有用户写的文字，好的状态下「Floating bars」写「按钮 1 个显示」。`AskHumanDeveloperUITests` 在 iPhone 18 Pro Max（iOS 27.0）上用最终的包跑过简体中文整班：19 条里 18 条通过，没过的是 PROGRESS 里早就记着的 `testTheButtonIsAboveASheetAndItsKeyboardAndRidesAboveTheKeyboard`（同一个断言，按钮拖不动；PROGRESS 已记它在 `6b59ebaa` 的干净 worktree 上同样失败，与这次改动无关）。英文整班只在监控优化之前的版本上跑过（除拖按钮那条外全过）；最终包的英文只补跑了两条，当时机器负载在 400 以上，第一条等了 192 秒后超时，没有结果，不作数。
 - **拖按钮的用例在满载时不稳**：`testDraggingMovesTheButtonAndItSnapsToTheNearestEdge` 在机器换页最重的时候 5 次里 4 次没过（按钮没动，或停在落点上方 25–41 点处），症状同上一条已记的那个；把每秒一次的监控关掉（临时开关，已移除）再跑仍不过，所以不是监控造成的；负载低的那一轮（最终包、整班）它 20 秒通过。**这条没有在改动之前的树上单独对照跑过**，只是症状与已记的那条一致、关掉监控不改变结果；真机上拖按钮若有问题，与 PROGRESS 里那一项一起查。
-- **没做**：iPad 与 iOS 18.5 / iPad mini 的冒烟（机器换页太重，停掉了）。报告里的 UIKit 部分只按类名字符串匹配，不依赖某个系统版本才有的 API；在没有悬浮栏的系统上「Floating bars」写没有。
+- **iPad 与旧系统只做了冒烟**：iPad mini（A17 Pro，iOS 18.5）上新增的那条 UI 测试通过两次（经典标签栏加 iPad 窗口：复制得出报告、不崩、出提示条）。报告的内容没看到：模拟器的剪贴板会跟 Mac 的同步，等我去读时已被 Mac 上新复制的东西盖掉；要看就在复制后立刻 `xcrun simctl pbpaste`。没跑：iPhone 16e（iOS 18.5）、iPad 的 iOS 27.0。报告里的 UIKit 部分只按类名字符串匹配，不依赖某个系统版本才有的 API；在没有悬浮栏的系统上「Floating bars」写 `none`。
 
 ## P6：真机一轮（需要用户在场，先问再做）
 

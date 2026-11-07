@@ -829,3 +829,34 @@ Release 归档及 external 预检通过；首次上传最终确认 401 后先查
 出包后补查（产品代码没有改，包里的就是 `38d0ff09`）：那条测试的毛病在测试自己。最大标准字号下底栏菜单比系统显示出来的部分长，两个说明项（「离开模式」「不再使用 AskHuman」）在折叠线以上，不在可访问性树里；测试原先用 `swipeUp()` / `swipeDown()` 滑整个 App，起点在屏幕中部、落在低处的菜单之外，滚不到菜单里；失败时留下的截图里菜单是开着的，只是那两项在屏幕外。改成在打开的菜单里拖动（`scrollTheMenu`）后，Pro Max 上单独连跑 5 次全过，测试文件已单独提交（`e092df79`，`test(ios)`）。随后用 Xcode 27.2 重新编译并复查：`AskHumanBarUITests` 在 Pro Max、SE（英文）、SE（简体中文）、16e（iOS 18.5 经典栏）上都是 5 / 5，到达动效类在 Pro Max 上 7 条通过、1 条（宽屏飞进蓝点，只在 iPad 上跑）按设计跳过；编译没有新的警告。
 
 **没做**：任何真机；iOS 17；折叠屏内屏；用最终包复查 Release 配置下的生产推送。
+
+## 2026-11-07：TestFlight 内部构建 12
+
+用户在 build 11 上两次遇到 iPhone Duo 副屏右侧栏的返回键等按钮不见（`docs/PROGRESS.md`「待取证：iPhone Duo 副屏右侧栏……」），同意加开发者菜单的「复制诊断信息」（需求 D22），并要求用新包带上它。只发内部组；从干净的临时 worktree（`/tmp/ah-ship`，分离在 `7ce2bafb`）打包，因为主工作区里有别的工作线的未提交文件（Mac 端引导页、`CaretTextView` 与 `AskHumanFocusUITests` 等）。
+
+版本 **0.1.0 (12)**，基线 `ios-testflight-11` → `38d0ff0`，源码 `7ce2bafb4d87a636c8a64c9bae032a0f27cfb6c9`。自基线以来 `ios/` 下 4 个提交：
+- `e092df79 test(ios)` 底栏高度的测试（没有产品改动）；
+- `12b70fdf fix(ios)` 宽屏浮层分栏里再点一次收件箱标签，重新打开列表（另一条工作线的修复，只在 Duo 内屏竖屏模拟器上验证过，真机待确认）；
+- `eaeb604a feat(ios)` 开发者菜单加「复制诊断信息」（含单元测试）；
+- `25d39439 test(ios)` 它的 UI 测试。
+
+出包前机器健康检查退出码 2（交换区满、负载 300–900，磁盘数据卷一度只剩 2.4 GB；已用 AskHuman 告知用户，用户同意删掉 `ios/build` 里四个 10 月底的旧 DerivedData；出包时机那一问他没有回答，按他之前定的「慢就慢」继续）。归档 `ARCHIVE SUCCEEDED`（约 7 分半，`-jobs 4`，Xcode 27.2）；预检通过（`0.1.0`、构建 `12`、仅内部）；上传 `EXPORT SUCCEEDED`、`Upload succeeded`（16:28:09；IPA 约 6 MB，网络中途断过一次、自动重试，共约 19 分钟）；约 4 分钟后 `status.mjs` 读到 `VALID`：Apple build `acd74fe2-813c-428f-a59f-7c4e2fd50004`，已在内部测试组 `AskHuman Internal`。
+
+中英文测试内容已写入并读回一致（中文 424、英文 1337 个字符；英文与中文一一对应，这里不重复）：
+
+```text
+构建 12 · 源码 7ce2baf
+• 开发者模式的浮动按钮菜单多了「复制诊断信息」：点它，会把设备与系统版本、窗口和导航栏的状态，以及最近发生过什么，整理成一段文字放进剪贴板，出问题时可以贴给开发者。文字里只有类名、状态和个数，没有请求、项目、Mac 的名字，也没有你写的内容。
+• Duo 内屏竖屏、收件箱列表收起时，再点一次底部的收件箱标签，列表会重新弹出，已打开的请求和回答草稿保留。
+
+请重点看
+• 如果在 iPhone Duo 副屏上又遇到右侧栏的返回键等按钮不见了：先别动，也别滑动返回，点浮动按钮选「复制诊断信息」，把内容发给开发者；恢复之后再复制一次做对比（需要先在 Macs 页的「开发者」一栏打开「开发者模式」）。
+• 平时用着有没有变卡：新版在 App 打开期间每秒读一次界面状态，在模拟器上平均每次约 1 毫秒，真机上还没量过。
+• Duo 内屏竖屏打开一条请求后，再点一次收件箱标签：列表是否弹出，请求和草稿是否还在。
+```
+
+标签 `ios-testflight-12` → `7ce2baf`（本地附注标签，不推送）。
+
+出包前验证（都在模拟器上，没有真机）：Swift 包 `DiagnosticsTests` 9 条加 `DeveloperToolsTests` 15 条全过；`AskHumanDeveloperUITests` 在 iPhone 18 Pro Max（iOS 27.0）上用最终的包跑过简体中文整班，19 条里 18 条通过，没过的是 PROGRESS 里早就记着的 `testTheButtonIsAboveASheetAndItsKeyboardAndRidesAboveTheKeyboard`；iPad mini（A17 Pro，iOS 18.5）上新增的「复制诊断信息」UI 测试通过；Duo 副屏（iOS 27.1）上读过复制出来的报告。逐条数字与没跑的见 `docs/plans/ios-developer-mode.md`「实现记录（复制诊断信息）」。
+
+**没做**：任何真机；iPhone 16e（iOS 18.5）与 iPad 的 iOS 27.0 上的冒烟；最终包的英文整班（机器负载在 400 以上，只补跑的两条中第一条超时）；用最终包复查 Release 配置下的生产推送。
