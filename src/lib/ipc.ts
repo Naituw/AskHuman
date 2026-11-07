@@ -827,10 +827,16 @@ export interface CursorRetentionStatus {
   atRisk?: number | null;
   atRiskAt: number;
 }
-/** `phase`, `verified` and `checks` describe the background-completion guard; `retention` the other one. */
+/** `phase`, `verified` and `checks` describe the background-completion guard. */
 export interface CursorDesktopWindow {
   pid: number; id: number; phase: string; surface?: string; suppressed: number; verified: boolean; checks: number; error?: string;
   retention?: CursorRetentionStatus | null;
+  stall?: {
+    state: string;
+    error?: string | null;
+    timeoutMs?: number | null;
+    retryWindowMs?: number | null;
+  } | null;
 }
 export interface CursorDesktopStatus {
   supported: boolean;

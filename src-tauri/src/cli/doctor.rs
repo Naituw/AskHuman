@@ -355,6 +355,9 @@ fn render_text(
     if let Some(summary) = crate::cursor_desktop::retention_summary(&cursor.windows) {
         out.push_str(&format!("  running-chat-protection: {summary}\n"));
     }
+    if let Some(summary) = crate::cursor_desktop::stall_summary(&cursor.windows) {
+        out.push_str(&format!("  stall-protection: {summary}\n"));
+    }
     if let Some(error) = cursor.error {
         out.push_str(&format!("  {error}\n"));
     }

@@ -1663,7 +1663,7 @@ export default {
   },
   cursorDesktop: {
     title: "Cursor session protection (experimental)",
-    hint: "Applies to all local Cursor Desktop chats: (1) background completions no longer start a model turn on their own, so send a message to continue (Await is unaffected); (2) in the Agents window, a running chat keeps its messages in memory, lowering the risk that a long task that fails is archived by mistake. Requires AskHuman to remain running. Terminal CLI is not covered.",
+    hint: "Protects all local Cursor Desktop chats. Send a message to continue after a background completion. Await still works. In the Agents window, a running chat keeps its messages in memory to reduce the risk of mistaken archiving. In compatible windows, Cursor waits 5 minutes for inbound messages and allows consecutive stall retries within a 10-minute window. Requires AskHuman to remain running. Terminal CLI is not covered.",
     experimental: "Requires a compatible Cursor version. Protection starts after checks pass and reconnects after startup or window reload.",
     disabled: "Off",
     waiting: "Waiting for a Cursor Desktop window",
@@ -1673,6 +1673,7 @@ export default {
     guards: {
       completion: "background-completion guard",
       retention: "running-chat protection",
+      stall: "stall waiting and retries",
       separator: " and ",
     },
     detaching: "Restoring Cursor Desktop…",

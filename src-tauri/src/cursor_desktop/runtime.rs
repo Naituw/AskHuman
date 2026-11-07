@@ -29,6 +29,12 @@ const BRIDGE: &str = include_str!("bridge.js");
 const RETENTION: &str = include_str!("retention.js");
 const RETENTION_PREFLIGHT: &str = include_str!("retention_preflight.js");
 const RETENTION_KEY: &str = "__ASKHUMAN_CURSOR_RETENTION_V1__";
+const STALL_POLICY: &str = include_str!("stall_policy.js");
+const STALL_RENDERER: &str = include_str!("stall_renderer.js");
+const STALL_HOST: &str = include_str!("stall_host.js");
+const STALL_ATTACH: &str = include_str!("stall_attach.js");
+const STALL_KEY: &str = "__ASKHUMAN_CURSOR_STALL_V1__";
+const STALL_VERSION: &str = "3.27.22";
 const PORT: u16 = 9229;
 
 pub(super) fn adapter_revision() -> String {
@@ -41,6 +47,11 @@ pub(super) fn adapter_revision() -> String {
             hash.update(PREFLIGHT);
             hash.update(RETENTION);
             hash.update(RETENTION_PREFLIGHT);
+            hash.update(STALL_POLICY);
+            hash.update(STALL_RENDERER);
+            hash.update(STALL_HOST);
+            hash.update(STALL_ATTACH);
+            hash.update(STALL_VERSION);
             format!("{:x}", hash.finalize())[..16].into()
         })
         .clone()
@@ -515,13 +526,24 @@ fn bootstrap_source(manifest: &Manifest, package: &Path, close_inspector: bool) 
         "revision": revision,
     });
     if !manifest.messages_only {
-        // The message bridge hosts only its own renderer. The running-chat protection rides with
-        // the completion adapter's bridge and is reported next to it, never inside it.
+        // The message bridge hosts only its own renderer. Other guards ride with the completion
+        // bridge and report their status alongside it.
+        config["stallVersion"] = json!(STALL_VERSION);
+        config["stallAttach"] = json!(STALL_ATTACH);
+        config["stallHost"] =
+            json!(STALL_HOST.replacen("__ASKHUMAN_STALL_POLICY__", STALL_POLICY, 1));
         config["guards"] = json!([{
             "name": "retention",
             "key": RETENTION_KEY,
             "source": RETENTION
                 .replacen("__ASKHUMAN_RETENTION_PREFLIGHT__", RETENTION_PREFLIGHT, 1)
+                .replace("__ASKHUMAN_OWNER__", &json!(manifest.owner).to_string())
+                .replace("__ASKHUMAN_REVISION__", &json!(revision).to_string()),
+        }, {
+            "name": "stall",
+            "key": STALL_KEY,
+            "source": STALL_RENDERER
+                .replacen("__ASKHUMAN_STALL_POLICY__", STALL_POLICY, 1)
                 .replace("__ASKHUMAN_OWNER__", &json!(manifest.owner).to_string())
                 .replace("__ASKHUMAN_REVISION__", &json!(revision).to_string()),
         }]);
@@ -976,8 +998,7 @@ async fn reconcile(
             }
         }
     }
-    // Each window's two guards are judged on their own: one that cannot attach leaves the other
-    // working and the phase `partial`, never a false `active`.
+    // A window's guards are judged independently. An unavailable guard leaves other guards working.
     let (active, phase) = super::overall(all_active, status.error.is_some(), &status.windows);
     status.active = active;
     status.phase = phase.into();

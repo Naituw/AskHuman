@@ -36,10 +36,12 @@
     name: String(guard.name), key: String(guard.key), label: `${guard.name} guard`,
     source: String(guard.source).replace("__ASKHUMAN_LEASE__", JSON.stringify(lease)),
     // Unavailable is a settled outcome (a contract that does not match is not retried).
-    ready: state => ["active", "notApplicable", "unavailable"].includes(state?.state),
+    ready: state => ["active", "notApplicable", "unavailable"].includes(state?.state) ||
+      (guard.name === "stall" && state?.state === "pending"),
     notReady: `The ${guard.name} guard did not settle`,
   }));
   let enabled = true, stopped = false, refreshPromise, registration;
+  let attachStallHost;
   const bounded = (promise, ms, label) => {
     let timer;
     return Promise.race([promise, new Promise((_, reject) => {
@@ -199,8 +201,30 @@
     const wc = record.wc;
     const generation = record.generation;
     try {
+      if (guard.name === "stall" && electron.app.getVersion() !== config.stallVersion) {
+        slot.status = { state: "unavailable", error: "This Cursor build has no verified stall adapter" };
+        return;
+      }
       let state = await readState(wc, guard.key);
       if (!state) state = await install(wc, guard);
+      if (guard.name === "stall" && state.state === "pending") {
+        slot.waitSince ??= Date.now();
+        if (state.hostPid) {
+          attachStallHost ??= eval(config.stallAttach)(require, config, bounded);
+          const { pid, token } = await attachStallHost(state.hostPid);
+          if (!stopped && enabled && generation === record.generation) {
+            state = await evaluate(wc, `(() => {
+              const s = globalThis[${JSON.stringify(guard.key)}];
+              if (s?.lease !== ${JSON.stringify(lease)}) return null;
+              return s.setHost(${pid}, ${JSON.stringify(token)});
+            })()`);
+          }
+        } else if (Date.now() - slot.waitSince >= 10000) {
+          state = { state: "unavailable", error: "Cursor has no verified local Agent Host for this window" };
+        }
+      } else {
+        delete slot.waitSince;
+      }
       if (stopped || !enabled || generation !== record.generation) {
         if (stopped || !enabled) await restoreWindow(wc).catch(() => {});
         return;
@@ -226,8 +250,16 @@
     const slot = record.guards[guard.name] ?? {};
     const reported = slot.status ?? {};
     const error = slot.error ?? (typeof reported.error === "string" ? reported.error.slice(0, 200) : undefined);
+    const state = slot.error ? "unavailable" : typeof reported.state === "string" ? reported.state : "pending";
+    if (guard.name === "stall") {
+      return {
+        state, error,
+        timeoutMs: Number.isSafeInteger(reported.timeoutMs) ? reported.timeoutMs : undefined,
+        retryWindowMs: Number.isSafeInteger(reported.retryWindowMs) ? reported.retryWindowMs : undefined,
+      };
+    }
     return {
-      state: slot.error ? "unavailable" : typeof reported.state === "string" ? reported.state : "pending",
+      state,
       error, checks: small(reported.checks),
       skipped: count(reported.skipped), skippedBubbles: count(reported.skippedBubbles), passed: count(reported.passed),
       lastSkippedAt: count(reported.lastSkippedAt),

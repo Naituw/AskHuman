@@ -63,6 +63,15 @@ pub struct RetentionStatus {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+pub struct StallStatus {
+    pub state: String,
+    pub error: Option<String>,
+    pub timeout_ms: Option<i64>,
+    pub retry_window_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct WindowStatus {
     pub pid: u32,
     pub id: u32,
@@ -74,6 +83,7 @@ pub struct WindowStatus {
     pub checks: u32,
     pub error: Option<String>,
     pub retention: Option<RetentionStatus>,
+    pub stall: Option<StallStatus>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,13 +122,30 @@ fn retention_state(window: &WindowStatus) -> GuardState {
     }
 }
 
-/// How completely one window is protected. The two guards are judged independently, so one that
+fn stall_state(window: &WindowStatus) -> GuardState {
+    match window.stall.as_ref() {
+        Some(status) if status.state == "active" => {
+            if status.timeout_ms == Some(300_000) && status.retry_window_ms == Some(600_000) {
+                GuardState::Active
+            } else {
+                GuardState::Failed
+            }
+        }
+        Some(status) if status.state == "notApplicable" && status.timeout_ms.is_some() => {
+            GuardState::NotApplicable
+        }
+        Some(status) if status.state == "unavailable" => GuardState::Failed,
+        _ => GuardState::Pending,
+    }
+}
+
+/// How completely one window is protected. The guards are judged independently, so one that
 /// cannot attach never hides or disables the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Coverage {
     /// Every guard that applies to the window is verified.
     Full,
-    /// One guard is verified and the other is not working.
+    /// A guard is verified and another applicable guard is unavailable.
     Partial,
     /// No applicable guard is working.
     Failed,
@@ -128,11 +155,19 @@ pub(super) enum Coverage {
 
 pub(super) fn coverage(window: &WindowStatus) -> Coverage {
     use GuardState::*;
-    match (completion_state(window), retention_state(window)) {
-        (Active, Active | NotApplicable) => Coverage::Full,
-        (Active, Failed) | (Failed, Active) => Coverage::Partial,
-        (Failed, Failed | NotApplicable) => Coverage::Failed,
-        _ => Coverage::Attaching,
+    let states = [
+        completion_state(window),
+        retention_state(window),
+        stall_state(window),
+    ];
+    if states.contains(&Pending) {
+        Coverage::Attaching
+    } else if !states.contains(&Failed) {
+        Coverage::Full
+    } else if states.contains(&Active) {
+        Coverage::Partial
+    } else {
+        Coverage::Failed
     }
 }
 
@@ -199,6 +234,34 @@ pub fn retention_summary(windows: &[WindowStatus]) -> Option<String> {
         reported.len() - count("active") - count("notApplicable") - count("unavailable"),
         reported.iter().map(|r| r.skipped).sum::<u64>(),
         at_risk,
+    ))
+}
+
+pub fn stall_summary(windows: &[WindowStatus]) -> Option<String> {
+    let reported: Vec<_> = windows.iter().filter_map(|w| w.stall.as_ref()).collect();
+    if reported.is_empty() {
+        return None;
+    }
+    let count = |state: GuardState| windows.iter().filter(|w| stall_state(w) == state).count();
+    let mut native: Vec<_> = reported
+        .iter()
+        .filter(|status| status.state == "notApplicable")
+        .filter_map(|status| status.timeout_ms)
+        .map(|ms| ms.max(0))
+        .collect();
+    native.sort_unstable();
+    native.dedup();
+    let suffix = if native.is_empty() {
+        String::new()
+    } else {
+        format!("; native timeout values in ms {native:?} (0 means disabled)")
+    };
+    Some(format!(
+        "{} active (300s stall, 600s retry window), {} native, {} unavailable, {} pending{suffix}",
+        count(GuardState::Active),
+        count(GuardState::NotApplicable),
+        count(GuardState::Failed),
+        count(GuardState::Pending),
     ))
 }
 
@@ -429,6 +492,14 @@ mod tests {
         })
     }
 
+    fn native_stall() -> Option<StallStatus> {
+        Some(StallStatus {
+            state: "notApplicable".into(),
+            timeout_ms: Some(0),
+            ..StallStatus::default()
+        })
+    }
+
     /// `completion`: `active` (verified), `error`, or `attaching`; `guard`: the retention state
     /// the window reports, or `None` when it reports nothing.
     fn window(completion: &str, surface: &str, guard: Option<(&str, u32)>) -> WindowStatus {
@@ -439,6 +510,7 @@ mod tests {
             verified: completion == "active",
             checks: if completion == "active" { 6 } else { 0 },
             retention: guard.and_then(|(state, checks)| retention(state, checks)),
+            stall: native_stall(),
             ..WindowStatus::default()
         }
     }
@@ -447,6 +519,7 @@ mod tests {
     fn unverified_or_partial_windows_cannot_report_active() {
         let mut window: WindowStatus = serde_json::from_str(r#"{"phase":"active"}"#).unwrap();
         window.retention = retention("active", 10);
+        window.stall = native_stall();
         assert_ne!(
             coverage(&window),
             Coverage::Full,
@@ -518,6 +591,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn stall_guard_requires_both_verified_timers() {
+        let mut window = window("active", "ide", Some(("notApplicable", 0)));
+        window.stall = None;
+        assert_eq!(coverage(&window), Coverage::Attaching);
+        window.stall = Some(StallStatus {
+            state: "active".into(),
+            timeout_ms: Some(300_000),
+            retry_window_ms: Some(180_000),
+            error: None,
+        });
+        assert_eq!(coverage(&window), Coverage::Partial);
+        window.stall.as_mut().unwrap().retry_window_ms = Some(600_000);
+        assert_eq!(coverage(&window), Coverage::Full);
     }
 
     #[test]

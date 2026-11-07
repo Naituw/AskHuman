@@ -1631,7 +1631,7 @@ export default {
   },
   cursorDesktop: {
     title: "Cursor 会话防护（实验）",
-    hint: "对所有本地 Cursor Desktop 会话生效：① 后台任务完成后不再自动续跑，需主动发消息继续（不影响 Await）；② Agents 窗口里运行中的会话不再被释放内存中的消息，降低长任务失败后被误归档的风险。需要 AskHuman 持续运行，不覆盖终端 CLI。",
+    hint: "保护本地 Cursor Desktop 会话。后台任务完成后，主动发消息才会继续（Await 照常）。Agents 窗口里运行中的会话不再被释放内存中的消息，降低误归档风险。兼容的窗口会把无入站消息的等待延长到 5 分钟，连续停滞重试窗口延长到 10 分钟。需要 AskHuman 持续运行，不覆盖终端 CLI。",
     experimental: "需要兼容的 Cursor 版本，检查通过后才生效。启动或窗口重载后需重新接入。",
     disabled: "未开启",
     waiting: "等待 Cursor Desktop 窗口",
@@ -1641,6 +1641,7 @@ export default {
     guards: {
       completion: "后台完成续跑拦截",
       retention: "运行中会话保护",
+      stall: "停滞等待与重试",
       separator: "、",
     },
     detaching: "正在恢复 Cursor Desktop 原生行为…",

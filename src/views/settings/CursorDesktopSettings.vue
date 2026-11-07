@@ -16,13 +16,16 @@ const enabled = computed(() => config.value?.cursorDesktop?.suppressBackgroundCo
 const phase = computed(() => !isMac ? "unsupported" : status.value?.phase ?? (enabled.value ? "attaching" : "disabled"));
 const detail = computed(() => error.value || status.value?.error
   || status.value?.windows.find(w => w.error)?.error
-  || status.value?.windows.find(w => w.retention?.error)?.retention?.error || "");
-// The two guards are reported apart, so a partly active state can name the one that is missing.
+  || status.value?.windows.find(w => w.retention?.error)?.retention?.error
+  || status.value?.windows.find(w => w.stall?.error)?.stall?.error || "");
+// A partly active state can name the guards that did not attach.
 const missing = computed(() => {
   const windows = status.value?.windows ?? [];
-  const names: ("completion" | "retention")[] = [];
+  const names: ("completion" | "retention" | "stall")[] = [];
   if (windows.some(w => w.phase === "error")) names.push("completion");
   if (windows.some(w => w.retention?.state === "unavailable")) names.push("retention");
+  if (windows.some(({stall}) => stall?.state === "unavailable" ||
+    (stall?.state === "active" && (stall.timeoutMs !== 300000 || stall.retryWindowMs !== 600000)))) names.push("stall");
   return names;
 });
 const statusText = computed(() => {

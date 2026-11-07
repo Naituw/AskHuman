@@ -163,15 +163,18 @@ it("stays fully active, and without a warning, when both guards work or one does
   expect(row.find('[role="alert"]').exists()).toBe(false);
 });
 
-it("keeps the single switch and renames it for both protections", async () => {
+it("keeps the single switch for all three protections", async () => {
   const row = await mountRow();
   expect(row.findAll('input[type="checkbox"]')).toHaveLength(1);
   expect(row.text()).toContain("Cursor session protection (experimental)");
   expect(row.text()).toContain("running chat keeps its messages in memory");
+  expect(row.text()).toContain("5 minutes for inbound messages");
+  expect(row.text()).toContain("10-minute window");
   i18n.global.locale.value = "zh";
   await flushPromises();
   expect(row.text()).toContain("Cursor 会话防护（实验）");
   expect(row.text()).toContain("运行中的会话不再被释放内存中的消息");
+  expect(row.text()).toContain("连续停滞重试窗口延长到 10 分钟");
 });
 
 // --- where new Cursor tasks run (docs/specs/cursor-desktop-task-creation.md §3) ---
