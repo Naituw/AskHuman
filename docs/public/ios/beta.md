@@ -52,9 +52,3 @@ During normal use, observe Wi-Fi/cellular changes, Mac sleep and wake, and answe
 The Mac must be online with the AskHuman daemon running. Use the daemon's keep-alive setting if you need continuous availability; it does not prevent computer sleep. Live observation works only while the app is in the foreground. Creating remote tasks requires the Mac's remote-task setting and a ready agent. Some features require the newer Mac version specified in your invitation.
 
 Report issues through TestFlight or the [project issue tracker](https://github.com/Naituw/AskHuman/issues). Include the iOS build, Mac app and OS versions, phone model, time/time zone, network and proxy state, steps, expected result and actual result. Say whether opening or refreshing the app restores it. Redact screenshots. Never send broker passwords, connection strings, pairing codes, push tokens, private keys or confidential transcripts.
-
-## Optional: fully self-hosted setup
-
-To manage both the broker and push relay yourself, use your own MQTT service and deploy the repository's relay to your Tencent Cloud account. This also requires an Apple Developer account: build the iOS app yourself, sign it with your own team and bundle IDs, configure APNs credentials matching that app and push environment, then enter your relay URL on the Mac and pair again. See the [source-build and self-hosting guide](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.en.md) for the steps.
-
-When using the maintainer-signed TestFlight app, keep using the maintainer's relay. A Tencent Cloud account alone does not let you replace that app's push authorization with an APNs key from your own team. The normal setup above requires neither signing your own app nor deploying a relay.
