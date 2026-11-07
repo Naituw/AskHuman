@@ -1,0 +1,116 @@
+/* Prototype-only styles for the "annotations in the popup" prototype: the stage and the fake window around the real popup,
+   and the pieces this prototype adds to the product's own DOM (the floating button, the editor, the highlights, the chip
+   beside Send and its list). They use the popup's own tokens and the quick-reply menu's look (popup.css / controls.css),
+   so the screenshots look like the product. Nothing here ships; the product's popup.css is used as is. */
+
+html.an-frame { --an-desk: #dedfe3; --an-ann: #af52de; }
+html.an-frame.theme-dark { --an-desk: #111113; --an-ann: #bf5af2; }
+html.an-frame body, html.an-frame #app { background: var(--an-desk); overflow: hidden; }
+
+.an-stage { height: 100%; box-sizing: border-box; display: flex; align-items: flex-start; justify-content: center; padding: 20px; }
+.an-window {
+  position: relative; flex: none; width: var(--rp-win-w); height: var(--rp-win-h); border-radius: 16px; overflow: hidden; background: var(--bg);
+  box-shadow: 0 0 0 .5px rgba(0, 0, 0, .28), 0 20px 50px rgba(0, 0, 0, .26), 0 3px 10px rgba(0, 0, 0, .14);
+}
+.theme-dark .an-window { box-shadow: 0 0 0 .5px rgba(255, 255, 255, .2), 0 20px 50px rgba(0, 0, 0, .6), 0 3px 10px rgba(0, 0, 0, .4); }
+.an-window[data-platform="win"] { border-radius: 8px; }
+.an-body { position: absolute; inset: 0; display: flex; }
+.an-window[data-platform="win"] .an-body { top: 32px; }
+.an-main { position: relative; flex: 1; min-width: 0; min-height: 0; }
+.an-main .popup-shell, .an-main .popup-status { height: 100%; width: 100%; }
+.an-lights { position: absolute; z-index: 30; top: 8px; left: 13px; display: flex; gap: 8px; pointer-events: none; }
+.an-lights i { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .2); }
+.an-lights i:nth-child(1) { background: #ff5f57; }
+.an-lights i:nth-child(2) { background: #febc2e; }
+.an-lights i:nth-child(3) { background: #28c840; }
+.an-winbar {
+  position: absolute; z-index: 30; inset: 0 0 auto 0; height: 32px; display: flex; align-items: center; gap: 8px; padding-left: 10px;
+  background: color-mix(in srgb, var(--bg) 86%, #8a8a8a); border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-primary);
+}
+.an-win-icon { flex: none; width: 14px; height: 14px; border-radius: 4px; background: var(--accent); }
+
+/* ---- Highlights in the text ------------------------------------------------------------------------------------- */
+/* Annotations are purple: the find hits are yellow / orange and the system selection is blue. */
+mark.an-mark {
+  position: relative; color: inherit; cursor: pointer; border-radius: 2px; padding: 0;
+  background: color-mix(in srgb, var(--an-ann) 16%, transparent);
+  box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--an-ann) 70%, transparent);
+  box-decoration-break: clone; -webkit-box-decoration-break: clone;
+}
+mark.an-mark:hover { background: color-mix(in srgb, var(--an-ann) 26%, transparent); }
+/* A small number after the last piece of each annotated passage, as in the list. */
+mark.an-mark.an-last::after {
+  content: attr(data-n); display: inline-flex; align-items: center; justify-content: center; vertical-align: super;
+  min-width: 13px; height: 13px; margin: 0 1px 0 2px; padding: 0 3px; box-sizing: border-box; border-radius: 7px;
+  background: var(--an-ann); color: #fff; font-size: 9px; font-weight: 700; line-height: 1;
+}
+mark.an-mark.an-flash { animation: an-flash 1.2s ease-out; }
+@keyframes an-flash { 0% { background: color-mix(in srgb, var(--an-ann) 55%, transparent); } 100% { background: color-mix(in srgb, var(--an-ann) 16%, transparent); } }
+/* The passage the editor is open on: not yet an annotation, so it is only outlined. */
+mark.an-draft {
+  color: inherit; border-radius: 2px; padding: 0; background: color-mix(in srgb, var(--an-ann) 10%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--an-ann) 80%, transparent); outline-offset: 1px;
+}
+/* Stand-in for the system selection in fixed scenes (a headless page draws it grey). */
+mark.an-sel { color: inherit; border-radius: 2px; padding: 0; background: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* ---- Floating button ---------------------------------------------------------------------------------------------- */
+.an-fab {
+  position: absolute; z-index: 55; box-sizing: border-box; height: 26px; padding: 0 11px 0 9px; display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--control-border); border-radius: 13px; background: var(--surface-overlay); color: var(--text-primary);
+  font: inherit; font-size: 12px; font-weight: 500; line-height: 1; white-space: nowrap; cursor: default;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .22), 0 0 0 .5px rgba(0, 0, 0, .06);
+}
+.an-fab svg { color: var(--an-ann); }
+.an-fab:hover { background: color-mix(in srgb, var(--text-primary) 6%, var(--surface-overlay)); }
+
+/* ---- Editor popover ------------------------------------------------------------------------------------------------ */
+.an-editor {
+  position: absolute; z-index: 60; width: 320px; box-sizing: border-box; padding: 10px; display: flex; flex-direction: column; gap: 8px;
+  background: var(--surface-overlay); border: 1px solid var(--border, rgba(127, 127, 127, .2)); border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .28); font-size: 13px; color: var(--text-primary);
+}
+.an-quote {
+  padding: 1px 0 1px 8px; border-left: 2px solid var(--an-ann); font-size: 12px; line-height: 1.45; color: var(--text-secondary);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
+}
+.an-textarea {
+  width: 100%; box-sizing: border-box; min-height: 64px; padding: 7px 9px; resize: none; font: inherit; font-size: 13px; line-height: 1.45;
+  color: var(--text-primary); background: var(--control-bg); border: var(--hairline) solid var(--control-border); border-radius: var(--radius-md);
+  box-shadow: var(--clickable-shadow); outline: none;
+}
+.an-textarea::placeholder { color: var(--text-tertiary); }
+.an-textarea:focus { box-shadow: var(--focus-ring), var(--clickable-shadow); }
+.an-editor-foot { display: flex; align-items: center; gap: 6px; }
+.an-spacer { flex: 1 1 auto; }
+.an-hint { font-size: 11.5px; color: var(--text-tertiary); }
+.an-kbd { font-family: inherit; font-size: 11px; line-height: 1; color: var(--text-secondary); background: var(--bg-elevated); border: var(--hairline) solid var(--border); border-radius: 5px; padding: 3px 5px; }
+.an-delete { padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: #ff453a; font: inherit; font-size: 12.5px; cursor: default; }
+.an-delete:hover { background: color-mix(in srgb, #ff453a 12%, transparent); }
+
+/* ---- Footer chip and list ---------------------------------------------------------------------------------------- */
+/* Beside Send: Cancel, answer later, free room, quick reply, then the chip, then the product's own buttons. */
+.an-window .popup-main > .footer > .an-anchor { order: 1; }
+.an-window .popup-main > .footer > .btn-primary { order: 2; }
+.an-chip svg { opacity: 1; margin-right: 0; color: var(--an-ann); }
+.an-count {
+  min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box; border-radius: 8px; background: var(--an-ann); color: #fff;
+  font-size: 11px; font-weight: 600; line-height: 16px; text-align: center;
+}
+.an-list { width: min(380px, calc(100vw - 24px)); }
+.an-row {
+  position: relative; display: flex; align-items: flex-start; gap: 10px; width: 100%; box-sizing: border-box; padding: 7px 10px; border-radius: 6px;
+  line-height: 1.35; cursor: default; outline: none;
+}
+.an-row:hover, .an-row:focus-visible { background: color-mix(in srgb, var(--text-primary) 7%, transparent); }
+.an-num {
+  flex: none; width: 18px; height: 18px; margin-top: 1px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--an-ann) 16%, transparent); color: var(--an-ann); font-size: 11px; font-weight: 700;
+}
+.an-row-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.an-row-quote { font-size: 11.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-row-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.an-row-actions { flex: none; display: none; align-items: center; gap: 2px; margin-top: -1px; }
+.an-row:hover .an-row-actions, .an-row:focus-within .an-row-actions { display: flex; }
+.an-icon-btn { width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); cursor: default; }
+.an-icon-btn:hover { background: rgba(128, 128, 128, .2); color: var(--text-primary); }

@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AskHuman · iOS 附注原型（静态示意）</title>
+<!-- A static mock of "select text, add a note" on the iPhone answer page: not product code, only drawn to be looked at.
+     ?board=flow    the four steps (select -> write -> notes on the text + round "notes" button in the action bar -> list)
+     ?board=direct  no Message and exactly one question: the question text always moves into the Message area (web view)
+     ?board=bar     the action bar with the extra round button on a 393 pt / 375 pt screen and at accessibility sizes (estimates)
+     `cells=1,2` limits a board to some of its cells (a phone board is taller than the screenshot viewport). -->
+<style>
+:root {
+  --bg: #f2f2f7; --card: #fff; --label: #000; --label2: rgba(60, 60, 67, .62); --label3: rgba(60, 60, 67, .32);
+  --fill: rgba(120, 120, 128, .12); --fill2: rgba(120, 120, 128, .2); --sep: rgba(60, 60, 67, .16);
+  --blue: #007aff; --purple: #af52de; --orange: #ff9500; --green: #34c759; --red: #ff3b30;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #d9dadf; color: var(--label); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; }
+.board { display: flex; gap: 44px; padding: 26px 30px 40px; align-items: flex-start; width: max-content; }
+.cell { width: 393px; display: flex; flex-direction: column; gap: 16px; }
+.cap { min-height: 128px; padding: 0 6px; font-size: 15px; line-height: 1.4; color: #3a3a3c; }
+.board.col { flex-direction: column; gap: 26px; align-items: flex-start; }
+.board.col .cell { gap: 10px; width: 540px; }
+.board.col .cap { min-height: 0; }
+.cap b { display: block; margin-bottom: 2px; font-size: 18px; color: #111; }
+.cap .no { color: #c0392b; }
+
+.phone { position: relative; width: 393px; height: 852px; border-radius: 52px; overflow: hidden; background: var(--bg); box-shadow: 0 0 0 7px #1d1d1f, 0 0 0 8px #4a4a4c, 0 24px 60px rgba(0, 0, 0, .3); }
+.island { position: absolute; z-index: 40; top: 11px; left: 50%; width: 124px; height: 36px; margin-left: -62px; border-radius: 18px; background: #000; }
+.status { position: absolute; z-index: 39; top: 0; left: 0; right: 0; height: 56px; padding: 19px 36px 0 48px; display: flex; justify-content: space-between; font-size: 17px; font-weight: 600; }
+.status .sys { display: flex; gap: 6px; align-items: center; }
+.nav { position: absolute; top: 64px; left: 16px; right: 16px; display: flex; justify-content: space-between; }
+.circle { position: relative; width: 46px; height: 46px; border-radius: 50%; background: rgba(255, 255, 255, .92); box-shadow: 0 1px 8px rgba(0, 0, 0, .1), 0 0 0 .5px rgba(0, 0, 0, .04); display: grid; place-items: center; }
+.scroll { position: absolute; top: 122px; left: 16px; right: 16px; }
+.head { display: flex; gap: 12px; align-items: center; padding: 0 2px; }
+.appicon { flex: none; width: 50px; height: 50px; border-radius: 13px; background: linear-gradient(160deg, #f0a07c, #d9663f); display: grid; place-items: center; }
+.head .t { font-size: 17px; font-weight: 700; line-height: 1.25; }
+.head .m { margin-top: 2px; font-size: 12.5px; color: var(--label2); }
+.head .d { font-size: 12px; color: var(--label3); }
+.card { position: relative; margin-top: 14px; padding: 16px; border-radius: 20px; background: var(--card); }
+.md { font-size: 17px; line-height: 25px; letter-spacing: -.2px; }
+.md p { margin: 0 0 8px; } .md p:last-child { margin-bottom: 0; }
+.md ul { margin: 0 0 8px; padding-left: 20px; } .md li { margin-bottom: 3px; }
+.md code { font: 15px ui-monospace, "SF Mono", Menlo, monospace; background: var(--fill); padding: 1px 5px; border-radius: 5px; }
+.qtitle { font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -.2px; }
+.qhead { display: flex; gap: 10px; align-items: flex-start; }
+.qnum { flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; background: var(--blue); color: #fff; font-size: 13px; font-weight: 700; display: grid; place-items: center; }
+.opts { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.opt { display: flex; align-items: center; gap: 12px; height: 46px; padding: 0 12px; border-radius: 14px; background: var(--fill); font-size: 17px; border: 1.5px solid transparent; }
+.opt.on { background: rgba(0, 122, 255, .14); border-color: var(--blue); }
+.radio { flex: none; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--label3); }
+.opt.on .radio { border: 7px solid var(--blue); background: #fff; }
+.opt .rec { margin-left: auto; padding: 3px 8px; border-radius: 9px; background: rgba(255, 149, 0, .16); color: #e08a00; font-size: 12px; font-weight: 600; }
+.field { margin-top: 10px; padding: 12px; border-radius: 12px; background: var(--fill); color: var(--label3); font-size: 17px; }
+
+.hl { background: rgba(175, 82, 222, .16); box-shadow: inset 0 -1.5px 0 rgba(175, 82, 222, .75); border-radius: 2px; }
+.bd { display: inline-grid; place-items: center; vertical-align: super; min-width: 15px; height: 15px; margin: 0 1px 0 3px; padding: 0 4px; border-radius: 8px; background: var(--purple); color: #fff; font-size: 10px; font-weight: 700; line-height: 1; }
+.sel { background: rgba(0, 122, 255, .24); }
+.knob { position: absolute; z-index: 20; width: 2px; background: var(--blue); }
+.knob::after { content: ""; position: absolute; left: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--blue); }
+.knob.s::after { top: -8px; } .knob.e::after { bottom: -8px; }
+.menu { position: absolute; z-index: 30; height: 46px; padding: 0 6px; display: flex; align-items: center; border-radius: 23px; background: rgba(252, 252, 254, .94); box-shadow: 0 8px 28px rgba(0, 0, 0, .25), 0 0 0 .5px rgba(0, 0, 0, .1); font-size: 16px; white-space: nowrap; }
+.menu span { padding: 0 12px; }
+.menu i { width: 1px; height: 22px; background: var(--sep); }
+.menu .new { font-weight: 600; }
+.menu .chev { padding: 0 10px; color: var(--label2); }
+
+.bar { position: absolute; z-index: 10; left: 16px; right: 16px; bottom: 34px; display: flex; gap: 8px; align-items: center; }
+.pill { height: 52px; padding: 0 18px; display: flex; align-items: center; border-radius: 26px; background: rgba(255, 255, 255, .95); box-shadow: 0 1px 8px rgba(0, 0, 0, .1); font-size: 16px; font-weight: 600; }
+.round { position: relative; flex: none; width: 52px; height: 52px; border-radius: 50%; background: rgba(255, 255, 255, .95); box-shadow: 0 1px 8px rgba(0, 0, 0, .1); display: grid; place-items: center; color: #3a3a3c; }
+.round.ann { color: var(--purple); }
+.round .badge { position: absolute; top: -3px; right: -3px; min-width: 21px; height: 21px; padding: 0 5px; border-radius: 11px; background: var(--purple); color: #fff; border: 2px solid var(--bg); font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+.send { flex: 1; height: 52px; display: grid; place-items: center; border-radius: 26px; background: var(--blue); color: #fff; font-size: 17px; font-weight: 600; box-shadow: 0 2px 10px rgba(0, 122, 255, .3); }
+.send.off { background: rgba(120, 120, 128, .16); color: var(--label3); box-shadow: none; }
+.home { position: absolute; z-index: 45; bottom: 8px; left: 50%; width: 138px; height: 5px; margin-left: -69px; border-radius: 3px; background: #000; }
+
+.dim { position: absolute; z-index: 50; inset: 0; background: rgba(0, 0, 0, .28); }
+.sheet { position: absolute; z-index: 60; left: 0; right: 0; bottom: 0; border-radius: 40px 40px 0 0; background: var(--bg); box-shadow: 0 -10px 40px rgba(0, 0, 0, .2); }
+.sbar { position: relative; height: 72px; padding: 16px 18px 0; display: flex; align-items: center; justify-content: space-between; }
+.stitle { position: absolute; left: 0; right: 0; top: 16px; height: 44px; display: grid; place-items: center; font-size: 17px; font-weight: 700; pointer-events: none; }
+.gbtn { position: relative; z-index: 1; height: 44px; padding: 0 18px; display: grid; place-items: center; border-radius: 22px; background: rgba(255, 255, 255, .92); box-shadow: 0 1px 8px rgba(0, 0, 0, .1); font-size: 17px; }
+.gbtn.pri { color: var(--blue); font-weight: 600; }
+.sbody { padding: 0 18px; }
+.quote { display: flex; gap: 10px; padding: 2px 4px 14px; }
+.quote i { flex: none; width: 3px; border-radius: 2px; background: var(--purple); }
+.quote span { color: var(--label2); font-size: 15px; line-height: 21px; }
+.tfield { position: relative; min-height: 118px; padding: 14px; border-radius: 20px; background: #fff; font-size: 17px; line-height: 24px; }
+.tfield .caret { display: inline-block; width: 2px; height: 20px; margin-left: 1px; vertical-align: -4px; background: var(--blue); }
+.sfoot { padding: 10px 6px 0; color: var(--label2); font-size: 13px; line-height: 18px; }
+.group { border-radius: 20px; background: #fff; overflow: hidden; }
+.lrow { display: flex; gap: 12px; padding: 12px 16px; border-bottom: .5px solid var(--sep); }
+.lrow:last-child { border-bottom: 0; }
+.num { flex: none; width: 24px; height: 24px; margin-top: 1px; border-radius: 50%; background: rgba(175, 82, 222, .16); color: var(--purple); font-size: 13px; font-weight: 700; display: grid; place-items: center; }
+.lq { color: var(--label2); font-size: 14px; line-height: 19px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.lt { margin-top: 2px; font-size: 17px; line-height: 23px; }
+.kb { position: absolute; z-index: 70; left: 0; right: 0; bottom: 0; height: 302px; padding: 10px 4px 0; background: #d1d4da; }
+.kb .row { display: flex; justify-content: center; gap: 5.5px; margin-bottom: 11px; }
+.kb .k { flex: none; width: 33px; height: 44px; border-radius: 6px; background: #fff; box-shadow: 0 1px 0 rgba(0, 0, 0, .3); display: grid; place-items: center; font-size: 22px; }
+.kb .k.w { width: 46px; background: #aeb3bd; font-size: 15px; } .kb .k.sp { width: 188px; font-size: 16px; } .kb .k.go { width: 82px; background: var(--blue); color: #fff; font-size: 16px; }
+.kb .k.m { width: 46px; background: #aeb3bd; font-size: 15px; }
+
+/* Board B: what draws what */
+.region { position: relative; }
+.region.web { outline: 2px dashed rgba(0, 122, 255, .7); outline-offset: 4px; border-radius: 18px; }
+.region.txt { outline: 2px dashed rgba(52, 199, 89, .85); outline-offset: 3px; border-radius: 8px; }
+.tag { position: absolute; z-index: 25; top: -17px; right: 8px; padding: 2px 8px; border-radius: 9px; color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .2px; }
+.tag.web { background: var(--blue); } .tag.txt { background: #28a745; } .tag.nat { background: #8e8e93; }
+.card.tight { padding: 14px 16px; }
+.qrow { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; }
+.qrow:first-child { margin-top: 0; }
+.mini { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.mini .opt { height: 40px; font-size: 16px; }
+.strip { padding: 14px 16px; border-radius: 18px; background: var(--bg); box-shadow: 0 0 0 1px rgba(0, 0, 0, .07), 0 8px 24px rgba(0, 0, 0, .08); }
+.srow { display: flex; gap: 12px; align-items: center; }
+.qlabel { margin-bottom: 8px; display: flex; gap: 8px; align-items: center; color: var(--label2); font-size: 13px; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="board" id="board"></div>
+<script>
+const ICON = {
+  back: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+  dots: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8"><circle cx="12" cy="12" r="9.5"/><circle cx="7.6" cy="12" r="1.15" fill="#000"/><circle cx="12" cy="12" r="1.15" fill="#000"/><circle cx="16.4" cy="12" r="1.15" fill="#000"/></svg>',
+  reply: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8l-5 4v-4H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M8 9.5h8M8 12.5h5"/></svg>',
+  note: '<svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="3.5" width="15" height="17" rx="3.2"/><path d="M8.5 9h7M8.5 12.5h7M8.5 16h4"/></svg>',
+  down: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+  star: '<svg width="26" height="26" viewBox="0 0 24 24" fill="#fff"><path d="M12 2l1.6 7 6.1-3.8L15.9 12l6.1 3.8-7 .4-1.6 6.8-1.6-6.8-7-.4L8.1 12 2.3 5.2 8.4 9z"/></svg>',
+  wifi: '<svg width="20" height="14" viewBox="0 0 20 14"><path d="M10 12.2l1.7-1.9a2.5 2.5 0 0 0-3.4 0zM5.6 7.4a6.4 6.4 0 0 1 8.8 0l1.2-1.4a8.2 8.2 0 0 0-11.2 0zM2 3.4a11.4 11.4 0 0 1 16 0l1.2-1.4a13.2 13.2 0 0 0-18.4 0z" fill="#000"/></svg>',
+  batt: '<svg width="30" height="14" viewBox="0 0 30 14"><rect x=".5" y=".5" width="25" height="13" rx="4" fill="none" stroke="#000" opacity=".4"/><rect x="2" y="2" width="22" height="10" rx="2.6" fill="#000"/><rect x="27" y="4.6" width="2" height="4.8" rx="1" fill="#000" opacity=".4"/></svg>',
+};
+
+const PHRASE_A = "需要同时调整三处表单";
+const PHRASE_B = "回归测试也已补充";
+const note = (cls, text, n) => (cls === "hl" ? `<span class="hl">${text}<sup class="bd">${n}</sup></span>` : cls === "sel" ? `<span class="sel">${text}</span>` : text);
+
+/** The Message as the web page draws it. */
+function message({ a = "", b = "" } = {}) {
+  return `<div class="md">
+    <p>已定位到登录页在 Safari 15 下样式错位的原因：<code>.field-row</code> 用了 flex 的 <code>gap</code>，旧版本不支持。</p>
+    <p>两种修复方式：</p>
+    <ul>
+      <li><b>方案 1：margin 兜底。</b>改动小，但会同时保留两套间距规则</li>
+      <li><b>方案 2：改用 grid 统一。</b>一次到位，${note(a, PHRASE_A, 1)}</li>
+    </ul>
+    <p>另外我顺手确认了 Chrome 与 Firefox 下表现一致，${note(b, PHRASE_B, 2)}。</p>
+  </div>`;
+}
+const shortMessage = `<div class="md"><p>已定位到登录页在 Safari 15 下样式错位的原因，有三个点要和你确认：</p></div>`;
+
+const option = (label, { on = false, rec = false } = {}) => `<div class="opt${on ? " on" : ""}"><span class="radio"></span><span>${label}</span>${rec ? '<span class="rec">★ 推荐</span>' : ""}</div>`;
+const field = (text = "补充说明（可选）") => `<div class="field">${text}</div>`;
+
+function questionCard({ title, on = 2, mark = "" } = {}) {
+  return `<div class="card">
+    <div class="qtitle">${title}</div>
+    <div class="opts">${option("方案 1：margin 兜底", { on: on === 1, rec: true })}${option("方案 2：改用 grid 统一", { on: on === 2 })}${option("先不改，只记录问题", { on: on === 3 })}</div>
+    ${field()}
+  </div>`;
+}
+
+function shell(inner, { bar = "", extra = "", title = "修复登录页 Safari 样式错位" } = {}) {
+  return `<div class="phone">
+    <div class="island"></div>
+    <div class="status"><span>17:31</span><span class="sys">${ICON.wifi}${ICON.batt}</span></div>
+    <div class="nav"><div class="circle">${ICON.back}</div><div class="circle">${ICON.dots}</div></div>
+    <div class="scroll">
+      <div class="head"><div class="appicon">${ICON.star}</div><div><div class="t">${title}</div><div class="m">relay · Office iMac</div><div class="d">11月7日 17:31</div></div></div>
+      ${inner}
+    </div>
+    ${bar}${extra}
+    <div class="home"></div>
+  </div>`;
+}
+
+function actionBar({ answered = "已回答 1/1", notes = 0 } = {}) {
+  const off = /\b0\//.test(answered);
+  return `<div class="bar">
+    <div class="pill">${answered}</div>
+    <div style="flex:1"></div>
+    <div class="round">${ICON.reply}</div>
+    ${notes ? `<div class="round ann">${ICON.note}<span class="badge">${notes}</span></div>` : ""}
+    <div class="send${off ? " off" : ""}" style="${notes ? "flex:0 0 112px" : "flex:0 0 132px"}">发送</div>
+  </div>`;
+}
+
+const keyboard = () => {
+  const row = (letters) => `<div class="row">${[...letters].map((c) => `<div class="k">${c}</div>`).join("")}</div>`;
+  return `<div class="kb">
+    ${row("qwertyuiop")}${row("asdfghjkl")}
+    <div class="row"><div class="k w">⇧</div>${[..."zxcvbnm"].map((c) => `<div class="k">${c}</div>`).join("")}<div class="k w">⌫</div></div>
+    <div class="row"><div class="k m">123</div><div class="k m">🌐</div><div class="k sp">空格</div><div class="k go">换行</div></div>
+  </div>`;
+};
+
+const editorSheet = (text, { typing = true } = {}) => `
+  <div class="dim"></div>
+  <div class="sheet" style="top:196px">
+    <div class="sbar"><div class="gbtn">取消</div><div class="stitle">添加附注</div><div class="gbtn pri">添加</div></div>
+    <div class="sbody">
+      <div class="quote"><i></i><span>${PHRASE_A}</span></div>
+      <div class="tfield">${text}${typing ? '<span class="caret"></span>' : ""}</div>
+      <div class="sfoot">提交回答时，附注会连同这段原文一起发给 Agent。</div>
+    </div>
+  </div>${keyboard()}`;
+
+const listSheet = (rows) => `
+  <div class="dim"></div>
+  <div class="sheet" style="top:446px">
+    <div class="sbar"><div class="gbtn" style="visibility:hidden">·</div><div class="stitle">附注 · ${rows.length} 条</div><div class="gbtn pri">完成</div></div>
+    <div class="sbody">
+      <div class="group">${rows.map((r, i) => `<div class="lrow"><span class="num">${i + 1}</span><div><div class="lq">“${r.q}”</div><div class="lt">${r.t}</div></div></div>`).join("")}</div>
+      <div class="sfoot">点一条定位到原文，左滑可编辑或删除。提交回答时，附注会随回答一起发给 Agent。</div>
+    </div>
+  </div>`;
+
+const menu = `<div class="menu"><span>拷贝</span><i></i><span class="new">添加附注</span><i></i><span>查询</span><i></i><span>翻译</span><i></i><span class="chev">›</span></div><div class="knob s"></div><div class="knob e"></div>`;
+
+const NOTE_A = "是哪三处？把文件名列一下，我想先看影响面。";
+const NOTE_B = "补在哪个文件里？覆盖 Safari 15 了吗？";
+
+function cell(caption, phone) {
+  return `<div class="cell"><div class="cap">${caption}</div>${phone}</div>`;
+}
+
+const boards = {
+  flow: () => [
+    cell("<b>① 长按选字，点「添加附注」</b>在 Message 里选字（没有 Message 的单题提问，题干就显示在这块区域里）；菜单是系统的编辑菜单，多了一项。",
+      shell(`<div class="card">${message({ a: "sel" })}</div>${questionCard({ title: "要采用哪种修复方式？", on: 0 })}`,
+        { bar: actionBar({ answered: "已回答 0/1" }), extra: menu })),
+    cell("<b>② 在底部写附注</b>弹出小面板：被选的原文在上，输入框在下；键盘一直在。",
+      shell(`<div class="card">${message({ a: "sel" })}</div>${questionCard({ title: "要采用哪种修复方式？", on: 0 })}`,
+        { bar: actionBar({ answered: "已回答 0/1" }), extra: editorSheet(NOTE_A) })),
+    cell("<b>③ 原文高亮，底栏多一个「附注」</b>点高亮的文字可再编辑；底栏圆钮带条数，点开看清单。附注不影响「已回答」的计数。",
+      shell(`<div class="card">${message({ a: "hl", b: "hl" })}</div>${questionCard({ title: "要采用哪种修复方式？", on: 2 })}`,
+        { bar: actionBar({ answered: "已回答 1/1", notes: 2 }) })),
+    cell("<b>④ 点底栏「附注」看清单</b>点一条回到原文并闪一下；左滑编辑 / 删除。",
+      shell(`<div class="card">${message({ a: "hl", b: "hl" })}</div>${questionCard({ title: "要采用哪种修复方式？", on: 2 })}`,
+        { bar: actionBar({ answered: "已回答 1/1", notes: 2 }), extra: listSheet([{ q: PHRASE_A, t: NOTE_A }, { q: PHRASE_B, t: NOTE_B }]) })),
+  ],
+  direct: () => {
+    // No Message and exactly one question: whatever its length, the question text is drawn in the Message area (web view,
+    // like a Message) and the card under it holds only the options and the input.
+    const shortQ = shell(
+      `<div class="card"><div class="region web"><span class="tag web">Message 区 · WebView</span><div class="md"><p>要继续部署到 staging 吗？</p></div></div></div>
+       <div class="card"><div class="opts" style="margin-top:0">${option("继续部署", { rec: true })}${option("先不部署")}</div>${field()}</div>`,
+      { title: "部署确认", bar: actionBar({ answered: "已回答 0/1" }) });
+    const longText = `<div class="md">
+      <p>迁移脚本已经跑完，结果有两点要你确认：</p>
+      <ul>
+        <li>旧表 <code>orders_v1</code> 里有 1,203 行没有 <code>user_id</code>，我先统一标成了 <code>unknown</code></li>
+        <li>新表比旧表<span class="hl">少 3 个索引<sup class="bd">1</sup></span>，查询在 staging 上慢了约 18%</li>
+      </ul>
+      <p><span class="hl">要不要现在补齐索引<sup class="bd">2</sup></span>，再切流量？</p>
+    </div>`;
+    const longQ = shell(
+      `<div class="card"><div class="region web"><span class="tag web">Message 区 · WebView</span>${longText}</div></div>
+       <div class="card"><div class="opts" style="margin-top:0">${option("补齐索引后再切流量", { rec: true })}${option("先切流量，索引稍后补")}${option("先不切")}</div>${field()}</div>`,
+      { title: "订单表迁移", bar: actionBar({ answered: "已回答 0/1", notes: 2 }) });
+    return [
+      cell("<b>一句话的提问也挪进来</b>没有 Message、只有一个问题：不论题干长短，一律显示在上方的 Message 区（网页渲染），选项卡里只剩选项和输入框。这种形态是少数，起一次网页进程不值得为它另做判断。", shortQ),
+      cell("<b>大段题干：同一个版面，可以选字加附注</b>题干在 Message 区里和 Message 一样可选字加附注，高亮带编号，底栏出现「附注」圆钮。有 Message 时题干仍在选项卡里，不可加附注。", longQ),
+    ];
+  },
+  bar: () => {
+    const rounds = (...kinds) => kinds.map((k) => ({ menu: { icon: ICON.reply }, notes: { icon: ICON.note, ann: true, badge: 2 }, next: { icon: ICON.down } })[k]);
+    // `above`: the count sits on a row of its own over the buttons (`CountAndButtons` when not even "1/3" fits beside them);
+    // `fullChip`: at accessibility sizes the chip spans the row.
+    const strip = ({ w, h = 50, fs = 17, scale = 1, count, above = false, fullChip = false, kinds, send, sendW }) => {
+      const circle = (r) => `<div class="round${r.ann ? " ann" : ""}" style="width:${h}px;height:${h}px"><span style="display:grid;transform:scale(${scale})">${r.icon}</span>${r.badge ? `<span class="badge">${r.badge}</span>` : ""}</div>`;
+      const chip = `<div class="pill" style="height:${above ? Math.round(h * 0.68) : h}px;font-size:${fs - 2}px;font-weight:500;padding:0 14px;white-space:nowrap;${fullChip ? "flex:1;" : "flex:none;"}">${count}</div>`;
+      const sendEl = `<div class="send" style="${sendW ? `flex:none;width:${sendW}px;` : ""}height:${h}px;font-size:${fs}px;white-space:nowrap">${send}</div>`;
+      const btns = rounds(...kinds).map(circle).join("");
+      const inner = above
+        ? `<div style="display:flex;margin-bottom:10px">${chip}</div><div class="srow">${btns}${sendEl}</div>`
+        : `<div class="srow">${chip}<div style="flex:1"></div>${btns}${sendEl}</div>`;
+      return `<div class="strip" style="width:${w}px">${inner}</div>`;
+    };
+    return [
+      cell("<b>① 393 pt · 有附注（没有「下一题」圆钮）：并排，计数缩成「1/1」</b>快捷回复、「附注」两个圆钮（各 50 pt）加「发送」（约 132 pt）共约 256 pt；计数只剩约 93 pt，放不下「已回答 1/1」（约 100 pt），缩成「1/1」。没有附注时它放得下。",
+        strip({ w: 393, count: "1/1", kinds: ["menu", "notes"], send: "发送", sendW: 132 })),
+      cell("<b>② 375 pt（iPhone SE）· 同上：仍是一行，计数「1/3」</b>按钮同样约 256 pt，计数剩约 75 pt，放得下「1/3」（约 52 pt）。",
+        strip({ w: 375, count: "1/3", kinds: ["menu", "notes"], send: "发送", sendW: 132 })),
+      cell("<b>③ 393 pt · 多题，「下一题」圆钮也在（走到过末题、屏幕下方还有题）：计数挪到按钮上方</b>三个圆钮加「发送」约 318 pt，计数只剩约 31 pt，连「1/3」也放不下，于是计数独占一行（现有 G12 ③），按钮保持常规高度，「发送」吃满剩余的 175 pt。",
+        strip({ w: 393, count: "已回答 1/3", above: true, kinds: ["menu", "notes", "next"], send: "发送" })),
+      cell("<b>④ 375 pt · 同上，又选了「发送并离开」</b>排法同③；「发送并离开」有 157 pt，放得下（现有 G12 已覆盖这个组合，少了附注圆钮时是 219 pt）。",
+        strip({ w: 375, count: "已回答 1/3", above: true, kinds: ["menu", "notes", "next"], send: "发送并离开" })),
+      cell("<b>⑤ 375 pt · 辅助字号</b>圆钮随字号变大到 64 pt，计数通栏在上；三个圆钮之后「发送」还剩 115 pt（没有附注时是 191 pt），仍比最小宽度 84 pt 宽，不会溢出。",
+        strip({ w: 375, h: 64, fs: 22, scale: 1.25, count: "已回答 1/3", above: true, fullChip: true, kinds: ["menu", "notes", "next"], send: "发送" })),
+      `<div class="cap" style="min-height:0;max-width:540px;font-size:13px;color:#6c6c70">宽度是按 <code>ButtonRow</code> / <code>CountAndButtons</code> 的排法和 G12 记录的「402 pt 机型上三个控件并排放不下完整计数」反推的估算（「发送」理想宽度 ≈ 84 pt 最小标签宽 + 两侧各 24 pt 内边距）；落地时在 iPhone SE 模拟器里用 <code>AskHumanBarUITests</code> 逐态实测。</div>`,
+    ];
+  },
+};
+
+const query = new URLSearchParams(location.search);
+const which = query.get("board") || "flow";
+const only = (query.get("cells") || "").split(",").map(Number).filter(Boolean);
+if (which === "bar") document.getElementById("board").classList.add("col");
+document.getElementById("board").innerHTML = (boards[which] || boards.flow)()
+  .filter((_, i) => only.length === 0 || only.includes(i + 1))
+  .join("");
+
+/** Draws the selection handles and the edit menu around the `.sel` text of a phone. */
+function placeSelection(phone) {
+  const sel = phone.querySelector(".sel");
+  const menuEl = phone.querySelector(".menu");
+  if (!sel || !menuEl) return;
+  const pr = phone.getBoundingClientRect();
+  const rects = Array.from(sel.getClientRects());
+  const first = rects[0];
+  const last = rects[rects.length - 1];
+  const s = phone.querySelector(".knob.s");
+  const e = phone.querySelector(".knob.e");
+  s.style.cssText = `left:${first.left - pr.left - 1}px;top:${first.top - pr.top}px;height:${first.height}px`;
+  e.style.cssText = `left:${last.right - pr.left - 1}px;top:${last.top - pr.top}px;height:${last.height}px`;
+  const box = sel.getBoundingClientRect();
+  const w = menuEl.offsetWidth;
+  const x = Math.max(12, Math.min(box.left - pr.left + box.width / 2 - w / 2, 393 - w - 12));
+  menuEl.style.left = `${x}px`;
+  menuEl.style.top = `${first.top - pr.top - 46 - 14}px`;
+}
+document.fonts.ready.then(() => document.querySelectorAll(".phone").forEach(placeSelection));
+</script>
+</body>
+</html>
