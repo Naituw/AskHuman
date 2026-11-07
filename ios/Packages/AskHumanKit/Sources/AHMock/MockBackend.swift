@@ -47,7 +47,8 @@ public actor MockBackend: RemoteBackend {
         /// still loading. They stay so unless a sync delay is given, after which the demo appears.
         case syncing
         /// Macs that take notes written on the message (`caps.annotations`) and three requests about a session cache:
-        /// one that offers notes, one the Mac sent as plain text, and one from a Mac that has none.
+        /// one that offers notes, one the Mac sent as plain text, one from a Mac that has none, and one whose message is
+        /// taller than the screen.
         case annotations
     }
 

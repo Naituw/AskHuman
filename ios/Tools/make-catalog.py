@@ -649,6 +649,18 @@ ZH = {
     "Send and stop": "发送并停用",
     "Escalated while away": "离开期间升级",
     "Not using AskHuman": "不再使用 AskHuman",
+    # Notes on the message (docs/specs/message-annotations.md); the words follow the desktop popup's "附注"
+    "Add annotation": "添加附注",
+    "Edit annotation": "编辑附注",
+    "Delete annotation": "删除附注",
+    "Annotation limit reached (%lld)": "附注已满（最多 %lld 条）",
+    "Write your question or comment…": "写下你的疑问或意见…",
+    "Sent to the Agent with your answer.": "会和你的回答一起发给 Agent。",
+    "Discard this annotation?": "放弃这条附注？",
+    "Discard your changes?": "放弃你的修改？",
+    "Annotations · %lld": "附注 · %lld 条",
+    "Tap a note to see its passage. Swipe left to edit or delete. Annotations are sent to the Agent with your answer.": "点一条附注可回到它所在的段落，左滑可编辑或删除。附注会和你的回答一起发给 Agent。",
+    "Original text not found": "找不到原文位置",
 }
 
 # Shown by iOS itself when a push cannot be decrypted by the notification extension.

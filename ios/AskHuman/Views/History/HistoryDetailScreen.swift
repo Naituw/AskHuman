@@ -112,6 +112,23 @@ struct HistoryDetailScreen: View {
             }
             .card()
         }
+        // What was written on the message, as it went with the answer (docs/specs/message-annotations.md D23).
+        if !entry.annotations.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Annotations · \(entry.annotations.count)").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(Array(entry.annotations.enumerated()), id: \.offset) { index, item in
+                    HStack(alignment: .top, spacing: 12) {
+                        AnnotationNumber(number: index + 1)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(verbatim: "“\(item.quote)”").font(.footnote).foregroundStyle(.secondary).lineLimit(3)
+                            Text(verbatim: item.note).font(.body).textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .card()
+        }
     }
 
     @ViewBuilder

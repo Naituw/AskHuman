@@ -15,6 +15,9 @@ final class AskHumanBarUITests: XCTestCase {
     private var sizeName = "default"
     /// What the screen held when the menu did not show its entries, for the failure message.
     private var menuTrouble = ""
+    /// How many notes the run's request has on its message: with some, the bar has the round "Annotations" button too
+    /// (`docs/specs/message-annotations.md` D21).
+    private var notes = 0
 
     override func setUp() async throws {
         continueAfterFailure = false
@@ -27,19 +30,26 @@ final class AskHumanBarUITests: XCTestCase {
     // MARK: helpers
 
     /// Opens the three-question migration request on a Mac that knows away mode, so that the bar can hold all it ever
-    /// holds: the count, the quick-reply menu, "Next" beside "Send".
+    /// holds: the count, the quick-reply menu, the round "Annotations" button (when `notes` says there are notes),
+    /// "Next" beside "Send".
     @discardableResult
-    private func launch(contentSize: String? = nil) -> XCUIApplication {
+    private func launch(contentSize: String? = nil, notes: Int = 0) -> XCUIApplication {
         let app = XCUIApplication()
         let locale = language == "en" ? "en_US" : "zh_CN"
         app.launchArguments = [
             "-AHMock", "YES", "-AHScenario", "away", "-AHOpen", "req-migration", "-AHLatency", "0.05", "-AHAutoAdvance", "NO",
             "-AHWebMarkdown", "NO", "-AppleLanguages", "(\(language))", "-AppleLocale", locale,
         ]
+        if notes > 0 {
+            // The Macs of the away scenario take no notes: this makes them (and the request) take them, and writes some.
+            app.launchArguments += ["-AHAnnotate", "YES", "-AHNotes", "\(notes)"]
+        }
+        self.notes = notes
         if let contentSize {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSize]
             sizeName = contentSize.replacingOccurrences(of: "UICTContentSizeCategory", with: "")
         }
+        if notes > 0 { sizeName += "-notes" }
         app.launch()
         self.app = app
         return app
@@ -84,7 +94,8 @@ final class AskHumanBarUITests: XCTestCase {
         }
         let window = app.windows.firstMatch.frame
         let line = "\(language)-\(sizeName) \(state): window \(Int(window.width))x\(Int(window.height)) | count \(rect("answered-count")) | "
-            + "menu \(rect("quick-reply-menu")) | next \(rect("next-button")) | send \(rect("send-button"))\n"
+            + "menu \(rect("quick-reply-menu")) | notes \(rect("annotations-button")) | next \(rect("next-button")) | "
+            + "send \(rect("send-button"))\n"
         let url = URL(fileURLWithPath: folder).appendingPathComponent("frames.txt")
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let handle = try? FileHandle(forWritingTo: url) {
@@ -128,9 +139,16 @@ final class AskHumanBarUITests: XCTestCase {
         let window = app.windows.firstMatch.frame
         let count = requireElement("answered-count").frame
         let primary = requireElement(primaryID).frame
-        let buttons: [(id: String, frame: CGRect)] = ["quick-reply-menu", "next-button", "send-button"].compactMap { id in
+        let buttons: [(id: String, frame: CGRect)] = ["quick-reply-menu", "annotations-button", "next-button", "send-button"].compactMap { id in
             let found = element(id)
             return found.exists ? (id, found.frame) : nil
+        }
+        // The notes are in the draft from the start of the run, so their button is there in every state, with their number.
+        XCTAssertEqual(element("annotations-button").exists, notes > 0, "\(state): the Annotations button is there when there are notes, and only then")
+        if notes > 0 {
+            XCTAssertTrue(
+                element("annotations-button").label.contains("\(notes)"), "\(state): the button says how many notes there are"
+            )
         }
 
         // The point of it all: what is said beside the buttons never makes them taller than they are at rest. (Shorter is
@@ -243,6 +261,43 @@ final class AskHumanBarUITests: XCTestCase {
     /// The accessibility sizes stack the count over the buttons whatever the width is.
     func testTheBarAtAccessibilityText() {
         launch(contentSize: "UICTContentSizeCategoryAccessibilityM")
+        checkTheCrowdedStates()
+    }
+
+    // MARK: with notes on the message: a round "Annotations" button joins the row
+
+    // The same three states, with the third circle (the quick-reply menu, "Annotations", "Next") in the row. How much room
+    // that leaves the count and the main button on a 375 pt phone is what `docs/specs/message-annotations.md` §4.3 only
+    // estimates: these are run on that width (docs/plans/message-annotations.md §7.3).
+
+    func testTheBarWithNotesAtTheDefaultTextSize() {
+        launch(notes: 2)
+        checkTheCrowdedStates()
+    }
+
+    /// The most notes there are: the badge is two digits wide.
+    func testTheBarWithTheMostNotes() {
+        launch(notes: 20)
+        checkTheCrowdedStates()
+    }
+
+    func testTheBarWithNotesAtLargeText() {
+        launch(contentSize: "UICTContentSizeCategoryXL", notes: 2)
+        checkTheCrowdedStates()
+    }
+
+    func testTheBarWithNotesAtLargerText() {
+        launch(contentSize: "UICTContentSizeCategoryXXL", notes: 2)
+        checkTheCrowdedStates()
+    }
+
+    func testTheBarWithNotesAtTheLargestStandardText() {
+        launch(contentSize: "UICTContentSizeCategoryXXXL", notes: 2)
+        checkTheCrowdedStates()
+    }
+
+    func testTheBarWithNotesAtAccessibilityText() {
+        launch(contentSize: "UICTContentSizeCategoryAccessibilityM", notes: 2)
         checkTheCrowdedStates()
     }
 }

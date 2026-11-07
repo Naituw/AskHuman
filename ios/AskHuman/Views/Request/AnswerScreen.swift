@@ -85,6 +85,7 @@ struct AnswerScreen: View {
                         onSend: { send(composer) },
                         onQuickReply: { reply in send(composer, quickReply: reply) },
                         onNext: { next(composer, proxy: proxy) },
+                        onAnnotations: { showAnnotations() },
                         onJump: { jumpToMissing(composer, proxy: proxy) }
                     )
                 }
@@ -110,12 +111,37 @@ struct AnswerScreen: View {
                 .sheet(item: Binding(get: { annotations.editing }, set: { annotations.editing = $0 }), onDismiss: { annotations.closed() }) { edit in
                     AnnotationEditorSheet(edit: edit, composer: composer, host: annotations)
                 }
+                // The list of notes. A row that leads on (to the editor, or to the passage) is carried out once the sheet is
+                // gone, from here: a sheet cannot start another one, nor a scroll, while it is still leaving.
+                .sheet(isPresented: Binding(get: { annotations.listing }, set: { annotations.listing = $0 }), onDismiss: { afterTheList() }) {
+                    AnnotationListSheet(composer: composer, host: annotations)
+                }
             }
 
         }
     }
 
     fileprivate static func cardID(_ index: Int) -> String { "question-\(index)" }
+
+    /// The keyboard goes first (the list covers the form, and a text field that keeps the keyboard under it would
+    /// bring it back up with it), then the list.
+    private func showAnnotations() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        focused = nil
+        annotations.listing = true
+    }
+
+    /// The list of notes is gone. When a row sent the person on, this is where they go.
+    private func afterTheList() {
+        switch annotations.takeDeparture() {
+        case .edit(let id)?:
+            annotations.beginEdit(id)
+        case .reveal(let id)?:
+            Task { await annotations.page?.reveal(id) }
+        case nil:
+            break
+        }
+    }
 
     private var sending: Bool { if case .sending = item.state { true } else { false } }
 
@@ -699,6 +725,8 @@ private struct SendBar: View {
     /// A quick reply of the bar menu: sends the form with it.
     let onQuickReply: (String) -> Void
     let onNext: () -> Void
+    /// The round "Annotations" button: opens the list of the notes written on the message.
+    let onAnnotations: () -> Void
     let onJump: () -> Void
 
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -732,6 +760,7 @@ private struct SendBar: View {
         .classicBarBacking()
         .animation(.snappy(duration: 0.25), value: composer.hasReachedEnd)
         .animation(.snappy(duration: 0.25), value: moreBelow)
+        .animation(.snappy(duration: 0.25), value: composer.annotations.isEmpty)
         .animation(.snappy(duration: 0.25), value: composer.directive?.kind)
         // Once the question is over (sent, or answered elsewhere) there is nothing left to arm: the panel goes, and with
         // it the keyboard of its note.
@@ -768,8 +797,8 @@ private struct SendBar: View {
         }
     }
 
-    /// The row of buttons: the quick-reply menu, "Next", "Send". On the floating bar `ButtonRow` makes the two small ones
-    /// circles as tall as "Send" (and so as wide), whatever the text size makes that.
+    /// The row of buttons: the quick-reply menu, "Annotations", "Next", "Send". On the floating bar `ButtonRow` makes all
+    /// but "Send" circles as tall as "Send" (and so as wide), whatever the text size makes that.
     @ViewBuilder
     private var buttons: some View {
         if BottomBar.floats {
@@ -788,6 +817,11 @@ private struct SendBar: View {
         if store.offersDirectives(for: item) {
             DirectiveMenu(composer: composer, disabled: ended || busy, canSend: enabled, onQuickReply: onQuickReply,
                           fillsRow: BottomBar.floats)
+        }
+        // Only once there is a note, and for as long as there is: notes the message page cannot take any more (it was
+        // drawn natively) stay in the answer, and so does the way to them.
+        if !composer.annotations.isEmpty {
+            annotationsButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
         }
         if composer.hasReachedEnd, moreBelow {
             nextIconButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
@@ -937,6 +971,37 @@ private struct SendBar: View {
             .disabled(ended || sendingState)
             .accessibilityLabel("Next question")
             .accessibilityIdentifier("next-button")
+        }
+    }
+
+    /// Between the quick-reply menu and "Next": opens the list of notes. A round button like its neighbours (a glass circle
+    /// as tall as the row on the floating bar, an outlined capsule on the classic one), the colour of the notes, with the
+    /// number of them on its corner.
+    @ViewBuilder
+    private var annotationsButton: some View {
+        let count = composer.annotations.count
+        if BottomBar.floats {
+            Button(action: onAnnotations) {
+                Image(systemName: "note.text").barRowRoundGlyph().foregroundStyle(Color.purple)
+            }
+            .barRoundButton()
+            .disabled(ended || sendingState)
+            .accessibilityLabel(Text("Annotations · \(count)"))
+            .accessibilityIdentifier("annotations-button")
+            // After the button's own accessibility, so that the badge is not part of the button's frame.
+            .overlay(alignment: .topTrailing) { AnnotationCountBadge(count: count).offset(x: 4, y: -4) }
+        } else {
+            Button(action: onAnnotations) {
+                Image(systemName: "note.text")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.purple)
+                    .frame(minWidth: 22)
+            }
+            .barSecondaryButton()
+            .disabled(ended || sendingState)
+            .accessibilityLabel(Text("Annotations · \(count)"))
+            .accessibilityIdentifier("annotations-button")
+            .overlay(alignment: .topTrailing) { AnnotationCountBadge(count: count).offset(x: 4, y: -4) }
         }
     }
 

@@ -83,6 +83,12 @@ struct LaunchOptions {
     #else
     var webTimeout = 5.0
     #endif
+    /// `-AHAnnotate YES`: every request of the mock takes notes on its message, as the newest Macs allow (UI tests of the
+    /// answer bar, whose forms are not in the `annotations` scenario).
+    var annotate = false
+    /// `-AHNotes 3`: the request `-AHOpen` names starts with this many notes written on its message (the number on the bar's
+    /// "Annotations" button). It has to take notes: with `-AHScenario annotations`, or `-AHAnnotate YES`.
+    var notes = 0
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
@@ -126,6 +132,8 @@ struct LaunchOptions {
         notifyRequest = defaults.string(forKey: "AHNotify")
         if defaults.object(forKey: "AHWebMarkdown") != nil { webMarkdown = defaults.bool(forKey: "AHWebMarkdown") }
         if defaults.object(forKey: "AHWebTimeout") != nil { webTimeout = defaults.double(forKey: "AHWebTimeout") }
+        annotate = defaults.bool(forKey: "AHAnnotate")
+        notes = min(Wire.maxAnnotations, max(0, defaults.integer(forKey: "AHNotes")))
     }
 }
 
@@ -224,6 +232,7 @@ final class AppEnvironment {
             if launch.maxControl { await backend.setOffersMaxControl(true) }
             if let reason = launch.failTask { await backend.setFailNextTask(reason) }
             await backend.setTaskAttachmentOptions(supported: !launch.noTaskAttachments, failUpload: launch.failTaskUpload)
+            if launch.annotate { await backend.allowAnnotations() }
         }
         await store.start()
         await push.refreshAuthorization()
@@ -242,6 +251,9 @@ final class AppEnvironment {
             for _ in 0..<50 where store.state.inbox.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
             if let item = store.state.inbox.first(where: { $0.requestId == request || $0.id == request }) {
                 store.open(macId: item.macId, requestId: item.requestId)
+                if launch.mock, launch.notes > 0, let composer = store.composer(for: item) {
+                    Self.seedNotes(launch.notes, in: composer)
+                }
                 // The page is up: the request ends while it is being looked at.
                 if let seconds = launch.endAfter, let backend = mock {
                     let (macId, requestId, outcome, by) = (item.macId, item.requestId, launch.endHow, launch.endBy)
@@ -280,6 +292,14 @@ final class AppEnvironment {
                     try? composer.addAttachment(name: "Screen.png", mime: "image/png", data: png, isImage: true)
                 }
             }
+        }
+    }
+
+    /// Writes `count` notes on the message of a request, for the UI tests of the bar. They sit at made-up places, so the
+    /// page finds the passage of some of them by their words and not of others; all of them count all the same.
+    private static func seedNotes(_ count: Int, in composer: AnswerComposer) {
+        for index in 0..<count {
+            composer.addAnnotation(start: index * 12, end: index * 12 + 5, quote: "users", note: "Note \(index + 1)")
         }
     }
 }

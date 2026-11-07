@@ -40,6 +40,10 @@ struct AnnotationEditorSheet: View {
 
     private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
 
+    // (Typed as keys on purpose: a choice between two literals could be taken for plain strings, which are not translated.)
+    private var title: LocalizedStringKey { existing == nil ? "Add annotation" : "Edit annotation" }
+    private var discardQuestion: LocalizedStringKey { existing == nil ? "Discard this annotation?" : "Discard your changes?" }
+
     /// Words that would be lost by leaving: what is written for a new note, what was changed in one that exists.
     /// A sheet in that state does not go away by a swipe or a tap on "Cancel" alone.
     private var hasUnsavedText: Bool {
@@ -87,7 +91,7 @@ struct AnnotationEditorSheet: View {
             }
             .scrollDismissesKeyboard(.never)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(existing == nil ? "Add annotation" : "Edit annotation")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -111,10 +115,7 @@ struct AnnotationEditorSheet: View {
         }
         .presentationDetents([.medium, .large])
         .interactiveDismissDisabled(hasUnsavedText)
-        .confirmationDialog(
-            existing == nil ? "Discard this annotation?" : "Discard your changes?", isPresented: $confirmDiscard,
-            titleVisibility: .visible
-        ) {
+        .confirmationDialog(discardQuestion, isPresented: $confirmDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { host.editing = nil }
             Button("Keep editing", role: .cancel) {}
         }

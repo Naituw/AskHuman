@@ -191,6 +191,61 @@ struct WebPage: UIViewRepresentable {
             webView?.evaluateJavaScript(NotesPage.clearSelection, completionHandler: nil)
         }
 
+        /// Brings the passage of a note into view, and makes it flash once it is there.
+        ///
+        /// The page does not scroll (its height is that of its text); the screen does, so the page says where the
+        /// passage is in it and the scroll view around the web view is moved to put that spot a little below the top of
+        /// what can be seen. (A `ScrollViewProxy` needs a view to scroll to, and the passage is not one.)
+        func reveal(_ id: Int) async {
+            guard ready, let webView, let top = await position(of: id) else { return }
+            if let scroll = Self.scrollView(above: webView) {
+                let passage = webView.convert(CGPoint(x: 0, y: top), to: scroll).y
+                let target = Self.offset(showing: passage, in: scroll)
+                if abs(scroll.contentOffset.y - target) > 1 {
+                    let animated = !UIAccessibility.isReduceMotionEnabled
+                    scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: target), animated: animated)
+                    // The flash is for the eye once the passage is where it is looked for, not on its way there.
+                    if animated { try? await Task.sleep(for: .milliseconds(450)) }
+                }
+            }
+            webView.evaluateJavaScript(NotesPage.flash(id), completionHandler: nil)
+        }
+
+        /// Where a note's passage starts, in points below the top of the page; `nil` when the page has no such passage.
+        private func position(of id: Int) async -> CGFloat? {
+            guard let webView else { return nil }
+            return await withCheckedContinuation { continuation in
+                webView.evaluateJavaScript(NotesPage.locate(id)) { result, _ in
+                    // The page answers with a number whatever happens: -1 is "not there".
+                    guard let value = (result as? NSNumber)?.doubleValue, value.isFinite, value >= 0 else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    continuation.resume(returning: CGFloat(value))
+                }
+            }
+        }
+
+        /// The scroll view the screen is in (not the web view's own, which is inside it and does not scroll).
+        private static func scrollView(above view: UIView) -> UIScrollView? {
+            var ancestor = view.superview
+            while let parent = ancestor {
+                if let scroll = parent as? UIScrollView { return scroll }
+                ancestor = parent.superview
+            }
+            return nil
+        }
+
+        /// The scroll offset that puts the point `y` (in the content of `scroll`) about a third of the way down the part of
+        /// it that can be seen: under the navigation bar and above the bottom bar. Kept within what the content allows.
+        private static func offset(showing y: CGFloat, in scroll: UIScrollView) -> CGFloat {
+            let inset = scroll.adjustedContentInset
+            let visible = scroll.bounds.height - inset.top - inset.bottom
+            let lowest = -inset.top
+            let highest = max(lowest, scroll.contentSize.height - scroll.bounds.height + inset.bottom)
+            return min(highest, max(lowest, y - inset.top - visible * 0.3))
+        }
+
         /// Gives the page up: the native renderer draws the text from now on. (Not done inside a view
         /// update, which is where this may be called from.)
         private func fail(_ reason: String) {

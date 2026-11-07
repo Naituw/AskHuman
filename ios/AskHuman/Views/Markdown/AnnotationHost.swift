@@ -7,6 +7,9 @@ import AHCore
 protocol AnnotationPage: AnyObject {
     /// Lets go of the selection in the page, so that its handles go away with the writing of a note.
     func clearSelection()
+    /// Brings the passage of a note into view (the screen scrolls, not the page) and makes it flash once it is there.
+    /// Nothing happens for a note whose passage the page has not got.
+    func reveal(_ id: Int) async
 }
 
 /// What is being written in the editor sheet.
@@ -30,6 +33,20 @@ struct AnnotationEdit: Identifiable, Equatable {
 final class AnnotationHost {
     /// The note the editor sheet is open on, while it is.
     var editing: AnnotationEdit?
+    /// The list of notes is up.
+    var listing = false
+
+    /// Where a row of the list sends the person once the list is gone. A sheet cannot hand over to another one, or to
+    /// a scroll the screen wants to make, while it is still leaving: the screen asks for this from the sheet's
+    /// `onDismiss` (`takeDeparture`).
+    enum Departure: Equatable {
+        /// To the editor, on the note with this number.
+        case edit(Int)
+        /// To the passage of the note with this number, in the message.
+        case reveal(Int)
+    }
+
+    @ObservationIgnored private var departure: Departure?
 
     /// What the page last said was selected: the menu builds its entry from it. Not drawn by any view.
     @ObservationIgnored var selection: NotesPage.Selection?
@@ -56,6 +73,18 @@ final class AnnotationHost {
     /// A note is to be changed (its highlight was tapped, or its entry in the list).
     func beginEdit(_ id: Int) {
         editing = AnnotationEdit(target: .existing(id))
+    }
+
+    /// Closes the list and keeps where it was left for, to be taken once the sheet is gone.
+    func leaveTheList(for departure: Departure) {
+        self.departure = departure
+        listing = false
+    }
+
+    /// Where the list was left for, when it was left for somewhere (not by "Done" or a swipe down); asked once only.
+    func takeDeparture() -> Departure? {
+        defer { departure = nil }
+        return departure
     }
 
     /// The sheet is gone, however it went (a note written or deleted, the writing given up, a swipe down): the
