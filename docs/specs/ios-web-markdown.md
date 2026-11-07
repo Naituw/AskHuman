@@ -25,19 +25,19 @@ markdown-it 在语法与渲染规则上有结构性差距——软换行被合�
 | 编号 | 决策项 | 结论 |
 |---|---|---|
 | U1 | 采用与否 | 正式实现 |
-| U2 | 范围 | 请求**消息正文**用 WebView；**题干、列表卡片、实时（Watch）卡片保持原生** |
+| U2 | 范围 | 请求**消息正文**用 WebView；**题干、列表卡片、实时（Watch）卡片保持原生**。**一种形态例外**（`docs/specs/message-annotations.md` D19，2026-11-07）：没有 Message（文字与附件都没有）、恰好一个问题、不是 What's next 的「直接提问」，题干一律画在上方的 Message 网页里（Markdown 时；非 Markdown 或网页没起来用原生文字，仍在上方），选项卡里只剩选项与输入框——这样手机上可附注的文字永远在同一块网页里。只看这四条，不看 Mac 能力、是否 Markdown、是否严格选择；有 Message 的提问、多题与 What's next 的题干仍保持原生 |
 | U3 | 粒度 | 一页一个 WebView，不为每个题干 / 每张卡片各开一个 |
 
 ## 3. 我自行决定的细节（用户睡前授权全权处理，可调）
 
 | 编号 | 决策项 | 结论 |
 |---|---|---|
-| W1 | 用在哪些页面 | 提问页的 Message（`AnswerScreen`）、确认页的详情正文（`ConfirmScreen` 的 `bodyMd`）、历史详情里的同两处（提问的 Message、确认的详情）。每页至多一个。其余（题干、列表摘要、WatchCard、Markdown 附件预览）仍用原生 |
+| W1 | 用在哪些页面 | 提问页的 Message（`AnswerScreen`）、确认页的详情正文（`ConfirmScreen` 的 `bodyMd`）、历史详情里的同两处（提问的 Message、确认的详情）。每页至多一个。其余（题干、列表摘要、WatchCard、Markdown 附件预览）仍用原生（直接提问的题干除外，见 U2；它占用的就是提问页的这一个网页） |
 | W2 | 引擎与版本 | 与 Mac 弹窗同一套：markdown-it（`html:false, linkify:true, breaks:true`）+ Mermaid；版本与根 `package.json` 一致（当前 markdown-it 14.3.0、Mermaid 11.16.1），文件随 App 打包、完全离线。`ios/Tools/web-markdown/sync.sh` 从 `node_modules` 同步并写出 `VERSIONS.txt`，升级 npm 依赖后重跑 |
 | W3 | 页面资源 | `ios/AskHuman/Resources/WebMarkdown/`（`index.html`、`style.css`、`render.js`、两个库）作为**文件夹引用**打进 App；一个页面实例 = 一个 `WKWebView` 加载 `index.html`，之后用 `AH.render(source, options)` 渲染。Mermaid 库只在文本里真有 ` ```mermaid ` 代码块时才加载 |
 | W4 | 高度 | 页面用 `ResizeObserver` 上报内容高度（点）；SwiftUI 按它设 `frame(height:)`，高度变化走动画。原生侧把高度夹在 0…20000，防止页面脚本报出离谱的数。同一段文字上一次的高度缓存起来作为下次的起始高度（回到旧页不跳）。（原型里还有「第一行基线」探针，用来对齐题干前的原生角标；题干保持原生后用不到，已去掉。） |
 | W5 | 图片 | 与现状一致：**不联网取图**。`data:image/*` 内联图片显示；其余（网络、本地路径）显示「图片说明」占位胶囊。理由：Agent 写的 Markdown 不可信，联网取图会泄露 IP / 被追踪；本地图片的 `ahasset://` 懒加载另案（见 `ios-channel.md` §6.5） |
-| W6 | 安全 | 页面除 `ready` / `height` / `rendered` / `copy` / `failed` 五个消息外没有任何原生能力；`index.html` 带 CSP（`default-src 'none'`，只放行本页脚本 / 样式与 `data:` 图片），断网也能用；导航被锁死（只允许最初的文件加载，链接点击一律交给原生）；`copy` 消息限长。Mermaid 用 `securityLevel:'strict'` + `htmlLabels:false` + `suppressErrorRendering` + `maxTextSize 40000` + `maxEdges 400`，最多 10 张图、单图源文最多 40000 字符（与 Mac 同限额）。**与 Mac 的差别**：Mac 的 M10 要求 `sandbox` 并重封装 iframe，因为那个页面带着 Tauri 的特权接口；手机上这个页面是一次性、无特权的，所以用 `strict` + CSP + 锁死导航。如要对齐 `sandbox`，另案 |
+| W6 | 安全 | 页面除 `ready` / `height` / `rendered` / `copy` / `failed` 五个消息（以及 W18 的附注消息 `selection` / `noteTap` / `notes`）外没有任何原生能力；`index.html` 带 CSP（`default-src 'none'`，只放行本页脚本 / 样式与 `data:` 图片），断网也能用；导航被锁死（只允许最初的文件加载，链接点击一律交给原生）；`copy` 消息限长。Mermaid 用 `securityLevel:'strict'` + `htmlLabels:false` + `suppressErrorRendering` + `maxTextSize 40000` + `maxEdges 400`，最多 10 张图、单图源文最多 40000 字符（与 Mac 同限额）。**与 Mac 的差别**：Mac 的 M10 要求 `sandbox` 并重封装 iframe，因为那个页面带着 Tauri 的特权接口；手机上这个页面是一次性、无特权的，所以用 `strict` + CSP + 锁死导航。如要对齐 `sandbox`，另案 |
 | W7 | 链接 | 沿用现状：http(s) 先弹「打开此链接？」显示域名，再用应用内浏览器打开；`mailto:` / `tel:` 交系统；其它协议（含 `javascript:`、`file:`、`data:`）忽略 |
 | W8 | 选字与复制 | 网页原生选区（长按选词、拖动手柄、复制 / 查询 / 翻译）；代码块右上角保留复制按钮（点击复制整块，轻触感） |
 | W9 | 外观 | 跟随系统深色模式（CSS `prefers-color-scheme`，Mermaid 主题随之，系统切换时重绘）；字号用 `font: -apple-system-body`，App 内 Dynamic Type 变化时重新渲染；样式与 Mac `.markdown-body` 对齐（标题 / 列表 / 引用 / 行内代码底 / 代码块 / 表格 / 链接 / 分隔线），颜色用 iOS 系统色 |
@@ -48,11 +48,12 @@ markdown-it 在语法与渲染规则上有结构性差距——软换行被合�
 | W14 | 原生渲染顺带修的 | 仍用原生的地方（题干、Watch 卡片、附件预览）：软换行改为换行（与 `breaks:true` 一致）；行内代码加浅底；文字可选。表格长单元格换行、Mermaid、本地图片留给 WebView 或另案 |
 | W16 | 加载中的样子 | 页面在报出第一个高度前整个透明（高度沿用同一段文字上次的高度，没有就是一行高）；超过 0.6 秒还没好，卡片左上角出现一个小转圈，好了就淡入、转圈消失。真机上页面约 0.1–0.2 秒就绪，几乎看不到转圈；冷启动的模拟器要 4–12 秒（机器很忙时更久），所以模拟器上看门狗默认放宽到 30 秒，网页的 UI 测试传 60；其余 UI 测试直接走原生渲染（`-AHWebMarkdown NO`），因为网页晚到几秒会把下面的版面整体推走，点按会落空 |
 | W17 | 测试挂钩 | `-AHWebMarkdown NO` 强制走原生渲染（回落路径的测试用），`-AHWebTimeout <秒>` 改看门狗时间；Mock 场景 `markdown`（一份带软换行、行内样式、内联图片、长单元格表格、Mermaid 流程图、代码、引用、嵌套列表和三道题的迁移评估报告）与 `tall`（同一份高 Message + 两道很短的仅选择题，用来证明 W13：不等 Message 排版的话，那两道题会在页面还是一行高时被误判为已看过）。WebView 的内容在无障碍树里是一串平铺的普通元素（没有 WebView 节点），UI 测试靠只有网页才有的标志来区分渲染器：复制按钮标签为「Copy」（原生是「Copy code」）、Mermaid 图是带图中文字的 `Image` |
+| W18 | 消息附注 | 提问页的 Message 网页可以选字写附注（`docs/specs/message-annotations.md`）：页面多加载 `annotations.js`（弹窗共用的引擎 `src/lib/annotations.ts` 的打包产物）与 `notes.js`（页面胶水）；`AH.render` 被包一层，每次重绘后立刻重画高亮；原生到页面是 `AH.setNotes / setPending / locate / flash / clearSelection`，页面到原生多三条脚本消息 `selection` / `noteTap` / `notes`。`WebMarkdownView` 只有被传入 `notes:` 时才启用这些（历史页、确认页等其余用处与以前完全一样）。选区菜单靠 `WKWebView` 子类的 `buildMenu(with:)`。引擎的坐标系是附注根（`#content`）下「未被跳过的文本节点依次拼接」，Mermaid 块不计入，所以图渲染完成不改变坐标 |
 | W15 | 无障碍 | WebView 内容由 VoiceOver 原生朗读，不额外包装；代码块复制按钮有 `aria-label`（本地化）；Mermaid 图带 `role="img"` 与可读标题（取自图中文字） |
 
 ## 4. 不做 / 后置
 
-- 题干、列表卡片、Watch 卡片、Markdown 附件预览改 WebView（用户明确要求保持原生；附件预览若要统一另案）。
+- 题干、列表卡片、Watch 卡片、Markdown 附件预览改 WebView（用户明确要求保持原生；附件预览若要统一另案）。直接提问的题干并入 Message 网页是 U2 里的一种形态例外。
 - 联网取图、`ahasset://` 本地图片（W5）。
 - 预渲染（请求到达时就在后台算好高度）：首屏有约 0.15–0.25 秒的占位，用淡入 + 高度动画掩盖；若实机仍觉得跳，再做预渲染。
 - Mermaid `sandbox` 对齐（W6）。

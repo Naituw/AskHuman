@@ -122,6 +122,8 @@ Interject 是「打断进行中」的纠偏语义，不适合），希望：
 | 只填自由文本 | 执行该文本（全新指令） | 不出队 |
 | 选「结束本轮」且无文本 | 同意结束：agent 输出结束 marker 后自然停止 | 不出队 |
 | 选「结束本轮」但填了文本 | **视为继续**：文本是新指令（有话说＝还没完，与 Stop 卡「纯文字=继续」一致） | 不出队 |
+| 选「结束本轮」（或什么都没选）但写了**附注** | **不批准结束**：只把附注交给 Agent（输出只有 `[user_annotations]` 区块，另有附件时 `[files]` 在前），它回应附注后再次调用 whats-next（消息附注 D5，`docs/specs/message-annotations.md`；同一条「有话说＝还没完」的道理，误结束的代价比多问一轮大）。内部是 `WhatsNextReply::NotesOnly`，没有「结束本轮」那行 | 不出队 |
+| 选了建议 / 待办 / 填了文本，同时写了**附注** | 照上面各行派活，附注作为 `[user_annotations]` 区块追加在其余区块（含 `[files]`）之后一并送达 | 按各行 |
 | 取消 / 关窗 / 超时 | 沿用普通 Ask 取消语义（`[status]` 指示继续询问） | 不出队 |
 
 - **出队时机＝「开始执行」**：Coordinator 首个终态回答的唯一汇聚点上，把选中的待办
@@ -143,6 +145,7 @@ whats-next 是固定题目，输出直接复用普通 Ask 的区块词汇，agen
   turn」）判断可结束，随后按既有 marker 行输出 `[user_confirmed_end_turn]`。
 - 取消 / 超时 → 沿用现有 `[status]` 区块语义（指示继续询问）。
 - 附件照旧按 `[files]` 附后；MCP `whats_next` 工具返回同一文本。
+- 附注（用户在 Message 里选字写的批注，`docs/specs/message-annotations.md`）：作为 `[user_annotations]` 区块追加在最后（`[files]` 之后）；只有附注、没有派活也没有准许结束时只输出这个区块，Agent 应回应附注后再次 `--whats-next`。MCP `whats_next` 的描述里写明「只有 `[user_annotations]` 的回复不批准结束」。
 - `--agent-help` 只说用法与语义（用户会给出下一个任务或确认结束），**不描述输出结构**
   （第 19 轮定案：与 Ask 同语义故无需另行说明；`--stdin` 报告写法仍在 help，rules 里
   不重复）。
@@ -385,3 +388,4 @@ AskHuman todo clear                # 清空本项目（需交互确认，或 --y
   自动待办继续优先并直接接管。
 - （2026-07-17 来源标记）Agent 经 CLI 添加待办时复用提问的调用方识别，只记录 Agent 家族；
   GUI 待办行正文下方显示「来自 Codex」式来源，执行历史也保留并显示，恢复后继续保留。
+- （2026-11-07 消息附注，`docs/specs/message-annotations.md` D5）：What's next 的 Message（完成报告）可以选字写附注；选了「结束本轮」又写了附注，不批准结束、只交付附注（用户第 2 轮 Q4 定：沿用「结束＋文字＝继续」）。What's next 的固定问句本身不可附注（N1）。

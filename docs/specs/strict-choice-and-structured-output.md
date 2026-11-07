@@ -44,6 +44,7 @@ AskHuman "看看这个改动？" -q "继续吗？" -o "继续" -o "停止" --out
 | D6 | 统一英文字段（文本侧） | 纯文本"**只改名 + 合并附件，不加其它字段**"：`[选择的选项]`→`[selected_options]`、`[用户输入]`→`[user_input]`、`[图片]`与`[文件]`**合并为** `[files]`（图片/文件/目录的本地路径，模型按后缀区分）、`[状态]`→`[status]`（取消）。**恒英文、不再随界面语言本地化**；多题仍 `# Q1` 分组。**不**在文本中新增 `selected_indices` / `action` / `channel`（这些仅 JSON 有） |
 | D7 | JSON 结构 | snake_case、**美化多行**。顶层 `action`（`answer`\|`cancel`）+ `channel`（作答渠道 id）。`answers` 仅含**有作答**的题，每项 `question_index`（0 基，对应输入问题顺序）+ **仅非空字段**：`selected_options`、`selected_indices`、`user_input`、`files`。单选时数组长度 ≤ 1。取消 → `{ "action":"cancel", "channel":"<id>" }`。**无** `version` / `answered`（作答与否由字段有无推导） |
 | D6b | 附件字段合并 | `[图片]`（落盘的图片路径）与 `[文件]`（透传的非图片路径）**统一合并为单一 `files`**（文本 `[files]`、JSON `files`），值为本地路径数组（图片/文件/目录），模型按后缀区分类型；渲染时顺序为「落盘图片路径 + 透传文件路径」拼接。此为对**既有输出契约**的有意变更，对所有输出（含默认文本与 JSON）生效；严格模式禁附件，故无此字段 |
+| D6c | 附注区块（2026-11-07，消息附注 D7 / D8，`docs/specs/message-annotations.md`） | 用户在弹窗或手机上给 Agent 消息的某段原文写了附注时，输出**追加**一个区块，文本是 `[user_annotations]`（恒英文、不本地化，同 D6）：每条 = 一行 `> 原文` + 附注正文，条与条之间空一行；文本区块里原文超过 300 字时中间截成「…」。位置：单题放在其余区块之后；多题放在最后一题之后，用 `---` 隔开、不带 `# Qn`；**只有附注**时只输出这个区块（不是「未作答」，也不是取消）。JSON 顶层多一个 `user_annotations` 数组，每项 `{ "quote": "…", "note": "…" }`，没有附注时不出现；只有附注时 `action` 为 `answer`、没有 `answers`。严格选择（`--select-only`）没有附注（它本来就禁止自由文本）。已有的标记、退出码与字段都不变，老 Agent 读不懂这个区块也只是多看到几行带 `>` 的文字 |
 | D8 | 字段语义 | `selected_indices`：按 `-o` 出现顺序的 0 基下标。推荐选项前缀不进 `selected_options`（保持原文），下标按原文匹配；重复文案取首个命中 |
 | D9 | JSON 产出位置 | 由 Daemon 的 `render_result` 产出（macOS/Linux/Windows CLI 均仅转发 `Final.stdout`，保持瘦客户端）。 |
 | D10 | help 体系 | `--help`/`-h` = **完整功能**，按「提问 / 管理」两块组织、列出新参数并指向另两者；`--agent-help` = **为 Agent 精调**的提问用法（仅把结果字段标记改名，不含脚本参数 / JSON）；`--scripting-help`（新）= **脚本/自动化用法**（`--select-only`/`--single`/`--output json` + JSON 结构 + 退出码，简洁精确、少量示例）。`--agent-help` 与 `--scripting-help` 用**共享片段 + 变量/条件组装**，不各写一份 |
@@ -112,6 +113,7 @@ User response:
   [selected_options]  Predefined options the user checked
   [user_input]        Free-form text the user typed
   [files]             Local paths the user attached (images/files/dirs; tell type by extension)
+  [user_annotations]  The user's notes on passages of your message: a quoted passage (> …) followed by the note
   [status]            Shown when the user cancels; follow its instructions to keep asking
 
 Multi-question output:
@@ -205,3 +207,5 @@ Example:
 ## 9. 反馈意见
 
 （后续 review 中产生的调整意见追加于此，标注日期。）
+
+- 2026-11-07（消息附注，`docs/specs/message-annotations.md`）：输出契约追加 `[user_annotations]` 区块与 JSON 的 `user_annotations`，见 D6c；`--agent-help` 的结果清单多一行（实现与 `agent_help_markers_match_output` 守着标记不漂移）。
