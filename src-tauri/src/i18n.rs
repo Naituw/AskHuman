@@ -186,6 +186,13 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "The user already answered through AskHuman. Do not ask these questions again:",
             "用户已通过 AskHuman 回答，请不要再次询问这些问题：",
         ),
+        // The same picker, no answer chosen but notes written on the question (spec
+        // message-annotations N10): the notes ride in the reason of a `deny`.
+        "askQuestion.notesOnly" => pick(
+            lang,
+            "The user did not choose an answer, but left notes on your question. Respond to the notes, then ask again:",
+            "用户没有选择答案，但对你的提问写了附注。请先回应这些附注，再重新提问：",
+        ),
         // 重放（spec duplicate-ask-coalescing D7）：同一个提问刚被回答过，这次没有再打扰人。
         "status.replayed" => pick(
             lang,

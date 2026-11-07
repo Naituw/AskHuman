@@ -461,6 +461,7 @@ pub(super) async fn handle_popup_host<R, W>(
                 action,
                 answers,
                 directive,
+                annotations,
             } => {
                 let entry = state.popup_inbox.lock().unwrap().get(&request_id);
                 let (winner, error) = match entry {
@@ -473,6 +474,7 @@ pub(super) async fn handle_popup_host<R, W>(
                             action,
                             answers,
                             source_channel_id: "popup".into(),
+                            annotations,
                         });
                         if !won {
                             entry.set_directive(None);

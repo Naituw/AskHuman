@@ -249,6 +249,7 @@ fn answer_with(directive: Option<wire::AnswerDirective>, action: &str) -> wire::
         ],
         todo_ids: Vec::new(),
         directive,
+        annotations: Vec::new(),
     }
 }
 

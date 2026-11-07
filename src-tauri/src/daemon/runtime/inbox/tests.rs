@@ -563,6 +563,7 @@ async fn fragmented_answer(external_terminal: bool) {
             ..Default::default()
         }],
         directive: None,
+        annotations: Vec::new(),
     };
     let mut bytes = serde_json::to_vec(&answer).unwrap();
     bytes.push(b'\n');
@@ -620,6 +621,7 @@ async fn fragmented_answer(external_terminal: bool) {
                 ..Default::default()
             }],
             directive: None,
+            annotations: Vec::new(),
         },
     )
     .await

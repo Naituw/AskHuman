@@ -246,6 +246,7 @@ impl GuiBridge {
             action: ChannelAction::Cancel,
             answers: Vec::new(),
             directive: None,
+            annotations: Vec::new(),
         });
     }
 
@@ -258,12 +259,14 @@ impl GuiBridge {
         &self,
         answers: Vec<QuestionAnswer>,
         directive: Option<crate::daemon::away::Directive>,
+        annotations: Vec<crate::annotations::UserAnnotation>,
     ) {
         self.terminal(crate::ipc::ClientMsg::Answer {
             request_id: self.request_id(),
             action: ChannelAction::Send,
             answers,
             directive,
+            annotations,
         });
     }
 
@@ -274,6 +277,7 @@ impl GuiBridge {
             action: ChannelAction::Cancel,
             answers: Vec::new(),
             directive: None,
+            annotations: Vec::new(),
         });
     }
 
@@ -1482,7 +1486,7 @@ pub(crate) fn render_result(
                         file_paths: &answer.files,
                     })
                     .collect();
-                output::aggregate_output(lang, &rendered)
+                output::aggregate_output(lang, &rendered, &result.annotations)
             };
 
             (
@@ -1530,7 +1534,7 @@ fn render_whats_next(
         .collect();
     (
         RenderOutcome {
-            stdout: output::whats_next_output(&reply, &files, lang),
+            stdout: output::whats_next_output(&reply, &files, &result.annotations, lang),
             stderr: None,
             exit_code: 0,
         },

@@ -775,6 +775,7 @@ fn try_whats_next_auto(project: &str, message: &crate::models::MessagePrompt, la
                     images: Vec::new(),
                     files: delivery.files.clone(),
                 }],
+                annotations: Vec::new(),
             },
             limit,
         );
@@ -787,6 +788,7 @@ fn try_whats_next_auto(project: &str, message: &crate::models::MessagePrompt, la
     print_line(&crate::cli::output::whats_next_output(
         &crate::cli::output::WhatsNextReply::Task(task),
         &delivery.files,
+        &[],
         lang,
     ));
     true

@@ -162,6 +162,7 @@ fn auto_reply_history_entry(
             images: Vec::new(),
             files: Vec::new(),
         }],
+        annotations: Vec::new(),
     }
 }
 
@@ -261,6 +262,7 @@ mod tests {
                 ..Default::default()
             }],
             source_channel_id: "popup".to_string(),
+            annotations: Vec::new(),
         }
     }
 

@@ -1667,19 +1667,23 @@ fn parse_askhuman_answer(content: &str) -> Option<String> {
     enum AnswerSection {
         Selected,
         Input,
+        Notes,
         Ignored,
     }
     let mut section: Option<AnswerSection> = None;
     let mut selected = Vec::new();
     let mut input = Vec::new();
+    let mut notes = Vec::new();
     for line in content.lines() {
         match line.trim() {
             "[selected_options]" => section = Some(AnswerSection::Selected),
             "[user_input]" => section = Some(AnswerSection::Input),
+            "[user_annotations]" => section = Some(AnswerSection::Notes),
             "[files]" | "[status]" => section = Some(AnswerSection::Ignored),
             _ => match section {
                 Some(AnswerSection::Selected) => selected.push(line),
                 Some(AnswerSection::Input) => input.push(line),
+                Some(AnswerSection::Notes) => notes.push(line),
                 Some(AnswerSection::Ignored) | None => {}
             },
         }
@@ -1694,7 +1698,17 @@ fn parse_askhuman_answer(content: &str) -> Option<String> {
     if !input.is_empty() {
         parts.push(input);
     }
-    (!parts.is_empty()).then(|| trunc(&parts.join("\n"), MAX_TOOL_RESULT_CHARS))
+    let mut text = parts.join("\n");
+    // The user's notes on the message (spec message-annotations N11) are the third part, shown
+    // as they were sent (quote lines and notes) after a blank line; they are not user input.
+    let notes = notes.join("\n").trim().to_string();
+    if !notes.is_empty() {
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&notes);
+    }
+    (!text.is_empty()).then(|| trunc(&text, MAX_TOOL_RESULT_CHARS))
 }
 
 /// Codex prefixes tool results with timing metadata and an `Output:` section.
@@ -2259,6 +2273,37 @@ mod tests {
     fn parse_answer_markers() {
         let c = "[status] answered\n[user_input]\nyes please\n[files]\n";
         assert_eq!(parse_askhuman_answer(c).as_deref(), Some("yes please"));
+    }
+
+    /// Notes on the message (spec message-annotations N11) are the third part of the answer
+    /// text and never leak into `[user_input]`; with notes alone they are the whole answer.
+    #[test]
+    fn parse_answer_keeps_the_notes_block_apart_from_the_input() {
+        let c = "[selected_options]\n方案 2\n\n[user_input]\n先按这个做\n\n[user_annotations]\n> 三处表单\n是哪三处？\n\n> 回归测试\n补在哪？";
+        assert_eq!(
+            parse_askhuman_answer(c).as_deref(),
+            Some("方案 2\n先按这个做\n\n> 三处表单\n是哪三处？\n\n> 回归测试\n补在哪？")
+        );
+        let notes_only = "[user_annotations]\n> 三处表单\n是哪三处？";
+        assert_eq!(
+            parse_askhuman_answer(notes_only).as_deref(),
+            Some("> 三处表单\n是哪三处？")
+        );
+        // A files block before the notes does not swallow them, and does not show up either.
+        let with_files = "[files]\n/tmp/a.png\n\n[user_annotations]\n> 引文\n问题";
+        assert_eq!(
+            parse_askhuman_answer(with_files).as_deref(),
+            Some("> 引文\n问题")
+        );
+    }
+
+    /// With several questions the notes sit behind the last `---` and follow the last answer.
+    #[test]
+    fn multi_question_notes_follow_the_last_answer() {
+        let c = "# Q1\n[selected_options]\n甲\n\n---\n\n# Q2\n[user_input]\n乙\n\n---\n\n[user_annotations]\n> 引文\n问题";
+        let answers = parse_askhuman_answers(c, 2);
+        assert_eq!(answers[0].as_deref(), Some("甲"));
+        assert_eq!(answers[1].as_deref(), Some("乙\n\n> 引文\n问题"));
     }
 
     /// heredoc / 操作符不当作 message；--stdin 场景 message 允许为空。

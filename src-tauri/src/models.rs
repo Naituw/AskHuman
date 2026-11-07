@@ -103,6 +103,13 @@ pub struct AskRequest {
     /// menu). Omitted when empty, so a sender that predates the field still parses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub quick_replies: Vec<String>,
+    /// Whether the popup and the phone let the user select text in this question's message and
+    /// write notes on it (spec `message-annotations`). Only the daemon sets it, for an Agent's own
+    /// questions that are not strict-choice; Stop confirmations, failure cards, native Codex
+    /// questions and development relays do not offer it. Sent only when true, so a sender that
+    /// predates the field never offers notes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub annotatable: bool,
 }
 
 fn default_quick_reply() -> bool {
@@ -139,6 +146,7 @@ impl AskRequest {
             escalated: None,
             quick_reply: true,
             quick_replies: Vec::new(),
+            annotatable: false,
         }
     }
 }
@@ -366,6 +374,11 @@ pub struct ChannelResult {
     #[serde(default)]
     pub answers: Vec<QuestionAnswer>,
     pub source_channel_id: String,
+    /// Notes the user wrote on passages of the message, sent with the answer (spec
+    /// `message-annotations`). `Coordinator::try_submit` cleans them once for every source.
+    /// Omitted when empty, so a peer that predates the field never sees it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<crate::annotations::UserAnnotation>,
 }
 
 // MARK: - Structured confirmations
@@ -874,6 +887,7 @@ impl ChannelResult {
             action: ChannelAction::Cancel,
             answers: Vec::new(),
             source_channel_id: source_channel_id.into(),
+            annotations: Vec::new(),
         }
     }
 }
@@ -902,6 +916,54 @@ mod tests {
         legacy.as_object_mut().unwrap().remove("quickReply");
         let parsed: AskRequest = serde_json::from_value(legacy).unwrap();
         assert!(parsed.quick_reply);
+    }
+
+    #[test]
+    fn annotatable_is_sent_only_when_true_and_defaults_to_false() {
+        let mut request = AskRequest::new(MessagePrompt::default(), Vec::new(), false);
+        let value = serde_json::to_value(&request).unwrap();
+        assert!(value.get("annotatable").is_none());
+
+        request.annotatable = true;
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["annotatable"], true);
+        let back: AskRequest = serde_json::from_value(value).unwrap();
+        assert!(back.annotatable);
+
+        // A sender that predates the field never offers notes.
+        let mut legacy =
+            serde_json::to_value(AskRequest::new(MessagePrompt::default(), Vec::new(), false))
+                .unwrap();
+        legacy.as_object_mut().unwrap().remove("annotatable");
+        let parsed: AskRequest = serde_json::from_value(legacy).unwrap();
+        assert!(!parsed.annotatable);
+    }
+
+    #[test]
+    fn channel_result_annotations_are_optional_on_the_wire() {
+        let legacy = r#"{"action":"send","answers":[],"sourceChannelId":"popup"}"#;
+        let parsed: ChannelResult = serde_json::from_str(legacy).unwrap();
+        assert!(parsed.annotations.is_empty());
+
+        let none = ChannelResult::cancel("popup");
+        assert!(serde_json::to_value(&none)
+            .unwrap()
+            .get("annotations")
+            .is_none());
+
+        let mut some = ChannelResult::cancel("popup");
+        some.action = ChannelAction::Send;
+        some.annotations = vec![crate::annotations::UserAnnotation {
+            quote: "passage".into(),
+            note: "why?".into(),
+        }];
+        let value = serde_json::to_value(&some).unwrap();
+        assert_eq!(
+            value["annotations"],
+            serde_json::json!([{"quote": "passage", "note": "why?"}])
+        );
+        let back: ChannelResult = serde_json::from_value(value).unwrap();
+        assert_eq!(back.annotations, some.annotations);
     }
 
     #[test]

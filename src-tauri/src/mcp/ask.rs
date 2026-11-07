@@ -519,8 +519,9 @@ any input that only the human can provide. Provide `message` for free-form quest
 `options` item requires `text` and may set `recommended` to true. Example: \
 `{\"questions\":[{\"question\":\"Continue?\",\"options\":[{\"text\":\"Yes\",\"recommended\":true}]}]}`. \
 The reply is plain text in labeled blocks: `[selected_options]`, `[user_input]`, `[files]` (paths \
-of files the human attached), and `[status]` (present on cancel or for a replayed earlier answer \
-— follow its instructions). Answers to multiple questions come back grouped under `# Q1`, `# Q2`, \
+of files the human attached), `[user_annotations]` (the human's notes on passages of your message: \
+a quoted passage `> …` followed by the note), and `[status]` (present on cancel or for a replayed \
+earlier answer — follow its instructions). Answers to multiple questions come back grouped under `# Q1`, `# Q2`, \
 … separated by `---`. Images the human attaches are also returned as image content.",
         // Truthful hints that also let Codex-style clients skip per-call approval
         // (their default treats missing destructive/open_world hints as true):
@@ -627,7 +628,8 @@ of files the human attached), and `[status]` (present on cancel or for a replaye
 this only after the current task is fully complete and before ending; use `ask` for any question, \
 decision, or next step within the current task. Optionally pass `message` with a completion report \
 and `files` with report documents. The human replies with the next task (start it immediately), or \
-approves ending the turn — only then may you end it.",
+approves ending the turn — only then may you end it. A reply holding only `[user_annotations]` (the \
+human's notes on your report) does not approve ending: answer the notes, then call this again.",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
     async fn whats_next(
@@ -2536,11 +2538,26 @@ mod tests {
             crate::cli::output::MARKER_SELECTED_OPTIONS,
             crate::cli::output::MARKER_USER_INPUT,
             crate::cli::output::MARKER_FILES,
+            crate::cli::output::MARKER_USER_ANNOTATIONS,
             crate::cli::output::MARKER_STATUS,
         ] {
             assert!(description.contains(marker), "{marker}");
         }
         assert!(description.contains("# Q1"));
+    }
+
+    #[test]
+    fn whats_next_description_says_notes_alone_do_not_approve_ending() {
+        let server = AskServer::new();
+        let description = server
+            .tool_router
+            .get("whats_next")
+            .unwrap()
+            .description
+            .clone()
+            .unwrap_or_default();
+        assert!(description.contains(crate::cli::output::MARKER_USER_ANNOTATIONS));
+        assert!(description.contains("does not approve ending"));
     }
 
     #[test]
@@ -2561,6 +2578,22 @@ mod tests {
         // 无 [files] 区块（含取消路径）→ 无路径；user_input 里的普通文本行不会被误收。
         assert!(files_block_paths("[status]\nThe user canceled.").is_empty());
         assert!(files_block_paths("[user_input]\nsee files: /tmp/x.png").is_empty());
+    }
+
+    #[test]
+    fn files_block_paths_does_not_read_the_notes_block_as_paths() {
+        // The notes block follows after a blank line, so the files block has ended by then.
+        let text = "[user_input]\nhi\n\n[files]\n/tmp/a.png\n\n[user_annotations]\n> /tmp/quoted.png\nlook at this";
+        assert_eq!(files_block_paths(text), vec![PathBuf::from("/tmp/a.png")]);
+        // What's next with only notes: files first, notes last.
+        let notes_only = "[files]\n/tmp/b.png\n\n[user_annotations]\n> a passage\nwhy?";
+        assert_eq!(
+            files_block_paths(notes_only),
+            vec![PathBuf::from("/tmp/b.png")]
+        );
+        // Several questions: the notes sit behind a rule, after the last answer.
+        let multi = "# Q1\n[files]\n/tmp/c.png\n\n---\n\n[user_annotations]\n> p\nn";
+        assert_eq!(files_block_paths(multi), vec![PathBuf::from("/tmp/c.png")]);
     }
 
     #[test]

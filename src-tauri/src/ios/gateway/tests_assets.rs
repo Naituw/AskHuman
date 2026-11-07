@@ -231,6 +231,7 @@ fn submit(client_msg_id: &str, request_id: &str, items: Vec<AnswerItem>) -> wire
         answers: items,
         todo_ids: Vec::new(),
         directive: None,
+        annotations: Vec::new(),
     }
 }
 

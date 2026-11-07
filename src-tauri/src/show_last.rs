@@ -403,6 +403,13 @@ fn render_exchange_body(
         parts.push(qa.trim_end().to_string());
     }
 
+    // Notes the user wrote on passages of the message come last, in the same indented style
+    // (spec message-annotations D23); quotes are shortened like in the answer block.
+    let notes = crate::annotations::render_show_last(&entry.annotations);
+    if !notes.is_empty() {
+        parts.push(notes);
+    }
+
     Ok(parts.join("\n\n") + "\n")
 }
 
@@ -683,6 +690,7 @@ mod tests {
                 images: vec!["/tmp/image.png".into()],
                 files: vec!["/tmp/file.txt".into()],
             }],
+            annotations: Vec::new(),
         }
     }
 
@@ -865,6 +873,51 @@ mod tests {
         assert!(out.contains("assistant (you) says:\n  files:\n    - /tmp/context.pdf"));
         assert!(out.contains("qa #2\n  assistant (you) asked:\n    Second?"));
         assert!(out.contains("user did not answer"));
+    }
+
+    #[test]
+    fn notes_on_the_message_close_the_exchange_in_their_own_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut entry = sample("Context", 1_000_000);
+        entry.annotations = vec![
+            crate::annotations::UserAnnotation {
+                quote: "needs three forms".into(),
+                note: "Which three?\nList the files.".into(),
+            },
+            crate::annotations::UserAnnotation {
+                quote: "字".repeat(400),
+                note: "too long to repeat".into(),
+            },
+        ];
+        let out = render(
+            &[entry],
+            1,
+            None,
+            None,
+            Surface::Cli,
+            "scope",
+            dir.path(),
+            1_000_000,
+        );
+        let long_quote = format!("  > {}…{}", "字".repeat(149), "字".repeat(150));
+        let expected = format!(
+            "user_annotations:\n  > needs three forms\n  Which three?\n  List the files.\n\n{long_quote}\n  too long to repeat\n"
+        );
+        assert!(out.ends_with(&expected), "{out}");
+        // After the answer, never inside it.
+        assert!(out.find("user_input:\n      details") < out.find("user_annotations:"));
+        // An exchange without notes has no such section.
+        let plain = render(
+            &[sample("Context", 1_000_000)],
+            1,
+            None,
+            None,
+            Surface::Cli,
+            "scope",
+            dir.path(),
+            1_000_000,
+        );
+        assert!(!plain.contains("user_annotations"));
     }
 
     #[test]

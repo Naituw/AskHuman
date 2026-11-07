@@ -459,6 +459,7 @@ mod tests {
             action: crate::models::ChannelAction::Cancel,
             answers: vec![],
             directive: None,
+            annotations: Vec::new(),
         }
     }
     #[test]

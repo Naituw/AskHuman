@@ -1347,6 +1347,9 @@ pub struct PopupSubmission {
     /// One-shot instruction from the quick-reply menu ("I'm away", "stop using AskHuman").
     #[serde(default)]
     directive: Option<crate::daemon::away::Directive>,
+    /// Notes written on passages of the message; the daemon cleans them (spec `message-annotations`).
+    #[serde(default)]
+    annotations: Vec<crate::annotations::UserAnnotation>,
 }
 
 #[tauri::command]
@@ -1365,13 +1368,18 @@ pub async fn submit_popup(
                     action: crate::models::ChannelAction::Send,
                     answers: submission.answers,
                     directive: submission.directive,
+                    annotations: submission.annotations,
                 },
                 crate::app::popup_inbox::CompletionFeedback::Sent,
             )
             .await;
     }
     if let Some(bridge) = app.try_state::<crate::app::GuiBridge>() {
-        bridge.send_answer(submission.answers, submission.directive);
+        bridge.send_answer(
+            submission.answers,
+            submission.directive,
+            submission.annotations,
+        );
     }
     Ok(())
 }
@@ -1481,6 +1489,7 @@ pub async fn cancel_popup(app: AppHandle, request_id: Option<String>) -> Result<
                 action: crate::models::ChannelAction::Cancel,
                 answers: Vec::new(),
                 directive: None,
+                annotations: Vec::new(),
             },
             InteractionRequest::Confirm(request) => {
                 let choice_index = request

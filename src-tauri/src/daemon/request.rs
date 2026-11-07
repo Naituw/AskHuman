@@ -485,6 +485,9 @@ impl RequestRegistry {
         request.whats_next = task.whats_next;
         request.escalated = escalated;
         request.quick_reply = quick_reply;
+        // Notes on the message go with an Agent's own questions (spec `message-annotations`
+        // N2); strict-choice takes the listed options only, so it takes no notes either.
+        request.annotatable = quick_reply && !request.select_only;
         request.quick_replies = quick_replies_for(
             &request,
             &crate::config::AppConfig::load_without_secrets().general,
@@ -1193,6 +1196,61 @@ mod tests {
         stop.stop_confirmation = true;
         let (entry, _rx) = registry.create(stop, None);
         assert!(!entry.request().quick_reply);
+    }
+
+    /// Notes on the message (spec message-annotations N2/E2) go with an Agent's own questions
+    /// that are not strict-choice; What's next is one of them, everything else is not.
+    #[test]
+    fn notes_are_offered_with_an_agents_own_non_strict_questions() {
+        let registry = RequestRegistry::new();
+        let annotatable = |task: TaskRequest| {
+            let (entry, _rx) = registry.create(task, None);
+            entry.request().annotatable
+        };
+
+        assert!(annotatable(ask_task(Some("s1"), "continue?")));
+
+        let mut whats_next = ask_task(Some("s1"), "next?");
+        whats_next.whats_next = true;
+        assert!(annotatable(whats_next));
+
+        let mut strict = ask_task(Some("s1"), "pick?");
+        strict.select_only = true;
+        assert!(!annotatable(strict));
+
+        let mut native = ask_task(Some("s1"), "native?");
+        native.native_request_id = Some("codex:thread:turn:item".into());
+        assert!(!annotatable(native));
+
+        let mut failure_card = ask_task(Some("s1"), "failed?");
+        failure_card.native_request_id = Some("failure:card:1".into());
+        assert!(!annotatable(failure_card));
+
+        let mut stop = ask_task(Some("s1"), "stop?");
+        stop.stop_confirmation = true;
+        assert!(!annotatable(stop));
+
+        // A development verification request is the build's, not the Agent's.
+        let mut dev = ask_task(Some("s1"), "dev?");
+        dev.message.development = Some(Box::new(
+            serde_json::from_value(json!({
+                "id": "v1",
+                "worktree": "/tmp/wt",
+                "delivery": "remote",
+                "relay": true,
+                "build": {
+                    "version": 1,
+                    "worktree": "/tmp/wt",
+                    "binary": "/tmp/wt/AskHuman",
+                    "sourceFingerprint": "s",
+                    "binaryFingerprint": "b",
+                    "gitCommit": null,
+                    "createdAtMs": 0
+                }
+            }))
+            .unwrap(),
+        ));
+        assert!(!annotatable(dev));
     }
 
     fn plain_ask() -> AskRequest {

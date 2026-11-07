@@ -3306,6 +3306,7 @@ async fn serve_gui(
                         action,
                         answers,
                         directive,
+                        annotations,
                         ..
                     })) => {
                         if answer_received {
@@ -3319,6 +3320,7 @@ async fn serve_gui(
                                 action: ChannelAction::Send,
                                 answers,
                                 source_channel_id: "popup".to_string(),
+                                annotations,
                             },
                             ChannelAction::Cancel => ChannelResult::cancel("popup"),
                         };

@@ -394,6 +394,10 @@ fn answer_hash(submit: &AnswerSubmit) -> String {
     if let Some(directive) = &submit.directive {
         canonical["directive"] = json!(directive);
     }
+    // Same rule for notes on the message: an answer without any hashes as it always did.
+    if !submit.annotations.is_empty() {
+        canonical["annotations"] = json!(submit.annotations);
+    }
     short_hash(&serde_json::to_vec(&canonical).expect("answer serializes"))
 }
 
@@ -1023,6 +1027,8 @@ impl Actor {
                     action: ChannelAction::Send,
                     answers,
                     source_channel_id: "ios".into(),
+                    // Cleaned for every source by `Coordinator::try_submit`.
+                    annotations: submit.annotations.clone(),
                 },
                 Err(reason) => return ("invalid", Some(reason)),
             },
@@ -1363,5 +1369,49 @@ impl Actor {
 
         // Questions a phone is not looking at: pushed once the Mac has been idle long enough.
         self.flush_due_notifications(now);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::annotations::UserAnnotation;
+
+    fn submit(annotations: Vec<UserAnnotation>) -> AnswerSubmit {
+        AnswerSubmit {
+            client_msg_id: "c1".into(),
+            request_id: "req1".into(),
+            action: "send".into(),
+            answers: Vec::new(),
+            todo_ids: Vec::new(),
+            directive: None,
+            annotations,
+        }
+    }
+
+    /// An answer without notes hashes exactly as before the field existed, so a retry that
+    /// crosses an upgrade of the Mac still replays instead of being called a conflict; notes
+    /// change the hash.
+    #[test]
+    fn the_answer_hash_ignores_absent_notes_and_notices_present_ones() {
+        let plain = submit(Vec::new());
+        let before = short_hash(
+            &serde_json::to_vec(&json!({
+                "requestId": plain.request_id,
+                "action": plain.action,
+                "answers": plain.answers,
+            }))
+            .unwrap(),
+        );
+        assert_eq!(answer_hash(&plain), before);
+
+        let note = |text: &str| UserAnnotation {
+            quote: "passage".into(),
+            note: text.into(),
+        };
+        let one = answer_hash(&submit(vec![note("why?")]));
+        assert_ne!(one, before);
+        assert_ne!(one, answer_hash(&submit(vec![note("other")])));
+        assert_eq!(one, answer_hash(&submit(vec![note("why?")])));
     }
 }

@@ -205,30 +205,68 @@ fn decide(reply: &Value, prepared: &[Prepared], tool_input: &Value, lang: Lang) 
         return deny(status.unwrap_or_else(|| crate::i18n::tr(lang, "status.cancel")));
     }
     let cancelled = action == Some("cancel");
-    let answers = if cancelled {
+    let mut answers = if cancelled {
         Map::new()
     } else {
         collect_answers(reply, prepared)
     };
+    // The user's notes on the question text (spec message-annotations N10); a cancellation
+    // never carries them.
+    let notes = if cancelled {
+        String::new()
+    } else {
+        notes_block(reply)
+    };
     // The answer came with a one-shot directive ("away", "stop using AskHuman"): Claude only reads
     // `answers` through `allow`, so the answers travel in the reason of a `deny` together with the
-    // guidance, and Claude is told not to ask again.
+    // guidance, and Claude is told not to ask again. The notes follow the answers, before the
+    // guidance.
     if let (Some(status), true, true) = (
         status,
         reply.get("directive").is_some(),
-        !answers.is_empty(),
+        !answers.is_empty() || !notes.is_empty(),
     ) {
-        let answered: Vec<String> = answers
-            .iter()
-            .map(|(question, answer)| {
-                format!("- {question}: {}", answer.as_str().unwrap_or_default())
-            })
-            .collect();
+        let mut reason = if answers.is_empty() {
+            crate::i18n::tr(lang, "askQuestion.notesOnly").to_string()
+        } else {
+            let answered: Vec<String> = answers
+                .iter()
+                .map(|(question, answer)| {
+                    format!("- {question}: {}", answer.as_str().unwrap_or_default())
+                })
+                .collect();
+            format!(
+                "{}\n{}",
+                crate::i18n::tr(lang, "askQuestion.answered"),
+                answered.join("\n")
+            )
+        };
+        if !notes.is_empty() {
+            reason.push_str("\n\n");
+            reason.push_str(&notes);
+        }
+        return deny(&format!("{reason}\n\n{status}"));
+    }
+    if answers.is_empty() && !notes.is_empty() {
+        // Notes alone: Claude reads them in the reason of a `deny` and asks again (N10).
         return deny(&format!(
-            "{}\n{}\n\n{status}",
-            crate::i18n::tr(lang, "askQuestion.answered"),
-            answered.join("\n")
+            "{}\n\n{notes}",
+            crate::i18n::tr(lang, "askQuestion.notesOnly")
         ));
+    }
+    if !notes.is_empty() {
+        // The notes ride in the answer text of the last answered question (the only one, since
+        // notes are offered on a lone question), after the answer itself.
+        let target = prepared
+            .iter()
+            .rev()
+            .find(|question| answers.contains_key(&question.original));
+        if let Some(target) = target {
+            if let Some(Value::String(value)) = answers.get_mut(&target.original) {
+                value.push_str("\n\n");
+                value.push_str(&notes);
+            }
+        }
     }
     if answers.is_empty() {
         // Explicit cancel, or a submit with nothing in it: ask Claude to ask again (spec D9).
@@ -254,6 +292,16 @@ fn decide(reply: &Value, prepared: &[Prepared], tool_input: &Value, lang: Lang) 
         }
     })
     .to_string()
+}
+
+/// The `[user_annotations]` block of the JSON reply's `user_annotations` array, empty when the
+/// user wrote no notes.
+fn notes_block(reply: &Value) -> String {
+    let notes: Vec<crate::annotations::UserAnnotation> = reply
+        .get("user_annotations")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default();
+    crate::annotations::render_block(&notes)
 }
 
 /// A `deny` whose reason Claude reads.
@@ -494,5 +542,92 @@ mod tests {
                 .contains("ask again"));
             assert!(decision.get("updatedInput").is_none());
         }
+    }
+
+    fn one_note() -> Value {
+        json!([{ "quote": "Which framework?", "note": "Why only these two?" }])
+    }
+
+    const ONE_NOTE_BLOCK: &str = "[user_annotations]\n> Which framework?\nWhy only these two?";
+
+    #[test]
+    fn notes_ride_in_the_answer_text_after_the_answer() {
+        let value = decided(json!({
+            "answers": [answer(0, &["React"], Some("with RSC"), &["/tmp/a.png"])],
+            "user_annotations": one_note(),
+        }));
+        let decision = &value["hookSpecificOutput"];
+        assert_eq!(decision["permissionDecision"], "allow");
+        assert_eq!(
+            decision["updatedInput"]["answers"]["Which framework?"],
+            format!("React, with RSC\n/tmp/a.png\n\n{ONE_NOTE_BLOCK}")
+        );
+    }
+
+    #[test]
+    fn notes_alone_are_handed_to_claude_in_a_deny_reason() {
+        let value = decided(json!({ "action": "answer", "user_annotations": one_note() }));
+        let decision = &value["hookSpecificOutput"];
+        assert_eq!(decision["permissionDecision"], "deny");
+        assert!(decision.get("updatedInput").is_none());
+        let reason = decision["permissionDecisionReason"].as_str().unwrap();
+        assert!(reason.contains("left notes on your question"));
+        assert!(reason.ends_with(ONE_NOTE_BLOCK));
+        // An empty answer next to the notes is the same thing.
+        let value = decided(json!({
+            "answers": [answer(0, &[], Some("  "), &[])],
+            "user_annotations": one_note(),
+        }));
+        assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
+        assert!(value["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .ends_with(ONE_NOTE_BLOCK));
+    }
+
+    #[test]
+    fn a_cancellation_never_carries_notes() {
+        let value = decided(json!({
+            "action": "cancel",
+            "status": "The user canceled.",
+            "user_annotations": one_note(),
+        }));
+        let reason = value["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap();
+        assert!(reason.contains("ask again"));
+        assert!(!reason.contains("[user_annotations]"));
+    }
+
+    #[test]
+    fn with_a_directive_the_notes_follow_the_answers_and_precede_the_status() {
+        let reply = json!({
+            "action": "answer",
+            "answers": [answer(0, &["React"], None, &[])],
+            "user_annotations": one_note(),
+            "status": "Stop asking.",
+            "directive": "mute",
+        });
+        let value = decided(reply);
+        let reason = value["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap();
+        assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
+        let answers = reason.find("- Which framework?: React").unwrap();
+        let notes = reason.find("[user_annotations]").unwrap();
+        let status = reason.find("Stop asking.").unwrap();
+        assert!(answers < notes && notes < status, "{reason}");
+        // Notes alone with a directive: the notes-only line, the block, then the status.
+        let value = decided(json!({
+            "action": "answer",
+            "user_annotations": one_note(),
+            "status": "Stop asking.",
+            "directive": "mute",
+        }));
+        let reason = value["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap();
+        assert!(reason.contains("left notes on your question"));
+        assert!(reason.ends_with(&format!("{ONE_NOTE_BLOCK}\n\nStop asking.")));
     }
 }

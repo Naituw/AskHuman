@@ -69,6 +69,10 @@ pub struct HistoryEntry {
     /// Per-question answers (empty for a cancel).
     #[serde(default)]
     pub answers: Vec<HistoryAnswer>,
+    /// Notes the user wrote on passages of the message, as cleaned by the daemon (quotes whole,
+    /// not shortened). Omitted when there are none, so older entries and older builds are unaffected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<crate::annotations::UserAnnotation>,
 }
 
 /// Aggregated project info for the history window's project picker.
@@ -553,6 +557,7 @@ mod tests {
             message: MessagePrompt::default(),
             questions: Vec::new(),
             answers: Vec::new(),
+            annotations: Vec::new(),
         }
     }
 
@@ -567,6 +572,37 @@ mod tests {
         // Most recent first.
         assert_eq!(loaded[0].id, "b");
         assert_eq!(loaded[1].id, "a");
+    }
+
+    /// Notes on the message are kept whole next to the answer; entries without notes write no
+    /// key, and a line recorded before the field existed still reads (spec message-annotations E1).
+    #[test]
+    fn annotations_are_stored_whole_and_older_lines_still_read() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        let mut with_notes = entry("with", "/p", 1);
+        with_notes.annotations = vec![crate::annotations::UserAnnotation {
+            quote: "q".repeat(500),
+            note: "why?".into(),
+        }];
+        record_at(&path, with_notes, 200);
+        record_at(&path, entry("plain", "/p", 2), 200);
+
+        let loaded = load_at(&path, Some("/p"), false);
+        let plain = &loaded[0];
+        let with = &loaded[1];
+        assert!(plain.annotations.is_empty());
+        assert_eq!(with.annotations[0].quote.chars().count(), 500);
+        assert_eq!(with.annotations[0].note, "why?");
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[0].contains("\"annotations\""));
+        assert!(!lines[1].contains("annotations"));
+
+        let legacy = r#"{"id":"old","timestampMs":3,"action":"send"}"#;
+        let parsed: HistoryEntry = serde_json::from_str(legacy).unwrap();
+        assert!(parsed.annotations.is_empty());
     }
 
     #[test]

@@ -4,6 +4,7 @@
 //! 共用同一常量，保证「AI 看到的实际输出」与 help 文档一致；仅**值文案**（取消/未作答/确认继续）
 //! 仍随界面语言本地化。结构（分组顺序/`# Qn`/`---`）不随语言变化。
 
+use crate::annotations::{self, UserAnnotation};
 use crate::i18n::{tr, Lang};
 use crate::models::{AskRequest, ChannelAction, ChannelResult};
 use serde::Serialize;
@@ -13,6 +14,9 @@ pub const MARKER_SELECTED_OPTIONS: &str = "[selected_options]";
 pub const MARKER_USER_INPUT: &str = "[user_input]";
 pub const MARKER_FILES: &str = "[files]";
 pub const MARKER_STATUS: &str = "[status]";
+/// The user's notes on passages of the message (spec `message-annotations`): a `> quote` line and
+/// the note for each, a blank line between notes.
+pub const MARKER_USER_ANNOTATIONS: &str = "[user_annotations]";
 
 /// 剥掉待办选项的展示前缀「执行待办：」（`whatsNext.todoPrefix`），还原待办原文。
 /// 构建端与渲染端可能语言不一致（理论上同进程同语言，但求稳）：两种语言的前缀都尝试。
@@ -117,19 +121,36 @@ fn unanswered_output(lang: Lang) -> String {
 /// - 单题：现状格式（无 `# Q1` 头）；空回答 → 未作答状态。
 /// - 多题：每题 `# Qn` + 区块，题间用 `---` 分隔；未答题为未作答状态；
 ///   全部未答 → 仅输出一次取消提示。
-pub fn aggregate_output(lang: Lang, answers: &[RenderedAnswer]) -> String {
+/// - 附注（spec message-annotations D7）：单题接在其余区块之后；多题放在最后一题之后，用 `---`
+///   隔开、不带 `# Qn`；回答全空而有附注时只输出附注区块（既不是「未作答」，也不是「取消」）。
+pub fn aggregate_output(
+    lang: Lang,
+    answers: &[RenderedAnswer],
+    annotations: &[UserAnnotation],
+) -> String {
+    let notes = annotations::render_block(annotations);
+    let nothing_answered = answers.iter().all(|a| a.is_empty());
+    if !notes.is_empty() && nothing_answered {
+        return notes;
+    }
+
     if answers.len() <= 1 {
-        return match answers.first() {
+        let body = match answers.first() {
             Some(a) if !a.is_empty() => a.body(lang),
             _ => unanswered_output(lang),
         };
+        return if notes.is_empty() {
+            body
+        } else {
+            format!("{body}\n\n{notes}")
+        };
     }
 
-    if answers.iter().all(|a| a.is_empty()) {
+    if nothing_answered {
         return cancel_output(lang);
     }
 
-    answers
+    let mut parts: Vec<String> = answers
         .iter()
         .enumerate()
         .map(|(i, a)| {
@@ -140,8 +161,11 @@ pub fn aggregate_output(lang: Lang, answers: &[RenderedAnswer]) -> String {
             };
             format!("# Q{}\n{}", i + 1, body)
         })
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n")
+        .collect();
+    if !notes.is_empty() {
+        parts.push(notes);
+    }
+    parts.join("\n\n---\n\n")
 }
 
 /// 成功路径输出（图片已落盘，传入路径列表；文件为用户拖入的非图片绝对路径，直接透传）。
@@ -206,6 +230,10 @@ pub enum WhatsNextReply {
     /// 准许结束：携带「结束本轮」选项原文 → `[selected_options]`（第 19 轮定案：复用
     /// Ask 标准区块，不再输出固定英文结束句；agent 据 rules 语义判断可结束）。
     End(String),
+    /// Notes on the message sent with an empty submission or with the end option (spec
+    /// `message-annotations` D5): the end is not approved, the Agent only gets the notes (and any
+    /// files) to answer, then asks again.
+    NotesOnly,
     /// 未作答 / 取消：沿用普通 Ask 取消语义（`[status]` 指示继续询问）。
     Cancelled,
 }
@@ -216,7 +244,22 @@ pub enum WhatsNextReply {
 /// ordinary Ask option/input blocks; free text alone becomes a task; the final end option without
 /// text approves ending, while end plus text continues with that text.
 /// 出队不在此处：赢家回答的待办 id 由 `todos::ids_to_dequeue` 统一收集、Coordinator 出队。
+///
+/// Notes on the message change one thing: an end approval (or an empty submission) that carries
+/// them becomes [`WhatsNextReply::NotesOnly`] — having something to say means the turn is not done.
 pub fn whats_next_reply(request: &AskRequest, result: &ChannelResult) -> WhatsNextReply {
+    let reply = whats_next_task_or_end(request, result);
+    let has_notes = result.action == ChannelAction::Send && !result.annotations.is_empty();
+    match reply {
+        WhatsNextReply::End(_) | WhatsNextReply::Cancelled if has_notes => {
+            WhatsNextReply::NotesOnly
+        }
+        other => other,
+    }
+}
+
+/// The submission mapping without notes: task, suggestion, end approval or cancellation.
+fn whats_next_task_or_end(request: &AskRequest, result: &ChannelResult) -> WhatsNextReply {
     if result.action == ChannelAction::Cancel {
         return WhatsNextReply::Cancelled;
     }
@@ -291,9 +334,15 @@ pub fn whats_next_reply(request: &AskRequest, result: &ChannelResult) -> WhatsNe
 
 /// whats-next 的 stdout 渲染（spec D3，第 19 轮定案：复用 Ask 标准区块）。
 /// 派活 → `[user_input]` + 任务文本；准许结束 → `[selected_options]` + 结束选项原文；
-/// 取消沿用 `[status]`。回答附带的图片/文件已由调用方落盘为路径，非空时按既有
-/// `[files]` 区块附后（普通 Ask 同一契约）。
-pub fn whats_next_output(reply: &WhatsNextReply, file_paths: &[String], lang: Lang) -> String {
+/// 取消沿用 `[status]`（从不带附注）。回答附带的图片/文件已由调用方落盘为路径，非空时按既有
+/// `[files]` 区块附后（普通 Ask 同一契约）。附注（spec message-annotations D5）在 `[files]` 之后，
+/// `NotesOnly` 只有 `[files]`（如有）与附注区块，没有「结束本轮」那行。
+pub fn whats_next_output(
+    reply: &WhatsNextReply,
+    file_paths: &[String],
+    annotations: &[UserAnnotation],
+    lang: Lang,
+) -> String {
     let base = match reply {
         WhatsNextReply::Task(text) => format!("{}\n{}", MARKER_USER_INPUT, text),
         WhatsNextReply::Suggested { option, user_input } => send_output(
@@ -304,13 +353,21 @@ pub fn whats_next_output(reply: &WhatsNextReply, file_paths: &[String], lang: La
             &[],
         ),
         WhatsNextReply::End(text) => format!("{}\n{}", MARKER_SELECTED_OPTIONS, text),
+        WhatsNextReply::NotesOnly => String::new(),
         WhatsNextReply::Cancelled => return cancel_output(lang),
     };
-    if file_paths.is_empty() {
-        base
-    } else {
-        format!("{}\n\n{}\n{}", base, MARKER_FILES, file_paths.join("\n"))
+    let mut sections: Vec<String> = Vec::new();
+    if !base.is_empty() {
+        sections.push(base);
     }
+    if !file_paths.is_empty() {
+        sections.push(format!("{}\n{}", MARKER_FILES, file_paths.join("\n")));
+    }
+    let notes = annotations::render_block(annotations);
+    if !notes.is_empty() {
+        sections.push(notes);
+    }
+    sections.join("\n\n")
 }
 
 /// 结构化 JSON 输出（D7）：snake_case、美化多行、省略空字段；`answers` 仅含**有作答**的题。
@@ -332,6 +389,10 @@ pub fn render_json(
         status: Option<String>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         answers: Vec<JsonAnswer>,
+        /// The user's notes on passages of the message, quotes whole. Absent when there are none;
+        /// notes alone make an `answer` without `answers`.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        user_annotations: Vec<UserAnnotation>,
     }
     #[derive(Serialize)]
     struct JsonAnswer {
@@ -396,11 +457,17 @@ pub fn render_json(
         ChannelAction::Send => None,
     };
 
+    let user_annotations = match result.action {
+        ChannelAction::Send => result.annotations.clone(),
+        ChannelAction::Cancel => Vec::new(),
+    };
+
     let out = JsonOutput {
         action,
         channel: result.source_channel_id.clone(),
         status,
         answers,
+        user_annotations,
     };
     serde_json::to_string_pretty(&out).unwrap_or_default()
 }
@@ -541,13 +608,13 @@ mod tests {
     #[test]
     fn single_answered_keeps_current_format() {
         let opts = s(&["A"]);
-        let out = aggregate_output(Lang::En, &[ans(&opts, Some("hi"), &[], &[])]);
+        let out = aggregate_output(Lang::En, &[ans(&opts, Some("hi"), &[], &[])], &[]);
         assert_eq!(out, "[selected_options]\nA\n\n[user_input]\nhi");
     }
 
     #[test]
     fn single_empty_is_unanswered() {
-        let out = aggregate_output(Lang::En, &[ans(&[], Some("   "), &[], &[])]);
+        let out = aggregate_output(Lang::En, &[ans(&[], Some("   "), &[], &[])], &[]);
         assert_eq!(out, "[status]\nThe user did not answer this question");
     }
 
@@ -557,6 +624,7 @@ mod tests {
         let out = aggregate_output(
             Lang::En,
             &[ans(&o1, None, &[], &[]), ans(&[], Some("ok"), &[], &[])],
+            &[],
         );
         assert_eq!(
             out,
@@ -570,6 +638,7 @@ mod tests {
         let out = aggregate_output(
             Lang::En,
             &[ans(&o1, None, &[], &[]), ans(&[], None, &[], &[])],
+            &[],
         );
         assert_eq!(
             out,
@@ -582,6 +651,7 @@ mod tests {
         let out = aggregate_output(
             Lang::En,
             &[ans(&[], None, &[], &[]), ans(&[], Some(" "), &[], &[])],
+            &[],
         );
         assert_eq!(out, cancel_output(Lang::En));
     }
@@ -621,6 +691,7 @@ mod tests {
             action: ChannelAction::Send,
             answers: vec![answered(&["production"], None, &[])],
             source_channel_id: "popup".into(),
+            annotations: Vec::new(),
         };
         let json = render_json(&request, &result, &[vec![]], Lang::En);
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -647,6 +718,7 @@ mod tests {
                 QuestionAnswer::default(),   // Q2 未答
             ],
             source_channel_id: "slack".into(),
+            annotations: Vec::new(),
         };
         let v: serde_json::Value = serde_json::from_str(&render_json(
             &request,
@@ -666,6 +738,7 @@ mod tests {
             action: ChannelAction::Send,
             answers: vec![answered(&[], Some("note"), &["/tmp/b.md"])],
             source_channel_id: "telegram".into(),
+            annotations: Vec::new(),
         };
         let v: serde_json::Value = serde_json::from_str(&render_json(
             &request,
@@ -708,6 +781,7 @@ mod tests {
             action: ChannelAction::Send,
             answers: vec![answered(selected, input, &[])],
             source_channel_id: "popup".into(),
+            annotations: Vec::new(),
         }
     }
 
@@ -750,7 +824,7 @@ mod tests {
             }
         );
         assert_eq!(
-            whats_next_output(&reply, &s(&["/tmp/report.md"]), Lang::En),
+            whats_next_output(&reply, &s(&["/tmp/report.md"]), &[], Lang::En),
             "[selected_options]\nAdd tests\n\n[user_input]\nCover the edge case\n\n[files]\n/tmp/report.md"
         );
     }
@@ -761,7 +835,7 @@ mod tests {
         let reply = whats_next_reply(&wn_request(), &wn_result(&["End this turn"], None));
         assert_eq!(reply, WhatsNextReply::End("End this turn".into()));
         assert_eq!(
-            whats_next_output(&reply, &[], Lang::En),
+            whats_next_output(&reply, &[], &[], Lang::En),
             "[selected_options]\nEnd this turn"
         );
     }
@@ -789,7 +863,8 @@ mod tests {
             WhatsNextReply::Cancelled
         );
         assert!(
-            whats_next_output(&WhatsNextReply::Cancelled, &[], Lang::En).starts_with("[status]\n")
+            whats_next_output(&WhatsNextReply::Cancelled, &[], &[], Lang::En)
+                .starts_with("[status]\n")
         );
     }
 
@@ -798,11 +873,11 @@ mod tests {
         // 派活 → `[user_input]` + 任务文本（第 19 轮定案）；文件照旧 `[files]` 附后。
         let reply = WhatsNextReply::Task("任务".into());
         assert_eq!(
-            whats_next_output(&reply, &s(&["/tmp/a.png"]), Lang::En),
+            whats_next_output(&reply, &s(&["/tmp/a.png"]), &[], Lang::En),
             "[user_input]\n任务\n\n[files]\n/tmp/a.png"
         );
         assert_eq!(
-            whats_next_output(&reply, &[], Lang::En),
+            whats_next_output(&reply, &[], &[], Lang::En),
             "[user_input]\n任务"
         );
     }
@@ -818,5 +893,238 @@ mod tests {
         assert!(v.get("answers").is_none());
         // 取消时必须带引导文案，要求模型重新确认。
         assert!(v["status"].as_str().unwrap().contains("must ask again"));
+    }
+
+    // ===== notes on the message (spec message-annotations) =====
+
+    fn note(quote: &str, text: &str) -> UserAnnotation {
+        UserAnnotation {
+            quote: quote.into(),
+            note: text.into(),
+        }
+    }
+
+    fn two_notes() -> Vec<UserAnnotation> {
+        vec![
+            note("需要同时调整三处表单", "是哪三处？"),
+            note("回归测试也已补充", "补在哪个文件里？"),
+        ]
+    }
+
+    const TWO_NOTES_BLOCK: &str =
+        "[user_annotations]\n> 需要同时调整三处表单\n是哪三处？\n\n> 回归测试也已补充\n补在哪个文件里？";
+
+    #[test]
+    fn a_single_answer_gets_the_notes_block_after_its_other_blocks() {
+        let opts = s(&["方案 2"]);
+        let out = aggregate_output(
+            Lang::En,
+            &[ans(&opts, Some("先按这个做"), &[], &s(&["/tmp/a.md"]))],
+            &two_notes(),
+        );
+        assert_eq!(
+            out,
+            format!(
+                "[selected_options]\n方案 2\n\n[user_input]\n先按这个做\n\n[files]\n/tmp/a.md\n\n{TWO_NOTES_BLOCK}"
+            )
+        );
+    }
+
+    #[test]
+    fn notes_alone_are_neither_unanswered_nor_a_cancel() {
+        // One question.
+        let out = aggregate_output(Lang::En, &[ans(&[], Some("  "), &[], &[])], &two_notes());
+        assert_eq!(out, TWO_NOTES_BLOCK);
+        // Several questions: no `# Qn`, no status lines.
+        let out = aggregate_output(
+            Lang::En,
+            &[ans(&[], None, &[], &[]), ans(&[], None, &[], &[])],
+            &two_notes(),
+        );
+        assert_eq!(out, TWO_NOTES_BLOCK);
+        // No answers at all (nothing to render) is the same.
+        assert_eq!(
+            aggregate_output(Lang::En, &[], &two_notes()),
+            TWO_NOTES_BLOCK
+        );
+    }
+
+    #[test]
+    fn several_questions_put_the_notes_after_the_last_one_behind_a_rule() {
+        let o1 = s(&["独立会话表"]);
+        let out = aggregate_output(
+            Lang::En,
+            &[ans(&o1, None, &[], &[]), ans(&[], None, &[], &[])],
+            &[note(
+                "线上还有约 1.2 万条旧会话",
+                "这些里面还在活跃的有多少？",
+            )],
+        );
+        assert_eq!(
+            out,
+            "# Q1\n[selected_options]\n独立会话表\n\n---\n\n# Q2\n[status]\nThe user did not answer this question\n\n---\n\n[user_annotations]\n> 线上还有约 1.2 万条旧会话\n这些里面还在活跃的有多少？"
+        );
+    }
+
+    #[test]
+    fn no_notes_leave_every_text_output_as_it_was() {
+        let o1 = s(&["A"]);
+        assert_eq!(
+            aggregate_output(Lang::En, &[ans(&o1, None, &[], &[])], &[]),
+            "[selected_options]\nA"
+        );
+        assert_eq!(
+            aggregate_output(Lang::En, &[ans(&[], None, &[], &[])], &[]),
+            unanswered_output(Lang::En)
+        );
+    }
+
+    #[test]
+    fn a_long_quote_is_shortened_in_the_text_block_only() {
+        let long = "字".repeat(500);
+        let notes = [note(&long, "why")];
+        let out = aggregate_output(Lang::En, &[ans(&[], None, &[], &[])], &notes);
+        let quote_line = out.lines().nth(1).unwrap();
+        assert_eq!(quote_line.chars().count(), 2 + 300);
+        assert!(quote_line.contains('…'));
+        // JSON keeps the whole quote.
+        let result = ChannelResult {
+            action: ChannelAction::Send,
+            answers: vec![QuestionAnswer::default()],
+            source_channel_id: "popup".into(),
+            annotations: notes.to_vec(),
+        };
+        let v: serde_json::Value = serde_json::from_str(&render_json(
+            &req(vec![q(&[])]),
+            &result,
+            &[vec![]],
+            Lang::En,
+        ))
+        .unwrap();
+        assert_eq!(v["user_annotations"][0]["quote"], long);
+    }
+
+    #[test]
+    fn a_status_text_still_comes_last() {
+        let out = aggregate_output(Lang::En, &[ans(&[], None, &[], &[])], &two_notes());
+        let with_status = append_status(&out, "stop asking", false, None);
+        assert_eq!(
+            with_status,
+            format!("{TWO_NOTES_BLOCK}\n\n[status]\nstop asking")
+        );
+    }
+
+    #[test]
+    fn json_lists_the_notes_and_notes_alone_are_an_answer_without_answers() {
+        let request = req(vec![q(&["A"])]);
+        let result = ChannelResult {
+            action: ChannelAction::Send,
+            answers: vec![QuestionAnswer::default()],
+            source_channel_id: "popup".into(),
+            annotations: two_notes(),
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&render_json(&request, &result, &[vec![]], Lang::En)).unwrap();
+        assert_eq!(v["action"], "answer");
+        assert!(v.get("answers").is_none());
+        assert!(v.get("status").is_none());
+        assert_eq!(
+            v["user_annotations"],
+            serde_json::json!([
+                {"quote": "需要同时调整三处表单", "note": "是哪三处？"},
+                {"quote": "回归测试也已补充", "note": "补在哪个文件里？"},
+            ])
+        );
+        // Next to a real answer the notes sit beside it, with no question index of their own.
+        let result = ChannelResult {
+            answers: vec![answered(&["A"], None, &[])],
+            ..result
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&render_json(&request, &result, &[vec![]], Lang::En)).unwrap();
+        assert_eq!(v["answers"][0]["selected_options"][0], "A");
+        assert!(v["user_annotations"][0].get("question_index").is_none());
+        // Without notes the key is absent; a cancellation never carries them.
+        let plain = ChannelResult {
+            annotations: Vec::new(),
+            ..result.clone()
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&render_json(&request, &plain, &[vec![]], Lang::En)).unwrap();
+        assert!(v.get("user_annotations").is_none());
+        let cancelled = ChannelResult {
+            action: ChannelAction::Cancel,
+            ..result
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&render_json(&request, &cancelled, &[], Lang::En)).unwrap();
+        assert_eq!(v["action"], "cancel");
+        assert!(v.get("user_annotations").is_none());
+    }
+
+    fn wn_result_with_notes(selected: &[&str], input: Option<&str>) -> ChannelResult {
+        ChannelResult {
+            annotations: two_notes(),
+            ..wn_result(selected, input)
+        }
+    }
+
+    #[test]
+    fn whats_next_end_or_an_empty_submit_with_notes_does_not_approve_ending() {
+        let end = whats_next_reply(
+            &wn_request(),
+            &wn_result_with_notes(&["End this turn"], None),
+        );
+        assert_eq!(end, WhatsNextReply::NotesOnly);
+        let empty = whats_next_reply(&wn_request(), &wn_result_with_notes(&[], None));
+        assert_eq!(empty, WhatsNextReply::NotesOnly);
+        // No "End this turn" line: only the notes, after the files when there are any.
+        assert_eq!(
+            whats_next_output(&end, &[], &two_notes(), Lang::En),
+            TWO_NOTES_BLOCK
+        );
+        assert_eq!(
+            whats_next_output(&end, &s(&["/tmp/a.png"]), &two_notes(), Lang::En),
+            format!("[files]\n/tmp/a.png\n\n{TWO_NOTES_BLOCK}")
+        );
+    }
+
+    #[test]
+    fn whats_next_tasks_and_suggestions_keep_their_output_and_add_the_notes_last() {
+        let task = whats_next_reply(
+            &wn_request(),
+            &wn_result_with_notes(&["End this turn"], Some("还有个想法")),
+        );
+        assert_eq!(task, WhatsNextReply::Task("还有个想法".into()));
+        assert_eq!(
+            whats_next_output(&task, &s(&["/tmp/a.png"]), &two_notes(), Lang::En),
+            format!("[user_input]\n还有个想法\n\n[files]\n/tmp/a.png\n\n{TWO_NOTES_BLOCK}")
+        );
+        let suggested =
+            whats_next_reply(&wn_request(), &wn_result_with_notes(&["Add tests"], None));
+        assert!(matches!(suggested, WhatsNextReply::Suggested { .. }));
+        assert_eq!(
+            whats_next_output(&suggested, &[], &two_notes(), Lang::En),
+            format!("[selected_options]\nAdd tests\n\n{TWO_NOTES_BLOCK}")
+        );
+        let todo = whats_next_reply(
+            &wn_request(),
+            &wn_result_with_notes(&["执行待办：修复登录 bug"], None),
+        );
+        assert_eq!(todo, WhatsNextReply::Task("修复登录 bug".into()));
+    }
+
+    #[test]
+    fn whats_next_cancel_never_carries_notes() {
+        let cancelled = ChannelResult {
+            action: ChannelAction::Cancel,
+            ..wn_result_with_notes(&[], None)
+        };
+        let reply = whats_next_reply(&wn_request(), &cancelled);
+        assert_eq!(reply, WhatsNextReply::Cancelled);
+        assert!(whats_next_output(&reply, &[], &two_notes(), Lang::En).starts_with("[status]\n"));
+        assert!(
+            !whats_next_output(&reply, &[], &two_notes(), Lang::En).contains("[user_annotations]")
+        );
     }
 }

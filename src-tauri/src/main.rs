@@ -8,6 +8,7 @@
 #![allow(dead_code)]
 
 mod agents;
+mod annotations;
 mod app;
 mod ask_question;
 mod attachment_browser;

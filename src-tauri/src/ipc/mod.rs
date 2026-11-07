@@ -613,6 +613,11 @@ pub enum ClientMsg {
         /// using AskHuman). The daemon applies it only when this answer is the one accepted.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         directive: Option<crate::daemon::away::Directive>,
+        /// Notes written on passages of the message (spec `message-annotations`); the daemon
+        /// cleans them when the answer is accepted. Omitted when empty, so an older peer on the
+        /// same protocol number neither sends nor is sent anything new.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        annotations: Vec<crate::annotations::UserAnnotation>,
     },
     /// GUI Helper submits a structured confirmation choice. `choice_index` is mapped through the
     /// daemon-owned request ledger; GUI-provided action ids are never accepted.
@@ -1712,6 +1717,7 @@ mod tests {
             action: ChannelAction::Send,
             answers: Vec::new(),
             directive: None,
+            annotations: Vec::new(),
         };
         assert!(!serde_json::to_string(&msg).unwrap().contains("directive"));
 
@@ -1724,6 +1730,7 @@ mod tests {
                 scope: crate::daemon::away::Scope::Session,
                 note: Some("back at 3".into()),
             }),
+            annotations: Vec::new(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(
@@ -1733,6 +1740,45 @@ mod tests {
             panic!("not an answer");
         };
         assert_eq!(directive.unwrap().note.as_deref(), Some("back at 3"));
+    }
+
+    /// Notes on the message ride along with the answer as an optional field: an answer without
+    /// them parses and serializes exactly as before, so the protocol number does not change.
+    #[test]
+    fn answer_annotations_are_optional_and_round_trip() {
+        let legacy = r#"{"type":"answer","request_id":"r1","action":"send","answers":[]}"#;
+        let ClientMsg::Answer { annotations, .. } = serde_json::from_str(legacy).unwrap() else {
+            panic!("not an answer");
+        };
+        assert!(annotations.is_empty());
+
+        let none = ClientMsg::Answer {
+            request_id: "r1".into(),
+            action: ChannelAction::Send,
+            answers: Vec::new(),
+            directive: None,
+            annotations: Vec::new(),
+        };
+        assert!(!serde_json::to_string(&none)
+            .unwrap()
+            .contains("annotations"));
+
+        let some = ClientMsg::Answer {
+            request_id: "r1".into(),
+            action: ChannelAction::Send,
+            answers: Vec::new(),
+            directive: None,
+            annotations: vec![crate::annotations::UserAnnotation {
+                quote: "the passage".into(),
+                note: "why?".into(),
+            }],
+        };
+        let json = serde_json::to_string(&some).unwrap();
+        assert!(json.contains(r#""annotations":[{"quote":"the passage","note":"why?"}]"#));
+        let ClientMsg::Answer { annotations, .. } = serde_json::from_str(&json).unwrap() else {
+            panic!("not an answer");
+        };
+        assert_eq!(annotations[0].note, "why?");
     }
 
     /// The away operation and its reply keep a stable wire shape (tray, CLI and phone share it).

@@ -351,6 +351,12 @@ impl Coordinator {
         } else {
             crate::todos::apply_todo_deliveries(&request, &mut result, &self.project);
         }
+        // Notes on the message are cleaned once here for every source (popup, phone): a
+        // cancellation and a request that never offered notes carry none.
+        result.annotations = crate::annotations::sanitize(
+            std::mem::take(&mut result.annotations),
+            result.action == ChannelAction::Send && request.annotatable,
+        );
         let (exiter, pending_count, dequeue_ids) = {
             let inner = self.inner.lock().unwrap();
             // 进入收尾：此后 GUI 拦下关窗退出，独占由协调器主动 `app.exit`。
@@ -620,6 +626,7 @@ impl Coordinator {
             message: request.message.clone(),
             questions: request.questions.clone(),
             answers,
+            annotations: result.annotations.clone(),
         }
     }
 }
@@ -724,6 +731,7 @@ mod tests {
                 todo_selections: Vec::new(),
             }],
             source_channel_id: "popup".into(),
+            annotations: Vec::new(),
         };
         let entry =
             coordinator.history_entry(&request, &result, &[vec!["/tmp/image.png".into()]], 123);
@@ -886,6 +894,111 @@ mod tests {
         // Terminal: a late answer or cancel changes nothing.
         coordinator.submit(ChannelResult::cancel("popup"));
         assert!(rx.try_recv().is_err());
+    }
+
+    /// A coordinator for a request that does (or does not) offer notes on the message.
+    fn coordinator_for_notes(
+        annotatable: bool,
+    ) -> (
+        Arc<Coordinator>,
+        tokio::sync::mpsc::UnboundedReceiver<RenderOutcome>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut request = AskRequest::new(
+            MessagePrompt::new("context".into(), Vec::new()),
+            vec![Question::new("question".into(), Vec::new())],
+            true,
+        );
+        request.annotatable = annotatable;
+        let coordinator = Coordinator::new_ipc(
+            request,
+            Lang::En,
+            tx,
+            "/project".into(),
+            "Codex".into(),
+            HistoryBinding::default(),
+            false,
+        );
+        (coordinator, rx)
+    }
+
+    fn note(quote: &str, text: &str) -> crate::annotations::UserAnnotation {
+        crate::annotations::UserAnnotation {
+            quote: quote.into(),
+            note: text.into(),
+        }
+    }
+
+    fn answer_with_notes(
+        action: ChannelAction,
+        annotations: Vec<crate::annotations::UserAnnotation>,
+    ) -> ChannelResult {
+        ChannelResult {
+            action,
+            answers: vec![QuestionAnswer::default()],
+            source_channel_id: "popup".into(),
+            annotations,
+        }
+    }
+
+    #[tokio::test]
+    async fn notes_are_cleaned_once_where_the_answer_wins_and_reach_the_output() {
+        let (coordinator, mut rx) = coordinator_for_notes(true);
+        assert!(coordinator.try_submit(answer_with_notes(
+            ChannelAction::Send,
+            vec![
+                note("  a \n b ", " why? "),
+                note("", "no quote"),
+                note("no note", "  "),
+            ],
+        )));
+        let outcome = rx.recv().await.expect("the answer is rendered");
+        // Only the notes: neither "unanswered" nor "cancelled", and cleaned (one line, trimmed).
+        assert_eq!(outcome.stdout, "[user_annotations]\n> a b\nwhy?");
+        assert_eq!(outcome.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn notes_on_a_request_that_offered_none_are_dropped_at_the_winner() {
+        let (coordinator, mut rx) = coordinator_for_notes(false);
+        assert!(coordinator.try_submit(answer_with_notes(
+            ChannelAction::Send,
+            vec![note("passage", "a note")],
+        )));
+        let outcome = rx.recv().await.expect("the answer is rendered");
+        assert!(
+            !outcome.stdout.contains("[user_annotations]"),
+            "{}",
+            outcome.stdout
+        );
+        assert!(outcome.stdout.starts_with("[status]\n"));
+    }
+
+    #[tokio::test]
+    async fn a_cancellation_never_carries_notes() {
+        let (coordinator, mut rx) = coordinator_for_notes(true);
+        assert!(coordinator.try_submit(answer_with_notes(
+            ChannelAction::Cancel,
+            vec![note("passage", "a note")],
+        )));
+        let outcome = rx.recv().await.expect("the cancellation is rendered");
+        assert!(outcome.stdout.starts_with("[status]\n"));
+        assert!(!outcome.stdout.contains("[user_annotations]"));
+    }
+
+    #[test]
+    fn history_entry_keeps_the_cleaned_notes_whole() {
+        let coordinator = coordinator();
+        let request = coordinator.inner.lock().unwrap().request.clone();
+        let long = "字".repeat(500);
+        let result = answer_with_notes(ChannelAction::Send, vec![note(&long, "kept")]);
+        let entry = coordinator.history_entry(&request, &result, &[vec![]], 1);
+        assert_eq!(entry.annotations.len(), 1);
+        // The history keeps the stored quote; only the text block and show-last shorten it.
+        assert_eq!(entry.annotations[0].quote.chars().count(), 500);
+        let cancelled =
+            coordinator.history_entry(&request, &ChannelResult::cancel("popup"), &[], 2);
+        assert!(cancelled.annotations.is_empty());
     }
 
     #[test]

@@ -62,6 +62,7 @@ fn answer(client_msg_id: &str, request_id: &str, answers: Vec<AnswerItem>) -> wi
         answers,
         todo_ids: Vec::new(),
         directive: None,
+        annotations: Vec::new(),
     }
 }
 
@@ -173,6 +174,7 @@ async fn cancel_is_forwarded_as_a_cancel() {
             answers: Vec::new(),
             todo_ids: Vec::new(),
             directive: None,
+            annotations: Vec::new(),
         })
         .await;
     let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
@@ -315,6 +317,97 @@ async fn a_repeated_client_message_id_replays_the_first_ack() {
     let conflict: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
     assert_eq!(conflict.status, "invalid");
     assert_eq!(conflict.reason.as_deref(), Some("conflict"));
+}
+
+fn note(quote: &str, text: &str) -> crate::annotations::UserAnnotation {
+    crate::annotations::UserAnnotation {
+        quote: quote.into(),
+        note: text.into(),
+    }
+}
+
+/// Notes written on the message ride along with the answer into the result (the coordinator
+/// cleans them where the answer wins); a cancellation takes none with it.
+#[tokio::test(start_paused = true)]
+async fn notes_on_the_message_travel_with_the_answer_but_not_with_a_cancel() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let sink = deliver_ask(&fx, "req1");
+    phone.recv(t::REQUEST_NEW).await;
+
+    let mut with_notes = answer("c1", "req1", vec![item(0, &[1], None)]);
+    with_notes.annotations = vec![note("the passage", "why?"), note("another", "and this?")];
+    phone.send(&with_notes).await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "accepted");
+    {
+        let results = sink.results.lock().unwrap();
+        assert_eq!(
+            results[0].annotations,
+            vec![note("the passage", "why?"), note("another", "and this?")]
+        );
+    }
+
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let sink = deliver_ask(&fx, "req1");
+    phone.recv(t::REQUEST_NEW).await;
+    phone
+        .send(&wire::AnswerSubmit {
+            client_msg_id: "c1".into(),
+            request_id: "req1".into(),
+            action: "cancel".into(),
+            answers: Vec::new(),
+            todo_ids: Vec::new(),
+            directive: None,
+            annotations: vec![note("the passage", "why?")],
+        })
+        .await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "accepted");
+    assert!(sink.results.lock().unwrap()[0].annotations.is_empty());
+}
+
+/// A retry with the same notes replays; the same message id with other notes is a conflict.
+#[tokio::test(start_paused = true)]
+async fn the_notes_are_part_of_what_a_repeated_message_id_must_match() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let sink = deliver_ask(&fx, "req1");
+    phone.recv(t::REQUEST_NEW).await;
+
+    let mut submit = answer("c1", "req1", vec![item(0, &[0], None)]);
+    submit.annotations = vec![note("the passage", "why?")];
+    phone.send(&submit).await;
+    let first: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(first.status, "accepted");
+    phone.send(&submit).await;
+    let second: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(second, first);
+    assert_eq!(sink.results.lock().unwrap().len(), 1, "submitted once");
+
+    let mut other = submit.clone();
+    other.annotations = vec![note("the passage", "something else")];
+    phone.send(&other).await;
+    let conflict: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(conflict.status, "invalid");
+    assert_eq!(conflict.reason.as_deref(), Some("conflict"));
+
+    // Dropping the notes is a different body as well.
+    let mut none = submit.clone();
+    none.annotations = Vec::new();
+    phone.send(&none).await;
+    let conflict: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(conflict.reason.as_deref(), Some("conflict"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_mac_announces_that_it_takes_notes_on_the_message() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.pair_phone().await;
+    phone.set_presence(true, true).await;
+    let hello = phone.hello().await;
+    assert!(hello.caps.annotations);
 }
 
 #[tokio::test(start_paused = true)]

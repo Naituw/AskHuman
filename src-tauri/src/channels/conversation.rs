@@ -240,6 +240,7 @@ pub async fn run_conversation(
         action: ChannelAction::Send,
         answers,
         source_channel_id,
+        annotations: Vec::new(),
     });
 }
 

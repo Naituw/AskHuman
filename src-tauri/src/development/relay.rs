@@ -641,6 +641,7 @@ fn decode_result(
         action,
         answers,
         source_channel_id: "dev-relay".into(),
+        annotations: Vec::new(),
     })
 }
 

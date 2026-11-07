@@ -71,6 +71,7 @@ impl Host for DaemonHost {
             todos: true,
             answer_todos: true,
             away: true,
+            annotations: true,
         }
     }
 

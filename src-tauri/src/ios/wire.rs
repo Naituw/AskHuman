@@ -235,6 +235,12 @@ pub struct Caps {
     /// every away control for that Mac.
     #[serde(default)]
     pub away: bool,
+    /// The Mac takes notes written on passages of the message (`answer.submit` `annotations`,
+    /// `annotatable` on requests; docs/specs/message-annotations.md). Older Macs do not send it,
+    /// and the phone then offers no notes: they would be dropped silently. Left out when false,
+    /// so the capability sets pinned by the wire fixtures keep their shape.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub annotations: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -453,6 +459,11 @@ pub struct AskView {
     /// of the kind. Additive: older phones ignore it, older Macs never send it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub quick_replies: Vec<String>,
+    /// The phone may let the user select text in this question's message and write notes on it
+    /// (docs/specs/message-annotations.md). Additive: older phones ignore it, older Macs never
+    /// send it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub annotatable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -657,6 +668,11 @@ pub struct AnswerSubmit {
     /// Additive: absent from older phones and when the user chose none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub directive: Option<AnswerDirective>,
+    /// Notes written on passages of the message, in the order the phone lists them
+    /// (docs/specs/message-annotations.md). The Mac cleans them when the answer wins. Additive:
+    /// absent from older phones and when the user wrote none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<crate::annotations::UserAnnotation>,
 }
 msg!(AnswerSubmit, t::ANSWER_SUBMIT);
 
@@ -1697,6 +1713,60 @@ mod tests {
             serde_json::json!({"clientMsgId": "c", "requestId": "r", "status": "accepted"})
         );
         assert_eq!(AnswerAck::TYPE, "answer.ack");
+    }
+
+    /// Notes on the message are additive (docs/specs/message-annotations.md E1): absent from
+    /// older peers, never sent when there is nothing to say, and read as "no" when missing.
+    #[test]
+    fn the_notes_fields_are_additive_in_both_directions() {
+        let caps = |annotations: bool| Caps {
+            new_task: true,
+            interject: true,
+            watch: true,
+            todos: true,
+            answer_todos: true,
+            away: true,
+            annotations,
+        };
+        assert!(serde_json::to_value(caps(false))
+            .unwrap()
+            .get("annotations")
+            .is_none());
+        assert_eq!(
+            serde_json::to_value(caps(true)).unwrap()["annotations"],
+            true
+        );
+        let old: Caps = serde_json::from_value(serde_json::json!({
+            "newTask": true, "interject": true, "watch": true
+        }))
+        .unwrap();
+        assert!(!old.annotations);
+
+        let submit = |annotations: Vec<crate::annotations::UserAnnotation>| AnswerSubmit {
+            client_msg_id: "c".into(),
+            request_id: "r".into(),
+            action: "send".into(),
+            answers: Vec::new(),
+            todo_ids: Vec::new(),
+            directive: None,
+            annotations,
+        };
+        assert!(submit(Vec::new()).to_value().get("annotations").is_none());
+        let with = submit(vec![crate::annotations::UserAnnotation {
+            quote: "passage".into(),
+            note: "why?".into(),
+        }]);
+        assert_eq!(
+            with.to_value()["annotations"],
+            serde_json::json!([{"quote": "passage", "note": "why?"}])
+        );
+        let back: AnswerSubmit = serde_json::from_value(with.to_value()).unwrap();
+        assert_eq!(back, with);
+        let legacy: AnswerSubmit = serde_json::from_value(serde_json::json!({
+            "clientMsgId": "c", "requestId": "r", "action": "send"
+        }))
+        .unwrap();
+        assert!(legacy.annotations.is_empty());
     }
 
     #[test]

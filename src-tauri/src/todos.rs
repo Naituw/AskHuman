@@ -1440,6 +1440,7 @@ mod tests {
                 todo_selections: Vec::new(),
             }],
             source_channel_id: "popup".into(),
+            annotations: Vec::new(),
         };
         assert_eq!(ids_to_dequeue(&request, &result), vec!["id-1", "id-3"]);
         // 取消路径不出队。
@@ -1452,6 +1453,7 @@ mod tests {
                 ..Default::default()
             }],
             source_channel_id: "popup".into(),
+            annotations: Vec::new(),
         };
         assert!(ids_to_dequeue(&request, &plain).is_empty());
     }
@@ -1500,6 +1502,7 @@ mod tests {
                 ..Default::default()
             }],
             source_channel_id: "popup".into(),
+            annotations: Vec::new(),
         };
         apply_todo_deliveries_from_entries(&request, &mut result, std::slice::from_ref(&entry));
         assert_eq!(result.answers[0].selected_options, vec![label]);
@@ -1513,6 +1516,7 @@ mod tests {
                 ..Default::default()
             }],
             source_channel_id: "popup".into(),
+            annotations: Vec::new(),
         };
         apply_todo_deliveries_from_entries(&request, &mut missing, &[]);
         assert!(missing.answers[0].files.is_empty());

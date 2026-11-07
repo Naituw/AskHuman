@@ -947,6 +947,7 @@ mod tests {
                 files: vec![file.to_string_lossy().to_string()],
                 ..Default::default()
             }],
+            annotations: Vec::new(),
         };
         retain_reply_files(&info, &mut result).unwrap();
         std::fs::write(&file, b"changed later").unwrap();

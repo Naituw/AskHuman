@@ -186,6 +186,7 @@ impl Host for TestHost {
             todos: true,
             answer_todos: true,
             away: true,
+            annotations: true,
         }
     }
 
@@ -549,6 +550,7 @@ pub fn sample_ask(id: &str) -> (Arc<AskRequest>, RequestView) {
         escalated: None,
         quick_reply: true,
         quick_replies: Vec::new(),
+        annotatable: false,
     };
     let view = RequestView {
         id: id.to_string(),
@@ -594,6 +596,7 @@ pub fn sample_ask(id: &str) -> (Arc<AskRequest>, RequestView) {
             single: false,
             whats_next: false,
             quick_replies: Vec::new(),
+            annotatable: false,
         }),
         confirm: None,
     };

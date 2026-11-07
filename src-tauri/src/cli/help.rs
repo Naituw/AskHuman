@@ -161,18 +161,21 @@ fn result_field_lines(lang: Lang) -> Vec<String> {
     let m_opts = output::MARKER_SELECTED_OPTIONS;
     let m_input = output::MARKER_USER_INPUT;
     let m_files = output::MARKER_FILES;
+    let m_notes = output::MARKER_USER_ANNOTATIONS;
     let m_status = output::MARKER_STATUS;
     match lang {
         Lang::En => vec![
             format!("  {m_opts}  Predefined options the user checked"),
             format!("  {m_input}        Free-form text the user typed"),
             format!("  {m_files}             Local paths the user attached (images/files/dirs; tell type by extension)"),
+            format!("  {m_notes}  The user's notes on passages of your message: a quoted passage (> …) followed by the note"),
             format!("  {m_status}            State of this request (cancelled, unanswered, replayed answer); follow its text"),
         ],
         Lang::Zh => vec![
             format!("  {m_opts}  用户勾选的预定义选项"),
             format!("  {m_input}        用户输入的自由文本"),
             format!("  {m_files}             用户附带的本地路径（图片/文件/目录，按后缀区分类型）"),
+            format!("  {m_notes}  用户对你消息中某些段落写的附注：引用的原文（> …）后跟附注内容"),
             format!("  {m_status}            本次提问的状态（取消 / 未作答 / 重放的旧回答），按其中说明处理"),
         ],
     }
@@ -495,6 +498,7 @@ mod tests {
             assert!(h.contains(output::MARKER_SELECTED_OPTIONS));
             assert!(h.contains(output::MARKER_USER_INPUT));
             assert!(h.contains(output::MARKER_FILES));
+            assert!(h.contains(output::MARKER_USER_ANNOTATIONS));
             assert!(h.contains(output::MARKER_STATUS));
         }
     }

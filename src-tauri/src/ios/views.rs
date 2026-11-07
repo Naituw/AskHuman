@@ -198,6 +198,7 @@ pub fn ask_view(
             single: request.single,
             whats_next: request.whats_next,
             quick_replies: request.quick_replies.clone(),
+            annotatable: request.annotatable,
         }),
         confirm: None,
     };
@@ -341,6 +342,24 @@ mod tests {
         assert_eq!(ask.questions[0].options[1].text, "b");
         assert!(ask.questions[0].options[1].recommended);
         assert!(built.assets.is_empty());
+    }
+
+    /// The phone offers notes on the message only for a question the Mac marked as annotatable;
+    /// a view of a request that is not stays as old phones know it (the flag is not even sent).
+    #[test]
+    fn ask_view_says_whether_notes_may_be_written() {
+        let mut request = AskRequest::new(MessagePrompt::default(), vec![], false);
+        let view = ask_view(&request, &origin(), 0).view;
+        assert!(!view.ask.as_ref().unwrap().annotatable);
+        assert!(serde_json::to_value(view.ask.unwrap())
+            .unwrap()
+            .get("annotatable")
+            .is_none());
+
+        request.annotatable = true;
+        let ask = ask_view(&request, &origin(), 0).view.ask.unwrap();
+        assert!(ask.annotatable);
+        assert_eq!(serde_json::to_value(ask).unwrap()["annotatable"], true);
     }
 
     #[test]
