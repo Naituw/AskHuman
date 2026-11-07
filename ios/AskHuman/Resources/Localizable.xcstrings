@@ -440,6 +440,16 @@
         }
       }
     },
+    "Add annotation" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加附注"
+          }
+        }
+      }
+    },
     "Add attachment" : {
       "localizations" : {
         "zh-Hans" : {
@@ -676,6 +686,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "有个附件无法使用。请移除后再试。"
+          }
+        }
+      }
+    },
+    "Annotation limit reached (%lld)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附注已满（最多 %lld 条）"
+          }
+        }
+      }
+    },
+    "Annotations · %lld" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附注 · %lld 条"
           }
         }
       }
@@ -1470,6 +1500,16 @@
         }
       }
     },
+    "Delete annotation" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除附注"
+          }
+        }
+      }
+    },
     "Delete this todo?" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1590,12 +1630,32 @@
         }
       }
     },
+    "Discard this annotation?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放弃这条附注？"
+          }
+        }
+      }
+    },
     "Discard this task?" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "放弃这个任务？"
+          }
+        }
+      }
+    },
+    "Discard your changes?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放弃你的修改？"
           }
         }
       }
@@ -1666,6 +1726,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "编辑"
+          }
+        }
+      }
+    },
+    "Edit annotation" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑附注"
           }
         }
       }
@@ -3240,6 +3310,16 @@
         }
       }
     },
+    "Original text not found" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "找不到原文位置"
+          }
+        }
+      }
+    },
     "PUSH_ASK" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4149,6 +4229,16 @@
         }
       }
     },
+    "Sent to the Agent with your answer." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会和你的回答一起发给 Agent。"
+          }
+        }
+      }
+    },
     "Sent to your Mac" : {
       "localizations" : {
         "zh-Hans" : {
@@ -4475,6 +4565,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "撤销"
+          }
+        }
+      }
+    },
+    "Tap a note to see its passage. Swipe left to edit or delete. Annotations are sent to the Agent with your answer." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "点一条附注可回到它所在的段落，左滑可编辑或删除。附注会和你的回答一起发给 Agent。"
           }
         }
       }
@@ -5973,6 +6073,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工作目录"
+          }
+        }
+      }
+    },
+    "Write your question or comment…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写下你的疑问或意见…"
           }
         }
       }
